@@ -1,0 +1,58 @@
+# Java .editorconfig
+# Supplementary whitespace and indent rules.
+# The project formatter (Spotless/Checkstyle/google-java-format) is authoritative for Java style.
+
+root = true
+
+#############################
+# Global (all file types)
+#############################
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+#############################
+# Java files
+#############################
+[*.java]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+#############################
+# Build files
+#############################
+[pom.xml]
+indent_style = space
+indent_size = 4
+
+[*.gradle]
+indent_style = space
+indent_size = 4
+
+[*.gradle.kts]
+indent_style = space
+indent_size = 4
+
+#############################
+# Config / resource files
+#############################
+[*.{xml,xsd,xsl}]
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.properties]
+indent_style = space
+indent_size = 4
+
+#############################
+# Markdown
+#############################
+[*.md]
+trim_trailing_whitespace = false

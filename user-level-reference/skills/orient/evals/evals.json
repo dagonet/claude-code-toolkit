@@ -1,0 +1,29 @@
+{
+  "skill_name": "orient",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Orient me in this project. Here's the structure:\n```\nTaskManager/\n  TaskManager.sln\n  src/\n    TaskManager.Domain/\n      TaskManager.Domain.csproj  (net8.0, no dependencies)\n      Entities/\n        TaskItem.cs\n        Project.cs\n      Interfaces/\n        ITaskRepository.cs\n        IProjectRepository.cs\n      ValueObjects/\n        Priority.cs\n        TaskStatus.cs\n    TaskManager.Application/\n      TaskManager.Application.csproj  (net8.0, refs: Domain)\n      Commands/\n        CreateTaskCommand.cs\n        UpdateTaskCommand.cs\n      Queries/\n        GetTasksQuery.cs\n      Interfaces/\n        IEmailService.cs\n    TaskManager.Infrastructure/\n      TaskManager.Infrastructure.csproj  (net8.0, refs: Domain, Application)\n      Persistence/\n        AppDbContext.cs\n        TaskRepository.cs\n      Services/\n        EmailService.cs\n    TaskManager.API/\n      TaskManager.API.csproj  (net8.0, refs: Application, Infrastructure)\n      Program.cs\n      Controllers/\n        TasksController.cs\n        ProjectsController.cs\n      appsettings.json\n  tests/\n    TaskManager.UnitTests/\n      TaskManager.UnitTests.csproj  (refs: Domain, Application)\n    TaskManager.IntegrationTests/\n      TaskManager.IntegrationTests.csproj  (refs: Infrastructure, API)\n```",
+      "expected_output": "Structured project orientation identifying Clean Architecture pattern",
+      "expectations": [
+        "Identifies the project as a .NET 8 Web API application",
+        "Identifies the architectural pattern as Clean Architecture (or Onion/Hexagonal)",
+        "Lists the key entry point (Program.cs in the API project)",
+        "Maps the layer dependencies correctly (API → Application/Infrastructure → Domain)",
+        "Identifies both test projects and their scope (unit vs integration)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "What does this project do? Here's what I see:\n```\nweather-dashboard/\n  package.json          (name: weather-dashboard, dependencies: react, axios, recharts, tailwindcss)\n  src/\n    index.tsx\n    App.tsx\n    api/\n      weatherApi.ts     (exports: fetchForecast, fetchCurrentWeather, fetchAlerts)\n    components/\n      Dashboard.tsx\n      ForecastChart.tsx\n      AlertBanner.tsx\n      LocationSearch.tsx\n    hooks/\n      useWeather.ts\n      useGeolocation.ts\n    types/\n      weather.ts\n    utils/\n      formatTemperature.ts\n      dateUtils.ts\n  public/\n    index.html\n  tailwind.config.js\n  tsconfig.json\n  vite.config.ts\n```",
+      "expected_output": "Project orientation identifying a React weather dashboard with key features",
+      "expectations": [
+        "Identifies this as a React/TypeScript frontend application",
+        "Identifies the build tool as Vite",
+        "Identifies the main purpose (weather dashboard with forecasts, alerts, and location search)",
+        "Lists key entry points (index.tsx, App.tsx)",
+        "Mentions the charting library (Recharts) and styling approach (Tailwind CSS)"
+      ]
+    }
+  ]
+}

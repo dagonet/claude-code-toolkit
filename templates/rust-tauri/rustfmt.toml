@@ -1,0 +1,6 @@
+# Rust formatting configuration — equivalent of .editorconfig for Rust
+# Applied by `cargo fmt`. All code MUST comply.
+edition = "2021"
+max_width = 100
+tab_spaces = 4
+use_field_init_shorthand = true

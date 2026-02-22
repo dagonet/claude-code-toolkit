@@ -1,0 +1,42 @@
+{
+  "skill_name": "code-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review this diff for issues:\n```diff\n--- a/src/UserService.cs\n+++ b/src/UserService.cs\n@@ -15,8 +15,12 @@ public class UserService\n     public async Task<User> GetUser(string userId)\n     {\n-        var user = await _db.Users.FindAsync(userId);\n-        return user;\n+        var query = $\"SELECT * FROM Users WHERE Id = '{userId}'\";\n+        var user = await _db.Database.ExecuteSqlRawAsync(query);\n+        if (user == null)\n+            throw new Exception(\"User not found\");\n+        _logger.LogInformation($\"Retrieved user: {userId}, email: {user.Email}\");\n+        return user;\n     }\n```",
+      "expected_output": "Structured code review identifying SQL injection and other security issues",
+      "expectations": [
+        "Output contains a summary table with category statuses (Correctness, Design, Security, etc.)",
+        "Output identifies SQL injection as a critical security issue",
+        "Output flags logging of sensitive data (email) as a security concern",
+        "Each critical finding includes a fix suggestion with code",
+        "Output ends with a verdict (APPROVE, REQUEST CHANGES, or COMMENT)",
+        "Findings are categorized by severity (Critical, Warning, or Suggestion)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Review this diff:\n```diff\n--- a/src/Utils/StringHelper.cs\n+++ b/src/Utils/StringHelper.cs\n@@ -1,0 +1,20 @@\n+namespace MyApp.Utils;\n+\n+public static class StringHelper\n+{\n+    public static string Truncate(string value, int maxLength)\n+    {\n+        if (string.IsNullOrEmpty(value)) return value;\n+        return value.Length <= maxLength ? value : value[..maxLength];\n+    }\n+\n+    public static string ToSlug(string value)\n+    {\n+        if (string.IsNullOrEmpty(value)) return string.Empty;\n+        return value.ToLowerInvariant()\n+            .Replace(\" \", \"-\")\n+            .Replace(\"_\", \"-\");\n+    }\n+}\n```",
+      "expected_output": "Code review of a clean utility class with minimal or no issues",
+      "expectations": [
+        "Output contains a summary table with all review categories listed",
+        "Verdict is APPROVE or COMMENT (not REQUEST CHANGES for clean code)",
+        "No false critical issues are reported for this straightforward code",
+        "Output mentions testing considerations (tests should be added for new code)",
+        "Review covers all checklist categories even when most are passing"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Review this diff:\n```diff\n--- a/src/OrderProcessor.cs\n+++ b/src/OrderProcessor.cs\n@@ -10,5 +10,65 @@ public class OrderProcessor\n+    public async Task<OrderResult> ProcessOrder(Order order, Customer customer, PaymentInfo payment, ShippingInfo shipping)\n+    {\n+        // Validate order\n+        if (order.Items == null || order.Items.Count == 0) throw new ArgumentException(\"No items\");\n+        if (order.Items.Any(i => i.Quantity <= 0)) throw new ArgumentException(\"Invalid quantity\");\n+        if (order.Items.Any(i => i.Price < 0)) throw new ArgumentException(\"Invalid price\");\n+\n+        // Calculate totals\n+        decimal subtotal = 0;\n+        foreach (var item in order.Items)\n+        {\n+            var product = await _productRepo.GetById(item.ProductId);\n+            if (product == null) throw new Exception($\"Product {item.ProductId} not found\");\n+            if (product.Stock < item.Quantity) throw new Exception($\"Insufficient stock for {product.Name}\");\n+            subtotal += item.Price * item.Quantity;\n+            product.Stock -= item.Quantity;\n+            await _productRepo.Update(product);\n+        }\n+\n+        // Apply discount\n+        decimal discount = 0;\n+        if (customer.IsVip) discount = subtotal * 0.1m;\n+        if (order.CouponCode != null)\n+        {\n+            var coupon = await _couponRepo.GetByCode(order.CouponCode);\n+            if (coupon != null && coupon.ExpiryDate > DateTime.Now)\n+                discount += subtotal * coupon.DiscountPercent / 100;\n+        }\n+\n+        // Process payment\n+        var total = subtotal - discount + shipping.Cost;\n+        var paymentResult = await _paymentGateway.Charge(payment.CardNumber, total);\n+        if (!paymentResult.Success) throw new Exception(\"Payment failed: \" + paymentResult.Error);\n+\n+        // Create order record\n+        var orderRecord = new OrderRecord\n+        {\n+            CustomerId = customer.Id, Items = order.Items, Subtotal = subtotal,\n+            Discount = discount, ShippingCost = shipping.Cost, Total = total,\n+            PaymentTransactionId = paymentResult.TransactionId,\n+            Status = \"Completed\", CreatedAt = DateTime.Now\n+        };\n+        await _orderRepo.Add(orderRecord);\n+\n+        // Send notifications\n+        await _emailService.SendOrderConfirmation(customer.Email, orderRecord);\n+        await _inventoryService.NotifyLowStock(order.Items.Select(i => i.ProductId).ToList());\n+\n+        return new OrderResult { Success = true, OrderId = orderRecord.Id, Total = total };\n+    }\n```",
+      "expected_output": "Code review identifying SRP violation, N+1 queries, and design concerns in a large method",
+      "expectations": [
+        "Output identifies Single Responsibility Principle violation (method does too much)",
+        "Output flags the N+1 query pattern in the foreach loop (individual GetById calls)",
+        "Output mentions the lack of transaction/atomicity (stock decremented before payment)",
+        "Output references specific line numbers or code locations for findings",
+        "Output suggests breaking the method into smaller, focused methods"
+      ]
+    }
+  ]
+}

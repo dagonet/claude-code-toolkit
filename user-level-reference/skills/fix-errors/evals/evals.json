@@ -1,0 +1,39 @@
+{
+  "skill_name": "fix-errors",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Fix this error:\n```\nTraceback (most recent call last):\n  File \"app/main.py\", line 15, in handle_request\n    result = process_data(request.json)\n  File \"app/processor.py\", line 8, in process_data\n    validated = DataValidator.validate(data)\nNameError: name 'DataValidator' is not defined\n```\n\nHere is app/processor.py:\n```python\n# app/processor.py\nfrom app.models import DataResult\n\ndef process_data(data: dict) -> DataResult:\n    validated = DataValidator.validate(data)\n    transformed = transform(validated)\n    return DataResult(data=transformed, status=\"ok\")\n\ndef transform(data: dict) -> dict:\n    return {k: v.strip() if isinstance(v, str) else v for k, v in data.items()}\n```\n\nHere is app/validators.py:\n```python\n# app/validators.py\nclass DataValidator:\n    @staticmethod\n    def validate(data: dict) -> dict:\n        if not data:\n            raise ValueError(\"Empty data\")\n        return {k: v for k, v in data.items() if v is not None}\n```",
+      "expected_output": "Identifies the missing import and provides the fix",
+      "expectations": [
+        "Identifies that DataValidator is missing an import statement in processor.py",
+        "Provides the specific fix: add 'from app.validators import DataValidator' to processor.py",
+        "Does not suggest unnecessary changes to validators.py or main.py",
+        "Explains the root cause (missing import) rather than just the symptom"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Fix these errors:\n```\nBuild FAILED.\n\nModels/Order.cs(5,14): error CS0246: The type or namespace name 'BaseEntity' could not be found\nModels/Order.cs(8,12): error CS0246: The type or namespace name 'Money' could not be found\nServices/OrderService.cs(12,42): error CS1061: 'Order' does not contain a definition for 'TotalAmount'\nServices/OrderService.cs(15,20): error CS0246: The type or namespace name 'OrderDto' could not be found\nControllers/OrderController.cs(22,16): error CS1503: Argument 1: cannot convert from 'string' to 'System.Guid'\n```\n\nHere is the project structure:\n```\nMyApp/\n  Models/\n    BaseEntity.cs    (namespace: MyApp.Domain.Models)\n    Money.cs         (namespace: MyApp.Domain.ValueObjects)\n    Order.cs         (namespace: MyApp.Models, missing usings)\n  Services/\n    OrderService.cs  (namespace: MyApp.Services)\n  DTOs/\n    OrderDto.cs      (namespace: MyApp.DTOs)\n  Controllers/\n    OrderController.cs\n```",
+      "expected_output": "Fixes root cause (missing usings/namespace issues) before addressing cascading errors",
+      "expectations": [
+        "Identifies that CS0246 errors for BaseEntity and Money are the root cause (missing using directives)",
+        "Prioritizes fixing the root namespace/using issues in Order.cs first",
+        "Recognizes that some errors may be cascading from the root cause",
+        "Provides specific using statements needed (e.g., 'using MyApp.Domain.Models')",
+        "Addresses the Guid conversion error in OrderController.cs separately as a distinct issue"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Fix this error:\n```\nTypeError: Cannot read properties of undefined (reading 'map')\n    at UserList (src/components/UserList.tsx:12:28)\n    at renderWithHooks (node_modules/react-dom/...)\n```\n\nHere is the component:\n```typescript\n// src/components/UserList.tsx\nimport { useEffect, useState } from 'react';\nimport { fetchUsers } from '../api/users';\n\ninterface User {\n  id: string;\n  name: string;\n  email: string;\n}\n\nexport function UserList() {\n  const [users, setUsers] = useState<User[]>();\n\n  useEffect(() => {\n    fetchUsers().then(data => setUsers(data.users));\n  }, []);\n\n  return (\n    <ul>\n      {users.map(user => (\n        <li key={user.id}>{user.name} ({user.email})</li>\n      ))}\n    </ul>\n  );\n}\n```",
+      "expected_output": "Identifies uninitialized state and provides fix with proper initialization or null check",
+      "expectations": [
+        "Identifies that useState is called without a default value, making users initially undefined",
+        "Provides a fix (either initialize with empty array or add a null/undefined check before .map)",
+        "Explains why the error occurs on initial render (before useEffect completes)",
+        "Does not suggest unrelated refactoring or unnecessary changes"
+      ]
+    }
+  ]
+}

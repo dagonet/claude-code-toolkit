@@ -1,0 +1,5 @@
+# Prevent Claude Code from auto-loading template CLAUDE.local.md files
+CLAUDE.local.md
+
+# Plan files (ephemeral, not tracked)
+docs/plans/

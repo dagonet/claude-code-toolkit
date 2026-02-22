@@ -1,0 +1,246 @@
+# Strict C#/.NET (.NET + Godot) .editorconfig
+# Place this file in the repository/project root (next to project.godot / *.sln).
+# It is intentionally strict and intended for automated agents + CI.
+
+root = true
+
+#############################
+# Global (all file types)
+#############################
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+#############################
+# Visual Studio / VS Code files
+#############################
+[*.{csproj,props,targets,xml,config,nuspec,ruleSet}]
+indent_style = space
+indent_size = 2
+
+[*.{sln}]
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+#############################
+# C# files
+#############################
+[*.cs]
+indent_style = space
+indent_size = 4
+
+# Prefer explicit and consistent using directives
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = true
+
+# Qualification (prefer NOT qualifying with this./Me.)
+dotnet_style_qualification_for_field = false:error
+dotnet_style_qualification_for_property = false:error
+dotnet_style_qualification_for_method = false:error
+dotnet_style_qualification_for_event = false:error
+
+# 'var' policy (strict + readable)
+csharp_style_var_for_built_in_types = false:error
+csharp_style_var_when_type_is_apparent = false:error
+csharp_style_var_elsewhere = false:error
+
+# Expression-bodied members (conservative for readability)
+csharp_style_expression_bodied_methods = false:suggestion
+csharp_style_expression_bodied_constructors = false:suggestion
+csharp_style_expression_bodied_operators = true:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_indexers = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+csharp_style_expression_bodied_lambdas = true:suggestion
+csharp_style_expression_bodied_local_functions = false:suggestion
+
+# Pattern matching / modern C#
+csharp_style_prefer_switch_expression = true:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_prefer_not_pattern = true:suggestion
+csharp_style_prefer_extended_property_pattern = true:suggestion
+
+# Null checking
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+
+# Braces & blocks (strict)
+csharp_prefer_braces = true:error
+dotnet_style_require_accessibility_modifiers = always:error
+
+# Parentheses for clarity (strict-ish)
+dotnet_style_parentheses_in_arithmetic_binary_operators = always_for_clarity:suggestion
+dotnet_style_parentheses_in_relational_binary_operators = always_for_clarity:suggestion
+dotnet_style_parentheses_in_other_binary_operators = always_for_clarity:suggestion
+dotnet_style_parentheses_in_other_operators = never_if_unnecessary:suggestion
+
+# "this." preferences already set above; also prefer readonly where possible
+dotnet_style_readonly_field = true:suggestion
+
+# Prefer 'is null' checks
+csharp_style_prefer_null_check_over_type_check = true:suggestion
+
+# 'using' directive placement
+csharp_using_directive_placement = outside_namespace:error
+
+# New line preferences (readable + consistent)
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
+
+# Indentation preferences
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_indent_labels = one_less_than_current
+csharp_indent_block_contents = true
+csharp_indent_braces = false
+
+# Spacing
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_parentheses = false
+csharp_space_before_colon_in_inheritance_clause = true
+csharp_space_after_colon_in_inheritance_clause = true
+csharp_space_around_binary_operators = before_and_after
+csharp_space_before_comma = false
+csharp_space_after_comma = true
+csharp_space_before_dot = false
+csharp_space_after_dot = false
+
+# Wrapping
+csharp_preserve_single_line_statements = false
+csharp_preserve_single_line_blocks = false
+
+# 'using' statement (prefer 'using var' when possible)
+csharp_prefer_simple_using_statement = true:suggestion
+
+# Object/collection initializers
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+
+# Explicit tuple names for readability
+dotnet_style_explicit_tuple_names = true:suggestion
+
+# Prefer 'nameof'
+dotnet_style_predefined_type_for_locals_parameters_members = true:suggestion
+dotnet_style_predefined_type_for_member_access = true:suggestion
+
+#############################
+# Naming rules (strict, Google/idiomatic hybrid)
+#############################
+
+# Interfaces: IPascalCase
+dotnet_naming_rule.interfaces_should_be_prefixed_with_i.severity = error
+dotnet_naming_rule.interfaces_should_be_prefixed_with_i.symbols = interfaces
+dotnet_naming_rule.interfaces_should_be_prefixed_with_i.style = interface_prefix
+
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+dotnet_naming_symbols.interfaces.applicable_accessibilities = public, internal, protected, protected_internal, private_protected
+dotnet_naming_style.interface_prefix.required_prefix = I
+dotnet_naming_style.interface_prefix.capitalization = pascal_case
+
+# Public/protected members: PascalCase
+dotnet_naming_rule.public_members_pascal_case.severity = error
+dotnet_naming_rule.public_members_pascal_case.symbols = public_members
+dotnet_naming_rule.public_members_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.public_members.applicable_kinds = property, method, event, field
+dotnet_naming_symbols.public_members.applicable_accessibilities = public, protected, protected_internal, private_protected
+
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+
+# Private fields: _camelCase
+dotnet_naming_rule.private_fields_underscore_camel.severity = error
+dotnet_naming_rule.private_fields_underscore_camel.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore_camel.style = underscore_camel
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel.required_prefix = _
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+
+# Constants: PascalCase (public/internal) and _camelCase (private) is contentious; choose PascalCase for all constants
+dotnet_naming_rule.constants_pascal_case.severity = error
+dotnet_naming_rule.constants_pascal_case.symbols = constants
+dotnet_naming_rule.constants_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.constants.applicable_kinds = field
+dotnet_naming_symbols.constants.required_modifiers = const
+
+# Locals: camelCase
+dotnet_naming_rule.locals_camel_case.severity = error
+dotnet_naming_rule.locals_camel_case.symbols = locals
+dotnet_naming_rule.locals_camel_case.style = camel_case_style
+
+dotnet_naming_symbols.locals.applicable_kinds = local
+dotnet_naming_style.camel_case_style.capitalization = camel_case
+
+# Parameters: camelCase
+dotnet_naming_rule.parameters_camel_case.severity = error
+dotnet_naming_rule.parameters_camel_case.symbols = parameters
+dotnet_naming_rule.parameters_camel_case.style = camel_case_style
+
+dotnet_naming_symbols.parameters.applicable_kinds = parameter
+
+#############################
+# Analyzer severities (strict)
+# You can tune these if your repo has legacy code.
+#############################
+
+# Remove unused usings
+dotnet_diagnostic.IDE0005.severity = error
+
+# Add/remove qualification (this.)
+dotnet_diagnostic.IDE0003.severity = error
+
+# Prefer braces
+dotnet_diagnostic.IDE0011.severity = error
+
+# Accessibility modifiers required
+dotnet_diagnostic.IDE0040.severity = error
+
+# 'var' preferences
+dotnet_diagnostic.IDE0007.severity = error
+dotnet_diagnostic.IDE0008.severity = error
+
+# Use expression-bodied members (we keep as suggestion; do not fail builds)
+dotnet_diagnostic.IDE0027.severity = suggestion
+dotnet_diagnostic.IDE0028.severity = suggestion
+
+# Use 'using var' / simplified using
+dotnet_diagnostic.IDE0063.severity = suggestion
+
+# File-scoped namespaces: keep suggestion (Godot projects vary)
+dotnet_diagnostic.IDE0160.severity = suggestion
+
+# Top-level statements: do not enforce
+dotnet_diagnostic.IDE0210.severity = silent
+
+#############################
+# Generated / tool output (do not analyze/format)
+#############################
+[**/obj/**.cs]
+generated_code = true
+
+[**/bin/**.cs]
+generated_code = true
+
+# Godot generates content under .godot/ in Godot 4+
+[**/.godot/**.cs]
+generated_code = true
+
+# Optional: if you keep generated code elsewhere
+[**/*.*.g.cs]
+generated_code = true
