@@ -1,4 +1,4 @@
-# Claude Code Template Repository
+# Claude Code Toolkit
 
 Reusable templates for bootstrapping projects with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) setup. Six template variants ship 8 agents, 10 skills, 21 commands, and pre-wired MCP server permissions -- pick a variant, run the setup script, and start coding with a full AI-assisted workflow.
 
