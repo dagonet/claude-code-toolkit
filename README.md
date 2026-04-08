@@ -65,6 +65,13 @@ claude-code-toolkit/
     └── skills/                # 10 auto-invoked skills
 ```
 
+## Related Projects
+
+This toolkit is part of an ecosystem of repos for AI-assisted development with Claude Code:
+
+- [mcp-dev-servers](https://github.com/dagonet/mcp-dev-servers) -- Five custom MCP servers (47 tools) for git, GitHub, .NET, Rust, and Ollama integration
+- [open-brain](https://github.com/dagonet/open-brain) -- Persistent memory MCP server that stores decisions, insights, and context across sessions
+
 ## License
 
 MIT
