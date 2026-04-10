@@ -28,7 +28,12 @@ This document explains each section and setting in the user-level Claude Code se
       "mcp__plugin_context7_context7__*",
       "mcp__godot-tools__*",
       "mcp__windows-mcp__*",
-      "mcp__sqlite__*"
+      "mcp__sqlite__*",
+      "mcp__searxng__*",
+      "mcp__open-brain__*",
+      "mcp__rust-tools__*",
+      "mcp__template-sync-tools__*",
+      "mcp__plugin_context-mode_context-mode__*"
     ],
     "deny": [
       "Read(.env*)"
@@ -53,7 +58,18 @@ This document explains each section and setting in the user-level Claude Code se
     "csharp-lsp@claude-plugins-official": true,
     "ralph-loop@claude-plugins-official": true,
     "playwright@claude-plugins-official": true,
-    "claude-code-setup@claude-plugins-official": true
+    "claude-code-setup@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "context-mode@context-mode": true
+  },
+  "extraKnownMarketplaces": {
+    "context-mode": {
+      "source": {
+        "source": "github",
+        "repo": "mksglu/context-mode"
+      }
+    }
   },
   "alwaysThinkingEnabled": true,
   "enableAllProjectMcpServers": true,
@@ -120,7 +136,12 @@ Controls which tools Claude Code can use without asking for confirmation.
   "mcp__plugin_context7_context7__*",     // Context7 documentation lookup
   "mcp__godot-tools__*",                  // Godot game engine tools
   "mcp__windows-mcp__*",                  // Windows system tools
-  "mcp__sqlite__*"                        // SQLite database query tools
+  "mcp__sqlite__*",                       // SQLite database query tools
+  "mcp__searxng__*",                      // SearXNG web search
+  "mcp__open-brain__*",                   // Open Brain persistent memory
+  "mcp__rust-tools__*",                   // Cargo build/test/clippy tools
+  "mcp__template-sync-tools__*",          // Template sync MCP tools
+  "mcp__plugin_context-mode_context-mode__*" // Context Mode plugin
 ]
 ```
 
@@ -190,6 +211,9 @@ Runs a custom PowerShell script to display contextual information in the Claude 
 | `ralph-loop` | Agentic loop for iterative development |
 | `playwright` | Browser automation via Playwright MCP |
 | `claude-code-setup` | Claude Code project setup assistance |
+| `rust-analyzer-lsp` | Rust Language Server Protocol integration |
+| `skill-creator` | Create, modify, and evaluate custom skills |
+| `context-mode` | Offloads large tool outputs to sandbox, keeps context clean |
 
 ### `alwaysThinkingEnabled`
 
