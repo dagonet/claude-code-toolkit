@@ -4,6 +4,16 @@ description: Verifies features against acceptance criteria using automated tests
 model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash, ToolSearch
 mode: bypassPermissions
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          if: "Bash(git *)"
+          command: "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands.' >&2; exit 2"
+        - type: command
+          if: "Bash(gh *)"
+          command: "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI.' >&2; exit 2"
 ---
 
 You are a QA tester for a .NET application. You verify features against acceptance criteria using automated tests, data inspection, and log analysis.
