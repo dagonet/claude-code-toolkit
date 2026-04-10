@@ -64,11 +64,26 @@ Each CLAUDE.md and AGENT_TEAM.md includes a variant-specific table mapping task 
 | Python | Python backend | `python-coder` |
 | All | Frontend / docs / other | `coder` |
 
-## MCP Permissions
+## MCP Permissions & Hooks
 
 All templates grant permissions for **all** user-level MCP servers (git, github, ollama, dotnet-tools, rust-tools, windows-mcp, sqlite, searxng, playwright, context7, open-brain). If a server is not registered at user-level (`~/.claude/.mcp.json`), the permission is a harmless no-op. Adding a new server to `~/.claude/` makes it instantly available in every project without editing any `settings.json`.
 
 `CLAUDE.local.md` contains MCP usage rules (e.g., "prefer `cargo_build` over Bash `cargo build`"). This file is gitignored because it references machine-specific paths.
+
+### Hooks
+
+All templates include hooks in `.claude/settings.json` that enforce workflow rules mechanistically:
+
+| Hook Event | Purpose | Templates |
+|------------|---------|-----------|
+| **PreToolUse** on `Bash` | Blocks `Bash(git *)` and `Bash(gh *)` — enforces MCP-only git/GitHub operations | All |
+| **PreToolUse** on `mcp__git-tools__git_commit` | Blocks commits if formatter detects violations | dotnet, dotnet-maui, rust-tauri, java, python |
+| **PreToolUse** on `mcp__windows-mcp__Click\|Type` | Blocks Click/Type for test automation (use FlaUI) | dotnet-maui |
+| **PostToolUse** on `Edit\|Write` | Runs build/lint check after edits for immediate feedback | dotnet, dotnet-maui, rust-tauri, python |
+| **SubagentStop** | Nudges PO to advance workstream pipeline when agents finish | All |
+| **PreCompact** | Snapshots worktree and branch state before context compaction | All |
+
+Additionally, all agents with Bash access (coders, testers, test-writers — 23 total) carry MCP enforcement hooks in their `.md` frontmatter as a belt-and-suspenders measure, since subagent hook inheritance from `settings.json` is not documented.
 
 ## Repository Structure
 
