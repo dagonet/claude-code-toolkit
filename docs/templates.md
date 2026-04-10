@@ -87,17 +87,21 @@ Adds the `rust-coder` agent (8 agents total) with cargo/clippy/fmt discipline. S
 | `{{MAUI_PROJECT}}` | MAUI project path (MAUI) | src/MyApp.MAUI |
 | `{{TEST_PROJECT}}` | Test project path | tests/MyApp.Tests |
 
-## Template Manifest
+## Template Manifest (v2)
 
-The setup script generates `.claude/template-manifest.json` in each target project. This file tracks:
+The setup script generates `.claude/template-manifest.json` in each target project. The v2 format tracks:
 
+- **Version**: schema version (`2`)
 - **Variant**: which template was applied (general, dotnet, dotnet-maui, rust-tauri, java, python)
 - **Template repo path**: absolute path to the claude-code-toolkit repo on disk
+- **Last synced commit**: git commit hash at time of setup/sync
 - **Placeholder values**: the concrete values used during setup (for reverse-mapping by `/contribute-upstream`)
-- **Per-file content hashes**: SHA-256 hash of each template-sourced file at time of copy
+- **Per-file hashes**: `templateHash` (after placeholder replacement), `templateRawHash` (before replacement), `localHash` (project file at last sync)
 - **Modification status**: whether each file has been locally modified since initial setup
 
-The manifest enables the `/sync-template` and `/contribute-upstream` skills to detect drift, auto-update unmodified files, and flag conflicts on customized files.
+The `templateRawHash` detects template changes without recomputing placeholder replacement. The `localHash` serves as the common ancestor for three-way merge during conflict resolution.
+
+The manifest is consumed by the **template-sync-tools** MCP server, which powers the `/sync-template` and `/contribute-upstream` skills. See [`template-sync.md`](template-sync.md) for the full workflow.
 
 ## Next Steps
 

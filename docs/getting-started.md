@@ -45,6 +45,7 @@ Private repo -- new users must fork/clone it, or remove references and rely on B
 | **dotnet-tools** | 19 (.NET build/test/NuGet/EF) | Python 3.10+, .NET SDK |
 | **rust-tools** | 4 (cargo build/test/clippy) | Python 3.10+, Rust toolchain |
 | **ollama-tools** | 6 (local LLM, project mapping) | Python 3.10+, Ollama |
+| **template-sync-tools** | 8 (manifest, diff, merge, sync) | Python 3.10+, Git |
 
 ### Official/Third-Party MCP Servers
 
