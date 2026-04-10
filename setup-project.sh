@@ -305,6 +305,7 @@ skipped=()
 # Manifest tracking
 declare -a MF_KEYS=()
 declare -a MF_HASHES=()
+declare -a MF_RAW_HASHES=()
 declare -a MF_MODIFIED=()
 declare -a MF_REASONS=()
 
@@ -360,6 +361,7 @@ for i in "${!FILE_SOURCES[@]}"; do
     fi
 
     mkdir -p "$(dirname "$target_file")"
+    raw_content="$content"
     content="$(apply_replacements "$content")"
     printf '%s' "$content" > "$target_file"
     copied+=("$rel")
@@ -375,6 +377,7 @@ for i in "${!FILE_SOURCES[@]}"; do
     fi
     MF_KEYS+=("$rel_key")
     MF_HASHES+=("$(content_hash "$content")")
+    MF_RAW_HASHES+=("$(content_hash "$raw_content")")
     MF_MODIFIED+=("$is_mod")
     MF_REASONS+=("$reason")
 done
@@ -429,6 +432,7 @@ json_escape() {
 
 {
     echo "{"
+    echo "  \"version\": 2,"
     echo "  \"variant\": \"$VARIANT\","
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
     echo "  \"lastSynced\": \"$template_head\","
@@ -445,6 +449,8 @@ json_escape() {
         comma=","; [[ $j -eq $last ]] && comma=""
         echo "    \"${MF_KEYS[$j]}\": {"
         echo "      \"templateHash\": \"${MF_HASHES[$j]}\","
+        echo "      \"templateRawHash\": \"${MF_RAW_HASHES[$j]}\","
+        echo "      \"localHash\": \"${MF_HASHES[$j]}\","
         if [[ -n "${MF_REASONS[$j]}" ]]; then
             echo "      \"locallyModified\": ${MF_MODIFIED[$j]},"
             echo "      \"reason\": \"${MF_REASONS[$j]}\""

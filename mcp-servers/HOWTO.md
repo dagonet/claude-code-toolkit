@@ -69,10 +69,10 @@ Environment="OLLAMA_NUM_PARALLEL=1"
 
 ## Python MCP Servers Source
 
-The 4 custom Python MCP servers (git-tools, github-tools, dotnet-tools, ollama-tools) live in a separate repository:
+The custom Python MCP servers live in a separate repository:
 
 - **Repository:** https://github.com/dagonet/mcp-dev-servers
-- **47 tools** across 5 servers
+- **55 tools** across 6 servers
 - See that repo's README for full tool reference
 
 ## Python Virtual Environment Setup
@@ -209,6 +209,26 @@ claude mcp add --scope user --transport stdio dotnet-tools `
 ```bash
 claude mcp add --scope user --transport stdio dotnet-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/dotnet_mcp.py
+```
+
+### Template Sync Tools (8 tools)
+
+Deterministic template syncing: manifest management, file status computation, three-way merge, placeholder replacement/reversal, cross-variant propagation. Used by the `/sync-template` and `/contribute-upstream` skills.
+
+**Tools:** `template_load_manifest`, `template_compute_status`, `template_get_diff`, `template_apply_file`, `template_finalize_sync`, `template_reverse_placeholders`, `template_check_cross_variant`, `template_propagate_to_variants`
+
+**Windows (PowerShell):**
+
+```powershell
+claude mcp add --scope user --transport stdio template-sync-tools `
+  -- "<your-path>\mcp-dev-servers\.venv\Scripts\python.exe" "<your-path>\mcp-dev-servers\src\template_sync_mcp.py"
+```
+
+**Linux / macOS:**
+
+```bash
+claude mcp add --scope user --transport stdio template-sync-tools \
+  -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/template_sync_mcp.py
 ```
 
 ### SQLite MCP Server
