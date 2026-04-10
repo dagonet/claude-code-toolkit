@@ -29,6 +29,42 @@
     "defaultMode": "dontAsk"
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands. See CLAUDE.local.md.' >&2; exit 2"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh *)",
+            "command": "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI. See CLAUDE.local.md.' >&2; exit 2"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__git-tools__git_commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dotnet format --verify-no-changes --verbosity quiet > /tmp/.claude-fmt 2>&1; E=$?; tail -5 /tmp/.claude-fmt; if [ $E -ne 0 ]; then echo 'BLOCKED: Formatting violations. Run: dotnet format' >&2; exit 2; fi",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__windows-mcp__Click|mcp__windows-mcp__Type",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'BLOCKED: Click/Type is forbidden for test automation. Use FlaUI for structural verification, Snapshot() for visual evidence.' >&2; exit 2"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -36,6 +72,28 @@
           {
             "type": "command",
             "command": "dotnet build --no-restore -v q 2>&1 | tail -20"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "^(coder|dotnet-coder|code-reviewer|tester|architect)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'PIPELINE: Agent finished. Review workstream status and advance if ready.'"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '=== PRE-COMPACTION STATE ===' && (git worktree list 2>/dev/null || true) && echo '---' && (git branch --sort=-committerdate 2>/dev/null | head -10 || true)"
           }
         ]
       }

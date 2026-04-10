@@ -28,5 +28,56 @@
     ],
     "defaultMode": "dontAsk"
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands. See CLAUDE.local.md.' >&2; exit 2"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh *)",
+            "command": "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI. See CLAUDE.local.md.' >&2; exit 2"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__git-tools__git_commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f pom.xml ]; then mvn spotless:check -q > /tmp/.claude-fmt 2>&1; else ./gradlew spotlessCheck -q > /tmp/.claude-fmt 2>&1; fi; E=$?; tail -5 /tmp/.claude-fmt; if [ $E -ne 0 ]; then echo 'BLOCKED: Formatting violations. Run the format command from PROJECT_CONTEXT.md.' >&2; exit 2; fi",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "^(coder|java-coder|code-reviewer|tester|architect)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'PIPELINE: Agent finished. Review workstream status and advance if ready.'"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '=== PRE-COMPACTION STATE ===' && (git worktree list 2>/dev/null || true) && echo '---' && (git branch --sort=-committerdate 2>/dev/null | head -10 || true)"
+          }
+        ]
+      }
+    ]
+  },
   "enableAllProjectMcpServers": true
 }
