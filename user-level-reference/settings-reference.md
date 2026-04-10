@@ -57,6 +57,25 @@ This document explains each section and setting in the user-level Claude Code se
   },
   "alwaysThinkingEnabled": true,
   "enableAllProjectMcpServers": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands.' >&2; exit 2"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh *)",
+            "command": "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI.' >&2; exit 2"
+          }
+        ]
+      }
+    ]
+  },
   "contextCompactionThreshold": 40
 }
 ```
@@ -195,3 +214,58 @@ Automatically enables all MCP servers defined in project-level `.mcp.json` files
 ```
 
 Controls when Claude Code compacts (summarizes) the conversation context to stay within the context window. A value of `40` means compaction triggers when the conversation reaches approximately 40% of the context window. Lower values compact earlier (saving tokens but losing detail); higher values preserve more history.
+
+### `hooks` -- Workflow Automation Hooks
+
+```json
+"hooks": {
+  "PreToolUse": [
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "if": "Bash(git *)",
+          "command": "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands.' >&2; exit 2"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Hooks are shell commands that execute in response to Claude Code events. They enforce workflow rules mechanistically rather than relying on prompt instructions alone.
+
+#### Hook Events
+
+| Event | When It Fires | Can Block? |
+|-------|--------------|-----------|
+| `PreToolUse` | Before a tool executes | Yes (exit code 2) |
+| `PostToolUse` | After a tool succeeds | No (informational) |
+| `SubagentStop` | When a subagent finishes | No (informational) |
+| `PreCompact` | Before context compaction | No (informational) |
+
+#### Key Fields
+
+| Field | Description |
+|-------|-------------|
+| `matcher` | Tool name filter. Pipe-separated exact list (`Edit\|Write`) or regex (`mcp__.*`). |
+| `if` | Permission rule syntax filter on tool arguments (`Bash(git *)`, `Edit(*.cs)`). Requires v2.1.85+. |
+| `type` | Always `"command"` for shell hooks. |
+| `command` | Shell command to execute. |
+| `timeout` | Seconds before canceling (default: 600). |
+
+#### Blocking Behavior
+
+- **Exit code 0**: Hook ran successfully, tool proceeds. Stdout goes to debug log.
+- **Exit code 2**: Tool call is **blocked**. Stderr is fed to Claude as an error message.
+- **Other exit codes**: Non-blocking error. First line of stderr shown in transcript.
+
+Hooks fire even when agents use `mode: bypassPermissions` — they enforce policy that cannot be bypassed.
+
+#### User-Level vs Project-Level Hooks
+
+- **User-level** (`~/.claude/settings.json`): Apply to all projects. Good for personal workflow enforcement (e.g., block `Bash(git *)` everywhere).
+- **Project-level** (`.claude/settings.json`): Apply to one project. Good for language-specific gates (e.g., pre-commit format checks).
+
+The example above shows a user-level hook that blocks `Bash(git *)` to enforce MCP-only git operations. Project-level templates add additional hooks for format gates, build checks, pipeline tracking, and compaction snapshots. See `docs/templates.md` for per-template hook details.
