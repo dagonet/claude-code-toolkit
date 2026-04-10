@@ -1,115 +1,100 @@
 ---
 name: contribute-upstream
-description: Push project improvements back to the template repo. Triggers on /contribute-upstream. Reads .claude/template-manifest.json, finds locally modified template-sourced files, helps generalize and write changes back to the template.
+description: Push project improvements back to the template repo. Triggers on /contribute-upstream. Uses template-sync-tools MCP server for deterministic placeholder reversal and cross-variant propagation.
 ---
 
 # Contribute Upstream
 
 Push improvements from the current project back to the claude-code-toolkit template.
 
-## Prerequisites
-
-- `.claude/template-manifest.json` must exist in the project root
-- The `templateRepo` path must point to a valid claude-code-toolkit checkout
-- At least one file in manifest must have `locallyModified: true`
+**Requires:** `template-sync-tools` MCP server registered and running.
 
 ## Workflow
 
 ### 1. Load Manifest and Find Candidates
 
-Read `.claude/template-manifest.json`. Collect all files where `locallyModified: true`.
+Call `template_load_manifest(project_path=".")`. If errors, stop.
 
-If none: "No locally modified template files. Nothing to contribute."
+Call `template_compute_status(project_path=".")`.
 
-Skip files that are inherently project-specific:
-- `PROJECT_CONTEXT.md` — always project-specific (contains project values)
+Collect files where `locally_modified` is true. Skip `PROJECT_CONTEXT.md` (always project-specific).
 
-Present the list of candidates with their `reason` field:
+If no candidates: "No locally modified template files. Nothing to contribute."
+
+Present the list:
 ```
 Locally modified template files:
-1. .claude/agents/architect.md — "Added MVVM details"
-2. CLAUDE.md — "Added custom debugging section"
-3. .claude/agents/code-reviewer.md — "Added MAUI/MVVM review section"
+1. .claude/agents/architect.md
+2. CLAUDE.md
+3. .claude/agents/code-reviewer.md
 ```
 
-### 2. For Each Candidate: Diff and Classify
+### 2. Diff and Classify Each Candidate
 
-For each file:
+For each candidate file:
 
-1. **Read project version** (current file in the project)
-2. **Read template version** from `{templateRepo}/templates/{variant}/{file}`
-3. **Apply placeholder replacement** to template version using `manifest.placeholders`
-4. **Show the diff** between the replaced template and the project version
+1. Call `template_get_diff(project_path=".", file_path=F, diff_type="local_changes")`
+2. Show the diff to the user
+3. Ask: **Generalizable** (benefits any project using this variant) or **Project-specific** (unique to this project)?
 
-Classify each change as:
-- **Project-specific**: Contains project name, paths, domain terms unique to this project. NOT suitable for template.
-- **Generalizable**: Structural improvements, new sections, better wording, new review criteria. ANY project using this variant would benefit.
+Do NOT auto-classify. Always confirm with the user.
 
-Present classification to user for confirmation.
+### 3. Reverse Placeholders
 
-### 3. Generalize and Write Back
+For each file confirmed as generalizable:
 
-For changes confirmed as generalizable:
+1. Call `template_reverse_placeholders(project_path=".", file_path=F)`
+2. Show the `replacements_made` list so the user can verify placeholders were restored correctly
+3. Show the `reversed_content` (or a relevant excerpt) for confirmation
+4. If the user spots issues, they can provide corrected content
 
-1. **Start from the project version** of the file
-2. **Reverse placeholder replacement** — substitute concrete values back to `{{PLACEHOLDER}}`:
-   - Sort placeholders by value length DESCENDING (longest first) to avoid partial matches
-   - For each placeholder in `manifest.placeholders`, replace the concrete value with `{{KEY}}`
-   - Example: `MyApp.sln` → `{{SOLUTION_FILE}}` before `MyApp` → `{{PROJECT_NAME}}`
-3. **Write the generalized file** to `{templateRepo}/templates/{variant}/{file}`
+### 4. Check Cross-Variant Propagation
 
-### 4. Cross-Variant Propagation
+For each confirmed file:
 
-Check if the file is identical across all template variants. Files known to be shared:
-- `AGENT_TEAM.md`
-- `PROJECT_STATE.md`
-- `.claude/settings.json`
+1. Call `template_check_cross_variant(template_repo=..., variant=..., file_path=F)`
+2. If `can_propagate` is true (all variants have identical content): offer to propagate to all variants
+3. If `can_propagate` is false (variants differ): only update the current variant and warn:
+   > "`{file}` differs across variants. Only updating `{variant}`. Check other variants manually."
 
-For shared files:
-1. Read the same file from all other variant directories
-2. If they are identical to the OLD template version (pre-change), apply the same change to all variants
-3. If they differ, only update the current variant and warn:
-   > "`{file}` differs across variants. Only updated `{variant}`. Check other variants manually."
+### 5. Write to Template
 
-For variant-specific files (CLAUDE.md, CLAUDE.local.md, agents): only update the current variant.
+For files being propagated to all variants:
 
-### 5. Update Manifest
+Call `template_propagate_to_variants(template_repo=..., file_path=F, content=<reversed_content>, target_variants=<JSON array>)`.
 
-After contributing, the project file now matches the template again:
-- Update `templateHash` to the hash of the new template version (post-replacement)
-- Set `locallyModified: false` (project is back in sync with template)
-- Remove `reason` field
+For files only updating current variant:
 
-### 6. Report
+Call `template_propagate_to_variants(template_repo=..., file_path=F, content=<reversed_content>, target_variants=["<current_variant>"])`.
+
+### 6. Update Manifest
+
+For each contributed file:
+
+Call `template_apply_file(project_path=".", file_path=F, source="skip")` to update the manifest entry (marks the file as back in sync with template).
+
+Call `template_finalize_sync(project_path=".", applied_files=<JSON array of results>)`.
+
+### 7. Report
 
 ```
-## Contribution Report
+Contribution Report
 
 Contributed to template ({variant}):
-- .claude/agents/code-reviewer.md — generalized and written to template
-- CLAUDE.md — generalized and written to template (also propagated to: general, dotnet)
+  - .claude/agents/code-reviewer.md (propagated to: all variants)
+  - CLAUDE.md (updated: {variant} only)
 
 Skipped (project-specific):
-- .claude/agents/architect.md — MVVM details are variant-specific, kept as project customization
+  - .claude/agents/architect.md
 
-Changes are staged in {templateRepo}. Review and commit when ready.
+Changes written to {templateRepo}. Review and commit when ready.
 ```
-
-## Reverse Placeholder Order
-
-CRITICAL: Replace longest concrete values first to avoid partial matches.
-
-1. Compound values: `DB_PATH` (full path = directory + filename)
-2. Long strings: `REPO_URL`, `TECH_STACK`, `SOLUTION_FILE`, `MAUI_PROJECT`, `TEST_PROJECT`
-3. Medium strings: `DB_DIRECTORY`, `DB_FILENAME`, `WORKTREE_BASE`, `LOG_PATH`
-4. Short strings: `PROJECT_NAME` (most common, must be last to avoid stomping)
-5. Derived: `PROJECT_NAME_LOWER`
 
 ## Rules
 
 - NEVER write to the template repo without showing the diff first
-- NEVER auto-classify — always confirm with user whether a change is project-specific or generalizable
-- ALWAYS reverse placeholders before writing to template
-- ALWAYS check cross-variant propagation for shared files
-- Do NOT commit in the template repo — stage only, let user review and commit
+- NEVER auto-classify — always confirm with the user whether a change is generalizable or project-specific
+- ALWAYS show reversed content for confirmation before writing to template
+- Do NOT commit in the template repo — write files only, let the user review and commit
 - Do NOT modify `PROJECT_CONTEXT.md` in the template (always project-specific)
+- All placeholder reversal is handled by the MCP tools — do NOT reverse placeholders manually

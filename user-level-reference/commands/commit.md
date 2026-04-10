@@ -24,17 +24,14 @@ Execute a proper git commit workflow using MCP git tools.
    - List files being committed in a short bullet list
    - Explain the purpose of the changes
 
-6. **Template manifest nudge**
+6. **Template drift check** (requires template-sync-tools MCP)
    - If `.claude/template-manifest.json` exists in the repo root:
-     1. Read the manifest
-     2. Check if any staged files appear in `manifest.files`
-     3. For each match where `locallyModified` is currently `false`:
-        - Update manifest: set `locallyModified: true`
-        - Set `reason` to a brief summary of the change (from the diff or commit message)
-     4. If any template-sourced files were detected:
-        - Stage the updated manifest alongside the other files
-        - After the commit, append: **"Template-sourced files modified: [list]. Run `/contribute-upstream` when ready."**
-   - If no manifest exists: skip this step silently
+     1. Call `template_compute_status(project_path=".")`
+     2. If any files have status `PROJECT_CUSTOM` or `CONFLICT`:
+        - After the commit, append: **"Template drift detected: X file(s) modified locally. Run `/contribute-upstream` to push generalizable changes back, or `/sync-template` to pull latest template updates."**
+     3. If any files have status `AUTO_UPDATE`:
+        - After the commit, append: **"Template updates available for X file(s). Run `/sync-template` to apply."**
+   - If no manifest exists or template-sync-tools MCP is unavailable: skip silently
 
 7. **Commit**
    - Call `git_commit(repo_path, message)`
@@ -46,4 +43,5 @@ Execute a proper git commit workflow using MCP git tools.
 - MUST NOT commit without showing the user what will be committed
 - MUST NOT include files the user didn't intend to commit
 - If unsure which files to include, ASK the user
-- Template manifest nudge is informational only — never block a commit
+- Template drift check is informational only — never block a commit
+- All manifest operations use MCP template-sync-tools — do NOT read/modify the manifest manually

@@ -1,3 +1,6 @@
+# Claude Code local state (root only, not templates/*/.claude/)
+/.claude/
+
 # Prevent Claude Code from auto-loading template CLAUDE.local.md files
 CLAUDE.local.md
 

@@ -378,7 +378,8 @@ foreach ($f in $templateFiles) {
     }
 
     # Read, replace placeholders, write
-    $content = Get-Content -Path $f.Source -Encoding UTF8 -Raw
+    $rawContent = Get-Content -Path $f.Source -Encoding UTF8 -Raw
+    $content = $rawContent
     foreach ($key in $replacements.Keys) {
         $content = $content.Replace($key, $replacements[$key])
     }
@@ -392,7 +393,13 @@ foreach ($f in $templateFiles) {
         $reason = if ($relKey -in $alwaysModified) { "Project-specific config" }
                   elseif ($relKey -in $variantCoders[$Variant]) { "Project-specific agent" }
                   else { $null }
-        $entry = @{ templateHash = (Get-ContentHash $content); locallyModified = $isModified }
+        $replacedHash = Get-ContentHash $content
+        $entry = @{
+            templateHash    = $replacedHash
+            templateRawHash = Get-ContentHash $rawContent
+            localHash       = $replacedHash
+            locallyModified = $isModified
+        }
         if ($reason) { $entry.reason = $reason }
         $manifestFiles[$relKey] = $entry
     }
@@ -469,6 +476,7 @@ foreach ($key in ($manifestFiles.Keys | Sort-Object)) {
 }
 
 $manifest = [ordered]@{
+    version      = 2
     variant      = $Variant
     templateRepo = ($PSScriptRoot -replace '\\', '/')
     lastSynced   = $templateHead
