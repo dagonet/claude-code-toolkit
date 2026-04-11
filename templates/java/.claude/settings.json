@@ -47,6 +47,24 @@
         ]
       },
       {
+        "matcher": "mcp__git-tools__git_push",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/no-push-main.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/tier-before-coder.sh"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__git-tools__git_commit",
         "hooks": [
           {
@@ -74,7 +92,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '=== PRE-COMPACTION STATE ===' && (git worktree list 2>/dev/null || true) && echo '---' && (git branch --sort=-committerdate 2>/dev/null | head -10 || true)"
+            "command": "echo '=== PRE-COMPACTION STATE ===' && (cat docs/plans/*.md 2>/dev/null | head -50 || echo 'No plan files') && echo '---' && (git worktree list 2>/dev/null || true) && echo '---' && (git branch --sort=-committerdate 2>/dev/null | head -10 || true)"
           }
         ]
       }

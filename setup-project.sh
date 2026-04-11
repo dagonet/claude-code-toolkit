@@ -248,6 +248,16 @@ if [[ -d "$TEMPLATE_DIR/.claude" ]]; then
     done < <(find "$TEMPLATE_DIR/.claude" -type f -print0 | sort -z)
 fi
 
+# Shared hook scripts (from repo root, not template-specific)
+if [[ -d "$SCRIPT_DIR/hooks" ]]; then
+    while IFS= read -r -d '' file; do
+        rel="${file#"$SCRIPT_DIR/"}"
+        FILE_SOURCES+=("$file")
+        FILE_RELS+=("$rel")
+        FILE_IS_GITIGNORE+=(false)
+    done < <(find "$SCRIPT_DIR/hooks" -type f -name '*.sh' -print0 | sort -z)
+fi
+
 # --- Dry run ---
 if [[ "$DRY_RUN" == true ]]; then
     echo ""
@@ -381,6 +391,11 @@ for i in "${!FILE_SOURCES[@]}"; do
     MF_MODIFIED+=("$is_mod")
     MF_REASONS+=("$reason")
 done
+
+# --- Set execute permissions on hook scripts (Linux/macOS) ---
+if [[ -d "$TARGET_DIR/hooks" ]]; then
+    chmod +x "$TARGET_DIR/hooks/"*.sh 2>/dev/null
+fi
 
 # --- Summary ---
 echo ""

@@ -15,6 +15,7 @@
 | Post-Edit Build Hook | No | `dotnet build` on Edit/Write | `dotnet build` on Edit/Write | `cargo check` on Edit/Write | No | `ruff check` on Edit/Write |
 | Pre-Commit Format Gate | No | `dotnet format --verify-no-changes` | `dotnet format --verify-no-changes` | `cargo fmt --check` + `npm format --check` | `spotless:check` (Maven/Gradle) | `ruff format --check` + `ruff check` |
 | MCP Enforcement Hook | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked |
+| Workflow Enforcement | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder |
 | Pipeline Hook | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge |
 | CLAUDE.md Behavior | Session Bootstrap, Debugging, Plan Challenge | + .NET Conventions | + MAUI Conventions | + Rust/Tauri Conventions, Code Style | + Java/Spring Conventions, Code Style | + Python Conventions, Code Style |
 | Database Tools | No | No | SQLite MCP (optional) | No | No | SQLite MCP (optional) |
@@ -33,6 +34,7 @@ Each template variant provides the following files:
 | `PROJECT_STATE.md` | Sprint state tracking |
 | `.claude/settings.json` | MCP permissions + workflow hooks (MCP enforcement, format gates, pipeline, compaction) |
 | `.claude/agents/` | 7 generic agents + variant-specific coders |
+| `hooks/` | Workflow enforcement scripts: no-push-main, tier-before-coder (shared across all variants) |
 | `gitignore` | Template for .gitignore (copied or merged by the setup script) |
 | `.editorconfig` | Code style for dotnet, dotnet-maui, java, and python variants |
 | `rustfmt.toml` + `.prettierrc` | Code style for rust-tauri variant only |
