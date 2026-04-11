@@ -246,6 +246,15 @@ function Get-TemplateFiles {
         }
     }
 
+    # Shared hook scripts (from repo root, not template-specific)
+    $hooksDir = Join-Path $PSScriptRoot "hooks"
+    if (Test-Path $hooksDir) {
+        Get-ChildItem -Path $hooksDir -Filter "*.sh" -File | ForEach-Object {
+            $relPath = "hooks/$($_.Name)"
+            $files += @{ Source = $_.FullName; RelPath = $relPath; IsGitignore = $false }
+        }
+    }
+
     return $files
 }
 

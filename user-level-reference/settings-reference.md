@@ -293,3 +293,20 @@ Hooks fire even when agents use `mode: bypassPermissions` — they enforce polic
 - **Project-level** (`.claude/settings.json`): Apply to one project. Good for language-specific gates (e.g., pre-commit format checks).
 
 The example above shows a user-level hook that blocks `Bash(git *)` to enforce MCP-only git operations. Project-level templates add additional hooks for format gates, build checks, pipeline tracking, and compaction snapshots. See `docs/templates.md` for per-template hook details.
+
+#### Workflow Enforcement Hooks (Project-Level)
+
+Templates include two workflow enforcement hooks (via external scripts in `hooks/`):
+
+**No push to main** (`hooks/no-push-main.sh`):
+- Matcher: `mcp__git-tools__git_push`
+- Blocks pushes to `main` or `master` branches. Resolves implicit branch via `git branch --show-current` when the `branch` parameter is omitted.
+- Message: "Use a feature branch and create a PR."
+
+**Tier before coder** (`hooks/tier-before-coder.sh`):
+- Matcher: `Agent`
+- Only blocks coder types (`coder`, `dotnet-coder`, `java-coder`, `python-coder`, `rust-coder`). All other agent types pass through.
+- Requires a plan file (in `docs/plans/` or `~/.claude/plans/`) containing both a tier declaration (`Tier: T[1-4]`) and evidence of architect challenge (word "challenge" or "architect").
+- Two distinct block messages: "No plan with tier declaration found" vs "Plan has tier but no evidence of architect challenge."
+
+Both hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
