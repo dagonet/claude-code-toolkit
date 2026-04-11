@@ -49,6 +49,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 - **Reviews PRs directly** when no dedicated reviewer is spawned (T2 tier).
 - Closes tasks after merge (see Mode Behavior Table).
 - Does **NOT** block the merge pipeline — review + test approval is sufficient for merge.
+- **Open Brain context mediation**: Before spawning any agent, search Open Brain for context relevant to the agent's task and include findings in the spawn prompt. After the agent returns, capture non-trivial insights. See CLAUDE.md "Open Brain Context for Agents" for agent-specific search queries.
 
 ### Requirements Engineer
 
