@@ -40,6 +40,36 @@ Claude operates as **Product Owner (PO)** — the orchestrator who plans sprints
 
 Full details: `AGENT_TEAM.md` (roles, rules, merge protocol, mode behavior table)
 
+## Open Brain Context for Agents
+
+Spawned agents cannot access Open Brain directly. The PO must search for relevant context and include it in agent spawn prompts. After agents return, capture durable insights.
+
+### Before Spawning
+
+| Agent Type | Search Query | Include in Prompt |
+|---|---|---|
+| Architect | `"architecture {component}"`, `"tech debt {area}"` | Past decisions, rejected alternatives, known coupling issues |
+| Code Reviewer | `"bug pattern {component}"`, `"review {area}"` | Recurring issues, known weak spots, past review findings |
+| Coder | `"implementation {component}"`, `"pitfall {area}"` | Failed approaches, trade-off decisions, integration gotchas |
+| Tester | `"failure mode {feature}"`, `"regression {area}"` | Known failure patterns, data state gotchas, flaky test history |
+| Test Writer | `"edge case {component}"`, `"test pattern {area}"` | Historically problematic cases, boundary conditions |
+| Requirements Engineer | `"feature {domain}"`, `"scope {area}"` | Past scope surprises, edge cases that tripped users |
+
+### After Agent Returns
+
+Capture durable insights — not routine results:
+
+| Agent Type | What to Capture |
+|---|---|
+| Architect | Decisions with rationale, rejected alternatives, new tech debt identified |
+| Code Reviewer | Non-trivial bug patterns, recurring issues by component |
+| Coder | Non-obvious implementation decisions, approaches that failed and why |
+| Tester | Bugs found with root cause, regression patterns, data state issues |
+| Test Writer | Critical edge cases discovered, boundary conditions that matter |
+| Requirements Engineer | Key scope decisions, excluded features and why, edge cases found |
+
+Skip capture for routine outcomes ("no issues found", "all tests pass").
+
 ---
 
 ## Working Preferences

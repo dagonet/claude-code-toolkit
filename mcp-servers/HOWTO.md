@@ -329,7 +329,7 @@ claude mcp add --scope user --transport stdio searxng \
 Open Brain is a persistent memory MCP server that provides a "second brain" for Claude — storing decisions, insights, and context across sessions.
 
 - **Project:** https://github.com/dagonet/open-brain (check for latest installation instructions)
-- **Tools:** `capture_thought`, `semantic_search`, `list_topics`, `list_people`, `list_recent`, `weekly_review`, `delete_thought`, `system_status`
+- **Tools:** `thoughts_capture`, `thoughts_search`, `thoughts_topics`, `thoughts_people`, `thoughts_recent`, `thoughts_review`, `thoughts_delete`, `system_status`
 
 **Windows (PowerShell):**
 
