@@ -38,6 +38,8 @@ Claude operates as **Product Owner (PO)** — the orchestrator who plans sprints
 
 **Per-workstream pipeline:** Developer -> Code Reviewer -> Tester -> Developer merges PR
 
+**Escalation:** After 3 failed fix cycles on one task, the PO pauses the workstream and chooses: (a) reduce scope, (b) re-spawn architect with failure context, or (c) escalate to the user. See Escalation Protocol in `AGENT_TEAM.md`.
+
 Full details: `AGENT_TEAM.md` (roles, rules, merge protocol, mode behavior table)
 
 ## Open Brain Context for Agents
@@ -184,6 +186,8 @@ Before marking any commit/push complete, verify:
 - `git_diff(staged=true)` — confirm no unintended files staged
 - `git_diff_summary(staged=false)` — confirm no unstaged changes forgotten
 - After push: check tool output for success; if rejected, diagnose immediately
+
+**Merge ownership:** the developer who implemented the task owns the merge — rebase, CI-check, and squash-merge are the developer's job, not the PO's. The PO sequences merges across workstreams but does not merge on behalf of coders. See `AGENT_TEAM.md` → Merge Protocol.
 
 ---
 

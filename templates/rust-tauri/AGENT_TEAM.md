@@ -107,6 +107,7 @@ Challenge 2: Correctness & Completeness
 - PO controls all architect spawn/shutdown transitions.
 - "Standby" means the architect agent remains alive but idle. PO messages it when guidance is needed.
 - If the architect is shut down (T2-T3) and a Rule 8 escalation requires re-design, PO spawns a **new** architect instance with the failure context.
+- **SubagentStop fires per-invocation, not per-shutdown.** At T4, the architect stays in STANDBY after replying to a guidance request — do NOT interpret a SubagentStop event as a shutdown signal. The architect shuts down explicitly only after the last T4 task is guided and merged.
 
 ### Developer (1 per workstream)
 
