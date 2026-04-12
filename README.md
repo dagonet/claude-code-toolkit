@@ -37,6 +37,8 @@ Pick the variant that matches your project. All share the same dual-mode workflo
 | Template sync and contributing upstream | [`docs/template-sync.md`](docs/template-sync.md) |
 | MCP server installation | [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md) |
 | User-level config reference (agents, commands, skills) | [`user-level-reference/README.md`](user-level-reference/README.md) |
+| Workflow diagram, known enforcement gaps, follow-up PR roadmap | [`docs/workflow-audit.md`](docs/workflow-audit.md) |
+| Plan: wire superpowers skills into templates (2026-04-12) | [`docs/plans/2026-04-12-wire-superpowers-skills.md`](docs/plans/2026-04-12-wire-superpowers-skills.md) |
 
 ## Repository Structure
 
