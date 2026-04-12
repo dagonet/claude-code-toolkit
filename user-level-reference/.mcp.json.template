@@ -1,63 +1,39 @@
 {
-     "mcpServers": {
-       "github": {
-         "type": "http",
-         "url": "https://api.githubcopilot.com/mcp/",
-         "env": {
-           "GITHUB_TOKEN": "{{GITHUB_PAT}}"
-         }
-       },
-       "windows-mcp": {
-         "command": "{{PYTHON_VENV_PATH}}/uvx.exe",
-         "args": ["windows-mcp"]
-       },
-       "sqlite": {
-         "command": "docker",
-         "args": [
-           "run", "-i", "--rm",
-           "-v", "{{SQLITE_DB_HOST_DIR}}:/data:ro",
-           "mcp/sqlite-mcp-server",
-           "--db-path", "/data/{{SQLITE_DB_FILENAME}}"
-         ]
-       },
-       "git-tools": {
-         "command": "{{PYTHON_VENV_PATH}}/python.exe",
-         "args": ["{{MCP_DEV_SERVERS_PATH}}/src/git_mcp.py"]
-       },
-       "github-tools": {
-         "command": "{{PYTHON_VENV_PATH}}/python.exe",
-         "args": ["{{MCP_DEV_SERVERS_PATH}}/src/github_mcp.py"],
-         "env": {
-           "GH_PROMPT_DISABLED": "1"
-         }
-       },
-       "dotnet-tools": {
-         "command": "{{PYTHON_VENV_PATH}}/python.exe",
-         "args": ["{{MCP_DEV_SERVERS_PATH}}/src/dotnet_mcp.py"]
-       },
-       "rust-tools": {
-         "command": "{{PYTHON_VENV_PATH}}/python.exe",
-         "args": ["{{MCP_DEV_SERVERS_PATH}}/src/rust_mcp.py"]
-       },
-       "ollama-tools": {
-         "command": "{{PYTHON_VENV_PATH}}/python.exe",
-         "args": ["{{MCP_DEV_SERVERS_PATH}}/src/ollama_mcp.py"],
-         "env": {
-           "OLLAMA_URL": "http://127.0.0.1:11434",
-           "OLLAMA_MODEL_FIRST_PASS": "{{OLLAMA_MODEL_FIRST_PASS}}",
-           "OLLAMA_MODEL_EXTRACT_JSON": "{{OLLAMA_MODEL_EXTRACT_JSON}}"
-         }
-       },
-       "open-brain": {
-         "command": "{{OPEN_BRAIN_COMMAND}}",
-         "args": ["{{OPEN_BRAIN_ARGS}}"]
-       },
-       "searxng": {
-         "command": "{{SEARXNG_COMMAND}}",
-         "args": ["{{SEARXNG_ARGS}}"],
-         "env": {
-           "SEARXNG_URL": "{{SEARXNG_INSTANCE_URL}}"
-         }
-       }
-     }
-   }
+  "mcpServers": {
+    "git-tools": {
+      "command": "{{PYTHON_VENV_PATH}}/python.exe",
+      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/git_mcp.py"]
+    },
+    "github-tools": {
+      "command": "{{PYTHON_VENV_PATH}}/python.exe",
+      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/github_mcp.py"],
+      "env": {
+        "GH_PROMPT_DISABLED": "1"
+      }
+    },
+    "template-sync-tools": {
+      "command": "{{PYTHON_VENV_PATH}}/python.exe",
+      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/template_sync_mcp.py"]
+    },
+    "ollama-tools": {
+      "command": "{{PYTHON_VENV_PATH}}/python.exe",
+      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/ollama_mcp.py"],
+      "env": {
+        "OLLAMA_URL": "http://127.0.0.1:11434",
+        "OLLAMA_MODEL_FIRST_PASS": "{{OLLAMA_MODEL_FIRST_PASS}}",
+        "OLLAMA_MODEL_EXTRACT_JSON": "{{OLLAMA_MODEL_EXTRACT_JSON}}"
+      }
+    },
+    "open-brain": {
+      "command": "{{OPEN_BRAIN_COMMAND}}",
+      "args": ["{{OPEN_BRAIN_ARGS}}"]
+    },
+    "searxng": {
+      "command": "{{SEARXNG_COMMAND}}",
+      "args": ["{{SEARXNG_ARGS}}"],
+      "env": {
+        "SEARXNG_URL": "{{SEARXNG_INSTANCE_URL}}"
+      }
+    }
+  }
+}

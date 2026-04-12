@@ -93,7 +93,7 @@ For each feature/bug, verify in this order:
 
 ## Findings Format
 
-Post findings directly to GitHub using `ToolSearch` to load `mcp__github__add_issue_comment`:
+Post findings directly to GitHub using `ToolSearch` to load `mcp__plugin_github_github__add_issue_comment`:
 
 ```
 **QA Verification Report**

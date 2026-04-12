@@ -2,14 +2,61 @@
 
 # MCP Server Installation Guide
 
+MCP servers in this toolkit are split into two tiers:
+
+- **User-level servers** are registered once in `~/.claude/.mcp.json` and loaded in every project. These are tools you need universally — git, github, ollama, open-brain, etc.
+- **Project-level servers** live in a repo's `.claude/.mcp.json` and only load in that project. These are language/framework-specific tools — dotnet, rust, sqlite, windows-mcp — that would bloat the context window if loaded globally.
+
+This guide is split accordingly. For the **why**, see `docs/architecture.md` → *MCP Layering*.
+
+---
+
 ## Prerequisites
 
-- **Python** 3.10+ (from python.org or system package manager, must be in PATH)
-- **Node.js** 18+ (for Godot MCP only)
-- **.NET SDK** 8.0+ (for dotnet-tools)
-- **Rust toolchain** (rustup, cargo, rustc) - for rust-tools
-- **GitHub CLI** (`gh`) installed and authenticated (for github-tools)
-- **Docker** (for SQLite MCP server, any project with SQLite)
+| Scope | Requirement | Used by |
+|---|---|---|
+| User | **Python** 3.10+ (in PATH) | All `mcp-dev-servers` python servers |
+| User | **GitHub CLI** (`gh`) installed + authenticated | `github-tools` |
+| User | **GitHub Personal Access Token** (`GITHUB_PERSONAL_ACCESS_TOKEN` env var) | Official GitHub plugin |
+| User | **Node.js** 18+ | SearXNG MCP, Open Brain |
+| Project (dotnet) | **.NET SDK** 8.0+ | `dotnet-tools` |
+| Project (rust-tauri) | **Rust toolchain** (rustup, cargo, rustc) | `rust-tools` |
+| Project (optional) | **Docker Desktop** running | `sqlite` |
+| Project (dotnet-maui / rust-tauri) | **uv/uvx** in PATH | `windows-mcp` |
+
+## Python MCP Servers Source
+
+The custom Python MCP servers live in a separate repository:
+
+- **Repository:** https://github.com/dagonet/mcp-dev-servers
+- **55+ tools** across 6 servers
+- See that repo's README for full tool reference
+
+## Python Virtual Environment Setup
+
+All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment.
+
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/dagonet/mcp-dev-servers.git <your-path>\mcp-dev-servers
+cd <your-path>\mcp-dev-servers
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+**Linux / macOS:**
+
+```bash
+git clone https://github.com/dagonet/mcp-dev-servers.git ~/repos/mcp-dev-servers
+cd ~/repos/mcp-dev-servers
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+---
 
 ## Ollama Setup
 
@@ -58,50 +105,13 @@ export OLLAMA_MAX_LOADED_MODELS="3"
 export OLLAMA_NUM_PARALLEL="1"
 ```
 
-On Linux with systemd-managed Ollama, you can also set these via `systemctl edit ollama.service`:
+---
 
-```ini
-[Service]
-Environment="OLLAMA_KEEP_ALIVE=1h"
-Environment="OLLAMA_MAX_LOADED_MODELS=3"
-Environment="OLLAMA_NUM_PARALLEL=1"
-```
+# User-Level Servers
 
-## Python MCP Servers Source
+Register these **once** with `claude mcp add --scope user`. They load in every project.
 
-The custom Python MCP servers live in a separate repository:
-
-- **Repository:** https://github.com/dagonet/mcp-dev-servers
-- **55 tools** across 6 servers
-- See that repo's README for full tool reference
-
-## Python Virtual Environment Setup
-
-All custom MCP servers run from a shared Python virtual environment.
-
-**Windows (PowerShell):**
-
-```powershell
-git clone https://github.com/dagonet/mcp-dev-servers.git <your-path>\mcp-dev-servers
-cd <your-path>\mcp-dev-servers
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-**Linux / macOS:**
-
-```bash
-git clone https://github.com/dagonet/mcp-dev-servers.git ~/repos/mcp-dev-servers
-cd ~/repos/mcp-dev-servers
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-## MCP Server Registration
-
-### Ollama Tools (6 tools)
+## Ollama Tools (6 tools)
 
 Local LLM preprocessing: health check, model management, text compression, JSON extraction, project mapping.
 
@@ -127,7 +137,7 @@ claude mcp add --scope user --transport stdio ollama-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/ollama_mcp.py
 ```
 
-### Git Tools (16 tools)
+## Git Tools (16 tools)
 
 Git operations via MCP: status, diff, log, add, commit, branch, checkout, push, pull, stash.
 
@@ -147,9 +157,9 @@ claude mcp add --scope user --transport stdio git-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/git_mcp.py
 ```
 
-### GitHub Tools (2 tools)
+## GitHub Tools (2 tools)
 
-Custom GitHub utilities not available in the official GitHub MCP server.
+Small custom GitHub utilities not covered by the official plugin — used by hooks and a few skills.
 
 **Tools:** `gh_repo_from_origin` (get OWNER/REPO from local git remote), `gh_workflow_list` (list GitHub Actions workflow runs)
 
@@ -171,47 +181,33 @@ claude mcp add --scope user --transport stdio github-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/github_mcp.py
 ```
 
-### Rust Tools (4 tools)
+## Official GitHub Plugin (40+ tools)
 
-Cargo build, test, and clippy with structured diagnostics. Requires Rust toolchain (rustup).
+For issue / PR / release / code-search operations, the **official GitHub plugin** (`github@claude-plugins-official`) wraps GitHub's hosted MCP server at `https://api.githubcopilot.com/mcp/` and exposes the full toolset.
 
-**Tools:** `cargo_env_info`, `cargo_build`, `cargo_test`, `cargo_clippy`
-
-**Windows (PowerShell):**
-
-```powershell
-claude mcp add --scope user --transport stdio rust-tools `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\python.exe" "<your-path>\mcp-dev-servers\src\rust_mcp.py"
-```
-
-**Linux / macOS:**
+**Install:**
 
 ```bash
-claude mcp add --scope user --transport stdio rust-tools \
-  -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/rust_mcp.py
+claude plugins install github@claude-plugins-official
 ```
 
-### .NET Tools (19 tools)
+**Required environment variable:**
 
-.NET build, test, NuGet, EF Core, code metrics. Requires .NET SDK.
+Create a fine-grained Personal Access Token at https://github.com/settings/personal-access-tokens and set `GITHUB_PERSONAL_ACCESS_TOKEN` in your user environment.
 
-**Tools:** `build_and_extract_errors`, `run_tests_summary`, `analyze_namespace_conflicts`, `nuget_list_outdated`, `nuget_check_vulnerabilities`, `nuget_dependency_tree`, `parse_csproj`, `analyze_project_references`, `check_framework_compatibility`, `ef_migrations_status`, `ef_pending_migrations`, `ef_dbcontext_info`, `analyze_method_complexity`, `find_large_files`, `find_god_classes`, `parse_stack_trace`, `parse_coverage_report`, `run_coverage`, `map_dotnet_structure`
+- **Windows (user env var):**
+  ```powershell
+  [System.Environment]::SetEnvironmentVariable('GITHUB_PERSONAL_ACCESS_TOKEN', 'ghp_yourtoken', 'User')
+  ```
+- **Linux / macOS:** add `export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_yourtoken"` to your shell profile.
 
-**Windows (PowerShell):**
+**Restart Claude Code** after setting the variable — the plugin's MCP server only loads when the token is present.
 
-```powershell
-claude mcp add --scope user --transport stdio dotnet-tools `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\python.exe" "<your-path>\mcp-dev-servers\src\dotnet_mcp.py"
-```
+**Tool prefix:** `mcp__plugin_github_github__*` (e.g. `mcp__plugin_github_github__issue_read`, `mcp__plugin_github_github__create_pull_request`).
 
-**Linux / macOS:**
+**Troubleshooting:** if no github tools show up in `ToolSearch`, the token is likely unset or invalid. The plugin's MCP server fails silently when auth fails — you will see no error, just no tools.
 
-```bash
-claude mcp add --scope user --transport stdio dotnet-tools \
-  -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/dotnet_mcp.py
-```
-
-### Template Sync Tools (8 tools)
+## Template Sync Tools (8 tools)
 
 Deterministic template syncing: manifest management, file status computation, three-way merge, placeholder replacement/reversal, cross-variant propagation. Used by the `/sync-template` and `/contribute-upstream` skills.
 
@@ -229,74 +225,6 @@ claude mcp add --scope user --transport stdio template-sync-tools `
 ```bash
 claude mcp add --scope user --transport stdio template-sync-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/template_sync_mcp.py
-```
-
-### SQLite MCP Server
-
-Read-only database inspection via Docker. Useful for any project with a SQLite database.
-
-**Tools:** `read_query`, `write_query`, `create_table`, `list_tables`, `describe_table`, `append_insight`
-
-**Requires:** Docker Desktop running
-
-Add to user-level MCP config (`~/.claude/.mcp.json`) with your project's DB path:
-
-**Windows:**
-
-```json
-{
-  "mcpServers": {
-    "sqlite": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-v", "C:\\path\\to\\db\\directory:/data:ro",
-        "mcp/sqlite-mcp-server",
-        "--db-path", "/data/your-database.db"
-      ]
-    }
-  }
-}
-```
-
-**Linux / macOS:**
-
-```json
-{
-  "mcpServers": {
-    "sqlite": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-v", "/home/user/data:/data:ro",
-        "mcp/sqlite-mcp-server",
-        "--db-path", "/data/your-database.db"
-      ]
-    }
-  }
-}
-```
-
-**Note:** The DB path is project-specific. Update the `-v` mount path and `--db-path` filename when switching between projects. All templates include SQLite permissions in `settings.json`, so no per-project permission changes are needed.
-
-### Godot Tools (14 tools)
-
-Godot game engine editor, scenes, nodes. Requires Node.js and Godot 4.x.
-
-**Tools:** `launch_editor`, `run_project`, `get_debug_output`, `stop_project`, `get_godot_version`, `list_projects`, `get_project_info`, `create_scene`, `add_node`, `load_sprite`, `export_mesh_library`, `save_scene`, `get_uid`, `update_project_uids`
-
-**Windows (PowerShell):**
-
-```powershell
-claude mcp add --scope user --transport stdio godot-tools `
-  -- node "<your-path>\mcp-godot\godot-mcp\build\index.js"
-```
-
-**Linux / macOS:**
-
-```bash
-claude mcp add --scope user --transport stdio godot-tools \
-  -- node ~/mcp/mcp-godot/godot-mcp/build/index.js
 ```
 
 ## SearXNG (Web Search)
@@ -347,56 +275,196 @@ claude mcp add --scope user --transport stdio open-brain \
 
 **Note:** Check the project repository for the latest installation method — the command and package name may vary. Open Brain stores data locally and provides semantic search over captured thoughts.
 
-## Official GitHub MCP Server (40+ tools)
-
-For most GitHub operations (issues, PRs, releases, code search), use the official server:
-
-- **Repository:** https://github.com/github/github-mcp-server
-- Follow the installation instructions at that repository
-- Provides comprehensive GitHub integration beyond the 2 custom tools above
-
 ## Context Mode Plugin
 
 Context Mode is a Claude Code plugin that offloads large tool outputs to a sandbox, keeping the context window clean and reducing token usage. It intercepts tool calls that would produce large outputs and processes them externally, returning only concise summaries to the conversation.
 
-- **Installation:** Installed as a Claude Code plugin, not via `claude mcp add`
-- **Install command:** `claude plugins add context-mode` (or install from the Claude Code marketplace)
+- **Install:** `claude plugins install context-mode@context-mode`
 
 **Key tools:**
-- `ctx_execute(language, code)` -- Run code in sandbox, return summary
-- `ctx_execute_file(path, language, code)` -- Run code against a file in sandbox
-- `ctx_search(queries)` -- Search indexed content with multiple queries
-- `ctx_batch_execute(commands, queries)` -- Run commands + search in one call
-- `ctx_fetch_and_index(url)` -- Fetch and index a URL for later searching
-- `ctx_index(label, content)` -- Index content for later searching
-- `ctx_stats()` -- Show context savings statistics
-- `ctx_doctor()` -- Diagnose installation and configuration
+- `ctx_execute(language, code)` — Run code in sandbox, return summary
+- `ctx_execute_file(path, language, code)` — Run code against a file in sandbox
+- `ctx_search(queries)` — Search indexed content with multiple queries
+- `ctx_batch_execute(commands, queries)` — Run commands + search in one call
+- `ctx_fetch_and_index(url)` — Fetch and index a URL for later searching
+- `ctx_index(label, content)` — Index content for later searching
+- `ctx_stats()` — Show context savings statistics
+- `ctx_doctor()` — Diagnose installation and configuration
 
-**Note:** Context Mode provides both MCP tools and hooks (PreToolUse for routing large outputs). Since it is a plugin, permissions use the `mcp__plugin_context-mode_context-mode__*` pattern in `settings.json`.
+**Tool prefix:** `mcp__plugin_context-mode_context-mode__*`
 
 ## Context7 Plugin
 
-The Context7 plugin provides library documentation lookup. Enable it in Claude Code settings:
+The Context7 plugin provides up-to-date library documentation lookup.
 
-- `mcp__plugin_context7_context7__resolve-library-id` - Find library ID
-- `mcp__plugin_context7_context7__query-docs` - Query documentation
+- **Install:** `claude plugins install context7@claude-plugins-official`
+- **Tools:**
+  - `mcp__plugin_context7_context7__resolve-library-id` — find library ID
+  - `mcp__plugin_context7_context7__query-docs` — query documentation
+
+---
+
+# Project-Level Servers
+
+These servers are **not** registered at user level. They go into per-project `.claude/.mcp.json` files so they only load in repos that actually need them — the user-level context stays small.
+
+`setup-project.{sh,ps1}` can generate `.claude/.mcp.json` automatically for the dotnet, dotnet-maui, and rust-tauri variants. Pass `--mcp-dev-servers-path <path>` so the script knows where your local `mcp-dev-servers` checkout lives. Optional: `--sqlite-db-path <path>` adds a sqlite entry. See `docs/templates.md` for the per-variant matrix.
+
+If you register these manually instead, the commands below show what each entry looks like.
+
+## SQLite (optional, any variant)
+
+Read-only database inspection via Docker.
+
+**Tools:** `read_query`, `write_query`, `create_table`, `list_tables`, `describe_table`, `append_insight`
+
+**Requires:** Docker Desktop running
+
+**`.claude/.mcp.json` entry (Windows):**
+
+```json
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "C:\\path\\to\\db\\directory:/data:ro",
+        "mcp/sqlite-mcp-server",
+        "--db-path", "/data/your-database.db"
+      ]
+    }
+  }
+}
+```
+
+**`.claude/.mcp.json` entry (Linux / macOS):**
+
+```json
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "/home/user/data:/data:ro",
+        "mcp/sqlite-mcp-server",
+        "--db-path", "/data/your-database.db"
+      ]
+    }
+  }
+}
+```
+
+**Note:** All templates include the `mcp__sqlite__*` permission in `settings.json`, so no per-project permission changes are needed.
+
+## .NET Tools (19 tools) — dotnet / dotnet-maui variants
+
+.NET build, test, NuGet, EF Core, code metrics. Requires .NET SDK.
+
+**Tools:** `build_and_extract_errors`, `run_tests_summary`, `analyze_namespace_conflicts`, `nuget_list_outdated`, `nuget_check_vulnerabilities`, `nuget_dependency_tree`, `parse_csproj`, `analyze_project_references`, `check_framework_compatibility`, `ef_migrations_status`, `ef_pending_migrations`, `ef_dbcontext_info`, `analyze_method_complexity`, `find_large_files`, `find_god_classes`, `parse_stack_trace`, `parse_coverage_report`, `run_coverage`, `map_dotnet_structure`
+
+**`.claude/.mcp.json` entry:**
+
+```json
+{
+  "mcpServers": {
+    "dotnet-tools": {
+      "command": "<mcp-dev-servers-path>/.venv/bin/python",
+      "args": ["<mcp-dev-servers-path>/src/dotnet_mcp.py"]
+    }
+  }
+}
+```
+
+Replace `<mcp-dev-servers-path>` with the absolute path to your local `mcp-dev-servers` repo. On Windows use `<path>\.venv\Scripts\python.exe`.
+
+## Rust Tools (4 tools) — rust-tauri variant
+
+Cargo build, test, and clippy with structured diagnostics. Requires Rust toolchain (rustup).
+
+**Tools:** `cargo_env_info`, `cargo_build`, `cargo_test`, `cargo_clippy`
+
+**`.claude/.mcp.json` entry:**
+
+```json
+{
+  "mcpServers": {
+    "rust-tools": {
+      "command": "<mcp-dev-servers-path>/.venv/bin/python",
+      "args": ["<mcp-dev-servers-path>/src/rust_mcp.py"]
+    }
+  }
+}
+```
+
+## Windows-MCP — dotnet-maui / rust-tauri variants
+
+Desktop automation for Windows: click, type, screenshot, window management. Used by `tester` agent for UI smoke tests in desktop variants.
+
+**Install via uvx:**
+
+```bash
+# uvx must be on PATH — install uv first: https://docs.astral.sh/uv/
+uvx --help
+```
+
+**`.claude/.mcp.json` entry:**
+
+```json
+{
+  "mcpServers": {
+    "windows-mcp": {
+      "command": "uvx",
+      "args": ["windows-mcp"]
+    }
+  }
+}
+```
+
+**Note:** Only useful on Windows. On Linux/macOS this entry is a no-op — the setup script skips it for non-Windows runs.
+
+## Godot Tools (14 tools) — custom setup
+
+Godot game engine editor, scenes, nodes. Not covered by any template variant (there is no godot variant). Listed here for completeness — register manually in a project-level `.claude/.mcp.json` if you need it.
+
+**Tools:** `launch_editor`, `run_project`, `get_debug_output`, `stop_project`, `get_godot_version`, `list_projects`, `get_project_info`, `create_scene`, `add_node`, `load_sprite`, `export_mesh_library`, `save_scene`, `get_uid`, `update_project_uids`
+
+**Requires:** Node.js and Godot 4.x.
+
+**`.claude/.mcp.json` entry:**
+
+```json
+{
+  "mcpServers": {
+    "godot-tools": {
+      "command": "node",
+      "args": ["<your-path>/mcp-godot/godot-mcp/build/index.js"]
+    }
+  }
+}
+```
+
+---
 
 ## Management Commands
 
 These commands work the same on all platforms:
 
 ```bash
-# List all registered MCP servers
+# List all registered MCP servers (user + project)
 claude mcp list
 
-# Remove a server
+# Remove a user-level server
 claude mcp remove ollama-tools
 claude mcp remove git-tools
 claude mcp remove github-tools
-claude mcp remove rust-tools
-claude mcp remove dotnet-tools
-claude mcp remove godot-tools
+claude mcp remove template-sync-tools
+claude mcp remove searxng
+claude mcp remove open-brain
 ```
+
+Project-level servers are removed by editing or deleting the project's `.claude/.mcp.json`.
 
 ## Troubleshooting
 
@@ -404,6 +472,8 @@ claude mcp remove godot-tools
 
 1. **MCP server fails to start:** Verify the Python virtual environment path is correct and the `.venv` has `mcp[cli]` and `httpx` installed.
 2. **Ollama tools timeout:** Ensure Ollama is running (`ollama --version`) and accessible at `http://127.0.0.1:11434`.
-3. **GitHub tools fail:** Run `gh auth status` to verify GitHub CLI authentication.
-4. **dotnet-tools errors:** Confirm `dotnet --version` returns a valid SDK version (8.0+).
-5. **Godot tools not found:** Verify Node.js is installed and the Godot MCP build path exists.
+3. **GitHub Tools fail:** Run `gh auth status` to verify GitHub CLI authentication.
+4. **Official GitHub plugin shows no tools:** `GITHUB_PERSONAL_ACCESS_TOKEN` is unset, expired, or lacks the required scopes. Set it and restart Claude Code.
+5. **dotnet-tools errors in a dotnet project:** Confirm `dotnet --version` returns a valid SDK version (8.0+) and that your `.claude/.mcp.json` points at the right `mcp-dev-servers` path.
+6. **windows-mcp not loading on a non-Windows machine:** The setup script skips `windows-mcp` on Linux/macOS; if you see an error, check that you regenerated `.claude/.mcp.json` after cloning to a new OS.
+7. **`uvx: command not found` when loading windows-mcp:** Install `uv` (which provides `uvx`) — see https://docs.astral.sh/uv/.

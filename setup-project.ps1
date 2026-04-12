@@ -52,12 +52,17 @@ param(
     [string]$PackageManager,
     [string]$PythonVersion,
 
+    [string]$McpDevServersPath,
+    [string]$SqliteDbPath,
+
     [switch]$Force,
     [switch]$DryRun
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$CallerCwd = (Get-Location).Path
 
 # --- Resolve paths ---
 $TemplateDir = Join-Path (Join-Path $PSScriptRoot "templates") $Variant
@@ -102,6 +107,24 @@ if ($Variant -eq "python") {
         Write-Error "PackageManager must be 'pip', 'poetry', or 'uv', got: $PackageManager"
         return
     }
+}
+
+# --- Resolve relative MCP path flags against caller CWD ---
+function Resolve-CallerPath {
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
+    return (Join-Path $CallerCwd $Path)
+}
+if ($McpDevServersPath) { $McpDevServersPath = Resolve-CallerPath $McpDevServersPath }
+if ($SqliteDbPath)      { $SqliteDbPath      = Resolve-CallerPath $SqliteDbPath }
+
+# Warn if a variant needs -McpDevServersPath but it's missing
+if ($Variant -in @("dotnet", "dotnet-maui") -and -not $McpDevServersPath) {
+    $warnings += "-McpDevServersPath not set - project-level dotnet-tools MCP entry will be skipped"
+}
+if ($Variant -eq "rust-tauri" -and -not $McpDevServersPath) {
+    $warnings += "-McpDevServersPath not set - project-level rust-tools MCP entry will be skipped"
 }
 
 # --- Build placeholder replacement map ---
@@ -210,6 +233,41 @@ function Get-ContentHash {
     return ([BitConverter]::ToString($hash) -replace '-', '').ToLower()
 }
 
+# --- Build project-level .mcp.json content (returns $null if no entries apply) ---
+function Build-ProjectMcpJson {
+    $mcpServers = [ordered]@{}
+
+    if ($Variant -in @("dotnet", "dotnet-maui") -and $McpDevServersPath) {
+        $mcpServers['dotnet-tools'] = [ordered]@{
+            command = "python"
+            args    = @(($McpDevServersPath.TrimEnd('\','/') + "/src/dotnet_mcp.py"))
+        }
+    }
+    if ($Variant -eq "rust-tauri" -and $McpDevServersPath) {
+        $mcpServers['rust-tools'] = [ordered]@{
+            command = "python"
+            args    = @(($McpDevServersPath.TrimEnd('\','/') + "/src/rust_mcp.py"))
+        }
+    }
+    if ($Variant -in @("dotnet-maui", "rust-tauri")) {
+        $mcpServers['windows-mcp'] = [ordered]@{
+            command = "uvx"
+            args    = @("windows-mcp")
+        }
+    }
+    if ($SqliteDbPath) {
+        $mcpServers['sqlite'] = [ordered]@{
+            command = "uvx"
+            args    = @("mcp-server-sqlite", "--db-path", $SqliteDbPath)
+        }
+    }
+
+    if ($mcpServers.Count -eq 0) { return $null }
+
+    $wrapper = [ordered]@{ mcpServers = $mcpServers }
+    return ($wrapper | ConvertTo-Json -Depth 6)
+}
+
 # --- Collect files to copy ---
 function Get-TemplateFiles {
     param([string]$Source)
@@ -302,6 +360,18 @@ if ($DryRun) {
     Write-Host "    templateRepo: $($PSScriptRoot -replace '\\', '/')"
     Write-Host "    placeholders: $($replacements.Count) values"
     Write-Host "    files: $($templateFiles.Where({ -not $_.IsGitignore }).Count) tracked"
+
+    Write-Host ""
+    $mcpPreview = Build-ProjectMcpJson
+    if ($mcpPreview) {
+        Write-Host "Project-level .claude/.mcp.json (would be generated):" -ForegroundColor Yellow
+        foreach ($line in ($mcpPreview -split "`n")) {
+            Write-Host "    $line"
+        }
+    }
+    else {
+        Write-Host "Project-level .claude/.mcp.json: (not generated - no entries for this variant/flags)" -ForegroundColor DarkGray
+    }
 
     Write-Host ""
     Write-Host "=== END DRY RUN ===" -ForegroundColor Cyan
@@ -502,6 +572,23 @@ if (-not (Test-Path $manifestDir)) {
 Set-Content -Path $manifestPath -Value $manifestJson -Encoding UTF8 -NoNewline
 $copiedFiles += ".claude/template-manifest.json"
 Write-Host "  [+] .claude/template-manifest.json (generated)" -ForegroundColor Green
+
+# --- Generate project-level .claude/.mcp.json if any entries apply ---
+$mcpJsonContent = Build-ProjectMcpJson
+if ($mcpJsonContent) {
+    $mcpJsonPath = Join-Path (Join-Path $TargetDir ".claude") ".mcp.json"
+    if ((Test-Path $mcpJsonPath) -and -not $Force) {
+        Write-Host "  [-] .claude/.mcp.json (exists, use -Force to overwrite)" -ForegroundColor Yellow
+    }
+    else {
+        $mcpJsonDir = Split-Path $mcpJsonPath -Parent
+        if (-not (Test-Path $mcpJsonDir)) {
+            New-Item -ItemType Directory -Path $mcpJsonDir -Force | Out-Null
+        }
+        Set-Content -Path $mcpJsonPath -Value $mcpJsonContent -Encoding UTF8 -NoNewline
+        Write-Host "  [+] .claude/.mcp.json (generated)" -ForegroundColor Green
+    }
+}
 
 # --- Check for remaining placeholders ---
 Write-Host ""

@@ -11,6 +11,7 @@ set -euo pipefail
 #   ./setup-project.sh --variant dotnet-maui --project-name "MyApp" --solution-file "MyApp.sln" --dry-run
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CALLER_CWD="$(pwd)"
 
 # --- Defaults ---
 VARIANT=""
@@ -29,6 +30,8 @@ BUILD_TOOL=""
 JAVA_VERSION=""
 PACKAGE_MANAGER=""
 PYTHON_VERSION=""
+MCP_DEV_SERVERS_PATH=""
+SQLITE_DB_PATH=""
 FORCE=false
 DRY_RUN=false
 
@@ -51,6 +54,8 @@ while [[ $# -gt 0 ]]; do
         --java-version)    JAVA_VERSION="$2"; shift 2 ;;
         --package-manager) PACKAGE_MANAGER="$2"; shift 2 ;;
         --python-version)  PYTHON_VERSION="$2"; shift 2 ;;
+        --mcp-dev-servers-path) MCP_DEV_SERVERS_PATH="$2"; shift 2 ;;
+        --sqlite-db-path)  SQLITE_DB_PATH="$2"; shift 2 ;;
         --force)           FORCE=true; shift ;;
         --dry-run)         DRY_RUN=true; shift ;;
         -h|--help)
@@ -105,6 +110,27 @@ fi
 if [[ -n "$PACKAGE_MANAGER" ]] && [[ "$PACKAGE_MANAGER" != "pip" && "$PACKAGE_MANAGER" != "poetry" && "$PACKAGE_MANAGER" != "uv" ]]; then
     echo "Error: --package-manager must be 'pip', 'poetry', or 'uv', got: $PACKAGE_MANAGER" >&2; exit 1
 fi
+
+# --- Resolve relative MCP path flags against caller CWD ---
+resolve_caller_path() {
+    local p="$1"
+    case "$p" in
+        /*|[a-zA-Z]:[/\\]*) printf '%s' "$p" ;;
+        *) printf '%s/%s' "$CALLER_CWD" "$p" ;;
+    esac
+}
+[[ -n "$MCP_DEV_SERVERS_PATH" ]] && MCP_DEV_SERVERS_PATH="$(resolve_caller_path "$MCP_DEV_SERVERS_PATH")"
+[[ -n "$SQLITE_DB_PATH" ]]       && SQLITE_DB_PATH="$(resolve_caller_path "$SQLITE_DB_PATH")"
+
+# Warn if a variant needs --mcp-dev-servers-path but it's missing
+case "$VARIANT" in
+    dotnet|dotnet-maui)
+        [[ -z "$MCP_DEV_SERVERS_PATH" ]] && warnings+=("--mcp-dev-servers-path not set - project-level dotnet-tools MCP entry will be skipped")
+        ;;
+    rust-tauri)
+        [[ -z "$MCP_DEV_SERVERS_PATH" ]] && warnings+=("--mcp-dev-servers-path not set - project-level rust-tools MCP entry will be skipped")
+        ;;
+esac
 
 # --- Build placeholder replacement map ---
 # Parallel arrays for bash 3 compatibility (macOS ships bash 3)
@@ -212,6 +238,77 @@ apply_replacements() {
     printf '%s' "$text"
 }
 
+# --- JSON escape (used by both .mcp.json and manifest generation) ---
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
+# --- Build project-level .mcp.json content based on variant and flags ---
+# Prints the JSON to stdout. Empty output means "do not write the file".
+build_project_mcp_json() {
+    declare -a entries=()
+
+    case "$VARIANT" in
+        dotnet|dotnet-maui)
+            [[ -n "$MCP_DEV_SERVERS_PATH" ]] && entries+=("dotnet-tools")
+            ;;
+        rust-tauri)
+            [[ -n "$MCP_DEV_SERVERS_PATH" ]] && entries+=("rust-tools")
+            ;;
+    esac
+    case "$VARIANT" in
+        dotnet-maui|rust-tauri) entries+=("windows-mcp") ;;
+    esac
+    [[ -n "$SQLITE_DB_PATH" ]] && entries+=("sqlite")
+
+    if [[ ${#entries[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    local out='{'$'\n'
+    out+='  "mcpServers": {'$'\n'
+    local last=$((${#entries[@]} - 1))
+    local idx=0
+    for entry in "${entries[@]}"; do
+        local comma=","
+        [[ $idx -eq $last ]] && comma=""
+        case "$entry" in
+            dotnet-tools)
+                out+='    "dotnet-tools": {'$'\n'
+                out+='      "command": "python",'$'\n'
+                out+='      "args": ["'"$(json_escape "$MCP_DEV_SERVERS_PATH/src/dotnet_mcp.py")"'"]'$'\n'
+                out+='    }'"$comma"$'\n'
+                ;;
+            rust-tools)
+                out+='    "rust-tools": {'$'\n'
+                out+='      "command": "python",'$'\n'
+                out+='      "args": ["'"$(json_escape "$MCP_DEV_SERVERS_PATH/src/rust_mcp.py")"'"]'$'\n'
+                out+='    }'"$comma"$'\n'
+                ;;
+            windows-mcp)
+                out+='    "windows-mcp": {'$'\n'
+                out+='      "command": "uvx",'$'\n'
+                out+='      "args": ["windows-mcp"]'$'\n'
+                out+='    }'"$comma"$'\n'
+                ;;
+            sqlite)
+                out+='    "sqlite": {'$'\n'
+                out+='      "command": "uvx",'$'\n'
+                out+='      "args": ["mcp-server-sqlite", "--db-path", "'"$(json_escape "$SQLITE_DB_PATH")"'"]'$'\n'
+                out+='    }'"$comma"$'\n'
+                ;;
+        esac
+        idx=$((idx + 1))
+    done
+    out+='  }'$'\n'
+    out+='}'$'\n'
+
+    printf '%s' "$out"
+}
+
 # --- Collect template files ---
 declare -a FILE_SOURCES=()
 declare -a FILE_RELS=()
@@ -300,6 +397,14 @@ if [[ "$DRY_RUN" == true ]]; then
     non_gi=0
     for ig in "${FILE_IS_GITIGNORE[@]}"; do [[ "$ig" == false ]] && ((non_gi++)) || true; done
     echo "    files: $non_gi tracked"
+    echo ""
+    mcp_preview="$(build_project_mcp_json)"
+    if [[ -n "$mcp_preview" ]]; then
+        echo "Project-level .claude/.mcp.json (would be generated):"
+        printf '%s' "$mcp_preview" | sed 's/^/    /'
+    else
+        echo "Project-level .claude/.mcp.json: (not generated - no entries for this variant/flags)"
+    fi
     echo ""
     echo "=== END DRY RUN ==="
     exit 0
@@ -437,14 +542,6 @@ for i in "${!PH_KEYS[@]}"; do
     MPH_VALS+=("${PH_VALS[$i]}")
 done
 
-# Helper to escape strings for JSON (handles backslashes and quotes)
-json_escape() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    printf '%s' "$s"
-}
-
 {
     echo "{"
     echo "  \"version\": 2,"
@@ -479,6 +576,19 @@ json_escape() {
 } > "$manifest_path"
 
 echo "  [+] .claude/template-manifest.json (generated)"
+
+# --- Generate project-level .claude/.mcp.json if any entries apply ---
+mcp_json_content="$(build_project_mcp_json)"
+if [[ -n "$mcp_json_content" ]]; then
+    mcp_json_path="$TARGET_DIR/.claude/.mcp.json"
+    if [[ -f "$mcp_json_path" ]] && [[ "$FORCE" != true ]]; then
+        echo "  [-] .claude/.mcp.json (exists, use --force to overwrite)"
+    else
+        mkdir -p "$(dirname "$mcp_json_path")"
+        printf '%s' "$mcp_json_content" > "$mcp_json_path"
+        echo "  [+] .claude/.mcp.json (generated)"
+    fi
+fi
 
 # --- Check for remaining placeholders ---
 echo ""

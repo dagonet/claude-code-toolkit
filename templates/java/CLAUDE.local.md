@@ -38,7 +38,7 @@ Claude MUST follow the rules below.
 
 ### GitHub Tools
 
-**Official GitHub MCP (`mcp__github__`)** -- Use for most operations:
+**Official GitHub MCP (`mcp__plugin_github_github__`)** -- Use for most operations:
 - `list_issues`, `issue_read`, `issue_write` -- issue management
 - `add_issue_comment` -- add comments to issues
 - `list_pull_requests`, `pull_request_read` -- PR management
@@ -132,7 +132,7 @@ For **ANY GitHub operation**, Claude MUST use MCP GitHub tools
 and MUST NOT use shell commands (`gh`, `curl`) or direct HTTP calls.
 
 ### For Issues and PRs
-Use the **official GitHub MCP** (`mcp__github__`):
+Use the **official GitHub MCP** (`mcp__plugin_github_github__`):
 - `list_issues` / `issue_read` / `issue_write`
 - `add_issue_comment`
 - `list_pull_requests` / `pull_request_read`

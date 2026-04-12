@@ -8,7 +8,8 @@
 |---------|---------|------|-----------|------------|------|--------|
 | Language/Framework | Any | C#/.NET | .NET MAUI Desktop | Rust + TypeScript (Tauri v2) | Java (Spring Boot) | Python |
 | Default Task Source | `plan-files` | `plan-files` | `plan-files` | `plan-files` | `plan-files` | `plan-files` |
-| MCP Servers (documented) | git, github, ollama | + dotnet-tools | + dotnet-tools, sqlite, windows-mcp | + rust-tools, windows-mcp | git, github, ollama | git, github, ollama |
+| User-level MCP (universal) | git, github, ollama, template-sync, searxng, open-brain (+ plugins) | same | same | same | same | same |
+| Project-level MCP (auto-generated) | none (unless `--sqlite-db-path`) | `dotnet-tools` | `dotnet-tools`, `windows-mcp` | `rust-tools`, `windows-mcp` | none (unless `--sqlite-db-path`) | none (unless `--sqlite-db-path`) |
 | Agents | 7 | 8 (+dotnet-coder) | 8 (full FlaUI tester) | 8 (+rust-coder) | 8 (+java-coder) | 8 (+python-coder) |
 | Code Style | No | .editorconfig | .editorconfig | rustfmt.toml + .prettierrc | .editorconfig | .editorconfig |
 | Build/Test Integration | Generic | dotnet build/test | + publish, FlaUI | cargo + npm | Maven or Gradle | pytest + ruff |
@@ -64,6 +65,28 @@ Adds the `python-coder` agent (8 agents total) with pytest/ruff discipline. Ship
 ### Rust-Tauri
 
 Adds the `rust-coder` agent (8 agents total) with cargo/clippy/fmt discipline. Ships `rustfmt.toml` and `.prettierrc` for Rust and TypeScript formatting. CLAUDE.md includes a mandatory "Code Style (MANDATORY)" section enforcing formatter compliance, plus Rust/Tauri-specific conventions. The tester agent uses Windows-MCP for desktop UI testing. CLAUDE.local.md includes Rule 12 (prefer `cargo_build`/`cargo_test`/`cargo_clippy` MCP tools over Bash). Includes a PostToolUse hook running `cargo check` after edits and a PreToolUse format gate requiring both `cargo fmt --check` and `npm run format --check` to pass before commits.
+
+## Project-Level MCP Matrix
+
+The setup script generates `<project>/.claude/.mcp.json` per variant at setup time, based on the variant and optional CLI flags. Language/framework MCP servers are **not** registered at user level — they only load in repos that explicitly need them.
+
+| Variant | Always generated | Optional (via flag) | Required flag |
+|---|---|---|---|
+| general | *(none — file omitted unless flags set)* | `sqlite` | `--sqlite-db-path` |
+| dotnet | `dotnet-tools` | `sqlite` | `--mcp-dev-servers-path` |
+| dotnet-maui | `dotnet-tools`, `windows-mcp` | `sqlite` | `--mcp-dev-servers-path` |
+| rust-tauri | `rust-tools`, `windows-mcp` | `sqlite` | `--mcp-dev-servers-path` |
+| java | *(none — file omitted unless flags set)* | `sqlite` | `--sqlite-db-path` |
+| python | *(none — file omitted unless flags set)* | `sqlite` | `--sqlite-db-path` |
+
+**Flag notes:**
+
+- `--mcp-dev-servers-path <path>` — points at a local clone of [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers). Required for variants that register `dotnet-tools` or `rust-tools`. If omitted, the setup script prints a warning and skips the affected entries (no default).
+- `--sqlite-db-path <path>` — optional for any variant. Accepts absolute or relative (resolved against caller CWD).
+- `windows-mcp` is hard-coded to `uvx windows-mcp` — assumes `uvx` is on PATH.
+- If no entries would be written for a variant, `.claude/.mcp.json` is not created.
+
+See `docs/architecture.md` → MCP Layering and `mcp-servers/HOWTO.md` → Project-Level Servers for rationale and per-server details.
 
 ## Placeholder Reference
 
