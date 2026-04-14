@@ -302,3 +302,45 @@ Templates include two workflow enforcement hooks (via external scripts in `hooks
 - Two distinct block messages: "No plan with tier declaration found" vs "Plan has tier but no evidence of architect challenge."
 
 Both hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
+
+### Read Size Gate (PreToolUse, User-Level Recommended)
+
+**Read size gate** (`hooks/read-size-gate.sh`):
+- Matcher: `Read`
+- Blocks `Read` calls whose **effective line count** exceeds a threshold (default `500`). `effective_lines = min(file_line_count, limit or file_line_count)`, so `Read(big.py, limit=100)` allows and `Read(big.py, limit=750)` blocks.
+- Missing/unreadable files pass through — the hook does not police file existence.
+- Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md` — the single largest actionable bucket. The CLAUDE.md "Read tool discipline" bullet asks agents to prefer `ctx_execute_file` / Explore subagents for analysis; this hook enforces it mechanically.
+- Block diagnostic directs the agent to (1) `mcp__plugin_context-mode_context-mode__ctx_execute_file` for analysis, (2) Explore subagent for compressed summaries, or (3) range-targeted `Read(path, offset, limit<=500)` for Edit workflows.
+- No bypass flag. If the hook misfires on legitimate work, the fix is to raise the threshold or comment out the stanza in `~/.claude/settings.json`.
+- Appends tab-separated decisions to `~/.claude/state/read-size-gate.log` (BLOCK always; ALLOW only when `file_line_count > 250`). Log append is best-effort — write failures never mask the block/allow decision.
+- Uses `node -e` for JSON parsing (no `jq` dependency). Style-matches `tier-before-coder.sh`.
+
+**Recommended install scope: user-level** (`~/.claude/settings.json`). The 22% Read-tool share is paid in target-project sessions, not in `claude-code-toolkit` self-maintenance. Installing at user level covers every project the user opens.
+
+**Install steps:**
+
+1. Copy script to `~/.claude/hooks/read-size-gate.sh` (create the directory if needed) and `chmod +x` it. The canonical source is `hooks/read-size-gate.sh` in this repo; the `user-level-reference/hooks/read-size-gate.sh` mirror is the "paste from here" copy.
+2. Merge the stanza below into `~/.claude/settings.json`. If a `hooks.PreToolUse` array already exists, append this matcher group to it; do **not** replace the whole `hooks` block.
+3. Start a new Claude Code session — settings reload is session-scoped.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/read-size-gate.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Rollback:** comment out or remove the matcher group from `~/.claude/settings.json` and start a new session.
+
+**Threshold tuning:** the script hard-codes `THRESHOLD=500` near the top. Edit the value directly. The log at `~/.claude/state/read-size-gate.log` provides per-decision data for post-sprint histogramming if you want to calibrate the threshold from real use rather than a gut number.
