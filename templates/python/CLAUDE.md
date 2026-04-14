@@ -38,6 +38,8 @@ Claude operates as **Product Owner (PO)** — the orchestrator who plans sprints
 
 **Per-workstream pipeline:** Developer -> Code Reviewer -> Tester -> Developer merges PR
 
+**Escalation:** After 3 failed fix cycles on one task, the PO pauses the workstream and chooses: (a) reduce scope, (b) re-spawn architect with failure context, or (c) escalate to the user. See Escalation Protocol in `AGENT_TEAM.md`.
+
 Full details: `AGENT_TEAM.md` (roles, rules, merge protocol, mode behavior table)
 
 ## Open Brain Context for Agents
@@ -81,6 +83,7 @@ Skip capture for routine outcomes ("no issues found", "all tests pass").
 - **Tests** — write general solutions, don't hard-code test values. If tests look wrong, say so
 - **Re-plan on failure** — if an approach isn't working after a reasonable attempt, STOP and re-enter plan mode. Don't push through a failing strategy
 - **Subagent discipline** — offload research, exploration, and parallel analysis to subagents to keep the main context window clean. One focused task per subagent
+- **Read tool discipline** — `Read` loads file contents directly into PO context (measured at **22% of total context** in `docs/plans/2026-04-14-context-baseline.md` — the largest actionable bucket). Use `Read` only for files you will immediately Edit or Write. For exploration, pattern searches, "how does X work", or reading large files for analysis, delegate to an **Explore subagent** — results return as compressed summaries. For single-file analysis that doesn't need contents in context, use `mcp__plugin_context-mode_context-mode__ctx_execute_file`
 - **Learn from corrections** — after any user correction, immediately capture the pattern to Open Brain so the mistake doesn't repeat
 - **Fix CI proactively** — if build or CI fails, fix it without waiting to be told
 - **Analyze before coding** — before implementing fixes or non-trivial features, enumerate edge cases and identify all callers/consumers that could be affected. For bug fixes, verify the root cause from data (query DB, check logs) before writing code
@@ -176,6 +179,8 @@ Before marking any commit/push complete, verify:
 - `git_diff(staged=true)` — confirm no unintended files staged
 - `git_diff_summary(staged=false)` — confirm no unstaged changes forgotten
 - After push: check tool output for success; if rejected, diagnose immediately
+
+**Merge ownership:** the developer who implemented the task owns the merge — rebase, CI-check, and squash-merge are the developer's job, not the PO's. The PO sequences merges across workstreams but does not merge on behalf of coders. See `AGENT_TEAM.md` → Merge Protocol.
 
 ---
 
