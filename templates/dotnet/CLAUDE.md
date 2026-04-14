@@ -155,11 +155,11 @@ Avoid incremental guess-and-check fixes.
 
 # Plan Challenge Protocol
 
-Every T2+ plan MUST be challenged **twice by the Architect agent** before execution. T1 fixes are exempt.
+Every T3+ plan MUST be challenged **twice by the Architect agent** before execution. T1 and T2 tasks are exempt — they go straight to implementation. Plan mode is still required for T2+; only the two-pass architect challenge is lifted.
 
 Full protocol details: `AGENT_TEAM.md` → Plan Challenge Protocol section.
 
-No plan ships unchallenged. No plan ships without a tier.
+No plan ships without a tier. T3+ plans ship challenged twice.
 
 ---
 
