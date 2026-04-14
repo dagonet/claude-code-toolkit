@@ -175,7 +175,7 @@ def process_session(path: Path):
             if total > peak:
                 peak = total
 
-        _, blocks = extract_blocks(msg)
+        role, blocks = extract_blocks(msg)
         for block in blocks:
             if not isinstance(block, dict):
                 continue
@@ -193,17 +193,29 @@ def process_session(path: Path):
                 continue
 
             if btype == "tool_use":
-                buckets["assistant"] += chars
+                buckets["assistant_tool_use"] += chars
+                continue
+
+            if btype == "thinking":
+                buckets["assistant_thinking"] += chars
                 continue
 
             if btype == "text":
                 if is_skill_content(block):
                     buckets["skill_content"] += chars
+                elif role == "assistant":
+                    buckets["assistant_text"] += chars
+                elif role == "user":
+                    text = block.get("text") or ""
+                    if "<system-reminder>" in text:
+                        buckets["user_system_reminder"] += chars
+                    else:
+                        buckets["user_text"] += chars
                 else:
-                    buckets["assistant"] += chars
+                    buckets["unknown"] += chars
                 continue
 
-            buckets["assistant"] += chars
+            buckets["unknown"] += chars
 
     return {
         "buckets": buckets,
