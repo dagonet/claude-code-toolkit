@@ -39,6 +39,7 @@ Pick the variant that matches your project. All share the same dual-mode workflo
 | User-level config reference (agents, commands, skills) | [`user-level-reference/README.md`](user-level-reference/README.md) |
 | Workflow diagram, known enforcement gaps, follow-up PR roadmap | [`docs/workflow-audit.md`](docs/workflow-audit.md) |
 | Plan: wire superpowers skills into templates (2026-04-12) | [`docs/plans/2026-04-12-wire-superpowers-skills.md`](docs/plans/2026-04-12-wire-superpowers-skills.md) |
+| Plan: user-level Read size gate hook (2026-04-14) -- install stanza in [`user-level-reference/settings-reference.md`](user-level-reference/settings-reference.md#read-size-gate-pretooluse-user-level-recommended) | [`docs/plans/2026-04-14-read-size-gate.md`](docs/plans/2026-04-14-read-size-gate.md) |
 
 ## Repository Structure
 
