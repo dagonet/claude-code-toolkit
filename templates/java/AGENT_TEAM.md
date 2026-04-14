@@ -66,7 +66,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 
 - Maintains all architecture documentation.
 - Provides implementation guidance on all sprint tasks (see Mode Behavior Table for where guidance is posted).
-- **Challenges ALL plans (T2+)**: Spawned by PO before implementation to perform two challenge passes on every plan. Validates scope, necessity, correctness, tier assignment, and team configuration. This is the plan-challenge phase — distinct from implementation guidance.
+- **Challenges ALL plans (T3+)**: Spawned by PO before implementation to perform two challenge passes on every plan. Validates scope, necessity, correctness, tier assignment, and team configuration. This is the plan-challenge phase — distinct from implementation guidance.
 - **Plan-challenge phase**: Shuts down after plan challenges are complete. Re-spawned for implementation guidance only if the sprint is T4.
 - Reviews all sprint tasks **BEFORE** development starts (T4), covering:
   - Affected components and files
@@ -442,7 +442,7 @@ The PO coordinates merge ordering by sending merge-go-ahead messages to develope
        |
 3. PO drafts implementation plan with tier assignment (T1-T4)
        |
-4. PO spawns Architect for plan challenge (MANDATORY for T2+)
+4. PO spawns Architect for plan challenge (MANDATORY for T3+)
    - Architect Challenge 1: Scope & Necessity
    - Architect Challenge 2: Correctness & Completeness
    - Architect validates tier assignment and team configuration
@@ -522,8 +522,8 @@ Every design doc and implementation plan must be challenged **twice** before exe
 - Are there batches or tasks that should be cut?
 
 **Who challenges:**
-- **T2+ tasks**: The **Architect agent** performs BOTH challenges. PO spawns the Architect with the draft plan. Architect returns two challenge passes. PO incorporates feedback. If the Architect recommends a tier change, PO updates the plan accordingly.
-- **T1 tasks**: Exempt from plan challenges.
+- **T3+ tasks**: The **Architect agent** performs BOTH challenges. PO spawns the Architect with the draft plan. Architect returns two challenge passes. PO incorporates feedback. If the Architect recommends a tier change, PO updates the plan accordingly.
+- **T1 and T2 tasks**: Exempt from plan challenges (plan mode still required for T2).
 
 **Process:**
 1. PO drafts plan in plan mode, including tier assignment
@@ -596,7 +596,7 @@ The PO presents these as a single confirmation at sprint start. All agents are s
 10. **Agents must not modify files outside their assigned worktree.**
 11. **Permission propagation** — all permissions requested once at sprint start. Agents spawned with `mode: bypassPermissions`.
 12. **Mode consistency** — the sprint's primary task source determines the mode. T1/T2 hotfixes may bypass mode if urgent.
-13. **Plan discipline** — T2+ tasks require plan mode, two Architect challenges, tier declaration, and tier-correct team configuration before execution (e.g., spawning a reviewer for T2 or skipping an architect for T4 is a violation). See Plan Challenge Protocol. T1 exempt.
+13. **Plan discipline** — T2+ requires plan mode and tier declaration. T3+ additionally requires two Architect challenges and tier-correct team configuration before execution (e.g., skipping an architect for T4 is a violation). See Plan Challenge Protocol. T1 exempt.
 
 ---
 

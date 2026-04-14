@@ -8,12 +8,16 @@
 #
 # A plan file passes when it contains:
 #   1. 'Tier: T1'-'T4' declaration (supports '**Tier:** Tn' markdown bold)
-#   2. Both 'Challenge 1' AND 'Challenge 2' literal anchors (two-pass challenge)
+#   2. Both 'Challenge 1' AND 'Challenge 2' literal anchors (T3/T4 only)
 #   3. 'Team:' line matching the declared tier:
 #        T1/T2: any Team line, or none
 #        T3:    must include coder, code-reviewer, tester
 #        T4:    must include architect, coder, code-reviewer, tester
 #   4. mtime within the last 14 days (stale plans rejected)
+#
+# T1 and T2 plans are exempt from the two-pass challenge (see
+# AGENT_TEAM.md Plan Challenge Protocol). They need only tier declaration
+# and freshness.
 #
 # OR semantics: at least one plan file in docs/plans/ or $HOME/.claude/plans/
 # must pass all four checks. If none pass, the hook prints a consolidated
@@ -56,20 +60,19 @@ validate_plan() {
     return 1
   fi
 
-  if ! grep -q 'Challenge 1' "$file" 2>/dev/null; then
-    echo "  $file: missing 'Challenge 1' literal (two-pass challenge required)"
-    return 1
-  fi
-  if ! grep -q 'Challenge 2' "$file" 2>/dev/null; then
-    echo "  $file: missing 'Challenge 2' literal (two-pass challenge required)"
-    return 1
-  fi
-
   case "$tier" in
     T1|T2)
       return 0
       ;;
     T3|T4)
+      if ! grep -q 'Challenge 1' "$file" 2>/dev/null; then
+        echo "  $file ($tier): missing 'Challenge 1' literal (two-pass challenge required for T3+)"
+        return 1
+      fi
+      if ! grep -q 'Challenge 2' "$file" 2>/dev/null; then
+        echo "  $file ($tier): missing 'Challenge 2' literal (two-pass challenge required for T3+)"
+        return 1
+      fi
       team_line=$(grep -E '^\*?\*?[Tt]eam:' "$file" 2>/dev/null | head -1)
       if [ -z "$team_line" ]; then
         echo "  $file ($tier): no 'Team:' declaration"
@@ -109,14 +112,14 @@ for dir in "docs/plans" "$HOME/.claude/plans"; do
 done
 
 if [ "$found_any" -eq 0 ]; then
-  echo "BLOCKED: No plan files found in docs/plans/ or \$HOME/.claude/plans/. Create a plan with Tier + two-pass challenge before spawning coder agents." >&2
+  echo "BLOCKED: No plan files found in docs/plans/ or \$HOME/.claude/plans/. Create a plan with a Tier declaration (plus two-pass challenge for T3/T4) before spawning coder agents." >&2
   exit 2
 fi
 
 {
   echo "BLOCKED: No plan passed tier-before-coder checks. Each plan must satisfy:"
   echo "  1. 'Tier: T1'-'T4' declaration"
-  echo "  2. Both 'Challenge 1' and 'Challenge 2' literals"
+  echo "  2. Both 'Challenge 1' and 'Challenge 2' literals (T3/T4 only)"
   echo "  3. 'Team:' line matching tier (T3: coder, code-reviewer, tester; T4: + architect)"
   echo "  4. mtime within last $MAX_STALE_DAYS days"
   echo "Plan failures:"
