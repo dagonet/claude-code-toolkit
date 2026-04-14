@@ -19,6 +19,14 @@ This machine runs Windows 11 with Git Bash as the shell.
 - When a sub-agent write fails with escaping issues, rewrite the file directly
 - For multi-file batches: prefer writing files sequentially over delegating to one agent
 
+## Read Tool Discipline
+
+`Read` loads file contents directly into the main context window (measured at **22% of total context** across recent claude-code-toolkit sessions — the largest actionable bucket after bulk `assistant_tool_use` and `assistant_thinking`). Use `Read` only for files you will immediately Edit or Write.
+
+- Exploration, pattern searches, "how does X work", or reading large files for analysis → delegate to an **Explore subagent** (results return as compressed summaries, not raw file contents)
+- Single-file analysis that doesn't need contents in context → use `mcp__plugin_context-mode_context-mode__ctx_execute_file`
+- Browsing directory contents → use `Glob`, not `Read` on each file
+
 ## New Project Setup
 
 After creating a CLI tool or installable package, always include setup/install instructions in the output and README before considering the task complete.
