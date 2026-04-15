@@ -30,3 +30,25 @@ This machine runs Windows 11 with Git Bash as the shell.
 ## New Project Setup
 
 After creating a CLI tool or installable package, always include setup/install instructions in the output and README before considering the task complete.
+
+## Superpowers Skills — When to Invoke
+
+Requires the [superpowers plugin](https://github.com/anthropics/claude-plugins-official/tree/main/superpowers). Invoke via the Skill tool.
+
+### Solo PO trigger matrix
+
+| Trigger (user action / session event) | Skill to invoke |
+|---|---|
+| User describes a new feature or design idea | `superpowers:brainstorming` |
+| Design is accepted, need to break into tasks | `superpowers:writing-plans` |
+| Plan approved, starting implementation | `superpowers:executing-plans` |
+| Writing any new code (feature or fix) | `superpowers:test-driven-development` |
+| User reports a bug, test failure, or unexpected behavior | `superpowers:systematic-debugging` |
+| Before claiming work complete or opening a PR | `superpowers:verification-before-completion` |
+| Requesting review from the code-reviewer agent | `superpowers:requesting-code-review` |
+| Digesting code review findings | `superpowers:receiving-code-review` |
+
+### Meta skills (no explicit trigger)
+
+- `superpowers:using-superpowers` — auto-loaded at session start; establishes skill-use protocol.
+- `superpowers:writing-skills` — invoke only when creating or editing a skill.
