@@ -61,6 +61,10 @@
           {
             "type": "command",
             "command": "bash hooks/tier-before-coder.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash hooks/require-skills-block.sh"
           }
         ]
       },

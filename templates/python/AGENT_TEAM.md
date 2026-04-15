@@ -50,6 +50,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 - Closes tasks after merge (see Mode Behavior Table).
 - Does **NOT** block the merge pipeline — review + test approval is sufficient for merge.
 - **Open Brain context mediation**: Before spawning any agent, search Open Brain for context relevant to the agent's task and include findings in the spawn prompt. After the agent returns, capture non-trivial insights. See CLAUDE.md "Open Brain Context for Agents" for agent-specific search queries.
+- **Spawn-prompt skill injection**: When constructing any spawn prompt, look up the target `subagent_type` in the Spawn-Prompt Binding Table (Superpowers Skills Integration section) and include a `## Required Skills` block in the prompt listing the skills to invoke via the Skill tool. Use the copy-paste snippets in that section verbatim. The `hooks/require-skills-block.sh` PreToolUse hook mechanically enforces this — a spawn of a bound subagent type without the block exits 2 with a diagnostic. Omit the block for `code-reviewer` and `doc-generator` spawns (no required skills; hook passes them through).
 
 ### Requirements Engineer
 
@@ -621,45 +622,74 @@ Token efficiency preprocessing (Ollama, Context7) is configured per-project in `
 
 ## Superpowers Skills Integration
 
-When the [superpowers plugin](https://github.com/anthropics/claude-plugins-official/tree/main/superpowers) is installed, its skills handle **implementation mechanics** (how to code efficiently) while AGENT_TEAM.md handles **quality gates** (PR, review, test, merge). Skills are tools used *within* the AGENT_TEAM.md lifecycle, not replacements for it.
+When the [superpowers plugin](https://github.com/anthropics/claude-plugins-official/tree/main/superpowers) is installed, its skills handle implementation mechanics (how to code efficiently) while AGENT_TEAM.md owns quality gates (tier, workstream, review, test, merge). Skills are tools used within the lifecycle defined here, not replacements for it.
 
-### Mapping Skills to Workflow Phases
+### Spawn-Prompt Binding Table
 
-| Workflow Phase | Superpowers Skill | AGENT_TEAM.md Owner |
-|---|---|---|
-| Feature ideation → design | `brainstorming` | PO (replaces Requirements Engineer for interactive sessions) |
-| Design → implementation plan | `writing-plans` | PO (produces plan file for `plan-files` mode) |
-| Worktree setup | `using-git-worktrees` | Developer (follows AGENT_TEAM.md worktree naming) |
-| Task implementation | `executing-plans`, `test-driven-development` | Developer |
-| Bug investigation | `systematic-debugging` | Developer |
-| Code review | `requesting-code-review`, `receiving-code-review` | Code Reviewer / Developer |
-| Pre-merge verification | `verification-before-completion` | Developer |
-| Branch completion | `finishing-a-development-branch` | Developer (follows Merge Protocol) |
+When spawning an agent, include in the spawn prompt a `## Required Skills` block listing the skills below for the target subagent type. The spawned agent must invoke each skill via the Skill tool before beginning task work. This is **mechanically enforced** by `hooks/require-skills-block.sh` (PreToolUse on `Task`) — a spawn of a bound subagent type without a `## Required Skills` block exits 2.
 
-### Rules
+| subagent_type | Required Skills |
+|---|---|
+| `coder` (and all variant coders: `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) | `test-driven-development`, `verification-before-completion`, `receiving-code-review` |
+| `code-reviewer` | *(none — review is the agent's core job)* |
+| `tester` | `systematic-debugging`, `verification-before-completion` |
+| `test-writer` | `test-driven-development` |
+| `architect` | `writing-plans` |
+| `requirements-engineer` | `brainstorming` |
+| `doc-generator` | *(none)* |
 
-1. **Skills don't bypass quality gates.** Even if `executing-plans` completes all tasks, the developer must still create a PR, go through code review, and pass tester verification per the workstream lifecycle.
-2. **Skills don't replace roles.** The `code-review` skill can assist the Code Reviewer agent, but the reviewer still posts findings on the PR per the Mode Behavior Table.
-3. **Skills don't own merges.** The `finishing-a-development-branch` skill presents completion options, but the Merge Protocol (rebase, CI check, squash-merge, cleanup) is authoritative.
-4. **Plan files from skills are specs.** When `writing-plans` produces a plan file, it becomes the task definition per `plan-files` mode. No checkboxes or status tracking in plan files.
-5. **Brainstorming replaces RE for interactive sessions.** When the PO uses `brainstorming` with the user, the output (design doc + plan) replaces the Requirements Engineer's spec. The RE is still used for async/batch spec generation.
+**Reference-only skills** (handled by existing AGENT_TEAM.md constructs, not injected via spawn prompt): `using-git-worktrees` (Worktree Naming), `finishing-a-development-branch` (Merge Protocol), `dispatching-parallel-agents` (Tier Model workstreams), `subagent-driven-development` (plan-files mode execution).
 
-### Example: Feature Development with Skills
+**Chain note:** `writing-plans` produces a plan. The Plan Challenge Protocol (below) validates any plan before execution — independent gate, not a side-effect of `writing-plans`.
 
+### Copy-paste snippets
+
+Use these snippets verbatim when constructing spawn prompts. Append to the body of the prompt, then add the task-specific instructions below.
+
+**Coder (and variant coders `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`):**
+
+```markdown
+## Required Skills
+Invoke these via the Skill tool before beginning task work:
+- superpowers:test-driven-development
+- superpowers:verification-before-completion
+- superpowers:receiving-code-review
 ```
-1. PO + user: brainstorming skill -> design doc approved
-2. PO: writing-plans skill -> implementation plan saved to docs/plans/
-3. PO: creates team, assigns task to dev-1
-4. dev-1: using-git-worktrees -> worktree created per AGENT_TEAM.md naming
-5. dev-1: executing-plans + test-driven-development -> implements all tasks
-6. dev-1: verification-before-completion -> all checks pass
-7. dev-1: creates PR, signals PO
-8. PO: spawns reviewer-1 (may use requesting-code-review skill)
-9. reviewer-1: reviews, posts findings on PR -> shuts down
-10. PO: spawns tester-1 -> verifies -> shuts down
-11. dev-1: finishing-a-development-branch -> follows Merge Protocol
-12. PO: closes task, updates MEMORY.md
+
+**Tester:**
+
+```markdown
+## Required Skills
+Invoke these via the Skill tool before beginning task work:
+- superpowers:systematic-debugging
+- superpowers:verification-before-completion
 ```
+
+**Test-writer:**
+
+```markdown
+## Required Skills
+Invoke these via the Skill tool before beginning task work:
+- superpowers:test-driven-development
+```
+
+**Architect:**
+
+```markdown
+## Required Skills
+Invoke these via the Skill tool before beginning task work:
+- superpowers:writing-plans
+```
+
+**Requirements-engineer:**
+
+```markdown
+## Required Skills
+Invoke these via the Skill tool before beginning task work:
+- superpowers:brainstorming
+```
+
+**Code-reviewer / doc-generator:** omit the block entirely (hook passes them through).
 
 ---
 

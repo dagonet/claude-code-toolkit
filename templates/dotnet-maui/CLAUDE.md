@@ -73,6 +73,34 @@ Skip capture for routine outcomes ("no issues found", "all tests pass").
 
 ---
 
+## Superpowers Skills — When to Invoke
+
+Requires the [superpowers plugin](https://github.com/anthropics/claude-plugins-official/tree/main/superpowers). Invoke via the Skill tool.
+
+### Solo PO trigger matrix
+
+| Trigger (user action / session event) | Skill to invoke |
+|---|---|
+| User describes a new feature or design idea | `superpowers:brainstorming` |
+| Design is accepted, need to break into tasks | `superpowers:writing-plans` |
+| Plan approved, starting implementation | `superpowers:executing-plans` |
+| Writing any new code (feature or fix) | `superpowers:test-driven-development` |
+| User reports a bug, test failure, or unexpected behavior | `superpowers:systematic-debugging` |
+| Before claiming work complete or opening a PR | `superpowers:verification-before-completion` |
+| Requesting review from the code-reviewer agent | `superpowers:requesting-code-review` |
+| Digesting code review findings | `superpowers:receiving-code-review` |
+
+**Chain note:** `writing-plans` produces a plan. The **Plan Challenge Protocol** in `AGENT_TEAM.md` validates any plan (regardless of source) before execution — independent gate, not a side-effect of `writing-plans`.
+
+**When spawning agents:** see `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* for the skills each subagent type must invoke. The `hooks/require-skills-block.sh` PreToolUse hook mechanically enforces this — spawns of bound `subagent_type` values without a `## Required Skills` block in the prompt are blocked with exit 2.
+
+### Meta skills (no explicit trigger)
+
+- `superpowers:using-superpowers` — auto-loaded at session start; establishes skill-use protocol.
+- `superpowers:writing-skills` — invoke only when creating or editing a skill.
+
+---
+
 ## Working Preferences
 
 - **Implement, don't suggest** — make changes directly, infer user intent from context
@@ -121,26 +149,15 @@ the code MUST be rewritten until it complies.
 
 # Build & Test Discipline
 
-After ANY code change, always run `dotnet build` and `dotnet test` to verify everything passes before considering the task complete. Never assume a change is correct without build verification. If the full test suite is slow, run targeted tests first (`dotnet test --filter "FullyQualifiedName~ClassName"`), then the full suite.
-
-For UI changes, publish the MAUI app and run smoke tests before considering the task complete.
-
-When verifying non-trivial changes, diff behavior between main and your branch to confirm the change does what's intended. Before marking any task complete, ask: "Would a staff engineer approve this as-is?"
+Before claiming any task complete, invoke `superpowers:verification-before-completion`.
+Project-specific reminders: diff behavior between your branch and `main` to confirm the change does what's intended; ask "would a staff engineer approve this as-is?" before marking complete. Use `dotnet build` + `dotnet test`; for slow suites, target first (`dotnet test --filter "FullyQualifiedName~ClassName"`) then run the full suite. For UI changes, publish the MAUI app and run smoke tests before claiming complete.
 
 ---
 
 # Debugging
 
-## Fix Strategy: Trace the Full Data Flow
-When fixing bugs, trace the ENTIRE data flow through all layers (Repository -> Service -> ViewModel -> View and back) before implementing a fix. Do not fix only the first issue found -- check all layers. Common miss: fixing the read path but not the write path, or vice versa.
-
-## Multi-Round Bug Fixes
-If the user reports a fix didn't work, DO NOT make another minimal patch. Instead:
-1. Re-read all relevant files end-to-end
-2. Add diagnostic logging if needed
-3. Identify ALL places the data flows through
-4. Fix comprehensively in one shot
-Avoid incremental guess-and-check fixes.
+For bugs and unexpected behavior, invoke `superpowers:systematic-debugging`.
+Project-specific reminder: trace read **and** write paths through Repository → Service → ViewModel → View — a common miss is fixing one direction but not the other.
 
 ---
 
@@ -153,16 +170,6 @@ Avoid incremental guess-and-check fixes.
 - After branch merges, verify no `using` directives were dropped
 - Run `dotnet format` to ensure `.editorconfig` compliance
 - When modifying XAML, verify ContentPage namespace declarations include all referenced assemblies
-
----
-
-# Plan Challenge Protocol
-
-Every T3+ plan MUST be challenged **twice by the Architect agent** before execution. T1 and T2 tasks are exempt — they go straight to implementation. Plan mode is still required for T2+; only the two-pass architect challenge is lifted.
-
-Full protocol details: `AGENT_TEAM.md` → Plan Challenge Protocol section.
-
-No plan ships without a tier. T3+ plans ship challenged twice.
 
 ---
 

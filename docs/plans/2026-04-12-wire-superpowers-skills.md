@@ -3,7 +3,7 @@
 # Plan: Wire Superpowers Skills Into Templates and User-Level Reference
 
 **Date:** 2026-04-12
-**Status:** Approved, pending implementation
+**Status:** In progress 2026-04-15 (revived per `docs/plans/2026-04-15-revive-wire-superpowers-skills.md`; deprioritization reversed once "compression" framing was replaced with "binding mechanism")
 **Related:** [workflow-audit.md](../workflow-audit.md) — current workflow shape + weaknesses this plan addresses (W15-W17) vs. defers (W1-W14).
 
 ## Context
@@ -12,7 +12,7 @@ The `claude-code-toolkit` templates currently contain zero mention of the superp
 
 Meanwhile, the CLAUDE.md files carry home-grown narratives for Debugging and Build & Test Discipline that are mostly shadowed by `superpowers:systematic-debugging` and `superpowers:verification-before-completion` — but those narratives also contain project-specific wisdom from a prior `/insights` improvement cycle (read/write path symmetry, main-vs-branch diff, staff-engineer check) that the skills don't carry.
 
-**Goal:** make skill invocation actionable and discoverable in both solo-PO mode and spawned-agent mode, while preserving the project-specific wisdom the earlier improvement cycle captured. Opinionated compression, not blanket deletion.
+**Goal:** make skill invocation actionable, discoverable, and **enforceable** in both solo-PO mode and spawned-agent mode, while preserving the project-specific wisdom the earlier improvement cycle captured. The mechanism that matters is spawn-prompt injection of `## Required Skills` blocks (mechanically enforced by `hooks/require-skills-block.sh` per the 2026-04-15 revival plan), not text compression.
 
 **Pre-flight verifications done in plan mode:**
 
@@ -126,11 +126,11 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 
 | subagent_type | Required Skills |
 |---|---|
-| `coder` (and all variant coders: `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) | `test-driven-development`, `verification-before-completion`, `requesting-code-review`, `receiving-code-review` |
+| `coder` (and all variant coders: `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) | `test-driven-development`, `verification-before-completion`, `receiving-code-review` |
 | `code-reviewer` | *(none — review is the agent's core job)* |
 | `tester` | `systematic-debugging`, `verification-before-completion` |
 | `test-writer` | `test-driven-development` |
-| `architect` | `writing-plans`, `brainstorming` |
+| `architect` | `writing-plans` |
 | `requirements-engineer` | `brainstorming` |
 | `doc-generator` | *(none)* |
 
@@ -156,7 +156,7 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 
 ### Deliverable 3 — `user-level-reference/CLAUDE.md`
 
-This file is lean global rules (Platform, Sub-Agent File Write Discipline, New Project Setup). It does NOT contain Debugging, Build & Test Discipline, or Plan Challenge Protocol sections — those only live in `templates/*/CLAUDE.md`. So there are **no thin pointers to write** here; this is an **append-only** edit.
+This file is lean global rules. As of 2026-04-13 (commit `337fd26`) it has **4 sections**: Platform, Sub-Agent File Write Discipline, Read Tool Discipline, New Project Setup. It does NOT contain Debugging, Build & Test Discipline, or Plan Challenge Protocol sections — those only live in `templates/*/CLAUDE.md`. So there are **no thin pointers to write** here; this is an **append-only** edit.
 
 **Append** a new `## Superpowers Skills — When to Invoke` section at the end of the file, containing:
 

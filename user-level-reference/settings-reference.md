@@ -301,7 +301,42 @@ Templates include two workflow enforcement hooks (via external scripts in `hooks
 - Requires a plan file (in `docs/plans/` or `~/.claude/plans/`) containing both a tier declaration (`Tier: T[1-4]`) and evidence of architect challenge (word "challenge" or "architect").
 - Two distinct block messages: "No plan with tier declaration found" vs "Plan has tier but no evidence of architect challenge."
 
-Both hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
+**Require skills block** (`hooks/require-skills-block.sh`):
+- Matcher: `Agent`
+- Enforces the AGENT_TEAM.md *Spawn-Prompt Binding Table* — when the PO spawns a `Task` whose `subagent_type` is bound (`coder` and variants, `tester`, `test-writer`, `architect`, `requirements-engineer`), the prompt body must contain a literal `## Required Skills` line listing the skills that subagent must invoke before task work.
+- Pass-through types: `code-reviewer`, `doc-generator` (no required skills), and any `subagent_type` not in the binding table (e.g. `general-purpose`, `Explore`, `Plan`).
+- Block diagnostic prints the expected skill list plus a copy-pasteable `## Required Skills` block for the PO to drop into the prompt.
+- DRIFT WARNING: the hook's case statement duplicates the AGENT_TEAM.md table. `scripts/verify-template-consistency.sh` diffs the two and fails CI if they diverge — keep them in sync.
+
+All three hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
+
+#### Optional User-Level Install for `require-skills-block.sh`
+
+The hook is wired into all 6 project templates by default. To also enforce it at the user level (so it covers projects that don't use these templates), copy the script and add the matcher group:
+
+1. Copy `hooks/require-skills-block.sh` from this repo to `~/.claude/hooks/require-skills-block.sh` and `chmod +x` it.
+2. Append the stanza below to the existing `hooks.PreToolUse` array in `~/.claude/settings.json` (do not replace the whole `hooks` block).
+3. Start a new Claude Code session.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/require-skills-block.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Rollback:** remove the matcher group and start a new session. **Caveat:** if a project's binding table differs from the user-level hook's hardcoded one, the user-level hook may either over-block (blocks valid project spawns) or under-block (passes prompts the project considers invalid). Project-level installation is the safer default.
 
 ### Read Size Gate (PreToolUse, User-Level Recommended)
 
