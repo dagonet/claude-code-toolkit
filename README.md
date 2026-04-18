@@ -27,6 +27,7 @@ Pick the variant that matches your project. All share the same dual-mode workflo
 | Setup on Windows (PowerShell) | [`docs/setup-windows.md`](docs/setup-windows.md) |
 | Setup on Linux / macOS (Bash) | [`docs/setup-linux-macos.md`](docs/setup-linux-macos.md) |
 | Template details, placeholders, manual setup | [`docs/templates.md`](docs/templates.md) |
+| **Agent-guided setup** (let Claude / Cursor / Copilot drive the wizard) | [`AGENTS.md`](AGENTS.md) |
 
 ## Learn More
 
