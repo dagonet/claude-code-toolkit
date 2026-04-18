@@ -25,7 +25,7 @@ PROMPT=$(node -e "console.log(JSON.parse(process.argv[1]).prompt||'')" "$TOOL_IN
 
 case "$SUBAGENT_TYPE" in
   coder|dotnet-coder|rust-coder|java-coder|python-coder)
-    REQUIRED="superpowers:test-driven-development superpowers:verification-before-completion superpowers:receiving-code-review"
+    REQUIRED="karpathy-guidelines superpowers:test-driven-development superpowers:verification-before-completion superpowers:receiving-code-review"
     ;;
   tester)
     REQUIRED="superpowers:systematic-debugging superpowers:verification-before-completion"

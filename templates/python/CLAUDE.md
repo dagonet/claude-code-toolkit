@@ -85,7 +85,7 @@ Requires the [superpowers plugin](https://github.com/anthropics/claude-plugins-o
 | User describes a new feature or design idea | `superpowers:brainstorming` |
 | Design is accepted, need to break into tasks | `superpowers:writing-plans` |
 | Plan approved, starting implementation | `superpowers:executing-plans` |
-| Writing any new code (feature or fix) | `superpowers:test-driven-development` |
+| Writing any new code (feature or fix) | `karpathy-guidelines` + `superpowers:test-driven-development` |
 | User reports a bug, test failure, or unexpected behavior | `superpowers:systematic-debugging` |
 | Before claiming work complete or opening a PR | `superpowers:verification-before-completion` |
 | Requesting review from the code-reviewer agent | `superpowers:requesting-code-review` |

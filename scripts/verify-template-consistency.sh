@@ -153,6 +153,7 @@ if [ -f "$HOOK" ]; then
     fi
   }
 
+  check_pair "coder" "karpathy-guidelines"
   check_pair "coder" "test-driven-development"
   check_pair "coder" "verification-before-completion"
   check_pair "coder" "receiving-code-review"
