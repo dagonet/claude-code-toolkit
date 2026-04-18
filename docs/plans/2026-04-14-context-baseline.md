@@ -59,7 +59,7 @@
 | tool_result:mcp__github__create_pull_request | 816 | 0.0% |
 | tool_result:TeamCreate | 302 | 0.0% |
 | tool_result:TeamDelete | 255 | 0.0% |
-| tool_result:mcp__plugin_github_github__create_pull_request | 204 | 0.0% |
+| tool_result:mcp__MCP_DOCKER__create_pull_request | 204 | 0.0% |
 
 ## Per-session detail (top 3 by size)
 
@@ -104,7 +104,7 @@
 | tool_result:unknown | 543 | 0.0% |
 | tool_result:TeamCreate | 302 | 0.0% |
 | tool_result:TeamDelete | 255 | 0.0% |
-| tool_result:mcp__plugin_github_github__create_pull_request | 204 | 0.0% |
+| tool_result:mcp__MCP_DOCKER__create_pull_request | 204 | 0.0% |
 
 ### 2. G--git-claude-code-toolkit / b0f59011 — 2.0 MB, peak 156428 tokens
 

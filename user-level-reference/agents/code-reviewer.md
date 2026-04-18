@@ -79,7 +79,7 @@ Categories: `quality`, `performance`, `style`, `structure`, `test-coverage`
 
 After completing your review, post it directly to GitHub:
 
-1. Use `ToolSearch` to load `mcp__plugin_github_github__pull_request_review_write`
+1. Use `ToolSearch` to load `mcp__MCP_DOCKER__pull_request_review_write`
 2. Create a review with method `create`, event `COMMENT`, and your full review body
 3. If the MCP tool is unavailable, send your review findings to the team lead via message as a fallback
 
