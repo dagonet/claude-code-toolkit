@@ -174,7 +174,7 @@ claude-code-toolkit/
 └── user-level-reference/                  # ~/.claude/ reference for new machines
     ├── agents/                            # 7 generic agent definitions
     ├── commands/                          # 21 slash commands
-    ├── skills/                            # 10 auto-invoked skills
+    ├── skills/                            # 11 auto-invoked skills
     ├── .mcp.json.template                 # MCP server config template
     └── settings-reference.md              # Annotated settings reference
 ```
