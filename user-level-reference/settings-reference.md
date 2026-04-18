@@ -21,7 +21,7 @@ This document explains each section and setting in the user-level Claude Code se
       "WebFetch(*)",
       "mcp__git-tools__*",
       "mcp__github-tools__*",
-      "mcp__plugin_github_github__*",
+      "mcp__MCP_DOCKER__*",
       "mcp__ollama-tools__*",
       "mcp__plugin_playwright_playwright__*",
       "mcp__plugin_context7_context7__*",
@@ -124,7 +124,7 @@ Controls which tools Claude Code can use without asking for confirmation.
   "WebFetch(*)",       // Fetch any URL
   "mcp__git-tools__*",                    // All git MCP tools (status, add, commit, diff, etc.)
   "mcp__github-tools__*",                 // GitHub helper tools (repo info, workflow list)
-  "mcp__plugin_github_github__*",         // Full GitHub MCP (issues, PRs, reviews, etc.) — official plugin
+  "mcp__MCP_DOCKER__*",         // Full GitHub MCP (issues, PRs, reviews, etc.) — official plugin
   "mcp__ollama-tools__*",                 // Local LLM tools via Ollama (first-pass, JSON extract)
   "mcp__plugin_playwright_playwright__*", // Playwright browser automation (plugin)
   "mcp__plugin_context7_context7__*",     // Context7 documentation lookup (plugin)

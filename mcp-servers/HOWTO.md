@@ -203,7 +203,7 @@ Create a fine-grained Personal Access Token at https://github.com/settings/perso
 
 **Restart Claude Code** after setting the variable — the plugin's MCP server only loads when the token is present.
 
-**Tool prefix:** `mcp__plugin_github_github__*` (e.g. `mcp__plugin_github_github__issue_read`, `mcp__plugin_github_github__create_pull_request`).
+**Tool prefix:** `mcp__MCP_DOCKER__*` (e.g. `mcp__MCP_DOCKER__issue_read`, `mcp__MCP_DOCKER__create_pull_request`).
 
 **Troubleshooting:** if no github tools show up in `ToolSearch`, the token is likely unset or invalid. The plugin's MCP server fails silently when auth fails — you will see no error, just no tools.
 

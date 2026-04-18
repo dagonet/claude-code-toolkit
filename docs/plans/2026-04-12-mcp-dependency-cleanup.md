@@ -6,23 +6,23 @@
 
 **Challenge 1 — Scope & Necessity:** folded impl step 2 (settings permission updates) into step 1 (rename pass) as redundant; confirmed "all-in-one" scope per user; kept HOWTO restructure and doc updates in scope.
 
-**Challenge 2 — Correctness & Completeness:** added `docs/verification.md` and `docs/setup-linux-macos.md` to the file list (missed in draft); clarified both new setup script flags resolve relative paths against caller CWD; noted new `.claude/.mcp.json` generation must respect `--dry-run`; confirmed grep verification pattern is tight (`mcp__plugin_github_github__` literal is not a substring of `mcp__github-tools__` or `mcp__plugin_github_github__`).
+**Challenge 2 — Correctness & Completeness:** added `docs/verification.md` and `docs/setup-linux-macos.md` to the file list (missed in draft); clarified both new setup script flags resolve relative paths against caller CWD; noted new `.claude/.mcp.json` generation must respect `--dry-run`; confirmed grep verification pattern is tight (`mcp__MCP_DOCKER__` literal is not a substring of `mcp__github-tools__` or `mcp__MCP_DOCKER__`).
 
 ## Context
 
 A recent overhaul of user-level MCP servers and plugins broke three classes of references in `claude-code-toolkit`:
 
-1. **`mcp__plugin_github_github__*`** (4 tools used by code-reviewer/tester/AGENT_TEAM/CLAUDE.local.md in all 6 variants) — the old standalone `github` MCP server is gone. Replacement: the `github` plugin (`@claude-plugins-official`) loads GitHub's hosted server at `https://api.githubcopilot.com/mcp/` and exposes the same tool *suffixes* under prefix `mcp__plugin_github_github__*`. Requires `GITHUB_PERSONAL_ACCESS_TOKEN` env var.
+1. **`mcp__MCP_DOCKER__*`** (4 tools used by code-reviewer/tester/AGENT_TEAM/CLAUDE.local.md in all 6 variants) — the old standalone `github` MCP server is gone. Replacement: the `github` plugin (`@claude-plugins-official`) loads GitHub's hosted server at `https://api.githubcopilot.com/mcp/` and exposes the same tool *suffixes* under prefix `mcp__MCP_DOCKER__*`. Requires `GITHUB_PERSONAL_ACCESS_TOKEN` env var.
 
 2. **Language/framework MCP servers** (`sqlite`, `dotnet-tools`, `rust-tools`, `windows-mcp`) — removed from user level. User's new policy: **register at project level only**, so the user-level context stays small and only loads them in repos that actually need them.
 
 3. **Plugin migrations** (`context7`, `playwright`) — already correctly prefixed in templates (`mcp__plugin_context7_context7__*`); only docs and user-level-reference need cleanup.
 
 Verified this session: the `github` plugin is loaded after setting `GITHUB_PERSONAL_ACCESS_TOKEN` and restarting. `ToolSearch` confirms all 4 required tools exist:
-- `mcp__plugin_github_github__issue_read`
-- `mcp__plugin_github_github__issue_write`
-- `mcp__plugin_github_github__add_issue_comment`
-- `mcp__plugin_github_github__pull_request_review_write`
+- `mcp__MCP_DOCKER__issue_read`
+- `mcp__MCP_DOCKER__issue_write`
+- `mcp__MCP_DOCKER__add_issue_comment`
+- `mcp__MCP_DOCKER__pull_request_review_write`
 
 ## Decisions (user-locked)
 
@@ -32,7 +32,7 @@ Verified this session: the `github` plugin is loaded after setting `GITHUB_PERSO
 
 ## Scope (in)
 
-1. **Github rename** — `mcp__plugin_github_github__*` → `mcp__plugin_github_github__*` across all files (settings.json, agent files, AGENT_TEAM.md, CLAUDE.local.md in 6 variants + user-level-reference).
+1. **Github rename** — `mcp__MCP_DOCKER__*` → `mcp__MCP_DOCKER__*` across all files (settings.json, agent files, AGENT_TEAM.md, CLAUDE.local.md in 6 variants + user-level-reference).
 2. **User-level MCP reference cleanup** — strip `sqlite`, `dotnet-tools`, `rust-tools`, `windows-mcp` from `user-level-reference/.mcp.json.template` and `user-level-reference/settings-reference.md`. Keep them in `mcp-servers/HOWTO.md` but under a new "project-level" section.
 3. **Setup script per-variant `.mcp.json` generation** — new function `generate_project_mcp_json` in both `setup-project.sh` and `setup-project.ps1`. New CLI flags:
    - `--mcp-dev-servers-path <path>` (required for dotnet, dotnet-maui, rust-tauri; points at the local `mcp-dev-servers` repo)
@@ -58,7 +58,7 @@ Verified this session: the `github` plugin is loaded after setting `GITHUB_PERSO
    - `mcp-servers/HOWTO.md` — restructure: top-level "User-Level" section (universal servers only), new "Project-Level" section (sqlite, dotnet-tools, rust-tools, windows-mcp) with the layering rationale, add a "Windows-MCP" subsection with install command (uvx-based), expand "Official GitHub MCP Server" to mention the plugin path and `GITHUB_PERSONAL_ACCESS_TOKEN` requirement.
    - `user-level-reference/settings-reference.md` — remove language-specific MCP mentions, keep the universal set.
 5. **Settings.json permissions** — **no changes**. The `mcp__dotnet-tools__*`, `mcp__rust-tools__*`, etc. permission entries stay in all variants. They're no-ops when the server isn't registered and become active when it is. This preserves the "universal permissions" model and avoids 6 × settings.json edits.
-6. **Add `mcp__plugin_github_github__*` to all settings.json** permissions (to replace the stale `mcp__plugin_github_github__*` entries).
+6. **Add `mcp__MCP_DOCKER__*` to all settings.json** permissions (to replace the stale `mcp__MCP_DOCKER__*` entries).
 
 ## Scope (out)
 
@@ -71,7 +71,7 @@ Verified this session: the `github` plugin is loaded after setting `GITHUB_PERSO
 
 ## Critical files to modify
 
-**Mechanical rename** (`mcp__plugin_github_github__` → `mcp__plugin_github_github__`, ~33 files):
+**Mechanical rename** (`mcp__MCP_DOCKER__` → `mcp__MCP_DOCKER__`, ~33 files):
 - 6 × `templates/<variant>/.claude/agents/code-reviewer.md`
 - 6 × `templates/<variant>/.claude/agents/tester.md`
 - 6 × `templates/<variant>/.claude/settings.json`
@@ -101,20 +101,20 @@ Verified this session: the `github` plugin is loaded after setting `GITHUB_PERSO
 
 ## Implementation order
 
-1. **Rename pass** — replace `mcp__plugin_github_github__` → `mcp__plugin_github_github__` across all 33 files, including `settings.json` permission entries (covers the separate settings-update step; folded per Challenge 1).
+1. **Rename pass** — replace `mcp__MCP_DOCKER__` → `mcp__MCP_DOCKER__` across all 33 files, including `settings.json` permission entries (covers the separate settings-update step; folded per Challenge 1).
 2. **User-level-reference cleanup** — `user-level-reference/.mcp.json.template` strip language-specific; `user-level-reference/settings-reference.md` strip language-specific (note: this file also covered by step 1 rename).
 3. **HOWTO restructure** — split into User-Level / Project-Level, add Windows-MCP section, expand Official GitHub section.
 4. **Docs updates** — `architecture.md`, `getting-started.md`, `templates.md`, `verification.md`, `setup-linux-macos.md`.
 5. **Setup script changes** — bash first (`setup-project.sh`), then mirror in PowerShell. New flags resolve relative paths against caller CWD (both `--mcp-dev-servers-path` and `--sqlite-db-path`). New `.claude/.mcp.json` generation must respect `--dry-run` (print content, don't write). Test with `--dry-run` for each of the 6 variants.
-6. **Verification grep suite** — confirm zero `mcp__plugin_github_github__` references remain, zero language-specific references in user-level-reference, setup script generates correct `.mcp.json` for each variant.
+6. **Verification grep suite** — confirm zero `mcp__MCP_DOCKER__` references remain, zero language-specific references in user-level-reference, setup script generates correct `.mcp.json` for each variant.
 7. **Commit.**
 
 ## Verification
 
 After all edits:
 
-1. `grep -rln "mcp__plugin_github_github__" templates/ user-level-reference/ docs/` → empty
-2. `grep -rln "mcp__plugin_github_github__" templates/ user-level-reference/` → ≥ 33 hits
+1. `grep -rln "mcp__MCP_DOCKER__" templates/ user-level-reference/ docs/` → empty
+2. `grep -rln "mcp__MCP_DOCKER__" templates/ user-level-reference/` → ≥ 33 hits
 3. `grep -l "dotnet-tools\|rust-tools\|sqlite\|windows-mcp" user-level-reference/.mcp.json.template` → empty
 4. Dry-run each variant:
    - `bash setup-project.sh --variant dotnet --project-name Test --mcp-dev-servers-path /tmp/mcp-dev-servers --solution-file Test.sln --dry-run` → should show `.claude/.mcp.json` with `dotnet-tools` entry

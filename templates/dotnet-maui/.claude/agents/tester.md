@@ -140,7 +140,7 @@ public void VERIFY_271_PerformancePageShowsMetrics()
 
 ## Findings Format
 
-Post findings directly to GitHub using `ToolSearch` to load `mcp__plugin_github_github__add_issue_comment`:
+Post findings directly to GitHub using `ToolSearch` to load `mcp__MCP_DOCKER__add_issue_comment`:
 
 ```
 **QA Verification Report**
