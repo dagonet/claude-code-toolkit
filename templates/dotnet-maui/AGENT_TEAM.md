@@ -630,7 +630,7 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 
 | subagent_type | Required Skills |
 |---|---|
-| `coder` (and all variant coders: `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) | `test-driven-development`, `verification-before-completion`, `receiving-code-review` |
+| `coder` (and all variant coders: `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) | `karpathy-guidelines`, `test-driven-development`, `verification-before-completion`, `receiving-code-review` |
 | `code-reviewer` | *(none — review is the agent's core job)* |
 | `tester` | `systematic-debugging`, `verification-before-completion` |
 | `test-writer` | `test-driven-development` |
@@ -651,6 +651,7 @@ Use these snippets verbatim when constructing spawn prompts. Append to the body 
 ```markdown
 ## Required Skills
 Invoke these via the Skill tool before beginning task work:
+- karpathy-guidelines
 - superpowers:test-driven-development
 - superpowers:verification-before-completion
 - superpowers:receiving-code-review
