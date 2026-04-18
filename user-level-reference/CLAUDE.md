@@ -31,6 +31,8 @@ This machine runs Windows 11 with Git Bash as the shell.
 
 After creating a CLI tool or installable package, always include setup/install instructions in the output and README before considering the task complete.
 
+When the user asks to "set up a new project" or "bootstrap a project" from the `claude-code-toolkit` repo, read `AGENTS.md` at the toolkit repo root and follow it — it drives variant selection + Q&A + `setup-project.sh`/`.ps1` invocation. Do not attempt to derive build/test commands yourself; pass the user's answers as flags.
+
 ## Superpowers Skills — When to Invoke
 
 Requires the [superpowers plugin](https://github.com/anthropics/claude-plugins-official/tree/main/superpowers). Invoke via the Skill tool.
