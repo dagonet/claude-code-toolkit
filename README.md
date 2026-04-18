@@ -3,7 +3,7 @@
 
 # Claude Code Toolkit
 
-Reusable templates for bootstrapping projects with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) setup. Six template variants ship 8 agents, 10 skills, 21 commands, and pre-wired MCP server permissions -- pick a variant, run the setup script, and start coding with a full AI-assisted workflow.
+Reusable templates for bootstrapping projects with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) setup. Six template variants ship 8 agents, 11 skills, 21 commands, and pre-wired MCP server permissions -- pick a variant, run the setup script, and start coding with a full AI-assisted workflow.
 
 ## Template Variants
 
@@ -69,7 +69,7 @@ claude-code-toolkit/
 └── user-level-reference/      # ~/.claude/ reference for new machines
     ├── agents/                # 7 generic agent definitions
     ├── commands/              # 21 slash commands
-    └── skills/                # 10 auto-invoked skills
+    └── skills/                # 11 auto-invoked skills
 ```
 
 ## Related Projects

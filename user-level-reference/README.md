@@ -98,7 +98,7 @@ Follow these steps to configure Claude Code on a fresh machine:
 |---------|-------------|
 | `/issue-create` | Create a properly formatted GitHub issue via MCP tools |
 
-### Skills (10)
+### Skills (11)
 
 | Skill | Auto-triggers When |
 |-------|-------------------|
@@ -107,6 +107,7 @@ Follow these steps to configure Claude Code on a fresh machine:
 | `explaining-code` | Asking "how does this work?" or requesting code explanations |
 | `fix-errors` | Build failures, compilation errors, or pasted error output |
 | `impact-analysis` | Planning changes or asking "what will be affected?" |
+| `karpathy-guidelines` | Writing any new code (feature or fix) — mechanically enforced on `coder`/*-coder spawns via `hooks/require-skills-block.sh` |
 | `orient` | Exploring a new codebase or asking about project structure |
 | `refactor` | Requesting code cleanup, improvements, or refactoring |
 | `security-audit` | Asking about security vulnerabilities or requesting an audit |
