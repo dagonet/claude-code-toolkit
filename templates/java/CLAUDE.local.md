@@ -8,91 +8,22 @@ Claude MUST follow the rules below.
 
 ---
 
-## Tooling Overview
+## MCP Servers Registered
 
-### Ollama Tools (MCP: `ollama-tools`)
-- `ollama_health` -- check if Ollama server is running
-- `ollama_list_models` -- list available models
-- `warm_models(keep_alive)` -- pre-load models for faster inference
-- `local_first_pass(text, goal)` -- compress large inputs via local LLM
-- `extract_json(text, schema)` -- extract structured data from text
-- `map_project_structure(root, include)` -- list project files (supports glob patterns)
+Tool schemas and full parameter signatures load on-demand via Claude Code's MCP catalog — don't duplicate them here. See *Mandatory Tool Usage Rules* below for when to prefer each server over Bash/shell alternatives.
 
-### Git Tools (MCP: `git-tools`)
-- `git_status(repo_path, include_untracked)`
-- `git_diff_summary(repo_path, staged)`
-- `git_diff(repo_path, staged, file_path)` -- full diff output
-- `git_log(repo_path, limit, oneline)` -- view commit history
-- `git_show(repo_path, ref)` -- show commit details
-- `git_add(repo_path, paths)`
-- `git_rm(repo_path, paths, cached)`
-- `git_commit(repo_path, message)`
-- `git_branch_list(repo_path, all_branches)`
-- `git_checkout(repo_path, ref, create)`
-- `git_pull(repo_path, remote, branch)`
-- `git_push(repo_path, remote, branch, set_upstream)`
-- `git_stash(repo_path, action, message)`
-- `git_remote_list(repo_path)`
-- `git_tag_list(repo_path, limit)`
-- `git_env_info` -- diagnostic info about git installation
+- **`ollama-tools`** — local LLM preprocessing: `local_first_pass`, `extract_json`, `map_project_structure`, plus health/model mgmt.
+- **`git-tools`** — all git operations: status/diff/log/show, add/rm/commit, branch/checkout, pull/push, stash, tag, remote.
+- **`MCP_DOCKER`** — official GitHub MCP (Docker Desktop): issues, PRs, comments, search, file ops, releases.
+- **`github-tools`** — repo + workflow utilities: `gh_repo_from_origin`, `gh_workflow_list`.
+- **`open-brain`** — persistent memory: `thoughts_search`/`recent`/`capture`/`review`/`people`/`topics`/`delete`, `system_status` (8 tools).
+- **`sqlite`** — DB access: `read_query`, `write_query`, `list_tables`, `describe_table`, `append_insight`.
+  > DB mounted at `/data/{{DB_FILENAME}}` from `{{DB_DIRECTORY}}`. Configured at user-level `~/.claude/.mcp.json`.
 
-### GitHub Tools
+### Java Build & Test (Bash — no MCP yet)
 
-**Official GitHub MCP via Docker Desktop (`mcp__MCP_DOCKER__`)** -- Use for most operations:
-- `list_issues`, `issue_read`, `issue_write` -- issue management
-- `add_issue_comment` -- add comments to issues
-- `list_pull_requests`, `pull_request_read` -- PR management
-- `create_pull_request`, `merge_pull_request` -- PR operations
-- `search_code`, `search_issues`, `search_pull_requests` -- search
-- `get_file_contents`, `create_or_update_file` -- file operations
-- See full list in MCP server documentation
-
-**Custom GitHub Tools (MCP: `github-tools`)** -- Unique utilities:
-- `gh_repo_from_origin(repo_path)` -- get OWNER/REPO from git remote
-- `gh_workflow_list(repo, limit)` -- list GitHub Actions workflow runs
-
-### Java Build & Test
-
-No Java-specific MCP tools exist yet. Use Bash commands directly:
-
-**Maven:**
-- `mvn clean verify` -- full build with tests
-- `mvn test` -- run tests only
-- `mvn test -pl module -Dtest=ClassName` -- targeted test
-- `mvn spotless:apply` -- format code
-- `mvn spotless:check` -- verify formatting
-
-**Gradle:**
-- `./gradlew build` -- full build with tests
-- `./gradlew test` -- run tests only
-- `./gradlew :module:test --tests ClassName` -- targeted test
-- `./gradlew spotlessApply` -- format code
-- `./gradlew spotlessCheck` -- verify formatting
-
-### Open Brain Memory (MCP: `open-brain`)
-
-**Read tools:**
-- `thoughts_search(query, limit?, thought_type?, people?, topics?, days?)` -- semantic search via embeddings
-- `thoughts_recent(days?, limit?)` -- list recent thoughts by date
-- `thoughts_people(limit?)` -- list unique people mentioned
-- `thoughts_topics(limit?)` -- list unique topics mentioned
-- `thoughts_review(days?)` -- structured summary over a time period
-- `system_status()` -- system health check
-
-**Write tools:**
-- `thoughts_capture(text, metadata?)` -- capture thought with auto-classification
-- `thoughts_delete(id)` -- soft-delete a thought by UUID
-
-### SQLite Database (MCP: `sqlite`)
-- `read_query(sql)` -- execute SELECT queries (read-only)
-- `write_query(sql)` -- execute INSERT/UPDATE/DELETE
-- `create_table(sql)` -- create new tables
-- `list_tables()` -- list all tables in the database
-- `describe_table(table_name)` -- show table schema
-- `append_insight(insight)` -- store analysis notes
-
-> **Database path**: `/data/{{DB_FILENAME}}` (mounted read-only from `{{DB_DIRECTORY}}`)
-> Runs in Docker container `mcp/sqlite-mcp-server`. Configured at user-level `~/.claude/.mcp.json`.
+- **Maven:** `mvn clean verify` (full), `mvn test -pl module -Dtest=ClassName` (targeted), `mvn spotless:apply` / `spotless:check` (format).
+- **Gradle:** `./gradlew build` (full), `./gradlew :module:test --tests ClassName` (targeted), `./gradlew spotlessApply` / `spotlessCheck` (format).
 
 ---
 

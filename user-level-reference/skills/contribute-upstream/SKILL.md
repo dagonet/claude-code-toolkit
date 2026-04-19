@@ -1,6 +1,6 @@
 ---
 name: contribute-upstream
-description: Push project improvements back to the template repo. Triggers on /contribute-upstream. Uses template-sync-tools MCP server for deterministic placeholder reversal and cross-variant propagation.
+description: Push project improvements back to the claude-code-toolkit template. Triggers on /contribute-upstream.
 ---
 
 # Contribute Upstream
