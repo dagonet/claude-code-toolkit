@@ -1,6 +1,6 @@
 ---
 name: sync-template
-description: Pull template updates into the current project. Triggers on /sync-template. Uses template-sync-tools MCP server for deterministic hashing, diffing, and three-way merge.
+description: Pull template updates into the current project. Triggers on /sync-template.
 ---
 
 # Sync Template (Downstream)

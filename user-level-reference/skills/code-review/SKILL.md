@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Performs comprehensive code review when reviewing PRs, branches, or code changes. Triggers on PR review requests, code quality checks, and change analysis.
+description: Performs comprehensive code review. Use when reviewing PRs, branches, code quality, or analyzing changes.
 ---
 
 # Code Review Skill

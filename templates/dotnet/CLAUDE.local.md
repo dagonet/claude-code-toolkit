@@ -8,106 +8,24 @@ Claude MUST follow the rules below.
 
 ---
 
-## Tooling Overview
+## MCP Servers Registered
 
-### Ollama Tools (MCP: `ollama-tools`)
-- `ollama_health` -- check if Ollama server is running
-- `ollama_list_models` -- list available models
-- `warm_models(keep_alive)` -- pre-load models for faster inference
-- `local_first_pass(text, goal)` -- compress large inputs via local LLM
-- `extract_json(text, schema)` -- extract structured data from text
-- `map_project_structure(root, include)` -- list project files (supports glob patterns)
+Tool schemas and full parameter signatures load on-demand via Claude Code's MCP catalog — don't duplicate them here. See *Mandatory Tool Usage Rules* below for when to prefer each server over Bash/shell alternatives.
 
-### Git Tools (MCP: `git-tools`)
-- `git_status(repo_path, include_untracked)`
-- `git_diff_summary(repo_path, staged)`
-- `git_diff(repo_path, staged, file_path)` -- full diff output
-- `git_log(repo_path, limit, oneline)` -- view commit history
-- `git_show(repo_path, ref)` -- show commit details
-- `git_add(repo_path, paths)`
-- `git_rm(repo_path, paths, cached)`
-- `git_commit(repo_path, message)`
-- `git_branch_list(repo_path, all_branches)`
-- `git_checkout(repo_path, ref, create)`
-- `git_pull(repo_path, remote, branch)`
-- `git_push(repo_path, remote, branch, set_upstream)`
-- `git_stash(repo_path, action, message)`
-- `git_remote_list(repo_path)`
-- `git_tag_list(repo_path, limit)`
-- `git_env_info` -- diagnostic info about git installation
-
-### GitHub Tools
-
-**Official GitHub MCP via Docker Desktop (`mcp__MCP_DOCKER__`)** -- Use for most operations:
-- `list_issues`, `issue_read`, `issue_write` -- issue management
-- `add_issue_comment` -- add comments to issues
-- `list_pull_requests`, `pull_request_read` -- PR management
-- `create_pull_request`, `merge_pull_request` -- PR operations
-- `search_code`, `search_issues`, `search_pull_requests` -- search
-- `get_file_contents`, `create_or_update_file` -- file operations
-- See full list in MCP server documentation
-
-**Custom GitHub Tools (MCP: `github-tools`)** -- Unique utilities:
-- `gh_repo_from_origin(repo_path)` -- get OWNER/REPO from git remote
-- `gh_workflow_list(repo, limit)` -- list GitHub Actions workflow runs
-
-### .NET Tools (MCP: `dotnet-tools`)
-
-**Build & Test:**
-- `build_and_extract_errors(project_or_sln, configuration)` -- build and extract errors/warnings
-- `run_tests_summary(project_or_sln, configuration)` -- run tests and parse TRX results
-- `run_coverage(project_or_sln, configuration)` -- run tests with code coverage
-
-**Project Analysis:**
-- `map_dotnet_structure(root)` -- categorize .NET project files
-- `parse_csproj(csproj_path)` -- extract project metadata
-- `analyze_project_references(solution_or_dir)` -- analyze inter-project dependencies
-- `check_framework_compatibility(solution_or_dir)` -- check target framework alignment
-- `analyze_namespace_conflicts(root, pattern)` -- find duplicate type definitions
-
-**NuGet Management:**
-- `nuget_list_outdated(project_or_sln, include_transitive)` -- find outdated packages
-- `nuget_check_vulnerabilities(project_or_sln, include_transitive)` -- security audit
-- `nuget_dependency_tree(project_or_sln, include_transitive)` -- full dependency graph
-
-**Entity Framework:**
-- `ef_migrations_status(project_path, context, startup_project)` -- list migrations
-- `ef_pending_migrations(project_path, context, startup_project)` -- check unapplied migrations
-- `ef_dbcontext_info(project_path, context, startup_project)` -- database provider info
-
-**Code Quality:**
-- `analyze_method_complexity(root, threshold)` -- find complex methods (cyclomatic complexity)
-- `find_god_classes(root, method_threshold, field_threshold)` -- detect bloated classes
-- `find_large_files(root, line_threshold, pattern)` -- find oversized files
-
-**Debugging:**
-- `parse_stack_trace(stack_trace)` -- extract structured frames from .NET stack traces
-- `parse_coverage_report(report_path)` -- parse Cobertura XML coverage reports
-
-### Open Brain Memory (MCP: `open-brain`)
-
-**Read tools:**
-- `thoughts_search(query, limit?, thought_type?, people?, topics?, days?)` -- semantic search via embeddings
-- `thoughts_recent(days?, limit?)` -- list recent thoughts by date
-- `thoughts_people(limit?)` -- list unique people mentioned
-- `thoughts_topics(limit?)` -- list unique topics mentioned
-- `thoughts_review(days?)` -- structured summary over a time period
-- `system_status()` -- system health check
-
-**Write tools:**
-- `thoughts_capture(text, metadata?)` -- capture thought with auto-classification
-- `thoughts_delete(id)` -- soft-delete a thought by UUID
-
-### SQLite Database (MCP: `sqlite`)
-- `read_query(sql)` -- execute SELECT queries (read-only)
-- `write_query(sql)` -- execute INSERT/UPDATE/DELETE
-- `create_table(sql)` -- create new tables
-- `list_tables()` -- list all tables in the database
-- `describe_table(table_name)` -- show table schema
-- `append_insight(insight)` -- store analysis notes
-
-> **Database path**: `/data/{{DB_FILENAME}}` (mounted read-only from `{{DB_DIRECTORY}}`)
-> Runs in Docker container `mcp/sqlite-mcp-server`. Configured at user-level `~/.claude/.mcp.json`.
+- **`ollama-tools`** — local LLM preprocessing: `local_first_pass`, `extract_json`, `map_project_structure`, plus health/model mgmt.
+- **`git-tools`** — all git operations: status/diff/log/show, add/rm/commit, branch/checkout, pull/push, stash, tag, remote.
+- **`dotnet-tools`** — structured .NET workflows:
+  - Build/test: `build_and_extract_errors`, `run_tests_summary`, `run_coverage`
+  - Project analysis: `map_dotnet_structure`, `parse_csproj`, `analyze_project_references`, `check_framework_compatibility`, `analyze_namespace_conflicts`
+  - NuGet: `nuget_list_outdated`, `nuget_check_vulnerabilities`, `nuget_dependency_tree`
+  - EF Core: `ef_migrations_status`, `ef_pending_migrations`, `ef_dbcontext_info`
+  - Code quality: `analyze_method_complexity`, `find_god_classes`, `find_large_files`
+  - Debugging: `parse_stack_trace`, `parse_coverage_report`
+- **`MCP_DOCKER`** — official GitHub MCP (Docker Desktop): issues, PRs, comments, search, file ops, releases.
+- **`github-tools`** — repo + workflow utilities: `gh_repo_from_origin`, `gh_workflow_list`.
+- **`open-brain`** — persistent memory: `thoughts_search`/`recent`/`capture`/`review`/`people`/`topics`/`delete`, `system_status` (8 tools).
+- **`sqlite`** — DB access: `read_query`, `write_query`, `list_tables`, `describe_table`, `append_insight`.
+  > DB mounted at `/data/{{DB_FILENAME}}` from `{{DB_DIRECTORY}}`. Configured at user-level `~/.claude/.mcp.json`.
 
 ---
 
