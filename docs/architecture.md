@@ -44,11 +44,13 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 ## Session Bootstrap
 
-CLAUDE.md enforces a mandatory bootstrap sequence at the start of every session:
+CLAUDE.md enforces a lightweight bootstrap sequence at the start of every session. `AGENT_TEAM.md` (~850 lines) is **not** read up front -- CLAUDE.md inlines a condensed Spawn-Prompt Binding Table so agent spawns still satisfy the `require-skills-block.sh` hook, and the PO loads the full file only when needed.
 
-1. Read `AGENT_TEAM.md` -- assume the PO role
+1. Assume the PO role. Load `AGENT_TEAM.md` on-demand when first spawning agents in a sprint, invoking the Plan Challenge Protocol, or answering questions about merge/escalation rules
 2. Read `PROJECT_CONTEXT.md` -- load build commands and workflow config
-3. Present current state (from MEMORY.md) and ask what to work on
+3. Check Open Brain (`thoughts_search` / `thoughts_recent`) for project context
+4. Present current state (from MEMORY.md) and ask what to work on
+5. Enter plan mode for any non-trivial task (T2+)
 
 ### Agent Type Selection
 

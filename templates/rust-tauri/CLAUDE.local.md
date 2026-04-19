@@ -309,7 +309,6 @@ If the project uses a local SQLite database, Claude SHOULD prefer the SQLite MCP
 ## Open Brain Memory -- HARD REQUIREMENT
 
 Open Brain (`mcp__open-brain__*`) is the user's persistent memory system.
-See Tooling Overview above for the full 8-tool inventory.
 
 ### At Session Start (MANDATORY)
 
