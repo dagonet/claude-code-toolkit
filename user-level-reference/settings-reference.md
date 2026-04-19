@@ -8,7 +8,9 @@ This document explains each section and setting in the user-level Claude Code se
 {
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe"
+    "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
   },
   "permissions": {
     "allow": [
@@ -87,7 +89,7 @@ This document explains each section and setting in the user-level Claude Code se
       }
     ]
   },
-  "contextCompactionThreshold": 40
+  "contextCompactionThreshold": 70
 }
 ```
 
@@ -98,7 +100,9 @@ This document explains each section and setting in the user-level Claude Code se
 ```json
 "env": {
   "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-  "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe"
+  "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+  "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
 }
 ```
 
@@ -106,6 +110,8 @@ This document explains each section and setting in the user-level Claude Code se
 |----------|-------|---------|
 | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | `"1"` | Enables the experimental Agent Teams feature, allowing multi-agent orchestration where specialized agents (architect, coder, tester, etc.) can collaborate on tasks. |
 | `CLAUDE_CODE_SHELL` | Path to bash.exe | Overrides the default shell used by Claude Code's Bash tool. Points to Git Bash so Unix-style commands work on Windows. |
+| `CLAUDE_CODE_DISABLE_1M_CONTEXT` | `"false"` | Enables the 1M token context window on Opus 4.6/4.7 (claude.ai MAX plan). Must be a **string** (`"false"`), not JSON boolean. On Sonnet this has no effect — Sonnet caps at 200k on MAX. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `"1000000"` | Sets the **context window size** (not the compaction trigger). Must match the model's max context, otherwise it clamps `/context` to this value. For Opus 4.7 with 1M context, keep at `"1000000"`. Setting it lower (e.g. `"700000"`) collapses `/context` back to 200k — a misleading symptom. Use `contextCompactionThreshold` to control *when* compaction triggers. |
 
 ### `permissions` -- Tool Permission Rules
 
@@ -226,10 +232,18 @@ Automatically enables all MCP servers defined in project-level `.mcp.json` files
 ### `contextCompactionThreshold`
 
 ```json
-"contextCompactionThreshold": 40
+"contextCompactionThreshold": 70
 ```
 
-Controls when Claude Code compacts (summarizes) the conversation context to stay within the context window. A value of `40` means compaction triggers when the conversation reaches approximately 40% of the context window. Lower values compact earlier (saving tokens but losing detail); higher values preserve more history.
+Controls **when** auto-compact triggers — expressed as a percentage of the current context window. `70` fires compaction at 70% fill (e.g. 140k on a 200k window, 700k on a 1M window). Lower values compact earlier (preserve quality, more frequent summary loss); higher values preserve more history (risk of degradation near ceiling).
+
+**Interaction with `CLAUDE_CODE_AUTO_COMPACT_WINDOW`:**
+- `AUTO_COMPACT_WINDOW` sets the *window size* — must match the model's max context.
+- `contextCompactionThreshold` sets the *trigger point* as a percentage of that window.
+- To get 1M context with compaction at 700k: `AUTO_COMPACT_WINDOW="1000000"` + `contextCompactionThreshold: 70`.
+- Do NOT try to tune behavior by lowering `AUTO_COMPACT_WINDOW` — that clamps the usable window (e.g. drops `/context` to 200k on Opus 4.7).
+
+**Context rot tuning (1M context):** Opus 4.x retrieval accuracy visibly degrades past ~800k. `70` is the recommended balance. `50` (aggressive) for quality-first sessions; `83+` to ride closer to the ceiling at the cost of recall quality.
 
 ### `hooks` -- Workflow Automation Hooks
 
