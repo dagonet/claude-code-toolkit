@@ -152,6 +152,10 @@ Skills with evals: `code-review` (3 tests, 16 assertions), `fix-errors` (3 tests
 - `{{SEARXNG_ARGS}}` -- Arguments for the SearXNG server
 - `{{SEARXNG_INSTANCE_URL}}` -- URL of your SearXNG instance (e.g., `http://localhost:8888`)
 
+**Related configuration (not in this template):**
+- **GitHub Personal Access Token** -- read by the official GitHub plugin from the `GITHUB_PERSONAL_ACCESS_TOKEN` system environment variable, not via template substitution. See [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md) → *Official GitHub Plugin* for setup.
+- **SQLite MCP** -- a project-level entry, generated into `<project>/.claude/.mcp.json` by `setup-project.sh --sqlite-db-path <path>` (or the `.ps1` equivalent). Not part of the user-level template.
+
 ### Settings Reference
 
 `settings-reference.md` -- Full annotated documentation of `~/.claude/settings.json` covering:
