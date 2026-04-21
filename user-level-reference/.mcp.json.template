@@ -1,23 +1,19 @@
 {
   "mcpServers": {
     "git-tools": {
-      "command": "{{PYTHON_VENV_PATH}}/python.exe",
-      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/git_mcp.py"]
+      "command": "{{PYTHON_VENV_PATH}}/mcp-git-tools.exe"
     },
     "github-tools": {
-      "command": "{{PYTHON_VENV_PATH}}/python.exe",
-      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/github_mcp.py"],
+      "command": "{{PYTHON_VENV_PATH}}/mcp-github-tools.exe",
       "env": {
         "GH_PROMPT_DISABLED": "1"
       }
     },
     "template-sync-tools": {
-      "command": "{{PYTHON_VENV_PATH}}/python.exe",
-      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/template_sync_mcp.py"]
+      "command": "{{PYTHON_VENV_PATH}}/mcp-template-sync-tools.exe"
     },
     "ollama-tools": {
-      "command": "{{PYTHON_VENV_PATH}}/python.exe",
-      "args": ["{{MCP_DEV_SERVERS_PATH}}/src/ollama_mcp.py"],
+      "command": "{{PYTHON_VENV_PATH}}/mcp-ollama-tools.exe",
       "env": {
         "OLLAMA_URL": "http://127.0.0.1:11434",
         "OLLAMA_MODEL_FIRST_PASS": "{{OLLAMA_MODEL_FIRST_PASS}}",
