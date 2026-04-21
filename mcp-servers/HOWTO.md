@@ -34,7 +34,9 @@ The custom Python MCP servers live in a separate repository:
 
 ## Python Virtual Environment Setup
 
-All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment.
+All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment. `pip install -e ".[ollama]"` installs `mcp-dev-servers` in editable mode and exposes 6 console scripts (`mcp-git-tools`, `mcp-github-tools`, `mcp-dotnet-tools`, `mcp-ollama-tools`, `mcp-rust-tools`, `mcp-template-sync-tools`) inside the venv. The `[ollama]` extra pulls `httpx`; drop it if you don't run Ollama.
+
+> **Invariant:** the venv MUST live at `<mcp-dev-servers>/.venv/` (the literal directory name `.venv` inside the repo root). Both `setup-project.{ps1,sh}` and the user-level `.mcp.json.template` hardcode this relative path. Naming the venv `env/`, placing it outside the repo, or installing via `pipx` will break project-level MCP registration silently.
 
 **Windows (PowerShell):**
 
@@ -43,7 +45,7 @@ git clone https://github.com/dagonet/mcp-dev-servers.git <your-path>\mcp-dev-ser
 cd <your-path>\mcp-dev-servers
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -e ".[ollama]"
 ```
 
 **Linux / macOS:**
@@ -53,8 +55,30 @@ git clone https://github.com/dagonet/mcp-dev-servers.git ~/repos/mcp-dev-servers
 cd ~/repos/mcp-dev-servers
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[ollama]"
 ```
+
+---
+
+## Migrating from pre-packaging install
+
+If you set up `mcp-dev-servers` **before 2026-04-21** (when it became a packaged Python project), module paths have changed and the install command is different. Update your local clone:
+
+```bash
+cd <your-mcp-dev-servers-path>
+git pull
+# activate the venv first
+#   Windows: .\.venv\Scripts\Activate.ps1
+#   Linux:   source .venv/bin/activate
+pip install -e ".[ollama]"
+```
+
+Then:
+
+- **Project-level `.claude/.mcp.json`** files: re-run `setup-project.{sh,ps1}` against each project to regenerate them with the new console-script paths.
+- **User-level registrations**: for each server you added with `claude mcp add`, run `claude mcp remove <name> -s user` and re-add it using the `mcp-<name>-tools(.exe)` console-script path shown in the install snippets below.
+
+Old paths like `<path>/src/git_mcp.py` no longer exist — Claude Code will report each affected server as `Failed to connect` until re-registered.
 
 ---
 
@@ -124,7 +148,7 @@ claude mcp add --scope user --transport stdio ollama-tools `
   -e OLLAMA_URL=http://127.0.0.1:11434 `
   -e OLLAMA_MODEL_FIRST_PASS=mistral:7b-instruct-q4_K_M `
   -e OLLAMA_MODEL_EXTRACT_JSON=qwen2.5:7b-instruct-q4_K_M `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\python.exe" "<your-path>\mcp-dev-servers\src\ollama_mcp.py"
+  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-ollama-tools.exe"
 ```
 
 **Linux / macOS:**
@@ -134,7 +158,7 @@ claude mcp add --scope user --transport stdio ollama-tools \
   -e OLLAMA_URL=http://127.0.0.1:11434 \
   -e OLLAMA_MODEL_FIRST_PASS=mistral:7b-instruct-q4_K_M \
   -e OLLAMA_MODEL_EXTRACT_JSON=qwen2.5:7b-instruct-q4_K_M \
-  -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/ollama_mcp.py
+  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-ollama-tools
 ```
 
 ## Git Tools (16 tools)
@@ -147,14 +171,14 @@ Git operations via MCP: status, diff, log, add, commit, branch, checkout, push, 
 
 ```powershell
 claude mcp add --scope user --transport stdio git-tools `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\python.exe" "<your-path>\mcp-dev-servers\src\git_mcp.py"
+  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-git-tools.exe"
 ```
 
 **Linux / macOS:**
 
 ```bash
 claude mcp add --scope user --transport stdio git-tools \
-  -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/git_mcp.py
+  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-git-tools
 ```
 
 ## GitHub Tools (2 tools)
@@ -170,7 +194,7 @@ Small custom GitHub utilities not covered by the official plugin — used by hoo
 ```powershell
 claude mcp add --scope user --transport stdio github-tools `
   -e GH_PROMPT_DISABLED=1 `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\python.exe" "<your-path>\mcp-dev-servers\src\github_mcp.py"
+  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-github-tools.exe"
 ```
 
 **Linux / macOS:**
@@ -178,7 +202,7 @@ claude mcp add --scope user --transport stdio github-tools `
 ```bash
 claude mcp add --scope user --transport stdio github-tools \
   -e GH_PROMPT_DISABLED=1 \
-  -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/github_mcp.py
+  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-github-tools
 ```
 
 ## Official GitHub Plugin (40+ tools)
@@ -217,14 +241,14 @@ Deterministic template syncing: manifest management, file status computation, th
 
 ```powershell
 claude mcp add --scope user --transport stdio template-sync-tools `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\python.exe" "<your-path>\mcp-dev-servers\src\template_sync_mcp.py"
+  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-template-sync-tools.exe"
 ```
 
 **Linux / macOS:**
 
 ```bash
 claude mcp add --scope user --transport stdio template-sync-tools \
-  -- ~/repos/mcp-dev-servers/.venv/bin/python ~/repos/mcp-dev-servers/src/template_sync_mcp.py
+  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-template-sync-tools
 ```
 
 ## SearXNG (Web Search)
@@ -370,14 +394,13 @@ Read-only database inspection via Docker.
 {
   "mcpServers": {
     "dotnet-tools": {
-      "command": "<mcp-dev-servers-path>/.venv/bin/python",
-      "args": ["<mcp-dev-servers-path>/src/dotnet_mcp.py"]
+      "command": "<mcp-dev-servers-path>/.venv/bin/mcp-dotnet-tools"
     }
   }
 }
 ```
 
-Replace `<mcp-dev-servers-path>` with the absolute path to your local `mcp-dev-servers` repo. On Windows use `<path>\.venv\Scripts\python.exe`.
+Replace `<mcp-dev-servers-path>` with the absolute path to your local `mcp-dev-servers` repo. On Windows use `<path>\.venv\Scripts\mcp-dotnet-tools.exe`.
 
 ## Rust Tools (4 tools) — rust-tauri variant
 
@@ -391,8 +414,7 @@ Cargo build, test, and clippy with structured diagnostics. Requires Rust toolcha
 {
   "mcpServers": {
     "rust-tools": {
-      "command": "<mcp-dev-servers-path>/.venv/bin/python",
-      "args": ["<mcp-dev-servers-path>/src/rust_mcp.py"]
+      "command": "<mcp-dev-servers-path>/.venv/bin/mcp-rust-tools"
     }
   }
 }

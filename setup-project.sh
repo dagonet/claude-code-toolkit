@@ -278,14 +278,12 @@ build_project_mcp_json() {
         case "$entry" in
             dotnet-tools)
                 out+='    "dotnet-tools": {'$'\n'
-                out+='      "command": "python",'$'\n'
-                out+='      "args": ["'"$(json_escape "$MCP_DEV_SERVERS_PATH/src/dotnet_mcp.py")"'"]'$'\n'
+                out+='      "command": "'"$(json_escape "$MCP_DEV_SERVERS_PATH/.venv/bin/mcp-dotnet-tools")"'"'$'\n'
                 out+='    }'"$comma"$'\n'
                 ;;
             rust-tools)
                 out+='    "rust-tools": {'$'\n'
-                out+='      "command": "python",'$'\n'
-                out+='      "args": ["'"$(json_escape "$MCP_DEV_SERVERS_PATH/src/rust_mcp.py")"'"]'$'\n'
+                out+='      "command": "'"$(json_escape "$MCP_DEV_SERVERS_PATH/.venv/bin/mcp-rust-tools")"'"'$'\n'
                 out+='    }'"$comma"$'\n'
                 ;;
             windows-mcp)

@@ -239,14 +239,12 @@ function Build-ProjectMcpJson {
 
     if ($Variant -in @("dotnet", "dotnet-maui") -and $McpDevServersPath) {
         $mcpServers['dotnet-tools'] = [ordered]@{
-            command = "python"
-            args    = @(($McpDevServersPath.TrimEnd('\','/') + "/src/dotnet_mcp.py"))
+            command = ($McpDevServersPath.TrimEnd('\','/') + "/.venv/Scripts/mcp-dotnet-tools.exe")
         }
     }
     if ($Variant -eq "rust-tauri" -and $McpDevServersPath) {
         $mcpServers['rust-tools'] = [ordered]@{
-            command = "python"
-            args    = @(($McpDevServersPath.TrimEnd('\','/') + "/src/rust_mcp.py"))
+            command = ($McpDevServersPath.TrimEnd('\','/') + "/.venv/Scripts/mcp-rust-tools.exe")
         }
     }
     if ($Variant -in @("dotnet-maui", "rust-tauri")) {
