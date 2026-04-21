@@ -142,12 +142,8 @@ Skills with evals: `code-review` (3 tests, 16 assertions), `fix-errors` (3 tests
 
 ### MCP Config Template
 
-`.mcp.json.template` -- A templatized version of `~/.claude/.mcp.json` with placeholders for secrets and machine-specific paths:
-- `{{GITHUB_PAT}}` -- GitHub Personal Access Token
+`.mcp.json.template` -- A templatized version of `~/.claude/.mcp.json` with placeholders for machine-specific paths and configuration:
 - `{{PYTHON_VENV_PATH}}` -- Path to the Python virtual environment binary directory (e.g., `<your-path>\mcp-dev-servers\.venv\Scripts` on Windows, `~/repos/mcp-dev-servers/.venv/bin` on Linux/macOS)
-- `{{MCP_DEV_SERVERS_PATH}}` -- Path to the mcp-dev-servers repository root (e.g., `<your-path>\mcp-dev-servers` on Windows, `~/repos/mcp-dev-servers` on Linux/macOS)
-- `{{SQLITE_DB_HOST_DIR}}` -- Host directory containing the SQLite database file
-- `{{SQLITE_DB_FILENAME}}` -- Name of the SQLite database file
 - `{{OLLAMA_MODEL_FIRST_PASS}}` -- Ollama model for text compression (e.g., `mistral:7b-instruct-q4_K_M`)
 - `{{OLLAMA_MODEL_EXTRACT_JSON}}` -- Ollama model for JSON extraction (e.g., `qwen2.5:7b-instruct-q4_K_M`)
 - `{{OPEN_BRAIN_COMMAND}}` -- Command to launch the Open Brain MCP server (replace with your installation path)
