@@ -1,0 +1,37 @@
+name: user-level-reference placeholder parity
+
+on:
+  pull_request:
+    paths:
+      - user-level-reference/README.md
+      - user-level-reference/.mcp.json.template
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare placeholder sets
+        run: |
+          set -euo pipefail
+
+          template=$(grep -oE '\{\{[A-Z_]+\}\}' user-level-reference/.mcp.json.template | sort -u)
+          readme=$(sed -n '/### MCP Config Template/,/^### /p' user-level-reference/README.md \
+                   | grep -oE '\{\{[A-Z_]+\}\}' | sort -u)
+
+          if [[ -z "$readme" ]]; then
+            echo "::error::Couldn't extract placeholders from user-level-reference/README.md MCP Config Template section. Was the heading renamed?"
+            exit 1
+          fi
+
+          if ! diff <(echo "$template") <(echo "$readme") > /tmp/parity.diff; then
+            echo "::error::user-level-reference/.mcp.json.template and README.md placeholder sets diverge:"
+            cat /tmp/parity.diff
+            echo ""
+            echo "Lines starting with '<' are in the template but not documented in README."
+            echo "Lines starting with '>' are documented in README but not in the template."
+            exit 1
+          fi
+
+          echo "PARITY: identical placeholder sets ($(echo "$template" | wc -l | tr -d ' ') placeholders)"
