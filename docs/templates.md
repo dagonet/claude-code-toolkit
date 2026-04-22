@@ -130,5 +130,4 @@ The manifest is consumed by the **template-sync-tools** MCP server, which powers
 
 ## Next Steps
 
-- [Windows setup guide](setup-windows.md)
-- [Linux/macOS setup guide](setup-linux-macos.md)
+- [Setup walkthrough (Windows + Linux/macOS)](setup.md)

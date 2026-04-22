@@ -126,6 +126,5 @@ This unlocks every MCP tool, skill, and automation the templates reference.
 
 Once you have the prerequisites for your chosen tier, proceed to the setup guide for your platform:
 
-- **Windows**: [setup-windows.md](setup-windows.md)
-- **Linux/macOS**: [setup-linux-macos.md](setup-linux-macos.md)
+- [Setup walkthrough (Windows + Linux/macOS)](setup.md)
 - **Comparing templates**: [templates.md](templates.md)

@@ -109,8 +109,7 @@ claude-code-toolkit/
 ├── setup-project.sh                       # Automated setup (Linux/macOS)
 ├── docs/
 │   ├── getting-started.md                 # Prerequisites, adoption tiers, MCP servers
-│   ├── setup-windows.md                   # Windows setup walkthrough
-│   ├── setup-linux-macos.md               # Linux/macOS setup walkthrough
+│   ├── setup.md                           # Setup walkthrough (Windows + Linux/macOS)
 │   ├── templates.md                       # Template details and placeholder reference
 │   ├── architecture.md                    # This file
 │   ├── verification.md                    # Post-setup verification checklist

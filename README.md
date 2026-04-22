@@ -3,82 +3,80 @@
 
 # Claude Code Toolkit
 
-Reusable templates for bootstrapping projects with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) setup. Six template variants ship 8 agents, 11 skills, 21 commands, and pre-wired MCP server permissions -- pick a variant, run the setup script, and start coding with a full AI-assisted workflow.
+> **Bootstrap a project with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workflow in one command.** Six template variants drop in an opinionated agent team, slash commands, auto-triggered skills, MCP permissions, and workflow-enforcement hooks — so `/build`, `/test`, `/commit`, and `/sprint` work the moment you're done.
 
-## Template Variants
-
-Pick the variant that matches your project. All share the same dual-mode workflow (GitHub Issues or plan files) and tiered sprint model (T1--T4).
-
-| Feature | General | .NET | .NET MAUI | Rust/Tauri | Java | Python |
-|---------|---------|------|-----------|------------|------|--------|
-| Language/Framework | Any | C#/.NET | .NET MAUI Desktop | Rust + TypeScript (Tauri v2) | Java (Spring Boot) | Python |
-| Agents | 7 | 8 (+dotnet-coder) | 8 (+dotnet-coder) | 8 (+rust-coder) | 8 (+java-coder) | 8 (+python-coder) |
-| Code Style Tooling | -- | .editorconfig | .editorconfig | rustfmt.toml + .prettierrc | .editorconfig | .editorconfig |
-| Build/Test Integration | Generic | dotnet build/test | + publish, FlaUI | cargo + npm | Maven or Gradle | pytest + ruff |
-| Post-Edit Build Hook | No | `dotnet build` | `dotnet build` | No | No | No |
-| Desktop Automation | No | No | Windows-MCP | Windows-MCP | No | No |
-| Database Tools | SQLite MCP | SQLite MCP (optional) | SQLite MCP (optional) | SQLite MCP (optional) | SQLite MCP (optional) | SQLite MCP (optional) |
-
-## Get Started
-
-| Topic | Doc |
-|-------|-----|
-| Prerequisites, adoption tiers, MCP servers | [`docs/getting-started.md`](docs/getting-started.md) |
-| Setup on Windows (PowerShell) | [`docs/setup-windows.md`](docs/setup-windows.md) |
-| Setup on Linux / macOS (Bash) | [`docs/setup-linux-macos.md`](docs/setup-linux-macos.md) |
-| Template details, placeholders, manual setup | [`docs/templates.md`](docs/templates.md) |
-| **Agent-guided setup** (let Claude / Cursor / Copilot drive the wizard) | [`AGENTS.md`](AGENTS.md) |
-
-## Learn More
-
-| Topic | Doc |
-|-------|-----|
-| Architecture -- layered config, AGENT_TEAM, session bootstrap | [`docs/architecture.md`](docs/architecture.md) |
-| Post-setup verification checklist | [`docs/verification.md`](docs/verification.md) |
-| Template sync and contributing upstream | [`docs/template-sync.md`](docs/template-sync.md) |
-| MCP server installation | [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md) |
-| User-level config reference (agents, commands, skills) | [`user-level-reference/README.md`](user-level-reference/README.md) |
-| Workflow diagram, known enforcement gaps, follow-up PR roadmap | [`docs/workflow-audit.md`](docs/workflow-audit.md) |
-| Plan: wire superpowers skills into templates (2026-04-12) | [`docs/plans/2026-04-12-wire-superpowers-skills.md`](docs/plans/2026-04-12-wire-superpowers-skills.md) |
-| Plan: user-level Read size gate hook (2026-04-14) -- install stanza in [`user-level-reference/settings-reference.md`](user-level-reference/settings-reference.md#read-size-gate-pretooluse-user-level-recommended) | [`docs/plans/2026-04-14-read-size-gate.md`](docs/plans/2026-04-14-read-size-gate.md) |
-
-## Repository Structure
-
-```
-claude-code-toolkit/
-├── README.md
-├── setup-project.ps1          # Automated setup (Windows)
-├── setup-project.sh           # Automated setup (Linux/macOS)
-├── docs/
-│   ├── getting-started.md     # Prerequisites, adoption tiers, MCP servers
-│   ├── setup-windows.md       # Windows setup walkthrough
-│   ├── setup-linux-macos.md   # Linux/macOS setup walkthrough
-│   ├── templates.md           # Template details and placeholder reference
-│   ├── architecture.md        # Layered config, workflow, session bootstrap
-│   ├── verification.md        # Post-setup verification checklist
-│   └── template-sync.md       # Keeping projects in sync with templates
-├── templates/
-│   ├── general/               # Any language
-│   ├── dotnet/                # C#/.NET
-│   ├── dotnet-maui/           # .NET MAUI desktop
-│   ├── rust-tauri/            # Rust + Tauri v2 desktop
-│   ├── java/                  # Java (Spring Boot)
-│   └── python/                # Python
-├── mcp-servers/
-│   └── HOWTO.md               # MCP server installation guide
-└── user-level-reference/      # ~/.claude/ reference for new machines
-    ├── agents/                # 7 generic agent definitions
-    ├── commands/              # 21 slash commands
-    └── skills/                # 11 auto-invoked skills
+```bash
+./setup-project.sh --variant python --project-name MyApp --target-path ../my-app
+# Windows: .\setup-project.ps1 -Variant python -ProjectName MyApp -TargetPath ..\my-app
 ```
 
-## Related Projects
+✅ **For:** Claude Code users on Windows / macOS / Linux working in .NET, Java, Python, Rust+Tauri, .NET MAUI — or any other language (`general`).
 
-This toolkit is part of an ecosystem of repos for AI-assisted development with Claude Code:
+---
 
-- [mcp-dev-servers](https://github.com/dagonet/mcp-dev-servers) -- Six custom MCP servers (55 tools) for git, GitHub, .NET, Rust, Ollama, and template-sync integration
-- [open-brain](https://github.com/dagonet/open-brain) -- Persistent memory MCP server that stores decisions, insights, and context across sessions
+## What you get
+
+- **6 template variants** (`general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`) with language-specific build hooks, format gates, and conventions baked in.
+- **7–8 agents per variant** — architect, code-reviewer, coder, doc-generator, requirements-engineer, test-writer, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps.
+- **23 user-level slash commands** for the daily loop: `/build`, `/test`, `/commit`, `/sprint`, `/challenge`, `/code-review`, `/new-feature`, `/sync-template`, …
+- **11 auto-triggering skills** that load themselves based on what you're doing (debugging, refactoring, exploring a new codebase, …).
+- **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
+- **Workflow enforcement hooks**: `Bash(git/gh *)` blocked in favor of MCP, commit-time format gates, no-push-to-main, tier-before-coder.
+
+## 5-minute quickstart
+
+1. **Install prerequisites:** `git`, `Node.js 18+`, and Claude Code CLI (`npm install -g @anthropic-ai/claude-code`). Variant-specific extras (.NET SDK, Rust, JDK, Python) are listed in [`docs/getting-started.md`](docs/getting-started.md).
+2. **Clone:**
+   ```bash
+   git clone https://github.com/dagonet/claude-code-toolkit
+   cd claude-code-toolkit
+   ```
+3. **Run the setup script** against your project directory:
+   ```bash
+   ./setup-project.sh --variant <variant> --project-name <name> --target-path <path>
+   ```
+   See [`docs/setup.md`](docs/setup.md) for per-variant flags and full examples.
+4. **(Optional) Install MCP servers** for tool-accelerated workflows: [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
+5. **Open your project in Claude Code** and try `/sprint` or `/build`.
+
+> Prefer to walk Claude / Cursor / Copilot through the wizard interactively? See [`AGENTS.md`](AGENTS.md).
+
+## Variants at a glance
+
+| Variant | Use when | Extras vs. `general` |
+|---|---|---|
+| `general` | Any language, no special tooling | — |
+| `dotnet` | C#/.NET 8+ | `dotnet-coder`, `dotnet build` post-edit hook, `dotnet format` gate |
+| `dotnet-maui` | .NET MAUI desktop | + FlaUI tester, Windows-MCP, optional SQLite |
+| `rust-tauri` | Rust + Tauri v2 desktop | `rust-coder`, `cargo check` hook, `cargo fmt` + Prettier gate, Windows-MCP |
+| `java` | Java + Maven/Gradle (Spring Boot default) | `java-coder`, Spotless gate |
+| `python` | Python 3.11+ (pip / Poetry / uv) | `python-coder`, `ruff check` hook + `ruff format` gate |
+
+Full comparison + project-level MCP matrix: [`docs/templates.md`](docs/templates.md).
+
+## Documentation
+
+| What you want to do | Where to look |
+|---|---|
+| Walk Claude / Cursor / Copilot through setup | [`AGENTS.md`](AGENTS.md) |
+| Detailed setup walkthrough (Windows + Linux/macOS) | [`docs/setup.md`](docs/setup.md) |
+| Prerequisites + adoption tiers (start small, grow into it) | [`docs/getting-started.md`](docs/getting-started.md) |
+| Compare variants, see placeholders + manifest format | [`docs/templates.md`](docs/templates.md) |
+| Install MCP servers | [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md) |
+| Architecture: layered config, hooks, AGENT_TEAM v2.0 | [`docs/architecture.md`](docs/architecture.md) |
+| Verify your setup works | [`docs/verification.md`](docs/verification.md) |
+| Keep projects in sync with the templates | [`docs/template-sync.md`](docs/template-sync.md) |
+| Reference for `~/.claude/` (agents, commands, skills, settings) | [`user-level-reference/README.md`](user-level-reference/README.md) |
+
+## Related projects
+
+- [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) — six custom MCP servers (58 tools) for git, GitHub, .NET, Rust, Ollama, and template-sync. Used by every variant.
+- [**open-brain**](https://github.com/dagonet/open-brain) — persistent memory MCP server for storing decisions, insights, and context across sessions.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Security issues: [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
