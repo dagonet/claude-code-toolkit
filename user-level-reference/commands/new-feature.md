@@ -2,6 +2,8 @@
 
 Plan and scaffold a new feature with proper .NET architecture patterns.
 
+> **Output style:** summary mode by default. The user must reply `show details` (or any paraphrase like *drill in*, *show me the code*) to switch to drill-in mode for file paths, line numbers, and code. See agent definitions for the convention.
+
 ## Arguments
 
 - `$ARGUMENTS` - Feature name or description

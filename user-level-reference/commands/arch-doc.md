@@ -2,6 +2,8 @@
 
 Generate architecture documentation from code analysis.
 
+> **Output style:** summary mode by default for any narrative findings. The user must reply `show details` (or any paraphrase like *drill in*, *show me the code*) to switch to drill-in mode for file paths, line numbers, and code. The generated documentation file itself is not affected — only conversational findings.
+
 ## Arguments
 
 - `$ARGUMENTS` - Output format (markdown, mermaid) or specific focus area

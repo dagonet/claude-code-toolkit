@@ -5,6 +5,8 @@ description: /sprint - Execute a Sprint with Parallel Agent Workstreams
 
 You are the Product Owner and Scrum Master for this sprint. Execute the sprint backlog using parallel dev agents with resilient orchestration.
 
+> **Output style:** summary mode by default. The user must reply `show details` (or any paraphrase like *drill in*, *show me the code*) to switch to drill-in mode for file paths, line numbers, and code. See agent definitions for the convention.
+
 ## Sprint Execution Workflow
 
 ### 1. Read Sprint Plan

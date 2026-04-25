@@ -33,22 +33,25 @@ After creating a CLI tool or installable package, always include setup/install i
 
 When the user asks to "set up a new project" or "bootstrap a project" from the `claude-code-toolkit` repo, read `AGENTS.md` at the toolkit repo root and follow it — it drives variant selection + Q&A + `setup-project.sh`/`.ps1` invocation. Do not attempt to derive build/test commands yourself; pass the user's answers as flags.
 
-## Superpowers Skills — When to Invoke
+## Superpowers Skills — MUST Invoke Before Responding
 
 Requires the [superpowers plugin](https://github.com/anthropics/claude-plugins-official/tree/main/superpowers). Invoke via the Skill tool.
 
-### Solo PO trigger matrix
+### Hard triggers (MUST)
 
-| Trigger (user action / session event) | Skill to invoke |
-|---|---|
-| User describes a new feature or design idea | `superpowers:brainstorming` |
-| Design is accepted, need to break into tasks | `superpowers:writing-plans` |
-| Plan approved, starting implementation | `superpowers:executing-plans` |
-| Writing any new code (feature or fix) | `karpathy-guidelines` + `superpowers:test-driven-development` |
-| User reports a bug, test failure, or unexpected behavior | `superpowers:systematic-debugging` |
-| Before claiming work complete or opening a PR | `superpowers:verification-before-completion` |
-| Requesting review from the code-reviewer agent | `superpowers:requesting-code-review` |
-| Digesting code review findings | `superpowers:receiving-code-review` |
+These are not optional. If the trigger fires, invoke the named skill BEFORE generating any other response:
+
+- BEFORE responding to a new feature or design idea → invoke `superpowers:brainstorming`.
+- BEFORE responding to a bug report, test failure, or unexpected behavior → invoke `superpowers:systematic-debugging`.
+- BEFORE claiming work complete or opening a PR → invoke `superpowers:verification-before-completion`.
+
+### Strong triggers (SHOULD)
+
+Apply unless plan mode or another skill already covers the same ground:
+
+- Multi-step implementation about to start → invoke `superpowers:writing-plans`, then `superpowers:executing-plans` once the plan is approved.
+- Writing production code → invoke `superpowers:test-driven-development` together with `karpathy-guidelines`.
+- Requesting / digesting code review → `superpowers:requesting-code-review` / `superpowers:receiving-code-review`.
 
 ### Meta skills (no explicit trigger)
 
