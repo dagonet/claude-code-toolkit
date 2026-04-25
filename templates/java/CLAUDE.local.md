@@ -40,6 +40,7 @@ and MUST NOT use Bash git commands.
 - `git_add`, `git_rm`, `git_commit`
 - `git_branch_list`, `git_checkout`
 - `git_pull`, `git_push`, `git_stash`
+- `git_worktree_list`, `git_worktree_add`, `git_worktree_remove`
 - `git_env_info` (for debugging)
 
 ### Forbidden
