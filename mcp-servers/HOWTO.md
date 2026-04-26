@@ -29,7 +29,7 @@ This guide is split accordingly. For the **why**, see `docs/architecture.md` →
 The custom Python MCP servers live in a separate repository:
 
 - **Repository:** https://github.com/dagonet/mcp-dev-servers
-- **55+ tools** across 6 servers
+- **61 tools** across 6 servers
 - See that repo's README for full tool reference
 
 ## Python Virtual Environment Setup
