@@ -23,7 +23,7 @@ Tool schemas and full parameter signatures load on-demand via Claude Code's MCP 
   - Debugging: `parse_stack_trace`, `parse_coverage_report`
 - **`MCP_DOCKER`** — official GitHub MCP (Docker Desktop): issues, PRs, comments, search, file ops, releases.
 - **`github-tools`** — repo + workflow utilities: `gh_repo_from_origin`, `gh_workflow_list`.
-- **`open-brain`** — persistent memory: `thoughts_search`/`recent`/`capture`/`review`/`people`/`topics`/`delete`, `system_status` (8 tools).
+- **`open-brain`** — persistent memory: `thoughts_search`/`recent`/`capture`/`review`/`people`/`topics`/`delete`, `system_status`, plus wiki tools (`wiki_get`/`wiki_list`/`wiki_refresh`) and contradictions tools (`contradictions_list`/`contradictions_resolve`/`contradictions_audit`) (14 tools).
 - **`sqlite`** — DB access: `read_query`, `write_query`, `list_tables`, `describe_table`, `append_insight`.
   > DB mounted at `/data/{{DB_FILENAME}}` from `{{DB_DIRECTORY}}`. Configured at user-level `~/.claude/.mcp.json`.
 
@@ -370,6 +370,24 @@ Claude MUST NOT capture:
 - Temporary debugging state
 - Information already in commit messages
 - Anything the user marks as private
+
+### Wiki Tools
+
+For synthesis-style questions on a known topic, prefer the wiki layer:
+
+- `wiki_list` — cheap probe (`{limit:1}`) to confirm any wiki pages exist for this user
+- `wiki_get` — fetch a compiled wiki page for a topic
+- `wiki_refresh` — recompile a stale page on demand
+
+Treat the page as stale and fall back to `thoughts_search` if any of the following hold: `stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days. The wiki-first rule is intentionally conditional — it does not replace the session-start `thoughts_search` mandate above.
+
+### Contradictions Tools
+
+When durable knowledge appears to conflict, surface and resolve via:
+
+- `contradictions_list` — review open contradictions
+- `contradictions_resolve` — record a resolution decision
+- `contradictions_audit` — request an on-demand contradiction audit over recent thoughts
 
 ### Forbidden
 - Skipping the session-start read

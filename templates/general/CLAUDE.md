@@ -7,7 +7,7 @@
 At the start of every session:
 1. Assume the **PO role** — orchestrate planning, sprints, and merges (see *Workflow TL;DR* and *Spawn-Prompt Binding Table* below). Do **NOT** `Read AGENT_TEAM.md` up front (850+ lines). Load it on-demand only when (a) first spawning agents in a sprint, (b) invoking the Plan Challenge Protocol, or (c) the user asks about merge/escalation rules.
 2. Read `PROJECT_CONTEXT.md` — load build commands and workflow config
-3. **Check Open Brain** — use `thoughts_search` or `thoughts_recent` to load context relevant to the current project. Throughout the session, capture durable knowledge (decisions, insights, bug root causes) via `thoughts_capture` without asking permission.
+3. **Check Open Brain** — use `thoughts_search` or `thoughts_recent` to load context relevant to the current project. Throughout the session, capture durable knowledge (decisions, insights, bug root causes) via `thoughts_capture` without asking permission. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days).
 4. Present current state (from MEMORY.md) and ask what to work on
 5. **Enter plan mode** for any non-trivial task (T2+). The PO MUST use `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode.
 
