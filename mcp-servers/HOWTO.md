@@ -281,7 +281,10 @@ claude mcp add --scope user --transport stdio searxng \
 Open Brain is a persistent memory MCP server that provides a "second brain" for Claude — storing decisions, insights, and context across sessions.
 
 - **Project:** https://github.com/dagonet/open-brain (check for latest installation instructions)
-- **Tools:** `thoughts_capture`, `thoughts_search`, `thoughts_topics`, `thoughts_people`, `thoughts_recent`, `thoughts_review`, `thoughts_delete`, `system_status`
+- **Tools (14 total):**
+  - **Thoughts:** `thoughts_capture`, `thoughts_search`, `thoughts_topics`, `thoughts_people`, `thoughts_recent`, `thoughts_review`, `thoughts_delete`, `system_status`
+  - **Wiki:** `wiki_get`, `wiki_list`, `wiki_refresh`
+  - **Contradictions:** `contradictions_list`, `contradictions_resolve`, `contradictions_audit`
 
 **Windows (PowerShell):**
 
@@ -298,6 +301,8 @@ claude mcp add --scope user --transport stdio open-brain \
 ```
 
 **Note:** Check the project repository for the latest installation method — the command and package name may vary. Open Brain stores data locally and provides semantic search over captured thoughts.
+
+**Per-repo opt-out (v0.3.0+):** if a particular project shouldn't see the wiki and contradictions tool families, add `"OPEN_BRAIN_TOOLS_DISABLED": "wiki,contradictions"` to the open-brain server's `env` block in that project's `.mcp.json`. The MCP server filters those families from `tools/list`; the `thoughts_*` tools and `system_status` remain available.
 
 ## Context Mode Plugin
 

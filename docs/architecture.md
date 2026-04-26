@@ -48,7 +48,7 @@ CLAUDE.md enforces a lightweight bootstrap sequence at the start of every sessio
 
 1. Assume the PO role. Load `AGENT_TEAM.md` on-demand when first spawning agents in a sprint, invoking the Plan Challenge Protocol, or answering questions about merge/escalation rules
 2. Read `PROJECT_CONTEXT.md` -- load build commands and workflow config
-3. Check Open Brain (`thoughts_search` / `thoughts_recent`) for project context
+3. Check Open Brain (`thoughts_search` / `thoughts_recent`) for project context. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days)
 4. Present current state (from MEMORY.md) and ask what to work on
 5. Enter plan mode for any non-trivial task (T2+)
 

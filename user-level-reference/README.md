@@ -148,6 +148,9 @@ Skills with evals: `code-review` (3 tests, 16 assertions), `fix-errors` (3 tests
 - `{{OLLAMA_MODEL_EXTRACT_JSON}}` -- Ollama model for JSON extraction (e.g., `qwen2.5:7b-instruct-q4_K_M`)
 - `{{OPEN_BRAIN_COMMAND}}` -- Command to launch the Open Brain MCP server (replace with your installation path)
 - `{{OPEN_BRAIN_ARGS}}` -- Arguments for the Open Brain server (replace with your configuration)
+
+  > **Per-repo opt-out (Open Brain v0.3.0+):** to disable the wiki and contradictions tool families for a specific project, add an `env` block to that project's `.mcp.json` open-brain entry: `"OPEN_BRAIN_TOOLS_DISABLED": "wiki,contradictions"`. The MCP server filters those tool families from `tools/list` when this env var is set; existing `thoughts_*` tools remain available.
+
 - `{{SEARXNG_COMMAND}}` -- Command to launch the SearXNG MCP server
 - `{{SEARXNG_ARGS}}` -- Arguments for the SearXNG server
 - `{{SEARXNG_INSTANCE_URL}}` -- URL of your SearXNG instance (e.g., `http://localhost:8888`)
