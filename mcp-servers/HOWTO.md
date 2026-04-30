@@ -29,12 +29,12 @@ This guide is split accordingly. For the **why**, see `docs/architecture.md` →
 The custom Python MCP servers live in a separate repository:
 
 - **Repository:** https://github.com/dagonet/mcp-dev-servers
-- **61 tools** across 6 servers
+- **95 tools** across 7 servers
 - See that repo's README for full tool reference
 
 ## Python Virtual Environment Setup
 
-All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment. `pip install -e ".[ollama]"` installs `mcp-dev-servers` in editable mode and exposes 6 console scripts (`mcp-git-tools`, `mcp-github-tools`, `mcp-dotnet-tools`, `mcp-ollama-tools`, `mcp-rust-tools`, `mcp-template-sync-tools`) inside the venv. The `[ollama]` extra pulls `httpx`; drop it if you don't run Ollama.
+All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment. `pip install -e ".[ollama]"` installs `mcp-dev-servers` in editable mode and exposes 7 console scripts (`mcp-git-tools`, `mcp-github-tools`, `mcp-dotnet-tools`, `mcp-ollama-tools`, `mcp-rust-tools`, `mcp-template-sync-tools`, `mcp-python-tools`) inside the venv. The `[ollama]` extra pulls `httpx`; drop it if you don't run Ollama.
 
 > **Invariant:** the venv MUST live at `<mcp-dev-servers>/.venv/` (the literal directory name `.venv` inside the repo root). Both `setup-project.{ps1,sh}` and the user-level `.mcp.json.template` hardcode this relative path. Naming the venv `env/`, placing it outside the repo, or installing via `pipx` will break project-level MCP registration silently.
 
@@ -161,11 +161,11 @@ claude mcp add --scope user --transport stdio ollama-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/mcp-ollama-tools
 ```
 
-## Git Tools (16 tools)
+## Git Tools (34 tools)
 
-Git operations via MCP: status, diff, log, add, commit, branch, checkout, push, pull, stash.
+Git operations via MCP: status, diff, log, add, commit, tag, branch, checkout, push, pull, fetch, reset, rebase, stash, restore, worktree, config, archive, describe, revert, reflog, clean-dry-run.
 
-**Tools:** `git_status`, `git_add`, `git_rm`, `git_commit`, `git_diff`, `git_diff_summary`, `git_log`, `git_branch_list`, `git_checkout`, `git_pull`, `git_push`, `git_stash`, `git_remote_list`, `git_tag_list`, `git_show`, `git_env_info`
+**Key tools:** `git_status`, `git_add`, `git_rm`, `git_commit`, `git_diff`, `git_diff_summary`, `git_log`, `git_branch_list`, `git_branch_create`, `git_branch_delete`, `git_checkout`, `git_pull`, `git_push` (with `--tags` support), `git_fetch`, `git_reset`, `git_rebase` (non-interactive only), `git_stash`, `git_remote_list`, `git_tag_list`, `git_tag_create`, `git_tag_delete`, `git_describe`, `git_revert`, `git_archive`, `git_config_get`, `git_config_set`, `git_restore`, `git_clean_dry_run`, `git_reflog`, `git_show`, `git_worktree_list`, `git_worktree_add`, `git_worktree_remove`, `git_env_info`
 
 **Windows (PowerShell):**
 
@@ -181,11 +181,11 @@ claude mcp add --scope user --transport stdio git-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/mcp-git-tools
 ```
 
-## GitHub Tools (2 tools)
+## GitHub Tools (17 tools)
 
-Small custom GitHub utilities not covered by the official plugin — used by hooks and a few skills.
+Custom GitHub utilities not covered by the official plugin — release management, workflow dispatch/monitoring, PR hygiene, and more.
 
-**Tools:** `gh_repo_from_origin` (get OWNER/REPO from local git remote), `gh_workflow_list` (list GitHub Actions workflow runs)
+**Tools:** `gh_repo_from_origin`, `gh_workflow_list`, `github_release_create` (draft by default), `github_release_edit` (use `draft=false` to publish), `github_release_delete` (name-match guard), `github_release_upload_asset`, `github_release_delete_asset`, `github_workflow_dispatch`, `github_workflow_run_wait`, `github_workflow_run_rerun`, `github_workflow_run_cancel`, `github_check_runs_for_sha`, `github_branch_protection_get`, `github_pr_label_add`, `github_pr_label_remove`, `github_pr_request_review`, `github_pr_auto_merge`
 
 **Requires:** GitHub CLI (`gh`) installed and authenticated
 
@@ -203,6 +203,28 @@ claude mcp add --scope user --transport stdio github-tools `
 claude mcp add --scope user --transport stdio github-tools \
   -e GH_PROMPT_DISABLED=1 \
   -- ~/repos/mcp-dev-servers/.venv/bin/mcp-github-tools
+```
+
+## Python Tools (7 tools)
+
+Python development workflows: wheel and sdist inspection, smoke install (throwaway venv), pytest with typed output, ruff (lint + format), uv build, coverage.
+
+**Tools:** `wheel_inspect`, `sdist_inspect`, `python_smoke_install`, `uv_build`, `pytest_run`, `ruff` (mode: check/format), `coverage` (merged collect + report)
+
+**Requires:** `uv`, `pytest`, `ruff`, `coverage` in the project environment; Python 3.11+
+
+**Windows (PowerShell):**
+
+```powershell
+claude mcp add --scope user --transport stdio python-tools `
+  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-python-tools.exe"
+```
+
+**Linux / macOS:**
+
+```bash
+claude mcp add --scope user --transport stdio python-tools \
+  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-python-tools
 ```
 
 ## Official GitHub Plugin (40+ tools)

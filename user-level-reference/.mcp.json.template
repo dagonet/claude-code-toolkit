@@ -12,6 +12,9 @@
     "template-sync-tools": {
       "command": "{{PYTHON_VENV_PATH}}/mcp-template-sync-tools.exe"
     },
+    "python-tools": {
+      "command": "{{PYTHON_VENV_PATH}}/mcp-python-tools.exe"
+    },
     "ollama-tools": {
       "command": "{{PYTHON_VENV_PATH}}/mcp-ollama-tools.exe",
       "env": {
