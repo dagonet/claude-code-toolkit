@@ -29,7 +29,7 @@ Tool schemas and full parameter signatures load on-demand via Claude Code's MCP 
 For **ANY git operation**, Claude MUST use MCP git tools
 and MUST NOT use Bash git commands.
 
-> **Scope:** this rule binds the **PO main session**. Claude Code strips `mcp__*` from sub-agents with explicit `tools:` lists, so specialized sub-agents (`coder`, `*-coder`, `test-writer`, `tester`, `code-reviewer`) physically cannot call MCP git tools. They return their work to the PO; the PO performs the git operation. The Bash-git block hook in their definitions is intentional — there is no escape hatch by design.
+> **Scope:** this rule binds the PO and all sub-agents with git MCP tools in their `tools:` frontmatter. Developer agents (`coder`, variant coders) have explicit git MCP tools listed. Agents without git MCP tools (`architect`, `requirements-engineer`, `doc-generator`, `test-writer`) return work to the PO; the PO performs the git operation. The Bash-git block hook in agent definitions is defense-in-depth — MCP tools are the only permitted path.
 
 ### Allowed
 - `git_status`, `git_diff_summary`, `git_diff`
@@ -60,7 +60,7 @@ and MUST NOT use Bash git commands.
 For **ANY GitHub operation**, Claude MUST use MCP GitHub tools
 and MUST NOT use shell commands (`gh`, `curl`) or direct HTTP calls.
 
-> **Scope:** this rule binds the **PO main session**. Specialized sub-agents cannot call `mcp__MCP_DOCKER__*` (dispatch strips it). They return findings/review/verification text to the PO; the PO posts the comment, opens the PR, or merges.
+> **Scope:** this rule binds the PO and all sub-agents with GitHub MCP tools in their `tools:` frontmatter. Developer agents, code reviewers, and testers have explicit GitHub MCP tools listed. Agents without GitHub MCP tools (`architect`, `requirements-engineer`, `doc-generator`, `test-writer`) return work to the PO; the PO performs the GitHub operation.
 
 ### For Issues and PRs
 Use the **official GitHub MCP via Docker Desktop** (`mcp__MCP_DOCKER__`):
