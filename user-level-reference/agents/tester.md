@@ -2,7 +2,7 @@
 name: tester
 description: Verifies features against acceptance criteria using automated tests, data inspection, and log analysis. Posts findings on GitHub issues.
 model: sonnet
-tools: Read, Write, Edit, Grep, Glob, Bash
+tools: Read, Write, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__MCP_DOCKER__add_issue_comment, mcp__github-tools__gh_repo_from_origin
 mode: bypassPermissions
 hooks:
   PreToolUse:
@@ -59,7 +59,7 @@ For each feature/bug, verify in this order:
 
 ## Findings Format
 
-Return findings text to the PO. The PO posts the comment via `mcp__MCP_DOCKER__add_issue_comment` on your behalf. Format the report exactly as below so the PO can paste verbatim:
+Post findings directly via `mcp__MCP_DOCKER__add_issue_comment` (use the PR number). Also return the report in your final response so the PO has visibility. Format the report exactly as below:
 
 ```
 **QA Verification Report**
@@ -104,6 +104,6 @@ When all acceptance criteria pass and no critical/major findings remain:
 - Do NOT modify application source code (only test files)
 - Do NOT create new GitHub issues (comment on existing issue)
 - Max 3 fix cycles per issue, then escalate to PO
-- Return findings text to the PO. The PO posts the comment via MCP on your behalf.
-- Do not attempt git or GitHub operations directly — return what you observed in your final response and the PO will act on it.
+- Post findings directly to the PR via `mcp__MCP_DOCKER__add_issue_comment`. Also return findings in your final response for PO visibility.
+- Use the GitHub MCP tools listed in your `tools:` frontmatter for PR/issue interaction. For operations not in your tool list, return findings to the PO.
 - Always read `PROJECT_STATE.md` and the GitHub issue before starting verification
