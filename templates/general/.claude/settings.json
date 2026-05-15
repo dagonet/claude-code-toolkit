@@ -51,6 +51,15 @@
         ]
       },
       {
+        "matcher": "mcp__git-tools__git_commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/pre-commit-test.sh"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__git-tools__git_push",
         "hooks": [
           {

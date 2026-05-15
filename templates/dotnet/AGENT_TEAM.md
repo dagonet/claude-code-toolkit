@@ -34,6 +34,28 @@ When a session starts on a project that has this AGENT_TEAM.md:
 
 ---
 
+## CRITICAL: Sub-Agent Tool Limitations
+
+**Sub-agents do NOT have automatic access to MCP tools.** Whether a sub-agent has git/GitHub MCP tools depends on its `tools:` frontmatter in the agent definition file. This is a Claude Code platform limitation — not a configuration error.
+
+### Agents WITH MCP git/GitHub tools:
+- `coder`, `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder` — can commit, push, create PRs, merge
+- `code-reviewer` — can post PR reviews via `mcp__MCP_DOCKER__pull_request_review_write`
+- `tester` — can post findings via `mcp__MCP_DOCKER__add_issue_comment`
+
+### Agents WITHOUT MCP git/GitHub tools:
+- `architect`, `requirements-engineer`, `doc-generator`, `test-writer` — CANNOT commit, push, create PRs, merge, or post comments
+
+**PO responsibility:** When spawning agents without MCP tools, do NOT include git/GitHub operations in their spawn prompts. They will bail, stall, or silently skip those steps. Instead:
+1. Have them return their work product (plan, spec, review findings, tests)
+2. The PO performs all git/GitHub I/O on their behalf
+
+**History:** Sub-agents bailing/stalling due to missing tools was a recurring friction point (sessions 22, 23, 26). Pre-verifying tool availability in spawn prompts prevents wasted agent cycles.
+
+---
+
+---
+
 ## Roles
 
 ### Product Owner (PO)
