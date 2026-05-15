@@ -51,6 +51,15 @@
         ]
       },
       {
+        "matcher": "mcp__git-tools__git_commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/pre-commit-test.sh"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__git-tools__git_push",
         "hooks": [
           {
@@ -71,21 +80,11 @@
             "command": "bash hooks/require-skills-block.sh"
           }
         ]
-      },
-      {
-        "matcher": "mcp__git-tools__git_commit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if [ -f pom.xml ]; then mvn spotless:check -q > /tmp/.claude-fmt 2>&1; else ./gradlew spotlessCheck -q > /tmp/.claude-fmt 2>&1; fi; E=$?; tail -5 /tmp/.claude-fmt; if [ $E -ne 0 ]; then echo 'BLOCKED: Formatting violations. Run the format command from PROJECT_CONTEXT.md.' >&2; exit 2; fi",
-            "timeout": 60
-          }
-        ]
       }
     ],
     "SubagentStop": [
       {
-        "matcher": "^(coder|java-coder|code-reviewer|tester|architect)$",
+        "matcher": "^(coder|code-reviewer|tester|architect)$",
         "hooks": [
           {
             "type": "command",

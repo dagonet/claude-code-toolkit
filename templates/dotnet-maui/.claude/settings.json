@@ -51,6 +51,15 @@
         ]
       },
       {
+        "matcher": "mcp__git-tools__git_commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/pre-commit-test.sh"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__git-tools__git_push",
         "hooks": [
           {
@@ -71,41 +80,11 @@
             "command": "bash hooks/require-skills-block.sh"
           }
         ]
-      },
-      {
-        "matcher": "mcp__git-tools__git_commit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "dotnet format --verify-no-changes --verbosity quiet > /tmp/.claude-fmt 2>&1; E=$?; tail -5 /tmp/.claude-fmt; if [ $E -ne 0 ]; then echo 'BLOCKED: Formatting violations. Run: dotnet format' >&2; exit 2; fi",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__windows-mcp__Click|mcp__windows-mcp__Type",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'BLOCKED: Click/Type is forbidden for test automation. Use FlaUI for structural verification, Snapshot() for visual evidence.' >&2; exit 2"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "dotnet build --no-restore -v q 2>&1 | tail -20"
-          }
-        ]
       }
     ],
     "SubagentStop": [
       {
-        "matcher": "^(coder|dotnet-coder|code-reviewer|tester|architect)$",
+        "matcher": "^(coder|code-reviewer|tester|architect)$",
         "hooks": [
           {
             "type": "command",

@@ -348,6 +348,38 @@ These are no-ops if not registered. Add documentation to your project-level `CLA
 
 ---
 
+## Headless Mode for Batch Operations
+
+For repeatable, non-interactive operations across multiple repos or variants, use **headless mode** (`claude -p`):
+
+```bash
+# Single-variant template sync
+claude -p "Run /sync-template, resolve merge conflicts, commit and push"
+
+# Multi-variant propagation
+for variant in general dotnet dotnet-maui rust-tauri java python; do
+  claude -p "Apply the same change to templates/$variant/ — implement, verify, commit, push"
+done
+
+# Automated release process
+claude -p "Run pre-release checklist, bump version, create release PR" --allowedTools "Bash,Read,Edit"
+```
+
+**When to use:**
+- Template propagation across 6+ variants (reduces per-variant repetition)
+- Release processes following scriptable patterns
+- Batch repo syncs where user confirmation isn't needed per step
+- Any operation where the pipeline is well-defined and repeatable
+
+**When NOT to use:**
+- Complex multi-step sprints requiring user checkpoints
+- Debugging sessions where interactive exploration is needed
+- First-time operations where the pattern hasn't been validated
+
+> **Platform note:** On Windows with Git Bash, use Git Bash to run headless commands. `claude -p` works from any shell.
+
+---
+
 ## Default Workflow Pattern
 
 Unless explicitly instructed otherwise, Claude SHOULD follow:

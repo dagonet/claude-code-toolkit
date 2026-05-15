@@ -10,7 +10,6 @@
       "WebFetch(*)",
       "mcp__git-tools__*",
       "mcp__github-tools__*",
-      "mcp__python-tools__*",
       "mcp__MCP_DOCKER__*",
       "mcp__dotnet-tools__*",
       "mcp__rust-tools__*",
@@ -52,6 +51,15 @@
         ]
       },
       {
+        "matcher": "mcp__git-tools__git_commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/pre-commit-test.sh"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__git-tools__git_push",
         "hooks": [
           {
@@ -72,33 +80,11 @@
             "command": "bash hooks/require-skills-block.sh"
           }
         ]
-      },
-      {
-        "matcher": "mcp__git-tools__git_commit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "ruff format --check . > /tmp/.claude-fmt 2>&1; F=$?; ruff check . > /tmp/.claude-lint 2>&1; L=$?; if [ $F -ne 0 ]; then tail -5 /tmp/.claude-fmt; echo 'BLOCKED: Format violations. Run: ruff format .' >&2; exit 2; fi; if [ $L -ne 0 ]; then tail -5 /tmp/.claude-lint; echo 'BLOCKED: Lint violations. Run: ruff check . --fix' >&2; exit 2; fi",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "ruff check . 2>&1 | tail -10",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "SubagentStop": [
       {
-        "matcher": "^(coder|python-coder|code-reviewer|tester|architect)$",
+        "matcher": "^(coder|code-reviewer|tester|architect)$",
         "hooks": [
           {
             "type": "command",
