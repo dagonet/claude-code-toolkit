@@ -91,7 +91,7 @@ All templates include hooks in `.claude/settings.json` that enforce workflow rul
 
 | Hook Event | Purpose | Templates |
 |------------|---------|-----------|
-| **PreToolUse** on `Bash` | Blocks `Bash(git *)` and `Bash(gh *)` — enforces MCP-only git/GitHub operations | All |
+| **PreToolUse** on `Bash` | `hooks/block-bash-vcs.sh` — blocks a Bash command only when a sub-command's first token is exactly `git` or `gh`, enforcing MCP-only git/GitHub operations without false-positiving on names that merely contain those substrings (e.g. `npx playwright test`) | All |
 | **PreToolUse** on `mcp__git-tools__git_commit` | Blocks commits if formatter detects violations | dotnet, dotnet-maui, rust-tauri, java, python |
 | **PreToolUse** on `mcp__windows-mcp__Click\|Type` | Blocks Click/Type for test automation (use FlaUI) | dotnet-maui |
 | **PostToolUse** on `Edit\|Write` | Runs build/lint check after edits for immediate feedback | dotnet, dotnet-maui, rust-tauri, python |

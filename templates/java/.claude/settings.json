@@ -40,13 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(git *)",
-            "command": "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands. See CLAUDE.local.md.' >&2; exit 2"
-          },
-          {
-            "type": "command",
-            "if": "Bash(gh *)",
-            "command": "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI. See CLAUDE.local.md.' >&2; exit 2"
+            "command": "bash hooks/block-bash-vcs.sh"
           }
         ]
       },
