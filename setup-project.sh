@@ -320,7 +320,7 @@ for name in CLAUDE.md CLAUDE.local.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_S
     fi
 done
 
-for name in .editorconfig rustfmt.toml .prettierrc; do
+for name in .editorconfig rustfmt.toml .prettierrc .gitattributes; do
     if [[ -f "$TEMPLATE_DIR/$name" ]]; then
         FILE_SOURCES+=("$TEMPLATE_DIR/$name")
         FILE_RELS+=("$name")

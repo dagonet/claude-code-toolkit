@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Copies template files (CLAUDE.md, CLAUDE.local.md, AGENT_TEAM.md, PROJECT_STATE.md,
-    .claude/, .editorconfig, gitignore) to a target project directory and replaces
+    .claude/, .editorconfig, .gitattributes, gitignore) to a target project directory and replaces
     {{PLACEHOLDER}} tokens with provided values.
 
 .EXAMPLE
@@ -280,7 +280,7 @@ function Get-TemplateFiles {
     }
 
     # Code style config files (variant-specific)
-    foreach ($styleFile in @(".editorconfig", "rustfmt.toml", ".prettierrc")) {
+    foreach ($styleFile in @(".editorconfig", "rustfmt.toml", ".prettierrc", ".gitattributes")) {
         $stylePath = Join-Path $Source $styleFile
         if (Test-Path $stylePath) {
             $files += @{ Source = $stylePath; RelPath = $styleFile; IsGitignore = $false }
