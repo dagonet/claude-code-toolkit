@@ -46,6 +46,7 @@ Review all code changes for:
 - Test naming follows project conventions
 - No implementation leaking into test assertions (test behavior, not internals)
 - Integration tests use proper fixtures and cleanup
+- Deleted or weakened tests — any removed/replaced assertion must be justified against the OLD contract it guarded; flag test edits that mirror the implementation change (a test rewritten to affirm the new behavior hides the regression it guarded)
 
 ## Findings Output — Summary mode by default
 

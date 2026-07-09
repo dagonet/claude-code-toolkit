@@ -170,11 +170,12 @@ Project-specific reminders: diff behavior between your branch and `main` to conf
 
 # Verification
 
-Mandatory rules live in `VERIFICATION_PLAYBOOK.md` — consult it before claiming completion. Three rules are always-on:
+Mandatory rules live in `VERIFICATION_PLAYBOOK.md` — consult it before claiming completion. Four rules are always-on:
 
 1. **Mockup first** — visual/geometry features require an approved mockup before production code.
 2. **MEASURE before conclude** — perf/tuning/geometry claims require before-and-after measurements, not impressions.
 3. **Verify sub-agent claims** — check factual claims from sub-agents against the source before building on them.
+4. **Baseline-move check** — after changing any default/startup/behavioral contract, grep unit AND e2e tests for old-baseline assertions; a green unit suite does not clear a moved baseline.
 
 **Gate rule (PO + developers):** run `bash hooks/run-gate.sh` — never re-derive the individual build/test/format/lint commands from memory. A green gate writes `.gate/last-pass.json`; `hooks/gate-before-merge.sh` hard-blocks PR merges without a fresh artifact.
 

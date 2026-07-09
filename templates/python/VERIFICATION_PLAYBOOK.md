@@ -16,6 +16,10 @@ Before claiming an improvement or stating a quantitative fact (faster, smaller, 
 
 Sub-agents return compressed summaries and are wrong often enough to matter. Before building on a sub-agent's factual claim (a value, a line number, a behavior), verify it against the source file or tool output yourself. Never chain a decision onto an unverified paraphrase.
 
+### 4. Baseline-Move Check (behavioral contract changes)
+
+After changing any default, startup, or behavioral contract: grep the unit AND e2e tests for assertions on the old baseline before merging. A green unit suite does not clear a moved baseline — e2e tests witness defaults that unit tests never touch. Treat any existing test you must edit or delete as a contract you must justify, never as collateral.
+
 ## Project-Specific Incident Rules
 
 <!-- Grow this list: every time an incident recurs or a verification gap bites,

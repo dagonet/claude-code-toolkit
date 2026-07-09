@@ -49,19 +49,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. New Solo PO matrix header present in every CLAUDE.md
+# 3. New Superpowers-skills header present in every CLAUDE.md
 # ---------------------------------------------------------------------------
 for v in $VARIANTS; do
-  if grep -q "^## Superpowers Skills — When to Invoke$" "templates/$v/CLAUDE.md"; then
-    ok "templates/$v/CLAUDE.md: Solo PO matrix header present"
+  if grep -q "^## Superpowers Skills — MUST Invoke Before Responding$" "templates/$v/CLAUDE.md"; then
+    ok "templates/$v/CLAUDE.md: Superpowers-skills header present"
   else
-    ko "templates/$v/CLAUDE.md: Solo PO matrix header missing"
+    ko "templates/$v/CLAUDE.md: Superpowers-skills header missing"
   fi
 done
-if grep -q "^## Superpowers Skills — When to Invoke$" user-level-reference/CLAUDE.md; then
-  ok "user-level-reference/CLAUDE.md: Solo PO matrix header present"
+if grep -q "^## Superpowers Skills — MUST Invoke Before Responding$" user-level-reference/CLAUDE.md; then
+  ok "user-level-reference/CLAUDE.md: Superpowers-skills header present"
 else
-  ko "user-level-reference/CLAUDE.md: Solo PO matrix header missing"
+  ko "user-level-reference/CLAUDE.md: Superpowers-skills header missing"
 fi
 
 # ---------------------------------------------------------------------------
@@ -170,6 +170,41 @@ if [ -f "$HOOK" ]; then
   fi
 else
   note "hooks/require-skills-block.sh not present yet — drift check skipped (will run after Chunk B)"
+fi
+
+# ---------------------------------------------------------------------------
+# 11. Gate + contract lock-in (PR #38 / session-mining round 2)
+# ---------------------------------------------------------------------------
+for v in $VARIANTS; do
+  s="templates/$v/.claude/settings.json"
+  grep -q "gate-before-merge" "$s" \
+    && ok "$s: gate-before-merge registered" \
+    || ko "$s: gate-before-merge NOT registered"
+  grep -q "enforce-agent-contract" "$s" \
+    && ok "$s: enforce-agent-contract (SubagentStop) registered" \
+    || ko "$s: enforce-agent-contract NOT registered"
+done
+
+settings_hashes=$(md5sum templates/*/.claude/settings.json | awk '{print $1}' | sort -u | wc -l)
+if [ "$settings_hashes" = "1" ]; then
+  ok "settings.json byte-identical across all 6 variants"
+else
+  ko "settings.json drift detected — variants are NOT byte-identical"
+  md5sum templates/*/.claude/settings.json
+fi
+
+coder_contract=$(grep -l "## Deliverable Contract" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md 2>/dev/null | wc -l)
+if [ "$coder_contract" = "11" ]; then
+  ok "Deliverable Contract present in all 11 template coder files"
+else
+  ko "Deliverable Contract present in only $coder_contract/11 template coder files"
+fi
+
+reviewer_opus=$(grep -l "^model: opus$" templates/*/.claude/agents/code-reviewer.md 2>/dev/null | wc -l)
+if [ "$reviewer_opus" = "6" ]; then
+  ok "code-reviewer pinned to opus in all 6 variants"
+else
+  ko "code-reviewer opus pin present in only $reviewer_opus/6 variants"
 fi
 
 # ---------------------------------------------------------------------------

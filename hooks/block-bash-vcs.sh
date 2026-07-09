@@ -32,22 +32,58 @@ normalized=$(printf '%s' "$COMMAND" | sed -E 's/&&|\|\||[;&|]/\n/g')
 
 # Inspect the first token of each sub-command. Use a here-string (NOT a pipe into
 # `while read`) so the `blocked` assignment survives in the current shell.
+# Capture the subcommand (second token) too, so the block message can name the
+# exact MCP replacement — transcript mining showed 700+ blocked retries per
+# session when the message was generic.
 blocked=""
+blocked_sub=""
 while IFS= read -r seg; do
   first=$(printf '%s' "$seg" | awk '{print $1}')
   case "$first" in
-    git) blocked="git" ;;
-    gh)  blocked="gh" ;;
+    git) blocked="git"; blocked_sub=$(printf '%s' "$seg" | awk '{print $2}') ;;
+    gh)  blocked="gh";  blocked_sub=$(printf '%s' "$seg" | awk '{print $2}') ;;
   esac
 done <<< "$normalized"
 
 case "$blocked" in
   git)
-    echo "BLOCKED: Use MCP git-tools instead of Bash git commands. See CLAUDE.local.md." >&2
+    case "$blocked_sub" in
+      status)          tool="mcp__git-tools__git_status" ;;
+      add)             tool="mcp__git-tools__git_add" ;;
+      rm)              tool="mcp__git-tools__git_rm" ;;
+      commit)          tool="mcp__git-tools__git_commit" ;;
+      push)            tool="mcp__git-tools__git_push" ;;
+      pull)            tool="mcp__git-tools__git_pull" ;;
+      fetch)           tool="mcp__git-tools__git_fetch" ;;
+      log)             tool="mcp__git-tools__git_log" ;;
+      show)            tool="mcp__git-tools__git_show" ;;
+      diff)            tool="mcp__git-tools__git_diff (or git_diff_summary)" ;;
+      checkout|switch) tool="mcp__git-tools__git_checkout" ;;
+      branch)          tool="mcp__git-tools__git_branch_list / git_branch_create / git_branch_delete" ;;
+      rebase)          tool="mcp__git-tools__git_rebase" ;;
+      stash)           tool="mcp__git-tools__git_stash" ;;
+      worktree)        tool="mcp__git-tools__git_worktree_add / git_worktree_list / git_worktree_remove" ;;
+      tag)             tool="mcp__git-tools__git_tag_list / git_tag_create" ;;
+      remote)          tool="mcp__git-tools__git_remote_list" ;;
+      reset)           tool="mcp__git-tools__git_reset" ;;
+      restore)         tool="mcp__git-tools__git_restore" ;;
+      revert)          tool="mcp__git-tools__git_revert" ;;
+      reflog)          tool="mcp__git-tools__git_reflog" ;;
+      *)               tool="the mcp__git-tools__* tools" ;;
+    esac
+    echo "BLOCKED: use $tool (MCP) instead of 'git ${blocked_sub:-...}'. See CLAUDE.local.md." >&2
     exit 2
     ;;
   gh)
-    echo "BLOCKED: Use MCP github-tools instead of Bash gh CLI. See CLAUDE.local.md." >&2
+    case "$blocked_sub" in
+      pr)           tool="mcp__MCP_DOCKER__create_pull_request / merge_pull_request / pull_request_read" ;;
+      issue)        tool="mcp__MCP_DOCKER__issue_read / issue_write / add_issue_comment" ;;
+      run|workflow) tool="mcp__github-tools__gh_workflow_list" ;;
+      release)      tool="mcp__MCP_DOCKER__list_releases / get_latest_release" ;;
+      repo)         tool="mcp__github-tools__gh_repo_from_origin" ;;
+      *)            tool="the GitHub MCP tools (mcp__MCP_DOCKER__* / mcp__github-tools__*)" ;;
+    esac
+    echo "BLOCKED: use $tool (MCP) instead of 'gh ${blocked_sub:-...}'. See CLAUDE.local.md." >&2
     exit 2
     ;;
 esac
