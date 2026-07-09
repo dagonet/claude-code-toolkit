@@ -93,6 +93,7 @@ All templates include hooks in `.claude/settings.json` that enforce workflow rul
 |------------|---------|-----------|
 | **PreToolUse** on `Bash` | `hooks/block-bash-vcs.sh` — blocks a Bash command only when a sub-command's first token is exactly `git` or `gh`, enforcing MCP-only git/GitHub operations without false-positiving on names that merely contain those substrings (e.g. `npx playwright test`) | All |
 | **PreToolUse** on `mcp__git-tools__git_commit` | Blocks commits if formatter detects violations | dotnet, dotnet-maui, rust-tauri, java, python |
+| **PreToolUse** on `mcp__MCP_DOCKER__merge_pull_request\|mcp__github-tools__github_pr_auto_merge` | `hooks/gate-before-merge.sh` — hard-blocks PR merge/auto-merge without a fresh, SHA-matching `.gate/last-pass.json` (written by the non-hook runner `hooks/run-gate.sh` from the `**Gate**:` command in PROJECT_CONTEXT.md; no-op while Gate is unset). Also duplicated inline in merge-owning coder agents' frontmatter | All |
 | **PreToolUse** on `mcp__windows-mcp__Click\|Type` | Blocks Click/Type for test automation (use FlaUI) | dotnet-maui |
 | **PostToolUse** on `Edit\|Write` | Runs build/lint check after edits for immediate feedback | dotnet, dotnet-maui, rust-tauri, python |
 | **SubagentStop** | Nudges PO to advance workstream pipeline when agents finish | All |

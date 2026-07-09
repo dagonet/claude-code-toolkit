@@ -13,6 +13,7 @@
 - **Test**: {{TEST_COMMAND}}
 - **Format**: {{FORMAT_COMMAND}}
 - **Lint**: {{LINT_COMMAND}}
+- **Gate**: {{GATE_COMMAND}}
 
 ## Paths
 

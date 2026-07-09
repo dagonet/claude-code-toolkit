@@ -6,8 +6,9 @@
 # Forces feature branch + PR workflow.
 
 TOOL_INPUT=$(cat)
-REPO_PATH=$(node -e "console.log(JSON.parse(process.argv[1]).repo_path||'')" "$TOOL_INPUT" 2>/dev/null)
-BRANCH=$(node -e "console.log(JSON.parse(process.argv[1]).branch||'')" "$TOOL_INPUT" 2>/dev/null)
+# Hook stdin nests tool args under .tool_input; keep top-level fallback for older harnesses.
+REPO_PATH=$(node -e "const j=JSON.parse(process.argv[1]); console.log((j.tool_input&&j.tool_input.repo_path)||j.repo_path||'')" "$TOOL_INPUT" 2>/dev/null)
+BRANCH=$(node -e "const j=JSON.parse(process.argv[1]); console.log((j.tool_input&&j.tool_input.branch)||j.branch||'')" "$TOOL_INPUT" 2>/dev/null)
 
 # Resolve implicit branch when not specified
 if [ -z "$BRANCH" ] && [ -n "$REPO_PATH" ]; then

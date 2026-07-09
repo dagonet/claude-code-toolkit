@@ -17,6 +17,7 @@
 - **Test**: {{TEST_COMMAND}}
 - **Format**: `dotnet format {{SOLUTION_FILE}}`
 - **Lint**: `dotnet format {{SOLUTION_FILE}} --verify-no-changes`
+- **Gate**: `dotnet format {{SOLUTION_FILE}} --verify-no-changes && dotnet build {{SOLUTION_FILE}} && dotnet test`
 
 ## Paths
 

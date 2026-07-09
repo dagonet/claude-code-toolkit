@@ -63,6 +63,15 @@
         ]
       },
       {
+        "matcher": "mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/gate-before-merge.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Agent",
         "hooks": [
           {
