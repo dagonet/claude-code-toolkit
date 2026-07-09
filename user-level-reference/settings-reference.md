@@ -403,3 +403,28 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 **Rollback:** comment out or remove the matcher group from `~/.claude/settings.json` and start a new session.
 
 **Threshold tuning:** the script hard-codes `THRESHOLD=500` near the top. Edit the value directly. The log at `~/.claude/state/read-size-gate.log` provides per-decision data for post-sprint histogramming if you want to calibrate the threshold from real use rather than a gut number.
+
+### Plan-Mode Allow Hook for context-mode Tools (PreToolUse, User-Level)
+
+**Problem:** plan mode overrides `permissions.allow` rules for tools it does not classify as read-only. `mcp__plugin_context-mode_context-mode__*` in the allow list does NOT stop plan mode from prompting on every `ctx_*` call (same mechanism that keeps `Edit` blocked in plan mode despite an `Edit` allow rule). The docs are silent on this precedence — verified empirically 2026-07-09.
+
+**Fix:** PreToolUse hooks run BEFORE the permission system; a hook emitting `permissionDecision: "allow"` bypasses the prompt in every mode, including plan mode.
+
+**Hook** (`hooks/allow-ctx-plan.sh`): stateless — prints the allow JSON and exits 0. Deliberately NOT 127-wrapped: if the script is missing, the hook fails open and the prompts simply return (wrapping an *allow* hook would convert absence into a block — wrong polarity).
+
+**Install:** copy `hooks/allow-ctx-plan.sh` to `~/.claude/hooks/`, then append this matcher group to `hooks.PreToolUse` in `~/.claude/settings.json`:
+
+```json
+{
+  "matcher": "mcp__plugin_context-mode_context-mode__ctx_batch_execute|mcp__plugin_context-mode_context-mode__ctx_execute|mcp__plugin_context-mode_context-mode__ctx_execute_file|mcp__plugin_context-mode_context-mode__ctx_search|mcp__plugin_context-mode_context-mode__ctx_fetch_and_index|mcp__plugin_context-mode_context-mode__ctx_index|mcp__plugin_context-mode_context-mode__ctx_stats|mcp__plugin_context-mode_context-mode__ctx_doctor|mcp__plugin_context-mode_context-mode__ctx_upgrade",
+  "hooks": [
+    { "type": "command", "command": "bash 'C:/Users/DarkNite/.claude/hooks/allow-ctx-plan.sh'" }
+  ]
+}
+```
+
+**Caveats:** (1) `ctx_execute`/`ctx_batch_execute` run sandbox shell code that CAN write files — auto-approving them weakens plan mode's no-writes guarantee. Accepted trade-off: the user approved every one of these prompts manually anyway. (2) Three tools (`ctx_execute`, `ctx_execute_file`, `ctx_batch_execute`) also match the context-mode plugin's own tip-injection PreToolUse group — both hooks fire; the allow decision answers the permission question, the tip context still injects.
+
+**Fallback:** if a Claude Code update stops PreToolUse `allow` from piercing plan mode, re-register the same script under the `PermissionRequest` event with `"command": "EVENT=permission-request bash '...allow-ctx-plan.sh'"` — the script then emits `{"decision":{"behavior":"allow"}}`, the PermissionRequest-shaped decision.
+
+**Rollback:** remove the matcher group and start a new session.
