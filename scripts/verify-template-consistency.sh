@@ -200,6 +200,13 @@ else
   ko "Deliverable Contract present in only $coder_contract/11 template coder files"
 fi
 
+coder_update_pr=$(grep -l "mcp__MCP_DOCKER__update_pull_request" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md 2>/dev/null | wc -l)
+if [ "$coder_update_pr" = "11" ]; then
+  ok "update_pull_request tool present in all 11 template coder files"
+else
+  ko "update_pull_request tool present in only $coder_update_pr/11 template coder files"
+fi
+
 reviewer_opus=$(grep -l "^model: opus$" templates/*/.claude/agents/code-reviewer.md 2>/dev/null | wc -l)
 if [ "$reviewer_opus" = "6" ]; then
   ok "code-reviewer pinned to opus in all 6 variants"

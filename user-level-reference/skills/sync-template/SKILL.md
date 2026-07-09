@@ -82,7 +82,8 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 1. Collect every `bash hooks/<name>.sh` reference from `.claude/settings.json` AND from the `hooks:` frontmatter of every file in `.claude/agents/`.
 2. For each referenced script: verify `hooks/<name>.sh` exists at the project repo root and is non-empty.
 3. For any missing script: copy it from the toolkit checkout (the `templateRepo` path in the manifest) into the project's `hooks/` directory and include it in the sync report.
-4. Report the verified list: `Hooks verified: N referenced, N present (M restored)`.
+4. For every referenced hook script NOT tracked in the manifest (compare against the manifest's file list — projects bootstrapped before hooks-tracking have none): call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="skip")` and include the result in the `template_finalize_sync` call. `source="skip"` registers a manifest entry from the project's existing file content WITHOUT writing — NEVER use `source="template"` here, it would silently overwrite locally-edited hook scripts. Once registered, future `template_compute_status` runs track hook drift like any other file.
+5. Report the verified list: `Hooks verified: N referenced, N present (M restored, K registered in manifest)`.
 
 ### 7. Finalize
 
@@ -105,5 +106,6 @@ Sync complete: {variant} @ {new_commit}
 - NEVER auto-update a `CONFLICT` file without user confirmation
 - NEVER delete project files, even if the template removed them
 - NEVER finalize without the hook-script verification (step 6b) — missing hook scripts fail open and silently disable enforcement
+- NEVER register hooks with `source="template"` in step 6b — always `source="skip"` (registration must not overwrite local edits)
 - ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `lastSynced`)
 - All hashing, diffing, and placeholder replacement is handled by the MCP tools — do NOT compute hashes or apply placeholders manually
