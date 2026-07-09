@@ -35,7 +35,7 @@ Each template variant provides the following files:
 | `PROJECT_STATE.md` | Sprint state tracking |
 | `.claude/settings.json` | MCP permissions + workflow hooks (MCP enforcement, format gates, pipeline, compaction) |
 | `.claude/agents/` | 7 generic agents + variant-specific coders |
-| `hooks/` | Workflow enforcement scripts: no-push-main, tier-before-coder (shared across all variants) |
+| `hooks/` | Workflow enforcement scripts, shared across all variants: `block-bash-vcs`, `no-push-main`, `tier-before-coder`, `pre-commit-test`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`. Also ships the opt-in user-level hooks `read-size-gate` and `allow-ctx-plan` (copied but not registered in `settings.json`) |
 | `gitignore` | Template for .gitignore (copied or merged by the setup script) |
 | `.editorconfig` | Code style for dotnet, dotnet-maui, java, and python variants |
 | `rustfmt.toml` + `.prettierrc` | Code style for rust-tauri variant only |
