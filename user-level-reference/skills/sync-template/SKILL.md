@@ -75,6 +75,15 @@ Warn: "Template no longer contains `{file}`. Your project copy is preserved."
 
 Do NOT delete project files.
 
+### 6b. Verify Hook Scripts (MANDATORY)
+
+Hooks fail OPEN when their script is missing (exit 127 → the tool call proceeds with only a non-blocking error). A synced project with a populated `.claude/settings.json` but an empty `hooks/` directory runs with its entire enforcement layer silently absent — this happened in production.
+
+1. Collect every `bash hooks/<name>.sh` reference from `.claude/settings.json` AND from the `hooks:` frontmatter of every file in `.claude/agents/`.
+2. For each referenced script: verify `hooks/<name>.sh` exists at the project repo root and is non-empty.
+3. For any missing script: copy it from the toolkit checkout (the `templateRepo` path in the manifest) into the project's `hooks/` directory and include it in the sync report.
+4. Report the verified list: `Hooks verified: N referenced, N present (M restored)`.
+
 ### 7. Finalize
 
 Call `template_finalize_sync(project_path=".", applied_files=<JSON array of all template_apply_file results>)`.
@@ -95,5 +104,6 @@ Sync complete: {variant} @ {new_commit}
 
 - NEVER auto-update a `CONFLICT` file without user confirmation
 - NEVER delete project files, even if the template removed them
+- NEVER finalize without the hook-script verification (step 6b) — missing hook scripts fail open and silently disable enforcement
 - ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `lastSynced`)
 - All hashing, diffing, and placeholder replacement is handled by the MCP tools — do NOT compute hashes or apply placeholders manually

@@ -652,6 +652,7 @@ The PO presents these as a single confirmation at sprint start. All agents are s
 - **Agent stall / idle without report** (runbook — judgment removed on purpose):
   1. First idle without a completion report: send exactly one prod message requesting status.
   2. Second idle: retire the agent via `TaskStop`. Do not send further prods.
+  2b. Before retiring or taking over: run `git_status` in the agent's worktree — a DIRTY tree means the agent is mid-edit; wait one more cycle instead of clobbering in-flight work.
   3. Verify the actual work state via `git_log` / `git_status` / `list_pull_requests` — **never trust the agent's last claim**; committed work frequently exists despite a silent agent (and vice versa).
   4. Count the stall as one strike toward the 3-cycle escalation above, then re-dispatch the remaining work with the verified state in the spawn prompt.
 

@@ -77,13 +77,7 @@ This document explains each section and setting in the user-level Claude Code se
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(git *)",
-            "command": "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands.' >&2; exit 2"
-          },
-          {
-            "type": "command",
-            "if": "Bash(gh *)",
-            "command": "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI.' >&2; exit 2"
+            "command": "bash ~/.claude/hooks/block-bash-vcs.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/block-bash-vcs.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
           }
         ]
       }
@@ -298,7 +292,11 @@ Hooks fire even when agents use `mode: bypassPermissions` — they enforce polic
 - **User-level** (`~/.claude/settings.json`): Apply to all projects. Good for personal workflow enforcement (e.g., block `Bash(git *)` everywhere).
 - **Project-level** (`.claude/settings.json`): Apply to one project. Good for language-specific gates (e.g., pre-commit format checks).
 
-The example above shows a user-level hook that blocks `Bash(git *)` to enforce MCP-only git operations. Project-level templates add additional hooks for format gates, build checks, pipeline tracking, and compaction snapshots. See `docs/templates.md` for per-template hook details.
+The example above shows the user-level Bash guard: it runs `hooks/block-bash-vcs.sh`, which blocks a command only when a sub-command's FIRST TOKEN is exactly `git` or `gh` and names the exact MCP replacement tool in the block message. Do NOT use the older inline `if: "Bash(git *)"` glob style at user level — its matcher is conservative on complex multi-line commands and fail-closes on false positives (observed blocking legitimate non-git commands). Install: copy `hooks/block-bash-vcs.sh` from the toolkit repo to `~/.claude/hooks/` and register it as shown.
+
+**Exit-code semantics (important):** a hook command exiting with anything other than 0 or 2 — including **127 when the script file is missing** — is FAIL-OPEN: the tool call proceeds and only a non-blocking error is logged. That is why the example wraps the script call and converts 127 to exit 2 with a `HOOK SCRIPT MISSING` diagnostic; the project templates apply the same wrapper to every PreToolUse script hook. The one deliberate exception: the SubagentStop contract enforcer is NOT wrapped — a missing stop-gate must fail open, or a broken installation would block agents from ever stopping.
+
+Project-level templates add additional hooks for format gates, build checks, pipeline tracking, and compaction snapshots. See `docs/templates.md` for per-template hook details.
 
 #### Workflow Enforcement Hooks (Project-Level)
 

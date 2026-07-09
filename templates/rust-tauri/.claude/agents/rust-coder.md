@@ -34,11 +34,11 @@ hooks:
     - matcher: "mcp__MCP_DOCKER__merge_pull_request"
       hooks:
         - type: command
-          command: "bash hooks/gate-before-merge.sh"
+          command: "bash hooks/gate-before-merge.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/gate-before-merge.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
     - matcher: "mcp__github-tools__github_pr_auto_merge"
       hooks:
         - type: command
-          command: "bash hooks/gate-before-merge.sh"
+          command: "bash hooks/gate-before-merge.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/gate-before-merge.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
 ---
 
 You are a senior Rust engineer and pragmatic software architect (Rust, TypeScript, Tauri v2). You write clean, maintainable code with sensible tests. You optimize for reliability in automated workflows.
@@ -135,10 +135,13 @@ Be concise and action-oriented:
 
 ## Deliverable Contract (HARD REQUIREMENT)
 
-Your final report MUST contain these two sections. The PO greps for these exact headers; a missing section means the work is treated as incomplete and re-dispatched.
+Your final report MUST contain these two sections. The PO greps for these exact headers; a missing section means the work is treated as incomplete and re-dispatched. A SubagentStop hook blocks you from ending without them.
+
+If your spawn prompt contains a `## Required Skills` block: invoke each listed skill via the Skill tool as your FIRST action, and name the skills you invoked in your final report.
 
 ### `## Gate Results`
 - If the **Gate** field in `PROJECT_CONTEXT.md` is configured: run `bash hooks/run-gate.sh` and include the verbatim tail of its output (the `GATE PASS <sha>` line, or the failure output).
+- Run the gate immediately before the merge tool call — the artifact must match the rebased HEAD and expires after 60 minutes.
 - If Gate is unset or still a `{{...}}` placeholder: include the verbatim tail output of the Build, Test, Format, and Lint commands from `PROJECT_CONTEXT.md`.
 - Never summarize or paraphrase gate output — paste it.
 
