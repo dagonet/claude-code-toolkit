@@ -302,7 +302,19 @@ The example above shows a user-level hook that blocks `Bash(git *)` to enforce M
 
 #### Workflow Enforcement Hooks (Project-Level)
 
-Templates include two workflow enforcement hooks (via external scripts in `hooks/`):
+Templates include the following workflow enforcement hooks (via external scripts in `hooks/`):
+
+**Gate before merge** (`hooks/gate-before-merge.sh`):
+- Matcher: `mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge`
+- Hard-blocks PR merges (and enabling auto-merge) unless a fresh gate artifact exists: `.gate/last-pass.json` must exist at the repo toplevel of the merging session's cwd (worktree-aware — developer agents self-merge from worktrees), its `sha` must equal the current HEAD, and the file must be younger than 60 minutes.
+- No-op when PROJECT_CONTEXT.md has no `**Gate**:` / `**Gate Command**:` value or the value is still a `{{...}}` placeholder — same graceful degradation as `pre-commit-test.sh`.
+- Also registered inline in the frontmatter of all merge-owning agents (`coder` + variant coders) as belt-and-suspenders, since subagent hook inheritance from `settings.json` is undocumented.
+- Block message: "Run 'bash hooks/run-gate.sh' on the PR branch head."
+
+**Run gate** (`hooks/run-gate.sh`) — companion runner, NOT registered as a hook:
+- Invoked by developers/PO as `bash hooks/run-gate.sh`.
+- Reads the Gate command from PROJECT_CONTEXT.md (tolerates `- ` list markers, the `**Gate Command**:` label style, and backtick-wrapped commands), runs it, and on success writes `.gate/last-pass.json` (`{"sha","branch","ts","status":"pass"}`) and prints `GATE PASS <sha>`. On failure it deletes the artifact and exits nonzero.
+- `.gate/` is gitignored by all templates.
 
 **No push to main** (`hooks/no-push-main.sh`):
 - Matcher: `mcp__git-tools__git_push`
@@ -322,7 +334,7 @@ Templates include two workflow enforcement hooks (via external scripts in `hooks
 - Block diagnostic prints the expected skill list plus a copy-pasteable `## Required Skills` block for the PO to drop into the prompt.
 - DRIFT WARNING: the hook's case statement duplicates the AGENT_TEAM.md table. `scripts/verify-template-consistency.sh` diffs the two and fails CI if they diverge — keep them in sync.
 
-All three hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
+All of these hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
 
 #### Optional User-Level Install for `require-skills-block.sh`
 

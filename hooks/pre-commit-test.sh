@@ -12,14 +12,17 @@
 # This hook prevents shipping code that breaks existing tests.
 
 TOOL_INPUT=$(cat)
-REPO_PATH=$(node -e "console.log(JSON.parse(process.argv[1]).repo_path||'')" "$TOOL_INPUT" 2>/dev/null)
+# Hook stdin nests tool args under .tool_input; keep top-level fallback for older harnesses.
+REPO_PATH=$(node -e "const j=JSON.parse(process.argv[1]); console.log((j.tool_input&&j.tool_input.repo_path)||j.repo_path||'')" "$TOOL_INPUT" 2>/dev/null)
 
 if [ -z "$REPO_PATH" ]; then
   REPO_PATH=$(pwd)
 fi
 
-# Read test command from PROJECT_CONTEXT.md
-TEST_CMD=$(grep -E '^\*\*Test\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Test\*\*: //' | head -1)
+# Read test command from PROJECT_CONTEXT.md. Tolerates: leading "- " / "* " list
+# markers, the "**Test Command**:" label style (java/python variants), and
+# surrounding backticks — several variants write commands as `cmd`.
+TEST_CMD=$(grep -E '^[-*[:space:]]*\*\*Test( Command)?\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Test\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
 
 # No-op: no PROJECT_CONTEXT.md or no Test command configured
 if [ -z "$TEST_CMD" ]; then

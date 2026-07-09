@@ -16,6 +16,7 @@
 - **Format (frontend)**: `npm run format`
 - **Lint (backend)**: `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`
 - **Lint (frontend)**: `npm run lint`
+- **Gate**: {{GATE_COMMAND}}
 
 ## Paths
 

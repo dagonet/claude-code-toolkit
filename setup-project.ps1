@@ -4,9 +4,9 @@
     Sets up a new project with Claude Code configuration from a template variant.
 
 .DESCRIPTION
-    Copies template files (CLAUDE.md, CLAUDE.local.md, AGENT_TEAM.md, PROJECT_STATE.md,
-    .claude/, .editorconfig, .gitattributes, gitignore) to a target project directory and replaces
-    {{PLACEHOLDER}} tokens with provided values.
+    Copies template files (CLAUDE.md, CLAUDE.local.md, AGENT_TEAM.md, PROJECT_CONTEXT.md,
+    PROJECT_STATE.md, VERIFICATION_PLAYBOOK.md, .claude/, .editorconfig, .gitattributes, gitignore)
+    to a target project directory and replaces {{PLACEHOLDER}} tokens with provided values.
 
 .EXAMPLE
     .\setup-project.ps1 -Variant general -ProjectName "MyProject" -RepoUrl "https://github.com/user/myproject"
@@ -174,6 +174,7 @@ if ($Variant -eq "python") {
         $replacements['{{TEST_COMMAND}}']  = "poetry run pytest"
         $replacements['{{FORMAT_COMMAND}}'] = "poetry run ruff format ."
         $replacements['{{LINT_COMMAND}}']  = "poetry run ruff check ."
+        $replacements['{{GATE_COMMAND}}']  = "poetry run ruff format --check . && poetry run ruff check . && poetry run pytest"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Python $pyVersion, Poetry"
         }
@@ -183,6 +184,7 @@ if ($Variant -eq "python") {
         $replacements['{{TEST_COMMAND}}']  = "uv run pytest"
         $replacements['{{FORMAT_COMMAND}}'] = "uv run ruff format ."
         $replacements['{{LINT_COMMAND}}']  = "uv run ruff check ."
+        $replacements['{{GATE_COMMAND}}']  = "uv run ruff format --check . && uv run ruff check . && uv run pytest"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Python $pyVersion, uv"
         }
@@ -192,6 +194,7 @@ if ($Variant -eq "python") {
         $replacements['{{TEST_COMMAND}}']  = "python -m pytest"
         $replacements['{{FORMAT_COMMAND}}'] = "ruff format ."
         $replacements['{{LINT_COMMAND}}']  = "ruff check ."
+        $replacements['{{GATE_COMMAND}}']  = "ruff format --check . && ruff check . && python -m pytest"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Python $pyVersion, pip"
         }
@@ -209,6 +212,7 @@ if ($Variant -eq "java") {
         $replacements['{{TEST_COMMAND}}']  = "./gradlew test"
         $replacements['{{FORMAT_COMMAND}}'] = "./gradlew spotlessApply"
         $replacements['{{LINT_COMMAND}}']  = "./gradlew spotlessCheck"
+        $replacements['{{GATE_COMMAND}}']  = "./gradlew spotlessCheck build"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Java $javaVersion, Spring Boot, Gradle"
         }
@@ -218,6 +222,7 @@ if ($Variant -eq "java") {
         $replacements['{{TEST_COMMAND}}']  = "mvn test"
         $replacements['{{FORMAT_COMMAND}}'] = "mvn spotless:apply"
         $replacements['{{LINT_COMMAND}}']  = "mvn spotless:check"
+        $replacements['{{GATE_COMMAND}}']  = "mvn spotless:check clean verify"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Java $javaVersion, Spring Boot, Maven"
         }
@@ -272,7 +277,7 @@ function Get-TemplateFiles {
     $files = @()
 
     # Top-level markdown and config files
-    foreach ($name in @("CLAUDE.md", "CLAUDE.local.md", "AGENT_TEAM.md", "PROJECT_CONTEXT.md", "PROJECT_STATE.md")) {
+    foreach ($name in @("CLAUDE.md", "CLAUDE.local.md", "AGENT_TEAM.md", "PROJECT_CONTEXT.md", "PROJECT_STATE.md", "VERIFICATION_PLAYBOOK.md")) {
         $path = Join-Path $Source $name
         if (Test-Path $path) {
             $files += @{ Source = $path; RelPath = $name; IsGitignore = $false }

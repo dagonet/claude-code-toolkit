@@ -12,6 +12,7 @@
 - **Test Command**: {{TEST_COMMAND}}
 - **Format Command**: {{FORMAT_COMMAND}}
 - **Lint Command**: {{LINT_COMMAND}}
+- **Gate Command**: {{GATE_COMMAND}}
 - **Java Version**: {{JAVA_VERSION}}
 
 ## Paths

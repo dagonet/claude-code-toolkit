@@ -176,6 +176,7 @@ if [[ "$VARIANT" == "python" ]]; then
             add_replacement '{{TEST_COMMAND}}' "poetry run pytest"
             add_replacement '{{FORMAT_COMMAND}}' "poetry run ruff format ."
             add_replacement '{{LINT_COMMAND}}' "poetry run ruff check ."
+            add_replacement '{{GATE_COMMAND}}' "poetry run ruff format --check . && poetry run ruff check . && poetry run pytest"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Python $py_ver, Poetry"
             ;;
         uv)
@@ -183,6 +184,7 @@ if [[ "$VARIANT" == "python" ]]; then
             add_replacement '{{TEST_COMMAND}}' "uv run pytest"
             add_replacement '{{FORMAT_COMMAND}}' "uv run ruff format ."
             add_replacement '{{LINT_COMMAND}}' "uv run ruff check ."
+            add_replacement '{{GATE_COMMAND}}' "uv run ruff format --check . && uv run ruff check . && uv run pytest"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Python $py_ver, uv"
             ;;
         *)
@@ -190,6 +192,7 @@ if [[ "$VARIANT" == "python" ]]; then
             add_replacement '{{TEST_COMMAND}}' "python -m pytest"
             add_replacement '{{FORMAT_COMMAND}}' "ruff format ."
             add_replacement '{{LINT_COMMAND}}' "ruff check ."
+            add_replacement '{{GATE_COMMAND}}' "ruff format --check . && ruff check . && python -m pytest"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Python $py_ver, pip"
             ;;
     esac
@@ -206,6 +209,7 @@ if [[ "$VARIANT" == "java" ]]; then
             add_replacement '{{TEST_COMMAND}}' "./gradlew test"
             add_replacement '{{FORMAT_COMMAND}}' "./gradlew spotlessApply"
             add_replacement '{{LINT_COMMAND}}' "./gradlew spotlessCheck"
+            add_replacement '{{GATE_COMMAND}}' "./gradlew spotlessCheck build"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Java $java_ver, Spring Boot, Gradle"
             ;;
         *)
@@ -213,6 +217,7 @@ if [[ "$VARIANT" == "java" ]]; then
             add_replacement '{{TEST_COMMAND}}' "mvn test"
             add_replacement '{{FORMAT_COMMAND}}' "mvn spotless:apply"
             add_replacement '{{LINT_COMMAND}}' "mvn spotless:check"
+            add_replacement '{{GATE_COMMAND}}' "mvn spotless:check clean verify"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Java $java_ver, Spring Boot, Maven"
             ;;
     esac
@@ -312,7 +317,7 @@ declare -a FILE_SOURCES=()
 declare -a FILE_RELS=()
 declare -a FILE_IS_GITIGNORE=()
 
-for name in CLAUDE.md CLAUDE.local.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md; do
+for name in CLAUDE.md CLAUDE.local.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md VERIFICATION_PLAYBOOK.md; do
     if [[ -f "$TEMPLATE_DIR/$name" ]]; then
         FILE_SOURCES+=("$TEMPLATE_DIR/$name")
         FILE_RELS+=("$name")
