@@ -76,3 +76,5 @@ Produce specs as GitHub Issue markdown, ready for the PO to post:
 - Keep specs focused -- if a feature is too large, recommend splitting into multiple issues
 - Reference existing interfaces, entities, and patterns by name when relevant
 - Check `PROJECT_STATE.md` for current work-in-progress to avoid conflicts
+
+**Team-mode reporting (HARD REQUIREMENT):** end your run with a SendMessage to `main` containing your full report. NEVER go idle without reporting — a bare idle notification is a non-report and your work will be treated as failed.

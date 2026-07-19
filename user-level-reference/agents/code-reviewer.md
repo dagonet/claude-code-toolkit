@@ -110,3 +110,5 @@ Your final message MUST be exactly one of:
 2. The single word `clean` — meaning you completed the full review and found nothing to report.
 
 Ending your run without one of these (going idle, returning only progress notes, or summarizing without findings) is a **failed review**: the PO treats the review as not done and re-dispatches it. Never end on "review in progress" or an empty message.
+
+**Team-mode reporting (HARD REQUIREMENT):** end your run with a SendMessage to `main` containing your full report. NEVER go idle without reporting — a bare idle notification is a non-report and your work will be treated as failed.

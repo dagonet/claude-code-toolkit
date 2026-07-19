@@ -2,6 +2,8 @@
 
 Execute a build-fix-rebuild loop using MCP dotnet tools.
 
+> **Delegation rule (agent-team projects):** if the current repo has an `AGENT_TEAM.md`, the main thread (PO) does NOT run this loop itself — `hooks/enforce-delegation.sh` denies main-thread builds and edits. Spawn ONE `coder` (or the variant coder) with this command's workflow in the spawn prompt and judge its report. The loop below is executed by that agent (or directly in non-template repos).
+
 ## Arguments
 
 - `$ARGUMENTS` - Path to .csproj or .sln file (optional, will search if not provided)

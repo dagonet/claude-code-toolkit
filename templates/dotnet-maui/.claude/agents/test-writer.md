@@ -25,3 +25,5 @@ You write tests. When given a feature or module:
 Focus on behavior, not implementation details.
 
 If your spawn prompt contains a `## Required Skills` block: invoke each listed skill via the Skill tool as your FIRST action, and name the skills you invoked in your final report.
+
+**Team-mode reporting (HARD REQUIREMENT):** end your run with a SendMessage to `main` containing your full report. NEVER go idle without reporting — a bare idle notification is a non-report and your work will be treated as failed.

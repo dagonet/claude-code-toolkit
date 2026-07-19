@@ -428,3 +428,13 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 **Fallback:** if a Claude Code update stops PreToolUse `allow` from piercing plan mode, re-register the same script under the `PermissionRequest` event with `"command": "EVENT=permission-request bash '...allow-ctx-plan.sh'"` — the script then emits `{"decision":{"behavior":"allow"}}`, the PermissionRequest-shaped decision.
 
 **Rollback:** remove the matcher group and start a new session.
+
+### Delegation Enforcement (PreToolUse, Project-Level — templates)
+
+**`hooks/enforce-delegation.sh`** — the PO (main thread) never does hands-on work; sub-agents do all coding/building/testing. Registered in every template `settings.json` under TWO PreToolUse matcher groups: `Edit|Write|NotebookEdit` and `Bash`.
+
+- **Discriminator:** the hook stdin contains `agent_id` ONLY when the call originates inside a subagent — subagent calls always pass; main-thread calls are checked.
+- **Main-thread edits** are allowed only on the PO write surface (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, paths outside the repo). Everything else denies with a model-visible DELEGATE message naming the right agent. Handles `notebook_path` (NotebookEdit) and backslash Windows paths.
+- **Main-thread Bash** denies build/test-runner commands (`npm test`, `npm run test|build|e2e|coverage`, `npx vitest|jest|playwright`, `pytest`, `cargo test|build|run`, `dotnet build|test|run`, `mvn`, `gradlew`, `go test`) AND `hooks/run-gate.sh` — the PO verifies via the `.gate/last-pass.json` artifact, never by running the suite.
+- **Kill-switch:** create `.claude/delegation-off` at the repo root to disable (also the recovery if a pre-`agent_id` CLI ever denies subagent calls).
+- **Failure polarity — deliberately fail-OPEN:** never apply the exit-2 127-wrapper (a missing script would block ALL edits including subagents' — total paralysis, same class as the SubagentStop stop-gate). Registration uses a **WARN-wrapper** instead: on 127 it prints `WARN: ... delegation enforcement offline. Run /sync-template.` to stderr and exits 0 — visible, never blocking. Internal parse failures pass through. Note: main-thread Bash-git stays guarded regardless — `block-bash-vcs.sh` (fail-closed) fires on the same Bash matcher.

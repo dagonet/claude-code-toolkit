@@ -37,10 +37,12 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 | Tier | Scope | Agents | Testing |
 |------|-------|--------|--------|
-| T1 Trivial | < 10 lines, config/style | PO only | Run existing suite |
-| T2 Simple | 1-2 files, < 50 lines | 1 dev, PO reviews | Tests if logic changes |
-| T3 Standard | Multi-file, < 200 lines | Dev + reviewer + tester | TDD required, >= 80% coverage |
-| T4 Complex | Architectural, > 200 lines | Architect + dev + reviewer + tester | Full BDD/TDD, >= 80% coverage |
+| T1 Trivial | < 10 lines, config/style | 1 coder (solo, uniform PR pipeline) | Coder runs gate (build + existing suite) |
+| T2 Simple | 1-2 files, < 50 lines | coder + code-reviewer | Tests if logic changes; coder runs gate |
+| T3 Standard | Multi-file, < 200 lines | coder + reviewer + tester | TDD required, >= 80% coverage |
+| T4 Complex | Architectural, > 200 lines | architect + coder(s) + reviewer + tester | Full BDD/TDD, >= 80% coverage |
+
+**Delegate-everything model:** the PO never does hands-on work at any tier — coding, reviewing, testing, builds, env setup (`ops` agent), and exploration (`Explore` agent) are all sub-agent work, enforced by `hooks/enforce-delegation.sh`. The PO's write surface is limited to orchestration files (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md`).
 
 ## Session Bootstrap
 
@@ -92,6 +94,7 @@ All templates include hooks in `.claude/settings.json` that enforce workflow rul
 | Hook Event | Purpose | Templates |
 |------------|---------|-----------|
 | **PreToolUse** on `Bash` | `hooks/block-bash-vcs.sh` — blocks a Bash command only when a sub-command's first token is exactly `git` or `gh`, enforcing MCP-only git/GitHub operations without false-positiving on names that merely contain those substrings (e.g. `npx playwright test`) | All |
+| **PreToolUse** on `Edit\|Write\|NotebookEdit` + `Bash` | `hooks/enforce-delegation.sh` — main-thread (PO) discrimination via the `agent_id` stdin field (present only inside subagents): denies PO edits outside the orchestration write surface and PO build/test-runner Bash (incl. `run-gate.sh` — the PO verifies via the gate artifact). Subagent calls always pass. Deliberately fail-open with a WARN-wrapper (a 127-wrap would paralyze subagent edits when the script is missing); kill-switch `.claude/delegation-off` | All |
 | **PreToolUse** on `mcp__git-tools__git_commit` | `hooks/pre-commit-test.sh` — runs the project's Test command (from `PROJECT_CONTEXT.md`) before allowing a commit; blocks on failure. No-op while `TEST_COMMAND` is an unset placeholder | All |
 | **PreToolUse** on `mcp__MCP_DOCKER__merge_pull_request\|mcp__github-tools__github_pr_auto_merge` | `hooks/gate-before-merge.sh` — hard-blocks PR merge/auto-merge without a fresh, SHA-matching `.gate/last-pass.json` (written by the non-hook runner `hooks/run-gate.sh` from the `**Gate**:` command in PROJECT_CONTEXT.md; no-op while Gate is unset). Also duplicated inline in merge-owning coder agents' frontmatter | All |
 | **PreToolUse** on `mcp__windows-mcp__Click\|Type` | Blocks Click/Type for test automation (use FlaUI) | dotnet-maui |
