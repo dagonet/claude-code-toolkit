@@ -296,3 +296,7 @@ Discard freely:
 - Use `vi.mock("../lib/tauri-api")` pattern in tests to isolate components from Tauri IPC
 - Tauri IPC only works in native window -- "Loading..." is expected in browser preview
 - Use `npm test` for frontend tests (Vitest + @solidjs/testing-library)
+
+<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->
+<!-- Project-specific rules, routing blocks, and extensions go here. -->
+<!-- PROJECT-CUSTOM:END -->
