@@ -89,6 +89,8 @@ The universal-permissions model still holds: `settings.json` permission entries 
 
 ### Hooks
 
+**Hook scripts are root-tracked**: they live once at the toolkit ROOT `hooks/` — variants do NOT ship a `hooks/` directory. Setup scripts copy from the root; the sync server resolves manifest `hooks/` paths against the root; consistency §13 asserts every referenced script exists there. See `docs/template-sync.md` → "Hooks Are Root-Tracked".
+
 All templates include hooks in `.claude/settings.json` that enforce workflow rules mechanistically:
 
 | Hook Event | Purpose | Templates |

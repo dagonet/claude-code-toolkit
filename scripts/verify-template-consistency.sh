@@ -251,6 +251,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 13. Hook-ref invariant (downstream sync findings 2026-07-19, finding #1)
+#     Every hooks/<name>.sh referenced by any variant settings.json or by an
+#     agent's YAML frontmatter hooks: block (command: lines) MUST exist and be
+#     non-empty at the toolkit ROOT hooks/ (root-tracked design — variants do
+#     NOT ship hooks/). Prose mentions are excluded (execution refs only).
+# ---------------------------------------------------------------------------
+hook_refs=$(
+  {
+    grep -ho 'bash hooks/[a-z-]*\.sh' templates/*/.claude/settings.json 2>/dev/null
+    # frontmatter command: lines only (execution refs), not prose
+    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null | grep -o 'bash hooks/[a-z-]*\.sh'
+  } | sed 's|bash ||' | sort -u
+)
+if [ -z "$hook_refs" ]; then
+  ko "hook-ref invariant: extraction returned NO references (extraction broken?)"
+else
+  for h in $hook_refs; do
+    if [ -s "$h" ]; then
+      ok "hook-ref: $h exists and is non-empty at repo root"
+    else
+      ko "hook-ref: $h referenced by a variant but MISSING/empty at repo root (fails open downstream)"
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

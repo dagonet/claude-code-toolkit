@@ -55,6 +55,7 @@ Thanks for your interest in contributing! Here's how to get started.
 - If changing a template, verify the setup script still works end-to-end
 - If changing shared files (AGENT_TEAM.md, settings.json), update all variants that share them
 - Maintain cross-platform compatibility (Windows + Linux/macOS)
+- **Behavior-changing PRs** (operating model, hooks, agent contracts, tier semantics) MUST include a `CHANGELOG.md` entry with a **"Downstream migration"** subsection telling template consumers what a `/sync-template` will change and what they must do. Reviewer-enforced — downstream operators otherwise reverse-engineer model shifts from raw diffs (see `docs/2026-07-19-sync-template-dotnet-findings.md`, finding 3)
 
 ## Reporting Issues
 

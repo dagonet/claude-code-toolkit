@@ -278,3 +278,7 @@ Discard freely:
 > Replace placeholders above with your project's actual commands from `PROJECT_CONTEXT.md`.
 
 ---
+
+<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->
+<!-- Project-specific rules, routing blocks, and extensions go here. -->
+<!-- PROJECT-CUSTOM:END -->
