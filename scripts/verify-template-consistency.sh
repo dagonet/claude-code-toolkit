@@ -215,6 +215,42 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 12. Delegate-everything lock-in (round 4)
+# ---------------------------------------------------------------------------
+for v in $VARIANTS; do
+  s="templates/$v/.claude/settings.json"
+  grep -q "enforce-delegation" "$s" \
+    && ok "$s: enforce-delegation registered" \
+    || ko "$s: enforce-delegation NOT registered"
+  [ -f "templates/$v/.claude/agents/ops.md" ] \
+    && ok "templates/$v: ops.md present" \
+    || ko "templates/$v: ops.md MISSING"
+done
+
+ops_hashes=$(md5sum templates/*/.claude/agents/ops.md 2>/dev/null | awk '{print $1}' | sort -u | wc -l)
+if [ "$ops_hashes" = "1" ]; then
+  ok "ops.md byte-identical across all 6 variants"
+else
+  ko "ops.md drift detected — variants are NOT byte-identical"
+fi
+
+mandate_count=$(grep -l "Team-mode reporting" templates/*/.claude/agents/*.md 2>/dev/null | wc -l)
+if [ "$mandate_count" = "42" ]; then
+  ok "Team-mode reporting mandate present in 42 agent files (7 report agents x 6 variants)"
+else
+  ko "Team-mode reporting mandate present in only $mandate_count/42 agent files"
+fi
+
+banned='fixes code directly|PO only|PO fixes directly|PO reviews directly|PO verifies directly|may be committed directly'
+banned_hits=$(grep -rEl "$banned" templates/*/AGENT_TEAM.md templates/*/CLAUDE.md 2>/dev/null | wc -l)
+if [ "$banned_hits" = "0" ]; then
+  ok "No PO-inline-work phrases remain in any AGENT_TEAM.md/CLAUDE.md"
+else
+  ko "PO-inline-work phrases still present in $banned_hits files:"
+  grep -rEln "$banned" templates/*/AGENT_TEAM.md templates/*/CLAUDE.md
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

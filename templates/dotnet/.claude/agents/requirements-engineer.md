@@ -83,3 +83,5 @@ Produce specs as GitHub Issue markdown, ready for the PO to post:
 - Reference existing interfaces, entities, and patterns by name when relevant
 - Check `PROJECT_STATE.md` for current work-in-progress to avoid conflicts
 - For large input documents (>200 lines), use `local_first_pass` for compression before analysis; use `extract_json` to extract structured requirements from raw specs
+
+**Team-mode reporting (HARD REQUIREMENT):** end your run with a SendMessage to `main` containing your full report. NEVER go idle without reporting — a bare idle notification is a non-report and your work will be treated as failed.

@@ -9,7 +9,7 @@ At the start of every session:
 2. Read `PROJECT_CONTEXT.md` — load build commands and workflow config
 3. **Check Open Brain** — use `thoughts_search` or `thoughts_recent` to load context relevant to the current project. Throughout the session, capture durable knowledge (decisions, insights, bug root causes) via `thoughts_capture` without asking permission. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days).
 4. Present current state (from MEMORY.md) and ask what to work on. Check `git_status` and `git_worktree_list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
-5. **Enter plan mode** for any non-trivial task (T2+). The PO MUST use `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode.
+5. **Enter plan mode** for any non-trivial task (T2+). The PO MUST use `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode — but still need a 3-line plan file containing `Tier: T1` in `docs/plans/` (the coder spawn gate reads it), and are implemented by ONE spawned coder, never by the PO.
 
 ## Workflow TL;DR
 
@@ -19,10 +19,12 @@ Claude operates as **Product Owner (PO)** — the orchestrator who plans sprints
 
 | Tier | Criteria | Agents Spawned |
 |------|----------|----------------|
-| T1 Trivial | < 10 lines, config/style | PO fixes directly |
-| T2 Simple | 1-2 files, < 50 lines | 1 dev, PO reviews |
-| T3 Standard | Multi-file, < 200 lines | dev + reviewer + tester |
-| T4 Complex | Architectural, > 200 lines | architect + dev + reviewer + tester |
+| T1 Trivial | < 10 lines, config/style | 1 coder (solo, uniform PR pipeline) |
+| T2 Simple | 1-2 files, < 50 lines | coder + code-reviewer |
+| T3 Standard | Multi-file, < 200 lines | coder + reviewer + tester |
+| T4 Complex | Architectural, > 200 lines | architect + coder(s) + reviewer + tester |
+
+**The PO never does hands-on work — at any tier.** Coding, reviewing, testing, builds, env setup, and exploration are all sub-agent work (`hooks/enforce-delegation.sh` enforces the code/build part mechanically). The PO's write surface: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md`. Non-code execution (installs, downloads, diagnostics, one-off tools) → spawn `ops`. Exploration → spawn `Explore` (pass `model: "haiku"` or `"sonnet"`).
 
 **Agent type selection** (which `subagent_type` to use for developers):
 
@@ -132,7 +134,9 @@ Opt-in (add to `enabledPlugins` if needed): `feature-dev`, `code-simplifier`, `c
 
 ## Working Preferences
 
-- **Implement, don't suggest** — make changes directly, infer user intent from context
+> **Actor note:** implementation-level preferences below (tests, CI fixes, minimal fix, post-merge verification, commit style) are PERFORMED by developer agents — the PO enforces them by putting them in spawn prompts and rejecting deliverables that violate them. The PO itself never edits code or runs builds/tests.
+
+- **Implement, don't suggest** — deliver working changes (via spawned agents), don't merely advise the user; infer intent from context
 - **Read before editing** — always open referenced files first, follow existing style
 - **Summarize tool work** — provide a quick summary after completing tasks
 - **Clean finish** — after completing work: all changes committed, PR merged, worktree removed, branch deleted. Delete temp helpers/scripts, keep only final code. Any leftover artifact that can't be cleaned up must be reported to the user with a reason
@@ -200,7 +204,7 @@ Mandatory rules live in `VERIFICATION_PLAYBOOK.md` — consult it before claimin
 3. **Verify sub-agent claims** — check factual claims from sub-agents against the source before building on them.
 4. **Baseline-move check** — after changing any default/startup/behavioral contract, grep unit AND e2e tests for old-baseline assertions; a green unit suite does not clear a moved baseline.
 
-**Gate rule (PO + developers):** run `bash hooks/run-gate.sh` — never re-derive the individual build/test/format/lint commands from memory. A green gate writes `.gate/last-pass.json`; `hooks/gate-before-merge.sh` hard-blocks PR merges without a fresh artifact.
+**Gate rule (developers):** run `bash hooks/run-gate.sh` — never re-derive the individual build/test/format/lint commands from memory. A green gate writes `.gate/last-pass.json`; `hooks/gate-before-merge.sh` hard-blocks PR merges without a fresh artifact. The PO never runs the gate or the suite — it verifies via the artifact (`hooks/enforce-delegation.sh` enforces this); a needed re-run is dispatched to `ops` or the coder.
 
 ---
 

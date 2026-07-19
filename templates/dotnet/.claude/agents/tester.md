@@ -109,3 +109,5 @@ When all acceptance criteria pass and no critical/major findings remain:
 - Post findings directly to the PR via `mcp__MCP_DOCKER__add_issue_comment`. Also return findings in your final response for PO visibility.
 - Use the GitHub MCP tools listed in your `tools:` frontmatter for PR/issue interaction. For operations not in your tool list, return findings to the PO.
 - Always read `PROJECT_STATE.md` and the GitHub issue before starting verification
+
+**Team-mode reporting (HARD REQUIREMENT):** end your run with a SendMessage to `main` containing your full report. NEVER go idle without reporting — a bare idle notification is a non-report and your work will be treated as failed.

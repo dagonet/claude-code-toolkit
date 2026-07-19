@@ -2,6 +2,8 @@
 
 Execute a test-fix-retest loop using MCP dotnet tools.
 
+> **Delegation rule (agent-team projects):** if the current repo has an `AGENT_TEAM.md`, the main thread (PO) does NOT run this loop itself — `hooks/enforce-delegation.sh` denies main-thread test runs and edits. Spawn ONE `coder` (fixing) or `tester` (verification-only) with this command's workflow in the spawn prompt and judge its report. The loop below is executed by that agent (or directly in non-template repos).
+
 ## Arguments
 
 - `$ARGUMENTS` - Path to test project or solution (optional)
