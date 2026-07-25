@@ -6,7 +6,7 @@
 
 Claude Code supports layered configuration: **project-level `.claude/` overrides user-level `~/.claude/`** for same-named items.
 
-- **User-level agents** (`~/.claude/agents/`): 7 generic agents -- architect, code-reviewer, coder, doc-generator, requirements-engineer, test-writer, tester.
+- **User-level agents** (`~/.claude/agents/`): 8 generic agents -- architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester.
 - **Template agents** override user-level when working in that project. Generic agents in general/rust-tauri templates are identical to user-level. Dotnet/MAUI templates specialize architect, code-reviewer, requirements-engineer, and tester for their tech stack.
 - **Domain-specific coders** (`dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) live at project-level only -- they have no user-level counterpart.
 
@@ -126,7 +126,7 @@ claude-code-toolkit/
 │   ├── general/                           # Any project, any language
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (7 agents)
+│   │   │   └── agents/ (8 agents)
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md                  # v2.0 (shared across all variants)
@@ -136,7 +136,7 @@ claude-code-toolkit/
 │   ├── dotnet/                            # .NET projects
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (8 agents)
+│   │   │   └── agents/ (9 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
@@ -147,7 +147,7 @@ claude-code-toolkit/
 │   ├── dotnet-maui/                       # .NET MAUI desktop apps
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (8 agents)
+│   │   │   └── agents/ (9 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
@@ -158,7 +158,7 @@ claude-code-toolkit/
 │   ├── rust-tauri/                        # Rust/Tauri v2 desktop apps
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (8 agents)
+│   │   │   └── agents/ (9 agents)
 │   │   ├── rustfmt.toml                   # Rust formatter config
 │   │   ├── .prettierrc                    # TypeScript/CSS formatter config
 │   │   ├── CLAUDE.md
@@ -170,7 +170,7 @@ claude-code-toolkit/
 │   └── python/                            # Python projects
 │       ├── .claude/
 │       │   ├── settings.json
-│       │   └── agents/ (8 agents)
+│       │   └── agents/ (9 agents)
 │       ├── .editorconfig
 │       ├── CLAUDE.md
 │       ├── CLAUDE.local.md

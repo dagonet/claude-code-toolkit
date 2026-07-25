@@ -10,7 +10,7 @@
 | Default Task Source | `plan-files` | `plan-files` | `plan-files` | `plan-files` | `plan-files` | `plan-files` |
 | User-level MCP (universal) | git, github, ollama, template-sync, searxng, open-brain (+ plugins) | same | same | same | same | same |
 | Project-level MCP (auto-generated) | none (unless `--sqlite-db-path`) | `dotnet-tools` | `dotnet-tools`, `windows-mcp` | `rust-tools`, `windows-mcp` | none (unless `--sqlite-db-path`) | none (unless `--sqlite-db-path`) |
-| Agents | 7 | 8 (+dotnet-coder) | 8 (full FlaUI tester) | 8 (+rust-coder) | 8 (+java-coder) | 8 (+python-coder) |
+| Agents | 8 | 9 (+dotnet-coder) | 9 (+dotnet-coder, full FlaUI tester) | 9 (+rust-coder) | 9 (+java-coder) | 9 (+python-coder) |
 | Code Style | No | .editorconfig | .editorconfig | rustfmt.toml + .prettierrc | .editorconfig | .editorconfig |
 | Build/Test Integration | Generic | dotnet build/test | + publish, FlaUI | cargo + npm | Maven or Gradle | pytest + ruff |
 | Post-Edit Build Hook | No | `dotnet build` on Edit/Write | `dotnet build` on Edit/Write | `cargo check` on Edit/Write | No | `ruff check` on Edit/Write |
@@ -18,6 +18,8 @@
 | MCP Enforcement Hook | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked |
 | Workflow Enforcement | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder |
 | Pipeline Hook | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge |
+| Delegation Enforcement | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds |
+| Agent Liveness | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget |
 | CLAUDE.md Behavior | Session Bootstrap, Debugging, Plan Challenge | + .NET Conventions | + MAUI Conventions | + Rust/Tauri Conventions, Code Style | + Java/Spring Conventions, Code Style | + Python Conventions, Code Style |
 | Database Tools | No | No | SQLite MCP (optional) | No | No | SQLite MCP (optional) |
 | Desktop Automation | No | No | Windows-MCP | Windows-MCP | No | No |
@@ -34,8 +36,8 @@ Each template variant provides the following files:
 | `PROJECT_CONTEXT.md` | Per-project config: tech stack, build/test commands, task source mode |
 | `PROJECT_STATE.md` | Sprint state tracking |
 | `.claude/settings.json` | MCP permissions + workflow hooks (MCP enforcement, format gates, pipeline, compaction) |
-| `.claude/agents/` | 7 generic agents + variant-specific coders |
-| `hooks/` | Workflow enforcement scripts, shared across all variants: `block-bash-vcs`, `no-push-main`, `tier-before-coder`, `pre-commit-test`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`. Also ships the opt-in user-level hooks `read-size-gate` and `allow-ctx-plan` (copied but not registered in `settings.json`) |
+| `.claude/agents/` | 8 generic agents + variant-specific coders |
+| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `block-bash-vcs`, `no-push-main`, `tier-before-coder`, `pre-commit-test`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `require-teammate-report`, `agent-budget-warn`. Also ships the opt-in user-level hooks `read-size-gate` and `allow-ctx-plan` (copied but not registered in `settings.json`) |
 | `gitignore` | Template for .gitignore (copied or merged by the setup script) |
 | `.editorconfig` | Code style for dotnet, dotnet-maui, java, and python variants |
 | `rustfmt.toml` + `.prettierrc` | Code style for rust-tauri variant only |
@@ -44,11 +46,11 @@ Each template variant provides the following files:
 
 ### General
 
-The simplest starting point, suitable for any language or framework. Ships with 7 generic agents (architect, code-reviewer, coder, doc-generator, requirements-engineer, test-writer, tester). No build hook or code style files, but includes MCP enforcement hooks (blocks `Bash(git *)` and `Bash(gh *)` to enforce MCP-only git/GitHub operations), SubagentStop pipeline hooks, and PreCompact state snapshots. No language-specific conventions in CLAUDE.md. Use this when your project does not match one of the specialized variants.
+The simplest starting point, suitable for any language or framework. Ships with 8 generic agents (architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester). No build hook or code style files, but includes MCP enforcement hooks (blocks `Bash(git *)` and `Bash(gh *)` to enforce MCP-only git/GitHub operations), SubagentStop pipeline hooks, delegation enforcement, the agent-liveness hooks, and PreCompact state snapshots. No language-specific conventions in CLAUDE.md. Use this when your project does not match one of the specialized variants.
 
 ### Dotnet
 
-Extends the general template for C#/.NET projects. Adds the `dotnet-coder` agent (8 agents total), an `.editorconfig` for code style, and .NET conventions in CLAUDE.md (implicit usings, DI patterns, null-coalescing, `dotnet format` compliance). Includes a PostToolUse build hook that runs `dotnet build --no-restore -v q` after every Edit or Write operation, catching compilation errors immediately. A PreToolUse format gate blocks commits if `dotnet format --verify-no-changes` detects violations.
+Extends the general template for C#/.NET projects. Adds the `dotnet-coder` agent (9 agents total), an `.editorconfig` for code style, and .NET conventions in CLAUDE.md (implicit usings, DI patterns, null-coalescing, `dotnet format` compliance). Includes a PostToolUse build hook that runs `dotnet build --no-restore -v q` after every Edit or Write operation, catching compilation errors immediately. A PreToolUse format gate blocks commits if `dotnet format --verify-no-changes` detects violations.
 
 ### Dotnet-MAUI
 
@@ -56,15 +58,15 @@ Extends the dotnet template for .NET MAUI desktop applications. Adds MAUI-specif
 
 ### Java
 
-Adds the `java-coder` agent (8 agents total) with Maven/Gradle build discipline. Ships a Java-focused `.editorconfig` for whitespace and indent rules (the project formatter — Spotless, Checkstyle, or google-java-format — is authoritative for Java style). CLAUDE.md includes a mandatory "Code Style (MANDATORY)" section enforcing formatter compliance, plus Java/Spring-specific conventions (constructor injection, `Optional` for nullable returns, `@ComponentScan` verification). The `java-coder` agent uses Bash `mvn`/`gradle` commands directly — no Java-specific MCP tools exist yet. A PreToolUse format gate auto-detects Maven vs Gradle and blocks commits if `spotless:check` / `spotlessCheck` fails. The setup script accepts `--build-tool` (maven or gradle, default: maven) and `--java-version` (default: 21) to auto-derive build, test, format, and lint commands.
+Adds the `java-coder` agent (9 agents total) with Maven/Gradle build discipline. Ships a Java-focused `.editorconfig` for whitespace and indent rules (the project formatter — Spotless, Checkstyle, or google-java-format — is authoritative for Java style). CLAUDE.md includes a mandatory "Code Style (MANDATORY)" section enforcing formatter compliance, plus Java/Spring-specific conventions (constructor injection, `Optional` for nullable returns, `@ComponentScan` verification). The `java-coder` agent uses Bash `mvn`/`gradle` commands directly — no Java-specific MCP tools exist yet. A PreToolUse format gate auto-detects Maven vs Gradle and blocks commits if `spotless:check` / `spotlessCheck` fails. The setup script accepts `--build-tool` (maven or gradle, default: maven) and `--java-version` (default: 21) to auto-derive build, test, format, and lint commands.
 
 ### Python
 
-Adds the `python-coder` agent (8 agents total) with pytest/ruff discipline. Ships a Python-focused `.editorconfig` for whitespace and indent rules. CLAUDE.md includes a mandatory "Code Style (MANDATORY)" section enforcing formatter compliance, plus Python-specific conventions (type hints, virtual environments, dependency management). The `python-coder` agent uses Bash `pytest` / `ruff` commands directly -- no Python-specific MCP tools exist yet. Includes a PostToolUse hook running `ruff check` after edits (sub-second overhead) and a PreToolUse format gate blocking commits unless both `ruff format --check` and `ruff check` pass. The setup script accepts `--package-manager` (pip, poetry, or uv, default: pip) and `--python-version` (default: 3.12) to auto-derive build, test, format, and lint commands. SQLite MCP support is optional.
+Adds the `python-coder` agent (9 agents total) with pytest/ruff discipline. Ships a Python-focused `.editorconfig` for whitespace and indent rules. CLAUDE.md includes a mandatory "Code Style (MANDATORY)" section enforcing formatter compliance, plus Python-specific conventions (type hints, virtual environments, dependency management). The `python-coder` agent uses Bash `pytest` / `ruff` commands directly -- no Python-specific MCP tools exist yet. Includes a PostToolUse hook running `ruff check` after edits (sub-second overhead) and a PreToolUse format gate blocking commits unless both `ruff format --check` and `ruff check` pass. The setup script accepts `--package-manager` (pip, poetry, or uv, default: pip) and `--python-version` (default: 3.12) to auto-derive build, test, format, and lint commands. SQLite MCP support is optional.
 
 ### Rust-Tauri
 
-Adds the `rust-coder` agent (8 agents total) with cargo/clippy/fmt discipline. Ships `rustfmt.toml` and `.prettierrc` for Rust and TypeScript formatting. CLAUDE.md includes a mandatory "Code Style (MANDATORY)" section enforcing formatter compliance, plus Rust/Tauri-specific conventions. The tester agent uses Windows-MCP for desktop UI testing. CLAUDE.local.md includes Rule 12 (prefer `cargo_build`/`cargo_test`/`cargo_clippy` MCP tools over Bash). Includes a PostToolUse hook running `cargo check` after edits and a PreToolUse format gate requiring both `cargo fmt --check` and `npm run format --check` to pass before commits.
+Adds the `rust-coder` agent (9 agents total) with cargo/clippy/fmt discipline. Ships `rustfmt.toml` and `.prettierrc` for Rust and TypeScript formatting. CLAUDE.md includes a mandatory "Code Style (MANDATORY)" section enforcing formatter compliance, plus Rust/Tauri-specific conventions. The tester agent uses Windows-MCP for desktop UI testing. CLAUDE.local.md includes Rule 12 (prefer `cargo_build`/`cargo_test`/`cargo_clippy` MCP tools over Bash). Includes a PostToolUse hook running `cargo check` after edits and a PreToolUse format gate requiring both `cargo fmt --check` and `npm run format --check` to pass before commits.
 
 ## Project-Level MCP Matrix
 
