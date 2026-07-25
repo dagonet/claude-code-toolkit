@@ -33,6 +33,8 @@ For each workstream:
 5. Code review the PR
 6. Fix any review findings, rebuild, retest
 
+Watch for **progress pings**, not silence. Every agent is instructed to send a one-line ping via SendMessage roughly every 20 tool calls. An agent that has sent no ping and no report is a suspected stall — treat missing pings, not elapsed time, as the signal.
+
 ### 5. Merge Sequence
 - Before merging any PR, **rebase it onto the latest main**
 - Merge PRs **one at a time** in dependency order

@@ -241,6 +241,22 @@ else
   ko "Team-mode reporting mandate present in only $mandate_count/42 agent files"
 fi
 
+# Liveness & Scope block: 53 template agent files + 8 user-level-reference = 61.
+# Guards the progress-ping cadence and the scope-abort clause against drift.
+liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+if [ "$liveness_count" = "61" ]; then
+  ok "Liveness & Scope block present in all 61 agent files (53 template + 8 user-level-reference)"
+else
+  ko "Liveness & Scope block present in only $liveness_count/61 agent files"
+fi
+
+scope_abort=$(grep -lF "Scope abort:" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+if [ "$scope_abort" = "61" ]; then
+  ok "Scope-abort clause present in all 61 agent files"
+else
+  ko "Scope-abort clause present in only $scope_abort/61 agent files"
+fi
+
 banned='fixes code directly|PO only|PO fixes directly|PO reviews directly|PO verifies directly|may be committed directly'
 banned_hits=$(grep -rEl "$banned" templates/*/AGENT_TEAM.md templates/*/CLAUDE.md 2>/dev/null | wc -l)
 if [ "$banned_hits" = "0" ]; then

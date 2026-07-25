@@ -57,6 +57,18 @@ Thanks for your interest in contributing! Here's how to get started.
 - Maintain cross-platform compatibility (Windows + Linux/macOS)
 - **Behavior-changing PRs** (operating model, hooks, agent contracts, tier semantics) MUST include a `CHANGELOG.md` entry with a **"Downstream migration"** subsection telling template consumers what a `/sync-template` will change and what they must do. Reviewer-enforced — downstream operators otherwise reverse-engineer model shifts from raw diffs (see `docs/2026-07-19-sync-template-dotnet-findings.md`, finding 3)
 
+## Versioning
+
+The toolkit is versioned `MAJOR.MINOR` in a tracked `VERSION` file at the repo root, mirrored by an annotated git tag.
+
+- **`VERSION`** holds two lines: the number, then a one-line description of what that version is. Greppable by tooling and by downstream projects checking which toolkit they were bootstrapped from.
+- **Annotated tag** `vMAJOR.MINOR` at the merge commit carries the full description — the scope of the version, or the changes since the previous one. This is what GitHub surfaces.
+- **Bump MINOR** for a body of work that changes the operating model, hooks, agent contracts, or template content. **Bump MAJOR** for a change that breaks downstream `/sync-template` compatibility.
+- Bump `VERSION` on the feature branch as part of the PR, then tag after merge so the tag lands on the merge commit.
+- Version bumps do not replace the `CHANGELOG.md` entry — the CHANGELOG stays date-based and carries the detail plus the "Downstream migration" subsection; the tag description summarizes.
+
+`v1.0` is annotation-only (tagged at `34b85fd`, everything through PR #43): adding a `VERSION` file retroactively would have meant a direct commit to `main`, which Rule 1 forbids. The tracked file starts at `v1.1`.
+
 ## Reporting Issues
 
 - Use [GitHub Issues](https://github.com/dagonet/claude-code-toolkit/issues) for bug reports and feature requests
