@@ -282,7 +282,18 @@ Events used by this toolkit:
 
 The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, `SessionEnd`, `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`. There is no `TeammateStart`.
 
-> **Hook config is read at session start.** Editing a `hooks` block mid-session has no effect until restart — budget for this when testing a new hook.
+> **Hook config hot-reloads.** Editing a `hooks` block takes effect without restarting the session — verified by binding a new hook mid-session and seeing it fire on the next event.
+
+**Measured stdin fields** (captured from a live log-only probe, since the docs are incomplete):
+
+| Event | Fields beyond `session_id` / `transcript_path` / `cwd` / `hook_event_name` / `prompt_id` / `permission_mode` |
+|-------|---|
+| `Stop` | `stop_hook_active`, `effort`, `session_crons`, `last_assistant_message` (full final message text), `background_tasks` (`[{id, type, status, description}]`) |
+| `TeammateIdle` | `teammate_name`, `team_name`. **No loop-guard field** — it fires again seconds later, so a blocking hook MUST keep its own ledger. `transcript_path` is the **lead's** transcript, which is where teammate messages land. `exit 2` blocks the idle and the stderr text is delivered **to the teammate**. |
+| `TaskCreated` / `TaskCompleted` | `task_id`, `task_subject`, `task_description`. No `teammate_name`, no task result — cannot attribute a completion to a teammate or inspect its output. |
+| `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id`, `effort`, and — inside a subagent **or a named teammate** — `agent_id` and `agent_type`. Main-thread calls carry neither, which makes `agent_id` a sound main-vs-agent discriminator. |
+
+> `background_tasks` reports `status: "running"` for a teammate that has already gone idle, and carries no `teammate_name`. Do not use `Stop` for idle detection — use `TeammateIdle`.
 
 #### Key Fields
 

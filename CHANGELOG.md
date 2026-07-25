@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-07-25 — Agent liveness, part 2: TeammateIdle report gate + tool-call budget
+
+Part 2 binds the two hooks part 1 deferred, after verifying every mechanism against live hook stdin rather than documentation. **Also corrects a number reported in part 1.**
+
+### Correction to part 1
+
+Part 1 claimed "64 of 90 teammates never sent a substantive message." **That figure was wrong — the true count is 4 of 90.** The mining pass that produced it only parsed `message.content` when it was a string, so it missed every teammate message delivered as array-form content. Re-measured over the full transcript: 90 teammates, 279 bare idle notifications, **305** substantive messages, and 86 of 90 teammates reported at least once.
+
+The pain point is real but has a different shape than reported. It is not "teammates never report" — it is **teammates idling repeatedly between reports**. Worst observed run: `m13-coder` with the sequence `R R I I I I I I I I I I R …` — ten consecutive idles with no output. That reframing changed the trigger: a "never reported" gate would have fired for 4 of 90 teammates and been useless.
+
+### Verified hook contracts (measured, not documented)
+
+A log-only probe captured real stdin for every candidate event:
+
+- **`TeammateIdle`** carries `teammate_name`, `team_name`, `session_id`, `transcript_path` (the **lead's** transcript, where teammate messages land), `cwd`, `prompt_id`, `permission_mode`. `exit 2` **blocks the idle**, and the stderr text is delivered **to the teammate** — confirmed end-to-end: a probe teammate read the block message and converted its silent idle into a report. It has **no loop guard**; it fired twice for the same teammate 9 s apart, so a hook here must carry its own ledger.
+- **`PreToolUse` fires for named teammates and carries `agent_id` plus `agent_type`.** This was the open question that gated the budget hook: teammates are separate sessions, and `agent_id` is documented as subagent-only. It is present, so the agents that actually run away are reachable.
+- **`Stop`** carries `last_assistant_message` and `background_tasks`, but `background_tasks` reported `status: "running"` for a teammate that had idled 12 s earlier and carries no `teammate_name` — useless for idle detection. **`TaskCompleted`** carries no `teammate_name` and no task result, so it cannot attribute a completion to a teammate or judge report substance.
+- Hook config **hot-reloads**; the "read at session start" note added in part 1 was wrong and is corrected here.
+- `"*"` is not a match-all matcher (malformed regex); omitting `matcher` is. Per-hook `if` filters work, verified firing exactly once on a narrow pattern.
+
+### New hooks
+
+- **`hooks/require-teammate-report.sh`** (`TeammateIdle`, **not** 127-wrapped — a missing stop-style gate must never trap teammates in a loop). Blocks when a teammate has **2 recorded unreported idles**, i.e. this is at least its second idle with no report in between — the point at which the existing Escalation Protocol runbook says to act. On the measured transcript that selects 14 of 90 teammates; a threshold of 1 would have selected 84 of 90 and fired on healthy report-then-idle cycles. Append-only ledger keyed `session_id` + `teammate_name` (never deleted — deleting on a second idle, the pattern `enforce-agent-contract.sh` safely uses for a once-per-agent `SubagentStop`, would loop block→pass→block forever here), one block per teammate, max 3 per session, `.claude/liveness-off` kill switch, fail-open on every unexpected condition. A teammate absent from the transcript fails open: absence of evidence is not evidence of silence.
+- **`hooks/agent-budget-warn.sh`** (`PreToolUse`, no matcher, WARN-on-127 wrapper). Advisory WARN at 60 tool calls, blocks **once** at 120, then warns every 60. Not a hard wall — the goal is one deliberate reconsideration, since a wall would break legitimate large tasks. Pure-shell hot path (one `grep`, no `node`) and an immediate `exit 0` on the main thread, because it runs on every agent tool call. Counters are per-`agent_id` under a per-session directory.
+
+### Verification
+
+32 assertions across two suites, all passing: trigger thresholds (report-then-one-idle does not block; two idles do; a report resets the streak), ledger non-deletion across repeated idles, per-session cap, fail-open paths (missing/malformed/absent), budget thresholds and per-agent counter isolation, and the kill switch. Both hooks were then replayed against the real 167-hour transcript and agreed with hand-verified ground truth on every teammate tested; whole-file scan of 68 MB costs ~0.6 s and only runs on a teammate idle.
+
+Two bugs were caught by testing and are worth recording. The report detector originally required bare `"` in the message tags, but transcript tags are JSON-encoded (`from=\"name\"`), so every reporting teammate read as silent — the patterns are now escape-tolerant. And an apostrophe inside the `node -e` script terminated its single-quoted shell string, making bash parse the JavaScript and exit 2 on every call, which masqueraded as the gate working.
+
+### Downstream migration
+- Re-run `/sync-template`, then **restart the session** (or rely on hot-reload) so the two new hook bindings load. `settings.json` changes in all 6 variants: one `TeammateIdle` entry and one matcher-less `PreToolUse` entry.
+- Both hooks fail open and both honour `.claude/liveness-off` if you need them off.
+- Tune `IDLE_STREAK_BEFORE_BLOCK`, `MAX_BLOCKS`, `WARN_AT`, and `BLOCK_AT` at the top of each script.
+
 ## 2026-07-25 — Agent liveness & right-sizing, part 1: prose contracts + hook-event reference
 
 Session-mining round 6, from a 167-hour Motorsport-Manager-AI-Agent transcript (18,237 lines, 107 user turns). Two reported pain points — sub-agents going stale without reporting, and long phases for small issues — were measured rather than assumed, and the measurement contradicted the obvious fix.

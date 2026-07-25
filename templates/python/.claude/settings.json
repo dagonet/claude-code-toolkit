@@ -101,6 +101,24 @@
             "command": "bash hooks/enforce-delegation.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'WARN: hooks/enforce-delegation.sh missing -- delegation enforcement offline. Run /sync-template.' >&2; exit 0; fi; exit $c"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/agent-budget-warn.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'WARN: hooks/agent-budget-warn.sh missing -- tool-call budget offline. Run /sync-template.' >&2; exit 0; fi; exit $c"
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/require-teammate-report.sh"
+          }
+        ]
       }
     ],
     "SubagentStop": [
