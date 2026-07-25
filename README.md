@@ -17,11 +17,11 @@
 ## What you get
 
 - **6 template variants** (`general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`) with language-specific build hooks, format gates, and conventions baked in.
-- **7–8 agents per variant** — architect, code-reviewer, coder, doc-generator, requirements-engineer, test-writer, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps.
+- **8–9 agents per variant** — architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps.
 - **23 user-level slash commands** for the daily loop: `/build`, `/test`, `/commit`, `/sprint`, `/challenge`, `/code-review`, `/new-feature`, `/sync-template`, …
 - **11 auto-triggering skills** that load themselves based on what you're doing (debugging, refactoring, exploring a new codebase, …).
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
-- **Workflow enforcement hooks**: `Bash(git/gh *)` blocked in favor of MCP, commit-time format gates, no-push-to-main, tier-before-coder.
+- **Workflow enforcement hooks**: `Bash(git/gh *)` blocked in favor of MCP, commit-time format gates, no-push-to-main, tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), and agent liveness (a teammate cannot idle twice without reporting; a single agent spawn cannot run away unbounded).
 
 ## 5-minute quickstart
 
