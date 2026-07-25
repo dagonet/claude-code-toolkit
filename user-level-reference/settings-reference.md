@@ -262,18 +262,34 @@ Hooks are shell commands that execute in response to Claude Code events. They en
 
 #### Hook Events
 
+Events used by this toolkit:
+
 | Event | When It Fires | Can Block? |
 |-------|--------------|-----------|
 | `PreToolUse` | Before a tool executes | Yes (exit code 2) |
 | `PostToolUse` | After a tool succeeds | No (informational) |
-| `SubagentStop` | When a subagent finishes | No (informational) |
+| `SubagentStop` | When a subagent finishes | **Yes (exit code 2)** — `hooks/enforce-agent-contract.sh` relies on this to force one continuation when a coder stops without `## Gate Results` |
 | `PreCompact` | Before context compaction | No (informational) |
+
+**Agent-team lifecycle events — all available, none currently bound by this toolkit:**
+
+| Event | When It Fires | Can Block? | Why it matters |
+|-------|--------------|-----------|----------------|
+| `Stop` | Main thread finishes its response | Yes | Fires even when a teammate merely idles — the only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
+| `TeammateIdle` | A teammate is about to go idle | Yes | Fires at the exact moment a teammate would go silent without reporting. No documented loop-guard field — a hook here must carry its own. |
+| `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description`, `teammate_name` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
+| `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
+
+The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, `SessionEnd`, `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`. There is no `TeammateStart`.
+
+> **Hook config is read at session start.** Editing a `hooks` block mid-session has no effect until restart — budget for this when testing a new hook.
 
 #### Key Fields
 
 | Field | Description |
 |-------|-------------|
-| `matcher` | Tool name filter. Pipe-separated exact list (`Edit\|Write`) or regex (`mcp__.*`). |
+| `matcher` | Tool name filter. Pipe-separated exact list (`Edit\|Write`) or regex (`mcp__.*`). Valid on **every** event, not just tool events. **To match all tools, omit `matcher` entirely** (or use `".*"`) — `"*"` is malformed regex, not a wildcard, despite being widely repeated as one. |
+| `async` / `asyncRewake` | Run the hook in the background. `asyncRewake` additionally wakes the model when the hook exits 2 — a way to report a slow check without blocking the turn. |
 | `if` | Permission rule syntax filter on tool arguments (`Bash(git *)`, `Edit(*.cs)`). Requires v2.1.85+. |
 | `type` | Always `"command"` for shell hooks. |
 | `command` | Shell command to execute. |

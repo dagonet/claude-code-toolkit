@@ -312,6 +312,11 @@ Not all changes need the full sprint ceremony. The PO selects the tier based on 
 
 ### Tier Selection Guidelines
 
+- **Lowest defensible tier wins**: pick the smallest tier the work actually needs, and justify escalation rather than justifying restraint. Measured cost of getting this wrong: in one 167-hour session, 22 of 107 user turns spawned more than 2 agents, including 6 agents for `"analyze the last race results"` (a read-only question) and 5 for `"continue"`.
+- **The tier table above is a cap on team size, not a menu.** T2 means *at most* coder + reviewer. Never spawn a role the tier does not list.
+- **Single file or single symbol ⇒ T1**: one coder, no reviewer, no tester.
+- **Question-shaped turns spawn at most one agent.** "How does X work", "what does the data say", "is Y correct" are read-only — answer from one `Explore` (or one `ops` for a command), never a sprint team.
+- **Never spawn `Explore` when the target file is already named.** If you or the user already said which file, hand the path to the assigned dev and let it grep directly — a discovery agent for an already-discovered file is pure latency.
 - **Same-file rule**: When 2+ fixes touch the same file, assign them to a **single dev agent** regardless of tier. This avoids merge conflicts and saves an agent spawn.
 - **Style/config-only changes** (layout, styling, alignment): Always T1 unless they affect data binding or behavior.
 - **Bug fixes with known root cause**: T2 if single-file, T3 if multi-file or needs new tests.
@@ -334,6 +339,9 @@ Not all changes need the full sprint ceremony. The PO selects the tier based on 
 | Fix a null check in a service method | **No → T2** | Logic change, even if 1 line |
 | Add a new config key + reading code | **No → T2** | Config + logic, 2 concerns |
 | Reorder methods for readability | **No** | Merge conflict risk, low value |
+| "Analyze the last race results" | **Not a tier at all** | Read-only question — 0-1 agents, never a sprint team |
+| "Continue" / "carry on" | **Not a tier at all** | Resume the existing workstream; spawn nothing new |
+| Fix a build break in a named file | Yes | File is already known — no `Explore` spawn, hand the path to one coder |
 
 Within the agreed tier: do the complete thing, not the demo path — a working end-to-end implementation, not a happy-path skeleton.
 
@@ -708,6 +716,8 @@ Use these snippets verbatim when constructing spawn prompts. Append to the body 
 
 ```markdown
 CRITICAL: end your run with a SendMessage to main containing your full report/findings — never go idle without reporting.
+Send a one-line progress ping via SendMessage roughly every 20 tool calls, and whenever you change approach — silence is read as a stall.
+If the task grows past its stated scope (extra files, a second root cause, a redesign), stop and report what is done plus the blocker instead of expanding scope.
 ```
 
 **Coder (and variant coders `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`):**
@@ -719,6 +729,10 @@ Invoke these via the Skill tool before beginning task work:
 - superpowers:test-driven-development
 - superpowers:verification-before-completion
 - superpowers:receiving-code-review
+
+CRITICAL: end your run with a SendMessage to main containing your full report — never go idle without reporting.
+Send a one-line progress ping via SendMessage roughly every 20 tool calls, and whenever you change approach — silence is read as a stall.
+If the task grows past its stated scope (extra files, a second root cause, a redesign), stop and report what is done plus the blocker instead of expanding scope. A long run is not evidence of progress.
 ```
 
 **Tester:**
