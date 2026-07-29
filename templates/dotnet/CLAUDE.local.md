@@ -25,7 +25,7 @@ Tool schemas and full parameter signatures load on-demand via Claude Code's MCP 
 - **`github-tools`** — repo + workflow utilities: `gh_repo_from_origin`, `gh_workflow_list`.
 - **`open-brain`** — persistent memory: `thoughts_search`/`recent`/`capture`/`review`/`people`/`topics`/`delete`, `system_status`, plus wiki tools (`wiki_get`/`wiki_list`/`wiki_refresh`) and contradictions tools (`contradictions_list`/`contradictions_resolve`/`contradictions_audit`) (14 tools).
 - **`sqlite`** — DB access: `read_query`, `write_query`, `list_tables`, `describe_table`, `append_insight`.
-  > DB mounted at `/data/{{DB_FILENAME}}` from `{{DB_DIRECTORY}}`. Configured at user-level `~/.claude/.mcp.json`.
+  > DB mounted at `/data/{{DB_FILENAME}}` from `{{DB_DIRECTORY}}`. Configured at user-level `~/.claude.json`.
 
 ---
 
@@ -402,7 +402,7 @@ When durable knowledge appears to conflict, surface and resolve via:
 
 ## Additional MCP Servers (Pre-Permitted)
 
-The following MCP servers are pre-permitted in `settings.json` but require user-level registration (`~/.claude/.mcp.json` or `claude mcp add`) before they become available:
+The following MCP servers are pre-permitted in `settings.json` but require user-level registration (`~/.claude.json` or `claude mcp add`) before they become available:
 
 - **Playwright** (`mcp__plugin_playwright_playwright__*`) -- Browser automation for web testing
 - **SearXNG** (`mcp__searxng__*`) -- Privacy-respecting web search aggregation

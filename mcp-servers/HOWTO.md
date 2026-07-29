@@ -4,7 +4,7 @@
 
 MCP servers in this toolkit are split into two tiers:
 
-- **User-level servers** are registered once in `~/.claude/.mcp.json` and loaded in every project. These are tools you need universally — git, github, ollama, open-brain, etc.
+- **User-level servers** are registered once in `~/.claude.json` and loaded in every project. These are tools you need universally — git, github, ollama, open-brain, etc.
 - **Project-level servers** live in a repo's `.claude/.mcp.json` and only load in that project. These are language/framework-specific tools — dotnet, rust, sqlite, windows-mcp — that would bloat the context window if loaded globally.
 
 This guide is split accordingly. For the **why**, see `docs/architecture.md` → *MCP Layering*.

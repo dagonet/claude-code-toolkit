@@ -26,24 +26,29 @@ Follow these steps to configure Claude Code on a fresh machine:
    Copy the skill directories from `skills/` in this directory to `~/.claude/skills/`, preserving the folder structure (each skill lives in its own subdirectory with a `SKILL.md` file).
 
 6. **Configure MCP servers**
-   Use `.mcp.json.template` as a starting point. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md) for MCP server installation and setup instructions.
+   `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
 
 7. **Configure settings.json**
    Copy the settings to `~/.claude/settings.json`, adjusting paths and preferences for your environment. See `settings-reference.md` for detailed explanations of every setting.
 
 ## What's Included
 
-### Agents (7)
+### Agents (8)
+
+Models below are the values in each `agents/*.md` frontmatter — keep this table in step with the files.
 
 | Agent | Model | Description |
 |-------|-------|-------------|
 | `architect` | opus | Reviews architecture, provides implementation guidance, maintains ADRs and docs. Does not write application code. |
-| `coder` | opus | General-purpose software engineer for implementing changes with high-quality engineering standards. |
-| `code-reviewer` | sonnet | Reviews code for quality, style, structure, and test coverage. Posts categorized findings. Does not write code. |
+| `code-reviewer` | opus | Reviews code for quality, style, structure, and test coverage. Posts categorized findings. Does not write code. |
+| `coder` | sonnet | General-purpose software engineer for implementing changes with high-quality engineering standards. |
 | `doc-generator` | haiku | Generates documentation for code changes (public APIs, usage examples). |
+| `ops` | sonnet | Non-code execution: environment setup, installs, binary/file operations, one-off diagnostics, log collection, re-running the project gate. Keeps the orchestrator out of hands-on work. |
 | `requirements-engineer` | sonnet | Refines feature ideas into detailed specs with user stories, acceptance criteria, and edge cases. |
 | `test-writer` | sonnet | Writes comprehensive tests for new code, focusing on behavior and edge cases. |
 | `tester` | sonnet | QA tester that verifies features via UI automation (FlaUI), database inspection, and log analysis. |
+
+> **User-level agents are not template agents.** A user-level agent applies in *every* repo and its frontmatter `hooks:` travel with it, so it may only reference scripts and paths that exist everywhere. The copies here deliberately omit the `hooks/gate-before-merge.sh` PreToolUse hooks that `templates/*/.claude/agents/coder.md` carries — those fail closed (`127` → `exit 2`) in any repo without a `hooks/` directory, which would make PR merges impossible. `scripts/verify-template-consistency.sh` asserts both halves of this rule. Body prose may still mention `hooks/run-gate.sh`, because that is conditional on the project's `Gate` field and the agent simply skips it when absent.
 
 ### Commands (23)
 
@@ -142,7 +147,7 @@ Skills with evals: `code-review` (3 tests, 16 assertions), `fix-errors` (3 tests
 
 ### MCP Config Template
 
-`.mcp.json.template` -- A templatized version of `~/.claude/.mcp.json` with placeholders for machine-specific paths and configuration:
+`.mcp.json.template` -- The user-scope `mcpServers` object, with placeholders for machine-specific paths and configuration. **Merge it into `~/.claude.json`** (or use `claude mcp add --scope user`), which is the only file Claude Code reads for user-scope servers. Placeholders:
 - `{{PYTHON_VENV_PATH}}` -- Path to the Python virtual environment binary directory (e.g., `<your-path>\mcp-dev-servers\.venv\Scripts` on Windows, `~/repos/mcp-dev-servers/.venv/bin` on Linux/macOS)
 - `{{OLLAMA_MODEL_FIRST_PASS}}` -- Ollama model for text compression (e.g., `mistral:7b-instruct-q4_K_M`)
 - `{{OLLAMA_MODEL_EXTRACT_JSON}}` -- Ollama model for JSON extraction (e.g., `qwen2.5:7b-instruct-q4_K_M`)

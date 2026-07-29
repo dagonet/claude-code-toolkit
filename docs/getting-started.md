@@ -34,14 +34,16 @@ Choose the template that matches your project's tech stack. Each may require add
 
 All templates pre-permit the full set of MCP servers in `settings.json`. Servers are registered at **two scopes** (see `docs/architecture.md` → MCP Layering):
 
-- **User-level** (`~/.claude/.mcp.json`): universal tools loaded in every session.
-- **Project-level** (`<project>/.claude/.mcp.json`): language/framework tools loaded only in repos that register them. Generated per-variant by `setup-project.{sh,ps1}` — see `docs/templates.md` for the matrix.
+- **User-level** (`~/.claude.json`, top-level `mcpServers` — or just `claude mcp add --scope user`): universal tools loaded in every session.
+- **Project-level** (`<project-root>/.mcp.json`): language/framework tools loaded only in repos that register them. Generated per-variant by `setup-project.{sh,ps1}` — see `docs/templates.md` for the matrix.
+
+> These are the only two locations Claude Code reads. `~/.claude/.mcp.json` is not a thing, and an `mcpServers` key inside `settings.json` is silently ignored. See `docs/architecture.md` → MCP Layering for a known defect in the generated project-level path.
 
 If a server is not registered in the active scope, the permission is a harmless no-op.
 
 ### User-Level Servers
 
-Registered once at `~/.claude/.mcp.json`; universally useful across projects.
+Registered once in `~/.claude.json`; universally useful across projects.
 
 #### Custom Python servers from [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers)
 
