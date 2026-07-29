@@ -29,7 +29,13 @@ Follow these steps to configure Claude Code on a fresh machine:
    `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
 
 7. **Configure settings.json**
-   Copy the settings to `~/.claude/settings.json`, adjusting paths and preferences for your environment. See `settings-reference.md` for detailed explanations of every setting.
+   Copy **`settings.json`** from this directory to `~/.claude/settings.json`. Hook commands use `~/.claude/hooks/…`; **`~` and `$HOME` both expand inside a hook `command` string** (verified empirically — a probe bound at both forms fired and resolved to the real absolute path), so no path editing is needed.
+
+   Two things to decide before copying, because they are permissive and this file is a starting point, not a policy:
+   - `permissions.allow` contains **`Bash(*)`** — every Bash command runs without a prompt. Narrow it if you want per-command review.
+   - `env.CLAUDE_CODE_SHELL` points at Git Bash on Windows. Remove it on macOS/Linux.
+
+   Personal additions are deliberately excluded: no `statusLine`, no third-party marketplaces or their plugins, no project-specific permission entries. `settings-reference.md` explains every setting in detail.
 
 ## What's Included
 
@@ -103,7 +109,7 @@ Models below are the values in each `agents/*.md` frontmatter — keep this tabl
 |---------|-------------|
 | `/issue-create` | Create a properly formatted GitHub issue via MCP tools |
 
-### Skills (11)
+### Skills (12)
 
 | Skill | Auto-triggers When |
 |-------|-------------------|
@@ -118,6 +124,7 @@ Models below are the values in each `agents/*.md` frontmatter — keep this tabl
 | `security-audit` | Asking about security vulnerabilities or requesting an audit |
 | `sync-template` | Running `/sync-template` to pull template updates into the project |
 | `contribute-upstream` | Running `/contribute-upstream` to push project improvements back to the template |
+| `mcp-usage` | About to digest a large input, extract structured data, orient in a new repo, look up a library API, or run a batch operation — the occasional MCP procedures moved out of `CLAUDE.local.md` |
 
 ### Skill Evals Convention
 

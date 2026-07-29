@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.4 — 2026-07-29
+
+Closes the two items v1.3 left open: the context trim, and a copyable user-level `settings.json`.
+
+### Context trim — measured, and a relocation rather than a deletion
+
+Always-loaded config on the `general` variant: **41,167 B → 34,084 B (−17%)**.
+
+| File | Before | After |
+|---|---|---|
+| `templates/general/CLAUDE.md` | 17,871 | **15,281** |
+| `templates/general/CLAUDE.local.md` | 13,845 | **9,352** |
+| user-level `CLAUDE.md` | 8,505 | 8,505 |
+| `PROJECT_CONTEXT.md` | 946 | 946 |
+
+Per-variant after: general 34,084 · java 37,254 · python 37,064 · dotnet 38,083 · rust-tauri 39,176 · dotnet-maui 39,861.
+
+Nothing was dropped — three moves, each to a surface that loads on demand:
+
+- **New `mcp-usage` skill** takes ten procedures out of every `CLAUDE.local.md`: Ollama warm-up, large-input digestion, structured extraction, project orientation, code-quality and security sweeps, Context7 lookups, headless batch runs, performance guidance, and the default MCP-first workflow. All ten were present in 6/6 variants and are needed occasionally, so they were pure always-on cost. What stays inline is what binds every turn: registered servers, the git/GitHub MCP-only requirement, Open Brain, trust/verification, failure handling. Skills 11 → 12.
+- **Open Brain per-agent tables** (1,750 B of search-query and capture guidance, only relevant while spawning) moved into `AGENT_TEAM.md`, which is already on-demand — appended identically to all six so the §7 byte-identity invariant still holds (47,968 → 49,724 B).
+- **Superpowers block** keeps its exact header, its three hard triggers, and a `superpowers:` token, and points at the user-level copy for strong triggers, plugin defaults, and meta skills.
+
+The on-demand side growing while the always-loaded side shrinks is the intended direction, not an accident.
+
+**Guardrail:** `verify-template-consistency.sh` checks 2 and 3 assert the exact `## Superpowers Skills — MUST Invoke Before Responding` header *and* a `superpowers:` token in `CLAUDE.md` and `AGENT_TEAM.md`. Both survived the reduction — verified at 1 exact header and 10 tokens per variant. 131 assertions, all green.
+
+**Still on the list:** `CLAUDE.md`'s 17-bullet *Working Preferences* (~3.9 KB) still restates rules that `no-push-main.sh`, `enforce-delegation.sh`, and the gate now enforce mechanically.
+
+### A copyable user-level `settings.json`
+
+`user-level-reference/` previously shipped only prose. The blocker was whether `~` survives inside a hook `command` string — untested, and a wrong answer would have produced silently dead hooks.
+
+**Measured, not assumed:** a probe bound at both `bash ~/.claude/hooks/…` and `bash $HOME/.claude/hooks/…` fired, and `$0` resolved to the real absolute path in both. So the shipped file uses `~`.
+
+Sanitised: no machine paths (only `CLAUDE_CODE_SHELL`, which is documented as Windows-only), no `statusLine`, no third-party marketplaces or their plugins, no project-specific permission entries. Two permissive settings are called out in the README rather than left for a copier to discover — `Bash(*)` in `permissions.allow`, and the Windows shell path. Two new assertions check the file is valid JSON and that no hook command uses an absolute home path.
+
 ## v1.3 — 2026-07-29
 
 Two correctness fixes, both of the same shape: **config that was built correctly and wired to a path nothing reads.**

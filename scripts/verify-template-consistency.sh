@@ -363,6 +363,27 @@ done
 [ "$ul_fail" -eq 0 ] && ok "user-level agents carry no project-only frontmatter hooks"
 
 # ---------------------------------------------------------------------------
+# 15b. A copyable user-level settings.json ships, and carries no machine paths.
+#      Hook commands must use ~ (verified to expand inside a hook command
+#      string), never an absolute /Users/<name> or C:/Users/<name> path.
+# ---------------------------------------------------------------------------
+ULS=user-level-reference/settings.json
+if [ ! -s "$ULS" ]; then
+  ko "$ULS missing — the reference cannot be copied to ~/.claude/settings.json"
+else
+  if command -v node >/dev/null 2>&1 && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$ULS" 2>/dev/null; then
+    ok "$ULS is valid JSON"
+  else
+    ko "$ULS is not valid JSON"
+  fi
+  if grep -qiE '"command":[^"]*"[^"]*(C:/Users/|C:\\\\+Users\\\\+|/home/[a-z]|/Users/[a-z])' "$ULS"; then
+    ko "$ULS hook command uses an absolute home path — use ~/.claude/hooks/… instead"
+  else
+    ok "$ULS hook commands use ~ rather than an absolute home path"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 16. Project MCP goes to the REPO ROOT.
 #     Claude Code reads project-scope servers only from <project-root>/.mcp.json.
 #     Setup scripts wrote <project>/.claude/.mcp.json until 2026-07-29, so those
