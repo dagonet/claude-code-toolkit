@@ -341,6 +341,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 15. User-level agents must not carry project-only hooks.
+#     A user-level agent applies in EVERY repo and its frontmatter `hooks:`
+#     fire unconditionally, so referencing a project-only script fails closed
+#     (127 -> exit 2). Measured: 11 of 20 local repos fall back to user-level
+#     agents and 10 of those have no hooks/ dir -- the template coder's
+#     gate-before-merge hooks would have made PR merges impossible there.
+#     Body PROSE may reference hooks/ (it is conditional; the agent skips when
+#     the script is absent), so this checks the frontmatter block only.
+# ---------------------------------------------------------------------------
+echo
+ul_fail=0
+for f in user-level-reference/agents/*.md; do
+  [ -f "$f" ] || continue
+  fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$f")
+  if printf '%s\n' "$fm" | grep -q 'hooks/[a-z-]*\.sh'; then
+    ko "user-level agent $(basename "$f") references a project-only script in its frontmatter (fails closed in repos without hooks/)"
+    ul_fail=1
+  fi
+done
+[ "$ul_fail" -eq 0 ] && ok "user-level agents carry no project-only frontmatter hooks"
+
+# The template copies MUST keep the merge gate -- this is the other half of the
+# same invariant: the rule is scope-dependent, not a blanket removal.
+for v in general dotnet dotnet-maui rust-tauri java python; do
+  c="templates/$v/.claude/agents/coder.md"
+  [ -f "$c" ] || continue
+  if awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c" | grep -q 'gate-before-merge'; then
+    ok "templates/$v coder keeps the merge gate in frontmatter"
+  else
+    ko "templates/$v coder LOST its gate-before-merge frontmatter hook"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

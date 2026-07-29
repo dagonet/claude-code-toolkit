@@ -131,5 +131,5 @@ If any check fails, report the specific failure verbatim — do not attempt to p
 
 - **Do not** derive or substitute `BUILD_COMMAND` / `TEST_COMMAND` / `FORMAT_COMMAND` / `LINT_COMMAND` manually. The script handles that based on `--build-tool` / `--package-manager` / variant defaults.
 - **Do not** edit `.gitignore` by hand. The script merges a variant-appropriate `.gitignore` with any existing one.
-- **Do not** generate `.mcp.json` for the target project. MCP servers are user-level (`~/.claude/.mcp.json`); no per-project `.mcp.json` ships with any variant.
+- **Do not** generate `.mcp.json` for the target project. MCP servers are user-level (`~/.claude.json`); no per-project `.mcp.json` ships with any variant.
 - **Do not** install language toolchains (dotnet, poetry, cargo, mvn, etc.). Prerequisites are the user's responsibility — refer them to their OS package manager.

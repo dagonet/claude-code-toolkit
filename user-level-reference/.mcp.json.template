@@ -9,6 +9,10 @@
         "GH_PROMPT_DISABLED": "1"
       }
     },
+    "MCP_DOCKER": {
+      "command": "docker",
+      "args": ["mcp", "gateway", "run"]
+    },
     "template-sync-tools": {
       "command": "{{PYTHON_VENV_PATH}}/mcp-template-sync-tools.exe"
     },

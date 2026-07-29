@@ -15,14 +15,15 @@ hooks:
         - type: command
           if: "Bash(gh *)"
           command: "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI.' >&2; exit 2"
-    - matcher: "mcp__MCP_DOCKER__merge_pull_request"
-      hooks:
-        - type: command
-          command: "bash hooks/gate-before-merge.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/gate-before-merge.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
-    - matcher: "mcp__github-tools__github_pr_auto_merge"
-      hooks:
-        - type: command
-          command: "bash hooks/gate-before-merge.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/gate-before-merge.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
+# NOTE: this is the USER-LEVEL copy. It deliberately omits the
+# gate-before-merge.sh PreToolUse hooks that the template copies carry.
+# A user-level agent applies in EVERY repo and its frontmatter hooks travel
+# with it, so referencing a project-only script would fail closed (127 -> exit 2)
+# and make PR merges impossible in any repo without hooks/. Measured: 11 of 20
+# local repos fall back to user-level agents and 10 of them have no hooks/ dir.
+# Rule: a user-level agent may only reference paths that exist in every repo.
+# The merge gate still applies in template-derived projects via their own
+# .claude/agents/coder.md and .claude/settings.json.
 ---
 
 You are a senior software engineer for backend and frontend and pragmatic software architect. You write clean, maintainable code with sensible tests. You optimize for reliability in automated workflows.
