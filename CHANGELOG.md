@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.5 — 2026-07-29
+
+Closes the item v1.4 recorded as outstanding: `CLAUDE.md`'s *Working Preferences* section restating rules that hooks already enforce.
+
+**18 bullets → 11. 3,939 → 2,393 B per variant.** Always-loaded config on `general`: **34,084 → 32,538 B**, and **41,167 → 32,538 (−20%)** against the pre-trim baseline.
+
+### What was cut, and what enforces it instead
+
+| Bullet | Enforced by |
+|---|---|
+| Read before editing | the harness — `Edit` fails without a prior `Read` |
+| Test after every change | `hooks/pre-commit-test.sh`, `run-gate.sh`, `gate-before-merge.sh` |
+| Never push to main | `hooks/no-push-main.sh` (PreToolUse on `git_push`) |
+| Read tool discipline | `hooks/read-size-gate.sh` + the routing table in `~/.claude/CLAUDE.md` |
+| Subagent discipline | `hooks/enforce-delegation.sh` — the PO cannot edit or build |
+| Summarize tool work | no behavioural content |
+| Fix CI proactively | no behavioural content beyond "fix the failure" |
+
+In their place, one line naming where the enforcement lives, so the omission reads as deliberate rather than as an oversight. Stating that a mechanism exists, instead of repeating the rule it enforces, is the unhobbling move the Claude 5 context-engineering guidance argues for.
+
+**Kept (11)** — the judgement calls no hook can make: implement-don't-suggest, minimal fix first, analyze before coding, re-plan on failure, tests, post-merge verification, update docs with code, commit messages explain why, clean finish, checkpoint long sessions, learn from corrections. The *Actor note* preamble is kept verbatim: it assigns these to developer agents and is load-bearing for the delegate-everything model.
+
+**Duplication:** the `"22% of total context"` statistic went from **7 files to 1** — the single authoritative copy in `user-level-reference/CLAUDE.md`, which already carries the full Read & Search routing table.
+
+### Why this cut was safe
+
+Nothing under `hooks/` or `scripts/` greps any of this section — verified before editing, not after. That is the opposite of the Superpowers block in v1.4, where two consistency assertions depended on an exact header and a token. Deleting prose a mechanism enforces is safe in a way that deleting an unenforced rule is not.
+
+### Verification
+
+131 assertions green. The section is byte-identical across all six variants before *and* after (single md5), so this was one rewrite applied six times. All seven cut phrases return zero hits across `templates/`. The six enforcing hooks are present and untouched. Section boundaries intact — `general`/`rust-tauri` are followed by `## Quick Start`, the other four by `# Code Style (MANDATORY)`, and the extraction had to stop at any `^#` rather than `^## ` to handle both.
+
 ## v1.4 — 2026-07-29
 
 Closes the two items v1.3 left open: the context trim, and a copyable user-level `settings.json`.

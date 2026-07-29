@@ -1,2 +1,2 @@
-1.4
-Context trim per the Claude 5 context-engineering guidance — always-loaded config down 17% (41,167 to 34,084 B) by relocating ten MCP procedures into a new mcp-usage skill and the Open Brain agent tables into AGENT_TEAM.md, plus a copyable user-level settings.json.
+1.5
+Working Preferences trimmed 18 bullets to 11 — five restated rules a hook or the harness already enforces, two carried no behavioural content. Always-loaded config now 32,538 B, down 20% from the 41,167 B baseline.
