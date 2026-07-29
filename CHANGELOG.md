@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-07-29 — v1.2: liveness caps corrected after four days of production exposure
+
+v1.1's two liveness hooks were installed in a real project on 2026-07-25 11:41 and ran for four days. They worked — and both were mis-sized. This release fixes the sizing, adds an audit trail, and adds a way to answer "is it on?" without a transcript investigation.
+
+### What the production data showed
+
+Project `Motorsport-Manager-AI-Agent`, one 208 MB / 10-day transcript. The hooks' own state directories are written on every run, so they are direct proof of execution: the liveness ledger held exactly **3** `.blocked` markers and the budget directory held **150** counter files.
+
+- **The liveness gate exhausted itself in 21 hours.** Its three blocks landed 07-25 18:24, 07-26 13:43 and 07-26 15:49, hitting the session-wide `MAX_BLOCKS=3`. From that point it returned 0 for every subsequent idle — and **618 idle notifications** followed over the next three days.
+- **The budget's single block does not stop a runaway.** Across 150 tracked agents: median **15** calls, **35 over 60**, **19 over 120**, worst **417**. Blocking once at 120 and warning thereafter left the 417-call agent running.
+- **Neither hook was observable.** Their stderr goes to the agent or teammate, not the lead transcript, and nothing was logged. Grepping the transcript for the hooks' own output returns zero — which is exactly why an initial analysis concluded, wrongly, that the fix had never activated.
+
+### Changes
+
+- **`hooks/require-teammate-report.sh`** — the session-wide `MAX_BLOCKS` cap is **deleted**, not retuned. The per-teammate marker (one block per teammate, ever) is now the only throttle; it already bounds the total at the number of teammates that qualify. An intermediate design added a daily cap and was cut: the measured worst day is 10, so it could never bind.
+- **`hooks/agent-budget-warn.sh`** — blocks now **escalate**: 120, 180, 240, and every 60 thereafter, instead of blocking once. Every threshold test is `-eq`, never `-ge`, so calls between thresholds pass and a blocked agent can still deliver its partial report.
+- **Audit trail** — both hooks append to `.claude/liveness.log` (gitignored in every variant). **Threshold events only**: the budget hook runs on every tool call, so logging passes would add a second hot-path write and ~10,000 lines of no signal per session. Writes are best-effort and can never change an exit code.
+- **`scripts/check-activation.sh`** (new) — reports, for any project: hook bindings in `settings.json`, hook scripts on disk, kill switches, `.claude/liveness.log` contents, and the ledger directories that prove execution.
+
+### Measured effect
+
+Replayed the **shipped** script over the same 208 MB transcript, feeding each of the 250 qualifying triggers the transcript prefix it would have seen in production:
+
+| | blocks | worst day |
+|---|---|---|
+| v1.1 (`MAX_BLOCKS=3`) | **3** | — |
+| v1.2 (no session cap) | **41** | 10 |
+
+That is the whole claim. It does not say teammates now report reliably — it says the gate stays armed for the life of a long session instead of 21 hours.
+
+### Rollout — required, and not automatic
+
+**A template is a source, not a shipment.** v1.1 was merged to `templates/` and reached exactly **one of 15** projects; the rest have no `TeammateIdle` binding and mostly no `hooks/` directory, so for them the fix has never existed. Getting v1.2 into a project needs both halves:
+
+1. the scripts in `<project>/hooks/`, and
+2. the bindings in `<project>/.claude/settings.json`.
+
+`/sync-template` installs both. Verify with `bash scripts/check-activation.sh <path-to-project>`. These hooks are deliberately **not** registered at user level: their commands are `bash hooks/…`, resolved relative to the project root.
+
+### Verification
+
+21 hook assertions plus the replay gate, all passing. Notable cases: a 4th distinct teammate blocks (v1.1's cap suppressed it) and 10 more after that; a teammate that reported is never blocked (guards the escape-tolerant regex against JSON-escaped tags); calls 121–179 all pass between block thresholds; the budget log contains exactly 4 lines after 250 calls, not 250.
+
 ## 2026-07-25 — Agent liveness, part 2: TeammateIdle report gate + tool-call budget
 
 Part 2 binds the two hooks part 1 deferred, after verifying every mechanism against live hook stdin rather than documentation. **Also corrects a number reported in part 1.**

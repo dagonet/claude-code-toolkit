@@ -75,6 +75,30 @@ Variants do **NOT** ship a `hooks/` directory. All hook scripts live once at the
 
 If a downstream sync reports a hook as missing from a variant: that is expected — the variant never carries it; the root does.
 
+## Rollout: a Template Is a Source, Not a Shipment
+
+Merging a hook into `templates/` changes nothing in any existing project. Enforcement needs **two** things in the consuming repo, and `/sync-template` installs both:
+
+1. the script at `<project>/hooks/<name>.sh`, and
+2. its binding in `<project>/.claude/settings.json`.
+
+This is not theoretical. The v1.1 agent-liveness hooks were merged to `templates/` and, days later, were present in **one of 15** projects — the other 14 had no `TeammateIdle` entry and mostly no `hooks/` directory, so for them the feature did not exist. Determining that took a multi-hour transcript investigation.
+
+**Check any project in one command:**
+
+```bash
+bash scripts/check-activation.sh /path/to/project
+```
+
+It reports the `settings.json` bindings, which hook scripts are on disk, whether a kill switch (`.claude/liveness-off`, `.claude/delegation-off`) is disabling enforcement, the contents of `.claude/liveness.log`, and the ledger directories under `TMPDIR` that prove whether the hooks have ever actually executed.
+
+Two things that look like failure but are not:
+
+- **No hook output in the session transcript.** `TeammateIdle` and `PreToolUse` hook stderr is delivered to the *teammate or agent*, not to the lead's transcript. Grepping the transcript for a hook's own message will find nothing even when the hook is firing correctly. Use the ledger directories or `.claude/liveness.log` instead.
+- **An empty `.claude/liveness.log`.** It records threshold events only. A hook that has run thousands of times without crossing a threshold writes nothing there; its counter files still prove execution.
+
+These hooks are deliberately **not** registered at user level (`~/.claude/settings.json`): their commands are `bash hooks/…`, resolved relative to the project root, and would break in any repo that has not been synced.
+
 ## PROJECT-CUSTOM Region
 
 Every template `CLAUDE.md` ends with:
