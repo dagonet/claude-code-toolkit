@@ -293,6 +293,54 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 14. v1.2 liveness sizing invariants.
+#     These encode decisions that were reverted-into-existence by production
+#     data; a future edit that reintroduces them should fail loudly here.
+# ---------------------------------------------------------------------------
+echo
+# Strip comments first: the header deliberately explains why MAX_BLOCKS was
+# removed, and that prose must not trip the assertion.
+if grep -v '^[[:space:]]*#' hooks/require-teammate-report.sh 2>/dev/null | grep -q 'MAX_BLOCKS'; then
+  ko "liveness: MAX_BLOCKS session cap is back — it exhausted itself in 21 h on real data (3 blocks vs 41)"
+else
+  ok "liveness: no session-wide block cap (per-teammate marker is the only throttle)"
+fi
+
+if grep -qE '\-ge +"?\$(BLOCK_AT|WARN_AT)' hooks/agent-budget-warn.sh 2>/dev/null; then
+  ko "budget: a threshold uses -ge — that re-blocks every call past the threshold and traps the agent"
+else
+  ok "budget: thresholds are crossing-only (-eq), so blocked agents can still report"
+fi
+
+if grep -q 'BLOCK_EVERY' hooks/agent-budget-warn.sh 2>/dev/null; then
+  ok "budget: blocks escalate past BLOCK_AT"
+else
+  ko "budget: BLOCK_EVERY missing — a single block does not stop a runaway (worst measured: 417 calls)"
+fi
+
+for f in hooks/require-teammate-report.sh hooks/agent-budget-warn.sh; do
+  if grep -q 'liveness.log' "$f" 2>/dev/null; then
+    ok "audit trail: $f writes .claude/liveness.log"
+  else
+    ko "audit trail: $f does not log — activation becomes unverifiable"
+  fi
+done
+
+for v in general dotnet dotnet-maui rust-tauri java python; do
+  if grep -q '^\.claude/liveness\.log$' "templates/$v/gitignore" 2>/dev/null; then
+    ok "templates/$v/gitignore: ignores .claude/liveness.log"
+  else
+    ko "templates/$v/gitignore: missing .claude/liveness.log"
+  fi
+done
+
+if [ -s scripts/check-activation.sh ]; then
+  ok "scripts/check-activation.sh present"
+else
+  ko "scripts/check-activation.sh missing — no one-command activation answer"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

@@ -19,4 +19,5 @@ coverage/
 # .claude/settings.json and .claude/agents/ ARE committed (shared with team)
 CLAUDE.local.md
 .claude/.mcp.json
+.claude/liveness.log
 .gate/

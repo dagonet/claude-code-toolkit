@@ -19,7 +19,7 @@
 | Workflow Enforcement | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder |
 | Pipeline Hook | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge |
 | Delegation Enforcement | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds |
-| Agent Liveness | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget | TeammateIdle report gate + tool-call budget |
+| Agent Liveness | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget |
 | CLAUDE.md Behavior | Session Bootstrap, Debugging, Plan Challenge | + .NET Conventions | + MAUI Conventions | + Rust/Tauri Conventions, Code Style | + Java/Spring Conventions, Code Style | + Python Conventions, Code Style |
 | Database Tools | No | No | SQLite MCP (optional) | No | No | SQLite MCP (optional) |
 | Desktop Automation | No | No | Windows-MCP | Windows-MCP | No | No |

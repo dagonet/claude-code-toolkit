@@ -20,14 +20,18 @@
 #   - Append-only ledger. NEVER delete a marker: deleting it on a second idle
 #     (the pattern enforce-agent-contract.sh uses, which is safe for a
 #     once-per-agent SubagentStop) would loop block -> pass -> block forever here.
-#   - At most one block per teammate, and at most MAX_BLOCKS per session.
+#   - At most one block per teammate. There is deliberately NO session-wide cap:
+#     v1.1 shipped MAX_BLOCKS=3 and a replay over a real 208 MB / 10-day transcript
+#     showed it exhausted itself in 21 hours, after which the gate was inert for
+#     ~500 further idles. Removing it takes coverage from 3 blocks to 41 (of 44
+#     achievable); the per-teammate marker already bounds the total at the number
+#     of distinct teammates that ever qualify. Worst measured day: 10.
 #   - Fail-open on every unexpected condition.
 #   - Must NOT be 127-wrapped in settings.json: a missing stop-style gate must
 #     never trap teammates in an unstoppable loop.
 
 set -u
 
-MAX_BLOCKS=3
 # Idles ARE recorded in the lead transcript before this hook runs (verified), so a
 # recorded streak of 2 means this is the teammate's second unreported idle -- the
 # point at which the Escalation Protocol runbook says to act. Measured on a real
@@ -51,6 +55,8 @@ HOOK_CWD=$(field cwd)
 [ -z "$SESSION" ] && exit 0
 
 # Kill switch at the repo root, mirroring hooks/enforce-delegation.sh.
+# REPO_ROOT is reused further down for the audit log, so resolve it once here.
+REPO_ROOT=""
 if [ -n "${HOOK_CWD:-}" ]; then
   REPO_ROOT=$(git -C "$HOOK_CWD" rev-parse --show-toplevel 2>/dev/null | tr '\\' '/')
   if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude/liveness-off" ]; then
@@ -61,13 +67,8 @@ fi
 LEDGER="${TMPDIR:-/tmp}/claude-teammate-liveness/$SESSION"
 mkdir -p "$LEDGER" 2>/dev/null || exit 0
 
-# Already nagged this teammate once -> never again.
+# Already nagged this teammate once -> never again. This is the ONLY throttle.
 [ -f "$LEDGER/$NAME.blocked" ] && exit 0
-
-# Session-wide budget, so the gate cannot itself become the slowness problem.
-BLOCKS=$(find "$LEDGER" -name '*.blocked' 2>/dev/null | wc -l | tr -d ' ')
-case "$BLOCKS" in ''|*[!0-9]*) exit 0 ;; esac
-[ "$BLOCKS" -ge "$MAX_BLOCKS" ] && exit 0
 
 # Decide from the teammate's message history in the LEAD's transcript (where
 # teammate messages land). The signal is NOT "never reported" -- measured, only 4
@@ -141,6 +142,15 @@ case "$STREAK" in ''|*[!0-9]*) exit 0 ;; esac
 
 : > "$LEDGER/$NAME.blocked" 2>/dev/null || exit 0
 
+# Audit trail. Block events only -- a passing idle carries no signal, and the
+# ledger already proves the hook ran. Best-effort: a failed write must never
+# change the exit code, so every failure mode is swallowed.
+if [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/.claude" ]; then
+  printf '%s require-teammate-report teammate=%s streak=%s action=block\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown-time)" \
+    "$NAME" "$STREAK" >> "$REPO_ROOT/.claude/liveness.log" 2>/dev/null || true
+fi
+
 cat >&2 <<EOF
 LIVENESS: this is at least your second idle in a row with no report in between.
 
@@ -151,6 +161,6 @@ Send your report to main now via SendMessage: what you did, what you found, what
 is left, and any blocker. If you genuinely have nothing to report, say that
 explicitly in one line rather than going silent.
 
-This fires at most once per teammate. Escape hatch: create .claude/liveness-off.
+This fires at most once per teammate, ever. Escape hatch: create .claude/liveness-off.
 EOF
 exit 2
