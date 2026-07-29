@@ -362,6 +362,38 @@ for f in user-level-reference/agents/*.md; do
 done
 [ "$ul_fail" -eq 0 ] && ok "user-level agents carry no project-only frontmatter hooks"
 
+# ---------------------------------------------------------------------------
+# 16. Project MCP goes to the REPO ROOT.
+#     Claude Code reads project-scope servers only from <project-root>/.mcp.json.
+#     Setup scripts wrote <project>/.claude/.mcp.json until 2026-07-29, so those
+#     servers never loaded. Guard both the write path and the gitignore.
+# ---------------------------------------------------------------------------
+for s in setup-project.sh setup-project.ps1; do
+  [ -f "$s" ] || continue
+  # Match the WRITE path only. The legacy-detection lines (legacy_mcp_path /
+  # $legacyMcpPath) also name .claude/.mcp.json and must not trip this.
+  bad=$(grep -c 'mcp_json_path="\$TARGET_DIR/\.claude/\.mcp\.json"\|\$mcpJsonPath = Join-Path (Join-Path \$TargetDir "\.claude")' "$s" 2>/dev/null || true)
+  case "$bad" in ''|*[!0-9]*) bad=0 ;; esac
+  if [ "$bad" -eq 0 ]; then
+    ok "$s writes project MCP to the repo root"
+  else
+    ko "$s still writes <target>/.claude/.mcp.json — those servers will never load"
+  fi
+  if grep -q 'legacy_mcp\|legacyMcpPath' "$s" 2>/dev/null; then
+    ok "$s warns about a legacy .claude/.mcp.json"
+  else
+    ko "$s does not warn about a legacy .claude/.mcp.json"
+  fi
+done
+
+for v in general dotnet dotnet-maui rust-tauri java python; do
+  if grep -q '^/\.mcp\.json' "templates/$v/gitignore" 2>/dev/null; then
+    ok "templates/$v/gitignore: ignores root /.mcp.json"
+  else
+    ko "templates/$v/gitignore: missing /.mcp.json (generated file carries machine-specific paths)"
+  fi
+done
+
 # The template copies MUST keep the merge gate -- this is the other half of the
 # same invariant: the rule is scope-dependent, not a blanket removal.
 for v in general dotnet dotnet-maui rust-tauri java python; do

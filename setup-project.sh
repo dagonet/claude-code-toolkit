@@ -403,10 +403,10 @@ if [[ "$DRY_RUN" == true ]]; then
     echo ""
     mcp_preview="$(build_project_mcp_json)"
     if [[ -n "$mcp_preview" ]]; then
-        echo "Project-level .claude/.mcp.json (would be generated):"
+        echo "Project-level .mcp.json (would be generated at repo root):"
         printf '%s' "$mcp_preview" | sed 's/^/    /'
     else
-        echo "Project-level .claude/.mcp.json: (not generated - no entries for this variant/flags)"
+        echo "Project-level .mcp.json: (not generated - no entries for this variant/flags)"
     fi
     echo ""
     echo "=== END DRY RUN ==="
@@ -580,16 +580,29 @@ done
 
 echo "  [+] .claude/template-manifest.json (generated)"
 
-# --- Generate project-level .claude/.mcp.json if any entries apply ---
+# --- Generate project-level .mcp.json if any entries apply ---
+#
+# MUST be the REPO ROOT. Claude Code reads project-scope MCP servers only from
+# <project-root>/.mcp.json; <project>/.claude/.mcp.json is an open upstream
+# feature request, not current behaviour. Earlier versions of this script wrote
+# the .claude/ path, so those servers never loaded.
 mcp_json_content="$(build_project_mcp_json)"
 if [[ -n "$mcp_json_content" ]]; then
-    mcp_json_path="$TARGET_DIR/.claude/.mcp.json"
+    mcp_json_path="$TARGET_DIR/.mcp.json"
+    legacy_mcp_path="$TARGET_DIR/.claude/.mcp.json"
+
+    if [[ -f "$legacy_mcp_path" ]]; then
+        echo "  [!] .claude/.mcp.json found — that path is NOT read by Claude Code."
+        echo "      Its servers have never loaded. Merge anything you need into .mcp.json, then delete it."
+    fi
+
     if [[ -f "$mcp_json_path" ]] && [[ "$FORCE" != true ]]; then
-        echo "  [-] .claude/.mcp.json (exists, use --force to overwrite)"
+        # Never clobber a hand-maintained root file — several repos already have one.
+        echo "  [-] .mcp.json (exists — left untouched; use --force to overwrite)"
+        echo "      Servers this variant would add: $(printf '%s' "$mcp_json_content" | grep -o '"[a-zA-Z_-]*": *{' | sed 's/": *{//; s/"//' | tr '\n' ' ')"
     else
-        mkdir -p "$(dirname "$mcp_json_path")"
         printf '%s' "$mcp_json_content" > "$mcp_json_path"
-        echo "  [+] .claude/.mcp.json (generated)"
+        echo "  [+] .mcp.json (generated at repo root)"
     fi
 fi
 

@@ -76,6 +76,33 @@ for k in liveness-off delegation-off; do
   else yes_ ".claude/$k absent (enforcement enabled)"; fi
 done
 
+# --- 3b. project MCP wiring -------------------------------------------------
+# Claude Code reads project-scope servers ONLY from <project-root>/.mcp.json.
+# Setup scripts before 2026-07-29 wrote <project>/.claude/.mcp.json, which is
+# never loaded — so a project can look configured and have zero servers active.
+printf '\nproject MCP wiring\n'
+ROOT_MCP="$PROJ/.mcp.json"
+LEGACY_MCP="$PROJ/.claude/.mcp.json"
+srv() { # list server names from an MCP json
+  [ -f "$1" ] || return 0
+  if command -v node >/dev/null 2>&1; then
+    node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(Object.keys(j.mcpServers||{}).join(", "))}catch(e){console.log("(unparseable)")}' "$1" 2>/dev/null
+  fi
+}
+if [ -f "$ROOT_MCP" ]; then yes_ ".mcp.json at repo root — servers: $(srv "$ROOT_MCP")"
+else warn_ "no .mcp.json at repo root (fine if this variant needs no project servers)"; fi
+
+if [ -f "$LEGACY_MCP" ]; then
+  no_ ".claude/.mcp.json present — THIS PATH IS NEVER READ. Servers: $(srv "$LEGACY_MCP")"
+  if [ -f "$ROOT_MCP" ]; then
+    warn_ "  merge any missing entries into .mcp.json, then delete the .claude/ copy"
+  else
+    warn_ "  move it: mv .claude/.mcp.json .mcp.json"
+  fi
+else
+  yes_ "no stale .claude/.mcp.json"
+fi
+
 # --- 4. evidence of firing --------------------------------------------------
 printf '\nevidence of firing\n'
 if [ -f "$LOG" ]; then

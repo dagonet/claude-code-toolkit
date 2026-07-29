@@ -367,13 +367,13 @@ if ($DryRun) {
     Write-Host ""
     $mcpPreview = Build-ProjectMcpJson
     if ($mcpPreview) {
-        Write-Host "Project-level .claude/.mcp.json (would be generated):" -ForegroundColor Yellow
+        Write-Host "Project-level .mcp.json (would be generated at repo root):" -ForegroundColor Yellow
         foreach ($line in ($mcpPreview -split "`n")) {
             Write-Host "    $line"
         }
     }
     else {
-        Write-Host "Project-level .claude/.mcp.json: (not generated - no entries for this variant/flags)" -ForegroundColor DarkGray
+        Write-Host "Project-level .mcp.json: (not generated - no entries for this variant/flags)" -ForegroundColor DarkGray
     }
 
     Write-Host ""
@@ -576,20 +576,31 @@ Set-Content -Path $manifestPath -Value $manifestJson -Encoding UTF8 -NoNewline
 $copiedFiles += ".claude/template-manifest.json"
 Write-Host "  [+] .claude/template-manifest.json (generated)" -ForegroundColor Green
 
-# --- Generate project-level .claude/.mcp.json if any entries apply ---
+# --- Generate project-level .mcp.json if any entries apply ---
+#
+# MUST be the REPO ROOT. Claude Code reads project-scope MCP servers only from
+# <project-root>/.mcp.json; <project>/.claude/.mcp.json is an open upstream
+# feature request, not current behaviour. Earlier versions of this script wrote
+# the .claude/ path, so those servers never loaded.
 $mcpJsonContent = Build-ProjectMcpJson
 if ($mcpJsonContent) {
-    $mcpJsonPath = Join-Path (Join-Path $TargetDir ".claude") ".mcp.json"
+    $mcpJsonPath = Join-Path $TargetDir ".mcp.json"
+    $legacyMcpPath = Join-Path (Join-Path $TargetDir ".claude") ".mcp.json"
+
+    if (Test-Path $legacyMcpPath) {
+        Write-Host "  [!] .claude/.mcp.json found -- that path is NOT read by Claude Code." -ForegroundColor Yellow
+        Write-Host "      Its servers have never loaded. Merge anything you need into .mcp.json, then delete it." -ForegroundColor Yellow
+    }
+
     if ((Test-Path $mcpJsonPath) -and -not $Force) {
-        Write-Host "  [-] .claude/.mcp.json (exists, use -Force to overwrite)" -ForegroundColor Yellow
+        # Never clobber a hand-maintained root file -- several repos already have one.
+        Write-Host "  [-] .mcp.json (exists -- left untouched; use -Force to overwrite)" -ForegroundColor Yellow
+        $names = ([regex]::Matches($mcpJsonContent, '"([a-zA-Z_-]+)"\s*:\s*\{') | ForEach-Object { $_.Groups[1].Value }) -join ' '
+        Write-Host "      Servers this variant would add: $names" -ForegroundColor DarkGray
     }
     else {
-        $mcpJsonDir = Split-Path $mcpJsonPath -Parent
-        if (-not (Test-Path $mcpJsonDir)) {
-            New-Item -ItemType Directory -Path $mcpJsonDir -Force | Out-Null
-        }
         Set-Content -Path $mcpJsonPath -Value $mcpJsonContent -Encoding UTF8 -NoNewline
-        Write-Host "  [+] .claude/.mcp.json (generated)" -ForegroundColor Green
+        Write-Host "  [+] .mcp.json (generated at repo root)" -ForegroundColor Green
     }
 }
 

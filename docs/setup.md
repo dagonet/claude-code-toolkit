@@ -185,7 +185,7 @@ If you prefer to set things up by hand:
 
 5. **Replace remaining `{{PLACEHOLDERS}}`** with actual values throughout the copied files. See [`templates.md`](templates.md#placeholder-reference) for the full reference.
 
-6. *(Optional)* Configure project-level MCP servers in `.claude/.mcp.json` if needed.
+6. *(Optional)* Configure project-level MCP servers in `.mcp.json` if needed.
 
 ## Platform Notes
 
@@ -197,7 +197,7 @@ If you prefer to set things up by hand:
 
 ### Linux / macOS
 
-- **Windows-MCP** is not available — the generated `.claude/.mcp.json` entry will fail to load but will not break anything else. For browser-based testing, use the **Playwright MCP plugin** instead.
+- **Windows-MCP** is not available — the generated `.mcp.json` entry will fail to load but will not break anything else. For browser-based testing, use the **Playwright MCP plugin** instead.
 - **Docker paths** in SQLite MCP config use Unix-style mount paths:
   ```json
   { "args": ["-v", "/home/user/data:/data:ro"] }
