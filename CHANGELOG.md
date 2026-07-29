@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.3 — 2026-07-29
+
+Two correctness fixes, both of the same shape: **config that was built correctly and wired to a path nothing reads.**
+
+- **`user-level-reference/` made safe and accurate as a `~/.claude/` source** (#47). Its `coder.md` was a copy of the *template* coder, carrying `PreToolUse` hooks that run `hooks/gate-before-merge.sh` with a `127 → exit 2` fallback. A user-level agent applies in every repo and its frontmatter hooks travel with it: measured, **11 of 20 local repos fall back to user-level agents and 10 have no `hooks/` directory**, so copying it as-is would have made PR merges impossible in 10 repos. Template copies keep the gate; the user-level copy does not; `verify-template-consistency.sh` asserts both halves.
+- **Project MCP config now written to `<project-root>/.mcp.json`** (#48) — the only path Claude Code reads for project scope. `dotnet-tools` / `rust-tools` / `windows-mcp` had never loaded in any generated project. Includes a migration warning, an activation check, and a repo-wide correction of the user-scope path to `~/.claude.json`.
+- **README documents the toolkit's stance on context engineering for Claude 5 generation models**, with measured numbers on both sides of the ledger: what is already progressive-disclosed (`AGENT_TEAM.md`, 47,968 B, not auto-loaded; 11 on-trigger skills; 13 hooks doing enforcement instead of prose) and what is not yet trimmed (~41 KB always-loaded across 4 files, 11–14 directives/100 lines, known cross-layer duplication).
+
+129 consistency assertions, all green. Detail for each change is in the entries below.
+
 ## 2026-07-29 — project MCP servers were written to a path Claude Code never reads
 
 `setup-project.{sh,ps1}` generated `<target>/.claude/.mcp.json`. **Claude Code reads project-scope MCP servers only from `<project-root>/.mcp.json`** — `<project>/.claude/.mcp.json` is an open upstream feature request, not current behaviour (anthropics/claude-code #43296, #3321).
