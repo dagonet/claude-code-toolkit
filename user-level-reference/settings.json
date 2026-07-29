@@ -1,0 +1,93 @@
+{
+  "env": {
+    "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
+    "ENABLE_PROMPT_CACHING_1H": "1",
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebSearch",
+      "WebFetch(*)",
+      "mcp__git-tools__*",
+      "mcp__github-tools__*",
+      "mcp__github__*",
+      "mcp__MCP_DOCKER__*",
+      "mcp__ollama-tools__*",
+      "mcp__open-brain__*",
+      "mcp__template-sync-tools__*",
+      "mcp__searxng__*",
+      "mcp__dotnet-tools__*",
+      "mcp__rust-tools__*",
+      "mcp__sqlite__*",
+      "mcp__windows-mcp__*",
+      "mcp__godot-tools__*",
+      "mcp__plugin_context7_context7__*",
+      "mcp__plugin_playwright_playwright__*",
+      "mcp__plugin_context-mode_context-mode__*"
+    ],
+    "deny": [
+      "Read(.env*)"
+    ],
+    "ask": [
+      "Bash(npm publish*)"
+    ],
+    "defaultMode": "default"
+  },
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/block-bash-vcs.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/block-bash-vcs.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__git-tools__git_push",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-push-main.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/no-push-main.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/tier-before-coder.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/tier-before-coder.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": false,
+    "feature-dev@claude-plugins-official": false,
+    "code-simplifier@claude-plugins-official": false,
+    "claude-md-management@claude-plugins-official": false,
+    "ralph-loop@claude-plugins-official": false,
+    "claude-code-setup@claude-plugins-official": false,
+    "skill-creator@claude-plugins-official": false,
+    "chrome-devtools-mcp@claude-plugins-official": false
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "medium",
+  "autoCompactEnabled": true,
+  "contextCompactionThreshold": 70
+}

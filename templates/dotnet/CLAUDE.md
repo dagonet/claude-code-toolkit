@@ -65,33 +65,9 @@ Full copy-paste snippets + rationale: `AGENT_TEAM.md` → *Spawn-Prompt Binding 
 
 ## Open Brain Context for Agents
 
-Spawned agents cannot access Open Brain directly. The PO must search for relevant context and include it in agent spawn prompts. After agents return, capture durable insights.
+Spawned agents cannot reach Open Brain. Before spawning, search for relevant context and put it in the spawn prompt; after an agent returns, capture durable insights (decisions with rationale, bug root causes, approaches that failed) and skip routine outcomes.
 
-### Before Spawning
-
-| Agent Type | Search Query | Include in Prompt |
-|---|---|---|
-| Architect | `"architecture {component}"`, `"tech debt {area}"` | Past decisions, rejected alternatives, known coupling issues |
-| Code Reviewer | `"bug pattern {component}"`, `"review {area}"` | Recurring issues, known weak spots, past review findings |
-| Coder | `"implementation {component}"`, `"pitfall {area}"` | Failed approaches, trade-off decisions, integration gotchas |
-| Tester | `"failure mode {feature}"`, `"regression {area}"` | Known failure patterns, data state gotchas, flaky test history |
-| Test Writer | `"edge case {component}"`, `"test pattern {area}"` | Historically problematic cases, boundary conditions |
-| Requirements Engineer | `"feature {domain}"`, `"scope {area}"` | Past scope surprises, edge cases that tripped users |
-
-### After Agent Returns
-
-Capture durable insights — not routine results:
-
-| Agent Type | What to Capture |
-|---|---|
-| Architect | Decisions with rationale, rejected alternatives, new tech debt identified |
-| Code Reviewer | Non-trivial bug patterns, recurring issues by component |
-| Coder | Non-obvious implementation decisions, approaches that failed and why |
-| Tester | Bugs found with root cause, regression patterns, data state issues |
-| Test Writer | Critical edge cases discovered, boundary conditions that matter |
-| Requirements Engineer | Key scope decisions, excluded features and why, edge cases found |
-
-Skip capture for routine outcomes ("no issues found", "all tests pass").
+Per-agent search queries and capture guidance: `AGENT_TEAM.md` -> *Open Brain Context for Agents* (loaded on demand, alongside the spawn snippets you need at the same moment).
 
 ---
 
@@ -107,32 +83,9 @@ These are not optional. If the trigger fires, invoke the named skill BEFORE gene
 - BEFORE responding to a bug report, test failure, or unexpected behavior → invoke `superpowers:systematic-debugging`.
 - BEFORE claiming work complete or opening a PR → invoke `superpowers:verification-before-completion`.
 
-### Strong triggers (SHOULD)
+**Strong triggers, plugin defaults, and meta skills:** see the same section in `~/.claude/CLAUDE.md`.
 
-Apply unless plan mode or another skill already covers the same ground:
-
-- Multi-step implementation about to start → invoke `superpowers:writing-plans`, then `superpowers:executing-plans` once the plan is approved.
-- Writing production code → invoke `superpowers:test-driven-development` together with `karpathy-guidelines`.
-- Requesting / digesting code review → `superpowers:requesting-code-review` / `superpowers:receiving-code-review`.
-
-**Chain note:** `writing-plans` produces a plan. The **Plan Challenge Protocol** in `AGENT_TEAM.md` validates any plan (regardless of source) before execution — independent gate, not a side-effect of `writing-plans`.
-
-**When spawning agents:** see `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* for the skills each subagent type must invoke. The `hooks/require-skills-block.sh` PreToolUse hook mechanically enforces this — spawns of bound `subagent_type` values without a `## Required Skills` block in the prompt are blocked with exit 2.
-
-### Plugin defaults
-
-Templates enable two plugins by default in `.claude/settings.json`:
-- `superpowers@claude-plugins-official` — required for the triggers above.
-- `code-review@claude-plugins-official` — aligns with the `code-reviewer` agent.
-
-Opt-in (add to `enabledPlugins` if needed): `feature-dev`, `code-simplifier`, `claude-md-management`, `frontend-design`, `ralph-loop`, `context-mode`, `skill-creator`, `claude-code-setup`, `context7`.
-
-### Meta skills (no explicit trigger)
-
-- `superpowers:using-superpowers` — auto-loaded at session start; establishes skill-use protocol.
-- `superpowers:writing-skills` — invoke only when creating or editing a skill.
-
----
+**When spawning agents:** `AGENT_TEAM.md` -> *Spawn-Prompt Binding Table* lists the skills each subagent type must invoke. `hooks/require-skills-block.sh` enforces it mechanically — a spawn of a bound `subagent_type` without a `## Required Skills` block is blocked with exit 2.
 
 ## Working Preferences
 

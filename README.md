@@ -19,7 +19,7 @@
 - **6 template variants** (`general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`) with language-specific build hooks, format gates, and conventions baked in.
 - **8–9 agents per variant** — architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps.
 - **23 user-level slash commands** for the daily loop: `/build`, `/test`, `/commit`, `/sprint`, `/challenge`, `/code-review`, `/new-feature`, `/sync-template`, …
-- **11 auto-triggering skills** that load themselves based on what you're doing (debugging, refactoring, exploring a new codebase, …).
+- **12 auto-triggering skills** that load themselves based on what you're doing (debugging, refactoring, exploring a new codebase, …).
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
 - **Workflow enforcement hooks**: `Bash(git/gh *)` blocked in favor of MCP, commit-time format gates, no-push-to-main, tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), and agent liveness (a teammate cannot idle twice without reporting; a single agent spawn cannot run away unbounded).
 
@@ -31,12 +31,25 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 
 | Blog principle | How the toolkit applies it |
 |---|---|
-| **Progressive disclosure** | `AGENT_TEAM.md` is **47,968 B / 930 lines and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **11 skills** load on trigger, not up front. |
-| **Mechanism over mandate** | **13 hook scripts** enforce the rules that prose used to repeat — MCP-only git, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, agent liveness. **129 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
+| **Progressive disclosure** | `AGENT_TEAM.md` is **49,724 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **12 skills** load on trigger, not up front. |
+| **Mechanism over mandate** | **13 hook scripts** enforce the rules that prose used to repeat — MCP-only git, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, agent liveness. **131 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
-**What is not done yet — stated plainly.** The always-loaded surface is still **~41 KB across 4 files** (`CLAUDE.md` 17.9 KB, `CLAUDE.local.md` 13.8 KB, user-level `CLAUDE.md` 8.5 KB, `PROJECT_CONTEXT.md` 0.9 KB), at a measured **11–14 directives per 100 lines**, with known duplication across layers (the Superpowers block, the Read-discipline statistic, the spawn-prompt table, the Open Brain mandates). A measured trim-and-relocate pass — moving rarely-needed MCP procedures into a skill and cutting duplication — is planned and **has not landed**. Anything that is load-bearing for a hook is pinned by `scripts/verify-template-consistency.sh` so the cut cannot silently break enforcement.
+**The trim pass, measured (v1.4).** The always-loaded surface went **41,167 B → 34,084 B (−17%)** on the `general` variant:
+
+| File | Before | After |
+|---|---|---|
+| `CLAUDE.md` | 17,871 | **15,281** |
+| `CLAUDE.local.md` | 13,845 | **9,352** |
+| user-level `CLAUDE.md` | 8,505 | 8,505 |
+| `PROJECT_CONTEXT.md` | 946 | 946 |
+
+Nothing was deleted — it was **relocated to where it loads on demand**. Ten MCP procedures (Ollama warm-up, digesting large inputs, structured extraction, orientation, quality/security sweeps, Context7, headless batch, performance, default workflow) moved into a new **`mcp-usage` skill**; the per-agent Open Brain tables moved into `AGENT_TEAM.md`, which is already on-demand; the Superpowers block keeps its hard triggers and points at the user-level copy for the rest. The on-demand side grew accordingly — `AGENT_TEAM.md` 47,968 → 49,724 B, skills 11 → 12.
+
+Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**131 assertions**), so the cut could not silently break enforcement — including the exact Superpowers header and the `superpowers:` token the checks require.
+
+**Still on the list:** `CLAUDE.md`'s 17-bullet *Working Preferences* (~3.9 KB) has bullets that hooks now enforce mechanically (`no-push-main.sh`, `enforce-delegation.sh`, the gate) and could be cut further.
 
 If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
 

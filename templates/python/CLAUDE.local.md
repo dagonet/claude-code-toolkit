@@ -97,74 +97,6 @@ Use **custom github-tools MCP**:
 
 ---
 
-## Ollama Availability & Warm-up
-
-Before using Ollama-dependent tools (`local_first_pass`, `extract_json`):
-
-Claude SHOULD:
-1. Call `ollama_health` to verify the server is running
-2. Call `ollama_list_models` to verify required models are available
-3. Optionally call `warm_models` to pre-load models for faster inference
-
-If Ollama is unavailable:
-- Claude MUST inform the user that local preprocessing is unavailable
-- Claude MAY proceed without local preprocessing if the task is small
-- Claude MUST NOT retry indefinitely or fail silently
-
----
-
-## Large Inputs / Context Digestion
-
-If any input (file, log, spec, pasted text) is:
-- longer than ~200 lines, OR
-- complex (requirements, logs, architecture, policies)
-
-Claude MUST:
-1. Call `local_first_pass`
-2. Use the result as a plan or compression
-3. VERIFY important details against the original source
-4. Only then implement or answer
-
-Claude MUST NOT skip this step.
-
----
-
-## Structured Information Extraction
-
-If the task requires structured data such as:
-- errors / warnings
-- TODOs
-- requirements
-- entities
-- acceptance criteria
-- causes / effects
-
-Claude MUST:
-1. Call `extract_json` with an explicit schema
-2. Treat the JSON as authoritative structure
-3. Act on the JSON (prioritize, implement, fix)
-
-Claude MUST NOT infer structure manually when extraction is possible.
-
----
-
-## Project Orientation & Exploration -- MUST
-
-When orienting within the repository:
-
-Claude MUST:
-1. Call `map_project_structure`
-2. Use the returned structure to decide which files to open or modify
-
-Claude MUST NOT:
-- Perform repeated manual directory exploration
-- Open random files without structural justification
-
-**Skill available:** The `orient` skill provides a comprehensive orientation workflow
-with structure mapping, architecture detection, and issue identification.
-
----
-
 ## Build Failure Handling -- MUST
 
 If a build or test run fails:
@@ -176,30 +108,6 @@ Claude MUST:
 
 **Skill available:** The `fix-errors` skill provides systematic error parsing,
 prioritization by error code, and iterative fixing with rebuild verification.
-
----
-
-## Code Quality Analysis -- SHOULD
-
-When reviewing code quality or during refactoring:
-
-Claude SHOULD use available skills for structured analysis.
-
-**Skills available:**
-- `refactor` skill: Full refactoring workflow with analysis, prioritization, and incremental changes
-- `code-review` skill: Comprehensive review checklist covering correctness, design, security, performance
-- `arch-analyze` skill: Architecture pattern detection and dependency rule validation
-
----
-
-## Security Review -- SHOULD
-
-When reviewing security or before releases:
-
-Claude SHOULD use available skills for structured security analysis.
-
-**Skill available:** The `security-audit` skill provides comprehensive security review
-including secrets scanning and OWASP Top 10 code pattern checks.
 
 ---
 
@@ -221,38 +129,6 @@ including secrets scanning and OWASP Top 10 code pattern checks.
   - Report the failure reason
   - Do NOT infer missing output
 - If required input is missing, Claude MUST ask explicitly
-
----
-
-## Performance Guidance -- SHOULD
-
-- Prefer MCP tools for preprocessing and automation
-- Avoid dumping logs, directory trees, or diffs into chat
-- Reserve Claude's reasoning budget for:
-  - design decisions
-  - code changes
-  - test logic
-  - architectural tradeoffs
-
----
-
-## Context7 Library Documentation -- SHOULD
-
-When using unfamiliar library APIs:
-
-Claude SHOULD:
-1. Use `mcp__plugin_context7_context7__resolve-library-id` to find the library
-2. Use `mcp__plugin_context7_context7__query-docs` to look up current API usage
-3. Verify code against retrieved documentation before committing
-
-### When to Use
-- Unfamiliar framework APIs (FastAPI, Django, SQLAlchemy, etc.)
-- Third-party library patterns and conventions
-- Any library where API surface has changed recently
-
-### When NOT to Use
-- Well-known Python standard library APIs
-- Code patterns already established in the codebase (follow existing patterns first)
 
 ---
 
@@ -348,49 +224,12 @@ These are no-ops if not registered. Add documentation to your project-level `CLA
 
 ---
 
-## Headless Mode for Batch Operations
+## Occasional MCP Procedures — On Demand
 
-For repeatable, non-interactive operations across multiple repos or variants, use **headless mode** (`claude -p`):
+Ollama warm-up, digesting large inputs, structured extraction, project orientation,
+code-quality and security sweeps, Context7 lookups, headless batch runs, and the
+default MCP-first workflow now live in the **`mcp-usage`** skill. It loads when the
+situation calls for it rather than on every turn.
 
-```bash
-# Single-variant template sync
-claude -p "Run /sync-template, resolve merge conflicts, commit and push"
-
-# Multi-variant propagation
-for variant in general dotnet dotnet-maui rust-tauri java python; do
-  claude -p "Apply the same change to templates/$variant/ — implement, verify, commit, push"
-done
-
-# Automated release process
-claude -p "Run pre-release checklist, bump version, create release PR" --allowedTools "Bash,Read,Edit"
-```
-
-**When to use:**
-- Template propagation across 6+ variants (reduces per-variant repetition)
-- Release processes following scriptable patterns
-- Batch repo syncs where user confirmation isn't needed per step
-- Any operation where the pipeline is well-defined and repeatable
-
-**When NOT to use:**
-- Complex multi-step sprints requiring user checkpoints
-- Debugging sessions where interactive exploration is needed
-- First-time operations where the pattern hasn't been validated
-
-> **Platform note:** On Windows with Git Bash, use Git Bash to run headless commands. `claude -p` works from any shell.
-
----
-
-## Default Workflow Pattern
-
-Unless explicitly instructed otherwise, Claude SHOULD follow:
-
-1. MCP preprocessing
-2. Plan based on tool output
-3. Verify against sources
-4. Implement changes
-5. Re-run build/tests if relevant
-6. Update GitHub issues if appropriate
-7. Commit changes
-8. Summarize results
-
----
+What stays inline above is what binds every turn: which servers are registered, the
+git/GitHub MCP-only requirement, Open Brain, trust/verification, and failure handling.
