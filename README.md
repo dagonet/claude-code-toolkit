@@ -36,20 +36,23 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
-**The trim pass, measured (v1.4).** The always-loaded surface went **41,167 B → 34,084 B (−17%)** on the `general` variant:
+**The trim pass, measured.** The always-loaded surface went **41,167 B → 32,538 B (−20%)** on the `general` variant, across v1.4 and v1.5:
 
-| File | Before | After |
-|---|---|---|
-| `CLAUDE.md` | 17,871 | **15,281** |
-| `CLAUDE.local.md` | 13,845 | **9,352** |
-| user-level `CLAUDE.md` | 8,505 | 8,505 |
-| `PROJECT_CONTEXT.md` | 946 | 946 |
+| File | Baseline | v1.4 | v1.5 |
+|---|---|---|---|
+| `CLAUDE.md` | 17,871 | 15,281 | **13,735** |
+| `CLAUDE.local.md` | 13,845 | **9,352** | 9,352 |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 |
+| `PROJECT_CONTEXT.md` | 946 | 946 | 946 |
+| **total** | **41,167** | 34,084 | **32,538** |
 
-Nothing was deleted — it was **relocated to where it loads on demand**. Ten MCP procedures (Ollama warm-up, digesting large inputs, structured extraction, orientation, quality/security sweeps, Context7, headless batch, performance, default workflow) moved into a new **`mcp-usage` skill**; the per-agent Open Brain tables moved into `AGENT_TEAM.md`, which is already on-demand; the Superpowers block keeps its hard triggers and points at the user-level copy for the rest. The on-demand side grew accordingly — `AGENT_TEAM.md` 47,968 → 49,724 B, skills 11 → 12.
+Per-variant now: general 32,538 · java 35,708 · python 35,518 · dotnet 36,537 · rust-tauri 37,630 · dotnet-maui 38,315.
 
-Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**131 assertions**), so the cut could not silently break enforcement — including the exact Superpowers header and the `superpowers:` token the checks require.
+**v1.4 relocated rather than deleted.** Ten MCP procedures (Ollama warm-up, digesting large inputs, structured extraction, orientation, quality/security sweeps, Context7, headless batch, performance, default workflow) moved into a new **`mcp-usage` skill**; the per-agent Open Brain tables moved into `AGENT_TEAM.md`, which is already on-demand; the Superpowers block keeps its hard triggers and points at the user-level copy for the rest. The on-demand side grew accordingly — `AGENT_TEAM.md` 47,968 → 49,724 B, skills 11 → 12.
 
-**Still on the list:** `CLAUDE.md`'s 17-bullet *Working Preferences* (~3.9 KB) has bullets that hooks now enforce mechanically (`no-push-main.sh`, `enforce-delegation.sh`, the gate) and could be cut further.
+**v1.5 deleted, because a mechanism already covers it.** *Working Preferences* went from 18 bullets to 11 (3,939 → 2,393 B). Seven were dropped: five that a hook or the harness already enforces — reading before editing, running tests before commit, never pushing to main, `Read` size limits, keeping the PO out of hands-on work — and two with no behavioural content. In their place, one line naming where the enforcement lives, so the omission reads as deliberate rather than as an oversight. This is the unhobbling move: state that a mechanism exists instead of repeating the rule it enforces. The `"22% of total context"` statistic also collapsed from **7 files to 1**.
+
+Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**131 assertions**), so neither cut could silently break enforcement — including the exact Superpowers header and the `superpowers:` token the checks require.
 
 If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
 

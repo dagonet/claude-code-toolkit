@@ -90,27 +90,21 @@ These are not optional. If the trigger fires, invoke the named skill BEFORE gene
 
 > **Actor note:** implementation-level preferences below (tests, CI fixes, minimal fix, post-merge verification, commit style) are PERFORMED by developer agents — the PO enforces them by putting them in spawn prompts and rejecting deliverables that violate them. The PO itself never edits code or runs builds/tests.
 
-- **Implement, don't suggest** — deliver working changes (via spawned agents), don't merely advise the user; infer intent from context
-- **Read before editing** — always open referenced files first, follow existing style
-- **Summarize tool work** — provide a quick summary after completing tasks
-- **Clean finish** — after completing work: all changes committed, PR merged, worktree removed, branch deleted. Delete temp helpers/scripts, keep only final code. Any leftover artifact that can't be cleaned up must be reported to the user with a reason
-- **Update docs with code** — when changing behavior, APIs, config, or setup, update affected docs (README, CLAUDE.md, PROJECT_CONTEXT.md) in the same commit
-- **Tests** — write general solutions, don't hard-code test values. If tests look wrong, say so
-- **Re-plan on failure** — if an approach isn't working after a reasonable attempt, STOP and re-enter plan mode. Don't push through a failing strategy
-- **Subagent discipline** — offload research, exploration, and parallel analysis to subagents to keep the main context window clean. One focused task per subagent
-- **Read tool discipline** — `Read` loads file contents directly into PO context (measured at **22% of total context** in `docs/plans/2026-04-14-read-size-gate.md` — the largest actionable bucket). Use `Read` only for files you will immediately Edit or Write. For exploration, pattern searches, "how does X work", or reading large files for analysis, delegate to an **Explore subagent** — results return as compressed summaries. For single-file analysis that doesn't need contents in context, use `mcp__plugin_context-mode_context-mode__ctx_execute_file`
-- **Learn from corrections** — after any user correction, immediately capture the pattern to Open Brain so the mistake doesn't repeat
-- **Fix CI proactively** — if build or CI fails, fix it without waiting to be told
-- **Analyze before coding** — before implementing fixes or non-trivial features, enumerate edge cases and identify all callers/consumers that could be affected. For bug fixes, verify the root cause from data (query DB, check logs) before writing code
-- **Post-merge verification** — after any merge or conflict resolution, immediately run the full build and test suite. Check for dropped imports, deleted lines, or accidentally reverted changes before moving on
-- **Commit messages explain why** — write commit messages so a reviewer reading the diff cold understands the reasoning without asking follow-up questions
-- **Minimal fix first** — before implementing, ask: "what's the smallest change that fixes this?" Cut scope aggressively. Over-engineered initial approaches (7 occurrences in past sessions) cause regressions and require scope clawback. Implement the minimal correct fix, then iterate only if needed
-- **Test after every change** — after ANY code change, run the full test suite and confirm all existing tests still pass before declaring work complete. Buggy code was the #1 friction category (10 occurrences). Never skip this
-- **Checkpoint long sessions** — for sessions spanning multiple hours, checkpoint progress by committing and pushing intermediate work. API output truncation has lost 9+ hours of context in past sessions. Commit often, push to feature branches, and summarize progress in commit messages so state can be reconstructed if the session is truncated
-- **Never push to main** — all changes go through feature branches and PRs. Branch protection blocks direct pushes — codifying this as a rule prevents mid-workflow pivots
+**Enforced mechanically, so not restated here:** reading a file before editing it (the harness refuses the edit otherwise), running tests before a commit (`hooks/pre-commit-test.sh`, `run-gate.sh`, `gate-before-merge.sh`), never pushing to main (`hooks/no-push-main.sh`), `Read` size limits and search routing (`hooks/read-size-gate.sh` plus the routing table in `~/.claude/CLAUDE.md`), and keeping the PO out of hands-on work (`hooks/enforce-delegation.sh`).
 
----
+What follows are the judgement calls no hook can make:
 
+- **Implement, don't suggest** — deliver working changes via spawned agents; infer intent from context instead of asking for a fuller spec
+- **Minimal fix first** — ask "what is the smallest change that fixes this?" and cut scope aggressively. Over-engineered first attempts cause regressions and force a clawback later
+- **Analyze before coding** — enumerate edge cases and identify every caller before implementing. For a bug fix, verify the root cause from data (query the DB, read the logs) before writing code
+- **Re-plan on failure** — if an approach is not working after a reasonable attempt, stop and re-enter plan mode rather than pushing through
+- **Tests** — write general solutions, never hard-code the expected values. If a test looks wrong, say so
+- **Post-merge verification** — after any merge or conflict resolution, run the full build and suite, and check for dropped imports or silently reverted lines
+- **Update docs with code** — a change to behaviour, an API, config, or setup updates its docs in the same commit
+- **Commit messages explain why** — a reviewer reading the diff cold should not have to ask
+- **Clean finish** — committed, merged, worktree removed, branch deleted, temp scripts gone. Anything left behind gets reported, with the reason
+- **Checkpoint long sessions** — commit and push intermediate work; output truncation has cost 9+ hours of context before now
+- **Learn from corrections** — capture the pattern to Open Brain immediately so the same mistake does not repeat
 # Code Style (MANDATORY)
 
 This repository uses a strict `.editorconfig` at the repository root.

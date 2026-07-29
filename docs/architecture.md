@@ -48,20 +48,23 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant, 2026-07-29):
 
-| | Before v1.4 | After v1.4 | Loaded |
-|---|---|---|---|
-| `templates/general/CLAUDE.md` | 17,871 | **15,281** | every session |
-| `templates/general/CLAUDE.local.md` | 13,845 | **9,352** | every session |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | every session |
-| `PROJECT_CONTEXT.md` | 946 | 946 | every session |
-| **always-loaded total** | **41,167** | **34,084 (−17%)** | |
-| `AGENT_TEAM.md` | 47,968 | 49,724 | **on demand only** |
-| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | on demand |
-| skills | 11 | **12** | on trigger |
+| | Baseline | v1.4 | v1.5 | Loaded |
+|---|---|---|---|---|
+| `templates/general/CLAUDE.md` | 17,871 | 15,281 | **13,735** | every session |
+| `templates/general/CLAUDE.local.md` | 13,845 | **9,352** | 9,352 | every session |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 | every session |
+| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | every session |
+| **always-loaded total** | **41,167** | 34,084 | **32,538 (−20%)** | |
+| `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | **on demand only** |
+| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | on demand |
+| skills | 11 | **12** | 12 | on trigger |
 
-Per-variant always-loaded totals after the trim: general 34,084 · java 37,254 · python 37,064 · dotnet 38,083 · rust-tauri 39,176 · dotnet-maui 39,861.
+Per-variant always-loaded totals now: general 32,538 · java 35,708 · python 35,518 · dotnet 36,537 · rust-tauri 37,630 · dotnet-maui 38,315.
 
-The largest single document in the repo is deliberately *not* in the always-loaded set, and the trim **moved rather than deleted**: ten MCP procedures went into the `mcp-usage` skill, the per-agent Open Brain tables into `AGENT_TEAM.md`. The on-demand side growing while the always-loaded side shrinks is the intended direction.
+The largest single document in the repo is deliberately *not* in the always-loaded set. The two passes used different mechanisms:
+
+- **v1.4 moved** — ten MCP procedures into the `mcp-usage` skill, the per-agent Open Brain tables into `AGENT_TEAM.md`. The on-demand side growing while the always-loaded side shrinks is the intended direction.
+- **v1.5 deleted** — *Working Preferences* 18 bullets → 11, because five were already enforced by a hook or by the harness itself and two carried no behavioural content. Deleting prose that a mechanism enforces is safe in a way that deleting an unenforced rule is not; the section now names the enforcing hooks instead of restating their rules.
 
 Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (131 assertions), so a cut cannot silently disable enforcement — notably the exact `## Superpowers Skills — MUST Invoke Before Responding` header and the `superpowers:` token that checks 2 and 3 require, both of which survived the Superpowers-block reduction.
 
