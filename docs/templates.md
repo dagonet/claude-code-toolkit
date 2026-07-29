@@ -70,7 +70,7 @@ Adds the `rust-coder` agent (9 agents total) with cargo/clippy/fmt discipline. S
 
 ## Project-Level MCP Matrix
 
-The setup script generates `<project>/.claude/.mcp.json` per variant at setup time, based on the variant and optional CLI flags. Language/framework MCP servers are **not** registered at user level — they only load in repos that explicitly need them.
+The setup script generates `<project-root>/.mcp.json` per variant at setup time, based on the variant and optional CLI flags. Language/framework MCP servers are **not** registered at user level — they only load in repos that explicitly need them.
 
 | Variant | Always generated | Optional (via flag) | Required flag |
 |---|---|---|---|
@@ -86,7 +86,7 @@ The setup script generates `<project>/.claude/.mcp.json` per variant at setup ti
 - `--mcp-dev-servers-path <path>` — points at a local clone of [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers). Required for variants that register `dotnet-tools` or `rust-tools`. If omitted, the setup script prints a warning and skips the affected entries (no default).
 - `--sqlite-db-path <path>` — optional for any variant. Accepts absolute or relative (resolved against caller CWD).
 - `windows-mcp` is hard-coded to `uvx windows-mcp` — assumes `uvx` is on PATH.
-- If no entries would be written for a variant, `.claude/.mcp.json` is not created.
+- If no entries would be written for a variant, `.mcp.json` is not created.
 
 See `docs/architecture.md` → MCP Layering and `mcp-servers/HOWTO.md` → Project-Level Servers for rationale and per-server details.
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-07-29 — project MCP servers were written to a path Claude Code never reads
+
+`setup-project.{sh,ps1}` generated `<target>/.claude/.mcp.json`. **Claude Code reads project-scope MCP servers only from `<project-root>/.mcp.json`** — `<project>/.claude/.mcp.json` is an open upstream feature request, not current behaviour (anthropics/claude-code #43296, #3321).
+
+For `dotnet`, `dotnet-maui`, and `rust-tauri` that file was the **sole** registration of `dotnet-tools` / `rust-tools` / `windows-mcp`. Those servers have therefore **never loaded in any project this toolkit set up**. `enableAllProjectMcpServers: true` does not help — it governs auto-approval, not file discovery.
+
+Corroborated locally, independent of the docs: 7 repos keep a working root `.mcp.json`; `InvestmentAdvisor`'s generated `.claude/.mcp.json` (`sqlite`, 2026-02-22) was superseded by a root file (`sqlite, windows-mcp, playwright`, 2026-04-12); in `Yutraffic-Challenge` the `windows-mcp` entry sits only in `.claude/` and is not loaded.
+
+### Changes
+
+- Both setup scripts now write **`<target>/.mcp.json`**, and **never clobber an existing root file** without `--force` (several repos already keep a hand-maintained one) — they print which servers the variant *would* have added instead.
+- Both **warn when they find a legacy `.claude/.mcp.json`**, naming it as a path that is not read.
+- `scripts/check-activation.sh` gained a *project MCP wiring* section: root file + servers, stale `.claude/` copy, and the exact `mv` to run.
+- Root `/.mcp.json` is gitignored in all 6 variants — the generated file carries machine-specific paths (sqlite DB path, `mcp-dev-servers` venv). The legacy line stays so migrating projects don't suddenly start tracking it.
+- User-scope path corrected repo-wide to **`~/.claude.json`** (`~/.claude/.mcp.json` is not a concept; an `mcpServers` key in any `settings.json` is silently ignored).
+- 12 new consistency assertions pin the write path, the legacy warning, and the gitignore entries (129 checks, all green).
+
+### Migration — required for existing projects
+
+```bash
+git mv .claude/.mcp.json .mcp.json     # or merge into an existing root .mcp.json
+bash scripts/check-activation.sh .     # confirms wiring
+```
+
+### Verification
+
+End-to-end against real setup runs, not just greps: dry-run announces the root path; a real `rust-tauri` run puts `rust-tools, windows-mcp` in root `.mcp.json` as valid JSON with **no** `.claude/.mcp.json`; a pre-existing hand-made root file survives untouched; a planted legacy file triggers the warning.
+
 ## 2026-07-29 — v1.2: liveness caps corrected after four days of production exposure
 
 v1.1's two liveness hooks were installed in a real project on 2026-07-25 11:41 and ran for four days. They worked — and both were mis-sized. This release fixes the sizing, adds an audit trail, and adds a way to answer "is it on?" without a transcript investigation.

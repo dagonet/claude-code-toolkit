@@ -5,7 +5,7 @@
 MCP servers in this toolkit are split into two tiers:
 
 - **User-level servers** are registered once in `~/.claude.json` and loaded in every project. These are tools you need universally — git, github, ollama, open-brain, etc.
-- **Project-level servers** live in a repo's `.claude/.mcp.json` and only load in that project. These are language/framework-specific tools — dotnet, rust, sqlite, windows-mcp — that would bloat the context window if loaded globally.
+- **Project-level servers** live in a repo's `.mcp.json` (repo root) and only load in that project. These are language/framework-specific tools — dotnet, rust, sqlite, windows-mcp — that would bloat the context window if loaded globally.
 
 This guide is split accordingly. For the **why**, see `docs/architecture.md` → *MCP Layering*.
 
@@ -75,7 +75,7 @@ pip install -e ".[ollama]"
 
 Then:
 
-- **Project-level `.claude/.mcp.json`** files: re-run `setup-project.{sh,ps1}` against each project to regenerate them with the new console-script paths.
+- **Project-level `.mcp.json`** files: re-run `setup-project.{sh,ps1}` against each project to regenerate them with the new console-script paths.
 - **User-level registrations**: for each server you added with `claude mcp add`, run `claude mcp remove <name> -s user` and re-add it using the `mcp-<name>-tools(.exe)` console-script path shown in the install snippets below.
 
 Old paths like `<path>/src/git_mcp.py` no longer exist — Claude Code will report each affected server as `Failed to connect` until re-registered.
@@ -357,9 +357,9 @@ The Context7 plugin provides up-to-date library documentation lookup.
 
 # Project-Level Servers
 
-These servers are **not** registered at user level. They go into per-project `.claude/.mcp.json` files so they only load in repos that actually need them — the user-level context stays small.
+These servers are **not** registered at user level. They go into per-project `.mcp.json` files (repo root) so they only load in repos that actually need them — the user-level context stays small.
 
-`setup-project.{sh,ps1}` can generate `.claude/.mcp.json` automatically for the dotnet, dotnet-maui, and rust-tauri variants. Pass `--mcp-dev-servers-path <path>` so the script knows where your local `mcp-dev-servers` checkout lives. Optional: `--sqlite-db-path <path>` adds a sqlite entry. See `docs/templates.md` for the per-variant matrix.
+`setup-project.{sh,ps1}` can generate `.mcp.json` automatically for the dotnet, dotnet-maui, and rust-tauri variants. Pass `--mcp-dev-servers-path <path>` so the script knows where your local `mcp-dev-servers` checkout lives. Optional: `--sqlite-db-path <path>` adds a sqlite entry. See `docs/templates.md` for the per-variant matrix.
 
 If you register these manually instead, the commands below show what each entry looks like.
 
@@ -371,7 +371,7 @@ Read-only database inspection via Docker.
 
 **Requires:** Docker Desktop running
 
-**`.claude/.mcp.json` entry (Windows):**
+**`.mcp.json` entry (Windows):**
 
 ```json
 {
@@ -389,7 +389,7 @@ Read-only database inspection via Docker.
 }
 ```
 
-**`.claude/.mcp.json` entry (Linux / macOS):**
+**`.mcp.json` entry (Linux / macOS):**
 
 ```json
 {
@@ -415,7 +415,7 @@ Read-only database inspection via Docker.
 
 **Tools:** `build_and_extract_errors`, `run_tests_summary`, `analyze_namespace_conflicts`, `nuget_list_outdated`, `nuget_check_vulnerabilities`, `nuget_dependency_tree`, `parse_csproj`, `analyze_project_references`, `check_framework_compatibility`, `ef_migrations_status`, `ef_pending_migrations`, `ef_dbcontext_info`, `analyze_method_complexity`, `find_large_files`, `find_god_classes`, `parse_stack_trace`, `parse_coverage_report`, `run_coverage`, `map_dotnet_structure`
 
-**`.claude/.mcp.json` entry:**
+**`.mcp.json` entry:**
 
 ```json
 {
@@ -435,7 +435,7 @@ Cargo build, test, and clippy with structured diagnostics. Requires Rust toolcha
 
 **Tools:** `cargo_env_info`, `cargo_build`, `cargo_test`, `cargo_clippy`
 
-**`.claude/.mcp.json` entry:**
+**`.mcp.json` entry:**
 
 ```json
 {
@@ -458,7 +458,7 @@ Desktop automation for Windows: click, type, screenshot, window management. Used
 uvx --help
 ```
 
-**`.claude/.mcp.json` entry:**
+**`.mcp.json` entry:**
 
 ```json
 {
@@ -475,13 +475,13 @@ uvx --help
 
 ## Godot Tools (14 tools) — custom setup
 
-Godot game engine editor, scenes, nodes. Not covered by any template variant (there is no godot variant). Listed here for completeness — register manually in a project-level `.claude/.mcp.json` if you need it.
+Godot game engine editor, scenes, nodes. Not covered by any template variant (there is no godot variant). Listed here for completeness — register manually in a project-level `.mcp.json` (repo root) if you need it.
 
 **Tools:** `launch_editor`, `run_project`, `get_debug_output`, `stop_project`, `get_godot_version`, `list_projects`, `get_project_info`, `create_scene`, `add_node`, `load_sprite`, `export_mesh_library`, `save_scene`, `get_uid`, `update_project_uids`
 
 **Requires:** Node.js and Godot 4.x.
 
-**`.claude/.mcp.json` entry:**
+**`.mcp.json` entry:**
 
 ```json
 {
@@ -513,7 +513,7 @@ claude mcp remove searxng
 claude mcp remove open-brain
 ```
 
-Project-level servers are removed by editing or deleting the project's `.claude/.mcp.json`.
+Project-level servers are removed by editing or deleting the project's `.mcp.json`.
 
 ## Troubleshooting
 
@@ -523,6 +523,6 @@ Project-level servers are removed by editing or deleting the project's `.claude/
 2. **Ollama tools timeout:** Ensure Ollama is running (`ollama --version`) and accessible at `http://127.0.0.1:11434`.
 3. **GitHub Tools fail:** Run `gh auth status` to verify GitHub CLI authentication.
 4. **Official GitHub plugin shows no tools:** `GITHUB_PERSONAL_ACCESS_TOKEN` is unset, expired, or lacks the required scopes. Set it and restart Claude Code.
-5. **dotnet-tools errors in a dotnet project:** Confirm `dotnet --version` returns a valid SDK version (8.0+) and that your `.claude/.mcp.json` points at the right `mcp-dev-servers` path.
-6. **windows-mcp not loading on a non-Windows machine:** The setup script skips `windows-mcp` on Linux/macOS; if you see an error, check that you regenerated `.claude/.mcp.json` after cloning to a new OS.
+5. **dotnet-tools errors in a dotnet project:** Confirm `dotnet --version` returns a valid SDK version (8.0+) and that your `.mcp.json` points at the right `mcp-dev-servers` path.
+6. **windows-mcp not loading on a non-Windows machine:** The setup script skips `windows-mcp` on Linux/macOS; if you see an error, check that you regenerated `.mcp.json` after cloning to a new OS.
 7. **`uvx: command not found` when loading windows-mcp:** Install `uv` (which provides `uvx`) — see https://docs.astral.sh/uv/.
