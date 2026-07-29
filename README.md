@@ -23,6 +23,23 @@
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
 - **Workflow enforcement hooks**: `Bash(git/gh *)` blocked in favor of MCP, commit-time format gates, no-push-to-main, tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), and agent liveness (a teammate cannot idle twice without reporting; a single agent spawn cannot run away unbounded).
 
+## Context engineering for Claude 5 generation models
+
+Anthropic's [*The new rules of context engineering for Claude 5 generation models*](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) (2026-07-24) argues that newer models are hurt, not helped, by large prescriptive system prompts — Anthropic removed **over 80% of Claude Code's own system prompt** with no measurable loss on their coding evals. The guidance: unhobble the model, delete conflicting directives, disclose procedures progressively, and put tool instructions in tool descriptions rather than the prompt.
+
+This toolkit is designed around the same idea, and the numbers are measured rather than asserted:
+
+| Blog principle | How the toolkit applies it |
+|---|---|
+| **Progressive disclosure** | `AGENT_TEAM.md` is **47,968 B / 930 lines and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **11 skills** load on trigger, not up front. |
+| **Mechanism over mandate** | **13 hook scripts** enforce the rules that prose used to repeat — MCP-only git, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, agent liveness. **129 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
+| **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
+| **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
+
+**What is not done yet — stated plainly.** The always-loaded surface is still **~41 KB across 4 files** (`CLAUDE.md` 17.9 KB, `CLAUDE.local.md` 13.8 KB, user-level `CLAUDE.md` 8.5 KB, `PROJECT_CONTEXT.md` 0.9 KB), at a measured **11–14 directives per 100 lines**, with known duplication across layers (the Superpowers block, the Read-discipline statistic, the spawn-prompt table, the Open Brain mandates). A measured trim-and-relocate pass — moving rarely-needed MCP procedures into a skill and cutting duplication — is planned and **has not landed**. Anything that is load-bearing for a hook is pinned by `scripts/verify-template-consistency.sh` so the cut cannot silently break enforcement.
+
+If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
+
 ## 5-minute quickstart
 
 1. **Install prerequisites:** `git`, `Node.js 18+`, and Claude Code CLI (`npm install -g @anthropic-ai/claude-code`). Variant-specific extras (.NET SDK, Rust, JDK, Python) are listed in [`docs/getting-started.md`](docs/getting-started.md).
@@ -64,6 +81,7 @@ Full comparison + project-level MCP matrix: [`docs/templates.md`](docs/templates
 | Compare variants, see placeholders + manifest format | [`docs/templates.md`](docs/templates.md) |
 | Install MCP servers | [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md) |
 | Architecture: layered config, hooks, AGENT_TEAM v2.0 | [`docs/architecture.md`](docs/architecture.md) |
+| Where MCP servers actually live (`~/.claude.json`, `<root>/.mcp.json`) | [`docs/architecture.md` → MCP Layering](docs/architecture.md) |
 | Verify your setup works | [`docs/verification.md`](docs/verification.md) |
 | Keep projects in sync with the templates | [`docs/template-sync.md`](docs/template-sync.md) |
 | Reference for `~/.claude/` (agents, commands, skills, settings) | [`user-level-reference/README.md`](user-level-reference/README.md) |

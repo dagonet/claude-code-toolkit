@@ -44,6 +44,23 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 **Delegate-everything model:** the PO never does hands-on work at any tier — coding, reviewing, testing, builds, env setup (`ops` agent), and exploration (`Explore` agent) are all sub-agent work, enforced by `hooks/enforce-delegation.sh`. The PO's write surface is limited to orchestration files (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md`).
 
+## Context Budget
+
+Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant, 2026-07-29):
+
+| | Bytes | Loaded |
+|---|---|---|
+| `templates/general/CLAUDE.md` | 17,871 | every session |
+| `templates/general/CLAUDE.local.md` | 13,845 | every session |
+| user-level `CLAUDE.md` | 8,505 | every session |
+| `PROJECT_CONTEXT.md` | 946 | every session |
+| **always-loaded total** | **~41 KB** | |
+| `AGENT_TEAM.md` | 47,968 | **on demand only** |
+| `VERIFICATION_PLAYBOOK.md` | 2,519 | on demand |
+| 11 skills | — | on trigger |
+
+The largest single document in the repo is deliberately *not* in the always-loaded set. A trim pass on the remaining ~41 KB (duplication across layers, procedures that belong in a skill) is planned; every literal that a hook greps is pinned by `scripts/verify-template-consistency.sh` so the cut cannot silently disable enforcement.
+
 ## Session Bootstrap
 
 CLAUDE.md enforces a lightweight bootstrap sequence at the start of every session. `AGENT_TEAM.md` (~850 lines) is **not** read up front -- CLAUDE.md inlines a condensed Spawn-Prompt Binding Table so agent spawns still satisfy the `require-skills-block.sh` hook, and the PO loads the full file only when needed.

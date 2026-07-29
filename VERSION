@@ -1,2 +1,2 @@
-1.2
-Liveness caps corrected — the TeammateIdle gate no longer exhausts itself mid-session (3 blocks to 41 on real data), the tool-call budget escalates instead of blocking once, and both hooks leave an audit trail.
+1.3
+User-level reference made safe and accurate as a ~/.claude/ source, and project MCP config moved to the path Claude Code actually reads.
