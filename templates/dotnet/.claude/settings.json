@@ -126,6 +126,24 @@
             "command": "bash hooks/enforce-agent-contract.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/retro-ledger.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/retro-brief.sh"
+          }
+        ]
       }
     ],
     "PreCompact": [
