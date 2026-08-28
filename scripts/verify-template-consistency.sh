@@ -632,6 +632,56 @@ for v in $VARIANTS; do
 done
 
 # ---------------------------------------------------------------------------
+# 20. Working-preferences custody (v2.0 PR4 round 2).
+#     The 11 developer-agent preferences left every CLAUDE.md and now live ONLY
+#     in the karpathy-guidelines skill, which all 12 coders preload via
+#     `skills:`. Nothing else references them, so a careless edit to that one
+#     file silently deletes behaviour from every coder in every variant with no
+#     other check going red. Guard the heading and the bullet count.
+#
+#     The floor is the v1.5 post-trim count (18 bullets -> 11), which is the
+#     set this PR relocated -- NOT the current length of the file. Adding a
+#     preference is therefore a passing change; losing one is not. The count is
+#     parsed from the section itself (heading to next `## ` or EOF), so no line
+#     number and no bullet's literal text is baked into the assertion.
+# ---------------------------------------------------------------------------
+echo
+KG=user-level-reference/skills/karpathy-guidelines/SKILL.md
+WP_HEADING='## Toolkit working preferences'
+WP_MIN=11
+if [ ! -s "$KG" ]; then
+  ko "prefs: $KG missing — the developer-agent preferences have no home (CLAUDE.md no longer carries them)"
+elif ! grep -qF "$WP_HEADING" "$KG"; then
+  ko "prefs: $KG has no '$WP_HEADING' section — the preferences moved out of CLAUDE.md and must land here"
+else
+  ok "prefs: $KG carries the '$WP_HEADING' section"
+  wp_bullets=$(
+    awk -v h="$WP_HEADING" '
+      index($0, h) == 1 { inb = 1; next }
+      inb && /^## / { exit }
+      inb && /^- / { n++ }
+      END { print n + 0 }
+    ' "$KG"
+  )
+  if [ "$wp_bullets" -ge "$WP_MIN" ]; then
+    ok "prefs: $wp_bullets preference bullets present (>= $WP_MIN, the v1.5 post-trim set this PR relocated)"
+  else
+    ko "prefs: only $wp_bullets preference bullets in $KG (expected >= $WP_MIN) — preferences were lost in the move, and no other check would notice"
+  fi
+fi
+
+# The pointer left behind in CLAUDE.md has to resolve. `## Required Skills` was
+# the original target and it no longer exists in CLAUDE.md (PR4 cut the table
+# that defined it), so pin the skill name instead of the stale anchor.
+for v in $VARIANTS; do
+  if grep -q 'karpathy-guidelines' "templates/$v/CLAUDE.md"; then
+    ok "templates/$v/CLAUDE.md: points at the karpathy-guidelines skill for developer preferences"
+  else
+    ko "templates/$v/CLAUDE.md: no pointer to karpathy-guidelines — the moved preferences are orphaned"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

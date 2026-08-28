@@ -69,7 +69,7 @@ These are not optional. If the trigger fires, invoke the named skill BEFORE gene
 
 **Enforced mechanically, so not restated here:** reading a file before editing it (the harness refuses the edit otherwise), running tests before a commit (`hooks/pre-commit-test.sh`, `run-gate.sh`, `gate-before-merge.sh`), never pushing to main (`hooks/no-push-main.sh`), automatic `Read` capping at 500 lines (`hooks/read-size-gate.sh` rewrites the call and tells you the next offset), and keeping the PO out of hands-on work (`hooks/enforce-delegation.sh`).
 
-Developer-agent working preferences are preloaded via the `karpathy-guidelines` skill (see `## Required Skills`).
+Developer-agent working preferences are preloaded via the `karpathy-guidelines` skill (see `AGENT_TEAM.md` → *Spawn-Prompt Binding Table*).
 
 ## Quick Start
 
