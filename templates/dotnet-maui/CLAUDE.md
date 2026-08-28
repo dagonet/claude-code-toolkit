@@ -48,11 +48,7 @@ Full details: `AGENT_TEAM.md` (roles, rules, merge protocol, mode behavior table
 
 Spawn-prompt contracts: `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* (hook-enforced) — also covers which agents lack `Bash`/GitHub tools and therefore return their work to the PO.
 
-## Open Brain Context for Agents
-
-Spawned agents cannot reach Open Brain. Before spawning, search for relevant context and put it in the spawn prompt; after an agent returns, capture durable insights (decisions with rationale, bug root causes, approaches that failed) and skip routine outcomes.
-
-Per-agent search queries and capture guidance: `AGENT_TEAM.md` -> *Open Brain Context for Agents* (loaded on demand, alongside the spawn snippets you need at the same moment).
+Open Brain search/capture guidance for spawns: `AGENT_TEAM.md` §Open Brain.
 
 ---
 
@@ -74,23 +70,10 @@ These are not optional. If the trigger fires, invoke the named skill BEFORE gene
 
 ## Working Preferences
 
-> **Actor note:** implementation-level preferences below (tests, CI fixes, minimal fix, post-merge verification, commit style) are PERFORMED by developer agents — the PO enforces them by putting them in spawn prompts and rejecting deliverables that violate them. The PO itself never edits code or runs builds/tests.
-
 **Enforced mechanically, so not restated here:** reading a file before editing it (the harness refuses the edit otherwise), running tests before a commit (`hooks/pre-commit-test.sh`, `run-gate.sh`, `gate-before-merge.sh`), never pushing to main (`hooks/no-push-main.sh`), automatic `Read` capping at 500 lines (`hooks/read-size-gate.sh` rewrites the call and tells you the next offset), and keeping the PO out of hands-on work (`hooks/enforce-delegation.sh`).
 
-What follows are the judgement calls no hook can make:
+Developer-agent working preferences are preloaded via the `karpathy-guidelines` skill (see `## Required Skills`).
 
-- **Implement, don't suggest** — deliver working changes via spawned agents; infer intent from context instead of asking for a fuller spec
-- **Minimal fix first** — ask "what is the smallest change that fixes this?" and cut scope aggressively. Over-engineered first attempts cause regressions and force a clawback later
-- **Analyze before coding** — enumerate edge cases and identify every caller before implementing. For a bug fix, verify the root cause from data (query the DB, read the logs) before writing code
-- **Re-plan on failure** — if an approach is not working after a reasonable attempt, stop and re-enter plan mode rather than pushing through
-- **Tests** — write general solutions, never hard-code the expected values. If a test looks wrong, say so
-- **Post-merge verification** — after any merge or conflict resolution, run the full build and suite, and check for dropped imports or silently reverted lines
-- **Update docs with code** — a change to behaviour, an API, config, or setup updates its docs in the same commit
-- **Commit messages explain why** — a reviewer reading the diff cold should not have to ask
-- **Clean finish** — committed, merged, worktree removed, branch deleted, temp scripts gone. Anything left behind gets reported, with the reason
-- **Checkpoint long sessions** — commit and push intermediate work; output truncation has cost 9+ hours of context before now
-- **Learn from corrections** — capture the pattern to Open Brain immediately so the same mistake does not repeat
 Conventions: see `.claude/rules/csharp.md` and `.claude/rules/xaml.md` (each loads when you touch matching files).
 
 ---

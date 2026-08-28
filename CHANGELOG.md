@@ -20,8 +20,18 @@
 - *Code Style (MANDATORY)*, *Enforcement Notes*, and the per-variant *Project Conventions* sections moved verbatim into rules, each replaced by `Conventions: see .claude/rules/<name>.md (loads when you touch matching files).`
 - Gate rule and commit checklist compressed to name the enforcing hook once instead of restating what it does.
 - Emphasis rationed: `# Session Bootstrap (MANDATORY)` → `# Session Bootstrap`, "The PO MUST use `EnterPlanMode`" → "the PO calls `EnterPlanMode`", "Every plan MUST declare its tier" → "Every plan declares its tier". The one surviving shouted line is the Superpowers header, which two hooks and the verify script pin.
-- **Bytes:** general 13,892 → 12,522 · dotnet 15,450 → 12,772 · dotnet-maui 15,699 → 12,811 · rust-tauri 16,749 → 13,456 · java 16,378 → 13,105 · python 16,299 → 13,131. Always-loaded total on `general`: **32,888 → 31,518 B**, and **41,167 → 31,518 (−23%)** against the pre-trim baseline.
-- The **6 KB / 7 KB targets in the plan were not met and are not reachable** by this route: the sections the plan also lists as *keep* (Session Bootstrap, Workflow TL;DR, Open Brain, Superpowers, Working Preferences, Verification, Compact Instructions) account for ~11 KB on their own. Cutting further means deleting content the plan protects; the honest number is reported instead.
+### CLAUDE.md diet, round 2 — routed by audience
+
+Two more sections left the always-loaded set once the question changed from "is this important?" to "**who** needs it, and **when**?".
+
+- **`## Open Brain Context for Agents` deleted** (×6). Every claim it made — spawned agents cannot reach Open Brain, search before spawning, capture decisions with rationale and bug root causes, skip routine outcomes — is already stated, in more detail and with per-agent tables, in `AGENT_TEAM.md` §Open Brain (moved there in v1.4). CLAUDE.md keeps one line: `Open Brain search/capture guidance for spawns: AGENT_TEAM.md §Open Brain.` `AGENT_TEAM.md` is unchanged and still byte-identical across all six variants.
+- **`## Working Preferences` bullets moved into the `karpathy-guidelines` skill** as `## Toolkit working preferences (developer agents)`. The section's own actor note says these bind **developer agents**, not the PO — and all 12 coders preload the skill (`skills: [karpathy-guidelines]`, added in PR3), so the preferences now arrive at spawn, in the context that acts on them, at zero always-loaded cost. CLAUDE.md keeps the `Enforced mechanically:` line (PO-relevant) plus one pointer.
+- **Bytes:** general 13,892 → 12,522 → **10,334** · dotnet 15,450 → **10,584** · dotnet-maui 15,699 → **10,623** · java 16,378 → **10,917** · python 16,299 → **10,943** · rust-tauri 16,749 → **11,268**. Always-loaded total on `general`: **32,888 → 29,330 B**, and **41,167 → 29,330 (−29%)** against the pre-trim baseline. Total across the six CLAUDE.md files: 94,467 → 64,669 B (−32%).
+- The revised **≤ 9 KB target was not met** — the two moves yielded 2.2 KB and land the variants at 10.3–11.3 KB. What remains is the §B keep-list (Session Bootstrap, Workflow TL;DR, Superpowers, Quick Start, Build & Test, Verification, Debugging, Commit Workflow, Compact Instructions) plus the PROJECT-CUSTOM region. No further cut was invented to reach the number.
+
+### Verification (round 2)
+
+- **No verify assertion changed.** Confirmed by grepping `scripts/`, `hooks/`, `tools/`, and both setup scripts for `Open Brain Context for Agents` and `Working Preferences`: zero hits, so nothing pinned either heading. The suite stays at 159 assertions and green, including the Superpowers header, the `superpowers:` token, the `PROJECT-CUSTOM` region, the banned-phrase sweep over `templates/*/CLAUDE.md`, and AGENT_TEAM.md byte-identity ×6.
 
 ### Verification
 
@@ -32,6 +42,7 @@
 
 - `/sync-template` reports `CLAUDE.md` as **CONFLICT** for any project with local edits outside the `PROJECT-CUSTOM` region. Accept the template version, then re-paste your customisations between the `PROJECT-CUSTOM:BEGIN/END` markers — that region is preserved verbatim by the sync server.
 - The new `.claude/rules/*.md` arrive as `new_template_files`; accept them. If your project already had language conventions pasted into CLAUDE.md, delete them there once the rules land, or the same text loads twice.
+- **Re-copy `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/SKILL.md`.** The *Working Preferences* bullets now live in that skill, and coder agents preload it by name from the user-level skills directory. A stale copy means developer agents silently lose the preferences that CLAUDE.md no longer carries — this is the one migration step with a real behavioural consequence.
 - If a plugin-installed context-mode routing block is still present in your CLAUDE.md, delete it (removed toolkit-side in PR3).
 
 ## v2.0-pr3 — 2026-08-28

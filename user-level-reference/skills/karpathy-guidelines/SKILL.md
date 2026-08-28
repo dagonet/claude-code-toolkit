@@ -71,3 +71,25 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+## Toolkit working preferences (developer agents)
+
+> Moved here from every variant's `CLAUDE.md` in v2.0-pr4. All 12 coder agents preload this skill (`skills: [karpathy-guidelines]`), so these arrive at spawn without costing an always-loaded byte. The hook-enforcement line stayed in `CLAUDE.md` because it is PO-relevant.
+
+> **Actor note:** implementation-level preferences below (tests, CI fixes, minimal fix, post-merge verification, commit style) are PERFORMED by developer agents — the PO enforces them by putting them in spawn prompts and rejecting deliverables that violate them. The PO itself never edits code or runs builds/tests.
+
+These are the judgement calls no hook can make:
+
+- **Implement, don't suggest** — deliver working changes via spawned agents; infer intent from context instead of asking for a fuller spec
+- **Minimal fix first** — ask "what is the smallest change that fixes this?" and cut scope aggressively. Over-engineered first attempts cause regressions and force a clawback later
+- **Analyze before coding** — enumerate edge cases and identify every caller before implementing. For a bug fix, verify the root cause from data (query the DB, read the logs) before writing code
+- **Re-plan on failure** — if an approach is not working after a reasonable attempt, stop and re-enter plan mode rather than pushing through
+- **Tests** — write general solutions, never hard-code the expected values. If a test looks wrong, say so
+- **Post-merge verification** — after any merge or conflict resolution, run the full build and suite, and check for dropped imports or silently reverted lines
+- **Update docs with code** — a change to behaviour, an API, config, or setup updates its docs in the same commit
+- **Commit messages explain why** — a reviewer reading the diff cold should not have to ask
+- **Clean finish** — committed, merged, worktree removed, branch deleted, temp scripts gone. Anything left behind gets reported, with the reason
+- **Checkpoint long sessions** — commit and push intermediate work; output truncation has cost 9+ hours of context before now
+- **Learn from corrections** — capture the pattern to Open Brain immediately so the same mistake does not repeat

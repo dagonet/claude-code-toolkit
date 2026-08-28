@@ -50,23 +50,24 @@ Anthropic's [context-engineering guidance for Claude 5 generation models](https:
 
 | | Baseline | v1.4 | v1.5 | v2.0-pr4 | Loaded |
 |---|---|---|---|---|---|
-| `templates/general/CLAUDE.md` | 17,871 | 15,281 | 13,735 | **12,522** | every session |
+| `templates/general/CLAUDE.md` | 17,871 | 15,281 | 13,735 | **10,334** | every session |
 | `templates/general/CLAUDE.local.md` | 13,845 | **9,352** | 9,352 | 9,413 | every session |
 | user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 | 8,637 | every session |
 | `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | every session |
-| **always-loaded total** | **41,167** | 34,084 | 32,538 | **31,518 (−23%)** | |
+| **always-loaded total** | **41,167** | 34,084 | 32,538 | **29,330 (−29%)** | |
 | `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 49,724 | **on demand only** |
 | `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | on demand |
 | `.claude/rules/*.md` (general: none) | — | — | — | 0 B | **on matching file touch** |
 | skills | 11 | **12** | 12 | 12 | on trigger |
 
-Per-variant always-loaded totals now: general 31,518 · java 32,785 · python 32,700 · dotnet 34,209 · rust-tauri 34,687 · dotnet-maui 35,777. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set. (The v1.5 figures above were measured before PR1–PR3 changed `CLAUDE.local.md` and the user-level reference, so the per-file deltas do not all come from PR4.)
+Per-variant always-loaded totals now: general 29,330 · java 30,597 · python 30,512 · dotnet 32,021 · rust-tauri 32,499 · dotnet-maui 33,589. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set. (The v1.5 figures above were measured before PR1–PR3 changed `CLAUDE.local.md` and the user-level reference, so the per-file deltas do not all come from PR4.)
 
 The largest single document in the repo is deliberately *not* in the always-loaded set. The three passes used different mechanisms:
 
 - **v1.4 moved** — ten MCP procedures into the `mcp-usage` skill, the per-agent Open Brain tables into `AGENT_TEAM.md`. The on-demand side growing while the always-loaded side shrinks is the intended direction.
 - **v1.5 deleted** — *Working Preferences* 18 bullets → 11, because five were already enforced by a hook or by the harness itself and two carried no behavioural content. Deleting prose that a mechanism enforces is safe in a way that deleting an unenforced rule is not; the section now names the enforcing hooks instead of restating their rules.
 - **v2.0-pr4 scoped** — language conventions (*Code Style (MANDATORY)*, *Enforcement Notes*, the per-variant *Project Conventions*) moved verbatim into `.claude/rules/*.md`, each with a `paths:` frontmatter glob list. A scoped rule loads only when Claude reads or edits a matching file and is re-injected after compaction; a rule **without** `paths:` loads at launch at CLAUDE.md cost, which is why the toolkit ships scoped rules only. The always-loaded CLAUDE.md now differs between variants by a single pointer line.
+- **v2.0-pr4 round 2 routed by audience** — two more sections left the always-loaded set once it was clear *who* each one binds. *Open Brain Context for Agents* said nothing `AGENT_TEAM.md` §Open Brain did not already say in more detail, so CLAUDE.md keeps a pointer and the tables stay on-demand. *Working Preferences* binds **developer agents**, not the PO, and all 12 coders preload `karpathy-guidelines` (`skills:`, PR3) — so its 11 bullets moved into that skill and reach the agents that act on them at spawn, at zero always-loaded cost. The hook-enforcement line stayed behind because it is PO-relevant. The routing question is not "is this important?" but "who needs it, and when?".
 
 **CLAUDE.md is facts, not procedure.** The per-line test is "would removing this cause Claude to make a mistake?". Procedures belong in skills, "every time X do Y" belongs in a hook, "never X" belongs in a deterministic guardrail, and anything that only applies to a subset of files belongs in `.claude/rules/`. Emphasis is rationed: at most one `MUST`/`MANDATORY`-style line per CLAUDE.md (the Superpowers header, which hooks and the verify script both pin).
 
