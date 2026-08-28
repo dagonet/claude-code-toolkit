@@ -1,4 +1,5 @@
 {
+  "_note_git_tools": "git-tools is OPTIONAL since v2.0: the toolkit uses the native git CLI and gates it with hooks. Nothing breaks if you drop this entry. Note that git work done through these MCP tools bypasses the pre-commit / no-push-main / merge gates, which key on Bash and PowerShell commands.",
   "mcpServers": {
     "git-tools": {
       "command": "{{PYTHON_VENV_PATH}}/mcp-git-tools.exe"

@@ -161,7 +161,9 @@ claude mcp add --scope user --transport stdio ollama-tools \
   -- ~/repos/mcp-dev-servers/.venv/bin/mcp-ollama-tools
 ```
 
-## Git Tools (34 tools)
+## Git Tools (34 tools) — optional since v2.0
+
+> **Optional.** Since v2.0 the toolkit drives git through the native `git` CLI and gates it with hooks; no template, agent or hook requires this server. Register it only if you prefer structured JSON over CLI output — the gates fire on `Bash`/`PowerShell` commands, so work done through these MCP tools is **not** gated.
 
 Git operations via MCP: status, diff, log, add, commit, tag, branch, checkout, push, pull, fetch, reset, rebase, stash, restore, worktree, config, archive, describe, revert, reflog, clean-dry-run.
 

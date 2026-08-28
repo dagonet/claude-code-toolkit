@@ -43,7 +43,7 @@ They cannot enforce **conversation-level state** (e.g., "did the architect chall
 
 | Field | Value |
 |-------|-------|
-| Hook type | `PreToolUse` on `mcp__git-tools__git_push` |
+| Hook type | `PreToolUse` on `Bash\|PowerShell` (v2.0; was `mcp__git-tools__git_push`) |
 | Logic | Reject if target branch is `main` or `master` |
 | Edge cases | Must resolve implicit branch (when branch param is omitted, check current branch in the worktree). Needs escape hatch for initial repo setup or hotfix scenarios |
 
@@ -144,7 +144,7 @@ The correct enforcement point is **GitHub Actions CI** as a required status chec
 
 | Field | Value |
 |-------|-------|
-| Hook type | `PreToolUse` on `mcp__git-tools__git_push` |
+| Hook type | `PreToolUse` on `Bash\|PowerShell` (v2.0; was `mcp__git-tools__git_push`) |
 | Logic | Reject if push arguments contain `--force` or `-f` flags |
 | Edge cases | Force-push is legitimate after interactive rebase on feature branches. Could allow force-push on non-main branches, or require explicit user confirmation |
 
@@ -192,15 +192,15 @@ These remain convention-only, enforced by AGENT_TEAM.md instructions.
 
 | # | Proposal | Status | Reason |
 |---|----------|--------|--------|
-| 1 | No Bash git | **Implemented** | `hooks/block-bash-vcs.sh` — first-token match |
+| 1 | No Bash git | **Superseded in v2.0** | `hooks/block-bash-vcs.sh` blocked 1,240 turns in 6 weeks for no safety gain; the git CLI is allowed and the three gates parse `tool_input.command` instead. The script survives as a no-op stub |
 | 2 | No push to main | **Implemented** | `hooks/no-push-main.sh` |
 | 3 | Format before commit | Reject | Wrong enforcement point, blocks workflows |
 | 4 | Build before commit | Reject | Wrong enforcement point, blocks TDD |
-| 5 | No `gh` CLI | **Implemented** | `hooks/block-bash-vcs.sh` — first-token match |
+| 5 | No `gh` CLI | **Superseded in v2.0** | Same reason as #1. `gh pr merge` is now a gated path (`hooks/gate-before-merge.sh`), not a blocked one |
 | 6 | Plan before edit | Defer | Too fragile, marginal gain |
 | 7 | Tier + two-challenge + team + freshness before coder spawns | **Implemented (PR B)** | `hooks/tier-before-coder.sh` — grep-based, see "strengths and limits" |
 | 8 | Test before merge | Reject | Wrong architecture, use CI |
-| 9 | No force-push | **Dropped** | `git_push` MCP tool has no `force` parameter; `git` via Bash already blocked (`hooks/block-bash-vcs.sh`) |
+| 9 | No force-push | **Reopened by v2.0** | The original rationale (no `force` parameter on the MCP tool, Bash git blocked) no longer holds now that `git push --force` is reachable. `hooks/no-push-main.sh` still blocks any push to main, forced or not |
 
 ---
 
