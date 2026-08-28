@@ -544,8 +544,11 @@ fi
 
 # Agents that are told to invoke skills need the Skill tool: a subagent whose
 # tools: omits it cannot run the `## Required Skills` block the PO injects.
-skill_users=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore|doc-generator|requirements-engineer)\.md$' | wc -l)
-skill_tool=$(grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+# Counted over the SAME file list, so adding Skill to one of the excluded
+# agents later is a passing change, not a spurious count mismatch.
+skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore|doc-generator|requirements-engineer)\.md$')
+skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
+skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
 if [ "$skill_tool" = "$skill_users" ]; then
   ok "Skill tool present in all $skill_users agent files that are told to invoke skills"
 else
