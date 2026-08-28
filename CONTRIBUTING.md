@@ -44,7 +44,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 - **New template variant**: Add `templates/<name>/` with full file set (see existing variants)
 - **Agent improvements**: Edit agent definitions in `templates/*/. claude/agents/` and `user-level-reference/agents/`
-- **New commands or skills**: Add to `user-level-reference/commands/` or `user-level-reference/skills/`
+- **New skills**: Add a skill directory under `user-level-reference/skills/<name>/SKILL.md` (commands were merged into skills)
 - **Documentation**: Improve docs in `docs/` or template READMEs
 - **Setup script improvements**: Enhance `setup-project.ps1` / `setup-project.sh`
 

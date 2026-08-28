@@ -4,31 +4,39 @@ This document explains each section and setting in the user-level Claude Code se
 
 ## Full Settings JSON
 
+Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Personal additions are deliberately excluded: no `statusLine`, no third-party marketplaces or their plugins, no project-specific permission entries.
+
 ```json
 {
   "env": {
     "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
     "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
+    "ENABLE_PROMPT_CACHING_1H": "1",
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"
   },
   "permissions": {
     "allow": [
-      "Bash(*)",
+      "Bash(bash hooks/run-gate.sh*)",
       "Read",
       "Edit",
       "Write",
       "NotebookEdit",
       "WebSearch",
-      "WebFetch(*)",
-      "mcp__git-tools__*",
       "mcp__github-tools__*",
+      "mcp__github__*",
       "mcp__MCP_DOCKER__*",
       "mcp__ollama-tools__*",
-      "mcp__plugin_playwright_playwright__*",
-      "mcp__plugin_context7_context7__*",
-      "mcp__searxng__*",
       "mcp__open-brain__*",
       "mcp__template-sync-tools__*",
+      "mcp__searxng__*",
+      "mcp__dotnet-tools__*",
+      "mcp__rust-tools__*",
+      "mcp__sqlite__*",
+      "mcp__windows-mcp__*",
+      "mcp__godot-tools__*",
+      "mcp__plugin_context7_context7__*",
+      "mcp__plugin_playwright_playwright__*",
       "mcp__plugin_context-mode_context-mode__*"
     ],
     "deny": [
@@ -37,51 +45,67 @@ This document explains each section and setting in the user-level Claude Code se
     "ask": [
       "Bash(npm publish*)"
     ],
-    "defaultMode": "dontAsk"
+    "defaultMode": "auto"
   },
-  "statusLine": {
-    "type": "command",
-    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\<USERNAME>\\.claude\\statusline.ps1\""
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "**Primary use**: software development in private repos under G:/git; PO/subagent workflow with hook-enforced gates",
+      "**Trusted repos**: the working directory's repo and its `origin` remote only",
+      "**Sensitive remote targets**: any name carrying `prod`/`production` as a whole word or segment"
+    ]
   },
-  "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true,
-    "context7@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true,
-    "feature-dev@claude-plugins-official": true,
-    "code-simplifier@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true,
-    "claude-md-management@claude-plugins-official": true,
-    "csharp-lsp@claude-plugins-official": true,
-    "ralph-loop@claude-plugins-official": true,
-    "playwright@claude-plugins-official": true,
-    "claude-code-setup@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true,
-    "skill-creator@claude-plugins-official": true,
-    "context-mode@context-mode": true
-  },
-  "extraKnownMarketplaces": {
-    "context-mode": {
-      "source": {
-        "source": "github",
-        "repo": "mksglu/context-mode"
-      }
-    }
-  },
-  "alwaysThinkingEnabled": true,
   "enableAllProjectMcpServers": true,
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/block-bash-vcs.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/block-bash-vcs.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
+            "command": "bash ~/.claude/hooks/no-push-main.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/no-push-main.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/tier-before-coder.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/tier-before-coder.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/bash-output-guard.sh"
           }
         ]
       }
     ]
   },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": false,
+    "feature-dev@claude-plugins-official": false,
+    "code-simplifier@claude-plugins-official": false,
+    "claude-md-management@claude-plugins-official": false,
+    "ralph-loop@claude-plugins-official": false,
+    "claude-code-setup@claude-plugins-official": false,
+    "skill-creator@claude-plugins-official": true,
+    "chrome-devtools-mcp@claude-plugins-official": false
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "medium",
+  "advisorModel": "opus",
+  "autoCompactEnabled": true,
   "contextCompactionThreshold": 70
 }
 ```
@@ -90,19 +114,15 @@ This document explains each section and setting in the user-level Claude Code se
 
 ### `env` -- Environment Variables
 
-```json
-"env": {
-  "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
-  "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
-  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
-}
-```
+> **Removed in v2.0:** `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. Agent teams are experimental and off by default; every measured stall in six weeks of transcripts came from a named teammate, while Agent-tool spawns never stalled. Parallelism now comes from parallel Agent calls, so the flag is gone — delete it from your own `~/.claude/settings.json` too.
+
+> **Kept deliberately in v2.0:** `CLAUDE_CODE_DISABLE_1M_CONTEXT` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. They are *not* redundant on the MAX plan — without both, `/context` clamps back to 200k on a 1M-capable model. Leave them set.
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
-> **Removed in v2.0:** `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. Agent teams are experimental and off by default; every measured stall in six weeks of transcripts came from a named teammate, while Agent-tool spawns never stalled. Parallelism now comes from parallel Agent calls, so the flag is gone — delete it from your own `~/.claude/settings.json` too.
-
 | `CLAUDE_CODE_SHELL` | Path to bash.exe | Overrides the default shell used by Claude Code's Bash tool. Points to Git Bash so Unix-style commands work on Windows. |
+| `ENABLE_PROMPT_CACHING_1H` | `"1"` | Extends prompt-cache TTL to one hour — worth it for long orchestrator sessions that re-send a large stable prefix. |
+| `CLAUDE_CODE_USE_POWERSHELL_TOOL` | `"1"` | Exposes the dedicated `PowerShell` tool alongside `Bash` on Windows. Hook matchers in this file use `Bash\|PowerShell` so both are covered. |
 | `CLAUDE_CODE_DISABLE_1M_CONTEXT` | `"false"` | Enables the 1M token context window on Opus 4.6/4.7 (claude.ai MAX plan). Must be a **string** (`"false"`), not JSON boolean. On Sonnet this has no effect — Sonnet caps at 200k on MAX. |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `"1000000"` | Sets the **context window size** (not the compaction trigger). Must match the model's max context, otherwise it clamps `/context` to this value. For Opus 4.7 with 1M context, keep at `"1000000"`. Setting it lower (e.g. `"700000"`) collapses `/context` back to 200k — a misleading symptom. Use `contextCompactionThreshold` to control *when* compaction triggers. |
 
@@ -112,27 +132,13 @@ Controls which tools Claude Code can use without asking for confirmation.
 
 #### `allow` -- Auto-approved tools
 
-```json
-"allow": [
-  "Bash(*)",           // All Bash commands (unrestricted shell access)
-  "Read",              // Read any file
-  "Edit",              // Edit any file
-  "Write",             // Write/create any file
-  "NotebookEdit",      // Edit Jupyter notebooks
-  "WebSearch",         // Search the web
-  "WebFetch(*)",       // Fetch any URL
-  "mcp__git-tools__*",                    // All git MCP tools (status, add, commit, diff, etc.)
-  "mcp__github-tools__*",                 // GitHub helper tools (repo info, workflow list)
-  "mcp__MCP_DOCKER__*",         // Full GitHub MCP (issues, PRs, reviews, etc.) — official plugin
-  "mcp__ollama-tools__*",                 // Local LLM tools via Ollama (first-pass, JSON extract)
-  "mcp__plugin_playwright_playwright__*", // Playwright browser automation (plugin)
-  "mcp__plugin_context7_context7__*",     // Context7 documentation lookup (plugin)
-  "mcp__searxng__*",                      // SearXNG web search
-  "mcp__open-brain__*",                   // Open Brain persistent memory
-  "mcp__template-sync-tools__*",          // Template sync MCP tools
-  "mcp__plugin_context-mode_context-mode__*" // Context Mode plugin
-]
-```
+See the *Full Settings JSON* block above for the current list. Three entries were **removed in v2.0 PR1** and must not come back:
+
+| Removed | Why |
+|---|---|
+| `Bash(*)` | Blanket shell approval defeated every gate. The only Bash entry left is `Bash(bash hooks/run-gate.sh*)`; everything else goes through `defaultMode: auto` plus the guard hooks, which *gate* the git/`gh` CLI rather than ban it. |
+| `WebFetch(*)` | Unbounded fetch is the largest single context-flood vector. Use `WebSearch`, or an explicit approval. |
+| `mcp__git-tools__*` | The MCP-git mandate is gone; native `git` is the supported path and is gated by `no-push-main.sh` + `gate-before-merge.sh`. |
 
 **Note:** Language/framework-specific MCP servers (`dotnet-tools`, `rust-tools`, `sqlite`, `windows-mcp`, `godot-tools`) are **not** registered at user level. They belong to project-level `.mcp.json` (repo root) files, generated by `setup-project.sh`/`setup-project.ps1` per variant. This keeps the user-level context minimal and loads language tools only in repos that actually need them. See `docs/architecture.md` → "MCP Layering" and `mcp-servers/HOWTO.md` → "Project-Level Servers".
 
@@ -152,59 +158,48 @@ Controls which tools Claude Code can use without asking for confirmation.
 ]
 ```
 
-#### `defaultMode`
+#### `defaultMode` (inside `permissions`) and `autoMode` (top level)
+
+`defaultMode` lives inside `permissions`. **`autoMode` does not — it is a top-level key**, a sibling of `permissions`, with `environment`, `allow`, `soft_deny`, and `hard_deny` members. Nesting it under `permissions` silently does nothing.
 
 ```json
-"defaultMode": "dontAsk"
+"permissions": { "…": "…", "defaultMode": "auto" },
+"autoMode": {
+  "environment": [
+    "$defaults",
+    "**Primary use**: software development in private repos under G:/git; PO/subagent workflow with hook-enforced gates",
+    "**Trusted repos**: the working directory's repo and its `origin` remote only",
+    "**Sensitive remote targets**: any name carrying `prod`/`production` as a whole word or segment"
+  ]
+}
 ```
 
-When a tool is not listed in `allow`, `deny`, or `ask`, the default behavior is `dontAsk` -- meaning tools are auto-approved unless explicitly denied. This creates a permissive environment suited for trusted development workflows.
+`auto` replaces the old `dontAsk`. Instead of blanket-approving everything not explicitly denied, a classifier model decides per call whether the action is safe *in this environment*. `autoMode.environment` is the prose it reasons over — plain sentences, not a rule grammar. `$defaults` keeps the built-in entries and your lines are appended, so you describe only what is specific to your machine.
+
+Three things about `autoMode` that are easy to get wrong:
+
+- **Scope is User/managed only.** A project `.claude/settings.json` cannot ship an `autoMode` block; it is ignored there. Trust boundaries belong to the operator, not to a checked-in repo — which is exactly the right polarity, since a hostile repo could otherwise widen its own trust.
+- **Do not route the classifier through a model proxy.** It needs the real model. Running it through `cc-proxy` (or any alias-rewriting proxy) produced **83 classifier outages** in the measured window, each degrading auto mode to prompting. If you run a proxy, exempt the classifier — the same exemption `advisorModel` needs.
+- **Prose quality is the control surface.** Vague lines ("be careful with prod") classify worse than the concrete phrasing above. Say which repos are trusted and what a sensitive target looks like.
+
+`deny` still wins over everything, so `Read(.env*)` holds regardless of mode.
 
 ### `statusLine` -- Custom Status Bar
 
-```json
-"statusLine": {
-  "type": "command",
-  "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\<USERNAME>\\.claude\\statusline.ps1\""
-}
-```
-
-Runs a custom PowerShell script to display contextual information in the Claude Code status bar. The script can show git branch, project info, resource usage, or other dynamic context. The `-NoProfile` flag ensures fast execution by skipping the PowerShell profile.
+**Not shipped in this reference.** `statusLine` is a per-machine cosmetic setting (it usually points at an absolute path to a local script), so it is deliberately excluded here. If you want one, add it to your own `~/.claude/settings.json`; a `type: "command"` entry runs a script whose stdout becomes the status bar, and `-NoProfile` keeps a PowerShell one fast.
 
 ### `enabledPlugins` -- Active Plugins
 
-```json
-"enabledPlugins": {
-  "frontend-design@claude-plugins-official": true,
-  "context7@claude-plugins-official": true,
-  "code-review@claude-plugins-official": true,
-  "feature-dev@claude-plugins-official": true,
-  "code-simplifier@claude-plugins-official": true,
-  "superpowers@claude-plugins-official": true,
-  "claude-md-management@claude-plugins-official": true,
-  "csharp-lsp@claude-plugins-official": true,
-  "ralph-loop@claude-plugins-official": true,
-  "playwright@claude-plugins-official": true,
-  "claude-code-setup@claude-plugins-official": true
-}
-```
+See the *Full Settings JSON* block above for the shipped values. Only four are on; every plugin costs context at session start whether or not it is used, so the default is `false`.
 
-| Plugin | Purpose |
-|--------|---------|
-| `frontend-design` | Assists with frontend/UI design tasks |
-| `context7` | Provides up-to-date library documentation lookup via Context7 |
-| `code-review` | Enhanced code review capabilities |
-| `feature-dev` | Feature development workflow support |
-| `code-simplifier` | Suggests code simplifications and cleanup |
-| `superpowers` | Extended Claude Code capabilities |
-| `claude-md-management` | Manages CLAUDE.md project instruction files |
-| `csharp-lsp` | C# Language Server Protocol integration for IntelliSense-like features |
-| `ralph-loop` | Agentic loop for iterative development |
-| `playwright` | Browser automation via Playwright MCP |
-| `claude-code-setup` | Claude Code project setup assistance |
-| `rust-analyzer-lsp` | Rust Language Server Protocol integration |
-| `skill-creator` | Create, modify, and evaluate custom skills |
-| `context-mode` | Offloads large tool outputs to sandbox, keeps context clean |
+| Plugin | Shipped | Purpose |
+|--------|---------|---------|
+| `superpowers` | on | The skill set the toolkit actually binds — `brainstorming`, `systematic-debugging`, `verification-before-completion`, `writing-plans`, `test-driven-development`, `requesting`/`receiving-code-review`. All 493 measured skill invocations were these plus `karpathy-guidelines`. |
+| `code-review` | on | Provides `/code-review`, the replacement for the toolkit's deleted `code-review` and `security-audit` skills. |
+| `context7` | on | Up-to-date library documentation lookup. |
+| `skill-creator` | on | **Enabled in v2.0 PR5.** Ships skill scaffolding, `evals/evals.json` authoring, LLM grading, and benchmarking — the replacement for the toolkit's deleted `/skill-eval` and `/skill-improve` commands and its hand-rolled eval convention. |
+| `frontend-design`, `feature-dev`, `code-simplifier`, `claude-md-management`, `ralph-loop`, `claude-code-setup`, `chrome-devtools-mcp` | off | Unused in six weeks of measured sessions. Turn one on when you have a reason, not by default. |
+| `context-mode` (third-party) | not shipped | Optional. It lives on a non-official marketplace, so neither it nor its `extraKnownMarketplaces` entry is part of this reference. `permissions.allow` still carries its tool prefix, which is a harmless no-op when the plugin is absent. |
 
 ### `alwaysThinkingEnabled`
 
@@ -212,7 +207,7 @@ Runs a custom PowerShell script to display contextual information in the Claude 
 "alwaysThinkingEnabled": true
 ```
 
-Forces Claude to use extended thinking (chain-of-thought reasoning) on every request, even when not explicitly triggered. This produces more thorough and considered responses at the cost of slightly higher latency and token usage.
+Forces extended thinking on every request. **No effect on Fable 5 / Claude 5 generation models** — they reason by default and `effortLevel` is the dial that matters. Kept because it still applies when the session runs an older model; harmless otherwise.
 
 ### `enableAllProjectMcpServers`
 
@@ -221,6 +216,8 @@ Forces Claude to use extended thinking (chain-of-thought reasoning) on every req
 ```
 
 Automatically enables all MCP servers defined in project-level `.mcp.json` files without requiring individual approval. This is convenient for repos that define their own MCP tooling.
+
+**Why this is safe now: `ENABLE_TOOL_SEARCH`.** Claude Code defers MCP tool definitions by default — the model is given a tool-search facility and pulls a server's schemas only when it needs them, instead of paying for every registered tool in the session prefix. That removes the tool-bloat problem that motivated context-mode's "route everything through the sandbox" mandate, which is why v2.0 demotes context-mode to optional. Enabling a server you rarely use now costs approximately nothing at startup.
 
 ### `contextCompactionThreshold`
 
@@ -240,24 +237,20 @@ Controls **when** auto-compact triggers — expressed as a percentage of the cur
 
 ### `hooks` -- Workflow Automation Hooks
 
-```json
-"hooks": {
-  "PreToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "if": "Bash(git *)",
-          "command": "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands.' >&2; exit 2"
-        }
-      ]
-    }
-  ]
-}
-```
-
 Hooks are shell commands that execute in response to Claude Code events. They enforce workflow rules mechanistically rather than relying on prompt instructions alone.
+
+**The v2.0 user-level hook set** (see the *Full Settings JSON* block for exact registration):
+
+| Hook | Event / matcher | Polarity | What it does |
+|---|---|---|---|
+| `no-push-main.sh` | `PreToolUse` on `Bash\|PowerShell` | fail-**closed** (127 → exit 2) | Blocks a push to `main`/`master`, resolving the implicit branch when none is named. v2.0 PR1 moved it onto the Bash matcher because native `git push` is now the supported path. |
+| `tier-before-coder.sh` | `PreToolUse` on `Agent` | fail-**closed** | A coder spawn needs a plan file declaring `Tier: T[1-4]` plus evidence of an architect challenge. All other agent types pass through. |
+| `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | unwrapped (cannot block) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
+| `read-size-gate.sh` | `PreToolUse` on `Read` | fail-**open** | Caps an unbounded `Read` at 500 lines and tells the model the next offset. Recommended user-level install — see below. |
+
+**Retired at user level in v2.0:** `block-bash-vcs.sh`. PR1 replaced "ban the git CLI" with "gate it" — `no-push-main.sh` and the project-level `gate-before-merge.sh` stop the dangerous operations, and everything else runs natively. If you still have the old blanket-block registered, remove it; it now blocks the supported workflow.
+
+Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory.
 
 #### Hook Events
 
@@ -313,10 +306,10 @@ Hooks fire even when agents use `mode: bypassPermissions` — they enforce polic
 
 #### User-Level vs Project-Level Hooks
 
-- **User-level** (`~/.claude/settings.json`): Apply to all projects. Good for personal workflow enforcement (e.g., block `Bash(git *)` everywhere).
-- **Project-level** (`.claude/settings.json`): Apply to one project. Good for language-specific gates (e.g., pre-commit format checks).
+- **User-level** (`~/.claude/settings.json`): Apply to all projects. Good for personal workflow enforcement that is true everywhere (never push to main, cap oversized reads).
+- **Project-level** (`.claude/settings.json`): Apply to one project. Good for language-specific gates (e.g., pre-commit format checks) and for anything that references a repo-relative path such as `hooks/run-gate.sh`.
 
-The example above shows the user-level Bash guard: it runs `hooks/block-bash-vcs.sh`, which blocks a command only when a sub-command's FIRST TOKEN is exactly `git` or `gh` and names the exact MCP replacement tool in the block message. Do NOT use the older inline `if: "Bash(git *)"` glob style at user level — its matcher is conservative on complex multi-line commands and fail-closes on false positives (observed blocking legitimate non-git commands). Install: copy `hooks/block-bash-vcs.sh` from the toolkit repo to `~/.claude/hooks/` and register it as shown.
+A user-level hook may only reference scripts and paths that exist in *every* repo — a fail-closed hook pointing at a repo-scoped script turns every unrelated project into a paralysed session. Do NOT use the inline `if: "Bash(git *)"` glob style at user level: its matcher is conservative on complex multi-line commands and fail-closes on false positives (observed blocking legitimate non-git commands). Prefer a script that parses the command itself.
 
 **Exit-code semantics (important):** a hook command exiting with anything other than 0 or 2 — including **127 when the script file is missing** — is FAIL-OPEN: the tool call proceeds and only a non-blocking error is logged. That is why the example wraps the script call and converts 127 to exit 2 with a `HOOK SCRIPT MISSING` diagnostic; the project templates apply the same wrapper to every PreToolUse script hook. The one deliberate exception: the SubagentStop contract enforcer is NOT wrapped — a missing stop-gate must fail open, or a broken installation would block agents from ever stopping.
 
@@ -444,6 +437,8 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 `model` picks the orchestrator's model; `effortLevel` picks how hard it works on each turn. They are different dials for different failures: a wrong answer *despite* full context calls for a bigger model, while skipped files or tests that never ran call for more effort. Subagent `model:` / `effort:` in the agent file override the session values for that spawn — see `AGENT_TEAM.md` → *Model & Effort Policy*.
 
 Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `claude-*` id: a model proxy reroutes aliases, and a pinned id bypasses it. If you run such a proxy, keep the auto-mode classifier and `advisorModel` off it — both need the real model.
+
+`advisorModel` is shipped as `"opus"` (top level). It picks the model behind the `advisor` reviewer tool, which is a different dial from `model` and `effortLevel`: the advisor sees the full transcript and is worth spending on even when the session itself runs cheaper.
 
 > The plan-mode allow hook for context-mode tools (`hooks/allow-ctx-plan.sh`) was removed in v2.0 PR3 along with the mandatory context-mode routing. The plugin is optional now; if you still run it and want the plan-mode prompts suppressed, re-add an `allow` PreToolUse hook for the `ctx_*` matchers — the mechanism (PreToolUse runs before the permission system, so `permissionDecision: "allow"` pierces plan mode) is unchanged.
 

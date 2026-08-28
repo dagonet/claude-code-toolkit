@@ -104,8 +104,8 @@ Claude MUST:
 
 For Maven, errors appear after `[ERROR]` markers. For Gradle, look for `> Task :compile* FAILED` lines.
 
-**Skill available:** The `fix-errors` skill provides systematic error parsing,
-prioritization by error code, and iterative fixing with rebuild verification.
+**Skill available:** `superpowers:systematic-debugging` — hypothesis-driven diagnosis
+before changing code; re-run `bash hooks/run-gate.sh` to verify the fix.
 
 ---
 

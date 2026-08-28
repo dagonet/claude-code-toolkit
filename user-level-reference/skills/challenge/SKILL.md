@@ -1,9 +1,17 @@
-# /challenge - Challenge a Plan or Design
+---
+name: challenge
+description: Challenge a plan, design, or approach in two structured passes — scope/necessity, then correctness/completeness. Use before executing any plan.
+disable-model-invocation: true
+argument-hint: "[what to challenge]"
+---
+
+# Challenge a Plan or Design
 
 Challenge the current plan, approach, or design with two structured passes. Catches over-engineering, missing requirements, YAGNI violations, and implementation flaws early.
 
 ## Arguments
-- `$ARGUMENTS` - (Optional) Description of what to challenge. If omitted, challenge the current plan or approach in the conversation context.
+
+- `$ARGUMENTS` — (Optional) Description of what to challenge. If omitted, challenge the current plan or approach in the conversation context.
 
 ## Workflow
 
@@ -12,7 +20,7 @@ Challenge the current plan, approach, or design with two structured passes. Catc
    - If omitted, identify the most recent plan, design, or proposed approach in the conversation
    - If no clear target exists, ASK the user what to challenge
 
-2. **Attempt Architect delegation**
+2. **Attempt architect delegation**
    - If an architect agent is available (team context with AGENT_TEAM.md), spawn the architect to perform both challenges
    - If no architect is available (solo session), perform both challenges directly
 
@@ -40,6 +48,7 @@ Challenge the current plan, approach, or design with two structured passes. Catc
    - Present the revised plan/approach incorporating all changes
 
 ## Rules
+
 - MUST perform exactly two challenge passes — never skip the second
 - MUST challenge substance, not style — focus on correctness, scope, and completeness
 - MUST preserve the original intent while cutting scope or simplifying

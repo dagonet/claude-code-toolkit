@@ -3,7 +3,7 @@
 
 # Claude Code Toolkit
 
-> **Bootstrap a project with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workflow in one command.** Six template variants drop in an opinionated agent team, slash commands, auto-triggered skills, MCP permissions, and workflow-enforcement hooks — so `/build`, `/test`, `/commit`, and `/sprint` work the moment you're done.
+> **Bootstrap a project with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workflow in one command.** Six template variants drop in an opinionated agent team, skills, MCP permissions, and workflow-enforcement hooks — so `/commit`, `/sprint`, and the `bash hooks/run-gate.sh` build/test gate work the moment you're done.
 
 ```bash
 ./setup-project.sh --variant python --project-name MyApp --target-path ../my-app
@@ -18,8 +18,7 @@
 
 - **6 template variants** (`general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`) with language-specific build hooks, format gates, and conventions baked in.
 - **9–10 agents per variant** — Explore, architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps. Each one declares its own `model:` and `effort:`, so exploration runs on haiku and review on opus without the caller thinking about it.
-- **23 user-level slash commands** for the daily loop: `/build`, `/test`, `/commit`, `/sprint`, `/challenge`, `/code-review`, `/new-feature`, `/sync-template`, …
-- **12 auto-triggering skills** that load themselves based on what you're doing (debugging, refactoring, exploring a new codebase, …).
+- **7 user-level skills**, no slash-command directory: `/challenge`, `/commit`, `/sprint`, `/sync-template`, `/contribute-upstream`, plus `mcp-usage` and `karpathy-guidelines` which auto-trigger. Anthropic merged custom commands into skills, so the toolkit ships one artifact type; the `Gate:` mechanism (`hooks/run-gate.sh`) replaced the old `/build` and `/test` commands, and the official `skill-creator` plugin replaced `/skill-eval` + `/skill-improve`.
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
 - **Workflow enforcement hooks**: the git/`gh` CLI is allowed and *gated* — the hooks parse the command and stop a red-gate commit, a push to main, and an ungated merge; plus tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), a `Read` size gate, an agent tool-call budget, and a retro ledger that records subagent failures and replays them at the next session start.
 
@@ -31,7 +30,7 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 
 | Blog principle | How the toolkit applies it |
 |---|---|
-| **Progressive disclosure** | `AGENT_TEAM.md` is **49,724 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **12 skills** load on trigger, not up front. Language conventions live in path-scoped `.claude/rules/*.md` files that load only when Claude touches a matching file — **1.2–2.3 KB per project** (7 files, 8,564 B across all six variants). |
+| **Progressive disclosure** | `AGENT_TEAM.md` is **49,724 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **7 skills** load on trigger, not up front. Language conventions live in path-scoped `.claude/rules/*.md` files that load only when Claude touches a matching file — **1.2–2.3 KB per project** (7 files, 8,564 B across all six variants). |
 | **Mechanism over mandate** | **15 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, subagent budget, and a retro ledger of subagent failures replayed at session start. **167 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
@@ -74,7 +73,7 @@ If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE
    ```
    See [`docs/setup.md`](docs/setup.md) for per-variant flags and full examples.
 4. **(Optional) Install MCP servers** for tool-accelerated workflows: [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
-5. **Open your project in Claude Code** and try `/sprint` or `/build`.
+5. **Open your project in Claude Code** and try `/sprint` or `bash hooks/run-gate.sh`.
 
 > Prefer to walk Claude / Cursor / Copilot through the wizard interactively? See [`AGENTS.md`](AGENTS.md).
 

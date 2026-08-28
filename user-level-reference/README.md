@@ -1,6 +1,8 @@
 # User-Level Claude Code Configuration Reference
 
-This directory contains reference copies of the user-level (`~/.claude/`) configuration for Claude Code. These files document the full setup of agents, commands, skills, MCP server configuration, and settings used across all projects on this machine.
+This directory contains reference copies of the user-level (`~/.claude/`) configuration for Claude Code. These files document the full setup of agents, skills, hooks, MCP server configuration, and settings used across all projects on this machine.
+
+> **Commands were merged into skills.** Anthropic made `.claude/commands/<n>.md` equivalent to `.claude/skills/<n>/SKILL.md`; slash commands still work, but a skill is the forward-compatible artifact. This directory no longer ships a `commands/` directory — delete `~/.claude/commands/` when you sync.
 
 > **Note:** This is part of the [Claude Code Template Repository](../README.md) -- see the main README for full documentation on template variants, setup automation, and project-level configuration.
 
@@ -19,11 +21,11 @@ Follow these steps to configure Claude Code on a fresh machine:
 3. **Copy agents to `~/.claude/agents/`**
    Copy all `.md` files from `agents/` in this directory to `~/.claude/agents/`. These define specialized AI personas that can be invoked for different tasks.
 
-4. **Copy commands to `~/.claude/commands/`**
-   Copy all `.md` files from `commands/` in this directory to `~/.claude/commands/`. These define slash commands (`/build`, `/test`, `/commit`, etc.) available in every project.
+4. **Copy skills to `~/.claude/skills/`**
+   Copy the skill directories from `skills/` in this directory to `~/.claude/skills/`, preserving the folder structure (each skill lives in its own subdirectory with a `SKILL.md` file). Then **delete `~/.claude/commands/`** — every surviving command now lives as a skill, and a leftover command file shadows its skill.
 
-5. **Copy skills to `~/.claude/skills/`**
-   Copy the skill directories from `skills/` in this directory to `~/.claude/skills/`, preserving the folder structure (each skill lives in its own subdirectory with a `SKILL.md` file).
+5. **Copy hooks to `~/.claude/hooks/`**
+   Copy the `.sh` files from `hooks/` in this directory to `~/.claude/hooks/`, **and `no-push-main.sh` + `tier-before-coder.sh` from the toolkit root `hooks/`** — `settings.json` binds all four at `~/.claude/hooks/…`. Those two root-sourced scripts are registered fail-closed (`127` → `exit 2`), so a missing copy blocks every Bash and every Agent call; copy them before the settings file. The two in this directory (`read-size-gate.sh`, `bash-output-guard.sh`) cannot block and degrade quietly.
 
 6. **Configure MCP servers**
    `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
@@ -31,8 +33,9 @@ Follow these steps to configure Claude Code on a fresh machine:
 7. **Configure settings.json**
    Copy **`settings.json`** from this directory to `~/.claude/settings.json`. Hook commands use `~/.claude/hooks/…`; **`~` and `$HOME` both expand inside a hook `command` string** (verified empirically — a probe bound at both forms fired and resolved to the real absolute path), so no path editing is needed.
 
-   Two things to decide before copying, because they are permissive and this file is a starting point, not a policy:
-   - `permissions.allow` contains **`Bash(*)`** — every Bash command runs without a prompt. Narrow it if you want per-command review.
+   Three things to decide before copying, because this file is a starting point, not a policy:
+   - `permissions.defaultMode` is **`auto`**, and `permissions.autoMode.environment` describes this machine's trust boundary in prose. Rewrite those sentences for your own environment — they are what the classifier reasons over. `autoMode` is User/managed scope only; a project cannot ship it.
+   - `permissions.allow` no longer contains `Bash(*)`, `WebFetch(*)`, or `mcp__git-tools__*`; the git/`gh` CLI is *gated* by hooks rather than blanket-allowed. Widen it only deliberately.
    - `env.CLAUDE_CODE_SHELL` points at Git Bash on Windows. Remove it on macOS/Linux.
 
    Personal additions are deliberately excluded: no `statusLine`, no third-party marketplaces or their plugins, no project-specific permission entries. `settings-reference.md` explains every setting in detail.
@@ -57,101 +60,36 @@ Models and effort below are the values in each `agents/*.md` frontmatter — kee
 
 > **User-level agents are not template agents.** A user-level agent applies in *every* repo and its frontmatter `hooks:` travel with it, so it may only reference scripts and paths that exist everywhere. The copies here deliberately omit the `hooks/gate-before-merge.sh` PreToolUse hooks that `templates/*/.claude/agents/coder.md` carries — those fail closed (`127` → `exit 2`) in any repo without a `hooks/` directory, which would make PR merges impossible. `scripts/verify-template-consistency.sh` asserts both halves of this rule. Body prose may still mention `hooks/run-gate.sh`, because that is conditional on the project's `Gate` field and the agent simply skips it when absent.
 
-### Commands (23)
+### Skills (7)
 
-#### Development
-| Command | Description |
-|---------|-------------|
-| `/build` | Build project and iteratively fix errors |
-| `/test` | Run tests and fix failures |
-| `/commit` | Stage and commit changes via MCP git tools |
-| `/new-feature` | Scaffold a new feature with proper architecture patterns |
-| `/add-tests` | Generate unit tests for existing code |
-| `/godot-run` | Run a Godot project and capture debug output |
-| `/sprint` | Execute a sprint with parallel agent workstreams |
+Explicit workflows carry `disable-model-invocation: true` so they run only when you type the slash command; the rest auto-trigger from their `description`.
 
-#### Architecture
-| Command | Description |
-|---------|-------------|
-| `/arch-doc` | Generate architecture documentation from code analysis |
-| `/api-design` | Review or design REST API contracts |
-| `/challenge` | Challenge a plan, approach, or design with two structured passes |
-| `/dependency-audit` | Find circular dependencies, orphan projects, and framework mismatches |
+| Skill | Invocation | Purpose |
+|-------|-----------|---------|
+| `challenge` | `/challenge [target]` only | Two structured passes over a plan or design: scope/necessity, then correctness/completeness. Explicit-only because it may spawn the architect. |
+| `commit` | `/commit` only | Stage and commit with native git, after showing the user the staged diff; includes the verification checklist |
+| `sprint` | `/sprint [plan]` only | Run a backlog as parallel **subagent** workstreams — rebase before merge, gate before merge, final-message reporting |
+| `sync-template` | `/sync-template` only | Pull template updates from claude-code-toolkit into the current project |
+| `contribute-upstream` | `/contribute-upstream` only | Push generalizable project improvements back to the template |
+| `karpathy-guidelines` | auto | Writing any new code — mechanically enforced on `coder`/`*-coder` spawns via `hooks/require-skills-block.sh`; carries the *Toolkit working preferences (developer agents)* section |
+| `mcp-usage` | auto | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
 
-#### Quality
-| Command | Description |
-|---------|-------------|
-| `/dotnet-analyze` | Analyze .NET code quality (complexity, god classes, large files) |
-| `/coverage-report` | Analyze test coverage and identify gaps |
-| `/tech-debt` | Assess and quantify technical debt with remediation roadmap |
-| `/pre-release` | Comprehensive pre-release validation checklist |
+**What replaced the culled artifacts**
 
-#### .NET Specific
-| Command | Description |
-|---------|-------------|
-| `/nuget-audit` | Check NuGet packages for vulnerabilities and updates |
-| `/ef-check` | Check Entity Framework migration status and DB sync |
+| Was | Use instead |
+|---|---|
+| `/build`, `/test` | `bash hooks/run-gate.sh` (the `Gate:` mechanism) |
+| `/skill-eval`, `/skill-improve`, plus the toolkit's `evals/evals.json` convention | the official `skill-creator@claude-plugins-official` plugin, which ships eval authoring, grading, and benchmarking |
+| `fix-errors` | `superpowers:systematic-debugging` |
+| `code-review` | the bundled `/code-review` plugin, or `superpowers:requesting-code-review` / `receiving-code-review` |
+| `arch-analyze`, `impact-analysis`, `explaining-code`, `orient` | the `Explore` subagent (haiku) plus `superpowers:brainstorming` / `writing-plans` |
+| `security-audit` | `/code-review`'s security pass |
+| `refactor` | `karpathy-guidelines` + `superpowers:test-driven-development` |
+| `/new-feature`, `/user-story`, `/spec-to-issues`, `/traceability`, `/arch-doc`, `/api-design`, `/tech-debt`, `/coverage-report`, `/dependency-audit`, `/dotnet-analyze`, `/ef-check`, `/nuget-audit`, `/pre-release`, `/godot-run`, `/issue-create`, `/add-tests` | deleted — near-zero measured use; the agent roster (`requirements-engineer`, `architect`, `test-writer`, `ops`) covers the same ground |
 
-#### Requirements
-| Command | Description |
-|---------|-------------|
-| `/user-story` | Generate user stories with acceptance criteria |
-| `/spec-to-issues` | Convert a specification document into GitHub issues |
-| `/traceability` | Build requirements-to-code-to-tests traceability matrix |
+### Hooks
 
-#### Skill Evaluation
-| Command | Description |
-|---------|-------------|
-| `/skill-eval` | Run eval test cases against a skill and report pass/fail results |
-| `/skill-improve` | Autonomous Karpathy-style improvement loop: eval → change → re-eval → keep/revert |
-
-#### Integration
-| Command | Description |
-|---------|-------------|
-| `/issue-create` | Create a properly formatted GitHub issue via MCP tools |
-
-### Skills (12)
-
-| Skill | Auto-triggers When |
-|-------|-------------------|
-| `arch-analyze` | Asking about architecture, layers, or dependency graphs |
-| `code-review` | Reviewing PRs, branches, or code changes |
-| `explaining-code` | Asking "how does this work?" or requesting code explanations |
-| `fix-errors` | Build failures, compilation errors, or pasted error output |
-| `impact-analysis` | Planning changes or asking "what will be affected?" |
-| `karpathy-guidelines` | Writing any new code (feature or fix) — mechanically enforced on `coder`/*-coder spawns via `hooks/require-skills-block.sh` |
-| `orient` | Exploring a new codebase or asking about project structure |
-| `refactor` | Requesting code cleanup, improvements, or refactoring |
-| `security-audit` | Asking about security vulnerabilities or requesting an audit |
-| `sync-template` | Running `/sync-template` to pull template updates into the project |
-| `contribute-upstream` | Running `/contribute-upstream` to push project improvements back to the template |
-| `mcp-usage` | About to digest a large input, extract structured data, orient in a new repo, look up a library API, or run a batch operation — the occasional MCP procedures moved out of `CLAUDE.local.md` |
-
-### Skill Evals Convention
-
-Skills can have evaluation test cases for automated quality measurement. To add evals to a skill:
-
-1. The skill must be in directory format: `skills/<name>/SKILL.md`
-2. Create `skills/<name>/evals/evals.json` with test cases following this schema:
-   ```json
-   {
-     "skill_name": "<name>",
-     "evals": [
-       {
-         "id": 1,
-         "prompt": "Self-contained test prompt with inline code/diffs/errors",
-         "expected_output": "Brief description of expected output",
-         "expectations": [
-           "Binary assertion 1 (pass/fail, evaluated by LLM grader)",
-           "Binary assertion 2"
-         ]
-       }
-     ]
-   }
-   ```
-3. Run `/skill-eval <name>` to test, `/skill-improve <name>` to auto-improve
-
-Skills with evals: `code-review` (3 tests, 16 assertions), `fix-errors` (3 tests, 13 assertions), `orient` (2 tests, 10 assertions).
+`hooks/` holds the machine-wide hook scripts: `bash-output-guard.sh` and `read-size-gate.sh`. `settings.json` also binds `no-push-main.sh` and `tier-before-coder.sh` at `~/.claude/hooks/…`; copy those two from the toolkit root `hooks/` directory, which is the canonical source for every enforcement hook. A hook script missing at runtime exits `127`; the wrappers in `settings.json` translate that to `exit 2` so enforcement fails closed rather than silently off.
 
 ### MCP Config Template
 
@@ -175,8 +113,8 @@ Skills with evals: `code-review` (3 tests, 16 assertions), `fix-errors` (3 tests
 ### Settings Reference
 
 `settings-reference.md` -- Full annotated documentation of `~/.claude/settings.json` covering:
-- Environment variables (agent teams, shell override)
-- Permission rules (allow, deny, ask, defaultMode)
-- Custom status line configuration
+- Environment variables (shell override, 1M context, tool search)
+- Permission rules (allow, deny, ask, `defaultMode`, `autoMode.environment`)
+- The v2.0 hook set
 - Enabled plugins with descriptions
 - Extended thinking, MCP auto-enable, and context compaction settings
