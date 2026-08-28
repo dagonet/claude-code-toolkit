@@ -25,9 +25,19 @@ gc_guard_off && exit 0
 
 CWD="$GC_CWD"
 
-# Bash/PowerShell: only merge-shaped commands are gated. Every other tool that
-# reaches this hook is one of the GitHub merge tools -- always gated.
-if [ -n "$GC_CMD" ]; then
+# Branch on the TOOL, never on the parsed string. This hook is registered on
+# Bash|PowerShell, so if node is missing, the JSON does not parse, or the payload
+# carries no tool_input.command, GC_CMD is empty -- and treating that as "not a
+# Bash call" would fall through to the artifact check and block every Bash call
+# in the session. A Bash payload we cannot read is a Bash payload with no merge
+# in it; only the GitHub merge tools are gated unconditionally.
+case "$GC_TOOL" in
+  Bash|PowerShell) ;;   # gate only merge-shaped commands (scanned below)
+  mcp__*)          ;;   # the GitHub merge tools: always gated
+  *) exit 0 ;;          # unknown or unparseable tool: fail open
+esac
+
+if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   is_merge=0
   base="$CWD"
   segments=$(gc_segments)

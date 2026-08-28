@@ -46,6 +46,10 @@ mkjson_mcp() { # <tool_name> <cwd> -- MCP payload carries no tool_input.command
   node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:process.argv[1],tool_input:{owner:"o",repo:"r",pullNumber:1},cwd:process.argv[2]}))' "$1" "$2"
 }
 
+mkjson_nocmd() { # <tool_name> <cwd> -- a payload whose command we cannot read
+  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:process.argv[1],tool_input:{},cwd:process.argv[2]}))' "$1" "$2"
+}
+
 # --- assertion --------------------------------------------------------------
 
 check() { # <label> <hook> <expected_exit> <json>
@@ -67,6 +71,9 @@ check() { # <label> <hook> <expected_exit> <json>
 echo "=== hooks/no-push-main.sh ==="
 MAINREPO=$(mkrepo pushmain main)
 FEATREPO=$(mkrepo pushfeat feature/x)
+# A repo whose path contains a space: the segment splitter strips quotes, so
+# `git -C "…/a b" push` must still be recognised (fail closed), not slip through.
+SPACEREPO=$(mkrepo 'push main repo' main)
 H=hooks/no-push-main.sh
 
 # must BLOCK (exit 2)
@@ -81,6 +88,13 @@ check "cd sub then bare push (on main)"  "$H" 2 "$(mkjson Bash 'cd sub && git pu
 check "bare push while on main"          "$H" 2 "$(mkjson Bash 'git push' "$MAINREPO")"
 check "PowerShell push origin main"      "$H" 2 "$(mkjson PowerShell 'git push origin main' "$FEATREPO")"
 check "push after a ; separator"         "$H" 2 "$(mkjson Bash 'echo hi; git push origin main' "$FEATREPO")"
+# review round 1: whole-repo pushes carry main even from a feature checkout
+check "push --mirror from a feature"     "$H" 2 "$(mkjson Bash 'git push --mirror origin' "$FEATREPO")"
+check "push --all from a feature"        "$H" 2 "$(mkjson Bash 'git push --all origin' "$FEATREPO")"
+# review round 1: a bare HEAD destination is not a refspec -- it follows the checkout
+check "push origin HEAD while on main"   "$H" 2 "$(mkjson Bash 'git push origin HEAD' "$MAINREPO")"
+# review round 1: a quoted -C path with a space must not slip the gate
+check "quoted -C path with a space"      "$H" 2 "$(mkjson Bash "git -C \"$SPACEREPO\" push origin main" "$FEATREPO")"
 
 # must NOT block (exit 0)
 check "push origin feature/x"            "$H" 0 "$(mkjson Bash 'git push origin feature/x' "$MAINREPO")"
@@ -91,6 +105,9 @@ check "push -u origin feature/x"         "$H" 0 "$(mkjson Bash 'git push -u orig
 check "bare push while on feature"       "$H" 0 "$(mkjson Bash 'git push' "$FEATREPO")"
 check "non-push git command"             "$H" 0 "$(mkjson Bash 'git status --short' "$MAINREPO")"
 check "git -C <feat> push from main cwd" "$H" 0 "$(mkjson Bash "git -C $FEATREPO push" "$MAINREPO")"
+check "push origin HEAD on a feature"    "$H" 0 "$(mkjson Bash 'git push origin HEAD' "$FEATREPO")"
+check "malformed JSON payload"           "$H" 0 '{not json'
+check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$MAINREPO")"
 
 # kill switch
 mkdir -p "$MAINREPO/.claude" && : > "$MAINREPO/.claude/git-guard-off"
@@ -118,6 +135,9 @@ check "git -c ... commit"                "$H" 2 "$(mkjson Bash 'git -c user.name
 check "commit wrapped in bash -c"        "$H" 2 "$(mkjson Bash 'bash -c "git commit -m x"' "$BADREPO")"
 check "git -C <bad> commit from ok cwd"  "$H" 2 "$(mkjson Bash "git -C $BADREPO commit -m y" "$OKREPO")"
 check "PowerShell commit, failing tests" "$H" 2 "$(mkjson PowerShell 'git commit -m "x"' "$BADREPO")"
+check "malformed JSON payload"           "$H" 0 '{not json'
+check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$BADREPO")"
+check "quoted -C path with a space"      "$H" 2 "$(mkjson Bash "git -C \"$SPACEREPO\" commit -m y" "$BADREPO")"
 
 mkdir -p "$BADREPO/.claude" && : > "$BADREPO/.claude/git-guard-off"
 check "kill switch disables the gate"    "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$BADREPO")"
@@ -170,6 +190,20 @@ check "no Gate command configured"       "$H" 0 "$(mkjson Bash 'gh pr merge 5 --
 mkdir -p "$GATEREPO/.claude" && : > "$GATEREPO/.claude/git-guard-off"
 check "kill switch disables the gate"    "$H" 0 "$(mkjson Bash 'gh pr merge 5' "$GATEREPO")"
 rm -f "$GATEREPO/.claude/git-guard-off"
+
+# --- review round 1: fail-open contract on an unusable payload.
+# This hook is registered on Bash|PowerShell, so a Bash call whose command we
+# cannot read must NOT fall through to the artifact check -- that would block
+# every Bash call in the session with "No gate artifact found".
+check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$GATEREPO")"
+check "malformed JSON payload"           "$H" 0 '{not json'
+check "unknown tool passes through"      "$H" 0 "$(mkjson_nocmd SomeOtherTool "$GATEREPO")"
+
+# --- review round 1: a whole-repo push is a merge-by-push even from a feature
+GATEFEAT2=$(mkrepo gatefeat2 feature/z)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$GATEFEAT2/PROJECT_CONTEXT.md"
+check "push --mirror is a merge by push" "$H" 2 "$(mkjson Bash 'git push --mirror origin' "$GATEFEAT2")"
+check "push --all is a merge by push"    "$H" 2 "$(mkjson Bash 'git push --all origin' "$GATEFEAT2")"
 
 # ===========================================================================
 # block-bash-vcs.sh must be an inert no-op stub

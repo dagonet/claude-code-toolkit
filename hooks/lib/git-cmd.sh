@@ -94,25 +94,46 @@ gc_on_main() {
 }
 
 # gc_matches_subcommand <segment> <subcommand>
+#
+# The strict form requires `-C <path>` to be a single space-free token. A quoted
+# path with a space (`git -C "C:/a b" push …`) loses its quotes in gc_segments
+# and no longer matches, which would silently bypass every gate — so a segment
+# that carries a `git -C` is re-tested against a looser shape and fails closed.
 gc_matches_subcommand() {
-  printf '%s\n' "$1" | grep -qE "${GC_GIT_PRE}[[:space:]]+$2([[:space:]]|\$)"
+  printf '%s\n' "$1" | grep -qE "${GC_GIT_PRE}[[:space:]]+$2([[:space:]]|\$)" && return 0
+  printf '%s\n' "$1" | grep -qE '\bgit\b[[:space:]]+-C\b' || return 1
+  printf '%s\n' "$1" | grep -qE "\bgit\b.*\b$2\b"
 }
 
 # gc_push_args <segment> -- everything after the `push` subcommand ("" if none).
 gc_push_args() {
-  printf '%s\n' "$1" | sed -n 's/.*\bgit\([[:space:]]\+-C[[:space:]]\+[^[:space:]]\+\)\?\([[:space:]]\+-c[[:space:]]\+[^[:space:]]\+\)*[[:space:]]\+push\([[:space:]]\|$\)/\3/p' | head -1
+  gcpa=$(printf '%s\n' "$1" | sed -n 's/.*\bgit\([[:space:]]\+-C[[:space:]]\+[^[:space:]]\+\)\?\([[:space:]]\+-c[[:space:]]\+[^[:space:]]\+\)*[[:space:]]\+push\([[:space:]]\|$\)/\3/p' | head -1)
+  # Same quoted-`-C`-with-a-space case as gc_matches_subcommand: fall back to
+  # "everything after push" so the destination ref is still inspected.
+  if [ -z "$gcpa" ] && printf '%s\n' "$1" | grep -qE '\bgit\b.*\bpush\b'; then
+    gcpa=$(printf '%s\n' "$1" | sed -n 's/.*\bpush\b//p' | head -1)
+  fi
+  printf '%s\n' "$gcpa"
 }
 
-# gc_targets_main_ref <push-args> -- an explicit main/master destination.
+# gc_targets_main_ref <push-args> -- a destination that includes main/master.
+# `--mirror` and `--all` push every local branch, so they carry main even when
+# the checkout is on a feature branch and no ref is named.
 gc_targets_main_ref() {
+  printf '%s\n' "$1" | grep -qE '(^|[[:space:]])--(mirror|all)([[:space:]]|=|$)' && return 0
   printf '%s\n' "$1" | grep -qE '(^|[[:space:]])(refs/heads/)?(main|master)([[:space:]]|$)' && return 0
   printf '%s\n' "$1" | grep -qE ':[[:space:]]*(refs/heads/)?(main|master)([[:space:]]|$)'
 }
 
 # gc_has_refspec <push-args> -- true when a destination ref is named explicitly
 # (i.e. more than just the remote survives after dropping flags).
+#
+# A bare `HEAD` (`git push origin HEAD`) names no branch: it resolves to the
+# current checkout, so it must fall through to the current-branch check rather
+# than count as an explicit refspec. `HEAD:main` is a real refspec and still
+# counts (and is caught by gc_targets_main_ref anyway).
 gc_has_refspec() {
-  n=$(printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -c '^[^-][^[:space:]]*$')
+  n=$(printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$' | grep -cvx 'HEAD')
   [ "${n:-0}" -ge 2 ]
 }
 
