@@ -57,10 +57,10 @@ Anthropic's [context-engineering guidance for Claude 5 generation models](https:
 | **always-loaded total** | **41,167** | 34,084 | 32,538 | **31,518 (−23%)** | |
 | `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 49,724 | **on demand only** |
 | `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | on demand |
-| `.claude/rules/*.md` | — | — | — | 7 files, 8,648 B | **on matching file touch** |
+| `.claude/rules/*.md` (general: none) | — | — | — | 0 B | **on matching file touch** |
 | skills | 11 | **12** | 12 | 12 | on trigger |
 
-Per-variant always-loaded totals now: general 31,518 · java 32,785 · python 32,700 · dotnet 34,209 · rust-tauri 34,687 · dotnet-maui 35,694. (The v1.5 figures above were measured before PR1–PR3 changed `CLAUDE.local.md` and the user-level reference, so the per-file deltas do not all come from PR4.)
+Per-variant always-loaded totals now: general 31,518 · java 32,785 · python 32,700 · dotnet 34,209 · rust-tauri 34,687 · dotnet-maui 35,777. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set. (The v1.5 figures above were measured before PR1–PR3 changed `CLAUDE.local.md` and the user-level reference, so the per-file deltas do not all come from PR4.)
 
 The largest single document in the repo is deliberately *not* in the always-loaded set. The three passes used different mechanisms:
 

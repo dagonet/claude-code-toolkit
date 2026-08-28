@@ -98,7 +98,7 @@ Conventions: see `.claude/rules/csharp.md` and `.claude/rules/xaml.md` (each loa
 # Build & Test Discipline
 
 Before claiming any task complete, invoke `superpowers:verification-before-completion`.
-Project-specific reminders: diff behavior between your branch and `main` to confirm the change does what's intended; ask "would a staff engineer approve this as-is?" before marking complete. Use `dotnet build` + `dotnet test`; for slow suites, target first (`dotnet test --filter "FullyQualifiedName~ClassName"`) then run the full suite.
+Project-specific reminders: diff behavior between your branch and `main` to confirm the change does what's intended; ask "would a staff engineer approve this as-is?" before marking complete. Use `dotnet build` + `dotnet test`; for slow suites, target first (`dotnet test --filter "FullyQualifiedName~ClassName"`) then run the full suite. For UI changes, publish the MAUI app and run smoke tests before claiming complete.
 
 ---
 

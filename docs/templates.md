@@ -56,7 +56,7 @@ Extends the general template for C#/.NET projects. Adds the `dotnet-coder` agent
 
 ### Dotnet-MAUI
 
-Extends the dotnet template for .NET MAUI desktop applications. Adds MAUI-specific conventions in `.claude/rules/xaml.md` (CommunityToolkit.Maui references, XAML namespace checks, UI smoke tests), scoped to `**/*.xaml` and `**/*.xaml.cs`, alongside the shared `csharp.md`. The tester agent is specialized for FlaUI desktop testing via Windows-MCP. A PreToolUse hook blocks Windows-MCP `Click`/`Type` tools (forbidden for test automation per CLAUDE.local.md -- use FlaUI for structural verification). SQLite MCP support is optional and configured through `PROJECT_CONTEXT.md` placeholders. Database-related fields (`{{DB_DIRECTORY}}`, `{{DB_FILENAME}}`, `{{DB_PATH}}`) can be left empty if the project does not use SQLite.
+Extends the dotnet template for .NET MAUI desktop applications. Adds MAUI-specific conventions in `.claude/rules/xaml.md` (CommunityToolkit.Maui references, XAML namespace checks), scoped to `**/*.xaml` and `**/*.xaml.cs`, alongside the shared `csharp.md`. The tester agent is specialized for FlaUI desktop testing via Windows-MCP. A PreToolUse hook blocks Windows-MCP `Click`/`Type` tools (forbidden for test automation per CLAUDE.local.md -- use FlaUI for structural verification). SQLite MCP support is optional and configured through `PROJECT_CONTEXT.md` placeholders. Database-related fields (`{{DB_DIRECTORY}}`, `{{DB_FILENAME}}`, `{{DB_PATH}}`) can be left empty if the project does not use SQLite.
 
 ### Java
 
