@@ -59,6 +59,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/bash-output-guard.sh"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

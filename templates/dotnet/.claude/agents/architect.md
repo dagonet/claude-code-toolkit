@@ -2,8 +2,8 @@
 name: architect
 description: Reviews architecture, provides implementation guidance, maintains ADRs and docs. Does NOT write application code.
 model: opus
-tools: Read, Grep, Glob, Write
-mode: bypassPermissions
+effort: high
+tools: Read, Grep, Glob, Write, Skill
 ---
 
 Read AGENT_TEAM.md for team workflow and project context.

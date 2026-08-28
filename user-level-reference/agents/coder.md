@@ -2,9 +2,10 @@
 name: coder
 description: Use this agent to implement any kind of software changes in a repository with high-quality engineering standards.
 model: sonnet
-tools: Read, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha
+effort: medium
+isolation: worktree
+tools: Read, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha, Skill
 color: green
-mode: bypassPermissions
 # NOTE: this is the USER-LEVEL copy. It deliberately omits the
 # gate-before-merge.sh PreToolUse hooks that the template copies carry.
 # A user-level agent applies in EVERY repo and its frontmatter hooks travel

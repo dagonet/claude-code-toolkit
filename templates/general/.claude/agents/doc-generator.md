@@ -3,7 +3,7 @@ name: doc-generator
 description: Generates documentation for code changes.
 tools: Read, Write, Grep, Glob
 model: haiku
-mode: bypassPermissions
+effort: low
 ---
 
 You write documentation. When invoked:

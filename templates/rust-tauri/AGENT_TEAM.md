@@ -69,7 +69,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 - Writes a brief **session summary** after each completed sprint.
 - **T1 delegated fixes**: For trivial changes (< 10 lines, style/config only, no logic), the PO spawns ONE coder with a minimal plan file containing `Tier: T1` (3 lines suffice — the spawn gate reads it). **The PO NEVER edits code, at any tier.** PO write surface: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md` — enforced by `hooks/enforce-delegation.sh`.
 - **Never reviews code inline** — a `code-reviewer` is spawned for every tier from T2 up; T1 relies on the coder's gate run.
-- **Read discipline**: PO Read/Grep is for targeted verification of specific claims (1–2 files) and orchestration files only. Any exploration beyond that — open-ended codebase analysis, pattern discovery, multi-file tracing — is delegated to an **Explore** agent (pass `model: "haiku"` or `"sonnet"` in the Agent call; it otherwise inherits the expensive session model).
+- **Read discipline**: PO Read/Grep is for targeted verification of specific claims (1–2 files) and orchestration files only. Any exploration beyond that — open-ended codebase analysis, pattern discovery, multi-file tracing — is delegated to an **Explore** agent (`.claude/agents/Explore.md` pins it to haiku at `effort: low` — do not pass a `model` in the Agent call).
 - **Never runs builds or tests** — coders run the gate, the tester verifies, `ops` handles env/tool work. The PO verifies via the `.gate/last-pass.json` artifact (also enforced by `hooks/enforce-delegation.sh`).
 - Closes tasks after merge (see Mode Behavior Table).
 - Does **NOT** block the merge pipeline — review + test approval is sufficient for merge.
@@ -153,7 +153,15 @@ When spawning a developer agent, the PO MUST choose the correct `subagent_type` 
 |---|---|---|
 | **All code tasks** | `coder` | Default for all development work |
 | **Env setup / downloads / tooling / diagnostics** | `ops` | Non-code execution: installs, binary/file ops, one-off tool runs, log collection, gate re-runs |
-| **Exploration / analysis** | `Explore` | Codebase exploration, pattern discovery, "how does X work" — pass `model: "haiku"` or `"sonnet"` (inherits the expensive session model otherwise) |
+| **Exploration / analysis** | `Explore` | Codebase exploration, pattern discovery, "how does X work" — the shipped `Explore` agent overrides the built-in one and runs on haiku, `effort: low` |
+
+## Model & Effort Policy
+
+- Orchestrator = the session model (`opus` / `fable`), session `effortLevel: medium` by default. Workers run `sonnet`; `architect` and `code-reviewer` run `opus` with `effort: high`; `Explore` and `doc-generator` run `haiku` with `effort: low`.
+- Each agent file carries its own `model:` / `effort:` — do not pass a `model` in the Agent call; that overrides the routing decision silently.
+- **Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`), never a full `claude-*` id: a model proxy reroutes the aliases, and a pinned id bypasses it.
+- Diagnostic rule: wrong answer despite full context → bigger model. Skipped files, tests not run, steps dropped → raise `effort`. They are different failures; raising the wrong dial costs money and fixes nothing.
+- If you run a model proxy, never route the auto-mode classifier or `advisorModel` through it — both need the real model to behave.
 
 ### Ops (on demand, any tier)
 
@@ -714,7 +722,7 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 | `requirements-engineer` | `brainstorming` |
 | `doc-generator` | *(none)* |
 | `ops` | *(none — pass-through)* |
-| `Explore` | *(none — pass-through; pass `model: "haiku"` or `"sonnet"` in the Agent call)* |
+| `Explore` | *(none — pass-through; custom Explore agent, haiku, effort low)* |
 
 **Reference-only skills** (handled by existing AGENT_TEAM.md constructs, not injected via spawn prompt): `using-git-worktrees` (Worktree Naming), `finishing-a-development-branch` (Merge Protocol), `dispatching-parallel-agents` (Tier Model workstreams), `subagent-driven-development` (plan-files mode execution).
 
