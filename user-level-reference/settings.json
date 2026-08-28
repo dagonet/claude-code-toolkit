@@ -36,15 +36,15 @@
     "ask": [
       "Bash(npm publish*)"
     ],
-    "defaultMode": "auto",
-    "autoMode": {
-      "environment": [
-        "$defaults",
-        "**Primary use**: software development in private repos under G:/git; PO/subagent workflow with hook-enforced gates",
-        "**Trusted repos**: the working directory's repo and its `origin` remote only",
-        "**Sensitive remote targets**: any name carrying `prod`/`production` as a whole word or segment"
-      ]
-    }
+    "defaultMode": "auto"
+  },
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "**Primary use**: software development in private repos under G:/git; PO/subagent workflow with hook-enforced gates",
+      "**Trusted repos**: the working directory's repo and its `origin` remote only",
+      "**Sensitive remote targets**: any name carrying `prod`/`production` as a whole word or segment"
+    ]
   },
   "enableAllProjectMcpServers": true,
   "hooks": {
@@ -95,6 +95,7 @@
   },
   "alwaysThinkingEnabled": true,
   "effortLevel": "medium",
+  "advisorModel": "opus",
   "autoCompactEnabled": true,
   "contextCompactionThreshold": 70
 }

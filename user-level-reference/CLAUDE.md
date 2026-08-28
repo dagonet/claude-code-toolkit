@@ -7,9 +7,9 @@ This machine runs Windows 11 with Git Bash as the shell.
 - Use Unix commands (ls, cp, rm, mkdir -p) — Git Bash supports them
 - Avoid Windows-only commands (dir, type, copy, del) — they fail in bash
 - Path separators: forward slashes work everywhere in bash
-- Avoid `cat` in Bash commands — fails on Windows paths with spaces. Use the Read tool for file reading, MCP tools for release notes
+- Avoid `cat` in Bash commands — fails on Windows paths with spaces. Use the Read tool for file reading
 - Avoid `grep -r` in Bash — pick the search tool from the Read & Search Tool Selection table below
-- GitHub releases: use MCP GitHub tools, not `gh release create`
+- **PO / main thread only** (subagents do not have MCP servers — never route these to a spawn): read release notes via the MCP GitHub tools, and cut GitHub releases with them rather than `gh release create`
 - PowerShell 5.1 reads BOM-less UTF-8 as ANSI — never rewrite files containing non-ASCII via PS `Get-Content`/`WriteAllText` (mojibakes `—` into `â€”`). Use Bash/the Edit tool, or read with `[IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)`
 - Multi-line/compound Bash commands can be conservatively blocked by guard hooks (unparseable → fail-closed). Write the logic to a script file and run `bash <path>` — a simple command line always parses clean
 - context-mode sandbox `/tmp` paths are invisible to native `git -C` ("cannot change to ..."). Run git-dependent scripts and fixtures via the Bash tool (real Git Bash), not `ctx_execute`

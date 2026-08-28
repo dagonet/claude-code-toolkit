@@ -18,10 +18,11 @@
 
 Every prose reference to a deleted artifact was replaced or removed: `templates/*/CLAUDE.local.md` (`fix-errors` ×6 → `superpowers:systematic-debugging`; `security-audit` ×2 → `/code-review`), `docs/verification.md` (`/orient` → `/challenge` as the skill smoke-test; `/build` → `bash hooks/run-gate.sh`), `docs/architecture.md` and `README.md` inventory counts, and `user-level-reference/README.md` (rewritten). Remaining matches for the sweep regex are all non-references: `tech-debt` as a **GitHub issue label** in `github-issues` mode, `refactor` inside the conventional-commit list `feat/fix/refactor/test`, and one English "a refactor" in `Explore.md`.
 
-### user-level CLAUDE.md — 8,637 → 4,974 B (−42%)
+### user-level CLAUDE.md — 8,637 → 5,089 B (−41%)
 
 - **The `# context-mode — MANDATORY routing rules` block (65 lines) is gone.** It mandated `ctx_batch_execute` as the PRIMARY tool; that tool failed **28.6%** of its calls in the measured window. Worse, subagents made **164 calls** to `ctx_*` tools they do not have — the block was being inherited into prompts for agents where it was pure hallucination bait. Three lines replace it: the plugin is optional, its own SessionStart hook carries its guidance, and subagents have no `ctx_*` tools.
 - **`ENABLE_TOOL_SEARCH` removed the original rationale.** MCP tool definitions are deferred by default now, so the tool-bloat problem context-mode was mitigating no longer exists at session start.
+- **Two Platform bullets scoped to the main thread.** "MCP tools for release notes" and "use MCP GitHub tools, not `gh release create`" were unconditional, but subagents have no MCP servers — the same failure mode as the context-mode block (164 subagent calls to tools that were not there). Both now carry a `**PO / main thread only**` prefix.
 - **Read & Search table de-ctx-ed:** analyze-one-file → `Read` with `limit`/`offset` (`hooks/read-size-gate.sh` caps at 500 lines and hands back the next offset), multi-file research → the `Explore` subagent on haiku. The 22%-of-context statistic keeps its single authoritative copy, now noting the cap is enforced mechanically.
 
 ### Toolkit root CLAUDE.md — 3,842 → 1,848 B
@@ -30,8 +31,9 @@ It was a verbatim copy of the context-mode block: zero repo-specific content in 
 
 ### user-level settings.json
 
-- **`permissions.autoMode.environment` added.** `defaultMode: auto` (PR1) routes undecided calls through a classifier; `environment` is the prose it reasons over. Four lines: `$defaults` plus primary use, trusted repos, and what counts as a sensitive remote target. `autoMode` is **User/managed scope only** — a project cannot ship one, which is the right polarity: a hostile repo must not be able to widen its own trust.
+- **`autoMode.environment` added — as a top-level key**, a sibling of `permissions`, not nested inside it. `defaultMode: auto` (PR1) routes undecided calls through a classifier; `environment` is the prose it reasons over. Four lines: `$defaults` plus primary use, trusted repos, and what counts as a sensitive remote target. `autoMode` is **User/managed scope only** — a project cannot ship one, which is the right polarity: a hostile repo must not be able to widen its own trust.
 - **Do not route the classifier through a model proxy.** 83 classifier outages were observed when it was; `cc-proxy` users must exempt it, as with `advisorModel`.
+- `advisorModel: "opus"` added (top level). `settings-reference.md` documented it but the shipped file never set it.
 - `skill-creator@claude-plugins-official` → `true`.
 - `Bash(*)`, `WebFetch(*)`, `mcp__git-tools__*` confirmed absent (removed in PR1); `deny: Read(.env*)` kept. `CLAUDE_CODE_DISABLE_1M_CONTEXT` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` **kept and annotated** — they are not redundant on the MAX plan; dropping them clamps `/context` back to 200k. `alwaysThinkingEnabled` kept with a note that it has no effect on Fable 5.
 - `settings-reference.md`: the *Full Settings JSON* block was three PRs stale (it still showed `Bash(*)`, `defaultMode: dontAsk`, and 14 enabled plugins) — it is now taken verbatim from the shipped file. Hook section rewritten for the v2.0 set (`no-push-main`, `tier-before-coder`, `bash-output-guard`, `read-size-gate`) with `block-bash-vcs` marked retired at user level, and `ENABLE_TOOL_SEARCH` documented as the replacement for context-mode's tool-bloat rationale.
