@@ -33,7 +33,7 @@ For each workstream:
 5. Code review the PR
 6. Fix any review findings, rebuild, retest
 
-Watch for **progress pings**, not silence. Every agent is instructed to send a one-line ping via SendMessage roughly every 20 tool calls. An agent that has sent no ping and no report is a suspected stall — treat missing pings, not elapsed time, as the signal.
+Each agent reports in its **final message** — there is no progress channel. A foreground Agent call cannot stall: it returns or it errors. For a `background: true` spawn, act on the task-completion notification; past the agent's tool-call budget with no completion, treat the run as failed and re-dispatch with a tighter brief rather than polling.
 
 ### 5. Merge Sequence
 - Before merging any PR, **rebase it onto the latest main**

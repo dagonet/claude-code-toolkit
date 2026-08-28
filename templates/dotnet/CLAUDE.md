@@ -9,7 +9,8 @@ At the start of every session:
 2. Read `PROJECT_CONTEXT.md` — load build commands and workflow config
 3. **Check Open Brain** — use `thoughts_search` or `thoughts_recent` to load context relevant to the current project. Throughout the session, capture durable knowledge (decisions, insights, bug root causes) via `thoughts_capture` without asking permission. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days).
 4. Present current state (from MEMORY.md) and ask what to work on. Check `git status` and `git worktree list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
-5. **Enter plan mode** for any non-trivial task (T2+). The PO MUST use `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode — but still need a 3-line plan file containing `Tier: T1` in `docs/plans/` (the coder spawn gate reads it), and are implemented by ONE spawned coder, never by the PO.
+5. **Act on the RETRO brief** — if one was printed (see `hooks/retro-brief.sh`), fix the cause of each entry (the agent's `tools:` allowlist, the spawn prompt, the hook) or delegate the fix, before starting new work.
+6. **Enter plan mode** for any non-trivial task (T2+). The PO MUST use `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode — but still need a 3-line plan file containing `Tier: T1` in `docs/plans/` (the coder spawn gate reads it), and are implemented by ONE spawned coder, never by the PO.
 
 ## Workflow TL;DR
 
@@ -195,7 +196,6 @@ Always preserve:
 - **Active work state**: current sprint number, issue numbers, branch names, merge progress
 - **In-flight agent work**: which agents are running, their assigned issues, current phase (dev/review/test)
 - **Merge sequence**: which PRs are ready, which are blocked, merge ordering constraints
-- **Team configuration**: team name, active teammates and their roles
 
 Preserve file paths ONLY when one of these load-bearing categories applies:
 1. **Work-in-progress**: files actively being modified, not yet committed.

@@ -7,7 +7,6 @@ This document explains each section and setting in the user-level Claude Code se
 ```json
 {
   "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
     "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
@@ -93,7 +92,6 @@ This document explains each section and setting in the user-level Claude Code se
 
 ```json
 "env": {
-  "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
   "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
   "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
@@ -102,7 +100,8 @@ This document explains each section and setting in the user-level Claude Code se
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
-| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | `"1"` | Enables the experimental Agent Teams feature, allowing multi-agent orchestration where specialized agents (architect, coder, tester, etc.) can collaborate on tasks. |
+> **Removed in v2.0:** `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. Agent teams are experimental and off by default; every measured stall in six weeks of transcripts came from a named teammate, while Agent-tool spawns never stalled. Parallelism now comes from parallel Agent calls, so the flag is gone — delete it from your own `~/.claude/settings.json` too.
+
 | `CLAUDE_CODE_SHELL` | Path to bash.exe | Overrides the default shell used by Claude Code's Bash tool. Points to Git Bash so Unix-style commands work on Windows. |
 | `CLAUDE_CODE_DISABLE_1M_CONTEXT` | `"false"` | Enables the 1M token context window on Opus 4.6/4.7 (claude.ai MAX plan). Must be a **string** (`"false"`), not JSON boolean. On Sonnet this has no effect — Sonnet caps at 200k on MAX. |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `"1000000"` | Sets the **context window size** (not the compaction trigger). Must match the model's max context, otherwise it clamps `/context` to this value. For Opus 4.7 with 1M context, keep at `"1000000"`. Setting it lower (e.g. `"700000"`) collapses `/context` back to 200k — a misleading symptom. Use `contextCompactionThreshold` to control *when* compaction triggers. |
@@ -271,16 +270,16 @@ Events used by this toolkit:
 | `SubagentStop` | When a subagent finishes | **Yes (exit code 2)** — `hooks/enforce-agent-contract.sh` relies on this to force one continuation when a coder stops without `## Gate Results` |
 | `PreCompact` | Before context compaction | No (informational) |
 
-**Agent-team lifecycle events — all available, none currently bound by this toolkit:**
+**Other lifecycle events — available, mostly unbound by this toolkit:**
 
 | Event | When It Fires | Can Block? | Why it matters |
 |-------|--------------|-----------|----------------|
-| `Stop` | Main thread finishes its response | Yes | Fires even when a teammate merely idles — the only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
-| `TeammateIdle` | A teammate is about to go idle | Yes | Fires at the exact moment a teammate would go silent without reporting. No documented loop-guard field — a hook here must carry its own. |
-| `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description`, `teammate_name` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
+| `Stop` | Main thread finishes its response | Yes | The only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
+| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`; stdout is injected into the session context. |
+| `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
-The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, `SessionEnd`, `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`. There is no `TeammateStart`.
+The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptSubmit`, `UserPromptExpansion`, `SessionEnd`, `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`.
 
 > **Hook config hot-reloads.** Editing a `hooks` block takes effect without restarting the session — verified by binding a new hook mid-session and seeing it fire on the next event.
 
@@ -289,11 +288,9 @@ The authoritative list is the settings schema, not the docs — a bad event name
 | Event | Fields beyond `session_id` / `transcript_path` / `cwd` / `hook_event_name` / `prompt_id` / `permission_mode` |
 |-------|---|
 | `Stop` | `stop_hook_active`, `effort`, `session_crons`, `last_assistant_message` (full final message text), `background_tasks` (`[{id, type, status, description}]`) |
-| `TeammateIdle` | `teammate_name`, `team_name`. **No loop-guard field** — it fires again seconds later, so a blocking hook MUST keep its own ledger. `transcript_path` is the **lead's** transcript, which is where teammate messages land. `exit 2` blocks the idle and the stderr text is delivered **to the teammate**. |
-| `TaskCreated` / `TaskCompleted` | `task_id`, `task_subject`, `task_description`. No `teammate_name`, no task result — cannot attribute a completion to a teammate or inspect its output. |
-| `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id`, `effort`, and — inside a subagent **or a named teammate** — `agent_id` and `agent_type`. Main-thread calls carry neither, which makes `agent_id` a sound main-vs-agent discriminator. |
-
-> `background_tasks` reports `status: "running"` for a teammate that has already gone idle, and carries no `teammate_name`. Do not use `Stop` for idle detection — use `TeammateIdle`.
+| `TaskCreated` / `TaskCompleted` | `task_id`, `task_subject`, `task_description`. No task result — cannot inspect a completion's output without reading the transcript. |
+| `SubagentStop` | `agent_id`, `agent_type`, `agent_transcript_path` (the SUBAGENT's own JSONL, not the session's), `last_assistant_message`. This is what `hooks/retro-ledger.sh` reads. |
+| `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id`, `effort`, and — inside a subagent — `agent_id` and `agent_type`. Main-thread calls carry neither, which makes `agent_id` a sound main-vs-agent discriminator. |
 
 #### Key Fields
 
