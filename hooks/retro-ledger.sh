@@ -54,7 +54,17 @@ process.stdin.on("end", () => {
   try { txt = fs.readFileSync(tp, "utf8"); } catch (e) { return; }
 
   const FAIL = /No such tool available|BLOCKED:|DELEGATE:|CONTRACT VIOLATION|hook error/;
+  // A hook block reaches the agent as ordinary tool_result text, so it is counted
+  // even without is_error — but ONLY in its real shape: the literal "hook error",
+  // or a line that STARTS with "BLOCKED:". Anything else must carry is_error.
+  // Without that second condition, reading hooks/*.sh or grepping for "BLOCKED:"
+  // would log a failure for a tool call that succeeded.
+  const HOOKBLOCK = /hook error|^BLOCKED:/m;
   const DEAD = /No such tool available:\s*([A-Za-z0-9_\-]+)/g;
+  // Hook script names are read from the bracketed hook command only
+  // (`PreToolUse:Bash hook error: [bash 'hooks/x.sh'; …]: BLOCKED: …`), never from
+  // arbitrary .sh tokens in the surrounding prose or in a tool output.
+  const HOOKCMD = /\[[^\]]*\]/g;
   const SCRIPT = /([A-Za-z0-9_\-]+\.sh)/g;
 
   const dead = new Set();
@@ -70,20 +80,45 @@ process.stdin.on("end", () => {
     for (const b of content) {
       if (!b || b.type !== "tool_result") continue;
       const text = typeof b.content === "string" ? b.content : JSON.stringify(b.content || "");
-      if (!FAIL.test(text)) continue;
+      const isBlock = HOOKBLOCK.test(text);
+      if (!isBlock && !(b.is_error === true && FAIL.test(text))) continue;
       errors++;
       let m;
       DEAD.lastIndex = 0;
       while ((m = DEAD.exec(text)) !== null) dead.add(m[1]);
-      SCRIPT.lastIndex = 0;
-      while ((m = SCRIPT.exec(text)) !== null) blocks.add(path.basename(m[1]));
+      if (isBlock) {
+        HOOKCMD.lastIndex = 0;
+        let cmd;
+        while ((cmd = HOOKCMD.exec(text)) !== null) {
+          SCRIPT.lastIndex = 0;
+          while ((m = SCRIPT.exec(cmd[0])) !== null) blocks.add(path.basename(m[1]));
+        }
+      }
     }
   }
   if (errors === 0) return;
 
+  // Bounded rendering: one pathological run must not produce a line that dwarfs
+  // the rest of the ledger (and, through retro-brief, the session context).
+  const CAP = 5;
+  const render = set => {
+    const all = [...set].sort();
+    const shown = all.slice(0, CAP);
+    if (all.length > CAP) shown.push("+" + (all.length - CAP) + " more");
+    return "[" + shown.join(",") + "]";
+  };
+
   const cwd = p.cwd || process.cwd();
   const slug = cwd.replace(/[:\\\/._]/g, "-");
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  // Base-dir helper — MUST stay identical in hooks/retro-brief.sh.
+  // Under Git Bash, HOME can arrive as /c/Users/x; Windows node resolves a
+  // leading "/" against the CURRENT DRIVE, which would silently write the ledger
+  // to G:\Users\x instead of C:\Users\x. Normalise /<letter>/ -> <letter>:/ on
+  // win32 only (on POSIX, /c/... is a legitimate absolute path).
+  const winify = s => (process.platform === "win32" ? s.replace(/^\/([A-Za-z])\//, "$1:/") : s);
+  const home = process.env.CLAUDE_MEMORY_HOME
+    || (process.env.HOME && winify(process.env.HOME))
+    || os.homedir();
   const dir = path.join(home, ".claude", "projects", slug, "memory");
 
   const d = new Date();
@@ -95,8 +130,8 @@ process.stdin.on("end", () => {
     stamp,
     p.agent_type || "unknown",
     p.agent_id || "unknown",
-    "dead=[" + [...dead].sort().join(",") + "]",
-    "blocks=[" + [...blocks].sort().join(",") + "]",
+    "dead=" + render(dead),
+    "blocks=" + render(blocks),
     "errors=" + errors
   ].join(" | ") + "\n";
 

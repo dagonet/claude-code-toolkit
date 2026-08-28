@@ -29,7 +29,13 @@ process.stdin.on("end", () => {
   try { p = JSON.parse(raw); } catch (e) { return; }
   const cwd = (p && p.cwd) || process.cwd();
   const slug = cwd.replace(/[:\\\/._]/g, "-");
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  // Base-dir helper — MUST stay identical in hooks/retro-ledger.sh. See the
+  // comment there: a Git Bash HOME of /c/Users/x resolves against the current
+  // drive under Windows node, which would point the brief at the wrong tree.
+  const winify = s => (process.platform === "win32" ? s.replace(/^\/([A-Za-z])\//, "$1:/") : s);
+  const home = process.env.CLAUDE_MEMORY_HOME
+    || (process.env.HOME && winify(process.env.HOME))
+    || os.homedir();
   console.log(path.join(home, ".claude", "projects", slug, "memory", "retro.md"));
 });
 ' 2>/dev/null)
@@ -37,7 +43,9 @@ process.stdin.on("end", () => {
 [ -n "$LEDGER" ] || exit 0
 [ -s "$LEDGER" ] || exit 0
 
+# Truncated at 200 columns: this output is injected into the session context, so
+# one pathological ledger line must not be able to flood it.
 echo "RETRO (last 10 subagent-failure entries — fix the cause or delegate it):"
-tail -n 10 "$LEDGER"
+tail -n 10 "$LEDGER" | cut -c1-200
 
 exit 0
