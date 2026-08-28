@@ -41,6 +41,21 @@ gc_read_stdin() {
       GC_CMD=""
       ;;
   esac
+  GC_CMD=$(gc_protect_c_paths "$GC_CMD")
+}
+
+# gc_protect_c_paths <command> -- make quoted `-C` paths survive quote stripping.
+#
+# gc_segments deletes quote characters, so `git -C "C:/a b" push` would become
+# `git -C C:/a b push`: the strict `git -C <token>` shape stops matching AND
+# gc_git_c would yield the truncated "C:/a", which gc_resolve rejects, silently
+# falling back to the payload cwd -- so the implicit branch check would then
+# evaluate the WRONG repo. Spaces inside a quoted -C argument are replaced with
+# \001 here (before any stripping) and decoded again in gc_git_c.
+gc_protect_c_paths() {
+  [ -n "$1" ] || { printf '%s' ""; return 0; }
+  node -e 'const s=process.argv[1];process.stdout.write(s.replace(/-C[ \t]+("([^"]*)"|\x27([^\x27]*)\x27)/g,(m,q,dq,sq)=>"-C "+(dq===undefined?sq:dq).replace(/[ \t]/g,"\u0001")))' "$1" 2>/dev/null \
+    || printf '%s' "$1"
 }
 
 # True when the repo has opted out of the git gates.
@@ -60,8 +75,9 @@ gc_cd_target() {
 }
 
 # Prints the `git -C <path>` argument of a segment, if present.
+# Decodes the \001 placeholders written by gc_protect_c_paths back to spaces.
 gc_git_c() {
-  printf '%s\n' "$1" | sed -n 's/.*\bgit[[:space:]]\+-C[[:space:]]\+\([^[:space:]]\+\).*/\1/p' | head -1
+  printf '%s\n' "$1" | sed -n 's/.*\bgit[[:space:]]\+-C[[:space:]]\+\([^[:space:]]\+\).*/\1/p' | head -1 | tr '\001' ' '
 }
 
 # gc_resolve <base> <path> -- absolute path, or the base when <path> is not a dir.

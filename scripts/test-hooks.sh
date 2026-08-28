@@ -74,6 +74,7 @@ FEATREPO=$(mkrepo pushfeat feature/x)
 # A repo whose path contains a space: the segment splitter strips quotes, so
 # `git -C "…/a b" push` must still be recognised (fail closed), not slip through.
 SPACEREPO=$(mkrepo 'push main repo' main)
+SPACEFEAT=$(mkrepo 'push feat repo' feature/x)
 H=hooks/no-push-main.sh
 
 # must BLOCK (exit 2)
@@ -95,6 +96,9 @@ check "push --all from a feature"        "$H" 2 "$(mkjson Bash 'git push --all o
 check "push origin HEAD while on main"   "$H" 2 "$(mkjson Bash 'git push origin HEAD' "$MAINREPO")"
 # review round 1: a quoted -C path with a space must not slip the gate
 check "quoted -C path with a space"      "$H" 2 "$(mkjson Bash "git -C \"$SPACEREPO\" push origin main" "$FEATREPO")"
+# review round 2: the implicit branch check must run against the -C target, not
+# the payload cwd -- a spaced -C path must resolve, not silently fall back.
+check "spaced -C on main, cwd on feature" "$H" 2 "$(mkjson Bash "git -C \"$SPACEREPO\" push origin" "$FEATREPO")"
 
 # must NOT block (exit 0)
 check "push origin feature/x"            "$H" 0 "$(mkjson Bash 'git push origin feature/x' "$MAINREPO")"
@@ -106,6 +110,7 @@ check "bare push while on feature"       "$H" 0 "$(mkjson Bash 'git push' "$FEAT
 check "non-push git command"             "$H" 0 "$(mkjson Bash 'git status --short' "$MAINREPO")"
 check "git -C <feat> push from main cwd" "$H" 0 "$(mkjson Bash "git -C $FEATREPO push" "$MAINREPO")"
 check "push origin HEAD on a feature"    "$H" 0 "$(mkjson Bash 'git push origin HEAD' "$FEATREPO")"
+check "spaced -C on feature, cwd on main" "$H" 0 "$(mkjson Bash "git -C \"$SPACEFEAT\" push origin" "$MAINREPO")"
 check "malformed JSON payload"           "$H" 0 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$MAINREPO")"
 
@@ -137,7 +142,14 @@ check "git -C <bad> commit from ok cwd"  "$H" 2 "$(mkjson Bash "git -C $BADREPO 
 check "PowerShell commit, failing tests" "$H" 2 "$(mkjson PowerShell 'git commit -m "x"' "$BADREPO")"
 check "malformed JSON payload"           "$H" 0 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$BADREPO")"
-check "quoted -C path with a space"      "$H" 2 "$(mkjson Bash "git -C \"$SPACEREPO\" commit -m y" "$BADREPO")"
+# review round 2: a spaced -C path must resolve to that repo, so the gate command
+# that runs is the TARGET's, not the payload cwd's.
+SPACEBAD=$(mkrepo 'commit bad repo' main)
+SPACEOK=$(mkrepo 'commit ok repo' main)
+printf '# ctx\n\n- **Test**: `false`\n' > "$SPACEBAD/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Test**: `true`\n'  > "$SPACEOK/PROJECT_CONTEXT.md"
+check "spaced -C, target tests fail"     "$H" 2 "$(mkjson Bash "git -C \"$SPACEBAD\" commit -m y" "$OKREPO")"
+check "spaced -C, target tests pass"     "$H" 0 "$(mkjson Bash "git -C \"$SPACEOK\" commit -m y" "$BADREPO")"
 
 mkdir -p "$BADREPO/.claude" && : > "$BADREPO/.claude/git-guard-off"
 check "kill switch disables the gate"    "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$BADREPO")"
@@ -204,6 +216,12 @@ GATEFEAT2=$(mkrepo gatefeat2 feature/z)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$GATEFEAT2/PROJECT_CONTEXT.md"
 check "push --mirror is a merge by push" "$H" 2 "$(mkjson Bash 'git push --mirror origin' "$GATEFEAT2")"
 check "push --all is a merge by push"    "$H" 2 "$(mkjson Bash 'git push --all origin' "$GATEFEAT2")"
+
+# --- review round 2: `git merge` while the -C TARGET is on main, cwd on feature
+SPACEGATE=$(mkrepo 'gate main repo' main)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SPACEGATE/PROJECT_CONTEXT.md"
+check "spaced -C merge, target on main"  "$H" 2 "$(mkjson Bash "git -C \"$SPACEGATE\" merge feature" "$GATEFEAT2")"
+check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' "$GATEREPO")"
 
 # ===========================================================================
 # block-bash-vcs.sh must be an inert no-op stub
