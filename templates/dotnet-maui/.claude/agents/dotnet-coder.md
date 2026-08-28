@@ -18,24 +18,12 @@ description: |
   <Task tool call to dotnet-coder agent>
   </example>
 model: sonnet
-tools: Read, Edit, Grep, Glob, Bash, mcp__git-tools__git_status, mcp__git-tools__git_diff, mcp__git-tools__git_diff_summary, mcp__git-tools__git_log, mcp__git-tools__git_show, mcp__git-tools__git_add, mcp__git-tools__git_rm, mcp__git-tools__git_commit, mcp__git-tools__git_push, mcp__git-tools__git_pull, mcp__git-tools__git_fetch, mcp__git-tools__git_checkout, mcp__git-tools__git_branch_create, mcp__git-tools__git_branch_list, mcp__git-tools__git_branch_delete, mcp__git-tools__git_rebase, mcp__git-tools__git_worktree_add, mcp__git-tools__git_worktree_list, mcp__git-tools__git_worktree_remove, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha
+tools: Read, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha
 color: green
 mode: bypassPermissions
 hooks:
   PreToolUse:
-    - matcher: "Bash"
-      hooks:
-        - type: command
-          if: "Bash(git *)"
-          command: "echo 'BLOCKED: Use MCP git-tools instead of Bash git commands.' >&2; exit 2"
-        - type: command
-          if: "Bash(gh *)"
-          command: "echo 'BLOCKED: Use MCP github-tools instead of Bash gh CLI.' >&2; exit 2"
-    - matcher: "mcp__MCP_DOCKER__merge_pull_request"
-      hooks:
-        - type: command
-          command: "bash hooks/gate-before-merge.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/gate-before-merge.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
-    - matcher: "mcp__github-tools__github_pr_auto_merge"
+    - matcher: "Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge"
       hooks:
         - type: command
           command: "bash hooks/gate-before-merge.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/gate-before-merge.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
