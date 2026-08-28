@@ -574,6 +574,114 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 19. Path-scoped rules (v2.0 PR4).
+#     Language conventions moved out of the always-loaded CLAUDE.md into
+#     .claude/rules/*.md. A rule WITHOUT a `paths:` frontmatter list loads at
+#     launch at CLAUDE.md cost, which defeats the whole point of the move — so
+#     every shipped rule must be path-scoped. `general` has no language of its
+#     own and is expected to ship no rules; every other variant ships >= 1.
+#     Counts are derived from the variant list, not hard-coded, so adding a
+#     seventh variant does not silently pass with zero rules.
+# ---------------------------------------------------------------------------
+echo
+rules_expected=0
+rules_present=0
+for v in $VARIANTS; do
+  [ "$v" = "general" ] && continue
+  rules_expected=$((rules_expected + 1))
+  n=$(ls "templates/$v/.claude/rules/"*.md 2>/dev/null | wc -l)
+  if [ "$n" -ge 1 ]; then
+    rules_present=$((rules_present + 1))
+    ok "templates/$v: $n path-scoped rule file(s) in .claude/rules/"
+  else
+    ko "templates/$v: no .claude/rules/*.md — language conventions have nowhere to live"
+  fi
+done
+if [ "$rules_present" = "$rules_expected" ]; then
+  ok "all $rules_expected non-general variants ship at least one rules file"
+fi
+
+# Every rule that ships MUST carry a `paths:` frontmatter list. An unconditional
+# rule is always-loaded context wearing a rules/ filename.
+rules_files=$(ls templates/*/.claude/rules/*.md 2>/dev/null | wc -l)
+scoped=0
+for f in templates/*/.claude/rules/*.md; do
+  [ -f "$f" ] || continue
+  fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$f")
+  if printf '%s\n' "$fm" | grep -q '^paths:' && printf '%s\n' "$fm" | grep -qE '^[[:space:]]+- '; then
+    scoped=$((scoped + 1))
+  else
+    ko "rules: $f has no 'paths:' glob list in its frontmatter (it would load at launch, at CLAUDE.md cost)"
+  fi
+done
+if [ "$rules_files" -gt 0 ] && [ "$scoped" = "$rules_files" ]; then
+  ok "all $rules_files rules files are paths-scoped"
+elif [ "$rules_files" -eq 0 ]; then
+  ko "rules: no .claude/rules/*.md found anywhere (extraction broken?)"
+fi
+
+# The CLAUDE.md diet is only safe if the moved text is still reachable: each
+# variant that ships rules must point at them from CLAUDE.md.
+for v in $VARIANTS; do
+  [ "$v" = "general" ] && continue
+  if grep -q '\.claude/rules/' "templates/$v/CLAUDE.md"; then
+    ok "templates/$v/CLAUDE.md: points at .claude/rules/"
+  else
+    ko "templates/$v/CLAUDE.md: no pointer to .claude/rules/ — the moved conventions are orphaned"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# 20. Working-preferences custody (v2.0 PR4 round 2).
+#     The 11 developer-agent preferences left every CLAUDE.md and now live ONLY
+#     in the karpathy-guidelines skill, which all 12 coders preload via
+#     `skills:`. Nothing else references them, so a careless edit to that one
+#     file silently deletes behaviour from every coder in every variant with no
+#     other check going red. Guard the heading and the bullet count.
+#
+#     The floor is the v1.5 post-trim count (18 bullets -> 11), which is the
+#     set this PR relocated -- NOT the current length of the file. Adding a
+#     preference is therefore a passing change; losing one is not. The count is
+#     parsed from the section itself (heading to next `## ` or EOF), so no line
+#     number and no bullet's literal text is baked into the assertion.
+# ---------------------------------------------------------------------------
+echo
+KG=user-level-reference/skills/karpathy-guidelines/SKILL.md
+WP_HEADING='## Toolkit working preferences'
+WP_MIN=11
+if [ ! -s "$KG" ]; then
+  ko "prefs: $KG missing — the developer-agent preferences have no home (CLAUDE.md no longer carries them)"
+elif ! grep -qF "$WP_HEADING" "$KG"; then
+  ko "prefs: $KG has no '$WP_HEADING' section — the preferences moved out of CLAUDE.md and must land here"
+else
+  ok "prefs: $KG carries the '$WP_HEADING' section"
+  wp_bullets=$(
+    awk -v h="$WP_HEADING" '
+      index($0, h) == 1 { inb = 1; next }
+      inb && /^## / { exit }
+      inb && /^- / { n++ }
+      END { print n + 0 }
+    ' "$KG"
+  )
+  if [ "$wp_bullets" -ge "$WP_MIN" ]; then
+    ok "prefs: $wp_bullets preference bullets present (>= $WP_MIN, the v1.5 post-trim set this PR relocated)"
+  else
+    ko "prefs: only $wp_bullets preference bullets in $KG (expected >= $WP_MIN) — preferences were lost in the move, and no other check would notice"
+  fi
+fi
+
+# The pointer left behind in CLAUDE.md has to resolve. `## Required Skills` was
+# the original target and it no longer exists in CLAUDE.md (PR4 cut the table
+# that defined it), so pin the skill name instead of the stale anchor.
+for v in $VARIANTS; do
+  if grep -q 'karpathy-guidelines' "templates/$v/CLAUDE.md"; then
+    ok "templates/$v/CLAUDE.md: points at the karpathy-guidelines skill for developer preferences"
+  else
+    ko "templates/$v/CLAUDE.md: no pointer to karpathy-guidelines — the moved preferences are orphaned"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

@@ -1,5 +1,53 @@
 # Changelog
 
+## v2.0-pr4 — 2026-08-28
+
+**CLAUDE.md is facts; conventions are path-scoped.** A C# style rule was being loaded on every turn of every session, including the ones that never opened a `.cs` file. `.claude/rules/*.md` files with a `paths:` frontmatter glob list load only when Claude reads or edits a matching file, and are re-injected after compaction — so the conventions arrive exactly when they are actionable.
+
+### Path-scoped rules (new, 7 files; 1,224–2,270 B per variant)
+
+- `templates/dotnet/.claude/rules/csharp.md` — `**/*.cs`, `**/*.csproj`, `**/*.props`, `**/*.targets`, `.editorconfig`.
+- `templates/dotnet-maui/.claude/rules/csharp.md` (same globs) + `xaml.md` — `**/*.xaml`, `**/*.xaml.cs`, carrying the CommunityToolkit.Maui and ContentPage-namespace checks.
+- `templates/rust-tauri/.claude/rules/rust.md` — `**/*.rs`, `rustfmt.toml`, `Cargo.toml`; `frontend.md` — `src/**/*.ts`, `src/**/*.tsx`, `**/*.css`, `.prettierrc`. The single Rust+TypeScript *Code Style* section was split along the language boundary so each half is scoped to the files it governs.
+- `templates/java/.claude/rules/java.md` — `**/*.java`, `pom.xml`, `**/build.gradle*`, `src/main/resources/application.*`.
+- `templates/python/.claude/rules/python.md` — `**/*.py`, `pyproject.toml`, `requirements*.txt`, `ruff.toml`.
+- **Only `paths:`-scoped rules ship.** An unconditional rule loads at launch at CLAUDE.md cost — it is always-loaded context wearing a `rules/` filename, and buys nothing. `general` has no language of its own and therefore ships no rules; its CLAUDE.md says where conventions belong instead.
+- `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` placeholders survive the move: `setup-project.sh` / `.ps1` walk `.claude/` recursively and run `apply_replacements` on every copied file, so rules are populated and manifest-tracked like any other template file.
+
+### CLAUDE.md diet (×6)
+
+- **Spawn-Prompt Binding Table deleted.** It duplicated `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* and is enforced by `hooks/require-skills-block.sh`, which reads neither copy. One pointer line remains.
+- *Code Style (MANDATORY)*, *Enforcement Notes*, and the per-variant *Project Conventions* sections moved verbatim into rules, each replaced by `Conventions: see .claude/rules/<name>.md (loads when you touch matching files).`
+- Gate rule and commit checklist compressed to name the enforcing hook once instead of restating what it does.
+- Emphasis rationed: `# Session Bootstrap (MANDATORY)` → `# Session Bootstrap`, "The PO MUST use `EnterPlanMode`" → "the PO calls `EnterPlanMode`", "Every plan MUST declare its tier" → "Every plan declares its tier". The one surviving shouted line is the Superpowers header, which two hooks and the verify script pin.
+### CLAUDE.md diet, round 2 — routed by audience
+
+Two more sections left the always-loaded set once the question changed from "is this important?" to "**who** needs it, and **when**?".
+
+- **`## Open Brain Context for Agents` deleted** (×6). Every claim it made — spawned agents cannot reach Open Brain, search before spawning, capture decisions with rationale and bug root causes, skip routine outcomes — is already stated, in more detail and with per-agent tables, in `AGENT_TEAM.md` §Open Brain (moved there in v1.4). CLAUDE.md keeps one line: `Open Brain search/capture guidance for spawns: AGENT_TEAM.md §Open Brain.` `AGENT_TEAM.md` is unchanged and still byte-identical across all six variants.
+- **`## Working Preferences` bullets moved into the `karpathy-guidelines` skill** as `## Toolkit working preferences (developer agents)`. The section's own actor note says these bind **developer agents**, not the PO — and all 12 coders preload the skill (`skills: [karpathy-guidelines]`, added in PR3), so the preferences now arrive at spawn, in the context that acts on them, at zero always-loaded cost. CLAUDE.md keeps the `Enforced mechanically:` line (PO-relevant) plus one pointer.
+- **Bytes:** general 13,892 → 12,522 → **10,362** · dotnet 15,450 → **10,612** · dotnet-maui 15,699 → **10,651** · java 16,378 → **10,945** · python 16,299 → **10,971** · rust-tauri 16,749 → **11,296**. Always-loaded total on `general`: **32,888 → 29,358 B**, and **41,167 → 29,358 (−29%)** against the pre-trim baseline. Total across the six CLAUDE.md files: 94,467 → 64,837 B (−31%).
+- The revised **≤ 9 KB target was not met** — the two moves yielded 2.2 KB and land the variants at 10.3–11.3 KB. What remains is the §B keep-list (Session Bootstrap, Workflow TL;DR, Superpowers, Quick Start, Build & Test, Verification, Debugging, Commit Workflow, Compact Instructions) plus the PROJECT-CUSTOM region. No further cut was invented to reach the number.
+
+### Verification (round 2)
+
+- No *existing* assertion needed changing: grepping `scripts/`, `hooks/`, `tools/`, and both setup scripts for `Open Brain Context for Agents` and `Working Preferences` returned zero hits, so nothing pinned either heading.
+- **New check 20 — working-preferences custody.** Moving prose out of the always-loaded set also moves it out from under every existing check, and the 11 developer-agent preferences now live in exactly one file that nothing referenced. Check 20 asserts the `## Toolkit working preferences` heading exists in `user-level-reference/skills/karpathy-guidelines/SKILL.md`, that the section holds at least 11 bullets (the v1.5 post-trim floor, parsed from the section — no line numbers, no bullet text, so adding a preference passes and losing one fails), and that all 6 CLAUDE.md files still name the skill. 159 → 167 assertions.
+- The CLAUDE.md pointer now reads "see `AGENT_TEAM.md` → *Spawn-Prompt Binding Table*". It briefly said "see `## Required Skills`" — an anchor that no longer exists in CLAUDE.md, since this PR cut the table that defined it. The new target is pinned by check 4.
+- Suite green, including the Superpowers header, the `superpowers:` token, the `PROJECT-CUSTOM` region, the banned-phrase sweep over `templates/*/CLAUDE.md`, and AGENT_TEAM.md byte-identity ×6.
+
+### Verification
+
+- `scripts/verify-template-consistency.sh` §19 (new, 3 assertion groups, all glob-derived): every non-`general` variant ships ≥ 1 `.claude/rules/*.md`; every rules file carries a `paths:` list with at least one glob; every such variant's CLAUDE.md still points at `.claude/rules/`. 148 → 159 assertions (→ 167 with §20 below).
+- The dangling-`VERIFICATION_PLAYBOOK.md` fix in the plan was **not applied — the premise was wrong.** The file ships in all 6 variants and `setup-project.sh` copies it; the reference resolves in a generated project.
+
+### Downstream migration
+
+- `/sync-template` reports `CLAUDE.md` as **CONFLICT** for any project with local edits outside the `PROJECT-CUSTOM` region. Accept the template version, then re-paste your customisations between the `PROJECT-CUSTOM:BEGIN/END` markers — that region is preserved verbatim by the sync server.
+- The new `.claude/rules/*.md` arrive as `new_template_files`; accept them. If your project already had language conventions pasted into CLAUDE.md, delete them there once the rules land, or the same text loads twice.
+- **Re-copy `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/SKILL.md`.** The *Working Preferences* bullets now live in that skill, and coder agents preload it by name from the user-level skills directory. A stale copy means developer agents silently lose the preferences that CLAUDE.md no longer carries — this is the one migration step with a real behavioural consequence.
+- If a plugin-installed context-mode routing block is still present in your CLAUDE.md, delete it (removed toolkit-side in PR3).
+
 ## v2.0-pr3 — 2026-08-28
 
 **Every agent now declares what it costs.** Transcripts showed the orchestrator on Opus, workers on `sonnet`, Haiku almost unused, and the *built-in* `Explore` inheriting the session model — 219 exploration spawns at Opus prices. In the same window ~400 tool calls hit tools the calling agent did not have (`dotnet-tools`: 87 of 87 failed, advertised in the body and absent from `tools:`), and 5,032 of 10,336 `Read` calls passed no `limit`.
