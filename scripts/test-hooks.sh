@@ -316,6 +316,22 @@ expect "100-line file is left alone" "" "$(readout "$(mkread "$HUNDRED")")"
 expect "image extension is skipped" "" "$(readout "$(mkread "$BIGPNG")")"
 expect "missing file emits nothing" "" "$(readout "$(mkread "$TMPROOT/does-not-exist.txt")")"
 
+# --- fix round 1: a very large file must be capped WITHOUT counting its lines
+# first. `wc -l` scans the whole file before the decision, on a hook that runs
+# on every Read. Over 10 MB the size alone decides.
+GIANT="$TMPROOT/giant.txt"
+if command -v truncate >/dev/null 2>&1; then
+  truncate -s 12M "$GIANT" 2>/dev/null
+else
+  node -e 'const fs=require("fs");const fd=fs.openSync(process.argv[1],"w");fs.ftruncateSync(fd,12*1024*1024);fs.closeSync(fd)' "$GIANT"
+fi
+GIANTOUT=$(readout "$(mkread "$GIANT")")
+expect "giant file: limit is 500" "500" "$(jfield "$GIANTOUT" hookSpecificOutput.updatedInput.limit)"
+expect "giant file: context reports the size, not a line count" 1 \
+  "$(printf '%s' "$GIANTOUT" | grep -c 'File is 12 MB; capped at 500 lines')"
+expect "giant file: no line count is claimed" 0 \
+  "$(printf '%s' "$GIANTOUT" | grep -c 'of 0 lines')"
+
 # --- the ctx-tool advice the blocking version printed is gone for good.
 expect "no context-mode advice in the hook" 0 \
   "$(grep -c 'ctx_execute_file' "$ROOT/hooks/read-size-gate.sh")"
@@ -333,11 +349,12 @@ GUARD=hooks/bash-output-guard.sh
 GUARDTMP="$TMPROOT/guardtmp"
 mkdir -p "$GUARDTMP"
 
-mkpost() { # <stdout_length>
+mkpost() { # <stdout_length> [stderr_length]
   node -e 'console.log(JSON.stringify({session_id:"guardsess",hook_event_name:"PostToolUse",
-tool_name:"Bash",tool_input:{command:"echo hi"},cwd:process.argv[2],
-tool_response:{stdout:"A".repeat(Number(process.argv[1])),stderr:"",interrupted:false,isImage:false,noOutputExpected:false},
-tool_use_id:"toolu_x",duration_ms:5}))' "$1" "$ROOT"
+tool_name:"Bash",tool_input:{command:"echo hi"},cwd:process.argv[3],
+tool_response:{stdout:"A".repeat(Number(process.argv[1])),stderr:"B".repeat(Number(process.argv[2])),
+interrupted:false,isImage:false,noOutputExpected:false},
+tool_use_id:"toolu_x",duration_ms:5}))' "$1" "${2:-0}" "$ROOT"
 }
 runguard() { # <json> -> hook stdout
   printf '%s' "$1" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" 2>/dev/null
@@ -363,6 +380,27 @@ expect "guard: the log holds all 20 000 chars" 20000 \
 
 expect "guard: 5 000 chars pass through" "" "$(runguard "$(mkpost 5000)")"
 expect "guard: malformed payload is silent" "" "$(runguard '{not json')"
+
+# --- fix round 1: the payload must reach node on STDIN, not in argv. Linux caps
+# a single argument at 128 KiB and Windows CreateProcess caps the whole command
+# line at 32,767 chars, so an argv-passed 200 KB build log — exactly the case
+# this hook exists for — fails to exec and passes through untruncated.
+HUGEOUT=$(runguard "$(mkpost 200000)")
+expect "guard: 200 KB payload still truncates" "500" \
+  "$(node -e 'try{let o=JSON.parse(process.argv[1]);console.log(o.hookSpecificOutput.updatedToolOutput.stdout.length<10000?500:0)}catch(e){console.log(-1)}' "$HUGEOUT")"
+expect "guard: 200 KB full output is on disk" 200000 \
+  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' -size +100k 2>/dev/null | head -1)" | tr -d ' ')"
+
+# --- fix round 1: stderr is an output stream too. A 20 KB stderr with a tiny
+# stdout was passed through whole.
+ERROUT=$(runguard "$(mkpost 100 20000)")
+expect "guard: stderr is truncated too" 1 \
+  "$(node -e 'try{let s=JSON.parse(process.argv[1]).hookSpecificOutput.updatedToolOutput.stderr;
+console.log(s.length<10000&&s.slice(0,4000)==="B".repeat(4000)&&s.indexOf("chars truncated")>0?1:0)}catch(e){console.log(0)}' "$ERROUT")"
+expect "guard: small stdout survives untouched" 100 \
+  "$(node -e 'try{console.log(JSON.parse(process.argv[1]).hookSpecificOutput.updatedToolOutput.stdout.length)}catch(e){console.log(-1)}' "$ERROUT")"
+expect "guard: stderr gets its own log file" 1 \
+  "$(find "$GUARDTMP/claude-bash-out" -name '*-stderr.log' 2>/dev/null | wc -l | tr -d ' ')"
 printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" >/dev/null 2>&1
 expect "guard: always exits 0" 0 $?
 

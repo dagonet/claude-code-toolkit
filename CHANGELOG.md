@@ -18,14 +18,15 @@
 
 ### Skills actually reachable
 
-- `Skill` added to `tools:` for all 47 agent files that are told to invoke skills. Without it a subagent cannot run the `## Required Skills` block the PO injects — the block had been dead for coders.
-- The 11 template coders preload `skills: [karpathy-guidelines]`, so the house style is in context from turn one.
+- `Skill` added to `tools:` for all 54 agent files that are told to invoke skills. Without it a subagent cannot run the `## Required Skills` block the PO injects — the block had been dead for coders.
+- All 12 coders preload `skills: [karpathy-guidelines]`, so the house style is in context from turn one, and all 12 gain `Write`: a coder that cannot create a file is not a coder (44 `Write` calls died on the allowlist in the mined sessions).
 - `dotnet-coder` (dotnet, dotnet-maui) gains `mcp__dotnet-tools__build_and_extract_errors` + `mcp__dotnet-tools__run_tests_summary` in `tools:` — the body already told it to use them.
 
 ### Native context hooks
 
 - `hooks/read-size-gate.sh` **caps instead of blocking**: an unbounded `Read` whose remaining length exceeds 500 lines is rewritten via `hookSpecificOutput.updatedInput` to carry `limit: 500`, with `additionalContext` naming the next offset. `updatedInput` replaces the whole input object, so `tool_input` is copied wholesale (`pages` and future fields survive). Silent when `limit` is set, the file is short, or the extension is `png|jpg|jpeg|gif|pdf|ipynb`. Fixes the pre-existing bug where `offset` was ignored. The context-mode advice in the old block message is gone.
-- `hooks/bash-output-guard.sh` (new, `PostToolUse` on `Bash|PowerShell`, registered unwrapped ×6 + user-level): `tool_response.stdout` over 12,000 chars is written whole to `$TMPDIR/claude-bash-out/<session_id>-<epoch>.log` and replaced by head 4,000 + a marker naming the log + tail 4,000 via `updatedToolOutput`. Payload shape observed from a real event: `{stdout, stderr, interrupted, isImage, noOutputExpected}`; the sibling fields are copied, not re-invented.
+- `hooks/bash-output-guard.sh` (new, `PostToolUse` on `Bash|PowerShell`, registered unwrapped ×6 + user-level): `tool_response.stdout` **and** `stderr` are checked independently; a stream over 12,000 chars is written whole to `$TMPDIR/claude-bash-out/<session_id>-<epoch>[-stderr].log` and replaced by head 4,000 + a marker naming the log + tail 4,000 via `updatedToolOutput`. Payload shape observed from a real event: `{stdout, stderr, interrupted, isImage, noOutputExpected}`; the sibling fields are copied, not re-invented.
+- Both hooks pipe the payload to `node` on **stdin**, never in argv (Linux caps one argument at 128 KiB, Windows CreateProcess caps the command line at 32,767 chars — an argv-passed 200 KB build log would fail to exec and slip through untruncated). `read-size-gate.sh` also runs a single node process per Read instead of five, and decides from `stat` alone above 10 MB rather than scanning the file to count lines.
 - `hooks/allow-ctx-plan.sh` deleted. context-mode is an optional plugin from here on, not a routing mandate.
 
 ### Verification

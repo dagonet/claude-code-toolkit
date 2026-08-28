@@ -9,6 +9,10 @@
 #
 # Decision rule (offset defaults to 0):
 #   tool_input.limit present         -> silent pass (the caller bounded it)
+#   size > BIG_FILE_BYTES            -> cap without counting lines (no offset
+#                                       can bring the remainder under the cap,
+#                                       and scanning every byte on a hook that
+#                                       fires on every Read is not free)
 #   file_lines - offset <= THRESHOLD -> silent pass
 #   otherwise -> stdout a hookSpecificOutput with permissionDecision "allow",
 #     updatedInput = the ORIGINAL tool_input plus limit=THRESHOLD, and an
@@ -27,90 +31,84 @@
 # decision.
 
 THRESHOLD=500
+# Above this size the cap is decided from the byte size alone — see below.
+BIG_FILE_BYTES=10485760
 LOG_FILE="$HOME/.claude/state/read-size-gate.log"
 
 TOOL_INPUT=$(cat)
 
-# Extract tool_name, file_path, offset, limit from JSON stdin.
-# Matches tier-before-coder.sh style (node -e inline parse).
-TOOL_NAME=$(node -e "try{console.log(JSON.parse(process.argv[1]).tool_name||'')}catch(e){}" "$TOOL_INPUT" 2>/dev/null || echo '')
-if [ "$TOOL_NAME" != "Read" ]; then
-  exit 0
-fi
-
-FILE_PATH=$(node -e "try{console.log(JSON.parse(process.argv[1]).tool_input?.file_path||'')}catch(e){}" "$TOOL_INPUT" 2>/dev/null || echo '')
-OFFSET=$(node -e "try{var v=JSON.parse(process.argv[1]).tool_input?.offset;console.log(v==null?'':v)}catch(e){}" "$TOOL_INPUT" 2>/dev/null || echo '')
-LIMIT=$(node -e "try{var v=JSON.parse(process.argv[1]).tool_input?.limit;console.log(v==null?'':v)}catch(e){}" "$TOOL_INPUT" 2>/dev/null || echo '')
-
-if [ -z "$FILE_PATH" ]; then
-  exit 0
-fi
-
-# The caller already bounded the read — nothing to do.
-if [ -n "$LIMIT" ]; then
-  exit 0
-fi
-
-# Not line-addressable: Read renders these as images, pages or notebook cells.
-case "$(printf '%s' "$FILE_PATH" | tr '[:upper:]' '[:lower:]')" in
-  *.png|*.jpg|*.jpeg|*.gif|*.pdf|*.ipynb) exit 0 ;;
-esac
-
-# Normalize to absolute path. realpath is present in Git Bash (GNU coreutils)
-# and on Linux/macOS. If the file doesn't exist yet, let Read handle it.
-ABS_PATH=$(realpath "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
-if [ ! -f "$ABS_PATH" ] || [ ! -r "$ABS_PATH" ]; then
-  exit 0
-fi
-
-FILE_LINES=$(wc -l < "$ABS_PATH" 2>/dev/null | tr -d ' ')
-if [ -z "$FILE_LINES" ] || ! [ "$FILE_LINES" -ge 0 ] 2>/dev/null; then
-  exit 0
-fi
-
-# offset defaults to 0. A non-numeric offset is treated as absent rather than
-# guessed at. The pre-PR3 script ignored offset entirely, so a Read already
-# near EOF was judged by the whole file's length.
-if [ -z "$OFFSET" ] || ! [ "$OFFSET" -ge 0 ] 2>/dev/null; then
-  OFFSET=0
-fi
-
-REMAINING=$((FILE_LINES - OFFSET))
-if [ "$REMAINING" -le "$THRESHOLD" ]; then
-  exit 0
-fi
-
-# Best-effort log append. Failures never mask the decision.
-log_cap() {
-  local ts
-  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
-  mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-  # Subshell wraps the redirection so both printf stderr and the shell's
-  # own "permission denied" from a failed >> open are swallowed.
-  ( printf "%s\t%s\t%s\t%s\t%s\n" \
-      "$ts" "CAP" "$THRESHOLD" "$FILE_LINES" "$ABS_PATH" \
-      >> "$LOG_FILE" ) 2>/dev/null || true
-}
-log_cap
-
-node -e '
+# ONE node process per Read call. The first version spawned five (four JSON
+# parses plus the emitter) on a hook that fires on every Read; process startup
+# dominated the hook's cost. The payload arrives on STDIN, never in argv, so a
+# large tool_input cannot hit the platform argument-length caps.
+printf '%s' "$TOOL_INPUT" | node -e '
 try {
-  var payload = JSON.parse(process.argv[1]);
+  var fs = require("fs");
+  var payload = JSON.parse(fs.readFileSync(0, "utf8"));
+  if (payload.tool_name !== "Read") process.exit(0);
+
   var input = payload.tool_input || {};
-  var lines = Number(process.argv[2]);
-  var offset = Number(process.argv[3]);
-  var cap = Number(process.argv[4]);
+  var filePath = input.file_path;
+  if (typeof filePath !== "string" || !filePath) process.exit(0);
+
+  // The caller already bounded the read — nothing to do.
+  if (input.limit != null) process.exit(0);
+
+  // Not line-addressable: Read renders these as images, pages or notebook cells.
+  if (/\.(png|jpe?g|gif|pdf|ipynb)$/i.test(filePath)) process.exit(0);
+
+  var st;
+  try { st = fs.statSync(filePath); } catch (e) { process.exit(0); }
+  if (!st.isFile()) process.exit(0);
+
+  var cap = Number(process.argv[1]);
+  var logFile = process.argv[2];
+  var bigBytes = Number(process.argv[3]);
+
+  // offset defaults to 0. A non-numeric offset is treated as absent rather
+  // than guessed at. The pre-PR3 script ignored offset entirely, so a Read
+  // already near EOF was judged by the whole file length.
+  var offset = Number(input.offset);
+  if (!isFinite(offset) || offset < 0) offset = 0;
+
+  var lines = null;
+  var context;
+  if (st.size > bigBytes) {
+    // Do not read a huge file just to decide: at this size no offset can bring
+    // the remainder under the cap, and counting lines would mean scanning
+    // every byte inside a hook that runs on every Read.
+    var mb = Math.round(st.size / (1024 * 1024));
+    context = "File is " + mb + " MB; capped at " + cap +
+      " lines starting at offset " + offset + "; pass offset=" +
+      (offset + cap) + " to continue.";
+  } else {
+    var buf = fs.readFileSync(filePath);
+    lines = 0;
+    for (var i = 0; i < buf.length; i++) if (buf[i] === 10) lines++;
+    if (lines - offset <= cap) process.exit(0);
+    context = "Read capped at " + cap + " of " + lines +
+      " lines starting at offset " + offset + "; pass offset=" +
+      (offset + cap) + " to continue.";
+  }
+
+  // Best-effort log append. Failures never mask the decision.
+  try {
+    fs.mkdirSync(require("path").dirname(logFile), { recursive: true });
+    fs.appendFileSync(logFile, [
+      new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+      "CAP", cap, lines === null ? st.size + "B" : lines, filePath
+    ].join("\t") + "\n");
+  } catch (e) {}
+
   console.log(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "allow",
       updatedInput: Object.assign({}, input, { limit: cap }),
-      additionalContext: "Read capped at " + cap + " of " + lines +
-        " lines starting at offset " + offset + "; pass offset=" +
-        (offset + cap) + " to continue."
+      additionalContext: context
     }
   }));
 } catch (e) {}
-' "$TOOL_INPUT" "$FILE_LINES" "$OFFSET" "$THRESHOLD" 2>/dev/null
+' "$THRESHOLD" "$LOG_FILE" "$BIG_FILE_BYTES" 2>/dev/null
 
 exit 0

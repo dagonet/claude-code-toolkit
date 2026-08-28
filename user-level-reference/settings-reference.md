@@ -393,6 +393,7 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 - **Caps** rather than blocks (v2.0 PR3). An unbounded `Read` whose remaining length (`file_lines - offset`) exceeds the threshold (default `500`) is rewritten via `hookSpecificOutput.updatedInput` to carry `limit: 500`, plus an `additionalContext` naming the offset to pass next. The call proceeds; nothing is refused.
 - `updatedInput` **replaces the whole input object**, so the hook copies the original `tool_input` wholesale (`Object.assign`) — `pages` and any future field survive.
 - Silent pass when: `limit` is already set, the file is short, the path is missing/unreadable, or the extension is `png|jpg|jpeg|gif|pdf|ipynb` (not line-addressable).
+- Over 10 MB the cap is decided from `stat` alone (`File is N MB; capped at 500 lines…`): no offset can bring the remainder under the cap, and counting lines would mean scanning every byte on a hook that fires on every Read. One node process per call, payload on stdin.
 - Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
 - Never exits non-zero, so it is registered with a fail-open (`exit 0` on 127) wrapper.
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
@@ -432,8 +433,9 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 
 **Hook** (`hooks/bash-output-guard.sh`), matcher `Bash|PowerShell`:
 - Reads `tool_response` from stdin. Observed shape (2.1.250): `{stdout, stderr, interrupted, isImage, noOutputExpected}`.
-- `stdout` over 12,000 chars → the full text is written to `$TMPDIR/claude-bash-out/<session_id>-<epoch>.log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
-- Shorter output, a missing `tool_response`, or an unparseable payload → no output at all, the result passes through untouched.
+- `stdout` and `stderr` are checked independently. A stream over 12,000 chars is written to `$TMPDIR/claude-bash-out/<session_id>-<epoch>[-stderr].log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output|stderr: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
+- The payload is piped to `node` on stdin, not passed in argv: a 200 KB build log exceeds the platform argument limits, and an exec failure here would silently pass the untruncated output through.
+- Both streams short, a missing `tool_response`, or an unparseable payload → no output at all, the result passes through untouched.
 - Always exits 0 and is registered **unwrapped**: it cannot block, so a 127 wrapper would only invent a failure mode.
 - Rollback: remove the matcher group. Old log files are never pruned — clear `$TMPDIR/claude-bash-out/` yourself if it grows.
 
