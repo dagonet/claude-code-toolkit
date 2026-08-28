@@ -82,7 +82,7 @@ Merging a hook into `templates/` changes nothing in any existing project. Enforc
 1. the script at `<project>/hooks/<name>.sh`, and
 2. its binding in `<project>/.claude/settings.json`.
 
-This is not theoretical. The v1.1 agent-liveness hooks were merged to `templates/` and, days later, were present in **one of 15** projects — the other 14 had no `TeammateIdle` entry and mostly no `hooks/` directory, so for them the feature did not exist. Determining that took a multi-hour transcript investigation.
+This is not theoretical. The v1.1 agent-liveness hooks were merged to `templates/` and, days later, were present in **one of 15** projects — the other 14 had no such hook entry and mostly no `hooks/` directory, so for them the feature did not exist. Determining that took a multi-hour transcript investigation.
 
 **Check any project in one command:**
 
@@ -94,7 +94,7 @@ It reports the `settings.json` bindings, which hook scripts are on disk, whether
 
 Two things that look like failure but are not:
 
-- **No hook output in the session transcript.** `TeammateIdle` and `PreToolUse` hook stderr is delivered to the *teammate or agent*, not to the lead's transcript. Grepping the transcript for a hook's own message will find nothing even when the hook is firing correctly. Use the ledger directories or `.claude/liveness.log` instead.
+- **No hook output in the session transcript.** `PreToolUse` and `SubagentStop` hook stderr is delivered to the *subagent*, not to the lead's transcript. Grepping the transcript for a hook's own message will find nothing even when the hook is firing correctly. Use the ledger directories or `.claude/liveness.log` instead.
 - **An empty `.claude/liveness.log`.** It records threshold events only. A hook that has run thousands of times without crossing a threshold writes nothing there; its counter files still prove execution.
 
 These hooks are deliberately **not** registered at user level (`~/.claude/settings.json`): their commands are `bash hooks/…`, resolved relative to the project root, and would break in any repo that has not been synced.

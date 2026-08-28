@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.0-pr2 — 2026-08-28
+
+**Agent teams are retired; parallelism comes from the Agent tool.** Every "sub-agent stalled / went idle without returning" complaint in six weeks of transcripts traced back to a *named teammate*; the 1,777 Agent-tool spawns in the same window never stalled. Agent teams are experimental and off by default, `TeamCreate`/`TeamDelete` no longer exist and `team_name` is deprecated — so the toolkit stops relying on them. What does **not** change: the PO still never does hands-on work at any tier, and `hooks/enforce-delegation.sh` is untouched (it keys on `agent_id`, which Agent-tool subagents provide).
+
+### Retired
+
+- `hooks/require-teammate-report.sh` — the `TeammateIdle` gate becomes a **no-op stub** (header + `exit 0`), removed in v2.1. It stays non-empty so a downstream `settings.json` that still names it does not fail closed on a 127. PR1 already dropped its registration.
+- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` — gone from `user-level-reference/settings.json` and `settings-reference.md`.
+- `AGENT_TEAM.md` — the *Agent Naming Convention* section (`dev-1`, `reviewer-2`, …) is deleted: a workstream is a position in the plan, not an agent name. The *Communication Protocol* is now the final-message contract; long tasks use `background: true` and the task-completion notification. The only surviving use of `SendMessage` is asking a *completed* subagent one follow-up question. The stall runbook is rewritten for Agent-tool completions (a foreground call cannot stall — it returns or errors; a background agent is checked once, then treated as failed) and no longer mentions `TaskStop` or `git status` polling. Worktrees are created with `isolation: worktree`, not by hand.
+- All 61 agent definitions: the SendMessage progress-ping bullet becomes the final-message contract, and `Team-mode reporting` is renamed `Subagent reporting`. The `## Liveness & Scope` header and the `Scope abort:` clause are unchanged.
+
+### Retro ledger (new)
+
+- `hooks/retro-ledger.sh` (`SubagentStop`, no matcher) parses the finished subagent's own transcript and appends one line per failing run to the project's auto-memory `memory/retro.md`: `date | agent_type | agent_id | dead=[…] | blocks=[…] | errors=n`. A failure is a `tool_result` matching `No such tool available|BLOCKED:|DELEGATE:|CONTRACT VIOLATION|hook error`.
+- `hooks/retro-brief.sh` (`SessionStart`, no matcher) prints the last 10 entries; SessionStart stdout is injected as session context, and the Session Bootstrap in every `CLAUDE.md` now has a step that says to fix the cause (agent `tools:` allowlist, prompt, hook) or delegate it before starting new work.
+- Both are registered **unwrapped** — no exit-127 fail-closed wrapper. They cannot block anything: every failure path (missing node, missing transcript, unparseable payload, unwritable dir) exits 0. Wrapping a hook that cannot block would only invent a failure mode, exactly as with the other stop-style hooks.
+- `scripts/test-hooks.sh`: 71 → 92 fixtures, including a round-trip case (ledger writes, brief reads) that catches the two hooks computing different project slugs — the one way this feature silently does nothing.
+
+### Downstream migration
+
+1. Run `/sync-template` — accept `AGENT_TEAM.md`, the agent definitions, `CLAUDE.md` and `settings.json`.
+2. Delete `"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"` from your `~/.claude/settings.json`.
+3. **Named-teammate spawns are no longer required.** Use plain Agent calls (several in parallel for parallel workstreams) and read each subagent's final message. If your `settings.json` is locally modified, add the two new entries by hand: `SubagentStop` → `bash hooks/retro-ledger.sh` and `SessionStart` → `bash hooks/retro-brief.sh`, both **without** the 127 wrapper.
+4. The retro ledger lands in `~/.claude/projects/<project-slug>/memory/retro.md`, next to `MEMORY.md` — the slug is your project path with every `:` `\` `/` `.` `_` replaced by `-` (`G:\git\foo` → `G--git-foo`). Delete the file to reset the ledger.
+
 ## v2.0-pr1 — 2026-08-28
 
 **The git ban is over; the git gates stay.** `hooks/block-bash-vcs.sh` blocked **1,240 turns in 6 weeks** of transcripts to buy nothing — the three git gates keyed on the `mcp__git-tools__*` tool names only because Bash git was banned in the first place. Claude Code 2.1.250 PreToolUse hooks can read `tool_input.command` and deny with exit 2, so the gates now fire on the command itself and the CLI is allowed.

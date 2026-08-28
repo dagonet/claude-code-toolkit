@@ -1,7 +1,6 @@
 {
   "env": {
     "CLAUDE_CODE_SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_CODE_DISABLE_1M_CONTEXT": "false",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
     "ENABLE_PROMPT_CACHING_1H": "1",

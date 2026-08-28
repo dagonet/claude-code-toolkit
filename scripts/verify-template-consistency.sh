@@ -234,27 +234,44 @@ else
   ko "ops.md drift detected — variants are NOT byte-identical"
 fi
 
-mandate_count=$(grep -l "Team-mode reporting" templates/*/.claude/agents/*.md 2>/dev/null | wc -l)
-if [ "$mandate_count" = "42" ]; then
-  ok "Team-mode reporting mandate present in 42 agent files (7 report agents x 6 variants)"
+# Expected counts are computed by glob, not hard-coded, so adding an agent type
+# does not silently invalidate the assertion.
+#   report agents = every template agent file EXCEPT the coders (coder.md and the
+#   language variants); the coders carry the Deliverable Contract instead.
+report_agents=$(ls templates/*/.claude/agents/*.md 2>/dev/null | grep -vE 'coder\.md$' | wc -l)
+mandate_count=$(grep -l "Subagent reporting" templates/*/.claude/agents/*.md 2>/dev/null | wc -l)
+if [ "$mandate_count" = "$report_agents" ]; then
+  ok "Subagent reporting mandate present in all $report_agents non-coder agent files"
 else
-  ko "Team-mode reporting mandate present in only $mandate_count/42 agent files"
+  ko "Subagent reporting mandate present in only $mandate_count/$report_agents non-coder agent files"
 fi
 
-# Liveness & Scope block: 53 template agent files + 8 user-level-reference = 61.
-# Guards the progress-ping cadence and the scope-abort clause against drift.
+# Liveness & Scope block: every template + user-level-reference agent file.
+# Guards the final-message reporting contract and the scope-abort clause.
+all_agents=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
 liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
-if [ "$liveness_count" = "61" ]; then
-  ok "Liveness & Scope block present in all 61 agent files (53 template + 8 user-level-reference)"
+if [ "$liveness_count" = "$all_agents" ]; then
+  ok "Liveness & Scope block present in all $all_agents agent files"
 else
-  ko "Liveness & Scope block present in only $liveness_count/61 agent files"
+  ko "Liveness & Scope block present in only $liveness_count/$all_agents agent files"
 fi
 
 scope_abort=$(grep -lF "Scope abort:" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
-if [ "$scope_abort" = "61" ]; then
-  ok "Scope-abort clause present in all 61 agent files"
+if [ "$scope_abort" = "$all_agents" ]; then
+  ok "Scope-abort clause present in all $all_agents agent files"
 else
-  ko "Scope-abort clause present in only $scope_abort/61 agent files"
+  ko "Scope-abort clause present in only $scope_abort/$all_agents agent files"
+fi
+
+# v2.0: subagents report in their FINAL MESSAGE. SendMessage was the named-teammate
+# channel and must not creep back into an agent definition — a partial sweep of the
+# 61 files would otherwise pass every assertion above.
+sendmsg=$(grep -lF "SendMessage" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+if [ "$sendmsg" = "0" ]; then
+  ok "No agent definition instructs SendMessage reporting (agent teams retired)"
+else
+  ko "SendMessage reporting survives in $sendmsg agent files:"
+  grep -lF "SendMessage" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null
 fi
 
 banned='fixes code directly|PO only|PO fixes directly|PO reviews directly|PO verifies directly|may be committed directly'
@@ -298,12 +315,43 @@ fi
 #     data; a future edit that reintroduces them should fail loudly here.
 # ---------------------------------------------------------------------------
 echo
-# Strip comments first: the header deliberately explains why MAX_BLOCKS was
-# removed, and that prose must not trip the assertion.
-if grep -v '^[[:space:]]*#' hooks/require-teammate-report.sh 2>/dev/null | grep -q 'MAX_BLOCKS'; then
-  ko "liveness: MAX_BLOCKS session cap is back — it exhausted itself in 21 h on real data (3 blocks vs 41)"
+# v2.0: the TeammateIdle gate is retired (agent teams are gone), so the
+# MAX_BLOCKS assertion moved to the hook that still throttles: agent-budget-warn.
+# The history it encodes — a session-wide cap exhausts itself and leaves the rest
+# of a long session ungated — applies to any future cap, so keep asserting it.
+if grep -v '^[[:space:]]*#' hooks/agent-budget-warn.sh 2>/dev/null | grep -q 'MAX_BLOCKS'; then
+  ko "liveness: a MAX_BLOCKS session cap is back — it exhausted itself in 21 h on real data (3 blocks vs 41)"
 else
-  ok "liveness: no session-wide block cap (per-teammate marker is the only throttle)"
+  ok "liveness: no session-wide block cap (per-agent thresholds are the only throttle)"
+fi
+
+# The retired TeammateIdle gate must stay a NON-EMPTY no-op for one release: the
+# §13 hook-ref invariant tests -s, and a downstream settings.json still naming it
+# would fail closed on a 127 if the file went away.
+if [ -s hooks/require-teammate-report.sh ] && grep -q 'DEPRECATED in v2.0' hooks/require-teammate-report.sh 2>/dev/null; then
+  ok "require-teammate-report.sh is a non-empty DEPRECATED no-op stub"
+else
+  ko "require-teammate-report.sh: expected a non-empty deprecated stub (removed in v2.1, not v2.0)"
+fi
+if printf '%s' '{}' | bash hooks/require-teammate-report.sh >/dev/null 2>&1; then
+  ok "require-teammate-report.sh stub exits 0"
+else
+  ko "require-teammate-report.sh stub does NOT exit 0 — it can still block a stop"
+fi
+
+# The retro ledger pair (v2.0 PR2) must exist and stay fail-open: both are
+# registered UNWRAPPED, so a non-zero exit would break every stop / session start.
+for f in hooks/retro-ledger.sh hooks/retro-brief.sh; do
+  if [ -s "$f" ]; then
+    ok "retro: $f present"
+  else
+    ko "retro: $f MISSING — the subagent-failure ledger is not shipped"
+  fi
+done
+if printf '%s' '{not json' | bash hooks/retro-ledger.sh >/dev/null 2>&1; then
+  ok "retro-ledger.sh exits 0 on an unusable payload"
+else
+  ko "retro-ledger.sh exits non-zero on an unusable payload — it would block subagent stops"
 fi
 
 if grep -qE '\-ge +"?\$(BLOCK_AT|WARN_AT)' hooks/agent-budget-warn.sh 2>/dev/null; then
@@ -318,7 +366,8 @@ else
   ko "budget: BLOCK_EVERY missing — a single block does not stop a runaway (worst measured: 417 calls)"
 fi
 
-for f in hooks/require-teammate-report.sh hooks/agent-budget-warn.sh; do
+# require-teammate-report.sh is a no-op stub from v2.0 and no longer logs.
+for f in hooks/agent-budget-warn.sh; do
   if grep -q 'liveness.log' "$f" 2>/dev/null; then
     ok "audit trail: $f writes .claude/liveness.log"
   else

@@ -159,7 +159,7 @@ When spawning a developer agent, the PO MUST choose the correct `subagent_type` 
 
 - Executes non-code-authoring work so the PO never runs it inline: environment setup, downloads/installs, binary/file operations, one-off tools, diagnostics, log collection, gate re-runs.
 - Does **NOT** author application code (coder work) and does **NOT** commit/merge (no git/GitHub tools — hands results back).
-- Deliverable contract: `## Commands Run` + `## Result`; ends with a SendMessage report in team mode.
+- Deliverable contract: `## Commands Run` + `## Result`, both in the final message.
 
 ### Code Reviewer (1 per workstream, T2+)
 
@@ -246,34 +246,26 @@ Developer --> Code Reviewer --> Tester --> Developer merges PR
 
 Each workstream operates autonomously. No shared reviewer or tester bottleneck.
 
-### Agent Naming Convention
-
-Workstream agents are named by their workstream number:
-
-| Workstream | Developer | Code Reviewer | Tester |
-|------------|-----------|---------------|--------|
-| 1 | `dev-1` | `reviewer-1` | `tester-1` |
-| 2 | `dev-2` | `reviewer-2` | `tester-2` |
-| 3 | `dev-3` | `reviewer-3` | `tester-3` |
-| N | `dev-N` | `reviewer-N` | `tester-N` |
-
-**Enforcement:** Always use numeric naming (`dev-1`, `reviewer-2`). Task identification goes in the agent's spawn prompt, never in the agent name. This applies to both `github-issues` and `plan-files` modes. Do not use `dev-calendar-fix` — use `dev-1`.
-
 ### Workstream Lifecycle
+
+Parallelism comes from the **Agent tool**: one Agent call per workstream, several
+in flight at once. Workstream N is a position in the plan, not an agent name —
+the PO tracks which spawn belongs to which workstream and puts the task
+identification in the spawn prompt.
 
 ```
 1. PO assigns task to workstream N
-2. dev-N creates worktree, implements feature (per tier testing discipline)
-3. dev-N creates PR, signals ready
-4. PO spawns reviewer-N -> reviews PR -> reviewer-N shuts down
-   |-- CRITICAL findings -> dev-N fixes -> PO spawns new reviewer-N -> re-review
+2. PO spawns a coder -> implements the feature (per tier testing discipline)
+3. Coder creates the PR and reports it in its final message
+4. PO spawns a code-reviewer -> reviews the PR -> returns findings
+   |-- CRITICAL findings -> PO spawns a coder to fix -> new reviewer -> re-review
    \-- NO CRITICAL FINDINGS -> proceed to step 5
    (Max 3 fix cycles — then PO pauses workstream per Rule 8)
-5. PO spawns tester-N -> verifies on branch or post-merge
-   |-- FAIL -> dev-N fixes, back to step 4
-   \-- PASS -> tester-N shuts down
-6. dev-N executes Merge Protocol (see below)
-7. dev-N cleans up worktree + branch, shuts down
+5. PO spawns a tester -> verifies on branch or post-merge
+   |-- FAIL -> PO spawns a coder to fix, back to step 4
+   \-- PASS -> tester returns its verdict
+6. The merging coder executes the Merge Protocol (see below)
+7. The merging coder cleans up the worktree + branch and reports
 ```
 
 ---
@@ -407,12 +399,18 @@ Each developer agent gets its own working directory with its own branch, all bac
 
 ### Setup
 
-```
-# github-issues mode
-git worktree add {worktree_base}/{project}-issue-{number} -b feature/issue-{number} main
+Prefer `isolation: worktree` — set it in the agent's frontmatter, or pass it on
+the Agent call — and let Claude Code create and attach the worktree. The PO does
+not run `git worktree add` by hand; that is hands-on work, and a worktree the PO
+made is one the harness does not know it owns.
 
-# plan-files mode
-git worktree add {worktree_base}/{project}-{branch-name} -b {branch-name} main
+```
+# on the Agent call (per spawn)
+isolation: worktree
+
+# fallback only — a developer agent creating its own worktree
+git worktree add {worktree_base}/{project}-issue-{number} -b feature/issue-{number} main   # github-issues mode
+git worktree add {worktree_base}/{project}-{branch-name} -b {branch-name} main             # plan-files mode
 ```
 
 See `PROJECT_CONTEXT.md` for worktree base path. See Mode Behavior Table for naming convention.
@@ -552,11 +550,14 @@ The PO coordinates merge ordering by sending merge-go-ahead messages. Developers
 ```
 Architect reviews all tasks -> scope-conflict check -> shuts down
        |
-|-- WS1: dev-1 --> reviewer-1 --> tester-1 --> dev-1 merges PR --> cleanup
-|-- WS2: dev-2 --> reviewer-2 --> tester-2 --> dev-2 merges PR --> cleanup
-|-- WS3: dev-3 --> reviewer-3 --> tester-3 --> dev-3 merges PR --> cleanup
-|-- WS4: dev-4 --> reviewer-4 --> tester-4 --> dev-4 merges PR --> cleanup
-\-- WS5: dev-5 --> reviewer-5 --> tester-5 --> dev-5 merges PR --> cleanup
+|-- WS1: coder --> code-reviewer --> tester --> coder merges PR --> cleanup
+|-- WS2: coder --> code-reviewer --> tester --> coder merges PR --> cleanup
+|-- WS3: coder --> code-reviewer --> tester --> coder merges PR --> cleanup
+|-- WS4: coder --> code-reviewer --> tester --> coder merges PR --> cleanup
+\-- WS5: coder --> code-reviewer --> tester --> coder merges PR --> cleanup
+
+(one Agent call per box; workstreams run in parallel, the PO tracks which spawn
+ belongs to which workstream — the agents are not named)
 
 Merges are sequenced by PO (first-ready, first-merge)
 ```
@@ -600,20 +601,31 @@ Every design doc and implementation plan must be challenged **twice** before exe
 
 ### Handoff mechanism
 
-Within a workstream, handoffs happen via **team messages** (SendMessage tool):
+A subagent has one channel: **its final message**. Everything the PO acts on —
+status, files changed, commands run plus an output summary, open concerns — is in
+there. There is no progress channel and no partial delivery.
 
-- Developer -> PO: "PR created, ready for review" (PO spawns reviewer)
-- Reviewer -> PO: "Review complete, findings: ..." (PO decides next step)
-- Tester -> PO: "Verification complete, verdict: PASS/FAIL" (PO sends merge-go-ahead or fix request)
-- Developer -> PO: "Merge complete, cleanup done" (PO closes task).
+- Coder final message: "PR created, ready for review" + the PR URL (PO spawns a reviewer)
+- Reviewer final message: "Review complete, findings: ..." (PO decides the next step)
+- Tester final message: "Verification complete, verdict: PASS/FAIL" (PO issues the merge-go-ahead or a fix brief)
+- Merging coder final message: "Merge complete, cleanup done" (PO closes the task)
 
-### PO orchestration messages
+**Long tasks:** pass `background: true` on the Agent call. The spawn returns
+immediately, the subagent keeps running, and the PO acts on the task-completion
+notification — it does not poll.
 
-The PO sends targeted messages to coordinate:
+**Follow-ups:** a *completed* subagent can be resumed by name with SendMessage to
+ask one follow-up question against the context it already has. That is the only
+remaining use of SendMessage: it is a cheaper re-read, never a coordination
+channel and never a way to hand over new work.
 
-- **To dev**: "Merge-go-ahead — you are clear to merge. Main is at commit {sha}."
-- **To dev**: "Hold merge — workstream N is merging first. Wait for confirmation."
-- **To dev**: "Review findings attached — address CRITICAL items, then signal ready for re-review."
+### PO orchestration
+
+Orchestration happens in the *next* spawn prompt, not in a message stream:
+
+- Merge-go-ahead: spawn (or resume) the merging coder with "you are clear to merge; main is at commit {sha}".
+- Hold: simply do not spawn the merge yet — workstream N merges first.
+- Review findings: spawn a coder with the CRITICAL items inlined, then spawn a fresh reviewer for the re-review.
 
 ### State tracking
 
@@ -663,18 +675,18 @@ The PO presents these as a single confirmation at sprint start. All agents are s
   - **(a) Scope reduction**: Simplify the task (remove edge cases, split into smaller pieces) and restart with reduced scope.
   - **(b) Architect re-design**: Re-spawn architect with the failure context. Architect produces a new approach. Dev restarts from the new plan.
   - **(c) Human escalation**: Notify the user with: task description, what was tried (3 cycles), failure details, and recommended next steps.
-- **Merge conflicts too complex**: Developer messages PO with details. PO decides per the Merge Protocol fallback (defer, re-spawn architect, etc.).
-- **Tester can't verify**: Message PO with details, PO routes to developer.
+- **Merge conflicts too complex**: the developer reports the details in its final message. PO decides per the Merge Protocol fallback (defer, re-spawn architect, etc.).
+- **Tester can't verify**: it reports why; the PO routes the work to a developer.
 - **Scope conflict discovered mid-sprint**: PO pauses affected workstreams, re-spawns architect for conflict resolution.
 - **Any agent stuck after escalation**: PO notifies the human (via issue comment in github-issues mode, or direct message in plan-files mode).
-- **Agent stall / idle without report** (runbook — judgment removed on purpose):
-  1. First idle without a completion report: send exactly one prod message requesting status.
-  2. Second idle: retire the agent via `TaskStop`. Do not send further prods.
-  2b. Before retiring or taking over: run `git status` in the agent's worktree — a DIRTY tree means the agent is mid-edit; wait one more cycle instead of clobbering in-flight work.
-  3. Verify the actual work state via `git log` / `git status` / `list_pull_requests` — **never trust the agent's last claim**; committed work frequently exists despite a silent agent (and vice versa).
-  4. Count the stall as one strike toward the 3-cycle escalation above, then re-dispatch the remaining work with the verified state in the spawn prompt. **Never self-perform the stalled agent's work as fallback** — the PO does not code, review, or test inline.
-  5. **Dead-coder merge handoff**: if the stalled/retired coder left a pushed branch with an open PR, spawn a FRESH coder with the PR URL, branch name, and worktree path in the spawn prompt to rebase, re-run the gate, and complete the merge. The PO never finishes merges by hand.
-  6. **Report agents (reviewer/architect/tester/ops/etc.)**: a bare idle notification without a delivered report is a NON-report — their report IS the deliverable. One prod citing the reporting mandate, then treat as failed and re-dispatch. (The SubagentStop contract enforcer does NOT fire on teammate idle — idling is not stopping — which is why the reporting mandate lives in the agent definitions and spawn prompts.)
+- **Missing or empty report** (runbook — judgment removed on purpose):
+  1. A **foreground** Agent call cannot stall: it either returns a final message or it errors. An error is a failed dispatch — read it and re-dispatch; do not "wait".
+  2. A **background** agent reports through the task-completion notification. Check it (or `ListAgents`) ONCE. Past the agent's tool-call budget with no completion, treat the run as failed — do not poll in a loop.
+  3. Verify the actual work state via `git log` / `git status` / `list_pull_requests` — **never trust the agent's last claim**; committed work frequently exists despite a truncated report (and vice versa).
+  4. Count the failure as one strike toward the 3-cycle escalation above, then re-dispatch with a TIGHTER brief: the verified state, the remaining work, and nothing else. **Never self-perform the failed agent's work as fallback** — the PO does not code, review, or test inline.
+  5. **Dead-coder merge handoff**: if the failed coder left a pushed branch with an open PR, spawn a FRESH coder with the PR URL, branch name, and worktree path in the spawn prompt to rebase, re-run the gate, and complete the merge. The PO never finishes merges by hand.
+  6. **Report agents (reviewer/architect/tester/ops/etc.)**: their report IS the deliverable. A final message without one is a failed run — re-dispatch, citing the reporting mandate. `hooks/enforce-agent-contract.sh` (SubagentStop) catches the coder/reviewer cases mechanically; for the rest the mandate lives in the agent definitions and spawn prompts.
+  7. Repeated failures of the same shape are recorded by `hooks/retro-ledger.sh` and replayed at the next session start — fix the cause (the agent's `tools:` allowlist, the prompt, the hook) instead of re-dispatching into the same wall.
 
 ---
 
@@ -712,11 +724,10 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 
 Use these snippets verbatim when constructing spawn prompts. Append to the body of the prompt, then add the task-specific instructions below.
 
-**Report agents (code-reviewer, architect, tester, test-writer, requirements-engineer, doc-generator, ops) — ALWAYS add this line to their spawn prompts** (their definitions carry the same mandate; repeating it in the prompt is what reliably prevents silent idles):
+**Report agents (code-reviewer, architect, tester, test-writer, requirements-engineer, doc-generator, ops) — ALWAYS add these lines to their spawn prompts** (their definitions carry the same mandate; repeating it in the prompt is what reliably prevents an empty return):
 
 ```markdown
-CRITICAL: end your run with a SendMessage to main containing your full report/findings — never go idle without reporting.
-Send a one-line progress ping via SendMessage roughly every 20 tool calls, and whenever you change approach — silence is read as a stall.
+CRITICAL: your final message IS the deliverable. It must contain: status, files changed, commands run + output summary, open concerns.
 If the task grows past its stated scope (extra files, a second root cause, a redesign), stop and report what is done plus the blocker instead of expanding scope.
 ```
 
@@ -730,8 +741,7 @@ Invoke these via the Skill tool before beginning task work:
 - superpowers:verification-before-completion
 - superpowers:receiving-code-review
 
-CRITICAL: end your run with a SendMessage to main containing your full report — never go idle without reporting.
-Send a one-line progress ping via SendMessage roughly every 20 tool calls, and whenever you change approach — silence is read as a stall.
+CRITICAL: your final message IS the deliverable. It must contain: status, files changed, commands run + output summary, open concerns.
 If the task grows past its stated scope (extra files, a second root cause, a redesign), stop and report what is done plus the blocker instead of expanding scope. A long run is not evidence of progress.
 ```
 
@@ -870,7 +880,7 @@ When using `plan-files` mode, implementation plans follow this structure:
 **Architecture:** {Key decisions}
 **Tech Stack:** {Relevant technologies}
 **Tier:** T{N}
-**Team:** {agent list per tier — e.g., "dev-1 (coder), reviewer-1, tester-1"}
+**Team:** {subagent types per tier — e.g., "coder, code-reviewer, tester"}
 
 ---
 

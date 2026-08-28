@@ -21,7 +21,7 @@
 - **23 user-level slash commands** for the daily loop: `/build`, `/test`, `/commit`, `/sprint`, `/challenge`, `/code-review`, `/new-feature`, `/sync-template`, …
 - **12 auto-triggering skills** that load themselves based on what you're doing (debugging, refactoring, exploring a new codebase, …).
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
-- **Workflow enforcement hooks**: the git/`gh` CLI is allowed and *gated* — the hooks parse the command and stop a red-gate commit, a push to main, and an ungated merge; plus tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), a `Read` size gate, and an agent tool-call budget.
+- **Workflow enforcement hooks**: the git/`gh` CLI is allowed and *gated* — the hooks parse the command and stop a red-gate commit, a push to main, and an ungated merge; plus tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), a `Read` size gate, an agent tool-call budget, and a retro ledger that records subagent failures and replays them at the next session start.
 
 ## Context engineering for Claude 5 generation models
 
@@ -32,7 +32,7 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 | Blog principle | How the toolkit applies it |
 |---|---|
 | **Progressive disclosure** | `AGENT_TEAM.md` is **49,724 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **12 skills** load on trigger, not up front. |
-| **Mechanism over mandate** | **13 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, agent liveness. **131 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
+| **Mechanism over mandate** | **15 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, subagent budget, and a retro ledger of subagent failures replayed at session start. **138 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
@@ -52,7 +52,7 @@ Per-variant now: general 32,538 · java 35,708 · python 35,518 · dotnet 36,537
 
 **v1.5 deleted, because a mechanism already covers it.** *Working Preferences* went from 18 bullets to 11 (3,939 → 2,393 B). Seven were dropped: five that a hook or the harness already enforces — reading before editing, running tests before commit, never pushing to main, `Read` size limits, keeping the PO out of hands-on work — and two with no behavioural content. In their place, one line naming where the enforcement lives, so the omission reads as deliberate rather than as an oversight. This is the unhobbling move: state that a mechanism exists instead of repeating the rule it enforces. The `"22% of total context"` statistic also collapsed from **7 files to 1**.
 
-Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**131 assertions**), so neither cut could silently break enforcement — including the exact Superpowers header and the `superpowers:` token the checks require.
+Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**138 assertions**), so neither cut could silently break enforcement — including the exact Superpowers header and the `superpowers:` token the checks require.
 
 If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
 

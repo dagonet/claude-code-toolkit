@@ -35,6 +35,10 @@ This machine runs Windows 11 with Git Bash as the shell.
 | Open-ended codebase exploration | Explore subagent (compressed summaries, not raw contents) |
 | Browse directory contents | Glob |
 
+## Auto-Memory
+
+Auto-memory `MEMORY.md` loads only its first 200 lines / 25 KB — keep it an index; move detail into topic files.
+
 ## New Project Setup
 
 After creating a CLI tool or installable package, always include setup/install instructions in the output and README before considering the task complete.

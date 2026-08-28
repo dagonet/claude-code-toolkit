@@ -48,7 +48,9 @@ else
     "pre-commit-test.sh:pre-commit test gate" \
     "no-push-main.sh:push-to-main guard" \
     "read-size-gate.sh:Read size gate" \
-    "gate-before-merge.sh:merge gate"
+    "gate-before-merge.sh:merge gate" \
+    "retro-ledger.sh:subagent-failure ledger" \
+    "retro-brief.sh:session-start retro brief"
   do
     key=${pair%%:*}; label=${pair#*:}
     if grep -q -- "$key" "$SETTINGS" 2>/dev/null; then yes_ "$label ($key)"
@@ -62,7 +64,8 @@ MISSING=0
 for h in agent-budget-warn.sh enforce-delegation.sh \
          enforce-agent-contract.sh no-push-main.sh read-size-gate.sh \
          tier-before-coder.sh require-skills-block.sh run-gate.sh \
-         gate-before-merge.sh pre-commit-test.sh
+         gate-before-merge.sh pre-commit-test.sh \
+         retro-ledger.sh retro-brief.sh
 do
   if [ -s "$PROJ/hooks/$h" ]; then yes_ "hooks/$h"
   else no_ "hooks/$h missing or empty"; MISSING=$((MISSING+1)); fi
@@ -122,7 +125,7 @@ printf '\n  ledger dirs (written on every hook run):\n'
 found=0
 for base in "${TMPDIR:-}" /tmp; do
   [ -z "$base" ] && continue
-  for d in claude-teammate-liveness claude-agent-budget; do
+  for d in claude-agent-budget; do
     if [ -d "$base/$d" ]; then
       c=$(find "$base/$d" -type f 2>/dev/null | wc -l | tr -d ' ')
       printf '    %s: %s files\n' "$base/$d" "$c"

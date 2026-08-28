@@ -37,7 +37,7 @@ Each template variant provides the following files:
 | `PROJECT_STATE.md` | Sprint state tracking |
 | `.claude/settings.json` | MCP permissions + workflow hooks (MCP enforcement, format gates, pipeline, compaction) |
 | `.claude/agents/` | 8 generic agents + variant-specific coders |
-| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `no-push-main`, `tier-before-coder`, `pre-commit-test`, `read-size-gate`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `agent-budget-warn`, plus the shared parser `lib/git-cmd.sh`. Also ships `block-bash-vcs` (a v2.0 no-op stub, unregistered), `require-teammate-report` (unregistered since v2.0) and the opt-in `allow-ctx-plan` |
+| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `no-push-main`, `tier-before-coder`, `pre-commit-test`, `read-size-gate`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `agent-budget-warn`, `retro-ledger` + `retro-brief`, plus the shared parser `lib/git-cmd.sh`. Also ships two DEPRECATED v2.0 no-op stubs, both unregistered and slated for removal in v2.1 — `block-bash-vcs` and `require-teammate-report` — and the opt-in `allow-ctx-plan` |
 | `gitignore` | Template for .gitignore (copied or merged by the setup script) |
 | `.editorconfig` | Code style for dotnet, dotnet-maui, java, and python variants |
 | `rustfmt.toml` + `.prettierrc` | Code style for rust-tauri variant only |

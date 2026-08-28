@@ -255,6 +255,232 @@ check "missing file is not blocked"      "$H" 0 "$(mkread "$TMPROOT/does-not-exi
 check "non-Read payload passes through"  "$H" 0 "$(mkjson Bash 'echo hi' "$MAINREPO")"
 
 # ===========================================================================
+# retro-ledger.sh (SubagentStop) + retro-brief.sh (SessionStart) — v2.0 PR2.
+# The ledger records subagent failures (dead tools, hook blocks) under the
+# project's auto-memory dir; the brief replays the last 10 at session start.
+# Both are fail-open by construction: they must NEVER exit non-zero.
+# ===========================================================================
+echo
+echo "=== hooks/retro-ledger.sh + hooks/retro-brief.sh ==="
+
+RETROHOME="$TMPROOT/retrohome"
+PROJCWD="G:/git/retroproj"
+SLUGDIR="$RETROHOME/.claude/projects/G--git-retroproj/memory"
+
+mkstop() { # <cwd> <agent_type> <agent_id> <transcript_path>
+  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"SubagentStop",cwd:process.argv[1],agent_type:process.argv[2],agent_id:process.argv[3],agent_transcript_path:process.argv[4],last_assistant_message:"done"}))' \
+    "$1" "$2" "$3" "$4"
+}
+
+mkstart() { # <cwd>
+  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"SessionStart",source:"startup",cwd:process.argv[1]}))' "$1"
+}
+
+# A subagent transcript with (a) a dead-tool tool_result and (b) a hook block.
+# Wording copied verbatim from a real transcript:
+#   ~/.claude/projects/G--git-claude-code-toolkit/<session>/subagents/
+#   agent-a003c937d78f9f557.jsonl
+mktranscript() { # <path>
+  node -e '
+const fs=require("fs");
+const rows=[
+ {type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
+   content:"<tool_use_error>Error: No such tool available: mcp__x__y. mcp__x__y is disabled for this session, in subagents as well as here.</tool_use_error>"}]}},
+ {type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
+   content:"PreToolUse:Bash hook error: [bash \u0027hooks/enforce-delegation.sh\u0027]: DELEGATE: the PO does not do hands-on work."}]}},
+ {type:"assistant",message:{role:"assistant",content:[{type:"text",text:"No such tool available in prose must not count"}]}}
+];
+fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
+' "$1"
+}
+
+expect() { # <label> <want> <got>
+  if [ "$2" = "$3" ]; then
+    printf 'PASS  %-42s (%s)\n' "$1" "$3"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$2" "$3"
+    fail=$((fail + 1))
+  fi
+}
+
+# --- 1. a transcript with failures appends exactly one ledger line
+mkdir -p "$RETROHOME"
+TRANSCRIPT="$TMPROOT/agent-fixture.jsonl"
+mktranscript "$TRANSCRIPT"
+mkstop "$PROJCWD" coder agent-abc123 "$TRANSCRIPT" \
+  | HOME="$RETROHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "retro-ledger exits 0" 0 $?
+expect "ledger writes to the slug path" 1 "$( [ -f "$SLUGDIR/retro.md" ] && echo 1 || echo 0 )"
+expect "ledger appends exactly one line" 1 "$(wc -l < "$SLUGDIR/retro.md" 2>/dev/null | tr -d ' ')"
+expect "ledger records the dead tool" 1 \
+  "$(grep -c 'dead=\[mcp__x__y\]' "$SLUGDIR/retro.md" 2>/dev/null)"
+expect "ledger records the hook basename" 1 \
+  "$(grep -c 'blocks=\[enforce-delegation.sh\]' "$SLUGDIR/retro.md" 2>/dev/null)"
+expect "ledger counts both failures" 1 \
+  "$(grep -c 'errors=2' "$SLUGDIR/retro.md" 2>/dev/null)"
+expect "ledger records agent type + id" 1 \
+  "$(grep -c '| coder | agent-abc123 |' "$SLUGDIR/retro.md" 2>/dev/null)"
+
+# --- 2. a missing transcript is silent: exit 0, nothing written
+CLEANHOME="$TMPROOT/retrohome-clean"
+mkdir -p "$CLEANHOME"
+mkstop "$PROJCWD" tester agent-none "$TMPROOT/does-not-exist.jsonl" \
+  | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "missing transcript exits 0" 0 $?
+expect "missing transcript writes nothing" 0 \
+  "$(find "$CLEANHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
+
+# --- 3. a clean transcript (no failures) writes nothing
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"all good"}]}}' \
+  > "$TMPROOT/agent-clean.jsonl"
+mkstop "$PROJCWD" coder agent-clean "$TMPROOT/agent-clean.jsonl" \
+  | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "clean transcript exits 0" 0 $?
+expect "clean transcript writes nothing" 0 \
+  "$(find "$CLEANHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
+
+# --- 4. malformed stdin must never break a SubagentStop
+printf '%s' '{not json' | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "malformed payload exits 0" 0 $?
+
+# --- 5. the slug rule is Claude Code's auto-memory rule, measured against
+# ~/.claude/projects: every one of : \ / . _ becomes '-'. Both the Windows and
+# the forward-slash spelling of the same cwd must land in the SAME directory.
+BSHOME="$TMPROOT/retrohome-bs"
+mkdir -p "$BSHOME"
+mkstop 'G:\git\retroproj' coder agent-bs "$TRANSCRIPT" \
+  | HOME="$BSHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "backslash cwd slugs identically" 1 \
+  "$( [ -f "$BSHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
+
+# --- 6. retro-brief prints exactly the last 10 lines of a 12-line ledger
+BRIEFHOME="$TMPROOT/retrohome-brief"
+BRIEFDIR="$BRIEFHOME/.claude/projects/G--git-retroproj/memory"
+mkdir -p "$BRIEFDIR"
+: > "$BRIEFDIR/retro.md"
+i=1; while [ "$i" -le 12 ]; do echo "entry-$i" >> "$BRIEFDIR/retro.md"; i=$((i + 1)); done
+BRIEFOUT="$TMPROOT/brief.out"
+mkstart "$PROJCWD" | HOME="$BRIEFHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+expect "retro-brief exits 0" 0 $?
+expect "brief prints the RETRO header" 1 "$(grep -c '^RETRO ' "$BRIEFOUT")"
+expect "brief prints 10 entries" 10 "$(grep -c '^entry-' "$BRIEFOUT")"
+expect "brief starts at entry-3" 1 "$(grep -c '^entry-3$' "$BRIEFOUT")"
+expect "brief drops entry-2" 0 "$(grep -c '^entry-2$' "$BRIEFOUT")"
+
+# --- 7. no ledger for this project: the brief is silent and still exits 0
+mkstart 'G:/git/no-such-project' | HOME="$BRIEFHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+expect "brief with no ledger exits 0" 0 $?
+expect "brief with no ledger prints nothing" 0 "$(wc -c < "$BRIEFOUT" | tr -d ' ')"
+
+# --- 8a. review round 1: a SUCCESSFUL tool_result whose output merely CONTAINS
+# "BLOCKED:" (reading hooks/*.sh, grepping this very file) is not a failure. Only
+# is_error results, or text that is itself a hook-block message, count.
+node -e '
+const fs=require("fs");
+const rows=[
+ {type:"user",message:{role:"user",content:[{type:"tool_result",
+   content:"1: echo \u0027BLOCKED: use the MCP tool\u0027\n2: BLOCKED: another quoted line\n"}]}},
+ {type:"user",message:{role:"user",content:[{type:"tool_result",
+   content:"file listing mentioning hooks/no-push-main.sh and DELEGATE: in prose"}]}}
+];
+fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
+' "$TMPROOT/agent-falsepos.jsonl"
+FPHOME="$TMPROOT/retrohome-fp"
+mkdir -p "$FPHOME"
+mkstop "$PROJCWD" coder agent-fp "$TMPROOT/agent-falsepos.jsonl" \
+  | HOME="$FPHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "successful output is not a failure" 0 \
+  "$(find "$FPHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
+
+# ... but a real hook block still counts even without is_error, and its script
+# name comes from the bracketed hook command, not from any .sh token in the text.
+node -e '
+const fs=require("fs");
+const rows=[
+ {type:"user",message:{role:"user",content:[{type:"tool_result",
+   content:"PreToolUse:Bash hook error: [bash \u0027hooks/no-push-main.sh\u0027]: BLOCKED: push to main."}]}},
+ {type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
+   content:"<tool_use_error>Error: No such tool available: mcp__x__y. Mentions scripts/test-hooks.sh in prose.</tool_use_error>"}]}}
+];
+fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
+' "$TMPROOT/agent-block.jsonl"
+BKHOME="$TMPROOT/retrohome-block"
+mkdir -p "$BKHOME"
+mkstop "$PROJCWD" coder agent-bk "$TMPROOT/agent-block.jsonl" \
+  | HOME="$BKHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+BKLEDGER="$BKHOME/.claude/projects/G--git-retroproj/memory/retro.md"
+expect "hook block counts without is_error" 1 \
+  "$(grep -c 'errors=2' "$BKLEDGER" 2>/dev/null)"
+expect "block name comes from the hook command" 1 \
+  "$(grep -c 'blocks=\[no-push-main.sh\]' "$BKLEDGER" 2>/dev/null)"
+
+# --- 8b. review round 1: the ledger line is bounded. 12 distinct dead tools must
+# render as 5 names + a "+7 more" marker, not a 12-entry line.
+node -e '
+const fs=require("fs");
+const rows=[];
+for (let i=1;i<=12;i++){
+  rows.push({type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
+    content:"<tool_use_error>Error: No such tool available: mcp__t"+String(i).padStart(2,"0")+"__x.</tool_use_error>"}]}});
+}
+fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
+' "$TMPROOT/agent-many.jsonl"
+MANYHOME="$TMPROOT/retrohome-many"
+mkdir -p "$MANYHOME"
+mkstop "$PROJCWD" coder agent-many "$TMPROOT/agent-many.jsonl" \
+  | HOME="$MANYHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+MANYLEDGER="$MANYHOME/.claude/projects/G--git-retroproj/memory/retro.md"
+expect "dead list is capped at 5 names" 1 \
+  "$(grep -c 'dead=\[mcp__t01__x,mcp__t02__x,mcp__t03__x,mcp__t04__x,mcp__t05__x,+7 more\]' "$MANYLEDGER" 2>/dev/null)"
+expect "capped line stays short" 1 \
+  "$( [ "$(wc -c < "$MANYLEDGER" 2>/dev/null | tr -d ' ')" -lt 200 ] && echo 1 || echo 0 )"
+
+# --- 8c. review round 1: retro-brief truncates each entry, so one pathological
+# ledger line cannot flood the session context it is injected into.
+LONGHOME="$TMPROOT/retrohome-long"
+LONGDIR="$LONGHOME/.claude/projects/G--git-retroproj/memory"
+mkdir -p "$LONGDIR"
+node -e 'require("fs").writeFileSync(process.argv[1],"X".repeat(500)+"\n")' "$LONGDIR/retro.md"
+mkstart "$PROJCWD" | HOME="$LONGHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/long.out" 2>/dev/null
+expect "brief truncates a 500-char entry" 1 \
+  "$( [ "$(awk 'NR==2{print length($0)}' "$TMPROOT/long.out")" -le 200 ] && echo 1 || echo 0 )"
+
+# --- 8d. review round 1: a POSIX-style HOME (/c/tmp/...) must not be resolved
+# drive-relative by Windows node — that would silently write the ledger outside
+# the auto-memory tree. The round-trip fixture cannot catch this: both hooks
+# would share the bug. Asserted with the same spelling bash uses, so the case
+# holds on Windows (where /c/x is C:\x) and on POSIX alike.
+POSIXHOME="/c/tmp/claude-retro-fixture"
+rm -rf "$POSIXHOME"
+mkstop "$PROJCWD" coder agent-posix "$TRANSCRIPT" \
+  | HOME="$POSIXHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "POSIX-style HOME resolves correctly" 1 \
+  "$( [ -f "$POSIXHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
+rm -rf "$POSIXHOME"
+
+# CLAUDE_MEMORY_HOME overrides HOME for both hooks (the shared base-dir helper).
+OVERHOME="$TMPROOT/retrohome-override"
+mkdir -p "$OVERHOME"
+mkstop "$PROJCWD" coder agent-over "$TRANSCRIPT" \
+  | HOME="$TMPROOT/retrohome-ignored" CLAUDE_MEMORY_HOME="$OVERHOME" \
+    bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+expect "CLAUDE_MEMORY_HOME wins over HOME" 1 \
+  "$( [ -f "$OVERHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
+mkstart "$PROJCWD" | HOME="$TMPROOT/retrohome-ignored" CLAUDE_MEMORY_HOME="$OVERHOME" \
+  bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/over.out" 2>/dev/null
+expect "brief honours CLAUDE_MEMORY_HOME too" 1 "$(grep -c 'agent-over' "$TMPROOT/over.out")"
+
+# --- 8. round trip: the two hooks must agree on the slug, or the feature is a
+# silent no-op in production. Ledger writes, brief reads, same cwd, same HOME.
+RTHOME="$TMPROOT/retrohome-rt"
+mkdir -p "$RTHOME"
+mkstop "$PROJCWD" code-reviewer agent-rt99 "$TRANSCRIPT" \
+  | HOME="$RTHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+expect "round trip: brief replays the entry" 1 "$(grep -c 'agent-rt99' "$BRIEFOUT")"
+
+# ===========================================================================
 echo
 echo "----------------------------------------------------------------"
 echo "test-hooks.sh: $pass passed, $fail failed"
