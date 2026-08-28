@@ -181,6 +181,28 @@ check "stub allows a push to main"       "$H" 0 "$(mkjson Bash 'git push origin 
 check "stub allows gh pr merge"          "$H" 0 "$(mkjson Bash 'gh pr merge 5' "$MAINREPO")"
 
 # ===========================================================================
+# read-size-gate.sh — newly REGISTERED in settings.json by v2.0 (PreToolUse on
+# Read). Its payload carries tool_input.file_path, not tool_input.command, so a
+# regression here would misfire on every Read downstream.
+# ===========================================================================
+echo
+echo "=== hooks/read-size-gate.sh (newly registered on Read) ==="
+H=hooks/read-size-gate.sh
+mkread() { # <file_path> [limit]
+  node -e 'const ti={file_path:process.argv[1]}; if(process.argv[2])ti.limit=Number(process.argv[2]);
+console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:"Read",tool_input:ti,cwd:process.argv[3]}))' \
+    "$1" "${2:-}" "$ROOT"
+}
+SMALL="$TMPROOT/small.txt"; : > "$SMALL"; for i in $(seq 1 20); do echo "line $i" >> "$SMALL"; done
+BIG="$TMPROOT/big.txt";     : > "$BIG";   for i in $(seq 1 900); do echo "line $i" >> "$BIG"; done
+
+check "small file passes"                "$H" 0 "$(mkread "$SMALL")"
+check "big file is blocked"              "$H" 2 "$(mkread "$BIG")"
+check "big file with a small limit"      "$H" 0 "$(mkread "$BIG" 100)"
+check "missing file is not blocked"      "$H" 0 "$(mkread "$TMPROOT/does-not-exist.txt")"
+check "non-Read payload passes through"  "$H" 0 "$(mkjson Bash 'echo hi' "$MAINREPO")"
+
+# ===========================================================================
 echo
 echo "----------------------------------------------------------------"
 echo "test-hooks.sh: $pass passed, $fail failed"
