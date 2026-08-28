@@ -1,5 +1,64 @@
 # Changelog
 
+## v2.0-pr5 — 2026-08-28
+
+**Commands became skills, and most of them stopped existing.** In six weeks of transcripts the toolkit's 12 skills were invoked **0 times** and its 23 slash commands close to it — `/sync-template` 22, `/challenge` 10, `/commit` and `/sprint` a handful, the rest zero. All 493 measured skill invocations went to `superpowers:*` and `karpathy-guidelines`. Anthropic has since made `.claude/commands/<n>.md` equivalent to `.claude/skills/<n>/SKILL.md`, so there is one artifact type to keep instead of two. 23 commands + 12 skills → **7 skills, no `commands/` directory**.
+
+### Skills: kept, migrated, deleted
+
+- **Kept:** `sync-template`, `contribute-upstream`, `karpathy-guidelines` (its `## Toolkit working preferences (developer agents)` section from PR4 is untouched), `mcp-usage` (description trimmed 496 → 172 chars; its table of pointers to now-deleted skills was repointed at `/code-review` and `superpowers:*`).
+- **Migrated command → skill:** `challenge`, `sprint`, `commit`. `$ARGUMENTS` works unchanged in a skill body. `commit` was rewritten for **native git** (`git add` / `git diff --cached` / `git commit`) since PR1 dropped the MCP-git mandate, keeping its verification checklist. `sprint` was rewritten for the **subagents-only** model from PR2: no teammate pings, `background: true` spawns, final-message reporting; rebase-before-merge and gate-before-merge rules kept.
+- **`disable-model-invocation: true`** on `sync-template`, `contribute-upstream`, `sprint`, `commit` — these must run only when the user types the slash command, never on the model's initiative. `challenge` stays model-invocable on purpose: challenging a plan unprompted is the behaviour we want.
+- **Deleted (skills):** `arch-analyze`, `code-review`, `explaining-code`, `fix-errors`, `impact-analysis`, `orient`, `refactor`, `security-audit`, including their `evals/` directories.
+- **Deleted (commands):** `add-tests`, `api-design`, `arch-doc`, `build`, `coverage-report`, `dependency-audit`, `dotnet-analyze`, `ef-check`, `godot-run`, `issue-create`, `new-feature`, `nuget-audit`, `pre-release`, `skill-eval`, `skill-improve`, `spec-to-issues`, `tech-debt`, `test`, `traceability`, `user-story`. The `commands/` directory is gone.
+- **What replaced them:** `/build` and `/test` → the `Gate:` mechanism (`bash hooks/run-gate.sh`), which already had to be the single source of build/test commands for `gate-before-merge.sh` to work. `/skill-eval` + `/skill-improve` and the hand-rolled `evals/evals.json` convention → the official **`skill-creator@claude-plugins-official`** plugin (flipped to `true` in `settings.json`), which ships eval authoring, LLM grading, and benchmarking. `fix-errors` → `superpowers:systematic-debugging`. `code-review` / `security-audit` → the bundled `/code-review` plugin and `superpowers:requesting-code-review`. `arch-analyze` / `impact-analysis` / `explaining-code` / `orient` → the `Explore` subagent plus `superpowers:writing-plans`.
+- **No binding broke.** The `AGENT_TEAM.md` Spawn-Prompt Binding Table and `hooks/require-skills-block.sh` reference only `karpathy-guidelines` and `superpowers:*`; the `code-reviewer` row was already *(none — review is the agent's core job)*. `require-skills-block.sh` is therefore unchanged — and had to be, since `verify-template-consistency.sh` diffs it against the table.
+
+### Reference sweep
+
+Every prose reference to a deleted artifact was replaced or removed: `templates/*/CLAUDE.local.md` (`fix-errors` ×6 → `superpowers:systematic-debugging`; `security-audit` ×2 → `/code-review`), `docs/verification.md` (`/orient` → `/challenge` as the skill smoke-test; `/build` → `bash hooks/run-gate.sh`), `docs/architecture.md` and `README.md` inventory counts, and `user-level-reference/README.md` (rewritten). Remaining matches for the sweep regex are all non-references: `tech-debt` as a **GitHub issue label** in `github-issues` mode, `refactor` inside the conventional-commit list `feat/fix/refactor/test`, and one English "a refactor" in `Explore.md`.
+
+### user-level CLAUDE.md — 8,637 → 4,974 B (−42%)
+
+- **The `# context-mode — MANDATORY routing rules` block (65 lines) is gone.** It mandated `ctx_batch_execute` as the PRIMARY tool; that tool failed **28.6%** of its calls in the measured window. Worse, subagents made **164 calls** to `ctx_*` tools they do not have — the block was being inherited into prompts for agents where it was pure hallucination bait. Three lines replace it: the plugin is optional, its own SessionStart hook carries its guidance, and subagents have no `ctx_*` tools.
+- **`ENABLE_TOOL_SEARCH` removed the original rationale.** MCP tool definitions are deferred by default now, so the tool-bloat problem context-mode was mitigating no longer exists at session start.
+- **Read & Search table de-ctx-ed:** analyze-one-file → `Read` with `limit`/`offset` (`hooks/read-size-gate.sh` caps at 500 lines and hands back the next offset), multi-file research → the `Explore` subagent on haiku. The 22%-of-context statistic keeps its single authoritative copy, now noting the cap is enforced mechanically.
+
+### Toolkit root CLAUDE.md — 3,842 → 1,848 B
+
+It was a verbatim copy of the context-mode block: zero repo-specific content in the repo's own always-loaded file. Replaced with toolkit facts — what the repo is, the six variants, the verify scripts as the gate, the byte-identity invariant and "edit general then `cp`", LF, the PowerShell/UTF-8 trap, and the `docs/plans/` convention.
+
+### user-level settings.json
+
+- **`permissions.autoMode.environment` added.** `defaultMode: auto` (PR1) routes undecided calls through a classifier; `environment` is the prose it reasons over. Four lines: `$defaults` plus primary use, trusted repos, and what counts as a sensitive remote target. `autoMode` is **User/managed scope only** — a project cannot ship one, which is the right polarity: a hostile repo must not be able to widen its own trust.
+- **Do not route the classifier through a model proxy.** 83 classifier outages were observed when it was; `cc-proxy` users must exempt it, as with `advisorModel`.
+- `skill-creator@claude-plugins-official` → `true`.
+- `Bash(*)`, `WebFetch(*)`, `mcp__git-tools__*` confirmed absent (removed in PR1); `deny: Read(.env*)` kept. `CLAUDE_CODE_DISABLE_1M_CONTEXT` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` **kept and annotated** — they are not redundant on the MAX plan; dropping them clamps `/context` back to 200k. `alwaysThinkingEnabled` kept with a note that it has no effect on Fable 5.
+- `settings-reference.md`: the *Full Settings JSON* block was three PRs stale (it still showed `Bash(*)`, `defaultMode: dontAsk`, and 14 enabled plugins) — it is now taken verbatim from the shipped file. Hook section rewritten for the v2.0 set (`no-push-main`, `tier-before-coder`, `bash-output-guard`, `read-size-gate`) with `block-bash-vcs` marked retired at user level, and `ENABLE_TOOL_SEARCH` documented as the replacement for context-mode's tool-bloat rationale.
+
+### Downstream migration
+
+Copy from `user-level-reference/` in this repo to `~/.claude/`:
+
+```bash
+cp    user-level-reference/CLAUDE.md      ~/.claude/CLAUDE.md
+cp    user-level-reference/settings.json  ~/.claude/settings.json
+cp -r user-level-reference/skills/.       ~/.claude/skills/
+cp -r user-level-reference/agents/.       ~/.claude/agents/
+cp    user-level-reference/hooks/*.sh     ~/.claude/hooks/
+cp    hooks/no-push-main.sh hooks/tier-before-coder.sh ~/.claude/hooks/
+```
+
+Then:
+
+1. **`rm -rf ~/.claude/commands/`** — every surviving command is a skill now, and a leftover command file shadows its skill.
+2. **Delete the removed skill directories:** `rm -rf ~/.claude/skills/{arch-analyze,code-review,explaining-code,fix-errors,impact-analysis,orient,refactor,security-audit}`.
+3. **Install `skill-creator@claude-plugins-official`** for eval authoring and grading (`settings.json` already enables it).
+4. **Remove the `# context-mode — MANDATORY routing rules` block from every project `CLAUDE.md`** you own, including projects bootstrapped from an earlier toolkit version. If you still run the plugin, its SessionStart hook supplies its own guidance.
+5. Start a new session — settings and skills load per session.
+
+Until step 1–5 are done, `scripts/verify-user-level-drift.sh` will report DRIFT. That is expected: the reference leads, the live copy follows.
+
 ## v2.0-pr4 — 2026-08-28
 
 **CLAUDE.md is facts; conventions are path-scoped.** A C# style rule was being loaded on every turn of every session, including the ones that never opened a `.cs` file. `.claude/rules/*.md` files with a `paths:` frontmatter glob list load only when Claude reads or edits a matching file, and are re-injected after compaction — so the conventions arrive exactly when they are actionable.

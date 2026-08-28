@@ -1,6 +1,7 @@
 ---
 name: sync-template
 description: Pull template updates into the current project. Triggers on /sync-template.
+disable-model-invocation: true
 ---
 
 # Sync Template (Downstream)

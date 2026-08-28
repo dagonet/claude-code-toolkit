@@ -97,8 +97,8 @@ Claude MUST:
 2. Fix errors in priority order (first error first)
 3. Re-run the build until clean
 
-**Skill available:** The `fix-errors` skill provides systematic error parsing,
-prioritization by error code, and iterative fixing with rebuild verification.
+**Skill available:** `superpowers:systematic-debugging` — hypothesis-driven diagnosis
+before changing code; re-run `bash hooks/run-gate.sh` to verify the fix.
 
 ---
 

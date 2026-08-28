@@ -104,8 +104,8 @@ Claude MUST:
 2. Fix import errors first (dependency order), then logic errors
 3. Re-run the build/tests until clean
 
-**Skill available:** The `fix-errors` skill provides systematic error parsing,
-prioritization by error code, and iterative fixing with rebuild verification.
+**Skill available:** `superpowers:systematic-debugging` — hypothesis-driven diagnosis
+before changing code; re-run `bash hooks/run-gate.sh` to verify the fix.
 
 ---
 

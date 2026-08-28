@@ -109,8 +109,8 @@ Claude MUST NOT:
 - Paste raw build output
 - Diagnose from partial logs
 
-**Skill available:** The `fix-errors` skill provides systematic error parsing,
-prioritization by error code, and iterative fixing with rebuild verification.
+**Skill available:** `superpowers:systematic-debugging` — hypothesis-driven diagnosis
+before changing code; re-run `bash hooks/run-gate.sh` to verify the fix.
 
 ---
 
@@ -153,8 +153,8 @@ Claude SHOULD:
 2. Call `nuget_list_outdated` to find available updates
 3. Report findings with severity and recommendations
 
-**Skill available:** The `security-audit` skill provides comprehensive security review
-including NuGet vulnerabilities, secrets scanning, and OWASP Top 10 code pattern checks.
+**Skill available:** `/code-review` (bundled `code-review` plugin) runs a security pass —
+NuGet vulnerabilities, secrets scanning, and OWASP Top 10 code pattern checks.
 
 ---
 

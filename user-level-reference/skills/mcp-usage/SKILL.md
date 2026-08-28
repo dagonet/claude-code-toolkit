@@ -1,6 +1,6 @@
 ---
 name: mcp-usage
-description: MCP tool preferences and preprocessing procedures — Ollama warm-up, digesting large inputs, structured extraction, project orientation, code-quality and security sweeps, Context7 lookups, headless batch runs, and the default MCP-first workflow. Triggers when about to digest a large file or log, extract structured data from prose, orient in an unfamiliar repo, look up an unfamiliar library API, run a batch operation across repos, or when unsure which MCP server to prefer over a shell command.
+description: Occasional MCP procedures — use when digesting a large input, extracting structured data, mapping an unfamiliar repo, looking up a library API, or running a headless batch.
 ---
 
 # MCP Usage
@@ -39,20 +39,18 @@ Do not hand-infer structure when extraction is available. If `extract_json` retu
 
 ## Project orientation
 
-Orienting in a repo: call `map_project_structure` (or `map_dotnet_structure` in .NET repos) and let the returned structure decide which files to open. Avoid repeated manual directory walks and opening files without structural justification.
-
-The `orient` skill wraps this in a fuller workflow (structure mapping, architecture detection, issue identification).
+Getting your bearings in a repo: call `map_project_structure` (or `map_dotnet_structure` in .NET repos) and let the returned structure decide which files to open. For open-ended exploration, dispatch the `Explore` subagent instead of walking directories by hand — it returns compressed locations, not raw file contents.
 
 ## Code quality & security sweeps
 
-Prefer the dedicated skills over ad-hoc reading:
+Prefer the bundled and superpowers skills over ad-hoc reading:
 
 | Need | Skill |
 |---|---|
-| Refactoring workflow | `refactor` |
-| Review checklist (correctness, design, security, performance) | `code-review` |
-| Architecture patterns + dependency rules | `arch-analyze` |
-| Secrets scan + OWASP Top 10 patterns | `security-audit` |
+| Review checklist (correctness, design, security, performance) | `/code-review` (bundled `code-review` plugin) |
+| Requesting or digesting a review | `superpowers:requesting-code-review` / `superpowers:receiving-code-review` |
+| Diagnosing a failure before changing code | `superpowers:systematic-debugging` |
+| Environment / config sanity check | `/doctor` (bundled) |
 
 In .NET repos, `analyze_method_complexity`, `find_god_classes`, and `find_large_files` give complexity hotspots; `nuget_check_vulnerabilities` and `nuget_list_outdated` cover dependencies.
 

@@ -4,6 +4,6 @@
 # Prevent Claude Code from auto-loading template CLAUDE.local.md files
 CLAUDE.local.md
 
-# Local context-mode routing rules at repo root (machine-specific, not template content)
-/CLAUDE.md
+# /CLAUDE.md was ignored while it held machine-specific context-mode routing rules.
+# As of v2.0-pr5 it holds toolkit facts (layout, gate, invariants) and is tracked.
 

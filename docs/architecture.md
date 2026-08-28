@@ -222,9 +222,9 @@ claude-code-toolkit/
 ├── mcp-servers/
 │   └── HOWTO.md                           # MCP server installation guide
 └── user-level-reference/                  # ~/.claude/ reference for new machines
-    ├── agents/                            # 7 generic agent definitions
-    ├── commands/                          # 21 slash commands
-    ├── skills/                            # 11 auto-invoked skills
+    ├── agents/                            # generic agent definitions (incl. Explore)
+    ├── skills/                            # 7 skills (commands were merged into skills)
+    ├── hooks/                             # user-level hook scripts
     ├── .mcp.json.template                 # MCP server config template
     └── settings-reference.md              # Annotated settings reference
 ```
