@@ -1,2 +1,2 @@
-1.5
-Working Preferences trimmed 18 bullets to 11 — five restated rules a hook or the harness already enforces, two carried no behavioural content. Always-loaded config now 32,538 B, down 20% from the 41,167 B baseline.
+2.0
+The git ban became a git gate, agent teams gave way to Agent-tool subagents, every agent now declares its model and effort, language conventions moved into path-scoped rules, and 23 commands plus 12 skills became 7 skills. Always-loaded config now 29,358 B, down 29% from the 41,167 B baseline; 174 consistency assertions and 133 hook fixtures.

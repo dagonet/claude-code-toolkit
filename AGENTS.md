@@ -48,6 +48,13 @@ Ask the user which variant to use. If they don't know, summarize the choices wit
 | `java` | Java (Maven or Gradle, Spring Boot assumed as default) |
 | `python` | Python 3.11+ (pip, Poetry, or uv) |
 
+### What lands in the target project (v2.0)
+
+- **9 agents** in `general` — `Explore` (haiku), `architect`, `code-reviewer`, `coder`, `doc-generator`, `ops`, `requirements-engineer`, `test-writer`, `tester` — **10** in every other variant, which add a language coder (`dotnet-coder` / `rust-coder` / `java-coder` / `python-coder`). Each agent declares its own `model:` and `effort:`; do not pass `model:` in an Agent call, it silently overrides the file.
+- **`.claude/rules/*.md`** — path-scoped language conventions with a `paths:` frontmatter glob list, loaded only when Claude touches a matching file. Every variant except `general` ships at least one; `general` has no language of its own. `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` inside them are substituted by the script like any other template file.
+- **`hooks/*.sh`** — 15 enforcement scripts copied from the toolkit root (variants do not carry their own copies).
+- **No `commands/` directory.** Slash commands are skills now; the 7 skills live at user level (`~/.claude/skills/`), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
+
 ---
 
 ## 4. Interactive Q&A
@@ -120,8 +127,9 @@ After the script exits 0:
 
 1. **Manifest written.** Confirm `.claude-setup-manifest.json` exists in the target directory.
 2. **No unfilled placeholders.** Run `grep -r '{{' <target-dir>` — expect no matches in `.claude/`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`. Stray `{{` inside code or 3rd-party docs is fine.
-3. **Discoverability sanity.** `ls -la <target-dir>/.claude/` shows `settings.json` and `agents/`.
-4. **Suggest next step.** Recommend the user runs the project's build command once to confirm the toolchain works — but do not run it yourself unless asked.
+3. **Discoverability sanity.** `ls -la <target-dir>/.claude/` shows `settings.json` and `agents/`, plus `rules/` on every variant except `general`.
+4. **Surface the `autoMode.environment` snippet.** The script prints one at the end of both the dry run and the real run. `permissions.autoMode` is **User/managed scope only** — a project cannot ship one, which is deliberate: a repo must not be able to widen its own trust. Show the user the line and tell them to paste it into `permissions.autoMode.environment` in `~/.claude/settings.json`. Do not write it into the project.
+5. **Suggest next step.** Recommend the user runs the project's build command once to confirm the toolchain works — but do not run it yourself unless asked.
 
 If any check fails, report the specific failure verbatim — do not attempt to patch the target directory by hand. Re-running the setup script with `--force` is the correct remediation; surface that option to the user.
 
@@ -131,5 +139,5 @@ If any check fails, report the specific failure verbatim — do not attempt to p
 
 - **Do not** derive or substitute `BUILD_COMMAND` / `TEST_COMMAND` / `FORMAT_COMMAND` / `LINT_COMMAND` manually. The script handles that based on `--build-tool` / `--package-manager` / variant defaults.
 - **Do not** edit `.gitignore` by hand. The script merges a variant-appropriate `.gitignore` with any existing one.
-- **Do not** generate `.mcp.json` for the target project. MCP servers are user-level (`~/.claude.json`); no per-project `.mcp.json` ships with any variant.
+- **Do not** hand-write `.mcp.json` for the target project. The script generates `<target>/.mcp.json` itself when the variant has project-scope servers (`dotnet-tools`, `rust-tools`, `windows-mcp`, `sqlite`), and never clobbers an existing root file without `--force`. Everything else is user-level (`~/.claude.json`).
 - **Do not** install language toolchains (dotnet, poetry, cargo, mvn, etc.). Prerequisites are the user's responsibility — refer them to their OS package manager.

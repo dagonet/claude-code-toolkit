@@ -358,6 +358,27 @@ if [[ -d "$SCRIPT_DIR/hooks" ]]; then
     done < <(find "$SCRIPT_DIR/hooks" -type f -name '*.sh' -print0 | sort -z)
 fi
 
+# --- autoMode.environment snippet -------------------------------------------
+#
+# `permissions.autoMode` is User/managed scope only: a project cannot ship one,
+# which is the right polarity (a hostile repo must not widen its own trust). So
+# the script cannot write this anywhere useful — it prints a line for the user
+# to paste into ~/.claude/settings.json, exactly like the legacy .mcp.json
+# warning above tells the user what to move by hand.
+print_automode_snippet() {
+    local remote="$REPO_URL"
+    if [[ -z "$remote" ]] && [[ -d "$TARGET_DIR/.git" ]]; then
+        remote="$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)"
+    fi
+    [[ -z "$remote" ]] && remote="<your remote URL>"
+
+    echo "autoMode.environment entry for this project (User/managed scope — cannot live in the project):"
+    echo "  \"**Trusted repo**: \`$TARGET_DIR\` and its remote \`$remote\` (private) — confidential material may be committed here\""
+    echo ""
+    echo "  Append it to permissions.autoMode.environment in ~/.claude/settings.json."
+    echo "  See user-level-reference/settings.json for the shape."
+}
+
 # --- Dry run ---
 if [[ "$DRY_RUN" == true ]]; then
     echo ""
@@ -404,10 +425,12 @@ if [[ "$DRY_RUN" == true ]]; then
     mcp_preview="$(build_project_mcp_json)"
     if [[ -n "$mcp_preview" ]]; then
         echo "Project-level .mcp.json (would be generated at repo root):"
-        printf '%s' "$mcp_preview" | sed 's/^/    /'
+        printf '%s\n' "$mcp_preview" | sed 's/^/    /'
     else
         echo "Project-level .mcp.json: (not generated - no entries for this variant/flags)"
     fi
+    echo ""
+    print_automode_snippet
     echo ""
     echo "=== END DRY RUN ==="
     exit 0
@@ -625,5 +648,8 @@ done
 if [[ "$has_remaining" == false ]]; then
     echo "All placeholders replaced."
 fi
+
+echo ""
+print_automode_snippet
 
 echo ""

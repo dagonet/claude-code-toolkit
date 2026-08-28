@@ -682,6 +682,42 @@ for v in $VARIANTS; do
 done
 
 # ---------------------------------------------------------------------------
+# 21. user-level hook mirror is byte-identical to the repo-root originals.
+#
+#     `user-level-reference/hooks/` is a copy source for `~/.claude/hooks/`, so
+#     every file under it must be the same bytes as `hooks/<same relative path>`.
+#     A drifted copy is worse than a missing one: the user-level gate would
+#     silently enforce an older contract than the project-level gate.
+#
+#     Glob-derived, not a hard-coded list — mirroring one more hook needs no
+#     edit here, and deleting a root hook while leaving its mirror fails.
+#     `lib/` is included, which is why the walk is `find`-based and compares
+#     relative paths rather than basenames.
+# ---------------------------------------------------------------------------
+echo
+ULH=user-level-reference/hooks
+if [ ! -d "$ULH" ]; then
+  ko "hook mirror: $ULH missing — the user-level copy step in the README has nothing to copy"
+else
+  mirror_files=$(find "$ULH" -type f | sort)
+  if [ -z "$mirror_files" ]; then
+    ko "hook mirror: $ULH is empty"
+  else
+    for mf in $mirror_files; do
+      rel="${mf#"$ULH"/}"
+      root="hooks/$rel"
+      if [ ! -f "$root" ]; then
+        ko "hook mirror: $mf has no root original at $root — a mirror of a deleted hook"
+      elif cmp -s "$root" "$mf"; then
+        ok "hook mirror: $rel is byte-identical to $root"
+      else
+        ko "hook mirror: $rel differs from $root — run: cp $root $mf"
+      fi
+    done
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

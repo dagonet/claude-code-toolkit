@@ -25,7 +25,13 @@ Follow these steps to configure Claude Code on a fresh machine:
    Copy the skill directories from `skills/` in this directory to `~/.claude/skills/`, preserving the folder structure (each skill lives in its own subdirectory with a `SKILL.md` file). Then **delete `~/.claude/commands/`** — every surviving command now lives as a skill, and a leftover command file shadows its skill.
 
 5. **Copy hooks to `~/.claude/hooks/`**
-   Copy the `.sh` files from `hooks/` in this directory to `~/.claude/hooks/`, **and `no-push-main.sh` + `tier-before-coder.sh` from the toolkit root `hooks/`** — `settings.json` binds all four at `~/.claude/hooks/…`. Those two root-sourced scripts are registered fail-closed (`127` → `exit 2`), so a missing copy blocks every Bash and every Agent call; copy them before the settings file. The two in this directory (`read-size-gate.sh`, `bash-output-guard.sh`) cannot block and degrade quietly.
+   ```bash
+   cp -r user-level-reference/hooks/. ~/.claude/hooks/
+   ```
+
+   One recursive copy is enough — since v2.0 this directory **mirrors** the fail-closed hooks from the toolkit root, so nothing has to be fetched from a second place. `settings.json` binds `no-push-main.sh` and `tier-before-coder.sh` fail-closed (`127` → `exit 2`), so a missing copy blocks every Bash and every Agent call; copy the hooks before the settings file. `read-size-gate.sh` and `bash-output-guard.sh` cannot block and degrade quietly. `gate-before-merge.sh` and `pre-commit-test.sh` ship here as files only — they are not bound at user level, because their project-level bindings run `bash hooks/…` relative to a project root. `lib/git-cmd.sh` is sourced by the gates via `$(dirname "$0")/lib/…` and must keep its subdirectory.
+
+   The mirror is asserted byte-identical to the toolkit root by `scripts/verify-template-consistency.sh` — edit `hooks/<name>.sh` at the root and re-copy; never edit the mirror.
 
 6. **Configure MCP servers**
    `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
@@ -89,7 +95,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 ### Hooks
 
-`hooks/` holds the machine-wide hook scripts: `bash-output-guard.sh` and `read-size-gate.sh`. `settings.json` also binds `no-push-main.sh` and `tier-before-coder.sh` at `~/.claude/hooks/…`; copy those two from the toolkit root `hooks/` directory, which is the canonical source for every enforcement hook. A hook script missing at runtime exits `127`; the wrappers in `settings.json` translate that to `exit 2` so enforcement fails closed rather than silently off.
+`hooks/` mirrors, byte for byte, the subset of the toolkit-root `hooks/` directory that is useful at user level: the fail-open `bash-output-guard.sh` and `read-size-gate.sh`, the fail-closed `no-push-main.sh` and `tier-before-coder.sh` that `settings.json` binds, the two git gates `pre-commit-test.sh` and `gate-before-merge.sh` (files only — not bound at user level), and `lib/git-cmd.sh`, which the gates source. The toolkit root remains the canonical source; `scripts/verify-template-consistency.sh` asserts every file here is identical to `hooks/<same relative path>`, so a drifted mirror is a red build rather than a silently older contract. A hook script missing at runtime exits `127`; the wrappers in `settings.json` translate that to `exit 2` so enforcement fails closed rather than silently off.
 
 ### MCP Config Template
 

@@ -26,7 +26,19 @@ After applying a template, walk through this checklist to confirm everything is 
 
 10. **For Python**: verify `pytest` runs and `ruff check` passes
 
-11. **Spawn a test team** to verify `AGENT_TEAM.md` workflow (assign a T1 task and confirm PO role, agent dispatch, and review cycle)
+11. **Run one T1 task end to end** to verify the `AGENT_TEAM.md` workflow — the PO plans, spawns a single `coder` subagent with the Agent tool, and reads its final message. Agent teams and named teammates were retired in v2.0; parallelism comes from spawning several Agent calls, not from a team.
+
+## Verifying the toolkit repo itself
+
+Three scripts run from the toolkit root. All three are safe to run at any time and none of them write to your project.
+
+| Script | Green means | Red means |
+|---|---|---|
+| `bash scripts/verify-template-consistency.sh` | the six variants agree on everything that must be identical, and every literal a hook greps still exists | a real regression — fix before committing |
+| `bash scripts/test-hooks.sh` | every hook decides correctly on real stdin fixtures, including the must-**not**-block cases | a real regression — fix before committing |
+| `bash scripts/verify-user-level-drift.sh` | your live `~/.claude/` matches `user-level-reference/` | usually just *"you have not synced yet"* — see the polarity note below |
+
+**`verify-user-level-drift.sh` polarity: the reference leads, the live copy follows.** The script compares `user-level-reference/` against your `~/.claude/` and **exits 1 whenever they differ**, without judging which side is newer. Immediately after a release that changed `user-level-reference/`, a red run is the *expected* state and simply means the migration steps in `CHANGELOG.md` have not been applied yet — perform them, then re-run and expect green. It is red-by-design in that window; it is not a build failure of the toolkit, and CI does not gate on it. (A `--expect-drift` / WARN mode that would let the two cases be told apart mechanically is a known follow-up, not shipped.)
 
 ## Troubleshooting
 

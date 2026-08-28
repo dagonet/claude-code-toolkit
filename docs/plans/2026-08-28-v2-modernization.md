@@ -119,3 +119,49 @@ Every PR: `bash scripts/verify-template-consistency.sh` green; `cp` general→5 
 - PR3 `updatedInput` whole-object bug could drop `offset` → fixture-tested. Explore quality change → delete file to roll back.
 - PR4 CONFLICTs downstream are expected; migration note covers it.
 - PR6 auto mode needs a supported plan/model; fallback documented (`/permissions` → `acceptEdits`).
+
+## Outcome
+
+Shipped as six PRs on `main`, 2026-08-28 / 2026-08-29.
+
+| PR | Title | # | SHA |
+|---|---|---|---|
+| PR1 | gate native git/gh CLI instead of banning it; consolidated settings.json | [#52](https://github.com/dagonet/claude-code-toolkit/pull/52) | `0da3f1d` |
+| PR2 | subagents-only workflow; retire agent-teams machinery; retro ledger | [#53](https://github.com/dagonet/claude-code-toolkit/pull/53) | `6b3b144` |
+| PR3 | model/effort tiers, custom haiku Explore, allowlist invariant, native context hooks | [#54](https://github.com/dagonet/claude-code-toolkit/pull/54) | `dd2cd8e` |
+| PR4 | path-scoped `.claude/rules/` for language conventions; CLAUDE.md diet | [#55](https://github.com/dagonet/claude-code-toolkit/pull/55) | `549453c` |
+| PR5 | user-level: commands→skills cull, CLAUDE.md without context-mode, auto-mode settings | [#56](https://github.com/dagonet/claude-code-toolkit/pull/56) | `6f72a06` |
+| PR6 | release v2.0 | — | this commit (branch `v2/pr6-release`) |
+
+### Measured before / after
+
+| | before (v1.5) | after (v2.0) |
+|---|---|---|
+| `hooks/*.sh` | 13 | **15** (incl. 2 no-op stubs; `lib/git-cmd.sh` is a library and does not glob in) |
+| agent definitions (6 variants + `user-level-reference/`) | 61 | **68** |
+| skills | 12 | **7** |
+| slash commands | 23 | **0** |
+| `templates/general/CLAUDE.md` | 13,892 B | **10,362 B** |
+| `scripts/verify-template-consistency.sh` assertions | 131 | **174** |
+| `scripts/test-hooks.sh` fixtures | 0 (script did not exist) | **133** |
+
+Always-loaded bytes per variant (`CLAUDE.md` + `CLAUDE.local.md` + user-level `CLAUDE.md` + `PROJECT_CONTEXT.md`):
+
+| Variant | after |
+|---|---|
+| general | **29,358** |
+| java | 30,625 |
+| python | 30,540 |
+| dotnet | 32,049 |
+| rust-tauri | 32,527 |
+| dotnet-maui | 33,617 |
+
+The only pre-trim baseline that was ever measured per file is `general`'s **41,167 B**, so `41,167 → 29,358 (−29%)` is the one before/after claim this plan is entitled to make; the other five variants have no baseline-era measurement and are reported as absolutes.
+
+### Corrections to this plan
+
+- **The `VERIFICATION_PLAYBOOK.md` "dangling reference" premise was wrong, and the fix was not applied.** The file ships in all six variants and `setup-project.sh` copies it, so the reference resolves in a generated project. Mentions of it in `README.md` and the templates were kept deliberately.
+- **`setup-project.sh` takes `--target-path`, not `--target-dir`** (§Verification step 4 above uses the wrong flag).
+- **`user-level-reference/hooks/` did not ship the retro hooks**, contrary to an assumption made while planning PR6 — it held only `read-size-gate.sh` and `bash-output-guard.sh`. PR6 mirrored the four fail-closed hooks plus `lib/git-cmd.sh` into it and added a glob-derived byte-identity assertion, which is what raised the assertion count from 167 to 174.
+- The `## Verification` targets "project CLAUDE.md ≤ 6 KB, always-loaded ≤ 20 KB" (and PR4's revised ≤ 9 KB) were **not met**; the variants land at 10.3–11.3 KB. No further cut was invented to reach the number.
+- `tools/measure-context-bloat.py` requires `PYTHONIOENCODING=utf-8` on Windows.

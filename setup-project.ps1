@@ -321,6 +321,30 @@ function Get-TemplateFiles {
 
 $templateFiles = Get-TemplateFiles -Source $TemplateDir
 
+# --- autoMode.environment snippet ---
+#
+# permissions.autoMode is User/managed scope only: a project cannot ship one,
+# which is the right polarity (a hostile repo must not widen its own trust). So
+# the script cannot write this anywhere useful -- it prints a line for the user
+# to paste into ~/.claude/settings.json, exactly like the legacy .mcp.json
+# warning tells the user what to move by hand.
+#
+# ASCII dashes only: PowerShell 5.1 reads a BOM-less UTF-8 file as ANSI, so an
+# em dash in a Write-Host string would reach the user as mojibake.
+function Write-AutoModeSnippet {
+    $remote = $RepoUrl
+    if (-not $remote -and (Test-Path (Join-Path $TargetDir ".git"))) {
+        $remote = (& git -C $TargetDir remote get-url origin 2>$null)
+    }
+    if (-not $remote) { $remote = "<your remote URL>" }
+
+    Write-Host "autoMode.environment entry for this project (User/managed scope -- cannot live in the project):" -ForegroundColor Yellow
+    Write-Host "  ""**Trusted repo**: ``$TargetDir`` and its remote ``$remote`` (private) -- confidential material may be committed here"""
+    Write-Host ""
+    Write-Host "  Append it to permissions.autoMode.environment in ~/.claude/settings.json."
+    Write-Host "  See user-level-reference/settings.json for the shape."
+}
+
 # --- DryRun output ---
 if ($DryRun) {
     Write-Host ""
@@ -375,6 +399,9 @@ if ($DryRun) {
     else {
         Write-Host "Project-level .mcp.json: (not generated - no entries for this variant/flags)" -ForegroundColor DarkGray
     }
+
+    Write-Host ""
+    Write-AutoModeSnippet
 
     Write-Host ""
     Write-Host "=== END DRY RUN ===" -ForegroundColor Cyan
@@ -641,5 +668,8 @@ if ($remainingPlaceholders.Count -gt 0) {
 else {
     Write-Host "All placeholders replaced." -ForegroundColor Green
 }
+
+Write-Host ""
+Write-AutoModeSnippet
 
 Write-Host ""
