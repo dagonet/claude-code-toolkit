@@ -13,7 +13,6 @@ Claude MUST follow the rules below.
 Tool schemas and full parameter signatures load on-demand via Claude Code's MCP catalog — don't duplicate them here. See *Mandatory Tool Usage Rules* below for when to prefer each server over Bash/shell alternatives.
 
 - **`ollama-tools`** — local LLM preprocessing: `local_first_pass`, `extract_json`, `map_project_structure`, plus health/model mgmt.
-- **`git-tools`** — all git operations: status/diff/log/show, add/rm/commit, branch/checkout, pull/push, stash, tag, remote.
 - **`MCP_DOCKER`** — official GitHub MCP (Docker Desktop): issues, PRs, comments, search, file ops, releases.
 - **`github-tools`** — repo + workflow utilities: `gh_repo_from_origin`, `gh_workflow_list`.
 - **`open-brain`** — persistent memory: `thoughts_search`/`recent`/`capture`/`review`/`people`/`topics`/`delete`, `system_status`, plus wiki tools (`wiki_get`/`wiki_list`/`wiki_refresh`) and contradictions tools (`contradictions_list`/`contradictions_resolve`/`contradictions_audit`) (14 tools).
@@ -31,36 +30,35 @@ Prefix with `poetry run` / `uv run` if using Poetry or uv; plain commands work w
 
 ## Mandatory Tool Usage Rules
 
-## Git Operations (MCP) -- HARD REQUIREMENT
+## Git Operations (native CLI)
 
-For **ANY git operation**, Claude MUST use MCP git tools
-and MUST NOT use Bash git commands.
+Git runs through the **git CLI** (`Bash(git ...)`), and `gh` covers the GitHub
+gaps the MCP servers do not. MCP wrappers for git are no longer required.
 
-> **Scope:** this rule binds the PO and all sub-agents with git MCP tools in their `tools:` frontmatter. Developer agents (`coder`, variant coders) have explicit git MCP tools listed. Agents without git MCP tools (`architect`, `requirements-engineer`, `doc-generator`, `test-writer`) return work to the PO; the PO performs the git operation. The Bash-git block hook in agent definitions is defense-in-depth — MCP tools are the only permitted path.
+> **Scope:** every agent with `Bash` in its `tools:` frontmatter does its own git
+> I/O. Agents without `Bash` (`architect`, `requirements-engineer`,
+> `doc-generator`) return their work product and the PO performs the git
+> operation on their behalf.
 
-### Allowed
-- `git_status`, `git_diff_summary`, `git_diff`
-- `git_log`, `git_show`
-- `git_add`, `git_rm`, `git_commit`
-- `git_branch_list`, `git_checkout`
-- `git_pull`, `git_push`, `git_stash`
-- `git_worktree_list`, `git_worktree_add`, `git_worktree_remove`
-- `git_env_info` (for debugging)
+### Gates — enforced by hooks, not by policy
 
-### Forbidden
-- `Bash(git ...)`
-- Shell scripts that invoke git
-- "Yes, and don't ask again" commit flows
+| Command | Hook | Effect |
+|---|---|---|
+| `git commit` | `hooks/pre-commit-test.sh` | runs the project gate first; a red gate blocks the commit |
+| `git push` to main/master | `hooks/no-push-main.sh` | blocked (exit 2) |
+| `gh pr merge`, `git merge` on main, a push to main | `hooks/gate-before-merge.sh` | requires a fresh, SHA-matching `.gate/last-pass.json` |
+
+The gates parse the command itself, so wrappers (`bash -c "..."`) and
+`git -C <path>` are covered too. `<repo>/.claude/git-guard-off` disables all
+three for the rare case that genuinely needs it.
 
 ### Required Workflow
-1. `git_status` -- Use `include_untracked=true` when new files may exist
-2. `git_diff_summary` (staged/unstaged as needed)
-3. `git_log` (optional, to review recent commit style)
-4. `git_add` / `git_rm` (explicit file paths only)
+1. `git status` -- check for untracked files before staging
+2. `git diff` / `git diff --cached` -- review what is about to be committed
+3. `git log` (optional, to review recent commit style)
+4. `git add <paths>` (explicit file paths only)
 5. Brief explanation of what will be committed (short bullet list)
-6. `git_commit` (commit message written by Claude)
-
----
+6. `git commit` (commit message written by Claude)
 
 ## GitHub Operations (MCP) -- HARD REQUIREMENT
 
@@ -85,7 +83,7 @@ Use **custom github-tools MCP**:
 - `gh_workflow_list(repo, limit)` -- list workflow runs
 
 ### Forbidden
-- `Bash(gh ...)`
+- `Bash(gh ...)` where an MCP GitHub tool exists -- `gh` is a fallback for the gaps only (e.g. `gh pr merge`, which the merge gate covers)
 - `Bash(curl ...)`
 - Direct REST or GraphQL calls
 

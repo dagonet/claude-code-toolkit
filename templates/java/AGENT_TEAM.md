@@ -36,19 +36,19 @@ When a session starts on a project that has this AGENT_TEAM.md:
 
 ## CRITICAL: Sub-Agent Tool Limitations
 
-**Sub-agents do NOT have automatic access to MCP tools.** Whether a sub-agent has git/GitHub MCP tools depends on its `tools:` frontmatter in the agent definition file. This is a Claude Code platform limitation — not a configuration error.
+**A sub-agent only has the tools its `tools:` frontmatter lists.** Git runs through the `git`/`gh` CLI, so an agent can do its own git work exactly when `Bash` is in its `tools:`; GitHub writes (PRs, comments, reviews) still need the matching `mcp__MCP_DOCKER__*` tools. This is a Claude Code platform limitation — not a configuration error.
 
-### Agents WITH MCP git/GitHub tools:
-- `coder`, `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder` — can commit, push, create PRs, merge
+### Agents that can do their own git + GitHub I/O:
+- `coder`, `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder` — `Bash` plus PR tools: can commit, push, create PRs, merge
 - `code-reviewer` — can post PR reviews via `mcp__MCP_DOCKER__pull_request_review_write`
-- `tester` — can post findings via `mcp__MCP_DOCKER__add_issue_comment`
+- `tester`, `test-writer` — have `Bash` (so they can commit) but no PR tools; `tester` can post findings via `mcp__MCP_DOCKER__add_issue_comment`
 
-### Agents WITHOUT MCP git/GitHub tools:
-- `architect`, `requirements-engineer`, `doc-generator`, `test-writer` — CANNOT commit, push, create PRs, merge, or post comments
+### Agents without `Bash`:
+- `architect`, `requirements-engineer`, `doc-generator` — CANNOT commit, push, create PRs, merge, or post comments
 
-**PO responsibility:** When spawning agents without MCP tools, do NOT include git/GitHub operations in their spawn prompts. They will bail, stall, or silently skip those steps. Instead:
+**PO responsibility:** When spawning an agent that lacks `Bash` (or lacks the PR tool an instruction needs), do NOT put that operation in its spawn prompt. It will bail, stall, or silently skip the step. Instead:
 1. Have them return their work product (plan, spec, review findings, tests)
-2. The PO performs all git/GitHub I/O on their behalf
+2. The PO performs the git I/O with the git CLI and the GitHub I/O with the MCP tools
 
 **History:** Sub-agents bailing/stalling due to missing tools was a recurring friction point (sessions 22, 23, 26). Pre-verifying tool availability in spawn prompts prevents wasted agent cycles.
 
@@ -371,7 +371,7 @@ Within the agreed tier: do the complete thing, not the demo path — a working e
 You are {name} on team {team}. Task #{n}: issue #{issue}.
 Worktree: {path}, branch: feature/issue-{issue}.
 Read the GitHub issue for full context.
-Workflow: read issue -> implement -> build -> test -> format -> commit (MCP git) -> push (MCP git) -> create PR (MCP github) -> mark task done -> message lead with PR URL.
+Workflow: read issue -> implement -> build -> test -> format -> commit -> push -> create PR (MCP github) -> mark task done -> message lead with PR URL.
 ```
 
 **plan-files mode (T2-T3):**
@@ -392,7 +392,7 @@ Worktree: {path}, branch: {branch}.
 Full plan: {plan_file_path} (reference only — task details above are authoritative).
 Architect guidance: {summary or "none — T2/T3 task"}.
 
-Workflow: implement -> build -> test -> format -> commit (MCP git) -> push (MCP git) -> create PR (MCP github) -> mark task done -> message lead with PR URL.
+Workflow: implement -> build -> test -> format -> commit -> push -> create PR (MCP github) -> mark task done -> message lead with PR URL.
 ```
 
 **PO responsibility (plan-files mode):** The PO MUST inline the acceptance criteria and file list directly in the dev spawn prompt. The dev agent should NOT need to read the plan file to understand its task. The plan file path is provided only for additional context.
@@ -436,12 +436,12 @@ After code review and testing pass, the developer executes the merge. MCP tools 
 | `coder`, `python-coder`, `dotnet-coder`, `rust-coder`, `java-coder` | Developer (MCP tools listed explicitly) |
 | `general-purpose` (declared with `tools: *`) | Developer (full MCP catalog via ToolSearch) |
 
-**Agents without git/GitHub MCP tools** (`architect`, `requirements-engineer`, `doc-generator`, `test-writer`): return work to the PO; PO performs git/GitHub I/O on their behalf.
+**Agents without `Bash`** (`architect`, `requirements-engineer`, `doc-generator`): return work to the PO; the PO does the git I/O with the git CLI and the GitHub I/O with the MCP tools.
 
 ### Steps (Developer-executed)
 
 ```
-1. Pull latest main into the worktree (git_pull or equivalent MCP tools).
+1. Pull latest main into the worktree (`git pull --rebase origin main`).
 
 2. If conflicts exist:
    a. Resolve conflicts (prefer preserving both changes when possible).
@@ -534,7 +534,7 @@ The PO coordinates merge ordering by sending merge-go-ahead messages. Developers
        |
 5. PO sends merge-go-ahead. Developer executes the merge.
    Note: For T4 sprints where a tester wrote verification tests, PO includes in the go-ahead:
-   "Tester wrote verification tests — check git_status and commit them before merging."
+   "Tester wrote verification tests — check `git status` and commit them before merging."
        |
 6. Merge Protocol runs (per merge-owner table in Merge Protocol section).
    - rebase onto latest main
@@ -645,7 +645,7 @@ The PO presents these as a single confirmation at sprint start. All agents are s
 2. **One task per developer** — no multitasking within an agent.
 3. **Max parallel workstreams** as specified in `PROJECT_CONTEXT.md`.
 4. **Architect reviews BEFORE development** — guidance before dev starts (T4).
-5. **Developers own the merge** — all developer agents have MCP git/GitHub tools and execute their own merges after PO sends merge-go-ahead. Agents without git/GitHub tools (`architect`, `requirements-engineer`, `doc-generator`, `test-writer`) return work to the PO.
+5. **Developers own the merge** — all developer agents have `Bash` plus the PR tools and execute their own merges after PO sends merge-go-ahead. Agents without `Bash` (`architect`, `requirements-engineer`, `doc-generator`) return work to the PO.
 6. **PO sequences merges** — developers wait for merge-go-ahead from the PO before merging.
 7. **Post-rebase verification required** — rebuild + retest before merge.
 8. **Max 3 fix cycles per task** — then PO pauses the workstream and selects one of: (a) scope reduction, (b) architect re-design, or (c) human escalation. See Escalation Protocol.
@@ -670,8 +670,8 @@ The PO presents these as a single confirmation at sprint start. All agents are s
 - **Agent stall / idle without report** (runbook — judgment removed on purpose):
   1. First idle without a completion report: send exactly one prod message requesting status.
   2. Second idle: retire the agent via `TaskStop`. Do not send further prods.
-  2b. Before retiring or taking over: run `git_status` in the agent's worktree — a DIRTY tree means the agent is mid-edit; wait one more cycle instead of clobbering in-flight work.
-  3. Verify the actual work state via `git_log` / `git_status` / `list_pull_requests` — **never trust the agent's last claim**; committed work frequently exists despite a silent agent (and vice versa).
+  2b. Before retiring or taking over: run `git status` in the agent's worktree — a DIRTY tree means the agent is mid-edit; wait one more cycle instead of clobbering in-flight work.
+  3. Verify the actual work state via `git log` / `git status` / `list_pull_requests` — **never trust the agent's last claim**; committed work frequently exists despite a silent agent (and vice versa).
   4. Count the stall as one strike toward the 3-cycle escalation above, then re-dispatch the remaining work with the verified state in the spawn prompt. **Never self-perform the stalled agent's work as fallback** — the PO does not code, review, or test inline.
   5. **Dead-coder merge handoff**: if the stalled/retired coder left a pushed branch with an open PR, spawn a FRESH coder with the PR URL, branch name, and worktree path in the spawn prompt to rebase, re-run the gate, and complete the merge. The PO never finishes merges by hand.
   6. **Report agents (reviewer/architect/tester/ops/etc.)**: a bare idle notification without a delivered report is a NON-report — their report IS the deliverable. One prod citing the reporting mandate, then treat as failed and re-dispatch. (The SubagentStop contract enforcer does NOT fire on teammate idle — idling is not stopping — which is why the reporting mandate lives in the agent definitions and spawn prompts.)
