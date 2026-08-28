@@ -390,12 +390,13 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 
 **Read size gate** (`hooks/read-size-gate.sh`):
 - Matcher: `Read`
-- Blocks `Read` calls whose **effective line count** exceeds a threshold (default `500`). `effective_lines = min(file_line_count, limit or file_line_count)`, so `Read(big.py, limit=100)` allows and `Read(big.py, limit=750)` blocks.
-- Missing/unreadable files pass through — the hook does not police file existence.
-- Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md` — the single largest actionable bucket. The CLAUDE.md "Read tool discipline" bullet asks agents to prefer `ctx_execute_file` / Explore subagents for analysis; this hook enforces it mechanically.
-- Block diagnostic directs the agent to (1) `mcp__plugin_context-mode_context-mode__ctx_execute_file` for analysis, (2) Explore subagent for compressed summaries, or (3) range-targeted `Read(path, offset, limit<=500)` for Edit workflows.
-- No bypass flag. If the hook misfires on legitimate work, the fix is to raise the threshold or comment out the stanza in `~/.claude/settings.json`.
-- Appends tab-separated decisions to `~/.claude/state/read-size-gate.log` (BLOCK always; ALLOW only when `file_line_count > 250`). Log append is best-effort — write failures never mask the block/allow decision.
+- **Caps** rather than blocks (v2.0 PR3). An unbounded `Read` whose remaining length (`file_lines - offset`) exceeds the threshold (default `500`) is rewritten via `hookSpecificOutput.updatedInput` to carry `limit: 500`, plus an `additionalContext` naming the offset to pass next. The call proceeds; nothing is refused.
+- `updatedInput` **replaces the whole input object**, so the hook copies the original `tool_input` wholesale (`Object.assign`) — `pages` and any future field survive.
+- Silent pass when: `limit` is already set, the file is short, the path is missing/unreadable, or the extension is `png|jpg|jpeg|gif|pdf|ipynb` (not line-addressable).
+- Over 10 MB the cap is decided from `stat` alone (`File is N MB; capped at 500 lines…`): no offset can bring the remainder under the cap, and counting lines would mean scanning every byte on a hook that fires on every Read. One node process per call, payload on stdin.
+- Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
+- Never exits non-zero, so it is registered with a fail-open (`exit 0` on 127) wrapper.
+- Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
 - Uses `node -e` for JSON parsing (no `jq` dependency). Style-matches `tier-before-coder.sh`.
 
 **Recommended install scope: user-level** (`~/.claude/settings.json`). The 22% Read-tool share is paid in target-project sessions, not in `claude-code-toolkit` self-maintenance. Installing at user level covers every project the user opens.
@@ -428,30 +429,23 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 
 **Threshold tuning:** the script hard-codes `THRESHOLD=500` near the top. Edit the value directly. The log at `~/.claude/state/read-size-gate.log` provides per-decision data for post-sprint histogramming if you want to calibrate the threshold from real use rather than a gut number.
 
-### Plan-Mode Allow Hook for context-mode Tools (PreToolUse, User-Level)
+### Bash Output Guard (PostToolUse, User-Level Recommended)
 
-**Problem:** plan mode overrides `permissions.allow` rules for tools it does not classify as read-only. `mcp__plugin_context-mode_context-mode__*` in the allow list does NOT stop plan mode from prompting on every `ctx_*` call (same mechanism that keeps `Edit` blocked in plan mode despite an `Edit` allow rule). The docs are silent on this precedence — verified empirically 2026-07-09.
+**Hook** (`hooks/bash-output-guard.sh`), matcher `Bash|PowerShell`:
+- Reads `tool_response` from stdin. Observed shape (2.1.250): `{stdout, stderr, interrupted, isImage, noOutputExpected}`.
+- `stdout` and `stderr` are checked independently. A stream over 12,000 chars is written to `$TMPDIR/claude-bash-out/<session_id>-<epoch>[-stderr].log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output|stderr: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
+- The payload is piped to `node` on stdin, not passed in argv: a 200 KB build log exceeds the platform argument limits, and an exec failure here would silently pass the untruncated output through.
+- Both streams short, a missing `tool_response`, or an unparseable payload → no output at all, the result passes through untouched.
+- Always exits 0 and is registered **unwrapped**: it cannot block, so a 127 wrapper would only invent a failure mode.
+- Rollback: remove the matcher group. Old log files are never pruned — clear `$TMPDIR/claude-bash-out/` yourself if it grows.
 
-**Fix:** PreToolUse hooks run BEFORE the permission system; a hook emitting `permissionDecision: "allow"` bypasses the prompt in every mode, including plan mode.
+### Model & Effort (session settings)
 
-**Hook** (`hooks/allow-ctx-plan.sh`): stateless — prints the allow JSON and exits 0. Deliberately NOT 127-wrapped: if the script is missing, the hook fails open and the prompts simply return (wrapping an *allow* hook would convert absence into a block — wrong polarity).
+`model` picks the orchestrator's model; `effortLevel` picks how hard it works on each turn. They are different dials for different failures: a wrong answer *despite* full context calls for a bigger model, while skipped files or tests that never ran call for more effort. Subagent `model:` / `effort:` in the agent file override the session values for that spawn — see `AGENT_TEAM.md` → *Model & Effort Policy*.
 
-**Install:** copy `hooks/allow-ctx-plan.sh` to `~/.claude/hooks/`, then append this matcher group to `hooks.PreToolUse` in `~/.claude/settings.json`:
+Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `claude-*` id: a model proxy reroutes aliases, and a pinned id bypasses it. If you run such a proxy, keep the auto-mode classifier and `advisorModel` off it — both need the real model.
 
-```json
-{
-  "matcher": "mcp__plugin_context-mode_context-mode__ctx_batch_execute|mcp__plugin_context-mode_context-mode__ctx_execute|mcp__plugin_context-mode_context-mode__ctx_execute_file|mcp__plugin_context-mode_context-mode__ctx_search|mcp__plugin_context-mode_context-mode__ctx_fetch_and_index|mcp__plugin_context-mode_context-mode__ctx_index|mcp__plugin_context-mode_context-mode__ctx_stats|mcp__plugin_context-mode_context-mode__ctx_doctor|mcp__plugin_context-mode_context-mode__ctx_upgrade",
-  "hooks": [
-    { "type": "command", "command": "bash 'C:/Users/DarkNite/.claude/hooks/allow-ctx-plan.sh'" }
-  ]
-}
-```
-
-**Caveats:** (1) `ctx_execute`/`ctx_batch_execute` run sandbox shell code that CAN write files — auto-approving them weakens plan mode's no-writes guarantee. Accepted trade-off: the user approved every one of these prompts manually anyway. (2) Three tools (`ctx_execute`, `ctx_execute_file`, `ctx_batch_execute`) also match the context-mode plugin's own tip-injection PreToolUse group — both hooks fire; the allow decision answers the permission question, the tip context still injects.
-
-**Fallback:** if a Claude Code update stops PreToolUse `allow` from piercing plan mode, re-register the same script under the `PermissionRequest` event with `"command": "EVENT=permission-request bash '...allow-ctx-plan.sh'"` — the script then emits `{"decision":{"behavior":"allow"}}`, the PermissionRequest-shaped decision.
-
-**Rollback:** remove the matcher group and start a new session.
+> The plan-mode allow hook for context-mode tools (`hooks/allow-ctx-plan.sh`) was removed in v2.0 PR3 along with the mandatory context-mode routing. The plugin is optional now; if you still run it and want the plan-mode prompts suppressed, re-add an `allow` PreToolUse hook for the `ctx_*` matchers — the mechanism (PreToolUse runs before the permission system, so `permissionDecision: "allow"` pierces plan mode) is unchanged.
 
 ### Delegation Enforcement (PreToolUse, Project-Level — templates)
 

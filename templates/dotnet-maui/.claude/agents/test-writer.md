@@ -1,9 +1,10 @@
 ---
 name: test-writer
 description: Writes tests for new code. Run PROACTIVELY after features.
-tools: Read, Write, Edit, Bash
+tools: Read, Write, Edit, Bash, Skill
 model: sonnet
-mode: bypassPermissions
+effort: medium
+isolation: worktree
 ---
 
 You write tests. When given a feature or module:

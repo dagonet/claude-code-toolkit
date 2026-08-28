@@ -108,6 +108,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/bash-output-guard.sh"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "matcher": "^(coder|code-reviewer|tester|architect)$",

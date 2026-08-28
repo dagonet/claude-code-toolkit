@@ -1,5 +1,47 @@
 # Changelog
 
+## v2.0-pr3 — 2026-08-28
+
+**Every agent now declares what it costs.** Transcripts showed the orchestrator on Opus, workers on `sonnet`, Haiku almost unused, and the *built-in* `Explore` inheriting the session model — 219 exploration spawns at Opus prices. In the same window ~400 tool calls hit tools the calling agent did not have (`dotnet-tools`: 87 of 87 failed, advertised in the body and absent from `tools:`), and 5,032 of 10,336 `Read` calls passed no `limit`.
+
+### Model & effort routing
+
+- Every agent file carries `model:` and `effort:`: coders `sonnet` / `medium` / `isolation: worktree`; `tester` + `test-writer` keep their model and gain `effort: medium` + `isolation: worktree`; `architect` + `code-reviewer` `opus` / `high`; `requirements-engineer` + `ops` `sonnet` / `medium`; `doc-generator` `haiku` / `low`.
+- **Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`) — a model proxy reroutes aliases, and a pinned `claude-*` id bypasses it. Asserted by the verify script.
+- `mode: bypassPermissions` is removed from all 61 pre-existing agent files: it is not a documented subagent field and was silently ignored.
+- New `## Model & Effort Policy` section in `AGENT_TEAM.md` (×6) with the diagnostic rule: wrong despite full context → bigger model; skipped files or tests not run → raise effort.
+
+### Custom `Explore` agent (new, ×7)
+
+- `.claude/agents/Explore.md` in all 6 variants + `user-level-reference/` overrides the built-in `Explore` and pins it to `haiku`, `effort: low`, `tools: Read, Grep, Glob, Bash`. It carries a breadth contract (`quick` / `medium` / `very thorough`), a 500-line-per-`Read` rule, and a fixed output shape: ranked `path:line — why it matters` plus a ≤5-line synthesis.
+- The `model: "haiku"` spawn snippets are gone from `CLAUDE.md` (×6) and the three `AGENT_TEAM.md` spots — the agent file carries the model now, and passing one in the Agent call overrides it.
+
+### Skills actually reachable
+
+- `Skill` added to `tools:` for all 54 agent files that are told to invoke skills. Without it a subagent cannot run the `## Required Skills` block the PO injects — the block had been dead for coders.
+- All 12 coders preload `skills: [karpathy-guidelines]`, so the house style is in context from turn one, and all 12 gain `Write`: a coder that cannot create a file is not a coder (44 `Write` calls died on the allowlist in the mined sessions).
+- `dotnet-coder` (dotnet, dotnet-maui) gains `mcp__dotnet-tools__build_and_extract_errors` + `mcp__dotnet-tools__run_tests_summary` in `tools:` — the body already told it to use them.
+
+### Native context hooks
+
+- `hooks/read-size-gate.sh` **caps instead of blocking**: an unbounded `Read` whose remaining length exceeds 500 lines is rewritten via `hookSpecificOutput.updatedInput` to carry `limit: 500`, with `additionalContext` naming the next offset. `updatedInput` replaces the whole input object, so `tool_input` is copied wholesale (`pages` and future fields survive). Silent when `limit` is set, the file is short, or the extension is `png|jpg|jpeg|gif|pdf|ipynb`. Fixes the pre-existing bug where `offset` was ignored. The context-mode advice in the old block message is gone.
+- `hooks/bash-output-guard.sh` (new, `PostToolUse` on `Bash|PowerShell`, registered unwrapped ×6 + user-level): `tool_response.stdout` **and** `stderr` are checked independently; a stream over 12,000 chars is written whole to `$TMPDIR/claude-bash-out/<session_id>-<epoch>[-stderr].log` and replaced by head 4,000 + a marker naming the log + tail 4,000 via `updatedToolOutput`. Payload shape observed from a real event: `{stdout, stderr, interrupted, isImage, noOutputExpected}`; the sibling fields are copied, not re-invented.
+- Both hooks pipe the payload to `node` on **stdin**, never in argv (Linux caps one argument at 128 KiB, Windows CreateProcess caps the command line at 32,767 chars — an argv-passed 200 KB build log would fail to exec and slip through untruncated). `read-size-gate.sh` also runs a single node process per Read instead of five, and decides from `stat` alone above 10 MB rather than scanning the file to count lines.
+- `hooks/allow-ctx-plan.sh` deleted. context-mode is an optional plugin from here on, not a routing mandate.
+
+### Verification
+
+- `scripts/verify-template-consistency.sh`: new check **17** (tool-allowlist invariant — every `mcp__server__tool` named in an agent body must be in that agent's `tools:` line; files without `tools:` inherit everything and are exempt) and check **18** (Explore ×7 on haiku, no `claude-*` ids, no `mode:`, `Skill` in all 47 skill-invoking agents, `karpathy-guidelines` preloaded in all 11 coders). Agent count is now 68.
+- `scripts/test-hooks.sh`: 101 → 125 fixtures — the Read cap (field-level assertions on `updatedInput`, offset handling, image skip) and the output guard (shape, head/tail, log file, pass-through).
+
+### Downstream migration
+
+1. Run `/sync-template`. `Explore.md` appears as a **new template file** in every variant; accept the agent definitions (`model` / `effort` / `Skill` / `mode:` removal), `AGENT_TEAM.md`, `CLAUDE.md` and `settings.json`.
+2. If your `settings.json` is locally modified, add the one new entry by hand: `PostToolUse` matcher `Bash|PowerShell` → `bash hooks/bash-output-guard.sh`, **without** the 127 wrapper. Nothing else in `settings.json` changed.
+3. **Delete the plugin-installed `# context-mode — MANDATORY routing rules` block from your project `CLAUDE.md`** if present. The context-mode plugin is optional now; the Read cap and the output guard do the same job natively, without a routing contract the model has to remember.
+4. Delete `~/.claude/hooks/allow-ctx-plan.sh` and its matcher group from `~/.claude/settings.json` if you installed it.
+5. Do **not** pass `model:` in Agent calls any more — it overrides the agent file's routing silently.
+
 ## v2.0-pr2 — 2026-08-28
 
 **Agent teams are retired; parallelism comes from the Agent tool.** Every "sub-agent stalled / went idle without returning" complaint in six weeks of transcripts traced back to a *named teammate*; the 1,777 Agent-tool spawns in the same window never stalled. Agent teams are experimental and off by default, `TeamCreate`/`TeamDelete` no longer exist and `team_name` is deprecated — so the toolkit stops relying on them. What does **not** change: the PO still never does hands-on work at any tier, and `hooks/enforce-delegation.sh` is untouched (it keys on `agent_id`, which Agent-tool subagents provide).

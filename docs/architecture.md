@@ -6,7 +6,7 @@
 
 Claude Code supports layered configuration: **project-level `.claude/` overrides user-level `~/.claude/`** for same-named items.
 
-- **User-level agents** (`~/.claude/agents/`): 8 generic agents -- architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester.
+- **User-level agents** (`~/.claude/agents/`): 9 generic agents -- Explore, architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester.
 - **Template agents** override user-level when working in that project. Generic agents in general/rust-tauri templates are identical to user-level. Dotnet/MAUI templates specialize architect, code-reviewer, requirements-engineer, and tester for their tech stack.
 - **Domain-specific coders** (`dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) live at project-level only -- they have no user-level counterpart.
 
@@ -131,10 +131,11 @@ All templates include hooks in `.claude/settings.json` that enforce workflow rul
 |------------|---------|-----------|
 | **PreToolUse** on `Bash\|PowerShell` | The three git gates — `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` — parse `tool_input.command`, split it on `&& \|\| ; \|` and newlines, unwrap `bash -c "…"`-style payloads, and match unanchored (fail-closed). `git -C <path>` retargets the repo; `<cwd>/.claude/git-guard-off` disables all three. Superseded `hooks/block-bash-vcs.sh` in v2.0, which banned Bash git outright and blocked 1,240 turns in 6 weeks | All |
 | **PreToolUse** on `Edit\|Write\|NotebookEdit` + `Bash` | `hooks/enforce-delegation.sh` — main-thread (PO) discrimination via the `agent_id` stdin field (present only inside subagents): denies PO edits outside the orchestration write surface and PO build/test-runner Bash (incl. `run-gate.sh` — the PO verifies via the gate artifact). Subagent calls always pass. Deliberately fail-open with a WARN-wrapper (a 127-wrap would paralyze subagent edits when the script is missing); kill-switch `.claude/delegation-off` | All |
-| **PreToolUse** on `Read` | `hooks/read-size-gate.sh` — warns/blocks on oversized `Read` calls and routes them to the search tools. Wired **fail-open** (127 → exit 0): a missing script must never hard-block a Read | All |
+| **PreToolUse** on `Read` | `hooks/read-size-gate.sh` — rewrites an unbounded `Read` to `limit: 500` via `updatedInput` and tells the caller which offset to pass next; it never refuses a call. Wired **fail-open** (127 → exit 0) | All |
 | **PreToolUse** on `mcp__MCP_DOCKER__merge_pull_request\|mcp__github-tools__github_pr_auto_merge` | `hooks/gate-before-merge.sh` — the MCP half of the merge gate; hard-blocks PR merge/auto-merge without a fresh, SHA-matching `.gate/last-pass.json` (written by the non-hook runner `hooks/run-gate.sh` from the `**Gate**:` command in PROJECT_CONTEXT.md; no-op while Gate is unset). Also duplicated inline in merge-owning coder agents' frontmatter, whose matcher additionally covers `Bash` (`gh pr merge`) | All |
 | **PreToolUse** on `mcp__windows-mcp__Click\|Type` | Blocks Click/Type for test automation (use FlaUI) | dotnet-maui |
 | **PostToolUse** on `Edit\|Write` | Runs build/lint check after edits for immediate feedback | dotnet, dotnet-maui, rust-tauri, python |
+| **PostToolUse** on `Bash\|PowerShell` | `hooks/bash-output-guard.sh` — `tool_response.stdout` and `stderr` over 12,000 chars are each written whole to `$TMPDIR/claude-bash-out/<session>-<epoch>[-stderr].log` and replaced in the transcript by head 4,000 + a marker naming the log + tail 4,000, via `hookSpecificOutput.updatedToolOutput` (same shape as `tool_response`, sibling fields copied). Payload reaches `node` on stdin, never argv — a 200 KB log exceeds the platform argument caps. Always exits 0, registered **unwrapped** — it can only ever pass output through | All |
 | **SubagentStop** | Two hooks fire: a pipeline echo nudging the PO to advance the workstream when an agent finishes, and `hooks/enforce-agent-contract.sh` — a stop-gate that exit-2 blocks a coder from ending without `## Gate Results` + `## Spec Compliance` and a reviewer from ending without findings or the literal word `clean`. A marker file bounds it to one forced continuation; a second non-compliant stop passes with a `CONTRACT-ENFORCER:` stderr signal to the PO. Deliberately fail-open when broken and **never** 127-wrapped (a missing stop-gate must not trap agents in an unstoppable loop) | All |
 | **SubagentStop** (no matcher) | `hooks/retro-ledger.sh` — parses the finished subagent's own transcript (`agent_transcript_path`), counts `tool_result` blocks matching `No such tool available\|BLOCKED:\|DELEGATE:\|CONTRACT VIOLATION\|hook error`, and appends one line per failing run to the project's auto-memory `memory/retro.md` (dead tools, blocking hook basenames, error count). Fail-open by construction and registered **unwrapped** — it cannot block, so a 127 wrapper would only invent a failure mode | All |
 | **SessionStart** (no matcher) | `hooks/retro-brief.sh` — prints the last 10 `retro.md` entries; SessionStart stdout is injected as session context, so the PO fixes the cause (agent `tools:` allowlist, prompt, hook) before re-dispatching into the same wall. Unwrapped, fail-open | All |
@@ -161,7 +162,7 @@ claude-code-toolkit/
 │   ├── general/                           # Any project, any language
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (8 agents)
+│   │   │   └── agents/ (9 agents)
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md                  # v2.0 (shared across all variants)
@@ -171,7 +172,7 @@ claude-code-toolkit/
 │   ├── dotnet/                            # .NET projects
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (9 agents)
+│   │   │   └── agents/ (10 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
@@ -182,7 +183,7 @@ claude-code-toolkit/
 │   ├── dotnet-maui/                       # .NET MAUI desktop apps
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (9 agents)
+│   │   │   └── agents/ (10 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
@@ -193,7 +194,7 @@ claude-code-toolkit/
 │   ├── rust-tauri/                        # Rust/Tauri v2 desktop apps
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (9 agents)
+│   │   │   └── agents/ (10 agents)
 │   │   ├── rustfmt.toml                   # Rust formatter config
 │   │   ├── .prettierrc                    # TypeScript/CSS formatter config
 │   │   ├── CLAUDE.md
@@ -205,7 +206,7 @@ claude-code-toolkit/
 │   └── python/                            # Python projects
 │       ├── .claude/
 │       │   ├── settings.json
-│       │   └── agents/ (9 agents)
+│       │   └── agents/ (10 agents)
 │       ├── .editorconfig
 │       ├── CLAUDE.md
 │       ├── CLAUDE.local.md

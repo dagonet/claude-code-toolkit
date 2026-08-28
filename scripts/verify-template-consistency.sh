@@ -477,6 +477,103 @@ for v in general dotnet dotnet-maui rust-tauri java python; do
 done
 
 # ---------------------------------------------------------------------------
+# 17. Tool-allowlist invariant (v2.0 PR3).
+#     ~400 tool calls in the mined sessions hit tools the calling agent did not
+#     have — dotnet-tools failed 87 of 87 times because the body told the agent
+#     to use it and `tools:` did not list it. Rule: every mcp__server__tool
+#     named in an agent BODY must appear in that agent's `tools:` line. A file
+#     with no `tools:` line inherits everything and is exempt.
+#     Frontmatter is excluded on purpose: a `hooks:` matcher legitimately names
+#     tools the agent itself cannot call. The token class is case-SENSITIVE but
+#     includes upper case — a lower-case-only pattern is blind to
+#     mcp__MCP_DOCKER__*, the most-used server, and would pass vacuously.
+# ---------------------------------------------------------------------------
+echo
+allow_fail=0
+for f in templates/*/.claude/agents/*.md user-level-reference/agents/*.md; do
+  [ -f "$f" ] || continue
+  tools_line=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb&&/^tools:/{print}' "$f")
+  [ -z "$tools_line" ] && continue
+  body=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{inb=0;body=1;next} body{print}' "$f")
+  for t in $(printf '%s' "$body" | grep -oE 'mcp__[a-zA-Z0-9_-]+__[a-zA-Z0-9_]+' | sort -u); do
+    case "$tools_line" in
+      *"$t"*) ;;
+      *) ko "allowlist: $f body uses $t, which is not in its tools: line"; allow_fail=1 ;;
+    esac
+  done
+done
+[ "$allow_fail" -eq 0 ] && ok "every mcp__ tool named in an agent body is in that agent's tools: allowlist"
+
+# ---------------------------------------------------------------------------
+# 18. Model / effort routing (v2.0 PR3).
+#     Aliases only: the user reroutes `sonnet` to a cheaper provider through a
+#     proxy, so a pinned claude-* id silently bypasses that routing. `mode:` is
+#     not a documented subagent field and was ignored wherever it appeared.
+#     The custom Explore agent must ship in every variant, or the built-in one
+#     inherits the session model (219 exploration spawns at Opus cost).
+# ---------------------------------------------------------------------------
+echo
+explore_files=$(ls templates/*/.claude/agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
+if [ "$explore_files" = "7" ]; then
+  ok "custom Explore agent present in all 6 variants + user-level"
+else
+  ko "custom Explore agent present in only $explore_files/7 locations (built-in Explore inherits the session model)"
+fi
+
+explore_haiku=$(grep -l "^model: haiku$" templates/*/.claude/agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
+if [ "$explore_haiku" = "7" ]; then
+  ok "Explore pinned to haiku in all 7 copies"
+else
+  ko "Explore pinned to haiku in only $explore_haiku/7 copies"
+fi
+
+pinned_ids=$(grep -l "^model: claude-" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+if [ "$pinned_ids" = "0" ]; then
+  ok "no agent pins a full claude-* model id (aliases only — a proxy may reroute them)"
+else
+  ko "$pinned_ids agent files pin a full claude-* model id instead of an alias"
+  grep -l "^model: claude-" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null
+fi
+
+mode_field=$(grep -l "^mode: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+if [ "$mode_field" = "0" ]; then
+  ok "no agent carries the undocumented 'mode:' frontmatter field"
+else
+  ko "$mode_field agent files still carry 'mode:' (not a documented subagent field)"
+fi
+
+# Agents that are told to invoke skills need the Skill tool: a subagent whose
+# tools: omits it cannot run the `## Required Skills` block the PO injects.
+# Counted over the SAME file list, so adding Skill to one of the excluded
+# agents later is a passing change, not a spurious count mismatch.
+skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore|doc-generator)\.md$')
+skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
+skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
+if [ "$skill_tool" = "$skill_users" ]; then
+  ok "Skill tool present in all $skill_users agent files that are told to invoke skills"
+else
+  ko "Skill tool present in only $skill_tool/$skill_users skill-invoking agent files"
+fi
+
+# All 12 coders (11 template + user-level) preload karpathy-guidelines, so the
+# house style is in context from turn one rather than one Skill call later.
+coder_skills=$(grep -l "karpathy-guidelines" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null | wc -l)
+if [ "$coder_skills" = "12" ]; then
+  ok "karpathy-guidelines preloaded via skills: in all 12 coder files"
+else
+  ko "karpathy-guidelines preloaded in only $coder_skills/12 coder files"
+fi
+
+# A coder that cannot create a file is not a coder: 44 Write calls died on the
+# tool allowlist in the mined sessions.
+coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null | wc -l)
+if [ "$coder_write" = "12" ]; then
+  ok "Write tool present in all 12 coder files"
+else
+  ko "Write tool present in only $coder_write/12 coder files"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

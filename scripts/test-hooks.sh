@@ -65,6 +65,18 @@ check() { # <label> <hook> <expected_exit> <json>
   fi
 }
 
+# Value assertion, for hooks whose contract is their STDOUT (updatedInput /
+# updatedToolOutput) rather than their exit code.
+expect() { # <label> <want> <got>
+  if [ "$2" = "$3" ]; then
+    printf 'PASS  %-42s (%s)\n' "$1" "$3"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$2" "$3"
+    fail=$((fail + 1))
+  fi
+}
+
 # ===========================================================================
 # no-push-main.sh
 # ===========================================================================
@@ -233,26 +245,164 @@ check "stub allows a push to main"       "$H" 0 "$(mkjson Bash 'git push origin 
 check "stub allows gh pr merge"          "$H" 0 "$(mkjson Bash 'gh pr merge 5' "$MAINREPO")"
 
 # ===========================================================================
-# read-size-gate.sh — newly REGISTERED in settings.json by v2.0 (PreToolUse on
-# Read). Its payload carries tool_input.file_path, not tool_input.command, so a
-# regression here would misfire on every Read downstream.
+# read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an
+# unbounded Read is rewritten to limit=500 via hookSpecificOutput.updatedInput
+# (which REPLACES the whole tool_input, so every original field must survive).
+# The hook never exits 2 any more; a regression here silently drops fields off
+# every Read in the session, so the field-level assertions matter more than the
+# exit code.
 # ===========================================================================
 echo
-echo "=== hooks/read-size-gate.sh (newly registered on Read) ==="
+echo "=== hooks/read-size-gate.sh (Read cap via updatedInput) ==="
 H=hooks/read-size-gate.sh
-mkread() { # <file_path> [limit]
-  node -e 'const ti={file_path:process.argv[1]}; if(process.argv[2])ti.limit=Number(process.argv[2]);
-console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:"Read",tool_input:ti,cwd:process.argv[3]}))' \
-    "$1" "${2:-}" "$ROOT"
+# '-' means "field absent". An EMPTY argv slot is unusable here: Git Bash drops
+# it before native node sees it, which silently shifts offset into limit.
+mkread() { # <file_path> [limit|-] [offset|-]
+  node -e 'const ti={file_path:process.argv[1]};
+if(process.argv[2]!=="-")ti.limit=Number(process.argv[2]);
+if(process.argv[3]!=="-")ti.offset=Number(process.argv[3]);
+console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:"Read",tool_input:ti,cwd:process.argv[4]}))' \
+    "$1" "${2:--}" "${3:--}" "$ROOT"
+}
+readout() { # <json> -> the hook's stdout
+  printf '%s' "$1" | bash "$ROOT/$H" 2>/dev/null
+}
+jfield() { # <json> <dotted.path> -> value, or '' when absent/unparseable
+  node -e 'try{let o=JSON.parse(process.argv[1]);
+for (const k of process.argv[2].split(".")) { if (o==null) break; o=o[k]; }
+console.log(o===undefined||o===null?"":String(o))}catch(e){console.log("")}' "$1" "$2"
 }
 SMALL="$TMPROOT/small.txt"; : > "$SMALL"; for i in $(seq 1 20); do echo "line $i" >> "$SMALL"; done
-BIG="$TMPROOT/big.txt";     : > "$BIG";   for i in $(seq 1 900); do echo "line $i" >> "$BIG"; done
+HUNDRED="$TMPROOT/hundred.txt"; : > "$HUNDRED"; for i in $(seq 1 100); do echo "line $i" >> "$HUNDRED"; done
+BIG="$TMPROOT/big.txt";     : > "$BIG";   for i in $(seq 1 600); do echo "line $i" >> "$BIG"; done
+HUGE="$TMPROOT/huge.txt";   : > "$HUGE";  for i in $(seq 1 900); do echo "line $i" >> "$HUGE"; done
+BIGPNG="$TMPROOT/big.png";  cp "$BIG" "$BIGPNG"
 
 check "small file passes"                "$H" 0 "$(mkread "$SMALL")"
-check "big file is blocked"              "$H" 2 "$(mkread "$BIG")"
+check "big file is allowed, not blocked" "$H" 0 "$(mkread "$BIG")"
 check "big file with a small limit"      "$H" 0 "$(mkread "$BIG" 100)"
 check "missing file is not blocked"      "$H" 0 "$(mkread "$TMPROOT/does-not-exist.txt")"
 check "non-Read payload passes through"  "$H" 0 "$(mkjson Bash 'echo hi' "$MAINREPO")"
+
+# --- an unbounded Read of a 600-line file is capped, and every original field
+# survives the updatedInput replacement. file_path is compared against the
+# payload's own copy: node normalises the POSIX temp path to a Windows one on
+# the way in, so $BIG is not the string the hook receives.
+CAPIN=$(mkread "$BIG")
+CAPOUT=$(readout "$CAPIN")
+expect "cap: decision is allow" "allow" "$(jfield "$CAPOUT" hookSpecificOutput.permissionDecision)"
+expect "cap: limit is 500" "500" "$(jfield "$CAPOUT" hookSpecificOutput.updatedInput.limit)"
+expect "cap: file_path is preserved" "$(jfield "$CAPIN" tool_input.file_path)" \
+  "$(jfield "$CAPOUT" hookSpecificOutput.updatedInput.file_path)"
+expect "cap: no offset key is invented" "" "$(jfield "$CAPOUT" hookSpecificOutput.updatedInput.offset)"
+expect "cap: additionalContext names the next offset" 1 \
+  "$(printf '%s' "$CAPOUT" | grep -c 'pass offset=500 to continue')"
+
+# --- offset must be honoured, not ignored (the pre-PR3 bug), and preserved.
+# 900 - 200 = 700 remaining lines, so this one still gets capped.
+OFFOUT=$(readout "$(mkread "$HUGE" - 200)")
+expect "offset: limit is 500" "500" "$(jfield "$OFFOUT" hookSpecificOutput.updatedInput.limit)"
+expect "offset: offset is preserved" "200" "$(jfield "$OFFOUT" hookSpecificOutput.updatedInput.offset)"
+expect "offset: next offset is 700" 1 \
+  "$(printf '%s' "$OFFOUT" | grep -c 'pass offset=700 to continue')"
+# 600 - 400 = 200 remaining lines: under the cap. The pre-PR3 script ignored
+# offset and would have judged this by the file's full length.
+expect "offset near EOF is left alone" "" "$(readout "$(mkread "$BIG" - 400)")"
+
+# --- the caller already bounded the read, the file is small, or the payload is
+# not a text file: the hook stays silent.
+expect "explicit limit is left alone" "" "$(readout "$(mkread "$BIG" 50)")"
+expect "100-line file is left alone" "" "$(readout "$(mkread "$HUNDRED")")"
+expect "image extension is skipped" "" "$(readout "$(mkread "$BIGPNG")")"
+expect "missing file emits nothing" "" "$(readout "$(mkread "$TMPROOT/does-not-exist.txt")")"
+
+# --- fix round 1: a very large file must be capped WITHOUT counting its lines
+# first. `wc -l` scans the whole file before the decision, on a hook that runs
+# on every Read. Over 10 MB the size alone decides.
+GIANT="$TMPROOT/giant.txt"
+if command -v truncate >/dev/null 2>&1; then
+  truncate -s 12M "$GIANT" 2>/dev/null
+else
+  node -e 'const fs=require("fs");const fd=fs.openSync(process.argv[1],"w");fs.ftruncateSync(fd,12*1024*1024);fs.closeSync(fd)' "$GIANT"
+fi
+GIANTOUT=$(readout "$(mkread "$GIANT")")
+expect "giant file: limit is 500" "500" "$(jfield "$GIANTOUT" hookSpecificOutput.updatedInput.limit)"
+expect "giant file: context reports the size, not a line count" 1 \
+  "$(printf '%s' "$GIANTOUT" | grep -c 'File is 12 MB; capped at 500 lines')"
+expect "giant file: no line count is claimed" 0 \
+  "$(printf '%s' "$GIANTOUT" | grep -c 'of 0 lines')"
+
+# --- the ctx-tool advice the blocking version printed is gone for good.
+expect "no context-mode advice in the hook" 0 \
+  "$(grep -c 'ctx_execute_file' "$ROOT/hooks/read-size-gate.sh")"
+
+# ===========================================================================
+# bash-output-guard.sh (PostToolUse on Bash|PowerShell) — v2.0 PR3.
+# The payload shape below was observed from a real PostToolUse Bash event:
+# tool_response = {stdout, stderr, interrupted, isImage, noOutputExpected}.
+# updatedToolOutput must keep that shape — a wrong shape corrupts every Bash
+# result downstream, so the sibling fields are asserted, not just stdout.
+# ===========================================================================
+echo
+echo "=== hooks/bash-output-guard.sh (PostToolUse output cap) ==="
+GUARD=hooks/bash-output-guard.sh
+GUARDTMP="$TMPROOT/guardtmp"
+mkdir -p "$GUARDTMP"
+
+mkpost() { # <stdout_length> [stderr_length]
+  node -e 'console.log(JSON.stringify({session_id:"guardsess",hook_event_name:"PostToolUse",
+tool_name:"Bash",tool_input:{command:"echo hi"},cwd:process.argv[3],
+tool_response:{stdout:"A".repeat(Number(process.argv[1])),stderr:"B".repeat(Number(process.argv[2])),
+interrupted:false,isImage:false,noOutputExpected:false},
+tool_use_id:"toolu_x",duration_ms:5}))' "$1" "${2:-0}" "$ROOT"
+}
+runguard() { # <json> -> hook stdout
+  printf '%s' "$1" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" 2>/dev/null
+}
+
+BIGOUT=$(runguard "$(mkpost 20000)")
+expect "guard: emits updatedToolOutput" "PostToolUse" \
+  "$(jfield "$BIGOUT" hookSpecificOutput.hookEventName)"
+expect "guard: truncation marker names the log" 1 \
+  "$(printf '%s' "$BIGOUT" | grep -c 'chars truncated — full output:')"
+expect "guard: sibling fields survive" "false" \
+  "$(jfield "$BIGOUT" hookSpecificOutput.updatedToolOutput.interrupted)"
+GUARDLEN=$(node -e 'try{let o=JSON.parse(process.argv[1]);console.log(o.hookSpecificOutput.updatedToolOutput.stdout.length)}catch(e){console.log(-1)}' "$BIGOUT")
+expect "guard: 20 000 chars are cut down" 1 \
+  "$( [ "$GUARDLEN" -gt 8000 ] && [ "$GUARDLEN" -lt 9000 ] && echo 1 || echo 0 )"
+expect "guard: head is preserved" 1 \
+  "$(node -e 'try{let o=JSON.parse(process.argv[1]);let s=o.hookSpecificOutput.updatedToolOutput.stdout;
+console.log(s.slice(0,4000)==="A".repeat(4000)&&s.slice(-4000)==="A".repeat(4000)?1:0)}catch(e){console.log(0)}' "$BIGOUT")"
+expect "guard: full output is on disk" 1 \
+  "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' 2>/dev/null | wc -l | tr -d ' ')"
+expect "guard: the log holds all 20 000 chars" 20000 \
+  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' 2>/dev/null | head -1)" | tr -d ' ')"
+
+expect "guard: 5 000 chars pass through" "" "$(runguard "$(mkpost 5000)")"
+expect "guard: malformed payload is silent" "" "$(runguard '{not json')"
+
+# --- fix round 1: the payload must reach node on STDIN, not in argv. Linux caps
+# a single argument at 128 KiB and Windows CreateProcess caps the whole command
+# line at 32,767 chars, so an argv-passed 200 KB build log — exactly the case
+# this hook exists for — fails to exec and passes through untruncated.
+HUGEOUT=$(runguard "$(mkpost 200000)")
+expect "guard: 200 KB payload still truncates" "500" \
+  "$(node -e 'try{let o=JSON.parse(process.argv[1]);console.log(o.hookSpecificOutput.updatedToolOutput.stdout.length<10000?500:0)}catch(e){console.log(-1)}' "$HUGEOUT")"
+expect "guard: 200 KB full output is on disk" 200000 \
+  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' -size +100k 2>/dev/null | head -1)" | tr -d ' ')"
+
+# --- fix round 1: stderr is an output stream too. A 20 KB stderr with a tiny
+# stdout was passed through whole.
+ERROUT=$(runguard "$(mkpost 100 20000)")
+expect "guard: stderr is truncated too" 1 \
+  "$(node -e 'try{let s=JSON.parse(process.argv[1]).hookSpecificOutput.updatedToolOutput.stderr;
+console.log(s.length<10000&&s.slice(0,4000)==="B".repeat(4000)&&s.indexOf("chars truncated")>0?1:0)}catch(e){console.log(0)}' "$ERROUT")"
+expect "guard: small stdout survives untouched" 100 \
+  "$(node -e 'try{console.log(JSON.parse(process.argv[1]).hookSpecificOutput.updatedToolOutput.stdout.length)}catch(e){console.log(-1)}' "$ERROUT")"
+expect "guard: stderr gets its own log file" 1 \
+  "$(find "$GUARDTMP/claude-bash-out" -name '*-stderr.log' 2>/dev/null | wc -l | tr -d ' ')"
+printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" >/dev/null 2>&1
+expect "guard: always exits 0" 0 $?
 
 # ===========================================================================
 # retro-ledger.sh (SubagentStop) + retro-brief.sh (SessionStart) — v2.0 PR2.
@@ -292,16 +442,6 @@ const rows=[
 ];
 fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
 ' "$1"
-}
-
-expect() { # <label> <want> <got>
-  if [ "$2" = "$3" ]; then
-    printf 'PASS  %-42s (%s)\n' "$1" "$3"
-    pass=$((pass + 1))
-  else
-    printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$2" "$3"
-    fail=$((fail + 1))
-  fi
 }
 
 # --- 1. a transcript with failures appends exactly one ledger line
