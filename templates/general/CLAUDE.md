@@ -8,7 +8,7 @@ At the start of every session:
 1. Assume the **PO role** — orchestrate planning, sprints, and merges (see *Workflow TL;DR* and *Spawn-Prompt Binding Table* below). Do **NOT** `Read AGENT_TEAM.md` up front (850+ lines). Load it on-demand only when (a) first spawning agents in a sprint, (b) invoking the Plan Challenge Protocol, or (c) the user asks about merge/escalation rules.
 2. Read `PROJECT_CONTEXT.md` — load build commands and workflow config
 3. **Check Open Brain** — use `thoughts_search` or `thoughts_recent` to load context relevant to the current project. Throughout the session, capture durable knowledge (decisions, insights, bug root causes) via `thoughts_capture` without asking permission. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days).
-4. Present current state (from MEMORY.md) and ask what to work on. Check `git_status` and `git_worktree_list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
+4. Present current state (from MEMORY.md) and ask what to work on. Check `git status` and `git worktree list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
 5. **Enter plan mode** for any non-trivial task (T2+). The PO MUST use `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode — but still need a 3-line plan file containing `Tier: T1` in `docs/plans/` (the coder spawn gate reads it), and are implemented by ONE spawned coder, never by the PO.
 
 ## Workflow TL;DR
@@ -36,7 +36,7 @@ Team size in this table is a **maximum**, not a target — pick the lowest defen
 
 **Every plan MUST declare its tier.** The PO enforces the correct team setup per tier before spawning agents.
 
-**Per-workstream pipeline:** Developer -> Code Reviewer -> Tester -> Developer merges PR. All developer agents have explicit MCP tools for git/GitHub operations. See `AGENT_TEAM.md` → Merge Protocol.
+**Per-workstream pipeline:** Developer -> Code Reviewer -> Tester -> Developer merges PR. All developer agents have `Bash` plus the GitHub PR tools. See `AGENT_TEAM.md` → Merge Protocol.
 
 **Escalation:** After 3 failed fix cycles on one task, the PO pauses the workstream and chooses: (a) reduce scope, (b) re-spawn architect with failure context, or (c) escalate to the user. See Escalation Protocol in `AGENT_TEAM.md`.
 
@@ -55,7 +55,7 @@ When spawning agents, include a `## Required Skills` block in the spawn prompt. 
 | `requirements-engineer` | `superpowers:brainstorming` |
 | `code-reviewer` / `doc-generator` | *(none — omit the block; hook passes them through)* |
 
-> **Spawn-prompt rule for agents without MCP tools:** Do NOT include commit, push, PR-creation, PR-merge, or comment-posting instructions in spawn prompts for `architect`, `requirements-engineer`, `doc-generator`, or `test-writer`. These agents do not have git/GitHub MCP tools in their `tools:` frontmatter and cannot perform such operations. Have them return their work product and let the PO perform the git + GitHub I/O. All other agents (`coder`, variant coders, `code-reviewer`, `tester`) have explicit MCP tools and handle their own git/GitHub operations.
+> **Spawn-prompt rule for agents without MCP tools:** Do NOT include commit, push, PR-creation, PR-merge, or comment-posting instructions in spawn prompts for `architect`, `requirements-engineer`, or `doc-generator`. These agents have neither `Bash` nor GitHub MCP tools in their `tools:` frontmatter and cannot perform such operations. Have them return their work product and let the PO perform the git + GitHub I/O. All other agents (`coder`, variant coders, `code-reviewer`, `tester`) have `Bash` plus the GitHub tools they need and handle their own git/GitHub operations.
 
 Full copy-paste snippets + rationale: `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* (load on-demand).
 
@@ -146,8 +146,8 @@ Project-specific reminder: trace read **and** write paths — a common miss is f
 When asked to commit and push, do so promptly without excessive re-verification. Keep momentum between implement -> commit -> plan-next cycles.
 
 Before marking any commit/push complete, verify:
-- `git_diff(staged=true)` — confirm no unintended files staged
-- `git_diff_summary(staged=false)` — confirm no unstaged changes forgotten
+- `git diff --cached` — confirm no unintended files staged
+- `git diff --stat` — confirm no unstaged changes forgotten
 - After push: check tool output for success; if rejected, diagnose immediately
 
 **Merge ownership:** Developer agents (`coder`, variant coders, `general-purpose`) own the merge — rebase, CI-check, and squash-merge are the developer's job. The PO sequences merges across workstreams by sending merge-go-ahead messages. See `AGENT_TEAM.md` → Merge Protocol.

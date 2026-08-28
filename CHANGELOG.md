@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.0-pr1 — 2026-08-28
+
+**The git ban is over; the git gates stay.** `hooks/block-bash-vcs.sh` blocked **1,240 turns in 6 weeks** of transcripts to buy nothing — the three git gates keyed on the `mcp__git-tools__*` tool names only because Bash git was banned in the first place. Claude Code 2.1.250 PreToolUse hooks can read `tool_input.command` and deny with exit 2, so the gates now fire on the command itself and the CLI is allowed.
+
+### Hooks
+
+- `hooks/lib/git-cmd.sh` (new) — shared parsing: split the command on `&&`, `||`, `;`, `|` and newlines, unwrap `bash -c "…"` / `sh -lc` / `pwsh -Command` payloads, match **unanchored** per segment (a false positive on `echo "git push origin main"` is the accepted cost of failing closed). `git -C <path>` retargets the repo; `<cwd>/.claude/git-guard-off` is the escape hatch for all three gates.
+- `hooks/pre-commit-test.sh` — fires on `git commit` (any `-C` / `-c` prefix, any wrapper). Unchanged behaviour otherwise.
+- `hooks/no-push-main.sh` — fires on `git push` to an explicit `main`/`master` ref (including `HEAD:main` and `refs/heads/main`) **or** on a refspec-less push while the checkout is on main. `git push origin feature/x`, `--force-with-lease`, `--tags` and `origin :feature/x` are not blocked.
+- `hooks/gate-before-merge.sh` — adds `gh pr merge`, `git merge` while on main, and a push targeting main. The MCP branch for `mcp__MCP_DOCKER__merge_pull_request` / `mcp__github-tools__github_pr_auto_merge` is unchanged (those are GitHub tools, not git-tools). Artifact freshness logic untouched.
+- `hooks/block-bash-vcs.sh` — no-op stub for one release, removed in v2.1.
+- `scripts/test-hooks.sh` (new) — 46 stdin fixtures over throwaway git repos, including every must-NOT-block case.
+
+### settings.json (all 6 variants + `user-level-reference`)
+
+One `PreToolUse` entry `"Bash|PowerShell"` runs the three gates in order; the `mcp__git-tools__git_commit` / `git_push` entries and the `block-bash-vcs` entry are gone. `Read` gains `hooks/read-size-gate.sh` with a **fail-open** wrapper (127 → exit 0). The `TeammateIdle` block is removed. `permissions.defaultMode` `dontAsk` → `auto`; `Bash(*)`, `WebFetch(*)` and `mcp__git-tools__*` drop out of `allow`, `Bash(bash hooks/run-gate.sh*)` comes in.
+
+### Agents
+
+The `Bash(git *)` / `Bash(gh *)` frontmatter blocks are gone from all 26 coder/tester/test-writer definitions, and the 19 `mcp__git-tools__*` entries leave every coder's `tools:`. The coder merge gate now matches `Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge`, so `gh pr merge` is gated exactly like the MCP tools.
+
+### Downstream migration
+
+1. Run `/sync-template` — it accepts the new `settings.json` and agent definitions.
+2. **If your `settings.json` was locally modified**, sync will not rewrite it. Delete the whole `TeammateIdle` block and the `PreToolUse` matcher that invokes `block-bash-vcs.sh` by hand, then add the `"Bash|PowerShell"` entry from `templates/general/.claude/settings.json`. Leaving the old `block-bash-vcs` entry in place is safe but pointless — the script is now a no-op stub.
+3. Agents may use the `git` and `gh` CLIs. The **`git-tools` MCP server becomes optional**: nothing in the toolkit requires it, and git work done through it bypasses the gates, which key on `Bash`/`PowerShell` commands.
+
 ## v1.5 — 2026-07-29
 
 Closes the item v1.4 recorded as outstanding: `CLAUDE.md`'s *Working Preferences* section restating rules that hooks already enforce.

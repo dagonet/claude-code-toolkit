@@ -21,7 +21,7 @@
 - **23 user-level slash commands** for the daily loop: `/build`, `/test`, `/commit`, `/sprint`, `/challenge`, `/code-review`, `/new-feature`, `/sync-template`, …
 - **12 auto-triggering skills** that load themselves based on what you're doing (debugging, refactoring, exploring a new codebase, …).
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
-- **Workflow enforcement hooks**: `Bash(git/gh *)` blocked in favor of MCP, commit-time format gates, no-push-to-main, tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), and agent liveness (a teammate cannot idle twice without reporting; a single agent spawn cannot run away unbounded).
+- **Workflow enforcement hooks**: the git/`gh` CLI is allowed and *gated* — the hooks parse the command and stop a red-gate commit, a push to main, and an ungated merge; plus tier-before-coder, delegation enforcement (the orchestrator never edits code or runs builds), a `Read` size gate, and an agent tool-call budget.
 
 ## Context engineering for Claude 5 generation models
 
@@ -32,7 +32,7 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 | Blog principle | How the toolkit applies it |
 |---|---|
 | **Progressive disclosure** | `AGENT_TEAM.md` is **49,724 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **12 skills** load on trigger, not up front. |
-| **Mechanism over mandate** | **13 hook scripts** enforce the rules that prose used to repeat — MCP-only git, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, agent liveness. **131 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
+| **Mechanism over mandate** | **13 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, agent liveness. **131 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 

@@ -19,7 +19,7 @@
 | Workflow Enforcement | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder |
 | Pipeline Hook | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge |
 | Delegation Enforcement | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds |
-| Agent Liveness | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget | TeammateIdle report gate + escalating tool-call budget |
+| Agent Liveness | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget |
 | CLAUDE.md Behavior | Session Bootstrap, Debugging, Plan Challenge | + .NET Conventions | + MAUI Conventions | + Rust/Tauri Conventions, Code Style | + Java/Spring Conventions, Code Style | + Python Conventions, Code Style |
 | Database Tools | No | No | SQLite MCP (optional) | No | No | SQLite MCP (optional) |
 | Desktop Automation | No | No | Windows-MCP | Windows-MCP | No | No |
@@ -37,7 +37,7 @@ Each template variant provides the following files:
 | `PROJECT_STATE.md` | Sprint state tracking |
 | `.claude/settings.json` | MCP permissions + workflow hooks (MCP enforcement, format gates, pipeline, compaction) |
 | `.claude/agents/` | 8 generic agents + variant-specific coders |
-| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `block-bash-vcs`, `no-push-main`, `tier-before-coder`, `pre-commit-test`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `require-teammate-report`, `agent-budget-warn`. Also ships the opt-in user-level hooks `read-size-gate` and `allow-ctx-plan` (copied but not registered in `settings.json`) |
+| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `no-push-main`, `tier-before-coder`, `pre-commit-test`, `read-size-gate`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `agent-budget-warn`, plus the shared parser `lib/git-cmd.sh`. Also ships `block-bash-vcs` (a v2.0 no-op stub, unregistered), `require-teammate-report` (unregistered since v2.0) and the opt-in `allow-ctx-plan` |
 | `gitignore` | Template for .gitignore (copied or merged by the setup script) |
 | `.editorconfig` | Code style for dotnet, dotnet-maui, java, and python variants |
 | `rustfmt.toml` + `.prettierrc` | Code style for rust-tauri variant only |
@@ -46,7 +46,7 @@ Each template variant provides the following files:
 
 ### General
 
-The simplest starting point, suitable for any language or framework. Ships with 8 generic agents (architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester). No build hook or code style files, but includes MCP enforcement hooks (blocks `Bash(git *)` and `Bash(gh *)` to enforce MCP-only git/GitHub operations), SubagentStop pipeline hooks, delegation enforcement, the agent-liveness hooks, and PreCompact state snapshots. No language-specific conventions in CLAUDE.md. Use this when your project does not match one of the specialized variants.
+The simplest starting point, suitable for any language or framework. Ships with 8 generic agents (architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester). No build hook or code style files, but includes the three git gates on `Bash|PowerShell` (tests before a commit, no push to main, no ungated merge), the `Read` size gate, SubagentStop pipeline hooks, delegation enforcement, the agent tool-call budget, and PreCompact state snapshots. No language-specific conventions in CLAUDE.md. Use this when your project does not match one of the specialized variants.
 
 ### Dotnet
 

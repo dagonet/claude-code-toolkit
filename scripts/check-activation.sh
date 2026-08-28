@@ -42,12 +42,12 @@ else
     esac
   fi
   for pair in \
-    "TeammateIdle:teammate report gate" \
-    "require-teammate-report.sh:  -> script reference" \
     "agent-budget-warn.sh:tool-call budget" \
     "enforce-delegation.sh:delegation guard" \
     "enforce-agent-contract.sh:agent contract stop-gate" \
-    "block-bash-vcs.sh:MCP-only git/gh" \
+    "pre-commit-test.sh:pre-commit test gate" \
+    "no-push-main.sh:push-to-main guard" \
+    "read-size-gate.sh:Read size gate" \
     "gate-before-merge.sh:merge gate"
   do
     key=${pair%%:*}; label=${pair#*:}
@@ -59,8 +59,8 @@ fi
 # --- 2. hook scripts on disk ------------------------------------------------
 printf '\nhook scripts present\n'
 MISSING=0
-for h in require-teammate-report.sh agent-budget-warn.sh enforce-delegation.sh \
-         enforce-agent-contract.sh block-bash-vcs.sh no-push-main.sh \
+for h in agent-budget-warn.sh enforce-delegation.sh \
+         enforce-agent-contract.sh no-push-main.sh read-size-gate.sh \
          tier-before-coder.sh require-skills-block.sh run-gate.sh \
          gate-before-merge.sh pre-commit-test.sh
 do
