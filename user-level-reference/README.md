@@ -25,7 +25,7 @@ Follow these steps to configure Claude Code on a fresh machine:
    Copy the skill directories from `skills/` in this directory to `~/.claude/skills/`, preserving the folder structure (each skill lives in its own subdirectory with a `SKILL.md` file). Then **delete `~/.claude/commands/`** — every surviving command now lives as a skill, and a leftover command file shadows its skill.
 
 5. **Copy hooks to `~/.claude/hooks/`**
-   Copy the `.sh` files from `hooks/` in this directory to `~/.claude/hooks/`. `settings.json` references them as `~/.claude/hooks/…`; a missing script fails closed (`127` → `exit 2`), so copy them before the settings file.
+   Copy the `.sh` files from `hooks/` in this directory to `~/.claude/hooks/`, **and `no-push-main.sh` + `tier-before-coder.sh` from the toolkit root `hooks/`** — `settings.json` binds all four at `~/.claude/hooks/…`. Those two root-sourced scripts are registered fail-closed (`127` → `exit 2`), so a missing copy blocks every Bash and every Agent call; copy them before the settings file. The two in this directory (`read-size-gate.sh`, `bash-output-guard.sh`) cannot block and degrade quietly.
 
 6. **Configure MCP servers**
    `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
@@ -66,7 +66,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 | Skill | Invocation | Purpose |
 |-------|-----------|---------|
-| `challenge` | `/challenge [target]` (also auto-triggers) | Two structured passes over a plan or design: scope/necessity, then correctness/completeness |
+| `challenge` | `/challenge [target]` only | Two structured passes over a plan or design: scope/necessity, then correctness/completeness. Explicit-only because it may spawn the architect. |
 | `commit` | `/commit` only | Stage and commit with native git, after showing the user the staged diff; includes the verification checklist |
 | `sprint` | `/sprint [plan]` only | Run a backlog as parallel **subagent** workstreams — rebase before merge, gate before merge, final-message reporting |
 | `sync-template` | `/sync-template` only | Pull template updates from claude-code-toolkit into the current project |

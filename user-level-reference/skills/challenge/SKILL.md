@@ -1,6 +1,7 @@
 ---
 name: challenge
 description: Challenge a plan, design, or approach in two structured passes — scope/necessity, then correctness/completeness. Use before executing any plan.
+disable-model-invocation: true
 argument-hint: "[what to challenge]"
 ---
 
