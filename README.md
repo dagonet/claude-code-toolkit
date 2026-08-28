@@ -31,28 +31,30 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 
 | Blog principle | How the toolkit applies it |
 |---|---|
-| **Progressive disclosure** | `AGENT_TEAM.md` is **49,724 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **12 skills** load on trigger, not up front. |
-| **Mechanism over mandate** | **15 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, subagent budget, and a retro ledger of subagent failures replayed at session start. **138 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
+| **Progressive disclosure** | `AGENT_TEAM.md` is **49,724 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, invoking the Plan Challenge Protocol, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **12 skills** load on trigger, not up front. Language conventions live in **7 path-scoped `.claude/rules/*.md` files (8,648 B)** that load only when Claude touches a matching file. |
+| **Mechanism over mandate** | **15 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, tier-before-coder, skills-in-spawn-prompt, merge gate, delegation, subagent budget, and a retro ledger of subagent failures replayed at session start. **159 consistency assertions** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
-**The trim pass, measured.** The always-loaded surface went **41,167 B → 32,538 B (−20%)** on the `general` variant, across v1.4 and v1.5:
+**The trim pass, measured.** The always-loaded surface went **41,167 B → 31,518 B (−23%)** on the `general` variant, across v1.4, v1.5, and v2.0-pr4:
 
-| File | Baseline | v1.4 | v1.5 |
-|---|---|---|---|
-| `CLAUDE.md` | 17,871 | 15,281 | **13,735** |
-| `CLAUDE.local.md` | 13,845 | **9,352** | 9,352 |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 |
-| `PROJECT_CONTEXT.md` | 946 | 946 | 946 |
-| **total** | **41,167** | 34,084 | **32,538** |
+| File | Baseline | v1.4 | v1.5 | v2.0-pr4 |
+|---|---|---|---|---|
+| `CLAUDE.md` | 17,871 | 15,281 | 13,735 | **12,522** |
+| `CLAUDE.local.md` | 13,845 | **9,352** | 9,352 | 9,413 |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 | 8,637 |
+| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 |
+| **total** | **41,167** | 34,084 | 32,538 | **31,518** |
 
-Per-variant now: general 32,538 · java 35,708 · python 35,518 · dotnet 36,537 · rust-tauri 37,630 · dotnet-maui 38,315.
+Per-variant now: general 31,518 · java 32,785 · python 32,700 · dotnet 34,209 · rust-tauri 34,687 · dotnet-maui 35,694. The `CLAUDE.local.md` and user-level rows moved slightly in PR1–PR3 for reasons unrelated to the trim.
 
 **v1.4 relocated rather than deleted.** Ten MCP procedures (Ollama warm-up, digesting large inputs, structured extraction, orientation, quality/security sweeps, Context7, headless batch, performance, default workflow) moved into a new **`mcp-usage` skill**; the per-agent Open Brain tables moved into `AGENT_TEAM.md`, which is already on-demand; the Superpowers block keeps its hard triggers and points at the user-level copy for the rest. The on-demand side grew accordingly — `AGENT_TEAM.md` 47,968 → 49,724 B, skills 11 → 12.
 
 **v1.5 deleted, because a mechanism already covers it.** *Working Preferences* went from 18 bullets to 11 (3,939 → 2,393 B). Seven were dropped: five that a hook or the harness already enforces — reading before editing, running tests before commit, never pushing to main, `Read` size limits, keeping the PO out of hands-on work — and two with no behavioural content. In their place, one line naming where the enforcement lives, so the omission reads as deliberate rather than as an oversight. This is the unhobbling move: state that a mechanism exists instead of repeating the rule it enforces. The `"22% of total context"` statistic also collapsed from **7 files to 1**.
 
-Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**138 assertions**), so neither cut could silently break enforcement — including the exact Superpowers header and the `superpowers:` token the checks require.
+**v2.0-pr4 scoped, because the rule only applies to some files.** Every variant's *Code Style (MANDATORY)*, *Enforcement Notes*, and *Project Conventions* sections moved verbatim into `.claude/rules/*.md` with a `paths:` frontmatter glob list — a C# style rule now enters context when Claude opens a `.cs` file and not before, and is re-injected after compaction. Rules **without** `paths:` load at launch at CLAUDE.md cost, so the toolkit ships scoped rules only. The duplicated Spawn-Prompt Binding Table (already in `AGENT_TEAM.md` and enforced by a hook) went with it. `general` variant CLAUDE.md: 13,735 → 12,522 B; `dotnet-maui`, the largest, 15,699 → 12,728 B.
+
+Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**159 assertions**), so none of the cuts could silently break enforcement — including the exact Superpowers header, the `superpowers:` token the checks require, and (new in PR4) that every rules file is genuinely path-scoped.
 
 If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
 

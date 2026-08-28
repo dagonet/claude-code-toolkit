@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.0-pr4 — 2026-08-28
+
+**CLAUDE.md is facts; conventions are path-scoped.** A C# style rule was being loaded on every turn of every session, including the ones that never opened a `.cs` file. `.claude/rules/*.md` files with a `paths:` frontmatter glob list load only when Claude reads or edits a matching file, and are re-injected after compaction — so the conventions arrive exactly when they are actionable.
+
+### Path-scoped rules (new, 7 files)
+
+- `templates/dotnet/.claude/rules/csharp.md` — `**/*.cs`, `**/*.csproj`, `**/*.props`, `**/*.targets`, `.editorconfig`.
+- `templates/dotnet-maui/.claude/rules/csharp.md` (same globs) + `xaml.md` — `**/*.xaml`, `**/*.xaml.cs`, carrying the CommunityToolkit.Maui / ContentPage-namespace checks and the UI smoke-test reminder.
+- `templates/rust-tauri/.claude/rules/rust.md` — `**/*.rs`, `rustfmt.toml`, `Cargo.toml`; `frontend.md` — `src/**/*.ts`, `src/**/*.tsx`, `**/*.css`, `.prettierrc`. The single Rust+TypeScript *Code Style* section was split along the language boundary so each half is scoped to the files it governs.
+- `templates/java/.claude/rules/java.md` — `**/*.java`, `pom.xml`, `**/build.gradle*`, `src/main/resources/application.*`.
+- `templates/python/.claude/rules/python.md` — `**/*.py`, `pyproject.toml`, `requirements*.txt`, `ruff.toml`.
+- **Only `paths:`-scoped rules ship.** An unconditional rule loads at launch at CLAUDE.md cost — it is always-loaded context wearing a `rules/` filename, and buys nothing. `general` has no language of its own and therefore ships no rules; its CLAUDE.md says where conventions belong instead.
+- `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` placeholders survive the move: `setup-project.sh` / `.ps1` walk `.claude/` recursively and run `apply_replacements` on every copied file, so rules are populated and manifest-tracked like any other template file.
+
+### CLAUDE.md diet (×6)
+
+- **Spawn-Prompt Binding Table deleted.** It duplicated `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* and is enforced by `hooks/require-skills-block.sh`, which reads neither copy. One pointer line remains.
+- *Code Style (MANDATORY)*, *Enforcement Notes*, and the per-variant *Project Conventions* sections moved verbatim into rules, each replaced by `Conventions: see .claude/rules/<name>.md (loads when you touch matching files).`
+- Gate rule and commit checklist compressed to name the enforcing hook once instead of restating what it does.
+- Emphasis rationed: `# Session Bootstrap (MANDATORY)` → `# Session Bootstrap`, "The PO MUST use `EnterPlanMode`" → "the PO calls `EnterPlanMode`", "Every plan MUST declare its tier" → "Every plan declares its tier". The one surviving shouted line is the Superpowers header, which two hooks and the verify script pin.
+- **Bytes:** general 13,892 → 12,522 · dotnet 15,450 → 12,772 · dotnet-maui 15,699 → 12,728 · rust-tauri 16,749 → 13,456 · java 16,378 → 13,105 · python 16,299 → 13,131. Always-loaded total on `general`: **32,888 → 31,518 B**, and **41,167 → 31,518 (−23%)** against the pre-trim baseline.
+- The **6 KB / 7 KB targets in the plan were not met and are not reachable** by this route: the sections the plan also lists as *keep* (Session Bootstrap, Workflow TL;DR, Open Brain, Superpowers, Working Preferences, Verification, Compact Instructions) account for ~11 KB on their own. Cutting further means deleting content the plan protects; the honest number is reported instead.
+
+### Verification
+
+- `scripts/verify-template-consistency.sh` §19 (new, 3 assertion groups, all glob-derived): every non-`general` variant ships ≥ 1 `.claude/rules/*.md`; every rules file carries a `paths:` list with at least one glob; every such variant's CLAUDE.md still points at `.claude/rules/`. 148 → 159 assertions.
+- The dangling-`VERIFICATION_PLAYBOOK.md` fix in the plan was **not applied — the premise was wrong.** The file ships in all 6 variants and `setup-project.sh` copies it; the reference resolves in a generated project.
+
+### Downstream migration
+
+- `/sync-template` reports `CLAUDE.md` as **CONFLICT** for any project with local edits outside the `PROJECT-CUSTOM` region. Accept the template version, then re-paste your customisations between the `PROJECT-CUSTOM:BEGIN/END` markers — that region is preserved verbatim by the sync server.
+- The new `.claude/rules/*.md` arrive as `new_template_files`; accept them. If your project already had language conventions pasted into CLAUDE.md, delete them there once the rules land, or the same text loads twice.
+- If a plugin-installed context-mode routing block is still present in your CLAUDE.md, delete it (removed toolkit-side in PR3).
+
 ## v2.0-pr3 — 2026-08-28
 
 **Every agent now declares what it costs.** Transcripts showed the orchestrator on Opus, workers on `sonnet`, Haiku almost unused, and the *built-in* `Explore` inheriting the session model — 219 exploration spawns at Opus prices. In the same window ~400 tool calls hit tools the calling agent did not have (`dotnet-tools`: 87 of 87 failed, advertised in the body and absent from `tools:`), and 5,032 of 10,336 `Read` calls passed no `limit`.

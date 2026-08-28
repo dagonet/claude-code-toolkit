@@ -574,6 +574,64 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 19. Path-scoped rules (v2.0 PR4).
+#     Language conventions moved out of the always-loaded CLAUDE.md into
+#     .claude/rules/*.md. A rule WITHOUT a `paths:` frontmatter list loads at
+#     launch at CLAUDE.md cost, which defeats the whole point of the move — so
+#     every shipped rule must be path-scoped. `general` has no language of its
+#     own and is expected to ship no rules; every other variant ships >= 1.
+#     Counts are derived from the variant list, not hard-coded, so adding a
+#     seventh variant does not silently pass with zero rules.
+# ---------------------------------------------------------------------------
+echo
+rules_expected=0
+rules_present=0
+for v in $VARIANTS; do
+  [ "$v" = "general" ] && continue
+  rules_expected=$((rules_expected + 1))
+  n=$(ls "templates/$v/.claude/rules/"*.md 2>/dev/null | wc -l)
+  if [ "$n" -ge 1 ]; then
+    rules_present=$((rules_present + 1))
+    ok "templates/$v: $n path-scoped rule file(s) in .claude/rules/"
+  else
+    ko "templates/$v: no .claude/rules/*.md — language conventions have nowhere to live"
+  fi
+done
+if [ "$rules_present" = "$rules_expected" ]; then
+  ok "all $rules_expected non-general variants ship at least one rules file"
+fi
+
+# Every rule that ships MUST carry a `paths:` frontmatter list. An unconditional
+# rule is always-loaded context wearing a rules/ filename.
+rules_files=$(ls templates/*/.claude/rules/*.md 2>/dev/null | wc -l)
+scoped=0
+for f in templates/*/.claude/rules/*.md; do
+  [ -f "$f" ] || continue
+  fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$f")
+  if printf '%s\n' "$fm" | grep -q '^paths:' && printf '%s\n' "$fm" | grep -qE '^[[:space:]]+- '; then
+    scoped=$((scoped + 1))
+  else
+    ko "rules: $f has no 'paths:' glob list in its frontmatter (it would load at launch, at CLAUDE.md cost)"
+  fi
+done
+if [ "$rules_files" -gt 0 ] && [ "$scoped" = "$rules_files" ]; then
+  ok "all $rules_files rules files are paths-scoped"
+elif [ "$rules_files" -eq 0 ]; then
+  ko "rules: no .claude/rules/*.md found anywhere (extraction broken?)"
+fi
+
+# The CLAUDE.md diet is only safe if the moved text is still reachable: each
+# variant that ships rules must point at them from CLAUDE.md.
+for v in $VARIANTS; do
+  [ "$v" = "general" ] && continue
+  if grep -q '\.claude/rules/' "templates/$v/CLAUDE.md"; then
+    ok "templates/$v/CLAUDE.md: points at .claude/rules/"
+  else
+    ko "templates/$v/CLAUDE.md: no pointer to .claude/rules/ — the moved conventions are orphaned"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

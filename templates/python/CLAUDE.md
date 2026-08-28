@@ -2,15 +2,15 @@
 
 ---
 
-# Session Bootstrap (MANDATORY)
+# Session Bootstrap
 
 At the start of every session:
-1. Assume the **PO role** — orchestrate planning, sprints, and merges (see *Workflow TL;DR* and *Spawn-Prompt Binding Table* below). Do **NOT** `Read AGENT_TEAM.md` up front (850+ lines). Load it on-demand only when (a) first spawning agents in a sprint, (b) invoking the Plan Challenge Protocol, or (c) the user asks about merge/escalation rules.
+1. Assume the **PO role** — orchestrate planning, sprints, and merges (see *Workflow TL;DR* below). Do **NOT** `Read AGENT_TEAM.md` up front (850+ lines). Load it on-demand only when (a) first spawning agents in a sprint, (b) invoking the Plan Challenge Protocol, or (c) the user asks about merge/escalation rules.
 2. Read `PROJECT_CONTEXT.md` — load build commands and workflow config
 3. **Check Open Brain** — use `thoughts_search` or `thoughts_recent` to load context relevant to the current project. Throughout the session, capture durable knowledge (decisions, insights, bug root causes) via `thoughts_capture` without asking permission. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days).
 4. Present current state (from MEMORY.md) and ask what to work on. Check `git status` and `git worktree list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
 5. **Act on the RETRO brief** — if one was printed (see `hooks/retro-brief.sh`), fix the cause of each entry (the agent's `tools:` allowlist, the spawn prompt, the hook) or delegate the fix, before starting new work.
-6. **Enter plan mode** for any non-trivial task (T2+). The PO MUST use `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode — but still need a 3-line plan file containing `Tier: T1` in `docs/plans/` (the coder spawn gate reads it), and are implemented by ONE spawned coder, never by the PO.
+6. **Enter plan mode** for any non-trivial task (T2+) — the PO calls `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode — but still need a 3-line plan file containing `Tier: T1` in `docs/plans/` (the coder spawn gate reads it), and are implemented by ONE spawned coder, never by the PO.
 
 ## Workflow TL;DR
 
@@ -39,7 +39,7 @@ Team size in this table is a **maximum**, not a target — pick the lowest defen
 
 **Agent fallback:** The `python-coder` agent uses Bash pip/poetry/uv + pytest commands for build and test (no Python-specific MCP tools exist yet). Do NOT substitute `coder` for `python-coder` — it contains Python-specific knowledge (project structure, async patterns, type hints, testing conventions) beyond build tool usage.
 
-**Every plan MUST declare its tier.** The PO enforces the correct team setup per tier before spawning agents.
+**Every plan declares its tier.** The PO enforces the correct team setup per tier before spawning agents.
 
 **Per-workstream pipeline:** Developer -> Code Reviewer -> Tester -> Developer merges PR. All developer agents have `Bash` plus the GitHub PR tools. See `AGENT_TEAM.md` → Merge Protocol.
 
@@ -47,22 +47,7 @@ Team size in this table is a **maximum**, not a target — pick the lowest defen
 
 Full details: `AGENT_TEAM.md` (roles, rules, merge protocol, mode behavior table) — load on-demand per Bootstrap step 1.
 
-## Spawn-Prompt Binding Table
-
-When spawning agents, include a `## Required Skills` block in the spawn prompt. Spawns without it are blocked for bound subagent types by `hooks/require-skills-block.sh` (PreToolUse on `Task`).
-
-| subagent_type | Required Skills |
-|---|---|
-| `coder` / variant coders (`dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) | `karpathy-guidelines`, `superpowers:test-driven-development`, `superpowers:verification-before-completion`, `superpowers:receiving-code-review` |
-| `tester` | `superpowers:systematic-debugging`, `superpowers:verification-before-completion` |
-| `test-writer` | `superpowers:test-driven-development` |
-| `architect` | `superpowers:writing-plans` |
-| `requirements-engineer` | `superpowers:brainstorming` |
-| `code-reviewer` / `doc-generator` | *(none — omit the block; hook passes them through)* |
-
-> **Spawn-prompt rule for agents without MCP tools:** Do NOT include commit, push, PR-creation, PR-merge, or comment-posting instructions in spawn prompts for `architect`, `requirements-engineer`, or `doc-generator`. These agents have neither `Bash` nor GitHub MCP tools in their `tools:` frontmatter and cannot perform such operations. Have them return their work product and let the PO perform the git + GitHub I/O. All other agents (`coder`, variant coders, `code-reviewer`, `tester`) have `Bash` plus the GitHub tools they need and handle their own git/GitHub operations.
-
-Full copy-paste snippets + rationale: `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* (load on-demand).
+Spawn-prompt contracts: `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* (hook-enforced) — also covers which agents lack `Bash`/GitHub tools and therefore return their work to the PO.
 
 ## Open Brain Context for Agents
 
@@ -107,34 +92,7 @@ What follows are the judgement calls no hook can make:
 - **Clean finish** — committed, merged, worktree removed, branch deleted, temp scripts gone. Anything left behind gets reported, with the reason
 - **Checkpoint long sessions** — commit and push intermediate work; output truncation has cost 9+ hours of context before now
 - **Learn from corrections** — capture the pattern to Open Brain immediately so the same mistake does not repeat
-# Code Style (MANDATORY)
-
-This repository uses `ruff` as the authoritative formatter and linter. The `.editorconfig` at the repository root provides supplementary whitespace and indent rules.
-
-All Python code MUST:
-- pass `ruff format` and `ruff check` without changes
-- use `snake_case` for functions, methods, and variables
-- use `UpperCamelCase` for classes
-- use `UPPER_SNAKE_CASE` for constants
-- use type hints for all function signatures
-- use absolute imports (avoid relative imports unless within a package)
-
-Claude agents MUST NOT:
-- reformat code that already complies
-- introduce alternative styles
-- override `.editorconfig` or ruff preferences
-
-If generated code would violate the project formatter,
-the code MUST be rewritten until it complies.
-
----
-
-## Enforcement Notes
-
-- `.editorconfig` is committed and authoritative for whitespace
-- `ruff` is authoritative for Python style and linting
-- Formatting consistency is more important than brevity
-- Run `{{FORMAT_COMMAND}}` and `{{LINT_COMMAND}}` before every commit
+Conventions: see `.claude/rules/python.md` (loads when you touch matching files).
 
 ---
 
@@ -154,7 +112,7 @@ Mandatory rules live in `VERIFICATION_PLAYBOOK.md` — consult it before claimin
 3. **Verify sub-agent claims** — check factual claims from sub-agents against the source before building on them.
 4. **Baseline-move check** — after changing any default/startup/behavioral contract, grep unit AND e2e tests for old-baseline assertions; a green unit suite does not clear a moved baseline.
 
-**Gate rule (developers):** run `bash hooks/run-gate.sh` — never re-derive the individual build/test/format/lint commands from memory. A green gate writes `.gate/last-pass.json`; `hooks/gate-before-merge.sh` hard-blocks PR merges without a fresh artifact. The PO never runs the gate or the suite — it verifies via the artifact (`hooks/enforce-delegation.sh` enforces this); a needed re-run is dispatched to `ops` or the coder.
+**Gate rule (developers):** run `bash hooks/run-gate.sh` — never re-derive the build/test/format/lint commands from memory. The PO reads the resulting `.gate/last-pass.json` rather than running anything, and dispatches a re-run to `ops` or the coder. Enforced mechanically: `hooks/gate-before-merge.sh`, `hooks/enforce-delegation.sh`.
 
 ---
 
@@ -165,29 +123,13 @@ Project-specific reminder: trace read **and** write paths through Route/View →
 
 ---
 
-# Python Project Conventions
-
-- Always verify `import` statements are present after merges or multi-file edits
-- Use type hints for all function signatures and return types
-- Use `pathlib.Path` over `os.path` for file system operations
-- Use the `logging` module — never `print()` for diagnostics
-- Use context managers (`with` statements) for resource management
-- Check `pyproject.toml` / `requirements.txt` for new dependencies before adding
-- After branch merges, verify no `import` statements were dropped
-- Run `{{FORMAT_COMMAND}}` + `{{LINT_COMMAND}}` before every commit
-
----
-
 # Commit Workflow
 
 When asked to commit and push, do so promptly without excessive re-verification. Keep momentum between implement -> commit -> plan-next cycles.
 
-Before marking any commit/push complete, verify:
-- `git diff --cached` — confirm no unintended files staged
-- `git diff --stat` — confirm no unstaged changes forgotten
-- After push: check tool output for success; if rejected, diagnose immediately
+Before calling a commit/push done: `git diff --cached` (nothing unintended staged), `git diff --stat` (nothing forgotten), and check the push output — a rejected push gets diagnosed immediately, not retried blindly.
 
-**Merge ownership:** Developer agents (`coder`, variant coders, `general-purpose`) own the merge — rebase, CI-check, and squash-merge are the developer's job. The PO sequences merges across workstreams by sending merge-go-ahead messages. See `AGENT_TEAM.md` → Merge Protocol.
+**Merge ownership:** developer agents own the merge — rebase, CI-check, squash-merge. The PO's part is sequencing merges across workstreams. See `AGENT_TEAM.md` → Merge Protocol.
 
 ---
 
