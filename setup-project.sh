@@ -132,7 +132,12 @@ if [[ -n "$PACKAGE_MANAGER" ]] && [[ "$PACKAGE_MANAGER" != "pip" && "$PACKAGE_MA
     echo "Error: --package-manager must be 'pip', 'poetry', or 'uv', got: $PACKAGE_MANAGER" >&2; exit 1
 fi
 
-# --- Default branch: explicit flag, else the target repo's current branch, else main ---
+if [[ "$FORCE" == true && "$WRAP_EXISTING_CLAUDE_MD" == true ]]; then
+    echo "Error: --force and --wrap-existing-claude-md conflict — --force overwrites an existing CLAUDE.md, --wrap-existing-claude-md preserves it inside the PROJECT-CUSTOM region. Pass one or the other." >&2
+    exit 1
+fi
+
+# --- Default branch: explicit flag, else detected from the target repo, else main ---
 if [[ -n "$DEFAULT_BRANCH" ]]; then
     # A plain ref name only — this value ends up in PROJECT_CONTEXT.md and is read
     # back by the branch-protection hooks, so refuse anything shell- or ref-unsafe.
@@ -140,8 +145,27 @@ if [[ -n "$DEFAULT_BRANCH" ]]; then
         echo "Error: --default-branch must be a plain ref name (letters, digits, . _ / -), got: $DEFAULT_BRANCH" >&2; exit 1
     fi
 else
-    DEFAULT_BRANCH="$(git -C "$TARGET_DIR" symbolic-ref --short HEAD 2>/dev/null || true)"
-    [[ -z "$DEFAULT_BRANCH" ]] && DEFAULT_BRANCH="main"
+    # Detect only when the TARGET ITSELF is a repo root: git walks up, so a target
+    # inside someone else's checkout would otherwise inherit that repo's branch.
+    detected=""
+    toplevel="$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$toplevel" ]] && [[ "$(cd "$toplevel" 2>/dev/null && pwd)" == "$TARGET_DIR" ]]; then
+        # Prefer the remote's default branch: the branch that happens to be checked
+        # out during bootstrap is often a feature branch, and this value is what
+        # PROJECT_CONTEXT.md declares PROTECTED.
+        remote_head="$(git -C "$TARGET_DIR" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)"
+        if [[ "$remote_head" == refs/remotes/origin/* ]]; then
+            detected="${remote_head#refs/remotes/origin/}"
+        else
+            detected="$(git -C "$TARGET_DIR" symbolic-ref --short HEAD 2>/dev/null || true)"
+        fi
+    fi
+    if [[ -n "$detected" ]]; then
+        DEFAULT_BRANCH="$detected"
+        echo "Detected default branch: $DEFAULT_BRANCH (override with --default-branch)"
+    else
+        DEFAULT_BRANCH="main"
+    fi
 fi
 
 # --- Resolve relative MCP path flags against caller CWD ---
@@ -320,6 +344,29 @@ should_wrap_claude_md() {
     ! grep -qF 'PROJECT-CUSTOM:BEGIN' "$TARGET_DIR/CLAUDE.md"
 }
 
+# --- .gitignore merge block ---
+#
+# The rendered lines the merge would append to an EXISTING .gitignore. Shared by
+# both modes so the dry-run list is the real run's list. The presence test is a
+# WHOLE-LINE match: `/.mcp.json` is a substring of `.claude/.mcp.json`, so a
+# substring test skipped the root rule on every upgrade path.
+# Prints nothing when there is nothing to add. No trailing newline (the caller
+# adds it) -- command substitution would strip it anyway.
+gitignore_append_block() {
+    local content="$1" target_file="$2"
+    local lines_to_add="" line trimmed
+    while IFS= read -r line; do
+        trimmed="${line#"${line%%[![:space:]]*}"}"
+        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+        [[ -z "$trimmed" || "$trimmed" == \#* ]] && continue
+        if ! grep -qxF "$trimmed" "$target_file" 2>/dev/null; then
+            lines_to_add+="$trimmed"$'\n'
+        fi
+    done <<< "$content"
+    [[ -z "$lines_to_add" ]] && return 0
+    apply_replacements $'\n'"# Claude Code - machine-specific files"$'\n'"$lines_to_add"
+}
+
 # One-line hint appended to an existing-CLAUDE.md skip, naming the way out.
 claude_md_skip_hint() {
     [[ "$1" == "CLAUDE.md" ]] || return 0
@@ -334,6 +381,11 @@ claude_md_skip_hint() {
 render_file() {
     local idx="$1"
     local rendered
+    # An existing .gitignore is merged, not rewritten -- only the append block is written.
+    if [[ "${FILE_IS_GITIGNORE[$idx]}" == true ]] && [[ -f "$TARGET_DIR/${FILE_RELS[$idx]}" ]]; then
+        gitignore_append_block "$(<"${FILE_SOURCES[$idx]}")" "$TARGET_DIR/${FILE_RELS[$idx]}"
+        return 0
+    fi
     rendered="$(apply_replacements "$(<"${FILE_SOURCES[$idx]}")")"
     if should_wrap_claude_md "${FILE_RELS[$idx]}"; then
         rendered="$(wrap_into_custom_region "$rendered" "$(<"$TARGET_DIR/CLAUDE.md")")"
@@ -475,14 +527,17 @@ if [[ -d "$TEMPLATE_DIR/.claude" ]]; then
     done < <(find "$TEMPLATE_DIR/.claude" -type f -print0 | sort -z)
 fi
 
-# Shared hook scripts (from repo root, not template-specific)
+# Shared hook scripts (from repo root, not template-specific).
+# EVERY file, recursively: the gates source hooks/lib/*.sh via $(dirname "$0")/lib/…
+# and fail CLOSED (exit 2) when the lib is missing, so a filtered copy would leave a
+# bootstrapped project unable to commit, push, or merge.
 if [[ -d "$SCRIPT_DIR/hooks" ]]; then
     while IFS= read -r -d '' file; do
         rel="${file#"$SCRIPT_DIR/"}"
         FILE_SOURCES+=("$file")
         FILE_RELS+=("$rel")
         FILE_IS_GITIGNORE+=(false)
-    done < <(find "$SCRIPT_DIR/hooks" -type f -name '*.sh' -print0 | sort -z)
+    done < <(find "$SCRIPT_DIR/hooks" -type f -print0 | sort -z)
 fi
 
 # --- autoMode.environment snippet -------------------------------------------
@@ -605,19 +660,9 @@ for i in "${!FILE_SOURCES[@]}"; do
     # .gitignore: append or create
     if [[ "$is_gi" == true ]]; then
         if [[ -f "$target_file" ]]; then
-            lines_to_add=""
-            while IFS= read -r line; do
-                trimmed="${line#"${line%%[![:space:]]*}"}"
-                trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-                [[ -z "$trimmed" || "$trimmed" == \#* ]] && continue
-                if ! grep -qF "$trimmed" "$target_file" 2>/dev/null; then
-                    lines_to_add+="$trimmed"$'\n'
-                fi
-            done <<< "$content"
-            if [[ -n "$lines_to_add" ]]; then
-                append_block=$'\n'"# Claude Code - machine-specific files"$'\n'"$lines_to_add"
-                append_block="$(apply_replacements "$append_block")"
-                printf '%s' "$append_block" >> "$target_file"
+            append_block="$(gitignore_append_block "$content" "$target_file")"
+            if [[ -n "$append_block" ]]; then
+                printf '%s\n' "$append_block" >> "$target_file"
                 copied+=("$rel (appended)")
                 record_rendered "$rel" "$append_block"
             else

@@ -14,12 +14,15 @@
 
 **5. Docs.** `AGENTS.md`: the general Q&A now covers the five commands, the flag-beats-derived rule is stated, the dry-run step tells the agent to read the placeholder report, §6's manifest path is corrected to `.claude/template-manifest.json` (it named a file that has never existed), and §3's hook count is corrected from 15 to 12 (BUG 5). `docs/getting-started.md` and `user-level-reference/README.md` warn that a user-level `settings.json` carries personal keys (`advisorModel`, `autoCompact*`, `contextCompactionThreshold`, `statusLine`) and must be MERGED — take `permissions.deny` and `hooks` only, per the v2.1 Python-merge pattern.
 
+**6. Bootstrap correctness (review round 1).** `setup-project.ps1` copied `hooks/` with a **non-recursive `*.sh`** filter, so `hooks/lib/git-cmd.sh` never reached the target — and the gates `source` it and fail **closed** (exit 2) when it is missing, leaving a Windows-bootstrapped project unable to commit, push, or merge. Both scripts now copy **every file under `hooks/`, recursively** (12 top-level scripts + `hooks/lib/`), which also covers PR15's new `hooks/lib/json.sh`. The `.gitignore` merge tested existing entries by **substring**, so an existing `.claude/.mcp.json` line suppressed the root `/.mcp.json` rule on every upgrade path — it is a whole-line match now (`grep -qxF`; `-notcontains` in PowerShell), and both scripts share one append-block helper so the dry-run list equals the real run's. `--default-branch` detection now fires only when the target **is** the repo root (`git` walks up, so a target inside another checkout inherited that repo's branch) and prefers `refs/remotes/origin/HEAD` over whatever branch happens to be checked out — bootstrapping from a feature branch used to write that branch into `**Protected branches**:`. It prints `Detected default branch: X (override with --default-branch)`. `--force` together with `--wrap-existing-claude-md` is now a hard error (they ask for opposite things). `templates/*/AGENT_TEAM.md`'s PROJECT_CONTEXT example uses `{{DEFAULT_BRANCH}}` too, and `CLAUDE.local.md`'s Open Brain section is prefixed "If `open-brain` is registered:" instead of "HARD REQUIREMENT", matching the new only-if-registered header.
+
 ### Downstream migration
 
-1. **Re-run nothing.** The new flags only affect fresh bootstraps.
-2. **Optional, existing projects:** add `- **Protected branches**: <branch>` to `PROJECT_CONTEXT.md` if you want PR15's hooks to read it; leaving it out keeps today's behaviour.
-3. The `.env` deny change (PR15) arrives through your normal `settings.json` sync; the `gitignore` fix arrives through `/sync-template`.
-4. `CLAUDE.local.md` is gitignored per project, so no sync touches it — re-copy `templates/<variant>/CLAUDE.local.md` by hand if you want the "only if registered" wording.
+1. **Windows consumers bootstrapped with `setup-project.ps1` before v2.2.0: check `ls <project>/hooks/lib`.** If it is missing, copy `hooks/lib/` from the toolkit — without it every gate exits 2 and no commit, push, or merge can succeed. This is the one item that is not optional.
+2. **Re-run nothing else.** The new flags only affect fresh bootstraps.
+3. **Optional, existing projects:** add `- **Protected branches**: <branch>` to `PROJECT_CONTEXT.md` if you want PR15's hooks to read it; leaving it out keeps today's behaviour.
+4. The `.env` deny change (PR15) arrives through your normal `settings.json` sync; the `gitignore` fix arrives through `/sync-template`.
+5. `CLAUDE.local.md` is gitignored per project, so no sync touches it — re-copy `templates/<variant>/CLAUDE.local.md` by hand if you want the "only if registered" wording.
 
 ## v2.2.0-pr15 — 2026-08-29
 

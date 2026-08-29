@@ -122,7 +122,12 @@ if ($Variant -eq "python") {
     }
 }
 
-# --- Default branch: explicit flag, else the target repo's current branch, else main ---
+if ($Force -and $WrapExistingClaudeMd) {
+    Write-Error "-Force and -WrapExistingClaudeMd conflict -- -Force overwrites an existing CLAUDE.md, -WrapExistingClaudeMd preserves it inside the PROJECT-CUSTOM region. Pass one or the other."
+    return
+}
+
+# --- Default branch: explicit flag, else detected from the target repo, else main ---
 #
 # The value lands in PROJECT_CONTEXT.md and is read back by the branch-protection
 # hooks, so refuse anything that is not a plain ref name.
@@ -133,10 +138,45 @@ if ($DefaultBranch) {
     }
 }
 else {
-    if (Test-Path (Join-Path $TargetDir ".git")) {
-        $DefaultBranch = (& git -C $TargetDir symbolic-ref --short HEAD 2>$null)
+    # Detect only when the TARGET ITSELF is a repo root: git walks up, so a target
+    # inside someone else's checkout would otherwise inherit that repo's branch.
+    #
+    # $ErrorActionPreference is 'Stop' for this script, which turns ANY stderr output
+    # from a native command into a terminating error -- and git writes to stderr for
+    # a missing directory or an unset origin/HEAD, both of which are normal here.
+    $detected = ""
+    if (Test-Path $TargetDir) {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $toplevel = (& git -C $TargetDir rev-parse --show-toplevel 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $toplevel) {
+                $sameRepo = ([System.IO.Path]::GetFullPath($toplevel).TrimEnd('\', '/') -eq
+                             [System.IO.Path]::GetFullPath($TargetDir).TrimEnd('\', '/'))
+                if ($sameRepo) {
+                    # Prefer the remote's default branch: the branch that happens to be
+                    # checked out during bootstrap is often a feature branch, and this
+                    # value is what PROJECT_CONTEXT.md declares PROTECTED.
+                    $remoteHead = (& git -C $TargetDir symbolic-ref refs/remotes/origin/HEAD 2>$null)
+                    if ($LASTEXITCODE -eq 0 -and $remoteHead -and $remoteHead.StartsWith("refs/remotes/origin/")) {
+                        $detected = $remoteHead.Substring("refs/remotes/origin/".Length)
+                    }
+                    else {
+                        $current = (& git -C $TargetDir symbolic-ref --short HEAD 2>$null)
+                        if ($LASTEXITCODE -eq 0) { $detected = $current }
+                    }
+                }
+            }
+        }
+        finally { $ErrorActionPreference = $prevEap }
     }
-    if (-not $DefaultBranch) { $DefaultBranch = "main" }
+    if ($detected) {
+        $DefaultBranch = $detected
+        Write-Host "Detected default branch: $DefaultBranch (override with -DefaultBranch)"
+    }
+    else {
+        $DefaultBranch = "main"
+    }
 }
 
 # --- Resolve relative MCP path flags against caller CWD ---
@@ -353,11 +393,14 @@ function Get-TemplateFiles {
         }
     }
 
-    # Shared hook scripts (from repo root, not template-specific)
+    # Shared hook scripts (from repo root, not template-specific).
+    # EVERY file, RECURSIVELY: the gates source hooks/lib/*.sh via $(dirname "$0")/lib/...
+    # and fail CLOSED (exit 2) when the lib is missing, so the old non-recursive
+    # *.sh copy left a Windows-bootstrapped project unable to commit, push, or merge.
     $hooksDir = Join-Path $PSScriptRoot "hooks"
     if (Test-Path $hooksDir) {
-        Get-ChildItem -Path $hooksDir -Filter "*.sh" -File | ForEach-Object {
-            $relPath = "hooks/$($_.Name)"
+        Get-ChildItem -Path $hooksDir -Recurse -File | ForEach-Object {
+            $relPath = "hooks/" + $_.FullName.Substring($hooksDir.Length).TrimStart('\', '/').Replace('\', '/')
             $files += @{ Source = $_.FullName; RelPath = $relPath; IsGitignore = $false }
         }
     }
@@ -400,6 +443,29 @@ function Test-ShouldWrapClaudeMd {
     return -not ((Get-Content -Path $existing -Encoding UTF8 -Raw).Contains("PROJECT-CUSTOM:BEGIN"))
 }
 
+# --- .gitignore merge block ---
+#
+# The rendered lines the merge would append to an EXISTING .gitignore. Shared by
+# both modes so the dry-run list is the real run's list. The presence test is a
+# WHOLE-LINE match: `/.mcp.json` is a substring of `.claude/.mcp.json`, so a
+# substring test skipped the root rule on every upgrade path.
+# Returns $null when there is nothing to add.
+function Get-GitignoreAppendBlock {
+    param([string]$SourceContent, [string]$TargetFile)
+    $existingLines = @(Get-Content -Path $TargetFile -Encoding UTF8 | ForEach-Object { $_.Trim() })
+    $linesToAdd = @()
+    foreach ($line in ($SourceContent -split "`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed -and -not $trimmed.StartsWith('#') -and $existingLines -notcontains $trimmed) {
+            $linesToAdd += $trimmed
+        }
+    }
+    if ($linesToAdd.Count -eq 0) { return $null }
+    $block = "`n`n# Claude Code - machine-specific files`n" + ($linesToAdd -join "`n") + "`n"
+    foreach ($key in $replacements.Keys) { $block = $block.Replace($key, $replacements[$key]) }
+    return $block
+}
+
 function Get-ClaudeMdSkipHint {
     param([string]$RelPath)
     if ($RelPath -ne "CLAUDE.md") { return "" }
@@ -410,6 +476,13 @@ function Get-ClaudeMdSkipHint {
 # Exact text that would be written for a template file -- used by both modes.
 function Get-RenderedContent {
     param($File)
+    # An existing .gitignore is merged, not rewritten -- only the append block is written.
+    if ($File.IsGitignore -and (Test-Path (Join-Path $TargetDir $File.RelPath))) {
+        $block = Get-GitignoreAppendBlock -SourceContent (Get-Content -Path $File.Source -Encoding UTF8 -Raw) `
+                                          -TargetFile (Join-Path $TargetDir $File.RelPath)
+        if ($null -eq $block) { return "" }
+        return $block
+    }
     $text = Get-Content -Path $File.Source -Encoding UTF8 -Raw
     foreach ($key in $replacements.Keys) { $text = $text.Replace($key, $replacements[$key]) }
     if (Test-ShouldWrapClaudeMd $File.RelPath) {
@@ -474,7 +547,15 @@ function Write-RemainingPlaceholders {
 function Write-AutoModeSnippet {
     $remote = $RepoUrl
     if (-not $remote -and (Test-Path (Join-Path $TargetDir ".git"))) {
-        $remote = (& git -C $TargetDir remote get-url origin 2>$null)
+        # 'Stop' turns git's stderr ("No such remote 'origin'") into a terminating
+        # error, which would abort an otherwise fine run in a repo without a remote.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $remote = (& git -C $TargetDir remote get-url origin 2>$null)
+            if ($LASTEXITCODE -ne 0) { $remote = "" }
+        }
+        finally { $ErrorActionPreference = $prevEap }
     }
     if (-not $remote) { $remote = "<your remote URL>" }
 
@@ -586,20 +667,8 @@ foreach ($f in $templateFiles) {
         $sourceContent = Get-Content -Path $f.Source -Encoding UTF8 -Raw
         if (Test-Path $targetFile) {
             # Append entries not already present
-            $existingContent = Get-Content -Path $targetFile -Encoding UTF8 -Raw
-            $linesToAdd = @()
-            foreach ($line in ($sourceContent -split "`n")) {
-                $trimmed = $line.Trim()
-                if ($trimmed -and -not $trimmed.StartsWith('#') -and $existingContent -notmatch [regex]::Escape($trimmed)) {
-                    $linesToAdd += $trimmed
-                }
-            }
-            if ($linesToAdd.Count -gt 0) {
-                $appendBlock = "`n`n# Claude Code - machine-specific files`n" + ($linesToAdd -join "`n") + "`n"
-                # Apply replacements to the append block
-                foreach ($key in $replacements.Keys) {
-                    $appendBlock = $appendBlock.Replace($key, $replacements[$key])
-                }
+            $appendBlock = Get-GitignoreAppendBlock -SourceContent $sourceContent -TargetFile $targetFile
+            if ($appendBlock) {
                 Add-Content -Path $targetFile -Value $appendBlock -Encoding UTF8
                 $copiedFiles += "$($f.RelPath) (appended)"
                 Add-RenderedFile -RelPath $f.RelPath -Text $appendBlock

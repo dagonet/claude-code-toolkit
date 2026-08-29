@@ -1,6 +1,6 @@
 # Claude Code -- MCP Usage Rules
 
-This repository is configured with local MCP servers that provide
+This repository may be configured with local MCP servers that provide
 **local-first preprocessing, automation, and integration tools**
 to reduce token usage, improve determinism, and avoid fragile shell workflows.
 
@@ -221,17 +221,17 @@ The Windows-MCP server provides desktop automation tools for the tester agent.
 
 ---
 
-## Open Brain Memory -- HARD REQUIREMENT
+## Open Brain Memory
 
-Open Brain (`mcp__open-brain__*`) is the user's persistent memory system.
+**If `open-brain` is registered:** Open Brain (`mcp__open-brain__*`) is the user's persistent memory system, and the rules in this section bind every turn. If it is not registered, skip the section entirely.
 
-### At Session Start (MANDATORY)
+### At Session Start
 
 Claude MUST call **at least one** of the following before any other work:
 - `thoughts_search` with a query relevant to the current project or task
 - `thoughts_recent` to review what was recently captured
 
-This is NOT optional. Do NOT skip this step. Do NOT defer it.
+With the server registered this is not optional: do not skip it, do not defer it.
 
 ### During the Session
 
@@ -294,4 +294,4 @@ default MCP-first workflow now live in the **`mcp-usage`** skill. It loads when 
 situation calls for it rather than on every turn.
 
 What stays inline above is what binds every turn: which servers are registered, the
-git/GitHub MCP-only requirement, Open Brain, trust/verification, and failure handling.
+GitHub tool-or-`gh` contract, Open Brain, trust/verification, and failure handling.
