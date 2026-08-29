@@ -26,7 +26,11 @@
 # this hook exists for — would fail to exec and slip through untruncated.
 #
 # Always exits 0. A PostToolUse hook that fails must never disturb the tool
-# result, so every error path is a silent pass-through.
+# result, so every error path is a silent pass-through — with ONE exception as
+# of v2.2.0: a host with no `node` gets a single WARN line on stderr (once per
+# hook per TMPDIR, see json_warn_once) rather than silence, because a truncation
+# guard that has quietly stopped running is indistinguishable from one that has
+# nothing to truncate.
 
 THRESHOLD=12000
 KEEP=4000

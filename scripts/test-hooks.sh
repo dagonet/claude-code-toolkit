@@ -1112,15 +1112,24 @@ mkpathdir() { # <name> [extra-tool ...] -> prints dir
   printf '%s\n' "$pd"
 }
 
+# A hook that cannot enforce warns only ONCE per hook per TMPDIR (see
+# json_warn_once), so every case gets a fresh TMPDIR — otherwise the second
+# assertion on the same hook would see no WARN and the suite would depend on
+# case order.
+WARNTMP="$TMPROOT/warntmp"
+
 # <label> <pathdir> <hook-rel-path> <want-exit> <json> [stderr-needle]
 check_env() {
   label="$1"; pd="$2"; hook="$3"; want="$4"; json="$5"; needle="${6:-}"
   errf="$TMPROOT/check_env.err"
-  printf '%s' "$json" | PATH="$pd" "$BASHABS" "$ROOT/$hook" >/dev/null 2>"$errf"
+  rm -rf "$WARNTMP"; mkdir -p "$WARNTMP"
+  printf '%s' "$json" | PATH="$pd" TMPDIR="$WARNTMP" "$BASHABS" "$ROOT/$hook" >/dev/null 2>"$errf"
   got=$?
   okc=1
   [ "$got" = "$want" ] || okc=0
   if [ -n "$needle" ] && ! grep -qF "$needle" "$errf"; then okc=0; fi
+  # An undefined helper (lib not sourced) is never an acceptable degradation.
+  if grep -qF "command not found" "$errf"; then okc=0; fi
   if [ "$okc" = "1" ]; then
     printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
     pass=$((pass + 1))
@@ -1143,10 +1152,26 @@ seen() { # <pathdir> <tool>
 expect "fixture PATH hides node"         1 "$(seen "$NOPARSER" node)"
 expect "fixture PATH hides python3"      1 "$(seen "$NOPARSER" python3)"
 expect "fixture PATH hides jq"           1 "$(seen "$NOPARSER" jq)"
-expect "python3-only PATH hides node"    1 "$(seen "$PYONLY" node)"
-expect "python3-only PATH keeps python3" 0 "$(seen "$PYONLY" python3)"
-expect "jq-only PATH hides node"         1 "$(seen "$JQONLY" node)"
-expect "jq-only PATH keeps jq"           0 "$(seen "$JQONLY" jq)"
+
+# The python3-only / jq-only backends can only be exercised where that
+# interpreter exists. On a node-only box those cases SKIP (reported, not
+# counted) instead of turning the whole suite red.
+skip() { printf 'SKIP  %-42s (%s)\n' "$1" "$2"; }
+HAVE_PY=1; command -v python3 >/dev/null 2>&1 || HAVE_PY=""
+HAVE_JQ=1; command -v jq      >/dev/null 2>&1 || HAVE_JQ=""
+
+if [ -n "$HAVE_PY" ]; then
+  expect "python3-only PATH hides node"    1 "$(seen "$PYONLY" node)"
+  expect "python3-only PATH keeps python3" 0 "$(seen "$PYONLY" python3)"
+else
+  skip "python3 backend cases" "no python3 on this host"
+fi
+if [ -n "$HAVE_JQ" ]; then
+  expect "jq-only PATH hides node"         1 "$(seen "$JQONLY" node)"
+  expect "jq-only PATH keeps jq"           0 "$(seen "$JQONLY" jq)"
+else
+  skip "jq backend cases" "no jq on this host"
+fi
 
 NEEDLE_BLOCK="no JSON parser (node, python3 or jq) on PATH"
 NEEDLE_WARN="no JSON parser on PATH"
@@ -1178,7 +1203,24 @@ cp "$ROOT/hooks/lib/git-cmd.sh" "$NOJSONLIB/lib/"
 check_msg "lib/json.sh missing: gate fails closed" "$NOJSONLIB/no-push-main.sh" 2 \
   "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")" "hooks/lib/json.sh"
 
+# A hook that calls json_get without the lib sourced would print
+# `json_get: command not found` and enforce nothing. Both hooks that read fields
+# through the lib must say so and pass instead. (check_env fails any case whose
+# stderr contains "command not found", so the whole block is guarded too.)
+NOLIB="$TMPROOT/nolib"
+mkdir -p "$NOLIB"
+cp "$ROOT/hooks/require-skills-block.sh" "$ROOT/hooks/enforce-agent-contract.sh" "$NOLIB/"
+check_msg "no lib: require-skills warns, passes" "$NOLIB/require-skills-block.sh" 0 \
+  "$(mkspawn coder 'Do the thing.')" "hooks/lib/json.sh missing"
+check_msg "no lib: agent-contract warns, passes" "$NOLIB/enforce-agent-contract.sh" 0 \
+  "$(mkstop "$ROOT" coder a1 /nonexistent)" "hooks/lib/json.sh missing"
+nolib_err="$TMPROOT/nolib.err"
+printf '%s' "$(mkstop "$ROOT" coder a1 /nonexistent)" \
+  | bash "$NOLIB/enforce-agent-contract.sh" >/dev/null 2>"$nolib_err"
+expect "no lib: no 'command not found' noise" "0" "$(grep -c 'command not found' "$nolib_err")"
+
 # --- python3 only: the git gates behave exactly as with node ----------------
+if [ -n "$HAVE_PY" ]; then
 check_env "python3: push origin main blocked"  "$PYONLY" hooks/no-push-main.sh 2 \
   "$(mkjson Bash 'git push origin main' "$MAINREPO")"
 check_env "python3: feature push allowed"      "$PYONLY" hooks/no-push-main.sh 0 \
@@ -1187,27 +1229,71 @@ check_env "python3: quoted -C space repo"      "$PYONLY" hooks/no-push-main.sh 2
   "$(mkjson Bash "git -C \"$SPACEREPO\" push" "$FEATREPO")"
 check_env "python3: gh pr merge needs artifact" "$PYONLY" hooks/gate-before-merge.sh 2 \
   "$(mkjson Bash 'gh pr merge 1 --squash' "$GATEREPO")"
+# A node-only hook on a python3 box names the parser it actually needs.
+check_env "python3: read-size-gate names node" "$PYONLY" hooks/read-size-gate.sh 0 \
+  "$(mkread "$ROOT/README.md" - -)" "node not on PATH (found python3)"
+else
+skip "python3 git-gate cases" "no python3 on this host"
+fi
 
 # --- jq only: same ----------------------------------------------------------
+if [ -n "$HAVE_JQ" ]; then
 check_env "jq: push origin main blocked"       "$JQONLY" hooks/no-push-main.sh 2 \
   "$(mkjson Bash 'git push origin main' "$MAINREPO")"
 check_env "jq: feature push allowed"           "$JQONLY" hooks/no-push-main.sh 0 \
   "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
 check_env "jq: quoted -C space repo"           "$JQONLY" hooks/no-push-main.sh 2 \
   "$(mkjson Bash "git -C \"$SPACEREPO\" push" "$FEATREPO")"
+else
+skip "jq git-gate cases" "no jq on this host"
+fi
 
 # require-skills-block is the one BLOCKING hook whose verdict now flows through
 # json_get, and it matches on a multi-line field (prompt) — a backend that
 # mangled the newlines would turn `^## Required Skills$` from a match into a
 # miss and the gate would stop blocking. Exercised on both non-node backends.
+if [ -n "$HAVE_PY" ]; then
 check_env "python3: skills block present passes" "$PYONLY" hooks/require-skills-block.sh 0 \
   "$(mkspawn coder "$WITHBLOCK")"
 check_env "python3: missing skills block blocks"  "$PYONLY" hooks/require-skills-block.sh 2 \
   "$(mkspawn coder 'Do the thing.')"
+fi
+if [ -n "$HAVE_JQ" ]; then
 check_env "jq: skills block present passes"       "$JQONLY" hooks/require-skills-block.sh 0 \
   "$(mkspawn coder "$WITHBLOCK")"
 check_env "jq: missing skills block blocks"       "$JQONLY" hooks/require-skills-block.sh 2 \
   "$(mkspawn coder 'Do the thing.')"
+fi
+
+# --- encoding: every backend must return the SAME bytes ---------------------
+#
+# `json.load(sys.stdin)` decoded in the LOCALE encoding, so an em dash in a
+# command raised UnicodeDecodeError on a Windows/`LC_ALL=C` box -> empty field
+# -> gate exits 0 silently. A UTF-8 BOM broke all three backends. Compared
+# across backends rather than against a hardcoded string.
+jget() { # <pathdir> <json> <dotted.path>
+  PATH="$1" "$BASHABS" -c '. "$0"/hooks/lib/json.sh; json_get "$1" "$2"' \
+    "$ROOT" "$2" "$3" 2>/dev/null
+}
+EMCMD='git push origin main # rationale — see PR'
+EMJSON=$(mkjson Bash "$EMCMD" "$MAINREPO")
+BOMJSON=$(printf '\357\273\277%s' "$EMJSON")
+expect "node: em dash survives"  "$EMCMD" "$(jget "$PATH" "$EMJSON" tool_input.command)"
+expect "node: BOM tolerated"     "$EMCMD" "$(jget "$PATH" "$BOMJSON" tool_input.command)"
+if [ -n "$HAVE_PY" ]; then
+  expect "python3: em dash survives" "$EMCMD" "$(jget "$PYONLY" "$EMJSON" tool_input.command)"
+  expect "python3: BOM tolerated"    "$EMCMD" "$(jget "$PYONLY" "$BOMJSON" tool_input.command)"
+  # The locale that used to break it, both directions.
+  pyloc=$(PATH="$PYONLY" LC_ALL=C PYTHONIOENCODING=cp1252 "$BASHABS" -c \
+    '. "$0"/hooks/lib/json.sh; json_get "$1" "$2"' "$ROOT" "$EMJSON" tool_input.command 2>/dev/null)
+  expect "python3 under LC_ALL=C parses"  "$EMCMD" "$pyloc"
+  printf '%s' "$EMJSON" | PATH="$PYONLY" LC_ALL=C "$BASHABS" "$ROOT/hooks/no-push-main.sh" >/dev/null 2>&1
+  expect "python3 under LC_ALL=C blocks"  2 "$?"
+fi
+if [ -n "$HAVE_JQ" ]; then
+  expect "jq: em dash survives"      "$EMCMD" "$(jget "$JQONLY" "$EMJSON" tool_input.command)"
+  expect "jq: BOM tolerated"         "$EMCMD" "$(jget "$JQONLY" "$BOMJSON" tool_input.command)"
+fi
 
 # --- the fail-open hooks stay open, but say so once -------------------------
 check_env "no parser: read-size-gate warns"    "$NOPARSER" hooks/read-size-gate.sh 0 \
@@ -1218,6 +1304,18 @@ check_env "no parser: enforce-delegation warns" "$NOPARSER" hooks/enforce-delega
   "$(mkjson Bash 'pytest' "$DELEGREPO")" "$NEEDLE_WARN"
 check_env "no parser: bash-output-guard warns" "$NOPARSER" hooks/bash-output-guard.sh 0 \
   "$(mkpost 40000)" "$NEEDLE_WARN"
+check_env "no parser: agent-contract warns"    "$NOPARSER" hooks/enforce-agent-contract.sh 0 \
+  "$(mkstop "$ROOT" coder a1 /nonexistent)" "$NEEDLE_WARN"
+
+# ... but only ONCE per hook per TMPDIR. A PreToolUse hook fires on every tool
+# call; an unconditional warning is thousands of identical stderr lines.
+ONCETMP="$TMPROOT/oncetmp"; rm -rf "$ONCETMP"; mkdir -p "$ONCETMP"
+oncef="$TMPROOT/once.err"; : > "$oncef"
+for _ in 1 2 3; do
+  printf '%s' "$(mkread "$ROOT/README.md" - -)" \
+    | PATH="$NOPARSER" TMPDIR="$ONCETMP" "$BASHABS" "$ROOT/hooks/read-size-gate.sh" >/dev/null 2>>"$oncef"
+done
+expect "WARN is printed once, not per call" "1" "$(grep -c 'enforcement inactive' "$oncef")"
 
 # ===========================================================================
 # v2.2.0 PR15 (B): the optional **Protected branches**: PROJECT_CONTEXT.md field

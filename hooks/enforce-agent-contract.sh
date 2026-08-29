@@ -25,8 +25,12 @@ INPUT=$(cat)
 # an embedded node program — so this hook still needs node specifically, and
 # says so once (fail-open) when it is missing.
 jlib="$(dirname "$0")/lib/json.sh"
-if [ -f "$jlib" ]; then . "$jlib"; json_require_node enforce-agent-contract || exit 0; fi
-command -v node >/dev/null 2>&1 || exit 0
+[ -f "$jlib" ] || {
+  echo "WARN: enforce-agent-contract: hooks/lib/json.sh missing — enforcement inactive" >&2
+  exit 0
+}
+. "$jlib"
+json_require_node enforce-agent-contract || exit 0
 
 AGENT_TYPE=$(json_get "$INPUT" agent_type)
 TRANSCRIPT=$(json_get "$INPUT" transcript_path)

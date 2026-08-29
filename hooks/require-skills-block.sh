@@ -24,7 +24,10 @@ TOOL_INPUT=$(cat)
 # v2.2.0: fields are read through hooks/lib/json.sh (node, python3 or jq).
 # Fail-open with one WARN when none of the three is on PATH.
 jlib="$(dirname "$0")/lib/json.sh"
-[ -f "$jlib" ] || exit 0
+[ -f "$jlib" ] || {
+  echo "WARN: require-skills-block: hooks/lib/json.sh missing — enforcement inactive" >&2
+  exit 0
+}
 . "$jlib"
 json_have || { json_warn_no_parser require-skills-block; exit 0; }
 

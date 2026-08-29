@@ -50,7 +50,7 @@ gc_read_stdin() {
     GC_TOOL=""
     GC_CMD=""
     gc_guard_off && return 0
-    echo "BLOCKED: no JSON parser (node, python3 or jq) on PATH — the git gates cannot inspect the command" >&2
+    echo "BLOCKED: no JSON parser (node, python3 or jq) on PATH — the git gates cannot inspect the command. Install one, or create <cwd>/.claude/git-guard-off to opt out." >&2
     exit 2
   fi
   GC_TOOL=$(json_get "$GC_JSON" tool_name)

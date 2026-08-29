@@ -751,6 +751,26 @@ else
   [ "$mirror_count" -eq 0 ] && ko "hook mirror: $ULH is empty"
 fi
 
+# 21b. hooks/lib/json.sh must EXIST on both sides (v2.2.0).
+#
+#      The walk above starts from the mirror, so a lib file missing from BOTH
+#      trees is invisible to it. Every git gate refuses to run without
+#      hooks/lib/json.sh (fail closed), and the fail-open hooks disable
+#      themselves — so its absence is a silent enforcement outage, not a
+#      cosmetic drift.
+for f in hooks/lib/json.sh "$ULH/lib/json.sh"; do
+  if [ -f "$f" ]; then
+    ok "$f present (the shared node/python3/jq reader)"
+  else
+    ko "$f MISSING — the git gates fail closed and the fail-open hooks disable themselves without it"
+  fi
+done
+if grep -q 'lib/json\.sh' hooks/lib/git-cmd.sh; then
+  ok "hooks/lib/git-cmd.sh sources lib/json.sh"
+else
+  ko "hooks/lib/git-cmd.sh no longer sources lib/json.sh — the gates are back to node-only"
+fi
+
 # ---------------------------------------------------------------------------
 # 22. The git-tools MCP write ops are denied (v2.1.1, consumer feedback).
 #
