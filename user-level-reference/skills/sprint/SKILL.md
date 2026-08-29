@@ -26,6 +26,7 @@ You are the Product Owner for this sprint. Execute the sprint backlog using para
 
 ### 3. Dispatch parallel subagents
 
+- **If the sprint is a single T4-sized task that is too big for one pass** (multi-module migration, a sweep across many files, competing hypotheses), say **"use a workflow"** first: Claude builds a script-orchestrated dynamic workflow — waves of implementers → two verifiers → a fixer per task — and runs it in the background under auto mode. Come back to this loop for the merge. Fan-out below is for a backlog of independent items.
 - Max 3 parallel workstreams to avoid rate limits
 - Each subagent gets a clear, self-contained scope and its own worktree
 - Assign independent workstreams first; queue dependent ones
@@ -68,6 +69,7 @@ Each subagent reports in its **final message** — there is no progress channel,
 ## Rules
 
 - Max 3 parallel workstreams to avoid rate limits
+- A workflow does not bypass the merge rules below — its branch rebases and gates like any other
 - Rebase before every merge — never merge without rebasing
 - Merge PRs sequentially, never in parallel
 - A passing gate is required before any merge

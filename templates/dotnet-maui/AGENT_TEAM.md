@@ -306,7 +306,7 @@ Not all changes need the full sprint ceremony. The PO selects the tier based on 
 | **T1 Trivial** | < 10 lines, style/config, no logic | 1 coder (solo — no reviewer/tester) | No new tests. Coder runs the gate (build + existing suite) before merging. |
 | **T2 Simple** | 1-2 files, < 50 lines, clear root cause | coder + code-reviewer | Tests recommended if logic changes. Coder runs the gate; reviewer approves. |
 | **T3 Standard** | Multi-file, < 200 lines, needs tests | Dev + reviewer + tester | **TDD required.** Failing tests first, then implement. Coverage >= 80% for changed files. |
-| **T4 Complex** | Architectural, > 200 lines, new entities | Architect + dev + reviewer + tester | **Full BDD/TDD.** BDD scenarios from acceptance criteria. Failing tests first. Coverage >= 80%. Architect reviews test strategy. |
+| **T4 Complex** | Architectural, > 200 lines, new entities | Architect + dev + reviewer + tester — or say **"use a workflow"** (below) when it is too big for one pass | **Full BDD/TDD.** BDD scenarios from acceptance criteria. Failing tests first. Coverage >= 80%. Architect reviews test strategy. |
 
 ### Tier Selection Guidelines
 
@@ -323,6 +323,21 @@ Not all changes need the full sprint ceremony. The PO selects the tier based on 
 - **Tester at T4**: Full verification including writing targeted verification test cases.
 - **Skip tester** for T1-T2 — the coder's gate run covers build+test there.
 - **Visual verification: capture by agent, judgment by PO**: the coder (T1/T2) or tester (T3+) captures screenshots; the PO reviews layout, alignment, colors, spacing. The PO never launches the app or runs capture tooling — that is agent work.
+
+### When to say "use a workflow"
+
+When a T4 task is too big for one pass — a multi-module migration, a sweep across many
+files, competing hypotheses to test in parallel — the PO says the trigger phrase **"use a
+workflow"**. Claude then builds a *dynamic workflow*: a script that orchestrates waves of
+subagents (implementers → two verifiers → a fixer per task, then summarizers), runs it in
+the background, and verifies the result before reporting. Run it in **auto mode**, so it
+does not stop for permissions mid-wave. The merge gate still applies to whatever branch
+comes out: `bash hooks/run-gate.sh`, then the usual `gate-before-merge` path.
+
+Do **not** use a workflow for sequential work (each task needs the previous one's output)
+or for several tasks touching the same file — waves assume independence, and the same-file
+rule still sends those to one dev. The Workflow tool's "is this big enough" guideline is
+configurable, so size it to the repo rather than to the default.
 
 ### T1 Examples
 
@@ -363,34 +378,62 @@ Within the agreed tier: do the complete thing, not the demo path — a working e
 
 ### Lean Dev Prompt Templates
 
+Both templates carry the five *Task Brief Upfront* headings — an issue link or a plan path
+is a reference, never a substitute for the brief.
+
 **github-issues mode (T2-T3):**
 
 ```
-You are {name} on team {team}. Task #{n}: issue #{issue}.
-Worktree: {path}, branch: feature/issue-{issue}.
-Read the GitHub issue for full context.
-Workflow: read issue -> implement -> build -> test -> format -> commit -> push -> create PR (MCP github) -> mark task done -> message lead with PR URL.
+Task #{n}: issue #{issue}. Worktree: {path}, branch: feature/issue-{issue}.
+
+## Goal
+{1-2 sentences}
+
+## Constraints
+{what must not change; platform/style rules}
+
+## Acceptance Criteria
+- [ ] {criterion 1}
+
+## Files in scope
+- {file} — {what to change}   (out of scope: {paths})
+
+## Definition of done
+{tests to pass} + `bash hooks/run-gate.sh` green, then PR.
+
+## Required Skills
+- {skill} — {why}
+
+Context: the GitHub issue (reference only — the brief above is authoritative).
+Workflow: implement -> gate -> commit -> push -> create PR (MCP github) -> report the PR URL in your final message.
 ```
 
 **plan-files mode (T2-T3):**
 
 ```
-You are {name} on team {team}. Task #{n}: {title}.
-Worktree: {path}, branch: {branch}.
+Task #{n}: {title}. Worktree: {path}, branch: {branch}.
+
+## Goal
+{1-2 sentences}
+
+## Constraints
+{what must not change; platform/style rules}
 
 ## Acceptance Criteria
 - [ ] {criterion 1}
-- [ ] {criterion 2}
 
-## Files
-- {file 1} — {what to change}
-- {file 2} — {what to change}
+## Files in scope
+- {file} — {what to change}   (out of scope: {paths})
 
-## Context
-Full plan: {plan_file_path} (reference only — task details above are authoritative).
+## Definition of done
+{tests to pass} + `bash hooks/run-gate.sh` green, then PR.
+
+## Required Skills
+- {skill} — {why}
+
+Context: {plan_file_path} if one exists (reference only — the brief above is authoritative).
 Architect guidance: {summary or "none — T2/T3 task"}.
-
-Workflow: implement -> build -> test -> format -> commit -> push -> create PR (MCP github) -> mark task done -> message lead with PR URL.
+Workflow: implement -> gate -> commit -> push -> create PR (MCP github) -> report the PR URL in your final message.
 ```
 
 **PO responsibility (plan-files mode):** The PO MUST inline the acceptance criteria and file list directly in the dev spawn prompt. The dev agent should NOT need to read the plan file to understand its task. The plan file path is provided only for additional context.
@@ -874,8 +917,8 @@ When using `plan-files` mode, implementation plans follow this structure:
 **Goal:** {1-2 sentences}
 **Architecture:** {Key decisions}
 **Tech Stack:** {Relevant technologies}
-**Tier:** T{N}
-**Team:** {subagent types per tier — e.g., "coder, code-reviewer, tester"}
+**Tier:** T{N}  (optional — no hook reads this)
+**Team:** {subagent types per tier — e.g., "coder, code-reviewer, tester"}  (optional — no hook reads this)
 
 ---
 
