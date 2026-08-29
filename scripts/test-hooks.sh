@@ -28,6 +28,11 @@ mkrepo() { # <name> <branch> -> prints path
   git -C "$d" config user.name t
   git -C "$d" config commit.gpgsign false
   echo seed > "$d/seed.txt"
+  # v2.1.5: real projects gitignore the gate artifact (every templates/*/gitignore
+  # and the toolkit's own .gitignore do). run-gate.sh keys the artifact on a
+  # temp-index `add -A` of the working tree, which honours .gitignore -- without
+  # this the artifact it just wrote would perturb the NEXT run's tree.
+  printf '.gate/\n' > "$d/.gitignore"
   git -C "$d" add -A >/dev/null 2>&1
   git -C "$d" commit -q -m seed >/dev/null 2>&1
   # normalise the initial branch name across git versions
@@ -248,23 +253,33 @@ expect "(a) run-gate.sh path: artifact written" "1" \
 ARTSHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
 expect "(a) run-gate.sh path: artifact sha matches HEAD" "$RUNGATESHA" "$ARTSHA"
 ARTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
+# v2.1.5: the recorded tree is the WORKING tree at gate time (PROJECT_CONTEXT.md
+# was still untracked when the hook fired). Committing exactly what was gated --
+# `git add -A && git commit` -- reproduces it as HEAD^{tree}.
+git -C "$GATEONLYOK" add -A >/dev/null 2>&1
+git -C "$GATEONLYOK" commit -q -m "gated commit" >/dev/null 2>&1
 RUNGATETREE=$(git -C "$GATEONLYOK" rev-parse 'HEAD^{tree}')
-expect "(a) run-gate.sh path: artifact tree matches HEAD^{tree}" "$RUNGATETREE" "$ARTTREE"
+expect "(a) run-gate.sh path: artifact tree matches committed tree" "$RUNGATETREE" "$ARTTREE"
 
-# --- v2.1.3 fix round 2 item 5: a working tree with unstaged changes beyond
-# the index must NOT get a tree recorded -- write-tree hashes the index only,
-# and a later `git commit -a` would fold the unstaged bits in too, producing a
-# DIFFERENT tree than the one hashed here.
+# --- v2.1.5 (consumer feedback, Yutraffic PR #223): the artifact keys on the
+# WORKING TREE, not the index. v2.1.3 recorded no tree at all when the working
+# tree had unstaged changes -- but that is the ordinary agent shape (the
+# PreToolUse hook fires before a chained `git add && git commit` stages
+# anything), so the artifact matched nothing and the single-run merge path never
+# fired. The positive form: unstaged change at gate time, `git commit -a`
+# after -> the recorded tree IS the committed tree.
 DIRTYGATE=$(mkrepo commitdirtygate main)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$DIRTYGATE/PROJECT_CONTEXT.md"
 git -C "$DIRTYGATE" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$DIRTYGATE" commit -q -m "add gate" >/dev/null 2>&1
 echo unstaged >> "$DIRTYGATE/seed.txt"   # unstaged change, not added to the index
-printf '%s' "$(mkjson Bash 'git commit -m x' "$DIRTYGATE")" \
+printf '%s' "$(mkjson Bash 'git commit -a -m x' "$DIRTYGATE")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "(R2-5) dirty working tree: exit 0 on pass" "0" "$?"
 DIRTYTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$DIRTYGATE/.gate/last-pass.json" 2>/dev/null)
-expect "(R2-5) dirty working tree: artifact tree is empty" "" "$DIRTYTREE"
+git -C "$DIRTYGATE" commit -aq -m x >/dev/null 2>&1
+expect "(R2-5) commit -a: recorded tree == committed tree" \
+  "$(git -C "$DIRTYGATE" rev-parse 'HEAD^{tree}')" "$DIRTYTREE"
 
 check_msg "(b) run-gate.sh path: block names run-gate.sh" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
@@ -435,6 +450,66 @@ git -C "$CHAINREPO" add file.txt >/dev/null 2>&1
 git -C "$CHAINREPO" commit -q -m "second change" >/dev/null 2>&1
 check "(R3) chain negative: stale artifact after a further commit" \
   "hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINREPO")"
+
+# ===========================================================================
+# v2.1.5 (consumer feedback, Yutraffic PR #223 e59e6fd vs 567f0d1): the agent
+# shape. Agents chain `git add <paths> && git commit`; the PreToolUse hook fires
+# BEFORE anything is staged, so an index-keyed artifact recorded the PARENT tree
+# (or, after the v2.1.3 round-2 dirty guard, no tree at all) and the merge gate
+# always demanded a second gate run. Keying on the WORKING tree fixes it.
+# ===========================================================================
+echo
+echo "=== R4 working-tree gate key (v2.1.5) ==="
+
+# (a) chained `git add <paths> && git commit` -> commit-time gate satisfies the
+#     merge gate in ONE run.
+CHAINADD=$(mkrepo gatechainadd main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$CHAINADD/PROJECT_CONTEXT.md"
+git -C "$CHAINADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$CHAINADD" commit -q -m "add gate" >/dev/null 2>&1
+echo one > "$CHAINADD/a.txt"
+echo two > "$CHAINADD/b.txt"          # BOTH files unstaged when the hook fires
+printf '%s' "$(mkjson Bash 'git add a.txt b.txt && git commit -m "both"' "$CHAINADD")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R4a) chained add+commit: hook allows" "0" "$?"
+git -C "$CHAINADD" add a.txt b.txt >/dev/null 2>&1
+git -C "$CHAINADD" commit -q -m both >/dev/null 2>&1
+check "(R4a) chained add+commit: merge gate accepts one run" \
+  "hooks/gate-before-merge.sh" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINADD")"
+
+# (b) PARTIAL add: the gate hashed both files, the commit contains one. The
+#     committed tree is not what was gated -> stale by design.
+PARTADD=$(mkrepo gatepartialadd main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$PARTADD/PROJECT_CONTEXT.md"
+git -C "$PARTADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$PARTADD" commit -q -m "add gate" >/dev/null 2>&1
+echo one > "$PARTADD/a.txt"
+echo two > "$PARTADD/b.txt"
+printf '%s' "$(mkjson Bash 'git add a.txt && git commit -m "partial"' "$PARTADD")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R4b) partial add: hook allows the commit" "0" "$?"
+git -C "$PARTADD" add a.txt >/dev/null 2>&1
+git -C "$PARTADD" commit -q -m partial >/dev/null 2>&1
+check "(R4b) partial add: merge gate reports stale" \
+  "hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$PARTADD")"
+
+# (c) an ignored file and the artifact directory itself must not move the tree.
+IGNTREE=$(mkrepo gateignoredtree main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$IGNTREE/PROJECT_CONTEXT.md"
+printf '.gate/\nbuild/\n' > "$IGNTREE/.gitignore"
+git -C "$IGNTREE" add -A >/dev/null 2>&1
+git -C "$IGNTREE" commit -q -m "add gate" >/dev/null 2>&1
+( cd "$IGNTREE" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+IGNTREE1=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$IGNTREE/.gate/last-pass.json" 2>/dev/null)
+expect "(R4c) clean tree: recorded tree == HEAD^{tree}" \
+  "$(git -C "$IGNTREE" rev-parse 'HEAD^{tree}')" "$IGNTREE1"
+mkdir -p "$IGNTREE/build" && echo junk > "$IGNTREE/build/out.o"
+( cd "$IGNTREE" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+IGNTREE2=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$IGNTREE/.gate/last-pass.json" 2>/dev/null)
+expect "(R4c) ignored file + .gate/ do not change the tree" "$IGNTREE1" "$IGNTREE2"
+# and the REAL index is untouched by the temp-index hash
+expect "(R4c) real index untouched by the gate" "" \
+  "$(git -C "$IGNTREE" diff --cached --name-only)"
 
 # ===========================================================================
 # v2.1.3 fix round 1 (R5): a **Gate** command that shells out to run-gate.sh
@@ -931,6 +1006,61 @@ mkstop "$PROJCWD" code-reviewer agent-rt99 "$TRANSCRIPT" \
   | HOME="$RTHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
 mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "round trip: brief replays the entry" 1 "$(grep -c 'agent-rt99' "$BRIEFOUT")"
+
+# ===========================================================================
+# hooks/enforce-delegation.sh — Bash matcher (v2.1.5, consumer feedback:
+# Yutraffic PR #223, panoscribe PR #123)
+#
+# The deny used to match the whole command STRING, so `git add hooks/run-gate.sh`
+# and `git commit -m "run pytest before merge"` were denied — blocking the PO's
+# own sync commit that the sync-template skill prescribes. git/gh I/O is the PO's
+# documented role (AGENT_TEAM.md), so a segment whose first token is git or gh
+# passes; every other segment keeps the existing deny logic.
+#
+# NOTE: this hook denies by printing a permissionDecision on STDOUT and exiting
+# 0 — check()/check_msg() cannot tell PASS from DENY here.
+# ===========================================================================
+echo
+echo "=== hooks/enforce-delegation.sh (Bash: git/gh exemption) ==="
+DELEGREPO=$(mkrepo delegation main)
+
+check_delegation() { # <label> <pass|deny> <command>
+  label="$1"; want="$2"
+  out=$(printf '%s' "$(mkjson Bash "$3" "$DELEGREPO")" \
+    | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+  case "$out" in
+    *'"permissionDecision":"deny"'*) got=deny ;;
+    *) got=pass ;;
+  esac
+  if [ "$got" = "$want" ]; then
+    printf 'PASS  %-42s (%s)\n' "$label" "$got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$label" "$want" "$got"
+    fail=$((fail + 1))
+  fi
+}
+
+check_delegation "git add of a hook file"        pass 'git add hooks/run-gate.sh'
+check_delegation "commit message naming a runner" pass 'git commit -m "run pytest before merge"'
+check_delegation "gh pr create with npm in body"  pass 'gh pr create --body "npm test"'
+check_delegation "git chained with a gate run"    deny 'git add x && bash hooks/run-gate.sh'
+check_delegation "bare pytest"                    deny 'pytest'
+check_delegation "cd prefix before git push"      pass 'cd sub && git push -u origin feature'
+# regressions the exemption must not open
+check_delegation "VAR= prefix before a runner"    deny 'CI=1 pytest -q'
+check_delegation "runner after a git segment"     deny 'git status; npm test'
+check_delegation "dotnet build stays denied"      deny 'dotnet build --no-restore'
+# Known limitation, pinned deliberately: the split is quote-blind, so a separator
+# INSIDE a quoted commit message still splits and the tail is judged on its own.
+# This is parity with pre-v2.1.5 (the whole-string match denied it too) and errs
+# closed; workaround is a message without an embedded `;` / `&&`.
+check_delegation "separator inside a quoted message" deny 'git commit -m "a; pytest -q"'
+# subagent calls always pass, exemption or not
+subout=$(node -e 'console.log(JSON.stringify({session_id:"t",agent_id:"a1",hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:"pytest"},cwd:process.argv[1]}))' "$DELEGREPO" \
+  | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+expect "subagent pytest still passes" "0" \
+  "$(printf '%s' "$subout" | grep -c '"deny"')"
 
 # ===========================================================================
 echo

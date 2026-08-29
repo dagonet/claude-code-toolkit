@@ -1,6 +1,11 @@
 # Claude Code local state (root only, not templates/*/.claude/)
 /.claude/
 
+# Gate artifact written by hooks/run-gate.sh. Must be ignored: as of v2.1.5 the
+# artifact is keyed on a temp-index `add -A` of the working tree, so an untracked
+# .gate/ would fold the previous run's artifact into the next run's tree hash.
+/.gate/
+
 # Prevent Claude Code from auto-loading template CLAUDE.local.md files
 CLAUDE.local.md
 
