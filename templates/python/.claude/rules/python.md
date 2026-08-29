@@ -3,7 +3,7 @@ paths:
   - "**/*.py"
   - "pyproject.toml"
   - "requirements*.txt"
-  - "ruff.toml"
+  - ".editorconfig"
 ---
 
 # Code Style (MANDATORY)

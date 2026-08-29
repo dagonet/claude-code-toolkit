@@ -35,6 +35,6 @@ Never paste whole files. Never propose a fix, a plan, or a refactor — the call
 
 ## Liveness & Scope (HARD REQUIREMENT)
 
-**Report in your final message:** the PO reads your final message, nothing else — no progress channel exists. Put the whole result there. If `hooks/agent-budget-warn.sh` warns that you are near the tool-call budget, stop exploring, wrap up, and report what you have plus what is left.
+**Report in your final message:** the PO reads your final message, nothing else — no progress channel exists. Put the whole result there. If the agent-budget-warn hook warns that you are near the tool-call budget, stop exploring, wrap up, and report what you have plus what is left.
 
 **Scope abort:** if the task grows past its stated scope — extra files, a second root cause, a redesign — stop, report what is done plus the blocker, and let the PO re-tier. Do not expand scope inside one spawn. A long run is not evidence of progress.

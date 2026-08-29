@@ -48,19 +48,21 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant, 2026-07-29):
 
-| | Baseline | v1.4 | v1.5 | v2.0-pr4 | Loaded |
-|---|---|---|---|---|---|
-| `templates/general/CLAUDE.md` | 17,871 | 15,281 | 13,735 | **10,362** | every session |
-| `templates/general/CLAUDE.local.md` | 13,845 | **9,352** | 9,352 | 9,413 | every session |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 | 8,637 | every session |
-| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | every session |
-| **always-loaded total** | **41,167** | 34,084 | 32,538 | **29,358 (−29%)** | |
-| `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 49,724 | **on demand only** |
-| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | on demand |
-| `.claude/rules/*.md` (general: none) | — | — | — | 0 B | **on matching file touch** |
-| skills | 11 | **12** | 12 | 12 | on trigger |
+| | Baseline | v1.4 | v1.5 | pre-PR4 | **v2.0** | Loaded |
+|---|---|---|---|---|---|---|
+| `templates/general/CLAUDE.md` | 17,871 | 15,281 | 13,735 | 13,892 | **10,362** | every session |
+| `templates/general/CLAUDE.local.md` | 13,845 | **9,352** | 9,352 | 9,413 | 9,417 | every session |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 | 8,637 | **5,089** | every session |
+| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | 946 | every session |
+| **always-loaded total** | **41,167** | 34,084 | 32,538 | 32,888 | **25,814 (−37%)** | |
+| `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 49,724 | 49,724 | **on demand only** |
+| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | 2,519 | on demand |
+| `.claude/rules/*.md` (general: none) | — | — | — | — | 0 B | **on matching file touch** |
+| skills | 11 | **12** | 12 | 12 | **7** | on trigger |
 
-Per-variant always-loaded totals now: general 29,358 · java 30,625 · python 30,540 · dotnet 32,049 · rust-tauri 32,527 · dotnet-maui 33,617. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set. (The v1.5 figures above were measured before PR1–PR3 changed `CLAUDE.local.md` and the user-level reference, so the per-file deltas do not all come from PR4.)
+Per-variant always-loaded totals now: general **25,814** · python 26,996 · java 27,081 · dotnet 28,500 · rust-tauri 29,300 · dotnet-maui 30,068. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set.
+
+Every **v2.0** figure is `wc -c` on the shipped file, not an arithmetic carry-forward — which is what the separate **pre-PR4** column is for: PR1–PR3 moved `CLAUDE.md` (13,735 → 13,892) and `CLAUDE.local.md` (9,352 → 9,413) for reasons unrelated to the trim, so those deltas must not be attributed to PR4. The user-level row's drop is PR5 deleting the context-mode routing block.
 
 The largest single document in the repo is deliberately *not* in the always-loaded set. The three passes used different mechanisms:
 

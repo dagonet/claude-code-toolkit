@@ -625,7 +625,10 @@ notification — it does not poll.
 **Follow-ups:** a *completed* subagent can be resumed by name with SendMessage to
 ask one follow-up question against the context it already has. That is the only
 remaining use of SendMessage: it is a cheaper re-read, never a coordination
-channel and never a way to hand over new work.
+channel and never a way to hand over new work. This is the one exception to the
+"no side channel" rule in the agent mandate, and it is not a contradiction of it:
+a follow-up question may arrive after you finish — answer it in a new final
+message. Nothing arrives *during* a run.
 
 ### PO orchestration
 

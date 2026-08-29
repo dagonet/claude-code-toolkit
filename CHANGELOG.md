@@ -2,7 +2,7 @@
 
 ## v2.0 — 2026-08-29
 
-**Six weeks of transcripts, read instead of guessed at.** Every change below was proposed by a measurement, not by a preference: a hook that blocked 1,240 turns to buy nothing, a stall mode that only ever affected named teammates, 219 exploration spawns billed at Opus, ~400 calls to tools the calling agent did not have, 12 skills invoked 0 times. The direction is the same in all five parts — **let a mechanism enforce what prose used to repeat, and load the prose only when it is actionable.** Always-loaded config on `general`: **41,167 → 29,358 B (−29%)**. Detail for each part is in the `v2.0-prN` entries below; this entry consolidates the migration.
+**Six weeks of transcripts, read instead of guessed at.** Every change below was proposed by a measurement, not by a preference: a hook that blocked 1,240 turns to buy nothing, a stall mode that only ever affected named teammates, 219 exploration spawns billed at Opus, ~400 calls to tools the calling agent did not have, 12 skills invoked 0 times. The direction is the same in all five parts — **let a mechanism enforce what prose used to repeat, and load the prose only when it is actionable.** Always-loaded config on `general`: **41,167 → 25,814 B (−37%)**, measured with `wc -c` on the shipped files rather than carried forward. Detail for each part is in the `v2.0-prN` entries below; this entry consolidates the migration.
 
 ### What changed
 
@@ -29,7 +29,7 @@
 | skills | 12 | **7** |
 | slash commands | 23 | **0** |
 | `templates/general/CLAUDE.md` | 13,892 B | **10,362 B** |
-| always-loaded on `general` | 41,167 B (baseline) | **29,358 B** |
+| always-loaded on `general` | 41,167 B (baseline) | **25,814 B** (−37%) |
 | consistency assertions | 131 | **174** |
 | hook fixtures | 0 | **133** |
 
@@ -67,7 +67,15 @@ Both are **no-op stubs** — header plus `exit 0` — and both are unregistered.
 
 ### Known minor follow-ups
 
-Carried verbatim from the implementation ledger. **None are implemented in this release** — they are recorded so the omissions read as deliberate. One further ledger entry (mirror `no-push-main.sh` + `tier-before-coder.sh` into `user-level-reference/hooks`) *is* resolved in this release and is therefore not listed.
+Carried verbatim from the implementation ledger. **None of the entries below are implemented in this release** — they are recorded so the omissions read as deliberate.
+
+Five ledger entries *were* fixed here, because each was a dangling or contradictory reference in a **shipped artifact** rather than a nice-to-have, and are therefore not listed below:
+
+- mirror `no-push-main.sh` + `tier-before-coder.sh` into `user-level-reference/hooks` — done, plus the two other gates and `lib/`.
+- `Explore.md` (×7) named `hooks/agent-budget-warn.sh` by repo-relative path, which dangles at user level → now "the agent-budget-warn hook", no path.
+- `templates/python/.claude/rules/python.md` listed `ruff.toml` in `paths:`, which no variant ships → dropped. `.editorconfig` added to both `python.md` and `java.md`, since each rule's text already calls it authoritative.
+- `templates/rust-tauri/CLAUDE.md` *Quick Start* hard-coded its build/test/format/lint commands while every other variant uses `{{…}}` placeholders → placeholders restored; the three `npm` dev-loop lines stay literal because they have no `PROJECT_CONTEXT.md` equivalent.
+- `AGENT_TEAM.md` let the PO SendMessage a completed subagent while the agent mandate says "no side channel" → the paragraph now states the exception explicitly ("a follow-up question may arrive after you finish — answer it in a new final message. Nothing arrives *during* a run."). Byte-identity across all six variants preserved.
 
 *From PR1:*
 
@@ -81,21 +89,18 @@ Carried verbatim from the implementation ledger. **None are implemented in this 
 - raw agent_type/agent_id interpolation into ledger row (strip `\r\n|`, slice 64).
 - retro-ledger slurps whole transcript (`readFileSync`) — stream or size-cap.
 - verify `:889-891` mandate assertion compares mismatched sets (exclude coders consistently; include user-level agents).
-- AGENT_TEAM.md says PO may SendMessage a completed subagent while agent mandate says "no side channel" — add half-line "a follow-up may arrive after you finish; answer in a new final message".
 
 *From PR3:*
 
 - read-size-gate offset advice off-by-one when offset absent (advise 501).
-- Explore.md names `hooks/agent-budget-warn.sh` repo-relative — dangles at user level; name the hook without a path.
 - bash-output-guard `mkdir -p` runs on every Bash call; no log pruning (`find -mtime +7 -delete`).
 
 *From PR4:*
 
 - `## Working Preferences` heading now near-empty (rename/fold).
 - duplicated formatter line inside python/java/csharp rules.
-- `.editorconfig` absent from java/python rule `paths:`; `ruff.toml` listed but not shipped.
 - further diet candidates — Compact Instructions (~1.6 KB) and Workflow TL;DR tier table (duplicated in AGENT_TEAM.md).
-- dotnet/dotnet-maui CLAUDE.md have no `## Quick Start`; rust-tauri's uses literal commands not placeholders.
+- dotnet/dotnet-maui CLAUDE.md have no `## Quick Start` *(the rust-tauri half of this entry — literal commands instead of placeholders — was fixed above; the missing dotnet/dotnet-maui sections were not)*.
 - `tools/measure-context-bloat.py` needs `PYTHONIOENCODING=utf-8` on Windows.
 
 *From PR5:*
