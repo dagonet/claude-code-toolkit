@@ -844,6 +844,29 @@ expect "hook block counts without is_error" 1 \
 expect "block name comes from the hook command" 1 \
   "$(grep -c 'blocks=\[no-push-main.sh\]' "$BKLEDGER" 2>/dev/null)"
 
+# --- 8a2. v2.1.4: a hooks/agent-budget-warn.sh block is tallied separately as
+# budget=<n>, not folded into blocks=[...] -- budget ceilings are an expected
+# liveness control, not a failure to investigate.
+node -e '
+const fs=require("fs");
+const rows=[
+ {type:"user",message:{role:"user",content:[{type:"tool_result",
+   content:"PreToolUse:Bash hook error: [bash \u0027hooks/agent-budget-warn.sh\u0027]: BUDGET: this spawn has made 120 tool calls (median is 15; 120 is the first ceiling)."}]}},
+ {type:"user",message:{role:"user",content:[{type:"tool_result",
+   content:"PreToolUse:Bash hook error: [bash \u0027hooks/no-push-main.sh\u0027]: BLOCKED: push to main."}]}}
+];
+fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
+' "$TMPROOT/agent-budget.jsonl"
+BUHOME="$TMPROOT/retrohome-budget"
+mkdir -p "$BUHOME"
+mkstop "$PROJCWD" coder agent-bu "$TMPROOT/agent-budget.jsonl" \
+  | HOME="$BUHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+BULEDGER="$BUHOME/.claude/projects/G--git-retroproj/memory/retro.md"
+expect "budget block tallies as budget=1" 1 \
+  "$(grep -c 'budget=1' "$BULEDGER" 2>/dev/null)"
+expect "budget block does not land in blocks=[...]" 1 \
+  "$(grep -c 'blocks=\[no-push-main.sh\]' "$BULEDGER" 2>/dev/null)"
+
 # --- 8b. review round 1: the ledger line is bounded. 12 distinct dead tools must
 # render as 5 names + a "+7 more" marker, not a 12-entry line.
 node -e '
