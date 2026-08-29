@@ -511,6 +511,25 @@ expect "(R4c) ignored file + .gate/ do not change the tree" "$IGNTREE1" "$IGNTRE
 expect "(R4c) real index untouched by the gate" "" \
   "$(git -C "$IGNTREE" diff --cached --name-only)"
 
+# (d) LINKED WORKTREE — the production path. coder/tester run under
+#     `isolation: worktree`, where the index is NOT $GIT_DIR/index but
+#     .git/worktrees/<name>/index; only `rev-parse --git-path index` resolves
+#     it. A hardcoded path would hash the MAIN checkout's index instead.
+WTMAIN=$(mkrepo gateworktreemain main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$WTMAIN/PROJECT_CONTEXT.md"
+git -C "$WTMAIN" add -A >/dev/null 2>&1
+git -C "$WTMAIN" commit -q -m "add gate" >/dev/null 2>&1
+WTLINK="$TMPROOT/gateworktree-linked"
+git -C "$WTMAIN" worktree add -q -b wt-feature "$WTLINK" >/dev/null 2>&1
+WTIDX=$(git -C "$WTLINK" rev-parse --git-path index)
+WTIDXBEFORE=$(md5sum "$WTIDX" 2>/dev/null | cut -d' ' -f1)
+( cd "$WTLINK" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+WTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$WTLINK/.gate/last-pass.json" 2>/dev/null)
+expect "(R4d) linked worktree: tree == its own HEAD^{tree}" \
+  "$(git -C "$WTLINK" rev-parse 'HEAD^{tree}')" "$WTTREE"
+expect "(R4d) linked worktree: its index file is byte-unchanged" \
+  "$WTIDXBEFORE" "$(md5sum "$WTIDX" 2>/dev/null | cut -d' ' -f1)"
+
 # ===========================================================================
 # v2.1.3 fix round 1 (R5): a **Gate** command that shells out to run-gate.sh
 # itself must not recurse. RUN_GATE_ACTIVE is exported before the gate command

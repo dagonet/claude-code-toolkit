@@ -23,10 +23,18 @@
 # a segment whose first token is `git` or `gh` is EXEMPT — git/GitHub I/O is
 # the PO's documented role (AGENT_TEAM.md), so `git add hooks/run-gate.sh`
 # and `git commit -m "run pytest first"` pass, while `git add x && bash
-# hooks/run-gate.sh` still denies on its second segment. Known limitation: the
-# split is quote-blind, so a separator INSIDE a quoted message (`git commit -m
-# "a; pytest -q"`) still splits and the tail is judged on its own — parity with
-# the pre-v2.1.5 whole-string match, and it errs closed. Pinned by a fixture.
+# hooks/run-gate.sh` still denies on its second segment.
+#
+# Known limitations (both deliberate — this hook is fail-OPEN by contract):
+#   * the split is quote-blind, so a separator INSIDE a quoted message
+#     (`git commit -m "a; pytest -q"`) still splits and the tail is judged on
+#     its own. Errs CLOSED, at parity with the pre-v2.1.5 whole-string match.
+#     Pinned by a fixture.
+#   * only `cd X` and `VAR=value` prefixes are stripped. Command wrappers —
+#     `env VAR=x pytest`, `time pytest`, `nice pytest`, `xargs …` — are not,
+#     so they pass. Errs OPEN, matching this hook's failure polarity: a
+#     determined bypass is not the threat model, an accidental main-thread
+#     `pytest` is.
 #
 # Escape hatch: create `.claude/delegation-off` at the repo root to disable
 # (also the fix if a pre-agent_id CLI ever denies subagent calls).

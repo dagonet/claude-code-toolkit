@@ -64,13 +64,15 @@ The same order applies to the CONFLICT resolutions in step 4 and the new files i
 
 **Any hook probe must live in a script file run via `bash <path>`, never inline.** The gates scan the whole command STRING by design, not just what a git subcommand would actually do — an inline compound command that merely *mentions* `git push origin main` (in a comment, an echo, a string literal) trips the gate it is trying to test. The result is then uninterpretable: a block does not tell you whether the gate works or whether your own probe was the violation it caught. Write the probe to a temp file and run `bash <path>` instead.
 
-**Positive control — prove the gates are LIVE, not merely unblocked.** `Bash(true)` succeeding only proves nothing blocked it; a fully inert enforcement layer passes that test too. Write this to a temp script and run it with `bash <path>`:
+**Positive control — prove the gates are LIVE, not merely unblocked.** `Bash(true)` succeeding only proves nothing blocked it; a fully inert enforcement layer passes that test too. Write this to `"${TMPDIR:-/tmp}/gate-probe.sh"` (or somewhere under `.claude/`) and run it with `bash "$TMPDIR/gate-probe.sh"`. **Do not** write it to a repo-relative path like `probe.sh` — `enforce-delegation.sh` denies main-thread writes outside the PO write surface, so the probe never gets created.
 
 ```sh
 printf '{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"<repo>"}' \
   | bash "${CLAUDE_PROJECT_DIR:-.}/hooks/no-push-main.sh"
 echo "exit=$?"
 ```
+
+Use **forward slashes** in the JSON `cwd` (`C:/git/foo`, not `C:\git\foo`): a Windows backslash is a JSON escape and the payload will not parse, which the hook treats as unreadable and passes — a false green on the very check you are running.
 
 Expect `exit=2` and a `BLOCKED` line on stderr. **`exit=0` means the gates are inert** — the scripts are missing, empty, or not wired — and the sync is running unprotected: apply `hooks/lib/git-cmd.sh` and the three gate scripts via `template_apply_file` (the recovery note below), then re-run the probe before continuing.
 
