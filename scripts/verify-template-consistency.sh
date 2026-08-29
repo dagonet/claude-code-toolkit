@@ -864,10 +864,38 @@ abshook=$(
     grep -hF "$ABS_FORM" templates/*/.claude/agents/*.md 2>/dev/null
   } | grep -c .
 )
-if [ "$abshook" -gt 0 ]; then
-  ok "$abshook hook command(s) use the \${CLAUDE_PROJECT_DIR:-.} form"
+#     `abshook > 0` alone is a coverage hole: a subset reverted to the
+#     intermediate no-fallback form `bash "$CLAUDE_PROJECT_DIR/hooks/` is neither
+#     cwd-relative nor fallback-safe, so relhook and abshook would both still be
+#     happy. Reject that form by name, and require abshook to equal the TOTAL
+#     number of hook command lines that name a hooks/ script — derived from the
+#     same two greps check 13 uses, so the two cannot drift apart.
+NOFALLBACK_FORM='bash \"$CLAUDE_PROJECT_DIR/hooks/'
+nofallback=$(
+  {
+    grep -hF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
+    grep -hF "$NOFALLBACK_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -c .
+)
+if [ "$nofallback" -eq 0 ]; then
+  ok "no hook command uses the no-fallback \$CLAUDE_PROJECT_DIR form"
 else
-  ko "no hook command uses \${CLAUDE_PROJECT_DIR:-.} — extraction broken or rewrite missing"
+  ko "$nofallback hook command(s) use \$CLAUDE_PROJECT_DIR without the :-. default — they hard-block if the host does not export it"
+  grep -nF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
+  grep -nF "$NOFALLBACK_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+fi
+hookcmd_total=$(
+  {
+    grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
+    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -c 'hooks/'
+)
+if [ "$hookcmd_total" -eq 0 ]; then
+  ko "hook command census matched NO lines (glob or grep broken?) — passing vacuously"
+elif [ "$abshook" -eq "$hookcmd_total" ]; then
+  ok "all $hookcmd_total hook command(s) use the \${CLAUDE_PROJECT_DIR:-.} form"
+else
+  ko "only $abshook of $hookcmd_total hook command(s) use \${CLAUDE_PROJECT_DIR:-.} — $((hookcmd_total - abshook)) in some other form"
 fi
 
 # ---------------------------------------------------------------------------
