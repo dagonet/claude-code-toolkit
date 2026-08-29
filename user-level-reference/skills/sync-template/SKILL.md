@@ -64,6 +64,18 @@ The same order applies to the CONFLICT resolutions in step 4 and the new files i
 
 **Any hook probe must live in a script file run via `bash <path>`, never inline.** The gates scan the whole command STRING by design, not just what a git subcommand would actually do — an inline compound command that merely *mentions* `git push origin main` (in a comment, an echo, a string literal) trips the gate it is trying to test. The result is then uninterpretable: a block does not tell you whether the gate works or whether your own probe was the violation it caught. Write the probe to a temp file and run `bash <path>` instead.
 
+**Positive control — prove the gates are LIVE, not merely unblocked.** `Bash(true)` succeeding only proves nothing blocked it; a fully inert enforcement layer passes that test too. Write this to `"${TMPDIR:-/tmp}/gate-probe.sh"` (or somewhere under `.claude/`) and run it with `bash "$TMPDIR/gate-probe.sh"`. **Do not** write it to a repo-relative path like `probe.sh` — `enforce-delegation.sh` denies main-thread writes outside the PO write surface, so the probe never gets created.
+
+```sh
+printf '{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"<repo>"}' \
+  | bash "${CLAUDE_PROJECT_DIR:-.}/hooks/no-push-main.sh"
+echo "exit=$?"
+```
+
+Use **forward slashes** in the JSON `cwd` (`C:/git/foo`, not `C:\git\foo`): a Windows backslash is a JSON escape and the payload will not parse, which the hook treats as unreadable and passes — a false green on the very check you are running.
+
+Expect `exit=2` and a `BLOCKED` line on stderr. **`exit=0` means the gates are inert** — the scripts are missing, empty, or not wired — and the sync is running unprotected: apply `hooks/lib/git-cmd.sh` and the three gate scripts via `template_apply_file` (the recovery note below), then re-run the probe before continuing.
+
 > **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination. Once Bash works again, finish the sync in the order above and restart per the final report.
 
 Collect all results. Report the list of auto-updated files.
@@ -140,6 +152,8 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 
 Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line.
 
+Re-run the step-3 **positive control** here as well (the same temp script, `bash <path>`) and fold its result in: the sync rewrote `hooks/` and `settings.json` since the first probe, so this is the run that tells you the *post-sync* enforcement layer is live. `exit=2` + `BLOCKED` → report `Gates: live`. `exit=0` → report `Gates: INERT` and the recovery note, not a clean sync.
+
 The FIRST line of the report is this sentence, verbatim:
 
 ```
@@ -161,7 +175,28 @@ Commit the synced tree yourself, from the main thread — `git add`/`git commit`
 
 Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appended `# context-mode — MANDATORY routing rules` block. The context-mode plugin re-appends this block after `PROJECT-CUSTOM:END` on every session start, so a CLAUDE.md cleaned earlier in the sync is dirty again by the time you commit. Remove the re-appended block (or disable the plugin) before staging, otherwise the commit silently reintroduces it.
 
+Match the plugin's **heading**, not the phrase: `grep -c '^# context-mode' CLAUDE.md` must be `0`. The template's own text mentions "context-mode" by design (the sentinel section under `## context-mode plugin`), so a substring grep reports a false positive on a perfectly clean file; only a line *starting* `# context-mode` is the re-appended plugin block.
+
 Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, `.gate/`, stray output files) that were never part of the sync.
+
+**The full sequence under v2.1.3+ hooks — the order is load-bearing:**
+
+```sh
+git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/template-manifest.json
+git commit -m "chore: sync template to <commit>"   # PreToolUse: with **Test** present this
+                                                   # runs the tests only and writes NO artifact
+# --> now delegate ONE `bash hooks/run-gate.sh` run to `ops` (the PO cannot run the gate)
+git push -u origin <branch>
+gh pr create --fill
+gh pr merge --squash --delete-branch
+git fetch -p                                       # drops the phantom remote-tracking ref
+```
+
+Gate **after** the commit, never before: the artifact must match the PR head by sha or tree. A gate run before the commit reports "artifact stale" at merge time unless the tree is byte-identical either side of the commit.
+
+**The commit gate keys on the WORKING TREE at gate time — commit exactly what was gated.** A chained `git add … && git commit` is fine (the tree the gate hashed is the tree the commit gets); so is `git commit -a`. A *partial* add after the gate ran mismatches by design — the committed tree is not what was gated — and the merge gate will correctly demand a fresh run.
+
+CI fires on `pull_request` and on push-to-main; a bare branch push produces **no** run. Open the PR first, then look up the run id — an empty workflow list right after `git push` is not a CI failure.
 
 ## Rules
 
