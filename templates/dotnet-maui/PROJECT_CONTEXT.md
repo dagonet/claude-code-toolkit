@@ -12,7 +12,7 @@
 <!-- THE line the protection hooks read; space- or comma-separated names.
      EDIT THIS if your trunk is not main/master — nothing fills it in for you,
      and a trunk that is not named here is NOT protected.
-     Absent, empty, or an unfilled {{PLACEHOLDER}} all fall back to `main master`;
+     Absent, empty, or an unfilled {{...}} all fall back to `main master`;
      `none` protects nothing (branch rules only; a PR merge stays gated). -->
 - **Protected branches**: main master
 

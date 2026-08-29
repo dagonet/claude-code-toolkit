@@ -325,6 +325,12 @@ printf '# ctx\n\n- **Test**: `false`\n' > "$BADREPO/PROJECT_CONTEXT.md"
 H=hooks/pre-commit-test.sh
 
 check "commit with passing tests"        "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$OKREPO")"
+# v2.2.1: the success path DELETES its captured output, so "I saw no test
+# output" is not evidence the suite did not run -- the elapsed seconds are the
+# only external discriminator between a real run and a hook that fell through
+# its own guards. Asserted on the shape, not the number, which is a real clock.
+check_msg "success names the elapsed seconds" "$ROOT/$H" 0 \
+  "$(mkjson Bash 'git commit -m "x"' "$OKREPO")" "passed. ("
 # v2.1.3 fix round 2 item 5: a Test-path commit (the common case -- 5 of 6
 # templates ship a **Test** line) never touches run-gate.sh or its artifact.
 # gate-before-merge.sh still needs a separate `bash hooks/run-gate.sh` before

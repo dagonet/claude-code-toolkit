@@ -18,7 +18,7 @@
 #   - v2.2.1: three more ways a gate could not determine the answer, all of
 #     which used to resolve to "allow" and now resolve to "refuse":
 #     an unparseable payload (gc_read_stdin), a parser that is present but
-#     broken (json.sh's json_probe_ok), and an unreplaced `{{PLACEHOLDER}}`
+#     broken (json.sh's json_probe_ok), and an unreplaced `{{...}}`
 #     config value (gc_is_placeholder).
 #
 # WHY THESE GATES SCAN THE WHOLE STRING, and why enforce-delegation.sh does the
@@ -176,11 +176,11 @@ gc_current_branch() {
   git -C "$1" branch --show-current 2>/dev/null
 }
 
-# gc_is_placeholder <value> -- true for an unreplaced `{{SETUP_PLACEHOLDER}}`.
+# gc_is_placeholder <value> -- true for an unreplaced `{{...}}`.
 #
 # GENERAL PRINCIPLE, and the reason this is a shared helper rather than one
 # `case` arm: AN UNREPLACED PLACEHOLDER MUST NEVER WIDEN ACCESS. A hook reading
-# a PROJECT_CONTEXT.md value that is still `{{FOO}}` has not been configured —
+# a PROJECT_CONTEXT.md value that is still `{{...}}` has not been configured —
 # it must behave exactly as if the line were absent, never treat the literal as
 # data. v2.2.0 shipped the opposite for the protected set and silently
 # unprotected trunk in every consumer that accepted the template.

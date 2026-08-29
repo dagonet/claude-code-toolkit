@@ -38,7 +38,9 @@ The three cases are now distinct, and asserted separately:
 
 **The templates no longer ship a placeholder on that line at all.** An earlier draft of this release kept `{{DEFAULT_BRANCH}}` live, arguing that with the resolver fix it was as safe as an absent line and was the only thing making the knob discoverable. That argument holds for a `main`/`master` repo and **fails for every other trunk**: `template_apply_file` does no substitution for it, so a `develop` repo received a line that *reads as configured*, silently resolved to `main master`, and had `git push origin develop` permitted — could-not-determine → permit, the shape this whole release exists to eliminate. All six templates now ship the literal `main master`, which is what the resolver actually does, above a comment telling a non-main/master repo to edit it.
 
-Trade-off, stated: a fresh `setup-project --default-branch develop` no longer auto-fills the protected set, so that repo edits one line. Accepted — the failure direction flips from silently-unprotected to visibly-wrong, and a line reading `main master` on a `develop` repo is something a reader can catch. The prose `- **Branch strategy**:` line keeps the placeholder (setup substitutes it, no hook reads it) and now says outright that no hook reads it, pointing at the key instead — it used to read like protection config four lines above the key that is one.
+**And the bootstrap fills the line in, so no repo is left to notice on its own.** Dropping the placeholder would otherwise have traded a silent gap in existing repos for a silent gap in new ones: `setup-project.{sh,ps1}` still accepted `--default-branch develop` while nothing carried that value to the protected-branches line, and there was no longer a placeholder for the "Remaining placeholders" report to flag. Both scripts now rewrite the line from the resolved trunk when the static default would not cover it — the template's default is right for the common case, and the bootstrap is the only layer that KNOWS the branch. No placeholder is reintroduced.
+
+They also SAY what they did, in the report: `Branch protection: main master (trunk 'main' is covered).` or `Branch protection: develop — set from the resolved trunk.` — and, when `PROJECT_CONTEXT.md` was skipped because it already existed, that the file was not written and the line is the user's to check. The hook warns too, but hook stderr never reaches the session transcript; this output is the channel that actually reaches the person running it. Both halves are exercised: the `.sh` real-run write path does **not** go through `render_file`, so the first implementation reported `develop` in the dry run and wrote `main master` for real — caught by a bootstrap test, and the `.ps1` has the same two-path shape. The prose `- **Branch strategy**:` line keeps the placeholder (setup substitutes it, no hook reads it) and now says outright that no hook reads it, pointing at the key instead — it used to read like protection config four lines above the key that is one.
 
 **The placeholder arm warns.** It fell back correctly but returned *silently*, while the empty-value arm warned — backwards, since an empty value is visibly empty and an unreplaced placeholder reads as configured. That is precisely the case a consumer does not know they are in. And `gc_is_placeholder` matches as a **substring**: a half-filled `{{DEFAULT_BRANCH}} develop` was read as two literal branch names, neither of which is a branch. Falling back costs one edit; treating the placeholder as data costs the repo its protection.
 
@@ -81,13 +83,13 @@ Two details worth keeping: `natpath()` (via `cygpath -m`) now does explicitly wh
 
 **2. The six node-only hooks SKIP instead of failing.** `read-size-gate`, `bash-output-guard`, `enforce-delegation`, `retro-ledger`, `retro-brief` and `enforce-agent-contract`'s transcript scan are embedded node *programs*, not field reads: with no node `json_require_node` makes them warn once and pass, which their fixtures cannot tell apart from a broken hook. Those four blocks (21 + 15 + 32 + 11 assertions) are now guarded by `HAVE_NODE` and reported as `SKIP`, the same idiom the python3-only / jq-only blocks already used. `HAVE_NODE` / `HAVE_PY` / `HAVE_JQ` and `skip()` moved up beside the assertion helpers, since the first block that needs them is 400 lines above where they used to be defined. The degraded paths keep their own coverage — `no parser: <hook> warns`, `python3: read-size-gate names node`, and the warn-once block are unchanged.
 
-The summary line now prints the total: `269 passed, 0 failed, 0 skipped (269 assertions)`. The three tallies are host-dependent, the total is not, so a wrong `skip <n>` count is visible immediately instead of hiding as a silent coverage hole. Measured at this commit:
+The summary line now prints the total: `309 passed, 0 failed, 0 skipped (309 assertions)`. The three tallies are host-dependent, the total is not, so a wrong `skip <n>` count is visible immediately instead of hiding as a silent coverage hole. Measured at this commit:
 
 | host | summary |
 |---|---|
-| node + python3 + jq | `308 passed, 0 failed, 0 skipped (308 assertions)` |
-| python3 + jq, no node | `217 passed, 0 failed, 91 skipped (308 assertions)` |
-| jq only | `201 passed, 0 failed, 107 skipped (308 assertions)` |
+| node + python3 + jq | `309 passed, 0 failed, 0 skipped (309 assertions)` |
+| python3 + jq, no node | `218 passed, 0 failed, 91 skipped (309 assertions)` |
+| jq only | `202 passed, 0 failed, 107 skipped (309 assertions)` |
 
 ### 5. `/sync-template`: the skill that was supposed to prevent all of this
 
@@ -115,7 +117,15 @@ Worse than a wrong expectation: **the probe was not read-only.** It executed the
 
 **Probing the merge gate from inside a guarded session blocks itself, and that block IS the positive result** (Motorsport-Manager-AI-Agent). Their probe command contained the literal `git merge` while building its payload; the real hook matched the echo constructing it. That is the fail-closed matcher doing its documented job, and their accidental block was better proof than a synthetic payload would have been — real command, real block, named shas. Stated in the skill's testing guidance and in `docs/verification.md`, along with the rule that a genuinely-needed synthetic probe is driven from outside the session, never inline.
 
-### 6. Two checks that existed but did not cover the case
+### 6. `pre-commit-test.sh`: two things a reader could not tell from its output
+
+Both from a consumer who timed the hook with `date +%s` rather than assuming — which is also what confirmed the probe decision above from the outside.
+
+**A green run prints nothing but `passed.`, because it deletes its captured output on success.** That is the right call for noise, and it means **"I saw no test output" is not evidence the tests did not run**. Timing was the only external discriminator, so the success line now carries it: `passed. (616s)`. A real suite takes minutes; a hook that fell through its own guards returns in about a second. One number, no output noise, and a no-op becomes self-evident — asserted by a fixture on the shape, not the number.
+
+**A `**Test**` value that chains projects with `&&` SHORT-CIRCUITS.** When the first project fails, the later ones are UNRUN — not passing. The block message names the whole command, so a reader can take it as "everything after the first project was fine" when in fact nothing after it executed. Stated in the hook header.
+
+### 7. Two checks that existed but did not cover the case
 
 Both found while fixing the above, both the same shape as everything else in this release. `scripts/verify-template-consistency.sh` grew from 230 to 259 assertions:
 
@@ -123,7 +133,7 @@ Both found while fixing the above, both the same shape as everything else in thi
 
 **Check 21d — every shipped shell script parses.** Not hypothetical: the node-program hooks embed their engine as a single-quoted shell argument (`node -e '…'`), and one apostrophe in that body — in a comment, in prose, in "the PO's own command" — ends the string early and disables the whole hook. It happened while writing item 3 of this release. `bash -n` catches it in one pass (verified against a deliberately broken fixture, which the check correctly fails); nothing else in the suite would, and the hook fixtures that DID notice it are `HAVE_NODE`-guarded and skip on exactly the hosts where a silent hook is hardest to spot. The check is parser-free, so it runs everywhere, and it covers `scripts/*.sh` and the mirror too.
 
-### 7. Documentation
+### 8. Documentation
 
 **On a trunk-committing repo the merge artifact is stale most of the time — by construction, and correctly** (Motorsport-Manager-AI-Agent, raised as a question; answered in `hooks/gate-before-merge.sh`'s header and `docs/verification.md`). Acceptance is `artifact.sha == HEAD` **or** `artifact.tree == HEAD^{tree}`; a docs-only commit moves both, because docs are tracked content. This is not a gap in v2.1.5's tree-hash keying — that key was added to fix the artifact's `sha` being the PARENT commit when an agent chains `git add … && git commit`, not to make an artifact outlive later commits. It costs nothing: the gate fires only on merge-shaped commands, so staleness is invisible until an actual merge, where re-running the gate is exactly the requirement. **No path-filtered or docs-excluding tree key** — deciding which file changes are safe to skip is the judgement a gate must not make.
 
@@ -150,7 +160,7 @@ Both found while fixing the above, both the same shape as everything else in thi
 
 **Known, not fixed here.** On Windows, `jq`'s stdout is in TEXT mode, so `json_get`'s jq backend can return a multi-line value with stray CRs. MSYS `grep`'s `$` tolerates them, so no hook misbehaves (`jq: skills block present passes` covers it), and the one exact-match assertion normalises. A CR-safe jq backend belongs in a `json.sh` change, not in the harness.
 
-12 hook scripts (2 lib files), 8 skills; **259 consistency assertions** and **308 hook fixtures**, both measured at this commit.
+12 hook scripts (2 lib files), 8 skills; **259 consistency assertions** and **309 hook fixtures**, both measured at this commit.
 
 ## v2.2.0 — 2026-08-29
 

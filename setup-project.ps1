@@ -213,6 +213,28 @@ $replacements['{{PROJECT_NAME}}'] = $ProjectName
 $replacements['{{PROJECT_NAME_LOWER}}'] = $ProjectName.ToLower()
 $replacements['{{DEFAULT_BRANCH}}'] = $DefaultBranch
 
+# --- Protected branches: bootstrap is the only layer that KNOWS the trunk ---
+#
+# The template ships the safe literal `- **Protected branches**: main master`.
+# Until v2.2.1 it shipped a placeholder, which NOTHING substitutes on a
+# /sync-template apply -- so a `develop` repo received a line that read as
+# configured, silently resolved to `main master`, and had its trunk unprotected.
+# No placeholder is reintroduced: the static default is right for the common
+# case, and setup -- which resolved the branch above -- rewrites the line when
+# that default would not cover it.
+$protectedDefault = 'main master'
+$protectedBranches = $protectedDefault
+if ($protectedDefault.Split(' ') -notcontains $DefaultBranch) {
+    $protectedBranches = $DefaultBranch
+}
+
+function Set-ProtectedBranches {
+    param([string]$Text)
+    if ($protectedBranches -eq $protectedDefault) { return $Text }
+    return [regex]::Replace($Text, '(?m)^- \*\*Protected branches\*\*:.*$',
+                            "- **Protected branches**: $protectedBranches")
+}
+
 # Explicit command flags -- set before any variant-derived default so they win
 if ($BuildCmd)  { $replacements['{{BUILD_COMMAND}}']  = $BuildCmd }
 if ($TestCmd)   { $replacements['{{TEST_COMMAND}}']   = $TestCmd }
@@ -485,6 +507,7 @@ function Get-RenderedContent {
     }
     $text = Get-Content -Path $File.Source -Encoding UTF8 -Raw
     foreach ($key in $replacements.Keys) { $text = $text.Replace($key, $replacements[$key]) }
+    if ($File.RelPath -eq 'PROJECT_CONTEXT.md') { $text = Set-ProtectedBranches -Text $text }
     if (Test-ShouldWrapClaudeMd $File.RelPath) {
         $existing = Get-Content -Path (Join-Path $TargetDir "CLAUDE.md") -Encoding UTF8 -Raw
         $text = Merge-IntoCustomRegion -Rendered $text -Body $existing
@@ -531,6 +554,29 @@ function Write-RemainingPlaceholders {
     }
     else {
         Write-Host "All placeholders replaced." -ForegroundColor Green
+    }
+}
+
+# --- Branch protection, stated in the report ---
+#
+# A bootstrap that cannot protect the trunk it just configured must SAY so here.
+# The hook does warn, but hook stderr never reaches the session transcript, so
+# this output is the only channel that actually reaches the person running it.
+function Write-BranchProtection {
+    $rendered = $script:renderedFiles | Where-Object { $_.RelPath -eq 'PROJECT_CONTEXT.md' }
+    if (-not $rendered) {
+        Write-Host "Branch protection: PROJECT_CONTEXT.md was NOT written (kept the existing file)." -ForegroundColor Yellow
+        Write-Host "  Resolved trunk is '$DefaultBranch' - check its '- **Protected branches**:' line"
+        Write-Host "  yourself; a trunk that is not named there is not protected."
+        return
+    }
+    if ($protectedBranches -eq $protectedDefault) {
+        Write-Host "Branch protection: $protectedBranches (trunk '$DefaultBranch' is covered)." -ForegroundColor Green
+    }
+    else {
+        Write-Host "Branch protection: $protectedBranches - set from the resolved trunk." -ForegroundColor Yellow
+        Write-Host "  main/master are NOT protected in this project; add them to"
+        Write-Host "  PROJECT_CONTEXT.md's '- **Protected branches**:' line if you want them."
     }
 }
 
@@ -628,6 +674,7 @@ if ($DryRun) {
 
     Write-Host ""
     Write-RemainingPlaceholders
+    Write-BranchProtection
 
     Write-Host ""
     Write-AutoModeSnippet
@@ -730,6 +777,11 @@ foreach ($f in $templateFiles) {
     foreach ($key in $replacements.Keys) {
         $content = $content.Replace($key, $replacements[$key])
     }
+    # Same rewrite the dry run reports -- this write path does NOT go through
+    # Get-RenderedContent, so the transform has to be applied here too or the two
+    # modes disagree about the one line that decides whether the trunk is
+    # protected. (The .sh half had exactly this bug, caught by a bootstrap test.)
+    if ($f.RelPath -eq 'PROJECT_CONTEXT.md') { $content = Set-ProtectedBranches -Text $content }
     Set-Content -Path $targetFile -Value $content -Encoding UTF8 -NoNewline
     $copiedFiles += $f.RelPath
     Add-RenderedFile -RelPath $f.RelPath -Text $content
@@ -879,6 +931,7 @@ if ($mcpJsonContent) {
 # --- Check for remaining placeholders ---
 Write-Host ""
 Write-RemainingPlaceholders
+Write-BranchProtection
 
 Write-Host ""
 Write-AutoModeSnippet
