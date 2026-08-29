@@ -8,7 +8,11 @@ disable-model-invocation: true
 
 Pull updates from the claude-code-toolkit template repo into the current project.
 
-**Requires:** `template-sync-tools` MCP server registered and running.
+**Requires:** `template-sync-tools` MCP server registered and running, **version >= 0.2.0**.
+
+> The two repos keep **independent** semver and ship on different cadences — do not expect the numbers to match. They are related by this stated contract instead. `template-sync-tools` 0.1.0 carries a classification bug that silently OVERWRITES a file the user chose to keep; 0.2.0 is the first release with the fix. Check the version at the first `template_*` call and stop if it is older.
+>
+> The fix lives in the SERVER PROCESS, so a consumer on a remote box must **pull, then restart** — a restart alone re-launches the same old code. One breaking field change a caller could key on: `locally_modified` now means "deviates from the template" (it used to mean "changed since the last sync"; that meaning moved to a new `changed_since_sync` field).
 
 ## Workflow
 
@@ -105,6 +109,10 @@ For each file with status `CONFLICT`:
 >
 > "EMPTY region" in the accept-template disqualifier above means *no content other than the shipped `<!-- Project-specific rules, routing blocks, and extensions go here. -->` placeholder* — the placeholder alone does not make a region non-empty.
 
+> **`PROJECT_CONTEXT.md`: SPLICE, never accept-template.** It conflicts for every consumer who has filled in real values, and accept-template replaces a working `- **Gate**: npm run gate` with `{{GATE_COMMAND}}` — which silently disables `pre-commit-test.sh` and `run-gate.sh` on the next commit, worst on a Gate-only repo where nothing else notices. Your `**Gate**:` / `**Test**:` / `**Build**:` values live in this file; they are a legitimate, permanent deviation, not drift to clean up. Take the template's *new lines* by hand and keep your own values.
+>
+> **`**Protected branches**:` is the one line the git gates read** — the `- **Branch strategy**:` prose above it is for humans and is parsed by nothing. Cheapest proof the config path works: attempt a push to trunk and read the block message, which names the set it actually resolved — `BLOCKED: pushing to a protected branch (main master)` vs `(develop release)`. Absent, empty, or still a `{{PLACEHOLDER}}` all resolve to `main master`; `none` is the one deliberate way to protect nothing (branch rules only — a PR merge stays gated whatever the branch).
+
 ### 5. Handle New Files
 
 For each file in `new_template_files`:
@@ -134,7 +142,15 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 > Read the toolkit working tree with Read/Grep, never through the context-mode sandbox: `git -C` fails silently on its `/tmp` paths and `grep -c` comes back 0, so every verification below would report a false clean.
 
 1. Collect every `hooks/<name>.sh` reference on a `command:` line in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. Match **both** invocation forms: the legacy cwd-relative `bash hooks/<name>.sh` and the v2.1.2 `bash "$CLAUDE_PROJECT_DIR/hooks/<name>.sh"`. Anchoring on `command:` keeps the `Bash(bash hooks/run-gate.sh*)` permissions pattern out of the set — it is a prompt rule, not a hook.
-1b. Collect the **sourced libs** too — a hook that cannot source its lib defines no helpers, reads an empty command, and exits 0 on everything. In every hook script present at the project root, grep for `\. "\$\(dirname "\$0"\)/lib/[^"]+"` and for a plain `lib/git-cmd.sh`; add each `hooks/lib/<file>` to the referenced set. They are checked and restored exactly like the scripts in steps 2–4 (`source="template"` when missing — the server resolves the `hooks/lib/` subdirectory against the toolkit root).
+1b. Collect the **libs** too — a hook that cannot reach its lib defines no helpers, reads an empty command, and exits 0 on everything. In every hook script present at the project root, grep for **any** `lib/<file>.sh` mention, in any form:
+
+```
+grep -oE 'lib/[A-Za-z0-9_.-]+\.sh' hooks/*.sh | sort -u
+```
+
+Add each hit as `hooks/lib/<file>`. They are checked and restored exactly like the scripts in steps 2–4 (`source="template"` when missing — the server resolves the `hooks/lib/` subdirectory against the toolkit root).
+
+> **Match the FORM, not one form.** Until v2.2.1 this step named a single pattern — the `. "$(dirname "$0")/lib/…"` **source** form, plus a literal `lib/git-cmd.sh`. Every node-program hook references its lib as an **assignment** instead (`jlib="$(dirname "$0")/lib/json.sh"` in `bash-output-guard`, `enforce-agent-contract`, `enforce-delegation`, `read-size-gate`, `require-skills-block`, `retro-brief`, `retro-ledger`), so an agent following this step *literally* never collected `hooks/lib/json.sh`, never noticed it missing, and those seven hooks disabled themselves while the sync report said clean. The three git gates were unaffected — they source `lib/git-cmd.sh` behind a hard `[ -f … ] || exit 2` and fail CLOSED. Over-collecting is harmless: a lib already present is a no-op, and a lib named only in a comment still resolves to a real file.
 2. For each referenced script: verify `hooks/<name>.sh` exists at the project repo root and is non-empty.
 3. For any MISSING script: call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="template")` — the server resolves root-tracked `hooks/` paths against the toolkit ROOT (variants do NOT ship `hooks/` — never look in `templates/<variant>/hooks/`, it does not exist) and both materializes the file AND returns its manifest entry in one call. Never hand-copy. Add each result to the collected `applied_files`.
 4. For every referenced hook script PRESENT at the project root, NOT tracked in the manifest, AND NOT already applied by step 3 (the two sets are disjoint): call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="skip")` and add the result to `applied_files`. `source="skip"` registers a manifest entry from the project's existing file content WITHOUT writing — NEVER use `source="template"` here, it would silently overwrite locally-edited hook scripts. Once registered, future `template_compute_status` runs track hook drift like any other file.
@@ -146,13 +162,34 @@ Call `template_finalize_sync(project_path=".", applied_files=<JSON array of all 
 
 Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
 
+**Shape this as two short commands, not one long one.** Write the `applied_files` JSON — and any validator — to the scratchpad with the Write tool, then run `python3 <validator-path> <json-path>`. The payload will always contain hook paths (`hooks/run-gate.sh` among them, by construction), and a long command line carrying them is the shape that has repeatedly tripped a guard: it is also the standing "move logic into a script file" rule, arriving from a third direction.
+
+**Re-hash before finalize.** After assembling `applied_files`, recompute each entry's hash from the file on disk and assert it matches the recorded `localHash`; report any mismatch instead of finalizing. This is a mechanical guard on the hazard the paragraph above states in prose — and prose has not been enough before: `template_finalize_sync`'s own hash validation exists because hand-typed hashes corrupted a manifest.
+
 **Post-finalize self-check:** re-run `template_compute_status(project_path=".")`. A clean sync shows `auto_update: 0, conflict: 0`. Anything else means the manifest was corrupted during finalize — report it to the user instead of finishing.
+
+**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report:
+
+```
+grep -rn '{{[A-Z_]\{2,\}}}' .claude hooks *.md
+```
+
+Any hit is a file the template wrote with an unfilled placeholder — `template_apply_file` substitutes only placeholders present in the project's manifest, so a key the manifest predates (`DEFAULT_BRANCH`, `GATE_COMMAND`, `WORKTREE_BASE`, `LOG_PATH`) lands as a literal on **both** accept-template and accept-merged. Fill it or delete the line; list every hit under `Warnings:` either way. This one grep is what stands between a consumer and a config value that reads as data — v2.2.0 shipped `- **Protected branches**: {{DEFAULT_BRANCH}}`, and until v2.2.1's resolver fix that literal silently unprotected trunk.
 
 ### 8. Report
 
 Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line.
 
 Re-run the step-3 **positive control** here as well (the same temp script, `bash <path>`) and fold its result in: the sync rewrote `hooks/` and `settings.json` since the first probe, so this is the run that tells you the *post-sync* enforcement layer is live. `exit=2` + `BLOCKED` → report `Gates: live`. `exit=0` → report `Gates: INERT` and the recovery note, not a clean sync.
+
+**Name the parser AND its consequence on the `Gates:` line.** The hooks pick the first WORKING backend of node → python3 → jq, and six of them (`read-size-gate`, `bash-output-guard`, `enforce-delegation`, `retro-ledger`, `retro-brief`, `enforce-agent-contract`'s transcript scan) are embedded node programs that stay inactive without node specifically. "Live" alone hides that. Field-validated shape, use it verbatim:
+
+```
+Gates:        live (parser: node — all 12 hooks enforcing)
+Gates:        live (parser: python3 — 6 node-only hooks inactive)
+```
+
+**Probing the MERGE gate from inside a guarded session blocks itself — and that block IS the positive result.** A probe command that builds a payload containing the literal `git merge` is matched by the real PreToolUse hook on the echo that constructs it, not on any merge. That is the unanchored matcher doing its documented job (these gates are fail-CLOSED; false positives are the accepted price of not being fooled by `bash -c "…"` wrapper forms). So: do not treat a self-block as a broken probe, and do not synthesise a payload to "really" test it — a real command, really blocked, with real shas in the message is the better proof. Where a synthetic probe genuinely is needed, drive the script from **outside** the session, never inline in a command string.
 
 The FIRST line of the report is this sentence, verbatim:
 
@@ -163,11 +200,15 @@ Sync complete: {variant} @ {new_commit}
 
   Auto-updated: [list]
   Merged:       [list]
+  Spliced:      [list — files where template and local content were combined by hand]
   Skipped:      [list]
   New files:    [list]
-  Warnings:     [list]
+  Warnings:     [list — every placeholder-sweep hit belongs here]
   User-level:   [one-line verify-user-level-drift.sh summary]
+  Gates:        live (parser: {backend} — {consequence})
 ```
+
+`Spliced:` is its own category on purpose: the conflict guidance now recommends splicing over accept-template for files that carry project values, and a spliced file is neither auto-updated nor merged by the server. Reporting it as "Skipped" hides work that was actually done.
 
 ### 9. Commit the Sync
 

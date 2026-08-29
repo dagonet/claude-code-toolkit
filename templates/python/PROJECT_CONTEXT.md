@@ -25,8 +25,8 @@
 ## Workflow Configuration
 
 - **Task source**: `plan-files`
-- **Branch strategy**: `{{DEFAULT_BRANCH}}` is protected; feature branches per task (see AGENT_TEAM.md Mode Behavior Table for naming convention)
-<!-- Branch names the protection hooks read; comma-separated. Empty or `none` = no protected branch. -->
+- **Branch strategy**: feature branches per task, PR into `{{DEFAULT_BRANCH}}` (see AGENT_TEAM.md Mode Behavior Table for naming convention). Prose for humans — **no hook reads this line**; the enforced set is `**Protected branches**:` directly below.
+<!-- THE line the protection hooks read; space- or comma-separated names. Absent, empty, or still a {{PLACEHOLDER}} -> `main master`. `none` protects nothing (branch rules only; a PR merge stays gated). -->
 - **Protected branches**: {{DEFAULT_BRANCH}}
 - **Max parallel workstreams**: 5
 - **Commit convention**: `feat:`, `fix:`, `chore:`, `test:`, `docs:` prefixes
