@@ -34,7 +34,7 @@ Three scripts run from the toolkit root. All three are safe to run at any time a
 
 | Script | Green means | Red means |
 |---|---|---|
-| `bash scripts/verify-template-consistency.sh` | the six variants agree on everything that must be identical, and every literal a hook greps still exists | a real regression — fix before committing |
+| `bash scripts/verify-template-consistency.sh` | the six variants agree on everything that must be identical, every literal a hook greps still exists, and the bootstrap fixtures pass (it invokes `scripts/test-setup-project.sh` as check 27 — the `setup-project.{sh,ps1}` dry-run and real-run paths must agree) | a real regression — fix before committing |
 | `bash scripts/test-hooks.sh` | every hook decides correctly on real stdin fixtures, including the must-**not**-block cases | a real regression — fix before committing |
 | `bash scripts/verify-user-level-drift.sh` | your live `~/.claude/` matches `user-level-reference/` | usually just *"you have not synced yet"* — see the polarity note below |
 

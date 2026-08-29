@@ -67,7 +67,7 @@ Reported by Motorsport-Manager-AI-Agent, and broader than reported. Here the par
 
 ### 3. `enforce-delegation.sh` false-denied on a filename in DATA
 
-Panoscribe's blocked call was a heredoc writing the sync's `applied_files` JSON to a scratch file. The cause is narrower than the "trigger words anywhere" hypothesis: every runner pattern is already anchored to command position (`/^pytest\b/`, `/^npm\s+test\b/`, …) — exactly one was not, `/hooks\/run-gate\.sh/`, which matched the string anywhere. Since step 7's payload necessarily NAMES that file, the more faithfully the skill was followed, the more certainly the command was denied. Now anchored like its siblings: `/^(bash\s+|sh\s+)?\S*hooks\/run-gate\.sh\b/`.
+Panoscribe's blocked call was a heredoc writing the sync's `applied_files` JSON to a scratch file. The cause is narrower than the "trigger words anywhere" hypothesis: every runner pattern is already anchored to command position (`/^pytest\b/`, `/^npm\s+test\b/`, …) — exactly one was not, `/hooks\/run-gate\.sh/`, which matched the string anywhere. Since step 7's payload necessarily NAMES that file, the more faithfully the skill was followed, the more certainly the command was denied. Now anchored like its siblings, with a leading class of PATH characters rather than `\S*`: `/^(bash\s+|sh\s+)?[\w./\\-]*hooks\/run-gate\.sh\b/`. `\S*` was the first cut and was still too wide — a pretty-printed JSON line whose first token merely ENDS in the path (a quote, a brace, a colon before it) matched it, which is the hole the anchor was closing. Covered forms: bare `hooks/run-gate.sh`, `./hooks/run-gate.sh`, `bash hooks/run-gate.sh`, `sh ./hooks/run-gate.sh`; not covered, and correctly so, the same path appearing as data anywhere in a command.
 
 **Deliberately not generalised to the git gates.** `enforce-delegation` is fail-OPEN workflow policy, where a false DENY costs real work and no safety argument justifies catching a filename in a payload. `no-push-main` / `pre-commit-test` / `gate-before-merge` are fail-CLOSED security gates that scan the whole string on purpose, so `bash -c "git push origin main"` cannot evade them; there a false positive costs one retry. The contrast is now stated in both headers so the next person does not "fix" the git gates the same way.
 
@@ -125,7 +125,15 @@ Both from a consumer who timed the hook with `date +%s` rather than assuming —
 
 **A `**Test**` value that chains projects with `&&` SHORT-CIRCUITS.** When the first project fails, the later ones are UNRUN — not passing. The block message names the whole command, so a reader can take it as "everything after the first project was fine" when in fact nothing after it executed. Stated in the hook header.
 
-### 7. Two checks that existed but did not cover the case
+### 7. The bootstrap now has fixtures, because a comment did not hold
+
+`setup-project.{sh,ps1}` render each file through **two** code paths — one for `--dry-run`, one for the real write — and those paths have now diverged twice, one release apart. v2.2.0's PR16 existed precisely to fix the first divergence (the dry run exited before the placeholder report; the real-run version grepped files on disk). One release later, this release's protected-branches rewrite went into the dry-run path only: the dry run reported `develop`, the real run wrote `main master`. It was caught by running both by hand, and the fix shipped with an adjacent comment saying "do not let these diverge".
+
+That comment is exactly what was already there, in spirit, when the second divergence happened — nothing executed both paths and compared them. So: **`scripts/test-setup-project.sh`**, which runs both modes for a `develop` trunk and a `main` trunk and asserts (a) the dry-run report equals the real-run report, (b) the report describes the line actually written, and (c) no placeholder survives on it; plus a rerun case that must say the file was kept, and a `setup-project.ps1` parity case where PowerShell exists. Verified against a deliberately reverted transform: it reproduces the exact r5 failure (`want develop, got main master`) and passes on the restored tree.
+
+It is **invoked from `verify-template-consistency.sh`** (check 27) rather than added as a third gate command, so the documented gate runs it with no consumer, doc, routine or CI wiring having to learn a new name. A test nothing runs is worth what the comment was worth.
+
+### 8. Two checks that existed but did not cover the case
 
 Both found while fixing the above, both the same shape as everything else in this release. `scripts/verify-template-consistency.sh` grew from 230 to 259 assertions:
 
@@ -133,7 +141,7 @@ Both found while fixing the above, both the same shape as everything else in thi
 
 **Check 21d — every shipped shell script parses.** Not hypothetical: the node-program hooks embed their engine as a single-quoted shell argument (`node -e '…'`), and one apostrophe in that body — in a comment, in prose, in "the PO's own command" — ends the string early and disables the whole hook. It happened while writing item 3 of this release. `bash -n` catches it in one pass (verified against a deliberately broken fixture, which the check correctly fails); nothing else in the suite would, and the hook fixtures that DID notice it are `HAVE_NODE`-guarded and skip on exactly the hosts where a silent hook is hardest to spot. The check is parser-free, so it runs everywhere, and it covers `scripts/*.sh` and the mirror too.
 
-### 8. Documentation
+### 9. Documentation
 
 **On a trunk-committing repo the merge artifact is stale most of the time — by construction, and correctly** (Motorsport-Manager-AI-Agent, raised as a question; answered in `hooks/gate-before-merge.sh`'s header and `docs/verification.md`). Acceptance is `artifact.sha == HEAD` **or** `artifact.tree == HEAD^{tree}`; a docs-only commit moves both, because docs are tracked content. This is not a gap in v2.1.5's tree-hash keying — that key was added to fix the artifact's `sha` being the PARENT commit when an agent chains `git add … && git commit`, not to make an artifact outlive later commits. It costs nothing: the gate fires only on merge-shaped commands, so staleness is invisible until an actual merge, where re-running the gate is exactly the requirement. **No path-filtered or docs-excluding tree key** — deciding which file changes are safe to skip is the judgement a gate must not make.
 
@@ -160,7 +168,7 @@ Both found while fixing the above, both the same shape as everything else in thi
 
 **Known, not fixed here.** On Windows, `jq`'s stdout is in TEXT mode, so `json_get`'s jq backend can return a multi-line value with stray CRs. MSYS `grep`'s `$` tolerates them, so no hook misbehaves (`jq: skills block present passes` covers it), and the one exact-match assertion normalises. A CR-safe jq backend belongs in a `json.sh` change, not in the harness.
 
-12 hook scripts (2 lib files), 8 skills; **259 consistency assertions** and **309 hook fixtures**, both measured at this commit.
+12 hook scripts (2 lib files), 8 skills; **261 consistency assertions** and **309 hook fixtures**, both measured at this commit.
 
 ## v2.2.0 — 2026-08-29
 

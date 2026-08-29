@@ -1043,6 +1043,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 27. The bootstrap fixtures (v2.2.1).
+#
+#     scripts/test-setup-project.sh runs setup-project.{sh,ps1} in BOTH modes
+#     and asserts the dry run and the real run agree. It is invoked from here,
+#     not left as a third gate command, so that the documented gate
+#     (verify-template-consistency.sh + test-hooks.sh) executes it without any
+#     consumer, doc, routine or CI wiring having to learn a new name — a test
+#     nothing runs is worth exactly as much as the comment it replaced.
+#
+#     Folded in as ONE assertion; its own per-case output is printed above the
+#     verdict so a failure is diagnosable from this script's log alone.
+# ---------------------------------------------------------------------------
+echo
+if [ -f scripts/test-setup-project.sh ]; then
+  setup_out=$(bash scripts/test-setup-project.sh 2>&1)
+  if [ $? -eq 0 ]; then
+    ok "bootstrap fixtures: $(printf '%s' "$setup_out" | grep -E '^test-setup-project' | head -1)"
+  else
+    printf '%s\n' "$setup_out" | sed 's/^/    /'
+    ko "bootstrap fixtures FAILED — run: bash scripts/test-setup-project.sh"
+  fi
+else
+  ko "scripts/test-setup-project.sh missing — the dry-run/real-run divergence is unguarded"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
