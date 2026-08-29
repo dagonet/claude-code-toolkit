@@ -682,6 +682,46 @@ for v in $VARIANTS; do
 done
 
 # ---------------------------------------------------------------------------
+# 21. user-level hook mirror is byte-identical to the repo-root originals.
+#
+#     `user-level-reference/hooks/` is a copy source for `~/.claude/hooks/`, so
+#     every file under it must be the same bytes as `hooks/<same relative path>`.
+#     A drifted copy is worse than a missing one: the user-level gate would
+#     silently enforce an older contract than the project-level gate.
+#
+#     Glob-derived, not a hard-coded list — mirroring one more hook needs no
+#     edit here, and deleting a root hook while leaving its mirror fails.
+#     `lib/` is included, which is why the walk is `find`-based and compares
+#     relative paths rather than basenames.
+#
+#     Direction, deliberately: this walks the MIRROR, not the root. It cannot
+#     catch a *new* root hook that nobody mirrored — that is not a drift, it is
+#     a judgement call about which hooks belong at user level, and most root
+#     hooks (run-gate, enforce-delegation, the retro pair) deliberately do not.
+#     What it does guarantee is that nothing in the mirror is stale or orphaned.
+# ---------------------------------------------------------------------------
+echo
+ULH=user-level-reference/hooks
+if [ ! -d "$ULH" ]; then
+  ko "hook mirror: $ULH missing — the user-level copy step in the README has nothing to copy"
+else
+  mirror_count=0
+  while IFS= read -r -d '' mf; do
+    mirror_count=$((mirror_count + 1))
+    rel="${mf#"$ULH"/}"
+    root="hooks/$rel"
+    if [ ! -f "$root" ]; then
+      ko "hook mirror: $mf has no root original at $root — a mirror of a deleted hook"
+    elif cmp -s "$root" "$mf"; then
+      ok "hook mirror: $rel is byte-identical to $root"
+    else
+      ko "hook mirror: $rel differs from $root — run: cp $root $mf"
+    fi
+  done < <(find "$ULH" -type f -print0 | sort -z)
+  [ "$mirror_count" -eq 0 ] && ko "hook mirror: $ULH is empty"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

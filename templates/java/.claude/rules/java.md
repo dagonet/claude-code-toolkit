@@ -4,6 +4,7 @@ paths:
   - "pom.xml"
   - "**/build.gradle*"
   - "src/main/resources/application.*"
+  - ".editorconfig"
 ---
 
 # Code Style (MANDATORY)

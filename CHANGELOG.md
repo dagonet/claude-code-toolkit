@@ -1,5 +1,114 @@
 # Changelog
 
+## v2.0 — 2026-08-29
+
+**Six weeks of transcripts, read instead of guessed at.** Every change below was proposed by a measurement, not by a preference: a hook that blocked 1,240 turns to buy nothing, a stall mode that only ever affected named teammates, 219 exploration spawns billed at Opus, ~400 calls to tools the calling agent did not have, 12 skills invoked 0 times. The direction is the same in all five parts — **let a mechanism enforce what prose used to repeat, and load the prose only when it is actionable.** Always-loaded config on `general`: **41,167 → 25,814 B (−37%)**, measured with `wc -c` on the shipped files rather than carried forward. Detail for each part is in the `v2.0-prN` entries below; this entry consolidates the migration.
+
+### What changed
+
+**PR1 — the git ban became a git gate** ([#52](https://github.com/dagonet/claude-code-toolkit/pull/52), `0da3f1d`). `hooks/block-bash-vcs.sh` blocked **1,240 turns in six weeks** and bought nothing: the three git gates keyed on `mcp__git-tools__*` tool names only because Bash git was banned in the first place, so the ban was load-bearing for its own workaround. Claude Code 2.1.250 PreToolUse hooks can read `tool_input.command` and deny with exit 2, so the gates now parse the command itself — a new shared parser `hooks/lib/git-cmd.sh` splits on `&&`/`||`/`;`/`|`, unwraps `bash -c` and `pwsh -Command`, and honours `git -C`. The CLI is allowed and *gated*: a red-gate commit, a push to main, and an ungated merge still stop. `scripts/test-hooks.sh` arrived with it — 46 stdin fixtures over throwaway git repos, including every must-**not**-block case. **`git-tools` MCP is optional from here on**, and work routed through it bypasses the gates.
+
+**PR2 — agent teams retired; parallelism comes from the Agent tool** ([#53](https://github.com/dagonet/claude-code-toolkit/pull/53), `6b3b144`). Every "sub-agent stalled without returning" complaint in the window traced back to a *named teammate*; the **1,777 Agent-tool spawns** in the same window never stalled once. Agent teams are experimental and off by default, `TeamCreate`/`TeamDelete` no longer exist, and `team_name` is deprecated — so the toolkit stops depending on them. `AGENT_TEAM.md` lost its naming convention and gained a final-message contract; long tasks use `background: true`. What did **not** change: the PO still never does hands-on work, and `hooks/enforce-delegation.sh` is untouched. New in its place: a **retro ledger** (`retro-ledger.sh` on `SubagentStop`, `retro-brief.sh` on `SessionStart`) that records each failing subagent run to the project's auto-memory and replays the last ten at the next session start, so a broken `tools:` allowlist surfaces once instead of every session.
+
+**PR3 — every agent declares what it costs** ([#54](https://github.com/dagonet/claude-code-toolkit/pull/54), `dd2cd8e`). The orchestrator ran on Opus, workers on `sonnet`, Haiku almost unused, and the *built-in* `Explore` inherited the session model — **219 exploration spawns at Opus prices**. In the same window **~400 tool calls hit tools the calling agent did not have** (`dotnet-tools`: 87 of 87 failed, advertised in the agent body and absent from its `tools:`) and **5,032 of 10,336 `Read` calls passed no `limit`**. So: `model:` + `effort:` on every agent, aliases only; a custom `Explore` pinned to haiku in all seven locations; `Skill` added to the 54 agents told to invoke skills (the `## Required Skills` block had been dead for coders); a tool-allowlist invariant asserted by the verify script. `read-size-gate.sh` stopped blocking and started **capping** — it rewrites an unbounded `Read` to `limit: 500` and names the next offset — and `bash-output-guard.sh` head/tail-truncates any Bash stream over 12,000 chars to a log file. Both native, both replacing a routing contract the model had to remember.
+
+**PR4 — CLAUDE.md is facts; conventions are path-scoped** ([#55](https://github.com/dagonet/claude-code-toolkit/pull/55), `549453c`). A C# style rule was loading on every turn of every session, including the ones that never opened a `.cs` file. Seven `.claude/rules/*.md` files with a `paths:` frontmatter glob list now carry those conventions and load only when Claude touches a matching file, re-injected after compaction. Only `paths:`-scoped rules ship — an unconditional rule is always-loaded context wearing a `rules/` filename. A second round routed two more sections by **audience**: *Open Brain Context for Agents* duplicated `AGENT_TEAM.md` (on-demand, more detailed), and *Working Preferences* binds developer agents, not the PO, so its 11 bullets moved into the `karpathy-guidelines` skill that all 12 coders preload. `general` CLAUDE.md **13,892 → 10,362 B**; across all six, 94,467 → 64,837 B (−31%). The revised ≤ 9 KB target was **not** met and no further cut was invented to reach it.
+
+**PR5 — commands became skills, and most of them stopped existing** ([#56](https://github.com/dagonet/claude-code-toolkit/pull/56), `6f72a06`). The toolkit's 12 skills were invoked **0 times** in the measured window and its 23 slash commands close to it; all 493 measured skill invocations went to `superpowers:*` and `karpathy-guidelines`. Anthropic has since made `.claude/commands/<n>.md` equivalent to `.claude/skills/<n>/SKILL.md`, so there is one artifact type to keep instead of two: **23 commands + 12 skills → 7 skills, no `commands/` directory**. `/build` and `/test` were already redundant with the `Gate:` mechanism; `/skill-eval` + `/skill-improve` were replaced by the official `skill-creator` plugin. The user-level `CLAUDE.md` lost its `# context-mode — MANDATORY routing rules` block (8,637 → 5,089 B, −41%): it mandated `ctx_batch_execute`, which **failed 28.6% of its calls**, and subagents made **164 calls to `ctx_*` tools they do not have** — the block was being inherited into prompts where it was pure hallucination bait.
+
+**PR6 — this release.** `VERSION`, this roll-up, a docs sweep, and one item PR1–PR5 surfaced: `user-level-reference/hooks/` now **mirrors** the fail-closed hooks (`no-push-main.sh`, `tier-before-coder.sh`, `pre-commit-test.sh`, `gate-before-merge.sh`, `lib/git-cmd.sh`) byte-for-byte from the toolkit root, so the user-level install is one `cp -r` instead of a two-directory scavenger hunt. A new glob-derived assertion fails the build if any mirrored file drifts from its root original — a stale mirror would have enforced an older contract at user level than at project level, silently.
+
+**This also repairs the user-level push gate.** The v2.0-pr5 copy step was `cp user-level-reference/hooks/*.sh` followed by `cp hooks/no-push-main.sh hooks/tier-before-coder.sh` — **neither glob recurses, and `lib/git-cmd.sh` was in neither source set**, so anyone who followed it installed a v2.0 `no-push-main.sh` that cannot load the parser it sources on its first line. The failure is quiet: the script file *exists*, so the wrapper's `127 → exit 2` fail-closed path never fires. If you already copied the hooks under the pr5 instructions, re-run step 4 below and confirm `~/.claude/hooks/lib/git-cmd.sh` is present.
+
+### By the numbers
+
+| | v1.5 | v2.0 |
+|---|---|---|
+| `hooks/*.sh` | 13 | **15** (incl. 2 no-op stubs) |
+| agent definitions (6 variants + user-level) | 61 | **68** |
+| skills | 12 | **7** |
+| slash commands | 23 | **0** |
+| `templates/general/CLAUDE.md` | 13,892 B | **10,362 B** |
+| always-loaded on `general` | 41,167 B (baseline) | **25,814 B** (−37%) |
+| consistency assertions | 131 | **174** |
+| hook fixtures | 0 | **133** |
+
+### Downstream migration
+
+Five steps. Steps 1–3 are per project; step 4 is once per machine; step 5 is once per machine.
+
+1. **Run `/sync-template` and accept the template version** of `CLAUDE.md`, `AGENT_TEAM.md`, `.claude/agents/*` (including the new `Explore.md`), `.claude/settings.json`, and the new `.claude/rules/*.md`. `CLAUDE.md` will report **CONFLICT** for any project with local edits — accept the template, then re-paste your customisations between the `PROJECT-CUSTOM:BEGIN/END` markers, which the sync server preserves verbatim. If your project already had language conventions pasted into `CLAUDE.md`, delete them there once the rules land, or the same text loads twice.
+2. **Delete the plugin-installed `# context-mode — MANDATORY routing rules` block from every project `CLAUDE.md`** you own, including projects bootstrapped from an earlier toolkit version. The context-mode plugin is optional now; if you still run it, its own SessionStart hook supplies its guidance, and the native `Read` cap and Bash output guard do the same job without a contract the model has to remember.
+3. **If your `settings.json` was locally modified**, `/sync-template` will not rewrite it. By hand: delete the whole `TeammateIdle` block and the `PreToolUse` matcher that invokes `block-bash-vcs.sh`, then add the four v2.0 entries — `PreToolUse` `"Bash|PowerShell"` running the three git gates in order, `PostToolUse` `"Bash|PowerShell"` → `bash hooks/bash-output-guard.sh`, `SubagentStop` → `bash hooks/retro-ledger.sh`, and `SessionStart` → `bash hooks/retro-brief.sh`. The last three go in **without** the 127 wrapper: they cannot block, so wrapping them would only invent a failure mode. Copy the shape from `templates/general/.claude/settings.json`.
+4. **User level (`~/.claude/`), once per machine.**
+   ```bash
+   cp    user-level-reference/CLAUDE.md      ~/.claude/CLAUDE.md
+   cp    user-level-reference/settings.json  ~/.claude/settings.json
+   cp -r user-level-reference/skills/.       ~/.claude/skills/
+   cp -r user-level-reference/agents/.       ~/.claude/agents/
+   cp -r user-level-reference/hooks/.        ~/.claude/hooks/
+   rm -rf ~/.claude/commands/
+   rm -rf ~/.claude/skills/{arch-analyze,code-review,explaining-code,fix-errors,impact-analysis,orient,refactor,security-audit}
+   rm -f  ~/.claude/hooks/allow-ctx-plan.sh
+   ```
+   The single `cp -r` of `hooks/` **supersedes the two-step copy in v2.0-pr5** — the fail-closed hooks are mirrored into this directory as of PR6, and unlike the two `*.sh` globs it took, `cp -r` carries `lib/git-cmd.sh` across. Verify with `ls ~/.claude/hooks/lib/git-cmd.sh`: the three git gates source it on their first line, and without it the user-level push gate silently cannot evaluate a command. Deleting `~/.claude/commands/` is not optional: a leftover command file shadows its skill. Then, in `~/.claude/settings.json`: **add a `permissions.autoMode.environment`** describing your machine's trust boundary in prose (`defaultMode: auto` routes undecided calls through a classifier and `environment` is what it reasons over; `autoMode` is **User/managed scope only**, so a project cannot ship one — the right polarity, since a hostile repo must not widen its own trust), **delete `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`**, remove the `allow-ctx-plan.sh` matcher group, and **remove the `git-tools` MCP server from `~/.claude.json` if you do not use it directly** — nothing in the toolkit requires it, and git routed through it bypasses the gates. If you run a model proxy, exempt the auto-mode classifier from it as you already do for `advisorModel`: 83 classifier outages were observed when it was proxied.
+5. **Install `skill-creator@claude-plugins-official`** — it replaces `/skill-eval`, `/skill-improve`, and the toolkit's hand-rolled `evals/evals.json` convention with eval authoring, LLM grading, and benchmarking. `settings.json` already enables it.
+
+Then **start a new session** — settings, skills, and agent definitions load per session. `setup-project.sh` / `.ps1` print the `autoMode.environment` line for you at the end of every run, dry or real.
+
+Until steps 1–5 are done, `scripts/verify-user-level-drift.sh` reports DRIFT. That is expected, not a failure: the reference leads and the live copy follows. See [`docs/verification.md`](docs/verification.md) → *Verifying the toolkit repo itself*.
+
+### Deprecated (removed in v2.1)
+
+Both are **no-op stubs** — header plus `exit 0` — and both are unregistered. They stay non-empty for one release so that a downstream `settings.json` still naming them does not fail closed on an exit 127.
+
+- `hooks/block-bash-vcs.sh` — superseded by the three command-parsing git gates (PR1).
+- `hooks/require-teammate-report.sh` — the `TeammateIdle` gate; agent teams are retired (PR2).
+
+### Known minor follow-ups
+
+Carried verbatim from the implementation ledger. **None of the entries below are implemented in this release** — they are recorded so the omissions read as deliberate.
+
+Four ledger entries *were* fixed here, because each was a dangling or contradictory reference in a **shipped artifact** rather than a nice-to-have, and are therefore not listed below:
+
+- mirror `no-push-main.sh` + `tier-before-coder.sh` into `user-level-reference/hooks` — done, plus the two other gates and `lib/`.
+- `Explore.md` (×7) named `hooks/agent-budget-warn.sh` by repo-relative path, which dangles at user level → now "the agent-budget-warn hook", no path.
+- `templates/python/.claude/rules/python.md` listed `ruff.toml` in `paths:`, which no variant ships → dropped. `.editorconfig` added to both `python.md` and `java.md`, since each rule's text already calls it authoritative.
+- `AGENT_TEAM.md` let the PO SendMessage a completed subagent while the agent mandate says "no side channel" → the paragraph now states the exception explicitly ("a follow-up question may arrive after you finish — answer it in a new final message. Nothing arrives *during* a run."). Byte-identity across all six variants preserved.
+
+*From PR1:*
+
+- `gc_protect_c_paths` regex also encodes non-git `-C "a b"` args (grep/diff) in the same segment — harmless, scope to `git … -C`.
+- 12 processes per Bash call (3 node calls per gate × 3 gates) — consolidate `gc_read_stdin` into one `node -e`.
+- unanchored commit match makes `grep "git commit"` run the full test suite — skip segments whose first token is echo/grep/rg/printf.
+- drop unverified `_note_git_tools` key from `user-level-reference/.mcp.json.template`.
+
+*From PR2:*
+
+- raw agent_type/agent_id interpolation into ledger row (strip `\r\n|`, slice 64).
+- retro-ledger slurps whole transcript (`readFileSync`) — stream or size-cap.
+- verify `:889-891` mandate assertion compares mismatched sets (exclude coders consistently; include user-level agents).
+
+*From PR3:*
+
+- read-size-gate offset advice off-by-one when offset absent (advise 501).
+- bash-output-guard `mkdir -p` runs on every Bash call; no log pruning (`find -mtime +7 -delete`).
+
+*From PR4:*
+
+- `## Working Preferences` heading now near-empty (rename/fold).
+- duplicated formatter line inside python/java/csharp rules.
+- further diet candidates — Compact Instructions (~1.6 KB) and Workflow TL;DR tier table (duplicated in AGENT_TEAM.md).
+- dotnet/dotnet-maui CLAUDE.md have no `## Quick Start`.
+- rust-tauri Quick Start uses literal commands because setup-project derives none for that variant — derive them (cargo build/test/fmt/clippy) in v2.1, then switch to placeholders.
+- `tools/measure-context-bloat.py` needs `PYTHONIOENCODING=utf-8` on Windows.
+
+*From PR5:*
+
+- `verify-user-level-drift.sh` red-by-design — add `--expect-drift`/WARN mode.
+- "PR1 removed…" jargon in `skills/commit/SKILL.md:9`.
+- `challenge` skill made explicit-only (`disable-model-invocation`) — was 2nd-most-used command; consider splitting guidance (auto) from architect spawn (explicit).
+
 ## v2.0-pr5 — 2026-08-28
 
 **Commands became skills, and most of them stopped existing.** In six weeks of transcripts the toolkit's 12 skills were invoked **0 times** and its 23 slash commands close to it — `/sync-template` 22, `/challenge` 10, `/commit` and `/sprint` a handful, the rest zero. All 493 measured skill invocations went to `superpowers:*` and `karpathy-guidelines`. Anthropic has since made `.claude/commands/<n>.md` equivalent to `.claude/skills/<n>/SKILL.md`, so there is one artifact type to keep instead of two. 23 commands + 12 skills → **7 skills, no `commands/` directory**.

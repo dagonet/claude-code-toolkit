@@ -51,7 +51,7 @@ Private repo — new users must fork/clone it, or remove references and rely on 
 
 | Server | Tools | Requires |
 |---|---|---|
-| **git-tools** | 34 git operations | Python 3.10+, GitPython |
+| **git-tools** | 34 git operations | Python 3.10+, GitPython — **optional since v2.0**: nothing in the toolkit requires it, and git work routed through it bypasses the three git gates, which key on `Bash`/`PowerShell` commands |
 | **github-tools** | 17 (releases, workflows, PR hygiene) | Python 3.10+, `gh` CLI |
 | **python-tools** | 7 (wheel/sdist inspect, pytest, ruff, uv build, coverage) | Python 3.10+, `uv`, `pytest`, `ruff`, `coverage` |
 | **ollama-tools** | 6 (local LLM, project mapping) | Python 3.10+, Ollama |
