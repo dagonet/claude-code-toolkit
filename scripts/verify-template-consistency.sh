@@ -89,6 +89,8 @@ done
 GATE_LITERALS='Plan Challenge Protocol|EnterPlanMode|Challenge 1|Challenge 2|tier-before-coder'
 for v in $VARIANTS; do
   for f in "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md"; do
+    # An absence grep passes vacuously on a missing file — guard first.
+    [ -f "$f" ] || { ko "$f: missing"; continue; }
     if grep -qE "$GATE_LITERALS" "$f"; then
       ko "$f: plan-gate mandate is back — $(grep -oE "$GATE_LITERALS" "$f" | sort -u | tr '\n' ' ')"
     else
@@ -325,19 +327,9 @@ else
   ok "liveness: no session-wide block cap (per-agent thresholds are the only throttle)"
 fi
 
-# The retired TeammateIdle gate must stay a NON-EMPTY no-op for one release: the
-# §13 hook-ref invariant tests -s, and a downstream settings.json still naming it
-# would fail closed on a 127 if the file went away.
-if [ -s hooks/require-teammate-report.sh ] && grep -q 'DEPRECATED in v2.0' hooks/require-teammate-report.sh 2>/dev/null; then
-  ok "require-teammate-report.sh is a non-empty DEPRECATED no-op stub"
-else
-  ko "require-teammate-report.sh: expected a non-empty deprecated stub (removed in v2.1, not v2.0)"
-fi
-if printf '%s' '{}' | bash hooks/require-teammate-report.sh >/dev/null 2>&1; then
-  ok "require-teammate-report.sh stub exits 0"
-else
-  ko "require-teammate-report.sh stub does NOT exit 0 — it can still block a stop"
-fi
+# v2.1: the deprecated TeammateIdle stub is deleted (it was kept non-empty for
+# exactly one release so a downstream settings.json naming it would not fail
+# closed on a 127). Its two assertions are gone with it.
 
 # The retro ledger pair (v2.0 PR2) must exist and stay fail-open: both are
 # registered UNWRAPPED, so a non-zero exit would break every stop / session start.
@@ -366,7 +358,6 @@ else
   ko "budget: BLOCK_EVERY missing — a single block does not stop a runaway (worst measured: 417 calls)"
 fi
 
-# require-teammate-report.sh is a no-op stub from v2.0 and no longer logs.
 for f in hooks/agent-budget-warn.sh; do
   if grep -q 'liveness.log' "$f" 2>/dev/null; then
     ok "audit trail: $f writes .claude/liveness.log"
@@ -533,6 +524,25 @@ if [ "$pinned_ids" = "0" ]; then
 else
   ko "$pinned_ids agent files pin a full claude-* model id instead of an alias"
   grep -l "^model: claude-" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null
+fi
+
+# The CLI does not validate `effort:`/`model:` — a v2.1 PR8 probe ran an agent
+# carrying `effort: banana` with no warning and `claude plugin validate` passed.
+# So a typo ships silently unless something here pins the documented value lists.
+bad_effort=$(grep -h "^effort: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
+if [ "$bad_effort" = "0" ]; then
+  ok "every agent 'effort:' value is one of low/medium/high/xhigh"
+else
+  ko "$bad_effort agent 'effort:' values are outside low/medium/high/xhigh (the CLI does not validate this field)"
+  grep -n "^effort: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
+fi
+
+bad_model=$(grep -h "^model: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
+if [ "$bad_model" = "0" ]; then
+  ok "every agent 'model:' value is one of sonnet/opus/haiku/fable/inherit"
+else
+  ko "$bad_model agent 'model:' values are outside the alias list (the CLI does not validate this field)"
+  grep -n "^model: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
 fi
 
 mode_field=$(grep -l "^mode: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)

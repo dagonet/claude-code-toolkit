@@ -192,7 +192,7 @@ These remain convention-only, enforced by AGENT_TEAM.md instructions.
 
 | # | Proposal | Status | Reason |
 |---|----------|--------|--------|
-| 1 | No Bash git | **Superseded in v2.0** | `hooks/block-bash-vcs.sh` blocked 1,240 turns in 6 weeks for no safety gain; the git CLI is allowed and the three gates parse `tool_input.command` instead. The script survives as a no-op stub |
+| 1 | No Bash git | **Superseded in v2.0** | The blanket Bash-git block cost 1,240 turns in 6 weeks for no safety gain; the git CLI is allowed and the three gates parse `tool_input.command` instead. The script survived one release as a no-op stub and was deleted in v2.1 |
 | 2 | No push to main | **Implemented** | `hooks/no-push-main.sh` |
 | 3 | Format before commit | Reject | Wrong enforcement point, blocks workflows |
 | 4 | Build before commit | Reject | Wrong enforcement point, blocks TDD |
