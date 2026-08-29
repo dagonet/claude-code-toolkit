@@ -14,7 +14,8 @@ Skills invoked: `superpowers:test-driven-development`, `karpathy-guidelines`,
 | `fa0a1a6` | fix(hooks): git gates fail closed on a missing lib and on a pre-v2 MCP matcher |
 | `a262810` | fix(settings): deny git-tools MCP write ops; matchers own the coder shape, not the list |
 | `6e20aab` | docs(sync-template): close the semantic gaps three consumer syncs found |
-| (final)  | release: v2.1.1 |
+| `48298fe` | release: v2.1.1 — consumer sync feedback, fail-closed gates, git-tools deny |
+| (fixup)   | CHANGELOG corrections (`LOG_FILE=` not `LOCK_FILE=`; dead consumer anchors removed) |
 
 ## TDD evidence
 
@@ -130,6 +131,13 @@ exactly 2 matchers of shape `^([a-z0-9]+-)?coder$`; per variant (6), the enumera
   plugin's SessionStart auto-injection. No opt-out env var or config toggle found
   in its README or `hooks/*.mjs`; `claude plugin disable context-mode@context-mode`
   is the only fix.
+- `hooks/require-skills-block.sh` was edited but has **no** `user-level-reference/hooks/`
+  mirror, by design: `user-level-reference/settings.json` does not register it, and
+  `settings-reference.md` §"Optional User-Level Install" tells the user to copy it
+  from the repo-root `hooks/` directly. Check 21 walks the mirror, so nothing broke;
+  the mirror set stays the six files it was.
+- No git tag is created (this branch is never pushed); `VERSION` is `2.1.1` while the
+  last tag remains `v2.1` at `d7251b9`. Tagging is the controller's step.
 - Deviation on item F: the brief said set *both* SubagentStop matchers to the same
   regex. The second matcher (`enforce-agent-contract.sh`) never covered
   `tester`/`architect`, so it got `^([a-z0-9]+-)?coder$|^code-reviewer$` — same
