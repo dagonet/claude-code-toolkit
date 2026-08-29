@@ -65,6 +65,23 @@ check() { # <label> <hook> <expected_exit> <json>
   fi
 }
 
+# Message assertion: exit code AND an ASCII substring of the hook's stderr.
+# Takes an ABSOLUTE hook path, so a copy under $TMPROOT can be exercised too.
+check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
+  label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
+  errf="$TMPROOT/check_msg.err"
+  printf '%s' "$json" | bash "$hookp" >/dev/null 2>"$errf"
+  got=$?
+  if [ "$got" = "$want" ] && grep -qF "$needle" "$errf"; then
+    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' \
+      "$label" "$want" "$needle" "$got" "$(head -1 "$errf")"
+    fail=$((fail + 1))
+  fi
+}
+
 # Value assertion, for hooks whose contract is their STDOUT (updatedInput /
 # updatedToolOutput) rather than their exit code.
 expect() { # <label> <want> <got>
@@ -167,6 +184,46 @@ mkdir -p "$BADREPO/.claude" && : > "$BADREPO/.claude/git-guard-off"
 check "kill switch disables the gate"    "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$BADREPO")"
 rm -f "$BADREPO/.claude/git-guard-off"
 
+# --- v2.1.1 (consumer feedback): a PROJECT_CONTEXT.md that only declares a
+# **Gate** command used to make this hook a silent no-op. Fall back to Gate, and
+# when neither field exists say so on stderr instead of passing in silence.
+GATEONLYOK=$(mkrepo commitgateok main)
+GATEONLYBAD=$(mkrepo commitgatebad main)
+BOTHFIELDS=$(mkrepo commitboth main)
+NOFIELDS=$(mkrepo commitnofields main)
+printf '# ctx\n\n- **Gate**: `true`\n'  > "$GATEONLYOK/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Gate**: `false`\n' > "$GATEONLYBAD/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Test**: `true`\n- **Gate**: `false`\n' > "$BOTHFIELDS/PROJECT_CONTEXT.md"
+printf '# ctx\n\nno commands here\n' > "$NOFIELDS/PROJECT_CONTEXT.md"
+
+check "Gate-only context, gate passes"   "$H" 0 "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")"
+check "Gate-only context, gate fails"    "$H" 2 "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")"
+check "Test wins over Gate when both"    "$H" 0 "$(mkjson Bash 'git commit -m x' "$BOTHFIELDS")"
+check_msg "no Test/Gate warns, allows"   "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$NOFIELDS")" \
+  "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
+check_msg "no PROJECT_CONTEXT warns too" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$BARE")" \
+  "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
+
+# --- v2.1.1 round 1: the block message names the command that failed (with the
+# Gate fallback it is often not a test runner), and the command's own output is
+# kept — swallowing it left "Fix test failures" with nothing to act on.
+check_msg "block names the failed command"  "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$BADREPO")" \
+  "BLOCKED: 'false' failed — re-run it and fix the failures before committing"
+check_msg "gate-only block names the gate"  "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
+  "BLOCKED: 'false' failed"
+
+TAILREPO=$(mkrepo committail main)
+printf '# ctx\n\n- **Test**: `seq 1 40 | sed s/^/LINE/; false`\n' > "$TAILREPO/PROJECT_CONTEXT.md"
+tailerr="$TMPROOT/committail.err"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$TAILREPO")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>"$tailerr"
+expect "failure output reaches stderr"   "1" "$(grep -cx 'LINE40' "$tailerr")"
+expect "failure output is tailed to 20"  "0" "$(grep -cx 'LINE1' "$tailerr")"
+
 # ===========================================================================
 # gate-before-merge.sh
 # ===========================================================================
@@ -234,6 +291,88 @@ SPACEGATE=$(mkrepo 'gate main repo' main)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SPACEGATE/PROJECT_CONTEXT.md"
 check "spaced -C merge, target on main"  "$H" 2 "$(mkjson Bash "git -C \"$SPACEGATE\" merge feature" "$GATEFEAT2")"
 check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' "$GATEREPO")"
+
+# ===========================================================================
+# git gates: fail-closed contracts (v2.1.1, consumer sync feedback #2c/#3)
+#
+# Two ways a synced-but-not-restarted project turns all three gates OFF:
+#   a) hooks/lib/git-cmd.sh was never materialised (sync step 6b missed the
+#      sourced lib) -- every gc_* helper is undefined, GC_CMD is empty, and the
+#      gates exit 0 on everything.
+#   b) the running session still holds a pre-v2 settings.json that registers the
+#      gates on mcp__git-tools__git_push / _commit. The v2 gates find no
+#      tool_input.command and exit 0.
+# Both must fail CLOSED (exit 2) with an actionable message.
+# ===========================================================================
+echo
+echo "=== git gates: fail-closed contracts ==="
+
+# --- a) the sourced lib is missing: copy each gate somewhere with no lib/ ----
+NOLIB="$TMPROOT/nolib"
+mkdir -p "$NOLIB"
+cp "$ROOT/hooks/no-push-main.sh" "$ROOT/hooks/pre-commit-test.sh" \
+   "$ROOT/hooks/gate-before-merge.sh" "$NOLIB/"
+LIBNEEDLE='run /sync-template step 6b'
+
+check_msg "no-push-main without lib/"     "$NOLIB/no-push-main.sh"     2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"      "$LIBNEEDLE"
+check_msg "pre-commit-test without lib/"  "$NOLIB/pre-commit-test.sh"  2 \
+  "$(mkjson Bash 'git commit -m x' "$BADREPO")"            "$LIBNEEDLE"
+check_msg "gate-before-merge without lib/" "$NOLIB/gate-before-merge.sh" 2 \
+  "$(mkjson Bash 'gh pr merge 5 --squash' "$GATEREPO")"    "$LIBNEEDLE"
+
+# --- b) a pre-v2 settings.json matcher reaches a v2 gate --------------------
+MCPNEEDLE='settings.json predates this hook'
+
+check_msg "no-push-main via mcp git_push"   "$ROOT/hooks/no-push-main.sh"    2 \
+  "$(mkjson_mcp mcp__git-tools__git_push "$MAINREPO")"     "$MCPNEEDLE"
+check_msg "no-push-main via mcp git_commit" "$ROOT/hooks/no-push-main.sh"    2 \
+  "$(mkjson_mcp mcp__git-tools__git_commit "$MAINREPO")"   "$MCPNEEDLE"
+check_msg "pre-commit via mcp git_commit"   "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson_mcp mcp__git-tools__git_commit "$OKREPO")"     "$MCPNEEDLE"
+check_msg "pre-commit via mcp git_push"     "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson_mcp mcp__git-tools__git_push "$OKREPO")"       "$MCPNEEDLE"
+
+# An unrelated MCP tool is not evidence of a stale settings.json -- fail open.
+check "no-push-main: unrelated MCP tool"  hooks/no-push-main.sh    0 \
+  "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$MAINREPO")"
+check "pre-commit: unrelated MCP tool"    hooks/pre-commit-test.sh 0 \
+  "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$BADREPO")"
+
+# The Bash branch is untouched by either guard.
+check "Bash push still blocked on main"   hooks/no-push-main.sh    2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"
+check "Bash commit still runs tests"      hooks/pre-commit-test.sh 2 \
+  "$(mkjson Bash 'git commit -m x' "$BADREPO")"
+
+# ===========================================================================
+# require-skills-block.sh — v2.1.1: a project that adds its own language coder
+# (cpp-coder, go-coder, …) must not fall through the binding table. The bound
+# list is now "coder or <lang>-coder", not an enumeration the template owns.
+# ===========================================================================
+echo
+echo "=== hooks/require-skills-block.sh ==="
+H=hooks/require-skills-block.sh
+
+mkspawn() { # <subagent_type> <prompt>
+  node -e 'console.log(JSON.stringify({subagent_type:process.argv[1],prompt:process.argv[2]}))' "$1" "$2"
+}
+WITHBLOCK='Do the thing.
+
+## Required Skills
+- karpathy-guidelines
+'
+
+check "cpp-coder without skills block"   "$H" 2 "$(mkspawn cpp-coder 'Do the thing.')"
+check "go-coder without skills block"    "$H" 2 "$(mkspawn go-coder 'Do the thing.')"
+check "cpp-coder with skills block"      "$H" 0 "$(mkspawn cpp-coder "$WITHBLOCK")"
+check "coder without skills block"       "$H" 2 "$(mkspawn coder 'Do the thing.')"
+check "rust-coder without skills block"  "$H" 2 "$(mkspawn rust-coder 'Do the thing.')"
+check "tester without skills block"      "$H" 2 "$(mkspawn tester 'Do the thing.')"
+check "code-reviewer is unbound"         "$H" 0 "$(mkspawn code-reviewer 'Do the thing.')"
+# The suffix rule must not over-match: 'coder-helper' is not a coder.
+check "coder-helper is not a coder"      "$H" 0 "$(mkspawn coder-helper 'Do the thing.')"
+check "unknown subagent_type passes"     "$H" 0 "$(mkspawn Explore 'Do the thing.')"
 
 # ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an

@@ -28,10 +28,18 @@
       "mcp__godot-tools__*",
       "mcp__plugin_context7_context7__*",
       "mcp__plugin_playwright_playwright__*",
-      "mcp__plugin_context-mode_context-mode__*"
+      "mcp__plugin_context-mode_context-mode__*",
+      "mcp__git-tools__*"
     ],
     "deny": [
-      "Read(.env*)"
+      "Read(.env*)",
+      "mcp__git-tools__git_push",
+      "mcp__git-tools__git_commit",
+      "mcp__git-tools__git_revert",
+      "mcp__git-tools__git_merge",
+      "mcp__git-tools__git_rebase",
+      "mcp__git-tools__git_reset",
+      "mcp__git-tools__git_push_tags"
     ],
     "ask": [
       "Bash(npm publish*)"

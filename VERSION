@@ -1,2 +1,2 @@
-2.1
-The plan gate is gone and every spawn carries its task brief instead, session-level effort is unset so the model uses its own default, "use a workflow" answers work too big for one pass, and a nightly routine plus a retro-review skill watch for drift. 12 hook scripts, 8 skills; always-loaded config 25,999 B, down 36.8% from the 41,167 B baseline; 172 consistency assertions and 131 hook fixtures.
+2.1.1
+Built from three consumers' /sync-template reports: the git gates now fail closed when their sourced lib is missing or a pre-v2 MCP matcher reaches them, the git-tools MCP write ops are denied so the native-git gates cannot be bypassed, and the SubagentStop matchers match any <lang>-coder instead of the template's own list. 12 hook scripts, 8 skills; always-loaded config 25,999 B, down 36.8% from the 41,167 B baseline; 205 consistency assertions and 160 hook fixtures.

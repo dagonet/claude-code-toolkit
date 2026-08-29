@@ -1,5 +1,47 @@
 # Changelog
 
+## v2.1.1 — 2026-08-29
+
+**Three consumers synced v2.0 → v2.1 and all three found the same shape of bug: a mechanism that reported success while doing nothing.** This is a patch release built entirely from their reports — **panoscribe** (python variant, `59ec37c` → `d7251b9`), **penumbra** (python, → `d7251b9`, write-up in that repo at `docs/reviews/2026-08-29-sync-template-feedback.md`), and **Yutraffic-Challenge** (rust-tauri, [PR #221](https://github.com/dagonet/Yutraffic-Challenge/pull/221)). Nothing here is a new feature; every change closes a path where enforcement was silently off.
+
+### The three HIGH items
+
+**1. The git gates could run with everything disabled, and said nothing.** Two independent paths, both ending in `exit 0`. (a) `hooks/lib/git-cmd.sh` was never materialised — the sync's hook-verification step greps for `bash hooks/<name>.sh` and never saw the *sourced* lib. Bash returns non-zero from a failed `.` but keeps going, so every `gc_*` helper was undefined, `GC_CMD` stayed empty, and `[ -n "$GC_CMD" ] || exit 0` waved through every push, commit and merge. (b) The sync rewrites the three gate scripts to their v2 (command-parsing) form while the *running* session still holds the pre-v2 `settings.json`, which invokes them on `mcp__git-tools__git_push` / `git_commit`. Those payloads carry no `tool_input.command`, so the v2 gates again found nothing and allowed everything — for the rest of that session.
+
+Both now **fail closed**. Each gate checks its lib exists before sourcing it and exits 2 with `run /sync-template step 6b`; `no-push-main.sh` and `pre-commit-test.sh` exit 2 on a `mcp__git-tools__git_(push|commit)` tool name with `settings.json predates this hook (MCP matcher) — restart the session after /sync-template`. `gate-before-merge.sh` keeps its existing MCP branch (the GitHub merge tools are gated unconditionally); `mcp__git-tools__git_merge` never existed in any shipped matcher, so nothing was added for it. The `sync-template` skill's final report now leads with the restart warning.
+
+**2. The native-git move left an MCP bypass open.** v2.0 dropped the `mcp__git-tools__git_commit|git_push` PreToolUse matchers because git runs through the CLI now. But `git-tools` is registered at **user** level (`~/.claude.json`), so it stays reachable in every project, and under `"defaultMode": "auto"` an `mcp__git-tools__git_push` to `main` ran with no hook on it at all. Seven write ops — `git_push`, `git_commit`, `git_revert`, `git_merge`, `git_rebase`, `git_reset`, `git_push_tags` — are now in `permissions.deny` in all six variants and in `user-level-reference/settings.json`; `mcp__git-tools__*` stays in `allow` for the read ops. Five of the seven (`git_push`, `git_commit`, `git_revert`, `git_rebase`, `git_reset`) exist in today's server — `git_revert` creates a commit and bypassed `pre-commit-test.sh` exactly as `git_commit` did. `git_merge` and `git_push_tags` are denied pre-emptively and are harmless no-ops.
+
+**3. A project's own agents lost their hook wiring on every sync.** Both `SubagentStop` matchers enumerated the template's coder names, so a project that added `cpp-coder` had `^(coder|code-reviewer|tester|architect)$` written back over `^(coder|cpp-coder|…)$` with no warning — the agent files survived, the wiring did not. The matchers now own the *shape*: `^([a-z0-9]+-)?coder$|^code-reviewer$|^tester$|^architect$`. `hooks/require-skills-block.sh` binds `coder|*-coder` for the same reason, and the `AGENT_TEAM.md` binding-table row says so.
+
+### Also
+
+- `hooks/pre-commit-test.sh` falls back to **Gate** when `PROJECT_CONTEXT.md` declares no **Test** command (projects that gate rather than test made it a silent no-op), and prints `WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md — nothing verified` when it has neither. A silent pass was indistinguishable from a green run. **Latency note:** a Gate-only project now runs its whole gate — build, tests, format, lint — on every `git commit`, which is slower than the test run this hook used to imply. Add a `**Test**:` line to `PROJECT_CONTEXT.md` to get the cheap path back; the escape hatch (`.claude/git-guard-off`) still works. The block message also names the command that failed and carries the last 20 lines of its output, instead of "Tests failed" with the output discarded.
+- `user-level-reference/skills/sync-template/SKILL.md` — six changes, all "clean" outcomes that were not: model-bump surfacing fires on `CLAUDE.local.md`, on a `settings.json` hook-list delta, and on any deleted `hooks/` file; a `has_conflicts: false` merge must be diffed for dropped lines and `bash -n`'d before it is applied (a three-way merge dropped the `LOG_FILE=` assignment from `hooks/read-size-gate.sh` in one repo and the closing `];` of an embedded JS array in `hooks/enforce-delegation.sh` in another, both reporting clean); accept-template is refused when the `PROJECT-CUSTOM` region is empty with project headings outside it, or when a `settings.json` matcher names agents the template version does not; step 6b collects sourced libs as well as `bash hooks/` entries; `TEMPLATE_DELETED` becomes an explicit ask with referenced/unreferenced evidence and a `git rm`, replacing the blanket "NEVER delete" (which still holds for project-owned files) and cross-referencing `~/.claude/hooks/`; the report carries a `verify-user-level-drift.sh` line. Plus: read the toolkit tree with Read/Grep, never the context-mode sandbox — `git -C` fails silently on its `/tmp` paths and `grep -c` returns 0.
+- `templates/rust-tauri/.claude/rules/frontend.md` is framework-agnostic. It loads on every `src/**/*.ts` touch and was naming SolidJS and `vi.mock("../lib/tauri-api")` at projects using neither.
+
+**Server-side, tracked separately in `mcp-dev-servers`:** the three-way merge dropping lines while reporting `has_conflicts: false`; `compute_status` omitting root-tracked `hooks/**` from `new_template_files`; the `AUTO_UPDATE`-hides-local-edits flag; stale placeholders; `LOCAL_MISSING` status for a gitignored absent file; and `get_diff` returning 91 KB for a 300-line file.
+
+### By the numbers
+
+| | v2.1 | v2.1.1 |
+|---|---|---|
+| consistency assertions | 172 | **205** |
+| hook fixtures | 131 | **160** |
+
+### Downstream migration
+
+1. **Re-copy the whole hook mirror — `lib/` included — and the sync skill to `~/.claude/`.** The user-level copies are what run in repos without a project `hooks/` directory, and the `lib/` subdirectory is now **mandatory**: the gates exit 2 without it. Copying only the three scripts would hard-block every `git commit` and `git push` in every such repo.
+   ```bash
+   mkdir -p ~/.claude/hooks/lib
+   cp -r user-level-reference/hooks/.               ~/.claude/hooks/
+   cp -r user-level-reference/skills/sync-template  ~/.claude/skills/
+   ```
+   Verify before you rely on it: `ls ~/.claude/hooks/lib/git-cmd.sh`. If a gate ever prints `BLOCKED: … lib/git-cmd.sh missing`, this step was skipped or half-done.
+2. **Add the `git-tools` deny entries** — `/sync-template` and accept `.claude/settings.json`, and copy the same seven `mcp__git-tools__*` deny lines into `~/.claude/settings.json`. If `git-tools` MCP is registered anywhere, **these deny entries are what keep the gates from being bypassable**. The alternative is to drop the server: `claude mcp remove git-tools -s user` — do it with the CLI, not by editing `~/.claude.json`, which Claude Code rewrites continuously (a Read→Edit round trip fails with "file has been modified since read").
+3. **Restart the session after the sync, before any git push/merge/commit.** The rewritten gates are inert against the in-memory pre-sync `settings.json` until then. This is the one step that has no workaround.
+4. **Addendum to the v2.0 migration:** if a `# context-mode — MANDATORY routing rules` block keeps reappearing in your project `CLAUDE.md` below `PROJECT-CUSTOM:END`, nothing in this toolkit writes it — the **context-mode plugin** does, from its own `configs/claude-code/CLAUDE.md`, re-appended by its SessionStart auto-injection every session. Checked the plugin cache at `~/.claude/plugins/cache/context-mode/context-mode/1.0.162/`: **no opt-out env var or config toggle was found** in its README or its `hooks/*.mjs`. The only fix is to turn the plugin off — `claude plugin disable context-mode@context-mode`.
+
 ## v2.1 — 2026-08-29
 
 **Two rules deleted, one judgement call added.** v2.0 was a measurement release; v2.1 is an alignment one. Boris Cherny, June 2026: *"I don't use plan mode anymore… starting with 4.6, and definitely with 4.7, it just doesn't need it."* The toolkit's plan gate encoded the opposite assumption, and so did a pinned session `effortLevel` — Anthropic's model-config docs now call `xhigh` *"the new default reasoning level"* for Opus 4.7 and later, which made a pinned `medium` a cap rather than a setting. Both are gone. What arrives in their place is not a third mechanism but a phrase: when a task is too big for one pass, the PO says **"use a workflow"** and Claude scripts its own fan-out. Detail per part is in the `v2.1-prN` entries below; this entry consolidates the migration.

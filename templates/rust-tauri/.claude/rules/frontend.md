@@ -27,9 +27,14 @@ the code MUST be rewritten until it complies.
 - Run `npm run format` before committing
 - Naming convention: `camelCase` for TypeScript
 
-# Frontend (TypeScript/SolidJS)
+# Frontend (TypeScript)
 
-- Wrap all Tauri IPC calls in typed functions in `src/lib/tauri-api.ts`
-- Use `vi.mock("../lib/tauri-api")` pattern in tests to isolate components from Tauri IPC
-- Tauri IPC only works in native window -- "Loading..." is expected in browser preview
-- Use `npm test` for frontend tests (Vitest + @solidjs/testing-library)
+Framework-agnostic — this rule loads for every `src/**/*.ts` touch, so it states
+only what holds regardless of the UI framework the project picked.
+
+- Keep Tauri IPC behind typed wrapper functions in one module, and import that
+  module rather than calling `invoke` from components. Tests then mock one path.
+- Tauri IPC only works in the native window — a loading placeholder is expected
+  in browser preview, and is not a bug to chase.
+- Run frontend tests with `npm test`; mock the IPC wrapper module, never the
+  Tauri runtime.
