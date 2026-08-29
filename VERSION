@@ -1,2 +1,2 @@
-2.0
-The git ban became a git gate, agent teams gave way to Agent-tool subagents, every agent now declares its model and effort, language conventions moved into path-scoped rules, and 23 commands plus 12 skills became 7 skills. Always-loaded config now 25,814 B, down 37% from the 41,167 B baseline; 174 consistency assertions and 133 hook fixtures.
+2.1
+The plan gate is gone and every spawn carries its task brief instead, session-level effort is unset so the model uses its own default, "use a workflow" answers work too big for one pass, and a nightly routine plus a retro-review skill watch for drift. 12 hook scripts, 8 skills; always-loaded config 25,999 B, down 36.8% from the 41,167 B baseline; 172 consistency assertions and 131 hook fixtures.

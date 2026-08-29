@@ -32,8 +32,10 @@ for each, PASS or FAIL plus the verbatim tail of its real output:
    `N passed, M failed` line.
 3. Stale references to artifacts removed in v2.0/v2.1. Run
    `grep -rn -E 'tier-before-coder|block-bash-vcs|require-teammate-report|effortLevel|Plan Challenge Protocol' --include='*.md' --include='*.sh' --include='*.json' .`
-   and treat a hit as FAIL **unless** the file is `CHANGELOG.md` or sits under
-   `docs/plans/` or `.superpowers/` — those are history and may name dead things.
+   and treat a hit as FAIL **unless** the file is `CHANGELOG.md`, is
+   `user-level-reference/routines/toolkit-nightly-check.md` (this prompt's own copy of
+   the pattern), or sits under `docs/plans/` or `.superpowers/` — those are history and
+   may name dead things.
 4. Version drift. Compare line 1 of `VERSION` with the newest release tag. FAIL if
    `VERSION` is behind it. A `VERSION` *ahead* of the tags is normal between a release
    commit and its tag: report that as PASS with a one-line note.

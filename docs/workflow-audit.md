@@ -4,6 +4,8 @@
 
 Snapshot of the claude-code-toolkit agent workflow as of 2026-04-12: the current shape (diagram), known weaknesses (W1-W17), and the follow-up PR roadmap derived from those weaknesses.
 
+> **Dated snapshot.** The weaknesses and roadmap below are as of that date and several have since been superseded — W1's hardened plan gate most of all, which v2.1 deleted rather than hardened. Read it as history plus an open-items list, not as a description of today's pipeline; the diagram alone is kept current.
+
 This document is intentionally not template-specific. It describes the workflow that ships in every variant (general, dotnet, dotnet-maui, rust-tauri, java, python) because the pipeline, hooks, and agents are identical across variants — only the language-specific conventions differ.
 
 ## Current workflow diagram
@@ -11,7 +13,7 @@ This document is intentionally not template-specific. It describes the workflow 
 ```mermaid
 flowchart TD
     U[User request] --> PO{{PO: Claude in session}}
-    PO -->|T1 trivial <10 lines| POFix[PO edits + commits directly]
+    PO -->|T1 trivial <10 lines| POFix[Spawn 1 coder solo<br/>no reviewer, no tester]
     PO -->|T2-T4| OB[PO: search Open Brain for context]
     OB --> Brief[PO: write the task brief<br/>goal, constraints, AC, files, done]
     Brief --> Team{Per-tier team}

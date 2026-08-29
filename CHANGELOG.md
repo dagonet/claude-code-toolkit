@@ -1,5 +1,101 @@
 # Changelog
 
+## v2.1 — 2026-08-29
+
+**Three rules deleted, one judgement call added.** v2.0 was a measurement release; v2.1 is an alignment one. Boris Cherny, June 2026: *"I don't use plan mode anymore… starting with 4.6, and definitely with 4.7, it just doesn't need it."* The toolkit's plan gate encoded the opposite assumption, and so did a pinned session `effortLevel` — Anthropic's model-config docs now call `xhigh` *"the new default reasoning level"* for Opus 4.7 and later, which made a pinned `medium` a cap rather than a setting. Both are gone. What arrives in their place is not a third mechanism but a phrase: when a task is too big for one pass, the PO says **"use a workflow"** and Claude scripts its own fan-out. Detail per part is in the `v2.1-prN` entries below; this entry consolidates the migration.
+
+### What changed
+
+**PR7 — the plan gate is gone** ([#58](https://github.com/dagonet/claude-code-toolkit/pull/58), `6c2e64f`). `hooks/tier-before-coder.sh` refused a coder spawn unless a file in `docs/plans/` carried `Tier: T[1-4]` and challenge evidence — which made the plan file a password rather than a document. Deleted, not loosened. **Task Brief Upfront** replaces it as prose: every spawn prompt states goal, constraints, acceptance criteria, files in scope, and what "done" means. An agent that has to go looking for one of the five is under-briefed — a prompt defect, not an agent failure. Plan files stay useful and become optional. Verify: 174 → 172 assertions.
+
+**PR8 — effort defaults to the model; the orchestrator model is a written choice** ([#59](https://github.com/dagonet/claude-code-toolkit/pull/59), `be13797`). `effortLevel` is removed from `user-level-reference/settings.json` — **unset means the model's default**. Effort is raised only where judgement happens: `architect` and `code-reviewer` go `high` → **`xhigh`**; coders and testers stay `medium`; `Explore` and `doc-generator` stay `low`. Alongside it, a documented model policy — **`/model fable` for T3/T4 sessions, Opus for T1/T2** — on the strength of Cherny on Fable 5 (*"the best model I have used for coding, by a wide margin… higher trust & autonomy"*) balanced against roughly 2× Opus price. Guidance, not a mechanism: the user picks with `/model`.
+
+**PR9 — "use a workflow", a nightly routine, and the promised deletions.** Cherny and Cat Wu on dynamic workflows (May 28 + Jun 9 2026): the trigger phrase is exactly **"use a workflow"**, the orchestrator fans out implementer → two verifiers → fixer per task, and you *"default to auto mode so Claude isn't stopping for permissions"*. It is for **one task too big for a single pass** — a multi-module migration, a sweep across many files, competing hypotheses — and explicitly not for sequential work or several tasks on the same file, both of which break the independence a wave assumes. The merge gate is untouched: a workflow's branch rebases and gates like any other. Routines are the other half of the same distinction — *recurring maintenance*, where a workflow is one complex task — so this PR also ships `user-level-reference/routines/toolkit-nightly-check.md`, a **cloud** routine prompt (created with `/schedule` or at claude.ai/code/routines) that clones this repo daily, runs both verify scripts plus a stale-reference grep and a `VERSION`-vs-tag check, stays **silent on success**, and otherwise keeps one rolling `nightly-check: <date>` issue open. A routine runs over a clone and cannot reach `~/.claude` or uncommitted files, so everything it cannot see went into a local counterpart instead: the new **`retro-review` skill** reads the per-project retro ledger, runs `verify-user-level-drift.sh`, and lists sibling checkouts behind this repo's `VERSION`. Both are read-only; neither pushes.
+
+**Also in PR9:** the two v2.0 no-op stubs are deleted as announced (below), and four review minors carried from PR7/PR8 are fixed — the appendix plan template's `Tier:`/`Team:` lines are annotated as parsed by nothing, both Lean Dev Prompt templates now carry the five Task-Brief headings and a `## Required Skills` block, check 6's absence grep no longer passes vacuously on a missing file, and a new assertion pins every agent's `effort:` and `model:` to the documented value lists — the PR8 probe showed the CLI accepts `effort: banana` without a warning, so nothing else was catching a typo.
+
+### By the numbers
+
+| | v2.0 | v2.1 |
+|---|---|---|
+| `hooks/*.sh` | 15 (incl. 2 no-op stubs) | **12** |
+| skills | 7 | **8** |
+| routines | 0 | **1** |
+| consistency assertions | 174 | **172** |
+| hook fixtures | 133 | **131** |
+| always-loaded on `general` | 25,814 B | **25,999 B** (−36.8% vs the 41,167 B baseline) |
+
+The always-loaded surface grew by 185 B, and that is deliberate: the *Pick the session model* bootstrap step and the `use a workflow` line are both decisions taken before any file is open, which is where always-loaded text earns its cost. No cut was invented elsewhere to keep the −37% headline round. Every figure here is `wc -c` / a counted script run on this commit, not carried forward.
+
+### Downstream migration
+
+1. **Run `/sync-template`** and accept `AGENT_TEAM.md`, `CLAUDE.md`, and `.claude/settings.json`. The root-tracked `hooks/tier-before-coder.sh`, `hooks/block-bash-vcs.sh`, and `hooks/require-teammate-report.sh` show up as template **deletions** — accept those too.
+2. **User level, once per machine:**
+   ```bash
+   rm -f ~/.claude/hooks/tier-before-coder.sh \
+         ~/.claude/hooks/block-bash-vcs.sh \
+         ~/.claude/hooks/require-teammate-report.sh
+   ```
+   and delete any `settings.json` matcher group that still invokes one of them. Do the two together: those entries are 127-wrapped fail-closed, so an entry left behind after the script is gone blocks every call on its matcher — for the `Agent` matcher that means **every agent spawn**.
+3. **Remove `"effortLevel"` from `~/.claude/settings.json`** to inherit the model's default. Keeping it breaks nothing; it just caps you below the model's own default.
+4. **Re-copy the two agents and the new skill:**
+   ```bash
+   cp    user-level-reference/agents/architect.md      ~/.claude/agents/
+   cp    user-level-reference/agents/code-reviewer.md  ~/.claude/agents/
+   cp -r user-level-reference/skills/retro-review      ~/.claude/skills/
+   ```
+5. **Optional:** create the `toolkit-nightly-check` routine — `/schedule` from a toolkit checkout, or claude.ai/code/routines. Paste the prompt body from `user-level-reference/routines/toolkit-nightly-check.md` and give it GitHub issue write access. Nothing in the toolkit depends on it existing.
+6. **Habit changes, not config:** `/model fable` at the start of a T3/T4 session, Opus otherwise; put the five-part task brief in every spawn prompt; say **"use a workflow"** when a task is too big for one pass.
+
+Then start a new session — settings, skills, and agent definitions load per session.
+
+### Removed
+
+- `hooks/tier-before-coder.sh` (PR7) — the plan gate; superseded by the task brief in the spawn prompt.
+- `hooks/block-bash-vcs.sh` and `hooks/require-teammate-report.sh` (PR9) — the two v2.0 no-op stubs, kept non-empty for exactly one release so a downstream `settings.json` still naming them would not fail closed on an exit 127. That release has shipped. Both were unregistered, so neither the hook-ref invariant nor the mirror check is affected.
+
+### Known minor follow-ups
+
+Carried from the v2.0 list plus this cycle's ledger, minus what was fixed since. **None are implemented in this release** — they are recorded so the omissions read as deliberate. Fixed here and therefore dropped from the carried list: `docs/architecture.md`'s Session Bootstrap step drift (PR8 fix round), `docs/workflow-audit.md`'s stale T1 row, and the four PR7/PR8 review minors described above.
+
+*From v2.0 PR1:*
+
+- `gc_protect_c_paths` regex also encodes non-git `-C "a b"` args (grep/diff) in the same segment — harmless, scope to `git … -C`.
+- 12 processes per Bash call (3 node calls per gate × 3 gates) — consolidate `gc_read_stdin` into one `node -e`.
+- unanchored commit match makes `grep "git commit"` run the full test suite — skip segments whose first token is echo/grep/rg/printf.
+- drop unverified `_note_git_tools` key from `user-level-reference/.mcp.json.template`.
+
+*From v2.0 PR2:*
+
+- raw agent_type/agent_id interpolation into ledger row (strip `\r\n|`, slice 64).
+- retro-ledger slurps whole transcript (`readFileSync`) — stream or size-cap.
+- the mandate assertion compares mismatched sets (exclude coders consistently; include user-level agents).
+
+*From v2.0 PR3:*
+
+- read-size-gate offset advice off-by-one when offset absent (advise 501).
+- bash-output-guard `mkdir -p` runs on every Bash call; no log pruning (`find -mtime +7 -delete`).
+
+*From v2.0 PR4:*
+
+- `## Working Preferences` heading now near-empty (rename/fold).
+- duplicated formatter line inside python/java/csharp rules.
+- further diet candidates — Compact Instructions (~1.6 KB) and Workflow TL;DR tier table (duplicated in AGENT_TEAM.md).
+- dotnet/dotnet-maui CLAUDE.md have no `## Quick Start`.
+- rust-tauri Quick Start uses literal commands because setup-project derives none for that variant — derive them (cargo build/test/fmt/clippy), then switch to placeholders.
+- `tools/measure-context-bloat.py` needs `PYTHONIOENCODING=utf-8` on Windows.
+
+*From v2.0 PR5:*
+
+- `verify-user-level-drift.sh` red-by-design — add `--expect-drift`/WARN mode.
+- "PR1 removed…" jargon in `skills/commit/SKILL.md:9`.
+- `challenge` skill made explicit-only (`disable-model-invocation`) — was 2nd-most-used command; consider splitting guidance (auto) from architect spawn (explicit).
+
+*New in v2.1:*
+
+- Nothing asserts the `use a workflow` phrase or the routine/skill pair — they are prose and a prompt, and no hook reads either. A future verify check could at least pin that the phrase still appears in all six `AGENT_TEAM.md` copies.
+- `toolkit-nightly-check.md` is a prompt body a human pastes into `/schedule`; there is no mechanism keeping the pasted routine in sync with the file after that.
+
 ## v2.1-pr8 — 2026-08-29
 
 **Stop setting a session effort level; spend the effort where judgement happens.** Anthropic's model-config docs now describe `xhigh` as *"the new default reasoning level"* for Opus 4.7 and later, and the Claude 5 generation models decide per step how hard to think. A pinned `effortLevel: medium` at session level therefore capped the model below its own default on every turn, for no measured benefit. It is removed from `user-level-reference/settings.json` — **unset means the model's default**. Effort is now raised only where it pays: `architect` and `code-reviewer` move `high` → **`xhigh`**, coders and testers stay `medium`, `Explore` and `doc-generator` stay `low`.
