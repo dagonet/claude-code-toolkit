@@ -40,7 +40,12 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
       "mcp__plugin_context-mode_context-mode__*"
     ],
     "deny": [
-      "Read(.env*)"
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.*.local)",
+      "Read(.env.production)",
+      "Read(.env.staging)",
+      "Read(.env.development)"
     ],
     "ask": [
       "Bash(npm publish*)"
@@ -136,7 +141,10 @@ See the *Full Settings JSON* block above for the current list. Three entries wer
 
 ```json
 "deny": [
-  "Read(.env*)"  // Prevents Claude from reading .env files (which may contain secrets)
+  // The secret-bearing names are enumerated, NOT globbed: `Read(.env*)` also
+  // denied the tracked `.env.example` most repos ship as their variable list.
+  "Read(.env)", "Read(.env.local)", "Read(.env.*.local)",
+  "Read(.env.production)", "Read(.env.staging)", "Read(.env.development)"
 ]
 ```
 
@@ -172,7 +180,7 @@ Three things about `autoMode` that are easy to get wrong:
 - **Do not route the classifier through a model proxy.** It needs the real model. Running it through `cc-proxy` (or any alias-rewriting proxy) produced **83 classifier outages** in the measured window, each degrading auto mode to prompting. If you run a proxy, exempt the classifier — the same exemption `advisorModel` needs.
 - **Prose quality is the control surface.** Vague lines ("be careful with prod") classify worse than the concrete phrasing above. Say which repos are trusted and what a sensitive target looks like.
 
-`deny` still wins over everything, so `Read(.env*)` holds regardless of mode.
+`deny` still wins over everything, so the `.env` entries hold regardless of mode.
 
 ### `statusLine` -- Custom Status Bar
 

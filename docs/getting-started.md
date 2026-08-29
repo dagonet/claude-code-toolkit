@@ -9,7 +9,7 @@ Everything you need to know before running the setup script. This guide covers p
 | Dependency | Min Version | Purpose |
 |---|---|---|
 | **Claude Code CLI** | Latest | `npm install -g @anthropic-ai/claude-code` |
-| **Node.js** | 18+ | Runtime for Claude Code |
+| **A JSON parser for the hooks** | `node` 18+, `python3` 3.8+ or `jq` 1.6+ | The enforcement hooks parse their stdin payload with the first one they find. Native Claude Code installs do **not** ship `node`, so on those boxes make sure `python3` or `jq` is on PATH — with none of the three the git gates fail closed (exit 2) and the rest warn that enforcement is inactive. `node` unlocks the full set: `read-size-gate`, `bash-output-guard`, `enforce-delegation`, `enforce-agent-contract` and the retro hooks are node-only. |
 | **Git** | Any recent | Version control |
 | **GitHub CLI (`gh`)** | Latest | GitHub integration (must be authenticated via `gh auth login`) |
 | **PowerShell** | 5.1+ | `setup-project.ps1` — Windows only |
@@ -96,7 +96,7 @@ You do not need everything installed to get value. Pick the tier that matches yo
 
 ### Tier 1 -- Bare Minimum
 
-1. Install Claude Code CLI, Git, Node.js 18+
+1. Install Claude Code CLI, Git, and one JSON parser for the hooks (`node`, `python3` or `jq` — `node` covers all of them)
 2. Clone this repo and run the setup script targeting your project:
    - **Windows**: `setup-project.ps1`
    - **Linux/macOS**: `setup-project.sh`

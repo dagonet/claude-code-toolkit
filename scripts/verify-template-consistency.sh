@@ -751,6 +751,26 @@ else
   [ "$mirror_count" -eq 0 ] && ko "hook mirror: $ULH is empty"
 fi
 
+# 21b. hooks/lib/json.sh must EXIST on both sides (v2.2.0).
+#
+#      The walk above starts from the mirror, so a lib file missing from BOTH
+#      trees is invisible to it. Every git gate refuses to run without
+#      hooks/lib/json.sh (fail closed), and the fail-open hooks disable
+#      themselves — so its absence is a silent enforcement outage, not a
+#      cosmetic drift.
+for f in hooks/lib/json.sh "$ULH/lib/json.sh"; do
+  if [ -f "$f" ]; then
+    ok "$f present (the shared node/python3/jq reader)"
+  else
+    ko "$f MISSING — the git gates fail closed and the fail-open hooks disable themselves without it"
+  fi
+done
+if grep -q 'lib/json\.sh' hooks/lib/git-cmd.sh; then
+  ok "hooks/lib/git-cmd.sh sources lib/json.sh"
+else
+  ko "hooks/lib/git-cmd.sh no longer sources lib/json.sh — the gates are back to node-only"
+fi
+
 # ---------------------------------------------------------------------------
 # 22. The git-tools MCP write ops are denied (v2.1.1, consumer feedback).
 #
@@ -801,6 +821,33 @@ if grep -q '"mcp__git-tools__\*"' user-level-reference/settings.json; then
 else
   ko "user-level-reference/settings.json: mcp__git-tools__* missing from allow"
 fi
+
+# ---------------------------------------------------------------------------
+# 22b. The .env deny list is precise (v2.2.0, consumer feedback BUG 6).
+#
+#     `Read(.env*)` also denied `.env.example` — a TRACKED file most repos ship
+#     as the documented list of required variables. The secret-bearing names are
+#     enumerated instead, so the example file stays readable.
+# ---------------------------------------------------------------------------
+echo
+ENV_DENY='Read(.env) Read(.env.local) Read(.env.*.local) Read(.env.production) Read(.env.staging) Read(.env.development)'
+for s in $(for v in $VARIANTS; do echo "templates/$v/.claude/settings.json"; done) user-level-reference/settings.json; do
+  missing=""
+  for t in $ENV_DENY; do
+    grep -qF "\"$t\"" "$s" || missing="$missing $t"
+  done
+  if [ -z "$missing" ]; then
+    ok "$s: denies all 6 secret-bearing .env names"
+  else
+    ko "$s: .env deny list missing:$missing"
+  fi
+  # The glob must be gone, or .env.example is denied again.
+  if grep -qF '"Read(.env*)"' "$s"; then
+    ko "$s: Read(.env*) is back — it also denies the tracked .env.example"
+  else
+    ok "$s: no Read(.env*) glob (.env.example stays readable)"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 23. SubagentStop matchers cover project-added language coders (v2.1.1).
