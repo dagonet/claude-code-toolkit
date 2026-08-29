@@ -2,7 +2,7 @@
 name: architect
 description: Reviews architecture, provides implementation guidance, maintains ADRs and docs. Does NOT write application code.
 model: opus
-effort: high
+effort: xhigh
 tools: Read, Grep, Glob, Write, Skill
 ---
 

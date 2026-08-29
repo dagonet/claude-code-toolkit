@@ -24,7 +24,7 @@
 
 ### Model & effort policy
 
-Every agent file declares its own `model:` and `effort:`, so cost follows the job instead of the session:
+Every agent file declares its own `model:` and `effort:`, so cost follows the job instead of the session. The **session** effort level ships unset — Opus 5 / Fable 5 pick their own default per step; raise it per role with the agent's `effort:`, or `/effort` for one session. The orchestrator model is a `/model` choice at session start: `fable` for T3/T4 (multi-file or architectural) work, `opus` for T1/T2.
 
 | Agents | `model:` | `effort:` | Notes |
 |---|---|---|---|
@@ -32,7 +32,7 @@ Every agent file declares its own `model:` and `effort:`, so cost follows the jo
 | `doc-generator` | `haiku` | `low` | |
 | `coder`, `*-coder`, `tester`, `test-writer` | `sonnet` | `medium` | Run with `isolation: worktree` |
 | `ops`, `requirements-engineer` | `sonnet` | `medium` | |
-| `architect`, `code-reviewer` | `opus` | `high` | Judgement work, not throughput work |
+| `architect`, `code-reviewer` | `opus` | `xhigh` | Judgement work, not throughput work |
 
 **Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`) — a pinned `claude-*` id bypasses a model proxy, and the verify script rejects one. **Do not pass `model:` in an Agent call**: it silently overrides the agent file. The diagnostic rule, stated once in `AGENT_TEAM.md` → *Model & Effort Policy*: wrong despite full context → bigger model; skipped files or tests not run → raise effort.
 
