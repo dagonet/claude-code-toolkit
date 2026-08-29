@@ -1223,6 +1223,9 @@ check_delegation "gate path as data: merge gate"   pass 'echo {"file_path":"hook
 check_delegation "applied_files array as data"     pass 'echo [{"path":"hooks/run-gate.sh","hash":"ab"},{"path":"hooks/no-push-main.sh","hash":"cd"}] > /tmp/applied.json'
 check_delegation "validator run on a scratch file" pass 'python3 /tmp/validator.py /tmp/applied.json'
 check_delegation "trigger words in a quoted string" pass 'echo "test gate coverage build"'
+# The anchor's leading class is PATH characters, not \S*: a pretty-printed JSON
+# line whose first token merely ENDS in the path is still data, not a command.
+check_delegation "pretty-printed JSON line as data" pass 'echo "path": "hooks/run-gate.sh", >> /tmp/applied.json'
 # ... and the anchor must not open the hole it closed: an actual invocation,
 # bare or via bash/sh, is still the PO doing hands-on work.
 check_delegation "bare run-gate.sh is still denied" deny 'hooks/run-gate.sh'
@@ -1233,7 +1236,7 @@ subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse
 expect "subagent pytest still passes" "0" \
   "$(printf '%s' "$subout" | grep -c '"deny"')"
 else
-skip "enforce-delegation git/gh exemption cases" "no node on this host" 19
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 20
 fi
 
 # ===========================================================================
@@ -1585,16 +1588,20 @@ rm -f "$KREPO/.claude/git-guard-off"
 echo
 echo "=== broken-parser fixtures (json_probe_ok) ==="
 
-mkstubpath() { # <name> <stub-body-line> [extra-tool ...] -> prints dir
-  msp_name="$1"; msp_body="$2"; shift 2
+mkstubpath() { # <name> <tool> <stub-body-line> [extra-tool ...] -> prints dir
+  msp_name="$1"; msp_tool="$2"; msp_body="$3"; shift 3
   msp=$(mkpathdir "$msp_name" "$@")
-  printf '#!/bin/sh\n%s\n' "$msp_body" > "$msp/python3"
-  chmod +x "$msp/python3"
+  printf '#!/bin/sh\n%s\n' "$msp_body" > "$msp/$msp_tool"
+  chmod +x "$msp/$msp_tool"
   printf '%s\n' "$msp"
 }
-STUB_RC=$(mkstubpath stub-rc 'exit 3')
-STUB_GARBAGE=$(mkstubpath stub-garbage 'echo not-json-at-all')
-STUB_JQ=$(mkstubpath stub-jq 'exit 3' jq)
+STUB_RC=$(mkstubpath stub-rc python3 'exit 3')
+STUB_GARBAGE=$(mkstubpath stub-garbage python3 'echo not-json-at-all')
+STUB_JQ=$(mkstubpath stub-jq python3 'exit 3' jq)
+# A broken NODE is the case json_require_node exists for -- the six node-program
+# hooks never call json_parser, so the probe has to run on that path too.
+STUB_NODE=$(mkstubpath stub-node node 'exit 3')
+STUB_NODE_PY=$(mkstubpath stub-node-py node 'exit 3' python3)
 
 # Self-check FIRST: a fixture whose stub is invisible would prove nothing.
 expect "stub PATH still shows python3" 0 "$(seen "$STUB_RC" python3)"
@@ -1614,6 +1621,23 @@ check_env "broken python3 + jq: feature allowed" "$STUB_JQ" hooks/no-push-main.s
   "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
 else
 skip "broken python3 + jq fallthrough" "no jq on this host" 2
+fi
+
+# --- a broken NODE, the json_require_node entry point ------------------------
+expect "stub PATH still shows node" 0 "$(seen "$STUB_NODE" node)"
+check_env "broken node alone: gate blocks" "$STUB_NODE" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")" "$NEEDLE_BLOCK"
+if [ -n "$HAVE_PY" ]; then
+check_env "broken node + python3: gate enforces" "$STUB_NODE_PY" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"
+check_env "broken node + python3: feature allowed" "$STUB_NODE_PY" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
+# json_require_node's own path: `command -v node` SUCCEEDS here, so without the
+# probe this hook would run the stub, get nothing, and fail open in silence.
+check_env "broken node: require_node names the fallback" "$STUB_NODE_PY" hooks/read-size-gate.sh 0 \
+  "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
+else
+skip "broken node + python3 cases" "no python3 on this host" 3
 fi
 
 # ===========================================================================
@@ -1649,6 +1673,10 @@ PB_PLACE=$(pbrepo pb-placeholder main '- **Protected branches**: {{DEFAULT_BRANC
 # treated it exactly like `none`, which is a silent unprotect. `none` stays the
 # one deliberate way to protect nothing.
 PB_EMPTY=$(pbrepo pb-empty main '- **Protected branches**:')
+# Half-filled, the shape a hand-edit leaves behind. A WHOLE-string placeholder
+# match read this as two literal branch NAMES, neither of which is a branch --
+# the unsafe direction. Substring match, so it falls back to the default.
+PB_HALF=$(pbrepo pb-half main '- **Protected branches**: {{DEFAULT_BRANCH}} develop')
 
 H=hooks/no-push-main.sh
 check "field absent: main still blocked"   "$H" 2 "$(mkjson Bash 'git push' "$PB_ABSENT")"
@@ -1665,6 +1693,11 @@ check "placeholder value: main blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB
 # consumers use that line as the cheapest proof the config path works.
 check_msg "placeholder falls back to the default" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push origin main' "$PB_PLACE")" "protected branch (main master)"
+check_msg "placeholder WARNs, it does not go quiet" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push' "$PB_PLACE")" "still an unfilled placeholder"
+check "half-filled placeholder: main blocked" "$H" 2 "$(mkjson Bash 'git push' "$PB_HALF")"
+check_msg "half-filled falls back, not to literals" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin main' "$PB_HALF")" "protected branch (main master)"
 check "empty value: main still blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY")"
 check_msg "empty value warns about the typo" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push' "$PB_EMPTY")" "**Protected branches**: is empty"

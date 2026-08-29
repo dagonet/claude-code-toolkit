@@ -176,10 +176,16 @@ gc_current_branch() {
 # it must behave exactly as if the line were absent, never treat the literal as
 # data. v2.2.0 shipped the opposite for the protected set and silently
 # unprotected trunk in every consumer that accepted the template.
+# SUBSTRING, not whole-string: `{{DEFAULT_BRANCH}} develop` is a half-filled
+# value, and a whole-string match read it as TWO literal branch names — the
+# unsafe direction, since neither matches a real branch. Falling back to the
+# default costs a `develop` repo one edit; treating the placeholder as data
+# costs it its protection. pre-commit-test.sh has used the substring form for
+# the same job since v2.1.3.
 gc_is_placeholder() {
   case "$1" in
-    '{{'*'}}') return 0 ;;
-    *)         return 1 ;;
+    *'{{'*'}}'*) return 0 ;;
+    *)           return 1 ;;
   esac
 }
 
@@ -205,6 +211,12 @@ gc_protected_branches() {
     | sed 's/.*\*\*Protected [Bb]ranches\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' \
     | tr ',' ' ' | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
   if gc_is_placeholder "$gcpb"; then
+    # WARN, for the same reason the empty arm does — more so. An empty value is
+    # visibly empty; an unreplaced placeholder READS as configured, so this is
+    # precisely the case a consumer does not know they are in. Silence here was
+    # backwards.
+    json_warn_once "protected-branches" "$(json_session "$GC_JSON")" \
+      "WARN: **Protected branches**: in $gcpb_top/PROJECT_CONTEXT.md is still an unfilled placeholder ($gcpb) — falling back to 'main master'. If your trunk is not main/master, it is NOT protected until you set a real name."
     printf '%s' "main master"
     return 0
   fi

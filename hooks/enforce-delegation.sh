@@ -120,7 +120,11 @@ process.stdin.on("end", () => {
         // This hook is fail-OPEN workflow policy: a false DENY costs real work,
         // so patterns match command position only. The three git gates are
         // fail-CLOSED and deliberately do the opposite -- see hooks/lib/git-cmd.sh.
-        /^(bash\s+|sh\s+)?\S*hooks\/run-gate\.sh\b/.test(s)
+        // The leading class is PATH characters only, not \S*: with \S* a
+        // pretty-printed JSON line whose first token merely ENDS in the path
+        // (a quote, a brace, a colon before it) still matched, which is the
+        // hole this anchor was closing.
+        /^(bash\s+|sh\s+)?[\w./\\-]*hooks\/run-gate\.sh\b/.test(s)
       );
     };
 

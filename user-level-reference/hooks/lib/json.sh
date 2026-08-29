@@ -98,26 +98,36 @@ json_probe_ok() {
   [ "$(json_read "$1" "$JSON_PROBE" jp.k)" = "ok" ]
 }
 
-# json_parser -- prints node | python3 | jq | none (memoised).
+# json_parser_init -- resolve the backend ONCE, into the CURRENT shell.
 #
-# Cost: ONE extra process per hook process, on first use only. PreToolUse hooks
-# run per tool call (read-size-gate on every Read), so this is deliberate and
-# bounded — the alternative is trusting a stub.
-json_parser() {
-  if [ -z "$JSON_PARSER" ]; then
-    JSON_PARSER=none
-    for jsb in node python3 jq; do
-      command -v "$jsb" >/dev/null 2>&1 || continue
-      json_probe_ok "$jsb" || continue
-      JSON_PARSER=$jsb
-      break
-    done
-  fi
-  printf '%s' "$JSON_PARSER"
+# Memoisation only works if the assignment survives, and it does not survive a
+# command substitution. `json_parser()` is almost always called as
+# `$(json_parser)`, so the probe ran in a throwaway subshell and `JSON_PARSER`
+# was empty again on the next call — roughly five probe forks per git-gate run
+# on a Bash|PowerShell matcher, not the "one, on first use" the comment claimed.
+# Cheap while the probe was a `command -v` builtin; not cheap now that it execs
+# an interpreter. So the callers below call THIS in their own shell and read
+# $JSON_PARSER, and `json_parser` stays as the printing wrapper for the few
+# places that want the name. gc_read_stdin's json_have call runs in the hook's
+# top-level shell, so the later `$(json_get …)` subshells inherit the resolved
+# value and the whole gate costs one probe.
+json_parser_init() {
+  [ -n "$JSON_PARSER" ] && return 0
+  JSON_PARSER=none
+  for jsb in node python3 jq; do
+    command -v "$jsb" >/dev/null 2>&1 || continue
+    json_probe_ok "$jsb" || continue
+    JSON_PARSER=$jsb
+    break
+  done
+  return 0
 }
 
+# json_parser -- prints node | python3 | jq | none.
+json_parser() { json_parser_init; printf '%s' "$JSON_PARSER"; }
+
 # json_have -- true when a WORKING backend is available.
-json_have() { [ "$(json_parser)" != "none" ]; }
+json_have() { json_parser_init; [ "$JSON_PARSER" != "none" ]; }
 
 # json_valid <json> -- true when the payload parses as JSON.
 #
@@ -128,7 +138,8 @@ json_have() { [ "$(json_parser)" != "none" ]; }
 json_valid() {
   case "$1" in "$JSON_BOM"*) set -- "${1#"$JSON_BOM"}" ;; esac
   [ -n "$1" ] || return 1
-  case "$(json_parser)" in
+  json_parser_init
+  case "$JSON_PARSER" in
     node)
       printf '%s' "$1" | node -e '
         try { JSON.parse(require("fs").readFileSync(0, "utf8")); }
@@ -159,7 +170,8 @@ except Exception:
 # check json_valid first.
 json_get() {
   case "$1" in "$JSON_BOM"*) set -- "${1#"$JSON_BOM"}" "$2" ;; esac
-  json_read "$(json_parser)" "$1" "$2"
+  json_parser_init
+  json_read "$JSON_PARSER" "$1" "$2"
 }
 
 # json_session <json> -- the payload's session_id, by grep. Deliberately NOT
