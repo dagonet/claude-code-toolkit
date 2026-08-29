@@ -154,7 +154,8 @@ When spawning a developer agent, the PO MUST choose the correct `subagent_type` 
 
 ## Model & Effort Policy
 
-- Orchestrator = the session model (`opus` / `fable`), session `effortLevel: medium` by default. Workers run `sonnet`; `architect` and `code-reviewer` run `opus` with `effort: high`; `Explore` and `doc-generator` run `haiku` with `effort: low`.
+- Orchestrator = the session model, picked by the user with `/model` at session start: **`fable` for T3/T4** sessions (multi-file or architectural — Fable 5 needs fewer prompts and steers, sustains longer sessions, and earns higher trust and autonomy; it also costs ~2× Opus), **`opus` for T1/T2**. Workers run `sonnet`; `architect` and `code-reviewer` run `opus` with `effort: xhigh`; `Explore` and `doc-generator` run `haiku` with `effort: low`.
+- Session effort is deliberately **unset** — the model's own default. Raise it per role via the agent file's `effort:` (`low` / `medium` / `high` / `xhigh`), or `/effort` for one session.
 - Each agent file carries its own `model:` / `effort:` — do not pass a `model` in the Agent call; that overrides the routing decision silently.
 - **Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`), never a full `claude-*` id: a model proxy reroutes the aliases, and a pinned id bypasses it.
 - Diagnostic rule: wrong answer despite full context → bigger model. Skipped files, tests not run, steps dropped → raise `effort`. They are different failures; raising the wrong dial costs money and fixes nothing.

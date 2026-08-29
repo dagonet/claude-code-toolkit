@@ -11,6 +11,7 @@ At the start of every session:
 4. Present current state (from MEMORY.md) and ask what to work on. Check `git status` and `git worktree list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
 5. **Act on the RETRO brief** — if one was printed (see `hooks/retro-brief.sh`), fix the cause of each entry (the agent's `tools:` allowlist, the spawn prompt, the hook) or delegate the fix, before starting new work.
 6. **Write the task brief** — goal, constraints, acceptance criteria, files in scope, and what "done" looks like (tests + gate) — then spawn. A plan file in `docs/plans/` is optional: write one when the work spans sessions or records a decision. Implementation is always a spawned coder, never the PO.
+7. **Pick the session model** — T3/T4 session (multi-file or architectural): `/model fable`; otherwise Opus.
 
 ## Workflow TL;DR
 

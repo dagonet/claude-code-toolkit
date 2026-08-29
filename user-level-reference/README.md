@@ -50,13 +50,13 @@ Follow these steps to configure Claude Code on a fresh machine:
 
 ### Agents (9)
 
-Models and effort below are the values in each `agents/*.md` frontmatter — keep this table in step with the files. Aliases only: a model proxy reroutes them, a pinned `claude-*` id bypasses it.
+Models and effort below are the values in each `agents/*.md` frontmatter — keep this table in step with the files. Aliases only: a model proxy reroutes them, a pinned `claude-*` id bypasses it. The **session** effort level is left unset (the model's own default); the orchestrator model is picked per session with `/model` — `fable` for T3/T4 work, `opus` for T1/T2.
 
 | Agent | Model | Effort | Description |
 |-------|-------|--------|-------------|
 | `Explore` | haiku | low | Read-only codebase search. Overrides the built-in `Explore`, which otherwise inherits the session model. Returns ranked `path:line` findings, never whole files. |
-| `architect` | opus | high | Reviews architecture, provides implementation guidance, maintains ADRs and docs. Does not write application code. |
-| `code-reviewer` | opus | high | Reviews code for quality, style, structure, and test coverage. Posts categorized findings. Does not write code. |
+| `architect` | opus | xhigh | Reviews architecture, provides implementation guidance, maintains ADRs and docs. Does not write application code. |
+| `code-reviewer` | opus | xhigh | Reviews code for quality, style, structure, and test coverage. Posts categorized findings. Does not write code. |
 | `coder` | sonnet | medium | General-purpose software engineer for implementing changes with high-quality engineering standards. Runs with `isolation: worktree`. |
 | `doc-generator` | haiku | low | Generates documentation for code changes (public APIs, usage examples). |
 | `ops` | sonnet | medium | Non-code execution: environment setup, installs, binary/file operations, one-off diagnostics, log collection, re-running the project gate. Keeps the orchestrator out of hands-on work. |

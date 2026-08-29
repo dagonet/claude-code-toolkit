@@ -85,7 +85,6 @@
     "chrome-devtools-mcp@claude-plugins-official": false
   },
   "alwaysThinkingEnabled": true,
-  "effortLevel": "medium",
   "advisorModel": "opus",
   "autoCompactEnabled": true,
   "contextCompactionThreshold": 70

@@ -42,6 +42,8 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 | T3 Standard | Multi-file, < 200 lines | coder + reviewer + tester | TDD required, >= 80% coverage |
 | T4 Complex | Architectural, > 200 lines | architect + coder(s) + reviewer + tester | Full BDD/TDD, >= 80% coverage |
 
+**Model & effort policy:** the orchestrator model is a per-session `/model` choice — `fable` for T3/T4 (multi-file or architectural) sessions, `opus` for T1/T2. Fable 5 needs fewer prompts and steers and sustains longer, higher-autonomy sessions, at roughly 2× Opus price. Session effort ships **unset** (the model's own default); effort is raised per role in the agent frontmatter — `architect` and `code-reviewer` at `xhigh`, workers at `medium`, `Explore` and `doc-generator` at `low`. Full rule set: `AGENT_TEAM.md` → *Model & Effort Policy*.
+
 **Delegate-everything model:** the PO never does hands-on work at any tier — coding, reviewing, testing, builds, env setup (`ops` agent), and exploration (`Explore` agent) are all sub-agent work, enforced by `hooks/enforce-delegation.sh`. The PO's write surface is limited to orchestration files (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md`).
 
 ## Context Budget

@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.1-pr8 — 2026-08-29
+
+**Stop setting a session effort level; spend the effort where judgement happens.** Anthropic's model-config docs now describe `xhigh` as *"the new default reasoning level"* for Opus 4.7 and later, and the Claude 5 generation models decide per step how hard to think. A pinned `effortLevel: medium` at session level therefore capped the model below its own default on every turn, for no measured benefit. It is removed from `user-level-reference/settings.json` — **unset means the model's default**. Effort is now raised only where it pays: `architect` and `code-reviewer` move `high` → **`xhigh`**, coders and testers stay `medium`, `Explore` and `doc-generator` stay `low`.
+
+**Orchestrator model is a per-session choice, and the choice is written down.** Boris Cherny, June 9 2026, on Fable 5: *"the best model I have used for coding, by a wide margin… higher trust & autonomy."* That advantage shows up on long, multi-file, architectural sessions — and Fable is roughly **2× Opus price**, so it is not the blanket default. The documented policy: **`/model fable` for T3/T4 sessions, Opus for T1/T2**. It is guidance, not a mechanism — the user picks with `/model`; nothing enforces it. The diagnostic rule is unchanged and now sits next to it: wrong despite full context → bigger model; skipped files or tests not run → raise effort.
+
+**Probe note.** `effort: xhigh` was checked against a throwaway project agent before the change: `claude -p --agent` returned a normal response with no frontmatter warning, and `claude plugin validate` passed. Both, however, also accepted a deliberately invalid `effort: banana` — the CLI does **not** validate this field, so the probe proves nothing beyond "no crash". `xhigh` ships on the strength of the documented level list (`low` / `medium` / `high` / `xhigh`), not the probe.
+
+**Files:** `user-level-reference/settings.json` (`effortLevel` removed); `user-level-reference/settings-reference.md` (mirrored JSON + the `alwaysThinkingEnabled`, *Model & Effort*, and `advisorModel` prose); `templates/*/.claude/agents/{architect,code-reviewer}.md` ×12 and `user-level-reference/agents/{architect,code-reviewer}.md` ×2 (`effort: xhigh`); `templates/*/AGENT_TEAM.md` ×6 (*Model & Effort Policy*, still byte-identical); `templates/*/CLAUDE.md` ×6 (Session Bootstrap step 7); `README.md`, `docs/architecture.md`, `user-level-reference/README.md`. `scripts/verify-template-consistency.sh` unchanged — **no assertion pinned an effort value**, so the total stays at **172**; `scripts/test-hooks.sh` unchanged (133 passed).
+
+### Downstream migration
+
+1. Remove `"effortLevel"` from `~/.claude/settings.json` to inherit the model's default — or keep it if you deliberately want a fixed level; nothing breaks either way.
+2. Re-copy `agents/architect.md` and `agents/code-reviewer.md` from `user-level-reference/agents/` into `~/.claude/agents/` (only the `effort:` line changed).
+3. Run `/sync-template` in template-consuming repos and accept `AGENT_TEAM.md`, `CLAUDE.md`, and the two agent files.
+4. Habit change: `/model fable` at the start of a big (T3/T4) session, Opus otherwise. Fable costs about twice as much per token — the payoff is fewer steers over a longer session, not a cheaper one.
+
 ## v2.1-pr7 — 2026-08-29
 
 **The plan gate is gone.** Boris Cherny, June 2026: *"I don't use plan mode anymore… starting with 4.6, and definitely with 4.7, it just doesn't need it."* The models the toolkit targets do not need a staged planning ritual — they need the whole task in the prompt. `hooks/tier-before-coder.sh` enforced the opposite: a coder spawn was refused unless a file in `docs/plans/` carried `Tier: T[1-4]` and challenge evidence, which made the plan file a password rather than a document. It is deleted, not loosened; a hardened version was on the roadmap (`docs/workflow-audit.md` W1, follow-up PR B) and that roadmap item is superseded.

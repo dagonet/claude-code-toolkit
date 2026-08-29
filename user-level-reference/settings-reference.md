@@ -94,7 +94,6 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
     "chrome-devtools-mcp@claude-plugins-official": false
   },
   "alwaysThinkingEnabled": true,
-  "effortLevel": "medium",
   "advisorModel": "opus",
   "autoCompactEnabled": true,
   "contextCompactionThreshold": 70
@@ -198,7 +197,7 @@ See the *Full Settings JSON* block above for the shipped values. Only four are o
 "alwaysThinkingEnabled": true
 ```
 
-Forces extended thinking on every request. **No effect on Fable 5 / Claude 5 generation models** — they reason by default and `effortLevel` is the dial that matters. Kept because it still applies when the session runs an older model; harmless otherwise.
+Forces extended thinking on every request. **No effect on Fable 5 / Claude 5 generation models** — they reason by default and decide per step how hard to think; the effort level is the dial that matters. Kept because it still applies when the session runs an older model; harmless otherwise.
 
 ### `enableAllProjectMcpServers`
 
@@ -420,11 +419,11 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 
 ### Model & Effort (session settings)
 
-`model` picks the orchestrator's model; `effortLevel` picks how hard it works on each turn. They are different dials for different failures: a wrong answer *despite* full context calls for a bigger model, while skipped files or tests that never ran call for more effort. Subagent `model:` / `effort:` in the agent file override the session values for that spawn — see `AGENT_TEAM.md` → *Model & Effort Policy*.
+`model` picks the orchestrator's model; the session effort level picks how hard it works on each turn. **No session effort key is shipped** — unset means the model's own default (Opus 5 / Fable 5 decide per step, and Fable 5 ignores thinking toggles entirely). Raise it per role instead, with `effort:` in the agent file (`low` / `medium` / `high` / `xhigh`), or `/effort` for one session. They are different dials for different failures: a wrong answer *despite* full context calls for a bigger model, while skipped files or tests that never ran call for more effort. Subagent `model:` / `effort:` in the agent file override the session values for that spawn — see `AGENT_TEAM.md` → *Model & Effort Policy*.
 
 Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `claude-*` id: a model proxy reroutes aliases, and a pinned id bypasses it. If you run such a proxy, keep the auto-mode classifier and `advisorModel` off it — both need the real model.
 
-`advisorModel` is shipped as `"opus"` (top level). It picks the model behind the `advisor` reviewer tool, which is a different dial from `model` and `effortLevel`: the advisor sees the full transcript and is worth spending on even when the session itself runs cheaper.
+`advisorModel` is shipped as `"opus"` (top level). It picks the model behind the `advisor` reviewer tool, which is a different dial from `model` and the effort level: the advisor sees the full transcript and is worth spending on even when the session itself runs cheaper.
 
 > The plan-mode allow hook for context-mode tools (`hooks/allow-ctx-plan.sh`) was removed in v2.0 PR3 along with the mandatory context-mode routing. The plugin is optional now; if you still run it and want the plan-mode prompts suppressed, re-add an `allow` PreToolUse hook for the `ctx_*` matchers — the mechanism (PreToolUse runs before the permission system, so `permissionDecision: "allow"` pierces plan mode) is unchanged.
 
