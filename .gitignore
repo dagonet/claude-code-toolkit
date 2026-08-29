@@ -6,6 +6,9 @@
 # .gate/ would fold the previous run's artifact into the next run's tree hash.
 /.gate/
 
+# Agent scratch — superpowers SDD working files are never part of the deliverable
+/.superpowers/
+
 # Prevent Claude Code from auto-loading template CLAUDE.local.md files
 CLAUDE.local.md
 

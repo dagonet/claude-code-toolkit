@@ -2,7 +2,11 @@
 
 ## v2.2.0 — 2026-08-29
 
-**A home-agent WSL dry run of the whole bootstrap path found that the dry run itself lied by omission, and that a consumer who already has a CLAUDE.md gets nothing.** Source: the home-agent WSL dry-run report of 2026-08-29. This roll-up covers PR16 (setup scripts, templates, docs) and PR15's hook/settings work — see `## v2.2.0-pr15` below for that half.
+**Every hook assumed `node`, so on a box without it the whole enforcement layer was silently off — and a home-agent WSL dry run of the whole bootstrap path found that the dry run itself lied by omission, and that a consumer who already has a CLAUDE.md gets nothing.** Source for both halves: the home-agent WSL dry-run report of 2026-08-29.
+
+**The PR15 half — hooks stop assuming `node`.** A native Claude Code install ships no Node runtime, and `hooks/lib/git-cmd.sh` parsed the hook payload with `node -e … 2>/dev/null`; with node absent every field came back empty and 10 of the 12 hooks fell through their own guards and exited 0 in silence — pushes to main, ungated merges and untested commits all passed with nothing printed. A new shared reader, `hooks/lib/json.sh`, tries `node`, then `python3`, then `jq`, and the three git gates (`no-push-main.sh`, `pre-commit-test.sh`, `gate-before-merge.sh`) now fail **CLOSED** with none of the three on PATH instead of waving everything through, while the fail-open hooks stay fail-open and print one WARN line per session rather than vanishing. Also in that half: an optional `**Protected branches**:` field in `PROJECT_CONTEXT.md` replaces the hardcoded `main|master`, and the `Read(.env*)` deny became six enumerated names so `.env.example` is readable again. Detail in `v2.2.0-pr15` below.
+
+**The PR16 half — the bootstrap path.**
 
 **1. The dry run prints the placeholder report (BUG 2).** `--dry-run` exited before the "Remaining placeholders to fill manually" section, and the real-run version grepped files on disk — which do not exist yet in a dry run. Both scripts now compute the report over the RENDERED content in memory and print it in both modes, so the dry run shows exactly the list the real run will. Only files the real run would actually write contribute (a `SKIP (exists)` file is excluded, matching the real run's behaviour). For `general` with no command flags the report is 9 placeholders: `BUILD`/`TEST`/`FORMAT`/`LINT`/`GATE_COMMAND`, `WORKTREE_BASE`, `LOG_PATH`, and — before item 4 below — `DB_FILENAME`/`DB_DIRECTORY`; it is 7 afterwards.
 
@@ -18,11 +22,17 @@
 
 ### Downstream migration
 
-1. **Windows consumers bootstrapped with `setup-project.ps1` before v2.2.0: check `ls <project>/hooks/lib`.** If it is missing, copy `hooks/lib/` from the toolkit — without it every gate exits 2 and no commit, push, or merge can succeed. This is the one item that is not optional.
-2. **Re-run nothing else.** The new flags only affect fresh bootstraps.
-3. **Optional, existing projects:** add `- **Protected branches**: <branch>` to `PROJECT_CONTEXT.md` if you want PR15's hooks to read it; leaving it out keeps today's behaviour.
-4. The `.env` deny change (PR15) arrives through your normal `settings.json` sync; the `gitignore` fix arrives through `/sync-template`.
-5. `CLAUDE.local.md` is gitignored per project, so no sync touches it — re-copy `templates/<variant>/CLAUDE.local.md` by hand if you want the "only if registered" wording.
+Union of both halves; the `v2.2.0-pr15` section below repeats none of it in list form, but states the mechanics behind items 1, 3, 4 and 5 in detail.
+
+1. **Re-copy `hooks/` INCLUDING `hooks/lib/`**: `cp -r user-level-reference/hooks/. ~/.claude/hooks/`; in a consumer project `/sync-template` picks up `hooks/**` including `hooks/lib/`. The new `hooks/lib/json.sh` is required — `git-cmd.sh` refuses to run without it, and `require-skills-block.sh` / `enforce-agent-contract.sh` disable themselves (with a WARN) when it is absent.
+2. **Windows consumers bootstrapped with `setup-project.ps1` before v2.2.0: check `ls <project>/hooks/lib`.** The PowerShell copy was non-recursive, so `hooks/lib/` never arrived — and the gates exit 2 without it, leaving the project unable to commit, push, or merge. This is the one item that is not optional.
+3. **Check your PATH.** With none of `node`, `python3`, `jq` present the git gates now block instead of waving everything through. Install one — `jq` is the smallest, `node` unlocks the six node-only hooks.
+4. **User-level `settings.json` deny list changed**: replace `Read(.env*)` with `Read(.env)`, `Read(.env.local)`, `Read(.env.*.local)`, `Read(.env.production)`, `Read(.env.staging)`, `Read(.env.development)`, or `.env.example` stays unreadable. In a consumer project the same change arrives through your normal `settings.json` sync.
+5. **Optional:** add `- **Protected branches**: <names>` to `PROJECT_CONTEXT.md` if your trunk is not `main`/`master`. Omitting it keeps the old behaviour exactly.
+6. **Re-run nothing else.** The new setup-script flags only affect fresh bootstraps. The `templates/*/gitignore` fix arrives through `/sync-template`.
+7. `CLAUDE.local.md` is gitignored per project, so no sync touches it — re-copy `templates/<variant>/CLAUDE.local.md` by hand if you want the "only if registered" wording.
+
+12 hook scripts (2 lib files), 8 skills; **230 consistency assertions** and **264 hook fixtures**, both measured at this commit. The node-only, python3-only and jq-only fixtures SKIP where that interpreter is absent (the suite prints a `skipped: N` tally, counted per assertion), so the fixture total is host-dependent: 264 is the count with all three parsers present.
 
 ## v2.2.0-pr15 — 2026-08-29
 
@@ -46,10 +56,7 @@
 
 ### Downstream migration
 
-1. **Re-copy the hooks INCLUDING `lib/`**: `cp -r user-level-reference/hooks/. ~/.claude/hooks/`. The new `hooks/lib/json.sh` is required — `git-cmd.sh` refuses to run without it (`BLOCKED: … hooks/lib/json.sh missing`), by design: a missing reader must not silently disarm the gates. In a consumer project `/sync-template` picks up `hooks/**` including `hooks/lib/`.
-2. **Check your PATH.** If the box has none of `node`, `python3`, `jq`, the git gates now block instead of waving everything through. Install one — `jq` is the smallest, `node` unlocks the five node-only hooks.
-3. **User-level `settings.json` deny list changed**: replace `Read(.env*)` with the six enumerated names, or `.env.example` stays unreadable.
-4. **Optional**: add `- **Protected branches**: <names>` to `PROJECT_CONTEXT.md` if your trunk is not `main`/`master`. Omitting it keeps the old behaviour exactly.
+Consolidated into the `v2.2.0` roll-up above — items 1, 3, 4 and 5 there are this half's. `git-cmd.sh` refusing to run without `hooks/lib/json.sh` (`BLOCKED: … hooks/lib/json.sh missing`) is by design: a missing reader must not silently disarm the gates.
 
 12 hook scripts (2 lib files), 8 skills; 212 → 230 consistency assertions and 204 → 264 hook fixtures. The node-only, python3-only and jq-only cases SKIP where that interpreter is absent (the suite prints a `skipped: N` tally, counted per assertion), so the fixture total is host-dependent: 264 is the count with all three present.
 
