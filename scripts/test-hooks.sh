@@ -328,6 +328,35 @@ check "Bash commit still runs tests"      hooks/pre-commit-test.sh 2 \
   "$(mkjson Bash 'git commit -m x' "$BADREPO")"
 
 # ===========================================================================
+# require-skills-block.sh — v2.1.1: a project that adds its own language coder
+# (cpp-coder, go-coder, …) must not fall through the binding table. The bound
+# list is now "coder or <lang>-coder", not an enumeration the template owns.
+# ===========================================================================
+echo
+echo "=== hooks/require-skills-block.sh ==="
+H=hooks/require-skills-block.sh
+
+mkspawn() { # <subagent_type> <prompt>
+  node -e 'console.log(JSON.stringify({subagent_type:process.argv[1],prompt:process.argv[2]}))' "$1" "$2"
+}
+WITHBLOCK='Do the thing.
+
+## Required Skills
+- karpathy-guidelines
+'
+
+check "cpp-coder without skills block"   "$H" 2 "$(mkspawn cpp-coder 'Do the thing.')"
+check "go-coder without skills block"    "$H" 2 "$(mkspawn go-coder 'Do the thing.')"
+check "cpp-coder with skills block"      "$H" 0 "$(mkspawn cpp-coder "$WITHBLOCK")"
+check "coder without skills block"       "$H" 2 "$(mkspawn coder 'Do the thing.')"
+check "rust-coder without skills block"  "$H" 2 "$(mkspawn rust-coder 'Do the thing.')"
+check "tester without skills block"      "$H" 2 "$(mkspawn tester 'Do the thing.')"
+check "code-reviewer is unbound"         "$H" 0 "$(mkspawn code-reviewer 'Do the thing.')"
+# The suffix rule must not over-match: 'coder-helper' is not a coder.
+check "coder-helper is not a coder"      "$H" 0 "$(mkspawn coder-helper 'Do the thing.')"
+check "unknown subagent_type passes"     "$H" 0 "$(mkspawn Explore 'Do the thing.')"
+
+# ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an
 # unbounded Read is rewritten to limit=500 via hookSpecificOutput.updatedInput
 # (which REPLACES the whole tool_input, so every original field must survive).

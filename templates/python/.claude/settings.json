@@ -20,10 +20,17 @@
       "mcp__open-brain__*",
       "mcp__godot-tools__*",
       "mcp__plugin_context-mode_context-mode__*",
-      "mcp__template-sync-tools__*"
+      "mcp__template-sync-tools__*",
+      "mcp__git-tools__*"
     ],
     "deny": [
-      "Read(.env*)"
+      "Read(.env*)",
+      "mcp__git-tools__git_push",
+      "mcp__git-tools__git_commit",
+      "mcp__git-tools__git_merge",
+      "mcp__git-tools__git_rebase",
+      "mcp__git-tools__git_reset",
+      "mcp__git-tools__git_push_tags"
     ],
     "defaultMode": "auto"
   },
@@ -117,7 +124,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "^(coder|code-reviewer|tester|architect)$",
+        "matcher": "^([a-z0-9]+-)?coder$|^code-reviewer$|^tester$|^architect$",
         "hooks": [
           {
             "type": "command",
@@ -126,7 +133,7 @@
         ]
       },
       {
-        "matcher": "coder|dotnet-coder|rust-coder|java-coder|python-coder|code-reviewer",
+        "matcher": "^([a-z0-9]+-)?coder$|^code-reviewer$",
         "hooks": [
           {
             "type": "command",

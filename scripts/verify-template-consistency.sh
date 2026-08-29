@@ -738,6 +738,69 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 22. The git-tools MCP write ops are denied (v2.1.1, consumer feedback).
+#
+#     v2.0 moved the git gates onto Bash|PowerShell. The git-tools MCP server is
+#     registered at USER level, so it stays reachable in every project — and
+#     under "defaultMode": "auto" an MCP git_push to main runs with no hook on
+#     it. The deny list is what keeps the gates from being bypassable.
+#     Denying a tool the server does not expose is a harmless no-op.
+# ---------------------------------------------------------------------------
+echo
+GIT_MCP_DENY="git_push git_commit git_merge git_rebase git_reset git_push_tags"
+for v in $VARIANTS; do
+  s="templates/$v/.claude/settings.json"
+  missing=""
+  for t in $GIT_MCP_DENY; do
+    grep -q "\"mcp__git-tools__$t\"" "$s" || missing="$missing $t"
+  done
+  if [ -z "$missing" ]; then
+    ok "$s: denies all 6 git-tools write ops"
+  else
+    ko "$s: git-tools deny list missing:$missing"
+  fi
+done
+missing=""
+for t in $GIT_MCP_DENY; do
+  grep -q "\"mcp__git-tools__$t\"" user-level-reference/settings.json || missing="$missing $t"
+done
+if [ -z "$missing" ]; then
+  ok "user-level-reference/settings.json: denies all 6 git-tools write ops"
+else
+  ko "user-level-reference/settings.json: git-tools deny list missing:$missing"
+fi
+
+# ---------------------------------------------------------------------------
+# 23. SubagentStop matchers cover project-added language coders (v2.1.1).
+#
+#     An enumerated matcher ("^(coder|code-reviewer|tester|architect)$") reverts
+#     a project's own `cpp-coder` wiring on every accept-template. The regex
+#     below owns the shape instead of the list, so the template never has to
+#     know a project's coder names.
+# ---------------------------------------------------------------------------
+echo
+CODER_RE='"matcher": "^([a-z0-9]+-)?coder$'
+for v in $VARIANTS; do
+  s="templates/$v/.claude/settings.json"
+  n=$(grep -cF "$CODER_RE" "$s")
+  if [ "$n" -eq 2 ]; then
+    ok "$s: both SubagentStop matchers accept <lang>-coder"
+  else
+    ko "$s: expected 2 <lang>-coder-shaped SubagentStop matchers, found $n"
+  fi
+  if grep -q '"matcher": "coder|dotnet-coder' "$s"; then
+    ko "$s: still carries the enumerated coder matcher"
+  else
+    ok "$s: no enumerated coder matcher left"
+  fi
+done
+if grep -q 'coder|\*-coder)' hooks/require-skills-block.sh; then
+  ok "hooks/require-skills-block.sh: binds any <lang>-coder, not an enumeration"
+else
+  ko "hooks/require-skills-block.sh: coder binding is still an enumeration"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
