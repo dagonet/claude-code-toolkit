@@ -82,10 +82,12 @@ Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh`
 CLAUDE.md enforces a lightweight bootstrap sequence at the start of every session. `AGENT_TEAM.md` (~850 lines) is **not** read up front -- CLAUDE.md carries a one-line pointer to its Spawn-Prompt Binding Table, and the PO loads the full file when it first spawns agents. The binding itself is enforced by `require-skills-block.sh`, not by the prose, so duplicating the table into CLAUDE.md bought nothing (v2.0 PR4 removed it).
 
 1. Assume the PO role. Load `AGENT_TEAM.md` on-demand when first spawning agents in a sprint, writing a spawn brief, or answering questions about merge/escalation rules
-2. Read `PROJECT_CONTEXT.md` -- load build commands and workflow config
-3. Check Open Brain (`thoughts_search` / `thoughts_recent`) for project context. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days)
-4. Present current state (from MEMORY.md) and ask what to work on. Check `git_status` and `git_worktree_list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
-5. Write the task brief (goal, constraints, acceptance criteria, files in scope, definition of done) and spawn
+2. Pick the session model -- T3/T4 session (multi-file or architectural): `/model fable`; otherwise Opus
+3. Read `PROJECT_CONTEXT.md` -- load build commands and workflow config
+4. Check Open Brain (`thoughts_search` / `thoughts_recent`) for project context. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days)
+5. Present current state (from MEMORY.md) and ask what to work on. Check `git_status` and `git_worktree_list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
+6. Act on the RETRO brief, if one was printed (`hooks/retro-brief.sh`) -- fix the cause of each entry (the agent's `tools:` allowlist, the spawn prompt, the hook) or delegate the fix, before starting new work
+7. Write the task brief (goal, constraints, acceptance criteria, files in scope, definition of done) and spawn
 
 ### Agent Type Selection
 
