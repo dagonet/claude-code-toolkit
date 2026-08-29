@@ -63,7 +63,7 @@ printf '\nhook scripts present\n'
 MISSING=0
 for h in agent-budget-warn.sh enforce-delegation.sh \
          enforce-agent-contract.sh no-push-main.sh read-size-gate.sh \
-         tier-before-coder.sh require-skills-block.sh run-gate.sh \
+         require-skills-block.sh run-gate.sh \
          gate-before-merge.sh pre-commit-test.sh \
          retro-ledger.sh retro-brief.sh
 do

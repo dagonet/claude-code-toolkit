@@ -13,11 +13,8 @@ flowchart TD
     U[User request] --> PO{{PO: Claude in session}}
     PO -->|T1 trivial <10 lines| POFix[PO edits + commits directly]
     PO -->|T2-T4| OB[PO: search Open Brain for context]
-    OB --> WritePlan[PO or architect: write plan file]
-    WritePlan --> Chal[Architect: 2-pass challenge<br/>scope + correctness]
-    Chal --> H1{{tier-before-coder.sh<br/>plan has 'Tier: Tn' + 'challenge' word?}}
-    H1 -->|block| WritePlan
-    H1 -->|pass| Team{Per-tier team}
+    OB --> Brief[PO: write the task brief<br/>goal, constraints, AC, files, done]
+    Brief --> Team{Per-tier team}
     Team -->|T2| Dev1[Spawn coder in worktree]
     Team -->|T3| Dev1
     Team -->|T4| Arch4[Architect stays standby] --> Dev1
@@ -35,14 +32,14 @@ flowchart TD
     Close --> Done[Done]
 
     classDef hook fill:#fef3c7,stroke:#d97706,stroke-width:2px;
-    class H1,H2 hook;
+    class H2 hook;
     classDef gap fill:#fee2e2,stroke:#dc2626,stroke-dasharray: 5 5;
     class Esc gap;
 ```
 
 **Legend**
 
-- **Yellow boxes (H1, H2)** — hook-enforced gates. The AI cannot bypass these without the hook firing.
+- **Yellow boxes (H2)** — hook-enforced gates. The AI cannot bypass these without the hook firing.
 - **Red dashed** — documented in AGENT_TEAM.md but not hook-enforced. The AI can silently skip these and nothing catches it.
 - **Per-tier team** — T1 skips the whole pipeline; T2 uses a single coder; T3 adds code-reviewer + tester; T4 keeps architect on standby throughout.
 
@@ -52,7 +49,7 @@ Seventeen weaknesses identified during the audit, grouped into five buckets. The
 
 ### Hook / enforcement gaps (workflow bypassable)
 
-- **W1. Tier hook is permissive** — `hooks/tier-before-coder.sh` greps for the word `challenge` and `Tier: Tn` but does not verify that *two* challenge passes happened, does not verify the plan corresponds to the current task, and does not validate that tier matches task scope. A stale plan file with the right keywords passes.
+- **W1. Tier hook is permissive** — ~~`hooks/tier-before-coder.sh` greps for the word `challenge` and `Tier: Tn` but does not verify that *two* challenge passes happened, does not verify the plan corresponds to the current task, and does not validate that tier matches task scope. A stale plan file with the right keywords passes.~~ **Resolved by removal in v2.1 (PR7):** the plan gate is gone entirely; the task brief in the spawn prompt replaces it, and nothing greps a plan file any more.
 - **W2. No team-config-matches-tier guard** — The AI can spawn `coder` alone for a T3 task (missing reviewer + tester) and no hook complains. The Agent PreToolUse hook fires per-spawn and can only enforce negative rules ("don't spawn reviewer for T1"), not positive ones ("must have spawned reviewer by now for T3").
 - **W3. No 3-fix-cycle escalation guard** — Rule 8 caps code-review fix cycles at 3 before escalation, but nothing tracks cycle count. The AI can loop indefinitely.
 - **W4. No concurrent-merge guard** — Parallel workstreams must merge sequentially (first-ready-first-merge), but nothing prevents two squash-merges firing near-simultaneously.
@@ -64,7 +61,7 @@ Seventeen weaknesses identified during the audit, grouped into five buckets. The
 
 - **W8. Escalation Protocol missing from CLAUDE.md TL;DR** — Rule 8 and the Escalation Protocol live in AGENT_TEAM.md only. PO might never escalate if they skim only CLAUDE.md.
 - **W9. Merge ownership missing from CLAUDE.md** — "Developer owns the merge" (Rule 5) is in AGENT_TEAM.md; CLAUDE.md silent. Risk: PO merges on coder's behalf.
-- **W10. Architect lifecycle ambiguous at T4** — Plan Challenge Protocol says architect shuts down after challenge, but T4 says architect stays on standby. The SubagentStop hook fires uniformly regardless of tier.
+- **W10. Architect lifecycle ambiguous at T4** — the architect is documented as shutting down after returning its critique, but T4 says it stays on standby. The SubagentStop hook fires uniformly regardless of tier.
 
 ### Agent / role gaps
 
@@ -99,6 +96,10 @@ The skills-wiring PR (see [`plans/2026-04-12-wire-superpowers-skills.md`](plans/
 **Estimated scope:** ~12-14 file edits, no hook changes, no new infrastructure.
 
 ### Follow-up PR B — Hook hardening
+
+> **Superseded in v2.1 (PR7).** The gate this roadmap item proposed to harden was
+> deleted instead: plans are optional artifacts and the spawn prompt carries the
+> task brief. The items below are kept as the record of what was considered.
 
 **Items:** W1, W2 (partial)
 **Scope:** `hooks/tier-before-coder.sh` logic changes + new test cases.

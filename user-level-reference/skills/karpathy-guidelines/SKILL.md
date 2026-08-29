@@ -85,7 +85,7 @@ These are the judgement calls no hook can make:
 - **Implement, don't suggest** — deliver working changes via spawned agents; infer intent from context instead of asking for a fuller spec
 - **Minimal fix first** — ask "what is the smallest change that fixes this?" and cut scope aggressively. Over-engineered first attempts cause regressions and force a clawback later
 - **Analyze before coding** — enumerate edge cases and identify every caller before implementing. For a bug fix, verify the root cause from data (query the DB, read the logs) before writing code
-- **Re-plan on failure** — if an approach is not working after a reasonable attempt, stop and re-enter plan mode rather than pushing through
+- **Re-plan on failure** — if an approach is not working after a reasonable attempt, stop and rethink the approach rather than pushing through
 - **Tests** — write general solutions, never hard-code the expected values. If a test looks wrong, say so
 - **Post-merge verification** — after any merge or conflict resolution, run the full build and suite, and check for dropped imports or silently reverted lines
 - **Update docs with code** — a change to behaviour, an API, config, or setup updates its docs in the same commit

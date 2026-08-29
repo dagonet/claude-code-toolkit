@@ -59,7 +59,7 @@ These are not optional. If the trigger fires, invoke the named skill BEFORE gene
 
 ### Strong triggers (SHOULD)
 
-Apply unless plan mode or another skill already covers the same ground:
+Apply unless another skill already covers the same ground:
 
 - Multi-step implementation about to start → invoke `superpowers:writing-plans`, then `superpowers:executing-plans` once the plan is approved.
 - Writing production code → invoke `superpowers:test-driven-development` together with `karpathy-guidelines`.

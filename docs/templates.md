@@ -16,11 +16,11 @@
 | Post-Edit Build Hook | No | `dotnet build` on Edit/Write | `dotnet build` on Edit/Write | `cargo check` on Edit/Write | No | `ruff check` on Edit/Write |
 | Pre-Commit Format Gate | No | `dotnet format --verify-no-changes` | `dotnet format --verify-no-changes` | `cargo fmt --check` + `npm format --check` | `spotless:check` (Maven/Gradle) | `ruff format --check` + `ruff check` |
 | MCP Enforcement Hook | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked | `Bash(git/gh *)` blocked |
-| Workflow Enforcement | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder | No push to main + tier-before-coder |
+| Workflow Enforcement | No push to main + skills-in-spawn-prompt | No push to main + skills-in-spawn-prompt | No push to main + skills-in-spawn-prompt | No push to main + skills-in-spawn-prompt | No push to main + skills-in-spawn-prompt | No push to main + skills-in-spawn-prompt |
 | Pipeline Hook | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge |
 | Delegation Enforcement | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds |
 | Agent Liveness | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget |
-| CLAUDE.md Behavior | Session Bootstrap, Debugging, Plan Challenge — identical across variants; language conventions live in `.claude/rules/` | same | same | same | same | same |
+| CLAUDE.md Behavior | Session Bootstrap, Debugging, Task Brief — identical across variants; language conventions live in `.claude/rules/` | same | same | same | same | same |
 | Path-scoped rules (`.claude/rules/`) | none | `csharp.md` | `csharp.md`, `xaml.md` | `rust.md`, `frontend.md` | `java.md` | `python.md` |
 | Database Tools | No | No | SQLite MCP (optional) | No | No | SQLite MCP (optional) |
 | Desktop Automation | No | No | Windows-MCP | Windows-MCP | No | No |
@@ -39,7 +39,7 @@ Each template variant provides the following files:
 | `PROJECT_STATE.md` | Sprint state tracking |
 | `.claude/settings.json` | MCP permissions + workflow hooks (MCP enforcement, format gates, pipeline, compaction) |
 | `.claude/agents/` | 9 generic agents (incl. the custom `Explore`, which overrides the built-in one and pins it to haiku) + variant-specific coders |
-| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `no-push-main`, `tier-before-coder`, `pre-commit-test`, `read-size-gate`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `agent-budget-warn`, `retro-ledger` + `retro-brief`, `bash-output-guard`, plus the shared parser `lib/git-cmd.sh`. Also ships two DEPRECATED v2.0 no-op stubs, both unregistered and slated for removal in v2.1 — `block-bash-vcs` and `require-teammate-report`. `allow-ctx-plan` was deleted in v2.0 PR3 with the context-mode routing rules |
+| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `no-push-main`, `pre-commit-test`, `read-size-gate`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `agent-budget-warn`, `retro-ledger` + `retro-brief`, `bash-output-guard`, plus the shared parser `lib/git-cmd.sh`. Also ships two DEPRECATED v2.0 no-op stubs, both unregistered and slated for removal in v2.1 — `block-bash-vcs` and `require-teammate-report`. `allow-ctx-plan` was deleted in v2.0 PR3 with the context-mode routing rules |
 | `gitignore` | Template for .gitignore (copied or merged by the setup script) |
 | `.editorconfig` | Code style for dotnet, dotnet-maui, java, and python variants |
 | `rustfmt.toml` + `.prettierrc` | Code style for rust-tauri variant only |
