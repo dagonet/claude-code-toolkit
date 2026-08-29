@@ -93,7 +93,7 @@ Marginal gain over convention. Revisit if plan-skipping becomes a recurring prob
 
 ### 7. Tier + challenge + team + freshness before coder spawns
 
-**Status: IMPLEMENTED** (tightened in PR B, 2026-04-12)
+**Status: REMOVED in v2.1 (PR7)** — implemented 2026-04-12, tightened in PR B, deleted 2026-08-29. Plans became optional artifacts and the task brief in the spawn prompt replaced the gate; the design below is kept as the record of what was built and why it went.
 
 | Field | Value |
 |-------|-------|
@@ -198,7 +198,7 @@ These remain convention-only, enforced by AGENT_TEAM.md instructions.
 | 4 | Build before commit | Reject | Wrong enforcement point, blocks TDD |
 | 5 | No `gh` CLI | **Superseded in v2.0** | Same reason as #1. `gh pr merge` is now a gated path (`hooks/gate-before-merge.sh`), not a blocked one |
 | 6 | Plan before edit | Defer | Too fragile, marginal gain |
-| 7 | Tier + two-challenge + team + freshness before coder spawns | **Implemented (PR B)** | `hooks/tier-before-coder.sh` — grep-based, see "strengths and limits" |
+| 7 | Tier + two-challenge + team + freshness before coder spawns | **Removed in v2.1** | Was `hooks/tier-before-coder.sh`; the plan gate is gone, the spawn prompt's task brief carries the context instead |
 | 8 | Test before merge | Reject | Wrong architecture, use CI |
 | 9 | No force-push | **Reopened by v2.0** | The original rationale (no `force` parameter on the MCP tool, Bash git blocked) no longer holds now that `git push --force` is reachable. `hooks/no-push-main.sh` still blocks any push to main, forced or not |
 

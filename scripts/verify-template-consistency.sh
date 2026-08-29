@@ -17,16 +17,9 @@ ko() { printf "FAIL  %s\n" "$*"; fail=1; }
 VARIANTS="general dotnet dotnet-maui rust-tauri java python"
 
 # ---------------------------------------------------------------------------
-# 1. Plan Challenge Protocol pointer removed from every templates/*/CLAUDE.md
-# ---------------------------------------------------------------------------
-for v in $VARIANTS; do
-  if grep -q "^# Plan Challenge Protocol$" "templates/$v/CLAUDE.md"; then
-    ko "templates/$v/CLAUDE.md still has '# Plan Challenge Protocol' section"
-  else
-    ok "templates/$v/CLAUDE.md: Plan Challenge Protocol section removed"
-  fi
-done
-
+# 1. (removed in v2.1 PR7) The "# Plan Challenge Protocol heading is gone from
+#    CLAUDE.md" assertion is strictly subsumed by check 6, which now asserts the
+#    absence of the whole plan-gate vocabulary in CLAUDE.md and AGENT_TEAM.md.
 # ---------------------------------------------------------------------------
 # 2. Skill references present in every variant CLAUDE.md and AGENT_TEAM.md
 # ---------------------------------------------------------------------------
@@ -87,14 +80,21 @@ for v in $VARIANTS; do
 done
 
 # ---------------------------------------------------------------------------
-# 6. Plan Challenge Protocol substance still in each AGENT_TEAM.md
+# 6. The plan gate is gone (v2.1 PR7). Boris Cherny, Jun 2026: "I don't use plan
+#    mode anymore … it just doesn't need it." Plans are optional artifacts now
+#    and every spawn carries its brief instead, so no workflow doc may
+#    reintroduce the mandate or name the deleted hook. One alternation per file
+#    so a partial revival fails on the file it lives in.
 # ---------------------------------------------------------------------------
+GATE_LITERALS='Plan Challenge Protocol|EnterPlanMode|Challenge 1|Challenge 2|tier-before-coder'
 for v in $VARIANTS; do
-  if grep -q "Plan Challenge Protocol" "templates/$v/AGENT_TEAM.md"; then
-    ok "templates/$v/AGENT_TEAM.md: Plan Challenge Protocol substance retained"
-  else
-    ko "templates/$v/AGENT_TEAM.md: Plan Challenge Protocol substance missing"
-  fi
+  for f in "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md"; do
+    if grep -qE "$GATE_LITERALS" "$f"; then
+      ko "$f: plan-gate mandate is back — $(grep -oE "$GATE_LITERALS" "$f" | sort -u | tr '\n' ' ')"
+    else
+      ok "$f: carries no plan-gate mandate"
+    fi
+  done
 done
 
 # ---------------------------------------------------------------------------

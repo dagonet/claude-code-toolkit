@@ -73,10 +73,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash hooks/tier-before-coder.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/tier-before-coder.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
-          },
-          {
-            "type": "command",
             "command": "bash hooks/require-skills-block.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: hooks/require-skills-block.sh -- enforcement offline. Run /sync-template to restore hooks/.' >&2; exit 2; fi; exit $c"
           }
         ]

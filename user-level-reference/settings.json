@@ -57,15 +57,6 @@
             "command": "bash ~/.claude/hooks/no-push-main.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/no-push-main.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
           }
         ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/tier-before-coder.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/tier-before-coder.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
-          }
-        ]
       }
     ],
     "PostToolUse": [

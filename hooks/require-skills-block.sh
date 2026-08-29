@@ -17,7 +17,7 @@
 #
 # Reference: docs/plans/2026-04-12-wire-superpowers-skills.md (Chunk B,
 # §Architecture). Mirrors the JSON-via-`node -e` parsing pattern used by
-# tier-before-coder.sh and no-push-main.sh.
+# no-push-main.sh.
 
 TOOL_INPUT=$(cat)
 SUBAGENT_TYPE=$(node -e "console.log(JSON.parse(process.argv[1]).subagent_type||'')" "$TOOL_INPUT" 2>/dev/null || echo '')

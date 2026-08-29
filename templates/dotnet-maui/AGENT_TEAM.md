@@ -67,7 +67,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 - Plans sprints: selects tasks, creates the team, spawns the Architect (T4), then spawns workstreams.
 - Monitors workstream progress and handles escalations.
 - Writes a brief **session summary** after each completed sprint.
-- **T1 delegated fixes**: For trivial changes (< 10 lines, style/config only, no logic), the PO spawns ONE coder with a minimal plan file containing `Tier: T1` (3 lines suffice — the spawn gate reads it). **The PO NEVER edits code, at any tier.** PO write surface: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md` — enforced by `hooks/enforce-delegation.sh`.
+- **T1 delegated fixes**: For trivial changes (< 10 lines, style/config only, no logic), the PO spawns ONE coder with the task brief in the prompt — no plan file needed. **The PO NEVER edits code, at any tier.** PO write surface: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md` — enforced by `hooks/enforce-delegation.sh`.
 - **Never reviews code inline** — a `code-reviewer` is spawned for every tier from T2 up; T1 relies on the coder's gate run.
 - **Read discipline**: PO Read/Grep is for targeted verification of specific claims (1–2 files) and orchestration files only. Any exploration beyond that — open-ended codebase analysis, pattern discovery, multi-file tracing — is delegated to an **Explore** agent (`.claude/agents/Explore.md` pins it to haiku at `effort: low` — do not pass a `model` in the Agent call).
 - **Never runs builds or tests** — coders run the gate, the tester verifies, `ops` handles env/tool work. The PO verifies via the `.gate/last-pass.json` artifact (also enforced by `hooks/enforce-delegation.sh`).
@@ -91,8 +91,8 @@ When a session starts on a project that has this AGENT_TEAM.md:
 
 - Maintains all architecture documentation.
 - Provides implementation guidance on all sprint tasks (see Mode Behavior Table for where guidance is posted).
-- **Challenges ALL plans (T3+)**: Spawned by PO before implementation to perform two challenge passes on every plan. Validates scope, necessity, correctness, tier assignment, and team configuration. This is the plan-challenge phase — distinct from implementation guidance.
-- **Plan-challenge phase**: Shuts down after plan challenges are complete. Re-spawned for implementation guidance only if the sprint is T4.
+- **Challenges an approach on demand**: The PO may spawn the architect before implementation to critique a draft — scope, necessity, correctness, sizing. This is a judgement call, not a gate; nothing blocks a spawn on it.
+- **Shuts down after returning the critique.** Re-spawned for implementation guidance only if the sprint is T4.
 - Reviews all sprint tasks **BEFORE** development starts (T4), covering:
   - Affected components and files
   - Recommended approach
@@ -106,13 +106,10 @@ When a session starts on a project that has this AGENT_TEAM.md:
 #### Architect Lifecycle
 
 ```
-Spawn (PO drafts plan, needs challenge)
+Spawn (PO wants a critique of an approach)
   |
   v
-Challenge 1: Scope & Necessity
-  |
-  v
-Challenge 2: Correctness & Completeness
+Architect returns the critique (scope, necessity, correctness, sizing)
   |
   +--> T2-T3: Architect shuts down. Not needed during implementation.
   |
@@ -131,7 +128,7 @@ Challenge 2: Correctness & Completeness
 **Transition rules:**
 - PO controls all architect spawn/shutdown transitions.
 - "Standby" means the architect agent remains alive but idle. PO messages it when guidance is needed.
-- If the architect is shut down (T2-T3) and a Rule 8 escalation requires re-design, PO spawns a **new** architect instance with the failure context.
+- If the architect is shut down and a Rule 8 escalation requires re-design, PO spawns a **new** architect instance with the failure context.
 - **SubagentStop fires per-invocation, not per-shutdown.** At T4, the architect stays in STANDBY after replying to a guidance request — do NOT interpret a SubagentStop event as a shutdown signal. The architect shuts down explicitly only after the last T4 task is guided and merged.
 
 ### Developer (1 per workstream)
@@ -495,29 +492,25 @@ The PO coordinates merge ordering by sending merge-go-ahead messages. Developers
 ### Sprint Planning Flow
 
 ```
-1. PO enters plan mode (EnterPlanMode) for task analysis
+1. PO analyses the task and sizes it against the tier table
        |
 2. PO spawns Requirements Engineer for M/L/XL features (if needed)
    - RE produces specs; PO publishes per Mode Behavior Table
    - PO writes specs directly for S features / bugs
        |
-3. PO drafts implementation plan with tier assignment (T1-T4)
+3. PO writes the task brief: goal, constraints, acceptance criteria,
+   files in scope, definition of done (see Task Brief Upfront)
+   - optionally records it as a plan file in docs/plans/
        |
-4. PO spawns Architect for plan challenge (MANDATORY for T3+)
-   - Architect Challenge 1: Scope & Necessity
-   - Architect Challenge 2: Correctness & Completeness
-   - Architect validates tier assignment and team configuration
+4. PO may spawn the Architect for a critique (optional, architectural work)
        |
-5. PO incorporates feedback into final plan
-   - Final plan MUST include: tier, team config, acceptance criteria
+5. PO confirms the approach with the user for anything non-obvious
        |
-6. PO presents final plan to user for confirmation
-       |
-7. PO creates team, spawns workstreams per tier:
+6. PO creates team, spawns workstreams per tier, brief in each prompt:
    - T1: 1 coder, uniform PR pipeline (no reviewer/tester)
    - T2: coder + code-reviewer
    - T3: coder + reviewer + tester
-   - T4: coder(s) + reviewer + tester (architect already consulted in step 4)
+   - T4: coder(s) + reviewer + tester (architect consulted in step 4)
 ```
 
 ### Per-Workstream Flow
@@ -570,38 +563,28 @@ Architect reviews all tasks -> scope-conflict check -> shuts down
 Merges are sequenced by PO (first-ready, first-merge)
 ```
 
-### Plan Challenge Protocol
+### Task Brief Upfront
 
-Every design doc and implementation plan must be challenged **twice** before execution begins. This catches over-engineering, missing requirements, YAGNI violations, and implementation flaws early — when they're cheap to fix.
+Current models do not need a staged planning ritual — they need the whole task in the
+prompt. Every spawn prompt therefore states, in the prompt itself:
 
-**Challenge 1 — Scope & Necessity (after design doc is written):**
-- Is every feature/component actually needed? (YAGNI check)
-- Are there simpler approaches that were dismissed too quickly?
-- Are edge cases identified but deferred appropriately?
-- Does the design solve the stated problem without gold-plating?
+- **Goal** — what the change must achieve, in one or two sentences.
+- **Constraints** — what must not change, what to leave alone, platform/style rules.
+- **Acceptance criteria** — the observable conditions that make the work correct.
+- **Files in scope** — the paths to touch, and the paths explicitly out of scope.
+- **Definition of done** — the tests to pass and the gate to run (`bash hooks/run-gate.sh`).
 
-**Challenge 2 — Correctness & Completeness (after implementation plan is written):**
-- Does the plan match the design doc faithfully?
-- Are there missing steps, untested paths, or incorrect assumptions?
-- Are error handling and validation covered at every layer?
-- Will the proposed changes pass CI (formatting, linting, type checks)?
-- Are there batches or tasks that should be cut?
+An agent that has to go looking for any of the five is being under-briefed; that is a
+prompt defect, not an agent failure. The `## Required Skills` block stays part of every
+bound spawn and is enforced by `hooks/require-skills-block.sh`.
 
-**Who challenges:**
-- **T3+ tasks**: The **Architect agent** performs BOTH challenges. PO spawns the Architect with the draft plan. Architect returns two challenge passes. PO incorporates feedback. If the Architect recommends a tier change, PO updates the plan accordingly.
-- **T1 and T2 tasks**: Exempt from plan challenges (plan mode still required for T2).
+**Plan files are optional.** Write one in `docs/plans/` when the work spans sessions, when
+several workstreams need a shared reference, or when a decision deserves a record. Nothing
+blocks a spawn on a plan file, and no literal in one is parsed by any hook.
 
-**Process:**
-1. PO drafts plan in plan mode, including tier assignment
-2. PO spawns Architect with the draft plan
-3. Architect performs Challenge 1 (Scope & Necessity) — returns changes
-4. PO incorporates Challenge 1 feedback
-5. Architect performs Challenge 2 (Correctness & Completeness) — returns changes
-6. PO incorporates Challenge 2 feedback
-7. Final plan includes: **tier assignment** + **team configuration**
-8. PO presents final plan to user for approval
-
-**Output:** Each challenge produces a brief list of changes made (cuts, additions, corrections). If no changes result, explicitly state "Challenged — no changes needed" to confirm the review happened.
+**Challenging a plan is optional and on demand.** For architectural work, invoke the
+`challenge` skill or spawn the architect with the draft — it is a judgement call the PO
+makes, not a gate the workflow enforces.
 
 ---
 
@@ -676,7 +659,7 @@ The PO presents these as a single confirmation at sprint start. All agents are s
 10. **Agents must not modify files outside their assigned worktree.**
 11. **Permission propagation** — all permissions requested once at sprint start. Agents spawned with `mode: bypassPermissions`.
 12. **Mode consistency** — the sprint's primary task source determines the mode. T1/T2 hotfixes may bypass mode formalities if urgent — but a hotfix is still a coder spawn and still runs the gate; only the reviewer may be skipped.
-13. **Plan discipline** — T2+ requires plan mode and tier declaration. T3+ additionally requires two Architect challenges and tier-correct team configuration before execution (e.g., skipping an architect for T4 is a violation). See Plan Challenge Protocol. T1 exempt.
+13. **Brief discipline** — every spawn prompt carries the full task brief (goal, constraints, acceptance criteria, files in scope, definition of done). See Task Brief Upfront. Team composition still follows the tier caps; a plan file is optional at every tier.
 
 ---
 
@@ -729,7 +712,7 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 
 **Reference-only skills** (handled by existing AGENT_TEAM.md constructs, not injected via spawn prompt): `using-git-worktrees` (Worktree Naming), `finishing-a-development-branch` (Merge Protocol), `dispatching-parallel-agents` (Tier Model workstreams), `subagent-driven-development` (plan-files mode execution).
 
-**Chain note:** `writing-plans` produces a plan. The Plan Challenge Protocol (below) validates any plan before execution — independent gate, not a side-effect of `writing-plans`.
+**Chain note:** `writing-plans` produces a plan, which is an optional artifact (see *Task Brief Upfront*). Nothing validates it before execution; the spawn prompt's brief and the review/tester pipeline carry that weight.
 
 ### Copy-paste snippets
 

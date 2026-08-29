@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.1-pr7 — 2026-08-29
+
+**The plan gate is gone.** Boris Cherny, June 2026: *"I don't use plan mode anymore… starting with 4.6, and definitely with 4.7, it just doesn't need it."* The models the toolkit targets do not need a staged planning ritual — they need the whole task in the prompt. `hooks/tier-before-coder.sh` enforced the opposite: a coder spawn was refused unless a file in `docs/plans/` carried `Tier: T[1-4]` and challenge evidence, which made the plan file a password rather than a document. It is deleted, not loosened; a hardened version was on the roadmap (`docs/workflow-audit.md` W1, follow-up PR B) and that roadmap item is superseded.
+
+What replaces it is prose, not another mechanism: **Task Brief Upfront** in `AGENT_TEAM.md`. Every spawn prompt states goal, constraints, acceptance criteria, files in scope, and what "done" means (tests + `bash hooks/run-gate.sh`). An agent that has to go looking for one of the five is under-briefed — a prompt defect, not an agent failure. Plan files in `docs/plans/` stay useful and become optional: write one when the work spans sessions or records a decision. `/challenge` stays as an optional skill for architectural work.
+
+Unchanged on purpose: `hooks/require-skills-block.sh` (the `## Required Skills` spawn contract), `hooks/enforce-delegation.sh` (the PO never does hands-on work), the tier table as **size caps** for team composition, and the review/tester/merge-gate pipeline.
+
+**Files:** deleted `hooks/tier-before-coder.sh` and `user-level-reference/hooks/tier-before-coder.sh`; the `Agent` → tier hook entry dropped from `templates/*/.claude/settings.json` ×6 and `user-level-reference/settings.json`; `templates/*/AGENT_TEAM.md` ×6 (Plan Challenge Protocol → Task Brief Upfront, architect lifecycle, sprint-planning flow, Rule 13); `templates/*/CLAUDE.md` ×6 (bootstrap step 6, TL;DR); `scripts/verify-template-consistency.sh` (check 6 inverted to assert the gate vocabulary is absent; check 1 removed as subsumed — **174 → 172 assertions**); `scripts/check-activation.sh`; `hooks/require-skills-block.sh` (stale comment); `README.md` (**15 → 14 hook scripts**, counts recomputed); `docs/architecture.md`, `docs/templates.md`, `docs/workflow-audit.md`, `docs/hook-enforcement-ideas.md`, `user-level-reference/{README,CLAUDE,settings-reference}.md`, `user-level-reference/skills/karpathy-guidelines/SKILL.md`. `scripts/test-hooks.sh` unchanged — the gate never had fixtures (133 passed, still 133).
+
+### Downstream migration
+
+1. Run `/sync-template` and **accept** the changes to `AGENT_TEAM.md`, `CLAUDE.md`, and `.claude/settings.json`. The root-tracked `hooks/tier-before-coder.sh` shows up as a template deletion — accept that too.
+2. At user level: `rm ~/.claude/hooks/tier-before-coder.sh` and delete its `Agent` matcher entry from `~/.claude/settings.json`. Do them together — the entry is 127-wrapped fail-closed, so an entry left behind after the script is gone blocks **every** agent spawn.
+3. No plan file is required before spawning coders any more. Put the task brief in the spawn prompt instead; keep writing plan files where they earn their keep.
+
 ## v2.0 — 2026-08-29
 
 **Six weeks of transcripts, read instead of guessed at.** Every change below was proposed by a measurement, not by a preference: a hook that blocked 1,240 turns to buy nothing, a stall mode that only ever affected named teammates, 219 exploration spawns billed at Opus, ~400 calls to tools the calling agent did not have, 12 skills invoked 0 times. The direction is the same in all five parts — **let a mechanism enforce what prose used to repeat, and load the prose only when it is actionable.** Always-loaded config on `general`: **41,167 → 25,814 B (−37%)**, measured with `wc -c` on the shipped files rather than carried forward. Detail for each part is in the `v2.0-prN` entries below; this entry consolidates the migration.

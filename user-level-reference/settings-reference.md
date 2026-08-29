@@ -66,15 +66,6 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
             "command": "bash ~/.claude/hooks/no-push-main.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/no-push-main.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
           }
         ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/tier-before-coder.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/tier-before-coder.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -244,9 +235,10 @@ Hooks are shell commands that execute in response to Claude Code events. They en
 | Hook | Event / matcher | Polarity | What it does |
 |---|---|---|---|
 | `no-push-main.sh` | `PreToolUse` on `Bash\|PowerShell` | fail-**closed** (127 → exit 2) | Blocks a push to `main`/`master`, resolving the implicit branch when none is named. v2.0 PR1 moved it onto the Bash matcher because native `git push` is now the supported path. |
-| `tier-before-coder.sh` | `PreToolUse` on `Agent` | fail-**closed** | A coder spawn needs a plan file declaring `Tier: T[1-4]` plus evidence of an architect challenge. All other agent types pass through. |
 | `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | unwrapped (cannot block) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
 | `read-size-gate.sh` | `PreToolUse` on `Read` | fail-**open** | Caps an unbounded `Read` at 500 lines and tells the model the next offset. Recommended user-level install — see below. |
+
+**Retired in v2.1:** `tier-before-coder.sh`. The plan gate is gone — plans are optional artifacts and every spawn carries its task brief instead. Delete the script from `~/.claude/hooks/` and its `Agent` matcher entry from `~/.claude/settings.json`; left registered, it fails closed on a missing script and blocks every coder spawn.
 
 **Retired at user level in v2.0:** `block-bash-vcs.sh`. PR1 replaced "ban the git CLI" with "gate it" — `no-push-main.sh` and the project-level `gate-before-merge.sh` stop the dangerous operations, and everything else runs natively. If you still have the old blanket-block registered, remove it; it now blocks the supported workflow.
 
@@ -336,12 +328,6 @@ Templates include the following workflow enforcement hooks (via external scripts
 - Blocks pushes to `main` or `master` branches. Resolves implicit branch via `git branch --show-current` when the `branch` parameter is omitted.
 - Message: "Use a feature branch and create a PR."
 
-**Tier before coder** (`hooks/tier-before-coder.sh`):
-- Matcher: `Agent`
-- Only blocks coder types (`coder`, `dotnet-coder`, `java-coder`, `python-coder`, `rust-coder`). All other agent types pass through.
-- Requires a plan file (in `docs/plans/` or `~/.claude/plans/`) containing both a tier declaration (`Tier: T[1-4]`) and evidence of architect challenge (word "challenge" or "architect").
-- Two distinct block messages: "No plan with tier declaration found" vs "Plan has tier but no evidence of architect challenge."
-
 **Require skills block** (`hooks/require-skills-block.sh`):
 - Matcher: `Agent`
 - Enforces the AGENT_TEAM.md *Spawn-Prompt Binding Table* — when the PO spawns a `Task` whose `subagent_type` is bound (`coder` and variants, `tester`, `test-writer`, `architect`, `requirements-engineer`), the prompt body must contain a literal `## Required Skills` line listing the skills that subagent must invoke before task work.
@@ -390,7 +376,7 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 - Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
 - Never exits non-zero, so it is registered with a fail-open (`exit 0` on 127) wrapper.
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
-- Uses `node -e` for JSON parsing (no `jq` dependency). Style-matches `tier-before-coder.sh`.
+- Uses `node -e` for JSON parsing (no `jq` dependency). Style-matches `no-push-main.sh`.
 
 **Recommended install scope: user-level** (`~/.claude/settings.json`). The 22% Read-tool share is paid in target-project sessions, not in `claude-code-toolkit` self-maintenance. Installing at user level covers every project the user opens.
 

@@ -5,12 +5,12 @@
 # Session Bootstrap
 
 At the start of every session:
-1. Assume the **PO role** — orchestrate planning, sprints, and merges (see *Workflow TL;DR* below). Do **NOT** `Read AGENT_TEAM.md` up front (850+ lines). Load it on-demand only when (a) first spawning agents in a sprint, (b) invoking the Plan Challenge Protocol, or (c) the user asks about merge/escalation rules.
+1. Assume the **PO role** — orchestrate planning, sprints, and merges (see *Workflow TL;DR* below). Do **NOT** `Read AGENT_TEAM.md` up front (850+ lines). Load it on-demand only when (a) first spawning agents in a sprint, (b) writing a spawn brief, or (c) the user asks about merge/escalation rules.
 2. Read `PROJECT_CONTEXT.md` — load build commands and workflow config
 3. **Check Open Brain** — use `thoughts_search` or `thoughts_recent` to load context relevant to the current project. Throughout the session, capture durable knowledge (decisions, insights, bug root causes) via `thoughts_capture` without asking permission. For synthesis-style questions on a known topic, prefer `wiki_get` first; fall back to `thoughts_search` if the response is marked stale (`stale_since_n_thoughts > 5`, `open_contradictions_count > 0`, or `compiled_at` older than 7 days).
 4. Present current state (from MEMORY.md) and ask what to work on. Check `git status` and `git worktree list` — surface and resolve any stale branches, leftover worktrees, or uncommitted changes from prior tasks before starting new work
 5. **Act on the RETRO brief** — if one was printed (see `hooks/retro-brief.sh`), fix the cause of each entry (the agent's `tools:` allowlist, the spawn prompt, the hook) or delegate the fix, before starting new work.
-6. **Enter plan mode** for any non-trivial task (T2+) — the PO calls `EnterPlanMode` before implementation. T1 trivial fixes (< 10 lines, config/style) may skip plan mode — but still need a 3-line plan file containing `Tier: T1` in `docs/plans/` (the coder spawn gate reads it), and are implemented by ONE spawned coder, never by the PO.
+6. **Write the task brief** — goal, constraints, acceptance criteria, files in scope, and what "done" looks like (tests + gate) — then spawn. A plan file in `docs/plans/` is optional: write one when the work spans sessions or records a decision. Implementation is always a spawned coder, never the PO.
 
 ## Workflow TL;DR
 
@@ -39,7 +39,7 @@ Team size in this table is a **maximum**, not a target — pick the lowest defen
 
 **Agent fallback:** If `rust-coder`'s MCP tools (rust-tools) are unavailable, the agent falls back to Bash `cargo` equivalents per its own fallback rules. Do NOT substitute `coder` for `rust-coder` — it contains Rust/Tauri-specific knowledge (IPC patterns, command registration, rusqlite conventions) beyond MCP tool usage.
 
-**Every plan declares its tier.** The PO enforces the correct team setup per tier before spawning agents.
+**Every spawn carries the task brief.** Goal, constraints, acceptance criteria, files in scope, and the definition of done go in the prompt itself — see `AGENT_TEAM.md` → *Task Brief Upfront*.
 
 **Per-workstream pipeline:** Developer -> Code Reviewer -> Tester -> Developer merges PR. All developer agents have `Bash` plus the GitHub PR tools. See `AGENT_TEAM.md` → Merge Protocol.
 
