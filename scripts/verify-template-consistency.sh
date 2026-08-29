@@ -301,7 +301,7 @@ extracted=$(
     grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
     # frontmatter command: lines only (execution refs), not prose
     grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
-  } | grep -o 'hooks/[a-z-]*\.sh' | sort -u
+  } | grep -o 'hooks/[A-Za-z0-9_-]*\.sh' | sort -u
 )
 # The vacuity check runs on the EXTRACTION only. run-gate.sh is added afterwards,
 # so a broken grep can never be masked by the unconditional entry.
@@ -725,9 +725,10 @@ done
 #     catch a *new* root hook that nobody mirrored — that is not a drift, it is
 #     a judgement call about which hooks belong at user level. run-gate.sh IS
 #     mirrored (v2.1.3): the user-level pre-commit-test.sh shells into it, same
-#     as the project-level one. enforce-delegation.sh and the retro pair still
-#     deliberately do not mirror. What this check guarantees is that nothing
-#     already in the mirror is stale or orphaned.
+#     as the project-level one. retro-ledger.sh mirrors too (v2.1.4), so the
+#     budget=<n> field lands the same way at user level; retro-brief.sh and
+#     enforce-delegation.sh still deliberately do not mirror. What this check
+#     guarantees is that nothing already in the mirror is stale or orphaned.
 # ---------------------------------------------------------------------------
 echo
 ULH=user-level-reference/hooks
@@ -925,6 +926,36 @@ elif [ -z "$region_missing" ]; then
   ok "all $region_total template agent files + AGENT_TEAM.md end with a PROJECT-CUSTOM region"
 else
   ko "PROJECT-CUSTOM region missing/not-last in:$region_missing"
+fi
+
+# ---------------------------------------------------------------------------
+# 26. templates/*/CLAUDE.md context-mode sentinel (v2.1.3 fix round 2, derived
+#     over variants). The line immediately ABOVE `PROJECT-CUSTOM:BEGIN` in
+#     every variant CLAUDE.md must name `context-mode`, so a consumer syncing
+#     the region sees where a plugin routing block belongs before it re-lands
+#     inside the preserved region.
+# ---------------------------------------------------------------------------
+echo
+sentinel_missing=""
+for v in $VARIANTS; do
+  f="templates/$v/CLAUDE.md"
+  [ -f "$f" ] || { sentinel_missing="$sentinel_missing $f(missing)"; continue; }
+  line=$(grep -n -F '<!-- PROJECT-CUSTOM:BEGIN' "$f" | head -1 | cut -d: -f1)
+  if [ -z "$line" ]; then
+    sentinel_missing="$sentinel_missing $f(no-marker)"
+    continue
+  fi
+  prev=$((line - 1))
+  prevline=$(sed -n "${prev}p" "$f")
+  case "$prevline" in
+    *context-mode*) : ;;
+    *) sentinel_missing="$sentinel_missing $f(line-$prev)" ;;
+  esac
+done
+if [ -z "$sentinel_missing" ]; then
+  ok "all $(printf '%s\n' "$VARIANTS" | wc -w) variant CLAUDE.md files carry the context-mode sentinel line above PROJECT-CUSTOM:BEGIN"
+else
+  ko "CLAUDE.md context-mode sentinel missing/wrong line in:$sentinel_missing"
 fi
 
 # ---------------------------------------------------------------------------

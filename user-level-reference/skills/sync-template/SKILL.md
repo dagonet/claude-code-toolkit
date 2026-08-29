@@ -62,6 +62,8 @@ The same order applies to the CONFLICT resolutions in step 4 and the new files i
 
 **Smoke test immediately after the `.claude/settings.json` write**: run a harmless `Bash(true)`. If it is blocked, the recovery note in the "Restart the session" area above applies — apply `hooks/lib/git-cmd.sh` and the three gates via `template_apply_file` (no shell needed) rather than continuing the sync through a fail-closed session.
 
+**Any hook probe must live in a script file run via `bash <path>`, never inline.** The gates scan the whole command STRING by design, not just what a git subcommand would actually do — an inline compound command that merely *mentions* `git push origin main` (in a comment, an echo, a string literal) trips the gate it is trying to test. The result is then uninterpretable: a block does not tell you whether the gate works or whether your own probe was the violation it caught. Write the probe to a temp file and run `bash <path>` instead.
+
 > **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination. Once Bash works again, finish the sync in the order above and restart per the final report.
 
 Collect all results. Report the list of auto-updated files.
@@ -159,7 +161,7 @@ Commit the synced tree yourself, from the main thread — `git add`/`git commit`
 
 Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appended `# context-mode — MANDATORY routing rules` block. The context-mode plugin re-appends this block after `PROJECT-CUSTOM:END` on every session start, so a CLAUDE.md cleaned earlier in the sync is dirty again by the time you commit. Remove the re-appended block (or disable the plugin) before staging, otherwise the commit silently reintroduces it.
 
-`git add -A` excluding `CLAUDE.local.md`, then `git commit`.
+Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, `.gate/`, stray output files) that were never part of the sync.
 
 ## Rules
 
