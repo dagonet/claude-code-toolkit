@@ -803,6 +803,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 22b. The .env deny list is precise (v2.2.0, consumer feedback BUG 6).
+#
+#     `Read(.env*)` also denied `.env.example` — a TRACKED file most repos ship
+#     as the documented list of required variables. The secret-bearing names are
+#     enumerated instead, so the example file stays readable.
+# ---------------------------------------------------------------------------
+echo
+ENV_DENY='Read(.env) Read(.env.local) Read(.env.*.local) Read(.env.production) Read(.env.staging) Read(.env.development)'
+for s in $(for v in $VARIANTS; do echo "templates/$v/.claude/settings.json"; done) user-level-reference/settings.json; do
+  missing=""
+  for t in $ENV_DENY; do
+    grep -qF "\"$t\"" "$s" || missing="$missing $t"
+  done
+  if [ -z "$missing" ]; then
+    ok "$s: denies all 6 secret-bearing .env names"
+  else
+    ko "$s: .env deny list missing:$missing"
+  fi
+  # The glob must be gone, or .env.example is denied again.
+  if grep -qF '"Read(.env*)"' "$s"; then
+    ko "$s: Read(.env*) is back — it also denies the tracked .env.example"
+  else
+    ok "$s: no Read(.env*) glob (.env.example stays readable)"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 # 23. SubagentStop matchers cover project-added language coders (v2.1.1).
 #
 #     An enumerated matcher ("^(coder|code-reviewer|tester|architect)$") reverts

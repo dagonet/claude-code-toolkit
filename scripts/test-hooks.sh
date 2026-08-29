@@ -337,7 +337,7 @@ expect "(R2-3) relative \$0: run-gate.sh actually ran (artifact written)" \
 NORUNGATE="$TMPROOT/norungate"
 mkdir -p "$NORUNGATE/lib"
 cp "$ROOT/hooks/pre-commit-test.sh" "$NORUNGATE/"
-cp "$ROOT/hooks/lib/git-cmd.sh" "$NORUNGATE/lib/"
+cp "$ROOT/hooks/lib/git-cmd.sh" "$ROOT/hooks/lib/json.sh" "$NORUNGATE/lib/"
 check_msg "(c) no run-gate.sh: Gate command evaluated directly" "$NORUNGATE/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
   "BLOCKED: 'false' failed"
@@ -1080,6 +1080,183 @@ subout=$(node -e 'console.log(JSON.stringify({session_id:"t",agent_id:"a1",hook_
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 expect "subagent pytest still passes" "0" \
   "$(printf '%s' "$subout" | grep -c '"deny"')"
+
+# ===========================================================================
+# v2.2.0 PR15 (A): the hooks must not depend on `node` specifically.
+#
+# Native Claude Code installs ship no node, and every gate keyed on
+# `node -e` silently exited 0 there. hooks/lib/json.sh now tries node,
+# then python3, then jq; the three git gates fail CLOSED when none is
+# present, the fail-open hooks warn once and pass.
+#
+# The fixture PATH is a directory of one-line `exec` wrapper scripts for the
+# tools the hooks actually call. Wrappers are text files, so no binary/DLL
+# copying is involved on Windows, and `command -v node` genuinely fails inside
+# them -- asserted below before any hook is exercised.
+# ===========================================================================
+echo
+echo "=== no-JSON-parser fixtures (hooks/lib/json.sh) ==="
+
+BASHABS=$(command -v bash)
+
+mkpathdir() { # <name> [extra-tool ...] -> prints dir
+  pd="$TMPROOT/path-$1"; shift
+  mkdir -p "$pd"
+  for t in sh bash git grep sed tr head tail cut cat wc stat date mktemp \
+           dirname basename sort uniq mkdir rm ls awk env find touch cp expr "$@"; do
+    r=$(command -v "$t" 2>/dev/null) || continue
+    [ -n "$r" ] || continue
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$r" > "$pd/$t"
+    chmod +x "$pd/$t"
+  done
+  printf '%s\n' "$pd"
+}
+
+# <label> <pathdir> <hook-rel-path> <want-exit> <json> [stderr-needle]
+check_env() {
+  label="$1"; pd="$2"; hook="$3"; want="$4"; json="$5"; needle="${6:-}"
+  errf="$TMPROOT/check_env.err"
+  printf '%s' "$json" | PATH="$pd" "$BASHABS" "$ROOT/$hook" >/dev/null 2>"$errf"
+  got=$?
+  okc=1
+  [ "$got" = "$want" ] || okc=0
+  if [ -n "$needle" ] && ! grep -qF "$needle" "$errf"; then okc=0; fi
+  if [ "$okc" = "1" ]; then
+    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s%s, got %s: %s)\n' \
+      "$label" "$want" "${needle:+ + \"$needle\"}" "$got" "$(head -1 "$errf" 2>/dev/null)"
+    fail=$((fail + 1))
+  fi
+}
+
+NOPARSER=$(mkpathdir noparser)
+PYONLY=$(mkpathdir pyonly python3)
+JQONLY=$(mkpathdir jqonly jq)
+
+# Self-check FIRST: a fixture that still sees node would pass green and prove
+# nothing. Prints 1 when the parser is invisible on that PATH.
+seen() { # <pathdir> <tool>
+  PATH="$1" "$BASHABS" -c "command -v $2 >/dev/null 2>&1" && echo 0 || echo 1
+}
+expect "fixture PATH hides node"         1 "$(seen "$NOPARSER" node)"
+expect "fixture PATH hides python3"      1 "$(seen "$NOPARSER" python3)"
+expect "fixture PATH hides jq"           1 "$(seen "$NOPARSER" jq)"
+expect "python3-only PATH hides node"    1 "$(seen "$PYONLY" node)"
+expect "python3-only PATH keeps python3" 0 "$(seen "$PYONLY" python3)"
+expect "jq-only PATH hides node"         1 "$(seen "$JQONLY" node)"
+expect "jq-only PATH keeps jq"           0 "$(seen "$JQONLY" jq)"
+
+NEEDLE_BLOCK="no JSON parser (node, python3 or jq) on PATH"
+NEEDLE_WARN="no JSON parser on PATH"
+
+# --- the three git gates fail CLOSED with no parser -------------------------
+check_env "no parser: push origin main"     "$NOPARSER" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")" "$NEEDLE_BLOCK"
+check_env "no parser: push feature branch"  "$NOPARSER" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")" "$NEEDLE_BLOCK"
+check_env "no parser: gh pr merge"          "$NOPARSER" hooks/gate-before-merge.sh 2 \
+  "$(mkjson Bash 'gh pr merge 1 --squash' "$GATEREPO")" "$NEEDLE_BLOCK"
+check_env "no parser: git commit"           "$NOPARSER" hooks/pre-commit-test.sh 2 \
+  "$(mkjson Bash 'git commit -m x' "$MAINREPO")" "$NEEDLE_BLOCK"
+# The documented escape hatch still wins over the missing parser. Without a
+# parser the payload cwd is unreadable, so the gate falls back to the process
+# cwd -- which is what Claude Code sets to the project dir. Run it from there.
+mkdir -p "$FEATREPO/.claude"; : > "$FEATREPO/.claude/git-guard-off"
+printf '%s' "$(mkjson Bash 'git push origin main' "$FEATREPO")" \
+  | ( cd "$FEATREPO" && PATH="$NOPARSER" "$BASHABS" "$ROOT/hooks/no-push-main.sh" ) >/dev/null 2>&1
+expect "no parser: guard-off still opens" 0 "$?"
+rm -f "$FEATREPO/.claude/git-guard-off"
+
+# A mirror that copied git-cmd.sh but not the new json.sh must fail closed too,
+# not fall back to an undefined reader.
+NOJSONLIB="$TMPROOT/nojsonlib"
+mkdir -p "$NOJSONLIB/lib"
+cp "$ROOT/hooks/no-push-main.sh" "$NOJSONLIB/"
+cp "$ROOT/hooks/lib/git-cmd.sh" "$NOJSONLIB/lib/"
+check_msg "lib/json.sh missing: gate fails closed" "$NOJSONLIB/no-push-main.sh" 2 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")" "hooks/lib/json.sh"
+
+# --- python3 only: the git gates behave exactly as with node ----------------
+check_env "python3: push origin main blocked"  "$PYONLY" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"
+check_env "python3: feature push allowed"      "$PYONLY" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
+check_env "python3: quoted -C space repo"      "$PYONLY" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash "git -C \"$SPACEREPO\" push" "$FEATREPO")"
+check_env "python3: gh pr merge needs artifact" "$PYONLY" hooks/gate-before-merge.sh 2 \
+  "$(mkjson Bash 'gh pr merge 1 --squash' "$GATEREPO")"
+
+# --- jq only: same ----------------------------------------------------------
+check_env "jq: push origin main blocked"       "$JQONLY" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"
+check_env "jq: feature push allowed"           "$JQONLY" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
+check_env "jq: quoted -C space repo"           "$JQONLY" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash "git -C \"$SPACEREPO\" push" "$FEATREPO")"
+
+# require-skills-block is the one BLOCKING hook whose verdict now flows through
+# json_get, and it matches on a multi-line field (prompt) — a backend that
+# mangled the newlines would turn `^## Required Skills$` from a match into a
+# miss and the gate would stop blocking. Exercised on both non-node backends.
+check_env "python3: skills block present passes" "$PYONLY" hooks/require-skills-block.sh 0 \
+  "$(mkspawn coder "$WITHBLOCK")"
+check_env "python3: missing skills block blocks"  "$PYONLY" hooks/require-skills-block.sh 2 \
+  "$(mkspawn coder 'Do the thing.')"
+check_env "jq: skills block present passes"       "$JQONLY" hooks/require-skills-block.sh 0 \
+  "$(mkspawn coder "$WITHBLOCK")"
+check_env "jq: missing skills block blocks"       "$JQONLY" hooks/require-skills-block.sh 2 \
+  "$(mkspawn coder 'Do the thing.')"
+
+# --- the fail-open hooks stay open, but say so once -------------------------
+check_env "no parser: read-size-gate warns"    "$NOPARSER" hooks/read-size-gate.sh 0 \
+  "$(mkread "$ROOT/README.md" - -)" "$NEEDLE_WARN"
+check_env "no parser: require-skills warns"    "$NOPARSER" hooks/require-skills-block.sh 0 \
+  "$(mkspawn coder 'no skills block here')" "$NEEDLE_WARN"
+check_env "no parser: enforce-delegation warns" "$NOPARSER" hooks/enforce-delegation.sh 0 \
+  "$(mkjson Bash 'pytest' "$DELEGREPO")" "$NEEDLE_WARN"
+check_env "no parser: bash-output-guard warns" "$NOPARSER" hooks/bash-output-guard.sh 0 \
+  "$(mkpost 40000)" "$NEEDLE_WARN"
+
+# ===========================================================================
+# v2.2.0 PR15 (B): the optional **Protected branches**: PROJECT_CONTEXT.md field
+# ===========================================================================
+echo
+echo "=== **Protected branches**: field ==="
+
+pbrepo() { # <name> <branch> <field-line|-> -> prints path
+  d=$(mkrepo "$1" "$2")
+  {
+    echo "# PROJECT_CONTEXT"
+    echo "- **Gate**: true"
+    [ "$3" = "-" ] || echo "$3"
+  } > "$d/PROJECT_CONTEXT.md"
+  printf '%s\n' "$d"
+}
+
+PB_ABSENT=$(pbrepo pb-absent main -)
+PB_DEV=$(pbrepo pb-dev develop '- **Protected branches**: develop release')
+PB_DEVMAIN=$(pbrepo pb-devmain main '- **Protected branches**: develop release')
+PB_NONE=$(pbrepo pb-none main '- **Protected branches**: none')
+PB_COMMA=$(pbrepo pb-comma develop '**Protected branches**: `develop, release`')
+
+H=hooks/no-push-main.sh
+check "field absent: main still blocked"   "$H" 2 "$(mkjson Bash 'git push' "$PB_ABSENT")"
+check "develop listed: develop blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_DEV")"
+check "develop listed: main allowed"       "$H" 0 "$(mkjson Bash 'git push' "$PB_DEVMAIN")"
+check "develop listed: main refspec ok"    "$H" 0 "$(mkjson Bash 'git push origin main' "$PB_DEVMAIN")"
+check "develop listed: develop refspec no" "$H" 2 "$(mkjson Bash 'git push origin develop' "$PB_DEVMAIN")"
+check "none: main allowed"                 "$H" 0 "$(mkjson Bash 'git push' "$PB_NONE")"
+check "none: explicit main allowed"        "$H" 0 "$(mkjson Bash 'git push origin main' "$PB_NONE")"
+check "comma+backticks are tolerated"      "$H" 2 "$(mkjson Bash 'git push' "$PB_COMMA")"
+
+# the merge gate reads the same field
+GB=hooks/gate-before-merge.sh
+check "merge on develop is gated"          "$GB" 2 "$(mkjson Bash 'git merge feature/x' "$PB_DEV")"
+check "merge on unprotected main is not"   "$GB" 0 "$(mkjson Bash 'git merge feature/x' "$PB_DEVMAIN")"
+# `none` unprotects the BRANCH rules only: a PR merge is a merge on any branch.
+check "none: gh pr merge still gated"      "$GB" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$PB_NONE")"
 
 # ===========================================================================
 echo

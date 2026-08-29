@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.2.0-pr15 — 2026-08-29
+
+**Every hook assumed `node`, so on a box without it the whole enforcement layer was silently off.** Credit: the home-agent WSL dry-run report (2026-08-29) — a native Claude Code install ships no Node runtime, and `hooks/lib/git-cmd.sh` parsed the payload with `node -e … 2>/dev/null`. With node absent, `GC_TOOL`/`GC_CMD` came back empty and every gate fell through its `[ -n "$GC_CMD" ] || exit 0` guard: pushes to main, merges without a gate artifact, and commits without tests all passed, with nothing printed. 10 of the 12 hooks were affected.
+
+**1. One shared JSON reader: `hooks/lib/json.sh`.** `json_get <json> <dotted.path>` tries `node`, then `python3` (`json.load(sys.stdin)`), then `jq`, and prints the scalar at that path or nothing. `hooks/lib/git-cmd.sh` sources it and reads `tool_name`, `cwd` and `tool_input.command` through it; `require-skills-block.sh` (`subagent_type`, `prompt`) and `enforce-agent-contract.sh` (`agent_type`, `transcript_path`, `agent_id`, `session_id`) do the same. `gc_protect_c_paths` — the quoted-`git -C <path with space>` protection that keeps the gates from evaluating the wrong repo — was a node regex substitution and is now pure `sed`, so the three git gates need no node-specific behaviour at all.
+
+**2. Polarity, stated explicitly.** The three git gates (`no-push-main.sh`, `pre-commit-test.sh`, `gate-before-merge.sh`) **fail CLOSED** with none of the three parsers on PATH: `BLOCKED: no JSON parser (node, python3 or jq) on PATH — the git gates cannot inspect the command`, exit 2. The documented `<cwd>/.claude/git-guard-off` escape hatch still wins (looked for under the process cwd, since the payload cwd is unreadable then). The fail-open hooks stay fail-open and print exactly one stderr line instead of vanishing: `WARN: <hook>: no JSON parser on PATH — enforcement inactive`. Six of them (`read-size-gate`, `bash-output-guard`, `enforce-delegation`, `retro-ledger`, `retro-brief`, and `enforce-agent-contract`'s transcript scan) are embedded node *programs*, not field reads — they still require node specifically and say so: `WARN: <hook>: node not on PATH (found python3) — enforcement inactive`. Porting those to three backends is deliberately out of scope. Two more consequences worth knowing: on a node-less box the WARN fires per invocation (`read-size-gate` on every `Read`), and `require-skills-block.sh`/`enforce-agent-contract.sh` disable themselves silently if `hooks/lib/json.sh` is missing — they were fail-open by construction, unlike the git gates, which block on the same condition. `agent-budget-warn.sh` never used a parser (it greps the raw payload) and is untouched.
+
+**3. `**Protected branches**:` — an optional PROJECT_CONTEXT.md field (G3).** `no-push-main.sh` and `gate-before-merge.sh` hardcoded `main|master`. They now read the field with the same tolerant grep as `**Gate**:` (leading list marker, backticks, comma- or space-separated names). Absent → `main master` as before; `- **Protected branches**: develop release` → those two instead; `none` (or an empty value) → nothing is branch-protected, though `gh pr merge` stays gated because it is a merge whatever branch it runs on. `gc_targets_main_ref` takes the repo as a second argument so the ref check uses the same list. PR16 adds the field line to the PROJECT_CONTEXT templates.
+
+**4. `.env` deny precision (BUG 6).** `Read(.env*)` also denied `.env.example`, a tracked file most repos ship as the documented variable list. All six `templates/*/.claude/settings.json` and `user-level-reference/settings.json` now enumerate `Read(.env)`, `Read(.env.local)`, `Read(.env.*.local)`, `Read(.env.production)`, `Read(.env.staging)`, `Read(.env.development)`. A new consistency check asserts the six names AND that the `.env*` glob has not come back.
+
+**Fixtures.** The no-parser cases run each hook with `PATH` pointing at a directory of one-line `exec` wrapper scripts for git and coreutils only — text files, so nothing is copied and Windows DLL loading is not involved — and the suite asserts *first* that `command -v node|python3|jq` genuinely fails inside that PATH, since a fixture that still sees node would pass green and prove nothing. The git-gate must-block/must-not-block cases (including the quoted `-C` with a space) are then repeated on a python3-only and on a jq-only PATH.
+
+### Downstream migration
+
+1. **Re-copy the hooks INCLUDING `lib/`**: `cp -r user-level-reference/hooks/. ~/.claude/hooks/`. The new `hooks/lib/json.sh` is required — `git-cmd.sh` refuses to run without it (`BLOCKED: … hooks/lib/json.sh missing`), by design: a missing reader must not silently disarm the gates. In a consumer project `/sync-template` picks up `hooks/**` including `hooks/lib/`.
+2. **Check your PATH.** If the box has none of `node`, `python3`, `jq`, the git gates now block instead of waving everything through. Install one — `jq` is the smallest, `node` unlocks the five node-only hooks.
+3. **User-level `settings.json` deny list changed**: replace `Read(.env*)` with the six enumerated names, or `.env.example` stays unreadable.
+4. **Optional**: add `- **Protected branches**: <names>` to `PROJECT_CONTEXT.md` if your trunk is not `main`/`master`. Omitting it keeps the old behaviour exactly.
+
+12 hook scripts (2 lib files), 8 skills; 212 → 227 consistency assertions and 204 → 243 hook fixtures.
+
 ## v2.1.5 — 2026-08-29
 
 **Two consumers hit the same wall from opposite sides: the gate artifact never matched what agents actually commit, and the delegation guard denied the PO's own sync commit.** Credit: Yutraffic-Challenge (PR #223, commits e59e6fd vs 567f0d1) and panoscribe (PR #123).

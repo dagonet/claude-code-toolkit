@@ -31,6 +31,12 @@
 THRESHOLD=12000
 KEEP=4000
 
+# v2.2.0: the spill/truncate engine below is an embedded node program, so this
+# hook needs node specifically. Without it it stays fail-open, but says so once.
+jlib="$(dirname "$0")/lib/json.sh"
+if [ -f "$jlib" ]; then . "$jlib"; json_require_node bash-output-guard || exit 0; fi
+command -v node >/dev/null 2>&1 || exit 0
+
 TOOL_INPUT=$(cat)
 
 OUTDIR="${TMPDIR:-/tmp}/claude-bash-out"

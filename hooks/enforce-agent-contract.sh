@@ -21,10 +21,17 @@
 
 INPUT=$(cat)
 
-AGENT_TYPE=$(node -e "const j=JSON.parse(process.argv[1]);console.log(j.agent_type||'')" "$INPUT" 2>/dev/null || echo '')
-TRANSCRIPT=$(node -e "const j=JSON.parse(process.argv[1]);console.log(j.transcript_path||'')" "$INPUT" 2>/dev/null || echo '')
-AGENT_ID=$(node -e "const j=JSON.parse(process.argv[1]);console.log(j.agent_id||'')" "$INPUT" 2>/dev/null || echo '')
-SESSION_ID=$(node -e "const j=JSON.parse(process.argv[1]);console.log(j.session_id||'')" "$INPUT" 2>/dev/null || echo '')
+# v2.2.0: fields go through hooks/lib/json.sh, but the transcript scan below is
+# an embedded node program — so this hook still needs node specifically, and
+# says so once (fail-open) when it is missing.
+jlib="$(dirname "$0")/lib/json.sh"
+if [ -f "$jlib" ]; then . "$jlib"; json_require_node enforce-agent-contract || exit 0; fi
+command -v node >/dev/null 2>&1 || exit 0
+
+AGENT_TYPE=$(json_get "$INPUT" agent_type)
+TRANSCRIPT=$(json_get "$INPUT" transcript_path)
+AGENT_ID=$(json_get "$INPUT" agent_id)
+SESSION_ID=$(json_get "$INPUT" session_id)
 
 # Fail-open: not enough information to enforce.
 if [ -z "$AGENT_TYPE" ] || [ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
