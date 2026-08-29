@@ -96,24 +96,39 @@ for f in "$H"/*.sh "$H"/lib/*.sh; do
   bash -n "$f" 2>/dev/null || echo "SYNTAX FAIL $f"
 done
 
-# b. each git gate, against the command IT owns plus two it must allow.
+# b. no-push-main, the one gate that needs no config and touches nothing.
 probe() { # <hook> <command>
   printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$2" "$R" \
     | bash "$H/$1.sh" >/dev/null 2>&1
   echo "$1 [$2] exit=$?"
 }
-for c in "git push origin main" "ls -la" "true"; do probe no-push-main     "$c"; done
-for c in "git commit -m x"     "ls -la" "true"; do probe pre-commit-test   "$c"; done
-for c in "git merge feature/x" "ls -la" "true"; do probe gate-before-merge "$c"; done
+for c in "git push origin main" "ls -la" "true"; do probe no-push-main "$c"; done
 ```
 
-Expect **2** on the first row of each group and **0** on the `ls -la` and `true` rows — nine lines, three 2s, six 0s.
+Expect **2**, **0**, **0**. That is the whole routine check: deterministic on every install, no configuration required, and it reads nothing but `PROJECT_CONTEXT.md` and `git branch --show-current`.
 
-**Each gate gets the command it owns, not a shared one.** Measured, in a repo with `**Test**` and `**Gate**` configured: `pre-commit-test.sh` returns **0** for a push-to-main, because it gates *commits*; `no-push-main.sh` returns 0 for a commit and for a merge. Feeding all three the same push-to-main payload therefore produces two false "enforcement gone" readings on a perfectly healthy install. (`gate-before-merge.sh` does return 2 for a push-to-main as well — a fast-forward merge by push — but `git merge` is the row that names what it is for.)
+**Why only this gate is in the routine probe.** The other two cannot be exercised without doing real work, and their answers are not deterministic:
 
-**Both halves are the test.** All-2 (including the `true` rows) means the session is fail-CLOSED — every Bash call is about to be blocked; take the recovery note below. **All-0 means enforcement is GONE** — the scripts are missing, empty, unparseable, or not wired — and the sync is running unprotected: apply `hooks/lib/git-cmd.sh` and the three gate scripts via `template_apply_file`, then re-run the probe before continuing. Only the three-2s-six-0s shape is healthy; the old `Bash(true)` test could not tell the second failure from success at all.
+| gate | its command | returns 2 when |
+|---|---|---|
+| `no-push-main` | `git push origin main` | always, on a protected branch — needs no config |
+| `pre-commit-test` | `git commit -m x` | **only if the suite FAILS.** It *runs* `**Test**`, or `run-gate.sh`, to find out |
+| `gate-before-merge` | `git merge feature/x` | only on a protected branch with no fresh artifact |
 
-One legitimate all-0: `pre-commit-test.sh` and `gate-before-merge.sh` **no-op by design** when `PROJECT_CONTEXT.md` has no `**Test**` / `**Gate**` value (or the value is still a `{{PLACEHOLDER}}`). If those two groups are all-0, check that field before concluding the hooks are broken — `no-push-main.sh` needs no config and is the group that must always show its 2.
+Measured, and neither case is a corner case: in a `**Test**`-configured repo with a green suite the commit row exits **0**; in a Gate-only repo `pre-commit-test` shells into `run-gate.sh`, which on green **writes `.gate/last-pass.json`** — after which `gate-before-merge` finds a fresh artifact and also exits 0. Feeding all three a shared push-to-main payload is wrong for a different reason again: `pre-commit-test` returns 0 for a push (it gates *commits*) and `no-push-main` returns 0 for a commit or a merge.
+
+> **The two rows below are NOT read-only — they run your test suite, and they can mint a gate artifact.** `pre-commit-test.sh` executes `**Test**`, or `run-gate.sh` when there is no `**Test**` field, and a green `run-gate.sh` writes `.gate/last-pass.json` keyed to the current HEAD/tree. That artifact is exactly what `gate-before-merge.sh` looks for, so a probe run can leave a *real* merge un-gated until it expires (60 minutes). Run these deliberately, on a repo you are already building in, and `rm -f .gate/last-pass.json` afterwards. Never as part of a routine sync.
+>
+> ```sh
+> probe pre-commit-test   "git commit -m x"      # 2 only if the suite FAILS
+> probe gate-before-merge "git merge feature/x"  # 2 only on a protected branch,
+> ```                                            #   with no fresh artifact
+>
+> A 0 from either proves nothing on its own — check its condition in the table above before drawing a conclusion.
+
+**Both halves are the test, and `2 0 0` is the only healthy answer.** `2 2 2` means the session is fail-CLOSED — every Bash call is about to be blocked; take the recovery note below. **`0 0 0` means enforcement is GONE** — the scripts are missing, empty, unparseable, or not wired — and the sync is running unprotected: apply `hooks/lib/git-cmd.sh` and the three gate scripts via `template_apply_file`, then re-run the probe before continuing. The old `Bash(true)` test could not tell that second failure from success at all, which is why it is gone.
+
+One thing this probe deliberately does not tell you: whether the branch you are on is the one you meant to protect. It fires on `main` because `main` is in the default set. If your trunk is `develop`, `2 0 0` here says the hook works — not that `develop` is covered. Check `**Protected branches**:` for that; the block message names the set it resolved.
 
 > `enforce-delegation.sh` is deliberately NOT in that loop. It signals a deny by printing a `permissionDecision` on **stdout** and always exits 0, so an exit-code probe reads every case as PASS and proves nothing about it. Probe it by grepping its stdout for `"permissionDecision":"deny"` instead.
 

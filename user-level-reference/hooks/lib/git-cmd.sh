@@ -88,6 +88,14 @@ gc_read_stdin() {
   fi
   case "$GC_TOOL" in
     Bash|PowerShell)
+      # ACCEPTED AND DOCUMENTED, not fixed: json_get prints "" for a
+      # `tool_input.command` that is an object or an array, which is
+      # indistinguishable here from the key being absent — and an absent key IS
+      # a legitimate allow (a Bash payload carrying no command must not block
+      # every Bash call; fixture: "Bash payload with no command"). Telling the
+      # two apart needs a "key present but non-scalar" probe that json.sh does
+      # not have, and the case is not reachable from Claude Code, which always
+      # sends a string. Revisit if a real payload ever shows otherwise.
       GC_CMD=$(json_get "$GC_JSON" tool_input.command)
       ;;
     *)

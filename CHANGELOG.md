@@ -36,7 +36,11 @@ The three cases are now distinct, and asserted separately:
 
 **Second propagation path, also fixed:** `templates/*/AGENT_TEAM.md`'s PROJECT_CONTEXT authoring block carried the same `{{DEFAULT_BRANCH}}` literal. Inert where it sat (prose in a fenced example; the resolver reads only `PROJECT_CONTEXT.md`) but it is a COPY SOURCE — and worse than stale, since on panoscribe a `source="template"` apply overwrote a correctly filled `main` with the placeholder. It now carries a real value, and it gained the `**Protected branches**:` line it never had, so a file created from it surfaces the knob instead of silently taking the default.
 
-**Why the template still ships a live `{{DEFAULT_BRANCH}}` rather than a commented-out line** (the alternative was on the table): with the resolver fix, a live placeholder is now exactly as safe as an absent line, and it is the only thing that makes the knob discoverable — the `AGENT_TEAM.md` block above is the proof, having hidden the field entirely by omitting it. A commented-out line would trade a real benefit for safety we now get elsewhere. The prose `- **Branch strategy**:` line was the remaining hazard — it read like protection config and sat four lines above the key that is one — so it now says outright that no hook reads it and points at the key.
+**The templates no longer ship a placeholder on that line at all.** An earlier draft of this release kept `{{DEFAULT_BRANCH}}` live, arguing that with the resolver fix it was as safe as an absent line and was the only thing making the knob discoverable. That argument holds for a `main`/`master` repo and **fails for every other trunk**: `template_apply_file` does no substitution for it, so a `develop` repo received a line that *reads as configured*, silently resolved to `main master`, and had `git push origin develop` permitted — could-not-determine → permit, the shape this whole release exists to eliminate. All six templates now ship the literal `main master`, which is what the resolver actually does, above a comment telling a non-main/master repo to edit it.
+
+Trade-off, stated: a fresh `setup-project --default-branch develop` no longer auto-fills the protected set, so that repo edits one line. Accepted — the failure direction flips from silently-unprotected to visibly-wrong, and a line reading `main master` on a `develop` repo is something a reader can catch. The prose `- **Branch strategy**:` line keeps the placeholder (setup substitutes it, no hook reads it) and now says outright that no hook reads it, pointing at the key instead — it used to read like protection config four lines above the key that is one.
+
+**The placeholder arm warns.** It fell back correctly but returned *silently*, while the empty-value arm warned — backwards, since an empty value is visibly empty and an unreplaced placeholder reads as configured. That is precisely the case a consumer does not know they are in. And `gc_is_placeholder` matches as a **substring**: a half-filled `{{DEFAULT_BRANCH}} develop` was read as two literal branch names, neither of which is a branch. Falling back costs one edit; treating the placeholder as data costs the repo its protection.
 
 ### 1. A parser that EXISTS but does not WORK (sixth fail-open path)
 
@@ -81,9 +85,9 @@ The summary line now prints the total: `269 passed, 0 failed, 0 skipped (269 ass
 
 | host | summary |
 |---|---|
-| node + python3 + jq | `299 passed, 0 failed, 0 skipped (299 assertions)` |
-| python3 + jq, no node | `209 passed, 0 failed, 90 skipped (299 assertions)` |
-| jq only | `196 passed, 0 failed, 103 skipped (299 assertions)` |
+| node + python3 + jq | `308 passed, 0 failed, 0 skipped (308 assertions)` |
+| python3 + jq, no node | `217 passed, 0 failed, 91 skipped (308 assertions)` |
+| jq only | `201 passed, 0 failed, 107 skipped (308 assertions)` |
 
 ### 5. `/sync-template`: the skill that was supposed to prevent all of this
 
@@ -103,7 +107,9 @@ The summary line now prints the total: `269 passed, 0 failed, 0 skipped (269 ass
 
 **The step-3 smoke test proved the wrong thing.** `Bash(true)` succeeding shows only that the session is not fail-CLOSED — a completely inert enforcement layer passes it identically, and that is the failure mode that actually follows a `settings.json` write. Replaced with a both-ways probe, run from a script file: `bash -n` over every `hooks/*.sh` and `hooks/lib/*.sh`, then each git gate against the command IT owns plus two it must allow. Three 2s and six 0s is the only healthy shape; **all-0 means enforcement is gone**, which is precisely what a node-less box printed before v2.2.0 and what nobody was looking for.
 
-Two corrections worth stating, both measured rather than assumed. Each gate needs **its own** must-block command: `pre-commit-test.sh` returns 0 for a push-to-main (it gates *commits*) and `no-push-main.sh` returns 0 for a commit or a merge, so one shared push-to-main payload produces two false "enforcement gone" readings on a healthy install. And `pre-commit-test.sh` / `gate-before-merge.sh` no-op by design without a `**Test**` / `**Gate**` value, so an all-0 from those two groups means "check the field", not "the hooks are broken" — `no-push-main.sh` needs no config and is the group that must always show its 2. `enforce-delegation.sh` stays out of the loop entirely: it signals a deny on **stdout** and always exits 0, so an exit-code probe reads every case as PASS.
+**The routine probe covers `no-push-main.sh` only, and that is a deliberate narrowing.** Two earlier drafts of this matrix were wrong, in different ways, and the second is the interesting one. Draft 1 fed all three gates a push-to-main payload — but `pre-commit-test.sh` returns 0 for a push (it gates *commits*) and `no-push-main.sh` returns 0 for a commit or a merge, so a healthy install produced two false "enforcement gone" readings. Draft 2 gave each gate the command it owns and expected three 2s — **also unreachable**, because those 2s are conditional on failure: `pre-commit-test.sh` returns 2 only when the suite FAILS, and it *runs* `**Test**` (or `run-gate.sh`) to find out. In a Gate-only repo that `run-gate.sh` run writes `.gate/last-pass.json` on green, after which `gate-before-merge.sh` finds a fresh artifact and returns 0 too. So the documented healthy shape could not occur in a green Gate-configured repo, and the skill would have told that consumer enforcement was gone.
+
+Worse than a wrong expectation: **the probe was not read-only.** It executed the project's test suite and could mint a gate artifact keyed to HEAD — leaving a *real* merge un-gated for up to 60 minutes. A diagnostic that runs the build and weakens a gate is not a routine step. `no-push-main.sh` needs no configuration, reads only `PROJECT_CONTEXT.md` and the current branch, and answers `2 0 0` deterministically on every install; the other two are now an explicitly opt-in deeper check with their side effects and per-gate conditions stated at the point of use. `enforce-delegation.sh` stays out entirely — it denies on **stdout** and always exits 0, so an exit-code probe reads every case as PASS.
 
 **`CLAUDE.local.md` is the one UNRECOVERABLE file in a sync.** It is gitignored in every variant AND manifest-tracked AND deviates by design in any project that customised its MCP rules. Every other synced file is tracked: a wrong apply is a `git checkout --` away and shows in the PR diff before anyone merges it. This one has no history, no diff, no undo. New mandatory step 2b, before any write: derive the set with `git check-ignore` over the manifest's file list — a project may gitignore more than the one file — copy each hit to a scratch directory preserving relative paths, and name that directory in the report as `Backup:`. The server is the only layer that can see both facts at once and a server-side refusal is the real fix; this is the client-side guard until it lands.
 
@@ -130,7 +136,7 @@ Both found while fixing the above, both the same shape as everything else in thi
 ### Downstream migration
 
 1. **NOT OPTIONAL — re-copy `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh`.** `cp -r user-level-reference/hooks/. ~/.claude/hooks/`; in a project, `/sync-template` picks up `hooks/**`. Between them these carry items 0, 1 and 2 — the placeholder unprotect, the broken-parser probe, and the unparseable-payload block. `git-cmd.sh` alone repairs an already-unprotected trunk **with no `PROJECT_CONTEXT.md` change**.
-2. **Check whether you are currently unprotected**, before or after: `grep 'Protected branches' PROJECT_CONTEXT.md`. A `{{DEFAULT_BRANCH}}` there means every push to trunk has been allowed since you accepted the v2.2.0 template. Item 1 above fixes it either way; filling in a real name (or deleting the line) is still worth doing.
+2. **Check whether you are currently unprotected**, before or after: `grep 'Protected branches' PROJECT_CONTEXT.md`. A `{{DEFAULT_BRANCH}}` there means every push to trunk has been allowed since you accepted the v2.2.0 template. Item 1 above fixes it either way — but **if your trunk is not `main` or `master`, the fallback does not protect it**: set a real name on that line. v2.2.1 also warns once per session when it finds an unfilled placeholder there.
 3. **Re-copy `hooks/enforce-delegation.sh`** (item 3) and `hooks/gate-before-merge.sh` (header comment only). `hooks/agent-budget-warn.sh` gained a comment block only.
 4. **Re-copy `scripts/test-hooks.sh`** if your project runs the suite.
 5. **BACK UP `CLAUDE.local.md` BEFORE YOUR NEXT SYNC.** It is gitignored *and* manifest-tracked, so a wrong apply there is unrecoverable — no history, no diff, no `git checkout --`. `cp CLAUDE.local.md CLAUDE.local.md.bak` costs nothing. The new step 2b automates this (and finds anything else your `.gitignore` covers), but it only helps once you have taken the skill.
@@ -144,7 +150,7 @@ Both found while fixing the above, both the same shape as everything else in thi
 
 **Known, not fixed here.** On Windows, `jq`'s stdout is in TEXT mode, so `json_get`'s jq backend can return a multi-line value with stray CRs. MSYS `grep`'s `$` tolerates them, so no hook misbehaves (`jq: skills block present passes` covers it), and the one exact-match assertion normalises. A CR-safe jq backend belongs in a `json.sh` change, not in the harness.
 
-12 hook scripts (2 lib files), 8 skills; **259 consistency assertions** and **299 hook fixtures**, both measured at this commit.
+12 hook scripts (2 lib files), 8 skills; **259 consistency assertions** and **308 hook fixtures**, both measured at this commit.
 
 ## v2.2.0 — 2026-08-29
 
