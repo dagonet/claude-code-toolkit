@@ -21,6 +21,16 @@ lib="$(dirname "$0")/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 . "$lib"
 
+# v2.1.3 fix round 2: absolutize RUN_GATE HERE, before any `cd`. $0 is a
+# relative path when the harness invokes `bash hooks/pre-commit-test.sh`, and
+# a relative "$(dirname "$0")/run-gate.sh" is not re-resolved until it is
+# actually used below -- by then the script has `cd`'d into REPO_PATH (which
+# `git -C <other-repo> commit` can point anywhere), so the stale relative path
+# would resolve against the WRONG repo: silently missing there (masking an
+# intended run-gate.sh as the legacy eval path), or worse, hitting that other
+# repo's own hooks/run-gate.sh instead of this toolkit's.
+RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
+
 gc_read_stdin
 gc_guard_off && exit 0
 
@@ -68,6 +78,15 @@ GC_SEGMENTS
 # only consulted below when there is NO Test field.
 TEST_CMD=$(grep -E '^[-*[:space:]]*\*\*Test( Command)?\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Test\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
 
+# v2.1.3 fix round 2: a still-unfilled {{...}} Test placeholder must not win
+# precedence over a real Gate command -- dotnet/dotnet-maui ship exactly this
+# shape (Test: {{TEST_COMMAND}}, a real Gate). Strip it to "" here, right after
+# extraction, so it is treated as absent below and precedence correctly falls
+# through to the Gate/run-gate.sh path instead of silently exiting 0.
+case "$TEST_CMD" in
+  *\{\{*\}\}*) TEST_CMD="" ;;
+esac
+
 # v2.1.1: projects that declare only a **Gate** command (the gate runs the tests
 # plus format/lint) used to make this hook a silent no-op. Fall back to Gate.
 #
@@ -86,7 +105,6 @@ if [ -z "$TEST_CMD" ]; then
   esac
 
   if [ -n "$GATE_CMD_RAW" ]; then
-    RUN_GATE="$(dirname "$0")/run-gate.sh"
     if [ -f "$RUN_GATE" ]; then
       echo "PRE-COMMIT: Running 'run-gate.sh'..." >&2
       cd "$REPO_PATH" || exit 1
@@ -103,6 +121,11 @@ if [ -z "$TEST_CMD" ]; then
         exit 2
       fi
     else
+      # v2.1.3 fix round 2: a mirror (e.g. ~/.claude/hooks/) whose run-gate.sh
+      # copy was never migrated must not 127 -- fall back to eval'ing the Gate
+      # command directly, same as the pre-run-gate.sh behaviour, but say so:
+      # a silent fallback here reads exactly like the full-gate path ran.
+      echo "WARN: pre-commit-test: run-gate.sh not found next to this hook — evaluating the Gate command directly instead" >&2
       TEST_CMD="$GATE_CMD_RAW"
     fi
   fi

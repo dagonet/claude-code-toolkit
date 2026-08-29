@@ -161,6 +161,12 @@ printf '# ctx\n\n- **Test**: `false`\n' > "$BADREPO/PROJECT_CONTEXT.md"
 H=hooks/pre-commit-test.sh
 
 check "commit with passing tests"        "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$OKREPO")"
+# v2.1.3 fix round 2 item 5: a Test-path commit (the common case -- 5 of 6
+# templates ship a **Test** line) never touches run-gate.sh or its artifact.
+# gate-before-merge.sh still needs a separate `bash hooks/run-gate.sh` before
+# merging a Test-path repo.
+expect "(R2-5) Test-path commit leaves no gate artifact" "0" \
+  "$([ -f "$OKREPO/.gate/last-pass.json" ] && echo 1 || echo 0)"
 check "commit with failing tests"        "$H" 2 "$(mkjson Bash 'git commit -m "x"' "$BADREPO")"
 check "commit with no PROJECT_CONTEXT"   "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$BARE")"
 check "non-commit git command"           "$H" 0 "$(mkjson Bash 'git status --short' "$BADREPO")"
@@ -245,6 +251,21 @@ ARTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.js
 RUNGATETREE=$(git -C "$GATEONLYOK" rev-parse 'HEAD^{tree}')
 expect "(a) run-gate.sh path: artifact tree matches HEAD^{tree}" "$RUNGATETREE" "$ARTTREE"
 
+# --- v2.1.3 fix round 2 item 5: a working tree with unstaged changes beyond
+# the index must NOT get a tree recorded -- write-tree hashes the index only,
+# and a later `git commit -a` would fold the unstaged bits in too, producing a
+# DIFFERENT tree than the one hashed here.
+DIRTYGATE=$(mkrepo commitdirtygate main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$DIRTYGATE/PROJECT_CONTEXT.md"
+git -C "$DIRTYGATE" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$DIRTYGATE" commit -q -m "add gate" >/dev/null 2>&1
+echo unstaged >> "$DIRTYGATE/seed.txt"   # unstaged change, not added to the index
+printf '%s' "$(mkjson Bash 'git commit -m x' "$DIRTYGATE")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R2-5) dirty working tree: exit 0 on pass" "0" "$?"
+DIRTYTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$DIRTYGATE/.gate/last-pass.json" 2>/dev/null)
+expect "(R2-5) dirty working tree: artifact tree is empty" "" "$DIRTYTREE"
+
 check_msg "(b) run-gate.sh path: block names run-gate.sh" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
   "BLOCKED: 'run-gate.sh' failed"
@@ -264,6 +285,39 @@ check_msg "Gate:placeholder alone -- WARN path, no false green" \
   "$(mkjson Bash 'git commit -m x' "$PLACEHOLDERONLY")" \
   "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
 
+# --- v2.1.3 fix round 2 item 1: the reverse shape -- a still-unfilled {{...}}
+# Test placeholder alongside a REAL Gate command (dotnet/dotnet-maui ship
+# exactly this). Precedence must fall through to the real Gate/run-gate.sh,
+# not silently exit 0 because a "Test" field merely exists.
+TESTPLACEHOLDER_REALGATE=$(mkrepo committestplaceholder main)
+printf '# ctx\n\n- **Test**: `{{TEST_COMMAND}}`\n- **Gate**: `true`\n' > "$TESTPLACEHOLDER_REALGATE/PROJECT_CONTEXT.md"
+rm -f "$TESTPLACEHOLDER_REALGATE/.gate/last-pass.json"
+check "Test:placeholder + Gate:real -- falls through to run-gate.sh" \
+  "$H" 0 "$(mkjson Bash 'git commit -m x' "$TESTPLACEHOLDER_REALGATE")"
+expect "Test:placeholder + Gate:real -- run-gate.sh actually ran (artifact written)" \
+  "1" "$([ -f "$TESTPLACEHOLDER_REALGATE/.gate/last-pass.json" ] && echo 1 || echo 0)"
+
+BOTHPLACEHOLDER=$(mkrepo commitbothplaceholder main)
+printf '# ctx\n\n- **Test**: `{{TEST_COMMAND}}`\n- **Gate**: `{{GATE_COMMAND}}`\n' > "$BOTHPLACEHOLDER/PROJECT_CONTEXT.md"
+check_msg "Test:placeholder + Gate:placeholder -- WARN path" \
+  "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$BOTHPLACEHOLDER")" \
+  "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
+
+# --- v2.1.3 fix round 2 item 3: RUN_GATE must be absolutized before any `cd`.
+# Invoke the hook via a RELATIVE $0 (as the real harness does: `bash
+# hooks/pre-commit-test.sh`) with cwd = the toolkit root, while the commit
+# targets a DIFFERENT repo via `git -C <repo>`. Before the fix, the stale
+# relative RUN_GATE would resolve against the -C target (no hooks/ there) and
+# silently fall back to the legacy eval path instead of running run-gate.sh.
+RELCHECK=$(mkrepo relcheck main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$RELCHECK/PROJECT_CONTEXT.md"
+rm -f "$RELCHECK/.gate/last-pass.json"
+relrc=$(cd "$ROOT" && printf '%s' "$(mkjson Bash "git -C \"$RELCHECK\" commit -m x" "$ROOT")" | bash hooks/pre-commit-test.sh >/dev/null 2>&1; echo $?)
+expect "(R2-3) relative \$0, -C to another repo: exit 0" "0" "$relrc"
+expect "(R2-3) relative \$0: run-gate.sh actually ran (artifact written)" \
+  "1" "$([ -f "$RELCHECK/.gate/last-pass.json" ] && echo 1 || echo 0)"
+
 # (c) no run-gate.sh next to the hook: existing Gate/Test eval path unchanged
 NORUNGATE="$TMPROOT/norungate"
 mkdir -p "$NORUNGATE/lib"
@@ -272,6 +326,12 @@ cp "$ROOT/hooks/lib/git-cmd.sh" "$NORUNGATE/lib/"
 check_msg "(c) no run-gate.sh: Gate command evaluated directly" "$NORUNGATE/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
   "BLOCKED: 'false' failed"
+# v2.1.3 fix round 2 item 4: the fallback WARNs (never a silent no-op, never a
+# 127) when run-gate.sh is absent next to the hook -- the state a user-level
+# mirror is in if it predates the run-gate.sh mirroring change.
+check_msg "(c) no run-gate.sh: WARN names the fallback" "$NORUNGATE/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")" \
+  "WARN: pre-commit-test: run-gate.sh not found next to this hook"
 
 # ===========================================================================
 # gate-before-merge.sh

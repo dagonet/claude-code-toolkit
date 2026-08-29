@@ -723,9 +723,11 @@ done
 #
 #     Direction, deliberately: this walks the MIRROR, not the root. It cannot
 #     catch a *new* root hook that nobody mirrored — that is not a drift, it is
-#     a judgement call about which hooks belong at user level, and most root
-#     hooks (run-gate, enforce-delegation, the retro pair) deliberately do not.
-#     What it does guarantee is that nothing in the mirror is stale or orphaned.
+#     a judgement call about which hooks belong at user level. run-gate.sh IS
+#     mirrored (v2.1.3): the user-level pre-commit-test.sh shells into it, same
+#     as the project-level one. enforce-delegation.sh and the retro pair still
+#     deliberately do not mirror. What this check guarantees is that nothing
+#     already in the mirror is stale or orphaned.
 # ---------------------------------------------------------------------------
 echo
 ULH=user-level-reference/hooks

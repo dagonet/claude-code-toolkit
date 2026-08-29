@@ -12,7 +12,7 @@ Template repo for bootstrapping projects with Claude Code config. It ships no ap
 
 ## Gate
 
-`bash scripts/verify-template-consistency.sh` and `bash scripts/test-hooks.sh` are the gate. Both must be green before a commit is claimed done. `scripts/verify-user-level-drift.sh` compares `user-level-reference/CLAUDE.md` against the live `~/.claude/CLAUDE.md`; the reference leads, the live copy follows per the CHANGELOG's downstream-migration section.
+`bash scripts/verify-template-consistency.sh` and `bash scripts/test-hooks.sh` are the gate. Both must be green before a commit is claimed done. `scripts/verify-user-level-drift.sh` compares `user-level-reference/{CLAUDE.md,hooks/**,skills/**,agents/**}` against the live `~/.claude/` tree; the reference leads, the live copy follows per the CHANGELOG's downstream-migration section.
 
 ## Invariants
 

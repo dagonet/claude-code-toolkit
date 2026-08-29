@@ -8,7 +8,8 @@
 # a PR merge:
 #
 #   .gate/last-pass.json  (at the repo toplevel of the current checkout/worktree)
-#   {"sha":"<HEAD sha>","branch":"<branch>","ts":"<UTC ISO-8601>","status":"pass"}
+#   {"sha":"<HEAD sha>","tree":"<index tree, or \"\" if the working tree had
+#    unstaged changes>","branch":"<branch>","ts":"<UTC ISO-8601>","status":"pass"}
 #
 # On failure, any existing artifact is deleted and the script exits nonzero.
 # No-op (exit 0) when the Gate field is missing or still a {{...}} placeholder,
@@ -78,7 +79,17 @@ cd "$REPO_TOP" || exit 1
 # `git add` after this ran stages more than the index snapshot we hashed here
 # -- that produces a tree mismatch too, and the merge gate falls back to
 # requiring a fresh run, exactly as before this fix.
-TREE_HASH=$(git -C "$REPO_TOP" write-tree 2>/dev/null)
+#
+# v2.1.3 fix round 2: only record the tree when the working tree matches the
+# index (`git diff --quiet`). write-tree hashes the INDEX; if there are
+# unstaged changes beyond it, a `git commit -a` (or a manual `git add` after
+# this ran) would fold those in too, producing a DIFFERENT tree than the one
+# we are about to hash -- recording it would let a mismatched commit slip
+# through gate-before-merge.sh's tree check. sha-only in that case.
+TREE_HASH=""
+if git -C "$REPO_TOP" diff --quiet 2>/dev/null; then
+  TREE_HASH=$(git -C "$REPO_TOP" write-tree 2>/dev/null)
+fi
 
 RUN_GATE_ACTIVE=1
 export RUN_GATE_ACTIVE
