@@ -198,10 +198,11 @@ printf '# ctx\n\nno commands here\n' > "$NOFIELDS/PROJECT_CONTEXT.md"
 
 check "Gate-only context, gate passes"   "$H" 0 "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")"
 check "Gate-only context, gate fails"    "$H" 2 "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")"
-# v2.1.3: with hooks/run-gate.sh present, a **Gate** field now takes priority
-# over **Test** (run-gate.sh runs the full gate, a superset of Test alone) --
-# was "Test wins over Gate when both" before run-gate.sh existed.
-check "Gate (via run-gate.sh) wins over Test when both" "$H" 2 "$(mkjson Bash 'git commit -m x' "$BOTHFIELDS")"
+# v2.1.3 fix round 1 (precedence ruling): **Test** wins when present -- cheap
+# commit path, unchanged behaviour. run-gate.sh is only consulted when there is
+# no Test line. BOTHFIELDS declares Test: true, Gate: false -- Test must win
+# (exit 0), even though the Gate command alone would fail.
+check "Test wins over Gate when both"    "$H" 0 "$(mkjson Bash 'git commit -m x' "$BOTHFIELDS")"
 check_msg "no Test/Gate warns, allows"   "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'git commit -m x' "$NOFIELDS")" \
   "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
@@ -240,10 +241,28 @@ expect "(a) run-gate.sh path: artifact written" "1" \
   "$([ -f "$GATEONLYOK/.gate/last-pass.json" ] && echo 1 || echo 0)"
 ARTSHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
 expect "(a) run-gate.sh path: artifact sha matches HEAD" "$RUNGATESHA" "$ARTSHA"
+ARTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
+RUNGATETREE=$(git -C "$GATEONLYOK" rev-parse 'HEAD^{tree}')
+expect "(a) run-gate.sh path: artifact tree matches HEAD^{tree}" "$RUNGATETREE" "$ARTTREE"
 
 check_msg "(b) run-gate.sh path: block names run-gate.sh" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
   "BLOCKED: 'run-gate.sh' failed"
+
+# --- v2.1.3 fix round 1 (Critical 1): a still-unfilled {{...}} Gate placeholder
+# must never route into run-gate.sh (which itself no-ops on a placeholder and
+# would return a false green with nothing verified).
+PLACEHOLDERTEST=$(mkrepo commitplaceholdertest main)
+printf '# ctx\n\n- **Test**: `true`\n- **Gate**: `{{GATE_COMMAND}}`\n' > "$PLACEHOLDERTEST/PROJECT_CONTEXT.md"
+check "Test:true + Gate:placeholder -- Test wins, run-gate NOT invoked" \
+  "$H" 0 "$(mkjson Bash 'git commit -m x' "$PLACEHOLDERTEST")"
+
+PLACEHOLDERONLY=$(mkrepo commitplaceholderonly main)
+printf '# ctx\n\n- **Gate**: `{{GATE_COMMAND}}`\n' > "$PLACEHOLDERONLY/PROJECT_CONTEXT.md"
+check_msg "Gate:placeholder alone -- WARN path, no false green" \
+  "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$PLACEHOLDERONLY")" \
+  "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
 
 # (c) no run-gate.sh next to the hook: existing Gate/Test eval path unchanged
 NORUNGATE="$TMPROOT/norungate"
@@ -321,6 +340,56 @@ SPACEGATE=$(mkrepo 'gate main repo' main)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SPACEGATE/PROJECT_CONTEXT.md"
 check "spaced -C merge, target on main"  "$H" 2 "$(mkjson Bash "git -C \"$SPACEGATE\" merge feature" "$GATEFEAT2")"
 check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' "$GATEREPO")"
+
+# ===========================================================================
+# v2.1.3 fix round 1 (Critical 2 / penumbra #2c): a real end-to-end chain --
+# pre-commit-test.sh runs run-gate.sh against the INDEX, the real `git commit`
+# follows, and gate-before-merge.sh must accept the resulting artifact via its
+# tree match even though the artifact's sha is the PARENT commit's.
+# ===========================================================================
+echo
+echo "=== R3 chain: commit-time run-gate.sh satisfies merge-time gate ==="
+CHAINREPO=$(mkrepo gatechain main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$CHAINREPO/PROJECT_CONTEXT.md"
+git -C "$CHAINREPO" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$CHAINREPO" commit -q -m "add gate" >/dev/null 2>&1
+echo change1 > "$CHAINREPO/file.txt"
+git -C "$CHAINREPO" add file.txt >/dev/null 2>&1
+
+# PreToolUse intercepts the `git commit` Bash call BEFORE it runs -- this is
+# pre-commit-test.sh routing into run-gate.sh (Gate-only, no Test field).
+printf '%s' "$(mkjson Bash 'git commit -m "add file"' "$CHAINREPO")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R3) chain: pre-commit-test.sh allows the commit" "0" "$?"
+
+# The real commit now runs (as the harness would do after the hook allows it).
+git -C "$CHAINREPO" commit -q -m "add file" >/dev/null 2>&1
+
+check "(R3) chain: gate-before-merge accepts the tree-matched artifact" \
+  "hooks/gate-before-merge.sh" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINREPO")"
+
+# Negative: a further commit moves both HEAD and the tree past what the
+# artifact recorded -- gate-before-merge must fall back to stale/blocked.
+echo change2 >> "$CHAINREPO/file.txt"
+git -C "$CHAINREPO" add file.txt >/dev/null 2>&1
+git -C "$CHAINREPO" commit -q -m "second change" >/dev/null 2>&1
+check "(R3) chain negative: stale artifact after a further commit" \
+  "hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINREPO")"
+
+# ===========================================================================
+# v2.1.3 fix round 1 (R5): a **Gate** command that shells out to run-gate.sh
+# itself must not recurse. RUN_GATE_ACTIVE is exported before the gate command
+# runs and checked on entry -- simulate that directly.
+# ===========================================================================
+echo
+echo "=== R5: run-gate.sh recursion guard ==="
+RECURSEREPO=$(mkrepo gaterecurse main)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$RECURSEREPO/PROJECT_CONTEXT.md"
+recurseerr="$TMPROOT/recurse.err"
+( cd "$RECURSEREPO" && RUN_GATE_ACTIVE=1 bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$recurseerr" )
+expect "(R5) recursion guard: exit 2"  "2" "$?"
+expect "(R5) recursion guard: message" "1" \
+  "$(grep -cF 'BLOCKED: **Gate** must not invoke run-gate.sh itself' "$recurseerr")"
 
 # ===========================================================================
 # git gates: fail-closed contracts (v2.1.1, consumer sync feedback #2c/#3)

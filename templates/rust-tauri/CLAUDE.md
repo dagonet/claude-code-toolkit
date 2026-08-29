@@ -165,5 +165,5 @@ Discard freely:
 ---
 
 <!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->
-<!-- Project-specific rules, routing blocks, and extensions go here. -->
+<!-- Project-specific rules, routing blocks (context-mode, …), and extensions go here. -->
 <!-- PROJECT-CUSTOM:END -->

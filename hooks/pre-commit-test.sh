@@ -60,42 +60,52 @@ GC_SEGMENTS
 # Not a commit -- nothing to gate.
 [ -n "$REPO_PATH" ] || exit 0
 
-# v2.1.3 (consumer feedback, Yutraffic): when hooks/run-gate.sh sits next to this
-# script AND the repo declares a **Gate** command, run run-gate.sh instead of
-# re-deriving/eval'ing the command ourselves. A green run-gate.sh writes
-# .gate/last-pass.json as a side effect, so gate-before-merge.sh is satisfied
-# without a second ~2-min gate run at merge time. run-gate.sh becomes the single
-# source of truth for both commit- and merge-time gating. This takes priority
-# over a **Test** field when both exist, since run-gate.sh runs the project's
-# full Gate (tests + format + lint), a superset of Test alone.
-RUN_GATE="$(dirname "$0")/run-gate.sh"
-HAS_GATE_FIELD=$(grep -E '^[-*[:space:]]*\*\*Gate( Command)?\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | head -1)
-if [ -f "$RUN_GATE" ] && [ -n "$HAS_GATE_FIELD" ]; then
-  echo "PRE-COMMIT: Running 'run-gate.sh'..." >&2
-  cd "$REPO_PATH" || exit 1
-  OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
-  if bash "$RUN_GATE" > "$OUT" 2>&1; then
-    rm -f "$OUT"
-    echo "PRE-COMMIT: 'run-gate.sh' passed." >&2
-    exit 0
-  else
-    echo "BLOCKED: 'run-gate.sh' failed — re-run it and fix the failures before committing." >&2
-    echo "--- last 20 lines ---" >&2
-    tail -20 "$OUT" >&2
-    rm -f "$OUT"
-    exit 2
-  fi
-fi
-
 # Read test command from PROJECT_CONTEXT.md. Tolerates: leading "- " / "* " list
 # markers, the "**Test Command**:" label style (java/python variants), and
 # surrounding backticks — several variants write commands as `cmd`.
+# v2.1.3 fix round 1: **Test** always wins when present -- cheap, unchanged
+# behaviour for repos that declare a lightweight Test command. run-gate.sh is
+# only consulted below when there is NO Test field.
 TEST_CMD=$(grep -E '^[-*[:space:]]*\*\*Test( Command)?\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Test\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
 
 # v2.1.1: projects that declare only a **Gate** command (the gate runs the tests
 # plus format/lint) used to make this hook a silent no-op. Fall back to Gate.
+#
+# v2.1.3 (consumer feedback, Yutraffic; fix round 1): when the fallback fires
+# AND hooks/run-gate.sh sits next to this script, run run-gate.sh instead of
+# eval'ing the Gate command ourselves. A green run-gate.sh writes
+# .gate/last-pass.json as a side effect, so gate-before-merge.sh is satisfied
+# without a second gate run at merge time. A still-unfilled {{...}} placeholder
+# is treated as absent here (never routed into run-gate.sh, and never eval'd
+# directly) -- it falls through to the "nothing to run" WARN below, same as no
+# Gate field at all, so a mid-setup repo cannot get a false green.
 if [ -z "$TEST_CMD" ]; then
-  TEST_CMD=$(grep -E '^[-*[:space:]]*\*\*Gate( Command)?\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Gate\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
+  GATE_CMD_RAW=$(grep -E '^[-*[:space:]]*\*\*Gate( Command)?\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Gate\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
+  case "$GATE_CMD_RAW" in
+    *\{\{*\}\}*) GATE_CMD_RAW="" ;;
+  esac
+
+  if [ -n "$GATE_CMD_RAW" ]; then
+    RUN_GATE="$(dirname "$0")/run-gate.sh"
+    if [ -f "$RUN_GATE" ]; then
+      echo "PRE-COMMIT: Running 'run-gate.sh'..." >&2
+      cd "$REPO_PATH" || exit 1
+      OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
+      if bash "$RUN_GATE" > "$OUT" 2>&1; then
+        rm -f "$OUT"
+        echo "PRE-COMMIT: 'run-gate.sh' passed." >&2
+        exit 0
+      else
+        echo "BLOCKED: 'run-gate.sh' failed — re-run it and fix the failures before committing." >&2
+        echo "--- last 20 lines ---" >&2
+        tail -20 "$OUT" >&2
+        rm -f "$OUT"
+        exit 2
+      fi
+    else
+      TEST_CMD="$GATE_CMD_RAW"
+    fi
+  fi
 fi
 
 # Nothing to run. Say so — a silent pass reads exactly like a green test run.
