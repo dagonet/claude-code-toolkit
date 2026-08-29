@@ -771,6 +771,43 @@ else
   ko "hooks/lib/git-cmd.sh no longer sources lib/json.sh — the gates are back to node-only"
 fi
 
+# 21c. EVERY hooks/lib/* must be mirrored (v2.2.1).
+#
+#      Check 21 walks the MIRROR, so it cannot see a root file nobody mirrored.
+#      For top-level hooks that is deliberate — whether a hook belongs at user
+#      level is a judgement call. For `lib/` it is not: the mirrored gates
+#      SOURCE these files and fail closed without them, so a new root lib with
+#      no mirror is a user-level enforcement outage the moment a mirrored gate
+#      starts requiring it. This is the direction check 21 leaves open, closed
+#      for the one subtree where it is never a judgement call.
+for lf in hooks/lib/*; do
+  [ -f "$lf" ] || continue
+  lrel="${lf#hooks/}"
+  if [ -f "$ULH/$lrel" ]; then
+    ok "hook mirror: $lf is mirrored at $ULH/$lrel"
+  else
+    ko "hook mirror: $lf has NO mirror — run: cp $lf $ULH/$lrel (the mirrored gates source it and fail closed)"
+  fi
+done
+
+# 21d. Every shipped shell script PARSES (v2.2.1).
+#
+#      Not hypothetical: `enforce-delegation.sh`, `read-size-gate.sh` and the
+#      other node-program hooks embed their engine as a SINGLE-QUOTED shell
+#      argument (`node -e '…'`). One apostrophe in that body — in a comment, in
+#      prose, in "the PO's own command" — ends the shell string early, and the
+#      whole hook stops working. `bash -n` catches it in one pass; nothing else
+#      in this suite would, and on a node-less host the fixtures that noticed it
+#      are skipped. Parser-free, so it runs everywhere.
+for sf in hooks/*.sh hooks/lib/*.sh "$ULH"/*.sh "$ULH"/lib/*.sh scripts/*.sh; do
+  [ -f "$sf" ] || continue
+  if bash -n "$sf" 2>/dev/null; then
+    ok "$sf parses"
+  else
+    ko "$sf has a SYNTAX ERROR — run: bash -n $sf (an apostrophe inside a node -e '…' body does this)"
+  fi
+done
+
 # ---------------------------------------------------------------------------
 # 22. The git-tools MCP write ops are denied (v2.1.1, consumer feedback).
 #

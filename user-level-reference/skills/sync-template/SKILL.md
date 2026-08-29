@@ -47,6 +47,22 @@ If everything is up-to-date and no new files, report "Already in sync" and final
 - `.claude/settings.json` whose hook list differs from the project's (a hook added, removed, or re-matched IS the enforcement layer changing);
 - any `TEMPLATE_DELETED` file under `hooks/` — a deleted hook is always an enforcement change.
 
+### 2b. Back Up the GITIGNORED Tracked Files (MANDATORY, before any write)
+
+**Every other file this sync touches is recoverable; these are not.** A wrong `template_apply_file` on a tracked file is a `git checkout --` away, and it shows up in the PR diff before anyone merges it. A file that is BOTH manifest-tracked AND gitignored has no history, no diff, and no undo — an erroneous overwrite is simply gone.
+
+`CLAUDE.local.md` is the file this describes in every variant: gitignored by the shipped `.gitignore`, tracked by the manifest, and deviating **by design** in any project that customised its MCP rules. Back it up first and by name.
+
+Derive the set rather than assuming it is only that one — a project may gitignore more:
+
+```
+git check-ignore --stdin < <manifest file list>     # every hit is unrecoverable
+```
+
+Copy each hit to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync.
+
+> The server is the only layer that can see both facts at once (it holds the manifest and can read `.gitignore`), so a server-side refusal is the real fix and is filed upstream. This step is the client-side guard until it lands.
+
 ### 3. Auto-Update Files
 
 For each file with status `AUTO_UPDATE`:
@@ -64,21 +80,44 @@ Call `template_apply_file(project_path=".", file_path=F, source="template")`.
 
 The same order applies to the CONFLICT resolutions in step 4 and the new files in step 5: never write `settings.json` before the hooks it wires. If `hooks/` is missing or partial at the project root, run step 6b's restore BEFORE writing `.claude/settings.json` — the order above is useless if the scripts it protects were never materialised.
 
-**Smoke test immediately after the `.claude/settings.json` write**: run a harmless `Bash(true)`. If it is blocked, the recovery note in the "Restart the session" area above applies — apply `hooks/lib/git-cmd.sh` and the three gates via `template_apply_file` (no shell needed) rather than continuing the sync through a fail-closed session.
+**Smoke test immediately after the `.claude/settings.json` write — probe BOTH WAYS, from a script file.** A harmless `Bash(true)` was the old test here; it proves only that the session is not fail-CLOSED, and a completely inert enforcement layer passes it too. That is the failure mode that actually follows a `settings.json` write, and pre-v2.2.0 on a node-less box this probe would have printed all-zeros and named the silent-gate bug in one line.
 
 **Any hook probe must live in a script file run via `bash <path>`, never inline.** The gates scan the whole command STRING by design, not just what a git subcommand would actually do — an inline compound command that merely *mentions* `git push origin main` (in a comment, an echo, a string literal) trips the gate it is trying to test. The result is then uninterpretable: a block does not tell you whether the gate works or whether your own probe was the violation it caught. Write the probe to a temp file and run `bash <path>` instead.
 
-**Positive control — prove the gates are LIVE, not merely unblocked.** `Bash(true)` succeeding only proves nothing blocked it; a fully inert enforcement layer passes that test too. Write this to `"${TMPDIR:-/tmp}/gate-probe.sh"` (or somewhere under `.claude/`) and run it with `bash "$TMPDIR/gate-probe.sh"`. **Do not** write it to a repo-relative path like `probe.sh` — `enforce-delegation.sh` denies main-thread writes outside the PO write surface, so the probe never gets created.
+Write this to `"${TMPDIR:-/tmp}/gate-probe.sh"` (or somewhere under `.claude/`) and run it with `bash "$TMPDIR/gate-probe.sh"`. **Do not** write it to a repo-relative path like `probe.sh` — `enforce-delegation.sh` denies main-thread writes outside the PO write surface, so the probe never gets created.
 
 ```sh
-printf '{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"<repo>"}' \
-  | bash "${CLAUDE_PROJECT_DIR:-.}/hooks/no-push-main.sh"
-echo "exit=$?"
+H="${CLAUDE_PROJECT_DIR:-.}/hooks"
+R="<repo>"   # forward slashes, see the note below
+
+# a. every shipped script must PARSE. One apostrophe inside a `node -e '…'`
+#    body ends the shell string early and silently disables that whole hook.
+for f in "$H"/*.sh "$H"/lib/*.sh; do
+  bash -n "$f" 2>/dev/null || echo "SYNTAX FAIL $f"
+done
+
+# b. each git gate, against the command IT owns plus two it must allow.
+probe() { # <hook> <command>
+  printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$2" "$R" \
+    | bash "$H/$1.sh" >/dev/null 2>&1
+  echo "$1 [$2] exit=$?"
+}
+for c in "git push origin main" "ls -la" "true"; do probe no-push-main     "$c"; done
+for c in "git commit -m x"     "ls -la" "true"; do probe pre-commit-test   "$c"; done
+for c in "git merge feature/x" "ls -la" "true"; do probe gate-before-merge "$c"; done
 ```
 
-Use **forward slashes** in the JSON `cwd` (`C:/git/foo`, not `C:\git\foo`): a Windows backslash is a JSON escape and the payload will not parse, which the hook treats as unreadable and passes — a false green on the very check you are running.
+Expect **2** on the first row of each group and **0** on the `ls -la` and `true` rows — nine lines, three 2s, six 0s.
 
-Expect `exit=2` and a `BLOCKED` line on stderr. **`exit=0` means the gates are inert** — the scripts are missing, empty, or not wired — and the sync is running unprotected: apply `hooks/lib/git-cmd.sh` and the three gate scripts via `template_apply_file` (the recovery note below), then re-run the probe before continuing.
+**Each gate gets the command it owns, not a shared one.** Measured, in a repo with `**Test**` and `**Gate**` configured: `pre-commit-test.sh` returns **0** for a push-to-main, because it gates *commits*; `no-push-main.sh` returns 0 for a commit and for a merge. Feeding all three the same push-to-main payload therefore produces two false "enforcement gone" readings on a perfectly healthy install. (`gate-before-merge.sh` does return 2 for a push-to-main as well — a fast-forward merge by push — but `git merge` is the row that names what it is for.)
+
+**Both halves are the test.** All-2 (including the `true` rows) means the session is fail-CLOSED — every Bash call is about to be blocked; take the recovery note below. **All-0 means enforcement is GONE** — the scripts are missing, empty, unparseable, or not wired — and the sync is running unprotected: apply `hooks/lib/git-cmd.sh` and the three gate scripts via `template_apply_file`, then re-run the probe before continuing. Only the three-2s-six-0s shape is healthy; the old `Bash(true)` test could not tell the second failure from success at all.
+
+One legitimate all-0: `pre-commit-test.sh` and `gate-before-merge.sh` **no-op by design** when `PROJECT_CONTEXT.md` has no `**Test**` / `**Gate**` value (or the value is still a `{{PLACEHOLDER}}`). If those two groups are all-0, check that field before concluding the hooks are broken — `no-push-main.sh` needs no config and is the group that must always show its 2.
+
+> `enforce-delegation.sh` is deliberately NOT in that loop. It signals a deny by printing a `permissionDecision` on **stdout** and always exits 0, so an exit-code probe reads every case as PASS and proves nothing about it. Probe it by grepping its stdout for `"permissionDecision":"deny"` instead.
+
+Use **forward slashes** in the JSON `cwd` (`C:/git/foo`, not `C:\git\foo`): a Windows backslash is a JSON escape and the payload will not parse. Since v2.2.1 the gates BLOCK an unparseable payload rather than passing it, so this now shows up as a spurious all-2 rather than a false green — still a wrong answer, just a louder one.
 
 > **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination. Once Bash works again, finish the sync in the order above and restart per the final report.
 
@@ -206,6 +245,7 @@ Sync complete: {variant} @ {new_commit}
   Warnings:     [list — every placeholder-sweep hit belongs here]
   User-level:   [one-line verify-user-level-drift.sh summary]
   Gates:        live (parser: {backend} — {consequence})
+  Backup:       {step-2b directory} [{gitignored tracked files copied}]
 ```
 
 `Spliced:` is its own category on purpose: the conflict guidance now recommends splicing over accept-template for files that carry project values, and a spliced file is neither auto-updated nor merged by the server. Reporting it as "Skipped" hides work that was actually done.
