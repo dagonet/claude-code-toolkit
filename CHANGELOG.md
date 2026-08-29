@@ -69,12 +69,11 @@ Both are **no-op stubs** — header plus `exit 0` — and both are unregistered.
 
 Carried verbatim from the implementation ledger. **None of the entries below are implemented in this release** — they are recorded so the omissions read as deliberate.
 
-Five ledger entries *were* fixed here, because each was a dangling or contradictory reference in a **shipped artifact** rather than a nice-to-have, and are therefore not listed below:
+Four ledger entries *were* fixed here, because each was a dangling or contradictory reference in a **shipped artifact** rather than a nice-to-have, and are therefore not listed below:
 
 - mirror `no-push-main.sh` + `tier-before-coder.sh` into `user-level-reference/hooks` — done, plus the two other gates and `lib/`.
 - `Explore.md` (×7) named `hooks/agent-budget-warn.sh` by repo-relative path, which dangles at user level → now "the agent-budget-warn hook", no path.
 - `templates/python/.claude/rules/python.md` listed `ruff.toml` in `paths:`, which no variant ships → dropped. `.editorconfig` added to both `python.md` and `java.md`, since each rule's text already calls it authoritative.
-- `templates/rust-tauri/CLAUDE.md` *Quick Start* hard-coded its build/test/format/lint commands while every other variant uses `{{…}}` placeholders → placeholders restored; the three `npm` dev-loop lines stay literal because they have no `PROJECT_CONTEXT.md` equivalent.
 - `AGENT_TEAM.md` let the PO SendMessage a completed subagent while the agent mandate says "no side channel" → the paragraph now states the exception explicitly ("a follow-up question may arrive after you finish — answer it in a new final message. Nothing arrives *during* a run."). Byte-identity across all six variants preserved.
 
 *From PR1:*
@@ -100,7 +99,8 @@ Five ledger entries *were* fixed here, because each was a dangling or contradict
 - `## Working Preferences` heading now near-empty (rename/fold).
 - duplicated formatter line inside python/java/csharp rules.
 - further diet candidates — Compact Instructions (~1.6 KB) and Workflow TL;DR tier table (duplicated in AGENT_TEAM.md).
-- dotnet/dotnet-maui CLAUDE.md have no `## Quick Start` *(the rust-tauri half of this entry — literal commands instead of placeholders — was fixed above; the missing dotnet/dotnet-maui sections were not)*.
+- dotnet/dotnet-maui CLAUDE.md have no `## Quick Start`.
+- rust-tauri Quick Start uses literal commands because setup-project derives none for that variant — derive them (cargo build/test/fmt/clippy) in v2.1, then switch to placeholders.
 - `tools/measure-context-bloat.py` needs `PYTHONIOENCODING=utf-8` on Windows.
 
 *From PR5:*

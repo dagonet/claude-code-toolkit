@@ -60,7 +60,7 @@ Anthropic's [context-engineering guidance for Claude 5 generation models](https:
 | `.claude/rules/*.md` (general: none) | — | — | — | — | 0 B | **on matching file touch** |
 | skills | 11 | **12** | 12 | 12 | **7** | on trigger |
 
-Per-variant always-loaded totals now: general **25,814** · python 26,996 · java 27,081 · dotnet 28,500 · rust-tauri 29,300 · dotnet-maui 30,068. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set.
+Per-variant always-loaded totals now: general **25,814** · python 26,996 · java 27,081 · dotnet 28,500 · rust-tauri 28,983 · dotnet-maui 30,068. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set.
 
 Every **v2.0** figure is `wc -c` on the shipped file, not an arithmetic carry-forward — which is what the separate **pre-PR4** column is for: PR1–PR3 moved `CLAUDE.md` (13,735 → 13,892) and `CLAUDE.local.md` (9,352 → 9,413) for reasons unrelated to the trim, so those deltas must not be attributed to PR4. The user-level row's drop is PR5 deleting the context-mode routing block.
 

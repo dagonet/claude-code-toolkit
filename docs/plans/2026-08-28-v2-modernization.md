@@ -153,7 +153,7 @@ Always-loaded bytes per variant (`CLAUDE.md` + `CLAUDE.local.md` + user-level `C
 | python | 26,996 |
 | java | 27,081 |
 | dotnet | 28,500 |
-| rust-tauri | 29,300 |
+| rust-tauri | 28,983 |
 | dotnet-maui | 30,068 |
 
 All six were measured with `wc -c` at the release commit, not carried forward from an earlier entry. The only pre-trim baseline that was ever measured per file is `general`'s **41,167 B**, so `41,167 → 25,814 (−37%)` is the one before/after claim this plan is entitled to make; the other five variants have no baseline-era measurement and are reported as absolutes.

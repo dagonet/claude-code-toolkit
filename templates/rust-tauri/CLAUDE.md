@@ -81,14 +81,11 @@ Developer-agent working preferences are preloaded via the `karpathy-guidelines` 
 npm install                    # Install frontend deps
 npm run dev                    # Vite dev server
 npm run tauri dev              # Full Tauri app (Rust + frontend)
-
-{{BUILD_COMMAND}}               # Build the project
-{{TEST_COMMAND}}                # Run tests
-{{FORMAT_COMMAND}}              # Format code
-{{LINT_COMMAND}}                # Lint code
+npm test                       # Frontend tests
+npm run test:rust              # cargo test (backend)
+npm run lint:all               # All linting
+npm run format                 # All formatting
 ```
-
-> Replace placeholders above with your project's actual commands from `PROJECT_CONTEXT.md`. Typical Tauri defaults: `npm run tauri build`, `npm test` + `npm run test:rust`, `npm run format`, `npm run lint:all`. The three `npm` lines above are dev-loop commands with no `PROJECT_CONTEXT.md` equivalent, so they stay literal.
 
 ## Directory Overview
 

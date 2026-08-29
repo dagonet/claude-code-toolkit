@@ -59,7 +59,7 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 | `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | 946 |
 | **total** | **41,167** | 34,084 | 32,538 | 32,888 | **25,814** |
 
-Per-variant now: general **25,814** · python 26,996 · java 27,081 · dotnet 28,500 · rust-tauri 29,300 · dotnet-maui 30,068.
+Per-variant now: general **25,814** · python 26,996 · java 27,081 · dotnet 28,500 · rust-tauri 28,983 · dotnet-maui 30,068.
 
 Every v2.0 figure is `wc -c` on the shipped file, not an arithmetic carry-forward. The **pre-PR4** column exists because PR1–PR3 moved two of these files for reasons unrelated to the trim: `CLAUDE.md` drifted 13,735 → 13,892 and `CLAUDE.local.md` 9,352 → 9,413, which is why the v2.0-pr4 CHANGELOG entry starts its cut at 13,892 rather than at the v1.5 number. The user-level row's drop is PR5 deleting the context-mode routing block (8,637 → 5,089 B).
 
@@ -69,7 +69,7 @@ Every v2.0 figure is `wc -c` on the shipped file, not an arithmetic carry-forwar
 
 **v2.0-pr4 scoped, because the rule only applies to some files.** Every variant's *Code Style (MANDATORY)*, *Enforcement Notes*, and *Project Conventions* sections moved verbatim into `.claude/rules/*.md` with a `paths:` frontmatter glob list — a C# style rule now enters context when Claude opens a `.cs` file and not before, and is re-injected after compaction. Rules **without** `paths:` load at launch at CLAUDE.md cost, so the toolkit ships scoped rules only. The duplicated Spawn-Prompt Binding Table (already in `AGENT_TEAM.md` and enforced by a hook) went with it.
 
-A second round routed two more sections by **audience** rather than by topic. *Open Brain Context for Agents* duplicated `AGENT_TEAM.md` §Open Brain, which is on-demand and more detailed — CLAUDE.md keeps a pointer. *Working Preferences* binds developer agents, not the PO, and every coder preloads `karpathy-guidelines` via `skills:` — so its 11 bullets moved into that skill and now reach the agents that act on them at spawn time, costing nothing on turns that spawn no one. Only the hook-enforcement line stayed, because it is PO-relevant. `general` variant CLAUDE.md: 13,892 → **10,362 B**; `rust-tauri`, now the largest, 16,749 → 11,296 B at PR4 and **11,613 B** as shipped (PR6 restored the four `{{…}}` command placeholders its Quick Start had hard-coded).
+A second round routed two more sections by **audience** rather than by topic. *Open Brain Context for Agents* duplicated `AGENT_TEAM.md` §Open Brain, which is on-demand and more detailed — CLAUDE.md keeps a pointer. *Working Preferences* binds developer agents, not the PO, and every coder preloads `karpathy-guidelines` via `skills:` — so its 11 bullets moved into that skill and now reach the agents that act on them at spawn time, costing nothing on turns that spawn no one. Only the hook-enforcement line stayed, because it is PO-relevant. `general` variant CLAUDE.md: 13,892 → **10,362 B**; `rust-tauri`, now the largest, 16,749 → **11,296 B**.
 
 Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (**174 assertions**), so none of the cuts could silently break enforcement — including the exact Superpowers header, the `superpowers:` token the checks require, and (new in PR4) that every rules file is genuinely path-scoped and that the relocated developer preferences survive in the skill that now carries them.
 
