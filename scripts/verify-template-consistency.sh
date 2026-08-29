@@ -292,35 +292,35 @@ fi
 #     non-empty at the toolkit ROOT hooks/ (root-tracked design — variants do
 #     NOT ship hooks/). Prose mentions are excluded (execution refs only).
 # ---------------------------------------------------------------------------
-#     v2.1.2: hook commands now invoke "$CLAUDE_PROJECT_DIR/hooks/<name>.sh",
+#     v2.1.2: hook commands now invoke "${CLAUDE_PROJECT_DIR:-.}/hooks/<name>.sh",
 #     so the extraction anchors on the command: line and pulls the hooks/ path
 #     out of it — that accepts both the old cwd-relative and the new absolute
 #     form, and still excludes the permissions allow pattern (no `command:`).
-hook_refs=$(
+extracted=$(
   {
     grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
     # frontmatter command: lines only (execution refs), not prose
     grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
   } | grep -o 'hooks/[a-z-]*\.sh' | sort -u
 )
+# The vacuity check runs on the EXTRACTION only. run-gate.sh is added afterwards,
+# so a broken grep can never be masked by the unconditional entry.
+if [ -z "$extracted" ]; then
+  ko "hook-ref invariant: extraction returned NO references (extraction broken?)"
+fi
 # run-gate.sh is named only by the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS
 # pattern and by prose, never by a `command:` line, so the anchored extraction
 # above cannot see it. It is the most load-bearing script in the repo (the Gate
 # mechanism, gate-before-merge.sh's dependency, every coder's deliverable
 # contract), so assert it explicitly rather than let it fall out of coverage.
-hook_refs="$hook_refs
-hooks/run-gate.sh"
-if [ -z "$hook_refs" ]; then
-  ko "hook-ref invariant: extraction returned NO references (extraction broken?)"
-else
-  for h in $hook_refs; do
-    if [ -s "$h" ]; then
-      ok "hook-ref: $h exists and is non-empty at repo root"
-    else
-      ko "hook-ref: $h referenced by a variant but MISSING/empty at repo root (fails open downstream)"
-    fi
-  done
-fi
+hook_refs=$(printf '%s\nhooks/run-gate.sh\n' "$extracted" | grep -v '^$' | sort -u)
+for h in $hook_refs; do
+  if [ -s "$h" ]; then
+    ok "hook-ref: $h exists and is non-empty at repo root"
+  else
+    ko "hook-ref: $h referenced by a variant but MISSING/empty at repo root (fails open downstream)"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 14. v1.2 liveness sizing invariants.
@@ -836,7 +836,10 @@ fi
 #     A `cd` inside any earlier Bash call persists for the rest of the session,
 #     so every later hook exits 127 and the 127-wrapper reports HOOK SCRIPT
 #     MISSING for a file that is right there. The documented fix is the
-#     `$CLAUDE_PROJECT_DIR` placeholder, which command hooks always get.
+#     `$CLAUDE_PROJECT_DIR` placeholder, which command hooks always get. It is
+#     spelled `${CLAUDE_PROJECT_DIR:-.}` so a host that does not export the
+#     variable degrades to the old cwd-relative behaviour rather than hard-
+#     blocking every tool call on a 127.
 #     NB: the permissions entry "Bash(bash hooks/run-gate.sh*)" is a prompt
 #     pattern, not a hook command, and must survive — hence the command:-anchor.
 # ---------------------------------------------------------------------------
@@ -854,16 +857,17 @@ else
   grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
   grep -n 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
 fi
+ABS_FORM='bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'
 abshook=$(
   {
-    grep -h '"command": "bash \\"\$CLAUDE_PROJECT_DIR/hooks/' templates/*/.claude/settings.json 2>/dev/null
-    grep -h 'command: "bash ' templates/*/.claude/agents/*.md 2>/dev/null | grep 'CLAUDE_PROJECT_DIR/hooks/'
+    grep -hF "$ABS_FORM" templates/*/.claude/settings.json 2>/dev/null
+    grep -hF "$ABS_FORM" templates/*/.claude/agents/*.md 2>/dev/null
   } | grep -c .
 )
 if [ "$abshook" -gt 0 ]; then
-  ok "$abshook hook command(s) use the \$CLAUDE_PROJECT_DIR absolute form"
+  ok "$abshook hook command(s) use the \${CLAUDE_PROJECT_DIR:-.} form"
 else
-  ko "no hook command uses \$CLAUDE_PROJECT_DIR — extraction broken or rewrite missing"
+  ko "no hook command uses \${CLAUDE_PROJECT_DIR:-.} — extraction broken or rewrite missing"
 fi
 
 # ---------------------------------------------------------------------------
@@ -885,7 +889,9 @@ for f in $region_files; do
     region_missing="$region_missing $f"
   fi
 done
-if [ -z "$region_missing" ]; then
+if [ "$region_total" -eq 0 ]; then
+  ko "PROJECT-CUSTOM region check matched NO files (glob broken?) — passing vacuously"
+elif [ -z "$region_missing" ]; then
   ok "all $region_total template agent files + AGENT_TEAM.md end with a PROJECT-CUSTOM region"
 else
   ko "PROJECT-CUSTOM region missing/not-last in:$region_missing"

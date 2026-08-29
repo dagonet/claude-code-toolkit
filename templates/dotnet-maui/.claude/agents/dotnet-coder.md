@@ -29,7 +29,7 @@ hooks:
     - matcher: "Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge"
       hooks:
         - type: command
-          command: "bash \"$CLAUDE_PROJECT_DIR/hooks/gate-before-merge.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: $CLAUDE_PROJECT_DIR/hooks/gate-before-merge.sh -- enforcement offline. Check that hooks/ exists at the project root.' >&2; exit 2; fi; exit $c"
+          command: "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh -- enforcement offline. Check that hooks/ exists at the project root.' >&2; exit 2; fi; exit $c"
 ---
 
 You are a senior .NET backend engineer and pragmatic software architect (C#, .NET). You write clean, maintainable code with sensible tests. You optimize for reliability in automated workflows.
