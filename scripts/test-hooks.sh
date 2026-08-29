@@ -198,7 +198,10 @@ printf '# ctx\n\nno commands here\n' > "$NOFIELDS/PROJECT_CONTEXT.md"
 
 check "Gate-only context, gate passes"   "$H" 0 "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")"
 check "Gate-only context, gate fails"    "$H" 2 "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")"
-check "Test wins over Gate when both"    "$H" 0 "$(mkjson Bash 'git commit -m x' "$BOTHFIELDS")"
+# v2.1.3: with hooks/run-gate.sh present, a **Gate** field now takes priority
+# over **Test** (run-gate.sh runs the full gate, a superset of Test alone) --
+# was "Test wins over Gate when both" before run-gate.sh existed.
+check "Gate (via run-gate.sh) wins over Test when both" "$H" 2 "$(mkjson Bash 'git commit -m x' "$BOTHFIELDS")"
 check_msg "no Test/Gate warns, allows"   "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'git commit -m x' "$NOFIELDS")" \
   "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
@@ -214,7 +217,7 @@ check_msg "block names the failed command"  "$ROOT/hooks/pre-commit-test.sh" 2 \
   "BLOCKED: 'false' failed — re-run it and fix the failures before committing"
 check_msg "gate-only block names the gate"  "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
-  "BLOCKED: 'false' failed"
+  "BLOCKED: 'run-gate.sh' failed"
 
 TAILREPO=$(mkrepo committail main)
 printf '# ctx\n\n- **Test**: `seq 1 40 | sed s/^/LINE/; false`\n' > "$TAILREPO/PROJECT_CONTEXT.md"
@@ -223,6 +226,33 @@ printf '%s' "$(mkjson Bash 'git commit -m x' "$TAILREPO")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>"$tailerr"
 expect "failure output reaches stderr"   "1" "$(grep -cx 'LINE40' "$tailerr")"
 expect "failure output is tailed to 20"  "0" "$(grep -cx 'LINE1' "$tailerr")"
+
+# --- v2.1.3 (consumer feedback, Yutraffic): run-gate.sh takes over commit-time
+# gating when it exists alongside a **Gate** field. A green run must write
+# .gate/last-pass.json as a side effect (so gate-before-merge is satisfied
+# without a second gate run), and a red run must exit 2 naming run-gate.sh.
+rm -f "$GATEONLYOK/.gate/last-pass.json"
+RUNGATESHA=$(git -C "$GATEONLYOK" rev-parse HEAD)
+printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(a) run-gate.sh path: exit 0 on pass" "0" "$?"
+expect "(a) run-gate.sh path: artifact written" "1" \
+  "$([ -f "$GATEONLYOK/.gate/last-pass.json" ] && echo 1 || echo 0)"
+ARTSHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
+expect "(a) run-gate.sh path: artifact sha matches HEAD" "$RUNGATESHA" "$ARTSHA"
+
+check_msg "(b) run-gate.sh path: block names run-gate.sh" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
+  "BLOCKED: 'run-gate.sh' failed"
+
+# (c) no run-gate.sh next to the hook: existing Gate/Test eval path unchanged
+NORUNGATE="$TMPROOT/norungate"
+mkdir -p "$NORUNGATE/lib"
+cp "$ROOT/hooks/pre-commit-test.sh" "$NORUNGATE/"
+cp "$ROOT/hooks/lib/git-cmd.sh" "$NORUNGATE/lib/"
+check_msg "(c) no run-gate.sh: Gate command evaluated directly" "$NORUNGATE/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
+  "BLOCKED: 'false' failed"
 
 # ===========================================================================
 # gate-before-merge.sh

@@ -60,6 +60,33 @@ GC_SEGMENTS
 # Not a commit -- nothing to gate.
 [ -n "$REPO_PATH" ] || exit 0
 
+# v2.1.3 (consumer feedback, Yutraffic): when hooks/run-gate.sh sits next to this
+# script AND the repo declares a **Gate** command, run run-gate.sh instead of
+# re-deriving/eval'ing the command ourselves. A green run-gate.sh writes
+# .gate/last-pass.json as a side effect, so gate-before-merge.sh is satisfied
+# without a second ~2-min gate run at merge time. run-gate.sh becomes the single
+# source of truth for both commit- and merge-time gating. This takes priority
+# over a **Test** field when both exist, since run-gate.sh runs the project's
+# full Gate (tests + format + lint), a superset of Test alone.
+RUN_GATE="$(dirname "$0")/run-gate.sh"
+HAS_GATE_FIELD=$(grep -E '^[-*[:space:]]*\*\*Gate( Command)?\*\*:' "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | head -1)
+if [ -f "$RUN_GATE" ] && [ -n "$HAS_GATE_FIELD" ]; then
+  echo "PRE-COMMIT: Running 'run-gate.sh'..." >&2
+  cd "$REPO_PATH" || exit 1
+  OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
+  if bash "$RUN_GATE" > "$OUT" 2>&1; then
+    rm -f "$OUT"
+    echo "PRE-COMMIT: 'run-gate.sh' passed." >&2
+    exit 0
+  else
+    echo "BLOCKED: 'run-gate.sh' failed — re-run it and fix the failures before committing." >&2
+    echo "--- last 20 lines ---" >&2
+    tail -20 "$OUT" >&2
+    rm -f "$OUT"
+    exit 2
+  fi
+fi
+
 # Read test command from PROJECT_CONTEXT.md. Tolerates: leading "- " / "* " list
 # markers, the "**Test Command**:" label style (java/python variants), and
 # surrounding backticks — several variants write commands as `cmd`.

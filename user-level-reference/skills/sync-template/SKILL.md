@@ -151,6 +151,14 @@ Sync complete: {variant} @ {new_commit}
   User-level:   [one-line verify-user-level-drift.sh summary]
 ```
 
+### 9. Commit the Sync
+
+Commit the synced tree yourself, from the main thread — the PO does git I/O for this step (`AGENT_TEAM.md`: agents without a usable tree return work; the PO commits). **Never spawn a worktree-isolated agent to commit a sync.** `coder`, `*-coder`, `tester`, and `test-writer` all set `isolation: worktree`; the harness creates that worktree from `main`, whose `hooks/` predate the sync, while the session's hot-reloaded `settings.json` already fires the v2 gates on every Bash call — the result is every Bash call in that worktree blocked ("BLOCKED: Tests failed…" even for `ls`). If you must delegate this step, use `ops` or `general-purpose` (neither sets `isolation: worktree`).
+
+Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appended `# context-mode — MANDATORY routing rules` block. The context-mode plugin re-appends this block after `PROJECT-CUSTOM:END` on every session start, so a CLAUDE.md cleaned earlier in the sync is dirty again by the time you commit. Remove the re-appended block (or disable the plugin) before staging, otherwise the commit silently reintroduces it.
+
+`git add -A` excluding `CLAUDE.local.md`, then `git commit`.
+
 ## Rules
 
 - NEVER auto-update a `CONFLICT` file without user confirmation
