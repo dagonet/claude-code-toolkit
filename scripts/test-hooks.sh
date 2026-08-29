@@ -1336,8 +1336,14 @@ check_env "no parser: agent-contract warns"    "$NOPARSER" hooks/enforce-agent-c
 # call, so warning every time is thousands of identical stderr lines; a marker
 # with no session in it is the opposite failure — with a host-global TMPDIR the
 # hook would warn once ever and every later outage would be silent.
+#
+# These payloads are built with printf, NOT the node-backed mkjson/mkread
+# helpers: this block is precisely the coverage a node-less host needs, and a
+# `node -e` builder there returns "" for every payload, collapsing the two
+# session ids into one and FAILING the "two sessions" case instead of skipping
+# it. The shapes are fixed strings, so no JSON encoder is needed.
 mkread_s() { # <session_id> <file_path>
-  node -e 'console.log(JSON.stringify({session_id:process.argv[1],hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{file_path:process.argv[2]}}))' "$1" "$2"
+  printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"%s"}}\n' "$1" "$2"
 }
 ONCETMP="$TMPROOT/oncetmp"
 warnruns() { # <session-json> [<session-json> ...] -> WARN line count
@@ -1351,7 +1357,7 @@ warnruns() { # <session-json> [<session-json> ...] -> WARN line count
 S1=$(mkread_s sess-one "$ROOT/README.md")
 S2=$(mkread_s sess-two "$ROOT/README.md")
 # mkread carries a session_id; this one deliberately does not.
-NOSESS=$(node -e 'console.log(JSON.stringify({hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{file_path:process.argv[1]}}))' "$ROOT/README.md")
+NOSESS=$(printf '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"%s"}}\n' "$ROOT/README.md")
 
 rm -rf "$ONCETMP"; mkdir -p "$ONCETMP"
 expect "same session: WARN printed once"   "1" "$(warnruns "$S1" "$S1" "$S1")"
@@ -1365,6 +1371,16 @@ if touch -d '2 hours ago' "$ONCETMP/claude-hook-warn-read-size-gate" 2>/dev/null
 else
   skip "session-less marker expiry" "touch -d unsupported here"
 fi
+# The session id lands in a FILENAME, so a value carrying a path separator or
+# `..` must not steer the marker out of the warn directory. Such a value is
+# treated as no session at all (the TTL path), which still warns exactly once.
+rm -rf "$ONCETMP"; mkdir -p "$ONCETMP"
+EVILSESS=$(mkread_s '../../evil' "$ROOT/README.md")
+expect "traversal session id: one WARN"    "1" "$(warnruns "$EVILSESS" "$EVILSESS")"
+expect "traversal session id: no escape"   "0" \
+  "$(find "$TMPROOT" -maxdepth 1 -name 'claude-hook-warn*' 2>/dev/null | grep -c .)"
+expect "traversal session id: marker is plain" "1" \
+  "$(find "$ONCETMP" -maxdepth 1 -name 'claude-hook-warn-read-size-gate' 2>/dev/null | grep -c .)"
 
 # ===========================================================================
 # v2.2.0 PR15 (B): the optional **Protected branches**: PROJECT_CONTEXT.md field

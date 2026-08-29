@@ -106,11 +106,17 @@ json_session() {
 # session id to key on (a payload we could not even grep) the marker expires
 # after an hour instead. Best-effort: an unwritable marker just means the
 # warning repeats. Never changes an exit code.
+#
+# The session id lands in a FILENAME, so a value carrying a path separator or
+# `..` is discarded rather than sanitised — an unusable key is exactly the
+# no-session case, and the TTL path below is the right fallback for it.
 JSON_WARN_TTL=3600
 json_warn_once() {
-  jwm="${TMPDIR:-/tmp}/claude-hook-warn-$1${2:+-$2}"
+  jws=$2
+  case "$jws" in */*|*\\*|*..*) jws="" ;; esac
+  jwm="${TMPDIR:-/tmp}/claude-hook-warn-$1${jws:+-$jws}"
   if [ -f "$jwm" ]; then
-    [ -n "$2" ] && return 0
+    [ -n "$jws" ] && return 0
     jwmt=$(stat -c %Y "$jwm" 2>/dev/null || stat -f %m "$jwm" 2>/dev/null || echo 0)
     [ $(( $(date +%s) - jwmt )) -lt "$JSON_WARN_TTL" ] && return 0
   fi

@@ -7,11 +7,11 @@ Branch `v2/pr15-hooks-no-node` (from main 527d3f9). Not pushed, no PR, no merge.
 
 ```
 verify-template-consistency.sh: ALL CHECKS PASSED   (230 PASS, 0 FAIL)
-test-hooks.sh: 261 passed, 0 failed, 0 skipped
+test-hooks.sh: 264 passed, 0 failed, 0 skipped
 ALL HOOK FIXTURES PASSED
 ```
 
-(Fix round 2 numbers. Round 0: 227 / 243. Round 1: 230 / 257. No SKIPs on this
+(Fix round 3 numbers. Round 0: 227 / 243. Round 1: 230 / 257. Round 2: 230 / 261. No SKIPs on this
 host — node, python3 and jq are all present; the fixture total is host-dependent
 by design and the suite now prints the skipped tally.)
 
@@ -54,6 +54,39 @@ templates/*/.claude/settings.json (x6): aba86f884c298813202aaf9d2e5f24c5 (one ha
 3. **`skipped: N` tally** — `test-hooks.sh: N passed, M failed, K skipped`, counted per assertion (each `skip` call carries the number of assertions it stands in for), so the host-dependent total still adds up.
 
 Caught by the fixtures themselves: `mkread` embeds `session_id:"t"`, so the first draft of the expiry case was not actually session-less and the marker `touch` missed the file — the assertion failed (`want 1, got 0`) and the payload is now built without a session id.
+
+## Fix round 3 (scoped re-review of f22cb2e..c4701ef)
+
+1. **WARNING — warn-once fixtures built with bare `node -e`.** Fixed at the source rather than
+   with a guard: `mkread_s` and `NOSESS` are `printf` literals (fixed shapes, no JSON encoder
+   needed), so the coverage survives on the target host instead of being skipped there.
+   Verified by extracting the block verbatim out of `scripts/test-hooks.sh` and running it with
+   node, python3 and jq hidden from BOTH the hook and the fixture builder:
+
+   ```
+   node hidden (good)
+   PASS  same session: WARN printed once            (1)
+   PASS  two sessions: two WARNs                    (2)
+   PASS  no session id: WARN printed once           (1)
+   PASS  stale session-less marker re-warns         (1)
+   PASS  traversal session id: one WARN             (1)
+   PASS  traversal session id: no escape            (0)
+   PASS  traversal session id: marker is plain      (1)
+   block: 7 passed, 0 failed, 0 skipped
+   ```
+
+   Note for the record: the SUITE as a whole cannot run node-less — `mkjson`, `mkrepo`,
+   `mkspawn`, `mkstop`, `mkpost`, `mkread` are all node-backed builders that predate this PR —
+   so the block was exercised in isolation. Converting the rest of the harness is a separate
+   piece of work.
+
+2. **SUGGESTION — session id sanitising.** `json_warn_once` now discards a session id containing
+   `/`, `\` or `..` (`case "$jws" in */*|*\\*|*..*) jws="" ;; esac`) instead of escaping it: an
+   unusable key IS the no-session case, and the TTL path is its correct fallback. Three fixtures:
+   `"session_id":"../../evil"` warns exactly once, nothing named `claude-hook-warn*` appears
+   outside the warn dir, and the marker written is the plain session-less name. Negative control
+   against the unsanitised lib returns 2 WARNs (the marker write fails on the traversed path, so
+   it warned on every call) — the fixtures fail without the fix.
 
 ## Deviations
 
