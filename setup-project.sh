@@ -9,6 +9,13 @@ set -euo pipefail
 #   ./setup-project.sh --variant java --project-name "MyService" --build-tool gradle --java-version 21
 #   ./setup-project.sh --variant python --project-name "MyApp" --package-manager poetry --python-version 3.12
 #   ./setup-project.sh --variant dotnet-maui --project-name "MyApp" --solution-file "MyApp.sln" --dry-run
+#
+# Command flags (all variants; an explicit flag always wins over a derived default):
+#   --build-cmd --test-cmd --format-cmd --lint-cmd --gate-cmd
+#   --worktree-base --log-path --default-branch
+#
+#   --wrap-existing-claude-md   keep an existing CLAUDE.md by moving its full
+#                               content into the template's PROJECT-CUSTOM region
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CALLER_CWD="$(pwd)"
@@ -32,6 +39,13 @@ PACKAGE_MANAGER=""
 PYTHON_VERSION=""
 MCP_DEV_SERVERS_PATH=""
 SQLITE_DB_PATH=""
+BUILD_CMD=""
+TEST_CMD=""
+FORMAT_CMD=""
+LINT_CMD=""
+GATE_CMD=""
+DEFAULT_BRANCH=""
+WRAP_EXISTING_CLAUDE_MD=false
 FORCE=false
 DRY_RUN=false
 
@@ -56,10 +70,17 @@ while [[ $# -gt 0 ]]; do
         --python-version)  PYTHON_VERSION="$2"; shift 2 ;;
         --mcp-dev-servers-path) MCP_DEV_SERVERS_PATH="$2"; shift 2 ;;
         --sqlite-db-path)  SQLITE_DB_PATH="$2"; shift 2 ;;
+        --build-cmd)       BUILD_CMD="$2"; shift 2 ;;
+        --test-cmd)        TEST_CMD="$2"; shift 2 ;;
+        --format-cmd)      FORMAT_CMD="$2"; shift 2 ;;
+        --lint-cmd)        LINT_CMD="$2"; shift 2 ;;
+        --gate-cmd)        GATE_CMD="$2"; shift 2 ;;
+        --default-branch)  DEFAULT_BRANCH="$2"; shift 2 ;;
+        --wrap-existing-claude-md) WRAP_EXISTING_CLAUDE_MD=true; shift ;;
         --force)           FORCE=true; shift ;;
         --dry-run)         DRY_RUN=true; shift ;;
         -h|--help)
-            sed -n '3,11p' "$0"
+            sed -n '3,18p' "$0"
             exit 0
             ;;
         *) echo "Error: Unknown option: $1" >&2; exit 1 ;;
@@ -111,6 +132,18 @@ if [[ -n "$PACKAGE_MANAGER" ]] && [[ "$PACKAGE_MANAGER" != "pip" && "$PACKAGE_MA
     echo "Error: --package-manager must be 'pip', 'poetry', or 'uv', got: $PACKAGE_MANAGER" >&2; exit 1
 fi
 
+# --- Default branch: explicit flag, else the target repo's current branch, else main ---
+if [[ -n "$DEFAULT_BRANCH" ]]; then
+    # A plain ref name only — this value ends up in PROJECT_CONTEXT.md and is read
+    # back by the branch-protection hooks, so refuse anything shell- or ref-unsafe.
+    if [[ ! "$DEFAULT_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "$DEFAULT_BRANCH" == -* ]] || [[ "$DEFAULT_BRANCH" == *..* ]]; then
+        echo "Error: --default-branch must be a plain ref name (letters, digits, . _ / -), got: $DEFAULT_BRANCH" >&2; exit 1
+    fi
+else
+    DEFAULT_BRANCH="$(git -C "$TARGET_DIR" symbolic-ref --short HEAD 2>/dev/null || true)"
+    [[ -z "$DEFAULT_BRANCH" ]] && DEFAULT_BRANCH="main"
+fi
+
 # --- Resolve relative MCP path flags against caller CWD ---
 resolve_caller_path() {
     local p="$1"
@@ -139,9 +172,28 @@ declare -a PH_VALS=()
 
 add_replacement() { PH_KEYS+=("$1"); PH_VALS+=("$2"); }
 
+# Variant-derived default: never overwrites a value an explicit flag already set.
+# (apply_replacements substitutes in insertion order, so a duplicate key would be
+# a silent no-op — this makes the precedence explicit instead of positional.)
+add_derived() {
+    local k
+    for k in "${PH_KEYS[@]}"; do
+        [[ "$k" == "$1" ]] && return 0
+    done
+    add_replacement "$1" "$2"
+}
+
 PROJECT_NAME_LOWER="$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]')"
 add_replacement '{{PROJECT_NAME}}' "$PROJECT_NAME"
 add_replacement '{{PROJECT_NAME_LOWER}}' "$PROJECT_NAME_LOWER"
+add_replacement '{{DEFAULT_BRANCH}}' "$DEFAULT_BRANCH"
+
+# Explicit command flags — added before any variant-derived default so they win.
+[[ -n "$BUILD_CMD" ]]      && add_replacement '{{BUILD_COMMAND}}' "$BUILD_CMD"
+[[ -n "$TEST_CMD" ]]       && add_replacement '{{TEST_COMMAND}}' "$TEST_CMD"
+[[ -n "$FORMAT_CMD" ]]     && add_replacement '{{FORMAT_COMMAND}}' "$FORMAT_CMD"
+[[ -n "$LINT_CMD" ]]       && add_replacement '{{LINT_COMMAND}}' "$LINT_CMD"
+[[ -n "$GATE_CMD" ]]       && add_replacement '{{GATE_COMMAND}}' "$GATE_CMD"
 
 [[ -n "$REPO_URL" ]]      && add_replacement '{{REPO_URL}}' "$REPO_URL"
 [[ -n "$SOLUTION_FILE" ]]  && add_replacement '{{SOLUTION_FILE}}' "$SOLUTION_FILE"
@@ -156,8 +208,8 @@ add_replacement '{{PROJECT_NAME_LOWER}}' "$PROJECT_NAME_LOWER"
 
 # Auto-derived: dotnet build commands
 if [[ "$VARIANT" == "dotnet" || "$VARIANT" == "dotnet-maui" ]] && [[ -n "$SOLUTION_FILE" ]]; then
-    add_replacement '{{BUILD_COMMAND}}' "dotnet build $SOLUTION_FILE"
-    add_replacement '{{TEST_COMMAND}}' "dotnet test"
+    add_derived '{{BUILD_COMMAND}}' "dotnet build $SOLUTION_FILE"
+    add_derived '{{TEST_COMMAND}}' "dotnet test"
 fi
 
 # Auto-derived: rust-tauri defaults
@@ -172,27 +224,27 @@ if [[ "$VARIANT" == "python" ]]; then
     add_replacement '{{PYTHON_VERSION}}' "$py_ver"
     case "$py_pkg" in
         poetry)
-            add_replacement '{{BUILD_COMMAND}}' "poetry run pytest"
-            add_replacement '{{TEST_COMMAND}}' "poetry run pytest"
-            add_replacement '{{FORMAT_COMMAND}}' "poetry run ruff format ."
-            add_replacement '{{LINT_COMMAND}}' "poetry run ruff check ."
-            add_replacement '{{GATE_COMMAND}}' "poetry run ruff format --check . && poetry run ruff check . && poetry run pytest"
+            add_derived '{{BUILD_COMMAND}}' "poetry run pytest"
+            add_derived '{{TEST_COMMAND}}' "poetry run pytest"
+            add_derived '{{FORMAT_COMMAND}}' "poetry run ruff format ."
+            add_derived '{{LINT_COMMAND}}' "poetry run ruff check ."
+            add_derived '{{GATE_COMMAND}}' "poetry run ruff format --check . && poetry run ruff check . && poetry run pytest"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Python $py_ver, Poetry"
             ;;
         uv)
-            add_replacement '{{BUILD_COMMAND}}' "uv run pytest"
-            add_replacement '{{TEST_COMMAND}}' "uv run pytest"
-            add_replacement '{{FORMAT_COMMAND}}' "uv run ruff format ."
-            add_replacement '{{LINT_COMMAND}}' "uv run ruff check ."
-            add_replacement '{{GATE_COMMAND}}' "uv run ruff format --check . && uv run ruff check . && uv run pytest"
+            add_derived '{{BUILD_COMMAND}}' "uv run pytest"
+            add_derived '{{TEST_COMMAND}}' "uv run pytest"
+            add_derived '{{FORMAT_COMMAND}}' "uv run ruff format ."
+            add_derived '{{LINT_COMMAND}}' "uv run ruff check ."
+            add_derived '{{GATE_COMMAND}}' "uv run ruff format --check . && uv run ruff check . && uv run pytest"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Python $py_ver, uv"
             ;;
         *)
-            add_replacement '{{BUILD_COMMAND}}' "python -m pytest"
-            add_replacement '{{TEST_COMMAND}}' "python -m pytest"
-            add_replacement '{{FORMAT_COMMAND}}' "ruff format ."
-            add_replacement '{{LINT_COMMAND}}' "ruff check ."
-            add_replacement '{{GATE_COMMAND}}' "ruff format --check . && ruff check . && python -m pytest"
+            add_derived '{{BUILD_COMMAND}}' "python -m pytest"
+            add_derived '{{TEST_COMMAND}}' "python -m pytest"
+            add_derived '{{FORMAT_COMMAND}}' "ruff format ."
+            add_derived '{{LINT_COMMAND}}' "ruff check ."
+            add_derived '{{GATE_COMMAND}}' "ruff format --check . && ruff check . && python -m pytest"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Python $py_ver, pip"
             ;;
     esac
@@ -205,19 +257,19 @@ if [[ "$VARIANT" == "java" ]]; then
     add_replacement '{{JAVA_VERSION}}' "$java_ver"
     case "$java_bt" in
         gradle)
-            add_replacement '{{BUILD_COMMAND}}' "./gradlew build"
-            add_replacement '{{TEST_COMMAND}}' "./gradlew test"
-            add_replacement '{{FORMAT_COMMAND}}' "./gradlew spotlessApply"
-            add_replacement '{{LINT_COMMAND}}' "./gradlew spotlessCheck"
-            add_replacement '{{GATE_COMMAND}}' "./gradlew spotlessCheck build"
+            add_derived '{{BUILD_COMMAND}}' "./gradlew build"
+            add_derived '{{TEST_COMMAND}}' "./gradlew test"
+            add_derived '{{FORMAT_COMMAND}}' "./gradlew spotlessApply"
+            add_derived '{{LINT_COMMAND}}' "./gradlew spotlessCheck"
+            add_derived '{{GATE_COMMAND}}' "./gradlew spotlessCheck build"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Java $java_ver, Spring Boot, Gradle"
             ;;
         *)
-            add_replacement '{{BUILD_COMMAND}}' "mvn clean verify"
-            add_replacement '{{TEST_COMMAND}}' "mvn test"
-            add_replacement '{{FORMAT_COMMAND}}' "mvn spotless:apply"
-            add_replacement '{{LINT_COMMAND}}' "mvn spotless:check"
-            add_replacement '{{GATE_COMMAND}}' "mvn spotless:check clean verify"
+            add_derived '{{BUILD_COMMAND}}' "mvn clean verify"
+            add_derived '{{TEST_COMMAND}}' "mvn test"
+            add_derived '{{FORMAT_COMMAND}}' "mvn spotless:apply"
+            add_derived '{{LINT_COMMAND}}' "mvn spotless:check"
+            add_derived '{{GATE_COMMAND}}' "mvn spotless:check clean verify"
             [[ -z "$TECH_STACK" ]] && add_replacement '{{TECH_STACK}}' "Java $java_ver, Spring Boot, Maven"
             ;;
     esac
@@ -241,6 +293,81 @@ apply_replacements() {
         text="${text//"${PH_KEYS[$i]}"/"${PH_VALS[$i]}"}"
     done
     printf '%s' "$text"
+}
+
+# --- Wrap an existing CLAUDE.md into the template's PROJECT-CUSTOM region ---
+#
+# Without --wrap-existing-claude-md an existing CLAUDE.md is skipped outright, so
+# a consumer whose file is all hard rules gets none of the template. Wrapping
+# keeps every one of their rules — inside the region sync-template preserves.
+wrap_into_custom_region() {
+    # $1 = rendered template text, $2 = existing CLAUDE.md text
+    printf '%s' "$1" | CUSTOM_BODY="$2" awk '
+        index($0, "<!-- PROJECT-CUSTOM:BEGIN") { print; print ""; print ENVIRON["CUSTOM_BODY"]; print ""; inside = 1; next }
+        index($0, "<!-- PROJECT-CUSTOM:END")   { inside = 0 }
+        inside { next }
+        { print }
+    '
+}
+
+# True when this file is an existing CLAUDE.md that --wrap-existing-claude-md applies to.
+should_wrap_claude_md() {
+    [[ "$1" == "CLAUDE.md" ]] || return 1
+    [[ "$WRAP_EXISTING_CLAUDE_MD" == true ]] || return 1
+    [[ "$FORCE" != true ]] || return 1
+    [[ -f "$TARGET_DIR/CLAUDE.md" ]] || return 1
+    # Nesting two PROJECT-CUSTOM regions would corrupt sync-template's region logic.
+    ! grep -qF 'PROJECT-CUSTOM:BEGIN' "$TARGET_DIR/CLAUDE.md"
+}
+
+# One-line hint appended to an existing-CLAUDE.md skip, naming the way out.
+claude_md_skip_hint() {
+    [[ "$1" == "CLAUDE.md" ]] || return 0
+    if [[ "$WRAP_EXISTING_CLAUDE_MD" == true ]]; then
+        printf '%s' " — already carries a PROJECT-CUSTOM region, nothing to wrap"
+    else
+        printf '%s' " — pass --wrap-existing-claude-md to keep it inside the template's PROJECT-CUSTOM region"
+    fi
+}
+
+# Exact text that would be written for FILE_SOURCES[$1] — used by both modes.
+render_file() {
+    local idx="$1"
+    local rendered
+    rendered="$(apply_replacements "$(<"${FILE_SOURCES[$idx]}")")"
+    if should_wrap_claude_md "${FILE_RELS[$idx]}"; then
+        rendered="$(wrap_into_custom_region "$rendered" "$(<"$TARGET_DIR/CLAUDE.md")")"
+    fi
+    printf '%s' "$rendered"
+}
+
+# --- Remaining-placeholder report ---
+#
+# Computed over the RENDERED content in memory, so the dry run and the real run
+# report the same thing. The old real-run-only version grepped the written files
+# and therefore could not run in dry-run mode at all (that branch exits first)
+# and saw nothing for files that do not exist yet.
+declare -a REPORT_RELS=()
+declare -a REPORT_TEXTS=()
+
+record_rendered() { REPORT_RELS+=("$1"); REPORT_TEXTS+=("$2"); }
+
+print_remaining_placeholders() {
+    local has_remaining=false
+    local i line
+    for i in "${!REPORT_RELS[@]}"; do
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if [[ "$has_remaining" == false ]]; then
+                echo "Remaining placeholders to fill manually:"
+                has_remaining=true
+            fi
+            echo "  ${REPORT_RELS[$i]}:$line"
+        done < <(printf '%s' "${REPORT_TEXTS[$i]}" | grep -n '{{[A-Z_]*}}' || true)
+    done
+    if [[ "$has_remaining" == false ]]; then
+        echo "All placeholders replaced."
+    fi
 }
 
 # --- JSON escape (used by both .mcp.json and manifest generation) ---
@@ -373,7 +500,7 @@ print_automode_snippet() {
     [[ -z "$remote" ]] && remote="<your remote URL>"
 
     echo "autoMode.environment entry for this project (User/managed scope — cannot live in the project):"
-    echo "  \"**Trusted repo**: \`$TARGET_DIR\` and its remote \`$remote\` (private) — confidential material may be committed here\""
+    echo "  \"**Trusted repo**: \`$TARGET_DIR\` and its remote \`$remote\` (private)\""
     echo ""
     echo "  Append it to permissions.autoMode.environment in ~/.claude/settings.json."
     echo "  See user-level-reference/settings.json for the shape."
@@ -393,14 +520,20 @@ if [[ "$DRY_RUN" == true ]]; then
         target_file="$TARGET_DIR/${FILE_RELS[$i]}"
         if [[ "${FILE_IS_GITIGNORE[$i]}" == true ]] && [[ -f "$target_file" ]]; then
             action="APPEND"
+        elif should_wrap_claude_md "${FILE_RELS[$i]}"; then
+            action="WRAP (existing content moves into the PROJECT-CUSTOM region)"
         elif [[ -f "$target_file" ]] && [[ "$FORCE" != true ]]; then
-            action="SKIP (exists)"
+            action="SKIP (exists)$(claude_md_skip_hint "${FILE_RELS[$i]}")"
         elif [[ -f "$target_file" ]] && [[ "$FORCE" == true ]]; then
             action="OVERWRITE"
         else
             action="CREATE"
         fi
         echo "  ${FILE_RELS[$i]} -> $action"
+        # Only files the real run would write contribute to the placeholder report.
+        if [[ "$action" != SKIP* ]]; then
+            record_rendered "${FILE_RELS[$i]}" "$(render_file "$i")"
+        fi
     done
     echo ""
     echo "Replacements:"
@@ -430,6 +563,8 @@ if [[ "$DRY_RUN" == true ]]; then
         echo "Project-level .mcp.json: (not generated - no entries for this variant/flags)"
     fi
     echo ""
+    print_remaining_placeholders
+    echo ""
     print_automode_snippet
     echo ""
     echo "=== END DRY RUN ==="
@@ -447,6 +582,7 @@ skipped=()
 declare -a MF_KEYS=()
 declare -a MF_HASHES=()
 declare -a MF_RAW_HASHES=()
+declare -a MF_LOCAL_HASHES=()
 declare -a MF_MODIFIED=()
 declare -a MF_REASONS=()
 
@@ -483,6 +619,7 @@ for i in "${!FILE_SOURCES[@]}"; do
                 append_block="$(apply_replacements "$append_block")"
                 printf '%s' "$append_block" >> "$target_file"
                 copied+=("$rel (appended)")
+                record_rendered "$rel" "$append_block"
             else
                 skipped+=("$rel (entries already present)")
             fi
@@ -491,13 +628,29 @@ for i in "${!FILE_SOURCES[@]}"; do
             content="$(apply_replacements "$content")"
             printf '%s' "$content" > "$target_file"
             copied+=("$rel")
+            record_rendered "$rel" "$content"
         fi
+        continue
+    fi
+
+    # Wrap an existing CLAUDE.md instead of skipping it
+    if should_wrap_claude_md "$rel"; then
+        wrapped="$(render_file "$i")"
+        printf '%s' "$wrapped" > "$target_file"
+        copied+=("$rel (existing content wrapped into PROJECT-CUSTOM)")
+        record_rendered "$rel" "$wrapped"
+        MF_KEYS+=("$rel")
+        MF_HASHES+=("$(content_hash "$(apply_replacements "$content")")")
+        MF_RAW_HASHES+=("$(content_hash "$content")")
+        MF_LOCAL_HASHES+=("$(content_hash "$wrapped")")
+        MF_MODIFIED+=(true)
+        MF_REASONS+=("Existing CLAUDE.md wrapped into the PROJECT-CUSTOM region")
         continue
     fi
 
     # Skip existing unless --force
     if [[ -f "$target_file" ]] && [[ "$FORCE" != true ]]; then
-        skipped+=("$rel (exists, use --force to overwrite)")
+        skipped+=("$rel (exists, use --force to overwrite)$(claude_md_skip_hint "$rel")")
         continue
     fi
 
@@ -506,6 +659,7 @@ for i in "${!FILE_SOURCES[@]}"; do
     content="$(apply_replacements "$content")"
     printf '%s' "$content" > "$target_file"
     copied+=("$rel")
+    record_rendered "$rel" "$content"
 
     # Track for manifest
     rel_key="${rel//\\//}"
@@ -519,6 +673,7 @@ for i in "${!FILE_SOURCES[@]}"; do
     MF_KEYS+=("$rel_key")
     MF_HASHES+=("$(content_hash "$content")")
     MF_RAW_HASHES+=("$(content_hash "$raw_content")")
+    MF_LOCAL_HASHES+=("$(content_hash "$content")")
     MF_MODIFIED+=("$is_mod")
     MF_REASONS+=("$reason")
 done
@@ -588,7 +743,7 @@ done
         echo "    \"${MF_KEYS[$j]}\": {"
         echo "      \"templateHash\": \"${MF_HASHES[$j]}\","
         echo "      \"templateRawHash\": \"${MF_RAW_HASHES[$j]}\","
-        echo "      \"localHash\": \"${MF_HASHES[$j]}\","
+        echo "      \"localHash\": \"${MF_LOCAL_HASHES[$j]}\","
         if [[ -n "${MF_REASONS[$j]}" ]]; then
             echo "      \"locallyModified\": ${MF_MODIFIED[$j]},"
             echo "      \"reason\": \"${MF_REASONS[$j]}\""
@@ -631,23 +786,7 @@ fi
 
 # --- Check for remaining placeholders ---
 echo ""
-has_remaining=false
-for f in "${copied[@]}"; do
-    clean="${f%% (*}"
-    filepath="$TARGET_DIR/$clean"
-    [[ ! -f "$filepath" ]] && continue
-    while IFS= read -r line; do
-        if [[ "$has_remaining" == false ]]; then
-            echo "Remaining placeholders to fill manually:"
-            has_remaining=true
-        fi
-        echo "  $clean:$line"
-    done < <(grep -n '{{[A-Z_]*}}' "$filepath" 2>/dev/null || true)
-done
-
-if [[ "$has_remaining" == false ]]; then
-    echo "All placeholders replaced."
-fi
+print_remaining_placeholders
 
 echo ""
 print_automode_snippet

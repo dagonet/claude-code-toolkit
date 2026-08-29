@@ -148,7 +148,10 @@ Bash flags use `--kebab-case`; PowerShell uses `-PascalCase`. Both scripts accep
 
 | Bash flag | PowerShell flag | Purpose |
 |---|---|---|
-| `--dry-run` | `-DryRun` | Preview which files would be copied and which placeholders would be replaced, without writing anything. |
+| `--dry-run` | `-DryRun` | Preview which files would be copied, which placeholders would be replaced, and — computed over the rendered content, so identical to the real run — which placeholders would remain unfilled. Writes nothing. |
+| `--build-cmd` / `--test-cmd` / `--format-cmd` / `--lint-cmd` / `--gate-cmd` | `-BuildCmd` / `-TestCmd` / `-FormatCmd` / `-LintCmd` / `-GateCmd` | Fill the command placeholders on **any** variant. An explicit flag always wins over the value a variant derives from `--build-tool` / `--package-manager` / `--solution-file`. `general` derives nothing, so these are the only way to fill them. |
+| `--default-branch <name>` | `-DefaultBranch <name>` | Value for `{{DEFAULT_BRANCH}}` in `PROJECT_CONTEXT.md` (branch strategy + the optional `**Protected branches**:` line). Must be a plain ref name. Defaults to the target repo's current branch, else `main`. |
+| `--wrap-existing-claude-md` | `-WrapExistingClaudeMd` | When the target already has a `CLAUDE.md`, write the template and place the existing file's full content inside its `PROJECT-CUSTOM` region instead of skipping. A file that already has such a region is left alone. |
 | `--force` | `-Force` | Overwrite existing files in the target directory (default: skip existing). |
 | `--mcp-dev-servers-path <path>` | `-McpDevServersPath <path>` | Path to a local clone of [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers). Required for `dotnet`, `dotnet-maui`, `rust-tauri` variants to generate project-level `dotnet-tools` / `rust-tools`. |
 | `--sqlite-db-path <path>` | `-SqliteDbPath <path>` | Optional; generates a project-level `sqlite` MCP entry for any variant. |

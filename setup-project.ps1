@@ -8,6 +8,11 @@
     PROJECT_STATE.md, VERIFICATION_PLAYBOOK.md, .claude/, .editorconfig, .gitattributes, gitignore)
     to a target project directory and replaces {{PLACEHOLDER}} tokens with provided values.
 
+    Command flags apply to every variant and always win over a variant-derived default:
+    -BuildCmd, -TestCmd, -FormatCmd, -LintCmd, -GateCmd, -WorktreeBase, -LogPath, -DefaultBranch.
+    -WrapExistingClaudeMd keeps an existing CLAUDE.md by moving its full content into the
+    template's PROJECT-CUSTOM region instead of skipping the file.
+
 .EXAMPLE
     .\setup-project.ps1 -Variant general -ProjectName "MyProject" -RepoUrl "https://github.com/user/myproject"
 
@@ -55,6 +60,14 @@ param(
     [string]$McpDevServersPath,
     [string]$SqliteDbPath,
 
+    [string]$BuildCmd,
+    [string]$TestCmd,
+    [string]$FormatCmd,
+    [string]$LintCmd,
+    [string]$GateCmd,
+    [string]$DefaultBranch,
+
+    [switch]$WrapExistingClaudeMd,
     [switch]$Force,
     [switch]$DryRun
 )
@@ -109,6 +122,23 @@ if ($Variant -eq "python") {
     }
 }
 
+# --- Default branch: explicit flag, else the target repo's current branch, else main ---
+#
+# The value lands in PROJECT_CONTEXT.md and is read back by the branch-protection
+# hooks, so refuse anything that is not a plain ref name.
+if ($DefaultBranch) {
+    if ($DefaultBranch -notmatch '^[A-Za-z0-9._/-]+$' -or $DefaultBranch.StartsWith('-') -or $DefaultBranch.Contains('..')) {
+        Write-Error "DefaultBranch must be a plain ref name (letters, digits, . _ / -), got: $DefaultBranch"
+        return
+    }
+}
+else {
+    if (Test-Path (Join-Path $TargetDir ".git")) {
+        $DefaultBranch = (& git -C $TargetDir symbolic-ref --short HEAD 2>$null)
+    }
+    if (-not $DefaultBranch) { $DefaultBranch = "main" }
+}
+
 # --- Resolve relative MCP path flags against caller CWD ---
 function Resolve-CallerPath {
     param([string]$Path)
@@ -130,9 +160,25 @@ if ($Variant -eq "rust-tauri" -and -not $McpDevServersPath) {
 # --- Build placeholder replacement map ---
 $replacements = @{}
 
+# Variant-derived default: never overwrites a value an explicit flag already set.
+# (A plain hashtable assignment is last-write-wins, which would silently invert the
+# precedence against setup-project.sh, where the first substitution wins.)
+function Add-Derived {
+    param([string]$Key, [string]$Value)
+    if (-not $replacements.ContainsKey($Key)) { $replacements[$Key] = $Value }
+}
+
 # Always replaced
 $replacements['{{PROJECT_NAME}}'] = $ProjectName
 $replacements['{{PROJECT_NAME_LOWER}}'] = $ProjectName.ToLower()
+$replacements['{{DEFAULT_BRANCH}}'] = $DefaultBranch
+
+# Explicit command flags -- set before any variant-derived default so they win
+if ($BuildCmd)  { $replacements['{{BUILD_COMMAND}}']  = $BuildCmd }
+if ($TestCmd)   { $replacements['{{TEST_COMMAND}}']   = $TestCmd }
+if ($FormatCmd) { $replacements['{{FORMAT_COMMAND}}'] = $FormatCmd }
+if ($LintCmd)   { $replacements['{{LINT_COMMAND}}']   = $LintCmd }
+if ($GateCmd)   { $replacements['{{GATE_COMMAND}}']   = $GateCmd }
 
 # Replaced if provided
 if ($RepoUrl)       { $replacements['{{REPO_URL}}']       = $RepoUrl }
@@ -152,8 +198,8 @@ if ($DbPath -and $DbFilename) {
 
 # Auto-derived: build/test commands for dotnet variants
 if ($Variant -in @("dotnet", "dotnet-maui") -and $SolutionFile) {
-    $replacements['{{BUILD_COMMAND}}'] = "dotnet build $SolutionFile"
-    $replacements['{{TEST_COMMAND}}']  = "dotnet test"
+    Add-Derived '{{BUILD_COMMAND}}' "dotnet build $SolutionFile"
+    Add-Derived '{{TEST_COMMAND}}' "dotnet test"
 }
 
 # Auto-derived: build/test commands for rust-tauri variant
@@ -170,31 +216,31 @@ if ($Variant -eq "python") {
     $replacements['{{PYTHON_VERSION}}'] = $pyVersion
 
     if ($pyPkgMgr -eq "poetry") {
-        $replacements['{{BUILD_COMMAND}}'] = "poetry run pytest"
-        $replacements['{{TEST_COMMAND}}']  = "poetry run pytest"
-        $replacements['{{FORMAT_COMMAND}}'] = "poetry run ruff format ."
-        $replacements['{{LINT_COMMAND}}']  = "poetry run ruff check ."
-        $replacements['{{GATE_COMMAND}}']  = "poetry run ruff format --check . && poetry run ruff check . && poetry run pytest"
+        Add-Derived '{{BUILD_COMMAND}}' "poetry run pytest"
+        Add-Derived '{{TEST_COMMAND}}' "poetry run pytest"
+        Add-Derived '{{FORMAT_COMMAND}}' "poetry run ruff format ."
+        Add-Derived '{{LINT_COMMAND}}' "poetry run ruff check ."
+        Add-Derived '{{GATE_COMMAND}}' "poetry run ruff format --check . && poetry run ruff check . && poetry run pytest"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Python $pyVersion, Poetry"
         }
     }
     elseif ($pyPkgMgr -eq "uv") {
-        $replacements['{{BUILD_COMMAND}}'] = "uv run pytest"
-        $replacements['{{TEST_COMMAND}}']  = "uv run pytest"
-        $replacements['{{FORMAT_COMMAND}}'] = "uv run ruff format ."
-        $replacements['{{LINT_COMMAND}}']  = "uv run ruff check ."
-        $replacements['{{GATE_COMMAND}}']  = "uv run ruff format --check . && uv run ruff check . && uv run pytest"
+        Add-Derived '{{BUILD_COMMAND}}' "uv run pytest"
+        Add-Derived '{{TEST_COMMAND}}' "uv run pytest"
+        Add-Derived '{{FORMAT_COMMAND}}' "uv run ruff format ."
+        Add-Derived '{{LINT_COMMAND}}' "uv run ruff check ."
+        Add-Derived '{{GATE_COMMAND}}' "uv run ruff format --check . && uv run ruff check . && uv run pytest"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Python $pyVersion, uv"
         }
     }
     else {
-        $replacements['{{BUILD_COMMAND}}'] = "python -m pytest"
-        $replacements['{{TEST_COMMAND}}']  = "python -m pytest"
-        $replacements['{{FORMAT_COMMAND}}'] = "ruff format ."
-        $replacements['{{LINT_COMMAND}}']  = "ruff check ."
-        $replacements['{{GATE_COMMAND}}']  = "ruff format --check . && ruff check . && python -m pytest"
+        Add-Derived '{{BUILD_COMMAND}}' "python -m pytest"
+        Add-Derived '{{TEST_COMMAND}}' "python -m pytest"
+        Add-Derived '{{FORMAT_COMMAND}}' "ruff format ."
+        Add-Derived '{{LINT_COMMAND}}' "ruff check ."
+        Add-Derived '{{GATE_COMMAND}}' "ruff format --check . && ruff check . && python -m pytest"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Python $pyVersion, pip"
         }
@@ -208,21 +254,21 @@ if ($Variant -eq "java") {
     $replacements['{{JAVA_VERSION}}'] = $javaVersion
 
     if ($javaBuildTool -eq "gradle") {
-        $replacements['{{BUILD_COMMAND}}'] = "./gradlew build"
-        $replacements['{{TEST_COMMAND}}']  = "./gradlew test"
-        $replacements['{{FORMAT_COMMAND}}'] = "./gradlew spotlessApply"
-        $replacements['{{LINT_COMMAND}}']  = "./gradlew spotlessCheck"
-        $replacements['{{GATE_COMMAND}}']  = "./gradlew spotlessCheck build"
+        Add-Derived '{{BUILD_COMMAND}}' "./gradlew build"
+        Add-Derived '{{TEST_COMMAND}}' "./gradlew test"
+        Add-Derived '{{FORMAT_COMMAND}}' "./gradlew spotlessApply"
+        Add-Derived '{{LINT_COMMAND}}' "./gradlew spotlessCheck"
+        Add-Derived '{{GATE_COMMAND}}' "./gradlew spotlessCheck build"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Java $javaVersion, Spring Boot, Gradle"
         }
     }
     else {
-        $replacements['{{BUILD_COMMAND}}'] = "mvn clean verify"
-        $replacements['{{TEST_COMMAND}}']  = "mvn test"
-        $replacements['{{FORMAT_COMMAND}}'] = "mvn spotless:apply"
-        $replacements['{{LINT_COMMAND}}']  = "mvn spotless:check"
-        $replacements['{{GATE_COMMAND}}']  = "mvn spotless:check clean verify"
+        Add-Derived '{{BUILD_COMMAND}}' "mvn clean verify"
+        Add-Derived '{{TEST_COMMAND}}' "mvn test"
+        Add-Derived '{{FORMAT_COMMAND}}' "mvn spotless:apply"
+        Add-Derived '{{LINT_COMMAND}}' "mvn spotless:check"
+        Add-Derived '{{GATE_COMMAND}}' "mvn spotless:check clean verify"
         if (-not $TechStack) {
             $replacements['{{TECH_STACK}}'] = "Java $javaVersion, Spring Boot, Maven"
         }
@@ -321,6 +367,100 @@ function Get-TemplateFiles {
 
 $templateFiles = Get-TemplateFiles -Source $TemplateDir
 
+# --- Wrap an existing CLAUDE.md into the template's PROJECT-CUSTOM region ---
+#
+# Without -WrapExistingClaudeMd an existing CLAUDE.md is skipped outright, so a
+# consumer whose file is all hard rules gets none of the template. Wrapping keeps
+# every one of their rules -- inside the region sync-template preserves.
+function Merge-IntoCustomRegion {
+    param([string]$Rendered, [string]$Body)
+    $out = New-Object System.Collections.Generic.List[string]
+    $inside = $false
+    foreach ($line in ($Rendered -split "`n")) {
+        if ($line.Contains("<!-- PROJECT-CUSTOM:BEGIN")) {
+            $out.Add($line); $out.Add(""); $out.Add($Body.TrimEnd("`r", "`n")); $out.Add("")
+            $inside = $true
+            continue
+        }
+        if ($line.Contains("<!-- PROJECT-CUSTOM:END")) { $inside = $false }
+        if ($inside) { continue }
+        $out.Add($line)
+    }
+    return ($out -join "`n")
+}
+
+function Test-ShouldWrapClaudeMd {
+    param([string]$RelPath)
+    if ($RelPath -ne "CLAUDE.md") { return $false }
+    if (-not $WrapExistingClaudeMd) { return $false }
+    if ($Force) { return $false }
+    $existing = Join-Path $TargetDir "CLAUDE.md"
+    if (-not (Test-Path $existing)) { return $false }
+    # Nesting two PROJECT-CUSTOM regions would corrupt sync-template's region logic.
+    return -not ((Get-Content -Path $existing -Encoding UTF8 -Raw).Contains("PROJECT-CUSTOM:BEGIN"))
+}
+
+function Get-ClaudeMdSkipHint {
+    param([string]$RelPath)
+    if ($RelPath -ne "CLAUDE.md") { return "" }
+    if ($WrapExistingClaudeMd) { return " -- already carries a PROJECT-CUSTOM region, nothing to wrap" }
+    return " -- pass -WrapExistingClaudeMd to keep it inside the template's PROJECT-CUSTOM region"
+}
+
+# Exact text that would be written for a template file -- used by both modes.
+function Get-RenderedContent {
+    param($File)
+    $text = Get-Content -Path $File.Source -Encoding UTF8 -Raw
+    foreach ($key in $replacements.Keys) { $text = $text.Replace($key, $replacements[$key]) }
+    if (Test-ShouldWrapClaudeMd $File.RelPath) {
+        $existing = Get-Content -Path (Join-Path $TargetDir "CLAUDE.md") -Encoding UTF8 -Raw
+        $text = Merge-IntoCustomRegion -Rendered $text -Body $existing
+    }
+    return $text
+}
+
+# --- Remaining-placeholder report ---
+#
+# Computed over the RENDERED content in memory, so the dry run and the real run
+# report the same thing. The old real-run-only version read the written files and
+# therefore could not run in dry-run mode at all (that branch returns first).
+$script:renderedFiles = @()
+
+function Add-RenderedFile {
+    param([string]$RelPath, [string]$Text)
+    $script:renderedFiles += [PSCustomObject]@{ RelPath = $RelPath; Text = $Text }
+}
+
+function Write-RemainingPlaceholders {
+    $remaining = @()
+    foreach ($rendered in $script:renderedFiles) {
+        $lineNum = 0
+        foreach ($line in ($rendered.Text -split "`n")) {
+            $lineNum++
+            foreach ($m in [regex]::Matches($line, '\{\{[A-Z_]+\}\}')) {
+                $remaining += [PSCustomObject]@{
+                    File        = $rendered.RelPath
+                    Line        = $lineNum
+                    Placeholder = $m.Value
+                }
+            }
+        }
+    }
+
+    if ($remaining.Count -gt 0) {
+        Write-Host "Remaining placeholders to fill manually:" -ForegroundColor Yellow
+        foreach ($group in ($remaining | Group-Object Placeholder | Sort-Object Name)) {
+            Write-Host "  $($group.Name):" -ForegroundColor DarkYellow
+            foreach ($item in $group.Group) {
+                Write-Host "    $($item.File):$($item.Line)"
+            }
+        }
+    }
+    else {
+        Write-Host "All placeholders replaced." -ForegroundColor Green
+    }
+}
+
 # --- autoMode.environment snippet ---
 #
 # permissions.autoMode is User/managed scope only: a project cannot ship one,
@@ -339,7 +479,7 @@ function Write-AutoModeSnippet {
     if (-not $remote) { $remote = "<your remote URL>" }
 
     Write-Host "autoMode.environment entry for this project (User/managed scope -- cannot live in the project):" -ForegroundColor Yellow
-    Write-Host "  ""**Trusted repo**: ``$TargetDir`` and its remote ``$remote`` (private) -- confidential material may be committed here"""
+    Write-Host "  ""**Trusted repo**: ``$TargetDir`` and its remote ``$remote`` (private)"""
     Write-Host ""
     Write-Host "  Append it to permissions.autoMode.environment in ~/.claude/settings.json."
     Write-Host "  See user-level-reference/settings.json for the shape."
@@ -360,10 +500,15 @@ if ($DryRun) {
         $targetFile = Join-Path $TargetDir $f.RelPath
         $exists = Test-Path $targetFile
         $action = if ($f.IsGitignore -and $exists) { "APPEND" }
-                  elseif ($exists -and -not $Force) { "SKIP (exists)" }
+                  elseif (Test-ShouldWrapClaudeMd $f.RelPath) { "WRAP (existing content moves into the PROJECT-CUSTOM region)" }
+                  elseif ($exists -and -not $Force) { "SKIP (exists)" + (Get-ClaudeMdSkipHint $f.RelPath) }
                   elseif ($exists -and $Force) { "OVERWRITE" }
                   else { "CREATE" }
         Write-Host "  $($f.RelPath) -> $action"
+        # Only files the real run would write contribute to the placeholder report.
+        if (-not $action.StartsWith("SKIP")) {
+            Add-RenderedFile -RelPath $f.RelPath -Text (Get-RenderedContent -File $f)
+        }
     }
 
     Write-Host ""
@@ -399,6 +544,9 @@ if ($DryRun) {
     else {
         Write-Host "Project-level .mcp.json: (not generated - no entries for this variant/flags)" -ForegroundColor DarkGray
     }
+
+    Write-Host ""
+    Write-RemainingPlaceholders
 
     Write-Host ""
     Write-AutoModeSnippet
@@ -454,6 +602,7 @@ foreach ($f in $templateFiles) {
                 }
                 Add-Content -Path $targetFile -Value $appendBlock -Encoding UTF8
                 $copiedFiles += "$($f.RelPath) (appended)"
+                Add-RenderedFile -RelPath $f.RelPath -Text $appendBlock
             }
             else {
                 $skippedFiles += "$($f.RelPath) (entries already present)"
@@ -470,13 +619,33 @@ foreach ($f in $templateFiles) {
             }
             Set-Content -Path $targetFile -Value $sourceContent -Encoding UTF8 -NoNewline
             $copiedFiles += $f.RelPath
+            Add-RenderedFile -RelPath $f.RelPath -Text $sourceContent
+        }
+        continue
+    }
+
+    # Wrap an existing CLAUDE.md instead of skipping it
+    if (Test-ShouldWrapClaudeMd $f.RelPath) {
+        $rawContent = Get-Content -Path $f.Source -Encoding UTF8 -Raw
+        $renderedTemplate = $rawContent
+        foreach ($key in $replacements.Keys) { $renderedTemplate = $renderedTemplate.Replace($key, $replacements[$key]) }
+        $wrapped = Get-RenderedContent -File $f
+        Set-Content -Path $targetFile -Value $wrapped -Encoding UTF8 -NoNewline
+        $copiedFiles += "$($f.RelPath) (existing content wrapped into PROJECT-CUSTOM)"
+        Add-RenderedFile -RelPath $f.RelPath -Text $wrapped
+        $manifestFiles[($f.RelPath -replace '\\', '/')] = @{
+            templateHash    = Get-ContentHash $renderedTemplate
+            templateRawHash = Get-ContentHash $rawContent
+            localHash       = Get-ContentHash $wrapped
+            locallyModified = $true
+            reason          = "Existing CLAUDE.md wrapped into the PROJECT-CUSTOM region"
         }
         continue
     }
 
     # Skip existing files unless -Force
     if ((Test-Path $targetFile) -and -not $Force) {
-        $skippedFiles += "$($f.RelPath) (exists, use -Force to overwrite)"
+        $skippedFiles += "$($f.RelPath) (exists, use -Force to overwrite)" + (Get-ClaudeMdSkipHint $f.RelPath)
         continue
     }
 
@@ -494,6 +663,7 @@ foreach ($f in $templateFiles) {
     }
     Set-Content -Path $targetFile -Value $content -Encoding UTF8 -NoNewline
     $copiedFiles += $f.RelPath
+    Add-RenderedFile -RelPath $f.RelPath -Text $content
 
     # Track for manifest (skip .gitignore — it's merge-only, not a template-owned file)
     if (-not $f.IsGitignore) {
@@ -578,6 +748,12 @@ if ($Variant -eq "python") {
     $placeholderMap['LINT_COMMAND']  = $replacements['{{LINT_COMMAND}}']
 }
 
+# Command values and the default branch, whichever way they were set (explicit flag
+# or variant default) -- the manifest must record what was actually substituted.
+foreach ($name in @('DEFAULT_BRANCH', 'BUILD_COMMAND', 'TEST_COMMAND', 'FORMAT_COMMAND', 'LINT_COMMAND', 'GATE_COMMAND')) {
+    if ($replacements.ContainsKey("{{$name}}")) { $placeholderMap[$name] = $replacements["{{$name}}"] }
+}
+
 # Build ordered files map
 $orderedFiles = [ordered]@{}
 foreach ($key in ($manifestFiles.Keys | Sort-Object)) {
@@ -633,41 +809,7 @@ if ($mcpJsonContent) {
 
 # --- Check for remaining placeholders ---
 Write-Host ""
-$remainingPlaceholders = @()
-foreach ($f in $copiedFiles) {
-    # Strip suffix like " (appended)" for file path lookup
-    $cleanPath = ($f -replace ' \(.*\)$', '')
-    $filePath = Join-Path $TargetDir $cleanPath
-    if (Test-Path $filePath) {
-        $lines = Get-Content -Path $filePath -Encoding UTF8
-        $lineNum = 0
-        foreach ($line in $lines) {
-            $lineNum++
-            $found = [regex]::Matches($line, '\{\{[A-Z_]+\}\}')
-            foreach ($m in $found) {
-                $remainingPlaceholders += [PSCustomObject]@{
-                    File        = $cleanPath
-                    Line        = $lineNum
-                    Placeholder = $m.Value
-                }
-            }
-        }
-    }
-}
-
-if ($remainingPlaceholders.Count -gt 0) {
-    Write-Host "Remaining placeholders to fill manually:" -ForegroundColor Yellow
-    $grouped = $remainingPlaceholders | Group-Object Placeholder | Sort-Object Name
-    foreach ($group in $grouped) {
-        Write-Host "  $($group.Name):" -ForegroundColor DarkYellow
-        foreach ($item in $group.Group) {
-            Write-Host "    $($item.File):$($item.Line)"
-        }
-    }
-}
-else {
-    Write-Host "All placeholders replaced." -ForegroundColor Green
-}
+Write-RemainingPlaceholders
 
 Write-Host ""
 Write-AutoModeSnippet

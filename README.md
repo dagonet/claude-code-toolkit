@@ -91,6 +91,8 @@ If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE
    ```bash
    ./setup-project.sh --variant <variant> --project-name <name> --target-path <path>
    ```
+   Every variant accepts `--build-cmd`, `--test-cmd`, `--format-cmd`, `--lint-cmd`, `--gate-cmd`, `--worktree-base`, `--log-path`, and `--default-branch`; an explicit flag always wins over the value a variant would derive. Add `--wrap-existing-claude-md` to keep an existing `CLAUDE.md` — its full content moves into the template's `PROJECT-CUSTOM` region instead of the file being skipped. Run with `--dry-run` first: it now prints the same "Remaining placeholders to fill manually" report as the real run.
+
    See [`docs/setup.md`](docs/setup.md) for per-variant flags and full examples.
 4. **(Optional) Install MCP servers** for tool-accelerated workflows: [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
 5. **Open your project in Claude Code** and try `/sprint` or `bash hooks/run-gate.sh`.

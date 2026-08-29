@@ -8,9 +8,9 @@ Claude MUST follow the rules below.
 
 ---
 
-## MCP Servers Registered
+## MCP Servers (each applies only if registered)
 
-Tool schemas and full parameter signatures load on-demand via Claude Code's MCP catalog — don't duplicate them here. See *Mandatory Tool Usage Rules* below for when to prefer each server over Bash/shell alternatives.
+Tool schemas and full parameter signatures load on-demand via Claude Code's MCP catalog — don't duplicate them here. See *Mandatory Tool Usage Rules* below for when to prefer each server over Bash/shell alternatives. Every server listed here is optional: a rule that names one applies **only if that server is registered** (`~/.claude.json`, or the project's `.mcp.json`). If it is not registered, use the Bash fallback the rule names.
 
 - **`ollama-tools`** — local LLM preprocessing: `local_first_pass`, `extract_json`, `map_project_structure`, plus health/model mgmt.
 - **`rust-tools`** — structured Rust build/test/lint: `cargo_build`, `cargo_test`, `cargo_clippy`, `cargo_env_info`.
@@ -18,8 +18,7 @@ Tool schemas and full parameter signatures load on-demand via Claude Code's MCP 
 - **`github-tools`** — repo + workflow utilities: `gh_repo_from_origin`, `gh_workflow_list`.
 - **`windows-mcp`** — Windows desktop automation: `Click`, `Type`, `Scroll`, `Snapshot`, `App`, `Shell`, `Clipboard`, `Process`.
 - **`open-brain`** — persistent memory: `thoughts_search`/`recent`/`capture`/`review`/`people`/`topics`/`delete`, `system_status`, plus wiki tools (`wiki_get`/`wiki_list`/`wiki_refresh`) and contradictions tools (`contradictions_list`/`contradictions_resolve`/`contradictions_audit`) (14 tools).
-- **`sqlite`** — DB access: `read_query`, `write_query`, `list_tables`, `describe_table`, `append_insight`.
-  > DB mounted at `/data/{{DB_FILENAME}}` from `{{DB_DIRECTORY}}`. Configured at user-level `~/.claude.json`.
+- **`sqlite`** — DB access: `read_query`, `write_query`, `list_tables`, `describe_table`, `append_insight`. The DB mount path is configured per machine at user level (`~/.claude.json`).
 
 ---
 
@@ -55,38 +54,19 @@ three for the rare case that genuinely needs it.
 5. Brief explanation of what will be committed (short bullet list)
 6. `git commit` (commit message written by Claude)
 
-## GitHub Operations (MCP) -- HARD REQUIREMENT
+## GitHub Operations
 
-For **ANY GitHub operation**, Claude MUST use MCP GitHub tools
-and MUST NOT use shell commands (`gh`, `curl`) or direct HTTP calls.
+Use the **MCP GitHub tools when registered** (`mcp__MCP_DOCKER__*` for issues, PRs and
+comments; `mcp__github-tools__*` for `gh_repo_from_origin` and `gh_workflow_list`),
+otherwise the `gh` CLI (the gates cover `gh pr merge`). Direct REST or GraphQL calls stay
+out of scope either way.
 
-> **Scope:** this rule binds the PO and all sub-agents with GitHub MCP tools in their `tools:` frontmatter. Developer agents, code reviewers, and testers have explicit GitHub MCP tools listed. Agents without GitHub MCP tools (`architect`, `requirements-engineer`, `doc-generator`, `test-writer`) return work to the PO; the PO performs the GitHub operation.
+> **Scope:** agents that have neither GitHub MCP tools nor `Bash` (`architect`,
+> `requirements-engineer`, `doc-generator`, `test-writer`) return their work to the PO,
+> which performs the GitHub operation.
 
-### For Issues and PRs
-Use the **official GitHub MCP via Docker Desktop** (`mcp__MCP_DOCKER__`):
-- `list_issues` / `issue_read` / `issue_write`
-- `add_issue_comment`
-- `list_pull_requests` / `pull_request_read`
-- `create_pull_request` / `merge_pull_request`
-
-### For Repository Detection
-Use **custom github-tools MCP**:
-- `gh_repo_from_origin(repo_path)` -- get OWNER/REPO from local git remote
-
-### For GitHub Actions
-Use **custom github-tools MCP**:
-- `gh_workflow_list(repo, limit)` -- list workflow runs
-
-### Forbidden
-- `Bash(gh ...)` where an MCP GitHub tool exists -- `gh` is a fallback for the gaps only (e.g. `gh pr merge`, which the merge gate covers)
-- `Bash(curl ...)`
-- Direct REST or GraphQL calls
-
-### Required Workflow
-1. **Get repo** -- Call `gh_repo_from_origin(repo_path)` if repo slug unknown
-2. **Read first** -- Use `list_issues` / `issue_read` to discover and understand issues
-3. **Propose before writing** -- State which issues will be affected and what will change
-4. **Write second** -- Execute write tools only after the proposal
+Read before you write: discover the issue or PR first, state what will change, then run
+the write tool.
 
 ---
 

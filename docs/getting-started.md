@@ -104,6 +104,13 @@ You do not need everything installed to get value. Pick the tier that matches yo
 
 This gives you the full agent team, workflow, and session bootstrap -- just without MCP tool acceleration.
 
+> **Adopting `user-level-reference/settings.json`: merge, do not overwrite.** Your own
+> `~/.claude/settings.json` carries personal keys the reference does not know about
+> (`advisorModel`, `autoCompact*`, `contextCompactionThreshold`, `statusLine`, your model
+> pins). Copy in only the `permissions.deny` entries and the `hooks` block, keeping
+> everything else. Use the v2.1 migration pattern: a short Python script that loads both
+> files as JSON, unions `permissions.deny`, replaces `hooks`, and writes your file back.
+
 ### Tier 2 -- Recommended
 
 Everything in Tier 1, plus:

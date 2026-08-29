@@ -1,5 +1,7 @@
 # Claude Code -- General Behavior
 
+> Project-specific hard rules live in the PROJECT-CUSTOM region at the end of this file — read it first.
+
 ---
 
 # Session Bootstrap
