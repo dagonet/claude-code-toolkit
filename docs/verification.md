@@ -38,6 +38,8 @@ Three scripts run from the toolkit root. All three are safe to run at any time a
 | `bash scripts/test-hooks.sh` | every hook decides correctly on real stdin fixtures, including the must-**not**-block cases | a real regression — fix before committing |
 | `bash scripts/verify-user-level-drift.sh` | your live `~/.claude/` matches `user-level-reference/` | usually just *"you have not synced yet"* — see the polarity note below |
 
+**Testing a hook's WARN behaviour by hand: use a fresh `TMPDIR` per case.** `json_warn_once` drops a marker at `${TMPDIR:-/tmp}/claude-hook-warn-<hook>[-<session>]` and suppresses the warning while it is there — keyed on the session id, or for an hour when the payload carries none. That is correct in a session and confusing at a prompt: the second and every later invocation of the same hook prints nothing, which reads like the warning regressed. Run each case with its own `TMPDIR=$(mktemp -d)`, exactly as `check_env` in `scripts/test-hooks.sh` does.
+
 **`verify-user-level-drift.sh` polarity: the reference leads, the live copy follows.** The script compares `user-level-reference/` against your `~/.claude/` and **exits 1 whenever they differ**, without judging which side is newer. Immediately after a release that changed `user-level-reference/`, a red run is the *expected* state and simply means the migration steps in `CHANGELOG.md` have not been applied yet — perform them, then re-run and expect green. It is red-by-design in that window; it is not a build failure of the toolkit, and CI does not gate on it. (A `--expect-drift` / WARN mode that would let the two cases be told apart mechanically is a known follow-up, not shipped.)
 
 ### Running these unattended

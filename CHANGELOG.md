@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.2.1 — 2026-08-29
+
+**The test harness had the bug it was written to catch.** Credit: the home-agent WSL field report of 2026-08-29, from a genuinely node-less host (`node` absent, `python3` 3.12, `jq` 1.7). Every v2.2.0 fix held there. `bash scripts/test-hooks.sh` did not: **133 passed, 128 failed, 3 skipped**, exit 1 — and not one of those failures was a hook.
+
+**1. Payload builders no longer assume `node`.** `mkjson`, `mkjson_mcp`, `mkjson_nocmd`, `mkspawn`, `mkread`, `mkpost`, `mkstop`, `mkstart`, the transcript writers and the assertion-side field readers were all `node -e` one-liners — 24 call sites. With no node each printed **nothing**, so every fixture fed a hook an empty stdin, every hook exited 0, and the suite recorded "want 2, got 0" against the very gates that were working. PR15 round 3 had already hit this and hand-written the warn-once payloads with `printf`; the other 24 sites were missed.
+
+They are all `printf` now, with a `jesc` helper (pure `sed`) escaping the interpolated values. **Deliberately no interpreter at all** — not even the node/python3/jq trio `hooks/lib/json.sh` picks from. Routing the builders through `json.sh` was the other option on the table and was rejected for the reason the report itself names: a builder sharing the reader's backend lets a broken lib make the git-gate fixtures pass vacuously, which is the one failure mode this suite must never have. The assertion-side READER does go through `json.sh` (`jfield`), so the suite still self-tests that lib — just never in a way that can hide its own failure. Five new `jesc` round-trip assertions run **first** in the file, before any fixture depends on the escaper: em dash, backslashes, embedded `"`, embedded newlines, trailing newline.
+
+Two details worth keeping: `natpath()` (via `cygpath -m`) now does explicitly what the node builders used to do by accident — hand a hook the platform's spelling of a path, since the embedded node program in `read-size-gate` / `retro-ledger` cannot stat a Git Bash `/tmp/...` on Windows. And `nchars` replaces `"A".repeat(n)`.
+
+**2. The six node-only hooks SKIP instead of failing.** `read-size-gate`, `bash-output-guard`, `enforce-delegation`, `retro-ledger`, `retro-brief` and `enforce-agent-contract`'s transcript scan are embedded node *programs*, not field reads: with no node `json_require_node` makes them warn once and pass, which their fixtures cannot tell apart from a broken hook. Those four blocks (21 + 15 + 32 + 11 assertions) are now guarded by `HAVE_NODE` and reported as `SKIP`, the same idiom the python3-only / jq-only blocks already used. `HAVE_NODE` / `HAVE_PY` / `HAVE_JQ` and `skip()` moved up beside the assertion helpers, since the first block that needs them is 400 lines above where they used to be defined. The degraded paths keep their own coverage — `no parser: <hook> warns`, `python3: read-size-gate names node`, and the warn-once block are unchanged.
+
+The summary line now prints the total: `269 passed, 0 failed, 0 skipped (269 assertions)`. The three tallies are host-dependent, the total is not, so a wrong `skip <n>` count is visible immediately instead of hiding as a silent coverage hole. Measured at this commit:
+
+| host | summary |
+|---|---|
+| node + python3 + jq | `269 passed, 0 failed, 0 skipped (269 assertions)` |
+| python3 + jq, no node | `187 passed, 0 failed, 82 skipped (269 assertions)` |
+| jq only | `174 passed, 0 failed, 95 skipped (269 assertions)` |
+
+**3. `none` and `git merge`, stated exactly.** The `**Protected branches**: none` note read as though *all* merges stayed gated; the code comment in `gate-before-merge.sh` was the accurate one. `none` unprotects the BRANCH rules, so a plain `git merge` on that repo **is ungated** — only `gh pr merge` stays gated, because a PR merge is a merge whatever branch it runs on. The field-verified matrix is now in the `v2.2.0-pr15` §3 entry and referenced from the roll-up's migration item 5. The reporter chased this as a suspected regression before finding the comment.
+
+**4. `agent-budget-warn.sh` is parser-free by construction.** It reads its one field (`agent_id`) with a grep over the raw payload and never sources `hooks/lib/json.sh`, so it needs no parser and prints no `no JSON parser on PATH` line — surprising after v2.2.0's "the fail-open hooks print one WARN". A header comment now says so, and says not to add a warn call: it would fire on every agent tool call for an enforcement gap that does not exist. Behaviour unchanged; the hook has no mirror under `user-level-reference/hooks/`.
+
+**5. WARN markers survive across runs.** `json_warn_once` keeps its marker at `${TMPDIR:-/tmp}/claude-hook-warn-<hook>[-<session>]` for the session, or an hour without one — correct in a session, and it silently swallowed the reporter's warnings across repeated manual runs. `docs/verification.md` and the `scripts/test-hooks.sh` header now say: use a fresh `TMPDIR` per case when testing WARN behaviour.
+
+### Downstream migration
+
+1. **Re-copy `scripts/test-hooks.sh`** if your project runs the suite. That is the whole change — nothing here alters hook behaviour at runtime.
+2. `hooks/agent-budget-warn.sh` gained a comment block only; re-copy it or don't.
+3. Nothing else moved. `hooks/lib/json.sh` and the 12 hook scripts are byte-identical to v2.2.0.
+
+**Known, not fixed here.** On Windows, `jq`'s stdout is in TEXT mode, so `json_get`'s jq backend can return a multi-line value with stray CRs. MSYS `grep`'s `$` tolerates them, so no hook misbehaves (`jq: skills block present passes` covers it), and the one exact-match assertion normalises. A CR-safe jq backend belongs in a `json.sh` change, not in the harness.
+
+12 hook scripts (2 lib files), 8 skills; **230 consistency assertions** and **269 hook fixtures**, both measured at this commit.
+
 ## v2.2.0 — 2026-08-29
 
 **Every hook assumed `node`, so on a box without it the whole enforcement layer was silently off — and a home-agent WSL dry run of the whole bootstrap path found that the dry run itself lied by omission, and that a consumer who already has a CLAUDE.md gets nothing.** Source for both halves: the home-agent WSL dry-run report of 2026-08-29.
@@ -28,7 +64,7 @@ The union of both halves — this is the list to work from. Items 1, 3, 4 and 5 
 2. **Windows consumers bootstrapped with `setup-project.ps1` before v2.2.0: check `ls <project>/hooks/lib`.** The PowerShell copy was non-recursive, so `hooks/lib/` never arrived — and the gates exit 2 without it, leaving the project unable to commit, push, or merge. This is the one item that is not optional.
 3. **Check your PATH.** With none of `node`, `python3`, `jq` present the git gates now block instead of waving everything through. Install one — `jq` is the smallest, `node` unlocks the six node-only hooks.
 4. **User-level `settings.json` deny list changed**: replace `Read(.env*)` with the six enumerated names (`v2.2.0-pr15` §4), or `.env.example` stays unreadable. In a consumer project the same change arrives through your normal `settings.json` sync.
-5. **Optional:** add `- **Protected branches**: <names>` to `PROJECT_CONTEXT.md` if your trunk is not `main`/`master`. Omitting it keeps the old behaviour exactly.
+5. **Optional:** add `- **Protected branches**: <names>` to `PROJECT_CONTEXT.md` if your trunk is not `main`/`master`. Omitting it keeps the old behaviour exactly. `none` unprotects the branch rules — a plain `git merge` is then ungated; `gh pr merge` stays gated regardless (matrix in `v2.2.0-pr15` §3).
 6. **Re-run nothing else.** The new setup-script flags only affect fresh bootstraps. The `templates/*/gitignore` fix arrives through `/sync-template`.
 7. `CLAUDE.local.md` is gitignored per project, so no sync touches it — re-copy `templates/<variant>/CLAUDE.local.md` by hand if you want the "only if registered" wording.
 
@@ -42,7 +78,14 @@ The union of both halves — this is the list to work from. Items 1, 3, 4 and 5 
 
 **2. Polarity, stated explicitly.** The three git gates (`no-push-main.sh`, `pre-commit-test.sh`, `gate-before-merge.sh`) **fail CLOSED** with none of the three parsers on PATH: `BLOCKED: no JSON parser (node, python3 or jq) on PATH — the git gates cannot inspect the command`, exit 2. The documented `<cwd>/.claude/git-guard-off` escape hatch still wins (looked for under the process cwd, since the payload cwd is unreadable then). The fail-open hooks stay fail-open and print exactly one stderr line instead of vanishing: `WARN: <hook>: no JSON parser on PATH — enforcement inactive`. Six of them (`read-size-gate`, `bash-output-guard`, `enforce-delegation`, `retro-ledger`, `retro-brief`, and `enforce-agent-contract`'s transcript scan) are embedded node *programs*, not field reads — they still require node specifically and say so: `WARN: <hook>: node not on PATH (found python3) — enforcement inactive`. Porting those to three backends is deliberately out of scope. Two more consequences worth knowing: on a node-less box the WARN fires per invocation (`read-size-gate` on every `Read`), and `require-skills-block.sh`/`enforce-agent-contract.sh` disable themselves silently if `hooks/lib/json.sh` is missing — they were fail-open by construction, unlike the git gates, which block on the same condition. `agent-budget-warn.sh` never used a parser (it greps the raw payload) and is untouched.
 
-**3. `**Protected branches**:` — an optional PROJECT_CONTEXT.md field (G3).** `no-push-main.sh` and `gate-before-merge.sh` hardcoded `main|master`. They now read the field with the same tolerant grep as `**Gate**:` (leading list marker, backticks, comma- or space-separated names). Absent → `main master` as before; `- **Protected branches**: develop release` → those two instead; `none` (or an empty value) → nothing is branch-protected, though `gh pr merge` stays gated because it is a merge whatever branch it runs on. `gc_targets_main_ref` takes the repo as a second argument so the ref check uses the same list. PR16 adds the field line to the PROJECT_CONTEXT templates.
+**3. `**Protected branches**:` — an optional PROJECT_CONTEXT.md field (G3).** `no-push-main.sh` and `gate-before-merge.sh` hardcoded `main|master`. They now read the field with the same tolerant grep as `**Gate**:` (leading list marker, backticks, comma- or space-separated names). Absent → `main master` as before; `- **Protected branches**: develop release` → those two instead; `none` (or an empty value) → nothing is branch-protected. **`none` does not mean "merges are still gated"** — it unprotects the BRANCH rules, so a plain `git merge` on that repo is ungated; only `gh pr merge` stays gated, because a PR merge is a merge whatever branch it runs on. Field-verified (v2.2.1):
+
+| field | `git push master` | `git merge` | `gh pr merge` |
+|---|---|---|---|
+| `Protected: master` | rc=2 | rc=2 | rc=2 |
+| `Protected: none` | rc=0 | rc=0 | rc=2 |
+| field absent | rc=2 | rc=2 | rc=2 |
+ `gc_targets_main_ref` takes the repo as a second argument so the ref check uses the same list. PR16 adds the field line to the PROJECT_CONTEXT templates.
 
 **4. `.env` deny precision (BUG 6).** `Read(.env*)` also denied `.env.example`, a tracked file most repos ship as the documented variable list. All six `templates/*/.claude/settings.json` and `user-level-reference/settings.json` now enumerate `Read(.env)`, `Read(.env.local)`, `Read(.env.*.local)`, `Read(.env.production)`, `Read(.env.staging)`, `Read(.env.development)`. A new consistency check asserts the six names AND that the `.env*` glob has not come back.
 
