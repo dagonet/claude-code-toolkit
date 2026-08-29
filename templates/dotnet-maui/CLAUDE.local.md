@@ -1,6 +1,6 @@
 # Claude Code -- MCP Usage Rules
 
-This repository is configured with local MCP servers that provide
+This repository may be configured with local MCP servers that provide
 **local-first preprocessing, automation, and integration tools**
 to reduce token usage, improve determinism, and avoid fragile shell workflows.
 
@@ -8,9 +8,9 @@ Claude MUST follow the rules below.
 
 ---
 
-## MCP Servers Registered
+## MCP Servers (each applies only if registered)
 
-Tool schemas and full parameter signatures load on-demand via Claude Code's MCP catalog — don't duplicate them here. See *Mandatory Tool Usage Rules* below for when to prefer each server over Bash/shell alternatives.
+Tool schemas and full parameter signatures load on-demand via Claude Code's MCP catalog — don't duplicate them here. See *Mandatory Tool Usage Rules* below for when to prefer each server over Bash/shell alternatives. Every server listed here is optional: a rule that names one applies **only if that server is registered** (`~/.claude.json`, or the project's `.mcp.json`). If it is not registered, use the Bash fallback the rule names.
 
 - **`ollama-tools`** — local LLM preprocessing: `local_first_pass`, `extract_json`, `map_project_structure`, plus health/model mgmt.
 - **`dotnet-tools`** — structured .NET workflows:
@@ -62,38 +62,19 @@ three for the rare case that genuinely needs it.
 5. Brief explanation of what will be committed (short bullet list)
 6. `git commit` (commit message written by Claude)
 
-## GitHub Operations (MCP) -- HARD REQUIREMENT
+## GitHub Operations
 
-For **ANY GitHub operation**, Claude MUST use MCP GitHub tools
-and MUST NOT use shell commands (`gh`, `curl`) or direct HTTP calls.
+Use the **MCP GitHub tools when registered** (`mcp__MCP_DOCKER__*` for issues, PRs and
+comments; `mcp__github-tools__*` for `gh_repo_from_origin` and `gh_workflow_list`),
+otherwise the `gh` CLI (the gates cover `gh pr merge`). Direct REST or GraphQL calls stay
+out of scope either way.
 
-> **Scope:** this rule binds the PO and all sub-agents with GitHub MCP tools in their `tools:` frontmatter. Developer agents, code reviewers, and testers have explicit GitHub MCP tools listed. Agents without GitHub MCP tools (`architect`, `requirements-engineer`, `doc-generator`, `test-writer`) return work to the PO; the PO performs the GitHub operation.
+> **Scope:** agents that have neither GitHub MCP tools nor `Bash` (`architect`,
+> `requirements-engineer`, `doc-generator`, `test-writer`) return their work to the PO,
+> which performs the GitHub operation.
 
-### For Issues and PRs
-Use the **official GitHub MCP via Docker Desktop** (`mcp__MCP_DOCKER__`):
-- `list_issues` / `issue_read` / `issue_write`
-- `add_issue_comment`
-- `list_pull_requests` / `pull_request_read`
-- `create_pull_request` / `merge_pull_request`
-
-### For Repository Detection
-Use **custom github-tools MCP**:
-- `gh_repo_from_origin(repo_path)` -- get OWNER/REPO from local git remote
-
-### For GitHub Actions
-Use **custom github-tools MCP**:
-- `gh_workflow_list(repo, limit)` -- list workflow runs
-
-### Forbidden
-- `Bash(gh …)` where an MCP GitHub tool exists -- `gh` is a fallback for the gaps only (e.g. `gh pr merge`, which the merge gate covers)
-- `Bash(curl …)`
-- Direct REST or GraphQL calls
-
-### Required Workflow
-1. **Get repo** -- Call `gh_repo_from_origin(repo_path)` if repo slug unknown
-2. **Read first** -- Use `list_issues` / `issue_read` to discover and understand issues
-3. **Propose before writing** -- State which issues will be affected and what will change
-4. **Write second** -- Execute write tools only after the proposal
+Read before you write: discover the issue or PR first, state what will change, then run
+the write tool.
 
 ---
 
@@ -240,17 +221,17 @@ The Windows-MCP server provides desktop automation tools for the tester agent.
 
 ---
 
-## Open Brain Memory -- HARD REQUIREMENT
+## Open Brain Memory
 
-Open Brain (`mcp__open-brain__*`) is the user's persistent memory system.
+**If `open-brain` is registered:** Open Brain (`mcp__open-brain__*`) is the user's persistent memory system, and the rules in this section bind every turn. If it is not registered, skip the section entirely.
 
-### At Session Start (MANDATORY)
+### At Session Start
 
 Claude MUST call **at least one** of the following before any other work:
 - `thoughts_search` with a query relevant to the current project or task
 - `thoughts_recent` to review what was recently captured
 
-This is NOT optional. Do NOT skip this step. Do NOT defer it.
+With the server registered this is not optional: do not skip it, do not defer it.
 
 ### During the Session
 
@@ -313,4 +294,4 @@ default MCP-first workflow now live in the **`mcp-usage`** skill. It loads when 
 situation calls for it rather than on every turn.
 
 What stays inline above is what binds every turn: which servers are registered, the
-git/GitHub MCP-only requirement, Open Brain, trust/verification, and failure handling.
+GitHub tool-or-`gh` contract, Open Brain, trust/verification, and failure handling.

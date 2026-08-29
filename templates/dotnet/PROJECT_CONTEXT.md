@@ -6,7 +6,9 @@
 - **Tech stack**: {{TECH_STACK}}
 - **Repository**: {{REPO_URL}}
 - **Solution file**: `{{SOLUTION_FILE}}`
-- **Branch strategy**: `main` is protected; feature branches per task (see AGENT_TEAM.md Mode Behavior Table for naming convention)
+- **Branch strategy**: `{{DEFAULT_BRANCH}}` is protected; feature branches per task (see AGENT_TEAM.md Mode Behavior Table for naming convention)
+<!-- Branch names the protection hooks read; comma-separated. Empty or `none` = no protected branch. -->
+- **Protected branches**: {{DEFAULT_BRANCH}}
 
 ## Commands
 

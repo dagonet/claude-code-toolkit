@@ -105,6 +105,8 @@ See `docs/architecture.md` → MCP Layering and `mcp-servers/HOWTO.md` → Proje
 | `{{TEST_COMMAND}}` | Test command | dotnet test |
 | `{{FORMAT_COMMAND}}` | Format command | dotnet format |
 | `{{LINT_COMMAND}}` | Lint command | dotnet format --verify-no-changes |
+| `{{GATE_COMMAND}}` | Gate command (`hooks/run-gate.sh` runs it) | dotnet format --verify-no-changes && dotnet test |
+| `{{DEFAULT_BRANCH}}` | Default / protected branch (`--default-branch`; detected from the target repo, else `main`) | main |
 | `{{DB_DIRECTORY}}` | Database directory (MAUI) | c:\Users\...\Data |
 | `{{DB_FILENAME}}` | Database filename (MAUI) | myproject.db |
 | `{{DB_PATH}}` | Full database path (MAUI) | c:\Users\...\Data\myproject.db |

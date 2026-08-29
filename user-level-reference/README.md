@@ -39,6 +39,13 @@ Follow these steps to configure Claude Code on a fresh machine:
 7. **Configure settings.json**
    Copy **`settings.json`** from this directory to `~/.claude/settings.json`. Hook commands use `~/.claude/hooks/…`; **`~` and `$HOME` both expand inside a hook `command` string** (verified empirically — a probe bound at both forms fired and resolved to the real absolute path), so no path editing is needed.
 
+   **If you already have a `~/.claude/settings.json`, merge — do not overwrite.** Your file
+   carries personal keys this reference does not (`advisorModel`, `autoCompact*`,
+   `contextCompactionThreshold`, `statusLine`, model pins); overwriting drops them silently.
+   Take the `permissions.deny` entries and the `hooks` block only, per the v2.1 migration
+   pattern: a short Python script that loads both files as JSON, unions `permissions.deny`,
+   replaces `hooks`, and writes your file back.
+
    Three things to decide before copying, because this file is a starting point, not a policy:
    - `permissions.defaultMode` is **`auto`**, and `permissions.autoMode.environment` describes this machine's trust boundary in prose. Rewrite those sentences for your own environment — they are what the classifier reasons over. `autoMode` is User/managed scope only; a project cannot ship it.
    - `permissions.allow` no longer contains `Bash(*)`, `WebFetch(*)`, or `mcp__git-tools__*`; the git/`gh` CLI is *gated* by hooks rather than blanket-allowed. Widen it only deliberately.

@@ -957,7 +957,7 @@ When `PROJECT_CONTEXT.md` doesn't exist, the PO creates it from this template:
 - **Name**: {project name}
 - **Tech stack**: {languages, frameworks, databases}
 - **Repository**: {repo URL}
-- **Branch strategy**: `main` is protected; feature branches per task (see AGENT_TEAM.md Mode Behavior Table for naming convention)
+- **Branch strategy**: `{{DEFAULT_BRANCH}}` is protected; feature branches per task (see AGENT_TEAM.md Mode Behavior Table for naming convention)
 
 ## Commands
 

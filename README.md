@@ -45,7 +45,7 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 | Blog principle | How the toolkit applies it |
 |---|---|
 | **Progressive disclosure** | `AGENT_TEAM.md` is **53,288 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, writing a spawn brief, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **8 skills** load on trigger, not up front. Language conventions live in path-scoped `.claude/rules/*.md` files that load only when Claude touches a matching file — **1.2–2.3 KB per project** (7 files, 8,564 B across all six variants). |
-| **Mechanism over mandate** | **12 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, skills-in-spawn-prompt, merge gate, delegation, subagent budget, and a retro ledger of subagent failures replayed at session start. **230 consistency assertions** and **264 hook fixtures** keep them from drifting. Where a hook enforces a rule, the prose does not need to shout it. |
+| **Mechanism over mandate** | **12 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, skills-in-spawn-prompt, merge gate, delegation, subagent budget, and a retro ledger of subagent failures replayed at session start. **230 consistency assertions** and **264 hook fixtures** keep them from drifting (the fixture total is host-dependent — 264 is the count with all three JSON parsers, `node`, `python3` and `jq`, on PATH; the single-parser cases SKIP otherwise). Where a hook enforces a rule, the prose does not need to shout it. |
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; `CLAUDE.local.md` says *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
@@ -91,6 +91,8 @@ If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE
    ```bash
    ./setup-project.sh --variant <variant> --project-name <name> --target-path <path>
    ```
+   Every variant accepts `--build-cmd`, `--test-cmd`, `--format-cmd`, `--lint-cmd`, `--gate-cmd`, `--worktree-base`, `--log-path`, and `--default-branch`; an explicit flag always wins over the value a variant would derive. Add `--wrap-existing-claude-md` to keep an existing `CLAUDE.md` — its full content moves into the template's `PROJECT-CUSTOM` region instead of the file being skipped. Run with `--dry-run` first: it now prints the same "Remaining placeholders to fill manually" report as the real run.
+
    See [`docs/setup.md`](docs/setup.md) for per-variant flags and full examples.
 4. **(Optional) Install MCP servers** for tool-accelerated workflows: [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
 5. **Open your project in Claude Code** and try `/sprint` or `bash hooks/run-gate.sh`.

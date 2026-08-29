@@ -52,14 +52,16 @@ Ask the user which variant to use. If they don't know, summarize the choices wit
 
 - **9 agents** in `general` — `Explore` (haiku), `architect`, `code-reviewer`, `coder`, `doc-generator`, `ops`, `requirements-engineer`, `test-writer`, `tester` — **10** in every other variant, which add a language coder (`dotnet-coder` / `rust-coder` / `java-coder` / `python-coder`). Each agent declares its own `model:` and `effort:`; do not pass `model:` in an Agent call, it silently overrides the file.
 - **`.claude/rules/*.md`** — path-scoped language conventions with a `paths:` frontmatter glob list, loaded only when Claude touches a matching file. Every variant except `general` ships at least one; `general` has no language of its own. `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` inside them are substituted by the script like any other template file.
-- **`hooks/*.sh`** — 15 enforcement scripts copied from the toolkit root (variants do not carry their own copies).
+- **`hooks/`** — 12 top-level enforcement scripts **plus `hooks/lib/`**, copied whole from the toolkit root (variants do not carry their own copies). The copy is recursive on purpose: the gates `source` `hooks/lib/*.sh` and fail **closed** (exit 2) if the lib is missing, which would leave the project unable to commit, push, or merge.
 - **No `commands/` directory.** Slash commands are skills now; the 8 skills live at user level (`~/.claude/skills/`), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
 
 ---
 
 ## 4. Interactive Q&A
 
-Collect answers before running the script. Ask only questions relevant to the chosen variant. **Do not compute `BUILD_COMMAND` / `TEST_COMMAND` / `FORMAT_COMMAND` yourself — the script derives those from the user's answers.**
+Collect answers before running the script. Ask only questions relevant to the chosen variant. **Do not compute `BUILD_COMMAND` / `TEST_COMMAND` / `FORMAT_COMMAND` yourself — the script derives those from the user's answers, or takes them verbatim from the command flags below.**
+
+**Precedence:** an explicit command flag always wins over the value a variant would derive. Passing `--build-cmd "make build"` to the `java` variant yields `make build`, not `mvn clean verify`; the flags the user does not pass keep deriving as before.
 
 ### Always ask
 
@@ -86,13 +88,24 @@ Collect answers before running the script. Ask only questions relevant to the ch
 - **Package manager**: `pip`, `poetry`, or `uv` (default: pip) → `--package-manager`
 - **Python version** (default: 3.12) → `--python-version`
 
-**`rust-tauri` / `general`:** no additional questions.
+**`general`:** the variant derives nothing, so ask for the five commands — anything left unanswered stays a `{{...}}` placeholder in `PROJECT_CONTEXT.md` and `CLAUDE.md`:
+
+- **Build command** → `--build-cmd`
+- **Test command** → `--test-cmd`
+- **Format command** → `--format-cmd`
+- **Lint command** → `--lint-cmd`
+- **Gate command** (build + test + format-check + lint in one line; `hooks/run-gate.sh` runs it) → `--gate-cmd`
+
+**`rust-tauri`:** no additional questions.
 
 ### Optional (all variants)
 
 - **Worktree base path** → `--worktree-base`
 - **Log path** → `--log-path`
 - **Tech stack blurb** → `--tech-stack`
+- **Default / protected branch** (defaults to the target repo's current branch, else `main`) → `--default-branch`
+- **Any of the five command flags above** — they apply to every variant and override the derived value.
+- **Existing `CLAUDE.md`?** If the target already has one, ask whether to keep it: `--wrap-existing-claude-md` writes the template and puts their full existing file inside its `PROJECT-CUSTOM` region. Without the flag the file is skipped untouched.
 
 ---
 
@@ -100,7 +113,7 @@ Collect answers before running the script. Ask only questions relevant to the ch
 
 1. **Construct the command** using the answers collected above. One flag per answer. Do not invent flags.
 
-2. **Dry-run first.** Append `--dry-run` to the command and run it. Show the user the output (files that would be touched, placeholders that would be substituted).
+2. **Dry-run first.** Append `--dry-run` to the command and run it. Show the user the output: files that would be touched (`CREATE` / `OVERWRITE` / `APPEND` / `WRAP` / `SKIP`), placeholders that would be substituted, and the **"Remaining placeholders to fill manually"** report — the dry run computes it over the rendered content, so it is the same list the real run prints. Anything listed there is a value the user still owes you; offer the matching flag before running for real.
 
 3. **Confirm.** Ask the user to approve the dry-run output before running for real. If they say no, adjust answers and repeat step 2.
 
@@ -112,8 +125,15 @@ Collect answers before running the script. Ask only questions relevant to the ch
 # general variant, bash
 ./setup-project.sh --variant general --project-name MyApp --target-path ../my-app --repo-url https://github.com/me/my-app
 
+# general with explicit commands, bash
+./setup-project.sh --variant general --project-name MyApp --build-cmd "make build" --test-cmd "make test" \
+  --format-cmd "make fmt" --lint-cmd "make lint" --gate-cmd "make gate" --default-branch main
+
 # java + gradle, bash
 ./setup-project.sh --variant java --project-name MyService --build-tool gradle --java-version 21
+
+# keep an existing CLAUDE.md by wrapping it into the template's PROJECT-CUSTOM region
+./setup-project.sh --variant general --project-name MyApp --wrap-existing-claude-md
 
 # python + poetry, PowerShell
 .\setup-project.ps1 -Variant python -ProjectName MyApp -PackageManager poetry -PythonVersion 3.12
@@ -125,7 +145,7 @@ Collect answers before running the script. Ask only questions relevant to the ch
 
 After the script exits 0:
 
-1. **Manifest written.** Confirm `.claude-setup-manifest.json` exists in the target directory.
+1. **Manifest written.** Confirm `.claude/template-manifest.json` exists in the target directory.
 2. **No unfilled placeholders.** Run `grep -r '{{' <target-dir>` — expect no matches in `.claude/`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`. Stray `{{` inside code or 3rd-party docs is fine.
 3. **Discoverability sanity.** `ls -la <target-dir>/.claude/` shows `settings.json` and `agents/`, plus `rules/` on every variant except `general`.
 4. **Surface the `autoMode.environment` snippet.** The script prints one at the end of both the dry run and the real run. `permissions.autoMode` is **User/managed scope only** — a project cannot ship one, which is deliberate: a repo must not be able to widen its own trust. Show the user the line and tell them to paste it into `permissions.autoMode.environment` in `~/.claude/settings.json`. Do not write it into the project.
