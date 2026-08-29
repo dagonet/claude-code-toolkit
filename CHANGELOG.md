@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.1.2 — 2026-08-29
+
+**A fourth consumer synced and hit three failures that all trace to the same blind spot: the sync knows *what* to write but not *when*, and the hooks it writes assume a cwd nobody guarantees.** Built from the **Motorsport-Manager-AI-Agent** report (dotnet variant, `59ec37c` → `5c64a9b`). As with v2.1.1, nothing here is a feature.
+
+### 1. The sync had no apply order, and `settings.json` takes effect immediately
+
+Hooks hot-reload: the moment `.claude/settings.json` lands on disk, the running session is using it. Applying it before the v2 hook scripts therefore wired the **new** `Bash|PowerShell` matcher to the **old** `gate-before-merge.sh`, which could not parse a command payload it had never seen — so it exited non-zero on everything. The consumer spent the rest of that session fail-closed on `ls`.
+
+`user-level-reference/skills/sync-template/SKILL.md` step 3 now carries a numbered apply order — `hooks/lib/**`, then `hooks/*.sh`, then `.claude/agents/*`, `.claude/rules/*`, `.claude/settings.json`, everything else — with the reason stated inline, and the note that the same order binds the CONFLICT (step 4) and new-file (step 5) paths. Step 6's `TEMPLATE_DELETED` branch gained the matching constraint: a template-removed hook is deleted only *after* the new `settings.json` is applied **and** the 6b reference grep re-run against it shows the hook unreferenced — deleting it while the in-memory settings still name it turns every matching call into a 127 fail-close. And there is now a recovery note for the state the consumer was actually in: if every Bash call is blocked mid-sync, apply `hooks/lib/git-cmd.sh` and the three gates through `template_apply_file` (which needs no shell) — do **not** restart first, the half-applied state persists on disk.
+
+### 2. Hook commands resolved against the shell's cwd
+
+`bash hooks/x.sh` is relative. A `cd` inside any earlier Bash call persists for the session, so from that point on every hook exited 127 and the 127-wrapper announced `HOOK SCRIPT MISSING` — for a file sitting right where it belongs — and advised a full re-sync that would not have helped.
+
+Command hooks are given `CLAUDE_PROJECT_DIR`, and `"$CLAUDE_PROJECT_DIR"/path/script.sh` is the documented placeholder form. Every hook `command:` in all six `templates/*/.claude/settings.json` and in the 11 coder-agent frontmatter blocks now reads `bash "${CLAUDE_PROJECT_DIR:-.}/hooks/<name>.sh"` — written with the `:-.` default so a host that does not export the variable degrades to the old cwd-relative behaviour instead of hard-blocking every tool call on a 127. The 127 wrapper stays (it is the only thing that turns a fail-open into a fail-close) but its message now names the absolute form and says "check that `hooks/` exists at the project root" instead of recommending `/sync-template`. Verified in Git Bash from an unrelated cwd with both a backslash and a forward-slash `CLAUDE_PROJECT_DIR`: `rc=0` either way, where the relative form is a 127.
+
+`scripts/verify-template-consistency.sh` gained check 24, which fails if any hook `command:` still uses the cwd-relative form and fails if none uses the `${CLAUDE_PROJECT_DIR:-.}` form (so a broken extraction cannot pass vacuously). The check-13 hook-ref extraction was re-anchored on the `command:` line and now accepts both forms — that also keeps the `Bash(bash hooks/run-gate.sh*)` **permissions** pattern, which is a prompt rule and not a hook, correctly out of the set. Skill step 6b matches both forms for the same reason.
+
+### 3. `accept-template` deleted hard-won lines from agent definitions
+
+Only `CLAUDE.md` carried `PROJECT-CUSTOM` markers, so a mature downstream's accumulated agent instructions had nowhere safe to live. The server's region split is file-agnostic — shipping the markers *is* the whole fix. All 59 files under `templates/*/.claude/agents/*.md` (including `Explore.md`) and all six `AGENT_TEAM.md` now end with the same marker pair `CLAUDE.md` uses. New check 25 asserts every one of those 65 files ends with it. The skill notes that these files now merge like `CLAUDE.md`, that existing custom lines must be moved into the region once, and — closing a gap the markers would otherwise open — that "empty region" in the accept-template disqualifier means *no content beyond the shipped placeholder comment*, so the safety net keeps firing.
+
+User-level files (`user-level-reference/agents/*.md`) are deliberately **not** marked: nothing syncs them. No check compares template and user-level agents byte-for-byte, so nothing needed adjusting there.
+
+### Downstream migration
+
+1. **Re-copy the sync skill**: `cp -r user-level-reference/skills/sync-template ~/.claude/skills/` — the apply order and the deletion ordering live there, and they only help before the next sync starts.
+2. **Re-sync each consumer project** to pick up the `PROJECT-CUSTOM` regions and the `$CLAUDE_PROJECT_DIR` hook paths. `settings.json` and the agent files will both show as CONFLICT in a project that edited them; resolve with the region splice rather than accept-template.
+3. **Move existing custom agent lines into the region.** On the first sync that brings the markers in, anything a project added to `.claude/agents/*.md` or `AGENT_TEAM.md` is still *above* the BEGIN marker, i.e. still template territory. Cut it into the region once; after that it survives.
+4. **If your `settings.json` is locally modified** and you keep it: replace each `bash hooks/<name>.sh` in a `"command"` value with `bash "${CLAUDE_PROJECT_DIR:-.}/hooks/<name>.sh"` by hand. Leave the `Bash(bash hooks/run-gate.sh*)` entry in `permissions.allow` alone — it is a prompt pattern, not a hook.
+
 ## v2.1.1 — 2026-08-29
 
 **Three consumers synced v2.0 → v2.1 and all three found the same shape of bug: a mechanism that reported success while doing nothing.** This is a patch release built entirely from their reports — **panoscribe** (python variant, `59ec37c` → `d7251b9`), **penumbra** (python, → `d7251b9`, write-up in that repo at `docs/reviews/2026-08-29-sync-template-feedback.md`), and **Yutraffic-Challenge** (rust-tauri, [PR #221](https://github.com/dagonet/Yutraffic-Challenge/pull/221)). Nothing here is a new feature; every change closes a path where enforcement was silently off.

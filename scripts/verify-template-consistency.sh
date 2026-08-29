@@ -292,24 +292,35 @@ fi
 #     non-empty at the toolkit ROOT hooks/ (root-tracked design — variants do
 #     NOT ship hooks/). Prose mentions are excluded (execution refs only).
 # ---------------------------------------------------------------------------
-hook_refs=$(
+#     v2.1.2: hook commands now invoke "${CLAUDE_PROJECT_DIR:-.}/hooks/<name>.sh",
+#     so the extraction anchors on the command: line and pulls the hooks/ path
+#     out of it — that accepts both the old cwd-relative and the new absolute
+#     form, and still excludes the permissions allow pattern (no `command:`).
+extracted=$(
   {
-    grep -ho 'bash hooks/[a-z-]*\.sh' templates/*/.claude/settings.json 2>/dev/null
+    grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
     # frontmatter command: lines only (execution refs), not prose
-    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null | grep -o 'bash hooks/[a-z-]*\.sh'
-  } | sed 's|bash ||' | sort -u
+    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -o 'hooks/[a-z-]*\.sh' | sort -u
 )
-if [ -z "$hook_refs" ]; then
+# The vacuity check runs on the EXTRACTION only. run-gate.sh is added afterwards,
+# so a broken grep can never be masked by the unconditional entry.
+if [ -z "$extracted" ]; then
   ko "hook-ref invariant: extraction returned NO references (extraction broken?)"
-else
-  for h in $hook_refs; do
-    if [ -s "$h" ]; then
-      ok "hook-ref: $h exists and is non-empty at repo root"
-    else
-      ko "hook-ref: $h referenced by a variant but MISSING/empty at repo root (fails open downstream)"
-    fi
-  done
 fi
+# run-gate.sh is named only by the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS
+# pattern and by prose, never by a `command:` line, so the anchored extraction
+# above cannot see it. It is the most load-bearing script in the repo (the Gate
+# mechanism, gate-before-merge.sh's dependency, every coder's deliverable
+# contract), so assert it explicitly rather than let it fall out of coverage.
+hook_refs=$(printf '%s\nhooks/run-gate.sh\n' "$extracted" | grep -v '^$' | sort -u)
+for h in $hook_refs; do
+  if [ -s "$h" ]; then
+    ok "hook-ref: $h exists and is non-empty at repo root"
+  else
+    ko "hook-ref: $h referenced by a variant but MISSING/empty at repo root (fails open downstream)"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 14. v1.2 liveness sizing invariants.
@@ -816,6 +827,102 @@ if grep -q 'coder|\*-coder)' hooks/require-skills-block.sh; then
   ok "hooks/require-skills-block.sh: binds any <lang>-coder, not an enumeration"
 else
   ko "hooks/require-skills-block.sh: coder binding is still an enumeration"
+fi
+
+# ---------------------------------------------------------------------------
+# 24. Hook commands are cwd-independent (v2.1.2, consumer report #3).
+#
+#     `bash hooks/x.sh` resolves against the SHELL's cwd, not the project root.
+#     A `cd` inside any earlier Bash call persists for the rest of the session,
+#     so every later hook exits 127 and the 127-wrapper reports HOOK SCRIPT
+#     MISSING for a file that is right there. The documented fix is the
+#     `$CLAUDE_PROJECT_DIR` placeholder, which command hooks always get. It is
+#     spelled `${CLAUDE_PROJECT_DIR:-.}` so a host that does not export the
+#     variable degrades to the old cwd-relative behaviour rather than hard-
+#     blocking every tool call on a 127.
+#     NB: the permissions entry "Bash(bash hooks/run-gate.sh*)" is a prompt
+#     pattern, not a hook command, and must survive — hence the command:-anchor.
+# ---------------------------------------------------------------------------
+echo
+relhook=$(
+  {
+    grep -h '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
+    grep -h 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -c .
+)
+if [ "$relhook" -eq 0 ]; then
+  ok "no hook command uses the cwd-relative 'bash hooks/' form"
+else
+  ko "$relhook hook command(s) still cwd-relative ('bash hooks/...') — they 127 after any cd"
+  grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
+  grep -n 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
+fi
+ABS_FORM='bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'
+abshook=$(
+  {
+    grep -hF "$ABS_FORM" templates/*/.claude/settings.json 2>/dev/null
+    grep -hF "$ABS_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -c .
+)
+#     `abshook > 0` alone is a coverage hole: a subset reverted to the
+#     intermediate no-fallback form `bash "$CLAUDE_PROJECT_DIR/hooks/` is neither
+#     cwd-relative nor fallback-safe, so relhook and abshook would both still be
+#     happy. Reject that form by name, and require abshook to equal the TOTAL
+#     number of hook command lines that name a hooks/ script — derived from the
+#     same two greps check 13 uses, so the two cannot drift apart.
+NOFALLBACK_FORM='bash \"$CLAUDE_PROJECT_DIR/hooks/'
+nofallback=$(
+  {
+    grep -hF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
+    grep -hF "$NOFALLBACK_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -c .
+)
+if [ "$nofallback" -eq 0 ]; then
+  ok "no hook command uses the no-fallback \$CLAUDE_PROJECT_DIR form"
+else
+  ko "$nofallback hook command(s) use \$CLAUDE_PROJECT_DIR without the :-. default — they hard-block if the host does not export it"
+  grep -nF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
+  grep -nF "$NOFALLBACK_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+fi
+hookcmd_total=$(
+  {
+    grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
+    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -c 'hooks/'
+)
+if [ "$hookcmd_total" -eq 0 ]; then
+  ko "hook command census matched NO lines (glob or grep broken?) — passing vacuously"
+elif [ "$abshook" -eq "$hookcmd_total" ]; then
+  ok "all $hookcmd_total hook command(s) use the \${CLAUDE_PROJECT_DIR:-.} form"
+else
+  ko "only $abshook of $hookcmd_total hook command(s) use \${CLAUDE_PROJECT_DIR:-.} — $((hookcmd_total - abshook)) in some other form"
+fi
+
+# ---------------------------------------------------------------------------
+# 25. PROJECT-CUSTOM region in agent definitions and AGENT_TEAM.md (v2.1.2,
+#     consumer report #5). Mature downstreams accumulate hard-won lines in
+#     their agent files; accept-template deleted them because only CLAUDE.md
+#     carried the markers. The server's region split is file-agnostic, so
+#     shipping the marker pair is the whole fix.
+# ---------------------------------------------------------------------------
+echo
+region_files=$(ls templates/*/.claude/agents/*.md templates/*/AGENT_TEAM.md 2>/dev/null)
+region_total=$(printf '%s\n' "$region_files" | grep -c .)
+region_missing=""
+for f in $region_files; do
+  if [ "$(tail -n 1 "$f")" = "<!-- PROJECT-CUSTOM:END -->" ] \
+     && grep -qF "<!-- PROJECT-CUSTOM:BEGIN" "$f"; then
+    :
+  else
+    region_missing="$region_missing $f"
+  fi
+done
+if [ "$region_total" -eq 0 ]; then
+  ko "PROJECT-CUSTOM region check matched NO files (glob broken?) — passing vacuously"
+elif [ -z "$region_missing" ]; then
+  ok "all $region_total template agent files + AGENT_TEAM.md end with a PROJECT-CUSTOM region"
+else
+  ko "PROJECT-CUSTOM region missing/not-last in:$region_missing"
 fi
 
 # ---------------------------------------------------------------------------
