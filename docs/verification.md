@@ -40,6 +40,24 @@ Three scripts run from the toolkit root. All three are safe to run at any time a
 
 **`verify-user-level-drift.sh` polarity: the reference leads, the live copy follows.** The script compares `user-level-reference/` against your `~/.claude/` and **exits 1 whenever they differ**, without judging which side is newer. Immediately after a release that changed `user-level-reference/`, a red run is the *expected* state and simply means the migration steps in `CHANGELOG.md` have not been applied yet — perform them, then re-run and expect green. It is red-by-design in that window; it is not a build failure of the toolkit, and CI does not gate on it. (A `--expect-drift` / WARN mode that would let the two cases be told apart mechanically is a known follow-up, not shipped.)
 
+### Running these unattended
+
+Two shipped artifacts schedule the checks above so drift surfaces without anyone asking.
+They are split by what each can *reach*, not by preference:
+
+- **`user-level-reference/routines/toolkit-nightly-check.md`** — a **cloud** routine
+  (`/schedule`, or claude.ai/code/routines) that clones this repo daily and runs
+  `verify-template-consistency.sh`, `test-hooks.sh`, a stale-reference grep, and a
+  `VERSION`-vs-latest-tag comparison. Silent when everything passes; on failure it opens
+  or retitles a single GitHub issue `nightly-check: <date>`. A routine sees only the
+  clone and its connectors — never `~/.claude`, never uncommitted files.
+- **the `retro-review` skill** (`/retro-review [project-dir]`) — the local counterpart,
+  covering exactly what a routine cannot see: the per-project retro ledger under
+  `~/.claude/projects/<slug>/memory/`, `verify-user-level-drift.sh` against the live
+  `~/.claude/`, and sibling checkouts whose `.claude/template-manifest.json` is behind
+  this repo's `VERSION`. Run it headless with
+  `claude -p "/retro-review" --permission-mode auto` from Task Scheduler or cron.
+
 ## Troubleshooting
 
 **CLAUDE.md not loaded**
