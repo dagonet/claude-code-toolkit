@@ -60,6 +60,8 @@ Call `template_apply_file(project_path=".", file_path=F, source="template")`.
 
 The same order applies to the CONFLICT resolutions in step 4 and the new files in step 5: never write `settings.json` before the hooks it wires. If `hooks/` is missing or partial at the project root, run step 6b's restore BEFORE writing `.claude/settings.json` — the order above is useless if the scripts it protects were never materialised.
 
+**Smoke test immediately after the `.claude/settings.json` write**: run a harmless `Bash(true)`. If it is blocked, the recovery note in the "Restart the session" area above applies — apply `hooks/lib/git-cmd.sh` and the three gates via `template_apply_file` (no shell needed) rather than continuing the sync through a fail-closed session.
+
 > **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination. Once Bash works again, finish the sync in the order above and restart per the final report.
 
 Collect all results. Report the list of auto-updated files.
@@ -107,7 +109,7 @@ For each file with status `TEMPLATE_DELETED`:
 2. Report the state precisely:
    - "preserved **and unreferenced — safe to delete**" — the new `settings.json` and agents no longer mention it;
    - "preserved **and still referenced by `<file>`**" — deleting it would take enforcement offline.
-3. ASK the user. Recommend accepting the deletion in the unreferenced case; delete with `git rm <file>` so the removal is in the diff. Never delete on your own initiative, and never delete a project-owned file the template never shipped.
+3. ASK the user. Recommend accepting the deletion in the unreferenced case; delete with `git rm <file>` so the removal is in the diff. Never delete on your own initiative, and never delete a project-owned file the template never shipped. (`git rm` here, and `git add`/`git commit` in step 9, are the PO's documented git-I/O role for this skill per `AGENT_TEAM.md` — not hands-on coding.)
    - **Ordering:** delete a template-removed hook only AFTER the new `.claude/settings.json` has been applied (step 3's order) AND the step-6b reference grep — re-run against that new `settings.json` — shows it unreferenced. Deleting it while the in-memory settings still wire it makes every matching tool call exit 127 and fail closed for the rest of the session.
 4. For a deleted **hook**, cross-reference the user-level copy: the dangerous twin usually lives at `~/.claude/hooks/<name>.sh`, which no project sync touches. Tell the user to remove it there too (see the CHANGELOG's downstream-migration notes).
 
@@ -139,7 +141,7 @@ Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result
 The FIRST line of the report is this sentence, verbatim:
 
 ```
-Restart the session before any git push/merge/commit — the rewritten gates are inert against the in-memory pre-sync settings.json until then.
+Gates are live immediately (settings.json hot-reloads). Restart before relying on changed agent definitions or skills.
 
 Sync complete: {variant} @ {new_commit}
 
@@ -150,6 +152,14 @@ Sync complete: {variant} @ {new_commit}
   Warnings:     [list]
   User-level:   [one-line verify-user-level-drift.sh summary]
 ```
+
+### 9. Commit the Sync
+
+Commit the synced tree yourself, from the main thread — `git add`/`git commit` here are the PO's documented git-I/O role for this skill, not hands-on coding (`AGENT_TEAM.md`: agents without a usable tree return work; the PO commits). **Never spawn a worktree-isolated agent to commit a sync.** `coder`, `*-coder`, `tester`, and `test-writer` all set `isolation: worktree`; the harness creates that worktree from `main`, whose `hooks/` predate the sync, while the session's hot-reloaded `settings.json` already fires the v2 gates on every Bash call — the result is every Bash call in that worktree blocked ("BLOCKED: Tests failed…" even for `ls`). If you must delegate this step, use `ops` or `general-purpose` (neither sets `isolation: worktree`).
+
+Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appended `# context-mode — MANDATORY routing rules` block. The context-mode plugin re-appends this block after `PROJECT-CUSTOM:END` on every session start, so a CLAUDE.md cleaned earlier in the sync is dirty again by the time you commit. Remove the re-appended block (or disable the plugin) before staging, otherwise the commit silently reintroduces it.
+
+`git add -A` excluding `CLAUDE.local.md`, then `git commit`.
 
 ## Rules
 
