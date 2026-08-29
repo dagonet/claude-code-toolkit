@@ -49,6 +49,19 @@ For each file with status `AUTO_UPDATE`:
 
 Call `template_apply_file(project_path=".", file_path=F, source="template")`.
 
+**Apply in this order — it is not cosmetic.** `settings.json` takes effect in memory the moment it is written (hooks hot-reload), so writing it before the scripts it names leaves the new matchers pointing at the old scripts: a consumer that applied the v2 `settings.json` first got the v2 `Bash|PowerShell` matcher running the v1 `gate-before-merge.sh` on *every* Bash call and was fail-closed on `ls` for the rest of the session.
+
+1. `hooks/lib/**` — sourced libs first; a script whose lib is missing defines no helpers.
+2. `hooks/*.sh` — the scripts themselves.
+3. `.claude/agents/*` — agent frontmatter `hooks:` can reference the scripts.
+4. `.claude/rules/*`
+5. `.claude/settings.json` — last of the enforcement wiring, so every script it names already exists in its new form.
+6. everything else (`CLAUDE.md`, `AGENT_TEAM.md`, docs, …).
+
+The same order applies to the CONFLICT resolutions in step 4 and the new files in step 5: never write `settings.json` before the hooks it wires.
+
+> **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination.
+
 Collect all results. Report the list of auto-updated files.
 
 ### 4. Resolve Conflicts
@@ -71,6 +84,10 @@ For each file with status `CONFLICT`:
    - Keep mine: `template_apply_file(source="skip")`
 
 > **PROJECT-CUSTOM region:** the server preserves content between `<!-- PROJECT-CUSTOM:BEGIN -->` and `<!-- PROJECT-CUSTOM:END -->` mechanically (when both template and project carry the markers). If the consumer's `template-sync-tools` server predates region support, preserve the project's region verbatim in any manual `CLAUDE.md` merge — never let accept-template clobber it.
+>
+> Since v2.1.2 the markers also ship at the end of every `.claude/agents/*.md` and of `AGENT_TEAM.md` — the region split is file-agnostic, so those files now merge exactly like `CLAUDE.md`. On the first sync that brings the markers in, **move the project's existing custom agent lines into the region once**; anything left above the BEGIN marker is template territory and the next accept-template will overwrite it.
+>
+> "EMPTY region" in the accept-template disqualifier above means *no content other than the shipped `<!-- Project-specific rules, routing blocks, and extensions go here. -->` placeholder* — the placeholder alone does not make a region non-empty.
 
 ### 5. Handle New Files
 
@@ -91,6 +108,7 @@ For each file with status `TEMPLATE_DELETED`:
    - "preserved **and unreferenced — safe to delete**" — the new `settings.json` and agents no longer mention it;
    - "preserved **and still referenced by `<file>`**" — deleting it would take enforcement offline.
 3. ASK the user. Recommend accepting the deletion in the unreferenced case; delete with `git rm <file>` so the removal is in the diff. Never delete on your own initiative, and never delete a project-owned file the template never shipped.
+   - **Ordering:** delete a template-removed hook only AFTER the new `.claude/settings.json` has been applied (step 3's order) AND the step-6b reference grep — re-run against that new `settings.json` — shows it unreferenced. Deleting it while the in-memory settings still wire it makes every matching tool call exit 127 and fail closed for the rest of the session.
 4. For a deleted **hook**, cross-reference the user-level copy: the dangerous twin usually lives at `~/.claude/hooks/<name>.sh`, which no project sync touches. Tell the user to remove it there too (see the CHANGELOG's downstream-migration notes).
 
 ### 6b. Verify Hook Scripts (MANDATORY)
@@ -99,7 +117,7 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 
 > Read the toolkit working tree with Read/Grep, never through the context-mode sandbox: `git -C` fails silently on its `/tmp` paths and `grep -c` comes back 0, so every verification below would report a false clean.
 
-1. Collect every `bash hooks/<name>.sh` reference from `.claude/settings.json` AND from the `hooks:` frontmatter of every file in `.claude/agents/`.
+1. Collect every `hooks/<name>.sh` reference on a `command:` line in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. Match **both** invocation forms: the legacy cwd-relative `bash hooks/<name>.sh` and the v2.1.2 `bash "$CLAUDE_PROJECT_DIR/hooks/<name>.sh"`. Anchoring on `command:` keeps the `Bash(bash hooks/run-gate.sh*)` permissions pattern out of the set — it is a prompt rule, not a hook.
 1b. Collect the **sourced libs** too — a hook that cannot source its lib defines no helpers, reads an empty command, and exits 0 on everything. In every hook script present at the project root, grep for `\. "\$\(dirname "\$0"\)/lib/[^"]+"` and for a plain `lib/git-cmd.sh`; add each `hooks/lib/<file>` to the referenced set. They are checked and restored exactly like the scripts in steps 2–4 (`source="template"` when missing — the server resolves the `hooks/lib/` subdirectory against the toolkit root).
 2. For each referenced script: verify `hooks/<name>.sh` exists at the project repo root and is non-empty.
 3. For any MISSING script: call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="template")` — the server resolves root-tracked `hooks/` paths against the toolkit ROOT (variants do NOT ship `hooks/` — never look in `templates/<variant>/hooks/`, it does not exist) and both materializes the file AND returns its manifest entry in one call. Never hand-copy. Add each result to the collected `applied_files`.

@@ -1013,3 +1013,7 @@ Capture durable insights — not routine results:
 Skip capture for routine outcomes ("no issues found", "all tests pass").
 
 ---
+
+<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->
+<!-- Project-specific rules, routing blocks, and extensions go here. -->
+<!-- PROJECT-CUSTOM:END -->

@@ -292,13 +292,24 @@ fi
 #     non-empty at the toolkit ROOT hooks/ (root-tracked design — variants do
 #     NOT ship hooks/). Prose mentions are excluded (execution refs only).
 # ---------------------------------------------------------------------------
+#     v2.1.2: hook commands now invoke "$CLAUDE_PROJECT_DIR/hooks/<name>.sh",
+#     so the extraction anchors on the command: line and pulls the hooks/ path
+#     out of it — that accepts both the old cwd-relative and the new absolute
+#     form, and still excludes the permissions allow pattern (no `command:`).
 hook_refs=$(
   {
-    grep -ho 'bash hooks/[a-z-]*\.sh' templates/*/.claude/settings.json 2>/dev/null
+    grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
     # frontmatter command: lines only (execution refs), not prose
-    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null | grep -o 'bash hooks/[a-z-]*\.sh'
-  } | sed 's|bash ||' | sort -u
+    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -o 'hooks/[a-z-]*\.sh' | sort -u
 )
+# run-gate.sh is named only by the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS
+# pattern and by prose, never by a `command:` line, so the anchored extraction
+# above cannot see it. It is the most load-bearing script in the repo (the Gate
+# mechanism, gate-before-merge.sh's dependency, every coder's deliverable
+# contract), so assert it explicitly rather than let it fall out of coverage.
+hook_refs="$hook_refs
+hooks/run-gate.sh"
 if [ -z "$hook_refs" ]; then
   ko "hook-ref invariant: extraction returned NO references (extraction broken?)"
 else
@@ -816,6 +827,68 @@ if grep -q 'coder|\*-coder)' hooks/require-skills-block.sh; then
   ok "hooks/require-skills-block.sh: binds any <lang>-coder, not an enumeration"
 else
   ko "hooks/require-skills-block.sh: coder binding is still an enumeration"
+fi
+
+# ---------------------------------------------------------------------------
+# 24. Hook commands are cwd-independent (v2.1.2, consumer report #3).
+#
+#     `bash hooks/x.sh` resolves against the SHELL's cwd, not the project root.
+#     A `cd` inside any earlier Bash call persists for the rest of the session,
+#     so every later hook exits 127 and the 127-wrapper reports HOOK SCRIPT
+#     MISSING for a file that is right there. The documented fix is the
+#     `$CLAUDE_PROJECT_DIR` placeholder, which command hooks always get.
+#     NB: the permissions entry "Bash(bash hooks/run-gate.sh*)" is a prompt
+#     pattern, not a hook command, and must survive — hence the command:-anchor.
+# ---------------------------------------------------------------------------
+echo
+relhook=$(
+  {
+    grep -h '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
+    grep -h 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
+  } | grep -c .
+)
+if [ "$relhook" -eq 0 ]; then
+  ok "no hook command uses the cwd-relative 'bash hooks/' form"
+else
+  ko "$relhook hook command(s) still cwd-relative ('bash hooks/...') — they 127 after any cd"
+  grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
+  grep -n 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
+fi
+abshook=$(
+  {
+    grep -h '"command": "bash \\"\$CLAUDE_PROJECT_DIR/hooks/' templates/*/.claude/settings.json 2>/dev/null
+    grep -h 'command: "bash ' templates/*/.claude/agents/*.md 2>/dev/null | grep 'CLAUDE_PROJECT_DIR/hooks/'
+  } | grep -c .
+)
+if [ "$abshook" -gt 0 ]; then
+  ok "$abshook hook command(s) use the \$CLAUDE_PROJECT_DIR absolute form"
+else
+  ko "no hook command uses \$CLAUDE_PROJECT_DIR — extraction broken or rewrite missing"
+fi
+
+# ---------------------------------------------------------------------------
+# 25. PROJECT-CUSTOM region in agent definitions and AGENT_TEAM.md (v2.1.2,
+#     consumer report #5). Mature downstreams accumulate hard-won lines in
+#     their agent files; accept-template deleted them because only CLAUDE.md
+#     carried the markers. The server's region split is file-agnostic, so
+#     shipping the marker pair is the whole fix.
+# ---------------------------------------------------------------------------
+echo
+region_files=$(ls templates/*/.claude/agents/*.md templates/*/AGENT_TEAM.md 2>/dev/null)
+region_total=$(printf '%s\n' "$region_files" | grep -c .)
+region_missing=""
+for f in $region_files; do
+  if [ "$(tail -n 1 "$f")" = "<!-- PROJECT-CUSTOM:END -->" ] \
+     && grep -qF "<!-- PROJECT-CUSTOM:BEGIN" "$f"; then
+    :
+  else
+    region_missing="$region_missing $f"
+  fi
+done
+if [ -z "$region_missing" ]; then
+  ok "all $region_total template agent files + AGENT_TEAM.md end with a PROJECT-CUSTOM region"
+else
+  ko "PROJECT-CUSTOM region missing/not-last in:$region_missing"
 fi
 
 # ---------------------------------------------------------------------------
