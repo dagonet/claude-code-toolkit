@@ -4,9 +4,9 @@
 # Shared command parsing for the v2.0 git-native PreToolUse gates
 # (pre-commit-test.sh, no-push-main.sh, gate-before-merge.sh).
 #
-# v1.x keyed those gates on MCP tool names because Bash git was banned outright
-# by hooks/block-bash-vcs.sh. v2.0 allows the native git/gh CLI, so the gates
-# parse tool_input.command instead.
+# v1.x keyed those gates on MCP tool names because a blanket hook banned Bash git
+# outright. v2.0 allows the native git/gh CLI, so the gates parse
+# tool_input.command instead.
 #
 # Design notes:
 #   - Matching is UNANCHORED inside each segment and quotes are stripped, so

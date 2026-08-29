@@ -53,7 +53,7 @@ Ask the user which variant to use. If they don't know, summarize the choices wit
 - **9 agents** in `general` — `Explore` (haiku), `architect`, `code-reviewer`, `coder`, `doc-generator`, `ops`, `requirements-engineer`, `test-writer`, `tester` — **10** in every other variant, which add a language coder (`dotnet-coder` / `rust-coder` / `java-coder` / `python-coder`). Each agent declares its own `model:` and `effort:`; do not pass `model:` in an Agent call, it silently overrides the file.
 - **`.claude/rules/*.md`** — path-scoped language conventions with a `paths:` frontmatter glob list, loaded only when Claude touches a matching file. Every variant except `general` ships at least one; `general` has no language of its own. `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` inside them are substituted by the script like any other template file.
 - **`hooks/*.sh`** — 15 enforcement scripts copied from the toolkit root (variants do not carry their own copies).
-- **No `commands/` directory.** Slash commands are skills now; the 7 skills live at user level (`~/.claude/skills/`), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
+- **No `commands/` directory.** Slash commands are skills now; the 8 skills live at user level (`~/.claude/skills/`), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
 
 ---
 

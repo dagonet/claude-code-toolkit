@@ -236,15 +236,6 @@ check "spaced -C merge, target on main"  "$H" 2 "$(mkjson Bash "git -C \"$SPACEG
 check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' "$GATEREPO")"
 
 # ===========================================================================
-# block-bash-vcs.sh must be an inert no-op stub
-# ===========================================================================
-echo
-echo "=== hooks/block-bash-vcs.sh (deprecated stub) ==="
-H=hooks/block-bash-vcs.sh
-check "stub allows a push to main"       "$H" 0 "$(mkjson Bash 'git push origin main' "$MAINREPO")"
-check "stub allows gh pr merge"          "$H" 0 "$(mkjson Bash 'gh pr merge 5' "$MAINREPO")"
-
-# ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an
 # unbounded Read is rewritten to limit=500 via hookSpecificOutput.updatedInput
 # (which REPLACES the whole tool_input, so every original field must survive).
