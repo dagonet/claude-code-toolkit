@@ -171,7 +171,12 @@ check() { # <label> <hook> <expected_exit> <json>
 check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
   label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
   errf="$TMPROOT/check_msg.err"
-  printf '%s' "$json" | bash "$hookp" >/dev/null 2>"$errf"
+  # Fresh TMPDIR per case. json_warn_once stays silent while its marker exists,
+  # and a SESSION-keyed marker never expires — a shared TMPDIR would make any
+  # WARN assertion pass on the first run of the suite and fail on every later
+  # one, on the same machine, for no reason visible in the diff.
+  cmtmp="$TMPROOT/check_msg.tmp"; rm -rf "$cmtmp"; mkdir -p "$cmtmp"
+  printf '%s' "$json" | TMPDIR="$cmtmp" bash "$hookp" >/dev/null 2>"$errf"
   got=$?
   if [ "$got" = "$want" ] && grep -qF "$needle" "$errf"; then
     printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
@@ -299,7 +304,7 @@ check "non-push git command"             "$H" 0 "$(mkjson Bash 'git status --sho
 check "git -C <feat> push from main cwd" "$H" 0 "$(mkjson Bash "git -C $FEATREPO push" "$MAINREPO")"
 check "push origin HEAD on a feature"    "$H" 0 "$(mkjson Bash 'git push origin HEAD' "$FEATREPO")"
 check "spaced -C on feature, cwd on main" "$H" 0 "$(mkjson Bash "git -C \"$SPACEFEAT\" push origin" "$MAINREPO")"
-check "malformed JSON payload"           "$H" 0 '{not json'
+check "malformed JSON payload"           "$H" 2 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$MAINREPO")"
 
 # kill switch
@@ -334,7 +339,7 @@ check "git -c ... commit"                "$H" 2 "$(mkjson Bash 'git -c user.name
 check "commit wrapped in bash -c"        "$H" 2 "$(mkjson Bash 'bash -c "git commit -m x"' "$BADREPO")"
 check "git -C <bad> commit from ok cwd"  "$H" 2 "$(mkjson Bash "git -C $BADREPO commit -m y" "$OKREPO")"
 check "PowerShell commit, failing tests" "$H" 2 "$(mkjson PowerShell 'git commit -m "x"' "$BADREPO")"
-check "malformed JSON payload"           "$H" 0 '{not json'
+check "malformed JSON payload"           "$H" 2 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$BADREPO")"
 # review round 2: a spaced -C path must resolve to that repo, so the gate command
 # that runs is the TARGET's, not the payload cwd's.
@@ -555,7 +560,7 @@ rm -f "$GATEREPO/.claude/git-guard-off"
 # cannot read must NOT fall through to the artifact check -- that would block
 # every Bash call in the session with "No gate artifact found".
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$GATEREPO")"
-check "malformed JSON payload"           "$H" 0 '{not json'
+check "malformed JSON payload"           "$H" 2 '{not json'
 check "unknown tool passes through"      "$H" 0 "$(mkjson_nocmd SomeOtherTool "$GATEREPO")"
 
 # --- review round 1: a whole-repo push is a merge-by-push even from a feature
@@ -1206,13 +1211,29 @@ check_delegation "dotnet build stays denied"      deny 'dotnet build --no-restor
 # This is parity with pre-v2.1.5 (the whole-string match denied it too) and errs
 # closed; workaround is a message without an embedded `;` / `&&`.
 check_delegation "separator inside a quoted message" deny 'git commit -m "a; pytest -q"'
+# v2.2.1 (P): every runner pattern was anchored to command position except one —
+# `/hooks\/run-gate\.sh/` matched the STRING anywhere. /sync-template step 7
+# assembles an applied_files payload that necessarily NAMES that file, so the
+# more faithfully the skill was followed, the more certainly the PO's own
+# command was denied. The sibling paths were never affected, which is why the
+# reporter's "trigger words in data" hypothesis over-generalised.
+check_delegation "gate path as data: run-gate.sh"  pass 'echo {"file_path":"hooks/run-gate.sh"} > /tmp/a.json'
+check_delegation "gate path as data: pre-commit"   pass 'echo {"file_path":"hooks/pre-commit-test.sh"} > /tmp/a.json'
+check_delegation "gate path as data: merge gate"   pass 'echo {"file_path":"hooks/gate-before-merge.sh"} > /tmp/a.json'
+check_delegation "applied_files array as data"     pass 'echo [{"path":"hooks/run-gate.sh","hash":"ab"},{"path":"hooks/no-push-main.sh","hash":"cd"}] > /tmp/applied.json'
+check_delegation "validator run on a scratch file" pass 'python3 /tmp/validator.py /tmp/applied.json'
+check_delegation "trigger words in a quoted string" pass 'echo "test gate coverage build"'
+# ... and the anchor must not open the hole it closed: an actual invocation,
+# bare or via bash/sh, is still the PO doing hands-on work.
+check_delegation "bare run-gate.sh is still denied" deny 'hooks/run-gate.sh'
+check_delegation "bash ./hooks/run-gate.sh denied"  deny 'bash ./hooks/run-gate.sh'
 # subagent calls always pass, exemption or not
 subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 expect "subagent pytest still passes" "0" \
   "$(printf '%s' "$subout" | grep -c '"deny"')"
 else
-skip "enforce-delegation git/gh exemption cases" "no node on this host" 11
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 19
 fi
 
 # ===========================================================================
@@ -1364,7 +1385,7 @@ check_env "python3: gh pr merge needs artifact" "$PYONLY" hooks/gate-before-merg
   "$(mkjson Bash 'gh pr merge 1 --squash' "$GATEREPO")"
 # A node-only hook on a python3 box names the parser it actually needs.
 check_env "python3: read-size-gate names node" "$PYONLY" hooks/read-size-gate.sh 0 \
-  "$(mkread "$ROOT/README.md" - -)" "node not on PATH (found python3)"
+  "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
 else
 skip "python3 git-gate cases" "no python3 on this host" 5
 fi
@@ -1507,6 +1528,95 @@ expect "traversal session id: marker is plain" "1" \
   "$(find "$ONCETMP" -maxdepth 1 -name 'claude-hook-warn-read-size-gate' 2>/dev/null | grep -c .)"
 
 # ===========================================================================
+# v2.2.1 (K): an UNPARSEABLE payload fails CLOSED.
+#
+# Third path to the same place as PR15's missing parser and v2.2.1's broken one:
+# here the parser is present AND works, but the INPUT does not parse. json_get
+# returned "" for that exactly as it does for a genuinely absent field, and the
+# gates read "" as "nothing to inspect, allow" — so malformed JSON, a truncated
+# payload and empty stdin all exited 0 in silence, indistinguishable from a
+# legitimate allow. That ambiguity is also why the first report of this read as
+# a false alarm, so the message is deliberately its own.
+#
+# The three rows below fail in gc_read_stdin, BEFORE any Gate or branch lookup,
+# so they discriminate on all three gates without a configured Gate. The
+# "parsed, and legitimately allowed" rows that complete the table live in each
+# gate's own section above, against repos that do have one.
+# ===========================================================================
+echo
+echo "=== git gates: unparseable payload fails CLOSED (v2.2.1) ==="
+KREPO=$(mkrepo kparse main)
+KTRUNC='{"tool_name":"Bash","tool_input":{"command":"git push origin ma'
+KNEEDLE="hook payload did not parse"
+
+check "parse: no-push-main, truncated"    hooks/no-push-main.sh 2 "$KTRUNC"
+check "parse: no-push-main, empty stdin"  hooks/no-push-main.sh 2 ''
+check_msg "parse: no-push-main names the cause" "$ROOT/hooks/no-push-main.sh" 2 "$KTRUNC" "$KNEEDLE"
+check "parse: pre-commit-test, truncated"   hooks/pre-commit-test.sh 2 "$KTRUNC"
+check "parse: pre-commit-test, empty stdin" hooks/pre-commit-test.sh 2 ''
+check_msg "parse: pre-commit-test names the cause" "$ROOT/hooks/pre-commit-test.sh" 2 "$KTRUNC" "$KNEEDLE"
+check "parse: gate-before-merge, truncated"   hooks/gate-before-merge.sh 2 "$KTRUNC"
+check "parse: gate-before-merge, empty stdin" hooks/gate-before-merge.sh 2 ''
+check_msg "parse: gate-before-merge names the cause" "$ROOT/hooks/gate-before-merge.sh" 2 "$KTRUNC" "$KNEEDLE"
+# The contrast that makes the rule a rule: a payload that PARSES and simply is
+# not a git command is still a legitimate allow. Only "could not determine"
+# refuses.
+check "parse: valid non-git command allowed" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'ls -la' "$KREPO")"
+# The escape hatch outranks the block, as it does on the no-parser path.
+mkdir -p "$KREPO/.claude"; : > "$KREPO/.claude/git-guard-off"
+printf '%s' "$KTRUNC" | ( cd "$KREPO" && bash "$ROOT/hooks/no-push-main.sh" ) >/dev/null 2>&1
+expect "parse: guard-off still opens" 0 "$?"
+rm -f "$KREPO/.claude/git-guard-off"
+
+# ===========================================================================
+# v2.2.1 (S): a parser that EXISTS but does not WORK is treated as ABSENT.
+#
+# `command -v python3` succeeds for the Windows App-Installer stub that ships on
+# PATH by default (and for a conda/pyenv shim pointing at a removed env). The
+# stub is not an interpreter: json_get returned "" for every field, the gates
+# read an empty command, and they exited 0 — the fail-OPEN outcome PR15's
+# fail-closed design exists to prevent, on the platform most users are on. A
+# missing parser was detected; a broken one was not.
+#
+# The fixture PATH must hide node too, or node answers first and the stub is
+# never reached.
+# ===========================================================================
+echo
+echo "=== broken-parser fixtures (json_probe_ok) ==="
+
+mkstubpath() { # <name> <stub-body-line> [extra-tool ...] -> prints dir
+  msp_name="$1"; msp_body="$2"; shift 2
+  msp=$(mkpathdir "$msp_name" "$@")
+  printf '#!/bin/sh\n%s\n' "$msp_body" > "$msp/python3"
+  chmod +x "$msp/python3"
+  printf '%s\n' "$msp"
+}
+STUB_RC=$(mkstubpath stub-rc 'exit 3')
+STUB_GARBAGE=$(mkstubpath stub-garbage 'echo not-json-at-all')
+STUB_JQ=$(mkstubpath stub-jq 'exit 3' jq)
+
+# Self-check FIRST: a fixture whose stub is invisible would prove nothing.
+expect "stub PATH still shows python3" 0 "$(seen "$STUB_RC" python3)"
+expect "stub PATH hides node"          1 "$(seen "$STUB_RC" node)"
+
+check_env "broken python3 (rc!=0): gate blocks" "$STUB_RC" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")" "$NEEDLE_BLOCK"
+check_env "broken python3 (garbage): gate blocks" "$STUB_GARBAGE" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")" "$NEEDLE_BLOCK"
+# A WORKING backend behind a broken one is still used — the probe falls through,
+# it does not give up. The feature-branch row is the discriminating one: a gate
+# that had fallen back to fail-closed would block this too.
+if [ -n "$HAVE_JQ" ]; then
+check_env "broken python3 + jq: still enforces" "$STUB_JQ" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"
+check_env "broken python3 + jq: feature allowed" "$STUB_JQ" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
+else
+skip "broken python3 + jq fallthrough" "no jq on this host" 2
+fi
+
+# ===========================================================================
 # v2.2.0 PR15 (B): the optional **Protected branches**: PROJECT_CONTEXT.md field
 # ===========================================================================
 echo
@@ -1527,6 +1637,18 @@ PB_DEV=$(pbrepo pb-dev develop '- **Protected branches**: develop release')
 PB_DEVMAIN=$(pbrepo pb-devmain main '- **Protected branches**: develop release')
 PB_NONE=$(pbrepo pb-none main '- **Protected branches**: none')
 PB_COMMA=$(pbrepo pb-comma develop '**Protected branches**: `develop, release`')
+# v2.2.1 (J): v2.2.0 shipped this line with a `{{DEFAULT_BRANCH}}` placeholder in
+# all six templates, and no existing consumer manifest carries a DEFAULT_BRANCH
+# key -- so the literal was written verbatim on sync. The resolver had no arm for
+# it, returned it as a branch NAME, `main` never matched `{{DEFAULT_BRANCH}}`,
+# and a push to main was ALLOWED. Reproduced in an isolated repo against
+# unmodified v2.2.0 hooks: with the line present exit=0 and no output; with the
+# line deleted exit=2. An unreplaced placeholder must never widen access.
+PB_PLACE=$(pbrepo pb-placeholder main '- **Protected branches**: {{DEFAULT_BRANCH}}')
+# ... and an EMPTY value is a typo or a truncated sync, not an opt-out. v2.2.0
+# treated it exactly like `none`, which is a silent unprotect. `none` stays the
+# one deliberate way to protect nothing.
+PB_EMPTY=$(pbrepo pb-empty main '- **Protected branches**:')
 
 H=hooks/no-push-main.sh
 check "field absent: main still blocked"   "$H" 2 "$(mkjson Bash 'git push' "$PB_ABSENT")"
@@ -1537,6 +1659,17 @@ check "develop listed: develop refspec no" "$H" 2 "$(mkjson Bash 'git push origi
 check "none: main allowed"                 "$H" 0 "$(mkjson Bash 'git push' "$PB_NONE")"
 check "none: explicit main allowed"        "$H" 0 "$(mkjson Bash 'git push origin main' "$PB_NONE")"
 check "comma+backticks are tolerated"      "$H" 2 "$(mkjson Bash 'git push' "$PB_COMMA")"
+# the three cases that must stay distinct
+check "placeholder value: main blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_PLACE")"
+# An explicit refspec takes the path whose message names the set it read —
+# consumers use that line as the cheapest proof the config path works.
+check_msg "placeholder falls back to the default" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin main' "$PB_PLACE")" "protected branch (main master)"
+check "empty value: main still blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY")"
+check_msg "empty value warns about the typo" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push' "$PB_EMPTY")" "**Protected branches**: is empty"
+# `none` is untouched by the two arms above: it remains the explicit opt-out.
+check "none is still an opt-out"           "$H" 0 "$(mkjson Bash 'git push origin main' "$PB_NONE")"
 
 # the merge gate reads the same field
 GB=hooks/gate-before-merge.sh
