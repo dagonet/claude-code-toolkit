@@ -82,13 +82,21 @@ case "$TEST_CMD" in
   *\{\{*\}\}*) exit 0 ;;
 esac
 
-echo "PRE-COMMIT: Running tests ($TEST_CMD)..." >&2
+echo "PRE-COMMIT: Running '$TEST_CMD'..." >&2
 cd "$REPO_PATH" || exit 1
 
-if eval "$TEST_CMD" > /dev/null 2>&1; then
-  echo "PRE-COMMIT: All tests passed." >&2
+# Capture rather than discard: with the Gate fallback $TEST_CMD may be a whole
+# gate, and "it failed" with no output leaves nothing to act on. Bounded to the
+# last 20 lines so a chatty gate cannot flood the transcript.
+OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
+if eval "$TEST_CMD" > "$OUT" 2>&1; then
+  rm -f "$OUT"
+  echo "PRE-COMMIT: '$TEST_CMD' passed." >&2
   exit 0
 else
-  echo "BLOCKED: Tests failed. Fix test failures before committing." >&2
+  echo "BLOCKED: '$TEST_CMD' failed — re-run it and fix the failures before committing." >&2
+  echo "--- last 20 lines ---" >&2
+  tail -20 "$OUT" >&2
+  rm -f "$OUT"
   exit 2
 fi

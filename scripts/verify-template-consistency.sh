@@ -747,7 +747,8 @@ fi
 #     Denying a tool the server does not expose is a harmless no-op.
 # ---------------------------------------------------------------------------
 echo
-GIT_MCP_DENY="git_push git_commit git_merge git_rebase git_reset git_push_tags"
+GIT_MCP_DENY="git_push git_commit git_revert git_merge git_rebase git_reset git_push_tags"
+GIT_MCP_DENY_N=7
 for v in $VARIANTS; do
   s="templates/$v/.claude/settings.json"
   missing=""
@@ -755,9 +756,21 @@ for v in $VARIANTS; do
     grep -q "\"mcp__git-tools__$t\"" "$s" || missing="$missing $t"
   done
   if [ -z "$missing" ]; then
-    ok "$s: denies all 6 git-tools write ops"
+    ok "$s: denies all $GIT_MCP_DENY_N git-tools write ops"
   else
     ko "$s: git-tools deny list missing:$missing"
+  fi
+  # The deny list is a scalpel, not a ban: the read ops must stay reachable, and
+  # the gate's own preflight command must survive every settings.json rewrite.
+  if grep -q '"mcp__git-tools__\*"' "$s"; then
+    ok "$s: mcp__git-tools__* still allowed (read ops reachable)"
+  else
+    ko "$s: mcp__git-tools__* missing from allow — the read ops were banned too"
+  fi
+  if grep -qF '"Bash(bash hooks/run-gate.sh*)"' "$s"; then
+    ok "$s: Bash(bash hooks/run-gate.sh*) survives in allow"
+  else
+    ko "$s: Bash(bash hooks/run-gate.sh*) dropped from allow — the gate needs a prompt"
   fi
 done
 missing=""
@@ -765,9 +778,14 @@ for t in $GIT_MCP_DENY; do
   grep -q "\"mcp__git-tools__$t\"" user-level-reference/settings.json || missing="$missing $t"
 done
 if [ -z "$missing" ]; then
-  ok "user-level-reference/settings.json: denies all 6 git-tools write ops"
+  ok "user-level-reference/settings.json: denies all $GIT_MCP_DENY_N git-tools write ops"
 else
   ko "user-level-reference/settings.json: git-tools deny list missing:$missing"
+fi
+if grep -q '"mcp__git-tools__\*"' user-level-reference/settings.json; then
+  ok "user-level-reference/settings.json: mcp__git-tools__* still allowed"
+else
+  ko "user-level-reference/settings.json: mcp__git-tools__* missing from allow"
 fi
 
 # ---------------------------------------------------------------------------

@@ -56,19 +56,21 @@ Collect all results. Report the list of auto-updated files.
 For each file with status `CONFLICT`:
 
 1. Call `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`
-2. Check the `merge_result`:
-   - If `has_conflicts` is **false**: a clean merge is not a correct merge. Before offering to apply, diff `auto_merged` against BOTH `template_content` and `project_content` for lines present in base AND project; if any are missing, do NOT apply `auto_merged` — splice by hand. For `hooks/*.sh`, also run `bash -n` on the merged body (and `node --check` on any embedded `node -e` block); a syntax error is a conflict, not a clean merge.
-   - If `has_conflicts` is **true**: show the conflict markers and the `unified_diff`. Ask the user how to resolve:
+2. **Disqualify the unsafe options BEFORE offering anything.** Both of these are checks on the diff you just fetched:
+   - *Accept merged* is off the table unless `auto_merged` survives inspection: diff it against BOTH `template_content` and `project_content` for lines present in base AND project; if any are missing, do not offer it — a clean merge is not a correct merge. For `hooks/*.sh`, also `bash -n` the merged body (and `node --check` any embedded `node -e` block); a syntax error is a conflict, not a clean merge.
+   - *Accept template* is off the table when it would silently drop project content: an EMPTY `PROJECT-CUSTOM` region while headings the template does not carry sit outside it (list those headings), or — for `.claude/settings.json` — a `matcher` string naming agents the template version no longer mentions, e.g. a project-added `cpp-coder` (list those agent names; accept-template reverts their hook wiring). In either case route to the splice path (`source="provided"`) instead.
+3. Present what is left:
+   - If `has_conflicts` is **false** and `auto_merged` passed step 2: show it and offer to apply.
+   - Otherwise show the conflict markers and the `unified_diff`, and ask the user how to resolve, offering only the options step 2 did not disqualify:
      - **Accept merged** (if they edit the merged content)
      - **Accept template** (discard local changes)
      - **Keep mine** (acknowledge template change but keep project version)
-3. Apply the user's choice:
+     - **Splice** (`source="provided"` with hand-merged content)
+4. Apply the user's choice:
    - Accept merged/template: `template_apply_file(source="provided", content=...)` or `template_apply_file(source="template")`
    - Keep mine: `template_apply_file(source="skip")`
-4. **Refuse plain accept-template when it would silently drop project content.** Before offering *Accept template*, check the project file for:
-   - an EMPTY `PROJECT-CUSTOM` region while headings exist outside it that the template version does not carry — list those headings, then route to the splice path (`source="provided"`) instead;
-   - for `.claude/settings.json`, a `matcher` string naming agents the template version no longer mentions (e.g. a project-added `cpp-coder`) — list those agent names; accept-template reverts their hook wiring.
-5. **PROJECT-CUSTOM region:** the server preserves content between `<!-- PROJECT-CUSTOM:BEGIN -->` and `<!-- PROJECT-CUSTOM:END -->` mechanically (when both template and project carry the markers). If the consumer's `template-sync-tools` server predates region support, preserve the project's region verbatim in any manual `CLAUDE.md` merge — never let accept-template clobber it.
+
+> **PROJECT-CUSTOM region:** the server preserves content between `<!-- PROJECT-CUSTOM:BEGIN -->` and `<!-- PROJECT-CUSTOM:END -->` mechanically (when both template and project carry the markers). If the consumer's `template-sync-tools` server predates region support, preserve the project's region verbatim in any manual `CLAUDE.md` merge — never let accept-template clobber it.
 
 ### 5. Handle New Files
 

@@ -206,6 +206,24 @@ check_msg "no PROJECT_CONTEXT warns too" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'git commit -m x' "$BARE")" \
   "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
 
+# --- v2.1.1 round 1: the block message names the command that failed (with the
+# Gate fallback it is often not a test runner), and the command's own output is
+# kept — swallowing it left "Fix test failures" with nothing to act on.
+check_msg "block names the failed command"  "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$BADREPO")" \
+  "BLOCKED: 'false' failed — re-run it and fix the failures before committing"
+check_msg "gate-only block names the gate"  "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
+  "BLOCKED: 'false' failed"
+
+TAILREPO=$(mkrepo committail main)
+printf '# ctx\n\n- **Test**: `seq 1 40 | sed s/^/LINE/; false`\n' > "$TAILREPO/PROJECT_CONTEXT.md"
+tailerr="$TMPROOT/committail.err"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$TAILREPO")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>"$tailerr"
+expect "failure output reaches stderr"   "1" "$(grep -cx 'LINE40' "$tailerr")"
+expect "failure output is tailed to 20"  "0" "$(grep -cx 'LINE1' "$tailerr")"
+
 # ===========================================================================
 # gate-before-merge.sh
 # ===========================================================================

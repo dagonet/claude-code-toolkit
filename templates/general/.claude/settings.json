@@ -27,6 +27,7 @@
       "Read(.env*)",
       "mcp__git-tools__git_push",
       "mcp__git-tools__git_commit",
+      "mcp__git-tools__git_revert",
       "mcp__git-tools__git_merge",
       "mcp__git-tools__git_rebase",
       "mcp__git-tools__git_reset",
