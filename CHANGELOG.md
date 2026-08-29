@@ -2,7 +2,7 @@
 
 ## v2.1 — 2026-08-29
 
-**Three rules deleted, one judgement call added.** v2.0 was a measurement release; v2.1 is an alignment one. Boris Cherny, June 2026: *"I don't use plan mode anymore… starting with 4.6, and definitely with 4.7, it just doesn't need it."* The toolkit's plan gate encoded the opposite assumption, and so did a pinned session `effortLevel` — Anthropic's model-config docs now call `xhigh` *"the new default reasoning level"* for Opus 4.7 and later, which made a pinned `medium` a cap rather than a setting. Both are gone. What arrives in their place is not a third mechanism but a phrase: when a task is too big for one pass, the PO says **"use a workflow"** and Claude scripts its own fan-out. Detail per part is in the `v2.1-prN` entries below; this entry consolidates the migration.
+**Two rules deleted, one judgement call added.** v2.0 was a measurement release; v2.1 is an alignment one. Boris Cherny, June 2026: *"I don't use plan mode anymore… starting with 4.6, and definitely with 4.7, it just doesn't need it."* The toolkit's plan gate encoded the opposite assumption, and so did a pinned session `effortLevel` — Anthropic's model-config docs now call `xhigh` *"the new default reasoning level"* for Opus 4.7 and later, which made a pinned `medium` a cap rather than a setting. Both are gone. What arrives in their place is not a third mechanism but a phrase: when a task is too big for one pass, the PO says **"use a workflow"** and Claude scripts its own fan-out. Detail per part is in the `v2.1-prN` entries below; this entry consolidates the migration.
 
 ### What changed
 
@@ -93,6 +93,7 @@ Carried from the v2.0 list plus this cycle's ledger, minus what was fixed since.
 
 *New in v2.1:*
 
+- `docs/architecture.md` §Session Bootstrap step 5 names MCP tools (`git_status`, `git_worktree_list`) where the templates name the CLI (`git status`) — cosmetic drift between two descriptions of the same step.
 - Nothing asserts the `use a workflow` phrase or the routine/skill pair — they are prose and a prompt, and no hook reads either. A future verify check could at least pin that the phrase still appears in all six `AGENT_TEAM.md` copies.
 - `toolkit-nightly-check.md` is a prompt body a human pastes into `/schedule`; there is no mechanism keeping the pasted routine in sync with the file after that.
 

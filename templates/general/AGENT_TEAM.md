@@ -332,7 +332,10 @@ workflow"**. Claude then builds a *dynamic workflow*: a script that orchestrates
 subagents (implementers → two verifiers → a fixer per task, then summarizers), runs it in
 the background, and verifies the result before reporting. Run it in **auto mode**, so it
 does not stop for permissions mid-wave. The merge gate still applies to whatever branch
-comes out: `bash hooks/run-gate.sh`, then the usual `gate-before-merge` path.
+comes out: `bash hooks/run-gate.sh`, then the usual `gate-before-merge` path. The
+orchestration script lives under `.claude/` or outside the repo, and the gate runs inside
+the worker waves — never from the PO thread (`enforce-delegation.sh` denies main-thread
+test/gate commands).
 
 Do **not** use a workflow for sequential work (each task needs the previous one's output)
 or for several tasks touching the same file — waves assume independence, and the same-file
