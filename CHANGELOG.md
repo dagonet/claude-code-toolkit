@@ -22,12 +22,12 @@
 
 ### Downstream migration
 
-Union of both halves; the `v2.2.0-pr15` section below repeats none of it in list form, but states the mechanics behind items 1, 3, 4 and 5 in detail.
+The union of both halves — this is the list to work from. Items 1, 3, 4 and 5 are the PR15 half, stated here in short form; `v2.2.0-pr15` below carries the mechanics and the exact strings.
 
 1. **Re-copy `hooks/` INCLUDING `hooks/lib/`**: `cp -r user-level-reference/hooks/. ~/.claude/hooks/`; in a consumer project `/sync-template` picks up `hooks/**` including `hooks/lib/`. The new `hooks/lib/json.sh` is required — `git-cmd.sh` refuses to run without it, and `require-skills-block.sh` / `enforce-agent-contract.sh` disable themselves (with a WARN) when it is absent.
 2. **Windows consumers bootstrapped with `setup-project.ps1` before v2.2.0: check `ls <project>/hooks/lib`.** The PowerShell copy was non-recursive, so `hooks/lib/` never arrived — and the gates exit 2 without it, leaving the project unable to commit, push, or merge. This is the one item that is not optional.
 3. **Check your PATH.** With none of `node`, `python3`, `jq` present the git gates now block instead of waving everything through. Install one — `jq` is the smallest, `node` unlocks the six node-only hooks.
-4. **User-level `settings.json` deny list changed**: replace `Read(.env*)` with `Read(.env)`, `Read(.env.local)`, `Read(.env.*.local)`, `Read(.env.production)`, `Read(.env.staging)`, `Read(.env.development)`, or `.env.example` stays unreadable. In a consumer project the same change arrives through your normal `settings.json` sync.
+4. **User-level `settings.json` deny list changed**: replace `Read(.env*)` with the six enumerated names (`v2.2.0-pr15` §4), or `.env.example` stays unreadable. In a consumer project the same change arrives through your normal `settings.json` sync.
 5. **Optional:** add `- **Protected branches**: <names>` to `PROJECT_CONTEXT.md` if your trunk is not `main`/`master`. Omitting it keeps the old behaviour exactly.
 6. **Re-run nothing else.** The new setup-script flags only affect fresh bootstraps. The `templates/*/gitignore` fix arrives through `/sync-template`.
 7. `CLAUDE.local.md` is gitignored per project, so no sync touches it — re-copy `templates/<variant>/CLAUDE.local.md` by hand if you want the "only if registered" wording.
@@ -56,7 +56,12 @@ Union of both halves; the `v2.2.0-pr15` section below repeats none of it in list
 
 ### Downstream migration
 
-Consolidated into the `v2.2.0` roll-up above — items 1, 3, 4 and 5 there are this half's. `git-cmd.sh` refusing to run without `hooks/lib/json.sh` (`BLOCKED: … hooks/lib/json.sh missing`) is by design: a missing reader must not silently disarm the gates.
+Rolled up into `v2.2.0` above (items 1, 3, 4 and 5 there are this half's); stated here in full.
+
+1. **Re-copy the hooks INCLUDING `lib/`**: `cp -r user-level-reference/hooks/. ~/.claude/hooks/`. The new `hooks/lib/json.sh` is required — `git-cmd.sh` refuses to run without it (`BLOCKED: … hooks/lib/json.sh missing`), by design: a missing reader must not silently disarm the gates. In a consumer project `/sync-template` picks up `hooks/**` including `hooks/lib/`.
+2. **Check your PATH.** If the box has none of `node`, `python3`, `jq`, the git gates now block instead of waving everything through. Install one — `jq` is the smallest, `node` unlocks the six node-only hooks.
+3. **User-level `settings.json` deny list changed**: replace `Read(.env*)` with the six enumerated names, or `.env.example` stays unreadable.
+4. **Optional**: add `- **Protected branches**: <names>` to `PROJECT_CONTEXT.md` if your trunk is not `main`/`master`. Omitting it keeps the old behaviour exactly.
 
 12 hook scripts (2 lib files), 8 skills; 212 → 230 consistency assertions and 204 → 264 hook fixtures. The node-only, python3-only and jq-only cases SKIP where that interpreter is absent (the suite prints a `skipped: N` tally, counted per assertion), so the fixture total is host-dependent: 264 is the count with all three present.
 
