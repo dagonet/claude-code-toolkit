@@ -92,34 +92,48 @@ sys.stdout.buffer.write((v if isinstance(v, str) else json.dumps(v)).encode("utf
   esac
 }
 
-# json_warn_once <hook-name> <message> -- print <message> to stderr at most once
-# per hook per TMPDIR. PreToolUse hooks fire on EVERY tool call, so on a host
-# with no parser an unconditional warning is thousands of stderr lines per
-# session saying the same thing. The marker is best-effort: if it cannot be
-# written the warning simply repeats. Never changes an exit code.
+# json_session <json> -- the payload's session_id, by grep. Deliberately NOT
+# json_get: the warn-once path has to work when there is no parser at all.
+json_session() {
+  printf '%s' "$1" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+
+# json_warn_once <hook-name> <session-id> <message> -- print <message> to stderr
+# at most once per hook per session. PreToolUse hooks fire on EVERY tool call,
+# so an unconditional warning is thousands of identical stderr lines; a marker
+# with no session in it is the opposite failure — on a host-global TMPDIR the
+# hook would warn once EVER and every later outage would be silent. With no
+# session id to key on (a payload we could not even grep) the marker expires
+# after an hour instead. Best-effort: an unwritable marker just means the
+# warning repeats. Never changes an exit code.
+JSON_WARN_TTL=3600
 json_warn_once() {
-  jwm="${TMPDIR:-/tmp}/claude-hook-warn-$1"
-  [ -f "$jwm" ] && return 0
+  jwm="${TMPDIR:-/tmp}/claude-hook-warn-$1${2:+-$2}"
+  if [ -f "$jwm" ]; then
+    [ -n "$2" ] && return 0
+    jwmt=$(stat -c %Y "$jwm" 2>/dev/null || stat -f %m "$jwm" 2>/dev/null || echo 0)
+    [ $(( $(date +%s) - jwmt )) -lt "$JSON_WARN_TTL" ] && return 0
+  fi
   : > "$jwm" 2>/dev/null || true
-  echo "$2" >&2
+  echo "$3" >&2
 }
 
-# json_warn_no_parser <hook-name> -- the ONE stderr line a fail-open hook prints
-# when it cannot enforce anything. Never changes an exit code.
+# json_warn_no_parser <hook-name> [session-id] -- the ONE stderr line a fail-open
+# hook prints when it cannot enforce anything. Never changes an exit code.
 json_warn_no_parser() {
-  json_warn_once "$1" "WARN: $1: no JSON parser on PATH — enforcement inactive"
+  json_warn_once "$1" "${2:-}" "WARN: $1: no JSON parser on PATH — enforcement inactive"
 }
 
-# json_require_node <hook-name> -- for the fail-open hooks whose engine is an
-# embedded node program (a JSONL transcript scan, a JSON rewrite) rather than a
-# field read. Returns non-zero — and warns exactly once — when node is missing,
-# so the caller can `|| exit 0`.
+# json_require_node <hook-name> [session-id] -- for the fail-open hooks whose
+# engine is an embedded node program (a JSONL transcript scan, a JSON rewrite)
+# rather than a field read. Returns non-zero — and warns once per session — when
+# node is missing, so the caller can `|| exit 0`.
 json_require_node() {
   command -v node >/dev/null 2>&1 && return 0
   if json_have; then
-    json_warn_once "$1" "WARN: $1: node not on PATH (found $(json_parser)) — enforcement inactive"
+    json_warn_once "$1" "${2:-}" "WARN: $1: node not on PATH (found $(json_parser)) — enforcement inactive"
   else
-    json_warn_no_parser "$1"
+    json_warn_no_parser "$1" "${2:-}"
   fi
   return 1
 }

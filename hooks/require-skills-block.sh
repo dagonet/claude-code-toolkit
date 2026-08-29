@@ -29,7 +29,7 @@ jlib="$(dirname "$0")/lib/json.sh"
   exit 0
 }
 . "$jlib"
-json_have || { json_warn_no_parser require-skills-block; exit 0; }
+json_have || { json_warn_no_parser require-skills-block "$(json_session "$TOOL_INPUT")"; exit 0; }
 
 SUBAGENT_TYPE=$(json_get "$TOOL_INPUT" subagent_type)
 PROMPT=$(json_get "$TOOL_INPUT" prompt)

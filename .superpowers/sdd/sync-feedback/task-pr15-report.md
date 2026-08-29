@@ -7,12 +7,13 @@ Branch `v2/pr15-hooks-no-node` (from main 527d3f9). Not pushed, no PR, no merge.
 
 ```
 verify-template-consistency.sh: ALL CHECKS PASSED   (230 PASS, 0 FAIL)
-test-hooks.sh: 257 passed, 0 failed
+test-hooks.sh: 261 passed, 0 failed, 0 skipped
 ALL HOOK FIXTURES PASSED
 ```
 
-(Fix round 1 numbers; the first pass was 227 / 243. No SKIPs on this host — node,
-python3 and jq are all present.)
+(Fix round 2 numbers. Round 0: 227 / 243. Round 1: 230 / 257. No SKIPs on this
+host — node, python3 and jq are all present; the fixture total is host-dependent
+by design and the suite now prints the skipped tally.)
 
 ## Mirrors (md5, canonical vs user-level-reference)
 
@@ -45,6 +46,14 @@ templates/*/.claude/settings.json (x6): aba86f884c298813202aaf9d2e5f24c5 (one ha
 | 6c | `bash-output-guard.sh` header said "always silent" | Amended. |
 | 6d | BLOCKED message | Now ends `Install one, or create <cwd>/.claude/git-guard-off to opt out.` |
 | 6e | `pre-commit-test.sh` header | Documents fail-closed-without-parser like the other two gates. |
+
+## Fix round 2 (re-review of f22cb2e)
+
+1. **Warn-once marker had no session scope** — `json_warn_once <hook> <session-id> <message>`; the marker is `$TMPDIR/claude-hook-warn-<hook>-<session_id>`. `json_session` greps `session_id` out of the raw payload (NOT `json_get` — the warn path must work with no parser at all). The six node-engine hooks now read stdin BEFORE the guard so there is a payload to key on. With no readable session id the marker expires after `JSON_WARN_TTL=3600`s, so a later outage is never silent. Fixtures: same session → 1 WARN, two sessions → 2, session-less → 1, session-less marker aged with `touch -d '2 hours ago'` → re-warns (skips where `touch -d` is unsupported).
+2. **Node encoding fixtures unguarded** — `HAVE_NODE` + a node-only PATH dir (`mkpathdir nodeonly node`) with a `node-only PATH keeps node` self-check; SKIP when node is absent. The ambient PATH is no longer used for a backend-specific assertion anywhere.
+3. **`skipped: N` tally** — `test-hooks.sh: N passed, M failed, K skipped`, counted per assertion (each `skip` call carries the number of assertions it stands in for), so the host-dependent total still adds up.
+
+Caught by the fixtures themselves: `mkread` embeds `session_id:"t"`, so the first draft of the expiry case was not actually session-less and the marker `touch` missed the file — the assertion failed (`want 1, got 0`) and the payload is now built without a session id.
 
 ## Deviations
 

@@ -13,6 +13,9 @@
 set -u
 pass=0
 fail=0
+# Assertions not run because the backend they exercise is absent on this host
+# (python3-only / jq-only / node-only cases). Reported, never a failure.
+skipped=0
 
 ROOT=$(pwd)
 TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t hooktest)
@@ -1156,21 +1159,27 @@ expect "fixture PATH hides jq"           1 "$(seen "$NOPARSER" jq)"
 # The python3-only / jq-only backends can only be exercised where that
 # interpreter exists. On a node-only box those cases SKIP (reported, not
 # counted) instead of turning the whole suite red.
-skip() { printf 'SKIP  %-42s (%s)\n' "$1" "$2"; }
-HAVE_PY=1; command -v python3 >/dev/null 2>&1 || HAVE_PY=""
-HAVE_JQ=1; command -v jq      >/dev/null 2>&1 || HAVE_JQ=""
+# <label> <reason> [assertion-count] -- the tally counts ASSERTIONS, not blocks,
+# so `243 passed, 0 failed, 14 skipped` still adds up to the same total suite.
+skip() {
+  skipped=$((skipped + ${3:-1}))
+  printf 'SKIP  %-42s (%s, %s assertion(s))\n' "$1" "$2" "${3:-1}"
+}
+HAVE_NODE=1; command -v node >/dev/null 2>&1 || HAVE_NODE=""
+HAVE_PY=1;   command -v python3 >/dev/null 2>&1 || HAVE_PY=""
+HAVE_JQ=1;   command -v jq      >/dev/null 2>&1 || HAVE_JQ=""
 
 if [ -n "$HAVE_PY" ]; then
   expect "python3-only PATH hides node"    1 "$(seen "$PYONLY" node)"
   expect "python3-only PATH keeps python3" 0 "$(seen "$PYONLY" python3)"
 else
-  skip "python3 backend cases" "no python3 on this host"
+  skip "python3-only PATH self-check" "no python3 on this host" 2
 fi
 if [ -n "$HAVE_JQ" ]; then
   expect "jq-only PATH hides node"         1 "$(seen "$JQONLY" node)"
   expect "jq-only PATH keeps jq"           0 "$(seen "$JQONLY" jq)"
 else
-  skip "jq backend cases" "no jq on this host"
+  skip "jq-only PATH self-check" "no jq on this host" 2
 fi
 
 NEEDLE_BLOCK="no JSON parser (node, python3 or jq) on PATH"
@@ -1233,7 +1242,7 @@ check_env "python3: gh pr merge needs artifact" "$PYONLY" hooks/gate-before-merg
 check_env "python3: read-size-gate names node" "$PYONLY" hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "node not on PATH (found python3)"
 else
-skip "python3 git-gate cases" "no python3 on this host"
+skip "python3 git-gate cases" "no python3 on this host" 5
 fi
 
 # --- jq only: same ----------------------------------------------------------
@@ -1245,7 +1254,7 @@ check_env "jq: feature push allowed"           "$JQONLY" hooks/no-push-main.sh 0
 check_env "jq: quoted -C space repo"           "$JQONLY" hooks/no-push-main.sh 2 \
   "$(mkjson Bash "git -C \"$SPACEREPO\" push" "$FEATREPO")"
 else
-skip "jq git-gate cases" "no jq on this host"
+skip "jq git-gate cases" "no jq on this host" 3
 fi
 
 # require-skills-block is the one BLOCKING hook whose verdict now flows through
@@ -1257,12 +1266,16 @@ check_env "python3: skills block present passes" "$PYONLY" hooks/require-skills-
   "$(mkspawn coder "$WITHBLOCK")"
 check_env "python3: missing skills block blocks"  "$PYONLY" hooks/require-skills-block.sh 2 \
   "$(mkspawn coder 'Do the thing.')"
+else
+skip "python3 require-skills cases" "no python3 on this host" 2
 fi
 if [ -n "$HAVE_JQ" ]; then
 check_env "jq: skills block present passes"       "$JQONLY" hooks/require-skills-block.sh 0 \
   "$(mkspawn coder "$WITHBLOCK")"
 check_env "jq: missing skills block blocks"       "$JQONLY" hooks/require-skills-block.sh 2 \
   "$(mkspawn coder 'Do the thing.')"
+else
+skip "jq require-skills cases" "no jq on this host" 2
 fi
 
 # --- encoding: every backend must return the SAME bytes ---------------------
@@ -1278,8 +1291,16 @@ jget() { # <pathdir> <json> <dotted.path>
 EMCMD='git push origin main # rationale — see PR'
 EMJSON=$(mkjson Bash "$EMCMD" "$MAINREPO")
 BOMJSON=$(printf '\357\273\277%s' "$EMJSON")
-expect "node: em dash survives"  "$EMCMD" "$(jget "$PATH" "$EMJSON" tool_input.command)"
-expect "node: BOM tolerated"     "$EMCMD" "$(jget "$PATH" "$BOMJSON" tool_input.command)"
+if [ -n "$HAVE_NODE" ]; then
+  # A node-ONLY PATH, not the ambient one: on a node-less host the ambient PATH
+  # would silently exercise python3 or jq and report it as the node backend.
+  NODEONLY=$(mkpathdir nodeonly node)
+  expect "node-only PATH keeps node" 0 "$(seen "$NODEONLY" node)"
+  expect "node: em dash survives"  "$EMCMD" "$(jget "$NODEONLY" "$EMJSON" tool_input.command)"
+  expect "node: BOM tolerated"     "$EMCMD" "$(jget "$NODEONLY" "$BOMJSON" tool_input.command)"
+else
+  skip "node encoding cases" "no node on this host" 3
+fi
 if [ -n "$HAVE_PY" ]; then
   expect "python3: em dash survives" "$EMCMD" "$(jget "$PYONLY" "$EMJSON" tool_input.command)"
   expect "python3: BOM tolerated"    "$EMCMD" "$(jget "$PYONLY" "$BOMJSON" tool_input.command)"
@@ -1289,10 +1310,14 @@ if [ -n "$HAVE_PY" ]; then
   expect "python3 under LC_ALL=C parses"  "$EMCMD" "$pyloc"
   printf '%s' "$EMJSON" | PATH="$PYONLY" LC_ALL=C "$BASHABS" "$ROOT/hooks/no-push-main.sh" >/dev/null 2>&1
   expect "python3 under LC_ALL=C blocks"  2 "$?"
+else
+  skip "python3 encoding cases" "no python3 on this host" 4
 fi
 if [ -n "$HAVE_JQ" ]; then
   expect "jq: em dash survives"      "$EMCMD" "$(jget "$JQONLY" "$EMJSON" tool_input.command)"
   expect "jq: BOM tolerated"         "$EMCMD" "$(jget "$JQONLY" "$BOMJSON" tool_input.command)"
+else
+  skip "jq encoding cases" "no jq on this host" 2
 fi
 
 # --- the fail-open hooks stay open, but say so once -------------------------
@@ -1307,15 +1332,39 @@ check_env "no parser: bash-output-guard warns" "$NOPARSER" hooks/bash-output-gua
 check_env "no parser: agent-contract warns"    "$NOPARSER" hooks/enforce-agent-contract.sh 0 \
   "$(mkstop "$ROOT" coder a1 /nonexistent)" "$NEEDLE_WARN"
 
-# ... but only ONCE per hook per TMPDIR. A PreToolUse hook fires on every tool
-# call; an unconditional warning is thousands of identical stderr lines.
-ONCETMP="$TMPROOT/oncetmp"; rm -rf "$ONCETMP"; mkdir -p "$ONCETMP"
-oncef="$TMPROOT/once.err"; : > "$oncef"
-for _ in 1 2 3; do
-  printf '%s' "$(mkread "$ROOT/README.md" - -)" \
-    | PATH="$NOPARSER" TMPDIR="$ONCETMP" "$BASHABS" "$ROOT/hooks/read-size-gate.sh" >/dev/null 2>>"$oncef"
-done
-expect "WARN is printed once, not per call" "1" "$(grep -c 'enforcement inactive' "$oncef")"
+# ... but only ONCE per hook PER SESSION. A PreToolUse hook fires on every tool
+# call, so warning every time is thousands of identical stderr lines; a marker
+# with no session in it is the opposite failure — with a host-global TMPDIR the
+# hook would warn once ever and every later outage would be silent.
+mkread_s() { # <session_id> <file_path>
+  node -e 'console.log(JSON.stringify({session_id:process.argv[1],hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{file_path:process.argv[2]}}))' "$1" "$2"
+}
+ONCETMP="$TMPROOT/oncetmp"
+warnruns() { # <session-json> [<session-json> ...] -> WARN line count
+  rm -f "$TMPROOT/once.err"; : > "$TMPROOT/once.err"
+  for wj in "$@"; do
+    printf '%s' "$wj" | PATH="$NOPARSER" TMPDIR="$ONCETMP" \
+      "$BASHABS" "$ROOT/hooks/read-size-gate.sh" >/dev/null 2>>"$TMPROOT/once.err"
+  done
+  grep -c 'enforcement inactive' "$TMPROOT/once.err"
+}
+S1=$(mkread_s sess-one "$ROOT/README.md")
+S2=$(mkread_s sess-two "$ROOT/README.md")
+# mkread carries a session_id; this one deliberately does not.
+NOSESS=$(node -e 'console.log(JSON.stringify({hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{file_path:process.argv[1]}}))' "$ROOT/README.md")
+
+rm -rf "$ONCETMP"; mkdir -p "$ONCETMP"
+expect "same session: WARN printed once"   "1" "$(warnruns "$S1" "$S1" "$S1")"
+rm -rf "$ONCETMP"; mkdir -p "$ONCETMP"
+expect "two sessions: two WARNs"           "2" "$(warnruns "$S1" "$S2")"
+rm -rf "$ONCETMP"; mkdir -p "$ONCETMP"
+expect "no session id: WARN printed once"  "1" "$(warnruns "$NOSESS" "$NOSESS")"
+# ... and the session-less marker expires, so a later outage is not silent.
+if touch -d '2 hours ago' "$ONCETMP/claude-hook-warn-read-size-gate" 2>/dev/null; then
+  expect "stale session-less marker re-warns" "1" "$(warnruns "$NOSESS")"
+else
+  skip "session-less marker expiry" "touch -d unsupported here"
+fi
 
 # ===========================================================================
 # v2.2.0 PR15 (B): the optional **Protected branches**: PROJECT_CONTEXT.md field
@@ -1359,7 +1408,7 @@ check "none: gh pr merge still gated"      "$GB" 2 "$(mkjson Bash 'gh pr merge 1
 # ===========================================================================
 echo
 echo "----------------------------------------------------------------"
-echo "test-hooks.sh: $pass passed, $fail failed"
+echo "test-hooks.sh: $pass passed, $fail failed, $skipped skipped"
 [ "$fail" -eq 0 ] || exit 1
 echo "ALL HOOK FIXTURES PASSED"
 exit 0
