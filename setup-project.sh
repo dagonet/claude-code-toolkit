@@ -207,6 +207,32 @@ add_derived() {
     add_replacement "$1" "$2"
 }
 
+# --- Protected branches: bootstrap is the only layer that KNOWS the trunk ---
+#
+# The template ships the safe literal `- **Protected branches**: main master`.
+# Until v2.2.1 it shipped `{{DEFAULT_BRANCH}}`, which NOTHING substitutes on a
+# /sync-template apply — so a `develop` repo received a line that read as
+# configured, silently resolved to `main master`, and had its trunk unprotected.
+# No placeholder is reintroduced here: the static default is correct for the
+# common case, and setup — which resolved the branch above — rewrites the line
+# when that default would not cover it. An unreplaced placeholder must never
+# widen access; a static default that is simply wrong is at least readable.
+PROTECTED_DEFAULT="main master"
+PROTECTED_BRANCHES="$PROTECTED_DEFAULT"
+case " $PROTECTED_DEFAULT " in
+    *" $DEFAULT_BRANCH "*) ;;
+    *) PROTECTED_BRANCHES="$DEFAULT_BRANCH" ;;
+esac
+
+# set_protected_branches <rendered PROJECT_CONTEXT.md text>
+set_protected_branches() {
+    if [[ "$PROTECTED_BRANCHES" == "$PROTECTED_DEFAULT" ]]; then
+        printf '%s' "$1"
+        return 0
+    fi
+    printf '%s' "$1" | sed "s|^- \*\*Protected branches\*\*:.*|- **Protected branches**: $PROTECTED_BRANCHES|"
+}
+
 PROJECT_NAME_LOWER="$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]')"
 add_replacement '{{PROJECT_NAME}}' "$PROJECT_NAME"
 add_replacement '{{PROJECT_NAME_LOWER}}' "$PROJECT_NAME_LOWER"
@@ -387,6 +413,9 @@ render_file() {
         return 0
     fi
     rendered="$(apply_replacements "$(<"${FILE_SOURCES[$idx]}")")"
+    if [[ "${FILE_RELS[$idx]}" == "PROJECT_CONTEXT.md" ]]; then
+        rendered="$(set_protected_branches "$rendered")"
+    fi
     if should_wrap_claude_md "${FILE_RELS[$idx]}"; then
         rendered="$(wrap_into_custom_region "$rendered" "$(<"$TARGET_DIR/CLAUDE.md")")"
     fi
@@ -419,6 +448,31 @@ print_remaining_placeholders() {
     done
     if [[ "$has_remaining" == false ]]; then
         echo "All placeholders replaced."
+    fi
+}
+
+# --- Branch protection, stated in the report ---
+#
+# A bootstrap that cannot protect the trunk it just configured must SAY so here.
+# The hook does warn, but hook stderr never reaches the session transcript, so
+# this output is the only channel that actually reaches the person running it.
+print_branch_protection() {
+    local rendered=false r
+    for r in "${REPORT_RELS[@]}"; do
+        [[ "$r" == "PROJECT_CONTEXT.md" ]] && rendered=true && break
+    done
+    if [[ "$rendered" != true ]]; then
+        echo "Branch protection: PROJECT_CONTEXT.md was NOT written (kept the existing file)."
+        echo "  Resolved trunk is '$DEFAULT_BRANCH' — check its '- **Protected branches**:' line"
+        echo "  yourself; a trunk that is not named there is not protected."
+        return 0
+    fi
+    if [[ "$PROTECTED_BRANCHES" == "$PROTECTED_DEFAULT" ]]; then
+        echo "Branch protection: $PROTECTED_BRANCHES (trunk '$DEFAULT_BRANCH' is covered)."
+    else
+        echo "Branch protection: $PROTECTED_BRANCHES — set from the resolved trunk."
+        echo "  main/master are NOT protected in this project; add them to"
+        echo "  PROJECT_CONTEXT.md's '- **Protected branches**:' line if you want them."
     fi
 }
 
@@ -619,6 +673,7 @@ if [[ "$DRY_RUN" == true ]]; then
     fi
     echo ""
     print_remaining_placeholders
+    print_branch_protection
     echo ""
     print_automode_snippet
     echo ""
@@ -702,6 +757,12 @@ for i in "${!FILE_SOURCES[@]}"; do
     mkdir -p "$(dirname "$target_file")"
     raw_content="$content"
     content="$(apply_replacements "$content")"
+    # Same rewrite the dry run reports — this write path does NOT go through
+    # render_file, so the transform has to be applied here too or the two modes
+    # disagree about the one line that decides whether the trunk is protected.
+    if [[ "$rel" == "PROJECT_CONTEXT.md" ]]; then
+        content="$(set_protected_branches "$content")"
+    fi
     printf '%s' "$content" > "$target_file"
     copied+=("$rel")
     record_rendered "$rel" "$content"
@@ -832,6 +893,7 @@ fi
 # --- Check for remaining placeholders ---
 echo ""
 print_remaining_placeholders
+print_branch_protection
 
 echo ""
 print_automode_snippet

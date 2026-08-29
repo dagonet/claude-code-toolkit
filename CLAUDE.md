@@ -12,7 +12,7 @@ Template repo for bootstrapping projects with Claude Code config. It ships no ap
 
 ## Gate
 
-`bash scripts/verify-template-consistency.sh` and `bash scripts/test-hooks.sh` are the gate. Both must be green before a commit is claimed done. `scripts/verify-user-level-drift.sh` compares `user-level-reference/{CLAUDE.md,hooks/**,skills/**,agents/**}` against the live `~/.claude/` tree; the reference leads, the live copy follows per the CHANGELOG's downstream-migration section.
+`bash scripts/verify-template-consistency.sh` and `bash scripts/test-hooks.sh` are the gate. Both must be green before a commit is claimed done. The gate command list stays two: `scripts/test-setup-project.sh` (bootstrap fixtures — the `setup-project.{sh,ps1}` dry-run/real-run paths must agree) is **invoked from** `verify-template-consistency.sh` as check 27, so a new fixture file never needs consumer, doc, routine or CI wiring to be executed. `scripts/verify-user-level-drift.sh` compares `user-level-reference/{CLAUDE.md,hooks/**,skills/**,agents/**}` against the live `~/.claude/` tree; the reference leads, the live copy follows per the CHANGELOG's downstream-migration section.
 
 ## Invariants
 

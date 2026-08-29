@@ -9,6 +9,12 @@
 #
 # Run from repo root: bash scripts/test-hooks.sh
 # Exit 0 = all cases pass. Exit 1 = at least one FAIL.
+#
+# Reproducing a WARN case by hand: give each invocation its own TMPDIR.
+# json_warn_once writes ${TMPDIR:-/tmp}/claude-hook-warn-<hook>[-<session>] and
+# stays quiet while that marker exists (per session, else for an hour), so a
+# second run at the prompt prints nothing and looks like a regression.
+# check_env below rebuilds $WARNTMP for exactly this reason.
 
 set -u
 pass=0
@@ -46,16 +52,103 @@ mkrepo() { # <name> <branch> -> prints path
   printf '%s\n' "$d"
 }
 
+# --- payload construction, without an interpreter ---------------------------
+#
+# v2.2.1: every builder below was a `node -e` one-liner. On a node-less host
+# node printed nothing, so EVERY payload was the empty string, every hook read
+# an empty stdin and exited 0, and the suite reported 128 FAILURES that were
+# all the harness -- the same silent-no-parser bug v2.2.0 fixed in the hooks,
+# sitting in the fixture that guards them. Reported 2026-08-29 (WSL field run).
+#
+# The payloads are fixed shapes with a handful of interpolated values, so they
+# are built with printf plus a sed-based string escaper: no interpreter at all,
+# not even the node/python3/jq trio hooks/lib/json.sh chooses from. That is
+# deliberate. Reading a hook's JSON *output* does go through json.sh (jfield,
+# below) -- but a BUILDER sharing the reader's backend could let a broken lib
+# make the git-gate fixtures pass vacuously, which is the one failure mode this
+# suite must never have.
+#
+# Out of fixture scope, and asserted nowhere: control characters other than
+# newline, and lone surrogates. No fixture contains one.
+jesc() { # <string> -> the string as a JSON string BODY (no surrounding quotes)
+  # The trailing '.' is a sentinel: `$(...)` strips trailing newlines, so a
+  # value ending in one would silently round-trip a byte short without it.
+  je=$(printf '%s.' "$1" \
+    | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')
+  printf '%s' "${je%.}"
+}
+
+# Claude Code hands a hook the NATIVE spelling of a path. The old `node -e`
+# builders normalised a Git Bash /tmp path to a Windows one for free on the way
+# in; printf does not, and the embedded node program inside read-size-gate /
+# retro-ledger cannot stat `/tmp/...` on Windows. So the conversion the builders
+# used to get by accident is explicit now. A no-op off Windows.
+natpath() { # <path> -> the same path as the platform spells it
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1" 2>/dev/null || printf '%s' "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+nchars() { # <count> <char> -- <count> copies of <char> (replaces "X".repeat(n))
+  [ "${1:-0}" -gt 0 ] || return 0
+  printf '%*s' "$1" '' | tr ' ' "$2"
+}
+
 mkjson() { # <tool_name> <command> <cwd>
-  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:process.argv[1],tool_input:{command:process.argv[2]},cwd:process.argv[3]}))' "$1" "$2" "$3"
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"command":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$3")"
 }
 
 mkjson_mcp() { # <tool_name> <cwd> -- MCP payload carries no tool_input.command
-  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:process.argv[1],tool_input:{owner:"o",repo:"r",pullNumber:1},cwd:process.argv[2]}))' "$1" "$2"
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"owner":"o","repo":"r","pullNumber":1},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")"
 }
 
 mkjson_nocmd() { # <tool_name> <cwd> -- a payload whose command we cannot read
-  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:process.argv[1],tool_input:{},cwd:process.argv[2]}))' "$1" "$2"
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")"
+}
+
+mkspawn() { # <subagent_type> <prompt>
+  printf '{"subagent_type":"%s","prompt":"%s"}\n' "$(jesc "$1")" "$(jesc "$2")"
+}
+
+mkread() { # <file_path> [limit|-] [offset|-] -- '-' means "field absent"
+  mr='"file_path":"'"$(jesc "$(natpath "$1")")"'"'
+  [ "${2:--}" = "-" ] || mr="$mr,\"limit\":$2"
+  [ "${3:--}" = "-" ] || mr="$mr,\"offset\":$3"
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{%s},"cwd":"%s"}\n' \
+    "$mr" "$(jesc "$ROOT")"
+}
+
+mkpost() { # <stdout_length> [stderr_length] -- a PostToolUse Bash result
+  printf '{"session_id":"guardsess","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"echo hi"},"cwd":"%s","tool_response":{"stdout":"%s","stderr":"%s","interrupted":false,"isImage":false,"noOutputExpected":false},"tool_use_id":"toolu_x","duration_ms":5}\n' \
+    "$(jesc "$ROOT")" "$(nchars "$1" A)" "$(nchars "${2:-0}" B)"
+}
+
+mkstop() { # <cwd> <agent_type> <agent_id> <transcript_path>
+  # cwd is asserted verbatim (the slug rule is exercised with both spellings),
+  # so only the transcript path -- which the hook must actually open -- is
+  # converted to the native form.
+  printf '{"session_id":"t","hook_event_name":"SubagentStop","cwd":"%s","agent_type":"%s","agent_id":"%s","agent_transcript_path":"%s","last_assistant_message":"done"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$3")" "$(jesc "$(natpath "$4")")"
+}
+
+mkstart() { # <cwd>
+  printf '{"session_id":"t","hook_event_name":"SessionStart","source":"startup","cwd":"%s"}\n' "$(jesc "$1")"
+}
+
+# --- subagent transcript rows (JSONL), for the retro-ledger fixtures --------
+trow_err() { # <content> -> an is_error tool_result row
+  printf '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"content":"%s"}]}}\n' "$(jesc "$1")"
+}
+trow_ok() { # <content> -> a SUCCESSFUL tool_result row (no is_error)
+  printf '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"%s"}]}}\n' "$(jesc "$1")"
+}
+trow_text() { # <text> -> an assistant prose row
+  printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$(jesc "$1")"
 }
 
 # --- assertion --------------------------------------------------------------
@@ -78,7 +171,12 @@ check() { # <label> <hook> <expected_exit> <json>
 check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
   label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
   errf="$TMPROOT/check_msg.err"
-  printf '%s' "$json" | bash "$hookp" >/dev/null 2>"$errf"
+  # Fresh TMPDIR per case. json_warn_once stays silent while its marker exists,
+  # and a SESSION-keyed marker never expires — a shared TMPDIR would make any
+  # WARN assertion pass on the first run of the suite and fail on every later
+  # one, on the same machine, for no reason visible in the diff.
+  cmtmp="$TMPROOT/check_msg.tmp"; rm -rf "$cmtmp"; mkdir -p "$cmtmp"
+  printf '%s' "$json" | TMPDIR="$cmtmp" bash "$hookp" >/dev/null 2>"$errf"
   got=$?
   if [ "$got" = "$want" ] && grep -qF "$needle" "$errf"; then
     printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
@@ -101,6 +199,64 @@ expect() { # <label> <want> <got>
     fail=$((fail + 1))
   fi
 }
+
+# A block whose backend is absent on this host SKIPs: reported, never a
+# failure, and the tally counts ASSERTIONS (not blocks) so the totals still
+# add up to the same suite size on every host.
+skip() { # <label> <reason> [assertion-count]
+  skipped=$((skipped + ${3:-1}))
+  printf 'SKIP  %-42s (%s, %s assertion(s))\n' "$1" "$2" "${3:-1}"
+}
+
+# Probed here, not further down, because the first block that needs them is
+# read-size-gate's -- six hooks (read-size-gate, bash-output-guard,
+# enforce-delegation, retro-ledger, retro-brief, enforce-agent-contract's
+# transcript scan) are embedded node PROGRAMS, not field reads: json.sh's
+# json_require_node makes them warn and pass with no node. Their fixtures
+# assert enforcement, so on a node-less host they must SKIP, not fail.
+HAVE_NODE=1; command -v node    >/dev/null 2>&1 || HAVE_NODE=""
+HAVE_PY=1;   command -v python3 >/dev/null 2>&1 || HAVE_PY=""
+HAVE_JQ=1;   command -v jq      >/dev/null 2>&1 || HAVE_JQ=""
+
+# The JSON READER the assertions use is the hooks' own lib -- so the suite is
+# self-testing for the mechanism it guards. Safe here precisely because the
+# builders above share none of its backends.
+. "$ROOT/hooks/lib/json.sh"
+jfield() { # <json> <dotted.path> -> value, or '' when absent/unparseable
+  json_get "$1" "$2"
+}
+
+# ===========================================================================
+# payload builder self-check -- FIRST, before any fixture depends on it.
+#
+# A wrong escape would not fail loudly: it would hand every hook a payload that
+# parses to the wrong value, or to nothing at all, and the failures would
+# surface 800 lines away as "the hook is broken". Every value class the
+# fixtures actually use is round-tripped builder -> reader here.
+# ===========================================================================
+echo "=== payload builders (jesc round-trip) ==="
+RT_EM='git push origin main # rationale — see PR'
+RT_BS='G:\git\retroproj'
+RT_DQ='git -C "/tmp/a b" push'
+RT_ML='Do the thing.
+
+## Required Skills
+- karpathy-guidelines'
+expect "jesc: em dash round-trips"      "$RT_EM" "$(jfield "$(mkjson Bash "$RT_EM" /x)" tool_input.command)"
+expect "jesc: backslashes round-trip"   "$RT_BS" "$(jfield "$(mkjson Bash "$RT_BS" /x)" tool_input.command)"
+expect "jesc: double quotes round-trip" "$RT_DQ" "$(jfield "$(mkjson Bash "$RT_DQ" /x)" tool_input.command)"
+# CR is stripped on the way back: jq's stdout is in TEXT mode on Windows, so it
+# turns some of the LFs it writes into CRLF. That is the reader's platform, not
+# the builder's escaping, and MSYS grep's `$` tolerates the stray CR (asserted
+# for real by "jq: skills block present passes" further down).
+expect "jesc: newlines round-trip"      "$RT_ML" \
+  "$(jfield "$(mkspawn coder "$RT_ML")" prompt | tr -d '\r')"
+# `$(...)` eats trailing newlines, so the round-trip above cannot see one. The
+# sentinel in jesc is what keeps it; asserted on the raw payload instead.
+RT_TRAIL='a
+'
+expect "jesc: trailing newline survives" 1 \
+  "$(printf '%s' "$(mkspawn coder "$RT_TRAIL")" | grep -c '"prompt":"a\\n"')"
 
 # ===========================================================================
 # no-push-main.sh
@@ -148,7 +304,7 @@ check "non-push git command"             "$H" 0 "$(mkjson Bash 'git status --sho
 check "git -C <feat> push from main cwd" "$H" 0 "$(mkjson Bash "git -C $FEATREPO push" "$MAINREPO")"
 check "push origin HEAD on a feature"    "$H" 0 "$(mkjson Bash 'git push origin HEAD' "$FEATREPO")"
 check "spaced -C on feature, cwd on main" "$H" 0 "$(mkjson Bash "git -C \"$SPACEFEAT\" push origin" "$MAINREPO")"
-check "malformed JSON payload"           "$H" 0 '{not json'
+check "malformed JSON payload"           "$H" 2 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$MAINREPO")"
 
 # kill switch
@@ -169,6 +325,12 @@ printf '# ctx\n\n- **Test**: `false`\n' > "$BADREPO/PROJECT_CONTEXT.md"
 H=hooks/pre-commit-test.sh
 
 check "commit with passing tests"        "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$OKREPO")"
+# v2.2.1: the success path DELETES its captured output, so "I saw no test
+# output" is not evidence the suite did not run -- the elapsed seconds are the
+# only external discriminator between a real run and a hook that fell through
+# its own guards. Asserted on the shape, not the number, which is a real clock.
+check_msg "success names the elapsed seconds" "$ROOT/$H" 0 \
+  "$(mkjson Bash 'git commit -m "x"' "$OKREPO")" "passed. ("
 # v2.1.3 fix round 2 item 5: a Test-path commit (the common case -- 5 of 6
 # templates ship a **Test** line) never touches run-gate.sh or its artifact.
 # gate-before-merge.sh still needs a separate `bash hooks/run-gate.sh` before
@@ -183,7 +345,7 @@ check "git -c ... commit"                "$H" 2 "$(mkjson Bash 'git -c user.name
 check "commit wrapped in bash -c"        "$H" 2 "$(mkjson Bash 'bash -c "git commit -m x"' "$BADREPO")"
 check "git -C <bad> commit from ok cwd"  "$H" 2 "$(mkjson Bash "git -C $BADREPO commit -m y" "$OKREPO")"
 check "PowerShell commit, failing tests" "$H" 2 "$(mkjson PowerShell 'git commit -m "x"' "$BADREPO")"
-check "malformed JSON payload"           "$H" 0 '{not json'
+check "malformed JSON payload"           "$H" 2 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$BADREPO")"
 # review round 2: a spaced -C path must resolve to that repo, so the gate command
 # that runs is the TARGET's, not the payload cwd's.
@@ -404,7 +566,7 @@ rm -f "$GATEREPO/.claude/git-guard-off"
 # cannot read must NOT fall through to the artifact check -- that would block
 # every Bash call in the session with "No gate artifact found".
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$GATEREPO")"
-check "malformed JSON payload"           "$H" 0 '{not json'
+check "malformed JSON payload"           "$H" 2 '{not json'
 check "unknown tool passes through"      "$H" 0 "$(mkjson_nocmd SomeOtherTool "$GATEREPO")"
 
 # --- review round 1: a whole-repo push is a merge-by-push even from a feature
@@ -610,9 +772,6 @@ echo
 echo "=== hooks/require-skills-block.sh ==="
 H=hooks/require-skills-block.sh
 
-mkspawn() { # <subagent_type> <prompt>
-  node -e 'console.log(JSON.stringify({subagent_type:process.argv[1],prompt:process.argv[2]}))' "$1" "$2"
-}
 WITHBLOCK='Do the thing.
 
 ## Required Skills
@@ -641,22 +800,8 @@ check "unknown subagent_type passes"     "$H" 0 "$(mkspawn Explore 'Do the thing
 echo
 echo "=== hooks/read-size-gate.sh (Read cap via updatedInput) ==="
 H=hooks/read-size-gate.sh
-# '-' means "field absent". An EMPTY argv slot is unusable here: Git Bash drops
-# it before native node sees it, which silently shifts offset into limit.
-mkread() { # <file_path> [limit|-] [offset|-]
-  node -e 'const ti={file_path:process.argv[1]};
-if(process.argv[2]!=="-")ti.limit=Number(process.argv[2]);
-if(process.argv[3]!=="-")ti.offset=Number(process.argv[3]);
-console.log(JSON.stringify({session_id:"t",hook_event_name:"PreToolUse",tool_name:"Read",tool_input:ti,cwd:process.argv[4]}))' \
-    "$1" "${2:--}" "${3:--}" "$ROOT"
-}
 readout() { # <json> -> the hook's stdout
   printf '%s' "$1" | bash "$ROOT/$H" 2>/dev/null
-}
-jfield() { # <json> <dotted.path> -> value, or '' when absent/unparseable
-  node -e 'try{let o=JSON.parse(process.argv[1]);
-for (const k of process.argv[2].split(".")) { if (o==null) break; o=o[k]; }
-console.log(o===undefined||o===null?"":String(o))}catch(e){console.log("")}' "$1" "$2"
 }
 SMALL="$TMPROOT/small.txt"; : > "$SMALL"; for i in $(seq 1 20); do echo "line $i" >> "$SMALL"; done
 HUNDRED="$TMPROOT/hundred.txt"; : > "$HUNDRED"; for i in $(seq 1 100); do echo "line $i" >> "$HUNDRED"; done
@@ -664,6 +809,11 @@ BIG="$TMPROOT/big.txt";     : > "$BIG";   for i in $(seq 1 600); do echo "line $
 HUGE="$TMPROOT/huge.txt";   : > "$HUGE";  for i in $(seq 1 900); do echo "line $i" >> "$HUGE"; done
 BIGPNG="$TMPROOT/big.png";  cp "$BIG" "$BIGPNG"
 
+# read-size-gate rewrites the tool_input with an embedded node program, so with
+# no node it warns once and passes everything through -- correct behaviour, but
+# it cannot be told apart from a broken cap here. Asserted where it belongs
+# instead: "python3: read-size-gate names node" and the warn-once block below.
+if [ -n "$HAVE_NODE" ]; then
 check "small file passes"                "$H" 0 "$(mkread "$SMALL")"
 check "big file is allowed, not blocked" "$H" 0 "$(mkread "$BIG")"
 check "big file with a small limit"      "$H" 0 "$(mkread "$BIG" 100)"
@@ -671,9 +821,9 @@ check "missing file is not blocked"      "$H" 0 "$(mkread "$TMPROOT/does-not-exi
 check "non-Read payload passes through"  "$H" 0 "$(mkjson Bash 'echo hi' "$MAINREPO")"
 
 # --- an unbounded Read of a 600-line file is capped, and every original field
-# survives the updatedInput replacement. file_path is compared against the
-# payload's own copy: node normalises the POSIX temp path to a Windows one on
-# the way in, so $BIG is not the string the hook receives.
+# survives the updatedInput replacement. file_path is still compared against the
+# payload's own copy rather than $BIG: the assertion is "the hook echoed back
+# what it was given", which must hold whatever spelling the path arrives in.
 CAPIN=$(mkread "$BIG")
 CAPOUT=$(readout "$CAPIN")
 expect "cap: decision is allow" "allow" "$(jfield "$CAPOUT" hookSpecificOutput.permissionDecision)"
@@ -709,7 +859,7 @@ GIANT="$TMPROOT/giant.txt"
 if command -v truncate >/dev/null 2>&1; then
   truncate -s 12M "$GIANT" 2>/dev/null
 else
-  node -e 'const fs=require("fs");const fd=fs.openSync(process.argv[1],"w");fs.ftruncateSync(fd,12*1024*1024);fs.closeSync(fd)' "$GIANT"
+  dd if=/dev/zero of="$GIANT" bs=1048576 count=12 >/dev/null 2>&1
 fi
 GIANTOUT=$(readout "$(mkread "$GIANT")")
 expect "giant file: limit is 500" "500" "$(jfield "$GIANTOUT" hookSpecificOutput.updatedInput.limit)"
@@ -717,8 +867,12 @@ expect "giant file: context reports the size, not a line count" 1 \
   "$(printf '%s' "$GIANTOUT" | grep -c 'File is 12 MB; capped at 500 lines')"
 expect "giant file: no line count is claimed" 0 \
   "$(printf '%s' "$GIANTOUT" | grep -c 'of 0 lines')"
+else
+skip "read-size-gate cap cases" "no node on this host" 21
+fi
 
 # --- the ctx-tool advice the blocking version printed is gone for good.
+# A source grep, so it holds with or without node.
 expect "no context-mode advice in the hook" 0 \
   "$(grep -c 'ctx_execute_file' "$ROOT/hooks/read-size-gate.sh")"
 
@@ -735,17 +889,14 @@ GUARD=hooks/bash-output-guard.sh
 GUARDTMP="$TMPROOT/guardtmp"
 mkdir -p "$GUARDTMP"
 
-mkpost() { # <stdout_length> [stderr_length]
-  node -e 'console.log(JSON.stringify({session_id:"guardsess",hook_event_name:"PostToolUse",
-tool_name:"Bash",tool_input:{command:"echo hi"},cwd:process.argv[3],
-tool_response:{stdout:"A".repeat(Number(process.argv[1])),stderr:"B".repeat(Number(process.argv[2])),
-interrupted:false,isImage:false,noOutputExpected:false},
-tool_use_id:"toolu_x",duration_ms:5}))' "$1" "${2:-0}" "$ROOT"
-}
 runguard() { # <json> -> hook stdout
   printf '%s' "$1" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" 2>/dev/null
 }
 
+# The guard rewrites tool_response with an embedded node program; with no node
+# it warns once and passes the output through untouched. Nothing below can tell
+# that apart from a broken truncator, so it SKIPs rather than fails.
+if [ -n "$HAVE_NODE" ]; then
 BIGOUT=$(runguard "$(mkpost 20000)")
 expect "guard: emits updatedToolOutput" "PostToolUse" \
   "$(jfield "$BIGOUT" hookSpecificOutput.hookEventName)"
@@ -753,12 +904,13 @@ expect "guard: truncation marker names the log" 1 \
   "$(printf '%s' "$BIGOUT" | grep -c 'chars truncated — full output:')"
 expect "guard: sibling fields survive" "false" \
   "$(jfield "$BIGOUT" hookSpecificOutput.updatedToolOutput.interrupted)"
-GUARDLEN=$(node -e 'try{let o=JSON.parse(process.argv[1]);console.log(o.hookSpecificOutput.updatedToolOutput.stdout.length)}catch(e){console.log(-1)}' "$BIGOUT")
+GUARDSTD=$(jfield "$BIGOUT" hookSpecificOutput.updatedToolOutput.stdout)
+GUARDLEN=${#GUARDSTD}
 expect "guard: 20 000 chars are cut down" 1 \
   "$( [ "$GUARDLEN" -gt 8000 ] && [ "$GUARDLEN" -lt 9000 ] && echo 1 || echo 0 )"
-expect "guard: head is preserved" 1 \
-  "$(node -e 'try{let o=JSON.parse(process.argv[1]);let s=o.hookSpecificOutput.updatedToolOutput.stdout;
-console.log(s.slice(0,4000)==="A".repeat(4000)&&s.slice(-4000)==="A".repeat(4000)?1:0)}catch(e){console.log(0)}' "$BIGOUT")"
+guard_head=0
+[ "${GUARDSTD:0:4000}" = "$(nchars 4000 A)" ] && [ "${GUARDSTD: -4000}" = "$(nchars 4000 A)" ] && guard_head=1
+expect "guard: head is preserved" 1 "$guard_head"
 expect "guard: full output is on disk" 1 \
   "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' 2>/dev/null | wc -l | tr -d ' ')"
 expect "guard: the log holds all 20 000 chars" 20000 \
@@ -772,23 +924,30 @@ expect "guard: malformed payload is silent" "" "$(runguard '{not json')"
 # line at 32,767 chars, so an argv-passed 200 KB build log — exactly the case
 # this hook exists for — fails to exec and passes through untruncated.
 HUGEOUT=$(runguard "$(mkpost 200000)")
+HUGESTD=$(jfield "$HUGEOUT" hookSpecificOutput.updatedToolOutput.stdout)
 expect "guard: 200 KB payload still truncates" "500" \
-  "$(node -e 'try{let o=JSON.parse(process.argv[1]);console.log(o.hookSpecificOutput.updatedToolOutput.stdout.length<10000?500:0)}catch(e){console.log(-1)}' "$HUGEOUT")"
+  "$( [ -n "$HUGESTD" ] && [ "${#HUGESTD}" -lt 10000 ] && echo 500 || echo 0 )"
 expect "guard: 200 KB full output is on disk" 200000 \
   "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' -size +100k 2>/dev/null | head -1)" | tr -d ' ')"
 
 # --- fix round 1: stderr is an output stream too. A 20 KB stderr with a tiny
 # stdout was passed through whole.
 ERROUT=$(runguard "$(mkpost 100 20000)")
-expect "guard: stderr is truncated too" 1 \
-  "$(node -e 'try{let s=JSON.parse(process.argv[1]).hookSpecificOutput.updatedToolOutput.stderr;
-console.log(s.length<10000&&s.slice(0,4000)==="B".repeat(4000)&&s.indexOf("chars truncated")>0?1:0)}catch(e){console.log(0)}' "$ERROUT")"
-expect "guard: small stdout survives untouched" 100 \
-  "$(node -e 'try{console.log(JSON.parse(process.argv[1]).hookSpecificOutput.updatedToolOutput.stdout.length)}catch(e){console.log(-1)}' "$ERROUT")"
+ERRSTDERR=$(jfield "$ERROUT" hookSpecificOutput.updatedToolOutput.stderr)
+err_trunc=0
+case "$ERRSTDERR" in *'chars truncated'*)
+  [ "${#ERRSTDERR}" -lt 10000 ] && [ "${ERRSTDERR:0:4000}" = "$(nchars 4000 B)" ] && err_trunc=1 ;;
+esac
+expect "guard: stderr is truncated too" 1 "$err_trunc"
+ERRSTD=$(jfield "$ERROUT" hookSpecificOutput.updatedToolOutput.stdout)
+expect "guard: small stdout survives untouched" 100 "${#ERRSTD}"
 expect "guard: stderr gets its own log file" 1 \
   "$(find "$GUARDTMP/claude-bash-out" -name '*-stderr.log' 2>/dev/null | wc -l | tr -d ' ')"
 printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" >/dev/null 2>&1
 expect "guard: always exits 0" 0 $?
+else
+skip "bash-output-guard cases" "no node on this host" 15
+fi
 
 # ===========================================================================
 # retro-ledger.sh (SubagentStop) + retro-brief.sh (SessionStart) — v2.0 PR2.
@@ -803,33 +962,22 @@ RETROHOME="$TMPROOT/retrohome"
 PROJCWD="G:/git/retroproj"
 SLUGDIR="$RETROHOME/.claude/projects/G--git-retroproj/memory"
 
-mkstop() { # <cwd> <agent_type> <agent_id> <transcript_path>
-  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"SubagentStop",cwd:process.argv[1],agent_type:process.argv[2],agent_id:process.argv[3],agent_transcript_path:process.argv[4],last_assistant_message:"done"}))' \
-    "$1" "$2" "$3" "$4"
-}
-
-mkstart() { # <cwd>
-  node -e 'console.log(JSON.stringify({session_id:"t",hook_event_name:"SessionStart",source:"startup",cwd:process.argv[1]}))' "$1"
-}
-
 # A subagent transcript with (a) a dead-tool tool_result and (b) a hook block.
 # Wording copied verbatim from a real transcript:
 #   ~/.claude/projects/G--git-claude-code-toolkit/<session>/subagents/
 #   agent-a003c937d78f9f557.jsonl
 mktranscript() { # <path>
-  node -e '
-const fs=require("fs");
-const rows=[
- {type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
-   content:"<tool_use_error>Error: No such tool available: mcp__x__y. mcp__x__y is disabled for this session, in subagents as well as here.</tool_use_error>"}]}},
- {type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
-   content:"PreToolUse:Bash hook error: [bash \u0027hooks/enforce-delegation.sh\u0027]: DELEGATE: the PO does not do hands-on work."}]}},
- {type:"assistant",message:{role:"assistant",content:[{type:"text",text:"No such tool available in prose must not count"}]}}
-];
-fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
-' "$1"
+  {
+    trow_err "<tool_use_error>Error: No such tool available: mcp__x__y. mcp__x__y is disabled for this session, in subagents as well as here.</tool_use_error>"
+    trow_err "PreToolUse:Bash hook error: [bash 'hooks/enforce-delegation.sh']: DELEGATE: the PO does not do hands-on work."
+    trow_text "No such tool available in prose must not count"
+  } > "$1"
 }
 
+# Both hooks scan the JSONL transcript with an embedded node program, so with no
+# node they warn once and write nothing at all. Every assertion below reads what
+# they wrote, so the block SKIPs rather than calling that absence a regression.
+if [ -n "$HAVE_NODE" ]; then
 # --- 1. a transcript with failures appends exactly one ledger line
 mkdir -p "$RETROHOME"
 TRANSCRIPT="$TMPROOT/agent-fixture.jsonl"
@@ -902,16 +1050,13 @@ expect "brief with no ledger prints nothing" 0 "$(wc -c < "$BRIEFOUT" | tr -d ' 
 # --- 8a. review round 1: a SUCCESSFUL tool_result whose output merely CONTAINS
 # "BLOCKED:" (reading hooks/*.sh, grepping this very file) is not a failure. Only
 # is_error results, or text that is itself a hook-block message, count.
-node -e '
-const fs=require("fs");
-const rows=[
- {type:"user",message:{role:"user",content:[{type:"tool_result",
-   content:"1: echo \u0027BLOCKED: use the MCP tool\u0027\n2: BLOCKED: another quoted line\n"}]}},
- {type:"user",message:{role:"user",content:[{type:"tool_result",
-   content:"file listing mentioning hooks/no-push-main.sh and DELEGATE: in prose"}]}}
-];
-fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
-' "$TMPROOT/agent-falsepos.jsonl"
+FP_QUOTED="1: echo 'BLOCKED: use the MCP tool'
+2: BLOCKED: another quoted line
+"
+{
+  trow_ok "$FP_QUOTED"
+  trow_ok "file listing mentioning hooks/no-push-main.sh and DELEGATE: in prose"
+} > "$TMPROOT/agent-falsepos.jsonl"
 FPHOME="$TMPROOT/retrohome-fp"
 mkdir -p "$FPHOME"
 mkstop "$PROJCWD" coder agent-fp "$TMPROOT/agent-falsepos.jsonl" \
@@ -921,16 +1066,10 @@ expect "successful output is not a failure" 0 \
 
 # ... but a real hook block still counts even without is_error, and its script
 # name comes from the bracketed hook command, not from any .sh token in the text.
-node -e '
-const fs=require("fs");
-const rows=[
- {type:"user",message:{role:"user",content:[{type:"tool_result",
-   content:"PreToolUse:Bash hook error: [bash \u0027hooks/no-push-main.sh\u0027]: BLOCKED: push to main."}]}},
- {type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
-   content:"<tool_use_error>Error: No such tool available: mcp__x__y. Mentions scripts/test-hooks.sh in prose.</tool_use_error>"}]}}
-];
-fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
-' "$TMPROOT/agent-block.jsonl"
+{
+  trow_ok "PreToolUse:Bash hook error: [bash 'hooks/no-push-main.sh']: BLOCKED: push to main."
+  trow_err "<tool_use_error>Error: No such tool available: mcp__x__y. Mentions scripts/test-hooks.sh in prose.</tool_use_error>"
+} > "$TMPROOT/agent-block.jsonl"
 BKHOME="$TMPROOT/retrohome-block"
 mkdir -p "$BKHOME"
 mkstop "$PROJCWD" coder agent-bk "$TMPROOT/agent-block.jsonl" \
@@ -944,16 +1083,10 @@ expect "block name comes from the hook command" 1 \
 # --- 8a2. v2.1.4: a hooks/agent-budget-warn.sh block is tallied separately as
 # budget=<n>, not folded into blocks=[...] -- budget ceilings are an expected
 # liveness control, not a failure to investigate.
-node -e '
-const fs=require("fs");
-const rows=[
- {type:"user",message:{role:"user",content:[{type:"tool_result",
-   content:"PreToolUse:Bash hook error: [bash \u0027hooks/agent-budget-warn.sh\u0027]: BUDGET: this spawn has made 120 tool calls (median is 15; 120 is the first ceiling)."}]}},
- {type:"user",message:{role:"user",content:[{type:"tool_result",
-   content:"PreToolUse:Bash hook error: [bash \u0027hooks/no-push-main.sh\u0027]: BLOCKED: push to main."}]}}
-];
-fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
-' "$TMPROOT/agent-budget.jsonl"
+{
+  trow_ok "PreToolUse:Bash hook error: [bash 'hooks/agent-budget-warn.sh']: BUDGET: this spawn has made 120 tool calls (median is 15; 120 is the first ceiling)."
+  trow_ok "PreToolUse:Bash hook error: [bash 'hooks/no-push-main.sh']: BLOCKED: push to main."
+} > "$TMPROOT/agent-budget.jsonl"
 BUHOME="$TMPROOT/retrohome-budget"
 mkdir -p "$BUHOME"
 mkstop "$PROJCWD" coder agent-bu "$TMPROOT/agent-budget.jsonl" \
@@ -966,15 +1099,13 @@ expect "budget block does not land in blocks=[...]" 1 \
 
 # --- 8b. review round 1: the ledger line is bounded. 12 distinct dead tools must
 # render as 5 names + a "+7 more" marker, not a 12-entry line.
-node -e '
-const fs=require("fs");
-const rows=[];
-for (let i=1;i<=12;i++){
-  rows.push({type:"user",message:{role:"user",content:[{type:"tool_result",is_error:true,
-    content:"<tool_use_error>Error: No such tool available: mcp__t"+String(i).padStart(2,"0")+"__x.</tool_use_error>"}]}});
-}
-fs.writeFileSync(process.argv[1], rows.map(r=>JSON.stringify(r)).join("\n")+"\n");
-' "$TMPROOT/agent-many.jsonl"
+{
+  many_i=1
+  while [ "$many_i" -le 12 ]; do
+    trow_err "$(printf '<tool_use_error>Error: No such tool available: mcp__t%02d__x.</tool_use_error>' "$many_i")"
+    many_i=$((many_i + 1))
+  done
+} > "$TMPROOT/agent-many.jsonl"
 MANYHOME="$TMPROOT/retrohome-many"
 mkdir -p "$MANYHOME"
 mkstop "$PROJCWD" coder agent-many "$TMPROOT/agent-many.jsonl" \
@@ -990,7 +1121,7 @@ expect "capped line stays short" 1 \
 LONGHOME="$TMPROOT/retrohome-long"
 LONGDIR="$LONGHOME/.claude/projects/G--git-retroproj/memory"
 mkdir -p "$LONGDIR"
-node -e 'require("fs").writeFileSync(process.argv[1],"X".repeat(500)+"\n")' "$LONGDIR/retro.md"
+{ nchars 500 X; echo; } > "$LONGDIR/retro.md"
 mkstart "$PROJCWD" | HOME="$LONGHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/long.out" 2>/dev/null
 expect "brief truncates a 500-char entry" 1 \
   "$( [ "$(awk 'NR==2{print length($0)}' "$TMPROOT/long.out")" -le 200 ] && echo 1 || echo 0 )"
@@ -1028,6 +1159,9 @@ mkstop "$PROJCWD" code-reviewer agent-rt99 "$TRANSCRIPT" \
   | HOME="$RTHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
 mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "round trip: brief replays the entry" 1 "$(grep -c 'agent-rt99' "$BRIEFOUT")"
+else
+skip "retro-ledger + retro-brief cases" "no node on this host" 32
+fi
 
 # ===========================================================================
 # hooks/enforce-delegation.sh — Bash matcher (v2.1.5, consumer feedback:
@@ -1063,6 +1197,11 @@ check_delegation() { # <label> <pass|deny> <command>
   fi
 }
 
+# enforce-delegation classifies the command with an embedded node program, so
+# with no node it warns once and lets everything pass -- the deny cases below
+# cannot be told apart from a broken classifier. The degraded path has its own
+# fixture ("no parser: enforce-delegation warns").
+if [ -n "$HAVE_NODE" ]; then
 check_delegation "git add of a hook file"        pass 'git add hooks/run-gate.sh'
 check_delegation "commit message naming a runner" pass 'git commit -m "run pytest before merge"'
 check_delegation "gh pr create with npm in body"  pass 'gh pr create --body "npm test"'
@@ -1078,11 +1217,33 @@ check_delegation "dotnet build stays denied"      deny 'dotnet build --no-restor
 # This is parity with pre-v2.1.5 (the whole-string match denied it too) and errs
 # closed; workaround is a message without an embedded `;` / `&&`.
 check_delegation "separator inside a quoted message" deny 'git commit -m "a; pytest -q"'
+# v2.2.1 (P): every runner pattern was anchored to command position except one —
+# `/hooks\/run-gate\.sh/` matched the STRING anywhere. /sync-template step 7
+# assembles an applied_files payload that necessarily NAMES that file, so the
+# more faithfully the skill was followed, the more certainly the PO's own
+# command was denied. The sibling paths were never affected, which is why the
+# reporter's "trigger words in data" hypothesis over-generalised.
+check_delegation "gate path as data: run-gate.sh"  pass 'echo {"file_path":"hooks/run-gate.sh"} > /tmp/a.json'
+check_delegation "gate path as data: pre-commit"   pass 'echo {"file_path":"hooks/pre-commit-test.sh"} > /tmp/a.json'
+check_delegation "gate path as data: merge gate"   pass 'echo {"file_path":"hooks/gate-before-merge.sh"} > /tmp/a.json'
+check_delegation "applied_files array as data"     pass 'echo [{"path":"hooks/run-gate.sh","hash":"ab"},{"path":"hooks/no-push-main.sh","hash":"cd"}] > /tmp/applied.json'
+check_delegation "validator run on a scratch file" pass 'python3 /tmp/validator.py /tmp/applied.json'
+check_delegation "trigger words in a quoted string" pass 'echo "test gate coverage build"'
+# The anchor's leading class is PATH characters, not \S*: a pretty-printed JSON
+# line whose first token merely ENDS in the path is still data, not a command.
+check_delegation "pretty-printed JSON line as data" pass 'echo "path": "hooks/run-gate.sh", >> /tmp/applied.json'
+# ... and the anchor must not open the hole it closed: an actual invocation,
+# bare or via bash/sh, is still the PO doing hands-on work.
+check_delegation "bare run-gate.sh is still denied" deny 'hooks/run-gate.sh'
+check_delegation "bash ./hooks/run-gate.sh denied"  deny 'bash ./hooks/run-gate.sh'
 # subagent calls always pass, exemption or not
-subout=$(node -e 'console.log(JSON.stringify({session_id:"t",agent_id:"a1",hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:"pytest"},cwd:process.argv[1]}))' "$DELEGREPO" \
+subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 expect "subagent pytest still passes" "0" \
   "$(printf '%s' "$subout" | grep -c '"deny"')"
+else
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 20
+fi
 
 # ===========================================================================
 # v2.2.0 PR15 (A): the hooks must not depend on `node` specifically.
@@ -1158,16 +1319,9 @@ expect "fixture PATH hides jq"           1 "$(seen "$NOPARSER" jq)"
 
 # The python3-only / jq-only backends can only be exercised where that
 # interpreter exists. On a node-only box those cases SKIP (reported, not
-# counted) instead of turning the whole suite red.
-# <label> <reason> [assertion-count] -- the tally counts ASSERTIONS, not blocks,
-# so `243 passed, 0 failed, 14 skipped` still adds up to the same total suite.
-skip() {
-  skipped=$((skipped + ${3:-1}))
-  printf 'SKIP  %-42s (%s, %s assertion(s))\n' "$1" "$2" "${3:-1}"
-}
-HAVE_NODE=1; command -v node >/dev/null 2>&1 || HAVE_NODE=""
-HAVE_PY=1;   command -v python3 >/dev/null 2>&1 || HAVE_PY=""
-HAVE_JQ=1;   command -v jq      >/dev/null 2>&1 || HAVE_JQ=""
+# counted) instead of turning the whole suite red. `skip` and the three HAVE_*
+# probes are defined once, near the assertion helpers at the top -- the
+# node-only fixture blocks above need them long before this point.
 
 if [ -n "$HAVE_PY" ]; then
   expect "python3-only PATH hides node"    1 "$(seen "$PYONLY" node)"
@@ -1240,7 +1394,7 @@ check_env "python3: gh pr merge needs artifact" "$PYONLY" hooks/gate-before-merg
   "$(mkjson Bash 'gh pr merge 1 --squash' "$GATEREPO")"
 # A node-only hook on a python3 box names the parser it actually needs.
 check_env "python3: read-size-gate names node" "$PYONLY" hooks/read-size-gate.sh 0 \
-  "$(mkread "$ROOT/README.md" - -)" "node not on PATH (found python3)"
+  "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
 else
 skip "python3 git-gate cases" "no python3 on this host" 5
 fi
@@ -1383,6 +1537,116 @@ expect "traversal session id: marker is plain" "1" \
   "$(find "$ONCETMP" -maxdepth 1 -name 'claude-hook-warn-read-size-gate' 2>/dev/null | grep -c .)"
 
 # ===========================================================================
+# v2.2.1 (K): an UNPARSEABLE payload fails CLOSED.
+#
+# Third path to the same place as PR15's missing parser and v2.2.1's broken one:
+# here the parser is present AND works, but the INPUT does not parse. json_get
+# returned "" for that exactly as it does for a genuinely absent field, and the
+# gates read "" as "nothing to inspect, allow" — so malformed JSON, a truncated
+# payload and empty stdin all exited 0 in silence, indistinguishable from a
+# legitimate allow. That ambiguity is also why the first report of this read as
+# a false alarm, so the message is deliberately its own.
+#
+# The three rows below fail in gc_read_stdin, BEFORE any Gate or branch lookup,
+# so they discriminate on all three gates without a configured Gate. The
+# "parsed, and legitimately allowed" rows that complete the table live in each
+# gate's own section above, against repos that do have one.
+# ===========================================================================
+echo
+echo "=== git gates: unparseable payload fails CLOSED (v2.2.1) ==="
+KREPO=$(mkrepo kparse main)
+KTRUNC='{"tool_name":"Bash","tool_input":{"command":"git push origin ma'
+KNEEDLE="hook payload did not parse"
+
+check "parse: no-push-main, truncated"    hooks/no-push-main.sh 2 "$KTRUNC"
+check "parse: no-push-main, empty stdin"  hooks/no-push-main.sh 2 ''
+check_msg "parse: no-push-main names the cause" "$ROOT/hooks/no-push-main.sh" 2 "$KTRUNC" "$KNEEDLE"
+check "parse: pre-commit-test, truncated"   hooks/pre-commit-test.sh 2 "$KTRUNC"
+check "parse: pre-commit-test, empty stdin" hooks/pre-commit-test.sh 2 ''
+check_msg "parse: pre-commit-test names the cause" "$ROOT/hooks/pre-commit-test.sh" 2 "$KTRUNC" "$KNEEDLE"
+check "parse: gate-before-merge, truncated"   hooks/gate-before-merge.sh 2 "$KTRUNC"
+check "parse: gate-before-merge, empty stdin" hooks/gate-before-merge.sh 2 ''
+check_msg "parse: gate-before-merge names the cause" "$ROOT/hooks/gate-before-merge.sh" 2 "$KTRUNC" "$KNEEDLE"
+# The contrast that makes the rule a rule: a payload that PARSES and simply is
+# not a git command is still a legitimate allow. Only "could not determine"
+# refuses.
+check "parse: valid non-git command allowed" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'ls -la' "$KREPO")"
+# The escape hatch outranks the block, as it does on the no-parser path.
+mkdir -p "$KREPO/.claude"; : > "$KREPO/.claude/git-guard-off"
+printf '%s' "$KTRUNC" | ( cd "$KREPO" && bash "$ROOT/hooks/no-push-main.sh" ) >/dev/null 2>&1
+expect "parse: guard-off still opens" 0 "$?"
+rm -f "$KREPO/.claude/git-guard-off"
+
+# ===========================================================================
+# v2.2.1 (S): a parser that EXISTS but does not WORK is treated as ABSENT.
+#
+# `command -v python3` succeeds for the Windows App-Installer stub that ships on
+# PATH by default (and for a conda/pyenv shim pointing at a removed env). The
+# stub is not an interpreter: json_get returned "" for every field, the gates
+# read an empty command, and they exited 0 — the fail-OPEN outcome PR15's
+# fail-closed design exists to prevent, on the platform most users are on. A
+# missing parser was detected; a broken one was not.
+#
+# The fixture PATH must hide node too, or node answers first and the stub is
+# never reached.
+# ===========================================================================
+echo
+echo "=== broken-parser fixtures (json_probe_ok) ==="
+
+mkstubpath() { # <name> <tool> <stub-body-line> [extra-tool ...] -> prints dir
+  msp_name="$1"; msp_tool="$2"; msp_body="$3"; shift 3
+  msp=$(mkpathdir "$msp_name" "$@")
+  printf '#!/bin/sh\n%s\n' "$msp_body" > "$msp/$msp_tool"
+  chmod +x "$msp/$msp_tool"
+  printf '%s\n' "$msp"
+}
+STUB_RC=$(mkstubpath stub-rc python3 'exit 3')
+STUB_GARBAGE=$(mkstubpath stub-garbage python3 'echo not-json-at-all')
+STUB_JQ=$(mkstubpath stub-jq python3 'exit 3' jq)
+# A broken NODE is the case json_require_node exists for -- the six node-program
+# hooks never call json_parser, so the probe has to run on that path too.
+STUB_NODE=$(mkstubpath stub-node node 'exit 3')
+STUB_NODE_PY=$(mkstubpath stub-node-py node 'exit 3' python3)
+
+# Self-check FIRST: a fixture whose stub is invisible would prove nothing.
+expect "stub PATH still shows python3" 0 "$(seen "$STUB_RC" python3)"
+expect "stub PATH hides node"          1 "$(seen "$STUB_RC" node)"
+
+check_env "broken python3 (rc!=0): gate blocks" "$STUB_RC" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")" "$NEEDLE_BLOCK"
+check_env "broken python3 (garbage): gate blocks" "$STUB_GARBAGE" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")" "$NEEDLE_BLOCK"
+# A WORKING backend behind a broken one is still used — the probe falls through,
+# it does not give up. The feature-branch row is the discriminating one: a gate
+# that had fallen back to fail-closed would block this too.
+if [ -n "$HAVE_JQ" ]; then
+check_env "broken python3 + jq: still enforces" "$STUB_JQ" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"
+check_env "broken python3 + jq: feature allowed" "$STUB_JQ" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
+else
+skip "broken python3 + jq fallthrough" "no jq on this host" 2
+fi
+
+# --- a broken NODE, the json_require_node entry point ------------------------
+expect "stub PATH still shows node" 0 "$(seen "$STUB_NODE" node)"
+check_env "broken node alone: gate blocks" "$STUB_NODE" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")" "$NEEDLE_BLOCK"
+if [ -n "$HAVE_PY" ]; then
+check_env "broken node + python3: gate enforces" "$STUB_NODE_PY" hooks/no-push-main.sh 2 \
+  "$(mkjson Bash 'git push origin main' "$MAINREPO")"
+check_env "broken node + python3: feature allowed" "$STUB_NODE_PY" hooks/no-push-main.sh 0 \
+  "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
+# json_require_node's own path: `command -v node` SUCCEEDS here, so without the
+# probe this hook would run the stub, get nothing, and fail open in silence.
+check_env "broken node: require_node names the fallback" "$STUB_NODE_PY" hooks/read-size-gate.sh 0 \
+  "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
+else
+skip "broken node + python3 cases" "no python3 on this host" 3
+fi
+
+# ===========================================================================
 # v2.2.0 PR15 (B): the optional **Protected branches**: PROJECT_CONTEXT.md field
 # ===========================================================================
 echo
@@ -1403,6 +1667,22 @@ PB_DEV=$(pbrepo pb-dev develop '- **Protected branches**: develop release')
 PB_DEVMAIN=$(pbrepo pb-devmain main '- **Protected branches**: develop release')
 PB_NONE=$(pbrepo pb-none main '- **Protected branches**: none')
 PB_COMMA=$(pbrepo pb-comma develop '**Protected branches**: `develop, release`')
+# v2.2.1 (J): v2.2.0 shipped this line with a `{{DEFAULT_BRANCH}}` placeholder in
+# all six templates, and no existing consumer manifest carries a DEFAULT_BRANCH
+# key -- so the literal was written verbatim on sync. The resolver had no arm for
+# it, returned it as a branch NAME, `main` never matched `{{DEFAULT_BRANCH}}`,
+# and a push to main was ALLOWED. Reproduced in an isolated repo against
+# unmodified v2.2.0 hooks: with the line present exit=0 and no output; with the
+# line deleted exit=2. An unreplaced placeholder must never widen access.
+PB_PLACE=$(pbrepo pb-placeholder main '- **Protected branches**: {{DEFAULT_BRANCH}}')
+# ... and an EMPTY value is a typo or a truncated sync, not an opt-out. v2.2.0
+# treated it exactly like `none`, which is a silent unprotect. `none` stays the
+# one deliberate way to protect nothing.
+PB_EMPTY=$(pbrepo pb-empty main '- **Protected branches**:')
+# Half-filled, the shape a hand-edit leaves behind. A WHOLE-string placeholder
+# match read this as two literal branch NAMES, neither of which is a branch --
+# the unsafe direction. Substring match, so it falls back to the default.
+PB_HALF=$(pbrepo pb-half main '- **Protected branches**: {{DEFAULT_BRANCH}} develop')
 
 H=hooks/no-push-main.sh
 check "field absent: main still blocked"   "$H" 2 "$(mkjson Bash 'git push' "$PB_ABSENT")"
@@ -1413,6 +1693,22 @@ check "develop listed: develop refspec no" "$H" 2 "$(mkjson Bash 'git push origi
 check "none: main allowed"                 "$H" 0 "$(mkjson Bash 'git push' "$PB_NONE")"
 check "none: explicit main allowed"        "$H" 0 "$(mkjson Bash 'git push origin main' "$PB_NONE")"
 check "comma+backticks are tolerated"      "$H" 2 "$(mkjson Bash 'git push' "$PB_COMMA")"
+# the three cases that must stay distinct
+check "placeholder value: main blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_PLACE")"
+# An explicit refspec takes the path whose message names the set it read —
+# consumers use that line as the cheapest proof the config path works.
+check_msg "placeholder falls back to the default" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin main' "$PB_PLACE")" "protected branch (main master)"
+check_msg "placeholder WARNs, it does not go quiet" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push' "$PB_PLACE")" "still an unfilled placeholder"
+check "half-filled placeholder: main blocked" "$H" 2 "$(mkjson Bash 'git push' "$PB_HALF")"
+check_msg "half-filled falls back, not to literals" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin main' "$PB_HALF")" "protected branch (main master)"
+check "empty value: main still blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY")"
+check_msg "empty value warns about the typo" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push' "$PB_EMPTY")" "**Protected branches**: is empty"
+# `none` is untouched by the two arms above: it remains the explicit opt-out.
+check "none is still an opt-out"           "$H" 0 "$(mkjson Bash 'git push origin main' "$PB_NONE")"
 
 # the merge gate reads the same field
 GB=hooks/gate-before-merge.sh
@@ -1424,7 +1720,9 @@ check "none: gh pr merge still gated"      "$GB" 2 "$(mkjson Bash 'gh pr merge 1
 # ===========================================================================
 echo
 echo "----------------------------------------------------------------"
-echo "test-hooks.sh: $pass passed, $fail failed, $skipped skipped"
+# The total is printed so a wrong `skip <n>` count is visible immediately: it
+# is host-INDEPENDENT, while the three tallies are not.
+echo "test-hooks.sh: $pass passed, $fail failed, $skipped skipped ($((pass + fail + skipped)) assertions)"
 [ "$fail" -eq 0 ] || exit 1
 echo "ALL HOOK FIXTURES PASSED"
 exit 0
