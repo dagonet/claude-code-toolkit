@@ -1,5 +1,87 @@
 # Changelog
 
+## v2.2.4 — 2026-08-30
+
+**Three bytes at position 0 turned every field extractor off, and the hook that reads them fails open.** Credit: the Yutraffic-Challenge sync report (items 1, 2, 3) and penumbra (item 4). Every measurement below was reproduced by the controller.
+
+### 1. TENTH fail-open path — a UTF-8 BOM defeats the `**Key**:` extractors
+
+The server strips a leading BOM before **hashing**; the hooks did not strip it before **grepping**. So the same file was two different files depending on which subsystem was looking. The BOM (`ef bb bf`) sits at byte 0, which is *inside line 1*, so `^` stops abutting the key and the grep finds nothing:
+
+| fixture | before | after |
+|---|---|---|
+| **key on LINE 1, BOM present** | **0 — not found** | 1 |
+| same key on line 2, BOM present | 1 | 1 |
+| no BOM, key on line 1 (control) | 1 | 1 |
+
+No `**Gate**` found means `pre-commit-test.sh` **warns and allows** — a silently ungated commit, not a parse error. Same shape as the other nine.
+
+**This is routine, not exotic.** PowerShell 5.1's `>` and `Out-File` default to UTF-8 **with** BOM, so a config file touched once by a PS redirect acquires one permanently and invisibly — on Windows, where most consumers are. A consumer's `PROJECT_CONTEXT.md` was found carrying one; harmless only because their keys sit on lines 14 and 29. The regression actually being guarded is therefore *someone moved a key to the top of the file*, not *someone added a BOM* — which is why the fixtures are a **pair by position** (line 1 and line 2) and not a single line-1 arm: a line-1-only arm would also pass a partial fix that strips the BOM only when the key immediately follows it.
+
+**Fixed as a class, not as an instance**, because this class has been patched one site at a time three times here. One constant, `GC_KEY_PRE` in `hooks/lib/git-cmd.sh`, carries the BOM tolerance together with the existing list-marker tolerance, with the explanation above it in the file; all five extractors go through it — `**Gate**` in `run-gate.sh` and `gate-before-merge.sh`, `**Test**` and `**Gate**` in `pre-commit-test.sh`, `**Protected branches**` in `git-cmd.sh`. The paired `sed` needed no change: its leading `.*` consumes the BOM along with the list marker. `run-gate.sh` is deliberately standalone (it must run with no JSON parser on PATH, which sourcing `git-cmd.sh` forbids) so it repeats the literal — and `verify-template-consistency.sh` now asserts both that the two copies agree and that **every** `grep -E` over `PROJECT_CONTEXT.md` in `hooks/` goes through `GC_KEY_PRE`. That census is the part that stops the next instance, which is why it ships instead of four edits.
+
+Fixture arms: `**Test**` and `**Gate**` × line 1 / line 2 × pass / fail, plus a `**Protected branches**` pair through `no-push-main.sh`. The polarity pair matters as much as the position pair: the `false`/blocked arms cannot discriminate on their own, because a partial fix that matches but leaves the BOM glued to the value runs `bash -c '<BOM>false'`, which is command-not-found — also nonzero, also a block. The `true` arms carry it, and since their exit 0 is shared with the pre-fix fail-open, the assertion is the **absence** of the `no Test/Gate command` WARN (new harness helper `check_nomsg`).
+
+### 2. `sync-template` step 7: the mandatory client-side re-hash is removed
+
+It required recomputing each entry's hash from disk and asserting it matched `localHash`. **It is not implementable from the skill text as written**, and the first file it reddens is `PROJECT_CONTEXT.md` — the one file the skill's own conflict guidance says every consumer must splice. Both honest responses to that red are bad: finalize anyway (and learn to ignore the guard), or stop a clean sync.
+
+`localHash` is `_sha256(_read_file(path))` upstream: `path.read_text(encoding="utf-8")` — **Python universal newlines**, so CRLF and CR become LF — with a leading BOM stripped, then sha256 over the UTF-8 bytes with the BOM stripped again. A consumer ruled out raw sha256, LF/CRLF normalisation, whitespace stripping and placeholder reversal in all six permutations before the BOM turned out to be the difference. Asking every consumer to reimplement an unspecified function is not a guard, it is a coin flip.
+
+What replaces it: nothing new. The original hand-typed-hash incident is already covered server-side — `template_finalize_sync` rejects malformed hashes — and by the standing "build `applied_files` programmatically" rule. The post-finalize `template_compute_status` check stays: that is the server checking its own arithmetic with the function that governs. The hash definition survives only as an **optional diagnostic**, with the normalisation stated exactly, and says outright that a mismatch is evidence about your reimplementation first.
+
+### 3. `sync-template` step 2b: the `\r` hazard is one layer earlier than v2.2.3 documented
+
+v2.2.3 documented `\r` as a hazard on `check-ignore`'s **stdin**. It is really a hazard on **any path list that passes through Python text mode** — and **Method 2**, presented there as the works-everywhere alternative, is the *more* exposed of the two, because its path source is left to the implementer. Method 1 escapes only because it builds bytes inside Python (`b"\0".join`) and never round-trips through text mode. A consumer's `python3 -c 'print(...)' | mapfile -t` produced `CLAUDE.local.md\r` for all 36 paths and `check-ignore -q` returned 1 for every one; their cross-check is what caught it. The step now says to write the list with `sys.stdout.buffer` or assert it is CR-free, and carries their guard verbatim.
+
+### 4. `sync-template` step 7: act on the predates-part-hash hint
+
+`template_compute_status` emits a hint saying "re-register to get region-aware classification", and nothing in the skill told an agent to act on it — penumbra did so only because the hint was in front of them twice. Any file carrying that hint now joins the sync's `source="skip"` set, re-registered last, which pairs with the existing ordering rule. Measured on their repo: `CLAUDE.md` came back `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, since that file does not deviate from the template, it only carries region content.
+
+### Downstream migration
+
+- **Removing a BOM from `PROJECT_CONTEXT.md` cannot desync your manifest — this first, because the fear of the edit is the blocker, not the edit.** The server strips a leading BOM *before* hashing, so removing it from disk leaves `localHash` byte-identical. Controller-verified on a real file:
+
+  ```
+  server-algorithm hash, BOM present : 187d06eb…
+  server-algorithm hash, BOM removed : 187d06eb…   IDENTICAL
+  raw sha256, BOM present            : a390c69d…    (why a naive re-hash disagrees)
+  ```
+
+  So it is **zero manifest churn**: no `source="skip"`, no finalize, no status change. One consumer shipped theirs as a 3-byte commit touching nothing else, with the pre-commit gate running on it — end-to-end proof the extractor still finds `**Gate**` afterwards. To check whether you have one: `head -c 3 PROJECT_CONTEXT.md | od -An -tx1` → `ef bb bf` means BOM present. Removing it is optional once the hooks below are in place; the fix makes the BOM harmless either way.
+- **`hooks/lib/git-cmd.sh`, `hooks/run-gate.sh`, `hooks/pre-commit-test.sh`, `hooks/gate-before-merge.sh`** — all four carry item 1. Re-copy all four into the project's `hooks/`; a partial copy leaves the extractor that was not copied still blind. Mirrors at `user-level-reference/hooks/…` for `~/.claude/`.
+- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`; it carries items 2, 3, 4 and 5.
+- **Not shipped here:** BOM tolerance in the upstream `template-sync-tools` server's own field reads, and a server-side refusal for step 2b — both live in that repository, not this one.
+
+### 5. The placeholder sweep had the same hole, in the release named after it
+
+The sweep in `sync-template` is the skill's own detector for unfilled placeholders, and its markdown arm is `^`-anchored exactly like the hook extractors were. It was first scoped out of item 1 as a warning generator rather than a gate; that was the wrong line to draw. BOMs are confirmed in the wild in precisely this file, a placeholder on the first line is the case a reordering consumer most plausibly creates, and the failure mode is a **false clean** — the shape this whole release is named for. Shipping a documented BOM-caused false clean inside the fix for BOM-caused false cleans reads as an oversight to everyone who was not in the review.
+
+The two arms fail in opposite directions and both are now BOM-tolerant. Measured on a fixture:
+
+| arm | before | after |
+|---|---|---|
+| markdown, placeholder on LINE 1 behind a BOM | **0 — MISSED (false clean)** | 1 |
+| markdown, same on line 2 behind a BOM | 1 | 1 |
+| markdown, no BOM on line 1 (control) | 1 | 1 |
+| shell, BOM'd COMMENT line (must be excluded) | **1 false positive** | 0 |
+
+Arm 2's mirror-image failure is worth naming: the BOM lands between the `:` and the `#`, so the comment filter stops recognising a comment and the sweep gets noisier — the same byte, the opposite symptom. Verification is **by measured reproduction, not by a suite fixture**: the sweep is skill prose with no executable surface in this repository, so the numbers above come from a fixture tree run against both pattern versions, and the standing contract (zero hits on a clean tree) was re-checked against this tree — 0 on both arms. What the suite *can* hold is drift: `verify-template-consistency.sh` now asserts both arms still carry the optional BOM prefix.
+
+### 6. Verification
+
+`verify-template-consistency.sh` **264/264** (+3: the BOM census, the `GC_KEY_PRE` drift check, and the placeholder-sweep BOM check). `test-hooks.sh` **342 assertions** (+8: six BOM arms on `pre-commit-test.sh`/`run-gate.sh`, two on `no-push-main.sh`), all three parser configurations:
+
+| configuration | v2.2.4 |
+|---|---|
+| node | `342 passed, 0 failed, 0 skipped` |
+| python3 (node not usable) | `239 passed, 0 failed, 103 skipped` |
+| jq (node + python3 not usable) | `223 passed, 0 failed, 119 skipped` |
+
+The skip counts are unchanged from v2.2.3 (103 and 119) — the eight new fixtures are parser-independent, which is the check that the restricted configurations were really restricted. Both restricted runs shim `node`/`python3` to a non-interpreter rather than removing them from PATH, which is the same thing the probes measure: `command -v` AND `json_probe_ok`.
+
+12 hook scripts + `hooks/lib/`, 8 skills; 264 consistency assertions, 342 hook fixtures.
+
 ## v2.2.3 — 2026-08-30
 
 **Warning is not protecting, and the silent case was the bigger one.** Credit: the Yutraffic-Challenge sync report for `47341e7` (PR #226), panoscribe and penumbra for item 4, plus controller runs that executed the fixed path against real repos and found what the fixtures did not state.
