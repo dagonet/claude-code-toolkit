@@ -2,23 +2,27 @@
 
 ## v2.2.3 — 2026-08-30
 
-**Warning is not protecting.** v2.2.1 fixed the `{{DEFAULT_BRANCH}}` placeholder by treating it as if the line were absent — fall back to `main master`, and warn. Credit: the Yutraffic-Challenge sync report for `47341e7` (PR #226), plus a controller run that executed the fixed path against real repos and found what the fixtures did not state.
+**Warning is not protecting, and the silent case was the bigger one.** Credit: the Yutraffic-Challenge sync report for `47341e7` (PR #226), panoscribe and penumbra for item 4, plus controller runs that executed the fixed path against real repos and found what the fixtures did not state.
 
-### 1. A develop-trunk repo carrying the placeholder was still unprotected
+### 1. A non-`main`/`master` trunk was unprotected — and this is a PRE-EXISTING hole, not v2.2.x fallout
 
-`main master` does not contain `develop`. So the v2.2.1 fallback covers a `main` repo and leaves a `develop` repo exactly where v2.2.0 left it — pushable. Measured against the v2.2.2 hooks:
+`main master` does not contain `develop`. Every arm of `gc_protected_branches` that is not a configured answer returned exactly that, so a `develop`-trunk repo was pushable. The **absent**-line case is the one that matters most and it predates v2.2.0 entirely — it is the original `main|master` hardcode's own blind spot, inherited by the documented `absent -> "main master"` fallback. It affects every repo that never configured the field, not only those that took the v2.2.0 template, and unlike the placeholder case it was **silent**: there is no placeholder to warn about. v2.2.1's placeholder warn was backwards on severity, warning about the smaller, louder population.
+
+The full matrix, measured against the v2.2.2 hooks and this branch:
 
 | repo | v2.2.2 | v2.2.3 |
 |---|---|---|
-| placeholder, trunk `main`, push `main` | blocked (`main master`) + WARN | blocked (`main master`) + WARN |
-| placeholder + a `develop` branch, push `main` | blocked | blocked |
-| **placeholder on a `develop` trunk, push `develop`** | **ALLOWED** | **blocked (`main master develop`)** |
+| **absent line, `develop` trunk, push `develop`** | **ALLOWED, silently** | **blocked (`main master develop`)** |
+| absent line, `main` trunk, push `main` | blocked | blocked |
+| **placeholder, `develop` trunk, push `develop`** | **ALLOWED** (+ WARN) | **blocked (`main master develop`)** |
+| placeholder, `main` trunk, push `main` | blocked + WARN | blocked + WARN |
+| empty value, `develop` trunk, push `develop` | ALLOWED (+ WARN) | blocked (`main master develop`) + WARN |
 | filled `main`, push `main` (control) | blocked | blocked |
 | `none`, push `main` (control) | allowed | allowed |
 
-The warn was not a mitigation: `json_warn_once` prints one line per session, on stderr, which does not reach the lead's transcript. A consumer could be told once, days ago, and be unprotected now.
+The warn was never a mitigation: `json_warn_once` prints one line per session, on stderr, which does not reach the lead's transcript. A consumer could be told once, days ago, and be unprotected now.
 
-`gc_protected_branches`' placeholder arm now resolves the repo's real trunk from `git symbolic-ref --short refs/remotes/origin/HEAD` and adds it to the fallback.
+All three unconfigured arms — **absent**, **placeholder**, **empty** — now resolve the repo's real trunk from `git symbolic-ref --short refs/remotes/origin/HEAD` through one helper, `gc_fallback_protected`, and add it to the fallback. `none` and any explicit value are configured answers and are untouched. The absent arm deliberately does **not** warn: nothing there is misconfigured, the repo simply never said, and it is now protected anyway.
 
 **Where the resolution went, and why the hook resolver rather than the apply layer.** The apply layer is not in this repository — `template_apply_file` lives in the upstream `template-sync-tools` server; `mcp-servers/` here is a HOWTO. So "resolve at apply time" is a proposal to file upstream, not a change that can ship in this release. Beyond that: the exposure is live *now* in every repo that accepted the v2.2.0 line, and the resolver repairs all of them by re-copying one file, whereas an apply-layer fix would only reach a repo on its next sync. The hot-path objection is real and is answered structurally, not by assertion — the git call sits **inside the placeholder arm**, so a correctly-configured repo never makes it, and the command is a local ref read that cannot hang, which is why no timeout wrapper was invented for it.
 
@@ -30,7 +34,9 @@ The warn was not a mitigation: `json_warn_once` prints one line per session, on 
 
 Fail-safe, unchanged in kind from v2.2.1: no remote, a missing or unreadable `origin/HEAD`, a value that is not a plain ref name, or a value that is itself a placeholder all yield the historical `main master`. Never empty, never the literal.
 
-Only the placeholder arm changed. The **absent** arm keeps `main master`: absence is the documented pre-v2.2.0 default, and resolving there would silently start blocking `develop` pushes in repos that never opted into the field — the same false-positive class rejected above. The **empty** arm was left alone as out of scope; it warns, and it has the same develop-trunk gap.
+**Note the asymmetry, because it is deliberate:** this file fails **closed** when it cannot read the COMMAND (an integrity failure — something is running and we cannot see what) and **open** when it cannot read the REPO'S CONFIGURATION (an unconfigured environment — an unknown is not a violation). `origin/HEAD` is unset on any clone that never ran `git remote set-head`, and blocking pushes over a missing local ref would be a worse bug than the one being fixed. So an unknowable trunk lets the push through. It is not silent, though: when the trunk is unknowable **and** the repo has no local `main` and no local `master`, the fallback set provably covers no branch it has, and that one case warns and names the remedy (`git remote set-head origin -a`). That predicate cannot fire on a main-trunk repo and cannot fire on a feature branch, so it costs correctly-configured work nothing.
+
+**On the proposed push-time three-conjunct block (fallback-derived set AND the pushed branch is the trunk AND the trunk is not in the set): it is unreachable once the fallback resolves the trunk, so it is not implemented as a block.** Conjunct 3 is false by construction — the resolved trunk is now always in the fallback set. The only residue is the case where `origin/HEAD` cannot be resolved at all, and there conjunct 2 cannot be evaluated either; that residue is exactly the warn described above. Shipping the block would have been dead code, and the reasoning that a gate blocking ordinary work gets disabled with `.claude/git-guard-off` — which takes all three gates down with it — argues against inventing a looser predicate to make it reachable.
 
 ### 2. The prose line stops carrying a placeholder that nothing fills
 
@@ -38,21 +44,51 @@ Only the placeholder arm changed. The **absent** arm keeps `main master`: absenc
 
 An exception list would have made the warning correct by making it blind. Item 1's resolution lands in the hook resolver, not the apply layer, so it does not fill this line either. The smallest fix that removes the problem rather than hiding it is to remove the placeholder: the line now points at the `**Protected branches**:` line below it, which is the authoritative value anyway and which `setup-project.{sh,ps1}` already rewrite when `main master` would not cover the trunk. No template file carries `{{DEFAULT_BRANCH}}` any more; the substitution and its manifest entry stay in both setup scripts, so a reintroduced placeholder would still resolve for a bootstrapped repo. `docs/templates.md`' placeholder table drops the row; `docs/setup.md` describes `--default-branch` by what it now does.
 
+Had the resolution landed in the apply layer instead, items 1 and 2 would have been the same fix — a filled `DEFAULT_BRANCH` resolves the prose line too, and `unresolved_placeholders` goes back to meaning "something is genuinely wrong" with no carve-out anywhere. That remains the better end state and is the shape to file upstream; removing the placeholder reaches the same place for this line without waiting for it.
+
 ### 3. `sync-template`: re-register keep-mine files LAST
 
 Yutraffic registered `PROJECT_STATE.md` with `source="skip"`, then wrote the sync notes into it, then committed — so the manifest's `localHash` was stale from that moment and the next sync reported `changed_since_sync: true` on a file nothing had touched. Benign there, but on a file with a live PROJECT-CUSTOM region the stale part hashes are precisely what classification reads. Step 7 now says it in one sentence: a hash recorded before a later edit describes nothing.
+
+### 4. `sync-template` step 2b backed up NOTHING on Windows and reported success
+
+Found mid-sync by panoscribe, reproduced independently by penumbra on a different repo, and confirmed by the controller. Step 2b is the mandatory pre-sync backup of manifest-tracked **gitignored** files — the guard that exists specifically for `CLAUDE.local.md`, the one file a sync can destroy unrecoverably. It said to derive the set with `git check-ignore --stdin`. Implemented literally from Python on Windows, text mode turns `\n` into `\r\n`, `check-ignore` without `-z` splits on `\n` and tests `CLAUDE.local.md\r`, which matches no rule — **exit 1, meaning "none of these paths are ignored", indistinguishable from a genuine clean result, with nothing on stderr.** The file was 9,329 bytes, untracked, and matched by `.gitignore:51`. Typed in Git Bash the same pipe works, because the shell writes bare `\n`; it fails specifically under the script-driven invocation the step actually uses. Penumbra caught it only by expecting that specific file and refusing the empty result — an agent trusting the output would have written with no backup and reported `Backup: <dir> []`.
+
+Both fixes ship, not one: the exact `git check-ignore -z --stdin` invocation fed NUL-separated bytes (plus the per-path `git check-ignore -v -- <path>` form and a required cross-check that the two agree), **and** an assertion that the set is non-empty whenever the manifest tracks `CLAUDE.local.md`, which every variant does. The assertion is the important half — it is the only part that does not depend on getting the invocation right, so it catches the next variant of this too.
+
+**The pattern, stated because it is now five for five:** missing parser, unfilled placeholder, unparseable payload, uncollected lib, and an ignore-check returning "nothing to protect" — **every one of them failed by reporting success.** This instance is the most expensive of the set, because step 2b's own prose says every other file it touches is recoverable and these are not. A false clean is the only one of the five that loses data.
+
+### 5. The placeholder sweep flagged the toolkit's own documentation of the fix
+
+Reported independently by penumbra and panoscribe. `grep -rn '{{[A-Z_]\{2,\}}}' .claude hooks *.md` hit three **comment** lines — two in `hooks/lib/git-cmd.sh` explaining the `{{DEFAULT_BRANCH}}` arms, one in `hooks/pre-commit-test.sh` naming `{{TEST_COMMAND}}` — so the sweep the v2.2.2 skill mandates flagged v2.2.1's own documentation, in the file that implements the fix. Every consumer hits it and has to reason it out, and the more thoroughly the handling is documented the noisier its own detector becomes.
+
+Refined rather than excluded: in `.sh` files, skip lines whose first non-whitespace character is `#`; in markdown, require the hit on a `- **Key**: value` line, which is where a placeholder is load-bearing. **`hooks/lib/` is deliberately NOT excluded by name** — that rots on the first rename and would hide a genuine unfilled placeholder in a hook. Verified on this tree: the old sweep reports 22 hits, the refined one reports **0**, and both arms still fire on a planted placeholder (`- **Protected branches**: {{DEFAULT_BRANCH}}` in markdown, `X={{GATE_COMMAND}}` in a shell line) while ignoring a comment that merely mentions one.
 
 ### Downstream migration
 
 - **`hooks/lib/git-cmd.sh`** — the only behavioural file. Re-copy it into the project's `hooks/lib/`; it repairs a placeholder-carrying repo without a full sync. Mirror at `user-level-reference/hooks/lib/git-cmd.sh` for `~/.claude/`.
 - **`PROJECT_CONTEXT.md`** — optional, prose only. Take the template's `- **Branch strategy**:` line if you want the placeholder gone; nothing reads it either way.
-- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md` for the step 7 sentence.
+- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`. **Do this one first**: it carries the step 2b backup fix (item 4), which protects `CLAUDE.local.md` on the *next* sync, and the refined placeholder sweep (item 5).
+- **Not shipped here:** the server-side fixture for region-only deviation against a template change (penumbra's stated scope limit — their `CLAUDE.md` template side did not move that cycle, so the harder case is still unexercised in the field). That suite lives in the upstream `template-sync-tools` server, not in this repository; it is filed there, and the same is true of resolving `DEFAULT_BRANCH` at apply time.
 
-### Gate record, stated as measured
+### 6. The suite has never been green in one of its three advertised configurations — said out loud
 
-`verify-template-consistency.sh` 261/261. `test-hooks.sh`: `327 passed, 0 failed, 0 skipped` with node; `224 passed, 0 failed, 103 skipped` with node off PATH (python3 backend). Removing python3 from the host PATH as well is **not** a third configuration — it starves the suite's own `python3-only PATH self-check` cases of an interpreter to build their synthetic PATH from, and produces the same 8 failures on unmodified v2.2.2. The jq backend is covered where it is actually testable: the suite builds a jq-only PATH internally, and those cases (`jq: push origin main blocked`, `jq: em dash survives`, `broken python3 + jq: still enforces`, …) run green inside both configurations above. A release about a claim that was not true of the thing it described should not ship a gate line that overstates its own evidence.
+`verify-template-consistency.sh` 261/261. `test-hooks.sh` **is green in two configurations, not three**:
 
-12 hook scripts + `hooks/lib/`, 8 skills; 261 consistency assertions, 327 hook fixtures.
+| configuration | this branch | unmodified v2.2.2 |
+|---|---|---|
+| node | `334 passed, 0 failed, 0 skipped` | `321 passed, 0 failed, 0 skipped` |
+| python3 (node off PATH) | `224 passed, 0 failed, 103 skipped` (v2.2.3 round 1 count; +7 after round 2) | — |
+| jq (node + python3 off PATH) | **8 failed** | **8 failed** (controller's independent run, a differently-stubbed PATH: **7 failed**) |
+
+The jq-only failures **pre-date this branch** — the same failures appear on unmodified v2.2.2 — so they are not a regression. But two runs of "the same thing" produced 8 and 7 failures, which is itself the finding: **the harness's stub PATH was under-specified in the silent direction.** `mkpathdir` copies a fixed tool list out of the ambient PATH with `command -v` and skipped, without a word, anything it could not find. Two consequences, both now fixed:
+
+- **`no session id: WARN printed once` / `traversal session id: one WARN` (want 1, got 2) are a missing `stat`, not test-isolation leakage.** Diagnosed by removing exactly one tool at a time from a reconstructed stub PATH: without `date` the count stays 1; **without `stat` it becomes 2**; with a session-keyed payload it stays 1 even without `date`. That is the mechanism exactly — `json_warn_once` returns early for a session-keyed marker, and only the no-session/discarded-session cases fall through to the TTL branch, which reads the marker's mtime. With no `stat`, the mtime reads `0`, an unexpired marker looks expired, and the hook warns twice. Those two fixtures are the only two that reach that branch, which is why they are the only two that fail.
+- **`seq` was a dependency nothing declared** (`seq: command not found` in the controller's run). It is not a shell builtin and was never in the stub tool list; the four fixture files it built now come from a `while` loop instead, removing the dependency rather than documenting it.
+
+`mkpathdir` now records every tool it could not find and the suite reports `stub PATH minimum tool set` as a real assertion — a harness that builds an incomplete environment and reports the result as a *test* failure is the same "fails by reporting something other than the failure" shape as items 4 and 1. A genuinely clean jq-only run is still not achievable here: the remaining failures are the suite's own `python3-only PATH self-check` cases, which need a python3 to build their synthetic PATH from and cannot pass on a host where python3 has been removed. The jq **backend** is covered — the suite builds a jq-only PATH internally, and `jq: push origin main blocked`, `jq: em dash survives`, `broken python3 + jq: still enforces` and the rest run green inside the two configurations above. What is not covered is a whole-suite run on a python3-less host, and no run has ever demonstrated one.
+
+12 hook scripts + `hooks/lib/`, 8 skills; 261 consistency assertions, 334 hook fixtures.
 
 ## v2.2.2 — 2026-08-30
 

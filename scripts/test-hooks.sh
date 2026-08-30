@@ -823,10 +823,17 @@ H=hooks/read-size-gate.sh
 readout() { # <json> -> the hook's stdout
   printf '%s' "$1" | bash "$ROOT/$H" 2>/dev/null
 }
-SMALL="$TMPROOT/small.txt"; : > "$SMALL"; for i in $(seq 1 20); do echo "line $i" >> "$SMALL"; done
-HUNDRED="$TMPROOT/hundred.txt"; : > "$HUNDRED"; for i in $(seq 1 100); do echo "line $i" >> "$HUNDRED"; done
-BIG="$TMPROOT/big.txt";     : > "$BIG";   for i in $(seq 1 600); do echo "line $i" >> "$BIG"; done
-HUGE="$TMPROOT/huge.txt";   : > "$HUGE";  for i in $(seq 1 900); do echo "line $i" >> "$HUGE"; done
+# `seq` is NOT a shell builtin and is not in the stub PATH list below; a host
+# without it produced `seq: command not found` here and unexplained downstream
+# failures. A while-loop has no such dependency.
+nlines() { # <file> <count>
+  : > "$1"; i=1
+  while [ "$i" -le "$2" ]; do echo "line $i" >> "$1"; i=$((i + 1)); done
+}
+SMALL="$TMPROOT/small.txt";     nlines "$SMALL" 20
+HUNDRED="$TMPROOT/hundred.txt"; nlines "$HUNDRED" 100
+BIG="$TMPROOT/big.txt";         nlines "$BIG" 600
+HUGE="$TMPROOT/huge.txt";       nlines "$HUGE" 900
 BIGPNG="$TMPROOT/big.png";  cp "$BIG" "$BIGPNG"
 
 # read-size-gate rewrites the tool_input with an embedded node program, so with
@@ -1396,16 +1403,31 @@ echo "=== no-JSON-parser fixtures (hooks/lib/json.sh) ==="
 
 BASHABS=$(command -v bash)
 
+# The MINIMUM tool set a stub PATH must carry. It was under-specified in the
+# silent direction: a tool `command -v` could not find was skipped, the stub was
+# built anyway, and every case running under it failed for a reason nothing
+# printed. A missing `stat` alone flips two warn-once fixtures from 1 WARN to 2
+# -- json_warn_once's no-session branch reads the marker's mtime, and with no
+# `stat` the mtime reads 0, so an unexpired marker looks expired and the hook
+# warns twice. Diagnosed by removing exactly one tool at a time. A harness that
+# builds an incomplete environment and reports the result as a test failure is
+# the same "fails by reporting something other than the failure" shape this
+# release exists to stop, so the gap is now LOUD.
+PATHDIR_TOOLS="sh bash git grep sed tr head tail cut cat wc stat date mktemp
+dirname basename sort uniq mkdir rm ls awk env find touch cp expr"
 mkpathdir() { # <name> [extra-tool ...] -> prints dir
   pd="$TMPROOT/path-$1"; shift
   mkdir -p "$pd"
-  for t in sh bash git grep sed tr head tail cut cat wc stat date mktemp \
-           dirname basename sort uniq mkdir rm ls awk env find touch cp expr "$@"; do
-    r=$(command -v "$t" 2>/dev/null) || continue
-    [ -n "$r" ] || continue
+  mpd_missing=""
+  for t in $PATHDIR_TOOLS "$@"; do
+    r=$(command -v "$t" 2>/dev/null) || r=""
+    if [ -z "$r" ]; then mpd_missing="$mpd_missing $t"; continue; fi
     printf '#!/bin/sh\nexec "%s" "$@"\n' "$r" > "$pd/$t"
     chmod +x "$pd/$t"
   done
+  # mkpathdir runs inside `$(...)`, so a counter bumped here dies with the
+  # subshell. The marker is read back in the main shell below.
+  [ -n "$mpd_missing" ] && printf '%s\n' "$mpd_missing" >> "$TMPROOT/pathdir-missing"
   printf '%s\n' "$pd"
 }
 
@@ -1830,6 +1852,27 @@ git -C "$PB_PLACE_DEV" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin
 # resolved trunk is main, the set must not grow a duplicate.
 PB_PLACE_MAIN=$(pbrepo pb-placeholder-main main '- **Protected branches**: {{DEFAULT_BRANCH}}')
 git -C "$PB_PLACE_MAIN" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main >/dev/null 2>&1
+# v2.2.3 round 2: the ABSENT line is the same hole and the LARGER population --
+# it predates v2.2.0 (it is the original `main|master` hardcode's own blind
+# spot), it affects every repo that never configured the field rather than only
+# those that took the v2.2.0 template, and unlike the placeholder it was SILENT.
+# The full {absent, placeholder} x {main trunk, develop trunk} matrix, so a
+# future edit to one arm cannot quietly diverge from the other.
+PB_ABS_MAIN=$(pbrepo pb-absent-main main -)
+git -C "$PB_ABS_MAIN" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main >/dev/null 2>&1
+PB_ABS_DEV=$(pbrepo pb-absent-dev develop -)
+git -C "$PB_ABS_DEV" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop >/dev/null 2>&1
+# The empty arm folds in on the same helper: it warns about the typo AND
+# protects the trunk while it does so.
+PB_EMPTY_DEV=$(pbrepo pb-empty-dev develop '- **Protected branches**:')
+git -C "$PB_EMPTY_DEV" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop >/dev/null 2>&1
+# `origin/HEAD` is unset on any clone that never ran `git remote set-head`, and
+# then the trunk is UNKNOWABLE. We fail OPEN there -- an unknown is not a
+# violation, and blocking pushes over a missing local ref would be a worse bug
+# than the one being fixed. But a repo with no local main AND no local master
+# provably has nothing in the fallback set, so that one case is said out loud.
+PB_NOHEAD_DEV=$(pbrepo pb-nohead-dev develop -)
+git -C "$PB_NOHEAD_DEV" branch -D main >/dev/null 2>&1
 
 H=hooks/no-push-main.sh
 check "field absent: main still blocked"   "$H" 2 "$(mkjson Bash 'git push' "$PB_ABSENT")"
@@ -1864,6 +1907,20 @@ check_msg "a resolved trunk of main does not duplicate" "$ROOT/$H" 2 \
 # default stands. Never empty, never the literal.
 check_msg "unresolvable trunk keeps the historical default" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push origin main' "$PB_PLACE")" "protected branch (main master)"
+# the four-way matrix: {absent, placeholder} x {main trunk, develop trunk}
+check "absent + main trunk: main blocked"      "$H" 2 "$(mkjson Bash 'git push' "$PB_ABS_MAIN")"
+check "absent + develop trunk: develop blocked" "$H" 2 "$(mkjson Bash 'git push' "$PB_ABS_DEV")"
+check_msg "absent + develop trunk names the union" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin develop' "$PB_ABS_DEV")" "protected branch (main master develop)"
+# (the absent arm deliberately does NOT warn — nothing there is misconfigured,
+# the repo simply never said. check_msg has no negative form and one assertion
+# does not justify a fifth harness helper; the union message above is what the
+# arm is contracted to produce.)
+check "empty + develop trunk: develop blocked" "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY_DEV")"
+# fail OPEN on an unknowable trunk, and say so
+check "unknowable trunk: push is NOT blocked"  "$H" 0 "$(mkjson Bash 'git push' "$PB_NOHEAD_DEV")"
+check_msg "unknowable trunk warns and names the remedy" "$ROOT/$H" 0 \
+  "$(mkjson Bash 'git push' "$PB_NOHEAD_DEV")" "git remote set-head origin -a"
 check "empty value: main still blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY")"
 check_msg "empty value warns about the typo" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push' "$PB_EMPTY")" "**Protected branches**: is empty"
@@ -1880,7 +1937,19 @@ check "placeholder develop trunk: merge gated" "$GB" 2 \
   "$(mkjson Bash 'git merge feature/x' "$PB_PLACE_DEV")"
 
 # ===========================================================================
+# Read back the stub-PATH completeness marker (see mkpathdir): a stub built
+# without its minimum tool set makes every case running under it meaningless,
+# and it used to do that in silence.
 echo
+if [ -f "$TMPROOT/pathdir-missing" ]; then
+  printf 'FAIL  %-42s (missing:%s)\n' "stub PATH minimum tool set" \
+    "$(tr '\n' ' ' < "$TMPROOT/pathdir-missing" | tr -s ' ')"
+  fail=$((fail + 1))
+else
+  printf 'PASS  %-42s (%s)\n' "stub PATH minimum tool set" "all present"
+  pass=$((pass + 1))
+fi
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
