@@ -78,8 +78,8 @@ Refined rather than excluded: in `.sh` files, skip lines whose first non-whitesp
 | configuration | this branch | unmodified v2.2.2 |
 |---|---|---|
 | node | `334 passed, 0 failed, 0 skipped` | `321 passed, 0 failed, 0 skipped` |
-| python3 (node off PATH) | `224 passed, 0 failed, 103 skipped` (v2.2.3 round 1 count; +7 after round 2) | — |
-| jq (node + python3 off PATH) | **8 failed** | **8 failed** (controller's independent run, a differently-stubbed PATH: **7 failed**) |
+| python3 (node off PATH) | `231 passed, 0 failed, 103 skipped` | — |
+| jq (node + python3 off PATH) | **`223 passed, 8 failed, 103 skipped`** | **`210 passed, 8 failed, 103 skipped`** — and the controller's independent run, on a differently-stubbed PATH, `195 passed, 7 failed, 119 skipped` |
 
 The jq-only failures **pre-date this branch** — the same failures appear on unmodified v2.2.2 — so they are not a regression. But two runs of "the same thing" produced 8 and 7 failures, which is itself the finding: **the harness's stub PATH was under-specified in the silent direction.** `mkpathdir` copies a fixed tool list out of the ambient PATH with `command -v` and skipped, without a word, anything it could not find. Two consequences, both now fixed:
 
