@@ -50,10 +50,10 @@ jlib="$(dirname "$0")/lib/json.sh"
 json_require_node enforce-agent-contract "$(json_session "$INPUT")" || exit 0
 
 AGENT_TYPE=$(json_get "$INPUT" agent_type)
-# v2.2.2: SubagentStop carries BOTH transcript_path (the SESSION's JSONL) and
-# agent_transcript_path (this subagent's own). This hook read the session one,
-# so it judged the LEAD's last message, not the agent's. agent_transcript_path
-# first; transcript_path only as a fallback for a payload that lacks it.
+# v2.2.2: the measured SubagentStop payload lists agent_transcript_path -- this
+# subagent's own JSONL, not the session's -- and retro-ledger.sh, the other
+# consumer of this event, reads it. This hook read transcript_path. Prefer the
+# documented field; keep transcript_path as a fallback for a payload lacking it.
 TRANSCRIPT=$(json_get "$INPUT" agent_transcript_path)
 [ -n "$TRANSCRIPT" ] || TRANSCRIPT=$(json_get "$INPUT" transcript_path)
 AGENT_ID=$(json_get "$INPUT" agent_id)

@@ -132,8 +132,13 @@ mkstop() { # <cwd> <agent_type> <agent_id> <transcript_path>
   # cwd is asserted verbatim (the slug rule is exercised with both spellings),
   # so only the transcript path -- which the hook must actually open -- is
   # converted to the native form.
-  printf '{"session_id":"t","hook_event_name":"SubagentStop","cwd":"%s","agent_type":"%s","agent_id":"%s","agent_transcript_path":"%s","last_assistant_message":"done"}\n' \
-    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$3")" "$(jesc "$(natpath "$4")")"
+  # v2.2.2: BOTH transcript fields, as the live payload carries them. With only
+  # agent_transcript_path set, a hook that reads transcript_path gets an empty
+  # value and fails OPEN -- so every want-0 assertion would pass vacuously,
+  # against a hook that never opened a transcript at all.
+  printf '{"session_id":"t","hook_event_name":"SubagentStop","cwd":"%s","agent_type":"%s","agent_id":"%s","agent_transcript_path":"%s","transcript_path":"%s","last_assistant_message":"done"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$3")" \
+    "$(jesc "$(natpath "$4")")" "$(jesc "$(natpath "$4")")"
 }
 
 mkstart() { # <cwd>

@@ -33,9 +33,13 @@ Both shapes are read now, string first. The semantics for a `tool_use`-only fina
 | `hooks/retro-brief.sh` | n/a | parses the ledger JSON, not a transcript |
 | `hooks/bash-output-guard.sh`, `hooks/pre-commit-test.sh`, `scripts/check-activation.sh` | n/a | mention `transcript` in prose only |
 
-### 2. It was reading the wrong transcript
+### 2. It read a transcript field the payload table does not list for this event
 
-Found while fixturing item 1. `SubagentStop` carries **both** `transcript_path` (the SESSION's JSONL) and `agent_transcript_path` (the subagent's own — see the measured-stdin table in `user-level-reference/settings-reference.md`). The hook read `transcript_path`, so it was judging the **lead's** last message against the coder's contract. `retro-ledger.sh`, the other `SubagentStop` consumer, has always read `agent_transcript_path` correctly. The hook now prefers `agent_transcript_path` and falls back to `transcript_path`.
+Found while fixturing item 1. The measured-stdin table in `user-level-reference/settings-reference.md` lists `agent_transcript_path` for `SubagentStop` and describes it as "the SUBAGENT's own JSONL, not the session's". `retro-ledger.sh`, the repo's other `SubagentStop` consumer, reads that field; `enforce-agent-contract.sh` read `transcript_path` instead, and `mkstop` — the fixture builder the two hooks share — set only the former. The hook now prefers `agent_transcript_path` and falls back to `transcript_path`.
+
+**Stated precisely, because the temptation is to overclaim it:** what is established is that the two consumers disagreed and that one of them used a field the table does not list for this event. What is *not* established is that `transcript_path` resolved to the session transcript on the live payload — the consumer's own experiment (adding a tool call to a turn to force array-shaped content, and watching the violation clear) could only have worked if the hook was already reading the agent's own transcript. So this is an ambiguity removed, not a second confirmed misread. The code change is correct under either reading, which is why it ships.
+
+`mkstop` now sets **both** fields, as the live payload does. That is not cosmetic: with only `agent_transcript_path` set, a hook reading `transcript_path` gets an empty value and fails OPEN, so every `want 0` assertion below would have passed vacuously against a hook that never opened a transcript. With both set, six of the twelve new assertions fail against the pre-v2.2.2 hook, which is what a fixture for a bug is supposed to do.
 
 ### 3. The loop guard bounded nothing
 
