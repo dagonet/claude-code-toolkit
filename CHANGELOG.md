@@ -1,5 +1,55 @@
 # Changelog
 
+## v2.2.3 — 2026-08-30
+
+**Warning is not protecting.** v2.2.1 fixed the `{{DEFAULT_BRANCH}}` placeholder by treating it as if the line were absent — fall back to `main master`, and warn. Credit: the Yutraffic-Challenge sync report for `47341e7` (PR #226), plus a controller run that executed the fixed path against real repos and found what the fixtures did not state.
+
+### 1. A develop-trunk repo carrying the placeholder was still unprotected
+
+`main master` does not contain `develop`. So the v2.2.1 fallback covers a `main` repo and leaves a `develop` repo exactly where v2.2.0 left it — pushable. Measured against the v2.2.2 hooks:
+
+| repo | v2.2.2 | v2.2.3 |
+|---|---|---|
+| placeholder, trunk `main`, push `main` | blocked (`main master`) + WARN | blocked (`main master`) + WARN |
+| placeholder + a `develop` branch, push `main` | blocked | blocked |
+| **placeholder on a `develop` trunk, push `develop`** | **ALLOWED** | **blocked (`main master develop`)** |
+| filled `main`, push `main` (control) | blocked | blocked |
+| `none`, push `main` (control) | allowed | allowed |
+
+The warn was not a mitigation: `json_warn_once` prints one line per session, on stderr, which does not reach the lead's transcript. A consumer could be told once, days ago, and be unprotected now.
+
+`gc_protected_branches`' placeholder arm now resolves the repo's real trunk from `git symbolic-ref --short refs/remotes/origin/HEAD` and adds it to the fallback.
+
+**Where the resolution went, and why the hook resolver rather than the apply layer.** The apply layer is not in this repository — `template_apply_file` lives in the upstream `template-sync-tools` server; `mcp-servers/` here is a HOWTO. So "resolve at apply time" is a proposal to file upstream, not a change that can ship in this release. Beyond that: the exposure is live *now* in every repo that accepted the v2.2.0 line, and the resolver repairs all of them by re-copying one file, whereas an apply-layer fix would only reach a repo on its next sync. The hot-path objection is real and is answered structurally, not by assertion — the git call sits **inside the placeholder arm**, so a correctly-configured repo never makes it, and the command is a local ref read that cannot hang, which is why no timeout wrapper was invented for it.
+
+**Three deliberate constraints on the resolution:**
+
+- **Union, never replacement.** The set is `main master` PLUS the resolved trunk. Narrowing to the trunk alone would strip `main`'s protection from a repo that has both — fixing one exposure by opening another. Deduped, so a resolved trunk of `main` yields `main master`, not `main master main`.
+- **Not every local branch.** The brief's own prohibition, and the mirror of the original bug. Two-to-three members, each individually justified.
+- **Not the current branch.** The upstream proposal's second fallback was `HEAD`, which is correct at *bootstrap* time (`setup-project.sh` keeps it) and wrong in a hook: at push time `HEAD` is almost always the feature branch being pushed, so protecting it would block the developer's own push. The resolver chain is two links — `origin/HEAD`, else `main master`.
+
+Fail-safe, unchanged in kind from v2.2.1: no remote, a missing or unreadable `origin/HEAD`, a value that is not a plain ref name, or a value that is itself a placeholder all yield the historical `main master`. Never empty, never the literal.
+
+Only the placeholder arm changed. The **absent** arm keeps `main master`: absence is the documented pre-v2.2.0 default, and resolving there would silently start blocking `develop` pushes in repos that never opted into the field — the same false-positive class rejected above. The **empty** arm was left alone as out of scope; it warns, and it has the same develop-trunk gap.
+
+### 2. The prose line stops carrying a placeholder that nothing fills
+
+`templates/*/PROJECT_CONTEXT.md` shipped `- **Branch strategy**: … PR into \`{{DEFAULT_BRANCH}}\` …`. No consumer manifest carries a `DEFAULT_BRANCH` key, so it arrives literal on every sync. Harmless today, but `unresolved_placeholders`-on-every-write is queued upstream, and when it lands this line warns on every apply, for everyone, forever, on a placeholder that is *supposed* to be there. A permanent expected warning trains people to ignore the mechanism.
+
+An exception list would have made the warning correct by making it blind. Item 1's resolution lands in the hook resolver, not the apply layer, so it does not fill this line either. The smallest fix that removes the problem rather than hiding it is to remove the placeholder: the line now points at the `**Protected branches**:` line below it, which is the authoritative value anyway and which `setup-project.{sh,ps1}` already rewrite when `main master` would not cover the trunk. No template file carries `{{DEFAULT_BRANCH}}` any more; the substitution and its manifest entry stay in both setup scripts, so a reintroduced placeholder would still resolve for a bootstrapped repo. `docs/templates.md`' placeholder table drops the row; `docs/setup.md` describes `--default-branch` by what it now does.
+
+### 3. `sync-template`: re-register keep-mine files LAST
+
+Yutraffic registered `PROJECT_STATE.md` with `source="skip"`, then wrote the sync notes into it, then committed — so the manifest's `localHash` was stale from that moment and the next sync reported `changed_since_sync: true` on a file nothing had touched. Benign there, but on a file with a live PROJECT-CUSTOM region the stale part hashes are precisely what classification reads. Step 7 now says it in one sentence: a hash recorded before a later edit describes nothing.
+
+### Downstream migration
+
+- **`hooks/lib/git-cmd.sh`** — the only behavioural file. Re-copy it into the project's `hooks/lib/`; it repairs a placeholder-carrying repo without a full sync. Mirror at `user-level-reference/hooks/lib/git-cmd.sh` for `~/.claude/`.
+- **`PROJECT_CONTEXT.md`** — optional, prose only. Take the template's `- **Branch strategy**:` line if you want the placeholder gone; nothing reads it either way.
+- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md` for the step 7 sentence.
+
+12 hook scripts + `hooks/lib/`, 8 skills; 261 consistency assertions, 327 hook fixtures.
+
 ## v2.2.2 — 2026-08-30
 
 **A contract that cannot determine whether the agent is finished must not demand the artifact of finishing.** That is the mirror, on the reporting side, of v2.2.1's gate posture — and `hooks/enforce-agent-contract.sh` violated it three ways at once. Credit: the Motorsport-Manager-AI-Agent session, 2026-08-30. Their agent read the hook source, diagnosed the mechanism, then confirmed it by adding a tool call to a turn specifically to force array-shaped content and watching the violation clear — and it **reported the defect rather than patching the hook**, which is what made the diagnosis trustworthy.

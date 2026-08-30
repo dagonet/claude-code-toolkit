@@ -197,13 +197,58 @@ gc_is_placeholder() {
   esac
 }
 
+# gc_resolve_trunk <repo> -- the remote's default branch, or "" when unknowable.
+#
+# A LOCAL ref read (`refs/remotes/origin/HEAD`): no network, so it cannot hang
+# and needs no timeout wrapper -- this runs inside a PreToolUse hook.
+# Deliberately NOT gc_current_branch: at push time HEAD is almost always the
+# feature branch being pushed, and protecting that would block the developer's
+# own push. setup-project.sh keeps a current-branch fallback because at
+# BOOTSTRAP time the checkout IS the trunk; a gate firing at push time is a
+# different question with a different safe answer.
+# Anything unexpected -- no remote, a detached or missing origin/HEAD, a value
+# that is not a plain ref name, a value that is itself a placeholder -- returns
+# "" so the caller keeps its own default. Never empty output used as a set,
+# never the literal.
+gc_resolve_trunk() {
+  gcrt=$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)
+  gcrt=${gcrt#origin/}
+  case "$gcrt" in
+    ''|-*|*..*|*[!A-Za-z0-9._/-]*) printf '%s' "" ;;
+    *)                             printf '%s' "$gcrt" ;;
+  esac
+}
+
+# gc_placeholder_fallback <repo-toplevel> -- the set to protect when the
+# configured value is unusable.
+#
+# `main master` (the historical default) UNION the remote's real trunk. The
+# union, not a replacement: narrowing to the resolved trunk alone would REMOVE
+# protection from `main` in a repo that has both, so a fix for one exposure
+# would open another. Bounded, and every member is individually justified --
+# this is NOT "protect every local branch", which is the mirror of the bug it
+# fixes.
+# Why resolve at all: v2.2.1 made a placeholder fall back to `main master`,
+# which warns but does not PROTECT a develop-trunk repo, and the warn is one
+# stderr line per session. Warning is not protecting.
+gc_placeholder_fallback() {
+  gcpf=$(gc_resolve_trunk "$1")
+  [ -n "$gcpf" ] || { printf '%s' "main master"; return 0; }
+  case " main master " in
+    *" $gcpf "*) printf '%s' "main master"; return 0 ;;
+  esac
+  printf '%s' "main master $gcpf"
+}
+
 # gc_protected_branches <repo> -- the branch names the git gates protect.
 #
 # Optional `**Protected branches**:` line in the repo's PROJECT_CONTEXT.md,
 # read with the same tolerant grep as `**Gate**:` (leading list marker,
 # surrounding backticks). Names are space- or comma-separated.
 #   absent              -> "main master" (the pre-v2.2.0 hardcoded default)
-#   `{{DEFAULT_BRANCH}}` -> "main master" — as if absent (v2.2.1, see above)
+#   `{{DEFAULT_BRANCH}}` -> "main master" PLUS the remote's real trunk, resolved
+#                          from git (v2.2.3). v2.2.1 stopped at "main master",
+#                          which leaves a develop-trunk repo unprotected.
 #   empty value         -> "main master", with one WARN: an empty value is a
 #                          typo or a truncated sync, not a decision. v2.2.0
 #                          treated it as an opt-out, which is a silent unprotect.
@@ -223,9 +268,13 @@ gc_protected_branches() {
     # visibly empty; an unreplaced placeholder READS as configured, so this is
     # precisely the case a consumer does not know they are in. Silence here was
     # backwards.
+    # ...and WARN is not enough on its own: the fallback now also covers the
+    # trunk git actually reports, so a develop-trunk repo is protected while it
+    # is being told to configure itself, not merely told.
+    gcpb_fb=$(gc_placeholder_fallback "$gcpb_top")
     json_warn_once "protected-branches" "$(json_session "$GC_JSON")" \
-      "WARN: **Protected branches**: in $gcpb_top/PROJECT_CONTEXT.md is still an unfilled placeholder ($gcpb) — falling back to 'main master'. If your trunk is not main/master, it is NOT protected until you set a real name."
-    printf '%s' "main master"
+      "WARN: **Protected branches**: in $gcpb_top/PROJECT_CONTEXT.md is still an unfilled placeholder ($gcpb) — falling back to '$gcpb_fb'. That fallback is a guess; set a real name."
+    printf '%s' "$gcpb_fb"
     return 0
   fi
   case "$(printf '%s' "$gcpb" | tr 'A-Z' 'a-z')" in

@@ -1816,6 +1816,20 @@ PB_EMPTY=$(pbrepo pb-empty main '- **Protected branches**:')
 # match read this as two literal branch NAMES, neither of which is a branch --
 # the unsafe direction. Substring match, so it falls back to the default.
 PB_HALF=$(pbrepo pb-half main '- **Protected branches**: {{DEFAULT_BRANCH}} develop')
+# v2.2.3: the exposure v2.2.1 LEFT. Its fallback is `main master`, which does not
+# contain `develop` -- so a develop-trunk repo carrying the placeholder was
+# warned at and its trunk was still pushable. Warning is not protecting, and the
+# warn is one stderr line per session. The resolver now reads the remote's own
+# default branch and adds it to the fallback. `refs/remotes/origin/HEAD` is set
+# here WITHOUT a real remote on purpose: symbolic-ref just writes the ref, which
+# is all the resolver reads -- a local read that cannot hang in a hook.
+PB_PLACE_DEV=$(pbrepo pb-placeholder-dev develop '- **Protected branches**: {{DEFAULT_BRANCH}}')
+git -C "$PB_PLACE_DEV" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop >/dev/null 2>&1
+# The resolved trunk is added to `main master`, never substituted for it: a repo
+# with both must not LOSE main's protection to a fix for develop's. And when the
+# resolved trunk is main, the set must not grow a duplicate.
+PB_PLACE_MAIN=$(pbrepo pb-placeholder-main main '- **Protected branches**: {{DEFAULT_BRANCH}}')
+git -C "$PB_PLACE_MAIN" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main >/dev/null 2>&1
 
 H=hooks/no-push-main.sh
 check "field absent: main still blocked"   "$H" 2 "$(mkjson Bash 'git push' "$PB_ABSENT")"
@@ -1837,6 +1851,19 @@ check_msg "placeholder WARNs, it does not go quiet" "$ROOT/$H" 2 \
 check "half-filled placeholder: main blocked" "$H" 2 "$(mkjson Bash 'git push' "$PB_HALF")"
 check_msg "half-filled falls back, not to literals" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push origin main' "$PB_HALF")" "protected branch (main master)"
+# v2.2.3: the row that was exit=0 before this release.
+check "placeholder on a develop trunk: develop blocked" "$H" 2 \
+  "$(mkjson Bash 'git push' "$PB_PLACE_DEV")"
+check "placeholder on a develop trunk: refspec blocked" "$H" 2 \
+  "$(mkjson Bash 'git push origin develop' "$PB_PLACE_DEV")"
+check_msg "resolved trunk JOINS the default, it does not replace it" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin main' "$PB_PLACE_DEV")" "protected branch (main master develop)"
+check_msg "a resolved trunk of main does not duplicate" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin main' "$PB_PLACE_MAIN")" "protected branch (main master)"
+# no origin remote at all -> the resolver returns nothing and the historical
+# default stands. Never empty, never the literal.
+check_msg "unresolvable trunk keeps the historical default" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git push origin main' "$PB_PLACE")" "protected branch (main master)"
 check "empty value: main still blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY")"
 check_msg "empty value warns about the typo" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push' "$PB_EMPTY")" "**Protected branches**: is empty"
@@ -1849,6 +1876,8 @@ check "merge on develop is gated"          "$GB" 2 "$(mkjson Bash 'git merge fea
 check "merge on unprotected main is not"   "$GB" 0 "$(mkjson Bash 'git merge feature/x' "$PB_DEVMAIN")"
 # `none` unprotects the BRANCH rules only: a PR merge is a merge on any branch.
 check "none: gh pr merge still gated"      "$GB" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$PB_NONE")"
+check "placeholder develop trunk: merge gated" "$GB" 2 \
+  "$(mkjson Bash 'git merge feature/x' "$PB_PLACE_DEV")"
 
 # ===========================================================================
 echo
