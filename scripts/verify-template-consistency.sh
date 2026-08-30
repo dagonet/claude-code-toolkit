@@ -790,6 +790,40 @@ for lf in hooks/lib/*; do
   fi
 done
 
+# 21c-2. Every PROJECT_CONTEXT.md field anchor is BOM-tolerant (v2.2.4).
+#
+#      A UTF-8 BOM sits at byte 0, INSIDE line 1, so a `^`-anchored `**Key**:`
+#      grep silently finds nothing when a key sits at the top of the file — and
+#      "no field found" is the fail-OPEN arm in pre-commit-test.sh. This bug
+#      class has been patched one instance at a time three times in this repo;
+#      the census is what makes the NEXT anchor fail loudly instead. Every
+#      `grep -E` over PROJECT_CONTEXT.md must go through GC_KEY_PRE.
+bom_anchors=$(grep -n 'PROJECT_CONTEXT\.md' hooks/*.sh hooks/lib/*.sh 2>/dev/null | grep 'grep -E')
+bom_total=$(printf '%s\n' "$bom_anchors" | grep -c .)
+bom_bad=$(printf '%s\n' "$bom_anchors" | grep -v 'GC_KEY_PRE' | grep -c .)
+if [ "$bom_total" -eq 0 ]; then
+  ko "BOM census matched NO field anchors (glob or grep broken?) — passing vacuously"
+elif [ "$bom_bad" -eq 0 ]; then
+  ok "BOM census: all $bom_total PROJECT_CONTEXT.md field anchors use GC_KEY_PRE"
+else
+  ko "BOM census: $bom_bad of $bom_total field anchors bypass GC_KEY_PRE (a BOM hides a key on line 1)"
+  printf '%s\n' "$bom_anchors" | grep -v 'GC_KEY_PRE' | sed 's/^/      /'
+fi
+# run-gate.sh is standalone (it must run with no JSON parser on PATH, which
+# sourcing git-cmd.sh forbids), so it REPEATS the definition. Assert the two
+# copies are the same literal — a duplicated constant that drifts is how the
+# fixed instance and the unfixed one end up in the same release.
+GC_KEY_PRE_DEF='GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"'
+gkp_have=0
+for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+  grep -qF "$GC_KEY_PRE_DEF" "$gkf" && gkp_have=$((gkp_have + 1))
+done
+if [ "$gkp_have" -eq 2 ]; then
+  ok "GC_KEY_PRE defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 2 files (git-cmd.sh, run-gate.sh)"
+fi
+
 # 21d. Every shipped shell script PARSES (v2.2.1).
 #
 #      Not hypothetical: `enforce-delegation.sh`, `read-size-gate.sh` and the

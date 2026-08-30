@@ -208,6 +208,26 @@ check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
   fi
 }
 
+# The negative of check_msg: exit code AND the ABSENCE of a stderr substring.
+# Needed where the exit code alone does not discriminate -- pre-commit-test's
+# fail-open arm (no field found) also exits 0, so only the missing WARN says
+# the field was actually read.
+check_nomsg() { # <label> <hook_abs_path> <expected_exit> <json> <forbidden-needle>
+  label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
+  errf="$TMPROOT/check_nomsg.err"
+  cntmp="$TMPROOT/check_nomsg.tmp"; rm -rf "$cntmp"; mkdir -p "$cntmp"
+  printf '%s' "$json" | TMPDIR="$cntmp" bash "$hookp" >/dev/null 2>"$errf"
+  got=$?
+  if [ "$got" = "$want" ] && ! grep -qF "$needle" "$errf"; then
+    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s WITHOUT "%s", got %s: %s)\n' \
+      "$label" "$want" "$needle" "$got" "$(head -1 "$errf")"
+    fail=$((fail + 1))
+  fi
+}
+
 # Value assertion, for hooks whose contract is their STDOUT (updatedInput /
 # updatedToolOutput) rather than their exit code.
 expect() { # <label> <want> <got>
@@ -419,6 +439,54 @@ check_msg "no Test/Gate warns, allows"   "$ROOT/hooks/pre-commit-test.sh" 0 \
 check_msg "no PROJECT_CONTEXT warns too" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'git commit -m x' "$BARE")" \
   "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
+
+# --- v2.2.4 (consumer feedback, Yutraffic-Challenge): a UTF-8 BOM defeats every
+# `**Key**:` extractor. The server strips the BOM for hashing and the hooks did
+# not for grepping, so the same file was two different files depending on which
+# subsystem looked. The BOM sits at byte 0, INSIDE line 1, so `^` stopped
+# abutting the key -- and "no field found" is this hook's fail-OPEN arm (warn
+# and allow), i.e. a silently ungated commit rather than a parse error.
+#
+# The arms are a PAIR by position (key on line 1, key on line 2) crossed with a
+# PAIR by polarity, and both pairs are load-bearing:
+#   * line 2 is the shape every consumer file actually has (BOM at byte 0, key
+#     further down) and it passed BEFORE the fix -- the regression being guarded
+#     is "someone moved the key up", not "someone added a BOM". A line-1-only
+#     fixture would also pass a partial fix that only strips a BOM immediately
+#     followed by the key.
+#   * the `false`/exit-2 arms alone cannot discriminate: with a partial fix that
+#     matches but leaves the BOM glued to the value, `bash -c '<BOM>false'` is
+#     command-not-found, also nonzero, also a block. The `true` arms carry the
+#     discrimination, and their exit 0 is shared with the pre-fix fail-open --
+#     so the ABSENCE of the WARN is the assertion that means "field was read".
+BOM=$(printf '\357\273\277')
+NOFIELD_WARN="WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md"
+BOM_L1_OK=$(mkrepo bom-l1-ok main)
+BOM_L2_OK=$(mkrepo bom-l2-ok main)
+BOM_L1_BAD=$(mkrepo bom-l1-bad main)
+BOM_L2_BAD=$(mkrepo bom-l2-bad main)
+printf '%s- **Test**: `true`\n'          "$BOM" > "$BOM_L1_OK/PROJECT_CONTEXT.md"
+printf '%s# ctx\n- **Test**: `true`\n'   "$BOM" > "$BOM_L2_OK/PROJECT_CONTEXT.md"
+printf '%s- **Test**: `false`\n'         "$BOM" > "$BOM_L1_BAD/PROJECT_CONTEXT.md"
+printf '%s# ctx\n- **Test**: `false`\n'  "$BOM" > "$BOM_L2_BAD/PROJECT_CONTEXT.md"
+check_nomsg "BOM + Test on line 1 is read" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$BOM_L1_OK")" "$NOFIELD_WARN"
+check_nomsg "BOM + Test on line 2 is read" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$BOM_L2_OK")" "$NOFIELD_WARN"
+check "BOM + failing Test on line 1"     "$H" 2 "$(mkjson Bash 'git commit -m x' "$BOM_L1_BAD")"
+check "BOM + failing Test on line 2"     "$H" 2 "$(mkjson Bash 'git commit -m x' "$BOM_L2_BAD")"
+
+# The same pair through the **Gate** path, which reaches run-gate.sh -- that
+# script is standalone (no lib), so it repeats the GC_KEY_PRE literal and needs
+# its own behavioural arm, not only the census assertion in
+# verify-template-consistency.sh.
+BOM_G1_OK=$(mkrepo bom-g1-ok main)
+BOM_G1_BAD=$(mkrepo bom-g1-bad main)
+printf '%s- **Gate**: `true`\n'  "$BOM" > "$BOM_G1_OK/PROJECT_CONTEXT.md"
+printf '%s- **Gate**: `false`\n' "$BOM" > "$BOM_G1_BAD/PROJECT_CONTEXT.md"
+check_nomsg "BOM + Gate on line 1 is read" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$BOM_G1_OK")" "$NOFIELD_WARN"
+check "BOM + failing Gate on line 1"     "$H" 2 "$(mkjson Bash 'git commit -m x' "$BOM_G1_BAD")"
 
 # --- v2.1.1 round 1: the block message names the command that failed (with the
 # Gate fallback it is often not a test runner), and the command's own output is
@@ -1927,9 +1995,9 @@ check "absent + develop trunk: develop blocked" "$H" 2 "$(mkjson Bash 'git push'
 check_msg "absent + develop trunk names the union" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push origin develop' "$PB_ABS_DEV")" "protected branch (main master develop)"
 # (the absent arm deliberately does NOT warn — nothing there is misconfigured,
-# the repo simply never said. check_msg has no negative form and one assertion
-# does not justify a fifth harness helper; the union message above is what the
-# arm is contracted to produce.)
+# the repo simply never said. The union message above is what the arm is
+# contracted to produce; v2.2.4 added check_nomsg for the BOM arms, so a direct
+# negative assertion here is now possible but has not been retrofitted.)
 check "empty + develop trunk: develop blocked" "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY_DEV")"
 # fail OPEN on an unknowable trunk, and say so
 check "unknowable trunk: push is NOT blocked"  "$H" 0 "$(mkjson Bash 'git push' "$PB_NOHEAD_DEV")"
@@ -1938,6 +2006,16 @@ check_msg "unknowable trunk warns and names the remedy" "$ROOT/$H" 0 \
 check "empty value: main still blocked"    "$H" 2 "$(mkjson Bash 'git push' "$PB_EMPTY")"
 check_msg "empty value warns about the typo" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git push' "$PB_EMPTY")" "**Protected branches**: is empty"
+# v2.2.4: the BOM pair for THIS extractor. Hiding the field fails safe for
+# `none` (the fallback protects more), so the arm that matters is a field
+# naming a NON-default trunk: unread, `develop` falls back to `main master`
+# and the develop trunk is pushable -- exit 0 before the fix.
+PB_BOM_L1=$(mkrepo pb-bom-l1 develop)
+PB_BOM_L2=$(mkrepo pb-bom-l2 develop)
+printf '%s- **Protected branches**: develop\n' "$BOM" > "$PB_BOM_L1/PROJECT_CONTEXT.md"
+printf '%s# ctx\n- **Protected branches**: develop\n' "$BOM" > "$PB_BOM_L2/PROJECT_CONTEXT.md"
+check "BOM + Protected branches line 1"    "$H" 2 "$(mkjson Bash 'git push' "$PB_BOM_L1")"
+check "BOM + Protected branches line 2"    "$H" 2 "$(mkjson Bash 'git push' "$PB_BOM_L2")"
 # `none` is untouched by the two arms above: it remains the explicit opt-out.
 check "none is still an opt-out"           "$H" 0 "$(mkjson Bash 'git push origin main' "$PB_NONE")"
 
