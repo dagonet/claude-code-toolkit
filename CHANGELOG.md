@@ -51,7 +51,21 @@ v2.2.3 documented `\r` as a hazard on `check-ignore`'s **stdin**. It is really a
   So it is **zero manifest churn**: no `source="skip"`, no finalize, no status change. One consumer shipped theirs as a 3-byte commit touching nothing else, with the pre-commit gate running on it — end-to-end proof the extractor still finds `**Gate**` afterwards. To check whether you have one: `head -c 3 PROJECT_CONTEXT.md | od -An -tx1` → `ef bb bf` means BOM present. Removing it is optional once the hooks below are in place; the fix makes the BOM harmless either way.
 - **`hooks/lib/git-cmd.sh`, `hooks/run-gate.sh`, `hooks/pre-commit-test.sh`, `hooks/gate-before-merge.sh`** — all four carry item 1. Re-copy all four into the project's `hooks/`; a partial copy leaves the extractor that was not copied still blind. Mirrors at `user-level-reference/hooks/…` for `~/.claude/`.
 - **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`; it carries items 2, 3 and 4.
-- **Not shipped here:** BOM tolerance in the upstream `template-sync-tools` server's own field reads, and a server-side refusal for step 2b — both live in that repository, not this one.
+- **Not shipped here:** BOM tolerance in the upstream `template-sync-tools` server's own field reads, and a server-side refusal for step 2b — both live in that repository, not this one. Also not fixed here, and queued rather than forgotten: the skill's own **post-apply placeholder sweep** anchors `'^[-*[:space:]]*\*\*[^*]\+\*\*:.*{{…}}'` the same way, so a placeholder on line 1 behind a BOM gets a false clean. It runs on consumer files, where BOMs actually occur — but it is a warning generator, not a gate, and item 1's scope is the hooks.
+
+### 5. Verification
+
+`verify-template-consistency.sh` **263/263** (+2: the BOM census and the `GC_KEY_PRE` drift check). `test-hooks.sh` **342 assertions** (+8: six BOM arms on `pre-commit-test.sh`/`run-gate.sh`, two on `no-push-main.sh`), all three parser configurations:
+
+| configuration | v2.2.4 |
+|---|---|
+| node | `342 passed, 0 failed, 0 skipped` |
+| python3 (node not usable) | `239 passed, 0 failed, 103 skipped` |
+| jq (node + python3 not usable) | `223 passed, 0 failed, 119 skipped` |
+
+The skip counts are unchanged from v2.2.3 (103 and 119) — the eight new fixtures are parser-independent, which is the check that the restricted configurations were really restricted. Both restricted runs shim `node`/`python3` to a non-interpreter rather than removing them from PATH, which is the same thing the probes measure: `command -v` AND `json_probe_ok`.
+
+12 hook scripts + `hooks/lib/`, 8 skills; 263 consistency assertions, 342 hook fixtures.
 
 ## v2.2.3 — 2026-08-30
 
