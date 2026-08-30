@@ -106,6 +106,7 @@ See `docs/architecture.md` → MCP Layering and `mcp-servers/HOWTO.md` → Proje
 | `{{FORMAT_COMMAND}}` | Format command | dotnet format |
 | `{{LINT_COMMAND}}` | Lint command | dotnet format --verify-no-changes |
 | `{{GATE_COMMAND}}` | Gate command (`hooks/run-gate.sh` runs it) | dotnet format --verify-no-changes && dotnet test |
+| `{{DEFAULT_BRANCH}}` | **No template file uses it** since v2.2.3 — nothing fills it on a sync, so a permanent unresolved-placeholder warning was the only thing it earned. Both setup scripts still substitute it and record it in the manifest, so a reintroduced placeholder resolves for a bootstrapped repo. `--default-branch` itself is live: it rewrites `**Protected branches**:`. | main |
 | `{{DB_DIRECTORY}}` | Database directory (MAUI) | c:\Users\...\Data |
 | `{{DB_FILENAME}}` | Database filename (MAUI) | myproject.db |
 | `{{DB_PATH}}` | Full database path (MAUI) | c:\Users\...\Data\myproject.db |

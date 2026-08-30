@@ -48,6 +48,10 @@ Yutraffic registered `PROJECT_STATE.md` with `source="skip"`, then wrote the syn
 - **`PROJECT_CONTEXT.md`** — optional, prose only. Take the template's `- **Branch strategy**:` line if you want the placeholder gone; nothing reads it either way.
 - **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md` for the step 7 sentence.
 
+### Gate record, stated as measured
+
+`verify-template-consistency.sh` 261/261. `test-hooks.sh`: `327 passed, 0 failed, 0 skipped` with node; `224 passed, 0 failed, 103 skipped` with node off PATH (python3 backend). Removing python3 from the host PATH as well is **not** a third configuration — it starves the suite's own `python3-only PATH self-check` cases of an interpreter to build their synthetic PATH from, and produces the same 8 failures on unmodified v2.2.2. The jq backend is covered where it is actually testable: the suite builds a jq-only PATH internally, and those cases (`jq: push origin main blocked`, `jq: em dash survives`, `broken python3 + jq: still enforces`, …) run green inside both configurations above. A release about a claim that was not true of the thing it described should not ship a gate line that overstates its own evidence.
+
 12 hook scripts + `hooks/lib/`, 8 skills; 261 consistency assertions, 327 hook fixtures.
 
 ## v2.2.2 — 2026-08-30
