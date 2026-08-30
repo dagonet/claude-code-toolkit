@@ -50,12 +50,27 @@ v2.2.3 documented `\r` as a hazard on `check-ignore`'s **stdin**. It is really a
 
   So it is **zero manifest churn**: no `source="skip"`, no finalize, no status change. One consumer shipped theirs as a 3-byte commit touching nothing else, with the pre-commit gate running on it — end-to-end proof the extractor still finds `**Gate**` afterwards. To check whether you have one: `head -c 3 PROJECT_CONTEXT.md | od -An -tx1` → `ef bb bf` means BOM present. Removing it is optional once the hooks below are in place; the fix makes the BOM harmless either way.
 - **`hooks/lib/git-cmd.sh`, `hooks/run-gate.sh`, `hooks/pre-commit-test.sh`, `hooks/gate-before-merge.sh`** — all four carry item 1. Re-copy all four into the project's `hooks/`; a partial copy leaves the extractor that was not copied still blind. Mirrors at `user-level-reference/hooks/…` for `~/.claude/`.
-- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`; it carries items 2, 3 and 4.
-- **Not shipped here:** BOM tolerance in the upstream `template-sync-tools` server's own field reads, and a server-side refusal for step 2b — both live in that repository, not this one. Also not fixed here, and queued rather than forgotten: the skill's own **post-apply placeholder sweep** anchors `'^[-*[:space:]]*\*\*[^*]\+\*\*:.*{{…}}'` the same way, so a placeholder on line 1 behind a BOM gets a false clean. It runs on consumer files, where BOMs actually occur — but it is a warning generator, not a gate, and item 1's scope is the hooks.
+- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`; it carries items 2, 3, 4 and 5.
+- **Not shipped here:** BOM tolerance in the upstream `template-sync-tools` server's own field reads, and a server-side refusal for step 2b — both live in that repository, not this one.
 
-### 5. Verification
+### 5. The placeholder sweep had the same hole, in the release named after it
 
-`verify-template-consistency.sh` **263/263** (+2: the BOM census and the `GC_KEY_PRE` drift check). `test-hooks.sh` **342 assertions** (+8: six BOM arms on `pre-commit-test.sh`/`run-gate.sh`, two on `no-push-main.sh`), all three parser configurations:
+The sweep in `sync-template` is the skill's own detector for unfilled placeholders, and its markdown arm is `^`-anchored exactly like the hook extractors were. It was first scoped out of item 1 as a warning generator rather than a gate; that was the wrong line to draw. BOMs are confirmed in the wild in precisely this file, a placeholder on the first line is the case a reordering consumer most plausibly creates, and the failure mode is a **false clean** — the shape this whole release is named for. Shipping a documented BOM-caused false clean inside the fix for BOM-caused false cleans reads as an oversight to everyone who was not in the review.
+
+The two arms fail in opposite directions and both are now BOM-tolerant. Measured on a fixture:
+
+| arm | before | after |
+|---|---|---|
+| markdown, placeholder on LINE 1 behind a BOM | **0 — MISSED (false clean)** | 1 |
+| markdown, same on line 2 behind a BOM | 1 | 1 |
+| markdown, no BOM on line 1 (control) | 1 | 1 |
+| shell, BOM'd COMMENT line (must be excluded) | **1 false positive** | 0 |
+
+Arm 2's mirror-image failure is worth naming: the BOM lands between the `:` and the `#`, so the comment filter stops recognising a comment and the sweep gets noisier — the same byte, the opposite symptom. Verification is **by measured reproduction, not by a suite fixture**: the sweep is skill prose with no executable surface in this repository, so the numbers above come from a fixture tree run against both pattern versions, and the standing contract (zero hits on a clean tree) was re-checked against this tree — 0 on both arms. What the suite *can* hold is drift: `verify-template-consistency.sh` now asserts both arms still carry the optional BOM prefix.
+
+### 6. Verification
+
+`verify-template-consistency.sh` **264/264** (+3: the BOM census, the `GC_KEY_PRE` drift check, and the placeholder-sweep BOM check). `test-hooks.sh` **342 assertions** (+8: six BOM arms on `pre-commit-test.sh`/`run-gate.sh`, two on `no-push-main.sh`), all three parser configurations:
 
 | configuration | v2.2.4 |
 |---|---|
@@ -65,7 +80,7 @@ v2.2.3 documented `\r` as a hazard on `check-ignore`'s **stdin**. It is really a
 
 The skip counts are unchanged from v2.2.3 (103 and 119) — the eight new fixtures are parser-independent, which is the check that the restricted configurations were really restricted. Both restricted runs shim `node`/`python3` to a non-interpreter rather than removing them from PATH, which is the same thing the probes measure: `command -v` AND `json_probe_ok`.
 
-12 hook scripts + `hooks/lib/`, 8 skills; 263 consistency assertions, 342 hook fixtures.
+12 hook scripts + `hooks/lib/`, 8 skills; 264 consistency assertions, 342 hook fixtures.
 
 ## v2.2.3 — 2026-08-30
 

@@ -824,6 +824,25 @@ else
   ko "GC_KEY_PRE definition drifted: found in $gkp_have of 2 files (git-cmd.sh, run-gate.sh)"
 fi
 
+# 21c-3. The sync-template placeholder sweep is BOM-tolerant too (v2.2.4).
+#
+#        Same class as 21c-2, one layer out: the sweep is the skill's own
+#        detector for unfilled placeholders and it runs on CONSUMER files, where
+#        BOMs actually occur. Arm 1 (`^`-anchored markdown) fails CLEAN — a
+#        placeholder on line 1 behind a BOM is missed silently; arm 2's comment
+#        filter fails NOISY — a BOM'd comment stops reading as a comment. Both
+#        arms carry `\(${BOM}\)\?`; this asserts neither loses it.
+SWEEP_SKILL="user-level-reference/skills/sync-template/SKILL.md"
+sweep_arms=$(grep -c '{{\[A-Z_\]\\{2,\\}}}' "$SWEEP_SKILL" 2>/dev/null)
+sweep_bom=$(grep -c 'BOM}\\)\\?' "$SWEEP_SKILL" 2>/dev/null)
+if [ ! -f "$SWEEP_SKILL" ]; then
+  ko "$SWEEP_SKILL missing — the placeholder sweep census cannot run"
+elif [ "$sweep_bom" -ge 2 ]; then
+  ok "placeholder sweep: both arms in $SWEEP_SKILL are BOM-tolerant"
+else
+  ko "placeholder sweep: only $sweep_bom of 2 arms in $SWEEP_SKILL carry the optional BOM prefix (arm 1 would fail CLEAN, arm 2 noisy) — $sweep_arms sweep lines seen"
+fi
+
 # 21d. Every shipped shell script PARSES (v2.2.1).
 #
 #      Not hypothetical: `enforce-delegation.sh`, `read-size-gate.sh` and the
