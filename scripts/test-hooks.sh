@@ -234,14 +234,28 @@ skip() { # <label> <reason> [assertion-count]
 # transcript scan) are embedded node PROGRAMS, not field reads: json.sh's
 # json_require_node makes them warn and pass with no node. Their fixtures
 # assert enforcement, so on a node-less host they must SKIP, not fail.
-HAVE_NODE=1; command -v node    >/dev/null 2>&1 || HAVE_NODE=""
-HAVE_PY=1;   command -v python3 >/dev/null 2>&1 || HAVE_PY=""
-HAVE_JQ=1;   command -v jq      >/dev/null 2>&1 || HAVE_JQ=""
-
 # The JSON READER the assertions use is the hooks' own lib -- so the suite is
 # self-testing for the mechanism it guards. Safe here precisely because the
-# builders above share none of its backends.
+# builders above share none of its backends. Sourced BEFORE the HAVE_* probes
+# because those need json_probe_ok; see immediately below.
 . "$ROOT/hooks/lib/json.sh"
+
+# `command -v` is NOT enough, and this harness had exactly the bug v2.2.1 fixed
+# inside json_require_node. Windows ships a non-interpreter App-Installer STUB at
+# %LOCALAPPDATA%/Microsoft/WindowsApps/python3 that is on PATH by default: it
+# satisfies `command -v python3` and prints "Python was not found" when run. So
+# on a host with no real python3, HAVE_PY was TRUE, the python3-only blocks ran,
+# mkpathdir copied the stub into the python3-only PATH, and eight cases failed
+# with no indication that the cause was a fake interpreter rather than a hook.
+# The hooks decide with `command -v` AND json_probe_ok; the suite that tests
+# them must use the same definition of "present", or it measures a different
+# machine than the one the hooks see.
+have_backend() { # <backend>
+  command -v "$1" >/dev/null 2>&1 && json_probe_ok "$1"
+}
+HAVE_NODE=1; have_backend node    || HAVE_NODE=""
+HAVE_PY=1;   have_backend python3 || HAVE_PY=""
+HAVE_JQ=1;   have_backend jq      || HAVE_JQ=""
 jfield() { # <json> <dotted.path> -> value, or '' when absent/unparseable
   json_get "$1" "$2"
 }
