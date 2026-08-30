@@ -53,11 +53,29 @@ If everything is up-to-date and no new files, report "Already in sync" and final
 
 `CLAUDE.local.md` is the file this describes in every variant: gitignored by the shipped `.gitignore`, tracked by the manifest, and deviating **by design** in any project that customised its MCP rules. Back it up first and by name.
 
-Derive the set rather than assuming it is only that one — a project may gitignore more:
+Derive the set rather than assuming it is only that one — a project may gitignore more. **Use exactly this invocation; the "obvious" implementation of the previous wording backed up nothing and reported success on two different repos.**
 
 ```
-git check-ignore --stdin < <manifest file list>     # every hit is unrecoverable
+# Method 1 — one process, NUL-separated BYTES. `-z` is not optional.
+git check-ignore -z --stdin        # stdin: b"\0".join(paths); every hit is unrecoverable
+
+# Method 2 — one process per path, works everywhere, instant for a few dozen paths.
+git check-ignore -v -- <path>      # a hit prints `.gitignore:<line>:<pattern>\t<path>`
 ```
+
+**Why `-z`, stated so it is not re-derived wrongly.** Written from Python in text mode on Windows, `"CLAUDE.local.md\n"` reaches git as `CLAUDE.local.md\r`. Without `-z`, `check-ignore --stdin` splits on `\n`, so it tests a path ending in `\r`, which matches no rule. It then exits **1 — meaning "none of these paths are ignored", which is indistinguishable from a genuine clean result — and prints nothing to stderr.** The same pipe typed in Git Bash works, because the shell writes bare `\n`; it fails specifically under the script-driven invocation this step actually uses. Measured:
+
+| written as | result |
+|---|---|
+| text mode, `'CLAUDE.local.md\n'` | rc=1, empty — **silently "nothing ignored"** |
+| bytes, `b'CLAUDE.local.md\n'` | rc=0, HIT |
+| bytes, `b'CLAUDE.local.md\r\n'` | rc=1, empty — the `\r` is the cause |
+| bytes, `-z`, `b'CLAUDE.local.md\0'` | rc=0, HIT |
+
+**Two assertions, both required before the result is trusted:**
+
+1. **Cross-check the methods.** Run both and assert they return the same set; print `both methods agree` before copying anything. `git status --porcelain --ignored` (which lists `!! <path>`) is a third, independent confirmation if they disagree.
+2. **Assert non-empty when the manifest tracks `CLAUDE.local.md`** — every variant ships it and every shipped `.gitignore` ignores it, so an empty set there is impossible and means the check failed, not that there is nothing to protect. **This assertion is the one that does not depend on getting the invocation right**, which is why it exists: it catches the whole class, including the next variant of it. An empty set with `CLAUDE.local.md` in the manifest stops the sync; it does not proceed with `Backup: <dir> []`.
 
 Copy each hit to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync.
 
@@ -214,6 +232,8 @@ Add each hit as `hooks/lib/<file>`. They are checked and restored exactly like t
 
 Call `template_finalize_sync(project_path=".", applied_files=<JSON array of all template_apply_file results>)`.
 
+**Re-register keep-mine files LAST** — every `source="skip"` registration is the last action before finalize, after every edit including the sync's own write-up into `PROJECT_STATE.md`. A hash recorded before a later edit describes nothing, and on a file with a live PROJECT-CUSTOM region those stale part hashes are exactly what the next sync's classification reads.
+
 Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
 
 **Shape this as two short commands, not one long one.** Write the `applied_files` JSON — and any validator — to the scratchpad with the Write tool, then run `python3 <validator-path> <json-path>`. The payload will always contain hook paths (`hooks/run-gate.sh` among them, by construction), and a long command line carrying them is the shape that has repeatedly tripped a guard: it is also the standing "move logic into a script file" rule, arriving from a third direction.
@@ -225,8 +245,13 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 **Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report:
 
 ```
-grep -rn '{{[A-Z_]\{2,\}}}' .claude hooks *.md
+# markdown: only a config-VALUE line, which is where a placeholder is load-bearing
+grep -rn -- '^[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}' .claude *.md
+# shell: skip comment lines — prose ABOUT a placeholder is not a placeholder
+grep -rn -- '{{[A-Z_]\{2,\}}}' .claude hooks --include='*.sh' | grep -v ':[0-9]*:[[:space:]]*#'
 ```
+
+**Why not the plain `grep -rn '{{[A-Z_]\{2,\}}}' .claude hooks *.md`:** it flags the toolkit's own documentation of placeholder handling — `hooks/lib/git-cmd.sh`'s comments explaining the `{{DEFAULT_BRANCH}}` arms, and `hooks/pre-commit-test.sh`'s comment naming `{{TEST_COMMAND}}`. Every consumer hits those three lines and has to reason them out, and the better the handling is documented the noisier its own detector becomes. Reported independently by two consumers. **Do not fix it by excluding `hooks/lib/` by name** — that rots on the first rename and would hide a genuine unfilled placeholder in a hook script. Excluding *comment lines* and requiring markdown hits on a `- **Key**: value` line kills all three false positives and keeps every real one. Verify the refinement the same way it was verified upstream: the sweep must report zero on a clean tree, and must still catch a placeholder planted in a `- **Key**:` line.
 
 Any hit is a file the template wrote with an unfilled placeholder — `template_apply_file` substitutes only placeholders present in the project's manifest, so a key the manifest predates (`DEFAULT_BRANCH`, `GATE_COMMAND`, `WORKTREE_BASE`, `LOG_PATH`) lands as a literal on **both** accept-template and accept-merged. Fill it or delete the line; list every hit under `Warnings:` either way. This one grep is what stands between a consumer and a config value that reads as data — v2.2.0 shipped `- **Protected branches**: {{DEFAULT_BRANCH}}`, and until v2.2.1's resolver fix that literal silently unprotected trunk.
 

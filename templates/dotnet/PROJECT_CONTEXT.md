@@ -6,7 +6,7 @@
 - **Tech stack**: {{TECH_STACK}}
 - **Repository**: {{REPO_URL}}
 - **Solution file**: `{{SOLUTION_FILE}}`
-- **Branch strategy**: feature branches per task, PR into `{{DEFAULT_BRANCH}}` (see AGENT_TEAM.md Mode Behavior Table for naming convention). Prose for humans — **no hook reads this line**; the enforced set is `**Protected branches**:` directly below.
+- **Branch strategy**: feature branches per task, PR into the trunk — the branch named on the `**Protected branches**:` line directly below (see AGENT_TEAM.md Mode Behavior Table for naming convention). Prose for humans — **no hook reads this line**, and it is deliberately placeholder-free: nothing fills a placeholder here on a sync, so one would report unresolved on every apply, forever, on a value that is supposed to be there.
 <!-- THE line the protection hooks read; space- or comma-separated names.
      EDIT THIS if your trunk is not main/master — nothing fills it in for you,
      and a trunk that is not named here is NOT protected.
