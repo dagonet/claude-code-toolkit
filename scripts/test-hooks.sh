@@ -132,8 +132,13 @@ mkstop() { # <cwd> <agent_type> <agent_id> <transcript_path>
   # cwd is asserted verbatim (the slug rule is exercised with both spellings),
   # so only the transcript path -- which the hook must actually open -- is
   # converted to the native form.
-  printf '{"session_id":"t","hook_event_name":"SubagentStop","cwd":"%s","agent_type":"%s","agent_id":"%s","agent_transcript_path":"%s","last_assistant_message":"done"}\n' \
-    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$3")" "$(jesc "$(natpath "$4")")"
+  # v2.2.2: BOTH transcript fields, as the live payload carries them. With only
+  # agent_transcript_path set, a hook that reads transcript_path gets an empty
+  # value and fails OPEN -- so every want-0 assertion would pass vacuously,
+  # against a hook that never opened a transcript at all.
+  printf '{"session_id":"t","hook_event_name":"SubagentStop","cwd":"%s","agent_type":"%s","agent_id":"%s","agent_transcript_path":"%s","transcript_path":"%s","last_assistant_message":"done"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$3")" \
+    "$(jesc "$(natpath "$4")")" "$(jesc "$(natpath "$4")")"
 }
 
 mkstart() { # <cwd>
@@ -149,6 +154,21 @@ trow_ok() { # <content> -> a SUCCESSFUL tool_result row (no is_error)
 }
 trow_text() { # <text> -> an assistant prose row
   printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$(jesc "$1")"
+}
+
+# v2.2.2: the SAME assistant turn as trow_text, in the OTHER wire shape. A
+# text-only assistant turn -- which every compliant final report is -- serializes
+# message.content as a plain STRING, not an array of blocks. A reader that only
+# handles the array shape silently skips it; that was the enforce-agent-contract
+# defect, and it is why both shapes are fixtured from here on.
+trow_str() { # <text> -> an assistant prose row with STRING content
+  printf '{"type":"assistant","message":{"role":"assistant","content":"%s"}}\n' "$(jesc "$1")"
+}
+
+# An assistant turn that is tool_use ONLY: array content, no text block. The
+# agent stopped mid-tool-call, so there is no report -- non-compliant by design.
+trow_tool() { # -> an assistant tool_use-only row
+  printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}\n'
 }
 
 # --- assertion --------------------------------------------------------------
@@ -1161,6 +1181,119 @@ mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFO
 expect "round trip: brief replays the entry" 1 "$(grep -c 'agent-rt99' "$BRIEFOUT")"
 else
 skip "retro-ledger + retro-brief cases" "no node on this host" 32
+fi
+
+# ===========================================================================
+# hooks/enforce-agent-contract.sh — verdict + loop guard (v2.2.2, consumer
+# feedback: Motorsport-Manager-AI-Agent field report)
+#
+# Until v2.2.2 this hook had NO behavioural fixture at all — only degraded-path
+# cases (`no lib:` / `no parser:`), which pass whatever the verdict logic does.
+# Two defects lived in that gap:
+#   A. the transcript scan read message.content only when it was an ARRAY, so a
+#      text-only compliant final report was never seen and `txt` kept an earlier
+#      mid-run turn: the contract could not be satisfied, ever;
+#   B. the loop-guard marker was deleted on the let-through path, so enforcement
+#      alternated block/pass forever instead of prodding exactly once.
+# Also fixed here: the hook read `transcript_path` (the SESSION's JSONL) rather
+# than `agent_transcript_path` (the subagent's own) — mkstop only ever sets the
+# latter, so every assertion below would fail against the pre-v2.2.2 field read.
+# ===========================================================================
+echo
+echo "=== hooks/enforce-agent-contract.sh (verdict + loop guard) ==="
+
+if [ -n "$HAVE_NODE" ]; then
+
+CONTRACT_OK='All done.
+
+## Gate Results
+GATE PASS abc1234
+
+## Spec Compliance
+1. DONE'
+
+# <label> <tmpdir> <agent_type> <agent_id> <transcript> <want_exit> <needle|"">
+# The TMPDIR is a PARAMETER, deliberately unlike check_msg's fresh-per-case
+# idiom: the loop-guard sequence below is only meaningful when three consecutive
+# stops share one marker directory, which is exactly what a real session does.
+ctr() {
+  ctr_label="$1"; ctr_tmp="$2"; ctr_type="$3"; ctr_id="$4"
+  ctr_tr="$5"; ctr_want="$6"; ctr_needle="${7:-}"
+  ctr_err="$TMPROOT/contract.err"
+  mkdir -p "$ctr_tmp"
+  printf '%s' "$(mkstop "$PROJCWD" "$ctr_type" "$ctr_id" "$ctr_tr")" \
+    | TMPDIR="$ctr_tmp" bash "$ROOT/hooks/enforce-agent-contract.sh" \
+      >/dev/null 2>"$ctr_err"
+  ctr_got=$?
+  if [ "$ctr_got" = "$ctr_want" ] &&
+     { [ -z "$ctr_needle" ] || grep -qF "$ctr_needle" "$ctr_err"; }; then
+    printf 'PASS  %-42s (exit %s)\n' "$ctr_label" "$ctr_got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s%s, got %s: %s)\n' "$ctr_label" "$ctr_want" \
+      "${ctr_needle:+ + \"$ctr_needle\"}" "$ctr_got" "$(head -1 "$ctr_err")"
+    fail=$((fail + 1))
+  fi
+}
+
+# --- 1. both wire shapes of a compliant final report are accepted -----------
+CT_ARR="$TMPROOT/contract-array.jsonl"
+trow_text "$CONTRACT_OK" > "$CT_ARR"
+ctr "coder: array-shaped report passes" "$TMPROOT/ct1" coder a-arr "$CT_ARR" 0
+
+CT_STR="$TMPROOT/contract-string.jsonl"
+trow_str "$CONTRACT_OK" > "$CT_STR"
+ctr "coder: STRING-shaped report passes" "$TMPROOT/ct2" coder a-str "$CT_STR" 0
+
+# --- 2. the reported shape: a non-compliant ARRAY turn earlier in the run,
+# then a compliant STRING final report. The array-only reader kept the stale
+# earlier turn and blocked; the last turn is what counts.
+CT_MIX="$TMPROOT/contract-mixed.jsonl"
+trow_text 'Working on it — reading the spec now.' > "$CT_MIX"
+trow_str "$CONTRACT_OK" >> "$CT_MIX"
+ctr "STRING report after array mid-run turn" "$TMPROOT/ct3" coder a-mix "$CT_MIX" 0
+
+# --- 3. preserved semantics: a tool_use-only final turn is NO report ---------
+CT_TOOL="$TMPROOT/contract-tool.jsonl"
+trow_str "$CONTRACT_OK" > "$CT_TOOL"
+trow_tool >> "$CT_TOOL"
+ctr "tool_use-only final turn blocks" "$TMPROOT/ct4" coder a-tool "$CT_TOOL" 2 \
+  "CONTRACT VIOLATION"
+
+# --- 4. code-reviewer verdicts read the string shape too --------------------
+CT_CLEAN="$TMPROOT/contract-clean.jsonl"
+trow_str 'clean' > "$CT_CLEAN"
+ctr "reviewer: STRING 'clean' passes" "$TMPROOT/ct5" code-reviewer a-cl "$CT_CLEAN" 0
+
+CT_CHAT="$TMPROOT/contract-chat.jsonl"
+trow_str 'Looks fine to me, nothing to flag.' > "$CT_CHAT"
+ctr "reviewer: STRING prose blocks" "$TMPROOT/ct6" code-reviewer a-ch "$CT_CHAT" 2 \
+  "CONTRACT VIOLATION"
+
+# --- 5. the loop guard bounds at ONE prod, over a SHARED marker dir ----------
+# Pre-v2.2.2 this sequence measured 2 / 0 / 2: the let-through path deleted the
+# marker, so stop 3 started fresh and prodded again — an unbounded alternation.
+CT_LOOP="$TMPROOT/contract-loop.jsonl"
+trow_str 'Done, I think that covers it.' > "$CT_LOOP"
+LOOPTMP="$TMPROOT/ct-loop"
+ctr "loop guard: stop 1 blocks"        "$LOOPTMP" coder a-loop "$CT_LOOP" 2 \
+  "CONTRACT VIOLATION"
+ctr "loop guard: stop 2 passes"        "$LOOPTMP" coder a-loop "$CT_LOOP" 0 \
+  "CONTRACT-ENFORCER"
+ctr "loop guard: stop 3 still passes"  "$LOOPTMP" coder a-loop "$CT_LOOP" 0 \
+  "CONTRACT-ENFORCER"
+# A DIFFERENT agent in the SAME session keeps its own single prod: the marker is
+# keyed on session+agent, not session.
+ctr "loop guard: other agent still prodded" "$LOOPTMP" coder a-loop2 "$CT_LOOP" 2 \
+  "CONTRACT VIOLATION"
+# ...and having complied once does not re-arm the prod for an agent that yields
+# again without a report.
+ctr "compliant stop does not re-arm"   "$LOOPTMP" coder a-loop "$CT_ARR" 0
+ctr "then a later bare stop still passes" "$LOOPTMP" coder a-loop "$CT_LOOP" 0 \
+  "CONTRACT-ENFORCER"
+
+else
+skip "enforce-agent-contract verdict + loop guard" "no node on this host" 12
 fi
 
 # ===========================================================================

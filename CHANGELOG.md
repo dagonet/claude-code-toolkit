@@ -1,5 +1,96 @@
 # Changelog
 
+## v2.2.2 — 2026-08-30
+
+**A contract that cannot determine whether the agent is finished must not demand the artifact of finishing.** That is the mirror, on the reporting side, of v2.2.1's gate posture — and `hooks/enforce-agent-contract.sh` violated it three ways at once. Credit: the Motorsport-Manager-AI-Agent session, 2026-08-30. Their agent read the hook source, diagnosed the mechanism, then confirmed it by adding a tool call to a turn specifically to force array-shaped content and watching the violation clear — and it **reported the defect rather than patching the hook**, which is what made the diagnosis trustworthy.
+
+### 1. The contract could not be satisfied — a compliant final report was never read
+
+`enforce-agent-contract.sh`'s transcript scan read `message.content` only when it was an **array**:
+
+```
+if (j.type==="assistant" && j.message && Array.isArray(j.message.content)){
+```
+
+In this transcript format `content` is an array only for turns that **mix text with tool calls**. A plain text-only assistant turn — which is exactly what a compliant final report is — serializes `content` as a **string**. Those turns were skipped entirely, so `txt` kept whatever the last array-shaped turn held: an earlier, non-compliant, mid-run message. An agent that ended with a pure-text compliant report was told it violated the contract, forever, no matter how many times it complied.
+
+Measured against the shipped hook, one compliant report in each wire shape:
+
+| final turn `content` | v2.2.1 | v2.2.2 |
+|---|---|---|
+| array | 0 | 0 |
+| **string** | **2** | **0** |
+
+Both shapes are read now, string first. The semantics for a `tool_use`-only final turn are deliberately unchanged: empty text still means the agent ended without a report, and still blocks.
+
+**This bug class was already in this project's own notes.** The v2.1 mining pass that produced "64 of 90 teammates never reported" made the mirror-image mistake — it parsed `content` only when it was a *string* — and the corrected figure was 4 of 90. The lesson was written down and then recurred in a hook, so every transcript reader in the repo was audited this time rather than only the reported one:
+
+| reader | shape handled | verdict |
+|---|---|---|
+| `hooks/enforce-agent-contract.sh` | array only | **fixed** — reads both |
+| `hooks/retro-ledger.sh` (+ mirror) | array only | **correct as written**, no change — it matches `tool_result` blocks, which only ever exist inside array content; a string turn cannot contain one |
+| `tools/measure-context-bloat.py` | both | already fixed after the mining error |
+| `hooks/retro-brief.sh` | n/a | parses the ledger JSON, not a transcript |
+| `hooks/bash-output-guard.sh`, `hooks/pre-commit-test.sh`, `scripts/check-activation.sh` | n/a | mention `transcript` in prose only |
+
+### 2. It read a transcript field the payload table does not list for this event
+
+Found while fixturing item 1. The measured-stdin table in `user-level-reference/settings-reference.md` lists `agent_transcript_path` for `SubagentStop` and describes it as "the SUBAGENT's own JSONL, not the session's". `retro-ledger.sh`, the repo's other `SubagentStop` consumer, reads that field; `enforce-agent-contract.sh` read `transcript_path` instead, and `mkstop` — the fixture builder the two hooks share — set only the former. The hook now prefers `agent_transcript_path` and falls back to `transcript_path`.
+
+**Stated precisely, because the temptation is to overclaim it:** what is established is that the two consumers disagreed and that one of them used a field the table does not list for this event. What is *not* established is that `transcript_path` resolved to the session transcript on the live payload — the consumer's own experiment (adding a tool call to a turn to force array-shaped content, and watching the violation clear) could only have worked if the hook was already reading the agent's own transcript. So this is an ambiguity removed, not a second confirmed misread. The code change is correct under either reading, which is why it ships.
+
+`mkstop` now sets **both** fields, as the live payload does. That is not cosmetic: with only `agent_transcript_path` set, a hook reading `transcript_path` gets an empty value and fails OPEN, so every `want 0` assertion below would have passed vacuously against a hook that never opened a transcript. With both set, six of the twelve new assertions fail against the pre-v2.2.2 hook, which is what a fixture for a bug is supposed to do.
+
+### 3. The loop guard bounded nothing
+
+The header claimed "a marker file bounds enforcement to EXACTLY ONE forced continuation per session+agent". It did not: the marker was deleted on **both** the compliant path and the let-through path, so the next stop started fresh and prodded again. Three consecutive stops, same session+agent, non-compliant each time:
+
+```
+v2.2.1   stop1: exit=2   stop2: exit=0   stop3: exit=2
+v2.2.2   stop1: exit=2   stop2: exit=0   stop3: exit=0
+```
+
+An unbounded alternation — prod on every odd stop, forever. The marker is now **sticky**: written once, never removed by this hook on any path. Every later stop for that session+agent passes with the non-blocking `CONTRACT-ENFORCER` line.
+
+**Cleanup is left to `TMPDIR` lifetime, not a `json_warn_once`-style TTL**, and that is the cheaper choice on both counts: an hour-long TTL re-arms the prod mid-run, which is the same unbounded loop with a slower clock, whereas a stale zero-byte marker costs one inode until the temp directory is cleared.
+
+### 4. Terminal-stop detection: investigated, not available — and deliberately not guessed
+
+The consumer's first hypothesis was "it fires every turn". Wrong as stated — it is registered on `SubagentStop`, matcher `^([a-z0-9]+-)?coder$|^code-reviewer$`. But the observation underneath it stands: an agent that yields a turn mid-run gets its contract checked against an unfinished transcript.
+
+The measured `SubagentStop` payload carries `agent_id`, `agent_type`, `agent_transcript_path` and `last_assistant_message`. **There is no `stop_hook_active` and no "this agent will resume" flag** — `stop_hook_active` exists on `Stop`, not here. A trailing `tool_use` block is not a substitute discriminator either: that is the same fact the hook already encodes as "empty text ⇒ no report", so reusing it would make every mid-tool yield indistinguishable from a terminal stop, not distinguishable.
+
+So: **no signal, and no heuristic added.** A wrong terminal-detection guess would reintroduce exactly the "cannot determine → act anyway" shape v2.2.1 exists to remove. With items 1–3 fixed the cost of not knowing is bounded to one prod per agent per session, and that bound is now what the fixtures assert. The reasoning is recorded in the hook header so the next reader does not re-open it.
+
+### 5. What it cost the consumer
+
+Both re-attributed from "agent misjudgement" to this hook once the mechanism was known:
+
+1. One completed run notified the lead **four times** with near-identical reports.
+2. An agent ran a **ten-minute gate including a plugin deploy into a live game install** on a task that changed zero source files, explicitly "to satisfy the stop-hook's mechanical requirement". It was safe only because that agent checked the game lock was free first.
+
+### 6. The hook had no behavioural fixture at all
+
+That is the gap all three defects lived in. `scripts/test-hooks.sh` covered only the degraded paths (`no lib:`, `no parser:`), which pass whatever the verdict logic does. Twelve new assertions, `HAVE_NODE`-guarded: both wire shapes of a compliant report; a string report following a non-compliant array turn (the reported shape); a `tool_use`-only final turn still blocking; the `code-reviewer` `clean`/prose verdicts in string form; and the loop-guard sequence over a **shared** marker directory — stop 1 blocks, stops 2 and 3 pass with the enforcer line, a different agent id in the same session still gets its own single prod, and a compliant stop does not re-arm the prod. The shared-`TMPDIR` helper is the deliberate opposite of `check_msg`'s fresh-per-case idiom, and says so: the guard is only meaningful across stops that share one marker dir.
+
+The total is host-independent, the split is not. Measured at this commit:
+
+| PATH | result |
+|---|---|
+| node + python3 + jq | `321 passed, 0 failed, 0 skipped (321 assertions)` |
+| python3 + jq, no node | `218 passed, 0 failed, 103 skipped (321 assertions)` |
+| jq only | `202 passed, 0 failed, 119 skipped (321 assertions)` |
+
+All twelve new assertions are node-only, so they land wholly in the skip column on the lower two rows — the same posture as every other embedded-node hook's fixtures.
+
+### Downstream migration
+
+Re-copy **one file**: `hooks/enforce-agent-contract.sh`. It has no `user-level-reference` mirror by design (it is a project-level hook). No other hook changed — the audit in item 1 confirmed `retro-ledger.sh` is correct as written, so its mirror is untouched too.
+
+**If you are on v2.1.x–v2.2.1, your coder and reviewer agents have been prodded into redundant work.** Any agent that ended with a plain-text report was told it violated the contract and re-ran its gate — repeatedly, since the loop guard did not bound. Re-copying the hook stops it; nothing else in your repo needs to change.
+
+12 hook scripts (2 lib files), 8 skills; **261 consistency assertions** (unchanged) and 309 → **321 hook fixtures**, both measured at this commit.
+
 ## v2.2.1 — 2026-08-29
 
 **SECURITY-RELEVANT — read item 0 first if you accepted the v2.2.0 template.** Credit for this release: the home-agent WSL field report, panoscribe, penumbra, Yutraffic-Challenge and Motorsport-Manager-AI-Agent, all 2026-08-29.
