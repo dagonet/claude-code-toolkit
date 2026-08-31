@@ -238,7 +238,11 @@ Results, all red where they must be:
 | the `:141` clamp | R5c (unrelated gate exits 78) | 4 of 4 assertions flip — red |
 | the provenance marker | R5b arm 1 (nested run-gate.sh) | 5 of 5 assertions flip — red |
 | not-a-git-repository → 78 | R5d | 2 of 2 assertions flip — red |
-| the parser-matrix skip assertion | an unrestricted PATH in a restricted slot | `MATRIX FAIL: … is still visible` — red |
+| the parser matrix's interpreter self-check | a configuration whose hidden interpreter is still resolvable | `MATRIX FAIL: 'python3' is still visible at …` — red (observed on a real run, before the fix) |
+| the parser matrix's **skip-count** assertion | `MATRIX_SUITE` pointed at a stub reporting 0 skips | node row green (exact 0), python3 and jq rows red |
+| — its opposite arm | a stub reporting an in-band skip count | all three green — so the assertion is not one that fires on everything |
+
+The matrix's own two guards were themselves wrong until this test was applied to them, which is the argument for the rule rather than an aside. The skip-count arm — the assertion the whole script exists for — had **never been observed firing**; only the self-check arm had, so that table row was decorative as first written. And `EXP_NODE_SKIP=0` with a ±20 band accepted **15 skips as "in band (~0)"** on the one configuration where 0 is the only correct answer, and where a fixture that silently skips everywhere would hide. An expected count of 0 is now asserted exactly, and `MATRIX_SUITE` makes the control a seconds-long probe instead of a ninety-minute one.
 
 **Field-coverage honesty, for the two items where the evidence is thinner than it reads.** The v2.2.4 BOM fix's coverage is **synthetic, not field-confirmed**: two consumers report no BOM anywhere in their trees, so both sweeps return 0 on both arms and every control that fired was planted. Neither repo is field confirmation. The one real-file datum available is an *under*-fire check that passed: after a three-way merge of `run-gate.sh`, the BOM-tolerant `**Gate**:` grep still extracted a consumer's actual Gate command rather than falling through to `GATE SKIP`. And item 8's I2 has **no** field evidence either way, as noted there.
 
