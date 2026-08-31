@@ -48,26 +48,36 @@ There was no root `PROJECT_CONTEXT.md`, so `run-gate.sh` printed `GATE SKIP` and
 `PROJECT_CONTEXT.md` now exists at the root, filled in, placeholder-free, with the **Test/Gate split**:
 
 ```
-- **Test**: bash scripts/verify-template-consistency.sh                                (~20s, every commit)
-- **Gate**: bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh  (~600s, merge only)
+- **Test**: bash scripts/verify-template-consistency.sh                                (58s, every commit)
+- **Gate**: bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh  (619s, merge only)
 - **Protected branches**: main
 ```
 
-The split is the point, not an optimisation. `test-hooks.sh` builds a throwaway git repo per fixture and takes ~600s; collapsed into one command it would put ten minutes on **every commit** in this repo — the exact trap a consumer is living in right now. `verify-template-consistency.sh` is unbothered by the new file (it does not mistake it for a template artifact) and three assertions now hold it in place: the file exists and is placeholder-free, `**Test**` is the consistency script *without* `test-hooks.sh`, and `**Gate**` runs both. Deleting the file would otherwise restore the old silence with no other symptom.
+The split is the point, not an optimisation. `test-hooks.sh` builds a throwaway git repo per fixture; collapsed into one command it would put ten minutes on **every commit** in this repo — the exact trap a consumer is living in right now. Both numbers are measured on the release host with nothing else running and are load-sensitive (Test measured **117s** under a concurrent suite run, 2× its quiet number); the ratio is the part that travels. `verify-template-consistency.sh` is unbothered by the new file (it does not mistake it for a template artifact) and four assertions now hold the arrangement in place: the file exists and is placeholder-free, `**Test**` is the consistency script *without* `test-hooks.sh`, `**Gate**` runs both, and `test-hooks.sh` unsets `RUN_GATE_ACTIVE` (item 3). Deleting the file would otherwise restore the old silence with no other symptom.
+
+### 3. Dogfooding found a real bug on its first run — in the suite, not in the hooks
+
+The first `bash hooks/run-gate.sh` in this repository's history went **323 passed, 19 failed**, against a `test-hooks.sh` that is 342/0 when run standalone. Every one of the 19 was a fixture that nests `run-gate.sh` in a throwaway repo.
+
+`run-gate.sh` **exports** `RUN_GATE_ACTIVE=1` before running the gate command, to stop a `**Gate**` that invokes `run-gate.sh` from recursing until the fd limit kills it. Now that the gate command *is* `test-hooks.sh`, every nested fixture inherits that variable and trips the guard on entry: exit 2, no artifact written, 19 reds. Same value, same script, two different answers depending on who invoked it.
+
+**Fixed in the suite, not in the hook.** The hook is doing exactly what its header says, and the leak is the harness's — `test-hooks.sh` already masks `PATH` and `TMPDIR` per case, and `RUN_GATE_ACTIVE` is the same class it had not handled. It now `unset`s the variable at the top; the one case that *tests* the recursion guard sets it explicitly per-invocation and is unaffected. The alternative — keying the guard on the repo top instead of a bare `1` — was rejected: it cannot stay recursion-safe as a single value (repo A's gate runs run-gate in B, B's runs it in A, each sees a different value and recurses forever), it would need a set inside a script that is deliberately standalone and parser-free, and it changes shipped consumer hook behaviour to paper over a test-harness environment leak. A consistency assertion pins the `unset` so the next person who reshuffles the suite header gets a red instead of 19.
+
+This is the value of item 2 arriving on day one: the bug was invisible for as long as the gate no-opped.
 
 **Self-reference risk, named in `CLAUDE.md`.** The gates now enforce against the repository that defines them, so a bug in `pre-commit-test.sh` can block the commit that fixes `pre-commit-test.sh`. The documented escape is the pre-existing kill switch `<cwd>/.claude/git-guard-off` — read the block message first, since it is far more often a real red gate than a broken hook.
 
 **Fixture re-check, as asked: nothing should be simplified.** The committed fixtures already build their own repos through `mkrepo`; pointing them at the toolkit checkout would couple the suite to the very `PROJECT_CONTEXT.md` under test and make it non-hermetic on hosts that run the suite from a different tree. What genuinely got easier is *ad-hoc* verification — a hand-built scratch repo is no longer needed to watch a gate discriminate — and that is where the benefit lands.
 
-### 3. Verification
+### 4. Verification
 
-`verify-template-consistency.sh` **267/267** (+3, the self-gating assertions). `test-hooks.sh` **342 assertions**, unchanged, all three parser configurations.
+`verify-template-consistency.sh` **268/268** (+4: three self-gating assertions and the `RUN_GATE_ACTIVE` pin). `test-hooks.sh` **342 assertions**, unchanged in count, `342 passed, 0 failed, 0 skipped` — all three parser configurations present on the host, so nothing skipped. `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
 
 ### Downstream migration
 
 - **No action for existing repos, and no manifest churn.** The two version fields are additive; an existing manifest without them is valid and stays valid. Item 1 changes only what the **next** sync writes. Absent means unknown, never stale.
 - **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`; it carries step 7b (the stamp) and the two new report lines.
-- **Item 2 is toolkit-internal.** Consumers are unaffected: no hook, template or setup path changed, and no consumer needs a root `PROJECT_CONTEXT.md` added — they already have one.
+- **Items 2 and 3 are toolkit-internal.** Consumers are unaffected: no hook, template or setup path changed — `hooks/run-gate.sh` is deliberately untouched by item 3 — and no consumer needs a root `PROJECT_CONTEXT.md` added, since they already have one. Worth knowing anyway if your `**Gate**` command runs a tool that itself shells out to `run-gate.sh` in another repository: it will be blocked by the recursion guard, and that is by design.
 
 ## v2.2.4 — 2026-08-30
 

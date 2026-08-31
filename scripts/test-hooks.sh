@@ -17,6 +17,17 @@
 # check_env below rebuilds $WARNTMP for exactly this reason.
 
 set -u
+
+# Environment leak, found the first time this repo ran its own **Gate** (v2.2.5).
+# run-gate.sh exports RUN_GATE_ACTIVE=1 before running the gate command, so
+# every fixture below that nests run-gate.sh in a throwaway repo inherits it
+# and trips the recursion guard: 342/0 standalone, 323/19 under run-gate.sh.
+# A suite that answers differently depending on who invoked it is the bug, and
+# this is the same class as the per-case PATH and TMPDIR masking further down.
+# The one case that TESTS the guard sets the variable itself (search
+# RUN_GATE_ACTIVE=1 below) — an explicit per-case set survives this unset.
+unset RUN_GATE_ACTIVE
+
 pass=0
 fail=0
 # Assertions not run because the backend they exercise is absent on this host

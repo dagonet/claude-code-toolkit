@@ -21,10 +21,13 @@ placeholder-bearing; this one is filled in, because it describes a real project.
 ## Commands
 
 The Test/Gate split is the point of this file. **Test** runs on EVERY commit, so it
-has to stay fast (~20s); **Gate** is the merge-only artifact command and runs the
-full pair (~600s, dominated by `test-hooks.sh`, which builds throwaway git repos
-under `mktemp` for every fixture). Collapsing them into one command would put ten
-minutes on every commit in this repo — the exact trap a consumer is living in.
+has to stay fast; **Gate** is the merge-only artifact command and runs the full
+pair. Measured on the release host, quiescent: Test 58s, Gate 619s — the
+difference is `test-hooks.sh`, which builds a throwaway git repo per fixture.
+Collapsing them into one command would put ten minutes on every commit in this
+repo, which is the exact trap a consumer is living in. Both numbers are
+host-dependent and load-sensitive (Test measured 117s under a concurrent suite);
+what is not host-dependent is the ratio.
 
 - **Build**: `bash scripts/verify-template-consistency.sh`
 - **Test**: `bash scripts/verify-template-consistency.sh`

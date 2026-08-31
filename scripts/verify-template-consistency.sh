@@ -857,6 +857,15 @@ case "$rpc_gate" in
   *verify-template-consistency.sh*test-hooks.sh*) ok "self-gating: **Gate** runs the full pair (consistency + test-hooks)" ;;
   *) ko "self-gating: **Gate** must run both scripts — got: ${rpc_gate:-<none>}" ;;
 esac
+# Self-gating makes test-hooks.sh a CHILD of run-gate.sh, which exports
+# RUN_GATE_ACTIVE=1 — inherited, it trips the recursion guard in every fixture
+# that nests run-gate.sh (measured: 342/0 standalone, 323/19 under the gate).
+# The suite must not answer differently depending on who invoked it.
+if grep -q '^unset RUN_GATE_ACTIVE' scripts/test-hooks.sh; then
+  ok "self-gating: test-hooks.sh unsets inherited RUN_GATE_ACTIVE (it runs as a child of run-gate.sh)"
+else
+  ko "self-gating: test-hooks.sh must 'unset RUN_GATE_ACTIVE' at the top — inherited, it fails 19 nested-gate fixtures"
+fi
 
 # 21c-3. The sync-template placeholder sweep is BOM-tolerant too (v2.2.4).
 #
