@@ -51,40 +51,67 @@ matrix_fail=0
 
 note() { printf '%s\n' "$*"; }
 
-# Resolve an interpreter to its containing directory, MSYS spelling.
-dir_of() { # <tool> -> prints dir, or empty
-  p=$(command -v "$1" 2>/dev/null) || p=""
-  [ -n "$p" ] || return 0
-  dirname "$p"
+# EVERY PATH directory that provides <tool>, not just the first (MSYS spelling).
+#
+# `command -v` alone is not enough and this is measured, not defensive: hiding
+# the directory `command -v python3` reports still left `python3` resolvable
+# through Windows' App-Installer stub in
+# `.../WindowsApps/Microsoft.DesktopAppInstaller_.../python3`. That is the same
+# stub this repository already documents as "the name resolves, the program is
+# not the one you meant" — and a configuration that still sees the interpreter
+# it was told to hide is the exact void measurement this script exists to stop.
+dirs_of() { # <tool> -> prints one dir per line
+  do_old_ifs=$IFS
+  IFS=:
+  for entry in $PATH; do
+    IFS=$do_old_ifs
+    [ -n "$entry" ] || continue
+    for ext in "" ".exe" ".EXE" ".cmd" ".bat"; do
+      if [ -x "$entry/$1$ext" ] && [ ! -d "$entry/$1$ext" ]; then
+        printf '%s\n' "$entry"
+        break
+      fi
+    done
+    IFS=:
+  done
+  IFS=$do_old_ifs
 }
 
 # Build a PATH with the given directories removed. Splitting on ':' is correct
 # here and only here BECAUSE every entry is MSYS-spelled; this is the exact
 # operation that silently did nothing when the entries carried drive letters.
-path_without() { # <dir> [<dir> ...]
+# Directories to drop arrive as ONE newline-separated string, never as separate
+# words: `/c/Program Files/nodejs` contains a space, so word-splitting the list
+# would drop nothing and the configuration would silently not apply.
+path_without() { # <newline-separated dirs> [<newline-separated dirs> ...]
+  pw_drop_list=$(printf '%s\n' "$@")
   pw_out=""
   pw_old_ifs=$IFS
   IFS=:
   for entry in $PATH; do
-    pw_drop=0
-    for d in "$@"; do
-      [ -n "$d" ] && [ "$entry" = "$d" ] && pw_drop=1
-    done
-    [ "$pw_drop" = "1" ] && continue
+    IFS=$pw_old_ifs
+    if [ -n "$entry" ] && printf '%s\n' "$pw_drop_list" | grep -qxF -- "$entry"; then
+      IFS=:
+      continue
+    fi
     if [ -z "$pw_out" ]; then pw_out="$entry"; else pw_out="$pw_out:$entry"; fi
+    IFS=:
   done
   IFS=$pw_old_ifs
   printf '%s' "$pw_out"
 }
 
-NODE_DIR=$(dir_of node)
-PY_DIR=$(dir_of python3)
-JQ_DIR=$(dir_of jq)
+NODE_DIRS=$(dirs_of node)
+PY_DIRS=$(dirs_of python3)
+JQ_DIRS=$(dirs_of jq)
 
 note "=== interpreters on this host (MSYS spelling — a 'C:\\' here is the bug) ==="
-note "  node    -> ${NODE_DIR:-<absent>}/node"
-note "  python3 -> ${PY_DIR:-<absent>}/python3"
-note "  jq      -> ${JQ_DIR:-<absent>}/jq"
+note "  node    -> $(command -v node 2>/dev/null || echo '<absent>')"
+note "  python3 -> $(command -v python3 2>/dev/null || echo '<absent>')"
+note "  jq      -> $(command -v jq 2>/dev/null || echo '<absent>')"
+note "  PATH dirs providing node:    $(printf '%s' "$NODE_DIRS" | tr '\n' ' ')"
+note "  PATH dirs providing python3: $(printf '%s' "$PY_DIRS" | tr '\n' ' ')"
+note "  PATH dirs providing jq:      $(printf '%s' "$JQ_DIRS" | tr '\n' ' ')"
 note ""
 
 # <label> <PATH to run under> <expected-skip> <must-see tool> <must-not-see tools...>
@@ -117,8 +144,10 @@ run_config() {
   cfg_out="$OUTDIR/$cfg_label.out"
   PATH="$cfg_path" bash "$SUITE" > "$cfg_out" 2>&1
   cfg_rc=$?
-  cfg_tail=$(tail -1 "$cfg_out")
+  # The summary line, NOT `tail -1`: the suite prints a verdict banner after it.
+  cfg_tail=$(grep '^test-hooks\.sh: ' "$cfg_out" | tail -1)
   note "  $cfg_tail"
+  note "  $(tail -1 "$cfg_out")"
 
   cfg_skip=$(printf '%s' "$cfg_tail" | sed -n 's/.*failed, \([0-9]*\) skipped.*/\1/p')
   cfg_failed=$(printf '%s' "$cfg_tail" | sed -n 's/.*passed, \([0-9]*\) failed.*/\1/p')
@@ -155,9 +184,17 @@ run_config() {
   note ""
 }
 
-run_config "node"    "$PATH"                                  "$EXP_NODE_SKIP" node    ""
-run_config "python3" "$(path_without "$NODE_DIR" "$JQ_DIR")"  "$EXP_PY_SKIP"   python3 node jq
-run_config "jq"      "$(path_without "$NODE_DIR" "$PY_DIR")"  "$EXP_JQ_SKIP"   jq      node python3
+# WHAT EACH CONFIGURATION HIDES, and why it is not "hide everything else".
+# hooks/lib/json.sh picks the first WORKING backend of node -> python3 -> jq, so
+# hiding node alone is what forces the python3 backend. jq is left VISIBLE in
+# that configuration deliberately: test-hooks.sh builds its own jq-only stub
+# PATH internally and needs the real jq to exist to do it, so hiding jq here
+# turns the suite red for a harness reason rather than a hook reason (measured:
+# `FAIL stub PATH minimum tool set (missing: jq)`). The jq configuration hides
+# node AND python3, which is what makes jq the first working backend.
+run_config "node"    "$PATH"                                            "$EXP_NODE_SKIP" node
+run_config "python3" "$(path_without "$NODE_DIRS")"                     "$EXP_PY_SKIP"   python3 node
+run_config "jq"      "$(path_without "$NODE_DIRS" "$PY_DIRS")"          "$EXP_JQ_SKIP"   jq      node python3
 
 if [ "$matrix_fail" -eq 0 ]; then
   note "PARSER MATRIX PASSED (3 configurations)"
