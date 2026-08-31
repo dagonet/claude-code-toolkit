@@ -771,6 +771,40 @@ else
   ko "hooks/lib/git-cmd.sh no longer sources lib/json.sh — the gates are back to node-only"
 fi
 
+# ===========================================================================
+# THE 21c-* CENSUS FAMILY — WHAT THESE CHECKS CAN AND CANNOT SEE.
+#
+#   A CENSUS OVER SOURCE TEXT CANNOT SEE BEHAVIOUR THAT ARRIVES THROUGH DATA.
+#
+# Every check below reads FILES IN THIS REPOSITORY and asserts a property of
+# their text. That is the whole point of the family — a structural property
+# holds for every future edit, where a fixture only holds for the inputs someone
+# thought to write. But it fixes the surface: a hook's control flow has a SECOND
+# source that no grep over this repo can reach, namely every config value the
+# hook `eval`s. Those values are CONSUMER-authored, they do not exist here, and
+# a census over source text is green for all of them.
+#
+# 21c-2f is the worked example and it is not a curiosity. It asserts "no
+# `exit 1` in a registered hook" and was green at 9baa446 while
+# pre-commit-test.sh exited 1 in practice, because the `exit 1` arrived as a
+# consumer's `**Test**` value and was eval'd in the hook's own shell. The claim
+# was true of the text and false of the process. Round 6 then found the same
+# eval is reached by a SECOND key (`**Gate**`, via the mirror-fallback path at
+# pre-commit-test.sh:175) — one statement, two value sources, and the census
+# saw neither.
+#
+# pre-commit-test.sh will not be the last hook to eval a consumer-authored
+# string, and this family will be green for every one of them. So:
+#
+#   - The question that finds this class: WHAT WOULD HAVE TO BE TRUE FOR THIS
+#     NUMBER TO BE GREEN WHILE THE THING I CARE ABOUT IS BROKEN?
+#   - An eval boundary needs a BEHAVIOURAL counterpart in scripts/test-hooks.sh
+#     driving real config values, and that counterpart must cover EVERY key
+#     that reaches the eval, not just the obvious one.
+#   - Neither kind subsumes the other. Do not delete a census because its
+#     behavioural partner is green, or the reverse.
+# ===========================================================================
+
 # 21c. EVERY hooks/lib/* must be mirrored (v2.2.1).
 #
 #      Check 21 walks the MIRROR, so it cannot see a root file nobody mirrored.
@@ -824,6 +858,250 @@ else
   ko "GC_KEY_PRE definition drifted: found in $gkp_have of 2 files (git-cmd.sh, run-gate.sh)"
 fi
 
+# 21c-2b. GC_TERMINAL_RC, same census for the same reason (v2.2.5).
+#
+#      run-gate.sh EXITS this code and pre-commit-test.sh TESTS for it, from two
+#      independent definitions. If they ever drift, the terminal failure quietly
+#      becomes an ordinary one again and the circular "re-run it" advice is back
+#      — with nothing red to show for it. That is the whole failure mode this
+#      constant exists to prevent, so it is asserted rather than trusted.
+GC_TERMINAL_RC_DEF='GC_TERMINAL_RC=78'
+gtr_have=0
+for gtf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+  grep -qF "$GC_TERMINAL_RC_DEF" "$gtf" && gtr_have=$((gtr_have + 1))
+done
+if [ "$gtr_have" -eq 2 ]; then
+  ok "GC_TERMINAL_RC defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "GC_TERMINAL_RC definition drifted: found in $gtr_have of 2 files (git-cmd.sh, run-gate.sh)"
+fi
+
+# 21c-2c. The placeholder sweep passes its OPTIONS BEFORE its PATHS (v2.2.5).
+#
+#      `grep -rn -- '…' .claude hooks --include='*.sh'` parses the --include as
+#      another PATH: the *.sh restriction never applies, the sweep recurses
+#      markdown and JSON too, and its shell-comment filter then silently eats a
+#      genuine markdown placeholder (`# {{FOO}}` reads as a comment). Measured
+#      on GNU grep 3.0 and reproduced independently by a consumer. This is the
+#      only part of that fix with any executable surface in this repo, so the
+#      ordering is pinned here — prose alone would drift back.
+sweepf="user-level-reference/skills/sync-template/SKILL.md"
+if [ ! -f "$sweepf" ]; then
+  ko "sweep ordering: $sweepf is missing"
+else
+  # Only the runnable sweep lines (a fenced command starts the line); prose
+  # ABOUT the broken ordering deliberately quotes it and must not be flagged.
+  sweep_cmds=$(grep -n '^grep -rn ' "$sweepf" | grep -F -- '--include')
+  sweep_total=$(printf '%s\n' "$sweep_cmds" | grep -c .)
+  sweep_bad=$(printf '%s\n' "$sweep_cmds" | grep -cv '^[0-9]*:grep -rn --include=')
+  if [ "$sweep_total" -eq 0 ]; then
+    ko "sweep ordering: no --include sweep command found in $sweepf (arm 2 lost its file filter?)"
+  elif [ "$sweep_bad" -eq 0 ]; then
+    ok "sweep ordering: all $sweep_total --include sweep commands pass options before paths"
+  else
+    ko "sweep ordering: $sweep_bad of $sweep_total sweep commands put --include AFTER the paths (the filter is then inert)"
+    printf '%s\n' "$sweep_cmds" | grep -v '^[0-9]*:grep -rn --include=' | sed 's/^/      /'
+  fi
+fi
+
+# 21c-3. The toolkit gates ITSELF (v2.2.5).
+#
+#      Without a root PROJECT_CONTEXT.md, pre-commit-test.sh and
+#      gate-before-merge.sh no-op in this repository — which is how every
+#      toolkit PR up to v2.2.4 merged through the artifact path as a silent
+#      no-op. Deleting the file would restore that silence with no other
+#      symptom, so it is asserted here. The Test/Gate SPLIT is asserted too:
+#      Test runs on every commit and must stay fast, so the ~600s test-hooks.sh
+#      belongs in Gate only.
+rpc="PROJECT_CONTEXT.md"
+if [ ! -f "$rpc" ]; then
+  ko "self-gating: root PROJECT_CONTEXT.md is MISSING — the commit and merge gates no-op in this repo"
+elif grep -q '{{[A-Z_]\{2,\}}}' "$rpc"; then
+  ko "self-gating: root PROJECT_CONTEXT.md still carries an unfilled {{PLACEHOLDER}}"
+else
+  ok "self-gating: root PROJECT_CONTEXT.md present and placeholder-free"
+fi
+rpc_test=$(grep -E "^[-*[:space:]]*\*\*Test\*\*:" "$rpc" 2>/dev/null | head -1)
+rpc_gate=$(grep -E "^[-*[:space:]]*\*\*Gate\*\*:" "$rpc" 2>/dev/null | head -1)
+case "$rpc_test" in
+  *verify-template-consistency.sh*) tsplit=1 ;;
+  *) tsplit=0 ;;
+esac
+case "$rpc_test" in *test-hooks.sh*) tsplit=0 ;; esac
+if [ "$tsplit" -eq 1 ]; then
+  ok "self-gating: **Test** is the ~20s consistency script only (test-hooks.sh stays out of the per-commit path)"
+else
+  ko "self-gating: **Test** must be verify-template-consistency.sh WITHOUT test-hooks.sh — got: ${rpc_test:-<none>}"
+fi
+case "$rpc_gate" in
+  *verify-template-consistency.sh*test-hooks.sh*) ok "self-gating: **Gate** runs the full pair (consistency + test-hooks)" ;;
+  *) ko "self-gating: **Gate** must run both scripts — got: ${rpc_gate:-<none>}" ;;
+esac
+# Self-gating makes test-hooks.sh a CHILD of run-gate.sh, which exports
+# RUN_GATE_ACTIVE=1 — inherited, it trips the recursion guard in every fixture
+# that nests run-gate.sh, which then skip instead of running. The suite must not
+# answer differently depending on who invoked it. (v2.2.5 round 6: the standalone
+# and under-the-gate counts that used to sit here were stale two releases running
+# — the CHANGELOG is the one place that carries them.)
+if grep -q '^unset RUN_GATE_ACTIVE' scripts/test-hooks.sh; then
+  ok "self-gating: test-hooks.sh unsets inherited RUN_GATE_ACTIVE (it runs as a child of run-gate.sh)"
+else
+  ko "self-gating: test-hooks.sh must 'unset RUN_GATE_ACTIVE' at the top — inherited, it fails 19 nested-gate fixtures"
+fi
+# Companion pin (v2.2.5 round 4). RUN_GATE_TERMINAL leaks by the same route and
+# in the worse direction: an inherited marker path points at the REAL outer run's
+# marker, a fixture's nested recursion guard touches it, and the outer clamp then
+# reads a retryable 78 as terminal. Same class, opposite polarity, so it gets its
+# own assertion rather than riding on the one above.
+if grep -q '^unset RUN_GATE_TERMINAL' scripts/test-hooks.sh; then
+  ok "self-gating: test-hooks.sh unsets inherited RUN_GATE_TERMINAL (a fixture must not touch the outer run's marker)"
+else
+  ko "self-gating: test-hooks.sh must 'unset RUN_GATE_TERMINAL' at the top — inherited, a fixture's nested guard marks the OUTER run terminal"
+fi
+
+# 21c-2f. NO `exit 1` IN A REGISTERED HOOK — it is warn-and-ALLOW (v2.2.5 r4).
+#
+#         The harness treats every non-zero, non-2 PreToolUse exit as a
+#         NON-BLOCKING error and lets the tool call proceed. So `|| exit 1` in a
+#         GATE reads as "could not determine, carry on" — cannot-determine
+#         permits, the shape this release keeps closing. pre-commit-test.sh had
+#         two (`cd "$REPO_PATH" || exit 1`); a failing cd let the commit through
+#         ungated.
+#
+#         Reaching those sites needs the directory to vanish between the
+#         PROJECT_CONTEXT.md grep and the cd — a race no fixture can honestly
+#         drive — so the property is asserted structurally here instead.
+#         run-gate.sh is excluded on purpose: it is a RUNNER, not a registered
+#         hook, and its `cd "$REPO_TOP" || exit 1` is documented to stay 1.
+hook_exit1=$(grep -nE 'exit 1( |;|$)' hooks/pre-commit-test.sh hooks/gate-before-merge.sh hooks/no-push-main.sh 2>/dev/null \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -z "$hook_exit1" ]; then
+  ok "no 'exit 1' in the registered git gates — a non-2 PreToolUse exit is warn-and-allow"
+else
+  ko "warn-and-allow: 'exit 1' in a registered hook lets the tool call PROCEED — use exit 2: $(printf '%s' "$hook_exit1" | head -3 | tr '\n' ' ')"
+fi
+#
+#         THIS CENSUS READS SOURCE AND CANNOT REACH CONFIG DATA (v2.2.5 round 5).
+#         It was green at 9baa446 while pre-commit-test.sh exited 1 in practice:
+#         the `exit 1` arrived as a consumer's `**Test**` VALUE and was eval'd in
+#         the hook's own shell. "This hook never exits anything but 0 or 2" was
+#         true of the text and false of the process. A source census cannot
+#         enumerate what a consumer may write, so the behavioural counterpart is
+#         R5g in scripts/test-hooks.sh — it drives the hook with `exit`- and
+#         `exec`-bearing **Test** values. Neither one subsumes the other; do not
+#         delete either on the strength of the other being green.
+
+# 21c-2h. THE `eval "$TEST_CMD"` BOUNDARY HAS NO TERMINAL ARM (v2.2.5 round 5).
+#
+#         Round 4 declined to clamp 78 at that boundary and the reasoning stands:
+#         with no terminal arm there, a clamp assignment is UNOBSERVABLE — delete
+#         it and every assertion stays green, which is the decorative-guard shape
+#         this release forbids. But what makes the absence safe is a fact about
+#         TODAY, and a comment defends against a reader, not against a refactor.
+#         The person who adds a terminal arm is exactly the person not reading the
+#         note about hypothetical terminal arms.
+#
+#         So the ABSENCE is asserted mechanically, and this census guards a
+#         NEGATIVE: it is green while nothing keys on the terminal code below the
+#         eval, and red the day someone adds one. The failure message names the
+#         prerequisite rather than the symptom — a terminal arm there needs a
+#         provenance channel FIRST, because a 78 arriving from an arbitrary
+#         consumer command is a child's number with nothing behind it.
+#
+#         Positional by necessity, like 21c-2d: the same test on line ~153 is the
+#         run-gate.sh branch and is LEGITIMATE (run-gate.sh clamps its own 78
+#         keyed on the marker it created, so a 78 emerging from it carries
+#         provenance). Whole-file grepping would be red on day one. Comment lines
+#         are excluded — the prose below the eval discusses 78 at length.
+#
+#         Not the same guard as R5f/R5g in test-hooks.sh: this file is the
+#         toolkit's own per-commit `**Test**`, test-hooks.sh is not (it runs only
+#         under the full `**Gate**`). Same property, two cadences.
+PCT_HOOK="hooks/pre-commit-test.sh"
+pct_eval_ln=$(grep -n 'eval "\$TEST_CMD"' "$PCT_HOOK" | head -1 | cut -d: -f1)
+if [ -z "$pct_eval_ln" ]; then
+  ko "eval-boundary census: cannot locate 'eval \"\$TEST_CMD\"' in $PCT_HOOK — the boundary moved or was renamed; re-point this census before trusting it"
+else
+  pct_term=$(tail -n +"$pct_eval_ln" "$PCT_HOOK" \
+    | grep -nE 'GC_TERMINAL_RC|-(eq|ne)[[:space:]]+78' \
+    | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [ -z "$pct_term" ]; then
+    ok "$PCT_HOOK: no terminal arm below the eval boundary (line $pct_eval_ln) — a child's 78 has no provenance and must stay retryable"
+  else
+    ko "$PCT_HOOK: a TERMINAL ARM appeared below the eval boundary (line $pct_eval_ln). \$TEST_CMD is an arbitrary consumer command, so a 78 there is a CHILD's number with no provenance — branching on it hands a plain test failure the 'cannot succeed as configured' remedy, which is inverted advice. PREREQUISITE: give this boundary a provenance channel (as run-gate.sh has, keyed on the marker it writes) BEFORE adding the arm; the number alone cannot earn it. Offending line(s), offset from $pct_eval_ln: $(printf '%s' "$pct_term" | head -3 | tr '\n' ' ')"
+  fi
+fi
+
+# 21c-2d. The RUN_GATE_ACTIVE test must PRECEDE the not-a-git-repository guard
+#         in hooks/run-gate.sh (v2.2.5 round 4).
+#
+#         The second terminal guard (`:74`) does NOT touch the provenance marker,
+#         which is safe ONLY because a nested invocation always exits at the
+#         recursion guard first and can never reach it. That makes `:74`
+#         top-level-only, where no outer clamp exists to mislead. Reorder the two
+#         and a nested run-gate.sh in a non-repo cwd starts exiting 78 with no
+#         marker — clamped to 1, the self-reference diagnosis lost.
+#
+#         A COMMENT CANNOT ENFORCE AN ORDERING; this can, and it fails on the
+#         edit that breaks it. It is honest about being positional: the safety
+#         here genuinely IS positional, so a positional assertion is not a proxy
+#         for the property — it is the property. The comment in run-gate.sh stays
+#         too: it carries the WHY, which a line-number census cannot. Same
+#         pairing as GC_KEY_PRE.
+rg_active_ln=$(grep -n 'RUN_GATE_ACTIVE:-' hooks/run-gate.sh | head -1 | cut -d: -f1)
+rg_norepo_ln=$(grep -n 'not inside a git repository' hooks/run-gate.sh | head -1 | cut -d: -f1)
+if [ -z "$rg_active_ln" ] || [ -z "$rg_norepo_ln" ]; then
+  ko "run-gate.sh guard ordering: could not locate both guards (RUN_GATE_ACTIVE=${rg_active_ln:-<none>}, not-a-repo=${rg_norepo_ln:-<none>})"
+elif [ "$rg_active_ln" -lt "$rg_norepo_ln" ]; then
+  ok "run-gate.sh: the RUN_GATE_ACTIVE guard precedes the not-a-git-repository guard (line $rg_active_ln < $rg_norepo_ln)"
+else
+  ko "run-gate.sh guard ordering INVERTED: RUN_GATE_ACTIVE at line $rg_active_ln must come BEFORE the not-a-git-repository guard at line $rg_norepo_ln — otherwise a nested run exits 78 without the provenance marker and the outer clamp swallows it"
+fi
+
+# 21c-2e. NO BARE `78` in hooks/ (v2.2.5 round 4).
+#
+#         GC_TERMINAL_RC has a drift census (21c-2b) but nothing asserted that a
+#         THIRD site could not appear spelled as a literal, bypassing the
+#         constant entirely and drifting silently the next time the value moves.
+#         None exists today; this keeps it that way. The target is the literal
+#         USED as the value — `exit 78`, `-eq 78`, `-ne 78`, `<VAR>=78` — so the
+#         constant's own two definitions and the prose that explains the number
+#         (comments, the --help text) are not matched. A doc string cannot make
+#         a caller test the wrong code; a bare literal can.
+bare78=$(grep -nE '(exit[[:space:]]+78|-(eq|ne)[[:space:]]+78|[A-Za-z_][A-Za-z0-9_]*=78)([^0-9]|$)' hooks/*.sh hooks/lib/*.sh 2>/dev/null \
+  | grep -v 'GC_TERMINAL_RC=78' \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -z "$bare78" ]; then
+  ok "no bare 78 in hooks/ — the terminal code is only ever GC_TERMINAL_RC"
+else
+  ko "bare 78 literal in hooks/ (use GC_TERMINAL_RC): $(printf '%s' "$bare78" | head -3 | tr '\n' ' ')"
+fi
+
+# 21c-2g. The sync-template SKILL body carries a version marker, and it matches
+#         VERSION (v2.2.5 round 4).
+#
+#         A running session obeys the body it LOADED, not the file on disk —
+#         measured: an installed SKILL.md identical to the release while live
+#         sessions still executed the previous version's steps, with the drift
+#         check reporting clean throughout. The marker is what lets step 1 catch
+#         that on the NEXT invocation and lets a session state which body it is
+#         running. A marker that silently stops tracking VERSION is worse than
+#         none: it would assert equality between two stale strings.
+SKILL_MD="user-level-reference/skills/sync-template/SKILL.md"
+want_marker="v$(head -1 VERSION 2>/dev/null | tr -d '\r')"
+got_marker=$(grep -m1 -o 'SYNC-TEMPLATE-SKILL-VERSION: [^ ]*' "$SKILL_MD" 2>/dev/null | sed 's/.*: //')
+if [ "$got_marker" = "$want_marker" ]; then
+  ok "sync-template SKILL.md carries the body version marker ($got_marker, matches VERSION)"
+else
+  ko "sync-template SKILL.md marker '${got_marker:-<none>}' does not match VERSION '$want_marker' — a stale session could not be detected"
+fi
+# ...and step 1 must actually CHECK it. A marker nothing reads is decoration.
+if [ "$(grep -c 'SYNC-TEMPLATE-SKILL-VERSION' "$SKILL_MD" 2>/dev/null)" -ge 2 ]; then
+  ok "sync-template SKILL.md step 1 asserts the marker against the installed file"
+else
+  ko "sync-template SKILL.md defines the version marker but nothing reads it — step 1 must grep the installed file and compare"
+fi
+
 # 21c-3. The sync-template placeholder sweep is BOM-tolerant too (v2.2.4).
 #
 #        Same class as 21c-2, one layer out: the sweep is the skill's own
@@ -831,16 +1109,222 @@ fi
 #        BOMs actually occur. Arm 1 (`^`-anchored markdown) fails CLEAN — a
 #        placeholder on line 1 behind a BOM is missed silently; arm 2's comment
 #        filter fails NOISY — a BOM'd comment stops reading as a comment. Both
-#        arms carry `\(${BOM}\)\?`; this asserts neither loses it.
+#        arms carry `\(${BOM}\)\?`; this asserts neither loses it. The JSON arm
+#        added in round 7 is deliberately NOT counted here — it has neither a
+#        `^` anchor nor a comment filter, which are the only two things a BOM
+#        breaks, so BOM tolerance is not a property it can have or lose.
 SWEEP_SKILL="user-level-reference/skills/sync-template/SKILL.md"
 sweep_arms=$(grep -c '{{\[A-Z_\]\\{2,\\}}}' "$SWEEP_SKILL" 2>/dev/null)
 sweep_bom=$(grep -c 'BOM}\\)\\?' "$SWEEP_SKILL" 2>/dev/null)
 if [ ! -f "$SWEEP_SKILL" ]; then
   ko "$SWEEP_SKILL missing — the placeholder sweep census cannot run"
 elif [ "$sweep_bom" -ge 2 ]; then
-  ok "placeholder sweep: both arms in $SWEEP_SKILL are BOM-tolerant"
+  ok "placeholder sweep: the markdown and shell arms in $SWEEP_SKILL are BOM-tolerant"
 else
-  ko "placeholder sweep: only $sweep_bom of 2 arms in $SWEEP_SKILL carry the optional BOM prefix (arm 1 would fail CLEAN, arm 2 noisy) — $sweep_arms sweep lines seen"
+  ko "placeholder sweep: only $sweep_bom of the markdown+shell arms in $SWEEP_SKILL carry the optional BOM prefix (the markdown arm would fail CLEAN, the shell arm noisy) — $sweep_arms sweep lines seen"
+fi
+
+# 21c-3b. NO PLACEHOLDER IN AN EXECUTABLE POSITION under user-level-reference/
+#         (v2.2.5 round 5). THE HOOKS' CORRECTNESS — not the drift check's.
+#
+#         The user-level install is VERBATIM: nothing substitutes `{{...}}` at
+#         user level, unlike the project bootstrap. That property is what makes
+#         verify-user-level-drift.sh's blob-versus-tag comparison a legitimate
+#         baseline, and it is asserted over there. It says NOTHING about whether
+#         the files WORK, and the two come apart exactly where it matters:
+#
+#           A placeholder added in a shell VALUE position keeps verbatim-install
+#           true, keeps the blob comparison green, and makes the hook execute a
+#           literal `{{...}}`. Drift reports 0 and the hook is broken.
+#
+#         That is v2.2.0's `- **Protected branches**: {{DEFAULT_BRANCH}}` — a
+#         config value read as data — one directory over. Only this assertion
+#         catches the failure worth catching.
+#
+#         USE THE REFINED SWEEP ARMS, NOT A PLAIN GREP. A naive
+#         `grep -rn '{{[A-Z_]\{2,\}}}' user-level-reference` returns 29 hits, not
+#         one of them actionable: .mcp.json.template 12 (a never-installed
+#         template whose placeholders are SUPPOSED to be unfilled), README.md 8,
+#         SKILL.md 6 and git-cmd.sh 2 + pre-commit-test.sh 1 (comments) — and the
+#         SKILL.md set includes the passage documenting this exact false
+#         positive. Shipped that way the assertion is red on day one,
+#         permanently, and gets disabled by someone whose reasoning looks sound.
+#         Measured with the refined arms: shell 0, markdown 0 — the number pinned
+#         below. Prose ABOUT a placeholder is not a placeholder.
+#
+#         SCANNED SURFACE, STATED BECAUSE 0 IS OTHERWISE OVERREAD: `*.sh` and
+#         `*.md` ONLY. JSON is NOT scanned here — it is scanned by 21c-3c
+#         immediately below, which closed round 6's residual. Do not widen these
+#         two arms to `*.json`: their refinements (comment-line exclusion, the
+#         `- **Key**: value` shape) exist because shell and markdown carry prose
+#         that legitimately mentions placeholders, and JSON needs none of it.
+#
+#         BORN WITH ITS CONTROL, IN BAND. A sweep that matches nothing also
+#         reports 0, so before trusting the number the detector is driven against
+#         a planted fixture every run: a placeholder in a shell VALUE line must
+#         be found, and the same placeholder in a BOM'd comment must not. If
+#         either self-test fails, the 0 below means the detector is inert and is
+#         reported as such rather than as a pass.
+ULR_BOM=$(printf '\357\273\277')
+ulr_sweep_sh() {   # <dir> -> executable-position placeholder hits in *.sh
+  grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' "$1" 2>/dev/null \
+    | grep -v ":[0-9]*:\(${ULR_BOM}\)\?[[:space:]]*#"
+}
+ulr_sweep_md() {   # <dir> -> placeholders on a `- **Key**: value` config line
+  grep -rn --include='*.md' -- \
+    "^\(${ULR_BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" "$1" 2>/dev/null
+}
+ULRFIX=$(mktemp -d)
+# The planted placeholder is ASSEMBLED, never spelled literally in an executable
+# line of this file: a fixture that trips a future sweep pointed at scripts/ is
+# how a detector acquires its first false positive.
+ULR_PH=$(printf '{{%s}}' TEST_COMMAND)
+printf 'TEST_CMD="%s"\n'              "$ULR_PH"             > "$ULRFIX/value.sh"
+printf '%s# note: %s goes here\n'     "$ULR_BOM" "$ULR_PH"  > "$ULRFIX/comment.sh"
+printf -- '- **Test**: %s\n'          "$ULR_PH"             > "$ULRFIX/value.md"
+printf 'Prose mentioning %s inline.\n' "$ULR_PH"            > "$ULRFIX/prose.md"
+ulr_pos_sh=$(ulr_sweep_sh "$ULRFIX" | grep -c 'value\.sh')
+ulr_neg_sh=$(ulr_sweep_sh "$ULRFIX" | grep -c 'comment\.sh')
+ulr_pos_md=$(ulr_sweep_md "$ULRFIX" | grep -c 'value\.md')
+ulr_neg_md=$(ulr_sweep_md "$ULRFIX" | grep -c 'prose\.md')
+if [ "$ulr_pos_sh" -eq 1 ] && [ "$ulr_neg_sh" -eq 0 ] && [ "$ulr_pos_md" -eq 1 ] && [ "$ulr_neg_md" -eq 0 ]; then
+  ok "executable-position sweep: detector verified live (shell value hit / BOM'd comment ignored, md value hit / prose ignored)"
+  ulr_hits=$( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | grep -c . )
+  if [ "$ulr_hits" -eq 0 ]; then
+    ok "user-level-reference/ (*.sh + *.md only): 0 placeholders in an EXECUTABLE position (a hook would run a literal {{...}})"
+  else
+    ko "user-level-reference/ (*.sh + *.md only): $ulr_hits placeholder(s) in an EXECUTABLE position — the user-level install substitutes NOTHING, so a shipped hook will run the literal {{...}}: $( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | head -3 | tr '\n' ' ')"
+  fi
+else
+  ko "executable-position sweep is INERT — its own self-test failed (shell hit=$ulr_pos_sh want 1, shell comment=$ulr_neg_sh want 0, md hit=$ulr_pos_md want 1, md prose=$ulr_neg_md want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
+fi
+rm -rf "$ULRFIX"
+
+# 21c-3c. NO PLACEHOLDER IN A SHIPPED *.json (v2.2.5 round 7). Closes the
+#         residual 21c-3b recorded in round 6 rather than re-dating it.
+#
+#         WHY JSON IS THE CHEAPEST ARM, NOT THE MOST EXPENSIVE. The `*.sh` and
+#         `*.md` arms above needed careful refinement — comment-line exclusion,
+#         the `- **Key**: value` shape — precisely because those formats carry
+#         prose and comments that LEGITIMATELY mention placeholders (which is
+#         why a plain grep flags the skill passage documenting that fact).
+#         JSON has no comments. Any `{{...}}` in a .json file is in a VALUE by
+#         construction, so this is a bare grep: no exclusions, no shape
+#         requirement, no false-positive class to tune. The excluded surface was
+#         the one needing the least work to include, which inverts the usual
+#         reason for excluding something and is probably why nobody noticed.
+#
+#         AND IT IS THIS RELEASE'S OWN CLASS. A `.claude/settings.json` hook
+#         `command` is an EXECUTABLE position: a literal `{{...}}` there is a
+#         path that does not resolve -> 127 -> fail-open. Measured on
+#         templates/general/.claude/settings.json and reproduced byte-identical
+#         on a live consumer: 30 `command` strings, 9 of them mentioning a 127
+#         guard. Not a claim of 21 live holes — it depends which hook each wires
+#         — but the ratio is the point: the surface no sweep covered is the
+#         surface where a missing path fails open BY DEFAULT, and the 127
+#         wrapper is the exception rather than the rule.
+#
+#         SCOPE BY OWNERSHIP, NEVER A FILESYSTEM WALK. JSON needs no
+#         content-shape tuning; it DOES need scope discipline — two different
+#         things, and conflating them is what makes a JSON arm look naive.
+#         Measured on a real machine: `find ~/.claude -name '*.json'` is 3430
+#         files with ONE hit, in a dated backup nothing reads, carrying
+#         `{{GUIDE_TEMPLATE}}`/`{{USAGE_DATA}}`/`{{WINDOW_DAYS}}` — ANOTHER
+#         TOOL's keys. Red on its first run for a benign reason: the exact
+#         "reports a problem forever, gets disabled within a week by someone
+#         whose reasoning looks sound" failure, reappearing inside the arm
+#         designed from the argument against it. So this census scopes to the
+#         two trees we OWN and never touches $HOME. And do NOT scope by
+#         filtering on known toolkit key names: that rots the first time a key
+#         is added, and it would hide a genuine unfilled placeholder under the
+#         new one. Scope is the right axis; the key set is not.
+#
+#         WHY user-level-reference/ RATHER THAN THE LIVE ~/.claude TREE, AND THE
+#         DEPENDENCY THAT MAKES THAT SUFFICIENT — READ BOTH HALVES. The only
+#         user-level JSON the toolkit ships is user-level-reference/settings.json
+#         (ONE file, versus 3430 in a walk), and verify-user-level-drift.sh
+#         deliberately excludes settings.json as USER-OWNED — so a live-tree
+#         check would be inspecting the user's own file. Our obligation is that
+#         what we SHIP carries no unfilled placeholder in an executable
+#         position. That repo-side census is SUFFICIENT for the user-level tree
+#         ONLY BECAUSE THE USER-LEVEL INSTALL IS VERBATIM: reference clean +
+#         verbatim install => live copy clean, by construction. That verbatim
+#         property is asserted separately, in verify-user-level-drift.sh's
+#         header (round 5). **These two look like independent checks and are one
+#         argument with two halves** — if the verbatim-install assertion ever
+#         goes red, this census stops implying anything at all about installed
+#         copies. Do not let a cleanup drop either one as overlapping with the
+#         other.
+#
+#         AND FOR THE PROJECT TREE THIS CENSUS IS NECESSARY BUT NOT SUFFICIENT,
+#         WHICH CUTS THE OPPOSITE WAY. The project install is NOT verbatim: it
+#         substitutes, and per sync-template SKILL.md `template_apply_file`
+#         substitutes only placeholders present in THE PROJECT's manifest, so a
+#         key the manifest predates lands as a literal in the consumer's file
+#         while the template it came from is clean. That is the v2.2.0 chain
+#         exactly — template correct -> substitution incomplete -> consumer
+#         carries `- **Protected branches**: {{DEFAULT_BRANCH}}` -> trunk
+#         silently unprotected — with a template-side census GREEN THROUGHOUT.
+#         An install defect, not a shipping defect. The skill's consumer-side
+#         JSON arm is the only detector for that class; this census cannot see
+#         it. The two are asymmetric in construction (that arm can use
+#         `git ls-files`, this one cannot for its user-level half) though
+#         symmetric in intent — do not harmonise them into one walk.
+#
+#         BORN WITH ITS CONTROLS, IN BAND, AND THE NEGATIVE IS THE POINT. A
+#         sweep that matches nothing also reports 0, so the detector is driven
+#         against planted fixtures every run. The POSITIVE (in-scope value ->
+#         found) proves it detects; the NEGATIVE (same placeholder OUTSIDE the
+#         scoped set -> not found) is what makes the SCOPING testable — without
+#         it the next person widens this back to a filesystem walk and nothing
+#         goes red. The second negative pins the `--include='*.json'` extension
+#         carve-out for `.mcp.json.template`, which is never installed and whose
+#         placeholders are SUPPOSED to be unfilled.
+JSONFIX=$(mktemp -d)
+# Assembled, never spelled literally in an executable line — a fixture that
+# trips a future sweep pointed at scripts/ is how a detector acquires its first
+# false positive.
+JSON_PH=$(printf '{{%s}}' GATE_COMMAND)
+json_census() {   # <root>... -> placeholder hits in *.json under those roots
+  grep -rn --include='*.json' -- '{{[A-Z_]\{2,\}}}' "$@" 2>/dev/null
+}
+mkdir -p "$JSONFIX/scoped" "$JSONFIX/unscoped"
+printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/in.json"
+printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/unscoped/out.json"
+printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/mcp.json.template"
+json_pos=$(json_census "$JSONFIX/scoped" | grep -c 'in\.json')
+json_neg_scope=$(json_census "$JSONFIX/scoped" | grep -c 'out\.json')
+json_neg_ext=$(json_census "$JSONFIX/scoped" | grep -c 'json\.template')
+if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ]; then
+  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored)"
+  json_hits=$(json_census templates user-level-reference | grep -c .)
+  if [ "$json_hits" -eq 0 ]; then
+    ok "templates/ + user-level-reference/ (*.json): 0 placeholders — a settings.json hook command is an executable position, so a literal {{...}} there is a 127 fail-open"
+  else
+    ko "templates/ + user-level-reference/ (*.json): $json_hits placeholder(s) in a shipped JSON file — JSON has no comments, so every one of these is in a VALUE: $(json_census templates user-level-reference | head -3 | tr '\n' ' ')"
+  fi
+else
+  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
+fi
+rm -rf "$JSONFIX"
+
+# 21c-3d. The skill's CONSUMER-SIDE json arm still exists (v2.2.5 round 7).
+#
+#         Same house rule as 21c-2c: prose alone would drift back. 21c-3c above
+#         covers what we SHIP; it is blind to the install-introduced class,
+#         because the project bootstrap substitutes and a key the consumer's
+#         manifest predates lands as a literal in THEIR file with our template
+#         clean. The skill's json arm is the only detector for that, and it is
+#         exactly the arm a tidy-up deletes as "redundant with the census".
+#         Pinned on `git grep` specifically: a `git ls-files … | xargs grep`
+#         rewrite would map both the clean case and a malformed one to xargs'
+#         123, collapsing the two states the exit contract exists to separate.
+if [ ! -f "$SWEEP_SKILL" ]; then
+  ko "$SWEEP_SKILL missing — the consumer-side json arm census cannot run"
+elif grep -q "^git grep .* -- '\*\.json'" "$SWEEP_SKILL"; then
+  ok "placeholder sweep: the consumer-side json arm is present in $SWEEP_SKILL (git grep, tracked-files scope)"
+else
+  ko "placeholder sweep: $SWEEP_SKILL has NO runnable json arm — .claude/settings.json is then undetected at the consumer end, which is the only end that sees the install-introduced class (v2.2.0's {{DEFAULT_BRANCH}} chain)"
 fi
 
 # 21d. Every shipped shell script PARSES (v2.2.1).

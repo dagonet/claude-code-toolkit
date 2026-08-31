@@ -17,6 +17,26 @@
 # check_env below rebuilds $WARNTMP for exactly this reason.
 
 set -u
+
+# Environment leak, found the first time this repo ran its own **Gate** (v2.2.5).
+# run-gate.sh exports RUN_GATE_ACTIVE=1 before running the gate command, so
+# every fixture below that nests run-gate.sh in a throwaway repo inherits it
+# and trips the recursion guard: 342/0 standalone, 323/19 under run-gate.sh.
+# A suite that answers differently depending on who invoked it is the bug, and
+# this is the same class as the per-case PATH and TMPDIR masking further down.
+# The one case that TESTS the guard sets the variable itself (search
+# RUN_GATE_ACTIVE=1 below) — an explicit per-case set survives this unset.
+#
+# RUN_GATE_TERMINAL leaks the same way and in the WORSE direction (v2.2.5 round
+# 4). Under self-gating, R5's `RUN_GATE_ACTIVE=1` case trips the inner recursion
+# guard, which touches the marker at the path the REAL OUTER run belongs to.
+# run-gate.sh's clamp then sees that marker and does not fire, so a genuinely
+# retryable 78 would read as terminal — inverted advice, produced by the suite
+# on the toolkit's own gate. Latent only because the chain must also exit
+# exactly 78.
+unset RUN_GATE_ACTIVE
+unset RUN_GATE_TERMINAL
+
 pass=0
 fail=0
 # Assertions not run because the backend they exercise is absent on this host
@@ -808,9 +828,255 @@ RECURSEREPO=$(mkrepo gaterecurse main)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$RECURSEREPO/PROJECT_CONTEXT.md"
 recurseerr="$TMPROOT/recurse.err"
 ( cd "$RECURSEREPO" && RUN_GATE_ACTIVE=1 bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$recurseerr" )
-expect "(R5) recursion guard: exit 2"  "2" "$?"
+expect "(R5) recursion guard: exit 78 (terminal)"  "78" "$?"
 expect "(R5) recursion guard: message" "1" \
   "$(grep -cF 'BLOCKED: **Gate** must not invoke run-gate.sh itself' "$recurseerr")"
+# v2.2.5: the guard's accurate diagnosis used to be buried under generic
+# "re-run it" advice from both outer layers. The specific remedy is now the LAST
+# line the guard prints, and it names the field to edit.
+expect "(R5) recursion guard: remedy is the last line" "1" \
+  "$(tail -1 "$recurseerr" | grep -cF "Edit '**Gate**:' in PROJECT_CONTEXT.md")"
+
+# --- R5b: terminal vs retryable must be distinguishable by the CALLER --------
+# Both arms, because a one-armed fixture cannot catch a suppression that fires
+# on everything. Arm 1: a terminal gate (rc=78) suppresses the retry advice and
+# still BLOCKS. Arm 2: an ordinary red gate still prints it.
+echo
+echo "=== R5b: terminal (78) vs retryable gate failure ==="
+
+# Arm 1 -- the real self-reference chain, driven end to end: **Gate** invokes
+# run-gate.sh, so the OUTER run-gate.sh runs the INNER one, which exits 78.
+termrepo=$(mkrepo gateterminal main)
+printf '# ctx\n\n- **Gate**: `bash %s/hooks/run-gate.sh`\n' "$ROOT" > "$termrepo/PROJECT_CONTEXT.md"
+termerr="$TMPROOT/terminal.err"
+( cd "$termrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$termerr" )
+expect "(R5b) terminal gate: run-gate.sh propagates 78" "78" "$?"
+expect "(R5b) terminal gate: NO generic re-run advice" "0" \
+  "$(grep -c 'Fix the failures and re-run' "$termerr")"
+expect "(R5b) terminal gate: remedy still last" "1" \
+  "$(tail -1 "$termerr" | grep -cF "Edit '**Gate**:' in PROJECT_CONTEXT.md")"
+
+# Arm 1b -- pre-commit-test.sh over the same repo: it must still BLOCK, with
+# exit 2 and never 78 (the PreToolUse contract with the harness is 0/2, so the
+# terminal code is consumed here, not propagated), and it must not tell the user
+# to re-run the thing that cannot succeed.
+check_nomsg "(R5b) terminal: no retry advice" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$termrepo")" "re-run it and fix the failures"
+check_msg "(R5b) terminal: names configuration" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$termrepo")" "cannot succeed as configured"
+check_msg "(R5b) terminal: remedy reaches the user" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$termrepo")" "Edit '**Gate**:' in PROJECT_CONTEXT.md"
+
+# Arm 2 -- an ORDINARY red gate must be unaffected: rc=1 from run-gate.sh, the
+# retry advice present, and pre-commit-test.sh's retry advice present too.
+redrepo=$(mkrepo gatered main)
+printf '# ctx\n\n- **Gate**: `false`\n' > "$redrepo/PROJECT_CONTEXT.md"
+rederr="$TMPROOT/red.err"
+( cd "$redrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$rederr" )
+expect "(R5b) ordinary red gate: run-gate.sh exits 1" "1" "$?"
+expect "(R5b) ordinary red gate: retry advice PRESENT" "1" \
+  "$(grep -c 'Fix the failures and re-run' "$rederr")"
+check_msg "(R5b) red: retry advice PRESENT" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$redrepo")" "re-run it and fix the failures"
+
+# --- R5c: THE CLAMP CONTROL (v2.2.5 round 3) --------------------------------
+# 78 is EX_CONFIG and real programs emit it, so an arbitrary consumer gate
+# command CAN exit 78 for its own reasons. It must be clamped to an ordinary
+# red gate, or a plain test failure inherits the terminal remedy "edit your
+# **Gate** value" -- INVERTED advice, worse than the generic retry line.
+#
+# This is the CONTROL for the clamp in run-gate.sh, and it is honest by
+# construction: delete the clamp and the 78 propagates, the terminal branch
+# fires, "Fix the failures and re-run" disappears and both assertions below flip.
+# Its opposite arm is R5b arm 1 (a NESTED run-gate.sh leaves the provenance
+# marker and its 78 must survive) -- the pair is what distinguishes a working
+# clamp from one that swallows every 78, which is the failure mode that would
+# silently undo item K.
+#
+# The Gate command must NOT mention run-gate.sh: the whole point is a gate that
+# exits 78 for an UNRELATED reason.
+clamprepo=$(mkrepo gateclamp main)
+printf 'exit 78\n' > "$clamprepo/exits78.sh"
+printf '# ctx\n\n- **Gate**: `bash exits78.sh`\n' > "$clamprepo/PROJECT_CONTEXT.md"
+clamperr="$TMPROOT/clamp.err"
+( cd "$clamprepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$clamperr" )
+expect "(R5c) unrelated gate rc=78 is CLAMPED to 1" "1" "$?"
+expect "(R5c) clamped gate: retry advice PRESENT (not the terminal text)" "1" \
+  "$(grep -c 'Fix the failures and re-run' "$clamperr")"
+check_msg "(R5c) clamped: pre-commit prints retry advice" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$clamprepo")" "re-run it and fix the failures"
+check_nomsg "(R5c) clamped: NOT reported as a configuration failure" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$clamprepo")" "cannot succeed as configured"
+
+# --- R5d: the SECOND terminal guard (v2.2.5 round 3) ------------------------
+# "not inside a git repository" is terminal by the same definition -- re-running
+# from the same cwd cannot make that directory a repository -- and it exited 1
+# until this release, so pre-commit-test appended "re-run it and fix the
+# failures". That is item K's circular advice in a guard that already existed.
+# The paired opposite arm is R5b arm 2: an ordinary red gate still exits 1.
+# NOTE the guard's sibling `cd "$REPO_TOP" || exit 1` deliberately stays 1 --
+# a cd failing on a path git just resolved is a transient environment fault.
+nonrepo="$TMPROOT/not-a-repo"
+mkdir -p "$nonrepo"
+nonrepoerr="$TMPROOT/nonrepo.err"
+( cd "$nonrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$nonrepoerr" )
+expect "(R5d) not a git repository: exit 78 (terminal, was 1)" "78" "$?"
+expect "(R5d) not a git repository: remedy names the fix" "1" \
+  "$(tail -1 "$nonrepoerr" | grep -c 'from inside the checkout')"
+
+# --- R5e: THE MARKER NESTS THROUGH A WRAPPER (v2.2.5 round 4) ---------------
+# R5b arm 1 is single-level: **Gate** invokes run-gate.sh directly. A marker
+# written to a SELF-CREATED temp dir would pass that test and fail here, because
+# only the value INHERITED from the outer run points at the file the outer tests.
+# Correct by construction today, unproven by execution until this arm — and this
+# is the arm that catches a future refactor moving the marker's creation above
+# the recursion guard.
+wraprepo=$(mkrepo gatewrapper main)
+printf '#!/usr/bin/env bash\nexec bash "%s/hooks/run-gate.sh"\n' "$ROOT" > "$wraprepo/wrapper.sh"
+printf '# ctx\n\n- **Gate**: `bash wrapper.sh`\n' > "$wraprepo/PROJECT_CONTEXT.md"
+wraperr="$TMPROOT/wrapper.err"
+( cd "$wraprepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$wraperr" )
+expect "(R5e) wrapper-nested terminal: 78 survives the clamp" "78" "$?"
+expect "(R5e) wrapper-nested: NO generic re-run advice" "0" \
+  "$(grep -c 'Fix the failures and re-run' "$wraperr")"
+expect "(R5e) wrapper-nested: remedy still last" "1" \
+  "$(tail -1 "$wraperr" | grep -cF "Edit '**Gate**:' in PROJECT_CONTEXT.md")"
+
+# --- R5f: the OTHER TWO 78-bearing paths into pre-commit-test.sh -------------
+# (v2.2.5 round 4.) R5c covers one of three. Both arms below reach the same
+# `eval "$TEST_CMD"` boundary, where nothing decided the number for us — so both
+# must produce the RETRYABLE message, and neither the terminal one.
+#
+# CONTROL FOR THE CLAMP AT THAT BOUNDARY, honest by construction: delete the
+# clamp and 78 reaches the terminal arm, "re-run it and fix the failures"
+# disappears and every assertion in this block flips.
+
+# Arm 1 -- a **Test** value that exits 78. **Test** always wins, so this never
+# touches run-gate.sh at all.
+t78repo=$(mkrepo test78 main)
+printf 'exit 78\n' > "$t78repo/exits78.sh"
+printf '# ctx\n\n- **Test**: `bash exits78.sh`\n' > "$t78repo/PROJECT_CONTEXT.md"
+check_msg "(R5f) **Test** rc=78: retry advice PRESENT" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$t78repo")" "re-run it and fix the failures"
+check_nomsg "(R5f) **Test** rc=78: NOT a configuration failure" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$t78repo")" "cannot succeed as configured"
+
+# Arm 2 -- **Gate** present but run-gate.sh ABSENT beside the hook, so the hook
+# eval's the Gate value itself. Identical gate command, identical exit code, and
+# before round 4 it got the OPPOSITE remediation from arm 1 of R5c purely
+# because of where the hook happened to be installed.
+g78hooks="$TMPROOT/hooks-no-rungate"
+mkdir -p "$g78hooks/lib"
+cp "$ROOT/hooks/pre-commit-test.sh" "$g78hooks/"
+cp "$ROOT/hooks/lib/git-cmd.sh" "$ROOT/hooks/lib/json.sh" "$g78hooks/lib/"
+g78repo=$(mkrepo gate78norungate main)
+printf 'exit 78\n' > "$g78repo/exits78.sh"
+printf '# ctx\n\n- **Gate**: `bash exits78.sh`\n' > "$g78repo/PROJECT_CONTEXT.md"
+check_msg "(R5f) Gate eval'd, no run-gate.sh, rc=78: WARN names the fallback" "$g78hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$g78repo")" "run-gate.sh not found next to this hook"
+check_msg "(R5f) Gate eval'd, no run-gate.sh, rc=78: retry advice PRESENT" "$g78hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$g78repo")" "re-run it and fix the failures"
+check_nomsg "(R5f) Gate eval'd, no run-gate.sh, rc=78: NOT a configuration failure" "$g78hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$g78repo")" "cannot succeed as configured"
+
+# --- R5g: THE EVAL BOUNDARY RUNS CONSUMER TEXT IN THE HOOK'S OWN SHELL --------
+# (v2.2.5 round 5, independent QA at 9baa446. Pre-existing since v2.1.x.)
+#
+# THIS BLOCK EXISTS BECAUSE A SOURCE CENSUS CANNOT REACH THIS CLASS. Census
+# 21c-2f in verify-template-consistency.sh asserts "no `exit 1` in a registered
+# hook" by grepping the hook's SOURCE. It was green here — and the hook exited 1
+# anyway, because the `exit 1` arrived as CONFIG DATA through `**Test**` and was
+# eval'd. "pre-commit-test.sh never exits anything but 0 or 2" was true of the
+# text and false of the process. The question that finds this class: what would
+# have to be true for this census to be green while the property is broken?
+#
+# Bare `eval "$TEST_CMD"` runs in the CURRENT shell, so a value reaching `exit`
+# or `exec` at top level terminated the hook and skipped the if/else. Measured
+# before the fix / after:
+#
+#   **Test**: exit 1                  rc 1  -> 2, BLOCKED lines 0 -> 1
+#   **Test**: exec bash -c "exit 1"   rc 1  -> 2, BLOCKED lines 0 -> 1
+#   **Test**: exec bash -c "exit 78"  rc 78 -> 2, BLOCKED lines 0 -> 1
+#   **Gate**: exec bash -c "exit 1"   rc 1  -> 2, BLOCKED lines 0 -> 1
+#     (round 6; run-gate.sh absent beside the hook, so :175 assigns the Gate
+#      value into $TEST_CMD and it reaches the SAME eval — see the block below)
+#
+# Every pre-fix row is warn-and-ALLOW: the commit proceeded UNGATED and SILENTLY.
+# CONTROL: drop the `( )` around the eval in hooks/pre-commit-test.sh and 9 of
+# the 10 assertions below flip (measured 2026-08-31); the tenth is the passing-
+# command control at the end, which correctly holds either way, so the block is
+# not one that fires on everything.
+#
+# `exec` is this codebase's own idiom — the R5e wrapper above uses it.
+#
+# NOT `$H`: it is positional state and by this point in the file it names
+# hooks/gate-before-merge.sh, which exits 0 on a commit payload — every arm
+# below would have passed vacuously. Spell the hook out, as R5f does.
+r5g_probe() { # <label> <index> <Test value> ; asserts exit 2 + a BLOCKED line
+  d=$(mkrepo "evalesc$2" main)
+  printf '# ctx\n\n- **Test**: %s\n' "$3" > "$d/PROJECT_CONTEXT.md"
+  check "(R5g) $1: still exit 2 (was warn-and-ALLOW)" hooks/pre-commit-test.sh 2 \
+    "$(mkjson Bash 'git commit -m x' "$d")"
+  check_msg "(R5g) $1: BLOCKED line present" "$ROOT/hooks/pre-commit-test.sh" 2 \
+    "$(mkjson Bash 'git commit -m x' "$d")" "re-run it and fix the failures"
+}
+r5g_probe "bare exit"      1 'exit 1'
+r5g_probe "exec + exit 1"  2 'exec bash -c "exit 1"'
+r5g_probe "exec + exit 78" 3 'exec bash -c "exit 78"'
+
+# THERE IS ONE `eval` BUT TWO CONFIG KEYS REACH IT (v2.2.5 round 6, consumer-
+# reported). The three arms above drive `**Test**`. But pre-commit-test.sh:175,
+# on the mirror-fallback path (`run-gate.sh not found next to this hook`),
+# assigns the **GATE** value into $TEST_CMD and falls through to that same single
+# eval. So the fail-open is reachable through **Test** AND through **Gate**, and
+# the second is not a variant — it is the identical statement with a different
+# value source. Driving only **Test** would be a correct behavioural test of one
+# of the two ways in, which is this finding's own shape one level up.
+#
+# THE GATE PATH IS THE LESS VISIBLE OF THE TWO, and that is why it gets its own
+# arm rather than a comment. It prints `WARN: ... evaluating the Gate command
+# directly instead` BY DESIGN — so a fail-open here arrives wearing a warning
+# that looks like the known degradation. A consumer who sees that line has been
+# told to expect a LESSER path, not a BYPASSED one, and has no way to tell from
+# the transcript which of the two they got.
+#
+# Shape copied from R5f arm 2, for its non-vacuity properties: both libs are
+# copied in (a missing lib fails the hook closed at exit 2 and the arm would
+# pass for the wrong reason), and the WARN string is asserted so that "the
+# fallback path was actually taken" is proved rather than assumed.
+r5ghooks="$TMPROOT/hooks-no-rungate-exec"
+mkdir -p "$r5ghooks/lib"
+cp "$ROOT/hooks/pre-commit-test.sh" "$r5ghooks/"
+cp "$ROOT/hooks/lib/git-cmd.sh" "$ROOT/hooks/lib/json.sh" "$r5ghooks/lib/"
+r5grepo=$(mkrepo evalescgate main)
+printf '# ctx\n\n- **Gate**: exec bash -c "exit 1"\n' > "$r5grepo/PROJECT_CONTEXT.md"
+check_msg "(R5g) Gate exec, no run-gate.sh: the mirror-fallback path was taken" "$r5ghooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$r5grepo")" "run-gate.sh not found next to this hook"
+check_msg "(R5g) Gate exec, no run-gate.sh: still exit 2 + BLOCKED (was warn-and-ALLOW)" "$r5ghooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$r5grepo")" "re-run it and fix the failures"
+
+# Round 4's clamp reasoning must survive the subshell: a child's 78 still has no
+# provenance, so it takes the RETRYABLE message, never the terminal framing.
+# (R5f arm 1 asserts the same for a non-exec child; this is the exec path.)
+r5gx=$(mkrepo evalesc78frame main)
+printf '# ctx\n\n- **Test**: exec bash -c "exit 78"\n' > "$r5gx/PROJECT_CONTEXT.md"
+check_nomsg "(R5g) exec rc=78: NOT a configuration failure" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$r5gx")" "cannot succeed as configured"
+
+# Two-sided: a passing consumer command must still pass, or "exit 2 everywhere"
+# would satisfy every assertion above.
+r5ggreen=$(mkrepo evalescgreen main)
+printf '# ctx\n\n- **Test**: `true`\n' > "$r5ggreen/PROJECT_CONTEXT.md"
+check "(R5g) control: a passing Test still exits 0" hooks/pre-commit-test.sh 0 \
+  "$(mkjson Bash 'git commit -m x' "$r5ggreen")"
+
+# NOTE on the `cd "$REPO_PATH" || exit 2` sites (v2.2.5 round 4): they are NOT
+# driven by a fixture here, and deliberately so. Reaching either one with a
+# failing cd requires the directory to disappear BETWEEN the PROJECT_CONTEXT.md
+# grep and the cd — a genuine race, and any fixture claiming to reproduce it
+# would in fact be testing a mutated copy of the hook. The property that the
+# code cannot exit 1 there is asserted structurally instead, as a census in
+# scripts/verify-template-consistency.sh (search: warn-and-allow).
 
 # ===========================================================================
 # git gates: fail-closed contracts (v2.1.1, consumer sync feedback #2c/#3)
@@ -1542,8 +1808,22 @@ check_env() {
 }
 
 NOPARSER=$(mkpathdir noparser)
-PYONLY=$(mkpathdir pyonly python3)
-JQONLY=$(mkpathdir jqonly jq)
+# BUILD THE OPTIONAL-PARSER STUB DIRS ONLY WHERE THAT PARSER EXISTS (v2.2.5
+# round 3). mkpathdir's missing-tool report is a LOUD guard, and correctly so —
+# for CORE tools, whose absence silently corrupts every case run under the stub.
+# `python3` and `jq` are not core: they are the thing being VARIED, and their
+# absence is already handled by the HAVE_* skips below. Building a stub dir for
+# an absent optional parser reported `FAIL stub PATH minimum tool set (missing:
+# python3)` and turned the whole suite RED in a configuration that was skipping
+# correctly — the harness failing for a harness reason and reporting it as a
+# hook result. Measured under the jq configuration of
+# scripts/test-hooks-parser-matrix.sh, where python3 is genuinely off PATH.
+# The variables stay defined-but-empty; every case using them is inside a
+# HAVE_PY / HAVE_JQ block.
+PYONLY=""
+if [ -n "$HAVE_PY" ]; then PYONLY=$(mkpathdir pyonly python3); fi
+JQONLY=""
+if [ -n "$HAVE_JQ" ]; then JQONLY=$(mkpathdir jqonly jq); fi
 
 # Self-check FIRST: a fixture that still sees node would pass green and prove
 # nothing. Prints 1 when the parser is invisible on that PATH.
@@ -1840,11 +2120,16 @@ mkstubpath() { # <name> <tool> <stub-body-line> [extra-tool ...] -> prints dir
 }
 STUB_RC=$(mkstubpath stub-rc python3 'exit 3')
 STUB_GARBAGE=$(mkstubpath stub-garbage python3 'echo not-json-at-all')
-STUB_JQ=$(mkstubpath stub-jq python3 'exit 3' jq)
+# Same rule as PYONLY/JQONLY above: these two carry a REAL optional parser as
+# the working backend behind the broken stub, so they are built only where that
+# parser exists. Their cases are already inside HAVE_JQ / HAVE_PY blocks.
+STUB_JQ=""
+if [ -n "$HAVE_JQ" ]; then STUB_JQ=$(mkstubpath stub-jq python3 'exit 3' jq); fi
 # A broken NODE is the case json_require_node exists for -- the six node-program
 # hooks never call json_parser, so the probe has to run on that path too.
 STUB_NODE=$(mkstubpath stub-node node 'exit 3')
-STUB_NODE_PY=$(mkstubpath stub-node-py node 'exit 3' python3)
+STUB_NODE_PY=""
+if [ -n "$HAVE_PY" ]; then STUB_NODE_PY=$(mkstubpath stub-node-py node 'exit 3' python3); fi
 
 # Self-check FIRST: a fixture whose stub is invisible would prove nothing.
 expect "stub PATH still shows python3" 0 "$(seen "$STUB_RC" python3)"
