@@ -201,7 +201,8 @@ PCT_T0=$(date +%s 2>/dev/null || echo 0)
 eval "$TEST_CMD" > "$OUT" 2>&1
 PCT_RC=$?
 
-# THE CLAMP AT THIS BOUNDARY (v2.2.5 round 4), and WHY THE TWO BOUNDARIES DIFFER.
+# NO TERMINAL REMEDY AT THIS BOUNDARY (v2.2.5 round 4), and WHY THE TWO
+# BOUNDARIES DIFFER.
 #
 # `$TEST_CMD` here is either a consumer's **Test** value or — when run-gate.sh is
 # absent beside this hook — the raw **Gate** value. Both are ARBITRARY consumer
@@ -228,10 +229,14 @@ PCT_RC=$?
 # "cannot succeed as configured" framing is lost. run-gate.sh's other terminal
 # guard is NOT reachable here at all: `$REPO_PATH` was resolved by gc_repo_for,
 # so "not inside a git repository" cannot fire under this cd.
-if [ "$PCT_RC" -eq "$GC_TERMINAL_RC" ]; then
-  PCT_RC=1
-fi
-
+#
+# SO THE FIX IS THE ABSENCE OF THE BRANCH, NOT A CLAMP ASSIGNMENT. Round 4 first
+# wrote `PCT_RC=1` here as well. With the terminal arm gone that statement has NO
+# observable effect — deleting it leaves every assertion green, which is exactly
+# the guard-indistinguishable-from-its-absence shape this release refuses to
+# ship. What is enforced instead is enforceable: the else branch below tests
+# `$PCT_RC` against 0 and nothing else, and R5f in scripts/test-hooks.sh goes red
+# the moment a terminal arm reappears here.
 if [ "$PCT_RC" -eq 0 ]; then
   rm -f "$OUT"
   # The elapsed seconds are the ONLY external evidence the suite actually ran.
@@ -244,11 +249,12 @@ if [ "$PCT_RC" -eq 0 ]; then
   echo "PRE-COMMIT: '$TEST_CMD' passed. ($((PCT_T1 - PCT_T0))s)" >&2
   exit 0
 else
-  # NO TERMINAL ARM HERE, DELIBERATELY (v2.2.5 round 4). The clamp above makes
-  # `$PCT_RC` never 78 at this point, so a `-eq "$GC_TERMINAL_RC"` branch would
-  # be dead code — and a branch that can never be observed firing is exactly
-  # what this release refuses to ship. Anyone restoring one must first give this
-  # boundary a provenance channel; the number alone cannot earn it.
+  # NO TERMINAL ARM HERE, DELIBERATELY (v2.2.5 round 4) — this absence IS the
+  # fix, see the note above the success test. A 78 reaching this point is a
+  # child's number with no provenance behind it, so branching on it would hand a
+  # plain test failure the terminal remedy: inverted advice. Anyone restoring a
+  # terminal arm must FIRST give this boundary a provenance channel; the number
+  # alone cannot earn it. R5f in scripts/test-hooks.sh goes red if one returns.
   echo "BLOCKED: '$TEST_CMD' failed — re-run it and fix the failures before committing." >&2
   # Same reason as the run-gate.sh branch above: the escape hatch is named
   # where the block is read, not only in CLAUDE.md.
