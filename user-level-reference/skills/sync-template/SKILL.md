@@ -83,7 +83,17 @@ for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; e
 1. **Cross-check the methods.** Run both and assert they return the same set; print `both methods agree` before copying anything. `git status --porcelain --ignored` (which lists `!! <path>`) is a third, independent confirmation if they disagree.
 2. **Assert non-empty when the manifest tracks `CLAUDE.local.md`** — every variant ships it and every shipped `.gitignore` ignores it, so an empty set there is impossible and means the check failed, not that there is nothing to protect. **This assertion is the one that does not depend on getting the invocation right**, which is why it exists: it catches the whole class, including the next variant of it. An empty set with `CLAUDE.local.md` in the manifest stops the sync; it does not proceed with `Backup: <dir> []`.
 
-Copy each hit to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync.
+**What each of those two can and cannot tell you (v2.2.5, and it matters when one of them fires).** The cross-check is what actually caught the `\r` defect above: one method disagreed with two others, and the disagreement *localised* the fault to path hygiene. The non-empty assertion is the opposite instrument — it would have fired on the same defect and told the consumer only that the set was empty, sending them hunting a manifest bug that did not exist. **It tells you SOMETHING is wrong, not WHAT.** Keep both: assertion 1 diagnoses, assertion 2 is the last line and survives the case assertion 1 cannot reach — both arms of the cross-check call `git check-ignore`, so they share an implementation and can be wrong *together*. Four syncs and assertion 2 has never fired; that is what an invariant is supposed to do, not evidence it is dead weight.
+
+**Control for assertion 2, because an untested last line is indistinguishable from an absent one.** Before trusting the result, plant a temp path that is definitely gitignored (append a unique name to `.gitignore`, create the file) and a temp path that is definitely NOT, run the same derivation over both, and assert the ignored one comes back and the plain one does not. **Both arms are required**: a positive-only control passes just as happily against a derivation that returns *every* path, which is a live failure mode here (a superset fallback is explicitly allowed further down this step), not a hypothetical one. Remove the two temp paths afterwards. One temp file each, deterministic, and it converts "this assertion has never fired" into "this assertion still works".
+
+**Back up a SECOND set as well: `new_template_files` ∩ exists-on-disk (v2.2.5).** The set above is manifest-scoped, and invariant I1's data-loss class is defined by *not* being in the manifest — so the first set structurally cannot cover it, and a gitignored member of it has no history, no diff and no undo. Adding it here is the only mechanism on the table that reaches that case.
+
+> **Do NOT reorder this step to make that work.** `new_template_files` is already in hand: this step runs AFTER step 2 (Compute Status), despite what its label suggests — "2b" reads as belonging to step 2's *inputs* when it is sequenced after step 2's *output*. Moving a step whose entire contract is *before any write* is exactly how the next data-loss bug gets introduced, and here it would buy nothing.
+
+**Bootstrap is the worst case, and it is not a corner.** A fresh bootstrap has an empty manifest, so **every hand-written file in the tree is simultaneously present-on-disk and absent-from-manifest** — the whole destructive intersection at once, on the one path where the manifest-scoped backup protects nothing whatsoever. The second set above is the only thing standing between a bootstrap and the tree it is bootstrapping into.
+
+Copy each hit from BOTH sets to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync — step 5's post-apply guard reads it.
 
 **If Bash commands starting with `git` are BLOCKED in this project, both methods above are unexecutable** (pre-v2.1 configs shipped a `block-bash-vcs.sh`; this toolkit removed it in v2.1, so this reaches only consumers still on such a config). The step anticipates a false clean, not a hard block. Two git-free routes, in preference order: use the server's `template_list_gitignored` when the installed `template-sync-tools` has it — the real fix, and the same one this step already names; otherwise parse `.gitignore` yourself and, where that is ambiguous, **back up the manifest's whole path list as a superset**. A superset backup is cheap and always correct — over-copying costs disk, under-copying costs the file. What is NOT acceptable is skipping 2b because the check would not run: that is a 127 being read as a verdict.
 
@@ -93,9 +103,15 @@ Copy each hit to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preservi
 
 The steps below are numbered for reading order, not for precedence. Two rules apply to **every** write in steps 3, 4, 5 and 6b, whichever list the path arrived in. Both exist because the numbering was followed literally and destroyed work.
 
+Two general rules govern how they, and every guard in this file, are written. Neither is decoration — each was earned by a specific failure in this release:
+
+> **A guard must be keyed on the DECISION that was made, not on the list the file arrived in.** A list describes *provenance*; a guard enforces *intent*. Enforcing intent off a provenance list is what miscategorises the legitimate case, and the fix for that false positive is always to weaken the guard.
+
+> **A guard that cannot be observed firing is indistinguishable from one that was deleted — so every guard against an invisible failure ships with a CONTROL that makes it visible.** A comment defends a guard against a reader; it does not defend it against a refactor, a merge, or a tidy-up six months out. A control converts *"this looks redundant"* into *"deleting this turns something red"*. Verify each control **by deleting its guard**: if the control still passes, it is decorative and tests the surrounding machinery instead. And a control SET needs both arms — positives alone cannot distinguish a working guard from one that fires on everything.
+
 **I1 — a file that EXISTS in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in.** `new_template_files` means *absent from the MANIFEST*, not *absent from the PROJECT*: `template_compute_status` decides that list by manifest membership alone and never looks at the disk. A path that is present on disk, untracked in the manifest, and also shipped by the template therefore appears in `new_template_files` while step 6b rule 4 says — correctly — that it must be registered `source="skip"`. Step 5 runs first, so following the numbering lets the destructive reading win. It has: a consumer lost a 156-line project-specific gate this way, and **step 2b cannot cover it**, because 2b backs up *manifest-tracked* paths and this file's defining property is that it is not one. The reporter recovered only because the file happened to be git-tracked; a gitignored one would simply be gone. The user cannot save themselves either — they are asked "add this new file?" about a file that already exists with their content in it, and "yes" is the reasonable answer to the question as posed.
 
-**I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
+**I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. **State this as a PRECONDITION, not as an ordering rule, and check it where the write happens:** immediately before writing `settings.json`, verify every `hooks/` path it references exists and is non-empty; refuse the write otherwise. An ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose — while a precondition checked at the point of the write does not. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
 
 ### 3. Auto-Update Files
 
@@ -179,18 +195,43 @@ For each file with status `CONFLICT`:
 1. Call `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`
 2. **Disqualify the unsafe options BEFORE offering anything.** Both of these are checks on the diff you just fetched:
    - *Accept merged* is off the table unless `auto_merged` survives inspection: diff it against BOTH `template_content` and `project_content` for lines present in base AND project; if any are missing, do not offer it — a clean merge is not a correct merge. For `hooks/*.sh`, also `bash -n` the merged body (and `node --check` any embedded `node -e` block); a syntax error is a conflict, not a clean merge.
-     > **Run `bash -n` through an EXPLICIT interpreter path, and never read `rc=127` as a syntax verdict (v2.2.5).** Driven from a scripting language on Windows, the bare name `bash` does not resolve to the shell you meant: `shutil.which('bash')` reports `C:\Program Files\Git\usr\bin\bash.EXE`, while `subprocess.run(['bash', …])` executes **WSL** bash, which cannot see a Windows path. Python's own two mechanisms disagree about the same name. The check then returns 127 for *every* file — valid and broken alike — so a consumer following this step learns nothing and goes hunting a syntax error in a file that is fine. Reproduced on two hosts; measured here:
+     > **Run `bash -n` through a `which`-RESOLVED absolute path, never a bare name and never a hardcoded one (v2.2.5).** Driven from a scripting language on Windows, the bare name `bash` does not resolve to the shell you meant: `shutil.which('bash')` reports `C:\Program Files\Git\usr\bin\bash.EXE`, while `subprocess.run(['bash', …])` executes **WSL** bash, which cannot see a Windows path. Python's own two mechanisms disagree about the same **NAME** — and that is the entire root cause. They cannot disagree about an absolute path. So the fix is one host-agnostic line with no platform knowledge in it:
+     >
+     > ```python
+     > exe = shutil.which("bash")     # resolve ONCE, by name, here
+     > if exe is None:
+     >     ...                        # could not check — name the interpreter and stop
+     > subprocess.run([exe, "-n", script], ...)   # then only ever exec the absolute path
+     > ```
+     >
+     > Measured on the reporting Windows host (Git for Windows + WSL both installed), all four verdict columns, every candidate interpreter:
      >
      > ```
-     > bash -n <VALID>                                  rc=127   (PATH-resolved -> WSL)
-     > bash -n <BROKEN, unterminated `if`>              rc=127   IDENTICAL
-     > "C:\Program Files\Git\bin\bash.exe" -n <VALID>   rc=0
-     > "C:\Program Files\Git\bin\bash.exe" -n <BROKEN>  rc=2     real syntax diagnostic
+     > interpreter                             valid  broken  missing  directory
+     > bare name 'bash'                          127     127      127        127   <- indistinguishable
+     > shutil.which('bash')  (Git\usr\bin)         0       2      127        126
+     > C:\Program Files\Git\bin\bash.exe           0       2      127        126
+     > C:\Program Files\Git\usr\bin\bash.exe       0       2      127        126   <- IDENTICAL to bin
      > ```
      >
-     > Use that verbatim invocation — note it is `Git\bin\bash.exe`, not the `Git\usr\bin\bash.EXE` the broken lookup reports; do not substitute one for the other without testing. Off Windows, or from a Git Bash shell, the plain `bash -n` is already the right interpreter.
+     > **An earlier revision of this step told you to hardcode `C:\Program Files\Git\bin\bash.exe` and warned against the `usr\bin` path `shutil.which` reports. Both halves are withdrawn.** The last two rows are the comparison that warning was written without: `bash -n` parses without executing, needs no path translation, and the two binaries behave identically. And the hardcoded path **does not exist on Linux, WSL or macOS**, so shipping it makes the check unrunnable everywhere else — while any fallback to the bare name restores the Windows bug it was meant to fix. An unmeasured warning is worse than no warning: it makes the next reader distrust the correct binary.
      >
-     > **And guard the reading, which is the durable half:** a meaningful `bash -n` returns **0** (valid) or **2** (syntax error). **127 means the check DID NOT RUN** — the interpreter could not read the file — and is an environment failure, never a syntax failure. Report it as "could not verify", fix the invocation, and re-run. The same rule applies to `node --check` and to any other checker invoked by name. (This is the `command -v python3` App-Installer stub class again: the name resolves, the program is not the one you meant.)
+     > **Then read the result by this table. `rc=127` is a HARD ERROR, not "the check did not run":**
+     >
+     > ```
+     > FileNotFoundError  -> could not check; name the interpreter. THIS is "the check
+     >                       did not run" — it is an EXCEPTION, raised before any exit
+     >                       code exists, not a return code. Verified: an interpreter
+     >                       that is absent raises; it never yields an rc.
+     > rc 0               -> pass
+     > rc 2               -> syntax error — the ONLY fail verdict
+     > rc 126             -> could not READ it: permissions, or a DIRECTORY passed where
+     >                       a script was expected. ERROR; print the path
+     > rc 127             -> bash could not find THE FILE. ERROR; print the path
+     > anything else      -> unknown. ERROR
+     > ```
+     >
+     > **Why 127 is an error rather than a shrug, and why the previous wording was a fail-open.** `rc=127` is bash's own verdict about the file it was handed — *"No such file or directory"*. It is not "the interpreter failed to launch". Treating it as did-not-run waves through `bash -n hooks/deleted-thing.sh` on a manifest that still references a script no longer on disk — and **a missing hook script is exactly the condition this toolkit's 127-wrapper exists to catch** (a hook whose script is gone exits 127 and the tool call proceeds). Recording it as "unknown, carry on" would reinstall that fail-open one layer up, inside the checker. The all-127 row above was bash correctly reporting that none of the three paths was visible to the bash that actually ran — a fact about the *invocation*, which the `shutil.which` line is what fixes. The same table applies to `node --check` and to any other checker invoked by name. (This is the `command -v python3` App-Installer stub class again: the name resolves, the program is not the one you meant.)
 
    - *Accept template* is off the table when it would silently drop project content: an EMPTY `PROJECT-CUSTOM` region while headings the template does not carry sit outside it (list those headings), or — for `.claude/settings.json` — a `matcher` string naming agents the template version no longer mentions, e.g. a project-added `cpp-coder` (list those agent names; accept-template reverts their hook wiring). In either case route to the splice path (`source="provided"`) instead.
 3. Present what is left:
@@ -218,10 +259,25 @@ For each file with status `CONFLICT`:
 
 `new_template_files` means **absent from the manifest**, NOT absent from the project (invariant I1 above). So for each file in `new_template_files`, **check the disk BEFORE asking anything**:
 
-1. **The path already exists in the project** → it is not new. Do NOT offer to add it and do NOT write it: call `template_apply_file(project_path=".", file_path=F, source="skip")` — which registers a manifest entry from the project's existing content and writes nothing — exactly as step 6b rule 4 already prescribes for a present-but-untracked hook. Report it under `Skipped:` as *present on disk, registered in the manifest (not overwritten)*. From the next sync on it classifies like any other tracked file, so a real template change to it arrives as a CONFLICT you can review — which is the point.
+1. **The path already exists in the project → this is a CONFLICT, not a new file, and not a silent skip.** Both sides have content, which is the definition of a conflict. Fetch `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`, **show the diff**, and offer the normal step-4 options — **with keep-mine as the default**:
+   - **Keep mine** (DEFAULT) → `template_apply_file(project_path=".", file_path=F, source="skip")`, which registers a manifest entry from the project's existing content and writes nothing, exactly as step 6b rule 4 prescribes for a present-but-untracked hook.
+   - **Accept template** → only on an explicit choice made against the diff; this overwrites their file.
+   - **Splice** (`source="provided"`) → hand-merged content.
+
+   Do not reduce this to a silent skip. Skipping is safe but it *hides* that the template ships a different version of a file the project already has — the consumer who lost a file this way would have been told nothing, and would never have learned the template's `run-gate.sh` existed and differed. That comparison is what produced the whole of item K.
 2. **The path does not exist** → ask the user whether to add it. If yes: `template_apply_file(project_path=".", file_path=F, source="template")`.
 
-Never route case 1 through `source="template"` on the strength of the user answering "yes" — the question as posed ("add this new file?") does not tell them their file is about to be overwritten, and step 2b's backup does not cover this class. If the file genuinely should become the template's version, that is a conflict resolution: show them the diff first and let them choose, per step 4.
+**`source="template"` appears in this step ONLY inside case 2, and that is deliberate.** An earlier revision presented it as the default with a condition that might override it; a reader executing literally reached the destructive call and the condition lost, even though a rule of exactly the same shape (6b rule 4) was already written down and had been read. **The imperative at the point of action beats the rule stated elsewhere**, so the branch — not the invariant — is what has to make the wrong call unreachable. Invariant I1 above is the backstop, not the fix.
+
+**List every path you took through case 1, individually.** Report them under `Skipped:` (or `Conflicts:` where the user chose otherwise) as *present on disk — resolved `<resolution>`*, one line per path, never as a count. A count is how a consumer fails to notice that the one file they cared about was in the set.
+
+**Post-apply guard — verify the keep-mine files were not written, and make the guard's own failure visible (v2.2.5).** After the last write in this step:
+
+- **Check set:** every path with a recorded resolution of **keep-mine** that is also in `new_template_files` ∩ exists-on-disk — i.e. exactly the set step 2b's second backup covers. Byte-compare each against its backup copy; any difference is a data-loss event, and at that moment it is still recoverable *from the backup*.
+- **Scope it by the RESOLUTION, never by the path list.** A file the user explicitly resolved **accept-template** is *supposed* to differ and is exempt; keying the guard on `new_template_files` instead would fire on a correct, user-approved outcome, and the fix for that false positive is to weaken the guard, which reopens the hole. This is the same shape as the bug the step itself fixes: **a guard must be keyed on the decision that was made, not on the list the file arrived in.** The discriminator already exists and is populated — `source="skip"` records `"resolution": "keep-mine"` on the manifest entry; template and provided applies omit the key.
+- **Step-4 keep-mine files are OUT of this guard's scope.** They are ordinary manifest-tracked paths, covered by git and visible in the PR diff; step 2b's backups do not include them, so pulling them in would make the coverage assertion below hard-error on a perfectly correct sync.
+- **Assert the backup COVERS each path before comparing it — a missing backup entry is a HARD ERROR, never a clean pass.** Say why, or the next reader deletes it as a redundant existence check in front of a comparison: a byte-comparison against a backup that does not contain the path finds nothing to compare and **reports success**. That is a guard failing by reporting success, guarding a bug whose entire signature is failing by reporting success. `no backup entry for <path>` stops the sync.
+- **Control, both arms.** Deliberately drop one check-set path from the backup and confirm you get the hard error, not a clean run; then restore it and confirm the run is clean. A coverage assertion is the easiest thing in this file to write in a way that passes whether or not it exists — verify it by removing it and watching the first arm go green, which is the only test that tells you the truth.
 
 Apply new libs and hooks BEFORE `.claude/settings.json` is written, even though this step is numbered after step 3 (invariant I2).
 
@@ -292,6 +348,9 @@ grep -rn -- "^\(${BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" .clau
 # OPTIONS BEFORE PATHS: `--include` after the paths is parsed as another PATH.
 # NO `2>/dev/null` on either arm — the sweep's stderr is deliberately
 # unsuppressed; it is the only thing that reports a malformed invocation.
+# PIPEFAIL: without it `$?` is the LAST grep's status and the first one's 2
+# (a malformed invocation) is invisible to anything testing the exit code.
+set -o pipefail
 grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' .claude hooks | grep -v ":[0-9]*:\(${BOM}\)\?[[:space:]]*#"
 ```
 
@@ -308,6 +367,10 @@ CORRECTED + comment filter:      s.sh                      correct
 ```
 
 That third row is the sweep failing at its entire job, quietly — the same shape as the BOM false-clean the v2.2.4 arms were written to prevent. Options before paths is unambiguous everywhere; `scripts/verify-template-consistency.sh` pins the ordering so it cannot drift back.
+
+**Keeping stderr visible is necessary but NOT sufficient — the exit code hides too (v2.2.5).** A malformed `grep` invocation exits **2**, but arm 2 is a pipeline, so a bare `$?` is the *last* grep's status: the 2 never surfaces and anyone wrapping the sweep in a script that tests its result gets a clean-looking answer even with stderr unsuppressed. `set -o pipefail` (above) or an explicit `${PIPESTATUS[0]}` check is what makes the failure testable; without one the defect recurs the moment someone automates the sweep. Stderr caught it for a human; the exit code is what catches it for a script.
+
+**Placeholders inside FENCED CODE BLOCKS are OUT OF SCOPE — decided, not omitted (v2.2.5).** A reviewer scanning unfiltered found a consumer's `CLAUDE.md` carrying `{{BUILD_COMMAND}}`, `{{TEST_COMMAND}}` and `{{FORMAT_COMMAND}}` unfilled inside its Quick Start fenced block. Neither arm sees them: arm 1 requires a `- **Key**: value` line, arm 2 requires `*.sh`. **That is deliberate and stays.** Two reasons. First, the same one that narrowed arm 1 in the first place — a pattern broad enough to reach fenced blocks flags the toolkit's own *documentation* of placeholder handling, including the sweep's own source above and every template's Quick Start, and the better the handling is documented the noisier its own detector becomes. Second, the failure this sweep exists for is a config value that reads as data to a *tool*: v2.2.0's `- **Protected branches**: {{DEFAULT_BRANCH}}` silently unprotected trunk. A fenced snippet telling a human what to type is read by a human, who has the surrounding sentence — in the reported case, the file's own "Replace placeholders above with your project's actual commands." **Named residual gap:** an unfilled placeholder in a fenced block is not reported, so a project that never followed that instruction will not hear about it here. The fact that would flip this decision is a fenced-block placeholder that some *tool* parses; there is not one today.
 
 **Do NOT add `2>/dev/null` to either arm.** The `No such file or directory` above is the *only* signal a malformed invocation gives, and it is the one a consumer running the line literally would have seen — this defect went unnoticed for a release because the reporting consumer had wrapped the shipped line in `2>/dev/null` in their own script. After the ordering fix that particular error is gone anyway; the principle is for whatever the next mistake is. A guard whose diagnostic is suppressed is not a guard.
 
@@ -326,12 +389,33 @@ Any hit is a file the template wrote with an unfilled placeholder — `template_
 
 **Both are optional labels. NEVER fail, block or roll back a sync over either one** — an unresolvable version is a missing label, not an error. Absent means *unknown*, never *stale*: every pre-v2.2.5 manifest stays valid unchanged.
 
-**Resolve `lastSyncedVersion`** against the manifest's own `templateRepo` and `lastSynced`, in this order — first one that succeeds wins, `""` if all fail (a toolkit checkout with no tags fetched is the ordinary case):
+**Resolve `lastSyncedVersion`** against the manifest's own `templateRepo` and `lastSynced`, in this order — first one that succeeds wins:
 
 ```
 git -C <templateRepo> describe --tags --exact-match <lastSynced>   # v2.2.5
 git -C <templateRepo> describe --tags <lastSynced>                 # v2.2.4-3-gabc1234
+#                     ^^^^^^^^^^^^ NO --abbrev=0, DELIBERATELY. With it the
+#   fallback returns the nearest ANCESTOR tag — a bare `v2.2.4` for a commit
+#   strictly NEWER than v2.2.4 — so the manifest would record a version OLDER
+#   than the one actually applied, with no error and no empty string. `""` is
+#   honest: it is unknown announcing itself. A bare ancestor tag is confidently
+#   wrong, and it fires on exactly the consumers who sync off-tag to pick up a
+#   fix early. The `-3-gabc1234` suffix is the signal, not noise; do not tidy it.
 ```
+
+**Distinguish the ways this can fail to resolve — an opaque `""` reproduces, one level down, the opaque `lastSynced` this whole step exists to fix (v2.2.5).** Four distinct outcomes, four distinct values:
+
+| state | value written | how to read it |
+|---|---|---|
+| resolved to a tag | `"v2.2.5"` | exact; `--exact-match` succeeded |
+| untagged but resolvable | `"v2.2.4-3-gabc1234"` | three commits past v2.2.4 — a real, precise answer, not a failure |
+| no toolkit checkout reachable | `"unknown:no-checkout"` | `templateRepo` is absent, or `git -C` cannot open it |
+| checkout present, no tags | `"unknown:no-tags"` | fetch tags (`git fetch --tags`) and re-run to label it |
+| this skill never ran | key **ABSENT** | a pre-v2.2.5 manifest; absent means unknown, never stale |
+
+Never write a bare `""` — it is indistinguishable from "resolved, to nothing". The bounded shape of the failure, measured: on a host with the toolkit checked out and its 18 tags fetched, `--exact-match` resolves correctly, so the unresolved states are specific to **no checkout, a shallow clone, or a fetch without tags** — a bounded defect, not an open-ended one.
+
+**Control, both arms, and assert the untagged arm POSITIVELY.** A tagged HEAD must resolve to the exact tag; an **untagged** HEAD must produce a value matching `-g[0-9a-f]{7,}`, i.e. it *carries the describe suffix*. Do **not** phrase the second as "is not an ancestor tag": that is awkward to express and passes **vacuously** on an empty string, a malformed value, or a swallowed exception — a fixture with the shape of a failing-arm test whose failing arm can go green for reasons unrelated to the guarantee. "Carries the suffix" is one positive assertion that an `--abbrev=0` refactor breaks on its first run, which is the named regression actually being guarded.
 
 **Run those through the Bash tool, not from inside the stamping script.** Consumer manifests store `templateRepo` as an MSYS path (`/g/git/claude-code-toolkit` in all four measured) and native `git.exe` spawned from Python cannot resolve it — it exits non-zero, both fallbacks "fail", and the label silently comes out `""` on a repo whose tags are right there. Measured: same sha, same repo, `''` from a Python `subprocess` versus `v2.2.3` from Bash. Resolve the string in Bash, hand it to the script.
 
@@ -393,8 +477,10 @@ Sync complete: {variant} @ {new_commit}
 
 ```
 Toolkit:      v2.2.5 (d67b507)
-Toolkit:      v2.2.4-3-gabc1234 (abc1234) — untagged commit
-Toolkit:      unknown (abc1234) — no tags in the toolkit checkout; fetch them and re-run to label it
+Toolkit:      v2.2.4-3-gabc1234 (abc1234) — untagged commit, three past v2.2.4
+Toolkit:      unknown:no-tags (abc1234) — checkout present but no tags; `git fetch --tags` and re-run to label it
+Toolkit:      unknown:no-checkout (abc1234) — no toolkit checkout reachable at the manifest's templateRepo
+Toolkit:      (field absent) — synced by a pre-v2.2.5 skill; unknown, not stale
 Sync server:  unknown (server reports no version — client never guesses it)
 ```
 
@@ -411,6 +497,10 @@ Match the plugin's **heading**, not the phrase: `grep -c '^# context-mode' CLAUD
 Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, `.gate/`, stray output files) that were never part of the sync.
 
 **Write the commit MESSAGE to a file and use `git commit -F <path>` — never a heredoc, and never a long `-m` (v2.2.5).** The gates scan the whole command STRING, so a message body that merely *describes* what this sync changed ("adopts the new merge gate", "gh pr merge is now blocked without a fresh artifact") is matched by `gate-before-merge.sh` on the commit that carries it. A sync commit describes gate changes by its nature, which makes this step the most likely place in the whole skill to hit it — and the block is uninterpretable, because it does not tell you whether the gate works or whether your own message was the violation. Same reasoning as the "probes must live in a script file" rule in step 3, arriving from a third direction. Write the message with the **Write tool** (not a Bash heredoc — the heredoc body is part of the command string too) to `"${TMPDIR:-/tmp}/sync-msg.txt"`, then `git commit -F` that path. The short `-m` this step used to prescribe dodged the gate by luck, not design.
+
+**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool), or `--fill` to reuse the commit message. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
+
+> **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
 
 **The full sequence under v2.1.3+ hooks — the order is load-bearing:**
 
@@ -439,9 +529,10 @@ CI fires on `pull_request` and on push-to-main; a bare branch push produces **no
 - NEVER apply an `auto_merged` body without checking it for dropped lines — and, for a hook, without a `bash -n`
 - NEVER finalize without the hook-script verification (step 6b), sourced libs included — a missing script or lib fails open and silently disables enforcement
 - NEVER register PRESENT hooks with `source="template"` in step 6b — `source="skip"` for present-but-untracked (registration must not overwrite local edits); `source="template"` is ONLY for scripts missing from disk (step 3)
-- NEVER write a path from the template that already EXISTS in the project without an explicit conflict resolution (invariant I1) — a `new_template_files` entry that is present on disk is registered `source="skip"`, never added with `source="template"`
+- NEVER write a path from the template that already EXISTS in the project without an explicit conflict resolution (invariant I1) — a `new_template_files` entry that is present on disk is presented as a CONFLICT defaulting to keep-mine (`source="skip"`), never added with `source="template"` on the strength of a "yes" to "add this new file?"
 - NEVER write `.claude/settings.json` before every script it references exists on disk (invariant I2), whichever step introduced those scripts
-- NEVER record `rc=127` from `bash -n` (or any checker) as a syntax verdict — 127 means the check did not run; 0 and 2 are the only verdicts (step 4)
+- NEVER record `rc=127` or `rc=126` from `bash -n` (or any checker) as a PASS — 0 and 2 are the only verdicts, 126/127 are hard ERRORS naming the path, and "the check did not run" is a raised `FileNotFoundError`, not a return code (step 4)
+- NEVER exec a checker by bare name, and never by a hardcoded platform path — resolve it once with `shutil.which` (or the shell equivalent) and exec the absolute path it returns (step 4)
 - NEVER hand-assemble or re-type `applied_files` entries — collect the tool results verbatim
 - ALWAYS re-run `template_compute_status` after finalize and report anything other than a clean result
 - ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `lastSynced`)
