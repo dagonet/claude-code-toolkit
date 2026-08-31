@@ -912,6 +912,83 @@ if grep -q '^unset RUN_GATE_ACTIVE' scripts/test-hooks.sh; then
 else
   ko "self-gating: test-hooks.sh must 'unset RUN_GATE_ACTIVE' at the top — inherited, it fails 19 nested-gate fixtures"
 fi
+# Companion pin (v2.2.5 round 4). RUN_GATE_TERMINAL leaks by the same route and
+# in the worse direction: an inherited marker path points at the REAL outer run's
+# marker, a fixture's nested recursion guard touches it, and the outer clamp then
+# reads a retryable 78 as terminal. Same class, opposite polarity, so it gets its
+# own assertion rather than riding on the one above.
+if grep -q '^unset RUN_GATE_TERMINAL' scripts/test-hooks.sh; then
+  ok "self-gating: test-hooks.sh unsets inherited RUN_GATE_TERMINAL (a fixture must not touch the outer run's marker)"
+else
+  ko "self-gating: test-hooks.sh must 'unset RUN_GATE_TERMINAL' at the top — inherited, a fixture's nested guard marks the OUTER run terminal"
+fi
+
+# 21c-2f. NO `exit 1` IN A REGISTERED HOOK — it is warn-and-ALLOW (v2.2.5 r4).
+#
+#         The harness treats every non-zero, non-2 PreToolUse exit as a
+#         NON-BLOCKING error and lets the tool call proceed. So `|| exit 1` in a
+#         GATE reads as "could not determine, carry on" — cannot-determine
+#         permits, the shape this release keeps closing. pre-commit-test.sh had
+#         two (`cd "$REPO_PATH" || exit 1`); a failing cd let the commit through
+#         ungated.
+#
+#         Reaching those sites needs the directory to vanish between the
+#         PROJECT_CONTEXT.md grep and the cd — a race no fixture can honestly
+#         drive — so the property is asserted structurally here instead.
+#         run-gate.sh is excluded on purpose: it is a RUNNER, not a registered
+#         hook, and its `cd "$REPO_TOP" || exit 1` is documented to stay 1.
+hook_exit1=$(grep -nE 'exit 1( |;|$)' hooks/pre-commit-test.sh hooks/gate-before-merge.sh hooks/no-push-main.sh 2>/dev/null \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -z "$hook_exit1" ]; then
+  ok "no 'exit 1' in the registered git gates — a non-2 PreToolUse exit is warn-and-allow"
+else
+  ko "warn-and-allow: 'exit 1' in a registered hook lets the tool call PROCEED — use exit 2: $(printf '%s' "$hook_exit1" | head -3 | tr '\n' ' ')"
+fi
+
+# 21c-2d. The RUN_GATE_ACTIVE test must PRECEDE the not-a-git-repository guard
+#         in hooks/run-gate.sh (v2.2.5 round 4).
+#
+#         The second terminal guard (`:74`) does NOT touch the provenance marker,
+#         which is safe ONLY because a nested invocation always exits at the
+#         recursion guard first and can never reach it. That makes `:74`
+#         top-level-only, where no outer clamp exists to mislead. Reorder the two
+#         and a nested run-gate.sh in a non-repo cwd starts exiting 78 with no
+#         marker — clamped to 1, the self-reference diagnosis lost.
+#
+#         A COMMENT CANNOT ENFORCE AN ORDERING; this can, and it fails on the
+#         edit that breaks it. It is honest about being positional: the safety
+#         here genuinely IS positional, so a positional assertion is not a proxy
+#         for the property — it is the property. The comment in run-gate.sh stays
+#         too: it carries the WHY, which a line-number census cannot. Same
+#         pairing as GC_KEY_PRE.
+rg_active_ln=$(grep -n 'RUN_GATE_ACTIVE:-' hooks/run-gate.sh | head -1 | cut -d: -f1)
+rg_norepo_ln=$(grep -n 'not inside a git repository' hooks/run-gate.sh | head -1 | cut -d: -f1)
+if [ -z "$rg_active_ln" ] || [ -z "$rg_norepo_ln" ]; then
+  ko "run-gate.sh guard ordering: could not locate both guards (RUN_GATE_ACTIVE=${rg_active_ln:-<none>}, not-a-repo=${rg_norepo_ln:-<none>})"
+elif [ "$rg_active_ln" -lt "$rg_norepo_ln" ]; then
+  ok "run-gate.sh: the RUN_GATE_ACTIVE guard precedes the not-a-git-repository guard (line $rg_active_ln < $rg_norepo_ln)"
+else
+  ko "run-gate.sh guard ordering INVERTED: RUN_GATE_ACTIVE at line $rg_active_ln must come BEFORE the not-a-git-repository guard at line $rg_norepo_ln — otherwise a nested run exits 78 without the provenance marker and the outer clamp swallows it"
+fi
+
+# 21c-2e. NO BARE `78` in hooks/ (v2.2.5 round 4).
+#
+#         GC_TERMINAL_RC has a drift census (21c-2b) but nothing asserted that a
+#         THIRD site could not appear spelled as a literal, bypassing the
+#         constant entirely and drifting silently the next time the value moves.
+#         None exists today; this keeps it that way. The target is the literal
+#         USED as the value — `exit 78`, `-eq 78`, `-ne 78`, `<VAR>=78` — so the
+#         constant's own two definitions and the prose that explains the number
+#         (comments, the --help text) are not matched. A doc string cannot make
+#         a caller test the wrong code; a bare literal can.
+bare78=$(grep -nE '(exit[[:space:]]+78|-(eq|ne)[[:space:]]+78|[A-Za-z_][A-Za-z0-9_]*=78)([^0-9]|$)' hooks/*.sh hooks/lib/*.sh 2>/dev/null \
+  | grep -v 'GC_TERMINAL_RC=78' \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -z "$bare78" ]; then
+  ok "no bare 78 in hooks/ — the terminal code is only ever GC_TERMINAL_RC"
+else
+  ko "bare 78 literal in hooks/ (use GC_TERMINAL_RC): $(printf '%s' "$bare78" | head -3 | tr '\n' ' ')"
+fi
 
 # 21c-3. The sync-template placeholder sweep is BOM-tolerant too (v2.2.4).
 #

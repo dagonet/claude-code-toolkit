@@ -26,7 +26,16 @@ set -u
 # this is the same class as the per-case PATH and TMPDIR masking further down.
 # The one case that TESTS the guard sets the variable itself (search
 # RUN_GATE_ACTIVE=1 below) — an explicit per-case set survives this unset.
+#
+# RUN_GATE_TERMINAL leaks the same way and in the WORSE direction (v2.2.5 round
+# 4). Under self-gating, R5's `RUN_GATE_ACTIVE=1` case trips the inner recursion
+# guard, which touches the marker at the path the REAL OUTER run belongs to.
+# run-gate.sh's clamp then sees that marker and does not fire, so a genuinely
+# retryable 78 would read as terminal — inverted advice, produced by the suite
+# on the toolkit's own gate. Latent only because the chain must also exit
+# exactly 78.
 unset RUN_GATE_ACTIVE
+unset RUN_GATE_TERMINAL
 
 pass=0
 fail=0
@@ -914,6 +923,69 @@ nonrepoerr="$TMPROOT/nonrepo.err"
 expect "(R5d) not a git repository: exit 78 (terminal, was 1)" "78" "$?"
 expect "(R5d) not a git repository: remedy names the fix" "1" \
   "$(tail -1 "$nonrepoerr" | grep -c 'from inside the checkout')"
+
+# --- R5e: THE MARKER NESTS THROUGH A WRAPPER (v2.2.5 round 4) ---------------
+# R5b arm 1 is single-level: **Gate** invokes run-gate.sh directly. A marker
+# written to a SELF-CREATED temp dir would pass that test and fail here, because
+# only the value INHERITED from the outer run points at the file the outer tests.
+# Correct by construction today, unproven by execution until this arm — and this
+# is the arm that catches a future refactor moving the marker's creation above
+# the recursion guard.
+wraprepo=$(mkrepo gatewrapper main)
+printf '#!/usr/bin/env bash\nexec bash "%s/hooks/run-gate.sh"\n' "$ROOT" > "$wraprepo/wrapper.sh"
+printf '# ctx\n\n- **Gate**: `bash wrapper.sh`\n' > "$wraprepo/PROJECT_CONTEXT.md"
+wraperr="$TMPROOT/wrapper.err"
+( cd "$wraprepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$wraperr" )
+expect "(R5e) wrapper-nested terminal: 78 survives the clamp" "78" "$?"
+expect "(R5e) wrapper-nested: NO generic re-run advice" "0" \
+  "$(grep -c 'Fix the failures and re-run' "$wraperr")"
+expect "(R5e) wrapper-nested: remedy still last" "1" \
+  "$(tail -1 "$wraperr" | grep -cF "Edit '**Gate**:' in PROJECT_CONTEXT.md")"
+
+# --- R5f: the OTHER TWO 78-bearing paths into pre-commit-test.sh -------------
+# (v2.2.5 round 4.) R5c covers one of three. Both arms below reach the same
+# `eval "$TEST_CMD"` boundary, where nothing decided the number for us — so both
+# must produce the RETRYABLE message, and neither the terminal one.
+#
+# CONTROL FOR THE CLAMP AT THAT BOUNDARY, honest by construction: delete the
+# clamp and 78 reaches the terminal arm, "re-run it and fix the failures"
+# disappears and every assertion in this block flips.
+
+# Arm 1 -- a **Test** value that exits 78. **Test** always wins, so this never
+# touches run-gate.sh at all.
+t78repo=$(mkrepo test78 main)
+printf 'exit 78\n' > "$t78repo/exits78.sh"
+printf '# ctx\n\n- **Test**: `bash exits78.sh`\n' > "$t78repo/PROJECT_CONTEXT.md"
+check_msg "(R5f) **Test** rc=78: retry advice PRESENT" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$t78repo")" "re-run it and fix the failures"
+check_nomsg "(R5f) **Test** rc=78: NOT a configuration failure" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$t78repo")" "cannot succeed as configured"
+
+# Arm 2 -- **Gate** present but run-gate.sh ABSENT beside the hook, so the hook
+# eval's the Gate value itself. Identical gate command, identical exit code, and
+# before round 4 it got the OPPOSITE remediation from arm 1 of R5c purely
+# because of where the hook happened to be installed.
+g78hooks="$TMPROOT/hooks-no-rungate"
+mkdir -p "$g78hooks/lib"
+cp "$ROOT/hooks/pre-commit-test.sh" "$g78hooks/"
+cp "$ROOT/hooks/lib/git-cmd.sh" "$ROOT/hooks/lib/json.sh" "$g78hooks/lib/"
+g78repo=$(mkrepo gate78norungate main)
+printf 'exit 78\n' > "$g78repo/exits78.sh"
+printf '# ctx\n\n- **Gate**: `bash exits78.sh`\n' > "$g78repo/PROJECT_CONTEXT.md"
+check_msg "(R5f) Gate eval'd, no run-gate.sh, rc=78: WARN names the fallback" "$g78hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$g78repo")" "run-gate.sh not found next to this hook"
+check_msg "(R5f) Gate eval'd, no run-gate.sh, rc=78: retry advice PRESENT" "$g78hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$g78repo")" "re-run it and fix the failures"
+check_nomsg "(R5f) Gate eval'd, no run-gate.sh, rc=78: NOT a configuration failure" "$g78hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$g78repo")" "cannot succeed as configured"
+
+# NOTE on the `cd "$REPO_PATH" || exit 2` sites (v2.2.5 round 4): they are NOT
+# driven by a fixture here, and deliberately so. Reaching either one with a
+# failing cd requires the directory to disappear BETWEEN the PROJECT_CONTEXT.md
+# grep and the cd — a genuine race, and any fixture claiming to reproduce it
+# would in fact be testing a mutated copy of the hook. The property that the
+# code cannot exit 1 there is asserted structurally instead, as a census in
+# scripts/verify-template-consistency.sh (search: warn-and-allow).
 
 # ===========================================================================
 # git gates: fail-closed contracts (v2.1.1, consumer sync feedback #2c/#3)

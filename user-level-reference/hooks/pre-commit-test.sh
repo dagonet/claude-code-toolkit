@@ -126,7 +126,17 @@ if [ -z "$TEST_CMD" ]; then
   if [ -n "$GATE_CMD_RAW" ]; then
     if [ -f "$RUN_GATE" ]; then
       echo "PRE-COMMIT: Running 'run-gate.sh'..." >&2
-      cd "$REPO_PATH" || exit 1
+      # v2.2.5 round 4: exit 2, NOT 1. The harness treats every non-zero, non-2
+      # PreToolUse exit as a NON-BLOCKING error and lets the tool call proceed
+      # (see the exit-code conventions in hooks/lib/git-cmd.sh) -- so the former
+      # `exit 1` here was warn-and-ALLOW: a failed cd into the resolved repo let
+      # the commit through UNGATED. Cannot-determine must refuse.
+      # Deliberately 2 and not GC_TERMINAL_RC: per the same reasoning as
+      # run-gate.sh's own `cd "$REPO_TOP" || exit 1`, a cd failing on a path git
+      # just resolved is a transient FAULT (race, permissions, unmounted share),
+      # not a settled condition, so "re-run it" is honest advice. And 78 is an
+      # internal signal that is never a hook's own exit status.
+      cd "$REPO_PATH" || { echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
       OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
       bash "$RUN_GATE" > "$OUT" 2>&1
       PCT_RC=$?
@@ -179,7 +189,9 @@ fi
 # above before this point is ever reached.
 
 echo "PRE-COMMIT: Running '$TEST_CMD'..." >&2
-cd "$REPO_PATH" || exit 1
+# Same as the run-gate.sh branch above: `exit 1` from a PreToolUse hook is
+# warn-and-ALLOW, so this must be 2 or a failed cd waves the commit through.
+cd "$REPO_PATH" || { echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
 
 # Capture rather than discard: with the Gate fallback $TEST_CMD may be a whole
 # gate, and "it failed" with no output leaves nothing to act on. Bounded to the
@@ -188,6 +200,38 @@ OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
 PCT_T0=$(date +%s 2>/dev/null || echo 0)
 eval "$TEST_CMD" > "$OUT" 2>&1
 PCT_RC=$?
+
+# THE CLAMP AT THIS BOUNDARY (v2.2.5 round 4), and WHY THE TWO BOUNDARIES DIFFER.
+#
+# `$TEST_CMD` here is either a consumer's **Test** value or — when run-gate.sh is
+# absent beside this hook — the raw **Gate** value. Both are ARBITRARY consumer
+# commands, and 78 is EX_CONFIG, which real programs emit for their own reasons.
+# Nothing stands between that command and this variable, so a 78 arriving here
+# is always a CHILD's number, never a verdict any guard of ours reached.
+# Forwarding it would hand a plain test failure the terminal remedy text — the
+# INVERTED advice the conventions block in hooks/lib/git-cmd.sh forbids ("a hook
+# NEVER forwards a child's exit code").
+#
+# The run-gate.sh boundary above needs no clamp for the opposite reason, and the
+# asymmetry is not an oversight: run-gate.sh clamps its OWN gate command's 78
+# internally, keyed on the provenance marker it created, so a 78 emerging from
+# it has already been decided BY run-gate.sh to be its own terminal guard
+# talking. There the number carries provenance; here it carries none.
+#
+# Residual edge, stated rather than engineered around: `**Test**: bash
+# hooks/run-gate.sh` whose own **Gate** is self-referencing would produce a
+# genuinely terminal 78 that this clamp demotes to a retryable one. That needs
+# two pathologies at once, and attribution across an eval boundary this hook did
+# not create would mean rebuilding a causal chain out of a file — the same
+# disposition round 3 took for `run-gate.sh; some-other-tool`. The guard still
+# prints its own specific remedy in the captured tail below; only the
+# "cannot succeed as configured" framing is lost. run-gate.sh's other terminal
+# guard is NOT reachable here at all: `$REPO_PATH` was resolved by gc_repo_for,
+# so "not inside a git repository" cannot fire under this cd.
+if [ "$PCT_RC" -eq "$GC_TERMINAL_RC" ]; then
+  PCT_RC=1
+fi
+
 if [ "$PCT_RC" -eq 0 ]; then
   rm -f "$OUT"
   # The elapsed seconds are the ONLY external evidence the suite actually ran.
@@ -200,17 +244,15 @@ if [ "$PCT_RC" -eq 0 ]; then
   echo "PRE-COMMIT: '$TEST_CMD' passed. ($((PCT_T1 - PCT_T0))s)" >&2
   exit 0
 else
-  # Same structural terminal test as the run-gate.sh path above: a Test/Gate
-  # command that exits GC_TERMINAL_RC is reporting a configuration it cannot
-  # succeed under, so "re-run it" is wrong advice whatever produced it.
-  if [ "$PCT_RC" -eq "$GC_TERMINAL_RC" ]; then
-    echo "BLOCKED: '$TEST_CMD' cannot succeed as configured — this is a configuration failure, not a failing check. Re-running it will NOT help; apply the remedy below." >&2
-  else
-    echo "BLOCKED: '$TEST_CMD' failed — re-run it and fix the failures before committing." >&2
-    # Same reason as the run-gate.sh branch above: the escape hatch is named
-    # where the block is read, not only in CLAUDE.md.
-    echo "  (If the HOOK itself is broken rather than the suite: create '.claude/git-guard-off' under this cwd, make the one fix, then delete it. Never leave it in place.)" >&2
-  fi
+  # NO TERMINAL ARM HERE, DELIBERATELY (v2.2.5 round 4). The clamp above makes
+  # `$PCT_RC` never 78 at this point, so a `-eq "$GC_TERMINAL_RC"` branch would
+  # be dead code — and a branch that can never be observed firing is exactly
+  # what this release refuses to ship. Anyone restoring one must first give this
+  # boundary a provenance channel; the number alone cannot earn it.
+  echo "BLOCKED: '$TEST_CMD' failed — re-run it and fix the failures before committing." >&2
+  # Same reason as the run-gate.sh branch above: the escape hatch is named
+  # where the block is read, not only in CLAUDE.md.
+  echo "  (If the HOOK itself is broken rather than the suite: create '.claude/git-guard-off' under this cwd, make the one fix, then delete it. Never leave it in place.)" >&2
   echo "--- last 20 lines ---" >&2
   tail -20 "$OUT" >&2
   rm -f "$OUT"

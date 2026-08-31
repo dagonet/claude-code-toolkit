@@ -167,6 +167,16 @@ export RUN_GATE_ACTIVE
 # The provenance channel for the recursion guard at the top of this file. It
 # lives inside TMPD, so the EXIT trap removes it; a nested run-gate.sh at ANY
 # depth inherits the variable and touches the file before exiting 78.
+#
+# THE MARKER IS A FILE, AND ON WINDOWS THAT IS LOAD-BEARING (v2.2.5 round 4).
+# Git Bash's MSYS layer REWRITES a POSIX-looking environment value when it
+# crosses into a native Windows process: the child receives `C:/Users/.../Temp/...`
+# where this script set `/tmp/...`. `mktemp -d` returns a real `/tmp/...` path on
+# this platform, so the translation DOES happen in the real script — it is not a
+# hypothetical. The mechanism survives it only because both spellings resolve to
+# the SAME FILE and the translation is consistent in both directions. If this
+# value were ever compared as a STRING — or used as a key rather than a path —
+# it would break silently on Windows and nowhere else.
 RUN_GATE_TERMINAL="$TMPD/terminal"
 export RUN_GATE_TERMINAL
 rm -f "$RUN_GATE_TERMINAL"
@@ -188,6 +198,18 @@ GATE_RC=$?
 # So a gate command's 78 is clamped to 1 — UNLESS a nested run-gate.sh left the
 # provenance marker, which is the one case where the 78 really is this script's
 # own terminal guard talking. Keyed on WHO decided, not on the number.
+#
+# THE HONEST LIMIT OF THE MARKER (v2.2.5 round 4). It proves that *a* nested
+# run-gate.sh exited terminally during THIS invocation. It does NOT prove that
+# *this* `$GATE_RC` came from that nested run. A gate of the form
+# `bash hooks/run-gate.sh; some-other-tool` sets the marker via the recursion
+# guard and then takes its final rc from the second command — so an unrelated 78
+# there inherits the terminal remedy, which is the very collision this clamp
+# closes, reopened one step along. It needs a self-referencing gate AND a second
+# command exiting 78, and closing it would mean reconstructing the causal chain
+# rather than a single fact, so it is recorded as a known edge rather than
+# fixed. Read this test as "a terminal guard fired in here", not as
+# "provenance settled".
 if [ "$GATE_RC" -eq "$GC_TERMINAL_RC" ] && [ ! -f "$RUN_GATE_TERMINAL" ]; then
   GATE_RC=1
 fi
