@@ -22,12 +22,12 @@ placeholder-bearing; this one is filled in, because it describes a real project.
 
 The Test/Gate split is the point of this file. **Test** runs on EVERY commit, so it
 has to stay fast; **Gate** is the merge-only artifact command and runs the full
-pair. Measured on the release host, quiescent: Test 58s, Gate 619s — the
-difference is `test-hooks.sh`, which builds a throwaway git repo per fixture.
-Collapsing them into one command would put ten minutes on every commit in this
-repo, which is the exact trap a consumer is living in. Both numbers are
-host-dependent and load-sensitive (Test measured 117s under a concurrent suite);
-what is not host-dependent is the ratio.
+pair. Measured on the release host across several runs: Test **58-117s**, Gate
+**512-619s** — the difference is `test-hooks.sh`, which builds a throwaway git
+repo per fixture. Collapsing them into one command would put ten minutes on every
+commit in this repo, which is the exact trap a consumer is living in. The spread
+inside each range is filesystem-cache and concurrency noise on Windows, so treat
+the absolute numbers as host-local; the ~10x ratio is the part that travels.
 
 - **Build**: `bash scripts/verify-template-consistency.sh`
 - **Test**: `bash scripts/verify-template-consistency.sh`

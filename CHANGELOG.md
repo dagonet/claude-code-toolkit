@@ -48,12 +48,12 @@ There was no root `PROJECT_CONTEXT.md`, so `run-gate.sh` printed `GATE SKIP` and
 `PROJECT_CONTEXT.md` now exists at the root, filled in, placeholder-free, with the **Test/Gate split**:
 
 ```
-- **Test**: bash scripts/verify-template-consistency.sh                                (58s, every commit)
-- **Gate**: bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh  (619s, merge only)
+- **Test**: bash scripts/verify-template-consistency.sh                                (58-117s, every commit)
+- **Gate**: bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh  (512-619s, merge only)
 - **Protected branches**: main
 ```
 
-The split is the point, not an optimisation. `test-hooks.sh` builds a throwaway git repo per fixture; collapsed into one command it would put ten minutes on **every commit** in this repo — the exact trap a consumer is living in right now. Both numbers are measured on the release host with nothing else running and are load-sensitive (Test measured **117s** under a concurrent suite run, 2× its quiet number); the ratio is the part that travels. `verify-template-consistency.sh` is unbothered by the new file (it does not mistake it for a template artifact) and four assertions now hold the arrangement in place: the file exists and is placeholder-free, `**Test**` is the consistency script *without* `test-hooks.sh`, `**Gate**` runs both, and `test-hooks.sh` unsets `RUN_GATE_ACTIVE` (item 3). Deleting the file would otherwise restore the old silence with no other symptom.
+The split is the point, not an optimisation. `test-hooks.sh` builds a throwaway git repo per fixture; collapsed into one command it would put ten minutes on **every commit** in this repo — the exact trap a consumer is living in right now. **The brief's estimates were ~20s and ~600s; the measured numbers are 58-117s and 512-619s.** Both were taken on the release host over several runs, and the spread inside each range is filesystem-cache and concurrency noise on Windows — the first Test measurement was 117s purely because a suite was running beside it. Neither absolute travels to another host; the ~10× ratio does, and the ratio is what the split is for. `verify-template-consistency.sh` is unbothered by the new file (it does not mistake it for a template artifact) and four assertions now hold the arrangement in place: the file exists and is placeholder-free, `**Test**` is the consistency script *without* `test-hooks.sh`, `**Gate**` runs both, and `test-hooks.sh` unsets `RUN_GATE_ACTIVE` (item 3). Deleting the file would otherwise restore the old silence with no other symptom.
 
 ### 3. Dogfooding found a real bug on its first run — in the suite, not in the hooks
 
