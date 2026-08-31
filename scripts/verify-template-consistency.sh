@@ -1103,14 +1103,24 @@ fi
 #         catches the failure worth catching.
 #
 #         USE THE REFINED SWEEP ARMS, NOT A PLAIN GREP. A naive
-#         `grep -rn '{{[A-Z_]\{2,\}}}' user-level-reference` returns 29 hits, all
-#         prose — including the passage in sync-template/SKILL.md that documents
-#         this exact false positive. Shipped that way the assertion is red on day
-#         one, permanently, and gets disabled by someone whose reasoning looks
-#         sound. Measured with the refined arms: shell 0, markdown 0. That is the
-#         number pinned below. Today's non-zero raw counts are all COMMENTS
-#         (hooks/lib/git-cmd.sh 2, hooks/pre-commit-test.sh 1) — prose ABOUT a
-#         placeholder is not a placeholder.
+#         `grep -rn '{{[A-Z_]\{2,\}}}' user-level-reference` returns 29 hits, not
+#         one of them actionable: .mcp.json.template 12 (a never-installed
+#         template whose placeholders are SUPPOSED to be unfilled), README.md 8,
+#         SKILL.md 6 and git-cmd.sh 2 + pre-commit-test.sh 1 (comments) — and the
+#         SKILL.md set includes the passage documenting this exact false
+#         positive. Shipped that way the assertion is red on day one,
+#         permanently, and gets disabled by someone whose reasoning looks sound.
+#         Measured with the refined arms: shell 0, markdown 0 — the number pinned
+#         below. Prose ABOUT a placeholder is not a placeholder.
+#
+#         SCANNED SURFACE, STATED BECAUSE 0 IS OTHERWISE OVERREAD: `*.sh` and
+#         `*.md` ONLY. `settings.json` is NOT scanned, and a settings.json hook
+#         `command` is an executable position — same class as v2.2.0's
+#         `{{DEFAULT_BRANCH}}` config value read as data. Measured today: no
+#         `*.json` under user-level-reference/ carries a placeholder at all
+#         except `.mcp.json.template`, which is never installed. So the boundary
+#         is real but nothing sits outside it right now; widen the arms here, not
+#         the interpretation of the number, if that stops being true.
 #
 #         BORN WITH ITS CONTROL, IN BAND. A sweep that matches nothing also
 #         reports 0, so before trusting the number the detector is driven against
@@ -1144,9 +1154,9 @@ if [ "$ulr_pos_sh" -eq 1 ] && [ "$ulr_neg_sh" -eq 0 ] && [ "$ulr_pos_md" -eq 1 ]
   ok "executable-position sweep: detector verified live (shell value hit / BOM'd comment ignored, md value hit / prose ignored)"
   ulr_hits=$( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | grep -c . )
   if [ "$ulr_hits" -eq 0 ]; then
-    ok "user-level-reference/: 0 placeholders in an EXECUTABLE position (hooks would run a literal {{...}})"
+    ok "user-level-reference/ (*.sh + *.md only): 0 placeholders in an EXECUTABLE position (a hook would run a literal {{...}})"
   else
-    ko "user-level-reference/: $ulr_hits placeholder(s) in an EXECUTABLE position — the user-level install substitutes NOTHING, so a shipped hook will run the literal {{...}}: $( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | head -3 | tr '\n' ' ')"
+    ko "user-level-reference/ (*.sh + *.md only): $ulr_hits placeholder(s) in an EXECUTABLE position — the user-level install substitutes NOTHING, so a shipped hook will run the literal {{...}}: $( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | head -3 | tr '\n' ' ')"
   fi
 else
   ko "executable-position sweep is INERT — its own self-test failed (shell hit=$ulr_pos_sh want 1, shell comment=$ulr_neg_sh want 0, md hit=$ulr_pos_md want 1, md prose=$ulr_neg_md want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
