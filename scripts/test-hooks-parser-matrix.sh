@@ -32,7 +32,12 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SUITE="$ROOT/scripts/test-hooks.sh"
+# MATRIX_SUITE exists so the skip-count assertion below can be CONTROLLED in
+# seconds instead of 90 minutes: point it at a stub that prints a summary line
+# with 0 skips and confirm this script goes red. A guard nobody has watched fire
+# is indistinguishable from one that was deleted, and the assertion right below
+# is the whole reason this file exists — so it needs a control of its own.
+SUITE="${MATRIX_SUITE:-$ROOT/scripts/test-hooks.sh}"
 OUTDIR=$(mktemp -d)
 trap 'rm -rf "$OUTDIR"' EXIT
 
@@ -169,7 +174,19 @@ run_config() {
   # NOTHING ran the real interpreters; it is not an improvement, it is a void
   # measurement. Asserted separately from the band so the message names the
   # actual failure rather than an off-by-N.
-  if [ "$cfg_exp" -gt 0 ] && [ "$cfg_skip" -eq 0 ]; then
+  if [ "$cfg_exp" -eq 0 ]; then
+    # The unrestricted configuration: 0 is the ONLY correct answer, so it is
+    # asserted EXACTLY. A band here would accept 15 skips as "in band (~0)",
+    # which is precisely where a silently-skipping new fixture would hide.
+    if [ "$cfg_skip" -ne 0 ]; then
+      note "  MATRIX FAIL: $cfg_label skipped $cfg_skip, expected exactly 0 — with every"
+      note "               parser present nothing may skip; a skip here is a fixture that"
+      note "               never runs anywhere."
+      matrix_fail=$((matrix_fail + 1))
+    else
+      note "  skip count 0 — exact, as required with every parser present"
+    fi
+  elif [ "$cfg_skip" -eq 0 ]; then
     note "  MATRIX FAIL: $cfg_label skipped 0 assertions — a restricted run that"
     note "               skips nothing is proof the restriction did not apply."
     matrix_fail=$((matrix_fail + 1))

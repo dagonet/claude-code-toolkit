@@ -1957,11 +1957,16 @@ mkstubpath() { # <name> <tool> <stub-body-line> [extra-tool ...] -> prints dir
 }
 STUB_RC=$(mkstubpath stub-rc python3 'exit 3')
 STUB_GARBAGE=$(mkstubpath stub-garbage python3 'echo not-json-at-all')
-STUB_JQ=$(mkstubpath stub-jq python3 'exit 3' jq)
+# Same rule as PYONLY/JQONLY above: these two carry a REAL optional parser as
+# the working backend behind the broken stub, so they are built only where that
+# parser exists. Their cases are already inside HAVE_JQ / HAVE_PY blocks.
+STUB_JQ=""
+if [ -n "$HAVE_JQ" ]; then STUB_JQ=$(mkstubpath stub-jq python3 'exit 3' jq); fi
 # A broken NODE is the case json_require_node exists for -- the six node-program
 # hooks never call json_parser, so the probe has to run on that path too.
 STUB_NODE=$(mkstubpath stub-node node 'exit 3')
-STUB_NODE_PY=$(mkstubpath stub-node-py node 'exit 3' python3)
+STUB_NODE_PY=""
+if [ -n "$HAVE_PY" ]; then STUB_NODE_PY=$(mkstubpath stub-node-py node 'exit 3' python3); fi
 
 # Self-check FIRST: a fixture whose stub is invisible would prove nothing.
 expect "stub PATH still shows python3" 0 "$(seen "$STUB_RC" python3)"
