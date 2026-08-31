@@ -824,6 +824,40 @@ else
   ko "GC_KEY_PRE definition drifted: found in $gkp_have of 2 files (git-cmd.sh, run-gate.sh)"
 fi
 
+# 21c-3. The toolkit gates ITSELF (v2.2.5).
+#
+#      Without a root PROJECT_CONTEXT.md, pre-commit-test.sh and
+#      gate-before-merge.sh no-op in this repository — which is how every
+#      toolkit PR up to v2.2.4 merged through the artifact path as a silent
+#      no-op. Deleting the file would restore that silence with no other
+#      symptom, so it is asserted here. The Test/Gate SPLIT is asserted too:
+#      Test runs on every commit and must stay fast, so the ~600s test-hooks.sh
+#      belongs in Gate only.
+rpc="PROJECT_CONTEXT.md"
+if [ ! -f "$rpc" ]; then
+  ko "self-gating: root PROJECT_CONTEXT.md is MISSING — the commit and merge gates no-op in this repo"
+elif grep -q '{{[A-Z_]\{2,\}}}' "$rpc"; then
+  ko "self-gating: root PROJECT_CONTEXT.md still carries an unfilled {{PLACEHOLDER}}"
+else
+  ok "self-gating: root PROJECT_CONTEXT.md present and placeholder-free"
+fi
+rpc_test=$(grep -E "^[-*[:space:]]*\*\*Test\*\*:" "$rpc" 2>/dev/null | head -1)
+rpc_gate=$(grep -E "^[-*[:space:]]*\*\*Gate\*\*:" "$rpc" 2>/dev/null | head -1)
+case "$rpc_test" in
+  *verify-template-consistency.sh*) tsplit=1 ;;
+  *) tsplit=0 ;;
+esac
+case "$rpc_test" in *test-hooks.sh*) tsplit=0 ;; esac
+if [ "$tsplit" -eq 1 ]; then
+  ok "self-gating: **Test** is the ~20s consistency script only (test-hooks.sh stays out of the per-commit path)"
+else
+  ko "self-gating: **Test** must be verify-template-consistency.sh WITHOUT test-hooks.sh — got: ${rpc_test:-<none>}"
+fi
+case "$rpc_gate" in
+  *verify-template-consistency.sh*test-hooks.sh*) ok "self-gating: **Gate** runs the full pair (consistency + test-hooks)" ;;
+  *) ko "self-gating: **Gate** must run both scripts — got: ${rpc_gate:-<none>}" ;;
+esac
+
 # 21c-3. The sync-template placeholder sweep is BOM-tolerant too (v2.2.4).
 #
 #        Same class as 21c-2, one layer out: the sweep is the skill's own

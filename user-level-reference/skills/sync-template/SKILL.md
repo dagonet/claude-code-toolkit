@@ -270,6 +270,45 @@ grep -rn -- '{{[A-Z_]\{2,\}}}' .claude hooks --include='*.sh' | grep -v ":[0-9]*
 
 Any hit is a file the template wrote with an unfilled placeholder — `template_apply_file` substitutes only placeholders present in the project's manifest, so a key the manifest predates (`DEFAULT_BRANCH`, `GATE_COMMAND`, `WORKTREE_BASE`, `LOG_PATH`) lands as a literal on **both** accept-template and accept-merged. Fill it or delete the line; list every hit under `Warnings:` either way. This one grep is what stands between a consumer and a config value that reads as data — v2.2.0 shipped `- **Protected branches**: {{DEFAULT_BRANCH}}`, and until v2.2.1's resolver fix that literal silently unprotected trunk.
 
+### 7b. Stamp the Version Fields into the Manifest (v2.2.5)
+
+`lastSynced` is a **commit sha**, and nothing else in a synced repo carries a version marker. So "which toolkit version is this repo on?" currently needs the toolkit checkout present *and* its tags fetched. Measured across four live consumers, every one of them was an opaque hex string. Two additive manifest fields fix that:
+
+| Field | Value | Written by |
+|---|---|---|
+| `lastSyncedVersion` | the toolkit tag for `lastSynced` | **this skill** (client-side) |
+| `templateSyncToolsVersion` | the `template-sync-tools` version that performed the sync | **the server**, when it starts emitting a version — this skill never guesses it |
+
+**Both are optional labels. NEVER fail, block or roll back a sync over either one** — an unresolvable version is a missing label, not an error. Absent means *unknown*, never *stale*: every pre-v2.2.5 manifest stays valid unchanged.
+
+**Resolve `lastSyncedVersion`** against the manifest's own `templateRepo` and `lastSynced`, in this order — first one that succeeds wins, `""` if all fail (a toolkit checkout with no tags fetched is the ordinary case):
+
+```
+git -C <templateRepo> describe --tags --exact-match <lastSynced>   # v2.2.5
+git -C <templateRepo> describe --tags <lastSynced>                 # v2.2.4-3-gabc1234
+```
+
+**Run those through the Bash tool, not from inside the stamping script.** Consumer manifests store `templateRepo` as an MSYS path (`/g/git/claude-code-toolkit` in all four measured) and native `git.exe` spawned from Python cannot resolve it — it exits non-zero, both fallbacks "fail", and the label silently comes out `""` on a repo whose tags are right there. Measured: same sha, same repo, `''` from a Python `subprocess` versus `v2.2.3` from Bash. Resolve the string in Bash, hand it to the script.
+
+**Do NOT invent `templateSyncToolsVersion`.** Write it only from a version the *server itself* reports in a `template_*` response. As of `template-sync-tools` 0.2.x no response carries one — which is the underlying complaint: a consumer found on 0.1.0 this week could only discover it by describing a symptom. Until the server emits one, leave the key **absent** and report `Sync server: unknown` (see step 8). A user-typed or inferred number in a server-owned file is worse than no field at all, because the next reader cannot tell it apart from an authoritative one.
+
+**How to write them, mechanically:**
+
+1. **After** `template_finalize_sync` and after the post-finalize self-check — finalize rewrites the manifest, so a stamp applied before it is discarded.
+2. **Only if the key is absent or empty.** A future server that writes these fields authoritatively must win; the client never clobbers a value it did not write.
+3. Write with the Write tool + a scratchpad script (`json.load` / `json.dump`), never by hand-editing the JSON and never by a long `python -c` command line — the same rule as `applied_files` in step 7. Preserve `indent=2`, LF endings, no BOM, and `ensure_ascii=False`.
+4. Re-run `template_compute_status` afterwards; it must still be clean. If the stamp upset anything, revert the two keys and report — the sync is still good, the label is not worth a corrupt manifest.
+5. `.claude/template-manifest.json` is already in the step-9 `git add`, so nothing extra to stage.
+
+Before → after, on a real consumer manifest:
+
+```json
+  "lastSynced": "707052c",
++ "lastSyncedVersion": "v2.2.3",
+```
+
+**Provenance, say it out loud when asked:** `lastSyncedVersion` is *client-written by this skill*, derived from the same `templateRepo` + `lastSynced` the server wrote, so it is reproducible and checkable — but it is not server-authoritative, and a repo synced by an older skill will not have it.
+
 ### 8. Report
 
 Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line.
@@ -300,7 +339,18 @@ Sync complete: {variant} @ {new_commit}
   Warnings:     [list — every placeholder-sweep hit belongs here]
   User-level:   [one-line verify-user-level-drift.sh summary]
   Gates:        live (parser: {backend} — {consequence})
+  Toolkit:      {lastSyncedVersion} ({lastSynced})
+  Sync server:  {templateSyncToolsVersion}
   Backup:       {step-2b directory} [{gitignored tracked files copied}]
+```
+
+`Toolkit:` and `Sync server:` (v2.2.5) exist so a human sees both versions without opening the manifest — the whole point of step 7b. Print what step 7b resolved, and print the honest shape when it resolved nothing:
+
+```
+Toolkit:      v2.2.5 (d67b507)
+Toolkit:      v2.2.4-3-gabc1234 (abc1234) — untagged commit
+Toolkit:      unknown (abc1234) — no tags in the toolkit checkout; fetch them and re-run to label it
+Sync server:  unknown (server reports no version — client never guesses it)
 ```
 
 `Spliced:` is its own category on purpose: the conflict guidance now recommends splicing over accept-template for files that carry project values, and a spliced file is neither auto-updated nor merged by the server. Reporting it as "Skipped" hides work that was actually done.
@@ -344,4 +394,5 @@ CI fires on `pull_request` and on push-to-main; a bare branch push produces **no
 - NEVER hand-assemble or re-type `applied_files` entries — collect the tool results verbatim
 - ALWAYS re-run `template_compute_status` after finalize and report anything other than a clean result
 - ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `lastSynced`)
+- NEVER fail or roll back a sync because a version label would not resolve (step 7b), and NEVER write `templateSyncToolsVersion` from anything but a server-reported value
 - All hashing, diffing, and placeholder replacement is handled by the MCP tools — do NOT compute hashes or apply placeholders manually
