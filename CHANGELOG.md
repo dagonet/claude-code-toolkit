@@ -1,5 +1,74 @@
 # Changelog
 
+## v2.2.5 — 2026-08-31
+
+**A synced repo could not name its own toolkit version, and the toolkit did not gate itself.** Two independent self-description gaps, both found by asking a repo a question it had no way to answer.
+
+### 1. `lastSynced` is a commit sha, and nothing else carries a version
+
+Measured across four live consumers, every manifest answered "which toolkit version is this?" with an opaque hex string:
+
+| repo | `lastSynced` | actually |
+|---|---|---|
+| Motorsport-Manager-AI-Agent | `d67b507` | v2.2.4 |
+| penumbra | `707052c` | v2.2.3 |
+| panoscribe | `707052c` | v2.2.3 |
+| Yutraffic-Challenge | `707052c` | v2.2.3 |
+
+No synced file carries a marker either — grepping `templates/` for `v2.2.x` returns zero hits. So resolving that sha needs the toolkit checkout **present with its tags fetched**; missing, stale or never-fetched and the answer is unavailable. Same class as the toolkit ↔ `mcp-dev-servers` version contract in v2.2.3: *"do I have the fix?"* needs a version handle, not a sha.
+
+Two additive manifest fields, documented in `docs/template-sync.md`:
+
+| field | value | written by |
+|---|---|---|
+| `lastSyncedVersion` | toolkit tag for `lastSynced` | **the `sync-template` skill — CLIENT-side** |
+| `templateSyncToolsVersion` | the `template-sync-tools` version that synced | **reserved for the server — nothing writes it yet** |
+
+**Which half shipped, plainly.** Only `lastSyncedVersion` is written, and it is written by the *skill*, not by `template_finalize_sync` — so it is reproducible (`git -C <templateRepo> describe --tags [--exact-match] <lastSynced>`, over the same repo and sha the server itself recorded) but it is **not server-authoritative**, and a repo synced by an older skill will not have it. Do not read it as a server guarantee.
+
+**`templateSyncToolsVersion` is deliberately NOT written client-side**, and this is the one place the brief's preferred "ship it client-side" answer is the wrong one. The client can compute a tag from a sha; it cannot observe the version of the process on the other side of the MCP boundary. No `template_*` response carries one — which *is* the underlying complaint, since the consumer found on 0.1.0 this week could only discover it by describing a symptom. A user-typed or inferred number written into a server-owned file is strictly worse than an absent key, because the next reader cannot tell it from an authoritative one. The field is defined, reserved, read and reported; writing it is upstream's to own.
+
+Both are **labels, never gates**: absent means *unknown*, never *stale*. Existing manifests stay valid untouched, nothing classifies or migrates on either field, and a sync never fails because a version would not resolve. The skill also stamps **only if the key is absent or empty**, so a future server that writes them authoritatively always wins.
+
+The sync report gains the two lines, so a human never has to open the manifest:
+
+```
+Toolkit:      v2.2.5 (d67b507)
+Sync server:  unknown (server reports no version — client never guesses it)
+```
+
+**One measured trap, now in the skill.** All four consumer manifests store `templateRepo` as an MSYS path (`/g/git/claude-code-toolkit`), which native `git.exe` spawned from Python cannot resolve — both fallbacks "fail" and the label silently comes out `""` on a repo whose tags are right there. Same sha, same repo: `''` from a Python `subprocess`, `v2.2.3` from Bash. The resolution runs in Bash and is handed to the stamping script.
+
+**Not shipped here:** `template_finalize_sync` writing both fields itself, and any `template_*` response reporting the server version. Both live in the upstream `template-sync-tools` (`mcp-dev-servers`) repository; file them there. When they land, the client-side stamp becomes a no-op by construction — it only fills an absent key.
+
+### 2. The toolkit did not gate itself
+
+There was no root `PROJECT_CONTEXT.md`, so `run-gate.sh` printed `GATE SKIP` and `pre-commit-test.sh` and `gate-before-merge.sh` both no-opped **in the repository that defines them**. Consequences, observed: every toolkit PR merged through the artifact path as a no-op, and two of the three git gates could not discriminate in their own repo — which cost fixture coverage twice, since both the malformed-payload rows and item K's four-way matrix had to be verified against scratch repos built by hand.
+
+`PROJECT_CONTEXT.md` now exists at the root, filled in, placeholder-free, with the **Test/Gate split**:
+
+```
+- **Test**: bash scripts/verify-template-consistency.sh                                (~20s, every commit)
+- **Gate**: bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh  (~600s, merge only)
+- **Protected branches**: main
+```
+
+The split is the point, not an optimisation. `test-hooks.sh` builds a throwaway git repo per fixture and takes ~600s; collapsed into one command it would put ten minutes on **every commit** in this repo — the exact trap a consumer is living in right now. `verify-template-consistency.sh` is unbothered by the new file (it does not mistake it for a template artifact) and three assertions now hold it in place: the file exists and is placeholder-free, `**Test**` is the consistency script *without* `test-hooks.sh`, and `**Gate**` runs both. Deleting the file would otherwise restore the old silence with no other symptom.
+
+**Self-reference risk, named in `CLAUDE.md`.** The gates now enforce against the repository that defines them, so a bug in `pre-commit-test.sh` can block the commit that fixes `pre-commit-test.sh`. The documented escape is the pre-existing kill switch `<cwd>/.claude/git-guard-off` — read the block message first, since it is far more often a real red gate than a broken hook.
+
+**Fixture re-check, as asked: nothing should be simplified.** The committed fixtures already build their own repos through `mkrepo`; pointing them at the toolkit checkout would couple the suite to the very `PROJECT_CONTEXT.md` under test and make it non-hermetic on hosts that run the suite from a different tree. What genuinely got easier is *ad-hoc* verification — a hand-built scratch repo is no longer needed to watch a gate discriminate — and that is where the benefit lands.
+
+### 3. Verification
+
+`verify-template-consistency.sh` **267/267** (+3, the self-gating assertions). `test-hooks.sh` **342 assertions**, unchanged, all three parser configurations.
+
+### Downstream migration
+
+- **No action for existing repos, and no manifest churn.** The two version fields are additive; an existing manifest without them is valid and stays valid. Item 1 changes only what the **next** sync writes. Absent means unknown, never stale.
+- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`; it carries step 7b (the stamp) and the two new report lines.
+- **Item 2 is toolkit-internal.** Consumers are unaffected: no hook, template or setup path changed, and no consumer needs a root `PROJECT_CONTEXT.md` added — they already have one.
+
 ## v2.2.4 — 2026-08-30
 
 **Three bytes at position 0 turned every field extractor off, and the hook that reads them fails open.** Credit: the Yutraffic-Challenge sync report (items 1, 2, 3) and penumbra (item 4). Every measurement below was reproduced by the controller.
