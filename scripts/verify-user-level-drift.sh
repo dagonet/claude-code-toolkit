@@ -194,6 +194,14 @@ fi
 # copy of a reference file not yet in the tag is invisible to every other line in
 # this script. It is scanned from the WORKING TREE for exactly that reason.
 #
+# SOMETHING ELSE DEPENDS ON THIS ONE — DO NOT DROP IT AS OVERLAPPING (round 7).
+# verify-template-consistency.sh's 21c-3c censuses shipped *.json for executable
+# -position placeholders REPO-SIDE ONLY, and never touches the live ~/.claude
+# tree. That census is SUFFICIENT for user level solely because of the property
+# asserted here: reference clean + verbatim install => live copy clean. The two
+# look like independent checks and are one argument with two halves. If this
+# assertion goes red, 21c-3c stops implying anything about installed copies.
+#
 # ITS CONTROL RUNS IN BAND, on a planted pair, because a counter that always
 # returns 0 would also report "verbatim" forever. Nothing is written under
 # $HOME.

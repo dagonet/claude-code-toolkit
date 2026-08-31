@@ -1109,16 +1109,19 @@ fi
 #        BOMs actually occur. Arm 1 (`^`-anchored markdown) fails CLEAN — a
 #        placeholder on line 1 behind a BOM is missed silently; arm 2's comment
 #        filter fails NOISY — a BOM'd comment stops reading as a comment. Both
-#        arms carry `\(${BOM}\)\?`; this asserts neither loses it.
+#        arms carry `\(${BOM}\)\?`; this asserts neither loses it. The JSON arm
+#        added in round 7 is deliberately NOT counted here — it has neither a
+#        `^` anchor nor a comment filter, which are the only two things a BOM
+#        breaks, so BOM tolerance is not a property it can have or lose.
 SWEEP_SKILL="user-level-reference/skills/sync-template/SKILL.md"
 sweep_arms=$(grep -c '{{\[A-Z_\]\\{2,\\}}}' "$SWEEP_SKILL" 2>/dev/null)
 sweep_bom=$(grep -c 'BOM}\\)\\?' "$SWEEP_SKILL" 2>/dev/null)
 if [ ! -f "$SWEEP_SKILL" ]; then
   ko "$SWEEP_SKILL missing — the placeholder sweep census cannot run"
 elif [ "$sweep_bom" -ge 2 ]; then
-  ok "placeholder sweep: both arms in $SWEEP_SKILL are BOM-tolerant"
+  ok "placeholder sweep: the markdown and shell arms in $SWEEP_SKILL are BOM-tolerant"
 else
-  ko "placeholder sweep: only $sweep_bom of 2 arms in $SWEEP_SKILL carry the optional BOM prefix (arm 1 would fail CLEAN, arm 2 noisy) — $sweep_arms sweep lines seen"
+  ko "placeholder sweep: only $sweep_bom of the markdown+shell arms in $SWEEP_SKILL carry the optional BOM prefix (the markdown arm would fail CLEAN, the shell arm noisy) — $sweep_arms sweep lines seen"
 fi
 
 # 21c-3b. NO PLACEHOLDER IN AN EXECUTABLE POSITION under user-level-reference/
@@ -1150,26 +1153,11 @@ fi
 #         below. Prose ABOUT a placeholder is not a placeholder.
 #
 #         SCANNED SURFACE, STATED BECAUSE 0 IS OTHERWISE OVERREAD: `*.sh` and
-#         `*.md` ONLY. `settings.json` is NOT scanned, and a settings.json hook
-#         `command` is an executable position — same class as v2.2.0's
-#         `{{DEFAULT_BRANCH}}` config value read as data.
-#
-#         KNOWN RESIDUAL, MEASURED RATHER THAN ASSUMED (v2.2.5 round 6,
-#         2026-08-31). The JSON surface is outside the arms above, so it was
-#         swept by hand instead:
-#
-#           grep -rn --include='*.json' -- '{{[A-Z_]\{2,\}}}' \
-#             templates user-level-reference        ->  0 hits
-#
-#         Zero across BOTH trees, not just user-level-reference/. (The
-#         `--include='*.json'` glob excludes `.mcp.json.template` by its
-#         extension, which is the same carve-out the arms above make for it and
-#         for the same reason: it is never installed, so its placeholders are
-#         SUPPOSED to be unfilled.) So the boundary is real but nothing sits
-#         outside it right now. This is recorded as a gap that has been LOOKED
-#         AT and found empty on a date, not as one nobody noticed. If a
-#         placeholder ever lands in a JSON hook `command`, widen the arms here —
-#         do not widen the interpretation of the number.
+#         `*.md` ONLY. JSON is NOT scanned here — it is scanned by 21c-3c
+#         immediately below, which closed round 6's residual. Do not widen these
+#         two arms to `*.json`: their refinements (comment-line exclusion, the
+#         `- **Key**: value` shape) exist because shell and markdown carry prose
+#         that legitimately mentions placeholders, and JSON needs none of it.
 #
 #         BORN WITH ITS CONTROL, IN BAND. A sweep that matches nothing also
 #         reports 0, so before trusting the number the detector is driven against
@@ -1211,6 +1199,133 @@ else
   ko "executable-position sweep is INERT — its own self-test failed (shell hit=$ulr_pos_sh want 1, shell comment=$ulr_neg_sh want 0, md hit=$ulr_pos_md want 1, md prose=$ulr_neg_md want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
 fi
 rm -rf "$ULRFIX"
+
+# 21c-3c. NO PLACEHOLDER IN A SHIPPED *.json (v2.2.5 round 7). Closes the
+#         residual 21c-3b recorded in round 6 rather than re-dating it.
+#
+#         WHY JSON IS THE CHEAPEST ARM, NOT THE MOST EXPENSIVE. The `*.sh` and
+#         `*.md` arms above needed careful refinement — comment-line exclusion,
+#         the `- **Key**: value` shape — precisely because those formats carry
+#         prose and comments that LEGITIMATELY mention placeholders (which is
+#         why a plain grep flags the skill passage documenting that fact).
+#         JSON has no comments. Any `{{...}}` in a .json file is in a VALUE by
+#         construction, so this is a bare grep: no exclusions, no shape
+#         requirement, no false-positive class to tune. The excluded surface was
+#         the one needing the least work to include, which inverts the usual
+#         reason for excluding something and is probably why nobody noticed.
+#
+#         AND IT IS THIS RELEASE'S OWN CLASS. A `.claude/settings.json` hook
+#         `command` is an EXECUTABLE position: a literal `{{...}}` there is a
+#         path that does not resolve -> 127 -> fail-open. Measured on
+#         templates/general/.claude/settings.json and reproduced byte-identical
+#         on a live consumer: 30 `command` strings, 9 of them mentioning a 127
+#         guard. Not a claim of 21 live holes — it depends which hook each wires
+#         — but the ratio is the point: the surface no sweep covered is the
+#         surface where a missing path fails open BY DEFAULT, and the 127
+#         wrapper is the exception rather than the rule.
+#
+#         SCOPE BY OWNERSHIP, NEVER A FILESYSTEM WALK. JSON needs no
+#         content-shape tuning; it DOES need scope discipline — two different
+#         things, and conflating them is what makes a JSON arm look naive.
+#         Measured on a real machine: `find ~/.claude -name '*.json'` is 3430
+#         files with ONE hit, in a dated backup nothing reads, carrying
+#         `{{GUIDE_TEMPLATE}}`/`{{USAGE_DATA}}`/`{{WINDOW_DAYS}}` — ANOTHER
+#         TOOL's keys. Red on its first run for a benign reason: the exact
+#         "reports a problem forever, gets disabled within a week by someone
+#         whose reasoning looks sound" failure, reappearing inside the arm
+#         designed from the argument against it. So this census scopes to the
+#         two trees we OWN and never touches $HOME. And do NOT scope by
+#         filtering on known toolkit key names: that rots the first time a key
+#         is added, and it would hide a genuine unfilled placeholder under the
+#         new one. Scope is the right axis; the key set is not.
+#
+#         WHY user-level-reference/ RATHER THAN THE LIVE ~/.claude TREE, AND THE
+#         DEPENDENCY THAT MAKES THAT SUFFICIENT — READ BOTH HALVES. The only
+#         user-level JSON the toolkit ships is user-level-reference/settings.json
+#         (ONE file, versus 3430 in a walk), and verify-user-level-drift.sh
+#         deliberately excludes settings.json as USER-OWNED — so a live-tree
+#         check would be inspecting the user's own file. Our obligation is that
+#         what we SHIP carries no unfilled placeholder in an executable
+#         position. That repo-side census is SUFFICIENT for the user-level tree
+#         ONLY BECAUSE THE USER-LEVEL INSTALL IS VERBATIM: reference clean +
+#         verbatim install => live copy clean, by construction. That verbatim
+#         property is asserted separately, in verify-user-level-drift.sh's
+#         header (round 5). **These two look like independent checks and are one
+#         argument with two halves** — if the verbatim-install assertion ever
+#         goes red, this census stops implying anything at all about installed
+#         copies. Do not let a cleanup drop either one as overlapping with the
+#         other.
+#
+#         AND FOR THE PROJECT TREE THIS CENSUS IS NECESSARY BUT NOT SUFFICIENT,
+#         WHICH CUTS THE OPPOSITE WAY. The project install is NOT verbatim: it
+#         substitutes, and per sync-template SKILL.md `template_apply_file`
+#         substitutes only placeholders present in THE PROJECT's manifest, so a
+#         key the manifest predates lands as a literal in the consumer's file
+#         while the template it came from is clean. That is the v2.2.0 chain
+#         exactly — template correct -> substitution incomplete -> consumer
+#         carries `- **Protected branches**: {{DEFAULT_BRANCH}}` -> trunk
+#         silently unprotected — with a template-side census GREEN THROUGHOUT.
+#         An install defect, not a shipping defect. The skill's consumer-side
+#         JSON arm is the only detector for that class; this census cannot see
+#         it. The two are asymmetric in construction (that arm can use
+#         `git ls-files`, this one cannot for its user-level half) though
+#         symmetric in intent — do not harmonise them into one walk.
+#
+#         BORN WITH ITS CONTROLS, IN BAND, AND THE NEGATIVE IS THE POINT. A
+#         sweep that matches nothing also reports 0, so the detector is driven
+#         against planted fixtures every run. The POSITIVE (in-scope value ->
+#         found) proves it detects; the NEGATIVE (same placeholder OUTSIDE the
+#         scoped set -> not found) is what makes the SCOPING testable — without
+#         it the next person widens this back to a filesystem walk and nothing
+#         goes red. The second negative pins the `--include='*.json'` extension
+#         carve-out for `.mcp.json.template`, which is never installed and whose
+#         placeholders are SUPPOSED to be unfilled.
+JSONFIX=$(mktemp -d)
+# Assembled, never spelled literally in an executable line — a fixture that
+# trips a future sweep pointed at scripts/ is how a detector acquires its first
+# false positive.
+JSON_PH=$(printf '{{%s}}' GATE_COMMAND)
+json_census() {   # <root>... -> placeholder hits in *.json under those roots
+  grep -rn --include='*.json' -- '{{[A-Z_]\{2,\}}}' "$@" 2>/dev/null
+}
+mkdir -p "$JSONFIX/scoped" "$JSONFIX/unscoped"
+printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/in.json"
+printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/unscoped/out.json"
+printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/mcp.json.template"
+json_pos=$(json_census "$JSONFIX/scoped" | grep -c 'in\.json')
+json_neg_scope=$(json_census "$JSONFIX/scoped" | grep -c 'out\.json')
+json_neg_ext=$(json_census "$JSONFIX/scoped" | grep -c 'json\.template')
+if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ]; then
+  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored)"
+  json_hits=$(json_census templates user-level-reference | grep -c .)
+  if [ "$json_hits" -eq 0 ]; then
+    ok "templates/ + user-level-reference/ (*.json): 0 placeholders — a settings.json hook command is an executable position, so a literal {{...}} there is a 127 fail-open"
+  else
+    ko "templates/ + user-level-reference/ (*.json): $json_hits placeholder(s) in a shipped JSON file — JSON has no comments, so every one of these is in a VALUE: $(json_census templates user-level-reference | head -3 | tr '\n' ' ')"
+  fi
+else
+  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
+fi
+rm -rf "$JSONFIX"
+
+# 21c-3d. The skill's CONSUMER-SIDE json arm still exists (v2.2.5 round 7).
+#
+#         Same house rule as 21c-2c: prose alone would drift back. 21c-3c above
+#         covers what we SHIP; it is blind to the install-introduced class,
+#         because the project bootstrap substitutes and a key the consumer's
+#         manifest predates lands as a literal in THEIR file with our template
+#         clean. The skill's json arm is the only detector for that, and it is
+#         exactly the arm a tidy-up deletes as "redundant with the census".
+#         Pinned on `git grep` specifically: a `git ls-files … | xargs grep`
+#         rewrite would map both the clean case and a malformed one to xargs'
+#         123, collapsing the two states the exit contract exists to separate.
+if [ ! -f "$SWEEP_SKILL" ]; then
+  ko "$SWEEP_SKILL missing — the consumer-side json arm census cannot run"
+elif grep -q "^git grep .* -- '\*\.json'" "$SWEEP_SKILL"; then
+  ok "placeholder sweep: the consumer-side json arm is present in $SWEEP_SKILL (git grep, tracked-files scope)"
+else
+  ko "placeholder sweep: $SWEEP_SKILL has NO runnable json arm — .claude/settings.json is then undetected at the consumer end, which is the only end that sees the install-introduced class (v2.2.0's {{DEFAULT_BRANCH}} chain)"
+fi
 
 # 21d. Every shipped shell script PARSES (v2.2.1).
 #

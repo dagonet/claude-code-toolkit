@@ -354,14 +354,16 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 **Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report:
 
 ```
-# BOTH arms are BOM-tolerant: a UTF-8 BOM sits at byte 0, INSIDE line 1, so an
-# unprefixed `^` stops matching a key at the top of the file. See below.
+# The markdown and shell arms are BOM-tolerant: a UTF-8 BOM sits at byte 0,
+# INSIDE line 1, so an unprefixed `^` stops matching a key at the top of the
+# file. See below. The JSON arm needs no BOM handling — it has neither a `^`
+# anchor nor a comment filter, which are the only two things a BOM breaks.
 BOM=$(printf '\357\273\277')
 # markdown: only a config-VALUE line, which is where a placeholder is load-bearing
 grep -rn -- "^\(${BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" .claude *.md
 # shell: skip comment lines — prose ABOUT a placeholder is not a placeholder.
 # OPTIONS BEFORE PATHS: `--include` after the paths is parsed as another PATH.
-# NO `2>/dev/null` on either arm — the sweep's stderr is deliberately
+# NO `2>/dev/null` on ANY arm — the sweep's stderr is deliberately
 # unsuppressed; it is the only thing that reports a malformed invocation.
 # PIPEFAIL: without it `$?` is the LAST grep's status and the first one's 2
 # (a malformed invocation) is invisible to anything testing the exit code.
@@ -370,6 +372,20 @@ grep -rn -- "^\(${BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" .clau
 grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' .claude hooks | grep -v ":[0-9]*:\(${BOM}\)\?[[:space:]]*#"
 )
 sweep_rc=$?
+# json: TRACKED files only, never a filesystem walk. `.claude/settings.json` is
+# template-tracked, substituted at apply time, and composed almost entirely of
+# hook `command` strings — an EXECUTABLE position, so a literal {{...}} there is
+# a path that does not resolve, i.e. 127, i.e. fail-open.
+# NO exclusions and NO shape requirement, deliberately: JSON has no comments, so
+# any {{...}} in a .json file is in a VALUE by construction. Do not add a
+# comment filter by analogy with the shell arm; there is nothing to filter.
+# `git grep`, NOT `git ls-files … | xargs grep`: xargs maps ANY grep exit in
+# 1..125 to its own 123, collapsing "clean" and "malformed" — the very
+# distinction pipefail was added to expose (measured: xargs 123 both ways).
+# git grep needs no pipeline, cannot wander into .venv or build output, and
+# handles spaces in paths.
+git grep -n -e '{{[A-Z_]\{2,\}}}' -- '*.json'
+json_rc=$?     # 0 = hits (a PROBLEM), 1 = clean, 128 = malformed (NOT grep's 2)
 ```
 
 **THE SWEEP'S EXIT CONTRACT — SUCCESS IS 1 AND FAILURE IS 0 (v2.2.5 round 4).** `pipefail` is correct and does its job, but the resulting contract is inverted relative to every instinct, and nothing said so:
@@ -380,14 +396,29 @@ exit 1  ->  clean, no hits          SUCCESS — this is grep's no-match, not an 
 exit 2  ->  malformed invocation    the defect pipefail was added to expose
 ```
 
-**Check for 2 specifically; non-zero alone is not an error.** Two consequences follow directly, and both have already been written by someone reading this file:
+**The JSON arm keeps 0-and-1 and reports malformed as 128, not 2** — that is `git grep`'s convention, not `grep`'s, and it is the reason the arm is `git grep` rather than a `git ls-files | xargs grep` pipeline: xargs would return **123** for both the clean case and the malformed one. So the testable form is *"0 means hits, 1 means clean, anything else means broken"*, which holds for all three arms; only the literal `2` is grep-specific.
+
+**Check for a non-{0,1} code; non-zero alone is not an error.** Two consequences follow directly, and both have already been written by someone reading this file:
 
 - `if ! sweep; then fail` marks **every clean tree** as broken.
 - This skill mandates putting logic in a **script file**, and `set -o pipefail` is typed as `set -euo pipefail` from muscle memory — under `set -e` a **clean sweep aborts the script**, turning the correct outcome into a hard stop with no message.
 
 **And scope `pipefail`.** As a bare `set -o pipefail` it leaks into the rest of the hosting script and changes the exit semantics of every later pipeline there. The subshell above contains it; `( set -o pipefail; … )` or an explicit save/restore both work, and the subshell is one character cheaper to get right.
 
-**Why the `${BOM}` in both arms (v2.2.4).** PowerShell 5.1's `>` and `Out-File` write UTF-8 **with** a BOM, and a consumer's `PROJECT_CONTEXT.md` was found carrying one — this is a live Windows shape, not a hypothetical. The two arms fail in opposite directions and both are wrong: arm 1's `^` no longer abuts the key, so **a placeholder on line 1 behind a BOM is a FALSE CLEAN** — the sweep's whole job, missed silently, on the case a consumer reordering their file most plausibly creates. Arm 2's exclusion filter is the mirror: the BOM lands between the `:` and the `#`, so a BOM'd comment stops being recognised as a comment and comes back as a **false positive**. Measured on a fixture, before → after: arm 1 line 1 `0 → 1`, line 2 `1 → 1`, no-BOM control `1 → 1`; arm 2 BOM'd comment `1 → 0` false positives. Same class as the hook extractors' `GC_KEY_PRE` — the server strips the BOM for hashing and a `^`-anchored grep does not, so the same file is two different files depending on which one is looking.
+**THE JSON ARM IS NOT REDUNDANT WITH THE TOOLKIT'S OWN SHIPPING CENSUS — DO NOT DELETE IT AS OVERLAPPING (v2.2.5 round 7).** `scripts/verify-template-consistency.sh` runs a repo-side JSON census over `templates/**` and `user-level-reference/**`, so it is tempting to read this arm as the same check one tree over. It is not, and the asymmetry cuts the OPPOSITE way to the usual one:
+
+| tree | repo-side census | consumer-side arm (here) |
+|---|---|---|
+| user level | **sufficient**, because the user-level install is *verbatim* — nothing substitutes there | not needed, and this arm deliberately never touches `$HOME` |
+| project | **necessary, NOT sufficient** — the project install is *not* verbatim | **the only detector for the install-introduced class** |
+
+The project bootstrap substitutes, and substitution is exactly where a placeholder survives: per the rule below, `template_apply_file` substitutes only placeholders present in **the project's** manifest, so a key the manifest predates lands as a literal in the consumer's file while the template it came from is perfectly clean. **That is v2.2.0's chain verbatim — template correct → substitution incomplete → the consumer carries `- **Protected branches**: {{DEFAULT_BRANCH}}` → trunk silently unprotected — with a template-side census green throughout.** It was an *install* defect, not a shipping defect, and only a consumer-side check can see it. Today the JSON exposure is latent (no `*.json` under `templates/` carries a placeholder, so substitution is a no-op for JSON); it appears the first time someone adds one, in a file full of executable command strings, with the shipping census still green.
+
+**`git grep` reads the WORKING TREE for tracked files, which is the moment this sweep runs in** — verified: a tracked `settings.json` edited but neither staged nor committed is still found (rc 0). It has to be, because the sweep runs immediately after `template_apply_file` and before anything is committed. **Named residual, from the same property:** a file the sync *creates* for the first time and that nobody has `git add`-ed yet is untracked, so this arm cannot see it. That is the same scoping that keeps the arm out of `.venv` and out of another tool's backups, and it is the right trade — but in a brand-new project with nothing committed, run the sweep again after the first `git add`.
+
+**Scope by OWNERSHIP, never by key name, and expect the two ends to look different.** This arm scopes with `git ls-files` (tracked files); the repo-side census cannot use git for its user-level half and scopes by directory instead. **They are asymmetric in construction though symmetric in intent** — do not "harmonise" them into one filesystem walk. A walk over `~/.claude` was measured at 3430 JSON files with one hit, in a dated backup carrying *another tool's* placeholder keys: red on day one for a benign reason, which is how a guard gets disabled by someone whose reasoning looks sound. And do **not** narrow either end by filtering on known toolkit key names: that rots the first time a key is added, and it would hide a genuine unfilled placeholder under the new one. Scope is the right axis; the key set is not.
+
+**Why the `${BOM}` in the markdown and shell arms (v2.2.4).** PowerShell 5.1's `>` and `Out-File` write UTF-8 **with** a BOM, and a consumer's `PROJECT_CONTEXT.md` was found carrying one — this is a live Windows shape, not a hypothetical. The two arms fail in opposite directions and both are wrong: arm 1's `^` no longer abuts the key, so **a placeholder on line 1 behind a BOM is a FALSE CLEAN** — the sweep's whole job, missed silently, on the case a consumer reordering their file most plausibly creates. Arm 2's exclusion filter is the mirror: the BOM lands between the `:` and the `#`, so a BOM'd comment stops being recognised as a comment and comes back as a **false positive**. Measured on a fixture, before → after: arm 1 line 1 `0 → 1`, line 2 `1 → 1`, no-BOM control `1 → 1`; arm 2 BOM'd comment `1 → 0` false positives. Same class as the hook extractors' `GC_KEY_PRE` — the server strips the BOM for hashing and a `^`-anchored grep does not, so the same file is two different files depending on which one is looking.
 
 **Why the option ordering is load-bearing, and why the stderr stays visible (v2.2.5).** Until this release arm 2 read `grep -rn -- '…' .claude hooks --include='*.sh'`, with the option AFTER the paths — where `grep` parses it as another **path**, not an option. So the `*.sh` restriction never applied at all: arm 2 recursed every file under `.claude` and `hooks`, and its comment filter — correct for shell, wrong for markdown — then **silently ate a genuine markdown placeholder**, because `# {{FOO}}` reads as a comment line. Measured on GNU grep 3.0 (Git Bash / Windows), planted fixture of `conf.json`, `doc.md` (line 1 `# {{FOO_BAR}}`) and `s.sh`, and reproduced independently by a consumer:
 
@@ -403,9 +434,9 @@ That third row is the sweep failing at its entire job, quietly — the same shap
 
 **Keeping stderr visible is necessary but NOT sufficient — the exit code hides too (v2.2.5).** A malformed `grep` invocation exits **2**, but arm 2 is a pipeline, so a bare `$?` is the *last* grep's status: the 2 never surfaces and anyone wrapping the sweep in a script that tests its result gets a clean-looking answer even with stderr unsuppressed. `set -o pipefail` (above) or an explicit `${PIPESTATUS[0]}` check is what makes the failure testable; without one the defect recurs the moment someone automates the sweep. Stderr caught it for a human; the exit code is what catches it for a script.
 
-**Placeholders inside FENCED CODE BLOCKS are OUT OF SCOPE — decided, not omitted (v2.2.5).** A reviewer scanning unfiltered found a consumer's `CLAUDE.md` carrying `{{BUILD_COMMAND}}`, `{{TEST_COMMAND}}` and `{{FORMAT_COMMAND}}` unfilled inside its Quick Start fenced block. Neither arm sees them: arm 1 requires a `- **Key**: value` line, arm 2 requires `*.sh`. **That is deliberate and stays.** Two reasons. First, the same one that narrowed arm 1 in the first place — a pattern broad enough to reach fenced blocks flags the toolkit's own *documentation* of placeholder handling, including the sweep's own source above and every template's Quick Start, and the better the handling is documented the noisier its own detector becomes. Second, the failure this sweep exists for is a config value that reads as data to a *tool*: v2.2.0's `- **Protected branches**: {{DEFAULT_BRANCH}}` silently unprotected trunk. A fenced snippet telling a human what to type is read by a human, who has the surrounding sentence — in the reported case, the file's own "Replace placeholders above with your project's actual commands." **Named residual gap:** an unfilled placeholder in a fenced block is not reported, so a project that never followed that instruction will not hear about it here. The fact that would flip this decision is a fenced-block placeholder that some *tool* parses; there is not one today.
+**Placeholders inside FENCED CODE BLOCKS are OUT OF SCOPE — decided, not omitted (v2.2.5).** A reviewer scanning unfiltered found a consumer's `CLAUDE.md` carrying `{{BUILD_COMMAND}}`, `{{TEST_COMMAND}}` and `{{FORMAT_COMMAND}}` unfilled inside its Quick Start fenced block. No arm sees them: the markdown arm requires a `- **Key**: value` line, the shell arm requires `*.sh`, the JSON arm requires `*.json`. **That is deliberate and stays.** Two reasons. First, the same one that narrowed arm 1 in the first place — a pattern broad enough to reach fenced blocks flags the toolkit's own *documentation* of placeholder handling, including the sweep's own source above and every template's Quick Start, and the better the handling is documented the noisier its own detector becomes. Second, the failure this sweep exists for is a config value that reads as data to a *tool*: v2.2.0's `- **Protected branches**: {{DEFAULT_BRANCH}}` silently unprotected trunk. A fenced snippet telling a human what to type is read by a human, who has the surrounding sentence — in the reported case, the file's own "Replace placeholders above with your project's actual commands." **Named residual gap:** an unfilled placeholder in a fenced block is not reported, so a project that never followed that instruction will not hear about it here. The fact that would flip this decision is a fenced-block placeholder that some *tool* parses; there is not one today.
 
-**Do NOT add `2>/dev/null` to either arm.** The `No such file or directory` above is the *only* signal a malformed invocation gives, and it is the one a consumer running the line literally would have seen — this defect went unnoticed for a release because the reporting consumer had wrapped the shipped line in `2>/dev/null` in their own script. After the ordering fix that particular error is gone anyway; the principle is for whatever the next mistake is. A guard whose diagnostic is suppressed is not a guard.
+**Do NOT add `2>/dev/null` to any arm.** The `No such file or directory` above is the *only* signal a malformed invocation gives, and it is the one a consumer running the line literally would have seen — this defect went unnoticed for a release because the reporting consumer had wrapped the shipped line in `2>/dev/null` in their own script. After the ordering fix that particular error is gone anyway; the principle is for whatever the next mistake is. A guard whose diagnostic is suppressed is not a guard.
 
 **Why not the plain `grep -rn '{{[A-Z_]\{2,\}}}' .claude hooks *.md`:** it flags the toolkit's own documentation of placeholder handling — `hooks/lib/git-cmd.sh`'s comments explaining the `{{DEFAULT_BRANCH}}` arms, and `hooks/pre-commit-test.sh`'s comment naming `{{TEST_COMMAND}}`. Every consumer hits those three lines and has to reason them out, and the better the handling is documented the noisier its own detector becomes. Reported independently by two consumers. **Do not fix it by excluding `hooks/lib/` by name** — that rots on the first rename and would hide a genuine unfilled placeholder in a hook script. Excluding *comment lines* and requiring markdown hits on a `- **Key**: value` line kills all three false positives and keeps every real one. Verify the refinement the same way it was verified upstream: the sweep must report zero on a clean tree, and must still catch a placeholder planted in a `- **Key**:` line — **on line 1 behind a BOM as well as further down**, which is the pair the v2.2.4 arms above exist for.
 
