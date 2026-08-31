@@ -1645,8 +1645,22 @@ check_env() {
 }
 
 NOPARSER=$(mkpathdir noparser)
-PYONLY=$(mkpathdir pyonly python3)
-JQONLY=$(mkpathdir jqonly jq)
+# BUILD THE OPTIONAL-PARSER STUB DIRS ONLY WHERE THAT PARSER EXISTS (v2.2.5
+# round 3). mkpathdir's missing-tool report is a LOUD guard, and correctly so —
+# for CORE tools, whose absence silently corrupts every case run under the stub.
+# `python3` and `jq` are not core: they are the thing being VARIED, and their
+# absence is already handled by the HAVE_* skips below. Building a stub dir for
+# an absent optional parser reported `FAIL stub PATH minimum tool set (missing:
+# python3)` and turned the whole suite RED in a configuration that was skipping
+# correctly — the harness failing for a harness reason and reporting it as a
+# hook result. Measured under the jq configuration of
+# scripts/test-hooks-parser-matrix.sh, where python3 is genuinely off PATH.
+# The variables stay defined-but-empty; every case using them is inside a
+# HAVE_PY / HAVE_JQ block.
+PYONLY=""
+if [ -n "$HAVE_PY" ]; then PYONLY=$(mkpathdir pyonly python3); fi
+JQONLY=""
+if [ -n "$HAVE_JQ" ]; then JQONLY=$(mkpathdir jqonly jq); fi
 
 # Self-check FIRST: a fixture that still sees node would pass green and prove
 # nothing. Prints 1 when the parser is invisible on that PATH.
