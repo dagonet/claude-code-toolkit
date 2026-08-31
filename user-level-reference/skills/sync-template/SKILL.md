@@ -87,6 +87,14 @@ Copy each hit to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preservi
 
 > The server is the only layer that can see both facts at once (it holds the manifest and can read `.gitignore`), so a server-side refusal is the real fix and is filed upstream. This step is the client-side guard until it lands.
 
+### Apply-time invariants — these OUTRANK the step numbering (v2.2.5)
+
+The steps below are numbered for reading order, not for precedence. Two rules apply to **every** write in steps 3, 4, 5 and 6b, whichever list the path arrived in. Both exist because the numbering was followed literally and destroyed work.
+
+**I1 — a file that EXISTS in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in.** `new_template_files` means *absent from the MANIFEST*, not *absent from the PROJECT*: `template_compute_status` decides that list by manifest membership alone and never looks at the disk. A path that is present on disk, untracked in the manifest, and also shipped by the template therefore appears in `new_template_files` while step 6b rule 4 says — correctly — that it must be registered `source="skip"`. Step 5 runs first, so following the numbering lets the destructive reading win. It has: a consumer lost a 156-line project-specific gate this way, and **step 2b cannot cover it**, because 2b backs up *manifest-tracked* paths and this file's defining property is that it is not one. The reporter recovered only because the file happened to be git-tracked; a gitignored one would simply be gone. The user cannot save themselves either — they are asked "add this new file?" about a file that already exists with their content in it, and "yes" is the reasonable answer to the question as posed.
+
+**I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
+
 ### 3. Auto-Update Files
 
 For each file with status `AUTO_UPDATE`:
@@ -193,11 +201,16 @@ For each file with status `CONFLICT`:
 
 ### 5. Handle New Files
 
-For each file in `new_template_files`:
+`new_template_files` means **absent from the manifest**, NOT absent from the project (invariant I1 above). So for each file in `new_template_files`, **check the disk BEFORE asking anything**:
 
-Ask the user whether to add it. If yes:
+1. **The path already exists in the project** → it is not new. Do NOT offer to add it and do NOT write it: call `template_apply_file(project_path=".", file_path=F, source="skip")` — which registers a manifest entry from the project's existing content and writes nothing — exactly as step 6b rule 4 already prescribes for a present-but-untracked hook. Report it under `Skipped:` as *present on disk, registered in the manifest (not overwritten)*. From the next sync on it classifies like any other tracked file, so a real template change to it arrives as a CONFLICT you can review — which is the point.
+2. **The path does not exist** → ask the user whether to add it. If yes: `template_apply_file(project_path=".", file_path=F, source="template")`.
 
-Call `template_apply_file(project_path=".", file_path=F, source="template")`.
+Never route case 1 through `source="template"` on the strength of the user answering "yes" — the question as posed ("add this new file?") does not tell them their file is about to be overwritten, and step 2b's backup does not cover this class. If the file genuinely should become the template's version, that is a conflict resolution: show them the diff first and let them choose, per step 4.
+
+Apply new libs and hooks BEFORE `.claude/settings.json` is written, even though this step is numbered after step 3 (invariant I2).
+
+> **Upstream:** `template_compute_status` should carry `present_on_disk: true` on `new_template_files` entries so a client cannot get this wrong — filed on `mcp-dev-servers`. Until it lands, the disk check above is the only thing between a consumer and a silent overwrite, and it depends on the agent remembering to make it.
 
 **Duplicate-load warning:** for a new `.claude/rules/*.md`, grep `CLAUDE.md` for each of its headings. A heading present in both means the project pasted that section into `CLAUDE.md` before the template extracted it into a path-scoped rule — it would now load twice. List the duplicated headings and offer to delete the `CLAUDE.md` copy.
 
@@ -391,6 +404,8 @@ CI fires on `pull_request` and on push-to-main; a bare branch push produces **no
 - NEVER apply an `auto_merged` body without checking it for dropped lines — and, for a hook, without a `bash -n`
 - NEVER finalize without the hook-script verification (step 6b), sourced libs included — a missing script or lib fails open and silently disables enforcement
 - NEVER register PRESENT hooks with `source="template"` in step 6b — `source="skip"` for present-but-untracked (registration must not overwrite local edits); `source="template"` is ONLY for scripts missing from disk (step 3)
+- NEVER write a path from the template that already EXISTS in the project without an explicit conflict resolution (invariant I1) — a `new_template_files` entry that is present on disk is registered `source="skip"`, never added with `source="template"`
+- NEVER write `.claude/settings.json` before every script it references exists on disk (invariant I2), whichever step introduced those scripts
 - NEVER hand-assemble or re-type `applied_files` entries — collect the tool results verbatim
 - ALWAYS re-run `template_compute_status` after finalize and report anything other than a clean result
 - ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `lastSynced`)
