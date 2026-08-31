@@ -128,12 +128,23 @@ if [ -z "$TEST_CMD" ]; then
       echo "PRE-COMMIT: Running 'run-gate.sh'..." >&2
       cd "$REPO_PATH" || exit 1
       OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
-      if bash "$RUN_GATE" > "$OUT" 2>&1; then
+      bash "$RUN_GATE" > "$OUT" 2>&1
+      PCT_RC=$?
+      if [ "$PCT_RC" -eq 0 ]; then
         rm -f "$OUT"
         echo "PRE-COMMIT: 'run-gate.sh' passed." >&2
         exit 0
       else
-        echo "BLOCKED: 'run-gate.sh' failed — re-run it and fix the failures before committing." >&2
+        # v2.2.5: suppress the retry advice STRUCTURALLY on a terminal rc. This
+        # test names no guard and reads no message, so any future terminal guard
+        # inherits it by exiting GC_TERMINAL_RC. The captured tail is printed
+        # last either way, so the guard's own specific remedy is what the user
+        # reads at the bottom of the block.
+        if [ "$PCT_RC" -eq "$GC_TERMINAL_RC" ]; then
+          echo "BLOCKED: 'run-gate.sh' cannot succeed as configured — this is a configuration failure, not a failing check. Re-running it will NOT help; apply the remedy below." >&2
+        else
+          echo "BLOCKED: 'run-gate.sh' failed — re-run it and fix the failures before committing." >&2
+        fi
         echo "--- last 20 lines ---" >&2
         tail -20 "$OUT" >&2
         rm -f "$OUT"
@@ -169,7 +180,9 @@ cd "$REPO_PATH" || exit 1
 # last 20 lines so a chatty gate cannot flood the transcript.
 OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
 PCT_T0=$(date +%s 2>/dev/null || echo 0)
-if eval "$TEST_CMD" > "$OUT" 2>&1; then
+eval "$TEST_CMD" > "$OUT" 2>&1
+PCT_RC=$?
+if [ "$PCT_RC" -eq 0 ]; then
   rm -f "$OUT"
   # The elapsed seconds are the ONLY external evidence the suite actually ran.
   # On success the captured output is deleted (right above) — correct, it is
@@ -181,7 +194,14 @@ if eval "$TEST_CMD" > "$OUT" 2>&1; then
   echo "PRE-COMMIT: '$TEST_CMD' passed. ($((PCT_T1 - PCT_T0))s)" >&2
   exit 0
 else
-  echo "BLOCKED: '$TEST_CMD' failed — re-run it and fix the failures before committing." >&2
+  # Same structural terminal test as the run-gate.sh path above: a Test/Gate
+  # command that exits GC_TERMINAL_RC is reporting a configuration it cannot
+  # succeed under, so "re-run it" is wrong advice whatever produced it.
+  if [ "$PCT_RC" -eq "$GC_TERMINAL_RC" ]; then
+    echo "BLOCKED: '$TEST_CMD' cannot succeed as configured — this is a configuration failure, not a failing check. Re-running it will NOT help; apply the remedy below." >&2
+  else
+    echo "BLOCKED: '$TEST_CMD' failed — re-run it and fix the failures before committing." >&2
+  fi
   echo "--- last 20 lines ---" >&2
   tail -20 "$OUT" >&2
   rm -f "$OUT"

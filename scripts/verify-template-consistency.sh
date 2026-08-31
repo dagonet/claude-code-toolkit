@@ -824,6 +824,24 @@ else
   ko "GC_KEY_PRE definition drifted: found in $gkp_have of 2 files (git-cmd.sh, run-gate.sh)"
 fi
 
+# 21c-2b. GC_TERMINAL_RC, same census for the same reason (v2.2.5).
+#
+#      run-gate.sh EXITS this code and pre-commit-test.sh TESTS for it, from two
+#      independent definitions. If they ever drift, the terminal failure quietly
+#      becomes an ordinary one again and the circular "re-run it" advice is back
+#      — with nothing red to show for it. That is the whole failure mode this
+#      constant exists to prevent, so it is asserted rather than trusted.
+GC_TERMINAL_RC_DEF='GC_TERMINAL_RC=78'
+gtr_have=0
+for gtf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+  grep -qF "$GC_TERMINAL_RC_DEF" "$gtf" && gtr_have=$((gtr_have + 1))
+done
+if [ "$gtr_have" -eq 2 ]; then
+  ok "GC_TERMINAL_RC defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "GC_TERMINAL_RC definition drifted: found in $gtr_have of 2 files (git-cmd.sh, run-gate.sh)"
+fi
+
 # 21c-3. The toolkit gates ITSELF (v2.2.5).
 #
 #      Without a root PROJECT_CONTEXT.md, pre-commit-test.sh and

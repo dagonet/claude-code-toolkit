@@ -11,7 +11,11 @@
 #   {"sha":"<HEAD sha>","tree":"<working-tree hash>","branch":"<branch>",
 #    "ts":"<UTC ISO-8601>","status":"pass"}
 #
-# On failure, any existing artifact is deleted and the script exits nonzero.
+# On failure, any existing artifact is deleted and the script exits nonzero:
+# 1 for an ordinary red gate (retry after fixing), GC_TERMINAL_RC (78) when the
+# failure is terminal — a configuration the gate command cannot succeed under,
+# where "re-run it" is the wrong advice. See the exit-code conventions block in
+# hooks/lib/git-cmd.sh.
 # No-op (exit 0) when the Gate field is missing or still a {{...}} placeholder,
 # so templates degrade gracefully before a project configures its gate.
 #
@@ -21,9 +25,20 @@
 # recurse until the process/fd limit kills it. RUN_GATE_ACTIVE guards against
 # that: it is exported before the gate command runs and checked on entry.
 
+#
+# v2.2.5 (consumer report): the guard was safe but its follow-on advice was
+# circular — the outer layers appended "fix the failures and re-run" to a
+# condition that no amount of re-running can change. GC_TERMINAL_RC, defined
+# locally for the same standalone reason as GC_KEY_PRE below, is how a caller
+# tells the two apart. See the exit-code conventions block in
+# hooks/lib/git-cmd.sh; scripts/verify-template-consistency.sh asserts the two
+# definitions stay in step.
+GC_TERMINAL_RC=78
+
 if [ "${RUN_GATE_ACTIVE:-}" = "1" ]; then
   echo "BLOCKED: **Gate** must not invoke run-gate.sh itself" >&2
-  exit 2
+  echo "Edit '**Gate**:' in PROJECT_CONTEXT.md to your real build/test commands — run-gate.sh RUNS that value, so it cannot BE that value." >&2
+  exit "$GC_TERMINAL_RC"
 fi
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
@@ -31,7 +46,7 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   echo ""
   echo "Runs the Gate command from PROJECT_CONTEXT.md (**Gate**: <command>)."
   echo "Green: writes .gate/last-pass.json (checked by gate-before-merge.sh) and prints GATE PASS <sha>."
-  echo "Red:   deletes the artifact and exits nonzero."
+  echo "Red:   deletes the artifact and exits 1 (78 when the failure is terminal — see hooks/lib/git-cmd.sh)."
   echo "No Gate configured: prints GATE SKIP and exits 0."
   exit 0
 fi
@@ -128,13 +143,28 @@ TREE_HASH=$(GIT_INDEX_FILE="$TMPIDX" git -C "$REPO_TOP" write-tree 2>/dev/null)
 
 RUN_GATE_ACTIVE=1
 export RUN_GATE_ACTIVE
-if bash -c "$GATE_CMD"; then
+bash -c "$GATE_CMD"
+GATE_RC=$?
+
+if [ "$GATE_RC" -eq 0 ]; then
   mkdir -p "$ARTIFACT_DIR"
   TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   printf '{"sha":"%s","tree":"%s","branch":"%s","ts":"%s","status":"pass"}\n' \
     "$HEAD_SHA" "$TREE_HASH" "${BRANCH:-unknown}" "$TS" > "$ARTIFACT"
   echo "GATE PASS $HEAD_SHA"
   exit 0
+elif [ "$GATE_RC" -eq "$GC_TERMINAL_RC" ]; then
+  # TERMINAL: the gate command reported a condition retrying cannot change (a
+  # self-invoking **Gate**, or any future guard that exits GC_TERMINAL_RC).
+  # DELIBERATELY SILENT. The generic "fix the failures and re-run" of the else
+  # arm is wrong here, and so is any replacement of it: only the guard knows the
+  # specific remedy, it has already printed it on this same stderr, and it must
+  # stay the LAST thing on screen. Printing a trailing summary would bury it
+  # again — which is the exact defect this branch exists to fix. The code is
+  # propagated so the caller (pre-commit-test.sh) can suppress ITS retry advice
+  # by the same structural test, without knowing which guard fired.
+  rm -f "$ARTIFACT"
+  exit "$GC_TERMINAL_RC"
 else
   rm -f "$ARTIFACT"
   echo "GATE FAILED: '$GATE_CMD' exited nonzero. Fix the failures and re-run 'bash hooks/run-gate.sh'." >&2

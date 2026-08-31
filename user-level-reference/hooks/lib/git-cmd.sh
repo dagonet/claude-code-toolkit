@@ -29,7 +29,39 @@
 # argument justifies it, so ITS patterns are anchored to command position. Do
 # not "fix" these three the same way; the polarity is the whole difference.
 #
+# EXIT-CODE CONVENTIONS for the gates and the gate runner (v2.2.5). All four
+# meanings in one place, because the fourth only makes sense against the others:
+#
+#     0    pass / not applicable — the tool call proceeds.
+#     2    BLOCK. Retrying after fixing the reported failure can succeed.
+#    78    BLOCK, TERMINAL — retrying cannot change the outcome, because the
+#          cause is configuration rather than a failing check. `GC_TERMINAL_RC`
+#          below. 78 is EX_CONFIG from sysexits.h, i.e. exactly "configuration
+#          error", and it collides with none of the meanings already in use.
+#   127    the script DID NOT RUN (missing/unreadable interpreter or file).
+#          Never a verdict: a 127 says nothing about what was being checked.
+#
+# WHY 78 EXISTS (v2.2.5, consumer report). `run-gate.sh`'s RUN_GATE_ACTIVE guard
+# fires correctly when a project's **Gate** value is `bash hooks/run-gate.sh`,
+# and then the outer layers buried its accurate one-line diagnosis under two
+# generic failures that BOTH said "fix the failures and re-run" — advice to
+# retry the one thing that cannot succeed. The defect was not the wording: the
+# caller had no way to tell a terminal failure from a retryable one. So the
+# distinction is carried in the exit code, and every outer handler suppresses
+# its retry advice on GC_TERMINAL_RC *structurally* — it never matches on a
+# message or names a particular guard, so the next terminal guard inherits the
+# behaviour by exiting 78 and nothing else has to change.
+#
+# A guard that fires correctly and then prints misleading remediation is not
+# much better than one that does not fire. Whatever prints a terminal failure
+# ends with the SPECIFIC remedy, and prints no generic "re-run" line at all.
+#
 # Source it from a hook:  . "$(dirname "$0")/lib/git-cmd.sh"
+
+# The standalone hooks/run-gate.sh repeats this literal (it must run with no
+# JSON parser on PATH, which sourcing this file forbids);
+# scripts/verify-template-consistency.sh asserts the two copies agree.
+GC_TERMINAL_RC=78
 
 # Fail CLOSED when the JSON reader is missing: without it GC_CMD would be empty
 # and every gate would allow every command.

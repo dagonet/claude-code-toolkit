@@ -819,9 +819,56 @@ RECURSEREPO=$(mkrepo gaterecurse main)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$RECURSEREPO/PROJECT_CONTEXT.md"
 recurseerr="$TMPROOT/recurse.err"
 ( cd "$RECURSEREPO" && RUN_GATE_ACTIVE=1 bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$recurseerr" )
-expect "(R5) recursion guard: exit 2"  "2" "$?"
+expect "(R5) recursion guard: exit 78 (terminal)"  "78" "$?"
 expect "(R5) recursion guard: message" "1" \
   "$(grep -cF 'BLOCKED: **Gate** must not invoke run-gate.sh itself' "$recurseerr")"
+# v2.2.5: the guard's accurate diagnosis used to be buried under generic
+# "re-run it" advice from both outer layers. The specific remedy is now the LAST
+# line the guard prints, and it names the field to edit.
+expect "(R5) recursion guard: remedy is the last line" "1" \
+  "$(tail -1 "$recurseerr" | grep -cF "Edit '**Gate**:' in PROJECT_CONTEXT.md")"
+
+# --- R5b: terminal vs retryable must be distinguishable by the CALLER --------
+# Both arms, because a one-armed fixture cannot catch a suppression that fires
+# on everything. Arm 1: a terminal gate (rc=78) suppresses the retry advice and
+# still BLOCKS. Arm 2: an ordinary red gate still prints it.
+echo
+echo "=== R5b: terminal (78) vs retryable gate failure ==="
+
+# Arm 1 -- the real self-reference chain, driven end to end: **Gate** invokes
+# run-gate.sh, so the OUTER run-gate.sh runs the INNER one, which exits 78.
+termrepo=$(mkrepo gateterminal main)
+printf '# ctx\n\n- **Gate**: `bash %s/hooks/run-gate.sh`\n' "$ROOT" > "$termrepo/PROJECT_CONTEXT.md"
+termerr="$TMPROOT/terminal.err"
+( cd "$termrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$termerr" )
+expect "(R5b) terminal gate: run-gate.sh propagates 78" "78" "$?"
+expect "(R5b) terminal gate: NO generic re-run advice" "0" \
+  "$(grep -c 'Fix the failures and re-run' "$termerr")"
+expect "(R5b) terminal gate: remedy still last" "1" \
+  "$(tail -1 "$termerr" | grep -cF "Edit '**Gate**:' in PROJECT_CONTEXT.md")"
+
+# Arm 1b -- pre-commit-test.sh over the same repo: it must still BLOCK, with
+# exit 2 and never 78 (the PreToolUse contract with the harness is 0/2, so the
+# terminal code is consumed here, not propagated), and it must not tell the user
+# to re-run the thing that cannot succeed.
+check_nomsg "(R5b) terminal: no retry advice" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$termrepo")" "re-run it and fix the failures"
+check_msg "(R5b) terminal: names configuration" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$termrepo")" "cannot succeed as configured"
+check_msg "(R5b) terminal: remedy reaches the user" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$termrepo")" "Edit '**Gate**:' in PROJECT_CONTEXT.md"
+
+# Arm 2 -- an ORDINARY red gate must be unaffected: rc=1 from run-gate.sh, the
+# retry advice present, and pre-commit-test.sh's retry advice present too.
+redrepo=$(mkrepo gatered main)
+printf '# ctx\n\n- **Gate**: `false`\n' > "$redrepo/PROJECT_CONTEXT.md"
+rederr="$TMPROOT/red.err"
+( cd "$redrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$rederr" )
+expect "(R5b) ordinary red gate: run-gate.sh exits 1" "1" "$?"
+expect "(R5b) ordinary red gate: retry advice PRESENT" "1" \
+  "$(grep -c 'Fix the failures and re-run' "$rederr")"
+check_msg "(R5b) red: retry advice PRESENT" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$redrepo")" "re-run it and fix the failures"
 
 # ===========================================================================
 # git gates: fail-closed contracts (v2.1.1, consumer sync feedback #2c/#3)
