@@ -308,9 +308,9 @@ That is v2.2.0's `- **Protected branches**: {{DEFAULT_BRANCH}}` — a config val
 
 | configuration | resolved to | v2.2.5 | v2.2.4 |
 |---|---|---|---|
-| node | `/c/Program Files/nodejs/node` | `374 passed, 0 failed, 0 skipped` | 342 / 0 / 0 |
-| python3 (node not usable) | `/c/Users/…/AppData/Local/Python/bin/python3` | `271 passed, 0 failed, 103 skipped` | 239 / 0 / 103 |
-| jq (node + python3 not usable) | `/c/Users/…/WinGet/Links/jq` | `255 passed, 0 failed, 119 skipped` | 223 / 0 / 119 |
+| node | `/c/Program Files/nodejs/node` | `376 passed, 0 failed, 0 skipped` | 342 / 0 / 0 |
+| python3 (node not usable) | `/c/Users/…/AppData/Local/Python/bin/python3` | `273 passed, 0 failed, 103 skipped` | 239 / 0 / 103 |
+| jq (node + python3 not usable) | `/c/Users/…/WinGet/Links/jq` | `257 passed, 0 failed, 119 skipped` | 223 / 0 / 119 |
 
 The skip counts are **unchanged** (103 and 119): all thirty-four new assertions are parser-independent, which is the check that the restricted configurations were really restricted — a new fixture that silently skips in two of three configurations is a fixture that only ever ran once, and **a restricted configuration reporting zero skips would be proof the restriction did not apply, not proof of improvement.** `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
 
