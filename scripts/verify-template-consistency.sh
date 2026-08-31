@@ -842,6 +842,34 @@ else
   ko "GC_TERMINAL_RC definition drifted: found in $gtr_have of 2 files (git-cmd.sh, run-gate.sh)"
 fi
 
+# 21c-2c. The placeholder sweep passes its OPTIONS BEFORE its PATHS (v2.2.5).
+#
+#      `grep -rn -- '…' .claude hooks --include='*.sh'` parses the --include as
+#      another PATH: the *.sh restriction never applies, the sweep recurses
+#      markdown and JSON too, and its shell-comment filter then silently eats a
+#      genuine markdown placeholder (`# {{FOO}}` reads as a comment). Measured
+#      on GNU grep 3.0 and reproduced independently by a consumer. This is the
+#      only part of that fix with any executable surface in this repo, so the
+#      ordering is pinned here — prose alone would drift back.
+sweepf="user-level-reference/skills/sync-template/SKILL.md"
+if [ ! -f "$sweepf" ]; then
+  ko "sweep ordering: $sweepf is missing"
+else
+  # Only the runnable sweep lines (a fenced command starts the line); prose
+  # ABOUT the broken ordering deliberately quotes it and must not be flagged.
+  sweep_cmds=$(grep -n '^grep -rn ' "$sweepf" | grep -F -- '--include')
+  sweep_total=$(printf '%s\n' "$sweep_cmds" | grep -c .)
+  sweep_bad=$(printf '%s\n' "$sweep_cmds" | grep -cv '^[0-9]*:grep -rn --include=')
+  if [ "$sweep_total" -eq 0 ]; then
+    ko "sweep ordering: no --include sweep command found in $sweepf (arm 2 lost its file filter?)"
+  elif [ "$sweep_bad" -eq 0 ]; then
+    ok "sweep ordering: all $sweep_total --include sweep commands pass options before paths"
+  else
+    ko "sweep ordering: $sweep_bad of $sweep_total sweep commands put --include AFTER the paths (the filter is then inert)"
+    printf '%s\n' "$sweep_cmds" | grep -v '^[0-9]*:grep -rn --include=' | sed 's/^/      /'
+  fi
+fi
+
 # 21c-3. The toolkit gates ITSELF (v2.2.5).
 #
 #      Without a root PROJECT_CONTEXT.md, pre-commit-test.sh and

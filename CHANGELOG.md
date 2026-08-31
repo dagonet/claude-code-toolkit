@@ -69,14 +69,102 @@ This is the value of item 2 arriving on day one: the bug was invisible for as lo
 
 **Fixture re-check, as asked: nothing should be simplified.** The committed fixtures already build their own repos through `mkrepo`; pointing them at the toolkit checkout would couple the suite to the very `PROJECT_CONTEXT.md` under test and make it non-hermetic on hosts that run the suite from a different tree. What genuinely got easier is *ad-hoc* verification — a hand-built scratch repo is no longer needed to watch a gate discriminate — and that is where the benefit lands.
 
-### 4. Verification
+### 4. The sync destroyed a file that was present on disk — real data loss, already suffered
 
-`verify-template-consistency.sh` **268/268** (+4: three self-gating assertions and the `RUN_GATE_ACTIVE` pin). `test-hooks.sh` **342 assertions**, unchanged in count, `342 passed, 0 failed, 0 skipped` — all three parser configurations present on the host, so nothing skipped. `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
+Reported by a consumer who lost a 156-line project-specific gate.
+
+`template_compute_status` puts a path in `new_template_files` when it is absent **from the manifest**, and never looks at the disk. Step 5 then applied `source="template"` to every entry the user said yes to — with no disk check. Step 6b rule 4 said the opposite for exactly this class (present at the project root, untracked in the manifest → register `source="skip"`, never write), and **step 5 runs first, so the destructive rule won**. The user could not save themselves either: they were asked "add this new file?" about a file that already existed with their content in it.
+
+**The backup could not cover it, which is what makes it severe.** Step 2b backs up *manifest-tracked* paths; not being manifest-tracked is the defining property of this class. The reporter recovered only because the file happened to be git-tracked — a gitignored one would be gone.
+
+Measured against the real `template-sync-tools` server, scratch project, `hooks/run-gate.sh` present on disk with local content and absent from the manifest:
+
+```
+hooks/run-gate.sh in new_template_files: True     (29 entries, none carrying any disk fact)
+ARM 1  source="template"  (shipped)     project content survived: False
+ARM 2  source="skip"      (corrected)   project content survived: True  + manifest entry returned
+```
+
+Step 5 now checks the disk first and routes a present path to `source="skip"`. Both ordering rules are hoisted **above the step numbering**, because the numbering is what let the destructive reading win: **I1** — a file that exists in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in; **I2** — `.claude/settings.json` is written only after every script it references exists on disk (see item 8).
+
+**Upstream, filed separately:** `template_compute_status` should carry `present_on_disk: true` on `new_template_files` entries, so a client cannot get this wrong. The client fix depends on the agent remembering to check; the server fix makes it structural.
+
+### 5. The placeholder sweep's `--include` never applied — and the v2.2.4 measurement was taken with it inert
+
+`grep -rn -- '{{…}}' .claude hooks --include='*.sh'` parses the `--include` as another **path**. Two live consequences, both reproduced by a consumer on GNU grep 3.0 (Git Bash / Windows) and re-measured here on a planted fixture of `conf.json`, `doc.md` (line 1 `# {{FOO_BAR}}`) and `s.sh`:
+
+```
+SHIPPED (options after paths):   conf.json, doc.md, s.sh    filter inert, every type matched
+                     stderr:     grep: --include=*.sh: No such file or directory
+CORRECTED (options first):       s.sh                       correct
+SHIPPED + comment filter:        conf.json, s.sh            <- doc.md's "# {{FOO_BAR}}" DROPPED
+CORRECTED + comment filter:      s.sh                       correct
+```
+
+The third row is the defect that matters: a **genuine markdown placeholder silently eaten**, because arm 2's shell-comment filter reads `# {{FOO}}` as a comment. The sweep failing at its entire job, quietly — the same shape as the BOM false-clean the v2.2.4 arms were written to prevent. Fixed by putting the options before the paths, and `verify-template-consistency.sh` now pins that ordering, since it is the only part of this item with executable surface.
+
+**Say it plainly: the v2.2.4 "22 hits → 0" sweep measurement was taken with this filter inert.** The net result was still correct — arm 1 covers markdown properly and both planted controls fired — but it was correct **by luck rather than by construction**, and a number that happens to be right is not evidence the thing that produced it works.
+
+**No `2>/dev/null` anywhere near the sweep**, and the skill now says so in a comment. That `No such file or directory` was the only signal the invocation was malformed; the reporting consumer had wrapped the shipped line in `2>/dev/null` in their own script and so could not see it. After the ordering fix the error is gone anyway — the principle is for the next mistake. A guard whose diagnostic is suppressed is not a guard.
+
+### 6. `bash -n` driven from Python on Windows checks nothing — it returns 127 for everything
+
+Reported as a false FAILURE; the measurement is worse than that. The bare name `bash` does not resolve to the shell you meant: `shutil.which('bash')` reports `C:\Program Files\Git\usr\bin\bash.EXE`, while `subprocess.run(['bash', …])` executes **WSL** bash, which cannot see a Windows path. One language's standard library, two mechanisms, two different programs. Reproduced on two hosts; re-measured here:
+
+```
+bash -n <VALID>                                  rc=127   (PATH-resolved -> WSL)
+bash -n <BROKEN, unterminated `if`>              rc=127   IDENTICAL
+"C:\Program Files\Git\bin\bash.exe" -n <VALID>   rc=0
+"C:\Program Files\Git\bin\bash.exe" -n <BROKEN>  rc=2     real syntax diagnostic
+```
+
+All 127s are identical, so the check could not distinguish anything — a consumer following step 4 would go hunting a syntax error in a file that is fine. Same class as the `command -v python3` App-Installer stub: the name resolves, the program is not the one you meant.
+
+Both halves are in the skill: the **verified explicit invocation** (`Git\bin\bash.exe`, *not* the `Git\usr\bin\bash.EXE` the broken lookup reports — an instruction without a path is what gets implemented wrong), and the durable guard — **`rc=127` means the check DID NOT RUN and is never a syntax verdict**; 0 and 2 are the only verdicts. That guard survives whatever the next shell-resolution surprise is. (Extra data point, not required by the fix: invoked by explicit path, `Git\usr\bin\bash.exe` also returns 2 correctly. The breakage is the PATH lookup, not that binary.)
+
+### 7. A guard that fires correctly, then tells you to retry what cannot succeed
+
+`run-gate.sh`'s `RUN_GATE_ACTIVE` guard (v2.1.3) is right: a project whose `**Gate**` value is `bash hooks/run-gate.sh` — a natural value — would otherwise recurse. But adopting the template's `run-gate.sh` on such a project turns every gate run into a failure, and the guard's accurate one-line diagnosis was then buried under two layers of generic text that **both said "fix the failures and re-run"**:
+
+```
+BLOCKED: **Gate** must not invoke run-gate.sh itself          <- accurate, and correct
+GATE FAILED: '…' exited nonzero. Fix the failures and re-run 'bash hooks/run-gate.sh'.
+BLOCKED: 'run-gate.sh' failed — re-run it and fix the failures before committing.
+```
+
+A hard-blocked repo and circular advice. **The defect is not the wording** — the outer handler had no way to tell a *terminal* failure from a *retryable* one, so rewording this guard would leave every future guard to hit the same wall and every outer handler to remember a special case. The distinction now travels in the exit code:
+
+> **`GC_TERMINAL_RC = 78`** — `EX_CONFIG` from `sysexits.h`, "configuration error": precisely a condition retrying cannot change. It collides with none of the meanings in use — `0` pass, `2` block, `127` the script did not run — and all four are documented together in `hooks/lib/git-cmd.sh`.
+
+`run-gate.sh` exits 78 from the guard with the **specific remedy as the last line** (*edit `**Gate**:` in `PROJECT_CONTEXT.md` to your real build/test commands — `run-gate.sh` RUNS that value, so it cannot BE that value*), and propagates 78 when its gate command exits 78; its terminal arm is deliberately silent, because only the guard knows the remedy and a trailing summary would bury it again. `pre-commit-test.sh` suppresses its retry advice **structurally** — it tests the code, matches no message and names no guard, on both its run-gate path and its direct-eval path — and still blocks with exit 2, since 78 is consumed there and never handed to the harness, whose contract is 0/2. Any future terminal guard inherits the behaviour by exiting 78.
+
+`run-gate.sh` must stay standalone (it has to run with no JSON parser on PATH, so it cannot source `git-cmd.sh`), so it repeats the literal exactly as it repeats `GC_KEY_PRE` — and `verify-template-consistency.sh` now asserts the two copies agree. That census is the part that stops the next instance: a silent drift would turn the terminal failure back into an ordinary one with nothing red to show for it.
+
+Fixtures assert **both** arms, because a one-armed fixture cannot catch a suppression that fires on everything: terminal (78, no generic advice, remedy last, `pre-commit-test.sh` blocks 2 without retry advice) and ordinary red (`run-gate.sh` still exits 1, both layers still print the retry advice).
+
+**`gate-before-merge.sh` is unchanged, and this is a deliberate deviation from the brief, which named it too.** It observes an *artifact*, never an exit code — it invokes nothing — so it has no terminal signal to suppress on. The only way to give it one would be a sentinel file written by `run-gate.sh`, which would be stale by construction: a repo whose `**Gate**` had been fixed but not yet re-gated would be told it has a terminal configuration error it no longer has. Replacing circular advice with wrong advice is not an improvement. Its message ("run `bash hooks/run-gate.sh`, then merge") is correct in every state except the one `pre-commit-test.sh` now diagnoses first — and a consumer in that state hits the commit gate before the merge gate.
+
+### 8. Four smaller corrections to the sync skill, all from consumer syncs
+
+- **New files arrive after `settings.json` in the numbering, and 9 of 11 of them were hooks it wires.** Following step 3's "settings.json last of the enforcement wiring" literally, then adopting new files in step 5, installs a `settings.json` naming nine scripts that do not yet exist — every matching tool call exits 127 and fails closed. The reporter ignored the numbering and applied libs → hooks → agents → settings.json → docs, which is right. Now stated as invariant **I2**, hoisted above the step numbering with I1.
+- **Step 9's own commit is blocked by the gate it just installed** — the sixth instance of this trap this week. `gate-before-merge.sh` scans the whole command string, and a template-sync commit message *naturally describes merge-gating changes*. Step 9 now prescribes writing the message to a file with the Write tool and using `git commit -F <path>`; the short `-m` it used to carry dodged the gate by luck, not design.
+- **Step 7's part-hash hint is silent on a recently-synced repo** (`hint: ""` on all 36 entries of one consumer, because the last two syncs already re-registered everything). One clause added: an empty hint set is the healthy state, not a missing step — the clause exists for manifests that predate the part-hash fields.
+- **Step 2b is unexecutable where Bash `git` commands are hard-blocked** — both prescribed backup methods shell out to `git check-ignore`, and the step anticipated a false clean but not a hard block. This reaches only consumers on pre-v2.1 configs (`block-bash-vcs.sh` was removed from this toolkit in v2.1). Git-free fallback added: prefer the server's `template_list_gitignored`, else parse `.gitignore` and back up the manifest's path list as a **superset** — over-copying costs disk, under-copying costs the file. Skipping 2b because the check will not run is a 127 read as a verdict.
+
+### 9. Verification
+
+`verify-template-consistency.sh` **270/270** (+6 over v2.2.4: three self-gating assertions, the `RUN_GATE_ACTIVE` pin, the `GC_TERMINAL_RC` census and the sweep-ordering pin). `test-hooks.sh` **352 passed, 0 failed, 0 skipped** (+10: the terminal-vs-retryable arms of item 7) — all three parser configurations present on the host, so nothing skipped. `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
+
+Both new assertions were probed two-sided over throwaway copies, since an assertion that cannot go red pins nothing: reverting the sweep line to options-after-paths gives `total=1 bad=1` (red), and changing one copy of the constant to 79 gives `found=1 of 2` (red).
+
+Items 4, 5 and 6 have **no executable surface in this repository** — they are skill prose, so a green gate does not cover them and must not be read as covering them. Each was reproduced by measurement instead: item 4 against the real `template-sync-tools` server on a scratch project, items 5 and 6 against planted fixtures, all three pasted above.
 
 ### Downstream migration
 
 - **No action for existing repos, and no manifest churn.** The two version fields are additive; an existing manifest without them is valid and stays valid. Item 1 changes only what the **next** sync writes. Absent means unknown, never stale.
-- **`~/.claude/skills/sync-template/SKILL.md`** — re-copy from `user-level-reference/skills/sync-template/SKILL.md`; it carries step 7b (the stamp) and the two new report lines.
+- **`~/.claude/skills/sync-template/SKILL.md` — RE-COPY IT, or you have none of items 4, 5, 6 or 8.** All four ship in `user-level-reference/skills/sync-template/SKILL.md`, and **the copy that actually runs is the one installed under `~/.claude/skills/`**. The tag alone delivers nothing: pulling this release, or reading this entry, does not change the file your next `/sync-template` executes. Item 4 is the data-loss fix, so this is the one migration step in this release that is not optional. (It also carries step 7b's stamp and the two new report lines from item 1.)
+- **Item 7: if your `**Gate**` value is `bash hooks/run-gate.sh`, replace it with your actual build/test commands BEFORE adopting the template's `run-gate.sh`.** Otherwise every gate run fails and `pre-commit-test.sh` / `gate-before-merge.sh` fail closed until you rewrite it. The failure is now self-explaining rather than circular — exit 78, no "re-run it" advice, and the field to edit named on the last line — but the fix is still yours to make, and making it first costs nothing.
+- **Item 7 also changes an exit code.** `hooks/run-gate.sh`'s self-reference guard exits **78**, not 2, and `run-gate.sh` exits 78 (not 1) when its gate command does. If any of your tooling keys on `run-gate.sh` exiting 2 for that case, or treats "nonzero == 1", update it. Ordinary red gates still exit 1; nothing else moved.
 - **Items 2 and 3 are toolkit-internal.** Consumers are unaffected: no hook, template or setup path changed — `hooks/run-gate.sh` is deliberately untouched by item 3 — and no consumer needs a root `PROJECT_CONTEXT.md` added, since they already have one. Worth knowing anyway if your `**Gate**` command runs a tool that itself shells out to `run-gate.sh` in another repository: it will be blocked by the recursion guard, and that is by design.
 
 ## v2.2.4 — 2026-08-30

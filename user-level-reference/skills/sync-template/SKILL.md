@@ -85,6 +85,8 @@ for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; e
 
 Copy each hit to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync.
 
+**If Bash commands starting with `git` are BLOCKED in this project, both methods above are unexecutable** (pre-v2.1 configs shipped a `block-bash-vcs.sh`; this toolkit removed it in v2.1, so this reaches only consumers still on such a config). The step anticipates a false clean, not a hard block. Two git-free routes, in preference order: use the server's `template_list_gitignored` when the installed `template-sync-tools` has it — the real fix, and the same one this step already names; otherwise parse `.gitignore` yourself and, where that is ambiguous, **back up the manifest's whole path list as a superset**. A superset backup is cheap and always correct — over-copying costs disk, under-copying costs the file. What is NOT acceptable is skipping 2b because the check would not run: that is a 127 being read as a verdict.
+
 > The server is the only layer that can see both facts at once (it holds the manifest and can read `.gitignore`), so a server-side refusal is the real fix and is filed upstream. This step is the client-side guard until it lands.
 
 ### Apply-time invariants — these OUTRANK the step numbering (v2.2.5)
@@ -177,6 +179,19 @@ For each file with status `CONFLICT`:
 1. Call `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`
 2. **Disqualify the unsafe options BEFORE offering anything.** Both of these are checks on the diff you just fetched:
    - *Accept merged* is off the table unless `auto_merged` survives inspection: diff it against BOTH `template_content` and `project_content` for lines present in base AND project; if any are missing, do not offer it — a clean merge is not a correct merge. For `hooks/*.sh`, also `bash -n` the merged body (and `node --check` any embedded `node -e` block); a syntax error is a conflict, not a clean merge.
+     > **Run `bash -n` through an EXPLICIT interpreter path, and never read `rc=127` as a syntax verdict (v2.2.5).** Driven from a scripting language on Windows, the bare name `bash` does not resolve to the shell you meant: `shutil.which('bash')` reports `C:\Program Files\Git\usr\bin\bash.EXE`, while `subprocess.run(['bash', …])` executes **WSL** bash, which cannot see a Windows path. Python's own two mechanisms disagree about the same name. The check then returns 127 for *every* file — valid and broken alike — so a consumer following this step learns nothing and goes hunting a syntax error in a file that is fine. Reproduced on two hosts; measured here:
+     >
+     > ```
+     > bash -n <VALID>                                  rc=127   (PATH-resolved -> WSL)
+     > bash -n <BROKEN, unterminated `if`>              rc=127   IDENTICAL
+     > "C:\Program Files\Git\bin\bash.exe" -n <VALID>   rc=0
+     > "C:\Program Files\Git\bin\bash.exe" -n <BROKEN>  rc=2     real syntax diagnostic
+     > ```
+     >
+     > Use that verbatim invocation — note it is `Git\bin\bash.exe`, not the `Git\usr\bin\bash.EXE` the broken lookup reports; do not substitute one for the other without testing. Off Windows, or from a Git Bash shell, the plain `bash -n` is already the right interpreter.
+     >
+     > **And guard the reading, which is the durable half:** a meaningful `bash -n` returns **0** (valid) or **2** (syntax error). **127 means the check DID NOT RUN** — the interpreter could not read the file — and is an environment failure, never a syntax failure. Report it as "could not verify", fix the invocation, and re-run. The same rule applies to `node --check` and to any other checker invoked by name. (This is the `command -v python3` App-Installer stub class again: the name resolves, the program is not the one you meant.)
+
    - *Accept template* is off the table when it would silently drop project content: an EMPTY `PROJECT-CUSTOM` region while headings the template does not carry sit outside it (list those headings), or — for `.claude/settings.json` — a `matcher` string naming agents the template version no longer mentions, e.g. a project-added `cpp-coder` (list those agent names; accept-template reverts their hook wiring). In either case route to the splice path (`source="provided"`) instead.
 3. Present what is left:
    - If `has_conflicts` is **false** and `auto_merged` passed step 2: show it and offer to apply.
@@ -253,7 +268,7 @@ Call `template_finalize_sync(project_path=".", applied_files=<JSON array of all 
 
 **Re-register keep-mine files LAST** — every `source="skip"` registration is the last action before finalize, after every edit including the sync's own write-up into `PROJECT_STATE.md`. A hash recorded before a later edit describes nothing, and on a file with a live PROJECT-CUSTOM region those stale part hashes are exactly what the next sync's classification reads.
 
-**Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's `source="skip"` set — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it.
+**Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's `source="skip"` set — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it. **If no entry carries a hint, there is nothing to do here** — this clause exists for manifests that predate the part-hash fields, and a recently-synced repo has already re-registered everything (measured: `hint: ""` on all 36 entries of one consumer). An empty hint set is the healthy state, not a missing step.
 
 Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
 
@@ -273,11 +288,28 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 BOM=$(printf '\357\273\277')
 # markdown: only a config-VALUE line, which is where a placeholder is load-bearing
 grep -rn -- "^\(${BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" .claude *.md
-# shell: skip comment lines — prose ABOUT a placeholder is not a placeholder
-grep -rn -- '{{[A-Z_]\{2,\}}}' .claude hooks --include='*.sh' | grep -v ":[0-9]*:\(${BOM}\)\?[[:space:]]*#"
+# shell: skip comment lines — prose ABOUT a placeholder is not a placeholder.
+# OPTIONS BEFORE PATHS: `--include` after the paths is parsed as another PATH.
+# NO `2>/dev/null` on either arm — the sweep's stderr is deliberately
+# unsuppressed; it is the only thing that reports a malformed invocation.
+grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' .claude hooks | grep -v ":[0-9]*:\(${BOM}\)\?[[:space:]]*#"
 ```
 
 **Why the `${BOM}` in both arms (v2.2.4).** PowerShell 5.1's `>` and `Out-File` write UTF-8 **with** a BOM, and a consumer's `PROJECT_CONTEXT.md` was found carrying one — this is a live Windows shape, not a hypothetical. The two arms fail in opposite directions and both are wrong: arm 1's `^` no longer abuts the key, so **a placeholder on line 1 behind a BOM is a FALSE CLEAN** — the sweep's whole job, missed silently, on the case a consumer reordering their file most plausibly creates. Arm 2's exclusion filter is the mirror: the BOM lands between the `:` and the `#`, so a BOM'd comment stops being recognised as a comment and comes back as a **false positive**. Measured on a fixture, before → after: arm 1 line 1 `0 → 1`, line 2 `1 → 1`, no-BOM control `1 → 1`; arm 2 BOM'd comment `1 → 0` false positives. Same class as the hook extractors' `GC_KEY_PRE` — the server strips the BOM for hashing and a `^`-anchored grep does not, so the same file is two different files depending on which one is looking.
+
+**Why the option ordering is load-bearing, and why the stderr stays visible (v2.2.5).** Until this release arm 2 read `grep -rn -- '…' .claude hooks --include='*.sh'`, with the option AFTER the paths — where `grep` parses it as another **path**, not an option. So the `*.sh` restriction never applied at all: arm 2 recursed every file under `.claude` and `hooks`, and its comment filter — correct for shell, wrong for markdown — then **silently ate a genuine markdown placeholder**, because `# {{FOO}}` reads as a comment line. Measured on GNU grep 3.0 (Git Bash / Windows), planted fixture of `conf.json`, `doc.md` (line 1 `# {{FOO_BAR}}`) and `s.sh`, and reproduced independently by a consumer:
+
+```
+SHIPPED (options after paths):   conf.json, doc.md, s.sh   filter inert, every type matched
+                     stderr:     grep: --include=*.sh: No such file or directory
+CORRECTED (options first):       s.sh                      correct
+SHIPPED + comment filter:        conf.json, s.sh           <- doc.md's "# {{FOO_BAR}}" DROPPED
+CORRECTED + comment filter:      s.sh                      correct
+```
+
+That third row is the sweep failing at its entire job, quietly — the same shape as the BOM false-clean the v2.2.4 arms were written to prevent. Options before paths is unambiguous everywhere; `scripts/verify-template-consistency.sh` pins the ordering so it cannot drift back.
+
+**Do NOT add `2>/dev/null` to either arm.** The `No such file or directory` above is the *only* signal a malformed invocation gives, and it is the one a consumer running the line literally would have seen — this defect went unnoticed for a release because the reporting consumer had wrapped the shipped line in `2>/dev/null` in their own script. After the ordering fix that particular error is gone anyway; the principle is for whatever the next mistake is. A guard whose diagnostic is suppressed is not a guard.
 
 **Why not the plain `grep -rn '{{[A-Z_]\{2,\}}}' .claude hooks *.md`:** it flags the toolkit's own documentation of placeholder handling — `hooks/lib/git-cmd.sh`'s comments explaining the `{{DEFAULT_BRANCH}}` arms, and `hooks/pre-commit-test.sh`'s comment naming `{{TEST_COMMAND}}`. Every consumer hits those three lines and has to reason them out, and the better the handling is documented the noisier its own detector becomes. Reported independently by two consumers. **Do not fix it by excluding `hooks/lib/` by name** — that rots on the first rename and would hide a genuine unfilled placeholder in a hook script. Excluding *comment lines* and requiring markdown hits on a `- **Key**: value` line kills all three false positives and keeps every real one. Verify the refinement the same way it was verified upstream: the sweep must report zero on a clean tree, and must still catch a placeholder planted in a `- **Key**:` line — **on line 1 behind a BOM as well as further down**, which is the pair the v2.2.4 arms above exist for.
 
@@ -378,11 +410,14 @@ Match the plugin's **heading**, not the phrase: `grep -c '^# context-mode' CLAUD
 
 Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, `.gate/`, stray output files) that were never part of the sync.
 
+**Write the commit MESSAGE to a file and use `git commit -F <path>` — never a heredoc, and never a long `-m` (v2.2.5).** The gates scan the whole command STRING, so a message body that merely *describes* what this sync changed ("adopts the new merge gate", "gh pr merge is now blocked without a fresh artifact") is matched by `gate-before-merge.sh` on the commit that carries it. A sync commit describes gate changes by its nature, which makes this step the most likely place in the whole skill to hit it — and the block is uninterpretable, because it does not tell you whether the gate works or whether your own message was the violation. Same reasoning as the "probes must live in a script file" rule in step 3, arriving from a third direction. Write the message with the **Write tool** (not a Bash heredoc — the heredoc body is part of the command string too) to `"${TMPDIR:-/tmp}/sync-msg.txt"`, then `git commit -F` that path. The short `-m` this step used to prescribe dodged the gate by luck, not design.
+
 **The full sequence under v2.1.3+ hooks — the order is load-bearing:**
 
 ```sh
 git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/template-manifest.json
-git commit -m "chore: sync template to <commit>"   # PreToolUse: with **Test** present this
+# write the message to a FILE first (Write tool), then:
+git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** present this
                                                    # runs the tests only and writes NO artifact
 # --> now delegate ONE `bash hooks/run-gate.sh` run to `ops` (the PO cannot run the gate)
 git push -u origin <branch>
@@ -406,6 +441,7 @@ CI fires on `pull_request` and on push-to-main; a bare branch push produces **no
 - NEVER register PRESENT hooks with `source="template"` in step 6b — `source="skip"` for present-but-untracked (registration must not overwrite local edits); `source="template"` is ONLY for scripts missing from disk (step 3)
 - NEVER write a path from the template that already EXISTS in the project without an explicit conflict resolution (invariant I1) — a `new_template_files` entry that is present on disk is registered `source="skip"`, never added with `source="template"`
 - NEVER write `.claude/settings.json` before every script it references exists on disk (invariant I2), whichever step introduced those scripts
+- NEVER record `rc=127` from `bash -n` (or any checker) as a syntax verdict — 127 means the check did not run; 0 and 2 are the only verdicts (step 4)
 - NEVER hand-assemble or re-type `applied_files` entries — collect the tool results verbatim
 - ALWAYS re-run `template_compute_status` after finalize and report anything other than a clean result
 - ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `lastSynced`)
