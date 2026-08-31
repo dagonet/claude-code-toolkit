@@ -239,15 +239,15 @@ Fixed as a **class exclusion, not a named exemption**, so the next derived field
 
 ### 10. Verification
 
-`verify-template-consistency.sh` **271/271** (+7 over v2.2.4: three self-gating assertions, the `RUN_GATE_ACTIVE` pin, the `GC_TERMINAL_RC` census, the sweep-ordering pin and the new matrix script joining the shell-syntax sweep). `test-hooks.sh` **358 assertions** (+16 over v2.2.4: the terminal-vs-retryable arms, the clamp control and the second terminal guard), all three parser configurations:
+`verify-template-consistency.sh` **277/277** (+13 over v2.2.4: three self-gating assertions, the `RUN_GATE_ACTIVE` pin, the `GC_TERMINAL_RC` census, the sweep-ordering pin, the matrix script joining the shell-syntax sweep, and round 4's six — the `RUN_GATE_TERMINAL` pin, the guard-ordering census, the bare-`78` bypass census, the no-`exit 1` census and the two SKILL-marker censuses). `test-hooks.sh` **366 assertions** (+24 over v2.2.4: the terminal-vs-retryable arms, the clamp control, the second terminal guard, and round 4's eight — R5e's wrapper-nested marker and R5f's two remaining 78-bearing paths), all three parser configurations, with the interpreter each one resolved to printed by the harness:
 
-| configuration | v2.2.5 | v2.2.4 |
-|---|---|---|
-| node | `358 passed, 0 failed, 0 skipped` | 342 / 0 / 0 |
-| python3 (node not usable) | `255 passed, 0 failed, 103 skipped` | 239 / 0 / 103 |
-| jq (node + python3 not usable) | `239 passed, 0 failed, 119 skipped` | 223 / 0 / 119 |
+| configuration | resolved to | v2.2.5 | v2.2.4 |
+|---|---|---|---|
+| node | `/c/Program Files/nodejs/node` | `366 passed, 0 failed, 0 skipped` | 342 / 0 / 0 |
+| python3 (node not usable) | `/c/Users/…/AppData/Local/Python/bin/python3` | `263 passed, 0 failed, 103 skipped` | 239 / 0 / 103 |
+| jq (node + python3 not usable) | `/c/Users/…/WinGet/Links/jq` | `247 passed, 0 failed, 119 skipped` | 223 / 0 / 119 |
 
-The skip counts are **unchanged** (103 and 119): the sixteen new assertions are parser-independent, which is the check that the restricted configurations were really restricted — a new fixture that silently skips in two of three configurations is a fixture that only ever ran once. `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
+The skip counts are **unchanged** (103 and 119): all twenty-four new assertions are parser-independent, which is the check that the restricted configurations were really restricted — a new fixture that silently skips in two of three configurations is a fixture that only ever ran once, and **a restricted configuration reporting zero skips would be proof the restriction did not apply, not proof of improvement.** `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
 
 **Two measurement traps, both of which produced a green-looking void before the harness caught them.** Prepending a shim directory to `PATH` in **Windows spelling** (`C:/…`) silently does nothing — the drive colon is a `PATH` separator, so the entry splits into `C` and `/Users/…` and the real `node` still resolves; the first pair of restricted runs came back `352 / 0 / 0`, identical to the node run, which is the tell. And hiding *the directory `command -v python3` reports* is not enough: `python3` remained resolvable through Windows' App-Installer stub at `…/WindowsApps/Microsoft.DesktopAppInstaller_…/python3` — **the same stub this repository already documents as "the name resolves, the program is not the one you meant"**, now appearing in the harness written to avoid exactly that. Every PATH directory providing an interpreter is dropped, and all of them are printed.
 
