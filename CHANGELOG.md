@@ -153,7 +153,17 @@ Fixtures assert **both** arms, because a one-armed fixture cannot catch a suppre
 
 ### 9. Verification
 
-`verify-template-consistency.sh` **270/270** (+6 over v2.2.4: three self-gating assertions, the `RUN_GATE_ACTIVE` pin, the `GC_TERMINAL_RC` census and the sweep-ordering pin). `test-hooks.sh` **352 passed, 0 failed, 0 skipped** (+10: the terminal-vs-retryable arms of item 7) — all three parser configurations present on the host, so nothing skipped. `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
+`verify-template-consistency.sh` **270/270** (+6 over v2.2.4: three self-gating assertions, the `RUN_GATE_ACTIVE` pin, the `GC_TERMINAL_RC` census and the sweep-ordering pin). `test-hooks.sh` **352 assertions** (+10: the terminal-vs-retryable arms of item 7), all three parser configurations:
+
+| configuration | v2.2.5 | v2.2.4 |
+|---|---|---|
+| node | `352 passed, 0 failed, 0 skipped` | 342 / 0 / 0 |
+| python3 (node not usable) | `249 passed, 0 failed, 103 skipped` | 239 / 0 / 103 |
+| jq (node + python3 not usable) | `233 passed, 0 failed, 119 skipped` | 223 / 0 / 119 |
+
+The skip counts are **unchanged** (103 and 119): the ten new assertions are parser-independent, which is the check that the restricted configurations were really restricted — a new fixture that silently skips in two of three configurations is a fixture that only ever ran once. `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
+
+One measurement trap worth recording, since both restricted runs were wrong the first time and looked right: prepending a shim directory to `PATH` in **Windows spelling** (`C:/…`) silently does nothing — the drive colon is a `PATH` separator, so the entry splits into `C` and `/Users/…` and the real `node` still resolves. The first pair of restricted runs came back `352 / 0 / 0`, identical to the node run, which is the tell. MSYS spelling (`/c/…`), plus printing what `node`, `python3` and `jq` actually resolve to before the suite starts, is what makes the restriction checkable rather than assumed.
 
 Both new assertions were probed two-sided over throwaway copies, since an assertion that cannot go red pins nothing: reverting the sweep line to options-after-paths gives `total=1 bad=1` (red), and changing one copy of the constant to 79 gives `found=1 of 2` (red).
 
