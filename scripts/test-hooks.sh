@@ -870,6 +870,51 @@ expect "(R5b) ordinary red gate: retry advice PRESENT" "1" \
 check_msg "(R5b) red: retry advice PRESENT" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$redrepo")" "re-run it and fix the failures"
 
+# --- R5c: THE CLAMP CONTROL (v2.2.5 round 3) --------------------------------
+# 78 is EX_CONFIG and real programs emit it, so an arbitrary consumer gate
+# command CAN exit 78 for its own reasons. It must be clamped to an ordinary
+# red gate, or a plain test failure inherits the terminal remedy "edit your
+# **Gate** value" -- INVERTED advice, worse than the generic retry line.
+#
+# This is the CONTROL for the clamp in run-gate.sh, and it is honest by
+# construction: delete the clamp and the 78 propagates, the terminal branch
+# fires, "Fix the failures and re-run" disappears and both assertions below flip.
+# Its opposite arm is R5b arm 1 (a NESTED run-gate.sh leaves the provenance
+# marker and its 78 must survive) -- the pair is what distinguishes a working
+# clamp from one that swallows every 78, which is the failure mode that would
+# silently undo item K.
+#
+# The Gate command must NOT mention run-gate.sh: the whole point is a gate that
+# exits 78 for an UNRELATED reason.
+clamprepo=$(mkrepo gateclamp main)
+printf 'exit 78\n' > "$clamprepo/exits78.sh"
+printf '# ctx\n\n- **Gate**: `bash exits78.sh`\n' > "$clamprepo/PROJECT_CONTEXT.md"
+clamperr="$TMPROOT/clamp.err"
+( cd "$clamprepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$clamperr" )
+expect "(R5c) unrelated gate rc=78 is CLAMPED to 1" "1" "$?"
+expect "(R5c) clamped gate: retry advice PRESENT (not the terminal text)" "1" \
+  "$(grep -c 'Fix the failures and re-run' "$clamperr")"
+check_msg "(R5c) clamped: pre-commit prints retry advice" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$clamprepo")" "re-run it and fix the failures"
+check_nomsg "(R5c) clamped: NOT reported as a configuration failure" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$clamprepo")" "cannot succeed as configured"
+
+# --- R5d: the SECOND terminal guard (v2.2.5 round 3) ------------------------
+# "not inside a git repository" is terminal by the same definition -- re-running
+# from the same cwd cannot make that directory a repository -- and it exited 1
+# until this release, so pre-commit-test appended "re-run it and fix the
+# failures". That is item K's circular advice in a guard that already existed.
+# The paired opposite arm is R5b arm 2: an ordinary red gate still exits 1.
+# NOTE the guard's sibling `cd "$REPO_TOP" || exit 1` deliberately stays 1 --
+# a cd failing on a path git just resolved is a transient environment fault.
+nonrepo="$TMPROOT/not-a-repo"
+mkdir -p "$nonrepo"
+nonrepoerr="$TMPROOT/nonrepo.err"
+( cd "$nonrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$nonrepoerr" )
+expect "(R5d) not a git repository: exit 78 (terminal, was 1)" "78" "$?"
+expect "(R5d) not a git repository: remedy names the fix" "1" \
+  "$(tail -1 "$nonrepoerr" | grep -c 'from inside the checkout')"
+
 # ===========================================================================
 # git gates: fail-closed contracts (v2.1.1, consumer sync feedback #2c/#3)
 #

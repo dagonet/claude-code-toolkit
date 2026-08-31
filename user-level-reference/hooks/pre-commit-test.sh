@@ -144,6 +144,12 @@ if [ -z "$TEST_CMD" ]; then
           echo "BLOCKED: 'run-gate.sh' cannot succeed as configured — this is a configuration failure, not a failing check. Re-running it will NOT help; apply the remedy below." >&2
         else
           echo "BLOCKED: 'run-gate.sh' failed — re-run it and fix the failures before committing." >&2
+          # v2.2.5: name the escape hatch WHERE THE FAILURE SURFACES. Since the
+          # toolkit gates itself, a bug in this hook can block the very commit
+          # that fixes it — and someone hard-blocked mid-commit is not reading
+          # CLAUDE.md. Same principle as the terminal-remedy rule above: the
+          # remedy has to appear where the person actually is.
+          echo "  (If the HOOK itself is broken rather than the suite: create '.claude/git-guard-off' under this cwd, make the one fix, then delete it. Never leave it in place.)" >&2
         fi
         echo "--- last 20 lines ---" >&2
         tail -20 "$OUT" >&2
@@ -201,6 +207,9 @@ else
     echo "BLOCKED: '$TEST_CMD' cannot succeed as configured — this is a configuration failure, not a failing check. Re-running it will NOT help; apply the remedy below." >&2
   else
     echo "BLOCKED: '$TEST_CMD' failed — re-run it and fix the failures before committing." >&2
+    # Same reason as the run-gate.sh branch above: the escape hatch is named
+    # where the block is read, not only in CLAUDE.md.
+    echo "  (If the HOOK itself is broken rather than the suite: create '.claude/git-guard-off' under this cwd, make the one fix, then delete it. Never leave it in place.)" >&2
   fi
   echo "--- last 20 lines ---" >&2
   tail -20 "$OUT" >&2

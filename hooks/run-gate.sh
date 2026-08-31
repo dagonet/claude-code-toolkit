@@ -38,6 +38,15 @@ GC_TERMINAL_RC=78
 if [ "${RUN_GATE_ACTIVE:-}" = "1" ]; then
   echo "BLOCKED: **Gate** must not invoke run-gate.sh itself" >&2
   echo "Edit '**Gate**:' in PROJECT_CONTEXT.md to your real build/test commands — run-gate.sh RUNS that value, so it cannot BE that value." >&2
+  # PROVENANCE MARKER, and it is load-bearing (v2.2.5 round 3). The OUTER
+  # run-gate.sh clamps a gate command's 78 to 1, because an arbitrary consumer
+  # gate that exits 78 for its own reasons must not inherit the terminal remedy
+  # text. But in the self-reference case the gate command IS run-gate.sh, so the
+  # clamp would swallow the one signal item K exists to deliver. The exit code
+  # carries a VALUE; what the outer layer needs is PROVENANCE. This file, and
+  # only this file, touches the marker the outer exported — at any nesting depth,
+  # since the variable is inherited through wrappers too. See the clamp below.
+  [ -n "${RUN_GATE_TERMINAL:-}" ] && : > "$RUN_GATE_TERMINAL"
   exit "$GC_TERMINAL_RC"
 fi
 
@@ -54,8 +63,15 @@ fi
 CWD=$(pwd)
 REPO_TOP=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
 if [ -z "$REPO_TOP" ]; then
+  # TERMINAL (v2.2.5 round 3): re-running this from the same cwd cannot ever make
+  # that directory a git repository. Before this it exited 1, so pre-commit-test
+  # appended "re-run it and fix the failures" — item K's circular advice, in a
+  # guard that already existed rather than a hypothetical future one. The class
+  # is TERMINAL, not "configuration": this one is an ENVIRONMENT error and 78
+  # covers both (see the exit-code conventions in hooks/lib/git-cmd.sh).
   echo "GATE ERROR: not inside a git repository" >&2
-  exit 1
+  echo "Run 'bash hooks/run-gate.sh' from inside the checkout — cd to the repository and re-run it there." >&2
+  exit "$GC_TERMINAL_RC"
 fi
 
 # GC_KEY_PRE, defined locally: this script is deliberately standalone (it must
@@ -92,6 +108,11 @@ ARTIFACT_DIR="$REPO_TOP/.gate"
 ARTIFACT="$ARTIFACT_DIR/last-pass.json"
 
 echo "GATE: running: $GATE_CMD"
+# This `exit 1` DELIBERATELY STAYS 1 and is not a terminal 78 (v2.2.5 round 3):
+# a failing cd to a path git JUST resolved is an environment FAULT — a race, a
+# permissions change, an unmounted share — not a settled condition. Retrying can
+# legitimately succeed, so "re-run it" is the right advice here and this is not
+# an inconsistency to tidy up.
 cd "$REPO_TOP" || exit 1
 
 # v2.1.3 fix round 1 (Critical 2 / penumbra #2c): key the artifact on the
@@ -143,8 +164,33 @@ TREE_HASH=$(GIT_INDEX_FILE="$TMPIDX" git -C "$REPO_TOP" write-tree 2>/dev/null)
 
 RUN_GATE_ACTIVE=1
 export RUN_GATE_ACTIVE
+# The provenance channel for the recursion guard at the top of this file. It
+# lives inside TMPD, so the EXIT trap removes it; a nested run-gate.sh at ANY
+# depth inherits the variable and touches the file before exiting 78.
+RUN_GATE_TERMINAL="$TMPD/terminal"
+export RUN_GATE_TERMINAL
+rm -f "$RUN_GATE_TERMINAL"
 bash -c "$GATE_CMD"
 GATE_RC=$?
+
+# THE CLAMP. NOT DEAD CODE — DELETING IT OPENS A COLLISION CHANNEL (v2.2.5
+# round 3). Until this release every nonzero from the gate command collapsed to
+# a hardcoded `exit 1`, because `$?` was never captured. That accidental clamp is
+# what kept the toolchain safe, and giving the guard a distinguishable code is
+# exactly the change that leads someone to refactor it into `exit $GATE_RC` —
+# at which point a consumer gate command exiting 78 for its own reason (78 is
+# EX_CONFIG; real programs emit it) inherits the terminal remedy text "edit your
+# **Gate** value", printed over a plain test failure. That is INVERTED advice,
+# strictly worse than the generic retry line it replaces. Measured downstream:
+# `uv run` propagates a child's code verbatim, so the channel is open one layer
+# up and closed only here.
+#
+# So a gate command's 78 is clamped to 1 — UNLESS a nested run-gate.sh left the
+# provenance marker, which is the one case where the 78 really is this script's
+# own terminal guard talking. Keyed on WHO decided, not on the number.
+if [ "$GATE_RC" -eq "$GC_TERMINAL_RC" ] && [ ! -f "$RUN_GATE_TERMINAL" ]; then
+  GATE_RC=1
+fi
 
 if [ "$GATE_RC" -eq 0 ]; then
   mkdir -p "$ARTIFACT_DIR"
@@ -154,8 +200,9 @@ if [ "$GATE_RC" -eq 0 ]; then
   echo "GATE PASS $HEAD_SHA"
   exit 0
 elif [ "$GATE_RC" -eq "$GC_TERMINAL_RC" ]; then
-  # TERMINAL: the gate command reported a condition retrying cannot change (a
-  # self-invoking **Gate**, or any future guard that exits GC_TERMINAL_RC).
+  # TERMINAL: reachable only when the clamp above let the 78 through, i.e. a
+  # NESTED run-gate.sh hit its own recursion guard (a self-invoking **Gate**,
+  # directly or through a wrapper) and left the provenance marker.
   # DELIBERATELY SILENT. The generic "fix the failures and re-run" of the else
   # arm is wrong here, and so is any replacement of it: only the guard knows the
   # specific remedy, it has already printed it on this same stderr, and it must
