@@ -269,6 +269,15 @@ Results, all red where they must be:
 | the parser matrix's interpreter self-check | a configuration whose hidden interpreter is still resolvable | `MATRIX FAIL: 'python3' is still visible at …` — red (observed on a real run, before the fix) |
 | the parser matrix's **skip-count** assertion | `MATRIX_SUITE` pointed at a stub reporting 0 skips | node row green (exact 0), python3 and jq rows red |
 | — its opposite arm | a stub reporting an in-band skip count | all three green — so the assertion is not one that fires on everything |
+| **round 4:** `GC_TERMINAL_RC` census, re-run | verifier 21c-2b | `GC_TERMINAL_RC=79` in `run-gate.sh` → `found=1 of 2` — red. Asked because it had never been *observed* firing, only read |
+| `RUN_GATE_TERMINAL` unset pin | verifier 21c-2d's companion | pin line deleted → red |
+| bare-`78` bypass census | verifier 21c-2e | `exit 78` appended to a hook → red |
+| no `exit 1` in a registered gate | verifier 21c-2f | `exit 1` appended to `pre-commit-test.sh` → red |
+| guard ordering in `run-gate.sh` | verifier 21c-2d | the two guards physically swapped → `ordering INVERTED: line 63 must come BEFORE 58` — red |
+| the provenance marker, **through a wrapper** | R5e (new) | the recursion guard's `: > "$RUN_GATE_TERMINAL"` deleted → 3 of 3 flip. R5b arm 1 is single-level and could not catch a marker written to a self-created temp dir |
+| no terminal arm at the `eval` boundary | R5f (new) | the terminal arm restored → **4 of 5** flip. The fifth (*"WARN names the fallback"*) is not about the arm and correctly stays green |
+
+**And one of round 4's own controls was written wrong, caught by the same rule.** The first cut of the `eval`-boundary fix wrote a clamp (`PCT_RC=1`) *and* deleted the terminal arm, and its probe mutated **both** — reporting "clamp deleted → 4 assertions flip". Traced properly, deleting the clamp alone changes nothing: `PCT_RC` stays 78, the else branch never tests it, the same retry line prints and the hook still exits 2. **The clamp had no observable effect; the absence of the branch was the entire fix.** A guard whose non-firing is indistinguishable from its absence is exactly what this rule forbids, so the clamp was removed and the control relabelled to the mutation it actually performs. Second time in two rounds that a control passed for the wrong reason because it changed two things at once.
 
 The matrix's own two guards were themselves wrong until this test was applied to them, which is the argument for the rule rather than an aside. The skip-count arm — the assertion the whole script exists for — had **never been observed firing**; only the self-check arm had, so that table row was decorative as first written. And `EXP_NODE_SKIP=0` with a ±20 band accepted **15 skips as "in band (~0)"** on the one configuration where 0 is the only correct answer, and where a fixture that silently skips everywhere would hide. An expected count of 0 is now asserted exactly, and `MATRIX_SUITE` makes the control a seconds-long probe instead of a ninety-minute one.
 
