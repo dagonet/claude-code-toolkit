@@ -771,6 +771,40 @@ else
   ko "hooks/lib/git-cmd.sh no longer sources lib/json.sh — the gates are back to node-only"
 fi
 
+# ===========================================================================
+# THE 21c-* CENSUS FAMILY — WHAT THESE CHECKS CAN AND CANNOT SEE.
+#
+#   A CENSUS OVER SOURCE TEXT CANNOT SEE BEHAVIOUR THAT ARRIVES THROUGH DATA.
+#
+# Every check below reads FILES IN THIS REPOSITORY and asserts a property of
+# their text. That is the whole point of the family — a structural property
+# holds for every future edit, where a fixture only holds for the inputs someone
+# thought to write. But it fixes the surface: a hook's control flow has a SECOND
+# source that no grep over this repo can reach, namely every config value the
+# hook `eval`s. Those values are CONSUMER-authored, they do not exist here, and
+# a census over source text is green for all of them.
+#
+# 21c-2f is the worked example and it is not a curiosity. It asserts "no
+# `exit 1` in a registered hook" and was green at 9baa446 while
+# pre-commit-test.sh exited 1 in practice, because the `exit 1` arrived as a
+# consumer's `**Test**` value and was eval'd in the hook's own shell. The claim
+# was true of the text and false of the process. Round 6 then found the same
+# eval is reached by a SECOND key (`**Gate**`, via the mirror-fallback path at
+# pre-commit-test.sh:175) — one statement, two value sources, and the census
+# saw neither.
+#
+# pre-commit-test.sh will not be the last hook to eval a consumer-authored
+# string, and this family will be green for every one of them. So:
+#
+#   - The question that finds this class: WHAT WOULD HAVE TO BE TRUE FOR THIS
+#     NUMBER TO BE GREEN WHILE THE THING I CARE ABOUT IS BROKEN?
+#   - An eval boundary needs a BEHAVIOURAL counterpart in scripts/test-hooks.sh
+#     driving real config values, and that counterpart must cover EVERY key
+#     that reaches the eval, not just the obvious one.
+#   - Neither kind subsumes the other. Do not delete a census because its
+#     behavioural partner is green, or the reverse.
+# ===========================================================================
+
 # 21c. EVERY hooks/lib/* must be mirrored (v2.2.1).
 #
 #      Check 21 walks the MIRROR, so it cannot see a root file nobody mirrored.
@@ -905,8 +939,10 @@ case "$rpc_gate" in
 esac
 # Self-gating makes test-hooks.sh a CHILD of run-gate.sh, which exports
 # RUN_GATE_ACTIVE=1 — inherited, it trips the recursion guard in every fixture
-# that nests run-gate.sh (measured: 342/0 standalone, 323/19 under the gate).
-# The suite must not answer differently depending on who invoked it.
+# that nests run-gate.sh, which then skip instead of running. The suite must not
+# answer differently depending on who invoked it. (v2.2.5 round 6: the standalone
+# and under-the-gate counts that used to sit here were stale two releases running
+# — the CHANGELOG is the one place that carries them.)
 if grep -q '^unset RUN_GATE_ACTIVE' scripts/test-hooks.sh; then
   ok "self-gating: test-hooks.sh unsets inherited RUN_GATE_ACTIVE (it runs as a child of run-gate.sh)"
 else
@@ -1116,11 +1152,24 @@ fi
 #         SCANNED SURFACE, STATED BECAUSE 0 IS OTHERWISE OVERREAD: `*.sh` and
 #         `*.md` ONLY. `settings.json` is NOT scanned, and a settings.json hook
 #         `command` is an executable position — same class as v2.2.0's
-#         `{{DEFAULT_BRANCH}}` config value read as data. Measured today: no
-#         `*.json` under user-level-reference/ carries a placeholder at all
-#         except `.mcp.json.template`, which is never installed. So the boundary
-#         is real but nothing sits outside it right now; widen the arms here, not
-#         the interpretation of the number, if that stops being true.
+#         `{{DEFAULT_BRANCH}}` config value read as data.
+#
+#         KNOWN RESIDUAL, MEASURED RATHER THAN ASSUMED (v2.2.5 round 6,
+#         2026-08-31). The JSON surface is outside the arms above, so it was
+#         swept by hand instead:
+#
+#           grep -rn --include='*.json' -- '{{[A-Z_]\{2,\}}}' \
+#             templates user-level-reference        ->  0 hits
+#
+#         Zero across BOTH trees, not just user-level-reference/. (The
+#         `--include='*.json'` glob excludes `.mcp.json.template` by its
+#         extension, which is the same carve-out the arms above make for it and
+#         for the same reason: it is never installed, so its placeholders are
+#         SUPPOSED to be unfilled.) So the boundary is real but nothing sits
+#         outside it right now. This is recorded as a gap that has been LOOKED
+#         AT and found empty on a date, not as one nobody noticed. If a
+#         placeholder ever lands in a JSON hook `command`, widen the arms here —
+#         do not widen the interpretation of the number.
 #
 #         BORN WITH ITS CONTROL, IN BAND. A sweep that matches nothing also
 #         reports 0, so before trusting the number the detector is driven against

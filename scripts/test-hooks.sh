@@ -997,11 +997,15 @@ check_nomsg "(R5f) Gate eval'd, no run-gate.sh, rc=78: NOT a configuration failu
 #   **Test**: exit 1                  rc 1  -> 2, BLOCKED lines 0 -> 1
 #   **Test**: exec bash -c "exit 1"   rc 1  -> 2, BLOCKED lines 0 -> 1
 #   **Test**: exec bash -c "exit 78"  rc 78 -> 2, BLOCKED lines 0 -> 1
+#   **Gate**: exec bash -c "exit 1"   rc 1  -> 2, BLOCKED lines 0 -> 1
+#     (round 6; run-gate.sh absent beside the hook, so :175 assigns the Gate
+#      value into $TEST_CMD and it reaches the SAME eval — see the block below)
 #
 # Every pre-fix row is warn-and-ALLOW: the commit proceeded UNGATED and SILENTLY.
-# CONTROL: drop the `( )` around the eval in hooks/pre-commit-test.sh and all
-# nine assertions below flip; the green control at the end holds either way, so
-# the block is not merely asserting that the hook still runs.
+# CONTROL: drop the `( )` around the eval in hooks/pre-commit-test.sh and 9 of
+# the 10 assertions below flip (measured 2026-08-31); the tenth is the passing-
+# command control at the end, which correctly holds either way, so the block is
+# not one that fires on everything.
 #
 # `exec` is this codebase's own idiom — the R5e wrapper above uses it.
 #
@@ -1019,6 +1023,37 @@ r5g_probe() { # <label> <index> <Test value> ; asserts exit 2 + a BLOCKED line
 r5g_probe "bare exit"      1 'exit 1'
 r5g_probe "exec + exit 1"  2 'exec bash -c "exit 1"'
 r5g_probe "exec + exit 78" 3 'exec bash -c "exit 78"'
+
+# THERE IS ONE `eval` BUT TWO CONFIG KEYS REACH IT (v2.2.5 round 6, consumer-
+# reported). The three arms above drive `**Test**`. But pre-commit-test.sh:175,
+# on the mirror-fallback path (`run-gate.sh not found next to this hook`),
+# assigns the **GATE** value into $TEST_CMD and falls through to that same single
+# eval. So the fail-open is reachable through **Test** AND through **Gate**, and
+# the second is not a variant — it is the identical statement with a different
+# value source. Driving only **Test** would be a correct behavioural test of one
+# of the two ways in, which is this finding's own shape one level up.
+#
+# THE GATE PATH IS THE LESS VISIBLE OF THE TWO, and that is why it gets its own
+# arm rather than a comment. It prints `WARN: ... evaluating the Gate command
+# directly instead` BY DESIGN — so a fail-open here arrives wearing a warning
+# that looks like the known degradation. A consumer who sees that line has been
+# told to expect a LESSER path, not a BYPASSED one, and has no way to tell from
+# the transcript which of the two they got.
+#
+# Shape copied from R5f arm 2, for its non-vacuity properties: both libs are
+# copied in (a missing lib fails the hook closed at exit 2 and the arm would
+# pass for the wrong reason), and the WARN string is asserted so that "the
+# fallback path was actually taken" is proved rather than assumed.
+r5ghooks="$TMPROOT/hooks-no-rungate-exec"
+mkdir -p "$r5ghooks/lib"
+cp "$ROOT/hooks/pre-commit-test.sh" "$r5ghooks/"
+cp "$ROOT/hooks/lib/git-cmd.sh" "$ROOT/hooks/lib/json.sh" "$r5ghooks/lib/"
+r5grepo=$(mkrepo evalescgate main)
+printf '# ctx\n\n- **Gate**: exec bash -c "exit 1"\n' > "$r5grepo/PROJECT_CONTEXT.md"
+check_msg "(R5g) Gate exec, no run-gate.sh: the mirror-fallback path was taken" "$r5ghooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$r5grepo")" "run-gate.sh not found next to this hook"
+check_msg "(R5g) Gate exec, no run-gate.sh: still exit 2 + BLOCKED (was warn-and-ALLOW)" "$r5ghooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$r5grepo")" "re-run it and fix the failures"
 
 # Round 4's clamp reasoning must survive the subshell: a child's 78 still has no
 # provenance, so it takes the RETRYABLE message, never the terminal framing.
