@@ -944,6 +944,57 @@ if [ -z "$hook_exit1" ]; then
 else
   ko "warn-and-allow: 'exit 1' in a registered hook lets the tool call PROCEED — use exit 2: $(printf '%s' "$hook_exit1" | head -3 | tr '\n' ' ')"
 fi
+#
+#         THIS CENSUS READS SOURCE AND CANNOT REACH CONFIG DATA (v2.2.5 round 5).
+#         It was green at 9baa446 while pre-commit-test.sh exited 1 in practice:
+#         the `exit 1` arrived as a consumer's `**Test**` VALUE and was eval'd in
+#         the hook's own shell. "This hook never exits anything but 0 or 2" was
+#         true of the text and false of the process. A source census cannot
+#         enumerate what a consumer may write, so the behavioural counterpart is
+#         R5g in scripts/test-hooks.sh — it drives the hook with `exit`- and
+#         `exec`-bearing **Test** values. Neither one subsumes the other; do not
+#         delete either on the strength of the other being green.
+
+# 21c-2h. THE `eval "$TEST_CMD"` BOUNDARY HAS NO TERMINAL ARM (v2.2.5 round 5).
+#
+#         Round 4 declined to clamp 78 at that boundary and the reasoning stands:
+#         with no terminal arm there, a clamp assignment is UNOBSERVABLE — delete
+#         it and every assertion stays green, which is the decorative-guard shape
+#         this release forbids. But what makes the absence safe is a fact about
+#         TODAY, and a comment defends against a reader, not against a refactor.
+#         The person who adds a terminal arm is exactly the person not reading the
+#         note about hypothetical terminal arms.
+#
+#         So the ABSENCE is asserted mechanically, and this census guards a
+#         NEGATIVE: it is green while nothing keys on the terminal code below the
+#         eval, and red the day someone adds one. The failure message names the
+#         prerequisite rather than the symptom — a terminal arm there needs a
+#         provenance channel FIRST, because a 78 arriving from an arbitrary
+#         consumer command is a child's number with nothing behind it.
+#
+#         Positional by necessity, like 21c-2d: the same test on line ~153 is the
+#         run-gate.sh branch and is LEGITIMATE (run-gate.sh clamps its own 78
+#         keyed on the marker it created, so a 78 emerging from it carries
+#         provenance). Whole-file grepping would be red on day one. Comment lines
+#         are excluded — the prose below the eval discusses 78 at length.
+#
+#         Not the same guard as R5f/R5g in test-hooks.sh: this file is the
+#         toolkit's own per-commit `**Test**`, test-hooks.sh is not (it runs only
+#         under the full `**Gate**`). Same property, two cadences.
+PCT_HOOK="hooks/pre-commit-test.sh"
+pct_eval_ln=$(grep -n 'eval "\$TEST_CMD"' "$PCT_HOOK" | head -1 | cut -d: -f1)
+if [ -z "$pct_eval_ln" ]; then
+  ko "eval-boundary census: cannot locate 'eval \"\$TEST_CMD\"' in $PCT_HOOK — the boundary moved or was renamed; re-point this census before trusting it"
+else
+  pct_term=$(tail -n +"$pct_eval_ln" "$PCT_HOOK" \
+    | grep -nE 'GC_TERMINAL_RC|-(eq|ne)[[:space:]]+78' \
+    | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [ -z "$pct_term" ]; then
+    ok "$PCT_HOOK: no terminal arm below the eval boundary (line $pct_eval_ln) — a child's 78 has no provenance and must stay retryable"
+  else
+    ko "$PCT_HOOK: a TERMINAL ARM appeared below the eval boundary (line $pct_eval_ln). \$TEST_CMD is an arbitrary consumer command, so a 78 there is a CHILD's number with no provenance — branching on it hands a plain test failure the 'cannot succeed as configured' remedy, which is inverted advice. PREREQUISITE: give this boundary a provenance channel (as run-gate.sh has, keyed on the marker it writes) BEFORE adding the arm; the number alone cannot earn it. Offending line(s), offset from $pct_eval_ln: $(printf '%s' "$pct_term" | head -3 | tr '\n' ' ')"
+  fi
+fi
 
 # 21c-2d. The RUN_GATE_ACTIVE test must PRECEDE the not-a-git-repository guard
 #         in hooks/run-gate.sh (v2.2.5 round 4).
@@ -1033,6 +1084,74 @@ elif [ "$sweep_bom" -ge 2 ]; then
 else
   ko "placeholder sweep: only $sweep_bom of 2 arms in $SWEEP_SKILL carry the optional BOM prefix (arm 1 would fail CLEAN, arm 2 noisy) — $sweep_arms sweep lines seen"
 fi
+
+# 21c-3b. NO PLACEHOLDER IN AN EXECUTABLE POSITION under user-level-reference/
+#         (v2.2.5 round 5). THE HOOKS' CORRECTNESS — not the drift check's.
+#
+#         The user-level install is VERBATIM: nothing substitutes `{{...}}` at
+#         user level, unlike the project bootstrap. That property is what makes
+#         verify-user-level-drift.sh's blob-versus-tag comparison a legitimate
+#         baseline, and it is asserted over there. It says NOTHING about whether
+#         the files WORK, and the two come apart exactly where it matters:
+#
+#           A placeholder added in a shell VALUE position keeps verbatim-install
+#           true, keeps the blob comparison green, and makes the hook execute a
+#           literal `{{...}}`. Drift reports 0 and the hook is broken.
+#
+#         That is v2.2.0's `- **Protected branches**: {{DEFAULT_BRANCH}}` — a
+#         config value read as data — one directory over. Only this assertion
+#         catches the failure worth catching.
+#
+#         USE THE REFINED SWEEP ARMS, NOT A PLAIN GREP. A naive
+#         `grep -rn '{{[A-Z_]\{2,\}}}' user-level-reference` returns 29 hits, all
+#         prose — including the passage in sync-template/SKILL.md that documents
+#         this exact false positive. Shipped that way the assertion is red on day
+#         one, permanently, and gets disabled by someone whose reasoning looks
+#         sound. Measured with the refined arms: shell 0, markdown 0. That is the
+#         number pinned below. Today's non-zero raw counts are all COMMENTS
+#         (hooks/lib/git-cmd.sh 2, hooks/pre-commit-test.sh 1) — prose ABOUT a
+#         placeholder is not a placeholder.
+#
+#         BORN WITH ITS CONTROL, IN BAND. A sweep that matches nothing also
+#         reports 0, so before trusting the number the detector is driven against
+#         a planted fixture every run: a placeholder in a shell VALUE line must
+#         be found, and the same placeholder in a BOM'd comment must not. If
+#         either self-test fails, the 0 below means the detector is inert and is
+#         reported as such rather than as a pass.
+ULR_BOM=$(printf '\357\273\277')
+ulr_sweep_sh() {   # <dir> -> executable-position placeholder hits in *.sh
+  grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' "$1" 2>/dev/null \
+    | grep -v ":[0-9]*:\(${ULR_BOM}\)\?[[:space:]]*#"
+}
+ulr_sweep_md() {   # <dir> -> placeholders on a `- **Key**: value` config line
+  grep -rn --include='*.md' -- \
+    "^\(${ULR_BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" "$1" 2>/dev/null
+}
+ULRFIX=$(mktemp -d)
+# The planted placeholder is ASSEMBLED, never spelled literally in an executable
+# line of this file: a fixture that trips a future sweep pointed at scripts/ is
+# how a detector acquires its first false positive.
+ULR_PH=$(printf '{{%s}}' TEST_COMMAND)
+printf 'TEST_CMD="%s"\n'              "$ULR_PH"             > "$ULRFIX/value.sh"
+printf '%s# note: %s goes here\n'     "$ULR_BOM" "$ULR_PH"  > "$ULRFIX/comment.sh"
+printf -- '- **Test**: %s\n'          "$ULR_PH"             > "$ULRFIX/value.md"
+printf 'Prose mentioning %s inline.\n' "$ULR_PH"            > "$ULRFIX/prose.md"
+ulr_pos_sh=$(ulr_sweep_sh "$ULRFIX" | grep -c 'value\.sh')
+ulr_neg_sh=$(ulr_sweep_sh "$ULRFIX" | grep -c 'comment\.sh')
+ulr_pos_md=$(ulr_sweep_md "$ULRFIX" | grep -c 'value\.md')
+ulr_neg_md=$(ulr_sweep_md "$ULRFIX" | grep -c 'prose\.md')
+if [ "$ulr_pos_sh" -eq 1 ] && [ "$ulr_neg_sh" -eq 0 ] && [ "$ulr_pos_md" -eq 1 ] && [ "$ulr_neg_md" -eq 0 ]; then
+  ok "executable-position sweep: detector verified live (shell value hit / BOM'd comment ignored, md value hit / prose ignored)"
+  ulr_hits=$( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | grep -c . )
+  if [ "$ulr_hits" -eq 0 ]; then
+    ok "user-level-reference/: 0 placeholders in an EXECUTABLE position (hooks would run a literal {{...}})"
+  else
+    ko "user-level-reference/: $ulr_hits placeholder(s) in an EXECUTABLE position — the user-level install substitutes NOTHING, so a shipped hook will run the literal {{...}}: $( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | head -3 | tr '\n' ' ')"
+  fi
+else
+  ko "executable-position sweep is INERT — its own self-test failed (shell hit=$ulr_pos_sh want 1, shell comment=$ulr_neg_sh want 0, md hit=$ulr_pos_md want 1, md prose=$ulr_neg_md want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
+fi
+rm -rf "$ULRFIX"
 
 # 21d. Every shipped shell script PARSES (v2.2.1).
 #

@@ -198,7 +198,34 @@ cd "$REPO_PATH" || { echo "BLOCKED: pre-commit-test: cannot enter the repository
 # last 20 lines so a chatty gate cannot flood the transcript.
 OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
 PCT_T0=$(date +%s 2>/dev/null || echo 0)
-eval "$TEST_CMD" > "$OUT" 2>&1
+# THE SUBSHELL IS LOAD-BEARING (v2.2.5 round 5, independent QA at 9baa446;
+# pre-existing since v2.1.x, not a regression of this branch).
+#
+# `eval` runs its argument in the CURRENT shell. `$TEST_CMD` is a CONSUMER-
+# authored value, so a value whose top level reaches `exit` or `exec` terminated
+# THIS HOOK and bypassed the if/else below entirely. Measured, bare `eval`:
+#
+#   **Test**: exit 1                 -> hook exit 1,  ZERO "BLOCKED" lines
+#   **Test**: exec bash -c "exit 1"  -> hook exit 1,  ZERO "BLOCKED" lines
+#   **Test**: exec bash -c "exit 78" -> hook exit 78, ZERO "BLOCKED" lines
+#
+# A non-2 PreToolUse exit is warn-and-ALLOW, so each of those let the commit
+# through UNGATED and SILENTLY, and leaked $OUT. The 78 case additionally
+# violated the invariant this release documents in hooks/lib/git-cmd.sh: 78 is
+# never a hook's own exit status, and a hook NEVER forwards a child's code.
+#
+# `( ... )` contains both: `exit` ends the subshell and `exec` replaces the
+# subshell's process, and either way $? is a CHILD's status that reaches the
+# test below like any other. This is containment of the two shell builtins that
+# end a process -- NOT a claim of immunity to arbitrary consumer values, which
+# is not a property an eval boundary can have.
+#
+# Round 4's clamp reasoning is undisturbed: a child's 78 still lands in $PCT_RC
+# with no provenance marker and still reaches the else branch (see the long note
+# below). R5g in scripts/test-hooks.sh drives this BEHAVIOURALLY -- the source
+# censuses in verify-template-consistency.sh cannot reach a value that arrives
+# as config DATA rather than as hook SOURCE.
+( eval "$TEST_CMD" ) > "$OUT" 2>&1
 PCT_RC=$?
 
 # NO TERMINAL REMEDY AT THIS BOUNDARY (v2.2.5 round 4), and WHY THE TWO

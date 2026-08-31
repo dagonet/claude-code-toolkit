@@ -979,6 +979,62 @@ check_msg "(R5f) Gate eval'd, no run-gate.sh, rc=78: retry advice PRESENT" "$g78
 check_nomsg "(R5f) Gate eval'd, no run-gate.sh, rc=78: NOT a configuration failure" "$g78hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$g78repo")" "cannot succeed as configured"
 
+# --- R5g: THE EVAL BOUNDARY RUNS CONSUMER TEXT IN THE HOOK'S OWN SHELL --------
+# (v2.2.5 round 5, independent QA at 9baa446. Pre-existing since v2.1.x.)
+#
+# THIS BLOCK EXISTS BECAUSE A SOURCE CENSUS CANNOT REACH THIS CLASS. Census
+# 21c-2f in verify-template-consistency.sh asserts "no `exit 1` in a registered
+# hook" by grepping the hook's SOURCE. It was green here — and the hook exited 1
+# anyway, because the `exit 1` arrived as CONFIG DATA through `**Test**` and was
+# eval'd. "pre-commit-test.sh never exits anything but 0 or 2" was true of the
+# text and false of the process. The question that finds this class: what would
+# have to be true for this census to be green while the property is broken?
+#
+# Bare `eval "$TEST_CMD"` runs in the CURRENT shell, so a value reaching `exit`
+# or `exec` at top level terminated the hook and skipped the if/else. Measured
+# before the fix / after:
+#
+#   **Test**: exit 1                  rc 1  -> 2, BLOCKED lines 0 -> 1
+#   **Test**: exec bash -c "exit 1"   rc 1  -> 2, BLOCKED lines 0 -> 1
+#   **Test**: exec bash -c "exit 78"  rc 78 -> 2, BLOCKED lines 0 -> 1
+#
+# Every pre-fix row is warn-and-ALLOW: the commit proceeded UNGATED and SILENTLY.
+# CONTROL: drop the `( )` around the eval in hooks/pre-commit-test.sh and all
+# nine assertions below flip; the green control at the end holds either way, so
+# the block is not merely asserting that the hook still runs.
+#
+# `exec` is this codebase's own idiom — the R5e wrapper above uses it.
+#
+# NOT `$H`: it is positional state and by this point in the file it names
+# hooks/gate-before-merge.sh, which exits 0 on a commit payload — every arm
+# below would have passed vacuously. Spell the hook out, as R5f does.
+r5g_probe() { # <label> <index> <Test value> ; asserts exit 2 + a BLOCKED line
+  d=$(mkrepo "evalesc$2" main)
+  printf '# ctx\n\n- **Test**: %s\n' "$3" > "$d/PROJECT_CONTEXT.md"
+  check "(R5g) $1: still exit 2 (was warn-and-ALLOW)" hooks/pre-commit-test.sh 2 \
+    "$(mkjson Bash 'git commit -m x' "$d")"
+  check_msg "(R5g) $1: BLOCKED line present" "$ROOT/hooks/pre-commit-test.sh" 2 \
+    "$(mkjson Bash 'git commit -m x' "$d")" "re-run it and fix the failures"
+}
+r5g_probe "bare exit"      1 'exit 1'
+r5g_probe "exec + exit 1"  2 'exec bash -c "exit 1"'
+r5g_probe "exec + exit 78" 3 'exec bash -c "exit 78"'
+
+# Round 4's clamp reasoning must survive the subshell: a child's 78 still has no
+# provenance, so it takes the RETRYABLE message, never the terminal framing.
+# (R5f arm 1 asserts the same for a non-exec child; this is the exec path.)
+r5gx=$(mkrepo evalesc78frame main)
+printf '# ctx\n\n- **Test**: exec bash -c "exit 78"\n' > "$r5gx/PROJECT_CONTEXT.md"
+check_nomsg "(R5g) exec rc=78: NOT a configuration failure" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$r5gx")" "cannot succeed as configured"
+
+# Two-sided: a passing consumer command must still pass, or "exit 2 everywhere"
+# would satisfy every assertion above.
+r5ggreen=$(mkrepo evalescgreen main)
+printf '# ctx\n\n- **Test**: `true`\n' > "$r5ggreen/PROJECT_CONTEXT.md"
+check "(R5g) control: a passing Test still exits 0" hooks/pre-commit-test.sh 0 \
+  "$(mkjson Bash 'git commit -m x' "$r5ggreen")"
+
 # NOTE on the `cd "$REPO_PATH" || exit 2` sites (v2.2.5 round 4): they are NOT
 # driven by a fixture here, and deliberately so. Reaching either one with a
 # failing cd requires the directory to disappear BETWEEN the PROJECT_CONTEXT.md
