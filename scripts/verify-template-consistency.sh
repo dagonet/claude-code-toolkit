@@ -990,6 +990,31 @@ else
   ko "bare 78 literal in hooks/ (use GC_TERMINAL_RC): $(printf '%s' "$bare78" | head -3 | tr '\n' ' ')"
 fi
 
+# 21c-2g. The sync-template SKILL body carries a version marker, and it matches
+#         VERSION (v2.2.5 round 4).
+#
+#         A running session obeys the body it LOADED, not the file on disk —
+#         measured: an installed SKILL.md identical to the release while live
+#         sessions still executed the previous version's steps, with the drift
+#         check reporting clean throughout. The marker is what lets step 1 catch
+#         that on the NEXT invocation and lets a session state which body it is
+#         running. A marker that silently stops tracking VERSION is worse than
+#         none: it would assert equality between two stale strings.
+SKILL_MD="user-level-reference/skills/sync-template/SKILL.md"
+want_marker="v$(head -1 VERSION 2>/dev/null | tr -d '\r')"
+got_marker=$(grep -m1 -o 'SYNC-TEMPLATE-SKILL-VERSION: [^ ]*' "$SKILL_MD" 2>/dev/null | sed 's/.*: //')
+if [ "$got_marker" = "$want_marker" ]; then
+  ok "sync-template SKILL.md carries the body version marker ($got_marker, matches VERSION)"
+else
+  ko "sync-template SKILL.md marker '${got_marker:-<none>}' does not match VERSION '$want_marker' — a stale session could not be detected"
+fi
+# ...and step 1 must actually CHECK it. A marker nothing reads is decoration.
+if [ "$(grep -c 'SYNC-TEMPLATE-SKILL-VERSION' "$SKILL_MD" 2>/dev/null)" -ge 2 ]; then
+  ok "sync-template SKILL.md step 1 asserts the marker against the installed file"
+else
+  ko "sync-template SKILL.md defines the version marker but nothing reads it — step 1 must grep the installed file and compare"
+fi
+
 # 21c-3. The sync-template placeholder sweep is BOM-tolerant too (v2.2.4).
 #
 #        Same class as 21c-2, one layer out: the sweep is the skill's own

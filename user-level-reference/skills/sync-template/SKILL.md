@@ -4,9 +4,13 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v2.2.5 -->
+
 # Sync Template (Downstream)
 
 Pull updates from the claude-code-toolkit template repo into the current project.
+
+**The line above is the version of the body YOU LOADED, and you must be able to state it.** A running session obeys the skill body it read at session start, not the file on disk — measured live: an installed `SKILL.md` byte-identical to the current release while sessions started earlier were still executing the previous version's steps. So *"re-copy `SKILL.md`"* and *"the drift check reports 0"* can both pass while every live session runs the old workflow. Step 1 checks this marker against the installed file.
 
 **Requires:** `template-sync-tools` MCP server registered and running, **version >= 0.2.0**.
 
@@ -18,7 +22,17 @@ Pull updates from the claude-code-toolkit template repo into the current project
 
 ### 1. Load Manifest
 
-Call `template_load_manifest(project_path=".")`.
+**FIRST, assert your own body against the installed file (v2.2.5 round 4).** Before any `template_*` call:
+
+```
+grep -m1 'SYNC-TEMPLATE-SKILL-VERSION' ~/.claude/skills/sync-template/SKILL.md
+```
+
+Compare that to the marker at the top of *this text as you loaded it*, and **state both in the report** (`SKILL body:` line, step 8). If they differ, **STOP**: you are running a stale body against a newer manifest and your steps are not the shipped ones. The remedy is a **session RESTART** — re-copying the file does nothing for a session that has already read it.
+
+**The honest limit, and it is the important half: this marker cannot rescue a session already at risk.** A session running an *older* body has no assertion in it to fire and can never self-detect — it will simply not perform this check. The marker prevents the **next** occurrence, not the current one. If a stale run is suspected and this check is absent from what you loaded, that absence *is* the answer.
+
+Then call `template_load_manifest(project_path=".")`.
 
 - If `valid` is false, stop and show the errors to the user.
 - If `warnings` mentions v1 migration, inform the user their manifest will be upgraded to v2.
@@ -273,9 +287,10 @@ For each file with status `CONFLICT`:
 
 **Post-apply guard — verify the keep-mine files were not written, and make the guard's own failure visible (v2.2.5).** After the last write in this step:
 
-- **Check set:** every path with a recorded resolution of **keep-mine** that is also in `new_template_files` ∩ exists-on-disk — i.e. exactly the set step 2b's second backup covers. Byte-compare each against its backup copy; any difference is a data-loss event, and at that moment it is still recoverable *from the backup*.
+- **Check set: every keep-mine path that step 2b's SPECIFICATION covers** — `keep-mine ∩ (set a ∪ set b)`, where 2b's two backup sets are **(a)** gitignored ∩ manifest-tracked and **(b)** `new_template_files` ∩ exists-on-disk. Byte-compare each against its backup copy; any difference is a data-loss event, and at that moment it is still recoverable *from the backup*.
+- **DERIVE THE SET FROM 2b's RULES, NEVER FROM THE BACKUP DIRECTORY'S CONTENTS (v2.2.5 round 4).** "Keep-mine paths present in the backup" makes the coverage assertion below **vacuous by construction**: a 2b derivation failure then silently shrinks the check set until the guard passes — a guard failing by reporting success, guarding a bug whose entire signature is failing by reporting success. Derive from the rules, assert each member has a backup entry, then compare.
 - **Scope it by the RESOLUTION, never by the path list.** A file the user explicitly resolved **accept-template** is *supposed* to differ and is exempt; keying the guard on `new_template_files` instead would fire on a correct, user-approved outcome, and the fix for that false positive is to weaken the guard, which reopens the hole. This is the same shape as the bug the step itself fixes: **a guard must be keyed on the decision that was made, not on the list the file arrived in.** The discriminator already exists and is populated — `source="skip"` records `"resolution": "keep-mine"` on the manifest entry; template and provided applies omit the key.
-- **Step-4 keep-mine files are OUT of this guard's scope.** They are ordinary manifest-tracked paths, covered by git and visible in the PR diff; step 2b's backups do not include them, so pulling them in would make the coverage assertion below hard-error on a perfectly correct sync.
+- **NO STEP ATTRIBUTION ANYWHERE (v2.2.5 round 4, and this replaces the blanket step-4 exclusion).** The earlier wording excluded *step-4 keep-mine files as a category* — keyed on **which step produced the resolution**, when the property that matters is **whether 2b's specification covers the path**. Those diverge, and in the direction that loses coverage: **a step-4 keep-mine file that is gitignored is in set (a)**, so it *is* backed up, the comparison *would* work, and the blanket exclusion drops it anyway — manifest-tracked, gitignored, resolved keep-mine: no history, no diff, no undo, exactly the class 2b exists for. **`CLAUDE.local.md` resolved keep-mine in step 4 is the routine instance, not a corner case.** With the set defined by 2b's rules, step-4 non-gitignored files fall out on their own (2b does not cover them) and the special case disappears. This is the provenance error one layer down from the one the release keeps closing: *keyed on who decided, when what matters is what the spec covers.*
 - **Assert the backup COVERS each path before comparing it — a missing backup entry is a HARD ERROR, never a clean pass.** Say why, or the next reader deletes it as a redundant existence check in front of a comparison: a byte-comparison against a backup that does not contain the path finds nothing to compare and **reports success**. That is a guard failing by reporting success, guarding a bug whose entire signature is failing by reporting success. `no backup entry for <path>` stops the sync.
 - **Control, both arms.** Deliberately drop one check-set path from the backup and confirm you get the hard error, not a clean run; then restore it and confirm the run is clean. A coverage assertion is the easiest thing in this file to write in a way that passes whether or not it exists — verify it by removing it and watching the first arm go green, which is the only test that tells you the truth.
 
@@ -350,9 +365,27 @@ grep -rn -- "^\(${BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" .clau
 # unsuppressed; it is the only thing that reports a malformed invocation.
 # PIPEFAIL: without it `$?` is the LAST grep's status and the first one's 2
 # (a malformed invocation) is invisible to anything testing the exit code.
-set -o pipefail
+# SCOPED TO A SUBSHELL, deliberately — see the exit contract below.
+( set -o pipefail
 grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' .claude hooks | grep -v ":[0-9]*:\(${BOM}\)\?[[:space:]]*#"
+)
+sweep_rc=$?
 ```
+
+**THE SWEEP'S EXIT CONTRACT — SUCCESS IS 1 AND FAILURE IS 0 (v2.2.5 round 4).** `pipefail` is correct and does its job, but the resulting contract is inverted relative to every instinct, and nothing said so:
+
+```
+exit 0  ->  hits found              a PROBLEM: unfilled placeholders, report them
+exit 1  ->  clean, no hits          SUCCESS — this is grep's no-match, not an error
+exit 2  ->  malformed invocation    the defect pipefail was added to expose
+```
+
+**Check for 2 specifically; non-zero alone is not an error.** Two consequences follow directly, and both have already been written by someone reading this file:
+
+- `if ! sweep; then fail` marks **every clean tree** as broken.
+- This skill mandates putting logic in a **script file**, and `set -o pipefail` is typed as `set -euo pipefail` from muscle memory — under `set -e` a **clean sweep aborts the script**, turning the correct outcome into a hard stop with no message.
+
+**And scope `pipefail`.** As a bare `set -o pipefail` it leaks into the rest of the hosting script and changes the exit semantics of every later pipeline there. The subshell above contains it; `( set -o pipefail; … )` or an explicit save/restore both work, and the subshell is one character cheaper to get right.
 
 **Why the `${BOM}` in both arms (v2.2.4).** PowerShell 5.1's `>` and `Out-File` write UTF-8 **with** a BOM, and a consumer's `PROJECT_CONTEXT.md` was found carrying one — this is a live Windows shape, not a hypothetical. The two arms fail in opposite directions and both are wrong: arm 1's `^` no longer abuts the key, so **a placeholder on line 1 behind a BOM is a FALSE CLEAN** — the sweep's whole job, missed silently, on the case a consumer reordering their file most plausibly creates. Arm 2's exclusion filter is the mirror: the BOM lands between the `:` and the `#`, so a BOM'd comment stops being recognised as a comment and comes back as a **false positive**. Measured on a fixture, before → after: arm 1 line 1 `0 → 1`, line 2 `1 → 1`, no-BOM control `1 → 1`; arm 2 BOM'd comment `1 → 0` false positives. Same class as the hook extractors' `GC_KEY_PRE` — the server strips the BOM for hashing and a `^`-anchored grep does not, so the same file is two different files depending on which one is looking.
 
@@ -384,7 +417,8 @@ Any hit is a file the template wrote with an unfilled placeholder — `template_
 
 | Field | Value | Written by |
 |---|---|---|
-| `lastSyncedVersion` | the toolkit tag for `lastSynced` | **this skill** (client-side) |
+| `lastSyncedVersion` | the toolkit tag for `lastSynced` | **this skill** (client-side, DERIVED — recomputed on every sync) |
+| `lastSyncedVersionOf` | the `lastSynced` sha `lastSyncedVersion` was computed from | **this skill** — the staleness backstop; see rule 2b |
 | `templateSyncToolsVersion` | the `template-sync-tools` version that performed the sync | **the server**, when it starts emitting a version — this skill never guesses it |
 
 **Both are optional labels. NEVER fail, block or roll back a sync over either one** — an unresolvable version is a missing label, not an error. Absent means *unknown*, never *stale*: every pre-v2.2.5 manifest stays valid unchanged.
@@ -424,7 +458,27 @@ Never write a bare `""` — it is indistinguishable from "resolved, to nothing".
 **How to write them, mechanically:**
 
 1. **After** `template_finalize_sync` and after the post-finalize self-check — finalize rewrites the manifest, so a stamp applied before it is discarded.
-2. **Only if the key is absent or empty.** A future server that writes these fields authoritatively must win; the client never clobbers a value it did not write.
+2. **Never-clobber, and it does NOT apply to a DERIVED field (v2.2.5 round 4).** The rule is: *only write a key that is absent or empty* — a future server that writes these fields authoritatively must win, and the client never clobbers a value it did not write.
+
+   **Never-clobber exists to protect values the client cannot REPRODUCE** — server-authoritative data, hand-edited resolutions, anything where overwriting destroys information that cannot be recovered. **A derived field is by definition reproducible**, so it is not in the class the rule protects, and applying the rule to it converts *"do not destroy information"* into *"preserve a wrong answer"*.
+
+   **The corollary is the actionable half, and it covers every future field of this shape:**
+
+   > **A derived field is rewritten with its source, or not at all. If `lastSynced` changes, everything computed from it is recomputed in the same write.**
+
+   So `lastSyncedVersion` — a pure function of `templateRepo` + `lastSynced`, and `lastSynced` changes on every sync — is **recomputed and overwritten every time, unconditionally**. Never-clobber applies **solely** to `templateSyncToolsVersion`, for the stated reason (the client cannot observe it), not because it appears on a list of exceptions. Written as a class exclusion deliberately: a named exemption for `lastSyncedVersion` is something a future editor can fail to extend to the next derived field, and the trap would be re-set silently.
+
+   **Why this is not a tidy-up: a stale version label is WORSE than an absent one.** Absent reads as *unknown* and sends the reader to the sha. Stale reads as *authoritative* and answers *"do I have the fix?"* **wrongly** — the exact question this step was opened to answer, failing hardest on the consumers who sync most often. Under the old wording there was no third case: if `template_finalize_sync` preserves the key, every subsequent sync leaves a confidently-wrong label; if it drops it, the rule was dead code for this field. Harmful or vacuous.
+
+2b. **Backstop, for when the exclusion is forgotten: store what the label was computed FROM.** A version label that cannot be checked against the thing it labels is itself a value that needs provenance. Write `lastSyncedVersionOf` beside it, carrying the `lastSynced` sha the label was derived from:
+
+   ```json
+     "lastSynced": "707052c",
+     "lastSyncedVersion": "v2.2.3",
+     "lastSyncedVersionOf": "707052c",
+   ```
+
+   A reader then compares the two: **equal means the label is good; unequal means it is stale AND KNOWN STALE.** That converts a confidently wrong answer into a detectable one, which is the whole difference this step exists to deliver. Step 8 reports `{lastSyncedVersion} (stale — computed for {lastSyncedVersionOf}, manifest is at {lastSynced})` when they disagree, and the three unresolved-state values (`unknown:*`) are written with the same companion key so the pairing has no gaps.
 3. Write with the Write tool + a scratchpad script (`json.load` / `json.dump`), never by hand-editing the JSON and never by a long `python -c` command line — the same rule as `applied_files` in step 7. Preserve `indent=2`, LF endings, no BOM, and `ensure_ascii=False`.
 4. Re-run `template_compute_status` afterwards; it must still be clean. If the stamp upset anything, revert the two keys and report — the sync is still good, the label is not worth a corrupt manifest.
 5. `.claude/template-manifest.json` is already in the step-9 `git add`, so nothing extra to stage.
@@ -434,13 +488,16 @@ Before → after, on a real consumer manifest:
 ```json
   "lastSynced": "707052c",
 + "lastSyncedVersion": "v2.2.3",
++ "lastSyncedVersionOf": "707052c",
 ```
 
 **Provenance, say it out loud when asked:** `lastSyncedVersion` is *client-written by this skill*, derived from the same `templateRepo` + `lastSynced` the server wrote, so it is reproducible and checkable — but it is not server-authoritative, and a repo synced by an older skill will not have it.
 
 ### 8. Report
 
-Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line.
+Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line. **It compares against the last RELEASED tag, not the working tree** (v2.2.5 round 4): a live `~/.claude/` matching an unshipped branch used to report 0 drift, so the delivery probe certified that an unreviewed revision had reached a user. Reference files that exist only on a branch are listed as `UNRELEASED`, never counted as in-sync.
+
+**DEFINITION OF DONE FOR A USER-LEVEL FILE IS RESTART-REQUIRED, NOT RE-COPY (v2.2.5 round 4).** Copying `SKILL.md` into `~/.claude/skills/` changes nothing for any session already running — including this one. The report has told users *"Restart before relying on changed agent definitions or skills"* for several versions; **the skill knew this about agents and not about itself.** So when this sync changed a user-level skill or agent, the delivery step is not complete until the session is restarted, and the report says so with the file named. Anyone mid-session while a copy is installed is running the previous version's steps against the new manifest.
 
 Re-run the step-3 **positive control** here as well (the same temp script, `bash <path>`) and fold its result in: the sync rewrote `hooks/` and `settings.json` since the first probe, so this is the run that tells you the *post-sync* enforcement layer is live. `exit=2` + `BLOCKED` → report `Gates: live`. `exit=0` → report `Gates: INERT` and the recovery note, not a clean sync.
 
@@ -469,6 +526,9 @@ Sync complete: {variant} @ {new_commit}
   User-level:   [one-line verify-user-level-drift.sh summary]
   Gates:        live (parser: {backend} — {consequence})
   Toolkit:      {lastSyncedVersion} ({lastSynced})
+                [when lastSyncedVersionOf != lastSynced: "STALE LABEL — computed
+                 for {lastSyncedVersionOf}; read the sha, not the version"]
+  SKILL body:   {the version marker at the top of this file, as LOADED}
   Sync server:  {templateSyncToolsVersion}
   Backup:       {step-2b directory} [{gitignored tracked files copied}]
 ```
