@@ -70,7 +70,7 @@ NEGATIVE (ls payload)           rc=0  elapsed=0s
 
 ### Counts
 
-Consistency **292 → 295** (`21c-3e` contributes two assertions — registration + trackability — and `21c-3f` one). Hook fixtures unchanged; `hooks/` is untouched by this release. `test-hooks-parser-matrix.sh` was **not** required: neither `hooks/lib/git-cmd.sh` nor `hooks/lib/json.sh` was modified.
+Consistency **292 → 295** (`21c-3e` contributes two assertions — registration + trackability — and `21c-3f` one). Hook fixtures **376 passed / 0 failed / 0 skipped**, unchanged by this release: `hooks/` is untouched. `test-hooks-parser-matrix.sh` was **not** required — neither `hooks/lib/git-cmd.sh` nor `hooks/lib/json.sh` was modified.
 
 ### Downstream migration
 
