@@ -2,7 +2,7 @@
 
 ## v2.2.6 — 2026-09-01
 
-**A patch release with no subtractions.** Its purpose is to clear the verification tooling that the next two releases depend on: `/sync-template`'s step 6b is the only check a consumer runs to confirm their hooks are wired, and a subtraction release cannot be verified by a collector known to under-count hook references. Thirteen items, eleven of them found by consumers, none by the suite — the thirteenth (§4) found in this repo, by instrumenting a hook that every assertion said was fine.
+**A patch release with no subtractions.** Its purpose is to clear the verification tooling that the next two releases depend on: `/sync-template`'s step 6b is the only check a consumer runs to confirm their hooks are wired, and a subtraction release cannot be verified by a collector known to under-count hook references. Thirteen items, eleven of them found by consumers, none by the suite — the thirteenth (§4) found in this repo, by reading a guard that every assertion said was fine.
 
 ### 1. Step 6b's hook-reference extractor recovered ZERO — a fail-open inside the step that exists to catch fail-open
 
@@ -88,20 +88,17 @@ Confirmed independently on two consumer machines: one asserted a marker file as 
 - **Annotated-tag deref.** `git rev-parse v2.2.5` is the **tag object** (`300020f`); the commit is `git rev-parse v2.2.5^{commit}` (`640ba5e`). Verifying a consumer's `lastSynced` against a tag without `^{commit}` reports a false mismatch.
 - **`verify-user-level-drift.sh`'s VERBATIM INSTALL arm is now a derived line.** Delete-the-guard on our own check: over the released set it never contributes information alone. `drift == 0` already implies verbatim install, because **byte-identical is strictly stronger than same-placeholder-count**; `drift != 0` leaves staleness and substitution both live and a placeholder count cannot distinguish them. Observed during the v2.2.5 release, pre-propagation: `VERBATIM INSTALL VIOLATED … live has 4 … reference has 12` — caused by **staleness, not substitution**, printed beside a correct `4 drift`. A wrong causal claim stacked on correct information, aimed at someone mid-migration, on every release before propagation: the disabled-within-a-week shape in a check we had just added. Softening the wording was rejected (it preserves the false alarm and makes it vaguer); so was coupling it to the adjacent drift line (adjacent output is not a condition the check evaluated). It survives where it carries information: **UNRELEASED files**, which `check_file` skips entirely, are still measured and still fold into the exit code.
 
-### 4. FOURTEENTH fail-open: an empty command payload made all three git gates exit 0
+### 4. FOURTEENTH fail-open: a `command` the gate cannot read would have made all three git gates exit 0
 
-`[ -n "$GC_CMD" ] || exit 0` stood in `pre-commit-test.sh`, `no-push-main.sh` and `gate-before-merge.sh` — **a fail-OPEN guard on a fail-CLOSED gate**, shipped since v2.0. `pre-commit-test.sh`'s own header warned about the state at `:35` and contemplated only a *missing JSON parser*; nobody considered the payload arriving with the parser present, the JSON valid, and the command **empty**.
+**No defect was observed in the field, and none is claimed here.** §2 settles that: the hook fires and the gate ran on every commit. What this item closes is a **reachable state in the code**, found by reading it — not a symptom anyone measured.
 
-The hook **is** invoked. A trace instrumented above every early exit, over real `git commit` calls through the Bash tool, caught it both ways on the same file:
+`[ -n "$GC_CMD" ] || exit 0` stood in `pre-commit-test.sh`, `no-push-main.sh` and `gate-before-merge.sh` — **a fail-OPEN guard on a fail-CLOSED gate**, shipped since v2.0. `pre-commit-test.sh`'s own header warned about the state at `:35` and contemplated only a *missing JSON parser*; nobody considered the payload arriving with the parser present, the JSON valid, the `command` key **present**, and the read yielding nothing. In that state a security gate exits 0 in silence — which is the wrong polarity whatever produces it, and *in a gate, an unreadable input is a block, never a pass*.
 
-```
-exit-near-51  exit-near-64  exit-near-91     invocation A: progressed past all three
-exit-near-51  exit-near-64                   invocation B: STOPPED at 64  <- empty GC_CMD
-```
+**Everything once offered as a live sighting of this state is withdrawn.** An instrumented trace of `git commit` calls, and the *"the **Test** takes ~87 s, so a 1-second commit is unambiguous non-execution"* corroboration beside it, both rest on the in-command timer §2 retracts — and the instrumentation was itself applied inside the tool call whose hook had already run, so its nulls measured the sequencing rather than the hook. There was no intermittency. Do not go looking for one. The full account, including four mechanism hypotheses that died before the instrument was understood, is preserved in `.superpowers/sdd/sync-feedback/empty-payload-failopen.md` under its retraction banner so none of them is re-tried.
 
-The "corroboration" once offered beside that trace — *the **Test** takes ~87 s, so a 1-second commit is unambiguous non-execution* — is **withdrawn**. It is the same in-command timer §2 retracts, and it was not independent of anything. Four mechanism hypotheses died first and are recorded in `.superpowers/sdd/sync-feedback/empty-payload-failopen.md` so they are not re-tried, including *"a reorder would have fixed this"* — which would have closed the investigation on a false mechanism and left the fault live.
+**The fix stands on its own merits and stays.** It is narrow, two-sided-controlled, and closes a state that exists in the code; it is not a fix for the phantom.
 
-**The obvious fix is unsafe, and refusing it is the design.** `exit 0` → `exit 2` unconditionally would, on an intermittently empty payload, **hard-block every Bash command in the session at random** — a silent gap traded for a worse failure. So the states were separated first, and two of the three turned out to be **already** fail-closed:
+**The obvious fix is unsafe, and refusing it is the design.** `exit 0` → `exit 2` unconditionally would refuse every payload that legitimately carries no command — **a hard block on ordinary Bash calls**, traded for a silent gap. The delete-the-guard table below measures exactly that: with the narrowing removed, 3 of 3 `Bash payload with no command` arms flip to a refusal. So the states were separated first, and two of the three turned out to be **already** fail-closed:
 
 | state | verdict | where |
 |---|---|---|
@@ -130,13 +127,15 @@ The key probe is a `grep` over the RAW payload, not another `json.sh` call — t
 
 The second is the one that matters: without it the narrowing would be decoration, and the "fix" would be the unconditional inversion this item exists to reject.
 
-**Bounded exposure, and the consumer advisory** — true whatever the mechanism turns out to be. **Commit-time only.** The merge path is unaffected: `run-gate.sh` is invoked as a **direct command**, not through hook stdin, and its output is observed — test counts plus a `GATE PASS <sha>` line tied to the tree.
+**No retroactive exposure is claimed.** Earlier drafts of this item told consumers their individual commits might be ungated. That advisory is **withdrawn** — it followed from the intermittency above, and §2 establishes that the gate ran. There is nothing to re-audit.
+
+What survives is an epistemic point about evidence, not a gap in history:
 
 > **A green commit does not prove the tests ran. Only an observed `run-gate.sh` output does.**
 
-So the guarantee is intact wherever a quoted `run-gate.sh` result exists and absent wherever the only evidence is "the commit succeeded". Merged states that quoted a gate run are covered; individual commits between them are not.
+The merge path was never in question either way: `run-gate.sh` is invoked as a **direct command**, not through hook stdin, and its output is observed — test counts plus a `GATE PASS <sha>` line tied to the tree.
 
-Method lessons kept with the investigation, not repeated here in full, but two travel: **instrument the hook, not its effect** — an effect-based probe cannot separate *did not run* from *ran and took a quiet path*; and **a block message names *a* sufficient blocker, never *the only* one**, so "its message did not appear" is never evidence a hook did not fire. The third, and the one that cost the most, is in §2: **a timer started inside the command cannot observe the hook that precedes it.**
+Method lessons kept with the investigation, not repeated here in full, but two travel: **a fed payload proves the SCRIPT runs, never that the HOOK fires**; and **a block message names *a* sufficient blocker, never *the only* one**, so "its message did not appear" is never evidence a hook did not fire. The third, and the one that cost the most, is in §2: **a timer started inside the command cannot observe the hook that precedes it** — so observe a side effect that outlives it.
 
 ### Counts
 
@@ -147,10 +146,11 @@ Consistency **292 → 295** (`21c-3e` contributes two assertions — registratio
 1. **Re-copy `skills/sync-template/SKILL.md` into `~/.claude/skills/sync-template/`**, then **RESTART the session** before running `/sync-template`. A running session obeys the body it LOADED — the step-1 version marker now reads `v2.2.6` and will tell you if it did not.
 2. **Definition of done is a probe that runs:** `bash scripts/verify-user-level-drift.sh` reports 0 drift against the **released tag** `v2.2.6`. Never "remember to copy the file".
 3. **Nothing is removed in this release.** No hook, no template file, no agent. A `TEMPLATE_DELETED` entry on this sync is not from us.
-4. **Three shipped hooks DO change (§4), and the advisory is about work you already did:** `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` and `hooks/lib/git-cmd.sh`. Re-copy all four wherever you mirror them.
-   - **A green commit does not prove the tests ran; only an observed `run-gate.sh` output does.** Before v2.2.6 all three gates exited 0 in silence when the command could not be read out of the payload, intermittently, and a commit then completed in about a second against a multi-minute **Test**. Do not re-audit your history for a config difference — there is not one to find; the same file produced both outcomes.
-   - **Exposure is commit-time only.** The merge path is unaffected: `run-gate.sh` is invoked as a direct command, not through hook stdin, and its output is observed, with a `GATE PASS <sha>` line tied to the tree. Merged states that quoted a gate run are covered; individual commits between them are not.
-   - **After the upgrade, expect a NEW, rare `BLOCKED: … could not read` on a git command.** That is the fix working: it is retryable, re-run the command. It is deliberately narrow — a payload with no `command` key at all still passes, so it cannot block ordinary Bash calls.
+4. **Three shipped hooks DO change (§4), and there is NO advisory about work you already did:** `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` and `hooks/lib/git-cmd.sh`. Re-copy all four wherever you mirror them.
+   - **Do not re-audit your commit history.** An earlier advisory said your individual commits might have been silently ungated. It is **withdrawn**: it rested on a timer started inside the command, which cannot observe the PreToolUse hook that precedes it. The gate fired. §2 and §4 both say so.
+   - **§4 closes a state found by reading the code**, not a defect anyone hit: with the `command` key present and the read yielding nothing, a git gate used to exit 0 in silence. In a gate, an unreadable input is a block, never a pass.
+   - **After the upgrade, a NEW `BLOCKED: … could not read` on a git command is possible.** That is the fix working: it is retryable, re-run the command. It is deliberately narrow — a payload with no `command` key at all still passes, so it cannot block ordinary Bash calls. Nobody has reported seeing it; no frequency is claimed.
+   - **If you want to check that your own hooks fire, observe a persistent side effect** — a marker file asserted as the FIRST statement of your own command, or the gate artifact read in a LATER tool call. Never elapsed time measured from inside the command.
    - The rest of the release still touches only the sync skill, the toolkit's own gate wiring, the docs and two verification scripts.
 5. Verifying a `lastSynced` against this release's tag: `git rev-parse v2.2.6^{commit}`, never `git rev-parse v2.2.6`.
 

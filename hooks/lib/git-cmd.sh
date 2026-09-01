@@ -222,19 +222,21 @@ gc_read_stdin() {
 # registered for AND the command string could not be read out of the payload.
 #
 # THE 14th FAIL-OPEN (v2.2.6 round 2). All three gates carried a bare
-# `[ -n "$GC_CMD" ] || exit 0`: a fail-OPEN guard on a fail-CLOSED gate. A real
-# `git commit` through the Bash tool was traced arriving with an EMPTY GC_CMD,
-# intermittently, on a payload that PARSED — so the commit sailed through in
-# about a second against an 87 s **Test**. Same file, both outcomes; four
-# mechanism hypotheses were killed before the STATE itself was named, and this
-# fix is deliberately mechanism-agnostic because every sub-cause below warrants
-# the same refusal.
+# `[ -n "$GC_CMD" ] || exit 0`: a fail-OPEN guard on a fail-CLOSED gate. NO
+# DEFECT WAS EVER OBSERVED IN THE FIELD — the "intermittently empty GC_CMD"
+# once reported here is RETRACTED, along with the timing that appeared to show
+# it (a PreToolUse hook completes BEFORE the Bash tool runs the command, so a
+# timer inside the command cannot observe it; see
+# .superpowers/sdd/sync-feedback/empty-payload-failopen.md). What stands is the
+# STATE, found by reading this code: `command` key present, read yields nothing,
+# gate exits 0. In a gate, an unreadable input is a block, never a pass. The fix
+# is mechanism-agnostic because every sub-cause below warrants the same refusal.
 #
 # THE POLARITY IS NOT FLIPPED UNCONDITIONALLY, and that is the whole design. An
-# unconditional refusal on an empty GC_CMD would intermittently hard-block EVERY
-# Bash call in the session — a random block traded for a silent gap, strictly
-# worse. Of the three states, two are ALREADY fail-closed and only the third is
-# live:
+# unconditional refusal on an empty GC_CMD would block every legitimate Bash
+# payload that carries no command at all — a hard block traded for a silent gap,
+# strictly worse. Of the three states, two are ALREADY fail-closed and only the
+# third is live:
 #
 #   stdin empty or unreadable   -> gc_read_stdin exits 2 (json_valid treats
 #                                  empty stdin as INVALID, deliberately).
