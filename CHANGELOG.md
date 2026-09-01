@@ -53,7 +53,9 @@ NEGATIVE (ls payload)           rc=0  elapsed=0s
 
 55 s versus 0 s, with the hook naming the command it ran: the wiring is correct and the gate discriminates.
 
-**But the `git commit` that carried this change still completed in 0 s.** A settings file created mid-session is not registered for that session — **a running session obeys the configuration it LOADED**, exactly as the sync skill already says about its own body and about agent definitions. So the first commit after adopting this wiring is ungated, in this repo and in any consumer that adds a project settings file mid-session. **RESTART, then re-probe**: a `git commit` that finishes in ~0 s against a 58-117 s `**Test**` means the file has not been picked up, and that measurement — not reading the JSON — is the check.
+**What was NOT proven, stated rather than papered over: the `git commit` that carried this change still completed in 0 s.** It was authored in a worktree-isolated agent, and the shared checkout the session resolves settings against still carries only `settings.local.json` — the new file is on the worktree branch, not merged. That is the explanation the evidence favours; the alternative (a settings file created mid-session not being registered for that session) is ruled against by v2.1.2, whose hot-reload behaviour is why the report's first line reads *"Gates are live immediately (settings.json hot-reloads)"*. **No causal claim is made here beyond that**, because the two were not discriminated by measurement.
+
+**The owed check is one command after merge: restart in the shared checkout and time a `git commit`.** ~0 s means the file has not been picked up; 58-117 s means the gate is live. That measurement, not reading the JSON, is what closes this item — which is the whole point of §2.
 
 ### 3. Nine further queued consumer items
 
@@ -65,6 +67,10 @@ NEGATIVE (ls payload)           rc=0  elapsed=0s
 - **The skill named only the short field form.** python and java ship `**Test Command**` / `**Gate Command**` / `**Build Command**`; the skill's prose said `**Test**` everywhere, so a python consumer grepping their own `PROJECT_CONTEXT.md` gets nothing and reasonably concludes the gate is unconfigured. A false clean one layer up, **in prose rather than in a regex** — the hooks were always tolerant (`\*\*Test( Command)?\*\*:`). rust-tauri's absent `**Test**` is documented as deliberate (Gate-only fallback), not a defect.
 - **Annotated-tag deref.** `git rev-parse v2.2.5` is the **tag object** (`300020f`); the commit is `git rev-parse v2.2.5^{commit}` (`640ba5e`). Verifying a consumer's `lastSynced` against a tag without `^{commit}` reports a false mismatch.
 - **`verify-user-level-drift.sh`'s VERBATIM INSTALL arm is now a derived line.** Delete-the-guard on our own check: over the released set it never contributes information alone. `drift == 0` already implies verbatim install, because **byte-identical is strictly stronger than same-placeholder-count**; `drift != 0` leaves staleness and substitution both live and a placeholder count cannot distinguish them. Observed during the v2.2.5 release, pre-propagation: `VERBATIM INSTALL VIOLATED … live has 4 … reference has 12` — caused by **staleness, not substitution**, printed beside a correct `4 drift`. A wrong causal claim stacked on correct information, aimed at someone mid-migration, on every release before propagation: the disabled-within-a-week shape in a check we had just added. Softening the wording was rejected (it preserves the false alarm and makes it vaguer); so was coupling it to the adjacent drift line (adjacent output is not a condition the check evaluated). It survives where it carries information: **UNRELEASED files**, which `check_file` skips entirely, are still measured and still fold into the exit code.
+
+### Counts
+
+Consistency **292 → 295** (`21c-3e` contributes two assertions — registration + trackability — and `21c-3f` one). Hook fixtures unchanged; `hooks/` is untouched by this release. `test-hooks-parser-matrix.sh` was **not** required: neither `hooks/lib/git-cmd.sh` nor `hooks/lib/json.sh` was modified.
 
 ### Downstream migration
 
