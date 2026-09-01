@@ -55,7 +55,7 @@ NEGATIVE (ls payload)           rc=0  elapsed=0s
 
 **What was NOT proven, stated rather than papered over: the `git commit` that carried this change still completed in 0 s.** It was authored in a worktree-isolated agent, and the shared checkout the session resolves settings against still carries only `settings.local.json` — the new file is on the worktree branch, not merged. That is the explanation the evidence favours; the alternative (a settings file created mid-session not being registered for that session) is ruled against by v2.1.2, whose hot-reload behaviour is why the report's first line reads *"Gates are live immediately (settings.json hot-reloads)"*. **No causal claim is made here beyond that**, because the two were not discriminated by measurement.
 
-**The owed check is one command after merge: restart in the shared checkout and time a `git commit`.** ~0 s means the file has not been picked up; 58-117 s means the gate is live. That measurement, not reading the JSON, is what closes this item — which is the whole point of §2.
+**The owed check is one command after merge: restart in the shared checkout and time a `git commit`.** 58-117 s means the gate is live. ~0 s is where care is needed: **§4 establishes a THIRD reading of it** — the gate registered, invoked, and exiting 0 on a command it could not read. So ~0 s now means *one of* "the file has not been picked up" or "§4's state fired", and the two are only separated by whether the §4 refusal message appears. That measurement, not reading the JSON, is still what closes this item — it just no longer closes it alone.
 
 ### 3. Nine further queued consumer items
 
