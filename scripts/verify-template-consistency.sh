@@ -1580,6 +1580,60 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 26b. The WORKTREE_BASE default is ignored by every variant (v2.2.6).
+#
+#      `{{WORKTREE_BASE}}` used to default to empty, so only a consumer who
+#      passed --worktree-base under `.claude/` was exposed. Giving it a default
+#      makes the gap universal: every bootstrapped repo places agent worktrees
+#      there, `coder`/`tester`/`test-writer` all run `isolation: worktree`, and
+#      a full repo checkout then shows as untracked files that `git add -A`
+#      would stage. This repo cannot reproduce it — its own .gitignore
+#      blanket-ignores `/.claude/`, while the SHIPPED gitignore is deliberately
+#      selective (settings.json and agents/ stay tracked). So the defect is
+#      invisible in the one place it would be noticed, and is asserted here.
+#
+#      ONE authoritative value: setup-project.sh. The .ps1 default and all six
+#      gitignores are checked AGAINST it rather than against a second copy of
+#      the literal — three independent copies is how they drift apart. If the
+#      value cannot be determined the check REFUSES; an empty needle would make
+#      every arm below vacuously green.
+# ---------------------------------------------------------------------------
+echo
+wtb=$(grep -E '^WORKTREE_BASE="' setup-project.sh 2>/dev/null | head -1 | sed 's/^WORKTREE_BASE="//; s/".*$//')
+case "$wtb" in
+  ''|*'{{'*)
+    ko "WORKTREE_BASE default: cannot determine it from setup-project.sh (got '$wtb') — every arm below would pass vacuously"
+    ;;
+  *)
+    ok "WORKTREE_BASE default: setup-project.sh is authoritative at '$wtb'"
+
+    wtb_ps_want="[string]\$WorktreeBase = \"$wtb\""
+    if grep -qF -- "$wtb_ps_want" setup-project.ps1 2>/dev/null; then
+      ok "WORKTREE_BASE default: setup-project.ps1 agrees ($wtb_ps_want)"
+    else
+      ko "WORKTREE_BASE default: setup-project.ps1 does not carry '$wtb_ps_want' — the two bootstrappers place worktrees differently"
+    fi
+
+    # docs/templates.md states the default in prose. A stated default that
+    # drifts is worse than no statement, so it is checked from the same value.
+    if grep -qF -- "defaults to \`$wtb\`" docs/templates.md 2>/dev/null; then
+      ok "WORKTREE_BASE default: docs/templates.md states '$wtb'"
+    else
+      ko "WORKTREE_BASE default: docs/templates.md does not state 'defaults to \`$wtb\`'"
+    fi
+
+    for v in general dotnet dotnet-maui rust-tauri java python; do
+      # Exact line: a substring match is satisfied by the `.claude/` comment
+      # header already at the top of every one of these files.
+      if grep -qxF -- "$wtb/" "templates/$v/gitignore" 2>/dev/null; then
+        ok "templates/$v/gitignore: ignores $wtb/"
+      else
+        ko "templates/$v/gitignore: missing '$wtb/' — the default worktree base would show as untracked files"
+      fi
+    done
+    ;;
+esac
+
 # 27. The bootstrap fixtures (v2.2.1).
 #
 #     scripts/test-setup-project.sh runs setup-project.{sh,ps1} in BOTH modes

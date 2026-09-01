@@ -113,7 +113,7 @@ See `docs/architecture.md` → MCP Layering and `mcp-servers/HOWTO.md` → Proje
 | `{{JAVA_VERSION}}` | Java version (Java) | 21 |
 | `{{PYTHON_VERSION}}` | Python version (Python) | 3.12 |
 | `{{LOG_PATH}}` | Log file location | c:\Users\...\Logs\ |
-| `{{WORKTREE_BASE}}` | Git worktree base | g:/git/.worktrees |
+| `{{WORKTREE_BASE}}` | Git worktree base (defaults to `.claude/worktrees`, which every variant gitignore covers) | g:/git/.worktrees |
 | `{{TECH_STACK}}` | Technology stack description | .NET 10, MAUI, SQLite |
 | `{{MAUI_PROJECT}}` | MAUI project path (MAUI) | src/MyApp.MAUI |
 | `{{TEST_PROJECT}}` | Test project path | tests/MyApp.Tests |

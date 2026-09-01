@@ -6,3 +6,5 @@ CLAUDE.local.md
 /.mcp.json
 .claude/liveness.log
 .gate/
+# agent worktrees — the WORKTREE_BASE default in setup-project.sh/.ps1
+.claude/worktrees/

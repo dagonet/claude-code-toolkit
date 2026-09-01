@@ -44,7 +44,11 @@ param(
     [string]$DbPath,
     [string]$DbFilename,
     [string]$TechStack,
-    [string]$WorktreeBase,
+    # Default, not a constant: -WorktreeBase still wins. Both `if ($WorktreeBase)`
+    # sites below (the replacement map and the sync manifest) therefore fire for a
+    # default bootstrap. Kept in sync with setup-project.sh's WORKTREE_BASE and
+    # with templates/*/gitignore by verify-template-consistency.sh.
+    [string]$WorktreeBase = ".claude/worktrees",
     [string]$LogPath,
     [string]$MauiProject,
     [string]$TestProject,
