@@ -126,9 +126,29 @@ mkjson_mcp() { # <tool_name> <cwd> -- MCP payload carries no tool_input.command
     "$(jesc "$1")" "$(jesc "$2")"
 }
 
-mkjson_nocmd() { # <tool_name> <cwd> -- a payload whose command we cannot read
+mkjson_nocmd() { # <tool_name> <cwd> -- a payload with NO command key at all
   printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{},"cwd":"%s"}\n' \
     "$(jesc "$1")" "$(jesc "$2")"
+}
+
+# v2.2.6 round 2 -- THE 14th FAIL-OPEN. A payload that PARSES and carries a
+# `command` key whose read yields nothing. This is the state, not the cause: the
+# traced live case was a transient empty read on a real `git commit`, which
+# cannot be fabricated deterministically and does not need to be -- an empty
+# string, a non-scalar value and a transient interpreter failure are the same
+# cannot-determine and warrant the same refusal. Distinct from mkjson_nocmd
+# above, whose key is ABSENT and which must still be ALLOWED.
+mkjson_emptycmd() { # <tool_name> <cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"command":""},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")"
+}
+
+# The same state with the tool_name ALSO unread -- the neighbouring door. The
+# gates are registered on Bash|PowerShell, so an empty tool_name on a live
+# invocation is the identical cannot-determine one field over.
+mkjson_emptycmd_notool() { # <cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"","tool_input":{"command":""},"cwd":"%s"}\n' \
+    "$(jesc "$1")"
 }
 
 mkspawn() { # <subagent_type> <prompt>
@@ -381,6 +401,14 @@ check "spaced -C on feature, cwd on main" "$H" 0 "$(mkjson Bash "git -C \"$SPACE
 check "malformed JSON payload"           "$H" 2 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$MAINREPO")"
 
+# --- v2.2.6 round 2: THE 14th FAIL-OPEN. A parsed payload that HAS a command
+# key we could not read is a gate that cannot do its job, and must refuse. The
+# line above is the control that keeps the refusal NARROW: an ABSENT key still
+# allows, because making that refuse would hard-block every Bash call.
+check_msg "empty command key refuses" "$ROOT/$H" 2 "$(mkjson_emptycmd Bash "$MAINREPO")" "could not read"
+check "empty command + empty tool"       "$H" 2 "$(mkjson_emptycmd_notool "$MAINREPO")"
+check "other tool with a command key"    "$H" 0 "$(mkjson_emptycmd SomeOtherTool "$MAINREPO")"
+
 # kill switch
 mkdir -p "$MAINREPO/.claude" && : > "$MAINREPO/.claude/git-guard-off"
 check "kill switch disables the gate"    "$H" 0 "$(mkjson Bash 'git push origin main' "$MAINREPO")"
@@ -421,6 +449,14 @@ check "git -C <bad> commit from ok cwd"  "$H" 2 "$(mkjson Bash "git -C $BADREPO 
 check "PowerShell commit, failing tests" "$H" 2 "$(mkjson PowerShell 'git commit -m "x"' "$BADREPO")"
 check "malformed JSON payload"           "$H" 2 '{not json'
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$BADREPO")"
+
+# --- v2.2.6 round 2: THE 14th FAIL-OPEN, the hook it was traced in. A parsed
+# payload carrying an unreadable command key exited 0 here, and the commit
+# completed in ~1s against an 87s **Test**. The line above is the control that
+# keeps the refusal narrow: an ABSENT key still allows.
+check_msg "empty command key refuses" "$ROOT/$H" 2 "$(mkjson_emptycmd Bash "$BADREPO")" "could not read"
+check "empty command + empty tool"       "$H" 2 "$(mkjson_emptycmd_notool "$BADREPO")"
+check "other tool with a command key"    "$H" 0 "$(mkjson_emptycmd SomeOtherTool "$BADREPO")"
 # review round 2: a spaced -C path must resolve to that repo, so the gate command
 # that runs is the TARGET's, not the payload cwd's.
 SPACEBAD=$(mkrepo 'commit bad repo' main)
@@ -690,6 +726,13 @@ rm -f "$GATEREPO/.claude/git-guard-off"
 check "Bash payload with no command"     "$H" 0 "$(mkjson_nocmd Bash "$GATEREPO")"
 check "malformed JSON payload"           "$H" 2 '{not json'
 check "unknown tool passes through"      "$H" 0 "$(mkjson_nocmd SomeOtherTool "$GATEREPO")"
+
+# --- v2.2.6 round 2: THE 14th FAIL-OPEN, third instance. The refusal is checked
+# BEFORE this hook's tool case, because that case's `*)` arm is the door an
+# unreadable tool_name walks through — hence the empty-tool arm below.
+check_msg "empty command key refuses" "$ROOT/$H" 2 "$(mkjson_emptycmd Bash "$GATEREPO")" "could not read"
+check "empty command + empty tool"       "$H" 2 "$(mkjson_emptycmd_notool "$GATEREPO")"
+check "other tool with a command key"    "$H" 0 "$(mkjson_emptycmd SomeOtherTool "$GATEREPO")"
 
 # --- review round 1: a whole-repo push is a merge-by-push even from a feature
 GATEFEAT2=$(mkrepo gatefeat2 feature/z)

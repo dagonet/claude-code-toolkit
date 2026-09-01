@@ -1,5 +1,14 @@
-# Claude Code local state (root only, not templates/*/.claude/)
-/.claude/
+# Claude Code local state (root only, not templates/*/.claude/).
+#
+# `/.claude/*` and NOT `/.claude/` — git never descends into an excluded
+# DIRECTORY, so a re-include below it is unreachable. v2.2.6 tracks exactly one
+# file under it: `.claude/settings.json`, which is what REGISTERS this repo's own
+# three git gates. Before v2.2.6 there was no project settings file at all, the
+# gates were wired nowhere, and `git commit` completed in 0s against a 58-117s
+# **Test** command — the toolkit shipped the config the gates READ
+# (PROJECT_CONTEXT.md) without the wiring that makes them RUN.
+/.claude/*
+!/.claude/settings.json
 
 # Gate artifact written by hooks/run-gate.sh. Must be ignored: as of v2.1.5 the
 # artifact is keyed on a temp-index `add -A` of the working tree, so an untracked

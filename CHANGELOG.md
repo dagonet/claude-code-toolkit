@@ -1,5 +1,159 @@
 # Changelog
 
+## v2.2.6 — 2026-09-01
+
+**A patch release with no subtractions.** Its purpose is to clear the verification tooling that the next two releases depend on: `/sync-template`'s step 6b is the only check a consumer runs to confirm their hooks are wired, and a subtraction release cannot be verified by a collector known to under-count hook references. Thirteen items, eleven of them found by consumers, none by the suite — the thirteenth (§4) found in this repo, by reading a guard that every assertion said was fine.
+
+### 1. Step 6b's hook-reference extractor recovered ZERO — a fail-open inside the step that exists to catch fail-open
+
+The step said to collect `hooks/<name>.sh` references **on a `command:` line**, justified as keeping the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS pattern out of the set. But the hook path sits **after an escaped quote** inside the command value, so the obvious implementation truncates at the escape:
+
+```
+grep -o '"command": "[^"]*'            ->  "command": "bash \        <- truncates AT the escape
+grep -o 'hooks/[A-Za-z0-9_.-]*\.sh'    ->  12
+```
+
+A consumer collected **5 of 12** and printed `Hooks verified: 5 referenced, 5 present`. Seven hooks unchecked; nothing said so. Their five came **entirely from the step's two unanchored collectors** (3 from agent frontmatter, 2 from the lib grep) — the one anchored collector contributed nothing, so **the step already succeeded everywhere it did not anchor**.
+
+**Why it survived a release is the durable half:** a **zero** would have looked broken; a **partial** read as plausible. The anchor bought protection against a harmless false positive at the cost of a silent false clean.
+
+Fixed with the step's own over-collection principle, already blessed for libs: collect the PATH. The single false positive (`hooks/run-gate.sh`) is a real, tracked file and costs one existence check.
+
+**And the count is now cross-checked against an independent source** — `ls hooks/*.sh`, the filesystem, not the configuration text — with every unreferenced on-disk hook listed by name. A collector returning a partial result reads as success; two differently-sourced numbers do not agree by accident.
+
+New consistency check `21c-3f` runs the pattern **as written in `SKILL.md`** (not a copy of it) against a shipped `settings.json`, and compares the result against hook paths sourced independently from the 127-wrapper error messages — a different region of the same file that the truncating anchor also loses. Delete-the-guard verified: with the anchor restored the collector recovers 3 and misses 7 of 7.
+
+### 2. "The toolkit gates itself" was one-third true
+
+v2.2.5 shipped the file the gates **READ** (root `PROJECT_CONTEXT.md`) and not the wiring that makes them **RUN**. Measured two-sided immediately after release:
+
+```
+git push --dry-run origin main   ->  BLOCKED: pushing to a protected branch (main)     POSITIVE
+project .claude/settings.json    ->  absent (only settings.local.json)                 NEGATIVE
+```
+
+**The negative arm is a config read, and that is deliberate.** It was originally a timing reading — a `git commit` that "completed in 0 s against a 58-117 s **Test**" — and that reading is **retracted**: a PreToolUse hook completes *before* the Bash tool runs the command, so a timer started inside the command can never observe the hook. Nothing in this item rests on it any more. See the method lesson at the end of this section.
+
+There was no project `.claude/settings.json` at all (only `settings.local.json`), and user-level wires only `no-push-main.sh` — `run-gate.sh` appears there solely as a *permissions* pattern, the exact confusion a consumer flagged in their own settings. So `pre-commit-test.sh` and `gate-before-merge.sh` were registered **nowhere**, and the v2.2.5 merge was not gated by `gate-before-merge.sh` (its artifact existed only because the gate had been run by hand). Every v2.2.5 assertion was green throughout: **a census over CONFIG cannot see whether the config is REGISTERED.**
+
+This ships:
+
+- `.claude/settings.json` at the repo root, wiring all three git gates with the fail-closed 127 wrapper, matching what the templates ship.
+- A root `.gitignore` change from `/.claude/` to `/.claude/*` + `!/.claude/settings.json`. **Git never descends into an excluded DIRECTORY**, so a re-include below `/.claude/` is unreachable — with the old pattern the wiring would exist on the author's disk and ship to nobody.
+- Consistency check `21c-3e`: each of the three gates is registered, each carries the **fail-CLOSED** wrapper (a git gate registered with the exit-0 WARN wrapper waves through its own absence), and the settings file is trackable.
+
+**Three claims, three different instruments — and keeping them apart is the whole lesson of this item.** Registration is established by *reading* `.claude/settings.json`. Correct behaviour is established by *feeding* the registered command a payload. Whether the harness actually *fires* the hook needs a third instrument, and neither of the first two can stand in for it.
+
+The registered command string was probed two-sided, executed verbatim from `.claude/settings.json` with real PreToolUse payloads:
+
+```
+POSITIVE (git commit payload)   rc=0  elapsed=55s
+    PRE-COMMIT: Running 'bash scripts/verify-template-consistency.sh'...
+    PRE-COMMIT: 'bash scripts/verify-template-consistency.sh' passed. (54s)
+NEGATIVE (ls payload)           rc=0  elapsed=0s
+```
+
+55 s versus 0 s, with the hook naming the command it ran. **That proves the scripts parse the payload and discriminate correctly on a fed payload — it does not prove the hook fires**, because the payload is handed to the script directly and the harness is never in the loop.
+
+**The hook does fire. The gate runs on every commit, and always did — measured from OUTSIDE the command.** Two consecutive tool calls, each stamping the time:
+
+```
+commit:      21:18:26 -> 21:19:30  = 64s
+non-commit:  21:19:55 -> 21:20:02  =  7s   (turn latency)
+delta ~= 57s = exactly the Test suite's runtime, measured independently
+```
+
+Confirmed independently on two consumer machines: one asserted a marker file as the **first statement of its own command** and found it PRESENT — which proves the hook ran *and completed* ahead of the command — and one measured a ~151 s wall-clock split across tool calls.
+
+**That closes the check earlier drafts of this item left owed**, and it closes it by a different instrument than the one they named. They asked for a `git commit` to be *timed*; timing it from inside the command is exactly the invalid reading. What closes it is a clock read from outside the command, or a side effect that outlives the interval.
+
+**The method lesson is worth more than the release.** It is consumer-authored, it is the durable output of the whole affair, and it lives here — once, so there is one place for it to be right:
+
+- **An instrument that lives inside the thing it measures cannot observe the interval before it starts, so a null result from it is not a measurement.** The remedy is a side effect that outlives the interval: a marker file answered in one commit what two sessions of timing could not.
+- **The decisive probe shape** — assert the marker as the **FIRST** statement of your own command. PRESENT there proves the hook ran *and completed* ahead of it.
+- **Two agreeing measurements add no evidence when they share a method**, and the agreement is what creates the confidence. One consumer's process-sampling "corroborated" their timing; both instruments start after the hook's children have exited.
+- **The pre-flight question for any probe: *what would this show if the thing DID work?*** If the answer matches the failure reading, the probe measures nothing. That is checkable before running it, and without knowing the mechanism.
+- **Hold a probe to the same standard as shipped code** — both arms, and a control. The product had a suite, controls and four reviewers; the instrument had none, which is why it survived hours of scrutiny aimed at everything downstream of it.
+
+**Consequence for our own shipped wording:** the `2 0 0` probe reported as `Gates: live` feeds payloads directly, so it proves **"the scripts parse and behave correctly on a fed payload"** — never that the hook fires. It is relabelled accordingly in `skills/sync-template/SKILL.md`. The mis-labelling originated here and consumers inherited it.
+
+### 3. Nine further queued consumer items
+
+- **7b's control fixture trap** (three independent reports; one reporter "nearly reported your implementation as broken"). The arm needs an untagged commit and the step never said how to pick one, so `<release-sha>~1` gets used — which on a well-tagged repo is very often *the previous release*. `describe --tags` then correctly returns a bare tag and the arm reports FAIL, indistinguishably from the `--abbrev=0` regression it guards. Now: walk back until `describe --exact-match` fails, and **assert the fixture is untagged before concluding anything about the implementation.** Position is provenance; taggedness is the property.
+- **7b's stamping order.** Python dicts are insertion-ordered, so assigning into the loaded manifest **appends**: one consumer's two version labels landed 270 lines below the `lastSynced` they annotate, past the whole `files` map, where a reader checking the header sees a bare sha and concludes nothing was stamped — which is exactly what happened. 7b now rebuilds the mapping in documented order and asserts `list(manifest)[:6]`, because `template_compute_status`, `template_load_manifest` and a key check all read **by key** and are structurally blind to position. Unknown top-level keys are still preserved (measured with a planted canary).
+- **`lastSyncedVersionOf` was missing from `docs/template-sync.md`'s field table** — shipped in the skill, never documented, so the two sources disagreed about the file's shape. Added, with the authoritative top-level key order beside it so the docs and the skill cannot drift apart.
+- **Step 2b's named worst case was the one population NOT exposed.** It warned about *bootstrap*; both bootstrap paths (`setup-project.sh` and `.ps1`) generate a populated manifest, and neither runs this skill. A reader reasoned "bootstrap means a script I am not running, so this is not about me" — and was right. Rewritten around **adoption into an existing repository**: a minimal manifest over a tree already full of files, every one present-on-disk and absent-from-manifest, which does run `/sync-template` and is very likely where the 156-line gate was lost. Also states that an empty `new_template_files` is **structural** for a mature repo, not evidence the step ran.
+- **Piping the gate discards its exit code.** `bash hooks/run-gate.sh | tail -100` reports **tail's** rc. Step 9 now says to read the `GATE PASS` line or `.gate/last-pass.json`, and to set `pipefail` if the pipe is needed — the same hazard the placeholder sweep already warns about, one command over.
+- **The skill named only the short field form.** python and java ship `**Test Command**` / `**Gate Command**` / `**Build Command**`; the skill's prose said `**Test**` everywhere, so a python consumer grepping their own `PROJECT_CONTEXT.md` gets nothing and reasonably concludes the gate is unconfigured. A false clean one layer up, **in prose rather than in a regex** — the hooks were always tolerant (`\*\*Test( Command)?\*\*:`). rust-tauri's absent `**Test**` is documented as deliberate (Gate-only fallback), not a defect.
+- **Annotated-tag deref.** `git rev-parse v2.2.5` is the **tag object** (`300020f`); the commit is `git rev-parse v2.2.5^{commit}` (`640ba5e`). Verifying a consumer's `lastSynced` against a tag without `^{commit}` reports a false mismatch.
+- **`verify-user-level-drift.sh`'s VERBATIM INSTALL arm is now a derived line.** Delete-the-guard on our own check: over the released set it never contributes information alone. `drift == 0` already implies verbatim install, because **byte-identical is strictly stronger than same-placeholder-count**; `drift != 0` leaves staleness and substitution both live and a placeholder count cannot distinguish them. Observed during the v2.2.5 release, pre-propagation: `VERBATIM INSTALL VIOLATED … live has 4 … reference has 12` — caused by **staleness, not substitution**, printed beside a correct `4 drift`. A wrong causal claim stacked on correct information, aimed at someone mid-migration, on every release before propagation: the disabled-within-a-week shape in a check we had just added. Softening the wording was rejected (it preserves the false alarm and makes it vaguer); so was coupling it to the adjacent drift line (adjacent output is not a condition the check evaluated). It survives where it carries information: **UNRELEASED files**, which `check_file` skips entirely, are still measured and still fold into the exit code.
+
+### 4. FOURTEENTH fail-open: a `command` the gate cannot read would have made all three git gates exit 0
+
+**No defect was observed in the field, and none is claimed here.** §2 settles that: the hook fires and the gate ran on every commit. What this item closes is a **reachable state in the code**, found by reading it — not a symptom anyone measured.
+
+`[ -n "$GC_CMD" ] || exit 0` stood in `pre-commit-test.sh`, `no-push-main.sh` and `gate-before-merge.sh` — **a fail-OPEN guard on a fail-CLOSED gate**, shipped since v2.0. `pre-commit-test.sh`'s own header warned about the state at `:35` and contemplated only a *missing JSON parser*; nobody considered the payload arriving with the parser present, the JSON valid, the `command` key **present**, and the read yielding nothing. In that state a security gate exits 0 in silence — which is the wrong polarity whatever produces it, and *in a gate, an unreadable input is a block, never a pass*.
+
+**Everything once offered as a live sighting of this state is withdrawn.** An instrumented trace of `git commit` calls, and the *"the **Test** takes ~87 s, so a 1-second commit is unambiguous non-execution"* corroboration beside it, both rest on the in-command timer §2 retracts — and the instrumentation was itself applied inside the tool call whose hook had already run, so its nulls measured the sequencing rather than the hook. There was no intermittency. Do not go looking for one. The full account, including four mechanism hypotheses that died before the instrument was understood, is preserved in `.superpowers/sdd/sync-feedback/empty-payload-failopen.md` under its retraction banner so none of them is re-tried.
+
+**The fix stands on its own merits and stays.** It is narrow, two-sided-controlled, and closes a state that exists in the code; it is not a fix for the phantom.
+
+**The obvious fix is unsafe, and refusing it is the design.** `exit 0` → `exit 2` unconditionally would refuse every payload that legitimately carries no command — **a hard block on ordinary Bash calls**, traded for a silent gap. The delete-the-guard table below measures exactly that: with the narrowing removed, 3 of 3 `Bash payload with no command` arms flip to a refusal. So the states were separated first, and two of the three turned out to be **already** fail-closed:
+
+| state | verdict | where |
+|---|---|---|
+| stdin empty or unreadable entirely | already refuses (exit 2) | `json_valid` treats empty stdin as INVALID, deliberately; `gc_read_stdin` exits on it |
+| no JSON parser on PATH | already refuses (exit 2) | `gc_read_stdin`, since v2.2.0 |
+| payload parsed, `GC_CMD` empty | **the live one** | the guard above |
+
+And the live one splits three further ways, which is what the fix keys on — `gc_cmd_unreadable` in `hooks/lib/git-cmd.sh`:
+
+- **tool is not `Bash`/`PowerShell`** → `GC_CMD` is empty *by design*. Allow.
+- **no `command` key in the payload at all** → a legitimate Bash call carrying no command. **Allow** — and this is narrower than "missing or empty", deliberately: refusing an absent key would hard-block a documented, fixture-covered case (`Bash payload with no command`, shipped in all three hook sections).
+- **a `command` key IS present and the read still yielded nothing** → the gate cannot do its job on a real invocation. **Refuse (exit 2).**
+
+The key probe is a `grep` over the RAW payload, not another `json.sh` call — the same reasoning `json_session` already uses: the state being detected is one where *the parser has already returned nothing*, so asking it again proves nothing. It is also backend-invariant, so it answers identically under node, python3 and jq.
+
+**An empty `tool_name` is included in the matched set**, and that is not incidental. The gates are registered on `Bash|PowerShell`, so an empty `tool_name` on a live invocation is the identical cannot-determine one field over — the read that came back empty happened to be `tool_name` instead of `tool_input.command`. `gate-before-merge.sh`'s `*)` arm is exactly the door it would otherwise walk through, so the refusal is checked BEFORE that hook's tool case, and the comment block that documented the arm as deliberate fail-open was rewritten rather than left contradicting the code.
+
+**The fix is mechanism-agnostic, and says so.** The fixture drives the STATE (key present, read yielded nothing), not the cause. The traced live cause — a transient empty read on a real commit — cannot be fabricated deterministically and does not need to be: an empty string, a non-scalar value and a transient interpreter failure are one cannot-determine and warrant one refusal.
+
+**Delete-the-guard, both halves — one deletion would have under-tested this:**
+
+| mutation | expected to flip | observed |
+|---|---|---|
+| delete the `gc_cmd_unreadable` block from all three hooks | the empty-command arms | 6 of 6 flip 2 → 0 — red |
+| delete only the `"command"`-key grep (refusal becomes unconditional on an empty `GC_CMD`) | the `Bash payload with no command` arms | 3 of 3 flip 0 → 2 — red |
+
+The second is the one that matters: without it the narrowing would be decoration, and the "fix" would be the unconditional inversion this item exists to reject.
+
+**No retroactive exposure is claimed.** Earlier drafts of this item told consumers their individual commits might be ungated. That advisory is **withdrawn** — it followed from the intermittency above, and §2 establishes that the gate ran. There is nothing to re-audit.
+
+What survives is an epistemic point about evidence, not a gap in history:
+
+> **A green commit does not prove the tests ran. Only an observed `run-gate.sh` output does.**
+
+The merge path was never in question either way: `run-gate.sh` is invoked as a **direct command**, not through hook stdin, and its output is observed — test counts plus a `GATE PASS <sha>` line tied to the tree.
+
+Method lessons kept with the investigation, not repeated here in full, but two travel: **a fed payload proves the SCRIPT runs, never that the HOOK fires**; and **a block message names *a* sufficient blocker, never *the only* one**, so "its message did not appear" is never evidence a hook did not fire. The third, and the one that cost the most, is in §2: **a timer started inside the command cannot observe the hook that precedes it** — so observe a side effect that outlives it.
+
+### Counts
+
+Consistency **292 → 295** (`21c-3e` contributes two assertions — registration + trackability — and `21c-3f` one). Hook fixtures **376 → 385 passed / 0 failed / 0 skipped** (§4 adds three arms in each of the three gate sections: the refusal with its message, the empty-`tool_name` door, and the other-tool control that keeps the refusal scoped). `test-hooks-parser-matrix.sh` was **not** run. `hooks/lib/json.sh` is untouched and `gc_read_stdin` — the shared reader — is byte-identical; §4 adds a NEW function to `hooks/lib/git-cmd.sh` whose only engine is `grep`, so it is backend-invariant by construction and cannot answer differently under node, python3 or jq. Stated rather than assumed: that is an argument, not a measurement, and the matrix remains the measurement.
+
+### Downstream migration
+
+1. **Re-copy `skills/sync-template/SKILL.md` into `~/.claude/skills/sync-template/`**, then **RESTART the session** before running `/sync-template`. A running session obeys the body it LOADED — the step-1 version marker now reads `v2.2.6` and will tell you if it did not.
+2. **Definition of done is a probe that runs:** `bash scripts/verify-user-level-drift.sh` reports 0 drift against the **released tag** `v2.2.6`. Never "remember to copy the file".
+3. **Nothing is removed in this release.** No hook, no template file, no agent. A `TEMPLATE_DELETED` entry on this sync is not from us.
+4. **Three shipped hooks DO change (§4), and there is NO advisory about work you already did:** `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` and `hooks/lib/git-cmd.sh`. Re-copy all four wherever you mirror them.
+   - **Do not re-audit your commit history.** An earlier advisory said your individual commits might have been silently ungated. It is **withdrawn**: it rested on a timer started inside the command, which cannot observe the PreToolUse hook that precedes it. The gate fired. §2 and §4 both say so.
+   - **§4 closes a state found by reading the code**, not a defect anyone hit: with the `command` key present and the read yielding nothing, a git gate used to exit 0 in silence. In a gate, an unreadable input is a block, never a pass.
+   - **After the upgrade, a NEW `BLOCKED: … could not read` on a git command is possible.** That is the fix working: it is retryable, re-run the command. It is deliberately narrow — a payload with no `command` key at all still passes, so it cannot block ordinary Bash calls. Nobody has reported seeing it; no frequency is claimed.
+   - **If you want to check that your own hooks fire, observe a persistent side effect** — a marker file asserted as the FIRST statement of your own command, or the gate artifact read in a LATER tool call. Never elapsed time measured from inside the command.
+   - The rest of the release still touches only the sync skill, the toolkit's own gate wiring, the docs and two verification scripts.
+5. Verifying a `lastSynced` against this release's tag: `git rev-parse v2.2.6^{commit}`, never `git rev-parse v2.2.6`.
+
 ## v2.2.5 — 2026-08-31
 
 **A synced repo could not name its own toolkit version, and the toolkit did not gate itself.** Two independent self-description gaps, both found by asking a repo a question it had no way to answer.
@@ -48,6 +202,8 @@ Sync server:  unknown (server reports no version — client never guesses it)
 **Not shipped here:** `template_finalize_sync` writing both fields itself, and any `template_*` response reporting the server version. Both live in the upstream `template-sync-tools` (`mcp-dev-servers`) repository; file them there. When they land, the client-side stamp becomes a no-op by construction — it only fills an absent key.
 
 ### 2. The toolkit did not gate itself
+
+> **CORRECTION (v2.2.6).** This section overstated what shipped. v2.2.5 added the file the gates **READ** and not the wiring that makes them **RUN**: v2.2.5 shipped no project `.claude/settings.json` at all (only `settings.local.json`), so `pre-commit-test.sh` and `gate-before-merge.sh` were registered nowhere for this repo. Only `no-push-main.sh` was live, via user-level settings. **That is established by reading the config, not by timing anything** — this correction originally cited a `git commit` that "still completed in 0 s", and that figure is withdrawn: a timer inside the command cannot observe the PreToolUse hook that precedes it, so it was an invalid instrument. The conclusion is unchanged. Read the claim below as "the config the gates read now exists"; v2.2.6 §2 supplies the registration.
 
 There was no root `PROJECT_CONTEXT.md`, so `run-gate.sh` printed `GATE SKIP` and `pre-commit-test.sh` and `gate-before-merge.sh` both no-opped **in the repository that defines them**. Consequences, observed: every toolkit PR merged through the artifact path as a no-op, and two of the three git gates could not discriminate in their own repo — which cost fixture coverage twice, since both the malformed-payload rows and item K's four-way matrix had to be verified against scratch repos built by hand.
 

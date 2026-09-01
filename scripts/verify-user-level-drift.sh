@@ -36,7 +36,8 @@
 # **the user-level install is VERBATIM**: there is no substitution step at user
 # level, unlike the project bootstrap. The files match precisely BECAUSE nobody
 # processes them. That is the narrow property, and the VERBATIM INSTALL section
-# below asserts it instead of assuming it.
+# below STATES it — derived from the drift result for released files (v2.2.6),
+# and genuinely measured for unreleased ones, which no other line here can see.
 #
 # EXTENDING THIS SCRIPT TO ANY PROCESSED TREE (the project bootstrap path)
 # REQUIRES THE MANIFEST'S PROCESSED HASH INSTEAD — a blob comparison there
@@ -187,20 +188,49 @@ fi
 # appearing at user level drops the live count and this reports PROCESSED,
 # naming the manifest's processed hash as the required baseline.
 #
-# WHAT THIS ADDS OVER THE DRIFT LINES, STATED HONESTLY. For a file that IS
-# compared, a processed live copy also differs byte-wise, so DRIFT fires too —
-# there this assertion contributes the CAUSE, not the red. Its independent red
-# is the UNRELEASED file: check_file skips those entirely, so a processed live
-# copy of a reference file not yet in the tag is invisible to every other line in
-# this script. It is scanned from the WORKING TREE for exactly that reason.
+# SCOPE NARROWED IN v2.2.6 — IT NOW SCANS ONLY THE UNRELEASED FILES, AND THE
+# RELEASED LINE IS DERIVED FROM THE DRIFT RESULT. The argument is the reporter's
+# own delete-the-guard on their own proposal: over the RELEASED set the arm never
+# contributes information alone, because there are only two states and it is
+# redundant in one and unevaluable in the other.
 #
-# SOMETHING ELSE DEPENDS ON THIS ONE — DO NOT DROP IT AS OVERLAPPING (round 7).
-# verify-template-consistency.sh's 21c-3c censuses shipped *.json for executable
-# -position placeholders REPO-SIDE ONLY, and never touches the live ~/.claude
-# tree. That census is SUFFICIENT for user level solely because of the property
-# asserted here: reference clean + verbatim install => live copy clean. The two
-# look like independent checks and are one argument with two halves. If this
-# assertion goes red, 21c-3c stops implying anything about installed copies.
+#   drift == 0  -> the live copy is BYTE-IDENTICAL to the reference, which is
+#                  STRICTLY STRONGER than same-placeholder-count. The arm can
+#                  only restate what the drift line already said.
+#   drift != 0  -> staleness and substitution are both live hypotheses and a
+#                  placeholder count CANNOT distinguish them. Observed live
+#                  during the v2.2.5 release, pre-propagation: "VERBATIM INSTALL
+#                  VIOLATED ... live has 4, reference@v2.2.5 has 12" — caused by
+#                  STALENESS, not substitution, printed beside a correct "4
+#                  drift". A wrong causal claim stacked on top of correct
+#                  information, aimed at someone mid-migration. It would print
+#                  that on EVERY release before propagation: the
+#                  disabled-within-a-week shape, in a check we had just added.
+#
+# Softening the wording was rejected — that preserves the false alarm and makes
+# it vaguer. Coupling it to the adjacent drift line was rejected too: adjacent
+# output is not a condition the check evaluated, and relying on a human to read
+# two lines together defends against an attentive reader and nothing else.
+#
+# WHAT SURVIVES, AND WHY IT IS NOT DELETED: the UNRELEASED file. check_file skips
+# those entirely, so a processed live copy of a reference file not yet in the tag
+# is invisible to every other line in this script. That arm still measures, still
+# folds into the exit code, and is still scanned from the WORKING TREE — because
+# no released baseline exists for it, which is exactly the case that makes it
+# informative. The released line is now documentation with a computed value in
+# it: it STATES THE PREMISE the drift result establishes, so nobody re-derives
+# why blob-versus-tag is legitimate. Worth having; it is not a check.
+#
+# SOMETHING ELSE DEPENDS ON THIS PROPERTY — DO NOT DROP THE LINE AS OVERLAPPING
+# (round 7, still true after the v2.2.6 narrowing). verify-template-consistency
+# .sh's 21c-3c censuses shipped *.json for executable-position placeholders
+# REPO-SIDE ONLY, and never touches the live ~/.claude tree. That census is
+# SUFFICIENT for user level solely because of the property named here: reference
+# clean + verbatim install => live copy clean. The two look like independent
+# checks and are one argument with two halves. What changed in v2.2.6 is only
+# WHERE the premise comes from — `drift == 0` now establishes it for released
+# files, more strongly than a placeholder count ever did. So the line must keep
+# STATING it; it just stops pretending to test it.
 #
 # ITS CONTROL RUNS IN BAND, on a planted pair, because a counter that always
 # returns 0 would also report "verbatim" forever. Nothing is written under
@@ -230,6 +260,7 @@ fi
 processed=0
 processed_list=""
 scanned=0
+scanned_rel=0
 for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks user-level-reference/skills user-level-reference/agents -type f 2>/dev/null); do
   [ -f "$f" ] || continue
   rel="${f#user-level-reference/}"
@@ -244,26 +275,42 @@ for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks user-l
   # The working tree is used only when the file is absent from the reference,
   # which is the UNRELEASED case this check exists to reach.
   srcf=$(ref_copy "$f")
-  [ -n "$srcf" ] || srcf="$f"
-  n_ref=$(ph_count "$srcf")
+  if [ -n "$srcf" ]; then
+    # RELEASED file: check_file already compared it BYTE-WISE against the same
+    # reference. Counting placeholders here adds nothing and can only be wrong
+    # (v2.2.6) — see the header note. Count it for the derived line and move on.
+    n_ref=$(ph_count "$srcf")
+    [ "$n_ref" -gt 0 ] && scanned_rel=$((scanned_rel + 1))
+    continue
+  fi
+  # UNRELEASED file: check_file SKIPPED it, so nothing else in this script can
+  # see a processed live copy of it. This is the arm that carries information.
+  n_ref=$(ph_count "$f")
   [ "$n_ref" -gt 0 ] || continue
   scanned=$((scanned + 1))
   n_live=$(ph_count "$live")
   if [ "$n_ref" -ne "$n_live" ]; then
     processed=$((processed + 1))
     processed_list="$processed_list
-  PROCESSED: $live has $n_live placeholder(s), $f@${REF:-worktree} has $n_ref"
+  PROCESSED: $live has $n_live placeholder(s), $f@worktree has $n_ref"
   fi
 done
 
 if [ "$verbatim_ok" -eq 1 ]; then
-  if [ "$processed" -eq 0 ]; then
-    echo "VERBATIM INSTALL: confirmed over $scanned placeholder-bearing file(s) — blob-versus-tag is a valid baseline."
+  if [ "$drift" -eq 0 ]; then
+    echo "VERBATIM INSTALL: implied by $in_sync/$checked in sync — byte-identical is strictly stronger than same-placeholder-count ($scanned_rel released placeholder-bearing file(s))."
   else
-    echo "VERBATIM INSTALL VIOLATED — something SUBSTITUTES placeholders at user level."
-    echo "  Blob-versus-tag is no longer a legitimate baseline for these files: compare the"
-    echo "  manifest's PROCESSED hash instead, or every one of them reports drift forever."
-    printf '%s\n' "$processed_list"
+    echo "VERBATIM INSTALL: not evaluated — $drift file(s) drifted. Staleness and substitution are both live hypotheses and a placeholder count cannot distinguish them; re-check after propagation."
+  fi
+  if [ "$scanned" -gt 0 ]; then
+    if [ "$processed" -eq 0 ]; then
+      echo "  UNRELEASED arm: $scanned placeholder-bearing file(s) compared directly (no released baseline exists for them) — clean."
+    else
+      echo "  UNRELEASED arm: something SUBSTITUTES placeholders at user level."
+      echo "  Blob-versus-tag will not be a legitimate baseline for these files once released:"
+      echo "  compare the manifest's PROCESSED hash instead, or they report drift forever."
+      printf '%s\n' "$processed_list"
+    fi
   fi
 fi
 
