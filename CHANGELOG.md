@@ -29,8 +29,8 @@ Two guards, each verified by deleting it:
 | guard | mutation | flips |
 |---|---|---|
 | consistency `21c-2f`: the export **precedes** `bash -c "$GATE_CMD"` | move the `export` below the gate line | 1 assertion, red with the line numbers named |
-| fixture `R5h` arm 1 (touch + 78 ⇒ terminal, remedy last, retry advice suppressed) | drop `[ ! -f "$RUN_GATE_TERMINAL" ]` from the clamp | 3 of R5h (and 6 of R5b/R5e) |
-| fixture `R5h` arm 2 (78 **without** the touch ⇒ clamped to 1, retry advice present) | delete the clamp `if` entirely | 2 of R5h (and 4 of R5c) |
+| fixture `R5h` arm 1 (touch + 78 ⇒ terminal, remedy last, retry advice suppressed) | drop `[ ! -f "$RUN_GATE_TERMINAL" ]` from the clamp | 3 of R5h (11 suite-wide: 5 R5b, 3 R5e) |
+| fixture `R5h` arm 2 (78 **without** the touch ⇒ clamped to 1, retry advice present) | delete the clamp `if` entirely | 2 of R5h (6 suite-wide: 4 R5c) |
 
 `21c-2f` is positional, and positional is what the property *is*: "exported before the gate runs" is an ordering. Same shape and same justification as `21c-2d`. It duplicates R5h deliberately — this file is the per-commit `**Test**`, `test-hooks.sh` is not. Same property, two cadences.
 
@@ -40,7 +40,7 @@ A heredoc body is data being written to a file, and it is the only quoting form 
 
 **`hooks/lib/git-cmd.sh` is deliberately untouched.** Its header states the opposite polarity on purpose: the three fail-CLOSED git gates scan the whole command string so `bash -c "git push origin main"` cannot evade them, and a false positive on `echo "git push origin main"` costs one retry. `enforce-delegation.sh` does not source it, and that is the design, not an oversight. **Quoted-literal stripping stays rejected** for the same reason: `bash -c "npm test"` and `echo "npm test"` are the same syntactic shape, and separating them needs a maintained wrapper allowlist (`bash -c`, `sh -lc`, `env`, `xargs`, `sudo`, `find -exec`, `npm run`, …) whose every gap is an evasion channel that is closed today.
 
-**Both accepted false positives are now asserted POSITIVELY**, so the "improvement" that would reopen the channel turns the suite red instead of passing quietly: `echo "git push origin main"` must still block (`no-push-main.sh`), and `echo "npm test"` must still be judged as written (`enforce-delegation.sh`). Verified by mutating `gc_segments` to strip double-quoted spans: 3 assertions flip, including the pre-existing `bash -c` wrapper pins.
+**Both accepted false positives are now asserted POSITIVELY**, so the "improvement" that would reopen the channel turns the suite red instead of passing quietly: `echo "git push origin main"` must still block (`no-push-main.sh`), and `echo "npm test"` must still be judged as written (`enforce-delegation.sh`). Verified by mutating `gc_segments` to strip double-quoted spans: **3 of the quoted-command arms flip, 12 suite-wide** — including the pre-existing `bash -c` wrapper pins. That blast radius *is* the argument for keeping the rejection.
 
 The strip's **narrowness** has its own control, because deleting the strip cannot test a boundary: made greedy (no terminator, run to end of string), the "runner AFTER the terminator" and "unterminated heredoc" arms flip. An unterminated heredoc is judged exactly as before — there is no end to trust.
 
