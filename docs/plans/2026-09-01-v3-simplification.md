@@ -64,6 +64,34 @@ agent files                                68
 
 **The whole benefit of the simplification programme lands here, and it lands across the fleet.**
 
+### ⛔ `hooks/local/` IS CANCELLED — the contract already exists and is already exported
+
+**The premise was never measured.** I claimed *"two repos maintain merge scripts reassembling `run-gate.sh`"*. Measured by the consumers themselves: **one repo, one file, one 13-line insertion, zero other edits.** The other has **no splice at all** — every `hooks/` file template-tracked and byte-identical to the tag. An extension point would be a **permanent surface for a single deviation.**
+
+**A `**Gate**` chain already works today** — `**Gate**: bash preflight.sh && <real gate>` — with one catch the consumer found before I could ship the mistake: inside `run-gate.sh` a spliced preflight exits as the **script's own** exit, upstream of the clamp, so its 78 survives. **Chained into `**Gate**`, the same 78 becomes the gate command's rc and the clamp destroys it** — item K's own defect, reintroduced by the migration meant to retire the splice.
+
+**The marker is exported, and that is the whole answer.** `run-gate.sh:170-171` exports `RUN_GATE_TERMINAL` into the gate command's environment, so a chained preflight can signal terminal legitimately:
+
+```sh
+# preflight.sh
+if ! <precondition>; then
+  echo "GATE ERROR: <what>" >&2
+  echo "run: <remedy>"      >&2
+  [ -n "${RUN_GATE_TERMINAL:-}" ] && : > "$RUN_GATE_TERMINAL"
+  exit 78
+fi
+```
+
+The clamp passes it through, and the terminal branch is **deliberately silent** so the guard's own remedy stays last on stderr — exactly what a consumer preflight wants.
+
+**So v2.3.0 ships ONE DOCUMENTED SENTENCE instead of a directory:** *if your `**Gate**` command hits a terminal condition, print your remedy, touch `$RUN_GATE_TERMINAL`, and exit `$GC_TERMINAL_RC`.* Zero new toolkit surface, nothing to sync, no manifest interaction — and it hands the terminal path to **every** consumer's Gate command rather than only to splice-holders. **Strictly more capability for strictly less code.**
+
+**Honest cost, flagged by the consumer rather than discovered later:** it promotes `RUN_GATE_TERMINAL` from an internal detail to a **public contract** that can no longer be renamed or repurposed freely. It is *already* exported, so consumers can depend on it today whether or not it is documented — which argues for documenting it deliberately rather than leaving it a discoverable accident.
+
+**Also rejected: siting any extension point inside `hooks/`.** That tree is template-owned and the manifest's model is *the template owns these paths*; a project-owned file there is re-proposed every sync as a keep-mine conflict, **training click-through in step 5, whose failure mode is losing a file with no history.** *A guard that cries wolf every sync is worse than no guard, because it teaches the reflex that defeats it.*
+
+<details><summary>Superseded original item</summary>
+
 1. **`hooks/local/` extension point.** Consumers splice `hooks/run-gate.sh` because we gave them nowhere else; **two repos maintain merge scripts whose only job is reassembling it every release.** `run-gate.sh` sources a local pre-gate when present.
    - **Undeclared dependency, must be resolved first:** the sync server's `hooks/` walk **offers gitignored artifacts** (a deferred upstream minor — *"filter via `git ls-files`"*). Until that lands, `/sync-template` surfaces `hooks/local/pre-gate.sh` as a sync candidate on every consumer sync — in the step whose failure mode is data loss. **Either land the upstream filter first, or site the extension point outside `hooks/` (e.g. `.claude/local/pre-gate.sh`).**
    - **Constrain the contract:** a local pre-gate may only **fail** the gate, never satisfy it, and its absence is silent. Otherwise `.gate/last-pass.json` attests to a different gate than CI ran.
@@ -113,7 +141,16 @@ Every item traces to a measured incident in this series.
 
 ## 6. Rejected — recorded so they are not re-imported
 
-- **Deleting a fail-closed hook in a single release.** Registrations are 127-wrapped (`exit 2`), so a deleted script hard-blocks a consumer's repo. If a fail-closed hook is ever deleted it goes through a **no-op stub release first**. **Not applicable to these three releases — none of them deletes a hook**, and shipping the stub apparatus anyway would be this plan's own KISS violation. Note also the wrapper is *not* uniform: `read-size-gate`, `enforce-delegation` and `agent-budget-warn` are registered fail-OPEN (`exit 0` + WARN).
+- **Deleting a fail-closed hook in a single release.** Registrations are 127-wrapped (`exit 2`), so a deleted script hard-blocks a consumer's repo. If a fail-closed hook is ever deleted it goes through a **no-op stub release first**. **Not applicable to these three releases — none of them deletes a hook**, and shipping the stub apparatus anyway would be this plan's own KISS violation. **Say POLARITY, not "wrapped" — a consumer checking the obvious way reaches the opposite conclusion.** Measured on the shipped `templates/general/.claude/settings.json`: **all nine PreToolUse registrations carry a 127 guard**, so grepping for `127` returns nine of nine and reads as "all fail-closed". **What differs is what the 127 branch DOES:**
+
+```
+pre-commit-test / no-push-main / gate-before-merge x2 / require-skills-block
+    127 branch -> exit 2    missing script BLOCKS      <- stub release REQUIRED before deletion
+read-size-gate / enforce-delegation x2 / agent-budget-warn
+    127 branch -> exit 0    missing script WARNS+ALLOWS <- deletable without a stub
+```
+
+A consumer measured "nine registrations, nine wrapped" and concluded the deletable set was empty — a reasonable reading of a claim I wrote as *"the wrapper is not uniform"*. **The rule must key on the 127 branch's exit code, not on the wrapper's presence**, or a future maintainer deleting one of the three fail-open hooks in a single release will be told by their own grep that they cannot.
 - **Quoted-literal stripping.** `bash -c "git push"` and `echo "git push"` are the same syntactic shape; separating them needs a maintained wrapper allowlist (`bash -c`, `sh -lc`, `env`, `xargs`, `sudo`, `find -exec`, `npm run`, …). Every wrapper not on the list becomes an evasion channel that is closed today. **Adds mechanism and a new fail-open class.**
 - **Dropping `gate-before-merge`'s `Bash|PowerShell` matcher** (recommended by the report). That arm catches `gh pr merge`, `git merge` on a protected branch, and merge-by-push — added in v2.0 precisely because *agents self-merge from their worktrees*. The hook already exits 0 unless a merge shape is found.
 - **Deleting `AGENT_TEAM.md`.** See §4.1. "Zero rule citations in 820 transcripts" is the wrong-shaped measurement for a document consumed by **context injection** — injected prose is never cited by number. The evidence supports *nothing depends on it*, not *it has no value*.
