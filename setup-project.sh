@@ -29,7 +29,12 @@ SOLUTION_FILE=""
 DB_PATH=""
 DB_FILENAME=""
 TECH_STACK=""
-WORKTREE_BASE=""
+# Default, not a constant: --worktree-base still wins. Agent worktrees have to
+# land SOMEWHERE, and an empty value left `{{WORKTREE_BASE}}` in the rendered
+# PROJECT_CONTEXT.md. The value is asserted against templates/*/gitignore by
+# verify-template-consistency.sh — a default the ignore rules do not cover puts
+# a full repo checkout in `git status`.
+WORKTREE_BASE=".claude/worktrees"
 LOG_PATH=""
 MAUI_PROJECT=""
 TEST_PROJECT=""
@@ -248,6 +253,11 @@ add_replacement '{{DEFAULT_BRANCH}}' "$DEFAULT_BRANCH"
 [[ -n "$REPO_URL" ]]      && add_replacement '{{REPO_URL}}' "$REPO_URL"
 [[ -n "$SOLUTION_FILE" ]]  && add_replacement '{{SOLUTION_FILE}}' "$SOLUTION_FILE"
 [[ -n "$TECH_STACK" ]]     && add_replacement '{{TECH_STACK}}' "$TECH_STACK"
+# The -n guard is now always true for a default bootstrap, and is KEPT for
+# parity with setup-project.ps1's `if ($WorktreeBase)`: on an explicit
+# `--worktree-base ""` both scripts must behave the same way (leave the
+# placeholder), or the two implementations diverge exactly as the dry-run and
+# real-run paths did in v2.2.0/v2.2.1.
 [[ -n "$WORKTREE_BASE" ]]  && add_replacement '{{WORKTREE_BASE}}' "$WORKTREE_BASE"
 [[ -n "$LOG_PATH" ]]       && add_replacement '{{LOG_PATH}}' "$LOG_PATH"
 [[ -n "$MAUI_PROJECT" ]]   && add_replacement '{{MAUI_PROJECT}}' "$MAUI_PROJECT"

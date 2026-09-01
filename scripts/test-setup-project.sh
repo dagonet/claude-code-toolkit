@@ -111,6 +111,43 @@ run_sh "$TMPROOT/develop-real" develop "$RERUN_OUT"
 expect "rerun reports that the file was not written" 1 \
   "$(grep -c 'was NOT written' "$RERUN_OUT")"
 
+# --- WORKTREE_BASE: a DEFAULT, not a constant (v2.2.6) ---------------------
+#
+# The field used to default to empty, which left `{{WORKTREE_BASE}}` in the
+# rendered PROJECT_CONTEXT.md of every bootstrap that did not pass the flag.
+# Two things have to hold and neither is implied by the other: a plain run
+# fills the field, and an explicit flag still overrides it.
+#
+# The expected value is read from setup-project.sh rather than restated here —
+# verify-template-consistency.sh check 26b is what pins that value across the
+# .ps1 and the six gitignores. This fixture asserts it REACHES the file.
+WTB_DEFAULT=$(grep -E '^WORKTREE_BASE="' "$ROOT/setup-project.sh" | head -1 | sed 's/^WORKTREE_BASE="//; s/".*$//')
+
+worktree_line() { # <project dir>
+  grep -E '^- \*\*Worktree base\*\*:' "$1/PROJECT_CONTEXT.md" 2>/dev/null | head -1
+}
+
+if [ -z "$WTB_DEFAULT" ]; then
+  # Refuse rather than compare against an empty string, which every line matches.
+  expect "WORKTREE_BASE default is readable from setup-project.sh" "non-empty" ""
+else
+  # Fresh dirs: a rerun over an existing PROJECT_CONTEXT.md is not written at
+  # all, and the assertion would read a stale file.
+  WTBDIR="$TMPROOT/wtb-default"
+  mkdir -p "$WTBDIR"
+  bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+    --target-path "$WTBDIR" > "$TMPROOT/wtb-default.out" 2>&1
+  expect "default bootstrap fills the worktree base" \
+    "- **Worktree base**: $WTB_DEFAULT" "$(worktree_line "$WTBDIR")"
+
+  WTBOVR="$TMPROOT/wtb-override"
+  mkdir -p "$WTBOVR"
+  bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+    --target-path "$WTBOVR" --worktree-base "custom/wt" > "$TMPROOT/wtb-override.out" 2>&1
+  expect "--worktree-base still overrides the default" \
+    "- **Worktree base**: custom/wt" "$(worktree_line "$WTBOVR")"
+fi
+
 # --- the PowerShell half, where it can run ---------------------------------
 #
 # The two scripts are independent implementations of the same contract, and the
@@ -127,8 +164,12 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
     -DefaultBranch develop > "$TMPROOT/ps-develop.out" 2>&1
   expect "ps1 writes the same protected line as sh" \
     "- **Protected branches**: develop" "$(protected_line "$PSDIR")"
+  # No -WorktreeBase passed: the .ps1 parameter default must reach the file
+  # through BOTH `if ($WorktreeBase)` sites, exactly as the .sh default does.
+  expect "ps1 writes the same worktree base as sh" \
+    "- **Worktree base**: $WTB_DEFAULT" "$(worktree_line "$PSDIR")"
 else
-  skip "setup-project.ps1 parity" "no PowerShell on this host" 1
+  skip "setup-project.ps1 parity" "no PowerShell on this host" 2
 fi
 
 echo "----------------------------------------------------------------"
