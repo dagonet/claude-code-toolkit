@@ -40,7 +40,20 @@ This ships:
 - A root `.gitignore` change from `/.claude/` to `/.claude/*` + `!/.claude/settings.json`. **Git never descends into an excluded DIRECTORY**, so a re-include below `/.claude/` is unreachable — with the old pattern the wiring would exist on the author's disk and ship to nobody.
 - Consistency check `21c-3e`: each of the three gates is registered, each carries the **fail-CLOSED** wrapper (a git gate registered with the exit-0 WARN wrapper waves through its own absence), and the settings file is trackable.
 
-**Verified behaviourally, not by reading config** — the proof is a commit that takes the Test command's time instead of 0 s.
+**Verified behaviourally, not by reading config** — and the verification itself carries a caveat worth keeping, because it is the same lesson one layer over.
+
+The registered command string was probed two-sided, executed verbatim from `.claude/settings.json` with real PreToolUse payloads:
+
+```
+POSITIVE (git commit payload)   rc=0  elapsed=55s
+    PRE-COMMIT: Running 'bash scripts/verify-template-consistency.sh'...
+    PRE-COMMIT: 'bash scripts/verify-template-consistency.sh' passed. (54s)
+NEGATIVE (ls payload)           rc=0  elapsed=0s
+```
+
+55 s versus 0 s, with the hook naming the command it ran: the wiring is correct and the gate discriminates.
+
+**But the `git commit` that carried this change still completed in 0 s.** A settings file created mid-session is not registered for that session — **a running session obeys the configuration it LOADED**, exactly as the sync skill already says about its own body and about agent definitions. So the first commit after adopting this wiring is ungated, in this repo and in any consumer that adds a project settings file mid-session. **RESTART, then re-probe**: a `git commit` that finishes in ~0 s against a 58-117 s `**Test**` means the file has not been picked up, and that measurement — not reading the JSON — is the check.
 
 ### 3. Nine further queued consumer items
 
