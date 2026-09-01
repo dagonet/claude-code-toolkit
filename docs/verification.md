@@ -101,6 +101,14 @@ Four details that are load-bearing:
   marker is clamped to 1 on purpose — 78 is `EX_CONFIG` and real programs emit it, so an
   unrelated 78 must not inherit the terminal remedy text. The marker is a claim of
   responsibility, not a number.
+- **Only the file's EXISTENCE is contractual; its CONTENT is ignored.** The clamp tests
+  `-f` and nothing else, so writing a reason into the marker instead of touching it still
+  works — and nothing will ever print what you wrote. Do not use it as a message channel:
+  the terminal branch is deliberately silent so *your* stderr lands last, and that same
+  silence would swallow anything you put in the file. Your remedy goes to stderr.
+  `run-gate.sh` creates the marker's directory with `mktemp -d` and removes it on an `EXIT`
+  trap, and it removes any stale marker before your gate command starts — so the path is
+  yours to write for the duration of the run, and there is nothing to clean up.
 - **Guard the variable with `${RUN_GATE_TERMINAL:-}`** so the same script still works when
   run by hand outside `run-gate.sh`.
 - **Print the remedy before exiting.** Nothing downstream will print one for you; that

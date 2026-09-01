@@ -1048,6 +1048,33 @@ expect "(R5h) no marker: 78 is CLAMPED to 1" "1" "$?"
 expect "(R5h) no marker: retry advice PRESENT" "1" \
   "$(grep -c 'Fix the failures and re-run' "$nopferr")"
 
+# Arm 3 -- THE MARKER IS ABSENT WHEN THE GATE COMMAND STARTS, and the variable
+# names a real path. `rm -f "$RUN_GATE_TERMINAL"` is as load-bearing as the
+# export and was covered by nothing: a marker SURVIVING into the gate makes
+# EVERY 78 pass the clamp, which is a fail-open on the clamp itself -- the thing
+# deciding whether a consumer's remedy survives at all. Harmless today only
+# because TMPD is a fresh `mktemp -d` per run; a reused or fixed TMPD is all it
+# would take.
+#
+# RUNTIME, not a static assertion beside 21c-2f, and the reason is the opposite
+# of 21c-2f's: "exported before the gate runs" IS an ordering, so a line-number
+# comparison is the property. "The file does not exist when the gate starts" is
+# a STATE. A grep for `rm -f` between the two lines would be a proxy for it --
+# it cannot see a TMPD that stopped being fresh. The gate command below observes
+# the state directly, from exactly where a consumer preflight stands.
+mkabsrepo=$(mkrepo gatemarkerabsent main)
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ -z "${RUN_GATE_TERMINAL:-}" ]; then echo VAR_UNSET > state.txt; exit 1; fi\n'
+  printf 'if [ -f "$RUN_GATE_TERMINAL" ]; then echo MARKER_PRESENT > state.txt; exit 1; fi\n'
+  printf 'echo VAR_SET_MARKER_ABSENT > state.txt\n'
+} > "$mkabsrepo/checkmarker.sh"
+printf '# ctx\n\n- **Gate**: `bash checkmarker.sh`\n' > "$mkabsrepo/PROJECT_CONTEXT.md"
+( cd "$mkabsrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+expect "(R5h) gate starts with the marker ABSENT" "0" "$?"
+expect "(R5h) ...and \$RUN_GATE_TERMINAL names a path" "VAR_SET_MARKER_ABSENT" \
+  "$(tr -d '\r\n' < "$mkabsrepo/state.txt" 2>/dev/null)"
+
 # --- R5f: the OTHER TWO 78-bearing paths into pre-commit-test.sh -------------
 # (v2.2.5 round 4.) R5c covers one of three. Both arms below reach the same
 # `eval "$TEST_CMD"` boundary, where nothing decided the number for us — so both

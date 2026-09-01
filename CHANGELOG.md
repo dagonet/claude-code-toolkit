@@ -20,6 +20,8 @@ if ! <precondition>; then
 fi
 ```
 
+**Only EXISTENCE is contractual; content is ignored.** The clamp tests `-f` and nothing else, so a consumer who writes a reason into the marker instead of touching it still works — and nothing will ever print what they wrote. Said out loud because the failure is quiet and plausible: the terminal branch's deliberate silence is what makes a consumer's remedy land last, and that same silence swallows anything put in the file. Remedies go to stderr; the marker is a flag.
+
 The touch is what earns the 78: a gate exiting 78 *without* it is still clamped to 1, because 78 is `EX_CONFIG` and an unrelated program's 78 must not inherit the terminal remedy. **The marker is a claim of responsibility, not a number** — and that was already true, which is why the terminal branch needed no change to accept a second producer. Its comment did: it claimed the branch was reachable "only" from a nested `run-gate.sh`, and that stopped being true here.
 
 **The cost, named rather than discovered.** This promotes `RUN_GATE_TERMINAL` from an internal detail to a **public contract**; it can no longer be renamed or repurposed freely. Accepted because **it is already exported into every gate command's environment** — consumers can depend on it today whether or not it is written down, and an undocumented dependency is not less of a dependency.
@@ -31,6 +33,9 @@ Two guards, each verified by deleting it:
 | consistency `21c-2f`: the export **precedes** `bash -c "$GATE_CMD"` | move the `export` below the gate line | 1 assertion, red with the line numbers named |
 | fixture `R5h` arm 1 (touch + 78 ⇒ terminal, remedy last, retry advice suppressed) | drop `[ ! -f "$RUN_GATE_TERMINAL" ]` from the clamp | 3 of R5h (11 suite-wide: 5 R5b, 3 R5e) |
 | fixture `R5h` arm 2 (78 **without** the touch ⇒ clamped to 1, retry advice present) | delete the clamp `if` entirely | 2 of R5h (6 suite-wide: 4 R5c) |
+| fixture `R5h` arm 3 (the marker is **absent** when the gate command starts, and the variable names a path) | replace `rm -f "$RUN_GATE_TERMINAL"` with `: > "$RUN_GATE_TERMINAL"` | 4 of R5h, 8 suite-wide |
+
+Arm 3 covers `rm -f "$RUN_GATE_TERMINAL"`, which was pinned by nothing and is as load-bearing as the export: **a marker surviving into the gate makes EVERY 78 pass the clamp** — a fail-open on the clamp itself. Harmless today only because `TMPD` is a fresh `mktemp -d` per run; a reused or fixed `TMPD` is all it would take. It is a **runtime** arm rather than a static one, for the opposite reason `21c-2f` is static: "exported before the gate runs" is an ordering, so a line-number comparison *is* the property, whereas "the file does not exist when the gate starts" is a **state** — a grep for `rm -f` between the two lines would be a proxy that cannot see a `TMPD` which stopped being fresh. The arm observes it from exactly where a consumer preflight stands. **The mutation also demonstrates the hazard rather than asserting it:** with a stale marker surviving, arm 2 flips too — an unrelated gate command's 78 stops being clamped and inherits the terminal remedy, which is the fail-open, measured.
 
 `21c-2f` is positional, and positional is what the property *is*: "exported before the gate runs" is an ordering. Same shape and same justification as `21c-2d`. It duplicates R5h deliberately — this file is the per-commit `**Test**`, `test-hooks.sh` is not. Same property, two cadences.
 
@@ -50,7 +55,7 @@ The strip's **narrowness** has its own control, because deleting the strip canno
 
 ### Verification
 
-`verify-template-consistency.sh` **295 → 296**. `test-hooks.sh` **385 → 398 passed / 0 failed / 0 skipped** (5 for R5h, 7 for the heredoc arms, 1 for the `echo`-of-a-push pin). `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
+`verify-template-consistency.sh` **295 → 296**. `test-hooks.sh` **385 → 400 passed / 0 failed / 0 skipped** (7 for R5h, 7 for the heredoc arms, 1 for the `echo`-of-a-push pin). `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
 
 **`test-hooks-parser-matrix.sh` was NOT run, and here is the argument for that rather than a silence.** §2 edits an embedded node program, which is the trigger the matrix exists for — but `hooks/lib/json.sh` is untouched, the enforce-delegation classifier is **node-only by construction** (`command -v node || exit 0`, with its own degraded-path fixture), so it has no python3 or jq behaviour to differ. Its assertions are already in the matrix's skip set; the skip count moves 20 → 27 in the restricted configurations. §1 adds no parser dependency at all. That is an argument, not a measurement, and the matrix remains the measurement.
 
