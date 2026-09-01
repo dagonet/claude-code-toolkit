@@ -2,7 +2,7 @@
 
 ## v2.2.6 — 2026-09-01
 
-**A patch release with no subtractions.** Its purpose is to clear the verification tooling that the next two releases depend on: `/sync-template`'s step 6b is the only check a consumer runs to confirm their hooks are wired, and a subtraction release cannot be verified by a collector known to under-count hook references. Twelve items, eleven of them found by consumers, none by the suite.
+**A patch release with no subtractions.** Its purpose is to clear the verification tooling that the next two releases depend on: `/sync-template`'s step 6b is the only check a consumer runs to confirm their hooks are wired, and a subtraction release cannot be verified by a collector known to under-count hook references. Thirteen items, eleven of them found by consumers, none by the suite — the thirteenth (§4) found in this repo, by instrumenting a hook that every assertion said was fine.
 
 ### 1. Step 6b's hook-reference extractor recovered ZERO — a fail-open inside the step that exists to catch fail-open
 
@@ -68,16 +68,70 @@ NEGATIVE (ls payload)           rc=0  elapsed=0s
 - **Annotated-tag deref.** `git rev-parse v2.2.5` is the **tag object** (`300020f`); the commit is `git rev-parse v2.2.5^{commit}` (`640ba5e`). Verifying a consumer's `lastSynced` against a tag without `^{commit}` reports a false mismatch.
 - **`verify-user-level-drift.sh`'s VERBATIM INSTALL arm is now a derived line.** Delete-the-guard on our own check: over the released set it never contributes information alone. `drift == 0` already implies verbatim install, because **byte-identical is strictly stronger than same-placeholder-count**; `drift != 0` leaves staleness and substitution both live and a placeholder count cannot distinguish them. Observed during the v2.2.5 release, pre-propagation: `VERBATIM INSTALL VIOLATED … live has 4 … reference has 12` — caused by **staleness, not substitution**, printed beside a correct `4 drift`. A wrong causal claim stacked on correct information, aimed at someone mid-migration, on every release before propagation: the disabled-within-a-week shape in a check we had just added. Softening the wording was rejected (it preserves the false alarm and makes it vaguer); so was coupling it to the adjacent drift line (adjacent output is not a condition the check evaluated). It survives where it carries information: **UNRELEASED files**, which `check_file` skips entirely, are still measured and still fold into the exit code.
 
+### 4. FOURTEENTH fail-open: an empty command payload made all three git gates exit 0
+
+`[ -n "$GC_CMD" ] || exit 0` stood in `pre-commit-test.sh`, `no-push-main.sh` and `gate-before-merge.sh` — **a fail-OPEN guard on a fail-CLOSED gate**, shipped since v2.0. `pre-commit-test.sh`'s own header warned about the state at `:35` and contemplated only a *missing JSON parser*; nobody considered the payload arriving with the parser present, the JSON valid, and the command **empty**.
+
+The hook **is** invoked. A trace instrumented above every early exit, over real `git commit` calls through the Bash tool, caught it both ways on the same file:
+
+```
+exit-near-51  exit-near-64  exit-near-91     invocation A: progressed past all three
+exit-near-51  exit-near-64                   invocation B: STOPPED at 64  <- empty GC_CMD
+```
+
+Corroboration independent of the trace: the **Test** command takes 87 s on this tree, so a 1-second commit is unambiguous non-execution — not a fast path, not caching. Four mechanism hypotheses died first and are recorded in `.superpowers/sdd/sync-feedback/empty-payload-failopen.md` so they are not re-tried, including *"a reorder would have fixed this"* — which would have closed the investigation on a false mechanism and left the fault live.
+
+**The obvious fix is unsafe, and refusing it is the design.** `exit 0` → `exit 2` unconditionally would, on an intermittently empty payload, **hard-block every Bash command in the session at random** — a silent gap traded for a worse failure. So the states were separated first, and two of the three turned out to be **already** fail-closed:
+
+| state | verdict | where |
+|---|---|---|
+| stdin empty or unreadable entirely | already refuses (exit 2) | `json_valid` treats empty stdin as INVALID, deliberately; `gc_read_stdin` exits on it |
+| no JSON parser on PATH | already refuses (exit 2) | `gc_read_stdin`, since v2.2.0 |
+| payload parsed, `GC_CMD` empty | **the live one** | the guard above |
+
+And the live one splits three further ways, which is what the fix keys on — `gc_cmd_unreadable` in `hooks/lib/git-cmd.sh`:
+
+- **tool is not `Bash`/`PowerShell`** → `GC_CMD` is empty *by design*. Allow.
+- **no `command` key in the payload at all** → a legitimate Bash call carrying no command. **Allow** — and this is narrower than "missing or empty", deliberately: refusing an absent key would hard-block a documented, fixture-covered case (`Bash payload with no command`, shipped in all three hook sections).
+- **a `command` key IS present and the read still yielded nothing** → the gate cannot do its job on a real invocation. **Refuse (exit 2).**
+
+The key probe is a `grep` over the RAW payload, not another `json.sh` call — the same reasoning `json_session` already uses: the state being detected is one where *the parser has already returned nothing*, so asking it again proves nothing. It is also backend-invariant, so it answers identically under node, python3 and jq.
+
+**An empty `tool_name` is included in the matched set**, and that is not incidental. The gates are registered on `Bash|PowerShell`, so an empty `tool_name` on a live invocation is the identical cannot-determine one field over — the read that came back empty happened to be `tool_name` instead of `tool_input.command`. `gate-before-merge.sh`'s `*)` arm is exactly the door it would otherwise walk through, so the refusal is checked BEFORE that hook's tool case, and the comment block that documented the arm as deliberate fail-open was rewritten rather than left contradicting the code.
+
+**The fix is mechanism-agnostic, and says so.** The fixture drives the STATE (key present, read yielded nothing), not the cause. The traced live cause — a transient empty read on a real commit — cannot be fabricated deterministically and does not need to be: an empty string, a non-scalar value and a transient interpreter failure are one cannot-determine and warrant one refusal.
+
+**Delete-the-guard, both halves — one deletion would have under-tested this:**
+
+| mutation | expected to flip | observed |
+|---|---|---|
+| delete the `gc_cmd_unreadable` block from all three hooks | the empty-command arms | 6 of 6 flip 2 → 0 — red |
+| delete only the `"command"`-key grep (refusal becomes unconditional on an empty `GC_CMD`) | the `Bash payload with no command` arms | 3 of 3 flip 0 → 2 — red |
+
+The second is the one that matters: without it the narrowing would be decoration, and the "fix" would be the unconditional inversion this item exists to reject.
+
+**Bounded exposure, and the consumer advisory** — true whatever the mechanism turns out to be. **Commit-time only.** The merge path is unaffected: `run-gate.sh` is invoked as a **direct command**, not through hook stdin, and its output is observed — test counts plus a `GATE PASS <sha>` line tied to the tree.
+
+> **A green commit does not prove the tests ran. Only an observed `run-gate.sh` output does.**
+
+So the guarantee is intact wherever a quoted `run-gate.sh` result exists and absent wherever the only evidence is "the commit succeeded". Merged states that quoted a gate run are covered; individual commits between them are not.
+
+Method lessons kept with the investigation, not repeated here in full, but two travel: **instrument the hook, not its effect** — an effect-based probe cannot separate *did not run* from *ran and took a quiet path*; and **a block message names *a* sufficient blocker, never *the only* one**, so "its message did not appear" is never evidence a hook did not fire.
+
 ### Counts
 
-Consistency **292 → 295** (`21c-3e` contributes two assertions — registration + trackability — and `21c-3f` one). Hook fixtures **376 passed / 0 failed / 0 skipped**, unchanged by this release: `hooks/` is untouched. `test-hooks-parser-matrix.sh` was **not** required — neither `hooks/lib/git-cmd.sh` nor `hooks/lib/json.sh` was modified.
+Consistency **292 → 295** (`21c-3e` contributes two assertions — registration + trackability — and `21c-3f` one). Hook fixtures **376 → 385 passed / 0 failed / 0 skipped** (§4 adds three arms in each of the three gate sections: the refusal with its message, the empty-`tool_name` door, and the other-tool control that keeps the refusal scoped). `test-hooks-parser-matrix.sh` was **not** run. `hooks/lib/json.sh` is untouched and `gc_read_stdin` — the shared reader — is byte-identical; §4 adds a NEW function to `hooks/lib/git-cmd.sh` whose only engine is `grep`, so it is backend-invariant by construction and cannot answer differently under node, python3 or jq. Stated rather than assumed: that is an argument, not a measurement, and the matrix remains the measurement.
 
 ### Downstream migration
 
 1. **Re-copy `skills/sync-template/SKILL.md` into `~/.claude/skills/sync-template/`**, then **RESTART the session** before running `/sync-template`. A running session obeys the body it LOADED — the step-1 version marker now reads `v2.2.6` and will tell you if it did not.
 2. **Definition of done is a probe that runs:** `bash scripts/verify-user-level-drift.sh` reports 0 drift against the **released tag** `v2.2.6`. Never "remember to copy the file".
 3. **Nothing is removed in this release.** No hook, no template file, no agent. A `TEMPLATE_DELETED` entry on this sync is not from us.
-4. Consumers see no behaviour change in shipped hooks — `hooks/` is untouched. The changes are to the sync skill, the toolkit's own gate wiring, the docs and two verification scripts.
+4. **Three shipped hooks DO change (§4), and the advisory is about work you already did:** `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` and `hooks/lib/git-cmd.sh`. Re-copy all four wherever you mirror them.
+   - **A green commit does not prove the tests ran; only an observed `run-gate.sh` output does.** Before v2.2.6 all three gates exited 0 in silence when the command could not be read out of the payload, intermittently, and a commit then completed in about a second against a multi-minute **Test**. Do not re-audit your history for a config difference — there is not one to find; the same file produced both outcomes.
+   - **Exposure is commit-time only.** The merge path is unaffected: `run-gate.sh` is invoked as a direct command, not through hook stdin, and its output is observed, with a `GATE PASS <sha>` line tied to the tree. Merged states that quoted a gate run are covered; individual commits between them are not.
+   - **After the upgrade, expect a NEW, rare `BLOCKED: … could not read` on a git command.** That is the fix working: it is retryable, re-run the command. It is deliberately narrow — a payload with no `command` key at all still passes, so it cannot block ordinary Bash calls.
+   - The rest of the release still touches only the sync skill, the toolkit's own gate wiring, the docs and two verification scripts.
 5. Verifying a `lastSynced` against this release's tag: `git rev-parse v2.2.6^{commit}`, never `git rev-parse v2.2.6`.
 
 ## v2.2.5 — 2026-08-31
