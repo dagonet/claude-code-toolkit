@@ -29,8 +29,10 @@ v2.2.5 shipped the file the gates **READ** (root `PROJECT_CONTEXT.md`) and not t
 
 ```
 git push --dry-run origin main   ->  BLOCKED: pushing to a protected branch (main)     POSITIVE
-git commit                       ->  completed in 0s, against a 58-117s **Test**       NEGATIVE
+project .claude/settings.json    ->  absent (only settings.local.json)                 NEGATIVE
 ```
+
+**The negative arm is a config read, and that is deliberate.** It was originally a timing reading — a `git commit` that "completed in 0 s against a 58-117 s **Test**" — and that reading is **retracted**: a PreToolUse hook completes *before* the Bash tool runs the command, so a timer started inside the command can never observe the hook. Nothing in this item rests on it any more. See the method lesson at the end of this section.
 
 There was no project `.claude/settings.json` at all (only `settings.local.json`), and user-level wires only `no-push-main.sh` — `run-gate.sh` appears there solely as a *permissions* pattern, the exact confusion a consumer flagged in their own settings. So `pre-commit-test.sh` and `gate-before-merge.sh` were registered **nowhere**, and the v2.2.5 merge was not gated by `gate-before-merge.sh` (its artifact existed only because the gate had been run by hand). Every v2.2.5 assertion was green throughout: **a census over CONFIG cannot see whether the config is REGISTERED.**
 
@@ -40,7 +42,7 @@ This ships:
 - A root `.gitignore` change from `/.claude/` to `/.claude/*` + `!/.claude/settings.json`. **Git never descends into an excluded DIRECTORY**, so a re-include below `/.claude/` is unreachable — with the old pattern the wiring would exist on the author's disk and ship to nobody.
 - Consistency check `21c-3e`: each of the three gates is registered, each carries the **fail-CLOSED** wrapper (a git gate registered with the exit-0 WARN wrapper waves through its own absence), and the settings file is trackable.
 
-**Verified behaviourally, not by reading config** — and the verification itself carries a caveat worth keeping, because it is the same lesson one layer over.
+**Three claims, three different instruments — and keeping them apart is the whole lesson of this item.** Registration is established by *reading* `.claude/settings.json`. Correct behaviour is established by *feeding* the registered command a payload. Whether the harness actually *fires* the hook needs a third instrument, and neither of the first two can stand in for it.
 
 The registered command string was probed two-sided, executed verbatim from `.claude/settings.json` with real PreToolUse payloads:
 
@@ -51,11 +53,29 @@ POSITIVE (git commit payload)   rc=0  elapsed=55s
 NEGATIVE (ls payload)           rc=0  elapsed=0s
 ```
 
-55 s versus 0 s, with the hook naming the command it ran: the wiring is correct and the gate discriminates.
+55 s versus 0 s, with the hook naming the command it ran. **That proves the scripts parse the payload and discriminate correctly on a fed payload — it does not prove the hook fires**, because the payload is handed to the script directly and the harness is never in the loop.
 
-**What was NOT proven, stated rather than papered over: the `git commit` that carried this change still completed in 0 s.** It was authored in a worktree-isolated agent, and the shared checkout the session resolves settings against still carries only `settings.local.json` — the new file is on the worktree branch, not merged. That is the explanation the evidence favours; the alternative (a settings file created mid-session not being registered for that session) is ruled against by v2.1.2, whose hot-reload behaviour is why the report's first line reads *"Gates are live immediately (settings.json hot-reloads)"*. **No causal claim is made here beyond that**, because the two were not discriminated by measurement.
+**The hook does fire. The gate runs on every commit, and always did — measured from OUTSIDE the command.** Two consecutive tool calls, each stamping the time:
 
-**The owed check is one command after merge: restart in the shared checkout and time a `git commit`.** 58-117 s means the gate is live. ~0 s is where care is needed: **§4 establishes a THIRD reading of it** — the gate registered, invoked, and exiting 0 on a command it could not read. So ~0 s now means *one of* "the file has not been picked up" or "§4's state fired", and the two are only separated by whether the §4 refusal message appears. That measurement, not reading the JSON, is still what closes this item — it just no longer closes it alone.
+```
+commit:      21:18:26 -> 21:19:30  = 64s
+non-commit:  21:19:55 -> 21:20:02  =  7s   (turn latency)
+delta ~= 57s = exactly the Test suite's runtime, measured independently
+```
+
+Confirmed independently on two consumer machines: one asserted a marker file as the **first statement of its own command** and found it PRESENT — which proves the hook ran *and completed* ahead of the command — and one measured a ~151 s wall-clock split across tool calls.
+
+**That closes the check earlier drafts of this item left owed**, and it closes it by a different instrument than the one they named. They asked for a `git commit` to be *timed*; timing it from inside the command is exactly the invalid reading. What closes it is a clock read from outside the command, or a side effect that outlives the interval.
+
+**The method lesson is worth more than the release.** It is consumer-authored, it is the durable output of the whole affair, and it lives here — once, so there is one place for it to be right:
+
+- **An instrument that lives inside the thing it measures cannot observe the interval before it starts, so a null result from it is not a measurement.** The remedy is a side effect that outlives the interval: a marker file answered in one commit what two sessions of timing could not.
+- **The decisive probe shape** — assert the marker as the **FIRST** statement of your own command. PRESENT there proves the hook ran *and completed* ahead of it.
+- **Two agreeing measurements add no evidence when they share a method**, and the agreement is what creates the confidence. One consumer's process-sampling "corroborated" their timing; both instruments start after the hook's children have exited.
+- **The pre-flight question for any probe: *what would this show if the thing DID work?*** If the answer matches the failure reading, the probe measures nothing. That is checkable before running it, and without knowing the mechanism.
+- **Hold a probe to the same standard as shipped code** — both arms, and a control. The product had a suite, controls and four reviewers; the instrument had none, which is why it survived hours of scrutiny aimed at everything downstream of it.
+
+**Consequence for our own shipped wording:** the `2 0 0` probe reported as `Gates: live` feeds payloads directly, so it proves **"the scripts parse and behave correctly on a fed payload"** — never that the hook fires. It is relabelled accordingly in `skills/sync-template/SKILL.md`. The mis-labelling originated here and consumers inherited it.
 
 ### 3. Nine further queued consumer items
 
@@ -79,7 +99,7 @@ exit-near-51  exit-near-64  exit-near-91     invocation A: progressed past all t
 exit-near-51  exit-near-64                   invocation B: STOPPED at 64  <- empty GC_CMD
 ```
 
-Corroboration independent of the trace: the **Test** command takes 87 s on this tree, so a 1-second commit is unambiguous non-execution — not a fast path, not caching. Four mechanism hypotheses died first and are recorded in `.superpowers/sdd/sync-feedback/empty-payload-failopen.md` so they are not re-tried, including *"a reorder would have fixed this"* — which would have closed the investigation on a false mechanism and left the fault live.
+The "corroboration" once offered beside that trace — *the **Test** takes ~87 s, so a 1-second commit is unambiguous non-execution* — is **withdrawn**. It is the same in-command timer §2 retracts, and it was not independent of anything. Four mechanism hypotheses died first and are recorded in `.superpowers/sdd/sync-feedback/empty-payload-failopen.md` so they are not re-tried, including *"a reorder would have fixed this"* — which would have closed the investigation on a false mechanism and left the fault live.
 
 **The obvious fix is unsafe, and refusing it is the design.** `exit 0` → `exit 2` unconditionally would, on an intermittently empty payload, **hard-block every Bash command in the session at random** — a silent gap traded for a worse failure. So the states were separated first, and two of the three turned out to be **already** fail-closed:
 
@@ -116,7 +136,7 @@ The second is the one that matters: without it the narrowing would be decoration
 
 So the guarantee is intact wherever a quoted `run-gate.sh` result exists and absent wherever the only evidence is "the commit succeeded". Merged states that quoted a gate run are covered; individual commits between them are not.
 
-Method lessons kept with the investigation, not repeated here in full, but two travel: **instrument the hook, not its effect** — an effect-based probe cannot separate *did not run* from *ran and took a quiet path*; and **a block message names *a* sufficient blocker, never *the only* one**, so "its message did not appear" is never evidence a hook did not fire.
+Method lessons kept with the investigation, not repeated here in full, but two travel: **instrument the hook, not its effect** — an effect-based probe cannot separate *did not run* from *ran and took a quiet path*; and **a block message names *a* sufficient blocker, never *the only* one**, so "its message did not appear" is never evidence a hook did not fire. The third, and the one that cost the most, is in §2: **a timer started inside the command cannot observe the hook that precedes it.**
 
 ### Counts
 
@@ -183,7 +203,7 @@ Sync server:  unknown (server reports no version — client never guesses it)
 
 ### 2. The toolkit did not gate itself
 
-> **CORRECTION (v2.2.6).** This section overstated what shipped. v2.2.5 added the file the gates **READ** and not the wiring that makes them **RUN**: with no project `.claude/settings.json`, `pre-commit-test.sh` and `gate-before-merge.sh` were registered nowhere and `git commit` still completed in 0 s. Only `no-push-main.sh` was live, via user-level settings. Read the claim below as "the config the gates read now exists"; v2.2.6 §2 supplies the registration.
+> **CORRECTION (v2.2.6).** This section overstated what shipped. v2.2.5 added the file the gates **READ** and not the wiring that makes them **RUN**: v2.2.5 shipped no project `.claude/settings.json` at all (only `settings.local.json`), so `pre-commit-test.sh` and `gate-before-merge.sh` were registered nowhere for this repo. Only `no-push-main.sh` was live, via user-level settings. **That is established by reading the config, not by timing anything** — this correction originally cited a `git commit` that "still completed in 0 s", and that figure is withdrawn: a timer inside the command cannot observe the PreToolUse hook that precedes it, so it was an invalid instrument. The conclusion is unchanged. Read the claim below as "the config the gates read now exists"; v2.2.6 §2 supplies the registration.
 
 There was no root `PROJECT_CONTEXT.md`, so `run-gate.sh` printed `GATE SKIP` and `pre-commit-test.sh` and `gate-before-merge.sh` both no-opped **in the repository that defines them**. Consequences, observed: every toolkit PR merged through the artifact path as a no-op, and two of the three git gates could not discriminate in their own repo — which cost fixture coverage twice, since both the malformed-payload rows and item K's four-way matrix had to be verified against scratch repos built by hand.
 
