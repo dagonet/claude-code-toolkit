@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v2.2.5 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v2.2.6 -->
 
 # Sync Template (Downstream)
 
@@ -105,7 +105,11 @@ for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; e
 
 > **Do NOT reorder this step to make that work.** `new_template_files` is already in hand: this step runs AFTER step 2 (Compute Status), despite what its label suggests — "2b" reads as belonging to step 2's *inputs* when it is sequenced after step 2's *output*. Moving a step whose entire contract is *before any write* is exactly how the next data-loss bug gets introduced, and here it would buy nothing.
 
-**Bootstrap is the worst case, and it is not a corner.** A fresh bootstrap has an empty manifest, so **every hand-written file in the tree is simultaneously present-on-disk and absent-from-manifest** — the whole destructive intersection at once, on the one path where the manifest-scoped backup protects nothing whatsoever. The second set above is the only thing standing between a bootstrap and the tree it is bootstrapping into.
+**ADOPTION INTO AN EXISTING REPOSITORY is the worst case, and it is not a corner (corrected in v2.2.6 — the previous wording named `bootstrap`, which is the one population NOT exposed).** Adoption is a hand-written or minimal manifest pointed at a tree that is already full of pre-existing files: **every one of them is simultaneously present-on-disk and absent-from-manifest** — the whole destructive intersection at once, on the path where the manifest-scoped backup protects nothing whatsoever. It runs `/sync-template`, so this step executes, and it is very likely where the 156-line project gate in invariant I1 was actually lost: an existing repo with content, not a fresh tree. The second set above is the only thing standing between adoption and the work already in the tree.
+
+> **Why the old wording had to go, stated so it is not re-imported.** It said *"a fresh bootstrap has an empty manifest, so every hand-written file is simultaneously present-on-disk and absent-from-manifest"*. Both halves are false, verified on **both** bootstrap paths: `setup-project.sh` generates the manifest itself and writes a populated `files{}` entry per copied file, and `setup-project.ps1` mirrors it (`templateHash` / `templateRawHash`). So (1) bootstrap does not produce an empty manifest — tree and manifest are consistent the moment it finishes, on Windows as well as POSIX; and (2) bootstrap does not run this skill at all, it is a separate script, so this step never executes on that path. A reader reasoned *"bootstrap means `setup-project.sh`, which I am not running, therefore this paragraph is not about me"* — **and they were right. The warning named the one population that is not exposed**, which is how it got dismissed by exactly the people who need it. Same guard, same second backup set, correct audience.
+
+**`new_template_files` being empty is STRUCTURAL for a mature repo, not a sampling accident** — it means *absent from the MANIFEST*, and a repo that has synced before has every template file tracked. It is non-empty in exactly two situations: the template ADDS a file, or the manifest does not yet describe the tree (adoption, above). Four consecutive consumer syncs reported it empty, so **an empty second set is the expected reading, not evidence that this step ran.** Say which it was in the report.
 
 Copy each hit from BOTH sets to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync — step 5's post-apply guard reads it.
 
@@ -267,6 +271,18 @@ For each file with status `CONFLICT`:
 
 > **`PROJECT_CONTEXT.md`: SPLICE, never accept-template.** It conflicts for every consumer who has filled in real values, and accept-template replaces a working `- **Gate**: npm run gate` with `{{GATE_COMMAND}}` — which silently disables `pre-commit-test.sh` and `run-gate.sh` on the next commit, worst on a Gate-only repo where nothing else notices. Your `**Gate**:` / `**Test**:` / `**Build**:` values live in this file; they are a legitimate, permanent deviation, not drift to clean up. Take the template's *new lines* by hand and keep your own values.
 >
+> **TWO FIELD-NAME STYLES SHIP, and until v2.2.6 this skill named only the short one (consumer report).** Grepping your own `PROJECT_CONTEXT.md` for `**Test**:` returns nothing on a python or java project and reads as *"the gate is unconfigured"* — a false clean one layer up, in prose rather than in a regex. Measured across all six variants:
+>
+> ```
+> general / dotnet / dotnet-maui    **Build**          **Gate**          **Test**
+> python / java                     **Build Command**  **Gate Command**  **Test Command**
+> rust-tauri                        **Build**          **Gate**          (no Test — deliberate)
+> ```
+>
+> **The HOOKS are fine** — `pre-commit-test.sh` greps `\*\*Test( Command)?\*\*:` explicitly, and the other field greps tolerate the long form the same way. Only the documentation was narrow. So whenever you grep for one of these fields, match both: `grep -E '^[-*[:space:]]*\*\*Test( Command)?\*\*:'`.
+>
+> **rust-tauri's absent `**Test**` is NOT a defect.** No Test ⇒ `pre-commit-test.sh` falls back to Gate ⇒ it runs `run-gate.sh`, which also mints the artifact. That is the deliberate v2.1.1/v2.1.3 Gate-only shape. The consequence worth knowing: a rust-tauri consumer runs the **full Gate on every commit** and never gets v2.2.5's Test/Gate split. Adding a fast `**Test**` line is a local choice, not a sync fix.
+>
 > **`**Protected branches**:` is the one line the git gates read** — the `- **Branch strategy**:` prose above it is for humans and is parsed by nothing. Cheapest proof the config path works: attempt a push to trunk and read the block message, which names the set it actually resolved — `BLOCKED: pushing to a protected branch (main master)` vs `(develop release)`. Absent, empty, or still a `{{...}}` all resolve to `main master`; `none` is the one deliberate way to protect nothing (branch rules only — a PR merge stays gated whatever the branch).
 
 ### 5. Handle New Files
@@ -318,7 +334,24 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 
 > Read the toolkit working tree with Read/Grep, never through the context-mode sandbox: `git -C` fails silently on its `/tmp` paths and `grep -c` comes back 0, so every verification below would report a false clean.
 
-1. Collect every `hooks/<name>.sh` reference on a `command:` line in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. Match **both** invocation forms: the legacy cwd-relative `bash hooks/<name>.sh` and the v2.1.2 `bash "$CLAUDE_PROJECT_DIR/hooks/<name>.sh"`. Anchoring on `command:` keeps the `Bash(bash hooks/run-gate.sh*)` permissions pattern out of the set — it is a prompt rule, not a hook.
+1. Collect every `hooks/<name>.sh` reference in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. **Collect the PATH; do NOT anchor on the `command:` value:**
+
+```
+grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u
+```
+
+> **Anchoring on `command:` is the v2.2.5 defect, and it recovered ZERO (v2.2.6, consumer measurement).** Until v2.2.6 this step said "on a `command:` line", justified as keeping the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS pattern out of the set. But the hook path sits **after an escaped quote** inside the command value, so the obvious implementation truncates at the escape:
+>
+> ```
+> grep -o '"command": "[^"]*'            ->  "command": "bash \        <- truncates AT the escape
+> grep -o 'hooks/[A-Za-z0-9_.-]*\.sh'    ->  12
+> ```
+>
+> A consumer collected **5 of 12** and printed `Hooks verified: 5 referenced, 5 present` — a clean-looking verify with **seven hooks unchecked**, in the one step that exists because a populated `settings.json` over an empty `hooks/` runs with enforcement silently absent. All five came from this step's two *unanchored* collectors (3 from agent frontmatter, 2 from the lib grep in 1b); the single anchored collector contributed nothing. **The step already succeeded everywhere it did not anchor.**
+>
+> **Why it survived a release is the durable half:** a **zero** would have looked broken; a **partial** read as plausible. The anchor bought protection against a harmless false positive at the cost of a silent false clean.
+>
+> Over-collection is the correct trade here, exactly as rule 1b already blesses it for libs. The one false positive (`hooks/run-gate.sh`, from the permissions pattern) is a real, tracked file: it costs one existence check and nothing else. And matching the PATH matches every invocation form at once — the legacy cwd-relative `bash hooks/<name>.sh`, the v2.1.2 `bash "$CLAUDE_PROJECT_DIR/hooks/<name>.sh"`, and whatever form is invented next.
 1b. Collect the **libs** too — a hook that cannot reach its lib defines no helpers, reads an empty command, and exits 0 on everything. In every hook script present at the project root, grep for **any** `lib/<file>.sh` mention, in any form:
 
 ```
@@ -328,10 +361,27 @@ grep -oE 'lib/[A-Za-z0-9_.-]+\.sh' hooks/*.sh | sort -u
 Add each hit as `hooks/lib/<file>`. They are checked and restored exactly like the scripts in steps 2–4 (`source="template"` when missing — the server resolves the `hooks/lib/` subdirectory against the toolkit root).
 
 > **Match the FORM, not one form.** Until v2.2.1 this step named a single pattern — the `. "$(dirname "$0")/lib/…"` **source** form, plus a literal `lib/git-cmd.sh`. Every node-program hook references its lib as an **assignment** instead (`jlib="$(dirname "$0")/lib/json.sh"` in `bash-output-guard`, `enforce-agent-contract`, `enforce-delegation`, `read-size-gate`, `require-skills-block`, `retro-brief`, `retro-ledger`), so an agent following this step *literally* never collected `hooks/lib/json.sh`, never noticed it missing, and those seven hooks disabled themselves while the sync report said clean. The three git gates were unaffected — they source `lib/git-cmd.sh` behind a hard `[ -f … ] || exit 2` and fail CLOSED. Over-collecting is harmless: a lib already present is a no-op, and a lib named only in a comment still resolves to a real file.
+1c. **Cross-check the collected count against an INDEPENDENT source before trusting it (v2.2.6).** The defect above did not announce itself: it produced a number, and every file behind that number really was present, so `5 referenced, 5 present` read as a clean verify. **A collector returning a partial result reads as success** — the fixture-that-passes-vacuously class, one layer out. The counts alone cannot tell you the collector worked; a second, differently-sourced count can.
+
+```
+referenced=$(grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u | wc -l)
+on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the config text
+```
+
+**Assert `referenced >= on_disk`, and LIST every on-disk hook that appears in neither file.** The two numbers come from different places — one from configuration text, one from the directory — so a truncating regex moves only the first. The observed failure prints `5 referenced, 12 on disk, 7 unreferenced: [...]`, which cannot be read as clean.
+
+`referenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. What is NOT acceptable is a bare count that nobody compared to anything.
+
+> **Verify this cross-check by DELETING the guard it protects.** Re-anchor the step-1 grep on `"command": "[^"]*` and re-run: `referenced` must collapse and the unreferenced list must fill up. A cross-check that stays green with the anchor restored is testing the surrounding machinery, not the collector.
+
 2. For each referenced script: verify `hooks/<name>.sh` exists at the project repo root and is non-empty.
 3. For any MISSING script: call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="template")` — the server resolves root-tracked `hooks/` paths against the toolkit ROOT (variants do NOT ship `hooks/` — never look in `templates/<variant>/hooks/`, it does not exist) and both materializes the file AND returns its manifest entry in one call. Never hand-copy. Add each result to the collected `applied_files`.
 4. For every referenced hook script PRESENT at the project root, NOT tracked in the manifest, AND NOT already applied by step 3 (the two sets are disjoint): call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="skip")` and add the result to `applied_files`. `source="skip"` registers a manifest entry from the project's existing file content WITHOUT writing — NEVER use `source="template"` here, it would silently overwrite locally-edited hook scripts. Once registered, future `template_compute_status` runs track hook drift like any other file.
-5. Report the verified list: `Hooks verified: N referenced, N present (M restored, K registered in manifest)`.
+5. Report the verified list, **including the independent count from 1c** — the cross-check is worth nothing if its second number never reaches the report:
+
+```
+Hooks verified: N referenced, N present (M restored, K registered in manifest); D on disk, U unreferenced: [list]
+```
 
 ### 7. Finalize
 
@@ -468,6 +518,15 @@ git -C <templateRepo> describe --tags <lastSynced>                 # v2.2.4-3-ga
 #   fix early. The `-3-gabc1234` suffix is the signal, not noise; do not tidy it.
 ```
 
+**Checking a `lastSynced` against a tag needs `^{commit}` — `git rev-parse <tag>` is the TAG OBJECT (v2.2.6).** Toolkit releases are annotated tags, so the tag name resolves to the tag object's sha, not the commit's:
+
+```
+git rev-parse v2.2.5            -> 300020f     <- the TAG OBJECT. Never equals lastSynced.
+git rev-parse v2.2.5^{commit}   -> 640ba5e     <- the commit. This is what lastSynced holds.
+```
+
+Anyone verifying a consumer's `lastSynced` against the tag without `^{commit}` reports a **false mismatch** and goes hunting a sync bug that does not exist. `describe --tags` above is unaffected (it takes a commit and returns a name), and `verify-user-level-drift.sh` already derefs correctly — this is a rule for the humans and release notes doing the comparison by hand.
+
 **Distinguish the ways this can fail to resolve — an opaque `""` reproduces, one level down, the opaque `lastSynced` this whole step exists to fix (v2.2.5).** Four distinct outcomes, four distinct values:
 
 | state | value written | how to read it |
@@ -481,6 +540,21 @@ git -C <templateRepo> describe --tags <lastSynced>                 # v2.2.4-3-ga
 Never write a bare `""` — it is indistinguishable from "resolved, to nothing". The bounded shape of the failure, measured: on a host with the toolkit checked out and its 18 tags fetched, `--exact-match` resolves correctly, so the unresolved states are specific to **no checkout, a shallow clone, or a fetch without tags** — a bounded defect, not an open-ended one.
 
 **Control, both arms, and assert the untagged arm POSITIVELY.** A tagged HEAD must resolve to the exact tag; an **untagged** HEAD must produce a value matching `-g[0-9a-f]{7,}`, i.e. it *carries the describe suffix*. Do **not** phrase the second as "is not an ancestor tag": that is awkward to express and passes **vacuously** on an empty string, a malformed value, or a swallowed exception — a fixture with the shape of a failing-arm test whose failing arm can go green for reasons unrelated to the guarantee. "Carries the suffix" is one positive assertion that an `--abbrev=0` refactor breaks on its first run, which is the named regression actually being guarded.
+
+> **SELECT THE UNTAGGED COMMIT BY THE PROPERTY, NEVER BY POSITION — and assert the fixture HAS the property before concluding anything (v2.2.6; hit independently by three consumers, one of whom "nearly reported your implementation as broken").** Arm 2 needs an untagged commit and this step never said how to find one, so the obvious `<release-sha>~1` gets used. On a well-tagged repo — i.e. this one — the previous commit is very often **the previous release**: `640ba5e~1` is `d67b507`, itself tagged `v2.2.4`, so `describe --tags` correctly returns a bare tag and the arm reports FAIL. **That failure is indistinguishable from the `--abbrev=0` regression the arm exists to catch**, and the tempting next move is to "fix" the resolver, which is working.
+>
+> ```sh
+> # Walk back until describe --exact-match FAILS; that commit is untagged BY MEASUREMENT.
+> c=$(git -C <templateRepo> rev-parse HEAD)
+> while git -C <templateRepo> describe --tags --exact-match "$c" >/dev/null 2>&1; do
+>   c=$(git -C <templateRepo> rev-parse "$c~1")
+> done
+> # assert the fixture's property FIRST, then the implementation's behaviour:
+> git -C <templateRepo> describe --tags --exact-match "$c" >/dev/null 2>&1 && { echo "FIXTURE INVALID: $c is tagged"; exit 1; }
+> git -C <templateRepo> describe --tags "$c" | grep -Eq -- '-g[0-9a-f]{7,}' || { echo "arm2 FAIL"; exit 1; }
+> ```
+>
+> **The general rule, which outlives this arm: a control must assert its own fixture carries the property under test, or the control's failure cannot be told from the regression it guards.** Position is provenance; taggedness is the property. Bites hardest on the repos that tag most carefully.
 
 **Run those through the Bash tool, not from inside the stamping script.** Consumer manifests store `templateRepo` as an MSYS path (`/g/git/claude-code-toolkit` in all four measured) and native `git.exe` spawned from Python cannot resolve it — it exits non-zero, both fallbacks "fail", and the label silently comes out `""` on a repo whose tags are right there. Measured: same sha, same repo, `''` from a Python `subprocess` versus `v2.2.3` from Bash. Resolve the string in Bash, hand it to the script.
 
@@ -511,16 +585,52 @@ Never write a bare `""` — it is indistinguishable from "resolved, to nothing".
 
    A reader then compares the two: **equal means the label is good; unequal means it is stale AND KNOWN STALE.** That converts a confidently wrong answer into a detectable one, which is the whole difference this step exists to deliver. Step 8 reports `{lastSyncedVersion} (stale — computed for {lastSyncedVersionOf}, manifest is at {lastSynced})` when they disagree, and the two unresolved-state values (`unknown:no-checkout`, `unknown:no-tags`) are written with the same companion key so the pairing has no gaps. The fifth table row — key **ABSENT** — has no value to pair and takes no companion key.
 3. Write with the Write tool + a scratchpad script (`json.load` / `json.dump`), never by hand-editing the JSON and never by a long `python -c` command line — the same rule as `applied_files` in step 7. Preserve `indent=2`, LF endings, no BOM, and `ensure_ascii=False`.
+
+   **REBUILD the top-level mapping in the documented order — do NOT assign into the loaded one (v2.2.6).** Python dicts are insertion-ordered and `json.dump` follows, so the natural `m = json.load(...); m["lastSyncedVersion"] = …; json.dump(m, …)` **appends** both keys after every pre-existing key. Measured on a consumer manifest: `lastSynced` landed at line 5 and its two labels at lines **276-277**, past the entire `files` map, **270 lines from the field they annotate**.
+
+   That is not cosmetic *in this step's own terms*. 7b exists so a human can read the version **without opening the toolkit**. Below the `files` map, a reader checking the header sees a bare sha and concludes the version was never stamped — which is exactly what one consumer's user did, and they were right to. **The feature is the visibility; the placement is the feature.**
+
+   The documented top-level order, which is also the order the docs table lists:
+
+   ```
+   version, variant, templateRepo, lastSynced, lastSyncedVersion, lastSyncedVersionOf,
+   templateSyncToolsVersion (when present), placeholders, files
+   ```
+
+   ```python
+   ORDER = ["version", "variant", "templateRepo", "lastSynced",
+            "lastSyncedVersion", "lastSyncedVersionOf",
+            "templateSyncToolsVersion", "placeholders", "files"]
+   out = {k: m[k] for k in ORDER if k in m}
+   out.update({k: v for k, v in m.items() if k not in out})   # unknown keys survive, at the end
+   ```
+
+   The `update` line is required, not tidy: `template_finalize_sync` mutates and re-dumps the RAW manifest, so **unknown top-level keys are preserved** (measured with a planted canary). Dropping them here would destroy data the server deliberately keeps.
+
+3b. **Assert POSITION, not presence — every existing check in this step is blind to it (v2.2.6).** After writing, `template_compute_status` is clean, `template_load_manifest` is valid, and a `json.load` key check is green — **all three read BY KEY**, so all three pass with the labels 270 lines out of place. The step's own verification is structurally incapable of catching the one thing the step is for.
+
+   ```python
+   assert list(manifest)[:6] == ["version", "variant", "templateRepo",
+                                 "lastSynced", "lastSyncedVersion", "lastSyncedVersionOf"], list(manifest)[:6]
+   ```
+
+   A pre-v2 manifest that carries `version` last is the one legitimate exception — the v1→v2 migration appends it by assignment and no sync has ever corrected it. Report that as `manifest key order: pre-v2 shape (version last)` rather than failing; it is a server-side fix, not something to hand-repair here.
+
 4. Re-run `template_compute_status` afterwards; it must still be clean. If the stamp upset anything, revert the two keys and report — the sync is still good, the label is not worth a corrupt manifest.
 5. `.claude/template-manifest.json` is already in the step-9 `git add`, so nothing extra to stage.
 
-Before → after, on a real consumer manifest:
+Before → after, on a real consumer manifest — **note where the two new keys sit**: immediately after the field they annotate, in the header, not appended at the end of the file:
 
 ```json
+  "templateRepo": "/g/git/claude-code-toolkit",
   "lastSynced": "707052c",
 + "lastSyncedVersion": "v2.2.3",
 + "lastSyncedVersionOf": "707052c",
+  "placeholders": { ... },
+  "files": { ... }
 ```
+
+A consumer re-ordered their own manifest to this shape as a pure move: parsed content identical, byte count identical, 3 insertions / 3 deletions, every entry still valid.
 
 **Provenance, say it out loud when asked:** `lastSyncedVersion` is *client-written by this skill*, derived from the same `templateRepo` + `lastSynced` the server wrote, so it is reproducible and checkable — but it is not server-authoritative, and a repo synced by an older skill will not have it.
 
@@ -608,6 +718,11 @@ gh pr create --fill
 gh pr merge --squash --delete-branch
 git fetch -p                                       # drops the phantom remote-tracking ref
 ```
+
+**Read the gate's verdict from `GATE PASS` or `.gate/last-pass.json` — NEVER from the exit code of a pipeline (v2.2.6).** `bash hooks/run-gate.sh | tail -100` is an entirely natural thing to do with a multi-minute chatty command, and it reports **`tail`'s** exit code, not the gate's. A consumer's delegated `ops` agent hit this and reported honestly that it could not supply the rc; a less careful one gets `0` from `tail` on a red gate. Two rules, both cheap:
+
+- **Do not pipe the gate if you need its rc.** If you must pipe for volume, set `set -o pipefail` first — the same hazard the placeholder sweep already warns about, one command over.
+- **The authoritative sources are the `GATE PASS <sha>` line and the artifact** (`.gate/last-pass.json` — `"status":"pass"` with sha/tree matching HEAD). The gate is LUCKIER than the sweep precisely because it writes an artifact; use it. Quote the `GATE PASS` line in the report rather than asserting "exit 0".
 
 Gate **after** the commit, never before: the artifact must match the PR head by sha or tree. A gate run before the commit reports "artifact stale" at merge time unless the tree is byte-identical either side of the commit.
 

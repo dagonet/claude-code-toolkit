@@ -959,6 +959,87 @@ else
   ko "self-gating: test-hooks.sh must 'unset RUN_GATE_TERMINAL' at the top — inherited, a fixture's nested guard marks the OUTER run terminal"
 fi
 
+# 21c-3e. The gates are REGISTERED, not merely configured (v2.2.6).
+#
+#      v2.2.5 shipped the file the gates READ (root PROJECT_CONTEXT.md, asserted
+#      above) and called the toolkit self-gating. It was one-third true. There
+#      was no project `.claude/settings.json` at all, and user-level wires only
+#      no-push-main.sh — so pre-commit-test.sh and gate-before-merge.sh were
+#      registered NOWHERE and `git commit` completed in 0s against a 58-117s
+#      **Test** command. Every assertion above was green throughout: a census
+#      over CONFIG cannot see whether the config is REGISTERED.
+#
+#      So this asserts the wiring, in the file that does the wiring, and it
+#      asserts the fail-CLOSED wrapper too — a git gate registered with the
+#      exit-0 WARN wrapper is a gate that waves through its own absence.
+rsettings=".claude/settings.json"
+if [ ! -f "$rsettings" ]; then
+  ko "self-gating: root $rsettings is MISSING — pre-commit-test.sh and gate-before-merge.sh are registered nowhere (commits complete in 0s)"
+else
+  wired_bad=0
+  for gh in pre-commit-test no-push-main gate-before-merge; do
+    ghline=$(grep -c "hooks/$gh\.sh" "$rsettings")
+    if [ "$ghline" -eq 0 ]; then
+      ko "self-gating: hooks/$gh.sh is not registered in $rsettings — it never RUNS in this repo"
+      wired_bad=1
+    elif [ "$(grep -c "hooks/$gh\.sh.*HOOK SCRIPT MISSING.*exit 2" "$rsettings")" -eq 0 ]; then
+      ko "self-gating: hooks/$gh.sh in $rsettings lacks the fail-CLOSED 127 wrapper (must echo 'HOOK SCRIPT MISSING' and exit 2)"
+      wired_bad=1
+    fi
+  done
+  [ "$wired_bad" -eq 0 ] && ok "self-gating: all three git gates registered in $rsettings with the fail-closed 127 wrapper"
+  # And the file has to be TRACKABLE — the root .gitignore excluded /.claude/
+  # wholesale until v2.2.6, and git never descends into an excluded DIRECTORY,
+  # so a re-include under `/.claude/` is unreachable and the wiring would be
+  # present on the author's disk and absent from every clone.
+  if git check-ignore -q "$rsettings" 2>/dev/null; then
+    ko "self-gating: $rsettings is GITIGNORED — the wiring exists locally and ships to nobody (use '/.claude/*' + '!/.claude/settings.json')"
+  else
+    ok "self-gating: $rsettings is trackable (root .gitignore re-includes it)"
+  fi
+fi
+
+# 21c-3f. CONTROL for the sync skill's hook-reference collector (v2.2.6).
+#
+#      Step 6b is the ONLY check a consumer runs to confirm their hooks are
+#      wired. Until v2.2.6 it said to collect the reference "on a `command:`
+#      line" — but the hook path sits AFTER an escaped quote inside that value,
+#      so the obvious implementation truncates at the escape and recovered ZERO
+#      from settings.json. A consumer printed `Hooks verified: 5 referenced,
+#      5 present` with seven hooks unchecked; their 5 came entirely from the
+#      step's two UNANCHORED greps. A PARTIAL result is what let it survive a
+#      release — a zero would have looked broken.
+#
+#      This runs the pattern AS WRITTEN IN SKILL.md (not a copy of it) against a
+#      real shipped settings.json, and compares the result against an
+#      INDEPENDENTLY SOURCED set: the hook paths named in the 127-wrapper's
+#      error MESSAGES, a different region of the same file that the truncating
+#      anchor also loses. Re-anchoring the skill turns this red.
+skf="user-level-reference/skills/sync-template/SKILL.md"
+sksettings="templates/general/.claude/settings.json"
+if [ ! -f "$skf" ] || [ ! -f "$sksettings" ]; then
+  ko "6b collector control: $skf or $sksettings missing"
+else
+  sk_pat=$(grep -o "grep -o 'hooks/[^']*'" "$skf" | head -1 | sed "s/^grep -o '//; s/'$//")
+  if [ -z "$sk_pat" ]; then
+    ko "6b collector control: no \`grep -o 'hooks/...'\` collector found in $skf step 6b — the step lost its path-shaped extractor"
+  else
+    sk_got=$(grep -o "$sk_pat" "$sksettings" | sort -u)
+    sk_exp=$(grep -o "\(HOOK SCRIPT MISSING\|WARN\): [^ ]*hooks/[A-Za-z0-9_.-]*\.sh" "$sksettings" | sed 's|.*/hooks/|hooks/|' | sort -u)
+    sk_missing=$(printf '%s\n' "$sk_exp" | grep -Fxv -f <(printf '%s\n' "$sk_got") 2>/dev/null)
+    sk_n=$(printf '%s\n' "$sk_got" | grep -c .)
+    sk_m=$(printf '%s\n' "$sk_exp" | grep -c .)
+    if [ -n "$sk_missing" ]; then
+      ko "6b collector control: the skill's collector recovered $sk_n path(s) but MISSED $(printf '%s\n' "$sk_missing" | grep -c .) of the $sk_m independently-sourced ones — it is anchoring and under-collecting"
+      printf '%s\n' "$sk_missing" | sed 's/^/      /'
+    elif [ "$sk_n" -lt "$sk_m" ]; then
+      ko "6b collector control: collector returned $sk_n < $sk_m independently-sourced references"
+    else
+      ok "6b collector control: the skill's own collector recovers $sk_n reference(s), covering all $sk_m independently sourced from the 127-wrapper messages"
+    fi
+  fi
+fi
+
 # 21c-2f. NO `exit 1` IN A REGISTERED HOOK — it is warn-and-ALLOW (v2.2.5 r4).
 #
 #         The harness treats every non-zero, non-2 PreToolUse exit as a
