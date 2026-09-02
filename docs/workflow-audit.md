@@ -77,9 +77,9 @@ Seventeen weaknesses identified during the audit, grouped into five buckets. The
 
 ### Skills / agents overlap
 
-- **W15. Architect already "challenges" plans; `writing-plans` skill also produces plans** — The Spawn-Prompt Binding Table assigns `writing-plans` to architect. In practice, the architect in AGENT_TEAM.md mostly *challenges* plans that the PO wrote, rather than writing them from scratch. The skill assignment is correct for the plan-authoring case, but challenge (done by architect) and authoring (often done by PO or requirements-engineer) are distinct jobs.
+- **W15. Architect already "challenges" plans; `writing-plans` skill also produces plans** — The Spawn-Prompt Binding Table assigns `writing-plans` to architect. In practice, the architect in AGENT_TEAM.md mostly *challenges* plans that the PO wrote, rather than writing them from scratch. The skill assignment is correct for the plan-authoring case, but challenge (done by architect) and authoring (often done by PO or requirements-engineer) are distinct jobs. *(Annotated v3.0.1: `requirements-engineer` was **retired**, absorbed into `architect` in v3.0.0. The finding as written was true when found; the two jobs now both sit with `architect`, which is why it gained `brainstorming`.)*
 - **W16. `receiving-code-review` assigned to coder, but coder agent file has no current reference to review-handling discipline** — The Spawn-Prompt Binding Table is the first wiring. No redundancy, but also no pre-existing safety net if a spawn prompt is miswritten.
-- **W17. `brainstorming` assigned to both architect and requirements-engineer** — The only genuine skill duplication in the binding table. Both roles legitimately use brainstorming (architect for design exploration, requirements-engineer for spec ideation). Probably fine, but flagged for awareness.
+- **W17. `brainstorming` assigned to both architect and requirements-engineer** — The only genuine skill duplication in the binding table. Both roles legitimately use brainstorming (architect for design exploration, requirements-engineer for spec ideation). Probably fine, but flagged for awareness. *(Annotated v3.0.1: `requirements-engineer` was **retired**, absorbed into `architect` in v3.0.0, so the duplication this finding flagged is resolved — one role now holds both uses.)*
 
 ## Follow-up PR roadmap
 

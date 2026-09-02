@@ -123,4 +123,8 @@ Every template `CLAUDE.md` ends with:
 <!-- PROJECT-CUSTOM:END -->
 ```
 
+> **⚠ THAT IS THE CURRENT AND ONLY SHIPPED MARKER TEXT — do not copy the wording from any older document.** The `BEGIN` marker carries an em-dash and the trailing prose *"sync-template preserves everything between these markers"*. Earlier records in `docs/` quote a superseded wording (*"never edits below this line"*) that **no shipped file carries**, and they are dated historical records, correct as of their date and deliberately not rewritten.
+>
+> **Do not hand-roll a matcher against either string.** v3.0.0 shipped `user-level-reference/skills/sync-template/region.sh` precisely because **two consumers implemented the marker check from prose and both got it wrong** — one matched `PROJECT-CUSTOM:BEGIN\s*-->`, which the em-dash and trailing prose defeat, and got *"zero regions"* on a repo with eleven. The reassuring answer is the one a wrong matcher returns. Use `region.sh`.
+
 Project-owned content goes INSIDE the markers. When both the template and the project file carry the markers, the sync server treats the region as project-owned: region-only edits keep the file `UP_TO_DATE`, `template_apply_file(source="template")` splices the project's region into the applied template, and three-way merges exclude/reattach it. Content appended OUTSIDE the region conflicts on every template bump — move it inside.

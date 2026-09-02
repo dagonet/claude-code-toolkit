@@ -79,7 +79,7 @@ Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh`
 
 ## Session Bootstrap
 
-CLAUDE.md enforces a lightweight bootstrap sequence at the start of every session. `AGENT_TEAM.md` (~850 lines) is **not** read up front -- CLAUDE.md carries a one-line pointer to its Spawn-Prompt Binding Table, and the PO loads the full file when it first spawns agents. The binding itself is enforced by `require-skills-block.sh`, not by the prose, so duplicating the table into CLAUDE.md bought nothing (v2.0 PR4 removed it).
+CLAUDE.md enforces a lightweight bootstrap sequence at the start of every session. `AGENT_TEAM.md` is **not** read up front -- CLAUDE.md carries a one-line pointer to its Spawn-Prompt Binding Table, and the PO loads the full file when it first spawns agents. The binding itself is enforced by `require-skills-block.sh`, not by the prose, so duplicating the table into CLAUDE.md bought nothing (v2.0 PR4 removed it).
 
 1. Assume the PO role. Load `AGENT_TEAM.md` on-demand when first spawning agents in a sprint, writing a spawn brief, or answering questions about merge/escalation rules
 2. Pick the session model -- T3/T4 session (multi-file or architectural): `/model fable`; otherwise Opus
