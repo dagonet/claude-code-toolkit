@@ -1,5 +1,81 @@
 # Changelog
 
+## v3.0.1 — 2026-09-02
+
+**The follow-up to v3.0.0's own deletions.** Every item here is an *instrument answering a question next to the one asked* — defect class 1 of the three this programme keeps producing — and one of them is the inverse of all the others: it fails toward **refusal**, which reads as the safe answer.
+
+### 1. 6d's form-4 grep SELF-MATCHES — a false positive that blocks a correct deletion
+
+`grep -l <name> .claude/agents/*.md` includes **the file under test**, which matches its own `name:` frontmatter. So **every retired agent reports as "still referenced", every time**, and the deletion the sweep exists to authorise is blocked by the sweep. The form-4 grep now excludes the agent's own file.
+
+**The polarity is the point.** Everything else in the skill fails toward *proceeding*; this one fails toward **refusal**, and refusal reads as the careful answer. A consumer sees the sweep catch something, stops, and concludes it caught something real. It caught the file it was asked about.
+
+> **Uniformity across independent subjects is evidence about the INSTRUMENT, not the subjects.** The consumer's first pass reported **all three** retired agents as still referenced, and they looked twice for exactly that reason — *"too tidy; one would have looked plausible."* Three independent agents with independent reference sets do not agree by coincidence. `reported-by: penumbra / v3.0.0`
+
+**Also in 6d, three things the sweep could not previously say about itself:**
+
+- **The report is now PER FORM, with a probe count from a different source** (`5 -> 0 sites across 5 forms x 3 names (15 probes)`). `0 -> 0` beats `0 hits`, and is still not enough: neither distinguishes *ran and found nothing* from *did not run*. The probe count derives from the INPUTS, so it cannot go quiet when the search does. **Per-form is not close, and the reason is form 3** — a total of 5 proves *a* sweep ran, but forms 1, 4 and 5 account for all five hits by themselves, and form 3 (the keep-mine `CLAUDE.md` routing table) is **the form 6d exists for** and **the only one carrying `--include` flags**, the defect class that has already landed twice. A silent form 3 under a nonzero total is a false clean on the exact failure mode. A **non-zero residual in keep-mine files is the EXPECTED outcome**, not a failed sync, and is reported separately rather than folded into the delta.
+- **The five forms are EXHAUSTIVE BY DESIGN — a sixth arm is a regression, not extra safety.** A consumer added a bare-name grep **having just read the 28:1 noise warning three paragraphs above**, and got 9 benign hits. Their framing: *"I was not being careless, I was being thorough."* **Thoroughness is precisely what the shape-keyed design defends against.** A believed sixth binding form is a finding to report, not an arm to add.
+- **New invariant I3** — when `TEMPLATE_DELETED` is non-empty, no write in steps 3, 4, 5 or 6b happens until the 6d **baseline** sweep has been captured. A delta needs a *before*, and there is exactly one moment to take it. Written as an invariant rather than a step 2c or a two-phase 6d: **a two-phase 6d cannot work** (a reader reaches 6d after step 3, so its "before" phase executes after the change it baselines), and an ordering rule *"silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose"*, in I2's own words. Checked at the first write, like I2, and gated on a non-empty deleted set so an ordinary sync pays nothing.
+
+### 2. Step 2b's backup path is UNFINDABLE on Windows — the copy worked, the report lied
+
+`/tmp` is **drive-relative** on Windows. Step 2b runs from Python; with `TMPDIR` unset, `os.path.abspath('/tmp/template-sync-backup-…')` resolves against the **current drive** and yields `G:\tmp\…`, which is not MSYS `/tmp`. **The copy succeeds. Only the reported path is wrong** — and a consumer's own `diff` against that path failed.
+
+Step 2b's entire contract is *"name the backup directory in the sync report so the user can find it without asking"*, on **the one step whose job is protecting unrecoverable files**. A user told `/tmp/...`, who looks there and finds nothing, concludes **the backup did not happen**.
+
+The step now derives the temp root explicitly (`os.environ.get("TMPDIR") or tempfile.gettempdir()`, never a bare `/tmp`) and prints `os.path.realpath(...)` — the path that was actually written, not the expression that produced it. The step-8 report template says so too.
+
+> **Same class as the `\r`-in-`check-ignore` and the `which`-resolved `bash -n`: a shell idiom means something different one layer over.** All three fail without an error; all three are caught by printing what was used rather than what was written.
+
+### 3. The RETRO ledger — the LEDGER IS THE RECORD, the BRIEF IS THE VIEW
+
+Two defects, and **the fix is not the obvious one.**
+
+`hooks/retro-ledger.sh` incremented `errors` **before** the budget/blocks split, so `if (errors === 0) return` never suppressed a budget-only spawn and, worse, the headline field counted a liveness ceiling as a failure. Measured on one consumer: **30 rows, every one a budget warning, zero real failures.** `hooks/retro-brief.sh` then ran `tail -n 10` over **cumulative** rows under a heading promising "the last 10 subagent-failure entries" — one long-running agent held **11 of 30** rows and hid three of the four agents.
+
+**⚠ The ledger does NOT stop emitting the row, and that is deliberate.** Suppression would mean a budget-only agent produces **no row at all**, so a consumer grepping an agent id sees rows *disappear* — and **disappearing rows read as "clean", not as "changed."** A silent negative traded for a noisy one. So the ledger keeps recording everything it observed (`budget=2 | errors=0` is now a real shape, and `errors=` no longer counts ceilings), and the **view** filters.
+
+**⚠ And the filter is keyed on NEITHER `errors=` NOR `budget=` alone.** The measured row `dead=[Bash,Edit] | budget=0 | errors=2` had a **fabricated** errors count and an **exactly true** `dead` list, and it is the field that produced two real defect reports. Either filter would have dropped precisely that row. **`dead=[...]` is surfaced on its own merits: a grant gap is not a failure — the agent completes and silently delivers something weaker.** A row is dropped only when it is budget-only in every field.
+
+The brief also **dedupes by agent id, last row wins, before tailing**, and its heading now says what the view actually is. The true positive that was already working — `blocks=[gate-before-merge.sh] | budget=0 | errors=1` — is unchanged: the field that matters was always correct; only the headline lied.
+
+Fixtures assert the **property**, not the implementation: a budget-only spawn **still produces a ledger row** while **not** appearing in the brief. Two-sided in one run, because `retro-brief.sh` is fail-open — an `awk` error empties its output entirely and a lone absence assertion would pass on that.
+
+### 4. Check 32 — no live doc names a retired agent. This is 6d pointed at the repo that ships 6d
+
+Every stale reference this release found is **6d's own form 3, one tree over**. 6d scopes to a *consumer's* project tree; **nothing scoped to the toolkit's own `docs/`**, and `verify-user-level-drift.sh` cannot help — it compares against the released **tag**, so a user-level file naming a retired agent reports **0 drift, because the tag names it too.** The probe works; it answers a different question. That is also how `SKILL.md`'s step 9 shipped v3.0.0 still listing `test-writer` among the worktree-isolating agent types — **6d form 3, in the file that defines 6d.**
+
+Three v3.0.0 docs were red on arrival and are fixed **per their kind**: `docs/hook-enforcement-ideas.md:102` is a live edge-case table and was corrected outright; `docs/workflow-audit.md:80` and `:82` are numbered findings that were **true when written** and are **annotated, not rewritten**, or the audit stops being a record of what was found.
+
+**It is not a bare-name scan**, for the reason 6d already established: `AGENT_TEAM.md`, the CHANGELOG and the skill name retired agents **legitimately**, to document the retirement, and a bare-name scan flags all of them and reproduces the 28:1 noise. A line passes when it carries a retirement **marker** (`retired`, `absorbed`, `formerly`, or a version string). **The retired set is explicit in the script, never inferred** — an inferred set is a second thing that can silently go empty, and an empty retired set makes every line pass while the check reports green having measured nothing. **Its polarity is stated in the comment: it fails toward FLAGGING.** A false positive costs one look; a false clean ships a document routing someone to a deleted agent. If it gets noisy, add the marker — do not loosen the matcher.
+
+Four arms. **B** asserts a synthetic *unmarked* line IS flagged; **C** asserts the same name *with* a marker is NOT — positives alone cannot tell a working guard from one that fires on everything. **D** asserts neither input is empty. Dated historical records (`docs/plans/**` and `docs/<YYYY-MM-DD>-*.md`) are excluded **by shape**, not by a list that rots — both are records of what was true on a date, and rewriting them falsifies the history.
+
+### 5. Skill documentation corrections
+
+- **Step 6's user-level twin rule is no longer hooks-only.** It said *"for a deleted **hook**, cross-reference the user-level copy"*. **v3.0.0 deleted AGENTS**, and the reasoning transfers exactly: a retired agent surviving at `~/.claude/agents/<name>.md` stays **spawnable** after the project file is gone — the retirement is undone at user level, silently, for every repo on the machine. A consumer checked `~/.claude/agents/` anyway because they generalised it themselves; the next one should not have to. **The scope is the DELETION, not the artefact type.**
+- **Tag type VARIES — always deref with `^{commit}`.** The skill claimed toolkit releases *are* annotated. False: `git tag -a` creates an annotated tag with its own object, while a release cut through the **GitHub API** (including the GitHub MCP release tools this repo's guidance prefers) creates a **lightweight** tag. **v2.3.0 is lightweight for exactly that reason.** The cause now sits next to the rule, because without it the next releaser has no way to know which kind they are about to make. `^{commit}` is a no-op on a lightweight tag and the correction on an annotated one, so deref unconditionally and never branch on the type.
+- **`docs/architecture.md`** carried the *"`AGENT_TEAM.md` (~850 lines)"* figure that v3.0.0 already removed from the shipped `CLAUDE.md`, with the rationale written into the shipped file — *"a figure in prose describing another file's shape goes stale the moment that file is edited, and nothing detects it."* Same number, same file described, same release, one doc over. **Removed, not updated to 539** — updating re-arms the defect the rationale describes.
+- **`docs/template-sync.md`** now states unambiguously that the quoted `PROJECT-CUSTOM` marker text is the **current and only shipped** form, and says not to hand-roll a matcher against it. An older dated record in `docs/` quotes a superseded wording (*"never edits below this line"*) that no shipped file carries — and v3.0.0 shipped `region.sh` precisely because **two consumers hand-rolled the marker check and both got it wrong.** A doc showing a marker string no file carries is that hazard one layer up.
+
+### Downstream migration
+
+**⚠ TOP LINE — CHECK 30 IS REPO-SCOPED AND CANNOT SEE YOUR KEEP-MINE `CLAUDE.md`, WHICH IS EXACTLY WHERE A STALE CROSS-FILE CLAIM SURVIVES A SHRINK.** v3.0.0's check 30 resolves every cited heading repo-wide *in this repository*. Your `CLAUDE.md` and `CLAUDE.local.md` are **keep-mine**: the sync never touches them, and no repo-scoped check can reach them. So a citation of yours pointing into `AGENT_TEAM.md` — which lost 470 lines in v3.0.0 — is the one place where **doing the careful thing (keep-mine) produces the wrong outcome, silently.** Grep your own keep-mine markdown for headings you cite in template-owned files, and re-resolve them by hand. Nothing else will.
+
+**⚠ A RED GATE DURING THIS SYNC IS MORE LIKELY TO BE PRE-EXISTING ENVIRONMENT DRIFT THAN A REGRESSION — CHECK THE FAILURE IS IN A FILE THIS SYNC TOUCHED.** Two consumers lost most of a release to unrelated environment rot surfacing mid-sync, at the most alarming possible moment: a gate that has not been run in weeks goes red on the first run *after* a sync, and the sync is the obvious suspect and usually not the cause. Read the failing assertion, find the file it names, and check whether that file is in this sync's applied set before assuming anything. If it is not, you have found drift that was already there.
+
+1. **Re-copy the sync skill: `user-level-reference/skills/sync-template/SKILL.md` changed substantially** (6d, step 2b, invariant I3, step 6's twin rule, the tag-type rule, step 9). The body version marker is now `v3.0.1`. **Copying it changes nothing for a session already running** — restart before relying on it.
+2. **`hooks/retro-ledger.sh` and `hooks/retro-brief.sh` both changed**, and `user-level-reference/hooks/retro-ledger.sh` mirrors the first byte-identically. `retro-brief.sh` is **root-only by design** and does not mirror. Both are fail-open and hot-reload; no restart needed for them.
+3. **Your `retro.md` will look DIFFERENT, not shorter.** Existing rows are untouched — the ledger is append-only and nothing rewrites history. New rows for budget-only spawns now read `budget=<n> | errors=0` where they previously read `errors=<n>`, and the session brief shows **one row per agent** instead of the last 10 raw lines. **If your brief suddenly looks emptier, that is the budget-only filter, not a lost ledger** — grep `retro.md` and the rows are all still there.
+4. **`retro-brief.sh` now uses `awk`.** If your environment lacks it the brief prints its heading and nothing else (it stays fail-open and exits 0); the ledger is unaffected.
+5. **Check 32 may be red on YOUR docs, and that is the check working.** If your own `docs/` name `test-writer`, `requirements-engineer` or `doc-generator` without a retirement marker, it will say so with `path:line`. Fix by naming the survivor (`tester`, `architect`, `coder`), or — if the line is a record of what was true then — **annotate it rather than rewriting it**. Do not loosen the matcher.
+6. **What did NOT change:** `gate-before-merge.sh`, `run-gate.sh`, `pre-commit-test.sh`, `hooks/lib/json.sh`, `hooks/lib/git-cmd.sh`, every `settings.json` matcher, and all six variant templates. A conflict on any of those is your own deviation, not this release.
+
+**Deferred, with reasons, so nobody looks for them here:** the A6 discriminator in `gate-before-merge.sh` and its probe's precondition (blocked on a measurement of whether the `pull` path can resolve its target — the **present-but-stale ref** row is the one that decides it); the 6d migration capability-table columns (six rows is the fix only if they are the right six); splice-recorded-as-`keep-mine` (needs a design pass, not a patch); and `--dry-run` (a live-only dry-run is a no-op on exactly the releases it exists for).
+
+**Owed, and not done in this release:** `scripts/verify-user-level-drift.sh` will report `skills/sync-template/SKILL.md` and `hooks/retro-ledger.sh` as drift until the live `~/.claude/` tree is re-copied. That propagation is a controller action; the release is not done until the drift probe reports 0.
+
 ## v3.0.0 — 2026-09-02
 
 **Phase B: the subtractions. THIS IS THE RELEASE THAT DELETES THINGS**, and it ships one release *behind* the guards that make deleting safe — v2.4.0's `region.sh`, the unreachable-deletion precondition, the touched-directory backup, the five-form name sweep and check 29. **Removals fail CLOSED where additions fail open**, which is why the order was that way round and not a shortfall.
