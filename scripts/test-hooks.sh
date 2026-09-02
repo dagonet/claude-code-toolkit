@@ -1767,6 +1767,74 @@ expect "budget block tallies as budget=1" 1 \
   "$(grep -c 'budget=1' "$BULEDGER" 2>/dev/null)"
 expect "budget block does not land in blocks=[...]" 1 \
   "$(grep -c 'blocks=\[no-push-main.sh\]' "$BULEDGER" 2>/dev/null)"
+# v3.0.1: and it does not inflate errors= either. The budget block used to be
+# counted as an error one line BEFORE the budget/blocks split, so a ceiling
+# tripping as designed was indistinguishable from a real failure in the headline.
+expect "budget block does not inflate errors=" 1 \
+  "$(grep -c 'errors=1' "$BULEDGER" 2>/dev/null)"
+
+# --- 8a3. v3.0.1: THE LEDGER IS THE RECORD, THE BRIEF IS THE VIEW.
+# A budget-only spawn STILL gets a ledger row — suppressing it would make an
+# agent's rows disappear from retro.md, and disappearing rows read as "clean",
+# not as "changed" (a silent negative). The filtering happens in retro-brief.sh.
+#
+# Two-sided IN ONE RUN, deliberately: retro-brief is fail-open, so an awk syntax
+# error empties its output entirely and a lone "budget-only agent is absent"
+# assertion would pass on that. The real-failure agent must be PRESENT in the
+# same output for the absence to mean anything.
+BOHOME="$TMPROOT/retrohome-budgetonly"
+mkdir -p "$BOHOME"
+{
+  trow_ok "PreToolUse:Bash hook error: [bash 'hooks/agent-budget-warn.sh']: BUDGET: this spawn has made 120 tool calls (median is 15; 120 is the first ceiling)."
+  trow_ok "PreToolUse:Bash hook error: [bash 'hooks/agent-budget-warn.sh']: BUDGET: this spawn has made 240 tool calls (median is 15; 120 is the first ceiling)."
+} > "$TMPROOT/agent-budgetonly.jsonl"
+mkstop "$PROJCWD" coder agent-bo77 "$TMPROOT/agent-budgetonly.jsonl" \
+  | HOME="$BOHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+BOLEDGER="$BOHOME/.claude/projects/G--git-retroproj/memory/retro.md"
+expect "budget-only spawn STILL writes a ledger row" 1 \
+  "$(grep -c 'agent-bo77' "$BOLEDGER" 2>/dev/null)"
+expect "budget-only row is budget=2 | errors=0" 1 \
+  "$(grep -c 'budget=2 | errors=0' "$BOLEDGER" 2>/dev/null)"
+mkstop "$PROJCWD" tester agent-real77 "$TMPROOT/agent-block.jsonl" \
+  | HOME="$BOHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+mkstart "$PROJCWD" | HOME="$BOHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/bo.out" 2>/dev/null
+expect "brief over a filtered ledger exits 0" 0 $?
+expect "brief HIDES the budget-only agent" 0 "$(grep -c 'agent-bo77' "$TMPROOT/bo.out")"
+expect "brief SHOWS the real-failure agent" 1 "$(grep -c 'agent-real77' "$TMPROOT/bo.out")"
+
+# --- 8a3b. v3.0.1: dead=[...] is surfaced ON ITS OWN MERITS and is NEVER
+# filtered out. A grant gap is not a failure — the agent completes and silently
+# delivers something weaker — and a measured row `dead=[Bash,Edit] | budget=0 |
+# errors=2` is the one that produced two real defect reports. A filter keyed on
+# errors= or budget= alone would have dropped precisely that row.
+DEADHOME="$TMPROOT/retrohome-deadonly"
+DEADDIR="$DEADHOME/.claude/projects/G--git-retroproj/memory"
+mkdir -p "$DEADDIR"
+printf '%s\n' '2026-09-02 10:00 | coder | agent-dead77 | dead=[Bash,Edit] | blocks=[] | budget=4 | errors=0' \
+  > "$DEADDIR/retro.md"
+mkstart "$PROJCWD" | HOME="$DEADHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/dead.out" 2>/dev/null
+expect "a dead= row survives the brief filter even with budget>0, errors=0" 1 \
+  "$(grep -c 'agent-dead77' "$TMPROOT/dead.out")"
+
+# --- 8a3c. v3.0.1: the brief DEDUPES by agent id (last row wins) BEFORE tailing.
+# Measured: one long-running agent occupied 11 of 30 cumulative rows and hid
+# three of the four agents behind `tail -n 10`, under a heading promising the
+# last 10 SUBAGENT entries.
+DDHOME="$TMPROOT/retrohome-dedupe"
+DDDIR="$DDHOME/.claude/projects/G--git-retroproj/memory"
+mkdir -p "$DDDIR"
+printf '%s\n' '2026-09-02 09:00 | tester | agent-quiet77 | dead=[] | blocks=[y.sh] | budget=0 | errors=1' \
+  > "$DDDIR/retro.md"
+dd_i=1
+while [ "$dd_i" -le 11 ]; do
+  printf '2026-09-02 10:00 | coder | agent-loud77 | dead=[] | blocks=[x.sh] | budget=0 | errors=%s\n' \
+    "$dd_i" >> "$DDDIR/retro.md"
+  dd_i=$((dd_i + 1))
+done
+mkstart "$PROJCWD" | HOME="$DDHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/dd.out" 2>/dev/null
+expect "brief keeps exactly one row per agent id" 1 "$(grep -c 'agent-loud77' "$TMPROOT/dd.out")"
+expect "brief keeps that agent's LAST row" 1 "$(grep -c 'errors=11' "$TMPROOT/dd.out")"
+expect "dedupe stops one agent hiding another" 1 "$(grep -c 'agent-quiet77' "$TMPROOT/dd.out")"
 
 # --- 8b. review round 1: the ledger line is bounded. 12 distinct dead tools must
 # render as 5 names + a "+7 more" marker, not a 12-entry line.
