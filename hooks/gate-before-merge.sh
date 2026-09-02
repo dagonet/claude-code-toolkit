@@ -61,6 +61,52 @@ gc_guard_off && exit 0
 
 CWD="$GC_CWD"
 
+# --- v3.0.1 (A6 fix) argument parsing, deliberately LOCAL to this hook -------
+#
+# Not added to hooks/lib/git-cmd.sh: that library is covered by the three-parser
+# matrix (~90 minutes), nothing else needs these shapes, and keeping them here
+# means the A6 fix costs one suite run rather than three.
+
+# a6_args <segment> <subcommand> -- everything after `<subcommand>` in a segment.
+a6_args() {
+  printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2\\([[:space:]]\\|\$\\)/\\1/p" | head -1
+}
+
+# a6_nonflag <args> -- the tokens that are not flags (a target ref, a remote).
+a6_nonflag() {
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$'
+}
+
+# a6_nonflag_count <args>
+a6_nonflag_count() {
+  a6_nonflag "$1" | grep -c . || true
+}
+
+# a6_has_flag <args> <alternation> -- a long flag from the alternation is present.
+a6_has_flag() {
+  printf '%s\n' "$1" | grep -qE "(^|[[:space:]])--($2)([[:space:]]|=|\$)"
+}
+
+# a6_merge_exempt <merge-args> -- `git merge --abort|--continue|--quit`.
+#
+# HIGHEST-PRIORITY ARM OF THE v3.0.1 FIX, and it is checked before every other
+# question. All three were measured exiting 2 on a protected branch, which left
+# a consumer in a CONFLICTED MERGE ON `main` — precisely the state this gate
+# exists to worry about — with no way out except `.claude/git-guard-off`. A
+# guard whose only exit is its own kill switch teaches the kill switch.
+# None of the three lands anything new: abort restores the pre-merge state,
+# continue completes work already begun (and already gated when it began), quit
+# leaves the index alone.
+#
+# The exemption requires NO non-flag token to be present. gc_segments strips
+# quotes, so `git merge -m "retry after --abort" feature/x` otherwise hands us a
+# bare `--abort` token and buys a real merge the exemption. The three real forms
+# take no operand, so the requirement costs nothing and closes that door.
+a6_merge_exempt() {
+  [ "$(a6_nonflag_count "$1")" -eq 0 ] || return 1
+  a6_has_flag "$1" 'abort|continue|quit'
+}
+
 # v2.2.6 round 2 -- THE 14th FAIL-OPEN, third instance. Checked BEFORE the tool
 # case below, because that case's `*)` arm is exactly the door an unreadable
 # tool_name walks through. See gc_cmd_unreadable in hooks/lib/git-cmd.sh.
@@ -110,6 +156,13 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # 2. git merge while the checkout is on a protected branch
     if gc_matches_subcommand "$seg" "merge"; then
       repo=$(gc_repo_for "$seg" "$base")
+      margs=$(a6_args "$seg" "merge")
+      # v3.0.1 item 1: the three merge-state subcommands are exempt on the
+      # SUBCOMMAND PARSE, before the branch is even looked at. See
+      # a6_merge_exempt.
+      if a6_merge_exempt "$margs"; then
+        continue
+      fi
       if gc_on_main "$repo"; then
         is_merge=1
         CWD="$repo"

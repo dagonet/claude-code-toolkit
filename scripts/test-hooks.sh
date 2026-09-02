@@ -798,6 +798,70 @@ check_msg "(A6) staleness message names WHICH head to gate" \
   "head that is actually being MERGED"
 writeartifact "$GATEFEAT" "$FEATSHA"
 
+# ===========================================================================
+# v3.0.1 — THE A6 FIX. Fixtures first.
+#
+# NONE of the repos below is ever given a gate artifact, deliberately. Every
+# want-0 row therefore proves the operation was not gated AT ALL, and every
+# want-2 row in the SAME repo proves the **Gate** field is configured and the
+# hook reached the A6 decision — the pairing is what keeps a want-0 row from
+# passing vacuously on the "no Gate command configured" exit above.
+#
+# `mkrepo` builds no remote, and half of A6 is about a branch's UPSTREAM, so
+# the provenance fixtures are real clones: origin advances, the clone fetches,
+# and the clone's `main` is then behind `origin/main` — the exact routine state
+# the ancestry rule would have blocked.
+# ===========================================================================
+A6CTX='# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n'
+A6MAIN=$(mkrepo a6main main)
+printf '%b' "$A6CTX" > "$A6MAIN/PROJECT_CONTEXT.md"
+git -C "$A6MAIN" branch feature/x >/dev/null 2>&1
+
+A6ORIGIN=$(mkrepo a6origin main)
+a6clone() { # <name> -> a clone of A6ORIGIN with a **Gate** field
+  git clone -q "$A6ORIGIN" "$TMPROOT/$1" >/dev/null 2>&1
+  git -C "$TMPROOT/$1" config user.email t@t.t
+  git -C "$TMPROOT/$1" config user.name t
+  git -C "$TMPROOT/$1" config commit.gpgsign false
+  printf '%b' "$A6CTX" > "$TMPROOT/$1/PROJECT_CONTEXT.md"
+  printf '%s\n' "$TMPROOT/$1"
+}
+A6CLONE=$(a6clone a6clone)
+echo more > "$A6ORIGIN/next.txt"
+git -C "$A6ORIGIN" add next.txt >/dev/null 2>&1
+git -C "$A6ORIGIN" commit -q -m next >/dev/null 2>&1
+git -C "$A6CLONE" fetch -q origin >/dev/null 2>&1
+git -C "$A6CLONE" branch feature/x >/dev/null 2>&1
+# The diverged twin: a local commit on `main` that the upstream does not have,
+# so the same `git merge origin/main` would create a merge commit.
+A6DIV=$(a6clone a6div)
+git -C "$A6DIV" reset -q --hard HEAD~1 >/dev/null 2>&1
+echo local > "$A6DIV/local.txt"
+git -C "$A6DIV" add local.txt >/dev/null 2>&1
+git -C "$A6DIV" commit -q -m local >/dev/null 2>&1
+# The negative arm for every A6 rule: the same shapes on a feature branch.
+A6FEATCO=$(a6clone a6featco)
+git -C "$A6FEATCO" checkout -q -b feature/co >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 1 — `git merge --abort|--continue|--quit` are EXEMPT.
+#
+# Measured on `main` before the fix: all three exited 2. A consumer in a
+# conflicted merge on a protected branch could not get out except through
+# `.claude/git-guard-off`. Delete the a6_merge_exempt call in
+# gate-before-merge.sh and the first four rows flip 0 -> 2.
+#
+# The fifth row is the control on the exemption itself: gc_segments strips
+# quotes, so a `-m` message body carrying the word `--abort` must NOT buy a
+# real merge the exemption. It flips 2 -> 0 if the non-flag-token requirement
+# is dropped from a6_merge_exempt.
+# ---------------------------------------------------------------------------
+check "(A6.1) merge --abort on a protected branch"     "$H" 0 "$(mkjson Bash 'git merge --abort' "$A6MAIN")"
+check "(A6.1) merge --continue on a protected branch"  "$H" 0 "$(mkjson Bash 'git merge --continue' "$A6MAIN")"
+check "(A6.1) merge --quit on a protected branch"      "$H" 0 "$(mkjson Bash 'git merge --quit' "$A6MAIN")"
+check "(A6.1) -C target on main, --abort exempt"       "$H" 0 "$(mkjson Bash "git -C $A6MAIN merge --abort" "$A6CLONE")"
+check "(A6.1) --abort inside -m does NOT exempt"       "$H" 2 "$(mkjson Bash 'git merge -m "retry after --abort" feature/x' "$A6MAIN")"
+
 # ---------------------------------------------------------------------------
 # v2.4.0 (A6, consumer report): a PRETTY-PRINTED artifact is valid JSON and a
 # consumer's own gate may well emit it — replacing run-gate.sh wholesale is a
