@@ -1,0 +1,16 @@
+## Open Brain team extensions (REGION-SENTINEL-TEAM-9c58)
+
+**Merge ownership on this repo.** The gate artifact `.gate/last-pass.json` is checked at
+the repo top of the *merging session's* cwd. A developer agent working in
+`.claude/worktrees/agent-<id>` holds an artifact keyed to its own HEAD, so that agent
+must perform its own merge — the PO's main checkout carries a different, usually stale
+artifact and will be blocked correctly.
+
+**Delegation boundary the PO hits most often.** `.mcp.json` and anything at the repo
+root outside the PO write surface must be routed to `ops`, not edited by the PO. The
+escape hatch `.claude/delegation-off` exists but using it to route around a guard that
+fired correctly is never the right response.
+
+**Three keep-mine files.** `hooks/run-gate.sh`, `hooks/gate-before-merge.sh` and
+`PROJECT_CONTEXT.md` deviate from the template by design and are re-registered
+`source="skip"` on every sync. Do not "clean up" their divergence.

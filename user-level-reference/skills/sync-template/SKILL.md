@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v2.3.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v2.4.0 -->
 
 # Sync Template (Downstream)
 
@@ -111,7 +111,27 @@ for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; e
 
 **`new_template_files` being empty is STRUCTURAL for a mature repo, not a sampling accident** — it means *absent from the MANIFEST*, and a repo that has synced before has every template file tracked. It is non-empty in exactly two situations: the template ADDS a file, or the manifest does not yet describe the tree (adoption, above). Four consecutive consumer syncs reported it empty, so **an empty second set is the expected reading, not evidence that this step ran.** Say which it was in the report.
 
-Copy each hit from BOTH sets to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync — step 5's post-apply guard reads it.
+**Back up a THIRD set: everything ON DISK in every directory a destructive operation TOUCHES (v2.4.0, item A3).**
+
+Concretely: for every `TEMPLATE_DELETED` path, back up **every file in that path's directory that exists on disk** — not just the deleted path, and **not only the manifest-tracked ones**. Deletion is the only irreversible-by-design operation in this skill, and a region-bearing agent file is in **neither** of the two sets above: it is not gitignored-and-tracked, and it is not a new template file. Git recovers a tracked one, so that alone is not catastrophic — but it also changes the step-6 prompt qualitatively: *"safe to delete (backed up at `<path>`)"* is a materially different question from *"safe to delete"*.
+
+> **⚠ SCOPE THIS BY WHAT IS ON DISK IN THE TOUCHED DIRECTORY, NOT BY MANIFEST MEMBERSHIP** — and the reason reads as over-caution until you know what it protects.
+>
+> A consumer has `.claude/agents/game-tester.md`: **project-owned, not manifest-tracked** (ten agent files tracked, that one not). So it is **not `TEMPLATE_DELETED`, not `new_template_files`, and not covered by this step's manifest-scoped sets on any path.** A consolidation that rewrites `.claude/agents/` wholesale meets it **with no backup anywhere.** That is invariant I1's class one directory over.
+>
+> Git settles what that file actually is: hand-authored through its own PR, extended in a second, still in use three months later, `tools:` listing 18 project-specific MCP tools that exist only in that repo's own harness, and a description encoding a domain policy of theirs. **Toolkit files matching `*game-tester*` across all branches and all history: zero.**
+>
+> **Every other file in that `.claude/agents/` can be restored from the template. That one exists only there.**
+>
+> **Manifest membership tracks TEMPLATE PROVENANCE, not importance** — and a consolidation naturally runs on the opposite intuition, that the untracked file is the leftover. It is the inverse: **the untracked file is the only one nobody can regenerate.** Scoping by what is on disk in the touched directory is what makes provenance stop deciding survival.
+
+**Consumers customise in two styles, and only one is visible to a manifest-scoped guard.** *Editing* a tracked file surfaces as `CONFLICT`, is covered by the manifest-scoped backup, and is recoverable from git besides. *Adding* an untracked file is invisible to classification **by construction**. Editing is safe because the manifest knows the path; adding is unsafe because nothing does.
+
+**A census of who currently holds orphans measures which style is popular, not how bad the failure is** — and the failure is unrecoverable file loss, no backup on any path, no prompt, in a directory a consolidation rewrites wholesale. A second consumer measured **zero** orphans (25 files on disk across `.claude/agents/`, `.claude/rules/` and `hooks/`, all 25 manifest-tracked, both directions clean across the whole 34-entry manifest). **Do not read that as "one of two, therefore marginal."** On a repo that only ever edits tracked files the manifest is bidirectionally consistent and *is* a trustworthy authority — nine syncs with no drift in either direction. **That is a property of that repo, not of manifests**, and it is not the case this set is written for. On such a repo the guard copies nothing extra and costs nothing, which is what a clean repo should look like.
+
+Copy each hit from ALL THREE sets to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync — step 5's post-apply guard reads it.
+
+> **Report the third set separately from the first two**, and name the directories it was derived from. A count folded into the others hides whether it ran at all — and unlike `new_template_files`, an empty third set is *not* the expected reading: it means no `TEMPLATE_DELETED` path had a directory, which on a sync that deletes anything is a derivation failure, not a clean result.
 
 **If Bash commands starting with `git` are BLOCKED in this project, both methods above are unexecutable** (pre-v2.1 configs shipped a `block-bash-vcs.sh`; this toolkit removed it in v2.1, so this reaches only consumers still on such a config). The step anticipates a false clean, not a hard block. Two git-free routes, in preference order: use the server's `template_list_gitignored` when the installed `template-sync-tools` has it — the real fix, and the same one this step already names; otherwise parse `.gitignore` yourself and, where that is ambiguous, **back up the manifest's whole path list as a superset**. A superset backup is cheap and always correct — over-copying costs disk, under-copying costs the file. What is NOT acceptable is skipping 2b because the check would not run: that is a 127 being read as a verdict.
 
@@ -261,6 +281,9 @@ For each file with status `CONFLICT`:
      - **Accept template** (discard local changes)
      - **Keep mine** (acknowledge template change but keep project version)
      - **Splice** (`source="provided"` with hand-merged content)
+
+     > **⚠ A `hooks/*.sh` SPLICE MUST NOT BE APPLIED WITH THE `Edit` TOOL.** `enforce-delegation.sh` denies main-thread `Edit`/`Write`/`NotebookEdit` outside the PO write surface, and `hooks/` is not on that surface — a hook script is enforcement code, and the PO hand-editing it is exactly what the rule exists to prevent. **That deny is correct and long-standing; do not work around it and do not reach for `.claude/delegation-off`.** The sanctioned route is `template_apply_file(source="provided", content=...)`, composing the merged content in a script rather than by hand, followed by `template_apply_file(source="skip")` to register the result. This is the modal conflict for any consumer carrying a gate deviation, so the route has to be named here rather than discovered: a consumer who got through did so by using `template_apply_file` plus a script for unrelated reasons — luck, not design.
+
 4. Apply the user's choice:
    - Accept merged/template: `template_apply_file(source="provided", content=...)` or `template_apply_file(source="template")`
    - Keep mine: `template_apply_file(source="skip")`
@@ -270,6 +293,32 @@ For each file with status `CONFLICT`:
 > Since v2.1.2 the markers also ship at the end of every `.claude/agents/*.md` and of `AGENT_TEAM.md` — the region split is file-agnostic, so those files now merge exactly like `CLAUDE.md`. On the first sync that brings the markers in, **move the project's existing custom agent lines into the region once**; anything left above the BEGIN marker is template territory and the next accept-template will overwrite it.
 >
 > "EMPTY region" in the accept-template disqualifier above means *no content other than the shipped `<!-- Project-specific rules, routing blocks, and extensions go here. -->` placeholder* — the placeholder alone does not make a region non-empty.
+>
+> ### ⚠ DO NOT IMPLEMENT THAT CHECK. RUN THE SHIPPED ONE (v2.4.0).
+>
+> ```
+> bash "$(dirname "$0")/region.sh" --scan .        # classify every region-bearing file
+> bash "$(dirname "$0")/region.sh" --body <path>   # the region body, verbatim
+> ```
+>
+> `region.sh` ships next to this file. **Two independent consumers implemented "is the region empty?" from the paragraph above and both got the REASSURING answer wrongly**, which is why it is now code:
+>
+> - `PROJECT-CUSTOM:BEGIN\s*-->` matches **nothing** — the shipped marker carries trailing prose: `<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->`
+> - `glob('**/*.md', recursive=True)` does **not** descend into dot-directories, so it skips all of `.claude/` — every agent file.
+>
+> One consumer measured **"zero regions" across a repo with eleven.** A consumer who implements this by hand concludes *"empty"*, clears the disqualifier, and accept-template destroys the region. The specification `region.sh` implements, so you can read it without reading the script:
+>
+> ```
+> regex : PROJECT-CUSTOM:BEGIN.*?-->(.*?)<!--\s*PROJECT-CUSTOM:END      (DOTALL)
+> scope : enumeration MUST include dot-directories (.claude/ especially)
+> empty : body is whitespace or the shipped placeholder comment only
+> ```
+>
+> **`--scan` is the ONLY enumeration this skill documents.** Two documented ways to enumerate is how the naive glob came back; take the file list from `--scan`'s output rather than writing a second walker.
+>
+> **AND THE COROLLARY REACHES BACKWARDS: every consumer who has ever reported *"no PROJECT-CUSTOM content here"* may have been reporting their EXTRACTOR, not their repo.** Re-check with the shipped one before trusting any earlier all-clear — including your own from a previous sync.
+>
+> The defect lives in the unspecified implementation, the same class as `--include` after paths, the `which`-resolved `bash -n`, and the `command:`-anchored collector. **The population bitten is the consumers who follow us most literally.**
 
 > **`PROJECT_CONTEXT.md`: SPLICE, never accept-template.** It conflicts for every consumer who has filled in real values, and accept-template replaces a working `- **Gate**: npm run gate` with `{{GATE_COMMAND}}` — which silently disables `pre-commit-test.sh` and `run-gate.sh` on the next commit, worst on a Gate-only repo where nothing else notices. Your `**Gate**:` / `**Test**:` / `**Build**:` values live in this file; they are a legitimate, permanent deviation, not drift to clean up. Take the template's *new lines* by hand and keep your own values.
 >
@@ -320,9 +369,45 @@ Apply new libs and hooks BEFORE `.claude/settings.json` is written, even though 
 
 ### 6. Handle Template-Deleted Files
 
-For each file with status `TEMPLATE_DELETED`:
+### ⚠ 6a. A FILE WHOSE PROJECT-CUSTOM REGION IS NON-EMPTY CANNOT BE DELETED (v2.4.0, item A2)
 
-1. Determine whether anything still references it: run the same reference grep as step 6b (`.claude/settings.json` plus the `hooks:` frontmatter of every `.claude/agents/*.md`).
+**Run this BEFORE anything else in this step, on every `TEMPLATE_DELETED` path:**
+
+```
+bash "$(dirname "$0")/region.sh" <every TEMPLATE_DELETED path>
+```
+
+`CONTENT` (or `UNCLOSED`) on any path ⇒ **deletion is NOT OFFERED for that path.** Not defaulted away from, not behind a second confirmation — **absent from the option list.** The only available actions are **relocate the region** to a named survivor, and **defer**. Once the region is empty, the ordinary flow below applies.
+
+**Why a precondition and not an acknowledgement.** Step 6 has until now asked exactly one question — *is it still referenced* — and **never inspected the region**. A consumer with custom routing in `coder.md` is told *"preserved and unreferenced — safe to delete"*, accepts, and `git rm` takes it. **The prompt that asked for consent never showed the thing being destroyed.** A second acknowledgement does not fix that: a prompt loses to fatigue, and someone who has cleared four prompts clears the fifth. Step 5 was not fixed by making `source="template"` the non-default; it was fixed by making it **unreachable** outside the not-present arm. This is the same shape.
+
+So the user cannot choose *"delete with content"*; they can only *"empty, then delete"* — and emptying is the act that moves the content somewhere it survives. **The irreversible step becomes reachable only once the content is provably elsewhere.**
+
+**This is the MODAL case in a consolidation release, not an edge case.** All nine shipped agent files carry PROJECT-CUSTOM regions and are manifest-tracked, so `TEMPLATE_DELETED × region-bearing` can fire **up to nine times in one sync**.
+
+Required, in order:
+
+1. **Extract with `region.sh`** — the shipped extractor, never a hand-written check. A2 is unsound without it: the hand-written version returns the *reassuring* answer (see step 4's note), a region with content reads as empty, deletion is offered, and the content is gone.
+2. **`CONTENT` ⇒ print the region VERBATIM** (`region.sh --body <path>`) and **withhold the delete option entirely**. Show the user what is at stake in the same breath as the question.
+3. **Offer relocate (to a named survivor) or defer.** After a relocate, **BYTE-COMPARE the moved region against the original before deletion becomes reachable**:
+
+   ```
+   bash region.sh --body <original>  > "$TMPDIR/region-orig"
+   bash region.sh --body <survivor>  > "$TMPDIR/region-moved"
+   cmp "$TMPDIR/region-orig" "$TMPDIR/region-moved"     # must be identical
+   ```
+
+   **Make "provably" MECHANICAL, not asserted** — a positive check carrying content, the same discipline as a planted-marker control, rather than the user's word that they handled it.
+
+> **Step 2b's backup is a good floor, but recoverable is not the same as noticed.** A consumer who does not realise they lost something never goes looking in the backup. That is why this is a precondition and not merely a backup.
+
+> ***"Unreferenced" answers whether enforcement breaks; it says nothing about whether the user loses work.***
+
+### 6 (continued). The ordinary TEMPLATE_DELETED flow
+
+Reached only for paths 6a classified `EMPTY` or `NOMARKERS`. For each such file:
+
+1. Determine whether anything still references it: run the same reference grep as step 6b (`.claude/settings.json` plus the `hooks:` frontmatter of every `.claude/agents/*.md`), **and the agent-NAME sweep in 6d below**.
 2. Report the state precisely:
    - "preserved **and unreferenced — safe to delete**" — the new `settings.json` and agents no longer mention it;
    - "preserved **and still referenced by `<file>`**" — deleting it would take enforcement offline.
@@ -384,6 +469,74 @@ on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the confi
 ```
 Hooks verified: N referenced, N present (M restored, K registered in manifest); D on disk, U unreferenced: [list]
 ```
+
+### 6d. Sweep for agent NAMES, not just `hooks/` paths (MANDATORY when an agent file is TEMPLATE_DELETED — v2.4.0, item A4)
+
+**A consolidation deletes agent FILES. It does not touch REFERENCES TO THEIR NAMES**, and step 6's reference grep looks for `hooks/` paths only. Measured on a live consumer: a **keep-mine `CLAUDE.md`** carries an agent-selection table naming `python-coder` and `coder` as `subagent_type` values, with an explicit instruction not to substitute one for the other. `AGENT_TEAM.md` and `settings.json` are template-owned, so the template updates them — **`CLAUDE.md` is keep-mine and is therefore NEVER updated.** The sync completes clean, step 6 reports the deleted agents unreferenced (*truthfully, for `hooks/` paths*), and the next spawn of a consolidated-away agent fails at runtime against instructions the project still carries.
+
+> This is *removals fail closed* **one layer out**: the removal does not break the hook layer, it breaks **a project-authored instruction that no longer resolves.**
+
+#### ⚠ KEY ON THE REFERENCE FORM, NOT THE NAME — a bare name grep is 28:1 noise and dies on first use
+
+Measured on a live consumer, `.claude/agents/` excluded:
+
+```
+name hits in project prose:  coder 74 | tester 32 | architect 27 | code-reviewer 16
+                             Explore 13 | ops 12 | doc-generator 10 | req-eng 7 | test-writer 4
+                             ------------------------------------------------- total 195
+lines actually referencing subagent_type:                                             7
+```
+
+`coder` alone is **74 hits**, essentially all of it prose discussing the role. **A consumer runs that once, sees 195 hits, and never runs it again** — the exact *noisy enough to be ignored* failure, and the same one already rejected for the placeholder sweep. **Match the reference SHAPE**, exactly as the sweep's markdown arm requires a `- **Key**: value` line rather than any occurrence of the key. **195 → 7 on that repo.** *Scope is the right axis; the name set is not.*
+
+#### The five binding forms — ONE PASS PER PATTERN LANGUAGE, NOT ONE PASS PER NAME
+
+A consumer enumerated every place an agent name is bound. **Only one of the five is a spawn call, and two of them fail OPEN and SILENT.**
+
+| # | Form | Failure mode when the name retires |
+|---|---|---|
+| 1 | Hook `case` arms — `coder\|*-coder)`, `tester)`, `architect)` | **FAIL OPEN, SILENT** — falls to the default arm; the spawn proceeds with **no skills requirement**, no error, no log line |
+| 2 | `settings.json` matcher regexes — `^([a-z0-9]+-)?coder$\|^tester$` | **FAIL OPEN, SILENT** — the hook is **never invoked at all**. Not a block, not a warning |
+| 3 | `CLAUDE.md` routing prose — *Rust/Tauri → rust-coder, do not substitute* | dangling mandate, permanent in a keep-mine file |
+| 4 | Agent frontmatter cross-refs — every agent file names others | dangling reference |
+| 5 | **Hook user-facing output strings** — `enforce-delegation.sh`'s DENY text names `coder`, `doc-generator`, `ops`, `tester` | not enforcement, but a live instruction telling a blocked user to spawn something that no longer exists |
+
+> **This inverts the comfort premise that a retired name "fails loudly at spawn".** It fails **loudly when spawned** and **silently in every hook that keyed on it** — opposite polarities in the same release, and the loud one is the one that got measured. Loudness protects the *caller*; it does not protect the *enforcement layer*.
+
+**Forms 1 and 2 are the same intent in two different pattern languages** — shell glob `coder|*-coder)` and regex `^([a-z0-9]+-)?coder$` — both generalising over the whole `<lang>-coder` family. **Consolidating or renaming `coder` breaks `rust-coder`, `cpp-coder` and every future variant in both places at once, and a fix applied to one will not be applied to the other by any grep keyed on a single syntax.**
+
+#### The sweep
+
+Run this for every `TEMPLATE_DELETED` agent name `<N>`:
+
+```sh
+# forms 3 + the spawn call: the reference SHAPE, in project-owned prose.
+grep -rnE "subagent_type[\"']?[[:space:]]*[:=][[:space:]]*[\"']?<N>\b" . \
+     --include='*.md' --include='*.json' --include='*.yaml' --include='*.yml'
+
+# form 1: shell case arms, in every hook on disk.
+grep -nE "^[[:space:]]*[A-Za-z0-9_|*?.-]*<N>[A-Za-z0-9_|*?.-]*\)" hooks/*.sh
+
+# form 2: settings.json matcher regexes that MATCH the name. Evaluate the
+# regex; do NOT string-compare it to the name — `rust-coder` appears as no
+# literal in `^([a-z0-9]+-)?coder$` and is covered only by the generalisation.
+grep -o '"matcher": "[^"]*"' .claude/settings.json | sed 's/.*"matcher": "//;s/"$//' \
+  | while IFS= read -r m; do printf '%s\n' "<N>" | grep -qE "$m" && echo "matcher: $m"; done
+
+# form 4: agent frontmatter cross-references.
+grep -rn "\b<N>\b" .claude/agents/*.md
+
+# form 5: hook OUTPUT strings — a live instruction inside a DENY message.
+grep -nE "(echo|printf)[^|]*\b<N>\b" hooks/*.sh
+```
+
+**`--include` goes BEFORE the paths** — after them it is parsed as another path and the filter silently does nothing. (Same defect class as the placeholder sweep's.)
+
+Then, for every `TEMPLATE_DELETED` agent, **list the hits per form**. **Weight keep-mine files specially — the sync will not fix those, so a hit there is permanent until a human edits it**, and say so in the report rather than folding it into a count.
+
+**Acceptance criterion, per pattern language:** enumerate every place a name is bound — case arms, matcher regexes, routing prose, frontmatter, hook output — and **assert the set is unchanged across the consolidation, per pattern language.** A rename then becomes a diff to look at rather than a silence to notice.
+
+> **CONSTRAINT THIS PUTS ON ANY CONSOLIDATION: ABSORB, DO NOT RENAME.** Both the matcher regex and the skills case arm already generalise over the variant family, so superset-under-an-existing-name is compatible **only while the surviving name is `coder`**. If a consolidation renames rather than absorbs, all three binding sites break silently at the same moment. With an existing name, a stale reference in a consumer's keep-mine prose fails loudly at spawn, which is recoverable; with a new name, every consumer's prose is stale at once.
 
 ### 7. Finalize
 

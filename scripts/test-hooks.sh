@@ -755,6 +755,83 @@ printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SPACEGATE/PROJECT_C
 check "spaced -C merge, target on main"  "$H" 2 "$(mkjson Bash "git -C \"$SPACEGATE\" merge feature" "$GATEFEAT2")"
 check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' "$GATEREPO")"
 
+# ---------------------------------------------------------------------------
+# v2.4.0 (A6): merging FROM a protected branch is refused before the artifact
+# is read. THE CONTROL IS TWO-SIDED AND THE POSITIVE ARM IS THE LOAD-BEARING
+# ONE: the protected repo below is given a PERFECTLY FRESH, sha-matching
+# artifact, so without the guard this call exits 0. That is the exact live
+# defect — a green artifact for `main`, permitting a merge of the PR branch's
+# entirely different content. Delete the gc_on_main block in
+# gate-before-merge.sh and this fixture flips 2 -> 0 while every other
+# gate-before-merge fixture stays green; that is what makes it a control and
+# not decoration. The negative arm (feature branch, same fresh artifact, 0)
+# is what proves the guard is not simply blocking everything.
+# ---------------------------------------------------------------------------
+GATEREPOSHA=$(git -C "$GATEREPO" rev-parse HEAD)
+writeartifact "$GATEREPO" "$GATEREPOSHA"
+check_msg "(A6) merge from a protected branch refuses despite a fresh artifact" \
+  "$ROOT/$H" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$GATEREPO")" \
+  "initiated while the checkout is on a protected branch"
+check_msg "(A6) protected-branch refusal names the head to gate instead" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 12 --squash' "$GATEREPO")" \
+  "check out the merge target"
+# Negative arm: the SAME merge shape on a feature branch, with a fresh
+# artifact, is allowed — HEAD is the merge content there, so the comparison is
+# meaningful and the guard must stay out of the way.
+check "(A6) same merge on a feature branch is still allowed" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 12 --squash' "$GATEFEAT")"
+# `**Protected branches**: none` is the one deliberate way to protect nothing;
+# the A6 refusal must honour it rather than keying on the branch NAME.
+GATENONE=$(mkrepo gateprotnone main)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n- **Protected branches**: none\n' > "$GATENONE/PROJECT_CONTEXT.md"
+writeartifact "$GATENONE" "$(git -C "$GATENONE" rev-parse HEAD)"
+check "(A6) 'Protected branches: none' is honoured, merge on main allowed" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 12 --squash' "$GATENONE")"
+# Defect 1: the staleness message must name BOTH keys, not just the sha — the
+# tree key is the half that survives a squash.
+writeartifact "$GATEFEAT" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check_msg "(A6) staleness message reports the tree key too" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 5 --squash' "$GATEFEAT")" \
+  "artifact tree:"
+check_msg "(A6) staleness message names WHICH head to gate" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 5 --squash' "$GATEFEAT")" \
+  "head that is actually being MERGED"
+writeartifact "$GATEFEAT" "$FEATSHA"
+
+# ---------------------------------------------------------------------------
+# v2.4.0 (A6, consumer report): a PRETTY-PRINTED artifact is valid JSON and a
+# consumer's own gate may well emit it — replacing run-gate.sh wholesale is a
+# supported configuration, the contract being the **Gate** field plus the
+# artifact FORMAT. The reader used to be hardcoded to `"sha":"` and returned
+# EMPTY, blocking every merge with `artifact sha: none` on a green gate.
+#
+# BOTH KEYS, BOTH SPELLINGS, and the sha arm is the one that catches a widened
+# grep paired with an unwidened sed: that combination yields a value with a
+# LEADING SPACE, which matches nothing and still reports "stale".
+# ---------------------------------------------------------------------------
+PRETTYGATE=$(mkrepo gateprettyartifact feature/pretty)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$PRETTYGATE/PROJECT_CONTEXT.md"
+PRETTYSHA=$(git -C "$PRETTYGATE" rev-parse HEAD)
+PRETTYTREE=$(git -C "$PRETTYGATE" rev-parse 'HEAD^{tree}')
+mkdir -p "$PRETTYGATE/.gate"
+printf '{\n  "sha": "%s",\n  "tree": "%s",\n  "branch": "feature/pretty",\n  "status": "pass"\n}\n' \
+  "$PRETTYSHA" "$PRETTYTREE" > "$PRETTYGATE/.gate/last-pass.json"
+check "(A6) pretty-printed artifact is accepted (sha key)" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
+# tree-only arm: no sha key at all, spaced spelling — must still match by tree.
+printf '{\n  "tree": "%s",\n  "sha": "%s",\n  "status": "pass"\n}\n' \
+  "$PRETTYTREE" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
+  > "$PRETTYGATE/.gate/last-pass.json"
+check "(A6) pretty-printed artifact is accepted (tree key)" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
+# Negative arm: a spaced spelling carrying values that match NEITHER key must
+# still block — the widening must not have turned into "accept anything".
+printf '{\n  "sha": "%s",\n  "tree": "%s"\n}\n' \
+  "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "cafebabecafebabecafebabecafebabecafebabe" \
+  > "$PRETTYGATE/.gate/last-pass.json"
+check "(A6) pretty-printed but genuinely stale still blocks" \
+  "$H" 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
+
 # ===========================================================================
 # v2.1.3 fix round 1 (Critical 2 / penumbra #2c): a real end-to-end chain --
 # pre-commit-test.sh runs run-gate.sh against the INDEX, the real `git commit`
@@ -763,7 +840,13 @@ check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' 
 # ===========================================================================
 echo
 echo "=== R3 chain: commit-time run-gate.sh satisfies merge-time gate ==="
-CHAINREPO=$(mkrepo gatechain main)
+# v2.4.0 (A6): these three chain fixtures used to sit on `main`. They model a
+# developer agent gating in its worktree and then merging, which is a FEATURE
+# branch flow — and it has to be, because A6 now refuses a merge initiated from
+# a protected branch before the artifact is read. On `main` they would all
+# report 2 for the topology reason and stop testing the artifact chain they
+# exist to test. Moving them to a feature branch restores what they measure.
+CHAINREPO=$(mkrepo gatechain feature/chain)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$CHAINREPO/PROJECT_CONTEXT.md"
 git -C "$CHAINREPO" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$CHAINREPO" commit -q -m "add gate" >/dev/null 2>&1
@@ -802,7 +885,7 @@ echo "=== R4 working-tree gate key (v2.1.5) ==="
 
 # (a) chained `git add <paths> && git commit` -> commit-time gate satisfies the
 #     merge gate in ONE run.
-CHAINADD=$(mkrepo gatechainadd main)
+CHAINADD=$(mkrepo gatechainadd feature/chainadd)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$CHAINADD/PROJECT_CONTEXT.md"
 git -C "$CHAINADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$CHAINADD" commit -q -m "add gate" >/dev/null 2>&1
@@ -818,7 +901,7 @@ check "(R4a) chained add+commit: merge gate accepts one run" \
 
 # (b) PARTIAL add: the gate hashed both files, the commit contains one. The
 #     committed tree is not what was gated -> stale by design.
-PARTADD=$(mkrepo gatepartialadd main)
+PARTADD=$(mkrepo gatepartialadd feature/partadd)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$PARTADD/PROJECT_CONTEXT.md"
 git -C "$PARTADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$PARTADD" commit -q -m "add gate" >/dev/null 2>&1
@@ -868,6 +951,44 @@ expect "(R4d) linked worktree: tree == its own HEAD^{tree}" \
   "$(git -C "$WTLINK" rev-parse 'HEAD^{tree}')" "$WTTREE"
 expect "(R4d) linked worktree: its index file is byte-unchanged" \
   "$WTIDXBEFORE" "$(md5sum "$WTIDX" 2>/dev/null | cut -d' ' -f1)"
+
+# ===========================================================================
+# v2.4.0 (A6, second half): THE CHECKOUT CAN MOVE UNDER A RUNNING GATE.
+# Observed live during v2.3.0's release — a second gate run was still going
+# when the checkout moved from detached c43f51f to `main`, finished green, and
+# wrote a sha captured before the move. It described no single state.
+#
+# The **Gate** command here moves HEAD itself, which is the only way to make
+# the race deterministic. Guard: HEAD is re-read after the gate command and
+# compared to the sha captured at the start; a move means no artifact.
+# CONTROL, BOTH ARMS: (a) a moving checkout writes NO artifact and exits
+# nonzero; (b) the identical repo with a non-moving gate command writes one.
+# Delete the HEAD_SHA_AFTER block in run-gate.sh and arm (a) flips to a green
+# run with an artifact — the exact false receipt.
+# ===========================================================================
+echo
+echo "=== A6: the checkout moving under a running gate ==="
+MOVEREPO=$(mkrepo gatemovinghead feature/moving)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$MOVEREPO/PROJECT_CONTEXT.md"
+git -C "$MOVEREPO" add -A >/dev/null 2>&1
+git -C "$MOVEREPO" commit -q -m "gate cfg" >/dev/null 2>&1
+echo second > "$MOVEREPO/second.txt"
+git -C "$MOVEREPO" add -A >/dev/null 2>&1
+git -C "$MOVEREPO" commit -q -m "second commit" >/dev/null 2>&1
+# (b) the stable arm first, so a failure in (a) cannot be blamed on the setup.
+( cd "$MOVEREPO" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+expect "(A6) stable checkout: gate exits 0" "0" "$?"
+expect "(A6) stable checkout: artifact written" "1" \
+  "$([ -f "$MOVEREPO/.gate/last-pass.json" ] && echo 1 || echo 0)"
+# (a) now a gate command that moves HEAD out from under itself.
+printf '# ctx\n\n- **Gate**: `git checkout -q --detach HEAD~1`\n' > "$MOVEREPO/PROJECT_CONTEXT.md"
+moveerr=$(mktemp)
+( cd "$MOVEREPO" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$moveerr" )
+expect "(A6) moving checkout: gate exits nonzero" "1" "$?"
+expect "(A6) moving checkout: NO artifact is left behind" "0" \
+  "$([ -f "$MOVEREPO/.gate/last-pass.json" ] && echo 1 || echo 0)"
+expect "(A6) moving checkout: the reason is named" "1" \
+  "$(grep -cF 'the checkout moved while the gate was running' "$moveerr")"
 
 # ===========================================================================
 # v2.1.3 fix round 1 (R5): a **Gate** command that shells out to run-gate.sh
