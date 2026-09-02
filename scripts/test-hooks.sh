@@ -930,6 +930,66 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# v3.0.1 item 4 — scripts/probe-a6.sh asserts its OWN preconditions.
+#
+# The probe reports on the gate of the repo it is standing in, so each fixture
+# below gets a copy of hooks/. THE REFUSAL ARMS ARE THE POINT: three of the four
+# vacuous states report every row ALLOWED and one reports every row BLOCKED,
+# and the BLOCKED one is the dangerous direction — a probe expecting BLOCKED
+# reads all-2 as the gate working perfectly.
+#
+# Each refusal must exit 9 (NEITHER hook verdict, so a wrapper testing -eq 0 or
+# -eq 2 cannot read a refusal as an answer) and must NOT print the table. The
+# absent-substring assertions are what make that second half a control: the
+# table cannot be printed without its header, so the refusal path is checked
+# for what it must NOT emit, not only for its exit code.
+# ---------------------------------------------------------------------------
+A6P="$ROOT/scripts/probe-a6.sh"
+a6probe() { ( cd "$1" && bash "$A6P" 2>&1 ); }
+a6probe_rc() { ( cd "$1" >/dev/null 2>&1 && bash "$A6P" >/dev/null 2>&1 ); }
+a6expect_rc() { # <label> <dir> <want>
+  a6probe_rc "$2"; a6rc=$?
+  if [ "$a6rc" = "$3" ]; then
+    printf 'PASS  %-42s (exit %s)\n' "$1" "$a6rc"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$3" "$a6rc"; fail=$((fail + 1))
+  fi
+}
+a6expect_notable() { # <label> <dir> <substring the refusal must name>
+  a6out=$(a6probe "$2")
+  if printf '%s\n' "$a6out" | grep -qF "$3" &&
+     ! printf '%s\n' "$a6out" | grep -qE 'EXPECTED|git merge --abort'; then
+    printf 'PASS  %-42s (observed value, no table)\n' "$1"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s\n' "$1"; fail=$((fail + 1))
+  fi
+}
+
+cp -r "$ROOT/hooks" "$A6CLONE/hooks"
+a6expect_rc "(A6.4) probe runs on a protected branch" "$A6CLONE" 0
+# VACUOUS-ALLOWED: not on a protected branch.
+A6PFEAT=$(a6clone a6probefeat)
+cp -r "$ROOT/hooks" "$A6PFEAT/hooks"
+git -C "$A6PFEAT" checkout -q -b feature/probe >/dev/null 2>&1
+a6expect_rc "(A6.4) probe refuses off a protected branch" "$A6PFEAT" 9
+a6expect_notable "(A6.4) that refusal names the branch, no table" "$A6PFEAT" "branch=feature/probe"
+# VACUOUS-BLOCKED, the one that hides in the block direction: no lib, so the
+# gate fails closed on every row.
+A6PNOLIB=$(a6clone a6probenolib)
+mkdir -p "$A6PNOLIB/hooks"
+cp "$ROOT/hooks/gate-before-merge.sh" "$A6PNOLIB/hooks/"
+a6expect_rc "(A6.4) probe refuses with the lib absent" "$A6PNOLIB" 9
+a6expect_notable "(A6.4) that refusal says BLOCK vacuously" "$A6PNOLIB" "BLOCK vacuously"
+# VACUOUS-ALLOWED, not in the specified list: with no **Gate** command the hook
+# exits 0 before any A6 decision, so every row would be ALLOWED for a reason
+# that is not the gate's logic.
+A6PNOGATE=$(a6clone a6probenogate)
+cp -r "$ROOT/hooks" "$A6PNOGATE/hooks"
+rm -f "$A6PNOGATE/PROJECT_CONTEXT.md"
+a6expect_rc "(A6.4) probe refuses with no Gate configured" "$A6PNOGATE" 9
+a6expect_notable "(A6.4) that refusal names the missing field" "$A6PNOGATE" "no '**Gate**:' line"
+
+# ---------------------------------------------------------------------------
 # v2.4.0 (A6, consumer report): a PRETTY-PRINTED artifact is valid JSON and a
 # consumer's own gate may well emit it — replacing run-gate.sh wholesale is a
 # supported configuration, the contract being the **Gate** field plus the

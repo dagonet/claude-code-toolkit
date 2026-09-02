@@ -42,6 +42,24 @@ Three scripts run from the toolkit root. All three are safe to run at any time a
 
 **On a repo that commits straight to trunk, the merge artifact is stale most of the time — by construction, and correctly.** `gate-before-merge.sh` accepts `artifact.sha == HEAD` **or** `artifact.tree == HEAD^{tree}`; any commit moves both, a docs-only commit included, because docs are tracked content. The artifact blesses one specific tree and that tree genuinely changed. It costs nothing: the gate only fires on merge-shaped commands, so staleness is invisible until an actual merge, where re-running the gate is exactly the requirement. A path-filtered or docs-excluding tree key would "fix" it by making the gate decide which changes are safe to skip — the one judgement a gate must not make.
 
+**What `gate-before-merge.sh` does to `merge` and `pull` on a protected branch (v3.0.1).** This file is toolkit-internal and has **no downstream equivalent** — no template ships it — so the copy consumers can actually reach is the header comment of `hooks/gate-before-merge.sh` itself, plus the hook's own block message. Treat what follows as the toolkit reader's summary, and keep the hook's header as the source of truth.
+
+| Command, run while the checkout is on a protected branch | Verdict |
+|---|---|
+| `git merge --abort` / `--continue` / `--quit` | **allowed, always** — they land nothing new, and a conflicted merge on `main` is exactly the state you must be able to leave |
+| `git merge --ff-only <upstream>`, a pure catch-up | **allowed** when the ref named is the branch's own configured upstream *and* HEAD is already an ancestor of it |
+| the same with `--no-ff` or `--squash` | gated — both produce a result the upstream does not have |
+| `git merge <anything else>` | gated |
+| **`git pull --ff-only`, no remote and no refspec** | **allowed — the safe catch-up form**, and the one to reach for |
+| `git pull` (bare), `--rebase`, or any form naming a remote or refspec | gated |
+| `gh pr merge`, the GitHub merge tools | gated |
+
+The rule for `merge` is **provenance, not ancestry**: gate unless the operation merely makes the local protected branch match its own configured upstream. An ancestry rule would gate the most common protected-branch operation there is, since right after a PR merge local `main` is one commit *behind* `origin/main`.
+
+**The stated limit, and why `pull` is gated by form rather than by content:** every decision is taken **before any fetch**, so the content of a remote ref is unknown to the hook. A remote-tracking ref that is merely *stale* answers "adds nothing" confidently and wrongly about an object that is not the one the pull will land, `ls-remote` costs ~1.4 s per hook call and fails offline. Only the refspec-free `--ff-only` form is provably safe before the fetch — refspec-free means the target is the configured upstream by construction, and `--ff-only` means git itself refuses a non-fast-forward.
+
+**`bash scripts/probe-a6.sh`** answers the same question about the checkout you are standing in, by feeding the real hook a table of payloads. It **refuses with exit 9** — neither hook verdict — and prints no table when a precondition would make the answer vacuous: not on a protected branch, no `**Gate**` command configured, or `hooks/lib/git-cmd.sh` missing. The last one is the reason the refusal exists: a missing lib makes the gate fail closed on everything, and a probe expecting BLOCKED reads all-blocked as a healthy gate.
+
 **Testing a hook's WARN behaviour by hand: use a fresh `TMPDIR` per case.** `json_warn_once` drops a marker at `${TMPDIR:-/tmp}/claude-hook-warn-<hook>[-<session>]` and suppresses the warning while it is there — keyed on the session id, or for an hour when the payload carries none. That is correct in a session and confusing at a prompt: the second and every later invocation of the same hook prints nothing, which reads like the warning regressed. Run each case with its own `TMPDIR=$(mktemp -d)`, exactly as `check_env` in `scripts/test-hooks.sh` does.
 
 **`verify-user-level-drift.sh` polarity: the reference leads, the live copy follows.** The script compares `user-level-reference/` against your `~/.claude/` and **exits 1 whenever they differ**, without judging which side is newer. Immediately after a release that changed `user-level-reference/`, a red run is the *expected* state and simply means the migration steps in `CHANGELOG.md` have not been applied yet — perform them, then re-run and expect green. It is red-by-design in that window; it is not a build failure of the toolkit, and CI does not gate on it. (A `--expect-drift` / WARN mode that would let the two cases be told apart mechanically is a known follow-up, not shipped.)
