@@ -927,6 +927,12 @@ check "(A6.3) pull on a feature branch is untouched"   "$H" 0 "$(mkjson Bash 'gi
 # recommended flow and stays allowed.
 # ---------------------------------------------------------------------------
 NP=hooks/no-push-main.sh
+# A PERFECTLY FRESH, sha-matching artifact, so the `gh pr merge` row below is a
+# real control rather than one that exits 2 because no artifact exists. Without
+# the fix that row takes the feature-branch path, the artifact comparison
+# PASSES, and the merge proceeds with a green receipt — the false green this
+# whole section is about. It must be the refusal that stops it, not an absence.
+writeartifact "$A6FEATCO" "$(git -C "$A6FEATCO" rev-parse HEAD)"
 check "(A6.6) checkout main && merge is refused"      "$H" 2 "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")"
 check "(A6.6) switch main && merge is refused"        "$H" 2 "$(mkjson Bash 'git switch main && git merge feature/co' "$A6FEATCO")"
 check "(A6.6) checkout main && gh pr merge refused"   "$H" 2 "$(mkjson Bash 'git checkout main && gh pr merge 3' "$A6FEATCO")"
@@ -950,6 +956,11 @@ check_msg "(A6.6) refusal names the branch change" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "branch change:"
 check_msg "(A6.6) refusal names the green-receipt risk" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "green receipt"
+# The two refusal reasons must READ differently: "moves onto a protected
+# branch" is a finding, "target unresolvable" is a cannot-determine. Without
+# this, the exit code is asserted and the message that explains it is not.
+check_msg "(A6.6) unresolvable target reads as cannot-determine" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout - && git merge feature/y' "$A6FEATCO")" "cannot determine which branch"
 
 # ---------------------------------------------------------------------------
 # v3.0.1 item 5 — the block message: diagnosis and fix, not argument.
