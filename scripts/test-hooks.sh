@@ -900,6 +900,58 @@ check "(A6.3) pull --rebase is gated"                  "$H" 2 "$(mkjson Bash 'gi
 check "(A6.3) pull on a feature branch is untouched"   "$H" 0 "$(mkjson Bash 'git pull' "$A6FEATCO")"
 
 # ---------------------------------------------------------------------------
+# v3.0.1 (consumer report) — THE BRANCH-CHANGE-FIRST BYPASS, in BOTH gates.
+#
+# Every payload below is fed to the hook; NOTHING is executed. Running
+# `git checkout main && git push` to test this would risk a real unguarded push.
+#
+# The premise these gates read (the current branch) is one the command they gate
+# can change, and they are PreToolUse hooks — they run first. So
+# `git checkout main && git merge feature/x` was evaluated on the feature
+# branch. Worse than a skip: gate-before-merge FELL THROUGH to the artifact
+# comparison and ran it under the feature-branch premise, so a fresh artifact
+# made it PASS — a green receipt for a merge it never checked.
+#
+# THE TWO ARMS MUST DIVERGE, and before the fix they were both `exit 0` for
+# opposite reasons:
+#   chained,   cwd on a feature branch  -> must GATE
+#   unchained, cwd on a feature branch  -> must still PASS
+# The second is the toolkit's own merge protocol — an agent merging its own PR
+# from its worktree is on a feature branch. A fix that gated it would block every
+# worktree-isolated merge while reading as "the fix works".
+#
+# KEYED ON THE CHECKOUT'S TARGET, not its presence: `git checkout feature/z &&
+# git merge feature/y` lands nothing near a protected branch and must stay
+# allowed. A target-blind refusal is the over-correction wearing a plausible
+# face. ORDER matters too — a gated clause placed BEFORE the checkout is the
+# recommended flow and stays allowed.
+# ---------------------------------------------------------------------------
+NP=hooks/no-push-main.sh
+check "(A6.6) checkout main && merge is refused"      "$H" 2 "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")"
+check "(A6.6) switch main && merge is refused"        "$H" 2 "$(mkjson Bash 'git switch main && git merge feature/co' "$A6FEATCO")"
+check "(A6.6) checkout main && gh pr merge refused"   "$H" 2 "$(mkjson Bash 'git checkout main && gh pr merge 3' "$A6FEATCO")"
+check "(A6.6) checkout main && bare pull refused"     "$H" 2 "$(mkjson Bash 'git checkout main && git pull' "$A6FEATCO")"
+check "(A6.6) checkout main && bare push refused"     "$NP" 2 "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")"
+check "(A6.6) UNCHAINED merge on a feature branch"    "$H" 0 "$(mkjson Bash 'git merge feature/x' "$A6FEATCO")"
+check "(A6.6) UNCHAINED bare push on a feature br."   "$NP" 0 "$(mkjson Bash 'git push' "$A6FEATCO")"
+check "(A6.6) gated clause BEFORE the checkout is ok" "$H" 0 "$(mkjson Bash 'git merge feature/x ; git checkout main' "$A6FEATCO")"
+check "(A6.6) push then checkout is ok"               "$NP" 0 "$(mkjson Bash 'git push origin feature/co ; git checkout main' "$A6FEATCO")"
+check "(A6.6) checkout then merge --abort allowed"    "$H" 0 "$(mkjson Bash 'git checkout main && git merge --abort' "$A6FEATCO")"
+check "(A6.6) checkout then pull --ff-only allowed"   "$H" 0 "$(mkjson Bash 'git checkout main && git pull --ff-only' "$A6FEATCO")"
+check "(A6.6) checkout then NAMED push allowed"       "$NP" 0 "$(mkjson Bash 'git checkout main && git push origin feature/co' "$A6FEATCO")"
+check "(A6.6) checkout feature/z && merge allowed"    "$H" 0 "$(mkjson Bash 'git checkout feature/z && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout -b new && merge allowed"       "$H" 0 "$(mkjson Bash 'git checkout -b feature/new && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout feature/z && push allowed"     "$NP" 0 "$(mkjson Bash 'git checkout feature/z && git push' "$A6FEATCO")"
+check "(A6.6) checkout - is unresolvable, refused"    "$H" 2 "$(mkjson Bash 'git checkout - && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout \$VAR is unresolvable"         "$H" 2 "$(mkjson Bash 'git checkout $BR && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) last checkout wins: back to a feature"  "$H" 0 "$(mkjson Bash 'git checkout main && git checkout feature/z && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout -- file is not a branch move"  "$H" 0 "$(mkjson Bash 'git checkout -- seed.txt && git merge feature/x' "$A6FEATCO")"
+check_msg "(A6.6) refusal names the branch change" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "branch change:"
+check_msg "(A6.6) refusal names the green-receipt risk" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "green receipt"
+
+# ---------------------------------------------------------------------------
 # v3.0.1 item 5 — the block message: diagnosis and fix, not argument.
 #
 # The LAST assertion is the load-bearing one. The positive condition ("what
