@@ -41,10 +41,10 @@ When a session starts on a project that has this AGENT_TEAM.md:
 ### Agents that can do their own git + GitHub I/O:
 - `coder`, `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder` — `Bash` plus PR tools: can commit, push, create PRs, merge
 - `code-reviewer` — has `Bash` for local `git diff <base>..<head>` (read-only in effect: it holds no write tool) and can post PR reviews via `mcp__MCP_DOCKER__pull_request_review_write`
-- `tester`, `test-writer` — have `Bash` (so they can commit) but no PR tools; `tester` can post findings via `mcp__MCP_DOCKER__add_issue_comment`
+- `tester` — has `Bash` (so it can commit) but no PR tools; it can post findings via `mcp__MCP_DOCKER__add_issue_comment`
 
 ### Agents without `Bash`:
-- `architect`, `requirements-engineer`, `doc-generator` — CANNOT commit, push, create PRs, merge, or post comments
+- `architect` — CANNOT commit, push, create PRs, merge, or post comments
 
 **PO responsibility:** When spawning an agent that lacks `Bash` (or lacks the PR tool an instruction needs), do NOT put that operation in its spawn prompt. It will bail, stall, or silently skip the step. Instead:
 1. Have them return their work product (plan, spec, review findings, tests)
@@ -62,7 +62,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 
 - Primary interface with the human stakeholder.
 - Maintains and prioritizes the backlog (see Mode Behavior Table for task source).
-- Spawns the **Requirements Engineer** for new features to produce detailed specs before publishing.
+- Spawns the **Architect** for new features to produce detailed specs before publishing (it absorbed the retired `requirements-engineer` in v3.0.0 and carries `brainstorming` for exactly this).
 - Reviews and publishes specs (see Mode Behavior Table for where specs are published).
 - Plans sprints: selects tasks, creates the team, spawns the Architect (T4), then spawns workstreams.
 - Monitors workstream progress and handles escalations.
@@ -74,11 +74,11 @@ When a session starts on a project that has this AGENT_TEAM.md:
 - Closes tasks after merge (see Mode Behavior Table).
 - Does **NOT** block the merge pipeline — review + test approval is sufficient for merge.
 - **Open Brain context mediation**: Before spawning any agent, search Open Brain for context relevant to the agent's task and include findings in the spawn prompt. After the agent returns, capture non-trivial insights. See `AGENT_TEAM.md` → *Open Brain Context for Agents* (below, in this file) for agent-specific search queries.
-- **Spawn-prompt skill injection**: When constructing any spawn prompt, look up the target `subagent_type` in the Spawn-Prompt Binding Table (Superpowers Skills Integration section) and include a `## Required Skills` block in the prompt listing the skills to invoke via the Skill tool. Use the copy-paste snippets in that section verbatim. The `hooks/require-skills-block.sh` PreToolUse hook mechanically enforces this — a spawn of a bound subagent type without the block exits 2 with a diagnostic. Omit the block for `code-reviewer` and `doc-generator` spawns (no required skills; hook passes them through).
+- **Spawn-prompt skill injection**: When constructing any spawn prompt, look up the target `subagent_type` in the Spawn-Prompt Binding Table (Superpowers Skills Integration section) and include a `## Required Skills` block in the prompt listing the skills to invoke via the Skill tool. Use the copy-paste snippets in that section verbatim. The `hooks/require-skills-block.sh` PreToolUse hook mechanically enforces this — a spawn of a bound subagent type without the block exits 2 with a diagnostic. Omit the block for `code-reviewer` spawns (no required skills; the hook passes it through).
 
 ## Model & Effort Policy
 
-- Orchestrator = the session model, picked by the user with `/model` at session start: **`fable` for T3/T4** sessions (multi-file or architectural — Fable 5 needs fewer prompts and steers, sustains longer sessions, and earns higher trust and autonomy; it also costs ~2× Opus), **`opus` for T1/T2**. Workers run `sonnet`; `architect` and `code-reviewer` run `opus` with `effort: xhigh`; `Explore` and `doc-generator` run `haiku` with `effort: low`.
+- Orchestrator = the session model, picked by the user with `/model` at session start: **`fable` for T3/T4** sessions (multi-file or architectural — Fable 5 needs fewer prompts and steers, sustains longer sessions, and earns higher trust and autonomy; it also costs ~2× Opus), **`opus` for T1/T2**. Workers run `sonnet`; `architect` and `code-reviewer` run `opus` with `effort: xhigh`; `Explore` runs `haiku` with `effort: low`.
 - Session effort is deliberately **unset** — the model's own default. Raise it per role via the agent file's `effort:` (`low` / `medium` / `high` / `xhigh`), or `/effort` for one session.
 - Each agent file carries its own `model:` / `effort:` — do not pass a `model` in the Agent call; that overrides the routing decision silently.
 - **Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`), never a full `claude-*` id: a model proxy reroutes the aliases, and a pinned id bypasses it.
@@ -270,7 +270,7 @@ After code review and testing pass, the developer executes the merge. MCP tools 
 | `coder`, `python-coder`, `dotnet-coder`, `rust-coder`, `java-coder` | Developer (MCP tools listed explicitly) |
 | `general-purpose` (declared with `tools: *`) | Developer (full MCP catalog via ToolSearch) |
 
-**Agents without `Bash`** (`architect`, `requirements-engineer`, `doc-generator`): return work to the PO; the PO does the git I/O with the git CLI and the GitHub I/O with the MCP tools.
+**Agents without `Bash`** (`architect`): return work to the PO; the PO does the git I/O with the git CLI and the GitHub I/O with the MCP tools.
 
 ### Steps (Developer-executed)
 
@@ -356,7 +356,7 @@ makes, not a gate the workflow enforces.
 2. **One task per developer** — no multitasking within an agent.
 3. **Max parallel workstreams** as specified in `PROJECT_CONTEXT.md`.
 4. **Architect reviews BEFORE development** — guidance before dev starts (T4).
-5. **Developers own the merge** — all developer agents have `Bash` plus the PR tools and execute their own merges after PO sends merge-go-ahead. Agents without `Bash` (`architect`, `requirements-engineer`, `doc-generator`) return work to the PO.
+5. **Developers own the merge** — all developer agents have `Bash` plus the PR tools and execute their own merges after PO sends merge-go-ahead. Agents without `Bash` (`architect`) return work to the PO.
 6. **PO sequences merges** — developers wait for merge-go-ahead from the PO before merging.
 7. **Post-rebase verification required** — rebuild + retest before merge.
 8. **Max 3 fix cycles per task** — then PO pauses the workstream and selects one of: (a) scope reduction, (b) architect re-design, or (c) human escalation. See Escalation Protocol.
@@ -401,11 +401,8 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 |---|---|
 | `coder` and any `<lang>-coder` — the template's own (`dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) **and any your project adds** (`cpp-coder`, `go-coder`, …); the hook matches the shape, not a list | `karpathy-guidelines`, `test-driven-development`, `verification-before-completion`, `receiving-code-review` |
 | `code-reviewer` | *(none — review is the agent's core job)* |
-| `tester` | `systematic-debugging`, `verification-before-completion` |
-| `test-writer` | `test-driven-development` |
-| `architect` | `writing-plans` |
-| `requirements-engineer` | `brainstorming` |
-| `doc-generator` | *(none)* |
+| `tester` — **absorbed `test-writer` in v3.0.0** | `systematic-debugging`, `verification-before-completion`, `test-driven-development` |
+| `architect` — **absorbed `requirements-engineer` in v3.0.0** | `writing-plans`, `brainstorming` |
 | `ops` | *(none — pass-through)* |
 | `Explore` | *(none — pass-through; custom Explore agent, haiku, effort low)* |
 
@@ -413,11 +410,13 @@ When spawning an agent, include in the spawn prompt a `## Required Skills` block
 
 **Chain note:** `writing-plans` produces a plan, which is an optional artifact (see *Task Brief Upfront*). Nothing validates it before execution; the spawn prompt's brief and the review/tester pipeline carry that weight.
 
+**v3.0.0 consolidation — three names retired, ABSORBED rather than renamed.** `test-writer` → `tester`, `requirements-engineer` → `architect`, `doc-generator` → `coder`. The survivor keeps the existing name in every case, and that is a hard constraint rather than a style preference: a stale reference to a surviving name fails **loudly, at spawn time**, which is recoverable; a *new* name would make every consumer's keep-mine prose stale at once, silently. The absorbing agents gained the absorbed skill (`tester` gained `test-driven-development`, `architect` gained `brainstorming`) — a superset, not a rename.
+
 ### Copy-paste snippets
 
 Use these snippets verbatim when constructing spawn prompts. Append to the body of the prompt, then add the task-specific instructions below.
 
-**Report agents (code-reviewer, architect, tester, test-writer, requirements-engineer, doc-generator, ops) — ALWAYS add these lines to their spawn prompts** (their definitions carry the same mandate; repeating it in the prompt is what reliably prevents an empty return):
+**Report agents (code-reviewer, architect, tester, ops) — ALWAYS add these lines to their spawn prompts** (their definitions carry the same mandate; repeating it in the prompt is what reliably prevents an empty return):
 
 ```markdown
 CRITICAL: your final message IS the deliverable. It must contain: status, files changed, commands run + output summary, open concerns.
@@ -438,40 +437,28 @@ CRITICAL: your final message IS the deliverable. It must contain: status, files 
 If the task grows past its stated scope (extra files, a second root cause, a redesign), stop and report what is done plus the blocker instead of expanding scope. A long run is not evidence of progress.
 ```
 
-**Tester:**
+**Tester (absorbed `test-writer` — it writes tests as well as verifying them):**
 
 ```markdown
 ## Required Skills
 Invoke these via the Skill tool before beginning task work:
 - superpowers:systematic-debugging
 - superpowers:verification-before-completion
-```
-
-**Test-writer:**
-
-```markdown
-## Required Skills
-Invoke these via the Skill tool before beginning task work:
 - superpowers:test-driven-development
 ```
 
-**Architect:**
+**Architect (absorbed `requirements-engineer` — it explores requirements as well as planning):**
 
 ```markdown
 ## Required Skills
 Invoke these via the Skill tool before beginning task work:
 - superpowers:writing-plans
-```
-
-**Requirements-engineer:**
-
-```markdown
-## Required Skills
-Invoke these via the Skill tool before beginning task work:
 - superpowers:brainstorming
 ```
 
-**Code-reviewer / doc-generator:** omit the block entirely (hook passes them through).
+**Code-reviewer:** omit the block entirely (hook passes it through).
+
+**Docs** are a `coder` spawn (`doc-generator` was absorbed into `coder` in v3.0.0), so they take the coder block above — including the skills. Docs that ship with the code they describe were always a coder's job; the separate agent duplicated it.
 
 ---
 
@@ -527,12 +514,10 @@ Spawned agents cannot access Open Brain directly. The PO must search for relevan
 
 | Agent Type | Search Query | Include in Prompt |
 |---|---|---|
-| Architect | `"architecture {component}"`, `"tech debt {area}"` | Past decisions, rejected alternatives, known coupling issues |
+| Architect | `"architecture {component}"`, `"tech debt {area}"`, `"feature {domain}"`, `"scope {area}"` | Past decisions, rejected alternatives, known coupling issues, past scope surprises |
 | Code Reviewer | `"bug pattern {component}"`, `"review {area}"` | Recurring issues, known weak spots, past review findings |
 | Coder | `"implementation {component}"`, `"pitfall {area}"` | Failed approaches, trade-off decisions, integration gotchas |
-| Tester | `"failure mode {feature}"`, `"regression {area}"` | Known failure patterns, data state gotchas, flaky test history |
-| Test Writer | `"edge case {component}"`, `"test pattern {area}"` | Historically problematic cases, boundary conditions |
-| Requirements Engineer | `"feature {domain}"`, `"scope {area}"` | Past scope surprises, edge cases that tripped users |
+| Tester | `"failure mode {feature}"`, `"regression {area}"`, `"edge case {component}"`, `"test pattern {area}"` | Known failure patterns, data state gotchas, flaky test history, historically problematic cases |
 
 ### After Agent Returns
 
@@ -540,12 +525,10 @@ Capture durable insights — not routine results:
 
 | Agent Type | What to Capture |
 |---|---|
-| Architect | Decisions with rationale, rejected alternatives, new tech debt identified |
+| Architect | Decisions with rationale, rejected alternatives, new tech debt identified, key scope decisions and excluded features |
 | Code Reviewer | Non-trivial bug patterns, recurring issues by component |
 | Coder | Non-obvious implementation decisions, approaches that failed and why |
-| Tester | Bugs found with root cause, regression patterns, data state issues |
-| Test Writer | Critical edge cases discovered, boundary conditions that matter |
-| Requirements Engineer | Key scope decisions, excluded features and why, edge cases found |
+| Tester | Bugs found with root cause, regression patterns, data state issues, critical edge cases discovered |
 
 Skip capture for routine outcomes ("no issues found", "all tests pass").
 

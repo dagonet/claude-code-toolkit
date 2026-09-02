@@ -499,7 +499,7 @@ A consumer enumerated every place an agent name is bound. **Only one of the five
 | 2 | `settings.json` matcher regexes — `^([a-z0-9]+-)?coder$\|^tester$` | **FAIL OPEN, SILENT** — the hook is **never invoked at all**. Not a block, not a warning |
 | 3 | `CLAUDE.md` routing prose — *Rust/Tauri → rust-coder, do not substitute* | dangling mandate, permanent in a keep-mine file |
 | 4 | Agent frontmatter cross-refs — every agent file names others | dangling reference |
-| 5 | **Hook user-facing output strings** — `enforce-delegation.sh`'s DENY text names `coder`, `doc-generator`, `ops`, `tester` | not enforcement, but a live instruction telling a blocked user to spawn something that no longer exists |
+| 5 | **Hook user-facing output strings** — `enforce-delegation.sh`'s DENY text names `coder`, `ops`, `tester` | not enforcement, but a live instruction telling a blocked user to spawn something that no longer exists |
 
 > **This inverts the comfort premise that a retired name "fails loudly at spawn".** It fails **loudly when spawned** and **silently in every hook that keyed on it** — opposite polarities in the same release, and the loud one is the one that got measured. Loudness protects the *caller*; it does not protect the *enforcement layer*.
 

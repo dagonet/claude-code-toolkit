@@ -7,8 +7,8 @@
 # Enforces `AGENT_TEAM.md` §Spawn-Prompt Binding Table. When the PO spawns
 # a Task whose subagent_type is in the binding table, the prompt body MUST
 # contain a literal '## Required Skills' line. Subagent types not in the
-# table pass through. The 'code-reviewer' and 'doc-generator' types have
-# no required skills and also pass through.
+# table pass through. The 'code-reviewer' type has no required skills and
+# also passes through.
 #
 # DRIFT WARNING: the case statement below duplicates the binding table in
 # templates/general/AGENT_TEAM.md §Superpowers Skills Integration. The
@@ -40,17 +40,22 @@ case "$SUBAGENT_TYPE" in
   coder|*-coder)
     REQUIRED="karpathy-guidelines superpowers:test-driven-development superpowers:verification-before-completion superpowers:receiving-code-review"
     ;;
+  # v3.0.0 (item B2): `tester` ABSORBED `test-writer` and gained its skill.
+  # ABSORB, NEVER RENAME — the survivor keeps the existing name, so a stale
+  # `tester` reference in a consumer's keep-mine prose still resolves. Had the
+  # merged agent taken a new name, every consumer's prose would have gone stale
+  # at once and silently.
   tester)
-    REQUIRED="superpowers:systematic-debugging superpowers:verification-before-completion"
+    REQUIRED="superpowers:systematic-debugging superpowers:verification-before-completion superpowers:test-driven-development"
     ;;
-  test-writer)
-    REQUIRED="superpowers:test-driven-development"
-    ;;
+  # v3.0.0 (item B2): `architect` ABSORBED `requirements-engineer` and gained
+  # `brainstorming` with it. This deliberately REVERSES the earlier R3 decision
+  # that dropped `brainstorming` from the architect row — R3 was correct while a
+  # separate agent owned requirements exploration, and is wrong now that the
+  # same agent does both. Check 9 asserts the new intent and records the
+  # reversal, rather than the old absence quietly outliving its reason.
   architect)
-    REQUIRED="superpowers:writing-plans"
-    ;;
-  requirements-engineer)
-    REQUIRED="superpowers:brainstorming"
+    REQUIRED="superpowers:writing-plans superpowers:brainstorming"
     ;;
   # DELIBERATELY EXEMPT — v2.4.0 (item A5) MADE THIS SET EXPLICIT, and the
   # names are the whole point of the change. Until now `ops` and `Explore`
@@ -73,7 +78,14 @@ case "$SUBAGENT_TYPE" in
   # ADDING A NAME HERE IS A DECISION, NOT A TIDY-UP: it says this agent needs
   # no skills block. Do not add a name here to silence check 29 — the check
   # exists to make that decision visible.
-  ops|Explore|code-reviewer|doc-generator)
+  #
+  # v3.0.0 (item B2): `doc-generator` LEFT THIS ARM BY BEING ABSORBED INTO
+  # `coder`, not by falling out of it — and the difference is the whole reason
+  # this list exists. Docs are now a `coder` spawn, which IS bound, so doc work
+  # now carries the coder skills. Check 29 arm A is what makes the distinction
+  # mechanical: had the agent files been deleted without editing this arm, the
+  # gate would be red before the release shipped.
+  ops|Explore|code-reviewer)
     exit 0
     ;;
   # The genuinely UNKNOWN type: a project's own agent (a consumer's

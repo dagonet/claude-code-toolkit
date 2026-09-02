@@ -129,11 +129,19 @@ if echo "$coder_row" | grep -q "requesting-code-review"; then
 else
   ok "templates/general/AGENT_TEAM.md: coder row no longer contains 'requesting-code-review' (R2)"
 fi
+# ⚠ R3 IS DELIBERATELY REVERSED IN v3.0.0 (item B2), AND THE POLARITY OF THIS
+# ASSERTION IS FLIPPED TO SAY SO OUT LOUD. R3 dropped `brainstorming` from the
+# architect row, and that was correct while a SEPARATE `requirements-engineer`
+# owned requirements exploration. v3.0.0 absorbed that agent INTO `architect`,
+# so the same agent now does both jobs and needs the skill R3 removed. The
+# assertion is re-pointed rather than deleted: an absence whose reason has
+# expired must not be allowed to outlive it silently, and a deleted check would
+# have let the skill drift back out with nothing noticing.
 arch_row=$(grep -A0 "^| \`architect\`" templates/general/AGENT_TEAM.md | head -1)
 if echo "$arch_row" | grep -q "brainstorming"; then
-  ko "templates/general/AGENT_TEAM.md: architect row still contains 'brainstorming' (R3 not applied)"
+  ok "templates/general/AGENT_TEAM.md: architect row carries 'brainstorming' (v3.0.0 absorbed requirements-engineer; R3 reversed on purpose)"
 else
-  ok "templates/general/AGENT_TEAM.md: architect row no longer contains 'brainstorming' (R3)"
+  ko "templates/general/AGENT_TEAM.md: architect row is missing 'brainstorming' — it absorbed requirements-engineer in v3.0.0 and must carry that agent's skill, or the absorption dropped a capability"
 fi
 
 # ---------------------------------------------------------------------------
@@ -160,9 +168,18 @@ if [ -f "$HOOK" ]; then
   check_pair "coder" "verification-before-completion"
   check_pair "coder" "receiving-code-review"
   check_pair "tester" "systematic-debugging"
-  check_pair "test-writer" "test-driven-development"
+  # v3.0.0 (item B2): these two pairs used to be keyed on `test-writer` and
+  # `requirements-engineer`. Both names were ABSORBED — into `tester` and
+  # `architect` respectively — so the pairs are RE-KEYED onto the survivors
+  # rather than deleted. Deleting them would have been the quiet failure:
+  # check_pair prints NOTHING when a skill is absent from BOTH sides, so a pair
+  # left naming a retired agent goes vacuous, reporting neither PASS nor FAIL.
+  # Re-keying keeps the assertion doing work against the agent that now owns the
+  # skill. `test-driven-development` in particular would otherwise have kept
+  # passing off `coder`'s row — a pass for the wrong reason.
+  check_pair "tester" "test-driven-development"
   check_pair "architect" "writing-plans"
-  check_pair "requirements-engineer" "brainstorming"
+  check_pair "architect" "brainstorming"
 
   # R2: coder row must NOT contain requesting-code-review in EITHER place
   if grep -q "requesting-code-review" "$HOOK"; then
@@ -573,7 +590,7 @@ fi
 # tools: omits it cannot run the `## Required Skills` block the PO injects.
 # Counted over the SAME file list, so adding Skill to one of the excluded
 # agents later is a passing change, not a spurious count mismatch.
-skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore|doc-generator)\.md$')
+skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
 skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
 skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
 if [ "$skill_tool" = "$skill_users" ]; then
@@ -1693,7 +1710,7 @@ fi
 #      `{{WORKTREE_BASE}}` used to default to empty, so only a consumer who
 #      passed --worktree-base under `.claude/` was exposed. Giving it a default
 #      makes the gap universal: every bootstrapped repo places agent worktrees
-#      there, `coder`/`tester`/`test-writer` all run `isolation: worktree`, and
+#      there, `coder`/`tester` both run `isolation: worktree`, and
 #      a full repo checkout then shows as untracked files that `git add -A`
 #      would stage. This repo cannot reproduce it — its own .gitignore
 #      blanket-ignores `/.claude/`, while the SHIPPED gitignore is deliberately
@@ -2086,6 +2103,77 @@ A5_ARMS
         ok "check 29 (arm D): domain coders are covered by the glob, not enumerated as literals"
       else
         ko "check 29 (arm D): domain coder(s) enumerated as literal arms —$a5_literal. The glob exists so a project's own <lang>-coder is bound too; enumerating defeats it."
+      fi
+
+      # Arm E: EXISTENCE PROVES NOTHING — MATCHING IS THE PROPERTY (v3.0.0,
+      # item B2).
+      #
+      # A control that asserts an agent FILE exists does not detect the failure
+      # a consolidation can cause. The dangerous case is a RENAME breaking the
+      # skills `case` arm, `enforce-agent-contract.sh`'s SubagentStop matcher
+      # and both `settings.json` matcher regexes AT THE SAME SILENT MOMENT:
+      # nothing errors, every file is present, and the enforcement layer is
+      # simply gone. Arms A-D cover the shell-glob language and the coder
+      # family; this arm covers the OTHER pattern language — the regexes — for
+      # every name the enforcement layer names, and it evaluates them AS
+      # REGEXES rather than comparing label text.
+      #
+      # This is why v3.0.0 ABSORBS rather than renames: the survivors keep the
+      # names these three patterns already match, so the patterns are untouched.
+      # Arm E is what turns that from a stated intention into a checked one.
+      #
+      # ⚠ THE EXPECTATIONS BELOW ARE FIXED, AND THE MATCHERS ARE KEYED BY THE
+      # HOOK THEY RUN, NEVER BY THEIR OWN TEXT. The first version of this arm
+      # selected matchers by grepping them for the very names it then tested,
+      # so deleting `^tester$` from a matcher made the arm skip that matcher and
+      # report green — a check keyed on the thing under test. It was caught by
+      # deleting the guard (drop `^tester$`; the arm did not flip, and only the
+      # cross-variant byte-identity check noticed, which would NOT have noticed
+      # had all six variants been edited together). Keyed on the command, the
+      # matcher cannot hide by changing.
+      a5_pairs=$(awk '
+        /"matcher":/ { m=$0; sub(/.*"matcher": "/,"",m); sub(/",?[[:space:]]*$/,"",m); next }
+        /"command":/ { c=$0; sub(/.*"command": "/,"",c); sub(/",?[[:space:]]*$/,"",c);
+                       if (m != "") print m "\t" c }
+      ' templates/general/.claude/settings.json)
+      a5_pipeline=$(printf '%s\n' "$a5_pairs" | grep -F 'PIPELINE:' | head -1 | cut -f1)
+      a5_contract=$(printf '%s\n' "$a5_pairs" | grep -F 'enforce-agent-contract.sh' | head -1 | cut -f1)
+
+      # a5_expect <label> <regex> <must-match names> -- <must-NOT-match names>
+      a5_e_bad=""
+      a5_expect() {
+        a5x_label="$1"; a5x_re="$2"; shift 2
+        a5x_side=in
+        for a5x_n in "$@"; do
+          if [ "$a5x_n" = "--" ]; then a5x_side=out; continue; fi
+          if printf '%s\n' "$a5x_n" | grep -qE "$a5x_re"; then
+            [ "$a5x_side" = out ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-MATCHES-but-must-not"
+          else
+            [ "$a5x_side" = in ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-NO-MATCH"
+          fi
+        done
+      }
+
+      # 1. the shell-glob language — the skills hook's case arms.
+      for a5n in coder dotnet-coder rust-coder java-coder python-coder tester architect; do
+        a5_matches "$a5n" || a5_e_bad="$a5_e_bad case-arm:$a5n"
+      done
+
+      # 2. the regex language — the two SubagentStop matchers, both directions.
+      if [ -z "$a5_pipeline" ] || [ -z "$a5_contract" ]; then
+        ko "check 29 (arm E): could not locate the SubagentStop pipeline/contract matchers by the hook they run — the sweep would pass vacuously"
+      else
+        a5_expect pipeline "$a5_pipeline" \
+          coder dotnet-coder rust-coder java-coder python-coder code-reviewer tester architect \
+          -- ops Explore zz-unbound-probe
+        a5_expect contract "$a5_contract" \
+          coder dotnet-coder rust-coder java-coder python-coder code-reviewer \
+          -- tester architect ops Explore zz-unbound-probe
+        if [ -z "$a5_e_bad" ]; then
+          ok "check 29 (arm E): every survivor name MATCHES its binding sites in BOTH pattern languages, and every non-bound name still misses them"
+        else
+          ko "check 29 (arm E): binding-site mismatch —$a5_e_bad. Existence proves nothing here; a name that stops matching fails OPEN and SILENT — the hook is simply never invoked, with no block, no warning and every file present."
+        fi
       fi
     fi
   fi

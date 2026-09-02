@@ -17,7 +17,7 @@
 ## What you get
 
 - **6 template variants** (`general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`) with language-specific build hooks, format gates, and conventions baked in.
-- **9–10 agents per variant** — Explore, architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps. Each one declares its own `model:` and `effort:`, so exploration runs on haiku and review on opus without the caller thinking about it.
+- **6–7 agents per variant** — Explore, architect, code-reviewer, coder, ops, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps. Each one declares its own `model:` and `effort:`, so exploration runs on haiku and review on opus without the caller thinking about it.
 - **8 user-level skills**, no slash-command directory: `/challenge`, `/commit`, `/sprint`, `/sync-template`, `/contribute-upstream`, `/retro-review`, plus `mcp-usage` and `karpathy-guidelines` which auto-trigger. Anthropic merged custom commands into skills, so the toolkit ships one artifact type; the `Gate:` mechanism (`hooks/run-gate.sh`) replaced the old `/build` and `/test` commands, and the official `skill-creator` plugin replaced `/skill-eval` + `/skill-improve`.
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
 - **Workflow enforcement hooks**: the git/`gh` CLI is allowed and *gated* — the hooks parse the command and stop a red-gate commit, a push to main, and an ungated merge; plus skills-in-spawn-prompt, delegation enforcement (the orchestrator never edits code or runs builds), a `Read` size gate, an agent tool-call budget, and a retro ledger that records subagent failures and replays them at the next session start.
@@ -29,9 +29,8 @@ Every agent file declares its own `model:` and `effort:`, so cost follows the jo
 | Agents | `model:` | `effort:` | Notes |
 |---|---|---|---|
 | `Explore` | `haiku` | `low` | Overrides the built-in `Explore`, which would otherwise inherit the session model |
-| `doc-generator` | `haiku` | `low` | |
-| `coder`, `*-coder`, `tester`, `test-writer` | `sonnet` | `medium` | Run with `isolation: worktree` |
-| `ops`, `requirements-engineer` | `sonnet` | `medium` | |
+| `coder`, `*-coder`, `tester` | `sonnet` | `medium` | Run with `isolation: worktree` |
+| `ops` | `sonnet` | `medium` | |
 | `architect`, `code-reviewer` | `opus` | `xhigh` | Judgement work, not throughput work |
 
 **Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`) — a pinned `claude-*` id bypasses a model proxy, and the verify script rejects one. **Do not pass `model:` in an Agent call**: it silently overrides the agent file. The diagnostic rule, stated once in `AGENT_TEAM.md` → *Model & Effort Policy*: wrong despite full context → bigger model; skipped files or tests not run → raise effort.

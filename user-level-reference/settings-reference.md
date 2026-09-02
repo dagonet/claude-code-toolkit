@@ -337,8 +337,8 @@ Templates include the following workflow enforcement hooks (via external scripts
 
 **Require skills block** (`hooks/require-skills-block.sh`):
 - Matcher: `Agent`
-- Enforces the AGENT_TEAM.md *Spawn-Prompt Binding Table* — when the PO spawns a `Task` whose `subagent_type` is bound (`coder` and variants, `tester`, `test-writer`, `architect`, `requirements-engineer`), the prompt body must contain a literal `## Required Skills` line listing the skills that subagent must invoke before task work.
-- Pass-through types: `code-reviewer`, `doc-generator` (no required skills), and any `subagent_type` not in the binding table (e.g. `general-purpose`, `Explore`, `Plan`).
+- Enforces the AGENT_TEAM.md *Spawn-Prompt Binding Table* — when the PO spawns a `Task` whose `subagent_type` is bound (`coder` and variants, `tester`, `architect`), the prompt body must contain a literal `## Required Skills` line listing the skills that subagent must invoke before task work.
+- Pass-through types: `code-reviewer` (no required skills), and any `subagent_type` not in the binding table (e.g. `general-purpose`, `Explore`, `Plan`).
 - Block diagnostic prints the expected skill list plus a copy-pasteable `## Required Skills` block for the PO to drop into the prompt.
 - DRIFT WARNING: the hook's case statement duplicates the AGENT_TEAM.md table. `scripts/verify-template-consistency.sh` diffs the two and fails CI if they diverge — keep them in sync.
 

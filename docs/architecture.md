@@ -6,8 +6,8 @@
 
 Claude Code supports layered configuration: **project-level `.claude/` overrides user-level `~/.claude/`** for same-named items.
 
-- **User-level agents** (`~/.claude/agents/`): 9 generic agents -- Explore, architect, code-reviewer, coder, doc-generator, ops, requirements-engineer, test-writer, tester.
-- **Template agents** override user-level when working in that project. Generic agents in general/rust-tauri templates are identical to user-level. Dotnet/MAUI templates specialize architect, code-reviewer, requirements-engineer, and tester for their tech stack.
+- **User-level agents** (`~/.claude/agents/`): 6 generic agents -- Explore, architect, code-reviewer, coder, ops, tester.
+- **Template agents** override user-level when working in that project. Generic agents in general/rust-tauri templates are identical to user-level. Dotnet/MAUI templates specialize architect, code-reviewer, and tester for their tech stack.
 - **Domain-specific coders** (`dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) live at project-level only -- they have no user-level counterpart.
 
 ## AGENT_TEAM.md v2.0 -- Dual-Mode Workflow
@@ -42,7 +42,7 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 | T3 Standard | Multi-file, < 200 lines | coder + reviewer + tester | TDD required, >= 80% coverage |
 | T4 Complex | Architectural, > 200 lines | architect + coder(s) + reviewer + tester | Full BDD/TDD, >= 80% coverage |
 
-**Model & effort policy:** the orchestrator model is a per-session `/model` choice — `fable` for T3/T4 (multi-file or architectural) sessions, `opus` for T1/T2. Fable 5 needs fewer prompts and steers and sustains longer, higher-autonomy sessions, at roughly 2× Opus price. Session effort ships **unset** (the model's own default); effort is raised per role in the agent frontmatter — `architect` and `code-reviewer` at `xhigh`, workers at `medium`, `Explore` and `doc-generator` at `low`. Full rule set: `AGENT_TEAM.md` → *Model & Effort Policy*.
+**Model & effort policy:** the orchestrator model is a per-session `/model` choice — `fable` for T3/T4 (multi-file or architectural) sessions, `opus` for T1/T2. Fable 5 needs fewer prompts and steers and sustains longer, higher-autonomy sessions, at roughly 2× Opus price. Session effort ships **unset** (the model's own default); effort is raised per role in the agent frontmatter — `architect` and `code-reviewer` at `xhigh`, workers at `medium`, `Explore` at `low`. Full rule set: `AGENT_TEAM.md` → *Model & Effort Policy*.
 
 **Delegate-everything model:** the PO never does hands-on work at any tier — coding, reviewing, testing, builds, env setup (`ops` agent), and exploration (`Explore` agent) are all sub-agent work, enforced by `hooks/enforce-delegation.sh`. The PO's write surface is limited to orchestration files (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md`).
 
@@ -174,7 +174,7 @@ claude-code-toolkit/
 │   ├── general/                           # Any project, any language
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (9 agents)
+│   │   │   └── agents/ (6 agents)
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md                  # v2.0 (shared across all variants)
@@ -184,7 +184,7 @@ claude-code-toolkit/
 │   ├── dotnet/                            # .NET projects
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (10 agents)
+│   │   │   └── agents/ (7 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
@@ -195,7 +195,7 @@ claude-code-toolkit/
 │   ├── dotnet-maui/                       # .NET MAUI desktop apps
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (10 agents)
+│   │   │   └── agents/ (7 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
 │   │   ├── CLAUDE.local.md
@@ -206,7 +206,7 @@ claude-code-toolkit/
 │   ├── rust-tauri/                        # Rust/Tauri v2 desktop apps
 │   │   ├── .claude/
 │   │   │   ├── settings.json
-│   │   │   └── agents/ (10 agents)
+│   │   │   └── agents/ (7 agents)
 │   │   ├── rustfmt.toml                   # Rust formatter config
 │   │   ├── .prettierrc                    # TypeScript/CSS formatter config
 │   │   ├── CLAUDE.md
@@ -218,7 +218,7 @@ claude-code-toolkit/
 │   └── python/                            # Python projects
 │       ├── .claude/
 │       │   ├── settings.json
-│       │   └── agents/ (10 agents)
+│       │   └── agents/ (7 agents)
 │       ├── .editorconfig
 │       ├── CLAUDE.md
 │       ├── CLAUDE.local.md

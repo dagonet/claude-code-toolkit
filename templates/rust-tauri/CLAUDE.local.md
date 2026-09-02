@@ -30,9 +30,8 @@ Git runs through the **git CLI** (`Bash(git ...)`), and `gh` covers the GitHub
 gaps the MCP servers do not. MCP wrappers for git are no longer required.
 
 > **Scope:** every agent with `Bash` in its `tools:` frontmatter does its own git
-> I/O. Agents without `Bash` (`architect`, `requirements-engineer`,
-> `doc-generator`) return their work product and the PO performs the git
-> operation on their behalf.
+> I/O. `architect` has no `Bash`, so it returns its work product and the PO
+> performs the git operation on its behalf.
 
 ### Gates — enforced by hooks, not by policy
 
@@ -61,9 +60,8 @@ comments; `mcp__github-tools__*` for `gh_repo_from_origin` and `gh_workflow_list
 otherwise the `gh` CLI (the gates cover `gh pr merge`). Direct REST or GraphQL calls stay
 out of scope either way.
 
-> **Scope:** agents that have neither GitHub MCP tools nor `Bash` (`architect`,
-> `requirements-engineer`, `doc-generator`, `test-writer`) return their work to the PO,
-> which performs the GitHub operation.
+> **Scope:** `architect` has neither GitHub MCP tools nor `Bash`, so it returns
+> its work to the PO, which performs the GitHub operation.
 
 Read before you write: discover the issue or PR first, state what will change, then run
 the write tool.
