@@ -1883,6 +1883,94 @@ else
     ko "region extractor: $r28_seen of $r28_agents shipped agent regions enumerated — the 'zero regions across eleven' reading"
   fi
 
+  # Arm 6: MATCH THE MARKER'S SHAPE, NOT ITS NAME — six rows, asserted BY
+  # CLASSIFICATION STRING (v3.0.0).
+  #
+  # v2.4.0's matcher was a bare substring while this file's documented
+  # specification anchors on the comment opener, so PROSE ABOUT THE MARKERS
+  # matched. Both false shapes were measured on live consumer repos, and they
+  # fail in OPPOSITE directions:
+  #
+  #   row 1 (BEGIN named in prose)  -> was UNCLOSED : DEADLOCK. Step 6a offers
+  #         only "relocate the region" or "defer" for CONTENT/UNCLOSED, and a
+  #         false positive has NO region to relocate, so the prescribed remedy
+  #         is unreachable — and A2 is built so no acknowledgement overrides it.
+  #   row 2 (BOTH named in prose)   -> was EMPTY    : THE DANGEROUS ONE. Step 6a
+  #         reaches the ORDINARY deletion flow for EMPTY, so a documentation
+  #         file sails through the precondition into the delete prompt. A2's
+  #         premise is that the prompt never SHOWED what was being destroyed;
+  #         here the guard affirmatively CERTIFIES the file as empty. `--body`
+  #         shares it, so 6a's post-relocate byte-compare compares two empty
+  #         bodies, they match, and the mechanical proof passes for a
+  #         relocation that never happened.
+  #
+  # ROWS 1, 2 AND 6 MUST ALL LAND ON NOMARKERS, and rows 1 and 5 must be
+  # DISTINGUISHABLE — a documentation file and a genuinely broken region printed
+  # the same verdict, so an operator could not tell them apart without opening
+  # the file.
+  #
+  # RESIDUAL, STATED RATHER THAN HIDDEN: a file that quotes the FULL marker
+  # comment verbatim (`<!-- PROJECT-CUSTOM:BEGIN ... -->`) is still classified as
+  # carrying a marker, and by construction must be — it contains bytes
+  # indistinguishable from a real marker. That fails toward PRESERVATION, which
+  # is the safe direction, and it is why no `^` line-anchor was added: a
+  # blockquoted or list-indented real marker would then be MISSED, and a missed
+  # region is the destructive reading.
+  r28b=$(mktemp -d)
+  printf 'The region sits between `PROJECT-CUSTOM:BEGIN` markers.\n' > "$r28b/r1.md"
+  printf 'It sits between `PROJECT-CUSTOM:BEGIN` and `PROJECT-CUSTOM:END` markers.\n' > "$r28b/r2.md"
+  printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\nreal content\n<!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r3.md"
+  printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\n<!-- Project-specific rules, routing blocks, and extensions go here. -->\n<!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r4.md"
+  printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\nreal content, no end marker\n' > "$r28b/r5.md"
+  printf 'nothing to see here\n' > "$r28b/r6.md"
+  r28b_bad=""
+  r28b_row() { # <file> <expected>
+    r28br=$(bash "$REGION_SH" "$r28b/$1" 2>/dev/null | cut -f1)
+    [ "$r28br" = "$2" ] || r28b_bad="$r28b_bad $1(got=$r28br want=$2)"
+  }
+  r28b_row r1.md NOMARKERS
+  r28b_row r2.md NOMARKERS
+  r28b_row r3.md CONTENT
+  r28b_row r4.md EMPTY
+  r28b_row r5.md UNCLOSED
+  r28b_row r6.md NOMARKERS
+  if [ -z "$r28b_bad" ]; then
+    ok "region extractor: all six marker-shape rows classify correctly (prose about the markers is NOMARKERS, not EMPTY and not UNCLOSED)"
+  else
+    ko "region extractor: marker-shape row(s) misclassified —$r28b_bad. EMPTY on prose UNLOCKS the delete path; UNCLOSED on prose DEADLOCKS step 6a with no region to relocate."
+  fi
+
+  # Arm 6b: --body must share the classifier's matcher. Two matchers is how the
+  # scan path and the body path came to disagree with the spec in DIFFERENT
+  # ways, and 6a's byte-compare rides on --body.
+  if [ -z "$(bash "$REGION_SH" --body "$r28b/r2.md" 2>/dev/null)" ] &&
+     [ "$(bash "$REGION_SH" --body "$r28b/r3.md" 2>/dev/null)" = "real content" ]; then
+    ok "region extractor: --body and the classifier share one matcher (prose yields nothing, a real region yields its body)"
+  else
+    ko "region extractor: --body disagrees with the classifier — 6a's post-relocate byte-compare inherits the disagreement"
+  fi
+
+  # Arm 6c: --scan must PRUNE vendor/build trees. Measured: 40,445 files on a
+  # node repo (killed after two minutes) and 10,246 of 10,524 in `.venv` on a
+  # python repo (~15 minutes). SKILL.md documents --scan as THE enumeration and
+  # warns against hand-rolling a walker, so a scan that appears to hang leaves a
+  # consumer with no sanctioned alternative — and the hand-rolled walker is the
+  # failure this file exists to prevent. Pruned by DIRECTORY NAME, never by
+  # git's tracked-file list: `git ls-files` would skip untracked files, and the
+  # untracked hand-authored agent is exactly what A3 protects.
+  mkdir -p "$r28b/tree/node_modules/deep" "$r28b/tree/.venv/lib" "$r28b/tree/.claude"
+  i=0; while [ "$i" -lt 40 ]; do echo x > "$r28b/tree/node_modules/deep/f$i"; i=$((i+1)); done
+  i=0; while [ "$i" -lt 40 ]; do echo x > "$r28b/tree/.venv/lib/f$i"; i=$((i+1)); done
+  cp "$r28b/r3.md" "$r28b/tree/.claude/agent.md"
+  r28b_scanned=$(bash "$REGION_SH" --scan "$r28b/tree" 2>&1 >/dev/null | sed -n 's/.*scanned \([0-9]*\) files under.*/\1/p')
+  r28b_found=$(bash "$REGION_SH" --scan "$r28b/tree" 2>/dev/null | grep -c '^CONTENT')
+  if [ "${r28b_scanned:-0}" -le 5 ] && [ "$r28b_found" = "1" ]; then
+    ok "region extractor: --scan prunes vendor/build trees (visited ${r28b_scanned:-?} of 81 files) and still finds the region in .claude/"
+  else
+    ko "region extractor: --scan visited ${r28b_scanned:-?} files of 81 and found $r28b_found region(s) — either the prune list is gone (the only sanctioned enumeration is unusable on a real tree) or it pruned the dot-directory it exists to walk"
+  fi
+  rm -rf "$r28b"
+
   rm -rf "$r28"
 
   # Arm 5b: THE REAL PLANTED FIXTURE. Arms 1–4 use a one-line synthetic region,

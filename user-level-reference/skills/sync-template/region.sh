@@ -46,7 +46,9 @@
 # CLASSIFY OUTPUT, one line per file, tab-separated:
 #   CONTENT   <path>    the region holds project work.  DESTRUCTION IS REFUSED.
 #   EMPTY     <path>    whitespace or the shipped placeholder only
-#   NOMARKERS <path>    no region in this file
+#   NOMARKERS <path>    no region in this file — INCLUDING a file that merely
+#                       writes ABOUT the markers in prose (v3.0.0; see the
+#                       matcher note below, it used to say EMPTY or UNCLOSED)
 #   UNCLOSED  <path>    a BEGIN with no END — malformed, treat as CONTENT
 #
 # EXIT: 0 when every named path was readable, 1 on a read/usage error.  The
@@ -56,8 +58,44 @@
 
 set -u
 
-BEGIN_MARK='PROJECT-CUSTOM:BEGIN'
-END_MARK='PROJECT-CUSTOM:END'
+# ⚠ MATCH THE MARKER'S SHAPE, NOT ITS NAME (v3.0.0).  ONE MATCHER, SHARED BY
+# THE CLASSIFIER AND THE BODY EXTRACTOR — two matchers is how they drifted apart.
+#
+# v2.4.0 shipped these as BARE SUBSTRINGS while the documented specification at
+# the top of this file anchors on the comment opener.  The implementation did
+# not, so any file that merely WRITES ABOUT the markers matched, and it produced
+# TWO false classifications with opposite consequences.  Both measured on live
+# consumer repos during a v2.4.0 sync:
+#
+#   prose naming BEGIN only   -> UNCLOSED   (want NOMARKERS)
+#   prose naming BOTH markers -> EMPTY      (want NOMARKERS)   <- THE DANGEROUS ONE
+#
+# The `EMPTY` one is the reason this is a v3.0.0 stop-ship rather than a
+# tidy-up.  Step 6a reaches the ORDINARY deletion flow for `EMPTY` and
+# `NOMARKERS`, so a documentation file that names both markers in one sentence
+# sails through the precondition and lands in the delete prompt — and A2's whole
+# premise is that the consent prompt never showed the thing being destroyed.
+# Here the guard goes further and AFFIRMATIVELY CERTIFIES the file as empty.
+# `--body` shares the asymmetry, returning empty on both false shapes, so step
+# 6a's post-relocate byte-compare inherits it: `cmp` compares two empty bodies,
+# they match, and the mechanical proof-of-relocation passes for a relocation
+# that never happened.
+#
+# The `UNCLOSED` one DEADLOCKS instead: 6a offers only "relocate the region" or
+# "defer" for CONTENT/UNCLOSED, and a false positive has NO region to relocate,
+# so the prescribed remedy is unreachable — and A2 is deliberately built so no
+# acknowledgement can override it.
+#
+# THIS IS A4's OWN REASONING APPLIED TO A1: key on the reference FORM, not on
+# any occurrence of the name.  Same failure, same population — the consumers who
+# document our mechanism most carefully are the ones who trip its detector.
+#
+# ⚠ The regexes are POSIX EREs used by BOTH `grep -E` AND awk's `match()`.  Do
+# not reintroduce awk `index()` here: `index()` is a literal search and would
+# silently ignore the `[[:space:]]*`, which is exactly how the two paths came to
+# disagree with the spec in different ways.
+BEGIN_RE='<!--[[:space:]]*PROJECT-CUSTOM:BEGIN'
+END_RE='<!--[[:space:]]*PROJECT-CUSTOM:END'
 
 usage() {
   echo "usage: region.sh <path>...            classify" >&2
@@ -73,19 +111,17 @@ usage() {
 # on that line — which is precisely what the `\s*-->` implementations got
 # wrong, since the shipped marker has prose between the two.
 body() {
-  awk -v bm="$BEGIN_MARK" -v em="$END_MARK" '
+  awk -v bre="$BEGIN_RE" -v ere="$END_RE" '
     state == 0 {
-      i = index($0, bm)
-      if (i > 0) {
-        rest = substr($0, i + length(bm))
+      if (match($0, bre)) {
+        rest = substr($0, RSTART + RLENGTH)
         j = index(rest, "-->")
         if (j > 0) {
           state = 1
           tail = substr(rest, j + 3)
           # A one-line region: BEGIN, body and END all on the same line.
-          k = index(tail, "<!--")
-          if (k > 0 && index(substr(tail, k), em) > 0) {
-            printf "%s", substr(tail, 1, k - 1)
+          if (match(tail, ere)) {
+            printf "%s", substr(tail, 1, RSTART - 1)
             exit
           }
           if (tail != "") printf "%s\n", tail
@@ -94,9 +130,8 @@ body() {
       next
     }
     state == 1 {
-      k = index($0, "<!--")
-      if (k > 0 && index(substr($0, k), em) > 0) {
-        if (k > 1) printf "%s", substr($0, 1, k - 1)
+      if (match($0, ere)) {
+        if (RSTART > 1) printf "%s", substr($0, 1, RSTART - 1)
         exit
       }
       printf "%s\n", $0
@@ -105,8 +140,9 @@ body() {
 }
 
 # has_begin / has_end -- marker presence, for the NOMARKERS/UNCLOSED verdicts.
-has_begin() { grep -q "$BEGIN_MARK" "$1"; }
-has_end()   { grep -q "$END_MARK" "$1"; }
+# `grep -E` with the SAME regexes awk uses; see the note at their definition.
+has_begin() { grep -qE "$BEGIN_RE" "$1"; }
+has_end()   { grep -qE "$END_RE" "$1"; }
 
 # is_empty <body> -- "whitespace or the shipped placeholder comment only".
 #
@@ -153,13 +189,48 @@ classify() { # <path>
 # language-level glob that produced the "zero regions across eleven" reading
 # does not.  `.git` is pruned (its objects are not project files); NOTHING ELSE
 # IS — in particular `.claude/` must be walked, which is the entire point.
+#
+# ⚠ PRUNE VENDOR AND BUILD DIRECTORIES, OR THE ONLY SANCTIONED ENUMERATION IS
+# UNUSABLE ON A REAL TREE (v3.0.0).  v2.4.0 pruned `.git` and nothing else.
+# Measured on three consumer repos:
+#
+#   node repo   : 40,445 files (`src-tauri/target` 31,413, `node_modules` 4,781)
+#                 -- killed after two minutes with no output
+#   python repo : 10,524 files, of which `.venv` is 10,246 -- 97% -- and is
+#                 gitignored by the rule the python variant itself ships.
+#                 `--scan .` took ~15 minutes; scoped to `.claude`, 2.3 seconds.
+#
+# THE SILENCE IS AS BAD AS THE DURATION.  A 15-minute scan with no output reads
+# as HUNG, and the consumer's next move is to kill it — which matters because
+# SKILL.md documents `--scan` as THE enumeration and explicitly warns against
+# hand-rolling a walker.  A consumer whose scan appears to hang has no
+# sanctioned alternative, and the hand-rolled walker is the exact failure mode
+# this file exists to prevent.  So it reports progress on stderr, leaving stdout
+# clean for the caller.
+#
+# ⚠ PRUNE BY DIRECTORY NAME, NEVER BY GIT'S TRACKED-FILE LIST.  `git ls-files`
+# would skip UNTRACKED files, and the untracked hand-authored agent is precisely
+# the file A3 exists to protect — the one nobody can regenerate.  The list below
+# is conservative on purpose: it names only unambiguous vendor/build output, and
+# no template-synced file has ever lived in any of them.  `bin`/`obj` are
+# deliberately ABSENT — Rust's `src/bin/` is real source.
 scan() {
   d="$1"
   [ -d "$d" ] || { echo "ERROR: not a directory: $d" >&2; return 1; }
-  find "$d" -name .git -prune -o -type f -print 2>/dev/null | sort | while IFS= read -r f; do
-    has_begin "$f" 2>/dev/null || continue
-    classify "$f"
-  done
+  find "$d" \( -name .git -o -name node_modules -o -name .venv -o -name venv \
+               -o -name __pycache__ -o -name .mypy_cache -o -name .pytest_cache \
+               -o -name .tox -o -name .next -o -name .nuxt -o -name target \
+               -o -name dist -o -name build -o -name vendor -o -name .gradle \
+               -o -name .terraform \) -prune -o -type f -print 2>/dev/null \
+    | sort | { n=0
+        while IFS= read -r f; do
+          n=$((n + 1))
+          [ $((n % 2000)) -eq 0 ] && printf 'region.sh: scanned %s files...\n' "$n" >&2
+          has_begin "$f" 2>/dev/null || continue
+          classify "$f"
+        done
+        printf 'region.sh: scanned %s files under %s\n' "$n" "$d" >&2
+      }
 }
 
 [ $# -ge 1 ] || usage

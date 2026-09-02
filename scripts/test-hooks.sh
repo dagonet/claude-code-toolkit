@@ -1411,6 +1411,48 @@ check "code-reviewer is unbound"         "$H" 0 "$(mkspawn code-reviewer 'Do the
 check "coder-helper is not a coder"      "$H" 0 "$(mkspawn coder-helper 'Do the thing.')"
 check "unknown subagent_type passes"     "$H" 0 "$(mkspawn Explore 'Do the thing.')"
 
+# --- THE HARNESS'S REAL PAYLOAD SHAPE (v3.0.0) ------------------------------
+#
+# ⚠ EVERY FIXTURE ABOVE USES `mkspawn`, WHICH BUILDS A **FLAT** PAYLOAD, AND THE
+# HARNESS DOES NOT SEND THAT SHAPE. It nests under `tool_input`, exactly as
+# `mkjson`/`mkread` already do for every other hook. Until v3.0.0 the hook read
+# `$.subagent_type` at the top level, so against a real spawn `SUBAGENT_TYPE`
+# was always empty, every spawn fell to the `*)` default arm, and THE HOOK
+# EXITED 0 ON EVERY SPAWN EVER MADE — confirmed on the real harness by spawning
+# a bound `architect` with no skills block and watching it launch.
+#
+# The fixtures above all passed throughout, because they exercised a shape
+# nothing sends. THIS is the control that would have caught it, and it is why
+# the block matters more than the fix: a fixture that agrees with the code about
+# an input the world never produces is a fixture that cannot fail.
+#
+# `mkspawn` is deliberately LEFT flat rather than converted, so both shapes stay
+# covered — the live Agent payload cannot be observed from inside the suite, and
+# a hook that reads only one shape is how this defect happened in the first
+# place.
+#
+# ⚠ THE NEGATIVE ARM IS THE ONE THAT MATTERS, AND THE `WITH block` ROWS PROVE
+# ALMOST NOTHING ON THEIR OWN — they passed throughout the entire period the
+# hook was inert. On a disciplined repo every spawn carries the block, so the
+# hook's only observable behaviour is SILENCE, and silence is also exactly what
+# a dead guard produces. Pass and absence are indistinguishable from where a
+# compliant consumer stands. That is the vacuous-fixture shape scaled up to an
+# entire enforcement layer, and it is why the four `without skills block` rows
+# below are the assertion and the rest is corroboration.
+mkspawn_nested() { # <subagent_type> <prompt> -- the shape the harness sends
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":"%s","prompt":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$ROOT")"
+}
+
+check "NESTED: coder without skills block"      "$H" 2 "$(mkspawn_nested coder 'Do the thing.')"
+check "NESTED: architect without skills block"  "$H" 2 "$(mkspawn_nested architect 'Do the thing.')"
+check "NESTED: tester without skills block"     "$H" 2 "$(mkspawn_nested tester 'Do the thing.')"
+check "NESTED: rust-coder without skills block" "$H" 2 "$(mkspawn_nested rust-coder 'Do the thing.')"
+check "NESTED: coder WITH skills block"         "$H" 0 "$(mkspawn_nested coder "$WITHBLOCK")"
+check "NESTED: architect WITH skills block"     "$H" 0 "$(mkspawn_nested architect "$WITHBLOCK")"
+check "NESTED: code-reviewer is unbound"        "$H" 0 "$(mkspawn_nested code-reviewer 'Do the thing.')"
+check "NESTED: unknown type passes"             "$H" 0 "$(mkspawn_nested game-tester 'Do the thing.')"
+
 # ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an
 # unbounded Read is rewritten to limit=500 via hookSpecificOutput.updatedInput
