@@ -1768,6 +1768,281 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 28. The PROJECT-CUSTOM region EXTRACTOR ships, and answers both arms (v2.4.0,
+#     item A1).
+#
+#     Step 4's accept-template disqualifier and step 6's deletion precondition
+#     both turn on "is this file's region empty?", and TWO independent
+#     consumers implemented that from prose and both got the REASSURING answer
+#     wrongly: `PROJECT-CUSTOM:BEGIN\s*-->` matches nothing (the shipped marker
+#     carries trailing prose), and a language-level `glob('**/*.md')` does not
+#     descend into dot-directories, so it skips all of `.claude/`. One measured
+#     "zero regions" across a repo with ELEVEN, at which point accept-template
+#     or `git rm` destroys the region with the disqualifier cleared.
+#
+#     So the extractor is SHIPPED CODE, not a paragraph, and this is its
+#     control. BOTH ARMS ARE REQUIRED and neither is decorative:
+#       * a planted region WITH CONTENT, inside a dot-directory, must be found
+#         and reported CONTENT — this arm goes red if the regex is narrowed to
+#         the naive `\s*-->` form, or if the walk stops at dot-directories;
+#       * a placeholder-only region must NOT be reported as content — this arm
+#         goes red if the extractor is widened to "any body is content", which
+#         would make the guard fire on all eleven shipped files and be turned
+#         off within a release.
+#     Deleting region.sh turns the whole check red.
+#
+#     VALIDATED AGAINST PLANTED CONTENT, NEVER FOUND CONTENT: a census across
+#     three consumer repos found ZERO real region content (11, 10 and 1
+#     region-bearing files, all placeholder-only). A green run on found content
+#     proves nothing, because the guard cannot fail there.
+# ---------------------------------------------------------------------------
+echo
+REGION_SH="user-level-reference/skills/sync-template/region.sh"
+if [ ! -f "$REGION_SH" ]; then
+  ko "$REGION_SH missing — step 4's disqualifier and step 6's precondition have no extractor, and prose is what both consumers got wrong"
+elif ! bash -n "$REGION_SH" 2>/dev/null; then
+  ko "$REGION_SH does not parse"
+else
+  ok "$REGION_SH: present and parses"
+
+  r28=$(mktemp -d)
+  mkdir -p "$r28/.claude/agents"
+  {
+    printf '# planted\n'
+    printf '<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->\n'
+    printf 'REGION-SENTINEL-CONTENT: project routing that must survive.\n'
+    printf '<!-- PROJECT-CUSTOM:END -->\n'
+  } > "$r28/.claude/agents/planted.md"
+  {
+    printf '# placeholder\n'
+    printf '<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->\n'
+    printf '<!-- Project-specific rules, routing blocks, and extensions go here. -->\n'
+    printf '<!-- PROJECT-CUSTOM:END -->\n'
+  } > "$r28/.claude/agents/placeholder.md"
+  printf '# plain\n' > "$r28/.claude/agents/plain.md"
+
+  # Arm 1 (positive): content in a DOT-DIRECTORY is found and named CONTENT.
+  r28_scan=$(bash "$REGION_SH" --scan "$r28" 2>/dev/null)
+  if printf '%s\n' "$r28_scan" | grep -q "^CONTENT	.*\.claude/agents/planted\.md$"; then
+    ok "region extractor: planted content inside a dot-directory is found (CONTENT)"
+  else
+    note "scan output was: $(printf '%s' "$r28_scan" | tr '\n' '|')"
+    ko "region extractor: planted content inside .claude/ NOT reported as CONTENT — the false clean that destroys regions"
+  fi
+
+  # Arm 2 (negative): the shipped placeholder is NOT content.
+  if printf '%s\n' "$r28_scan" | grep -q "^EMPTY	.*placeholder\.md$"; then
+    ok "region extractor: a placeholder-only region is EMPTY, not content"
+  else
+    ko "region extractor: placeholder-only region misreported — a guard that fires on all eleven shipped files gets switched off"
+  fi
+
+  # Arm 3: a file with no markers is neither of the above.
+  if printf '%s\n' "$r28_scan" | grep -q "plain\.md"; then
+    ko "region extractor: a marker-less file appeared in --scan output"
+  else
+    ok "region extractor: a marker-less file is not enumerated"
+  fi
+
+  # Arm 4: --body is byte-exact. Step 6's post-relocate byte-compare is what
+  # makes "the content is provably elsewhere" mechanical rather than asserted,
+  # and it is only as good as this.
+  r28_body=$(bash "$REGION_SH" --body "$r28/.claude/agents/planted.md" 2>/dev/null)
+  if [ "$r28_body" = "REGION-SENTINEL-CONTENT: project routing that must survive." ]; then
+    ok "region extractor: --body returns the region verbatim"
+  else
+    note "--body returned: [$r28_body]"
+    ko "region extractor: --body did not return the region verbatim — the post-relocate byte-compare cannot work"
+  fi
+
+  # Arm 5: the SHIPPED files. Every agent file in templates/general carries a
+  # region (check 25 asserts that separately); the extractor must SEE all of
+  # them through the dot-directory, which is the exact walk that returned zero.
+  r28_agents=$(ls templates/general/.claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
+  r28_seen=$(bash "$REGION_SH" --scan templates/general/.claude/agents 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$r28_agents" = "$r28_seen" ] && [ "$r28_agents" != "0" ]; then
+    ok "region extractor: all $r28_agents shipped agent regions are enumerated"
+  else
+    ko "region extractor: $r28_seen of $r28_agents shipped agent regions enumerated — the 'zero regions across eleven' reading"
+  fi
+
+  rm -rf "$r28"
+
+  # Arm 6: the extractor must be WIRED INTO the instructions. An extractor no
+  # step names is prose with extra steps — the failure A1 exists to prevent.
+  if grep -q 'region\.sh' user-level-reference/skills/sync-template/SKILL.md; then
+    ok "sync-template SKILL.md: references region.sh"
+  else
+    ko "sync-template SKILL.md: never names region.sh — the extractor ships but no step uses it"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 29. "Deliberately exempt" must be distinguishable from "silently fell out"
+#     (v2.4.0, item A5).
+#
+#     In hooks/require-skills-block.sh the exempt arm and the `*)` default arm
+#     are BYTE-IDENTICAL IN EFFECT — both `exit 0`. An agent exempted on
+#     purpose and an agent whose name silently fell out of the enumeration
+#     produce the same result, with no signal at runtime or afterwards. That is
+#     precisely why a consumer could not tell whether their own `game-tester`
+#     was unbound deliberately.
+#
+#     THE RUNTIME FIX IS UNAVAILABLE. Making `*)` warn before exiting 0 sends
+#     the warning down a channel measured, earlier in this programme, not to
+#     reach the lead. A warning nobody receives is the same silence with more
+#     code, and it reads as fixed. So the check is STATIC and lives here, where
+#     output demonstrably reaches someone, and it fires at BUILD time — which
+#     is also what makes it catch a consolidation's own damage: delete or
+#     rename an agent without updating the case arm and the gate is red before
+#     the release ships, rather than silent after.
+#
+#     ⚠ EVALUATE EACH PATTERN IN ITS OWN LANGUAGE. NEVER STRING-COMPARE ARM
+#     LABELS TO FILENAMES. `coder|*-coder)` is a GLOB, not a name:
+#     `dotnet-coder`, `java-coder`, `python-coder` and `rust-coder` all ship as
+#     agent files and appear NOWHERE as literals in any arm — they are covered
+#     only by the glob. A set-equality check against the labels goes red on day
+#     one against the exact generalisation that makes the hook correct. The
+#     same trap sits in the settings.json matcher `^([a-z0-9]+-)?coder$`. Arm C
+#     below asserts that trap is not re-entered.
+#
+#     SCOPED TO THE TOOLKIT'S OWN SHIPPED AGENT SET, deliberately. A consumer's
+#     project-owned agent must remain legitimately unbound with no gate failure
+#     in THEIR repo — a gate that goes red on a consumer's own file is the
+#     cries-wolf failure this release exists to reduce.
+# ---------------------------------------------------------------------------
+echo
+A5_HOOK="hooks/require-skills-block.sh"
+if [ ! -f "$A5_HOOK" ]; then
+  ko "$A5_HOOK missing — the skills binding is unenumerated"
+else
+  # Arm labels, taken from the case statement and used AS PATTERNS. `*)` is
+  # excluded on purpose: it matches everything, so including it would make this
+  # whole check vacuously true — which is the failure it exists to detect.
+  a5_arms=$(sed -n '/case "\$SUBAGENT_TYPE" in/,/^esac$/p' "$A5_HOOK" \
+    | grep -E '^[[:space:]]+[A-Za-z0-9_|*?.-]+\)[[:space:]]*$' \
+    | sed 's/^[[:space:]]*//;s/)[[:space:]]*$//' \
+    | grep -vx '\*')
+
+  if [ -z "$a5_arms" ]; then
+    ko "check 29: no case arms parsed out of $A5_HOOK — the check would pass vacuously, so it fails instead"
+  else
+    ok "check 29: parsed $(printf '%s\n' "$a5_arms" | wc -l | tr -d ' ') case arms from $A5_HOOK"
+
+    # a5_matches <name> -- does any arm match, EVALUATED AS A SHELL GLOB?
+    #
+    # THE `|` MUST BE SPLIT BEFORE THE `case`, and this is not a nicety: in a
+    # case arm `|` is SYNTAX, not data, so `case $n in $arm)` with
+    # $arm='coder|*-coder' tests the single literal pattern "coder|*-coder" and
+    # matches nothing. The first version of this check did exactly that and
+    # reported all nine shipped names unbound — a check failing loudly, which
+    # is the good direction, but it is the same "evaluate the pattern in its
+    # own language" trap the check exists to enforce, sprung on the check
+    # itself. Split on `|`, then glob each alternative.
+    a5_matches() {
+      a5m_name="$1"
+      while IFS= read -r a5m_arm; do
+        [ -n "$a5m_arm" ] || continue
+        a5m_old_ifs=$IFS
+        IFS='|'
+        for a5m_alt in $a5m_arm; do
+          IFS=$a5m_old_ifs
+          [ -n "$a5m_alt" ] || continue
+          case "$a5m_name" in
+            $a5m_alt) return 0 ;;
+          esac
+          IFS='|'
+        done
+        IFS=$a5m_old_ifs
+      done <<A5_ARMS
+$a5_arms
+A5_ARMS
+      return 1
+    }
+
+    # The shipped agent set: every variant plus the user-level reference copies.
+    a5_names=$( { ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null; } \
+      | sed 's@.*/@@;s@\.md$@@' | sort -u )
+    a5_unmatched=""
+    for a5n in $a5_names; do
+      a5_matches "$a5n" || a5_unmatched="$a5_unmatched $a5n"
+    done
+    if [ -z "$a5_unmatched" ]; then
+      ok "check 29 (arm A): every shipped agent name matches a case arm or the explicit exempt list ($(printf '%s\n' $a5_names | wc -l | tr -d ' ') names)"
+    else
+      ko "check 29 (arm A): shipped agent(s) match NO case arm —$a5_unmatched. Either bind them in $A5_HOOK or add them to the explicit exempt arm; falling through to \`*)\` is indistinguishable from having silently fallen out."
+    fi
+
+    # Arm B (NEGATIVE SELF-TEST): a name the toolkit does not ship must NOT
+    # match. Without this, an arm-parsing bug that yielded `*` — or a
+    # `a5_matches` that always returned 0 — would make arm A green for the
+    # wrong reason. A check that cannot report a miss has not reported a hit.
+    if a5_matches "zz-unbound-probe"; then
+      ko "check 29 (arm B): the synthetic name 'zz-unbound-probe' matched an arm — the arm set is over-broad and arm A is passing vacuously"
+    else
+      ok "check 29 (arm B): a non-shipped name correctly matches no arm"
+    fi
+
+    # Arm C: THE TWO-PATTERN-LANGUAGES INVARIANT. The same intent is written as
+    # a shell glob in the hook (`coder|*-coder`) and as a regex in
+    # settings.json (`^([a-z0-9]+-)?coder$`), and both generalise over the whole
+    # <lang>-coder family. A fix applied to one is NOT applied to the other by
+    # any grep keyed on a single syntax, so consolidating or renaming `coder`
+    # breaks every variant coder in both places at once — silently, because
+    # both forms fail OPEN when a name stops matching. Rather than a
+    # hand-maintained expected set (which drifts), assert the two languages
+    # agree on the shipped names.
+    a5_regex=$(grep -o '"matcher": "[^"]*coder[^"]*"' templates/general/.claude/settings.json \
+      | sed 's/.*"matcher": "//;s/"$//' | head -1)
+    if [ -z "$a5_regex" ]; then
+      ko "check 29 (arm C): no agent matcher regex found in templates/general/.claude/settings.json"
+    else
+      # ONE DIRECTION ONLY, and the asymmetry is deliberate. The matcher is
+      # legitimately BROADER than the coder family — it also names
+      # `code-reviewer`, `tester`, `architect` — so equality is the wrong
+      # relation and the first version of this arm went red on all three of
+      # them for saying so. The property that actually breaks under a
+      # consolidation is the COVERAGE one: every name the hook's coder glob
+      # binds must also be reached by the settings matcher. A `<lang>-coder`
+      # added to one language and not the other is silently unhooked, and both
+      # forms fail OPEN, so nothing else reports it.
+      a5_disagree=""
+      for a5n in $a5_names; do
+        case "$a5n" in
+          coder|*-coder)
+            printf '%s\n' "$a5n" | grep -qE "$a5_regex" \
+              || a5_disagree="$a5_disagree $a5n"
+            ;;
+        esac
+      done
+      if [ -z "$a5_disagree" ]; then
+        ok "check 29 (arm C): every name the hook's coder glob binds is also reached by the settings.json matcher"
+      else
+        ko "check 29 (arm C): bound by the shell glob but NOT by the settings.json matcher —$a5_disagree. The two pattern languages have drifted; both fail OPEN and silently."
+      fi
+
+      # Arm D: the trap itself. The domain coders must be covered BY THE GLOB
+      # while existing as no literal in any arm. If someone "fixes" check 29 by
+      # enumerating them, this arm says so — the enumeration is exactly what
+      # silently unbinds the next variant coder a project adds.
+      a5_literal=""
+      for a5n in $a5_names; do
+        case "$a5n" in
+          *-coder)
+            if printf '%s\n' "$a5_arms" | grep -qx "$a5n"; then a5_literal="$a5_literal $a5n"; fi
+            ;;
+        esac
+      done
+      if [ -z "$a5_literal" ]; then
+        ok "check 29 (arm D): domain coders are covered by the glob, not enumerated as literals"
+      else
+        ko "check 29 (arm D): domain coder(s) enumerated as literal arms —$a5_literal. The glob exists so a project's own <lang>-coder is bound too; enumerating defeats it."
+      fi
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
