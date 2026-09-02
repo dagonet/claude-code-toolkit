@@ -40,7 +40,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 
 ### Agents that can do their own git + GitHub I/O:
 - `coder`, `dotnet-coder`, `rust-coder`, `java-coder`, `python-coder` — `Bash` plus PR tools: can commit, push, create PRs, merge
-- `code-reviewer` — can post PR reviews via `mcp__MCP_DOCKER__pull_request_review_write`
+- `code-reviewer` — has `Bash` for local `git diff <base>..<head>` (read-only in effect: it holds no write tool) and can post PR reviews via `mcp__MCP_DOCKER__pull_request_review_write`
 - `tester`, `test-writer` — have `Bash` (so they can commit) but no PR tools; `tester` can post findings via `mcp__MCP_DOCKER__add_issue_comment`
 
 ### Agents without `Bash`:
