@@ -2253,6 +2253,106 @@ fi
 rm -rf "$b1_tmp"
 
 # ---------------------------------------------------------------------------
+# 31. REGION PRESERVATION MUST SURVIVE A NEAR-TOTAL DELETION OF THE TEMPLATE
+#     PART (v3.0.0, item B1).
+#
+#     v3.0.0 shrinks AGENT_TEAM.md from 1026 lines to 556 — a 46% deletion of
+#     the template part, far outside anything the region machinery has ever been
+#     exercised against. This check runs the property at ~97%, which is stricter
+#     than what ships, because the property is supposed to be independent of how
+#     much was deleted and a fixture pinned to today's figure stops testing that
+#     the moment the figure changes.
+#
+#     ⚠ PLANTED CONTENT, NEVER FOUND CONTENT. A census across three consumer
+#     repos found ZERO real PROJECT-CUSTOM content (11, 10 and 1 region-bearing
+#     files, all placeholder-only), so a green run on any of them proves
+#     nothing — the guard CANNOT FAIL there. The content comes from the
+#     committed fixture at scripts/fixtures/project-custom-regions/, which is
+#     the only known source of real region content anywhere.
+#
+#     BOTH ARMS. A planted region must be classified CONTENT and must survive
+#     the splice BYTE-EXACTLY; a placeholder-only region must be classified
+#     EMPTY. A check that only ever asserts the reassuring answer is the
+#     extractor defect this whole programme exists to stop.
+# ---------------------------------------------------------------------------
+echo
+B1_REGION_SH="user-level-reference/skills/sync-template/region.sh"
+B1_PLANT="scripts/fixtures/project-custom-regions/plant.sh"
+if [ ! -f "$B1_REGION_SH" ] || [ ! -f "$B1_PLANT" ]; then
+  ko "check 31: $B1_REGION_SH or $B1_PLANT missing — region preservation is unexercised"
+else
+  b2_tmp=$(mktemp -d)
+  mkdir -p "$b2_tmp/consumer/.claude/agents"
+  cp templates/general/AGENT_TEAM.md templates/general/CLAUDE.md "$b2_tmp/consumer/"
+  cp templates/general/.claude/agents/coder.md "$b2_tmp/consumer/.claude/agents/"
+
+  # Arm A (BOTH-ARMS PRECONDITION): before planting, every one of the three must
+  # classify EMPTY. If they did not, arm B's CONTENT result would prove nothing
+  # about the planting.
+  b2_pre=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
+    "$b2_tmp/consumer/CLAUDE.md" "$b2_tmp/consumer/.claude/agents/coder.md" \
+    2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
+  if [ "$b2_pre" = "EMPTY " ]; then
+    ok "check 31 (arm A): the three shipped region-bearing files classify EMPTY before planting"
+  else
+    ko "check 31 (arm A): expected all three shipped files to classify EMPTY before planting, got: $b2_pre"
+  fi
+
+  if ! bash "$B1_PLANT" "$b2_tmp/consumer" >/dev/null 2>&1; then
+    ko "check 31: plant.sh failed against a freshly copied template tree — the shipped placeholder block has changed shape"
+  else
+    b2_post=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
+      "$b2_tmp/consumer/CLAUDE.md" "$b2_tmp/consumer/.claude/agents/coder.md" \
+      2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
+    if [ "$b2_post" = "CONTENT " ]; then
+      ok "check 31 (arm B): all three classify CONTENT once real region content is planted"
+    else
+      ko "check 31 (arm B): expected all three to classify CONTENT after planting, got: $b2_post"
+    fi
+
+    # Arm C: THE SHRINK ITSELF. Build a new template part that is a ~97%
+    # deletion — the first 12 lines and nothing else — then splice the
+    # consumer's extracted region onto it, exactly as a sync preserves.
+    b2_keep=12
+    b2_body_lines=$(wc -l < "$b2_tmp/consumer/AGENT_TEAM.md")
+    head -n "$b2_keep" templates/general/AGENT_TEAM.md > "$b2_tmp/shrunk.md"
+    tail -n 3 templates/general/AGENT_TEAM.md >> "$b2_tmp/shrunk.md"
+    b2_pct=$(( 100 - (b2_keep + 3) * 100 / b2_body_lines ))
+
+    bash "$B1_REGION_SH" --body "$b2_tmp/consumer/AGENT_TEAM.md" > "$b2_tmp/planted.body" 2>/dev/null
+    # Splice: replace the shrunk file's placeholder body with the planted body.
+    awk -v ph='<!-- Project-specific rules, routing blocks, and extensions go here. -->' \
+        -v rf="$b2_tmp/planted.body" '
+      index($0, ph) > 0 && !done {
+        while ((getline line < rf) > 0) print line
+        close(rf); done = 1; next
+      }
+      { print }
+    ' "$b2_tmp/shrunk.md" > "$b2_tmp/spliced.md"
+
+    bash "$B1_REGION_SH" --body "$b2_tmp/spliced.md" > "$b2_tmp/spliced.body" 2>/dev/null
+    b2_class=$(bash "$B1_REGION_SH" "$b2_tmp/spliced.md" 2>/dev/null | cut -f1)
+    if cmp -s "$b2_tmp/planted.body" "$b2_tmp/spliced.body" && [ "$b2_class" = "CONTENT" ]; then
+      ok "check 31 (arm C): a planted region ($(wc -c < "$b2_tmp/planted.body" | tr -d ' ') B) survives a ${b2_pct}% deletion of the template part BYTE-EXACTLY, and still classifies CONTENT"
+    else
+      ko "check 31 (arm C): the planted region did NOT survive a ${b2_pct}% deletion byte-exactly (classified '$b2_class') — region preservation breaks at shrink magnitudes v3.0.0 actually performs"
+    fi
+
+    # Arm D (NEGATIVE CONTROL): splice the PLACEHOLDER instead of the planted
+    # body. It must classify EMPTY. Without this, an extractor that returned
+    # CONTENT unconditionally would make arms B and C green for the wrong
+    # reason — the exact false-clean this programme was bitten by, inverted.
+    b2_ph_class=$(bash "$B1_REGION_SH" "$b2_tmp/shrunk.md" 2>/dev/null | cut -f1)
+    if [ "$b2_ph_class" = "EMPTY" ]; then
+      ok "check 31 (arm D): the same shrunk file with only the placeholder classifies EMPTY — the CONTENT result in arm C is discriminating, not unconditional"
+    else
+      ko "check 31 (arm D): a placeholder-only region classified '$b2_ph_class', not EMPTY — arms B and C are passing vacuously"
+    fi
+  fi
+  rm -rf "$b2_tmp"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

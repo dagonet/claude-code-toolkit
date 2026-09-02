@@ -4,7 +4,7 @@
 #
 # Matcher: Task
 #
-# Enforces the AGENT_TEAM.md Spawn-Prompt Binding Table. When the PO spawns
+# Enforces `AGENT_TEAM.md` §Spawn-Prompt Binding Table. When the PO spawns
 # a Task whose subagent_type is in the binding table, the prompt body MUST
 # contain a literal '## Required Skills' line. Subagent types not in the
 # table pass through. The 'code-reviewer' and 'doc-generator' types have
@@ -94,7 +94,12 @@ fi
 {
   echo "BLOCKED: Task spawn for subagent_type '$SUBAGENT_TYPE' is missing a '## Required Skills' block in the prompt body."
   echo
-  echo "Per AGENT_TEAM.md Spawn-Prompt Binding Table, this subagent_type must invoke:"
+  # This message names a HEADING AT RUNTIME. A shrink of AGENT_TEAM.md can
+  # otherwise leave a live error pointing a blocked user at a section that no
+  # longer exists — inside the very hook that blocked them. Written in the
+  # `§Heading` form so check 30 resolves it against the live headings and goes
+  # red if the section is ever renamed or cut.
+  echo "Per \`AGENT_TEAM.md\` §Spawn-Prompt Binding Table, this subagent_type must invoke:"
   for skill in $REQUIRED; do
     echo "  - $skill"
   done
