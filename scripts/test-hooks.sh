@@ -771,7 +771,7 @@ GATEREPOSHA=$(git -C "$GATEREPO" rev-parse HEAD)
 writeartifact "$GATEREPO" "$GATEREPOSHA"
 check_msg "(A6) merge from a protected branch refuses despite a fresh artifact" \
   "$ROOT/$H" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$GATEREPO")" \
-  "initiated while the checkout is on a protected branch"
+  "refuses this operation on a protected branch"
 check_msg "(A6) protected-branch refusal names the head to gate instead" \
   "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 12 --squash' "$GATEREPO")" \
   "check out the merge target"
@@ -861,6 +861,73 @@ check "(A6.1) merge --continue on a protected branch"  "$H" 0 "$(mkjson Bash 'gi
 check "(A6.1) merge --quit on a protected branch"      "$H" 0 "$(mkjson Bash 'git merge --quit' "$A6MAIN")"
 check "(A6.1) -C target on main, --abort exempt"       "$H" 0 "$(mkjson Bash "git -C $A6MAIN merge --abort" "$A6CLONE")"
 check "(A6.1) --abort inside -m does NOT exempt"       "$H" 2 "$(mkjson Bash 'git merge -m "retry after --abort" feature/x' "$A6MAIN")"
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 2 — the merge path gates on UPSTREAM PROVENANCE, not ancestry.
+#
+# THE FIRST ROW IS THE COUNTEREXAMPLE THAT KILLED THE ANCESTRY RULE. A6CLONE's
+# `main` is one commit behind `origin/main` — the state every repo is in right
+# after a PR merge — so `origin/main` is NOT an ancestor of HEAD, and an
+# ancestry rule would call the routine catch-up "foreign content" and gate it.
+# Delete the a6_merge_catchup call and rows 1-2 flip 0 -> 2; loosen it to accept
+# any target, or drop the --no-ff/--squash refusal, or collapse the exact
+# is-ancestor return codes into a truthiness test, and rows 3-8 flip 2 -> 0.
+# ---------------------------------------------------------------------------
+check "(A6.2) catch-up merge of own upstream allowed"  "$H" 0 "$(mkjson Bash 'git merge --ff-only origin/main' "$A6CLONE")"
+check "(A6.2) bare-named catch-up allowed"             "$H" 0 "$(mkjson Bash 'git merge origin/main' "$A6CLONE")"
+check "(A6.2) --no-ff of the upstream is gated"        "$H" 2 "$(mkjson Bash 'git merge --no-ff origin/main' "$A6CLONE")"
+check "(A6.2) --squash of the upstream is gated"       "$H" 2 "$(mkjson Bash 'git merge --squash origin/main' "$A6CLONE")"
+check "(A6.2) a ref the upstream lacks is gated"       "$H" 2 "$(mkjson Bash 'git merge feature/x' "$A6CLONE")"
+check "(A6.2) diverged local: upstream merge gated"    "$H" 2 "$(mkjson Bash 'git merge origin/main' "$A6DIV")"
+check "(A6.2) no upstream configured: merge gated"     "$H" 2 "$(mkjson Bash 'git merge feature/x' "$A6MAIN")"
+check "(A6.2) unresolvable target is gated"            "$H" 2 "$(mkjson Bash 'git merge origin/zz-nope' "$A6CLONE")"
+check "(A6.2) catch-up on a FEATURE branch allowed"    "$H" 0 "$(mkjson Bash 'git merge origin/main' "$A6FEATCO")"
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 3 — `git pull` on a protected branch, gated by FORM.
+#
+# A pull fetches first, so no pre-fetch check can be sound: a STALE
+# remote-tracking ref answers "adds nothing" confidently and wrongly about an
+# object that is not the one being merged, and `ls-remote` costs ~1.4 s per
+# PreToolUse call and fails offline. Only the refspec-free `--ff-only` form is
+# provably safe before the fetch. `git pull` was not gated at all before
+# v3.0.1, so rows 1, 3 and 4 flip 2 -> 0 when the pull arm is deleted.
+# ---------------------------------------------------------------------------
+check "(A6.3) bare pull on a protected branch gated"   "$H" 2 "$(mkjson Bash 'git pull' "$A6CLONE")"
+check "(A6.3) pull --ff-only, refspec-free, allowed"   "$H" 0 "$(mkjson Bash 'git pull --ff-only' "$A6CLONE")"
+check "(A6.3) pull --ff-only with a refspec gated"     "$H" 2 "$(mkjson Bash 'git pull --ff-only origin main' "$A6CLONE")"
+check "(A6.3) pull --rebase is gated"                  "$H" 2 "$(mkjson Bash 'git pull --rebase' "$A6CLONE")"
+check "(A6.3) pull on a feature branch is untouched"   "$H" 0 "$(mkjson Bash 'git pull' "$A6FEATCO")"
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 5 — the block message: diagnosis and fix, not argument.
+#
+# The LAST assertion is the load-bearing one. The positive condition ("what
+# would make it allow") must be printed BEFORE the escape hatch, because
+# whichever a consumer reads first is the one they use — and the safe pull form
+# is named nowhere else a consumer can reach.
+# ---------------------------------------------------------------------------
+A6PULL=$(mkjson Bash 'git pull' "$A6CLONE")
+check_msg "(A6.5) message names the branch" "$ROOT/$H" 2 "$A6PULL" "branch:"
+check_msg "(A6.5) message names the protected set" "$ROOT/$H" 2 "$A6PULL" "protected set:"
+check_msg "(A6.5) message quotes the matched segment" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git pull --rebase' "$A6CLONE")" "git pull --rebase"
+check_msg "(A6.5) message shows the discriminator inputs" "$ROOT/$H" 2 "$A6PULL" "refspec/remote named:"
+check_msg "(A6.5) message names the tracked upstream" "$ROOT/$H" 2 "$A6PULL" "origin/main"
+check_msg "(A6.5) message names what it could NOT determine" "$ROOT/$H" 2 "$A6PULL" "before any fetch"
+check_msg "(A6.5) message states the ALLOWED pull form" "$ROOT/$H" 2 "$A6PULL" "git pull --ff-only"
+check_msg "(A6.5) merge block states the ALLOWED merge form" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git merge feature/x' "$A6CLONE")" "pure catch-up"
+A6MSG=$(printf '%s' "$A6PULL" | bash "$ROOT/$H" 2>&1 >/dev/null)
+A6POS=$(printf '%s\n' "$A6MSG" | grep -n 'ALLOWED without a gate run' | head -1 | cut -d: -f1)
+A6ESC=$(printf '%s\n' "$A6MSG" | grep -n 'git-guard-off' | head -1 | cut -d: -f1)
+if [ -n "$A6POS" ] && [ -n "$A6ESC" ] && [ "$A6POS" -lt "$A6ESC" ]; then
+  printf 'PASS  %-42s (line %s < %s)\n' "(A6.5) ALLOW precedes the escape hatch" "$A6POS" "$A6ESC"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (pos=%s esc=%s)\n' "(A6.5) ALLOW precedes the escape hatch" "${A6POS:-none}" "${A6ESC:-none}"
+  fail=$((fail + 1))
+fi
 
 # ---------------------------------------------------------------------------
 # v2.4.0 (A6, consumer report): a PRETTY-PRINTED artifact is valid JSON and a
