@@ -394,12 +394,47 @@ Required, in order:
    ```
    bash region.sh --body <original>  > "$TMPDIR/region-orig"
    bash region.sh --body <survivor>  > "$TMPDIR/region-moved"
-   cmp "$TMPDIR/region-orig" "$TMPDIR/region-moved"     # must be identical
+
+   # NON-EMPTY *AND* EQUAL. Both conditions, in this order.
+   [ -s "$TMPDIR/region-moved" ] || FAIL "the survivor's region is EMPTY — the relocate did not happen"
+   cmp "$TMPDIR/region-orig" "$TMPDIR/region-moved" || FAIL "the moved region differs from the original"
    ```
+
+   **⚠ EQUALITY ALONE IS SATISFIED BY TWO NOTHINGS, and that was measured on real fixtures, not imagined (v3.0.0):**
+
+   ```
+   two files whose regions are both empty (the relocation never happened)
+     --body rc: orig=0  moved=0        bytes: orig=0  moved=0
+     cmp: IDENTICAL  ->  the relocation gate PASSES
+   ```
+
+   `cmp` on two zero-byte bodies succeeds, so a `cmp`-only check **certifies a relocation that never occurred** and then unlocks the irreversible step. The non-empty test is what makes the proof carry content. This is the same shape as a control that cannot fail in the environment it runs in — a check whose success state is indistinguishable from its no-op state.
 
    **Make "provably" MECHANICAL, not asserted** — a positive check carrying content, the same discipline as a planted-marker control, rather than the user's word that they handled it.
 
 > **Step 2b's backup is a good floor, but recoverable is not the same as noticed.** A consumer who does not realise they lost something never goes looking in the backup. That is why this is a precondition and not merely a backup.
+
+### ⚠ A2 AND SET (c) COVER **DISJOINT** POPULATIONS — do not read A2 as "my customisations are protected"
+
+Measured on a consumer's live synthetic `TEMPLATE_DELETED` run, and it is the single most likely misreading of this section:
+
+```
+set (c), disk-scoped   : 11 files
+manifest-scoped        : 10 files
+delta                  : .claude/agents/game-tester.md   <- exactly the irreplaceable file
+                         verdict: NOMARKERS
+```
+
+**A2 protects REGION-BEARING files. The irreplaceable file is not one.** A hand-authored, project-owned agent has no PROJECT-CUSTOM region at all, so it classifies `NOMARKERS`, and `NOMARKERS` is reached by the **ordinary** flow — 6a offers it for deletion and withholds nothing. That behaviour is *correct*: there genuinely is no region to protect. But it means the natural reading — *"A2 protects my customisations"* — **is false for precisely the file nobody can regenerate.**
+
+The orphan's only defences are elsewhere, and both must hold:
+
+1. **Step 2b's set (c)**, scoped to what the destructive operation TOUCHES rather than what the manifest KNOWS — which is the whole reason A3 was rescoped;
+2. **Step 6's rule that a project-owned file the template never shipped is never deleted.**
+
+Two guards, two disjoint populations, and **a reader will assume they overlap.** That assumption is what gets the file deleted, so it is written down here rather than left to be inferred.
+
+**Also confirmed by the same run, so it is not in doubt:** 6a discriminates correctly in a single pass — a planted `CONTENT` region withheld deletion while an untouched placeholder-only file classified `EMPTY` and was offered. The discrimination works. It was the *inputs* that were unsound before v3.0.0's marker-shape fix.
 
 > ***"Unreferenced" answers whether enforcement breaks; it says nothing about whether the user loses work.***
 

@@ -127,6 +127,30 @@ It pruned `.git` and nothing else. Measured: **40,445 files** on a node repo (`s
 
 Timing is why this was stop-ship rather than a fast follow: **A2 makes `region.sh` a precondition for deletion.** In v2.4.0 that cost nothing because nothing was deleted. In v3.0.0 it is load-bearing on the first real `TEMPLATE_DELETED` — on agent files, all of which carry regions. Unusable one release before it mattered.
 
+### 11. Step 6a's relocation proof: NON-EMPTY **and** equal — `cmp` alone is satisfied by two nothings
+
+Measured on real fixtures, not imagined:
+
+```
+two files whose regions are both empty (the relocation never happened)
+  --body rc: orig=0  moved=0        bytes: orig=0  moved=0
+  cmp: IDENTICAL  ->  the relocation gate PASSES
+```
+
+A `cmp`-only check **certifies a relocation that never occurred**, and then unlocks the irreversible step. Step 6a now requires the moved body to be **non-empty AND equal**. Same shape as a control that cannot fail in the environment it runs in: a check whose success state is indistinguishable from its no-op state.
+
+**⚠ A2 and set (c) cover DISJOINT populations**, and this is now written into the skill because it is the section's most likely misreading. A consumer's live run:
+
+```
+set (c), disk-scoped : 11 files    manifest-scoped : 10
+delta                : .claude/agents/game-tester.md   <- the irreplaceable file
+                       verdict: NOMARKERS
+```
+
+**A2 protects region-bearing files; the irreplaceable file is not one.** A hand-authored project-owned agent has no region, so it classifies `NOMARKERS`, reaches the ordinary flow, and 6a offers it for deletion withholding nothing. That is *correct* — there is no region to protect — but the natural reading *"A2 protects my customisations"* is **false for exactly the file nobody can regenerate**. Its only defences are set (c)'s disk-scoped backup and step 6's never-delete-a-project-owned-file rule. Two guards, two disjoint populations, and a reader will assume they overlap.
+
+**Reported rather than implemented, with the measurement:** two further refinements were requested and are **already resolved by the marker-shape fix**, so no code changed. Reversed-order prose (END named before BEGIN — from a real `PROJECT_STATE.md`) now classifies `NOMARKERS`, because the shape matcher is order-independent: neither mention carries the `<!--` opener, so neither is a marker at all. A fixture row was added anyway, since a *naive* repair ("find BEGIN, then find END") reads correctly and would fail it. And `EMPTY` is no longer two states — the "`EMPTY` with a 0-byte body means no region at all" case was a symptom of the substring bug. Measured after the fix: prose is `NOMARKERS`, while `EMPTY` with 0 bytes and `EMPTY` with the 73-byte placeholder are both genuine regions holding nothing of the user's — one state, correctly deletable. Splitting the verdict would add a distinction with no consequence.
+
 ### Downstream migration
 
 **⚠ THIS IS A MAJOR VERSION. Consumers will meet `TEMPLATE_DELETED` for the first time in this programme — up to 21 files, and `TEMPLATE_DELETED × region-bearing` is the modal case, not an edge case.** Every agent file carries a PROJECT-CUSTOM region and is manifest-tracked. **Sync with v2.4.0's guards in place** (`region.sh` installed alongside `SKILL.md`; step 6's deletion precondition; step 2b's touched-directory backup). A copy that misses `region.sh` leaves check 28 referencing a file that is not installed.

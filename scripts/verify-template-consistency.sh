@@ -1923,6 +1923,15 @@ else
   printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\n<!-- Project-specific rules, routing blocks, and extensions go here. -->\n<!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r4.md"
   printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\nreal content, no end marker\n' > "$r28b/r5.md"
   printf 'nothing to see here\n' > "$r28b/r6.md"
+  # Row 7: REVERSED-ORDER PROSE — the END marker named BEFORE the BEGIN marker.
+  # Taken from a real consumer file (`PROJECT_STATE.md:276-277`), where it
+  # classified EMPTY with a 0-byte body under the v2.4.0 substring matcher.
+  # It is here because A NAIVE REPAIR WOULD STILL GET IT WRONG: "find BEGIN,
+  # then find END" reads correctly and fails this row. The shape matcher is
+  # order-independent — neither prose mention carries the `<!--` opener, so
+  # neither is a marker at all — and this row is what stops a future
+  # order-based rewrite from regressing it silently.
+  printf 'Status notes.\n\nThe `PROJECT-CUSTOM:END` marker closes what `PROJECT-CUSTOM:BEGIN` opens.\n' > "$r28b/r7.md"
   r28b_bad=""
   r28b_row() { # <file> <expected>
     r28br=$(bash "$REGION_SH" "$r28b/$1" 2>/dev/null | cut -f1)
@@ -1934,8 +1943,9 @@ else
   r28b_row r4.md EMPTY
   r28b_row r5.md UNCLOSED
   r28b_row r6.md NOMARKERS
+  r28b_row r7.md NOMARKERS
   if [ -z "$r28b_bad" ]; then
-    ok "region extractor: all six marker-shape rows classify correctly (prose about the markers is NOMARKERS, not EMPTY and not UNCLOSED)"
+    ok "region extractor: all seven marker-shape rows classify correctly (prose about the markers is NOMARKERS — in either order — not EMPTY and not UNCLOSED)"
   else
     ko "region extractor: marker-shape row(s) misclassified —$r28b_bad. EMPTY on prose UNLOCKS the delete path; UNCLOSED on prose DEADLOCKS step 6a with no region to relocate."
   fi
