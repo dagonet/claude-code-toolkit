@@ -88,6 +88,45 @@ Absorption is a **superset**, so the absorbing agent gained the absorbed skill: 
 
 The general lesson: **the agent's description stated a workflow its grant could not execute**, and the only signal was RETRO `dead=[...]` rows, which are mostly false positives and so go unread. A consolidation that changes any grant must re-ask whether the survivor can still do what its description claims.
 
+### 8. STOP-SHIP — `require-skills-block.sh` HAD NEVER FIRED
+
+The harness nests spawn fields under `tool_input`; this hook read them at the top level. Measured both ways: a nested payload with a **bound** `subagent_type` and no `## Required Skills` block exited **0**; the same payload flattened exited 2. On the real harness, a bound `architect` spawn with no block **launched**. So `SUBAGENT_TYPE` was always empty, every spawn fell to the `*)` default arm, and **the hook exited 0 on every spawn ever made.**
+
+`hooks/lib/git-cmd.sh` reads `tool_input.command` and `enforce-delegation.sh` reads `j.tool_input` — this was the only top-level reader, and the trail is a stale `# Matcher: Task` header while `settings.json` registers `Agent`.
+
+**⚠ This is why it is a v3.0.0 blocker and not a fast follow.** In the five-binding-form taxonomy this hook's `case` arms are **form 1 — fail open, silent**. v3.0.0 consolidates 13 agent names to 10. *The mechanism meant to catch a mis-bound name after that consolidation is the mechanism that has never run.*
+
+**⚠ And why nobody noticed for its whole life:** on a disciplined repo every spawn carries the block, so the hook's only observable behaviour is **silence** — and silence is exactly what a dead guard produces. Pass and absence are indistinguishable from where a compliant consumer stands. The vacuous-fixture shape, scaled up to an entire enforcement layer. Every existing fixture used `mkspawn`, which builds a **flat** payload the harness does not send; the eight nested-shape fixtures are the control that would have caught it, and the four `without skills block` rows are the assertion — the `WITH block` rows passed throughout the dead period too.
+
+The variable is renamed `TOOL_INPUT` → `HOOK_PAYLOAD`: it held the whole document while being named for a descent never performed, which is why the defect survived review. The descent is a dotted path at the point of use rather than a hoist at `$(cat)`, because `json_get` returns **scalars** — `json_get "$P" tool_input` measures as empty, so hoisting the object would make the fallback fire on every payload and restore the exact defect. `enforce-agent-contract.sh` is deliberately **not** changed: it reads top-level fields because it is a **SubagentStop** hook, where those fields genuinely are top-level.
+
+### 9. STOP-SHIP — `region.sh` matched the marker's NAME, not its SHAPE
+
+v2.4.0 shipped bare substrings while the file's own documented specification anchors on the comment opener, so any file that merely **writes about** the markers matched. Two false classifications, failing in **opposite** directions, both measured on live consumer repos:
+
+```
+prose naming BEGIN only    -> UNCLOSED   (want NOMARKERS)   -- DEADLOCK
+prose naming BOTH markers  -> EMPTY      (want NOMARKERS)   -- UNLOCKS DELETION
+```
+
+**`EMPTY` is what unlocks the delete path.** Step 6a reaches the ordinary deletion flow for `EMPTY`/`NOMARKERS`, so a documentation file naming both markers in one sentence sails through the precondition into the delete prompt. A2's premise is that the consent prompt never *showed* what was being destroyed; **here the guard affirmatively CERTIFIES the file as empty.** `--body` shared the asymmetry, so 6a's post-relocate byte-compare compared two empty bodies, they matched, and the mechanical proof-of-relocation passed for a relocation that never happened.
+
+The `UNCLOSED` half deadlocks instead: 6a offers only relocate-or-defer, a false positive has **no region to relocate**, and A2 is built so no acknowledgement can override it.
+
+**This is A4's own reasoning applied to A1** — key on the reference FORM, not any occurrence of the name. Same failure, same population: *the consumers who document our mechanism most carefully are the ones who trip its detector.* One matcher now, shared by the classifier and `--body` (awk uses `match()` with the same ERE; `index()` is a literal search and would silently ignore the `[[:space:]]*`, which is how the two paths diverged). Six rows asserted by classification string, rows 1, 2 and 6 all `NOMARKERS`, and rows 1 and 5 finally distinguishable — a documentation file and a genuinely broken region used to print the same verdict.
+
+**Residual, stated rather than hidden:** a file quoting the FULL marker comment verbatim is still treated as carrying a marker, and by construction must be. That fails toward **preservation** — which is why no `^` line-anchor was added, since a blockquoted or indented real marker would then be MISSED, and a missed region is the destructive reading.
+
+### 10. STOP-SHIP — `region.sh --scan` was unusable on a real tree
+
+It pruned `.git` and nothing else. Measured: **40,445 files** on a node repo (`src-tauri/target` 31,413, `node_modules` 4,781), killed after two minutes with no output; and **10,246 of 10,524 files in `.venv`** on a python repo — 97 %, gitignored by the rule the python variant itself ships — taking ~15 minutes versus 2.3 seconds scoped to `.claude`.
+
+**The silence is as bad as the duration.** `SKILL.md` documents `--scan` as *the* enumeration and warns against hand-rolling a walker, so a scan that appears hung leaves a consumer with no sanctioned alternative — and the hand-rolled walker is the exact failure `region.sh` exists to prevent. It now prunes vendor/build directories and reports progress on **stderr**, leaving stdout clean.
+
+**⚠ Pruned by directory NAME, never by git's tracked-file list.** `git ls-files` would skip **untracked** files, and the untracked hand-authored agent is precisely what A3 protects — the one nobody can regenerate. (`git check-ignore` would have been acceptable; `ls-files` is not.) `bin`/`obj` are deliberately absent from the list: Rust's `src/bin/` is real source.
+
+Timing is why this was stop-ship rather than a fast follow: **A2 makes `region.sh` a precondition for deletion.** In v2.4.0 that cost nothing because nothing was deleted. In v3.0.0 it is load-bearing on the first real `TEMPLATE_DELETED` — on agent files, all of which carry regions. Unusable one release before it mattered.
+
 ### Downstream migration
 
 **⚠ THIS IS A MAJOR VERSION. Consumers will meet `TEMPLATE_DELETED` for the first time in this programme — up to 21 files, and `TEMPLATE_DELETED × region-bearing` is the modal case, not an edge case.** Every agent file carries a PROJECT-CUSTOM region and is manifest-tracked. **Sync with v2.4.0's guards in place** (`region.sh` installed alongside `SKILL.md`; step 6's deletion precondition; step 2b's touched-directory backup). A copy that misses `region.sh` leaves check 28 referencing a file that is not installed.
@@ -97,7 +136,9 @@ The general lesson: **the agent's description stated a workflow its grant could 
 3. **`AGENT_TEAM.md` shrinks by 470 lines.** It is template-owned, so the sync replaces it — but a ~46 % deletion of the template part is far outside anything the region machinery had been exercised against before check 31. If you carry real PROJECT-CUSTOM content in it, verify with `bash region.sh --body AGENT_TEAM.md` before and after and byte-compare.
 4. **`enforce-delegation.sh`'s DENY message changed text.** If you match on it, update: it now reads `Spawn coder (code and docs), ops (env/files), tester (verification).`
 5. **Re-check any earlier "no PROJECT-CUSTOM content here" all-clear** with the shipped `region.sh` — the v2.4.0 corollary still stands, and it reaches backwards.
-6. **What did NOT change:** the `settings.json` matcher regexes, the git gates, `run-gate.sh`, `gate-before-merge.sh`, `hooks/lib/json.sh` and `hooks/lib/git-cmd.sh` are all untouched. If your sync reports a conflict on any of those, it is your own deviation, not this release.
+6. **⚠ RE-RUN ANY `region.sh` CLASSIFICATION YOU TOOK FROM v2.4.0.** Its matcher was a bare substring, so a file that merely *writes about* the markers was reported `UNCLOSED` or — worse — `EMPTY`. If you cleared a deletion on a v2.4.0 `EMPTY` verdict, that verdict may have been describing prose. Re-check with v3.0.0's `region.sh`. This is the v2.4.0 corollary a second time: *the answer may have been describing your extractor, not your repo.*
+7. **`require-skills-block.sh` starts enforcing for the first time.** It had never fired — it read spawn fields at the top level while the harness nests them under `tool_input`. After this sync, a spawn of a **bound** `subagent_type` (`coder` and any `<lang>-coder`, `tester`, `architect`) **without** a `## Required Skills` block will be **blocked with exit 2** where it previously launched. That is the hook finally doing its job, not a regression — but if your committed plans or spawn scripts omit the block, they will start failing. Add the block, or add the type to the explicit exempt arm (which is a decision, and check 29 exists to keep it visible).
+8. **What did NOT change:** the `settings.json` matcher regexes, the git gates, `run-gate.sh`, `gate-before-merge.sh`, `hooks/lib/json.sh` and `hooks/lib/git-cmd.sh` are all untouched. If your sync reports a conflict on any of those, it is your own deviation, not this release.
 
 **Owed, and not done in this release:** `scripts/verify-user-level-drift.sh` will report the three deleted `user-level-reference/agents/*.md` as drift until the live `~/.claude/` tree is re-copied. That propagation is a controller action; the release is not done until the drift probe reports 0.
 
