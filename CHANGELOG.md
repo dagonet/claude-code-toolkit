@@ -1,5 +1,107 @@
 # Changelog
 
+## v2.4.0 — 2026-09-02
+
+**Phase A of the subtraction programme. NOTHING IS DELETED IN THIS RELEASE.** Every item is a guard on a destruction path, and they ship a release *ahead* of the deletions they exist to make safe — **removals fail CLOSED where additions fail open**, so the destruction paths are guarded before anything is removed. Phase B (the `AGENT_TEAM.md` shrink, the agent consolidation, the hook demotions) becomes v3.0.0 after its own measurement round. The split is deliberate rather than a shortfall: A's guards are what make B's deletions safe, so they belong in the earlier release regardless of whether B follows.
+
+### 1. A1 — the PROJECT-CUSTOM region extractor is SHIPPED CODE, not a paragraph
+
+`user-level-reference/skills/sync-template/region.sh`. Step 4's accept-template disqualifier and step 6's deletion precondition both turn on one question — *is this file's region empty?* — and **both consumers who implemented it from prose got the REASSURING answer wrongly**:
+
+- `PROJECT-CUSTOM:BEGIN\s*-->` matches **nothing**; the shipped marker carries an em-dash and trailing prose (`<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->`);
+- `glob('**/*.md', recursive=True)` does **not** descend into dot-directories, so it skips all of `.claude/` — every agent file.
+
+One consumer measured **"zero regions" across a repo with eleven**. Follow step 4 literally, conclude "empty", clear the disqualifier, and accept-template destroys the region. **The defect lives in the unspecified implementation** — the same class as `--include` after paths, the `which`-resolved `bash -n`, and the `command:`-anchored collector — and **the population bitten is the consumers who follow us most literally.**
+
+`region.sh` implements the specification verbatim (DOTALL span, dot-directories included, placeholder-only counts as empty) and documents **exactly one enumeration path**: two documented ways to enumerate is how the naive glob came back. `--body` prints the region byte-exactly, which is what step 6 shows before refusing a deletion and what the post-relocate byte-compare compares. A `BEGIN` with no `END` is reported `UNCLOSED` and treated as content — **the guard fails toward preservation, because the destructive reading is the one that looks reassuring.**
+
+**And the corollary reaches backwards:** *every consumer who has ever reported "no PROJECT-CUSTOM content here" may have been reporting their EXTRACTOR, not their repo.* Re-check with the shipped one, including your own earlier all-clears.
+
+### 2. A2 — deletion of a region-bearing file is UNREACHABLE, not defaulted away from
+
+Step 6 asked exactly one question — *is it still referenced* — and **never inspected the region**. A consumer with custom routing in `coder.md` is told *"preserved and unreferenced — safe to delete"*, accepts, and `git rm` takes it: **the prompt that asked for consent never showed the thing being destroyed.** All nine shipped agent files carry regions and are manifest-tracked, so `TEMPLATE_DELETED × region-bearing` is the **modal** case of a consolidation — up to nine in one sync.
+
+**A second acknowledgement is not enough; a prompt loses to fatigue.** Step 5 was not fixed by making `source="template"` the non-default, it was fixed by making it *unreachable* outside the not-present arm, and new step **6a** has the same shape: a non-empty region ⇒ **deletion is not offered**. The only actions are **relocate** (to a named survivor) and **defer**; after a relocate the moved region is **byte-compared** against the original before deletion becomes reachable. So the user cannot choose *"delete with content"*, only *"empty, then delete"* — and emptying is the act that moves the content somewhere it survives. **The irreversible step becomes reachable only once the content is provably elsewhere, and "provably" is mechanical rather than asserted.**
+
+> *"Unreferenced" answers whether enforcement breaks; it says nothing about whether the user loses work.* Step 2b's backup is a good floor, but **recoverable is not the same as noticed** — a consumer who does not realise they lost something never goes looking in the backup.
+
+### 3. A3 — 2b backs up what the operation TOUCHES, not what the manifest KNOWS
+
+A third backup set: **everything on disk in every directory a destructive operation touches.** A consumer has `.claude/agents/game-tester.md` — project-owned, not manifest-tracked — so it is not `TEMPLATE_DELETED`, not `new_template_files`, and **covered by 2b's manifest-scoped sets on no path**; a consolidation that rewrites `.claude/agents/` wholesale meets it with **no backup anywhere**.
+
+Git settles what that file is: hand-authored through its own PR, extended in a second, still in use three months later, `tools:` listing 18 MCP tools that exist only in that repo's own harness. **Toolkit files matching `*game-tester*` across all branches and all history: zero.** Every other file in that directory can be restored from the template; **that one exists only there.**
+
+> **Manifest membership tracks template PROVENANCE, not importance** — and a consolidation naturally runs on the opposite intuition, that the untracked file is the leftover. It is the inverse. Consumers customise in two styles and only one is visible to a manifest-scoped guard: *editing* a tracked file surfaces as `CONFLICT` and is recoverable from git besides; *adding* an untracked file is invisible to classification **by construction**.
+
+A second consumer measured **zero** orphans across 25 files and a bidirectionally consistent 34-entry manifest. **That is a property of that repo, not of manifests**, and a census of who currently holds orphans measures which style is popular, not how bad the failure is — which here is unrecoverable file loss with no backup, no prompt, in a directory v3.0 rewrites wholesale. On a clean repo the guard copies nothing extra and costs nothing.
+
+### 4. A4 — sweep for agent NAMES by reference SHAPE, across five binding forms
+
+Consolidation deletes agent **files**; it does not touch **references to their names**, and step 6's grep looked for `hooks/` paths only. Measured: a **keep-mine `CLAUDE.md`** carries an agent-selection table naming `python-coder` and `coder` as `subagent_type` values with an explicit *do not substitute* instruction. `AGENT_TEAM.md` and `settings.json` are template-owned so the template updates them; **`CLAUDE.md` is keep-mine and is therefore never updated.** The sync completes clean, step 6 reports the deleted agents unreferenced (*truthfully, for `hooks/` paths*), and the next spawn fails against instructions the project still carries. **That is *removals fail closed* one layer out** — not the hook layer, a project-authored instruction that no longer resolves.
+
+**A bare name grep is 28:1 noise and dies on first use:** 195 name hits in project prose (`coder` alone 74, essentially all prose about the role) against **7** lines actually binding a `subagent_type`. A consumer runs that once and never again. New step **6d** keys on the reference *shape* — **195 → 7 on that repo** — and covers all five binding forms:
+
+| # | Form | Failure when the name retires |
+|---|---|---|
+| 1 | hook `case` arms | **FAIL OPEN, SILENT** — falls to the default arm, spawn proceeds with no skills requirement |
+| 2 | `settings.json` matcher regexes | **FAIL OPEN, SILENT** — the hook is never invoked at all |
+| 3 | `CLAUDE.md` routing prose | dangling mandate, permanent in a keep-mine file |
+| 4 | agent frontmatter cross-refs | dangling reference |
+| 5 | **hook user-facing output strings** | a live instruction telling a blocked user to spawn something that no longer exists |
+
+> **This inverts the comfort premise that a retired name "fails loudly at spawn".** It fails loudly when *spawned* and silently in every hook that *keyed* on it — opposite polarities in the same release, **and the loud one is the one that got measured.** Loudness protects the caller; it does not protect the enforcement layer.
+
+Forms 1 and 2 are the same intent in **two pattern languages** (`coder|*-coder)` and `^([a-z0-9]+-)?coder$`), both generalising over the whole `<lang>-coder` family — **so a fix applied to one is not applied to the other by any grep keyed on a single syntax.** Hence the standing constraint on any later consolidation: **absorb under an existing name, never rename.**
+
+### 5. A5 — "deliberately exempt" is now distinguishable from "silently fell out"
+
+In `hooks/require-skills-block.sh` the exempt arm and `*)` were **byte-identical in effect**: an agent exempted on purpose and an agent whose name silently fell out of the enumeration both produced `exit 0`, with no signal at runtime or afterwards. `ops` and `Explore` are now **named** in the exempt arm, so the intent is written down; `*)` stays as the genuinely-unknown case, because a consumer's own agent must still pass — **a gate that goes red on a consumer's own file is the cries-wolf failure this release exists to reduce.**
+
+**The runtime fix is unavailable and this programme has already paid for the lesson:** hook stderr was measured not to reach the lead, so making `*)` warn is the same silence with more code, and it would read as fixed. **Check 29 is static, in the gate, where output demonstrably reaches someone** — which also means it fires at build time and catches a consolidation's own damage before the release ships.
+
+> **⚠ It evaluates each pattern in its own language and never string-compares arm labels to filenames.** `dotnet-coder`, `java-coder`, `python-coder` and `rust-coder` ship as files and exist as **no literal in any arm** — covered only by the glob. Two defects in the first draft, both found by running it: `case $n in $arm)` treats `|` as **data, not syntax**, so every alternation arm matched nothing and all nine names reported unbound; and the two-language arm was written as set-equality against a matcher that legitimately covers more than the coder family. **That is the trap the check exists to catch, sprung on the check itself**, which is why both are commented in place.
+
+### 6. A6 — the merge gate verified the wrong head, and could not read a pretty artifact
+
+Found live merging PR #75. `hooks/gate-before-merge.sh` asserted `artifact.sha == HEAD`, but **the merge lands the PR branch's tip**. On a controller sitting on `main`, *"re-run the gate on the current head"* gates content **already merged**, writes a green artifact, and then permits a merge of entirely different content. **A correct guard whose own remediation manufactures the false receipt** — item K's shape, third occurrence. Not exploited: the merge was stopped and escalated.
+
+**The fix is a purely local detector, no API and no network.** If the merge is initiated while HEAD is on a **protected branch**, the thing being merged is by construction not HEAD, so the comparison verifies nothing — **say so and refuse**. On a feature branch HEAD *is* the merge content and the comparison stands. Same hook, opposite validity; both helpers were already present. **Deliberately not unconditionally fail-closed:** a bare `gh pr merge` names no target at all, and refusing every unresolvable path would hard-block every PR merge for anyone offline — the hazard from the `GC_CMD` round. The protected-branch detector is what makes *cannot-determine-must-refuse* affordable here.
+
+Two more in the same file:
+
+- **The staleness message had drifted to the weaker half of its own check.** The artifact matches by sha **or** tree, and the tree half is what survives a squash (measured: squash changes the sha, leaves the tree byte-identical). It now prints both keys and **names which head to gate** — *the head that is actually being merged* — because the message is what a consumer acts on at 2am.
+- **The reader was hardcoded to `"sha":"`,** the exact bytes our own `printf` emits. A consumer whose project-owned gate writes `{"sha": "…"}` — valid JSON — got an **empty** value and was blocked on every merge with `artifact sha: none`, **on a gate that passed**, and carried a local widening for releases. **Replacing `run-gate.sh` wholesale is a supported configuration:** the contract is the `**Gate**` field plus the artifact **format**, not the script. The `sed` is widened in lockstep with the `grep` — accepting `"sha": "` while stripping only `"sha":"` leaves a leading space, i.e. the same silent mismatch one step later and harder to see.
+
+> The artifact format is a **contract between two files that never states it is one** — `run-gate.sh` writes it, `gate-before-merge.sh` reads it, and nothing asserted they agree. v2.4.0 pins the reader's tolerance with fixtures on both keys in both spellings rather than adding a format assertion; **the standing note is that a consumer-authored writer is in scope, so the reader must never be narrowed back to one spelling.**
+
+And in `run-gate.sh`: **the checkout can move under a running gate.** Observed live and unplanned during v2.3.0's release — two runs overlapped, the second was still going when the checkout moved from detached `c43f51f` to `main`, and it finished green and wrote a sha captured *before* the move. **No harm came of it only because the two trees happened to be byte-identical, which is luck, not a property.** (Both runs also recorded `"branch":"unknown"` because the checkout was detached, so that field cannot be relied on either.) HEAD is now re-read before the artifact is written; a move means **no artifact** and a named reason.
+
+#### ⚠ One brief instruction NOT implemented, and the measurement that overrode it
+
+The brief required the tree comparison be changed to **working-tree-to-working-tree**, on the ground that `artifact.tree == HEAD^{tree}` is false on any checkout with uncommitted changes — which is this repo's normal state. **Measured, that trade is the wrong way round.** The check is `sha == HEAD || tree == HEAD^{tree}`, so the permanently-dirty case already passes **via the sha arm** (confirmed at v2.3.0's release: artifact sha `c43f51f`, HEAD `c43f51f`); the predicted fail-closed never materialises, because the brief was reasoning about a tree-*only* check. Adding a working-tree arm **regresses fixture R4b from 2 to 0**: the gate hashes `a.txt`+`b.txt`, the commit contains only `a.txt`, the working tree is unchanged either side, so the artifact would bless a committed tree that was never gated as a unit. **That is a fail-open, and the brief itself warned that getting this backwards in either direction is worse than the sha check it replaces.** Reported rather than implemented.
+
+### Verification
+
+`bash hooks/run-gate.sh`. The parser matrix was **not** required and was not run: neither `hooks/lib/git-cmd.sh` nor `hooks/lib/json.sh` was touched.
+
+**Every guard ships a control, and every control was verified by deleting its guard and re-running the suite** — a control that still passes with its guard removed is decorative. Measured flips:
+
+| guard removed | result |
+|---|---|
+| `region.sh` deleted | 311 PASS / 0 FAIL → **301 / 1** |
+| `region.sh` walk stops at dot-directories (the measured consumer defect) | → **306 / 5**, including *"0 of 9 shipped agent regions enumerated"* |
+| `ops\|Explore` dropped from the explicit exempt arm | → **310 / 1**, naming both |
+| A6's protected-branch refusal removed | protected-branch merge with a **fresh, sha-matching** artifact flips **2 → 0** — the live defect itself |
+
+**The region controls run against PLANTED content, never found content.** A census across three consumer repos found **zero** real region content (11, 10 and 1 region-bearing files, all placeholder-only), so a green run on any of them **proves nothing — the guard cannot fail there.** `scripts/fixtures/project-custom-regions/` now commits three regions of real consumer project knowledge (770 B, 968 B, 932 B) handed over when the branch holding them was deleted; it is the only known source of real region content anywhere. Planting is base-agnostic — one exact whole-line replacement against any base tag — so `git checkout v2.2.4` plus `plant.sh` covers the wide-jump migration requirement for free, and **the fixture is a parameter rather than a branch someone has to keep alive.** Two properties are load-bearing and easy to destroy by tidying: **the BEGIN marker is kept verbatim** (its em-dash and trailing prose are precisely what breaks the naive extractor), and **size** — a 40-byte region and a 900-byte region are not equally good at catching a truncating preserve.
+
+### Downstream migration
+
+- Copy `user-level-reference/skills/sync-template/{SKILL.md,region.sh}` to `~/.claude/skills/sync-template/`. **`region.sh` is a NEW SIBLING FILE, not an edit to `SKILL.md`** — a copy that moves only `SKILL.md` leaves every new step pointing at a script that is not there. `scripts/verify-user-level-drift.sh` reports it.
+- Copy `user-level-reference/hooks/{gate-before-merge.sh,run-gate.sh}` to `~/.claude/hooks/`.
+- `hooks/require-skills-block.sh` is project-scoped and is **not** mirrored to user level; take it through `/sync-template` like any other project hook.
+- **Re-check any earlier "no PROJECT-CUSTOM content here" report with `region.sh`** before acting on it. That is not routine advice — it is the corollary of A1, and it applies retroactively to every such report.
+
 ## v2.3.0 — 2026-09-01
 
 **Two items, no new mechanism — and the release is this small because a consumer measured the premise of its own headline feature and found it did not exist.** The plan opened with a `hooks/local/pre-gate.sh` extension point, justified by *"two repos maintain merge scripts reassembling `run-gate.sh`"*. Measured: **one repo, one file, one 13-line insertion, zero other edits; the second repo has no splice at all.** An extension point is a permanent surface, and one deviation does not buy one. **It is cancelled**, and nothing replaces it, because nothing needed to.
