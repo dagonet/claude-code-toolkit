@@ -1158,6 +1158,33 @@ else
   ko "bare 78 literal in hooks/ (use GC_TERMINAL_RC): $(printf '%s' "$bare78" | head -3 | tr '\n' ' ')"
 fi
 
+# 21c-2f. RUN_GATE_TERMINAL is exported BEFORE the gate command runs (v2.3.0).
+#
+#         v2.3.0 documented the terminal contract for consumer `**Gate**`
+#         commands (docs/verification.md): print the remedy, touch
+#         $RUN_GATE_TERMINAL, exit 78. That promotes the variable from an
+#         internal provenance detail to a PUBLIC NAME. A refactor that moved the
+#         export below `bash -c "$GATE_CMD"` — or dropped the `export` and left
+#         a plain assignment — would leave every consumer preflight seeing an
+#         empty value, skipping the touch, and having its 78 clamped to 1: the
+#         exact silent failure the contract exists to prevent, and green
+#         everywhere because the fallback IS the pre-contract behaviour.
+#
+#         Positional by necessity and by nature, like 21c-2d: "before the gate
+#         runs" IS an ordering property, so a line-number comparison is not a
+#         proxy for it. The R5h fixture in test-hooks.sh catches the same
+#         reorder at RUNTIME; this file is the toolkit's own per-commit
+#         `**Test**` and test-hooks.sh is not — same property, two cadences.
+rgt_exp_ln=$(grep -n '^export RUN_GATE_TERMINAL$' hooks/run-gate.sh | head -1 | cut -d: -f1)
+rgt_cmd_ln=$(grep -n 'bash -c "\$GATE_CMD"' hooks/run-gate.sh | head -1 | cut -d: -f1)
+if [ -z "$rgt_exp_ln" ] || [ -z "$rgt_cmd_ln" ]; then
+  ko "run-gate.sh terminal contract: could not locate both anchors (export RUN_GATE_TERMINAL=${rgt_exp_ln:-<none>}, bash -c \"\$GATE_CMD\"=${rgt_cmd_ln:-<none>}) — the PUBLIC contract in docs/verification.md tells consumers to touch \$RUN_GATE_TERMINAL, so re-point this assertion before trusting it"
+elif [ "$rgt_exp_ln" -lt "$rgt_cmd_ln" ]; then
+  ok "run-gate.sh: RUN_GATE_TERMINAL is exported before the gate command runs (line $rgt_exp_ln < $rgt_cmd_ln)"
+else
+  ko "run-gate.sh: RUN_GATE_TERMINAL is exported at line $rgt_exp_ln, AFTER the gate command at line $rgt_cmd_ln — a consumer preflight following the documented contract (docs/verification.md) would see an empty value, skip the touch, and have its terminal 78 clamped to 1. Silent, and green"
+fi
+
 # 21c-2g. The sync-template SKILL body carries a version marker, and it matches
 #         VERSION (v2.2.5 round 4).
 #

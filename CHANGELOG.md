@@ -1,5 +1,73 @@
 # Changelog
 
+## v2.3.0 — 2026-09-01
+
+**Two items, no new mechanism — and the release is this small because a consumer measured the premise of its own headline feature and found it did not exist.** The plan opened with a `hooks/local/pre-gate.sh` extension point, justified by *"two repos maintain merge scripts reassembling `run-gate.sh`"*. Measured: **one repo, one file, one 13-line insertion, zero other edits; the second repo has no splice at all.** An extension point is a permanent surface, and one deviation does not buy one. **It is cancelled**, and nothing replaces it, because nothing needed to.
+
+### 1. The terminal contract for `**Gate**` commands is now public and documented
+
+A chained gate already works today — `**Gate**: bash preflight.sh && <your real gate>` — with exactly one catch, found by the consumer who owns the splice: **spliced INTO `run-gate.sh`, a preflight's `78` is the script's own exit and survives; chained into `**Gate**`, the same `78` is the gate command's rc and the clamp collapses it to 1.** That is item K's own defect, reintroduced by the migration meant to retire the splice, and failing *silently*.
+
+It needs no code: `RUN_GATE_TERMINAL` is **already exported** before the gate command runs. So `docs/verification.md` gains the contract and the worked example, shipped **verbatim** rather than described — a described contract is what produced v2.2.6's two data-loss-adjacent defects:
+
+```sh
+# preflight.sh — chained from **Gate**: bash preflight.sh && <your real gate>
+if ! <precondition>; then
+  echo "GATE ERROR: <what is wrong>" >&2
+  echo "run: <the remedy>"           >&2
+  [ -n "${RUN_GATE_TERMINAL:-}" ] && : > "$RUN_GATE_TERMINAL"
+  exit 78
+fi
+```
+
+**Only EXISTENCE is contractual; content is ignored.** The clamp tests `-f` and nothing else, so a consumer who writes a reason into the marker instead of touching it still works — and nothing will ever print what they wrote. Said out loud because the failure is quiet and plausible: the terminal branch's deliberate silence is what makes a consumer's remedy land last, and that same silence swallows anything put in the file. Remedies go to stderr; the marker is a flag.
+
+The touch is what earns the 78: a gate exiting 78 *without* it is still clamped to 1, because 78 is `EX_CONFIG` and an unrelated program's 78 must not inherit the terminal remedy. **The marker is a claim of responsibility, not a number** — and that was already true, which is why the terminal branch needed no change to accept a second producer. Its comment did: it claimed the branch was reachable "only" from a nested `run-gate.sh`, and that stopped being true here.
+
+**The cost, named rather than discovered.** This promotes `RUN_GATE_TERMINAL` from an internal detail to a **public contract**; it can no longer be renamed or repurposed freely. Accepted because **it is already exported into every gate command's environment** — consumers can depend on it today whether or not it is written down, and an undocumented dependency is not less of a dependency.
+
+Two guards, each verified by deleting it:
+
+| guard | mutation | flips |
+|---|---|---|
+| consistency `21c-2f`: the export **precedes** `bash -c "$GATE_CMD"` | move the `export` below the gate line | 1 assertion, red with the line numbers named |
+| fixture `R5h` arm 1 (touch + 78 ⇒ terminal, remedy last, retry advice suppressed) | drop `[ ! -f "$RUN_GATE_TERMINAL" ]` from the clamp | 3 of R5h (11 suite-wide: 5 R5b, 3 R5e) |
+| fixture `R5h` arm 2 (78 **without** the touch ⇒ clamped to 1, retry advice present) | delete the clamp `if` entirely | 2 of R5h (6 suite-wide: 4 R5c) |
+| fixture `R5h` arm 3 (the marker is **absent** when the gate command starts, and the variable names a path) | replace `rm -f "$RUN_GATE_TERMINAL"` with `: > "$RUN_GATE_TERMINAL"` | 4 of R5h, 8 suite-wide |
+
+Arm 3 covers `rm -f "$RUN_GATE_TERMINAL"`, which was pinned by nothing and is as load-bearing as the export: **a marker surviving into the gate makes EVERY 78 pass the clamp** — a fail-open on the clamp itself. Harmless today only because `TMPD` is a fresh `mktemp -d` per run; a reused or fixed `TMPD` is all it would take. It is a **runtime** arm rather than a static one, for the opposite reason `21c-2f` is static: "exported before the gate runs" is an ordering, so a line-number comparison *is* the property, whereas "the file does not exist when the gate starts" is a **state** — a grep for `rm -f` between the two lines would be a proxy that cannot see a `TMPD` which stopped being fresh. The arm observes it from exactly where a consumer preflight stands. **The mutation also demonstrates the hazard rather than asserting it:** with a stale marker surviving, arm 2 flips too — an unrelated gate command's 78 stops being clamped and inherits the terminal remedy, which is the fail-open, measured.
+
+`21c-2f` is positional, and positional is what the property *is*: "exported before the gate runs" is an ordering. Same shape and same justification as `21c-2d`. It duplicates R5h deliberately — this file is the per-commit `**Test**`, `test-hooks.sh` is not. Same property, two cadences.
+
+### 2. `hooks/enforce-delegation.sh` strips heredoc BODIES — and nothing else
+
+A heredoc body is data being written to a file, and it is the only quoting form with an **explicit terminator**, so it can be removed without guessing where it ends. Authoring `cat > plan.md <<EOF … npm test … EOF` was denied as if the PO had run a test suite.
+
+**`hooks/lib/git-cmd.sh` is deliberately untouched.** Its header states the opposite polarity on purpose: the three fail-CLOSED git gates scan the whole command string so `bash -c "git push origin main"` cannot evade them, and a false positive on `echo "git push origin main"` costs one retry. `enforce-delegation.sh` does not source it, and that is the design, not an oversight. **Quoted-literal stripping stays rejected** for the same reason: `bash -c "npm test"` and `echo "npm test"` are the same syntactic shape, and separating them needs a maintained wrapper allowlist (`bash -c`, `sh -lc`, `env`, `xargs`, `sudo`, `find -exec`, `npm run`, …) whose every gap is an evasion channel that is closed today.
+
+**Both accepted false positives are now asserted POSITIVELY**, so the "improvement" that would reopen the channel turns the suite red instead of passing quietly: `echo "git push origin main"` must still block (`no-push-main.sh`), and `echo "npm test"` must still be judged as written (`enforce-delegation.sh`). Verified by mutating `gc_segments` to strip double-quoted spans: **3 of the quoted-command arms flip, 12 suite-wide** — including the pre-existing `bash -c` wrapper pins. That blast radius *is* the argument for keeping the rejection.
+
+The strip's **narrowness** has its own control, because deleting the strip cannot test a boundary: made greedy (no terminator, run to end of string), the "runner AFTER the terminator" and "unterminated heredoc" arms flip. An unterminated heredoc is judged exactly as before — there is no end to trust.
+
+**The narrowness arms found a real bug, which is the point of writing them to fail.** The here-string arm started as `echo hi <<<EOF` — an arm that would have passed either way, since `echo` is not a runner. Reshaped so the mistake shows up as a *wrongly allowed runner* (`cat f.md <<<EOF` ⏎ `pytest -q` ⏎ `EOF`), it went red: the opener pattern matched `<<<EOF` **starting at the second `<`**, so a here-STRING read as a heredoc opener and the real commands after it were swallowed. A fail-OPEN hook, opened further, by the fix meant to narrow it. The pattern now requires the opener not to be preceded by `<`. Reading the regex did not catch this; an arm shaped to fail did.
+
+**One fixture defect found while writing the fixture.** The `<<-` arm first carried a **tab-indented terminator**. A raw tab inside a JSON string is an invalid control character, so the payload did not parse, and this fail-OPEN hook passed it — a green arm testing nothing, in the release whose principle is that a control must be verified by deleting its guard. It is now an unindented terminator (legal for `<<-`), and it flips under the deletion mutation like its siblings. The suite header's "no fixture contains a control character other than newline" was true and briefly stopped being true.
+
+### Verification
+
+`verify-template-consistency.sh` **295 → 296**. `test-hooks.sh` **385 → 400 passed / 0 failed / 0 skipped** (7 for R5h, 7 for the heredoc arms, 1 for the `echo`-of-a-push pin). `bash hooks/run-gate.sh` green end to end, writing `.gate/last-pass.json`.
+
+**`test-hooks-parser-matrix.sh` was NOT run, and here is the argument for that rather than a silence.** §2 edits an embedded node program, which is the trigger the matrix exists for — but `hooks/lib/json.sh` is untouched, the enforce-delegation classifier is **node-only by construction** (`command -v node || exit 0`, with its own degraded-path fixture), so it has no python3 or jq behaviour to differ. Its assertions are already in the matrix's skip set; the skip count moves 20 → 27 in the restricted configurations. §1 adds no parser dependency at all. That is an argument, not a measurement, and the matrix remains the measurement.
+
+### Downstream migration
+
+1. **Re-copy `hooks/run-gate.sh`** wherever you mirror it (`~/.claude/hooks/`, project checkouts). The change is comment-only — the terminal contract and its two producers — so nothing behaves differently; take it so the file you read matches the file that runs.
+2. **`hooks/enforce-delegation.sh` changes behaviour, in the ALLOW direction.** If you mirror it, re-copy it. Commands that were denied for containing a runner name inside a heredoc body now pass. Nothing that was allowed becomes denied.
+3. **`skills/sync-template/SKILL.md` — re-copy it and RESTART the session** before running `/sync-template`. The step-1 version marker now reads `v2.3.0` and will tell you if you did not. The body is otherwise unchanged this release.
+4. **Nothing is removed.** No hook, no template file, no agent, and **`hooks/local/` was never shipped** — if you built one against the plan, it is unsupported; chain a preflight from `**Gate**` instead and see `docs/verification.md`.
+5. **`RUN_GATE_TERMINAL` is now a name you may depend on.** If you have a terminal guard of your own inside a gate chain, this is the release in which touching that marker is a documented contract rather than an accident. It also means we are committed to the name: it will not be renamed without a major version.
+6. Verifying a `lastSynced` against this release's tag: `git rev-parse v2.3.0^{commit}`, never `git rev-parse v2.3.0`.
+
 ## v2.2.6 — 2026-09-01
 
 **A patch release with no subtractions.** Its purpose is to clear the verification tooling that the next two releases depend on: `/sync-template`'s step 6b is the only check a consumer runs to confirm their hooks are wired, and a subtraction release cannot be verified by a collector known to under-count hook references. Thirteen items, eleven of them found by consumers, none by the suite — the thirteenth (§4) found in this repo, by reading a guard that every assertion said was fine.

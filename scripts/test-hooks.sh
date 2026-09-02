@@ -376,6 +376,15 @@ check "cd sub then bare push (on main)"  "$H" 2 "$(mkjson Bash 'cd sub && git pu
 check "bare push while on main"          "$H" 2 "$(mkjson Bash 'git push' "$MAINREPO")"
 check "PowerShell push origin main"      "$H" 2 "$(mkjson PowerShell 'git push origin main' "$FEATREPO")"
 check "push after a ; separator"         "$H" 2 "$(mkjson Bash 'echo hi; git push origin main' "$FEATREPO")"
+# v2.3.0: the ACCEPTED FALSE POSITIVE, asserted POSITIVELY. This gate is
+# fail-CLOSED and scans the whole command string, which is what makes the
+# `bash -c "…"` wrapper above unevadable; the price is that `echo "git push
+# origin main"` blocks too, and that price is deliberate (docs/verification.md).
+# v2.3.0 taught hooks/enforce-delegation.sh to strip heredoc bodies, so the
+# obvious next "improvement" is to strip quoted literals HERE as well — which
+# would reopen every wrapper form not on an allowlist. This line turns red on
+# that change, so it has to be argued rather than slipped in.
+check "echo of a push string still blocks" "$H" 2 "$(mkjson Bash 'echo "git push origin main"' "$FEATREPO")"
 # review round 1: whole-repo pushes carry main even from a feature checkout
 check "push --mirror from a feature"     "$H" 2 "$(mkjson Bash 'git push --mirror origin' "$FEATREPO")"
 check "push --all from a feature"        "$H" 2 "$(mkjson Bash 'git push --all origin' "$FEATREPO")"
@@ -984,6 +993,87 @@ expect "(R5e) wrapper-nested: NO generic re-run advice" "0" \
   "$(grep -c 'Fix the failures and re-run' "$wraperr")"
 expect "(R5e) wrapper-nested: remedy still last" "1" \
   "$(tail -1 "$wraperr" | grep -cF "Edit '**Gate**:' in PROJECT_CONTEXT.md")"
+
+# --- R5h: THE PUBLIC TERMINAL CONTRACT FOR **Gate** COMMANDS (v2.3.0) --------
+# R5b/R5e prove the marker works when run-gate.sh writes it to itself. This
+# proves the CONSUMER-FACING half documented in docs/verification.md: a chained
+# preflight (`**Gate**: bash preflight.sh && <real gate>`) that hits a terminal
+# condition prints its remedy, touches $RUN_GATE_TERMINAL, and exits 78 -- and
+# the clamp lets that 78 through instead of collapsing it to 1.
+#
+# BOTH ARMS, and the difference between them is ONE LINE of the preflight, so
+# neither can pass for the other's reason. Arm 1 is the contract; arm 2 is the
+# clamp still doing its job for a gate that exits 78 without claiming
+# provenance. The delete-the-guard control for arm 1 is removing
+# `[ ! -f "$RUN_GATE_TERMINAL" ]` from the clamp (arm 2 flips); for arm 2 it is
+# deleting the clamp `if` entirely (arm 2 flips, arm 1 does not).
+#
+# This is what makes RUN_GATE_TERMINAL a PUBLIC name: 21c-2f in
+# verify-template-consistency.sh pins its export ABOVE the gate invocation,
+# because a reorder would break consumers silently and green.
+echo
+echo "=== R5h: consumer **Gate** terminal contract (RUN_GATE_TERMINAL) ==="
+
+# Arm 1 -- preflight signals terminal: remedy on stderr, marker touched, 78.
+pfrepo=$(mkrepo gatepreflight main)
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'echo "GATE ERROR: node_modules is absent" >&2\n'
+  printf 'echo "run: npm ci" >&2\n'
+  printf '[ -n "${RUN_GATE_TERMINAL:-}" ] && : > "$RUN_GATE_TERMINAL"\n'
+  printf 'exit 78\n'
+} > "$pfrepo/preflight.sh"
+printf '# ctx\n\n- **Gate**: `bash preflight.sh && true`\n' > "$pfrepo/PROJECT_CONTEXT.md"
+pferr="$TMPROOT/preflight.err"
+( cd "$pfrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$pferr" )
+expect "(R5h) preflight touched marker: 78 survives the clamp" "78" "$?"
+expect "(R5h) preflight terminal: NO generic re-run advice" "0" \
+  "$(grep -c 'Fix the failures and re-run' "$pferr")"
+expect "(R5h) preflight terminal: consumer remedy is LAST" "1" \
+  "$(tail -1 "$pferr" | grep -c '^run: npm ci$')"
+
+# Arm 2 -- byte-for-byte the same script MINUS the touch: no provenance claimed,
+# so the 78 is a child's number and must clamp to an ordinary red gate.
+nopfrepo=$(mkrepo gatepreflight_nomarker main)
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'echo "GATE ERROR: node_modules is absent" >&2\n'
+  printf 'echo "run: npm ci" >&2\n'
+  printf 'exit 78\n'
+} > "$nopfrepo/preflight.sh"
+printf '# ctx\n\n- **Gate**: `bash preflight.sh && true`\n' > "$nopfrepo/PROJECT_CONTEXT.md"
+nopferr="$TMPROOT/preflight-nomarker.err"
+( cd "$nopfrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$nopferr" )
+expect "(R5h) no marker: 78 is CLAMPED to 1" "1" "$?"
+expect "(R5h) no marker: retry advice PRESENT" "1" \
+  "$(grep -c 'Fix the failures and re-run' "$nopferr")"
+
+# Arm 3 -- THE MARKER IS ABSENT WHEN THE GATE COMMAND STARTS, and the variable
+# names a real path. `rm -f "$RUN_GATE_TERMINAL"` is as load-bearing as the
+# export and was covered by nothing: a marker SURVIVING into the gate makes
+# EVERY 78 pass the clamp, which is a fail-open on the clamp itself -- the thing
+# deciding whether a consumer's remedy survives at all. Harmless today only
+# because TMPD is a fresh `mktemp -d` per run; a reused or fixed TMPD is all it
+# would take.
+#
+# RUNTIME, not a static assertion beside 21c-2f, and the reason is the opposite
+# of 21c-2f's: "exported before the gate runs" IS an ordering, so a line-number
+# comparison is the property. "The file does not exist when the gate starts" is
+# a STATE. A grep for `rm -f` between the two lines would be a proxy for it --
+# it cannot see a TMPD that stopped being fresh. The gate command below observes
+# the state directly, from exactly where a consumer preflight stands.
+mkabsrepo=$(mkrepo gatemarkerabsent main)
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ -z "${RUN_GATE_TERMINAL:-}" ]; then echo VAR_UNSET > state.txt; exit 1; fi\n'
+  printf 'if [ -f "$RUN_GATE_TERMINAL" ]; then echo MARKER_PRESENT > state.txt; exit 1; fi\n'
+  printf 'echo VAR_SET_MARKER_ABSENT > state.txt\n'
+} > "$mkabsrepo/checkmarker.sh"
+printf '# ctx\n\n- **Gate**: `bash checkmarker.sh`\n' > "$mkabsrepo/PROJECT_CONTEXT.md"
+( cd "$mkabsrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+expect "(R5h) gate starts with the marker ABSENT" "0" "$?"
+expect "(R5h) ...and \$RUN_GATE_TERMINAL names a path" "VAR_SET_MARKER_ABSENT" \
+  "$(tr -d '\r\n' < "$mkabsrepo/state.txt" 2>/dev/null)"
 
 # --- R5f: the OTHER TWO 78-bearing paths into pre-commit-test.sh -------------
 # (v2.2.5 round 4.) R5c covers one of three. Both arms below reach the same
@@ -1767,13 +1857,52 @@ check_delegation "pretty-printed JSON line as data" pass 'echo "path": "hooks/ru
 # bare or via bash/sh, is still the PO doing hands-on work.
 check_delegation "bare run-gate.sh is still denied" deny 'hooks/run-gate.sh'
 check_delegation "bash ./hooks/run-gate.sh denied"  deny 'bash ./hooks/run-gate.sh'
+# v2.3.0: HEREDOC BODIES ARE DATA. Authoring a plan/doc that CONTAINS a runner
+# line is the whole of this hook's measured false-deny traffic, and a heredoc is
+# the one quoting form with an explicit terminator, so its body can be removed
+# without guessing. Arm 2 is the control that keeps the strip narrow: the
+# terminator ends it, and a real runner AFTER it is still the PO running a test.
+# Arm 3 is the accepted, deliberate NON-fix: quoted literals stay judged as
+# written, because separating `bash -c "npm test"` from `echo "npm test"` needs
+# a wrapper allowlist whose every gap is an evasion channel.
+check_delegation "heredoc body naming a runner"   pass 'cat > plan.md <<EOF
+pytest -q
+npm test
+EOF'
+check_delegation "runner AFTER the terminator"    deny 'cat > plan.md <<EOF
+npm test
+EOF
+pytest -q'
+check_delegation "quoted-literal runner unchanged" pass 'echo "npm test"'
+# quoted and tab-suppressed heredoc openers are the same construct
+check_delegation "quoted heredoc delimiter"       pass 'cat > plan.md <<"EOF"
+dotnet build
+EOF'
+# `<<-` with an UNINDENTED terminator: legal, and it keeps the payload free of a
+# literal TAB. A raw tab inside a JSON string is an invalid control character,
+# so a tab-indented terminator would make the payload unparseable and this
+# fail-OPEN hook would pass it for the wrong reason — a vacuously green arm.
+# (Measured while writing this fixture, not reasoned about.)
+check_delegation "<<- opener is a heredoc too"    pass 'cat > plan.md <<-END
+mvn verify
+END'
+# an UNTERMINATED heredoc has no end to trust: nothing is stripped, judged as before
+check_delegation "unterminated heredoc unchanged" deny 'cat > plan.md <<EOF
+pytest -q'
+# `<<<` is a here-STRING, not a heredoc: it has no body and no terminator, so
+# mistaking it for an opener would swallow the REAL commands that follow. The
+# arm is shaped so that mistake shows up as a wrongly-allowed runner, not as a
+# cosmetic difference -- `echo hi <<<EOF` would have passed either way.
+check_delegation "here-string is not an opener"   deny 'cat f.md <<<EOF
+pytest -q
+EOF'
 # subagent calls always pass, exemption or not
 subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 expect "subagent pytest still passes" "0" \
   "$(printf '%s' "$subout" | grep -c '"deny"')"
 else
-skip "enforce-delegation git/gh exemption cases" "no node on this host" 20
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 27
 fi
 
 # ===========================================================================

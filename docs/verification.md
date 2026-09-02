@@ -64,6 +64,67 @@ They are split by what each can *reach*, not by preference:
   this repo's `VERSION`. Run it headless with
   `claude -p "/retro-review" --permission-mode auto` from Task Scheduler or cron.
 
+## Terminal conditions in a `**Gate**` command
+
+`hooks/run-gate.sh` runs the `**Gate**:` command from `PROJECT_CONTEXT.md` and reports
+two kinds of failure. An **ordinary red gate** exits 1 and every layer above it says
+"fix the failures and re-run". A **terminal** failure is one that re-running cannot
+change — a missing toolchain, an unfilled config, a lockfile that has to be regenerated —
+and there "re-run it" is circular advice.
+
+**Your `**Gate**` command can declare a terminal condition itself.** Print your remedy to
+stderr, touch the file named by `$RUN_GATE_TERMINAL`, and exit `78`. `run-gate.sh` passes
+that 78 through instead of collapsing it to 1, and its terminal branch is deliberately
+silent, so *your* remedy stays the last thing on screen.
+
+Ship a preflight as a chained gate — no toolkit file needs editing:
+
+```
+- **Gate**: `bash preflight.sh && <your real gate>`
+```
+
+```sh
+# preflight.sh — chained from **Gate**: bash preflight.sh && <your real gate>
+if ! <precondition>; then
+  echo "GATE ERROR: <what is wrong>" >&2
+  echo "run: <the remedy>"           >&2
+  [ -n "${RUN_GATE_TERMINAL:-}" ] && : > "$RUN_GATE_TERMINAL"
+  exit 78
+fi
+```
+
+Four details that are load-bearing:
+
+- **`78` is written as a literal.** The toolkit's own `GC_TERMINAL_RC` is not exported;
+  the number is the contract.
+- **The touch is what earns the 78.** A gate command that exits 78 *without* touching the
+  marker is clamped to 1 on purpose — 78 is `EX_CONFIG` and real programs emit it, so an
+  unrelated 78 must not inherit the terminal remedy text. The marker is a claim of
+  responsibility, not a number.
+- **Only the file's EXISTENCE is contractual; its CONTENT is ignored.** The clamp tests
+  `-f` and nothing else, so writing a reason into the marker instead of touching it still
+  works — and nothing will ever print what you wrote. Do not use it as a message channel:
+  the terminal branch is deliberately silent so *your* stderr lands last, and that same
+  silence would swallow anything you put in the file. Your remedy goes to stderr.
+  `run-gate.sh` creates the marker's directory with `mktemp -d` and removes it on an `EXIT`
+  trap, and it removes any stale marker before your gate command starts — so the path is
+  yours to write for the duration of the run, and there is nothing to clean up.
+- **Guard the variable with `${RUN_GATE_TERMINAL:-}`** so the same script still works when
+  run by hand outside `run-gate.sh`.
+- **Print the remedy before exiting.** Nothing downstream will print one for you; that
+  silence is the point.
+
+**The cost, stated plainly.** This promotes `RUN_GATE_TERMINAL` from an internal
+implementation detail to a **public contract**: it can no longer be renamed or repurposed
+freely, and `scripts/verify-template-consistency.sh` now pins its export *above* the line
+that runs your gate command. That was accepted because the variable is **already exported
+into every gate command's environment** — consumers can depend on it today whether or not
+it is written down, and an undocumented dependency is not less of a dependency.
+
+This is also why the proposed `hooks/local/` extension point was **cancelled**: a chained
+`**Gate**` already does the job, and the one thing it could not express — the terminal
+exit — is expressible with the variable that was already there.
+
 ## Troubleshooting
 
 **CLAUDE.md not loaded**
