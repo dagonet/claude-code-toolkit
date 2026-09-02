@@ -988,6 +988,16 @@ cp -r "$ROOT/hooks" "$A6PNOGATE/hooks"
 rm -f "$A6PNOGATE/PROJECT_CONTEXT.md"
 a6expect_rc "(A6.4) probe refuses with no Gate configured" "$A6PNOGATE" 9
 a6expect_notable "(A6.4) that refusal names the missing field" "$A6PNOGATE" "no '**Gate**:' line"
+# The probe runs `set -u` and SOURCES the libs, which the hooks themselves never
+# do under -u. If any lib path touched an unset variable, bash would abort with
+# exit 1 — the code this script assigns to "table printed, a row differed", so a
+# crash and a real mismatch would be indistinguishable, which is the confusion
+# the 9 exists to prevent. A placeholder protected set is the reachable path
+# that reaches json_warn_once, and it runs BEFORE precondition 4.
+A6PWARN=$(a6clone a6probewarn)
+cp -r "$ROOT/hooks" "$A6PWARN/hooks"
+printf '# ctx\n\n- **Gate**: `true`\n- **Protected branches**: {{DEFAULT_BRANCH}}\n' > "$A6PWARN/PROJECT_CONTEXT.md"
+a6expect_rc "(A6.4) probe survives the lib's WARN path" "$A6PWARN" 0
 
 # ---------------------------------------------------------------------------
 # v2.4.0 (A6, consumer report): a PRETTY-PRINTED artifact is valid JSON and a
