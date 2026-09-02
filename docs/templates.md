@@ -90,7 +90,7 @@ The setup script generates `<project-root>/.mcp.json` per variant at setup time,
 - `windows-mcp` is hard-coded to `uvx windows-mcp` — assumes `uvx` is on PATH.
 - If no entries would be written for a variant, `.mcp.json` is not created.
 
-See `docs/architecture.md` → MCP Layering and `mcp-servers/HOWTO.md` → Project-Level Servers for rationale and per-server details.
+See `docs/architecture.md` → *MCP Layering* and `mcp-servers/HOWTO.md` → *Project-Level Servers* for rationale and per-server details.
 
 ## Placeholder Reference
 

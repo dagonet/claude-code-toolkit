@@ -73,7 +73,7 @@ When a session starts on a project that has this AGENT_TEAM.md:
 - **Never runs builds or tests** — coders run the gate, the tester verifies, `ops` handles env/tool work. The PO verifies via the `.gate/last-pass.json` artifact (also enforced by `hooks/enforce-delegation.sh`).
 - Closes tasks after merge (see Mode Behavior Table).
 - Does **NOT** block the merge pipeline — review + test approval is sufficient for merge.
-- **Open Brain context mediation**: Before spawning any agent, search Open Brain for context relevant to the agent's task and include findings in the spawn prompt. After the agent returns, capture non-trivial insights. See CLAUDE.md "Open Brain Context for Agents" for agent-specific search queries.
+- **Open Brain context mediation**: Before spawning any agent, search Open Brain for context relevant to the agent's task and include findings in the spawn prompt. After the agent returns, capture non-trivial insights. See `AGENT_TEAM.md` → *Open Brain Context for Agents* (below, in this file) for agent-specific search queries.
 - **Spawn-prompt skill injection**: When constructing any spawn prompt, look up the target `subagent_type` in the Spawn-Prompt Binding Table (Superpowers Skills Integration section) and include a `## Required Skills` block in the prompt listing the skills to invoke via the Skill tool. Use the copy-paste snippets in that section verbatim. The `hooks/require-skills-block.sh` PreToolUse hook mechanically enforces this — a spawn of a bound subagent type without the block exits 2 with a diagnostic. Omit the block for `code-reviewer` and `doc-generator` spawns (no required skills; hook passes them through).
 
 ### Requirements Engineer

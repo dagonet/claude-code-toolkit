@@ -2092,6 +2092,167 @@ A5_ARMS
 fi
 
 # ---------------------------------------------------------------------------
+# 30. CITED HEADINGS MUST RESOLVE, AND THE REPORT MUST SELF-DIAGNOSE (v3.0.0,
+#     item B1).
+#
+#     THIS IS A STRING CHECK, NOT A LINK CHECK, AND THAT IS THE WHOLE POINT.
+#     Two consumers independently censused it and it was verified in source:
+#     there is not ONE `AGENT_TEAM.md#anchor` fragment link in this repo. Zero.
+#     Every cross-reference is prose, in several syntaxes. A link checker finds
+#     none of them, which is why nothing detected the defect below for the
+#     entire life of the file.
+#
+#     ⚠ RESOLVE REPO-WIDE BEFORE REPORTING — "dangling" INVITES THE WRONG FIX.
+#     Measured, not hypothesised: the consumer who FOUND the defect this check
+#     debuts against proposed two remedies and BOTH were wrong — "add the
+#     heading to CLAUDE.md" would have duplicated a section already present 916
+#     lines down the same file, and "drop the citation" would have deleted a
+#     pointer to real, reachable guidance. Their detection was right; their
+#     prescription was not, and the cause is the CHECK'S SHAPE, not their
+#     judgement. A check asking only "does the cited heading exist in the cited
+#     FILE?" returns a true answer that cannot separate two cases with OPPOSITE
+#     remedies:
+#
+#       CITED <file> "<heading>" -> not in <file>; FOUND in <other> : wrong
+#                                   filename — a one-word edit
+#       CITED <file> "<heading>" -> not found anywhere              : missing
+#                                   section — write it, or drop the citation
+#
+#     One extra lookup buys a self-diagnosing failure, the same property that
+#     makes a retired-subagent_type error useful. This arrives load-bearing
+#     rather than theoretical: THE FIRST DEFECT IT CAUGHT WAS A WRONG-FILENAME
+#     ONE, shipped in all six variants — `AGENT_TEAM.md:76` cited
+#     `CLAUDE.md "Open Brain Context for Agents"` while the heading sat at
+#     `AGENT_TEAM.md:992`. The failure mode B1 exists to prevent had ALREADY
+#     OCCURRED, in the opposite direction, with no shrink involved. So this is
+#     a STANDING gate assertion, not a shrink-only acceptance criterion.
+#
+#     THE COLLECTOR IS WHERE A CHECK LIKE THIS DIES QUIETLY. A regex keyed on
+#     one citation syntax finds a subset and reports green, which is the
+#     `command:`-anchored collector's failure one noun over. So: four shapes are
+#     collected, arm C asserts a FLOOR on the count, and the shapes are
+#     DELIMITED on purpose. The bare `-> Heading` shape terminates at the first
+#     punctuation, so a citation trailing into prose ("-> MCP Layering for the
+#     one-line migration") over-captures and goes RED as a missing section
+#     rather than silently passing. That is fail-closed in the right direction:
+#     the remedy is to delimit the citation (`-> *MCP Layering*`), and the check
+#     teaches the canonical syntax by going red.
+#
+#     SCOPE. CHANGELOG.md is excluded — it is an append-only historical record
+#     whose prose deliberately quotes headings as they were at the time. And a
+#     citation whose FILE does not resolve inside this repo is skipped, not
+#     failed: `~/.claude/CLAUDE.md` is a prose reference across the repo
+#     boundary into user-level config that no repo-scoped check can verify and
+#     no project sync touches. Do not gate it; do not add more of them.
+# ---------------------------------------------------------------------------
+echo
+b1_files=$( { ls ./*.md 2>/dev/null
+              ls docs/*.md 2>/dev/null
+              find templates user-level-reference -name '*.md' 2>/dev/null
+              ls hooks/*.sh 2>/dev/null
+            } | sed 's@^\./@@' | grep -v '^CHANGELOG\.md$' | sort -u )
+
+b1_FILEPAT='`?[A-Za-z0-9_.-]+\.md`?'
+b1_ARROW='[[:space:]]*(->|→)[[:space:]]*'
+b1_SEC='[[:space:]]*§[[:space:]]*'
+b1_WORDS="[A-Z][A-Za-z0-9 &'/-]*"
+
+b1_tmp=$(mktemp -d)
+
+# Heading index, one `basename|heading` per line. Indexed by BASENAME because a
+# citation names a file, not a path, and the same basename legitimately exists
+# once per variant.
+for b1_f in $b1_files; do
+  case "$b1_f" in *.md) ;; *) continue ;; esac
+  sed -n 's/^#\{1,6\}[[:space:]]\{1,\}\(.*\)$/\1/p' "$b1_f" \
+    | sed 's/[[:space:]]*#*[[:space:]]*$//' \
+    | sed "s@^@${b1_f##*/}|@" >> "$b1_tmp/headings"
+done
+sort -u -o "$b1_tmp/headings" "$b1_tmp/headings"
+
+{ grep -rnoE "${b1_FILEPAT}${b1_ARROW}\*[^*]+\*"  $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}${b1_ARROW}\"[^\"]+\"" $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}${b1_ARROW}${b1_WORDS}" $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}${b1_SEC}${b1_WORDS}"   $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}[[:space:]]+\"[^\"]+\"" \
+    $(printf '%s\n' $b1_files | grep '\.md$') 2>/dev/null
+} | sort -u > "$b1_tmp/raw"
+
+b1_total=$(grep -c . "$b1_tmp/raw" 2>/dev/null || echo 0)
+
+# b1_resolve — prints nothing and returns 0 when the citation resolves;
+# otherwise prints the SELF-DIAGNOSING line and returns 1.
+b1_resolve() {
+  b1r_where="$1"; b1r_cf="$2"; b1r_hd="$3"
+  if grep -qxF "${b1r_cf}|${b1r_hd}" "$b1_tmp/headings"; then
+    return 0
+  fi
+  b1r_other=$(awk -v h="$b1r_hd" \
+    '{i=index($0,"|"); if (i>0 && substr($0,i+1)==h) print substr($0,1,i-1)}' \
+    "$b1_tmp/headings" | sort -u | tr '\n' ' ')
+  if [ -n "$b1r_other" ]; then
+    printf '  %s  CITED %s "%s" -> not in %s; FOUND in %s: WRONG FILENAME (one-word edit)\n' \
+      "$b1r_where" "$b1r_cf" "$b1r_hd" "$b1r_cf" "${b1r_other% }"
+  else
+    printf '  %s  CITED %s "%s" -> not found anywhere: MISSING SECTION (write it, drop the citation, or delimit it as -> *Heading*)\n' \
+      "$b1r_where" "$b1r_cf" "$b1r_hd"
+  fi
+  return 1
+}
+
+b1_bad=0
+b1_ok=0
+while IFS= read -r b1_rec; do
+  [ -n "$b1_rec" ] || continue
+  b1_where=${b1_rec%%:*}; b1_rest=${b1_rec#*:}
+  b1_lineno=${b1_rest%%:*}; b1_cite=${b1_rest#*:}
+  b1_cf=$(printf '%s' "$b1_cite" | sed -E 's/^`?([A-Za-z0-9_.-]+\.md).*/\1/')
+  b1_hd=$(printf '%s' "$b1_cite" \
+    | sed -E 's@^`?[A-Za-z0-9_.-]+\.md`?@@' \
+    | sed -E 's/^[[:space:]]*(->|→|§)?[[:space:]]*//' \
+    | sed -E 's/^\*(.*)\*$/\1/; s/^"(.*)"$/\1/' \
+    | sed -E 's/[[:space:]]+$//')
+  [ -n "$b1_hd" ] || continue
+  # Out of scope by design: a cited file that does not exist in this repo is a
+  # cross-boundary reference (`~/.claude/CLAUDE.md`), unverifiable here.
+  printf '%s\n' $b1_files \
+    | grep -q "\(^\|/\)$(printf '%s' "$b1_cf" | sed 's/\./\\./g')$" || continue
+  if b1_resolve "$b1_where:$b1_lineno" "$b1_cf" "$b1_hd"; then
+    b1_ok=$((b1_ok + 1))
+  else
+    b1_bad=$((b1_bad + 1))
+  fi
+done < "$b1_tmp/raw"
+
+if [ "$b1_bad" -eq 0 ]; then
+  ok "check 30 (arm A): all $b1_ok in-repo cited headings resolve to a live heading"
+else
+  ko "check 30 (arm A): $b1_bad cited heading(s) do not resolve — see the self-diagnosing lines above; wrong-filename and missing-section have OPPOSITE remedies"
+fi
+
+# Arm B (NEGATIVE SELF-TEST): a heading nobody wrote must be reported. Without
+# it, a resolver that always returned 0 — or a heading index that accidentally
+# matched everything — would make arm A green for the wrong reason. A check that
+# cannot report a miss has not reported a hit.
+if b1_resolve "synthetic" "AGENT_TEAM.md" "zz-nonexistent-heading-probe" >/dev/null; then
+  ko "check 30 (arm B): a synthetic non-existent heading RESOLVED — arm A is passing vacuously"
+else
+  ok "check 30 (arm B): a synthetic non-existent heading is correctly reported unresolved"
+fi
+
+# Arm C (COLLECTOR FLOOR): the way this check dies quietly is a collector that
+# stops matching and reports zero unresolved out of zero collected. 62 citations
+# were collected when this shipped; the floor is set well below that so ordinary
+# prose edits do not trip it, and well above zero so a broken collector does.
+if [ "$b1_total" -ge 40 ]; then
+  ok "check 30 (arm C): collector recovered $b1_total citations (floor 40)"
+else
+  ko "check 30 (arm C): collector recovered only $b1_total citations (floor 40) — the citation syntax has drifted away from the collected shapes, or the collector is broken. A zero here would otherwise report as ZERO UNRESOLVED."
+fi
+
+rm -rf "$b1_tmp"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

@@ -48,7 +48,7 @@ Full details: `AGENT_TEAM.md` (roles, rules, merge protocol, mode behavior table
 
 Spawn-prompt contracts: `AGENT_TEAM.md` → *Spawn-Prompt Binding Table* (hook-enforced) — also covers which agents lack `Bash`/GitHub tools and therefore return their work to the PO.
 
-Open Brain search/capture guidance for spawns: `AGENT_TEAM.md` §Open Brain.
+Open Brain search/capture guidance for spawns: `AGENT_TEAM.md` §Open Brain Context for Agents.
 
 ---
 
