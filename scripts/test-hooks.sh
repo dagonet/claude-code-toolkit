@@ -1411,6 +1411,48 @@ check "code-reviewer is unbound"         "$H" 0 "$(mkspawn code-reviewer 'Do the
 check "coder-helper is not a coder"      "$H" 0 "$(mkspawn coder-helper 'Do the thing.')"
 check "unknown subagent_type passes"     "$H" 0 "$(mkspawn Explore 'Do the thing.')"
 
+# --- THE HARNESS'S REAL PAYLOAD SHAPE (v3.0.0) ------------------------------
+#
+# ⚠ EVERY FIXTURE ABOVE USES `mkspawn`, WHICH BUILDS A **FLAT** PAYLOAD, AND THE
+# HARNESS DOES NOT SEND THAT SHAPE. It nests under `tool_input`, exactly as
+# `mkjson`/`mkread` already do for every other hook. Until v3.0.0 the hook read
+# `$.subagent_type` at the top level, so against a real spawn `SUBAGENT_TYPE`
+# was always empty, every spawn fell to the `*)` default arm, and THE HOOK
+# EXITED 0 ON EVERY SPAWN EVER MADE — confirmed on the real harness by spawning
+# a bound `architect` with no skills block and watching it launch.
+#
+# The fixtures above all passed throughout, because they exercised a shape
+# nothing sends. THIS is the control that would have caught it, and it is why
+# the block matters more than the fix: a fixture that agrees with the code about
+# an input the world never produces is a fixture that cannot fail.
+#
+# `mkspawn` is deliberately LEFT flat rather than converted, so both shapes stay
+# covered — the live Agent payload cannot be observed from inside the suite, and
+# a hook that reads only one shape is how this defect happened in the first
+# place.
+#
+# ⚠ THE NEGATIVE ARM IS THE ONE THAT MATTERS, AND THE `WITH block` ROWS PROVE
+# ALMOST NOTHING ON THEIR OWN — they passed throughout the entire period the
+# hook was inert. On a disciplined repo every spawn carries the block, so the
+# hook's only observable behaviour is SILENCE, and silence is also exactly what
+# a dead guard produces. Pass and absence are indistinguishable from where a
+# compliant consumer stands. That is the vacuous-fixture shape scaled up to an
+# entire enforcement layer, and it is why the four `without skills block` rows
+# below are the assertion and the rest is corroboration.
+mkspawn_nested() { # <subagent_type> <prompt> -- the shape the harness sends
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":"%s","prompt":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$ROOT")"
+}
+
+check "NESTED: coder without skills block"      "$H" 2 "$(mkspawn_nested coder 'Do the thing.')"
+check "NESTED: architect without skills block"  "$H" 2 "$(mkspawn_nested architect 'Do the thing.')"
+check "NESTED: tester without skills block"     "$H" 2 "$(mkspawn_nested tester 'Do the thing.')"
+check "NESTED: rust-coder without skills block" "$H" 2 "$(mkspawn_nested rust-coder 'Do the thing.')"
+check "NESTED: coder WITH skills block"         "$H" 0 "$(mkspawn_nested coder "$WITHBLOCK")"
+check "NESTED: architect WITH skills block"     "$H" 0 "$(mkspawn_nested architect "$WITHBLOCK")"
+check "NESTED: code-reviewer is unbound"        "$H" 0 "$(mkspawn_nested code-reviewer 'Do the thing.')"
+check "NESTED: unknown type passes"             "$H" 0 "$(mkspawn_nested game-tester 'Do the thing.')"
+
 # ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an
 # unbounded Read is rewritten to limit=500 via hookSpecificOutput.updatedInput
@@ -1904,6 +1946,118 @@ ctr "then a later bare stop still passes" "$LOOPTMP" coder a-loop "$CT_LOOP" 0 \
 else
 skip "enforce-agent-contract verdict + loop guard" "no node on this host" 12
 fi
+
+# ===========================================================================
+# hooks/agent-budget-warn.sh — SendMessage is EXEMPT (v3.0.0, item B3)
+#
+# Until v3.0.0 this hook had NO behavioural fixture at all: the only assertion
+# naming it was a retro-ledger transcript row that merely quoted its message.
+# The defect that lived in that gap was measured in the field — the budget block
+# stopped FIVE agent reports, i.e. it stopped agents FILING THEIR WORK, which is
+# the precise failure the liveness effort exists to prevent. The block message
+# tells the agent to "report your partial result plus the blocker", and the tool
+# that does that is the one it was blocking: a guard denying its own remedy.
+#
+# THE CEILING IS UNCHANGED — spawns hit 417, 420 and 480 calls, so the escalating
+# block is doing real work. What changed is WHICH calls it applies to.
+#
+# ⚠ THE EXEMPTION MUST NOT COUNT, NOT MERELY NOT BLOCK, and case 4 is the arm
+# that tells those apart. `-eq` fires once per exact value, so a SendMessage that
+# consumed call 120 would SILENTLY SKIP the ceiling and defer the next block to
+# 180. An exemption implemented as "block unless SendMessage" passes cases 1-3
+# and fails case 4 — which is the only reason case 4 exists.
+#
+# The counter file is seeded directly rather than driven 119 times. That is
+# white-box coupling to a path this hook's own header documents, accepted so the
+# suite does not pay 240 process spawns for one property.
+# ===========================================================================
+echo
+echo "=== hooks/agent-budget-warn.sh (SendMessage exemption) ==="
+
+BUDCWD="$TMPROOT/budgetcwd"
+mkdir -p "$BUDCWD"
+
+mkbudget() { # <tool_name> <agent_id> <session_id>
+  printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"command":"echo hi"},"cwd":"%s","agent_id":"%s"}\n' \
+    "$(jesc "$3")" "$(jesc "$1")" "$(jesc "$BUDCWD")" "$(jesc "$2")"
+}
+
+# <label> <tmpdir> <tool_name> <agent_id> <session> <want_exit> [needle]
+bud() {
+  bud_label="$1"; bud_tmp="$2"; bud_tool="$3"; bud_id="$4"
+  bud_sess="$5"; bud_want="$6"; bud_needle="${7:-}"
+  bud_err="$TMPROOT/budget.err"
+  mkdir -p "$bud_tmp"
+  printf '%s' "$(mkbudget "$bud_tool" "$bud_id" "$bud_sess")" \
+    | TMPDIR="$bud_tmp" bash "$ROOT/hooks/agent-budget-warn.sh" \
+      >/dev/null 2>"$bud_err"
+  bud_got=$?
+  if [ "$bud_got" = "$bud_want" ] &&
+     { [ -z "$bud_needle" ] || grep -qF "$bud_needle" "$bud_err"; }; then
+    printf 'PASS  %-42s (exit %s)\n' "$bud_label" "$bud_got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s%s, got %s: %s)\n' "$bud_label" "$bud_want" \
+      "${bud_needle:+ + \"$bud_needle\"}" "$bud_got" "$(head -1 "$bud_err")"
+    fail=$((fail + 1))
+  fi
+}
+
+bud_seed() { # <tmpdir> <session> <agent_id> <n>
+  mkdir -p "$1/claude-agent-budget/$2"
+  printf '%s' "$4" > "$1/claude-agent-budget/$2/$3"
+}
+bud_count() { # <tmpdir> <session> <agent_id>
+  cat "$1/claude-agent-budget/$2/$3" 2>/dev/null || echo MISSING
+}
+
+# --- 1. the main thread carries no agent_id and is never this hook's business
+bud "main thread (no agent_id) passes" "$TMPROOT/bud1" Bash "" mainsess 0
+
+# --- 2. the ceiling still blocks. If this ever goes green-by-passing, the
+# exemption has been widened into a disabling.
+bud_seed "$TMPROOT/bud2" budsess a-ceil 119
+bud "call 120 (Bash) still blocks" "$TMPROOT/bud2" Bash a-ceil budsess 2 \
+  "BUDGET: this spawn has made 120 tool calls"
+
+# --- 3. THE FIX: the same call number, as a SendMessage, is not blocked.
+bud_seed "$TMPROOT/bud3" budsess a-send 119
+bud "SendMessage at the ceiling passes" "$TMPROOT/bud3" SendMessage a-send budsess 0
+
+# --- 4. ...and it did not CONSUME the threshold: the counter is untouched, so
+# the next working call still lands on 120 and still blocks. This is the arm
+# that distinguishes "exempt from counting" from "exempt from blocking".
+if [ "$(bud_count "$TMPROOT/bud3" budsess a-send)" = "119" ]; then
+  printf 'PASS  %-42s (counter 119)\n' "SendMessage does not spend budget"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (counter %s, want 119)\n' "SendMessage does not spend budget" \
+    "$(bud_count "$TMPROOT/bud3" budsess a-send)"
+  fail=$((fail + 1))
+fi
+bud "next Bash call still hits the ceiling" "$TMPROOT/bud3" Bash a-send budsess 2 \
+  "BUDGET: this spawn has made 120 tool calls"
+
+# --- 5. a NON-threshold SendMessage is equally uncounted, so a long reporting
+# burst cannot inflate an agent past its ceiling without doing any work.
+bud_seed "$TMPROOT/bud5" budsess a-many 10
+bud "SendMessage below the ceiling passes" "$TMPROOT/bud5" SendMessage a-many budsess 0
+bud "SendMessage below the ceiling, again" "$TMPROOT/bud5" SendMessage a-many budsess 0
+if [ "$(bud_count "$TMPROOT/bud5" budsess a-many)" = "10" ]; then
+  printf 'PASS  %-42s (counter 10)\n' "repeated SendMessage leaves count at 10"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (counter %s, want 10)\n' "repeated SendMessage leaves count at 10" \
+    "$(bud_count "$TMPROOT/bud5" budsess a-many)"
+  fail=$((fail + 1))
+fi
+
+# --- 6. NEGATIVE CONTROL: a tool whose name merely CONTAINS the exempt name is
+# not exempt. Without this, an exemption written as a substring match would pass
+# every case above while quietly exempting anything.
+bud_seed "$TMPROOT/bud6" budsess a-near 119
+bud "SendMessageToTeam is NOT exempt" "$TMPROOT/bud6" SendMessageToTeam a-near budsess 2 \
+  "BUDGET: this spawn has made 120 tool calls"
 
 # ===========================================================================
 # hooks/enforce-delegation.sh — Bash matcher (v2.1.5, consumer feedback:

@@ -129,11 +129,19 @@ if echo "$coder_row" | grep -q "requesting-code-review"; then
 else
   ok "templates/general/AGENT_TEAM.md: coder row no longer contains 'requesting-code-review' (R2)"
 fi
+# ⚠ R3 IS DELIBERATELY REVERSED IN v3.0.0 (item B2), AND THE POLARITY OF THIS
+# ASSERTION IS FLIPPED TO SAY SO OUT LOUD. R3 dropped `brainstorming` from the
+# architect row, and that was correct while a SEPARATE `requirements-engineer`
+# owned requirements exploration. v3.0.0 absorbed that agent INTO `architect`,
+# so the same agent now does both jobs and needs the skill R3 removed. The
+# assertion is re-pointed rather than deleted: an absence whose reason has
+# expired must not be allowed to outlive it silently, and a deleted check would
+# have let the skill drift back out with nothing noticing.
 arch_row=$(grep -A0 "^| \`architect\`" templates/general/AGENT_TEAM.md | head -1)
 if echo "$arch_row" | grep -q "brainstorming"; then
-  ko "templates/general/AGENT_TEAM.md: architect row still contains 'brainstorming' (R3 not applied)"
+  ok "templates/general/AGENT_TEAM.md: architect row carries 'brainstorming' (v3.0.0 absorbed requirements-engineer; R3 reversed on purpose)"
 else
-  ok "templates/general/AGENT_TEAM.md: architect row no longer contains 'brainstorming' (R3)"
+  ko "templates/general/AGENT_TEAM.md: architect row is missing 'brainstorming' — it absorbed requirements-engineer in v3.0.0 and must carry that agent's skill, or the absorption dropped a capability"
 fi
 
 # ---------------------------------------------------------------------------
@@ -160,9 +168,18 @@ if [ -f "$HOOK" ]; then
   check_pair "coder" "verification-before-completion"
   check_pair "coder" "receiving-code-review"
   check_pair "tester" "systematic-debugging"
-  check_pair "test-writer" "test-driven-development"
+  # v3.0.0 (item B2): these two pairs used to be keyed on `test-writer` and
+  # `requirements-engineer`. Both names were ABSORBED — into `tester` and
+  # `architect` respectively — so the pairs are RE-KEYED onto the survivors
+  # rather than deleted. Deleting them would have been the quiet failure:
+  # check_pair prints NOTHING when a skill is absent from BOTH sides, so a pair
+  # left naming a retired agent goes vacuous, reporting neither PASS nor FAIL.
+  # Re-keying keeps the assertion doing work against the agent that now owns the
+  # skill. `test-driven-development` in particular would otherwise have kept
+  # passing off `coder`'s row — a pass for the wrong reason.
+  check_pair "tester" "test-driven-development"
   check_pair "architect" "writing-plans"
-  check_pair "requirements-engineer" "brainstorming"
+  check_pair "architect" "brainstorming"
 
   # R2: coder row must NOT contain requesting-code-review in EITHER place
   if grep -q "requesting-code-review" "$HOOK"; then
@@ -573,7 +590,7 @@ fi
 # tools: omits it cannot run the `## Required Skills` block the PO injects.
 # Counted over the SAME file list, so adding Skill to one of the excluded
 # agents later is a passing change, not a spurious count mismatch.
-skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore|doc-generator)\.md$')
+skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
 skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
 skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
 if [ "$skill_tool" = "$skill_users" ]; then
@@ -1693,7 +1710,7 @@ fi
 #      `{{WORKTREE_BASE}}` used to default to empty, so only a consumer who
 #      passed --worktree-base under `.claude/` was exposed. Giving it a default
 #      makes the gap universal: every bootstrapped repo places agent worktrees
-#      there, `coder`/`tester`/`test-writer` all run `isolation: worktree`, and
+#      there, `coder`/`tester` both run `isolation: worktree`, and
 #      a full repo checkout then shows as untracked files that `git add -A`
 #      would stage. This repo cannot reproduce it — its own .gitignore
 #      blanket-ignores `/.claude/`, while the SHIPPED gitignore is deliberately
@@ -1865,6 +1882,104 @@ else
   else
     ko "region extractor: $r28_seen of $r28_agents shipped agent regions enumerated — the 'zero regions across eleven' reading"
   fi
+
+  # Arm 6: MATCH THE MARKER'S SHAPE, NOT ITS NAME — six rows, asserted BY
+  # CLASSIFICATION STRING (v3.0.0).
+  #
+  # v2.4.0's matcher was a bare substring while this file's documented
+  # specification anchors on the comment opener, so PROSE ABOUT THE MARKERS
+  # matched. Both false shapes were measured on live consumer repos, and they
+  # fail in OPPOSITE directions:
+  #
+  #   row 1 (BEGIN named in prose)  -> was UNCLOSED : DEADLOCK. Step 6a offers
+  #         only "relocate the region" or "defer" for CONTENT/UNCLOSED, and a
+  #         false positive has NO region to relocate, so the prescribed remedy
+  #         is unreachable — and A2 is built so no acknowledgement overrides it.
+  #   row 2 (BOTH named in prose)   -> was EMPTY    : THE DANGEROUS ONE. Step 6a
+  #         reaches the ORDINARY deletion flow for EMPTY, so a documentation
+  #         file sails through the precondition into the delete prompt. A2's
+  #         premise is that the prompt never SHOWED what was being destroyed;
+  #         here the guard affirmatively CERTIFIES the file as empty. `--body`
+  #         shares it, so 6a's post-relocate byte-compare compares two empty
+  #         bodies, they match, and the mechanical proof passes for a
+  #         relocation that never happened.
+  #
+  # ROWS 1, 2 AND 6 MUST ALL LAND ON NOMARKERS, and rows 1 and 5 must be
+  # DISTINGUISHABLE — a documentation file and a genuinely broken region printed
+  # the same verdict, so an operator could not tell them apart without opening
+  # the file.
+  #
+  # RESIDUAL, STATED RATHER THAN HIDDEN: a file that quotes the FULL marker
+  # comment verbatim (`<!-- PROJECT-CUSTOM:BEGIN ... -->`) is still classified as
+  # carrying a marker, and by construction must be — it contains bytes
+  # indistinguishable from a real marker. That fails toward PRESERVATION, which
+  # is the safe direction, and it is why no `^` line-anchor was added: a
+  # blockquoted or list-indented real marker would then be MISSED, and a missed
+  # region is the destructive reading.
+  r28b=$(mktemp -d)
+  printf 'The region sits between `PROJECT-CUSTOM:BEGIN` markers.\n' > "$r28b/r1.md"
+  printf 'It sits between `PROJECT-CUSTOM:BEGIN` and `PROJECT-CUSTOM:END` markers.\n' > "$r28b/r2.md"
+  printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\nreal content\n<!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r3.md"
+  printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\n<!-- Project-specific rules, routing blocks, and extensions go here. -->\n<!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r4.md"
+  printf '<!-- PROJECT-CUSTOM:BEGIN — x -->\nreal content, no end marker\n' > "$r28b/r5.md"
+  printf 'nothing to see here\n' > "$r28b/r6.md"
+  # Row 7: REVERSED-ORDER PROSE — the END marker named BEFORE the BEGIN marker.
+  # Taken from a real consumer file (`PROJECT_STATE.md:276-277`), where it
+  # classified EMPTY with a 0-byte body under the v2.4.0 substring matcher.
+  # It is here because A NAIVE REPAIR WOULD STILL GET IT WRONG: "find BEGIN,
+  # then find END" reads correctly and fails this row. The shape matcher is
+  # order-independent — neither prose mention carries the `<!--` opener, so
+  # neither is a marker at all — and this row is what stops a future
+  # order-based rewrite from regressing it silently.
+  printf 'Status notes.\n\nThe `PROJECT-CUSTOM:END` marker closes what `PROJECT-CUSTOM:BEGIN` opens.\n' > "$r28b/r7.md"
+  r28b_bad=""
+  r28b_row() { # <file> <expected>
+    r28br=$(bash "$REGION_SH" "$r28b/$1" 2>/dev/null | cut -f1)
+    [ "$r28br" = "$2" ] || r28b_bad="$r28b_bad $1(got=$r28br want=$2)"
+  }
+  r28b_row r1.md NOMARKERS
+  r28b_row r2.md NOMARKERS
+  r28b_row r3.md CONTENT
+  r28b_row r4.md EMPTY
+  r28b_row r5.md UNCLOSED
+  r28b_row r6.md NOMARKERS
+  r28b_row r7.md NOMARKERS
+  if [ -z "$r28b_bad" ]; then
+    ok "region extractor: all seven marker-shape rows classify correctly (prose about the markers is NOMARKERS — in either order — not EMPTY and not UNCLOSED)"
+  else
+    ko "region extractor: marker-shape row(s) misclassified —$r28b_bad. EMPTY on prose UNLOCKS the delete path; UNCLOSED on prose DEADLOCKS step 6a with no region to relocate."
+  fi
+
+  # Arm 6b: --body must share the classifier's matcher. Two matchers is how the
+  # scan path and the body path came to disagree with the spec in DIFFERENT
+  # ways, and 6a's byte-compare rides on --body.
+  if [ -z "$(bash "$REGION_SH" --body "$r28b/r2.md" 2>/dev/null)" ] &&
+     [ "$(bash "$REGION_SH" --body "$r28b/r3.md" 2>/dev/null)" = "real content" ]; then
+    ok "region extractor: --body and the classifier share one matcher (prose yields nothing, a real region yields its body)"
+  else
+    ko "region extractor: --body disagrees with the classifier — 6a's post-relocate byte-compare inherits the disagreement"
+  fi
+
+  # Arm 6c: --scan must PRUNE vendor/build trees. Measured: 40,445 files on a
+  # node repo (killed after two minutes) and 10,246 of 10,524 in `.venv` on a
+  # python repo (~15 minutes). SKILL.md documents --scan as THE enumeration and
+  # warns against hand-rolling a walker, so a scan that appears to hang leaves a
+  # consumer with no sanctioned alternative — and the hand-rolled walker is the
+  # failure this file exists to prevent. Pruned by DIRECTORY NAME, never by
+  # git's tracked-file list: `git ls-files` would skip untracked files, and the
+  # untracked hand-authored agent is exactly what A3 protects.
+  mkdir -p "$r28b/tree/node_modules/deep" "$r28b/tree/.venv/lib" "$r28b/tree/.claude"
+  i=0; while [ "$i" -lt 40 ]; do echo x > "$r28b/tree/node_modules/deep/f$i"; i=$((i+1)); done
+  i=0; while [ "$i" -lt 40 ]; do echo x > "$r28b/tree/.venv/lib/f$i"; i=$((i+1)); done
+  cp "$r28b/r3.md" "$r28b/tree/.claude/agent.md"
+  r28b_scanned=$(bash "$REGION_SH" --scan "$r28b/tree" 2>&1 >/dev/null | sed -n 's/.*scanned \([0-9]*\) files under.*/\1/p')
+  r28b_found=$(bash "$REGION_SH" --scan "$r28b/tree" 2>/dev/null | grep -c '^CONTENT')
+  if [ "${r28b_scanned:-0}" -le 5 ] && [ "$r28b_found" = "1" ]; then
+    ok "region extractor: --scan prunes vendor/build trees (visited ${r28b_scanned:-?} of 81 files) and still finds the region in .claude/"
+  else
+    ko "region extractor: --scan visited ${r28b_scanned:-?} files of 81 and found $r28b_found region(s) — either the prune list is gone (the only sanctioned enumeration is unusable on a real tree) or it pruned the dot-directory it exists to walk"
+  fi
+  rm -rf "$r28b"
 
   rm -rf "$r28"
 
@@ -2087,8 +2202,340 @@ A5_ARMS
       else
         ko "check 29 (arm D): domain coder(s) enumerated as literal arms —$a5_literal. The glob exists so a project's own <lang>-coder is bound too; enumerating defeats it."
       fi
+
+      # Arm E: EXISTENCE PROVES NOTHING — MATCHING IS THE PROPERTY (v3.0.0,
+      # item B2).
+      #
+      # A control that asserts an agent FILE exists does not detect the failure
+      # a consolidation can cause. The dangerous case is a RENAME breaking the
+      # skills `case` arm, `enforce-agent-contract.sh`'s SubagentStop matcher
+      # and both `settings.json` matcher regexes AT THE SAME SILENT MOMENT:
+      # nothing errors, every file is present, and the enforcement layer is
+      # simply gone. Arms A-D cover the shell-glob language and the coder
+      # family; this arm covers the OTHER pattern language — the regexes — for
+      # every name the enforcement layer names, and it evaluates them AS
+      # REGEXES rather than comparing label text.
+      #
+      # This is why v3.0.0 ABSORBS rather than renames: the survivors keep the
+      # names these three patterns already match, so the patterns are untouched.
+      # Arm E is what turns that from a stated intention into a checked one.
+      #
+      # ⚠ THE EXPECTATIONS BELOW ARE FIXED, AND THE MATCHERS ARE KEYED BY THE
+      # HOOK THEY RUN, NEVER BY THEIR OWN TEXT. The first version of this arm
+      # selected matchers by grepping them for the very names it then tested,
+      # so deleting `^tester$` from a matcher made the arm skip that matcher and
+      # report green — a check keyed on the thing under test. It was caught by
+      # deleting the guard (drop `^tester$`; the arm did not flip, and only the
+      # cross-variant byte-identity check noticed, which would NOT have noticed
+      # had all six variants been edited together). Keyed on the command, the
+      # matcher cannot hide by changing.
+      a5_pairs=$(awk '
+        /"matcher":/ { m=$0; sub(/.*"matcher": "/,"",m); sub(/",?[[:space:]]*$/,"",m); next }
+        /"command":/ { c=$0; sub(/.*"command": "/,"",c); sub(/",?[[:space:]]*$/,"",c);
+                       if (m != "") print m "\t" c }
+      ' templates/general/.claude/settings.json)
+      a5_pipeline=$(printf '%s\n' "$a5_pairs" | grep -F 'PIPELINE:' | head -1 | cut -f1)
+      a5_contract=$(printf '%s\n' "$a5_pairs" | grep -F 'enforce-agent-contract.sh' | head -1 | cut -f1)
+
+      # a5_expect <label> <regex> <must-match names> -- <must-NOT-match names>
+      a5_e_bad=""
+      a5_expect() {
+        a5x_label="$1"; a5x_re="$2"; shift 2
+        a5x_side=in
+        for a5x_n in "$@"; do
+          if [ "$a5x_n" = "--" ]; then a5x_side=out; continue; fi
+          if printf '%s\n' "$a5x_n" | grep -qE "$a5x_re"; then
+            [ "$a5x_side" = out ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-MATCHES-but-must-not"
+          else
+            [ "$a5x_side" = in ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-NO-MATCH"
+          fi
+        done
+      }
+
+      # 1. the shell-glob language — the skills hook's case arms.
+      for a5n in coder dotnet-coder rust-coder java-coder python-coder tester architect; do
+        a5_matches "$a5n" || a5_e_bad="$a5_e_bad case-arm:$a5n"
+      done
+
+      # 2. the regex language — the two SubagentStop matchers, both directions.
+      if [ -z "$a5_pipeline" ] || [ -z "$a5_contract" ]; then
+        ko "check 29 (arm E): could not locate the SubagentStop pipeline/contract matchers by the hook they run — the sweep would pass vacuously"
+      else
+        a5_expect pipeline "$a5_pipeline" \
+          coder dotnet-coder rust-coder java-coder python-coder code-reviewer tester architect \
+          -- ops Explore zz-unbound-probe
+        a5_expect contract "$a5_contract" \
+          coder dotnet-coder rust-coder java-coder python-coder code-reviewer \
+          -- tester architect ops Explore zz-unbound-probe
+        if [ -z "$a5_e_bad" ]; then
+          ok "check 29 (arm E): every survivor name MATCHES its binding sites in BOTH pattern languages, and every non-bound name still misses them"
+        else
+          ko "check 29 (arm E): binding-site mismatch —$a5_e_bad. Existence proves nothing here; a name that stops matching fails OPEN and SILENT — the hook is simply never invoked, with no block, no warning and every file present."
+        fi
+      fi
     fi
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# 30. CITED HEADINGS MUST RESOLVE, AND THE REPORT MUST SELF-DIAGNOSE (v3.0.0,
+#     item B1).
+#
+#     THIS IS A STRING CHECK, NOT A LINK CHECK, AND THAT IS THE WHOLE POINT.
+#     Two consumers independently censused it and it was verified in source:
+#     there is not ONE `AGENT_TEAM.md#anchor` fragment link in this repo. Zero.
+#     Every cross-reference is prose, in several syntaxes. A link checker finds
+#     none of them, which is why nothing detected the defect below for the
+#     entire life of the file.
+#
+#     ⚠ RESOLVE REPO-WIDE BEFORE REPORTING — "dangling" INVITES THE WRONG FIX.
+#     Measured, not hypothesised: the consumer who FOUND the defect this check
+#     debuts against proposed two remedies and BOTH were wrong — "add the
+#     heading to CLAUDE.md" would have duplicated a section already present 916
+#     lines down the same file, and "drop the citation" would have deleted a
+#     pointer to real, reachable guidance. Their detection was right; their
+#     prescription was not, and the cause is the CHECK'S SHAPE, not their
+#     judgement. A check asking only "does the cited heading exist in the cited
+#     FILE?" returns a true answer that cannot separate two cases with OPPOSITE
+#     remedies:
+#
+#       CITED <file> "<heading>" -> not in <file>; FOUND in <other> : wrong
+#                                   filename — a one-word edit
+#       CITED <file> "<heading>" -> not found anywhere              : missing
+#                                   section — write it, or drop the citation
+#
+#     One extra lookup buys a self-diagnosing failure, the same property that
+#     makes a retired-subagent_type error useful. This arrives load-bearing
+#     rather than theoretical: THE FIRST DEFECT IT CAUGHT WAS A WRONG-FILENAME
+#     ONE, shipped in all six variants — `AGENT_TEAM.md:76` cited
+#     `CLAUDE.md "Open Brain Context for Agents"` while the heading sat at
+#     `AGENT_TEAM.md:992`. The failure mode B1 exists to prevent had ALREADY
+#     OCCURRED, in the opposite direction, with no shrink involved. So this is
+#     a STANDING gate assertion, not a shrink-only acceptance criterion.
+#
+#     THE COLLECTOR IS WHERE A CHECK LIKE THIS DIES QUIETLY. A regex keyed on
+#     one citation syntax finds a subset and reports green, which is the
+#     `command:`-anchored collector's failure one noun over. So: four shapes are
+#     collected, arm C asserts a FLOOR on the count, and the shapes are
+#     DELIMITED on purpose. The bare `-> Heading` shape terminates at the first
+#     punctuation, so a citation trailing into prose ("-> MCP Layering for the
+#     one-line migration") over-captures and goes RED as a missing section
+#     rather than silently passing. That is fail-closed in the right direction:
+#     the remedy is to delimit the citation (`-> *MCP Layering*`), and the check
+#     teaches the canonical syntax by going red.
+#
+#     SCOPE. CHANGELOG.md is excluded — it is an append-only historical record
+#     whose prose deliberately quotes headings as they were at the time. And a
+#     citation whose FILE does not resolve inside this repo is skipped, not
+#     failed: `~/.claude/CLAUDE.md` is a prose reference across the repo
+#     boundary into user-level config that no repo-scoped check can verify and
+#     no project sync touches. Do not gate it; do not add more of them.
+# ---------------------------------------------------------------------------
+echo
+b1_files=$( { ls ./*.md 2>/dev/null
+              ls docs/*.md 2>/dev/null
+              find templates user-level-reference -name '*.md' 2>/dev/null
+              ls hooks/*.sh 2>/dev/null
+            } | sed 's@^\./@@' | grep -v '^CHANGELOG\.md$' | sort -u )
+
+b1_FILEPAT='`?[A-Za-z0-9_.-]+\.md`?'
+b1_ARROW='[[:space:]]*(->|→)[[:space:]]*'
+b1_SEC='[[:space:]]*§[[:space:]]*'
+b1_WORDS="[A-Z][A-Za-z0-9 &'/-]*"
+
+b1_tmp=$(mktemp -d)
+
+# Heading index, one `basename|heading` per line. Indexed by BASENAME because a
+# citation names a file, not a path, and the same basename legitimately exists
+# once per variant.
+for b1_f in $b1_files; do
+  case "$b1_f" in *.md) ;; *) continue ;; esac
+  sed -n 's/^#\{1,6\}[[:space:]]\{1,\}\(.*\)$/\1/p' "$b1_f" \
+    | sed 's/[[:space:]]*#*[[:space:]]*$//' \
+    | sed "s@^@${b1_f##*/}|@" >> "$b1_tmp/headings"
+done
+sort -u -o "$b1_tmp/headings" "$b1_tmp/headings"
+
+{ grep -rnoE "${b1_FILEPAT}${b1_ARROW}\*[^*]+\*"  $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}${b1_ARROW}\"[^\"]+\"" $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}${b1_ARROW}${b1_WORDS}" $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}${b1_SEC}${b1_WORDS}"   $b1_files 2>/dev/null
+  grep -rnoE "${b1_FILEPAT}[[:space:]]+\"[^\"]+\"" \
+    $(printf '%s\n' $b1_files | grep '\.md$') 2>/dev/null
+} | sort -u > "$b1_tmp/raw"
+
+b1_total=$(grep -c . "$b1_tmp/raw" 2>/dev/null || echo 0)
+
+# b1_resolve — prints nothing and returns 0 when the citation resolves;
+# otherwise prints the SELF-DIAGNOSING line and returns 1.
+b1_resolve() {
+  b1r_where="$1"; b1r_cf="$2"; b1r_hd="$3"
+  if grep -qxF "${b1r_cf}|${b1r_hd}" "$b1_tmp/headings"; then
+    return 0
+  fi
+  b1r_other=$(awk -v h="$b1r_hd" \
+    '{i=index($0,"|"); if (i>0 && substr($0,i+1)==h) print substr($0,1,i-1)}' \
+    "$b1_tmp/headings" | sort -u | tr '\n' ' ')
+  if [ -n "$b1r_other" ]; then
+    printf '  %s  CITED %s "%s" -> not in %s; FOUND in %s: WRONG FILENAME (one-word edit)\n' \
+      "$b1r_where" "$b1r_cf" "$b1r_hd" "$b1r_cf" "${b1r_other% }"
+  else
+    printf '  %s  CITED %s "%s" -> not found anywhere: MISSING SECTION (write it, drop the citation, or delimit it as -> *Heading*)\n' \
+      "$b1r_where" "$b1r_cf" "$b1r_hd"
+  fi
+  return 1
+}
+
+b1_bad=0
+b1_ok=0
+while IFS= read -r b1_rec; do
+  [ -n "$b1_rec" ] || continue
+  b1_where=${b1_rec%%:*}; b1_rest=${b1_rec#*:}
+  b1_lineno=${b1_rest%%:*}; b1_cite=${b1_rest#*:}
+  b1_cf=$(printf '%s' "$b1_cite" | sed -E 's/^`?([A-Za-z0-9_.-]+\.md).*/\1/')
+  b1_hd=$(printf '%s' "$b1_cite" \
+    | sed -E 's@^`?[A-Za-z0-9_.-]+\.md`?@@' \
+    | sed -E 's/^[[:space:]]*(->|→|§)?[[:space:]]*//' \
+    | sed -E 's/^\*(.*)\*$/\1/; s/^"(.*)"$/\1/' \
+    | sed -E 's/[[:space:]]+$//')
+  [ -n "$b1_hd" ] || continue
+  # Out of scope by design: a cited file that does not exist in this repo is a
+  # cross-boundary reference (`~/.claude/CLAUDE.md`), unverifiable here.
+  printf '%s\n' $b1_files \
+    | grep -q "\(^\|/\)$(printf '%s' "$b1_cf" | sed 's/\./\\./g')$" || continue
+  if b1_resolve "$b1_where:$b1_lineno" "$b1_cf" "$b1_hd"; then
+    b1_ok=$((b1_ok + 1))
+  else
+    b1_bad=$((b1_bad + 1))
+  fi
+done < "$b1_tmp/raw"
+
+if [ "$b1_bad" -eq 0 ]; then
+  ok "check 30 (arm A): all $b1_ok in-repo cited headings resolve to a live heading"
+else
+  ko "check 30 (arm A): $b1_bad cited heading(s) do not resolve — see the self-diagnosing lines above; wrong-filename and missing-section have OPPOSITE remedies"
+fi
+
+# Arm B (NEGATIVE SELF-TEST): a heading nobody wrote must be reported. Without
+# it, a resolver that always returned 0 — or a heading index that accidentally
+# matched everything — would make arm A green for the wrong reason. A check that
+# cannot report a miss has not reported a hit.
+if b1_resolve "synthetic" "AGENT_TEAM.md" "zz-nonexistent-heading-probe" >/dev/null; then
+  ko "check 30 (arm B): a synthetic non-existent heading RESOLVED — arm A is passing vacuously"
+else
+  ok "check 30 (arm B): a synthetic non-existent heading is correctly reported unresolved"
+fi
+
+# Arm C (COLLECTOR FLOOR): the way this check dies quietly is a collector that
+# stops matching and reports zero unresolved out of zero collected. 62 citations
+# were collected when this shipped; the floor is set well below that so ordinary
+# prose edits do not trip it, and well above zero so a broken collector does.
+if [ "$b1_total" -ge 40 ]; then
+  ok "check 30 (arm C): collector recovered $b1_total citations (floor 40)"
+else
+  ko "check 30 (arm C): collector recovered only $b1_total citations (floor 40) — the citation syntax has drifted away from the collected shapes, or the collector is broken. A zero here would otherwise report as ZERO UNRESOLVED."
+fi
+
+rm -rf "$b1_tmp"
+
+# ---------------------------------------------------------------------------
+# 31. REGION PRESERVATION MUST SURVIVE A NEAR-TOTAL DELETION OF THE TEMPLATE
+#     PART (v3.0.0, item B1).
+#
+#     v3.0.0 shrinks AGENT_TEAM.md from 1026 lines to 556 — a 46% deletion of
+#     the template part, far outside anything the region machinery has ever been
+#     exercised against. This check runs the property at ~97%, which is stricter
+#     than what ships, because the property is supposed to be independent of how
+#     much was deleted and a fixture pinned to today's figure stops testing that
+#     the moment the figure changes.
+#
+#     ⚠ PLANTED CONTENT, NEVER FOUND CONTENT. A census across three consumer
+#     repos found ZERO real PROJECT-CUSTOM content (11, 10 and 1 region-bearing
+#     files, all placeholder-only), so a green run on any of them proves
+#     nothing — the guard CANNOT FAIL there. The content comes from the
+#     committed fixture at scripts/fixtures/project-custom-regions/, which is
+#     the only known source of real region content anywhere.
+#
+#     BOTH ARMS. A planted region must be classified CONTENT and must survive
+#     the splice BYTE-EXACTLY; a placeholder-only region must be classified
+#     EMPTY. A check that only ever asserts the reassuring answer is the
+#     extractor defect this whole programme exists to stop.
+# ---------------------------------------------------------------------------
+echo
+B1_REGION_SH="user-level-reference/skills/sync-template/region.sh"
+B1_PLANT="scripts/fixtures/project-custom-regions/plant.sh"
+if [ ! -f "$B1_REGION_SH" ] || [ ! -f "$B1_PLANT" ]; then
+  ko "check 31: $B1_REGION_SH or $B1_PLANT missing — region preservation is unexercised"
+else
+  b2_tmp=$(mktemp -d)
+  mkdir -p "$b2_tmp/consumer/.claude/agents"
+  cp templates/general/AGENT_TEAM.md templates/general/CLAUDE.md "$b2_tmp/consumer/"
+  cp templates/general/.claude/agents/coder.md "$b2_tmp/consumer/.claude/agents/"
+
+  # Arm A (BOTH-ARMS PRECONDITION): before planting, every one of the three must
+  # classify EMPTY. If they did not, arm B's CONTENT result would prove nothing
+  # about the planting.
+  b2_pre=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
+    "$b2_tmp/consumer/CLAUDE.md" "$b2_tmp/consumer/.claude/agents/coder.md" \
+    2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
+  if [ "$b2_pre" = "EMPTY " ]; then
+    ok "check 31 (arm A): the three shipped region-bearing files classify EMPTY before planting"
+  else
+    ko "check 31 (arm A): expected all three shipped files to classify EMPTY before planting, got: $b2_pre"
+  fi
+
+  if ! bash "$B1_PLANT" "$b2_tmp/consumer" >/dev/null 2>&1; then
+    ko "check 31: plant.sh failed against a freshly copied template tree — the shipped placeholder block has changed shape"
+  else
+    b2_post=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
+      "$b2_tmp/consumer/CLAUDE.md" "$b2_tmp/consumer/.claude/agents/coder.md" \
+      2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
+    if [ "$b2_post" = "CONTENT " ]; then
+      ok "check 31 (arm B): all three classify CONTENT once real region content is planted"
+    else
+      ko "check 31 (arm B): expected all three to classify CONTENT after planting, got: $b2_post"
+    fi
+
+    # Arm C: THE SHRINK ITSELF. Build a new template part that is a ~97%
+    # deletion — the first 12 lines and nothing else — then splice the
+    # consumer's extracted region onto it, exactly as a sync preserves.
+    b2_keep=12
+    b2_body_lines=$(wc -l < "$b2_tmp/consumer/AGENT_TEAM.md")
+    head -n "$b2_keep" templates/general/AGENT_TEAM.md > "$b2_tmp/shrunk.md"
+    tail -n 3 templates/general/AGENT_TEAM.md >> "$b2_tmp/shrunk.md"
+    b2_pct=$(( 100 - (b2_keep + 3) * 100 / b2_body_lines ))
+
+    bash "$B1_REGION_SH" --body "$b2_tmp/consumer/AGENT_TEAM.md" > "$b2_tmp/planted.body" 2>/dev/null
+    # Splice: replace the shrunk file's placeholder body with the planted body.
+    awk -v ph='<!-- Project-specific rules, routing blocks, and extensions go here. -->' \
+        -v rf="$b2_tmp/planted.body" '
+      index($0, ph) > 0 && !done {
+        while ((getline line < rf) > 0) print line
+        close(rf); done = 1; next
+      }
+      { print }
+    ' "$b2_tmp/shrunk.md" > "$b2_tmp/spliced.md"
+
+    bash "$B1_REGION_SH" --body "$b2_tmp/spliced.md" > "$b2_tmp/spliced.body" 2>/dev/null
+    b2_class=$(bash "$B1_REGION_SH" "$b2_tmp/spliced.md" 2>/dev/null | cut -f1)
+    if cmp -s "$b2_tmp/planted.body" "$b2_tmp/spliced.body" && [ "$b2_class" = "CONTENT" ]; then
+      ok "check 31 (arm C): a planted region ($(wc -c < "$b2_tmp/planted.body" | tr -d ' ') B) survives a ${b2_pct}% deletion of the template part BYTE-EXACTLY, and still classifies CONTENT"
+    else
+      ko "check 31 (arm C): the planted region did NOT survive a ${b2_pct}% deletion byte-exactly (classified '$b2_class') — region preservation breaks at shrink magnitudes v3.0.0 actually performs"
+    fi
+
+    # Arm D (NEGATIVE CONTROL): splice the PLACEHOLDER instead of the planted
+    # body. It must classify EMPTY. Without this, an extractor that returned
+    # CONTENT unconditionally would make arms B and C green for the wrong
+    # reason — the exact false-clean this programme was bitten by, inverted.
+    b2_ph_class=$(bash "$B1_REGION_SH" "$b2_tmp/shrunk.md" 2>/dev/null | cut -f1)
+    if [ "$b2_ph_class" = "EMPTY" ]; then
+      ok "check 31 (arm D): the same shrunk file with only the placeholder classifies EMPTY — the CONTENT result in arm C is discriminating, not unconditional"
+    else
+      ko "check 31 (arm D): a placeholder-only region classified '$b2_ph_class', not EMPTY — arms B and C are passing vacuously"
+    fi
+  fi
+  rm -rf "$b2_tmp"
 fi
 
 # ---------------------------------------------------------------------------

@@ -65,10 +65,7 @@ Models and effort below are the values in each `agents/*.md` frontmatter — kee
 | `architect` | opus | xhigh | Reviews architecture, provides implementation guidance, maintains ADRs and docs. Does not write application code. |
 | `code-reviewer` | opus | xhigh | Reviews code for quality, style, structure, and test coverage. Posts categorized findings. Does not write code. |
 | `coder` | sonnet | medium | General-purpose software engineer for implementing changes with high-quality engineering standards. Runs with `isolation: worktree`. |
-| `doc-generator` | haiku | low | Generates documentation for code changes (public APIs, usage examples). |
 | `ops` | sonnet | medium | Non-code execution: environment setup, installs, binary/file operations, one-off diagnostics, log collection, re-running the project gate. Keeps the orchestrator out of hands-on work. |
-| `requirements-engineer` | sonnet | medium | Refines feature ideas into detailed specs with user stories, acceptance criteria, and edge cases. |
-| `test-writer` | sonnet | medium | Writes comprehensive tests for new code, focusing on behavior and edge cases. Runs with `isolation: worktree`. |
 | `tester` | sonnet | medium | QA tester that verifies features via UI automation (FlaUI), database inspection, and log analysis. Runs with `isolation: worktree`. |
 
 > **User-level agents are not template agents.** A user-level agent applies in *every* repo and its frontmatter `hooks:` travel with it, so it may only reference scripts and paths that exist everywhere. The copies here deliberately omit the `hooks/gate-before-merge.sh` PreToolUse hooks that `templates/*/.claude/agents/coder.md` carries — those fail closed (`127` → `exit 2`) in any repo without a `hooks/` directory, which would make PR merges impossible. `scripts/verify-template-consistency.sh` asserts both halves of this rule. Body prose may still mention `hooks/run-gate.sh`, because that is conditional on the project's `Gate` field and the agent simply skips it when absent.

@@ -1,5 +1,171 @@
 # Changelog
 
+## v3.0.0 — 2026-09-02
+
+**Phase B: the subtractions. THIS IS THE RELEASE THAT DELETES THINGS**, and it ships one release *behind* the guards that make deleting safe — v2.4.0's `region.sh`, the unreachable-deletion precondition, the touched-directory backup, the five-form name sweep and check 29. **Removals fail CLOSED where additions fail open**, which is why the order was that way round and not a shortfall.
+
+`AGENT_TEAM.md` shrinks from 1026 lines to 556. Three agent names are retired by **absorption** — `test-writer` → `tester`, `requirements-engineer` → `architect`, `doc-generator` → `coder` — removing 21 files. `agent-budget-warn.sh` stops blocking `SendMessage`. Two new standing gate assertions arrive with it, and one of them caught a defect shipped in all six variants on its very first run.
+
+### 1. B1 — check 30: cited headings must resolve, and the report must SELF-DIAGNOSE
+
+**This had to be a STRING check, not a link check.** Two consumers independently censused it and it was verified in source: there is **not one `AGENT_TEAM.md#anchor` fragment link anywhere in this repo**. Zero. Every cross-reference is prose, in several syntaxes, so a link checker finds none of them — which is why nothing detected the defect below for the entire life of the file.
+
+**⚠ It resolves REPO-WIDE before reporting, because "dangling" invites the wrong fix.** Measured, not hypothesised: the consumer who *found* the defect proposed two remedies and **both were wrong** — "add the heading to `CLAUDE.md`" would have duplicated a section already present 916 lines down the same file, and "drop the citation" would have deleted a pointer to real, reachable guidance. Their detection was right; their prescription was not, and **the cause is the check's shape, not their judgement**. A check asking only *"does the cited heading exist in the cited FILE?"* returns a true answer that cannot separate two cases with **opposite** remedies:
+
+```
+CITED <file> "<heading>" -> not in <file>; FOUND in <other> : WRONG FILENAME   (one-word edit)
+CITED <file> "<heading>" -> not found anywhere              : MISSING SECTION  (write it, or drop it)
+```
+
+**It arrived load-bearing rather than theoretical.** Its first run was red on 16 citations, six of them the same shipped defect in all six variants:
+
+```
+templates/*/AGENT_TEAM.md:76  CITED CLAUDE.md "Open Brain Context for Agents"
+  -> not in CLAUDE.md; FOUND in AGENT_TEAM.md: WRONG FILENAME
+```
+
+The section exists at `AGENT_TEAM.md:992`, **916 lines below the line pointing at it**. The citation named the wrong FILE. A PO following the Open-Brain mediation rule was being sent to a nonexistent section for the agent-specific search queries it promises — silently, in every shipped variant. **The failure mode B1 exists to prevent had ALREADY OCCURRED, in the opposite direction, with no shrink involved**, which is why this is a STANDING assertion rather than a shrink-only acceptance criterion.
+
+The other ten were real too: `§Open Brain` cites a heading that does not exist (it is `Open Brain Context for Agents`), and three doc citations trailed off into prose. The bare `-> Heading` shape terminates at punctuation, so an over-capturing citation goes **red as a missing section** rather than quietly passing — fail-closed in the right direction, and the message tells the author to delimit it.
+
+**The collector is where a check like this dies quietly**, so it collects five shapes, and **arm C asserts a FLOOR on the count**: the way this fails is a collector that stops matching and then reports zero unresolved out of zero collected — the `command:`-anchored collector's failure, one noun over. Three citation forms the collector could not see were normalised in the same release so the guard actually covers the anchors it protects (62 → 75 collected), including `require-skills-block.sh:102`, which **prints a heading name to a blocked user at runtime**: a shrink can otherwise leave a live error message pointing at a section that no longer exists, inside the very hook that blocked them.
+
+Out of scope by design: `CHANGELOG.md` (an append-only record that deliberately quotes headings as they were) and any citation whose FILE does not resolve in-repo (`~/.claude/CLAUDE.md` is a reference across the repo boundary that no repo-scoped check can verify).
+
+### 2. B1 — `AGENT_TEAM.md`: 1026 → 556 lines, with every cited anchor proven to survive
+
+**Shrink, not delete.** Deleting the file would destroy consumer content the toolkit itself told them to write into its PROJECT-CUSTOM region. Shrinking captures nearly all the saving at zero migration risk: no `TEMPLATE_DELETED`, no region question, no dangling `architect.md` frontmatter, no setup-script change.
+
+Cut: the role bodies (they duplicate `.claude/agents/*.md`, which is where an agent's contract actually binds), the flow diagrams, Communication Protocol, Permission Batching, Preprocessing, Tech Debt Tracking, the session-summary and retrospective templates, and the implementation-plan appendix.
+
+Kept, and the keeping is the load-bearing half: the tier model, the **Spawn-Prompt Binding Table** — where a HOOK-ENFORCED contract is written, so cutting it would make the enforcement layer's documentation disappear while the hook kept firing — the worktree and merge protocol, the Mode Behavior Table, Task Brief Upfront, Escalation Protocol, Model & Effort Policy, Open Brain Context for Agents, and the `PROJECT_CONTEXT.md` template.
+
+**⚠ The ~150-line target in the plan is arithmetically unreachable and was NOT forced.** The plan's own named cut list totals ~165 lines, leaving ~860. Cutting everything not on its keep list reaches 556. Reaching 150 requires deleting the Merge Protocol steps, the copy-paste snippets and the PROJECT_CONTEXT template — all three named as *keep* by the same plan, and two of them gate-asserted. Recorded rather than resolved by over-cutting.
+
+`templates/*/CLAUDE.md` said *"Do NOT `Read AGENT_TEAM.md` up front (850+ lines)"*. The **advice** was rewritten and the number **removed entirely**: a figure in prose describing another file's shape goes stale the moment that file is edited and nothing detects it — the same defect class as the `:76` citation.
+
+### 3. B1 — check 31: region preservation survives a near-total deletion of the template part
+
+**⚠ Validated against PLANTED content, never found content.** A census across three consumer repos found **zero** real PROJECT-CUSTOM content (11, 10 and 1 region-bearing files, all placeholder-only), so a green run on any of them proves nothing — the guard *cannot fail* there.
+
+Four arms, and the negative ones are why the positive ones mean anything: the three shipped files classify `EMPTY` before planting; all three classify `CONTENT` after; a **968 B planted region survives a 98 % deletion of the template part BYTE-EXACTLY**; and the same shrunk file with only the placeholder still classifies `EMPTY`. 98 % is stricter than the 46 % this release performs, deliberately — the property is supposed to be independent of deletion magnitude, and a fixture pinned to today's figure stops testing that the moment the figure changes.
+
+### 4. B2 — agent consolidation: 13 names → 10. ABSORB, NEVER RENAME
+
+**⚠ "68 files → ~6" is wrong by a factor of ten.** There are **13 distinct names**: 9 generic × 6 variants = 54, plus 5 domain-coder files, plus 9 user-level copies. The 68 is a template-**distribution** artifact — those files are byte-identical across variants *by invariant* — not complexity. Blast radius is counted per NAME: **deleting one generic name removes seven files at once.**
+
+Retired: `test-writer` → `tester`, `requirements-engineer` → `architect`, `doc-generator` → `coder`. Survivors: `coder`, `code-reviewer`, `tester`, `architect`, `ops`, `Explore`, plus the four domain coders.
+
+**⚠ ABSORB, DO NOT RENAME — a hard constraint.** Both the matcher regex `^([a-z0-9]+-)?coder$` and the skills case `coder|*-coder)` already generalise over the variant family, so superset-under-an-existing-name works **only while the survivor keeps its name**. A stale reference to a surviving name fails **loudly at spawn time**, which is recoverable; a new name would make every consumer's keep-mine prose stale at once, silently.
+
+Absorption is a **superset**, so the absorbing agent gained the absorbed skill: `tester` gained `test-driven-development`, `architect` gained `brainstorming`. That deliberately **reverses** the earlier R3 decision — R3 was right while a separate agent owned requirements exploration and is wrong now that the same agent does both. Check 9 is re-pointed rather than deleted, and records the reversal: *an absence whose reason has expired must not outlive it silently.*
+
+**The four domain coders survive, and the reason is evidential.** A domain coder needs a **routing-table** argument to be removed, never a usage argument — low recent usage and unused are different facts. The only measured routing table points the other way: it *mandates* `rust-coder` with an explicit "do NOT substitute `coder`". No rust or java repo is in the measurement corpus, so their zero is a property of the sample.
+
+**All five binding forms swept, one pass per PATTERN LANGUAGE rather than per name** — a shell glob and a regex express the same intent in different syntaxes, and a grep keyed on one will not carry a fix to the other. The `settings.json` matchers were deliberately **untouched**: they name only coder-family, `code-reviewer`, `tester` and `architect`, none of which was retired or renamed. The fifth form is the one a name-grep misses — `enforce-delegation.sh`'s DENY text named `doc-generator`, a live instruction telling a blocked user to spawn something that no longer exists.
+
+**Check 29 arm E, new: existence proves nothing — MATCHING is the property.** A control asserting an agent FILE exists cannot detect the failure this release could cause: a rename breaking the case arm and both matcher regexes *at the same silent moment*, nothing erroring, every file present. Arm E evaluates a fixed set of survivor names against each binding site **in its own language**, both directions.
+
+**⚠ The first version of arm E was broken, and deleting the guard is what found it.** It selected `settings.json` matchers by grepping them for the very names it then tested, so removing `^tester$` made the arm *skip that matcher* and report green — a check keyed on the thing under test, which is the exact trap check 29 exists to enforce against, sprung on check 29 itself for the second time in two releases. Only the cross-variant byte-identity check noticed, and it would **not** have noticed had all six variants been edited together. Matchers are now keyed by **the hook they run**, which they cannot change by changing.
+
+### 5. B3 — `SendMessage` is exempt from the agent budget: the guard was denying its own remedy
+
+`agent-budget-warn.sh` blocked **five agent reports**. It stopped agents **filing their work** — the exact failure the liveness effort exists to prevent. The block message tells the agent to *"report your partial result plus the blocker"*, and the tool that does that is the one it was blocking.
+
+**The ceiling is kept, unchanged** — spawns hit 417, 420 and 480 calls. This narrows *which* calls it applies to, not how hard it applies.
+
+**⚠ Not counted, not merely not blocked**, and that distinction is the design. Every threshold test is `-eq` (a `-ge` would refire on 121, 122, 123 … and the agent could never report at all), so a `SendMessage` that *consumed* call 120 would silently skip the ceiling and defer the next block to 180. Leaving the counter untouched means the next working call still lands on 120 and still blocks: **filing your work does not spend your budget, and does not buy you extra budget either.** Nine new fixtures; until now this hook had **no behavioural fixture at all**.
+
+### 6. Two B3 items reported rather than implemented
+
+**`enforce-agent-contract.sh` — "cap re-blocks": ALREADY SHIPPED, in v2.2.2.** The plan cites "one session looped 28×", but the repo already bounds enforcement to exactly **one** forced continuation per session+agent via a sticky marker, and the v2.2.2 header documents the very defect described. Seven fixtures assert the bound, including that a compliant stop does not re-arm the prod. The plan is describing a pre-v2.2.2 measurement.
+
+**`require-skills-block.sh`, `read-size-gate.sh` — "demote": REFUSED.** The verb is defined nowhere in this repo, and its only coherent reading contradicts a measurement this programme has already paid for: demoting `require-skills-block.sh` from `exit 2` to advisory sends its diagnostic as hook stderr on a zero exit — **the channel measured NOT to reach the lead**, and the exact reason A5's fix had to be a static gate assertion rather than a runtime warning. A warning nobody receives is the same silence with more code, and it reads as fixed. `read-size-gate.sh` already degrades rather than blocks. Both want a stated behaviour to demote *to* before anything moves.
+
+### 7. Two additive tool grants — the description stated a workflow the grant could not execute
+
+`architect` gains `Edit`: its deliverable is a plan file built incrementally, and with `Write` alone, appending means rewriting the whole file from memory each time. It still has no `Bash`. `code-reviewer` gains `Bash`: it could not run `git diff <base>..<head>`, and a consumer's reviewer disclosed its own gap — it read `.git/refs/heads/main` **as a file** and compared trees, so it could not attribute a change to one of two commits. It holds no write tool, so `Bash` leaves it read-only in effect.
+
+The general lesson: **the agent's description stated a workflow its grant could not execute**, and the only signal was RETRO `dead=[...]` rows, which are mostly false positives and so go unread. A consolidation that changes any grant must re-ask whether the survivor can still do what its description claims.
+
+### 8. STOP-SHIP — `require-skills-block.sh` HAD NEVER FIRED
+
+The harness nests spawn fields under `tool_input`; this hook read them at the top level. Measured both ways: a nested payload with a **bound** `subagent_type` and no `## Required Skills` block exited **0**; the same payload flattened exited 2. On the real harness, a bound `architect` spawn with no block **launched**. So `SUBAGENT_TYPE` was always empty, every spawn fell to the `*)` default arm, and **the hook exited 0 on every spawn ever made.**
+
+`hooks/lib/git-cmd.sh` reads `tool_input.command` and `enforce-delegation.sh` reads `j.tool_input` — this was the only top-level reader, and the trail is a stale `# Matcher: Task` header while `settings.json` registers `Agent`.
+
+**⚠ This is why it is a v3.0.0 blocker and not a fast follow.** In the five-binding-form taxonomy this hook's `case` arms are **form 1 — fail open, silent**. v3.0.0 consolidates 13 agent names to 10. *The mechanism meant to catch a mis-bound name after that consolidation is the mechanism that has never run.*
+
+**⚠ And why nobody noticed for its whole life:** on a disciplined repo every spawn carries the block, so the hook's only observable behaviour is **silence** — and silence is exactly what a dead guard produces. Pass and absence are indistinguishable from where a compliant consumer stands. The vacuous-fixture shape, scaled up to an entire enforcement layer. Every existing fixture used `mkspawn`, which builds a **flat** payload the harness does not send; the eight nested-shape fixtures are the control that would have caught it, and the four `without skills block` rows are the assertion — the `WITH block` rows passed throughout the dead period too.
+
+The variable is renamed `TOOL_INPUT` → `HOOK_PAYLOAD`: it held the whole document while being named for a descent never performed, which is why the defect survived review. The descent is a dotted path at the point of use rather than a hoist at `$(cat)`, because `json_get` returns **scalars** — `json_get "$P" tool_input` measures as empty, so hoisting the object would make the fallback fire on every payload and restore the exact defect. `enforce-agent-contract.sh` is deliberately **not** changed: it reads top-level fields because it is a **SubagentStop** hook, where those fields genuinely are top-level.
+
+### 9. STOP-SHIP — `region.sh` matched the marker's NAME, not its SHAPE
+
+v2.4.0 shipped bare substrings while the file's own documented specification anchors on the comment opener, so any file that merely **writes about** the markers matched. Two false classifications, failing in **opposite** directions, both measured on live consumer repos:
+
+```
+prose naming BEGIN only    -> UNCLOSED   (want NOMARKERS)   -- DEADLOCK
+prose naming BOTH markers  -> EMPTY      (want NOMARKERS)   -- UNLOCKS DELETION
+```
+
+**`EMPTY` is what unlocks the delete path.** Step 6a reaches the ordinary deletion flow for `EMPTY`/`NOMARKERS`, so a documentation file naming both markers in one sentence sails through the precondition into the delete prompt. A2's premise is that the consent prompt never *showed* what was being destroyed; **here the guard affirmatively CERTIFIES the file as empty.** `--body` shared the asymmetry, so 6a's post-relocate byte-compare compared two empty bodies, they matched, and the mechanical proof-of-relocation passed for a relocation that never happened.
+
+The `UNCLOSED` half deadlocks instead: 6a offers only relocate-or-defer, a false positive has **no region to relocate**, and A2 is built so no acknowledgement can override it.
+
+**This is A4's own reasoning applied to A1** — key on the reference FORM, not any occurrence of the name. Same failure, same population: *the consumers who document our mechanism most carefully are the ones who trip its detector.* One matcher now, shared by the classifier and `--body` (awk uses `match()` with the same ERE; `index()` is a literal search and would silently ignore the `[[:space:]]*`, which is how the two paths diverged). Six rows asserted by classification string, rows 1, 2 and 6 all `NOMARKERS`, and rows 1 and 5 finally distinguishable — a documentation file and a genuinely broken region used to print the same verdict.
+
+**Residual, stated rather than hidden:** a file quoting the FULL marker comment verbatim is still treated as carrying a marker, and by construction must be. That fails toward **preservation** — which is why no `^` line-anchor was added, since a blockquoted or indented real marker would then be MISSED, and a missed region is the destructive reading.
+
+### 10. STOP-SHIP — `region.sh --scan` was unusable on a real tree
+
+It pruned `.git` and nothing else. Measured: **40,445 files** on a node repo (`src-tauri/target` 31,413, `node_modules` 4,781), killed after two minutes with no output; and **10,246 of 10,524 files in `.venv`** on a python repo — 97 %, gitignored by the rule the python variant itself ships — taking ~15 minutes versus 2.3 seconds scoped to `.claude`.
+
+**The silence is as bad as the duration.** `SKILL.md` documents `--scan` as *the* enumeration and warns against hand-rolling a walker, so a scan that appears hung leaves a consumer with no sanctioned alternative — and the hand-rolled walker is the exact failure `region.sh` exists to prevent. It now prunes vendor/build directories and reports progress on **stderr**, leaving stdout clean.
+
+**⚠ Pruned by directory NAME, never by git's tracked-file list.** `git ls-files` would skip **untracked** files, and the untracked hand-authored agent is precisely what A3 protects — the one nobody can regenerate. (`git check-ignore` would have been acceptable; `ls-files` is not.) `bin`/`obj` are deliberately absent from the list: Rust's `src/bin/` is real source.
+
+Timing is why this was stop-ship rather than a fast follow: **A2 makes `region.sh` a precondition for deletion.** In v2.4.0 that cost nothing because nothing was deleted. In v3.0.0 it is load-bearing on the first real `TEMPLATE_DELETED` — on agent files, all of which carry regions. Unusable one release before it mattered.
+
+### 11. Step 6a's relocation proof: NON-EMPTY **and** equal — `cmp` alone is satisfied by two nothings
+
+Measured on real fixtures, not imagined:
+
+```
+two files whose regions are both empty (the relocation never happened)
+  --body rc: orig=0  moved=0        bytes: orig=0  moved=0
+  cmp: IDENTICAL  ->  the relocation gate PASSES
+```
+
+A `cmp`-only check **certifies a relocation that never occurred**, and then unlocks the irreversible step. Step 6a now requires the moved body to be **non-empty AND equal**. Same shape as a control that cannot fail in the environment it runs in: a check whose success state is indistinguishable from its no-op state.
+
+**⚠ A2 and set (c) cover DISJOINT populations**, and this is now written into the skill because it is the section's most likely misreading. A consumer's live run:
+
+```
+set (c), disk-scoped : 11 files    manifest-scoped : 10
+delta                : .claude/agents/game-tester.md   <- the irreplaceable file
+                       verdict: NOMARKERS
+```
+
+**A2 protects region-bearing files; the irreplaceable file is not one.** A hand-authored project-owned agent has no region, so it classifies `NOMARKERS`, reaches the ordinary flow, and 6a offers it for deletion withholding nothing. That is *correct* — there is no region to protect — but the natural reading *"A2 protects my customisations"* is **false for exactly the file nobody can regenerate**. Its only defences are set (c)'s disk-scoped backup and step 6's never-delete-a-project-owned-file rule. Two guards, two disjoint populations, and a reader will assume they overlap.
+
+**Reported rather than implemented, with the measurement:** two further refinements were requested and are **already resolved by the marker-shape fix**, so no code changed. Reversed-order prose (END named before BEGIN — from a real `PROJECT_STATE.md`) now classifies `NOMARKERS`, because the shape matcher is order-independent: neither mention carries the `<!--` opener, so neither is a marker at all. A fixture row was added anyway, since a *naive* repair ("find BEGIN, then find END") reads correctly and would fail it. And `EMPTY` is no longer two states — the "`EMPTY` with a 0-byte body means no region at all" case was a symptom of the substring bug. Measured after the fix: prose is `NOMARKERS`, while `EMPTY` with 0 bytes and `EMPTY` with the 73-byte placeholder are both genuine regions holding nothing of the user's — one state, correctly deletable. Splitting the verdict would add a distinction with no consequence.
+
+### Downstream migration
+
+**⚠ THIS IS A MAJOR VERSION. Consumers will meet `TEMPLATE_DELETED` for the first time in this programme — up to 21 files, and `TEMPLATE_DELETED × region-bearing` is the modal case, not an edge case.** Every agent file carries a PROJECT-CUSTOM region and is manifest-tracked. **Sync with v2.4.0's guards in place** (`region.sh` installed alongside `SKILL.md`; step 6's deletion precondition; step 2b's touched-directory backup). A copy that misses `region.sh` leaves check 28 referencing a file that is not installed.
+
+1. **Three `subagent_type`s are retired: `test-writer`, `requirements-engineer`, `doc-generator`.** Spawn one and it fails **at spawn time, loudly** — that is the recoverable direction and it is by design. Use `tester`, `architect` and `coder` respectively; each absorbed the retired agent's skill, so a spawn prompt's `## Required Skills` block must now list the survivor's fuller set. `hooks/require-skills-block.sh` enforces it.
+2. **Your keep-mine files will NOT be updated, and this is the one that bites.** `CLAUDE.md` and `CLAUDE.local.md` are keep-mine — a permanent deviation — so the sync never touches them. If either names a retired agent in a routing table or a tool-limitation list (the toolkit's own copies named all three in three separate places), **the sync will complete clean and the next spawn of a consolidated-away agent will fail against instructions your project still carries.** Grep your own keep-mine markdown for the three names before syncing; step 6's reference sweep reports `hooks/` paths, and now agent-name reference SHAPES, but nothing can edit a keep-mine file for you.
+3. **`AGENT_TEAM.md` shrinks by 470 lines.** It is template-owned, so the sync replaces it — but a ~46 % deletion of the template part is far outside anything the region machinery had been exercised against before check 31. If you carry real PROJECT-CUSTOM content in it, verify with `bash region.sh --body AGENT_TEAM.md` before and after and byte-compare.
+4. **`enforce-delegation.sh`'s DENY message changed text.** If you match on it, update: it now reads `Spawn coder (code and docs), ops (env/files), tester (verification).`
+5. **Re-check any earlier "no PROJECT-CUSTOM content here" all-clear** with the shipped `region.sh` — the v2.4.0 corollary still stands, and it reaches backwards.
+6. **⚠ RE-RUN ANY `region.sh` CLASSIFICATION YOU TOOK FROM v2.4.0.** Its matcher was a bare substring, so a file that merely *writes about* the markers was reported `UNCLOSED` or — worse — `EMPTY`. If you cleared a deletion on a v2.4.0 `EMPTY` verdict, that verdict may have been describing prose. Re-check with v3.0.0's `region.sh`. This is the v2.4.0 corollary a second time: *the answer may have been describing your extractor, not your repo.*
+7. **`require-skills-block.sh` starts enforcing for the first time.** It had never fired — it read spawn fields at the top level while the harness nests them under `tool_input`. After this sync, a spawn of a **bound** `subagent_type` (`coder` and any `<lang>-coder`, `tester`, `architect`) **without** a `## Required Skills` block will be **blocked with exit 2** where it previously launched. That is the hook finally doing its job, not a regression — but if your committed plans or spawn scripts omit the block, they will start failing. Add the block, or add the type to the explicit exempt arm (which is a decision, and check 29 exists to keep it visible).
+8. **What did NOT change:** the `settings.json` matcher regexes, the git gates, `run-gate.sh`, `gate-before-merge.sh`, `hooks/lib/json.sh` and `hooks/lib/git-cmd.sh` are all untouched. If your sync reports a conflict on any of those, it is your own deviation, not this release.
+
+**Owed, and not done in this release:** `scripts/verify-user-level-drift.sh` will report the three deleted `user-level-reference/agents/*.md` as drift until the live `~/.claude/` tree is re-copied. That propagation is a controller action; the release is not done until the drift probe reports 0.
+
 ## v2.4.0 — 2026-09-02
 
 **Phase A of the subtraction programme. NOTHING IS DELETED IN THIS RELEASE.** Every item is a guard on a destruction path, and they ship a release *ahead* of the deletions they exist to make safe — **removals fail CLOSED where additions fail open**, so the destruction paths are guarded before anything is removed. Phase B (the `AGENT_TEAM.md` shrink, the agent consolidation, the hook demotions) becomes v3.0.0 after its own measurement round. The split is deliberate rather than a shortfall: A's guards are what make B's deletions safe, so they belong in the earlier release regardless of whether B follows.

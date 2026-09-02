@@ -37,7 +37,7 @@ All templates pre-permit the full set of MCP servers in `settings.json`. Servers
 - **User-level** (`~/.claude.json`, top-level `mcpServers` — or just `claude mcp add --scope user`): universal tools loaded in every session.
 - **Project-level** (`<project-root>/.mcp.json`): language/framework tools loaded only in repos that register them. Generated per-variant by `setup-project.{sh,ps1}` — see `docs/templates.md` for the matrix.
 
-> These are the only two locations Claude Code reads. `~/.claude/.mcp.json` is not a thing, `<project>/.claude/.mcp.json` is not read either, and an `mcpServers` key inside `settings.json` is silently ignored. Projects set up before 2026-07-29 have the file in the wrong place — see `docs/architecture.md` → MCP Layering for the one-line migration.
+> These are the only two locations Claude Code reads. `~/.claude/.mcp.json` is not a thing, `<project>/.claude/.mcp.json` is not read either, and an `mcpServers` key inside `settings.json` is silently ignored. Projects set up before 2026-07-29 have the file in the wrong place — see `docs/architecture.md` → *MCP Layering* for the one-line migration.
 
 If a server is not registered in the active scope, the permission is a harmless no-op.
 
