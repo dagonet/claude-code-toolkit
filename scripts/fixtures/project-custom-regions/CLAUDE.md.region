@@ -1,0 +1,16 @@
+## Open Brain hard rules (REGION-SENTINEL-CLAUDE-4b21)
+
+**Gate coverage is narrower than it looks.** A green `bash hooks/run-gate.sh` proves the
+migration dollar-quote lint, per-component `tsc --noEmit`, and vitest. It does NOT prove
+formatting or linting of `web/`, and CI runs neither prettier nor eslint at all. Do not
+cite a green gate as evidence that lint passed.
+
+**Verify the tool ran, not just that it exited 0.** `run-gate.sh` invokes prettier and
+eslint through `npx`, which silently fetches the latest version from the registry when
+the package is absent from `node_modules`. The tell is
+`npm warn exec ... not found and will be installed` — its absence is what proves the
+declared local version ran.
+
+**Worktrees live at `.claude/worktrees/`,** inside the repo, and are excluded from
+vitest, prettier, eslint and git. Never re-point `**Worktree base**:` outside the repo
+without moving those four exclusions with it.

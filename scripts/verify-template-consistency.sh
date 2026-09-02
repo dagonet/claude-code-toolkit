@@ -1868,6 +1868,55 @@ else
 
   rm -rf "$r28"
 
+  # Arm 5b: THE REAL PLANTED FIXTURE. Arms 1–4 use a one-line synthetic region,
+  # which is enough to catch the naive regex and the dot-directory walk but NOT
+  # enough to catch a TRUNCATING preserve — a 40-byte region and a 900-byte one
+  # are not equally good at that. scripts/fixtures/project-custom-regions/
+  # holds three regions of real consumer project knowledge (767 B, 965 B,
+  # 929 B), the only known source of real region content anywhere: a census of
+  # three consumer repos found ZERO, so a guard validated on found content
+  # cannot fail and proves nothing.
+  #
+  # Planted into a COPY of templates/general, against the shipped placeholder
+  # block, with both marker lines left verbatim — the BEGIN marker's em-dash
+  # and trailing prose are exactly what a naive `BEGIN\s*-->` extractor chokes
+  # on, so normalising them would destroy the property under test.
+  r28f="scripts/fixtures/project-custom-regions"
+  if [ ! -f "$r28f/plant.sh" ]; then
+    ko "$r28f/plant.sh missing — the region guards have no planted fixture, and found content cannot fail them"
+  else
+    r28p=$(mktemp -d)
+    cp -r templates/general/. "$r28p/" 2>/dev/null
+    if bash "$r28f/plant.sh" "$r28p" >/dev/null 2>&1; then
+      r28pscan=$(bash "$REGION_SH" --scan "$r28p" 2>/dev/null)
+      r28pc=$(printf '%s\n' "$r28pscan" | grep -c '^CONTENT	')
+      if [ "$r28pc" = "3" ]; then
+        ok "region extractor: all 3 planted real regions are reported CONTENT"
+      else
+        ko "region extractor: $r28pc of 3 planted real regions reported CONTENT — the false clean that destroys regions"
+      fi
+      # The other eight regions in the same tree are still placeholder-only and
+      # must stay EMPTY. A guard that fires on all eleven gets switched off.
+      r28pe=$(printf '%s\n' "$r28pscan" | grep -c '^EMPTY	')
+      if [ "$r28pe" -ge 1 ]; then
+        ok "region extractor: $r28pe untouched regions in the same tree remain EMPTY"
+      else
+        ko "region extractor: planting turned every region in the tree into CONTENT"
+      fi
+      # TRUNCATING-PRESERVE ARM: --body must return the planted region BYTE FOR
+      # BYTE. This is the arm the one-line synthetic fixture cannot provide.
+      if bash "$REGION_SH" --body "$r28p/.claude/agents/coder.md" 2>/dev/null \
+           | cmp -s - "$r28f/coder.md.region"; then
+        ok "region extractor: --body returns the $(wc -c < "$r28f/coder.md.region" | tr -d ' ') B planted region byte-for-byte"
+      else
+        ko "region extractor: --body did not round-trip the planted region byte-for-byte — a truncating preserve would go unnoticed"
+      fi
+    else
+      ko "$r28f/plant.sh failed against a copy of templates/general — the placeholder block it keys on has changed"
+    fi
+    rm -rf "$r28p"
+  fi
+
   # Arm 6: the extractor must be WIRED INTO the instructions. An extractor no
   # step names is prose with extra steps — the failure A1 exists to prevent.
   if grep -q 'region\.sh' user-level-reference/skills/sync-template/SKILL.md; then

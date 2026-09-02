@@ -1,0 +1,11 @@
+## Open Brain coder rules (REGION-SENTINEL-CODER-7f3a)
+
+- `hooks/run-gate.sh` is project-owned and registered `keep-mine`. Never replace it
+  with the template's version: ours IS the gate (migration dollar-quote lint for #29,
+  per-component tsc/vitest), theirs reads `**Gate**:` and shells out to it.
+- Migration SQL uses `$$` dollar-quoting exclusively. Tagged quoting (`$func$`) is not
+  parsed by the gate's lint — do not introduce it.
+- Edge functions under `supabase/functions/` are Deno, not Node. Do not add Node-only
+  imports there; they are formatted by prettier but not type-checked by the CI matrix.
+- `web/` is formatted but NOT linted (the gate's eslint loop covers `cli` and
+  `mcp-server` only). Do not assume a lint rule protects code you add there.
