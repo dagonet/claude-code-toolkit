@@ -21,16 +21,29 @@
 #   git merge --abort / --continue / --quit   ALLOWED, always. They land nothing
 #       new, and a conflicted merge on a protected branch is exactly the state
 #       this gate exists to worry about — you must be able to get out of it.
-#   git merge --ff-only <upstream>            ALLOWED when it is a pure CATCH-UP:
-#       the ref named is this branch's own configured upstream and HEAD is
-#       already an ancestor of it. Catching up lands nothing the upstream has
-#       not already accepted. --no-ff and --squash are gated even then, because
-#       both produce a result the upstream does not have.
-#   git merge <anything else>                 GATED.
-#   git pull --ff-only   (no remote, no refspec)   ALLOWED — THE SAFE CATCH-UP
-#       FORM, and the one to reach for. Refspec-free means the target is the
-#       configured upstream by construction; --ff-only means git itself refuses
-#       if the result would not be a fast-forward.
+#   git merge <anything else>                 GATED, unconditionally.
+#       v3.0.2 DELETED the catch-up exemption that allowed
+#       `git merge --ff-only <this branch's upstream>` when HEAD was already an
+#       ancestor of it. It resolved the ref by NAME and trusted its VALUE, and
+#       `git update-ref refs/remotes/origin/main <sha>` is ungated — measured
+#       landing never-gated content on a protected branch while every
+#       configuration read came back honest. Proving the ref FRESH does not
+#       work either: a reflog message is forgeable with `update-ref -m`, and a
+#       fresh clone has no `.git/logs/refs/remotes/origin/main` at all, so a
+#       freshness check fails closed on every new clone.
+#       THE CATCH-UP ROUTE IS NOW `git pull --ff-only`, which is safe here
+#       BECAUSE IT FETCHES FIRST: the fetch overwrites a poisoned tracking ref
+#       before the merge reads it (measured).
+#   git pull --ff-only   (no remote, no refspec)   ALLOWED only when this
+#       branch's own config names it: `branch.<cur>.remote` is set AND
+#       `branch.<cur>.merge` is `refs/heads/<cur>`. v3.0.2: "targets the
+#       configured upstream by construction" was false — `branch.<cur>.merge`
+#       is re-pointable, re-pointing is ungated, and `git pull --ff-only` then
+#       landed a whole foreign branch on a protected branch.
+#   git pull --ff-only <remote> <branch>      ALLOWED when <branch> is this
+#       branch's name and neither operand carries a ':'. Strictly more provably
+#       safe than the refspec-free form — it NAMES what it lands — and gated
+#       until v3.0.2 purely because the form looked refspec-bearing.
 #   git pull <any other form>                 GATED, including a bare `git pull`
 #       on a branch that would fast-forward cleanly. That is deliberate: the
 #       remedy is one word, and it is the safer command.
@@ -46,6 +59,16 @@
 #       fine too, because the target is not protected. Run the checkout and the
 #       operation as separate calls, or name the destination — `git push origin
 #       <branch>` keys on its argument and never consults the current branch.
+#
+#   AND (v3.0.2): the same refusal when an earlier clause MOVES WHAT THE GATED
+#       CLAUSE RESOLVES TO — `git branch -u`, `git config branch.*/remote.*`,
+#       `git update-ref`, `git fetch` with a destination refspec, `git remote
+#       set-url|remove|add` — or when the gated git invocation ITSELF carries
+#       inline configuration (`-c`, `--config-env`, a `GIT_CONFIG_*` env
+#       prefix). The last one needs no chaining at all: a single
+#       `git -c remote.evil.url=… -c branch.main.remote=evil pull --ff-only`
+#       was measured landing foreign content while `branch.main.merge` on disk
+#       still read `refs/heads/main`.
 #
 # THE STATED LIMIT: every decision above is taken BEFORE any fetch, so the
 # CONTENT of a remote ref is unknown to this hook — it can only read the form of
@@ -110,7 +133,9 @@ A6_SEG=""
 A6_ARGS=""
 A6_MOVE_SEG=""
 A6_MOVE_TARGET=""
+A6_MUT_SEG=""
 moved=0
+mutated=0
 
 # --- v3.0.1 (A6 fix) argument parsing, deliberately LOCAL to this hook -------
 #
@@ -245,47 +270,152 @@ a6_upstream_facts() {
   A6_HEADSHA=$(git -C "$1" rev-parse --verify --quiet HEAD 2>/dev/null)
 }
 
-# a6_merge_catchup <repo> <merge-args> -- true when the merge merely makes this
-# protected branch match ITS OWN CONFIGURED UPSTREAM.
+# v3.0.2 — A6.2's catch-up exemption is GONE. It lived here, and it allowed
+# `git merge --ff-only <this branch's configured upstream>` on a protected
+# branch when HEAD was already an ancestor of that ref. Measured end-to-end:
 #
-# THE RULE IS PROVENANCE, NOT ANCESTRY, and the difference is not academic. The
-# rule this replaced — "allow when the target is already an ancestor of HEAD" —
-# blocks the single most common protected-branch operation there is: after a PR
-# merge, local `main` is one commit BEHIND `origin/main`, so the target is not
-# an ancestor of HEAD and a routine catch-up would demand a multi-minute gate
-# run for content that already passed the PR gate, CI and this gate. That is the
-# highest-frequency false positive available, and it lands when the consumer is
-# most task-focused.
+#   git update-ref refs/remotes/origin/main <rogue sha>   verdict 0  UNGATED
+#   git merge --ff-only origin/main                       verdict 0  ALLOWED
+#     -> never-gated content landed on the protected branch, and every
+#        configuration read (branch.main.merge, main@{upstream}) stayed honest.
 #
-# "Foreign to local HEAD" and "not yet accepted upstream" are different facts.
-# A6 only cares about the second: catching up to your own upstream lands nothing
-# the upstream has not already accepted.
+# THE EXEMPTION RESOLVED A REF BY NAME AND TRUSTED ITS VALUE. A name is not a
+# value. And proving the value FRESH is not available to this hook: a reflog
+# entry is forgeable (`git update-ref -m 'fetch origin: fast-forward'`), the log
+# is a file that can be removed, and a FRESH CLONE HAS NO
+# `.git/logs/refs/remotes/origin/main` at all — so a freshness check would fail
+# closed on every new clone. Do not reintroduce either shape.
 #
-# --no-ff and --squash are refused even when the target IS the upstream: both
-# produce a result the upstream does not have, which is exactly what the rule
-# excludes. Ancestry is measured directly rather than by trusting --ff-only,
-# because the flag states an intent while merge-base states the fact.
-a6_merge_catchup() {
-  a6cu_repo=$1; a6cu_args=$2
-  A6_TARGET=""; A6_TARGETSHA=""; A6_ANCESTOR_RC=""
-  a6_upstream_facts "$a6cu_repo"
-  a6_has_flag "$a6cu_args" 'no-ff|squash' && return 1
-  [ "$(a6_nonflag_count "$a6cu_args")" -eq 1 ] || return 1
-  A6_TARGET=$(a6_nonflag "$a6cu_args" | head -1)
-  [ -n "$A6_UPSHA" ] || return 1
-  A6_TARGETSHA=$(git -C "$a6cu_repo" rev-parse --verify --quiet "$A6_TARGET^{commit}" 2>/dev/null)
-  [ -n "$A6_TARGETSHA" ] || return 1
-  [ "$A6_TARGETSHA" = "$A6_UPSHA" ] || return 1
-  git -C "$a6cu_repo" merge-base --is-ancestor HEAD "$A6_UPSHA" 2>/dev/null
-  A6_ANCESTOR_RC=$?
-  # BRANCH ON THE EXACT CODE. `--is-ancestor` returns 1 for "not an ancestor"
-  # and 128 for "could not resolve"; a caller testing truthiness collapses the
-  # two, and "could not resolve" would read as a definite answer.
-  case "$A6_ANCESTOR_RC" in
-    0) return 0 ;;   # HEAD is contained in the upstream -> pure fast-forward to it
-    1) return 1 ;;   # diverged -> the result is a merge commit the upstream lacks
-    *) return 1 ;;   # 128 and anything else: not provable catch-up, so gate
+# No capability is lost: `git pull --ff-only` catches a protected branch up and
+# SELF-HEALS, because the pull fetches before it merges — measured restoring a
+# poisoned `origin/main` before reading it. That is now what the DENY message
+# recommends.
+
+# a6_pull_catchup <repo> <pull-args> -- true for the two pull forms that are
+# provably safe on a protected branch BEFORE any fetch. Sets A6_PULL_WHY for the
+# block message.
+#
+# v3.0.2, finding 54. The form this replaced allowed any refspec-free
+# `--ff-only` pull, on the stated grounds that it "targets the configured
+# upstream by construction". It does not: `branch.<cur>.merge` is re-pointable,
+# and re-pointing is ungated on both gates.
+#
+#   git branch -u origin/rogue main    verdict 0   (ungated)
+#   git pull --ff-only                 verdict 0   -> HEAD MOVED, rogue landed
+#
+# So compare NAMES — a local config read, offline, sound before the fetch:
+#
+#   refspec-free `--ff-only`   allowed only when `branch.<cur>.remote` is
+#       non-empty AND `branch.<cur>.merge` is exactly `refs/heads/<cur>`.
+#       Missing or mismatched is cannot-determine, so it gates.
+#   `--ff-only <remote> <branch>`   allowed when there are exactly two operands,
+#       neither carries a ':', and <branch> is the current branch. This form was
+#       GATED until v3.0.2 and is strictly more provably safe than the one that
+#       was allowed — it NAMES what it lands. A consumer reported the false
+#       positive; the report's harmless half turned out to be the sound form.
+#
+# Operands are counted through a6_nonflag, which strips redirections first, so
+# `git pull --ff-only origin main 2>&1` still reads as two operands and not
+# three. That is the row where this rule and the v3.0.2 redirect strip meet.
+#
+# `config --get` is used, not `--get-all`: a multi-valued key makes it exit
+# non-zero with no value, which lands in the mismatch arm and gates. That is the
+# right answer — a branch with two merge refs is not one this can prove.
+a6_pull_catchup() {
+  a6pc_repo=$1; a6pc_args=$2
+  A6_PULL_WHY=""
+  a6_has_flag "$a6pc_args" 'ff-only' || { A6_PULL_WHY="no --ff-only"; return 1; }
+  a6pc_cur=$(gc_current_branch "$a6pc_repo")
+  [ -n "$a6pc_cur" ] || { A6_PULL_WHY="current branch unreadable"; return 1; }
+  a6pc_n=$(a6_nonflag_count "$a6pc_args")
+  case "$a6pc_n" in
+    0)
+      a6pc_rem=$(git -C "$a6pc_repo" config --get "branch.$a6pc_cur.remote" 2>/dev/null)
+      a6pc_mrg=$(git -C "$a6pc_repo" config --get "branch.$a6pc_cur.merge" 2>/dev/null)
+      A6_PULL_WHY="branch.$a6pc_cur.remote=${a6pc_rem:-<unset>} branch.$a6pc_cur.merge=${a6pc_mrg:-<unset>} (want refs/heads/$a6pc_cur)"
+      [ -n "$a6pc_rem" ] || return 1
+      [ "$a6pc_mrg" = "refs/heads/$a6pc_cur" ] || return 1
+      return 0
+      ;;
+    2)
+      a6pc_dst=$(a6_nonflag "$a6pc_args" | sed -n 2p)
+      A6_PULL_WHY="operands: $(a6_nonflag "$a6pc_args" | tr '\n' ' ')(want <remote> $a6pc_cur, no ':')"
+      printf '%s\n' "$(a6_nonflag "$a6pc_args")" | grep -q ':' && return 1
+      [ "$a6pc_dst" = "$a6pc_cur" ] || return 1
+      return 0
+      ;;
+    *)
+      A6_PULL_WHY="$a6pc_n operand(s): $(a6_nonflag "$a6pc_args" | tr '\n' ' ')(want 0, or <remote> $a6pc_cur)"
+      return 1
+      ;;
   esac
+}
+
+# a6_mutates_resolution <segment> -- an EARLIER clause that moves what a later
+# gated clause resolves to.
+#
+# KNOWN-INCOMPLETE BLOCKLIST, deliberately, and the incompleteness is the point
+# of writing it down. Four resolution inputs (`branch.*.remote`,
+# `branch.*.merge`, `remote.*.url`, `remote.*.fetch`) times at least four
+# mutation channels (a git verb, a direct ref write, a `.git/config` file edit,
+# env injection) — and WORSE, the same channel behaves differently per key:
+# `-c branch.main.merge=…` fails because that key is MULTI-VALUED so `-c` adds
+# rather than replaces, while `-c branch.main.remote=…` replaces cleanly and
+# lands foreign content. The cell matters, not the row or the column, so no
+# enumeration of keys and channels is sufficient.
+#
+# The sound shape is the INVERSE — allow a multi-clause call only when every
+# preceding clause is on a small proven-inert allowlist (`cd`, `echo`, `printf`,
+# `ls`). It is deliberately NOT in this release: it would gate
+# `git checkout feature/z && git merge feature/y`, which v3.0.1 shipped on
+# purpose and a consumer measured working. Queued, not snuck in.
+a6_mutates_resolution() {
+  a6mr=$1
+  # `git branch -u` / `--set-upstream-to` (a6_has_flag is long-flags-only).
+  if gc_matches_subcommand "$a6mr" "branch"; then
+    printf '%s\n' "$a6mr" | grep -qE '(^|[[:space:]])(-u|--set-upstream-to)([[:space:]]|=|$)' && return 0
+  fi
+  # `git config <anything> branch.* | remote.*` — any subcommand form, any scope.
+  if gc_matches_subcommand "$a6mr" "config"; then
+    printf '%s\n' "$a6mr" | grep -qE '(^|[[:space:]])(branch|remote)\.' && return 0
+  fi
+  gc_matches_subcommand "$a6mr" "update-ref" && return 0
+  # `git fetch` with an explicit DESTINATION refspec (an operand carrying ':').
+  if gc_matches_subcommand "$a6mr" "fetch"; then
+    a6_nonflag "$(a6_args "$a6mr" "fetch")" | grep -q ':' && return 0
+  fi
+  if gc_matches_subcommand "$a6mr" "remote"; then
+    printf '%s\n' "$a6mr" | grep -qE '(^|[[:space:]])(set-url|remove|rm|add)([[:space:]]|$)' && return 0
+  fi
+  return 1
+}
+
+# a6_inline_config <segment> <subcommand> -- the gated invocation ITSELF carries
+# configuration, so no preceding clause is needed to re-point it.
+#
+# BROAD BY DESIGN: any `-c` or `--config-env` before the subcommand, and any
+# `GIT_CONFIG_*` env prefix on the clause — not an enumeration of keys, because
+# a new key cannot then silently join the list. Measured, ONE clause:
+#
+#   git -c remote.evil.url=<other> -c remote.evil.fetch=+refs/heads/*:… \
+#       -c branch.main.remote=evil pull --ff-only
+#     -> rc=0, fast-forward, foreign content on main, while
+#        branch.main.merge on disk still read refs/heads/main
+#
+# The name comparison in a6_pull_catchup PASSES there — the merge ref is
+# honest — and the content came from another remote entirely.
+#
+# THE HONEST COST: a benign `git -c core.pager=cat merge …` on a protected
+# branch is now refused. That is the correct direction for a fail-closed gate,
+# and the DENY message says to re-run without the `-c`.
+#
+# The `-c` search is restricted to the text BETWEEN `git` and the subcommand:
+# gc_segments strips quotes, so a segment-wide grep would fire on
+# `git merge -m "note -c x" feature/x` and refuse a message body.
+a6_inline_config() {
+  printf '%s\n' "$1" | grep -qE '(^|[[:space:]])GIT_CONFIG_[A-Z_]+=' && return 0
+  a6ic=$(printf '%s\n' "$1" | sed -n "s/.*[[:space:]]*git\\([^;]*\\)[[:space:]]$2\\([[:space:]]\\|\$\\).*/\\1/p" | head -1)
+  printf '%s\n' "$a6ic" | grep -qE '(^|[[:space:]])(-c|--config-env)([[:space:]]|=)'
 }
 
 # v2.2.6 round 2 -- THE 14th FAIL-OPEN, third instance. Checked BEFORE the tool
@@ -353,9 +483,23 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   # premise is not load-bearing. Where a decision can key on the payload's
   # arguments it already does; this flag covers what is left.
   moved=0
+  mutated=0
 
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
+
+    # v3.0.2 — the same ordering rule, one premise further out. v3.0.1 keyed on
+    # a preceding CHECKOUT because that moves the branch a gated clause lands
+    # on; a preceding `git branch -u`, `git config branch.*`, `git update-ref`
+    # or `git remote set-url` moves what a gated clause RESOLVES TO, which is
+    # the same defect with a different mutable premise. Set here, read by the
+    # merge/pull/push arms below. Never reset: a mutation cannot be undone by a
+    # later clause the way a checkout can be.
+    if a6_mutates_resolution "$seg"; then
+      mutated=1
+      A6_MUT_SEG=$seg
+      continue
+    fi
 
     cdt=$(gc_cd_target "$seg")
     if [ -n "$cdt" ]; then
@@ -403,13 +547,13 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
         break
       fi
       if gc_on_main "$repo"; then
-        # v3.0.1 item 2: a pure catch-up to this branch's own upstream lands
-        # nothing the upstream has not already accepted. See a6_merge_catchup.
-        if a6_merge_catchup "$repo" "$margs"; then
-          continue
-        fi
+        # v3.0.2: NO exemption left here but the three merge-state subcommands
+        # above. The catch-up exemption that used to sit on this line resolved a
+        # ref by name and trusted its value; see the comment on a6_pull_catchup's
+        # neighbour block. A merge on a protected branch is gated.
         is_merge=1
         A6_KIND=merge
+        A6_TARGET=$(a6_nonflag "$margs" | head -1)
         A6_SEG=$seg
         A6_ARGS=$margs
         CWD="$repo"
@@ -447,22 +591,44 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     if gc_matches_subcommand "$seg" "pull"; then
       repo=$(gc_repo_for "$seg" "$base")
       pargs=$(a6_args "$seg" "pull")
-      # The refspec-free --ff-only form is allowed on ANY branch, so a preceding
-      # branch change does not change its verdict — it stays out of the refusal.
-      if [ "$(a6_nonflag_count "$pargs")" -eq 0 ] && a6_has_flag "$pargs" 'ff-only'; then
-        continue
-      fi
-      if [ "$moved" != 0 ]; then
-        is_merge=1
-        A6_KIND=moved
+      # THE PROTECTED-BRANCH DECISION COMES FIRST (v3.0.2). The name comparison
+      # in a6_pull_catchup reads THIS repo's config for THIS branch, so it is
+      # only meaningful when the branch this hook can read is the branch the
+      # pull lands on — i.e. not after a checkout, and only when protected.
+      # Applying it to the branch-independent exemption below would gate
+      # `git checkout main && git pull --ff-only` from a worktree whose feature
+      # branch has no upstream, which v3.0.1 shipped as allowed on purpose.
+      # NAMED RESIDUAL: a checkout onto a protected branch whose upstream config
+      # is poisoned is still allowed through that exemption. Queued, not fixed
+      # here — closing it needs the inverse (allowlist) shape.
+      if [ "$moved" = 0 ] && gc_on_main "$repo"; then
+        if a6_inline_config "$seg" "pull"; then
+          is_merge=1
+          A6_KIND=config
+        elif [ "$mutated" != 0 ]; then
+          is_merge=1
+          A6_KIND=mutated
+        elif a6_pull_catchup "$repo" "$pargs"; then
+          continue
+        else
+          is_merge=1
+          A6_KIND=pull
+        fi
         A6_SEG=$seg
         A6_ARGS=$pargs
         CWD="$repo"
         break
       fi
-      if gc_on_main "$repo"; then
+      # Not on a protected branch as this hook reads it. The refspec-free
+      # --ff-only form is allowed on ANY branch, so a preceding branch change
+      # does not change its verdict — it stays out of the refusal.
+      if [ "$(a6_nonflag_count "$pargs")" -eq 0 ] && a6_has_flag "$pargs" 'ff-only' \
+         && [ "$mutated" = 0 ] && ! a6_inline_config "$seg" "pull"; then
+        continue
+      fi
+      if [ "$moved" != 0 ]; then
         is_merge=1
-        A6_KIND=pull
+        A6_KIND=moved
         A6_SEG=$seg
         A6_ARGS=$pargs
         CWD="$repo"
@@ -481,6 +647,20 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # compensating at the call site keeps that lib — and its ~90-minute
       # three-parser matrix — out of this fix.
       args=$(a6_strip_redir "$(gc_push_args "$seg")")
+      # v3.0.2: a push FROM a protected branch whose remote was just re-pointed
+      # (`git remote set-url`, `-c remote.origin.url=…`) sends this branch's
+      # content somewhere this hook cannot see. Scoped to a protected branch on
+      # purpose: gating every `git remote set-url && git push` on a feature
+      # branch would be an over-correction on ordinary work.
+      if gc_on_main "$repo" && { a6_inline_config "$seg" "push" || [ "$mutated" != 0 ]; }; then
+        is_merge=1
+        A6_KIND=config
+        [ "$mutated" != 0 ] && ! a6_inline_config "$seg" "push" && A6_KIND=mutated
+        A6_SEG=$seg
+        A6_ARGS=$args
+        CWD="$repo"
+        break
+      fi
       if gc_targets_main_ref "$args" "$repo"; then
         is_merge=1
         A6_KIND=push
@@ -611,16 +791,23 @@ if gc_on_main "$CWD"; then
     echo "  HEAD:            ${A6_HEADSHA:-<unresolvable>}"
     case "$A6_KIND" in
       merge)
-        echo "  discriminator:   target ref: ${A6_TARGET:-<none named, or more than one>}${A6_TARGETSHA:+ -> $A6_TARGETSHA}"
+        echo "  discriminator:   target ref: ${A6_TARGET:-<none named, or more than one>}"
         echo "                   --ff-only: $(a6_has_flag "$A6_ARGS" 'ff-only' && echo present || echo absent)   --no-ff/--squash: $(a6_has_flag "$A6_ARGS" 'no-ff|squash' && echo present || echo absent)"
-        echo "                   HEAD already an ancestor of the upstream: $(case "${A6_ANCESTOR_RC:-}" in 0) echo yes ;; 1) echo no ;; 128) echo 'could not resolve (rc=128)' ;; *) echo 'not measured — an earlier condition already ruled out a catch-up' ;; esac)"
-        echo "                   verdict: not a catch-up to this branch's own upstream."
+        echo "                   verdict: a merge on a protected branch is gated unconditionally as of v3.0.2. The catch-up exemption was deleted: it resolved the target by NAME and trusted its VALUE, and 'git update-ref refs/remotes/origin/main <sha>' is ungated — measured landing never-gated content here with every config read honest."
         ;;
       pull)
         echo "  discriminator:   refspec/remote named: $([ "$(a6_nonflag_count "$A6_ARGS")" -eq 0 ] && echo absent || echo "present ($(a6_nonflag "$A6_ARGS" | tr '\n' ' '))")"
         echo "                   --ff-only: $(a6_has_flag "$A6_ARGS" 'ff-only' && echo present || echo absent)"
-        echo "                   HEAD already equals the upstream: $([ -n "$A6_UPSHA" ] && { [ "$A6_UPSHA" = "$A6_HEADSHA" ] && echo yes || echo no; } || echo 'unknown — no upstream configured')"
-        echo "                   verdict: not the one pull form that cannot land foreign content."
+        echo "                   name comparison: ${A6_PULL_WHY:-<not reached>}"
+        echo "                   verdict: not one of the two pull forms whose target can be proved by NAME before the fetch."
+        ;;
+      config)
+        echo "  discriminator:   this git invocation carries inline configuration (-c, --config-env, or a GIT_CONFIG_* env prefix)."
+        echo "                   verdict: inline config can re-point remote.*.url / branch.*.remote for this one command, so what it resolves to is not what the repository's configuration says. Measured landing foreign content on a protected branch in a SINGLE clause, while branch.<branch>.merge on disk stayed honest."
+        ;;
+      mutated)
+        echo "  discriminator:   earlier clause: ${A6_MUT_SEG}"
+        echo "                   verdict: that clause changes the configuration or refs THIS clause resolves through (upstream, remote URL, or a tracking ref), and this hook runs before any of it."
         ;;
       *)
         echo "  discriminator:   not applicable — this operation names no local ref that can be resolved before it runs."
@@ -629,11 +816,17 @@ if gc_on_main "$CWD"; then
     echo "Could not determine: this check runs before any fetch, so the CONTENT of a remote target ref — what a fetch would bring in — is unknown to it. It decides on the FORM of the command and on refs that already exist locally. If your case is one only the content would settle, the hook cannot see it."
     case "$A6_KIND" in
       merge)
-        echo "ALLOWED without a gate run: a pure catch-up — 'git merge --ff-only <upstream>' naming exactly this branch's configured upstream (${A6_UP:-none configured}) while HEAD is already an ancestor of it. Also always allowed: 'git merge --abort', '--continue', '--quit'."
+        echo "ALLOWED without a gate run: to CATCH THIS BRANCH UP to its upstream (${A6_UP:-none configured}), use 'git pull --ff-only' — not 'git merge --ff-only origin/main'. The pull FETCHES FIRST, so it re-reads the tracking ref from the remote instead of trusting whatever is in .git/refs; that is the whole difference, and it is why the merge form is no longer exempt. Also always allowed: 'git merge --abort', '--continue', '--quit'."
         echo "Otherwise: gate the content that is actually being merged — check out the merge target (the PR branch head), run 'bash hooks/run-gate.sh' there, and merge from that checkout."
         ;;
       pull)
-        echo "ALLOWED without a gate run: 'git pull --ff-only' with no remote and no refspec — the safe catch-up form. It targets the configured upstream by construction, and git itself refuses if the result would not be a fast-forward."
+        echo "ALLOWED without a gate run: 'git pull --ff-only' with no remote and no refspec, when this branch's own config names itself (branch.$A6_BRANCH.remote set, branch.$A6_BRANCH.merge = refs/heads/$A6_BRANCH); or 'git pull --ff-only <remote> $A6_BRANCH', which names the same thing explicitly. Either way git itself refuses if the result would not be a fast-forward."
+        ;;
+      config)
+        echo "ALLOWED without a gate run: re-run this command WITHOUT the '-c' / '--config-env' option (and with no GIT_CONFIG_* variable set on it). If the setting is one you genuinely need, put it in the repository's configuration in a separate call, where it is visible to a reader, and then run the operation."
+        ;;
+      mutated)
+        echo "ALLOWED without a gate run: run the two as SEPARATE calls — make the configuration or ref change first, then issue the pull/merge/push on its own, where this gate reads the configuration the operation will actually use."
         ;;
       *)
         echo "ALLOWED without a gate run: nothing on this path — a merge run from a protected branch lands the OTHER side's content, not this checkout's HEAD, so comparing the gate artifact to HEAD verifies nothing and re-gating here would only bless content that is already merged."
