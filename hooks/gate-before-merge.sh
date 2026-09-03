@@ -664,6 +664,49 @@ case "$GC_TOOL" in
   *) exit 0 ;;          # unknown tool, or a payload with no command key at all
 esac
 
+# INVARIANT — RE-CHECK IT BEFORE YOU ADD A GATED PATH (v3.0.2; penumbra).
+#
+# `git update-ref refs/remotes/origin/main <sha>` is UNGATED and stays so:
+# the ways to MOVE a ref are unbounded, the ways to LAND content are few, so
+# this gate protects the landing and never the ref. The property this file
+# guarantees is therefore NOT "tracking refs are trustworthy". It is:
+#
+#   every path that acts on a remote-tracking ref on a protected branch is
+#   gated UNCONDITIONALLY — its verdict never depends on the ref's VALUE.
+#
+# That is a property of the CONSUMER LIST, not of any one arm. The list is
+# A6_CONSUMER_LIST below; test-hooks.sh's A6.11 census asserts the case arms
+# in this file match it, and the A6.11 canary runs every form in FOUR ref
+# states. If you add a gated path that RESOLVES a tracking ref and branches on
+# what it finds — a new catch-up exemption, an "only if behind" shortcut, an
+# "already up to date, nothing to gate" fast path, anything keyed on
+# `rev-parse origin/X` — you have reopened ref poisoning, and NO EXISTING
+# FIXTURE GOES RED except the canary, and only if you add the form to the
+# list. The poisoning question is UNREACHABLE today, not ANSWERED.
+# Before merging such a path:
+#   (1) add its command form to A6_CONSUMER_LIST;
+#   (2) the A6.11 canary then runs it in all four values of the pairwise
+#       ancestry relation between HEAD and origin/main — BEHIND, EQUAL,
+#       AHEAD, DIVERGED — and asserts the verdict AND the discriminator are
+#       unchanged across all four. Four, not two: the v3.0.1 exemption keyed
+#       on "HEAD is an ancestor of upstream", which is true for BEHIND and
+#       EQUAL alike, and DIVERGED is the one people forget — "upstream is an
+#       ancestor of HEAD" is true for AHEAD and false for DIVERGED, exactly
+#       the shape a push-side shortcut would key on;
+#   (3) run delete-the-guard on that row: restore v3.0.1's exemption from git
+#       and confirm the row goes red.
+#
+# ACCEPTED RESIDUAL, precisely: the name comparison in a6_pull_catchup reads
+# branch.<cur>.merge ONLY. branch.<cur>.remote, remote.<r>.url and
+# remote.<r>.fetch are NOT read, so a config write to one of those in a
+# SEPARATE call, followed by a bare `git pull --ff-only`, passes with `merge`
+# honest. Those are the reads that would close it, if anyone ever wants to.
+#
+# ONE LINE, ON PURPOSE: test-hooks.sh reads this variable out of this file
+# with grep. Wrapping or splitting it makes the census silently report the
+# list as missing.
+A6_CONSUMER_LIST='merge:any-target pull:bare pull:named-refspec push:any'
+
 if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   is_merge=0
   base="$CWD"
@@ -703,6 +746,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   # explicitly — stay allowed after a branch change, because for them the moved
   # premise is not load-bearing. Where a decision can key on the payload's
   # arguments it already does; this flag covers what is left.
+
   moved=0
   mutated=0
 

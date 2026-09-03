@@ -807,6 +807,12 @@ writeartifact "$GATEFEAT" "$FEATSHA"
 # hook reached the A6 decision — the pairing is what keeps a want-0 row from
 # passing vacuously on the "no Gate command configured" exit above.
 #
+# v3.0.3 (queue 12b) — EVERY WANT-2 ROW ADDED FROM v3.0.3 ON IS PAIRED WITH A
+# `check_msg` ON THE ARM'S MARKER TEXT. A 2 from the wrong discriminator passes
+# without testing what it claims. It is the mechanical form of the same rule the
+# canary applies to the invariant (verdict AND discriminator), and it is what
+# would have made the six A3 rows self-report as one arm rather than six.
+#
 # `mkrepo` builds no remote, and half of A6 is about a branch's UPSTREAM, so
 # the provenance fixtures are real clones: origin advances, the clone fetches,
 # and the clone's `main` is then behind `origin/main` — the exact routine state
@@ -1149,6 +1155,171 @@ check "(A6.10) cp onto .git/config then pull gated"         "$H" 2 "$(mkjson Bas
 check_msg "(A6.10) mover refusal names the clause"   "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "earlier clause"
 check_msg "(A6.10) mover refusal names the category" "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "clause class: mover"
 check_msg "(A6.10) substitution refusal names why"   "$ROOT/$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")" "command substitution"
+
+# ---------------------------------------------------------------------------
+# v3.0.3 item 3b — THE INVARIANT AS A FIXTURE. For every form in the hook's own
+# A6_CONSUMER_LIST, the pairwise ancestry relation between HEAD and
+# refs/remotes/origin/main is poisoned into ALL FOUR of its values, and the
+# verdict AND the discriminator must be identical across all four.
+#
+# FOUR, not two. Every predicate anyone will build here — merge-base
+# --is-ancestor, rev-list --count, rev-parse equality, status -b ahead/behind —
+# is a function of which of BEHIND / EQUAL / AHEAD / DIVERGED holds. v3.0.1's
+# exemption keyed on "HEAD is an ancestor of upstream", true for BEHIND and
+# EQUAL alike, so a poison that preserves "behind" preserves the verdict;
+# v3.0.1's DENY text also printed an EQUALITY read a behind/ahead pair cannot
+# see; and DIVERGED is the one people forget — "upstream is an ancestor of
+# HEAD" is true for AHEAD and false for DIVERGED, exactly the shape a push-side
+# shortcut would key on. "Honest" is not a fifth state: it is whichever of the
+# four the fixture produced, and the first assertion below is WHICH.
+#
+# THE LIST IS READ FROM THE HOOK so a new gated path cannot fall outside the
+# loop; a form with no fixture command FAILS rather than being skipped.
+# ---------------------------------------------------------------------------
+A6LIST=$(grep -E "^A6_CONSUMER_LIST=" "$ROOT/hooks/gate-before-merge.sh" | sed "s/^[^=]*='//;s/'$//")
+if [ -n "$A6LIST" ]; then
+  printf 'PASS  %-42s (%s)\n' "(A6.11) A6_CONSUMER_LIST read from the hook" "$A6LIST"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.11) A6_CONSUMER_LIST not found in the hook"; fail=$((fail + 1))
+fi
+a6_form_cmd() { case "$1" in
+  merge:any-target)   echo 'git merge --ff-only origin/main' ;;
+  pull:bare)          echo 'git pull --ff-only' ;;
+  pull:named-refspec) echo 'git pull --ff-only origin main' ;;
+  push:any)           echo 'git push origin main' ;;
+  *) echo "UNKNOWN-FORM-$1" ;; esac; }
+A6CAN=$(a6clone a6canary)
+# The four ref states, each a real commit rather than a relabelling:
+#   EQUAL     origin/main = HEAD
+#   BEHIND    origin/main = a commit that has HEAD as an ancestor
+#   AHEAD     origin/main = HEAD~1
+#   DIVERGED  origin/main = a sibling of HEAD, off HEAD~1
+A6CAN_HEAD=$(git -C "$A6CAN" rev-parse HEAD)
+git -C "$A6CAN" checkout -q -b zz-canary-ahead >/dev/null 2>&1
+echo ahead > "$A6CAN/ahead.txt"; git -C "$A6CAN" add ahead.txt >/dev/null 2>&1
+git -C "$A6CAN" commit -q -m ahead >/dev/null 2>&1
+A6CAN_NEWER=$(git -C "$A6CAN" rev-parse HEAD)
+git -C "$A6CAN" checkout -q -B zz-canary-div "$A6CAN_HEAD~1" >/dev/null 2>&1
+echo div > "$A6CAN/div.txt"; git -C "$A6CAN" add div.txt >/dev/null 2>&1
+git -C "$A6CAN" commit -q -m div >/dev/null 2>&1
+A6CAN_DIV=$(git -C "$A6CAN" rev-parse HEAD)
+git -C "$A6CAN" checkout -q main >/dev/null 2>&1
+# ASSERT the fixture carries the property before measuring anything with it:
+# a fresh clone is EQUAL, and the three poisons are genuinely the other three.
+a6can_rel() { # <sha> -> BEHIND|EQUAL|AHEAD|DIVERGED, as seen from HEAD
+  if [ "$1" = "$A6CAN_HEAD" ]; then echo EQUAL; return; fi
+  if git -C "$A6CAN" merge-base --is-ancestor "$A6CAN_HEAD" "$1" 2>/dev/null; then echo BEHIND; return; fi
+  if git -C "$A6CAN" merge-base --is-ancestor "$1" "$A6CAN_HEAD" 2>/dev/null; then echo AHEAD; return; fi
+  echo DIVERGED
+}
+a6can_expect() { # <label> <sha> <want-relation>
+  a6cr=$(a6can_rel "$2")
+  if [ "$a6cr" = "$3" ]; then
+    printf 'PASS  %-42s (%s)\n' "$1" "$a6cr"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$3" "$a6cr"; fail=$((fail + 1))
+  fi
+}
+a6can_expect "(A6.11) fixture: honest state is EQUAL"  "$(git -C "$A6CAN" rev-parse refs/remotes/origin/main)" EQUAL
+a6can_expect "(A6.11) fixture: the BEHIND poison is behind"    "$A6CAN_NEWER"      BEHIND
+a6can_expect "(A6.11) fixture: the AHEAD poison is ahead"      "$A6CAN_HEAD~1"     AHEAD
+a6can_expect "(A6.11) fixture: the DIVERGED poison diverges"   "$A6CAN_DIV"        DIVERGED
+a6can_run() { # <sha to poison origin/main with> -> "rc=N|discriminator…|verdict…"
+  git -C "$A6CAN" update-ref refs/remotes/origin/main "$1" >/dev/null 2>&1
+  a6cout=$(printf '%s' "$(mkjson Bash "$a6ccmd" "$A6CAN")" | bash "$ROOT/$H" 2>&1; echo "rc=$?")
+  printf '%s' "$a6cout" | grep -E '^rc=|discriminator|verdict' | tr '\n' '|'
+}
+for a6cform in $A6LIST; do
+  a6ccmd=$(a6_form_cmd "$a6cform")
+  case "$a6ccmd" in
+    UNKNOWN-FORM-*)
+      printf 'FAIL  %-42s\n' "(A6.11) census: $a6cform has no fixture command"; fail=$((fail + 1)); continue ;;
+  esac
+  a6c_eq=$(a6can_run "$A6CAN_HEAD")
+  a6c_be=$(a6can_run "$A6CAN_NEWER")
+  a6c_ah=$(a6can_run "$(git -C "$A6CAN" rev-parse "$A6CAN_HEAD~1")")
+  a6c_dv=$(a6can_run "$A6CAN_DIV")
+  if [ "$a6c_eq" = "$a6c_be" ] && [ "$a6c_be" = "$a6c_ah" ] && [ "$a6c_ah" = "$a6c_dv" ]; then
+    printf 'PASS  %-42s (4 ref states)\n' "(A6.11) $a6cform: verdict+discriminator invariant"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (equal=%s behind=%s ahead=%s diverged=%s)\n' \
+      "(A6.11) $a6cform: verdict depends on the ref VALUE" "$a6c_eq" "$a6c_be" "$a6c_ah" "$a6c_dv"
+    fail=$((fail + 1))
+  fi
+done
+git -C "$A6CAN" update-ref refs/remotes/origin/main "$A6CAN_HEAD" >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# THE CENSUS — an ALLOWLIST OF GIT INVOCATION SHAPES, not a blocklist of ref
+# reads. Two facts make the blocklist form useless: the hook ALREADY resolves
+# the tracking ref's value for DISPLAY (the DENY text prints `upstream:
+# origin/main (<sha>)` and `HEAD: <sha>`) and does not branch on it, so a check
+# like "no rev-parse.*origin/ in the gated arms" goes RED ON THE SHIPPED HOOK —
+# and the first thing anyone does with a census that is red on the shipped hook
+# is weaken it; and display-read vs branch-on-value is a dataflow property that
+# no grep sees.
+#
+# THE CANARY ABOVE IS THE ONLY INSTRUMENT THAT CATCHES A DISPLAY READ TURNING
+# INTO A BRANCH. Do not delete it as redundant with the census.
+#
+# So the census enumerates every git invocation SHAPE in the hook and diffs it
+# against the allowlist below. Any NEW shape — merge-base, rev-list, status -b,
+# for-each-ref, describe — fails, and must be added here in the same diff with a
+# reason. The extraction excludes comments, `echo`/`printf` lines and the
+# *_WHY= assignments: without that it matches the DENY text's own prose ("git
+# checkout", "git merge --abort") and the comment blocks, which is a census red
+# on the shipped hook for reasons that are not code. Measured: 34 matches
+# unfiltered, 5 filtered.
+# ---------------------------------------------------------------------------
+A6ALLOW='git -C "$1" rev-parse --abbrev-ref --symbolic-full-name
+git -C "$1" rev-parse --verify --quiet
+git -C "$CWD" rev-parse
+git -C "$CWD" rev-parse --show-toplevel
+git -C "$a6pc_repo" config --get'
+# reasons, one per line above, in order:
+#   1  the upstream's NAME for the DENY text                      display only
+#   2  a sha for the DENY text (upstream tip, HEAD)               display only
+#   3  HEAD and HEAD^{tree} for the artifact comparison — decides a verdict, but
+#      from the artifact's own keys, never from a remote-tracking ref
+#   4  the repo toplevel                                          not a ref read
+#   5  branch.<cur>.merge, compared by NAME to the branch's own name; the value
+#      of any ref is never consulted
+A6FORMS=$(grep -vE '^[[:space:]]*#' "$ROOT/hooks/gate-before-merge.sh" \
+  | grep -vE '^[[:space:]]*(echo|printf)[[:space:]]' \
+  | grep -vE '_WHY=' \
+  | grep -oE '\bgit( -C "[^"]*")? [a-z][a-z-]*( --?[a-z][a-z-]*)*' | sort -u)
+if [ "$A6FORMS" = "$A6ALLOW" ]; then
+  printf 'PASS  %-42s (%s shapes)\n' "(A6.11) census: git shapes match the allowlist" "$(printf '%s\n' "$A6FORMS" | wc -l | tr -d ' ')"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.11) census: a git shape is not on the allowlist"
+  printf '%s\n' "$A6FORMS" | grep -vxF "$A6ALLOW" | sed 's/^/        NEW: /'
+  printf '%s\n' "$A6ALLOW" | grep -vxF "$A6FORMS" | sed 's/^/        GONE: /'
+  fail=$((fail + 1))
+fi
+# The census is two-sided: its extraction must actually FIND something, or an
+# over-tight filter would report "matches the allowlist" over an empty set.
+if [ -n "$A6FORMS" ]; then
+  printf 'PASS  %-42s\n' "(A6.11) census extraction is non-empty"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.11) census extraction found nothing — filter too tight"; fail=$((fail + 1))
+fi
+# Closes the read-packed-refs-directly route: no code line may name a .git/ path.
+A6DOTGIT=$(grep -vE '^[[:space:]]*#' "$ROOT/hooks/gate-before-merge.sh" \
+  | grep -vE '^[[:space:]]*(echo|printf)[[:space:]]' | grep -vE '_WHY=' | grep -c '\.git/')
+if [ "$A6DOTGIT" = 0 ]; then
+  printf 'PASS  %-42s\n' "(A6.11) census: no .git/ path is read in code"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (%s line(s))\n' "(A6.11) census: a .git/ path is named in code" "$A6DOTGIT"; fail=$((fail + 1))
+fi
+# The second census, a different question: the subcommands the hook GATES must
+# all be declared in A6_CONSUMER_LIST.
+for a6csub in merge pull push; do
+  if printf '%s\n' "$A6LIST" | grep -q "$a6csub"; then
+    printf 'PASS  %-42s\n' "(A6.11) census: '$a6csub' is declared in the list"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s\n' "(A6.11) census: hook gates '$a6csub', list lacks it"; fail=$((fail + 1))
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.
