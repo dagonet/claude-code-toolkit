@@ -3876,6 +3876,60 @@ PCTPUSH=$(mkrepo pct-push main)
 check_msg "(PCT) no-push-main names what it could not determine" "$ROOT/hooks/no-push-main.sh" 2 \
   "$(mkjson Bash 'git push' "$PCTPUSH")" "Could not determine"
 
+# ---------------------------------------------------------------------------
+# v3.0.3 Task 8½ — THE ARTIFACT NAMES THE REFUSAL, and `none` is an opt-out.
+#
+# Finding 62's commit half cannot be asserted by exit code (on a green suite the
+# skipped and the run case BOTH exit 0) or by the absence of the `passed. (`
+# marker (absent in the broken state AND in the fixed one). The channel that
+# FLIPS when the lib fix lands is the artifact's `path` field:
+#
+#   git commit -m x        -> "test"              (control; Test is `exit 0`)
+#   git -P commit -m x     -> "no-commit-segment" BEFORE the lib fix
+#   git -P commit -m x     -> "test"              AFTER  (an inert global)
+#   git -c x=y commit -m x -> "global-refused"    AFTER  (a resolving one)
+#
+# The artifact is rewritten on EVERY Bash call this hook sees in any git repo,
+# so each read below happens immediately after the invocation that wrote it —
+# a read one call later is a read of a different file.
+PCT8=hooks/pre-commit-test.sh
+PCT8REPO=$(mkrepo pct-8h main)
+printf '# ctx\n\n- **Test**: `exit 0`\n- **Gate**: `exit 0`\n' > "$PCT8REPO/PROJECT_CONTEXT.md"
+PCT8ART="$PCT8REPO/.gate/last-precommit.json"
+rm -f "$PCT8ART"
+check "(PCT8) control: plain commit, Test exit 0"  "$PCT8" 0 "$(mkjson Bash 'git commit -m x' "$PCT8REPO")"
+expect "(PCT8) control artifact path=test" "test" "$(pct_field "$PCT8ART" path)"
+rm -f "$PCT8ART"
+check "(PCT8) -P commit: inert global reaches the Test" "$PCT8" 0 "$(mkjson Bash 'git -P commit -m x' "$PCT8REPO")"
+expect "(PCT8) -P artifact path=test (was no-commit-segment)" "test" "$(pct_field "$PCT8ART" path)"
+rm -f "$PCT8ART"
+check "(PCT8) -c commit refused by the classifier"  "$PCT8" 2 "$(mkjson Bash 'git -c core.x=y commit -m x' "$PCT8REPO")"
+expect "(PCT8) refusal artifact path=global-refused" "global-refused" "$(pct_field "$PCT8ART" path)"
+
+# `- **Test**: none` BLOCKED EVERY COMMIT (measured 2026-09-04): the hook ran a
+# command literally called `none`, took 127, and refused. The value that reads
+# as "no Test command" was the only one that hard-blocked. `none` is now the
+# opt-out it looks like — treated as an ABSENT field, so precedence still falls
+# through to Gate. Two arms, because "treated as empty" has two destinations.
+PCT8NONE=$(mkrepo pct-8h-none main)
+printf '#!/usr/bin/env bash\nexit 0\n' > "$PCT8NONE/g.sh"
+printf '# ctx\n\n- **Test**: none\n- **Gate**: `bash g.sh`\n' > "$PCT8NONE/PROJECT_CONTEXT.md"
+check "(PCT8) Test 'none' + Gate present: allowed"  "$PCT8" 0 "$(mkjson Bash 'git commit -m x' "$PCT8NONE")"
+check_msg "(PCT8) 'none' + Gate: the GATE ran" "$ROOT/$PCT8" 0 "$(mkjson Bash 'git commit -m x' "$PCT8NONE")" "Running 'run-gate.sh'"
+check_nomsg "(PCT8) 'none' is never RUN as a command" "$ROOT/$PCT8" 0 "$(mkjson Bash 'git commit -m x' "$PCT8NONE")" "Running 'none'"
+# ...case-insensitive and backtick-tolerant, the two spellings a consumer
+# actually writes in a markdown field.
+printf '# ctx\n\n- **Test**: `None`\n- **Gate**: `bash g.sh`\n' > "$PCT8NONE/PROJECT_CONTEXT.md"
+check_nomsg "(PCT8) backticked 'None' is the same opt-out" "$ROOT/$PCT8" 0 "$(mkjson Bash 'git commit -m x' "$PCT8NONE")" "Running 'None'"
+PCT8NG=$(mkrepo pct-8h-nogate main)
+printf '# ctx\n\n- **Test**: none\n' > "$PCT8NG/PROJECT_CONTEXT.md"
+check_msg "(PCT8) 'none' with no Gate: the WARN, exit 0" "$ROOT/$PCT8" 0 "$(mkjson Bash 'git commit -m x' "$PCT8NG")" "nothing verified"
+# The opt-out must be DISCRIMINATING: a real Test command in the same repo still
+# runs and still blocks, or "none is an opt-out" is indistinguishable from "the
+# Test path stopped working".
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$PCT8NG/PROJECT_CONTEXT.md"
+check "(PCT8) control: a real Test still runs and blocks" "$PCT8" 2 "$(mkjson Bash 'git commit -m x' "$PCT8NG")"
+
 # ===========================================================================
 # Read back the stub-PATH completeness marker (see mkpathdir): a stub built
 # without its minimum tool set makes every case running under it meaningless,

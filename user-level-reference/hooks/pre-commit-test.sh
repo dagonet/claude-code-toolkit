@@ -192,6 +192,12 @@ while IFS= read -r seg; do
         echo "  allowed globals: -C <path>, --no-pager, -P, --paginate, --no-optional-locks, --literal-pathspecs, --no-lazy-fetch."
         echo "Re-run the commit WITHOUT the '$pctgopt' option; set it in your configuration in a separate call instead."
       } >&2
+      # v3.0.3 Task 8½ — NAME THE REFUSAL IN THE ARTIFACT. On a green suite the
+      # skipped and the run case both exit 0, and the `passed. (` marker is
+      # absent in the broken state AND in the fixed one, so neither channel can
+      # carry finding 62's commit half. The artifact's `path` field can:
+      # `no-commit-segment` before the lib fix, `global-refused` after.
+      pct_note global-refused -1
       exit 2
     fi
     # --- end v3.0.3 block ----------------------------------------------------
@@ -232,6 +238,20 @@ TEST_CMD=$(grep -E "${GC_KEY_PRE}\*\*Test( Command)?\*\*:" "$REPO_PATH/PROJECT_C
 # through to the Gate/run-gate.sh path instead of silently exiting 0.
 case "$TEST_CMD" in
   *\{\{*\}\}*) TEST_CMD="" ;;
+esac
+
+# v3.0.3 Task 8½ — `none` IS AN OPT-OUT, NOT A COMMAND. Measured 2026-09-04 on
+# the shipped hook: `- **Test**: none` printed `PRE-COMMIT: Running 'none'...`,
+# took 127 from the shell and BLOCKED every commit in that repository. The field
+# whose value reads as "I have no Test command" was the one value that hard-
+# blocked, and the release plan itself advised writing it. `none` is already how
+# the Protected-branches field spells "opt out", so the Test field spells it the
+# same way — and is then treated exactly like an absent field, so precedence
+# still falls through to the Gate/run-gate.sh path below rather than exiting 0.
+# Case-insensitive; the extraction above has already trimmed surrounding space
+# and stripped the backticks several variants write commands in.
+case "$(printf '%s' "$TEST_CMD" | tr '[:upper:]' '[:lower:]')" in
+  none) TEST_CMD="" ;;
 esac
 
 # v2.1.1: projects that declare only a **Gate** command (the gate runs the tests
