@@ -807,6 +807,12 @@ writeartifact "$GATEFEAT" "$FEATSHA"
 # hook reached the A6 decision — the pairing is what keeps a want-0 row from
 # passing vacuously on the "no Gate command configured" exit above.
 #
+# v3.0.3 (queue 12b) — EVERY WANT-2 ROW ADDED FROM v3.0.3 ON IS PAIRED WITH A
+# `check_msg` ON THE ARM'S MARKER TEXT. A 2 from the wrong discriminator passes
+# without testing what it claims. It is the mechanical form of the same rule the
+# canary applies to the invariant (verdict AND discriminator), and it is what
+# would have made the six A3 rows self-report as one arm rather than six.
+#
 # `mkrepo` builds no remote, and half of A6 is about a branch's UPSTREAM, so
 # the provenance fixtures are real clones: origin advances, the clone fetches,
 # and the clone's `main` is then behind `origin/main` — the exact routine state
@@ -980,8 +986,13 @@ check "(A6.3) --ff-only origin main 2>&1 allowed"      "$H" 0 "$(mkjson Bash 'gi
 # compensates in the hook; delete it and that row flips 2 -> 0 while the
 # `-c` rows stay green, which is what makes the two causes separable.
 #
-# Delete the mutated/a6_inline_config arms in the pull path and rows 1-8 flip
-# 2 -> 0. The want-0 pairs live in the SAME repos: A6CLONE's honest
+# v3.0.3: the two functions this comment used to name are gone. The inline-config
+# half is a6_global_options (item 1, A6.9 below); the preceding-clause half is
+# a6_clause_class (item 2, A6.10 below). The delete-the-guard instruction for the
+# rows here is now: make a6_global_options print `ok` unconditionally and rows
+# 6-9 flip 2 -> 0; make a6_clause_class return `inert` for its inert-eligible
+# verbs' complement — i.e. return `mover` never — and rows 1-5 flip 2 -> 0.
+# The want-0 pairs live in the SAME repos: A6CLONE's honest
 # `git pull --ff-only` above, and the two feature-branch rows here.
 # ---------------------------------------------------------------------------
 check "(A6.8) branch -u then pull is gated"            "$H" 2 "$(mkjson Bash 'git branch -u origin/rogue main && git pull --ff-only' "$A6CLONE")"
@@ -1005,6 +1016,481 @@ check_msg "(A6.8) the -c refusal says to drop the -c" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git -c core.pager=cat pull --ff-only' "$A6CLONE")" "WITHOUT the '-c'"
 check_msg "(A6.8) the chained refusal quotes the clause" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git branch -u origin/rogue main && git pull --ff-only' "$A6CLONE")" "earlier clause:"
+
+# ---------------------------------------------------------------------------
+# v3.0.3 item 1 — ARGV PREFIX SHAPE. Complete over the config channel, measured
+# (git 2.55.0): -c / --config-env are git-global-only; every subcommand rejects
+# them, so there is no after-the-subcommand position to have a gap in. Globals
+# are classified by whether they change what the command RESOLVES to.
+#
+# Delete a6_global_options' refuse arms (make it print `ok` unconditionally) and
+# the resolving-global rows below flip 2 -> 0; the six inert-global rows and the
+# two feature-branch rows are the want-0 pairs that keep them honest.
+# ---------------------------------------------------------------------------
+check "(A6.9) bare pull baseline allowed"                "$H" 0 "$(mkjson Bash 'git pull --ff-only' "$A6CLONE")"
+for g in '--no-pager' '-P' '--paginate' '--no-optional-locks' '--literal-pathspecs' '--no-lazy-fetch'; do
+  check "(A6.9) inert global $g allowed"                 "$H" 0 "$(mkjson Bash "git $g pull --ff-only" "$A6CLONE")"
+done
+for g in '-c core.x=y' '--config-env=core.x=E' '--config-env core.x=E' '--git-dir=.git' '--work-tree=.' '--namespace=x' '--exec-path=/nope' '--no-replace-objects'; do
+  check "(A6.9) resolving global $g gated"               "$H" 2 "$(mkjson Bash "git $g pull --ff-only" "$A6CLONE")"
+  check_msg "(A6.9) $g refusal names the option"  "$ROOT/$H" 2 "$(mkjson Bash "git $g pull --ff-only" "$A6CLONE")" "global option"
+done
+check "(A6.9) unknown global gated (fail-closed)"       "$H" 2 "$(mkjson Bash 'git --future-flag pull --ff-only' "$A6CLONE")"
+check "(A6.9) legacy GIT_CONFIG= prefix gated"          "$H" 2 "$(mkjson Bash 'GIT_CONFIG=/tmp/x git pull --ff-only' "$A6CLONE")"
+check "(A6.9) env GIT_CONFIG_COUNT prefix gated"        "$H" 2 "$(mkjson Bash 'env GIT_CONFIG_COUNT=1 git pull --ff-only' "$A6CLONE")"
+check "(A6.9) glued -cKEY= gated (dead seam, fixture anyway)" "$H" 2 "$(mkjson Bash 'git -ccore.x=y pull --ff-only' "$A6CLONE")"
+check "(A6.9) -C stays allowed (resolved)"              "$H" 0 "$(mkjson Bash "git -C $A6CLONE pull --ff-only" "$A6CLONE")"
+check "(A6.9) inert global on a feature branch allowed" "$H" 0 "$(mkjson Bash 'git --no-optional-locks pull' "$A6FEATCO")"
+check "(A6.9) resolving global on a feature branch allowed (nothing gated)" "$H" 0 "$(mkjson Bash 'git -c core.x=y pull' "$A6FEATCO")"
+# Amendment (consumer, git 2.55.0): -C is REPEATABLE and CUMULATIVE. Measured
+# here: `git -C a -C b` chdirs to a, then to b RELATIVE to a ("cannot change to
+# 'b'" when b is a sibling), so for the ABSOLUTE paths below the last one wins.
+# gc_git_c takes head -1 — the FIRST — so a6_repo_for folds every -C through
+# gc_resolve instead. The pair is two-sided on purpose: swapping the order
+# swaps the verdict, which a first-wins or an any-protected reading cannot do.
+check "(A6.9) repeated -C: last one wins, protected"   "$H" 2 "$(mkjson Bash "git -C $A6FEATCO -C $A6CLONE merge feature/y" "$A6FEATCO")"
+check "(A6.9) repeated -C: last one wins, feature"     "$H" 0 "$(mkjson Bash "git -C $A6CLONE -C $A6FEATCO merge feature/y" "$A6CLONE")"
+
+# ---------------------------------------------------------------------------
+# v3.0.3 item 2 — PRECEDING CLAUSES: three categories, not a blocklist.
+#   inert   never affects the gated clause AND has no redirection operand AND
+#           none of `$(`, a backtick, `<(`, `>(` — command substitution can
+#           execute anything — AND the whole command contains no pipe.
+#   tracked allowed BECAUSE the scanner follows them: cd, -C, git checkout|
+#           switch <non-protected>. Listing cd as inert would switch OFF the
+#           tracker (measured: cd <protected> && merge is 2 today).
+#   mover   everything else -> the gated arms still run on it, and if none
+#           fires it sets the `mutated` flag the pull/push arms read.
+#
+# THE SCANNER DOES NOT LOOK INSIDE AN INERT CLAUSE. There is no separate
+# whole-string pass in this hook (a plan inaccuracy, corrected here): the arms
+# grep UNANCHORED inside each segment, so a literal `echo 'git pull'` was
+# re-parsed as a second pull. Skipping the arms on an inert segment IS the fix.
+#
+# THREE MEASURED REASONS THE CATEGORY IS NARROW, each with its own rows below:
+#  (1) FOUR substitution forms, not two: `<(` and `>(` carry neither `$(` nor a
+#      backtick and are 2 today only because the arms see them.
+#  (2) NO CLAUSE IS INERT IN A COMMAND CONTAINING A PIPE. `echo 'git merge x'`
+#      prints; `echo 'git merge x' | bash` EXECUTES. Identical leading verb,
+#      identical quoted content, opposite correct verdicts — the difference is
+#      what consumes the clause's stdout, which a per-clause classifier cannot
+#      see. `echo hello | bash` is the control that shows the cost is only paid
+#      when something is actually gated.
+#  (3) AN INERT GIT VERB IS INERT ONLY WITH A FLAG ALLOWLIST. Measured:
+#      `git diff HEAD~1 --output=.git/config` CLOBBERS .git/config, and
+#      `git show --output=` / `git log -p --output=` write files too — the
+#      .git/config-as-a-file channel reached through a verb on the inert list,
+#      with NO shell operator, so the redirection rule cannot see it (the
+#      redirection is an option VALUE). `--set-upstream-to=` / `--unset-upstream`
+#      are the long forms of the `-u` guard. A guard LIST would be the third
+#      list that does not close, so the allowlist is inverted the same way the
+#      globals are: any flag not on the verb's list makes the clause a mover,
+#      and the DENY text names the flag.
+#
+# DELETE-THE-GUARD, two arms, reported separately (they buy different things):
+#   (a) inert deleted   — the inert-eligible verbs return `mover`; the want-0
+#                         rows here flip 0 -> 2.
+#   (b) exclusions deleted — substitution/redirection/pipe return `inert`; the
+#                         substitution, pipe-to-shell and `> .git/config` rows
+#                         flip 2 -> 0. These do NOT flip in arm (a): they are
+#                         caught by the arms, not by the classifier.
+# Making the classifier return `inert` for EVERYTHING is degenerate — no segment
+# would reach an arm, every A6 want-2 row in the suite flips, and the number
+# measures nothing. Do not run it that way.
+#
+# Rows already asserted in the A6.8 block above (branch -u, config branch.*,
+# remote set-url, update-ref, the feature-branch mover control, and the v3.0.1
+# `checkout feature/z && merge` row) are deliberately NOT repeated here.
+# ---------------------------------------------------------------------------
+git -C "$A6CLONE" branch feature/y >/dev/null 2>&1
+git -C "$A6FEATCO" branch feature/y >/dev/null 2>&1
+# inert, want 0
+check "(A6.10) echo before pull allowed"                    "$H" 0 "$(mkjson Bash 'echo starting && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) echo REPEATING the command allowed"          "$H" 0 "$(mkjson Bash 'git pull --ff-only && echo git pull --ff-only on main OK' "$A6CLONE")"
+check "(A6.10) echo quoting a merge, no pipe, allowed"      "$H" 0 "$(mkjson Bash "echo 'git merge feature/x'" "$A6CLONE")"
+check "(A6.10) read-only git verb before pull allowed"      "$H" 0 "$(mkjson Bash 'git status && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) rev-parse before pull allowed"               "$H" 0 "$(mkjson Bash 'git rev-parse HEAD && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git status --short then pull allowed"        "$H" 0 "$(mkjson Bash 'git status --short && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git log --oneline -n 5 then pull allowed"    "$H" 0 "$(mkjson Bash 'git log --oneline -n 5 && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git diff --stat then pull allowed"           "$H" 0 "$(mkjson Bash 'git diff --stat && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git branch --show-current then pull allowed" "$H" 0 "$(mkjson Bash 'git branch --show-current && git pull --ff-only' "$A6CLONE")"
+# tracked, want 0 / want 2 by target
+check "(A6.10) cd to a FEATURE checkout && merge allowed"   "$H" 0 "$(mkjson Bash "cd $A6FEATCO && git merge feature/y" "$A6CLONE")"
+check "(A6.10) cd to a PROTECTED checkout && merge gated"   "$H" 2 "$(mkjson Bash "cd $A6CLONE && git merge feature/y" "$A6FEATCO")"
+check "(A6.10) checkout main && merge gated (v3.0.1 row)"   "$H" 2 "$(mkjson Bash 'git checkout main && git merge feature/y' "$A6FEATCO")"
+# not inert: redirection and the four substitution forms, want 2
+check "(A6.10) echo > .git/config && pull gated"            "$H" 2 "$(mkjson Bash 'echo x > .git/config && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) echo \$(git merge) gated"                    "$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")"
+check "(A6.10) backtick substitution gated"                 "$H" 2 "$(mkjson Bash 'echo `git merge feature/x`' "$A6CLONE")"
+check "(A6.10) process substitution <( gated"               "$H" 2 "$(mkjson Bash 'echo <(git merge feature/x)' "$A6CLONE")"
+check "(A6.10) process substitution >( gated"               "$H" 2 "$(mkjson Bash 'echo >(git merge feature/x)' "$A6CLONE")"
+check "(A6.10) printf \$(git merge) gated"                  "$H" 2 "$(mkjson Bash "printf '%s' \$(git merge feature/x)" "$A6CLONE")"
+check "(A6.10) echo \$(git config include.path X) && pull"  "$H" 2 "$(mkjson Bash 'echo $(git config include.path /x) && git pull --ff-only' "$A6CLONE")"
+# not inert: a pipe anywhere in the command, want 2 — with the control
+check "(A6.10) echo quoting a merge piped to bash gated"    "$H" 2 "$(mkjson Bash "echo 'git merge feature/x' | bash" "$A6CLONE")"
+check "(A6.10) echo quoting a merge piped to sh gated"      "$H" 2 "$(mkjson Bash "echo 'git merge feature/x' | sh" "$A6CLONE")"
+check "(A6.10) printf a merge piped to bash gated"          "$H" 2 "$(mkjson Bash "printf '%s' 'git merge feature/x' | bash" "$A6CLONE")"
+check "(A6.10) echo hello | bash allowed (pipe control)"    "$H" 0 "$(mkjson Bash 'echo hello | bash' "$A6CLONE")"
+# compound shapes: their headers are not inert verbs, so the arms still see them
+check "(A6.10) semicolon compound still gated"              "$H" 2 "$(mkjson Bash 'echo a ; git merge feature/x' "$A6CLONE")"
+check "(A6.10) && compound still gated"                     "$H" 2 "$(mkjson Bash 'echo a && git merge feature/x' "$A6CLONE")"
+check "(A6.10) for-loop body still gated"                   "$H" 2 "$(mkjson Bash 'for i in 1; do git merge feature/x; done' "$A6CLONE")"
+check "(A6.10) if-then body still gated"                    "$H" 2 "$(mkjson Bash 'if true; then git merge feature/x; fi' "$A6CLONE")"
+check "(A6.10) subshell still gated"                        "$H" 2 "$(mkjson Bash '( git merge feature/x )' "$A6CLONE")"
+check "(A6.10) brace group still gated"                     "$H" 2 "$(mkjson Bash '{ git merge feature/x; }' "$A6CLONE")"
+check "(A6.10) backslash continuation still gated"          "$H" 2 "$(mkjson Bash 'git merge \
+  feature/x' "$A6CLONE")"
+# the flag allowlist on the inert git verbs, want 2. The `git diff --output`
+# row is NOT discriminating on its own (its second clause is a merge on a
+# protected branch, gated regardless) — the `git show --output` row is.
+check "(A6.10) git diff --output onto .git/config gated"    "$H" 2 "$(mkjson Bash 'git diff HEAD~1 --output=.git/config && git merge feature/x' "$A6CLONE")"
+check "(A6.10) git show --output then pull gated"           "$H" 2 "$(mkjson Bash 'git show --output=/x && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) branch --set-upstream-to= then pull gated"   "$H" 2 "$(mkjson Bash 'git branch --set-upstream-to=origin/rogue main && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) branch --unset-upstream then pull gated"     "$H" 2 "$(mkjson Bash 'git branch --unset-upstream main && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) unknown flag on an inert verb refuses"       "$H" 2 "$(mkjson Bash 'git log --future-flag && git pull --ff-only' "$A6CLONE")"
+check_msg "(A6.10) unknown-flag refusal names the flag" "$ROOT/$H" 2 "$(mkjson Bash 'git log --future-flag && git pull --ff-only' "$A6CLONE")" "future-flag"
+# movers the v3.0.2 blocklist did not reach, want 2
+check "(A6.10) config include.path then pull gated"         "$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) cp onto .git/config then pull gated"         "$H" 2 "$(mkjson Bash 'cp /x .git/config && git pull --ff-only' "$A6CLONE")"
+check_msg "(A6.10) mover refusal names the clause"   "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "earlier clause"
+check_msg "(A6.10) mover refusal names the category" "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "clause class: mover"
+check_msg "(A6.10) substitution refusal names why"   "$ROOT/$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")" "command substitution"
+
+# ---------------------------------------------------------------------------
+# v3.0.3 item 3b — THE INVARIANT AS A FIXTURE. For every form in the hook's own
+# A6_CONSUMER_LIST, the pairwise ancestry relation between HEAD and
+# refs/remotes/origin/main is poisoned into ALL FOUR of its values, and the
+# verdict AND the discriminator must be identical across all four.
+#
+# FOUR, not two. Every predicate anyone will build here — merge-base
+# --is-ancestor, rev-list --count, rev-parse equality, status -b ahead/behind —
+# is a function of which of BEHIND / EQUAL / AHEAD / DIVERGED holds. v3.0.1's
+# exemption keyed on "HEAD is an ancestor of upstream", true for BEHIND and
+# EQUAL alike, so a poison that preserves "behind" preserves the verdict;
+# v3.0.1's DENY text also printed an EQUALITY read a behind/ahead pair cannot
+# see; and DIVERGED is the one people forget — "upstream is an ancestor of
+# HEAD" is true for AHEAD and false for DIVERGED, exactly the shape a push-side
+# shortcut would key on. "Honest" is not a fifth state: it is whichever of the
+# four the fixture produced, and the first assertion below is WHICH.
+#
+# THE LIST IS READ FROM THE HOOK so a new gated path cannot fall outside the
+# loop; a form with no fixture command FAILS rather than being skipped.
+# ---------------------------------------------------------------------------
+A6LIST=$(grep -E "^A6_CONSUMER_LIST=" "$ROOT/hooks/gate-before-merge.sh" | sed "s/^[^=]*='//;s/'$//")
+if [ -n "$A6LIST" ]; then
+  printf 'PASS  %-42s (%s)\n' "(A6.11) A6_CONSUMER_LIST read from the hook" "$A6LIST"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.11) A6_CONSUMER_LIST not found in the hook"; fail=$((fail + 1))
+fi
+a6_form_cmd() { case "$1" in
+  merge:any-target)   echo 'git merge --ff-only origin/main' ;;
+  pull:bare)          echo 'git pull --ff-only' ;;
+  pull:named-refspec) echo 'git pull --ff-only origin main' ;;
+  push:any)           echo 'git push origin main' ;;
+  *) echo "UNKNOWN-FORM-$1" ;; esac; }
+A6CAN=$(a6clone a6canary)
+# The four ref states, each a real commit rather than a relabelling:
+#   EQUAL     origin/main = HEAD
+#   BEHIND    origin/main = a commit that has HEAD as an ancestor
+#   AHEAD     origin/main = HEAD~1
+#   DIVERGED  origin/main = a sibling of HEAD, off HEAD~1
+A6CAN_HEAD=$(git -C "$A6CAN" rev-parse HEAD)
+git -C "$A6CAN" checkout -q -b zz-canary-ahead >/dev/null 2>&1
+echo ahead > "$A6CAN/ahead.txt"; git -C "$A6CAN" add ahead.txt >/dev/null 2>&1
+git -C "$A6CAN" commit -q -m ahead >/dev/null 2>&1
+A6CAN_NEWER=$(git -C "$A6CAN" rev-parse HEAD)
+git -C "$A6CAN" checkout -q -B zz-canary-div "$A6CAN_HEAD~1" >/dev/null 2>&1
+echo div > "$A6CAN/div.txt"; git -C "$A6CAN" add div.txt >/dev/null 2>&1
+git -C "$A6CAN" commit -q -m div >/dev/null 2>&1
+A6CAN_DIV=$(git -C "$A6CAN" rev-parse HEAD)
+git -C "$A6CAN" checkout -q main >/dev/null 2>&1
+# ASSERT the fixture carries the property before measuring anything with it:
+# a fresh clone is EQUAL, and the three poisons are genuinely the other three.
+a6can_rel() { # <sha> -> BEHIND|EQUAL|AHEAD|DIVERGED, as seen from HEAD
+  if [ "$1" = "$A6CAN_HEAD" ]; then echo EQUAL; return; fi
+  if git -C "$A6CAN" merge-base --is-ancestor "$A6CAN_HEAD" "$1" 2>/dev/null; then echo BEHIND; return; fi
+  if git -C "$A6CAN" merge-base --is-ancestor "$1" "$A6CAN_HEAD" 2>/dev/null; then echo AHEAD; return; fi
+  echo DIVERGED
+}
+a6can_expect() { # <label> <sha> <want-relation>
+  a6cr=$(a6can_rel "$2")
+  if [ "$a6cr" = "$3" ]; then
+    printf 'PASS  %-42s (%s)\n' "$1" "$a6cr"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$3" "$a6cr"; fail=$((fail + 1))
+  fi
+}
+a6can_expect "(A6.11) fixture: honest state is EQUAL"  "$(git -C "$A6CAN" rev-parse refs/remotes/origin/main)" EQUAL
+a6can_expect "(A6.11) fixture: the BEHIND poison is behind"    "$A6CAN_NEWER"      BEHIND
+a6can_expect "(A6.11) fixture: the AHEAD poison is ahead"      "$A6CAN_HEAD~1"     AHEAD
+a6can_expect "(A6.11) fixture: the DIVERGED poison diverges"   "$A6CAN_DIV"        DIVERGED
+a6can_run() { # <sha to poison origin/main with> -> "rc=N|discriminator…|verdict…"
+  git -C "$A6CAN" update-ref refs/remotes/origin/main "$1" >/dev/null 2>&1
+  a6cout=$(printf '%s' "$(mkjson Bash "$a6ccmd" "$A6CAN")" | bash "$ROOT/$H" 2>&1; echo "rc=$?")
+  printf '%s' "$a6cout" | grep -E '^rc=|discriminator|verdict' | tr '\n' '|'
+}
+for a6cform in $A6LIST; do
+  a6ccmd=$(a6_form_cmd "$a6cform")
+  case "$a6ccmd" in
+    UNKNOWN-FORM-*)
+      printf 'FAIL  %-42s\n' "(A6.11) census: $a6cform has no fixture command"; fail=$((fail + 1)); continue ;;
+  esac
+  a6c_eq=$(a6can_run "$A6CAN_HEAD")
+  a6c_be=$(a6can_run "$A6CAN_NEWER")
+  a6c_ah=$(a6can_run "$(git -C "$A6CAN" rev-parse "$A6CAN_HEAD~1")")
+  a6c_dv=$(a6can_run "$A6CAN_DIV")
+  if [ "$a6c_eq" = "$a6c_be" ] && [ "$a6c_be" = "$a6c_ah" ] && [ "$a6c_ah" = "$a6c_dv" ]; then
+    printf 'PASS  %-42s (4 ref states)\n' "(A6.11) $a6cform: verdict+discriminator invariant"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (equal=%s behind=%s ahead=%s diverged=%s)\n' \
+      "(A6.11) $a6cform: verdict depends on the ref VALUE" "$a6c_eq" "$a6c_be" "$a6c_ah" "$a6c_dv"
+    fail=$((fail + 1))
+  fi
+done
+git -C "$A6CAN" update-ref refs/remotes/origin/main "$A6CAN_HEAD" >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# THE CENSUS — an ALLOWLIST OF GIT INVOCATION SHAPES, not a blocklist of ref
+# reads. Two facts make the blocklist form useless: the hook ALREADY resolves
+# the tracking ref's value for DISPLAY (the DENY text prints `upstream:
+# origin/main (<sha>)` and `HEAD: <sha>`) and does not branch on it, so a check
+# like "no rev-parse.*origin/ in the gated arms" goes RED ON THE SHIPPED HOOK —
+# and the first thing anyone does with a census that is red on the shipped hook
+# is weaken it; and display-read vs branch-on-value is a dataflow property that
+# no grep sees.
+#
+# THE CANARY ABOVE IS THE ONLY INSTRUMENT THAT CATCHES A DISPLAY READ TURNING
+# INTO A BRANCH. Do not delete it as redundant with the census.
+#
+# So the census enumerates every git invocation SHAPE in the hook and diffs it
+# against the allowlist below. Any NEW shape — merge-base, rev-list, status -b,
+# for-each-ref, describe — fails, and must be added here in the same diff with a
+# reason. The extraction excludes comments, `echo`/`printf` lines and the
+# *_WHY= assignments: without that it matches the DENY text's own prose ("git
+# checkout", "git merge --abort") and the comment blocks, which is a census red
+# on the shipped hook for reasons that are not code. Measured: 34 matches
+# unfiltered, 5 filtered.
+# ---------------------------------------------------------------------------
+A6ALLOW='git -C "$1" rev-parse --abbrev-ref --symbolic-full-name
+git -C "$1" rev-parse --verify --quiet
+git -C "$CWD" rev-parse
+git -C "$CWD" rev-parse --show-toplevel
+git -C "$a6pc_repo" config --get'
+# reasons, one per line above, in order:
+#   1  the upstream's NAME for the DENY text                      display only
+#   2  a sha for the DENY text (upstream tip, HEAD)               display only
+#   3  HEAD and HEAD^{tree} for the artifact comparison — decides a verdict, but
+#      from the artifact's own keys, never from a remote-tracking ref
+#   4  the repo toplevel                                          not a ref read
+#   5  branch.<cur>.merge, compared by NAME to the branch's own name; the value
+#      of any ref is never consulted
+A6FORMS=$(grep -vE '^[[:space:]]*#' "$ROOT/hooks/gate-before-merge.sh" \
+  | grep -vE '^[[:space:]]*(echo|printf)[[:space:]]' \
+  | grep -vE '_WHY=' \
+  | grep -oE '\bgit( -C "[^"]*")? [a-z][a-z-]*( --?[a-z][a-z-]*)*' | sort -u)
+if [ "$A6FORMS" = "$A6ALLOW" ]; then
+  printf 'PASS  %-42s (%s shapes)\n' "(A6.11) census: git shapes match the allowlist" "$(printf '%s\n' "$A6FORMS" | wc -l | tr -d ' ')"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.11) census: a git shape is not on the allowlist"
+  printf '%s\n' "$A6FORMS" | grep -vxF "$A6ALLOW" | sed 's/^/        NEW: /'
+  printf '%s\n' "$A6ALLOW" | grep -vxF "$A6FORMS" | sed 's/^/        GONE: /'
+  fail=$((fail + 1))
+fi
+# The census is two-sided: its extraction must actually FIND something, or an
+# over-tight filter would report "matches the allowlist" over an empty set.
+if [ -n "$A6FORMS" ]; then
+  printf 'PASS  %-42s\n' "(A6.11) census extraction is non-empty"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.11) census extraction found nothing — filter too tight"; fail=$((fail + 1))
+fi
+# Closes the read-packed-refs-directly route: no code line may name a .git/ path.
+A6DOTGIT=$(grep -vE '^[[:space:]]*#' "$ROOT/hooks/gate-before-merge.sh" \
+  | grep -vE '^[[:space:]]*(echo|printf)[[:space:]]' | grep -vE '_WHY=' | grep -c '\.git/')
+if [ "$A6DOTGIT" = 0 ]; then
+  printf 'PASS  %-42s\n' "(A6.11) census: no .git/ path is read in code"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (%s line(s))\n' "(A6.11) census: a .git/ path is named in code" "$A6DOTGIT"; fail=$((fail + 1))
+fi
+# The second census, a different question: the subcommands the hook GATES must
+# all be declared in A6_CONSUMER_LIST.
+for a6csub in merge pull push; do
+  if printf '%s\n' "$A6LIST" | grep -q "$a6csub"; then
+    printf 'PASS  %-42s\n' "(A6.11) census: '$a6csub' is declared in the list"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s\n' "(A6.11) census: hook gates '$a6csub', list lacks it"; fail=$((fail + 1))
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# v3.0.3 FINDING 62 — ONE COMMON GLOBAL SKIPPED ALL THREE GIT GATES.
+#
+# The lib's GC_GIT_PRE tolerated `-C <path>` and `-c <k>=<v>` between `git` and
+# the subcommand and NOTHING else, so gc_matches_subcommand returned false and
+# the subcommand was never FOUND. Measured on the installed v3.0.2 by four
+# consumers, three variants, on a protected branch — every one of these was
+# ALLOWED, with no chaining and no quoting:
+#
+#   git --no-pager merge feature/y            git -P merge feature/y
+#   git --no-pager push origin main           git -P push origin main
+#   git --no-pager pull origin feature/y      git --no-optional-locks merge …
+#   git --literal-pathspecs push origin main  git -P commit -m x  (no test run)
+#
+# The control that pinned the cause: `git -C . merge --ff-only origin/main` was
+# 2 (the -C tolerance) while `git --no-pager merge --ff-only origin/main` was 0.
+#
+# EVERY WANT-2 ROW HERE IS PAIRED WITH ITS UN-PREFIXED CONTROL IN THIS BLOCK,
+# and the parse control (`ls -la` -> 0) is here too. After a fix like this
+# almost everything returns 2, and without the pairs a reader cannot tell a
+# working refusal from a gate that now refuses everything — the v3.0.1
+# over-correction shape.
+#
+# THE TWO POLARITIES ARE DIFFERENT CLAIMS, deliberately:
+#   an INERT global (`-P`, `--paginate`, `--no-pager`) must reach the arms and
+#     get the NORMAL verdict — matching is not allowing, and a skip is not a
+#     verdict;
+#   a RESOLVING global (`-c`) must be refused by the CLASSIFIER, asserted by
+#     check_msg on "global option" rather than by the exit code alone.
+#
+# DELETE-THE-GUARD: revert GC_GIT_PRE to its v3.0.2 form and every prefixed row
+# in this block flips 2 -> 0 while its un-prefixed control stays 2.
+# ---------------------------------------------------------------------------
+check "(A6.13) parse control: ls -la is not gated"        "$H" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+# merge — treatment/control pairs
+check "(A6.13) CONTROL git merge feature/y"               "$H" 2 "$(mkjson Bash 'git merge feature/y' "$A6CLONE")"
+check "(A6.13) git --no-pager merge feature/y"            "$H" 2 "$(mkjson Bash 'git --no-pager merge feature/y' "$A6CLONE")"
+check "(A6.13) git -P merge feature/y"                    "$H" 2 "$(mkjson Bash 'git -P merge feature/y' "$A6CLONE")"
+check "(A6.13) git --paginate merge feature/y"            "$H" 2 "$(mkjson Bash 'git --paginate merge feature/y' "$A6CLONE")"
+check "(A6.13) git --no-optional-locks merge feature/y"   "$H" 2 "$(mkjson Bash 'git --no-optional-locks merge feature/y' "$A6CLONE")"
+# push — treatment/control pairs
+check "(A6.13) CONTROL git push origin main"              "$H" 2 "$(mkjson Bash 'git push origin main' "$A6CLONE")"
+check "(A6.13) git --no-pager push origin main"           "$H" 2 "$(mkjson Bash 'git --no-pager push origin main' "$A6CLONE")"
+check "(A6.13) git --literal-pathspecs push origin main"  "$H" 2 "$(mkjson Bash 'git --literal-pathspecs push origin main' "$A6CLONE")"
+# pull — treatment/control pair
+check "(A6.13) CONTROL git pull origin feature/y"         "$H" 2 "$(mkjson Bash 'git pull origin feature/y' "$A6CLONE")"
+check "(A6.13) git --no-pager pull origin feature/y"      "$H" 2 "$(mkjson Bash 'git --no-pager pull origin feature/y' "$A6CLONE")"
+# the two TOLERATED prefixes: matched before the fix too, and refused by an ARM
+# (push) and by the CLASSIFIER (-c) respectively — not by a skip.
+check "(A6.13) tolerated prefix: git -C <repo> push origin main" "$H" 2 "$(mkjson Bash "git -C $A6CLONE push origin main" "$A6CLONE")"
+check "(A6.13) tolerated prefix: git -c core.x=y merge feature/y" "$H" 2 "$(mkjson Bash 'git -c core.x=y merge feature/y' "$A6CLONE")"
+check_msg "(A6.13) -c merge is refused by the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash 'git -c core.x=y merge feature/y' "$A6CLONE")" "global option"
+# the inert-global rows must NOT be refused by the classifier — they must reach
+# the merge arm. Asserting the arm is what separates "found and judged" from
+# "refused for carrying any global at all".
+check_msg "(A6.13) -P merge is refused by the MERGE arm" "$ROOT/$H" 2 "$(mkjson Bash 'git -P merge feature/y' "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
+# feature-branch control: the widened matcher must not gate what was never gated
+check "(A6.13) git -P merge on a feature branch allowed"  "$H" 0 "$(mkjson Bash 'git -P merge feature/y' "$A6FEATCO")"
+
+# --- the same defect in no-push-main.sh ------------------------------------
+NP62=hooks/no-push-main.sh
+check "(A6.13/NP) CONTROL git push origin main"           "$NP62" 2 "$(mkjson Bash 'git push origin main' "$A6CLONE")"
+check "(A6.13/NP) git --no-pager push origin main"        "$NP62" 2 "$(mkjson Bash 'git --no-pager push origin main' "$A6CLONE")"
+check "(A6.13/NP) git -P push origin main"                "$NP62" 2 "$(mkjson Bash 'git -P push origin main' "$A6CLONE")"
+check "(A6.13/NP) git --literal-pathspecs push origin main" "$NP62" 2 "$(mkjson Bash 'git --literal-pathspecs push origin main' "$A6CLONE")"
+check "(A6.13/NP) -c push is refused by the classifier"   "$NP62" 2 "$(mkjson Bash 'git -c core.x=y push origin main' "$A6CLONE")"
+check_msg "(A6.13/NP) that refusal names the option" "$ROOT/$NP62" 2 "$(mkjson Bash 'git -c core.x=y push origin main' "$A6CLONE")" "global option"
+check "(A6.13/NP) parse control: ls -la is not gated"     "$NP62" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+check "(A6.13/NP) inert global, feature branch, allowed"  "$NP62" 0 "$(mkjson Bash 'git -P push origin feature/co' "$A6FEATCO")"
+
+# --- the same defect in pre-commit-test.sh ---------------------------------
+# EXIT CODE DOES NOT DISCRIMINATE HERE: on a GREEN suite both the skipped and
+# the run case exit 0. The suite's own `passed. (Ns)` line is the signal, and
+# the control must prove the suite RAN or the treatment proves nothing.
+PCT62=hooks/pre-commit-test.sh
+PCTFAIL=$(mkrepo pct62fail main)
+printf '#!/usr/bin/env bash\nexit 1\n' > "$PCTFAIL/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n- **Gate**: `bash tc.sh`\n' > "$PCTFAIL/PROJECT_CONTEXT.md"
+PCTPASS=$(mkrepo pct62pass main)
+printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' > "$PCTPASS/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n- **Gate**: `bash tc.sh`\n' > "$PCTPASS/PROJECT_CONTEXT.md"
+# TWO POLARITIES, and the brief's expectation for the inert half was wrong in
+# kind — measured here, reported rather than coded around. `-P` and
+# `--no-pager` are INERT globals: they change nothing this hook resolves. The
+# finding-62 defect for them is not "they should be refused", it is "the suite
+# was SKIPPED". So the fixed behaviour is that the Test RUNS, and the row that
+# proves it is the `passed. (Ns)` line, not a refusal. Refusing `-P` would be a
+# false positive on a flag IDEs pass unprompted — the shape that gets a guard
+# switched off. A RESOLVING global (`-c`) is the half that is refused.
+#
+# (a) FAILING-suite rows: exit code 2 either way, so check_msg names WHICH.
+check "(A6.13/PCT) CONTROL git commit -m x, failing Test" "$PCT62" 2 "$(mkjson Bash 'git commit -m x' "$PCTFAIL")"
+check_msg "(A6.13/PCT) control blocked by the TEST"  "$ROOT/$PCT62" 2 "$(mkjson Bash 'git commit -m x' "$PCTFAIL")" "re-run it and fix"
+check "(A6.13/PCT) git -P commit -m x, failing Test"      "$PCT62" 2 "$(mkjson Bash 'git -P commit -m x' "$PCTFAIL")"
+check_msg "(A6.13/PCT) -P now REACHES and fails the TEST" "$ROOT/$PCT62" 2 "$(mkjson Bash 'git -P commit -m x' "$PCTFAIL")" "re-run it and fix"
+check_msg "(A6.13/PCT) --no-pager REACHES the TEST"  "$ROOT/$PCT62" 2 "$(mkjson Bash 'git --no-pager commit -F msg' "$PCTFAIL")" "re-run it and fix"
+check_msg "(A6.13/PCT) -c commit refused by the GLOBAL" "$ROOT/$PCT62" 2 "$(mkjson Bash 'git -c core.x=y commit -m x' "$PCTFAIL")" "global option"
+# ORDER AND ARITY, measured against the shipped regex: it hard-coded ONE
+# optional `-C` FIRST then zero-or-more `-c`, so `git -c a=b -C . commit` and
+# `git -C . -C . commit` did not match — the tolerated globals were tolerated
+# only in one order and one arity. "Unknown global -> refuse" does not reach
+# these: -c and -C are the known-good ones, merely written the other way round.
+check_msg "(A6.13/PCT) -c BEFORE -C: matched, refused by the GLOBAL" "$ROOT/$PCT62" 2 "$(mkjson Bash "git -c a=b -C $PCTFAIL commit -m x" "$PCTFAIL")" "global option"
+check_msg "(A6.13/PCT) -C twice: matched, judged by the TEST"  "$ROOT/$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL -C $PCTFAIL commit -m x" "$PCTFAIL")" "re-run it and fix"
+check_msg "(A6.13/PCT) control -c a=b -c d=e: the GLOBAL"      "$ROOT/$PCT62" 2 "$(mkjson Bash 'git -c a=b -c d=e commit -m x' "$PCTFAIL")" "global option"
+check_msg "(A6.13/PCT) control -C then -c: the GLOBAL"         "$ROOT/$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL -c a=b commit -m x" "$PCTFAIL")" "global option"
+# (b) GREEN-suite rows — THE EXIT-CODE TRAP. On a green suite the skipped case
+# and the run case BOTH exit 0, so a probe asserting 2-vs-0 reads "no
+# difference" and calls the commit gate unaffected: the reassuring answer,
+# wrong, with the signal in the wrong channel. The suite's own `passed. (Ns)`
+# line is the signal, and the control must prove the suite RAN or the treatment
+# proves nothing.
+pct62out=$(printf '%s' "$(mkjson Bash 'git commit -m x' "$PCTPASS")" | bash "$ROOT/$PCT62" 2>&1)
+pct62rc=$?
+if [ "$pct62rc" = 0 ] && printf '%s' "$pct62out" | grep -q 'passed. ('; then
+  printf 'PASS  %-42s\n' "(A6.13/PCT) green CONTROL: suite RAN, commit allowed"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (rc=%s, no "passed. (" on stderr)\n' "(A6.13/PCT) green CONTROL: suite did not run" "$pct62rc"; fail=$((fail + 1))
+fi
+pct62out=$(printf '%s' "$(mkjson Bash 'git -P commit -m x' "$PCTPASS")" | bash "$ROOT/$PCT62" 2>&1)
+pct62rc=$?
+if [ "$pct62rc" = 0 ] && printf '%s' "$pct62out" | grep -q 'passed. ('; then
+  printf 'PASS  %-42s\n' "(A6.13/PCT) green -P: suite RAN too (finding 62 closed)"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (rc=%s) — the -P commit did not run the suite\n' "(A6.13/PCT) green -P: suite SKIPPED" "$pct62rc"; fail=$((fail + 1))
+fi
+# The same row stated as the negative that pre-fix behaviour would trip: before
+# the lib fix this exits 0 with NO `passed. (` line at all, which is precisely
+# what an exit-code-only probe cannot see.
+if printf '%s' "$pct62out" | grep -q 'passed. ('; then
+  printf 'PASS  %-42s\n' "(A6.13/PCT) green -P: the 'passed.' line is present"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.13/PCT) green -P: no 'passed.' line — suite skipped"; fail=$((fail + 1))
+fi
+# the tolerated form, control: -C is inert, the Test runs normally.
+check "(A6.13/PCT) git -C <repo> commit -m x runs the Test" "$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL commit -m x" "$PCTFAIL")"
+check_msg "(A6.13/PCT) -C control blocked by the TEST" "$ROOT/$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL commit -m x" "$PCTFAIL")" "re-run it and fix"
+# the same order/arity pair, mirrored for merge (A6CLONE is on protected main)
+check_msg "(A6.13) -c BEFORE -C merge: the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash "git -c a=b -C $A6CLONE merge feature/y" "$A6CLONE")" "global option"
+check_msg "(A6.13) -C twice merge: the MERGE arm"      "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE -C $A6CLONE merge feature/y" "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
+
+# ---------------------------------------------------------------------------
+# v3.0.3 item 25 — EARLY EXIT for payloads with no git/gh token.
+#
+# These are CORRECTNESS rows, not the early exit's own rows: delete the early
+# exit and all of them still pass. That is the point — the exit must change
+# only latency. The guard for this item is therefore the TIMING (see
+# scripts/time-hook.sh and its control arm), not a fixture flip count, and a
+# zero flip count here is the expected result rather than a defect.
+#
+# The FIRST row is the one that matters most. An early exit that pattern-matched
+# on a leading `git merge` would pass every timing test and silently re-open
+# finding 62 in the same change: after that fix a gated command can be
+# `git -P merge feature/y`, so the test is for a git TOKEN.
+# ---------------------------------------------------------------------------
+check "(A6.12) git -P merge feature/y reaches the gate" "$H" 2 "$(mkjson Bash 'git -P merge feature/y' "$A6CLONE")"
+check "(A6.12) non-git payload exits 0 fast"            "$H" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+check "(A6.12) 'git' inside a word is not a git token"  "$H" 0 "$(mkjson Bash 'echo digital' "$A6CLONE")"
+check "(A6.12) gh pr merge still gated"                 "$H" 2 "$(mkjson Bash 'gh pr merge 5 --squash' "$A6FEATCO")"
+check "(A6.12) git in a later clause still gated"       "$H" 2 "$(mkjson Bash 'ls && git merge feature/y' "$A6CLONE")"
+check "(A6.12) mcp merge tool still gated"              "$H" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$A6FEATCO")"
+# a NEWLINE-separated git clause: the shape that disqualified a raw-payload
+# pre-parse. The `\n` escape puts an alnum immediately before `git` in the raw
+# bytes, so a grep over the payload MISSES it and exits 0 ungated. This row is
+# the false negative, asserted.
+check "(A6.12) newline-separated git merge still gated" "$H" 2 "$(mkjson Bash 'echo a
+git merge feature/y' "$A6CLONE")"
+check "(A6.12/NP) non-git payload exits 0 fast"       "$NP62" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+check "(A6.12/NP) newline-separated push still gated" "$NP62" 2 "$(mkjson Bash 'echo a
+git push origin main' "$A6CLONE")"
 
 # ---------------------------------------------------------------------------
 # v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.
