@@ -77,6 +77,7 @@ Two smaller behaviour changes to expect:
 
 - `git pull --ff-only` is refused when this branch's upstream config does not name itself. Check with `git rev-parse --abbrev-ref <branch>@{upstream}` — anything other than `origin/<branch>` means that repo had no pull gate on its protected branch before this release.
 - A gated command carrying `-c`, `--config-env` or a `GIT_CONFIG_*` prefix is refused, benign settings included. Re-run without it.
+- `scripts/probe-a6.sh`'s expectation table changed with the gate: `git pull --ff-only origin <current-branch>` now expects ALLOWED, and the upstream catch-up merge carries a fixed BLOCKED instead of no expectation. **Take the v3.0.2 probe with the v3.0.2 hook** — the v3.0.1 probe run against the v3.0.2 hook reports `<-- DIFFERS` on two rows whose verdicts are correct, and exits 1. That mismatch is what turned the toolkit's own gate red on this release's first run.
 
 Copy `hooks/gate-before-merge.sh` to `~/.claude/hooks/` as usual (`user-level-reference/hooks/` is the copy source and is updated in lockstep).
 

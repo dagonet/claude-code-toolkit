@@ -162,15 +162,23 @@ row ALLOWED 'git merge --continue'
 row ALLOWED 'git merge --quit'
 # Provenance: a ref that certainly is not this branch's upstream.
 row BLOCKED 'git merge refs/heads/zz-a6-probe-absent'
-# The pull path, gated by form.
+# The pull path, gated by NAME since v3.0.2: the refspec-free form is allowed
+# only while branch.<this>.merge names this branch, and the two-operand form is
+# allowed only while the named branch IS this branch. Keyed on $BRANCH so the
+# table holds on `master` as well as `main`.
 row ALLOWED 'git pull --ff-only'
 row BLOCKED 'git pull'
-row BLOCKED 'git pull --ff-only origin main'
+row ALLOWED "git pull --ff-only origin $BRANCH"
+row BLOCKED 'git pull --ff-only origin zz-a6-probe-absent'
 row BLOCKED 'gh pr merge 1 --squash'
-# State-dependent, so it carries no expectation: this is a catch-up only while
-# the upstream is ahead of (or equal to) HEAD.
+# v3.0.2 deleted the catch-up exemption, so this row is no longer
+# state-dependent: a merge of the upstream on a protected branch is gated
+# regardless of whether HEAD is behind it. Before v3.0.2 the same command gave
+# OPPOSITE verdicts twenty minutes apart on one consumer's repo, discriminated
+# only by whether an unrelated earlier operation had refreshed the ref — that
+# inconsistency is the thing this row now asserts is gone.
 if [ -n "$UPSTREAM" ]; then
-  row - "git merge --ff-only $UPSTREAM"
+  row BLOCKED "git merge --ff-only $UPSTREAM"
 fi
 
 printf '\n'
