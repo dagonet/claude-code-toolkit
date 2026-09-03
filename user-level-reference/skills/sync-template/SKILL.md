@@ -573,6 +573,9 @@ Run this for every `TEMPLATE_DELETED` agent name `<N>`:
 
 ```sh
 # forms 3 + the spawn call: the reference SHAPE, in project-owned prose.
+# On the USER-LEVEL pass this arm also matches this skill's own example lines —
+# see "Sweep the USER-LEVEL tree too" below for the exclusion and the hand-check
+# that replaces it. In the PROJECT tree there is nothing to exclude.
 grep -rnE "subagent_type[\"']?[[:space:]]*[:=][[:space:]]*[\"']?<N>\b" . \
      --include='*.md' --include='*.json' --include='*.yaml' --include='*.yml'
 
@@ -655,6 +658,8 @@ The five forms above are scoped to the **project tree**. `~/.claude/` is not in 
 
 **Measured, in this skill.** v3.0.0 retired `test-writer` and shipped step 9 still naming it in the list of worktree-isolating agent types — **6d form 3, in the file that defines 6d.** Harmless in effect (an over-broad do-not-spawn list), but it survived a release *because it was outside every sweep, census and drift check at once*. So: **on any release that retires a name, run the same five forms over `~/.claude/` and over the toolkit's own `user-level-reference/` and `docs/`**, and report that pass separately.
 
+**The sweep's own example lines are not sites — and the exclusion has a catch.** Run over `~/.claude`, form 3 matches the example lines in `skills/sync-template/SKILL.md` itself: one phantom site on every run, measured by a consumer. Add `--exclude-dir=sync-template` to the form-3 arm for the user-level pass **and then read this file by hand for the retired name** — because the one real user-level hit anybody has measured (`test-writer`, above) was *in this file*. A blanket exclusion alone would have hidden exactly the defect that motivated the section. Excluded-then-hand-checked, never excluded-and-forgotten; say which of the two you did in the report.
+
 > **CONSTRAINT THIS PUTS ON ANY CONSOLIDATION: ABSORB, DO NOT RENAME.** Both the matcher regex and the skills case arm already generalise over the variant family, so superset-under-an-existing-name is compatible **only while the surviving name is `coder`**. If a consolidation renames rather than absorbs, all three binding sites break silently at the same moment. With an existing name, a stale reference in a consumer's keep-mine prose fails loudly at spawn, which is recoverable; with a new name, every consumer's prose is stale at once.
 
 ### 7. Finalize
@@ -675,7 +680,9 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 
 **Post-finalize self-check:** re-run `template_compute_status(project_path=".")`. A clean sync shows `auto_update: 0, conflict: 0`. Anything else means the manifest was corrupted during finalize — report it to the user instead of finishing.
 
-**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report:
+**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report.
+
+**Run the three arms below verbatim; do not invent a broader regex.** The placeholder shape this toolkit ships is `{{[A-Z_]{2,}}}` and nothing else. A consumer widened it to `__[A-Z_]{3,}__` and got 38 false hits in one sweep — that shape is every MCP tool name (`mcp__MCP_DOCKER__…`), not a placeholder. A sweep that cries wolf 38 times is a sweep the next person skips.
 
 ```
 # The markdown and shell arms are BOM-tolerant: a UTF-8 BOM sits at byte 0,
