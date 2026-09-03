@@ -181,11 +181,20 @@ while IFS= read -r seg; do
         fi
         echo "Do the checkout and the push as SEPARATE calls, or name the destination: 'git push origin <branch>' keys on its argument and never consults the current branch."
         echo "(If this is a false positive: create '.claude/git-guard-off' under this cwd, make the one push, then delete it.)"
+        # v3.0.3 (queue item 4, consumer-authored, verbatim). BOTH no-refspec
+        # exits carry it: the paragraph is about how the DESTINATION is
+        # resolved, and both of these are exits taken because no refspec named
+        # one. The explicit-refspec block at the top of this loop does not —
+        # there the argument IS the destination and there is no blind spot.
+        echo "Could not determine: this check reads the branch you are on and the refspec you typed. It cannot see the remote's own push configuration, so a push whose destination is decided by remote.<name>.push or push.default rather than by your argument may land somewhere this check never evaluated."
       } >&2
       exit 2
     fi
     if gc_on_main "$repo"; then
-      echo "BLOCKED: pushing to a protected branch is not allowed (current branch of $repo is $(gc_current_branch "$repo")). Use a feature branch and open a PR." >&2
+      {
+        echo "BLOCKED: pushing to a protected branch is not allowed (current branch of $repo is $(gc_current_branch "$repo")). Use a feature branch and open a PR."
+        echo "Could not determine: this check reads the branch you are on and the refspec you typed. It cannot see the remote's own push configuration, so a push whose destination is decided by remote.<name>.push or push.default rather than by your argument may land somewhere this check never evaluated."
+      } >&2
       exit 2
     fi
   fi
