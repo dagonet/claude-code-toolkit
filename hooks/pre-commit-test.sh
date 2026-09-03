@@ -47,6 +47,48 @@ lib="$(dirname "$0")/lib/git-cmd.sh"
 # repo's own hooks/run-gate.sh instead of this toolkit's.
 RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
 
+# v3.0.3 — THE SIDE EFFECT THAT OUTLIVES THE HOOK (.gate/last-precommit.json).
+#
+# A PreToolUse hook completes BEFORE the tool it gates ever starts, and the
+# harness drops non-blocking hook stderr. Between them, nothing this hook PRINTS
+# can place it relative to the command it gated: a commit that "returns
+# instantly" with no visible output is indistinguishable, from outside, from a
+# hook that never ran. A consumer spent twenty minutes with a hand-driven
+# payload proving that a ten-minute hook HAD run. This file answers that in one
+# read, and it is why the answer is an artifact and not a message.
+#
+# IT IS A DIAGNOSTIC AND NEVER A GATE. Every failure below is swallowed —
+# unwritable cwd, no git repo, a read-only .gate. A diagnostic that can block a
+# commit is a second gate nobody declared, and it would be the worst kind: one
+# whose refusal has nothing to do with the tests.
+#
+# Written on every path past payload parsing, so the file distinguishes "the
+# hook ran and found nothing to gate" from "the hook did not run". Not written
+# on the two exits BEFORE the payload is understood — the guard-off kill switch
+# (whose whole contract is that this hook does nothing) and the pre-v2
+# settings.json refusal (which has no readable command to describe).
+PCT_HOOK_T0=$(date +%s 2>/dev/null || echo 0)
+PCT_ARTIFACT_BASE=""
+pct_note() { # <path-label> <rc, or -1 where no subshell ran>
+  _pn_base="${PCT_ARTIFACT_BASE:-$GC_CWD}"
+  [ -n "$_pn_base" ] || return 0
+  # "At the repo top" has a precondition. Outside a repo there is no top to
+  # write to, and creating .gate/ in an arbitrary cwd would litter — this hook
+  # sees every Bash call, not only commits.
+  _pn_top=$(git -C "$_pn_base" rev-parse --show-toplevel 2>/dev/null) || return 0
+  [ -n "$_pn_top" ] || return 0
+  mkdir -p "$_pn_top/.gate" 2>/dev/null || return 0
+  _pn_t1=$(date +%s 2>/dev/null || echo 0)
+  # The COMMAND ITSELF is never recorded, only its length: this file lands in
+  # the consumer's repo, and a diagnostic is not a place to accumulate command
+  # history. printf, so no jq is required on the path that reports jq missing.
+  printf '{"path":"%s","rc":%s,"elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s"}\n' \
+    "$1" "$2" "$((_pn_t1 - PCT_HOOK_T0))" "${#GC_CMD}" "${GC_TOOL:-unknown}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+    > "$_pn_top/.gate/last-precommit.json" 2>/dev/null || return 0
+  return 0
+}
+
 gc_read_stdin
 gc_guard_off && exit 0
 
@@ -66,11 +108,12 @@ esac
 # state split and for why the polarity is CONDITIONAL rather than inverted
 # outright — an unconditional refusal here would hard-block every Bash call.
 if gc_cmd_unreadable; then
+  pct_note unreadable -1
   echo "BLOCKED: pre-commit-test: the payload carries a command this gate could not read, so it cannot show your tests passed — refusing rather than allowing an unverified commit. Re-run the commit. (If it repeats: create '.claude/git-guard-off' under this cwd, make the one fix, then delete it.)" >&2
   exit 2
 fi
 
-[ -n "$GC_CMD" ] || exit 0
+[ -n "$GC_CMD" ] || { pct_note empty-cmd -1; exit 0; }
 
 # Find the repo of the first `git commit` in the command line (if any).
 base="$GC_CWD"
@@ -95,7 +138,11 @@ $segments
 GC_SEGMENTS
 
 # Not a commit -- nothing to gate.
-[ -n "$REPO_PATH" ] || exit 0
+[ -n "$REPO_PATH" ] || { pct_note no-commit-segment -1; exit 0; }
+
+# From here the artifact goes to the repo the COMMIT targets, which `git -C` and
+# a `cd` clause can point anywhere. Absolute, and fixed before any cd below.
+PCT_ARTIFACT_BASE="$REPO_PATH"
 
 # Read test command from PROJECT_CONTEXT.md through GC_KEY_PRE (see the header
 # note on that constant in hooks/lib/git-cmd.sh: a leading UTF-8 BOM otherwise
@@ -110,7 +157,12 @@ TEST_CMD=$(grep -E "${GC_KEY_PRE}\*\*Test( Command)?\*\*:" "$REPO_PATH/PROJECT_C
 
 # v2.1.3 fix round 2: a still-unfilled {{...}} Test placeholder must not win
 # precedence over a real Gate command -- dotnet/dotnet-maui ship exactly this
-# shape (Test: {{TEST_COMMAND}}, a real Gate). Strip it to "" here, right after
+# shape (a Test field still holding the TEST_COMMAND placeholder in its
+# double-brace form, beside a real Gate). v3.0.3: the placeholder is NAMED here
+# rather than written literally — a literal one is bait for the consumer-side
+# placeholder sweep in the sync-template skill, which reports it as an unfilled
+# token in a shipped file. Benign only for as long as that sweep keeps its
+# comment filter. Strip it to "" here, right after
 # extraction, so it is treated as absent below and precedence correctly falls
 # through to the Gate/run-gate.sh path instead of silently exiting 0.
 case "$TEST_CMD" in
@@ -147,10 +199,11 @@ if [ -z "$TEST_CMD" ]; then
       # just resolved is a transient FAULT (race, permissions, unmounted share),
       # not a settled condition, so "re-run it" is honest advice. And 78 is an
       # internal signal that is never a hook's own exit status.
-      cd "$REPO_PATH" || { echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
+      cd "$REPO_PATH" || { pct_note gate -1; echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
       OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
       bash "$RUN_GATE" > "$OUT" 2>&1
       PCT_RC=$?
+      pct_note gate "$PCT_RC"
       if [ "$PCT_RC" -eq 0 ]; then
         rm -f "$OUT"
         echo "PRE-COMMIT: 'run-gate.sh' passed." >&2
@@ -172,6 +225,10 @@ if [ -z "$TEST_CMD" ]; then
           # remedy has to appear where the person actually is.
           echo "  (If the HOOK itself is broken rather than the suite: create '.claude/git-guard-off' under this cwd, make the one fix, then delete it. Never leave it in place.)" >&2
         fi
+        # v3.0.3 (queue item 4, consumer-authored, verbatim). BEFORE the tail
+        # header on purpose: everything after that header must be the gate's own
+        # output, so its remedy stays the last thing on stderr.
+        echo "Could not determine: this check ran your suite against the WORKING TREE as it stood a moment ago, not against the tree this commit will contain. If only part of the tree is staged, or it changed between that run and this commit, the thing tested and the thing committed are different objects." >&2
         echo "--- last 20 lines ---" >&2
         tail -20 "$OUT" >&2
         rm -f "$OUT"
@@ -190,6 +247,7 @@ fi
 
 # Nothing to run. Say so — a silent pass reads exactly like a green test run.
 if [ -z "$TEST_CMD" ]; then
+  pct_note nothing-to-run -1
   echo "WARN: pre-commit-test: no Test/Gate command in PROJECT_CONTEXT.md — nothing verified" >&2
   exit 0
 fi
@@ -202,7 +260,7 @@ fi
 echo "PRE-COMMIT: Running '$TEST_CMD'..." >&2
 # Same as the run-gate.sh branch above: `exit 1` from a PreToolUse hook is
 # warn-and-ALLOW, so this must be 2 or a failed cd waves the commit through.
-cd "$REPO_PATH" || { echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
+cd "$REPO_PATH" || { pct_note test -1; echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
 
 # Capture rather than discard: with the Gate fallback $TEST_CMD may be a whole
 # gate, and "it failed" with no output leaves nothing to act on. Bounded to the
@@ -238,6 +296,10 @@ PCT_T0=$(date +%s 2>/dev/null || echo 0)
 # as config DATA rather than as hook SOURCE.
 ( eval "$TEST_CMD" ) > "$OUT" 2>&1
 PCT_RC=$?
+# v3.0.3 diagnostic. Records the child's number as data; nothing here BRANCHES
+# on it — see the long note below and census 21c-2h in
+# scripts/verify-template-consistency.sh.
+pct_note test "$PCT_RC"
 
 # NO TERMINAL REMEDY AT THIS BOUNDARY (v2.2.5 round 4), and WHY THE TWO
 # BOUNDARIES DIFFER.
@@ -297,6 +359,9 @@ else
   # Same reason as the run-gate.sh branch above: the escape hatch is named
   # where the block is read, not only in CLAUDE.md.
   echo "  (If the HOOK itself is broken rather than the suite: create '.claude/git-guard-off' under this cwd, make the one fix, then delete it. Never leave it in place.)" >&2
+  # v3.0.3 (queue item 4, consumer-authored, verbatim), before the tail header
+  # for the same reason as the run-gate branch above.
+  echo "Could not determine: this check ran your suite against the WORKING TREE as it stood a moment ago, not against the tree this commit will contain. If only part of the tree is staged, or it changed between that run and this commit, the thing tested and the thing committed are different objects." >&2
   echo "--- last 20 lines ---" >&2
   tail -20 "$OUT" >&2
   rm -f "$OUT"

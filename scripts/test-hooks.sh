@@ -3256,6 +3256,93 @@ check "placeholder develop trunk: merge gated" "$GB" 2 \
   "$(mkjson Bash 'git merge feature/x' "$PB_PLACE_DEV")"
 
 # ===========================================================================
+# --- v3.0.3 Task 4: pre-commit-test terminal contract ---
+#
+# Three concerns in one block, from queue items 4/5/6 and finding 59:
+#   (1) the three Test rows (exit 0 / 1 / 78) panoscribe measured, each with
+#       the fixture's OWN exit asserted first — finding 59's consumer produced
+#       a probe that could not fail by mis-quoting exactly this script;
+#   (2) the `.gate/last-precommit.json` DIAGNOSTIC (Task 3½): a PreToolUse hook
+#       completes before the tool runs and the harness drops non-blocking hook
+#       stderr, so this file is the only side effect that outlives the hook and
+#       can place it relative to the command it gates;
+#   (3) the "Could not determine" blind-spot paragraph in both gates, and the
+#       property that nothing the HOOK writes lands after the tail header —
+#       what run-gate.sh:258's deliberate silence actually guarantees.
+#
+# NOT HERE, and why: the TERMINAL WORDING rows for the exit-78 case. The Test
+# path's eval boundary is forbidden a terminal arm by three shipped guards —
+# verify-template-consistency.sh census 21c-2h, and R5f/R5g above, which assert
+# the retryable wording on exactly this rc. Adding the wording rows would put
+# this block in direct contradiction with them. See the v3.0.3 report: the
+# prerequisite those guards name (a provenance channel at the eval boundary) is
+# unbuilt, so the 78 row below asserts today's contract, not finding 59's.
+PCTREPO=$(mkrepo pct-terminal main)
+PCT=hooks/pre-commit-test.sh
+for rc in 0 1 78; do
+  printf '#!/usr/bin/env bash\necho "GATE ERROR: pytest-cov missing" >&2\necho "run: uv sync --extra dev" >&2\nexit %s\n' "$rc" > "$PCTREPO/tc$rc.sh"
+done
+# The fixture must be shown to carry the property BEFORE it is measured with.
+for rc in 0 1 78; do
+  bash "$PCTREPO/tc$rc.sh" >/dev/null 2>&1
+  expect "(PCT) tc$rc.sh exits $rc" "$rc" "$?"
+done
+pct_ctx() { # <test-script> -- Gate declared too, so no want-0 row is vacuous
+  printf '# ctx\n\n- **Test**: `bash %s`\n- **Gate**: `bash %s`\n' "$1" "$1" > "$PCTREPO/PROJECT_CONTEXT.md"
+}
+PCTART="$PCTREPO/.gate/last-precommit.json"
+pct_field() { # <file> <key> -> value (string or number), no jq dependency
+  sed -n 's/.*"'"$2"'":"\([^"]*\)".*/\1/p;s/.*"'"$2"'":\(-\{0,1\}[0-9]\{1,\}\).*/\1/p' "$1" 2>/dev/null | head -1
+}
+for rc in 0 1 78; do
+  want=2; [ "$rc" -eq 0 ] && want=0
+  pct_ctx "tc$rc.sh"
+  rm -f "$PCTART"
+  check "(PCT) Test exit $rc -> hook exit $want" "$PCT" "$want" "$(mkjson Bash 'git commit -m x' "$PCTREPO")"
+  # (2) the artifact outlives the hook, on the path it actually took
+  if [ -f "$PCTART" ]; then
+    expect "(PCT) artifact path=test for tc$rc" "test" "$(pct_field "$PCTART" path)"
+    expect "(PCT) artifact rc=$rc for tc$rc"    "$rc"   "$(pct_field "$PCTART" rc)"
+  else
+    printf 'FAIL  %-42s (no %s)\n' "(PCT) artifact written for tc$rc" ".gate/last-precommit.json"
+    fail=$((fail + 2))
+  fi
+done
+# A payload with no commit segment still leaves the artifact — that is the read
+# that answers "did this hook run at all", which stderr cannot.
+rm -f "$PCTART"
+check "(PCT) non-commit payload allowed" "$PCT" 0 "$(mkjson Bash 'ls -la' "$PCTREPO")"
+expect "(PCT) artifact path=no-commit-segment" "no-commit-segment" "$(pct_field "$PCTART" path)"
+# (1) the ordinary-failure path keeps its advice and its escape hatch
+pct_ctx tc1.sh
+check_msg "(PCT) ordinary failure keeps the re-run advice" "$ROOT/$PCT" 2 \
+  "$(mkjson Bash 'git commit -m x' "$PCTREPO")" "re-run it and fix"
+# (3) the blind-spot paragraph, on the BLOCKED path
+check_msg "(PCT) BLOCKED names what it could not determine" "$ROOT/$PCT" 2 \
+  "$(mkjson Bash 'git commit -m x' "$PCTREPO")" "Could not determine"
+# (3) property (b), as the guarantee actually is: nothing the HOOK wrote appears
+# after the tail header. Assert it structurally — every line after the header is
+# a line of the command's OWN output — rather than by pinning the last line,
+# which would pass for a hook that printed its own trailer above the remedy.
+pctErr="$TMPROOT/pct-tail.err"
+pcttmp="$TMPROOT/pct-tail.tmp"; rm -rf "$pcttmp"; mkdir -p "$pcttmp"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$PCTREPO")" | TMPDIR="$pcttmp" bash "$ROOT/$PCT" >/dev/null 2>"$pctErr"
+pctAfter=$(sed -n '/--- last 20 lines ---/,$p' "$pctErr" | tail -n +2)
+pctStray=$(printf '%s\n' "$pctAfter" | grep -v '^GATE ERROR: pytest-cov missing$' | grep -v '^run: uv sync --extra dev$' | grep -v '^$' || true)
+if [ -z "$pctStray" ] && [ -n "$pctAfter" ]; then
+  printf 'PASS  %-42s (%s)\n' "(PCT) nothing hook-written after the tail" "remedy is last"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (stray: %s)\n' "(PCT) nothing hook-written after the tail" \
+    "$(printf '%s' "$pctStray" | head -1)"
+  fail=$((fail + 1))
+fi
+# (3) the same paragraph in no-push-main.sh, on its no-refspec path
+PCTPUSH=$(mkrepo pct-push main)
+check_msg "(PCT) no-push-main names what it could not determine" "$ROOT/hooks/no-push-main.sh" 2 \
+  "$(mkjson Bash 'git push' "$PCTPUSH")" "Could not determine"
+
+# ===========================================================================
 # Read back the stub-PATH completeness marker (see mkpathdir): a stub built
 # without its minimum tool set makes every case running under it meaningless,
 # and it used to do that in silence.

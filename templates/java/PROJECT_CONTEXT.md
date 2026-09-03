@@ -13,6 +13,7 @@
 - **Format Command**: {{FORMAT_COMMAND}}
 - **Lint Command**: {{LINT_COMMAND}}
 - **Gate Command**: {{GATE_COMMAND}}
+<!-- Declaring BOTH means the Test runs on commit and the Gate does not, so no artifact is minted and every merge needs a separate `bash hooks/run-gate.sh`. Worth it only above roughly gate_seconds / (gate_seconds - test_seconds) commits per PR — measure yours. Below that, declare the Gate alone and leave the Test field empty (a literal `none` is NOT an opt-out here: it is eval'd as a command and blocks every commit — measured 2026-09-03). -->
 - **Java Version**: {{JAVA_VERSION}}
 
 ## Paths
