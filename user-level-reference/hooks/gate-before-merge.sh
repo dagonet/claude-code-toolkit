@@ -426,13 +426,97 @@ a6_mutates_resolution() {
 # v3.0.2 redirect strip does for gc_has_refspec.
 a6_is_git_sub() {
   gc_matches_subcommand "$1" "$2" && return 0
-  printf '%s\n' "$1" | grep -qE "\\bgit\\b([[:space:]]+--config-env=[^[:space:]]+|[[:space:]]+-c[[:space:]]+[^[:space:]]+|[[:space:]]+-C[[:space:]]+[^[:space:]]+)+[[:space:]]+$2([[:space:]]|\$)"
+  # v3.0.3 item 1: widened from three named option forms to the general prefix
+  # shape. GC_GIT_PRE knows only `-C <path>` and `-c <k>=<v>`, so EVERY other
+  # global — `--git-dir=…`, `--namespace=x`, `--no-optional-locks`, an unknown
+  # future flag — made the clause fail to match as a pull/push AT ALL and fall
+  # through ungated. The classifier that refuses those globals is useless if the
+  # clause never reaches it, so the matcher has to see the same shape the
+  # classifier does: any run of option tokens (with a value token for the forms
+  # that take one) between `git` and the subcommand.
+  printf '%s\n' "$1" | grep -qE "\\bgit\\b([[:space:]]+(-C|-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]+)*[[:space:]]+$2([[:space:]]|\$)"
 }
 
-a6_inline_config() {
-  printf '%s\n' "$1" | grep -qE '(^|[[:space:]])GIT_CONFIG_[A-Z_]+=' && return 0
-  a6ic=$(printf '%s\n' "$1" | sed -n "s/.*[[:space:]]*git\\([^;]*\\)[[:space:]]$2\\([[:space:]]\\|\$\\).*/\\1/p" | head -1)
-  printf '%s\n' "$a6ic" | grep -qE '(^|[[:space:]])(-c|--config-env)([[:space:]]|=)'
+# v3.0.3 item 1 — ARGV PREFIX SHAPE (finding 60) replaces the `-c`-only search
+# above. A gated git command is
+#   [ENV...] git <globals> <subcommand> ...
+# Every global before the subcommand is classified by ONE question: does it
+# change what the command RESOLVES to? -c/--config-env (config), --git-dir/
+# --work-tree (repo), --namespace (ref namespace — reads like a display option,
+# moves the refs the merge decision is made from), --exec-path (which binaries
+# run), --no-replace-objects (object resolution). Unknown globals are REFUSED:
+# a future flag cannot silently join the allow side. -C is allowed because
+# a6_repo_for resolves it. This is complete over the config channel: `git pull
+# -c x=y` / `git merge -c` / `git push -c` all fail with `unknown switch` (git
+# 2.55.0, measured by a consumer), so there is no after-the-subcommand position
+# to have a gap in. Environment assignments before `git` (GIT_CONFIG=...,
+# GIT_CONFIG_COUNT=..., `env X=Y git ...`) are refused for the same reason: they
+# are config that the name comparison never reads.
+#
+# THE SIX INERT GLOBALS ARE NOT A CONVENIENCE. --no-optional-locks is what VS
+# Code and the JetBrains IDEs pass to avoid touching the index lock; refusing
+# tooling nobody typed is the shape that gets a guard switched off.
+#
+# KNOWN SEAM, unchanged from a6_inline_config: gc_segments strips quotes, so a
+# `-C "C:/a b"` path word-splits here and the token after `-C` is consumed as
+# its value while the remainder falls to the `*)` (subcommand) arm. That reads
+# `ok` — the same verdict the previous implementation gave — so it is a
+# pre-existing gap this item does not widen. gc_matches_subcommand's own
+# fail-closed retry is what covers the quoted-path case for the gate decision.
+a6_global_options() { # <segment> -> prints ok | refuse:<opt> | env:<VAR>
+  a6go_seg="$1"
+  # shellcheck disable=SC2086
+  set -- $a6go_seg
+  a6go_sawgit=0
+  while [ $# -gt 0 ]; do
+    a6go_tok="$1"; shift
+    if [ "$a6go_sawgit" -eq 0 ]; then
+      case "$a6go_tok" in
+        env) continue ;;
+        git) a6go_sawgit=1; continue ;;
+        *=*) case "$a6go_tok" in GIT_*=*|*_GIT_*=*) printf 'env:%s\n' "${a6go_tok%%=*}"; return ;; esac; continue ;;
+        *)   continue ;;
+      esac
+    fi
+    case "$a6go_tok" in
+      -C)   shift; continue ;;                                    # resolved by a6_repo_for
+      -C?*) continue ;;
+      --no-pager|-P|--paginate|--no-optional-locks|--literal-pathspecs|--no-lazy-fetch) continue ;;
+      -c|-c?*|--config-env|--config-env=*|--git-dir|--git-dir=*|--work-tree|--work-tree=*|--namespace|--namespace=*|--exec-path|--exec-path=*|--no-replace-objects)
+            printf 'refuse:%s\n' "${a6go_tok%%=*}"; return ;;
+      -*)   printf 'refuse:%s\n' "$a6go_tok"; return ;;           # unknown global: fail closed
+      *)    printf 'ok\n'; return ;;                              # the subcommand
+    esac
+  done
+  printf 'ok\n'
+}
+
+# a6_repo_for <segment> <base> -- gc_repo_for, corrected for REPEATED `-C`.
+#
+# MEASURED (git 2.55.0, this machine): `-C` is repeatable and CUMULATIVE, each
+# one relative to the last — `git -C a -C b` chdirs into `a` and then tries `b`
+# INSIDE it ("fatal: cannot change to 'b'" for a sibling `b`). For the absolute
+# paths a hook payload carries, that means the LAST -C wins. gc_git_c takes
+# `head -1`, i.e. the FIRST, so `git -C <feature repo> -C <protected repo>
+# merge …` resolved to the feature repo and went ungated.
+#
+# The fold is gated behind the count so a segment with 0 or 1 `-C` goes through
+# gc_repo_for byte-for-byte as before: this corrects one shape and moves no
+# existing row. The defect is in hooks/lib/git-cmd.sh's gc_git_c; correcting it
+# there would drag the ~90-minute three-parser matrix into this release, the
+# same reason a6_is_git_sub and a6_strip_redir compensate at the call site.
+a6_repo_for() {
+  a6rf_list=$(printf '%s\n' "$1" | grep -oE '(^|[[:space:]])-C[[:space:]]+[^[:space:]]+' | sed 's/.*-C[[:space:]]*//')
+  a6rf_n=$(printf '%s\n' "$a6rf_list" | grep -c '[^[:space:]]')
+  if [ "$a6rf_n" -le 1 ]; then
+    gc_repo_for "$1" "$2"
+    return
+  fi
+  a6rf_base="$2"
+  for a6rf_p in $a6rf_list; do
+    a6rf_base=$(gc_resolve "$a6rf_base" "$(printf '%s' "$a6rf_p" | tr '\001' ' ')")
+  done
+  printf '%s\n' "$a6rf_base"
 }
 
 # v2.2.6 round 2 -- THE 14th FAIL-OPEN, third instance. Checked BEFORE the tool
@@ -527,7 +611,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     if a6_branch_move "$seg"; then
       # Last one wins: a later checkout back onto a feature branch means the
       # gated clause no longer lands on a protected branch.
-      a6_move_verdict "$(gc_repo_for "$seg" "$base")" "$seg"
+      a6_move_verdict "$(a6_repo_for "$seg" "$base")" "$seg"
       moved=$?
       A6_MOVE_SEG=$seg
       continue
@@ -539,13 +623,13 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       A6_KIND=ghpr
       [ "$moved" != 0 ] && A6_KIND=moved
       A6_SEG=$seg
-      CWD=$(gc_repo_for "$seg" "$base")
+      CWD=$(a6_repo_for "$seg" "$base")
       break
     fi
 
     # 2. git merge while the checkout is on a protected branch
     if a6_is_git_sub "$seg" "merge"; then
-      repo=$(gc_repo_for "$seg" "$base")
+      repo=$(a6_repo_for "$seg" "$base")
       margs=$(a6_args "$seg" "merge")
       # v3.0.1 item 1: the three merge-state subcommands are exempt on the
       # SUBCOMMAND PARSE, before the branch is even looked at. See
@@ -606,7 +690,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # bare `git pull` with divergent local history creating a real merge commit
     # on the protected branch, which is the topology A6 exists for.
     if a6_is_git_sub "$seg" "pull"; then
-      repo=$(gc_repo_for "$seg" "$base")
+      repo=$(a6_repo_for "$seg" "$base")
       pargs=$(a6_args "$seg" "pull")
       # THE PROTECTED-BRANCH DECISION COMES FIRST (v3.0.2). The name comparison
       # in a6_pull_catchup reads THIS repo's config for THIS branch, so it is
@@ -619,9 +703,14 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # is poisoned is still allowed through that exemption. Queued, not fixed
       # here — closing it needs the inverse (allowlist) shape.
       if [ "$moved" = 0 ] && gc_on_main "$repo"; then
-        if a6_inline_config "$seg" "pull"; then
+        a6g=$(a6_global_options "$seg")
+        if [ "$a6g" != ok ]; then
           is_merge=1
-          A6_KIND=config
+          A6_KIND=global
+          case "$a6g" in
+            refuse:*) A6_GLOBAL="${a6g#refuse:}" ;;
+            env:*)    A6_GLOBAL="${a6g#env:}=" ;;
+          esac
         elif [ "$mutated" != 0 ]; then
           is_merge=1
           A6_KIND=mutated
@@ -640,7 +729,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # --ff-only form is allowed on ANY branch, so a preceding branch change
       # does not change its verdict — it stays out of the refusal.
       if [ "$(a6_nonflag_count "$pargs")" -eq 0 ] && a6_has_flag "$pargs" 'ff-only' \
-         && [ "$mutated" = 0 ] && ! a6_inline_config "$seg" "pull"; then
+         && [ "$mutated" = 0 ] && [ "$(a6_global_options "$seg")" = ok ]; then
         continue
       fi
       if [ "$moved" != 0 ]; then
@@ -655,7 +744,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
 
     # 3. a push that targets a protected branch -- fast-forward merge by push
     if a6_is_git_sub "$seg" "push"; then
-      repo=$(gc_repo_for "$seg" "$base")
+      repo=$(a6_repo_for "$seg" "$base")
       # v3.0.2: the push half of the redirection defect is a FAIL-OPEN, not a
       # false positive. `git push origin 2>&1` on a protected branch gave
       # gc_has_refspec two non-flag tokens, so it read "destination named", the
@@ -669,10 +758,15 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # content somewhere this hook cannot see. Scoped to a protected branch on
       # purpose: gating every `git remote set-url && git push` on a feature
       # branch would be an over-correction on ordinary work.
-      if gc_on_main "$repo" && { a6_inline_config "$seg" "push" || [ "$mutated" != 0 ]; }; then
+      a6g=$(a6_global_options "$seg")
+      if gc_on_main "$repo" && { [ "$a6g" != ok ] || [ "$mutated" != 0 ]; }; then
         is_merge=1
-        A6_KIND=config
-        [ "$mutated" != 0 ] && ! a6_inline_config "$seg" "push" && A6_KIND=mutated
+        A6_KIND=global
+        case "$a6g" in
+          refuse:*) A6_GLOBAL="${a6g#refuse:}" ;;
+          env:*)    A6_GLOBAL="${a6g#env:}=" ;;
+          ok)       A6_KIND=mutated ;;
+        esac
         A6_SEG=$seg
         A6_ARGS=$args
         CWD="$repo"
@@ -818,9 +912,10 @@ if gc_on_main "$CWD"; then
         echo "                   name comparison: ${A6_PULL_WHY:-<not reached>}"
         echo "                   verdict: not one of the two pull forms whose target can be proved by NAME before the fetch."
         ;;
-      config)
-        echo "  discriminator:   this git invocation carries inline configuration (-c, --config-env, or a GIT_CONFIG_* env prefix)."
-        echo "                   verdict: inline config can re-point remote.*.url / branch.*.remote for this one command, so what it resolves to is not what the repository's configuration says. Measured landing foreign content on a protected branch in a SINGLE clause, while branch.<branch>.merge on disk stayed honest."
+      global)
+        echo "  discriminator:   global option '$A6_GLOBAL' before the subcommand changes what this command RESOLVES to (config, repo, ref namespace, or binaries), or is unknown to this gate."
+        echo "                   verdict: refused. Allowed globals: -C <path>, --no-pager, -P, --paginate, --no-optional-locks, --literal-pathspecs, --no-lazy-fetch."
+        echo "                   inline config in particular can re-point remote.*.url / branch.*.remote for this one command: measured landing foreign content on a protected branch in a SINGLE clause, while branch.<branch>.merge on disk stayed honest."
         ;;
       mutated)
         echo "  discriminator:   earlier clause: ${A6_MUT_SEG}"
@@ -839,8 +934,8 @@ if gc_on_main "$CWD"; then
       pull)
         echo "ALLOWED without a gate run: 'git pull --ff-only' with no remote and no refspec, when this branch's own config names itself (branch.$A6_BRANCH.remote set, branch.$A6_BRANCH.merge = refs/heads/$A6_BRANCH); or 'git pull --ff-only <remote> $A6_BRANCH', which names the same thing explicitly. Either way git itself refuses if the result would not be a fast-forward."
         ;;
-      config)
-        echo "ALLOWED without a gate run: re-run this command WITHOUT the '-c' / '--config-env' option (and with no GIT_CONFIG_* variable set on it). If the setting is one you genuinely need, put it in the repository's configuration in a separate call, where it is visible to a reader, and then run the operation."
+      global)
+        echo "ALLOWED without a gate run: re-run this command WITHOUT the '$A6_GLOBAL' option — the same command with '$A6_GLOBAL' removed. Set the option in your configuration instead, in a separate call where a reader can see it; this gate compares configuration by NAME, so an inline override is exactly what it cannot see."
         ;;
       mutated)
         echo "ALLOWED without a gate run: run the two as SEPARATE calls — make the configuration or ref change first, then issue the pull/merge/push on its own, where this gate reads the configuration the operation will actually use."

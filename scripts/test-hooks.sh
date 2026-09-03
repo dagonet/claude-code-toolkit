@@ -1007,6 +1007,40 @@ check_msg "(A6.8) the chained refusal quotes the clause" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git branch -u origin/rogue main && git pull --ff-only' "$A6CLONE")" "earlier clause:"
 
 # ---------------------------------------------------------------------------
+# v3.0.3 item 1 — ARGV PREFIX SHAPE. Complete over the config channel, measured
+# (git 2.55.0): -c / --config-env are git-global-only; every subcommand rejects
+# them, so there is no after-the-subcommand position to have a gap in. Globals
+# are classified by whether they change what the command RESOLVES to.
+#
+# Delete a6_global_options' refuse arms (make it print `ok` unconditionally) and
+# the resolving-global rows below flip 2 -> 0; the six inert-global rows and the
+# two feature-branch rows are the want-0 pairs that keep them honest.
+# ---------------------------------------------------------------------------
+check "(A6.9) bare pull baseline allowed"                "$H" 0 "$(mkjson Bash 'git pull --ff-only' "$A6CLONE")"
+for g in '--no-pager' '-P' '--paginate' '--no-optional-locks' '--literal-pathspecs' '--no-lazy-fetch'; do
+  check "(A6.9) inert global $g allowed"                 "$H" 0 "$(mkjson Bash "git $g pull --ff-only" "$A6CLONE")"
+done
+for g in '-c core.x=y' '--config-env=core.x=E' '--config-env core.x=E' '--git-dir=.git' '--work-tree=.' '--namespace=x' '--exec-path=/nope' '--no-replace-objects'; do
+  check "(A6.9) resolving global $g gated"               "$H" 2 "$(mkjson Bash "git $g pull --ff-only" "$A6CLONE")"
+  check_msg "(A6.9) $g refusal names the option"  "$ROOT/$H" 2 "$(mkjson Bash "git $g pull --ff-only" "$A6CLONE")" "global option"
+done
+check "(A6.9) unknown global gated (fail-closed)"       "$H" 2 "$(mkjson Bash 'git --future-flag pull --ff-only' "$A6CLONE")"
+check "(A6.9) legacy GIT_CONFIG= prefix gated"          "$H" 2 "$(mkjson Bash 'GIT_CONFIG=/tmp/x git pull --ff-only' "$A6CLONE")"
+check "(A6.9) env GIT_CONFIG_COUNT prefix gated"        "$H" 2 "$(mkjson Bash 'env GIT_CONFIG_COUNT=1 git pull --ff-only' "$A6CLONE")"
+check "(A6.9) glued -cKEY= gated (dead seam, fixture anyway)" "$H" 2 "$(mkjson Bash 'git -ccore.x=y pull --ff-only' "$A6CLONE")"
+check "(A6.9) -C stays allowed (resolved)"              "$H" 0 "$(mkjson Bash "git -C $A6CLONE pull --ff-only" "$A6CLONE")"
+check "(A6.9) inert global on a feature branch allowed" "$H" 0 "$(mkjson Bash 'git --no-optional-locks pull' "$A6FEATCO")"
+check "(A6.9) resolving global on a feature branch allowed (nothing gated)" "$H" 0 "$(mkjson Bash 'git -c core.x=y pull' "$A6FEATCO")"
+# Amendment (consumer, git 2.55.0): -C is REPEATABLE and CUMULATIVE. Measured
+# here: `git -C a -C b` chdirs to a, then to b RELATIVE to a ("cannot change to
+# 'b'" when b is a sibling), so for the ABSOLUTE paths below the last one wins.
+# gc_git_c takes head -1 — the FIRST — so a6_repo_for folds every -C through
+# gc_resolve instead. The pair is two-sided on purpose: swapping the order
+# swaps the verdict, which a first-wins or an any-protected reading cannot do.
+check "(A6.9) repeated -C: last one wins, protected"   "$H" 2 "$(mkjson Bash "git -C $A6FEATCO -C $A6CLONE merge feature/y" "$A6FEATCO")"
+check "(A6.9) repeated -C: last one wins, feature"     "$H" 0 "$(mkjson Bash "git -C $A6CLONE -C $A6FEATCO merge feature/y" "$A6CLONE")"
+
+# ---------------------------------------------------------------------------
 # v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.
 #
 # NP is set here rather than further down: this section is the first to feed the
