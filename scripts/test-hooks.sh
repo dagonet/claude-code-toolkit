@@ -3313,6 +3313,23 @@ done
 rm -f "$PCTART"
 check "(PCT) non-commit payload allowed" "$PCT" 0 "$(mkjson Bash 'ls -la' "$PCTREPO")"
 expect "(PCT) artifact path=no-commit-segment" "no-commit-segment" "$(pct_field "$PCTART" path)"
+# `tree` is empty where nothing was hashed because nothing ran — otherwise a
+# reader would compare against a hash that describes no gated state.
+expect "(PCT) artifact tree empty when nothing ran" "" "$(pct_field "$PCTART" tree)"
+# ...and on a path that DID run, it is the tree the hook gated. Two consumers hit
+# the same symptom from opposite causes in one evening — a mutation batched into
+# the same Bash call as the commit, and an untracked file swept in by `add -A` —
+# and both read from outside as "green commit, stale artifact". This field is
+# the one comparison that separates them, so it is asserted against a repo whose
+# working tree is CLEAN, where the gated tree must equal HEAD's.
+PCTCLEAN=$(mkrepo pct-clean-tree main)
+printf '# ctx\n\n- **Test**: `true`\n- **Gate**: `true`\n' > "$PCTCLEAN/PROJECT_CONTEXT.md"
+git -C "$PCTCLEAN" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$PCTCLEAN" commit -q -m ctx >/dev/null 2>&1
+check "(PCT) clean-tree commit allowed" "$PCT" 0 "$(mkjson Bash 'git commit -m x' "$PCTCLEAN")"
+expect "(PCT) artifact tree == HEAD^{commit}'s tree" \
+  "$(git -C "$PCTCLEAN" rev-parse 'HEAD^{tree}')" \
+  "$(pct_field "$PCTCLEAN/.gate/last-precommit.json" tree)"
 # (1) the ordinary-failure path keeps its advice and its escape hatch
 pct_ctx tc1.sh
 check_msg "(PCT) ordinary failure keeps the re-run advice" "$ROOT/$PCT" 2 \

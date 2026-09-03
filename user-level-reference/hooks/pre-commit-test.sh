@@ -69,6 +69,35 @@ RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
 # settings.json refusal (which has no readable command to describe).
 PCT_HOOK_T0=$(date +%s 2>/dev/null || echo 0)
 PCT_ARTIFACT_BASE=""
+PCT_TREE=""
+
+# v3.0.3 — WHICH TREE THIS HOOK GATED. Two consumers hit the same symptom in one
+# evening from opposite causes: a green commit, an artifact the merge gate calls
+# stale, and nothing printed. One had batched `cat addendum >> FILE; git add;
+# git commit` into a SINGLE Bash call — a PreToolUse hook hashes the working
+# tree BEFORE the call runs, so the append happened after the gate; the other had
+# an untracked message file swept into the gated tree by `add -A` and absent from
+# the commit. From outside those read identically. With this field they are one
+# comparison apart: artifact tree == the PARENT's tree means the mutation was
+# batched with the commit; equal to neither means an untracked file moved.
+#
+# Computed EXACTLY as run-gate.sh computes `tree` for .gate/last-pass.json
+# (temp index, add -A, write-tree — hooks/run-gate.sh:170-175) so the two
+# artifacts cannot disagree about what "tree" names. Captured BEFORE the Test
+# command or run-gate.sh runs: that is the state the verdict describes.
+pct_capture_tree() {
+  [ -n "$PCT_ARTIFACT_BASE" ] || return 0
+  _pt_top=$(git -C "$PCT_ARTIFACT_BASE" rev-parse --show-toplevel 2>/dev/null) || return 0
+  [ -n "$_pt_top" ] || return 0
+  _pt_d=$(mktemp -d 2>/dev/null) || return 0
+  # `--git-path index`, never a hardcoded .git/index: in a linked worktree the
+  # index lives under .git/worktrees/<name>/.
+  cp "$(git -C "$_pt_top" rev-parse --git-path index)" "$_pt_d/index" 2>/dev/null || true
+  GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" add -A >/dev/null 2>&1
+  PCT_TREE=$(GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" write-tree 2>/dev/null)
+  rm -rf "$_pt_d"
+  return 0
+}
 pct_note() { # <path-label> <rc, or -1 where no subshell ran>
   _pn_base="${PCT_ARTIFACT_BASE:-$GC_CWD}"
   [ -n "$_pn_base" ] || return 0
@@ -79,11 +108,21 @@ pct_note() { # <path-label> <rc, or -1 where no subshell ran>
   [ -n "$_pn_top" ] || return 0
   mkdir -p "$_pn_top/.gate" 2>/dev/null || return 0
   _pn_t1=$(date +%s 2>/dev/null || echo 0)
+  # `tool` is the ONLY payload-controlled field in this record. Mapped to the
+  # declared enum rather than interpolated: a tool_name carrying a quote or a
+  # backslash would otherwise produce malformed JSON in exactly the file
+  # somebody reads when they are already confused about what ran.
+  case "${GC_TOOL:-}" in
+    Bash)       _pn_tool=Bash ;;
+    PowerShell) _pn_tool=PowerShell ;;
+    *)          _pn_tool=other ;;
+  esac
   # The COMMAND ITSELF is never recorded, only its length: this file lands in
   # the consumer's repo, and a diagnostic is not a place to accumulate command
   # history. printf, so no jq is required on the path that reports jq missing.
-  printf '{"path":"%s","rc":%s,"elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s"}\n' \
-    "$1" "$2" "$((_pn_t1 - PCT_HOOK_T0))" "${#GC_CMD}" "${GC_TOOL:-unknown}" \
+  # `tree` is "" on every path where nothing was hashed because nothing ran.
+  printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s"}\n' \
+    "$1" "$2" "$PCT_TREE" "$((_pn_t1 - PCT_HOOK_T0))" "${#GC_CMD}" "$_pn_tool" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
     > "$_pn_top/.gate/last-precommit.json" 2>/dev/null || return 0
   return 0
@@ -201,6 +240,7 @@ if [ -z "$TEST_CMD" ]; then
       # internal signal that is never a hook's own exit status.
       cd "$REPO_PATH" || { pct_note gate -1; echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
       OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
+      pct_capture_tree
       bash "$RUN_GATE" > "$OUT" 2>&1
       PCT_RC=$?
       pct_note gate "$PCT_RC"
@@ -294,6 +334,7 @@ PCT_T0=$(date +%s 2>/dev/null || echo 0)
 # below). R5g in scripts/test-hooks.sh drives this BEHAVIOURALLY -- the source
 # censuses in verify-template-consistency.sh cannot reach a value that arrives
 # as config DATA rather than as hook SOURCE.
+pct_capture_tree
 ( eval "$TEST_CMD" ) > "$OUT" 2>&1
 PCT_RC=$?
 # v3.0.3 diagnostic. Records the child's number as data; nothing here BRANCHES
