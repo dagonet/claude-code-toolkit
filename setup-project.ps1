@@ -594,26 +594,43 @@ function Write-BranchProtection {
 #
 # ASCII dashes only: PowerShell 5.1 reads a BOM-less UTF-8 file as ANSI, so an
 # em dash in a Write-Host string would reach the user as mojibake.
+# v3.0.3 (item 23): this used to print a PER-REPO line naming $TargetDir as THE
+# trusted repo. autoMode.environment is USER scope, so such a line makes the
+# classifier read every OTHER repository as outside the trust boundary --
+# measured as 58 denials across 11 sessions, 50 in one consumer. The entries are
+# read from user-level-reference/settings.json at run time so this snippet cannot
+# drift from the reference it points at.
+#
+# ReadAllLines with an explicit UTF8 encoding, never Get-Content: PowerShell 5.1
+# reads a BOM-less UTF-8 file as ANSI, and a mojibaked entry pasted into
+# settings.json is worse than no entry.
 function Write-AutoModeSnippet {
-    $remote = $RepoUrl
-    if (-not $remote -and (Test-Path (Join-Path $TargetDir ".git"))) {
-        # 'Stop' turns git's stderr ("No such remote 'origin'") into a terminating
-        # error, which would abort an otherwise fine run in a repo without a remote.
-        $prevEap = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        try {
-            $remote = (& git -C $TargetDir remote get-url origin 2>$null)
-            if ($LASTEXITCODE -ne 0) { $remote = "" }
-        }
-        finally { $ErrorActionPreference = $prevEap }
-    }
-    if (-not $remote) { $remote = "<your remote URL>" }
+    $ref = Join-Path (Join-Path $PSScriptRoot "user-level-reference") "settings.json"
 
-    Write-Host "autoMode.environment entry for this project (User/managed scope -- cannot live in the project):" -ForegroundColor Yellow
-    Write-Host "  ""**Trusted repo**: ``$TargetDir`` and its remote ``$remote`` (private)"""
+    Write-Host "autoMode.environment (User/managed scope -- it applies to EVERY project on this" -ForegroundColor Yellow
+    Write-Host "machine, so it cannot live in this project and must not name this project):" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  Append it to permissions.autoMode.environment in ~/.claude/settings.json."
-    Write-Host "  See user-level-reference/settings.json for the shape."
+    if (Test-Path $ref) {
+        $inArray = $false
+        foreach ($line in [IO.File]::ReadAllLines($ref, [Text.Encoding]::UTF8)) {
+            if (-not $inArray) {
+                if ($line -match '"environment"\s*:\s*\[') { $inArray = $true }
+                continue
+            }
+            if ($line -match '^\s*\]') { break }
+            Write-Host "  $line"
+        }
+    }
+    else {
+        Write-Host "  (user-level-reference/settings.json not found next to this script --"
+        Write-Host "   read the entries from the toolkit repo before editing anything.)"
+    }
+    Write-Host ""
+    Write-Host "  Verify these entries are present in permissions.autoMode.environment in"
+    Write-Host "  ~/.claude/settings.json. Do NOT append per-project variants: a line naming"
+    Write-Host "  one repository as THE trusted repo makes every other repository on this"
+    Write-Host "  machine read as outside the trust boundary, and the classifier will then"
+    Write-Host "  ask for confirmation on ordinary commands there."
 }
 
 # --- DryRun output ---

@@ -611,18 +611,34 @@ fi
 # the script cannot write this anywhere useful — it prints a line for the user
 # to paste into ~/.claude/settings.json, exactly like the legacy .mcp.json
 # warning above tells the user what to move by hand.
+# v3.0.3 (item 23): this used to print a PER-REPO line naming $TARGET_DIR as THE
+# trusted repo, and told the user to append it. `autoMode.environment` is USER
+# scope: a line naming one repository makes the classifier read every OTHER
+# repository as outside the trust boundary. Measured: 58 classifier denials
+# across 11 sessions, 50 of them in the one consumer whose commands began with a
+# `Set-Location` into a path a per-repo line had declared untrusted. The entries
+# are read from user-level-reference/settings.json at run time so the snippet
+# cannot drift from the reference it points at.
 print_automode_snippet() {
-    local remote="$REPO_URL"
-    if [[ -z "$remote" ]] && [[ -d "$TARGET_DIR/.git" ]]; then
-        remote="$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)"
-    fi
-    [[ -z "$remote" ]] && remote="<your remote URL>"
+    local ref="$SCRIPT_DIR/user-level-reference/settings.json"
 
-    echo "autoMode.environment entry for this project (User/managed scope — cannot live in the project):"
-    echo "  \"**Trusted repo**: \`$TARGET_DIR\` and its remote \`$remote\` (private)\""
+    echo "autoMode.environment (User/managed scope -- it applies to EVERY project on this"
+    echo "machine, so it cannot live in this project and must not name this project):"
     echo ""
-    echo "  Append it to permissions.autoMode.environment in ~/.claude/settings.json."
-    echo "  See user-level-reference/settings.json for the shape."
+    if [[ -f "$ref" ]]; then
+        awk '/"environment"[[:space:]]*:[[:space:]]*\[/ { inarr = 1; next }
+             inarr && /^[[:space:]]*\]/ { exit }
+             inarr { print "  " $0 }' "$ref"
+    else
+        echo "  (user-level-reference/settings.json not found next to this script --"
+        echo "   read the entries from the toolkit repo before editing anything.)"
+    fi
+    echo ""
+    echo "  Verify these entries are present in permissions.autoMode.environment in"
+    echo "  ~/.claude/settings.json. Do NOT append per-project variants: a line naming"
+    echo "  one repository as THE trusted repo makes every other repository on this"
+    echo "  machine read as outside the trust boundary, and the classifier will then"
+    echo "  ask for confirmation on ordinary commands there."
 }
 
 # --- Dry run ---

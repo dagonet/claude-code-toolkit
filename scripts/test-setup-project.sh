@@ -148,6 +148,40 @@ else
     "- **Worktree base**: custom/wt" "$(worktree_line "$WTBOVR")"
 fi
 
+# --- the autoMode snippet is GENERIC and USER-scoped (v3.0.3, item 23) -----
+#
+# `permissions.autoMode.environment` applies to every project on the machine.
+# A snippet naming ONE repository as THE trusted repo makes the classifier read
+# every other repo as outside the trust boundary: 58 denials across 11 sessions
+# were measured, 50 of them in one consumer whose commands began with a
+# `Set-Location` into a path the live environment had declared untrusted.
+#
+# The wanted line is READ from the reference, never restated here — the whole
+# point of the fix is that the snippet cannot drift from
+# user-level-reference/settings.json.
+AMDIR="$TMPROOT/automode"
+mkdir -p "$AMDIR"
+bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+  --target-path "$AMDIR" > "$TMPROOT/automode.out" 2>&1
+
+am_want() { # the generic entry, straight out of the reference
+  grep -F '**Trusted repos**' "$ROOT/user-level-reference/settings.json" \
+    | head -1 | sed 's/^[[:space:]]*"//; s/",*[[:space:]]*$//'
+}
+AM_WANT=$(am_want)
+
+if [ -z "$AM_WANT" ]; then
+  # Refuse rather than compare against an empty string, which every line matches.
+  expect "trusted-repos entry is readable from the reference" "non-empty" ""
+else
+  expect "sh snippet prints the reference's generic entry" 1 \
+    "$(grep -cF -- "$AM_WANT" "$TMPROOT/automode.out")"
+fi
+# The paired negative: the singular, path-naming form must be gone. Without it
+# the row above would pass while the defective line was still printed too.
+expect "sh snippet names no single repo as THE trusted repo" 0 \
+  "$(grep -cF -- '**Trusted repo**:' "$TMPROOT/automode.out")"
+
 # --- the PowerShell half, where it can run ---------------------------------
 #
 # The two scripts are independent implementations of the same contract, and the
@@ -168,8 +202,16 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   # through BOTH `if ($WorktreeBase)` sites, exactly as the .sh default does.
   expect "ps1 writes the same worktree base as sh" \
     "- **Worktree base**: $WTB_DEFAULT" "$(worktree_line "$PSDIR")"
+  if [ -n "$AM_WANT" ]; then
+    expect "ps1 snippet prints the reference's generic entry" 1 \
+      "$(grep -cF -- "$AM_WANT" "$TMPROOT/ps-develop.out")"
+  else
+    expect "trusted-repos entry is readable from the reference (ps1)" "non-empty" ""
+  fi
+  expect "ps1 snippet names no single repo as THE trusted repo" 0 \
+    "$(grep -cF -- '**Trusted repo**:' "$TMPROOT/ps-develop.out")"
 else
-  skip "setup-project.ps1 parity" "no PowerShell on this host" 2
+  skip "setup-project.ps1 parity" "no PowerShell on this host" 4
 fi
 
 echo "----------------------------------------------------------------"
