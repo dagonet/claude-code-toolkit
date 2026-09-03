@@ -45,6 +45,19 @@ fi
 
 [ -n "$GC_CMD" ] || exit 0
 
+# v3.0.3 item 25 — exit before doing any work on a payload that cannot be gated.
+# See the long note on the same block in hooks/gate-before-merge.sh: the cost is
+# WORK (the segment walk and its git subprocesses), not parse, and the test is
+# for a git TOKEN rather than for a leading `git push`, because after finding 62
+# a gated command can be `git -P push origin main`. It reads GC_CMD and not the
+# raw payload because a JSON-escaped newline puts an alnum immediately before
+# `git`, which makes a raw-payload grep produce a FALSE NEGATIVE — an ungated
+# exit 0 — on a newline-separated command.
+if ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])git([[:space:]]|$)' &&
+   ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
+  exit 0
+fi
+
 base="$GC_CWD"
 segments=$(gc_segments)
 

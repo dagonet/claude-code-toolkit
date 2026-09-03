@@ -1462,6 +1462,35 @@ check_msg "(A6.13/PCT) -C control blocked by the TEST" "$ROOT/$PCT62" 2 "$(mkjso
 check_msg "(A6.13) -c BEFORE -C merge: the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash "git -c a=b -C $A6CLONE merge feature/y" "$A6CLONE")" "global option"
 check_msg "(A6.13) -C twice merge: the MERGE arm"      "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE -C $A6CLONE merge feature/y" "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
 
+# ---------------------------------------------------------------------------
+# v3.0.3 item 25 — EARLY EXIT for payloads with no git/gh token.
+#
+# These are CORRECTNESS rows, not the early exit's own rows: delete the early
+# exit and all of them still pass. That is the point — the exit must change
+# only latency. The guard for this item is therefore the TIMING (see
+# scripts/time-hook.sh and its control arm), not a fixture flip count, and a
+# zero flip count here is the expected result rather than a defect.
+#
+# The FIRST row is the one that matters most. An early exit that pattern-matched
+# on a leading `git merge` would pass every timing test and silently re-open
+# finding 62 in the same change: after that fix a gated command can be
+# `git -P merge feature/y`, so the test is for a git TOKEN.
+# ---------------------------------------------------------------------------
+check "(A6.12) git -P merge feature/y reaches the gate" "$H" 2 "$(mkjson Bash 'git -P merge feature/y' "$A6CLONE")"
+check "(A6.12) non-git payload exits 0 fast"            "$H" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+check "(A6.12) 'git' inside a word is not a git token"  "$H" 0 "$(mkjson Bash 'echo digital' "$A6CLONE")"
+check "(A6.12) gh pr merge still gated"                 "$H" 2 "$(mkjson Bash 'gh pr merge 5 --squash' "$A6FEATCO")"
+check "(A6.12) git in a later clause still gated"       "$H" 2 "$(mkjson Bash 'ls && git merge feature/y' "$A6CLONE")"
+check "(A6.12) mcp merge tool still gated"              "$H" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$A6FEATCO")"
+# a NEWLINE-separated git clause: the shape that disqualified a raw-payload
+# pre-parse. The `\n` escape puts an alnum immediately before `git` in the raw
+# bytes, so a grep over the payload MISSES it and exits 0 ungated. This row is
+# the false negative, asserted.
+check "(A6.12) newline-separated git merge still gated" "$H" 2 "$(mkjson Bash 'echo a
+git merge feature/y' "$A6CLONE")"
+check "(A6.12/NP) non-git payload exits 0 fast"       "$NP62" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+check "(A6.12/NP) newline-separated push still gated" "$NP62" 2 "$(mkjson Bash 'echo a
+git push origin main' "$A6CLONE")"
 
 # ---------------------------------------------------------------------------
 # v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.

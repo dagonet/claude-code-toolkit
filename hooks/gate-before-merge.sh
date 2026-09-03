@@ -598,6 +598,43 @@ case "$GC_TOOL" in
   *) exit 0 ;;          # unknown tool, or a payload with no command key at all
 esac
 
+# v3.0.3 item 25 — EXIT BEFORE DOING ANY WORK ON A PAYLOAD THAT CANNOT BE GATED.
+#
+# The ~1.5 s this gate spends per call is WORK, not parse: measured, comments
+# intact 49 KB -> 1512 ms/call, the same logic with comments stripped 17 KB ->
+# 1559 ms, a no-op script 38 ms. Stripping 32 KB changed nothing. The lever is
+# not doing the work — the segment walk, gc_repo_for, gc_protected_branches,
+# gc_on_main and their git subprocesses — on a command with no git or gh token
+# in it at all. Every gated path in this file needs one of the two tokens
+# below, so a payload carrying neither cannot reach a refusal.
+#
+# WHY THIS IS AFTER THE PARSE AND NOT BEFORE IT, measured. The obvious cheaper
+# form is to grep the RAW JSON payload before sourcing anything. It is unsound:
+# a newline inside the command is JSON-escaped as `\n`, so
+# `"echo a\ngit merge feature/x"` puts the letter `n` immediately before `git`
+# in the raw bytes, the `(^|[^[:alnum:]_-])` prefix fails, and the grep MISSES a
+# genuinely gated merge — a FALSE NEGATIVE, i.e. an ungated exit 0, on exactly
+# the newline-separated shape gc_segments exists to split. (Probed: the
+# backslash-continuation, leading-tab, `&&` and `gh pr merge` forms are all
+# seen; the newline one is not.) A false positive costs one wasted parse; a
+# false negative costs the gate. So the token test reads GC_CMD, which is
+# unescaped, and sits before the first git subprocess rather than before the
+# parse.
+#
+# The MCP branch is untouched: those payloads carry no command string, and the
+# GitHub merge tools are gated unconditionally.
+#
+# Note the test is for a git TOKEN, not for a leading `git merge`: after
+# finding 62 a gated command can be `git -P merge feature/y`, and an early exit
+# that pattern-matched on the subcommand would pass every timing test and
+# re-open finding 62 in the same change — fast and wrong.
+if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
+  if ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])git([[:space:]]|$)' &&
+     ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
+    exit 0
+  fi
+fi
+
 # INVARIANT — RE-CHECK IT BEFORE YOU ADD A GATED PATH (v3.0.2; penumbra).
 #
 # `git update-ref refs/remotes/origin/main <sha>` is UNGATED and stays so:
