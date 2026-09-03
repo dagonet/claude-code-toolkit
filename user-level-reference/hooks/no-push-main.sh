@@ -48,6 +48,16 @@ fi
 base="$GC_CWD"
 segments=$(gc_segments)
 
+# v3.0.1 (consumer report): the no-refspec path below reads the CURRENT BRANCH,
+# which is ambient state this hook resolves BEFORE the command runs — so
+# `git checkout main && git push` was evaluated on the feature branch and let
+# through. The refspec paths are immune by construction: they key on the
+# argument, never on ambient state.
+# ORDER, not co-presence: only a branch change that PRECEDES the push matters,
+# because only that changes where the push lands. `git push origin feature/x &&
+# git checkout main` is unaffected, and must stay so.
+moved=0
+
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
 
@@ -55,6 +65,30 @@ while IFS= read -r seg; do
   cdt=$(gc_cd_target "$seg")
   if [ -n "$cdt" ]; then
     base=$(gc_resolve "$base" "$cdt")
+    continue
+  fi
+
+  # A clause that can move HEAD to another branch. `--` means "everything after
+  # is a path", so `git checkout -- file` restores files without moving HEAD and
+  # must not arm the refusal.
+  #
+  # KEYED ON THE TARGET, not on the presence of a checkout: `git checkout
+  # feature/z && git push` lands nothing on a protected branch, and refusing it
+  # would be a false positive on ordinary work. The target is an ARGUMENT — in
+  # the payload, not ambient state — which is the whole point. Last one wins.
+  # 0 = harmless, 1 = moves onto a protected branch, 2 = target unresolvable.
+  if { gc_matches_subcommand "$seg" "checkout" || gc_matches_subcommand "$seg" "switch"; } &&
+     ! printf '%s\n' "$seg" | grep -qE '(^|[[:space:]])--([[:space:]]|$)'; then
+    mvargs=$(printf '%s\n' "$seg" | sed -n 's/.*[[:space:]]\(checkout\|switch\)\([[:space:]]\|$\)/\2/p' | head -1)
+    mvtarget=$(printf '%s\n' "$mvargs" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$' | head -1)
+    case "$mvtarget" in
+      ''|*[!A-Za-z0-9._/-]*) moved=2 ;;
+      *)
+        moved=0
+        for mvp in $(gc_protected_branches "$(gc_repo_for "$seg" "$base")"); do
+          [ "$mvtarget" = "$mvp" ] && moved=1
+        done ;;
+    esac
     continue
   fi
 
@@ -71,6 +105,18 @@ while IFS= read -r seg; do
 
   # 2. No explicit refspec -> the push follows the current branch.
   if ! gc_has_refspec "$args" && ! gc_push_skips_branch_check "$args"; then
+    if [ "$moved" != 0 ]; then
+      {
+        if [ "$moved" = 1 ]; then
+          echo "BLOCKED: this push names no refspec, so it follows the current branch — and an earlier clause in the same command checks out '$mvtarget', which is protected. This hook runs BEFORE the command, so the branch it can read is not the branch this would push."
+        else
+          echo "BLOCKED: this push names no refspec, so it follows the current branch — and an earlier clause in the same command changes that branch to a target this hook cannot resolve ('${mvtarget:-<none named>}'), so which branch it pushes to cannot be determined."
+        fi
+        echo "Do the checkout and the push as SEPARATE calls, or name the destination: 'git push origin <branch>' keys on its argument and never consults the current branch."
+        echo "(If this is a false positive: create '.claude/git-guard-off' under this cwd, make the one push, then delete it.)"
+      } >&2
+      exit 2
+    fi
     if gc_on_main "$repo"; then
       echo "BLOCKED: pushing to a protected branch is not allowed (current branch of $repo is $(gc_current_branch "$repo")). Use a feature branch and open a PR." >&2
       exit 2

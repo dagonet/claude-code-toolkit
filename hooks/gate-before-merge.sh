@@ -13,6 +13,48 @@
 # merge lands the other side's content, so no comparison against this
 # checkout's HEAD can say anything about it. See the block above that check.
 #
+# ---------------------------------------------------------------------------
+# v3.0.1 — WHAT IS AND IS NOT GATED ON A PROTECTED BRANCH. Read this before
+# reaching for the kill switch; it is the contract, and it lives HERE because
+# this file syncs to consumers while docs/verification.md does not.
+#
+#   git merge --abort / --continue / --quit   ALLOWED, always. They land nothing
+#       new, and a conflicted merge on a protected branch is exactly the state
+#       this gate exists to worry about — you must be able to get out of it.
+#   git merge --ff-only <upstream>            ALLOWED when it is a pure CATCH-UP:
+#       the ref named is this branch's own configured upstream and HEAD is
+#       already an ancestor of it. Catching up lands nothing the upstream has
+#       not already accepted. --no-ff and --squash are gated even then, because
+#       both produce a result the upstream does not have.
+#   git merge <anything else>                 GATED.
+#   git pull --ff-only   (no remote, no refspec)   ALLOWED — THE SAFE CATCH-UP
+#       FORM, and the one to reach for. Refspec-free means the target is the
+#       configured upstream by construction; --ff-only means git itself refuses
+#       if the result would not be a fast-forward.
+#   git pull <any other form>                 GATED, including a bare `git pull`
+#       on a branch that would fast-forward cleanly. That is deliberate: the
+#       remedy is one word, and it is the safer command.
+#   gh pr merge / the GitHub merge tools      GATED from a protected branch.
+#
+#   AND: any of the gated forms above is also refused when an EARLIER clause of
+#       the SAME command checks out (or switches to) a protected branch, or a
+#       target this hook cannot resolve. `git checkout main && git merge
+#       feature/x` used to slip through — this hook runs before the command, so
+#       it read the branch you were still on. Order is what matters, not
+#       chaining: `gh pr merge …; git checkout main; git pull --ff-only` is fine,
+#       the gated clause runs first. `git checkout feature/z && git merge …` is
+#       fine too, because the target is not protected. Run the checkout and the
+#       operation as separate calls, or name the destination — `git push origin
+#       <branch>` keys on its argument and never consults the current branch.
+#
+# THE STATED LIMIT: every decision above is taken BEFORE any fetch, so the
+# CONTENT of a remote ref is unknown to this hook — it can only read the form of
+# the command and refs that already exist locally. That is why `pull` is gated
+# by form rather than by content: a remote-tracking ref that is merely STALE
+# answers "adds nothing" confidently and wrongly about an object that is not the
+# one the pull will land.
+# ---------------------------------------------------------------------------
+#
 # Requires .gate/last-pass.json (written by hooks/run-gate.sh) at the repo
 # toplevel of the merging session's cwd — worktree-aware, since developer
 # agents self-merge from their worktrees. Blocks (exit 2) unless:
@@ -61,6 +103,159 @@ gc_guard_off && exit 0
 
 CWD="$GC_CWD"
 
+# What the block message reports about. Defaults describe the MCP merge tools,
+# which carry no command string at all; the Bash branch overrides them.
+A6_KIND=mcp
+A6_SEG=""
+A6_ARGS=""
+A6_MOVE_SEG=""
+A6_MOVE_TARGET=""
+moved=0
+
+# --- v3.0.1 (A6 fix) argument parsing, deliberately LOCAL to this hook -------
+#
+# Not added to hooks/lib/git-cmd.sh: that library is covered by the three-parser
+# matrix (~90 minutes), nothing else needs these shapes, and keeping them here
+# means the A6 fix costs one suite run rather than three.
+
+# a6_args <segment> <subcommand> -- everything after `<subcommand>` in a segment.
+a6_args() {
+  printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2\\([[:space:]]\\|\$\\)/\\1/p" | head -1
+}
+
+# a6_nonflag <args> -- the tokens that are not flags (a target ref, a remote).
+a6_nonflag() {
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$'
+}
+
+# a6_nonflag_count <args>
+a6_nonflag_count() {
+  a6_nonflag "$1" | grep -c . || true
+}
+
+# a6_has_flag <args> <alternation> -- a long flag from the alternation is present.
+a6_has_flag() {
+  printf '%s\n' "$1" | grep -qE "(^|[[:space:]])--($2)([[:space:]]|=|\$)"
+}
+
+# a6_merge_exempt <merge-args> -- `git merge --abort|--continue|--quit`.
+#
+# HIGHEST-PRIORITY ARM OF THE v3.0.1 FIX, and it is checked before every other
+# question. All three were measured exiting 2 on a protected branch, which left
+# a consumer in a CONFLICTED MERGE ON `main` — precisely the state this gate
+# exists to worry about — with no way out except `.claude/git-guard-off`. A
+# guard whose only exit is its own kill switch teaches the kill switch.
+# None of the three lands anything new: abort restores the pre-merge state,
+# continue completes work already begun (and already gated when it began), quit
+# leaves the index alone.
+#
+# The exemption requires NO non-flag token to be present. gc_segments strips
+# quotes, so `git merge -m "retry after --abort" feature/x` otherwise hands us a
+# bare `--abort` token and buys a real merge the exemption. The three real forms
+# take no operand, so the requirement costs nothing and closes that door.
+a6_merge_exempt() {
+  [ "$(a6_nonflag_count "$1")" -eq 0 ] || return 1
+  a6_has_flag "$1" 'abort|continue|quit'
+}
+
+# a6_upstream_facts <repo> -- populate A6_UP / A6_UPSHA / A6_HEADSHA for both
+# the discriminator and the block message. Local reads only, no network.
+# a6_branch_move <segment> -- a clause that can move HEAD to another branch.
+#
+# NOT added to hooks/lib/git-cmd.sh even though no-push-main.sh needs the same
+# three lines: the lib is covered by the ~90-minute three-parser matrix, and
+# this shape carries no JSON. The duplication is deliberate and small.
+#
+# `--` means "everything after this is a path", so `git checkout -- file` and
+# `git checkout <ref> -- path` restore files without moving HEAD. Those must not
+# arm the refusal, or a routine file restore would gate the merge that follows.
+a6_branch_move() {
+  gc_matches_subcommand "$1" "checkout" || gc_matches_subcommand "$1" "switch" || return 1
+  printf '%s\n' "$1" | grep -qE '(^|[[:space:]])--([[:space:]]|$)' && return 1
+  return 0
+}
+
+# a6_move_target <segment> -- the branch a checkout/switch names, or "".
+#
+# KEY ON THE TARGET, NOT ON THE PRESENCE OF A CHECKOUT. A branch change only
+# matters when it moves the checkout ONTO a protected branch;
+# `git checkout feature/z && git merge feature/y` lands nothing near one, and
+# refusing it would be a false positive on ordinary work — which is how a layer
+# gets switched off. The target is an ARGUMENT, in the payload, not ambient
+# state the command can change, so it is the safe thing to key on: the same
+# distinction that explains the bug, applied one level in.
+a6_move_target() {
+  a6mt=$(a6_args "$1" "checkout")
+  [ -n "$a6mt" ] || a6mt=$(a6_args "$1" "switch")
+  a6_nonflag "$a6mt" | head -1
+}
+
+# a6_move_verdict <repo> <segment> -- 1 = moves onto a protected branch,
+# 2 = names a target this hook cannot resolve, 0 = moves somewhere harmless.
+a6_move_verdict() {
+  A6_MOVE_TARGET=$(a6_move_target "$2")
+  case "$A6_MOVE_TARGET" in
+    # No target at all (`git checkout` alone), `-` / `@{-1}` (the previous
+    # branch), a variable, or anything that is not a plain ref name: genuinely
+    # cannot be determined here, so refuse THOSE rather than every chain.
+    ''|*[!A-Za-z0-9._/-]*) printf 0 >/dev/null; return 2 ;;
+  esac
+  for a6mp in $(gc_protected_branches "$1"); do
+    [ "$A6_MOVE_TARGET" = "$a6mp" ] && return 1
+  done
+  return 0
+}
+
+a6_upstream_facts() {
+  A6_UP=$(git -C "$1" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)
+  A6_UPSHA=""
+  [ -n "$A6_UP" ] && A6_UPSHA=$(git -C "$1" rev-parse --verify --quiet "$A6_UP^{commit}" 2>/dev/null)
+  A6_HEADSHA=$(git -C "$1" rev-parse --verify --quiet HEAD 2>/dev/null)
+}
+
+# a6_merge_catchup <repo> <merge-args> -- true when the merge merely makes this
+# protected branch match ITS OWN CONFIGURED UPSTREAM.
+#
+# THE RULE IS PROVENANCE, NOT ANCESTRY, and the difference is not academic. The
+# rule this replaced — "allow when the target is already an ancestor of HEAD" —
+# blocks the single most common protected-branch operation there is: after a PR
+# merge, local `main` is one commit BEHIND `origin/main`, so the target is not
+# an ancestor of HEAD and a routine catch-up would demand a multi-minute gate
+# run for content that already passed the PR gate, CI and this gate. That is the
+# highest-frequency false positive available, and it lands when the consumer is
+# most task-focused.
+#
+# "Foreign to local HEAD" and "not yet accepted upstream" are different facts.
+# A6 only cares about the second: catching up to your own upstream lands nothing
+# the upstream has not already accepted.
+#
+# --no-ff and --squash are refused even when the target IS the upstream: both
+# produce a result the upstream does not have, which is exactly what the rule
+# excludes. Ancestry is measured directly rather than by trusting --ff-only,
+# because the flag states an intent while merge-base states the fact.
+a6_merge_catchup() {
+  a6cu_repo=$1; a6cu_args=$2
+  A6_TARGET=""; A6_TARGETSHA=""; A6_ANCESTOR_RC=""
+  a6_upstream_facts "$a6cu_repo"
+  a6_has_flag "$a6cu_args" 'no-ff|squash' && return 1
+  [ "$(a6_nonflag_count "$a6cu_args")" -eq 1 ] || return 1
+  A6_TARGET=$(a6_nonflag "$a6cu_args" | head -1)
+  [ -n "$A6_UPSHA" ] || return 1
+  A6_TARGETSHA=$(git -C "$a6cu_repo" rev-parse --verify --quiet "$A6_TARGET^{commit}" 2>/dev/null)
+  [ -n "$A6_TARGETSHA" ] || return 1
+  [ "$A6_TARGETSHA" = "$A6_UPSHA" ] || return 1
+  git -C "$a6cu_repo" merge-base --is-ancestor HEAD "$A6_UPSHA" 2>/dev/null
+  A6_ANCESTOR_RC=$?
+  # BRANCH ON THE EXACT CODE. `--is-ancestor` returns 1 for "not an ancestor"
+  # and 128 for "could not resolve"; a caller testing truthiness collapses the
+  # two, and "could not resolve" would read as a definite answer.
+  case "$A6_ANCESTOR_RC" in
+    0) return 0 ;;   # HEAD is contained in the upstream -> pure fast-forward to it
+    1) return 1 ;;   # diverged -> the result is a merge commit the upstream lacks
+    *) return 1 ;;   # 128 and anything else: not provable catch-up, so gate
+  esac
+}
+
 # v2.2.6 round 2 -- THE 14th FAIL-OPEN, third instance. Checked BEFORE the tool
 # case below, because that case's `*)` arm is exactly the door an unreadable
 # tool_name walks through. See gc_cmd_unreadable in hooks/lib/git-cmd.sh.
@@ -91,6 +286,42 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   base="$CWD"
   segments=$(gc_segments)
 
+  # v3.0.1 (consumer report) — THE PREMISE THIS GATE READS IS ONE THE COMMAND
+  # CAN CHANGE. Every ambient check below resolves the branch with
+  # `git branch --show-current`, and this is a PreToolUse hook: it runs BEFORE
+  # the command. So `git checkout main && git merge feature/x` is evaluated
+  # while the checkout is still on the feature branch, the protected-branch test
+  # is false, and an entire unreviewed branch lands on `main` — using the exact
+  # verb this gate watches.
+  #
+  # AND IT IS WORSE THAN A SKIPPED CHECK. The gate does not stand aside: it
+  # falls through to the artifact comparison and runs it under the
+  # feature-branch premise ("artifact.sha == branch tip == merged content"),
+  # which that command invalidates. With a fresh artifact the comparison PASSES.
+  # A skipped guard leaves no evidence; this one emits a POSITIVE RECEIPT for
+  # something it did not check.
+  #
+  # ORDER IS THE DISCRIMINATOR, not co-presence. `gh pr merge …; git checkout
+  # main; git pull --ff-only` is SAFE and is the flow the toolkit recommends:
+  # the gated operation runs FIRST, on the branch this hook can see. Refusing
+  # every chain that contains a checkout would gate the recommended workflow,
+  # which is how guards get switched off. Only a branch change that PRECEDES a
+  # gated operation matters, because only that changes where the operation
+  # LANDS.
+  #
+  # And the guard must gate a merge that LANDS ON a protected branch, not one
+  # merely INITIATED FROM a non-protected one: an agent merging its own PR from
+  # its worktree is on a feature branch, which is the toolkit's own merge
+  # protocol. Gating that would block every worktree-isolated merge, and would
+  # read as "the fix works" rather than as the regression it is.
+  #
+  # Forms whose verdict does NOT depend on the branch — the three merge-state
+  # subcommands, a refspec-free `--ff-only` pull, a push naming its destination
+  # explicitly — stay allowed after a branch change, because for them the moved
+  # premise is not load-bearing. Where a decision can key on the payload's
+  # arguments it already does; this flag covers what is left.
+  moved=0
+
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
 
@@ -100,9 +331,21 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       continue
     fi
 
+    if a6_branch_move "$seg"; then
+      # Last one wins: a later checkout back onto a feature branch means the
+      # gated clause no longer lands on a protected branch.
+      a6_move_verdict "$(gc_repo_for "$seg" "$base")" "$seg"
+      moved=$?
+      A6_MOVE_SEG=$seg
+      continue
+    fi
+
     # 1. gh pr merge (any flags)
     if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b'; then
       is_merge=1
+      A6_KIND=ghpr
+      [ "$moved" != 0 ] && A6_KIND=moved
+      A6_SEG=$seg
       CWD=$(gc_repo_for "$seg" "$base")
       break
     fi
@@ -110,8 +353,86 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # 2. git merge while the checkout is on a protected branch
     if gc_matches_subcommand "$seg" "merge"; then
       repo=$(gc_repo_for "$seg" "$base")
+      margs=$(a6_args "$seg" "merge")
+      # v3.0.1 item 1: the three merge-state subcommands are exempt on the
+      # SUBCOMMAND PARSE, before the branch is even looked at. See
+      # a6_merge_exempt.
+      if a6_merge_exempt "$margs"; then
+        continue
+      fi
+      # A branch change earlier in the same command: the branch this merge lands
+      # on is not the branch this hook can read. Cannot determine, so refuse.
+      if [ "$moved" != 0 ]; then
+        is_merge=1
+        A6_KIND=moved
+        A6_SEG=$seg
+        A6_ARGS=$margs
+        CWD="$repo"
+        break
+      fi
+      if gc_on_main "$repo"; then
+        # v3.0.1 item 2: a pure catch-up to this branch's own upstream lands
+        # nothing the upstream has not already accepted. See a6_merge_catchup.
+        if a6_merge_catchup "$repo" "$margs"; then
+          continue
+        fi
+        is_merge=1
+        A6_KIND=merge
+        A6_SEG=$seg
+        A6_ARGS=$margs
+        CWD="$repo"
+        break
+      fi
+    fi
+
+    # 2b. v3.0.1 item 3: `git pull` while the checkout is on a protected branch.
+    #
+    # NO DISCRIMINATOR HERE, and that is a measured decision rather than a
+    # shortcut. A pull FETCHES FIRST, so anything this hook resolves before the
+    # command runs is an answer about a different object:
+    #   - a CURRENT remote-tracking ref answers correctly (measured rc=0)
+    #   - an ABSENT one is at least distinguishable (rc=128)
+    #   - a STALE one answers CONFIDENTLY AND WRONGLY: `--is-ancestor` returns 0
+    #     for the stale tip, the check reads "adds nothing", and the pull then
+    #     lands every commit gained since. Resolve-after-fetch is too late, and
+    #     refuse-when-unresolvable never fires because the ref does resolve.
+    #   - `ls-remote` is ~1.4 s per PreToolUse call and FAILS OFFLINE, which for
+    #     a fail-closed gate means "no pull on a protected branch without a
+    #     network".
+    #
+    # So: gate every pull except the one form that cannot land foreign content.
+    # Refspec-free means the target is the configured upstream by construction,
+    # and --ff-only means git itself refuses if it is not a fast-forward. Both
+    # are readable BEFORE the fetch, which is the constraint that defeated
+    # everything else.
+    #
+    # NAMED RESIDUAL FALSE POSITIVE: a bare `git pull` on a cleanly
+    # fast-forwardable protected branch is gated. That is deliberate — the
+    # remedy is "use git pull --ff-only", a one-word fix and the safer command,
+    # not a multi-minute gate run. Gating only refspec-bearing pulls would leave
+    # bare `git pull` with divergent local history creating a real merge commit
+    # on the protected branch, which is the topology A6 exists for.
+    if gc_matches_subcommand "$seg" "pull"; then
+      repo=$(gc_repo_for "$seg" "$base")
+      pargs=$(a6_args "$seg" "pull")
+      # The refspec-free --ff-only form is allowed on ANY branch, so a preceding
+      # branch change does not change its verdict — it stays out of the refusal.
+      if [ "$(a6_nonflag_count "$pargs")" -eq 0 ] && a6_has_flag "$pargs" 'ff-only'; then
+        continue
+      fi
+      if [ "$moved" != 0 ]; then
+        is_merge=1
+        A6_KIND=moved
+        A6_SEG=$seg
+        A6_ARGS=$pargs
+        CWD="$repo"
+        break
+      fi
       if gc_on_main "$repo"; then
         is_merge=1
+        A6_KIND=pull
+        A6_SEG=$seg
+        A6_ARGS=$pargs
         CWD="$repo"
         break
       fi
@@ -123,11 +444,28 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       args=$(gc_push_args "$seg")
       if gc_targets_main_ref "$args" "$repo"; then
         is_merge=1
+        A6_KIND=push
+        A6_SEG=$seg
+        A6_ARGS=$args
+        CWD="$repo"
+        break
+      fi
+      # A push with no refspec follows the current branch, which a preceding
+      # checkout has changed. A push that NAMES its destination is immune by
+      # construction — it never consults ambient state — and is not refused.
+      if ! gc_has_refspec "$args" && ! gc_push_skips_branch_check "$args" && [ "$moved" != 0 ]; then
+        is_merge=1
+        A6_KIND=moved
+        A6_SEG=$seg
+        A6_ARGS=$args
         CWD="$repo"
         break
       fi
       if ! gc_has_refspec "$args" && ! gc_push_skips_branch_check "$args" && gc_on_main "$repo"; then
         is_merge=1
+        A6_KIND=push
+        A6_SEG=$seg
+        A6_ARGS=$args
         CWD="$repo"
         break
       fi
@@ -188,12 +526,82 @@ esac
 # protected-branch detector is what makes cannot-determine-must-refuse
 # affordable here: it refuses exactly the case where the evidence is known to
 # be irrelevant, and stays out of the way otherwise.
-if gc_on_main "$CWD"; then
+# v3.0.1 (consumer report): a branch change PRECEDES the gated operation in this
+# same command, so the branch it lands on is not the branch this hook can read.
+# Refused before the artifact is compared — running that comparison under a
+# premise the command invalidates is what produced a green receipt for an
+# unchecked merge.
+if [ "$A6_KIND" = "moved" ]; then
   {
-    echo "BLOCKED: this merge was initiated while the checkout is on a protected branch ($(gc_current_branch "$CWD"))."
-    echo "A merge run from a protected branch lands the OTHER side's content, not this checkout's HEAD — so comparing the gate artifact to HEAD verifies nothing, and re-running the gate here would only bless content that is already merged."
-    echo "Gate the content that is actually being merged: check out the merge target (the PR branch head) and run 'bash hooks/run-gate.sh' there, or gate on the branch before opening the PR, and merge from that checkout."
-    echo "(If this is a false positive: create '.claude/git-guard-off' under this cwd, make the one merge, then delete it.)"
+    if [ "$moved" = 1 ]; then
+      echo "BLOCKED: an earlier clause in this same command checks out a PROTECTED branch, so this operation lands on one."
+    else
+      echo "BLOCKED: gate-before-merge cannot determine which branch this operation lands on."
+    fi
+    echo "  branch now:      $(gc_current_branch "$CWD")  (as this hook sees it, BEFORE the command runs)"
+    echo "  protected set:   $(gc_protected_branches "$CWD" 2>/dev/null || true)"
+    echo "  branch change:   ${A6_MOVE_SEG}"
+    echo "  change target:   ${A6_MOVE_TARGET:-<none named, or not a plain ref name>}$([ "$moved" = 1 ] && echo '  (protected)' || echo '  (unresolvable here)')"
+    echo "  matched segment: ${A6_SEG}"
+    echo "  discriminator:   the branch change comes FIRST, so every branch-derived input to this gate is the pre-change value. The change TARGET is read from the command instead, because that is an argument rather than state the command can move."
+    echo "Could not determine: this hook runs before the command, and the command moves HEAD before the gated clause executes. Letting it through would not merely skip a check — the gate would compare its artifact against THIS checkout's HEAD and pass, emitting a green receipt for content it never examined."
+    echo "ALLOWED without a gate run: run the two as SEPARATE calls — do the checkout, then issue the merge/pull/push on its own, where this gate can see the branch it lands on. A gated operation placed BEFORE the branch change is also fine ('gh pr merge …; git checkout main; git pull --ff-only'), and a push that NAMES its destination ('git push origin <branch>') never consults the current branch at all, so it is immune to this by construction."
+    echo "(Last resort, and an admission of this guard's limits rather than a remedy: create '.claude/git-guard-off' under this cwd, make the one operation, then delete it.)"
+  } >&2
+  exit 2
+fi
+
+if gc_on_main "$CWD"; then
+  # v3.0.1 item 5: DIAGNOSIS AND FIX, NOT ARGUMENT. The rationale for the
+  # refusal lives in the comment block above, where the next editor will read
+  # it; at block time nobody reads an argument. What a blocked consumer needs is
+  # the configuration they are subject to, the segment that fired, the inputs
+  # the decision used, the limit of what the hook can see, and — before the
+  # escape hatch, never after it — the form that WOULD be allowed. Whichever of
+  # those last two is read first is the one that gets used, and the toolkit has
+  # plenty of hooks that name only the bypass.
+  a6_upstream_facts "$CWD"
+  A6_BRANCH=$(gc_current_branch "$CWD")
+  A6_PROT=$(gc_protected_branches "$CWD")
+  {
+    echo "BLOCKED: gate-before-merge refuses this operation on a protected branch."
+    echo "  branch:          $A6_BRANCH"
+    echo "  protected set:   ${A6_PROT:-<empty>}  (set '- **Protected branches**:' in PROJECT_CONTEXT.md; 'none' protects nothing)"
+    echo "  matched segment: ${A6_SEG:-<GitHub merge tool payload — no command string>}"
+    echo "  upstream:        ${A6_UP:-<none configured for this branch>}${A6_UPSHA:+ ($A6_UPSHA)}"
+    echo "  HEAD:            ${A6_HEADSHA:-<unresolvable>}"
+    case "$A6_KIND" in
+      merge)
+        echo "  discriminator:   target ref: ${A6_TARGET:-<none named, or more than one>}${A6_TARGETSHA:+ -> $A6_TARGETSHA}"
+        echo "                   --ff-only: $(a6_has_flag "$A6_ARGS" 'ff-only' && echo present || echo absent)   --no-ff/--squash: $(a6_has_flag "$A6_ARGS" 'no-ff|squash' && echo present || echo absent)"
+        echo "                   HEAD already an ancestor of the upstream: $(case "${A6_ANCESTOR_RC:-}" in 0) echo yes ;; 1) echo no ;; 128) echo 'could not resolve (rc=128)' ;; *) echo 'not measured — an earlier condition already ruled out a catch-up' ;; esac)"
+        echo "                   verdict: not a catch-up to this branch's own upstream."
+        ;;
+      pull)
+        echo "  discriminator:   refspec/remote named: $([ "$(a6_nonflag_count "$A6_ARGS")" -eq 0 ] && echo absent || echo "present ($(a6_nonflag "$A6_ARGS" | tr '\n' ' '))")"
+        echo "                   --ff-only: $(a6_has_flag "$A6_ARGS" 'ff-only' && echo present || echo absent)"
+        echo "                   HEAD already equals the upstream: $([ -n "$A6_UPSHA" ] && { [ "$A6_UPSHA" = "$A6_HEADSHA" ] && echo yes || echo no; } || echo 'unknown — no upstream configured')"
+        echo "                   verdict: not the one pull form that cannot land foreign content."
+        ;;
+      *)
+        echo "  discriminator:   not applicable — this operation names no local ref that can be resolved before it runs."
+        ;;
+    esac
+    echo "Could not determine: this check runs before any fetch, so the CONTENT of a remote target ref — what a fetch would bring in — is unknown to it. It decides on the FORM of the command and on refs that already exist locally. If your case is one only the content would settle, the hook cannot see it."
+    case "$A6_KIND" in
+      merge)
+        echo "ALLOWED without a gate run: a pure catch-up — 'git merge --ff-only <upstream>' naming exactly this branch's configured upstream (${A6_UP:-none configured}) while HEAD is already an ancestor of it. Also always allowed: 'git merge --abort', '--continue', '--quit'."
+        echo "Otherwise: gate the content that is actually being merged — check out the merge target (the PR branch head), run 'bash hooks/run-gate.sh' there, and merge from that checkout."
+        ;;
+      pull)
+        echo "ALLOWED without a gate run: 'git pull --ff-only' with no remote and no refspec — the safe catch-up form. It targets the configured upstream by construction, and git itself refuses if the result would not be a fast-forward."
+        ;;
+      *)
+        echo "ALLOWED without a gate run: nothing on this path — a merge run from a protected branch lands the OTHER side's content, not this checkout's HEAD, so comparing the gate artifact to HEAD verifies nothing and re-gating here would only bless content that is already merged."
+        echo "Do this instead: check out the merge target (the PR branch head), run 'bash hooks/run-gate.sh' there, and merge from that checkout — or gate on the branch before opening the PR."
+        ;;
+    esac
+    echo "(Last resort, and an admission of this guard's limits rather than a remedy: create '.claude/git-guard-off' under this cwd, make the one operation, then delete it.)"
   } >&2
   exit 2
 fi

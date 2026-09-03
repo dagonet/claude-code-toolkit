@@ -771,7 +771,7 @@ GATEREPOSHA=$(git -C "$GATEREPO" rev-parse HEAD)
 writeartifact "$GATEREPO" "$GATEREPOSHA"
 check_msg "(A6) merge from a protected branch refuses despite a fresh artifact" \
   "$ROOT/$H" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$GATEREPO")" \
-  "initiated while the checkout is on a protected branch"
+  "refuses this operation on a protected branch"
 check_msg "(A6) protected-branch refusal names the head to gate instead" \
   "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 12 --squash' "$GATEREPO")" \
   "check out the merge target"
@@ -797,6 +797,270 @@ check_msg "(A6) staleness message names WHICH head to gate" \
   "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 5 --squash' "$GATEFEAT")" \
   "head that is actually being MERGED"
 writeartifact "$GATEFEAT" "$FEATSHA"
+
+# ===========================================================================
+# v3.0.1 — THE A6 FIX. Fixtures first.
+#
+# NONE of the repos below is ever given a gate artifact, deliberately. Every
+# want-0 row therefore proves the operation was not gated AT ALL, and every
+# want-2 row in the SAME repo proves the **Gate** field is configured and the
+# hook reached the A6 decision — the pairing is what keeps a want-0 row from
+# passing vacuously on the "no Gate command configured" exit above.
+#
+# `mkrepo` builds no remote, and half of A6 is about a branch's UPSTREAM, so
+# the provenance fixtures are real clones: origin advances, the clone fetches,
+# and the clone's `main` is then behind `origin/main` — the exact routine state
+# the ancestry rule would have blocked.
+# ===========================================================================
+A6CTX='# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n'
+A6MAIN=$(mkrepo a6main main)
+printf '%b' "$A6CTX" > "$A6MAIN/PROJECT_CONTEXT.md"
+git -C "$A6MAIN" branch feature/x >/dev/null 2>&1
+
+A6ORIGIN=$(mkrepo a6origin main)
+a6clone() { # <name> -> a clone of A6ORIGIN with a **Gate** field
+  git clone -q "$A6ORIGIN" "$TMPROOT/$1" >/dev/null 2>&1
+  git -C "$TMPROOT/$1" config user.email t@t.t
+  git -C "$TMPROOT/$1" config user.name t
+  git -C "$TMPROOT/$1" config commit.gpgsign false
+  printf '%b' "$A6CTX" > "$TMPROOT/$1/PROJECT_CONTEXT.md"
+  printf '%s\n' "$TMPROOT/$1"
+}
+A6CLONE=$(a6clone a6clone)
+echo more > "$A6ORIGIN/next.txt"
+git -C "$A6ORIGIN" add next.txt >/dev/null 2>&1
+git -C "$A6ORIGIN" commit -q -m next >/dev/null 2>&1
+git -C "$A6CLONE" fetch -q origin >/dev/null 2>&1
+git -C "$A6CLONE" branch feature/x >/dev/null 2>&1
+# The diverged twin: a local commit on `main` that the upstream does not have,
+# so the same `git merge origin/main` would create a merge commit.
+A6DIV=$(a6clone a6div)
+git -C "$A6DIV" reset -q --hard HEAD~1 >/dev/null 2>&1
+echo local > "$A6DIV/local.txt"
+git -C "$A6DIV" add local.txt >/dev/null 2>&1
+git -C "$A6DIV" commit -q -m local >/dev/null 2>&1
+# The negative arm for every A6 rule: the same shapes on a feature branch.
+A6FEATCO=$(a6clone a6featco)
+git -C "$A6FEATCO" checkout -q -b feature/co >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 1 — `git merge --abort|--continue|--quit` are EXEMPT.
+#
+# Measured on `main` before the fix: all three exited 2. A consumer in a
+# conflicted merge on a protected branch could not get out except through
+# `.claude/git-guard-off`. Delete the a6_merge_exempt call in
+# gate-before-merge.sh and the first four rows flip 0 -> 2.
+#
+# The fifth row is the control on the exemption itself: gc_segments strips
+# quotes, so a `-m` message body carrying the word `--abort` must NOT buy a
+# real merge the exemption. It flips 2 -> 0 if the non-flag-token requirement
+# is dropped from a6_merge_exempt.
+# ---------------------------------------------------------------------------
+check "(A6.1) merge --abort on a protected branch"     "$H" 0 "$(mkjson Bash 'git merge --abort' "$A6MAIN")"
+check "(A6.1) merge --continue on a protected branch"  "$H" 0 "$(mkjson Bash 'git merge --continue' "$A6MAIN")"
+check "(A6.1) merge --quit on a protected branch"      "$H" 0 "$(mkjson Bash 'git merge --quit' "$A6MAIN")"
+check "(A6.1) -C target on main, --abort exempt"       "$H" 0 "$(mkjson Bash "git -C $A6MAIN merge --abort" "$A6CLONE")"
+check "(A6.1) --abort inside -m does NOT exempt"       "$H" 2 "$(mkjson Bash 'git merge -m "retry after --abort" feature/x' "$A6MAIN")"
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 2 — the merge path gates on UPSTREAM PROVENANCE, not ancestry.
+#
+# THE FIRST ROW IS THE COUNTEREXAMPLE THAT KILLED THE ANCESTRY RULE. A6CLONE's
+# `main` is one commit behind `origin/main` — the state every repo is in right
+# after a PR merge — so `origin/main` is NOT an ancestor of HEAD, and an
+# ancestry rule would call the routine catch-up "foreign content" and gate it.
+# Delete the a6_merge_catchup call and rows 1-2 flip 0 -> 2; loosen it to accept
+# any target, or drop the --no-ff/--squash refusal, or collapse the exact
+# is-ancestor return codes into a truthiness test, and rows 3-8 flip 2 -> 0.
+# ---------------------------------------------------------------------------
+check "(A6.2) catch-up merge of own upstream allowed"  "$H" 0 "$(mkjson Bash 'git merge --ff-only origin/main' "$A6CLONE")"
+check "(A6.2) bare-named catch-up allowed"             "$H" 0 "$(mkjson Bash 'git merge origin/main' "$A6CLONE")"
+check "(A6.2) --no-ff of the upstream is gated"        "$H" 2 "$(mkjson Bash 'git merge --no-ff origin/main' "$A6CLONE")"
+check "(A6.2) --squash of the upstream is gated"       "$H" 2 "$(mkjson Bash 'git merge --squash origin/main' "$A6CLONE")"
+check "(A6.2) a ref the upstream lacks is gated"       "$H" 2 "$(mkjson Bash 'git merge feature/x' "$A6CLONE")"
+check "(A6.2) diverged local: upstream merge gated"    "$H" 2 "$(mkjson Bash 'git merge origin/main' "$A6DIV")"
+check "(A6.2) no upstream configured: merge gated"     "$H" 2 "$(mkjson Bash 'git merge feature/x' "$A6MAIN")"
+check "(A6.2) unresolvable target is gated"            "$H" 2 "$(mkjson Bash 'git merge origin/zz-nope' "$A6CLONE")"
+check "(A6.2) catch-up on a FEATURE branch allowed"    "$H" 0 "$(mkjson Bash 'git merge origin/main' "$A6FEATCO")"
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 3 — `git pull` on a protected branch, gated by FORM.
+#
+# A pull fetches first, so no pre-fetch check can be sound: a STALE
+# remote-tracking ref answers "adds nothing" confidently and wrongly about an
+# object that is not the one being merged, and `ls-remote` costs ~1.4 s per
+# PreToolUse call and fails offline. Only the refspec-free `--ff-only` form is
+# provably safe before the fetch. `git pull` was not gated at all before
+# v3.0.1, so rows 1, 3 and 4 flip 2 -> 0 when the pull arm is deleted.
+# ---------------------------------------------------------------------------
+check "(A6.3) bare pull on a protected branch gated"   "$H" 2 "$(mkjson Bash 'git pull' "$A6CLONE")"
+check "(A6.3) pull --ff-only, refspec-free, allowed"   "$H" 0 "$(mkjson Bash 'git pull --ff-only' "$A6CLONE")"
+check "(A6.3) pull --ff-only with a refspec gated"     "$H" 2 "$(mkjson Bash 'git pull --ff-only origin main' "$A6CLONE")"
+check "(A6.3) pull --rebase is gated"                  "$H" 2 "$(mkjson Bash 'git pull --rebase' "$A6CLONE")"
+check "(A6.3) pull on a feature branch is untouched"   "$H" 0 "$(mkjson Bash 'git pull' "$A6FEATCO")"
+
+# ---------------------------------------------------------------------------
+# v3.0.1 (consumer report) — THE BRANCH-CHANGE-FIRST BYPASS, in BOTH gates.
+#
+# Every payload below is fed to the hook; NOTHING is executed. Running
+# `git checkout main && git push` to test this would risk a real unguarded push.
+#
+# The premise these gates read (the current branch) is one the command they gate
+# can change, and they are PreToolUse hooks — they run first. So
+# `git checkout main && git merge feature/x` was evaluated on the feature
+# branch. Worse than a skip: gate-before-merge FELL THROUGH to the artifact
+# comparison and ran it under the feature-branch premise, so a fresh artifact
+# made it PASS — a green receipt for a merge it never checked.
+#
+# THE TWO ARMS MUST DIVERGE, and before the fix they were both `exit 0` for
+# opposite reasons:
+#   chained,   cwd on a feature branch  -> must GATE
+#   unchained, cwd on a feature branch  -> must still PASS
+# The second is the toolkit's own merge protocol — an agent merging its own PR
+# from its worktree is on a feature branch. A fix that gated it would block every
+# worktree-isolated merge while reading as "the fix works".
+#
+# KEYED ON THE CHECKOUT'S TARGET, not its presence: `git checkout feature/z &&
+# git merge feature/y` lands nothing near a protected branch and must stay
+# allowed. A target-blind refusal is the over-correction wearing a plausible
+# face. ORDER matters too — a gated clause placed BEFORE the checkout is the
+# recommended flow and stays allowed.
+# ---------------------------------------------------------------------------
+NP=hooks/no-push-main.sh
+# A PERFECTLY FRESH, sha-matching artifact, so the `gh pr merge` row below is a
+# real control rather than one that exits 2 because no artifact exists. Without
+# the fix that row takes the feature-branch path, the artifact comparison
+# PASSES, and the merge proceeds with a green receipt — the false green this
+# whole section is about. It must be the refusal that stops it, not an absence.
+writeartifact "$A6FEATCO" "$(git -C "$A6FEATCO" rev-parse HEAD)"
+check "(A6.6) checkout main && merge is refused"      "$H" 2 "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")"
+check "(A6.6) switch main && merge is refused"        "$H" 2 "$(mkjson Bash 'git switch main && git merge feature/co' "$A6FEATCO")"
+check "(A6.6) checkout main && gh pr merge refused"   "$H" 2 "$(mkjson Bash 'git checkout main && gh pr merge 3' "$A6FEATCO")"
+check "(A6.6) checkout main && bare pull refused"     "$H" 2 "$(mkjson Bash 'git checkout main && git pull' "$A6FEATCO")"
+check "(A6.6) checkout main && bare push refused"     "$NP" 2 "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")"
+check "(A6.6) UNCHAINED merge on a feature branch"    "$H" 0 "$(mkjson Bash 'git merge feature/x' "$A6FEATCO")"
+check "(A6.6) UNCHAINED bare push on a feature br."   "$NP" 0 "$(mkjson Bash 'git push' "$A6FEATCO")"
+check "(A6.6) gated clause BEFORE the checkout is ok" "$H" 0 "$(mkjson Bash 'git merge feature/x ; git checkout main' "$A6FEATCO")"
+check "(A6.6) push then checkout is ok"               "$NP" 0 "$(mkjson Bash 'git push origin feature/co ; git checkout main' "$A6FEATCO")"
+check "(A6.6) checkout then merge --abort allowed"    "$H" 0 "$(mkjson Bash 'git checkout main && git merge --abort' "$A6FEATCO")"
+check "(A6.6) checkout then pull --ff-only allowed"   "$H" 0 "$(mkjson Bash 'git checkout main && git pull --ff-only' "$A6FEATCO")"
+check "(A6.6) checkout then NAMED push allowed"       "$NP" 0 "$(mkjson Bash 'git checkout main && git push origin feature/co' "$A6FEATCO")"
+check "(A6.6) checkout feature/z && merge allowed"    "$H" 0 "$(mkjson Bash 'git checkout feature/z && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout -b new && merge allowed"       "$H" 0 "$(mkjson Bash 'git checkout -b feature/new && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout feature/z && push allowed"     "$NP" 0 "$(mkjson Bash 'git checkout feature/z && git push' "$A6FEATCO")"
+check "(A6.6) checkout - is unresolvable, refused"    "$H" 2 "$(mkjson Bash 'git checkout - && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout \$VAR is unresolvable"         "$H" 2 "$(mkjson Bash 'git checkout $BR && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) last checkout wins: back to a feature"  "$H" 0 "$(mkjson Bash 'git checkout main && git checkout feature/z && git merge feature/y' "$A6FEATCO")"
+check "(A6.6) checkout -- file is not a branch move"  "$H" 0 "$(mkjson Bash 'git checkout -- seed.txt && git merge feature/x' "$A6FEATCO")"
+check_msg "(A6.6) refusal names the branch change" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "branch change:"
+check_msg "(A6.6) refusal names the green-receipt risk" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "green receipt"
+# The two refusal reasons must READ differently: "moves onto a protected
+# branch" is a finding, "target unresolvable" is a cannot-determine. Without
+# this, the exit code is asserted and the message that explains it is not.
+check_msg "(A6.6) unresolvable target reads as cannot-determine" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout - && git merge feature/y' "$A6FEATCO")" "cannot determine which branch"
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 5 — the block message: diagnosis and fix, not argument.
+#
+# The LAST assertion is the load-bearing one. The positive condition ("what
+# would make it allow") must be printed BEFORE the escape hatch, because
+# whichever a consumer reads first is the one they use — and the safe pull form
+# is named nowhere else a consumer can reach.
+# ---------------------------------------------------------------------------
+A6PULL=$(mkjson Bash 'git pull' "$A6CLONE")
+check_msg "(A6.5) message names the branch" "$ROOT/$H" 2 "$A6PULL" "branch:"
+check_msg "(A6.5) message names the protected set" "$ROOT/$H" 2 "$A6PULL" "protected set:"
+check_msg "(A6.5) message quotes the matched segment" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git pull --rebase' "$A6CLONE")" "git pull --rebase"
+check_msg "(A6.5) message shows the discriminator inputs" "$ROOT/$H" 2 "$A6PULL" "refspec/remote named:"
+check_msg "(A6.5) message names the tracked upstream" "$ROOT/$H" 2 "$A6PULL" "origin/main"
+check_msg "(A6.5) message names what it could NOT determine" "$ROOT/$H" 2 "$A6PULL" "before any fetch"
+check_msg "(A6.5) message states the ALLOWED pull form" "$ROOT/$H" 2 "$A6PULL" "git pull --ff-only"
+check_msg "(A6.5) merge block states the ALLOWED merge form" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git merge feature/x' "$A6CLONE")" "pure catch-up"
+A6MSG=$(printf '%s' "$A6PULL" | bash "$ROOT/$H" 2>&1 >/dev/null)
+A6POS=$(printf '%s\n' "$A6MSG" | grep -n 'ALLOWED without a gate run' | head -1 | cut -d: -f1)
+A6ESC=$(printf '%s\n' "$A6MSG" | grep -n 'git-guard-off' | head -1 | cut -d: -f1)
+if [ -n "$A6POS" ] && [ -n "$A6ESC" ] && [ "$A6POS" -lt "$A6ESC" ]; then
+  printf 'PASS  %-42s (line %s < %s)\n' "(A6.5) ALLOW precedes the escape hatch" "$A6POS" "$A6ESC"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (pos=%s esc=%s)\n' "(A6.5) ALLOW precedes the escape hatch" "${A6POS:-none}" "${A6ESC:-none}"
+  fail=$((fail + 1))
+fi
+
+# ---------------------------------------------------------------------------
+# v3.0.1 item 4 — scripts/probe-a6.sh asserts its OWN preconditions.
+#
+# The probe reports on the gate of the repo it is standing in, so each fixture
+# below gets a copy of hooks/. THE REFUSAL ARMS ARE THE POINT: three of the four
+# vacuous states report every row ALLOWED and one reports every row BLOCKED,
+# and the BLOCKED one is the dangerous direction — a probe expecting BLOCKED
+# reads all-2 as the gate working perfectly.
+#
+# Each refusal must exit 9 (NEITHER hook verdict, so a wrapper testing -eq 0 or
+# -eq 2 cannot read a refusal as an answer) and must NOT print the table. The
+# absent-substring assertions are what make that second half a control: the
+# table cannot be printed without its header, so the refusal path is checked
+# for what it must NOT emit, not only for its exit code.
+# ---------------------------------------------------------------------------
+A6P="$ROOT/scripts/probe-a6.sh"
+a6probe() { ( cd "$1" && bash "$A6P" 2>&1 ); }
+a6probe_rc() { ( cd "$1" >/dev/null 2>&1 && bash "$A6P" >/dev/null 2>&1 ); }
+a6expect_rc() { # <label> <dir> <want>
+  a6probe_rc "$2"; a6rc=$?
+  if [ "$a6rc" = "$3" ]; then
+    printf 'PASS  %-42s (exit %s)\n' "$1" "$a6rc"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$3" "$a6rc"; fail=$((fail + 1))
+  fi
+}
+a6expect_notable() { # <label> <dir> <substring the refusal must name>
+  a6out=$(a6probe "$2")
+  if printf '%s\n' "$a6out" | grep -qF "$3" &&
+     ! printf '%s\n' "$a6out" | grep -qE 'EXPECTED|git merge --abort'; then
+    printf 'PASS  %-42s (observed value, no table)\n' "$1"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s\n' "$1"; fail=$((fail + 1))
+  fi
+}
+
+cp -r "$ROOT/hooks" "$A6CLONE/hooks"
+a6expect_rc "(A6.4) probe runs on a protected branch" "$A6CLONE" 0
+# VACUOUS-ALLOWED: not on a protected branch.
+A6PFEAT=$(a6clone a6probefeat)
+cp -r "$ROOT/hooks" "$A6PFEAT/hooks"
+git -C "$A6PFEAT" checkout -q -b feature/probe >/dev/null 2>&1
+a6expect_rc "(A6.4) probe refuses off a protected branch" "$A6PFEAT" 9
+a6expect_notable "(A6.4) that refusal names the branch, no table" "$A6PFEAT" "branch=feature/probe"
+# VACUOUS-BLOCKED, the one that hides in the block direction: no lib, so the
+# gate fails closed on every row.
+A6PNOLIB=$(a6clone a6probenolib)
+mkdir -p "$A6PNOLIB/hooks"
+cp "$ROOT/hooks/gate-before-merge.sh" "$A6PNOLIB/hooks/"
+a6expect_rc "(A6.4) probe refuses with the lib absent" "$A6PNOLIB" 9
+a6expect_notable "(A6.4) that refusal says BLOCK vacuously" "$A6PNOLIB" "BLOCK vacuously"
+# VACUOUS-ALLOWED, not in the specified list: with no **Gate** command the hook
+# exits 0 before any A6 decision, so every row would be ALLOWED for a reason
+# that is not the gate's logic.
+A6PNOGATE=$(a6clone a6probenogate)
+cp -r "$ROOT/hooks" "$A6PNOGATE/hooks"
+rm -f "$A6PNOGATE/PROJECT_CONTEXT.md"
+a6expect_rc "(A6.4) probe refuses with no Gate configured" "$A6PNOGATE" 9
+a6expect_notable "(A6.4) that refusal names the missing field" "$A6PNOGATE" "no '**Gate**:' line"
+# The probe runs `set -u` and SOURCES the libs, which the hooks themselves never
+# do under -u. If any lib path touched an unset variable, bash would abort with
+# exit 1 — the code this script assigns to "table printed, a row differed", so a
+# crash and a real mismatch would be indistinguishable, which is the confusion
+# the 9 exists to prevent. A placeholder protected set is the reachable path
+# that reaches json_warn_once, and it runs BEFORE precondition 4.
+A6PWARN=$(a6clone a6probewarn)
+cp -r "$ROOT/hooks" "$A6PWARN/hooks"
+printf '# ctx\n\n- **Gate**: `true`\n- **Protected branches**: {{DEFAULT_BRANCH}}\n' > "$A6PWARN/PROJECT_CONTEXT.md"
+a6expect_rc "(A6.4) probe survives the lib's WARN path" "$A6PWARN" 0
 
 # ---------------------------------------------------------------------------
 # v2.4.0 (A6, consumer report): a PRETTY-PRINTED artifact is valid JSON and a
