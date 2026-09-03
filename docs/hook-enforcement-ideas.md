@@ -99,7 +99,7 @@ Marginal gain over convention. Revisit if plan-skipping becomes a recurring prob
 |-------|-------|
 | Hook type | `PreToolUse` on `Agent` |
 | Logic | Coder-variant spawns are blocked unless at least one plan in `docs/plans/` or `$HOME/.claude/plans/` satisfies all four: tier declaration, two-pass challenge literals, team-matches-tier line, mtime within 14 days |
-| Edge cases | Only `coder`, `dotnet-coder`, `java-coder`, `python-coder`, `rust-coder` subagent types are gated — all other agent types (including architect, code-reviewer, tester, requirements-engineer) pass through unconditionally |
+| Edge cases | Only `coder`, `dotnet-coder`, `java-coder`, `python-coder`, `rust-coder` subagent types are gated — all other agent types (including architect, code-reviewer, tester) pass through unconditionally |
 
 **Validation rules:**
 1. **Tier declaration** — `Tier: T1`-`T4` or `**Tier:** T1`-`T4` (markdown-bold tolerated)

@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.0.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.0.1 -->
 
 # Sync Template (Downstream)
 
@@ -129,7 +129,23 @@ Concretely: for every `TEMPLATE_DELETED` path, back up **every file in that path
 
 **A census of who currently holds orphans measures which style is popular, not how bad the failure is** — and the failure is unrecoverable file loss, no backup on any path, no prompt, in a directory a consolidation rewrites wholesale. A second consumer measured **zero** orphans (25 files on disk across `.claude/agents/`, `.claude/rules/` and `hooks/`, all 25 manifest-tracked, both directions clean across the whole 34-entry manifest). **Do not read that as "one of two, therefore marginal."** On a repo that only ever edits tracked files the manifest is bidirectionally consistent and *is* a trustworthy authority — nine syncs with no drift in either direction. **That is a property of that repo, not of manifests**, and it is not the case this set is written for. On such a repo the guard copies nothing extra and costs nothing, which is what a clean repo should look like.
 
-Copy each hit from ALL THREE sets to `"${TMPDIR:-/tmp}/template-sync-backup-<timestamp>/"`, preserving relative paths, and **name the backup directory in the sync report** so the user can find it without asking. Do not delete it at the end of the sync — step 5's post-apply guard reads it.
+Copy each hit from ALL THREE sets to a `template-sync-backup-<timestamp>/` directory under the temp root, preserving relative paths, and **report the ABSOLUTE, RESOLVED path** so the user can find it without asking. Do not delete it at the end of the sync — step 5's post-apply guard reads it.
+
+> **⚠ `/tmp` IS DRIVE-RELATIVE ON WINDOWS, AND THIS STEP RUNS FROM PYTHON.** `${TMPDIR:-/tmp}` is a *shell* idiom; one layer over, in Python with `TMPDIR` unset, `os.path.abspath('/tmp/template-sync-backup-…')` resolves against the **current drive** and yields `G:\tmp\…`, which is not MSYS `/tmp`. **The copy succeeds — only the reported path is wrong**, which is the worst shape it could take: a consumer ran their own `diff` against the path they were given and it failed.
+>
+> This step's entire contract is *"name the backup directory so the user can find it without asking"*, on the one step whose job is protecting **unrecoverable** files. A user told `/tmp/...`, who looks there and finds nothing, concludes **the backup did not happen**.
+>
+> **So: derive the temp root explicitly, and print the resolved absolute path.**
+>
+> ```python
+> import os, tempfile
+> root = os.environ.get("TMPDIR") or tempfile.gettempdir()   # never a bare "/tmp"
+> backup = os.path.realpath(os.path.join(root, f"template-sync-backup-{stamp}"))
+> ```
+>
+> `os.path.realpath`, not `abspath` — it resolves symlinks and the `/tmp` → real-directory mapping as well as making the path absolute. Print `backup` verbatim in the report; do **not** re-print the `${TMPDIR:-/tmp}` expression you wrote in the source.
+>
+> **Same class as the `\r`-in-`check-ignore` defect above and the `which`-resolved `bash -n` in step 4: a shell idiom means something different one layer over.** All three fail without an error, and all three are caught by printing the thing that was actually used rather than the expression that produced it.
 
 > **Report the third set separately from the first two**, and name the directories it was derived from. A count folded into the others hides whether it ran at all — and unlike `new_template_files`, an empty third set is *not* the expected reading: it means no `TEMPLATE_DELETED` path had a directory, which on a sync that deletes anything is a derivation failure, not a clean result.
 
@@ -139,7 +155,7 @@ Copy each hit from ALL THREE sets to `"${TMPDIR:-/tmp}/template-sync-backup-<tim
 
 ### Apply-time invariants — these OUTRANK the step numbering (v2.2.5)
 
-The steps below are numbered for reading order, not for precedence. Two rules apply to **every** write in steps 3, 4, 5 and 6b, whichever list the path arrived in. Both exist because the numbering was followed literally and destroyed work.
+The steps below are numbered for reading order, not for precedence. Three rules apply to **every** write in steps 3, 4, 5 and 6b, whichever list the path arrived in. All three exist because the numbering was followed literally and destroyed work, or hid it.
 
 Two general rules govern how they, and every guard in this file, are written. Neither is decoration — each was earned by a specific failure in this release:
 
@@ -150,6 +166,15 @@ Two general rules govern how they, and every guard in this file, are written. Ne
 **I1 — a file that EXISTS in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in.** `new_template_files` means *absent from the MANIFEST*, not *absent from the PROJECT*: `template_compute_status` decides that list by manifest membership alone and never looks at the disk. A path that is present on disk, untracked in the manifest, and also shipped by the template therefore appears in `new_template_files` while step 6b rule 4 says — correctly — that it must be registered `source="skip"`. Step 5 runs first, so following the numbering lets the destructive reading win. It has: a consumer lost a 156-line project-specific gate this way, and **step 2b cannot cover it**, because 2b backs up *manifest-tracked* paths and this file's defining property is that it is not one. The reporter recovered only because the file happened to be git-tracked; a gitignored one would simply be gone. The user cannot save themselves either — they are asked "add this new file?" about a file that already exists with their content in it, and "yes" is the reasonable answer to the question as posed.
 
 **I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. **State this as a PRECONDITION, not as an ordering rule, and check it where the write happens:** immediately before writing `settings.json`, verify every `hooks/` path it references exists and is non-empty; refuse the write otherwise. An ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose — while a precondition checked at the point of the write does not. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
+
+**I3 — when the `TEMPLATE_DELETED` set is NON-EMPTY, no write in steps 3, 4, 5 or 6b happens until the step-6d BASELINE sweep has been captured for every deleted agent name.** 6d reports a **delta** (`5 -> 0`), and a delta needs a *before*. There is only one moment a before can be taken: while the tree still holds the references the sync is about to rewrite.
+
+> **Why this is an invariant and not a new step 2c, nor a two-phase 6d.**
+>
+> - **A two-phase 6d cannot work.** A reader reaches 6d only *after* step 3, so a "before" phase written inside 6d executes after the change it is meant to precede. **You cannot baseline from a step that runs later than the thing it baselines.**
+> - **A new step 2c rots**, in I2's own words: *"an ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose."* 6d is already a victim of exactly that renumbering.
+>
+> So it is **checked at the point of the first write, like I2**, not asserted as an ordering rule: before the first write of the sync, if `TEMPLATE_DELETED` contains an agent file, refuse until the baseline exists. It is **gated on a non-empty `TEMPLATE_DELETED`**, so it costs an ordinary sync nothing at all.
 
 ### 3. Auto-Update Files
 
@@ -448,7 +473,9 @@ Reached only for paths 6a classified `EMPTY` or `NOMARKERS`. For each such file:
    - "preserved **and still referenced by `<file>`**" — deleting it would take enforcement offline.
 3. ASK the user. Recommend accepting the deletion in the unreferenced case; delete with `git rm <file>` so the removal is in the diff. Never delete on your own initiative, and never delete a project-owned file the template never shipped. (`git rm` here, and `git add`/`git commit` in step 9, are the PO's documented git-I/O role for this skill per `AGENT_TEAM.md` — not hands-on coding.)
    - **Ordering:** delete a template-removed hook only AFTER the new `.claude/settings.json` has been applied (step 3's order) AND the step-6b reference grep — re-run against that new `settings.json` — shows it unreferenced. Deleting it while the in-memory settings still wire it makes every matching tool call exit 127 and fail closed for the rest of the session.
-4. For a deleted **hook**, cross-reference the user-level copy: the dangerous twin usually lives at `~/.claude/hooks/<name>.sh`, which no project sync touches. Tell the user to remove it there too (see the CHANGELOG's downstream-migration notes).
+4. **For ANY deleted file, cross-reference its user-level twin — this is not a hooks-only rule.** The dangerous twin lives under `~/.claude/` (`hooks/<name>.sh`, `agents/<name>.md`, `skills/<name>/SKILL.md`), which **no project sync touches**. Tell the user to remove it there too (see the CHANGELOG's downstream-migration notes).
+
+   > **Why it was written hooks-only, and why that was wrong.** The original wording said *"for a deleted **hook**"*, on the reasoning that a stale hook fails closed. **v3.0.0 deleted AGENTS**, and the reasoning transfers exactly: a retired agent surviving at `~/.claude/agents/<name>.md` stays **spawnable** after the project file is gone — the retirement is undone at user level, silently, for every repo on the machine. A consumer checked `~/.claude/agents/` anyway, because they generalised it themselves. Do not make the next one do that. **The scope is the DELETION, not the artefact type.**
 
 ### 6b. Verify Hook Scripts (MANDATORY)
 
@@ -558,8 +585,10 @@ grep -nE "^[[:space:]]*[A-Za-z0-9_|*?.-]*<N>[A-Za-z0-9_|*?.-]*\)" hooks/*.sh
 grep -o '"matcher": "[^"]*"' .claude/settings.json | sed 's/.*"matcher": "//;s/"$//' \
   | while IFS= read -r m; do printf '%s\n' "<N>" | grep -qE "$m" && echo "matcher: $m"; done
 
-# form 4: agent frontmatter cross-references.
-grep -rn "\b<N>\b" .claude/agents/*.md
+# form 4: agent frontmatter cross-references. EXCLUDE THE AGENT'S OWN FILE —
+# `.claude/agents/<N>.md` matches its own `name: <N>` frontmatter, so the file
+# being deleted always reports itself as a reference to itself.
+grep -rn "\b<N>\b" .claude/agents/*.md | grep -v "^.claude/agents/<N>.md:"
 
 # form 5: hook OUTPUT strings — a live instruction inside a DENY message.
 grep -nE "(echo|printf)[^|]*\b<N>\b" hooks/*.sh
@@ -567,9 +596,64 @@ grep -nE "(echo|printf)[^|]*\b<N>\b" hooks/*.sh
 
 **`--include` goes BEFORE the paths** — after them it is parsed as another path and the filter silently does nothing. (Same defect class as the placeholder sweep's.)
 
-Then, for every `TEMPLATE_DELETED` agent, **list the hits per form**. **Weight keep-mine files specially — the sync will not fix those, so a hit there is permanent until a human edits it**, and say so in the report rather than folding it into a count.
+#### ⚠ FORM 4 SELF-MATCHES, AND THE POLARITY IS THE OPPOSITE OF EVERYTHING ELSE HERE
+
+`grep -l <N> .claude/agents/*.md` includes the file under test, which matches its own `name:` frontmatter. **Every retired agent therefore reports as "still referenced", every time**, and the deletion the sweep exists to authorise is blocked by the sweep itself.
+
+Everything else in this skill fails toward *proceeding*; this one fails toward **refusal — which reads as the safe answer.** A consumer sees the sweep catch something, stops, and concludes it caught something real. It caught the file it was asked about.
+
+> **Uniformity across independent subjects is evidence about the INSTRUMENT, not the subjects.** A consumer's first pass reported **all three** retired agents as still referenced and they looked twice for exactly that reason — *"too tidy; one would have looked plausible."* Three independent agents with independent reference sets do not agree by coincidence. When a sweep answers the same way for every subject, suspect the sweep. `reported-by: penumbra / v3.0.0`
+
+#### The 6d report — PER-FORM, with a probe count from a different source
+
+Report **one line per form per name plus a total**, not a single number:
+
+```
+6d name sweep: 5 -> 0 sites across 5 forms x 3 names (15 probes)
+
+  form 1  case arms in hooks         3 -> 0
+  form 2  settings.json matchers     0 -> 0
+  form 3  subagent_type in prose     0 -> 0
+  form 4  agent frontmatter          1 -> 0
+  form 5  hook output strings        1 -> 0
+```
+
+**`0 -> 0` beats `0 hits`, and is still not enough on its own:** neither distinguishes *ran and found nothing* from *did not run*. The **probe count** is the second number, and it comes from a different source — it is derived from the INPUTS (forms × names), so it cannot go quiet when the search does. Same shape as 6b.1c.
+
+**Per-form is not close to good enough, and the reason is form 3.** A total of 5 proves *a* sweep ran; it does not prove forms 2 and 3 ran, because forms 1, 4 and 5 account for all five hits by themselves. **Form 3 is the form 6d exists for** — the keep-mine `CLAUDE.md` agent-selection table that motivated this whole step is form 3 and nothing else — **and it is the only form carrying `--include` flags**, the defect class that has already landed twice here. A silent form 3 under a nonzero total is a false clean on the exact failure mode.
+
+This is **reporting, not searching**: it adds no greps, so it does not widen the closed set of five forms below. It makes that closed set *visible* instead of an unverifiable claim in prose.
+
+**Report the residual separately — never folded into the delta.** **Weight keep-mine files specially: the sync will not fix those, so a hit there is permanent until a human edits it.**
+
+```
+6d name sweep: 5 -> 2 sites across 5 forms x 3 names (15 probes)
+  residual, in keep-mine files — PERMANENT until a human edits:
+    CLAUDE.md:41   subagent_type: doc-generator     (form 3)
+```
+
+**A non-zero residual is the EXPECTED outcome for a consumer with agent routing in keep-mine prose**, not a failed sync. Say so in the report, or the next reader treats a correct result as a red one.
 
 **Acceptance criterion, per pattern language:** enumerate every place a name is bound — case arms, matcher regexes, routing prose, frontmatter, hook output — and **assert the set is unchanged across the consolidation, per pattern language.** A rename then becomes a diff to look at rather than a silence to notice.
+
+#### ⚠ THE FIVE FORMS ARE EXHAUSTIVE BY DESIGN. A SIXTH ARM IS A REGRESSION, NOT EXTRA SAFETY
+
+**Do not add a bare-name grep "just to be sure".** The set of five is closed on purpose: each arm is keyed on a REFERENCE SHAPE, and that keying is the whole mechanism — it is what took 195 hits down to 7 on a real repo. A sixth arm matching the bare name re-imports the 28:1 noise the design exists to eliminate, and the noise does not stay contained: it makes the other five unreadable alongside it, which is how the sweep gets abandoned.
+
+**This is not a hypothetical.** A consumer added a bare-name grep **having just read the 28:1 warning three paragraphs above**, and got 9 benign hits for their trouble. Their own framing is the reason this warning has to be here in its own right:
+
+> *"I was not being careless, I was being thorough."*
+
+**Thoroughness is precisely what the shape-keyed design defends against.** The instinct that adds an arm is the same instinct that produced the 195-hit sweep, and it does not feel like a mistake while you are having it. If you believe a sixth binding form exists, **that is a finding to report, not an arm to add** — a new form changes the table above and belongs in the skill, where the next consumer inherits it.
+
+#### Sweep the USER-LEVEL tree too, on any release that retires a name
+
+The five forms above are scoped to the **project tree**. `~/.claude/` is not in that scope, and **nothing else covers it either**:
+
+- `verify-user-level-drift.sh` compares user-level files against the **released tag**. A user-level file naming a retired agent reports **0 drift**, because the released tag names it too. The probe is working; it is answering a different question.
+- The toolkit repo-side censuses scope to `templates/**` and `user-level-reference/**` and do not look for retired names at all.
+
+**Measured, in this skill.** v3.0.0 retired `test-writer` and shipped step 9 still naming it in the list of worktree-isolating agent types — **6d form 3, in the file that defines 6d.** Harmless in effect (an over-broad do-not-spawn list), but it survived a release *because it was outside every sweep, census and drift check at once*. So: **on any release that retires a name, run the same five forms over `~/.claude/` and over the toolkit's own `user-level-reference/` and `docs/`**, and report that pass separately.
 
 > **CONSTRAINT THIS PUTS ON ANY CONSOLIDATION: ABSORB, DO NOT RENAME.** Both the matcher regex and the skills case arm already generalise over the variant family, so superset-under-an-existing-name is compatible **only while the surviving name is `coder`**. If a consolidation renames rather than absorbs, all three binding sites break silently at the same moment. With an existing name, a stale reference in a consumer's keep-mine prose fails loudly at spawn, which is recoverable; with a new name, every consumer's prose is stale at once.
 
@@ -708,12 +792,16 @@ git -C <templateRepo> describe --tags <lastSynced>                 # v2.2.4-3-ga
 #   fix early. The `-3-gabc1234` suffix is the signal, not noise; do not tidy it.
 ```
 
-**Checking a `lastSynced` against a tag needs `^{commit}` — `git rev-parse <tag>` is the TAG OBJECT (v2.2.6).** Toolkit releases are annotated tags, so the tag name resolves to the tag object's sha, not the commit's:
+**Checking a `lastSynced` against a tag needs `^{commit}` — TAG TYPE VARIES, so ALWAYS DEREF (v2.2.6, corrected v3.0.1).** On an *annotated* tag, the tag name resolves to the **tag object's** sha, not the commit's:
 
 ```
 git rev-parse v2.2.5            -> 300020f     <- the TAG OBJECT. Never equals lastSynced.
 git rev-parse v2.2.5^{commit}   -> 640ba5e     <- the commit. This is what lastSynced holds.
 ```
+
+> **Do NOT rely on "toolkit releases are annotated" — that claim was in this file and it is false.** The tag type depends on **how the release was cut**: `git tag -a` (and `git tag -s`) creates an **annotated** tag with its own object; a release cut through the **GitHub API** — including the GitHub MCP release tools this repo's own guidance prefers — creates a **LIGHTWEIGHT** tag, which is a plain ref straight to the commit. **v2.3.0 is lightweight for exactly that reason.** The cause is stated here rather than left out because without it the next releaser has no way to know which kind they are about to make.
+>
+> `^{commit}` is a no-op on a lightweight tag and the correction on an annotated one, so **deref unconditionally and never branch on the type.** A rule of the form "these are annotated, so deref" rots the first time someone cuts one the other way — which has already happened.
 
 Anyone verifying a consumer's `lastSynced` against the tag without `^{commit}` reports a **false mismatch** and goes hunting a sync bug that does not exist. `describe --tags` above is unaffected (it takes a commit and returns a name), and `verify-user-level-drift.sh` already derefs correctly — this is a rule for the humans and release notes doing the comparison by hand.
 
@@ -863,8 +951,10 @@ Sync complete: {variant} @ {new_commit}
                  for {lastSyncedVersionOf}; read the sha, not the version"]
   SKILL body:   {the version marker at the top of this file, as LOADED}
   Sync server:  {templateSyncToolsVersion}
-  Backup:       {step-2b directory} [{gitignored tracked files copied}]
+  Backup:       {step-2b directory, ABSOLUTE and RESOLVED} [{gitignored tracked files copied}]
 ```
+
+`Backup:` prints `os.path.realpath(...)` of the directory that was actually written — never `/tmp/...` and never the `${TMPDIR:-/tmp}` expression. On Windows the two differ and the reported one does not exist (step 2b).
 
 `Toolkit:` and `Sync server:` (v2.2.5) exist so a human sees both versions without opening the manifest — the whole point of step 7b. Print what step 7b resolved, and print the honest shape when it resolved nothing:
 
@@ -881,7 +971,7 @@ Sync server:  unknown (server reports no version — client never guesses it)
 
 ### 9. Commit the Sync
 
-Commit the synced tree yourself, from the main thread — `git add`/`git commit` here are the PO's documented git-I/O role for this skill, not hands-on coding (`AGENT_TEAM.md`: agents without a usable tree return work; the PO commits). **Never spawn a worktree-isolated agent to commit a sync.** `coder`, `*-coder`, `tester`, and `test-writer` all set `isolation: worktree`; the harness creates that worktree from `main`, whose `hooks/` predate the sync, while the session's hot-reloaded `settings.json` already fires the v2 gates on every Bash call — the result is every Bash call in that worktree blocked ("BLOCKED: Tests failed…" even for `ls`). If you must delegate this step, use `ops` or `general-purpose` (neither sets `isolation: worktree`).
+Commit the synced tree yourself, from the main thread — `git add`/`git commit` here are the PO's documented git-I/O role for this skill, not hands-on coding (`AGENT_TEAM.md`: agents without a usable tree return work; the PO commits). **Never spawn a worktree-isolated agent to commit a sync.** `coder`, `*-coder` and `tester` all set `isolation: worktree`; the harness creates that worktree from `main`, whose `hooks/` predate the sync, while the session's hot-reloaded `settings.json` already fires the v2 gates on every Bash call — the result is every Bash call in that worktree blocked ("BLOCKED: Tests failed…" even for `ls`). If you must delegate this step, use `ops` or `general-purpose` (neither sets `isolation: worktree`).
 
 Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appended `# context-mode — MANDATORY routing rules` block. The context-mode plugin re-appends this block after `PROJECT-CUSTOM:END` on every session start, so a CLAUDE.md cleaned earlier in the sync is dirty again by the time you commit. Remove the re-appended block (or disable the plugin) before staging, otherwise the commit silently reintroduces it.
 

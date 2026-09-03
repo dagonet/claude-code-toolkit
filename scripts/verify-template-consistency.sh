@@ -2538,6 +2538,189 @@ else
   rm -rf "$b2_tmp"
 fi
 
+# ===========================================================================
+# 32. NO LIVE DOC NAMES A RETIRED AGENT (v3.0.1)
+#
+#     THIS IS 6d POINTED AT THE REPOSITORY THAT SHIPS 6d.
+#
+#     Every stale reference v3.0.1 found is 6d's own FORM 3 — prose naming an
+#     agent that no longer exists — one tree over. 6d scopes to a CONSUMER's
+#     project tree; nothing scoped to the toolkit's own `docs/`, which is why
+#     three of them shipped in v3.0.0 and were found by a reader, not a check.
+#
+#     ⚠ POLARITY IS DELIBERATE: THIS CHECK FAILS TOWARD FLAGGING.
+#     A false positive costs a human one look. A false clean ships a document
+#     that routes someone to a deleted agent. If this check gets noisy, the fix
+#     is to add a retirement marker to the offending line — NOT to loosen the
+#     matcher. Loosening it is how a guard becomes decorative.
+#
+#     ⚠ AND IT IS NOT A BARE-NAME SCAN. `AGENT_TEAM.md`, the CHANGELOG and the
+#     sync skill all name retired agents LEGITIMATELY, to document the
+#     retirement. A bare-name scan flags every one of them and reproduces the
+#     28:1 noise that killed the bare-name approach in 6d — a check consumers
+#     learn to ignore is worse than no check. So: a line naming a retired agent
+#     PASSES when it also carries a retirement MARKER (`retired`, `absorbed`,
+#     `formerly`, or a version string), and is flagged otherwise.
+#
+#     THE RETIRED SET IS EXPLICIT AND MAINTAINED HERE, never inferred from a
+#     git diff. An inferred set is a second thing that can silently go empty,
+#     and an empty retired set makes every row pass — the check reports green
+#     having measured nothing. Arm D asserts it is non-empty for that reason.
+#
+#     SCOPE is `docs/**.md` AND `user-level-reference/**.md`, minus the DATED
+#     HISTORICAL RECORDS: `docs/plans/**` and `docs/<YYYY-MM-DD>-*.md`. Both are
+#     records of what was true on a date; rewriting them falsifies the history,
+#     so they are excluded BY SHAPE rather than by a list that rots. Excluded by
+#     path, not by content, so a new dated record needs no edit here.
+#
+#     ⚠ `user-level-reference/` IS IN SCOPE BECAUSE THAT IS WHERE THE MOTIVATING
+#     CASE LIVED. The reference that proved this gap existed was step 9 of
+#     `skills/sync-template/SKILL.md`, which shipped v3.0.0 still naming
+#     `test-writer`. A check scoped so it cannot see its own motivating case is
+#     the "adjacent question" defect one more time — so the scope is the tree
+#     the instance was found in, not the tree that was convenient.
+#
+#     FENCED CODE BLOCKS ARE EXCLUDED, and on their own merits rather than as a
+#     workaround. A line inside ``` or ~~~ is a sample, a transcript, or a
+#     MEASUREMENT — never live routing prose. This skill's own noise census
+#     (`doc-generator 10 | test-writer 4`) is a recorded measurement inside a
+#     fence: flagging it would demand falsifying a number that was true when
+#     measured. Prose one line outside the fence is still flagged.
+#
+#     ⚠ FENCE TRACKING FAILS THE WRONG WAY IF IT DESYNCS. An odd number of
+#     delimiters leaves the tail of a file permanently "inside a fence", which
+#     silently swallows live prose and returns the CLEAN answer. Arm F asserts
+#     the delimiter count is even in every scanned file, so the desync cannot
+#     happen quietly. Arm E is the two-sided control on the extractor itself.
+# ===========================================================================
+echo
+b3_retired="test-writer requirements-engineer doc-generator"
+# A line naming a retired agent is legitimate when it says so. Version strings
+# count because "absorbed into `tester` (v3.0.0)" is the shape migration notes
+# actually use.
+b3_marker='retired|absorbed|formerly|v[0-9]+\.[0-9]+\.[0-9]+'
+b3_re=$(printf '%s' "$b3_retired" | tr ' ' '|')
+
+# The matcher, as ONE function, so the two control arms below exercise the same
+# code the real scan does rather than a re-typed approximation of it.
+# Returns 0 (true) when the line SHOULD be flagged.
+b3_should_flag() {
+  case "$1" in
+    *test-writer*|*requirements-engineer*|*doc-generator*)
+      printf '%s' "$1" | grep -qiE "$b3_marker" && return 1
+      return 0 ;;
+  esac
+  return 1
+}
+
+# Candidate extractor: `<lineno>:<text>` for every line matching a retired name
+# OUTSIDE a fenced code block. ONE function, so arm E exercises the code the
+# real scan runs rather than a re-typed approximation of it.
+b3_extract() { # <file>
+  awk -v re="$b3_re" '
+    /^[[:space:]]*(```|~~~)/ { fence = 1 - fence; next }
+    !fence && $0 ~ re { print NR ":" $0 }
+  ' "$1" 2>/dev/null
+}
+
+b3_bad=0
+b3_scanned=0
+b3_oddfence=0
+while IFS= read -r b3_f; do
+  [ -n "$b3_f" ] || continue
+  case "$b3_f" in
+    docs/plans/*) continue ;;
+    docs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*) continue ;;
+  esac
+  b3_scanned=$((b3_scanned + 1))
+  # Arm F input: an odd delimiter count means fence state desyncs and the tail
+  # of the file is treated as fenced — a silent CLEAN on live prose.
+  # `grep -c` PRINTS 0 and EXITS 1 on no match, so a `|| echo 0` fallback
+  # appends a SECOND line and the arithmetic below dies on "0\n0". The count is
+  # always printed; there is nothing to fall back to.
+  b3_fc=$(grep -cE '^[[:space:]]*(```|~~~)' "$b3_f" 2>/dev/null)
+  if [ $(( ${b3_fc:-0} % 2 )) -ne 0 ]; then
+    echo "    $b3_f has $b3_fc fence delimiters (odd) — fence state desyncs and the tail of the file would be scanned as if fenced"
+    b3_oddfence=$((b3_oddfence + 1))
+  fi
+  while IFS= read -r b3_hit; do
+    [ -n "$b3_hit" ] || continue
+    b3_lno=${b3_hit%%:*}
+    b3_txt=${b3_hit#*:}
+    if b3_should_flag "$b3_txt"; then
+      echo "    $b3_f:$b3_lno NAMES A RETIRED AGENT with no retirement marker"
+      echo "      ${b3_txt}" | cut -c1-160
+      b3_bad=$((b3_bad + 1))
+    fi
+  done < <(b3_extract "$b3_f")
+done < <(git ls-files -- 'docs/*.md' 'docs/*/*.md' 'user-level-reference/*.md' 'user-level-reference/*/*.md' 'user-level-reference/*/*/*.md' 2>/dev/null)
+
+# Arm A — the assertion itself.
+if [ "$b3_bad" -eq 0 ]; then
+  ok "check 32 (arm A): no live doc names a retired agent without a retirement marker ($b3_scanned docs scanned)"
+else
+  ko "check 32 (arm A): $b3_bad line(s) name a RETIRED agent as if it were live — see above. Fix by naming the survivor (test-writer -> tester, requirements-engineer -> architect, doc-generator -> coder), or, if the line is a record of what was true then, ANNOTATE it with the retirement rather than rewriting it"
+fi
+
+# Arm B (POSITIVE CONTROL) — a synthetic unmarked line MUST be flagged. Without
+# this, a matcher that never fires makes arm A green having measured nothing.
+if b3_should_flag "spawn a doc-generator to write the release notes"; then
+  ok "check 32 (arm B): a synthetic unmarked retired-agent line IS flagged — arm A is not passing vacuously"
+else
+  ko "check 32 (arm B): a synthetic unmarked retired-agent line was NOT flagged — the matcher is dead and arm A means nothing"
+fi
+
+# Arm C (NEGATIVE CONTROL) — the SAME name WITH a marker must NOT be flagged.
+# Positives alone cannot distinguish a working guard from one that fires on
+# everything, and a guard that fires on everything is the one that gets deleted.
+if b3_should_flag "tester absorbed test-writer in v3.0.0"; then
+  ko "check 32 (arm C): a properly MARKED retirement note was flagged — this check fires on everything, including the migration notes that document the retirement"
+else
+  ok "check 32 (arm C): a properly marked retirement note is NOT flagged — arm B is discriminating, not unconditional"
+fi
+
+# Arm D — the retired set and the scope must both be non-empty. An empty
+# retired list makes every line pass; an empty file list makes every file pass.
+# Either one reports green having measured nothing.
+b3_n=0
+for b3_name in $b3_retired; do b3_n=$((b3_n + 1)); done
+if [ "$b3_n" -ge 1 ] && [ "$b3_scanned" -ge 10 ]; then
+  ok "check 32 (arm D): $b3_n retired name(s) checked against $b3_scanned live docs — neither input is empty"
+else
+  ko "check 32 (arm D): retired names=$b3_n, docs scanned=$b3_scanned (floor 10) — an empty input makes arm A green having measured NOTHING"
+fi
+
+# Arm E (TWO-SIDED CONTROL on the FENCE EXTRACTOR). A fence-aware scan can fail
+# in two opposite directions and only one of them is loud: extracting nothing at
+# all is the CLEAN answer. So assert both sides against one synthetic file —
+# the fenced hit must be invisible, the prose hit one line later must not be.
+b3_tmp=$(mktemp -d 2>/dev/null || echo "/tmp/b3-$$")
+mkdir -p "$b3_tmp"
+{
+  printf '%s\n' 'intro prose with no names'
+  printf '%s\n' '```'
+  printf '%s\n' 'doc-generator 10 | test-writer 4'
+  printf '%s\n' '```'
+  printf '%s\n' 'spawn a doc-generator to write the release notes'
+} > "$b3_tmp/fence.md"
+b3_got=$(b3_extract "$b3_tmp/fence.md")
+if printf '%s' "$b3_got" | grep -q '^5:' && ! printf '%s' "$b3_got" | grep -q '^3:'; then
+  ok "check 32 (arm E): the fence extractor skips a FENCED retired-name line and still returns the PROSE one — exclusion is discriminating, not blanket"
+else
+  ko "check 32 (arm E): fence extractor returned [$b3_got]; expected line 5 (prose) and NOT line 3 (fenced). Returning neither is the CLEAN-looking failure — arm A would be green having extracted nothing"
+fi
+rm -rf "$b3_tmp"
+
+# Arm F — fence delimiters must be balanced in every scanned file. An odd count
+# leaves the tail of a file permanently "inside a fence", so live prose after it
+# is never scanned and arm A returns clean. This is the one way the exclusion
+# above can turn into a silent false negative.
+if [ "$b3_oddfence" -eq 0 ]; then
+  ok "check 32 (arm F): fence delimiters are balanced in all $b3_scanned scanned docs — fence state cannot desync and swallow live prose"
+else
+  ko "check 32 (arm F): $b3_oddfence scanned doc(s) have an ODD fence-delimiter count — see above. Everything after the unmatched delimiter is scanned as if fenced, so arm A is clean for that region whatever it contains"
+fi
+
 # ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
