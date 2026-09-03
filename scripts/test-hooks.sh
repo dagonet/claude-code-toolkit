@@ -1462,6 +1462,37 @@ check_msg "(A6.13/PCT) -C control blocked by the TEST" "$ROOT/$PCT62" 2 "$(mkjso
 check_msg "(A6.13) -c BEFORE -C merge: the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash "git -c a=b -C $A6CLONE merge feature/y" "$A6CLONE")" "global option"
 check_msg "(A6.13) -C twice merge: the MERGE arm"      "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE -C $A6CLONE merge feature/y" "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
 
+# --- repeated -C is RELATIVE, and a -C chain that cannot be entered ---------
+# `git -C a -C b` does NOT mean "b"; it means "b resolved from a", i.e. a/b. The
+# absolute-path pair above cannot see the difference — every spelling of an
+# absolute path resolves to the same place. The layout below has a SIBLING `b`
+# and a NESTED `a/b`, and only the nested one is on a protected branch, so the
+# two spellings of one command must answer differently. A hook that folded only
+# the LAST -C would answer the same for both.
+#
+# THE MISSING-DIRECTORY ROW IS A DECISION, STATED: when the -C chain names a
+# directory that does not exist, this gate exits 0 and prints NO BLOCKED line.
+# git's own `fatal: cannot change to '...'` is the answer there, and it is not
+# a gate verdict — the command never reaches a repository, so there is nothing
+# to gate and nothing was let through. Asserted with check_nomsg rather than by
+# exit code alone: a 0 would also be produced by a gate that printed a refusal
+# and then exited 0 on some other path, and those two are not the same fact.
+NESTPROT=$(a6clone nest/a/b)
+NESTSIB=$(a6clone nest/b)
+git -C "$NESTSIB" checkout -q -b work >/dev/null 2>&1
+NESTROOT="$TMPROOT/nest"
+# The fixture must be shown to carry the property before it is measured with:
+# `b` has to be BOTH a sibling of `a` and a child of it, or the pair below is
+# two spellings of the same repository and proves nothing.
+expect "(A6.13) nested layout: a/b is the nested repo" "$NESTROOT/a/b" "$NESTPROT"
+expect "(A6.13) nested layout: b is the sibling repo"  "$NESTROOT/b"   "$NESTSIB"
+check_msg "(A6.13) -C a -C b resolves a/b (protected)" "$ROOT/$H" 2 "$(mkjson Bash 'git -C a -C b merge feature/y' "$NESTROOT")" "a merge on a protected branch is gated unconditionally"
+check "(A6.13) -C a -C ../b is the SIBLING, unprotected" "$H" 0 "$(mkjson Bash 'git -C a -C ../b merge feature/y' "$NESTROOT")"
+# ...and that 0 is a decision, not a hook that stopped looking: the same repo
+# answers 2 to a merge it does gate.
+check "(A6.13) the sibling repo IS gate-capable (pairing)" "$H" 2 "$(mkjson Bash 'gh pr merge 5 --squash' "$NESTSIB")"
+check_nomsg "(A6.13) -C chain to a missing dir: no verdict" "$ROOT/$H" 0 "$(mkjson Bash 'git -C q -C b merge feature/y' "$NESTROOT")" "BLOCKED"
+
 # ---------------------------------------------------------------------------
 # v3.0.3 item 25 — EARLY EXIT for payloads with no git/gh token.
 #
