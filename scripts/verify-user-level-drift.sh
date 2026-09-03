@@ -61,6 +61,14 @@
 # `.mcp.json.template`, `README.md` and `settings-reference.md` — reference
 # files, never installed. DO NOT ADD ANY OF THEM TO THE `for sub in` LOOP.
 #
+# ONE NARROW EXCEPTION, ADDED v3.0.3 AND NOT A WEAKENING OF THE ABOVE:
+# `permissions.autoMode.environment` inside settings.json IS compared, as a
+# KEY-SCOPED comparison, not a byte one, and settings.json stays out of the loop.
+# The reasoning that excludes the file is about the user's OWN entries; that key
+# is not one of them — it is the trust boundary this repo's reference defines,
+# at USER scope, and drift in it was invisible for two releases. See the
+# autoMode.environment section below for the measurement.
+#
 # Run ad-hoc; not wired into any hook. Works from any cwd (cd's to repo root).
 set -u
 
@@ -178,6 +186,75 @@ if [ "$MODE" = "tag" ]; then
   UNRELEASED (not in $REF, not compared): $f"
     done < <(find "user-level-reference/$sub" -type f)
   done
+fi
+
+# ---------------------------------------------------------------------------
+# autoMode.environment — THE ONE THING COMPARED INSIDE settings.json (v3.0.3,
+# item 24).
+#
+# This is NOT the byte comparison the scope note above forbids, and settings.json
+# is still NOT in the `for sub in` loop. A user's own permissions, env and MCP
+# entries are theirs; `permissions.autoMode.environment` is not — it is the trust
+# boundary the toolkit's own reference defines, it is USER scope (it applies to
+# every repo on the machine), and drift in it is silent and expensive.
+#
+# Measured: a live file with 25 environment entries against the reference's 4, in
+# a repo that reported "0 drift" for two releases — because nothing here looked
+# at settings.json at all. The damage was a per-repo `**Trusted repo**: <path>`
+# line, which made every OTHER repository read as outside the trust boundary: 58
+# classifier denials across 11 sessions, 50 of them in one repo.
+#
+# TWO ARMS, deliberately, because either can be true without the other: the
+# arrays must MATCH, and no live entry may carry the singular, path-naming
+# `**Trusted repo**:` form. An array that differs for some benign reason would
+# otherwise hide the specific defect, and the specific defect could arrive inside
+# an otherwise-matching array.
+#
+# DRIFT_LIVE_SETTINGS overrides the live path. It exists so the control can be
+# run against a DOCTORED COPY — never doctor the live file to test this.
+# ---------------------------------------------------------------------------
+LIVE_SETTINGS="${DRIFT_LIVE_SETTINGS:-$LIVE_ROOT/settings.json}"
+
+automode_entries() { # <settings.json> -> permissions.autoMode.environment, one entry per line
+  [ -f "$1" ] || return 0
+  awk '/"environment"[[:space:]]*:[[:space:]]*\[/ { inarr = 1; next }
+       inarr && /^[[:space:]]*\]/ { exit }
+       inarr { sub(/^[[:space:]]+/, ""); sub(/,[[:space:]]*$/, ""); print }' "$1"
+}
+
+am_ref_src=$(ref_copy "user-level-reference/settings.json")
+if [ -z "$am_ref_src" ]; then
+  # Cannot determine refuses: no reference, no comparison, and silence would read
+  # as agreement.
+  drift=$((drift + 1))
+  drift_list="$drift_list
+  CANNOT COMPARE autoMode.environment: user-level-reference/settings.json is not in ${REF:-the working tree}"
+elif [ ! -f "$LIVE_SETTINGS" ]; then
+  drift=$((drift + 1))
+  drift_list="$drift_list
+  MISSING live: $LIVE_SETTINGS (autoMode.environment not comparable)"
+else
+  am_ref=$(automode_entries "$am_ref_src")
+  am_live=$(automode_entries "$LIVE_SETTINGS")
+  if [ -z "$am_ref" ]; then
+    # In-band control for the extractor itself: the reference always carries
+    # entries, so an empty read is a broken parser, not an empty array.
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  autoMode.environment EXTRACTOR IS INERT: read 0 entries from the reference copy of user-level-reference/settings.json"
+  elif [ "$am_ref" = "$am_live" ]; then
+    : # arm 1 clean
+  else
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  DRIFT: permissions.autoMode.environment in $LIVE_SETTINGS differs from user-level-reference/settings.json@${REF:-worktree}
+    reference has $(printf '%s\n' "$am_ref" | grep -c .) entry(ies), live has $(printf '%s\n' "$am_live" | grep -c .)"
+  fi
+  if printf '%s\n' "$am_live" | grep -q '\*\*Trusted repo\*\*:'; then
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  DRIFT: $LIVE_SETTINGS names a SINGLE repo as THE trusted repo (**Trusted repo**: ...). autoMode.environment is USER scope: that line puts every other repository on this machine outside the trust boundary. Use the reference's generic **Trusted repos** entry."
+  fi
 fi
 
 # ---------------------------------------------------------------------------

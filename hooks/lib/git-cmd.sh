@@ -440,8 +440,9 @@ gc_current_branch() {
 # it must behave exactly as if the line were absent, never treat the literal as
 # data. v2.2.0 shipped the opposite for the protected set and silently
 # unprotected trunk in every consumer that accepted the template.
-# SUBSTRING, not whole-string: `{{DEFAULT_BRANCH}} develop` is a half-filled
-# value, and a whole-string match read it as TWO literal branch names — the
+# SUBSTRING, not whole-string: an unreplaced DEFAULT_BRANCH placeholder (the
+# double-brace form) followed by ` develop` is a half-filled value, and a
+# whole-string match read it as TWO literal branch names — the
 # unsafe direction, since neither matches a real branch. Falling back to the
 # default costs a `develop` repo one edit; treating the placeholder as data
 # costs it its protection. pre-commit-test.sh has used the substring form for
@@ -530,9 +531,10 @@ gc_fallback_protected() {
 # that took the v2.2.0 template, and unlike the placeholder arm it was SILENT.
 #   absent              -> the resolved fallback set, no warning: nothing is
 #                          misconfigured here, the repo just never said.
-#   `{{DEFAULT_BRANCH}}` -> the resolved fallback set, with one WARN: a
-#                          placeholder READS as configured, so this is the case
-#                          a consumer does not know they are in.
+#   unreplaced          -> the resolved fallback set, with one WARN: a
+#   DEFAULT_BRANCH         DEFAULT_BRANCH placeholder still in its double-brace
+#   placeholder            form READS as configured, so this is the case a
+#                          consumer does not know they are in.
 #   empty value         -> the resolved fallback set, with one WARN: an empty
 #                          value is a typo or a truncated sync, not a decision.
 #                          v2.2.0 treated it as an opt-out — a silent unprotect.

@@ -220,29 +220,62 @@ classify() { # <path>
 # this file exists to prevent.  So it reports progress on stderr, leaving stdout
 # clean for the caller.
 #
-# ⚠ PRUNE BY DIRECTORY NAME, NEVER BY GIT'S TRACKED-FILE LIST.  `git ls-files`
-# would skip UNTRACKED files, and the untracked hand-authored agent is precisely
-# the file A3 exists to protect — the one nobody can regenerate.  The list below
-# is conservative on purpose: it names only unambiguous vendor/build output, and
-# no template-synced file has ever lived in any of them.  `bin`/`obj` are
-# deliberately ABSENT — Rust's `src/bin/` is real source.
+# ⚠ NEVER BARE `git ls-files`.  Bare `ls-files` enumerates TRACKED files only
+# and would go blind to the untracked, hand-authored project-owned agent this
+# scan exists to find — the one nobody can regenerate (A3, set (c)).  The form
+# used below is `ls-files --cached --others --exclude-standard`: tracked files
+# PLUS untracked-but-not-ignored, in ONE process.  That is not the form this
+# warning is about; it is strictly a superset of the tracked list, and a
+# consumer measured it covering exactly the case the warning protects (two
+# untracked project-owned agents included; a gitignored decompile tree of
+# 16,000+ files excluded).
+#
+# ⚠ WHY THE NAME LIST WAS NOT ENOUGH (v3.0.3, item 17).  v3.0.1 fixed a
+# 40,445-file timeout by pruning on a DIRECTORY-NAME list.  The next consumer's
+# build output was a decompile tree whose directory is not on that list, and the
+# scan took 120 s and was killed.  An enumeration keyed on a name list does not
+# close: the list is a guess about names, and the property that actually matters
+# is gitignore STATUS.  Inside a git repo, ask git.  The residual — a
+# project-owned file that is ALSO gitignored — is set (a)'s job, not this scan's.
+#
+# The name-list `find` walk survives for the NON-git case only (no repo, so no
+# ignore status to ask about).  It is conservative on purpose: only unambiguous
+# vendor/build output, and no template-synced file has ever lived in any of
+# them.  `bin`/`obj` are deliberately ABSENT — Rust's `src/bin/` is real source.
+
+# scan_stream <label> <prefix> -- consumes NUL-delimited paths on stdin.
+# NUL-delimited because a path may contain a newline; both producers emit -z/-print0.
+scan_stream() {
+  _lbl="$1"; _pfx="$2"; n=0
+  while IFS= read -r -d '' f; do
+    f="$_pfx$f"
+    n=$((n + 1))
+    [ $((n % 2000)) -eq 0 ] && printf 'region.sh: scanned %s files...\n' "$n" >&2
+    has_begin "$f" 2>/dev/null || continue
+    classify "$f"
+  done
+  printf 'region.sh: scanned %s files under %s\n' "$n" "$_lbl" >&2
+  # A dead enumerator and an empty tree print the same "scanned 0 files", and a
+  # 0 reads as CLEAN. Say so instead of letting silence be the verdict.
+  [ "$n" -eq 0 ] && printf 'region.sh: WARNING: enumerated 0 files under %s — verify this is an empty tree and not an enumeration failure\n' "$_lbl" >&2
+  return 0
+}
+
 scan() {
   d="$1"
   [ -d "$d" ] || { echo "ERROR: not a directory: $d" >&2; return 1; }
-  find "$d" \( -name .git -o -name node_modules -o -name .venv -o -name venv \
-               -o -name __pycache__ -o -name .mypy_cache -o -name .pytest_cache \
-               -o -name .tox -o -name .next -o -name .nuxt -o -name target \
-               -o -name dist -o -name build -o -name vendor -o -name .gradle \
-               -o -name .terraform \) -prune -o -type f -print 2>/dev/null \
-    | sort | { n=0
-        while IFS= read -r f; do
-          n=$((n + 1))
-          [ $((n % 2000)) -eq 0 ] && printf 'region.sh: scanned %s files...\n' "$n" >&2
-          has_begin "$f" 2>/dev/null || continue
-          classify "$f"
-        done
-        printf 'region.sh: scanned %s files under %s\n' "$n" "$d" >&2
-      }
+  if ( cd "$d" && git rev-parse --show-toplevel ) >/dev/null 2>&1; then
+    # Paths come back relative to <dir>; prefix them so classify gets a usable path.
+    ( cd "$d" && git ls-files --cached --others --exclude-standard -z -- . ) \
+      | sort -z | scan_stream "$d" "$d/"
+  else
+    find "$d" \( -name .git -o -name node_modules -o -name .venv -o -name venv \
+                 -o -name __pycache__ -o -name .mypy_cache -o -name .pytest_cache \
+                 -o -name .tox -o -name .next -o -name .nuxt -o -name target \
+                 -o -name dist -o -name build -o -name vendor -o -name .gradle \
+                 -o -name .terraform \) -prune -o -type f -print0 2>/dev/null \
+      | sort -z | scan_stream "$d" ""
+  fi
 }
 
 [ $# -ge 1 ] || usage
