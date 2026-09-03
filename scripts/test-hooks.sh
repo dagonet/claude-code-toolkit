@@ -842,6 +842,14 @@ git -C "$A6DIV" commit -q -m local >/dev/null 2>&1
 # The negative arm for every A6 rule: the same shapes on a feature branch.
 A6FEATCO=$(a6clone a6featco)
 git -C "$A6FEATCO" checkout -q -b feature/co >/dev/null 2>&1
+# v3.0.2 (finding 54): the two dishonest-upstream twins. The gate reads CONFIG,
+# not the ref, so `branch.main.merge` pointing at a branch that does not exist
+# locally is exactly the state being modelled — a re-pointed upstream.
+A6ROGUEUP=$(a6clone a6rogueup)
+git -C "$A6ROGUEUP" config branch.main.merge refs/heads/rogue
+A6NOUP=$(a6clone a6noup)
+git -C "$A6NOUP" config --unset branch.main.remote >/dev/null 2>&1
+git -C "$A6NOUP" config --unset branch.main.merge >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
 # v3.0.1 item 1 — `git merge --abort|--continue|--quit` are EXEMPT.
@@ -863,18 +871,31 @@ check "(A6.1) -C target on main, --abort exempt"       "$H" 0 "$(mkjson Bash "gi
 check "(A6.1) --abort inside -m does NOT exempt"       "$H" 2 "$(mkjson Bash 'git merge -m "retry after --abort" feature/x' "$A6MAIN")"
 
 # ---------------------------------------------------------------------------
-# v3.0.1 item 2 — the merge path gates on UPSTREAM PROVENANCE, not ancestry.
+# v3.0.2 item 1 — THE CATCH-UP EXEMPTION IS GONE. `git merge` on a protected
+# branch is gated unconditionally, `--abort/--continue/--quit` excepted.
 #
-# THE FIRST ROW IS THE COUNTEREXAMPLE THAT KILLED THE ANCESTRY RULE. A6CLONE's
-# `main` is one commit behind `origin/main` — the state every repo is in right
-# after a PR merge — so `origin/main` is NOT an ancestor of HEAD, and an
-# ancestry rule would call the routine catch-up "foreign content" and gate it.
-# Delete the a6_merge_catchup call and rows 1-2 flip 0 -> 2; loosen it to accept
-# any target, or drop the --no-ff/--squash refusal, or collapse the exact
-# is-ancestor return codes into a truthiness test, and rows 3-8 flip 2 -> 0.
+# v3.0.1 allowed `git merge --ff-only <this branch's upstream>` when HEAD was
+# already an ancestor of it. The exemption resolved the ref by NAME and trusted
+# its VALUE, and the value is writable by any local command:
+#
+#   git update-ref refs/remotes/origin/main <sha>   verdict 0  UNGATED
+#   git merge --ff-only origin/main                 verdict 0  ALLOWED
+#     -> EXECUTED, landed "rogue: never gated, never reviewed" on main, with
+#        branch config untouched and main@{upstream} still reading origin/main.
+#
+# ROWS 1-2 ARE THE FLIPPED ONES (0 -> 2 in v3.0.2). Restore the a6_merge_catchup
+# call and they flip back — that is the delete-the-guard control for item 1.
+# Row 3 is the same defect spelled out as a chain. The remaining rows were
+# already gated and stay gated; they now pass through the SAME arm, so they no
+# longer discriminate anything about the upstream comparison, which is the point
+# of deleting it.
+#
+# The catch-up capability is not lost: `git pull --ff-only` (A6.3) fetches
+# first, so it re-reads the tracking ref instead of trusting it.
 # ---------------------------------------------------------------------------
-check "(A6.2) catch-up merge of own upstream allowed"  "$H" 0 "$(mkjson Bash 'git merge --ff-only origin/main' "$A6CLONE")"
-check "(A6.2) bare-named catch-up allowed"             "$H" 0 "$(mkjson Bash 'git merge origin/main' "$A6CLONE")"
+check "(A6.2) catch-up merge of own upstream GATED"    "$H" 2 "$(mkjson Bash 'git merge --ff-only origin/main' "$A6CLONE")"
+check "(A6.2) bare-named catch-up GATED"               "$H" 2 "$(mkjson Bash 'git merge origin/main' "$A6CLONE")"
+check "(A6.2) poisoned-ref chain: update-ref + merge"  "$H" 2 "$(mkjson Bash 'git update-ref refs/remotes/origin/main HEAD && git merge --ff-only origin/main' "$A6CLONE")"
 check "(A6.2) --no-ff of the upstream is gated"        "$H" 2 "$(mkjson Bash 'git merge --no-ff origin/main' "$A6CLONE")"
 check "(A6.2) --squash of the upstream is gated"       "$H" 2 "$(mkjson Bash 'git merge --squash origin/main' "$A6CLONE")"
 check "(A6.2) a ref the upstream lacks is gated"       "$H" 2 "$(mkjson Bash 'git merge feature/x' "$A6CLONE")"
@@ -894,10 +915,96 @@ check "(A6.2) catch-up on a FEATURE branch allowed"    "$H" 0 "$(mkjson Bash 'gi
 # v3.0.1, so rows 1, 3 and 4 flip 2 -> 0 when the pull arm is deleted.
 # ---------------------------------------------------------------------------
 check "(A6.3) bare pull on a protected branch gated"   "$H" 2 "$(mkjson Bash 'git pull' "$A6CLONE")"
-check "(A6.3) pull --ff-only, refspec-free, allowed"   "$H" 0 "$(mkjson Bash 'git pull --ff-only' "$A6CLONE")"
-check "(A6.3) pull --ff-only with a refspec gated"     "$H" 2 "$(mkjson Bash 'git pull --ff-only origin main' "$A6CLONE")"
+check "(A6.3) pull --ff-only, honest upstream, allowed" "$H" 0 "$(mkjson Bash 'git pull --ff-only' "$A6CLONE")"
 check "(A6.3) pull --rebase is gated"                  "$H" 2 "$(mkjson Bash 'git pull --rebase' "$A6CLONE")"
 check "(A6.3) pull on a feature branch is untouched"   "$H" 0 "$(mkjson Bash 'git pull' "$A6FEATCO")"
+
+# ---------------------------------------------------------------------------
+# v3.0.2 item 2 — the pull arm compares NAMES.
+#
+# "Refspec-free means the target is the configured upstream BY CONSTRUCTION"
+# was the stated reason the form was safe, and it was false. `branch.<cur>.merge`
+# is re-pointable and re-pointing is ungated on both gates:
+#
+#   git branch -u origin/rogue main   verdict 0   (ungated)
+#   git pull --ff-only                verdict 0   -> HEAD MOVED, rogue landed
+#
+# So the refspec-free form now requires this branch's own config to name itself,
+# and `--ff-only <remote> <cur>` — reported as a FALSE POSITIVE by a consumer,
+# and the more provably safe of the two, because it NAMES what it lands — is
+# allowed. Delete the a6_pull_catchup call (restore the old
+# "count==0 && --ff-only" test) and rows 1, 3 and 5 flip: 1 and 3 go 2 -> 0
+# (the bypass reopens) and 5 goes 0 -> 2 (the false positive returns).
+#
+# EVERY want-0 IS PAIRED IN ITS OWN REPO: A6ROGUEUP and A6NOUP each carry a
+# want-2 refspec-free row and a want-0 two-operand row, so neither can be
+# passing vacuously through the "no **Gate** configured" exit.
+# ---------------------------------------------------------------------------
+check "(A6.3) re-pointed upstream: --ff-only GATED"    "$H" 2 "$(mkjson Bash 'git pull --ff-only' "$A6ROGUEUP")"
+check "(A6.3) re-pointed upstream: named form allowed" "$H" 0 "$(mkjson Bash 'git pull --ff-only origin main' "$A6ROGUEUP")"
+check "(A6.3) no upstream configured: --ff-only GATED" "$H" 2 "$(mkjson Bash 'git pull --ff-only' "$A6NOUP")"
+check "(A6.3) no upstream: the named form still ok"    "$H" 0 "$(mkjson Bash 'git pull --ff-only origin main' "$A6NOUP")"
+check "(A6.3) --ff-only origin main allowed"           "$H" 0 "$(mkjson Bash 'git pull --ff-only origin main' "$A6CLONE")"
+check "(A6.3) --ff-only origin feature/x gated"        "$H" 2 "$(mkjson Bash 'git pull --ff-only origin feature/x' "$A6CLONE")"
+check "(A6.3) --ff-only origin main:main gated"        "$H" 2 "$(mkjson Bash 'git pull --ff-only origin main:main' "$A6CLONE")"
+check "(A6.3) --ff-only origin main HEAD gated"        "$H" 2 "$(mkjson Bash 'git pull --ff-only origin main HEAD' "$A6CLONE")"
+check "(A6.3) named form without --ff-only gated"      "$H" 2 "$(mkjson Bash 'git pull origin main' "$A6CLONE")"
+# THE ROW WHERE ITEM 2 AND THE v3.0.2 REDIRECT STRIP MEET: the operand count
+# that decides the two-operand form is a6_nonflag, which strips redirections
+# first. Count `2>&1` as an operand and this is a three-operand pull -> gated.
+check "(A6.3) --ff-only origin main 2>&1 allowed"      "$H" 0 "$(mkjson Bash 'git pull --ff-only origin main 2>&1' "$A6CLONE")"
+
+# ---------------------------------------------------------------------------
+# v3.0.2 item 3 — NOTHING MAY MOVE WHAT A GATED CLAUSE RESOLVES TO.
+#
+# Item 2 reads mutable config, so a same-call re-point defeats it. v3.0.1's
+# ordering rule does not reach these: that rule is keyed on CHECKOUT TARGETS,
+# and `git branch -u` is not a checkout. Two shapes:
+#
+#   PRECEDING CLAUSE  git branch -u origin/rogue main && git pull --ff-only
+#                     -> ungated before this item, HEAD moved, rogue landed
+#   SAME CLAUSE       git -c remote.evil.url=<other> -c branch.main.remote=evil
+#                        pull --ff-only
+#                     -> rc=0, fast-forward, foreign content, while
+#                        branch.main.merge on disk still read refs/heads/main
+#
+# The second is ONE clause, so no rule about what may PRECEDE a gated clause can
+# see it — hence the separate inline-config test on the invocation's own argv,
+# written broadly (`-c`, `--config-env`, `GIT_CONFIG_*`) rather than as a list
+# of keys, so a new key cannot silently join it.
+#
+# `--config-env` also exposed a second defect, and the row for it is the last
+# one below: the lib's GC_GIT_PRE allows `-C` and `-c` between `git` and the
+# subcommand and NOTHING ELSE, so that clause did not match as a `pull` AT ALL
+# and fell through ungated for a reason unrelated to this item. a6_is_git_sub
+# compensates in the hook; delete it and that row flips 2 -> 0 while the
+# `-c` rows stay green, which is what makes the two causes separable.
+#
+# Delete the mutated/a6_inline_config arms in the pull path and rows 1-8 flip
+# 2 -> 0. The want-0 pairs live in the SAME repos: A6CLONE's honest
+# `git pull --ff-only` above, and the two feature-branch rows here.
+# ---------------------------------------------------------------------------
+check "(A6.8) branch -u then pull is gated"            "$H" 2 "$(mkjson Bash 'git branch -u origin/rogue main && git pull --ff-only' "$A6CLONE")"
+check "(A6.8) config branch.* then pull is gated"      "$H" 2 "$(mkjson Bash 'git config branch.main.merge refs/heads/rogue && git pull --ff-only' "$A6CLONE")"
+check "(A6.8) remote set-url then pull is gated"       "$H" 2 "$(mkjson Bash 'git remote set-url origin /nope && git pull --ff-only' "$A6CLONE")"
+check "(A6.8) fetch with a dest refspec then pull"     "$H" 2 "$(mkjson Bash 'git fetch /nope +refs/heads/main:refs/remotes/origin/main && git pull --ff-only' "$A6CLONE")"
+check "(A6.8) update-ref then pull is gated"           "$H" 2 "$(mkjson Bash 'git update-ref refs/remotes/origin/main HEAD && git pull --ff-only' "$A6CLONE")"
+check "(A6.8) -c branch.*.remote pull is gated"        "$H" 2 "$(mkjson Bash 'git -c remote.evil.url=/nope -c branch.main.remote=evil pull --ff-only' "$A6CLONE")"
+check "(A6.8) -c branch.*.merge pull is gated"         "$H" 2 "$(mkjson Bash 'git -c branch.main.merge=refs/heads/rogue pull --ff-only' "$A6CLONE")"
+check "(A6.8) GIT_CONFIG_* env prefix is gated"        "$H" 2 "$(mkjson Bash 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=branch.main.remote GIT_CONFIG_VALUE_0=evil git pull --ff-only' "$A6CLONE")"
+check "(A6.8) --config-env pull is gated"              "$H" 2 "$(mkjson Bash 'git --config-env=branch.main.remote=X pull --ff-only' "$A6CLONE")"
+# A benign `-c` on a gated invocation is refused too. That is the honest cost of
+# writing the rule broadly, and the DENY message says to re-run without it.
+check "(A6.8) a benign -c on a protected pull is gated" "$H" 2 "$(mkjson Bash 'git -c core.pager=cat pull --ff-only' "$A6CLONE")"
+# THE REGRESSION GUARD for the over-correction: pulls on a feature branch stay
+# untouched, mutation or not, and the v3.0.1 checkout-target rule is unchanged.
+check "(A6.8) mutation + pull on a feature branch ok"  "$H" 0 "$(mkjson Bash 'git branch -u origin/rogue main && git pull --ff-only' "$A6FEATCO")"
+check "(A6.8) -c pull on a feature branch is ok"       "$H" 0 "$(mkjson Bash 'git -c core.pager=cat pull --ff-only' "$A6FEATCO")"
+check "(A6.8) checkout feature/z && merge still ok"    "$H" 0 "$(mkjson Bash 'git checkout feature/z && git merge feature/y' "$A6FEATCO")"
+check_msg "(A6.8) the -c refusal says to drop the -c" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git -c core.pager=cat pull --ff-only' "$A6CLONE")" "WITHOUT the '-c'"
+check_msg "(A6.8) the chained refusal quotes the clause" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git branch -u origin/rogue main && git pull --ff-only' "$A6CLONE")" "earlier clause:"
 
 # ---------------------------------------------------------------------------
 # v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.
@@ -1031,8 +1138,12 @@ check_msg "(A6.5) message shows the discriminator inputs" "$ROOT/$H" 2 "$A6PULL"
 check_msg "(A6.5) message names the tracked upstream" "$ROOT/$H" 2 "$A6PULL" "origin/main"
 check_msg "(A6.5) message names what it could NOT determine" "$ROOT/$H" 2 "$A6PULL" "before any fetch"
 check_msg "(A6.5) message states the ALLOWED pull form" "$ROOT/$H" 2 "$A6PULL" "git pull --ff-only"
+# v3.0.2: the merge block's ALLOWED line no longer offers a catch-up MERGE — it
+# sends the reader to `git pull --ff-only`, which fetches before it merges. A
+# message still naming the deleted exemption would send a blocked consumer to a
+# command that is now refused.
 check_msg "(A6.5) merge block states the ALLOWED merge form" "$ROOT/$H" 2 \
-  "$(mkjson Bash 'git merge feature/x' "$A6CLONE")" "pure catch-up"
+  "$(mkjson Bash 'git merge feature/x' "$A6CLONE")" "use 'git pull --ff-only'"
 A6MSG=$(printf '%s' "$A6PULL" | bash "$ROOT/$H" 2>&1 >/dev/null)
 A6POS=$(printf '%s\n' "$A6MSG" | grep -n 'ALLOWED without a gate run' | head -1 | cut -d: -f1)
 A6ESC=$(printf '%s\n' "$A6MSG" | grep -n 'git-guard-off' | head -1 | cut -d: -f1)

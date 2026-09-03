@@ -1,5 +1,85 @@
 # Changelog
 
+## v3.0.2 — 2026-09-03
+
+**Two measured bypasses of the A6 protected-branch gate, both reproduced end-to-end on a Gate-bearing fixture with controls in the same repo.** Both have the same shape, one premise further out each time: *a gate that keys on the FORM of a command is only as sound as the assumption that the form determines the effect.*
+
+### 1. A6.2's catch-up exemption trusted a ref anyone can write — DELETED
+
+v3.0.1 allowed `git merge --ff-only <this branch's configured upstream>` on a protected branch when HEAD was already an ancestor of it. Measured, two ungated calls:
+
+```
+CONTROLS  git merge feature/x    verdict 2      git push origin main   verdict 2
+STEP 1    git update-ref refs/remotes/origin/main <sha>   verdict 0   UNGATED
+STEP 2    git merge --ff-only origin/main                 verdict 0   ALLOWED
+          EXECUTED, landed "rogue: never gated, never reviewed" on main
+          branch config UNTOUCHED; main@{upstream} still read origin/main
+```
+
+**The exemption resolved the ref by NAME and trusted its VALUE.** Every configuration read came back honest, so the state check that answers item 2 does not answer this one.
+
+**Proving the ref FRESH is not available and was not attempted.** `git update-ref -m 'fetch origin: fast-forward'` forges any reflog message a check could match; the log is a file that can be removed; and **a fresh clone has no `.git/logs/refs/remotes/origin/main` at all**, so a freshness check fails closed on every new clone. So `git merge` on a protected branch is now gated with no exemption but `--abort` / `--continue` / `--quit`, which land nothing and whose refusal is why v3.0.1 exists.
+
+**No capability is lost, and the reason is the contrast measurement:** poison `origin/main`, then `git pull --ff-only`, and the ref is back to `init` with HEAD unmoved — **the pull's own FETCH restored it before merging.** The property cited in v3.0.1 as the reason no pre-fetch check on `pull` could be sound is the property that makes `pull` the safe catch-up route.
+
+### 2. The one ALLOWED pull form targeted an upstream it never read
+
+The hook's own message said refspec-free `git pull --ff-only` *"targets the configured upstream by construction"*. `branch.<cur>.merge` is re-pointable and re-pointing is ungated on both gates:
+
+```
+git branch -u origin/rogue main   verdict 0   (also --set-upstream-to, and the raw config route)
+git pull --ff-only                verdict 0   -> HEAD MOVED, a whole foreign branch landed on main
+```
+
+The pull arm now compares **NAMES** — a local config read, offline, sound before the fetch:
+
+- refspec-free `--ff-only`: allowed only when `branch.<cur>.remote` is set **and** `branch.<cur>.merge` is exactly `refs/heads/<cur>`.
+- `--ff-only <remote> <branch>`: allowed when there are exactly two operands, neither carries a `:`, and `<branch>` is the current branch.
+
+The second form was **gated** until now, and a consumer reported it as a false positive: it carries both the fast-forward guarantee and an explicit same-name refspec — **strictly more provably safe than the form that was allowed.** Their report's harmless half turned out to be the sound form; the half they called safe was the bypass.
+
+### 3. No clause — and no inline option — may move what a gated clause resolves to
+
+The name comparison in item 2 reads mutable config, so a same-call re-point defeats it, and **v3.0.1's ordering rule does not reach it: that rule is keyed on checkout TARGETS, and `git branch -u` is not a checkout.** A gated `pull`/`merge`/`push` is now refused when an earlier clause runs `git branch -u|--set-upstream-to`, `git config …branch.*|remote.*`, `git update-ref`, `git fetch` with a destination refspec, or `git remote set-url|remove|add` — **or when the gated invocation itself carries `-c`, `--config-env`, or a `GIT_CONFIG_*` env prefix.**
+
+That last one needs no chaining at all, which is why a rule about *preceding* clauses cannot cover it:
+
+```
+git -c remote.evil.url=<other> -c remote.evil.fetch=+refs/heads/*:refs/remotes/evil/* \
+    -c branch.main.remote=evil pull --ff-only
+  -> rc=0, Fast-forward, "ROGUE never reviewed" on main
+     branch.main.merge on disk still read refs/heads/main
+```
+
+Item 2's comparison **passes** there: the merge ref is honest and the content came from a different remote. It is written as *any inline config on a gated invocation*, not a list of keys, so a new key cannot silently join it. **The honest cost:** a benign `git -c core.pager=cat` on a gated command is refused, and the DENY message says to re-run without the `-c`.
+
+> **THE BLOCKLIST IS KNOWN-INCOMPLETE AND SAYS SO IN THE CODE.** Four resolution inputs (`branch.*.remote`, `branch.*.merge`, `remote.*.url`, `remote.*.fetch`) times at least four mutation channels — and worse, **the same channel behaves differently per key**: `-c branch.main.merge=…` fails because that key is MULTI-VALUED (git dies with *"Cannot fast-forward to multiple branches"*), while `-c branch.main.remote=…` replaces cleanly and lands foreign content. Item 2's key is protected incidentally, by that key's multi-valuedness, not by the check. **The cell matters, not the row or the column**, so no enumeration of keys and channels is sufficient. The sound shape is the inverse — allow a multi-clause call only when every preceding clause is on a small proven-inert allowlist (`cd`, `echo`, `printf`, `ls`) — and it is deliberately **not** in this release, because it would gate `git checkout feature/z && git merge feature/y`, which v3.0.1 shipped on purpose and a consumer measured working. Queued, not snuck in.
+
+### 4. A `--config-env` clause did not match as a git subcommand at all
+
+Found while writing item 3's fixtures, and it is a separate cause with the same symptom: `hooks/lib/git-cmd.sh`'s `GC_GIT_PRE` allows `-C <path>` and `-c <k>=<v>` between `git` and the subcommand **and nothing else**, so `git --config-env=… pull --ff-only` matched no arm, skipped the entire pull path, and fell through **ungated for a reason unrelated to inline config**. Compensated at the call site (`a6_is_git_sub`), exactly as v3.0.2's redirect strip compensates for `gc_has_refspec`: **the lib is untouched**, because editing it obliges the ~90-minute three-parser matrix run.
+
+### Known gap, deliberately deferred
+
+`git --git-dir=<other>/.git --work-tree=<other> merge feature/x` run from a **non-protected** cwd operates on a repo that is on a protected branch, and the gate reads the cwd's branch. Measured verdict 0, with `git -C <other> merge feature/x` as the paired control at verdict 2 — **`-C` is resolved by `gc_repo_for`; `--git-dir` is not.** The distinction is not "flags that retarget", it is **"flags that retarget AND ARE NOT RESOLVED"**. Pre-existing since v3.0.0, not a regression introduced here, and closing it properly needs a rule outside the protected-branch arm (the arm never runs, because the cwd is not protected) — so it is queued rather than rushed in untested.
+
+### Downstream migration
+
+**`git merge --ff-only origin/main` on a protected branch is now GATED.** If that is how you catch a protected branch up after a PR merge, switch to:
+
+```
+git pull --ff-only
+```
+
+It is safe where the merge is not, and the difference is mechanical rather than stylistic: **the pull fetches before it merges**, so it re-reads the tracking ref from the remote instead of trusting whatever is in `.git/refs`. `git pull --ff-only origin <current-branch>` is also allowed now, and was not before.
+
+Two smaller behaviour changes to expect:
+
+- `git pull --ff-only` is refused when this branch's upstream config does not name itself. Check with `git rev-parse --abbrev-ref <branch>@{upstream}` — anything other than `origin/<branch>` means that repo had no pull gate on its protected branch before this release.
+- A gated command carrying `-c`, `--config-env` or a `GIT_CONFIG_*` prefix is refused, benign settings included. Re-run without it.
+
+Copy `hooks/gate-before-merge.sh` to `~/.claude/hooks/` as usual (`user-level-reference/hooks/` is the copy source and is updated in lockstep).
+
 ## v3.0.1 — 2026-09-02
 
 **The follow-up to v3.0.0's own deletions.** Every item here is an *instrument answering a question next to the one asked* — defect class 1 of the three this programme keeps producing — and one of them is the inverse of all the others: it fails toward **refusal**, which reads as the safe answer.

@@ -412,6 +412,23 @@ a6_mutates_resolution() {
 # The `-c` search is restricted to the text BETWEEN `git` and the subcommand:
 # gc_segments strips quotes, so a segment-wide grep would fire on
 # `git merge -m "note -c x" feature/x` and refuse a message body.
+# a6_is_git_sub <segment> <subcommand> -- gc_matches_subcommand, widened for the
+# option forms the lib's GC_GIT_PRE does not know about.
+#
+# MEASURED while writing the fixtures for a6_inline_config:
+# `git --config-env=branch.main.remote=X pull --ff-only` on a protected branch
+# returned 0 — not because the inline-config rule missed it, but because the
+# clause never matched as a `pull` AT ALL. GC_GIT_PRE allows `-C <path>` and
+# `-c <k>=<v>` between `git` and the subcommand and nothing else, so the whole
+# pull arm was skipped and the command fell through ungated. The counting bug is
+# in hooks/lib/git-cmd.sh; compensating at the call site keeps that lib — and
+# its ~90-minute three-parser matrix — out of this release, exactly as the
+# v3.0.2 redirect strip does for gc_has_refspec.
+a6_is_git_sub() {
+  gc_matches_subcommand "$1" "$2" && return 0
+  printf '%s\n' "$1" | grep -qE "\\bgit\\b([[:space:]]+--config-env=[^[:space:]]+|[[:space:]]+-c[[:space:]]+[^[:space:]]+|[[:space:]]+-C[[:space:]]+[^[:space:]]+)+[[:space:]]+$2([[:space:]]|\$)"
+}
+
 a6_inline_config() {
   printf '%s\n' "$1" | grep -qE '(^|[[:space:]])GIT_CONFIG_[A-Z_]+=' && return 0
   a6ic=$(printf '%s\n' "$1" | sed -n "s/.*[[:space:]]*git\\([^;]*\\)[[:space:]]$2\\([[:space:]]\\|\$\\).*/\\1/p" | head -1)
@@ -527,7 +544,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     fi
 
     # 2. git merge while the checkout is on a protected branch
-    if gc_matches_subcommand "$seg" "merge"; then
+    if a6_is_git_sub "$seg" "merge"; then
       repo=$(gc_repo_for "$seg" "$base")
       margs=$(a6_args "$seg" "merge")
       # v3.0.1 item 1: the three merge-state subcommands are exempt on the
@@ -588,7 +605,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # not a multi-minute gate run. Gating only refspec-bearing pulls would leave
     # bare `git pull` with divergent local history creating a real merge commit
     # on the protected branch, which is the topology A6 exists for.
-    if gc_matches_subcommand "$seg" "pull"; then
+    if a6_is_git_sub "$seg" "pull"; then
       repo=$(gc_repo_for "$seg" "$base")
       pargs=$(a6_args "$seg" "pull")
       # THE PROTECTED-BRANCH DECISION COMES FIRST (v3.0.2). The name comparison
@@ -637,7 +654,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     fi
 
     # 3. a push that targets a protected branch -- fast-forward merge by push
-    if gc_matches_subcommand "$seg" "push"; then
+    if a6_is_git_sub "$seg" "push"; then
       repo=$(gc_repo_for "$seg" "$base")
       # v3.0.2: the push half of the redirection defect is a FAIL-OPEN, not a
       # false positive. `git push origin 2>&1` on a protected branch gave
