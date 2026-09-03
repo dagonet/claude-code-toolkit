@@ -123,9 +123,41 @@ a6_args() {
   printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2\\([[:space:]]\\|\$\\)/\\1/p" | head -1
 }
 
+# a6_strip_redir <args> -- <args> with shell REDIRECTION tokens removed.
+#
+# v3.0.2 (measured minutes after v3.0.1 shipped): `git pull --ff-only 2>&1` was
+# BLOCKED, reporting `refspec/remote named: present (2>&1 )`. `2>&1` starts with
+# a digit, so the non-flag filter below counted it as an operand — an ordinary
+# scripted form refused by a guard, which is how a layer gets switched off.
+#
+# THE STRIP MUST NOT BE GREEDY, and that is the whole difficulty. Dropping
+# everything after a `>`, or every token that merely CONTAINS one, would turn
+# `git pull origin feature/x 2>&1` into a refspec-free pull and hand it the
+# safe-form exemption — reopening the hole A6 just closed. So it drops only
+# tokens that are THEMSELVES a redirection operator:
+#   - operator with its target attached (`2>&1`, `>file`, `>>file`, `<file`,
+#     `&>file`): the one token goes;
+#   - bare operator (`>`, `>>`, `<`, `2>`, `&>`): the token AND the next one,
+#     which is its target. Exactly one follower, never a run.
+# A ref name can never match either pattern, because both require a `>` or `<`
+# immediately after an optional fd number or `&`.
+#
+# The empty-token arm comes FIRST on purpose: `tr` emits an empty field for a
+# double space, so `git pull >  /dev/null` yields `>`, ``, `/dev/null`. If the
+# empty token consumed the skip, `/dev/null` would leak back in as an operand.
+a6_strip_redir() {
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk '
+    $0 == "" { next }
+    skip == 1 { skip = 0; next }
+    /^([0-9]*|&)(>>|>|<).+$/ { next }
+    /^([0-9]*|&)(>>|>|<)$/ { skip = 1; next }
+    { print }
+  ' | tr '\n' ' '
+}
+
 # a6_nonflag <args> -- the tokens that are not flags (a target ref, a remote).
 a6_nonflag() {
-  printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$'
+  a6_strip_redir "$1" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$'
 }
 
 # a6_nonflag_count <args>
@@ -441,7 +473,14 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # 3. a push that targets a protected branch -- fast-forward merge by push
     if gc_matches_subcommand "$seg" "push"; then
       repo=$(gc_repo_for "$seg" "$base")
-      args=$(gc_push_args "$seg")
+      # v3.0.2: the push half of the redirection defect is a FAIL-OPEN, not a
+      # false positive. `git push origin 2>&1` on a protected branch gave
+      # gc_has_refspec two non-flag tokens, so it read "destination named", the
+      # current-branch check was skipped, and the push went through ungated.
+      # The counting bug is inside gc_has_refspec in hooks/lib/git-cmd.sh;
+      # compensating at the call site keeps that lib — and its ~90-minute
+      # three-parser matrix — out of this fix.
+      args=$(a6_strip_redir "$(gc_push_args "$seg")")
       if gc_targets_main_ref "$args" "$repo"; then
         is_merge=1
         A6_KIND=push

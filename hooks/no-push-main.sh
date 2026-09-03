@@ -48,6 +48,34 @@ fi
 base="$GC_CWD"
 segments=$(gc_segments)
 
+# np_strip_redir <args> -- <args> with shell REDIRECTION tokens removed.
+#
+# v3.0.2: `git push origin 2>&1` on a protected branch was ALLOWED. `2>&1`
+# starts with a digit, so gc_has_refspec counted two non-flag tokens, read
+# "destination named", and skipped the current-branch check — a fail-open, not
+# a false positive. The counting bug is inside gc_has_refspec in
+# hooks/lib/git-cmd.sh; it is compensated here, at the call site, because that
+# lib is covered by the ~90-minute three-parser matrix and this shape carries no
+# JSON. Same reason gate-before-merge.sh carries its own copy as
+# a6_strip_redir: the duplication is deliberate and small.
+#
+# NOT GREEDY, and that is the point: dropping everything after a `>` would turn
+# `git push origin main 2>&1` into a refspec-free push and lose the explicit
+# protected destination. Only a token that is ITSELF a redirection operator is
+# dropped — with its target attached (`2>&1`, `>file`), or bare (`>`, `2>`)
+# plus exactly the one token that follows it. The empty-token arm is first
+# because `tr` emits an empty field for a double space, which would otherwise
+# consume the skip and leak the redirect target back in as an operand.
+np_strip_redir() {
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk '
+    $0 == "" { next }
+    skip == 1 { skip = 0; next }
+    /^([0-9]*|&)(>>|>|<).+$/ { next }
+    /^([0-9]*|&)(>>|>|<)$/ { skip = 1; next }
+    { print }
+  ' | tr '\n' ' '
+}
+
 # v3.0.1 (consumer report): the no-refspec path below reads the CURRENT BRANCH,
 # which is ambient state this hook resolves BEFORE the command runs — so
 # `git checkout main && git push` was evaluated on the feature branch and let
@@ -95,7 +123,7 @@ while IFS= read -r seg; do
   gc_matches_subcommand "$seg" "push" || continue
 
   repo=$(gc_repo_for "$seg" "$base")
-  args=$(gc_push_args "$seg")
+  args=$(np_strip_redir "$(gc_push_args "$seg")")
 
   # 1. An explicit protected destination is always a block.
   if gc_targets_main_ref "$args" "$repo"; then

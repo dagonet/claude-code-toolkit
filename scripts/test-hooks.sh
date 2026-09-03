@@ -900,6 +900,59 @@ check "(A6.3) pull --rebase is gated"                  "$H" 2 "$(mkjson Bash 'gi
 check "(A6.3) pull on a feature branch is untouched"   "$H" 0 "$(mkjson Bash 'git pull' "$A6FEATCO")"
 
 # ---------------------------------------------------------------------------
+# v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.
+#
+# NP is set here rather than further down: this section is the first to feed the
+# push gate, and both gates share the defect.
+#
+# Measured on `main` right after v3.0.1 shipped: `git pull --ff-only 2>&1` was
+# BLOCKED, and the block message reported `refspec/remote named: present
+# (2>&1 )`. `2>&1` is not a refspec; it is a token the operand counter had no
+# reason to see. Two halves, opposite polarity:
+#
+#   FALSE POSITIVE — an ordinary scripted `git pull --ff-only 2>&1` and the
+#   `git merge --abort 2>&1` escape from a conflicted merge on a protected
+#   branch were refused. The --abort one is the worse of the two: v3.0.1 exists
+#   because that escape was blocked, and a redirection put it back.
+#   FAIL-OPEN — `git push origin 2>&1` on a protected branch counted TWO
+#   non-flag tokens, so gc_has_refspec read "destination named", the
+#   current-branch check was skipped, and neither gate blocked the push.
+#
+# THE OVER-GREEDY STRIP IS THE REAL HAZARD, so the want-2 rows below are the
+# load-bearing ones. A strip that drops anything after a `>`, or any token
+# containing one, turns a REAL refspec into no-refspec and reopens exactly the
+# hole A6 closed. Both arms were run, and both are reported because one alone
+# proves nothing:
+#   REMOVE the a6_strip_redir / np_strip_redir calls -> 6 rows flip
+#     (1, 2, 5, 9 go 0 -> 2; 6 and 8 go 2 -> 0, the fail-open half).
+#   REPLACE them with a naive "drop any token containing > or <" -> only row 9
+#     flips (0 -> 2). Rows 1-8 all put the redirect LAST, where that variant
+#     happens to be right — which is exactly why row 9 and row 10 exist.
+# Row 10 is the one that catches the two genuinely greedy shapes, both measured
+# against it: "eat everything after a redirect" and "always skip the token
+# after a redirect" each leave `git push origin 2>&1 main` with no protected
+# destination and flip it 2 -> 0.
+# ---------------------------------------------------------------------------
+NP=hooks/no-push-main.sh
+check "(A6.7) pull --ff-only 2>&1 allowed"             "$H" 0 "$(mkjson Bash 'git pull --ff-only 2>&1' "$A6CLONE")"
+check "(A6.7) merge --abort 2>&1 stays exempt"         "$H" 0 "$(mkjson Bash 'git merge --abort 2>&1' "$A6MAIN")"
+check "(A6.7) pull with a refspec AND 2>&1 gated"      "$H" 2 "$(mkjson Bash 'git pull origin feature/x 2>&1' "$A6CLONE")"
+check "(A6.7) 2>&1 inside -m does NOT exempt"          "$H" 2 "$(mkjson Bash 'git merge -m "note 2>&1" --abort' "$A6MAIN")"
+check "(A6.7) pull --ff-only >/dev/null 2>&1 allowed"  "$H" 0 "$(mkjson Bash 'git pull --ff-only >/dev/null 2>&1' "$A6CLONE")"
+check "(A6.7) redirect-only push still branch-checked" "$NP" 2 "$(mkjson Bash 'git push origin 2>&1' "$A6CLONE")"
+check "(A6.7) named destination survives the strip"    "$NP" 0 "$(mkjson Bash 'git push origin feature/x 2>&1' "$A6CLONE")"
+check "(A6.7) merge gate sees the same push"           "$H" 2 "$(mkjson Bash 'git push origin 2>&1' "$A6CLONE")"
+check "(A6.7) separated redirect target not an operand" "$H" 0 "$(mkjson Bash 'git pull --ff-only > /dev/null' "$A6CLONE")"
+# THE ROW THAT DISCRIMINATES A WORKING STRIP FROM A GREEDY ONE. The redirect
+# sits BETWEEN the remote and the ref, on a FEATURE branch — so the only thing
+# that can block it is the explicit `main` destination surviving the strip.
+# "Drop everything after the first `>`" leaves `origin 2` and it flips 2 -> 0;
+# "always skip the token after a redirect" eats `main` and it flips 2 -> 0.
+# The rows above cannot tell either of those from a correct strip, because in
+# them the redirect is the LAST token.
+check "(A6.7) refspec AFTER a redirect survives"       "$NP" 2 "$(mkjson Bash 'git push origin 2>&1 main' "$A6FEATCO")"
+
+# ---------------------------------------------------------------------------
 # v3.0.1 (consumer report) — THE BRANCH-CHANGE-FIRST BYPASS, in BOTH gates.
 #
 # Every payload below is fed to the hook; NOTHING is executed. Running
@@ -926,7 +979,6 @@ check "(A6.3) pull on a feature branch is untouched"   "$H" 0 "$(mkjson Bash 'gi
 # face. ORDER matters too — a gated clause placed BEFORE the checkout is the
 # recommended flow and stays allowed.
 # ---------------------------------------------------------------------------
-NP=hooks/no-push-main.sh
 # A PERFECTLY FRESH, sha-matching artifact, so the `gh pr merge` row below is a
 # real control rather than one that exits 2 because no artifact exists. Without
 # the fix that row takes the feature-branch path, the artifact comparison
