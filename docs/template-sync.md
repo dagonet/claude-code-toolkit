@@ -106,7 +106,7 @@ The 2×2 above cannot express deletion, and this doc did not mention it at all �
 - `TEMPLATE_DELETED` means the template no longer ships a path the manifest still tracks. It is a state the classification table cannot reach, because the template's *absence* is not a *change* to a file.
 - **A manifest entry drops when the template no longer ships the file AND the project no longer has it.** Both halves. Removing it upstream while the project keeps its copy leaves the entry in place, which is correct: the project still has a file whose provenance you want recorded.
 - **`deleted_files` is not required when `git rm` precedes finalize.** Deleting on disk first is a supported order — finalize then observes the absence rather than being told about it.
-- **`files_dropped` is the number to assert.** It is the count finalize reports, and it is the one that distinguishes "the deletion took" from "finalize ran and changed nothing" — which look identical from the exit code.
+- **Assert on the count of dropped entries that finalize reports, not on its exit code.** "The deletion took" and "finalize ran and changed nothing" are indistinguishable from the exit code alone; the count is the only thing that separates them. (The field name is the server's to state — this repo ships no definition of it, so do not hard-code one from memory.)
 
 ## `keep-mine`: the mechanism for files you never want overwritten
 
