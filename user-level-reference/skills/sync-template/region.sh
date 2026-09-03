@@ -255,6 +255,10 @@ scan_stream() {
     classify "$f"
   done
   printf 'region.sh: scanned %s files under %s\n' "$n" "$_lbl" >&2
+  # A dead enumerator and an empty tree print the same "scanned 0 files", and a
+  # 0 reads as CLEAN. Say so instead of letting silence be the verdict.
+  [ "$n" -eq 0 ] && printf 'region.sh: WARNING: enumerated 0 files under %s — verify this is an empty tree and not an enumeration failure\n' "$_lbl" >&2
+  return 0
 }
 
 scan() {
