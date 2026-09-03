@@ -980,8 +980,13 @@ check "(A6.3) --ff-only origin main 2>&1 allowed"      "$H" 0 "$(mkjson Bash 'gi
 # compensates in the hook; delete it and that row flips 2 -> 0 while the
 # `-c` rows stay green, which is what makes the two causes separable.
 #
-# Delete the mutated/a6_inline_config arms in the pull path and rows 1-8 flip
-# 2 -> 0. The want-0 pairs live in the SAME repos: A6CLONE's honest
+# v3.0.3: the two functions this comment used to name are gone. The inline-config
+# half is a6_global_options (item 1, A6.9 below); the preceding-clause half is
+# a6_clause_class (item 2, A6.10 below). The delete-the-guard instruction for the
+# rows here is now: make a6_global_options print `ok` unconditionally and rows
+# 6-9 flip 2 -> 0; make a6_clause_class return `inert` for its inert-eligible
+# verbs' complement — i.e. return `mover` never — and rows 1-5 flip 2 -> 0.
+# The want-0 pairs live in the SAME repos: A6CLONE's honest
 # `git pull --ff-only` above, and the two feature-branch rows here.
 # ---------------------------------------------------------------------------
 check "(A6.8) branch -u then pull is gated"            "$H" 2 "$(mkjson Bash 'git branch -u origin/rogue main && git pull --ff-only' "$A6CLONE")"
@@ -1039,6 +1044,111 @@ check "(A6.9) resolving global on a feature branch allowed (nothing gated)" "$H"
 # swaps the verdict, which a first-wins or an any-protected reading cannot do.
 check "(A6.9) repeated -C: last one wins, protected"   "$H" 2 "$(mkjson Bash "git -C $A6FEATCO -C $A6CLONE merge feature/y" "$A6FEATCO")"
 check "(A6.9) repeated -C: last one wins, feature"     "$H" 0 "$(mkjson Bash "git -C $A6CLONE -C $A6FEATCO merge feature/y" "$A6CLONE")"
+
+# ---------------------------------------------------------------------------
+# v3.0.3 item 2 — PRECEDING CLAUSES: three categories, not a blocklist.
+#   inert   never affects the gated clause AND has no redirection operand AND
+#           none of `$(`, a backtick, `<(`, `>(` — command substitution can
+#           execute anything — AND the whole command contains no pipe.
+#   tracked allowed BECAUSE the scanner follows them: cd, -C, git checkout|
+#           switch <non-protected>. Listing cd as inert would switch OFF the
+#           tracker (measured: cd <protected> && merge is 2 today).
+#   mover   everything else -> the gated arms still run on it, and if none
+#           fires it sets the `mutated` flag the pull/push arms read.
+#
+# THE SCANNER DOES NOT LOOK INSIDE AN INERT CLAUSE. There is no separate
+# whole-string pass in this hook (a plan inaccuracy, corrected here): the arms
+# grep UNANCHORED inside each segment, so a literal `echo 'git pull'` was
+# re-parsed as a second pull. Skipping the arms on an inert segment IS the fix.
+#
+# THREE MEASURED REASONS THE CATEGORY IS NARROW, each with its own rows below:
+#  (1) FOUR substitution forms, not two: `<(` and `>(` carry neither `$(` nor a
+#      backtick and are 2 today only because the arms see them.
+#  (2) NO CLAUSE IS INERT IN A COMMAND CONTAINING A PIPE. `echo 'git merge x'`
+#      prints; `echo 'git merge x' | bash` EXECUTES. Identical leading verb,
+#      identical quoted content, opposite correct verdicts — the difference is
+#      what consumes the clause's stdout, which a per-clause classifier cannot
+#      see. `echo hello | bash` is the control that shows the cost is only paid
+#      when something is actually gated.
+#  (3) AN INERT GIT VERB IS INERT ONLY WITH A FLAG ALLOWLIST. Measured:
+#      `git diff HEAD~1 --output=.git/config` CLOBBERS .git/config, and
+#      `git show --output=` / `git log -p --output=` write files too — the
+#      .git/config-as-a-file channel reached through a verb on the inert list,
+#      with NO shell operator, so the redirection rule cannot see it (the
+#      redirection is an option VALUE). `--set-upstream-to=` / `--unset-upstream`
+#      are the long forms of the `-u` guard. A guard LIST would be the third
+#      list that does not close, so the allowlist is inverted the same way the
+#      globals are: any flag not on the verb's list makes the clause a mover,
+#      and the DENY text names the flag.
+#
+# DELETE-THE-GUARD, two arms, reported separately (they buy different things):
+#   (a) inert deleted   — the inert-eligible verbs return `mover`; the want-0
+#                         rows here flip 0 -> 2.
+#   (b) exclusions deleted — substitution/redirection/pipe return `inert`; the
+#                         substitution, pipe-to-shell and `> .git/config` rows
+#                         flip 2 -> 0. These do NOT flip in arm (a): they are
+#                         caught by the arms, not by the classifier.
+# Making the classifier return `inert` for EVERYTHING is degenerate — no segment
+# would reach an arm, every A6 want-2 row in the suite flips, and the number
+# measures nothing. Do not run it that way.
+#
+# Rows already asserted in the A6.8 block above (branch -u, config branch.*,
+# remote set-url, update-ref, the feature-branch mover control, and the v3.0.1
+# `checkout feature/z && merge` row) are deliberately NOT repeated here.
+# ---------------------------------------------------------------------------
+git -C "$A6CLONE" branch feature/y >/dev/null 2>&1
+git -C "$A6FEATCO" branch feature/y >/dev/null 2>&1
+# inert, want 0
+check "(A6.10) echo before pull allowed"                    "$H" 0 "$(mkjson Bash 'echo starting && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) echo REPEATING the command allowed"          "$H" 0 "$(mkjson Bash 'git pull --ff-only && echo git pull --ff-only on main OK' "$A6CLONE")"
+check "(A6.10) echo quoting a merge, no pipe, allowed"      "$H" 0 "$(mkjson Bash "echo 'git merge feature/x'" "$A6CLONE")"
+check "(A6.10) read-only git verb before pull allowed"      "$H" 0 "$(mkjson Bash 'git status && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) rev-parse before pull allowed"               "$H" 0 "$(mkjson Bash 'git rev-parse HEAD && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git status --short then pull allowed"        "$H" 0 "$(mkjson Bash 'git status --short && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git log --oneline -n 5 then pull allowed"    "$H" 0 "$(mkjson Bash 'git log --oneline -n 5 && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git diff --stat then pull allowed"           "$H" 0 "$(mkjson Bash 'git diff --stat && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) git branch --show-current then pull allowed" "$H" 0 "$(mkjson Bash 'git branch --show-current && git pull --ff-only' "$A6CLONE")"
+# tracked, want 0 / want 2 by target
+check "(A6.10) cd to a FEATURE checkout && merge allowed"   "$H" 0 "$(mkjson Bash "cd $A6FEATCO && git merge feature/y" "$A6CLONE")"
+check "(A6.10) cd to a PROTECTED checkout && merge gated"   "$H" 2 "$(mkjson Bash "cd $A6CLONE && git merge feature/y" "$A6FEATCO")"
+check "(A6.10) checkout main && merge gated (v3.0.1 row)"   "$H" 2 "$(mkjson Bash 'git checkout main && git merge feature/y' "$A6FEATCO")"
+# not inert: redirection and the four substitution forms, want 2
+check "(A6.10) echo > .git/config && pull gated"            "$H" 2 "$(mkjson Bash 'echo x > .git/config && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) echo \$(git merge) gated"                    "$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")"
+check "(A6.10) backtick substitution gated"                 "$H" 2 "$(mkjson Bash 'echo `git merge feature/x`' "$A6CLONE")"
+check "(A6.10) process substitution <( gated"               "$H" 2 "$(mkjson Bash 'echo <(git merge feature/x)' "$A6CLONE")"
+check "(A6.10) process substitution >( gated"               "$H" 2 "$(mkjson Bash 'echo >(git merge feature/x)' "$A6CLONE")"
+check "(A6.10) printf \$(git merge) gated"                  "$H" 2 "$(mkjson Bash "printf '%s' \$(git merge feature/x)" "$A6CLONE")"
+check "(A6.10) echo \$(git config include.path X) && pull"  "$H" 2 "$(mkjson Bash 'echo $(git config include.path /x) && git pull --ff-only' "$A6CLONE")"
+# not inert: a pipe anywhere in the command, want 2 — with the control
+check "(A6.10) echo quoting a merge piped to bash gated"    "$H" 2 "$(mkjson Bash "echo 'git merge feature/x' | bash" "$A6CLONE")"
+check "(A6.10) echo quoting a merge piped to sh gated"      "$H" 2 "$(mkjson Bash "echo 'git merge feature/x' | sh" "$A6CLONE")"
+check "(A6.10) printf a merge piped to bash gated"          "$H" 2 "$(mkjson Bash "printf '%s' 'git merge feature/x' | bash" "$A6CLONE")"
+check "(A6.10) echo hello | bash allowed (pipe control)"    "$H" 0 "$(mkjson Bash 'echo hello | bash' "$A6CLONE")"
+# compound shapes: their headers are not inert verbs, so the arms still see them
+check "(A6.10) semicolon compound still gated"              "$H" 2 "$(mkjson Bash 'echo a ; git merge feature/x' "$A6CLONE")"
+check "(A6.10) && compound still gated"                     "$H" 2 "$(mkjson Bash 'echo a && git merge feature/x' "$A6CLONE")"
+check "(A6.10) for-loop body still gated"                   "$H" 2 "$(mkjson Bash 'for i in 1; do git merge feature/x; done' "$A6CLONE")"
+check "(A6.10) if-then body still gated"                    "$H" 2 "$(mkjson Bash 'if true; then git merge feature/x; fi' "$A6CLONE")"
+check "(A6.10) subshell still gated"                        "$H" 2 "$(mkjson Bash '( git merge feature/x )' "$A6CLONE")"
+check "(A6.10) brace group still gated"                     "$H" 2 "$(mkjson Bash '{ git merge feature/x; }' "$A6CLONE")"
+check "(A6.10) backslash continuation still gated"          "$H" 2 "$(mkjson Bash 'git merge \
+  feature/x' "$A6CLONE")"
+# the flag allowlist on the inert git verbs, want 2. The `git diff --output`
+# row is NOT discriminating on its own (its second clause is a merge on a
+# protected branch, gated regardless) — the `git show --output` row is.
+check "(A6.10) git diff --output onto .git/config gated"    "$H" 2 "$(mkjson Bash 'git diff HEAD~1 --output=.git/config && git merge feature/x' "$A6CLONE")"
+check "(A6.10) git show --output then pull gated"           "$H" 2 "$(mkjson Bash 'git show --output=/x && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) branch --set-upstream-to= then pull gated"   "$H" 2 "$(mkjson Bash 'git branch --set-upstream-to=origin/rogue main && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) branch --unset-upstream then pull gated"     "$H" 2 "$(mkjson Bash 'git branch --unset-upstream main && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) unknown flag on an inert verb refuses"       "$H" 2 "$(mkjson Bash 'git log --future-flag && git pull --ff-only' "$A6CLONE")"
+check_msg "(A6.10) unknown-flag refusal names the flag" "$ROOT/$H" 2 "$(mkjson Bash 'git log --future-flag && git pull --ff-only' "$A6CLONE")" "future-flag"
+# movers the v3.0.2 blocklist did not reach, want 2
+check "(A6.10) config include.path then pull gated"         "$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")"
+check "(A6.10) cp onto .git/config then pull gated"         "$H" 2 "$(mkjson Bash 'cp /x .git/config && git pull --ff-only' "$A6CLONE")"
+check_msg "(A6.10) mover refusal names the clause"   "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "earlier clause"
+check_msg "(A6.10) mover refusal names the category" "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "clause class: mover"
+check_msg "(A6.10) substitution refusal names why"   "$ROOT/$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")" "command substitution"
 
 # ---------------------------------------------------------------------------
 # v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.
