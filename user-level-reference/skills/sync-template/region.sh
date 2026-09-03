@@ -97,7 +97,19 @@ set -u
 BEGIN_RE='<!--[[:space:]]*PROJECT-CUSTOM:BEGIN'
 END_RE='<!--[[:space:]]*PROJECT-CUSTOM:END'
 
+# REGION_SH_VERSION -- bump on every behavioural change to this script.
+#
+# `SKILL.md` carries `SYNC-TEMPLATE-SKILL-VERSION` and a step that asserts it.
+# This script had no version string at all, and it grew 6,924 -> 11,384 bytes
+# between v2.4.0 and v3.0.0 — a consumer had to `sha256sum` it to work out which
+# one they were running. It matters MORE here than for `SKILL.md`: the skill
+# asserts its own marker, while `region.sh` is invoked by a step that simply
+# assumes the copy on disk is current. Printing it in `--help` means the answer
+# is one command away rather than a hash lookup.
+REGION_SH_VERSION="3.0.1"
+
 usage() {
+  echo "region.sh $REGION_SH_VERSION" >&2
   echo "usage: region.sh <path>...            classify" >&2
   echo "       region.sh --scan <dir>         enumerate (dot-dirs included) + classify" >&2
   echo "       region.sh --body <path>        print the region body verbatim" >&2
