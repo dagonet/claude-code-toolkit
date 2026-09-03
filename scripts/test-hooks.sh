@@ -1322,6 +1322,148 @@ for a6csub in merge pull push; do
 done
 
 # ---------------------------------------------------------------------------
+# v3.0.3 FINDING 62 — ONE COMMON GLOBAL SKIPPED ALL THREE GIT GATES.
+#
+# The lib's GC_GIT_PRE tolerated `-C <path>` and `-c <k>=<v>` between `git` and
+# the subcommand and NOTHING else, so gc_matches_subcommand returned false and
+# the subcommand was never FOUND. Measured on the installed v3.0.2 by four
+# consumers, three variants, on a protected branch — every one of these was
+# ALLOWED, with no chaining and no quoting:
+#
+#   git --no-pager merge feature/y            git -P merge feature/y
+#   git --no-pager push origin main           git -P push origin main
+#   git --no-pager pull origin feature/y      git --no-optional-locks merge …
+#   git --literal-pathspecs push origin main  git -P commit -m x  (no test run)
+#
+# The control that pinned the cause: `git -C . merge --ff-only origin/main` was
+# 2 (the -C tolerance) while `git --no-pager merge --ff-only origin/main` was 0.
+#
+# EVERY WANT-2 ROW HERE IS PAIRED WITH ITS UN-PREFIXED CONTROL IN THIS BLOCK,
+# and the parse control (`ls -la` -> 0) is here too. After a fix like this
+# almost everything returns 2, and without the pairs a reader cannot tell a
+# working refusal from a gate that now refuses everything — the v3.0.1
+# over-correction shape.
+#
+# THE TWO POLARITIES ARE DIFFERENT CLAIMS, deliberately:
+#   an INERT global (`-P`, `--paginate`, `--no-pager`) must reach the arms and
+#     get the NORMAL verdict — matching is not allowing, and a skip is not a
+#     verdict;
+#   a RESOLVING global (`-c`) must be refused by the CLASSIFIER, asserted by
+#     check_msg on "global option" rather than by the exit code alone.
+#
+# DELETE-THE-GUARD: revert GC_GIT_PRE to its v3.0.2 form and every prefixed row
+# in this block flips 2 -> 0 while its un-prefixed control stays 2.
+# ---------------------------------------------------------------------------
+check "(A6.13) parse control: ls -la is not gated"        "$H" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+# merge — treatment/control pairs
+check "(A6.13) CONTROL git merge feature/y"               "$H" 2 "$(mkjson Bash 'git merge feature/y' "$A6CLONE")"
+check "(A6.13) git --no-pager merge feature/y"            "$H" 2 "$(mkjson Bash 'git --no-pager merge feature/y' "$A6CLONE")"
+check "(A6.13) git -P merge feature/y"                    "$H" 2 "$(mkjson Bash 'git -P merge feature/y' "$A6CLONE")"
+check "(A6.13) git --paginate merge feature/y"            "$H" 2 "$(mkjson Bash 'git --paginate merge feature/y' "$A6CLONE")"
+check "(A6.13) git --no-optional-locks merge feature/y"   "$H" 2 "$(mkjson Bash 'git --no-optional-locks merge feature/y' "$A6CLONE")"
+# push — treatment/control pairs
+check "(A6.13) CONTROL git push origin main"              "$H" 2 "$(mkjson Bash 'git push origin main' "$A6CLONE")"
+check "(A6.13) git --no-pager push origin main"           "$H" 2 "$(mkjson Bash 'git --no-pager push origin main' "$A6CLONE")"
+check "(A6.13) git --literal-pathspecs push origin main"  "$H" 2 "$(mkjson Bash 'git --literal-pathspecs push origin main' "$A6CLONE")"
+# pull — treatment/control pair
+check "(A6.13) CONTROL git pull origin feature/y"         "$H" 2 "$(mkjson Bash 'git pull origin feature/y' "$A6CLONE")"
+check "(A6.13) git --no-pager pull origin feature/y"      "$H" 2 "$(mkjson Bash 'git --no-pager pull origin feature/y' "$A6CLONE")"
+# the two TOLERATED prefixes: matched before the fix too, and refused by an ARM
+# (push) and by the CLASSIFIER (-c) respectively — not by a skip.
+check "(A6.13) tolerated prefix: git -C <repo> push origin main" "$H" 2 "$(mkjson Bash "git -C $A6CLONE push origin main" "$A6CLONE")"
+check "(A6.13) tolerated prefix: git -c core.x=y merge feature/y" "$H" 2 "$(mkjson Bash 'git -c core.x=y merge feature/y' "$A6CLONE")"
+check_msg "(A6.13) -c merge is refused by the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash 'git -c core.x=y merge feature/y' "$A6CLONE")" "global option"
+# the inert-global rows must NOT be refused by the classifier — they must reach
+# the merge arm. Asserting the arm is what separates "found and judged" from
+# "refused for carrying any global at all".
+check_msg "(A6.13) -P merge is refused by the MERGE arm" "$ROOT/$H" 2 "$(mkjson Bash 'git -P merge feature/y' "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
+# feature-branch control: the widened matcher must not gate what was never gated
+check "(A6.13) git -P merge on a feature branch allowed"  "$H" 0 "$(mkjson Bash 'git -P merge feature/y' "$A6FEATCO")"
+
+# --- the same defect in no-push-main.sh ------------------------------------
+NP62=hooks/no-push-main.sh
+check "(A6.13/NP) CONTROL git push origin main"           "$NP62" 2 "$(mkjson Bash 'git push origin main' "$A6CLONE")"
+check "(A6.13/NP) git --no-pager push origin main"        "$NP62" 2 "$(mkjson Bash 'git --no-pager push origin main' "$A6CLONE")"
+check "(A6.13/NP) git -P push origin main"                "$NP62" 2 "$(mkjson Bash 'git -P push origin main' "$A6CLONE")"
+check "(A6.13/NP) git --literal-pathspecs push origin main" "$NP62" 2 "$(mkjson Bash 'git --literal-pathspecs push origin main' "$A6CLONE")"
+check "(A6.13/NP) -c push is refused by the classifier"   "$NP62" 2 "$(mkjson Bash 'git -c core.x=y push origin main' "$A6CLONE")"
+check_msg "(A6.13/NP) that refusal names the option" "$ROOT/$NP62" 2 "$(mkjson Bash 'git -c core.x=y push origin main' "$A6CLONE")" "global option"
+check "(A6.13/NP) parse control: ls -la is not gated"     "$NP62" 0 "$(mkjson Bash 'ls -la' "$A6CLONE")"
+check "(A6.13/NP) inert global, feature branch, allowed"  "$NP62" 0 "$(mkjson Bash 'git -P push origin feature/co' "$A6FEATCO")"
+
+# --- the same defect in pre-commit-test.sh ---------------------------------
+# EXIT CODE DOES NOT DISCRIMINATE HERE: on a GREEN suite both the skipped and
+# the run case exit 0. The suite's own `passed. (Ns)` line is the signal, and
+# the control must prove the suite RAN or the treatment proves nothing.
+PCT62=hooks/pre-commit-test.sh
+PCTFAIL=$(mkrepo pct62fail main)
+printf '#!/usr/bin/env bash\nexit 1\n' > "$PCTFAIL/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n- **Gate**: `bash tc.sh`\n' > "$PCTFAIL/PROJECT_CONTEXT.md"
+PCTPASS=$(mkrepo pct62pass main)
+printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' > "$PCTPASS/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n- **Gate**: `bash tc.sh`\n' > "$PCTPASS/PROJECT_CONTEXT.md"
+# TWO POLARITIES, and the brief's expectation for the inert half was wrong in
+# kind — measured here, reported rather than coded around. `-P` and
+# `--no-pager` are INERT globals: they change nothing this hook resolves. The
+# finding-62 defect for them is not "they should be refused", it is "the suite
+# was SKIPPED". So the fixed behaviour is that the Test RUNS, and the row that
+# proves it is the `passed. (Ns)` line, not a refusal. Refusing `-P` would be a
+# false positive on a flag IDEs pass unprompted — the shape that gets a guard
+# switched off. A RESOLVING global (`-c`) is the half that is refused.
+#
+# (a) FAILING-suite rows: exit code 2 either way, so check_msg names WHICH.
+check "(A6.13/PCT) CONTROL git commit -m x, failing Test" "$PCT62" 2 "$(mkjson Bash 'git commit -m x' "$PCTFAIL")"
+check_msg "(A6.13/PCT) control blocked by the TEST"  "$ROOT/$PCT62" 2 "$(mkjson Bash 'git commit -m x' "$PCTFAIL")" "re-run it and fix"
+check "(A6.13/PCT) git -P commit -m x, failing Test"      "$PCT62" 2 "$(mkjson Bash 'git -P commit -m x' "$PCTFAIL")"
+check_msg "(A6.13/PCT) -P now REACHES and fails the TEST" "$ROOT/$PCT62" 2 "$(mkjson Bash 'git -P commit -m x' "$PCTFAIL")" "re-run it and fix"
+check_msg "(A6.13/PCT) --no-pager REACHES the TEST"  "$ROOT/$PCT62" 2 "$(mkjson Bash 'git --no-pager commit -F msg' "$PCTFAIL")" "re-run it and fix"
+check_msg "(A6.13/PCT) -c commit refused by the GLOBAL" "$ROOT/$PCT62" 2 "$(mkjson Bash 'git -c core.x=y commit -m x' "$PCTFAIL")" "global option"
+# ORDER AND ARITY, measured against the shipped regex: it hard-coded ONE
+# optional `-C` FIRST then zero-or-more `-c`, so `git -c a=b -C . commit` and
+# `git -C . -C . commit` did not match — the tolerated globals were tolerated
+# only in one order and one arity. "Unknown global -> refuse" does not reach
+# these: -c and -C are the known-good ones, merely written the other way round.
+check_msg "(A6.13/PCT) -c BEFORE -C: matched, refused by the GLOBAL" "$ROOT/$PCT62" 2 "$(mkjson Bash "git -c a=b -C $PCTFAIL commit -m x" "$PCTFAIL")" "global option"
+check_msg "(A6.13/PCT) -C twice: matched, judged by the TEST"  "$ROOT/$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL -C $PCTFAIL commit -m x" "$PCTFAIL")" "re-run it and fix"
+check_msg "(A6.13/PCT) control -c a=b -c d=e: the GLOBAL"      "$ROOT/$PCT62" 2 "$(mkjson Bash 'git -c a=b -c d=e commit -m x' "$PCTFAIL")" "global option"
+check_msg "(A6.13/PCT) control -C then -c: the GLOBAL"         "$ROOT/$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL -c a=b commit -m x" "$PCTFAIL")" "global option"
+# (b) GREEN-suite rows — THE EXIT-CODE TRAP. On a green suite the skipped case
+# and the run case BOTH exit 0, so a probe asserting 2-vs-0 reads "no
+# difference" and calls the commit gate unaffected: the reassuring answer,
+# wrong, with the signal in the wrong channel. The suite's own `passed. (Ns)`
+# line is the signal, and the control must prove the suite RAN or the treatment
+# proves nothing.
+pct62out=$(printf '%s' "$(mkjson Bash 'git commit -m x' "$PCTPASS")" | bash "$ROOT/$PCT62" 2>&1)
+pct62rc=$?
+if [ "$pct62rc" = 0 ] && printf '%s' "$pct62out" | grep -q 'passed. ('; then
+  printf 'PASS  %-42s\n' "(A6.13/PCT) green CONTROL: suite RAN, commit allowed"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (rc=%s, no "passed. (" on stderr)\n' "(A6.13/PCT) green CONTROL: suite did not run" "$pct62rc"; fail=$((fail + 1))
+fi
+pct62out=$(printf '%s' "$(mkjson Bash 'git -P commit -m x' "$PCTPASS")" | bash "$ROOT/$PCT62" 2>&1)
+pct62rc=$?
+if [ "$pct62rc" = 0 ] && printf '%s' "$pct62out" | grep -q 'passed. ('; then
+  printf 'PASS  %-42s\n' "(A6.13/PCT) green -P: suite RAN too (finding 62 closed)"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (rc=%s) — the -P commit did not run the suite\n' "(A6.13/PCT) green -P: suite SKIPPED" "$pct62rc"; fail=$((fail + 1))
+fi
+# The same row stated as the negative that pre-fix behaviour would trip: before
+# the lib fix this exits 0 with NO `passed. (` line at all, which is precisely
+# what an exit-code-only probe cannot see.
+if printf '%s' "$pct62out" | grep -q 'passed. ('; then
+  printf 'PASS  %-42s\n' "(A6.13/PCT) green -P: the 'passed.' line is present"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s\n' "(A6.13/PCT) green -P: no 'passed.' line — suite skipped"; fail=$((fail + 1))
+fi
+# the tolerated form, control: -C is inert, the Test runs normally.
+check "(A6.13/PCT) git -C <repo> commit -m x runs the Test" "$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL commit -m x" "$PCTFAIL")"
+check_msg "(A6.13/PCT) -C control blocked by the TEST" "$ROOT/$PCT62" 2 "$(mkjson Bash "git -C $PCTFAIL commit -m x" "$PCTFAIL")" "re-run it and fix"
+# the same order/arity pair, mirrored for merge (A6CLONE is on protected main)
+check_msg "(A6.13) -c BEFORE -C merge: the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash "git -c a=b -C $A6CLONE merge feature/y" "$A6CLONE")" "global option"
+check_msg "(A6.13) -C twice merge: the MERGE arm"      "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE -C $A6CLONE merge feature/y" "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
+
+
+# ---------------------------------------------------------------------------
 # v3.0.2 — SHELL REDIRECTIONS ARE NOT OPERANDS.
 #
 # NP is set here rather than further down: this section is the first to feed the

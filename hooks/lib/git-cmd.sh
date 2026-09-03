@@ -138,9 +138,92 @@ GC_TOOL=""
 GC_CWD=""
 GC_CMD=""
 
-# Word-boundary-safe prefix for a git invocation, allowing `-C <path>` and any
-# number of `-c <key>=<value>` options between `git` and the subcommand.
-GC_GIT_PRE='\bgit\b([[:space:]]+-C[[:space:]]+[^[:space:]]+)?([[:space:]]+-c[[:space:]]+[^[:space:]]+)*'
+# Word-boundary-safe prefix for a git invocation: ANY sequence of global option
+# tokens between `git` and the subcommand.
+#
+# v3.0.3, FINDING 62 — THIS CONSTANT WAS A THREE-GATE FAIL-OPEN. Until now it
+# tolerated `-C <path>` and `-c <k>=<v>` and NOTHING ELSE, so a single common
+# global made gc_matches_subcommand return false, and the subcommand was never
+# FOUND. Measured on four hosts, three variants, on a protected branch:
+#
+#   git --no-pager merge feature/y            ALLOWED   (control: git merge -> 2)
+#   git --no-pager push origin main           ALLOWED   past BOTH git gates
+#   git --no-optional-locks merge feature/y   ALLOWED
+#   git --literal-pathspecs push origin main  ALLOWED
+#   git -P merge feature/y                    ALLOWED   (three characters)
+#   git -P commit -m x                        no test run, 0 s, exit 0
+#   control: git -C . merge --ff-only origin/main -> 2, via the -C tolerance
+#
+# All three callers exited 0 having evaluated NOTHING: gate-before-merge,
+# no-push-main and pre-commit-test. Fixing it per hook would have been three
+# copies of one fix and the third caller would have got none, so it is fixed
+# here, once.
+#
+# MATCHING IS NOT ALLOWING. This constant answers "is this segment a `git <sub>`
+# invocation at all"; whether the globals in front of it are acceptable is
+# gc_global_options' separate question. An INERT global must lead to the normal
+# verdict, never to a skip — `git --paginate merge feature/y` is found here and
+# then refused by the merge arm, which is the point.
+#
+# The two-token forms are listed first so the alternation consumes an option's
+# VALUE with it; the trailing `-[^[:space:]]+` arm then covers every one-token
+# global, including ones git has not shipped yet.
+GC_GIT_PRE='\bgit\b([[:space:]]+(-C|-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]+)*'
+
+# gc_global_options <segment> -> prints ok | refuse:<opt> | env:<VAR>
+#
+# v3.0.3 item 1 — ARGV PREFIX SHAPE (finding 60). Lived in gate-before-merge.sh
+# as a6_global_options until finding 62 showed no-push-main and pre-commit-test
+# need the same classification; one definition, three callers.
+#
+# A gated git command is `[ENV...] git <globals> <subcommand> ...`. Every global
+# before the subcommand is classified by ONE question: does it change what the
+# command RESOLVES to? -c/--config-env (config), --git-dir/--work-tree (repo),
+# --namespace (ref namespace — reads like a display option, moves the refs the
+# decision is made from), --exec-path (which binaries run), --no-replace-objects
+# (object resolution). Unknown globals are REFUSED: a future flag cannot
+# silently join the allow side. -C is allowed because the callers resolve it.
+#
+# Complete over the config channel, measured (git 2.55.0): `git pull -c x=y`,
+# `git merge -c`, `git push -c` all fail with `unknown switch`, so there is no
+# after-the-subcommand position to have a gap in.
+#
+# THE SIX INERT GLOBALS ARE NOT A CONVENIENCE. --no-optional-locks is what VS
+# Code and the JetBrains IDEs pass to avoid touching the index lock; refusing
+# tooling nobody typed is the shape that gets a guard switched off.
+#
+# KNOWN SEAM: gc_segments strips quotes, so a `-C "C:/a b"` path word-splits
+# here and the token after `-C` is consumed as its value while the remainder
+# falls to the `*)` (subcommand) arm, printing `ok`. That is the same verdict
+# the pre-v3.0.3 code gave, so this does not widen it; gc_matches_subcommand's
+# own fail-closed retry is what covers the quoted-path case for the verdict.
+gc_global_options() {
+  gcgo_seg="$1"
+  # shellcheck disable=SC2086
+  set -- $gcgo_seg
+  gcgo_sawgit=0
+  while [ $# -gt 0 ]; do
+    gcgo_tok="$1"; shift
+    if [ "$gcgo_sawgit" -eq 0 ]; then
+      case "$gcgo_tok" in
+        env) continue ;;
+        git) gcgo_sawgit=1; continue ;;
+        *=*) case "$gcgo_tok" in GIT_*=*|*_GIT_*=*) printf 'env:%s\n' "${gcgo_tok%%=*}"; return ;; esac; continue ;;
+        *)   continue ;;
+      esac
+    fi
+    case "$gcgo_tok" in
+      -C)   shift; continue ;;                                    # resolved by the caller
+      -C?*) continue ;;
+      --no-pager|-P|--paginate|--no-optional-locks|--literal-pathspecs|--no-lazy-fetch) continue ;;
+      -c|-c?*|--config-env|--config-env=*|--git-dir|--git-dir=*|--work-tree|--work-tree=*|--namespace|--namespace=*|--exec-path|--exec-path=*|--no-replace-objects)
+            printf 'refuse:%s\n' "${gcgo_tok%%=*}"; return ;;
+      -*)   printf 'refuse:%s\n' "$gcgo_tok"; return ;;           # unknown global: fail closed
+      *)    printf 'ok\n'; return ;;                              # the subcommand
+    esac
+  done
+  printf 'ok\n'
+}
 
 # v2.2.4 -- the tolerant prefix EVERY `**Key**:` anchor over PROJECT_CONTEXT.md
 # must start with. Read this before writing a new field extractor:
@@ -515,6 +598,13 @@ gc_on_main() {
 # path with a space (`git -C "C:/a b" push …`) loses its quotes in gc_segments
 # and no longer matches, which would silently bypass every gate — so a segment
 # that carries a `git -C` is re-tested against a looser shape and fails closed.
+#
+# v3.0.3: the widened GC_GIT_PRE does NOT make this fallback dead, and it is
+# kept for exactly the case it was written for. Every arm of the widened prefix
+# consumes either an option token or an option-plus-value pair; a path split
+# into two bare words by the quote strip (`C:/a` then `b`) matches neither, so
+# the strict form still fails on it. The fallback is the only thing standing
+# between that shape and an ungated push.
 gc_matches_subcommand() {
   printf '%s\n' "$1" | grep -qE "${GC_GIT_PRE}[[:space:]]+$2([[:space:]]|\$)" && return 0
   printf '%s\n' "$1" | grep -qE '\bgit\b[[:space:]]+-C\b' || return 1

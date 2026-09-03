@@ -87,6 +87,32 @@ while IFS= read -r seg; do
   fi
 
   if gc_matches_subcommand "$seg" "commit"; then
+    # --- v3.0.3 (finding 62), one block, deliberately small ------------------
+    # A global before `commit` used to make the line above false, so this gate
+    # exited 0 in 0 s having run no tests: `git -P commit -m x` and
+    # `git --no-pager commit` were measured skipping the suite entirely while
+    # the control `git commit -m x` ran it in 5 s. Both exited 0, so the EXIT
+    # CODE cannot discriminate on a green suite — the signal is whether the
+    # suite ran. GC_GIT_PRE is widened in the lib so the subcommand is now
+    # FOUND; the globals are classified here by the same gc_global_options the
+    # other two git gates use. An inert global (`-C <path>`, `--no-pager`, `-P`,
+    # …) falls through and the Test runs normally.
+    pctg=$(gc_global_options "$seg")
+    if [ "$pctg" != ok ]; then
+      case "$pctg" in
+        refuse:*) pctgopt="${pctg#refuse:}" ;;
+        env:*)    pctgopt="${pctg#env:}=" ;;
+      esac
+      {
+        echo "BLOCKED: pre-commit-test refuses this commit: it carries the global option '$pctgopt' before the subcommand."
+        echo "  matched segment: $seg"
+        echo "  verdict: refused. A global option that changes what the command RESOLVES to (config, repo, or binaries), or one unknown to this gate, means the repository this hook would test is not provably the repository this commit lands in."
+        echo "  allowed globals: -C <path>, --no-pager, -P, --paginate, --no-optional-locks, --literal-pathspecs, --no-lazy-fetch."
+        echo "Re-run the commit WITHOUT the '$pctgopt' option; set it in your configuration in a separate call instead."
+      } >&2
+      exit 2
+    fi
+    # --- end v3.0.3 block ----------------------------------------------------
     REPO_PATH=$(gc_repo_for "$seg" "$base")
     break
   fi

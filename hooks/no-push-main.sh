@@ -122,6 +122,32 @@ while IFS= read -r seg; do
 
   gc_matches_subcommand "$seg" "push" || continue
 
+  # v3.0.3 (finding 62): a global before `push` used to make the line above
+  # false, so this gate exited 0 having evaluated nothing — `git --no-pager
+  # push origin main` and `git -P push origin main` were ALLOWED past BOTH git
+  # gates, measured on four hosts. The lib's GC_GIT_PRE is widened so the
+  # subcommand is FOUND regardless of the globals; the globals are then
+  # classified separately, here, by the same gc_global_options the merge gate
+  # uses. An inert global (`--no-pager`, `-P`, `--paginate`, …) falls through to
+  # the push checks below and gets the normal verdict — matching is not
+  # allowing, and a skip is not a verdict.
+  npg=$(gc_global_options "$seg")
+  if [ "$npg" != ok ]; then
+    case "$npg" in
+      refuse:*) npgopt="${npg#refuse:}" ;;
+      env:*)    npgopt="${npg#env:}=" ;;
+    esac
+    {
+      echo "BLOCKED: this push carries the global option '$npgopt' before the subcommand, which changes what the command RESOLVES to (config, repo, ref namespace, or binaries), or is unknown to this gate."
+      echo "  matched segment: $seg"
+      echo "  verdict: refused. Allowed globals: -C <path>, --no-pager, -P, --paginate, --no-optional-locks, --literal-pathspecs, --no-lazy-fetch."
+      echo "Could not determine: this check reads the branch you are on and the refspec you typed. An inline '$npgopt' can re-point remote.<name>.url or branch.<name>.remote for this one command, so the destination it computes is not the one this hook can see."
+      echo "Re-run the push WITHOUT the '$npgopt' option. If the setting is one you genuinely need, put it in the repository's configuration in a separate call, where a reader can see it."
+      echo "(If this is a false positive: create '.claude/git-guard-off' under this cwd, make the one push, then delete it.)"
+    } >&2
+    exit 2
+  fi
+
   repo=$(gc_repo_for "$seg" "$base")
   args=$(np_strip_redir "$(gc_push_args "$seg")")
 
