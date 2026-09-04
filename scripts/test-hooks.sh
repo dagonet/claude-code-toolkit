@@ -2002,17 +2002,85 @@ done
 # (`*` and `?` are not legal in a Windows filename; `[` is, so `w[1]` is the
 # portable arm and the residual is named rather than asserted.)
 #
-# ⚠ OPEN, NOT CLOSED, AND DELIBERATELY NOT ASSERTED (v3.0.3). MEASURED on this
-# lib: a repo whose path contains `[` — `…/hostglob/w[1]` — is NOT gated.
-# `git -C '…/w[1]' merge` on a protected branch returned 0, single AND double
-# `-C`, where the same fixture under `…/hostglob/w` returns 2. `set -f` around
-# gc_global_options' unquoted split (added here) was necessary but is NOT
-# sufficient — another site consumes the operand glob-sensitively and it was not
-# found before this release closed. The rows are NOT included as want-0,
-# because a want-0 row on a bypass reads as approval of it. Named here so the
-# next reader starts from a measurement instead of rediscovering it:
-#
-#   repro: a6host "hostglob/w[1]" main; git -C <that> merge <x> from any cwd -> 0
+# CLOSED (v3.0.3, re-measured with a valid fixture). The earlier "NOT gated"
+# reading here was a FIXTURE ARTIFACT, not a hook defect: `a6host`/`a6clone`
+# builds a repo with `git clone -q "$A6ORIGIN" "$TMPROOT/$1"`, and on
+# git-for-windows a `clone` DESTINATION argument containing `[`/`]` is created
+# under an MSYS-converted name the shell's own literal string cannot address
+# (`git clone` echoes `Cloning into '/c/Users/…'`, not the drive-letter path
+# handed to it) — so `…/hostglob/w[1]` never held a real `.git` reachable by
+# that string; `gc_resolve`'s `[ -d "$2" ]` test correctly said no, and the
+# hook correctly fell back to the payload cwd. Measured on two hosts with a
+# fixture that never passes a bracket path as a `git clone` argument (`mkdir`,
+# `cd` INTO the directory, then `git init -b <branch>` with NO path operand):
+# `git -C '…/w[1]' rev-parse --show-toplevel` and `(cd '…/w[1]' && git
+# rev-parse --show-toplevel)` and `(cd '…/w[1]' && pwd -W)` all name the same
+# directory, and `git -C '…/w[1]' merge` on a protected branch built this way
+# returns 2, matching a same-shape non-bracket control exactly. git-on-Windows:
+# a repo CLONED to a path containing `[`/`]` is created under an
+# MSYS-converted name the shell cannot address (the user's own `cd` fails
+# immediately); the hooks never create directories, and for any repo the shell
+# can address, `git -C` and `cd` resolve identically — measured on two hosts,
+# brackets included.
+a6hostinit() { # <relative subdir> <branch> -> a protected repo built with
+                # `git init` IN PLACE (never a bracket-path clone destination).
+  # DRIVE-LETTER FORM, NOT $TMPROOT's MSYS form. Measured: git-for-windows
+  # skips MSYS->Windows argument conversion for a `-C` operand containing
+  # `[`/`]` -- `git -C /c/Users/.../w[1] ...` fails ("cannot change to"),
+  # `git -C C:/Users/.../w[1] ...` works. bash's own `cd`/`[ -d ]` handle the
+  # MSYS form fine (this is a git argument-parsing quirk, not a bash one), so
+  # BUILDING via `cd` is unaffected -- but every `-C` OPERAND emitted for a
+  # hook payload, and every git-side assertion against these paths, must use
+  # the drive-letter form or the row measures a git-argument-conversion
+  # failure that has nothing to do with the hook.
+  a6hi_d="$TMPROOT/$1"
+  mkdir -p "$a6hi_d"
+  ( cd "$a6hi_d" \
+      && git init -q -b "$2" \
+      && git config user.email t@t.t \
+      && git config user.name t \
+      && git config commit.gpgsign false \
+      && printf '%b' "$A6CTX" > PROJECT_CONTEXT.md \
+      && git add PROJECT_CONTEXT.md \
+      && git commit -q -m init >/dev/null 2>&1 )
+  printf '%s\n' "$(cygpath -m "$a6hi_d" 2>/dev/null || printf '%s' "$a6hi_d")"
+}
+A6BR_P=$(a6hostinit "hostglob/w[1]" main)
+A6BR_U=$(a6hostinit "hostglob/side[1]" feature/co)
+A6BRCTL_P=$(a6hostinit "hostglobctl/w" main)
+A6BRCTL_U=$(a6hostinit "hostglobctl/side" feature/co)
+# THE FOUR FACTS, THROUGH GIT ONLY (no shell `[ -e ]`/`ls`/`test -d` on a
+# bracket path — MSYS path conversion diverges on bracket arguments, so a
+# shell file test on these paths shares the fixture's own failure mode and
+# proves nothing either way). Bracket repo paired with its non-bracket
+# control, same builder, same block.
+for a6bp in "$A6BR_P" "$A6BRCTL_P"; do
+  expect "(A6.bracket) $a6bp: git-dir"    ".git" "$(git -C "$a6bp" --no-pager rev-parse --git-dir 2>/dev/null)"
+  expect "(A6.bracket) $a6bp: rev count"  "1"    "$(git -C "$a6bp" --no-pager rev-list --count HEAD 2>/dev/null)"
+  expect "(A6.bracket) $a6bp: branch"     "main" "$(git -C "$a6bp" --no-pager rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  expect "(A6.bracket) $a6bp: Gate line"  "1"    "$(git -C "$a6bp" --no-pager show HEAD:PROJECT_CONTEXT.md 2>/dev/null | grep -c Gate)"
+done
+# BRACKET ROW MUST READ AS THE CONTROL. Single -C, double -C both orders,
+# across all three hooks, plus the mirror (target = unprotected bracket sibling
+# -> 0). Every bracket row is immediately followed by its non-bracket control.
+check "(A6.bracket) single -C, protected -> gated"       "$H" 2 "$(mkjson Bash "git -C $A6BR_P merge feature/x" "$A6BR_U")"
+check "(A6.bracket) CONTROL single -C, protected"        "$H" 2 "$(mkjson Bash "git -C $A6BRCTL_P merge feature/x" "$A6BRCTL_U")"
+check "(A6.bracket) double -C (U,P) -> P wins -> gated"   "$H" 2 "$(mkjson Bash "git -C $A6BR_U -C $A6BR_P merge feature/x" "$A6BR_U")"
+check "(A6.bracket) CONTROL double -C (U,P) -> P wins"    "$H" 2 "$(mkjson Bash "git -C $A6BRCTL_U -C $A6BRCTL_P merge feature/x" "$A6BRCTL_U")"
+check "(A6.bracket) double -C (P,U) -> U wins -> 0"       "$H" 0 "$(mkjson Bash "git -C $A6BR_P -C $A6BR_U merge feature/x" "$A6BR_U")"
+check "(A6.bracket) CONTROL double -C (P,U) -> U wins"    "$H" 0 "$(mkjson Bash "git -C $A6BRCTL_P -C $A6BRCTL_U merge feature/x" "$A6BRCTL_U")"
+check "(A6.bracket) MIRROR: target=unprotected bracket -> 0" "$H" 0 "$(mkjson Bash "git -C $A6BR_U merge feature/x" "$A6BR_U")"
+check "(A6.bracket) push origin main, protected -> blocked" "hooks/no-push-main.sh" 2 "$(mkjson Bash "git -C $A6BR_P push origin main" "$A6BR_U")"
+check "(A6.bracket) CONTROL push origin main, protected"    "hooks/no-push-main.sh" 2 "$(mkjson Bash "git -C $A6BRCTL_P push origin main" "$A6BRCTL_U")"
+check "(A6.bracket) push, unprotected bracket target -> 0"  "hooks/no-push-main.sh" 0 "$(mkjson Bash "git -C $A6BR_U push origin feature/co" "$A6BR_U")"
+printf '# ctx\n\n- **Test**: `false`\n' > "$A6BR_P/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Test**: `false`\n' > "$A6BRCTL_P/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Test**: `true`\n'  > "$A6BR_U/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Test**: `true`\n'  > "$A6BRCTL_U/PROJECT_CONTEXT.md"
+check "(A6.bracket) commit, failing Test -> blocked"      "hooks/pre-commit-test.sh" 2 "$(mkjson Bash "git -C $A6BR_P commit -m y" "$A6BR_P")"
+check "(A6.bracket) CONTROL commit, failing Test"         "hooks/pre-commit-test.sh" 2 "$(mkjson Bash "git -C $A6BRCTL_P commit -m y" "$A6BRCTL_P")"
+check "(A6.bracket) commit, passing Test -> 0"            "hooks/pre-commit-test.sh" 0 "$(mkjson Bash "git -C $A6BR_U commit -m y" "$A6BR_U")"
+check "(A6.bracket) CONTROL commit, passing Test"         "hooks/pre-commit-test.sh" 0 "$(mkjson Bash "git -C $A6BRCTL_U commit -m y" "$A6BRCTL_U")"
 #
 # The `*` and `?` arms cannot be built on this host at all — neither is a legal
 # Windows filename — so `[` is the whole portable surface of the class.

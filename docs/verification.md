@@ -34,6 +34,16 @@ After applying a template, walk through this checklist to confirm everything is 
 
 Measured, v3.0.3 finding 63: a consumer's `git -C <a> -C <b> push origin main` row gated through the **refspec** arm — the refspec names the protected branch whichever repository resolves — so the row returned 2 without `-C` ever being resolved and could not see the repetition defect it was believed to cover. The control was replaced for the new rows and the earlier results that had leaned on it were not re-run.
 
+From the v3.0.3 consumer verification round:
+
+> **Probes are script files, never inline command strings** (the live gates scan the whole command). Every probe sets `GIT_PAGER=cat`, uses `--no-pager`, and runs under a hard timeout — a probe that never returns looks like work in progress; a probe that cannot fail looks like a pass.
+
+> **Fixture repos in a resolution test must be DISTINGUISHABLE**: different Test commands or a marker naming the repo, and the artifact's repo path asserted — identical fixtures cannot tell "resolved to the right one" from "resolved to any one". Assert per repo, through git, that it is a repo with commits on the expected branch.
+
+> **A check that shares the fixture's failure mode proves nothing in either direction** (a shell file test on an odd path, a guard that tests "made a directory" for "made a repo").
+
+> **Run the harness against a known-answer state (e.g. the previous release) before pointing it at the release candidate**; a harness that has never produced a correct result has not been shown to produce results at all.
+
 ## Verifying the toolkit repo itself
 
 Three scripts run from the toolkit root. All three are safe to run at any time and none of them write to your project.
