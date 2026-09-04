@@ -4407,6 +4407,304 @@ check "(DSR) unparseable payload refused"     "$DSR" 2 '{"tool_name":"Read",'
 check "(DSR) a Read with no file_path allowed" "$DSR" 0 "$(mkjson_nocmd Read "$DSRCWD")"
 
 # ===========================================================================
+# v3.0.3 PERMANENT REGRESSION FIXTURES for three security fixes that shipped
+# on this branch with no test coverage: gc_push_args' positional walk (defect
+# 1), the three-class -C resolver (defect 2), pre-commit-test's -C wiring
+# (defect 3a) and the GC_KEY_PRE-anchored `**Field**:` extractors (defect 3b).
+# hooks/ and hooks/lib/ are UNCHANGED by this block — every row below drives
+# logic that already shipped fixed; a future edit that reopens one of these
+# must turn this block red.
+# ===========================================================================
+echo
+echo "=== v3.0.3 regression fixtures (PUSHARG / METACHAR / UNRESOLVED / FIELD / GUARD) ==="
+
+# checkenv[_msg]: the same contract as check[_msg] above, plus arbitrary
+# env-var assignments ahead of the hook invocation -- needed for the METACHAR
+# rows, which drive gc_classify_c's $HOME/$USERPROFILE arms directly.
+checkenv() { # <label> <hook> <expected_exit> <json> <env-assignment...>
+  cke_label="$1"; cke_hook="$2"; cke_want="$3"; cke_json="$4"; shift 4
+  printf '%s' "$cke_json" | env "$@" bash "$ROOT/$cke_hook" >/dev/null 2>&1
+  cke_got=$?
+  if [ "$cke_got" = "$cke_want" ]; then
+    printf 'PASS  %-42s (exit %s)\n' "$cke_label" "$cke_got"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s, got %s)\n' "$cke_label" "$cke_want" "$cke_got"; fail=$((fail + 1))
+  fi
+}
+checkenv_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle> <env-assignment...>
+  ckm_label="$1"; ckm_hookp="$2"; ckm_want="$3"; ckm_json="$4"; ckm_needle="$5"; shift 5
+  ckm_tmp="$TMPROOT/checkenv_msg.tmp"; rm -rf "$ckm_tmp"; mkdir -p "$ckm_tmp"
+  ckm_err="$TMPROOT/checkenv_msg.err"
+  printf '%s' "$ckm_json" | env "$@" TMPDIR="$ckm_tmp" bash "$ckm_hookp" >/dev/null 2>"$ckm_err"
+  ckm_got=$?
+  if [ "$ckm_got" = "$ckm_want" ] && grep -qF "$ckm_needle" "$ckm_err"; then
+    printf 'PASS  %-42s (exit %s)\n' "$ckm_label" "$ckm_got"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' \
+      "$ckm_label" "$ckm_want" "$ckm_needle" "$ckm_got" "$(head -1 "$ckm_err")"; fail=$((fail + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# PUSHARG (defect 1) -- gc_push_args' positional walk, no greedy fallback.
+# The regex form this replaced fell back to `sed -n 's/.*\bpush\b//p'` on
+# anything with more than one `-C`, stripping through the LAST word-bounded
+# "push" in the segment -- so any trailing token merely CONTAINING "push"
+# (--push-option=, --receive-pack=/x/push, -o push-me, a refspec branch named
+# .../push-fix:main) carried that strip past the real refspec. Measured live
+# bypass: `git -C /tmp/other -C <protected, on a feature branch> push origin
+# other:main --push-option=ci-skip` returned rc=0 through no-push-main.sh.
+# ---------------------------------------------------------------------------
+NPA=hooks/no-push-main.sh
+PA_TARGET_MAIN=$(mkrepo pa-target-main main)
+PA_TARGET_FEAT=$(mkrepo pa-target-feat feature/pa)
+PA_CWD=$(mkrepo pa-cwd feature/pacwd)
+
+# Branch-independent: an EXPLICIT protected destination is a block whichever
+# branch the target repo happens to be checked out to, so every row below is
+# run against a target on `main` and again against the SAME shape on a
+# feature branch, and both copies must land on the SAME verdict (2) --
+# proving the fix is a property of gc_push_args, not of gc_on_main.
+for PA_PAIR in "main $PA_TARGET_MAIN" "feat $PA_TARGET_FEAT"; do
+  set -- $PA_PAIR; PA_BR=$1; PA_T=$2
+  check_msg "(PUSHARG/$PA_BR) the measured live bypass: --push-option after other:main" "$ROOT/$NPA" 2 \
+    "$(mkjson Bash "git -C $PA_CWD -C $PA_T push origin other:main --push-option=ci-skip" "$PA_CWD")" \
+    "pushing to a protected branch"
+  check_msg "(PUSHARG/$PA_BR) trailing --receive-pack=/x/push" "$ROOT/$NPA" 2 \
+    "$(mkjson Bash "git -C $PA_T push origin main --receive-pack=/x/push" "$PA_CWD")" \
+    "pushing to a protected branch"
+  check_msg "(PUSHARG/$PA_BR) trailing -o push-me" "$ROOT/$NPA" 2 \
+    "$(mkjson Bash "git -C $PA_T push origin main -o push-me" "$PA_CWD")" \
+    "pushing to a protected branch"
+  check_msg "(PUSHARG/$PA_BR) the same push-lookalike token BEFORE the refspec" "$ROOT/$NPA" 2 \
+    "$(mkjson Bash "git -C $PA_T push origin -o push-me main" "$PA_CWD")" \
+    "pushing to a protected branch"
+  # NOT a flip-discriminator on its own (measured against the actual greedy
+  # `sed -n 's/.*\bpush\b//p'` this replaced): the lookalike token sits BEFORE
+  # ":main" in the string, so a greedy strip through it still leaves "main" in
+  # the remainder -- right by luck, same shape as the merge-arm note above
+  # ("the VERDICT was right by luck... the DISCRIMINATOR named the wrong
+  # rule"). Kept as the requested regression row for the shape itself (a
+  # protected-destination refspec whose SOURCE ref merely contains "push"
+  # must still parse and still block), labelled rather than dropped.
+  check_msg "(PUSHARG/$PA_BR) refspec branch literally named .../push-fix:main" "$ROOT/$NPA" 2 \
+    "$(mkjson Bash "git -C $PA_T push origin feature/push-fix:main" "$PA_CWD")" \
+    "pushing to a protected branch"
+  check_msg "(PUSHARG/$PA_BR) single -C (no fold), push-option trailing" "$ROOT/$NPA" 2 \
+    "$(mkjson Bash "git -C $PA_T push origin other:main --push-option=x" "$PA_CWD")" \
+    "pushing to a protected branch"
+done
+# CONTROL: --force alone, no refspec and no push-lookalike trailing token --
+# a parser that over-corrects into "any flagged push is refused" would also
+# pass every row above and still be wrong. Single copy, target on main, so the
+# implicit current-branch check is what fires.
+check "(PUSHARG) CONTROL: --force, refspec-free, on protected main" "$NPA" 2 \
+  "$(mkjson Bash "git -C $PA_TARGET_MAIN push --force" "$PA_CWD")"
+# MIRROR: the same shapes into an UNPROTECTED destination must stay allowed --
+# proves the fix discriminates rather than blocking every flagged push.
+check "(PUSHARG) mirror: push-option into a feature destination, allowed" "$NPA" 0 \
+  "$(mkjson Bash "git -C $PA_TARGET_MAIN push origin other:feature/pa --push-option=ci-skip" "$PA_CWD")"
+# DtG (delete-then-good) note, stated rather than re-executed here: deleting
+# gc_push_args' positional walk and restoring the greedy `sed` fallback flips
+# the double-`-C`/--push-option row above from 2 to 0 WITH EMPTY STDERR -- the
+# fallback reads the destination as "ci-skip", finds no protected branch in
+# it, and prints nothing, which is exactly the live bypass this block exists
+# to catch (see scripts/test-hooks-parser-matrix.sh's sibling note on why this
+# is documented rather than driven by a second hook copy).
+
+# ---------------------------------------------------------------------------
+# METACHAR (defect 2) -- the three-class -C resolver in gc_classify_c.
+# Class 1: a literal path, resolved by plain `[ -d ]` (git's own resolution).
+# Class 2: resolvable by STRING SUBSTITUTION alone ($HOME, $USERPROFILE, $PWD,
+#          ~, ~/...) -- must resolve to the TARGET, never silently fall back
+#          to the payload cwd.
+# Class 3: cannot-determine ($(...), `...`, <(...), >(...), any other $VAR,
+#          ~user/...) -- refused outright, distinct from "does not resolve".
+# ---------------------------------------------------------------------------
+MC_HOME="$TMPROOT/mc-home"
+mc_mkprot() { # <path> -- a protected (main) clone of A6ORIGIN, Gate + fast Test
+  git clone -q "$A6ORIGIN" "$1" >/dev/null 2>&1
+  git -C "$1" config user.email t@t.t
+  git -C "$1" config user.name t
+  git -C "$1" config commit.gpgsign false
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n- **Test**: `false`\n' > "$1/PROJECT_CONTEXT.md"
+}
+mc_mkprot "$MC_HOME"      # HOME itself is a protected repo (bare `~` / `~/`)
+mc_mkprot "$MC_HOME/P"    # a nested protected repo (`~/P`, `$HOME/P`, ...)
+MC_H3=hooks/gate-before-merge.sh
+MC_H1=hooks/no-push-main.sh
+MC_H2=hooks/pre-commit-test.sh
+MC_CWD="$A6FEATCO"        # unprotected: a fallback-to-cwd bug would read 0
+
+# class 2: every $HOME/$USERPROFILE/tilde spelling must RESOLVE, never fall
+# back silently. NEVER 0-via-cwd-fallback is the property under test in each.
+checkenv "(METACHAR) -C ~ merge (bare tilde -> HOME itself, protected)" "$MC_H3" 2 \
+  "$(mkjson Bash 'git -C ~ merge feature/y' "$MC_CWD")" "HOME=$MC_HOME"
+checkenv "(METACHAR) -C ~/ merge (trailing slash -> HOME itself, protected)" "$MC_H3" 2 \
+  "$(mkjson Bash 'git -C ~/ merge feature/y' "$MC_CWD")" "HOME=$MC_HOME"
+checkenv "(METACHAR) -C ~/P merge (tilde + subpath)" "$MC_H3" 2 \
+  "$(mkjson Bash 'git -C ~/P merge feature/y' "$MC_CWD")" "HOME=$MC_HOME"
+checkenv "(METACHAR) -C \$HOME/P push (refspec-free, implicit branch check)" "$MC_H1" 2 \
+  "$(mkjson Bash "git -C \$HOME/P push" "$MC_CWD")" "HOME=$MC_HOME"
+checkenv "(METACHAR) -C \${HOME}/P commit (Test:false on the resolved target)" "$MC_H2" 2 \
+  "$(mkjson Bash "git -C \${HOME}/P commit" "$MC_CWD")" "HOME=$MC_HOME"
+checkenv "(METACHAR) -C \$USERPROFILE/P merge" "$MC_H3" 2 \
+  "$(mkjson Bash "git -C \$USERPROFILE/P merge feature/y" "$MC_CWD")" "HOME=$MC_CWD" "USERPROFILE=$MC_HOME"
+checkenv "(METACHAR) -C \${USERPROFILE}/P push" "$MC_H1" 2 \
+  "$(mkjson Bash "git -C \${USERPROFILE}/P push" "$MC_CWD")" "HOME=$MC_CWD" "USERPROFILE=$MC_HOME"
+
+# class 3: cannot-determine, refused with "cannot DETERMINE", never "does not
+# resolve" -- one per hook, so all three carry the distinction.
+checkenv_msg "(METACHAR) -C \$(echo P) merge -- cannot-determine" "$ROOT/$MC_H3" 2 \
+  "$(mkjson Bash "git -C \$(echo P) merge feature/y" "$MC_CWD")" "cannot DETERMINE" "HOME=$MC_HOME"
+checkenv_msg "(METACHAR) -C \$UNSET_XYZ/P push -- cannot-determine" "$ROOT/$MC_H1" 2 \
+  "$(mkjson Bash "git -C \$UNSET_XYZ/P push" "$MC_CWD")" "cannot DETERMINE" "HOME=$MC_HOME"
+checkenv_msg "(METACHAR) -C <(x) commit -- cannot-determine" "$ROOT/$MC_H2" 2 \
+  "$(mkjson Bash "git -C <(x) commit" "$MC_CWD")" "cannot DETERMINE" "HOME=$MC_HOME"
+checkenv_msg "(METACHAR) -C ~user/P merge -- cannot-determine" "$ROOT/$MC_H3" 2 \
+  "$(mkjson Bash "git -C ~user/P merge feature/y" "$MC_CWD")" "cannot DETERMINE" "HOME=$MC_HOME"
+
+# class 1: a single -C into a MISSING directory keeps the documented exit-0
+# fallback (git fails on its own) -- asserted against an UNPROTECTED cwd so a
+# 0 here is a decision, not a coincidence of the cwd already being safe.
+check "(METACHAR) -C /no/such merge -- class-1 miss, falls back and allows" "$MC_H3" 0 \
+  "$(mkjson Bash 'git -C /no/such merge feature/y' "$MC_CWD")"
+
+# controls: a single-quoted `~/P` and its unquoted twin are INDISTINGUISHABLE
+# to this hook -- gc_segments strips every quote character before the parser
+# ever sees the text, so there is no real-shell-quoting behaviour to recover
+# here. Both resolve identically (class 2, protected), which is the honest
+# answer given what the hook can see; a plain expanded absolute path is the
+# baseline sanity check in the same block.
+checkenv "(METACHAR) control: single-quoted '~/P' resolves the same as bare ~/P" "$MC_H3" 2 \
+  "$(mkjson Bash "git -C '~/P' merge feature/y" "$MC_CWD")" "HOME=$MC_HOME"
+check "(METACHAR) control: a plain expanded absolute path still resolves" "$MC_H3" 2 \
+  "$(mkjson Bash "git -C $MC_HOME/P merge feature/y" "$MC_CWD")"
+
+# double -C, class 2: git's own COMPOSE/OVERRIDE rule (gc_repo_for's fold)
+# applies to a metachar-resolved operand exactly as it does to a literal one.
+checkenv "(METACHAR) double -C: ~ then P COMPOSES to ~/P, protected" "$MC_H3" 2 \
+  "$(mkjson Bash 'git -C ~ -C P merge feature/y' "$MC_CWD")" "HOME=$MC_HOME"
+checkenv "(METACHAR) double -C: ~/P then an absolute OVERRIDES, unprotected" "$MC_H3" 0 \
+  "$(mkjson Bash "git -C ~/P -C $MC_CWD merge feature/y" "$MC_CWD")" "HOME=$MC_HOME"
+
+# $PWD/${PWD} resolve against the PAYLOAD's cwd, never the hook's own $PWD.
+# Built so the two differ: PA_PWD_BASE is the payload cwd, holding a NESTED
+# protected clone at PA_PWD_BASE/P; the hook process's own $PWD is the
+# toolkit root, which has no such subdirectory. Landing on the nested repo
+# (2) proves the payload cwd was used; landing on the unprotected base (0)
+# would prove the hook's own $PWD leaked in instead.
+PA_PWD_BASE=$(mkrepo mc-pwd-base feature/pwdbase)
+mc_mkprot "$PA_PWD_BASE/P"
+check "(METACHAR) \$PWD/P resolves against the PAYLOAD cwd, not the hook's" "$MC_H3" 2 \
+  "$(mkjson Bash 'git -C $PWD/P merge feature/y' "$PA_PWD_BASE")"
+
+# ---------------------------------------------------------------------------
+# UNRESOLVED (defect 3a) -- pre-commit-test.sh's own -C resolver, wired the
+# same place the other two git gates already had it. Before the fix this hook
+# called gc_repo_for directly with no preceding unresolved-`-C` check, so an
+# unresolved fold silently fell back to `$base` and ran the WRONG repo's Test.
+# g1 = the cwd repo (Test PASSES, branch `work`); g2 = the target repo (Test
+# FAILS, branch `feat`). "marker" below means: which repo's
+# .gate/last-precommit.json the run actually wrote to.
+# ---------------------------------------------------------------------------
+UR_G1=$(mkrepo ur-g1 work)
+printf '# ctx\n\n- **Test**: `true`\n' > "$UR_G1/PROJECT_CONTEXT.md"
+UR_G2=$(mkrepo ur-g2 feat)
+printf '# ctx\n\n- **Test**: `false`\n' > "$UR_G2/PROJECT_CONTEXT.md"
+UR_PCT=hooks/pre-commit-test.sh
+
+ur_marker_check() { # <label> <want_rc> <json> <marker_repo> <want_path_field>
+  rm -f "$4/.gate/last-precommit.json"
+  printf '%s' "$3" | bash "$ROOT/$UR_PCT" >/dev/null 2>&1
+  urm_got=$?
+  urm_file="$4/.gate/last-precommit.json"
+  if [ "$urm_got" = "$2" ] && [ -f "$urm_file" ] && grep -qF "\"path\":\"$5\"" "$urm_file"; then
+    printf 'PASS  %-42s (exit %s, marker path=%s)\n' "$1" "$urm_got" "$5"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s+path=%s, got %s file=%s)\n' \
+      "$1" "$2" "$5" "$urm_got" "$([ -f "$urm_file" ] && head -c 200 "$urm_file" || echo MISSING)"
+    fail=$((fail + 1))
+  fi
+}
+
+# 1. no operand resolves -- was rc=0, marker=g1, before the fix (DtG: restore
+#    the pre-defect-3a wiring -- call gc_repo_for with no unresolved check
+#    ahead of it -- and this row flips 2 -> 0 with the marker unmoved).
+rm -f "$UR_G2/.gate/last-precommit.json"
+ur_marker_check "(UNRESOLVED) -C nope1 -C nope2 commit -- refuses" 2 \
+  "$(mkjson Bash 'git -C nope1 -C nope2 commit' "$UR_G1")" "$UR_G1" "unresolved-c"
+# ...and two-sided: g2's Test never ran at all, so its marker must stay absent
+# -- proves this is a refusal, not merely "g1 happened to be written too".
+expect "(UNRESOLVED) -C nope1 -C nope2 commit -- g2 untouched" "0" \
+  "$([ -f "$UR_G2/.gate/last-precommit.json" ] && echo 1 || echo 0)"
+# 2. both real -- resolves the target, g1 is only ever the payload cwd.
+ur_marker_check "(UNRESOLVED) -C g1 -C g2 commit -- resolves target" 2 \
+  "$(mkjson Bash "git -C $UR_G1 -C $UR_G2 commit" "$UR_G1")" "$UR_G2" test
+# 3/4. partial folds -- git itself FATALS on the garbage operand, so these
+# test non-spurious-refusal (does the hook still judge the resolvable half),
+# not resolution-correctness in general.
+ur_marker_check "(UNRESOLVED) -C g2 -C nope2 commit -- judged as g2" 2 \
+  "$(mkjson Bash "git -C $UR_G2 -C nope2 commit" "$UR_G1")" "$UR_G2" test
+ur_marker_check "(UNRESOLVED) -C nope1 -C g2 commit -- judged as g2" 2 \
+  "$(mkjson Bash "git -C nope1 -C $UR_G2 commit" "$UR_G1")" "$UR_G2" test
+# 5. single -C, the baseline the multi-C rows are measured against.
+ur_marker_check "(UNRESOLVED) -C g2 commit (single) -- judged as g2" 2 \
+  "$(mkjson Bash "git -C $UR_G2 commit" "$UR_G1")" "$UR_G2" test
+
+# ---------------------------------------------------------------------------
+# FIELD (defect 3b) -- the GC_KEY_PRE-anchored `**Field**:` extractors. Before
+# the fix every extractor's `sed` used a GREEDY leading `.*`, so a value that
+# itself contains the literal field label a second time had everything up to
+# and including that SECOND occurrence stripped, silently truncating the
+# value instead of returning it whole.
+# ---------------------------------------------------------------------------
+# **Test**: read via eval, so the discriminator is behavioural, not textual --
+# a truncated extraction ("false" alone) fails; the whole value ("true # ...")
+# succeeds because `true` is the command and the rest is a shell comment.
+FLD_TEST=$(mkrepo fld-test main)
+printf '# ctx\n\n- **Test**: true # note: see **Test**: false\n' > "$FLD_TEST/PROJECT_CONTEXT.md"
+check_msg "(FIELD) **Test**: value repeating the marker -- whole value used" \
+  "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit -m x' "$FLD_TEST")" "passed. ("
+
+# **Gate**: same shape, through pre-commit-test.sh's own GATE_CMD_RAW fallback
+# (no **Test** field, and $NORUNGATE carries no run-gate.sh sibling, so the
+# WARN path evaluates GATE_CMD_RAW directly rather than dispatching to the
+# real gate -- keeping this row fast).
+FLD_GATE=$(mkrepo fld-gate main)
+printf '# ctx\n\n- **Gate**: true # note: see **Gate**: false\n' > "$FLD_GATE/PROJECT_CONTEXT.md"
+check_msg "(FIELD) **Gate**: value repeating the marker -- whole value used" \
+  "$NORUNGATE/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit -m x' "$FLD_GATE")" "passed. ("
+
+# **Protected branches**: read via gc_on_main's plain string comparison (never
+# a regex -- the extracted value can itself carry `**`, which would be an
+# unsafe alternation to build a grep -E pattern from). A truncated extraction
+# ("develop" alone) drops "main" from the protected set and allows the bare
+# push through; the whole value ("main **Protected branches**: develop")
+# keeps "main" in the set and blocks it.
+FLD_PB=$(mkrepo fld-pb main)
+printf '# ctx\n\n- **Protected branches**: main **Protected branches**: develop\n' > "$FLD_PB/PROJECT_CONTEXT.md"
+check "(FIELD) **Protected branches**: value repeating the marker -- whole value used" \
+  "hooks/no-push-main.sh" 2 "$(mkjson Bash 'git push' "$FLD_PB")"
+
+# ---------------------------------------------------------------------------
+# GUARD -- gate-before-merge.sh's `-c` classifier, confirmed still shared
+# (gc_global_options, moved into hooks/lib/git-cmd.sh at v3.0.3 item 1) rather
+# than reverted to a private copy. Scoped INSIDE gc_on_main by design: a
+# resolving global on a FEATURE-branch merge must stay allowed.
+# ---------------------------------------------------------------------------
+GRD_H=hooks/gate-before-merge.sh
+GRD_FEAT_NOGATE=$(mkrepo grd-feat-nogate feature/g)
+check "(GUARD) -c a=b merge, unprotected + Gate configured" "$GRD_H" 0 \
+  "$(mkjson Bash 'git -c a=b merge feature/y' "$GATEFEAT")"
+check "(GUARD) -c a=b merge, unprotected, NO **Gate** line at all" "$GRD_H" 0 \
+  "$(mkjson Bash 'git -c a=b merge feature/y' "$GRD_FEAT_NOGATE")"
+check "(GUARD) -c a=b -C garbage1 -C garbage2 merge -- fires via unresolved -C" "$GRD_H" 2 \
+  "$(mkjson Bash 'git -c a=b -C garbage1 -C garbage2 merge feature/y' "$GATEFEAT")"
+check "(GUARD) bare merge, unprotected" "$GRD_H" 0 \
+  "$(mkjson Bash 'git merge feature/y' "$GATEFEAT")"
+
+# ===========================================================================
 # Read back the stub-PATH completeness marker (see mkpathdir): a stub built
 # without its minimum tool set makes every case running under it meaningless,
 # and it used to do that in silence.
