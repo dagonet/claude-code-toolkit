@@ -1,5 +1,127 @@
 # Changelog
 
+## v3.0.3 — 2026-09-04
+
+**Twenty-five items from the v3.0.2 verification round, five consumer sessions reporting.** The through-line: *every gate in this repository was keyed on a FORM, and each finding is one more way a form fails to determine an effect.* This release closes the argv channel completely, replaces one blocklist with a classification, replaces a deny RULE with a hook, and — the item nobody predicted — fixes a gate that had been skipping its own suite since v3.0.0.
+
+### 1. The argv prefix, complete over its channel
+
+A gated git command is `[ENV…] git <globals> <subcommand> …`, and every global before the subcommand is now classified by ONE question: does it change what the command RESOLVES to? `-c` / `--config-env` (config), `--git-dir` / `--work-tree` (repo), `--namespace` (ref namespace — reads like a display option, moves the refs the merge decision is made from), `--exec-path` (which binaries run), `--no-replace-objects` (object resolution). Six inert globals are allowed by name (`--no-pager`, `-P`, `--paginate`, `--no-optional-locks`, `--literal-pathspecs`, `--no-lazy-fetch`); `-C` is allowed because the lib resolves it. **An unknown global is REFUSED** — a future flag cannot silently join the allow side. Environment assignments before `git` (`GIT_CONFIG=…`, `env GIT_CONFIG_COUNT=1 git …`) are refused for the same reason. This is complete over the config channel because `-c` is git-global-only: `git pull -c x=y`, `git merge -c`, `git push -c` all die with *unknown switch* (git 2.55.0, measured by a consumer), so there is no after-the-subcommand position to have a gap in.
+
+### 2. The preceding-clause rule became a classification, not a blocklist
+
+v3.0.2's list of mutating clauses was known-incomplete and said so. Clauses are now classed `inert` / `tracked` / `mover`; the gated arms simply do not run on an inert clause. The substitution, redirection and pipe exclusions are what keep that from opening anything — **no clause is inert in a command containing a pipe**, because `echo 'git merge …' | bash` executes.
+
+### 3. The invariant, and a canary that can see a display read becoming a branch
+
+The A6 arms carry a stated invariant, a declared consumer list, and a four-ancestry-state canary (behind / equal / ahead / diverged, with the starting state asserted). The census is an allowlist of git invocation shapes plus `grep -c '\.git/' == 0`, filtered to non-comment lines with a non-empty guard so an over-tight filter cannot pass vacuously. Run against v3.0.1's hook it goes **red**, which is what makes it a working control rather than a decoration.
+
+### 4. FINDING 62 — both git gates were blind to the globals they did not list, and the commit gate was SKIPPING ITS OWN SUITE
+
+`git -P merge feature/y` on a protected branch was **ALLOWED** on installed v3.0.2, on both gates, on four hosts. Root cause in `hooks/lib/git-cmd.sh`: `GC_GIT_PRE` tolerated only `-C` and `-c` between `git` and the subcommand, so any other global made the clause **not match as a merge/pull/push at all** and it fell through ungated — a fail-OPEN blind spot, not a refusal.
+
+The third caller made it worse in a way no exit code can show: `git -P commit -m x` matched no commit segment, so `hooks/pre-commit-test.sh` **ran no tests and exited 0 in ~0 s**, indistinguishable from a green run. On a green suite both the skipped and the run case exit 0, and the `passed. (` marker is absent in the broken state AND in the fixed one, so neither channel discriminates. The channel that does is `.gate/last-precommit.json`'s `path` field: `no-commit-segment` before the fix, `test` after.
+
+**One fix, in the lib** — `GC_GIT_PRE` widened to accept any unordered, repeatable sequence of globals, and the classifier moved in as `gc_global_options` so all three gates share it instead of carrying three copies. Consequence, stated because it is a real cost: `scripts/test-hooks-parser-matrix.sh` (~90 min) is MANDATORY before the tag, not background confirmation.
+
+Two corrections found while building it, both kept: **`-P` is not refused** — it is inert, and refusing a flag IDEs pass unprompted is the shape that gets a guard switched off; and **repeated `-C` is cumulative and RELATIVE** — `git -C a -C b` resolves `b` from inside `a`, so "refuse more than one `-C`" would have failed the amendment's own want-0 row. Both have fixtures with siblings-versus-nested layouts.
+
+### 5. The Test path's contract, and the artifact that outlives the hook
+
+`.gate/last-precommit.json` records which path the hook took, its rc, and the working-tree hash it gated (computed exactly as `run-gate.sh` computes `tree`). A PreToolUse hook finishes before the tool runs and the harness drops non-blocking stderr, so nothing the hook PRINTS can place it relative to the command it gated. **Read it immediately after the commit, before any other tool call** — it is rewritten on every Bash call this hook sees in any git repository, which is inherent and not a defect.
+
+Both gates now name their blind spot on the BLOCKED path: the commit gate says it ran your suite against the working tree as it stood a moment ago, not the tree the commit will contain; `no-push-main.sh` says it cannot see `remote.<name>.push` or `push.default`.
+
+### 6. `**Test**: none` BLOCKED EVERY COMMIT
+
+Measured on the shipped hook: `PRE-COMMIT: Running 'none'...`, 127 from the shell, refused. The field value that reads as *"I have no Test command"* was the one value that hard-blocked — and the release plan itself advised writing it. `none` is now the opt-out it looks like (case-insensitive, trimmed, backticks stripped), treated as an ABSENT field so precedence still falls through to the Gate path.
+
+### 7. The Test/Gate trade-off, at the field
+
+Every `templates/*/PROJECT_CONTEXT.md` carries the break-even inline: declaring BOTH means the Test runs on commit and the Gate does not, so no artifact is minted and every merge needs a separate `bash hooks/run-gate.sh`. Worth it only above roughly `gate_seconds / (gate_seconds − test_seconds)` commits per PR. Measure yours.
+
+### 8. THE ACTUAL PROMPT SOURCE — six deny RULES, replaced by a hook
+
+Six `Read(.env…)` entries shipped in `permissions.deny` of every consumer's project settings. Claude Code evaluates deny rules **before** the classifier, and a read-only command whose path is RELATIVE after a `cd` cannot be statically proven not to hit one — so the harness prompts (*"only you can approve running it anyway"*) and auto mode cannot approve it. Subagents in worktrees run `cd <worktree> && grep …` on nearly every read. **Every "auto mode is prompting" report this cycle was this**; the `autoMode.environment` and pause findings were real but secondary.
+
+`hooks/deny-secret-reads.sh` replaces them on PreToolUse `Read|Bash`. A hook deny answers per call and does not trigger the static path check. `.env.example` stays readable. **Stated blind spot, with fixtures asserting it:** the hook sees a command's ARGUMENTS, not what an interpreter opens — `python -c "open('.env')"` and `git show HEAD:.env` are judged by the classifier's own credential rules, not here.
+
+### 9. Sources, skill and setup
+
+The `{{…}}` sweep, the `--scan` walker (0.37 s agent-classified versus 238 s / 2,003 files on the pre-fix walker), the form-3 whitelist, the unattended step-6 default, the auto-mode snippet in `setup-project.sh`, and a drift probe that compares `autoMode.environment` against the reference. A 0-file enumeration now WARNS rather than reading as clean — the no-op-indistinguishable-from-pass class, caught in the file being fixed.
+
+### 10. Performance: the gates exit before doing any work on payloads that cannot be gated
+
+A payload with no `git` token and no `gh pr merge` exits 0 before the lib is sourced. Measured against an unchanged-hook control: `ls -la` 1156 → 844 ms, merge payload unchanged, control drift 7% versus treatment 27%. A raw-payload pre-parse grep was rejected as unsound (a JSON-escaped newline puts `n` immediately before `git`); the exit reads `GC_CMD` after the parse and before the first git subprocess.
+
+### Deferred, named — finding 59: the Test path has no terminal arm, and that is deliberate
+
+The plan asked for one. Three shipped guards forbid it, and they are not oversights: census **21c-2h** in `verify-template-consistency.sh` (which reads THIS repo's own `**Test**`, so it blocks the fixing commit) and fixtures **R5f** arms 1–2 + **R5g**, which assert the retryable wording and `check_nomsg "cannot succeed as configured"` on exactly this rc. Their reason, in their own text: a 78 from an arbitrary consumer command is a child's number with no provenance. The plan's cited line range was the run-gate FALLBACK branch, which has had the arm since v2.2.5; the real Test path is the `eval "$TEST_CMD"` boundary. The corrected contract, as shipped:
+
+| path | rc | v3.0.3 behaviour | why |
+|---|---|---|---|
+| Test (`eval "$TEST_CMD"`) | 0 | commit allowed | — |
+| Test | 1 | BLOCKED, *"re-run it and fix"* | an ordinary failure is retryable |
+| Test | 78 | BLOCKED, *"re-run it and fix"* — **not** terminal | 78 from an arbitrary consumer command has no provenance; R5f/R5g assert this wording |
+| Gate (`run-gate.sh`) | 78 | BLOCKED, *"cannot succeed as configured"* | the 78 came from the toolkit's own program |
+
+**v3.0.4 carries the principled fix:** export a `RUN_GATE_TERMINAL` marker across the Test eval and clamp on `rc == 78 && [ -f "$marker" ]`. R5f/R5g stay green under it (their `exits78.sh` never touches the marker), which is strong evidence it is the intended shape. Keying on the marker alone was rejected as *doing the forbidden thing while evading the instrument*.
+
+### Downstream migration
+
+1. **Globals before a gated `pull` / `merge` / `push` are refused** unless they are one of the six inert ones or `-C`. Set them in configuration in a separate call. The DENY text names the option it refused.
+2. **`settings.json` customisers must port the matcher change by hand.** If your project `settings.json` is PROJECT_CUSTOM (a dotnet build hook, for example), the sync will not touch it. Do it in this order: **(a) ADD the hook entry FIRST, (b) THEN delete the six `Read(.env…)` lines.** Deleting first leaves you unprotected until the hook is wired; adding the hook while leaving the rules in place keeps the prompts. The entry to paste, copied from the template:
+   ```json
+   {
+     "matcher": "Read|Bash",
+     "hooks": [
+       {
+         "type": "command",
+         "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-secret-reads.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/deny-secret-reads.sh -- secrets protection offline. Check that hooks/ exists at the project root.' >&2; exit 2; fi; exit $c"
+       }
+     ]
+   }
+   ```
+   and the six lines to delete from `permissions.deny`:
+   ```json
+   "Read(.env)",
+   "Read(.env.local)",
+   "Read(.env.*.local)",
+   "Read(.env.production)",
+   "Read(.env.staging)",
+   "Read(.env.development)",
+   ```
+   **Keeping the six rules — and the prompts — until you have installed the hook is a valid choice**, not a migration you are behind on. The rules protect the right files; what they cost is auto mode.
+3. **Step 9 of the sync skill is now TWO calls.** Edit in one tool call; `git add` + `git commit -F <file OUTSIDE the repo>` in the next. The commit hook is PreToolUse and hashes the working tree BEFORE the call runs, so a mutation batched with the commit is gated in its pre-mutation state and the artifact then describes the parent's tree.
+4. **Read `.gate/last-precommit.json` immediately after the commit**, before any other tool call. It is rewritten on every Bash call this hook sees in any git repository.
+5. **The Test/Gate break-even is at the field** in `PROJECT_CONTEXT.md`. `**Test**: none` is now an opt-out rather than a command; before v3.0.3 it blocked every commit.
+6. **`autoMode.environment` must be generic.** A repo-specific line there makes the classifier deny in every OTHER repo (58 denials across 11 sessions, one repo contributing 50). `scripts/verify-user-level-drift.sh` now compares it against the reference. And the part that reads as a config problem when it is a counter — **verbatim from the docs**: *"if the classifier blocks an action 3 times in a row or 20 times total, auto mode pauses and Claude Code resumes prompting. Approving the prompted action resumes auto mode. These thresholds are not configurable."* A session that hit the bad environment stays paused until one prompt is approved, and re-pauses within three blocks if it still holds the old environment in memory. **Restart the session**; do not re-edit the settings.
+
+### Delete-the-guard
+
+Arm-specific, on the integrated tree. Any arm-specific zero would stop the release; there is none.
+
+| arm deleted | rows that flip | direction |
+|---|---|---|
+| T1 classifier → `ok` | 26 | all 2 → 0 (22 A6.9 + 4 A6.8) |
+| T2 inert category removed | 9 | all 0 → 2 |
+| T2 substitution / redirection / pipe exclusions | 11 | all 2 → 0 |
+| T3 canary against v3.0.1's hook | RED (`merge:any-target` rc 0 in EQUAL+BEHIND, 2 in AHEAD+DIVERGED) | the census also goes red — a working control |
+| finding-62 lib fix (`GC_GIT_PRE` widening reverted alone, `gc_global_options` kept) | **35** | all 2 → 0: A6.8 ×1, A6.9 ×14, A6.13 ×9, A6.13/NP ×3, A6.13/PCT ×6, A6.12 ×1, PCT8 ×1 (`path` reads `no-commit-segment`) |
+| Task 4 artifact stubbed | 7 | — |
+| Task 4 blind-spot paragraphs removed | 2 | — |
+| `hooks/deny-secret-reads.sh` → `exit 0` | **11** | all 2 → 0, entirely within the DSR arm |
+| Task 4 terminal branch | **VOID** | not shipped, not fabricated |
+
+The T1/T2 arms were measured before the branches were integrated and are reported as measured; the finding-62 and DSR arms were measured on the final tree. **Shared rows: none.** The T2 inert arm and the T2 exclusion arm have zero overlap — the partition the amendment asked for — and the DSR arm overlaps nothing.
+
+### Field coverage — what this release does NOT exercise
+
+- No PowerShell payload is gated by `deny-secret-reads.sh`: it is registered on `Read|Bash`, as the plan specifies. A PowerShell `cat .env` is judged by the classifier alone.
+- The hook reads arguments, never an interpreter's file handles. Interpreter reads and `git show HEAD:<path>` are out of scope by decision, with fixtures pinning the boundary.
+- `templates/rust-tauri/PROJECT_CONTEXT.md` has no plain `**Test**` field (`**Test (backend)**` / `**Test (frontend)**`), so that variant is always on the Gate path and the `none` opt-out never applies to it.
+- The EOL census (check 33) reads BLOBS. In this repository `.gitattributes` (`* text=auto eol=lf`) normalizes on `git add`, so a CRLF blob can only be produced by bypassing the filters — which is how the control was built. Every one of the 208 tracked text blobs is already LF: **the plan's "normalize the six CRLF `PROJECT_CONTEXT.md` files" was a no-op on this tree, and the check is what says so.**
+
 ## v3.0.2 — 2026-09-03
 
 **Two measured bypasses of the A6 protected-branch gate, both reproduced end-to-end on a Gate-bearing fixture with controls in the same repo.** Both have the same shape, one premise further out each time: *a gate that keys on the FORM of a command is only as sound as the assumption that the form determines the effect.*

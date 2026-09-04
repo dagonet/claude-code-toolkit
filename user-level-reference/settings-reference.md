@@ -40,12 +40,13 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
       "mcp__plugin_context-mode_context-mode__*"
     ],
     "deny": [
-      "Read(.env)",
-      "Read(.env.local)",
-      "Read(.env.*.local)",
-      "Read(.env.production)",
-      "Read(.env.staging)",
-      "Read(.env.development)"
+      "mcp__git-tools__git_push",
+      "mcp__git-tools__git_commit",
+      "mcp__git-tools__git_revert",
+      "mcp__git-tools__git_merge",
+      "mcp__git-tools__git_rebase",
+      "mcp__git-tools__git_reset",
+      "mcp__git-tools__git_push_tags"
     ],
     "ask": [
       "Bash(npm publish*)"
@@ -141,10 +142,18 @@ See the *Full Settings JSON* block above for the current list. Three entries wer
 
 ```json
 "deny": [
-  // The secret-bearing names are enumerated, NOT globbed: `Read(.env*)` also
-  // denied the tracked `.env.example` most repos ship as their variable list.
-  "Read(.env)", "Read(.env.local)", "Read(.env.*.local)",
-  "Read(.env.production)", "Read(.env.staging)", "Read(.env.development)"
+  // v3.0.3: NO `Read(...)` entries. The six `Read(.env…)` names that used to
+  // live here were replaced by `hooks/deny-secret-reads.sh` on PreToolUse
+  // `Read|Bash`. Deny rules are evaluated BEFORE the classifier, and a
+  // read-only command with a RELATIVE path after a `cd` cannot be statically
+  // proven not to hit one — so the harness prompted on ordinary reads and auto
+  // mode could not approve. A hook deny answers per call and does not trigger
+  // that static check. The MCP entries below have no such problem: a tool name
+  // is exact, so nothing has to be proven about a path.
+  "mcp__git-tools__git_push", "mcp__git-tools__git_commit",
+  "mcp__git-tools__git_revert", "mcp__git-tools__git_merge",
+  "mcp__git-tools__git_rebase", "mcp__git-tools__git_reset",
+  "mcp__git-tools__git_push_tags"
 ]
 ```
 
@@ -180,7 +189,9 @@ Three things about `autoMode` that are easy to get wrong:
 - **Do not route the classifier through a model proxy.** It needs the real model. Running it through `cc-proxy` (or any alias-rewriting proxy) produced **83 classifier outages** in the measured window, each degrading auto mode to prompting. If you run a proxy, exempt the classifier — the same exemption `advisorModel` needs.
 - **Prose quality is the control surface.** Vague lines ("be careful with prod") classify worse than the concrete phrasing above. Say which repos are trusted and what a sensitive target looks like.
 
-`deny` still wins over everything, so the `.env` entries hold regardless of mode.
+- **Auto mode PAUSES on a counter, and that reads exactly like a config problem (v3.0.3).** From the docs, verbatim: *"if the classifier blocks an action 3 times in a row or 20 times total, auto mode pauses and Claude Code resumes prompting. Approving the prompted action resumes auto mode. These thresholds are not configurable."* A session that hit a bad `environment` therefore keeps prompting **after** the environment is fixed, until one prompt is approved — and re-pauses within three blocks if it is still holding the old environment in memory. Restart the session; do not re-edit the settings.
+
+`deny` still wins over everything. Since v3.0.3 the `.env` protection is **not** a deny rule but `hooks/deny-secret-reads.sh` — see the `deny` section above for why a `Read(...)` rule cost auto mode on every relative-path read.
 
 ### `statusLine` -- Custom Status Bar
 
