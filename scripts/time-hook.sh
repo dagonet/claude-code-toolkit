@@ -92,7 +92,11 @@ time_arm() {
   printf '%s|%s|%s|%s|%s|%s\n' "$ta_label" "$ta_med" "$ta_q1" "$ta_q3" "$((ta_q3 - ta_q1))" "$ta_uniq"
 }
 
-GATE="$ROOT/hooks/gate-before-merge.sh"
+# GATE is overridable so a BASELINE copy of the hook — `git show
+# main:hooks/gate-before-merge.sh` beside `main:hooks/lib/` in a temp dir — can
+# be timed with the same fixture, warm-ups, run count and control arm. Without
+# that, "the merge payload regressed 46%" is a number with nothing to subtract.
+GATE="${GATE:-$ROOT/hooks/gate-before-merge.sh}"
 CONTROL="${CONTROL:-$ROOT/hooks/retro-brief.sh}"
 if [ ! -f "$CONTROL" ]; then
   # The control must be a hook this change does not touch. Fall back to another

@@ -28,6 +28,12 @@ After applying a template, walk through this checklist to confirm everything is 
 
 11. **Run one T1 task end to end** to verify the `AGENT_TEAM.md` workflow — the PO plans, spawns a single `coder` subagent with the Agent tool, and reads its final message. Agent teams and named teammates were retired in v2.0; parallelism comes from spawning several Agent calls, not from a team.
 
+### When a control turns out to be invalid
+
+> **When a control is found invalid, re-run every row that used it — not just the rows you are writing now. An invalidated control retroactively voids past results; the instinct is to fix forward only.**
+
+Measured, v3.0.3 finding 63: a consumer's `git -C <a> -C <b> push origin main` row gated through the **refspec** arm — the refspec names the protected branch whichever repository resolves — so the row returned 2 without `-C` ever being resolved and could not see the repetition defect it was believed to cover. The control was replaced for the new rows and the earlier results that had leaned on it were not re-run.
+
 ## Verifying the toolkit repo itself
 
 Three scripts run from the toolkit root. All three are safe to run at any time and none of them write to your project.

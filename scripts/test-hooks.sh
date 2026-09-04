@@ -1207,6 +1207,15 @@ check "(A6.10) cp onto .git/config then pull gated"         "$H" 2 "$(mkjson Bas
 check_msg "(A6.10) mover refusal names the clause"   "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "earlier clause"
 check_msg "(A6.10) mover refusal names the category" "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "clause class: mover"
 check_msg "(A6.10) substitution refusal names why"   "$ROOT/$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")" "command substitution"
+# THE MOVER RULE, BOTH POLARITIES, on a checkout onto a protected branch. The
+# rule refuses when the VERDICT DEPENDS on the branch the mover lands on. It
+# does for a merge — the landing is real and the branch decides — and it does
+# NOT for a bare `pull --ff-only`, which fetches first and can only fast-forward
+# to the upstream, so it is judged the same on every branch. Refusing the latter
+# would be a denied legitimate command. Measured: the chained pull blocked on
+# v3.0.2 and is allowed on v3.0.3; the chained merge is refused on both.
+check "(A6.10) checkout main && merge is refused"   "$H" 2 "$(mkjson Bash 'git checkout main && git merge feature/y' "$A6FEATCO")"
+check "(A6.10) checkout main && pull --ff-only allowed" "$H" 0 "$(mkjson Bash 'git checkout main && git pull --ff-only' "$A6FEATCO")"
 
 # ---------------------------------------------------------------------------
 # v3.0.3 item 3b — THE INVARIANT AS A FIXTURE. For every form in the hook's own
@@ -1228,12 +1237,45 @@ check_msg "(A6.10) substitution refusal names why"   "$ROOT/$H" 2 "$(mkjson Bash
 # THE LIST IS READ FROM THE HOOK so a new gated path cannot fall outside the
 # loop; a form with no fixture command FAILS rather than being skipped.
 # ---------------------------------------------------------------------------
-A6LIST=$(grep -E "^A6_CONSUMER_LIST=" "$ROOT/hooks/gate-before-merge.sh" | sed "s/^[^=]*='//;s/'$//")
-if [ -n "$A6LIST" ]; then
+# a6_require_consumer_list <hook path> -- prints the list; rc 1 and a message
+# NAMING THE HOOK when the extraction comes back empty.
+#
+# WHY THIS IS A FUNCTION AND WHY IT FAILS LOUDLY. The canary below is a `for`
+# over this list. An extraction that finds nothing makes that loop run ZERO
+# iterations, and a canary that runs zero iterations is GREEN — the same
+# no-op-indistinguishable-from-pass class the `--scan` 0-file WARNING exists
+# for. Measured against a copy of the hook with the `A6_CONSUMER_LIST=` line
+# deleted: the extraction returns the empty string and the loop iterates 0
+# times. The guard has been here since v3.0.3 and does fire; what it did not do
+# was name the hook it read, or have a fixture of its own — so nothing asserted
+# that the guard itself still works. Both are below.
+a6_require_consumer_list() { # <hook path>
+  a6rcl=$(grep -E "^A6_CONSUMER_LIST=" "$1" 2>/dev/null | sed "s/^[^=]*='//;s/'$//")
+  if [ -z "$a6rcl" ]; then
+    printf 'A6_CONSUMER_LIST is EMPTY in %s — the canary would loop zero times and pass vacuously\n' "$1" >&2
+    return 1
+  fi
+  printf '%s\n' "$a6rcl"
+}
+if A6LIST=$(a6_require_consumer_list "$ROOT/hooks/gate-before-merge.sh"); then
   printf 'PASS  %-42s (%s)\n' "(A6.11) A6_CONSUMER_LIST read from the hook" "$A6LIST"; pass=$((pass + 1))
 else
-  printf 'FAIL  %-42s\n' "(A6.11) A6_CONSUMER_LIST not found in the hook"; fail=$((fail + 1))
+  A6LIST=""
+  printf 'FAIL  %-42s\n' "(A6.11) A6_CONSUMER_LIST not found in $ROOT/hooks/gate-before-merge.sh"; fail=$((fail + 1))
 fi
+# THE GUARD'S OWN FIXTURE: a copy of the hook with the declaration deleted must
+# make the assertion FAIL, naming the path. Without this row, deleting the
+# guard's `return 1` would go unnoticed — the canary would simply be green.
+A6NOLIST="$TMPROOT/a6-nolist-hook.sh"
+sed '/^A6_CONSUMER_LIST=/d' "$ROOT/hooks/gate-before-merge.sh" > "$A6NOLIST"
+a6nl_out=$(a6_require_consumer_list "$A6NOLIST" 2>&1 >/dev/null); a6nl_rc=$?
+if [ "$a6nl_rc" -ne 0 ]; then
+  printf 'PASS  %-42s (rc=%s)\n' "(A6.11) list-less hook copy is caught" "$a6nl_rc"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (rc=0 — the canary would pass vacuously)\n' "(A6.11) list-less hook copy is caught"; fail=$((fail + 1))
+fi
+expect "(A6.11) the empty-list message names the hook path" "1" \
+  "$(printf '%s\n' "$a6nl_out" | grep -c "$A6NOLIST")"
 a6_form_cmd() { case "$1" in
   merge:any-target)   echo 'git merge --ff-only origin/main' ;;
   pull:bare)          echo 'git pull --ff-only' ;;

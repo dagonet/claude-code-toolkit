@@ -1872,11 +1872,30 @@ else
     ko "region extractor: placeholder-only region misreported — a guard that fires on all eleven shipped files gets switched off"
   fi
 
-  # Arm 3: a file with no markers is neither of the above.
-  if printf '%s\n' "$r28_scan" | grep -q "plain\.md"; then
-    ko "region extractor: a marker-less file appeared in --scan output"
+  # Arm 3 (v3.0.3, REVERSED ON PURPOSE): a marker-less AGENT file is now
+  # REPORTED as NOMARKERS rather than skipped. It used to be asserted absent,
+  # which is what made `--scan` blind to set (c) — the hand-authored,
+  # project-owned agent nobody can regenerate, and the one class step 6's
+  # unattended default refuses to delete. `--scan` is the only enumeration the
+  # skill documents, so a class it omits has nowhere else to be seen.
+  if printf '%s\n' "$r28_scan" | grep -q "^NOMARKERS	.*plain\.md$"; then
+    ok "region extractor: a marker-less agent file is reported NOMARKERS"
   else
-    ok "region extractor: a marker-less file is not enumerated"
+    note "scan output was: $(printf '%s' "$r28_scan" | tr '\n' '|')"
+    ko "region extractor: a marker-less agent file is missing from --scan — the set (c) blind spot"
+  fi
+
+  # Arm 3b: and the label is SCOPED. Labelling every marker-less file in the
+  # tree NOMARKERS is one line per file (553 measured on a real repo), which
+  # buries the finding it exists to surface, so the scope is
+  # `.claude/agents/*.md`. This arm is what keeps arm 3 from becoming "print
+  # everything".
+  printf '# not an agent\n' > "$r28/README.md"
+  r28_scan2=$(bash "$REGION_SH" --scan "$r28" 2>/dev/null)
+  if printf '%s\n' "$r28_scan2" | grep -q "README\.md"; then
+    ko "region extractor: NOMARKERS is unscoped — a marker-less non-agent file was enumerated"
+  else
+    ok "region extractor: NOMARKERS is scoped to .claude/agents"
   fi
 
   # Arm 4: --body is byte-exact. Step 6's post-relocate byte-compare is what

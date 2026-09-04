@@ -13,6 +13,16 @@
 # merge lands the other side's content, so no comparison against this
 # checkout's HEAD can say anything about it. See the block above that check.
 #
+# QUALIFIER (v3.0.3): "refused outright" is true FOR REPOS WITH A GATE
+# CONFIGURED. The `**Gate**:` lookup below exits 0 when the field is absent,
+# BEFORE any protected-branch judgement — so **no Gate command configured means
+# this hook exits 0 for every merge, on every branch.** Configure `**Gate**:` in
+# PROJECT_CONTEXT.md to get merge protection. That is the contract and not a
+# bug (a gate with no command has nothing to prove), but it is the reading
+# people get wrong, so it is stated here rather than inferred from the code.
+# There is deliberately no stderr notice: the harness drops non-blocking hook
+# stderr, so it would be invisible to the person who needs it.
+#
 # ---------------------------------------------------------------------------
 # v3.0.1 — WHAT IS AND IS NOT GATED ON A PROTECTED BRANCH. Read this before
 # reaching for the kill switch; it is the contract, and it lives HERE because
@@ -429,6 +439,14 @@ a6_pull_catchup() {
 #      that does not close, so the allowlist is inverted the same way the argv
 #      globals are: any flag not on the verb's list makes the clause a mover.
 #
+# THE MOVER RULE REFUSES WHEN THE VERDICT DEPENDS ON THE BRANCH THE MOVER LANDS
+# ON — not whenever a mover is present. `git checkout main && git merge <x>` is
+# refused: the landing is real and the branch decides. `git checkout main &&
+# git pull --ff-only` is ALLOWED, because a bare `--ff-only` pull fetches first
+# and can only fast-forward to the upstream, so it is judged the same on every
+# branch; refusing it would be a denied legitimate command. It blocked on
+# v3.0.2 and is allowed from v3.0.3 for that reason. Both polarities have rows.
+#
 # SETS TWO GLOBALS, does not print. A `$(a6_clause_class …)` call would run the
 # body in a SUBSHELL and the reason string would never reach the DENY text — the
 # refusal would then read as an ordinary merge refusal and the fixture asserting
@@ -666,7 +684,14 @@ fi
 #       on "HEAD is an ancestor of upstream", which is true for BEHIND and
 #       EQUAL alike, and DIVERGED is the one people forget — "upstream is an
 #       ancestor of HEAD" is true for AHEAD and false for DIVERGED, exactly
-#       the shape a push-side shortcut would key on;
+#       the shape a push-side shortcut would key on. WHAT THE FOUR STATES DO
+#       AND DO NOT COVER, measured: the canary is asserted for every ancestry
+#       predicate AND every value-equality predicate — EQUAL is one of the four
+#       and the other three poison away from the honest value, so any
+#       single-sha exemption gives a 1-vs-3 split whichever sha it keys on. It
+#       is NOT asserted for predicates on commit CONTENT or METADATA that the
+#       four fixture states share (author, message text, a file's presence):
+#       the forged AHEAD/DIVERGED commits inherit those from the fixture;
 #   (3) run delete-the-guard on that row: restore v3.0.1's exemption from git
 #       and confirm the row goes red.
 #

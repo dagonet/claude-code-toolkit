@@ -154,6 +154,16 @@ body() {
 # has_begin / has_end -- marker presence, for the NOMARKERS/UNCLOSED verdicts.
 # `grep -E` with the SAME regexes awk uses; see the note at their definition.
 has_begin() { grep -qE "$BEGIN_RE" "$1"; }
+
+# is_agent_file <path> -- true for `.claude/agents/<name>.md`, the location the
+# untracked, hand-authored project-owned agent of set (c) lives in. Used to
+# SCOPE the NOMARKERS label in scan_stream; see the comment there.
+is_agent_file() {
+  case "$1" in
+    */.claude/agents/*.md|.claude/agents/*.md) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 has_end()   { grep -qE "$END_RE" "$1"; }
 
 # is_empty <body> -- "whitespace or the shipped placeholder comment only".
@@ -251,8 +261,26 @@ scan_stream() {
     f="$_pfx$f"
     n=$((n + 1))
     [ $((n % 2000)) -eq 0 ] && printf 'region.sh: scanned %s files...\n' "$n" >&2
-    has_begin "$f" 2>/dev/null || continue
-    classify "$f"
+    if has_begin "$f" 2>/dev/null; then
+      classify "$f"
+    elif is_agent_file "$f"; then
+      # NOMARKERS, REPORTED RATHER THAN SKIPPED (v3.0.3). `continue` here made
+      # `--scan` blind to the one class it most needs to surface: the
+      # hand-authored, project-owned agent with no PROJECT-CUSTOM region — the
+      # game-tester case, set (c), the file step 6's unattended default refuses
+      # to delete precisely because nobody can regenerate it. `--scan` is the
+      # only enumeration this skill documents, so a class it omits has nowhere
+      # else to be seen. Measured before the fix: 553 files in 14 s, and two
+      # project-owned agents with no marker absent from the output.
+      #
+      # SCOPED, and the scope is the point. Labelling EVERY marker-less file
+      # NOMARKERS is one line per file in the tree — 553 of them on the same
+      # measurement — which buries the finding it is meant to surface. The
+      # scope is `.claude/agents/*.md`, the location set (c) is about. STATED
+      # RESIDUAL: a project-owned marker-less file OUTSIDE that directory is
+      # still not listed.
+      printf 'NOMARKERS\t%s\n' "$f"
+    fi
   done
   printf 'region.sh: scanned %s files under %s\n' "$n" "$_lbl" >&2
   # A dead enumerator and an empty tree print the same "scanned 0 files", and a
