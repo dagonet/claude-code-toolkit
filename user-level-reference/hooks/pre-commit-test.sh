@@ -209,6 +209,29 @@ while IFS= read -r seg; do
       exit 2
     fi
     # --- end v3.0.3 block ----------------------------------------------------
+
+    # v3.0.3 defect 3a — WIRE THE `-C` RESOLVER BEFORE gc_repo_for, same
+    # position no-push-main.sh and gate-before-merge.sh already use. Until
+    # now this hook called gc_repo_for directly with no preceding
+    # unresolved-`-C` check at all, so a `-C` fold this hook cannot resolve
+    # (cannot-determine, or -- pre-defect-2 -- a multi-`-C` fold where nothing
+    # resolves) silently fell back to `$base` and the wrong repository's Test
+    # command ran instead of a refusal.
+    pctdu_out=$(gc_dash_c_unresolved "$seg" "$base")
+    if [ -n "$pctdu_out" ]; then
+      pctdu_kind=$(printf '%s\n' "$pctdu_out" | sed -n 1p)
+      pctdu=$(printf '%s\n' "$pctdu_out" | sed -n 2p)
+      if [ "$pctdu_kind" = cannot-determine ]; then
+        echo "BLOCKED: pre-commit-test: hook cannot DETERMINE the -C target (contains an unexpanded shell expression): $pctdu" >&2
+        echo "  matched segment: $seg" >&2
+      else
+        echo "BLOCKED: pre-commit-test: hook could not resolve \`-C $pctdu\`; if git can, pass an absolute path." >&2
+        echo "  matched segment: $seg" >&2
+      fi
+      pct_note unresolved-c -1
+      exit 2
+    fi
+
     REPO_PATH=$(gc_repo_for "$seg" "$base")
     break
   fi
@@ -232,7 +255,12 @@ PCT_ARTIFACT_BASE="$REPO_PATH"
 # v2.1.3 fix round 1: **Test** always wins when present -- cheap, unchanged
 # behaviour for repos that declare a lightweight Test command. run-gate.sh is
 # only consulted below when there is NO Test field.
-TEST_CMD=$(grep -E "${GC_KEY_PRE}\*\*Test( Command)?\*\*:" "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Test\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
+# v3.0.3 defect 3b — anchored at GC_KEY_PRE (same grammar the grep above
+# uses), not a greedy `.*`: a value that itself contains the literal text
+# `**Test**:` a second time used to have everything up to THAT occurrence
+# stripped too, truncating the extracted command instead of returning the
+# whole original value.
+TEST_CMD=$(grep -E "${GC_KEY_PRE}\*\*Test( Command)?\*\*:" "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed -E "s/${GC_KEY_PRE}\\*\\*Test( Command)?\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" | head -1)
 
 # v2.1.3 fix round 2: a still-unfilled {{...}} Test placeholder must not win
 # precedence over a real Gate command -- dotnet/dotnet-maui ship exactly this
@@ -274,7 +302,9 @@ esac
 # directly) -- it falls through to the "nothing to run" WARN below, same as no
 # Gate field at all, so a mid-setup repo cannot get a false green.
 if [ -z "$TEST_CMD" ]; then
-  GATE_CMD_RAW=$(grep -E "${GC_KEY_PRE}\*\*Gate( Command)?\*\*:" "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Gate\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
+  # v3.0.3 defect 3b — same GC_KEY_PRE-anchored fix as the **Test** and
+  # **Protected branches** extractors: no greedy `.*`.
+  GATE_CMD_RAW=$(grep -E "${GC_KEY_PRE}\*\*Gate( Command)?\*\*:" "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed -E "s/${GC_KEY_PRE}\\*\\*Gate( Command)?\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" | head -1)
   case "$GATE_CMD_RAW" in
     *\{\{*\}\}*) GATE_CMD_RAW="" ;;
   esac

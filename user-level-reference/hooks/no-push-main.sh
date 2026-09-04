@@ -168,8 +168,22 @@ while IFS= read -r seg; do
   # mirror-image false positive in the other operand order. A fold that does
   # not resolve is the cannot-determine case and is refused; a SINGLE `-C` into
   # a missing directory keeps the documented fall-back-to-cwd behaviour.
-  npdu=$(gc_dash_c_unresolved "$seg" "$base")
-  if [ -n "$npdu" ]; then
+  npdu_out=$(gc_dash_c_unresolved "$seg" "$base")
+  if [ -n "$npdu_out" ]; then
+    npdu_kind=$(printf '%s\n' "$npdu_out" | sed -n 1p)
+    npdu=$(printf '%s\n' "$npdu_out" | sed -n 2p)
+    if [ "$npdu_kind" = cannot-determine ]; then
+      # v3.0.3 defect 2 -- a different fact from "does not resolve": the
+      # operand contains an unexpanded shell expression this hook cannot know
+      # the value of without executing it (never done here).
+      {
+        echo "BLOCKED: hook cannot DETERMINE the -C target (contains an unexpanded shell expression): $npdu"
+        echo "  matched segment: $seg"
+        echo "This push names a -C operand this hook cannot resolve by string substitution"
+        echo "alone. Pass a literal or absolute path, or one of \$HOME/\$USERPROFILE/~."
+      } >&2
+      exit 2
+    fi
     {
       echo "BLOCKED: hook could not resolve \`-C $npdu\`; if git can, pass an absolute path."
       echo "  matched segment: $seg"

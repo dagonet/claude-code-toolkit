@@ -582,8 +582,22 @@ a6_inert_flags() {
 # back to the cwd, decide, let git fail). A fold that does not resolve is the
 # cannot-determine case, and a fail-closed gate refuses it.
 a6_deny_unresolved_c() {
-  a6du=$(gc_dash_c_unresolved "$1" "$2")
-  [ -n "$a6du" ] || return 0
+  a6du_out=$(gc_dash_c_unresolved "$1" "$2")
+  [ -n "$a6du_out" ] || return 0
+  a6du_kind=$(printf '%s\n' "$a6du_out" | sed -n 1p)
+  a6du=$(printf '%s\n' "$a6du_out" | sed -n 2p)
+  if [ "$a6du_kind" = cannot-determine ]; then
+    # v3.0.3 defect 2 -- a different fact from "does not resolve": the operand
+    # contains an unexpanded shell expression this hook cannot know the value
+    # of without executing it (never done here -- see gc_classify_c).
+    {
+      echo "BLOCKED: A6 — hook cannot DETERMINE the -C target (contains an unexpanded shell expression): $a6du"
+      echo "  clause:          $1"
+      echo "  This clause names a -C operand this hook cannot resolve by string substitution"
+      echo "  alone. Pass a literal or absolute path, or one of \$HOME/\$USERPROFILE/~."
+    } >&2
+    exit 2
+  fi
   {
     echo "BLOCKED: A6 — hook could not resolve \`-C $a6du\`; if git can, pass an absolute path."
     echo "  clause:          $1"
@@ -840,6 +854,12 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
         # discriminator passes without testing what it claims. Scoped inside
         # gc_on_main so a resolving global on a FEATURE-branch merge stays
         # allowed, as the A6.9 row asserts.
+        # v3.0.3 defect 2 — this `-c` classifier runs AFTER `$repo` has already
+        # been resolved by gc_repo_for (it is INSIDE the `gc_on_main "$repo"`
+        # scope above), and it is left there BY DESIGN: it is
+        # protected-branch-conditioned, not a `-C`-resolution question, so
+        # moving it earlier would change what it answers. The unresolvable-`-C`
+        # case is refused earlier, unconditionally, by a6_deny_unresolved_c.
         A6_KIND=merge
         a6g=$(gc_global_options "$seg")
         case "$a6g" in
@@ -1032,7 +1052,12 @@ fi
 # Tolerates: leading "- " / "* " list
 # markers, the "**Gate Command**:" label style (java/python variants), and
 # surrounding backticks — several variants write commands as `cmd`.
-GATE_CMD=$(grep -E "${GC_KEY_PRE}\*\*Gate( Command)?\*\*:" "$REPO_TOP/PROJECT_CONTEXT.md" 2>/dev/null | sed 's/.*\*\*Gate\( Command\)\?\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' | head -1)
+# v3.0.3 defect 3b — anchored at GC_KEY_PRE (same grammar the grep above
+# uses), not a greedy `.*`: a value that itself contains the literal text
+# `**Gate**:` a second time used to have everything up to THAT occurrence
+# stripped too, truncating the extracted command instead of returning the
+# whole original value.
+GATE_CMD=$(grep -E "${GC_KEY_PRE}\*\*Gate( Command)?\*\*:" "$REPO_TOP/PROJECT_CONTEXT.md" 2>/dev/null | sed -E "s/${GC_KEY_PRE}\\*\\*Gate( Command)?\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" | head -1)
 
 # No-op: no PROJECT_CONTEXT.md or no Gate command configured
 if [ -z "$GATE_CMD" ]; then

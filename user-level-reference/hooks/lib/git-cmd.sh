@@ -421,12 +421,129 @@ gc_cd_target() {
 # the literal `git` and took only the first one; see gc_dash_c_list below, which
 # replaces it with a walk over the globals.
 
-# gc_resolve <base> <path> -- absolute path, or the base when <path> is not a dir.
-gc_resolve() {
-  case "$2" in
-    /*|[A-Za-z]:[/\\]*) [ -d "$2" ] && printf '%s\n' "$2" || printf '%s\n' "$1" ;;
-    *)                  [ -d "$1/$2" ] && printf '%s\n' "$1/$2" || printf '%s\n' "$1" ;;
+# gc_classify_c <operand> <base> -- prints one of:
+#   1                       literal path (absolute or relative), resolved by
+#                           plain `[ -d ]` -- git's own resolution, unaided.
+#   2\n<substituted-path>   resolvable by STRING SUBSTITUTION alone (no eval,
+#                           no unquoted ~, no $(...), no sh -c: this operand
+#                           text is compared against a fixed literal prefix
+#                           and, on a match, that prefix is replaced by a
+#                           value already sitting in THIS process's own
+#                           environment or by <base> -- nothing is executed
+#                           to produce it).
+#   3                       cannot-determine: the hook cannot know what this
+#                           operand resolves to without executing it.
+#
+# v3.0.3 DEFECT 2 (security fix). The pre-existing arm below (`gc_resolve`,
+# byte-identical back through v3.0.0) matched only `/*` and `[A-Za-z]:[/\\]*`
+# as "absolute" and treated everything else, including `~/x` and `$HOME/x`,
+# as a plain relative path tested against <base> -- which is almost always
+# false, so it silently fell back to <base>. That is a STRICT SUPERSET of
+# git's own unresolvable set: the real shell expands `~` and `$VAR` before
+# git ever sees them, so `git -C ~/protected push` was judged against the
+# WRONG repo (the payload cwd) while landing in the REAL one -- a silent
+# bypass, live since v3.0.0. v3.0.3's own new multi-`-C` refusal machinery
+# (gc_dash_c_unresolved) then went the other way and refused a `~`/`$HOME`
+# double-`-C` outright, even though git resolves it fine -- a false refusal,
+# and "a denied legitimate command is the guard people switch off".
+#
+# CLASS 3 KEYS ON THE PRESENCE of a shell metacharacter ($, ~, $(, <(, >(, a
+# backtick) -- NOT on whether that character would actually expand. The hook
+# payload does not carry which shell ran the command (bash vs PowerShell vs
+# cmd), so "would this expand" is unanswerable from here; "does this LOOK
+# like something only the shell could resolve" is answerable and is the
+# question this asks. Under bash `~` expands (the bypass this closes) and
+# refusing it is correct; under PowerShell `~` is literal and git fails on
+# its own, so refusing it there is harmless -- refusing something that would
+# have failed regardless. Same rule, both directions, no per-shell arm needed.
+#
+# `%VAR%` (cmd.exe style) is left OUT of class 3 on purpose: bash and
+# PowerShell both leave it as a literal string, git fails to chdir into it,
+# and that is exactly the documented single-`-C` fallback (class 1).
+gc_classify_c() {
+  gccc_op="$1"; gccc_base="$2"
+  case "$gccc_op" in
+    *'$('*|*'`'*|*'<('*|*'>('*) printf '3\n'; return ;;
   esac
+  case "$gccc_op" in
+    '~')      printf '2\n%s\n' "$(gccc_norm "$HOME")"; return ;;
+    '~/'*)    printf '2\n%s/%s\n' "$(gccc_norm "$HOME")" "${gccc_op#\~/}"; return ;;
+    '~'*)     printf '3\n'; return ;;  # ~user/... -- not worth string-resolving another user's home
+  esac
+  case "$gccc_op" in
+    '$HOME'|'${HOME}')
+      printf '2\n%s\n' "$(gccc_norm "$HOME")"; return ;;
+    '$HOME/'*)
+      printf '2\n%s/%s\n' "$(gccc_norm "$HOME")" "${gccc_op#\$HOME/}"; return ;;
+    '${HOME}/'*)
+      printf '2\n%s/%s\n' "$(gccc_norm "$HOME")" "${gccc_op#'${HOME}/'}"; return ;;
+    '$USERPROFILE'|'${USERPROFILE}')
+      [ -n "$USERPROFILE" ] && { printf '2\n%s\n' "$(gccc_norm "$USERPROFILE")"; return; }
+      printf '3\n'; return ;;
+    '$USERPROFILE/'*)
+      [ -n "$USERPROFILE" ] && { printf '2\n%s/%s\n' "$(gccc_norm "$USERPROFILE")" "${gccc_op#\$USERPROFILE/}"; return; }
+      printf '3\n'; return ;;
+    '${USERPROFILE}/'*)
+      [ -n "$USERPROFILE" ] && { printf '2\n%s/%s\n' "$(gccc_norm "$USERPROFILE")" "${gccc_op#'${USERPROFILE}/'}"; return; }
+      printf '3\n'; return ;;
+    # $PWD/${PWD} resolve against <base> -- the PAYLOAD's cwd -- and NEVER
+    # against this hook process's own $PWD. The hook runs where the harness
+    # started it; the command runs in the payload's cwd. Substituting the
+    # hook's own $PWD would judge a repo the user never named while reporting
+    # a plausible-looking path -- the original bypass, reintroduced, and
+    # harder to notice because it no longer falls back visibly.
+    '$PWD'|'${PWD}')   printf '2\n%s\n' "$gccc_base"; return ;;
+    '$PWD/'*)          printf '2\n%s/%s\n' "$gccc_base" "${gccc_op#\$PWD/}"; return ;;
+    '${PWD}/'*)        printf '2\n%s/%s\n' "$gccc_base" "${gccc_op#'${PWD}/'}"; return ;;
+  esac
+  case "$gccc_op" in
+    *'$'*) printf '3\n'; return ;;   # any other $VAR (set, unset, or malformed): cannot-determine
+  esac
+  printf '1\n'
+}
+
+# gccc_norm <value> -- forward-slash form of a HOME/USERPROFILE value so it
+# compares against `[ -d ]` the same way this host's other paths do (Git Bash
+# `$HOME` is already `/c/...`; `$USERPROFILE` inherited from Windows is
+# `C:\...`). Pure string translation, no execution.
+gccc_norm() {
+  printf '%s' "$1" | tr '\\' '/'
+}
+
+# gc_c_resolves <operand> <base> -- the absolute path <operand> resolves to
+# under gc_classify_c's rules, or "" when it does not resolve at all.
+gc_c_resolves() {
+  gccr_out=$(gc_classify_c "$1" "$2")
+  gccr_cls=$(printf '%s\n' "$gccr_out" | sed -n 1p)
+  case "$gccr_cls" in
+    1)
+      case "$1" in
+        /*|[A-Za-z]:[/\\]*) [ -d "$1" ] && printf '%s\n' "$1" ;;
+        *)                  [ -d "$2/$1" ] && printf '%s\n' "$2/$1" ;;
+      esac
+      ;;
+    2)
+      gccr_path=$(printf '%s\n' "$gccr_out" | sed -n 2p)
+      [ -d "$gccr_path" ] && printf '%s\n' "$gccr_path"
+      ;;
+    *) ;;
+  esac
+}
+
+# gc_resolve <base> <path> -- absolute path, or the base when <path> is not a
+# dir. Routed through the class-1/class-2 resolver above so `~`, `$HOME`,
+# `$USERPROFILE` and `$PWD` (mapped to <base>) resolve the same way git's own
+# shell would, instead of falling back to <base> as pure-literal matching did.
+# A class-3 (cannot-determine) operand also falls back to <base> HERE -- this
+# function only builds the best-effort folded path; REFUSAL for class 3 is a
+# separate decision made by gc_dash_c_unresolved below.
+gc_resolve() {
+  gcr_r=$(gc_c_resolves "$2" "$1")
+  if [ -n "$gcr_r" ]; then
+    printf '%s\n' "$gcr_r"
+  else
+    printf '%s\n' "$1"
+  fi
 }
 
 # gc_dash_c_list <segment> -- every `-C` operand of a segment, one per line, in
@@ -550,53 +667,81 @@ GC_DASHC
   printf '%s\n' "$gcrf_base"
 }
 
-# gc_dash_c_unresolved <segment> <base> -- the first `-C` operand of a MULTI-`-C`
-# segment when NO operand of that segment resolves at all; empty otherwise.
+# gc_dash_c_unresolved <segment> <base> -- empty when nothing needs refusing;
+# otherwise two lines: a kind (`cannot-determine` or `unresolved`) and the
+# operand to name in the message. Applies to SINGLE and MULTI `-C` alike
+# (v3.0.3 defect 2) -- the pre-fix `>= 2` guard below meant a single
+# `-C ~/protected` was never even classified, which is exactly how the silent
+# bypass reached gc_repo_for unchallenged.
 #
-# THE RULE, IN PRECEDENCE ORDER (v3.0.3). "Strictest wins" is a FALLBACK and
-# must never be read as "any protected candidate wins":
+# THE RULE, IN PRECEDENCE ORDER:
 #
-#   1. When the FINAL folded path resolves, it is judged AS GIT WOULD RESOLVE
-#      IT — relative composes, absolute overrides. `git -C <protected>
-#      -C <unprotected>` is therefore judged as the UNPROTECTED repo and
-#      allowed, because that is where git lands. There is a want-0 fixture row
-#      for exactly that, labelled "git semantics, not strictest".
-#   2. Only when the final path does NOT resolve is the strictest RESOLVED
-#      candidate judged: gc_resolve keeps the last resolved partial, so
-#      `git -C <protected> -C nope` is judged as the protected repo. Git will
-#      fail on its own anyway, so nothing lands either way.
-#   3. Refusal only when NO candidate resolves at all. That is the
-#      cannot-determine case, and a fail-closed gate refuses it, naming the
-#      operand.
+#   0. No `-C` at all -> "" (nothing to refuse; must stay true after removing
+#      the old `>= 2` guard, or every -C-free command -- including this file's
+#      OWN `git commit -F <file>` -- would be refused).
+#   1. ANY operand classifies as class 3 (cannot-determine, see
+#      gc_classify_c) -> "cannot-determine\n<that operand>", regardless of
+#      how many `-C` there are or whether other operands resolve. This is
+#      new, count-independent behaviour: a single unresolvable-by-string
+#      operand is exactly the shape the hook must refuse rather than guess.
+#   2. Otherwise, single `-C` -> "" always. A class-1 miss keeps the
+#      documented exit-0 fallback (git fails on its own); a class-2 hit
+#      RESOLVES (closing the bypass) and is judged as the real repo by
+#      gc_repo_for, not refused.
+#   3. Otherwise, multi `-C`, all class 1/2:
+#        a. When the FINAL folded path resolves, it is judged AS GIT WOULD
+#           RESOLVE IT — relative composes, absolute overrides. `git -C
+#           <protected> -C <unprotected>` is therefore judged as the
+#           UNPROTECTED repo and allowed, because that is where git lands.
+#        b. Only when the final path does NOT resolve is the strictest
+#           RESOLVED candidate judged (gc_resolve keeps the last resolved
+#           partial): `git -C <protected> -C nope` is judged as the protected
+#           repo. Git will fail on its own anyway, so nothing lands either
+#           way.
+#        c. Refusal ("unresolved\n<first operand>") only when NO candidate
+#           resolves at all -- the cannot-determine-by-resolution case.
 #
 # The first draft refused any multi-`-C` fold with an unresolvable step. That
 # was too blunt: a denied legitimate command is the guard people switch off.
 #
-# THE ASYMMETRY WITH A SINGLE `-C` IS DELIBERATE. `git -C nope merge` keeps its
-# documented exit 0 — falling back to the cwd and letting git fail. A multi-`-C`
-# fold is where this resolver has demonstrably diverged from git's own
-# composition, so it is the one shape where "I cannot resolve this" is evidence
-# about the RESOLVER rather than about the command.
+# THE ASYMMETRY BETWEEN CLASS-1-MISS AND CLASS-3 ON A SINGLE `-C` IS
+# DELIBERATE. `git -C nope merge` (class 1, no such directory) keeps its
+# documented exit 0 -- falling back to the cwd and letting git fail; nothing
+# about that operand is ambiguous, it is simply absent. `git -C $(cat x)
+# merge` (class 3) is refused even alone -- the hook genuinely cannot know
+# what that resolves to, which is a different fact about the SAME position.
 gc_dash_c_unresolved() {
   gcdu_list=$(gc_dash_c_list "$1")
-  [ "$(printf '%s\n' "$gcdu_list" | grep -c '[^[:space:]]')" -ge 2 ] || return 0
+  [ -n "$(printf '%s' "$gcdu_list" | tr -d '[:space:]')" ] || return 0
   gcdu_base="$2"
   gcdu_first=""
+  gcdu_any_resolved=0
+  gcdu_class3=""
   while IFS= read -r gcdu_p; do
     [ -n "$gcdu_p" ] || continue
     [ -n "$gcdu_first" ] || gcdu_first=$gcdu_p
-    # Resolvability is tested DIRECTLY, not by comparing gc_resolve's output to
-    # the base: an operand that legitimately names the base directory would
-    # otherwise read as "did not resolve" and refuse a valid command.
-    case "$gcdu_p" in
-      /*|[A-Za-z]:[/\\]*) [ -d "$gcdu_p" ]            && return 0 ;;
-      *)                  [ -d "$gcdu_base/$gcdu_p" ] && return 0 ;;
-    esac
-    gcdu_base=$(gc_resolve "$gcdu_base" "$gcdu_p")
+    gcdu_cls=$(gc_classify_c "$gcdu_p" "$gcdu_base" | sed -n 1p)
+    if [ "$gcdu_cls" = 3 ] && [ -z "$gcdu_class3" ]; then
+      gcdu_class3=$gcdu_p
+    fi
+    gcdu_r=$(gc_c_resolves "$gcdu_p" "$gcdu_base")
+    if [ -n "$gcdu_r" ]; then
+      gcdu_any_resolved=1
+      gcdu_base=$gcdu_r
+    else
+      gcdu_base=$(gc_resolve "$gcdu_base" "$gcdu_p")
+    fi
   done <<GC_DASHU
 $gcdu_list
 GC_DASHU
-  printf '%s\n' "$gcdu_first"
+  if [ -n "$gcdu_class3" ]; then
+    printf 'cannot-determine\n%s\n' "$gcdu_class3"
+    return 0
+  fi
+  gcdu_count=$(printf '%s\n' "$gcdu_list" | grep -c '[^[:space:]]')
+  [ "$gcdu_count" -ge 2 ] || return 0
+  [ "$gcdu_any_resolved" -eq 0 ] && printf 'unresolved\n%s\n' "$gcdu_first"
+  return 0
 }
 
 # gc_current_branch <repo>
@@ -718,8 +863,15 @@ gc_protected_branches() {
   [ -n "$gcpb_top" ] || { printf '%s' "main master"; return 0; }
   gcpb_line=$(grep -E "${GC_KEY_PRE}\*\*Protected [Bb]ranches\*\*:" "$gcpb_top/PROJECT_CONTEXT.md" 2>/dev/null | head -1)
   [ -n "$gcpb_line" ] || { gc_fallback_protected "$gcpb_top"; return 0; }
+  # v3.0.3 defect 3b — the leading `.*` used to be GREEDY, so a value that
+  # itself contains the literal text `**Protected branches**:` again (e.g. a
+  # value quoting the field name) had everything up to and including the
+  # SECOND occurrence stripped, silently truncating the extracted value.
+  # Anchored at the same GC_KEY_PRE the grep above uses, so the finder and the
+  # extractor agree on one grammar and only the true leading marker is
+  # consumed — never a later occurrence of the same text inside the value.
   gcpb=$(printf '%s' "$gcpb_line" \
-    | sed 's/.*\*\*Protected [Bb]ranches\*\*:[[:space:]]*//;s/[[:space:]]*$//;s/^`//;s/`$//' \
+    | sed -E "s/${GC_KEY_PRE}\\*\\*Protected [Bb]ranches\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" \
     | tr ',' ' ' | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
   if gc_is_placeholder "$gcpb"; then
     # WARN, for the same reason the empty arm does — more so. An empty value is
@@ -786,14 +938,54 @@ gc_matches_subcommand() {
 }
 
 # gc_push_args <segment> -- everything after the `push` subcommand ("" if none).
+#
+# v3.0.3 DEFECT 1 (security fix). The regex form this replaced permitted at
+# most ONE `-C` in its primary arm; a double `-C` failed it and fell to a
+# GREEDY fallback (`sed -n 's/.*\bpush\b//p'`) that strips through the LAST
+# word-bounded `push` in the segment. Any trailing token that merely CONTAINS
+# "push" as a whole word carried that fallback past the real refspec:
+# `--push-option=ci-skip`, `--receive-pack=/x/push`, `-o push-me`, or a
+# refspec branch literally named `feature/push-fix:main`. Measured: from an
+# unprotected cwd, `git -C /tmp/other -C <P, on a feature branch> push origin
+# other:main --push-option=ci-skip` returned rc=0 through no-push-main.sh — a
+# real push into protected main. This is a STRING-SUBSTITUTION-ONLY parser
+# (no eval, no unquoted ~, no $(...), no sh -c) over the ALREADY-RECEIVED
+# payload text; it never re-interprets the payload as a shell.
+#
+# FIX: walk the token stream POSITIONALLY, using the same global-option shapes
+# gc_dash_c_list/gc_global_options recognise, and return everything after the
+# FIRST token that IS EXACTLY `push` in subcommand position. The greedy
+# fallback is deleted, not repaired -- there is no shape it covered that this
+# walk does not also cover, see the note below.
+#
+# Unrecognised bare words are SKIPPED, not treated as an abort/subcommand
+# boundary: gc_segments strips quote characters, so `git -C "C:/a b" push …`
+# word-splits into `-C`, `C:/a`, `b`, `push`, … and the fragment `b` is not a
+# global and is not `push`. Aborting there would silently regress the very
+# case gc_matches_subcommand's own fallback exists for (a quoted `-C` path
+# with a space) back into a push whose destination goes uninspected. Scanning
+# past it and finding the real `push` token keeps that case covered while
+# still being non-greedy: only the FIRST `push` token ends the scan.
 gc_push_args() {
-  gcpa=$(printf '%s\n' "$1" | sed -n 's/.*\bgit\([[:space:]]\+-C[[:space:]]\+[^[:space:]]\+\)\?\([[:space:]]\+-c[[:space:]]\+[^[:space:]]\+\)*[[:space:]]\+push\([[:space:]]\|$\)/\3/p' | head -1)
-  # Same quoted-`-C`-with-a-space case as gc_matches_subcommand: fall back to
-  # "everything after push" so the destination ref is still inspected.
-  if [ -z "$gcpa" ] && printf '%s\n' "$1" | grep -qE '\bgit\b.*\bpush\b'; then
-    gcpa=$(printf '%s\n' "$1" | sed -n 's/.*\bpush\b//p' | head -1)
-  fi
-  printf '%s\n' "$gcpa"
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk '
+    BEGIN { seen_git = 0; want_value = 0; found = 0 }
+    $0 == "" { next }
+    {
+      tok = $0
+      if (!seen_git) {
+        if (tok == "git" || tok ~ /\/git$/ || tok ~ /\\git$/) seen_git = 1
+        next
+      }
+      if (found) { print tok; next }
+      if (want_value) { want_value = 0; next }
+      if (tok == "-C" || tok == "-c" || tok == "--config-env" || tok == "--git-dir" ||
+          tok == "--work-tree" || tok == "--namespace" || tok == "--exec-path" ||
+          tok == "--attr-source" || tok == "--super-prefix") { want_value = 1; next }
+      if (tok ~ /^-/) next                 # single-token global (inert or attached-value)
+      if (tok == "push") { found = 1; next }
+      next                                 # unrecognised bare word -- keep scanning, do not abort
+    }
+  ' | tr '\n' ' ' | sed 's/[[:space:]]*$//'
 }
 
 # gc_targets_main_ref <push-args> <repo> -- a destination that includes a
