@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.0.2 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.0.3 -->
 
 # Sync Template (Downstream)
 
@@ -69,6 +69,8 @@ If everything is up-to-date and no new files, report "Already in sync" and final
 
 Derive the set rather than assuming it is only that one — a project may gitignore more. **Use exactly this invocation; the "obvious" implementation of the previous wording backed up nothing and reported success on two different repos.**
 
+**Keep the script you build from this step ASCII-ONLY, or set `PYTHONIOENCODING=utf-8` before running it.** Windows Python's default stdout is cp1252: one non-ASCII character in a `print` — a set-intersection sign copied out of this page, an em dash in a status line — raises `UnicodeEncodeError` **before the copy runs**, and the step then reports nothing at all. A crash before the backup is precisely the failure this step exists to prevent. Measured on a consumer sync: U+2229 in a progress print, backup not written on the first attempt.
+
 ```
 # Method 1 — one process, NUL-separated BYTES. `-z` is not optional.
 git check-ignore -z --stdin        # stdin: b"\0".join(paths); every hit is unrecoverable
@@ -101,7 +103,7 @@ for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; e
 
 **Control for assertion 2, because an untested last line is indistinguishable from an absent one.** Before trusting the result, plant a temp path that is definitely gitignored (append a unique name to `.gitignore`, create the file) and a temp path that is definitely NOT, run the same derivation over both, and assert the ignored one comes back and the plain one does not. **Both arms are required**: a positive-only control passes just as happily against a derivation that returns *every* path, which is a live failure mode here (a superset fallback is explicitly allowed further down this step), not a hypothetical one. Remove the two temp paths afterwards. One temp file each, deterministic, and it converts "this assertion has never fired" into "this assertion still works".
 
-**Back up a SECOND set as well: `new_template_files` ∩ exists-on-disk (v2.2.5).** The set above is manifest-scoped, and invariant I1's data-loss class is defined by *not* being in the manifest — so the first set structurally cannot cover it, and a gitignored member of it has no history, no diff and no undo. Adding it here is the only mechanism on the table that reaches that case.
+**Back up a SECOND set as well: `new_template_files` INTERSECT exists-on-disk (v2.2.5).** The set above is manifest-scoped, and invariant I1's data-loss class is defined by *not* being in the manifest — so the first set structurally cannot cover it, and a gitignored member of it has no history, no diff and no undo. Adding it here is the only mechanism on the table that reaches that case.
 
 > **Do NOT reorder this step to make that work.** `new_template_files` is already in hand: this step runs AFTER step 2 (Compute Status), despite what its label suggests — "2b" reads as belonging to step 2's *inputs* when it is sequenced after step 2's *output*. Moving a step whose entire contract is *before any write* is exactly how the next data-loss bug gets introduced, and here it would buy nothing.
 
@@ -196,6 +198,10 @@ The same order applies to the CONFLICT resolutions in step 4 and the new files i
 **Smoke test immediately after the `.claude/settings.json` write — probe BOTH WAYS, from a script file.** A harmless `Bash(true)` was the old test here; it proves only that the session is not fail-CLOSED, and a completely inert enforcement layer passes it too. That is the failure mode that actually follows a `settings.json` write, and pre-v2.2.0 on a node-less box this probe would have printed all-zeros and named the silent-gate bug in one line.
 
 **Any hook probe must live in a script file run via `bash <path>`, never inline.** The gates scan the whole command STRING by design, not just what a git subcommand would actually do — an inline compound command that merely *mentions* `git push origin main` (in a comment, an echo, a string literal) trips the gate it is trying to test. The result is then uninterpretable: a block does not tell you whether the gate works or whether your own probe was the violation it caught. Write the probe to a temp file and run `bash <path>` instead.
+
+**A heredoc body is part of the command string too** — `bash <<'EOF' … EOF` is not an escape from the previous paragraph, it is the same string with a different delimiter. Three sessions in two days hit exactly this. Write probe scripts with the **file tool** and run `bash <path>`.
+
+**And check every payload PARSES (`jq .`) before believing a 2.** An unescaped `"` in a JSON payload makes the hook fail closed — at exit 2, which reads as "gated" and is not. A malformed probe and a working gate are indistinguishable by exit code alone.
 
 Write this to `"${TMPDIR:-/tmp}/gate-probe.sh"` (or somewhere under `.claude/`) and run it with `bash "$TMPDIR/gate-probe.sh"`. **Do not** write it to a repo-relative path like `probe.sh` — `enforce-delegation.sh` denies main-thread writes outside the PO write surface, so the probe never gets created.
 
@@ -472,6 +478,10 @@ Reached only for paths 6a classified `EMPTY` or `NOMARKERS`. For each such file:
    - "preserved **and unreferenced — safe to delete**" — the new `settings.json` and agents no longer mention it;
    - "preserved **and still referenced by `<file>`**" — deleting it would take enforcement offline.
 3. ASK the user. Recommend accepting the deletion in the unreferenced case; delete with `git rm <file>` so the removal is in the diff. Never delete on your own initiative, and never delete a project-owned file the template never shipped. (`git rm` here, and `git add`/`git commit` in step 9, are the PO's documented git-I/O role for this skill per `AGENT_TEAM.md` — not hands-on coding.)
+
+   > **UNATTENDED (no user in the loop) — the default, stated so it is not improvised.** Delete ONLY a path that is all three of: classified `EMPTY`, shipped by the template, and unreferenced by the step-6b grep and the 6d name sweep. **DEFER everything else** — `CONTENT` and **`NOMARKERS` included**: keep the file on disk, keep its manifest entry, and report it. `NOMARKERS` is exactly what a hand-authored, project-owned agent classifies as (set (c), the game-tester case), so an autonomous branch that treated NOMARKERS as deletable would delete the one file nobody can regenerate. **The rule "never delete a project-owned file the template never shipped" applies in the autonomous branch explicitly** — an unattended run is where an implied rule dies.
+
+   > **Acknowledging a kept file so it stops re-reporting: the MANIFEST, beside `files`.** A `TEMPLATE_DELETED` path the project decided to KEEP re-reports on every future sync. The acknowledgement is a `"deletedAcknowledged": ["<path>", ...]` list in `.claude/template-manifest.json`; `compute_status` then reports those paths as `ACKNOWLEDGED_KEPT` instead of `TEMPLATE_DELETED`. This is **distinct from `deleted_files`**, which drops the entry entirely. The intended surface is `template_finalize_sync(acknowledged_deleted=[...])` — **a server change in `mcp-dev-servers`, landing on that repo's next release, not in this one.** Until it ships, add the key by hand: LF endings, existing key order preserved, the same relative paths `files` uses. It is the manifest and not `PROJECT_CONTEXT.md` deliberately: that file is keep-mine project content, and a sync-owned key there would be a key the tool writes into a file it otherwise never touches.
    - **Ordering:** delete a template-removed hook only AFTER the new `.claude/settings.json` has been applied (step 3's order) AND the step-6b reference grep — re-run against that new `settings.json` — shows it unreferenced. Deleting it while the in-memory settings still wire it makes every matching tool call exit 127 and fail closed for the rest of the session.
 4. **For ANY deleted file, cross-reference its user-level twin — this is not a hooks-only rule.** The dangerous twin lives under `~/.claude/` (`hooks/<name>.sh`, `agents/<name>.md`, `skills/<name>/SKILL.md`), which **no project sync touches**. Tell the user to remove it there too (see the CHANGELOG's downstream-migration notes).
 
@@ -573,6 +583,9 @@ Run this for every `TEMPLATE_DELETED` agent name `<N>`:
 
 ```sh
 # forms 3 + the spawn call: the reference SHAPE, in project-owned prose.
+# On the USER-LEVEL pass this arm also matches this skill's own example lines —
+# see "Sweep the USER-LEVEL tree too" below for the exclusion and the hand-check
+# that replaces it. In the PROJECT tree there is nothing to exclude.
 grep -rnE "subagent_type[\"']?[[:space:]]*[:=][[:space:]]*[\"']?<N>\b" . \
      --include='*.md' --include='*.json' --include='*.yaml' --include='*.yml'
 
@@ -655,6 +668,8 @@ The five forms above are scoped to the **project tree**. `~/.claude/` is not in 
 
 **Measured, in this skill.** v3.0.0 retired `test-writer` and shipped step 9 still naming it in the list of worktree-isolating agent types — **6d form 3, in the file that defines 6d.** Harmless in effect (an over-broad do-not-spawn list), but it survived a release *because it was outside every sweep, census and drift check at once*. So: **on any release that retires a name, run the same five forms over `~/.claude/` and over the toolkit's own `user-level-reference/` and `docs/`**, and report that pass separately.
 
+**The sweep's own example lines are not sites — and the exclusion has a catch.** Run over `~/.claude`, form 3 matches the example lines in `skills/sync-template/SKILL.md` itself: one phantom site on every run, measured by a consumer. Add `--exclude-dir=sync-template` to the form-3 arm for the user-level pass **and then read this file by hand for the retired name** — because the one real user-level hit anybody has measured (`test-writer`, above) was *in this file*. A blanket exclusion alone would have hidden exactly the defect that motivated the section. Excluded-then-hand-checked, never excluded-and-forgotten; say which of the two you did in the report.
+
 > **CONSTRAINT THIS PUTS ON ANY CONSOLIDATION: ABSORB, DO NOT RENAME.** Both the matcher regex and the skills case arm already generalise over the variant family, so superset-under-an-existing-name is compatible **only while the surviving name is `coder`**. If a consolidation renames rather than absorbs, all three binding sites break silently at the same moment. With an existing name, a stale reference in a consumer's keep-mine prose fails loudly at spawn, which is recoverable; with a new name, every consumer's prose is stale at once.
 
 ### 7. Finalize
@@ -675,7 +690,9 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 
 **Post-finalize self-check:** re-run `template_compute_status(project_path=".")`. A clean sync shows `auto_update: 0, conflict: 0`. Anything else means the manifest was corrupted during finalize — report it to the user instead of finishing.
 
-**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report:
+**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report.
+
+**Run the three arms below verbatim; do not invent a broader regex.** The placeholder shape this toolkit ships is `{{[A-Z_]{2,}}}` and nothing else. A consumer widened it to `__[A-Z_]{3,}__` and got 38 false hits in one sweep — that shape is every MCP tool name (`mcp__MCP_DOCKER__…`), not a placeholder. A sweep that cries wolf 38 times is a sweep the next person skips.
 
 ```
 # The markdown and shell arms are BOM-tolerant: a UTF-8 BOM sits at byte 0,
@@ -981,6 +998,8 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 
 **Write the commit MESSAGE to a file and use `git commit -F <path>` — never a heredoc, and never a long `-m` (v2.2.5).** The gates scan the whole command STRING, so a message body that merely *describes* what this sync changed ("adopts the new merge gate", "gh pr merge is now blocked without a fresh artifact") is matched by `gate-before-merge.sh` on the commit that carries it. A sync commit describes gate changes by its nature, which makes this step the most likely place in the whole skill to hit it — and the block is uninterpretable, because it does not tell you whether the gate works or whether your own message was the violation. Same reasoning as the "probes must live in a script file" rule in step 3, arriving from a third direction. Write the message with the **Write tool** (not a Bash heredoc — the heredoc body is part of the command string too) to `"${TMPDIR:-/tmp}/sync-msg.txt"`, then `git commit -F` that path. The short `-m` this step used to prescribe dodged the gate by luck, not design.
 
+**Edit in one tool call; `git add <files>` + `git commit -F <file OUTSIDE the repo>` in the NEXT call (v3.0.3).** Never batch the edit with the commit. The commit hook is `PreToolUse`: it hashes the working tree BEFORE the call runs, so a mutation made in the same call is gated in its *pre-mutation* state — the artifact then describes the parent's tree, and the merge gate reads it as stale. "Commit exactly what was gated" reads as satisfied at the moment you type the batched call, which is why this has to be stated as a SHAPE and not as an intention. Two consumers hit it in one evening. `.gate/last-precommit.json` now carries a `tree` field for exactly this: an artifact tree equal to `HEAD^{tree}` means the mutation was batched with the commit; equal to neither that nor the working tree means an untracked file was swept in by `add -A`.
+
 **The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool), or `--fill` to reuse the commit message. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
 
 > **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
@@ -995,9 +1014,18 @@ git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** p
 # --> now delegate ONE `bash hooks/run-gate.sh` run to `ops` (the PO cannot run the gate)
 git push -u origin <branch>
 gh pr create --fill
-gh pr merge --squash --delete-branch
+gh pr merge --squash --delete-branch               # (or the MCP merge tool)
+git checkout main                                  # local main still carries the PRE-sync hooks
+                                                   # until it fast-forwards
+git pull --ff-only                                 # allowed by BOTH hook versions; if a refusal
+                                                   # surprises you HERE, sha256 the hook before
+                                                   # concluding anything about the release
 git fetch -p                                       # drops the phantom remote-tracking ref
 ```
+
+**Write the last two as two commands, not as `git checkout main && git pull --ff-only`.** Stated truthfully, because the reason changed under this procedure's feet: the chained form **blocked on v3.0.2** and is **allowed from v3.0.3**, because a bare `--ff-only` pull fetches first and can only fast-forward to the upstream, so its verdict does not depend on which branch the mover lands on — and refusing it would be a denied legitimate command. The mover rule is unchanged for the case it exists for: `git checkout <protected> && git merge <x>` is still refused, because there the landing is real and the branch decides. Keep the two-call form anyway — it is the shape that reads the same under both hook versions, and a consumer on a v3.0.2 checkout still hits the block. The two lines are IN the block on purpose: the reader who needs them is the one who was surprised by a refusal on `main` and is primed to read it as a broken release, and that reader copies from the block, not from the prose under it.
+
+**A fast commit with no visible output is the harness dropping non-blocking hook stderr, not the hook skipping.** `pre-commit-test.sh` does not path-filter and has no "no source files" branch — it runs the Test Command (or `run-gate.sh`) on every commit, unconditionally. The `passed. (Ns)` marker is printed and you do not see it. **The elapsed seconds are the evidence**; a fast commit means a fast Test suite.
 
 **Read the gate's verdict from `GATE PASS` or `.gate/last-pass.json` — NEVER from the exit code of a pipeline (v2.2.6).** `bash hooks/run-gate.sh | tail -100` is an entirely natural thing to do with a multi-minute chatty command, and it reports **`tail`'s** exit code, not the gate's. A consumer's delegated `ops` agent hit this and reported honestly that it could not supply the rc; a less careful one gets `0` from `tail` on a red gate. Two rules, both cheap:
 
@@ -1009,6 +1037,36 @@ Gate **after** the commit, never before: the artifact must match the PR head by 
 **The commit gate keys on the WORKING TREE at gate time — commit exactly what was gated.** A chained `git add … && git commit` is fine (the tree the gate hashed is the tree the commit gets); so is `git commit -a`. A *partial* add after the gate ran mismatches by design — the committed tree is not what was gated — and the merge gate will correctly demand a fresh run.
 
 CI fires on `pull_request` and on push-to-main; a bare branch push produces **no** run. Open the PR first, then look up the run id — an empty workflow list right after `git push` is not a CI failure.
+
+## Pre-sync verification
+
+**When a release changes refusal behaviour on commands people type by hand, nobody syncs until this comes back.** The risk is not a missed bypass — it is a regression that blocks routine work and gets the guard switched off. Verify **read-only against the TAG**: extract the hooks from the tag into a throwaway repo; do not install, do not sync, do not touch your tree.
+
+### The three rules every row must follow
+
+1. **Every want-0 row is paired with a want-2 row in the SAME fixture repo.** A `PROJECT_CONTEXT.md` with no `**Gate**:` field makes the hook exit 0 *before it decides anything*, so every want-0 in that repo passes vacuously. An unpaired want-0 is **VOID, not passing** — say "void" in the report; a void row counted as green is worse than a missing row, because it is claimed coverage.
+2. **Assert the fixture carries the property before measuring it.** A probe that cannot fail looks exactly like one that passed.
+3. **`set -o pipefail`, and check the payload parses (`jq .`) before you believe a verdict.** An unescaped `"` makes the hook fail closed at **exit 2, which reads as "gated" and is not.** In one night three sessions hit the pipe-exit-code error and two hit the quote one.
+
+Write probe scripts with your file-writing tool and run `bash <path>`. A heredoc containing git clauses is refused by the gates' own whole-string scan — the heredoc body IS the command string.
+
+### The three named traps, each hit by a different session
+
+- A fixture `PROJECT_CONTEXT.md` with **no Gate field** — the hook exits 0 before deciding, and every row reads as allowed.
+- **No remote after `git init`** — `pull --ff-only` is then correctly BLOCKED for a reason that has nothing to do with the rule under test, and it reads as a regression.
+- **Testing a gated-clause rule on a branch where nothing is gated** — on a feature branch the answer is 0 whatever the rule does.
+
+### Commit the predicted table BEFORE running anything
+
+Write down every row with its predicted verdict **and the reason**, and commit that file first. Then run. A matching result cannot be post-hoc rationalised, a mismatch is unmissable, and the git order is the proof. This costs one commit and is the only thing that distinguishes a prediction from a description.
+
+### Delete-the-guard bookkeeping
+
+For each new arm: delete the arm, re-run the suite, count the rows that flip. **An arm whose deletion flips zero rows is untested**, however green the suite looks. **Rows that flip because they share an INSTRUMENT are one piece of evidence, not many** — two probe rows that flip under both arm 1 and arm 2 are arm-agnostic and do not count toward the zero-flip rule. Report the deduplicated numbers (3 / 6 / 12, not 5 / 8 / 12) and say which rows were deduplicated.
+
+### The order
+
+**Verification → restart → sync → live re-run.** Verification runs against the tag before anything is installed. **Restart** the session after user-level files are copied — a running session keeps the previous skill and agent definitions, including this one. Only then sync, and re-run the probes **live**, on the installed hooks: the tag run proves what the release contains, the live run proves what the machine now enforces, and only the second one is delivery.
 
 ## Rules
 
