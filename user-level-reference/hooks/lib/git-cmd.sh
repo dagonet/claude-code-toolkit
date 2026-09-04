@@ -463,12 +463,17 @@ gc_resolve() {
 gc_dash_c_list() {
   # FAST PATH, and it is the common one. The walk below costs a `sed`, a `tr`
   # and a subshell per call, and this function is reached twice per gated arm
-  # (gc_repo_for and gc_dash_c_unresolved) inside the segment loop. MEASURED on
-  # the merge payload with scripts/time-hook.sh, 20 runs: 2826 ms median without
-  # this line, 2332 ms with — the whole v3.0.3 regression on the gated path was
-  # spawning that pipeline for segments that carry no `-C` at all. A literal
-  # `-C` test is a builtin `case`, costs nothing, and cannot change the answer:
-  # no `-C` in the string means no `-C` operand to find.
+  # (gc_repo_for and gc_dash_c_unresolved) inside the segment loop.
+  # gate-before-merge costs ~540 ms more per invocation than v3.0.2 on the
+  # measuring host (paired, rotated, 31 rounds, p<0.001) — the price of the
+  # four-state ancestry canary, the consumer-arm dispatch and the full `-C`
+  # fold; ~160 ms of redundant `-C` walk was removed on inspection (the tip is
+  # measurably faster than the interim tree). no-push-main is not measurably
+  # changed. Timing was measured by paired interleaved sampling — block timing
+  # on this host cannot resolve effects of this size. Not a release gate for
+  # v3.0.3; profiling the merge path is a v3.0.4 item. A literal `-C` test is
+  # a builtin `case`, costs nothing, and cannot change the answer: no `-C` in
+  # the string means no `-C` operand to find.
   case "$1" in *-C*) ;; *) return 0 ;; esac
   # THE `git` TOKEN IS FOUND POSITIONALLY, NOT BY REGEX (v3.0.3, phantom-token
   # audit). The first draft used
