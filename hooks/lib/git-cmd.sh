@@ -199,8 +199,17 @@ GC_GIT_PRE='\bgit\b([[:space:]]+(-C|-c|--config-env|--git-dir|--work-tree|--name
 # own fail-closed retry is what covers the quoted-path case for the verdict.
 gc_global_options() {
   gcgo_seg="$1"
+  # `set -f` BEFORE the unquoted split (v3.0.3, phantom-token audit). Word
+  # splitting is wanted here; PATHNAME EXPANSION is not. Without it a `-C`
+  # operand containing `*`, `?` or `[` is globbed against the CURRENT DIRECTORY
+  # before this function ever sees it — a repo at `…/w[1]` or `…/w*` either
+  # vanishes from the token list or multiplies, and the classifier then answers
+  # about a different command than the one that was typed. Restored immediately
+  # after, because callers do rely on globbing elsewhere.
+  set -f
   # shellcheck disable=SC2086
   set -- $gcgo_seg
+  set +f
   gcgo_sawgit=0
   while [ $# -gt 0 ]; do
     gcgo_tok="$1"; shift
@@ -461,11 +470,29 @@ gc_dash_c_list() {
   # `-C` test is a builtin `case`, costs nothing, and cannot change the answer:
   # no `-C` in the string means no `-C` operand to find.
   case "$1" in *-C*) ;; *) return 0 ;; esac
-  gcdl_tail=$(printf '%s\n' "$1" | sed -n 's/.*\bgit[[:space:]]\+\(.*\)/\1/p' | head -1)
-  [ -n "$gcdl_tail" ] || return 0
+  # THE `git` TOKEN IS FOUND POSITIONALLY, NOT BY REGEX (v3.0.3, phantom-token
+  # audit). The first draft used
+  #
+  #     sed -n 's/.*\bgit[[:space:]]\+\(.*\)/\1/p'
+  #
+  # whose leading `.*` is GREEDY: it anchors on the LAST `git` followed by
+  # whitespace anywhere in the segment. An operand whose final component is
+  # literally `git` — `git -C /srv/git merge …` — put a `git ` inside the PATH,
+  # so the tail became `merge …`, the walk hit a non-option token immediately,
+  # and NO `-C` was found. Same layer error as the defect this function was
+  # written to fix. The loop below skips tokens until the first one that IS the
+  # `git` command (bare, or a path ending in `/git`), and everything after it is
+  # argv. Nothing about an operand's CONTENTS can move that boundary.
   gcdl_want=0
-  printf '%s\n' "$gcdl_tail" | tr ' \t' '\n\n' | while IFS= read -r gcdl_t; do
+  gcdl_seen=0
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | while IFS= read -r gcdl_t; do
     [ -n "$gcdl_t" ] || continue
+    if [ "$gcdl_seen" -eq 0 ]; then
+      case "$gcdl_t" in
+        git|*/git|*\\git) gcdl_seen=1 ;;
+      esac
+      continue
+    fi
     case "$gcdl_want" in
       1) gcdl_want=0; continue ;;
       2) printf '%s\n' "$gcdl_t" | tr '\001' ' '; gcdl_want=0; continue ;;

@@ -1927,6 +1927,134 @@ check "(A6.C) NO operand resolves -> refuse"                   "$H" 2 "$(mkjson 
 check_msg "(A6.C) the refusal names the operand and not the kill switch" "$ROOT/$H" 2 \
   "$(mkjson Bash "git -C $TMPROOT/nope -C $TMPROOT/alsonope merge feature/x" "$A6FEATCO")" "could not resolve"
 check "(A6.C) CONTROL: single -C into a missing dir keeps the cwd verdict" "$H" 0 "$(mkjson Bash "git -C $TMPROOT/nope merge feature/x" "$A6FEATCO")"
+
+# ---------------------------------------------------------------------------
+# HOSTILE PATH CONTENT — THE ACTUAL v3.0.3 ROOT CAUSE, and the reason the fold
+# must be a token walk rather than a regex.
+#
+# A consumer measured `-C <feature> -C <protected>` returning 0 while two other
+# consumers measured the same shape correctly on the same machine. The
+# difference was the PATH, not the shape. The deleted local fold extracted its
+# operands with
+#
+#     sed 's/.*-C[[:space:]]*//'
+#
+# whose leading `.*` is GREEDY, so it cut at the LAST `-C` anywhere in the
+# string. Their scratchpad lived under `…/G--git-Yutraffic-Challenge/…`, and
+# `-Challenge` CONTAINS `-C`. Both operands came back as `hallenge/…/side` and
+# `hallenge/…/w` — relative paths that do not exist — gc_resolve fell back to
+# the base, and the hook judged the PAYLOAD CWD. That is exactly the four cells
+# they reported, and it is why the reproduction depended on whose temp
+# directory the fixture lived in.
+#
+# These repos are therefore built under a path carrying every hostile component
+# seen on this machine: `-C` inside a word (`Sub-Challenge`), `git` as a
+# word-bounded component (`/git/`), `git` inside a hyphenated name
+# (`G--git-Sub`), and a directory literally named after a subcommand (`merge`).
+# The fold must be insensitive to all of it.
+# a6host <subdir> -> a protected clone under a directory of that name.
+# `$2` names the branch: `main` (protected) or a feature branch.
+a6host() { # <relative subdir> <branch>
+  mkdir -p "$TMPROOT/$(dirname "$1")"
+  a6h=$(a6clone "$1")
+  [ "$2" = main ] || git -C "$a6h" checkout -q -b "$2" >/dev/null 2>&1
+  printf '%s\n' "$a6h"
+}
+# FOUR ARMS BY OPERAND. `-C` in the FIRST operand only, the SECOND only, BOTH,
+# and NEITHER. The measured trigger was a double `-C` whose TARGET (second)
+# operand contained `-C`; first-only passed because the clean absolute second
+# operand overwrote the corruption, and the content-free double failed on
+# v3.0.2 for an unrelated reason. Only all four arms together tell those apart.
+A6P_PLAIN=$(a6host "hostplain/w" main);        A6U_PLAIN=$(a6host "hostplain/side" feature/co)
+A6P_CORE=$(a6host "host-Core/w" main);         A6U_CORE=$(a6host "host-Core/side" feature/co)
+A6P_FINAL=$(a6host "hostfin/w-Core" main);     A6U_FINAL=$(a6host "hostfin/side-Core" feature/co)
+# ARM 4 — NEITHER operand carries the substring (the v3.0.2 content-free double).
+check "(A6.C) arm4 neither: -C U -C P -> P"    "$H" 2 "$(mkjson Bash "git -C $A6U_PLAIN -C $A6P_PLAIN merge feature/x" "$A6U_PLAIN")"
+check "(A6.C) arm4 neither: -C P -C U -> U"    "$H" 0 "$(mkjson Bash "git -C $A6P_PLAIN -C $A6U_PLAIN merge feature/x" "$A6U_PLAIN")"
+# ARM 1 — FIRST operand only.
+check "(A6.C) arm1 first-only: -C U(-C) -C P"  "$H" 2 "$(mkjson Bash "git -C $A6U_CORE -C $A6P_PLAIN merge feature/x" "$A6U_CORE")"
+# ARM 2 — SECOND operand only. THIS IS THE ONE THAT WAS LIVE.
+check "(A6.C) arm2 second-only: -C U -C P(-C)" "$H" 2 "$(mkjson Bash "git -C $A6U_PLAIN -C $A6P_CORE merge feature/x" "$A6U_PLAIN")"
+check "(A6.C) arm2 second-only, cwd P"         "$H" 2 "$(mkjson Bash "git -C $A6U_PLAIN -C $A6P_CORE merge feature/x" "$A6P_CORE")"
+check "(A6.C) arm2 second-only, target U -> 0" "$H" 0 "$(mkjson Bash "git -C $A6P_PLAIN -C $A6U_CORE merge feature/x" "$A6U_CORE")"
+# ARM 3 — BOTH operands.
+check "(A6.C) arm3 both: -C U(-C) -C P(-C)"    "$H" 2 "$(mkjson Bash "git -C $A6U_CORE -C $A6P_CORE merge feature/x" "$A6U_CORE")"
+check "(A6.C) arm3 both: -C P(-C) -C U(-C)"    "$H" 0 "$(mkjson Bash "git -C $A6P_CORE -C $A6U_CORE merge feature/x" "$A6U_CORE")"
+# Both PATH SHAPES: the substring in a parent directory (above) and in the
+# FINAL component (here). Position was measured irrelevant; both are asserted so
+# a position-keyed regression cannot hide in whichever shape is missing.
+check "(A6.C) final-segment -Core: -C U -C P"  "$H" 2 "$(mkjson Bash "git -C $A6U_FINAL -C $A6P_FINAL merge feature/x" "$A6U_FINAL")"
+check "(A6.C) final-segment -Core: -C P -C U"  "$H" 0 "$(mkjson Bash "git -C $A6P_FINAL -C $A6U_FINAL merge feature/x" "$A6U_FINAL")"
+check "(A6.C) single -C into a -Core path"     "$H" 2 "$(mkjson Bash "git -C $A6P_CORE merge feature/x" "$A6U_PLAIN")"
+check "(A6.C) NEGATIVE: status into a -Core path is not gated" "$H" 0 "$(mkjson Bash "git -C $A6P_CORE status" "$A6U_PLAIN")"
+check_msg "(A6.C) arm2 DENY names the folded repo's branch" "$ROOT/$H" 2 \
+  "$(mkjson Bash "git -C $A6U_PLAIN -C $A6P_CORE merge feature/x" "$A6U_PLAIN")" "branch:          main"
+# MUST-NOT-TRIGGER CONTROLS. Only the literal `-C` was ever the trigger;
+# directories named after OTHER options are the invented class, and they are
+# here to be shown NOT to fail.
+for a6ctl in 'host-c' 'host-P' 'host--no-pager' 'host--git-dir' 'hostgit/git'; do
+  a6cp=$(a6host "$a6ctl/w" main); a6cu=$(a6host "$a6ctl/side" feature/co)
+  check "(A6.C) control $a6ctl: -C U -C P -> P"  "$H" 2 "$(mkjson Bash "git -C $a6cu -C $a6cp merge feature/x" "$a6cu")"
+  check "(A6.C) control $a6ctl: -C P -C U -> U"  "$H" 0 "$(mkjson Bash "git -C $a6cp -C $a6cu merge feature/x" "$a6cu")"
+done
+# GLOB METACHARACTER in an operand: gc_global_options splits unquoted, so
+# pathname expansion would rewrite the token list before anything is judged.
+# (`*` and `?` are not legal in a Windows filename; `[` is, so `w[1]` is the
+# portable arm and the residual is named rather than asserted.)
+#
+# ⚠ OPEN, NOT CLOSED, AND DELIBERATELY NOT ASSERTED (v3.0.3). MEASURED on this
+# lib: a repo whose path contains `[` — `…/hostglob/w[1]` — is NOT gated.
+# `git -C '…/w[1]' merge` on a protected branch returned 0, single AND double
+# `-C`, where the same fixture under `…/hostglob/w` returns 2. `set -f` around
+# gc_global_options' unquoted split (added here) was necessary but is NOT
+# sufficient — another site consumes the operand glob-sensitively and it was not
+# found before this release closed. The rows are NOT included as want-0,
+# because a want-0 row on a bypass reads as approval of it. Named here so the
+# next reader starts from a measurement instead of rediscovering it:
+#
+#   repro: a6host "hostglob/w[1]" main; git -C <that> merge <x> from any cwd -> 0
+#
+# The `*` and `?` arms cannot be built on this host at all — neither is a legal
+# Windows filename — so `[` is the whole portable surface of the class.
+# THE FALLBACK THAT TURNED A PARSE ERROR INTO A BYPASS. gc_resolve returns the
+# BASE when an operand is not a directory, which is what silently substituted
+# the payload cwd. Under strictest-wins that is safe ONLY because a fold with no
+# resolvable operand at all is refused — these three rows are what make that
+# claim testable rather than asserted.
+check "(A6.C) fallback: -C P -C <garbage> -> P"        "$H" 2 "$(mkjson Bash "git -C $A6P_PLAIN -C $TMPROOT/nope merge feature/x" "$A6U_PLAIN")"
+check "(A6.C) fallback: -C <garbage> -C P -> P"        "$H" 2 "$(mkjson Bash "git -C $TMPROOT/nope -C $A6P_PLAIN merge feature/x" "$A6U_PLAIN")"
+check "(A6.C) fallback: both garbage -> refusal"       "$H" 2 "$(mkjson Bash "git -C $TMPROOT/nope -C $TMPROOT/nope2 merge feature/x" "$A6U_PLAIN")"
+check_msg "(A6.C) fallback: the refusal names an operand" "$ROOT/$H" 2 \
+  "$(mkjson Bash "git -C $TMPROOT/nope -C $TMPROOT/nope2 merge feature/x" "$A6U_PLAIN")" "could not resolve"
+# The same operand set through the OTHER two consumers of gc_repo_for.
+check "(A6.C) arm2 push: -C U -C P(-C) -> P"   "hooks/no-push-main.sh" 2 "$(mkjson Bash "git -C $A6U_PLAIN -C $A6P_CORE push" "$A6U_PLAIN")"
+check "(A6.C) arm2 push: -C P -C U(-C) -> U"   "hooks/no-push-main.sh" 0 "$(mkjson Bash "git -C $A6P_PLAIN -C $A6U_CORE push" "$A6U_CORE")"
+check "(A6.C) arm4 push: content-free double"  "hooks/no-push-main.sh" 2 "$(mkjson Bash "git -C $A6U_PLAIN -C $A6P_PLAIN push" "$A6U_PLAIN")"
+# pre-commit-test discriminates on the RESOLVED repo's **Test** command.
+printf '# ctx\n\n- **Test**: `false`\n' > "$A6P_CORE/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Test**: `true`\n'  > "$A6U_CORE/PROJECT_CONTEXT.md"
+check "(A6.C) arm2 commit: -C U -C P(-C, Test false)" "hooks/pre-commit-test.sh" 2 "$(mkjson Bash "git -C $A6U_CORE -C $A6P_CORE commit -m y" "$A6U_CORE")"
+check "(A6.C) arm2 commit: -C P(-C) -C U(-C, Test true)" "hooks/pre-commit-test.sh" 0 "$(mkjson Bash "git -C $A6P_CORE -C $A6U_CORE commit -m y" "$A6P_CORE")"
+# THE COMMIT CELL IS GREEN BY CONSTRUCTION UNLESS THE TWO REPOS DIFFER. On
+# 0d7806e the arm-2 commit row returned the same rc with the same "path":"test"
+# while the artifact landed in the WRONG repo, because both fixture repos
+# carried the same failing Test. Here the Tests differ (`false` vs `true`), so
+# the exit code already discriminates — and the ARTIFACT LOCATION is asserted
+# too, because that is the reading that caught it.
+expect "(A6.C) arm2 commit: the artifact lands in the TARGET repo" "1" \
+  "$([ -f "$A6U_CORE/.gate/last-precommit.json" ] && echo 1 || echo 0)"
+# THE MIRROR FACE. A path containing `--no-pager` must not read as a GLOBAL —
+# the substring bug has a false-negative face (gate skipped) and a false-
+# positive face (legitimate command refused), and only the second gets people
+# reaching for the kill switch.
+A6NP=$(a6host "host--no-pager-y/repo" main)
+printf '# ctx\n\n- **Test**: `false`\n' > "$A6NP/PROJECT_CONTEXT.md"
+check "(A6.C) mirror: --no-pager in a PATH runs the Test" "hooks/pre-commit-test.sh" 2 "$(mkjson Bash "git -C $A6NP commit -m y" "$A6U_PLAIN")"
+expect "(A6.C) mirror: the artifact says path=test, not global-refused" "1" \
+  "$(grep -c '"path":"test"' "$A6NP/.gate/last-precommit.json" 2>/dev/null || echo 0)"
+# Restore the Gate fields the clones above share.
+printf '%b' "$A6CTX" > "$A6P_CORE/PROJECT_CONTEXT.md"
+printf '%b' "$A6CTX" > "$A6U_CORE/PROJECT_CONTEXT.md"
 check "(A6.C) CONTROL: same shape, resolvable, judged by the arm" "$H" 2 "$(mkjson Bash "git -C $A6FEATCO -C $A6CLONE merge feature/x" "$A6FEATCO")"
 # THE ORDER HOLE. The function this replaces required `-C` to sit IMMEDIATELY
 # after the literal `git`, so ANY global in front of it made the whole `-C`
