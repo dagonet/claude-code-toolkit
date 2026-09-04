@@ -70,7 +70,7 @@ The `{{…}}` sweep, the `--scan` walker (0.37 s agent-classified versus 238 s /
 
 ### 10. Performance: the gates exit before doing any work on payloads that cannot be gated
 
-A payload with no `git` token and no `gh pr merge` exits 0 before the lib is sourced. On the measuring host, gate-before-merge costs ~600 ms more per invocation than v3.0.2 and no-push-main ~200 ms more (paired interleaved sampling, rotated order, 31 rounds, p<0.001 for both; magnitudes approximate, see IQRs in the verification record) — the price of the four-state ancestry canary, the consumer-arm dispatch and the full `-C` fold; ~160 ms of redundant `-C` walk was removed on inspection. Block timing on this host cannot resolve effects of this size. Not a release gate for v3.0.3; profiling both hooks is a v3.0.4 item. A raw-payload pre-parse grep was rejected as unsound (a JSON-escaped newline puts `n` immediately before `git`); the exit reads `GC_CMD` after the parse and before the first git subprocess.
+A payload with no `git` token and no `gh pr merge` exits 0 before the lib is sourced. On the measuring host, gate-before-merge costs ~700 ms and no-push-main ~350 ms more per invocation than v3.0.2 (paired interleaved sampling, rotated order, 31 rounds, p<0.001 for both; magnitudes approximate, see IQRs in the verification record) — the security fixes in this release cost more than the 33c909e interim measured; no-push-main roughly doubled its delta. Not a release gate for v3.0.3; profiling both hooks is a v3.0.4 item. A raw-payload pre-parse grep was rejected as unsound (a JSON-escaped newline puts `n` immediately before `git`); the exit reads `GC_CMD` after the parse and before the first git subprocess.
 
 ### 11. The reported bracket-path bypass was a fixture artifact — bracket paths are gated like any other, asserted
 
@@ -107,11 +107,15 @@ Class 1 (literal path, existent or not) keeps the documented `[ -d ]` test and t
 
 The class-2 fix removes BOTH halves at once, and a partial upgrade is a real, if narrow, regression worth naming: a v3.0.2 consumer upgrading to a v3.0.3 WITHOUT the class-2 fix would trade a silent bypass for a noisy false refusal on ordinary `~`/`$HOME` multi-`-C` commands — strictly safer, and visibly worse for daily use, tolerable only because the deny text says "if git can, pass an absolute path." With the class-2 fix, neither.
 
+**Known limitation:** the segment splitter strips quote characters before classification, so a single-quoted `'~/path'` `-C` operand is classified like a bare `~/path` — it resolves and gates a command git itself would reject as a literal. An over-block in the safe direction, not a bypass; observed independently by three consumers.
+
 ### 14. `pre-commit-test.sh` called `gc_repo_for` with no preceding unresolved-`-C` check, and four `**Field**:` extractors were greedy
 
 (a) Unlike `no-push-main.sh` and `gate-before-merge.sh`, `pre-commit-test.sh` resolved the commit's repo via `gc_repo_for` with nothing checking whether the `-C` fold was even resolvable first — a fold this hook could not resolve fell back to the payload cwd and ran the WRONG repository's Test command instead of refusing. `gc_dash_c_unresolved` (now class-aware per item 13) is wired in at the same position the other two gates use, immediately before `gc_repo_for`; a refusal records `"path":"unresolved-c"` in `.gate/last-precommit.json` and prints the cannot-determine text when the reason is class 3, the existing "could not resolve" text otherwise.
 
 (b) Four `**Field**:` extractors (`hooks/lib/git-cmd.sh`'s `gc_protected_branches`, `gate-before-merge.sh`'s `**Gate**` read, `pre-commit-test.sh`'s `**Test**` and `**Gate**` reads) stripped the field label with a leading `.*` in their `sed`, which is GREEDY: a value that itself quotes the field's own label a second time (`- **Gate**: echo "the value quotes **Gate**: again here"`) had everything up to and including the SECOND occurrence stripped, silently truncating the extracted command to `again here"`. All four are now anchored at `GC_KEY_PRE` — the same tolerant line-start prefix (optional BOM, optional list marker) their paired `grep` already uses to FIND the line — so the finder and the extractor agree on one grammar and only the true leading marker is ever consumed.
+
+(c) A fifth `**Gate**:` read site, `hooks/run-gate.sh:101`, kept the greedy `.*` that 3b removed from the other four — the gate ORCHESTRATOR, so a PR-editable Gate value containing the marker twice truncated the command the gate runs; a value ending `&& echo **Gate**: true` would have minted `.gate/last-pass.json` on an unrun suite. Found by a consumer, then the whole repo was enumerated by two independent methods (marker+paired-sed search, and greedy-strip-shape search, plus non-sed and PowerShell-reader checks across hooks/, scripts/, user-level-reference/, templates/ and the root setup scripts): this was the only surviving greedy read; the setup scripts only write the field. `run-gate.sh` now joins the pinned hash set in every verification. The defect is specifically that a Gate value could DISPLAY one command and EXECUTE another — a value shaped `bash real-gate.sh # **Gate**: true` reads as an honest gate command in review, but the greedy sed stripped through the trailing marker and ran `true`; the anchored read closes that gap. A Gate value that honestly reads `bash real-gate.sh ; true` still mints a pass artifact after the real gate ran and failed — that is the field being an executable shell command by design, visible in the diff, and unchanged by this fix, not a residual instance of the same defect.
 
 ### Deferred, named — finding 59: the Test path has no terminal arm, and that is deliberate
 
@@ -150,6 +154,8 @@ The plan asked for one. Three shipped guards forbid it, and they are not oversig
    "Read(.env.development)",
    ```
    **Keeping the six rules — and the prompts — until you have installed the hook is a valid choice**, not a migration you are behind on. The rules protect the right files; what they cost is auto mode.
+
+   `deny-secret-reads.sh` is NEW in v3.0.3 — it did not exist in v3.0.2. It is NOT a drop-in replacement for a `Read(.env*)` deny rule you already have: until you sync AND verify the hook is present and wired in `settings.json`, removing your `Read(.env*)` denies leaves a gap, not a redundancy. Order: sync, verify installed and registered, measure it, then consider whether the `Read(.env*)` rules are redundant.
 2. **Globals before a gated `pull` / `merge` / `push` are refused** unless they are one of the six inert ones or `-C`. Set them in configuration in a separate call. The DENY text names the option it refused.
 3. **Step 9 of the sync skill is now TWO calls.** Edit in one tool call; `git add` + `git commit -F <file OUTSIDE the repo>` in the next. The commit hook is PreToolUse and hashes the working tree BEFORE the call runs, so a mutation batched with the commit is gated in its pre-mutation state and the artifact then describes the parent's tree.
 4. **Read `.gate/last-precommit.json` immediately after the commit**, before any other tool call. It is rewritten on every Bash call this hook sees in any git repository.
@@ -173,6 +179,8 @@ Arm-specific, on the integrated tree. Any arm-specific zero would stop the relea
 | Task 4 terminal branch | **VOID** | not shipped, not fabricated |
 
 The T1/T2 arms were measured before the branches were integrated and are reported as measured; the finding-62 and DSR arms were measured on the final tree. **Shared rows: none.** The T2 inert arm and the T2 exclusion arm have zero overlap — the partition the amendment asked for — and the DSR arm overlaps nothing.
+
+The `-c` DtG behaviour is PER-HOOK, not a shared property: on `gate-before-merge.sh` the `-c` classifier sits inside the `gc_on_main` protected-branch condition, so it flips under a fold stub; on `no-push-main.sh` it precedes resolution, so it does not — "the `-c` rows never flip" is true of `no-push-main.sh` only.
 
 ### Field coverage — what this release does NOT exercise
 

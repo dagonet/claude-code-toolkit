@@ -4688,6 +4688,75 @@ check "(FIELD) **Protected branches**: value repeating the marker -- whole value
   "hooks/no-push-main.sh" 2 "$(mkjson Bash 'git push' "$FLD_PB")"
 
 # ---------------------------------------------------------------------------
+# RUN-GATE (v3.0.3, the fifth site) -- hooks/run-gate.sh:101's own GATE_CMD
+# extractor, read directly by invoking run-gate.sh itself rather than through
+# pre-commit-test.sh/gate-before-merge.sh: it is the ORCHESTRATOR those two
+# shell out to, and was the one surviving greedy `.*` in the field grammar --
+# a **Gate** value containing the literal marker a second time was truncated
+# at the LAST occurrence instead of returning the whole value. Both rows run
+# entirely inside their own THROWAWAY mkrepo checkout (REPO_TOP resolves from
+# cwd, so run-gate.sh never touches this checkout's own .gate/last-pass.json);
+# the guard assertion below confirms that directly.
+# ---------------------------------------------------------------------------
+RG_SELFGATE_BEFORE=$(cat "$ROOT/.gate/last-pass.json" 2>/dev/null; echo)
+
+# (control) a plain **Gate** value with no embedded marker -- passes
+# identically pre-fix and post-fix; proves the two rows below fail on a
+# defect in the double-marker case specifically, not on run-gate.sh in
+# general.
+RG_PLAIN=$(mkrepo rg-plain main)
+printf '# ctx\n\n- **Gate**: true\n' > "$RG_PLAIN/PROJECT_CONTEXT.md"
+git -C "$RG_PLAIN" add -A >/dev/null 2>&1
+git -C "$RG_PLAIN" commit -q -m "add gate" >/dev/null 2>&1
+( cd "$RG_PLAIN" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+expect "(RUN-GATE control) plain **Gate**: true -- exits 0" "0" "$?"
+expect "(RUN-GATE control) plain **Gate**: true -- last-pass.json minted" "1" \
+  "$([ -f "$RG_PLAIN/.gate/last-pass.json" ] && echo 1 || echo 0)"
+# end-to-end: the artifact must be keyed on THIS repo's HEAD/tree -- the exact
+# fields gate-before-merge.sh reads back at merge time. A parse fix that
+# recovers the right command but mis-keys the artifact would pass every row
+# above and still hand gate-before-merge a receipt for the wrong commit.
+RG_PLAIN_SHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$RG_PLAIN/.gate/last-pass.json" 2>/dev/null)
+RG_PLAIN_TREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$RG_PLAIN/.gate/last-pass.json" 2>/dev/null)
+expect "(RUN-GATE control) artifact sha == repo HEAD" \
+  "$(git -C "$RG_PLAIN" rev-parse HEAD)" "$RG_PLAIN_SHA"
+expect "(RUN-GATE control) artifact tree == repo HEAD^{tree}" \
+  "$(git -C "$RG_PLAIN" rev-parse 'HEAD^{tree}')" "$RG_PLAIN_TREE"
+
+# (a) truncate-to-garbage: the whole value must run (both echoes), not just
+# the tail after the second marker.
+RG_GARBAGE=$(mkrepo rg-garbage main)
+printf '# ctx\n\n- **Gate**: echo FIRST && echo **Gate**: SECOND-PART\n' > "$RG_GARBAGE/PROJECT_CONTEXT.md"
+RG_GARBAGE_OUT=$(cd "$RG_GARBAGE" && bash "$ROOT/hooks/run-gate.sh" 2>&1)
+RG_GARBAGE_RC=$?
+expect "(RUN-GATE) truncate-to-garbage: exits 0" "0" "$RG_GARBAGE_RC"
+expect "(RUN-GATE) truncate-to-garbage: whole value ran (FIRST present)" "1" \
+  "$(printf '%s' "$RG_GARBAGE_OUT" | grep -cx 'FIRST')"
+
+# (b) truncate-to-true -- THE SEVERITY ROW: a real failing gate followed by
+# the marker + `true`. Pre-fix, the sed truncated the value down to `true`,
+# so the gate exited 0 and minted .gate/last-pass.json WITHOUT ever running
+# `bash -c 'exit 1'` -- a PR-editable value could mint a passing gate receipt
+# on an unrun suite. Post-fix the whole value runs, the real command fails,
+# and no artifact is written.
+RG_SEVERITY=$(mkrepo rg-severity main)
+printf "# ctx\n\n- **Gate**: bash -c 'exit 1' && echo **Gate**: true\n" > "$RG_SEVERITY/PROJECT_CONTEXT.md"
+rm -f "$RG_SEVERITY/.gate/last-pass.json"
+( cd "$RG_SEVERITY" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+RG_SEVERITY_RC=$?
+expect "(RUN-GATE) truncate-to-true: exits non-zero (real failure runs)" "1" \
+  "$([ "$RG_SEVERITY_RC" -ne 0 ] && echo 1 || echo 0)"
+expect "(RUN-GATE) truncate-to-true: no last-pass.json minted on an unrun suite" "0" \
+  "$([ -f "$RG_SEVERITY/.gate/last-pass.json" ] && echo 1 || echo 0)"
+
+# GUARD, two-sided: this checkout's own .gate/last-pass.json (if any) must be
+# byte-unchanged by either row above -- both ran with REPO_TOP resolved to
+# their own throwaway repo, never to this one.
+RG_SELFGATE_AFTER=$(cat "$ROOT/.gate/last-pass.json" 2>/dev/null; echo)
+expect "(RUN-GATE) real checkout's own last-pass.json untouched" \
+  "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER"
+
+# ---------------------------------------------------------------------------
 # GUARD -- gate-before-merge.sh's `-c` classifier, confirmed still shared
 # (gc_global_options, moved into hooks/lib/git-cmd.sh at v3.0.3 item 1) rather
 # than reverted to a private copy. Scoped INSIDE gc_on_main by design: a
