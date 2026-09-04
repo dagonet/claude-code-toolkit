@@ -216,7 +216,12 @@ gc_global_options() {
       -C)   shift; continue ;;                                    # resolved by the caller
       -C?*) continue ;;
       --no-pager|-P|--paginate|--no-optional-locks|--literal-pathspecs|--no-lazy-fetch) continue ;;
-      -c|-c?*|--config-env|--config-env=*|--git-dir|--git-dir=*|--work-tree|--work-tree=*|--namespace|--namespace=*|--exec-path|--exec-path=*|--no-replace-objects)
+      # `--attr-source` is listed EXPLICITLY (v3.0.3, consumer argument on
+      # merit): it changes which tree gitattributes are read from, i.e. what the
+      # command resolves to, so it belongs beside --git-dir and --namespace
+      # rather than being caught by the unknown-global default below. Naming it
+      # also makes the DENY text say the option instead of "unknown".
+      -c|-c?*|--config-env|--config-env=*|--git-dir|--git-dir=*|--work-tree|--work-tree=*|--namespace|--namespace=*|--exec-path|--exec-path=*|--attr-source|--attr-source=*|--no-replace-objects)
             printf 'refuse:%s\n' "${gcgo_tok%%=*}"; return ;;
       -*)   printf 'refuse:%s\n' "$gcgo_tok"; return ;;           # unknown global: fail closed
       *)    printf 'ok\n'; return ;;                              # the subcommand
@@ -403,11 +408,9 @@ gc_cd_target() {
   printf '%s\n' "$1" | sed -n 's/^[[:space:]]*cd[[:space:]]\+\([^[:space:]]\+\)[[:space:]]*$/\1/p' | head -1
 }
 
-# Prints the `git -C <path>` argument of a segment, if present.
-# Decodes the \001 placeholders written by gc_protect_c_paths back to spaces.
-gc_git_c() {
-  printf '%s\n' "$1" | sed -n 's/.*\bgit[[:space:]]\+-C[[:space:]]\+\([^[:space:]]\+\).*/\1/p' | head -1 | tr '\001' ' '
-}
+# gc_git_c IS GONE (v3.0.3 defect 1). It required `-C` to sit immediately after
+# the literal `git` and took only the first one; see gc_dash_c_list below, which
+# replaces it with a walk over the globals.
 
 # gc_resolve <base> <path> -- absolute path, or the base when <path> is not a dir.
 gc_resolve() {
@@ -417,14 +420,141 @@ gc_resolve() {
   esac
 }
 
+# gc_dash_c_list <segment> -- every `-C` operand of a segment, one per line, in
+# argv order, with the \001 placeholders of gc_protect_c_paths decoded back to
+# spaces. Empty when the segment carries no `-C`.
+#
+# WHY THIS IS A PARSER AND NOT A REGEX (v3.0.3 defect 1, second finding). The
+# function it replaces, `gc_git_c`, was
+#
+#   sed -n 's/.*\bgit[[:space:]]\+-C[[:space:]]\+\([^[:space:]]\+\).*/\1/p' | head -1
+#
+# which required `-C` to sit IMMEDIATELY after the literal `git` and took only
+# the first one. Two live holes, both measured at 0d7806e:
+#
+#   ORDER       `git -c a=b -C <protected repo> merge feature/y` from an
+#               unprotected cwd -> 0. The leading `-c` defeats the regex,
+#               gc_git_c returns EMPTY, and gc_repo_for falls back to the
+#               payload cwd. From the protected cwd the same command returned 2
+#               — by luck, not by judgement.
+#   REPETITION  `head -1` takes the FIRST `-C`, so
+#               `git -C <feature repo> -C <protected repo> push` resolved to the
+#               feature repo and went ungated.
+#
+# FINDING 63 IS THE MIRROR IMAGE OF THE v3.0.2 ARGV-PREFIX DEFECT: that one was
+# blind to unlisted globals AFTER the subcommand position; `gc_git_c` was blind
+# to listed globals BEFORE `-C`. Same lib, same shape, opposite direction.
+#
+# The globals are now WALKED: every token after `git` is consumed until the
+# first non-option token, which is the subcommand. Stopping at the subcommand is
+# load-bearing in the other direction too — `git commit -C <commit>` reuses a
+# commit message and is not a directory change, and `git log -C` is copy
+# detection. Value-taking globals swallow their operand so that a value can
+# never be mistaken for the subcommand.
+gc_dash_c_list() {
+  gcdl_tail=$(printf '%s\n' "$1" | sed -n 's/.*\bgit[[:space:]]\+\(.*\)/\1/p' | head -1)
+  [ -n "$gcdl_tail" ] || return 0
+  gcdl_want=0
+  printf '%s\n' "$gcdl_tail" | tr ' \t' '\n\n' | while IFS= read -r gcdl_t; do
+    [ -n "$gcdl_t" ] || continue
+    case "$gcdl_want" in
+      1) gcdl_want=0; continue ;;
+      2) printf '%s\n' "$gcdl_t" | tr '\001' ' '; gcdl_want=0; continue ;;
+    esac
+    case "$gcdl_t" in
+      -C)  gcdl_want=2 ;;
+      -C*) printf '%s\n' "${gcdl_t#-C}" | tr '\001' ' ' ;;
+      --*=*) ;;
+      *)
+        case "$gcdl_t" in
+          -*)
+            # shellcheck disable=SC2254
+            case "$gcdl_t" in
+              -c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--super-prefix) gcdl_want=1 ;;
+              *) ;;
+            esac ;;
+          *=*) ;;                      # an environment assignment before `git`
+          *) break ;;                  # the subcommand
+        esac ;;
+    esac
+  done
+}
+
 # gc_repo_for <segment> <base> -- the repo a segment operates on.
+#
+# REPEATED `-C` IS FOLDED IN ARGV ORDER (v3.0.3, defect 1). MEASURED, git
+# 2.55.0 on this host: `-C` is repeatable and CUMULATIVE, each operand relative
+# to the one before — `git -C a -C b` chdirs into `a` and then into `b` INSIDE
+# it ("fatal: cannot change to 'b'" for a sibling `b`), and `git -C /g/x -C /g/y
+# rev-parse` resolves to `/g/y`. So an absolute second operand OVERRIDES and a
+# relative second one COMPOSES.
+#
+# WHY THE FOLD LIVES HERE AND NOT AT A CALL SITE. v3.0.3's first pass put it in
+# `a6_repo_for` in hooks/gate-before-merge.sh, on the stated grounds that
+# touching this lib would drag the ~90-minute three-parser matrix into the
+# release. That reason is void — this file already carries functional change in
+# v3.0.3 (the widened GC_GIT_PRE, gc_global_options moved in), so the matrix is
+# already mandatory before the tag — and the local copy was wrong in the way a
+# local copy is always wrong here: THREE hooks resolve a repo through this
+# function and the copy fixed ONE of them, while the OTHER of the two rules
+# (order) was in the lib and so was fixed in none.
 gc_repo_for() {
-  gcp=$(gc_git_c "$1")
-  if [ -n "$gcp" ]; then
-    gc_resolve "$2" "$gcp"
-  else
+  gcrf_list=$(gc_dash_c_list "$1")
+  if [ -z "$(printf '%s' "$gcrf_list" | tr -d '[:space:]')" ]; then
     printf '%s\n' "$2"
+    return
   fi
+  gcrf_base="$2"
+  while IFS= read -r gcrf_p; do
+    [ -n "$gcrf_p" ] || continue
+    gcrf_base=$(gc_resolve "$gcrf_base" "$gcrf_p")
+  done <<GC_DASHC
+$gcrf_list
+GC_DASHC
+  printf '%s\n' "$gcrf_base"
+}
+
+# gc_dash_c_unresolved <segment> <base> -- the first `-C` operand of a MULTI-`-C`
+# segment when NO operand of that segment resolves at all; empty otherwise.
+#
+# STRICTEST WINS BEFORE REFUSAL (v3.0.3, controller ruling on defect 1). The
+# first draft refused any multi-`-C` fold with an unresolvable step. That was too
+# blunt: a denied legitimate command is the guard people switch off. The rule
+# implemented instead, in gc_repo_for and here together:
+#
+#   * every `-C` is folded in order; gc_resolve keeps the LAST RESOLVED partial
+#     when a step does not resolve, so `git -C <protected> -C nope` is judged as
+#     the protected repo — strictest wins, and git will fail on its own anyway,
+#     so nothing lands either way;
+#   * only when NO operand resolved at any step does the hook have no candidate
+#     at all. That is the cannot-determine case, and a fail-closed gate refuses
+#     it, naming the operand.
+#
+# THE ASYMMETRY WITH A SINGLE `-C` IS DELIBERATE. `git -C nope merge` keeps its
+# documented exit 0 — falling back to the cwd and letting git fail. A multi-`-C`
+# fold is where this resolver has demonstrably diverged from git's own
+# composition, so it is the one shape where "I cannot resolve this" is evidence
+# about the RESOLVER rather than about the command.
+gc_dash_c_unresolved() {
+  gcdu_list=$(gc_dash_c_list "$1")
+  [ "$(printf '%s\n' "$gcdu_list" | grep -c '[^[:space:]]')" -ge 2 ] || return 0
+  gcdu_base="$2"
+  gcdu_first=""
+  while IFS= read -r gcdu_p; do
+    [ -n "$gcdu_p" ] || continue
+    [ -n "$gcdu_first" ] || gcdu_first=$gcdu_p
+    # Resolvability is tested DIRECTLY, not by comparing gc_resolve's output to
+    # the base: an operand that legitimately names the base directory would
+    # otherwise read as "did not resolve" and refuse a valid command.
+    case "$gcdu_p" in
+      /*|[A-Za-z]:[/\\]*) [ -d "$gcdu_p" ]            && return 0 ;;
+      *)                  [ -d "$gcdu_base/$gcdu_p" ] && return 0 ;;
+    esac
+    gcdu_base=$(gc_resolve "$gcdu_base" "$gcdu_p")
+  done <<GC_DASHU
+$gcdu_list
+GC_DASHU
+  printf '%s\n' "$gcdu_first"
 }
 
 # gc_current_branch <repo>

@@ -545,32 +545,35 @@ a6_inert_flags() {
 # pre-commit-test.sh need the identical classification. Same contract:
 # `ok | refuse:<opt> | env:<VAR>`. One definition, three callers.
 
-# a6_repo_for <segment> <base> -- gc_repo_for, corrected for REPEATED `-C`.
+# gc_repo_for IS GONE (v3.0.3, defect 1 round 2). It held a private copy of the
+# repeated-`-C` fold, on the stated grounds that fixing hooks/lib/git-cmd.sh
+# would drag the ~90-minute three-parser matrix into this release. That reason
+# was void — the lib already carries functional change in v3.0.3, so the matrix
+# is already mandatory — and the private copy fixed THIS hook while leaving the
+# same bypass live in hooks/no-push-main.sh, MEASURED at 0d7806e:
 #
-# MEASURED (git 2.55.0, this machine): `-C` is repeatable and CUMULATIVE, each
-# one relative to the last — `git -C a -C b` chdirs into `a` and then tries `b`
-# INSIDE it ("fatal: cannot change to 'b'" for a sibling `b`). For the absolute
-# paths a hook payload carries, that means the LAST -C wins. gc_git_c takes
-# `head -1`, i.e. the FIRST, so `git -C <feature repo> -C <protected repo>
-# merge …` resolved to the feature repo and went ungated.
+#   git -C <feature repo> -C <protected repo> push   from either cwd -> 0
 #
-# The fold is gated behind the count so a segment with 0 or 1 `-C` goes through
-# gc_repo_for byte-for-byte as before: this corrects one shape and moves no
-# existing row. The defect is in hooks/lib/git-cmd.sh's gc_git_c; correcting it
-# there would drag the ~90-minute three-parser matrix into this release, the
-# same reason a6_strip_redir compensates at the call site.
-a6_repo_for() {
-  a6rf_list=$(printf '%s\n' "$1" | grep -oE '(^|[[:space:]])-C[[:space:]]+[^[:space:]]+' | sed 's/.*-C[[:space:]]*//')
-  a6rf_n=$(printf '%s\n' "$a6rf_list" | grep -c '[^[:space:]]')
-  if [ "$a6rf_n" -le 1 ]; then
-    gc_repo_for "$1" "$2"
-    return
-  fi
-  a6rf_base="$2"
-  for a6rf_p in $a6rf_list; do
-    a6rf_base=$(gc_resolve "$a6rf_base" "$(printf '%s' "$a6rf_p" | tr '\001' ' ')")
-  done
-  printf '%s\n' "$a6rf_base"
+# i.e. git lands on the protected branch and the push gate never sees it. The
+# fold now lives in gc_repo_for; all three callers get it. See the comment
+# there for the git 2.55.0 measurement of `-C` composition.
+
+# a6_deny_unresolved_c <segment> <base> -- refuse a GATED clause whose repeated
+# `-C` fold does not resolve. Never called for a 0- or 1-`-C` segment: a single
+# `-C` into a missing directory keeps the documented pre-v3.0.3 behaviour (fall
+# back to the cwd, decide, let git fail). A fold that does not resolve is the
+# cannot-determine case, and a fail-closed gate refuses it.
+a6_deny_unresolved_c() {
+  a6du=$(gc_dash_c_unresolved "$1" "$2")
+  [ -n "$a6du" ] || return 0
+  {
+    echo "BLOCKED: A6 — hook could not resolve \`-C $a6du\`; if git can, pass an absolute path."
+    echo "  clause:          $1"
+    echo "  This clause carries more than one 'git -C' and NOT ONE of them resolves, so"
+    echo "  there is no candidate repository to judge. A fold with at least one resolvable"
+    echo "  step is judged on the strictest candidate instead of being refused."
+  } >&2
+  exit 2
 }
 
 # v2.2.6 round 2 -- THE 14th FAIL-OPEN, third instance. Checked BEFORE the tool
@@ -761,7 +764,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     if a6_branch_move "$seg"; then
       # Last one wins: a later checkout back onto a feature branch means the
       # gated clause no longer lands on a protected branch.
-      a6_move_verdict "$(a6_repo_for "$seg" "$base")" "$seg"
+      a6_move_verdict "$(gc_repo_for "$seg" "$base")" "$seg"
       moved=$?
       A6_MOVE_SEG=$seg
       continue
@@ -773,13 +776,15 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       A6_KIND=ghpr
       [ "$moved" != 0 ] && A6_KIND=moved
       A6_SEG=$seg
-      CWD=$(a6_repo_for "$seg" "$base")
+      a6_deny_unresolved_c "$seg" "$base"
+      CWD=$(gc_repo_for "$seg" "$base")
       break
     fi
 
     # 2. git merge while the checkout is on a protected branch
     if gc_matches_subcommand "$seg" "merge"; then
-      repo=$(a6_repo_for "$seg" "$base")
+      a6_deny_unresolved_c "$seg" "$base"
+      repo=$(gc_repo_for "$seg" "$base")
       margs=$(a6_args "$seg" "merge")
       # v3.0.1 item 1: the three merge-state subcommands are exempt on the
       # SUBCOMMAND PARSE, before the branch is even looked at. See
@@ -852,7 +857,8 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # bare `git pull` with divergent local history creating a real merge commit
     # on the protected branch, which is the topology A6 exists for.
     if gc_matches_subcommand "$seg" "pull"; then
-      repo=$(a6_repo_for "$seg" "$base")
+      a6_deny_unresolved_c "$seg" "$base"
+      repo=$(gc_repo_for "$seg" "$base")
       pargs=$(a6_args "$seg" "pull")
       # THE PROTECTED-BRANCH DECISION COMES FIRST (v3.0.2). The name comparison
       # in a6_pull_catchup reads THIS repo's config for THIS branch, so it is
@@ -905,8 +911,16 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     fi
 
     # 3. a push that targets a protected branch -- fast-forward merge by push
+    #
+    # THE TWO PUSH GATES KEY ON DIFFERENT THINGS, ON PURPOSE (v3.0.3, comment
+    # only). This arm keys on the CURRENT branch being protected — the merge
+    # gate guards what lands FROM here. hooks/no-push-main.sh keys on the push
+    # TARGET — it guards the DESTINATION. Both catch push-main-from-main;
+    # only no-push-main.sh catches push-to-main-from-a-feature-branch, verified.
+    # That is not a gap in this arm: the target check has an owner.
     if gc_matches_subcommand "$seg" "push"; then
-      repo=$(a6_repo_for "$seg" "$base")
+      a6_deny_unresolved_c "$seg" "$base"
+      repo=$(gc_repo_for "$seg" "$base")
       # v3.0.2: the push half of the redirection defect is a FAIL-OPEN, not a
       # false positive. `git push origin 2>&1` on a protected branch gave
       # gc_has_refspec two non-flag tokens, so it read "destination named", the

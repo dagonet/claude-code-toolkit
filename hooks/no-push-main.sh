@@ -161,6 +161,25 @@ while IFS= read -r seg; do
     exit 2
   fi
 
+  # v3.0.3 defect 1: repeated `git -C` is folded in argv order by gc_repo_for.
+  # Before that fix this gate took the FIRST operand, so
+  # `git -C <feature repo> -C <protected repo> push` resolved to the feature
+  # repo and returned 0 from either cwd — a measured live bypass, and the
+  # mirror-image false positive in the other operand order. A fold that does
+  # not resolve is the cannot-determine case and is refused; a SINGLE `-C` into
+  # a missing directory keeps the documented fall-back-to-cwd behaviour.
+  npdu=$(gc_dash_c_unresolved "$seg" "$base")
+  if [ -n "$npdu" ]; then
+    {
+      echo "BLOCKED: hook could not resolve \`-C $npdu\`; if git can, pass an absolute path."
+      echo "  matched segment: $seg"
+      echo "This push carries more than one 'git -C' and NOT ONE of them resolves, so there"
+      echo "is no candidate repository to judge. A fold with at least one resolvable step is"
+      echo "judged on the strictest candidate instead of being refused."
+    } >&2
+    exit 2
+  fi
+
   repo=$(gc_repo_for "$seg" "$base")
   args=$(np_strip_redir "$(gc_push_args "$seg")")
 
