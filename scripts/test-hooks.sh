@@ -1899,8 +1899,13 @@ check "(A6.C) single -C w, cwd side"                    "$H" 2 "$(mkjson Bash "g
 check "(A6.C) single -C side, cwd w"                    "$H" 0 "$(mkjson Bash "git -C $A6FEATCO merge feature/x" "$A6CLONE")"
 check "(A6.C) -C side -C w, cwd w   (fold lands in w)"  "$H" 2 "$(mkjson Bash "git -C $A6FEATCO -C $A6CLONE merge feature/x" "$A6CLONE")"
 check "(A6.C) -C side -C w, cwd side (fold lands in w)" "$H" 2 "$(mkjson Bash "git -C $A6FEATCO -C $A6CLONE merge feature/x" "$A6FEATCO")"
-check "(A6.C) -C w -C side, cwd w   (fold lands in side)" "$H" 0 "$(mkjson Bash "git -C $A6CLONE -C $A6FEATCO merge feature/x" "$A6CLONE")"
-check "(A6.C) -C w -C side, cwd side (fold lands in side)" "$H" 0 "$(mkjson Bash "git -C $A6CLONE -C $A6FEATCO merge feature/x" "$A6FEATCO")"
+# GIT SEMANTICS, NOT STRICTEST. `-C <protected> -C <unprotected>` is ALLOWED
+# because that is where git lands — the final folded path resolves, so it is
+# judged as git would resolve it. "Strictest wins" is the FALLBACK for a final
+# path that does not resolve, never "any protected candidate wins". These two
+# rows pin the code and the prose to the same fixture.
+check "(A6.C) -C w -C side, cwd w   (git semantics, not strictest)" "$H" 0 "$(mkjson Bash "git -C $A6CLONE -C $A6FEATCO merge feature/x" "$A6CLONE")"
+check "(A6.C) -C w -C side, cwd side (git semantics, not strictest)" "$H" 0 "$(mkjson Bash "git -C $A6CLONE -C $A6FEATCO merge feature/x" "$A6FEATCO")"
 # The DENY text must name the RESOLVED repo's branch, not the cwd's. A6FEATCO is
 # on feature/co, so a `branch: main` line proves the fold, not the payload.
 check_msg "(A6.C) DENY names the folded repo's branch" "$ROOT/$H" 2 \

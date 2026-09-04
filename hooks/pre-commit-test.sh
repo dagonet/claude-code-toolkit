@@ -68,12 +68,13 @@ RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
 # (whose whole contract is that this hook does nothing) and the pre-v2
 # settings.json refusal (which has no readable command to describe).
 #
-# WHERE THE ARTIFACT LANDS WHEN THE GLOBAL REFUSAL FIRES (v3.0.3, measured):
-# a `global-refused` artifact lands in the CWD repo's `.gate/`, not the `-C`
-# target's — the refusal fires before the target is resolved, because
-# PCT_ARTIFACT_BASE is assigned after REPO_PATH. Reading the target repo's
-# `.gate/` after such a refusal finds nothing, which is not evidence the hook
-# did not run.
+# WHERE THE ARTIFACT LANDS (v3.0.3, both cases measured). Written at
+# `<resolved repo>/.gate/last-precommit.json` — the repo whose commit was
+# gated, which is NOT the cwd when `-C` is in play. Exception: a
+# `global-refused` artifact lands in the cwd repo's `.gate/`, because that
+# refusal fires before the target is resolved (PCT_ARTIFACT_BASE is assigned
+# after REPO_PATH). Reading the target repo's `.gate/` after such a refusal
+# finds nothing, which is not evidence the hook did not run.
 PCT_HOOK_T0=$(date +%s 2>/dev/null || echo 0)
 PCT_ARTIFACT_BASE=""
 PCT_TREE=""

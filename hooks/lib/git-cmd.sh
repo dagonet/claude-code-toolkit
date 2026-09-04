@@ -526,18 +526,24 @@ GC_DASHC
 # gc_dash_c_unresolved <segment> <base> -- the first `-C` operand of a MULTI-`-C`
 # segment when NO operand of that segment resolves at all; empty otherwise.
 #
-# STRICTEST WINS BEFORE REFUSAL (v3.0.3, controller ruling on defect 1). The
-# first draft refused any multi-`-C` fold with an unresolvable step. That was too
-# blunt: a denied legitimate command is the guard people switch off. The rule
-# implemented instead, in gc_repo_for and here together:
+# THE RULE, IN PRECEDENCE ORDER (v3.0.3). "Strictest wins" is a FALLBACK and
+# must never be read as "any protected candidate wins":
 #
-#   * every `-C` is folded in order; gc_resolve keeps the LAST RESOLVED partial
-#     when a step does not resolve, so `git -C <protected> -C nope` is judged as
-#     the protected repo — strictest wins, and git will fail on its own anyway,
-#     so nothing lands either way;
-#   * only when NO operand resolved at any step does the hook have no candidate
-#     at all. That is the cannot-determine case, and a fail-closed gate refuses
-#     it, naming the operand.
+#   1. When the FINAL folded path resolves, it is judged AS GIT WOULD RESOLVE
+#      IT — relative composes, absolute overrides. `git -C <protected>
+#      -C <unprotected>` is therefore judged as the UNPROTECTED repo and
+#      allowed, because that is where git lands. There is a want-0 fixture row
+#      for exactly that, labelled "git semantics, not strictest".
+#   2. Only when the final path does NOT resolve is the strictest RESOLVED
+#      candidate judged: gc_resolve keeps the last resolved partial, so
+#      `git -C <protected> -C nope` is judged as the protected repo. Git will
+#      fail on its own anyway, so nothing lands either way.
+#   3. Refusal only when NO candidate resolves at all. That is the
+#      cannot-determine case, and a fail-closed gate refuses it, naming the
+#      operand.
+#
+# The first draft refused any multi-`-C` fold with an unresolvable step. That
+# was too blunt: a denied legitimate command is the guard people switch off.
 #
 # THE ASYMMETRY WITH A SINGLE `-C` IS DELIBERATE. `git -C nope merge` keeps its
 # documented exit 0 — falling back to the cwd and letting git fail. A multi-`-C`
