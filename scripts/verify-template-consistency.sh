@@ -1522,31 +1522,49 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 22b. The .env deny list is precise (v2.2.0, consumer feedback BUG 6).
+# 22b. The .env protection is a HOOK, not a deny rule (v3.0.3, queue item 28;
+#      supersedes v2.2.0's BUG-6 enumeration, which this check used to assert).
 #
-#     `Read(.env*)` also denied `.env.example` — a TRACKED file most repos ship
-#     as the documented list of required variables. The secret-bearing names are
-#     enumerated instead, so the example file stays readable.
+#      The six `Read(.env…)` deny rules protected the right files and cost every
+#      consumer their auto mode: Claude Code evaluates deny rules BEFORE the
+#      classifier, and a read-only command with a RELATIVE path after a `cd`
+#      cannot be statically proven not to hit one — so the harness prompted, and
+#      auto mode could not approve. Subagents in worktrees do that on nearly
+#      every read. The polarity of this check is therefore INVERTED on purpose:
+#      the rules must be ABSENT and `hooks/deny-secret-reads.sh` must be
+#      registered. Asserting only the absence would be half a check — that state
+#      is also what "somebody deleted the protection" looks like.
 # ---------------------------------------------------------------------------
 echo
 ENV_DENY='Read(.env) Read(.env.local) Read(.env.*.local) Read(.env.production) Read(.env.staging) Read(.env.development)'
 for s in $(for v in $VARIANTS; do echo "templates/$v/.claude/settings.json"; done) user-level-reference/settings.json; do
-  missing=""
+  present=""
   for t in $ENV_DENY; do
-    grep -qF "\"$t\"" "$s" || missing="$missing $t"
+    grep -qF "\"$t\"" "$s" && present="$present $t"
   done
-  if [ -z "$missing" ]; then
-    ok "$s: denies all 6 secret-bearing .env names"
+  if [ -z "$present" ]; then
+    ok "$s: no Read(.env…) deny rules (they prompted on every relative-path read)"
   else
-    ko "$s: .env deny list missing:$missing"
+    ko "$s: Read(.env…) deny rule(s) back:$present — they cost auto mode; the hook is the replacement"
   fi
-  # The glob must be gone, or .env.example is denied again.
-  if grep -qF '"Read(.env*)"' "$s"; then
-    ko "$s: Read(.env*) is back — it also denies the tracked .env.example"
+  # Any Read() glob has the same static-path problem, so it must not return by
+  # another spelling either.
+  if grep -qE '"Read\([^"]*\)"' "$s"; then
+    ko "$s: a Read(...) deny rule is present — every one of them triggers the static path check"
   else
-    ok "$s: no Read(.env*) glob (.env.example stays readable)"
+    ok "$s: no Read(...) deny rule of any spelling"
+  fi
+  if grep -qF 'hooks/deny-secret-reads.sh' "$s"; then
+    ok "$s: registers hooks/deny-secret-reads.sh (the protection that replaced the rules)"
+  else
+    ko "$s: hooks/deny-secret-reads.sh NOT registered — the .env files are unprotected, not merely un-prompted"
   fi
 done
+if [ -s hooks/deny-secret-reads.sh ]; then
+  ok "hooks/deny-secret-reads.sh exists at the repo root"
+else
+  ko "hooks/deny-secret-reads.sh missing/empty — every settings.json above references a hook that is not there"
+fi
 
 # ---------------------------------------------------------------------------
 # 23. SubagentStop matchers cover project-added language coders (v2.1.1).
@@ -2711,6 +2729,9 @@ else
 fi
 rm -rf "$b3_tmp"
 
+# NOTE: check 33 (EOL) is appended after arm F below — it is a file-level census
+# with no relation to the retired-name scan and simply lands at the end.
+
 # Arm F — fence delimiters must be balanced in every scanned file. An odd count
 # leaves the tail of a file permanently "inside a fence", so live prose after it
 # is never scanned and arm A returns clean. This is the one way the exclusion
@@ -2719,6 +2740,47 @@ if [ "$b3_oddfence" -eq 0 ]; then
   ok "check 32 (arm F): fence delimiters are balanced in all $b3_scanned scanned docs — fence state cannot desync and swallow live prose"
 else
   ko "check 32 (arm F): $b3_oddfence scanned doc(s) have an ODD fence-delimiter count — see above. Everything after the unmatched delimiter is scanned as if fenced, so arm A is clean for that region whatever it contains"
+fi
+
+# ---------------------------------------------------------------------------
+# 33. NO TRACKED FILE CARRIES A CARRIAGE RETURN (v3.0.3).
+#
+#     "Every file is LF" has been an invariant since v1 and nothing executed it.
+#     `scripts/template_propagate_to_variants` can emit CRLF, and a census that
+#     cannot see line endings is the same class of blind spot as one that cannot
+#     see whether a hook is REGISTERED.
+#
+#     READ THE BLOBS, NOT THE WORKING TREE. On a consumer checkout with
+#     `core.autocrlf=true` every text file in the working tree has CRLF by
+#     design, and a working-tree scan would go red on a repository that is
+#     perfectly clean. `git show :<path>` reads the staged/committed bytes,
+#     which are what other consumers receive.
+#
+#     Binary files are skipped by the same extension list `.gitattributes`
+#     marks binary; a CR inside one of those is content, not an EOL.
+# ---------------------------------------------------------------------------
+echo
+eol_bad=0
+eol_scanned=0
+eol_names=""
+eol_list=$(git ls-files 2>/dev/null)
+for f in $eol_list; do
+  case "$f" in
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.icns|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.gz|*.zip|*.pdf|*.jar|*.class|*.dll|*.exe) continue ;;
+  esac
+  eol_scanned=$((eol_scanned + 1))
+  if git show ":$f" 2>/dev/null | grep -qU "$(printf '\r')"; then
+    eol_bad=$((eol_bad + 1))
+    eol_names="$eol_names $f"
+  fi
+done
+if [ "$eol_scanned" -lt 50 ]; then
+  # A census that scanned almost nothing reports clean for the wrong reason.
+  ko "check 33: only $eol_scanned tracked text files enumerated — the file list is broken, not the repository clean"
+elif [ "$eol_bad" -eq 0 ]; then
+  ok "check 33: all $eol_scanned tracked text blobs are LF-only (no CR)"
+else
+  ko "check 33: $eol_bad tracked blob(s) contain CR:$eol_names — normalize to LF (sed -i 's/\r\$//', never PowerShell) and re-add"
 fi
 
 # ---------------------------------------------------------------------------

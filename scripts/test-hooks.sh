@@ -3930,6 +3930,52 @@ check_msg "(PCT8) 'none' with no Gate: the WARN, exit 0" "$ROOT/$PCT8" 0 "$(mkjs
 printf '# ctx\n\n- **Test**: `exit 1`\n' > "$PCT8NG/PROJECT_CONTEXT.md"
 check "(PCT8) control: a real Test still runs and blocks" "$PCT8" 2 "$(mkjson Bash 'git commit -m x' "$PCT8NG")"
 
+# ---------------------------------------------------------------------------
+# v3.0.3 item 28 — hooks/deny-secret-reads.sh: the .env protection as a HOOK.
+#
+# Six `Read(.env…)` deny RULES shipped in every consumer's project settings.
+# They protected the right files and cost every consumer their auto mode: deny
+# rules are evaluated before the classifier, and a read-only command with a
+# relative path after a `cd` cannot be statically proven not to hit one, so the
+# harness prompted and auto mode could not approve. A hook answers per call.
+#
+# Both polarities, and the two BLIND-SPOT rows are want-0 ON PURPOSE: this hook
+# sees a command's ARGUMENTS, not what an interpreter opens. `python -c
+# "open('.env')"` and `git show HEAD:.env` are judged by the auto-mode
+# classifier's own credential rules, and the DENY text says so. Asserting them
+# as 0 puts the boundary on the record as a decision instead of leaving it to be
+# rediscovered as a hole.
+DSR=hooks/deny-secret-reads.sh
+mkjson_read() { # <file_path> <cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")"
+}
+DSRCWD="$TMPROOT"
+for p in '.env' '/p/.env.local' '/p/.env.production' '/x/.env.staging'; do
+  check "(DSR) Read $p denied"                "$DSR" 2 "$(mkjson_read "$p" "$DSRCWD")"
+done
+for p in '/p/.envrc' '/p/environment.ts' 'src/.env.example'; do
+  check "(DSR) Read $p allowed"               "$DSR" 0 "$(mkjson_read "$p" "$DSRCWD")"
+done
+check_msg "(DSR) the denial NAMES the path"   "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "/p/.env.local"
+check_msg "(DSR) the denial names its blind spot" "$ROOT/$DSR" 2 "$(mkjson_read '.env' "$DSRCWD")" "judged by the auto-mode classifier"
+check "(DSR) Bash: cat .env denied"           "$DSR" 2 "$(mkjson Bash 'cat .env' "$DSRCWD")"
+check "(DSR) Bash: sed -n p ./.env denied"    "$DSR" 2 "$(mkjson Bash 'sed -n p ./.env' "$DSRCWD")"
+check "(DSR) Bash: grep in a quoted path denied" "$DSR" 2 "$(mkjson Bash 'grep KEY "$PWD/.env.local"' "$DSRCWD")"
+check "(DSR) Bash: cat .env | head denied"    "$DSR" 2 "$(mkjson Bash 'cat .env | head' "$DSRCWD")"
+check "(DSR) Bash: cat .environment allowed"  "$DSR" 0 "$(mkjson Bash 'cat .environment' "$DSRCWD")"
+check "(DSR) Bash: ls -la allowed"            "$DSR" 0 "$(mkjson Bash 'ls -la' "$DSRCWD")"
+# DECIDED AND STATED: `echo .env` is a literal, not a read. The Bash arm keys on
+# a reader verb as well as a path shape, which is what keeps this row 0 — and
+# what keeps `git show HEAD:.env` below out of this hook's jurisdiction for the
+# right reason rather than by accident of the regex.
+check "(DSR) Bash: echo .env is a literal, allowed" "$DSR" 0 "$(mkjson Bash 'echo .env' "$DSRCWD")"
+check "(DSR) BLIND SPOT: python -c open('.env')" "$DSR" 0 "$(mkjson Bash "python -c \"open('.env')\"" "$DSRCWD")"
+check "(DSR) BLIND SPOT: git show HEAD:.env"  "$DSR" 0 "$(mkjson Bash 'git show HEAD:.env' "$DSRCWD")"
+# Cannot-determine refuses: an unparseable payload is not an absent one.
+check "(DSR) unparseable payload refused"     "$DSR" 2 '{"tool_name":"Read",'
+check "(DSR) a Read with no file_path allowed" "$DSR" 0 "$(mkjson_nocmd Read "$DSRCWD")"
+
 # ===========================================================================
 # Read back the stub-PATH completeness marker (see mkpathdir): a stub built
 # without its minimum tool set makes every case running under it meaningless,
