@@ -34,6 +34,16 @@
 # hook's jurisdiction for the right reason rather than by accident of the
 # regex.
 #
+# THE VERB LIST IS AN ALLOWLIST AND IS THEREFORE KNOWN-INCOMPLETE — SAID HERE
+# rather than discovered later, the same way v3.0.2's clause blocklist declared
+# its own incompleteness. A reader that is not in the list below passes: today
+# that is anything from `perl -ne`, `busybox cat` under another name, or a
+# consumer's own script. Adding verbs is cheap and safe; the inverse rule ("deny
+# any matching token unless the verb is provably inert") was considered and
+# REJECTED, because it denies `cp .env.example .env`, `git add .env` and
+# `rm .env`, none of which are reads. A missed read is a gap; a denied write is
+# a guard people switch off.
+#
 # STATED BLIND SPOT. This hook sees a command's ARGUMENTS, not what an
 # interpreter opens. `python -c "open('.env')"`, `node -e "fs.readFileSync…"`
 # and `git show HEAD:.env` are NOT denied here — they are judged by the
@@ -100,7 +110,7 @@ case "$DSR_TOOL" in
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       case "${tok##*/}" in
-        cat|bat|head|tail|less|more|nl|od|xxd|hexdump|strings|sed|awk|gawk|grep|egrep|fgrep|rg|ag|cut|tr|sort|uniq|wc|tee|dd|base64|readarray|mapfile|source|.)
+        cat|bat|head|tail|less|more|nl|od|xxd|hexdump|strings|sed|awk|gawk|grep|egrep|fgrep|rg|ag|cut|tr|sort|uniq|wc|tee|dd|base64|jq|yq|diff|cmp|envsubst|readarray|mapfile|source|.)
           DSR_READER=1 ;;
       esac
     done <<DSR_TOK

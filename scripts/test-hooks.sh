@@ -3970,6 +3970,11 @@ check "(DSR) Bash: ls -la allowed"            "$DSR" 0 "$(mkjson Bash 'ls -la' "
 # what keeps `git show HEAD:.env` below out of this hook's jurisdiction for the
 # right reason rather than by accident of the regex.
 check "(DSR) Bash: echo .env is a literal, allowed" "$DSR" 0 "$(mkjson Bash 'echo .env' "$DSRCWD")"
+check "(DSR) Bash: jq . .env denied"           "$DSR" 2 "$(mkjson Bash 'jq . .env' "$DSRCWD")"
+# The verb list is an ALLOWLIST, so an unlisted reader passes. Asserted rather
+# than left implicit: a guard whose incompleteness is only in prose is one
+# nobody can see the edge of. Adding the verb is the fix when one shows up.
+check "(DSR) STATED GAP: an unlisted reader passes" "$DSR" 0 "$(mkjson Bash 'perl -ne print .env' "$DSRCWD")"
 check "(DSR) BLIND SPOT: python -c open('.env')" "$DSR" 0 "$(mkjson Bash "python -c \"open('.env')\"" "$DSRCWD")"
 check "(DSR) BLIND SPOT: git show HEAD:.env"  "$DSR" 0 "$(mkjson Bash 'git show HEAD:.env' "$DSRCWD")"
 # Cannot-determine refuses: an unparseable payload is not an absent one.

@@ -69,8 +69,7 @@ The plan asked for one. Three shipped guards forbid it, and they are not oversig
 
 ### Downstream migration
 
-1. **Globals before a gated `pull` / `merge` / `push` are refused** unless they are one of the six inert ones or `-C`. Set them in configuration in a separate call. The DENY text names the option it refused.
-2. **`settings.json` customisers must port the matcher change by hand.** If your project `settings.json` is PROJECT_CUSTOM (a dotnet build hook, for example), the sync will not touch it. Do it in this order: **(a) ADD the hook entry FIRST, (b) THEN delete the six `Read(.env…)` lines.** Deleting first leaves you unprotected until the hook is wired; adding the hook while leaving the rules in place keeps the prompts. The entry to paste, copied from the template:
+1. **`settings.json` customisers must port the matcher change by hand.** If your project `settings.json` is PROJECT_CUSTOM (a dotnet build hook, for example), the sync will not touch it. Do it in this order: **(a) ADD the hook entry FIRST, (b) THEN delete the six `Read(.env…)` lines.** Deleting first leaves you unprotected until the hook is wired; adding the hook while leaving the rules in place keeps the prompts. The entry to paste, copied from the template:
    ```json
    {
      "matcher": "Read|Bash",
@@ -92,6 +91,7 @@ The plan asked for one. Three shipped guards forbid it, and they are not oversig
    "Read(.env.development)",
    ```
    **Keeping the six rules — and the prompts — until you have installed the hook is a valid choice**, not a migration you are behind on. The rules protect the right files; what they cost is auto mode.
+2. **Globals before a gated `pull` / `merge` / `push` are refused** unless they are one of the six inert ones or `-C`. Set them in configuration in a separate call. The DENY text names the option it refused.
 3. **Step 9 of the sync skill is now TWO calls.** Edit in one tool call; `git add` + `git commit -F <file OUTSIDE the repo>` in the next. The commit hook is PreToolUse and hashes the working tree BEFORE the call runs, so a mutation batched with the commit is gated in its pre-mutation state and the artifact then describes the parent's tree.
 4. **Read `.gate/last-precommit.json` immediately after the commit**, before any other tool call. It is rewritten on every Bash call this hook sees in any git repository.
 5. **The Test/Gate break-even is at the field** in `PROJECT_CONTEXT.md`. `**Test**: none` is now an opt-out rather than a command; before v3.0.3 it blocked every commit.
@@ -119,6 +119,7 @@ The T1/T2 arms were measured before the branches were integrated and are reporte
 
 - No PowerShell payload is gated by `deny-secret-reads.sh`: it is registered on `Read|Bash`, as the plan specifies. A PowerShell `cat .env` is judged by the classifier alone.
 - The hook reads arguments, never an interpreter's file handles. Interpreter reads and `git show HEAD:<path>` are out of scope by decision, with fixtures pinning the boundary.
+- **The Bash arm's reader-verb list is an ALLOWLIST and is therefore known-incomplete**, stated in the hook and pinned by a fixture: an unlisted reader (`perl -ne print .env`) passes. Adding verbs is cheap; the inverse rule ("deny any matching token unless the verb is provably inert") was considered and rejected, because it denies `cp .env.example .env`, `git add .env` and `rm .env`, none of which are reads. A missed read is a gap; a denied write is a guard people switch off.
 - `templates/rust-tauri/PROJECT_CONTEXT.md` has no plain `**Test**` field (`**Test (backend)**` / `**Test (frontend)**`), so that variant is always on the Gate path and the `none` opt-out never applies to it.
 - The EOL census (check 33) reads BLOBS. In this repository `.gitattributes` (`* text=auto eol=lf`) normalizes on `git add`, so a CRLF blob can only be produced by bypassing the filters — which is how the control was built. Every one of the 208 tracked text blobs is already LF: **the plan's "normalize the six CRLF `PROJECT_CONTEXT.md` files" was a no-op on this tree, and the check is what says so.**
 

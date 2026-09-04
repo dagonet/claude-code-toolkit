@@ -2763,17 +2763,20 @@ echo
 eol_bad=0
 eol_scanned=0
 eol_names=""
-eol_list=$(git ls-files 2>/dev/null)
-for f in $eol_list; do
+# NUL-delimited: a `for f in $(git ls-files)` word-splits on a filename with a
+# space in it and silently under-scans, which is the same clean-looking failure
+# the scanned-count floor below exists to catch.
+eol_cr=$(printf '\r')
+while IFS= read -r -d '' f; do
   case "$f" in
     *.png|*.jpg|*.jpeg|*.gif|*.ico|*.icns|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.gz|*.zip|*.pdf|*.jar|*.class|*.dll|*.exe) continue ;;
   esac
   eol_scanned=$((eol_scanned + 1))
-  if git show ":$f" 2>/dev/null | grep -qU "$(printf '\r')"; then
+  if git show ":$f" 2>/dev/null | grep -qU "$eol_cr"; then
     eol_bad=$((eol_bad + 1))
     eol_names="$eol_names $f"
   fi
-done
+done < <(git ls-files -z 2>/dev/null)
 if [ "$eol_scanned" -lt 50 ]; then
   # A census that scanned almost nothing reports clean for the wrong reason.
   ko "check 33: only $eol_scanned tracked text files enumerated — the file list is broken, not the repository clean"
