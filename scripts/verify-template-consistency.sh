@@ -801,16 +801,22 @@ fi
 #      sync-template skill flow described above, which is why the defensive
 #      posture stands regardless.)
 #
-#      THE PRINCIPLE, not a fixed list: a root hook must have a mirror
-#      UNLESS it is PROJECT-MODEL-scoped — its subject is the agent team
-#      (`.claude/agents/`, AGENT_TEAM.md, the delegation surface), which has
-#      no meaning in a bare `~/.claude` where there is no project. The
-#      mirrored hooks are exactly the ones whose subject is the developer's
-#      MACHINE (git gates, secrets, output/read size, the retro ledger and
-#      its brief — both keyed on cwd -> project slug under the user's own
+#      THE PRINCIPLE, not a fixed list: membership on this allowlist is a
+#      claim about USEFULNESS at user level, never a claim about what the
+#      hook reads or how it is implemented. A root hook must have a mirror
+#      UNLESS a bare `~/.claude` checkout has no audience for it: no agent
+#      team (enforce-delegation.sh has no delegation surface to enforce),
+#      no project-team deliverable contract (enforce-agent-contract.sh has
+#      nothing to bind to), no per-task tool-call budget (agent-budget-warn.sh
+#      has nothing to warn about), no "## Required Skills" spawn convention
+#      (require-skills-block.sh has no skills binding to check). The mirrored
+#      hooks are exactly the ones whose subject is the developer's MACHINE
+#      (git gates, secrets, output/read size, the retro ledger and its brief
+#      — both keyed on cwd -> project slug under the user's own
 #      `~/.claude/projects/`, so both work in any repo on the machine).
-#      Adding an entry requires stating, in one line, why the hook has no
-#      user-level meaning — not just that it currently lacks a mirror.
+#      Adding an entry requires stating, in one line, why a bare user-level
+#      install has no USE for the hook — not just that it currently lacks a
+#      mirror, and never merely that it happens to read project-only state.
 #      Populated from the diff between `hooks` and `user-level-reference/hooks`
 #      at v3.0.4 (verified by:
 #      diff <(cd hooks && find . -type f | sort) <(cd user-level-reference/hooks && find . -type f | sort)):
@@ -993,8 +999,12 @@ fi
 # 21c-2g. The retro base-dir helper, same census for the same reason (v3.0.4,
 # item A6b, a consequence of mirroring retro-brief.sh in check 21a above).
 #
-#      retro-ledger.sh WRITES `$HOME/.claude/projects/<slug>/memory/retro.md`;
-#      retro-brief.sh READS it. If the base-dir helper (the win32 HOME
+#      retro-ledger.sh and retro-brief.sh are TWO HALVES OF ONE FEATURE, not
+#      two hooks that happen to touch the same directory: retro-ledger.sh
+#      WRITES `$HOME/.claude/projects/<slug>/memory/retro.md`; retro-brief.sh
+#      READS that same data back. Sharing a directory would not require a
+#      shared helper; sharing a WRITE/READ contract on the same file does. If
+#      the base-dir helper (the win32 HOME
 #      normalisation plus the CLAUDE_MEMORY_HOME/HOME/os.homedir() fallback
 #      chain) ever diverges between the two, the brief silently reads an
 #      EMPTY file and reports "no retro entries" — a null result
@@ -2928,6 +2938,36 @@ elif [ "$eol_bad" -eq 0 ]; then
   ok "check 33: all $eol_scanned tracked text blobs are LF-only (no CR)"
 else
   ko "check 33: $eol_bad tracked blob(s) contain CR:$eol_names — normalize to LF (sed -i 's/\r\$//', never PowerShell) and re-add"
+fi
+
+# ---------------------------------------------------------------------------
+# 34. HEADING-ANCHORED PLACEMENT CHECK, against a real fixture (v3.0.4, item
+#     B3). A merge can be clean by has_conflicts/dropped_lines and still splice
+#     the template's new content into the wrong section — see
+#     scripts/fixtures/b3-placement/README.md for the real three-way sync this
+#     was measured from. scripts/check-b3-placement.sh implements the
+#     heading-anchored algorithm from SKILL.md step 4; this row runs it against
+#     BOTH arms of the fixture and asserts each lands on its documented
+#     verdict — RED on the misplaced merge, GREEN on the correct splice. A
+#     check that only ever prints RED (or only ever GREEN) is not a working
+#     check; both arms must be seen to fire correctly, on every run.
+# ---------------------------------------------------------------------------
+echo
+B3D=scripts/fixtures/b3-placement
+B3C=scripts/check-b3-placement.sh
+if [ ! -f "$B3C" ] || [ ! -d "$B3D" ]; then
+  ko "check 34: $B3C or $B3D missing — the placement check has no fixture to run against"
+else
+  if bash "$B3C" "$B3D/base.md" "$B3D/template.md" "$B3D/merged.md" >/dev/null 2>&1; then
+    ko "check 34: placement check reported GREEN on $B3D/merged.md — expected RED (known-misplaced fixture); the check is not detecting misplacement"
+  else
+    ok "check 34: placement check correctly reports RED on $B3D/merged.md (added block under the wrong heading)"
+  fi
+  if bash "$B3C" "$B3D/base.md" "$B3D/template.md" "$B3D/spliced-negative-control.md" >/dev/null 2>&1; then
+    ok "check 34: placement check correctly reports GREEN on $B3D/spliced-negative-control.md (added block under the correct heading)"
+  else
+    ko "check 34: placement check reported RED on $B3D/spliced-negative-control.md — expected GREEN (known-correct fixture); the check fires on every added block regardless of placement"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -4337,17 +4337,20 @@ for p in '/p/.envrc' '/p/environment.ts' 'src/.env.example'; do
 done
 check_msg "(DSR) the denial NAMES the path"   "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "/p/.env.local"
 check_msg "(DSR) the denial names its blind spot" "$ROOT/$DSR" 2 "$(mkjson_read '.env' "$DSRCWD")" "judged by the auto-mode classifier"
-# v3.0.4 item A1 — the TEXT clause, and where it matched. Two consumers were
-# blocked within minutes by `grep -c 'Read(\.env' .claude/settings.json` —
-# a config-inspection false positive — and the fix names the matched TOKEN
-# and its LOCATION, not a workaround that would teach evasion (a controller
-# amendment during this item's implementation rejected an earlier draft that
-# pointed at "a script file" / "bash <path>", because that sentence IS an
-# evasion recipe against this very hook: the guard scans the Bash COMMAND
-# STRING, not a script file's contents, so `bash audit.sh` containing
-# `cat .env` would not be caught — the advice would teach the bypass at the
-# moment the user is most motivated to use it).
-check_msg "(DSR) the denial names the matched TEXT" "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "This matched the command TEXT"
+# v3.0.4 item A1 — the matched TOKEN and its LOCATION, not a workaround that
+# would teach evasion (a controller amendment during this item's
+# implementation rejected an earlier draft that pointed at "a script file" /
+# "bash <path>", because that sentence IS an evasion recipe against this very
+# hook: the guard scans the Bash COMMAND STRING, not a script file's contents,
+# so `bash audit.sh` containing `cat .env` would not be caught — the advice
+# would teach the bypass at the moment the user is most motivated to use it).
+# A first-shipped draft also added a TEXT clause claiming "a literal secrets
+# filename in any argument is enough, even when the command reads something
+# else" — that is FALSE against this hook's own source: the Bash arm is
+# VERB-KEYED (`DSR_READER` gates the whole match at line ~198), so `echo .env`
+# and `ls -la .env` are 0, asserted below. The clause was removed rather than
+# left to mislead the next reader into thinking any argument match denies;
+# only the matched-token + location line stays.
 check_msg "(DSR) the denial names the match location" "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "matched: \"/p/.env.local\" in the file path argument"
 check_msg "(DSR) Bash denial names the match location" "$ROOT/$DSR" 2 "$(mkjson Bash 'cat .env' "$DSRCWD")" "matched: \".env\" in argument 2"
 check_msg "(DSR) the remedy for config-inspection false positives" "$ROOT/$DSR" 2 "$(mkjson_read '.env' "$DSRCWD")" "Read it with the Read tool"
@@ -4364,6 +4367,17 @@ check "(DSR) Bash: grep in a quoted path denied" "$DSR" 2 "$(mkjson Bash 'grep K
 check "(DSR) Bash: cat .env | head denied"    "$DSR" 2 "$(mkjson Bash 'cat .env | head' "$DSRCWD")"
 check "(DSR) Bash: cat .environment allowed"  "$DSR" 0 "$(mkjson Bash 'cat .environment' "$DSRCWD")"
 check "(DSR) Bash: ls -la allowed"            "$DSR" 0 "$(mkjson Bash 'ls -la' "$DSRCWD")"
+# v3.0.4 item A1 follow-up — CROSS-CLAUSE matching is deliberate, measured by a
+# consumer: the verb check and the secret-shape check both scan the WHOLE
+# tokenized command, not a single clause, so a reader verb in one clause and a
+# secrets-shaped token in another both fire the deny — a wrapper cannot split
+# the two across `&&`/`;`/`|` to evade the match. Confirmed against the source
+# (no per-clause split in either DSR_READER or the token-secret loop) before
+# the deny text's cross-clause sentence was shipped.
+check "(DSR) Bash: cross-clause (mention + reader in another clause) denied" \
+  "$DSR" 2 "$(mkjson Bash 'echo mentions .env here && grep -c x settings.json' "$DSRCWD")"
+check "(DSR) Bash: negative control — reader clause with no secret token allowed" \
+  "$DSR" 0 "$(mkjson Bash 'cat settings.json && echo hello' "$DSRCWD")"
 # DECIDED AND STATED: `echo .env` is a literal, not a read. The Bash arm keys on
 # a reader verb as well as a path shape, which is what keeps this row 0 — and
 # what keeps `git show HEAD:.env` below out of this hook's jurisdiction for the

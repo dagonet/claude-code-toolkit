@@ -148,12 +148,11 @@ dsr_paths_in() {
   esac
 }
 
-dsr_deny() { # <path> <location-desc>
+dsr_deny() { # <path> <location-desc> [extra-clause]
   {
-    echo "BLOCKED: reading '$1' — secrets files are not read by agents."
+    echo "BLOCKED: '$1' — secrets files are not read by agents. (matched: \"$1\" in $2)"
     echo "  Could not determine: this hook sees the command's arguments, not what an interpreter opens; 'python -c open(...)' and 'git show HEAD:.env' are judged by the auto-mode classifier, not here."
-    echo "  This matched the command TEXT: a literal secrets filename in any argument is"
-    echo "  enough, even when the command reads something else. (matched: \"$1\" in $2)"
+    [ -n "${3:-}" ] && printf '%s\n' "$3" | sed 's/^/  /'
     echo "  If you need a variable's NAME, read '.env.example' — it is allowed on purpose."
     echo "  Inspecting a config file that merely mentions one? Read it with the Read tool."
   } >&2
@@ -202,7 +201,9 @@ DSR_TOK
       DSR_ARGN=$((DSR_ARGN + 1))
       while IFS= read -r dsr_p; do
         [ -n "$dsr_p" ] || continue
-        if dsr_is_secret "$dsr_p"; then dsr_deny "$dsr_p" "argument $DSR_ARGN"; fi
+        if dsr_is_secret "$dsr_p"; then
+          dsr_deny "$dsr_p" "argument $DSR_ARGN" "Matched a reader verb and a secrets filename in the same command, though not necessarily in the same clause: a mention in an echo or a comment counts, and so does a reader that never touches the file. Whole-command matching is deliberate, so that a wrapper such as \`bash -c \"...\"\` cannot hide the read."
+        fi
       done <<DSR_PATHS
 $(dsr_paths_in "$tok")
 DSR_PATHS

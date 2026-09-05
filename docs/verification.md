@@ -44,6 +44,10 @@ From the v3.0.3 consumer verification round:
 
 > **Run the harness against a known-answer state (e.g. the previous release) before pointing it at the release candidate**; a harness that has never produced a correct result has not been shown to produce results at all.
 
+From the v3.0.4 consumer verification round:
+
+> **A suite's verdict is `passed == expected_total AND skipped == 0`, never `failed == 0`.** A skip is a non-measurement wearing a green costume, exactly as an exit 127 is; asserting the EXPECTED TOTAL costs one integer and catches every silent-skip variant at once, including the ones not yet invented. `963/0/0` is a verdict; `all passed` is not, and neither is `0 failed`. The parser matrix already enforces this at release time (the node configuration asserts skip count 0 exact, the restricted configurations assert an in-band non-zero count) — but the finding that produced this rule was on a pre-matrix run, so the rule applies to EVERY suite run, not only the matrix.
+
 ## Verifying the toolkit repo itself
 
 Three scripts run from the toolkit root. All three are safe to run at any time and none of them write to your project.
