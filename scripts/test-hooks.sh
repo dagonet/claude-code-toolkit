@@ -4738,7 +4738,7 @@ if grep -qF "$PCT_ANCHOR" "$ROOT/hooks/pre-commit-test.sh"; then
   ' "$ROOT/hooks/pre-commit-test.sh" > "$PCT_GREEDY_SH"
   cp "$ROOT/hooks/lib/git-cmd.sh" "$ROOT/hooks/lib/json.sh" "$NORUNGATE-greedy/lib/"
   cp "$PCT_GREEDY_SH" "$NORUNGATE-greedy/pre-commit-test.sh"
-  if grep -qF "$PCT_ANCHOR_NEW"'\*\*Gate' "$NORUNGATE-greedy/pre-commit-test.sh" 2>/dev/null; then
+  if grep -qF "$PCT_ANCHOR_NEW"'\\*\\*Gate' "$NORUNGATE-greedy/pre-commit-test.sh" 2>/dev/null; then
     printf '%s' "$(mkjson Bash 'git commit -m x' "$FLD_GATE2")" \
       | env PCT_PROBE_MARKER="$FLD_GATE_DTG_MARKER" bash "$NORUNGATE-greedy/pre-commit-test.sh" >/dev/null 2>&1
     FLD_GATE_DTG_RC=$?
@@ -4917,7 +4917,7 @@ if grep -qF "$RG_ANCHOR" "$ROOT/hooks/run-gate.sh"; then
   # Verify the mutation actually applied rather than trusting it, since a
   # no-op copy would make every DtG row silently look like a false PASS on
   # "did not flip".
-  if grep -qF "$RG_ANCHOR_NEW"'\*\*Gate' "$RG_GREEDY_SH" 2>/dev/null; then
+  if grep -qF "$RG_ANCHOR_NEW"'\\*\\*Gate' "$RG_GREEDY_SH" 2>/dev/null; then
     rg_dtg_row() { # <label> <gate-value> <want-marker> <want-artifact>
       rgd_label="$1"; rgd_gate="$2"; rgd_wm="$3"; rgd_wa="$4"
       rgd_d=$(mkrepo "rg-a2-dtg-$(printf '%s' "$rgd_label" | tr -c 'a-zA-Z0-9' '-')" main)
