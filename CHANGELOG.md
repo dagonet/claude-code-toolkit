@@ -2,7 +2,7 @@
 
 ## v3.0.4 — 2026-09-05
 
-**A patch of consumer-measured items against v3.0.3; the v3.1 deferrals are named, not silent: misplacement-aware merge, `lastSyncedVersion` ownership, tracked-only tree hashing, finding-59 provenance, profiling, and class-3 refusal on read-only verbs.**
+**A patch of consumer-measured items against v3.0.3; the v3.1 deferrals are named, not silent: misplacement-aware merge, `lastSyncedVersion` ownership, tracked-only tree hashing, finding-59 provenance, profiling, class-3 refusal on read-only verbs, and `setup-project.ps1`'s unguarded `git rev-parse` terminating before the manifest is written on a no-`.git` (ZIP) checkout (open-brain).**
 
 **Six items from three consumers (yutraffic, open-brain, panoscribe) reporting against v3.0.3, plus Coder B's skill-side items in the same release.**
 
