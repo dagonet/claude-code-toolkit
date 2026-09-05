@@ -44,6 +44,12 @@ From the v3.0.3 consumer verification round:
 
 > **Run the harness against a known-answer state (e.g. the previous release) before pointing it at the release candidate**; a harness that has never produced a correct result has not been shown to produce results at all.
 
+From the v3.0.4 consumer verification round:
+
+> **A suite's verdict is `passed == expected_total AND skipped == 0`, never `failed == 0`.** A skip is a non-measurement wearing a green costume, exactly as an exit 127 is; asserting the EXPECTED TOTAL costs one integer and catches every silent-skip variant at once, including the ones not yet invented. `963/0/0` is a verdict; `all passed` is not, and neither is `0 failed`. The parser matrix already enforces this at release time (the node configuration asserts skip count 0 exact, the restricted configurations assert an in-band non-zero count) — but the finding that produced this rule was on a pre-matrix run, so the rule applies to EVERY suite run, not only the matrix.
+>
+> **Removing the offending string is a fix; excluding it is a standing exception that accumulates — the fix for a guard that fires is never to weaken the guard** (panoscribe). When this rule fires — a skip appears, a count comes up short — the corrective action is to remove whatever produced the skip, not to allowlist it, carve out an exception, or otherwise teach the guard to stop looking at it; every carve-out is a permanent reduction in what the guard can ever catch again.
+
 ## Verifying the toolkit repo itself
 
 Three scripts run from the toolkit root. All three are safe to run at any time and none of them write to your project.
@@ -164,6 +170,12 @@ it is written down, and an undocumented dependency is not less of a dependency.
 This is also why the proposed `hooks/local/` extension point was **cancelled**: a chained
 `**Gate**` already does the job, and the one thing it could not express — the terminal
 exit — is expressible with the variable that was already there.
+
+## For the release owner
+
+**Keep the toolkit checkout on the tagged commit for as long as any consumer may be syncing; never switch its branch during a consumer sync.** `template_compute_status` resolves against the checkout's HEAD, not against any tag, so a checkout moved to a docs branch mid-sync makes the manifest record an untagged commit as `lastSynced` even when every file hash still matches the tagged build (`sync-template`'s v3.0.4 pre-step catches this — stops in case 4, rewrites to the tag commit in case 2 — but the safer fix is not to create the condition; penumbra).
+
+If the checkout does drift onto a docs-only descendant of the tag, the skill's pre-step now recovers the correct label for the consumer by rewriting `lastSynced` to the tag commit when the tracked tree is unchanged — **do not rely on that as a substitute for keeping the checkout on the tag.** It only recovers a tree-identical drift; a checkout that has moved onto a commit carrying real template changes past the tag has no such rescue, and stays on the honest-but-unlabeled path.
 
 ## Troubleshooting
 
