@@ -37,3 +37,15 @@ the code MUST be rewritten until it complies.
 - Register all commands in `lib.rs`
 - Use structured logging via the `log` crate
 - Prefer `rusqlite` with `params![]` macro for SQL queries (not string interpolation)
+
+# Build, Routing, and Directory Notes (moved from CLAUDE.md)
+
+**Commands:** `npm install` (frontend deps), `npm run dev` (Vite dev server), `npm run tauri dev` (full Tauri app), `npm test` / `npm run test:rust` (`cargo test`), `npm run lint:all`, `npm run format`.
+
+**Directory overview:** `src/` (frontend TypeScript), `src-tauri/src/` (Rust backend), `e2e/` (E2E tests), `docs/plans/` (design docs + sprint plans).
+
+**Agent fallback:** If `rust-coder`'s MCP tools (rust-tools) are unavailable, it falls back to Bash `cargo` equivalents. Do NOT substitute `coder` for `rust-coder` — it carries Rust/Tauri-specific knowledge beyond MCP tool usage.
+
+**Build & Test:** run `cargo build` + `cargo test` (backend) + `npm test` (frontend), and `cargo clippy -- -D warnings` before committing.
+
+**Debugging:** trace read and write paths through the full IPC flow (frontend → tauri command → service → repository) — a common miss is fixing one direction but not the other.

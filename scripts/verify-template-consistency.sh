@@ -2987,7 +2987,7 @@ fi
 # cannot fail looks exactly like one that passed.
 # ---------------------------------------------------------------------------
 note "Check 35: byte budget on templates/*/{CLAUDE.md,CLAUDE.local.md,AGENT_TEAM.md}"
-BUDGET_CLAUDE_MD=12800
+BUDGET_CLAUDE_MD=6144
 BUDGET_CLAUDE_LOCAL_MD=12288
 BUDGET_AGENT_TEAM_MD=36352
 c33_fail=0
