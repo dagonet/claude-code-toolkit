@@ -165,6 +165,12 @@ This is also why the proposed `hooks/local/` extension point was **cancelled**: 
 `**Gate**` already does the job, and the one thing it could not express — the terminal
 exit — is expressible with the variable that was already there.
 
+## For the release owner
+
+**Keep the toolkit checkout on the tagged commit for as long as any consumer may be syncing; never switch its branch during a consumer sync.** `template_compute_status` resolves against the checkout's HEAD, not against any tag, so a checkout moved to a docs branch mid-sync makes the manifest record an untagged commit as `lastSynced` even when every file hash still matches the tagged build (`sync-template`'s v3.0.4 pre-step catches this and stops, but the safer fix is not to create the condition).
+
+If the checkout does drift onto a docs-only descendant of the tag, the skill's pre-step now recovers the correct label for the consumer by rewriting `lastSynced` to the tag commit when the tracked tree is unchanged — **do not rely on that as a substitute for keeping the checkout on the tag.** It only recovers a tree-identical drift; a checkout that has moved onto a commit carrying real template changes past the tag has no such rescue, and stays on the honest-but-unlabeled path.
+
 ## Troubleshooting
 
 **CLAUDE.md not loaded**
