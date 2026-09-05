@@ -2971,7 +2971,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 33 — BYTE BUDGET on the three per-project template files.
+# Check 35 — BYTE BUDGET on the three per-project template files.
 #
 # v3.0.0 subtracted (AGENT_TEAM.md 54.5 KB -> 33.3 KB); v3.0.1 and v3.0.2 added
 # back, because every fix shipped with its rationale written into the operative
@@ -2986,7 +2986,7 @@ fi
 # TWO-SIDED: the control arm proves the comparison executes. A check that
 # cannot fail looks exactly like one that passed.
 # ---------------------------------------------------------------------------
-note "Check 33: byte budget on templates/*/{CLAUDE.md,CLAUDE.local.md,AGENT_TEAM.md}"
+note "Check 35: byte budget on templates/*/{CLAUDE.md,CLAUDE.local.md,AGENT_TEAM.md}"
 BUDGET_CLAUDE_MD=12800
 BUDGET_CLAUDE_LOCAL_MD=12288
 BUDGET_AGENT_TEAM_MD=36352
@@ -2995,11 +2995,11 @@ c33_rows=0
 for v in general dotnet dotnet-maui rust-tauri java python; do
   for pair in "CLAUDE.md:$BUDGET_CLAUDE_MD" "CLAUDE.local.md:$BUDGET_CLAUDE_LOCAL_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD"; do
     f="templates/$v/${pair%%:*}"; b="${pair##*:}"
-    [ -f "$f" ] || { ko "check 33: $f missing — the budget cannot be measured"; c33_fail=1; continue; }
+    [ -f "$f" ] || { ko "check 35: $f missing — the budget cannot be measured"; c33_fail=1; continue; }
     sz=$(wc -c < "$f" | tr -d '[:space:]')
     c33_rows=$((c33_rows + 1))
     if [ "$sz" -gt "$b" ]; then
-      ko "check 33: $f is $sz bytes, budget $b (+$((sz - b)))"
+      ko "check 35: $f is $sz bytes, budget $b (+$((sz - b)))"
       c33_fail=1
     fi
   done
@@ -3009,9 +3009,9 @@ done
 # as over-budget, the arithmetic is broken and every row above was vacuous.
 c33_ctrl_sz=$(wc -c < templates/general/CLAUDE.md | tr -d '[:space:]')
 if [ "$c33_ctrl_sz" -gt 0 ] && [ "$c33_rows" -eq 18 ]; then
-  [ "$c33_fail" -eq 0 ] && ok "check 33: 18/18 files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, CLAUDE.local.md<=$BUDGET_CLAUDE_LOCAL_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
+  [ "$c33_fail" -eq 0 ] && ok "check 35: 18/18 files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, CLAUDE.local.md<=$BUDGET_CLAUDE_LOCAL_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
 else
-  ko "check 33: CONTROL FAILED — rows=$c33_rows (want 18), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
+  ko "check 35: CONTROL FAILED — rows=$c33_rows (want 18), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
 fi
 
 # ---------------------------------------------------------------------------
