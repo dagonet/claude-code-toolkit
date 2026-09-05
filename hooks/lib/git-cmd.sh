@@ -931,10 +931,41 @@ gc_on_main() {
 # into two bare words by the quote strip (`C:/a` then `b`) matches neither, so
 # the strict form still fails on it. The fallback is the only thing standing
 # between that shape and an ungated push.
+#
+# v3.1 DEFECT (penumbra): the fallback used to be `\bgit\b.*\b$2\b` -- unanchored
+# and word-bounded over the WHOLE remainder. `-` is a word boundary, so
+# `merge-base`/`merge-tree`/`merge-file` matched "merge", and any token merely
+# EQUAL to the verb (`--grep=merge`, a path `docs/merge.md`, a branch
+# `feature/push-fix`) matched too -- over-refusal with a discriminator that
+# names a rule for a command with no such verb in it. FIX: walk the token
+# stream the same way gc_push_args does -- skip `git`, skip each recognised
+# global-option token (and its value, so a quote-stripped `-C "C:/a b"` that
+# word-split into `-C`, `C:/a`, `b` still advances past both `C:/a` and `b`),
+# skip any other bare word without stopping, and match only a token EQUAL to
+# $2. This is strictly tighter than the old fallback, never looser: it never
+# matches a word merely CONTAINING $2, only one equal to it, so it cannot
+# newly refuse anything arm 1 plus the old fallback did not already refuse.
 gc_matches_subcommand() {
   printf '%s\n' "$1" | grep -qE "${GC_GIT_PRE}[[:space:]]+$2([[:space:]]|\$)" && return 0
   printf '%s\n' "$1" | grep -qE '\bgit\b[[:space:]]+-C\b' || return 1
-  printf '%s\n' "$1" | grep -qE "\bgit\b.*\b$2\b"
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk -v verb="$2" '
+    BEGIN { seen_git = 0; want_value = 0 }
+    $0 == "" { next }
+    {
+      tok = $0
+      if (!seen_git) {
+        if (tok == "git" || tok ~ /\/git$/ || tok ~ /\\git$/) seen_git = 1
+        next
+      }
+      if (want_value) { want_value = 0; next }
+      if (tok == "-C" || tok == "-c" || tok == "--config-env" || tok == "--git-dir" ||
+          tok == "--work-tree" || tok == "--namespace" || tok == "--exec-path" ||
+          tok == "--attr-source" || tok == "--super-prefix") { want_value = 1; next }
+      if (tok ~ /^-/) next                 # single-token global -- skip, not a match
+      if (tok == verb) { print "MATCH"; exit }
+      next                                 # unrecognised bare word -- keep scanning
+    }
+  ' | grep -q MATCH
 }
 
 # gc_push_args <segment> -- everything after the `push` subcommand ("" if none).

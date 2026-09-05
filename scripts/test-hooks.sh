@@ -1556,6 +1556,26 @@ check_msg "(A6.13/PCT) -C control blocked by the TEST" "$ROOT/$PCT62" 2 "$(mkjso
 check_msg "(A6.13) -c BEFORE -C merge: the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash "git -c a=b -C $A6CLONE merge feature/y" "$A6CLONE")" "global option"
 check_msg "(A6.13) -C twice merge: the MERGE arm"      "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE -C $A6CLONE merge feature/y" "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
 
+# --- v3.1 (penumbra): gc_matches_subcommand's -C fallback no longer treats a
+# token merely EQUAL to the verb, or containing it after a `-`, as a match for
+# the whole remainder. Over-refusal only -- these are all want-0 rows -- plus
+# two want-2 controls that must stay refused so the fix cannot pass vacuously.
+check "(A6.14) CONTROL git merge-base A B, no -C (unchanged)" "$H" 0 "$(mkjson Bash 'git merge-base A B' "$A6CLONE")"
+check_nomsg "(A6.14) git -C <repo> merge-base A B: not a merge" "$ROOT/$H" 0 "$(mkjson Bash "git -C $A6CLONE merge-base A B" "$A6CLONE")" "a merge on a protected branch"
+check "(A6.14) git -C <repo> log -1 --grep=merge: not a merge" "$H" 0 "$(mkjson Bash "git -C $A6CLONE log -1 --grep=merge" "$A6CLONE")"
+check "(A6.14) git -C <repo> log -1 --grep=push: not a push"   "$H" 0 "$(mkjson Bash "git -C $A6CLONE log -1 --grep=push" "$A6CLONE")"
+# penumbra's design-round addendum: the verb word can also appear only INSIDE
+# an operand path -- `/` and `.` are word boundaries too, so the old
+# `\bgit\b.*\bmerge\b` fallback matched `docs/merge.md` the same way it
+# matched `merge-base`.
+check_nomsg "(A6.14) git -C <repo> log -- docs/merge.md: not a merge" "$ROOT/$H" 0 "$(mkjson Bash "git -C $A6CLONE log -- docs/merge.md" "$A6CLONE")" "a merge on a protected branch"
+# panoscribe's arm: read-only plumbing whose own name CONTAINS "merge" after a
+# `-`, distinct from the merge-base row above (a different plumbing command,
+# named independently by panoscribe's five-arm sweep).
+check_nomsg "(A6.14) git -C <repo> merge-tree A B: not a merge" "$ROOT/$H" 0 "$(mkjson Bash "git -C $A6CLONE merge-tree A B" "$A6CLONE")" "a merge on a protected branch"
+check_msg "(A6.14) CONTROL git -C <repo> merge feature: still refused" "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE merge feature" "$A6CLONE")" "a merge on a protected branch"
+check "(A6.14) CONTROL git -C <repo> push origin main: still refused"  "$H" 2 "$(mkjson Bash "git -C $A6CLONE push origin main" "$A6CLONE")"
+
 # --- repeated -C is RELATIVE, and a -C chain that cannot be entered ---------
 # `git -C a -C b` does NOT mean "b"; it means "b resolved from a", i.e. a/b. The
 # absolute-path pair above cannot see the difference — every spelling of an
