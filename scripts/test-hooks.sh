@@ -4337,6 +4337,27 @@ for p in '/p/.envrc' '/p/environment.ts' 'src/.env.example'; do
 done
 check_msg "(DSR) the denial NAMES the path"   "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "/p/.env.local"
 check_msg "(DSR) the denial names its blind spot" "$ROOT/$DSR" 2 "$(mkjson_read '.env' "$DSRCWD")" "judged by the auto-mode classifier"
+# v3.0.4 item A1 — the TEXT clause, and where it matched. Two consumers were
+# blocked within minutes by `grep -c 'Read(\.env' .claude/settings.json` —
+# a config-inspection false positive — and the fix names the matched TOKEN
+# and its LOCATION, not a workaround that would teach evasion (a controller
+# amendment during this item's implementation rejected an earlier draft that
+# pointed at "a script file" / "bash <path>", because that sentence IS an
+# evasion recipe against this very hook: the guard scans the Bash COMMAND
+# STRING, not a script file's contents, so `bash audit.sh` containing
+# `cat .env` would not be caught — the advice would teach the bypass at the
+# moment the user is most motivated to use it).
+check_msg "(DSR) the denial names the matched TEXT" "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "This matched the command TEXT"
+check_msg "(DSR) the denial names the match location" "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "matched: \"/p/.env.local\" in the file path argument"
+check_msg "(DSR) Bash denial names the match location" "$ROOT/$DSR" 2 "$(mkjson Bash 'cat .env' "$DSRCWD")" "matched: \".env\" in argument 2"
+check_msg "(DSR) the remedy for config-inspection false positives" "$ROOT/$DSR" 2 "$(mkjson_read '.env' "$DSRCWD")" "Read it with the Read tool"
+# The rejected draft's evasion-teaching sentence must never reappear.
+DSR_SRC="$(cat "$ROOT/$DSR")"
+if ! printf '%s' "$DSR_SRC" | grep -qF "script file" && ! printf '%s' "$DSR_SRC" | grep -qF "bash <path>"; then
+  printf 'PASS  %-42s\n' "(DSR) deny text has no evasion-teaching phrase"; pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (found a rejected evasion phrase)\n' "(DSR) deny text has no evasion-teaching phrase"; fail=$((fail + 1))
+fi
 check "(DSR) Bash: cat .env denied"           "$DSR" 2 "$(mkjson Bash 'cat .env' "$DSRCWD")"
 check "(DSR) Bash: sed -n p ./.env denied"    "$DSR" 2 "$(mkjson Bash 'sed -n p ./.env' "$DSRCWD")"
 check "(DSR) Bash: grep in a quoted path denied" "$DSR" 2 "$(mkjson Bash 'grep KEY "$PWD/.env.local"' "$DSRCWD")"
@@ -4676,6 +4697,61 @@ printf '# ctx\n\n- **Gate**: true # note: see **Gate**: false\n' > "$FLD_GATE/PR
 check_msg "(FIELD) **Gate**: value repeating the marker -- whole value used" \
   "$NORUNGATE/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit -m x' "$FLD_GATE")" "passed. ("
 
+# ---------------------------------------------------------------------------
+# GATE_CMD_RAW (v3.0.4, item A3) -- make the FALLBACK EXTRACTOR's value
+# observable through its EFFECT, not through a new field on any artifact.
+# `**Test**` is ABSENT and `$NORUNGATE` carries no run-gate.sh sibling, so
+# pre-commit-test.sh's own GATE_CMD_RAW fallback (~line 307) evaluates the
+# **Gate** value directly by `eval`. The value writes a marker file ONLY if
+# the WHOLE thing runs; the truncated tail (`true` alone) would not write it
+# but would still exit 0 -- exactly the shape that hid this extractor's
+# defect, so exit code alone cannot be the assertion. Zero hook change: the
+# test does not depend on the thing under test, only on what it DOES.
+# ---------------------------------------------------------------------------
+FLD_GATE_MARKER="$TMPROOT/a3-gate-cmd.marker"
+rm -f "$FLD_GATE_MARKER"
+FLD_GATE2=$(mkrepo fld-gate-cmd main)
+printf '# ctx\n\n- **Gate**: sh -c '"'"'printf ok > "$PCT_PROBE_MARKER"'"'"' && echo **Gate**: true\n' \
+  > "$FLD_GATE2/PROJECT_CONTEXT.md"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$FLD_GATE2")" \
+  | env PCT_PROBE_MARKER="$FLD_GATE_MARKER" bash "$NORUNGATE/pre-commit-test.sh" >/dev/null 2>&1
+FLD_GATE2_RC=$?
+expect "(A3) GATE_CMD_RAW: whole value ran (marker written)" "1" \
+  "$([ -f "$FLD_GATE_MARKER" ] && echo 1 || echo 0)"
+expect "(A3) GATE_CMD_RAW: exits 0" "0" "$FLD_GATE2_RC"
+# DtG: restore the pre-v3.0.3 greedy `sed 's/.*\*\*Gate\( Command\)\?\*\*:[[:space:]]*//'`
+# on a scratch copy of pre-commit-test.sh's GATE_CMD_RAW extractor and re-run
+# the same row -- the marker must go ABSENT (truncated to `true` alone) while
+# the exit code stays 0, which is exactly the "looks fine, ran nothing"
+# failure mode this row exists to catch.
+FLD_GATE_DTG_MARKER="$TMPROOT/a3-gate-cmd-dtg.marker"
+rm -f "$FLD_GATE_DTG_MARKER"
+PCT_ANCHOR='sed -E "s/${GC_KEY_PRE}'
+PCT_ANCHOR_NEW='sed -E "s/.*'
+if grep -qF "$PCT_ANCHOR" "$ROOT/hooks/pre-commit-test.sh"; then
+  PCT_GREEDY_SH="$TMPROOT/pre-commit-test-greedy.sh"
+  mkdir -p "$NORUNGATE-greedy/lib"
+  awk -v old="$PCT_ANCHOR" -v new="$PCT_ANCHOR_NEW" '
+    { line = $0; idx = index(line, old)
+      if (idx > 0) line = substr(line, 1, idx-1) new substr(line, idx+length(old))
+      print line }
+  ' "$ROOT/hooks/pre-commit-test.sh" > "$PCT_GREEDY_SH"
+  cp "$ROOT/hooks/lib/git-cmd.sh" "$ROOT/hooks/lib/json.sh" "$NORUNGATE-greedy/lib/"
+  cp "$PCT_GREEDY_SH" "$NORUNGATE-greedy/pre-commit-test.sh"
+  if grep -qF "$PCT_ANCHOR_NEW"'\*\*Gate' "$NORUNGATE-greedy/pre-commit-test.sh" 2>/dev/null; then
+    printf '%s' "$(mkjson Bash 'git commit -m x' "$FLD_GATE2")" \
+      | env PCT_PROBE_MARKER="$FLD_GATE_DTG_MARKER" bash "$NORUNGATE-greedy/pre-commit-test.sh" >/dev/null 2>&1
+    FLD_GATE_DTG_RC=$?
+    expect "(A3 DtG-greedy) GATE_CMD_RAW: marker absent (truncated)" "0" \
+      "$([ -f "$FLD_GATE_DTG_MARKER" ] && echo 1 || echo 0)"
+    expect "(A3 DtG-greedy) GATE_CMD_RAW: still exits 0 (looks fine)" "0" "$FLD_GATE_DTG_RC"
+  else
+    echo "SKIP  (A3 DtG-greedy) mutation did not apply -- anchor text moved"
+  fi
+else
+  echo "SKIP  (A3 DtG-greedy) anchor not found in hooks/pre-commit-test.sh -- extraction shape changed"
+fi
+
 # **Protected branches**: read via gc_on_main's plain string comparison (never
 # a regex -- the extracted value can itself carry `**`, which would be an
 # unsafe alternation to build a grep -E pattern from). A truncated extraction
@@ -4755,6 +4831,129 @@ expect "(RUN-GATE) truncate-to-true: no last-pass.json minted on an unrun suite"
 RG_SELFGATE_AFTER=$(cat "$ROOT/.gate/last-pass.json" 2>/dev/null; echo)
 expect "(RUN-GATE) real checkout's own last-pass.json untouched" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER"
+
+# ---------------------------------------------------------------------------
+# RUN-GATE PERMANENT ROWS (v3.0.4, item A2) -- a MARKER FIXTURE, because the
+# real gate script both WRITES A FILE and EXITS 1, so "ran and failed" is
+# never confused with "never ran": marker present + no artifact means the
+# whole Gate value ran and its real (failing) command was reached; artifact
+# present with no marker would mean an artifact was minted on a suite that
+# never ran at all -- assert MARKER and ARTIFACT together, never exit code
+# alone, which is exactly the axis a truncating extractor cannot see.
+#
+# THE DEFECT IS THE GREEDY STRIP, THE SHELL COMMENT IS INCIDENTAL. Under the
+# pre-v3.0.3 greedy `sed 's/.*\*\*Gate\( Command\)\?\*\*:[[:space:]]*//'`, the
+# anchored `grep -E` still finds the crafted line, but the sed strips through
+# the LAST occurrence of the marker instead of the first -- so a value that
+# repeats "**Gate**:" (or "**Gate Command**:", the field-name style the
+# python/java variants ship) anywhere after the real command truncates down
+# to whatever trails the LAST occurrence, with or without a `#` in front of
+# it. A suite that only covered the `#`-comment shape would look green
+# against a fix that special-cases shell comments and miss the strip itself
+# reappearing behind a different whitelist one release later.
+RG_RGSH='#!/usr/bin/env bash
+echo ran > gate-ran.marker
+exit 1
+'
+rg_row() { # <label> <gate-value> <want-marker 0|1> <want-artifact 0|1>
+  rgr_label="$1"; rgr_gate="$2"; rgr_wm="$3"; rgr_wa="$4"
+  rgr_d=$(mkrepo "rg-a2-$(printf '%s' "$rgr_label" | tr -c 'a-zA-Z0-9' '-')" main)
+  printf '%s' "$RG_RGSH" > "$rgr_d/real-gate.sh"
+  printf -- "- **Gate**: %s\n- **Protected branches**: main\n" "$rgr_gate" > "$rgr_d/PROJECT_CONTEXT.md"
+  git -C "$rgr_d" add -A >/dev/null 2>&1
+  git -C "$rgr_d" commit -q -m gate >/dev/null 2>&1
+  rm -f "$rgr_d/gate-ran.marker"
+  ( cd "$rgr_d" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+  rgr_marker=$([ -f "$rgr_d/gate-ran.marker" ] && echo 1 || echo 0)
+  rgr_artifact=$([ -f "$rgr_d/.gate/last-pass.json" ] && echo 1 || echo 0)
+  expect "(RUN-GATE A2) $rgr_label -- marker" "$rgr_wm" "$rgr_marker"
+  expect "(RUN-GATE A2) $rgr_label -- artifact" "$rgr_wa" "$rgr_artifact"
+}
+
+# --- five CONTROLS: must stay marker=1 artifact=0 (or, for the semicolon
+# row, marker=1 artifact=1) both before and after the DtG mutation below;
+# each proves the fixture gates for the right reason rather than being dead
+# weight -- deleting one is deleting the proof, not tidying it.
+rg_row "honest failing gate" "bash real-gate.sh" 1 0
+rg_row "trailing Field text" "bash real-gate.sh - **Protected branches**: main" 1 0
+rg_row "bare-bash truncation" "bash real-gate.sh **x**: y" 1 0
+rg_row "double-star mid value" "bash **real-gate.sh" 1 0
+# want-artifact: THE OVER-CORRECTION CONTROL -- the only row in this set that
+# goes RED if the **Gate**: read is later tightened into refusing honest Gate
+# values containing `;`; the deceptive and garbage rows above get GREENER as
+# the parser tightens and cannot detect that. `;` discarding the failure
+# status is shell semantics, intended, documented (see item A5's note on
+# joining Gate steps with `&&`, never `;`, in every PROJECT_CONTEXT.md).
+rg_row "semicolon tail" "bash real-gate.sh ; true" 1 1
+
+# --- three rows that FLIP under the pre-v3.0.3 greedy strip (the actual
+# regression coverage): a trailing marker, with or without `#`, in either
+# field-name style, is part of the command once the read is anchored.
+rg_row "comment tail" "bash real-gate.sh # **Gate**: true" 1 0
+rg_row "LONG field-name form" "bash real-gate.sh # **Gate Command**: true" 1 0
+rg_row "second Gate no hash" "bash real-gate.sh **Gate**: true" 1 0
+
+# DtG: restore the pre-v3.0.3 greedy sed on a SCRATCH COPY of run-gate.sh
+# (single-line revert, diff-confirmed against the anchor at run-gate.sh:104)
+# and re-run every row above against the mutated copy. The comment tail, the
+# LONG field-name form and the no-hash second-Gate row must FLIP (marker=0,
+# artifact=1 -- MINTED ON AN UNRUN SUITE); the five controls above must NOT.
+RG_GREEDY_DIR="$TMPROOT/rg-greedy"
+mkdir -p "$RG_GREEDY_DIR"
+RG_GREEDY_SH="$RG_GREEDY_DIR/run-gate.sh"
+RG_ANCHOR='sed -E "s/${GC_KEY_PRE}'
+RG_ANCHOR_NEW='sed -E "s/.*'
+if grep -qF "$RG_ANCHOR" "$ROOT/hooks/run-gate.sh"; then
+  # Literal-substring replace via awk's index()/substr(), not sed -- the
+  # anchor and its replacement both carry `/`, `*` and `$`, which is exactly
+  # the character set that makes a sed *pattern* substitution fragile to
+  # shell-quote. awk does a byte-for-byte substring splice instead of a
+  # regex match, so none of those characters need escaping here.
+  awk -v old="$RG_ANCHOR" -v new="$RG_ANCHOR_NEW" '
+    { line = $0; idx = index(line, old)
+      if (idx > 0) line = substr(line, 1, idx-1) new substr(line, idx+length(old))
+      print line }
+  ' "$ROOT/hooks/run-gate.sh" > "$RG_GREEDY_SH"
+  # Verify the mutation actually applied rather than trusting it, since a
+  # no-op copy would make every DtG row silently look like a false PASS on
+  # "did not flip".
+  if grep -qF "$RG_ANCHOR_NEW"'\*\*Gate' "$RG_GREEDY_SH" 2>/dev/null; then
+    rg_dtg_row() { # <label> <gate-value> <want-marker> <want-artifact>
+      rgd_label="$1"; rgd_gate="$2"; rgd_wm="$3"; rgd_wa="$4"
+      rgd_d=$(mkrepo "rg-a2-dtg-$(printf '%s' "$rgd_label" | tr -c 'a-zA-Z0-9' '-')" main)
+      printf '%s' "$RG_RGSH" > "$rgd_d/real-gate.sh"
+      printf -- "- **Gate**: %s\n- **Protected branches**: main\n" "$rgd_gate" > "$rgd_d/PROJECT_CONTEXT.md"
+      git -C "$rgd_d" add -A >/dev/null 2>&1
+      git -C "$rgd_d" commit -q -m gate >/dev/null 2>&1
+      rm -f "$rgd_d/gate-ran.marker"
+      ( cd "$rgd_d" && bash "$RG_GREEDY_SH" >/dev/null 2>&1 )
+      rgd_marker=$([ -f "$rgd_d/gate-ran.marker" ] && echo 1 || echo 0)
+      rgd_artifact=$([ -f "$rgd_d/.gate/last-pass.json" ] && echo 1 || echo 0)
+      expect "(RUN-GATE A2 DtG-greedy) $rgd_label -- marker" "$rgd_wm" "$rgd_marker"
+      expect "(RUN-GATE A2 DtG-greedy) $rgd_label -- artifact" "$rgd_wa" "$rgd_artifact"
+    }
+    rg_dtg_row "honest failing gate (control, must NOT flip)" "bash real-gate.sh" 1 0
+    rg_dtg_row "trailing Field text (control, must NOT flip)" "bash real-gate.sh - **Protected branches**: main" 1 0
+    rg_dtg_row "bare-bash truncation (control, must NOT flip)" "bash real-gate.sh **x**: y" 1 0
+    rg_dtg_row "double-star mid value (control, must NOT flip)" "bash **real-gate.sh" 1 0
+    rg_dtg_row "semicolon tail (control, must NOT flip)" "bash real-gate.sh ; true" 1 1
+    rg_dtg_row "comment tail (MUST FLIP)" "bash real-gate.sh # **Gate**: true" 0 1
+    rg_dtg_row "LONG field-name form (MUST FLIP)" "bash real-gate.sh # **Gate Command**: true" 0 1
+    rg_dtg_row "second Gate no hash (MUST FLIP)" "bash real-gate.sh **Gate**: true" 0 1
+  else
+    echo "SKIP  (RUN-GATE A2 DtG-greedy) mutation did not apply -- anchor text moved"
+  fi
+else
+  echo "SKIP  (RUN-GATE A2 DtG-greedy) anchor not found in hooks/run-gate.sh -- extraction shape changed"
+fi
+
+# GUARD, two-sided, bracketing the A2 block above too: every rg_row/rg_dtg_row
+# invocation ran with REPO_TOP resolved to its own throwaway repo, so this
+# checkout's own .gate/last-pass.json must be byte-unchanged across the
+# whole block, not just the pre-A2 rows the earlier guard bracketed.
+RG_SELFGATE_AFTER_A2=$(cat "$ROOT/.gate/last-pass.json" 2>/dev/null; echo)
+expect "(RUN-GATE A2) real checkout's own last-pass.json untouched" \
+  "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER_A2"
 
 # ---------------------------------------------------------------------------
 # GUARD -- gate-before-merge.sh's `-c` classifier, confirmed still shared

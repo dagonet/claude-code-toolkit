@@ -768,6 +768,103 @@ else
   [ "$mirror_count" -eq 0 ] && ko "hook mirror: $ULH is empty"
 fi
 
+# 21a. REVERSE walk: every hooks/** file must have a SAME-NAMED mirror,
+#      except an explicit allowlist (v3.0.4).
+#
+#      The walk above starts from the mirror, so a root hook that was NEVER
+#      mirrored is invisible to it — that was a deliberate gap (see the
+#      "Direction, deliberately" note above), but an invisible gap is also
+#      where a hook meant to be mirrored quietly never gets there. This walk
+#      starts from hooks/** instead: every file must resolve to a mirror,
+#      unless it is named here with a reason.
+#
+#      NAME-PRESENCE ONLY, deliberately NOT byte comparison, and this is the
+#      opposite of check 21's polarity above. Two reasons, both measured:
+#      (a) this script is copied into consumer repos by the sync-template
+#      skill and is not proven to run ONLY inside this toolkit checkout, so
+#      it must not assume `hooks/run-gate.sh` in a consumer's tree is a copy
+#      of THIS repo's — a consumer may run a project-owned "keep-mine"
+#      `run-gate.sh` (a real example: a 6-step gate) that legitimately
+#      DIFFERS from the user-level copy on purpose; (b) byte-comparing this
+#      direction would make every such keep-mine consumer permanently red,
+#      and the fix for that false positive is exactly the hole this check
+#      exists to close: weakening enforcement to make the false positive go
+#      away. So this direction only asks "does a same-named file exist in
+#      the mirror" — the EXISTING byte-identity assertion already lives in
+#      check 21's mirror-walk above, for the direction where it is safe
+#      (there, `$ULH` is this repo's own tracked copy, not a consumer's).
+#      This direction also never flags a mirror-only EXTRA — a consumer's
+#      own additional user-level hooks are its business, not this repo's.
+#      (Checked at v3.0.4: `scripts/` — and so this file itself — is not
+#      copied by setup-project.sh/.ps1 to a bootstrapped consumer repo,
+#      only referenced in a comment; it IS distributed via the
+#      sync-template skill flow described above, which is why the defensive
+#      posture stands regardless.)
+#
+#      THE PRINCIPLE, not a fixed list: a root hook must have a mirror
+#      UNLESS it is PROJECT-MODEL-scoped — its subject is the agent team
+#      (`.claude/agents/`, AGENT_TEAM.md, the delegation surface), which has
+#      no meaning in a bare `~/.claude` where there is no project. The
+#      mirrored hooks are exactly the ones whose subject is the developer's
+#      MACHINE (git gates, secrets, output/read size, the retro ledger and
+#      its brief — both keyed on cwd -> project slug under the user's own
+#      `~/.claude/projects/`, so both work in any repo on the machine).
+#      Adding an entry requires stating, in one line, why the hook has no
+#      user-level meaning — not just that it currently lacks a mirror.
+#      Populated from the diff between `hooks` and `user-level-reference/hooks`
+#      at v3.0.4 (verified by:
+#      diff <(cd hooks && find . -type f | sort) <(cd user-level-reference/hooks && find . -type f | sort)):
+HOOKS_NO_MIRROR=(
+  # enforce-delegation.sh: named in the check-21 comment above as
+  # deliberately project-only (v2.0-round4) — enforces the PO/team
+  # delegation contract, which has no user-level analogue.
+  "enforce-delegation.sh"
+  # enforce-agent-contract.sh: reads this repo's SubagentStop deliverable
+  # contract (## Gate Results / ## Spec Compliance) — a project-team
+  # convention, not something a bare ~/.claude checkout enforces.
+  "enforce-agent-contract.sh"
+  # agent-budget-warn.sh: warns against THIS repo's per-task tool-call budget
+  # convention; a personal ~/.claude install has no such budget to warn about.
+  "agent-budget-warn.sh"
+  # require-skills-block.sh: enforces this repo's "## Required Skills" spawn
+  # convention (AGENT_TEAM.md), which is project-team-only.
+  "require-skills-block.sh"
+)
+# FINDING (v3.0.4, A6): retro-brief.sh (SessionStart, reads the ledger) and
+# retro-ledger.sh (SubagentStop, writes it) both key off cwd -> project slug
+# under the developer's OWN `~/.claude/projects/<slug>/memory/retro.md` — a
+# per-USER, per-machine path, not a per-project file checked into any repo.
+# That makes retro-brief.sh MACHINE-scoped exactly like retro-ledger.sh
+# (already mirrored), and its prior absence from the mirror looked accidental
+# rather than designed — `user-level-reference/settings-reference.md` even
+# already documents SessionStart as "Bound in v2.0 to hooks/retro-brief.sh".
+# Mirrored below rather than allowlisted; neither hook is registered in
+# `user-level-reference/settings.json` today, so no settings.json edit was
+# needed to match an existing binding.
+hnm_is_allowlisted() {
+  local needle="$1" x
+  for x in "${HOOKS_NO_MIRROR[@]}"; do
+    [ "$x" = "$needle" ] && return 0
+  done
+  return 1
+}
+if [ -d "$ULH" ]; then
+  reverse_count=0
+  while IFS= read -r -d '' rf; do
+    reverse_count=$((reverse_count + 1))
+    rrel="${rf#hooks/}"
+    mirror="$ULH/$rrel"
+    if hnm_is_allowlisted "$rrel"; then
+      ok "hook reverse-mirror: $rrel is on HOOKS_NO_MIRROR (root-only by design)"
+    elif [ -f "$mirror" ]; then
+      ok "hook reverse-mirror: $rrel has a same-named mirror at $mirror (byte-identity is check 21's job, above)"
+    else
+      ko "hook reverse-mirror: $rf has NO mirror at $mirror — either cp $rf $mirror or add \"$rrel\" to HOOKS_NO_MIRROR with a reason"
+    fi
+  done < <(find hooks -type f -print0 | sort -z)
+  [ "$reverse_count" -eq 0 ] && ko "hook reverse-mirror: hooks/ is empty"
+fi
+
 # 21b. hooks/lib/json.sh must EXIST on both sides (v2.2.0).
 #
 #      The walk above starts from the mirror, so a lib file missing from BOTH
@@ -891,6 +988,34 @@ if [ "$gtr_have" -eq 2 ]; then
   ok "GC_TERMINAL_RC defined identically in git-cmd.sh and the standalone run-gate.sh"
 else
   ko "GC_TERMINAL_RC definition drifted: found in $gtr_have of 2 files (git-cmd.sh, run-gate.sh)"
+fi
+
+# 21c-2g. The retro base-dir helper, same census for the same reason (v3.0.4,
+# item A6b, a consequence of mirroring retro-brief.sh in check 21a above).
+#
+#      retro-ledger.sh WRITES `$HOME/.claude/projects/<slug>/memory/retro.md`;
+#      retro-brief.sh READS it. If the base-dir helper (the win32 HOME
+#      normalisation plus the CLAUDE_MEMORY_HOME/HOME/os.homedir() fallback
+#      chain) ever diverges between the two, the brief silently reads an
+#      EMPTY file and reports "no retro entries" — a null result
+#      indistinguishable from a clean run, which is exactly the failure mode
+#      this whole census family exists to catch. NOTE FOR ANY FUTURE
+#      "IMPROVEMENT": both hooks embed this helper inside a NODE PROGRAM
+#      wrapped in shell, so a shell-pattern grep over the file finds nothing
+#      here — this check greps the EMBEDDED JS TEXT (both files are read as
+#      plain text, not executed), never file presence or bytes alone.
+RETRO_HELPER_DEF='const winify = s => (process.platform === "win32" ? s.replace(/^\/([A-Za-z])\//, "$1:/") : s);
+  const home = process.env.CLAUDE_MEMORY_HOME
+    || (process.env.HOME && winify(process.env.HOME))
+    || os.homedir();'
+rh_have=0
+for rhf in hooks/retro-ledger.sh hooks/retro-brief.sh; do
+  grep -qF "$RETRO_HELPER_DEF" "$rhf" && rh_have=$((rh_have + 1))
+done
+if [ "$rh_have" -eq 2 ]; then
+  ok "retro base-dir helper defined identically in retro-ledger.sh and retro-brief.sh"
+else
+  ko "retro base-dir helper drifted: found in $rh_have of 2 files (retro-ledger.sh, retro-brief.sh) — the ledger writer and the brief reader must resolve the SAME path, or the brief silently reads an empty file"
 fi
 
 # 21c-2c. The placeholder sweep passes its OPTIONS BEFORE its PATHS (v2.2.5).
