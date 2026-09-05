@@ -10,7 +10,7 @@ v2.0
 
 ## How to Use This Document
 
-Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Session Bootstrap*: spawning agents, a spawn brief, a merge/escalation question, or a file naming an agent). `PROJECT_CONTEXT.md` defines the tech stack, commands, and **task source mode** — read that first, then look up your mode in the **Mode Behavior Table** below.
+Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Session Bootstrap*). `PROJECT_CONTEXT.md` defines the tech stack, commands, and **task source mode** — read that first, then look up your mode in the **Mode Behavior Table** below.
 
 ---
 
@@ -35,7 +35,7 @@ Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Sessio
 ### The rule that covers every tool, not just `Bash`
 `Explore`/`code-reviewer` hold neither `Edit` nor `Write`. `Explore`/`architect`/`ops` hold no GitHub MCP tool. `isolation: worktree` (`coder`, `tester`, `<lang>-coder`) means those agents cannot reach the main checkout — never spawn one to commit a sync.
 
-**PO responsibility:** if an agent lacks a needed tool, have it return the work product and let the PO perform the git/GitHub I/O.
+**PO responsibility:** if an agent lacks a needed tool, it returns the work product and the PO performs the git/GitHub I/O.
 
 ---
 
@@ -43,7 +43,7 @@ Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Sessio
 
 ### Product Owner (PO)
 
-- Primary interface with the human stakeholder; maintains/prioritizes the backlog. Spawns the **Architect** for new features (absorbed `requirements-engineer` in v3.0.0); reviews/publishes specs; plans sprints; monitors progress, handles escalations; writes a session summary after each sprint.
+- Primary interface with the human stakeholder; maintains/prioritizes the backlog. Spawns the **Architect** for new features; reviews/publishes specs; plans sprints; monitors progress, handles escalations; writes a session summary after each sprint.
 - **T1 delegated fixes**: trivial changes (< 10 lines, style/config, no logic) get ONE coder with the brief inline — no plan file needed. **The PO NEVER edits code, at any tier.** Write surface: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md` — enforced by `hooks/enforce-delegation.sh`.
 - **Never reviews code inline** — `code-reviewer` is spawned T2+; T1 relies on the coder's gate run.
 - **Read discipline**: Read/Grep only for targeted verification (1-2 files) and orchestration files; open-ended exploration goes to **Explore** (haiku/`effort: low` — never pass `model` in the Agent call).
@@ -155,7 +155,7 @@ Task #{n}: issue #{issue}. Worktree: {path}, branch: feature/issue-{issue}.
 Context: the GitHub issue (reference only). Workflow: implement -> gate -> commit -> push -> create PR -> report the PR URL.
 ```
 
-**plan-files mode (T2-T3):** same shape as above, plus `Architect guidance: {summary or "none"}` and `Context: {plan_file_path} if one exists (reference only)`.
+**plan-files mode (T2-T3):** same shape as above, except the Task line reads `Task: {title}. Worktree: {path}, branch: {branch}.` (no issue number), plus `Architect guidance: {summary or "none"}` and `Context: {plan_file_path} if one exists (reference only)`.
 
 ```
 ## Required Skills
@@ -176,7 +176,12 @@ Each developer gets its own working directory and branch, backed by one shared `
 
 Prefer `isolation: worktree` in the agent's frontmatter (or on the Agent call) and let Claude Code create/attach the worktree — the PO does not run `git worktree add` by hand; a worktree the PO made is one the harness doesn't know it owns.
 
-Fallback only (a developer agent creating its own): `git worktree add {worktree_base}/{project}-issue-{number} -b feature/issue-{number} main` (github-issues) or `{project}-{branch-name} -b {branch-name}` (plan-files).
+Fallback only (a developer agent creating its own):
+
+```
+git worktree add {worktree_base}/{project}-issue-{number} -b feature/issue-{number} main   # github-issues
+git worktree add {worktree_base}/{project}-{branch-name} -b {branch-name} main             # plan-files
+```
 
 See `PROJECT_CONTEXT.md` for the worktree base path; see Mode Behavior Table for naming.
 
@@ -227,7 +232,7 @@ An agent that has to go looking for any of the five is under-briefed — a promp
 
 **Plan files are optional** — write one in `docs/plans/` when work spans sessions or several workstreams need a shared reference; nothing blocks a spawn on one, and no hook parses a literal in it.
 
-**Challenging a plan is optional and on demand** — invoke the `challenge` skill or spawn the architect with the draft; a judgement call, not a gate.
+**Challenging a plan is optional and on demand** — invoke the `challenge` skill or spawn the architect with the draft.
 
 ---
 
@@ -250,9 +255,9 @@ An agent that has to go looking for any of the five is under-briefed — a promp
 ## Escalation Protocol
 
 - **Developer stuck** (>3 fix cycles): PO selects (a) scope reduction — simplify and restart, (b) architect re-design — re-spawn with failure context, or (c) human escalation — task, what was tried, failure, recommended next steps.
-- **Merge conflicts too complex**: developer reports; PO decides per the Merge Protocol fallback.
-- **Tester can't verify**: it reports why; PO routes to a developer.
-- **Scope conflict mid-sprint**: PO pauses affected workstreams, re-spawns architect.
+- **Merge conflicts too complex**: developer reports; PO decides per Merge Protocol.
+- **Tester can't verify**: reports why; PO routes to a developer.
+- **Scope conflict mid-sprint**: PO pauses workstreams, re-spawns architect.
 - **Any agent stuck after escalation**: PO notifies the human.
 - **Missing/empty report** (runbook):
   1. A **foreground** Agent call cannot stall — final message or error; an error is a failed dispatch, re-dispatch it.
@@ -279,7 +284,8 @@ Include a `## Required Skills` block in every spawn prompt, listing the skills b
 | `code-reviewer` | *(none)* |
 | `tester` — absorbed `test-writer` | `systematic-debugging`, `verification-before-completion`, `test-driven-development` |
 | `architect` — absorbed `requirements-engineer` | `writing-plans`, `brainstorming` |
-| `ops` / `Explore` | *(none — pass-through)* |
+| `ops` | *(none — pass-through)* |
+| `Explore` | *(none — pass-through; custom Explore agent, haiku, effort low)* |
 
 **Reference-only** (not injected): `using-git-worktrees`, `finishing-a-development-branch`, `dispatching-parallel-agents`, `subagent-driven-development`
 
@@ -349,7 +355,7 @@ Spawned agents cannot access Open Brain directly — the PO searches for relevan
 | Coder | implementation notes / pitfalls for the component |
 | Tester | failure mode / regression / edge case / test pattern for the feature |
 
-Include whatever the search returns: past decisions, rejected alternatives, known weak spots, failed approaches, flaky-test history.
+Include whatever the search returns: past decisions, rejected alternatives, known weak spots, flaky-test history.
 
 ### After Agent Returns
 

@@ -243,8 +243,12 @@ the rule.
 
 ### Superpowers Skills Integration
 
-The `### Spawn-Prompt Binding Table` heading, its table (verbatim, minus one
-row's inline commentary), the `Spawn-prompt skill injection` phrase, and every
+The `### Spawn-Prompt Binding Table` heading, its table (one row per agent
+kept; four rows lost inline commentary — the `(...)`-list of language coders,
+`in v3.0.0` on two rows, `— review is the agent's core job`. Safe because no
+hook parses the table at runtime — `verify-template-consistency.sh` checks
+8/9/10 grep skill-name substrings in the coder/tester/architect rows, all of
+which survive), the `Spawn-prompt skill injection` phrase, and every
 `superpowers:` skill name are hook-read literals (`require-skills-block.sh`,
 check 4, check 5, check 10) and survive byte-exact. The Coder copy-paste
 snippet now says "the Report-agents CRITICAL block above, plus:" instead of

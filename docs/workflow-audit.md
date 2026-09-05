@@ -53,7 +53,7 @@ Seventeen weaknesses identified during the audit, grouped into five buckets. The
 
 - **W1. Tier hook is permissive** — ~~`hooks/tier-before-coder.sh` greps for the word `challenge` and `Tier: Tn` but does not verify that *two* challenge passes happened, does not verify the plan corresponds to the current task, and does not validate that tier matches task scope. A stale plan file with the right keywords passes.~~ **Resolved by removal in v2.1 (PR7):** the plan gate is gone entirely; the task brief in the spawn prompt replaces it, and nothing greps a plan file any more.
 - **W2. No team-config-matches-tier guard** — The AI can spawn `coder` alone for a T3 task (missing reviewer + tester) and no hook complains. The Agent PreToolUse hook fires per-spawn and can only enforce negative rules ("don't spawn reviewer for T1"), not positive ones ("must have spawned reviewer by now for T3").
-- **W3. No 3-fix-cycle escalation guard** — Rule 8 caps code-review fix cycles at 3 before escalation, but nothing tracks cycle count. The AI can loop indefinitely.
+- **W3. No 3-fix-cycle escalation guard** — Rule 7 caps code-review fix cycles at 3 before escalation, but nothing tracks cycle count. The AI can loop indefinitely.
 - **W4. No concurrent-merge guard** — Parallel workstreams must merge sequentially (first-ready-first-merge), but nothing prevents two squash-merges firing near-simultaneously.
 - **W5. Open Brain session-start search not enforced** — CLAUDE.md tells PO to search Open Brain at session start and before each spawn, but no SessionStart hook fires the search. Hooks are shell commands and cannot invoke MCP tools.
 - **W6. Acceptance-criteria verification not enforced** — Tester is told to verify each AC, but nothing gates "mark complete" on actual AC coverage.
@@ -61,7 +61,7 @@ Seventeen weaknesses identified during the audit, grouped into five buckets. The
 
 ### Documentation inconsistency gaps
 
-- **W8. Escalation Protocol missing from CLAUDE.md TL;DR** — Rule 8 and the Escalation Protocol live in AGENT_TEAM.md only. PO might never escalate if they skim only CLAUDE.md.
+- **W8. Escalation Protocol missing from CLAUDE.md TL;DR** — Rule 7 and the Escalation Protocol live in AGENT_TEAM.md only. PO might never escalate if they skim only CLAUDE.md.
 - **W9. Merge ownership missing from CLAUDE.md** — "Developer owns the merge" (Rule 5) is in AGENT_TEAM.md; CLAUDE.md silent. Risk: PO merges on coder's behalf.
 - **W10. Architect lifecycle ambiguous at T4** — the architect is documented as shutting down after returning its critique, but T4 says it stays on standby. The SubagentStop hook fires uniformly regardless of tier.
 
