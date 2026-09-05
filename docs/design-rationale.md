@@ -154,7 +154,118 @@ v3.1 plan — not here.
 
 ## AGENT_TEAM.md
 
-(populated by Task 3)
+Byte-identical across all six variants, measured at `3975c1a` (before) and after the v3.1 diet (this commit):
+
+| variant | before (bytes) | after (bytes) |
+|---|---|---|
+| general | 35,845 | 20,464 |
+| dotnet | 35,845 | 20,464 |
+| dotnet-maui | 35,845 | 20,464 |
+| rust-tauri | 35,845 | 20,464 |
+| java | 35,845 | 20,464 |
+| python | 35,845 | 20,464 |
+
+Budget: `BUDGET_AGENT_TEAM_MD = 20480` (`scripts/verify-template-consistency.sh`, check 35).
+
+### Sub-Agent Tool Limitations
+
+The per-agent git/GitHub capability bullets shrank to two short sentences plus a
+pointer at each of the three `###` subheadings. Cut to here: the measured
+consumer incident that motivated the rule in the first place — a session where
+a consumer demanded `Edit` from an `architect` spawn that never carried that
+tool in its frontmatter, discovering the gap only when the agent bailed
+mid-task. The rule survives ("`.claude/agents/<name>.md` is the source of
+truth"); the story that proved the rule was needed did not, because the file
+itself cannot go stale the way a restated capability matrix can.
+
+### Product Owner role
+
+The role's bullets stay (write surface, delegation targets, spawn-prompt skill
+injection, read discipline) because each one gates a specific PO behavior a
+hook enforces (`hooks/enforce-delegation.sh`, `hooks/require-skills-block.sh`).
+Cut: the connective "why" prose between bullets — e.g. why the PO never reviews
+code inline is that a `code-reviewer` is spawned from T2 up, which is now
+stated once as the fact rather than argued.
+
+### Model & Effort Policy
+
+Kept the table-shaped policy (alias-only models, per-role effort, the
+diagnostic rule). Cut: the worked-example reasoning for "wrong despite full
+context → bigger model, not effort" and the model-proxy caveat about
+`advisorModel` — both are true and can be recovered from the alias-only rule's
+own logic; restating the worked example cost more bytes than the fact it
+supports.
+
+### Mode Behavior Table
+
+Verified against `3975c1a`: the table's two columns are already
+`github-issues` / `plan-files` — there is no legacy teammate/team column to
+retire, so nothing here needed a CHANGELOG entry. Only the one-line "which
+column applies" lead-in was tightened; the table itself (a hook-independent
+but functionally load-bearing reference) is unchanged.
+
+### Tiered Sprint Model, Tier Selection, Definition of Done
+
+The tier table and DoD table are the two things a PO actually looks up
+mid-sprint, so both stay intact in structure; only cell wording was
+tightened (`Required` → `Yes`, merged adjacent guideline bullets). Cut: the
+measured-cost anecdote for "lowest defensible tier wins" (the 167-hour-session,
+22-of-107-turns statistic) — the rule reads the same without the number that
+originally justified writing it down.
+
+### Lean Dev Prompt Templates
+
+Both `github-issues` and `plan-files` mode blocks keep their own
+`## Required Skills` heading — check 8 floors the count at 5 in
+`templates/general/AGENT_TEAM.md`, and the file was already sitting exactly at
+that floor, so merging the two templates into one would have failed the gate.
+The `plan-files` block is written as a delta on the `github-issues` block
+instead (same shape, different context/architect-guidance line) rather than
+repeating the full template a second time.
+
+### Worktrees, Merge Protocol
+
+Numbered steps and rules stay; the worktree lag explanation (`isolation:
+worktree` cuts from `origin/main`, not the session branch) stays because it is
+the PO's own troubleshooting check, not narrative. Cut: restated context that
+duplicated the Rules section (developers own the merge, PO sequences it).
+
+### Task Brief Upfront, Rules, Escalation Protocol
+
+The five brief fields, the numbered rules (renumbered 1-11 after merging two
+overlapping rules about worktree/task ownership — no rule's substance was
+dropped, two adjacent ones were combined), and the three escalation options
+plus the 7-step missing-report runbook all stay, because each is either
+grepped (`Team:` line, `tier-before-coder` absence) or is the literal procedure
+an agent follows during a live incident. Cut: restated "why current models
+don't need a staged planning ritual" prose beyond the one sentence that states
+the rule.
+
+### Superpowers Skills Integration
+
+The `### Spawn-Prompt Binding Table` heading, its table (verbatim, minus one
+row's inline commentary), the `Spawn-prompt skill injection` phrase, and every
+`superpowers:` skill name are hook-read literals (`require-skills-block.sh`,
+check 4, check 5, check 10) and survive byte-exact. The Coder copy-paste
+snippet now says "the Report-agents CRITICAL block above, plus:" instead of
+repeating the CRITICAL paragraph a second time — same instruction, one fewer
+copy of it.
+
+### Appendix: PROJECT_CONTEXT.md Template
+
+The ~960-byte duplicate of the real `PROJECT_CONTEXT.md` template is gone,
+replaced by a one-line pointer to the file that ships with `setup-project.
+{sh,ps1}`. The duplicate was flagged for removal because it drifts from the
+real template rather than because it was long — a stale second copy of a
+project-facing file is a correctness bug, not just a diet target.
+
+### Open Brain Context for Agents
+
+Both tables collapsed from a 4-column ("Agent Type / Search Query / Include in
+Prompt") shape to a 2-column search-query table plus one prose sentence
+for "what to include," and a single "after agent returns" sentence covering
+all four agent types instead of a four-row table repeating "decisions /
+patterns / approaches / bugs" with light variation per row.
 
 ## CLAUDE.local.md
 
