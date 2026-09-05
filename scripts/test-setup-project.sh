@@ -196,6 +196,7 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
     -Variant general -ProjectName SetupFixture -TargetPath "$PSDIR" \
     -DefaultBranch develop > "$TMPROOT/ps-develop.out" 2>&1
+  PS_DEVELOP_RC=$?
   expect "ps1 writes the same protected line as sh" \
     "- **Protected branches**: develop" "$(protected_line "$PSDIR")"
   # No -WorktreeBase passed: the .ps1 parameter default must reach the file
@@ -210,8 +211,63 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   fi
   expect "ps1 snippet names no single repo as THE trusted repo" 0 \
     "$(grep -cF -- '**Trusted repo**:' "$TMPROOT/ps-develop.out")"
+  # v3.1 (open-brain): :861 used to run `git -C $PSScriptRoot rev-parse --short
+  # HEAD` unguarded under `$ErrorActionPreference = "Stop"`. On this fixture
+  # PowerShell IS present and the toolkit tree DOES carry .git, so :861 never
+  # throws here and the exit code was always 0 -- this row is the assertion
+  # that was MISSING (only the snippet count was checked), not a row that
+  # exercises the defect. See the no-.git arm below for the row that does.
+  expect "ps1 exits 0 on the develop fixture" 0 "$PS_DEVELOP_RC"
+
+  # --- the no-.git arm: the actual regression test for :861 -----------------
+  #
+  # A toolkit extracted without .git (a ZIP download, not a clone) is the
+  # measured trigger: PS 5.1 turns git's stderr for "not a git repository"
+  # into a terminating error under `Stop`, and the script exits 1 after most
+  # files are already written but before the manifest and the auto-mode
+  # snippet -- a bootstrap that LOOKS complete and can never sync.
+  #
+  # `setup-project.sh`'s own :844 already tolerates this
+  # (`2>/dev/null || echo "unknown"`) and is the paired control: same
+  # no-.git source tree, same target shape, asserted to exit 0 with a
+  # manifest and the same file count as the .ps1 arm.
+  NOGITSRC="$TMPROOT/nogit-src"
+  mkdir -p "$NOGITSRC"
+  # Copy the toolkit tree the two scripts actually ship from (setup-project.sh,
+  # setup-project.ps1, templates/, scripts/, user-level-reference/), never the
+  # harness's own temp/worktree scaffolding -- and drop `.git` so the fixture
+  # models the ZIP-download shape the defect was measured against.
+  cp "$ROOT/setup-project.sh" "$ROOT/setup-project.ps1" "$NOGITSRC/"
+  cp -r "$ROOT/templates" "$ROOT/scripts" "$ROOT/user-level-reference" "$NOGITSRC/"
+  rm -rf "$NOGITSRC/.git"
+
+  NOGITSH="$TMPROOT/nogit-sh"
+  NOGITPS="$TMPROOT/nogit-ps"
+  mkdir -p "$NOGITSH" "$NOGITPS"
+  bash "$NOGITSRC/setup-project.sh" --variant general --project-name SetupFixture \
+    --target-path "$NOGITSH" > "$TMPROOT/nogit-sh.out" 2>&1
+  NOGIT_SH_RC=$?
+  "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$NOGITSRC/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$NOGITPS" \
+    > "$TMPROOT/nogit-ps.out" 2>&1
+  NOGIT_PS_RC=$?
+
+  expect "sh control: exits 0 on a no-.git toolkit" 0 "$NOGIT_SH_RC"
+  expect "ps1: exits 0 on a no-.git toolkit (was 1)" 0 "$NOGIT_PS_RC"
+
+  NOGIT_SH_MANIFEST="$NOGITSH/.claude/template-manifest.json"
+  NOGIT_PS_MANIFEST="$NOGITPS/.claude/template-manifest.json"
+  [ -f "$NOGIT_SH_MANIFEST" ] && got_sh_manifest=1 || got_sh_manifest=0
+  [ -f "$NOGIT_PS_MANIFEST" ] && got_ps_manifest=1 || got_ps_manifest=0
+  expect "sh control: manifest written on a no-.git toolkit" 1 "$got_sh_manifest"
+  expect "ps1: manifest written on a no-.git toolkit (was absent)" 1 "$got_ps_manifest"
+
+  NOGIT_SH_COUNT=$(find "$NOGITSH" -type f | wc -l | tr -d ' ')
+  NOGIT_PS_COUNT=$(find "$NOGITPS" -type f | wc -l | tr -d ' ')
+  expect "ps1 file count matches sh on a no-.git toolkit" "$NOGIT_SH_COUNT" "$NOGIT_PS_COUNT"
 else
   skip "setup-project.ps1 parity" "no PowerShell on this host" 4
+  skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 6
 fi
 
 echo "----------------------------------------------------------------"

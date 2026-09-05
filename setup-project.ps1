@@ -858,8 +858,20 @@ if ($warnings.Count -gt 0) {
 }
 
 # --- Generate template manifest ---
-$templateHead = & git -C $PSScriptRoot rev-parse --short HEAD 2>$null
-if (-not $templateHead) { $templateHead = "unknown" }
+# Same $ErrorActionPreference = 'Stop' trap as the default-branch detection above
+# (:153-175): a toolkit extracted without .git (e.g. a ZIP download) makes git
+# write "not a git repository" to stderr, which under 'Stop' is a terminating
+# error -- aborting the script here, after most files are already written but
+# before the manifest and the auto-mode snippet, leaves a bootstrap that LOOKS
+# complete and can never sync. Guard it the same way: fall back to "unknown".
+$templateHead = "unknown"
+$prevEapHead = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $headOut = (& git -C $PSScriptRoot rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $headOut) { $templateHead = $headOut }
+}
+finally { $ErrorActionPreference = $prevEapHead }
 
 # Build placeholders map (only actually-provided values)
 $placeholderMap = [ordered]@{}
