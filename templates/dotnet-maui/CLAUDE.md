@@ -1,7 +1,7 @@
 # Claude Code -- General Behavior
 
 > Project-specific hard rules live in the PROJECT-CUSTOM region below — read it first.
-> Rationale for every rule in this file: docs/design-rationale.md#claudemd
+> Rationale (toolkit repo): docs/design-rationale.md#claudemd
 
 ---
 
@@ -103,7 +103,7 @@ Project-specific: trace read **and** write paths — a common miss is fixing one
 
 # Commit Workflow
 
-Commit and push promptly when asked. Before calling done: `git diff --cached`, `git diff --stat`, and check push output for rejections.
+Commit and push promptly when asked. Before calling done: `git diff --cached`, `git diff --stat`, and diagnose push rejections; never retry blindly.
 
 **Merge ownership:** developers own the merge; PO sequences merges.
 

@@ -154,16 +154,16 @@ v3.1 plan — not here.
 
 ## AGENT_TEAM.md
 
-Byte-identical across all six variants, measured at `3975c1a` (before) and after the v3.1 diet (this commit):
+Byte-identical across all six variants, measured at `3975c1a` (before) and at the branch tip after the review fixes (after):
 
 | variant | before (bytes) | after (bytes) |
 |---|---|---|
-| general | 35,845 | 20,464 |
-| dotnet | 35,845 | 20,464 |
-| dotnet-maui | 35,845 | 20,464 |
-| rust-tauri | 35,845 | 20,464 |
-| java | 35,845 | 20,464 |
-| python | 35,845 | 20,464 |
+| general | 35,845 | 20,472 |
+| dotnet | 35,845 | 20,472 |
+| dotnet-maui | 35,845 | 20,472 |
+| rust-tauri | 35,845 | 20,472 |
+| java | 35,845 | 20,472 |
+| python | 35,845 | 20,472 |
 
 Budget: `BUDGET_AGENT_TEAM_MD = 20480` (`scripts/verify-template-consistency.sh`, check 35).
 
@@ -191,10 +191,12 @@ stated once as the fact rather than argued.
 
 Kept the table-shaped policy (alias-only models, per-role effort, the
 diagnostic rule). Cut: the worked-example reasoning for "wrong despite full
-context → bigger model, not effort" and the model-proxy caveat about
-`advisorModel` — both are true and can be recovered from the alias-only rule's
-own logic; restating the worked example cost more bytes than the fact it
-supports.
+context → bigger model, not effort". Also cut: the model-proxy caveat (never
+route the auto-mode classifier or `advisorModel` through an alias-rewriting
+proxy). That one is NOT derivable from the alias-only rule — the alias rule
+wants the proxy to reroute, the caveat wants these two exempted from it. It is
+user-scope settings guidance, and it lives in full, with its measurement
+(83 classifier outages), at `user-level-reference/settings-reference.md:189`.
 
 ### Mode Behavior Table
 

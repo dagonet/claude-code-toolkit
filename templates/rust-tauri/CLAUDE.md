@@ -1,7 +1,7 @@
 # Claude Code -- General Behavior
 
 > Project-specific hard rules live in the PROJECT-CUSTOM region below — read it first.
-> Rationale for every rule in this file: docs/design-rationale.md#claudemd
+> Rationale (toolkit repo): docs/design-rationale.md#claudemd
 
 ---
 
@@ -34,7 +34,7 @@ Table is a **maximum**; question turns get at most one agent; never re-spawn `Ex
 | Task Domain | subagent_type | When |
 |---|---|---|
 | **Rust/Tauri** | `rust-coder` | Services, commands |
-| **Frontend/Mixed** | `coder` | Frontend, cross-cutting |
+| **Frontend/Mixed** | `coder` | Frontend, misc |
 
 **Every spawn carries the task brief** (goal, constraints, files in scope, definition of done) — `AGENT_TEAM.md` → *Task Brief Upfront*.
 
@@ -70,7 +70,7 @@ Developer-agent preferences preload via the `karpathy-guidelines` skill.
 bash hooks/run-gate.sh   # build, test, format, lint
 ```
 
-Commands, layout, fallback: `.claude/rules/{rust,frontend}.md`.
+Commands: `PROJECT_CONTEXT.md`; rules: `.claude/rules/{rust,frontend}.md`.
 
 ---
 
@@ -103,7 +103,7 @@ Project-specific: trace read **and** write paths — a common miss is fixing one
 
 # Commit Workflow
 
-Commit and push promptly when asked. Before calling done: `git diff --cached`, `git diff --stat`, and check push output for rejections.
+Commit and push promptly when asked. Before calling done: `git diff --cached`, `git diff --stat`, and diagnose push rejections; never retry blindly.
 
 **Merge ownership:** developers own the merge; PO sequences merges.
 

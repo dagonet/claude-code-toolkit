@@ -40,7 +40,7 @@ the code MUST be rewritten until it complies.
 
 # Build, Routing, and Directory Notes (moved from CLAUDE.md)
 
-**Commands:** `npm install` (frontend deps), `npm run dev` (Vite dev server), `npm run tauri dev` (full Tauri app), `npm test` / `npm run test:rust` (`cargo test`), `npm run lint:all`, `npm run format`.
+**Commands (build, test, format, lint, gate):** see `PROJECT_CONTEXT.md` at the project root — the single source; do not copy them here.
 
 **Directory overview:** `src/` (frontend TypeScript), `src-tauri/src/` (Rust backend), `e2e/` (E2E tests), `docs/plans/` (design docs + sprint plans).
 

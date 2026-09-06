@@ -4,7 +4,7 @@
 
 v2.0
 
-> Rationale for cuts: `docs/design-rationale.md#agent_teammd`
+> Rationale: toolkit `docs/design-rationale.md#agent_teammd`
 
 ---
 
