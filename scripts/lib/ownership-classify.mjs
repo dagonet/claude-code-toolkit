@@ -2,6 +2,10 @@
 // ownership-classify.mjs — first-match-wins over the rules in templates/ownership.json.
 // Globs: PurePosixPath-style; `**` matches across `/`, `*` within a segment.
 // Classifies TEMPLATE-tree relative paths only (spec §4/§6); never consumer files.
+// Feed TEMPLATE-relative names, not the project path: the `gitignore` rule is
+// `^gitignore$` and will NOT match `.gitignore`. setup-project.sh:581 already
+// holds the renamed `.gitignore` in FILE_RELS — classify the template name and
+// take the manifest key from column 3 (`target`) when it is not `-`.
 //
 // Output per path: `<rel-path>\t<ownership>\t<target|->\t<rule-index>`
 // rule-index is the 0-based index into rules[] that matched, or `-` if UNCLASSIFIED.

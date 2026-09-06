@@ -3054,7 +3054,12 @@ echo "$c36_hooks_rels" | sed 's#^#hooks/#' >> "$c36_rel_file"
 c36_files=$(wc -l < "$c36_full_file" | tr -d '[:space:]')
 
 c36_class_file=$(mktemp)
+node -e 'require("./templates/ownership.json")' 2>/dev/null \
+  || { ko "check 36: templates/ownership.json is unreadable (missing, bad JSON, no node, or cwd is not the repo root) — the coverage arms measured nothing"; c36_fail=1; }
 node scripts/lib/ownership-classify.mjs templates/ownership.json $(cat "$c36_rel_file") > "$c36_class_file"
+c36_class_rows=$(wc -l < "$c36_class_file" | tr -d '[:space:]')
+[ "$c36_class_rows" = "$c36_files" ] \
+  || { ko "check 36: classifier emitted $c36_class_rows rows for $c36_files files — the join is misaligned and the coverage arm measured nothing"; c36_fail=1; }
 paste "$c36_full_file" "$c36_class_file" > "${c36_class_file}.joined"
 
 c36_unclassified=""
@@ -3084,8 +3089,8 @@ while [ "$i" -lt "$c36_rule_count" ]; do
 done
 
 # also refuse a bare root wildcard pattern (would classify consumer-owned root files)
-if node -e 'process.exit(require("./templates/ownership.json").rules.some(r=>/^\*\.[a-z0-9]+$/.test(r.pattern))?1:0)'; then :; else
-  ko "check 36: a bare root wildcard rule (*.ext) is present — it would classify consumer-owned root files"; c36_fail=1
+if node -e 'process.exit(require("./templates/ownership.json").rules.some(r=>/^\*{1,2}(\.[A-Za-z0-9]+)?$/.test(r.pattern))?1:0)'; then :; else
+  ko "check 36: a bare root wildcard rule (*, ** or *.ext) is present — it would classify consumer-owned root files"; c36_fail=1
 fi
 if [ "$c36_files" -lt 60 ]; then ko "check 36: CONTROL FAILED — only $c36_files template files enumerated (want >= 60)"; c36_fail=1; fi
 [ -z "$c36_unclassified" ] || ko "check 36: unclassified template files:$c36_unclassified"
@@ -3122,10 +3127,10 @@ fi
 # release's summary. v3.0.4's first squash bumped line 1 and left v3.0.3's summary.
 # ---------------------------------------------------------------------------
 note "Check 38: VERSION line 2 changes whenever line 1 does"
-c38_v_now=$(head -1 VERSION | tr -d '\r'); c38_s_now=$(sed -n 2p VERSION)
+c38_v_now=$(head -1 VERSION | tr -d '\r'); c38_s_now=$(sed -n 2p VERSION | tr -d '\r')
 c38_last_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v "^v${c38_v_now}\$" | head -1)
 if [ -n "$c38_last_tag" ] && git cat-file -e "$c38_last_tag:VERSION" 2>/dev/null; then
-  c38_v_tag=$(git show "$c38_last_tag:VERSION" | head -1 | tr -d '\r'); c38_s_tag=$(git show "$c38_last_tag:VERSION" | sed -n 2p)
+  c38_v_tag=$(git show "$c38_last_tag:VERSION" | head -1 | tr -d '\r'); c38_s_tag=$(git show "$c38_last_tag:VERSION" | sed -n 2p | tr -d '\r')
   if [ "$c38_v_now" != "$c38_v_tag" ] && [ "$c38_s_now" = "$c38_s_tag" ]; then
     ko "check 38: VERSION line 1 moved ($c38_v_tag -> $c38_v_now) but line 2 still carries $c38_last_tag's summary"
   else
