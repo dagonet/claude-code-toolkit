@@ -3634,8 +3634,44 @@ subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 expect "subagent pytest still passes" "0" \
   "$(printf '%s' "$subout" | grep -c '"deny"')"
+
+# v3.1 Task 2.2: **PO write surface** extends the Edit/Write allow-list from
+# PROJECT_CONTEXT.md. Reuses DELEGREPO; the Bash-matcher fixtures above never
+# read that file, so dropping one into it here does not disturb them.
+mkjson_edit() { # <file_path> <cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")"
+}
+
+printf -- '- **PO write surface**: docs/ tools/\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+out=$(printf '%s' "$(mkjson_edit docs/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: extra prefix allows docs/x.md" "pass" "$got"
+
+out=$(printf '%s' "$(mkjson_edit src/x.py "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: outside extra prefix still denied" "deny" "$got"
+
+printf -- '- **PO write surface**: none\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+out=$(printf '%s' "$(mkjson_edit notes/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: none denies as today" "deny" "$got"
+
+printf -- '- **PO write surface**: {{PO_WRITE_SURFACE}}\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+PHERR="$TMPROOT/delegation_placeholder.err"
+out=$(printf '%s' "$(mkjson_edit tools/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>"$PHERR")
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: placeholder behaves as none" "deny" "$got"
+expect "PO write surface: placeholder reported on stderr" 1 \
+  "$(grep -c 'unfilled placeholder' "$PHERR")"
+
+rm -f "$DELEGREPO/PROJECT_CONTEXT.md"
 else
-skip "enforce-delegation git/gh exemption cases" "no node on this host" 27
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 32
 fi
 
 # ===========================================================================
