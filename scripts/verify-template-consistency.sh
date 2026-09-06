@@ -3015,6 +3015,85 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 36 — OWNERSHIP TABLE COVERAGE (v3.1, spec §6).
+#
+# Every file a consumer actually receives — templates/<variant>/** (minus the
+# known CLAUDE.local.md exception, gone at Phase 3) plus the repo-root hooks/**
+# tree setup-project.sh copies verbatim — must match a rule in
+# templates/ownership.json (first match wins). A file with no class is a red
+# gate, not an implicit `template`.
+#
+# Reverse arm: every rule pattern must match at least one file in that same
+# enumeration, counted PER RULE INDEX from the classifier's 4th column — a
+# stale or over-broad rule (a bare `*.sh` that would clobber a consumer's root
+# preflight.sh) cannot sit unnoticed. This is the toolkit half of the "absent
+# from the manifest is project" guarantee; the server tests the other half.
+#
+# Known pending exception: .claude/rules/project.md is seeded by Phase 3
+# Task 3.2 — until then it matches nothing in the shipped templates, so it is
+# allowlisted below rather than turning the check red. Remove the allowlist
+# entry when Task 3.2 lands.
+# ---------------------------------------------------------------------------
+note "Check 36: templates/ownership.json covers every template file, and no rule is dead"
+C36_PENDING_RULES=".claude/rules/project.md"
+c36_fail=0
+# Two parallel lists, same line count and order: the display path (what a
+# human sees in a failure message) and the classify path (relative to the
+# tree root a rule pattern is written against — templates/<v>/ for template
+# files, repo root for hooks/**).
+c36_full_file=$(mktemp)
+c36_rel_file=$(mktemp)
+for v in general dotnet dotnet-maui rust-tauri java python; do
+  c36_v_rels=$(cd "templates/$v" && find . -type f | sed 's#^\./##' | grep -v '^CLAUDE\.local\.md$')
+  echo "$c36_v_rels" | sed "s#^#$v/#" >> "$c36_full_file"
+  echo "$c36_v_rels" >> "$c36_rel_file"
+done
+c36_hooks_rels=$(cd hooks && find . -type f | sed 's#^\./##')
+echo "$c36_hooks_rels" | sed 's#^#hooks/#' >> "$c36_full_file"
+echo "$c36_hooks_rels" | sed 's#^#hooks/#' >> "$c36_rel_file"
+c36_files=$(wc -l < "$c36_full_file" | tr -d '[:space:]')
+
+c36_class_file=$(mktemp)
+node scripts/lib/ownership-classify.mjs templates/ownership.json $(cat "$c36_rel_file") > "$c36_class_file"
+paste "$c36_full_file" "$c36_class_file" > "${c36_class_file}.joined"
+
+c36_unclassified=""
+while IFS=$'\t' read -r full rel cls tgt idx; do
+  [ "$cls" = "UNCLASSIFIED" ] && { c36_unclassified="$c36_unclassified $full"; c36_fail=1; }
+done < "${c36_class_file}.joined"
+
+# reverse arm: every rule index must appear at least once in column 4
+c36_rule_count=$(node -e 'console.log(require("./templates/ownership.json").rules.length)')
+c36_dead=""
+c36_pending_hit=0
+i=0
+while [ "$i" -lt "$c36_rule_count" ]; do
+  pat=$(node -e "console.log(require('./templates/ownership.json').rules[$i].pattern)")
+  if awk -F'\t' -v idx="$i" '$4==idx{c++} END{exit !(c>0)}' "$c36_class_file"; then
+    :
+  else
+    is_pending=0
+    for p in $C36_PENDING_RULES; do [ "$p" = "$pat" ] && is_pending=1; done
+    if [ "$is_pending" = 1 ]; then
+      c36_pending_hit=$((c36_pending_hit+1))
+    else
+      c36_dead="$c36_dead $pat"; c36_fail=1
+    fi
+  fi
+  i=$((i+1))
+done
+
+# also refuse a bare root wildcard pattern (would classify consumer-owned root files)
+if node -e 'process.exit(require("./templates/ownership.json").rules.some(r=>/^\*\.[a-z0-9]+$/.test(r.pattern))?1:0)'; then :; else
+  ko "check 36: a bare root wildcard rule (*.ext) is present — it would classify consumer-owned root files"; c36_fail=1
+fi
+if [ "$c36_files" -lt 60 ]; then ko "check 36: CONTROL FAILED — only $c36_files template files enumerated (want >= 60)"; c36_fail=1; fi
+[ -z "$c36_unclassified" ] || ko "check 36: unclassified template files:$c36_unclassified"
+[ -z "$c36_dead" ] || { ko "check 36: rule patterns matching no template file:$c36_dead"; c36_fail=1; }
+rm -f "$c36_full_file" "$c36_rel_file" "$c36_class_file" "${c36_class_file}.joined"
+[ "$c36_fail" -eq 0 ] && ok "check 36: $c36_files template files classified; every rule live; no bare root wildcard; $c36_pending_hit pending rule allowed"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
