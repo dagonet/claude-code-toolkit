@@ -215,16 +215,31 @@ process.stdin.on("end", () => {
     /(^|\/)CLAUDE\.local\.md$/,
     /(^|\/)AGENT_TEAM\.md$/,
   ];
-  // v3.1 Task 2.2: append one anchored-prefix regex per **PO write surface**
-  // entry. A trailing slash in the source prefix is kept as a literal
-  // character; a prefix with none (e.g. "tools") is still a plain string
-  // prefix, so it also matches "toolsx" -- write "tools/" to bind it to a
-  // directory.
-  extra.forEach((prefix) => {
-    const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    allowPatterns.push(new RegExp("(^|/)" + esc));
-  });
   if (allowPatterns.some(re => re.test(p))) { console.log(warn + "PASS"); return; }
+
+  // v3.1 Task 2.2 fix round 1 (review probe A): **PO write surface** extras
+  // are anchored to the REPO ROOT, not to any path-segment boundary -- the
+  // path is relativized against CLAUDE_PROJECT_DIR (or cwd if unset) before
+  // an extra is tested, and each extra is matched with ^, so "docs/" means
+  // the repo-root docs/ tree, never a nested directory also named docs; a
+  // path outside the repo root never matches an extra. A prefix without a
+  // trailing slash is still a plain string prefix -- "tools" also matches
+  // "toolsx"; write "tools/" to bind it to a directory. If the key appears
+  // more than once in PROJECT_CONTEXT.md, the first occurrence wins (the
+  // regex above has no `g` flag).
+  const root = (process.env.CLAUDE_PROJECT_DIR || cwd).replace(/\\/g, "/").replace(/\/+$/, "");
+  let rel = p;
+  if (/^(\/|[A-Za-z]:\/)/.test(p)) {
+    if (p === root || p.startsWith(root + "/")) {
+      rel = p.slice(root.length).replace(/^\//, "");
+    } else {
+      rel = null; // absolute and outside the repo root -- extras never match
+    }
+  }
+  if (rel !== null && extra.some((prefix) => {
+    const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("^" + esc).test(rel);
+  })) { console.log(warn + "PASS"); return; }
 
   // Paths outside the repo root (scratchpad, ~/.claude memory) are PO-legal.
   // Repo root detection happens in the shell wrapper (git); here we only

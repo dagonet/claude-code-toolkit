@@ -3660,6 +3660,27 @@ out=$(printf '%s' "$(mkjson_edit notes/x.md "$DELEGREPO")" \
 case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
 expect "PO write surface: none denies as today" "deny" "$got"
 
+# v3.1 Task 2.2 fix round 1 (review probe A): extras are anchored to the repo
+# ROOT, not to any path-segment boundary -- a nested directory that happens
+# to be named "docs" is not the repo-root docs/ tree.
+printf -- '- **PO write surface**: docs/ tools/\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+out=$(printf '%s' "$(mkjson_edit src/docs/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: nested docs/ dir is not root docs/" "deny" "$got"
+
+out=$(printf '%s' "$(mkjson_edit "$DELEGREPO/docs/x.md" "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: absolute path under root allowed" "pass" "$got"
+
+# backslash form is normalized to / before extras are matched, same as the
+# built-in patterns -- reuses the docs/ tools/ key still set above.
+out=$(printf '%s' "$(mkjson_edit 'docs\x.md' "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: backslash path normalized" "pass" "$got"
+
 printf -- '- **PO write surface**: {{PO_WRITE_SURFACE}}\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
 PHERR="$TMPROOT/delegation_placeholder.err"
 out=$(printf '%s' "$(mkjson_edit tools/x.md "$DELEGREPO")" \
@@ -3671,7 +3692,7 @@ expect "PO write surface: placeholder reported on stderr" 1 \
 
 rm -f "$DELEGREPO/PROJECT_CONTEXT.md"
 else
-skip "enforce-delegation git/gh exemption cases" "no node on this host" 32
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 35
 fi
 
 # ===========================================================================
