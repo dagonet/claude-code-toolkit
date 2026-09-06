@@ -747,6 +747,7 @@ foreach ($f in $templateFiles) {
             $appendBlock = Get-GitignoreAppendBlock -SourceContent $sourceContent -TargetFile $targetFile
             if ($appendBlock) {
                 $existingTargetContent = [System.IO.File]::ReadAllText($targetFile, [System.Text.Encoding]::UTF8)
+                # Add-Content always terminated the value with a line ending; WriteAllText does not, so append it explicitly (byte-identical to the old output, measured 2026-09-06).
                 Write-Utf8NoBom -Path $targetFile -Content ($existingTargetContent + $appendBlock + "`r`n")
                 $copiedFiles += "$($f.RelPath) (appended)"
                 Add-RenderedFile -RelPath $f.RelPath -Text $appendBlock

@@ -279,7 +279,7 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   NOGIT_PS_COUNT=$(find "$NOGITPS" -type f | wc -l | tr -d ' ')
   expect "ps1 file count matches sh on a no-.git toolkit" "$NOGIT_SH_COUNT" "$NOGIT_PS_COUNT"
 else
-  skip "setup-project.ps1 parity" "no PowerShell on this host" 7
+  skip "setup-project.ps1 parity" "no PowerShell on this host" 8
   skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 6
 fi
 
