@@ -3094,6 +3094,30 @@ rm -f "$c36_full_file" "$c36_rel_file" "$c36_class_file" "${c36_class_file}.join
 [ "$c36_fail" -eq 0 ] && ok "check 36: $c36_files template files classified; every rule live; no bare root wildcard; $c36_pending_hit pending rule allowed"
 
 # ---------------------------------------------------------------------------
+# Check 37 — CONTEXT-MODE SENTINEL (v3.1, spec §5; measured 2026-09-05).
+# The context-mode MCP server's writeRoutingInstructions() appends its routing
+# block to the project CLAUDE.md on every startup unless the file already
+# includes("context-mode") (server.bundle.mjs). Under template ownership that is
+# a permanent unauthored LOCAL_EDITED for every context-mode consumer. Keep one
+# line containing the literal in every variant, and re-read the predicate from
+# the installed bundle when present so a plugin change turns red, not silent.
+# ---------------------------------------------------------------------------
+note "Check 37: every templates/*/CLAUDE.md contains the literal 'context-mode'"
+c37_fail=0
+for v in general dotnet dotnet-maui rust-tauri java python; do
+  grep -q 'context-mode' "templates/$v/CLAUDE.md" || { ko "check 37: templates/$v/CLAUDE.md lacks the context-mode sentinel"; c37_fail=1; }
+done
+c37_bundle="${C37_BUNDLE:-$HOME/.claude/plugins/marketplaces/context-mode/server.bundle.mjs}"
+if [ -f "$c37_bundle" ]; then
+  grep -q 'includes("context-mode")' "$c37_bundle" \
+    && ok "check 37: plugin predicate still includes(\"context-mode\") in the installed bundle" \
+    || { ko "check 37: installed context-mode bundle no longer uses includes(\"context-mode\") — re-measure the writer predicate before trusting the sentinel"; c37_fail=1; }
+else
+  note "check 37: context-mode bundle not installed here — predicate not re-measured (sentinel still asserted)"
+fi
+[ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in 6/6 variants"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
