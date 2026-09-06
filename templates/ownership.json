@@ -1,0 +1,25 @@
+{
+  "tracked_paths": ["hooks", "scripts", "templates", "user-level-reference"],
+  "rules": [
+    { "pattern": "CLAUDE.md",                 "ownership": "template" },
+    { "pattern": "AGENT_TEAM.md",             "ownership": "template" },
+    { "pattern": ".claude/settings.json",     "ownership": "template" },
+    { "pattern": ".claude/agents/*.md",       "ownership": "template" },
+    { "pattern": ".claude/rules/project.md",  "ownership": "once" },
+    { "pattern": ".claude/rules/*.md",        "ownership": "template" },
+    { "pattern": "hooks/**",                  "ownership": "template" },
+    { "pattern": ".gitattributes",            "ownership": "template" },
+    { "pattern": "PROJECT_CONTEXT.md",        "ownership": "once", "audit": "keys",
+      "required_keys": ["Protected branches", "Gate"],
+      "deprecated_keys": { "Gate Command": "Gate", "Test Command": "Test" },
+      "aliases": {},
+      "placeholder_map": { "Build": "BUILD_COMMAND", "Test": "TEST_COMMAND",
+                           "Format": "FORMAT_COMMAND", "Lint": "LINT_COMMAND" } },
+    { "pattern": "PROJECT_STATE.md",          "ownership": "once" },
+    { "pattern": "VERIFICATION_PLAYBOOK.md",  "ownership": "once" },
+    { "pattern": "gitignore",                 "ownership": "once", "target": ".gitignore" },
+    { "pattern": ".editorconfig",             "ownership": "once" },
+    { "pattern": ".prettierrc",               "ownership": "once" },
+    { "pattern": "rustfmt.toml",              "ownership": "once" }
+  ]
+}
