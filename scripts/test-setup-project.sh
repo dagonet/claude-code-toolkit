@@ -219,6 +219,19 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   # exercises the defect. See the no-.git arm below for the row that does.
   expect "ps1 exits 0 on the develop fixture" 0 "$PS_DEVELOP_RC"
 
+  # --- BOM: PS 5.1's `-Encoding UTF8` writes a byte-order mark on every write.
+  # The MCP server tolerates it, but the sync skill's own
+  # `json.load(encoding="utf-8")` on the manifest raises
+  # `JSONDecodeError: Unexpected UTF-8 BOM`, crashing mid-sync on every
+  # ps1-bootstrapped consumer (open-brain, measured 2026-09-05).
+  bom_files=$(cd "$PSDIR" && find . -type f -exec sh -c 'head -c3 "$1" | od -An -tx1 | tr -d " \n" | grep -q "^efbbbf" && echo "$1"' _ {} \;)
+  expect "ps1 bootstrap writes no UTF-8 BOM" "" "$bom_files"
+  expect "ps1 manifest has no BOM" "7b" "$(head -c1 "$PSDIR/.claude/template-manifest.json" | od -An -tx1 | tr -d ' ')"
+  SHDIR="$TMPROOT/develop-real"
+  sh_list=$(cd "$SHDIR" && find . -type f | sort)
+  ps_list=$(cd "$PSDIR" && find . -type f | sort)
+  expect "sh and ps1 bootstraps write the same file set" "$sh_list" "$ps_list"
+
   # --- the no-.git arm: the actual regression test for :861 -----------------
   #
   # A toolkit extracted without .git (a ZIP download, not a clone) is the
@@ -266,7 +279,7 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   NOGIT_PS_COUNT=$(find "$NOGITPS" -type f | wc -l | tr -d ' ')
   expect "ps1 file count matches sh on a no-.git toolkit" "$NOGIT_SH_COUNT" "$NOGIT_PS_COUNT"
 else
-  skip "setup-project.ps1 parity" "no PowerShell on this host" 4
+  skip "setup-project.ps1 parity" "no PowerShell on this host" 7
   skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 6
 fi
 
