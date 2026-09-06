@@ -2963,6 +2963,54 @@ skip "bash-output-guard cases" "no node on this host" 15
 fi
 
 # ===========================================================================
+# post-edit-build.sh (PostToolUse Edit|Write) — v3.1 Task 2.1. Runs the
+# **Post-edit build** command declared in PROJECT_CONTEXT.md; `none` or an
+# absent key is a silent no-op, an unfilled `{{...}}` placeholder is reported
+# to stderr (never run), and a real command's last 20 lines land on stderr.
+# Never blocks -- always exits 0.
+# ===========================================================================
+echo
+echo "=== hooks/post-edit-build.sh (PostToolUse Edit|Write) ==="
+PEB=hooks/post-edit-build.sh
+PEBDIR="$TMPROOT/pebdir"
+mkdir -p "$PEBDIR"
+
+runpeb() { # <project_dir> -> stderr (stdout discarded, rc via $?)
+  printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"x"},"cwd":"%s","tool_response":{}}\n' "$(jesc "$1")" \
+    | CLAUDE_PROJECT_DIR="$1" bash "$ROOT/$PEB" 2>&1 1>/dev/null
+}
+
+PEBNONE="$PEBDIR/none"; mkdir -p "$PEBNONE"
+printf '# ctx\n\n- **Post-edit build**: none\n' > "$PEBNONE/PROJECT_CONTEXT.md"
+PEBNONE_OUT=$(runpeb "$PEBNONE"); PEBNONE_RC=$?
+expect "post-edit-build: none -> exit 0" 0 "$PEBNONE_RC"
+expect "post-edit-build: none -> silent" "" "$PEBNONE_OUT"
+
+PEBPH="$PEBDIR/placeholder"; mkdir -p "$PEBPH"
+printf '# ctx\n\n- **Post-edit build**: {{POST_EDIT_BUILD}}\n' > "$PEBPH/PROJECT_CONTEXT.md"
+PEBPH_OUT=$(runpeb "$PEBPH"); PEBPH_RC=$?
+expect "post-edit-build: placeholder -> exit 0" 0 "$PEBPH_RC"
+expect "post-edit-build: placeholder reported" 1 \
+  "$(printf '%s' "$PEBPH_OUT" | grep -c 'unfilled placeholder')"
+
+PEBCMD="$PEBDIR/cmd"; mkdir -p "$PEBCMD"
+cat > "$PEBCMD/PROJECT_CONTEXT.md" <<'EOF'
+# ctx
+
+- **Post-edit build**: `printf built-%s ok`
+EOF
+PEBCMD_OUT=$(runpeb "$PEBCMD"); PEBCMD_RC=$?
+expect "post-edit-build: command -> exit 0" 0 "$PEBCMD_RC"
+expect "post-edit-build: command output on stderr" 1 \
+  "$(printf '%s' "$PEBCMD_OUT" | grep -c 'built-ok')"
+
+PEBABSENT="$PEBDIR/absent"; mkdir -p "$PEBABSENT"
+printf '# ctx\n\n- **Gate**: `true`\n' > "$PEBABSENT/PROJECT_CONTEXT.md"
+PEBABSENT_OUT=$(runpeb "$PEBABSENT"); PEBABSENT_RC=$?
+expect "post-edit-build: absent key -> exit 0" 0 "$PEBABSENT_RC"
+expect "post-edit-build: absent key -> silent" "" "$PEBABSENT_OUT"
+
+# ===========================================================================
 # retro-ledger.sh (SubagentStop) + retro-brief.sh (SessionStart) — v2.0 PR2.
 # The ledger records subagent failures (dead tools, hook blocks) under the
 # project's auto-memory dir; the brief replays the last 10 at session start.

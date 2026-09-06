@@ -34,6 +34,8 @@ the absolute numbers as host-local; the ~10x ratio is the part that travels.
 - **Format**: none — every file is LF-only Markdown or shell; `verify-template-consistency.sh` asserts the line endings
 - **Lint**: none — see Build
 - **Gate**: `bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh`
+- **Post-edit build**: none
+<!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 <!-- Join Gate command steps with `&&`, never `;` — `;` discards an earlier step's failure status, so `<real gate> ; <anything>` exits 0 and the gate mints a pass artifact on a failing suite. -->
 
 ## Paths

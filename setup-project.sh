@@ -335,6 +335,14 @@ if [[ "$VARIANT" == "java" ]]; then
     esac
 fi
 
+# Auto-derived: post-edit build (hooks/post-edit-build.sh, PostToolUse Edit|Write).
+# Only the dotnet variants build after every edit; the rest declare `none`.
+if [[ "$VARIANT" == "dotnet" || "$VARIANT" == "dotnet-maui" ]]; then
+    add_derived '{{POST_EDIT_BUILD}}' "dotnet build --no-restore -v q"
+else
+    add_derived '{{POST_EDIT_BUILD}}' "none"
+fi
+
 # --- SHA-256 helper ---
 content_hash() {
     if command -v sha256sum &>/dev/null; then
