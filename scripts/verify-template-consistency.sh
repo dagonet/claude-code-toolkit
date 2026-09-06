@@ -3118,6 +3118,26 @@ fi
 [ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in 6/6 variants"
 
 # ---------------------------------------------------------------------------
+# Check 38 — VERSION two-line convention (v3.1). Line 1 = semver, line 2 = this
+# release's summary. v3.0.4's first squash bumped line 1 and left v3.0.3's summary.
+# ---------------------------------------------------------------------------
+note "Check 38: VERSION line 2 changes whenever line 1 does"
+c38_v_now=$(head -1 VERSION | tr -d '\r'); c38_s_now=$(sed -n 2p VERSION)
+c38_last_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v "^v${c38_v_now}\$" | head -1)
+if [ -n "$c38_last_tag" ] && git cat-file -e "$c38_last_tag:VERSION" 2>/dev/null; then
+  c38_v_tag=$(git show "$c38_last_tag:VERSION" | head -1 | tr -d '\r'); c38_s_tag=$(git show "$c38_last_tag:VERSION" | sed -n 2p)
+  if [ "$c38_v_now" != "$c38_v_tag" ] && [ "$c38_s_now" = "$c38_s_tag" ]; then
+    ko "check 38: VERSION line 1 moved ($c38_v_tag -> $c38_v_now) but line 2 still carries $c38_last_tag's summary"
+  else
+    ok "check 38: VERSION $c38_v_now; summary differs from $c38_last_tag's (or version unchanged)"
+  fi
+  c38_lines=$(awk 'END{print NR}' VERSION)
+  [ "$c38_lines" -eq 2 ] || ko "check 38: VERSION must have exactly two lines (has $c38_lines)"
+else
+  note "check 38: no previous tag with a VERSION file — skipped"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
