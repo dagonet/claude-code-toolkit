@@ -341,6 +341,15 @@ if ($Variant -eq "java") {
     }
 }
 
+# --- BOM-less UTF-8 writer. PS 5.1's `-Encoding UTF8` always writes a BOM;
+# the sync skill's `json.load(encoding="utf-8")` on the manifest raises
+# `JSONDecodeError: Unexpected UTF-8 BOM` on a ps1-bootstrapped consumer.
+function Write-Utf8NoBom {
+    param([string]$Path, [string]$Content)
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
+
 # --- SHA-256 hash function ---
 function Get-ContentHash {
     param([string]$Content)
@@ -737,7 +746,9 @@ foreach ($f in $templateFiles) {
             # Append entries not already present
             $appendBlock = Get-GitignoreAppendBlock -SourceContent $sourceContent -TargetFile $targetFile
             if ($appendBlock) {
-                Add-Content -Path $targetFile -Value $appendBlock -Encoding UTF8
+                $existingTargetContent = [System.IO.File]::ReadAllText($targetFile, [System.Text.Encoding]::UTF8)
+                # Add-Content always terminated the value with a line ending; WriteAllText does not, so append it explicitly (byte-identical to the old output, measured 2026-09-06).
+                Write-Utf8NoBom -Path $targetFile -Content ($existingTargetContent + $appendBlock + "`r`n")
                 $copiedFiles += "$($f.RelPath) (appended)"
                 Add-RenderedFile -RelPath $f.RelPath -Text $appendBlock
             }
@@ -754,7 +765,7 @@ foreach ($f in $templateFiles) {
             foreach ($key in $replacements.Keys) {
                 $sourceContent = $sourceContent.Replace($key, $replacements[$key])
             }
-            Set-Content -Path $targetFile -Value $sourceContent -Encoding UTF8 -NoNewline
+            Write-Utf8NoBom -Path $targetFile -Content $sourceContent
             $copiedFiles += $f.RelPath
             Add-RenderedFile -RelPath $f.RelPath -Text $sourceContent
         }
@@ -767,7 +778,7 @@ foreach ($f in $templateFiles) {
         $renderedTemplate = $rawContent
         foreach ($key in $replacements.Keys) { $renderedTemplate = $renderedTemplate.Replace($key, $replacements[$key]) }
         $wrapped = Get-RenderedContent -File $f
-        Set-Content -Path $targetFile -Value $wrapped -Encoding UTF8 -NoNewline
+        Write-Utf8NoBom -Path $targetFile -Content $wrapped
         $copiedFiles += "$($f.RelPath) (existing content wrapped into PROJECT-CUSTOM)"
         Add-RenderedFile -RelPath $f.RelPath -Text $wrapped
         $manifestFiles[($f.RelPath -replace '\\', '/')] = @{
@@ -803,7 +814,7 @@ foreach ($f in $templateFiles) {
     # modes disagree about the one line that decides whether the trunk is
     # protected. (The .sh half had exactly this bug, caught by a bootstrap test.)
     if ($f.RelPath -eq 'PROJECT_CONTEXT.md') { $content = Set-ProtectedBranches -Text $content }
-    Set-Content -Path $targetFile -Value $content -Encoding UTF8 -NoNewline
+    Write-Utf8NoBom -Path $targetFile -Content $content
     $copiedFiles += $f.RelPath
     Add-RenderedFile -RelPath $f.RelPath -Text $content
 
@@ -929,7 +940,7 @@ $manifestDir  = Split-Path $manifestPath -Parent
 if (-not (Test-Path $manifestDir)) {
     New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
 }
-Set-Content -Path $manifestPath -Value $manifestJson -Encoding UTF8 -NoNewline
+Write-Utf8NoBom -Path $manifestPath -Content $manifestJson
 $copiedFiles += ".claude/template-manifest.json"
 Write-Host "  [+] .claude/template-manifest.json (generated)" -ForegroundColor Green
 
@@ -956,7 +967,7 @@ if ($mcpJsonContent) {
         Write-Host "      Servers this variant would add: $names" -ForegroundColor DarkGray
     }
     else {
-        Set-Content -Path $mcpJsonPath -Value $mcpJsonContent -Encoding UTF8 -NoNewline
+        Write-Utf8NoBom -Path $mcpJsonPath -Content $mcpJsonContent
         Write-Host "  [+] .mcp.json (generated at repo root)" -ForegroundColor Green
     }
 }
