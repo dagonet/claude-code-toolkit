@@ -4525,8 +4525,13 @@ pct_ctx() { # <test-script> -- Gate declared too, so no want-0 row is vacuous
   printf '# ctx\n\n- **Test**: `bash %s`\n- **Gate**: `bash %s`\n' "$1" "$1" > "$PCTREPO/PROJECT_CONTEXT.md"
 }
 PCTART="$PCTREPO/.gate/last-precommit.json"
-pct_field() { # <file> <key> -> value (string or number), no jq dependency
-  sed -n 's/.*"'"$2"'":"\([^"]*\)".*/\1/p;s/.*"'"$2"'":\(-\{0,1\}[0-9]\{1,\}\).*/\1/p' "$1" 2>/dev/null | head -1
+PCTNOOP="$PCTREPO/.gate/last-precommit-noop.json"
+pct_field() { # <file> <key> -> value (string, number, or bool), no jq dependency
+  sed -n \
+    -e 's/.*"'"$2"'":"\([^"]*\)".*/\1/p' \
+    -e 's/.*"'"$2"'":\(-\{0,1\}[0-9]\{1,\}\).*/\1/p' \
+    -e 's/.*"'"$2"'":\(true\|false\)[,}].*/\1/p' \
+    "$1" 2>/dev/null | head -1
 }
 for rc in 0 1 78; do
   want=2; [ "$rc" -eq 0 ] && want=0
@@ -4542,14 +4547,53 @@ for rc in 0 1 78; do
     fail=$((fail + 2))
   fi
 done
-# A payload with no commit segment still leaves the artifact — that is the read
-# that answers "did this hook run at all", which stderr cannot.
-rm -f "$PCTART"
+# A payload with no commit segment still leaves an artifact — that is the read
+# that answers "did this hook run at all", which stderr cannot. v3.1: it lands
+# in its OWN file (last-precommit-noop.json), never in last-precommit.json —
+# see the split below.
+rm -f "$PCTART" "$PCTNOOP"
 check "(PCT) non-commit payload allowed" "$PCT" 0 "$(mkjson Bash 'ls -la' "$PCTREPO")"
-expect "(PCT) artifact path=no-commit-segment" "no-commit-segment" "$(pct_field "$PCTART" path)"
+expect "(PCT) noop artifact path=no-commit-segment" "no-commit-segment" "$(pct_field "$PCTNOOP" path)"
 # `tree` is empty where nothing was hashed because nothing ran — otherwise a
 # reader would compare against a hash that describes no gated state.
-expect "(PCT) artifact tree empty when nothing ran" "" "$(pct_field "$PCTART" tree)"
+expect "(PCT) noop artifact tree empty when nothing ran" "" "$(pct_field "$PCTNOOP" tree)"
+expect "(PCT) non-commit payload does not create last-precommit.json" "0" \
+  "$([ -f "$PCTART" ] && echo 1 || echo 0)"
+
+# v3.1 — THE SPLIT'S WHOLE POINT: inspecting the artifact is itself what
+# destroys it. Before the split, a non-commit Bash call (an `ls`, a `git
+# status`) run AFTER a commit overwrote that commit's OWN last-precommit.json
+# record with path=no-commit-segment — a consumer who checked "did my commit
+# get gated?" a moment too late saw the wrong answer for a hook that had, in
+# fact, run correctly. Measured on three consumers. A commit's record must
+# survive every later non-commit call in the same repo.
+pct_ctx "tc0.sh"
+rm -f "$PCTART" "$PCTNOOP"
+check "(PCT split) commit writes last-precommit.json" "$PCT" 0 \
+  "$(mkjson Bash 'git commit -m x' "$PCTREPO")"
+expect "(PCT split) commit artifact path=test" "test" "$(pct_field "$PCTART" path)"
+check "(PCT split) a later non-commit call is allowed" "$PCT" 0 \
+  "$(mkjson Bash 'ls -la' "$PCTREPO")"
+expect "(PCT split) last-precommit.json UNCHANGED by the later call" "test" \
+  "$(pct_field "$PCTART" path)"
+expect "(PCT split) the later call's own record lands in the noop file" \
+  "no-commit-segment" "$(pct_field "$PCTNOOP" path)"
+
+# v3.1 — matched_in_quoted marks a commit segment that gc_segments only found
+# because it strips quotes: a payload of the shape `bash -c "git commit -m
+# x"` collapses to one segment once quotes are gone, indistinguishable from an
+# unwrapped `git commit -m x` on the SEGMENT TEXT alone — this field answers
+# it from the lib's own GC_SEG_QUOTED side channel instead.
+rm -f "$PCTART"
+check "(PCT split) plain commit, Test exit 0" "$PCT" 0 \
+  "$(mkjson Bash 'git commit -m x' "$PCTREPO")"
+expect "(PCT split) matched_in_quoted=false for a plain commit" "false" \
+  "$(pct_field "$PCTART" matched_in_quoted)"
+rm -f "$PCTART"
+check "(PCT split) bash -c wrapped commit, Test exit 0" "$PCT" 0 \
+  "$(mkjson Bash 'bash -c "git commit -m x"' "$PCTREPO")"
+expect "(PCT split) matched_in_quoted=true for a bash -c wrapped commit" "true" \
+  "$(pct_field "$PCTART" matched_in_quoted)"
 # ...and on a path that DID run, it is the tree the hook gated. Two consumers hit
 # the same symptom from opposite causes in one evening — a mutation batched into
 # the same Bash call as the commit, and an untracked file swept in by `add -A` —

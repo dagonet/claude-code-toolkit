@@ -412,6 +412,34 @@ gc_segments() {
   printf '%s\n' "$GC_CMD" | tr -d "\"'" | tr '|;' '\n\n' | sed 's/&&/\n/g'
 }
 
+# gc_seg_quoted -- sibling of gc_segments, additive (no caller of gc_segments
+# breaks). Prints one 0|1 per line, same order and count as gc_segments' own
+# output: 1 when that segment carried a quote character BEFORE stripping.
+#
+# v3.1. A wrapper payload such as `bash -c "git commit -m x"` collapses to ONE
+# segment once quotes are gone, indistinguishable there from an unwrapped
+# `git commit -m x` -- a caller that cares whether the commit segment it
+# matched came from inside such a wrapper reads this list instead. Built by
+# re-splitting the UNSTRIPPED command on the identical delimiters -- removing
+# quote characters never changes where && ; | fall, so the segment boundaries
+# line up -- and testing each raw segment for a leftover quote character.
+#
+# A SEPARATE function, not a side-effect global set inside gc_segments: the
+# caller captures gc_segments via `segments=$(gc_segments)`, and a variable
+# assigned INSIDE a function invoked through command substitution is a
+# subshell's own copy -- it vanishes the instant that subshell exits, never
+# reaching the caller. Measured red before this split existed as its own
+# function. Callers assign the result to a variable named GC_SEG_QUOTED
+# themselves, e.g. `GC_SEG_QUOTED=$(gc_seg_quoted)`.
+gc_seg_quoted() {
+  printf '%s\n' "$GC_CMD" | tr '|;' '\n\n' | sed 's/&&/\n/g' | while IFS= read -r _gcsq_raw; do
+    case "$_gcsq_raw" in
+      *[\"\']*) printf '1\n' ;;
+      *)        printf '0\n' ;;
+    esac
+  done
+}
+
 # Prints the `cd <target>` argument of a segment, if the segment is a bare cd.
 gc_cd_target() {
   printf '%s\n' "$1" | sed -n 's/^[[:space:]]*cd[[:space:]]\+\([^[:space:]]\+\)[[:space:]]*$/\1/p' | head -1

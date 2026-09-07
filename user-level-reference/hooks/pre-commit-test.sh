@@ -78,6 +78,12 @@ RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
 PCT_HOOK_T0=$(date +%s 2>/dev/null || echo 0)
 PCT_ARTIFACT_BASE=""
 PCT_TREE=""
+# v3.1 — whether the commit segment this hook matched came from inside an
+# unwrapped quoted payload (`bash -c "git commit ..."`, `sh -lc "..."`). Set
+# once a commit segment is found (below); false until then, so every path that
+# writes last-precommit.json before a commit segment is known (unreadable,
+# empty-cmd) reports it honestly as false.
+PCT_QUOTED=false
 
 # v3.0.3 — WHICH TREE THIS HOOK GATED. Two consumers hit the same symptom in one
 # evening from opposite causes: a green commit, an artifact the merge gate calls
@@ -125,13 +131,36 @@ pct_note() { # <path-label> <rc, or -1 where no subshell ran>
     PowerShell) _pn_tool=PowerShell ;;
     *)          _pn_tool=other ;;
   esac
+  # v3.1 — SPLIT ARTIFACT (three-consumer measurement: inspecting the artifact
+  # is itself what destroys it). Before this, a plain `ls` run moments after a
+  # commit overwrote that commit's OWN last-precommit.json record with
+  # path=no-commit-segment, because pct_note wrote every path — commit or not —
+  # to the same file: a consumer who read the artifact a call too late saw "the
+  # hook never ran" for a hook that, in fact, had. `no-commit-segment` now lands
+  # in its OWN file, last-precommit-noop.json, which nothing else ever writes to
+  # — so it can never clobber a commit's record — and last-precommit.json is
+  # left untouched on that path. Every other path (including empty-cmd and
+  # unreadable, which also found no commit but for a different reason) keeps
+  # writing last-precommit.json exactly as before, now carrying
+  # matched_in_quoted as well.
+  if [ "$1" = no-commit-segment ]; then
+    printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","kind":"no-commit-segment"}\n' \
+      "$1" "$2" "$PCT_TREE" "$((_pn_t1 - PCT_HOOK_T0))" "${#GC_CMD}" "$_pn_tool" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+      > "$_pn_top/.gate/last-precommit-noop.json" 2>/dev/null || return 0
+    return 0
+  fi
   # The COMMAND ITSELF is never recorded, only its length: this file lands in
   # the consumer's repo, and a diagnostic is not a place to accumulate command
   # history. printf, so no jq is required on the path that reports jq missing.
   # `tree` is "" on every path where nothing was hashed because nothing ran.
-  printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s"}\n' \
+  # `matched_in_quoted` (v3.1): true when the commit segment this hook matched
+  # was only found because gc_segments strips quote characters -- a payload of
+  # the shape `bash -c "git commit -m x"` -- as opposed to an unwrapped `git
+  # commit -m x`; see gc_seg_quoted in hooks/lib/git-cmd.sh.
+  printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","matched_in_quoted":%s}\n' \
     "$1" "$2" "$PCT_TREE" "$((_pn_t1 - PCT_HOOK_T0))" "${#GC_CMD}" "$_pn_tool" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$PCT_QUOTED" \
     > "$_pn_top/.gate/last-precommit.json" 2>/dev/null || return 0
   return 0
 }
@@ -166,8 +195,16 @@ fi
 base="$GC_CWD"
 REPO_PATH=""
 segments=$(gc_segments)
+# gc_seg_quoted (lib) is a sibling of gc_segments: one 0|1 line per line of
+# $segments, same order -- see its header note on why this cannot be a
+# variable gc_segments sets as a side effect (a command-substitution subshell
+# would discard it).
+GC_SEG_QUOTED=$(gc_seg_quoted)
+pct_seg_quoted="$GC_SEG_QUOTED"
 
+pct_seg_idx=0
 while IFS= read -r seg; do
+  pct_seg_idx=$((pct_seg_idx + 1))
   [ -n "$seg" ] || continue
 
   cdt=$(gc_cd_target "$seg")
@@ -177,6 +214,13 @@ while IFS= read -r seg; do
   fi
 
   if gc_matches_subcommand "$seg" "commit"; then
+    # v3.1 -- resolve matched_in_quoted as soon as the commit segment is
+    # known, before any of the pct_note calls below (global-refused,
+    # unresolved-c, gate, test) that must all carry it.
+    case "$(printf '%s\n' "$pct_seg_quoted" | sed -n "${pct_seg_idx}p")" in
+      1) PCT_QUOTED=true ;;
+      *) PCT_QUOTED=false ;;
+    esac
     # --- v3.0.3 (finding 62), one block, deliberately small ------------------
     # A global before `commit` used to make the line above false, so this gate
     # exited 0 in 0 s having run no tests: `git -P commit -m x` and
@@ -295,7 +339,7 @@ esac
 #
 # v2.1.3 (consumer feedback, Yutraffic; fix round 1): when the fallback fires
 # AND hooks/run-gate.sh sits next to this script, run run-gate.sh instead of
-# eval'ing the Gate command ourselves. A green run-gate.sh writes
+# eval'ing the Gate command ourselves. A green run writes
 # .gate/last-pass.json as a side effect, so gate-before-merge.sh is satisfied
 # without a second gate run at merge time. A still-unfilled {{...}} placeholder
 # is treated as absent here (never routed into run-gate.sh, and never eval'd
