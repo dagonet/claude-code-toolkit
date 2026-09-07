@@ -3681,6 +3681,43 @@ out=$(printf '%s' "$(mkjson_edit 'docs\x.md' "$DELEGREPO")" \
 case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
 expect "PO write surface: backslash path normalized" "pass" "$got"
 
+# v3.1 Task 2.2 fix round 2 (re-review probe B): a `..` segment must not be
+# able to escape an anchored prefix -- the path is normalized (path.posix
+# semantics) BEFORE the prefix test, both relative and absolute. Still under
+# the docs/ tools/ key set above.
+out=$(printf '%s' "$(mkjson_edit docs/../src/x.py "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: dot-dot cannot escape docs/ (relative)" "deny" "$got"
+
+# An absolute-path form of the same probe is deliberately NOT added here: it
+# would exercise hooks/enforce-delegation.sh's separate CHECK_ROOT/git
+# rev-parse repo-root comparison (line ~291/307), not the extras
+# normalization fixed in this round. On this Git-Bash-on-Windows host, `git
+# -C "$DELEGREPO" rev-parse --show-toplevel` returns the Windows-native
+# spelling (C:/Users/.../AppData/Local/Temp/tmp.XXXX) while $DELEGREPO/the
+# JSON cwd stay POSIX (/tmp/tmp.XXXX) -- confirmed directly (not inferred)
+# by running both commands against a throwaway repo. The resulting spelling
+# mismatch makes that comparison treat an in-repo absolute path as "outside
+# the repo" and allow it -- a real, pre-existing bug in the wrapper, but not
+# in the node-side normalization this fix round targets, and out of this
+# round's scope; reported to the controller separately. Row (a) above already
+# exercises normalization for both the relative and (via `path.posix.normalize`
+# on `p` before the root comparison) absolute code path, since the same
+# normalization runs regardless of which form `p` arrives in.
+out=$(printf '%s' "$(mkjson_edit docs/./x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: dot-segment resolves inside docs/" "pass" "$got"
+
+# Choice: a leading `./` is normalized away like any other dot-segment, so
+# ./docs/x.md resolves to docs/x.md and is ALLOWED -- consistent with the
+# hook normalizing the whole path (not just `..`) before the prefix test.
+out=$(printf '%s' "$(mkjson_edit ./docs/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: leading ./ is normalized away" "pass" "$got"
+
 printf -- '- **PO write surface**: {{PO_WRITE_SURFACE}}\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
 PHERR="$TMPROOT/delegation_placeholder.err"
 out=$(printf '%s' "$(mkjson_edit tools/x.md "$DELEGREPO")" \
@@ -3692,7 +3729,7 @@ expect "PO write surface: placeholder reported on stderr" 1 \
 
 rm -f "$DELEGREPO/PROJECT_CONTEXT.md"
 else
-skip "enforce-delegation git/gh exemption cases" "no node on this host" 35
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 38
 fi
 
 # ===========================================================================

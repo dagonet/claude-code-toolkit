@@ -217,16 +217,24 @@ process.stdin.on("end", () => {
   ];
   if (allowPatterns.some(re => re.test(p))) { console.log(warn + "PASS"); return; }
 
-  // v3.1 Task 2.2 fix round 1 (review probe A): **PO write surface** extras
-  // are anchored to the REPO ROOT, not to any path-segment boundary -- the
-  // path is relativized against CLAUDE_PROJECT_DIR (or cwd if unset) before
-  // an extra is tested, and each extra is matched with ^, so "docs/" means
-  // the repo-root docs/ tree, never a nested directory also named docs; a
-  // path outside the repo root never matches an extra. A prefix without a
-  // trailing slash is still a plain string prefix -- "tools" also matches
-  // "toolsx"; write "tools/" to bind it to a directory. If the key appears
-  // more than once in PROJECT_CONTEXT.md, the first occurrence wins (the
-  // regex above has no `g` flag).
+  // v3.1 Task 2.2 fix rounds 1-2 (review probes A, B): **PO write surface**
+  // extras are anchored to the REPO ROOT, not to any path-segment boundary
+  // -- "docs/" means the repo-root docs/ tree, never a nested directory also
+  // named docs, and a `..` segment cannot walk back out of it either. `p` is
+  // normalized (path.posix semantics: collapses `.`/`..` segments) BEFORE
+  // relativizing against CLAUDE_PROJECT_DIR (or cwd if unset); the resulting
+  // relative path is normalized again, and if it is `..`, starts with
+  // `../`, or is still absolute, extras never match (falls through to the
+  // existing CHECK_ROOT path) -- a path outside the repo root, before or
+  // after normalization, cannot match an extra. Each extra is matched with
+  // `^` against the normalized relative path. A leading `./` is normalized
+  // away like any other dot-segment, so "./docs/x.md" resolves to
+  // "docs/x.md" and IS allowed. A prefix without a trailing slash is still a
+  // plain string prefix -- "tools" also matches "toolsx"; write "tools/" to
+  // bind it to a directory. If the key appears more than once in
+  // PROJECT_CONTEXT.md, the first occurrence wins (the regex above has no
+  // `g` flag).
+  p = path.posix.normalize(p);
   const root = (process.env.CLAUDE_PROJECT_DIR || cwd).replace(/\\/g, "/").replace(/\/+$/, "");
   let rel = p;
   if (/^(\/|[A-Za-z]:\/)/.test(p)) {
@@ -235,6 +243,10 @@ process.stdin.on("end", () => {
     } else {
       rel = null; // absolute and outside the repo root -- extras never match
     }
+  }
+  if (rel !== null) {
+    rel = path.posix.normalize(rel);
+    if (rel === ".." || rel.startsWith("../") || /^(\/|[A-Za-z]:\/)/.test(rel)) rel = null;
   }
   if (rel !== null && extra.some((prefix) => {
     const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
