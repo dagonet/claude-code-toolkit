@@ -142,16 +142,6 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "^([a-z0-9]+-)?coder$|^code-reviewer$|^tester$|^architect$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'PIPELINE: Agent finished. Review workstream status and advance if ready.'"
-          }
-        ]
-      },
-      {
-        "matcher": "^([a-z0-9]+-)?coder$|^code-reviewer$",
         "hooks": [
           {
             "type": "command",

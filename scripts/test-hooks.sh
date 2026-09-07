@@ -3313,6 +3313,28 @@ echo "=== hooks/enforce-agent-contract.sh (verdict + loop guard) ==="
 
 if [ -n "$HAVE_NODE" ]; then
 
+# v3.1: eligibility is now derived from the PROJECT's own agent definition
+# (`.claude/agents/<agent_type>.md` frontmatter `pipeline: true`), not a
+# settings.json matcher, so every ctr() case below needs a CLAUDE_PROJECT_DIR
+# whose coder/code-reviewer agent files opt in -- otherwise every one of these
+# pre-existing behavioural rows would now read as ineligible and exit 0.
+CONTRACT_PROJ="$TMPROOT/contract-proj"
+mkdir -p "$CONTRACT_PROJ/.claude/agents"
+{
+  echo '---'
+  echo 'name: coder'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Coder agent body.'
+} > "$CONTRACT_PROJ/.claude/agents/coder.md"
+{
+  echo '---'
+  echo 'name: code-reviewer'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Reviewer agent body.'
+} > "$CONTRACT_PROJ/.claude/agents/code-reviewer.md"
+
 CONTRACT_OK='All done.
 
 ## Gate Results
@@ -3331,7 +3353,8 @@ ctr() {
   ctr_err="$TMPROOT/contract.err"
   mkdir -p "$ctr_tmp"
   printf '%s' "$(mkstop "$PROJCWD" "$ctr_type" "$ctr_id" "$ctr_tr")" \
-    | TMPDIR="$ctr_tmp" bash "$ROOT/hooks/enforce-agent-contract.sh" \
+    | TMPDIR="$ctr_tmp" CLAUDE_PROJECT_DIR="$CONTRACT_PROJ" \
+      bash "$ROOT/hooks/enforce-agent-contract.sh" \
       >/dev/null 2>"$ctr_err"
   ctr_got=$?
   if [ "$ctr_got" = "$ctr_want" ] &&
@@ -3401,8 +3424,162 @@ ctr "compliant stop does not re-arm"   "$LOOPTMP" coder a-loop "$CT_ARR" 0
 ctr "then a later bare stop still passes" "$LOOPTMP" coder a-loop "$CT_LOOP" 0 \
   "CONTRACT-ENFORCER"
 
+# ===========================================================================
+# v3.1: eligibility -- and behavior -- derived from the project's own agent
+# definition. Fixture project with coder.md (pipeline: true), helper.md (no
+# flag), mm-runner.md (pipeline: true, consumer-shaped name), tester.md /
+# architect.md (pipeline: notify, R17) -- plus the extent rows: pipeline:
+# false, pipeline: yes (an invalid value), pipeline: true confined to the
+# BODY (not frontmatter), a path-traversal / subdirectory agent_type that
+# must never be read, and the no-space `pipeline:true` spelling.
+# ===========================================================================
+FIXROOT="$TMPROOT/pipeline-fixture"
+mkdir -p "$FIXROOT/.claude/agents/sub"
+{
+  echo '---'
+  echo 'name: coder'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Coder agent body.'
+} > "$FIXROOT/.claude/agents/coder.md"
+{
+  echo '---'
+  echo 'name: helper'
+  echo '---'
+  echo 'Helper agent body, no pipeline flag.'
+} > "$FIXROOT/.claude/agents/helper.md"
+{
+  echo '---'
+  echo 'name: mm-runner'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Consumer-shaped pipeline runner agent.'
+} > "$FIXROOT/.claude/agents/mm-runner.md"
+{
+  echo '---'
+  echo 'name: off'
+  echo 'pipeline: false'
+  echo '---'
+  echo 'Explicitly opted out.'
+} > "$FIXROOT/.claude/agents/off.md"
+{
+  echo '---'
+  echo 'name: bodyonly'
+  echo '---'
+  echo 'pipeline: true'
+} > "$FIXROOT/.claude/agents/bodyonly.md"
+{
+  echo '---'
+  echo 'name: notrue'
+  echo 'pipeline:true'
+  echo '---'
+  echo 'No-space spelling.'
+} > "$FIXROOT/.claude/agents/notrue.md"
+# R17: the flag carries a VALUE, not a boolean -- `true` (echo + contract
+# verdict) and `notify` (echo only, then exit 0) reproduce the two DIFFERENT
+# sets the old settings.json matchers encoded separately.
+{
+  echo '---'
+  echo 'name: tester'
+  echo 'pipeline: notify'
+  echo '---'
+  echo 'Tester agent body.'
+} > "$FIXROOT/.claude/agents/tester.md"
+{
+  echo '---'
+  echo 'name: architect'
+  echo 'pipeline: notify'
+  echo '---'
+  echo 'Architect agent body -- has no Bash, cannot run the gate.'
+} > "$FIXROOT/.claude/agents/architect.md"
+{
+  echo '---'
+  echo 'name: yesval'
+  echo 'pipeline: yes'
+  echo '---'
+  echo 'An invalid pipeline value.'
+} > "$FIXROOT/.claude/agents/yesval.md"
+# These two files WOULD be eligible if the traversal guard failed -- their
+# presence is what makes the rejection rows meaningful rather than vacuous.
+{
+  echo '---'
+  echo 'name: evil'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Must never be reached via agent_type=../evil.'
+} > "$FIXROOT/.claude/evil.md"
+{
+  echo '---'
+  echo 'name: coder'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Must never be reached via agent_type=sub/coder.'
+} > "$FIXROOT/.claude/agents/sub/coder.md"
+FIXCWD="$(cd "$FIXROOT" && pwd -W)"
+
+ELIG_NODELIV="$TMPROOT/elig-nodeliv.jsonl"
+trow_str 'Still working, no report yet.' > "$ELIG_NODELIV"
+ELIG_OK="$TMPROOT/elig-ok.jsonl"
+trow_str "$CONTRACT_OK" > "$ELIG_OK"
+
+# <label> <tmpdir> <agent_type> <transcript> <want_exit> [want_stdout_needle] [forbid_stdout_needle]
+elig() {
+  el_label="$1"; el_tmp="$2"; el_type="$3"; el_tr="$4"; el_want="$5"
+  el_needle="${6:-}"; el_forbid="${7:-}"
+  el_out="$TMPROOT/elig.out"; el_err="$TMPROOT/elig.err"
+  mkdir -p "$el_tmp"
+  printf '%s' "$(mkstop "$FIXCWD" "$el_type" "elig-$el_type" "$el_tr")" \
+    | TMPDIR="$el_tmp" CLAUDE_PROJECT_DIR="$FIXCWD" \
+      bash "$ROOT/hooks/enforce-agent-contract.sh" \
+      >"$el_out" 2>"$el_err"
+  el_got=$?
+  el_ok=1
+  [ "$el_got" = "$el_want" ] || el_ok=0
+  [ -z "$el_needle" ] || grep -qF "$el_needle" "$el_out" || el_ok=0
+  if [ -n "$el_forbid" ] && grep -qF "$el_forbid" "$el_out"; then el_ok=0; fi
+  if [ "$el_ok" = 1 ]; then
+    printf 'PASS  %-42s (exit %s)\n' "$el_label" "$el_got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s%s%s, got %s stdout=%s)\n' "$el_label" "$el_want" \
+      "${el_needle:+ + \"$el_needle\"}" "${el_forbid:+ w/o \"$el_forbid\"}" \
+      "$el_got" "$(head -1 "$el_out")"
+    fail=$((fail + 1))
+  fi
+}
+
+elig "derived: coder (pipeline: true) without deliverable blocks" \
+  "$TMPROOT/el1" coder "$ELIG_NODELIV" 2
+elig "derived: helper (no flag) without deliverable is a no-op" \
+  "$TMPROOT/el2" helper "$ELIG_NODELIV" 0
+elig "derived: mm-runner (consumer-shaped, pipeline: true) blocks" \
+  "$TMPROOT/el3" mm-runner "$ELIG_NODELIV" 2
+elig "derived: unknown agent type (no agent file) is a no-op" \
+  "$TMPROOT/el4" Explore "$ELIG_NODELIV" 0
+elig "derived: PIPELINE echo prints for an eligible, compliant coder" \
+  "$TMPROOT/el5" coder "$ELIG_OK" 0 "PIPELINE:"
+elig "derived: PIPELINE echo does NOT print for an ineligible helper" \
+  "$TMPROOT/el6" helper "$ELIG_OK" 0 "" "PIPELINE:"
+elig "extent: pipeline: false is ineligible" \
+  "$TMPROOT/el7" off "$ELIG_NODELIV" 0
+elig "extent: pipeline: true confined to the BODY (not frontmatter) is ineligible" \
+  "$TMPROOT/el8" bodyonly "$ELIG_NODELIV" 0
+elig "extent: agent_type with '..' is rejected before reading outside .claude/agents/" \
+  "$TMPROOT/el9" "../evil" "$ELIG_NODELIV" 0
+elig "extent: agent_type with '/' is rejected before reading a subdirectory" \
+  "$TMPROOT/el10" "sub/coder" "$ELIG_NODELIV" 0
+elig "extent: pipeline:true (no space) is eligible" \
+  "$TMPROOT/el11" notrue "$ELIG_NODELIV" 2
+elig "R17: tester (pipeline: notify) without deliverable is echo-only, no block" \
+  "$TMPROOT/el12" tester "$ELIG_NODELIV" 0 "PIPELINE:"
+elig "R17: architect (pipeline: notify) is echo-only, no block" \
+  "$TMPROOT/el13" architect "$ELIG_NODELIV" 0 "PIPELINE:"
+elig "R17: pipeline: yes is an invalid value, ineligible" \
+  "$TMPROOT/el14" yesval "$ELIG_NODELIV" 0 "" "PIPELINE:"
+
 else
 skip "enforce-agent-contract verdict + loop guard" "no node on this host" 12
+skip "enforce-agent-contract derived eligibility" "no node on this host" 14
 fi
 
 # ===========================================================================
