@@ -96,9 +96,10 @@ PCT_QUOTED=false
 # batched with the commit; equal to neither means an untracked file moved.
 #
 # Computed EXACTLY as run-gate.sh computes `tree` for .gate/last-pass.json
-# (temp index, add -A, write-tree — hooks/run-gate.sh:170-175) so the two
-# artifacts cannot disagree about what "tree" names. Captured BEFORE the Test
-# command or run-gate.sh runs: that is the state the verdict describes.
+# (temp index, add -u -- ., write-tree — hooks/run-gate.sh) so the two
+# artifacts cannot disagree about what "tree" names. v3.1: tracked files
+# only -- an untracked file no longer enters either hash. Captured BEFORE the
+# Test command or run-gate.sh runs: that is the state the verdict describes.
 pct_capture_tree() {
   [ -n "$PCT_ARTIFACT_BASE" ] || return 0
   _pt_top=$(git -C "$PCT_ARTIFACT_BASE" rev-parse --show-toplevel 2>/dev/null) || return 0
@@ -107,7 +108,7 @@ pct_capture_tree() {
   # `--git-path index`, never a hardcoded .git/index: in a linked worktree the
   # index lives under .git/worktrees/<name>/.
   cp "$(git -C "$_pt_top" rev-parse --git-path index)" "$_pt_d/index" 2>/dev/null || true
-  GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" add -A >/dev/null 2>&1
+  GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" add -u -- . >/dev/null 2>&1
   PCT_TREE=$(GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" write-tree 2>/dev/null)
   rm -rf "$_pt_d"
   return 0

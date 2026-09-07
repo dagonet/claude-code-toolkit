@@ -637,33 +637,65 @@ expect "(a) run-gate.sh path: artifact written" "1" \
 ARTSHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
 expect "(a) run-gate.sh path: artifact sha matches HEAD" "$RUNGATESHA" "$ARTSHA"
 ARTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
-# v2.1.5: the recorded tree is the WORKING tree at gate time (PROJECT_CONTEXT.md
-# was still untracked when the hook fired). Committing exactly what was gated --
-# `git add -A && git commit` -- reproduces it as HEAD^{tree}.
-git -C "$GATEONLYOK" add -A >/dev/null 2>&1
+# v2.1.5, updated v3.1 (penumbra, arm a): the recorded tree is the WORKING
+# tree at gate time, TRACKED FILES ONLY (`add -u`, not `add -A` -- see below)
+# -- PROJECT_CONTEXT.md was still untracked when the hook fired, so it is
+# NOT part of ARTTREE. Committing exactly what was gated -- `git add -u --
+# . && git commit` -- reproduces it as HEAD^{tree}; the SAME untracked file
+# swept in by `add -A` instead would land in the commit and MISMATCH (proven
+# on a fresh clone of the identical starting state right below) -- that
+# mismatch is the whole point of moving off `add -A`.
+git -C "$GATEONLYOK" add -u -- . >/dev/null 2>&1
 git -C "$GATEONLYOK" commit -q -m "gated commit" >/dev/null 2>&1
 RUNGATETREE=$(git -C "$GATEONLYOK" rev-parse 'HEAD^{tree}')
-expect "(a) run-gate.sh path: artifact tree matches committed tree" "$RUNGATETREE" "$ARTTREE"
+expect "(2.5a) run-gate.sh path: artifact tree matches tracked-only committed tree" "$RUNGATETREE" "$ARTTREE"
 
-# --- v2.1.5 (consumer feedback, Yutraffic PR #223): the artifact keys on the
-# WORKING TREE, not the index. v2.1.3 recorded no tree at all when the working
-# tree had unstaged changes -- but that is the ordinary agent shape (the
-# PreToolUse hook fires before a chained `git add && git commit` stages
-# anything), so the artifact matched nothing and the single-run merge path never
-# fired. The positive form: unstaged change at gate time, `git commit -a`
-# after -> the recorded tree IS the committed tree.
+GATEONLYOK_AA=$(mkrepo gateonlyok-aa main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$GATEONLYOK_AA/PROJECT_CONTEXT.md"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK_AA")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+AATREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK_AA/.gate/last-pass.json" 2>/dev/null)
+git -C "$GATEONLYOK_AA" add -A >/dev/null 2>&1
+git -C "$GATEONLYOK_AA" commit -q -m "add-A commit" >/dev/null 2>&1
+expect "(2.5a) the same untracked file, committed via add -A, mismatches" "mismatch" \
+  "$([ "$(git -C "$GATEONLYOK_AA" rev-parse 'HEAD^{tree}')" != "$AATREE" ] && echo mismatch || echo match)"
+
+# (b) unstaged edit to a TRACKED file, present at gate time but left OUT of the
+#     real commit (a dummy file is committed instead) -- MISMATCH (control):
+#     `add -u` still catches genuine staleness, it just stops sweeping in
+#     untracked content.
 DIRTYGATE=$(mkrepo commitdirtygate main)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$DIRTYGATE/PROJECT_CONTEXT.md"
 git -C "$DIRTYGATE" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$DIRTYGATE" commit -q -m "add gate" >/dev/null 2>&1
-echo unstaged >> "$DIRTYGATE/seed.txt"   # unstaged change, not added to the index
-printf '%s' "$(mkjson Bash 'git commit -a -m x' "$DIRTYGATE")" \
+echo unstaged >> "$DIRTYGATE/seed.txt"   # unstaged edit to a tracked file
+printf '%s' "$(mkjson Bash 'git commit -m x' "$DIRTYGATE")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
-expect "(R2-5) dirty working tree: exit 0 on pass" "0" "$?"
+expect "(2.5b) dirty working tree: exit 0 on pass" "0" "$?"
 DIRTYTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$DIRTYGATE/.gate/last-pass.json" 2>/dev/null)
-git -C "$DIRTYGATE" commit -aq -m x >/dev/null 2>&1
-expect "(R2-5) commit -a: recorded tree == committed tree" \
-  "$(git -C "$DIRTYGATE" rev-parse 'HEAD^{tree}')" "$DIRTYTREE"
+echo dummy > "$DIRTYGATE/dummy.txt"
+git -C "$DIRTYGATE" add dummy.txt >/dev/null 2>&1
+git -C "$DIRTYGATE" commit -q -m "unrelated commit" >/dev/null 2>&1
+expect "(2.5b) unstaged tracked-file edit left out of the commit mismatches" "mismatch" \
+  "$([ "$(git -C "$DIRTYGATE" rev-parse 'HEAD^{tree}')" != "$DIRTYTREE" ] && echo mismatch || echo match)"
+
+# (c) `git add new.py` (explicitly staged, not merely untracked) -> gate ->
+#     commit -> MATCH: the temp index is a COPY of the real index, so a
+#     staged new file rides along even though `add -u` alone would not have
+#     staged it.
+CADD=$(mkrepo commitaddnew main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$CADD/PROJECT_CONTEXT.md"
+git -C "$CADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$CADD" commit -q -m "add gate" >/dev/null 2>&1
+echo hello > "$CADD/new.py"
+git -C "$CADD" add new.py >/dev/null 2>&1
+printf '%s' "$(mkjson Bash 'git commit -m x' "$CADD")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(2.5c) staged-new-file gate: exit 0 on pass" "0" "$?"
+CADDTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$CADD/.gate/last-pass.json" 2>/dev/null)
+git -C "$CADD" commit -q -m x >/dev/null 2>&1
+expect "(2.5c) recorded tree == committed tree (staged new file)" \
+  "$(git -C "$CADD" rev-parse 'HEAD^{tree}')" "$CADDTREE"
 
 check_msg "(b) run-gate.sh path: block names run-gate.sh" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
@@ -2225,8 +2257,15 @@ check "(R3) chain negative: stale artifact after a further commit" \
 echo
 echo "=== R4 working-tree gate key (v2.1.5) ==="
 
-# (a) chained `git add <paths> && git commit` -> commit-time gate satisfies the
-#     merge gate in ONE run.
+# (a) chained `git add <paths> && git commit` of files that are BRAND NEW
+#     (untracked) when the hook fires. v3.1 (penumbra): `add -u -- .` only
+#     refreshes TRACKED files, so neither a.txt nor b.txt enters the gated
+#     hash even though the chained commit adds both -- the committed tree
+#     therefore does not match what was gated, same as a genuine partial add
+#     (R4b below). This is the direct, intended consequence of moving off
+#     `add -A`: a NEW file is no longer something the gate can bless
+#     sight-unseen, so the merge gate now correctly demands a fresh run here
+#     too, where before v3.1 it accepted the first one.
 CHAINADD=$(mkrepo gatechainadd feature/chainadd)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$CHAINADD/PROJECT_CONTEXT.md"
 git -C "$CHAINADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
@@ -2238,8 +2277,8 @@ printf '%s' "$(mkjson Bash 'git add a.txt b.txt && git commit -m "both"' "$CHAIN
 expect "(R4a) chained add+commit: hook allows" "0" "$?"
 git -C "$CHAINADD" add a.txt b.txt >/dev/null 2>&1
 git -C "$CHAINADD" commit -q -m both >/dev/null 2>&1
-check "(R4a) chained add+commit: merge gate accepts one run" \
-  "hooks/gate-before-merge.sh" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINADD")"
+check "(R4a) chained add+commit of NEW files: merge gate demands a fresh run" \
+  "hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINADD")"
 
 # (b) PARTIAL add: the gate hashed both files, the commit contains one. The
 #     committed tree is not what was gated -> stale by design.
