@@ -1,43 +1,5 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(bash hooks/run-gate.sh*)",
-      "Read",
-      "Edit",
-      "Write",
-      "NotebookEdit",
-      "WebSearch",
-      "mcp__github-tools__*",
-      "mcp__MCP_DOCKER__*",
-      "mcp__dotnet-tools__*",
-      "mcp__rust-tools__*",
-      "mcp__ollama-tools__*",
-      "mcp__plugin_context7_context7__*",
-      "mcp__plugin_playwright_playwright__*",
-      "mcp__windows-mcp__*",
-      "mcp__sqlite__*",
-      "mcp__searxng__*",
-      "mcp__open-brain__*",
-      "mcp__godot-tools__*",
-      "mcp__plugin_context-mode_context-mode__*",
-      "mcp__template-sync-tools__*",
-      "mcp__git-tools__*"
-    ],
-    "deny": [
-      "mcp__git-tools__git_push",
-      "mcp__git-tools__git_commit",
-      "mcp__git-tools__git_revert",
-      "mcp__git-tools__git_merge",
-      "mcp__git-tools__git_rebase",
-      "mcp__git-tools__git_reset",
-      "mcp__git-tools__git_push_tags"
-    ],
-    "defaultMode": "auto"
-  },
-  "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true
-  },
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "hooks": {
     "PreToolUse": [
       {
@@ -58,24 +20,6 @@
         ]
       },
       {
-        "matcher": "Read|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-secret-reads.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/deny-secret-reads.sh -- secrets protection offline. Check that hooks/ exists at the project root.' >&2; exit 2; fi; exit $c"
-          }
-        ]
-      },
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/read-size-gate.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'WARN: ${CLAUDE_PROJECT_DIR:-.}/hooks/read-size-gate.sh missing -- Read size gate offline. Check that hooks/ exists at the project root.' >&2; exit 0; fi; exit $c"
-          }
-        ]
-      },
-      {
         "matcher": "mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge",
         "hooks": [
           {
@@ -83,53 +27,9 @@
             "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh -- enforcement offline. Check that hooks/ exists at the project root.' >&2; exit 2; fi; exit $c"
           }
         ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/require-skills-block.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/require-skills-block.sh -- enforcement offline. Check that hooks/ exists at the project root.' >&2; exit 2; fi; exit $c"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/enforce-delegation.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'WARN: ${CLAUDE_PROJECT_DIR:-.}/hooks/enforce-delegation.sh missing -- delegation enforcement offline. Check that hooks/ exists at the project root.' >&2; exit 0; fi; exit $c"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/enforce-delegation.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'WARN: ${CLAUDE_PROJECT_DIR:-.}/hooks/enforce-delegation.sh missing -- delegation enforcement offline. Check that hooks/ exists at the project root.' >&2; exit 0; fi; exit $c"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/agent-budget-warn.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'WARN: ${CLAUDE_PROJECT_DIR:-.}/hooks/agent-budget-warn.sh missing -- tool-call budget offline. Check that hooks/ exists at the project root.' >&2; exit 0; fi; exit $c"
-          }
-        ]
       }
     ],
     "PostToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/bash-output-guard.sh\""
-          }
-        ]
-      },
       {
         "matcher": "Edit|Write",
         "hooks": [
@@ -157,28 +57,6 @@
           }
         ]
       }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/retro-brief.sh\""
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "auto",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '=== PRE-COMPACTION STATE ===' && (cat docs/plans/*.md 2>/dev/null | head -50 || echo 'No plan files') && echo '---' && (git worktree list 2>/dev/null || true) && echo '---' && (git branch --sort=-committerdate 2>/dev/null | head -10 || true)"
-          }
-        ]
-      }
     ]
-  },
-  "enableAllProjectMcpServers": true
+  }
 }
