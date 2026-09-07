@@ -39,24 +39,6 @@
           }
         ]
       }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/enforce-agent-contract.sh\""
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/retro-ledger.sh\""
-          }
-        ]
-      }
     ]
   }
 }
