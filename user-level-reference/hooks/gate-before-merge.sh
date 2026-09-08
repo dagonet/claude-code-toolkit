@@ -151,6 +151,7 @@
 lib="$(dirname "$0")/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 . "$lib"
+command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: $lib is present but corrupt (gc_current_branch undefined) — this gate cannot evaluate the command, refusing" >&2; exit 2; }
 
 gc_read_stdin
 gc_guard_off && exit 0
@@ -912,6 +913,26 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
           env:*)    A6_KIND=global; A6_GLOBAL="${a6g#env:}=" ;;
         esac
         A6_TARGET=$(a6_nonflag "$margs" | head -1)
+        A6_SEG=$seg
+        A6_ARGS=$margs
+        CWD="$repo"
+        break
+      elif [ -n "${A6_MOVE_TARGET:-}" ] && gc_branch_is_gate_checked "$repo" "$A6_MOVE_TARGET"; then
+        # I1 fix wave: a checkout earlier in this same command landed on a
+        # gate-checked branch. The branch this merge lands on is not one this
+        # hook can read from ambient state (CWD is still pre-checkout) -- same
+        # cannot-determine as the protected `moved` arm above, and it MUST
+        # route through A6_KIND=moved, never =gatechecked. Routing it to the
+        # gatechecked arm would set is_merge=1 and fall through to the
+        # artifact-freshness check with $CWD still on the PRE-checkout branch:
+        # a fresh artifact THERE (the common case -- gate the feature branch,
+        # then checkout the session branch and merge) would satisfy the
+        # comparison and emit a green receipt for a merge that lands somewhere
+        # else entirely. The existing moved message already tells the operator
+        # to split the call, which is the correct answer here too.
+        is_merge=1
+        A6_KIND=moved
+        A6_MOVED_VERB=merge
         A6_SEG=$seg
         A6_ARGS=$margs
         CWD="$repo"

@@ -2419,6 +2419,41 @@ check_msg "(2.7 hazard) same, cwd empty -> 2" \
   "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
 cd "$ROOT"
 
+# --- fix wave B / I1: a merge landing on a gate-checked branch via a compound
+# checkout is a cannot-determine, not an allow. The checkout in these payloads
+# is never actually EXECUTED by the harness -- this hook only parses the text
+# -- so the repo's real current branch stays feature/x throughout, which is
+# exactly the ambient-state gap the moved machinery exists to close.
+GCB_MOVED=$(gcbrepo gcb-moved feature/x "$GCB_CTX_MERGE_LINE")
+git -C "$GCB_MOVED" branch m113-session-2026-09-03 >/dev/null 2>&1
+git -C "$GCB_MOVED" branch other/x >/dev/null 2>&1
+
+# The target (m113-session-2026-09-03) is not on the PROTECTED list, so
+# a6_move_verdict returns 0 (not 1), which routes the moved block's message
+# to the generic "cannot determine which branch" line rather than the
+# checkout-naming sentence -- both share the unconditional remedy line
+# ("run the two as SEPARATE calls"), which is what this needle asserts.
+check_msg "(I1) checkout onto a gate-checked branch then merge -> moved refusal, not allowed" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git checkout m113-session-2026-09-03 && git merge other' "$GCB_MOVED")" \
+  "run the two as SEPARATE calls"
+
+# narrowness control: same repo/payload shape, checking out a branch the
+# gate-checked glob does NOT match -- without this row a hook that refuses
+# every compound checkout-then-merge would still pass row 1.
+check "(I1 narrowness) checkout onto a non-gate-checked branch then merge -> allowed" \
+  "$H" 0 "$(mkjson Bash 'git checkout other/x && git merge other' "$GCB_MOVED")"
+
+# the discriminator: identical payload to row 1, but with a FRESH artifact on
+# the PRE-checkout branch (feature/x -- the branch the repo is actually still
+# on, since the checkout text is never executed). A6_KIND=gatechecked reads
+# this artifact against $CWD's HEAD and returns 0 (the broken fix, a green
+# receipt for content never examined); A6_KIND=moved returns 2 unconditionally
+# before the artifact is ever read (the correct fix). A wave verified only
+# against the stale artifact in row 1 would ship the broken polarity green.
+writeartifact "$GCB_MOVED" "$(git -C "$GCB_MOVED" rev-parse HEAD)"
+check "(I1 discriminator) same payload, fresh artifact on pre-checkout branch -> still refused" \
+  "$H" 2 "$(mkjson Bash 'git checkout m113-session-2026-09-03 && git merge other' "$GCB_MOVED")"
+
 # ===========================================================================
 # v2.1.3 fix round 1 (Critical 2 / penumbra #2c): a real end-to-end chain --
 # pre-commit-test.sh runs run-gate.sh against the INDEX, the real `git commit`
@@ -3294,6 +3329,16 @@ printf '# ctx\n\n- **Gate**: `true`\n' > "$PEBABSENT/PROJECT_CONTEXT.md"
 PEBABSENT_OUT=$(runpeb "$PEBABSENT"); PEBABSENT_RC=$?
 expect "post-edit-build: absent key -> exit 0" 0 "$PEBABSENT_RC"
 expect "post-edit-build: absent key -> silent" "" "$PEBABSENT_OUT"
+
+# fix wave B / M2: a failing declared command used to give hook rc 0 with NO
+# stderr at all -- the rc-only half of a check passed vacuously. This row
+# asserts both: never-blocking (rc 0) AND the failure is actually reported.
+PEBFAIL="$PEBDIR/fail"; mkdir -p "$PEBFAIL"
+printf '# ctx\n\n- **Post-edit build**: exit 9\n' > "$PEBFAIL/PROJECT_CONTEXT.md"
+PEBFAIL_OUT=$(runpeb "$PEBFAIL"); PEBFAIL_RC=$?
+expect "post-edit-build: failing command -> exit 0 (never blocks)" 0 "$PEBFAIL_RC"
+expect "post-edit-build: failing command reported" 1 \
+  "$(printf '%s' "$PEBFAIL_OUT" | grep -c 'exited 9')"
 
 # ===========================================================================
 # retro-ledger.sh (SubagentStop) + retro-brief.sh (SessionStart) — v2.0 PR2.
@@ -5653,6 +5698,88 @@ check "(GUARD) -c a=b -C garbage1 -C garbage2 merge -- fires via unresolved -C" 
   "$(mkjson Bash 'git -c a=b -C garbage1 -C garbage2 merge feature/y' "$GATEFEAT")"
 check "(GUARD) bare merge, unprotected" "$GRD_H" 0 \
   "$(mkjson Bash 'git merge feature/y' "$GATEFEAT")"
+
+# ===========================================================================
+# fix wave B / I3: every git gate must refuse (or, for post-edit-build, at
+# least report) when hooks/lib/git-cmd.sh is present but CORRUPT (empty or a
+# syntax error) -- not just when it is MISSING. A missing lib is already
+# fail-closed via each hook's own `[ -f "$lib" ]` guard; a truncated or
+# half-written lib is exactly what a dropped three-way sync merge, a
+# CRLF-mangled copy, or an interrupted propagate produces, and (measured,
+# pre-fix) left every git gate returning 0 in silence. Each hook is copied
+# into its own scratch tree so the REAL hooks/lib/git-cmd.sh this whole suite
+# depends on is never touched.
+# ===========================================================================
+echo
+echo "=== fix wave B / I3: corrupt lib/git-cmd.sh sentinel (4 hooks) ==="
+
+fw4scratch() { # <name> <hookfile> -> prints a scratch hooks/ dir holding a
+               # copy of <hookfile> plus an INTACT copy of the whole real
+               # lib/ dir -- git-cmd.sh itself sources lib/json.sh, so a
+               # scratch tree missing it is already broken before the
+               # corrupt arm even runs.
+  local d="$TMPROOT/fw4-$1/hooks"
+  mkdir -p "$d/lib"
+  cp "$ROOT/hooks/$2" "$d/$2"
+  cp -r "$ROOT/hooks/lib/." "$d/lib/"
+  printf '%s\n' "$d"
+}
+fw4_corrupt() { # <scratch-hooks-dir> -- overwrite its lib with a syntax error
+  printf 'if [ 1 = 1\n' > "$1/lib/git-cmd.sh"
+}
+FW4_NEEDLE="gc_current_branch undefined"
+
+# --- gate-before-merge.sh: exit 2 on corrupt lib -----------------------------
+FW4_GBM_DIR=$(fw4scratch gbm gate-before-merge.sh)
+FW4_GBM_REPO=$(mkrepo fw4-gbm feature/x)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$FW4_GBM_REPO/PROJECT_CONTEXT.md"
+printf '%s' "$(mkjson Bash 'git merge feature/y' "$FW4_GBM_REPO")" \
+  | bash "$FW4_GBM_DIR/gate-before-merge.sh" >/dev/null 2>&1
+expect "(I3 control) gate-before-merge: intact lib, harmless merge -> allowed" 0 "$?"
+fw4_corrupt "$FW4_GBM_DIR"
+check_msg "(I3) gate-before-merge: corrupt lib -> refuses (cannot-determine)" \
+  "$FW4_GBM_DIR/gate-before-merge.sh" 2 \
+  "$(mkjson Bash 'git merge feature/y' "$FW4_GBM_REPO")" "$FW4_NEEDLE"
+
+# --- no-push-main.sh: exit 2 on corrupt lib ----------------------------------
+FW4_NPM_DIR=$(fw4scratch npm no-push-main.sh)
+FW4_NPM_REPO=$(mkrepo fw4-npm feature/x)
+printf '%s' "$(mkjson Bash 'git push origin feature/x' "$FW4_NPM_REPO")" \
+  | bash "$FW4_NPM_DIR/no-push-main.sh" >/dev/null 2>&1
+expect "(I3 control) no-push-main: intact lib, harmless push -> allowed" 0 "$?"
+fw4_corrupt "$FW4_NPM_DIR"
+check_msg "(I3) no-push-main: corrupt lib -> refuses (cannot-determine)" \
+  "$FW4_NPM_DIR/no-push-main.sh" 2 \
+  "$(mkjson Bash 'git push origin feature/x' "$FW4_NPM_REPO")" "$FW4_NEEDLE"
+
+# --- pre-commit-test.sh: exit 2 on corrupt lib -------------------------------
+FW4_PCT_DIR=$(fw4scratch pct pre-commit-test.sh)
+FW4_PCT_REPO=$(mkrepo fw4-pct feature/x)
+printf '%s' "$(mkjson Bash 'git commit -m "x"' "$FW4_PCT_REPO")" \
+  | bash "$FW4_PCT_DIR/pre-commit-test.sh" >/dev/null 2>&1
+expect "(I3 control) pre-commit-test: intact lib, no PROJECT_CONTEXT -> allowed" 0 "$?"
+fw4_corrupt "$FW4_PCT_DIR"
+check_msg "(I3) pre-commit-test: corrupt lib -> refuses (cannot-determine)" \
+  "$FW4_PCT_DIR/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m "x"' "$FW4_PCT_REPO")" "$FW4_NEEDLE"
+
+# --- post-edit-build.sh: never blocks, but must REPORT the corrupt lib ------
+FW4_PEB_DIR=$(fw4scratch peb post-edit-build.sh)
+FW4_PEB_PROJ="$TMPROOT/fw4-peb-proj"; mkdir -p "$FW4_PEB_PROJ"
+printf '# ctx\n\n- **Post-edit build**: none\n' > "$FW4_PEB_PROJ/PROJECT_CONTEXT.md"
+fw4peb() { # -> stderr (stdout discarded, rc via $?)
+  printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"x"},"cwd":"%s","tool_response":{}}\n' "$(jesc "$FW4_PEB_PROJ")" \
+    | CLAUDE_PROJECT_DIR="$FW4_PEB_PROJ" bash "$FW4_PEB_DIR/post-edit-build.sh" 2>&1 1>/dev/null
+}
+FW4_PEB_OUT=$(fw4peb); FW4_PEB_RC=$?
+expect "(I3 control) post-edit-build: intact lib -> exit 0, silent" 0 "$FW4_PEB_RC"
+expect "(I3 control) post-edit-build: intact lib -> no corrupt-lib report" 0 \
+  "$(printf '%s' "$FW4_PEB_OUT" | grep -c "$FW4_NEEDLE")"
+fw4_corrupt "$FW4_PEB_DIR"
+FW4_PEB_OUT2=$(fw4peb); FW4_PEB_RC2=$?
+expect "(I3) post-edit-build: corrupt lib -> exit 0 (never blocks)" 0 "$FW4_PEB_RC2"
+expect "(I3) post-edit-build: corrupt lib -> reported" 1 \
+  "$(printf '%s' "$FW4_PEB_OUT2" | grep -c "$FW4_NEEDLE")"
 
 # ===========================================================================
 # Read back the stub-PATH completeness marker (see mkpathdir): a stub built

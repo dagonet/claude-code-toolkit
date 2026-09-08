@@ -21,6 +21,7 @@
 lib="$(dirname "$0")/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 . "$lib"
+command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: $lib is present but corrupt (gc_current_branch undefined) — this gate cannot evaluate the command, refusing" >&2; exit 2; }
 
 gc_read_stdin
 gc_guard_off && exit 0
