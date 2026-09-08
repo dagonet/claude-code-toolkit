@@ -2387,6 +2387,38 @@ writeartifact "$GCB_EMPTY" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 check "(2.7 extent) empty value treated as none, not match-everything" \
   "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_EMPTY")"
 
+# --- hazard rows (task-2.7 fix round 1, review finding 1 / F1) -------------
+# Critical: `for gcgbb in $(gc_gate_checked_branches "$1")` in
+# gc_branch_is_gate_checked (hooks/lib/git-cmd.sh) word-splits UNQUOTED, so a
+# declared value of a bare `*` is pathname-expanded against the INVOKING
+# PROCESS's cwd rather than matched as a glob against the branch name. GCB_
+# STARMAIN above never reaches this: it checks out the PROTECTED branch, so
+# gc_on_main refuses first and the elif under test is never evaluated. These
+# two rows check out the SESSION branch instead (not on the protected list,
+# same fixture and payload as GCB_SESSION), so the elif actually runs, and
+# they differ ONLY in whether the test process's cwd holds files a bare `*`
+# could expand to -- proving the defect is cwd-dependent, not value-dependent.
+GCB_HAZARD=$(gcbrepo gcb-hazard m113-session-2026-09-03 '- **Gate-checked branches**: *')
+writeartifact "$GCB_HAZARD" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+GCB_HAZ_POP="$TMPROOT/gcb-hazard-populated-cwd"
+mkdir -p "$GCB_HAZ_POP"
+: > "$GCB_HAZ_POP/aaa"
+: > "$GCB_HAZ_POP/bbb"
+cd "$GCB_HAZ_POP"
+check_msg "(2.7 hazard) bare * value, session branch checked out, stale artifact -> 2" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_HAZARD")" \
+  "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
+cd "$ROOT"
+
+GCB_HAZ_EMPTY="$TMPROOT/gcb-hazard-empty-cwd"
+mkdir -p "$GCB_HAZ_EMPTY"
+cd "$GCB_HAZ_EMPTY"
+check_msg "(2.7 hazard) same, cwd empty -> 2" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_HAZARD")" \
+  "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
+cd "$ROOT"
+
 # ===========================================================================
 # v2.1.3 fix round 1 (Critical 2 / penumbra #2c): a real end-to-end chain --
 # pre-commit-test.sh runs run-gate.sh against the INDEX, the real `git commit`
@@ -2476,6 +2508,39 @@ git -C "$PARTADD" add a.txt >/dev/null 2>&1
 git -C "$PARTADD" commit -q -m partial >/dev/null 2>&1
 check "(R4b) partial add: merge gate reports stale" \
   "hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$PARTADD")"
+
+# (R4b) separate calls (penumbra M1/M2): the two-message shape a real agent
+# turn produces -- `git add <path>` gated in ONE PreToolUse call, `git commit`
+# gated in a LATER, separate call. Payload A carries no commit segment at all,
+# so pre-commit-test.sh must NOT mint last-precommit.json (the noop file is
+# written instead); payload B, with the file staged, mints and its recorded
+# tree must equal the resulting commit's tree.
+SEPCALL=$(mkrepo gatesepcall feature/sepcall)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$SEPCALL/PROJECT_CONTEXT.md"
+git -C "$SEPCALL" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$SEPCALL" commit -q -m "add gate" >/dev/null 2>&1
+echo payload > "$SEPCALL/newfile.py"
+
+# payload A: `git add newfile.py` alone -- no commit segment in the command.
+printf '%s' "$(mkjson Bash 'git add newfile.py' "$SEPCALL")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R4b) separate calls: add-only payload allowed" "0" "$?"
+expect "(R4b) separate calls: add-only does not mint last-precommit.json" "" \
+  "$([ -f "$SEPCALL/.gate/last-precommit.json" ] && echo present)"
+expect "(R4b) separate calls: add-only writes the noop file instead" "present" \
+  "$([ -f "$SEPCALL/.gate/last-precommit-noop.json" ] && echo present)"
+git -C "$SEPCALL" add newfile.py >/dev/null 2>&1
+
+# payload B: `git commit -m x`, with newfile.py now staged -- mints.
+printf '%s' "$(mkjson Bash 'git commit -m x' "$SEPCALL")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R4b) separate calls: commit-only payload allowed" "0" "$?"
+git -C "$SEPCALL" commit -q -m x >/dev/null 2>&1
+SEPCALLTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$SEPCALL/.gate/last-precommit.json" 2>/dev/null)
+expect "(R4b) separate calls: mint's tree == HEAD^{tree}" \
+  "$(git -C "$SEPCALL" rev-parse 'HEAD^{tree}')" "$SEPCALLTREE"
+check "(R4b) separate calls: merge gate accepts the mint" \
+  "hooks/gate-before-merge.sh" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$SEPCALL")"
 
 # (c) an ignored file and the artifact directory itself must not move the tree.
 IGNTREE=$(mkrepo gateignoredtree main)

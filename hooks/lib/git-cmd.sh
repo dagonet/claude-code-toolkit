@@ -978,10 +978,28 @@ gc_gate_checked_branches() {
 # NOT normalised away, exactly as the case-glob match below is not a filename
 # glob (`/` is an ordinary character to it, not a segment separator).
 gc_branch_is_gate_checked() {
+  # (task-2.7 fix round 1, review Critical F1) `set -f` BEFORE the unquoted
+  # split, same shape as gc_global_options above: word splitting is wanted,
+  # PATHNAME EXPANSION is not. Without it a declared value of a bare `*` (or
+  # any glob that happens to collide with a real filename) is globbed against
+  # the INVOKING PROCESS's cwd instead of being matched as a glob against the
+  # branch name below -- an eligible branch then silently goes UNGATED,
+  # depending on a cwd unrelated to the target repo. Saved/restored
+  # CONDITIONALLY (unlike gc_global_options' unconditional `set +f`): a caller
+  # that had deliberately set `-f` itself must not have it cleared out from
+  # under it by this function returning.
+  case $- in
+    *f*) gcgbb_hadf=1 ;;
+    *) gcgbb_hadf=0 ;;
+  esac
+  set -f
+  gcgbb_rc=1
+  # shellcheck disable=SC2086
   for gcgbb in $(gc_gate_checked_branches "$1"); do
-    case "$2" in $gcgbb) return 0 ;; esac
+    case "$2" in $gcgbb) gcgbb_rc=0; break ;; esac
   done
-  return 1
+  [ "$gcgbb_hadf" = 1 ] || set +f
+  return "$gcgbb_rc"
 }
 
 # gc_on_main <repo> -- the checkout sits on a protected branch.
