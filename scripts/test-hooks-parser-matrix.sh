@@ -47,9 +47,24 @@ trap 'rm -rf "$OUTDIR"' EXIT
 # constants deliberately when the suite grows — the band is wide enough to
 # absorb ordinary additions and narrow enough that "the restriction silently
 # did not apply" (which lands on 0) can never pass.
+# v3.1 Phase 2 recalibration (2026-09-09), derived rather than observed-and-
+# accepted: the previous 103/119 were set at v2.2.5 and never revisited, so the
+# first matrix run of this release failed on both restricted configurations.
+# Every additional skip is a node-only block that GREW or was ADDED, and no
+# pre-existing block began skipping — which is the failure this check exists to
+# catch, so the arithmetic is written down here rather than the numbers simply
+# being raised to whatever the run printed:
+#   103 (v2.2.5)
+#    +7  enforce-delegation git/gh exemption cases 20 -> 27, between v2.2.5 and
+#        the v3.1 branch point (the constants were not updated at the time)
+#   +11  the same block 27 -> 38 in Phase 2
+#   +14  enforce-agent-contract derived eligibility, a new node-only block
+#        (Task 2.3, `pipeline: true|notify`)
+#  = 135 measured for python3; the same +32 gives 151 measured for jq.
+# Both restricted runs reported 0 failures at that tree.
 EXP_NODE_SKIP=0
-EXP_PY_SKIP=103
-EXP_JQ_SKIP=119
+EXP_PY_SKIP=135
+EXP_JQ_SKIP=151
 BAND=20
 
 matrix_fail=0
