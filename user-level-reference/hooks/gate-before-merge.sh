@@ -916,6 +916,22 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
         A6_ARGS=$margs
         CWD="$repo"
         break
+      elif gc_branch_is_gate_checked "$repo" "$(gc_current_branch "$repo")"; then
+        # Task 2.7 (companion spec): checked AFTER gc_on_main, deliberately --
+        # a branch declared in BOTH `**Protected branches**:` and
+        # `**Gate-checked branches**:` must still get the protected refusal
+        # above, never this weaker one. This arm never sets A6_KIND to
+        # anything the block-message case statements below recognise, so it
+        # falls through to the plain artifact-freshness check untouched by
+        # any A6 protected-branch refusal -- and a PUSH to this same branch
+        # is never routed through gc_branch_is_gate_checked at all, so it
+        # stays ungated (spec req. 2).
+        is_merge=1
+        A6_KIND=gatechecked
+        A6_SEG=$seg
+        A6_ARGS=$margs
+        CWD="$repo"
+        break
       fi
     fi
 
@@ -1302,7 +1318,15 @@ if [ -z "$ARTIFACT_SHA" ] || { [ "$ARTIFACT_SHA" != "$HEAD_SHA" ] && { [ -z "$AR
   # gating `main` look like a remedy. The message is what a consumer acts on at
   # 2am; report both keys and name the head.
   {
-    echo "BLOCKED: Gate artifact is stale — it matches this checkout by neither key."
+    if [ "$A6_KIND" = "gatechecked" ]; then
+      # Task 2.7 (companion spec req. 4): name the branch as gate-checked, not
+      # protected -- "protected branch" on a session branch sends the operator
+      # to the wrong PROJECT_CONTEXT.md line. Both keys are still reported
+      # (defect 1 precedent): the tree key is the half that survives a squash.
+      echo "BLOCKED: $(gc_current_branch "$CWD") is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**); artifact sha ${ARTIFACT_SHA:-none} does not match HEAD $HEAD_SHA"
+    else
+      echo "BLOCKED: Gate artifact is stale — it matches this checkout by neither key."
+    fi
     echo "  artifact sha:  ${ARTIFACT_SHA:-none}    HEAD:          $HEAD_SHA"
     echo "  artifact tree: ${ARTIFACT_TREE:-none}    HEAD^{tree}:   $HEAD_TREE"
     echo "Run 'bash hooks/run-gate.sh' on the head that is actually being MERGED — the PR branch tip, from a checkout of that branch — then merge from there. Gating some other head produces a fresh artifact that verifies nothing."

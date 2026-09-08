@@ -12,6 +12,13 @@
      Absent, empty, or an unfilled {{...}} all fall back to `main master`;
      `none` protects nothing (branch rules only; a PR merge stays gated). -->
 - **Protected branches**: main master
+<!-- Optional. A merge onto a matching branch still needs a fresh gate
+     artifact, exactly like a protected branch, but a PUSH to it stays
+     ungated -- for a session/worktree branch that lands milestones before one
+     PR. GLOBS, space- or comma-separated. Absent, `none`, or empty all mean
+     "no gate-checked branches"; an unfilled {{...}} is reported, not silently
+     dropped. A branch listed here AND above is still protected. -->
+- **Gate-checked branches**: {{GATE_CHECKED_BRANCHES}}
 
 ## Commands
 

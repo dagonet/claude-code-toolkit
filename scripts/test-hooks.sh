@@ -2282,6 +2282,112 @@ for g in '--icase-pathspecs' '--noglob-pathspecs' '--glob-pathspecs' '--no-advic
 done
 
 # ===========================================================================
+# Task 2.7 -- `**Gate-checked branches**:` (companion spec). A session branch
+# (MM-Agent's `m113-session-*`) may declare itself artifact-checked on MERGE
+# without being PROTECTED: a merge onto it still needs a fresh sha/tree-matched
+# .gate/last-pass.json, but `git push origin <branch>` stays ungated -- the
+# whole point of the declaration is to avoid recreating the push blocker the
+# session-branch migration exists to escape.
+#
+# gc_gate_checked_branches/gc_branch_is_gate_checked mirror the
+# gc_protected_branches grammar exactly (same GC_KEY_PRE grep, same sed strip,
+# same comma/space normalisation, same gc_is_placeholder test): absent/`none`/
+# empty all mean "no gate-checked branches", and an unfilled `{{...}}`
+# placeholder is REPORTED to stderr and then treated as none -- never silently
+# absent (spec req. 3).
+# ===========================================================================
+echo
+echo "=== Task 2.7: **Gate-checked branches**: field ==="
+
+GCB_CTX_MERGE_LINE='- **Gate-checked branches**: m*-session-*'
+gcbrepo() { # <name> <branch> <extra-context-line(s), may contain \n> -> prints path
+  local d
+  d=$(mkrepo "$1" "$2")
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n%b\n' "$3" > "$d/PROJECT_CONTEXT.md"
+  git -C "$d" branch other >/dev/null 2>&1
+  printf '%s\n' "$d"
+}
+
+# --- base rows -------------------------------------------------------------
+GCB_SESSION=$(gcbrepo gcb-session m113-session-2026-09-03 "$GCB_CTX_MERGE_LINE")
+GCB_SESSION_SHA=$(git -C "$GCB_SESSION" rev-parse HEAD)
+writeartifact "$GCB_SESSION" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check_msg "(2.7) merge onto a gate-checked branch, stale artifact" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_SESSION")" \
+  "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
+writeartifact "$GCB_SESSION" "$GCB_SESSION_SHA"
+check "(2.7) merge onto a gate-checked branch, fresh artifact" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_SESSION")"
+check "(2.7) push to a gate-checked branch stays ungated" \
+  "$H" 0 "$(mkjson Bash 'git push origin m113-session-2026-09-03' "$GCB_SESSION")"
+
+# strip-the-line control: the exact same stale-artifact merge, no declaration.
+GCB_NODECL=$(mkrepo gcb-nodecl m113-session-2026-09-03)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$GCB_NODECL/PROJECT_CONTEXT.md"
+git -C "$GCB_NODECL" branch other >/dev/null 2>&1
+writeartifact "$GCB_NODECL" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check "(2.7) strip-the-line control: same stale-artifact merge, allowed" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_NODECL")"
+
+# unfilled placeholder: reported, then treated as none (merge allowed).
+GCB_PLACE=$(gcbrepo gcb-place m113-session-2026-09-03 '- **Gate-checked branches**: {{GATE_CHECKED_BRANCHES}}')
+check_msg "(2.7) unfilled placeholder is reported to stderr" \
+  "$ROOT/$H" 0 "$(mkjson Bash 'git merge other' "$GCB_PLACE")" \
+  "unfilled placeholder"
+check "(2.7) unfilled placeholder treated as none (merge allowed)" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_PLACE")"
+
+# glob does not match an unrelated worktree-agent branch.
+GCB_WTA=$(gcbrepo gcb-wta worktree-agent-x "$GCB_CTX_MERGE_LINE")
+check "(2.7) glob m*-session-* does not match worktree-agent-x" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_WTA")"
+
+# a branch listed in BOTH keys: the protected refusal wins, even with a fresh
+# artifact -- gate-checked status never weakens protection.
+GCB_BOTH=$(gcbrepo gcb-both m113-session-2026-09-03 \
+  "- **Protected branches**: m113-session-2026-09-03\n$GCB_CTX_MERGE_LINE")
+writeartifact "$GCB_BOTH" "$(git -C "$GCB_BOTH" rev-parse HEAD)"
+check_msg "(2.7) protected + gate-checked: protected refusal wins" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_BOTH")" \
+  "refuses this operation on a protected branch"
+
+# --- extent rows (mandatory) -------------------------------------------------
+# A `case` glob's `*` is an ordinary wildcard -- it is NOT filename globbing,
+# so it matches `/` like any other character. `m*-session-*` still does not
+# match `m/session-x` because the literal substring `-session-` never appears
+# in it (the branch has `/session-` instead) -- this row documents that this
+# is about substring shape, not about `/` being special-cased away.
+GCB_SLASH=$(gcbrepo gcb-slash 'm/session-x' "$GCB_CTX_MERGE_LINE")
+check "(2.7 extent) glob vs a branch containing a slash (no match)" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_SLASH")"
+
+# A `refs/heads/` prefix in the declared value is matched LITERALLY, never
+# normalised against the short branch name gc_current_branch reports -- so a
+# consumer who declares `refs/heads/m113-session-*` gets NO match at all.
+GCB_REFSPFX=$(gcbrepo gcb-refspfx m113-session-2026-09-03 \
+  '- **Gate-checked branches**: refs/heads/m113-session-*')
+check "(2.7 extent) refs/heads/ prefix in the value does not match (literal)" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_REFSPFX")"
+
+# A glob that WOULD match a protected branch (bare `*`) still loses to the
+# protected refusal -- gate-checked can never widen access to a protected name.
+GCB_STARMAIN=$(mkrepo gcb-starmain main)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n- **Gate-checked branches**: *\n' \
+  > "$GCB_STARMAIN/PROJECT_CONTEXT.md"
+writeartifact "$GCB_STARMAIN" "$(git -C "$GCB_STARMAIN" rev-parse HEAD)"
+git -C "$GCB_STARMAIN" branch other >/dev/null 2>&1
+check_msg "(2.7 extent) bare * gate-checked glob still loses to main's protection" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_STARMAIN")" \
+  "refuses this operation on a protected branch"
+
+# An EMPTY value after the colon is treated as none, never as "match
+# everything" -- the stale-artifact merge on the session branch stays allowed.
+GCB_EMPTY=$(gcbrepo gcb-empty m113-session-2026-09-03 '- **Gate-checked branches**:')
+writeartifact "$GCB_EMPTY" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check "(2.7 extent) empty value treated as none, not match-everything" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_EMPTY")"
+
+# ===========================================================================
 # v2.1.3 fix round 1 (Critical 2 / penumbra #2c): a real end-to-end chain --
 # pre-commit-test.sh runs run-gate.sh against the INDEX, the real `git commit`
 # follows, and gate-before-merge.sh must accept the resulting artifact via its

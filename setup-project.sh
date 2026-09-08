@@ -343,6 +343,11 @@ else
     add_derived '{{POST_EDIT_BUILD}}' "none"
 fi
 
+# Auto-derived: gate-checked branches (hooks/gate-before-merge.sh companion
+# spec). No variant declares one at bootstrap time -- a consumer opts in later
+# by naming a glob on the PROJECT_CONTEXT.md line themselves.
+add_derived '{{GATE_CHECKED_BRANCHES}}' "none"
+
 # --- SHA-256 helper ---
 content_hash() {
     if command -v sha256sum &>/dev/null; then

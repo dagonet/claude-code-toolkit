@@ -17,6 +17,13 @@ placeholder-bearing; this one is filled in, because it describes a real project.
 - **Branch strategy**: feature branches per task, PR into the trunk — the branch named on the `**Protected branches**:` line directly below. Prose for humans — no hook reads this line.
 <!-- THE line the protection hooks read; space- or comma-separated names. -->
 - **Protected branches**: main
+<!-- Optional. A merge onto a matching branch still needs a fresh gate
+     artifact, exactly like a protected branch, but a PUSH to it stays
+     ungated -- for a session/worktree branch that lands milestones before one
+     PR. GLOBS, space- or comma-separated. Absent, `none`, or empty all mean
+     "no gate-checked branches"; an unfilled {{...}} is reported, not silently
+     dropped. A branch listed here AND above is still protected. -->
+- **Gate-checked branches**: none
 
 ## Commands
 

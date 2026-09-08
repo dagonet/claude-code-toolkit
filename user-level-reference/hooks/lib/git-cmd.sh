@@ -936,6 +936,54 @@ gc_protected_alt() {
   printf '%s' "$(gc_protected_branches "$1")" | tr ' ' '|'
 }
 
+# gc_gate_checked_branches <repo> -- companion spec (v3.1): GLOBS of branches
+# that get ONLY the artifact-freshness check on merge, never the protected-
+# branch refusals, and whose PUSH stays ungated. Built for a worktree-based
+# session-branch landing route (e.g. `m113-session-2026-09-03`): dated, so a
+# literal name goes stale on the first rollover and a stale gate-checked list
+# fails open -- the worst way for it to fail. A glob is enough.
+#
+# Mirrors gc_protected_branches' grammar exactly (same GC_KEY_PRE grep, same
+# sed strip, same comma/space normalisation, same gc_is_placeholder test), but
+# the "not configured" arms differ: there is no protected-style fallback set
+# to widen into here, so every unconfigured arm means simply "none".
+#   absent      -> "" -- fully backward compatible, no warning.
+#   `none`      -> "" -- the deliberate way to declare none.
+#   empty value -> "" -- a typo or truncated sync is never "match everything".
+#   unreplaced  -> "" with one WARN: an unfilled `{{...}}` must be REPORTED,
+#   placeholder    never silently treated as absent (spec req. 3).
+gc_gate_checked_branches() {
+  gcgb_top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)
+  [ -n "$gcgb_top" ] || { printf '%s' ""; return 0; }
+  gcgb_line=$(grep -E "${GC_KEY_PRE}\*\*Gate-checked [Bb]ranches\*\*:" "$gcgb_top/PROJECT_CONTEXT.md" 2>/dev/null | head -1)
+  [ -n "$gcgb_line" ] || { printf '%s' ""; return 0; }
+  gcgb=$(printf '%s' "$gcgb_line" \
+    | sed -E "s/${GC_KEY_PRE}\\*\\*Gate-checked [Bb]ranches\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" \
+    | tr ',' ' ' | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
+  if gc_is_placeholder "$gcgb"; then
+    json_warn_once "gate-checked-branches" "$(json_session "$GC_JSON")" \
+      "WARN: **Gate-checked branches**: in $gcgb_top/PROJECT_CONTEXT.md is still an unfilled placeholder ($gcgb) — treated as none, fill it or delete the line."
+    printf '%s' ""
+    return 0
+  fi
+  case "$(printf '%s' "$gcgb" | tr 'A-Z' 'a-z')" in
+    none|"") printf '%s' "" ;;
+    *) printf '%s' "$gcgb" ;;
+  esac
+}
+
+# gc_branch_is_gate_checked <repo> <branch> -- <branch> matches one of the
+# declared gate-checked GLOBS. Matched literally against the plain branch name
+# gc_current_branch reports -- a `refs/heads/` prefix in the declared value is
+# NOT normalised away, exactly as the case-glob match below is not a filename
+# glob (`/` is an ordinary character to it, not a segment separator).
+gc_branch_is_gate_checked() {
+  for gcgbb in $(gc_gate_checked_branches "$1"); do
+    case "$2" in $gcgbb) return 0 ;; esac
+  done
+  return 1
+}
+
 # gc_on_main <repo> -- the checkout sits on a protected branch.
 gc_on_main() {
   b=$(gc_current_branch "$1")

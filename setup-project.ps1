@@ -350,6 +350,11 @@ else {
     Add-Derived '{{POST_EDIT_BUILD}}' "none"
 }
 
+# Auto-derived: gate-checked branches (hooks/gate-before-merge.sh companion
+# spec). No variant declares one at bootstrap time -- a consumer opts in later
+# by naming a glob on the PROJECT_CONTEXT.md line themselves.
+Add-Derived '{{GATE_CHECKED_BRANCHES}}' "none"
+
 # --- BOM-less UTF-8 writer. PS 5.1's `-Encoding UTF8` always writes a BOM;
 # the sync skill's `json.load(encoding="utf-8")` on the manifest raises
 # `JSONDecodeError: Unexpected UTF-8 BOM` on a ps1-bootstrapped consumer.
@@ -924,7 +929,7 @@ if ($Variant -eq "python") {
 
 # Command values and the default branch, whichever way they were set (explicit flag
 # or variant default) -- the manifest must record what was actually substituted.
-foreach ($name in @('DEFAULT_BRANCH', 'BUILD_COMMAND', 'TEST_COMMAND', 'FORMAT_COMMAND', 'LINT_COMMAND', 'GATE_COMMAND', 'POST_EDIT_BUILD')) {
+foreach ($name in @('DEFAULT_BRANCH', 'BUILD_COMMAND', 'TEST_COMMAND', 'FORMAT_COMMAND', 'LINT_COMMAND', 'GATE_COMMAND', 'POST_EDIT_BUILD', 'GATE_CHECKED_BRANCHES')) {
     if ($replacements.ContainsKey("{{$name}}")) { $placeholderMap[$name] = $replacements["{{$name}}"] }
 }
 
