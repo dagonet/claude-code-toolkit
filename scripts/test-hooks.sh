@@ -1239,6 +1239,66 @@ check "(A6.10) cp onto .git/config then pull gated"         "$H" 2 "$(mkjson Bas
 check_msg "(A6.10) mover refusal names the clause"   "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "earlier clause"
 check_msg "(A6.10) mover refusal names the category" "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "clause class: mover"
 check_msg "(A6.10) substitution refusal names why"   "$ROOT/$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")" "command substitution"
+# Task 2.6 (penumbra): the reason a pipe-forced mover is refused must name the
+# ACTUAL downstream stage that can consume it, not the generic "a pipe
+# elsewhere" text, and must never read as "earlier clause" -- that phrase is
+# the mutated-preceding-clause mechanism, a different one from a pipe.
+check_msg "(A6.14 wording) pipe reason names the later stage" "$ROOT/$H" 2 \
+  "$(mkjson Bash "echo 'git merge feature/x' | tail -1" "$A6CLONE")" \
+  "the pipe's later stage (\`tail\`) is not inert"
+check_nomsg "(A6.14 wording) pipe reason is not mislabeled 'earlier clause'" "$ROOT/$H" 2 \
+  "$(mkjson Bash "echo 'git merge feature/x' | tail -1" "$A6CLONE")" \
+  "earlier clause"
+
+# ---------------------------------------------------------------------------
+# Task 2.6b (panoscribe): a redirection only counts as a mover with a FILE
+# operand; fd duplications (2>&1, >&2, 1>&2) cannot write .git/config and are
+# inert. `git push origin --delete zz` is the neutral gated clause: --delete
+# skips this hook's own branch check (gc_push_skips_branch_check), so ONLY
+# the preceding clause's classification (via `mutated`) decides the verdict.
+# ---------------------------------------------------------------------------
+check "(2.6b F) no redirect at all, control"                 "$H" 0 "$(mkjson Bash 'echo hi; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b D) 2>&1 is inert (today 2)"                     "$H" 0 "$(mkjson Bash 'echo hi 2>&1; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b G) true, control"                               "$H" 0 "$(mkjson Bash 'true; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b H) true 2>&1 is inert (today 2)"                "$H" 0 "$(mkjson Bash 'true 2>&1; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b I) real write > out.txt stays a mover"          "$H" 2 "$(mkjson Bash 'echo hi > out.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b E) push alone, control"                         "$H" 0 "$(mkjson Bash 'git push origin --delete zz' "$A6CLONE")"
+# Extent rows -- an `inert` classification is an ALLOW, so these must STAY 2.
+check "(2.6b extent) glued file operand, no space"           "$H" 2 "$(mkjson Bash 'echo hi >out.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) fd number then a FILE operand"          "$H" 2 "$(mkjson Bash 'echo hi 2>err.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) a dup followed by a real write"         "$H" 2 "$(mkjson Bash 'echo hi >&2 >out.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) input redirection to a file"            "$H" 2 "$(mkjson Bash 'cat <in.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) &> to a file"                            "$H" 2 "$(mkjson Bash 'echo hi &>all.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) dup text inside quotes must not mask a real write" "$H" 2 "$(mkjson Bash 'echo "2>&1" >out.txt; git push origin --delete zz' "$A6CLONE")"
+
+# ---------------------------------------------------------------------------
+# Task 2.6c: A6.14 follow-up rows (N2, row 7) and the N3 open item. The
+# positional walk in gc_matches_subcommand only matches a token EQUAL to the
+# verb, so a read-only-looking verb never reaches the gated arm at all -- the
+# class-3 (-C unresolved) check inside that arm is never evaluated for it.
+# ---------------------------------------------------------------------------
+check "(2.6c N2) config --get merge.tool is not a merge verb" "$H" 0 \
+  "$(mkjson Bash "git -C $A6CLONE config --get merge.tool" "$A6CLONE")"
+check "(2.6c) literal \$T merge-base never reaches the merge arm" "$H" 0 \
+  "$(mkjson Bash 'git -C $T merge-base HEAD HEAD~1' "$A6CLONE")"
+check "(2.6c control) literal \$T merge DOES reach the merge arm, refused" "$H" 2 \
+  "$(mkjson Bash 'git -C $T merge f/x' "$A6CLONE")"
+check "(2.6c control) literal \$T push DOES reach the push arm, refused" "$H" 2 \
+  "$(mkjson Bash 'git -C $T push origin main' "$A6CLONE")"
+check "(2.6c N3) show-branch --merge-base is not a merge verb" "$H" 0 \
+  "$(mkjson Bash "git -C $A6CLONE show-branch --merge-base a b" "$A6CLONE")"
+check "(2.6c N3 posture) show-branch merge is a bare merge operand, refused" "$H" 2 \
+  "$(mkjson Bash "git -C $A6CLONE show-branch merge" "$A6CLONE")"
+# Vacuity-discriminator (yutraffic): deleting the artifact first proves this
+# want-0 commit row actually MINTED a fresh pass artifact, rather than passing
+# vacuously because run-gate.sh was absent (which also exits 0, with a WARN,
+# and mints nothing).
+rm -f "$GATEONLYOK/.gate/last-pass.json"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(2.6c vacuity) commit row against run-gate.sh mints status:pass" "1" \
+  "$(grep -c '\"status\":\"pass\"' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)"
+
 # THE MOVER RULE, BOTH POLARITIES, on a checkout onto a protected branch. The
 # rule refuses when the VERDICT DEPENDS on the branch the mover lands on. It
 # does for a merge — the landing is real and the branch decides — and it does
@@ -1760,6 +1820,13 @@ check "(A6.6) switch main && merge is refused"        "$H" 2 "$(mkjson Bash 'git
 check "(A6.6) checkout main && gh pr merge refused"   "$H" 2 "$(mkjson Bash 'git checkout main && gh pr merge 3' "$A6FEATCO")"
 check "(A6.6) checkout main && bare pull refused"     "$H" 2 "$(mkjson Bash 'git checkout main && git pull' "$A6FEATCO")"
 check "(A6.6) checkout main && bare push refused"     "$NP" 2 "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")"
+# Task 2.6 (penumbra's sentence, verbatim, <verb>/<X> substituted): this hook
+# evaluates on the branch it sees BEFORE the checkout runs -- say so, and name
+# the checkout clause that has not run yet, instead of the vaguer "an earlier
+# clause in the same command checks out ...".
+check_msg "(A6.14 wording) compound-checkout names the checkout (no-push-main)" "$ROOT/$NP" 2 \
+  "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")" \
+  "refused: push evaluated on branch 'feature/co' — the 'git checkout main' earlier in this call has not run when this hook fires; split the call: checkout first, then push alone."
 check "(A6.6) UNCHAINED merge on a feature branch"    "$H" 0 "$(mkjson Bash 'git merge feature/x' "$A6FEATCO")"
 check "(A6.6) UNCHAINED bare push on a feature br."   "$NP" 0 "$(mkjson Bash 'git push' "$A6FEATCO")"
 check "(A6.6) gated clause BEFORE the checkout is ok" "$H" 0 "$(mkjson Bash 'git merge feature/x ; git checkout main' "$A6FEATCO")"
@@ -1778,6 +1845,14 @@ check_msg "(A6.6) refusal names the branch change" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "branch change:"
 check_msg "(A6.6) refusal names the green-receipt risk" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "green receipt"
+# Task 2.6 (penumbra's sentence, verbatim, <verb>/<X> substituted). Same
+# wording as no-push-main.sh: the gate reads the branch it can see BEFORE the
+# checkout runs, so it names the checkout clause that has not run yet rather
+# than the older, vaguer "an earlier clause ... checks out a PROTECTED
+# branch" text.
+check_msg "(A6.14 wording) compound-checkout names the checkout (gate)" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")" \
+  "refused: push evaluated on branch 'feature/co' — the 'git checkout main' earlier in this call has not run when this hook fires; split the call: checkout first, then push alone."
 # The two refusal reasons must READ differently: "moves onto a protected
 # branch" is a finding, "target unresolvable" is a cannot-determine. Without
 # this, the exit code is asserted and the message that explains it is not.

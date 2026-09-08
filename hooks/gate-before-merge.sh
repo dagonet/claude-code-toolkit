@@ -451,6 +451,25 @@ a6_pull_catchup() {
 # body in a SUBSHELL and the reason string would never reach the DENY text — the
 # refusal would then read as an ordinary merge refusal and the fixture asserting
 # WHICH arm fired would pass on the wrong discriminator.
+# Task 2.6b (panoscribe): a `>`/`<` CHARACTER anywhere in the segment used to
+# be enough to classify it a mover -- `2>&1`, `>&2`, `1>&2` are fd
+# DUPLICATIONS, not file writes, and cannot touch .git/config. Only a
+# redirection with a FILE operand (`>`, `>>`, `&>`, `>|`, `<` -- glued to the
+# file or as its own token, the file's identity does not matter either way)
+# counts as a mover; a bare fd-dup token is inert. Quotes are already gone by
+# the time a segment reaches here (gc_segments strips them), so
+# `echo "2>&1" >out.txt` and `echo 2>&1 >out.txt` are indistinguishable here
+# on purpose -- both carry a real `>out.txt` token and both must be movers.
+a6_redir_mover() { # <segment> -> prints mover|inert
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk '
+    function isdup(t) { return (t ~ /^[0-9]*>&[0-9-]+$/) || (t ~ /^[0-9]*<&[0-9-]+$/) }
+    $0 == "" { next }
+    isdup($0) { next }
+    /[<>]/ { found = 1 }
+    END { print (found ? "mover" : "inert") }
+  '
+}
+
 a6_clause_class() { # <segment> -> sets A6_CLASS=inert|tracked|mover, A6_CLASS_WHY
   a6cc_seg="$1"
   A6_CLASS_WHY=""
@@ -461,8 +480,11 @@ a6_clause_class() { # <segment> -> sets A6_CLASS=inert|tracked|mover, A6_CLASS_W
   esac
   case "$a6cc_seg" in
     *'>'*|*'<'*)
-      A6_CLASS_WHY="the clause carries a redirection operand, which can write .git/config"
-      A6_CLASS=mover; return ;;
+      if [ "$(a6_redir_mover "$a6cc_seg")" = mover ]; then
+        A6_CLASS_WHY="the clause carries a redirection operand, which can write .git/config"
+        A6_CLASS=mover; return
+      fi
+      ;;
   esac
   a6cc_first=$(printf '%s' "$a6cc_seg" | awk '{print $1}')
   case "$a6cc_first" in
@@ -494,7 +516,25 @@ a6_clause_class() { # <segment> -> sets A6_CLASS=inert|tracked|mover, A6_CLASS_W
 # is a gating mechanism, not a bypass, and stays on.
 a6cc_inert() {
   if [ "${A6_NOINERT:-0}" = 1 ]; then
-    A6_CLASS_WHY="a pipe elsewhere in this command can consume this clause's output and execute it"
+    # Task 2.6 (panoscribe): name the actual downstream stage that can consume
+    # this clause's output, not the generic "a pipe elsewhere" -- the first
+    # OTHER segment in the pipe whose leading word is not itself provably
+    # harmless. $segments is the whole-command segment list set once before
+    # this loop runs; $a6cc_seg is this clause, set by the caller.
+    a6cc_stage_seg=$(printf '%s\n' "$segments" | while IFS= read -r a6cc_other; do
+      [ -n "$a6cc_other" ] || continue
+      [ "$a6cc_other" = "$a6cc_seg" ] && continue
+      case "$(printf '%s' "$a6cc_other" | awk '{print $1}')" in
+        echo|printf|ls|pwd|true|:) continue ;;
+        *) printf '%s\n' "$a6cc_other"; break ;;
+      esac
+    done)
+    a6cc_stage=$(printf '%s' "$a6cc_stage_seg" | awk '{print $1}')
+    if [ -n "$a6cc_stage" ]; then
+      A6_CLASS_WHY="the pipe's later stage (\`${a6cc_stage}\`) is not inert"
+    else
+      A6_CLASS_WHY="a pipe elsewhere in this command can consume this clause's output and execute it"
+    fi
     A6_CLASS=mover
     return
   fi
@@ -805,7 +845,10 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # gated clause no longer lands on a protected branch.
       a6_move_verdict "$(gc_repo_for "$seg" "$base")" "$seg"
       moved=$?
-      A6_MOVE_SEG=$seg
+      # Trim: gc_segments splits on `&&`/`;`/`|`, which leaves a leading or
+      # trailing space on the clause either side of the delimiter -- interior
+      # spacing (the checkout's own arguments) is untouched.
+      A6_MOVE_SEG=$(printf '%s' "$seg" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
       continue
     fi
 
@@ -813,6 +856,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b'; then
       is_merge=1
       A6_KIND=ghpr
+      A6_MOVED_VERB="gh pr merge"
       [ "$moved" != 0 ] && A6_KIND=moved
       A6_SEG=$seg
       a6_deny_unresolved_c "$seg" "$base"
@@ -836,6 +880,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       if [ "$moved" != 0 ]; then
         is_merge=1
         A6_KIND=moved
+        A6_MOVED_VERB=merge
         A6_SEG=$seg
         A6_ARGS=$margs
         CWD="$repo"
@@ -948,6 +993,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       if [ "$moved" != 0 ]; then
         is_merge=1
         A6_KIND=moved
+        A6_MOVED_VERB=pull
         A6_SEG=$seg
         A6_ARGS=$pargs
         CWD="$repo"
@@ -1007,6 +1053,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       if ! gc_has_refspec "$args" && ! gc_push_skips_branch_check "$args" && [ "$moved" != 0 ]; then
         is_merge=1
         A6_KIND=moved
+        A6_MOVED_VERB=push
         A6_SEG=$seg
         A6_ARGS=$args
         CWD="$repo"
@@ -1102,7 +1149,11 @@ esac
 if [ "$A6_KIND" = "moved" ]; then
   {
     if [ "$moved" = 1 ]; then
-      echo "BLOCKED: an earlier clause in this same command checks out a PROTECTED branch, so this operation lands on one."
+      # Task 2.6 (penumbra's sentence, verbatim): name the checkout clause
+      # that has not run yet, rather than the vaguer "an earlier clause ...
+      # checks out a PROTECTED branch" -- the reader needs the exact clause
+      # to split out, not just the fact that one exists.
+      echo "refused: ${A6_MOVED_VERB:-operation} evaluated on branch '$(gc_current_branch "$CWD")' — the '${A6_MOVE_SEG}' earlier in this call has not run when this hook fires; split the call: checkout first, then ${A6_MOVED_VERB:-the operation} alone."
     else
       echo "BLOCKED: gate-before-merge cannot determine which branch this operation lands on."
     fi
@@ -1176,7 +1227,7 @@ if gc_on_main "$CWD"; then
     # refusal reads as an ordinary merge refusal and the fixture asserting the
     # arm would pass on the wrong discriminator.
     case "${A6_SEG_WHY:-}" in
-      *"command substitution"*|*"redirection operand"*|*"pipe elsewhere"*)
+      *"command substitution"*|*"redirection operand"*|*"pipe elsewhere"*|*"pipe's later stage"*)
         echo "                   clause class: mover (not inert, not tracked) — ${A6_SEG_WHY}" ;;
     esac
     echo "Could not determine: this check runs before any fetch, so the CONTENT of a remote target ref — what a fetch would bring in — is unknown to it. It decides on the FORM of the command and on refs that already exist locally. If your case is one only the content would settle, the hook cannot see it."

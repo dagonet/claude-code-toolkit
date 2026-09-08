@@ -973,6 +973,25 @@ gc_on_main() {
 # $2. This is strictly tighter than the old fallback, never looser: it never
 # matches a word merely CONTAINING $2, only one equal to it, so it cannot
 # newly refuse anything arm 1 plus the old fallback did not already refuse.
+#
+# A6.14 / N3 (measured, controller, 2026-09-06; probes in the controller's
+# scratchpad n3-probe2.sh + n3-payloads.txt, cwd = protected main). Under the
+# OLD (v3.0.4) fallback, `git -C <abs> show-branch --merge-base a b` and bare
+# `show-branch merge` both returned 0, and it looked like `--merge-base`
+# itself was being read as harmless -- it was not. The OLD fallback was
+# `\bgit\b.*\b$2\b`, the SAME regex gate-before-merge.sh's own A6 read-only
+# list (`status rev-parse branch log diff show`) was tested with, and
+# `\bbranch\b` matches inside `show-branch` -- so the clause classified INERT
+# (a known read-only verb) before the merge arm was ever reached. `foo
+# --merge-base`, `show --merge-base` and bare `merge-base HEAD HEAD~1` all
+# still returned 2 under the old lib, because none of those first words match
+# `\bbranch\b`. Under the CURRENT positional walk, `show-branch --merge-base
+# a b` still returns 0, but for the intended reason this time: `show-branch`
+# and `--merge-base` are matched against the verb by EXACT token equality, so
+# neither equals "merge" and the merge arm is never entered. Bare `show-branch
+# merge` returns 2 under the current lib (and did not before): the bare
+# `merge` token IS matched by exact equality, which is the documented posture
+# -- a bare `merge` operand anywhere after the globals refuses.
 gc_matches_subcommand() {
   printf '%s\n' "$1" | grep -qE "${GC_GIT_PRE}[[:space:]]+$2([[:space:]]|\$)" && return 0
   printf '%s\n' "$1" | grep -qE '\bgit\b[[:space:]]+-C\b' || return 1

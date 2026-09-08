@@ -122,6 +122,10 @@ while IFS= read -r seg; do
      ! printf '%s\n' "$seg" | grep -qE '(^|[[:space:]])--([[:space:]]|$)'; then
     mvargs=$(printf '%s\n' "$seg" | sed -n 's/.*[[:space:]]\(checkout\|switch\)\([[:space:]]\|$\)/\2/p' | head -1)
     mvtarget=$(printf '%s\n' "$mvargs" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$' | head -1)
+    # Trim: gc_segments splits on `&&`/`;`/`|`, which leaves a leading or
+    # trailing space on the clause either side of the delimiter -- interior
+    # spacing (the checkout's own arguments) is untouched.
+    mv_seg=$(printf '%s' "$seg" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     case "$mvtarget" in
       ''|*[!A-Za-z0-9._/-]*) moved=2 ;;
       *)
@@ -208,7 +212,11 @@ while IFS= read -r seg; do
     if [ "$moved" != 0 ]; then
       {
         if [ "$moved" = 1 ]; then
-          echo "BLOCKED: this push names no refspec, so it follows the current branch — and an earlier clause in the same command checks out '$mvtarget', which is protected. This hook runs BEFORE the command, so the branch it can read is not the branch this would push."
+          # Task 2.6 (penumbra's sentence, verbatim): name the checkout clause
+          # that has not run yet, rather than the vaguer "an earlier clause
+          # ... checks out '$mvtarget'" -- the reader needs the exact clause
+          # to split out, not just the branch it targets.
+          echo "refused: push evaluated on branch '$(gc_current_branch "$repo")' — the '$mv_seg' earlier in this call has not run when this hook fires; split the call: checkout first, then push alone."
         else
           echo "BLOCKED: this push names no refspec, so it follows the current branch — and an earlier clause in the same command changes that branch to a target this hook cannot resolve ('${mvtarget:-<none named>}'), so which branch it pushes to cannot be determined."
         fi
