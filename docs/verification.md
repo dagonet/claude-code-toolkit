@@ -50,6 +50,17 @@ From the v3.0.4 consumer verification round:
 >
 > **Removing the offending string is a fix; excluding it is a standing exception that accumulates — the fix for a guard that fires is never to weaken the guard** (panoscribe). When this rule fires — a skip appears, a count comes up short — the corrective action is to remove whatever produced the skip, not to allowlist it, carve out an exception, or otherwise teach the guard to stop looking at it; every carve-out is a permanent reduction in what the guard can ever catch again.
 
+## The PROJECT-CUSTOM markers are load-bearing for DATA, not just for delivery
+
+`CLAUDE.md`'s `PROJECT-CUSTOM:BEGIN`/`:END` markers are asserted by consistency check 39. Two independent reasons require them, and only the first is obvious:
+
+1. **Delivery.** The region is the only always-on channel. A `.claude/rules/*.md` file is delivered only when a tool call touches a file its `paths:` key matches, is never present at session or subagent start, and with no `paths:` key is delivered to nobody. So safety rules, prohibitions and tool-selection guidance cannot live in a rules file.
+2. **Preservation.** The sync server keeps a consumer's region by splicing it into the template, and **the splice happens only when both sides carry the markers**. Measured on a real consumer fixture across 24 runs and two server builds: markers present in the template → a region-only difference round-trips byte-identically in the **working file**; markers **absent** from the template → the consumer's region is dropped from the working file and survives only in `backup_dir`. That holds on both the pre- and post-fix server, so it is a property of the design rather than a bug awaiting a fix.
+
+**Consequence: deleting the markers from the template silently discards every consumer's region on their next sync.** Anyone revisiting the "should CLAUDE.md be fully template-owned?" question needs both reasons in front of them; the delivery argument alone could be answered by a future harness change, and the preservation argument would still stand.
+
+**Known state, worth documenting rather than fixing:** if `BEGIN` is present and `END` is missing, the whole file is replaced and the original goes to `backup_dir` — no crash, no truncation to EOF, but the working file still loses the region.
+
 ## Instrument checklist
 
 Every row below was paid for by a real false result during a release. One line each, imperative:
