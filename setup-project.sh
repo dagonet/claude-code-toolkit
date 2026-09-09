@@ -909,6 +909,29 @@ template_commit="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "unkn
 manifest_path="$TARGET_DIR/.claude/template-manifest.json"
 mkdir -p "$(dirname "$manifest_path")"
 
+# Rerun preservation: under manifest v3 a file absent from `files` is
+# project-owned BY DEFINITION, so rebuilding the manifest from only this
+# run's writes would silently unshare every template file the run did not
+# touch. Merge instead -- entries this run wrote replace the old ones,
+# every other old entry (even one whose file has since vanished from the
+# target; the sync server is the right place to report that) is carried
+# forward verbatim.
+new_entries_tsv=""
+for j in "${!MF_KEYS[@]}"; do
+    new_entries_tsv+="${MF_KEYS[$j]}"$'\t'"${MF_OWNERSHIP[$j]}"$'\t'"${MF_HASHES[$j]}"$'\n'
+done
+merged_tsv="$(printf '%s' "$new_entries_tsv" | node "$SCRIPT_DIR/scripts/lib/manifest-merge.mjs" "$manifest_path")"
+MF_KEYS=()
+MF_OWNERSHIP=()
+MF_HASHES=()
+if [[ -n "$merged_tsv" ]]; then
+    while IFS=$'\t' read -r m_key m_own m_hash; do
+        MF_KEYS+=("$m_key")
+        MF_OWNERSHIP+=("$m_own")
+        MF_HASHES+=("$m_hash")
+    done <<< "$merged_tsv"
+fi
+
 # Collect all placeholder key/value pairs for the manifest
 declare -a MPH_KEYS=()
 declare -a MPH_VALS=()

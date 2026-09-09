@@ -387,6 +387,133 @@ NODE_EOF
   row6_word=$(row_result ROW6 | sed -E 's/^ROW6: (PASS|FAIL).*/\1/')
   expect "manifest hash matches sha256 of the file as written (row 6)" "PASS" "$row6_word"
 
+  # --- v3.1 Phase 3: a rerun must not shrink the manifest --------------------
+  #
+  # Under manifest v3 a file absent from `files` is project-owned BY
+  # DEFINITION, so rebuilding the manifest from only this run's writes would
+  # silently reclassify every file the run did not touch as project-owned,
+  # and sync stops updating them for good. Bootstrap once, strip the
+  # PROJECT-CUSTOM markers from the written CLAUDE.md (simulating an older
+  # project that predates them), then rerun with
+  # --wrap-existing-claude-md/-WrapExistingClaudeMd: that flag rewrites
+  # CLAUDE.md ONLY -- every other file already exists and is skipped -- so it
+  # is exactly the "writes a subset" shape the bug report describes, AND it
+  # changes CLAUDE.md's content (the old body moves inside a new
+  # PROJECT-CUSTOM region), giving row 3 a real hash change to check.
+  RERUN_SH="$TMPROOT/rerun-sh"
+  RERUN_PS="$TMPROOT/rerun-ps"
+  mkdir -p "$RERUN_SH" "$RERUN_PS"
+  bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+    --target-path "$RERUN_SH" --default-branch develop > "$TMPROOT/rerun-sh-1.out" 2>&1
+  "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$RERUN_PS" \
+    -DefaultBranch develop > "$TMPROOT/rerun-ps-1.out" 2>&1
+  cp "$RERUN_SH/.claude/template-manifest.json" "$TMPROOT/rerun-sh-manifest-1.json"
+  cp "$RERUN_PS/.claude/template-manifest.json" "$TMPROOT/rerun-ps-manifest-1.json"
+
+  # Strip the markers the same way in both trees so the wrap fires on rerun.
+  sed -i '/<!-- Project-specific rules and plugin routing blocks/,$d' "$RERUN_SH/CLAUDE.md"
+  sed -i '/<!-- Project-specific rules and plugin routing blocks/,$d' "$RERUN_PS/CLAUDE.md"
+
+  bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+    --target-path "$RERUN_SH" --default-branch develop --wrap-existing-claude-md \
+    > "$TMPROOT/rerun-sh-2.out" 2>&1
+  "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$RERUN_PS" \
+    -DefaultBranch develop -WrapExistingClaudeMd > "$TMPROOT/rerun-ps-2.out" 2>&1
+  cp "$RERUN_SH/.claude/template-manifest.json" "$TMPROOT/rerun-sh-manifest-2.json"
+  cp "$RERUN_PS/.claude/template-manifest.json" "$TMPROOT/rerun-ps-manifest-2.json"
+
+  RERUN_CHECK="$TMPROOT/rerun-check.cjs"
+  cat > "$RERUN_CHECK" <<'NODE_EOF'
+const fs = require("fs");
+const [, , m1Path, m2Path] = process.argv;
+const m1 = JSON.parse(fs.readFileSync(m1Path, "utf8"));
+const m2 = JSON.parse(fs.readFileSync(m2Path, "utf8"));
+const k1 = Object.keys(m1.files);
+const k2 = new Set(Object.keys(m2.files));
+
+// Row 1: the discriminating row -- fails today. The second manifest's keys
+// must be a SUPERSET of the first's; nothing this run left untouched may
+// disappear from `files`.
+const lost = k1.filter((k) => !k2.has(k));
+console.log(`ROW1: ${lost.length ? "FAIL lost keys: " + lost.join(", ") : "PASS"}`);
+
+// Row 2: an untouched entry -- anything but CLAUDE.md, which this run DID
+// rewrite -- is byte-identical (same ownership, same hash) across the runs.
+const untouchedKey = k1.find((k) => k !== "CLAUDE.md");
+if (!untouchedKey) {
+  console.log("ROW2: FAIL no untouched key to compare");
+} else {
+  const same = JSON.stringify(m1.files[untouchedKey]) === JSON.stringify(m2.files[untouchedKey]);
+  console.log(`ROW2: ${same ? "PASS" : "FAIL " + untouchedKey + " changed"}`);
+}
+
+// Row 3: the touched entry (CLAUDE.md) has a refreshed hash -- its content
+// genuinely changed (old body moved inside a new PROJECT-CUSTOM region).
+const c1 = m1.files["CLAUDE.md"];
+const c2 = m2.files["CLAUDE.md"];
+if (!c1 || !c2) {
+  console.log("ROW3: FAIL CLAUDE.md entry missing from one of the manifests");
+} else if (c1.hash === c2.hash) {
+  console.log("ROW3: FAIL hash did not change across the wrap rerun");
+} else {
+  console.log("ROW3: PASS");
+}
+NODE_EOF
+
+  RERUN_SH_RESULTS="$(node "$RERUN_CHECK" "$TMPROOT/rerun-sh-manifest-1.json" "$TMPROOT/rerun-sh-manifest-2.json" 2>&1)"
+  RERUN_PS_RESULTS="$(node "$RERUN_CHECK" "$TMPROOT/rerun-ps-manifest-1.json" "$TMPROOT/rerun-ps-manifest-2.json" 2>&1)"
+  rerun_row() { echo "$1" | grep "^$2:" | head -1; }
+
+  expect "sh rerun: second manifest is a superset of the first (row 1)" "ROW1: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW1)"
+  expect "sh rerun: an untouched entry is byte-identical across runs (row 2)" "ROW2: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW2)"
+  expect "sh rerun: touched entry's hash was refreshed (row 3)" "ROW3: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW3)"
+  expect "ps1 rerun: second manifest is a superset of the first (row 1)" "ROW1: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW1)"
+  expect "ps1 rerun: an untouched entry is byte-identical across runs (row 2)" "ROW2: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW2)"
+  expect "ps1 rerun: touched entry's hash was refreshed (row 3)" "ROW3: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW3)"
+
+  # --- v3.1 Phase 3: .claude/rules/project.md is seeded once, then left alone ---
+  #
+  # `once` ownership, no hash key at all (it is never rewritten so there is
+  # nothing to hash against), and a rerun over the same target must not touch
+  # it even where the rerun DOES touch other files (the CLAUDE.md wrap above).
+  RULES_SH="$RERUN_SH/.claude/rules/project.md"
+  RULES_PS="$RERUN_PS/.claude/rules/project.md"
+  expect "sh: .claude/rules/project.md created" 1 "$([ -f "$RULES_SH" ] && echo 1 || echo 0)"
+  expect "ps1: .claude/rules/project.md created" 1 "$([ -f "$RULES_PS" ] && echo 1 || echo 0)"
+  SH_M2="$TMPROOT/rerun-sh-manifest-2.json"
+  PS_M2="$TMPROOT/rerun-ps-manifest-2.json"
+  RULES_CHECK="$TMPROOT/rules-check.cjs"
+  cat > "$RULES_CHECK" <<'NODE_EOF'
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const e = m.files[".claude/rules/project.md"];
+if (!e) { console.log("FAIL entry missing"); }
+else if (e.ownership !== "once") { console.log(`FAIL ownership is "${e.ownership}"`); }
+else if (Object.prototype.hasOwnProperty.call(e, "hash")) { console.log("FAIL once entry carries a hash key"); }
+else { console.log("PASS"); }
+NODE_EOF
+  expect "sh: .claude/rules/project.md is once/no-hash in the manifest" "PASS" "$(node "$RULES_CHECK" "$SH_M2")"
+  expect "ps1: .claude/rules/project.md is once/no-hash in the manifest" "PASS" "$(node "$RULES_CHECK" "$PS_M2")"
+
+  # A user edit is the real test of "seed once, then leave alone" -- an
+  # unchanged file would pass a naive comparison even if the script silently
+  # regenerated it from the template. Edit it, rerun (the wrap flag proves the
+  # rerun DOES write other files), and the edit must survive verbatim.
+  printf '\nMY CUSTOM RULE\n' >> "$RULES_SH"
+  printf '\nMY CUSTOM RULE\n' >> "$RULES_PS"
+  RULES_SH_BEFORE="$(cat "$RULES_SH")"
+  RULES_PS_BEFORE="$(cat "$RULES_PS")"
+  bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+    --target-path "$RERUN_SH" --default-branch develop --wrap-existing-claude-md \
+    > "$TMPROOT/rerun-sh-3.out" 2>&1
+  "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$RERUN_PS" \
+    -DefaultBranch develop -WrapExistingClaudeMd > "$TMPROOT/rerun-ps-3.out" 2>&1
+  expect "sh: user edit to project.md survives a rerun that touches other files" "$RULES_SH_BEFORE" "$(cat "$RULES_SH")"
+  expect "ps1: user edit to project.md survives a rerun that touches other files" "$RULES_PS_BEFORE" "$(cat "$RULES_PS")"
+
   # --- the no-.git arm: the actual regression test for :861 -----------------
   #
   # A toolkit extracted without .git (a ZIP download, not a clone) is the

@@ -1005,6 +1005,34 @@ foreach ($name in @('DEFAULT_BRANCH', 'BUILD_COMMAND', 'TEST_COMMAND', 'FORMAT_C
     if ($replacements.ContainsKey("{{$name}}")) { $placeholderMap[$name] = $replacements["{{$name}}"] }
 }
 
+# Rerun preservation: under manifest v3 a file absent from `files` is
+# project-owned BY DEFINITION, so rebuilding the manifest from only this
+# run's writes would silently unshare every template file the run did not
+# touch. Merge instead -- entries this run wrote (already in $manifestFiles)
+# win; every other old entry (even one whose file has since vanished from
+# the target; the sync server is the right place to report that) is carried
+# forward verbatim.
+$existingManifestPath = Join-Path (Join-Path $TargetDir ".claude") "template-manifest.json"
+if (Test-Path $existingManifestPath) {
+    try {
+        $oldManifest = Get-Content -Path $existingManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($oldManifest.files) {
+            foreach ($prop in $oldManifest.files.PSObject.Properties) {
+                if (-not $manifestFiles.ContainsKey($prop.Name)) {
+                    $oldEntry = @{ ownership = $prop.Value.ownership }
+                    if ($prop.Value.PSObject.Properties.Name -contains 'hash') {
+                        $oldEntry['hash'] = $prop.Value.hash
+                    }
+                    $manifestFiles[$prop.Name] = $oldEntry
+                }
+            }
+        }
+    }
+    catch {
+        # Unreadable/corrupt old manifest -- proceed with this run's entries only.
+    }
+}
+
 # Build ordered files map
 $orderedFiles = [ordered]@{}
 foreach ($key in ($manifestFiles.Keys | Sort-Object)) {
