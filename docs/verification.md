@@ -50,6 +50,24 @@ From the v3.0.4 consumer verification round:
 >
 > **Removing the offending string is a fix; excluding it is a standing exception that accumulates — the fix for a guard that fires is never to weaken the guard** (panoscribe). When this rule fires — a skip appears, a count comes up short — the corrective action is to remove whatever produced the skip, not to allowlist it, carve out an exception, or otherwise teach the guard to stop looking at it; every carve-out is a permanent reduction in what the guard can ever catch again.
 
+## Instrument checklist
+
+Every row below was paid for by a real false result during a release. One line each, imperative:
+
+- **Assert the thing under test EXISTS on both sides before comparing them.** A consumer diffed against a lib where the function under test did not exist and read `127` as a verdict on every row — an absent implementation returns a number too.
+- **The baseline is the sha you last measured, not the version you happen to have installed.** A consumer flagged three intended narrowings as regressions this way.
+- **A probe must inherit the suite's isolation, not just its payload shape.** An ad-hoc rig copied the suite's `session_id` but not its per-case `TMPDIR`; `json_warn_once` dedups per `(key, session_id)` with a marker that never expires, so a stale marker suppressed a warning hours later in an unrelated run. Exit codes stayed correct; only stderr vanished.
+- **A control you have to tune to make it pass is not a control.** Four "intact lib" controls were silently broken because the fixture copied one file out of a directory whose contents source each other.
+- **A clean result from a fixture that never reaches the code is vacuous.** Two consumers reported reassuring results from trees that do not declare the key under test, so the changed lines never executed. Check that the key is declared and say which rows reached the code.
+- **A test whose control matches it exactly has measured nothing.** State the expected difference between test and control before running.
+- **Rules delivery is once per context** — a row that reads two matching files and expects two injections fails for the wrong reason.
+
+**Timing, measured, and no cold-cache number is quoted because none worth quoting was measured** — the earlier "~10 s" figure was a cold ceiling divided by a budget and is retracted:
+
+> roughly 3–4 s per `gate-before-merge.sh` invocation on Windows; expect ~0.5 s run-to-run variance, and a multi-harness suite on a cold cache 2–3× that.
+
+**The parser matrix's `EXP_*_SKIP` constants are measurements, not targets.** When the suite grows, derive the new value from the `skip` call sites and record the arithmetic — never raise the constant to whatever the run happened to print.
+
 ## Verifying the toolkit repo itself
 
 Three scripts run from the toolkit root. All three are safe to run at any time and none of them write to your project.

@@ -34,10 +34,35 @@ Compare that to the marker at the top of *this text as you loaded it*, and **sta
 
 **The honest limit, and it is the important half: this marker cannot rescue a session already at risk.** A session running an *older* body has no assertion in it to fire and can never self-detect — it will simply not perform this check. The marker prevents the **next** occurrence, not the current one. If a stale run is suspected and this check is absent from what you loaded, that absence *is* the answer.
 
+**`template_load_manifest` MUST be the FIRST `template_*` call of the sync, and you STOP on `valid:false`. This is load-bearing, and here is why it cannot be reordered:**
+
+> **The manifest's `requires_server` floor is enforced ONLY at `template_load_manifest` (measured against the real 0.3.1 reader, not a design doc).** `template_compute_status` and `template_apply_file` do **not** re-check it. A skill that skips straight to status against a manifest declaring a newer server than the one installed gets a normal-looking status answer instead of a refusal — a **silent** failure, not a loud one. There is exactly one gate for this floor and it is this call; anything read from a later call about server compatibility is not a substitute for it.
+
 Then call `template_load_manifest(project_path=".")`.
 
-- If `valid` is false, stop and show the errors to the user.
+- If `valid` is false, **stop** and show the errors to the user — this is the only place a `requires_server` mismatch surfaces, so a false here is not recoverable by continuing.
 - If `warnings` mentions v1 migration, inform the user their manifest will be upgraded to v2.
+
+### 1a. Manifest v3 shape
+
+The manifest is **`manifest_version: 3`**. Expect and preserve this shape — do not strip anything you do not recognise:
+
+- `variant` — the template variant this project bootstrapped from.
+- `templateRepo` and `lastSynced` are the **only** camelCase top-level keys; every other key is snake_case. Do not "normalise" one style onto the other.
+- `placeholders` — the substitution map.
+- `template_version` — **v-prefixed** (`"v3.0.4"`, never `"3.0.4"`).
+- `template_commit` — a 40-hex sha, a short sha, **or the literal string `"unknown"`**, which is treated as **absent** for base resolution (a three-way diff cannot pick a base off `"unknown"`; fall back the same way you would for a missing key).
+- `requires_server` — appears **only** in the `">=X.Y.Z"` form. Any other spec string (a caret range, a bare version, an `<`/`~` operator) is a **named error** to report to the user, not a spec to interpret and not a silent pass.
+- `unknown_keys` / `unknown_file_keys` — the manifest's own record of fields it did not recognise. **These survive round-trip.** Do not strip them when you re-serialize anything; a future manifest version's fields ride through this skill's writes unharmed only because nothing here deletes what it does not understand.
+
+### 1b. Ownership classes
+
+Every manifest-tracked path falls into exactly one class:
+
+- **`template`** — carries `hash: "sha256:<64 lowercase hex>"`. This is the ordinary auto-update/conflict machinery already described below.
+- **`once`** — carries **no `hash` key at all**, ever. A `once` file that is **absent** is created. A `once` file that is **present** is **kept**: `bytes_written: 0`, byte-for-byte preserved, and it is **never** a three-way merge candidate — there is no template content to merge it against, by definition of the class. `project.md` under `.claude/rules/` (see step 3's note below) is the shipped example.
+- **project files** — absent from the manifest entirely. Never read, written, or reported by any `template_*` call except as informational orphans (the same untracked-file population step 2b's set (c) and step 6d already discuss).
+- **`unclassified_template_files`** — a path that exists in the template tree and matches **no** ownership rule. **This is NOT defaulted to `template`.** It is reported separately and is **never applied**. Treat a non-empty `unclassified_template_files` list as something to tell the user about, not something to silently adopt one way or the other.
 
 ### 1b. Assert the Toolkit Checkout Is On a Release Tag
 
@@ -75,6 +100,10 @@ Sync Status: {variant} @ {template_commit} (last synced: {last_synced_commit})
 ```
 
 If everything is up-to-date and no new files, report "Already in sync" and finalize.
+
+**`local_diff_kind` — key the context-mode remedy on `insertion`, and ONLY `insertion`; `mixed` is NOT a signal.** An appended context-mode routing block reports `LOCAL_EDITED` + `insertion`, and for that specific case the honest remedy is *"move these lines into the PROJECT-CUSTOM region"*. **Do not extend that remedy to `mixed`.** All four measured consumers report `mixed` for entirely ordinary reasons — a populated PROJECT-CUSTOM region replacing the shipped placeholder is a removal plus an addition, plus whatever drift already existed outside the region — so a message keyed on `mixed` fires on every one of them and blames the context-mode plugin in four places where the plugin is not involved. If you cannot tell which measured kind produced a given diff, ask before naming a cause.
+
+**`redundant_project_file` — offer deletion ONLY when the server can prove byte-identity from a hash it already holds.** A project file the server reports as duplicating shipped template content is a candidate for cleanup, but the proof has to come from the server's own held hash comparison, never from a visual/textual "looks the same" read. For a **diverged** copy (content that once matched but has since changed): report it **once**, naming which sections now duplicate template-owned content, and **never** offer deletion — the file is gitignored, so there is no diff, no history, and no undo if the wrong half is kept.
 
 **Model-bump surfacing:** tell the user BEFORE applying anything — "This bump changes the operating model — review the CHANGELOG's Downstream-migration notes in the template repo first" — when ANY of these appear in the auto-update or conflict set:
 
@@ -219,6 +248,8 @@ Call `template_apply_file(project_path=".", file_path=F, source="template")`.
 4. `.claude/rules/*`
 5. `.claude/settings.json` — last of the enforcement wiring, so every script it names already exists in its new form.
 6. everything else (`CLAUDE.md`, `AGENT_TEAM.md`, docs, …).
+
+> **Delivery reality for `.claude/rules/*.md`, one paragraph, because it changes what advice this skill may give.** A rules file is delivered to a session **only** when a tool call touches a file its `paths:` key matches; it is **never** present at session or subagent start. A rules file with **no `paths:` key is delivered to nobody** — measured, not theoretical. Delivery also appears to be **once per context**, not once per matching tool call. Because of this: **never advise moving safety rules, prohibitions, or tool-selection guidance into a `.claude/rules/*.md` file** — that content needs to be present unconditionally, and a `paths:`-scoped rules file cannot deliver it. `project.md` (the `once`-class file introduced in step 1b) exists for `paths:`-scoped PROJECT CONVENTIONS only, never for anything that must be enforced or read before a tool call fires.
 
 The same order applies to the CONFLICT resolutions in step 4 and the new files in step 5: never write `settings.json` before the hooks it wires. If `hooks/` is missing or partial at the project root, run step 6b's restore BEFORE writing `.claude/settings.json` — the order above is useless if the scripts it protects were never materialised.
 
