@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.0.4 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.0 -->
 
 # Sync Template (Downstream)
 
@@ -50,7 +50,7 @@ The manifest is **`manifest_version: 3`**. Expect and preserve this shape — do
 - `variant` — the template variant this project bootstrapped from.
 - `templateRepo` and `lastSynced` are the **only** camelCase top-level keys; every other key is snake_case. Do not "normalise" one style onto the other.
 - `placeholders` — the substitution map.
-- `template_version` — **v-prefixed** (`"v3.0.4"`, never `"3.0.4"`).
+- `template_version` — **v-prefixed** (`"v3.1.0"`, never `"3.1.0"`).
 - `template_commit` — a 40-hex sha, a short sha, **or the literal string `"unknown"`**, which is treated as **absent** for base resolution (a three-way diff cannot pick a base off `"unknown"`; fall back the same way you would for a missing key).
 - `requires_server` — appears **only** in the `">=X.Y.Z"` form. Any other spec string (a caret range, a bare version, an `<`/`~` operator) is a **named error** to report to the user, not a spec to interpret and not a silent pass.
 - `unknown_keys` / `unknown_file_keys` — the manifest's own record of fields it did not recognise. **These survive round-trip.** Do not strip them when you re-serialize anything; a future manifest version's fields ride through this skill's writes unharmed only because nothing here deletes what it does not understand.
