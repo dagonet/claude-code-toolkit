@@ -17,6 +17,7 @@ description: |
   assistant: "I'll address the requested changes with minimal diffs, rerun build+test, and update the task file."
   <Task tool call to java-coder agent>
   </example>
+pipeline: true
 model: sonnet
 effort: medium
 isolation: worktree

@@ -1708,16 +1708,25 @@ fi
 #     a project's own `cpp-coder` wiring on every accept-template. The regex
 #     below owns the shape instead of the list, so the template never has to
 #     know a project's coder names.
+#
+#     R17 (v3.1): the regex itself is RETIRED. enforce-agent-contract.sh's
+#     SubagentStop entry now carries NO matcher at all (fires unconditionally
+#     for every subagent), and eligibility lives in the agent file's own
+#     `pipeline:` frontmatter -- so a project's own <lang>-coder is covered by
+#     adding the flag to ITS OWN agent file, never by editing settings.json.
+#     The invariant this check protects (a project's language coder is never
+#     silently unhooked) still holds; check 29 arms C/D/E now assert it via
+#     the frontmatter flag instead of this regex.
 # ---------------------------------------------------------------------------
 echo
 CODER_RE='"matcher": "^([a-z0-9]+-)?coder$'
 for v in $VARIANTS; do
   s="templates/$v/.claude/settings.json"
   n=$(grep -cF "$CODER_RE" "$s")
-  if [ "$n" -eq 2 ]; then
-    ok "$s: both SubagentStop matchers accept <lang>-coder"
+  if [ "$n" -eq 0 ]; then
+    ok "$s: no <lang>-coder-shaped SubagentStop matcher (retired under R17)"
   else
-    ko "$s: expected 2 <lang>-coder-shaped SubagentStop matchers, found $n"
+    ko "$s: still carries $n <lang>-coder-shaped SubagentStop matcher(s) -- should have been retired under R17"
   fi
   if grep -q '"matcher": "coder|dotnet-coder' "$s"; then
     ko "$s: still carries the enumerated coder matcher"
@@ -2320,41 +2329,49 @@ A5_ARMS
     fi
 
     # Arm C: THE TWO-PATTERN-LANGUAGES INVARIANT. The same intent is written as
-    # a shell glob in the hook (`coder|*-coder`) and as a regex in
-    # settings.json (`^([a-z0-9]+-)?coder$`), and both generalise over the whole
-    # <lang>-coder family. A fix applied to one is NOT applied to the other by
-    # any grep keyed on a single syntax, so consolidating or renaming `coder`
-    # breaks every variant coder in both places at once — silently, because
-    # both forms fail OPEN when a name stops matching. Rather than a
-    # hand-maintained expected set (which drifts), assert the two languages
-    # agree on the shipped names.
-    a5_regex=$(grep -o '"matcher": "[^"]*coder[^"]*"' templates/general/.claude/settings.json \
-      | sed 's/.*"matcher": "//;s/"$//' | head -1)
-    if [ -z "$a5_regex" ]; then
-      ko "check 29 (arm C): no agent matcher regex found in templates/general/.claude/settings.json"
+    # a shell glob in the hook (`coder|*-coder`) and, until v3.1 (R17), a regex
+    # in settings.json (`^([a-z0-9]+-)?coder$`). That matcher is retired:
+    # eligibility now lives in the agent file's own frontmatter (`pipeline:
+    # true|notify`, hooks/enforce-agent-contract.sh), so the SECOND pattern
+    # language is the set of agent files carrying `pipeline: true` — the exact
+    # replacement for the old contract matcher's name set (coder family +
+    # code-reviewer). A fix applied to one language is NOT applied to the
+    # other by any grep keyed on a single syntax, so consolidating or renaming
+    # `coder` breaks the hook's glob and the agent file's flag at once —
+    # silently, because both forms fail OPEN when a name stops matching.
+    # Rather than a hand-maintained expected set (which drifts), assert the
+    # two languages agree on the shipped names.
+    a5_true_names=$(
+      for a5f in templates/*/.claude/agents/*.md; do
+        [ -f "$a5f" ] || continue
+        awk '/^---$/{n++; next} n==1' "$a5f" \
+          | grep -qE '^pipeline:[[:space:]]*true[[:space:]]*$' \
+          && basename "$a5f" .md
+      done | sort -u
+    )
+    if [ -z "$a5_true_names" ]; then
+      ko "check 29 (arm C): no agent file under templates/*/.claude/agents/ carries pipeline: true"
     else
-      # ONE DIRECTION ONLY, and the asymmetry is deliberate. The matcher is
-      # legitimately BROADER than the coder family — it also names
-      # `code-reviewer`, `tester`, `architect` — so equality is the wrong
-      # relation and the first version of this arm went red on all three of
-      # them for saying so. The property that actually breaks under a
-      # consolidation is the COVERAGE one: every name the hook's coder glob
-      # binds must also be reached by the settings matcher. A `<lang>-coder`
-      # added to one language and not the other is silently unhooked, and both
-      # forms fail OPEN, so nothing else reports it.
+      # ONE DIRECTION ONLY, and the asymmetry is deliberate. `pipeline: true`
+      # is exactly the coder-family + code-reviewer set (not broader like the
+      # old echo matcher was) but equality is still the wrong relation here:
+      # the property that actually breaks under a consolidation is the
+      # COVERAGE one — every name the hook's coder glob binds must also carry
+      # the flag. A `<lang>-coder` added to one language and not the other is
+      # silently unhooked, and both forms fail OPEN, so nothing else reports it.
       a5_disagree=""
       for a5n in $a5_names; do
         case "$a5n" in
           coder|*-coder)
-            printf '%s\n' "$a5n" | grep -qE "$a5_regex" \
+            printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
               || a5_disagree="$a5_disagree $a5n"
             ;;
         esac
       done
       if [ -z "$a5_disagree" ]; then
-        ok "check 29 (arm C): every name the hook's coder glob binds is also reached by the settings.json matcher"
+        ok "check 29 (arm C): every name the hook's coder glob binds also carries pipeline: true"
       else
-        ko "check 29 (arm C): bound by the shell glob but NOT by the settings.json matcher —$a5_disagree. The two pattern languages have drifted; both fail OPEN and silently."
+        ko "check 29 (arm C): bound by the shell glob but missing pipeline: true —$a5_disagree. The two pattern languages have drifted; both fail OPEN and silently."
       fi
 
       # Arm D: the trap itself. The domain coders must be covered BY THE GLOB
@@ -2380,70 +2397,49 @@ A5_ARMS
       #
       # A control that asserts an agent FILE exists does not detect the failure
       # a consolidation can cause. The dangerous case is a RENAME breaking the
-      # skills `case` arm, `enforce-agent-contract.sh`'s SubagentStop matcher
-      # and both `settings.json` matcher regexes AT THE SAME SILENT MOMENT:
-      # nothing errors, every file is present, and the enforcement layer is
-      # simply gone. Arms A-D cover the shell-glob language and the coder
-      # family; this arm covers the OTHER pattern language — the regexes — for
-      # every name the enforcement layer names, and it evaluates them AS
-      # REGEXES rather than comparing label text.
+      # skills `case` arm and the agent file's OWN `pipeline: true` flag AT THE
+      # SAME SILENT MOMENT: nothing errors, every file is present, and the
+      # enforcement layer is simply gone. Arms A-D cover the shell-glob
+      # language and the coder family; this arm covers the OTHER pattern
+      # language — until v3.1 (R17) a settings.json regex, now the frontmatter
+      # flag — for every name the enforcement layer names, evaluated as SET
+      # MEMBERSHIP rather than comparing label text.
       #
       # This is why v3.0.0 ABSORBS rather than renames: the survivors keep the
-      # names these three patterns already match, so the patterns are untouched.
+      # names these patterns already match, so the patterns are untouched.
       # Arm E is what turns that from a stated intention into a checked one.
       #
-      # ⚠ THE EXPECTATIONS BELOW ARE FIXED, AND THE MATCHERS ARE KEYED BY THE
-      # HOOK THEY RUN, NEVER BY THEIR OWN TEXT. The first version of this arm
-      # selected matchers by grepping them for the very names it then tested,
-      # so deleting `^tester$` from a matcher made the arm skip that matcher and
-      # report green — a check keyed on the thing under test. It was caught by
-      # deleting the guard (drop `^tester$`; the arm did not flip, and only the
-      # cross-variant byte-identity check noticed, which would NOT have noticed
-      # had all six variants been edited together). Keyed on the command, the
-      # matcher cannot hide by changing.
-      a5_pairs=$(awk '
-        /"matcher":/ { m=$0; sub(/.*"matcher": "/,"",m); sub(/",?[[:space:]]*$/,"",m); next }
-        /"command":/ { c=$0; sub(/.*"command": "/,"",c); sub(/",?[[:space:]]*$/,"",c);
-                       if (m != "") print m "\t" c }
-      ' templates/general/.claude/settings.json)
-      a5_pipeline=$(printf '%s\n' "$a5_pairs" | grep -F 'PIPELINE:' | head -1 | cut -f1)
-      a5_contract=$(printf '%s\n' "$a5_pairs" | grep -F 'enforce-agent-contract.sh' | head -1 | cut -f1)
-
-      # a5_expect <label> <regex> <must-match names> -- <must-NOT-match names>
+      # ⚠ THE EXPECTATIONS BELOW ARE FIXED, AND THE SET IS KEYED BY THE HOOK
+      # THAT READS IT (`grep -qE '^pipeline:...'` in
+      # hooks/enforce-agent-contract.sh), NEVER BY ITS OWN TEXT. The
+      # settings.json-era version of this arm selected matchers by grepping
+      # them for the very names it then tested, so deleting a name from a
+      # matcher made the arm skip that matcher and report green — a check
+      # keyed on the thing under test. Recomputing $a5_true_names from the
+      # SAME regex the hook itself runs keeps that trap closed.
       a5_e_bad=""
-      a5_expect() {
-        a5x_label="$1"; a5x_re="$2"; shift 2
-        a5x_side=in
-        for a5x_n in "$@"; do
-          if [ "$a5x_n" = "--" ]; then a5x_side=out; continue; fi
-          if printf '%s\n' "$a5x_n" | grep -qE "$a5x_re"; then
-            [ "$a5x_side" = out ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-MATCHES-but-must-not"
-          else
-            [ "$a5x_side" = in ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-NO-MATCH"
-          fi
-        done
-      }
 
       # 1. the shell-glob language — the skills hook's case arms.
       for a5n in coder dotnet-coder rust-coder java-coder python-coder tester architect; do
         a5_matches "$a5n" || a5_e_bad="$a5_e_bad case-arm:$a5n"
       done
 
-      # 2. the regex language — the two SubagentStop matchers, both directions.
-      if [ -z "$a5_pipeline" ] || [ -z "$a5_contract" ]; then
-        ko "check 29 (arm E): could not locate the SubagentStop pipeline/contract matchers by the hook they run — the sweep would pass vacuously"
+      # 2. the frontmatter-flag language — pipeline: true is exactly the old
+      # contract set (coder family + code-reviewer); tester/architect carry
+      # `pipeline: notify` instead (R17) and must NOT appear here.
+      for a5n in coder dotnet-coder rust-coder java-coder python-coder code-reviewer; do
+        printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
+          || a5_e_bad="$a5_e_bad pipeline-true:${a5n}-NO-MATCH"
+      done
+      for a5n in tester architect ops Explore zz-unbound-probe; do
+        printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
+          && a5_e_bad="$a5_e_bad pipeline-true:${a5n}-MATCHES-but-must-not"
+      done
+
+      if [ -z "$a5_e_bad" ]; then
+        ok "check 29 (arm E): every survivor name MATCHES its binding sites in BOTH pattern languages, and every non-bound name still misses them"
       else
-        a5_expect pipeline "$a5_pipeline" \
-          coder dotnet-coder rust-coder java-coder python-coder code-reviewer tester architect \
-          -- ops Explore zz-unbound-probe
-        a5_expect contract "$a5_contract" \
-          coder dotnet-coder rust-coder java-coder python-coder code-reviewer \
-          -- tester architect ops Explore zz-unbound-probe
-        if [ -z "$a5_e_bad" ]; then
-          ok "check 29 (arm E): every survivor name MATCHES its binding sites in BOTH pattern languages, and every non-bound name still misses them"
-        else
-          ko "check 29 (arm E): binding-site mismatch —$a5_e_bad. Existence proves nothing here; a name that stops matching fails OPEN and SILENT — the hook is simply never invoked, with no block, no warning and every file present."
-        fi
+        ko "check 29 (arm E): binding-site mismatch —$a5_e_bad. Existence proves nothing here; a name that stops matching fails OPEN and SILENT — the hook is simply never invoked, with no block, no warning and every file present."
       fi
     fi
   fi

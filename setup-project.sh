@@ -335,6 +335,19 @@ if [[ "$VARIANT" == "java" ]]; then
     esac
 fi
 
+# Auto-derived: post-edit build (hooks/post-edit-build.sh, PostToolUse Edit|Write).
+# Only the dotnet variants build after every edit; the rest declare `none`.
+if [[ "$VARIANT" == "dotnet" || "$VARIANT" == "dotnet-maui" ]]; then
+    add_derived '{{POST_EDIT_BUILD}}' "dotnet build --no-restore -v q"
+else
+    add_derived '{{POST_EDIT_BUILD}}' "none"
+fi
+
+# Auto-derived: gate-checked branches (hooks/gate-before-merge.sh companion
+# spec). No variant declares one at bootstrap time -- a consumer opts in later
+# by naming a glob on the PROJECT_CONTEXT.md line themselves.
+add_derived '{{GATE_CHECKED_BRANCHES}}' "none"
+
 # --- SHA-256 helper ---
 content_hash() {
     if command -v sha256sum &>/dev/null; then

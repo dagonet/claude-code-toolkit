@@ -637,33 +637,65 @@ expect "(a) run-gate.sh path: artifact written" "1" \
 ARTSHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
 expect "(a) run-gate.sh path: artifact sha matches HEAD" "$RUNGATESHA" "$ARTSHA"
 ARTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
-# v2.1.5: the recorded tree is the WORKING tree at gate time (PROJECT_CONTEXT.md
-# was still untracked when the hook fired). Committing exactly what was gated --
-# `git add -A && git commit` -- reproduces it as HEAD^{tree}.
-git -C "$GATEONLYOK" add -A >/dev/null 2>&1
+# v2.1.5, updated v3.1 (penumbra, arm a): the recorded tree is the WORKING
+# tree at gate time, TRACKED FILES ONLY (`add -u`, not `add -A` -- see below)
+# -- PROJECT_CONTEXT.md was still untracked when the hook fired, so it is
+# NOT part of ARTTREE. Committing exactly what was gated -- `git add -u --
+# . && git commit` -- reproduces it as HEAD^{tree}; the SAME untracked file
+# swept in by `add -A` instead would land in the commit and MISMATCH (proven
+# on a fresh clone of the identical starting state right below) -- that
+# mismatch is the whole point of moving off `add -A`.
+git -C "$GATEONLYOK" add -u -- . >/dev/null 2>&1
 git -C "$GATEONLYOK" commit -q -m "gated commit" >/dev/null 2>&1
 RUNGATETREE=$(git -C "$GATEONLYOK" rev-parse 'HEAD^{tree}')
-expect "(a) run-gate.sh path: artifact tree matches committed tree" "$RUNGATETREE" "$ARTTREE"
+expect "(2.5a) run-gate.sh path: artifact tree matches tracked-only committed tree" "$RUNGATETREE" "$ARTTREE"
 
-# --- v2.1.5 (consumer feedback, Yutraffic PR #223): the artifact keys on the
-# WORKING TREE, not the index. v2.1.3 recorded no tree at all when the working
-# tree had unstaged changes -- but that is the ordinary agent shape (the
-# PreToolUse hook fires before a chained `git add && git commit` stages
-# anything), so the artifact matched nothing and the single-run merge path never
-# fired. The positive form: unstaged change at gate time, `git commit -a`
-# after -> the recorded tree IS the committed tree.
+GATEONLYOK_AA=$(mkrepo gateonlyok-aa main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$GATEONLYOK_AA/PROJECT_CONTEXT.md"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK_AA")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+AATREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK_AA/.gate/last-pass.json" 2>/dev/null)
+git -C "$GATEONLYOK_AA" add -A >/dev/null 2>&1
+git -C "$GATEONLYOK_AA" commit -q -m "add-A commit" >/dev/null 2>&1
+expect "(2.5a) the same untracked file, committed via add -A, mismatches" "mismatch" \
+  "$([ "$(git -C "$GATEONLYOK_AA" rev-parse 'HEAD^{tree}')" != "$AATREE" ] && echo mismatch || echo match)"
+
+# (b) unstaged edit to a TRACKED file, present at gate time but left OUT of the
+#     real commit (a dummy file is committed instead) -- MISMATCH (control):
+#     `add -u` still catches genuine staleness, it just stops sweeping in
+#     untracked content.
 DIRTYGATE=$(mkrepo commitdirtygate main)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$DIRTYGATE/PROJECT_CONTEXT.md"
 git -C "$DIRTYGATE" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$DIRTYGATE" commit -q -m "add gate" >/dev/null 2>&1
-echo unstaged >> "$DIRTYGATE/seed.txt"   # unstaged change, not added to the index
-printf '%s' "$(mkjson Bash 'git commit -a -m x' "$DIRTYGATE")" \
+echo unstaged >> "$DIRTYGATE/seed.txt"   # unstaged edit to a tracked file
+printf '%s' "$(mkjson Bash 'git commit -m x' "$DIRTYGATE")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
-expect "(R2-5) dirty working tree: exit 0 on pass" "0" "$?"
+expect "(2.5b) dirty working tree: exit 0 on pass" "0" "$?"
 DIRTYTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$DIRTYGATE/.gate/last-pass.json" 2>/dev/null)
-git -C "$DIRTYGATE" commit -aq -m x >/dev/null 2>&1
-expect "(R2-5) commit -a: recorded tree == committed tree" \
-  "$(git -C "$DIRTYGATE" rev-parse 'HEAD^{tree}')" "$DIRTYTREE"
+echo dummy > "$DIRTYGATE/dummy.txt"
+git -C "$DIRTYGATE" add dummy.txt >/dev/null 2>&1
+git -C "$DIRTYGATE" commit -q -m "unrelated commit" >/dev/null 2>&1
+expect "(2.5b) unstaged tracked-file edit left out of the commit mismatches" "mismatch" \
+  "$([ "$(git -C "$DIRTYGATE" rev-parse 'HEAD^{tree}')" != "$DIRTYTREE" ] && echo mismatch || echo match)"
+
+# (c) `git add new.py` (explicitly staged, not merely untracked) -> gate ->
+#     commit -> MATCH: the temp index is a COPY of the real index, so a
+#     staged new file rides along even though `add -u` alone would not have
+#     staged it.
+CADD=$(mkrepo commitaddnew main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$CADD/PROJECT_CONTEXT.md"
+git -C "$CADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$CADD" commit -q -m "add gate" >/dev/null 2>&1
+echo hello > "$CADD/new.py"
+git -C "$CADD" add new.py >/dev/null 2>&1
+printf '%s' "$(mkjson Bash 'git commit -m x' "$CADD")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(2.5c) staged-new-file gate: exit 0 on pass" "0" "$?"
+CADDTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$CADD/.gate/last-pass.json" 2>/dev/null)
+git -C "$CADD" commit -q -m x >/dev/null 2>&1
+expect "(2.5c) recorded tree == committed tree (staged new file)" \
+  "$(git -C "$CADD" rev-parse 'HEAD^{tree}')" "$CADDTREE"
 
 check_msg "(b) run-gate.sh path: block names run-gate.sh" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYBAD")" \
@@ -1207,6 +1239,66 @@ check "(A6.10) cp onto .git/config then pull gated"         "$H" 2 "$(mkjson Bas
 check_msg "(A6.10) mover refusal names the clause"   "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "earlier clause"
 check_msg "(A6.10) mover refusal names the category" "$ROOT/$H" 2 "$(mkjson Bash 'git config include.path /x && git pull --ff-only' "$A6CLONE")" "clause class: mover"
 check_msg "(A6.10) substitution refusal names why"   "$ROOT/$H" 2 "$(mkjson Bash 'echo $(git merge feature/x)' "$A6CLONE")" "command substitution"
+# Task 2.6 (penumbra): the reason a pipe-forced mover is refused must name the
+# ACTUAL downstream stage that can consume it, not the generic "a pipe
+# elsewhere" text, and must never read as "earlier clause" -- that phrase is
+# the mutated-preceding-clause mechanism, a different one from a pipe.
+check_msg "(A6.14 wording) pipe reason names the later stage" "$ROOT/$H" 2 \
+  "$(mkjson Bash "echo 'git merge feature/x' | tail -1" "$A6CLONE")" \
+  "the pipe's later stage (\`tail\`) is not inert"
+check_nomsg "(A6.14 wording) pipe reason is not mislabeled 'earlier clause'" "$ROOT/$H" 2 \
+  "$(mkjson Bash "echo 'git merge feature/x' | tail -1" "$A6CLONE")" \
+  "earlier clause"
+
+# ---------------------------------------------------------------------------
+# Task 2.6b (panoscribe): a redirection only counts as a mover with a FILE
+# operand; fd duplications (2>&1, >&2, 1>&2) cannot write .git/config and are
+# inert. `git push origin --delete zz` is the neutral gated clause: --delete
+# skips this hook's own branch check (gc_push_skips_branch_check), so ONLY
+# the preceding clause's classification (via `mutated`) decides the verdict.
+# ---------------------------------------------------------------------------
+check "(2.6b F) no redirect at all, control"                 "$H" 0 "$(mkjson Bash 'echo hi; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b D) 2>&1 is inert (today 2)"                     "$H" 0 "$(mkjson Bash 'echo hi 2>&1; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b G) true, control"                               "$H" 0 "$(mkjson Bash 'true; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b H) true 2>&1 is inert (today 2)"                "$H" 0 "$(mkjson Bash 'true 2>&1; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b I) real write > out.txt stays a mover"          "$H" 2 "$(mkjson Bash 'echo hi > out.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b E) push alone, control"                         "$H" 0 "$(mkjson Bash 'git push origin --delete zz' "$A6CLONE")"
+# Extent rows -- an `inert` classification is an ALLOW, so these must STAY 2.
+check "(2.6b extent) glued file operand, no space"           "$H" 2 "$(mkjson Bash 'echo hi >out.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) fd number then a FILE operand"          "$H" 2 "$(mkjson Bash 'echo hi 2>err.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) a dup followed by a real write"         "$H" 2 "$(mkjson Bash 'echo hi >&2 >out.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) input redirection to a file"            "$H" 2 "$(mkjson Bash 'cat <in.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) &> to a file"                            "$H" 2 "$(mkjson Bash 'echo hi &>all.txt; git push origin --delete zz' "$A6CLONE")"
+check "(2.6b extent) dup text inside quotes must not mask a real write" "$H" 2 "$(mkjson Bash 'echo "2>&1" >out.txt; git push origin --delete zz' "$A6CLONE")"
+
+# ---------------------------------------------------------------------------
+# Task 2.6c: A6.14 follow-up rows (N2, row 7) and the N3 open item. The
+# positional walk in gc_matches_subcommand only matches a token EQUAL to the
+# verb, so a read-only-looking verb never reaches the gated arm at all -- the
+# class-3 (-C unresolved) check inside that arm is never evaluated for it.
+# ---------------------------------------------------------------------------
+check "(2.6c N2) config --get merge.tool is not a merge verb" "$H" 0 \
+  "$(mkjson Bash "git -C $A6CLONE config --get merge.tool" "$A6CLONE")"
+check "(2.6c) literal \$T merge-base never reaches the merge arm" "$H" 0 \
+  "$(mkjson Bash 'git -C $T merge-base HEAD HEAD~1' "$A6CLONE")"
+check "(2.6c control) literal \$T merge DOES reach the merge arm, refused" "$H" 2 \
+  "$(mkjson Bash 'git -C $T merge f/x' "$A6CLONE")"
+check "(2.6c control) literal \$T push DOES reach the push arm, refused" "$H" 2 \
+  "$(mkjson Bash 'git -C $T push origin main' "$A6CLONE")"
+check "(2.6c N3) show-branch --merge-base is not a merge verb" "$H" 0 \
+  "$(mkjson Bash "git -C $A6CLONE show-branch --merge-base a b" "$A6CLONE")"
+check "(2.6c N3 posture) show-branch merge is a bare merge operand, refused" "$H" 2 \
+  "$(mkjson Bash "git -C $A6CLONE show-branch merge" "$A6CLONE")"
+# Vacuity-discriminator (yutraffic): deleting the artifact first proves this
+# want-0 commit row actually MINTED a fresh pass artifact, rather than passing
+# vacuously because run-gate.sh was absent (which also exits 0, with a WARN,
+# and mints nothing).
+rm -f "$GATEONLYOK/.gate/last-pass.json"
+printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(2.6c vacuity) commit row against run-gate.sh mints status:pass" "1" \
+  "$(grep -c '\"status\":\"pass\"' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)"
+
 # THE MOVER RULE, BOTH POLARITIES, on a checkout onto a protected branch. The
 # rule refuses when the VERDICT DEPENDS on the branch the mover lands on. It
 # does for a merge — the landing is real and the branch decides — and it does
@@ -1728,6 +1820,13 @@ check "(A6.6) switch main && merge is refused"        "$H" 2 "$(mkjson Bash 'git
 check "(A6.6) checkout main && gh pr merge refused"   "$H" 2 "$(mkjson Bash 'git checkout main && gh pr merge 3' "$A6FEATCO")"
 check "(A6.6) checkout main && bare pull refused"     "$H" 2 "$(mkjson Bash 'git checkout main && git pull' "$A6FEATCO")"
 check "(A6.6) checkout main && bare push refused"     "$NP" 2 "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")"
+# Task 2.6 (penumbra's sentence, verbatim, <verb>/<X> substituted): this hook
+# evaluates on the branch it sees BEFORE the checkout runs -- say so, and name
+# the checkout clause that has not run yet, instead of the vaguer "an earlier
+# clause in the same command checks out ...".
+check_msg "(A6.14 wording) compound-checkout names the checkout (no-push-main)" "$ROOT/$NP" 2 \
+  "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")" \
+  "refused: push evaluated on branch 'feature/co' — the 'git checkout main' earlier in this call has not run when this hook fires; split the call: checkout first, then push alone."
 check "(A6.6) UNCHAINED merge on a feature branch"    "$H" 0 "$(mkjson Bash 'git merge feature/x' "$A6FEATCO")"
 check "(A6.6) UNCHAINED bare push on a feature br."   "$NP" 0 "$(mkjson Bash 'git push' "$A6FEATCO")"
 check "(A6.6) gated clause BEFORE the checkout is ok" "$H" 0 "$(mkjson Bash 'git merge feature/x ; git checkout main' "$A6FEATCO")"
@@ -1746,6 +1845,14 @@ check_msg "(A6.6) refusal names the branch change" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "branch change:"
 check_msg "(A6.6) refusal names the green-receipt risk" "$ROOT/$H" 2 \
   "$(mkjson Bash 'git checkout main && git merge feature/co' "$A6FEATCO")" "green receipt"
+# Task 2.6 (penumbra's sentence, verbatim, <verb>/<X> substituted). Same
+# wording as no-push-main.sh: the gate reads the branch it can see BEFORE the
+# checkout runs, so it names the checkout clause that has not run yet rather
+# than the older, vaguer "an earlier clause ... checks out a PROTECTED
+# branch" text.
+check_msg "(A6.14 wording) compound-checkout names the checkout (gate)" "$ROOT/$H" 2 \
+  "$(mkjson Bash 'git checkout main && git push' "$A6FEATCO")" \
+  "refused: push evaluated on branch 'feature/co' — the 'git checkout main' earlier in this call has not run when this hook fires; split the call: checkout first, then push alone."
 # The two refusal reasons must READ differently: "moves onto a protected
 # branch" is a finding, "target unresolvable" is a cannot-determine. Without
 # this, the exit code is asserted and the message that explains it is not.
@@ -2175,6 +2282,179 @@ for g in '--icase-pathspecs' '--noglob-pathspecs' '--glob-pathspecs' '--no-advic
 done
 
 # ===========================================================================
+# Task 2.7 -- `**Gate-checked branches**:` (companion spec). A session branch
+# (MM-Agent's `m113-session-*`) may declare itself artifact-checked on MERGE
+# without being PROTECTED: a merge onto it still needs a fresh sha/tree-matched
+# .gate/last-pass.json, but `git push origin <branch>` stays ungated -- the
+# whole point of the declaration is to avoid recreating the push blocker the
+# session-branch migration exists to escape.
+#
+# gc_gate_checked_branches/gc_branch_is_gate_checked mirror the
+# gc_protected_branches grammar exactly (same GC_KEY_PRE grep, same sed strip,
+# same comma/space normalisation, same gc_is_placeholder test): absent/`none`/
+# empty all mean "no gate-checked branches", and an unfilled `{{...}}`
+# placeholder is REPORTED to stderr and then treated as none -- never silently
+# absent (spec req. 3).
+# ===========================================================================
+echo
+echo "=== Task 2.7: **Gate-checked branches**: field ==="
+
+GCB_CTX_MERGE_LINE='- **Gate-checked branches**: m*-session-*'
+gcbrepo() { # <name> <branch> <extra-context-line(s), may contain \n> -> prints path
+  local d
+  d=$(mkrepo "$1" "$2")
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n%b\n' "$3" > "$d/PROJECT_CONTEXT.md"
+  git -C "$d" branch other >/dev/null 2>&1
+  printf '%s\n' "$d"
+}
+
+# --- base rows -------------------------------------------------------------
+GCB_SESSION=$(gcbrepo gcb-session m113-session-2026-09-03 "$GCB_CTX_MERGE_LINE")
+GCB_SESSION_SHA=$(git -C "$GCB_SESSION" rev-parse HEAD)
+writeartifact "$GCB_SESSION" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check_msg "(2.7) merge onto a gate-checked branch, stale artifact" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_SESSION")" \
+  "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
+writeartifact "$GCB_SESSION" "$GCB_SESSION_SHA"
+check "(2.7) merge onto a gate-checked branch, fresh artifact" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_SESSION")"
+check "(2.7) push to a gate-checked branch stays ungated" \
+  "$H" 0 "$(mkjson Bash 'git push origin m113-session-2026-09-03' "$GCB_SESSION")"
+
+# strip-the-line control: the exact same stale-artifact merge, no declaration.
+GCB_NODECL=$(mkrepo gcb-nodecl m113-session-2026-09-03)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$GCB_NODECL/PROJECT_CONTEXT.md"
+git -C "$GCB_NODECL" branch other >/dev/null 2>&1
+writeartifact "$GCB_NODECL" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check "(2.7) strip-the-line control: same stale-artifact merge, allowed" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_NODECL")"
+
+# unfilled placeholder: reported, then treated as none (merge allowed).
+GCB_PLACE=$(gcbrepo gcb-place m113-session-2026-09-03 '- **Gate-checked branches**: {{GATE_CHECKED_BRANCHES}}')
+check_msg "(2.7) unfilled placeholder is reported to stderr" \
+  "$ROOT/$H" 0 "$(mkjson Bash 'git merge other' "$GCB_PLACE")" \
+  "unfilled placeholder"
+check "(2.7) unfilled placeholder treated as none (merge allowed)" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_PLACE")"
+
+# glob does not match an unrelated worktree-agent branch.
+GCB_WTA=$(gcbrepo gcb-wta worktree-agent-x "$GCB_CTX_MERGE_LINE")
+check "(2.7) glob m*-session-* does not match worktree-agent-x" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_WTA")"
+
+# a branch listed in BOTH keys: the protected refusal wins, even with a fresh
+# artifact -- gate-checked status never weakens protection.
+GCB_BOTH=$(gcbrepo gcb-both m113-session-2026-09-03 \
+  "- **Protected branches**: m113-session-2026-09-03\n$GCB_CTX_MERGE_LINE")
+writeartifact "$GCB_BOTH" "$(git -C "$GCB_BOTH" rev-parse HEAD)"
+check_msg "(2.7) protected + gate-checked: protected refusal wins" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_BOTH")" \
+  "refuses this operation on a protected branch"
+
+# --- extent rows (mandatory) -------------------------------------------------
+# A `case` glob's `*` is an ordinary wildcard -- it is NOT filename globbing,
+# so it matches `/` like any other character. `m*-session-*` still does not
+# match `m/session-x` because the literal substring `-session-` never appears
+# in it (the branch has `/session-` instead) -- this row documents that this
+# is about substring shape, not about `/` being special-cased away.
+GCB_SLASH=$(gcbrepo gcb-slash 'm/session-x' "$GCB_CTX_MERGE_LINE")
+check "(2.7 extent) glob vs a branch containing a slash (no match)" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_SLASH")"
+
+# A `refs/heads/` prefix in the declared value is matched LITERALLY, never
+# normalised against the short branch name gc_current_branch reports -- so a
+# consumer who declares `refs/heads/m113-session-*` gets NO match at all.
+GCB_REFSPFX=$(gcbrepo gcb-refspfx m113-session-2026-09-03 \
+  '- **Gate-checked branches**: refs/heads/m113-session-*')
+check "(2.7 extent) refs/heads/ prefix in the value does not match (literal)" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_REFSPFX")"
+
+# A glob that WOULD match a protected branch (bare `*`) still loses to the
+# protected refusal -- gate-checked can never widen access to a protected name.
+GCB_STARMAIN=$(mkrepo gcb-starmain main)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n- **Gate-checked branches**: *\n' \
+  > "$GCB_STARMAIN/PROJECT_CONTEXT.md"
+writeartifact "$GCB_STARMAIN" "$(git -C "$GCB_STARMAIN" rev-parse HEAD)"
+git -C "$GCB_STARMAIN" branch other >/dev/null 2>&1
+check_msg "(2.7 extent) bare * gate-checked glob still loses to main's protection" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_STARMAIN")" \
+  "refuses this operation on a protected branch"
+
+# An EMPTY value after the colon is treated as none, never as "match
+# everything" -- the stale-artifact merge on the session branch stays allowed.
+GCB_EMPTY=$(gcbrepo gcb-empty m113-session-2026-09-03 '- **Gate-checked branches**:')
+writeartifact "$GCB_EMPTY" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check "(2.7 extent) empty value treated as none, not match-everything" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_EMPTY")"
+
+# --- hazard rows (task-2.7 fix round 1, review finding 1 / F1) -------------
+# Critical: `for gcgbb in $(gc_gate_checked_branches "$1")` in
+# gc_branch_is_gate_checked (hooks/lib/git-cmd.sh) word-splits UNQUOTED, so a
+# declared value of a bare `*` is pathname-expanded against the INVOKING
+# PROCESS's cwd rather than matched as a glob against the branch name. GCB_
+# STARMAIN above never reaches this: it checks out the PROTECTED branch, so
+# gc_on_main refuses first and the elif under test is never evaluated. These
+# two rows check out the SESSION branch instead (not on the protected list,
+# same fixture and payload as GCB_SESSION), so the elif actually runs, and
+# they differ ONLY in whether the test process's cwd holds files a bare `*`
+# could expand to -- proving the defect is cwd-dependent, not value-dependent.
+GCB_HAZARD=$(gcbrepo gcb-hazard m113-session-2026-09-03 '- **Gate-checked branches**: *')
+writeartifact "$GCB_HAZARD" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+GCB_HAZ_POP="$TMPROOT/gcb-hazard-populated-cwd"
+mkdir -p "$GCB_HAZ_POP"
+: > "$GCB_HAZ_POP/aaa"
+: > "$GCB_HAZ_POP/bbb"
+cd "$GCB_HAZ_POP"
+check_msg "(2.7 hazard) bare * value, session branch checked out, stale artifact -> 2" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_HAZARD")" \
+  "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
+cd "$ROOT"
+
+GCB_HAZ_EMPTY="$TMPROOT/gcb-hazard-empty-cwd"
+mkdir -p "$GCB_HAZ_EMPTY"
+cd "$GCB_HAZ_EMPTY"
+check_msg "(2.7 hazard) same, cwd empty -> 2" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_HAZARD")" \
+  "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
+cd "$ROOT"
+
+# --- fix wave B / I1: a merge landing on a gate-checked branch via a compound
+# checkout is a cannot-determine, not an allow. The checkout in these payloads
+# is never actually EXECUTED by the harness -- this hook only parses the text
+# -- so the repo's real current branch stays feature/x throughout, which is
+# exactly the ambient-state gap the moved machinery exists to close.
+GCB_MOVED=$(gcbrepo gcb-moved feature/x "$GCB_CTX_MERGE_LINE")
+git -C "$GCB_MOVED" branch m113-session-2026-09-03 >/dev/null 2>&1
+git -C "$GCB_MOVED" branch other/x >/dev/null 2>&1
+
+# The target (m113-session-2026-09-03) is not on the PROTECTED list, so
+# a6_move_verdict returns 0 (not 1), which routes the moved block's message
+# to the generic "cannot determine which branch" line rather than the
+# checkout-naming sentence -- both share the unconditional remedy line
+# ("run the two as SEPARATE calls"), which is what this needle asserts.
+check_msg "(I1) checkout onto a gate-checked branch then merge -> moved refusal, not allowed" \
+  "$ROOT/$H" 2 "$(mkjson Bash 'git checkout m113-session-2026-09-03 && git merge other' "$GCB_MOVED")" \
+  "run the two as SEPARATE calls"
+
+# narrowness control: same repo/payload shape, checking out a branch the
+# gate-checked glob does NOT match -- without this row a hook that refuses
+# every compound checkout-then-merge would still pass row 1.
+check "(I1 narrowness) checkout onto a non-gate-checked branch then merge -> allowed" \
+  "$H" 0 "$(mkjson Bash 'git checkout other/x && git merge other' "$GCB_MOVED")"
+
+# the discriminator: identical payload to row 1, but with a FRESH artifact on
+# the PRE-checkout branch (feature/x -- the branch the repo is actually still
+# on, since the checkout text is never executed). A6_KIND=gatechecked reads
+# this artifact against $CWD's HEAD and returns 0 (the broken fix, a green
+# receipt for content never examined); A6_KIND=moved returns 2 unconditionally
+# before the artifact is ever read (the correct fix). A wave verified only
+# against the stale artifact in row 1 would ship the broken polarity green.
+writeartifact "$GCB_MOVED" "$(git -C "$GCB_MOVED" rev-parse HEAD)"
+check "(I1 discriminator) same payload, fresh artifact on pre-checkout branch -> still refused" \
+  "$H" 2 "$(mkjson Bash 'git checkout m113-session-2026-09-03 && git merge other' "$GCB_MOVED")"
+
+# ===========================================================================
 # v2.1.3 fix round 1 (Critical 2 / penumbra #2c): a real end-to-end chain --
 # pre-commit-test.sh runs run-gate.sh against the INDEX, the real `git commit`
 # follows, and gate-before-merge.sh must accept the resulting artifact via its
@@ -2225,8 +2505,15 @@ check "(R3) chain negative: stale artifact after a further commit" \
 echo
 echo "=== R4 working-tree gate key (v2.1.5) ==="
 
-# (a) chained `git add <paths> && git commit` -> commit-time gate satisfies the
-#     merge gate in ONE run.
+# (a) chained `git add <paths> && git commit` of files that are BRAND NEW
+#     (untracked) when the hook fires. v3.1 (penumbra): `add -u -- .` only
+#     refreshes TRACKED files, so neither a.txt nor b.txt enters the gated
+#     hash even though the chained commit adds both -- the committed tree
+#     therefore does not match what was gated, same as a genuine partial add
+#     (R4b below). This is the direct, intended consequence of moving off
+#     `add -A`: a NEW file is no longer something the gate can bless
+#     sight-unseen, so the merge gate now correctly demands a fresh run here
+#     too, where before v3.1 it accepted the first one.
 CHAINADD=$(mkrepo gatechainadd feature/chainadd)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$CHAINADD/PROJECT_CONTEXT.md"
 git -C "$CHAINADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
@@ -2238,8 +2525,8 @@ printf '%s' "$(mkjson Bash 'git add a.txt b.txt && git commit -m "both"' "$CHAIN
 expect "(R4a) chained add+commit: hook allows" "0" "$?"
 git -C "$CHAINADD" add a.txt b.txt >/dev/null 2>&1
 git -C "$CHAINADD" commit -q -m both >/dev/null 2>&1
-check "(R4a) chained add+commit: merge gate accepts one run" \
-  "hooks/gate-before-merge.sh" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINADD")"
+check "(R4a) chained add+commit of NEW files: merge gate demands a fresh run" \
+  "hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$CHAINADD")"
 
 # (b) PARTIAL add: the gate hashed both files, the commit contains one. The
 #     committed tree is not what was gated -> stale by design.
@@ -2256,6 +2543,39 @@ git -C "$PARTADD" add a.txt >/dev/null 2>&1
 git -C "$PARTADD" commit -q -m partial >/dev/null 2>&1
 check "(R4b) partial add: merge gate reports stale" \
   "hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$PARTADD")"
+
+# (R4b) separate calls (penumbra M1/M2): the two-message shape a real agent
+# turn produces -- `git add <path>` gated in ONE PreToolUse call, `git commit`
+# gated in a LATER, separate call. Payload A carries no commit segment at all,
+# so pre-commit-test.sh must NOT mint last-precommit.json (the noop file is
+# written instead); payload B, with the file staged, mints and its recorded
+# tree must equal the resulting commit's tree.
+SEPCALL=$(mkrepo gatesepcall feature/sepcall)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$SEPCALL/PROJECT_CONTEXT.md"
+git -C "$SEPCALL" add PROJECT_CONTEXT.md >/dev/null 2>&1
+git -C "$SEPCALL" commit -q -m "add gate" >/dev/null 2>&1
+echo payload > "$SEPCALL/newfile.py"
+
+# payload A: `git add newfile.py` alone -- no commit segment in the command.
+printf '%s' "$(mkjson Bash 'git add newfile.py' "$SEPCALL")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R4b) separate calls: add-only payload allowed" "0" "$?"
+expect "(R4b) separate calls: add-only does not mint last-precommit.json" "" \
+  "$([ -f "$SEPCALL/.gate/last-precommit.json" ] && echo present)"
+expect "(R4b) separate calls: add-only writes the noop file instead" "present" \
+  "$([ -f "$SEPCALL/.gate/last-precommit-noop.json" ] && echo present)"
+git -C "$SEPCALL" add newfile.py >/dev/null 2>&1
+
+# payload B: `git commit -m x`, with newfile.py now staged -- mints.
+printf '%s' "$(mkjson Bash 'git commit -m x' "$SEPCALL")" \
+  | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "(R4b) separate calls: commit-only payload allowed" "0" "$?"
+git -C "$SEPCALL" commit -q -m x >/dev/null 2>&1
+SEPCALLTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$SEPCALL/.gate/last-precommit.json" 2>/dev/null)
+expect "(R4b) separate calls: mint's tree == HEAD^{tree}" \
+  "$(git -C "$SEPCALL" rev-parse 'HEAD^{tree}')" "$SEPCALLTREE"
+check "(R4b) separate calls: merge gate accepts the mint" \
+  "hooks/gate-before-merge.sh" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$SEPCALL")"
 
 # (c) an ignored file and the artifact directory itself must not move the tree.
 IGNTREE=$(mkrepo gateignoredtree main)
@@ -2963,6 +3283,64 @@ skip "bash-output-guard cases" "no node on this host" 15
 fi
 
 # ===========================================================================
+# post-edit-build.sh (PostToolUse Edit|Write) — v3.1 Task 2.1. Runs the
+# **Post-edit build** command declared in PROJECT_CONTEXT.md; `none` or an
+# absent key is a silent no-op, an unfilled `{{...}}` placeholder is reported
+# to stderr (never run), and a real command's last 20 lines land on stderr.
+# Never blocks -- always exits 0.
+# ===========================================================================
+echo
+echo "=== hooks/post-edit-build.sh (PostToolUse Edit|Write) ==="
+PEB=hooks/post-edit-build.sh
+PEBDIR="$TMPROOT/pebdir"
+mkdir -p "$PEBDIR"
+
+runpeb() { # <project_dir> -> stderr (stdout discarded, rc via $?)
+  printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"x"},"cwd":"%s","tool_response":{}}\n' "$(jesc "$1")" \
+    | CLAUDE_PROJECT_DIR="$1" bash "$ROOT/$PEB" 2>&1 1>/dev/null
+}
+
+PEBNONE="$PEBDIR/none"; mkdir -p "$PEBNONE"
+printf '# ctx\n\n- **Post-edit build**: none\n' > "$PEBNONE/PROJECT_CONTEXT.md"
+PEBNONE_OUT=$(runpeb "$PEBNONE"); PEBNONE_RC=$?
+expect "post-edit-build: none -> exit 0" 0 "$PEBNONE_RC"
+expect "post-edit-build: none -> silent" "" "$PEBNONE_OUT"
+
+PEBPH="$PEBDIR/placeholder"; mkdir -p "$PEBPH"
+printf '# ctx\n\n- **Post-edit build**: {{POST_EDIT_BUILD}}\n' > "$PEBPH/PROJECT_CONTEXT.md"
+PEBPH_OUT=$(runpeb "$PEBPH"); PEBPH_RC=$?
+expect "post-edit-build: placeholder -> exit 0" 0 "$PEBPH_RC"
+expect "post-edit-build: placeholder reported" 1 \
+  "$(printf '%s' "$PEBPH_OUT" | grep -c 'unfilled placeholder')"
+
+PEBCMD="$PEBDIR/cmd"; mkdir -p "$PEBCMD"
+cat > "$PEBCMD/PROJECT_CONTEXT.md" <<'EOF'
+# ctx
+
+- **Post-edit build**: `printf built-%s ok`
+EOF
+PEBCMD_OUT=$(runpeb "$PEBCMD"); PEBCMD_RC=$?
+expect "post-edit-build: command -> exit 0" 0 "$PEBCMD_RC"
+expect "post-edit-build: command output on stderr" 1 \
+  "$(printf '%s' "$PEBCMD_OUT" | grep -c 'built-ok')"
+
+PEBABSENT="$PEBDIR/absent"; mkdir -p "$PEBABSENT"
+printf '# ctx\n\n- **Gate**: `true`\n' > "$PEBABSENT/PROJECT_CONTEXT.md"
+PEBABSENT_OUT=$(runpeb "$PEBABSENT"); PEBABSENT_RC=$?
+expect "post-edit-build: absent key -> exit 0" 0 "$PEBABSENT_RC"
+expect "post-edit-build: absent key -> silent" "" "$PEBABSENT_OUT"
+
+# fix wave B / M2: a failing declared command used to give hook rc 0 with NO
+# stderr at all -- the rc-only half of a check passed vacuously. This row
+# asserts both: never-blocking (rc 0) AND the failure is actually reported.
+PEBFAIL="$PEBDIR/fail"; mkdir -p "$PEBFAIL"
+printf '# ctx\n\n- **Post-edit build**: exit 9\n' > "$PEBFAIL/PROJECT_CONTEXT.md"
+PEBFAIL_OUT=$(runpeb "$PEBFAIL"); PEBFAIL_RC=$?
+expect "post-edit-build: failing command -> exit 0 (never blocks)" 0 "$PEBFAIL_RC"
+expect "post-edit-build: failing command reported" 1 \
+  "$(printf '%s' "$PEBFAIL_OUT" | grep -c 'exited 9')"
+
+# ===========================================================================
 # retro-ledger.sh (SubagentStop) + retro-brief.sh (SessionStart) — v2.0 PR2.
 # The ledger records subagent failures (dead tools, hook blocks) under the
 # project's auto-memory dir; the brief replays the last 10 at session start.
@@ -3265,6 +3643,28 @@ echo "=== hooks/enforce-agent-contract.sh (verdict + loop guard) ==="
 
 if [ -n "$HAVE_NODE" ]; then
 
+# v3.1: eligibility is now derived from the PROJECT's own agent definition
+# (`.claude/agents/<agent_type>.md` frontmatter `pipeline: true`), not a
+# settings.json matcher, so every ctr() case below needs a CLAUDE_PROJECT_DIR
+# whose coder/code-reviewer agent files opt in -- otherwise every one of these
+# pre-existing behavioural rows would now read as ineligible and exit 0.
+CONTRACT_PROJ="$TMPROOT/contract-proj"
+mkdir -p "$CONTRACT_PROJ/.claude/agents"
+{
+  echo '---'
+  echo 'name: coder'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Coder agent body.'
+} > "$CONTRACT_PROJ/.claude/agents/coder.md"
+{
+  echo '---'
+  echo 'name: code-reviewer'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Reviewer agent body.'
+} > "$CONTRACT_PROJ/.claude/agents/code-reviewer.md"
+
 CONTRACT_OK='All done.
 
 ## Gate Results
@@ -3283,7 +3683,8 @@ ctr() {
   ctr_err="$TMPROOT/contract.err"
   mkdir -p "$ctr_tmp"
   printf '%s' "$(mkstop "$PROJCWD" "$ctr_type" "$ctr_id" "$ctr_tr")" \
-    | TMPDIR="$ctr_tmp" bash "$ROOT/hooks/enforce-agent-contract.sh" \
+    | TMPDIR="$ctr_tmp" CLAUDE_PROJECT_DIR="$CONTRACT_PROJ" \
+      bash "$ROOT/hooks/enforce-agent-contract.sh" \
       >/dev/null 2>"$ctr_err"
   ctr_got=$?
   if [ "$ctr_got" = "$ctr_want" ] &&
@@ -3353,8 +3754,162 @@ ctr "compliant stop does not re-arm"   "$LOOPTMP" coder a-loop "$CT_ARR" 0
 ctr "then a later bare stop still passes" "$LOOPTMP" coder a-loop "$CT_LOOP" 0 \
   "CONTRACT-ENFORCER"
 
+# ===========================================================================
+# v3.1: eligibility -- and behavior -- derived from the project's own agent
+# definition. Fixture project with coder.md (pipeline: true), helper.md (no
+# flag), mm-runner.md (pipeline: true, consumer-shaped name), tester.md /
+# architect.md (pipeline: notify, R17) -- plus the extent rows: pipeline:
+# false, pipeline: yes (an invalid value), pipeline: true confined to the
+# BODY (not frontmatter), a path-traversal / subdirectory agent_type that
+# must never be read, and the no-space `pipeline:true` spelling.
+# ===========================================================================
+FIXROOT="$TMPROOT/pipeline-fixture"
+mkdir -p "$FIXROOT/.claude/agents/sub"
+{
+  echo '---'
+  echo 'name: coder'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Coder agent body.'
+} > "$FIXROOT/.claude/agents/coder.md"
+{
+  echo '---'
+  echo 'name: helper'
+  echo '---'
+  echo 'Helper agent body, no pipeline flag.'
+} > "$FIXROOT/.claude/agents/helper.md"
+{
+  echo '---'
+  echo 'name: mm-runner'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Consumer-shaped pipeline runner agent.'
+} > "$FIXROOT/.claude/agents/mm-runner.md"
+{
+  echo '---'
+  echo 'name: off'
+  echo 'pipeline: false'
+  echo '---'
+  echo 'Explicitly opted out.'
+} > "$FIXROOT/.claude/agents/off.md"
+{
+  echo '---'
+  echo 'name: bodyonly'
+  echo '---'
+  echo 'pipeline: true'
+} > "$FIXROOT/.claude/agents/bodyonly.md"
+{
+  echo '---'
+  echo 'name: notrue'
+  echo 'pipeline:true'
+  echo '---'
+  echo 'No-space spelling.'
+} > "$FIXROOT/.claude/agents/notrue.md"
+# R17: the flag carries a VALUE, not a boolean -- `true` (echo + contract
+# verdict) and `notify` (echo only, then exit 0) reproduce the two DIFFERENT
+# sets the old settings.json matchers encoded separately.
+{
+  echo '---'
+  echo 'name: tester'
+  echo 'pipeline: notify'
+  echo '---'
+  echo 'Tester agent body.'
+} > "$FIXROOT/.claude/agents/tester.md"
+{
+  echo '---'
+  echo 'name: architect'
+  echo 'pipeline: notify'
+  echo '---'
+  echo 'Architect agent body -- has no Bash, cannot run the gate.'
+} > "$FIXROOT/.claude/agents/architect.md"
+{
+  echo '---'
+  echo 'name: yesval'
+  echo 'pipeline: yes'
+  echo '---'
+  echo 'An invalid pipeline value.'
+} > "$FIXROOT/.claude/agents/yesval.md"
+# These two files WOULD be eligible if the traversal guard failed -- their
+# presence is what makes the rejection rows meaningful rather than vacuous.
+{
+  echo '---'
+  echo 'name: evil'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Must never be reached via agent_type=../evil.'
+} > "$FIXROOT/.claude/evil.md"
+{
+  echo '---'
+  echo 'name: coder'
+  echo 'pipeline: true'
+  echo '---'
+  echo 'Must never be reached via agent_type=sub/coder.'
+} > "$FIXROOT/.claude/agents/sub/coder.md"
+FIXCWD="$(cd "$FIXROOT" && pwd -W)"
+
+ELIG_NODELIV="$TMPROOT/elig-nodeliv.jsonl"
+trow_str 'Still working, no report yet.' > "$ELIG_NODELIV"
+ELIG_OK="$TMPROOT/elig-ok.jsonl"
+trow_str "$CONTRACT_OK" > "$ELIG_OK"
+
+# <label> <tmpdir> <agent_type> <transcript> <want_exit> [want_stdout_needle] [forbid_stdout_needle]
+elig() {
+  el_label="$1"; el_tmp="$2"; el_type="$3"; el_tr="$4"; el_want="$5"
+  el_needle="${6:-}"; el_forbid="${7:-}"
+  el_out="$TMPROOT/elig.out"; el_err="$TMPROOT/elig.err"
+  mkdir -p "$el_tmp"
+  printf '%s' "$(mkstop "$FIXCWD" "$el_type" "elig-$el_type" "$el_tr")" \
+    | TMPDIR="$el_tmp" CLAUDE_PROJECT_DIR="$FIXCWD" \
+      bash "$ROOT/hooks/enforce-agent-contract.sh" \
+      >"$el_out" 2>"$el_err"
+  el_got=$?
+  el_ok=1
+  [ "$el_got" = "$el_want" ] || el_ok=0
+  [ -z "$el_needle" ] || grep -qF "$el_needle" "$el_out" || el_ok=0
+  if [ -n "$el_forbid" ] && grep -qF "$el_forbid" "$el_out"; then el_ok=0; fi
+  if [ "$el_ok" = 1 ]; then
+    printf 'PASS  %-42s (exit %s)\n' "$el_label" "$el_got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s%s%s, got %s stdout=%s)\n' "$el_label" "$el_want" \
+      "${el_needle:+ + \"$el_needle\"}" "${el_forbid:+ w/o \"$el_forbid\"}" \
+      "$el_got" "$(head -1 "$el_out")"
+    fail=$((fail + 1))
+  fi
+}
+
+elig "derived: coder (pipeline: true) without deliverable blocks" \
+  "$TMPROOT/el1" coder "$ELIG_NODELIV" 2
+elig "derived: helper (no flag) without deliverable is a no-op" \
+  "$TMPROOT/el2" helper "$ELIG_NODELIV" 0
+elig "derived: mm-runner (consumer-shaped, pipeline: true) blocks" \
+  "$TMPROOT/el3" mm-runner "$ELIG_NODELIV" 2
+elig "derived: unknown agent type (no agent file) is a no-op" \
+  "$TMPROOT/el4" Explore "$ELIG_NODELIV" 0
+elig "derived: PIPELINE echo prints for an eligible, compliant coder" \
+  "$TMPROOT/el5" coder "$ELIG_OK" 0 "PIPELINE:"
+elig "derived: PIPELINE echo does NOT print for an ineligible helper" \
+  "$TMPROOT/el6" helper "$ELIG_OK" 0 "" "PIPELINE:"
+elig "extent: pipeline: false is ineligible" \
+  "$TMPROOT/el7" off "$ELIG_NODELIV" 0
+elig "extent: pipeline: true confined to the BODY (not frontmatter) is ineligible" \
+  "$TMPROOT/el8" bodyonly "$ELIG_NODELIV" 0
+elig "extent: agent_type with '..' is rejected before reading outside .claude/agents/" \
+  "$TMPROOT/el9" "../evil" "$ELIG_NODELIV" 0
+elig "extent: agent_type with '/' is rejected before reading a subdirectory" \
+  "$TMPROOT/el10" "sub/coder" "$ELIG_NODELIV" 0
+elig "extent: pipeline:true (no space) is eligible" \
+  "$TMPROOT/el11" notrue "$ELIG_NODELIV" 2
+elig "R17: tester (pipeline: notify) without deliverable is echo-only, no block" \
+  "$TMPROOT/el12" tester "$ELIG_NODELIV" 0 "PIPELINE:"
+elig "R17: architect (pipeline: notify) is echo-only, no block" \
+  "$TMPROOT/el13" architect "$ELIG_NODELIV" 0 "PIPELINE:"
+elig "R17: pipeline: yes is an invalid value, ineligible" \
+  "$TMPROOT/el14" yesval "$ELIG_NODELIV" 0 "" "PIPELINE:"
+
 else
 skip "enforce-agent-contract verdict + loop guard" "no node on this host" 12
+skip "enforce-agent-contract derived eligibility" "no node on this host" 14
 fi
 
 # ===========================================================================
@@ -3586,8 +4141,102 @@ subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 expect "subagent pytest still passes" "0" \
   "$(printf '%s' "$subout" | grep -c '"deny"')"
+
+# v3.1 Task 2.2: **PO write surface** extends the Edit/Write allow-list from
+# PROJECT_CONTEXT.md. Reuses DELEGREPO; the Bash-matcher fixtures above never
+# read that file, so dropping one into it here does not disturb them.
+mkjson_edit() { # <file_path> <cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")"
+}
+
+printf -- '- **PO write surface**: docs/ tools/\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+out=$(printf '%s' "$(mkjson_edit docs/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: extra prefix allows docs/x.md" "pass" "$got"
+
+out=$(printf '%s' "$(mkjson_edit src/x.py "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: outside extra prefix still denied" "deny" "$got"
+
+printf -- '- **PO write surface**: none\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+out=$(printf '%s' "$(mkjson_edit notes/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: none denies as today" "deny" "$got"
+
+# v3.1 Task 2.2 fix round 1 (review probe A): extras are anchored to the repo
+# ROOT, not to any path-segment boundary -- a nested directory that happens
+# to be named "docs" is not the repo-root docs/ tree.
+printf -- '- **PO write surface**: docs/ tools/\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+out=$(printf '%s' "$(mkjson_edit src/docs/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: nested docs/ dir is not root docs/" "deny" "$got"
+
+out=$(printf '%s' "$(mkjson_edit "$DELEGREPO/docs/x.md" "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: absolute path under root allowed" "pass" "$got"
+
+# backslash form is normalized to / before extras are matched, same as the
+# built-in patterns -- reuses the docs/ tools/ key still set above.
+out=$(printf '%s' "$(mkjson_edit 'docs\x.md' "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: backslash path normalized" "pass" "$got"
+
+# v3.1 Task 2.2 fix round 2 (re-review probe B): a `..` segment must not be
+# able to escape an anchored prefix -- the path is normalized (path.posix
+# semantics) BEFORE the prefix test, both relative and absolute. Still under
+# the docs/ tools/ key set above.
+out=$(printf '%s' "$(mkjson_edit docs/../src/x.py "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: dot-dot cannot escape docs/ (relative)" "deny" "$got"
+
+# An absolute-path form of the same probe is deliberately NOT added here: it
+# would exercise hooks/enforce-delegation.sh's separate CHECK_ROOT/git
+# rev-parse repo-root comparison (line ~291/307), not the extras
+# normalization fixed in this round. On this Git-Bash-on-Windows host, `git
+# -C "$DELEGREPO" rev-parse --show-toplevel` returns the Windows-native
+# spelling (C:/Users/.../AppData/Local/Temp/tmp.XXXX) while $DELEGREPO/the
+# JSON cwd stay POSIX (/tmp/tmp.XXXX) -- confirmed directly (not inferred)
+# by running both commands against a throwaway repo. The resulting spelling
+# mismatch makes that comparison treat an in-repo absolute path as "outside
+# the repo" and allow it -- a real, pre-existing bug in the wrapper, but not
+# in the node-side normalization this fix round targets, and out of this
+# round's scope; reported to the controller separately. Row (a) above already
+# exercises normalization for both the relative and (via `path.posix.normalize`
+# on `p` before the root comparison) absolute code path, since the same
+# normalization runs regardless of which form `p` arrives in.
+out=$(printf '%s' "$(mkjson_edit docs/./x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: dot-segment resolves inside docs/" "pass" "$got"
+
+# Choice: a leading `./` is normalized away like any other dot-segment, so
+# ./docs/x.md resolves to docs/x.md and is ALLOWED -- consistent with the
+# hook normalizing the whole path (not just `..`) before the prefix test.
+out=$(printf '%s' "$(mkjson_edit ./docs/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: leading ./ is normalized away" "pass" "$got"
+
+printf -- '- **PO write surface**: {{PO_WRITE_SURFACE}}\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
+PHERR="$TMPROOT/delegation_placeholder.err"
+out=$(printf '%s' "$(mkjson_edit tools/x.md "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>"$PHERR")
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "PO write surface: placeholder behaves as none" "deny" "$got"
+expect "PO write surface: placeholder reported on stderr" 1 \
+  "$(grep -c 'unfilled placeholder' "$PHERR")"
+
+rm -f "$DELEGREPO/PROJECT_CONTEXT.md"
 else
-skip "enforce-delegation git/gh exemption cases" "no node on this host" 27
+skip "enforce-delegation git/gh exemption cases" "no node on this host" 38
 fi
 
 # ===========================================================================
@@ -4206,8 +4855,13 @@ pct_ctx() { # <test-script> -- Gate declared too, so no want-0 row is vacuous
   printf '# ctx\n\n- **Test**: `bash %s`\n- **Gate**: `bash %s`\n' "$1" "$1" > "$PCTREPO/PROJECT_CONTEXT.md"
 }
 PCTART="$PCTREPO/.gate/last-precommit.json"
-pct_field() { # <file> <key> -> value (string or number), no jq dependency
-  sed -n 's/.*"'"$2"'":"\([^"]*\)".*/\1/p;s/.*"'"$2"'":\(-\{0,1\}[0-9]\{1,\}\).*/\1/p' "$1" 2>/dev/null | head -1
+PCTNOOP="$PCTREPO/.gate/last-precommit-noop.json"
+pct_field() { # <file> <key> -> value (string, number, or bool), no jq dependency
+  sed -n \
+    -e 's/.*"'"$2"'":"\([^"]*\)".*/\1/p' \
+    -e 's/.*"'"$2"'":\(-\{0,1\}[0-9]\{1,\}\).*/\1/p' \
+    -e 's/.*"'"$2"'":\(true\|false\)[,}].*/\1/p' \
+    "$1" 2>/dev/null | head -1
 }
 for rc in 0 1 78; do
   want=2; [ "$rc" -eq 0 ] && want=0
@@ -4223,14 +4877,53 @@ for rc in 0 1 78; do
     fail=$((fail + 2))
   fi
 done
-# A payload with no commit segment still leaves the artifact — that is the read
-# that answers "did this hook run at all", which stderr cannot.
-rm -f "$PCTART"
+# A payload with no commit segment still leaves an artifact — that is the read
+# that answers "did this hook run at all", which stderr cannot. v3.1: it lands
+# in its OWN file (last-precommit-noop.json), never in last-precommit.json —
+# see the split below.
+rm -f "$PCTART" "$PCTNOOP"
 check "(PCT) non-commit payload allowed" "$PCT" 0 "$(mkjson Bash 'ls -la' "$PCTREPO")"
-expect "(PCT) artifact path=no-commit-segment" "no-commit-segment" "$(pct_field "$PCTART" path)"
+expect "(PCT) noop artifact path=no-commit-segment" "no-commit-segment" "$(pct_field "$PCTNOOP" path)"
 # `tree` is empty where nothing was hashed because nothing ran — otherwise a
 # reader would compare against a hash that describes no gated state.
-expect "(PCT) artifact tree empty when nothing ran" "" "$(pct_field "$PCTART" tree)"
+expect "(PCT) noop artifact tree empty when nothing ran" "" "$(pct_field "$PCTNOOP" tree)"
+expect "(PCT) non-commit payload does not create last-precommit.json" "0" \
+  "$([ -f "$PCTART" ] && echo 1 || echo 0)"
+
+# v3.1 — THE SPLIT'S WHOLE POINT: inspecting the artifact is itself what
+# destroys it. Before the split, a non-commit Bash call (an `ls`, a `git
+# status`) run AFTER a commit overwrote that commit's OWN last-precommit.json
+# record with path=no-commit-segment — a consumer who checked "did my commit
+# get gated?" a moment too late saw the wrong answer for a hook that had, in
+# fact, run correctly. Measured on three consumers. A commit's record must
+# survive every later non-commit call in the same repo.
+pct_ctx "tc0.sh"
+rm -f "$PCTART" "$PCTNOOP"
+check "(PCT split) commit writes last-precommit.json" "$PCT" 0 \
+  "$(mkjson Bash 'git commit -m x' "$PCTREPO")"
+expect "(PCT split) commit artifact path=test" "test" "$(pct_field "$PCTART" path)"
+check "(PCT split) a later non-commit call is allowed" "$PCT" 0 \
+  "$(mkjson Bash 'ls -la' "$PCTREPO")"
+expect "(PCT split) last-precommit.json UNCHANGED by the later call" "test" \
+  "$(pct_field "$PCTART" path)"
+expect "(PCT split) the later call's own record lands in the noop file" \
+  "no-commit-segment" "$(pct_field "$PCTNOOP" path)"
+
+# v3.1 — matched_in_quoted marks a commit segment that gc_segments only found
+# because it strips quotes: a payload of the shape `bash -c "git commit -m
+# x"` collapses to one segment once quotes are gone, indistinguishable from an
+# unwrapped `git commit -m x` on the SEGMENT TEXT alone — this field answers
+# it from the lib's own GC_SEG_QUOTED side channel instead.
+rm -f "$PCTART"
+check "(PCT split) plain commit, Test exit 0" "$PCT" 0 \
+  "$(mkjson Bash 'git commit -m x' "$PCTREPO")"
+expect "(PCT split) matched_in_quoted=false for a plain commit" "false" \
+  "$(pct_field "$PCTART" matched_in_quoted)"
+rm -f "$PCTART"
+check "(PCT split) bash -c wrapped commit, Test exit 0" "$PCT" 0 \
+  "$(mkjson Bash 'bash -c "git commit -m x"' "$PCTREPO")"
+expect "(PCT split) matched_in_quoted=true for a bash -c wrapped commit" "true" \
+  "$(pct_field "$PCTART" matched_in_quoted)"
 # ...and on a path that DID run, it is the tree the hook gated. Two consumers hit
 # the same symptom from opposite causes in one evening — a mutation batched into
 # the same Bash call as the commit, and an untracked file swept in by `add -A` —
@@ -5005,6 +5698,88 @@ check "(GUARD) -c a=b -C garbage1 -C garbage2 merge -- fires via unresolved -C" 
   "$(mkjson Bash 'git -c a=b -C garbage1 -C garbage2 merge feature/y' "$GATEFEAT")"
 check "(GUARD) bare merge, unprotected" "$GRD_H" 0 \
   "$(mkjson Bash 'git merge feature/y' "$GATEFEAT")"
+
+# ===========================================================================
+# fix wave B / I3: every git gate must refuse (or, for post-edit-build, at
+# least report) when hooks/lib/git-cmd.sh is present but CORRUPT (empty or a
+# syntax error) -- not just when it is MISSING. A missing lib is already
+# fail-closed via each hook's own `[ -f "$lib" ]` guard; a truncated or
+# half-written lib is exactly what a dropped three-way sync merge, a
+# CRLF-mangled copy, or an interrupted propagate produces, and (measured,
+# pre-fix) left every git gate returning 0 in silence. Each hook is copied
+# into its own scratch tree so the REAL hooks/lib/git-cmd.sh this whole suite
+# depends on is never touched.
+# ===========================================================================
+echo
+echo "=== fix wave B / I3: corrupt lib/git-cmd.sh sentinel (4 hooks) ==="
+
+fw4scratch() { # <name> <hookfile> -> prints a scratch hooks/ dir holding a
+               # copy of <hookfile> plus an INTACT copy of the whole real
+               # lib/ dir -- git-cmd.sh itself sources lib/json.sh, so a
+               # scratch tree missing it is already broken before the
+               # corrupt arm even runs.
+  local d="$TMPROOT/fw4-$1/hooks"
+  mkdir -p "$d/lib"
+  cp "$ROOT/hooks/$2" "$d/$2"
+  cp -r "$ROOT/hooks/lib/." "$d/lib/"
+  printf '%s\n' "$d"
+}
+fw4_corrupt() { # <scratch-hooks-dir> -- overwrite its lib with a syntax error
+  printf 'if [ 1 = 1\n' > "$1/lib/git-cmd.sh"
+}
+FW4_NEEDLE="gc_current_branch undefined"
+
+# --- gate-before-merge.sh: exit 2 on corrupt lib -----------------------------
+FW4_GBM_DIR=$(fw4scratch gbm gate-before-merge.sh)
+FW4_GBM_REPO=$(mkrepo fw4-gbm feature/x)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$FW4_GBM_REPO/PROJECT_CONTEXT.md"
+printf '%s' "$(mkjson Bash 'git merge feature/y' "$FW4_GBM_REPO")" \
+  | bash "$FW4_GBM_DIR/gate-before-merge.sh" >/dev/null 2>&1
+expect "(I3 control) gate-before-merge: intact lib, harmless merge -> allowed" 0 "$?"
+fw4_corrupt "$FW4_GBM_DIR"
+check_msg "(I3) gate-before-merge: corrupt lib -> refuses (cannot-determine)" \
+  "$FW4_GBM_DIR/gate-before-merge.sh" 2 \
+  "$(mkjson Bash 'git merge feature/y' "$FW4_GBM_REPO")" "$FW4_NEEDLE"
+
+# --- no-push-main.sh: exit 2 on corrupt lib ----------------------------------
+FW4_NPM_DIR=$(fw4scratch npm no-push-main.sh)
+FW4_NPM_REPO=$(mkrepo fw4-npm feature/x)
+printf '%s' "$(mkjson Bash 'git push origin feature/x' "$FW4_NPM_REPO")" \
+  | bash "$FW4_NPM_DIR/no-push-main.sh" >/dev/null 2>&1
+expect "(I3 control) no-push-main: intact lib, harmless push -> allowed" 0 "$?"
+fw4_corrupt "$FW4_NPM_DIR"
+check_msg "(I3) no-push-main: corrupt lib -> refuses (cannot-determine)" \
+  "$FW4_NPM_DIR/no-push-main.sh" 2 \
+  "$(mkjson Bash 'git push origin feature/x' "$FW4_NPM_REPO")" "$FW4_NEEDLE"
+
+# --- pre-commit-test.sh: exit 2 on corrupt lib -------------------------------
+FW4_PCT_DIR=$(fw4scratch pct pre-commit-test.sh)
+FW4_PCT_REPO=$(mkrepo fw4-pct feature/x)
+printf '%s' "$(mkjson Bash 'git commit -m "x"' "$FW4_PCT_REPO")" \
+  | bash "$FW4_PCT_DIR/pre-commit-test.sh" >/dev/null 2>&1
+expect "(I3 control) pre-commit-test: intact lib, no PROJECT_CONTEXT -> allowed" 0 "$?"
+fw4_corrupt "$FW4_PCT_DIR"
+check_msg "(I3) pre-commit-test: corrupt lib -> refuses (cannot-determine)" \
+  "$FW4_PCT_DIR/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m "x"' "$FW4_PCT_REPO")" "$FW4_NEEDLE"
+
+# --- post-edit-build.sh: never blocks, but must REPORT the corrupt lib ------
+FW4_PEB_DIR=$(fw4scratch peb post-edit-build.sh)
+FW4_PEB_PROJ="$TMPROOT/fw4-peb-proj"; mkdir -p "$FW4_PEB_PROJ"
+printf '# ctx\n\n- **Post-edit build**: none\n' > "$FW4_PEB_PROJ/PROJECT_CONTEXT.md"
+fw4peb() { # -> stderr (stdout discarded, rc via $?)
+  printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"x"},"cwd":"%s","tool_response":{}}\n' "$(jesc "$FW4_PEB_PROJ")" \
+    | CLAUDE_PROJECT_DIR="$FW4_PEB_PROJ" bash "$FW4_PEB_DIR/post-edit-build.sh" 2>&1 1>/dev/null
+}
+FW4_PEB_OUT=$(fw4peb); FW4_PEB_RC=$?
+expect "(I3 control) post-edit-build: intact lib -> exit 0, silent" 0 "$FW4_PEB_RC"
+expect "(I3 control) post-edit-build: intact lib -> no corrupt-lib report" 0 \
+  "$(printf '%s' "$FW4_PEB_OUT" | grep -c "$FW4_NEEDLE")"
+fw4_corrupt "$FW4_PEB_DIR"
+FW4_PEB_OUT2=$(fw4peb); FW4_PEB_RC2=$?
+expect "(I3) post-edit-build: corrupt lib -> exit 0 (never blocks)" 0 "$FW4_PEB_RC2"
+expect "(I3) post-edit-build: corrupt lib -> reported" 1 \
+  "$(printf '%s' "$FW4_PEB_OUT2" | grep -c "$FW4_NEEDLE")"
 
 # ===========================================================================
 # Read back the stub-PATH completeness marker (see mkpathdir): a stub built
