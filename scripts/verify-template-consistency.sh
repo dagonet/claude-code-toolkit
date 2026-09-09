@@ -645,12 +645,18 @@ if [ "$rules_present" = "$rules_expected" ]; then
   ok "all $rules_expected non-general variants ship at least one rules file"
 fi
 
-# Every rule that ships MUST carry a `paths:` frontmatter list. An unconditional
-# rule is always-loaded context wearing a rules/ filename.
-rules_files=$(ls templates/*/.claude/rules/*.md 2>/dev/null | wc -l)
+# Every rule that ships MUST carry a `paths:` frontmatter list -- EXCEPT
+# `project.md`, which is deliberately unscoped (v3.1 Phase 3, task 3.2): it is
+# the project-owned seed a consumer fills in themselves, not a shipped
+# language convention. Measured: an unscoped rules file reaches nobody at
+# session start (nor a subagent spawn), so it earns none of the "always-loaded
+# context wearing a rules/ filename" cost this check exists to catch -- the
+# concern this loop guards against does not apply to it.
+rules_files=$(ls templates/*/.claude/rules/*.md 2>/dev/null | grep -v '/project\.md$' | wc -l)
 scoped=0
 for f in templates/*/.claude/rules/*.md; do
   [ -f "$f" ] || continue
+  case "$f" in */project.md) continue ;; esac
   fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$f")
   if printf '%s\n' "$fm" | grep -q '^paths:' && printf '%s\n' "$fm" | grep -qE '^[[:space:]]+- '; then
     scoped=$((scoped + 1))
@@ -659,7 +665,7 @@ for f in templates/*/.claude/rules/*.md; do
   fi
 done
 if [ "$rules_files" -gt 0 ] && [ "$scoped" = "$rules_files" ]; then
-  ok "all $rules_files rules files are paths-scoped"
+  ok "all $rules_files non-seed rules files are paths-scoped (project.md exempt, see above)"
 elif [ "$rules_files" -eq 0 ]; then
   ko "rules: no .claude/rules/*.md found anywhere (extraction broken?)"
 fi
@@ -3137,6 +3143,30 @@ if [ -n "$c38_last_tag" ] && git cat-file -e "$c38_last_tag:VERSION" 2>/dev/null
 else
   note "check 38: no previous tag with a VERSION file — skipped"
 fi
+
+# ---------------------------------------------------------------------------
+# Check 39 — PROJECT-CUSTOM STAYS, AND THE POINTER LINE NAMES BOTH HOMES
+# (v3.1 Phase 3, task 3.2). The plan asked for CLAUDE.md to become fully
+# template-owned with project instructions moved to `.claude/rules/project.md`;
+# that move was reversed on measurement (an unscoped or session-start-absent
+# rules file reaches nobody, so CLAUDE.md's PROJECT-CUSTOM region is the only
+# always-on channel). This check is the inversion of what the plan asked for:
+# the markers staying, plus a pointer line naming both homes, is now the
+# invariant, not their removal.
+# ---------------------------------------------------------------------------
+echo
+note "Check 39: every variant CLAUDE.md keeps PROJECT-CUSTOM:BEGIN/END and a pointer line naming both homes"
+c39_fail=0
+for v in $VARIANTS; do
+  f="templates/$v/CLAUDE.md"
+  if [ ! -f "$f" ]; then
+    ko "check 39: $f missing"; c39_fail=1; continue
+  fi
+  grep -qF '<!-- PROJECT-CUSTOM:BEGIN' "$f" || { ko "check 39: $f missing PROJECT-CUSTOM:BEGIN"; c39_fail=1; }
+  [ "$(tail -n 1 "$f")" = "<!-- PROJECT-CUSTOM:END -->" ] || { ko "check 39: $f missing/misplaced PROJECT-CUSTOM:END"; c39_fail=1; }
+  grep -qF '.claude/rules/' "$f" || { ko "check 39: $f has no pointer line naming .claude/rules/"; c39_fail=1; }
+done
+[ "$c39_fail" -eq 0 ] && ok "check 39: 6/6 variant CLAUDE.md files carry both PROJECT-CUSTOM markers and a .claude/rules/ pointer line"
 
 # ---------------------------------------------------------------------------
 echo

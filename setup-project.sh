@@ -348,6 +348,18 @@ fi
 # by naming a glob on the PROJECT_CONTEXT.md line themselves.
 add_derived '{{GATE_CHECKED_BRANCHES}}' "none"
 
+# True when $1 ends with a trailing newline. Every `$(...)` capture of that
+# file's content (however many bash function calls it passes through) strips
+# ALL trailing newlines, which PowerShell's `Get-Content -Raw` does not --
+# that divergence used to be invisible (nothing compared the two writers'
+# byte output); the ownership-cutover manifest's per-file hash now makes it a
+# cross-writer hash mismatch on every template file ending in a newline.
+# Cheaper to restore the one newline at the write site than to fight command
+# substitution's stripping at every intermediate step.
+file_ends_with_newline() {
+    [[ "$(tail -c 1 "$1")" == "" ]]
+}
+
 # --- SHA-256 helper ---
 content_hash() {
     if command -v sha256sum &>/dev/null; then
@@ -572,12 +584,18 @@ build_project_mcp_json() {
 declare -a FILE_SOURCES=()
 declare -a FILE_RELS=()
 declare -a FILE_IS_GITIGNORE=()
+# TEMPLATE-relative name to feed the ownership classifier. Equal to FILE_RELS
+# except for .gitignore, which FILE_RELS already carries under its renamed
+# project-path key ("gitignore" -> ".gitignore") -- the classifier's own rule
+# is `^gitignore$` and will not match the renamed form.
+declare -a FILE_CLASSIFY_NAMES=()
 
 for name in CLAUDE.md CLAUDE.local.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md VERIFICATION_PLAYBOOK.md; do
     if [[ -f "$TEMPLATE_DIR/$name" ]]; then
         FILE_SOURCES+=("$TEMPLATE_DIR/$name")
         FILE_RELS+=("$name")
         FILE_IS_GITIGNORE+=(false)
+        FILE_CLASSIFY_NAMES+=("$name")
     fi
 done
 
@@ -586,6 +604,7 @@ for name in .editorconfig rustfmt.toml .prettierrc .gitattributes; do
         FILE_SOURCES+=("$TEMPLATE_DIR/$name")
         FILE_RELS+=("$name")
         FILE_IS_GITIGNORE+=(false)
+        FILE_CLASSIFY_NAMES+=("$name")
     fi
 done
 
@@ -593,6 +612,7 @@ if [[ -f "$TEMPLATE_DIR/gitignore" ]]; then
     FILE_SOURCES+=("$TEMPLATE_DIR/gitignore")
     FILE_RELS+=(".gitignore")
     FILE_IS_GITIGNORE+=(true)
+    FILE_CLASSIFY_NAMES+=("gitignore")
 fi
 
 if [[ -d "$TEMPLATE_DIR/.claude" ]]; then
@@ -601,6 +621,7 @@ if [[ -d "$TEMPLATE_DIR/.claude" ]]; then
         FILE_SOURCES+=("$file")
         FILE_RELS+=("$rel")
         FILE_IS_GITIGNORE+=(false)
+        FILE_CLASSIFY_NAMES+=("$rel")
     done < <(find "$TEMPLATE_DIR/.claude" -type f -print0 | sort -z)
 fi
 
@@ -614,8 +635,61 @@ if [[ -d "$SCRIPT_DIR/hooks" ]]; then
         FILE_SOURCES+=("$file")
         FILE_RELS+=("$rel")
         FILE_IS_GITIGNORE+=(false)
+        FILE_CLASSIFY_NAMES+=("$rel")
     done < <(find "$SCRIPT_DIR/hooks" -type f -print0 | sort -z)
 fi
+
+# --- Classify every collected file against templates/ownership.json --------
+# One batched node invocation (node is already required by the hooks) rather
+# than one process per file. Output columns: rel, ownership, target, rule-idx.
+declare -A CLASS_OWNERSHIP=()
+declare -A CLASS_TARGET=()
+if [[ ${#FILE_CLASSIFY_NAMES[@]} -gt 0 ]]; then
+    while IFS=$'\t' read -r c_rel c_own c_target _c_idx; do
+        CLASS_OWNERSHIP["$c_rel"]="$c_own"
+        CLASS_TARGET["$c_rel"]="$c_target"
+    done < <(node "$SCRIPT_DIR/scripts/lib/ownership-classify.mjs" "$SCRIPT_DIR/templates/ownership.json" "${FILE_CLASSIFY_NAMES[@]}")
+fi
+
+# Manifest key + ownership class for FILE index $1, from the classifier
+# results above. Prints "<key>\t<ownership>" ("-" ownership means the
+# classifier did not match -- e.g. CLAUDE.local.md -- and the file is left
+# out of the manifest entirely, per the ownership-cutover contract.
+manifest_entry_for() {
+    local idx="$1" cname own target
+    cname="${FILE_CLASSIFY_NAMES[$idx]}"
+    own="${CLASS_OWNERSHIP[$cname]:-UNCLASSIFIED}"
+    if [[ "$own" != "template" && "$own" != "once" ]]; then
+        # A leading tab is IFS whitespace to `read` and gets collapsed away
+        # (the empty key field would otherwise vanish), so both columns carry
+        # the sentinel here rather than leaving the first one empty.
+        printf -- '-\t-\n'
+        return 0
+    fi
+    target="${CLASS_TARGET[$cname]:-}"
+    if [[ -n "$target" && "$target" != "-" ]]; then
+        printf '%s\t%s\n' "$target" "$own"
+    else
+        printf '%s\t%s\n' "${FILE_RELS[$idx]//\\//}" "$own"
+    fi
+}
+
+# Record a manifest row for FILE index $1 using the content actually written
+# ($2). Unclassified files (e.g. CLAUDE.local.md -- retired to
+# unclassified_template_files on the server side) are silently left out, per
+# contract. `once` entries get no hash at all; $2 is ignored for them.
+add_manifest_entry() {
+    local idx="$1" written="$2" key own
+    IFS=$'\t' read -r key own < <(manifest_entry_for "$idx")
+    [[ "$own" == "-" ]] && return 0
+    MF_KEYS+=("$key")
+    MF_OWNERSHIP+=("$own")
+    if [[ "$own" == "template" ]]; then
+        MF_HASHES+=("sha256:$(content_hash "$written")")
+    else
+        MF_HASHES+=("")
+    fi
+}
 
 # --- autoMode.environment snippet -------------------------------------------
 #
@@ -727,22 +801,12 @@ mkdir -p "$TARGET_DIR"
 copied=()
 skipped=()
 
-# Manifest tracking
+# Manifest tracking. MF_HASHES holds a "sha256:<hex>" value for `template`
+# entries and is unset (never assigned) for `once` entries so the manifest
+# writer can tell "no hash key at all" apart from an empty one.
 declare -a MF_KEYS=()
+declare -a MF_OWNERSHIP=()
 declare -a MF_HASHES=()
-declare -a MF_RAW_HASHES=()
-declare -a MF_LOCAL_HASHES=()
-declare -a MF_MODIFIED=()
-declare -a MF_REASONS=()
-
-always_modified="PROJECT_CONTEXT.md"
-case "$VARIANT" in
-    dotnet|dotnet-maui) variant_coder=".claude/agents/dotnet-coder.md" ;;
-    rust-tauri)         variant_coder=".claude/agents/rust-coder.md" ;;
-    java)               variant_coder=".claude/agents/java-coder.md" ;;
-    python)             variant_coder=".claude/agents/python-coder.md" ;;
-    *)                  variant_coder="" ;;
-esac
 
 for i in "${!FILE_SOURCES[@]}"; do
     src="${FILE_SOURCES[$i]}"
@@ -769,6 +833,8 @@ for i in "${!FILE_SOURCES[@]}"; do
             copied+=("$rel")
             record_rendered "$rel" "$content"
         fi
+        # gitignore is `once` ownership -- no hash regardless of branch above.
+        add_manifest_entry "$i" ""
         continue
     fi
 
@@ -778,12 +844,9 @@ for i in "${!FILE_SOURCES[@]}"; do
         printf '%s' "$wrapped" > "$target_file"
         copied+=("$rel (existing content wrapped into PROJECT-CUSTOM)")
         record_rendered "$rel" "$wrapped"
-        MF_KEYS+=("$rel")
-        MF_HASHES+=("$(content_hash "$(apply_replacements "$content")")")
-        MF_RAW_HASHES+=("$(content_hash "$content")")
-        MF_LOCAL_HASHES+=("$(content_hash "$wrapped")")
-        MF_MODIFIED+=(true)
-        MF_REASONS+=("Existing CLAUDE.md wrapped into the PROJECT-CUSTOM region")
+        # Hash covers the content AS WRITTEN, i.e. the wrapped file, not the
+        # pre-wrap intermediate.
+        add_manifest_entry "$i" "$wrapped"
         continue
     fi
 
@@ -794,7 +857,6 @@ for i in "${!FILE_SOURCES[@]}"; do
     fi
 
     mkdir -p "$(dirname "$target_file")"
-    raw_content="$content"
     content="$(apply_replacements "$content")"
     # Same rewrite the dry run reports — this write path does NOT go through
     # render_file, so the transform has to be applied here too or the two modes
@@ -802,25 +864,14 @@ for i in "${!FILE_SOURCES[@]}"; do
     if [[ "$rel" == "PROJECT_CONTEXT.md" ]]; then
         content="$(set_protected_branches "$content")"
     fi
+    # Every `$(...)` above stripped the source's trailing newline (if any) --
+    # restore it so the byte written, and hashed, matches what ps1 (which
+    # never strips it) writes for the same source.
+    file_ends_with_newline "$src" && content+=$'\n'
     printf '%s' "$content" > "$target_file"
     copied+=("$rel")
     record_rendered "$rel" "$content"
-
-    # Track for manifest
-    rel_key="${rel//\\//}"
-    is_mod=false
-    reason=""
-    if [[ "$rel_key" == "$always_modified" ]]; then
-        is_mod=true; reason="Project-specific config"
-    elif [[ "$rel_key" == "$variant_coder" ]]; then
-        is_mod=true; reason="Project-specific agent"
-    fi
-    MF_KEYS+=("$rel_key")
-    MF_HASHES+=("$(content_hash "$content")")
-    MF_RAW_HASHES+=("$(content_hash "$raw_content")")
-    MF_LOCAL_HASHES+=("$(content_hash "$content")")
-    MF_MODIFIED+=("$is_mod")
-    MF_REASONS+=("$reason")
+    add_manifest_entry "$i" "$content"
 done
 
 # --- Set execute permissions on hook scripts (Linux/macOS) ---
@@ -853,10 +904,33 @@ if [[ ${#warnings[@]} -gt 0 ]]; then
     for w in "${warnings[@]}"; do echo "  [!] $w"; done
 fi
 
-# --- Generate template manifest ---
-template_head="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+# --- Generate template manifest (v3, per the ownership-cutover contract) ---
+template_commit="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")"
 manifest_path="$TARGET_DIR/.claude/template-manifest.json"
 mkdir -p "$(dirname "$manifest_path")"
+
+# Rerun preservation: under manifest v3 a file absent from `files` is
+# project-owned BY DEFINITION, so rebuilding the manifest from only this
+# run's writes would silently unshare every template file the run did not
+# touch. Merge instead -- entries this run wrote replace the old ones,
+# every other old entry (even one whose file has since vanished from the
+# target; the sync server is the right place to report that) is carried
+# forward verbatim.
+new_entries_tsv=""
+for j in "${!MF_KEYS[@]}"; do
+    new_entries_tsv+="${MF_KEYS[$j]}"$'\t'"${MF_OWNERSHIP[$j]}"$'\t'"${MF_HASHES[$j]}"$'\n'
+done
+merged_tsv="$(printf '%s' "$new_entries_tsv" | node "$SCRIPT_DIR/scripts/lib/manifest-merge.mjs" "$manifest_path")"
+MF_KEYS=()
+MF_OWNERSHIP=()
+MF_HASHES=()
+if [[ -n "$merged_tsv" ]]; then
+    while IFS=$'\t' read -r m_key m_own m_hash; do
+        MF_KEYS+=("$m_key")
+        MF_OWNERSHIP+=("$m_own")
+        MF_HASHES+=("$m_hash")
+    done <<< "$merged_tsv"
+fi
 
 # Collect all placeholder key/value pairs for the manifest
 declare -a MPH_KEYS=()
@@ -870,10 +944,12 @@ done
 
 {
     echo "{"
-    echo "  \"version\": 2,"
+    echo "  \"manifest_version\": 3,"
     echo "  \"variant\": \"$VARIANT\","
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
-    echo "  \"lastSynced\": \"$template_head\","
+    echo "  \"template_version\": \"v3.1.0\","
+    echo "  \"template_commit\": \"$template_commit\","
+    echo "  \"requires_server\": \">=0.3.0\","
     echo "  \"placeholders\": {"
     last=$((${#MPH_KEYS[@]} - 1))
     for j in $(seq 0 "$last"); do
@@ -886,14 +962,11 @@ done
     for j in $(seq 0 "$last"); do
         comma=","; [[ $j -eq $last ]] && comma=""
         echo "    \"${MF_KEYS[$j]}\": {"
-        echo "      \"templateHash\": \"${MF_HASHES[$j]}\","
-        echo "      \"templateRawHash\": \"${MF_RAW_HASHES[$j]}\","
-        echo "      \"localHash\": \"${MF_LOCAL_HASHES[$j]}\","
-        if [[ -n "${MF_REASONS[$j]}" ]]; then
-            echo "      \"locallyModified\": ${MF_MODIFIED[$j]},"
-            echo "      \"reason\": \"${MF_REASONS[$j]}\""
+        if [[ "${MF_OWNERSHIP[$j]}" == "template" ]]; then
+            echo "      \"ownership\": \"template\","
+            echo "      \"hash\": \"${MF_HASHES[$j]}\""
         else
-            echo "      \"locallyModified\": ${MF_MODIFIED[$j]}"
+            echo "      \"ownership\": \"once\""
         fi
         echo "    }$comma"
     done
