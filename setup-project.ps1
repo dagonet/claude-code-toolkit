@@ -1045,7 +1045,12 @@ $manifest = [ordered]@{
     templateRepo     = ($PSScriptRoot -replace '\\', '/')
     template_version = "v3.1.0"
     template_commit  = $templateCommit
-    requires_server  = ">=0.3.0"
+    # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
+    # the region splice, so applying CLAUDE.md under them overwrites a populated
+    # PROJECT-CUSTOM region with the template's empty seed. See setup-project.sh
+    # for the full note; the floor protects every sync after the first, and the
+    # sync skill's server_version check covers the first migration.
+    requires_server  = ">=0.3.2"
     placeholders     = $placeholderMap
     files            = $orderedFiles
 }
