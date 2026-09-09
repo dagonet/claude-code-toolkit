@@ -257,7 +257,7 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   MANIFEST_CHECK="$TMPROOT/manifest-check.cjs"
   cat > "$MANIFEST_CHECK" <<'NODE_EOF'
 const fs = require("fs");
-const [, , shPath, psPath, shDir] = process.argv;
+const [, , shPath, psPath, shDir, wantVersion] = process.argv;
 const sh = JSON.parse(fs.readFileSync(shPath, "utf8"));
 const ps = JSON.parse(fs.readFileSync(psPath, "utf8"));
 
@@ -267,7 +267,12 @@ function checkShape(m, label) {
   if (typeof m.variant !== "string" || !m.variant) errs.push("variant missing/not a string");
   if (typeof m.templateRepo !== "string" || !m.templateRepo) errs.push("templateRepo missing/not a string");
   if (typeof m.placeholders !== "object" || m.placeholders === null) errs.push("placeholders missing/not an object");
-  if (m.template_version !== "v3.1.0") errs.push(`template_version !== "v3.1.0" (${m.template_version})`);
+  // Asserted against VERSION, never against a literal. The previous literal
+  // matched the emitter's literal, so both went stale at the v3.1.1 bump and
+  // the fixture stayed green while the manifest named a tag that did not match
+  // its own template_commit. An assertion that repeats the emitter's constant
+  // tests nothing; this one fails if either writer stops tracking VERSION.
+  if (m.template_version !== wantVersion) errs.push(`template_version !== "${wantVersion}" (${m.template_version})`);
   if (m.requires_server !== ">=0.3.2") errs.push(`requires_server !== ">=0.3.2" (${m.requires_server})`);
   if (!/^[0-9a-f]{40}$/.test(m.template_commit) && m.template_commit !== "unknown") {
     errs.push(`template_commit not a 40-hex sha or "unknown" (${m.template_commit})`);
@@ -371,7 +376,8 @@ if (!pickKey) {
 }
 NODE_EOF
 
-  MANIFEST_RESULTS="$(node "$MANIFEST_CHECK" "$SH_MANIFEST" "$PS_MANIFEST" "$SHMDIR" 2>&1)"
+  WANT_TEMPLATE_VERSION="v$(head -1 "$ROOT/VERSION" | tr -d '\r\n')"
+  MANIFEST_RESULTS="$(node "$MANIFEST_CHECK" "$SH_MANIFEST" "$PS_MANIFEST" "$SHMDIR" "$WANT_TEMPLATE_VERSION" 2>&1)"
   row_result() { echo "$MANIFEST_RESULTS" | grep "^$1:" | head -1; }
 
   expect "sh manifest: shape/required fields (row 1)" "ROW1_SH: PASS" "$(row_result ROW1_SH)"

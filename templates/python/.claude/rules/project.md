@@ -1,6 +1,6 @@
 # Project rules (yours; sync never overwrites this file)
 
-<!-- template-sync: project-owned; seeded by setup-project at v3.1.0 -->
+<!-- template-sync: project-owned, and never overwritten by a sync; introduced in v3.1.0 -->
 
 Add `paths:`-scoped conventions here — style, language and file-type rules that
 should arrive when a matching file is opened.

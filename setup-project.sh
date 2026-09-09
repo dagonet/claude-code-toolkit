@@ -906,6 +906,22 @@ fi
 
 # --- Generate template manifest (v3, per the ownership-cutover contract) ---
 template_commit="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")"
+# DERIVED, never a literal. A hardcoded "v3.1.0" here survived the v3.1.1 bump
+# and stamped projects with a tag that did not match template_commit -- the
+# manifest named one release and pinned a commit belonging to another, and the
+# bootstrap could not notice because the fixture asserted the same literal.
+# VERSION line 1 is the single source; the tag is always "v" + that. Read from
+# the file rather than `git describe`, so an export or a shallow clone with no
+# tags still stamps the truth.
+# Guarded with -f rather than swallowing the error inside the substitution:
+# this script runs under `set -o pipefail`, so a missing VERSION makes the
+# PIPELINE fail, and a failing command substitution fails the ASSIGNMENT, which
+# `set -e` turns into an aborted bootstrap. The fixture's no-.git control is
+# what caught it -- the toolkit copy there has no VERSION file either.
+template_version="unknown"
+if [ -f "$SCRIPT_DIR/VERSION" ]; then
+    template_version="v$(head -1 "$SCRIPT_DIR/VERSION" | tr -d '\r\n')"
+fi
 manifest_path="$TARGET_DIR/.claude/template-manifest.json"
 mkdir -p "$(dirname "$manifest_path")"
 
@@ -947,7 +963,7 @@ done
     echo "  \"manifest_version\": 3,"
     echo "  \"variant\": \"$VARIANT\","
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
-    echo "  \"template_version\": \"v3.1.0\","
+    echo "  \"template_version\": \"$(json_escape "$template_version")\","
     echo "  \"template_commit\": \"$template_commit\","
     # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
     # the region splice, so applying CLAUDE.md under them overwrites a populated

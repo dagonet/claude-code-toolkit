@@ -1,5 +1,27 @@
 # Changelog
 
+## v3.1.2 — 2026-09-09
+
+**Two stale constants, both found by consumer sessions measuring the released artifact rather than reading the diff. One misled a tool; one misled a reader.**
+
+**`template_version` was a hardcoded literal and it went stale at the last release.** `setup-project.sh` and `setup-project.ps1` each emitted `"template_version": "v3.1.0"` as a string. So a project bootstrapped from a v3.1.1 checkout was stamped `v3.1.0` while its `template_commit` pinned `267c2892` — **the manifest named one release and pinned a commit belonging to another**, and anything resolving `template_version` as a git ref in the window between bootstrap and first sync resolved the wrong tag. The first sync silently corrected it, because the server recomputes the field as the nearest reachable tag whose tracked tree matches, which is exactly why nobody noticed. Both writers now derive it from `VERSION` line 1 — read from the file rather than `git describe`, so an export or a tagless shallow clone still stamps the truth.
+
+**The fixture could not have caught it, and that is the more general lesson.** `scripts/test-setup-project.sh` asserted `template_version === "v3.1.0"` — the emitter's own literal, repeated. Emitter and assertion went stale together and the gate stayed green. The assertion now compares against `VERSION`, so it fails if *either* writer stops tracking it. This is the second time a version literal in these emitters has drifted; the first was the unprefixed `template_version` that broke as a git ref before Phase 3. A literal that no release step updates will drift again — deriving it costs one file read.
+
+**The sync skill's header contradicted its own gate.** `SKILL.md` opened with `**Requires:** ... version >= 0.2.0` while step 1 halts the sync below 0.3.2. A skimmer who read the header and stopped got a number three minor versions below the one that protects them, inside the file whose entire job this release series is to make protective. `>= 0.2.0` holds only for a consumer whose checkout predates `templates/ownership.json` — and there is no such consumer, since that file's presence is what makes `migration_required` true.
+
+**One clause added to the same file, from a near-miss worth more than a finding.** The `server_version` rule warned that four sources disagree. It now also warns that **the same source disagrees with itself across a restart**: a session measured `0.3.2`, its user reconnected the server, and the field then read `0.3.3`. The earlier reading was not wrong when taken, it was wrong to still believe, and nothing in between looks stale. Read the field in the run that will perform the sync; never carry a number forward.
+
+### Also settled this release, without a code change
+
+**`migration_required` is tree-driven, and "stay on 0.3.0" was unsafe advice.** Earlier guidance held that a consumer on 0.3.0 reporting `migration_required: false` was in the safer state. That rested on two readings taken hours apart — 0.3.0 reporting false, 0.3.1 reporting true — with *this repo's* release of `templates/ownership.json` landing in between. Two variables moved and the effect was attributed to the version. The server source settles it: at both `v0.3.0` and `v0.3.1`, `template_sync_mcp.py:756` is the byte-identical line `migration_required = v3.load_ownership(manifest["templateRepo"]) is not None`, and 0.3.0 ships a test pinning false-without / true-with. The three mechanisms that landed in one window, separated: **arming** came from this repo shipping the ownership table, **the region splice** came from server 0.3.2, and **the floor a migration stamps** came from 0.3.3. The correction was already published in the v3.1.0 note; it now rests on the artifact rather than on consumer readings.
+
+### Downstream migration
+
+1. **Re-copy `user-level-reference/skills/sync-template/SKILL.md` into `~/.claude/skills/`** — but check first: on four machines it was already current. Compare bytes, not the marker line; a marker can read one version in a file whose body is another. `scripts/verify-user-level-drift.sh` reports 0 when it has landed.
+2. **A correct file on disk is not a correct file in a running session.** A session that loaded the old body still executes the old body. This file guards itself — step 1 compares the installed marker against the body as loaded and halts on a mismatch — so a stale session stops rather than proceeding. Restart before syncing.
+3. **If you bootstrapped a project under v3.1.0 or v3.1.1, its `template_version` may name a tag its `template_commit` contradicts.** Harmless in practice: your first sync recomputes the field. Nothing to do unless you have tooling that resolves `template_version` as a ref before the first sync.
+
 ## v3.1.1 — 2026-09-09
 
 **A version floor raised to where the safety actually lives, a migration gate that reads the running server rather than the installed one, and four documentation corrections where this repo asserted things measurement contradicts.**
