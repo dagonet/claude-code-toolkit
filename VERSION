@@ -1,2 +1,2 @@
-3.1.0
-Declared keys instead of prose, ownership per file instead of guesswork, and four enforcement fail-opens closed — three found by review rather than by the suite. One spec commitment was reversed on measurement: unscoped .claude/rules files reach nobody, so CLAUDE.md keeps its PROJECT-CUSTOM region and the CLAUDE.local.md retirement moves to v3.2.
+3.1.1
+The emitted requires_server floor rises to >=0.3.2 and the sync skill refuses a first migration on an older server — two guards covering two different moments, because a v2 manifest carries no floor at all. Documentation corrected where it asserted things measurement contradicts.

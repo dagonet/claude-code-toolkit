@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.1 -->
 
 # Sync Template (Downstream)
 
