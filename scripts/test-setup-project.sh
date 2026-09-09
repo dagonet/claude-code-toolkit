@@ -268,7 +268,7 @@ function checkShape(m, label) {
   if (typeof m.templateRepo !== "string" || !m.templateRepo) errs.push("templateRepo missing/not a string");
   if (typeof m.placeholders !== "object" || m.placeholders === null) errs.push("placeholders missing/not an object");
   if (m.template_version !== "v3.1.0") errs.push(`template_version !== "v3.1.0" (${m.template_version})`);
-  if (m.requires_server !== ">=0.3.0") errs.push(`requires_server !== ">=0.3.0" (${m.requires_server})`);
+  if (m.requires_server !== ">=0.3.2") errs.push(`requires_server !== ">=0.3.2" (${m.requires_server})`);
   if (!/^[0-9a-f]{40}$/.test(m.template_commit) && m.template_commit !== "unknown") {
     errs.push(`template_commit not a 40-hex sha or "unknown" (${m.template_commit})`);
   }

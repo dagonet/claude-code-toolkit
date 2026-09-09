@@ -949,7 +949,14 @@ done
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
     echo "  \"template_version\": \"v3.1.0\","
     echo "  \"template_commit\": \"$template_commit\","
-    echo "  \"requires_server\": \">=0.3.0\","
+    # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
+    # the region splice, so applying CLAUDE.md under them overwrites a populated
+    # PROJECT-CUSTOM region with the template's empty seed. The floor is enforced
+    # at template_load_manifest, so this refuses on every sync after the first --
+    # including a consumer who downgrades, or the same repo opened on a machine
+    # whose server process is older. It cannot protect the FIRST migration (a v2
+    # manifest carries no floor); the sync skill's server_version check does that.
+    echo "  \"requires_server\": \">=0.3.2\","
     echo "  \"placeholders\": {"
     last=$((${#MPH_KEYS[@]} - 1))
     for j in $(seq 0 "$last"); do

@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.1 -->
 
 # Sync Template (Downstream)
 
@@ -42,6 +42,10 @@ Then call `template_load_manifest(project_path=".")`.
 
 - If `valid` is false, **stop** and show the errors to the user — this is the only place a `requires_server` mismatch surfaces, so a false here is not recoverable by continuing.
 - If `warnings` mentions v1 migration, inform the user their manifest will be upgraded to v2.
+
+**STOP BELOW `server_version` 0.3.2 IF THIS SYNC WOULD MIGRATE THE MANIFEST TO v3.** Read `server_version` from THIS response — not `pip show`, not the `dist-info`, not the tag, not the source checkout; all four disagree on a real machine, and only this one describes the process that would perform the sync. If `migration_required` is true and `server_version` is below `0.3.2`, **stop and tell the user**: their server predates the region splice, so migrating the manifest to v3 and then applying `CLAUDE.md` overwrites a populated `PROJECT-CUSTOM` region with the template's empty seed. They need to restart the MCP server onto 0.3.2+ and re-read this field — **a running server executes whatever it imported at spawn, so upgrading on disk changes nothing until the process restarts.**
+
+This gate exists because nothing else can cover the case. A v2 manifest carries no `requires_server`, so the floor cannot refuse the FIRST migration; a manifest written by 0.3.3+ declares `">=0.3.2"` and protects every sync afterwards. Two guards, neither redundant: this one covers the migration, the floor covers the rest. Measured 2026-09-09: four consumer sessions were in the armed state (`migration_required: true` on a pre-0.3.2 server) without having installed anything — the flag turned true when the toolkit shipped `templates/ownership.json`, not when they changed their server.
 
 ### 1a. Manifest v3 shape
 

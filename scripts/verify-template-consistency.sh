@@ -3153,6 +3153,25 @@ fi
 # always-on channel). This check is the inversion of what the plan asked for:
 # the markers staying, plus a pointer line naming both homes, is now the
 # invariant, not their removal.
+#
+# THE SECOND REASON, and it is the one that makes this check load-bearing
+# rather than stylistic: the sync server preserves a consumer's region by
+# splicing it into the template, and that splice happens only when BOTH sides
+# carry the markers. Measured on a real consumer fixture (penumbra, 2026-09-09,
+# 24 runs across two server builds): with the markers present in the template,
+# a region-only difference round-trips byte-identically in the WORKING file;
+# with the markers ABSENT from the template, the consumer's region is dropped
+# from the working file and survives only in `backup_dir`. That holds on both
+# the pre- and post-fix server, so it is a property of the design, not a bug
+# someone will fix later.
+#
+# So removing these markers from the template does not merely change where
+# instructions live — IT SILENTLY DISCARDS EVERY CONSUMER'S REGION ON THEIR NEXT
+# SYNC. If you are here because the delivery rationale above no longer applies
+# and you are about to delete the markers, this is the reason not to: the
+# guarantee is conditional on the template shipping them, and the failure lands
+# on the consumer, not on us. Change the server's splice rule first, or accept
+# that you are choosing the data loss.
 # ---------------------------------------------------------------------------
 echo
 note "Check 39: every variant CLAUDE.md keeps PROJECT-CUSTOM:BEGIN/END and a pointer line naming both homes"
