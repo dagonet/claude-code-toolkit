@@ -232,6 +232,161 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   ps_list=$(cd "$PSDIR" && find . -type f | sort)
   expect "sh and ps1 bootstraps write the same file set" "$sh_list" "$ps_list"
 
+  # --- v3.1 ownership-cutover: manifest v3 contract ---------------------------
+  #
+  # Both writers now emit a manifest v3 (ownership per file, sha256 for
+  # `template` class, variant/templateRepo/placeholders, v-prefixed
+  # template_version) instead of the old flat v2 `files{}`. Node does the
+  # parsing/comparison (it is already required by the hooks) so this stays a
+  # structural check rather than a brittle text diff — ConvertTo-Json's escaping
+  # and PS's key order differ from jq's by design and must not fail the row.
+  #
+  # Fresh directories, not $SHDIR/$PSDIR: those two are reused/mutated later
+  # by the rerun-over-an-existing-project fixture, whose manifest legitimately
+  # carries only the one file that fixture actually rewrites.
+  SHMDIR="$TMPROOT/manifest-sh"
+  PSMDIR="$TMPROOT/manifest-ps"
+  mkdir -p "$SHMDIR" "$PSMDIR"
+  bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+    --target-path "$SHMDIR" --default-branch develop > "$TMPROOT/manifest-sh.out" 2>&1
+  "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$PSMDIR" \
+    -DefaultBranch develop > "$TMPROOT/manifest-ps.out" 2>&1
+  SH_MANIFEST="$SHMDIR/.claude/template-manifest.json"
+  PS_MANIFEST="$PSMDIR/.claude/template-manifest.json"
+  MANIFEST_CHECK="$TMPROOT/manifest-check.cjs"
+  cat > "$MANIFEST_CHECK" <<'NODE_EOF'
+const fs = require("fs");
+const [, , shPath, psPath, shDir] = process.argv;
+const sh = JSON.parse(fs.readFileSync(shPath, "utf8"));
+const ps = JSON.parse(fs.readFileSync(psPath, "utf8"));
+
+function checkShape(m, label) {
+  const errs = [];
+  if (m.manifest_version !== 3) errs.push(`manifest_version !== 3 (${m.manifest_version})`);
+  if (typeof m.variant !== "string" || !m.variant) errs.push("variant missing/not a string");
+  if (typeof m.templateRepo !== "string" || !m.templateRepo) errs.push("templateRepo missing/not a string");
+  if (typeof m.placeholders !== "object" || m.placeholders === null) errs.push("placeholders missing/not an object");
+  if (m.template_version !== "v3.1.0") errs.push(`template_version !== "v3.1.0" (${m.template_version})`);
+  if (m.requires_server !== ">=0.3.0") errs.push(`requires_server !== ">=0.3.0" (${m.requires_server})`);
+  if (!/^[0-9a-f]{40}$/.test(m.template_commit) && m.template_commit !== "unknown") {
+    errs.push(`template_commit not a 40-hex sha or "unknown" (${m.template_commit})`);
+  }
+  console.log(`ROW1_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
+}
+checkShape(sh, "SH");
+checkShape(ps, "PS");
+
+function checkFiles(m, label) {
+  const errs = [];
+  for (const [key, entry] of Object.entries(m.files)) {
+    if (entry.ownership !== "template" && entry.ownership !== "once") {
+      errs.push(`${key}: ownership is "${entry.ownership}"`);
+    }
+  }
+  console.log(`ROW2_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
+}
+checkFiles(sh, "SH");
+checkFiles(ps, "PS");
+
+function checkHashes(m, label) {
+  const errs = [];
+  for (const [key, entry] of Object.entries(m.files)) {
+    if (entry.ownership === "template") {
+      if (!/^sha256:[0-9a-f]{64}$/.test(entry.hash || "")) errs.push(`${key}: hash malformed (${entry.hash})`);
+    } else if (entry.ownership === "once") {
+      if (Object.prototype.hasOwnProperty.call(entry, "hash")) errs.push(`${key}: once entry carries a hash key`);
+    }
+  }
+  console.log(`ROW3_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
+}
+checkHashes(sh, "SH");
+checkHashes(ps, "PS");
+
+function checkGitignoreKeys(m, label) {
+  const errs = [];
+  if (!m.files[".gitignore"]) errs.push("no .gitignore entry under the project-path key");
+  if (m.files["gitignore"]) errs.push("a bare 'gitignore' key is present (should be renamed to .gitignore)");
+  if (m.files["CLAUDE.local.md"]) errs.push("CLAUDE.local.md is present (should be absent, unclassified_template_files)");
+  console.log(`ROW4_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
+}
+checkGitignoreKeys(sh, "SH");
+checkGitignoreKeys(ps, "PS");
+
+// Row 5: identical after normalising template_commit, templateRepo, and (if
+// present) classifier. Key order is deliberately not part of the comparison
+// (sortObj below) -- sh and ps1 build their placeholder maps in different
+// orders and that is not drift.
+//
+// templateRepo needs normalising too, beyond what the brief names: on this
+// harness `$PSBIN -File "$ROOT/setup-project.ps1"` is MSYS invoking a native
+// (non-MSYS) exe, and MSYS silently rewrites a POSIX-looking argument
+// (`$ROOT`, e.g. `/g/git/...`) to its Windows spelling (`G:/git/...`) before
+// PowerShell ever sees it -- so `$PSScriptRoot` resolves Windows-style while
+// bash's own `$SCRIPT_DIR` stays POSIX-style. Both name the identical
+// directory; the difference is the launching shell's argv translation, not
+// the two writers disagreeing. Row 1 already asserts both are non-empty
+// strings, so the field is not going unchecked -- only the exact spelling
+// is exempted here.
+function sortObj(o) {
+  if (Array.isArray(o)) return o.map(sortObj);
+  if (o && typeof o === "object") {
+    const out = {};
+    for (const k of Object.keys(o).sort()) out[k] = sortObj(o[k]);
+    return out;
+  }
+  return o;
+}
+const shN = JSON.parse(JSON.stringify(sh));
+const psN = JSON.parse(JSON.stringify(ps));
+shN.template_commit = "NORM";
+psN.template_commit = "NORM";
+shN.templateRepo = "NORM";
+psN.templateRepo = "NORM";
+delete shN.classifier;
+delete psN.classifier;
+const shStr = JSON.stringify(sortObj(shN));
+const psStr = JSON.stringify(sortObj(psN));
+if (shStr === psStr) {
+  console.log("ROW5: PASS");
+} else {
+  console.log("ROW5: FAIL manifests differ after normalisation");
+}
+
+// Row 6: recompute sha256 over the file on disk for one `template` entry and
+// compare to the manifest value — catches a hash computed pre-replacement.
+const crypto = require("crypto");
+const path = require("path");
+const [pickKey] = Object.entries(sh.files).find(([, v]) => v.ownership === "template") || [];
+if (!pickKey) {
+  console.log("ROW6: FAIL no template entry found to check");
+} else {
+  const onDisk = fs.readFileSync(path.join(shDir, pickKey));
+  const want = "sha256:" + crypto.createHash("sha256").update(onDisk).digest("hex");
+  if (want === sh.files[pickKey].hash) {
+    console.log(`ROW6: PASS (${pickKey})`);
+  } else {
+    console.log(`ROW6: FAIL ${pickKey} manifest=${sh.files[pickKey].hash} disk=${want}`);
+  }
+}
+NODE_EOF
+
+  MANIFEST_RESULTS="$(node "$MANIFEST_CHECK" "$SH_MANIFEST" "$PS_MANIFEST" "$SHMDIR" 2>&1)"
+  row_result() { echo "$MANIFEST_RESULTS" | grep "^$1:" | head -1; }
+
+  expect "sh manifest: shape/required fields (row 1)" "ROW1_SH: PASS" "$(row_result ROW1_SH)"
+  expect "ps1 manifest: shape/required fields (row 1)" "ROW1_PS: PASS" "$(row_result ROW1_PS)"
+  expect "sh manifest: every files entry ownership template|once (row 2)" "ROW2_SH: PASS" "$(row_result ROW2_SH)"
+  expect "ps1 manifest: every files entry ownership template|once (row 2)" "ROW2_PS: PASS" "$(row_result ROW2_PS)"
+  expect "sh manifest: hash shape, once carries no hash key (row 3)" "ROW3_SH: PASS" "$(row_result ROW3_SH)"
+  expect "ps1 manifest: hash shape, once carries no hash key (row 3)" "ROW3_PS: PASS" "$(row_result ROW3_PS)"
+  expect "sh manifest: .gitignore key, no gitignore/CLAUDE.local.md keys (row 4)" "ROW4_SH: PASS" "$(row_result ROW4_SH)"
+  expect "ps1 manifest: .gitignore key, no gitignore/CLAUDE.local.md keys (row 4)" "ROW4_PS: PASS" "$(row_result ROW4_PS)"
+  expect "sh and ps1 manifests agree after normalisation (row 5)" "ROW5: PASS" "$(row_result ROW5)"
+  # row 6's PASS line carries the picked filename; compare on the PASS/FAIL word only.
+  row6_word=$(row_result ROW6 | sed -E 's/^ROW6: (PASS|FAIL).*/\1/')
+  expect "manifest hash matches sha256 of the file as written (row 6)" "PASS" "$row6_word"
+
   # --- the no-.git arm: the actual regression test for :861 -----------------
   #
   # A toolkit extracted without .git (a ZIP download, not a clone) is the
