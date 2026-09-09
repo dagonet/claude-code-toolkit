@@ -918,9 +918,21 @@ template_commit="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "unkn
 # PIPELINE fail, and a failing command substitution fails the ASSIGNMENT, which
 # `set -e` turns into an aborted bootstrap. The fixture's no-.git control is
 # what caught it -- the toolkit copy there has no VERSION file either.
-template_version="unknown"
+# JSON null, not the string "unknown", when it cannot be determined. The v3
+# contract already names null for this field ("the nearest reachable tag whose
+# tracked tree is identical, null when none") and the sync server emits null
+# from the same condition. A sentinel string is TRUTHY, so a consumer written
+# against the contract -- `if manifest.template_version is None` -- sails past
+# the check and then fails resolving "unknown" as a ref. Same class as the
+# missing `v` prefix, one layer down, in the branch nobody exercises.
+# `template_commit` keeps "unknown" deliberately: that IS its contract, and the
+# fixture asserts it.
+template_version_json="null"
 if [ -f "$SCRIPT_DIR/VERSION" ]; then
     template_version="v$(head -1 "$SCRIPT_DIR/VERSION" | tr -d '\r\n')"
+    if [ "$template_version" != "v" ]; then
+        template_version_json="\"$(json_escape "$template_version")\""
+    fi
 fi
 manifest_path="$TARGET_DIR/.claude/template-manifest.json"
 mkdir -p "$(dirname "$manifest_path")"
@@ -963,7 +975,7 @@ done
     echo "  \"manifest_version\": 3,"
     echo "  \"variant\": \"$VARIANT\","
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
-    echo "  \"template_version\": \"$(json_escape "$template_version")\","
+    echo "  \"template_version\": $template_version_json,"
     echo "  \"template_commit\": \"$template_commit\","
     # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
     # the region splice, so applying CLAUDE.md under them overwrites a populated

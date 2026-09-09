@@ -975,12 +975,17 @@ finally { $ErrorActionPreference = $prevEapHead }
 # that did not match template_commit. VERSION line 1 is the single source, read
 # from the file rather than `git describe` so an export with no tags still
 # stamps the truth.
-$templateVersion = "unknown"
+$templateVersion = $null
 $versionPath = Join-Path $PSScriptRoot "VERSION"
 if (Test-Path $versionPath) {
     $versionLine = (Get-Content $versionPath -TotalCount 1)
-    if ($versionLine) { $templateVersion = "v" + $versionLine.Trim() }
+    if ($versionLine -and $versionLine.Trim()) { $templateVersion = "v" + $versionLine.Trim() }
 }
+# $null, not "unknown": ConvertTo-Json writes it as JSON null, which is the
+# value the v3 contract names and what the sync server emits from the same
+# condition. A sentinel string is truthy and passes a consumer's `is None`
+# check before failing as a ref. $templateCommit keeps "unknown" -- that IS its
+# contract.
 
 # Build placeholders map (only actually-provided values)
 $placeholderMap = [ordered]@{}

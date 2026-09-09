@@ -566,9 +566,38 @@ NODE_EOF
   NOGIT_SH_COUNT=$(find "$NOGITSH" -type f | wc -l | tr -d ' ')
   NOGIT_PS_COUNT=$(find "$NOGITPS" -type f | wc -l | tr -d ' ')
   expect "ps1 file count matches sh on a no-.git toolkit" "$NOGIT_SH_COUNT" "$NOGIT_PS_COUNT"
+
+  # template_version when it CANNOT be determined. This source tree carries no
+  # VERSION file (the copy above takes the scripts, templates and reference
+  # trees, not VERSION), so both writers take the fallback branch -- the branch
+  # that shipped a truthy "unknown" string past every previous run because
+  # nothing asserted on it. The v3 contract says null here, and the sync server
+  # emits null from the same condition, so a consumer testing `is None` must
+  # see null from BOTH writers. Asserted as a JSON type, not a string compare:
+  # "null" and null are the failure this row exists to tell apart.
+  NOGIT_TV_CHECK="$TMPROOT/nogit-tv.js"
+  cat > "$NOGIT_TV_CHECK" <<'TV_EOF'
+const fs = require("fs");
+const [, , shPath, psPath] = process.argv;
+for (const [label, p] of [["sh", shPath], ["ps1", psPath]]) {
+  let verdict;
+  try {
+    const v = JSON.parse(fs.readFileSync(p, "utf8")).template_version;
+    verdict = v === null ? "null" : `${typeof v}:${JSON.stringify(v)}`;
+  } catch (e) {
+    verdict = `unreadable:${e.message}`;
+  }
+  console.log(`${label} ${verdict}`);
+}
+TV_EOF
+  NOGIT_TV_OUT="$(node "$NOGIT_TV_CHECK" "$NOGIT_SH_MANIFEST" "$NOGIT_PS_MANIFEST" 2>&1)"
+  expect "sh: template_version is JSON null when VERSION is absent" \
+    "null" "$(printf '%s\n' "$NOGIT_TV_OUT" | awk '$1=="sh"{print $2}')"
+  expect "ps1: template_version is JSON null when VERSION is absent" \
+    "null" "$(printf '%s\n' "$NOGIT_TV_OUT" | awk '$1=="ps1"{print $2}')"
 else
   skip "setup-project.ps1 parity" "no PowerShell on this host" 8
-  skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 5
+  skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 7
 fi
 
 echo "----------------------------------------------------------------"
