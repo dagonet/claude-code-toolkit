@@ -1,2 +1,2 @@
-3.1.3
-The sync skill gains the migration step it had been gating without describing, and reports the keep-mine records a v2 to v3 migration drops — with absence read as "this server cannot tell you" rather than as "nothing was dropped".
+3.1.4
+Step 1c named two different markers as the value to pass and the wrong one was easier to reach for, so a caller who had done everything right could be refused; and check 41 pins the deprecated-key tolerance that check 40 left without a template-side user.

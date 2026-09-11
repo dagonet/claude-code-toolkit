@@ -1,5 +1,28 @@
 # Changelog
 
+## v3.1.4 — 2026-09-12
+
+**Three defects, each of which would have punished someone for doing the right thing. All three were found by peers reading v3.1.3's shipped artifact against their own.**
+
+**Step 1c named two different markers as the value to pass, and the wrong one was easier to reach for.** It said to take `skill_version` from "the marker in the body you are executing — the one you already read and stated in step 1". But step 1 puts **two** markers in front of the reader: the `grep` of `~/.claude/skills/sync-template/SKILL.md`, which reports the **disk**, and the marker in the loaded body. The back-reference named both. The `grep` result is the one that arrives as command output rather than self-inspection, so it is the one a reader reaches for.
+
+The failure is a **false refusal of a compliant caller**, and it is the same shape as the bug v3.1.3 fixed, arriving from the other side. Disk *older* than the running body — someone restored an old file, or a copy failed halfway — and a disk-sourced value is below the floor, so a caller who re-copied and restarted is refused and told to re-copy and restart. Meanwhile the case the guard exists for is untouched, because a stale body passes nothing regardless of what it reads. The step now names the wrong source beside the right one, and spells out that the two disagree in **both** directions with a different failure in each.
+
+**The floor was deliberately NOT raised to `">=v3.1.4"`.** A v3.1.3 body that passes its own correct marker is compliant, and raising the floor would refuse it — committing the exact error this release is fixing. The wording defect makes a wrong value *possible*; it does not make v3.1.3 unacceptable. `requires_skill` stays `">=v3.1.3"`.
+
+**Check 41 — check 40's own exposure, found by the consumer with the most to lose from it.** v3.1.3 normalised the templates to `**Gate**` / `**Test**`, which is right for new adoptions and means **no template exercises the old spelling any more**. But `PROJECT_CONTEXT.md` is a `once` file: every consumer seeded with `**Gate Command**` keeps it forever, and the normalised template never reaches them. The `( Command)?` tolerance in the hook readers is now the only thing standing between such a consumer and a command that resolves to the empty string — **and an empty `GATE_CMD` is not an error, it is a no-op that exits 0.** Removing the tolerance would present to those consumers as *"the gate passes"*, silently, in the direction of less enforcement. Nothing else in this repo would have gone red if someone deleted it as dead code, because after check 40 it has no template-side user. Check 41 is that user, pinning all four reader sites.
+
+**Two restarts, not one.** Restarting the MCP server fixes the server half; only a **fresh Claude session** fixes the skill half, and that one has no in-session remedy — a session running an older body has no instruction in it to identify itself, so it passes nothing and is refused. Two consumer sessions were measured in that state simultaneously, one executing a body three releases behind its own disk and one five. The second restart is the one people skip, because the first felt like the fix.
+
+### A note on the check that caught itself
+
+Check 41's first implementation reported all four sites missing while the tolerance was present in every one: the reader lines carry the pattern as `\*\*Gate( Command)?\*\*:`, backslashes and all, so a regex written to *look like* the pattern does not match the source that *contains* it. It now matches a literal substring. Worth recording because the check was red for a reason that had nothing to do with what it was checking — and because the delete-the-guard probe that verifies it also failed on its first run, for a third unrelated reason: the pattern occurs twice on one line and a `sed` without `/g` left the second copy in place. A probe that cannot produce its red is worth exactly as much as a check that cannot fail.
+
+### Downstream migration
+
+1. **Re-copy `user-level-reference/skills/sync-template/SKILL.md` into `~/.claude/skills/`**, then **restart the session**. Both. See above.
+2. Nothing else changed. No template file moved, no manifest field changed, and the server floor is unchanged at `>=0.3.2`.
+
 ## v3.1.3 — 2026-09-11
 
 **The sync skill gated a migration it never described. This release writes that step — and the peer round that reviewed it changed the design twice before it shipped.**
