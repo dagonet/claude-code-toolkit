@@ -970,6 +970,23 @@ try {
 }
 finally { $ErrorActionPreference = $prevEapHead }
 
+# DERIVED, never a literal -- see the matching comment in setup-project.sh. A
+# hardcoded "v3.1.0" survived the v3.1.1 bump and stamped projects with a tag
+# that did not match template_commit. VERSION line 1 is the single source, read
+# from the file rather than `git describe` so an export with no tags still
+# stamps the truth.
+$templateVersion = $null
+$versionPath = Join-Path $PSScriptRoot "VERSION"
+if (Test-Path $versionPath) {
+    $versionLine = (Get-Content $versionPath -TotalCount 1)
+    if ($versionLine -and $versionLine.Trim()) { $templateVersion = "v" + $versionLine.Trim() }
+}
+# $null, not "unknown": ConvertTo-Json writes it as JSON null, which is the
+# value the v3 contract names and what the sync server emits from the same
+# condition. A sentinel string is truthy and passes a consumer's `is None`
+# check before failing as a ref. $templateCommit keeps "unknown" -- that IS its
+# contract.
+
 # Build placeholders map (only actually-provided values)
 $placeholderMap = [ordered]@{}
 $placeholderMap['PROJECT_NAME'] = $ProjectName
@@ -1043,7 +1060,7 @@ $manifest = [ordered]@{
     manifest_version = 3
     variant          = $Variant
     templateRepo     = ($PSScriptRoot -replace '\\', '/')
-    template_version = "v3.1.0"
+    template_version = $templateVersion
     template_commit  = $templateCommit
     # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
     # the region splice, so applying CLAUDE.md under them overwrites a populated

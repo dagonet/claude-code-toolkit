@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.1 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.2 -->
 
 # Sync Template (Downstream)
 
@@ -12,7 +12,7 @@ Pull updates from the claude-code-toolkit template repo into the current project
 
 **The line above is the version of the body YOU LOADED, and you must be able to state it.** A running session obeys the skill body it read at session start, not the file on disk — measured live: an installed `SKILL.md` byte-identical to the current release while sessions started earlier were still executing the previous version's steps. So *"re-copy `SKILL.md`"* and *"the drift check reports 0"* can both pass while every live session runs the old workflow. Step 1 checks this marker against the installed file.
 
-**Requires:** `template-sync-tools` MCP server registered and running, **version >= 0.2.0**.
+**Requires:** `template-sync-tools` MCP server registered and running, **version >= 0.3.2** — read from the `template_load_manifest` response, not from `pip show` or the checkout. This header used to say `>= 0.2.0` while step 1 below halted under 0.3.2; a skimmer who read the header and stopped got a number three minor versions under the one that protects them. `>= 0.2.0` holds only for a consumer whose toolkit checkout predates `templates/ownership.json`, and there is no such consumer left: that file's presence is what makes `migration_required` true, and a v3 manifest enforces `">=0.3.2"` at load.
 
 > The two repos keep **independent** semver and ship on different cadences — do not expect the numbers to match. They are related by this stated contract instead. `template-sync-tools` 0.1.0 carries a classification bug that silently OVERWRITES a file the user chose to keep; 0.2.0 is the first release with the fix. Check the version at the first `template_*` call and stop if it is older.
 >
@@ -43,7 +43,7 @@ Then call `template_load_manifest(project_path=".")`.
 - If `valid` is false, **stop** and show the errors to the user — this is the only place a `requires_server` mismatch surfaces, so a false here is not recoverable by continuing.
 - If `warnings` mentions v1 migration, inform the user their manifest will be upgraded to v2.
 
-**STOP BELOW `server_version` 0.3.2 IF THIS SYNC WOULD MIGRATE THE MANIFEST TO v3.** Read `server_version` from THIS response — not `pip show`, not the `dist-info`, not the tag, not the source checkout; all four disagree on a real machine, and only this one describes the process that would perform the sync. If `migration_required` is true and `server_version` is below `0.3.2`, **stop and tell the user**: their server predates the region splice, so migrating the manifest to v3 and then applying `CLAUDE.md` overwrites a populated `PROJECT-CUSTOM` region with the template's empty seed. They need to restart the MCP server onto 0.3.2+ and re-read this field — **a running server executes whatever it imported at spawn, so upgrading on disk changes nothing until the process restarts.**
+**STOP BELOW `server_version` 0.3.2 IF THIS SYNC WOULD MIGRATE THE MANIFEST TO v3.** Read `server_version` from THIS response — not `pip show`, not the `dist-info`, not the tag, not the source checkout; all four disagree on a real machine, and only this one describes the process that would perform the sync. If `migration_required` is true and `server_version` is below `0.3.2`, **stop and tell the user**: their server predates the region splice, so migrating the manifest to v3 and then applying `CLAUDE.md` overwrites a populated `PROJECT-CUSTOM` region with the template's empty seed. They need to restart the MCP server onto 0.3.2+ and re-read this field — **a running server executes whatever it imported at spawn, so upgrading on disk changes nothing until the process restarts.** And read it in the run that will perform the sync: **the same source disagrees with itself across a restart.** One session measured `0.3.2`, its user reconnected the server, and the field then read `0.3.3` — the earlier reading was not wrong when taken, it was wrong to still believe, and nothing in between looks stale. Never carry a version number forward from an earlier turn.
 
 This gate exists because nothing else can cover the case. A v2 manifest carries no `requires_server`, so the floor cannot refuse the FIRST migration; a manifest written by 0.3.3+ declares `">=0.3.2"` and protects every sync afterwards. Two guards, neither redundant: this one covers the migration, the floor covers the rest. Measured 2026-09-09: four consumer sessions were in the armed state (`migration_required: true` on a pre-0.3.2 server) without having installed anything — the flag turned true when the toolkit shipped `templates/ownership.json`, not when they changed their server.
 

@@ -1,2 +1,2 @@
-3.1.1
-The emitted requires_server floor rises to >=0.3.2 and the sync skill refuses a first migration on an older server — two guards covering two different moments, because a v2 manifest carries no floor at all. Documentation corrected where it asserted things measurement contradicts.
+3.1.2
+template_version is derived from VERSION instead of a literal that survived the last bump and stamped projects with a tag their own template_commit contradicted, and the sync skill's header no longer names a floor three minor versions below the one its first step enforces.

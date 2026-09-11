@@ -906,6 +906,34 @@ fi
 
 # --- Generate template manifest (v3, per the ownership-cutover contract) ---
 template_commit="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")"
+# DERIVED, never a literal. A hardcoded "v3.1.0" here survived the v3.1.1 bump
+# and stamped projects with a tag that did not match template_commit -- the
+# manifest named one release and pinned a commit belonging to another, and the
+# bootstrap could not notice because the fixture asserted the same literal.
+# VERSION line 1 is the single source; the tag is always "v" + that. Read from
+# the file rather than `git describe`, so an export or a shallow clone with no
+# tags still stamps the truth.
+# Guarded with -f rather than swallowing the error inside the substitution:
+# this script runs under `set -o pipefail`, so a missing VERSION makes the
+# PIPELINE fail, and a failing command substitution fails the ASSIGNMENT, which
+# `set -e` turns into an aborted bootstrap. The fixture's no-.git control is
+# what caught it -- the toolkit copy there has no VERSION file either.
+# JSON null, not the string "unknown", when it cannot be determined. The v3
+# contract already names null for this field ("the nearest reachable tag whose
+# tracked tree is identical, null when none") and the sync server emits null
+# from the same condition. A sentinel string is TRUTHY, so a consumer written
+# against the contract -- `if manifest.template_version is None` -- sails past
+# the check and then fails resolving "unknown" as a ref. Same class as the
+# missing `v` prefix, one layer down, in the branch nobody exercises.
+# `template_commit` keeps "unknown" deliberately: that IS its contract, and the
+# fixture asserts it.
+template_version_json="null"
+if [ -f "$SCRIPT_DIR/VERSION" ]; then
+    template_version="v$(head -1 "$SCRIPT_DIR/VERSION" | tr -d '\r\n')"
+    if [ "$template_version" != "v" ]; then
+        template_version_json="\"$(json_escape "$template_version")\""
+    fi
+fi
 manifest_path="$TARGET_DIR/.claude/template-manifest.json"
 mkdir -p "$(dirname "$manifest_path")"
 
@@ -947,7 +975,7 @@ done
     echo "  \"manifest_version\": 3,"
     echo "  \"variant\": \"$VARIANT\","
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
-    echo "  \"template_version\": \"v3.1.0\","
+    echo "  \"template_version\": $template_version_json,"
     echo "  \"template_commit\": \"$template_commit\","
     # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
     # the region splice, so applying CLAUDE.md under them overwrites a populated
