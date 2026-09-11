@@ -155,10 +155,10 @@ Then report:
   | `manifest.files[path].ownership` in the RETURNED manifest | Verdict |
   |---|---|
   | `"template"` | **REAL.** The next apply overwrites. Re-apply or upstream. |
-  | `"once"` | **SAFE — and STRONGER than `keep-mine` was.** Apply returns `kept`, 0 bytes written. |
+  | `"once"` | **SAFE — and STRICTLY STRONGER than `keep-mine` was.** Apply returns `kept`, 0 bytes written. |
   | path absent from `files{}` | **Untracked.** The server never writes it at all. |
 
-  Everything you need is in the one response: the list, and `manifest.files[path].ownership` beside it. **Warning on the bare list produces false alarms on the first consumer who runs this** — one measured tree yields four dropped resolutions and *zero* real hazards; another yields three, of which two move to the stronger class. Four false alarms teach a consumer to skim the step, and then the one real case gets skimmed too.
+  **Why the asymmetry, and why the join is the discriminator rather than the count:** `keep-mine` meant *preserved at this sync*. `once` means *never overwritten again* — so for those paths the class change is an **upgrade**, and only the move to `template` is a downgrade. Everything you need is in the one response: the list, and `manifest.files[path].ownership` beside it. **Warning on the bare list produces false alarms on the first consumer who runs this** — one measured tree yields four dropped resolutions and *zero* real hazards; another yields three, of which two move to the stronger class. Four false alarms teach a consumer to skim the step, and then the one real case gets skimmed too.
 
   For a `"template"` hit, say it precisely: **the file on disk is UNCHANGED** — only the manifest moved, to the template's hash. The deviation is still sitting in the file and is simply no longer protected. **Diff it against the template now, then upstream it or re-apply it after the apply overwrites it.** Without that sentence a consumer reads "dropped" and assumes the file already changed. And a `template` hit whose only deviation is inside the `PROJECT-CUSTOM` region is *still* not a loss — the region mechanism preserves that independently of class.
 - **Empty list, reconciled against your 1c-i census** → nothing was dropped. **An empty list on its own is unfalsifiable** — it looks identical whether the tool looked and found nothing or never looked. Compare it against the census; on a mismatch, report the census and refuse to call the migration clean.

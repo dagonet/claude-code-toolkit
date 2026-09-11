@@ -26,6 +26,16 @@
 
 **`once` protects a file and, by the same mechanism, means template-side ADDITIONS never arrive.** Step 1c now names the declared `PROJECT_CONTEXT.md` keys a `once` file will silently never receive — `**Gate-checked branches**`, `**PO write surface**`, `**Post-edit build**`. One consumer traced an earlier probe of theirs being *vacuous* to exactly this: the key was absent, the hook path never iterated, and nothing in any sync would ever have told them.
 
+### `requires_skill` declared now so it can be enforced later
+
+`templates/ownership.json` gains **`"requires_skill": ">=v3.1.3"`**. Nothing reads it today — it is **inert on server 0.3.4 and harmless**, because `load_ownership` ignores unknown top-level keys. It is here now so that it *can* be enforced the moment a server does read it, rather than shipping after the guard that needs it.
+
+The guard it prepares for closes an asymmetry a consumer session found: **the checking is one-directional.** The skill checks the server — that is what v3.1.1's floor bought — and **the server never checks the skill**, so *old-skill + new-server* is gated by nothing at all: no migration step, no dropped-resolutions reporting, the migration proceeding on a region that is at stake. It is also the *more probable* direction, for two mechanical reasons out of this repo's own documentation: a server running from a working-tree checkout advances on any `git pull` with no release involved, while the skill requires a deliberate re-copy into `~/.claude/skills/` — and a running session keeps the body it read at startup, which `SKILL.md` step 1 already says cannot be self-detected from inside.
+
+Declaring the floor **here** rather than hardcoding it in the server is the point: raising it becomes an edit to this file instead of a server release, so the gate can never again ship later than the thing it must gate. Exactly symmetric with the manifest's `requires_server`, in the opposite direction.
+
+Two design notes belong with it, because both are easy to "improve" into something broken later. **The load-bearing test is refusal on ABSENCE, not the version comparison** — a stale skill body does not pass a low version, it passes nothing at all, because the instruction to identify itself does not exist in the body it is executing. And **the value must come from the caller even though the caller is what is being checked**: reading `~/.claude/skills/sync-template/SKILL.md` from the server would report the *disk* state, and the failure being gated is a session executing a body it read at startup — a disk read hands back a confident green in precisely the stale case. It works because the threat is staleness, not deceit.
+
 ### Check 40, and two variants that were born deprecated
 
 `templates/ownership.json` audits `PROJECT_CONTEXT.md` with `deprecated_keys` mapping `Gate Command → Gate` and `Test Command → Test` — while **`templates/java` and `templates/python` shipped exactly those two deprecated spellings.** A fresh adoption of either variant was born deprecated against the toolkit's own table. Found by a consumer resolving their paths against the shipped table rather than the design doc. Both variants normalised, and **check 40** now joins the audit config to the artifacts it describes, two-sided with a control arm.
