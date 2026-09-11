@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.3 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.4 -->
 
 # Sync Template (Downstream)
 
@@ -115,7 +115,9 @@ Write the paths down. These are deliberate deviations recorded in the v2 manifes
 template_migrate_manifest(project_path=".", dry_run=True, skill_version="<the marker at the top of THIS body>")
 ```
 
-**Pass `skill_version` on EVERY `template_migrate_manifest` call, and take the value from the marker in the body you are executing** — the one you already read and stated in step 1 — **never from `~/.claude/skills/sync-template/SKILL.md` on disk.** The two disagree in exactly the case this matters: a session keeps the body it read at startup, so the installed file can be current while the running body is not. A consumer session is a live instance of that right now — disk at one version, session executing an older body. Reading the file would report the disk and wave the stale body through.
+**Pass `skill_version` on EVERY `template_migrate_manifest` call, and take the value from the marker at the top of THIS body — the text you are reading now — NOT the `grep` output from step 1.** Step 1 puts **two** markers in front of you: the `grep` of `~/.claude/skills/sync-template/SKILL.md`, which reports the **disk**, and the marker in the body you loaded. Only the second is this value. The `grep` result is the easier one to reach for, because it arrived as command output rather than as self-inspection — and pasting it is a defect, not a shortcut. The two disagree in **both** directions, and each produces a different failure. Installed file *newer* than the running body — a session that kept the body it read at startup — and a disk-sourced value waves a stale body through, which is the case the guard exists for. Installed file *older* than the running body — someone put an old file back, or a copy failed halfway — and a disk-sourced value **refuses a caller who did everything right**, telling them to re-copy and restart, which is exactly what they already did. A consumer session is a live instance of that right now — disk at one version, session executing an older body. Reading the file would report the disk and wave the stale body through.
+
+**THE MIGRATION CANNOT BE RUN FROM A SESSION THAT PREDATES THE SKILL BODY, AND THERE ARE TWO RESTARTS, NOT ONE.** Restarting the **MCP server** fixes the server half — the process runs whatever it imported at spawn. Only a **fresh Claude session** fixes the skill half, and that one has no in-session remedy: a session running an older body has no instruction in it to identify itself, so it passes nothing and is refused. Two different restarts, and the second is the one people skip because the first felt like the fix. Measured on two consumer sessions at once — one executing a body three releases behind its own disk, another five.
 
 Servers from 0.3.5 read `requires_skill` from `templates/ownership.json` (v3.1.3 declares `">=v3.1.3"`) and **refuse a write-mode migration when `skill_version` is absent**, because a body too old to carry this instruction sends nothing at all — absence, not a low number, is what identifies a stale skill. Older servers ignore the argument entirely, so passing it is always safe. `dry_run` is never refused for this: inspection stays open.
 

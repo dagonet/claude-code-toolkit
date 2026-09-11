@@ -3242,6 +3242,57 @@ fi
 [ "$c40_fail" -eq 0 ] && ok "check 40: $c40_rows variant/deprecated-key pairs clean; control found **Gate** in 6/6"
 
 # ---------------------------------------------------------------------------
+# Check 41 — the declared-key readers MUST keep the `( Command)?` tolerance
+# (v3.1.4). This is check 40's own exposure, found by the consumer with the
+# most to lose from it.
+#
+# Check 40 normalised the templates to `**Gate**` / `**Test**`. That is right
+# for new adoptions -- and it means NO TEMPLATE EXERCISES THE OLD SPELLING ANY
+# MORE. But `PROJECT_CONTEXT.md` is a `once` file, so every existing consumer
+# who was seeded with `**Gate Command**` keeps it FOREVER; the normalised
+# template never reaches them. The regex tolerance in these readers is now the
+# only thing standing between such a consumer and a gate that resolves to the
+# empty string.
+#
+# AND AN EMPTY GATE_CMD IS NOT AN ERROR -- it is a no-op that exits 0. So
+# removing the tolerance would present to those consumers as "the gate passes",
+# not as a failure. Silent, and in the direction of less enforcement.
+#
+# Nothing else in this repo would go red if someone deleted `( Command)?` as
+# dead code, because after check 40 it has no template-side user. This check IS
+# that user. Do not remove it without also proving no consumer carries the old
+# spelling, which is not a thing this repo can observe.
+#
+# TWO-SIDED: the control proves the scan reads real reader lines.
+# ---------------------------------------------------------------------------
+note "Check 41: declared-key readers keep the ( Command)? tolerance for once-seeded consumers"
+c41_fail=0
+c41_hits=0
+for spec in "hooks/gate-before-merge.sh:Gate" "hooks/run-gate.sh:Gate" \
+            "hooks/pre-commit-test.sh:Gate" "hooks/pre-commit-test.sh:Test"; do
+  c41_f="${spec%%:*}"; c41_k="${spec##*:}"
+  [ -f "$c41_f" ] || { ko "check 41: $c41_f missing"; c41_fail=1; continue; }
+  # -F on a distinctive literal substring: the reader lines carry the pattern
+  # as `\*\*Gate( Command)?\*\*:` -- backslashes and all -- so a regex written
+  # to look like the pattern does not match the source that contains it. The
+  # first version of this check did exactly that and reported all four sites
+  # missing while the tolerance was present in every one.
+  if grep -qF "$c41_k( Command)?" "$c41_f"; then
+    c41_hits=$((c41_hits + 1))
+  else
+    ko "check 41: $c41_f no longer tolerates '**$c41_k Command**:' -- every once-seeded consumer carrying the old spelling silently resolves an EMPTY command, which exits 0 and reads as a pass"
+    c41_fail=1
+  fi
+done
+# Control: the same grep for a spelling no reader has must NOT match, or the
+# pattern above is matching something other than what it names.
+if grep -qF 'Gruntle( Command)?' hooks/gate-before-merge.sh 2>/dev/null; then
+  ko "check 41 CONTROL: matched a key no reader defines -- the scan is not reading what it claims"
+  c41_fail=1
+fi
+[ "$c41_fail" -eq 0 ] && ok "check 41: $c41_hits/4 reader sites keep the tolerance; control did not match a fabricated key"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
