@@ -1,8 +1,10 @@
 # Changelog
 
-## v3.1.2 — 2026-09-09
+## v3.1.2 — 2026-09-11
 
 **Two stale constants, both found by consumer sessions measuring the released artifact rather than reading the diff. One misled a tool; one misled a reader.**
+
+> *This heading originally read 2026-09-09 — the date the entry was written, two days before the merge landed. Corrected to the date the tag and the release actually shipped. The discrepancy was disclosed in the v3.1.2 release notes rather than fixed by retagging.*
 
 **`template_version` was a hardcoded literal and it went stale at the last release.** `setup-project.sh` and `setup-project.ps1` each emitted `"template_version": "v3.1.0"` as a string. So a project bootstrapped from a v3.1.1 checkout was stamped `v3.1.0` while its `template_commit` pinned `267c2892` — **the manifest named one release and pinned a commit belonging to another**, and anything resolving `template_version` as a git ref in the window between bootstrap and first sync resolved the wrong tag. The first sync silently corrected it, because the server recomputes the field as the nearest reachable tag whose tracked tree matches, which is exactly why nobody noticed. Both writers now derive it from `VERSION` line 1 — read from the file rather than `git describe`, so an export or a tagless shallow clone still stamps the truth.
 
