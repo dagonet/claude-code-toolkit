@@ -9,10 +9,10 @@
 ## Build System
 
 - **Build Command**: {{BUILD_COMMAND}}
-- **Test Command**: {{TEST_COMMAND}}
+- **Test**: {{TEST_COMMAND}}
 - **Format Command**: {{FORMAT_COMMAND}}
 - **Lint Command**: {{LINT_COMMAND}}
-- **Gate Command**: {{GATE_COMMAND}}
+- **Gate**: {{GATE_COMMAND}}
 - **Post-edit build**: {{POST_EDIT_BUILD}}
 <!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none

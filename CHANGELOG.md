@@ -1,5 +1,58 @@
 # Changelog
 
+## v3.1.3 — 2026-09-11
+
+**The sync skill gated a migration it never described. This release writes that step — and the peer round that reviewed it changed the design twice before it shipped.**
+
+**`template_migrate_manifest` appeared nowhere in `SKILL.md`.** Step 1 said STOP below `server_version` 0.3.2 when `migration_required` is true, and then said nothing about what to do once you clear that gate. Four of five live consumer sessions have a pending first migration, so every one of them was going to improvise at the moment their `PROJECT-CUSTOM` region was at stake. New **step 1c** describes the operation end to end, entirely from measurement: a consumer's full rehearsal against a real v2 manifest, cross-checked against the source by the sync server's own session.
+
+**Three facts from that pairing that the skill had no way to know:**
+
+- **Nothing performs the migration for you.** `template_load_manifest` only *reports* `migration_required` and returns. The v1→v2 upgrade is not the same shape — that happens in memory inside load — so assuming symmetry was wrong.
+- **Skipping it is silent and permanent.** `template_finalize_sync` dispatches on `is_v3`; handed a v2 manifest it takes the v2 path and writes v2 back out. No error, nothing lost, `migration_required: true` forever. The migration is not something the flow falls into.
+- **`migration_required: true` is not an instruction.** It reports that the *template checkout* ships `ownership.json` — true for everyone. It does not say this project needs migrating, nor that migration can succeed: a `gate_self_reference` hit refuses in write mode, and a missing `backup_dir` is a hard error.
+
+**The design was corrected twice by review, and both corrections made it narrower.**
+
+*First:* the step was going to warn whenever `dropped_resolutions` was non-empty. **Two consumer sessions, measuring their own real manifests independently, showed that over-reports.** A dropped `keep-mine` is a loss only when the class replacing it is *weaker*; `once` is **stronger** than `keep-mine` was, and an untracked path is never written at all. One tree yields four dropped resolutions and **zero** real hazards; another yields three of which two move to the stronger class. So the step now **joins each dropped path against `manifest.files[path].ownership` in the returned manifest** and warns only on `template`. Four false alarms on the first consumer to run it would have taught them to skim the step — and then the one real case gets skimmed too.
+
+*Second:* the "two tests, never one" rule this release was scoped around turned out to be **incomplete**, retracted by the session that gave it. `template_migrate_manifest` has **four response shapes**, and the key is absent from two of them. Key presence answers a version question only when absence has exactly one cause; here it has three (server predates 0.3.4, no migration ran, the call errored) — and a `null` value passes `in` while failing truthiness, landing a consumer in "nothing was dropped", confidently, from a null. The step now orders four tests: `error`, then `migrated: false`, then **`server_version` from the load response** for the version question, then key-present-**and-a-list** for content.
+
+**An empty list is unfalsifiable on its own** — it looks identical whether the tool looked and found nothing or never looked. So step 1c opens with a census the consumer takes *before* migrating (`grep '"resolution"\|"reason"'` over the v2 manifest), which needs no field, works on every server version, and is the only thing that helps the population the reporting field cannot reach. The reported list is reconciled against it.
+
+**Also documented, because each is a change the consumer did not ask for:** `backup_dir` is required unless `dry_run` (and is the *only* backup covering this set — step 2b backs up the gitignored files, and one consumer measured all three of their deviating paths as non-gitignored); migrate and apply are **one unit**, because migrate never touches `CLAUDE.md` and leaves the manifest recording a template hash for a file that still holds project content; `migration_base` is **never null** — it is the truthy string `"unavailable"` plus a warning, so test the warning, not falsiness; `region_was_seed` is **tri-state**; `region_bytes` counts the region *body* where the block with its markers is larger; and `dropped_entries` silently stops tracking files.
+
+**The tool's own docstring is wrong and the step says so.** It promises migration writes `.claude/rules/project.md` with the region verbatim and the out-of-region hunks fenced. It does not: the file is a ~136-byte header and the region stays in `CLAUDE.md` with `region_left_in_place: true`. Measured by a consumer, then confirmed in the implementation — which is deliberate, because under the v3.1 reversal copying the region would duplicate it into a file delivered to nobody. The step documents the artifact.
+
+**`once` protects a file and, by the same mechanism, means template-side ADDITIONS never arrive.** Step 1c now names the declared `PROJECT_CONTEXT.md` keys a `once` file will silently never receive — `**Gate-checked branches**`, `**PO write surface**`, `**Post-edit build**`. One consumer traced an earlier probe of theirs being *vacuous* to exactly this: the key was absent, the hook path never iterated, and nothing in any sync would ever have told them.
+
+### `requires_skill` declared now so it can be enforced later
+
+`templates/ownership.json` gains **`"requires_skill": ">=v3.1.3"`**. Nothing reads it today — it is **inert on server 0.3.4 and harmless**, because `load_ownership` ignores unknown top-level keys. It is here now so that it *can* be enforced the moment a server does read it, rather than shipping after the guard that needs it.
+
+The guard it prepares for closes an asymmetry a consumer session found: **the checking is one-directional.** The skill checks the server — that is what v3.1.1's floor bought — and **the server never checks the skill**, so *old-skill + new-server* is gated by nothing at all: no migration step, no dropped-resolutions reporting, the migration proceeding on a region that is at stake. It is also the *more probable* direction, for two mechanical reasons out of this repo's own documentation: a server running from a working-tree checkout advances on any `git pull` with no release involved, while the skill requires a deliberate re-copy into `~/.claude/skills/` — and a running session keeps the body it read at startup, which `SKILL.md` step 1 already says cannot be self-detected from inside.
+
+Declaring the floor **here** rather than hardcoding it in the server is the point: raising it becomes an edit to this file instead of a server release, so the gate can never again ship later than the thing it must gate. Exactly symmetric with the manifest's `requires_server`, in the opposite direction.
+
+**A floor and the thing that satisfies it are ONE change, never two.** Declaring `requires_skill` without teaching the skill to identify itself would have produced a guard that rejects its own intended-compliant client: refusal-on-absence would refuse a v3.1.3 body — the one version the floor names as acceptable — while the stale bodies it was aimed at sail past on a different path. A guard whose first victim is the caller who did everything right is worse than no guard. Generalised: **any guard keyed on absence must ship with whatever teaches callers to be present.** Same failure as a fixture asserting the emitter's own constant, arriving from the opposite direction.
+
+**Step 1c therefore passes `skill_version` on every `template_migrate_manifest` call, taken from the marker in the body being executed.** Without that the floor would be self-defeating: a server refusing on absence would refuse a v3.1.3 body — the very version the floor names as acceptable — because that body never identified itself. Older servers ignore the argument, so passing it is always safe.
+
+Two design notes belong with it, because both are easy to "improve" into something broken later. **The load-bearing test is refusal on ABSENCE, not the version comparison** — a stale skill body does not pass a low version, it passes nothing at all, because the instruction to identify itself does not exist in the body it is executing. And **the value must come from the caller even though the caller is what is being checked**: reading `~/.claude/skills/sync-template/SKILL.md` from the server would report the *disk* state, and the failure being gated is a session executing a body it read at startup — a disk read hands back a confident green in precisely the stale case. It works because the threat is staleness, not deceit.
+
+### Check 40, and two variants that were born deprecated
+
+`templates/ownership.json` audits `PROJECT_CONTEXT.md` with `deprecated_keys` mapping `Gate Command → Gate` and `Test Command → Test` — while **`templates/java` and `templates/python` shipped exactly those two deprecated spellings.** A fresh adoption of either variant was born deprecated against the toolkit's own table. Found by a consumer resolving their paths against the shipped table rather than the design doc. Both variants normalised, and **check 40** now joins the audit config to the artifacts it describes, two-sided with a control arm.
+
+**And rust-tauri resolved no `**Test**` key at all.** It shipped `**Test (backend)**` and `**Test (frontend)**`; the reader in `pre-commit-test.sh` matches `\*\*Test( Command)?\*\*:`, which neither parenthesised spelling satisfies — so the pre-commit gate had nothing to run. rust-tauri now ships a plain `**Test**` and `setup-project.sh` gains the `{{TEST_COMMAND}}` derivation it never had (backend-only by deliberate choice: it is the fast half, `--test-cmd` overrides, and the parenthesised lines stay for a human). All six variants now resolve both declared keys.
+
+### Downstream migration
+
+1. **Re-copy `user-level-reference/skills/sync-template/SKILL.md` into `~/.claude/skills/`** — check first, compare bytes rather than the marker line. **Restart before syncing**: a session that loaded an older body still runs it, and this file's own step 1 halts on the marker mismatch rather than proceeding.
+2. **If you have not migrated yet, read step 1c before you do** — particularly the census in 1c-i, which is the only protection available on a server below 0.3.4.
+3. **java and python adopters:** your `PROJECT_CONTEXT.md` is a `once` file, so this release does not rewrite it. If yours carries `**Gate Command**` or `**Test Command**`, rename them to `**Gate**` and `**Test**` by hand.
+4. **rust-tauri adopters:** add a plain `- **Test**:` line. Without it the pre-commit gate resolves no test command.
+
 ## v3.1.2 — 2026-09-11
 
 **Two stale constants, both found by consumer sessions measuring the released artifact rather than reading the diff. One misled a tool; one misled a reader.**
