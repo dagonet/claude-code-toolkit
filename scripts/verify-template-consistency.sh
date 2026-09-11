@@ -3188,6 +3188,60 @@ done
 [ "$c39_fail" -eq 0 ] && ok "check 39: 6/6 variant CLAUDE.md files carry both PROJECT-CUSTOM markers and a .claude/rules/ pointer line"
 
 # ---------------------------------------------------------------------------
+# Check 40 — no variant may ship a PROJECT_CONTEXT.md key spelling that our OWN
+# ownership.json audit config marks deprecated (v3.1.3).
+#
+# FOUND BY A CONSUMER, not by us: templates/ownership.json audits
+# PROJECT_CONTEXT.md with deprecated_keys {"Gate Command": "Gate",
+# "Test Command": "Test"}, while templates/java and templates/python shipped
+# exactly those two spellings. A fresh adoption of either variant was BORN
+# DEPRECATED against the toolkit's own table -- the config and the artifact it
+# describes disagreed, and nothing compared them.
+#
+# This is the same class as check 39's real rationale and as the v3.1.2
+# template_version literal: a constant repeated in two places with no check
+# joining them drifts, and the drift is invisible because each side looks
+# right on its own.
+#
+# TWO-SIDED: the control arm proves the scan can fire. A check that cannot
+# fail looks exactly like one that passed.
+# ---------------------------------------------------------------------------
+note "Check 40: no variant ships a PROJECT_CONTEXT.md key spelling ownership.json calls deprecated"
+c40_fail=0
+c40_rows=0
+c40_dep=$(sed -n 's/.*"deprecated_keys"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' templates/ownership.json \
+          | grep -o '"[^"]*"[[:space:]]*:' | tr -d '":' | sed 's/[[:space:]]*$//')
+if [ -z "$c40_dep" ]; then
+  ko "check 40: could not read deprecated_keys out of templates/ownership.json -- the scan would be vacuous"
+  c40_fail=1
+fi
+for v in $VARIANTS; do
+  f="templates/$v/PROJECT_CONTEXT.md"
+  [ -f "$f" ] || { ko "check 40: $f missing"; c40_fail=1; continue; }
+  while IFS= read -r dk; do
+    [ -n "$dk" ] || continue
+    c40_rows=$((c40_rows + 1))
+    if grep -q "^- \*\*$dk\*\*:" "$f"; then
+      ko "check 40: $f ships '- **$dk**:', which ownership.json marks deprecated"
+      c40_fail=1
+    fi
+  done <<EOF
+$c40_dep
+EOF
+done
+# Control arm: the same grep against a spelling every variant DOES ship must
+# fire, or the loop above proves nothing about the files it read.
+c40_ctl=0
+for v in $VARIANTS; do
+  grep -q "^- \*\*Gate\*\*:" "templates/$v/PROJECT_CONTEXT.md" 2>/dev/null && c40_ctl=$((c40_ctl + 1))
+done
+if [ "$c40_ctl" -ne 6 ]; then
+  ko "check 40 CONTROL: '- **Gate**:' found in $c40_ctl/6 variants -- the scan cannot be trusted (or a variant lost its Gate key)"
+  c40_fail=1
+fi
+[ "$c40_fail" -eq 0 ] && ok "check 40: $c40_rows variant/deprecated-key pairs clean; control found **Gate** in 6/6"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

@@ -276,6 +276,16 @@ fi
 if [[ "$VARIANT" == "rust-tauri" && -z "$TECH_STACK" ]]; then
     add_replacement '{{TECH_STACK}}' "Tauri v2, Rust, TypeScript, SolidJS, SQLite"
 fi
+# rust-tauri had NO {{TEST_COMMAND}} derivation and its PROJECT_CONTEXT.md
+# shipped only `**Test (backend)**` / `**Test (frontend)**`. The declared-key
+# reader in pre-commit-test.sh matches `\*\*Test( Command)?\*\*:` -- neither
+# parenthesised spelling matches, so a rust-tauri project resolved NO Test key
+# and the pre-commit gate had nothing to run. Backend-only is the deliberate
+# default: it is the fast half, `--test-cmd` overrides it, and the two
+# parenthesised lines stay for a human reading the file.
+if [[ "$VARIANT" == "rust-tauri" ]]; then
+    add_derived '{{TEST_COMMAND}}' "cargo test --manifest-path src-tauri/Cargo.toml"
+fi
 
 # Auto-derived: Python variant
 if [[ "$VARIANT" == "python" ]]; then

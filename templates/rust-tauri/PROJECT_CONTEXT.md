@@ -23,6 +23,7 @@
 ## Commands
 
 - **Build**: `cargo build --manifest-path src-tauri/Cargo.toml`
+- **Test**: {{TEST_COMMAND}}
 - **Test (backend)**: `cargo test --manifest-path src-tauri/Cargo.toml`
 - **Test (frontend)**: `npm test`
 - **Format (backend)**: `cargo fmt --manifest-path src-tauri/Cargo.toml`
