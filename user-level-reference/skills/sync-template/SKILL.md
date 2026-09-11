@@ -110,8 +110,12 @@ Write the paths down. These are deliberate deviations recorded in the v2 manifes
 #### 1c-ii. Dry run FIRST, always
 
 ```
-template_migrate_manifest(project_path=".", dry_run=True)     # no backup_dir needed
+template_migrate_manifest(project_path=".", dry_run=True, skill_version="<the marker at the top of THIS body>")
 ```
+
+**Pass `skill_version` on EVERY `template_migrate_manifest` call, and take the value from the marker in the body you are executing** — the one you already read and stated in step 1 — **never from `~/.claude/skills/sync-template/SKILL.md` on disk.** The two disagree in exactly the case this matters: a session keeps the body it read at startup, so the installed file can be current while the running body is not. A consumer session is a live instance of that right now — disk at one version, session executing an older body. Reading the file would report the disk and wave the stale body through.
+
+Servers from 0.3.5 read `requires_skill` from `templates/ownership.json` (v3.1.3 declares `">=v3.1.3"`) and **refuse a write-mode migration when `skill_version` is absent**, because a body too old to carry this instruction sends nothing at all — absence, not a low number, is what identifies a stale skill. Older servers ignore the argument entirely, so passing it is always safe. `dry_run` is never refused for this: inspection stays open.
 
 Inspect before writing anything:
 
@@ -124,7 +128,7 @@ Inspect before writing anything:
 #### 1c-iii. Then migrate for real
 
 ```
-template_migrate_manifest(project_path=".", backup_dir="<dir>")
+template_migrate_manifest(project_path=".", backup_dir="<dir>", skill_version="<the marker at the top of THIS body>")
 ```
 
 **`backup_dir` is REQUIRED unless `dry_run`** — the call is refused without it, and a step that omits it fails at the worst possible moment. It returns `backup: {claude_md, manifest}` as absolute `.pre-migration` paths.
