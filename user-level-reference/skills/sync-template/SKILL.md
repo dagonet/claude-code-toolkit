@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.5 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.6 -->
 
 # Sync Template (Downstream)
 
@@ -119,7 +119,11 @@ template_migrate_manifest(project_path=".", dry_run=True, skill_version="<the ma
 
 **THE MIGRATION CANNOT BE RUN FROM A SESSION THAT PREDATES THE SKILL BODY, AND THERE ARE TWO RESTARTS, NOT ONE.** Restarting the **MCP server** fixes the server half — the process runs whatever it imported at spawn. Only a **fresh Claude session** fixes the skill half, and that one has no in-session remedy: a session running an older body has no instruction in it to identify itself, so it passes nothing and is refused. Two different restarts, and the second is the one people skip because the first felt like the fix. Measured on two consumer sessions at once — one executing a body three releases behind its own disk, another five.
 
-Servers from 0.3.5 read `requires_skill` from `templates/ownership.json` (v3.1.3 declares `">=v3.1.3"`) and **refuse a write-mode migration when `skill_version` is absent**, because a body too old to carry this instruction sends nothing at all — absence, not a low number, is what identifies a stale skill. Older servers ignore the argument entirely, so passing it is always safe. `dry_run` is never refused for this: inspection stays open.
+**Which servers enforce this — read the capability, never the version.** `requires_skill` (declared `">=v3.1.3"` in `templates/ownership.json` since v3.1.3) is enforced by a server whose `template_load_manifest` response lists **`skill_version_floor` in `capabilities`** — shipped in mcp-dev-servers 0.3.7. **0.3.5 and 0.3.6 do not enforce it**, whatever a version comparison suggests: a version is a proxy, the capability is the instrument. **Measured, not argued:** a consumer's running server reported `server_version: "0.3.5"` while listing `skill_version_floor` and refusing them — an editable install had imported a working tree between two tags, matching no released version. There the version gate was not lagging, it was *wrong*: it named a release with no guard while the guard was actively refusing. Capability agreed with behaviour; version did not. A version string is a claim about provenance; a capability list is a claim about the artifact; only the second survives an editable install off a moving checkout. An enforcing server **refuses a write-mode migration when `skill_version` is absent** — a body too old to carry this instruction sends nothing at all, so absence, not a low number, is what identifies a stale skill. **The refusal happens before any write** (verified on a throwaway clone: manifest untouched, no `project.md`, no backup directory, `git status` empty), so a refused session has nothing to clean up. `dry_run` is never refused, and on an enforcing server the preview **names the refusal a write would have produced**, so a stale session finds out before it writes anything.
+
+**Passing the argument to a non-enforcing server is safe — and silent, which is why the capability is the only honest signal.** Measured: the MCP layer accepts an undeclared argument and drops it without error, on 0.3.4 through 0.3.6. So a successful migration response looks *identical* whether the server checked your skill version or threw the field away; nothing in the result tells you which. Only `"skill_version_floor" in capabilities` does. v3.1.5 of this skill said *"servers from 0.3.5 refuse"* — a promise the wire silently agreed with by doing nothing. That sentence is retired.
+
+**Non-skill callers** — a harness calling the library in-process, a human driving the tool by hand — pass **`skill_version="not-a-skill"`**, exactly. Case-sensitive, no near-miss accepted: `not_a_skill`, `Not-A-Skill` and `notaskill` all land in the mismatch arm and **refuse**, by design — a mistyped sentinel that *bypassed* would be the guard quietly not existing. The response then carries `skill_version_bypassed` (presence-keyed: emitted only when the bypass was used) so a report shows it. The threat model is staleness, not deceit; a stale body cannot produce the sentinel by accident.
 
 Inspect before writing anything:
 
