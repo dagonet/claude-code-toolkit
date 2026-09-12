@@ -3324,6 +3324,67 @@ fi
 [ "$c41_fail" -eq 0 ] && ok "check 41: $c41_hits enumerated reader sites all keep the tolerance ($c41_bad without); control did not match a fabricated key"
 
 # ---------------------------------------------------------------------------
+# Check 42 — `requires_skill` in templates/ownership.json can never exceed the
+# toolkit's own VERSION, and must be tag-shaped (v3.1.4 follow-up).
+#
+# `requires_skill` is read by the sync server AT CALL TIME from whatever
+# checkout the consumer has, with no review on the server side and no
+# monotonicity: unlike `requires_server`, which can only move toward more
+# protection, this field can be wrong in the HARMFUL direction. A well-formed
+# but wrong value -- `">=v9.0.0"` -- refuses every consumer's write-mode
+# migration with no server release and no error on our side. The server's
+# unparseable->warn rule catches garbage; it does not catch a plausible
+# mistake. Raised by the server session as its second objection to the guard.
+#
+# Two properties, each two-sided:
+#   (a) SHAPE: exactly `>=vX.Y.Z`. A bare `3.1.3` or `>=3.1.3` is unparseable
+#       to a tag-comparing server, which proceeds-and-warns -- the guard is
+#       then silently disarmed rather than loudly wrong.
+#   (b) BOUND: floor <= "v" + VERSION line 1. A floor above the version that
+#       ships it is a floor no consumer can meet. Equality is fine (this
+#       release IS the floor); lower is fine (less protection, never lockout).
+#
+# ABSENCE IS RED, not skipped: the field has been load-bearing since v3.1.3
+# and dropping it disarms 0.3.6's guard for every consumer without any other
+# check noticing.
+#
+# LIMIT, stated so nobody over-trusts this: it constrains the file at commit
+# time in THIS repo. A consumer's old checkout can still declare an old floor.
+# That direction is strictly less protection and never a lockout, so the
+# asymmetry is the right way round.
+# ---------------------------------------------------------------------------
+note "Check 42: requires_skill is tag-shaped and never above this VERSION"
+c42_fail=0
+c42_floor=$(sed -n 's/.*"requires_skill"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' templates/ownership.json | head -1)
+c42_ours="v$(head -1 VERSION | tr -d '\r\n')"
+if [ -z "$c42_floor" ]; then
+  ko "check 42: templates/ownership.json declares NO requires_skill -- the field has been load-bearing since v3.1.3; its absence disarms the server-side skill guard for every consumer"
+  c42_fail=1
+else
+  case "$c42_floor" in
+    '>=v'[0-9]*.[0-9]*.[0-9]*) ;;
+    *) ko "check 42: requires_skill '$c42_floor' is not tag-shaped ('>=vX.Y.Z') -- a tag-comparing server cannot parse it, warns, and proceeds, so the guard is silently disarmed"
+       c42_fail=1 ;;
+  esac
+  c42_bare=${c42_floor#>=}
+  # sort -V puts the lower version first; the floor must sort first-or-equal.
+  c42_low=$(printf '%s\n%s\n' "$c42_bare" "$c42_ours" | sort -V | head -1)
+  if [ "$c42_low" != "$c42_bare" ]; then
+    ko "check 42: requires_skill '$c42_floor' is ABOVE this toolkit's own VERSION ($c42_ours) -- no consumer can meet it, so every write-mode migration would be refused with no server release involved"
+    c42_fail=1
+  fi
+fi
+# Control arm: the same comparison must be able to fire. Evaluate it against a
+# floor that is certainly above us; if that reads as "not above", the sort is
+# not doing what the check claims.
+c42_ctl=$(printf '%s\n%s\n' "v99.0.0" "$c42_ours" | sort -V | head -1)
+if [ "$c42_ctl" != "$c42_ours" ]; then
+  ko "check 42 CONTROL: v99.0.0 did not sort above $c42_ours -- the bound comparison is inert"
+  c42_fail=1
+fi
+[ "$c42_fail" -eq 0 ] && ok "check 42: requires_skill '$c42_floor' is tag-shaped and <= $c42_ours; control detected v99.0.0 as above"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
