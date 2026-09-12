@@ -1,2 +1,2 @@
-3.1.5
-context-mode is no longer recommended, on measurement; the root CLAUDE.md now carries the sentinel that stops its injection, and check 37 asserts it there too and re-measures both of the plugin's writers instead of one.
+3.1.6
+The sync skill describes the requires_skill guard as it shipped in server 0.3.7 rather than as it was planned — keyed on the skill_version_floor capability, not a version — and tells non-skill callers the sentinel that keeps their harnesses working.

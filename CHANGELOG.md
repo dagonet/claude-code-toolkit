@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.1.6 — 2026-09-12
+
+**The sync skill described the `requires_skill` guard as planned rather than as shipped. This release describes the artifact.** No template file moved, no manifest field changed, server floor unchanged.
+
+**mcp-dev-servers 0.3.7 enforces `requires_skill`** — the first server release that can refuse a consumer. The toolkit's floor at v3.1.5, `">=v3.1.3"`, was read from the tag before the guard was implemented, and any server process spawned from now on enforces it: a write-mode `template_migrate_manifest` from a session whose loaded skill body predates v3.1.3 is refused, because that body has no instruction to identify itself and passes nothing. The refusal texts are this skill's, verbatim — including *"then RESTART this session"* and the sentence saying a re-copy alone changes nothing for a running session, which is now load-bearing rather than advisory.
+
+**What v3.1.5's step 1c got wrong, and it was ours.** It said *"servers from 0.3.5 read `requires_skill` … and refuse."* Written as a forward-looking claim when item 6 was expected in 0.3.5; it shipped in 0.3.7, and the sentence was false for two released servers. A consumer on 0.3.5 or 0.3.6 reading it would expect a refusal that never comes and infer protection they do not have. The mirror of the defect their 0.3.6 fixed — we shipped a skill describing a server that did not exist yet. Describe the artifact, not the plan.
+
+**The fix keys on a capability, not a version, and a measurement makes that the only possible choice.** The server session measured, in-process against the live tool, that the MCP layer accepts an undeclared argument and **drops it silently** on 0.3.4 through 0.3.6. So passing `skill_version` to a non-enforcing server is safe, as we had both been asserting without testing — and a successful migration response looks *identical* whether the server checked the field or threw it away. Nothing in the result distinguishes those states. Only **`"skill_version_floor" in capabilities`** from the load response does. "Gate on the capability, not the version" reads as a style preference until you notice there is no other signal.
+
+**And within the hour a consumer produced the case where the version is not merely a weaker signal but a wrong one.** Their running server reported `server_version: "0.3.5"` — a release whose source contains `skill_version_floor` zero times — while listing that capability and refusing their stale session. An editable install had imported a working tree part-way between two tags; the process matched no released version, and "which version is running" had no correct answer for it. Anyone gating on the version would have concluded the guard was absent while it was actively refusing them. Capability agreed with behaviour; version did not. That case exists by accident rather than construction, and it is now cited in step 1c. They also verified the refusal is a true no-op — manifest untouched, no `project.md`, no backup directory, `git status` empty — so a refused session has nothing to clean up.
+
+**Non-skill callers now have their instruction.** A harness calling the library in-process, or a human driving the tool by hand, passes `skill_version="not-a-skill"` exactly — case-sensitive, every near-miss refuses by design, `skill_version_bypassed` emitted presence-keyed when used. Without this line, every migration rehearsal rig on this machine would have read 0.3.7's refusal as a regression. `dry_run` is never refused and now reports the refusal a write would have produced, so step 1c's preview-first order surfaces a stale session before it writes anything.
+
+### Downstream migration
+
+1. **Re-copy `user-level-reference/skills/sync-template/SKILL.md` into `~/.claude/skills/`, then start a fresh session.** With 0.3.7 the second half is enforced, not advised: a session running an older body is refused in write mode, and there is no in-session remedy.
+2. **If you drive `template_migrate_manifest` outside the skill**, pass `skill_version="not-a-skill"` exactly.
+3. **Check enforcement by capability**: `"skill_version_floor" in capabilities` from `template_load_manifest`. A version number tells you nothing here, and the migration response tells you less.
+4. Nothing else changed.
+
 ## v3.1.5 — 2026-09-12
 
 **The context-mode plugin is no longer recommended, and the one file the toolkit had left undefended against it is now defended.** No template file moved; no manifest field changed; the server floor is unchanged.
