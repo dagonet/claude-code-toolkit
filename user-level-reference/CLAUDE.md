@@ -72,5 +72,5 @@ Apply unless another skill already covers the same ground:
 
 ## context-mode plugin
 
-context-mode is optional. If installed, its SessionStart hook injects its own guidance; do not duplicate it here.
+context-mode is optional and, since v3.1.5, **not recommended**: its guidance arrives three times per turn through its own hooks, and its MCP launcher appends a routing block to every project `CLAUDE.md` on every server spawn (`mcp-servers/HOWTO.md` has the measurements). If installed, its SessionStart hook injects its own guidance; do not duplicate it here.
 Subagents do not have `ctx_*` tools — never instruct them to use `ctx_*`.

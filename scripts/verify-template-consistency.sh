@@ -3101,28 +3101,49 @@ rm -f "$c36_full_file" "$c36_rel_file" "$c36_class_file" "${c36_class_file}.join
 [ "$c36_fail" -eq 0 ] && ok "check 36: $c36_files template files classified; every rule live; no bare root wildcard; $c36_pending_hit pending rule allowed"
 
 # ---------------------------------------------------------------------------
-# Check 37 — CONTEXT-MODE SENTINEL (v3.1, spec §5; measured 2026-09-05).
-# The context-mode MCP server's writeRoutingInstructions() appends its routing
-# block to the project CLAUDE.md on every startup unless the file already
-# includes("context-mode") (server.bundle.mjs). Under template ownership that is
-# a permanent unauthored LOCAL_EDITED for every context-mode consumer. Keep one
-# line containing the literal in every variant, and re-read the predicate from
-# the installed bundle when present so a plugin change turns red, not silent.
+# Check 37 — CONTEXT-MODE SENTINEL (v3.1, spec §5; measured 2026-09-05;
+# extended v3.1.5).
+# The context-mode plugin has TWO writers with the same guard: the MCP server
+# bundle's writeRoutingInstructions() (server.bundle.mjs) and the launcher
+# start.mjs, which runs on EVERY server spawn -- session start and every /mcp
+# reconnect. Each appends the routing block to <project>/CLAUDE.md unless the
+# file already includes("context-mode"). Under template ownership that is a
+# permanent unauthored out-of-region edit for every consumer running the
+# plugin: discarded on sync, re-appended on the next spawn, forever. Keep one
+# line containing the literal in every variant AND in this repo's own root
+# CLAUDE.md (measured 2026-09-12: the root lacked it and was re-injected on
+# every spawn while the six variants were fine), and re-read the predicate
+# from BOTH writers wherever the plugin is installed, so a change to either
+# turns red rather than silent.
+#
+# The root is "not a seventh variant" for hooks and settings; it IS a project
+# CLAUDE.md that Claude Code opens, which is the only property this check
+# cares about.
 # ---------------------------------------------------------------------------
-note "Check 37: every templates/*/CLAUDE.md contains the literal 'context-mode'"
+note "Check 37: the context-mode sentinel is in every templates/*/CLAUDE.md and the root CLAUDE.md; both plugin writers re-measured where installed"
 c37_fail=0
-for v in general dotnet dotnet-maui rust-tauri java python; do
-  grep -q 'context-mode' "templates/$v/CLAUDE.md" || { ko "check 37: templates/$v/CLAUDE.md lacks the context-mode sentinel"; c37_fail=1; }
+c37_files=0
+for f in templates/general/CLAUDE.md templates/dotnet/CLAUDE.md templates/dotnet-maui/CLAUDE.md \
+         templates/rust-tauri/CLAUDE.md templates/java/CLAUDE.md templates/python/CLAUDE.md CLAUDE.md; do
+  c37_files=$((c37_files + 1))
+  grep -q 'context-mode' "$f" || { ko "check 37: $f lacks the context-mode sentinel -- the plugin's launcher will append its routing block on the next server spawn"; c37_fail=1; }
 done
-c37_bundle="${C37_BUNDLE:-$HOME/.claude/plugins/marketplaces/context-mode/server.bundle.mjs}"
-if [ -f "$c37_bundle" ]; then
-  grep -q 'includes("context-mode")' "$c37_bundle" \
-    && ok "check 37: plugin predicate still includes(\"context-mode\") in the installed bundle" \
-    || { ko "check 37: installed context-mode bundle no longer uses includes(\"context-mode\") — re-measure the writer predicate before trusting the sentinel"; c37_fail=1; }
-else
-  note "check 37: context-mode bundle not installed here — predicate not re-measured (sentinel still asserted)"
+# Predicate arms: every installed copy of either writer. An unmatched glob
+# stays literal and fails the -f test, so an uninstalled plugin yields zero
+# measured files and a NOTE, never a false pass.
+c37_measured=0
+for c37_src in "${C37_BUNDLE:-$HOME/.claude/plugins/marketplaces/context-mode/server.bundle.mjs}" \
+               "$HOME"/.claude/plugins/cache/context-mode/context-mode/*/server.bundle.mjs \
+               "$HOME"/.claude/plugins/cache/context-mode/context-mode/*/start.mjs; do
+  [ -f "$c37_src" ] || continue
+  c37_measured=$((c37_measured + 1))
+  grep -q 'includes("context-mode")' "$c37_src" \
+    || { ko "check 37: installed writer $c37_src no longer uses includes(\"context-mode\") -- re-measure the predicate before trusting the sentinel"; c37_fail=1; }
+done
+if [ "$c37_measured" -eq 0 ]; then
+  note "check 37: context-mode plugin not installed here -- writer predicate not re-measured (sentinel still asserted in $c37_files files)"
 fi
-[ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in 6/6 variants"
+[ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in $c37_files/7 files (6 variants + root); $c37_measured installed writer(s) still gate on includes(\"context-mode\")"
 
 # ---------------------------------------------------------------------------
 # Check 38 — VERSION two-line convention (v3.1). Line 1 = semver, line 2 = this
