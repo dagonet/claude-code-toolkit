@@ -26,3 +26,4 @@ Since v2.2.6 this repo gates ITSELF for real: v2.2.5 added the root `PROJECT_CON
 - User-level agents must not carry project-only frontmatter `hooks:` — they fail closed in repos without a `hooks/` directory.
 - Every file is **LF**. `scripts/template_propagate_to_variants` can emit CRLF — normalize afterwards.
 - Never rewrite a file containing non-ASCII through PowerShell `Get-Content`/`WriteAllText` (PS 5.1 mojibakes UTF-8). Use Bash or the Edit tool.
+- This file carries the literal `context-mode` deliberately — in this bullet. That plugin's MCP launcher (`start.mjs`) appends its 63-line routing block to `<project>/CLAUDE.md` on **every server spawn** unless the file already contains that substring, and the substring is its only idempotency guard. Check 37 asserts the sentinel in all six variants **and here**, and re-measures the guard predicate in the installed plugin so a change there goes red rather than silent. Removing the word re-arms the injection.

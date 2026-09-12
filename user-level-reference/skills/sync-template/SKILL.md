@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.4 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.5 -->
 
 # Sync Template (Downstream)
 
@@ -166,6 +166,8 @@ Then report:
   | `"once"` | **SAFE — and STRICTLY STRONGER than `keep-mine` was.** Apply returns `kept`, 0 bytes written. |
   | path absent from `files{}` | **Untracked.** The server never writes it at all. |
 
+  **On 0.3.5+ the join is done for you:** each `dropped_resolutions` row is `{path, resolution, ownership}`, so read `row["ownership"]` directly — warn only on `"template"`; `"once"`, `"project"` and `null` need no warning. On 0.3.4 the row has no `ownership` key, so join against `manifest.files[path].ownership` as above. **Both paths yield the same verdict**; the row field is a convenience, not a different rule, and a row lacking the key tells you which server you are on.
+
   **Why the asymmetry, and why the join is the discriminator rather than the count:** `keep-mine` meant *preserved at this sync*. `once` means *never overwritten again* — so for those paths the class change is an **upgrade**, and only the move to `template` is a downgrade. Everything you need is in the one response: the list, and `manifest.files[path].ownership` beside it. **Warning on the bare list produces false alarms on the first consumer who runs this** — one measured tree yields four dropped resolutions and *zero* real hazards; another yields three, of which two move to the stronger class. Four false alarms teach a consumer to skim the step, and then the one real case gets skimmed too.
 
   For a `"template"` hit, say it precisely: **the file on disk is UNCHANGED** — only the manifest moved, to the template's hash. The deviation is still sitting in the file and is simply no longer protected. **Diff it against the template now, then upstream it or re-apply it after the apply overwrites it.** Without that sentence a consumer reads "dropped" and assumes the file already changed. And a `template` hit whose only deviation is inside the `PROJECT-CUSTOM` region is *still* not a loss — the region mechanism preserves that independently of class.
@@ -175,14 +177,15 @@ Then report:
 **`dropped_resolutions` keys on the literal `resolution` and nothing else** (`template_sync_v3.py:1165`) — not `reason`, not `locallyModified`. The check sits *before* the class dispatch, which is why a path can appear in the list and then also be dropped as project-class. Three things follow, and the third is a real gap rather than a caveat:
 
 - A v2 manifest written by an older sync can carry **`reason`** on an entry instead. For entries that SURVIVE migration those keys are carried and reported in **`unknown_file_keys`** — read that list too.
-- For an entry **dropped** as project-class, unknown keys are neither carried nor reported: `dropped_entries` gives you the path and nothing else. **Intent recorded in an unknown key on a dropped entry vanishes with no report anywhere.** Same defect class as the one 0.3.4 fixed, in the branch nobody had looked at. Flagged to the server session for 0.3.5.
+- For an entry **dropped** as project-class: **on 0.3.5+ its unknown keys are reported in `dropped_file_keys`**, which partitions with `unknown_file_keys` (an entry's keys land in exactly one of the two), and the values survive in the pre-migration manifest under `backup_dir`. **On 0.3.4 and below they are neither carried nor reported** — `dropped_entries` gives you the path and nothing else, and intent recorded in an unknown key on a dropped entry vanishes with no report anywhere. Same defect class as the one 0.3.4 fixed, in the branch nobody had looked at; closed in 0.3.5.
 - This is why the 1c-i census greps for **both** `resolution` and `reason`: it is taken from the v2 manifest before any of this, so it sees what no post-migration list can.
 
 #### 1c-v. Also report, because each is a change the consumer did not ask for
 
 - **`dropped_entries`** — project-class entries removed from tracking. One rehearsal silently stopped tracking `CLAUDE.local.md`; correct under v3, but say it.
 - **`redundant_project_file`** — byte-identical copies. **A SUGGESTION ONLY; nothing is ever deleted.**
-- **`unknown_keys` / `unknown_file_keys`** — preserved, not dropped. `unknown_file_keys` is where a `reason` deviation appears.
+- **`unknown_keys` / `unknown_file_keys`** — preserved, not dropped. `unknown_file_keys` is where a `reason` deviation appears on an entry that *survives*.
+- **`dropped_file_keys`** (0.3.5+) — the same annotations on entries the migration *drops*. Absent on 0.3.4: that is the version signal, not "none"; the 1c-i census is your only view of them there.
 - **`region_left_in_place: true` and `region_bytes`** — **the region stays in `CLAUDE.md`.** The tool's docstring still claims migration writes the region verbatim into `project.md` with fenced hunks; **it does not.** Measured: `project.md` is a ~136-byte header and nothing more, with the region untouched in `CLAUDE.md`. Following the docstring would send a consumer to open a file that does not contain their instructions. The measured behaviour is also the correct one — an unscoped rules file is delivered to nobody, which is why the v3.1 cutover was reversed.
 - **`region_bytes` counts the region BODY**, not the block: one measured file reports 2695 where the block including its marker lines is 2814. Two correct numbers with different boundaries — do not diff them and report a discrepancy.
 

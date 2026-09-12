@@ -328,23 +328,20 @@ claude mcp add --scope user --transport stdio open-brain \
 
 **Per-repo opt-out (v0.3.0+):** if a particular project shouldn't see the wiki and contradictions tool families, add `"OPEN_BRAIN_TOOLS_DISABLED": "wiki,contradictions"` to the open-brain server's `env` block in that project's `.mcp.json`. The MCP server filters those families from `tools/list`; the `thoughts_*` tools and `system_status` remain available.
 
-## Context Mode Plugin
+## Context Mode Plugin — not recommended
 
-Context Mode is a Claude Code plugin that offloads large tool outputs to a sandbox, keeping the context window clean and reducing token usage. It intercepts tool calls that would produce large outputs and processes them externally, returning only concise summaries to the conversation.
+Context Mode is a third-party Claude Code plugin that offloads tool output to a sandbox and indexes it for search. **As of v3.1.5 the toolkit does not recommend it**, on measurement rather than preference:
 
-- **Install:** `claude plugins install context-mode@context-mode`
+- Its routing guidance is delivered **three times per turn** through its own hooks (`SessionStart`, `UserPromptSubmit`) plus a tip on every tool call (`PreToolUse`). The block it also appends to `CLAUDE.md` is a fourth copy of the same text.
+- `ctx_batch_execute`, which that guidance names the PRIMARY tool, **failed 28.6 % of calls** across six weeks of measured sessions. **164 dead `ctx_execute` calls** came from subagents that received the guidance but do not have the tools.
+- Its MCP launcher (`start.mjs`) **appends a 63-line block to `<project>/CLAUDE.md` on every server spawn** — every session start and every `/mcp` reconnect — unless the file already contains the substring `context-mode`. Under template ownership that is an unauthored out-of-region edit that every sync discards and every spawn re-creates.
+- It **blocks `WebFetch`, `curl` and `wget`** to create the need that `ctx_fetch_and_index` fills.
+- Its sandbox runs on `/tmp` paths that `git -C` cannot see, so the sync skill already forbids using it for this repo's main job.
+- Its post-compaction "session guide" was measured naming the wrong plan file and the wrong mode, the one time it fired in an 11-hour session.
 
-**Key tools:**
-- `ctx_execute(language, code)` — Run code in sandbox, return summary
-- `ctx_execute_file(path, language, code)` — Run code against a file in sandbox
-- `ctx_search(queries)` — Search indexed content with multiple queries
-- `ctx_batch_execute(commands, queries)` — Run commands + search in one call
-- `ctx_fetch_and_index(url)` — Fetch and index a URL for later searching
-- `ctx_index(label, content)` — Index content for later searching
-- `ctx_stats()` — Show context savings statistics
-- `ctx_doctor()` — Diagnose installation and configuration
+**If you run it anyway, the toolkit is defended.** Every template `CLAUDE.md` and this repo's root carry the literal `context-mode` — the plugin's own idempotency guard — and consistency check 37 asserts the sentinel in all seven files and re-measures the guard predicate in both of the plugin's writers wherever it is installed. `permissions.allow` keeps the tool prefix `mcp__plugin_context-mode_context-mode__*` as a harmless no-op.
 
-**Tool prefix:** `mcp__plugin_context-mode_context-mode__*`
+**To remove it:** `claude plugins uninstall context-mode@context-mode`, then **restart the session** — a running session keeps the hooks it loaded at startup. `WebFetch` comes back; nothing the toolkit ships calls a `ctx_*` tool.
 
 ## Context7 Plugin
 
