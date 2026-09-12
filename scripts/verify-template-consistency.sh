@@ -3268,29 +3268,60 @@ fi
 note "Check 41: declared-key readers keep the ( Command)? tolerance for once-seeded consumers"
 c41_fail=0
 c41_hits=0
-for spec in "hooks/gate-before-merge.sh:Gate" "hooks/run-gate.sh:Gate" \
-            "hooks/pre-commit-test.sh:Gate" "hooks/pre-commit-test.sh:Test"; do
-  c41_f="${spec%%:*}"; c41_k="${spec##*:}"
-  [ -f "$c41_f" ] || { ko "check 41: $c41_f missing"; c41_fail=1; continue; }
+c41_bad=0
+# ENUMERATE the readers; do not assert a KNOWN LIST. A fixed list passes when
+# someone adds a FIFTH reader without the tolerance -- and that is now the
+# likeliest way this regresses, because after check 40 the pattern has no
+# template-side user: a new reader written against the normalised `**Gate**`
+# spelling is correct by every template in this repo and silently wrong for
+# every once-seeded consumer.
+#
+# A fixed COUNT (exactly 4) would catch that, but it also goes red for a
+# CORRECTLY written fifth reader, which is a false alarm on a good change.
+# Enumerating and requiring the tolerance on each is strictly better: it fails
+# on a new reader that lacks it, passes one that has it, and the floor below
+# still notices readers disappearing.
+#
+# The predicate wants a real reader line -- a `grep -E` against
+# PROJECT_CONTEXT.md naming a **Gate**/**Test** key -- not the prose around it,
+# which mentions both file and key freely.
+c41_readers=$(grep -n 'grep -E' hooks/*.sh 2>/dev/null \
+              | grep 'PROJECT_CONTEXT\.md' \
+              | grep -E '\\\*\\\*(Gate|Test)')
+if [ -z "$c41_readers" ]; then
+  ko "check 41: found NO declared-key reader lines at all -- the enumerator is broken, or every reader was removed; either way this check is vacuous"
+  c41_fail=1
+fi
+while IFS= read -r c41_line; do
+  [ -n "$c41_line" ] || continue
+  c41_hits=$((c41_hits + 1))
+  c41_where=${c41_line%%:*}:$(printf '%s' "$c41_line" | cut -d: -f2)
   # -F on a distinctive literal substring: the reader lines carry the pattern
   # as `\*\*Gate( Command)?\*\*:` -- backslashes and all -- so a regex written
   # to look like the pattern does not match the source that contains it. The
   # first version of this check did exactly that and reported all four sites
   # missing while the tolerance was present in every one.
-  if grep -qF "$c41_k( Command)?" "$c41_f"; then
-    c41_hits=$((c41_hits + 1))
-  else
-    ko "check 41: $c41_f no longer tolerates '**$c41_k Command**:' -- every once-seeded consumer carrying the old spelling silently resolves an EMPTY command, which exits 0 and reads as a pass"
-    c41_fail=1
-  fi
-done
+  case "$c41_line" in
+    *"( Command)?"*) ;;
+    *) ko "check 41: $c41_where reads a declared key WITHOUT the ( Command)? tolerance -- every once-seeded consumer carrying the old spelling resolves an EMPTY command there, which exits 0 and reads as a pass"
+       c41_bad=$((c41_bad + 1)); c41_fail=1 ;;
+  esac
+done <<EOF
+$c41_readers
+EOF
+# Floor: the four known readers at the time of writing. Fewer means a reader
+# was deleted rather than fixed, which the per-line scan above cannot see.
+if [ "$c41_hits" -lt 4 ]; then
+  ko "check 41: only $c41_hits declared-key reader sites found, expected at least 4 -- a reader was removed, or the enumerator stopped matching one"
+  c41_fail=1
+fi
 # Control: the same grep for a spelling no reader has must NOT match, or the
 # pattern above is matching something other than what it names.
 if grep -qF 'Gruntle( Command)?' hooks/gate-before-merge.sh 2>/dev/null; then
   ko "check 41 CONTROL: matched a key no reader defines -- the scan is not reading what it claims"
   c41_fail=1
 fi
-[ "$c41_fail" -eq 0 ] && ok "check 41: $c41_hits/4 reader sites keep the tolerance; control did not match a fabricated key"
+[ "$c41_fail" -eq 0 ] && ok "check 41: $c41_hits enumerated reader sites all keep the tolerance ($c41_bad without); control did not match a fabricated key"
 
 # ---------------------------------------------------------------------------
 echo
