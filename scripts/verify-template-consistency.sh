@@ -645,12 +645,18 @@ if [ "$rules_present" = "$rules_expected" ]; then
   ok "all $rules_expected non-general variants ship at least one rules file"
 fi
 
-# Every rule that ships MUST carry a `paths:` frontmatter list. An unconditional
-# rule is always-loaded context wearing a rules/ filename.
-rules_files=$(ls templates/*/.claude/rules/*.md 2>/dev/null | wc -l)
+# Every rule that ships MUST carry a `paths:` frontmatter list -- EXCEPT
+# `project.md`, which is deliberately unscoped (v3.1 Phase 3, task 3.2): it is
+# the project-owned seed a consumer fills in themselves, not a shipped
+# language convention. Measured: an unscoped rules file reaches nobody at
+# session start (nor a subagent spawn), so it earns none of the "always-loaded
+# context wearing a rules/ filename" cost this check exists to catch -- the
+# concern this loop guards against does not apply to it.
+rules_files=$(ls templates/*/.claude/rules/*.md 2>/dev/null | grep -v '/project\.md$' | wc -l)
 scoped=0
 for f in templates/*/.claude/rules/*.md; do
   [ -f "$f" ] || continue
+  case "$f" in */project.md) continue ;; esac
   fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$f")
   if printf '%s\n' "$fm" | grep -q '^paths:' && printf '%s\n' "$fm" | grep -qE '^[[:space:]]+- '; then
     scoped=$((scoped + 1))
@@ -659,7 +665,7 @@ for f in templates/*/.claude/rules/*.md; do
   fi
 done
 if [ "$rules_files" -gt 0 ] && [ "$scoped" = "$rules_files" ]; then
-  ok "all $rules_files rules files are paths-scoped"
+  ok "all $rules_files non-seed rules files are paths-scoped (project.md exempt, see above)"
 elif [ "$rules_files" -eq 0 ]; then
   ko "rules: no .claude/rules/*.md found anywhere (extraction broken?)"
 fi
@@ -1708,16 +1714,25 @@ fi
 #     a project's own `cpp-coder` wiring on every accept-template. The regex
 #     below owns the shape instead of the list, so the template never has to
 #     know a project's coder names.
+#
+#     R17 (v3.1): the regex itself is RETIRED. enforce-agent-contract.sh's
+#     SubagentStop entry now carries NO matcher at all (fires unconditionally
+#     for every subagent), and eligibility lives in the agent file's own
+#     `pipeline:` frontmatter -- so a project's own <lang>-coder is covered by
+#     adding the flag to ITS OWN agent file, never by editing settings.json.
+#     The invariant this check protects (a project's language coder is never
+#     silently unhooked) still holds; check 29 arms C/D/E now assert it via
+#     the frontmatter flag instead of this regex.
 # ---------------------------------------------------------------------------
 echo
 CODER_RE='"matcher": "^([a-z0-9]+-)?coder$'
 for v in $VARIANTS; do
   s="templates/$v/.claude/settings.json"
   n=$(grep -cF "$CODER_RE" "$s")
-  if [ "$n" -eq 2 ]; then
-    ok "$s: both SubagentStop matchers accept <lang>-coder"
+  if [ "$n" -eq 0 ]; then
+    ok "$s: no <lang>-coder-shaped SubagentStop matcher (retired under R17)"
   else
-    ko "$s: expected 2 <lang>-coder-shaped SubagentStop matchers, found $n"
+    ko "$s: still carries $n <lang>-coder-shaped SubagentStop matcher(s) -- should have been retired under R17"
   fi
   if grep -q '"matcher": "coder|dotnet-coder' "$s"; then
     ko "$s: still carries the enumerated coder matcher"
@@ -2320,41 +2335,49 @@ A5_ARMS
     fi
 
     # Arm C: THE TWO-PATTERN-LANGUAGES INVARIANT. The same intent is written as
-    # a shell glob in the hook (`coder|*-coder`) and as a regex in
-    # settings.json (`^([a-z0-9]+-)?coder$`), and both generalise over the whole
-    # <lang>-coder family. A fix applied to one is NOT applied to the other by
-    # any grep keyed on a single syntax, so consolidating or renaming `coder`
-    # breaks every variant coder in both places at once — silently, because
-    # both forms fail OPEN when a name stops matching. Rather than a
-    # hand-maintained expected set (which drifts), assert the two languages
-    # agree on the shipped names.
-    a5_regex=$(grep -o '"matcher": "[^"]*coder[^"]*"' templates/general/.claude/settings.json \
-      | sed 's/.*"matcher": "//;s/"$//' | head -1)
-    if [ -z "$a5_regex" ]; then
-      ko "check 29 (arm C): no agent matcher regex found in templates/general/.claude/settings.json"
+    # a shell glob in the hook (`coder|*-coder`) and, until v3.1 (R17), a regex
+    # in settings.json (`^([a-z0-9]+-)?coder$`). That matcher is retired:
+    # eligibility now lives in the agent file's own frontmatter (`pipeline:
+    # true|notify`, hooks/enforce-agent-contract.sh), so the SECOND pattern
+    # language is the set of agent files carrying `pipeline: true` — the exact
+    # replacement for the old contract matcher's name set (coder family +
+    # code-reviewer). A fix applied to one language is NOT applied to the
+    # other by any grep keyed on a single syntax, so consolidating or renaming
+    # `coder` breaks the hook's glob and the agent file's flag at once —
+    # silently, because both forms fail OPEN when a name stops matching.
+    # Rather than a hand-maintained expected set (which drifts), assert the
+    # two languages agree on the shipped names.
+    a5_true_names=$(
+      for a5f in templates/*/.claude/agents/*.md; do
+        [ -f "$a5f" ] || continue
+        awk '/^---$/{n++; next} n==1' "$a5f" \
+          | grep -qE '^pipeline:[[:space:]]*true[[:space:]]*$' \
+          && basename "$a5f" .md
+      done | sort -u
+    )
+    if [ -z "$a5_true_names" ]; then
+      ko "check 29 (arm C): no agent file under templates/*/.claude/agents/ carries pipeline: true"
     else
-      # ONE DIRECTION ONLY, and the asymmetry is deliberate. The matcher is
-      # legitimately BROADER than the coder family — it also names
-      # `code-reviewer`, `tester`, `architect` — so equality is the wrong
-      # relation and the first version of this arm went red on all three of
-      # them for saying so. The property that actually breaks under a
-      # consolidation is the COVERAGE one: every name the hook's coder glob
-      # binds must also be reached by the settings matcher. A `<lang>-coder`
-      # added to one language and not the other is silently unhooked, and both
-      # forms fail OPEN, so nothing else reports it.
+      # ONE DIRECTION ONLY, and the asymmetry is deliberate. `pipeline: true`
+      # is exactly the coder-family + code-reviewer set (not broader like the
+      # old echo matcher was) but equality is still the wrong relation here:
+      # the property that actually breaks under a consolidation is the
+      # COVERAGE one — every name the hook's coder glob binds must also carry
+      # the flag. A `<lang>-coder` added to one language and not the other is
+      # silently unhooked, and both forms fail OPEN, so nothing else reports it.
       a5_disagree=""
       for a5n in $a5_names; do
         case "$a5n" in
           coder|*-coder)
-            printf '%s\n' "$a5n" | grep -qE "$a5_regex" \
+            printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
               || a5_disagree="$a5_disagree $a5n"
             ;;
         esac
       done
       if [ -z "$a5_disagree" ]; then
-        ok "check 29 (arm C): every name the hook's coder glob binds is also reached by the settings.json matcher"
+        ok "check 29 (arm C): every name the hook's coder glob binds also carries pipeline: true"
       else
-        ko "check 29 (arm C): bound by the shell glob but NOT by the settings.json matcher —$a5_disagree. The two pattern languages have drifted; both fail OPEN and silently."
+        ko "check 29 (arm C): bound by the shell glob but missing pipeline: true —$a5_disagree. The two pattern languages have drifted; both fail OPEN and silently."
       fi
 
       # Arm D: the trap itself. The domain coders must be covered BY THE GLOB
@@ -2380,70 +2403,49 @@ A5_ARMS
       #
       # A control that asserts an agent FILE exists does not detect the failure
       # a consolidation can cause. The dangerous case is a RENAME breaking the
-      # skills `case` arm, `enforce-agent-contract.sh`'s SubagentStop matcher
-      # and both `settings.json` matcher regexes AT THE SAME SILENT MOMENT:
-      # nothing errors, every file is present, and the enforcement layer is
-      # simply gone. Arms A-D cover the shell-glob language and the coder
-      # family; this arm covers the OTHER pattern language — the regexes — for
-      # every name the enforcement layer names, and it evaluates them AS
-      # REGEXES rather than comparing label text.
+      # skills `case` arm and the agent file's OWN `pipeline: true` flag AT THE
+      # SAME SILENT MOMENT: nothing errors, every file is present, and the
+      # enforcement layer is simply gone. Arms A-D cover the shell-glob
+      # language and the coder family; this arm covers the OTHER pattern
+      # language — until v3.1 (R17) a settings.json regex, now the frontmatter
+      # flag — for every name the enforcement layer names, evaluated as SET
+      # MEMBERSHIP rather than comparing label text.
       #
       # This is why v3.0.0 ABSORBS rather than renames: the survivors keep the
-      # names these three patterns already match, so the patterns are untouched.
+      # names these patterns already match, so the patterns are untouched.
       # Arm E is what turns that from a stated intention into a checked one.
       #
-      # ⚠ THE EXPECTATIONS BELOW ARE FIXED, AND THE MATCHERS ARE KEYED BY THE
-      # HOOK THEY RUN, NEVER BY THEIR OWN TEXT. The first version of this arm
-      # selected matchers by grepping them for the very names it then tested,
-      # so deleting `^tester$` from a matcher made the arm skip that matcher and
-      # report green — a check keyed on the thing under test. It was caught by
-      # deleting the guard (drop `^tester$`; the arm did not flip, and only the
-      # cross-variant byte-identity check noticed, which would NOT have noticed
-      # had all six variants been edited together). Keyed on the command, the
-      # matcher cannot hide by changing.
-      a5_pairs=$(awk '
-        /"matcher":/ { m=$0; sub(/.*"matcher": "/,"",m); sub(/",?[[:space:]]*$/,"",m); next }
-        /"command":/ { c=$0; sub(/.*"command": "/,"",c); sub(/",?[[:space:]]*$/,"",c);
-                       if (m != "") print m "\t" c }
-      ' templates/general/.claude/settings.json)
-      a5_pipeline=$(printf '%s\n' "$a5_pairs" | grep -F 'PIPELINE:' | head -1 | cut -f1)
-      a5_contract=$(printf '%s\n' "$a5_pairs" | grep -F 'enforce-agent-contract.sh' | head -1 | cut -f1)
-
-      # a5_expect <label> <regex> <must-match names> -- <must-NOT-match names>
+      # ⚠ THE EXPECTATIONS BELOW ARE FIXED, AND THE SET IS KEYED BY THE HOOK
+      # THAT READS IT (`grep -qE '^pipeline:...'` in
+      # hooks/enforce-agent-contract.sh), NEVER BY ITS OWN TEXT. The
+      # settings.json-era version of this arm selected matchers by grepping
+      # them for the very names it then tested, so deleting a name from a
+      # matcher made the arm skip that matcher and report green — a check
+      # keyed on the thing under test. Recomputing $a5_true_names from the
+      # SAME regex the hook itself runs keeps that trap closed.
       a5_e_bad=""
-      a5_expect() {
-        a5x_label="$1"; a5x_re="$2"; shift 2
-        a5x_side=in
-        for a5x_n in "$@"; do
-          if [ "$a5x_n" = "--" ]; then a5x_side=out; continue; fi
-          if printf '%s\n' "$a5x_n" | grep -qE "$a5x_re"; then
-            [ "$a5x_side" = out ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-MATCHES-but-must-not"
-          else
-            [ "$a5x_side" = in ] && a5_e_bad="$a5_e_bad ${a5x_label}:${a5x_n}-NO-MATCH"
-          fi
-        done
-      }
 
       # 1. the shell-glob language — the skills hook's case arms.
       for a5n in coder dotnet-coder rust-coder java-coder python-coder tester architect; do
         a5_matches "$a5n" || a5_e_bad="$a5_e_bad case-arm:$a5n"
       done
 
-      # 2. the regex language — the two SubagentStop matchers, both directions.
-      if [ -z "$a5_pipeline" ] || [ -z "$a5_contract" ]; then
-        ko "check 29 (arm E): could not locate the SubagentStop pipeline/contract matchers by the hook they run — the sweep would pass vacuously"
+      # 2. the frontmatter-flag language — pipeline: true is exactly the old
+      # contract set (coder family + code-reviewer); tester/architect carry
+      # `pipeline: notify` instead (R17) and must NOT appear here.
+      for a5n in coder dotnet-coder rust-coder java-coder python-coder code-reviewer; do
+        printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
+          || a5_e_bad="$a5_e_bad pipeline-true:${a5n}-NO-MATCH"
+      done
+      for a5n in tester architect ops Explore zz-unbound-probe; do
+        printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
+          && a5_e_bad="$a5_e_bad pipeline-true:${a5n}-MATCHES-but-must-not"
+      done
+
+      if [ -z "$a5_e_bad" ]; then
+        ok "check 29 (arm E): every survivor name MATCHES its binding sites in BOTH pattern languages, and every non-bound name still misses them"
       else
-        a5_expect pipeline "$a5_pipeline" \
-          coder dotnet-coder rust-coder java-coder python-coder code-reviewer tester architect \
-          -- ops Explore zz-unbound-probe
-        a5_expect contract "$a5_contract" \
-          coder dotnet-coder rust-coder java-coder python-coder code-reviewer \
-          -- tester architect ops Explore zz-unbound-probe
-        if [ -z "$a5_e_bad" ]; then
-          ok "check 29 (arm E): every survivor name MATCHES its binding sites in BOTH pattern languages, and every non-bound name still misses them"
-        else
-          ko "check 29 (arm E): binding-site mismatch —$a5_e_bad. Existence proves nothing here; a name that stops matching fails OPEN and SILENT — the hook is simply never invoked, with no block, no warning and every file present."
-        fi
+        ko "check 29 (arm E): binding-site mismatch —$a5_e_bad. Existence proves nothing here; a name that stops matching fails OPEN and SILENT — the hook is simply never invoked, with no block, no warning and every file present."
       fi
     fi
   fi
@@ -2969,6 +2971,439 @@ else
     ko "check 34: placement check reported RED on $B3D/spliced-negative-control.md — expected GREEN (known-correct fixture); the check fires on every added block regardless of placement"
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# Check 35 — BYTE BUDGET on the three per-project template files.
+#
+# v3.0.0 subtracted (AGENT_TEAM.md 54.5 KB -> 33.3 KB); v3.0.1 and v3.0.2 added
+# back, because every fix shipped with its rationale written into the operative
+# file, and no check measured bytes. The v2.0 plan set project CLAUDE.md at
+# <= 6 KB and always-loaded at <= 20 KB; at v3.0.2 CLAUDE.md was 11.6 KB.
+#
+# RATCHET: these budgets only ever go DOWN. A diet task lowers the budget and
+# cuts content in the SAME commit, so this check is never red at a commit.
+# Anyone raising a budget is making a release decision and must say so in the
+# CHANGELOG.
+#
+# TWO-SIDED: the control arm proves the comparison executes. A check that
+# cannot fail looks exactly like one that passed.
+# ---------------------------------------------------------------------------
+note "Check 35: byte budget on templates/*/{CLAUDE.md,CLAUDE.local.md,AGENT_TEAM.md}"
+BUDGET_CLAUDE_MD=6144
+BUDGET_CLAUDE_LOCAL_MD=12288
+BUDGET_AGENT_TEAM_MD=20480
+c33_fail=0
+c33_rows=0
+for v in general dotnet dotnet-maui rust-tauri java python; do
+  for pair in "CLAUDE.md:$BUDGET_CLAUDE_MD" "CLAUDE.local.md:$BUDGET_CLAUDE_LOCAL_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD"; do
+    f="templates/$v/${pair%%:*}"; b="${pair##*:}"
+    [ -f "$f" ] || { ko "check 35: $f missing — the budget cannot be measured"; c33_fail=1; continue; }
+    sz=$(wc -c < "$f" | tr -d '[:space:]')
+    c33_rows=$((c33_rows + 1))
+    if [ "$sz" -gt "$b" ]; then
+      ko "check 35: $f is $sz bytes, budget $b (+$((sz - b)))"
+      c33_fail=1
+    fi
+  done
+done
+# Control arm: the comparison above must be able to fire. Evaluate the same
+# expression against a budget of 0 for the first file; if that does not read
+# as over-budget, the arithmetic is broken and every row above was vacuous.
+c33_ctrl_sz=$(wc -c < templates/general/CLAUDE.md | tr -d '[:space:]')
+if [ "$c33_ctrl_sz" -gt 0 ] && [ "$c33_rows" -eq 18 ]; then
+  [ "$c33_fail" -eq 0 ] && ok "check 35: 18/18 files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, CLAUDE.local.md<=$BUDGET_CLAUDE_LOCAL_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
+else
+  ko "check 35: CONTROL FAILED — rows=$c33_rows (want 18), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 36 — OWNERSHIP TABLE COVERAGE (v3.1, spec §6).
+#
+# Every file a consumer actually receives — templates/<variant>/** (minus the
+# known CLAUDE.local.md exception, gone at Phase 3) plus the repo-root hooks/**
+# tree setup-project.sh copies verbatim — must match a rule in
+# templates/ownership.json (first match wins). A file with no class is a red
+# gate, not an implicit `template`.
+#
+# Reverse arm: every rule pattern must match at least one file in that same
+# enumeration, counted PER RULE INDEX from the classifier's 4th column — a
+# stale or over-broad rule (a bare `*.sh` that would clobber a consumer's root
+# preflight.sh) cannot sit unnoticed. This is the toolkit half of the "absent
+# from the manifest is project" guarantee; the server tests the other half.
+#
+# Known pending exception: .claude/rules/project.md is seeded by Phase 3
+# Task 3.2 — until then it matches nothing in the shipped templates, so it is
+# allowlisted below rather than turning the check red. Remove the allowlist
+# entry when Task 3.2 lands.
+# ---------------------------------------------------------------------------
+note "Check 36: templates/ownership.json covers every template file, and no rule is dead"
+C36_PENDING_RULES=".claude/rules/project.md"
+c36_fail=0
+# Two parallel lists, same line count and order: the display path (what a
+# human sees in a failure message) and the classify path (relative to the
+# tree root a rule pattern is written against — templates/<v>/ for template
+# files, repo root for hooks/**).
+c36_full_file=$(mktemp)
+c36_rel_file=$(mktemp)
+for v in general dotnet dotnet-maui rust-tauri java python; do
+  c36_v_rels=$(cd "templates/$v" && find . -type f | sed 's#^\./##' | grep -v '^CLAUDE\.local\.md$')
+  echo "$c36_v_rels" | sed "s#^#$v/#" >> "$c36_full_file"
+  echo "$c36_v_rels" >> "$c36_rel_file"
+done
+c36_hooks_rels=$(cd hooks && find . -type f | sed 's#^\./##')
+echo "$c36_hooks_rels" | sed 's#^#hooks/#' >> "$c36_full_file"
+echo "$c36_hooks_rels" | sed 's#^#hooks/#' >> "$c36_rel_file"
+c36_files=$(wc -l < "$c36_full_file" | tr -d '[:space:]')
+
+c36_class_file=$(mktemp)
+node -e 'require("./templates/ownership.json")' 2>/dev/null \
+  || { ko "check 36: templates/ownership.json is unreadable (missing, bad JSON, no node, or cwd is not the repo root) — the coverage arms measured nothing"; c36_fail=1; }
+node scripts/lib/ownership-classify.mjs templates/ownership.json $(cat "$c36_rel_file") > "$c36_class_file"
+c36_class_rows=$(wc -l < "$c36_class_file" | tr -d '[:space:]')
+[ "$c36_class_rows" = "$c36_files" ] \
+  || { ko "check 36: classifier emitted $c36_class_rows rows for $c36_files files — the join is misaligned and the coverage arm measured nothing"; c36_fail=1; }
+paste "$c36_full_file" "$c36_class_file" > "${c36_class_file}.joined"
+
+c36_unclassified=""
+while IFS=$'\t' read -r full rel cls tgt idx; do
+  [ "$cls" = "UNCLASSIFIED" ] && { c36_unclassified="$c36_unclassified $full"; c36_fail=1; }
+done < "${c36_class_file}.joined"
+
+# reverse arm: every rule index must appear at least once in column 4
+c36_rule_count=$(node -e 'console.log(require("./templates/ownership.json").rules.length)')
+c36_dead=""
+c36_pending_hit=0
+i=0
+while [ "$i" -lt "$c36_rule_count" ]; do
+  pat=$(node -e "console.log(require('./templates/ownership.json').rules[$i].pattern)")
+  if awk -F'\t' -v idx="$i" '$4==idx{c++} END{exit !(c>0)}' "$c36_class_file"; then
+    :
+  else
+    is_pending=0
+    for p in $C36_PENDING_RULES; do [ "$p" = "$pat" ] && is_pending=1; done
+    if [ "$is_pending" = 1 ]; then
+      c36_pending_hit=$((c36_pending_hit+1))
+    else
+      c36_dead="$c36_dead $pat"; c36_fail=1
+    fi
+  fi
+  i=$((i+1))
+done
+
+# also refuse a bare root wildcard pattern (would classify consumer-owned root files)
+if node -e 'process.exit(require("./templates/ownership.json").rules.some(r=>/^\*{1,2}(\.[A-Za-z0-9]+)?$/.test(r.pattern))?1:0)'; then :; else
+  ko "check 36: a bare root wildcard rule (*, ** or *.ext) is present — it would classify consumer-owned root files"; c36_fail=1
+fi
+if [ "$c36_files" -lt 60 ]; then ko "check 36: CONTROL FAILED — only $c36_files template files enumerated (want >= 60)"; c36_fail=1; fi
+[ -z "$c36_unclassified" ] || ko "check 36: unclassified template files:$c36_unclassified"
+[ -z "$c36_dead" ] || { ko "check 36: rule patterns matching no template file:$c36_dead"; c36_fail=1; }
+rm -f "$c36_full_file" "$c36_rel_file" "$c36_class_file" "${c36_class_file}.joined"
+[ "$c36_fail" -eq 0 ] && ok "check 36: $c36_files template files classified; every rule live; no bare root wildcard; $c36_pending_hit pending rule allowed"
+
+# ---------------------------------------------------------------------------
+# Check 37 — CONTEXT-MODE SENTINEL (v3.1, spec §5; measured 2026-09-05;
+# extended v3.1.5).
+# The context-mode plugin has TWO writers with the same guard: the MCP server
+# bundle's writeRoutingInstructions() (server.bundle.mjs) and the launcher
+# start.mjs, which runs on EVERY server spawn -- session start and every /mcp
+# reconnect. Each appends the routing block to <project>/CLAUDE.md unless the
+# file already includes("context-mode"). Under template ownership that is a
+# permanent unauthored out-of-region edit for every consumer running the
+# plugin: discarded on sync, re-appended on the next spawn, forever. Keep one
+# line containing the literal in every variant AND in this repo's own root
+# CLAUDE.md (measured 2026-09-12: the root lacked it and was re-injected on
+# every spawn while the six variants were fine), and re-read the predicate
+# from BOTH writers wherever the plugin is installed, so a change to either
+# turns red rather than silent.
+#
+# The root is "not a seventh variant" for hooks and settings; it IS a project
+# CLAUDE.md that Claude Code opens, which is the only property this check
+# cares about.
+# ---------------------------------------------------------------------------
+note "Check 37: the context-mode sentinel is in every templates/*/CLAUDE.md and the root CLAUDE.md; both plugin writers re-measured where installed"
+c37_fail=0
+c37_files=0
+for f in templates/general/CLAUDE.md templates/dotnet/CLAUDE.md templates/dotnet-maui/CLAUDE.md \
+         templates/rust-tauri/CLAUDE.md templates/java/CLAUDE.md templates/python/CLAUDE.md CLAUDE.md; do
+  c37_files=$((c37_files + 1))
+  grep -q 'context-mode' "$f" || { ko "check 37: $f lacks the context-mode sentinel -- the plugin's launcher will append its routing block on the next server spawn"; c37_fail=1; }
+done
+# Predicate arms: every installed copy of either writer. An unmatched glob
+# stays literal and fails the -f test, so an uninstalled plugin yields zero
+# measured files and a NOTE, never a false pass.
+c37_measured=0
+for c37_src in "${C37_BUNDLE:-$HOME/.claude/plugins/marketplaces/context-mode/server.bundle.mjs}" \
+               "$HOME"/.claude/plugins/cache/context-mode/context-mode/*/server.bundle.mjs \
+               "$HOME"/.claude/plugins/cache/context-mode/context-mode/*/start.mjs; do
+  [ -f "$c37_src" ] || continue
+  c37_measured=$((c37_measured + 1))
+  grep -q 'includes("context-mode")' "$c37_src" \
+    || { ko "check 37: installed writer $c37_src no longer uses includes(\"context-mode\") -- re-measure the predicate before trusting the sentinel"; c37_fail=1; }
+done
+if [ "$c37_measured" -eq 0 ]; then
+  note "check 37: context-mode plugin not installed here -- writer predicate not re-measured (sentinel still asserted in $c37_files files)"
+fi
+[ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in $c37_files/7 files (6 variants + root); $c37_measured installed writer(s) still gate on includes(\"context-mode\")"
+
+# ---------------------------------------------------------------------------
+# Check 38 — VERSION two-line convention (v3.1). Line 1 = semver, line 2 = this
+# release's summary. v3.0.4's first squash bumped line 1 and left v3.0.3's summary.
+# ---------------------------------------------------------------------------
+note "Check 38: VERSION line 2 changes whenever line 1 does"
+c38_v_now=$(head -1 VERSION | tr -d '\r'); c38_s_now=$(sed -n 2p VERSION | tr -d '\r')
+c38_last_tag=$(git tag --list 'v*' --sort=-v:refname | grep -v "^v${c38_v_now}\$" | head -1)
+if [ -n "$c38_last_tag" ] && git cat-file -e "$c38_last_tag:VERSION" 2>/dev/null; then
+  c38_v_tag=$(git show "$c38_last_tag:VERSION" | head -1 | tr -d '\r'); c38_s_tag=$(git show "$c38_last_tag:VERSION" | sed -n 2p | tr -d '\r')
+  if [ "$c38_v_now" != "$c38_v_tag" ] && [ "$c38_s_now" = "$c38_s_tag" ]; then
+    ko "check 38: VERSION line 1 moved ($c38_v_tag -> $c38_v_now) but line 2 still carries $c38_last_tag's summary"
+  else
+    ok "check 38: VERSION $c38_v_now; summary differs from $c38_last_tag's (or version unchanged)"
+  fi
+  c38_lines=$(awk 'END{print NR}' VERSION)
+  [ "$c38_lines" -eq 2 ] || ko "check 38: VERSION must have exactly two lines (has $c38_lines)"
+else
+  note "check 38: no previous tag with a VERSION file — skipped"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 39 — PROJECT-CUSTOM STAYS, AND THE POINTER LINE NAMES BOTH HOMES
+# (v3.1 Phase 3, task 3.2). The plan asked for CLAUDE.md to become fully
+# template-owned with project instructions moved to `.claude/rules/project.md`;
+# that move was reversed on measurement (an unscoped or session-start-absent
+# rules file reaches nobody, so CLAUDE.md's PROJECT-CUSTOM region is the only
+# always-on channel). This check is the inversion of what the plan asked for:
+# the markers staying, plus a pointer line naming both homes, is now the
+# invariant, not their removal.
+#
+# THE SECOND REASON, and it is the one that makes this check load-bearing
+# rather than stylistic: the sync server preserves a consumer's region by
+# splicing it into the template, and that splice happens only when BOTH sides
+# carry the markers. Measured on a real consumer fixture (penumbra, 2026-09-09,
+# 24 runs across two server builds): with the markers present in the template,
+# a region-only difference round-trips byte-identically in the WORKING file;
+# with the markers ABSENT from the template, the consumer's region is dropped
+# from the working file and survives only in `backup_dir`. That holds on both
+# the pre- and post-fix server, so it is a property of the design, not a bug
+# someone will fix later.
+#
+# So removing these markers from the template does not merely change where
+# instructions live — IT SILENTLY DISCARDS EVERY CONSUMER'S REGION ON THEIR NEXT
+# SYNC. If you are here because the delivery rationale above no longer applies
+# and you are about to delete the markers, this is the reason not to: the
+# guarantee is conditional on the template shipping them, and the failure lands
+# on the consumer, not on us. Change the server's splice rule first, or accept
+# that you are choosing the data loss.
+# ---------------------------------------------------------------------------
+echo
+note "Check 39: every variant CLAUDE.md keeps PROJECT-CUSTOM:BEGIN/END and a pointer line naming both homes"
+c39_fail=0
+for v in $VARIANTS; do
+  f="templates/$v/CLAUDE.md"
+  if [ ! -f "$f" ]; then
+    ko "check 39: $f missing"; c39_fail=1; continue
+  fi
+  grep -qF '<!-- PROJECT-CUSTOM:BEGIN' "$f" || { ko "check 39: $f missing PROJECT-CUSTOM:BEGIN"; c39_fail=1; }
+  [ "$(tail -n 1 "$f")" = "<!-- PROJECT-CUSTOM:END -->" ] || { ko "check 39: $f missing/misplaced PROJECT-CUSTOM:END"; c39_fail=1; }
+  grep -qF '.claude/rules/' "$f" || { ko "check 39: $f has no pointer line naming .claude/rules/"; c39_fail=1; }
+done
+[ "$c39_fail" -eq 0 ] && ok "check 39: 6/6 variant CLAUDE.md files carry both PROJECT-CUSTOM markers and a .claude/rules/ pointer line"
+
+# ---------------------------------------------------------------------------
+# Check 40 — no variant may ship a PROJECT_CONTEXT.md key spelling that our OWN
+# ownership.json audit config marks deprecated (v3.1.3).
+#
+# FOUND BY A CONSUMER, not by us: templates/ownership.json audits
+# PROJECT_CONTEXT.md with deprecated_keys {"Gate Command": "Gate",
+# "Test Command": "Test"}, while templates/java and templates/python shipped
+# exactly those two spellings. A fresh adoption of either variant was BORN
+# DEPRECATED against the toolkit's own table -- the config and the artifact it
+# describes disagreed, and nothing compared them.
+#
+# This is the same class as check 39's real rationale and as the v3.1.2
+# template_version literal: a constant repeated in two places with no check
+# joining them drifts, and the drift is invisible because each side looks
+# right on its own.
+#
+# TWO-SIDED: the control arm proves the scan can fire. A check that cannot
+# fail looks exactly like one that passed.
+# ---------------------------------------------------------------------------
+note "Check 40: no variant ships a PROJECT_CONTEXT.md key spelling ownership.json calls deprecated"
+c40_fail=0
+c40_rows=0
+c40_dep=$(sed -n 's/.*"deprecated_keys"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' templates/ownership.json \
+          | grep -o '"[^"]*"[[:space:]]*:' | tr -d '":' | sed 's/[[:space:]]*$//')
+if [ -z "$c40_dep" ]; then
+  ko "check 40: could not read deprecated_keys out of templates/ownership.json -- the scan would be vacuous"
+  c40_fail=1
+fi
+for v in $VARIANTS; do
+  f="templates/$v/PROJECT_CONTEXT.md"
+  [ -f "$f" ] || { ko "check 40: $f missing"; c40_fail=1; continue; }
+  while IFS= read -r dk; do
+    [ -n "$dk" ] || continue
+    c40_rows=$((c40_rows + 1))
+    if grep -q "^- \*\*$dk\*\*:" "$f"; then
+      ko "check 40: $f ships '- **$dk**:', which ownership.json marks deprecated"
+      c40_fail=1
+    fi
+  done <<EOF
+$c40_dep
+EOF
+done
+# Control arm: the same grep against a spelling every variant DOES ship must
+# fire, or the loop above proves nothing about the files it read.
+c40_ctl=0
+for v in $VARIANTS; do
+  grep -q "^- \*\*Gate\*\*:" "templates/$v/PROJECT_CONTEXT.md" 2>/dev/null && c40_ctl=$((c40_ctl + 1))
+done
+if [ "$c40_ctl" -ne 6 ]; then
+  ko "check 40 CONTROL: '- **Gate**:' found in $c40_ctl/6 variants -- the scan cannot be trusted (or a variant lost its Gate key)"
+  c40_fail=1
+fi
+[ "$c40_fail" -eq 0 ] && ok "check 40: $c40_rows variant/deprecated-key pairs clean; control found **Gate** in 6/6"
+
+# ---------------------------------------------------------------------------
+# Check 41 — the declared-key readers MUST keep the `( Command)?` tolerance
+# (v3.1.4). This is check 40's own exposure, found by the consumer with the
+# most to lose from it.
+#
+# Check 40 normalised the templates to `**Gate**` / `**Test**`. That is right
+# for new adoptions -- and it means NO TEMPLATE EXERCISES THE OLD SPELLING ANY
+# MORE. But `PROJECT_CONTEXT.md` is a `once` file, so every existing consumer
+# who was seeded with `**Gate Command**` keeps it FOREVER; the normalised
+# template never reaches them. The regex tolerance in these readers is now the
+# only thing standing between such a consumer and a gate that resolves to the
+# empty string.
+#
+# AND AN EMPTY GATE_CMD IS NOT AN ERROR -- it is a no-op that exits 0. So
+# removing the tolerance would present to those consumers as "the gate passes",
+# not as a failure. Silent, and in the direction of less enforcement.
+#
+# Nothing else in this repo would go red if someone deleted `( Command)?` as
+# dead code, because after check 40 it has no template-side user. This check IS
+# that user. Do not remove it without also proving no consumer carries the old
+# spelling, which is not a thing this repo can observe.
+#
+# TWO-SIDED: the control proves the scan reads real reader lines.
+# ---------------------------------------------------------------------------
+note "Check 41: declared-key readers keep the ( Command)? tolerance for once-seeded consumers"
+c41_fail=0
+c41_hits=0
+c41_bad=0
+# ENUMERATE the readers; do not assert a KNOWN LIST. A fixed list passes when
+# someone adds a FIFTH reader without the tolerance -- and that is now the
+# likeliest way this regresses, because after check 40 the pattern has no
+# template-side user: a new reader written against the normalised `**Gate**`
+# spelling is correct by every template in this repo and silently wrong for
+# every once-seeded consumer.
+#
+# A fixed COUNT (exactly 4) would catch that, but it also goes red for a
+# CORRECTLY written fifth reader, which is a false alarm on a good change.
+# Enumerating and requiring the tolerance on each is strictly better: it fails
+# on a new reader that lacks it, passes one that has it, and the floor below
+# still notices readers disappearing.
+#
+# The predicate wants a real reader line -- a `grep -E` against
+# PROJECT_CONTEXT.md naming a **Gate**/**Test** key -- not the prose around it,
+# which mentions both file and key freely.
+c41_readers=$(grep -n 'grep -E' hooks/*.sh 2>/dev/null \
+              | grep 'PROJECT_CONTEXT\.md' \
+              | grep -E '\\\*\\\*(Gate|Test)')
+if [ -z "$c41_readers" ]; then
+  ko "check 41: found NO declared-key reader lines at all -- the enumerator is broken, or every reader was removed; either way this check is vacuous"
+  c41_fail=1
+fi
+while IFS= read -r c41_line; do
+  [ -n "$c41_line" ] || continue
+  c41_hits=$((c41_hits + 1))
+  c41_where=${c41_line%%:*}:$(printf '%s' "$c41_line" | cut -d: -f2)
+  # -F on a distinctive literal substring: the reader lines carry the pattern
+  # as `\*\*Gate( Command)?\*\*:` -- backslashes and all -- so a regex written
+  # to look like the pattern does not match the source that contains it. The
+  # first version of this check did exactly that and reported all four sites
+  # missing while the tolerance was present in every one.
+  case "$c41_line" in
+    *"( Command)?"*) ;;
+    *) ko "check 41: $c41_where reads a declared key WITHOUT the ( Command)? tolerance -- every once-seeded consumer carrying the old spelling resolves an EMPTY command there, which exits 0 and reads as a pass"
+       c41_bad=$((c41_bad + 1)); c41_fail=1 ;;
+  esac
+done <<EOF
+$c41_readers
+EOF
+# Floor: the four known readers at the time of writing. Fewer means a reader
+# was deleted rather than fixed, which the per-line scan above cannot see.
+if [ "$c41_hits" -lt 4 ]; then
+  ko "check 41: only $c41_hits declared-key reader sites found, expected at least 4 -- a reader was removed, or the enumerator stopped matching one"
+  c41_fail=1
+fi
+# Control: the same grep for a spelling no reader has must NOT match, or the
+# pattern above is matching something other than what it names.
+if grep -qF 'Gruntle( Command)?' hooks/gate-before-merge.sh 2>/dev/null; then
+  ko "check 41 CONTROL: matched a key no reader defines -- the scan is not reading what it claims"
+  c41_fail=1
+fi
+[ "$c41_fail" -eq 0 ] && ok "check 41: $c41_hits enumerated reader sites all keep the tolerance ($c41_bad without); control did not match a fabricated key"
+
+# ---------------------------------------------------------------------------
+# Check 42 — `requires_skill` in templates/ownership.json can never exceed the
+# toolkit's own VERSION, and must be tag-shaped (v3.1.4 follow-up).
+#
+# `requires_skill` is read by the sync server AT CALL TIME from whatever
+# checkout the consumer has, with no review on the server side and no
+# monotonicity: unlike `requires_server`, which can only move toward more
+# protection, this field can be wrong in the HARMFUL direction. A well-formed
+# but wrong value -- `">=v9.0.0"` -- refuses every consumer's write-mode
+# migration with no server release and no error on our side. The server's
+# unparseable->warn rule catches garbage; it does not catch a plausible
+# mistake. Raised by the server session as its second objection to the guard.
+#
+# Two properties, each two-sided:
+#   (a) SHAPE: exactly `>=vX.Y.Z`. A bare `3.1.3` or `>=3.1.3` is unparseable
+#       to a tag-comparing server, which proceeds-and-warns -- the guard is
+#       then silently disarmed rather than loudly wrong.
+#   (b) BOUND: floor <= "v" + VERSION line 1. A floor above the version that
+#       ships it is a floor no consumer can meet. Equality is fine (this
+#       release IS the floor); lower is fine (less protection, never lockout).
+#
+# ABSENCE IS RED, not skipped: the field has been load-bearing since v3.1.3
+# and dropping it disarms 0.3.6's guard for every consumer without any other
+# check noticing.
+#
+# LIMIT, stated so nobody over-trusts this: it constrains the file at commit
+# time in THIS repo. A consumer's old checkout can still declare an old floor.
+# That direction is strictly less protection and never a lockout, so the
+# asymmetry is the right way round.
+# ---------------------------------------------------------------------------
+note "Check 42: requires_skill is tag-shaped and never above this VERSION"
+c42_fail=0
+c42_floor=$(sed -n 's/.*"requires_skill"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' templates/ownership.json | head -1)
+c42_ours="v$(head -1 VERSION | tr -d '\r\n')"
+if [ -z "$c42_floor" ]; then
+  ko "check 42: templates/ownership.json declares NO requires_skill -- the field has been load-bearing since v3.1.3; its absence disarms the server-side skill guard for every consumer"
+  c42_fail=1
+else
+  case "$c42_floor" in
+    '>=v'[0-9]*.[0-9]*.[0-9]*) ;;
+    *) ko "check 42: requires_skill '$c42_floor' is not tag-shaped ('>=vX.Y.Z') -- a tag-comparing server cannot parse it, warns, and proceeds, so the guard is silently disarmed"
+       c42_fail=1 ;;
+  esac
+  c42_bare=${c42_floor#>=}
+  # sort -V puts the lower version first; the floor must sort first-or-equal.
+  c42_low=$(printf '%s\n%s\n' "$c42_bare" "$c42_ours" | sort -V | head -1)
+  if [ "$c42_low" != "$c42_bare" ]; then
+    ko "check 42: requires_skill '$c42_floor' is ABOVE this toolkit's own VERSION ($c42_ours) -- no consumer can meet it, so every write-mode migration would be refused with no server release involved"
+    c42_fail=1
+  fi
+fi
+# Control arm: the same comparison must be able to fire. Evaluate it against a
+# floor that is certainly above us; if that reads as "not above", the sort is
+# not doing what the check claims.
+c42_ctl=$(printf '%s\n%s\n' "v99.0.0" "$c42_ours" | sort -V | head -1)
+if [ "$c42_ctl" != "$c42_ours" ]; then
+  ko "check 42 CONTROL: v99.0.0 did not sort above $c42_ours -- the bound comparison is inert"
+  c42_fail=1
+fi
+[ "$c42_fail" -eq 0 ] && ok "check 42: requires_skill '$c42_floor' is tag-shaped and <= $c42_ours; control detected v99.0.0 as above"
 
 # ---------------------------------------------------------------------------
 echo

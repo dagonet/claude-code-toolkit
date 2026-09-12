@@ -341,6 +341,29 @@ if ($Variant -eq "java") {
     }
 }
 
+# Auto-derived: post-edit build (hooks/post-edit-build.sh, PostToolUse Edit|Write).
+# Only the dotnet variants build after every edit; the rest declare `none`.
+if ($Variant -eq "dotnet" -or $Variant -eq "dotnet-maui") {
+    Add-Derived '{{POST_EDIT_BUILD}}' "dotnet build --no-restore -v q"
+}
+else {
+    Add-Derived '{{POST_EDIT_BUILD}}' "none"
+}
+
+# Auto-derived: gate-checked branches (hooks/gate-before-merge.sh companion
+# spec). No variant declares one at bootstrap time -- a consumer opts in later
+# by naming a glob on the PROJECT_CONTEXT.md line themselves.
+Add-Derived '{{GATE_CHECKED_BRANCHES}}' "none"
+
+# --- BOM-less UTF-8 writer. PS 5.1's `-Encoding UTF8` always writes a BOM;
+# the sync skill's `json.load(encoding="utf-8")` on the manifest raises
+# `JSONDecodeError: Unexpected UTF-8 BOM` on a ps1-bootstrapped consumer.
+function Write-Utf8NoBom {
+    param([string]$Path, [string]$Content)
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
+
 # --- SHA-256 hash function ---
 function Get-ContentHash {
     param([string]$Content)
@@ -435,6 +458,89 @@ function Get-TemplateFiles {
 }
 
 $templateFiles = Get-TemplateFiles -Source $TemplateDir
+
+# --- Classify every collected file against templates/ownership.json --------
+# Same TEMPLATE-relative contract as the .sh classifier call: feed "gitignore"
+# for the renamed .gitignore entry, not ".gitignore" -- the rule is
+# `^gitignore$`. Prefer node (already required by the hooks) and fall back to
+# a PowerShell glob matcher only when node is unavailable, recording that
+# fallback in the manifest so it is never silent.
+function Get-OwnershipClassifyName {
+    param($File)
+    if ($File.IsGitignore) { return "gitignore" }
+    return ($File.RelPath -replace '\\', '/')
+}
+
+function Invoke-PowerShellOwnershipFallback {
+    param([string[]]$Names, [string]$TablePath)
+    $table = Get-Content -Path $TablePath -Raw | ConvertFrom-Json
+    $specialChars = '.+?^$(){}|[]\'
+    $compiled = @()
+    foreach ($rule in $table.rules) {
+        $pattern = $rule.pattern
+        $re = "^"
+        $i = 0
+        while ($i -lt $pattern.Length) {
+            $c = $pattern[$i]
+            if ($c -eq '*' -and ($i + 1) -lt $pattern.Length -and $pattern[$i + 1] -eq '*') {
+                $re += ".*"
+                $i++
+                if (($i + 1) -lt $pattern.Length -and $pattern[$i + 1] -eq '/') { $i++ }
+            }
+            elseif ($c -eq '*') { $re += "[^/]*" }
+            elseif ($specialChars.IndexOf($c) -ge 0) { $re += "\" + $c }
+            else { $re += $c }
+            $i++
+        }
+        $re += "$"
+        $compiled += [PSCustomObject]@{ Regex = [regex]$re; Rule = $rule }
+    }
+    $result = @{}
+    foreach ($name in $Names) {
+        $hit = $compiled | Where-Object { $_.Regex.IsMatch($name) } | Select-Object -First 1
+        if ($hit) {
+            $target = if ($hit.Rule.PSObject.Properties.Match('target').Count -gt 0) { $hit.Rule.target } else { "-" }
+            $result[$name] = @{ ownership = $hit.Rule.ownership; target = $target }
+        }
+        else {
+            $result[$name] = @{ ownership = "UNCLASSIFIED"; target = "-" }
+        }
+    }
+    return $result
+}
+
+$classifyNames = $templateFiles | ForEach-Object { Get-OwnershipClassifyName $_ } | Select-Object -Unique
+$ownershipTablePath = Join-Path $PSScriptRoot "templates/ownership.json"
+$script:classifierFallback = $false
+$classResult = @{}
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if ($nodeCmd -and $classifyNames.Count -gt 0) {
+    $classifyScript = Join-Path $PSScriptRoot "scripts/lib/ownership-classify.mjs"
+    $output = & node $classifyScript $ownershipTablePath @classifyNames
+    foreach ($line in $output) {
+        $parts = $line -split "`t"
+        $classResult[$parts[0]] = @{ ownership = $parts[1]; target = $parts[2] }
+    }
+}
+elseif ($classifyNames.Count -gt 0) {
+    $classResult = Invoke-PowerShellOwnershipFallback -Names $classifyNames -TablePath $ownershipTablePath
+    $script:classifierFallback = $true
+}
+
+# Manifest key + ownership class for template file $File, from the
+# classification above. Returns $null when the classifier did not match
+# (e.g. CLAUDE.local.md -- unclassified_template_files server-side), which
+# the caller uses to leave the file out of the manifest entirely.
+function Get-ManifestKeyAndOwnership {
+    param($File)
+    $cname = Get-OwnershipClassifyName $File
+    $entry = $classResult[$cname]
+    if (-not $entry -or ($entry.ownership -ne "template" -and $entry.ownership -ne "once")) {
+        return $null
+    }
+    $key = if ($entry.target -and $entry.target -ne "-") { $entry.target } else { ($File.RelPath -replace '\\', '/') }
+    return @{ Key = $key; Ownership = $entry.ownership }
+}
 
 # --- Wrap an existing CLAUDE.md into the template's PROJECT-CUSTOM region ---
 #
@@ -717,15 +823,6 @@ $skippedFiles = @()
 
 # --- Manifest tracking ---
 $manifestFiles = @{}
-$alwaysModified = @("PROJECT_CONTEXT.md")
-$variantCoders = @{
-    "dotnet"      = @(".claude/agents/dotnet-coder.md")
-    "dotnet-maui" = @(".claude/agents/dotnet-coder.md")
-    "rust-tauri"  = @(".claude/agents/rust-coder.md")
-    "java"        = @(".claude/agents/java-coder.md")
-    "python"      = @(".claude/agents/python-coder.md")
-    "general"     = @()
-}
 
 foreach ($f in $templateFiles) {
     $targetFile = Join-Path $TargetDir $f.RelPath
@@ -737,7 +834,9 @@ foreach ($f in $templateFiles) {
             # Append entries not already present
             $appendBlock = Get-GitignoreAppendBlock -SourceContent $sourceContent -TargetFile $targetFile
             if ($appendBlock) {
-                Add-Content -Path $targetFile -Value $appendBlock -Encoding UTF8
+                $existingTargetContent = [System.IO.File]::ReadAllText($targetFile, [System.Text.Encoding]::UTF8)
+                # Add-Content always terminated the value with a line ending; WriteAllText does not, so append it explicitly (byte-identical to the old output, measured 2026-09-06).
+                Write-Utf8NoBom -Path $targetFile -Content ($existingTargetContent + $appendBlock + "`r`n")
                 $copiedFiles += "$($f.RelPath) (appended)"
                 Add-RenderedFile -RelPath $f.RelPath -Text $appendBlock
             }
@@ -754,28 +853,34 @@ foreach ($f in $templateFiles) {
             foreach ($key in $replacements.Keys) {
                 $sourceContent = $sourceContent.Replace($key, $replacements[$key])
             }
-            Set-Content -Path $targetFile -Value $sourceContent -Encoding UTF8 -NoNewline
+            Write-Utf8NoBom -Path $targetFile -Content $sourceContent
             $copiedFiles += $f.RelPath
             Add-RenderedFile -RelPath $f.RelPath -Text $sourceContent
+        }
+        # gitignore is `once` ownership -- no hash regardless of branch above.
+        $manifestInfo = Get-ManifestKeyAndOwnership -File $f
+        if ($manifestInfo) {
+            $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
         }
         continue
     }
 
     # Wrap an existing CLAUDE.md instead of skipping it
     if (Test-ShouldWrapClaudeMd $f.RelPath) {
-        $rawContent = Get-Content -Path $f.Source -Encoding UTF8 -Raw
-        $renderedTemplate = $rawContent
-        foreach ($key in $replacements.Keys) { $renderedTemplate = $renderedTemplate.Replace($key, $replacements[$key]) }
         $wrapped = Get-RenderedContent -File $f
-        Set-Content -Path $targetFile -Value $wrapped -Encoding UTF8 -NoNewline
+        Write-Utf8NoBom -Path $targetFile -Content $wrapped
         $copiedFiles += "$($f.RelPath) (existing content wrapped into PROJECT-CUSTOM)"
         Add-RenderedFile -RelPath $f.RelPath -Text $wrapped
-        $manifestFiles[($f.RelPath -replace '\\', '/')] = @{
-            templateHash    = Get-ContentHash $renderedTemplate
-            templateRawHash = Get-ContentHash $rawContent
-            localHash       = Get-ContentHash $wrapped
-            locallyModified = $true
-            reason          = "Existing CLAUDE.md wrapped into the PROJECT-CUSTOM region"
+        # Hash covers the content AS WRITTEN, i.e. the wrapped file, not the
+        # pre-wrap intermediate.
+        $manifestInfo = Get-ManifestKeyAndOwnership -File $f
+        if ($manifestInfo) {
+            if ($manifestInfo.Ownership -eq "template") {
+                $manifestFiles[$manifestInfo.Key] = @{ ownership = "template"; hash = "sha256:" + (Get-ContentHash $wrapped) }
+            }
+            else {
+                $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
+            }
         }
         continue
     }
@@ -803,26 +908,18 @@ foreach ($f in $templateFiles) {
     # modes disagree about the one line that decides whether the trunk is
     # protected. (The .sh half had exactly this bug, caught by a bootstrap test.)
     if ($f.RelPath -eq 'PROJECT_CONTEXT.md') { $content = Set-ProtectedBranches -Text $content }
-    Set-Content -Path $targetFile -Value $content -Encoding UTF8 -NoNewline
+    Write-Utf8NoBom -Path $targetFile -Content $content
     $copiedFiles += $f.RelPath
     Add-RenderedFile -RelPath $f.RelPath -Text $content
 
-    # Track for manifest (skip .gitignore — it's merge-only, not a template-owned file)
-    if (-not $f.IsGitignore) {
-        $relKey = $f.RelPath -replace '\\', '/'
-        $isModified = ($relKey -in $alwaysModified) -or ($relKey -in $variantCoders[$Variant])
-        $reason = if ($relKey -in $alwaysModified) { "Project-specific config" }
-                  elseif ($relKey -in $variantCoders[$Variant]) { "Project-specific agent" }
-                  else { $null }
-        $replacedHash = Get-ContentHash $content
-        $entry = @{
-            templateHash    = $replacedHash
-            templateRawHash = Get-ContentHash $rawContent
-            localHash       = $replacedHash
-            locallyModified = $isModified
+    $manifestInfo = Get-ManifestKeyAndOwnership -File $f
+    if ($manifestInfo) {
+        if ($manifestInfo.Ownership -eq "template") {
+            $manifestFiles[$manifestInfo.Key] = @{ ownership = "template"; hash = "sha256:" + (Get-ContentHash $content) }
         }
-        if ($reason) { $entry.reason = $reason }
-        $manifestFiles[$relKey] = $entry
+        else {
+            $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
+        }
     }
 }
 
@@ -858,8 +955,37 @@ if ($warnings.Count -gt 0) {
 }
 
 # --- Generate template manifest ---
-$templateHead = & git -C $PSScriptRoot rev-parse --short HEAD 2>$null
-if (-not $templateHead) { $templateHead = "unknown" }
+# Same $ErrorActionPreference = 'Stop' trap as the default-branch detection above
+# (:153-175): a toolkit extracted without .git (e.g. a ZIP download) makes git
+# write "not a git repository" to stderr, which under 'Stop' is a terminating
+# error -- aborting the script here, after most files are already written but
+# before the manifest and the auto-mode snippet, leaves a bootstrap that LOOKS
+# complete and can never sync. Guard it the same way: fall back to "unknown".
+$templateCommit = "unknown"
+$prevEapHead = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $headOut = (& git -C $PSScriptRoot rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $headOut) { $templateCommit = $headOut }
+}
+finally { $ErrorActionPreference = $prevEapHead }
+
+# DERIVED, never a literal -- see the matching comment in setup-project.sh. A
+# hardcoded "v3.1.0" survived the v3.1.1 bump and stamped projects with a tag
+# that did not match template_commit. VERSION line 1 is the single source, read
+# from the file rather than `git describe` so an export with no tags still
+# stamps the truth.
+$templateVersion = $null
+$versionPath = Join-Path $PSScriptRoot "VERSION"
+if (Test-Path $versionPath) {
+    $versionLine = (Get-Content $versionPath -TotalCount 1)
+    if ($versionLine -and $versionLine.Trim()) { $templateVersion = "v" + $versionLine.Trim() }
+}
+# $null, not "unknown": ConvertTo-Json writes it as JSON null, which is the
+# value the v3 contract names and what the sync server emits from the same
+# condition. A sentinel string is truthy and passes a consumer's `is None`
+# check before failing as a ref. $templateCommit keeps "unknown" -- that IS its
+# contract.
 
 # Build placeholders map (only actually-provided values)
 $placeholderMap = [ordered]@{}
@@ -892,8 +1018,36 @@ if ($Variant -eq "python") {
 
 # Command values and the default branch, whichever way they were set (explicit flag
 # or variant default) -- the manifest must record what was actually substituted.
-foreach ($name in @('DEFAULT_BRANCH', 'BUILD_COMMAND', 'TEST_COMMAND', 'FORMAT_COMMAND', 'LINT_COMMAND', 'GATE_COMMAND')) {
+foreach ($name in @('DEFAULT_BRANCH', 'BUILD_COMMAND', 'TEST_COMMAND', 'FORMAT_COMMAND', 'LINT_COMMAND', 'GATE_COMMAND', 'POST_EDIT_BUILD', 'GATE_CHECKED_BRANCHES')) {
     if ($replacements.ContainsKey("{{$name}}")) { $placeholderMap[$name] = $replacements["{{$name}}"] }
+}
+
+# Rerun preservation: under manifest v3 a file absent from `files` is
+# project-owned BY DEFINITION, so rebuilding the manifest from only this
+# run's writes would silently unshare every template file the run did not
+# touch. Merge instead -- entries this run wrote (already in $manifestFiles)
+# win; every other old entry (even one whose file has since vanished from
+# the target; the sync server is the right place to report that) is carried
+# forward verbatim.
+$existingManifestPath = Join-Path (Join-Path $TargetDir ".claude") "template-manifest.json"
+if (Test-Path $existingManifestPath) {
+    try {
+        $oldManifest = Get-Content -Path $existingManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($oldManifest.files) {
+            foreach ($prop in $oldManifest.files.PSObject.Properties) {
+                if (-not $manifestFiles.ContainsKey($prop.Name)) {
+                    $oldEntry = @{ ownership = $prop.Value.ownership }
+                    if ($prop.Value.PSObject.Properties.Name -contains 'hash') {
+                        $oldEntry['hash'] = $prop.Value.hash
+                    }
+                    $manifestFiles[$prop.Name] = $oldEntry
+                }
+            }
+        }
+    }
+    catch {
+        # Unreadable/corrupt old manifest -- proceed with this run's entries only.
+    }
 }
 
 # Build ordered files map
@@ -903,13 +1057,21 @@ foreach ($key in ($manifestFiles.Keys | Sort-Object)) {
 }
 
 $manifest = [ordered]@{
-    version      = 2
-    variant      = $Variant
-    templateRepo = ($PSScriptRoot -replace '\\', '/')
-    lastSynced   = $templateHead
-    placeholders = $placeholderMap
-    files        = $orderedFiles
+    manifest_version = 3
+    variant          = $Variant
+    templateRepo     = ($PSScriptRoot -replace '\\', '/')
+    template_version = $templateVersion
+    template_commit  = $templateCommit
+    # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
+    # the region splice, so applying CLAUDE.md under them overwrites a populated
+    # PROJECT-CUSTOM region with the template's empty seed. See setup-project.sh
+    # for the full note; the floor protects every sync after the first, and the
+    # sync skill's server_version check covers the first migration.
+    requires_server  = ">=0.3.2"
+    placeholders     = $placeholderMap
+    files            = $orderedFiles
 }
+if ($script:classifierFallback) { $manifest.classifier = "powershell-fallback" }
 
 $manifestJson = $manifest | ConvertTo-Json -Depth 4
 $manifestPath = Join-Path (Join-Path $TargetDir ".claude") "template-manifest.json"
@@ -917,7 +1079,7 @@ $manifestDir  = Split-Path $manifestPath -Parent
 if (-not (Test-Path $manifestDir)) {
     New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
 }
-Set-Content -Path $manifestPath -Value $manifestJson -Encoding UTF8 -NoNewline
+Write-Utf8NoBom -Path $manifestPath -Content $manifestJson
 $copiedFiles += ".claude/template-manifest.json"
 Write-Host "  [+] .claude/template-manifest.json (generated)" -ForegroundColor Green
 
@@ -944,7 +1106,7 @@ if ($mcpJsonContent) {
         Write-Host "      Servers this variant would add: $names" -ForegroundColor DarkGray
     }
     else {
-        Set-Content -Path $mcpJsonPath -Value $mcpJsonContent -Encoding UTF8 -NoNewline
+        Write-Utf8NoBom -Path $mcpJsonPath -Content $mcpJsonContent
         Write-Host "  [+] .mcp.json (generated at repo root)" -ForegroundColor Green
     }
 }

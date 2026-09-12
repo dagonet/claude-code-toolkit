@@ -12,10 +12,18 @@
      Absent, empty, or an unfilled {{...}} all fall back to `main master`;
      `none` protects nothing (branch rules only; a PR merge stays gated). -->
 - **Protected branches**: main master
+<!-- Optional. A merge onto a matching branch still needs a fresh gate
+     artifact, exactly like a protected branch, but a PUSH to it stays
+     ungated -- for a session/worktree branch that lands milestones before one
+     PR. GLOBS, space- or comma-separated. Absent, `none`, or empty all mean
+     "no gate-checked branches"; an unfilled {{...}} is reported, not silently
+     dropped. A branch listed here AND above is still protected. -->
+- **Gate-checked branches**: {{GATE_CHECKED_BRANCHES}}
 
 ## Commands
 
 - **Build**: `cargo build --manifest-path src-tauri/Cargo.toml`
+- **Test**: {{TEST_COMMAND}}
 - **Test (backend)**: `cargo test --manifest-path src-tauri/Cargo.toml`
 - **Test (frontend)**: `npm test`
 - **Format (backend)**: `cargo fmt --manifest-path src-tauri/Cargo.toml`
@@ -23,6 +31,10 @@
 - **Lint (backend)**: `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`
 - **Lint (frontend)**: `npm run lint`
 - **Gate**: {{GATE_COMMAND}}
+- **Post-edit build**: {{POST_EDIT_BUILD}}
+<!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
+- **PO write surface**: none
+<!-- extra path prefixes the PO may write directly, space-separated; `none` = the template default -->
 <!-- Declaring BOTH means the Test runs on commit and the Gate does not, so no artifact is minted and every merge needs a separate `bash hooks/run-gate.sh`. Worth it only above roughly gate_seconds / (gate_seconds - test_seconds) commits per PR — measure yours. Below that, declare the Gate alone and leave the Test field empty (a literal `none` is NOT an opt-out here: it is eval'd as a command and blocks every commit — measured 2026-09-03). -->
 <!-- Join Gate command steps with `&&`, never `;` — `;` discards an earlier step's failure status, so `<real gate> ; <anything>` exits 0 and the gate mints a pass artifact on a failing suite. -->
 

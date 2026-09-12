@@ -208,7 +208,7 @@ See the *Full Settings JSON* block above for the shipped values. Only four are o
 | `context7` | on | Up-to-date library documentation lookup. |
 | `skill-creator` | on | **Enabled in v2.0 PR5.** Ships skill scaffolding, `evals/evals.json` authoring, LLM grading, and benchmarking — the replacement for the toolkit's deleted `/skill-eval` and `/skill-improve` commands and its hand-rolled eval convention. |
 | `frontend-design`, `feature-dev`, `code-simplifier`, `claude-md-management`, `ralph-loop`, `claude-code-setup`, `chrome-devtools-mcp` | off | Unused in six weeks of measured sessions. Turn one on when you have a reason, not by default. |
-| `context-mode` (third-party) | not shipped | Optional. It lives on a non-official marketplace, so neither it nor its `extraKnownMarketplaces` entry is part of this reference. `permissions.allow` still carries its tool prefix, which is a harmless no-op when the plugin is absent. |
+| `context-mode` (third-party) | **not recommended** | Dropped from the recommended set in v3.1.5 on measurement — `mcp-servers/HOWTO.md` has the numbers (guidance ×3 per turn, 28.6 % primary-tool failure, a `CLAUDE.md` append on every server spawn). It lives on a non-official marketplace, so neither it nor its `extraKnownMarketplaces` entry is part of this reference. `permissions.allow` still carries its tool prefix as a harmless no-op, and check 37 keeps the sentinel that stops its `CLAUDE.md` injection for anyone who still runs it. |
 
 ### `alwaysThinkingEnabled`
 
@@ -444,7 +444,7 @@ Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `c
 
 `advisorModel` is shipped as `"opus"` (top level). It picks the model behind the `advisor` reviewer tool, which is a different dial from `model` and the effort level: the advisor sees the full transcript and is worth spending on even when the session itself runs cheaper.
 
-> The plan-mode allow hook for context-mode tools (`hooks/allow-ctx-plan.sh`) was removed in v2.0 PR3 along with the mandatory context-mode routing. The plugin is optional now; if you still run it and want the plan-mode prompts suppressed, re-add an `allow` PreToolUse hook for the `ctx_*` matchers — the mechanism (PreToolUse runs before the permission system, so `permissionDecision: "allow"` pierces plan mode) is unchanged.
+> The plan-mode allow hook for context-mode tools (`hooks/allow-ctx-plan.sh`) was removed in v2.0 PR3 along with the mandatory context-mode routing. The plugin is not recommended since v3.1.5 (`mcp-servers/HOWTO.md` has the measurements); if you still run it and want the plan-mode prompts suppressed, re-add an `allow` PreToolUse hook for the `ctx_*` matchers — the mechanism (PreToolUse runs before the permission system, so `permissionDecision: "allow"` pierces plan mode) is unchanged.
 
 ### Delegation Enforcement (PreToolUse, Project-Level — templates)
 

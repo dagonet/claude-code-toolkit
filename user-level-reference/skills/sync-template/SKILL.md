@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.0.4 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v3.1.5 -->
 
 # Sync Template (Downstream)
 
@@ -12,7 +12,7 @@ Pull updates from the claude-code-toolkit template repo into the current project
 
 **The line above is the version of the body YOU LOADED, and you must be able to state it.** A running session obeys the skill body it read at session start, not the file on disk — measured live: an installed `SKILL.md` byte-identical to the current release while sessions started earlier were still executing the previous version's steps. So *"re-copy `SKILL.md`"* and *"the drift check reports 0"* can both pass while every live session runs the old workflow. Step 1 checks this marker against the installed file.
 
-**Requires:** `template-sync-tools` MCP server registered and running, **version >= 0.2.0**.
+**Requires:** `template-sync-tools` MCP server registered and running, **version >= 0.3.2** — read from the `template_load_manifest` response, not from `pip show` or the checkout. This header used to say `>= 0.2.0` while step 1 below halted under 0.3.2; a skimmer who read the header and stopped got a number three minor versions under the one that protects them. `>= 0.2.0` holds only for a consumer whose toolkit checkout predates `templates/ownership.json`, and there is no such consumer left: that file's presence is what makes `migration_required` true, and a v3 manifest enforces `">=0.3.2"` at load.
 
 > The two repos keep **independent** semver and ship on different cadences — do not expect the numbers to match. They are related by this stated contract instead. `template-sync-tools` 0.1.0 carries a classification bug that silently OVERWRITES a file the user chose to keep; 0.2.0 is the first release with the fix. Check the version at the first `template_*` call and stop if it is older.
 >
@@ -34,10 +34,41 @@ Compare that to the marker at the top of *this text as you loaded it*, and **sta
 
 **The honest limit, and it is the important half: this marker cannot rescue a session already at risk.** A session running an *older* body has no assertion in it to fire and can never self-detect — it will simply not perform this check. The marker prevents the **next** occurrence, not the current one. If a stale run is suspected and this check is absent from what you loaded, that absence *is* the answer.
 
+**And a clean drift check is NOT evidence about your session.** `scripts/verify-user-level-drift.sh` reporting `29/29 in sync, 0 drift` compares the released tree against the files **on disk**. It is a correct answer to a different question: it says the body a *new* session would load is current, and says nothing about the body *this* session is running. The two diverge exactly when it matters, and the divergence presents as a green check. A consumer session was measured in precisely that state — disk byte-identical to the release, drift clean, executing a body from three releases earlier. **Re-copying is the action that feels like the fix; the restart is the one that is.**
+
+**`template_load_manifest` MUST be the FIRST `template_*` call of the sync, and you STOP on `valid:false`. This is load-bearing, and here is why it cannot be reordered:**
+
+> **The manifest's `requires_server` floor is enforced ONLY at `template_load_manifest` (measured against the real 0.3.1 reader, not a design doc).** `template_compute_status` and `template_apply_file` do **not** re-check it. A skill that skips straight to status against a manifest declaring a newer server than the one installed gets a normal-looking status answer instead of a refusal — a **silent** failure, not a loud one. There is exactly one gate for this floor and it is this call; anything read from a later call about server compatibility is not a substitute for it.
+
 Then call `template_load_manifest(project_path=".")`.
 
-- If `valid` is false, stop and show the errors to the user.
+- If `valid` is false, **stop** and show the errors to the user — this is the only place a `requires_server` mismatch surfaces, so a false here is not recoverable by continuing.
 - If `warnings` mentions v1 migration, inform the user their manifest will be upgraded to v2.
+
+**STOP BELOW `server_version` 0.3.2 IF THIS SYNC WOULD MIGRATE THE MANIFEST TO v3.** Read `server_version` from THIS response — not `pip show`, not the `dist-info`, not the tag, not the source checkout; all four disagree on a real machine, and only this one describes the process that would perform the sync. If `migration_required` is true and `server_version` is below `0.3.2`, **stop and tell the user**: their server predates the region splice, so migrating the manifest to v3 and then applying `CLAUDE.md` overwrites a populated `PROJECT-CUSTOM` region with the template's empty seed. They need to restart the MCP server onto 0.3.2+ and re-read this field — **a running server executes whatever it imported at spawn, so upgrading on disk changes nothing until the process restarts.** And read it in the run that will perform the sync: **the same source disagrees with itself across a restart.** One session measured `0.3.2`, its user reconnected the server, and the field then read `0.3.3` — the earlier reading was not wrong when taken, it was wrong to still believe, and nothing in between looks stale. Never carry a version number forward from an earlier turn.
+
+This gate exists because nothing else can cover the case. A v2 manifest carries no `requires_server`, so the floor cannot refuse the FIRST migration; a manifest written by 0.3.3+ declares `">=0.3.2"` and protects every sync afterwards. Two guards, neither redundant: this one covers the migration, the floor covers the rest. Measured 2026-09-09: four consumer sessions were in the armed state (`migration_required: true` on a pre-0.3.2 server) without having installed anything — the flag turned true when the toolkit shipped `templates/ownership.json`, not when they changed their server.
+
+### 1a. Manifest v3 shape
+
+The manifest is **`manifest_version: 3`**. Expect and preserve this shape — do not strip anything you do not recognise:
+
+- `variant` — the template variant this project bootstrapped from.
+- `templateRepo` and `lastSynced` are the **only** camelCase top-level keys; every other key is snake_case. Do not "normalise" one style onto the other.
+- `placeholders` — the substitution map.
+- `template_version` — **v-prefixed** (`"v3.1.0"`, never `"3.1.0"`).
+- `template_commit` — a 40-hex sha, a short sha, **or the literal string `"unknown"`**, which is treated as **absent** for base resolution (a three-way diff cannot pick a base off `"unknown"`; fall back the same way you would for a missing key).
+- `requires_server` — appears **only** in the `">=X.Y.Z"` form. Any other spec string (a caret range, a bare version, an `<`/`~` operator) is a **named error** to report to the user, not a spec to interpret and not a silent pass.
+- `unknown_keys` / `unknown_file_keys` — the manifest's own record of fields it did not recognise. **These survive round-trip.** Do not strip them when you re-serialize anything; a future manifest version's fields ride through this skill's writes unharmed only because nothing here deletes what it does not understand.
+
+### 1b. Ownership classes
+
+Every manifest-tracked path falls into exactly one class:
+
+- **`template`** — carries `hash: "sha256:<64 lowercase hex>"`. This is the ordinary auto-update/conflict machinery already described below.
+- **`once`** — carries **no `hash` key at all**, ever. A `once` file that is **absent** is created. A `once` file that is **present** is **kept**: `bytes_written: 0`, byte-for-byte preserved, and it is **never** a three-way merge candidate — there is no template content to merge it against, by definition of the class. `project.md` under `.claude/rules/` (see step 3's note below) is the shipped example.
+- **project files** — absent from the manifest entirely. Never read, written, or reported by any `template_*` call except as informational orphans (the same untracked-file population step 2b's set (c) and step 6d already discuss).
+- **`unclassified_template_files`** — a path that exists in the template tree and matches **no** ownership rule. **This is NOT defaulted to `template`.** It is reported separately and is **never applied**. Treat a non-empty `unclassified_template_files` list as something to tell the user about, not something to silently adopt one way or the other.
 
 ### 1b. Assert the Toolkit Checkout Is On a Release Tag
 
@@ -58,6 +89,116 @@ git -C <templateRepo> describe --exact-match --tags 2>/dev/null
 3. **The template tree at HEAD actually DIFFERS from the nearest tag under the manifest's tracked paths** → today's behaviour, unchanged: record HEAD as `lastSynced`, keep the `describe` suffix, and keep step 7b's "the suffix is the signal, not noise" — that sentence is scoped to THIS case, where the extra commits carry real content past the tag, never to case 2, where they do not.
 4. **Anything else** — not a descendant of any tag, or `describe` finds no tag at all → **STOP** and tell the user: "the toolkit checkout is on `<branch>@<sha>` (`git describe` = `<label>`), not a release tag — sync would record that untagged commit as `lastSynced`; ask the release owner to put the checkout on the tag, or confirm you mean to sync an untagged tree."
 
+### 1c. Migrate the Manifest to v3 (v3.1.3 — the step this file had been GATING without describing)
+
+**Until v3.1.3 `template_migrate_manifest` appeared nowhere in this file.** Step 1 told you to STOP below `server_version` 0.3.2 when `migration_required` is true, and said nothing about what to do once you clear that gate — so the consumer improvised at the one moment the region is at stake. Everything below is **measured** (a consumer's full rehearsal on a real v2 manifest) and **confirmed against the source by the server's own session**. Where the tool's docstring disagrees with the artifact, this section follows the artifact and says so.
+
+**Nothing performs this for you.** `template_load_manifest` only *reports* `migration_required` and returns (`template_sync_mcp.py:776`); it does not act on it. The v1→v2 upgrade is NOT the same shape — that happens in memory inside load and persists at the next finalize, which is why assuming symmetry here is wrong.
+
+**And skipping it is silent and permanent.** `template_finalize_sync` dispatches on `is_v3(manifest)` (`:1376`); handed a v2 manifest it takes the v2 path and writes v2 back out. No error, nothing lost, and `migration_required: true` again on every future sync forever. **The migration is not something the flow falls into. It is something this skill does on purpose, or never.**
+
+**`migration_required: true` is not an instruction.** It is computed as `v3.load_ownership(manifest["templateRepo"]) is not None` — it says the TEMPLATE CHECKOUT ships `ownership.json`, which is true for every consumer. It does not say this project needs migrating, and it does not say migration can succeed: a `gate_self_reference` hit refuses in write mode, and a missing `backup_dir` is a hard error. Read as an imperative it produces a forced step that can dead-end.
+
+**Do not migrate silently. STOP and show the user first** — migration changes the ownership model of every file at once, and after it a file the ownership table does not name is project-owned *by definition*.
+
+#### 1c-i. BEFORE migrating: take your own census (works on every server version)
+
+```
+grep -n '"resolution"\|"reason"' .claude/template-manifest.json
+```
+
+Write the paths down. These are deliberate deviations recorded in the v2 manifest, and **v3 has no equivalent, so migration drops them.** This census costs nothing, needs no field, and is the ONLY thing that works on a server too old to report the loss. It is also the census that makes an empty report meaningful — see 1c-iv.
+
+#### 1c-ii. Dry run FIRST, always
+
+```
+template_migrate_manifest(project_path=".", dry_run=True, skill_version="<the marker at the top of THIS body>")
+```
+
+**Pass `skill_version` on EVERY `template_migrate_manifest` call, and take the value from the marker at the top of THIS body — the text you are reading now — NOT the `grep` output from step 1.** Step 1 puts **two** markers in front of you: the `grep` of `~/.claude/skills/sync-template/SKILL.md`, which reports the **disk**, and the marker in the body you loaded. Only the second is this value. The `grep` result is the easier one to reach for, because it arrived as command output rather than as self-inspection — and pasting it is a defect, not a shortcut. The two disagree in **both** directions, and each produces a different failure. Installed file *newer* than the running body — a session that kept the body it read at startup — and a disk-sourced value waves a stale body through, which is the case the guard exists for. Installed file *older* than the running body — someone put an old file back, or a copy failed halfway — and a disk-sourced value **refuses a caller who did everything right**, telling them to re-copy and restart, which is exactly what they already did. A consumer session is a live instance of that right now — disk at one version, session executing an older body. Reading the file would report the disk and wave the stale body through.
+
+**THE MIGRATION CANNOT BE RUN FROM A SESSION THAT PREDATES THE SKILL BODY, AND THERE ARE TWO RESTARTS, NOT ONE.** Restarting the **MCP server** fixes the server half — the process runs whatever it imported at spawn. Only a **fresh Claude session** fixes the skill half, and that one has no in-session remedy: a session running an older body has no instruction in it to identify itself, so it passes nothing and is refused. Two different restarts, and the second is the one people skip because the first felt like the fix. Measured on two consumer sessions at once — one executing a body three releases behind its own disk, another five.
+
+Servers from 0.3.5 read `requires_skill` from `templates/ownership.json` (v3.1.3 declares `">=v3.1.3"`) and **refuse a write-mode migration when `skill_version` is absent**, because a body too old to carry this instruction sends nothing at all — absence, not a low number, is what identifies a stale skill. Older servers ignore the argument entirely, so passing it is always safe. `dry_run` is never refused for this: inspection stays open.
+
+Inspect before writing anything:
+
+- **`gate_self_reference`** — non-empty **REFUSES in write mode**. Fix it now, not mid-sync.
+- **`gate_unverified: true`** — a `**Gate**` is declared and this tool did not run it. Surface it; do not pass it through silently.
+- **`region_was_seed`** — **TRI-STATE**: `true` / `false` / **`null` = the comparison could not be made** (no region, or no base). `null` is not `false`.
+- **`migration_base`** — **never null.** When the held revision cannot be found it is the literal string `"unavailable"` plus a `migration_base_unavailable` warning. It is *truthy*, so `if not migration_base` silently proceeds as though the base resolved. **Test the warning, not falsiness.**
+- **`project_md_existing`** — an existing `.claude/rules/project.md` is NEVER overwritten (`project_md` comes back `null`).
+
+#### 1c-iii. Then migrate for real
+
+```
+template_migrate_manifest(project_path=".", backup_dir="<dir>", skill_version="<the marker at the top of THIS body>")
+```
+
+**`backup_dir` is REQUIRED unless `dry_run`** — the call is refused without it, and a step that omits it fails at the worst possible moment. It returns `backup: {claude_md, manifest}` as absolute `.pre-migration` paths.
+
+**That backup is the ONLY one covering this step's at-risk set, and step 2b does not help.** 2b backs up the *gitignored* tracked files; a consumer measured all three of their deviating paths as **non-gitignored**, so 2b covers exactly zero of them. Do not reason "2b already backed things up" here — it backed up a different set.
+
+**Migrate and apply are ONE UNIT.** Migrate does not touch `CLAUDE.md` at all — it copies it to the backup and writes only `.claude/rules/project.md` and the manifest. So between migrate and apply the repo is in a **half-state**: the manifest is v3 and already records the TEMPLATE hash for `CLAUDE.md`, while `CLAUDE.md` still holds the project's content. A consumer who stops there — context runs out, session ends — is left with a manifest that disagrees with the file on disk. Do not break between them.
+
+The order is forced, not stylistic: **migrate before apply** (migrate reads the v2 entries to compute `migration_base`), **apply before finalize** (finalize consumes the apply results). `compute_status` is *not* a precondition of migrate.
+
+#### 1c-iv. Read `dropped_resolutions` — FOUR tests, in this order
+
+There are four response shapes, and the key is absent from two of them. **Answer the questions in this order or you will answer the wrong one:**
+
+| # | Test | What it settles |
+|---|---|---|
+| 1 | `error` in the response | The call was REFUSED. Say nothing about versions or drops. |
+| 2 | `migrated: false` with a `reason` | Already v3. Nothing migrated, no fields. Not a loss report. |
+| 3 | `server_version` from the **load** response | The VERSION question — **use the version field, not key presence** |
+| 4 | key present **AND its value is a list** | The CONTENT question — then, and only then, its length |
+
+**Key presence is NOT a version oracle.** `in` answers a version question only when the key's absence has exactly one cause; here it has three (server predates 0.3.4, no migration ran, the call errored). And a `null` value passes `in` while failing truthiness, landing a consumer in "nothing was dropped" — confidently, from a null. Check the type.
+
+Then report:
+
+- **Non-empty list → DO NOT WARN ON THE LIST. JOIN IT AGAINST THE INCOMING CLASS FIRST.** This is the single most important line in the step, and two consumer sessions arrived at it independently against their own real manifests. A dropped `resolution` is a **loss only when the class replacing it is WEAKER than `keep-mine` was**:
+
+  | `manifest.files[path].ownership` in the RETURNED manifest | Verdict |
+  |---|---|
+  | `"template"` | **REAL.** The next apply overwrites. Re-apply or upstream. |
+  | `"once"` | **SAFE — and STRICTLY STRONGER than `keep-mine` was.** Apply returns `kept`, 0 bytes written. |
+  | path absent from `files{}` | **Untracked.** The server never writes it at all. |
+
+  **On 0.3.5+ the join is done for you:** each `dropped_resolutions` row is `{path, resolution, ownership}`, so read `row["ownership"]` directly — warn only on `"template"`; `"once"`, `"project"` and `null` need no warning. On 0.3.4 the row has no `ownership` key, so join against `manifest.files[path].ownership` as above. **Both paths yield the same verdict**; the row field is a convenience, not a different rule, and a row lacking the key tells you which server you are on.
+
+  **Why the asymmetry, and why the join is the discriminator rather than the count:** `keep-mine` meant *preserved at this sync*. `once` means *never overwritten again* — so for those paths the class change is an **upgrade**, and only the move to `template` is a downgrade. Everything you need is in the one response: the list, and `manifest.files[path].ownership` beside it. **Warning on the bare list produces false alarms on the first consumer who runs this** — one measured tree yields four dropped resolutions and *zero* real hazards; another yields three, of which two move to the stronger class. Four false alarms teach a consumer to skim the step, and then the one real case gets skimmed too.
+
+  For a `"template"` hit, say it precisely: **the file on disk is UNCHANGED** — only the manifest moved, to the template's hash. The deviation is still sitting in the file and is simply no longer protected. **Diff it against the template now, then upstream it or re-apply it after the apply overwrites it.** Without that sentence a consumer reads "dropped" and assumes the file already changed. And a `template` hit whose only deviation is inside the `PROJECT-CUSTOM` region is *still* not a loss — the region mechanism preserves that independently of class.
+- **Empty list, reconciled against your 1c-i census** → nothing was dropped. **An empty list on its own is unfalsifiable** — it looks identical whether the tool looked and found nothing or never looked. Compare it against the census; on a mismatch, report the census and refuse to call the migration clean.
+- **Absent on a server below 0.3.4** → say *"I cannot see whether any `keep-mine` records were dropped"*, **never** *"nothing was dropped"*. Records are still being dropped; this server cannot name them. Fall back to the 1c-i census, and offer upgrade-and-restart.
+
+**`dropped_resolutions` keys on the literal `resolution` and nothing else** (`template_sync_v3.py:1165`) — not `reason`, not `locallyModified`. The check sits *before* the class dispatch, which is why a path can appear in the list and then also be dropped as project-class. Three things follow, and the third is a real gap rather than a caveat:
+
+- A v2 manifest written by an older sync can carry **`reason`** on an entry instead. For entries that SURVIVE migration those keys are carried and reported in **`unknown_file_keys`** — read that list too.
+- For an entry **dropped** as project-class: **on 0.3.5+ its unknown keys are reported in `dropped_file_keys`**, which partitions with `unknown_file_keys` (an entry's keys land in exactly one of the two), and the values survive in the pre-migration manifest under `backup_dir`. **On 0.3.4 and below they are neither carried nor reported** — `dropped_entries` gives you the path and nothing else, and intent recorded in an unknown key on a dropped entry vanishes with no report anywhere. Same defect class as the one 0.3.4 fixed, in the branch nobody had looked at; closed in 0.3.5.
+- This is why the 1c-i census greps for **both** `resolution` and `reason`: it is taken from the v2 manifest before any of this, so it sees what no post-migration list can.
+
+#### 1c-v. Also report, because each is a change the consumer did not ask for
+
+- **`dropped_entries`** — project-class entries removed from tracking. One rehearsal silently stopped tracking `CLAUDE.local.md`; correct under v3, but say it.
+- **`redundant_project_file`** — byte-identical copies. **A SUGGESTION ONLY; nothing is ever deleted.**
+- **`unknown_keys` / `unknown_file_keys`** — preserved, not dropped. `unknown_file_keys` is where a `reason` deviation appears on an entry that *survives*.
+- **`dropped_file_keys`** (0.3.5+) — the same annotations on entries the migration *drops*. Absent on 0.3.4: that is the version signal, not "none"; the 1c-i census is your only view of them there.
+- **`region_left_in_place: true` and `region_bytes`** — **the region stays in `CLAUDE.md`; it is never copied into `project.md`.** What `project.md` gets is a header plus the **out-of-region** hunks fenced as `diff`, when there are any — measured at 136 bytes on a fixture with `hunk_count: 0`, so do not read "136 bytes" as "always header-only". Before 0.3.5 the tool's docstring claimed the region itself was written verbatim; following it sent a consumer to open a file that did not contain their instructions. 0.3.5 fixed the docstring and pinned it against the artifact with a test. The behaviour was right all along — an unscoped rules file is delivered to nobody, which is why the v3.1 cutover was reversed.
+- **`region_bytes` counts the region BODY**, not the block: one measured file reports 2695 where the block including its marker lines is 2814. Two correct numbers with different boundaries — do not diff them and report a discrepancy.
+
+#### 1c-vi. Name what `once` will silently never deliver
+
+`once` protects a file from being clobbered — and by the same mechanism the file is **never re-diffed, so template-side ADDITIONS never arrive.** That is not a bug, but it is invisible, and the consumer has no path to noticing it.
+
+After migration, tell the user which **declared `PROJECT_CONTEXT.md` keys their file lacks**, because a `once` class means nothing will ever prompt them again. As of v3.1: `**Gate-checked branches**`, `**PO write surface**`, `**Post-edit build**`. Compare their file against the shipped template's key list and name the gaps.
+
+This is not hypothetical. One consumer traced their own earlier probe being *vacuous* to a missing `**Gate-checked branches**` — the hook path never iterated, the check could not fail, and nothing in any sync would ever have told them.
+
+**Calling migrate on an already-v3 manifest is harmless.** It returns the no-op before loading ownership and writes nothing.
+
 ### 2. Compute Status
 
 Call `template_compute_status(project_path=".")`.
@@ -75,6 +216,10 @@ Sync Status: {variant} @ {template_commit} (last synced: {last_synced_commit})
 ```
 
 If everything is up-to-date and no new files, report "Already in sync" and finalize.
+
+**`local_diff_kind` — key the context-mode remedy on `insertion`, and ONLY `insertion`; `mixed` is NOT a signal.** An appended context-mode routing block reports `LOCAL_EDITED` + `insertion`, and for that specific case the honest remedy is *"move these lines into the PROJECT-CUSTOM region"*. **Do not extend that remedy to `mixed`.** All four measured consumers report `mixed` for entirely ordinary reasons — a populated PROJECT-CUSTOM region replacing the shipped placeholder is a removal plus an addition, plus whatever drift already existed outside the region — so a message keyed on `mixed` fires on every one of them and blames the context-mode plugin in four places where the plugin is not involved. If you cannot tell which measured kind produced a given diff, ask before naming a cause.
+
+**`redundant_project_file` — offer deletion ONLY when the server can prove byte-identity from a hash it already holds.** A project file the server reports as duplicating shipped template content is a candidate for cleanup, but the proof has to come from the server's own held hash comparison, never from a visual/textual "looks the same" read. For a **diverged** copy (content that once matched but has since changed): report it **once**, naming which sections now duplicate template-owned content, and **never** offer deletion — the file is gitignored, so there is no diff, no history, and no undo if the wrong half is kept.
 
 **Model-bump surfacing:** tell the user BEFORE applying anything — "This bump changes the operating model — review the CHANGELOG's Downstream-migration notes in the template repo first" — when ANY of these appear in the auto-update or conflict set:
 
@@ -219,6 +364,8 @@ Call `template_apply_file(project_path=".", file_path=F, source="template")`.
 4. `.claude/rules/*`
 5. `.claude/settings.json` — last of the enforcement wiring, so every script it names already exists in its new form.
 6. everything else (`CLAUDE.md`, `AGENT_TEAM.md`, docs, …).
+
+> **Delivery reality for `.claude/rules/*.md`, one paragraph, because it changes what advice this skill may give.** A rules file is delivered to a session **only** when a tool call touches a file its `paths:` key matches; it is **never** present at session or subagent start. A rules file with **no `paths:` key is delivered to nobody** — measured, not theoretical. Delivery also appears to be **once per context**, not once per matching tool call. Because of this: **never advise moving safety rules, prohibitions, or tool-selection guidance into a `.claude/rules/*.md` file** — that content needs to be present unconditionally, and a `paths:`-scoped rules file cannot deliver it. `project.md` (the `once`-class file introduced in step 1b) exists for `paths:`-scoped PROJECT CONVENTIONS only, never for anything that must be enforced or read before a tool call fires.
 
 The same order applies to the CONFLICT resolutions in step 4 and the new files in step 5: never write `settings.json` before the hooks it wires. If `hooks/` is missing or partial at the project root, run step 6b's restore BEFORE writing `.claude/settings.json` — the order above is useless if the scripts it protects were never materialised.
 

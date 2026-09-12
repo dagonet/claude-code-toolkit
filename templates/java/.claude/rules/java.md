@@ -43,3 +43,11 @@ the code MUST be rewritten until it complies.
 - Check `application.properties`/`application.yml` for new config entries
 - After branch merges, verify no `import` directives were dropped
 - Run `{{FORMAT_COMMAND}}` to ensure style compliance
+
+# Agent Routing and Build/Test Notes (moved from CLAUDE.md)
+
+**Agent fallback:** The `java-coder` agent uses Bash `mvn`/`gradle` for build and test (no Java-specific MCP tools exist yet). Do NOT substitute `coder` for `java-coder` — it carries Java/Spring-specific knowledge beyond build tool usage.
+
+**Build & Test:** use the project's Maven/Gradle build+test commands (see `PROJECT_CONTEXT.md`); for slow suites, target first (Maven `mvn test -pl module -Dtest=ClassName` / Gradle `./gradlew :module:test --tests ClassName`) then run the full suite.
+
+**Debugging:** trace read and write paths through Controller → Service → Repository → Database — a common miss is fixing one direction but not the other.

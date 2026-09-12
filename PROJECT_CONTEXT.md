@@ -17,6 +17,13 @@ placeholder-bearing; this one is filled in, because it describes a real project.
 - **Branch strategy**: feature branches per task, PR into the trunk — the branch named on the `**Protected branches**:` line directly below. Prose for humans — no hook reads this line.
 <!-- THE line the protection hooks read; space- or comma-separated names. -->
 - **Protected branches**: main
+<!-- Optional. A merge onto a matching branch still needs a fresh gate
+     artifact, exactly like a protected branch, but a PUSH to it stays
+     ungated -- for a session/worktree branch that lands milestones before one
+     PR. GLOBS, space- or comma-separated. Absent, `none`, or empty all mean
+     "no gate-checked branches"; an unfilled {{...}} is reported, not silently
+     dropped. A branch listed here AND above is still protected. -->
+- **Gate-checked branches**: none
 
 ## Commands
 
@@ -34,6 +41,10 @@ the absolute numbers as host-local; the ~10x ratio is the part that travels.
 - **Format**: none — every file is LF-only Markdown or shell; `verify-template-consistency.sh` asserts the line endings
 - **Lint**: none — see Build
 - **Gate**: `bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh`
+- **Post-edit build**: none
+<!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
+- **PO write surface**: none
+<!-- extra path prefixes the PO may write directly, space-separated; `none` = the template default -->
 <!-- Join Gate command steps with `&&`, never `;` — `;` discards an earlier step's failure status, so `<real gate> ; <anything>` exits 0 and the gate mints a pass artifact on a failing suite. -->
 
 ## Paths

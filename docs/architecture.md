@@ -50,19 +50,21 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant, 2026-07-29):
 
-| | Baseline | v1.4 | v1.5 | pre-PR4 | v2.0 | **v2.1** | Loaded |
-|---|---|---|---|---|---|---|---|
-| `templates/general/CLAUDE.md` | 17,871 | 15,281 | 13,735 | 13,892 | 10,362 | **10,560** | every session |
-| `templates/general/CLAUDE.local.md` | 13,845 | **9,352** | 9,352 | 9,413 | 9,417 | 9,417 | every session |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | 8,505 | 8,637 | 5,089 | **5,076** | every session |
-| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | 946 | 946 | every session |
-| **always-loaded total** | **41,167** | 34,084 | 32,538 | 32,888 | 25,814 | **25,999 (−36.8%)** | |
-| `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 49,724 | 49,724 | **53,288** | **on demand only** |
-| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | 2,519 | 2,519 | on demand |
-| `.claude/rules/*.md` (general: none) | — | — | — | — | 0 B | 0 B | **on matching file touch** |
-| skills | 11 | **12** | 12 | 12 | **7** | **8** | on trigger |
+| | Baseline | v1.5 | v2.0 | v2.1 | **v3.1** | Loaded |
+|---|---|---|---|---|---|---|
+| `templates/general/CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | **6,143** | every session |
+| `templates/general/CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** | every session |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | **5,076** | every session |
+| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | **3,170** | every session |
+| **always-loaded total** | **41,167** | 32,538 | 25,814 | 25,999 | **23,044 (−44%)** | |
+| `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 53,288 | **20,472** | **on demand only** |
+| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | 2,519 | on demand |
+| `.claude/rules/*.md` (general) | — | — | 0 B | 0 B | **634 B** | **on matching file touch** |
+| skills | 11 | 12 | **7** | **8** | 8 | on trigger |
 
-Per-variant always-loaded totals now: general **25,999** · python 27,181 · java 27,266 · dotnet 28,685 · rust-tauri 29,168 · dotnet-maui 30,253. The table's rules row is 0 B because `general` ships no rules; the other variants defer 1,224–2,270 B each into `.claude/rules/` (dotnet 1,224 · dotnet-maui 1,548 · python 1,701 · java 1,821 · rust-tauri 2,270), and no project ever receives more than its own variant's set.
+Per-variant always-loaded totals now: general **23,044** · python 23,745 · java 23,852 · rust-tauri 25,277 · dotnet 25,477 · dotnet-maui 27,037. The other variants defer 2,468–4,024 B each into `.claude/rules/` (dotnet 2,468 · dotnet-maui 2,884 · python 3,012 · java 3,193 · rust-tauri 4,024), and no project ever receives more than its own variant's set.
+
+Two v3.1 movements are worth reading rather than skimming. **`AGENT_TEAM.md` fell 53,288 → 20,472 B** — the largest single cut in the toolkit's history, and it is enforced rather than intended: consistency check 35 caps it at 20,480 B and `CLAUDE.md` at 6,144 B per variant, so neither can grow back without the check going red and someone deciding it should. **`PROJECT_CONTEXT.md` grew 946 → 3,170 B on purpose**, because that is where the declared keys live; every byte added there removes prose that a hook would otherwise have to trust an agent to remember.
 
 Every **v2.0** figure is `wc -c` on the shipped file, not an arithmetic carry-forward — which is what the separate **pre-PR4** column is for: PR1–PR3 moved `CLAUDE.md` (13,735 → 13,892) and `CLAUDE.local.md` (9,352 → 9,413) for reasons unrelated to the trim, so those deltas must not be attributed to PR4. The user-level row's drop is PR5 deleting the context-mode routing block.
 
@@ -70,7 +72,7 @@ The largest single document in the repo is deliberately *not* in the always-load
 
 - **v1.4 moved** — ten MCP procedures into the `mcp-usage` skill, the per-agent Open Brain tables into `AGENT_TEAM.md`. The on-demand side growing while the always-loaded side shrinks is the intended direction.
 - **v1.5 deleted** — *Working Preferences* 18 bullets → 11, because five were already enforced by a hook or by the harness itself and two carried no behavioural content. Deleting prose that a mechanism enforces is safe in a way that deleting an unenforced rule is not; the section now names the enforcing hooks instead of restating their rules.
-- **v2.0-pr4 scoped** — language conventions (*Code Style (MANDATORY)*, *Enforcement Notes*, the per-variant *Project Conventions*) moved verbatim into `.claude/rules/*.md`, each with a `paths:` frontmatter glob list. A scoped rule loads only when Claude reads or edits a matching file and is re-injected after compaction; a rule **without** `paths:` loads at launch at CLAUDE.md cost, which is why the toolkit ships scoped rules only. The always-loaded CLAUDE.md now differs between variants by a single pointer line.
+- **v2.0-pr4 scoped** — language conventions (*Code Style (MANDATORY)*, *Enforcement Notes*, the per-variant *Project Conventions*) moved verbatim into `.claude/rules/*.md`, each with a `paths:` frontmatter glob list. A scoped rule loads only when Claude reads or edits a matching file. **Corrected in v3.1, on measurement:** a rule **without** `paths:` does not "load at launch at CLAUDE.md cost" as this document previously stated — **it is delivered to nobody**, and no rules content of any kind is in a subagent's context at spawn even when scoped. A missing `paths:` key means "matches nothing", not "matches everything". The toolkit therefore ships scoped rules only — but the reason is the opposite of the one given before, and the practical consequence is that safety rules, prohibitions and tool-selection guidance cannot live in a rules file at all. The always-loaded CLAUDE.md now differs between variants by a single pointer line.
 - **v2.0-pr4 round 2 routed by audience** — two more sections left the always-loaded set once it was clear *who* each one binds. *Open Brain Context for Agents* said nothing `AGENT_TEAM.md` → *Open Brain Context for Agents* did not already say in more detail, so CLAUDE.md keeps a pointer and the tables stay on-demand. *Working Preferences* binds **developer agents**, not the PO, and all 12 coders preload `karpathy-guidelines` (`skills:`, PR3) — so its 11 bullets moved into that skill and reach the agents that act on them at spawn, at zero always-loaded cost. The hook-enforcement line stayed behind because it is PO-relevant. The routing question is not "is this important?" but "who needs it, and when?". Moving prose out of the always-loaded set removes the check that used to guard it implicitly, so check 20 pins the skill's heading and its bullet count — a floor of 11, the v1.5 post-trim set, parsed from the section rather than hard-coded to the file's current length.
 
 **CLAUDE.md is facts, not procedure.** The per-line test is "would removing this cause Claude to make a mistake?". Procedures belong in skills, "every time X do Y" belongs in a hook, "never X" belongs in a deterministic guardrail, and anything that only applies to a subset of files belongs in `.claude/rules/`. Emphasis is rationed: at most one `MUST`/`MANDATORY`-style line per CLAUDE.md (the Superpowers header, which hooks and the verify script both pin).

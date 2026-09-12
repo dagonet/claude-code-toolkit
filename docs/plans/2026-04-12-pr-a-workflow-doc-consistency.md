@@ -8,7 +8,7 @@
 
 Follow-up PR A from `docs/workflow-audit.md`. Closes four doc-inconsistency gaps identified in the workflow audit:
 
-- **W8** — Escalation Protocol exists in AGENT_TEAM.md (Rule 8 + dedicated section) but is invisible to a PO who skims only CLAUDE.md. Risk: PO loops on fix cycles indefinitely.
+- **W8** — Escalation Protocol exists in AGENT_TEAM.md (Rule 7 + dedicated section) but is invisible to a PO who skims only CLAUDE.md. Risk: PO loops on fix cycles indefinitely.
 - **W9** — "Developer owns the merge" (AGENT_TEAM.md Rule 5) is silent in CLAUDE.md. Risk: PO merges on the coder's behalf, breaking the workstream handoff model.
 - **W10** — Plan Challenge Protocol says architect shuts down after challenge, but T4 architect lifecycle says "standby". SubagentStop fires per-message and can be misread as a shutdown signal.
 - **W12** — Tester agent has `Write` / `Edit` permissions for test files only, but nothing in the agent file forbids writes to `src/`. Pure doc/discipline note (no hook change).

@@ -50,6 +50,36 @@ From the v3.0.4 consumer verification round:
 >
 > **Removing the offending string is a fix; excluding it is a standing exception that accumulates — the fix for a guard that fires is never to weaken the guard** (panoscribe). When this rule fires — a skip appears, a count comes up short — the corrective action is to remove whatever produced the skip, not to allowlist it, carve out an exception, or otherwise teach the guard to stop looking at it; every carve-out is a permanent reduction in what the guard can ever catch again.
 
+## The PROJECT-CUSTOM markers are load-bearing for DATA, not just for delivery
+
+`CLAUDE.md`'s `PROJECT-CUSTOM:BEGIN`/`:END` markers are asserted by consistency check 39. Two independent reasons require them, and only the first is obvious:
+
+1. **Delivery.** The region is the only always-on channel. A `.claude/rules/*.md` file is delivered only when a tool call touches a file its `paths:` key matches, is never present at session or subagent start, and with no `paths:` key is delivered to nobody. So safety rules, prohibitions and tool-selection guidance cannot live in a rules file.
+2. **Preservation.** The sync server keeps a consumer's region by splicing it into the template, and **the splice happens only when both sides carry the markers**. Measured on a real consumer fixture across 24 runs and two server builds: markers present in the template → a region-only difference round-trips byte-identically in the **working file**; markers **absent** from the template → the consumer's region is dropped from the working file and survives only in `backup_dir`. That holds on both the pre- and post-fix server, so it is a property of the design rather than a bug awaiting a fix.
+
+**Consequence: deleting the markers from the template silently discards every consumer's region on their next sync.** Anyone revisiting the "should CLAUDE.md be fully template-owned?" question needs both reasons in front of them; the delivery argument alone could be answered by a future harness change, and the preservation argument would still stand.
+
+**Known state, worth documenting rather than fixing:** if `BEGIN` is present and `END` is missing, the whole file is replaced and the original goes to `backup_dir` — no crash, no truncation to EOF, but the working file still loses the region.
+
+## Instrument checklist
+
+Every row below was paid for by a real false result during a release. One line each, imperative:
+
+- **Assert the thing under test EXISTS on both sides before comparing them.** A consumer diffed against a lib where the function under test did not exist and read `127` as a verdict on every row — an absent implementation returns a number too.
+- **The baseline is the sha you last measured, not the version you happen to have installed.** A consumer flagged three intended narrowings as regressions this way.
+- **A probe must inherit the suite's isolation, not just its payload shape.** An ad-hoc rig copied the suite's `session_id` but not its per-case `TMPDIR`; `json_warn_once` dedups per `(key, session_id)` with a marker that never expires, so a stale marker suppressed a warning hours later in an unrelated run. Exit codes stayed correct; only stderr vanished.
+- **A control you have to tune to make it pass is not a control.** Four "intact lib" controls were silently broken because the fixture copied one file out of a directory whose contents source each other.
+- **A clean result from a fixture that never reaches the code is vacuous.** Two consumers reported reassuring results from trees that do not declare the key under test, so the changed lines never executed. Check that the key is declared and say which rows reached the code.
+- **A test whose control matches it exactly has measured nothing.** State the expected difference between test and control before running.
+- **Rules delivery is once per context** — a row that reads two matching files and expects two injections fails for the wrong reason.
+- **A field recording your HARNESS's own call is not evidence about the library's behaviour.** A rig verifying "the expensive lookup runs only when the cheap comparison is inconclusive" logged `lookup_actually_ran: true` on every case, including the conclusive control — because the harness itself called that function to label the case. Read as evidence it would have contradicted the claim; read correctly it says nothing about it either way. The fix is to instrument the library rather than the harness: a counting wrapper monkeypatched around the function *before* the code under test is invoked, so the count reflects only what the library did (measured: 1 call when inconclusive, 0 when conclusive). **This is the same defect as a check that greps a whole bundle for a string its target merely contains — the assertion names one thing and measures another.**
+
+**Timing, measured, and no cold-cache number is quoted because none worth quoting was measured** — the earlier "~10 s" figure was a cold ceiling divided by a budget and is retracted:
+
+> roughly 3–4 s per `gate-before-merge.sh` invocation on Windows; expect ~0.5 s run-to-run variance, and a multi-harness suite on a cold cache 2–3× that.
+
+**The parser matrix's `EXP_*_SKIP` constants are measurements, not targets.** When the suite grows, derive the new value from the `skip` call sites and record the arithmetic — never raise the constant to whatever the run happened to print.
+
 ## Verifying the toolkit repo itself
 
 Three scripts run from the toolkit root. All three are safe to run at any time and none of them write to your project.
