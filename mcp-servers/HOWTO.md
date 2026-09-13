@@ -15,7 +15,7 @@ This guide is split accordingly. For the **why**, see `docs/architecture.md` →
 
 | Scope | Requirement | Used by |
 |---|---|---|
-| User | **Python** 3.10+ (in PATH) | All `mcp-dev-servers` python servers, and this repo's own `template-sync-tools` server (`server/`) |
+| User | **Python** 3.11+ (in PATH) | All `mcp-dev-servers` python servers, and this repo's own `template-sync-tools` server (`server/`) |
 | User | **GitHub CLI** (`gh`) installed + authenticated | `github-tools` |
 | User | **GitHub Personal Access Token** (`GITHUB_PERSONAL_ACCESS_TOKEN` env var) | Official GitHub plugin |
 | User | **Node.js** 18+ | SearXNG MCP, Open Brain |
