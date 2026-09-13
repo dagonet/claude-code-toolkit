@@ -54,6 +54,35 @@ def _server_source() -> str:
     return str(pathlib.Path(__file__).parent)
 
 
+# --- v4.0: what this PROCESS imported, beside what each call READS -----------
+# After the move, templates are read from disk on every call and advance the
+# moment the toolkit is pulled, while this process is frozen at spawn. One tag
+# makes a reader assume both match; mid-session they do not. Reporting the
+# commit imported at spawn beside template_commit makes the skew visible.
+# Reuse the module's existing _server_source() rather than a second spelling of
+# the same path, and pass creationflags=_SUBPROCESS_FLAGS exactly as the two
+# existing git calls do (:232, :568) -- the constant is an int (:29,
+# CREATE_NO_WINDOW or 0), not a mapping; without it a console window flashes at
+# every server spawn on Windows. This runs at IMPORT: anything that escapes the
+# except clause here stops the server from booting, so the call site takes only
+# what the two existing ones take.
+SERVER_SOURCE_DIR = _server_source()
+
+
+def _git_head_of(path: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", path, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10, creationflags=_SUBPROCESS_FLAGS,
+        )
+        return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+SERVER_COMMIT = _git_head_of(SERVER_SOURCE_DIR)
+
+
 def _sha256(content: str) -> str:
     """SHA-256 hash of a string (UTF-8, BOM stripped)."""
     if content.startswith("\ufeff"):
@@ -694,12 +723,14 @@ async def template_load_manifest(project_path: str) -> str:
     if manifest is None:
         from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
+                           "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
 
     if errors:
         from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
+                           "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
 
@@ -729,6 +760,7 @@ async def template_load_manifest(project_path: str) -> str:
             "valid": len(errors) == 0,
             "manifest_version": 3,
             "server_version": __version__,
+            "server_commit": SERVER_COMMIT,
             "server_source": _server_source(),
             "capabilities": list(v3.CAPABILITIES),
             "migration_required": False,
@@ -780,6 +812,7 @@ async def template_load_manifest(project_path: str) -> str:
         "version": manifest.get("version", 1),
         "manifest_version": manifest.get("version", 1),
         "server_version": __version__,
+        "server_commit": SERVER_COMMIT,
         "server_source": _server_source(),
         "capabilities": list(v3.CAPABILITIES),
         "migration_required": migration_required,
