@@ -24,3 +24,7 @@ CLAUDE.local.md
 # /CLAUDE.md was ignored while it held machine-specific context-mode routing rules.
 # As of v2.0-pr5 it holds toolkit facts (layout, gate, invariants) and is tracked.
 
+# v4.0 server move: the template-sync MCP server's own venv, created by
+# server/install.sh / server/install.ps1. Never tracked.
+/server/.venv/
+
