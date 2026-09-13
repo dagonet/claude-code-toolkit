@@ -10,7 +10,10 @@ letting a reader assume both track the same commit.
 
 import asyncio
 import json
+import pathlib
 import subprocess
+
+import pytest
 
 from template_sync import mcp as ts
 
@@ -78,6 +81,28 @@ def test_load_response_carries_server_commit_on_the_v3_path(tmp_path):
     assert r["valid"] is True
     assert r["manifest_version"] == 3
     assert r["server_commit"] == ts.SERVER_COMMIT
+
+
+@pytest.mark.parametrize("template_repo_form", [
+    "G:/git/claude-code-toolkit",          # forward slashes, Windows drive
+    "G:\\git\\claude-code-toolkit",         # backslashes
+    "/g/git/claude-code-toolkit",           # MSYS form written by setup-project.sh:20 (cd && pwd under Git Bash)
+])
+def test_server_in_template_repo_true_across_path_namespaces(template_repo_form, monkeypatch):
+    # The server's source dir, in Windows form, is inside the repo in all three spellings.
+    monkeypatch.setattr(ts, "SERVER_SOURCE_DIR", "G:\\git\\claude-code-toolkit\\server\\src\\template_sync")
+    assert ts._server_in_template_repo(template_repo_form) is True
+
+
+def test_server_in_template_repo_false_for_the_old_server(monkeypatch):
+    monkeypatch.setattr(ts, "SERVER_SOURCE_DIR", "G:\\git\\mcp-dev-servers\\src\\mcp_dev_servers")
+    assert ts._server_in_template_repo("/g/git/claude-code-toolkit") is False
+
+
+def test_server_in_template_repo_false_when_unresolvable(monkeypatch):
+    monkeypatch.setattr(ts, "SERVER_SOURCE_DIR", "G:\\git\\claude-code-toolkit\\server\\src\\template_sync")
+    assert ts._server_in_template_repo("") is False
+    assert ts._server_in_template_repo("not-a-path-that-exists-anywhere") is False
 
 
 def test_git_head_of_is_none_outside_a_git_checkout(tmp_path):
