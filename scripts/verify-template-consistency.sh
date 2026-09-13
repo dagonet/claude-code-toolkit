@@ -3442,6 +3442,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 45 — MIN_SERVER_FOR_V3 stays a 0.3.x string (v4.0). A bound whose job
+# is to catch a good intention, not a typo: see the comment above the constant.
+# ---------------------------------------------------------------------------
+note "Check 45: MIN_SERVER_FOR_V3 is a 0.3.x string, not the current version"
+c45=$(grep -oE '^MIN_SERVER_FOR_V3 = "[^"]+"' server/src/template_sync/v3.py | sed 's/.*"\(.*\)"/\1/')
+case "$c45" in
+  0.3.[0-9]*) ok "check 45: MIN_SERVER_FOR_V3 = $c45" ;;
+  "") ko "check 45: MIN_SERVER_FOR_V3 not found in server/src/template_sync/v3.py" ;;
+  *)  ko "check 45: MIN_SERVER_FOR_V3 = '$c45' -- raising it is a contract change that re-floors every consumer on their next finalize; if that is intended, this check is what you change, with a CHANGELOG entry" ;;
+esac
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
