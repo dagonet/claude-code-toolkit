@@ -723,12 +723,14 @@ async def template_load_manifest(project_path: str) -> str:
     if manifest is None:
         from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
+                           "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
 
     if errors:
         from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
+                           "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
 
@@ -758,6 +760,7 @@ async def template_load_manifest(project_path: str) -> str:
             "valid": len(errors) == 0,
             "manifest_version": 3,
             "server_version": __version__,
+            "server_commit": SERVER_COMMIT,
             "server_source": _server_source(),
             "capabilities": list(v3.CAPABILITIES),
             "migration_required": False,

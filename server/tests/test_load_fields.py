@@ -51,6 +51,35 @@ def test_load_response_carries_server_commit_unconditionally(tmp_path):
     assert r["server_commit"] == ts.SERVER_COMMIT
 
 
+def test_load_response_carries_server_commit_with_no_manifest_at_all(tmp_path):
+    # Mirrors test_server_source_reports_the_imported_package_directory in
+    # test_template_sync_v3_gate.py: server_source is present on this
+    # "valid": False / no-manifest path so a caller diagnosing which build is
+    # live never needs a valid project to ask. server_commit is the same
+    # diagnostic and must be unconditional in the same sense.
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"))))
+    assert r["valid"] is False
+    assert r["server_commit"] == ts.SERVER_COMMIT
+
+
+def test_load_response_carries_server_commit_on_the_v3_path(tmp_path):
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({"rules": []}), encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    manifest = {
+        "manifest_version": 3, "template_version": "3.1.0", "template_commit": "abc1234",
+        "variant": "general", "placeholders": {}, "requires_server": ">=0.3.0", "files": {},
+        "templateRepo": str(repo),
+    }
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    assert r["valid"] is True
+    assert r["manifest_version"] == 3
+    assert r["server_commit"] == ts.SERVER_COMMIT
+
+
 def test_git_head_of_is_none_outside_a_git_checkout(tmp_path):
     """`git rev-parse HEAD` searches upward for an enclosing .git, so this
     holds only while tmp_path is outside any git work tree. This project's
