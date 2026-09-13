@@ -182,6 +182,46 @@ fi
 expect "sh snippet names no single repo as THE trusted repo" 0 \
   "$(grep -cF -- '**Trusted repo**:' "$TMPROOT/automode.out")"
 
+# --- v4.0: the template-sync registration points at the toolkit's OWN exe --
+#
+# setup asserted the exe exists BEFORE writing the path -- otherwise the
+# registration points at nothing, the failure the release sequencing exists
+# to prevent, arriving from the other side. This checkout's server/.venv is
+# expected to already be installed (bash server/install.sh, run once per
+# checkout -- see CLAUDE.md) so these rows do not themselves trigger a pip
+# install.
+#
+# A genuinely missing venv is not this row's failure to report: check 46
+# elsewhere in this repo already makes a missing venv a LOUD, named error
+# (never a silent skip that reads as a pass) -- so here, rather than a bare
+# assertion failure that looks like a template-sync-tools regression, these
+# rows (and their PowerShell/installer counterparts below) are skipped with
+# the same "run bash server/install.sh" reason, the same shape as the
+# existing $WTB_DEFAULT/$AM_WANT refusals above.
+TS_EXE_EXPECTED="$ROOT/server/.venv/Scripts/mcp-template-sync-tools.exe"
+[ -x "$TS_EXE_EXPECTED" ] || TS_EXE_EXPECTED="$ROOT/server/.venv/bin/mcp-template-sync-tools"
+TS_VENV_REASON="server/.venv absent -- run 'bash server/install.sh' once per checkout"
+if [ -x "$TS_EXE_EXPECTED" ]; then
+  TS_VENV_PRESENT=1
+  expect "sh: template-sync exe exists before registration" 1 1
+
+  # The registration snippet is written in the Win32 namespace with backslashes
+  # doubled for JSON (the consumer is a Win32 process reading ~/.claude.json),
+  # not in bash's own MSYS view of the path -- so the needle is built the same
+  # way before it is searched for in the sh run's captured stdout.
+  TS_WIN_EXPECTED="$TS_EXE_EXPECTED"
+  command -v cygpath >/dev/null 2>&1 && TS_WIN_EXPECTED="$(cygpath -w "$TS_EXE_EXPECTED")"
+  TS_JSON_NEEDLE="${TS_WIN_EXPECTED//\\/\\\\}"
+  expect "sh: written template-sync command resolves to the toolkit exe" 1 \
+    "$(grep -cF -- "$TS_JSON_NEEDLE" "$TMPROOT/automode.out" 2>/dev/null || echo 0)"
+else
+  TS_VENV_PRESENT=0
+  TS_WIN_EXPECTED=""
+  TS_JSON_NEEDLE=""
+  skip "sh: template-sync exe exists before registration" "$TS_VENV_REASON" 1
+  skip "sh: written template-sync command resolves to the toolkit exe" "$TS_VENV_REASON" 1
+fi
+
 # --- the PowerShell half, where it can run ---------------------------------
 #
 # The two scripts are independent implementations of the same contract, and the
@@ -218,6 +258,15 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   # that was MISSING (only the snippet count was checked), not a row that
   # exercises the defect. See the no-.git arm below for the row that does.
   expect "ps1 exits 0 on the develop fixture" 0 "$PS_DEVELOP_RC"
+
+  # v4.0: ps1's registration must resolve to the SAME toolkit exe as sh's --
+  # same needle, built once above from the sh-side resolution.
+  if [ "$TS_VENV_PRESENT" -eq 1 ]; then
+    expect "ps1: written template-sync command resolves to the same toolkit exe" 1 \
+      "$(grep -cF -- "$TS_JSON_NEEDLE" "$TMPROOT/ps-develop.out" 2>/dev/null || echo 0)"
+  else
+    skip "ps1: written template-sync command resolves to the same toolkit exe" "$TS_VENV_REASON" 1
+  fi
 
   # --- BOM: PS 5.1's `-Encoding UTF8` writes a byte-order mark on every write.
   # The MCP server tolerates it, but the sync skill's own
@@ -520,6 +569,39 @@ NODE_EOF
   expect "sh: user edit to project.md survives a rerun that touches other files" "$RULES_SH_BEFORE" "$(cat "$RULES_SH")"
   expect "ps1: user edit to project.md survives a rerun that touches other files" "$RULES_PS_BEFORE" "$(cat "$RULES_PS")"
 
+  # --- v4.0: both installers publish the SAME path (main arm only) ----------
+  #
+  # setup-project.sh and setup-project.ps1 must agree byte-for-byte on what
+  # they hand the registration snippet. Ask the installers directly (this
+  # checkout's server/.venv already exists -- installed once per checkout,
+  # see CLAUDE.md -- so this is a no-op reinstall, not a fresh venv build) and
+  # compare their raw stdout, then tie that value back to the exact string
+  # already proven to appear, JSON-escaped, in both writers' output above.
+  # A non-zero exit here (e.g. no network to satisfy pip) is skipped rather
+  # than failed -- this fixture must not turn a network-less host red. Same
+  # for a venv that was never installed in the first place: re-invoking would
+  # silently turn this row into a slow FRESH install instead of the idempotent
+  # re-install it is meant to exercise.
+  if [ "$TS_VENV_PRESENT" -ne 1 ]; then
+    skip "sh and ps1 installers publish the same path" "$TS_VENV_REASON" 1
+    skip "installer stdout matches the exe already registered in the snippet" "$TS_VENV_REASON" 1
+  else
+    TS_SH_INSTALL_OUT="$(bash "$ROOT/server/install.sh" 2>"$TMPROOT/ts-install-sh.err")"
+    TS_SH_INSTALL_RC=$?
+    TS_PS_INSTALL_OUT="$("$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/server/install.ps1" 2>"$TMPROOT/ts-install-ps.err")"
+    TS_PS_INSTALL_RC=$?
+    if [ "$TS_SH_INSTALL_RC" -ne 0 ] || [ "$TS_PS_INSTALL_RC" -ne 0 ]; then
+      skip "sh and ps1 installers publish the same path" \
+        "installer exited non-zero (sh rc=$TS_SH_INSTALL_RC, ps1 rc=$TS_PS_INSTALL_RC) -- see $TMPROOT/ts-install-*.err" 1
+      skip "installer stdout matches the exe already registered in the snippet" \
+        "installer exited non-zero (sh rc=$TS_SH_INSTALL_RC, ps1 rc=$TS_PS_INSTALL_RC)" 1
+    else
+      expect "sh and ps1 installers publish the same path" "$TS_SH_INSTALL_OUT" "$TS_PS_INSTALL_OUT"
+      expect "installer stdout matches the exe already registered in the snippet" \
+        "$TS_WIN_EXPECTED" "$TS_SH_INSTALL_OUT"
+    fi
+  fi
+
   # --- the no-.git arm: the actual regression test for :861 -----------------
   #
   # A toolkit extracted without .git (a ZIP download, not a clone) is the
@@ -596,7 +678,7 @@ TV_EOF
   expect "ps1: template_version is JSON null when VERSION is absent" \
     "null" "$(printf '%s\n' "$NOGIT_TV_OUT" | awk '$1=="ps1"{print $2}')"
 else
-  skip "setup-project.ps1 parity" "no PowerShell on this host" 8
+  skip "setup-project.ps1 parity" "no PowerShell on this host" 11
   skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 7
 fi
 

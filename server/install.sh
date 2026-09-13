@@ -22,4 +22,12 @@ else VPY="$HERE/.venv/bin/python"; EXE="$HERE/.venv/bin/mcp-template-sync-tools"
 # A relative path has no leading slash, so no conversion is attempted.
 ( cd "$HERE" && "$VPY" -m pip install --quiet -e ".[dev]" 1>&2 )
 [ -x "$EXE" ] || { echo "install.sh: expected console script not found at $EXE" >&2; exit 3; }
+# The value is written into ~/.claude.json and spawned by a Win32 process
+# (claude.exe), not by this bash. On Git Bash for Windows $EXE is an MSYS
+# path (/g/...) that a Win32 process cannot resolve -- publish the Win32
+# namespace form instead so setup-project.{sh,ps1} agree byte-for-byte on
+# what they hand to the registration snippet. POSIX (no cygpath): unchanged.
+if command -v cygpath >/dev/null 2>&1; then
+    EXE="$(cygpath -w "$EXE")"
+fi
 echo "$EXE"
