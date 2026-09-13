@@ -277,7 +277,7 @@ server\install.ps1
 bash server/install.sh
 ```
 
-Either script creates `server/.venv` and prints the console-script exe path on its last line of stdout.
+Either script creates `server/.venv` and prints the console-script exe path as its ONLY line of stdout.
 
 **Migrate (three steps — never reinstall to fix skew, restart instead):**
 
