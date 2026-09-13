@@ -254,7 +254,15 @@ if [[ -n "$TS_EXE" ]]; then
                     # and the file exists in the namespace bash already
                     # trusted, never that a Win32 process can open it.
                     ts_probe_out=""
-                    [[ -n "$TS_WIN_EXE" ]] && ts_probe_out="$(powershell -NoProfile -Command "Test-Path -LiteralPath '$TS_WIN_EXE'" 2>/dev/null | tr -d '\r')"
+                    if [[ -n "$TS_WIN_EXE" ]]; then
+                        # PowerShell's single-quoted string escape is a doubled
+                        # quote, not a backslash -- a checkout path containing
+                        # an apostrophe (e.g. an O'Brien user directory) would
+                        # otherwise terminate the string early and hand
+                        # Test-Path a ParserError instead of True/False.
+                        ts_win_esc="${TS_WIN_EXE//\'/\'\'}"
+                        ts_probe_out="$(powershell -NoProfile -Command "Test-Path -LiteralPath '$ts_win_esc'" 2>/dev/null | tr -d '\r')"
+                    fi
                     if [[ "$ts_probe_out" == "True" ]]; then
                         TS_REGISTER=1
                     else
