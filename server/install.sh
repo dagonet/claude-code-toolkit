@@ -22,4 +22,6 @@ else VPY="$HERE/.venv/bin/python"; EXE="$HERE/.venv/bin/mcp-template-sync-tools"
 # A relative path has no leading slash, so no conversion is attempted.
 ( cd "$HERE" && "$VPY" -m pip install --quiet -e ".[dev]" 1>&2 )
 [ -x "$EXE" ] || { echo "install.sh: expected console script not found at $EXE" >&2; exit 3; }
-echo "$EXE"
+# The path is published into ~/.claude.json and spawned by a Win32 process:
+# publish it in THAT namespace. Internal checks above stay on the MSYS path.
+if command -v cygpath >/dev/null 2>&1; then echo "$(cygpath -w "$EXE")"; else echo "$EXE"; fi
