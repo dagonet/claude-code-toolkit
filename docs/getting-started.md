@@ -134,10 +134,11 @@ This adds GitHub integration and language-specific build/test support.
 
 Everything in Tier 2, plus:
 
-7. Clone [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers) and pass its path to setup via `--mcp-dev-servers-path` for dotnet/dotnet-maui/rust-tauri variants (generates project-level `dotnet-tools` / `rust-tools`)
-8. Install Ollama + models for local LLM processing
-9. Install the superpowers plugin
-10. Install `uvx` (for windows-mcp auto-config on dotnet-maui/rust-tauri), Open Brain, SearXNG as desired
+7. Install the toolkit's own `template-sync-tools` server, once per `claude-code-toolkit` checkout: `bash server/install.sh` (Linux/macOS) or `server\install.ps1` (Windows) — see *`template-sync-tools` (ships with this toolkit, not `mcp-dev-servers`)* above for registration details
+8. Clone [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers) and pass its path to setup via `--mcp-dev-servers-path` for dotnet/dotnet-maui/rust-tauri variants (generates project-level `dotnet-tools` / `rust-tools`)
+9. Install Ollama + models for local LLM processing
+10. Install the superpowers plugin
+11. Install `uvx` (for windows-mcp auto-config on dotnet-maui/rust-tauri), Open Brain, SearXNG as desired
 
 This unlocks every MCP tool, skill, and automation the templates reference.
 
