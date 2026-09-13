@@ -238,8 +238,29 @@ if [[ -n "$TS_EXE" ]]; then
             # exists to stop, with no warning at all.
             if command -v cygpath >/dev/null 2>&1; then
                 TS_WIN_EXE="$(cygpath -w "$TS_EXE" 2>/dev/null || true)"
-                ts_probe="$(cygpath -u "$TS_WIN_EXE" 2>/dev/null || true)"
-                [[ -n "$ts_probe" && -f "$ts_probe" ]] && TS_REGISTER=1
+                if ! command -v powershell >/dev/null 2>&1; then
+                    # Cannot ask the actual consumer whether the published
+                    # string resolves -- same posture as cygpath missing:
+                    # cannot verify, so do not register.
+                    TS_WARN_REASON="cannot verify the exe in the Win32 namespace: powershell not found; not registering template-sync-tools - install PowerShell or register the exe by hand"
+                else
+                    # The consumer is a Win32 process (claude.exe reading
+                    # ~/.claude.json). Ask THAT consumer's own resolution
+                    # mechanism whether the published string resolves -- the
+                    # same check install.ps1 makes with Test-Path -- rather
+                    # than round-tripping back through cygpath: `cygpath -w`
+                    # then `cygpath -u` then `-f` never leaves MSYS's own
+                    # path-mapping, so it only proves cygpath inverts itself
+                    # and the file exists in the namespace bash already
+                    # trusted, never that a Win32 process can open it.
+                    ts_probe_out=""
+                    [[ -n "$TS_WIN_EXE" ]] && ts_probe_out="$(powershell -NoProfile -Command "Test-Path -LiteralPath '$TS_WIN_EXE'" 2>/dev/null | tr -d '\r')"
+                    if [[ "$ts_probe_out" == "True" ]]; then
+                        TS_REGISTER=1
+                    else
+                        TS_WARN_REASON="could not verify the exe in the Win32 namespace (cygpath conversion of $TS_EXE failed or the converted path does not resolve); not registering template-sync-tools - register the exe by hand"
+                    fi
+                fi
             else
                 TS_WARN_REASON="cannot convert the exe path to the Win32 namespace: cygpath not found; not registering template-sync-tools - install Git for Windows' cygpath or register the exe by hand"
             fi
