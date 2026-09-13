@@ -295,7 +295,7 @@ Either script creates `server/.venv` and prints the console-script exe path on i
    claude mcp add --scope user --transport stdio template-sync-tools \
      -- ~/repos/claude-code-toolkit/server/.venv/bin/mcp-template-sync-tools
    ```
-3. **Restart the session** — the server re-imports at spawn, so a restart alone picks up the move. Reinstalling into a running venv is not the fix for skew; it is the one measured way to break it (locked launcher executables, no shim mid-flight).
+3. **Restart the MCP server (a session restart also does it)** — the server re-imports at spawn, so a restart alone picks up the move. Reinstalling into a running venv is not the fix for skew; it is the one measured way to break it (locked launcher executables, no shim mid-flight).
 
 `mcp-template-sync-tools` from mcp-dev-servers 0.3.8 keeps working until you re-register; 0.4.0 of that package removes it. 0.3.8 stays installable from `mcp-dev-servers` as a rollback if the in-repo server regresses.
 

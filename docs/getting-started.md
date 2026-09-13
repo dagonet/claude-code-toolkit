@@ -62,7 +62,7 @@ Since v4.0.0 this server lives in `server/` in **this** repo — it is not part 
 
 | Server | Tools | Installed by | Requires |
 |---|---|---|---|
-| **template-sync-tools** | 8 (manifest, diff, merge, sync) | `bash server/install.sh` (Linux/macOS) or `server\install.ps1` (Windows), run from a `claude-code-toolkit` checkout | Python 3.10+, Git |
+| **template-sync-tools** | 8 (manifest, diff, merge, sync) | `bash server/install.sh` (Linux/macOS) or `server\install.ps1` (Windows), run from a `claude-code-toolkit` checkout | Python 3.11+, Git |
 
 The install script creates `server/.venv` and prints the console-script exe path. `setup-project.{sh,ps1}` registers that path under `template-sync-tools` in `~/.claude.json` automatically for new projects; to register or re-register by hand, point `template-sync-tools` at the printed path yourself. See [`mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md) → *Template Sync Tools* for the full install / re-register / restart migration, including moving off an older `mcp-dev-servers`-hosted registration.
 
