@@ -27,4 +27,6 @@ CLAUDE.local.md
 # v4.0 server move: the template-sync MCP server's own venv, created by
 # server/install.sh / server/install.ps1. Never tracked.
 /server/.venv/
+__pycache__/
+.pytest_cache/
 
