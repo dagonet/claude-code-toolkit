@@ -203,7 +203,6 @@ TS_EXE_EXPECTED="$ROOT/server/.venv/Scripts/mcp-template-sync-tools.exe"
 TS_VENV_REASON="server/.venv absent -- run 'bash server/install.sh' once per checkout"
 if [ -x "$TS_EXE_EXPECTED" ]; then
   TS_VENV_PRESENT=1
-  expect "sh: template-sync exe exists before registration" 1 1
 
   # The registration snippet is written in the Win32 namespace with backslashes
   # doubled for JSON (the consumer is a Win32 process reading ~/.claude.json),
@@ -212,13 +211,23 @@ if [ -x "$TS_EXE_EXPECTED" ]; then
   TS_WIN_EXPECTED="$TS_EXE_EXPECTED"
   command -v cygpath >/dev/null 2>&1 && TS_WIN_EXPECTED="$(cygpath -w "$TS_EXE_EXPECTED")"
   TS_JSON_NEEDLE="${TS_WIN_EXPECTED//\\/\\\\}"
+
+  # Not "the exe exists" (tautological -- it was just proven by the `if`
+  # above and could not fail): the OLD writer (pre-Task-7) never printed a
+  # template-sync-tools entry at all, so this exact `"command": "...",` line
+  # could not have existed to match against it. Anchored on the FULL line,
+  # not just a substring, so this is exact equality with the installer's own
+  # published path, not merely "the path appears somewhere in the output".
+  TS_COMMAND_LINE_EXPECTED="    \"command\": \"$TS_JSON_NEEDLE\","
+  expect "sh: template-sync snippet's command field equals the installer's own output" 1 \
+    "$(grep -cF -- "$TS_COMMAND_LINE_EXPECTED" "$TMPROOT/automode.out" 2>/dev/null || echo 0)"
   expect "sh: written template-sync command resolves to the toolkit exe" 1 \
     "$(grep -cF -- "$TS_JSON_NEEDLE" "$TMPROOT/automode.out" 2>/dev/null || echo 0)"
 else
   TS_VENV_PRESENT=0
   TS_WIN_EXPECTED=""
   TS_JSON_NEEDLE=""
-  skip "sh: template-sync exe exists before registration" "$TS_VENV_REASON" 1
+  skip "sh: template-sync snippet's command field equals the installer's own output" "$TS_VENV_REASON" 1
   skip "sh: written template-sync command resolves to the toolkit exe" "$TS_VENV_REASON" 1
 fi
 
@@ -569,37 +578,32 @@ NODE_EOF
   expect "sh: user edit to project.md survives a rerun that touches other files" "$RULES_SH_BEFORE" "$(cat "$RULES_SH")"
   expect "ps1: user edit to project.md survives a rerun that touches other files" "$RULES_PS_BEFORE" "$(cat "$RULES_PS")"
 
-  # --- v4.0: both installers publish the SAME path (main arm only) ----------
+  # --- v4.0: both installers publish the SAME path (ruling R21: gate-time only) ---
   #
   # setup-project.sh and setup-project.ps1 must agree byte-for-byte on what
-  # they hand the registration snippet. Ask the installers directly (this
-  # checkout's server/.venv already exists -- installed once per checkout,
-  # see CLAUDE.md -- so this is a no-op reinstall, not a fresh venv build) and
+  # they hand the registration snippet. Ask the installers directly and
   # compare their raw stdout, then tie that value back to the exact string
   # already proven to appear, JSON-escaped, in both writers' output above.
-  # A non-zero exit here (e.g. no network to satisfy pip) is skipped rather
-  # than failed -- this fixture must not turn a network-less host red. Same
-  # for a venv that was never installed in the first place: re-invoking would
-  # silently turn this row into a slow FRESH install instead of the idempotent
-  # re-install it is meant to exercise.
-  if [ "$TS_VENV_PRESENT" -ne 1 ]; then
-    skip "sh and ps1 installers publish the same path" "$TS_VENV_REASON" 1
-    skip "installer stdout matches the exe already registered in the snippet" "$TS_VENV_REASON" 1
+  # This re-invokes both installers (network + a live-venv reinstall, ~22s
+  # measured) so it runs ONLY at merge time, never on the per-commit **Test**
+  # path -- hooks/run-gate.sh exports RUN_GATE_ACTIVE=1 to its children, the
+  # same signal this suite's own recursion guard already keys off of.
+  if [ "${RUN_GATE_ACTIVE:-}" != "1" ]; then
+    skip "sh and ps1 installers publish the same path" \
+      "installer parity rows run at gate time (RUN_GATE_ACTIVE=1)" 1
+    skip "installer stdout matches the exe already registered in the snippet" \
+      "installer parity rows run at gate time (RUN_GATE_ACTIVE=1)" 1
   else
+    # No skip-not-fail inside the gate arm -- a red here is a red. Gate time
+    # is expected to already have a working, networked checkout (the venv
+    # precondition the rest of this fixture treats as a skip reason above is
+    # not honored here: a missing venv or a failed installer both surface as
+    # an ordinary assertion mismatch, not a shrug).
     TS_SH_INSTALL_OUT="$(bash "$ROOT/server/install.sh" 2>"$TMPROOT/ts-install-sh.err")"
-    TS_SH_INSTALL_RC=$?
     TS_PS_INSTALL_OUT="$("$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/server/install.ps1" 2>"$TMPROOT/ts-install-ps.err")"
-    TS_PS_INSTALL_RC=$?
-    if [ "$TS_SH_INSTALL_RC" -ne 0 ] || [ "$TS_PS_INSTALL_RC" -ne 0 ]; then
-      skip "sh and ps1 installers publish the same path" \
-        "installer exited non-zero (sh rc=$TS_SH_INSTALL_RC, ps1 rc=$TS_PS_INSTALL_RC) -- see $TMPROOT/ts-install-*.err" 1
-      skip "installer stdout matches the exe already registered in the snippet" \
-        "installer exited non-zero (sh rc=$TS_SH_INSTALL_RC, ps1 rc=$TS_PS_INSTALL_RC)" 1
-    else
-      expect "sh and ps1 installers publish the same path" "$TS_SH_INSTALL_OUT" "$TS_PS_INSTALL_OUT"
-      expect "installer stdout matches the exe already registered in the snippet" \
-        "$TS_WIN_EXPECTED" "$TS_SH_INSTALL_OUT"
-    fi
+    expect "sh and ps1 installers publish the same path" "$TS_SH_INSTALL_OUT" "$TS_PS_INSTALL_OUT"
+    expect "installer stdout matches the exe already registered in the snippet" \
+      "$TS_WIN_EXPECTED" "$TS_SH_INSTALL_OUT"
   fi
 
   # --- the no-.git arm: the actual regression test for :861 -----------------
@@ -648,6 +652,25 @@ NODE_EOF
   NOGIT_SH_COUNT=$(find "$NOGITSH" -type f | wc -l | tr -d ' ')
   NOGIT_PS_COUNT=$(find "$NOGITPS" -type f | wc -l | tr -d ' ')
   expect "ps1 file count matches sh on a no-.git toolkit" "$NOGIT_SH_COUNT" "$NOGIT_PS_COUNT"
+
+  # v4.0: a tree without server/ must WARN and register nothing -- both sides
+  # of that claim, unconditionally (no venv needed): the "not registered"
+  # warning is present, and the JSON snippet itself never appears (the warning
+  # text itself contains the literal substring "template-sync-tools", so the
+  # absence check greps for the JSON key shape, not the bare substring).
+  # No `|| echo 0` fallback: `grep -c` exits 1 (not 0) when it finds zero
+  # matches, even though it still correctly prints "0" -- with the fallback,
+  # the zero-matches case runs BOTH grep's own "0" and the `|| echo 0`,
+  # producing a bogus two-line "0\n0". The files are already known to exist
+  # (written unconditionally above), so no missing-file fallback is needed.
+  expect "sh: no-.git toolkit warns template-sync-tools not registered" 1 \
+    "$(grep -c "template-sync-tools not registered" "$TMPROOT/nogit-sh.out" 2>/dev/null)"
+  expect "ps1: no-.git toolkit warns template-sync-tools not registered" 1 \
+    "$(grep -c "template-sync-tools not registered" "$TMPROOT/nogit-ps.out" 2>/dev/null)"
+  expect "sh: no-.git toolkit generates no template-sync-tools snippet" 0 \
+    "$(grep -c '"template-sync-tools":' "$TMPROOT/nogit-sh.out" 2>/dev/null)"
+  expect "ps1: no-.git toolkit generates no template-sync-tools snippet" 0 \
+    "$(grep -c '"template-sync-tools":' "$TMPROOT/nogit-ps.out" 2>/dev/null)"
 
   # template_version when it CANNOT be determined. This source tree carries no
   # VERSION file (the copy above takes the scripts, templates and reference

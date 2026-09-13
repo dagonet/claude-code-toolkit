@@ -225,18 +225,37 @@ if [[ -z "$TS_EXE" && -x "$SCRIPT_DIR/server/install.sh" ]]; then
 fi
 TS_REGISTER=0
 TS_WIN_EXE=""
+TS_WARN_REASON=""
 if [[ -n "$TS_EXE" ]]; then
-    if command -v cygpath >/dev/null 2>&1; then
-        TS_WIN_EXE="$(cygpath -w "$TS_EXE" 2>/dev/null || true)"
-        ts_probe="$(cygpath -u "$TS_WIN_EXE" 2>/dev/null || true)"
-    else
-        TS_WIN_EXE="$TS_EXE"
-        ts_probe="$TS_EXE"
-    fi
-    [[ -n "$ts_probe" && -f "$ts_probe" ]] && TS_REGISTER=1
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*)
+            # On a Windows shell the consumer is a Win32 process (claude.exe
+            # reading ~/.claude.json), and cygpath is the ONLY thing that can
+            # turn bash's own MSYS path shape into the Win32 namespace that
+            # consumer needs -- so it is REQUIRED here, never best-effort. A
+            # silent fallback to the raw (MSYS) path when cygpath is missing
+            # would write exactly the kind of unresolvable path this task
+            # exists to stop, with no warning at all.
+            if command -v cygpath >/dev/null 2>&1; then
+                TS_WIN_EXE="$(cygpath -w "$TS_EXE" 2>/dev/null || true)"
+                ts_probe="$(cygpath -u "$TS_WIN_EXE" 2>/dev/null || true)"
+                [[ -n "$ts_probe" && -f "$ts_probe" ]] && TS_REGISTER=1
+            else
+                TS_WARN_REASON="cannot convert the exe path to the Win32 namespace: cygpath not found; not registering template-sync-tools - install Git for Windows' cygpath or register the exe by hand"
+            fi
+            ;;
+        *)
+            # A real POSIX host (Linux/macOS): the raw path already IS the
+            # consumer's own (POSIX) namespace, so no conversion is needed.
+            TS_WIN_EXE="$TS_EXE"
+            [[ -f "$TS_EXE" ]] && TS_REGISTER=1
+            ;;
+    esac
 fi
 if [[ "$TS_REGISTER" -ne 1 ]]; then
-    if [[ "$TS_INSTALL_RC" -ne 0 ]]; then
+    if [[ -n "$TS_WARN_REASON" ]]; then
+        warnings+=("$TS_WARN_REASON")
+    elif [[ "$TS_INSTALL_RC" -ne 0 ]]; then
         # install.sh failed -- name the exit code and point at the direct
         # invocation rather than swallowing it into a bare "not found" warning
         # (its cygpath-fails path exits under `set -e` with nothing on stderr).
