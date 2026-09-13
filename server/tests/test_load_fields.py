@@ -80,13 +80,12 @@ def test_load_response_carries_server_commit_on_the_v3_path(tmp_path):
     assert r["server_commit"] == ts.SERVER_COMMIT
 
 
-def test_git_head_of_is_none_outside_a_git_checkout(tmp_path):
-    """`git rev-parse HEAD` searches upward for an enclosing .git, so this
-    holds only while tmp_path is outside any git work tree. This project's
-    pytest --basetemp convention (see the brief/CLAUDE.md for how the moved
-    suite is invoked) keeps basetemp outside any checkout; an implementer who
-    points --basetemp inside a checkout would find `tmp_path` picking up that
-    checkout's HEAD instead of None.
+def test_git_head_of_is_none_outside_a_git_checkout(tmp_path, monkeypatch):
+    """`git rev-parse HEAD` searches upward for an enclosing .git. A
+    test-scoped GIT_CEILING_DIRECTORIES (tmp_path's parent) confines that
+    search to tmp_path itself, so this test is independent of where
+    --basetemp lives -- it does not rely on the project's --basetemp
+    convention keeping basetemp outside any checkout.
 
     GIT_CEILING_DIRECTORIES was measured and rejected as a fix inside
     _git_head_of itself: setting the ceiling to a probed path's immediate
@@ -94,6 +93,8 @@ def test_git_head_of_is_none_outside_a_git_checkout(tmp_path):
     up -- exactly the topology of the real SERVER_SOURCE_DIR call
     (server/src/template_sync, with .git at the repo root), so it would turn
     the real SERVER_COMMIT into None. See task-4 report for the two probe
-    outputs.
+    outputs. The helper stays as-is; only this test sets the ceiling, and
+    only in its own subprocess environment.
     """
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     assert ts._git_head_of(str(tmp_path)) is None
