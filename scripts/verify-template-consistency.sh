@@ -3406,6 +3406,42 @@ fi
 [ "$c42_fail" -eq 0 ] && ok "check 42: requires_skill '$c42_floor' is tag-shaped and <= $c42_ours; control detected v99.0.0 as above"
 
 # ---------------------------------------------------------------------------
+# Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
+# server_version; parse_version at every consumer accepts EXACTLY three dotted
+# integers. A `v` or a `-rc1` here makes requires_server_satisfied return False
+# for every consumer carrying any floor, at template_load_manifest -- a
+# machine-wide load outage from a version-string format choice. The `v` lives
+# in the tag and the skill marker only.
+# ---------------------------------------------------------------------------
+note "Check 43: VERSION line 1 is bare X.Y.Z"
+c43_v=$(head -1 VERSION | tr -d '\r\n')
+case "$c43_v" in
+  [0-9]*.[0-9]*.[0-9]*)
+    if printf '%s' "$c43_v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+      ok "check 43: VERSION line 1 '$c43_v' is bare X.Y.Z"
+    else
+      ko "check 43: VERSION line 1 '$c43_v' is not bare X.Y.Z -- every consumer's template_load_manifest would refuse"
+    fi ;;
+  *) ko "check 43: VERSION line 1 '$c43_v' is not bare X.Y.Z -- every consumer's template_load_manifest would refuse" ;;
+esac
+# Control: a value that must fail the same test.
+printf '%s' "v9.9.9" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' && ko "check 43 CONTROL: 'v9.9.9' passed the shape test -- the test is inert"
+
+# ---------------------------------------------------------------------------
+# Check 44 — the package VERSION is byte-identical to the repo-root VERSION
+# (v4.0). Two sources, one check: __version__ is read from the package copy so
+# non-editable installs work; the root is what tags and templates derive from.
+# ---------------------------------------------------------------------------
+note "Check 44: server/src/template_sync/VERSION is byte-identical to VERSION"
+if [ ! -f server/src/template_sync/VERSION ]; then
+  ko "check 44: server/src/template_sync/VERSION missing -- the server would refuse to start"
+elif cmp -s VERSION server/src/template_sync/VERSION; then
+  ok "check 44: package VERSION == root VERSION"
+else
+  ko "check 44: package VERSION differs from root VERSION -- server_version would disagree with template_version"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
