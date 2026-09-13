@@ -55,7 +55,16 @@ Private repo — new users must fork/clone it, or remove references and rely on 
 | **github-tools** | 17 (releases, workflows, PR hygiene) | Python 3.10+, `gh` CLI |
 | **python-tools** | 7 (wheel/sdist inspect, pytest, ruff, uv build, coverage) | Python 3.10+, `uv`, `pytest`, `ruff`, `coverage` |
 | **ollama-tools** | 6 (local LLM, project mapping) | Python 3.10+, Ollama |
-| **template-sync-tools** | 8 (manifest, diff, merge, sync) | Python 3.10+, Git |
+
+#### `template-sync-tools` (ships with this toolkit, not `mcp-dev-servers`)
+
+Since v4.0.0 this server lives in `server/` in **this** repo — it is not part of the `mcp-dev-servers` clone above, so it needs no fork/clone of that private repo and no `--mcp-dev-servers-path`.
+
+| Server | Tools | Installed by | Requires |
+|---|---|---|---|
+| **template-sync-tools** | 8 (manifest, diff, merge, sync) | `bash server/install.sh` (Linux/macOS) or `server\install.ps1` (Windows), run from a `claude-code-toolkit` checkout | Python 3.10+, Git |
+
+The install script creates `server/.venv` and prints the console-script exe path. `setup-project.{sh,ps1}` registers that path under `template-sync-tools` in `~/.claude.json` automatically for new projects; to register or re-register by hand, point `template-sync-tools` at the printed path yourself. See [`mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md) → *Template Sync Tools* for the full install / re-register / restart migration, including moving off an older `mcp-dev-servers`-hosted registration.
 
 #### Official / third-party user-level servers
 
