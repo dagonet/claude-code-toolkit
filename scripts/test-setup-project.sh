@@ -606,6 +606,43 @@ NODE_EOF
       "$TS_WIN_EXPECTED" "$TS_SH_INSTALL_OUT"
   fi
 
+  # --- v4.0: hostile-input probe -- an apostrophe in the checkout path (ruling R28, gate-time only) ---
+  #
+  # Measured defect: an apostrophe in the checkout path defeats MSYS's argv
+  # auto-conversion for install.sh's own `"$PY" -m venv "$HERE/.venv"`
+  # argument the same way a `[dev]` suffix defeats it for pip's requirement
+  # argument -- Windows Python then creates the venv relative to the CURRENT
+  # DRIVE instead of under $HERE, returns rc=0, and the next line's
+  # Scripts/python.exe check then fails, exit 127. Copies server/ (minus
+  # .venv, like the no-.git arm's own copy) into a scratch dir whose path
+  # contains a literal apostrophe and runs the REAL installer there -- a
+  # fresh venv build + network, so gate-time only, same as the
+  # installer-parity rows just above.
+  if [ "${RUN_GATE_ACTIVE:-}" != "1" ]; then
+    skip "install.sh survives an apostrophe in the checkout path (exit 0)" \
+      "hostile-input probe runs at gate time (RUN_GATE_ACTIVE=1)" 1
+    skip "install.sh survives an apostrophe in the checkout path (one stdout line)" \
+      "hostile-input probe runs at gate time (RUN_GATE_ACTIVE=1)" 1
+    skip "install.sh survives an apostrophe in the checkout path (exe resolves from PowerShell)" \
+      "hostile-input probe runs at gate time (RUN_GATE_ACTIVE=1)" 1
+  else
+    APOSSRC="$TMPROOT/o'brien/toolkit"
+    mkdir -p "$APOSSRC"
+    cp -r "$ROOT/server" "$APOSSRC/server"
+    rm -rf "$APOSSRC/server/.venv"
+    APOS_OUT="$(bash "$APOSSRC/server/install.sh" 2>"$TMPROOT/apos-install.err")"
+    APOS_RC=$?
+    expect "install.sh survives an apostrophe in the checkout path (exit 0)" 0 "$APOS_RC"
+    APOS_LINES="$(printf '%s\n' "$APOS_OUT" | wc -l | tr -d ' ')"
+    expect "install.sh survives an apostrophe in the checkout path (one stdout line)" 1 "$APOS_LINES"
+    # Same PowerShell single-quote escaping setup-project.sh uses for its own
+    # Test-Path probe: a doubled quote, not a backslash.
+    apos_esc="${APOS_OUT//\'/\'\'}"
+    apos_probe="$("$PSBIN" -NoProfile -Command "Test-Path -LiteralPath '$apos_esc'" 2>/dev/null | tr -d '\r')"
+    expect "install.sh survives an apostrophe in the checkout path (exe resolves from PowerShell)" \
+      "True" "$apos_probe"
+  fi
+
   # --- the no-.git arm: the actual regression test for :861 -----------------
   #
   # A toolkit extracted without .git (a ZIP download, not a clone) is the
@@ -701,7 +738,7 @@ TV_EOF
   expect "ps1: template_version is JSON null when VERSION is absent" \
     "null" "$(printf '%s\n' "$NOGIT_TV_OUT" | awk '$1=="ps1"{print $2}')"
 else
-  skip "setup-project.ps1 parity" "no PowerShell on this host" 11
+  skip "setup-project.ps1 parity" "no PowerShell on this host" 14
   skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 7
 fi
 
