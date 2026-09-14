@@ -1,2 +1,2 @@
-3.1.6
-The sync skill describes the requires_skill guard as it shipped in server 0.3.7 rather than as it was planned — keyed on the skill_version_floor capability, not a version — and tells non-skill callers the sentinel that keeps their harnesses working.
+4.0.0
+The template-sync MCP server ships from this repo's server/ directory as package template_sync, with checks 43-46, a third gate command, and the rollback target corrected to mcp-dev-servers 0.3.9.
