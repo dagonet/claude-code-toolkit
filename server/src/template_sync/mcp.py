@@ -317,6 +317,31 @@ def _template_repo_resolved(manifest: dict) -> str:
     return str(_resolve_path(manifest["templateRepo"]))
 
 
+def _server_in_template_repo(template_repo: str) -> bool:
+    """True iff the running server's source is inside the manifest's templateRepo.
+
+    Computed HERE, where the resolver lives, because the two values cross a
+    namespace: templateRepo is written by setup-project.sh under Git Bash as
+    /g/git/..., server_source is a pathlib string as G:\\git\\...; a string
+    containment test in the skill reported "not re-registered" to a consumer
+    who correctly had. The skill reads this boolean and never compares paths.
+    """
+    if not template_repo:
+        return False
+    try:
+        repo = pathlib.Path(_resolve_path(template_repo)).resolve()   # _resolve_path, NOT _normalize_path
+        src = pathlib.Path(SERVER_SOURCE_DIR).resolve()
+    except (OSError, ValueError):
+        return False
+    if not repo.exists():
+        return False
+    try:
+        src.relative_to(repo)
+        return True
+    except ValueError:
+        return False
+
+
 def _get_template_dir(manifest: dict) -> pathlib.Path:
     """Get the template variant directory from manifest."""
     repo = _resolve_path(manifest["templateRepo"])
@@ -725,6 +750,7 @@ async def template_load_manifest(project_path: str) -> str:
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
+                           "server_in_template_repo": False,
                            "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
 
     if errors:
@@ -732,6 +758,7 @@ async def template_load_manifest(project_path: str) -> str:
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
+                           "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
                            "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
 
     from . import v3
@@ -762,6 +789,7 @@ async def template_load_manifest(project_path: str) -> str:
             "server_version": __version__,
             "server_commit": SERVER_COMMIT,
             "server_source": _server_source(),
+            "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
             "capabilities": list(v3.CAPABILITIES),
             "migration_required": False,
             "variant": manifest.get("variant", ""),
@@ -814,6 +842,7 @@ async def template_load_manifest(project_path: str) -> str:
         "server_version": __version__,
         "server_commit": SERVER_COMMIT,
         "server_source": _server_source(),
+        "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
         "capabilities": list(v3.CAPABILITIES),
         "migration_required": migration_required,
         "variant": manifest.get("variant", ""),
