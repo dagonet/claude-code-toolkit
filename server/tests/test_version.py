@@ -24,7 +24,13 @@ def test_hatch_reads_the_same_version_file():
     # wrong version; this catches it in Task 1 rather than at release.
     from importlib.metadata import version
     import template_sync
-    assert version("claude-code-toolkit-template-sync") == template_sync.__version__
+    meta = version("claude-code-toolkit-template-sync")
+    assert meta == template_sync.__version__, (
+        f"installed metadata {meta!r} != package VERSION {template_sync.__version__!r}: "
+        "the editable install was built before a VERSION bump -- run "
+        "`bash server/install.sh` (or server\\install.ps1) once in this checkout, "
+        "then re-run the gate"
+    )
 
 
 def test_missing_version_file_raises_at_import(tmp_path, monkeypatch):

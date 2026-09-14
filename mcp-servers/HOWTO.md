@@ -297,7 +297,7 @@ Either script creates `server/.venv` and prints the console-script exe path as i
    ```
 3. **Restart the MCP server (a session restart also does it)** — the server re-imports at spawn, so a restart alone picks up the move. Reinstalling into a running venv is not the fix for skew; it is the one measured way to break it (locked launcher executables, no shim mid-flight).
 
-`mcp-template-sync-tools` from mcp-dev-servers 0.3.8 keeps working until you re-register; 0.4.0 of that package removes it. **The rollback target is mcp-dev-servers 0.3.9**, not 0.3.8, if the in-repo server regresses: 0.3.9 carries the `mcp<2` pin and installs cleanly, while 0.3.8 resolves `mcp` 2.x from a clean environment and fails to import (mcp 2.x ships `mcp/server/fastmcp.py` as a tombstone).
+`mcp-template-sync-tools` from mcp-dev-servers 0.3.x keeps working until you re-register; 0.4.0 of that package removes it. **The rollback target is mcp-dev-servers 0.3.9**, not 0.3.8, if the in-repo server regresses: 0.3.9 carries the `mcp<2` pin and installs cleanly, while 0.3.8 resolves `mcp` 2.x from a clean environment and fails to import (mcp 2.x ships `mcp/server/fastmcp.py` as a tombstone).
 
 ## SearXNG (Web Search)
 
