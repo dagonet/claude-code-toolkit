@@ -194,6 +194,106 @@ case "$VARIANT" in
         ;;
 esac
 
+# --- v4.0: resolve the toolkit's OWN template-sync exe (ruling R2) ----------
+# The template-sync server ships from THIS checkout, so unlike dotnet-tools /
+# rust-tools above it needs no --mcp-dev-servers-path flag -- the path is
+# $SCRIPT_DIR/server/.venv/.... Register it only if its exe exists, installing
+# it first when server/install.sh is present and the exe is not. A tree
+# without server/ (the bootstrap fixture's no-.git copy, or a partial
+# checkout) gets a WARNING and no registration: a registration that points at
+# nothing is the failure the release sequencing exists to prevent.
+#
+# `[[ -x "$cand" ]]` below is a check in BASH's own namespace -- $cand is
+# whatever path shape bash/MSYS produced for $SCRIPT_DIR. The consumer of the
+# registration this script publishes is a Win32 process (claude.exe reading
+# ~/.claude.json), so the candidate is re-verified after converting it to the
+# Win32 form that actually gets written out: round-tripped back to a POSIX
+# path via `cygpath -u` and stat'd again, rather than trusting that bash's own
+# resolution of the candidate implies the Win32 process's resolution agrees.
+TS_EXE=""
+for cand in "$SCRIPT_DIR/server/.venv/Scripts/mcp-template-sync-tools.exe" "$SCRIPT_DIR/server/.venv/bin/mcp-template-sync-tools"; do
+    [[ -x "$cand" ]] && { TS_EXE="$cand"; break; }
+done
+TS_INSTALL_RC=0
+if [[ -z "$TS_EXE" && -x "$SCRIPT_DIR/server/install.sh" ]]; then
+    if TS_EXE="$("$SCRIPT_DIR/server/install.sh")"; then
+        :
+    else
+        TS_INSTALL_RC=$?
+        TS_EXE=""
+    fi
+fi
+TS_REGISTER=0
+TS_WIN_EXE=""
+TS_WARN_REASON=""
+if [[ -n "$TS_EXE" ]]; then
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*)
+            # On a Windows shell the consumer is a Win32 process (claude.exe
+            # reading ~/.claude.json), and cygpath is the ONLY thing that can
+            # turn bash's own MSYS path shape into the Win32 namespace that
+            # consumer needs -- so it is REQUIRED here, never best-effort. A
+            # silent fallback to the raw (MSYS) path when cygpath is missing
+            # would write exactly the kind of unresolvable path this task
+            # exists to stop, with no warning at all.
+            if command -v cygpath >/dev/null 2>&1; then
+                TS_WIN_EXE="$(cygpath -w "$TS_EXE" 2>/dev/null || true)"
+                if ! command -v powershell >/dev/null 2>&1; then
+                    # Cannot ask the actual consumer whether the published
+                    # string resolves -- same posture as cygpath missing:
+                    # cannot verify, so do not register.
+                    TS_WARN_REASON="cannot verify the exe in the Win32 namespace: powershell not found; not registering template-sync-tools - install PowerShell or register the exe by hand"
+                else
+                    # The consumer is a Win32 process (claude.exe reading
+                    # ~/.claude.json). Ask THAT consumer's own resolution
+                    # mechanism whether the published string resolves -- the
+                    # same check install.ps1 makes with Test-Path -- rather
+                    # than round-tripping back through cygpath: `cygpath -w`
+                    # then `cygpath -u` then `-f` never leaves MSYS's own
+                    # path-mapping, so it only proves cygpath inverts itself
+                    # and the file exists in the namespace bash already
+                    # trusted, never that a Win32 process can open it.
+                    ts_probe_out=""
+                    if [[ -n "$TS_WIN_EXE" ]]; then
+                        # PowerShell's single-quoted string escape is a doubled
+                        # quote, not a backslash -- a checkout path containing
+                        # an apostrophe (e.g. an O'Brien user directory) would
+                        # otherwise terminate the string early and hand
+                        # Test-Path a ParserError instead of True/False.
+                        ts_win_esc="${TS_WIN_EXE//\'/\'\'}"
+                        ts_probe_out="$(powershell -NoProfile -Command "Test-Path -LiteralPath '$ts_win_esc'" 2>/dev/null | tr -d '\r')"
+                    fi
+                    if [[ "$ts_probe_out" == "True" ]]; then
+                        TS_REGISTER=1
+                    else
+                        TS_WARN_REASON="could not verify the exe in the Win32 namespace (cygpath conversion of $TS_EXE failed or the converted path does not resolve); not registering template-sync-tools - register the exe by hand"
+                    fi
+                fi
+            else
+                TS_WARN_REASON="cannot convert the exe path to the Win32 namespace: cygpath not found; not registering template-sync-tools - install Git for Windows' cygpath or register the exe by hand"
+            fi
+            ;;
+        *)
+            # A real POSIX host (Linux/macOS): the raw path already IS the
+            # consumer's own (POSIX) namespace, so no conversion is needed.
+            TS_WIN_EXE="$TS_EXE"
+            [[ -f "$TS_EXE" ]] && TS_REGISTER=1
+            ;;
+    esac
+fi
+if [[ "$TS_REGISTER" -ne 1 ]]; then
+    if [[ -n "$TS_WARN_REASON" ]]; then
+        warnings+=("$TS_WARN_REASON")
+    elif [[ "$TS_INSTALL_RC" -ne 0 ]]; then
+        # install.sh failed -- name the exit code and point at the direct
+        # invocation rather than swallowing it into a bare "not found" warning
+        # (its cygpath-fails path exits under `set -e` with nothing on stderr).
+        warnings+=("template-sync-tools not registered: server/install.sh exited $TS_INSTALL_RC - run 'bash server/install.sh' in the toolkit checkout by hand to see the error, then re-run setup or add the entry to ~/.claude.json manually")
+    else
+        warnings+=("template-sync-tools not registered: no exe under server/.venv and no server/install.sh to create one - run 'bash server/install.sh' in the toolkit checkout, then re-run setup or add the entry by hand")
+    fi
+fi
+
 # --- Build placeholder replacement map ---
 # Parallel arrays for bash 3 compatibility (macOS ships bash 3)
 declare -a PH_KEYS=()
@@ -738,6 +838,24 @@ print_automode_snippet() {
     echo "  ask for confirmation on ordinary commands there."
 }
 
+# --- template-sync-tools ~/.claude.json snippet -----------------------------
+#
+# Same reasoning as autoMode above: ~/.claude.json is user/global scope, this
+# script only knows about the one project it just bootstrapped, so it prints
+# the entry rather than writing it. TS_REGISTER/TS_WIN_EXE are resolved once,
+# above, before the dry-run/real-run fork, so both paths print the same thing.
+print_template_sync_snippet() {
+    [[ "$TS_REGISTER" -eq 1 ]] || return 0
+    echo "template-sync-tools (register in ~/.claude.json's mcpServers if not already"
+    echo "present -- this is the toolkit's OWN server, resolved from this checkout):"
+    echo ""
+    echo "  \"template-sync-tools\": {"
+    echo "    \"type\": \"stdio\","
+    echo "    \"command\": \"$(json_escape "$TS_WIN_EXE")\","
+    echo "    \"args\": []"
+    echo "  }"
+}
+
 # --- Dry run ---
 if [[ "$DRY_RUN" == true ]]; then
     echo ""
@@ -799,6 +917,8 @@ if [[ "$DRY_RUN" == true ]]; then
     print_branch_protection
     echo ""
     print_automode_snippet
+    echo ""
+    print_template_sync_snippet
     echo ""
     echo "=== END DRY RUN ==="
     exit 0
@@ -1054,5 +1174,8 @@ print_branch_protection
 
 echo ""
 print_automode_snippet
+
+echo ""
+print_template_sync_snippet
 
 echo ""

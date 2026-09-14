@@ -15,7 +15,7 @@ This guide is split accordingly. For the **why**, see `docs/architecture.md` →
 
 | Scope | Requirement | Used by |
 |---|---|---|
-| User | **Python** 3.10+ (in PATH) | All `mcp-dev-servers` python servers |
+| User | **Python** 3.11+ (in PATH) | All `mcp-dev-servers` python servers, and this repo's own `template-sync-tools` server (`server/`) |
 | User | **GitHub CLI** (`gh`) installed + authenticated | `github-tools` |
 | User | **GitHub Personal Access Token** (`GITHUB_PERSONAL_ACCESS_TOKEN` env var) | Official GitHub plugin |
 | User | **Node.js** 18+ | SearXNG MCP, Open Brain |
@@ -29,12 +29,12 @@ This guide is split accordingly. For the **why**, see `docs/architecture.md` →
 The custom Python MCP servers live in a separate repository:
 
 - **Repository:** https://github.com/dagonet/mcp-dev-servers
-- **95 tools** across 7 servers
+- **95 tools** across 7 servers as of 0.3.8. `template-sync-tools` moved into this repo's own `server/` as of toolkit v4.0.0 — see the Template Sync Tools section below — and mcp-dev-servers 0.4.0 removes it from that count.
 - See that repo's README for full tool reference
 
 ## Python Virtual Environment Setup
 
-All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment. `pip install -e ".[ollama]"` installs `mcp-dev-servers` in editable mode and exposes 7 console scripts (`mcp-git-tools`, `mcp-github-tools`, `mcp-dotnet-tools`, `mcp-ollama-tools`, `mcp-rust-tools`, `mcp-template-sync-tools`, `mcp-python-tools`) inside the venv. The `[ollama]` extra pulls `httpx`; drop it if you don't run Ollama.
+All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment. `pip install -e ".[ollama]"` installs `mcp-dev-servers` in editable mode and exposes 7 console scripts (`mcp-git-tools`, `mcp-github-tools`, `mcp-dotnet-tools`, `mcp-ollama-tools`, `mcp-rust-tools`, `mcp-template-sync-tools`, `mcp-python-tools`) inside the venv. The `[ollama]` extra pulls `httpx`; drop it if you don't run Ollama. **Do not register `mcp-template-sync-tools` from this venv** — as of toolkit v4.0.0 that server ships from this repo's own `server/` instead; see the Template Sync Tools section below.
 
 > **Invariant:** the venv MUST live at `<mcp-dev-servers>/.venv/` (the literal directory name `.venv` inside the repo root). Both `setup-project.{ps1,sh}` and the user-level `.mcp.json.template` hardcode this relative path. Naming the venv `env/`, placing it outside the repo, or installing via `pipx` will break project-level MCP registration silently.
 
@@ -261,19 +261,43 @@ Deterministic template syncing: manifest management, file status computation, th
 
 **Tools:** `template_load_manifest`, `template_compute_status`, `template_get_diff`, `template_apply_file`, `template_finalize_sync`, `template_reverse_placeholders`, `template_check_cross_variant`, `template_propagate_to_variants`
 
+**Since v4.0.0 this server ships from `server/` in this repo (`claude-code-toolkit`), not from `mcp-dev-servers`.** The contract it implements lives at [`docs/template-sync-migration-contract.md`](../docs/template-sync-migration-contract.md). `mcp-dev-servers` still gates `dotnet-tools` and `rust-tools` via `--mcp-dev-servers-path` — only template-sync-tools moved.
+
+**Install (from a `claude-code-toolkit` checkout):**
+
 **Windows (PowerShell):**
 
 ```powershell
-claude mcp add --scope user --transport stdio template-sync-tools `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-template-sync-tools.exe"
+server\install.ps1
 ```
 
 **Linux / macOS:**
 
 ```bash
-claude mcp add --scope user --transport stdio template-sync-tools \
-  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-template-sync-tools
+bash server/install.sh
 ```
+
+Either script creates `server/.venv` and prints the console-script exe path as its ONLY line of stdout.
+
+**Migrate (three steps — never reinstall to fix skew, restart instead):**
+
+1. **Install:** run the install script above; capture the printed exe path.
+2. **Re-register:** point `template-sync-tools` in `~/.claude.json` at the printed exe path — replacing any prior `mcp-dev-servers` entry. `setup-project.{sh,ps1}` now does this registration for new projects automatically.
+
+   **Windows (PowerShell):**
+   ```powershell
+   claude mcp add --scope user --transport stdio template-sync-tools `
+     -- "<your-path>\claude-code-toolkit\server\.venv\Scripts\mcp-template-sync-tools.exe"
+   ```
+
+   **Linux / macOS:**
+   ```bash
+   claude mcp add --scope user --transport stdio template-sync-tools \
+     -- ~/repos/claude-code-toolkit/server/.venv/bin/mcp-template-sync-tools
+   ```
+3. **Restart the MCP server (a session restart also does it)** — the server re-imports at spawn, so a restart alone picks up the move. Reinstalling into a running venv is not the fix for skew; it is the one measured way to break it (locked launcher executables, no shim mid-flight).
+
+`mcp-template-sync-tools` from mcp-dev-servers 0.3.x keeps working until you re-register; 0.4.0 of that package removes it. **The rollback target is mcp-dev-servers 0.3.9**, not 0.3.8, if the in-repo server regresses: 0.3.9 carries the `mcp<2` pin and installs cleanly, while 0.3.8 resolves `mcp` 2.x from a clean environment and fails to import (mcp 2.x ships `mcp/server/fastmcp.py` as a tombstone).
 
 ## SearXNG (Web Search)
 

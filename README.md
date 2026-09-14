@@ -132,7 +132,7 @@ Full comparison + project-level MCP matrix: [`docs/templates.md`](docs/templates
 
 ## Related projects
 
-- [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) — seven custom MCP servers (95 tools) for git, GitHub, .NET, Rust, Ollama, Python, and template-sync. Used by every variant.
+- [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) — seven custom MCP servers (95 tools) for git, GitHub, .NET, Rust, Ollama, Python, and (until 0.4.0) template-sync. Used by every variant. (`template-sync-tools` itself now ships from this repo's own `server/` as of v4.0.0 — see [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).)
 - [**open-brain**](https://github.com/dagonet/open-brain) — persistent memory MCP server for storing decisions, insights, and context across sessions.
 
 ## Contributing
