@@ -7,7 +7,19 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$(command -v python3 || command -v python || true)"
 [ -n "$PY" ] || { echo "install.sh: no python3/python on PATH" >&2; exit 2; }
-[ -d "$HERE/.venv" ] || "$PY" -m venv "$HERE/.venv"
+# Ruling R28 (third instance of this repo's MSYS-argv-conversion mechanism --
+# a bracket defeated it for pip's requirement argument at line 23/below, an
+# apostrophe defeats it here): any MSYS path handed to a Windows executable is
+# suspect unless the token is bare -- cd and go relative, or cygpath -w it
+# first. A checkout path containing `'` (e.g. an O'Brien user directory)
+# defeats MSYS's argv auto-conversion for "$HERE/.venv" the same way a `[dev]`
+# suffix defeats it for a pip requirement: Windows Python receives the
+# unconverted POSIX string, silently creates the venv relative to the current
+# drive instead of under $HERE, and returns rc=0 -- the next line's
+# Scripts/python.exe check then fails and the script dies on the POSIX
+# fallback. `cd "$HERE" && ... .venv` is a bare relative token; no conversion
+# is attempted, so there is nothing for the apostrophe to defeat.
+[ -d "$HERE/.venv" ] || ( cd "$HERE" && "$PY" -m venv .venv )
 if [ -x "$HERE/.venv/Scripts/python.exe" ]; then VPY="$HERE/.venv/Scripts/python.exe"; EXE="$HERE/.venv/Scripts/mcp-template-sync-tools.exe"
 else VPY="$HERE/.venv/bin/python"; EXE="$HERE/.venv/bin/mcp-template-sync-tools"; fi
 # stdout is the CONTRACT: the exe path and nothing else. setup-project captures

@@ -12,14 +12,12 @@ else
   exit 2
 fi
 
-# --basetemp outside the checkout: test_git_head_of_is_none_outside_a_git_checkout
-# (server/tests/test_load_fields.py) relies on `tmp_path` NOT resolving to an
-# enclosing .git via `git rev-parse`'s upward search -- a basetemp UNDER this
-# checkout would put every tmp_path inside the repo's work tree and flip that
-# assertion. `mktemp -d` (no TMPDIR override) lands outside the repo on this
-# host. A fresh dir per run, removed after, also keeps `git status` clean: gate
-# runs must not leave test scratch files as untracked repo content.
+# --basetemp outside the checkout: keeps `git status` clean -- gate runs must
+# not leave test scratch files as untracked repo content, and a basetemp under
+# this checkout would show up there. `mktemp -d` (no TMPDIR override) lands
+# outside the repo on this host. A fresh dir per run, removed after.
 BASETEMP="$(mktemp -d 2>/dev/null || mktemp -d -t test-server)"
+trap 'rm -rf "$BASETEMP"' EXIT
 "$VPY" -m pytest "$HERE/server/tests" -q --basetemp="$BASETEMP"
 rc=$?
 rm -rf "$BASETEMP"

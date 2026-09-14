@@ -3467,7 +3467,11 @@ esac
 # no move. Either way this arm is exercised on every run, never skipped for
 # lack of a venv. (Two concurrent gate runs in the SAME worktree can collide on
 # the moved-aside directory -- per-worktree venvs make cross-worktree runs
-# safe; accepted, not engineered around.)
+# safe; accepted, not engineered around.) Recovery: if the process dies at a
+# point the EXIT trap cannot fire (e.g. SIGKILL), the venv is left behind as
+# `server/.venv.check46-<pid>` and every later gate run fails at command three
+# looking like a missing install -- `mv server/.venv.check46-<pid> server/.venv`
+# restores it.
 # ---------------------------------------------------------------------------
 note "Check 46: **Gate** names test-server.sh; test-server.sh exits 2 (never skips) with no venv"
 c46_gate=$(grep -E "^[-*[:space:]]*\*\*Gate\*\*:" PROJECT_CONTEXT.md 2>/dev/null | head -1)

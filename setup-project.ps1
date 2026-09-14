@@ -201,6 +201,51 @@ if ($Variant -eq "rust-tauri" -and -not $McpDevServersPath) {
     $warnings += "-McpDevServersPath not set - project-level rust-tools MCP entry will be skipped"
 }
 
+# --- v4.0: resolve the toolkit's OWN template-sync exe (ruling R2) ---------
+# The template-sync server ships from THIS checkout, so unlike dotnet-tools /
+# rust-tools above it needs no -McpDevServersPath flag -- the path is
+# $PSScriptRoot\server\.venv\.... Register it only if its exe exists,
+# installing it first when server\install.ps1 is present and the exe is not. A
+# tree without server\ (the bootstrap fixture's no-.git copy, or a partial
+# checkout) gets a WARNING and no registration: a registration that points at
+# nothing is the failure the release sequencing exists to prevent.
+#
+# Test-Path here IS already a check in the CONSUMER's namespace -- this
+# process is itself the Win32 process that will read the registration back out
+# of ~/.claude.json -- unlike setup-project.sh's `[[ -x ]]`, which has to
+# round-trip through cygpath to prove the same thing about a path bash
+# resolved in its own (MSYS) namespace.
+$tsExe = $null
+foreach ($cand in @(
+    (Join-Path $PSScriptRoot "server\.venv\Scripts\mcp-template-sync-tools.exe"),
+    (Join-Path $PSScriptRoot "server\.venv\bin\mcp-template-sync-tools")
+)) {
+    if (Test-Path $cand) { $tsExe = $cand; break }
+}
+$tsInstallScript = Join-Path $PSScriptRoot "server\install.ps1"
+$tsInstallError = $null
+if (-not $tsExe -and (Test-Path $tsInstallScript)) {
+    try {
+        $tsExe = & $tsInstallScript
+    }
+    catch {
+        # install.ps1 failed -- name the reason and point at the direct
+        # invocation rather than swallowing it into a bare "not found" warning.
+        $tsInstallError = $_.Exception.Message
+        $tsExe = $null
+    }
+}
+$tsRegister = $false
+if ($tsExe -and (Test-Path $tsExe)) { $tsRegister = $true }
+if (-not $tsRegister) {
+    if ($tsInstallError) {
+        $warnings += "template-sync-tools not registered: server/install.ps1 failed - $tsInstallError - run '.\server\install.ps1' in the toolkit checkout by hand to see the error, then re-run setup or add the entry to ~/.claude.json manually"
+    }
+    else {
+        $warnings += "template-sync-tools not registered: no exe under server\.venv and no server\install.ps1 to create one - run '.\server\install.ps1' in the toolkit checkout, then re-run setup or add the entry by hand"
+    }
+}
+
 # --- Build placeholder replacement map ---
 $replacements = @{}
 
@@ -739,6 +784,31 @@ function Write-AutoModeSnippet {
     Write-Host "  ask for confirmation on ordinary commands there."
 }
 
+# --- template-sync-tools ~/.claude.json snippet -----------------------------
+#
+# Same reasoning as Write-AutoModeSnippet above: ~/.claude.json is user/global
+# scope, this script only knows about the one project it just bootstrapped, so
+# it prints the entry rather than writing it. $tsRegister/$tsExe are resolved
+# once, above, before the DryRun/real-run fork, so both paths print the same
+# thing -- and $tsExe is already the Win32-namespace path (this process IS the
+# Win32 consumer), so ConvertTo-Json's own backslash-escaping is all that is
+# needed here, unlike setup-project.sh's manual json_escape.
+function Write-TemplateSyncSnippet {
+    if (-not $tsRegister) { return }
+    $entry = [ordered]@{
+        "template-sync-tools" = [ordered]@{
+            type    = "stdio"
+            command = $tsExe
+            args    = @()
+        }
+    }
+    $json = ($entry | ConvertTo-Json -Depth 4)
+    Write-Host "template-sync-tools (register in ~/.claude.json's mcpServers if not already" -ForegroundColor Yellow
+    Write-Host "present -- this is the toolkit's OWN server, resolved from this checkout):" -ForegroundColor Yellow
+    Write-Host ""
+    foreach ($line in ($json -split "`r?`n")) { Write-Host "  $line" }
+}
+
 # --- DryRun output ---
 if ($DryRun) {
     Write-Host ""
@@ -805,6 +875,9 @@ if ($DryRun) {
 
     Write-Host ""
     Write-AutoModeSnippet
+
+    Write-Host ""
+    Write-TemplateSyncSnippet
 
     Write-Host ""
     Write-Host "=== END DRY RUN ===" -ForegroundColor Cyan
@@ -1118,5 +1191,8 @@ Write-BranchProtection
 
 Write-Host ""
 Write-AutoModeSnippet
+
+Write-Host ""
+Write-TemplateSyncSnippet
 
 Write-Host ""
