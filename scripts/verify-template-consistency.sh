@@ -1092,8 +1092,8 @@ else
   ko "self-gating: **Test** must be verify-template-consistency.sh WITHOUT test-hooks.sh — got: ${rpc_test:-<none>}"
 fi
 case "$rpc_gate" in
-  *verify-template-consistency.sh*test-hooks.sh*) ok "self-gating: **Gate** runs the full pair (consistency + test-hooks)" ;;
-  *) ko "self-gating: **Gate** must run both scripts — got: ${rpc_gate:-<none>}" ;;
+  *verify-template-consistency.sh*test-hooks.sh*test-server.sh*) ok "self-gating: **Gate** runs all three commands in order (consistency, test-hooks, test-server)" ;;
+  *) ko "self-gating: **Gate** must run all three scripts in order (consistency, test-hooks, test-server) — got: ${rpc_gate:-<none>}" ;;
 esac
 # Self-gating makes test-hooks.sh a CHILD of run-gate.sh, which exports
 # RUN_GATE_ACTIVE=1 — inherited, it trips the recursion guard in every fixture
@@ -3425,7 +3425,7 @@ case "$c43_v" in
   *) ko "check 43: VERSION line 1 '$c43_v' is not bare X.Y.Z -- every consumer's template_load_manifest would refuse" ;;
 esac
 # Control: a value that must fail the same test.
-printf '%s' "v9.9.9" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' && ko "check 43 CONTROL: 'v9.9.9' passed the shape test -- the test is inert"
+printf '%s' "v9.9.9" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' && ko "check 43c CONTROL: 'v9.9.9' passed the shape test -- the test is inert"
 
 # ---------------------------------------------------------------------------
 # Check 44 — the package VERSION is byte-identical to the repo-root VERSION
@@ -3452,6 +3452,52 @@ case "$c45" in
   "") ko "check 45: MIN_SERVER_FOR_V3 not found in server/src/template_sync/v3.py" ;;
   *)  ko "check 45: MIN_SERVER_FOR_V3 = '$c45' -- raising it is a contract change that re-floors every consumer on their next finalize; if that is intended, this check is what you change, with a CHANGELOG entry" ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Check 46 — the Gate line names test-server.sh, and test-server.sh itself
+# never turns a missing install into a skip (v4.0). Two-sided:
+#   (a) the **Gate** line literally names the third command (RED: remove it);
+#   (b) the script's own behavior with the venv ABSENT is an ERROR (exit 2,
+#       naming 'server/install.sh'), never a silent/soft skip -- a gate that
+#       skips is a gate that passed vacuously.
+# Arm (b) runs BOTH ways a checkout can be found in: if server/.venv exists
+# here, it is moved aside for the single invocation and restored immediately
+# after (trap-guarded so an interrupted run still restores it); if it does not
+# exist, the no-venv behavior is already the checkout's real state and needs
+# no move. Either way this arm is exercised on every run, never skipped for
+# lack of a venv. (Two concurrent gate runs in the SAME worktree can collide on
+# the moved-aside directory -- per-worktree venvs make cross-worktree runs
+# safe; accepted, not engineered around.)
+# ---------------------------------------------------------------------------
+note "Check 46: **Gate** names test-server.sh; test-server.sh exits 2 (never skips) with no venv"
+c46_gate=$(grep -E "^[-*[:space:]]*\*\*Gate\*\*:" PROJECT_CONTEXT.md 2>/dev/null | head -1)
+case "$c46_gate" in
+  *test-server.sh*) ok "check 46: **Gate** line names scripts/test-server.sh" ;;
+  *) ko "check 46: **Gate** line does not name scripts/test-server.sh -- got: ${c46_gate:-<none>}" ;;
+esac
+
+if [ ! -x scripts/test-server.sh ]; then
+  ko "check 46: scripts/test-server.sh missing or not executable"
+else
+  c46_moved=0
+  if [ -d server/.venv ]; then
+    c46_aside="server/.venv.check46-$$"
+    mv server/.venv "$c46_aside"
+    trap 'mv "$c46_aside" server/.venv 2>/dev/null' EXIT
+    c46_moved=1
+  fi
+  c46_out=$(bash scripts/test-server.sh 2>&1)
+  c46_rc=$?
+  if [ "$c46_moved" -eq 1 ]; then
+    mv "$c46_aside" server/.venv
+    trap - EXIT
+  fi
+  if [ "$c46_rc" -eq 2 ] && printf '%s' "$c46_out" | grep -q "server/install.sh" && ! printf '%s' "$c46_out" | grep -qi "skip"; then
+    ok "check 46: scripts/test-server.sh exits 2 with an install message and no 'skip' when server/.venv is absent"
+  else
+    ko "check 46: scripts/test-server.sh must exit 2 naming server/install.sh (never 'skip') when server/.venv is absent -- got rc=$c46_rc, output: $c46_out"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 echo

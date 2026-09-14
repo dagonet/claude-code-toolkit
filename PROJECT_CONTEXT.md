@@ -40,7 +40,7 @@ the absolute numbers as host-local; the ~10x ratio is the part that travels.
 - **Test**: `bash scripts/verify-template-consistency.sh`
 - **Format**: none — every file is LF-only Markdown or shell; `verify-template-consistency.sh` asserts the line endings
 - **Lint**: none — see Build
-- **Gate**: `bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh`
+- **Gate**: `bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh && bash scripts/test-server.sh`
 - **Post-edit build**: none
 <!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none
