@@ -229,10 +229,13 @@ while IFS= read -r seg; do
     # `git --no-pager commit` were measured skipping the suite entirely while
     # the control `git commit -m x` ran it in 5 s. Both exited 0, so the EXIT
     # CODE cannot discriminate on a green suite — the signal is whether the
-    # suite ran. GC_GIT_PRE is widened in the lib so the subcommand is now
-    # FOUND; the globals are classified here by the same gc_global_options the
-    # other two git gates use. An inert global (`-C <path>`, `--no-pager`, `-P`,
-    # …) falls through and the Test runs normally.
+    # suite ran. v4.0.1: the lib's positional walk in gc_matches_subcommand is
+    # now the SOLE authority (the GC_GIT_PRE fast path that originally fixed
+    # this is retired -- see hooks/lib/git-cmd.sh) and it finds the subcommand
+    # regardless of the globals; the globals are classified here by the same
+    # gc_global_options the other two git gates use. An inert global
+    # (`-C <path>`, `--no-pager`, `-P`, …) falls through and the Test runs
+    # normally.
     pctg=$(gc_global_options "$seg")
     if [ "$pctg" != ok ]; then
       case "$pctg" in

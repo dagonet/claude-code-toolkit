@@ -560,6 +560,12 @@ check "item 10 (F2): a backslash path to git is still recognised"          "$H" 
 check "item 10 (F3): bash -c wrapper still runs Test"                      "$H" 2 "$(mkjson Bash "bash -c \"git commit -m x\"" "$BADREPO")"
 check "item 10 (F3): sh -lc wrapper still runs Test"                       "$H" 2 "$(mkjson Bash "sh -lc \"git commit -m x\"" "$BADREPO")"
 check "item 10 (F3): subshell wrapper still runs Test"                     "$H" 2 "$(mkjson Bash "(git commit -m x)" "$BADREPO")"
+# --- v4.0.1 fix round 1: the A6.10 rows in the gate-before-merge.sh block
+# exercise the substitution-opener strip only through the merge arm; nothing
+# pinned it through the COMMIT path until now.
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (dollar-paren)" "$H" 2 "$(mkjson Bash 'echo $(git commit -m x)' "$BADREPO")"
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (backtick)"     "$H" 2 "$(mkjson Bash 'echo `git commit -m x`' "$BADREPO")"
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (process-sub)"  "$H" 2 "$(mkjson Bash 'diff <(git commit -m x) f' "$BADREPO")"
 # review round 2: the matcher itself must never write to stderr -- a hook or
 # caller that captures stderr would carry an awk warning into gate logs on
 # every single call, forever. Measured silent on this awk; pinned as a
