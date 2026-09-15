@@ -166,8 +166,21 @@ def test_migration_region_and_hunks(tmp_path):
     assert res["region_left_in_place"] is True and res["region_bytes"] > 0
     assert res["region_was_seed"] is False
     assert res["gate_self_reference"] == [] and res["gate_unverified"] is False
-    assert "```diff\n" in md and "+My extra rule." in md
+    # v4.0.1 item 14: the out-of-region hunks are NOT embedded in project.md
+    # (it has no `paths:` key and loads at every session start) -- they go
+    # to backup_dir as a diff record instead.
+    assert "```diff" not in md and "Migrated from CLAUDE.md" not in md
+    # F1 (controller, fix round 1): "paths:" and "PROJECT-CUSTOM" both also
+    # appear in the OLD f10c39f seed this item replaces (the "delivered to
+    # nobody" one), so that pair alone cannot distinguish old from new.
+    # Compare directly against the real constant instead.
+    assert v3.PROJECT_MD_SEED_BODY in md               # the v4.0.1 seed body
+    assert "delivered to nobody" not in md
     assert "Project-specific instructions" not in md      # never diffed against the current template
+    diff_path = backup / "CLAUDE.md.out-of-region.diff"
+    assert diff_path.exists()
+    assert "+My extra rule." in diff_path.read_text(encoding="utf-8")
+    assert res["project_md_record"] == str(diff_path)
     # backup
     assert (backup / "CLAUDE.md.pre-migration").read_text(encoding="utf-8") == PROJ_CLAUDE
     assert (backup / "template-manifest.json.pre-migration").exists()
@@ -209,7 +222,12 @@ def test_migration_reports_the_keep_mine_entries_it_drops(tmp_path):
 
     Measured by penumbra on a real tree: migration is careful with keys it
     does NOT understand (`reason` survives under unknown_file_keys,
-    `lastSyncedVersion` under unknown_keys) and discarded the one it does.
+    `deletedAcknowledged` under unknown_keys) and discarded the one it does.
+    (The `lastSyncedVersion` pair used to be the unknown-keys example too --
+    v4.0.1 makes it the ONE exception: dropped unconditionally and reported
+    in `superseded_keys_dropped`, not preserved. See
+    test_migration_open_brain_manifest_shape and
+    test_finalize_drops_superseded_lastsynced_keys.)
     """
     entries = {
         "hooks/enforce-delegation.sh": {
@@ -269,7 +287,10 @@ def test_migration_vacuity_control(tmp_path):
     md = (proj / ".claude" / "rules" / "project.md").read_text(encoding="utf-8")
     assert "```diff" not in md
     assert SEED not in md                       # the toolkit's seed is not the consumer's content
-    assert md.count("\n") <= 3                  # header only
+    assert v3.PROJECT_MD_SEED_BODY in md        # the v4.0.1 seed body, always present -- F1, see above
+    assert "delivered to nobody" not in md
+    assert not (tmp_path / "b" / "CLAUDE.md.out-of-region.diff").exists()   # no hunks, nothing to record
+    assert res["project_md_record"] is None
 
 
 def test_migration_region_only_no_migrated_heading(tmp_path):
@@ -300,7 +321,9 @@ def test_migration_dry_run_writes_nothing(tmp_path):
     repo, proj, commit = _mk_v2(tmp_path, PROJ_CLAUDE)
     res = _migrate(proj, dry_run=True)
     assert res["dry_run"] is True and res["migrated"] is False
-    assert res["hunk_count"] == 1 and "+My extra rule." in res["project_md"]
+    assert res["hunk_count"] == 1 and "+My extra rule." in res["out_of_region_diff"]
+    assert "```diff" not in res["project_md"]
+    assert res["project_md_record"] is None       # dry_run writes nothing
     assert res["manifest"]["manifest_version"] == 3
     assert not (proj / ".claude" / "rules" / "project.md").exists()
     assert json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))["version"] == 2
@@ -383,10 +406,13 @@ def test_migration_open_brain_manifest_shape(tmp_path):
 
     res = _migrate(proj, backup_dir=str(tmp_path / "b"))
     assert res["migrated"] is True
-    assert sorted(res["unknown_keys"]) == ["deletedAcknowledged", "lastSyncedVersion", "lastSyncedVersionOf"]
+    # v4.0.1 item 8: the lastSynced* trio is the ONE exception to
+    # preserve-unknown -- dropped unconditionally, reported separately.
+    assert res["unknown_keys"] == ["deletedAcknowledged"]
+    assert res["superseded_keys_dropped"] == ["lastSynced", "lastSyncedVersion", "lastSyncedVersionOf"]
     out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
     assert out["template_version"] == "v2.3.0"                 # server-written
-    assert out["lastSyncedVersion"] == "v2.3.0" and out["lastSyncedVersionOf"] == "claude-code-toolkit"
+    assert "lastSynced" not in out and "lastSyncedVersion" not in out and "lastSyncedVersionOf" not in out
     assert out["files"]["hooks/h0.sh"] == {"hash": "sha256:" + ts._sha256("h0\n"), "ownership": "template",
                                            "reason": "Project-specific config"}
     assert out["files"]["hooks/h1.sh"] == {"hash": "sha256:" + ts._sha256("h1\n"), "ownership": "template"}
