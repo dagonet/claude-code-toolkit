@@ -49,6 +49,8 @@ CAPABILITIES = (
     "local_diff_kind",
     "server_source",
     "skill_version_floor",
+    "region_bytes_raw",
+    "new_template_files_detail",
 )
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
@@ -1172,7 +1174,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
 
     manifest_path = pp / ".claude" / "template-manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    core._write_file_atomic(manifest_path, json.dumps(out, indent=2, ensure_ascii=False))
+    core._write_file_atomic(manifest_path, json.dumps(out, indent=2, ensure_ascii=False) + "\n")
     return {
         "manifest_path": ".claude/template-manifest.json",
         "manifest_version": 3,
@@ -1232,6 +1234,33 @@ def _region_body(region_block: str | None) -> str | None:
     lines = region_block.splitlines()
     inner = [l for l in lines if core.CUSTOM_REGION_BEGIN not in l and core.CUSTOM_REGION_END not in l]
     return "\n".join(inner)
+
+
+def region_bytes_raw(content: str | None) -> int:
+    """Byte length of the PROJECT-CUSTOM region body exactly as it sits in the
+    file: every byte strictly between the BEGIN marker's closing "-->" and the
+    START of the END marker's own "<!--". No stripping, no joining on "\n" --
+    this is the ONE definition shared with region.sh --bytes (v4.0.1, item 6);
+    `_region_body` above keeps its line-joined text shape for callers that
+    compare CONTENT, not bytes. 0 for no region, an unclosed region, or an
+    empty region (BEGIN immediately followed by END).
+    """
+    if not content:
+        return 0
+    begin = content.find(core.CUSTOM_REGION_BEGIN)
+    if begin < 0:
+        return 0
+    body_start = content.find("-->", begin)
+    if body_start < 0:
+        return 0
+    body_start += 3
+    end_text = content.find(core.CUSTOM_REGION_END, body_start)
+    if end_text < 0:
+        return 0
+    body_end = content.rfind("<!--", body_start, end_text)
+    if body_end < body_start:
+        return 0
+    return len(content[body_start:body_end].encode("utf-8"))
 
 
 def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
@@ -1358,7 +1387,7 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
         "migration_base": base_label,
         "region_was_seed": region_was_seed,
         "region_left_in_place": proj_region is not None,
-        "region_bytes": len((_region_body(proj_region) or "").encode("utf-8")),
+        "region_bytes": region_bytes_raw(proj_claude),
         "gate_self_reference": gate_hits,
         "gate_unverified": gate_declared,
         "unknown_keys": unknown_top_level_keys(new_manifest),
@@ -1448,7 +1477,7 @@ def migrate_manifest(pp: pathlib.Path, backup_dir: str, dry_run: bool,
         core._write_file_atomic(target, plan["project_md"])
         written.append(PROJECT_MD)
     core._write_file_atomic(pp / ".claude" / "template-manifest.json",
-                            json.dumps(plan["manifest"], indent=2, ensure_ascii=False))
+                            json.dumps(plan["manifest"], indent=2, ensure_ascii=False) + "\n")
     written.append(".claude/template-manifest.json")
 
     plan["migrated"] = True

@@ -5,6 +5,9 @@
 ### Fixed
 - Check 46 no longer moves `server/.venv` to prove the no-venv arm: `scripts/test-server.sh` takes `TS_VENV_DIR`, and the check points it at an empty temp directory. A live MCP server holding the venv made every per-commit Test red on the live checkout (item 11).
 - `gc_matches_subcommand` matched a bare `commit` VALUE after another verb (`git log --grep commit`) and ran the target repo's Test on a read-only command. `commit` is now matched only at git's subcommand position; the `merge`/`push` bare-operand posture is unchanged and pinned (item 10). Compound segments, quoted wrappers and backslash paths are pinned in test-hooks.sh.
+- `template_finalize_sync` and `template_migrate_manifest` wrote `template-manifest.json` with no trailing newline; a prettier-checked consumer went red on every clean sync. Both writers now append exactly one `\n` (item 12).
+- `region_bytes` disagreed with `region.sh --body | wc -c` and with the server's own prior `_region_body`-based count — three instruments, three numbers, none of them the raw span. There is now ONE definition (`region_bytes_raw`, capability `region_bytes_raw`): every byte strictly between the BEGIN marker's closing `-->` and the start of the END marker's `<!--`, no stripping. `region.sh --bytes <path>` prints the same integer; on the shipped `templates/general/CLAUDE.md` seed both report `74` (item 6).
+- `template_get_diff(".gitignore")` errored with "Template file not found" — the template copy is named `gitignore` (dotless) and only `template_apply_file` resolved the mapping. `_template_file_path`/`_template_git_path` now share one `template_path_for()` mapping, used by `get_diff`, `apply` and the v2 status path alike; `template_compute_status` also reports the new, additive `new_template_files_detail` (capability `new_template_files_detail`) alongside the unchanged `new_template_files` string list (item 3).
 
 ## v4.0.0 — 2026-09-14
 

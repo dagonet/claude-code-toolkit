@@ -42,6 +42,18 @@
 #                                 no trailing newline added) — this is what
 #                                 step 6 prints before refusing a deletion, and
 #                                 what the post-relocate byte-compare compares
+#   bash region.sh --bytes <path> print the RAW byte length of the region
+#                                 span (v4.0.1, item 6) — every byte strictly
+#                                 between the BEGIN marker's closing "-->" and
+#                                 the START of the END marker's own "<!--", NO
+#                                 stripping. --body strips exactly one
+#                                 trailing newline off the same content, so
+#                                 `--body | wc -c` and `--bytes` normally
+#                                 differ by one; `--bytes` is the ONE
+#                                 definition shared with the server's
+#                                 `region_bytes_raw` (v3.py) and with the
+#                                 `region_bytes` field it reports. Prints 0
+#                                 when the file has no complete region.
 #
 # CLASSIFY OUTPUT, one line per file, tab-separated:
 #   CONTENT   <path>    the region holds project work.  DESTRUCTION IS REFUSED.
@@ -113,6 +125,7 @@ usage() {
   echo "usage: region.sh <path>...            classify" >&2
   echo "       region.sh --scan <dir>         enumerate (dot-dirs included) + classify" >&2
   echo "       region.sh --body <path>        print the region body verbatim" >&2
+  echo "       region.sh --bytes <path>       print the raw region byte span" >&2
   exit 1
 }
 
@@ -148,6 +161,34 @@ body() {
       }
       printf "%s\n", $0
     }
+  ' "$1"
+}
+
+# bytes <file> -- print the RAW byte length of the region span: every byte
+# strictly between the BEGIN marker line's terminating newline and the first
+# byte of the line carrying the END marker (v4.0.1, item 6). This is the ONE
+# definition shared with the server's `region_bytes_raw` (v3.py) -- no
+# stripping, unlike `body` above (which strips one trailing newline) or the
+# server's now-retired `_region_body`-based count (which stripped every edge
+# newline). A one-line region (BEGIN and END on the same physical line) is 0
+# bytes; a file with no complete region is 0.
+bytes() {
+  awk -v bre="$BEGIN_RE" -v ere="$END_RE" '
+    state == 0 {
+      if (match($0, bre)) {
+        rest = substr($0, RSTART + RLENGTH)
+        if (match(rest, ere)) { print 0; printed = 1; exit }
+        state = 1
+        total = 1   # the newline terminating the BEGIN marker line
+      }
+      next
+    }
+    state == 1 {
+      if (match($0, ere)) { print total; printed = 1; exit }
+      total += length($0) + 1
+      next
+    }
+    END { if (!printed) print 0 }
   ' "$1"
 }
 
@@ -313,6 +354,9 @@ case "$1" in
   --body) [ $# -eq 2 ] || usage
           [ -f "$2" ] || { echo "ERROR: not a readable file: $2" >&2; exit 1; }
           body "$2" ;;
+  --bytes) [ $# -eq 2 ] || usage
+          [ -f "$2" ] || { echo "ERROR: not a readable file: $2" >&2; exit 1; }
+          bytes "$2" ;;
   -h|--help) usage ;;
   -*) usage ;;
   *)  rc=0

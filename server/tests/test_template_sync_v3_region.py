@@ -377,3 +377,16 @@ def test_migration_leaves_the_region_in_claude_md_and_reports_it(tmp_path):
     # Out-of-region edits are still what an apply would discard, so they stay reported.
     assert "MY OUT OF REGION EDIT" in pmd
     assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == project_claude
+
+
+def test_region_bytes_is_the_raw_span(tmp_path):
+    """v4.0.1 item 6: three instruments (raw span, `region.sh --body | wc -c`,
+    the old `_region_body`-based count) disagreed by construction, not by an
+    off-by-one -- each stripped a different amount of edge whitespace. A body
+    without a trailing blank line cannot distinguish them, so the fixture
+    here (with one) is the one that actually proves which definition ships.
+    """
+    body = "\n\nX\n\n"
+    content = "# T\n<!-- PROJECT-CUSTOM:BEGIN -->" + body + "<!-- PROJECT-CUSTOM:END -->\n"
+    assert v3.region_bytes_raw(content) == len(body.encode())      # 5
+    assert v3.region_bytes_raw("# T\n<!-- PROJECT-CUSTOM:BEGIN --><!-- PROJECT-CUSTOM:END -->\n") == 0

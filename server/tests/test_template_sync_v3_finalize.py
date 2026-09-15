@@ -181,6 +181,19 @@ def test_finalize_leaves_an_equal_floor_alone(tmp_path):
     assert out["requires_server"] == ">=0.3.2"
 
 
+def test_finalize_manifest_ends_with_exactly_one_newline(tmp_path):
+    """v4.0.1 item 12: a prettier-checked consumer goes red after a clean
+    sync because finalize wrote no trailing newline at all. The assertion is
+    on BYTES, not on a parsed-and-reserialized comparison, so a fix that
+    reads correctly under json.loads but is still missing the newline on
+    disk cannot pass this by accident."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n"}, project={"CLAUDE.md": "v1\n"},
+                        entries={}, requires_server=">=0.3.2")
+    _run(ts.template_finalize_sync(str(proj), "[]"))
+    data = (proj / ".claude" / "template-manifest.json").read_bytes()
+    assert data.endswith(b"\n") and not data.endswith(b"\n\n"), data[-8:]
+
+
 def test_finalize_does_not_rewrite_a_floor_it_cannot_parse(tmp_path):
     """An unparseable floor already makes load refuse. Rewriting it would
     silently repair a manifest the server does not understand."""
