@@ -41,8 +41,14 @@ def test_migrate_docstring_agrees_with_build_project_md():
 def test_the_artifact_itself_has_no_region(tmp_path):
     """The behavioural arm. Without it these are prose tests: a docstring that
     merely agrees with another docstring proves nothing about the file written.
+
+    v4.0.1 item 14: `hunks` is accepted for backward compatibility but
+    IGNORED -- project.md is header-plus-seed only; the caller
+    (migrate_manifest) writes any hunks to backup_dir instead, because this
+    file has no `paths:` key and loads at every session start.
     """
     md = v3.build_project_md("@@ -1 +1 @@\n-a\n+b\n", "abc1234", "v3.1.0")
     assert v3.core.CUSTOM_REGION_BEGIN not in md
     assert v3.core.CUSTOM_REGION_END not in md
-    assert "```diff" in md and "+b" in md
+    assert "```diff" not in md and "+b" not in md
+    assert "paths:" in md and "PROJECT-CUSTOM" in md

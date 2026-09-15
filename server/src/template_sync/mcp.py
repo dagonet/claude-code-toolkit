@@ -1274,7 +1274,16 @@ async def template_apply_file(
             - "skip": don't change the project file, just update manifest hashes
               ("keep mine" -- the entry records resolution="keep-mine" for
               reporting; the CONFLICT the next status call reports comes from
-              the recorded part hashes, not from that field)
+              the recorded part hashes, not from that field). Manifest v3
+              has no keep-mine class: "skip" is REFUSED for every ownership
+              (template and once alike) with "source='skip' is refused under
+              manifest v3 for <ownership>-class files". For a once-class
+              file that is already present, do not call this tool at all --
+              go straight to template_finalize_sync(new_files=[path]), which
+              registers it as {"ownership": "once"} with zero bytes written.
+              For a once-class file that is absent, "template" creates it
+              (action="created_from_template"); its result then joins
+              applied_files/new_files at finalize like any other new file.
         content: File content to write (only used when source="provided")
         backup_dir: Manifest v3 only. Directory that receives `<file>.pre-sync`
             and `<file>.diff` before a LOCAL_EDITED template-class file is
@@ -1433,7 +1442,18 @@ async def template_finalize_sync(
     Manifest v3: entries carry `hash` (sha256:-prefixed) and `ownership`;
     `template_commit` is HEAD of the template repo and `template_version` the
     nearest reachable tag whose tracked tree is identical (null when none).
-    Unknown top-level keys are preserved and listed in `unknown_keys`.
+    Unknown top-level keys are preserved and listed in `unknown_keys` --
+    with ONE exception: the v2-era `lastSynced`/`lastSyncedVersion`/
+    `lastSyncedVersionOf` keys are dropped unconditionally and listed in
+    `superseded_keys_dropped` instead (v4.0.1, item 8). They duplicate the
+    server-written `template_version`/`template_commit` above, so a
+    client-derived copy can only drift.
+
+    Once-class new files: pass their path in `new_files`, never in
+    `applied_files` and never via `template_apply_file(source="skip")`
+    (refused under v3 -- there is no keep-mine class). A once-class path
+    already present on disk needs no apply call at all: it lands
+    `{"ownership": "once"}` here with zero bytes touched.
     """
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
@@ -1600,10 +1620,18 @@ async def template_migrate_manifest(
     Steps (toolkit spec §7): extract the PROJECT-CUSTOM region from CLAUDE.md;
     diff the remainder against the template CLAUDE.md at the held revision
     (template_commit, else the template_version tag, never the current
-    template), placeholder-rendered; write .claude/rules/project.md with a
-    header and the out-of-region hunks fenced as ```diff; rewrite the
-    manifest as v3 (entries classified by templates/ownership.json,
-    project-class entries dropped, unknown top-level keys preserved).
+    template), placeholder-rendered; write .claude/rules/project.md with the
+    v4.0.1 seed header ONLY (v4.0.1, item 14) -- the out-of-region hunks are
+    written instead to `<backup_dir>/CLAUDE.md.out-of-region.diff`, never
+    into project.md, because project.md has no `paths:` key and is therefore
+    loaded at EVERY session start, same priority as CLAUDE.md -- an unscoped
+    file is delivered to every session, not to nobody, so a migration diff
+    does not belong there; rewrite the manifest as v3 (entries classified by
+    templates/ownership.json, project-class entries dropped, unknown
+    top-level keys preserved except the superseded `lastSynced`/
+    `lastSyncedVersion`/`lastSyncedVersionOf` trio, which is dropped
+    unconditionally and reported in `superseded_keys_dropped` -- v4.0.1,
+    item 8).
 
     The PROJECT-CUSTOM region is NOT copied into project.md. Under the toolkit
     v3.1 reversal the region STAYS in CLAUDE.md, so copying it would not
@@ -1642,7 +1670,12 @@ async def template_migrate_manifest(
 
     Returns:
         JSON with migrated, dry_run, migration_base, hunk_count, project_md,
-        project_md_bytes, project_md_existing, region_was_seed (the region
+        project_md_bytes, project_md_existing, project_md_record (the
+        out-of-region diff's path under backup_dir, or null when there were
+        no hunks or this was a dry_run -- v4.0.1, item 14),
+        superseded_keys_dropped (the lastSynced/lastSyncedVersion/
+        lastSyncedVersionOf keys actually present and dropped -- v4.0.1,
+        item 8), region_was_seed (the region
         was the toolkit's untouched seed and is omitted), dropped_entries,
         dropped_file_keys ([{path, keys}] -- consumer annotations on entries
         being dropped, which no other field would report; the values survive in

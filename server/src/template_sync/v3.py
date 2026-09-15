@@ -51,6 +51,7 @@ CAPABILITIES = (
     "skill_version_floor",
     "region_bytes_raw",
     "new_template_files_detail",
+    "superseded_keys",
 )
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
@@ -332,6 +333,26 @@ def requires_server_satisfied(spec: str, server_version: str) -> tuple[bool, str
 
 def unknown_top_level_keys(manifest: dict) -> list[str]:
     return sorted(k for k in manifest if k not in KNOWN_TOP_LEVEL_V3)
+
+
+# v2's client-derived version labels (v4.0.1, item 8 / R32-R33). Under v3
+# these duplicate template_version/template_commit, which are SERVER-written
+# at every finalize -- a client-derived copy of the same fact can only drift,
+# never correct it, so this is the one exception to the preserve-unknown rule
+# (review §12): every other unrecognised top-level key survives untouched.
+SUPERSEDED_KEYS = ("lastSynced", "lastSyncedVersion", "lastSyncedVersionOf")
+
+
+def drop_superseded(manifest: dict) -> list[str]:
+    """Remove v2's client-derived version labels in place. Returns the keys
+    actually present and dropped, in SUPERSEDED_KEYS order (already
+    alphabetical). Callers run this BEFORE unknown_top_level_keys so a
+    superseded key can never appear there -- it is gone by construction, not
+    by exclusion."""
+    dropped = [k for k in SUPERSEDED_KEYS if k in manifest]
+    for k in dropped:
+        del manifest[k]
+    return dropped
 
 
 def raise_floor(existing: str | None) -> tuple[str, dict | None, str | None]:
@@ -1169,7 +1190,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     if warn:
         warnings.append(warn)
 
-    out = {k: v for k, v in manifest.items() if k not in ("version", "lastSynced")}
+    out = {k: v for k, v in manifest.items() if k != "version"}
     out["manifest_version"] = MANIFEST_VERSION_V3
     out["template_version"] = version
     out["template_commit"] = commit
@@ -1177,6 +1198,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     if floor_warning:
         warnings.append(floor_warning)
     out["files"] = dict(sorted(files.items()))
+    superseded_dropped = drop_superseded(out)
     unknown = unknown_top_level_keys(out)
 
     manifest_path = pp / ".claude" / "template-manifest.json"
@@ -1191,6 +1213,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         "files_added": added,
         "files_dropped": len(dropped),
         "dropped_entries": sorted(dropped),
+        "superseded_keys_dropped": superseded_dropped,
         "unknown_keys": unknown,
         "unknown_file_keys": sorted(unknown_files, key=lambda d: d["path"]),
         **({"requires_server_raised": raised} if raised else {}),
@@ -1208,29 +1231,44 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
 MIGRATION_MARKER = "<!-- template-sync: project-owned; migrated from CLAUDE.md at"
 
 
+PROJECT_MD_SEED_BODY = (
+    "This file has no `paths:` key, so Claude Code loads it at EVERY session start,\n"
+    "at the same priority as CLAUDE.md. Anything you write here is always on.\n"
+    "\n"
+    "To scope it to files instead, add a frontmatter block at the very top:\n"
+    "\n"
+    "    ---\n"
+    "    paths:\n"
+    "      - \"src/**/*.py\"\n"
+    "      - \"pyproject.toml\"\n"
+    "    ---\n"
+    "\n"
+    "Always-on project rules belong in CLAUDE.md's PROJECT-CUSTOM region, not here;\n"
+    "a rule in both places exists twice and drifts."
+)
+
+
 def build_project_md(hunks: str, base_label: str, template_version: str) -> str:
     """Seed .claude/rules/project.md.
 
     The PROJECT-CUSTOM region is NOT copied here. Under the toolkit v3.1
     reversal the region stays in CLAUDE.md, so copying it would not relocate
-    it, it would duplicate it -- and the duplicate is the dangerous half,
-    because an unscoped project.md is delivered to no agent. Out-of-region
-    edits are still reported, since an apply does discard those.
+    it, it would duplicate it. Out-of-region edits are no longer embedded
+    either (v4.0.1, item 14): `hunks` is accepted for backward compatibility
+    but ignored -- the caller (migrate_manifest) writes them to
+    `<backup_dir>/CLAUDE.md.out-of-region.diff` instead, because this file
+    has NO `paths:` key and is therefore loaded at EVERY session start, same
+    as CLAUDE.md -- an unscoped project.md is delivered to EVERY session, not
+    to nobody, which is exactly why a migration diff must not live here.
     """
     rendered = "no" if base_label == "unavailable" else "yes"
     out = [
         "# Project instructions",
         f"{MIGRATION_MARKER} {template_version}; migration-base: {base_label}; rendered: {rendered} -->",
         "",
+        PROJECT_MD_SEED_BODY,
+        "",
     ]
-    if hunks.strip():
-        out += [
-            "## Migrated from CLAUDE.md — review, then keep or delete",
-            "```diff",
-            hunks.rstrip("\n"),
-            "```",
-            "",
-        ]
     return "\n".join(out)
 
 
@@ -1376,18 +1414,25 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     version, vwarn = derive_template_version(repo, commit, rules.tracked_paths) if commit else (None, "untagged_template_tree")
     if vwarn:
         warnings.append(vwarn)
-    new_manifest = {k: v for k, v in manifest.items() if k not in ("version", "lastSynced", "files")}
+    new_manifest = {k: v for k, v in manifest.items() if k not in ("version", "files")}
     new_manifest["manifest_version"] = MANIFEST_VERSION_V3
     new_manifest["template_version"] = version
     new_manifest["template_commit"] = commit
     new_manifest["requires_server"] = f">={MIN_SERVER_FOR_V3}"
     new_manifest["files"] = dict(sorted(files.items()))
+    superseded_dropped = drop_superseded(new_manifest)
 
-    # Step 3: project.md, unless the consumer already has one.
+    # Step 3: project.md, unless the consumer already has one. The
+    # out-of-region hunks are NOT embedded here (v4.0.1, item 14) -- this
+    # file has no `paths:` key, so it loads at every session start same as
+    # CLAUDE.md, and a migration diff belongs in the backup, not in
+    # something every session reads. migrate_manifest writes `hunks` to
+    # `<backup_dir>/CLAUDE.md.out-of-region.diff` and records the path as
+    # `project_md_record`; build_project_md gets hunks="" unconditionally.
     existing = core._read_file(pp / PROJECT_MD)
     project_md = None
     if existing is None:
-        project_md = build_project_md(hunks, base_label, "v3.1.0")
+        project_md = build_project_md("", base_label, "v3.1.0")
 
     return {
         "manifest": new_manifest,
@@ -1398,12 +1443,14 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
         "project_md": project_md,
         "project_md_existing": existing is not None,
         "hunk_count": hunk_count,
+        "out_of_region_diff": hunks,
         "migration_base": base_label,
         "region_was_seed": region_was_seed,
         "region_left_in_place": proj_region is not None,
         "region_bytes": region_bytes_raw(proj_claude),
         "gate_self_reference": gate_hits,
         "gate_unverified": gate_declared,
+        "superseded_keys_dropped": superseded_dropped,
         "unknown_keys": unknown_top_level_keys(new_manifest),
         "unknown_file_keys": sorted(unknown_files, key=lambda d: d["path"]),
         "warnings": warnings,
@@ -1467,6 +1514,10 @@ def migrate_manifest(pp: pathlib.Path, backup_dir: str, dry_run: bool,
         plan["migrated"] = False
         plan["backup"] = None
         plan["written"] = []
+        # Nothing is written in dry_run, so there is no record path yet --
+        # `out_of_region_diff` (in the plan already) previews what a real
+        # write would put in backup_dir.
+        plan["project_md_record"] = None
         return plan
     if plan["gate_self_reference"]:
         hit = plan["gate_self_reference"][0]
@@ -1483,6 +1534,18 @@ def migrate_manifest(pp: pathlib.Path, backup_dir: str, dry_run: bool,
     manifest_bak = bdir / "template-manifest.json.pre-migration"
     core._write_file_atomic(claude_bak, core._read_file(pp / "CLAUDE.md") or "")
     core._write_file_atomic(manifest_bak, core._read_file(pp / ".claude" / "template-manifest.json") or "")
+
+    # Item 14: the out-of-region diff is a migration RECORD, not project
+    # content -- it goes into the existing, required backup_dir beside the
+    # two .pre-migration copies, never into project.md (which has no
+    # `paths:` key and is therefore loaded at every session start).
+    diff_text = plan.get("out_of_region_diff") or ""
+    if diff_text.strip():
+        diff_path = bdir / "CLAUDE.md.out-of-region.diff"
+        core._write_file_atomic(diff_path, diff_text)
+        plan["project_md_record"] = str(diff_path)
+    else:
+        plan["project_md_record"] = None
 
     written = []
     if plan["project_md"] is not None:
