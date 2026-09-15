@@ -49,6 +49,8 @@ CAPABILITIES = (
     "local_diff_kind",
     "server_source",
     "skill_version_floor",
+    "region_bytes_raw",
+    "new_template_files_detail",
 )
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
@@ -903,7 +905,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
     gitignore = template_dir / "gitignore"
     if gitignore.is_file():
         scanned.append("gitignore")   # _scan_template_files skips it; the rules decide now
-    new_files, unclassified = [], []
+    new_files, new_files_detail, unclassified = [], [], []
     template_files: set[str] = set()
     for tpl_rel in sorted(set(scanned)):
         cls = rules.class_of(tpl_rel)
@@ -913,6 +915,12 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
             continue
         if cls in ("template", "once"):
             new_files.append(proj_rel)
+            # new_template_files stays a list of project-path strings (pinned
+            # at test_template_sync_v3_status.py:296); this is the additive,
+            # parallel surface a caller uses to resolve each path's
+            # template-relative name -- .gitignore -> gitignore included
+            # (v4.0.1, item 3).
+            new_files_detail.append({"path": proj_rel, "template_path": tpl_rel})
         elif cls is None:
             unclassified.append(tpl_rel)
 
@@ -927,6 +935,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
         "last_synced_commit": manifest_commit(manifest),
         "files": files_status,
         "new_template_files": sorted(new_files),
+        "new_template_files_detail": sorted(new_files_detail, key=lambda d: d["path"]),
         "unclassified_template_files": sorted(unclassified),
         "orphans": orphans,
         "deleted_template_files": deleted,
@@ -1172,7 +1181,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
 
     manifest_path = pp / ".claude" / "template-manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    core._write_file_atomic(manifest_path, json.dumps(out, indent=2, ensure_ascii=False))
+    core._write_file_atomic(manifest_path, json.dumps(out, indent=2, ensure_ascii=False) + "\n")
     return {
         "manifest_path": ".claude/template-manifest.json",
         "manifest_version": 3,
@@ -1232,6 +1241,47 @@ def _region_body(region_block: str | None) -> str | None:
     lines = region_block.splitlines()
     inner = [l for l in lines if core.CUSTOM_REGION_BEGIN not in l and core.CUSTOM_REGION_END not in l]
     return "\n".join(inner)
+
+
+def region_bytes_raw(content: str | None) -> int:
+    """Byte length of the PROJECT-CUSTOM region body exactly as it sits in the
+    file: every byte from the BEGIN marker LINE's terminating newline
+    (inclusive of that newline) up to (not including) the first byte of the
+    LINE that carries the END marker. No stripping, no joining on "\n" --
+    this is the ONE definition shared with region.sh --bytes (v4.0.1, item
+    6), which is necessarily line-based (awk reads line by line and moves to
+    the next line the instant it sees the BEGIN marker, without looking at
+    what follows "-->" on that same line). Both ends of the span are
+    therefore anchored on LINES, not on the marker delimiters themselves:
+    starting right after the BEGIN marker's own "-->" (v4.0.1 fix round 1's
+    initial implementation) counted any trailing text on the BEGIN line
+    itself (e.g. "<!-- PROJECT-CUSTOM:BEGIN --> keep this\\n") as region
+    bytes, which region.sh does not -- and ending at the END marker's own
+    "<!--" instead of its line start disagrees with region.sh the moment
+    that marker is indented. `_region_body` above keeps its line-joined text
+    shape for callers that compare CONTENT, not bytes. 0 for no region, an
+    unclosed region, or an empty region (BEGIN immediately followed by END
+    on the same line).
+    """
+    if not content:
+        return 0
+    begin = content.find(core.CUSTOM_REGION_BEGIN)
+    if begin < 0:
+        return 0
+    body_start = content.find("\n", begin)
+    if body_start < 0:
+        return 0
+    end_text = content.find(core.CUSTOM_REGION_END, body_start)
+    if end_text < 0:
+        return 0
+    last_nl = content.rfind("\n", body_start, end_text)
+    if last_nl < 0:
+        # No newline between the BEGIN marker line's own newline and the END
+        # marker's text: BEGIN and END share one physical line -- an empty
+        # region.
+        return 0
+    body_end = last_nl + 1
+    return len(content[body_start:body_end].encode("utf-8"))
 
 
 def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
@@ -1358,7 +1408,7 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
         "migration_base": base_label,
         "region_was_seed": region_was_seed,
         "region_left_in_place": proj_region is not None,
-        "region_bytes": len((_region_body(proj_region) or "").encode("utf-8")),
+        "region_bytes": region_bytes_raw(proj_claude),
         "gate_self_reference": gate_hits,
         "gate_unverified": gate_declared,
         "unknown_keys": unknown_top_level_keys(new_manifest),
@@ -1448,7 +1498,7 @@ def migrate_manifest(pp: pathlib.Path, backup_dir: str, dry_run: bool,
         core._write_file_atomic(target, plan["project_md"])
         written.append(PROJECT_MD)
     core._write_file_atomic(pp / ".claude" / "template-manifest.json",
-                            json.dumps(plan["manifest"], indent=2, ensure_ascii=False))
+                            json.dumps(plan["manifest"], indent=2, ensure_ascii=False) + "\n")
     written.append(".claude/template-manifest.json")
 
     plan["migrated"] = True

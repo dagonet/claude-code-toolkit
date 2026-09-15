@@ -190,6 +190,16 @@ def test_migration_region_and_hunks(tmp_path):
     assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == PROJ_CLAUDE   # apply step does that, not migrate
 
 
+def test_migration_manifest_ends_with_exactly_one_newline(tmp_path):
+    """Migration writes the same manifest.json shape finalize does (v4.0.1
+    item 12) -- the same missing-trailing-newline defect applies to the
+    migration writer at v3.py:1451, not just finalize's at :1175."""
+    repo, proj, commit = _mk_v2(tmp_path, PROJ_CLAUDE)
+    _migrate(proj, backup_dir=str(tmp_path / "b"))
+    data = (proj / ".claude" / "template-manifest.json").read_bytes()
+    assert data.endswith(b"\n") and not data.endswith(b"\n\n"), data[-8:]
+
+
 def test_migration_reports_the_keep_mine_entries_it_drops(tmp_path):
     """v3 has no keep-mine class, so `resolution` is dropped by design -- but
     dropping it silently is the defect. The manifest afterwards records the
