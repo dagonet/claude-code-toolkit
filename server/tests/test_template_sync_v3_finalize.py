@@ -323,6 +323,30 @@ def test_finalize_drops_superseded_lastsynced_keys(tmp_path):
     assert out["files"] == {}
 
 
+def test_finalize_reads_lastsynced_as_fallback_commit_before_dropping_it(tmp_path):
+    """v4.0.1 item 8: `manifest_commit()` reads `lastSynced` as a fallback
+    when `template_commit` is absent, and that read must happen BEFORE
+    `drop_superseded` removes the key -- otherwise a manifest missing
+    `template_commit` but carrying the v2-era `lastSynced` would finalize
+    with an EMPTY commit instead of falling back correctly. A v3 manifest
+    should not normally carry `lastSynced` at all, but a hand-edited or
+    pre-4.0.1-finalized one might, and this pins the ordering so a future
+    refactor cannot swap the two calls silently."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n"}, project={"CLAUDE.md": "v1\n"},
+                        entries={}, requires_server=">=0.3.2")
+    m = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    del m["template_commit"]
+    m["lastSynced"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(m), encoding="utf-8")
+
+    res = _run(ts.template_finalize_sync(str(proj), "[]"))
+    assert res["template_commit"] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    assert res["superseded_keys_dropped"] == ["lastSynced"]
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    assert out["template_commit"] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    assert "lastSynced" not in out
+
+
 def test_finalize_registers_a_present_once_class_new_file_without_touching_it(tmp_path):
     """v4.0.1 item 4, arm (a): a once-class path already on disk needs no
     apply call at all -- template_finalize_sync(new_files=[path]) alone

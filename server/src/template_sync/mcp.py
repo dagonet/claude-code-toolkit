@@ -1670,7 +1670,10 @@ async def template_migrate_manifest(
 
     Returns:
         JSON with migrated, dry_run, migration_base, hunk_count, project_md,
-        project_md_bytes, project_md_existing, project_md_record (the
+        project_md_bytes, project_md_existing, out_of_region_diff (the raw
+        unified diff text project_md_record's path holds on a real write --
+        present even on a dry_run, for preview, since nothing is written
+        then -- v4.0.1, item 14), project_md_record (the
         out-of-region diff's path under backup_dir, or null when there were
         no hunks or this was a dry_run -- v4.0.1, item 14),
         superseded_keys_dropped (the lastSynced/lastSyncedVersion/

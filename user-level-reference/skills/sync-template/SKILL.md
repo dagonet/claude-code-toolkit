@@ -576,7 +576,7 @@ For each file with status `CONFLICT`:
 **`template`-class — unchanged from before v4.0.1:**
 
 1. **The path already exists in the project → this is a CONFLICT, not a new file, and not a silent skip.** Both sides have content, which is the definition of a conflict. Fetch `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`, **show the diff**, and offer the normal step-4 options — **with keep-mine as the default**:
-   - **Keep mine** (DEFAULT) → `template_apply_file(project_path=".", file_path=F, source="skip")`, which registers a manifest entry from the project's existing content and writes nothing, exactly as step 6b rule 4 prescribes for a present-but-untracked hook.
+   - **Keep mine** (DEFAULT) → `template_apply_file(project_path=".", file_path=F, source="skip")`, which registers a manifest entry from the project's existing content and writes nothing, exactly as step 6b rule 4 prescribes for a present-but-untracked hook. **⚠ Under manifest v3 this call is itself refused** — `source="skip"` is refused unconditionally for every ownership class, the same refusal the once-class note above names, not just for `once`-class files. This branch is preserved unchanged pending its own item; do not route a present `template`-class new file through this call until that is fixed. (Compare against the `once`-class branch above, which never attempts this call at all.)
    - **Accept template** → only on an explicit choice made against the diff; this overwrites their file.
    - **Splice** (`source="provided"`) → hand-merged content.
 
