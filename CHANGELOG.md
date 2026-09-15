@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.0.1 — unreleased
+
+### Fixed
+- Check 46 no longer moves `server/.venv` to prove the no-venv arm: `scripts/test-server.sh` takes `TS_VENV_DIR`, and the check points it at an empty temp directory. A live MCP server holding the venv made every per-commit Test red on the live checkout (item 11).
+- `gc_matches_subcommand` matched a bare `commit` VALUE after another verb (`git log --grep commit`) and ran the target repo's Test on a read-only command. `commit` is now matched only at git's subcommand position; the `merge`/`push` bare-operand posture is unchanged and pinned (item 10). Compound segments, quoted wrappers and backslash paths are pinned in test-hooks.sh.
+
 ## v4.0.0 — 2026-09-14
 
 **The template-sync MCP server ships from this repo.** `server/` is a new top-level package, `template_sync`, hatchling-built, holding the two modules and 17 test files (235 tests) lifted verbatim from `mcp-dev-servers` at tag `v0.3.8` with imports rewritten and nothing else changed. Console script name (`mcp-template-sync-tools`), MCP server name (`template-sync-tools`), and tool prefix (`mcp__template-sync-tools__*`) are all unchanged — only the command path moves. One `VERSION` now drives templates, the skill marker, and the server: this release is `4.0.0` in all three places, in one commit.
