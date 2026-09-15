@@ -3460,18 +3460,20 @@ esac
 #   (b) the script's own behavior with the venv ABSENT is an ERROR (exit 2,
 #       naming 'server/install.sh'), never a silent/soft skip -- a gate that
 #       skips is a gate that passed vacuously.
-# Arm (b) runs BOTH ways a checkout can be found in: if server/.venv exists
-# here, it is moved aside for the single invocation and restored immediately
-# after (trap-guarded so an interrupted run still restores it); if it does not
-# exist, the no-venv behavior is already the checkout's real state and needs
-# no move. Either way this arm is exercised on every run, never skipped for
-# lack of a venv. (Two concurrent gate runs in the SAME worktree can collide on
-# the moved-aside directory -- per-worktree venvs make cross-worktree runs
-# safe; accepted, not engineered around.) Recovery: if the process dies at a
-# point the EXIT trap cannot fire (e.g. SIGKILL), the venv is left behind as
-# `server/.venv.check46-<pid>` and every later gate run fails at command three
-# looking like a missing install -- `mv server/.venv.check46-<pid> server/.venv`
-# restores it.
+# v4.0.1 item 11: arm (b) used to prove the no-venv path by MOVING the real
+# server/.venv aside for the single invocation and moving it back after. On
+# the live checkout, an MCP server process can hold that directory open
+# (Windows file locking), so the move failed and every per-commit **Test**
+# went red for a reason with nothing to do with the code being committed --
+# this script blocked commits to itself. FIX: test-server.sh now honours
+# TS_VENV_DIR, an env override for where it looks for the venv (default
+# server/.venv, unchanged for every normal invocation). This arm points it at
+# a freshly created EMPTY temp directory instead -- no python is found there
+# by construction, so the no-venv arm is proven without ever touching the
+# real venv, and there is nothing to move back, so nothing to recover if the
+# process dies mid-check. The fixture-error branch below (mktemp failing) is
+# a tooling problem, not a red result, and is reported as `ko` with a
+# distinct FIXTURE ERROR message so it is never mistaken for a real failure.
 # ---------------------------------------------------------------------------
 note "Check 46: **Gate** names test-server.sh; test-server.sh exits 2 (never skips) with no venv"
 c46_gate=$(grep -E "^[-*[:space:]]*\*\*Gate\*\*:" PROJECT_CONTEXT.md 2>/dev/null | head -1)
@@ -3483,23 +3485,18 @@ esac
 if [ ! -x scripts/test-server.sh ]; then
   ko "check 46: scripts/test-server.sh missing or not executable"
 else
-  c46_moved=0
-  if [ -d server/.venv ]; then
-    c46_aside="server/.venv.check46-$$"
-    mv server/.venv "$c46_aside"
-    trap 'mv "$c46_aside" server/.venv 2>/dev/null' EXIT
-    c46_moved=1
-  fi
-  c46_out=$(bash scripts/test-server.sh 2>&1)
-  c46_rc=$?
-  if [ "$c46_moved" -eq 1 ]; then
-    mv "$c46_aside" server/.venv
-    trap - EXIT
-  fi
-  if [ "$c46_rc" -eq 2 ] && printf '%s' "$c46_out" | grep -q "server/install.sh" && ! printf '%s' "$c46_out" | grep -qi "skip"; then
-    ok "check 46: scripts/test-server.sh exits 2 with an install message and no 'skip' when server/.venv is absent"
+  c46_empty=$(mktemp -d 2>/dev/null || mktemp -d -t c46)
+  if [ -z "$c46_empty" ] || [ ! -d "$c46_empty" ]; then
+    ko "check 46: FIXTURE ERROR -- could not create an empty temp dir for the no-venv arm (not a red result; fix the fixture)"
   else
-    ko "check 46: scripts/test-server.sh must exit 2 naming server/install.sh (never 'skip') when server/.venv is absent -- got rc=$c46_rc, output: $c46_out"
+    c46_out=$(TS_VENV_DIR="$c46_empty" bash scripts/test-server.sh 2>&1)
+    c46_rc=$?
+    rmdir "$c46_empty" 2>/dev/null
+    if [ "$c46_rc" -eq 2 ] && printf '%s' "$c46_out" | grep -q "server/install.sh" && printf '%s' "$c46_out" | grep -qF "$c46_empty" && ! printf '%s' "$c46_out" | grep -qi "skip"; then
+      ok "check 46: scripts/test-server.sh exits 2 naming the probed dir and server/install.sh (never 'skip') with no venv"
+    else
+      ko "check 46: scripts/test-server.sh must exit 2 naming the probed dir and server/install.sh (never 'skip') when the venv is absent -- got rc=$c46_rc, output: $c46_out"
+    fi
   fi
 fi
 

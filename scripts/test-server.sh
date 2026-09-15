@@ -5,12 +5,22 @@
 # `bash server/install.sh` once per checkout.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if   [ -x "$HERE/server/.venv/Scripts/python.exe" ]; then VPY="$HERE/server/.venv/Scripts/python.exe"
-elif [ -x "$HERE/server/.venv/bin/python" ];         then VPY="$HERE/server/.venv/bin/python"
+# TS_VENV_DIR: where the server venv lives. Default server/.venv. Check 46 in
+# verify-template-consistency.sh points this at an EMPTY directory to prove the
+# no-venv arm below without touching the real venv (v4.0.1, item 11).
+VENV="${TS_VENV_DIR:-$HERE/server/.venv}"
+if   [ -x "$VENV/Scripts/python.exe" ]; then VPY="$VENV/Scripts/python.exe"
+elif [ -x "$VENV/bin/python" ];         then VPY="$VENV/bin/python"
 else
-  echo "test-server.sh: server/.venv not found -- run 'bash server/install.sh' once per checkout" >&2
+  echo "test-server.sh: no python found under $VENV (probed Scripts/python.exe and bin/python) -- run 'bash server/install.sh' once per checkout" >&2
   exit 2
 fi
+# v4.0.1 (fix round 1, constraint 9): name what was tested on the path that
+# actually runs the suite too, not only on the no-venv error path -- a green
+# gate run used to say nothing about which venv it used. STDERR only: the gate
+# and check 46 both read stdout (for absence of "skip", for the probed-dir
+# substring on the error path), so this must never land there.
+echo "test-server.sh: using venv $VENV" >&2
 
 # --basetemp outside the checkout: keeps `git status` clean -- gate runs must
 # not leave test scratch files as untracked repo content, and a basetemp under

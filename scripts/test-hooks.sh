@@ -527,6 +527,52 @@ printf '# ctx\n\n- **Test**: `true`\n'  > "$SPACEOK/PROJECT_CONTEXT.md"
 check "spaced -C, target tests fail"     "$H" 2 "$(mkjson Bash "git -C \"$SPACEBAD\" commit -m y" "$OKREPO")"
 check "spaced -C, target tests pass"     "$H" 0 "$(mkjson Bash "git -C \"$SPACEOK\" commit -m y" "$BADREPO")"
 
+# --- v4.0.1 item 10: a bare `commit` token that is a VALUE (a --grep pattern,
+# or the pattern argument to `git grep`) rather than the real subcommand used
+# to be matched by the old positional-walk fallback, which stopped scanning at
+# the FIRST bare word equal to the verb regardless of where in the argv it
+# sat. `commit` is now matched only at git's real subcommand position.
+check "item 10: bare 'commit' as --grep VALUE does not run Test"   "$H" 0 "$(mkjson Bash "git -C $BADREPO log --grep commit" "$OKREPO")"
+check "item 10: bare 'commit' as grep pattern does not run Test"   "$H" 0 "$(mkjson Bash "git -C $BADREPO grep commit" "$OKREPO")"
+check "item 10: peel syntax never ran Test (regression guard)"     "$H" 0 "$(mkjson Bash "git -C $BADREPO rev-parse HEAD^{commit}" "$OKREPO")"
+check "item 10: -c then -C then commit still runs Test"            "$H" 2 "$(mkjson Bash "git -c a=b -C $BADREPO commit -m y" "$OKREPO")"
+
+# --- v4.0.1 item 10, F1-F3 (outside review of the first draft of this fix).
+# F1: the matcher's first-token-only mode used to `exit` on a mismatch rather
+# than restarting, so a SINGLE unsplit segment holding more than one `git`
+# invocation could lose a later real commit. Every caller here pre-splits via
+# gc_segments before calling the matcher, so these rows exercise the FULL
+# hook, not the matcher in isolation -- they pin the end-to-end behaviour the
+# restart makes robust regardless of caller-side splitting.
+check "item 10 (F1): compound && segment still runs Test on the commit half" "$H" 2 "$(mkjson Bash "git add -A && git commit -m x" "$BADREPO")"
+check "item 10 (F1): compound ; segment still runs Test on the commit half"  "$H" 2 "$(mkjson Bash "git add . ; git commit -m x" "$BADREPO")"
+check "item 10 (F1): cd into target then commit resolves the cd target"     "$H" 2 "$(mkjson Bash "cd $BADREPO && git commit -m x" "$OKREPO")"
+check "item 10 (F1): grep-value commit does not mask a later real commit"   "$H" 2 "$(mkjson Bash "git -C $BADREPO log --grep commit && git -C $BADREPO commit -m x" "$OKREPO")"
+# F2: the git-token test must not degrade to a bare "ends in git" match on an
+# awk that treats an unescaped \g as plain g -- pin both the false positive it
+# must not gain and the true positive (a Windows-style backslash path) it must
+# not lose.
+check "item 10 (F2): a bare word ending in 'git' is not the git token"      "$H" 0 "$(mkjson Bash "notgit commit -m x" "$BADREPO")"
+check "item 10 (F2): a backslash path to git is still recognised"          "$H" 2 "$(mkjson Bash "C:\\bin\\git commit -m x" "$BADREPO")"
+# F3: the deleted fast path was, incidentally, the only thing that matched a
+# quoted or parenthesised wrapper around a real commit -- the walk itself now
+# strips a leading/trailing quote or paren from each token before testing it.
+check "item 10 (F3): bash -c wrapper still runs Test"                      "$H" 2 "$(mkjson Bash "bash -c \"git commit -m x\"" "$BADREPO")"
+check "item 10 (F3): sh -lc wrapper still runs Test"                       "$H" 2 "$(mkjson Bash "sh -lc \"git commit -m x\"" "$BADREPO")"
+check "item 10 (F3): subshell wrapper still runs Test"                     "$H" 2 "$(mkjson Bash "(git commit -m x)" "$BADREPO")"
+# --- v4.0.1 fix round 1: the A6.10 rows in the gate-before-merge.sh block
+# exercise the substitution-opener strip only through the merge arm; nothing
+# pinned it through the COMMIT path until now.
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (dollar-paren)" "$H" 2 "$(mkjson Bash 'echo $(git commit -m x)' "$BADREPO")"
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (backtick)"     "$H" 2 "$(mkjson Bash 'echo `git commit -m x`' "$BADREPO")"
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (process-sub)"  "$H" 2 "$(mkjson Bash 'diff <(git commit -m x) f' "$BADREPO")"
+# review round 2: the matcher itself must never write to stderr -- a hook or
+# caller that captures stderr would carry an awk warning into gate logs on
+# every single call, forever. Measured silent on this awk; pinned as a
+# regression guard regardless of which awk a consumer runs.
+GCSTDERR=$(bash -c 'source hooks/lib/git-cmd.sh; gc_matches_subcommand "git commit -m x" commit' 2>&1 >/dev/null)
+expect "gc_matches_subcommand writes nothing to stderr" "0" "${#GCSTDERR}"
+
 mkdir -p "$BADREPO/.claude" && : > "$BADREPO/.claude/git-guard-off"
 check "kill switch disables the gate"    "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$BADREPO")"
 rm -f "$BADREPO/.claude/git-guard-off"
@@ -838,6 +884,14 @@ SPACEGATE=$(mkrepo 'gate main repo' main)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SPACEGATE/PROJECT_CONTEXT.md"
 check "spaced -C merge, target on main"  "$H" 2 "$(mkjson Bash "git -C \"$SPACEGATE\" merge feature" "$GATEFEAT2")"
 check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' "$GATEREPO")"
+
+# --- v4.0.1 item 10 posture pin: `commit` is now matched only at git's real
+# subcommand position, but `merge`/`push` are deliberately NOT narrowed the
+# same way -- a bare `merge` operand anywhere after an unrecognised verb
+# (`show-branch merge`) must still refuse. This proves the item-10 fix did not
+# also loosen the merge/push posture.
+check "item 10: merge posture unchanged: bare 'merge' operand after an unrecognised verb still refuses" "$H" 2 "$(mkjson Bash "git -C $GATEONLYOK show-branch merge" "$GATEONLYOK")"
+check "item 10: quoted operand: deliberate widening, v4.0.1" "$H" 2 "$(mkjson Bash "git -C $GATEONLYOK log --grep \"merge\"" "$GATEONLYOK")"
 
 # ---------------------------------------------------------------------------
 # v2.4.0 (A6): merging FROM a protected branch is refused before the artifact
