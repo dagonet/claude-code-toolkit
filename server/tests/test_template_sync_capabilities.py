@@ -143,26 +143,31 @@ def _witness_region_bytes_raw(tmp_path) -> bool:
 
 
 def _witness_new_template_files_detail(tmp_path) -> bool:
-    """Exercised through the actual status payload, not `hasattr`: the
-    dotfile mapping (`.gitignore` -> `gitignore`) and a plain identity
-    mapping both round-trip through `template_compute_status`.
+    """Exercised through the actual v3 status payload (compute_status_v3 --
+    the dispatch target for every real, v3-manifest consumer), not
+    `hasattr`, and with a NON-identity row: `.gitignore` -> `gitignore` is
+    the shape that proves the detail list carries real information rather
+    than echoing the path back at itself.
     """
     if ts.template_path_for(".gitignore") != "gitignore":
         return False
-    if ts.template_path_for("CLAUDE.md") != "CLAUDE.md":
-        return False
     repo = tmp_path / "tk"
     (repo / "templates" / "general").mkdir(parents=True)
-    (repo / "templates" / "general" / "CLAUDE.md").write_text("# hi\n", encoding="utf-8", newline="")
+    (repo / "templates" / "general" / "gitignore").write_text("*.log\n", encoding="utf-8", newline="")
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "gitignore", "ownership": "once", "target": ".gitignore"}],
+    }), encoding="utf-8")
     proj = tmp_path / "proj"
     (proj / ".claude").mkdir(parents=True)
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps({
-        "version": 2, "templateRepo": str(repo), "variant": "general",
-        "lastSynced": "", "placeholders": {}, "files": {},
+        "manifest_version": 3, "template_version": "3.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.0", "files": {},
     }), encoding="utf-8")
     res = json.loads(asyncio.run(ts.template_compute_status(str(proj))))
-    return (res["new_template_files"] == ["CLAUDE.md"]
-            and res["new_template_files_detail"] == [{"path": "CLAUDE.md", "template_path": "CLAUDE.md"}])
+    return (res["new_template_files"] == [".gitignore"]
+            and res["new_template_files_detail"] == [{"path": ".gitignore", "template_path": "gitignore"}])
 
 
 WITNESSES = {

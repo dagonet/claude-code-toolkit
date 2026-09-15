@@ -9,6 +9,7 @@ template splices the consumer's region back in instead of wiping it.
 
 import asyncio
 import json
+import pathlib
 import subprocess
 
 import pytest
@@ -390,3 +391,27 @@ def test_region_bytes_is_the_raw_span(tmp_path):
     content = "# T\n<!-- PROJECT-CUSTOM:BEGIN -->" + body + "<!-- PROJECT-CUSTOM:END -->\n"
     assert v3.region_bytes_raw(content) == len(body.encode())      # 5
     assert v3.region_bytes_raw("# T\n<!-- PROJECT-CUSTOM:BEGIN --><!-- PROJECT-CUSTOM:END -->\n") == 0
+
+
+def test_region_bytes_raw_matches_region_sh_with_indented_end_marker(tmp_path):
+    """Two instruments, one number -- the property item 6 exists to
+    guarantee. An END marker sitting alone at column 0 cannot discriminate a
+    LINE-based span (ending at the start of the END line) from a
+    MARKER-based one (ending at the END marker's own "<!--"): they agree by
+    coincidence on every other fixture in this file, including the 74-byte
+    real seed. An indented END marker is the one shape that tells them
+    apart, and this row cross-checks the server's number against
+    region.sh --bytes on the identical file, rather than a hand-computed
+    constant either implementation could independently get wrong.
+    """
+    content = "# T\n<!-- PROJECT-CUSTOM:BEGIN -->\n\nX\n\n    <!-- PROJECT-CUSTOM:END -->\n"
+    f = tmp_path / "indented.md"
+    f.write_text(content, encoding="utf-8", newline="")
+    server_bytes = v3.region_bytes_raw(content)
+    assert server_bytes > 0
+    region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
+    import shutil
+    bash = shutil.which("bash") or r"C:\Program Files\Git\usr\bin\bash.exe"
+    out = subprocess.run([bash, str(region_sh), "--bytes", str(f)], check=True,
+                         capture_output=True, text=True).stdout.strip()
+    assert str(server_bytes) == out

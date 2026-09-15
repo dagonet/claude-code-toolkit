@@ -905,7 +905,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
     gitignore = template_dir / "gitignore"
     if gitignore.is_file():
         scanned.append("gitignore")   # _scan_template_files skips it; the rules decide now
-    new_files, unclassified = [], []
+    new_files, new_files_detail, unclassified = [], [], []
     template_files: set[str] = set()
     for tpl_rel in sorted(set(scanned)):
         cls = rules.class_of(tpl_rel)
@@ -915,6 +915,12 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
             continue
         if cls in ("template", "once"):
             new_files.append(proj_rel)
+            # new_template_files stays a list of project-path strings (pinned
+            # at test_template_sync_v3_status.py:296); this is the additive,
+            # parallel surface a caller uses to resolve each path's
+            # template-relative name -- .gitignore -> gitignore included
+            # (v4.0.1, item 3).
+            new_files_detail.append({"path": proj_rel, "template_path": tpl_rel})
         elif cls is None:
             unclassified.append(tpl_rel)
 
@@ -929,6 +935,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
         "last_synced_commit": manifest_commit(manifest),
         "files": files_status,
         "new_template_files": sorted(new_files),
+        "new_template_files_detail": sorted(new_files_detail, key=lambda d: d["path"]),
         "unclassified_template_files": sorted(unclassified),
         "orphans": orphans,
         "deleted_template_files": deleted,
@@ -1238,12 +1245,16 @@ def _region_body(region_block: str | None) -> str | None:
 
 def region_bytes_raw(content: str | None) -> int:
     """Byte length of the PROJECT-CUSTOM region body exactly as it sits in the
-    file: every byte strictly between the BEGIN marker's closing "-->" and the
-    START of the END marker's own "<!--". No stripping, no joining on "\n" --
-    this is the ONE definition shared with region.sh --bytes (v4.0.1, item 6);
-    `_region_body` above keeps its line-joined text shape for callers that
-    compare CONTENT, not bytes. 0 for no region, an unclosed region, or an
-    empty region (BEGIN immediately followed by END).
+    file: every byte from the BEGIN marker's closing "-->" up to (not
+    including) the first byte of the LINE that carries the END marker. No
+    stripping, no joining on "\n" -- this is the ONE definition shared with
+    region.sh --bytes (v4.0.1, item 6), which is necessarily line-based (awk
+    reads line by line); ending at the END marker's own "<!--" instead would
+    disagree with region.sh the moment that marker is indented, which is
+    exactly the two-instruments-two-numbers defect this item exists to
+    close. `_region_body` above keeps its line-joined text shape for callers
+    that compare CONTENT, not bytes. 0 for no region, an unclosed region, or
+    an empty region (BEGIN immediately followed by END on the same line).
     """
     if not content:
         return 0
@@ -1257,9 +1268,12 @@ def region_bytes_raw(content: str | None) -> int:
     end_text = content.find(core.CUSTOM_REGION_END, body_start)
     if end_text < 0:
         return 0
-    body_end = content.rfind("<!--", body_start, end_text)
-    if body_end < body_start:
+    last_nl = content.rfind("\n", body_start, end_text)
+    if last_nl < 0:
+        # No newline between the BEGIN marker's "-->" and the END marker's
+        # text: BEGIN and END share one physical line -- an empty region.
         return 0
+    body_end = last_nl + 1
     return len(content[body_start:body_end].encode("utf-8"))
 
 
