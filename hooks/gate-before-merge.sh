@@ -1364,4 +1364,16 @@ if [ "$ARTIFACT_EPOCH" -eq 0 ] || [ "$AGE" -gt 3600 ]; then
   exit 2
 fi
 
+# v4.0.1 (item 15): name which arm of the sha-or-tree check above actually
+# matched. sha is the classic case (the gate ran on this exact commit); tree
+# is the pre-commit-test.sh -> run-gate.sh chain (the gate ran against the
+# INDEX just before `git commit`, so the artifact's sha is the commit's
+# PARENT but its tree already equals HEAD^{tree}) -- sha is checked first, so
+# a sha match takes the label even when tree also happens to match.
+if [ -n "$ARTIFACT_SHA" ] && [ "$ARTIFACT_SHA" = "$HEAD_SHA" ]; then
+  echo "matched: sha"
+else
+  echo "matched: tree"
+fi
+
 exit 0

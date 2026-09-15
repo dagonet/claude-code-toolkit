@@ -3501,6 +3501,48 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 47 -- skill bodies carry no positional tokens (v4.0.1). The Skill tool
+# substitutes $0-$9 / ${N} / $ARGUMENTS textually across the whole body before
+# any shell snippet runs; a skill invoked with an argument has those tokens
+# replaced in-place, corrupting every shell snippet that used them as
+# variables. $0-$9 / ${N} have no legitimate use in ANY skill body (a shell
+# snippet needing a positional-looking name should use a NAMED variable
+# instead) and are banned unconditionally. $ARGUMENTS is different: it is the
+# documented substitution point for a skill that declares `argument-hint` in
+# its own frontmatter (challenge, retro-review, sprint all do, and reference
+# $ARGUMENTS only in prose, never inside a shell snippet) -- banning it there
+# too would make this check permanently red on working, by-design skills. So
+# $ARGUMENTS is checked only for a skill that does NOT declare argument-hint,
+# where it has no reason to appear at all. Two-sided: 47c plants a $1 in a
+# throwaway string and asserts the same pattern catches it, so a pattern that
+# stopped matching would go red here instead of silently passing check 47
+# vacuously; the argument-hint exemption itself is exercised live by every
+# shipped skill that declares it (real fixture, not a synthetic one).
+# ---------------------------------------------------------------------------
+note "Check 47: skill bodies carry no positional tokens (the Skill tool substitutes \$0-\$9 / \${N} textually; \$ARGUMENTS is checked only where argument-hint is not declared)"
+c47_hits=""
+for c47_f in user-level-reference/skills/*/SKILL.md; do
+  [ -f "$c47_f" ] || continue
+  c47_h1=$(grep -nE '\$[0-9]|\$\{[0-9]\}' "$c47_f" 2>/dev/null)
+  [ -n "$c47_h1" ] && c47_hits="$c47_hits
+$c47_h1"
+  if ! grep -qE '^argument-hint:' "$c47_f" 2>/dev/null; then
+    c47_h2=$(grep -n '\$ARGUMENTS' "$c47_f" 2>/dev/null)
+    [ -n "$c47_h2" ] && c47_hits="$c47_hits
+$c47_h2"
+  fi
+done
+c47_hits=$(printf '%s' "$c47_hits" | sed '/^$/d')
+if [ -n "$c47_hits" ]; then
+  ko "check 47: positional token(s) in a skill body -- any argument corrupts the shell snippets: $(printf '%s' "$c47_hits" | head -5 | tr '\n' ';')"
+else
+  ok "check 47: no \$0-\$9 / \${N} in any skill body, and no \$ARGUMENTS in a skill that does not declare argument-hint"
+fi
+# 47c control: the pattern must detect a planted token (two-sided).
+c47_probe=$(printf 'x "$1" y\n' | grep -cE '\$[0-9]|\$\{[0-9]\}|\$ARGUMENTS')
+[ "$c47_probe" -eq 1 ] && ok "check 47c: control -- the pattern detects a planted \$1" || ko "check 47c: control -- the pattern did not detect a planted \$1"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

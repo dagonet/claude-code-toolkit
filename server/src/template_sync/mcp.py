@@ -969,6 +969,16 @@ async def template_compute_status(
         `key_audit` per audited once file, `encoding_drift` per file (BOM/EOL
         only differences, informational), and `gate_self_reference` /
         `gate_unverified` at top level. CONFLICT never appears for v3.
+
+        gate_unverified: true when an audited once file (matched by a
+        literal-path "keys" rule) declares a `**Gate**:` key -- constant true
+        on any Gate-declaring repo, for every call, dry-run or not; nothing in
+        this tool clears it, because this tool never runs the gate it is
+        naming. It is NOT commit state and does not mean "the gate is
+        currently failing" or "the gate has not run since the last commit" --
+        it means only "a Gate is declared here", which a consumer should read
+        as a standing reminder to actually run `bash hooks/run-gate.sh`
+        themselves, not as a verdict this call produced.
     """
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
