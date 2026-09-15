@@ -170,7 +170,12 @@ def test_migration_region_and_hunks(tmp_path):
     # (it has no `paths:` key and loads at every session start) -- they go
     # to backup_dir as a diff record instead.
     assert "```diff" not in md and "Migrated from CLAUDE.md" not in md
-    assert "paths:" in md and "PROJECT-CUSTOM" in md      # the v4.0.1 seed body
+    # F1 (controller, fix round 1): "paths:" and "PROJECT-CUSTOM" both also
+    # appear in the OLD f10c39f seed this item replaces (the "delivered to
+    # nobody" one), so that pair alone cannot distinguish old from new.
+    # Compare directly against the real constant instead.
+    assert v3.PROJECT_MD_SEED_BODY in md               # the v4.0.1 seed body
+    assert "delivered to nobody" not in md
     assert "Project-specific instructions" not in md      # never diffed against the current template
     diff_path = backup / "CLAUDE.md.out-of-region.diff"
     assert diff_path.exists()
@@ -282,7 +287,8 @@ def test_migration_vacuity_control(tmp_path):
     md = (proj / ".claude" / "rules" / "project.md").read_text(encoding="utf-8")
     assert "```diff" not in md
     assert SEED not in md                       # the toolkit's seed is not the consumer's content
-    assert "paths:" in md and "PROJECT-CUSTOM" in md   # the v4.0.1 seed body, always present
+    assert v3.PROJECT_MD_SEED_BODY in md        # the v4.0.1 seed body, always present -- F1, see above
+    assert "delivered to nobody" not in md
     assert not (tmp_path / "b" / "CLAUDE.md.out-of-region.diff").exists()   # no hunks, nothing to record
     assert res["project_md_record"] is None
 
