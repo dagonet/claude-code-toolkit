@@ -12,9 +12,12 @@ back on its own.
 """
 
 import inspect
+import pathlib
 
 from template_sync import mcp as ts
 from template_sync import v3
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def _doc(tool) -> str:
@@ -51,4 +54,55 @@ def test_the_artifact_itself_has_no_region(tmp_path):
     assert v3.core.CUSTOM_REGION_BEGIN not in md
     assert v3.core.CUSTOM_REGION_END not in md
     assert "```diff" not in md and "+b" not in md
-    assert "paths:" in md and "PROJECT-CUSTOM" in md
+    # F1 (controller, fix round 1): "paths:"/"PROJECT-CUSTOM" alone also
+    # match the OLD pre-item-14 seed ("delivered to nobody"); compare
+    # directly against the real constant to distinguish old from new.
+    assert v3.PROJECT_MD_SEED_BODY in md
+    assert "delivered to nobody" not in md
+
+
+def test_new_seed_assertion_rejects_the_old_seed_the_weak_one_could_not():
+    """F1's two-sided proof, pinned as a real test rather than a one-off
+    check (controller fix round 1). The OLD project.md seed (pre-item-14,
+    toolkit commit f10c39f, "delivered to nobody") PASSES the weak
+    assertion this fix replaces ("paths:" and "PROJECT-CUSTOM" both
+    present, both also true of the old body) -- proving that assertion
+    could not tell old from new -- and correctly FAILS the corrected one.
+    """
+    old_seed = (
+        "# Project rules (yours; sync never overwrites this file)\n\n"
+        "<!-- template-sync: project-owned, and never overwritten by a sync; "
+        "introduced in v3.1.0 -->\n\n"
+        "Add `paths:`-scoped conventions here — style, language and file-type "
+        "rules that\nshould arrive when a matching file is opened.\n\n"
+        "A rules file is delivered ONLY when a tool call touches a file its "
+        "`paths:` key\nmatches, and it is never present when a session or a "
+        "subagent starts. A rules\nfile with no `paths:` key is delivered to "
+        "nobody. So anything that must be true\nBEFORE work begins — safety "
+        "rules, prohibitions, which tool to reach for —\nbelongs in CLAUDE.md's "
+        "PROJECT-CUSTOM region, not here.\n"
+    )
+    # The weak assertion this fix replaces: it PASSES on the old seed, which
+    # is exactly the defect (it cannot distinguish old from new).
+    assert "paths:" in old_seed and "PROJECT-CUSTOM" in old_seed
+    # The corrected assertion correctly FAILS on the old seed.
+    assert v3.PROJECT_MD_SEED_BODY not in old_seed
+    assert "delivered to nobody" in old_seed
+
+
+def test_seed_body_pinned_inside_the_template_seed_file():
+    """v4.0.1 item 14 has TWO seed prose sources: `v3.PROJECT_MD_SEED_BODY`
+    (what a MIGRATED consumer gets, via build_project_md) and
+    `templates/general/.claude/rules/project.md` (what a BOOTSTRAPPED
+    consumer gets, via setup-project.sh/.ps1). Nothing pinned them together,
+    so they could drift apart silently (controller fix round 1, F2).
+    """
+    tpl_seed = (ROOT / "templates" / "general" / ".claude" / "rules" / "project.md").read_text(encoding="utf-8")
+    assert v3.PROJECT_MD_SEED_BODY.strip() in tpl_seed
+
+    # Two-sided: a body that disagrees by one word must NOT match -- proves
+    # this assertion is discriminating, not vacuously true because both
+    # sides are short, generic substrings.
+    mutated = v3.PROJECT_MD_SEED_BODY.strip().replace("EVERY session start", "SOME sessions", 1)
+    assert mutated != v3.PROJECT_MD_SEED_BODY.strip(), "fixture did not actually change anything"
+    assert mutated not in tpl_seed
