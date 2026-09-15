@@ -172,8 +172,16 @@ body() {
 # server's now-retired `_region_body`-based count (which stripped every edge
 # newline). A one-line region (BEGIN and END on the same physical line) is 0
 # bytes; a file with no complete region is 0.
+#
+# ⚠ LC_ALL=C, DELIBERATELY (v4.0.1 fix round 1).  gawk's `length()` counts
+# CHARACTERS, not bytes, under a UTF-8 locale -- a region body with one em
+# dash measured 14 here under `LC_ALL=en_US.UTF-8` against the server's 16
+# (correct) under the environment's own default C locale. `region_bytes_raw`
+# is a BYTE count by definition (`.encode("utf-8")` in v3.py); running the
+# awk under `LC_ALL=C` makes `length()` count bytes here too, so the two
+# never again depend on the CALLER's locale to agree.
 bytes() {
-  awk -v bre="$BEGIN_RE" -v ere="$END_RE" '
+  LC_ALL=C awk -v bre="$BEGIN_RE" -v ere="$END_RE" '
     state == 0 {
       if (match($0, bre)) {
         rest = substr($0, RSTART + RLENGTH)

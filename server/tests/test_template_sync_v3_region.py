@@ -399,6 +399,88 @@ def test_region_bytes_is_the_raw_span(tmp_path):
     assert v3.region_bytes_raw("# T\n<!-- PROJECT-CUSTOM:BEGIN --><!-- PROJECT-CUSTOM:END -->\n") == 0
 
 
+def _resolve_bash():
+    """Resolve, never hardcode: a public template repo cannot bake in one
+    machine's absolute bash path (this file's own item 23 states that
+    principle for MCP_DEV_SERVERS_DIR; the same applies here).
+    shutil.which("bash") returns None from pytest's subprocess on at least
+    one measured Windows setup even though an interactive shell finds bash
+    on PATH, so a handful of the usual install locations are tried too.
+    Returns None (never raises) when nothing resolves, so callers can report
+    an in-band SKIP instead of a hard FAIL for an environment gap unrelated
+    to the fix under test.
+    """
+    import shutil
+    bash = shutil.which("bash")
+    if bash:
+        return bash
+    for candidate in (r"C:\Program Files\Git\usr\bin\bash.exe",
+                      r"C:\Program Files\Git\bin\bash.exe",
+                      r"C:\Windows\System32\bash.exe", "/usr/bin/bash", "/bin/bash"):
+        if pathlib.Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def test_region_bytes_raw_matches_region_sh_under_a_utf8_locale_with_an_em_dash(tmp_path):
+    """v4.0.1 fix round 1, item F1: gawk's `length()` counts CHARACTERS, not
+    bytes, under a UTF-8 locale. Run WITHOUT region.sh's `LC_ALL=C` fix, the
+    same awk logic gives 11 for this fixture under `LC_ALL=en_US.utf8` on
+    this machine (character-counted) against the correct, locale-independent
+    13 (byte-counted, matching region_bytes_raw) -- confirmed by hand before
+    writing this test, so the fixture is known to discriminate. This test
+    invokes region.sh --bytes with `LC_ALL=en_US.UTF-8` FORCED in the
+    subprocess environment specifically because the fix must hold regardless
+    of the CALLER's locale, not just this session's; an ASCII-only fixture
+    would pass under either locale and prove nothing about this defect.
+    """
+    content = "# T\n<!-- PROJECT-CUSTOM:BEGIN -->\none \u2014 two\n<!-- PROJECT-CUSTOM:END -->\n"
+    f = tmp_path / "emdash.md"
+    f.write_text(content, encoding="utf-8", newline="")
+    server_bytes = v3.region_bytes_raw(content)
+    assert server_bytes > 0
+    region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
+    bash = _resolve_bash()
+    if not bash:
+        pytest.skip("bash not found on PATH or in any known install location -- "
+                    "region.sh cross-check not run")
+    import os
+    env = dict(os.environ)
+    env["LC_ALL"] = "en_US.UTF-8"
+    proc = subprocess.run([bash, str(region_sh), "--bytes", str(f)], capture_output=True,
+                          text=True, env=env)
+    if proc.returncode != 0:
+        pytest.skip(f"en_US.UTF-8 locale unavailable on this machine for the subprocess "
+                    f"cross-check: {proc.stderr.strip()!r}")
+    assert str(server_bytes) == proc.stdout.strip()
+
+
+def test_region_bytes_raw_matches_region_sh_with_trailing_text_on_the_begin_line(tmp_path):
+    """v4.0.1 fix round 1, item F2: the SERVER used to deviate from the spec
+    here, not region.sh. `region_bytes_raw` started the span right after the
+    BEGIN marker's own "-->", so trailing text on the BEGIN line itself (e.g.
+    "<!-- PROJECT-CUSTOM:BEGIN --> keep this") was counted as region bytes;
+    region.sh's awk moves to the NEXT line the instant it sees the BEGIN
+    marker match and never looks at what follows "-->" on that line, so it
+    does not. Fixed by starting the span at the BEGIN marker LINE's own
+    terminating newline instead. Cross-checked against region.sh --bytes on
+    the identical file rather than a hardcoded constant -- both must agree.
+    """
+    content = "<!-- PROJECT-CUSTOM:BEGIN --> keep this\nX\n<!-- PROJECT-CUSTOM:END -->"
+    f = tmp_path / "trailing.md"
+    f.write_text(content, encoding="utf-8", newline="")
+    server_bytes = v3.region_bytes_raw(content)
+    assert server_bytes > 0
+    region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
+    bash = _resolve_bash()
+    if not bash:
+        pytest.skip("bash not found on PATH or in any known install location -- "
+                    "region.sh cross-check not run")
+    out = subprocess.run([bash, str(region_sh), "--bytes", str(f)], check=True,
+                         capture_output=True, text=True).stdout.strip()
+    assert str(server_bytes) == out
+
+
 def test_region_bytes_raw_matches_region_sh_with_indented_end_marker(tmp_path):
     """Two instruments, one number -- the property item 6 exists to
     guarantee. An END marker sitting alone at column 0 cannot discriminate a
@@ -416,23 +498,7 @@ def test_region_bytes_raw_matches_region_sh_with_indented_end_marker(tmp_path):
     server_bytes = v3.region_bytes_raw(content)
     assert server_bytes > 0
     region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
-    # Resolve, never hardcode: a public template repo cannot bake in one
-    # machine's absolute bash path (the census this file's own item 23 states
-    # for exactly this reason). shutil.which("bash") returns None from
-    # pytest's subprocess on at least one measured Windows setup even though
-    # an interactive shell finds bash on PATH, so a handful of the usual
-    # install locations are tried too; if none resolve here, the cross-check
-    # is reported as an in-band SKIP with a reason, never silently absent and
-    # never a hard FAIL for an environment gap unrelated to the fix.
-    import shutil
-    bash = shutil.which("bash")
-    if not bash:
-        for candidate in (r"C:\Program Files\Git\usr\bin\bash.exe",
-                          r"C:\Program Files\Git\bin\bash.exe",
-                          r"C:\Windows\System32\bash.exe", "/usr/bin/bash", "/bin/bash"):
-            if pathlib.Path(candidate).is_file():
-                bash = candidate
-                break
+    bash = _resolve_bash()
     if not bash:
         pytest.skip("bash not found on PATH or in any known install location -- "
                     "region.sh cross-check not run")

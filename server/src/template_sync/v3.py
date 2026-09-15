@@ -1283,33 +1283,40 @@ def _region_body(region_block: str | None) -> str | None:
 
 def region_bytes_raw(content: str | None) -> int:
     """Byte length of the PROJECT-CUSTOM region body exactly as it sits in the
-    file: every byte from the BEGIN marker's closing "-->" up to (not
-    including) the first byte of the LINE that carries the END marker. No
-    stripping, no joining on "\n" -- this is the ONE definition shared with
-    region.sh --bytes (v4.0.1, item 6), which is necessarily line-based (awk
-    reads line by line); ending at the END marker's own "<!--" instead would
-    disagree with region.sh the moment that marker is indented, which is
-    exactly the two-instruments-two-numbers defect this item exists to
-    close. `_region_body` above keeps its line-joined text shape for callers
-    that compare CONTENT, not bytes. 0 for no region, an unclosed region, or
-    an empty region (BEGIN immediately followed by END on the same line).
+    file: every byte from the BEGIN marker LINE's terminating newline
+    (inclusive of that newline) up to (not including) the first byte of the
+    LINE that carries the END marker. No stripping, no joining on "\n" --
+    this is the ONE definition shared with region.sh --bytes (v4.0.1, item
+    6), which is necessarily line-based (awk reads line by line and moves to
+    the next line the instant it sees the BEGIN marker, without looking at
+    what follows "-->" on that same line). Both ends of the span are
+    therefore anchored on LINES, not on the marker delimiters themselves:
+    starting right after the BEGIN marker's own "-->" (v4.0.1 fix round 1's
+    initial implementation) counted any trailing text on the BEGIN line
+    itself (e.g. "<!-- PROJECT-CUSTOM:BEGIN --> keep this\\n") as region
+    bytes, which region.sh does not -- and ending at the END marker's own
+    "<!--" instead of its line start disagrees with region.sh the moment
+    that marker is indented. `_region_body` above keeps its line-joined text
+    shape for callers that compare CONTENT, not bytes. 0 for no region, an
+    unclosed region, or an empty region (BEGIN immediately followed by END
+    on the same line).
     """
     if not content:
         return 0
     begin = content.find(core.CUSTOM_REGION_BEGIN)
     if begin < 0:
         return 0
-    body_start = content.find("-->", begin)
+    body_start = content.find("\n", begin)
     if body_start < 0:
         return 0
-    body_start += 3
     end_text = content.find(core.CUSTOM_REGION_END, body_start)
     if end_text < 0:
         return 0
     last_nl = content.rfind("\n", body_start, end_text)
     if last_nl < 0:
-        # No newline between the BEGIN marker's "-->" and the END marker's
-        # text: BEGIN and END share one physical line -- an empty region.
+        # No newline between the BEGIN marker line's own newline and the END
+        # marker's text: BEGIN and END share one physical line -- an empty
+        # region.
         return 0
     body_end = last_nl + 1
     return len(content[body_start:body_end].encode("utf-8"))
