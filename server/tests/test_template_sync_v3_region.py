@@ -410,8 +410,26 @@ def test_region_bytes_raw_matches_region_sh_with_indented_end_marker(tmp_path):
     server_bytes = v3.region_bytes_raw(content)
     assert server_bytes > 0
     region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
+    # Resolve, never hardcode: a public template repo cannot bake in one
+    # machine's absolute bash path (the census this file's own item 23 states
+    # for exactly this reason). shutil.which("bash") returns None from
+    # pytest's subprocess on at least one measured Windows setup even though
+    # an interactive shell finds bash on PATH, so a handful of the usual
+    # install locations are tried too; if none resolve here, the cross-check
+    # is reported as an in-band SKIP with a reason, never silently absent and
+    # never a hard FAIL for an environment gap unrelated to the fix.
     import shutil
-    bash = shutil.which("bash") or r"C:\Program Files\Git\usr\bin\bash.exe"
+    bash = shutil.which("bash")
+    if not bash:
+        for candidate in (r"C:\Program Files\Git\usr\bin\bash.exe",
+                          r"C:\Program Files\Git\bin\bash.exe",
+                          r"C:\Windows\System32\bash.exe", "/usr/bin/bash", "/bin/bash"):
+            if pathlib.Path(candidate).is_file():
+                bash = candidate
+                break
+    if not bash:
+        pytest.skip("bash not found on PATH or in any known install location -- "
+                    "region.sh cross-check not run")
     out = subprocess.run([bash, str(region_sh), "--bytes", str(f)], check=True,
                          capture_output=True, text=True).stdout.strip()
     assert str(server_bytes) == out
