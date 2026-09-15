@@ -372,8 +372,12 @@ def _is_root_tracked(rel_path: str) -> bool:
 # fields -- the same data OwnershipRules.template_path_for (v3.py) reads --
 # so there is exactly one place a new dotfile rule needs to be added, and the
 # hardcoded literal here can never silently disagree with it for a mapping
-# ownership.json actually declares. This literal remains the only answer for
-# the v2 / no-ownership.json path, where there is no rules object to ask.
+# ownership.json actually declares. The rules branch is gated on
+# `manifest.get("templateRepo")`, which a v2 manifest carries too -- there is
+# no v2/v3 split here, deliberately (v4.0.1 fix round 2): one mapping for
+# every manifest version is the point of F4. This literal is the answer only
+# when NO manifest is given, the manifest has no `templateRepo`, or the
+# template repo has no templates/ownership.json to read.
 _DOTFILE_MAP = {".gitignore": "gitignore"}   # project name -> template name
 
 
@@ -382,11 +386,15 @@ def template_path_for(rel_path: str, manifest: dict | None = None) -> str:
 
     Prefers the mapping derived from the template repo's own
     templates/ownership.json (via OwnershipRules.template_path_for) when a
-    manifest is given and that file exists; falls back to the hardcoded
-    _DOTFILE_MAP otherwise (v2 manifests, or a v3 template with no
-    ownership.json rule for this path). A test in
-    test_template_sync_diff_alias.py pins that the two can never disagree
-    for every `target` rule the shipped ownership.json declares.
+    manifest carrying a `templateRepo` is given and that repo has an
+    ownership.json -- a v2 manifest qualifies exactly the same way a v3 one
+    does, deliberately (v4.0.1 fix round 2: one mapping for both manifest
+    versions is the point of F4, not a v2/v3 split). Falls back to the
+    hardcoded _DOTFILE_MAP only when no manifest is given, the manifest has
+    no `templateRepo`, or the template repo has no ownership.json to read.
+    A test in test_template_sync_diff_alias.py pins that the two can never
+    disagree for every `target` rule the shipped ownership.json declares,
+    and a v2-manifest test pins that the rules branch applies there too.
     """
     norm = _normalize_path(rel_path)
     if manifest is not None:

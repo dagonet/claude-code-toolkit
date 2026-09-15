@@ -118,6 +118,31 @@ def test_template_path_for_agrees_with_every_target_rule_in_shipped_ownership(tm
         assert ts.template_path_for(rule["target"], manifest) == rule["pattern"], rule
 
 
+def test_template_path_for_uses_the_rules_for_a_v2_manifest_too(tmp_path):
+    """v4.0.1 fix round 2: the rules branch of template_path_for() is gated
+    on `manifest.get("templateRepo")`, which a v2 manifest carries exactly
+    like a v3 one -- so a v2 manifest whose template repo declares an
+    `npmrc -> .npmrc` target rule ALSO gets the rules-derived answer. This is
+    deliberate, not an accident of the gating: one mapping for every manifest
+    version is the point of F4, not a v2/v3 split. Pinned directly against
+    template_path_for() (not through get_diff, which
+    test_template_path_for_generalizes_beyond_gitignore below already
+    covers) so the coupling is unambiguous and cannot regress silently.
+    """
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "general" / "npmrc").write_text("registry=x\n", encoding="utf-8", newline="")
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "npmrc", "ownership": "once", "target": ".npmrc"}],
+    }), encoding="utf-8")
+    v2_manifest = {
+        "version": 2, "templateRepo": str(repo), "variant": "general",
+        "placeholders": {}, "lastSynced": "", "files": {},
+    }
+    assert ts.template_path_for(".npmrc", v2_manifest) == "npmrc"
+
+
 def test_template_path_for_generalizes_beyond_gitignore(tmp_path):
     """The generalization fixture: an ownership.json rule the hardcoded
     _DOTFILE_MAP has never heard of (npmrc -> .npmrc) still resolves through
