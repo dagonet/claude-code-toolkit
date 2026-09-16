@@ -140,6 +140,18 @@ What `hooks/gate-before-merge.sh` actually **reads** is narrower than what is wr
 
 A minimal replacement runner therefore needs `sha` **or** `tree`, plus a fresh mtime. Two parsing rules matter if you write your own: the reader tolerates whitespace after the colon (`{"sha": "…"}` is valid JSON and a consumer emitted exactly that, was silently read as empty, and got blocked on every merge with `artifact sha: none`), and a red gate **deletes** the artifact rather than writing `"status":"fail"` — absence is the failure signal.
 
+### Two artifacts, not one (v4.0.1, item 15)
+
+`last-pass.json` (above) is written by `hooks/run-gate.sh`, including when `pre-commit-test.sh` falls back to running the Gate itself on a Gate-only repo (no `**Test**` declared, or `**Test**` is `none`). A SECOND artifact, `last-precommit.json`, is written by `pre-commit-test.sh` on the ordinary Test path (a `**Test**` key IS declared) and carries `tree` only — no `sha`. Consumers correlating the two must key on `tree`, never `sha`.
+
+**`sha` is advisory, `tree` is the matching key.** When `last-pass.json` is minted by the Gate fallback DURING a commit, `pre-commit-test.sh` runs the gate BEFORE the commit object exists, so the `sha` it records is HEAD *at hook time* — the commit's PARENT, not the commit itself (measured: `sha` = parent, `tree` = `HEAD^{tree}` of the finished commit). `gate-before-merge.sh` reads that correctly because it accepts either a `sha` OR a `tree` match (the table above) and the `tree` match is the one that succeeds in this case. Reading `sha` in that artifact as "the gated commit" is the error this note exists to head off; `tree` is what actually decided the match, and the gate's own success-path output says which arm matched (`matched: tree` / `matched: sha`).
+
+Both artifacts live together in **the gate artifact directory** — the same directory `last-pass.json` above is written to; a future release may relocate that directory without changing either filename or field shape.
+
+### `gate_unverified` (v4.0.1, item 15)
+
+`template_compute_status`'s top-level `gate_unverified` field is **constant `true` on any repo that declares a `**Gate**:` key**, for every call, dry-run or not — measured directly in `collect_gate_refs` (`server/src/template_sync/v3.py`): it is set `true` the moment an audited file's `**Gate**:` key is found, and nothing in this tool ever sets it back to `false`, because this tool never runs the gate it is naming. **It is not commit state.** It does not mean "the gate is currently failing", "the gate has not run since the last commit", or anything about the working tree — it means only "a Gate is declared here", and a consumer should read it as a standing reminder to run `bash hooks/run-gate.sh`, never as a verdict this call produced. Do not document (or rely on) any condition that clears it; none exists in the code as of v4.0.1.
+
 ## Hooks Are Root-Tracked
 
 Variants do **NOT** ship a `hooks/` directory. All hook scripts live once at the toolkit ROOT `hooks/` — a single source with zero cross-variant drift. Everything that consumes them resolves against the root:

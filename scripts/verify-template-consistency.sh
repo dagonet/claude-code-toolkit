@@ -3501,6 +3501,103 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 47 -- skill bodies carry no positional tokens (v4.0.1; tightened
+# v4.0.1 fix round 1). The Skill tool substitutes $0-$9 / ${N} / $ARGUMENTS
+# textually across the whole body before any shell snippet runs -- textually
+# meaning inside a fenced shell snippet too, so a skill invoked with an
+# argument has any of these tokens replaced in-place with raw, unescaped
+# user text. Inside a fence that is worse than mangling: a shape like
+# `grep -r "$ARGUMENTS" .` becomes a shell-injection point, not just a
+# broken command (reviewer-planted case, fix round 1 -- the argument-hint
+# exemption below used to be unconditional and let this through).
+#
+# $0-$9 / ${N} have no legitimate use in ANY skill body, prose or fence (a
+# shell snippet needing a positional-looking name should use a NAMED
+# variable instead), and are banned unconditionally everywhere.
+#
+# $ARGUMENTS is different: it is the documented substitution point for a
+# skill that declares `argument-hint` in its own frontmatter (challenge,
+# retro-review, sprint all do). In PROSE that is exactly the intended use,
+# so banning it unconditionally would make this check permanently red on
+# working, by-design skills. INSIDE a fenced code block it is the
+# shell-injection shape above, so it is banned there even when
+# argument-hint is declared. A skill that does NOT declare argument-hint has
+# no legitimate use for $ARGUMENTS anywhere, fence or prose.
+#
+# The fence toggle matches an INDENTED fence too (a fence opened under a
+# list item, e.g. "   ```sh"), not just one starting at column 0 -- an
+# anchor of bare /^```/ never toggles on an indented fence, so content
+# inside it reads as prose and a fenced $ARGUMENTS there passes uncaught
+# (fix round 2; the shipped sync-template SKILL.md has 4 such fences today).
+#
+# The scan lives in one function, c47_scan, so 47c can exercise the SAME
+# code the real check runs rather than a parallel literal -- the fix-round-1
+# finding was that the prior 47c probed a pattern that appeared nowhere in
+# check 47 itself, so it stayed green even when check 47's own greps broke.
+# 47c now builds a throwaway skills tree and asserts c47_scan flags a bare
+# $1, a fenced $ARGUMENTS under a declared argument-hint, and the SAME thing
+# inside an INDENTED fence (fix round 2) -- and does NOT flag the same
+# $ARGUMENTS used in prose right next to it -- exercising the loop, the
+# glob, and every branch of the condition.
+# ---------------------------------------------------------------------------
+c47_scan() {   # <skills-root-dir> -> "path:line:content" hits, one per line, empty when clean
+  c47_dir="$1"
+  c47_out=""
+  while IFS= read -r c47_f; do
+    [ -f "$c47_f" ] || continue
+    c47_h=$(grep -HnE '\$[0-9]|\$\{[0-9]\}' "$c47_f" 2>/dev/null)
+    [ -n "$c47_h" ] && c47_out="$c47_out
+$c47_h"
+    if grep -qE '^argument-hint:' "$c47_f" 2>/dev/null; then
+      # argument-hint declared: $ARGUMENTS is the documented placeholder in
+      # PROSE (allowed); banned only INSIDE a fenced code block (``` ... ```),
+      # indented or not (a fence opened under a list item still counts).
+      c47_h=$(awk -v fn="$c47_f" '
+        /^[[:space:]]*```/ { infence = !infence; next }
+        infence && /\$ARGUMENTS/ { print fn ":" NR ":" $0 }
+      ' "$c47_f")
+    else
+      # no argument-hint declared: $ARGUMENTS has no legitimate use anywhere.
+      c47_h=$(grep -HnF '$ARGUMENTS' "$c47_f" 2>/dev/null)
+    fi
+    [ -n "$c47_h" ] && c47_out="$c47_out
+$c47_h"
+  done <<EOF
+$(find "$c47_dir" -type f -name 'SKILL.md' 2>/dev/null)
+EOF
+  printf '%s\n' "$c47_out" | sed '/^$/d'
+}
+
+note "Check 47: skill bodies carry no positional tokens (\$0-\$9/\${N} always; \$ARGUMENTS inside a fence, or anywhere without argument-hint)"
+c47_hits=$(c47_scan "user-level-reference/skills")
+if [ -n "$c47_hits" ]; then
+  ko "check 47: positional token(s) in a skill body -- any argument corrupts the shell snippets: $(printf '%s' "$c47_hits" | head -5 | tr '\n' ';')"
+else
+  ok "check 47: no \$0-\$9/\${N} in any skill body; no \$ARGUMENTS in a fence, or anywhere in a skill without argument-hint"
+fi
+
+# 47c control: exercises c47_scan itself, not a parallel probe (fix round 1).
+c47_scratch="${TMPDIR:-/tmp}/c47-control-$$"
+rm -rf "$c47_scratch"
+mkdir -p "$c47_scratch/plain-skill" "$c47_scratch/argword-skill" "$c47_scratch/indented-fence-skill"
+printf -- '---\nname: plain-skill\n---\nbody with a stray positional: "$1"\n' > "$c47_scratch/plain-skill/SKILL.md"
+printf -- '---\nname: argword-skill\nargument-hint: "[x]"\n---\nProse use is fine: $ARGUMENTS\n\n```sh\necho "$ARGUMENTS"\n```\n' > "$c47_scratch/argword-skill/SKILL.md"
+# fix round 2 (F7): an INDENTED fence (opened under a list item) must toggle
+# the same as a column-0 one, so $ARGUMENTS inside it is still caught.
+printf -- '---\nname: indented-fence-skill\nargument-hint: "[x]"\n---\n1. a step\n   ```sh\n   echo "$ARGUMENTS"\n   ```\n' > "$c47_scratch/indented-fence-skill/SKILL.md"
+c47_probe=$(c47_scan "$c47_scratch")
+c47_probe_n=$(printf '%s\n' "$c47_probe" | sed '/^$/d' | wc -l | tr -d ' ')
+if printf '%s' "$c47_probe" | grep -qF "plain-skill/SKILL.md" \
+   && printf '%s' "$c47_probe" | grep -qF "argword-skill/SKILL.md" \
+   && printf '%s' "$c47_probe" | grep -qF "indented-fence-skill/SKILL.md" \
+   && [ "$c47_probe_n" -eq 3 ]; then
+  ok "check 47c: control -- c47_scan flags the planted \$1 (plain-skill), the fenced \$ARGUMENTS under argument-hint (argword-skill), and the INDENTED-fenced \$ARGUMENTS (indented-fence-skill), and nothing else -- $c47_probe_n hit(s), prose \$ARGUMENTS correctly unflagged"
+else
+  ko "check 47c: control -- c47_scan did not flag exactly the three planted cases (bare \$1; fenced \$ARGUMENTS under argument-hint; indented-fenced \$ARGUMENTS) -- got $c47_probe_n hit(s): $(printf '%s' "$c47_probe" | tr '\n' ';')"
+fi
+rm -rf "$c47_scratch"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

@@ -165,8 +165,19 @@ cd "$REPO_TOP" || exit 1
 # single-run merge path never fired for agents, who chain add+commit habitually.
 #
 # A temp index (a copy of the real one, so unchanged paths need no re-stat) is
-# refreshed with `add -u -- .` (v3.1 -- TRACKED FILES ONLY, see the doc note
-# above) and hashed. The REAL index is never touched.
+# refreshed with `add -u -- .` (v3.1) and hashed. The REAL index is never
+# touched. `add -u` only UPDATES paths already IN the index with their
+# current worktree content -- it never ADDS a path that is not there. Read
+# that as "whatever the real index held at copy time, plus fresh content for
+# what it already held", not as "only files HEAD already tracks": a file
+# `git add`ed BEFORE this hook fires -- a staged NEW file, not yet in any
+# commit -- is already in the real index at copy time, so it is already in
+# the temp index too, and `add -u` leaves it there. That staged new file IS
+# in the hash, and is blessed by design (fix round 1, item 13', measured:
+# staged new file -> in; never-staged file -> out; modified tracked file ->
+# worktree version, not the last-committed one). Only a file that was never
+# staged at all -- still fully untracked at hook time -- is outside the temp
+# index from the start and stays outside no matter what `add -u` does.
 #
 # Consequently `git add -u -- . && git commit`, `git commit -a`, and separate
 # add/commit calls of already-tracked files all yield `HEAD^{tree} == tree`.

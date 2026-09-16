@@ -178,7 +178,11 @@ step later in the same sync is what rewrites it.
 `project.md` gets a header plus the out-of-region hunks fenced as ` ```diff `. **The
 PROJECT-CUSTOM region is not copied into it.** Under the v3.1 reversal the region stays in
 `CLAUDE.md`, so copying it would duplicate rather than relocate it — and the duplicate is the
-dangerous half, because an unscoped `project.md` is delivered to no agent. The region is
+dangerous half: not because an unscoped `project.md` fails to deliver (corrected in v4.0.1,
+item 14 — it loads at every session start, same as the region, once it carries no `paths:`
+key), but because a rule written in BOTH places exists twice and drifts the moment either copy
+is edited. Keeping one authoritative copy (the region) and a reported diff (here) avoids that;
+writing the same content into both is the actual hazard. The region is
 reported instead (`region_left_in_place`, `region_bytes`, `region_was_seed`).
 
 Refusals:
