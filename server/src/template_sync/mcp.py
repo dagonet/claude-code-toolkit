@@ -1930,7 +1930,82 @@ async def template_propagate_to_variants(
     }, ensure_ascii=False)
 
 
+@mcp.tool()
+async def template_verify(
+    project_path: str,
+    template_repo: str = "",
+    mode: str = "post_commit",
+) -> str:
+    """
+    Read-only consumer consistency check (v4.0.1, item 22). Verifies END
+    STATE, not process -- it would have caught the superseded-keys pair, the
+    missing manifest keys, the missing trailing newline and the .gitignore
+    new-file residue; it cannot catch a process defect that leaves no trace
+    (a get_diff error, a refused skip, a $0 snippet).
+
+    `template_repo` resolves the way template_compute_status does (an
+    override, else manifest["templateRepo"]) -- a server installed from a
+    different checkout must not verify against the wrong repo silently.
+    `mode="pre_commit"` treats an uncommitted, dirty working tree as expected
+    (the sync writes files before committing them); `mode="post_commit"`
+    (the default) treats it as a FAIL. Call it with mode="pre_commit" before
+    the sync's commit (SKILL.md step 8) and mode="post_commit" after it
+    (step 9b).
+
+    Args:
+        project_path: Path to the project root directory
+        template_repo: Override templateRepo from manifest (optional)
+        mode: "pre_commit" or "post_commit" (default)
+
+    Returns:
+        JSON {ok, mode, summary: "N PASS, M FAIL, K SKIP, J INFO",
+        lines: [{id, status: PASS|FAIL|SKIP|INFO, measured, expected, remedy}]}.
+        `ok` is true only when no line is FAIL. A SKIP is always reported
+        with a reason and counted in the summary, so a SKIP-heavy green is
+        never mistaken for a real green.
+    """
+    from . import verify
+    return json.dumps(verify.run(project_path, template_repo, mode), ensure_ascii=False)
+
+
+def _cli_verify(argv: list[str]) -> int:
+    """`mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]`.
+
+    Prints one line per result, then the summary; exits 0 iff `ok`.
+    """
+    project_path = None
+    template_repo = ""
+    mode = "post_commit"
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--template-repo" and i + 1 < len(argv):
+            template_repo = argv[i + 1]
+            i += 2
+        elif arg == "--mode" and i + 1 < len(argv):
+            mode = argv[i + 1]
+            i += 2
+        elif project_path is None:
+            project_path = arg
+            i += 1
+        else:
+            i += 1
+    if project_path is None:
+        print("usage: mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]")
+        return 2
+    from . import verify
+    result = verify.run(project_path, template_repo, mode)
+    for line in result["lines"]:
+        suffix = f"; {line['remedy']}" if line.get("remedy") else ""
+        print(f"{line['status']} {line['id']}: {line['measured']}  (expected {line['expected']}){suffix}")
+    print(result["summary"])
+    return 0 if result["ok"] else 1
+
+
 def main():
+    import sys
+    if sys.argv[1:2] == ["--verify"]:
+        sys.exit(_cli_verify(sys.argv[2:]))
     mcp.run(transport="stdio")
 
 

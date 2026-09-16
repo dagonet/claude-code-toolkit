@@ -1031,6 +1031,8 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 ### 8. Report
 
+**Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
+
 **Report `key_audit.optional_absent_detail`** (v4.0.1, item 18; capability `optional_absent_detail`) for every key it lists, one line each, in this exact shape:
 
 ```
@@ -1156,6 +1158,12 @@ Gate **after** the commit, never before: the artifact must match the PR head by 
 **The commit gate keys on the WORKING TREE at gate time — commit exactly what was gated.** A chained `git add … && git commit` is fine (the tree the gate hashed is the tree the commit gets); so is `git commit -a`. A *partial* add after the gate ran mismatches by design — the committed tree is not what was gated — and the merge gate will correctly demand a fresh run.
 
 CI fires on `pull_request` and on push-to-main; a bare branch push produces **no** run. Open the PR first, then look up the run id — an empty workflow list right after `git push` is not a CI failure.
+
+### 9b. Verify After the Commit
+
+Call `template_verify(project_path=<project>, mode="post_commit")` (v4.0.1, item 22) right after the commit lands. This is the SAME check as step 8's, run again with `mode="post_commit"` now that the manifest and every applied file are committed — `tree_clean` FAILs this time if anything is still uncommitted (step 8's pre-commit call SKIPped it on purpose). Any `FAIL` line here means the commit did not actually finish the sync; fix it and commit again before opening the PR.
+
+**Quote the summary line (`"N PASS, M FAIL, K SKIP, J INFO"`) in the PR body.** It is the one-line, machine-checkable proof that the committed state — not just the pre-commit report — is clean; a reviewer reads it instead of re-deriving the same 21 checks by hand.
 
 ## Pre-sync verification
 
