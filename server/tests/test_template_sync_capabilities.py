@@ -28,6 +28,7 @@ import pytest
 
 from template_sync import mcp as ts
 from template_sync import v3
+from template_sync import verify
 
 BEGIN = "<!-- PROJECT-CUSTOM:BEGIN -->"
 END = "<!-- PROJECT-CUSTOM:END -->"
@@ -46,6 +47,7 @@ EXPECTED = {
     "superseded_keys",
     "missing_declared_keys",
     "optional_absent_detail",
+    "template_verify",
 }
 
 
@@ -239,6 +241,22 @@ def _witness_optional_absent_detail(tmp_path) -> bool:
             and "Test" not in [e["key"] for e in res["missing_declared_keys"]])
 
 
+def _witness_template_verify(tmp_path) -> bool:
+    """Exercised through a real `verify.run` call on a project with no
+    manifest at all -- not `hasattr`. A missing manifest FAILs exactly
+    `manifest_valid` and SKIPs every other line (nothing else can be safely
+    evaluated without a manifest to read), so `ok` is False and the summary
+    reports the SKIP count in-band rather than reading as a real green."""
+    res = verify.run(str(tmp_path / "no-such-project"), "", "post_commit")
+    lines = {l["id"]: l["status"] for l in res["lines"]}
+    return (res["ok"] is False
+            and lines.get("manifest_valid") == "FAIL"
+            and lines.get("tree_clean") in ("SKIP", "FAIL")
+            and len(res["lines"]) == len(verify.LINES)
+            and res["summary"].endswith(" INFO")
+            and "template_verify" in v3.CAPABILITIES)
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -251,6 +269,7 @@ WITNESSES = {
     "superseded_keys": _witness_superseded_keys,
     "missing_declared_keys": _witness_missing_declared_keys,
     "optional_absent_detail": _witness_optional_absent_detail,
+    "template_verify": _witness_template_verify,
 }
 
 

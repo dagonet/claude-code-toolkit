@@ -1176,7 +1176,13 @@ $manifest = [ordered]@{
 }
 if ($script:classifierFallback) { $manifest.classifier = "powershell-fallback" }
 
-$manifestJson = $manifest | ConvertTo-Json -Depth 4
+# ConvertTo-Json (PS 5.1) writes `r`n between lines and no trailing newline at
+# all -- a prettier-checked consumer (or template_verify's manifest_bytes
+# line, v4.0.1 item 22) goes red on a ps1-bootstrapped manifest even though
+# the JSON content itself is correct. Normalize to LF-only, one trailing LF,
+# matching what the server's own finalize/migrate writers produce (v4.0.1
+# item 12) and what setup-project.sh's manifest writer already produces.
+$manifestJson = (($manifest | ConvertTo-Json -Depth 4) -replace "`r`n", "`n") + "`n"
 $manifestPath = Join-Path (Join-Path $TargetDir ".claude") "template-manifest.json"
 $manifestDir  = Split-Path $manifestPath -Parent
 if (-not (Test-Path $manifestDir)) {
@@ -1224,5 +1230,19 @@ Write-AutoModeSnippet
 
 Write-Host ""
 Write-TemplateSyncSnippet
+
+# --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
+# $tsExe/$tsRegister are resolved above, once, before the DryRun/real-run
+# fork. A FAIL line is reported, not fatal -- setup's job is done by this
+# point; the user reads the lines and the remedy text names the fix.
+if ($tsRegister -and $tsExe) {
+    Write-Host ""
+    Write-Host "Verifying the bootstrap:"
+    & $tsExe --verify $TargetDir --template-repo $PSScriptRoot
+    $verifyRc = $LASTEXITCODE
+    if ($verifyRc -ne 0) {
+        Write-Host "  (verify reported FAIL line(s) above -- not fatal to setup; each remedy names the fix)"
+    }
+}
 
 Write-Host ""
