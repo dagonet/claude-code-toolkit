@@ -362,20 +362,68 @@ def _is_root_tracked(rel_path: str) -> bool:
     return any(norm.startswith(prefix) for prefix in _ROOT_TRACKED_PREFIXES)
 
 
+# Project-relative dotfile name -> template-relative name. `.gitignore` is the
+# only dotfile today: git will not track a template-owned file named
+# `.gitignore` inside templates/<variant>/ (it would gitignore the template
+# tree itself), so the template copy is named `gitignore` and the project
+# copy is `.gitignore`. This is the FALLBACK only (v4.0.1 fix round 1, item
+# F4): when a manifest is available, template_path_for() below derives the
+# mapping from the template repo's own templates/ownership.json `target`
+# fields -- the same data OwnershipRules.template_path_for (v3.py) reads --
+# so there is exactly one place a new dotfile rule needs to be added, and the
+# hardcoded literal here can never silently disagree with it for a mapping
+# ownership.json actually declares. The rules branch is gated on
+# `manifest.get("templateRepo")`, which a v2 manifest carries too -- there is
+# no v2/v3 split here, deliberately (v4.0.1 fix round 2): one mapping for
+# every manifest version is the point of F4. This literal is the answer only
+# when NO manifest is given, the manifest has no `templateRepo`, or the
+# template repo has no templates/ownership.json to read.
+_DOTFILE_MAP = {".gitignore": "gitignore"}   # project name -> template name
+
+
+def template_path_for(rel_path: str, manifest: dict | None = None) -> str:
+    """Template-relative name for a project-relative path (dotfile mapping).
+
+    Prefers the mapping derived from the template repo's own
+    templates/ownership.json (via OwnershipRules.template_path_for) when a
+    manifest carrying a `templateRepo` is given and that repo has an
+    ownership.json -- a v2 manifest qualifies exactly the same way a v3 one
+    does, deliberately (v4.0.1 fix round 2: one mapping for both manifest
+    versions is the point of F4, not a v2/v3 split). Falls back to the
+    hardcoded _DOTFILE_MAP only when no manifest is given, the manifest has
+    no `templateRepo`, or the template repo has no ownership.json to read.
+    A test in test_template_sync_diff_alias.py pins that the two can never
+    disagree for every `target` rule the shipped ownership.json declares,
+    and a v2-manifest test pins that the rules branch applies there too.
+    """
+    norm = _normalize_path(rel_path)
+    if manifest is not None:
+        template_repo = manifest.get("templateRepo")
+        if template_repo:
+            from . import v3
+            rules = v3.load_ownership(template_repo)
+            if rules is not None:
+                mapped = rules.template_path_for(norm)
+                if mapped != norm:
+                    return mapped
+    return _DOTFILE_MAP.get(norm, norm)
+
+
 def _template_file_path(manifest: dict, rel_path: str) -> pathlib.Path:
     """Get full path to a template file.
 
     Most files live under templates/<variant>/, but root-tracked paths
     (e.g. shared hooks/) are resolved against the toolkit repo root.
     """
-    if _is_root_tracked(rel_path):
-        return _resolve_path(manifest["templateRepo"]) / _normalize_path(rel_path)
-    return _get_template_dir(manifest) / rel_path
+    mapped = template_path_for(rel_path, manifest)
+    if _is_root_tracked(mapped):
+        return _resolve_path(manifest["templateRepo"]) / _normalize_path(mapped)
+    return _get_template_dir(manifest) / mapped
 
 
 def _template_git_path(manifest: dict, rel_path: str) -> str:
     """Repo-root-relative path of a template file (for `git show`)."""
-    norm = _normalize_path(rel_path)
+    norm = template_path_for(rel_path, manifest)
     if _is_root_tracked(norm):
         return norm
     return f"templates/{manifest.get('variant', '')}/{norm}"
@@ -398,7 +446,11 @@ def _scan_template_files(
         for p in template_dir.rglob("*"):
             if p.is_file():
                 rel = _normalize_path(str(p.relative_to(template_dir)))
-                # Skip gitignore (merge-only, not template-owned)
+                # Skip gitignore (merge-only, not template-owned). Its project
+                # name `.gitignore` enters `new_template_files` downstream via
+                # v3's rules.project_path_for in compute_status_v3 (v3.py),
+                # not through this scan; template_path_for() above is the
+                # reverse (project -> template name) mapping used elsewhere.
                 if rel == "gitignore":
                     continue
                 files.add(rel)
@@ -1072,6 +1124,13 @@ async def template_compute_status(
     )
     tracked = set(manifest.get("files", {}).keys())
     new_files = [f for f in all_template_files if f not in tracked and f not in ALWAYS_PROJECT_SPECIFIC]
+    # new_template_files stays a list of project-path strings -- it is pinned
+    # by exact equality (test_template_sync_v3_status.py:296,
+    # test_template_sync_paths.py:103-105) and round-trips as-is into
+    # template_finalize_sync(new_files=...). new_template_files_detail is the
+    # additive, parallel surface a caller uses to resolve each path's
+    # template-relative name (v4.0.1, item 3).
+    new_files_detail = [{"path": f, "template_path": template_path_for(f, manifest)} for f in new_files]
 
     # Detect deleted template files already counted above
     deleted_files = [p for p, s in files_status.items() if s["status"] == "TEMPLATE_DELETED"]
@@ -1081,6 +1140,7 @@ async def template_compute_status(
         "last_synced_commit": manifest.get("lastSynced", ""),
         "files": files_status,
         "new_template_files": new_files,
+        "new_template_files_detail": new_files_detail,
         "deleted_template_files": deleted_files,
         "summary": summary,
     }, ensure_ascii=False)
@@ -1531,7 +1591,7 @@ async def template_finalize_sync(
     # Write manifest atomically
     manifest_path = pp / ".claude" / "template-manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_json = json.dumps(manifest, indent=2, ensure_ascii=False)
+    manifest_json = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
     _write_file_atomic(manifest_path, manifest_json)
 
     consumed = sorted(

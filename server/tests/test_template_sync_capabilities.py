@@ -41,6 +41,8 @@ EXPECTED = {
     "local_diff_kind",
     "server_source",
     "skill_version_floor",
+    "region_bytes_raw",
+    "new_template_files_detail",
 }
 
 
@@ -127,6 +129,47 @@ def _witness_skill_version_floor(tmp_path) -> bool:
             and undeclared is True)
 
 
+def _witness_region_bytes_raw(tmp_path) -> bool:
+    """The `"\\n\\nX\\n\\n"` fixture (v4.0.1 item 6): a body without a
+    trailing blank line cannot distinguish the raw span from the two
+    stripped definitions it replaced, so this is the one shape that proves
+    which definition `region_bytes_raw` -- and the `region_bytes` field it
+    now backs -- actually ships.
+    """
+    body = "\n\nX\n\n"
+    content = "# T\n<!-- PROJECT-CUSTOM:BEGIN -->" + body + "<!-- PROJECT-CUSTOM:END -->\n"
+    return (v3.region_bytes_raw(content) == len(body.encode())
+            and v3.region_bytes_raw("# T\n<!-- PROJECT-CUSTOM:BEGIN --><!-- PROJECT-CUSTOM:END -->\n") == 0)
+
+
+def _witness_new_template_files_detail(tmp_path) -> bool:
+    """Exercised through the actual v3 status payload (compute_status_v3 --
+    the dispatch target for every real, v3-manifest consumer), not
+    `hasattr`, and with a NON-identity row: `.gitignore` -> `gitignore` is
+    the shape that proves the detail list carries real information rather
+    than echoing the path back at itself.
+    """
+    if ts.template_path_for(".gitignore") != "gitignore":
+        return False
+    repo = tmp_path / "tk"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "general" / "gitignore").write_text("*.log\n", encoding="utf-8", newline="")
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "gitignore", "ownership": "once", "target": ".gitignore"}],
+    }), encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps({
+        "manifest_version": 3, "template_version": "3.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.0", "files": {},
+    }), encoding="utf-8")
+    res = json.loads(asyncio.run(ts.template_compute_status(str(proj))))
+    return (res["new_template_files"] == [".gitignore"]
+            and res["new_template_files_detail"] == [{"path": ".gitignore", "template_path": "gitignore"}])
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -134,6 +177,8 @@ WITNESSES = {
     "local_diff_kind": _witness_local_diff_kind,
     "server_source": _witness_server_source,
     "skill_version_floor": _witness_skill_version_floor,
+    "region_bytes_raw": _witness_region_bytes_raw,
+    "new_template_files_detail": _witness_new_template_files_detail,
 }
 
 
