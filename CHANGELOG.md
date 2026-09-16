@@ -24,11 +24,15 @@
 - `templates/general/PROJECT_CONTEXT.md`'s Branch-strategy sentence spelled the literal key string `` **Protected branches**: `` mid-sentence, ahead of the real key line — safe only as long as every reader stayed line-anchored. Reworded (×6 variants) to name the section without the bold key token; new consistency check 49 asserts no declared key string appears anywhere but at a line's own start, with a 49c control planted in the real defect's shape (a valid key line ALSO naming a second key mid-line) proving the check is not vacuous — the first, obvious version of check 49 was vacuous, measured against the unmodified tree (item 21).
 - `template_apply_file`, `template_finalize_sync` and `template_migrate_manifest` resolved `project_path`/`backup_dir` with plain `pathlib.Path(...).resolve()`, which on Windows treats a leading `/` as rooted at the CURRENT drive rather than converting MSYS's drive-letter segment — an MSYS path (`/g/git/proj`) silently created a stray `<drive>:\<letter>\...` tree instead of refusing. All three now call `_reject_msys_path` first and write nothing when the path is MSYS-shaped (item 9, server half; the sync-skill clause is item 9 from Task 4).
 
+### Removed
+- `CLAUDE.local.md` is retired from all six template variants (item 16): no variant ships it any more (new consistency check 48, two-sided via 48c), `setup-project.{sh,ps1}` no longer copy it, and check 35's byte budget drops it (18/18 rows → 12/12, derived from the loop rather than hard-coded).
+
 ### Downstream migration
 - Run `/sync-template` once with no arguments; finalize drops the superseded `lastSynced*` keys and reports `superseded_keys_dropped`; the manifest gains a trailing newline.
 - Replace the header of `.claude/rules/project.md` with the v4.0.1 seed (or add a `paths:` block).
 - **Nothing about hook BEHAVIOUR changes in this release.** `**Test**: none` already meant "not declared, Gate fallback" as of v3.0.3 (before that: run as a shell command, blocking every commit) — this release only corrects two stale `PROJECT_CONTEXT.md` comment blocks that still described the pre-v3.0.3 behaviour, and adds `optional_absent_detail`/`missing_declared_keys` so the skill can report the (unchanged) per-key semantics without re-deriving them. A consumer syncing v4.0.1 sees new manifest/status fields, not a functional change to any hook.
 - Pass a Windows path (`G:\...`) or a repo-relative path to any `template_*` write tool — an MSYS path (`/g/...`) is now refused outright rather than silently mis-resolved.
+- `CLAUDE.local.md` is no longer offered by the template; your copy stays and is never touched by a sync; `unclassified_template_files` is expected empty from now on. A project bootstrapped fresh under v4.0.1 or later never receives the always-on MCP/session-start guidance that used to ship inline in `CLAUDE.local.md` (registered-server list, git/GitHub MCP-only requirement, Open Brain session-start mandate, trust/verification, failure handling) — `CLAUDE.md`'s PROJECT-CUSTOM region is the place for that content now.
 
 ## v4.0.0 — 2026-09-14
 

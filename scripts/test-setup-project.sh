@@ -366,7 +366,8 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   MANIFEST_CHECK="$TMPROOT/manifest-check.cjs"
   cat > "$MANIFEST_CHECK" <<'NODE_EOF'
 const fs = require("fs");
-const [, , shPath, psPath, shDir, wantVersion] = process.argv;
+const path = require("path");
+const [, , shPath, psPath, shDir, psDir, wantVersion] = process.argv;
 const sh = JSON.parse(fs.readFileSync(shPath, "utf8"));
 const ps = JSON.parse(fs.readFileSync(psPath, "utf8"));
 
@@ -417,15 +418,20 @@ function checkHashes(m, label) {
 checkHashes(sh, "SH");
 checkHashes(ps, "PS");
 
-function checkGitignoreKeys(m, label) {
+function checkGitignoreKeys(m, label, dir) {
   const errs = [];
   if (!m.files[".gitignore"]) errs.push("no .gitignore entry under the project-path key");
   if (m.files["gitignore"]) errs.push("a bare 'gitignore' key is present (should be renamed to .gitignore)");
-  if (m.files["CLAUDE.local.md"]) errs.push("CLAUDE.local.md is present (should be absent, unclassified_template_files)");
+  if (m.files["CLAUDE.local.md"]) errs.push("CLAUDE.local.md is present in the manifest (retired v4.0.1, should be absent)");
+  // Stronger than a manifest-only check (v4.0.1 item 16): the template no
+  // longer ships CLAUDE.local.md at all, so the file must not exist on disk
+  // in the bootstrapped project either -- not just be missing/unclassified
+  // in the manifest.
+  if (fs.existsSync(path.join(dir, "CLAUDE.local.md"))) errs.push("CLAUDE.local.md exists in the bootstrapped dir (retired v4.0.1, should be absent)");
   console.log(`ROW4_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
 }
-checkGitignoreKeys(sh, "SH");
-checkGitignoreKeys(ps, "PS");
+checkGitignoreKeys(sh, "SH", shDir);
+checkGitignoreKeys(ps, "PS", psDir);
 
 // Row 5: identical after normalising template_commit, templateRepo, and (if
 // present) classifier. Key order is deliberately not part of the comparison
@@ -470,7 +476,6 @@ if (shStr === psStr) {
 // Row 6: recompute sha256 over the file on disk for one `template` entry and
 // compare to the manifest value — catches a hash computed pre-replacement.
 const crypto = require("crypto");
-const path = require("path");
 const [pickKey] = Object.entries(sh.files).find(([, v]) => v.ownership === "template") || [];
 if (!pickKey) {
   console.log("ROW6: FAIL no template entry found to check");
@@ -486,7 +491,7 @@ if (!pickKey) {
 NODE_EOF
 
   WANT_TEMPLATE_VERSION="v$(head -1 "$ROOT/VERSION" | tr -d '\r\n')"
-  MANIFEST_RESULTS="$(node "$MANIFEST_CHECK" "$SH_MANIFEST" "$PS_MANIFEST" "$SHMDIR" "$WANT_TEMPLATE_VERSION" 2>&1)"
+  MANIFEST_RESULTS="$(node "$MANIFEST_CHECK" "$SH_MANIFEST" "$PS_MANIFEST" "$SHMDIR" "$PSMDIR" "$WANT_TEMPLATE_VERSION" 2>&1)"
   row_result() { echo "$MANIFEST_RESULTS" | grep "^$1:" | head -1; }
 
   expect "sh manifest: shape/required fields (row 1)" "ROW1_SH: PASS" "$(row_result ROW1_SH)"
@@ -495,8 +500,8 @@ NODE_EOF
   expect "ps1 manifest: every files entry ownership template|once (row 2)" "ROW2_PS: PASS" "$(row_result ROW2_PS)"
   expect "sh manifest: hash shape, once carries no hash key (row 3)" "ROW3_SH: PASS" "$(row_result ROW3_SH)"
   expect "ps1 manifest: hash shape, once carries no hash key (row 3)" "ROW3_PS: PASS" "$(row_result ROW3_PS)"
-  expect "sh manifest: .gitignore key, no gitignore/CLAUDE.local.md keys (row 4)" "ROW4_SH: PASS" "$(row_result ROW4_SH)"
-  expect "ps1 manifest: .gitignore key, no gitignore/CLAUDE.local.md keys (row 4)" "ROW4_PS: PASS" "$(row_result ROW4_PS)"
+  expect "sh manifest/disk: .gitignore key, no gitignore key, CLAUDE.local.md absent (row 4)" "ROW4_SH: PASS" "$(row_result ROW4_SH)"
+  expect "ps1 manifest/disk: .gitignore key, no gitignore key, CLAUDE.local.md absent (row 4)" "ROW4_PS: PASS" "$(row_result ROW4_PS)"
   expect "sh and ps1 manifests agree after normalisation (row 5)" "ROW5: PASS" "$(row_result ROW5)"
   # row 6's PASS line carries the picked filename; compare on the PASS/FAIL word only.
   row6_word=$(row_result ROW6 | sed -E 's/^ROW6: (PASS|FAIL).*/\1/')

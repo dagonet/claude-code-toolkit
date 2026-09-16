@@ -737,7 +737,7 @@ declare -a FILE_IS_GITIGNORE=()
 # is `^gitignore$` and will not match the renamed form.
 declare -a FILE_CLASSIFY_NAMES=()
 
-for name in CLAUDE.md CLAUDE.local.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md VERIFICATION_PLAYBOOK.md; do
+for name in CLAUDE.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md VERIFICATION_PLAYBOOK.md; do
     if [[ -f "$TEMPLATE_DIR/$name" ]]; then
         FILE_SOURCES+=("$TEMPLATE_DIR/$name")
         FILE_RELS+=("$name")
@@ -800,8 +800,9 @@ fi
 
 # Manifest key + ownership class for FILE index $1, from the classifier
 # results above. Prints "<key>\t<ownership>" ("-" ownership means the
-# classifier did not match -- e.g. CLAUDE.local.md -- and the file is left
-# out of the manifest entirely, per the ownership-cutover contract.
+# classifier did not match -- e.g. a project-added file with no ownership
+# rule -- and the file is left out of the manifest entirely, per the
+# ownership-cutover contract.
 manifest_entry_for() {
     local idx="$1" cname own target
     cname="${FILE_CLASSIFY_NAMES[$idx]}"
@@ -822,9 +823,9 @@ manifest_entry_for() {
 }
 
 # Record a manifest row for FILE index $1 using the content actually written
-# ($2). Unclassified files (e.g. CLAUDE.local.md -- retired to
-# unclassified_template_files on the server side) are silently left out, per
-# contract. `once` entries get no hash at all; $2 is ignored for them.
+# ($2). Unclassified files (no ownership rule match; surfaced server-side as
+# unclassified_template_files) are silently left out, per contract. `once`
+# entries get no hash at all; $2 is ignored for them.
 add_manifest_entry() {
     local idx="$1" written="$2" key own
     IFS=$'\t' read -r key own < <(manifest_entry_for "$idx")

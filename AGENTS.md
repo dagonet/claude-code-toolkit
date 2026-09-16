@@ -146,7 +146,7 @@ Collect answers before running the script. Ask only questions relevant to the ch
 After the script exits 0:
 
 1. **Manifest written.** Confirm `.claude/template-manifest.json` exists in the target directory.
-2. **No unfilled placeholders.** Run `grep -r '{{' <target-dir>` — expect no matches in `.claude/`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`. Stray `{{` inside code or 3rd-party docs is fine.
+2. **No unfilled placeholders.** Run `grep -r '{{' <target-dir>` — expect no matches in `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`. Stray `{{` inside code or 3rd-party docs is fine.
 3. **Discoverability sanity.** `ls -la <target-dir>/.claude/` shows `settings.json` and `agents/`, plus `rules/` on every variant except `general`.
 4. **Surface the `autoMode.environment` snippet.** The script prints one at the end of both the dry run and the real run. `permissions.autoMode` is **User/managed scope only** — a project cannot ship one, which is deliberate: a repo must not be able to widen its own trust. Show the user the line and tell them to paste it into `permissions.autoMode.environment` in `~/.claude/settings.json`. Do not write it into the project.
 5. **Suggest next step.** Recommend the user runs the project's build command once to confirm the toolchain works — but do not run it yourself unless asked.

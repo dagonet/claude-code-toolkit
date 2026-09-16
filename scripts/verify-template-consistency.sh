@@ -2988,14 +2988,14 @@ fi
 # TWO-SIDED: the control arm proves the comparison executes. A check that
 # cannot fail looks exactly like one that passed.
 # ---------------------------------------------------------------------------
-note "Check 35: byte budget on templates/*/{CLAUDE.md,CLAUDE.local.md,AGENT_TEAM.md}"
+note "Check 35: byte budget on templates/*/{CLAUDE.md,AGENT_TEAM.md}"
 BUDGET_CLAUDE_MD=6144
-BUDGET_CLAUDE_LOCAL_MD=12288
 BUDGET_AGENT_TEAM_MD=20480
+c33_pairs=("CLAUDE.md:$BUDGET_CLAUDE_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD")
 c33_fail=0
 c33_rows=0
-for v in general dotnet dotnet-maui rust-tauri java python; do
-  for pair in "CLAUDE.md:$BUDGET_CLAUDE_MD" "CLAUDE.local.md:$BUDGET_CLAUDE_LOCAL_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD"; do
+for v in $VARIANTS; do
+  for pair in "${c33_pairs[@]}"; do
     f="templates/$v/${pair%%:*}"; b="${pair##*:}"
     [ -f "$f" ] || { ko "check 35: $f missing — the budget cannot be measured"; c33_fail=1; continue; }
     sz=$(wc -c < "$f" | tr -d '[:space:]')
@@ -3006,22 +3006,26 @@ for v in general dotnet dotnet-maui rust-tauri java python; do
     fi
   done
 done
+# Expected row count is derived from the loop shape (pairs x variants), not
+# hard-coded, so dropping/adding a budgeted file never needs a manual count
+# update here.
+c33_variant_count=$(printf '%s\n' "$VARIANTS" | wc -w)
+c33_expected_rows=$(( ${#c33_pairs[@]} * c33_variant_count ))
 # Control arm: the comparison above must be able to fire. Evaluate the same
 # expression against a budget of 0 for the first file; if that does not read
 # as over-budget, the arithmetic is broken and every row above was vacuous.
 c33_ctrl_sz=$(wc -c < templates/general/CLAUDE.md | tr -d '[:space:]')
-if [ "$c33_ctrl_sz" -gt 0 ] && [ "$c33_rows" -eq 18 ]; then
-  [ "$c33_fail" -eq 0 ] && ok "check 35: 18/18 files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, CLAUDE.local.md<=$BUDGET_CLAUDE_LOCAL_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
+if [ "$c33_ctrl_sz" -gt 0 ] && [ "$c33_rows" -eq "$c33_expected_rows" ]; then
+  [ "$c33_fail" -eq 0 ] && ok "check 35: $c33_rows/$c33_expected_rows files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
 else
-  ko "check 35: CONTROL FAILED — rows=$c33_rows (want 18), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
+  ko "check 35: CONTROL FAILED — rows=$c33_rows (want $c33_expected_rows), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
 fi
 
 # ---------------------------------------------------------------------------
 # Check 36 — OWNERSHIP TABLE COVERAGE (v3.1, spec §6).
 #
-# Every file a consumer actually receives — templates/<variant>/** (minus the
-# known CLAUDE.local.md exception, gone at Phase 3) plus the repo-root hooks/**
-# tree setup-project.sh copies verbatim — must match a rule in
+# Every file a consumer actually receives — templates/<variant>/** plus the
+# repo-root hooks/** tree setup-project.sh copies verbatim — must match a rule in
 # templates/ownership.json (first match wins). A file with no class is a red
 # gate, not an implicit `template`.
 #
@@ -3596,6 +3600,51 @@ else
   ko "check 47c: control -- c47_scan did not flag exactly the three planted cases (bare \$1; fenced \$ARGUMENTS under argument-hint; indented-fenced \$ARGUMENTS) -- got $c47_probe_n hit(s): $(printf '%s' "$c47_probe" | tr '\n' ';')"
 fi
 rm -rf "$c47_scratch"
+
+# ---------------------------------------------------------------------------
+# Check 48 -- no variant ships CLAUDE.local.md (retired v4.0.1, item 16). The
+# file is no longer part of the template; an existing consumer's own copy is
+# project-owned (gitignored, never manifest-tracked) and untouched by a sync
+# -- this check only guards against the template growing one back.
+#
+# RECURSIVE (fix round 1): setup-project.sh copies templates/<variant>/**
+# recursively, so a reappearance nested below the variant root (e.g.
+# general/sub/CLAUDE.local.md) would still ship. A depth-1 glob
+# (*/CLAUDE.local.md) misses that; find does not.
+#
+# TWO-SIDED: 48c plants a CLAUDE.local.md under a scratch base -- one at
+# depth 1 and one nested deeper -- and calls the SAME function the real
+# check uses, so the control exercises the identical scan rather than a
+# separately-written literal grep, and proves depth is not a blind spot.
+# ---------------------------------------------------------------------------
+note "Check 48: no variant ships CLAUDE.local.md (retired v4.0.1; consumer copies are theirs and untouched)"
+
+# c48_scan <base-dir> -- prints one path per CLAUDE.local.md found anywhere
+# under <base-dir>, at any depth.
+c48_scan() { find "$1" -type f -name CLAUDE.local.md 2>/dev/null || true; }
+
+c48_hit=$(c48_scan templates)
+if [ -z "$c48_hit" ]; then
+  ok "check 48: no CLAUDE.local.md anywhere under templates/"
+else
+  ko "check 48: CLAUDE.local.md reappeared: $(printf '%s' "$c48_hit" | tr '\n' ';')"
+fi
+
+# 48c control: plant one at depth 1 AND one nested deeper under a throwaway
+# base, and confirm c48_scan finds BOTH -- a depth-1-only scan would find
+# just the first and pass this control too, so require count == 2.
+C48C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c48c)
+mkdir -p "$C48C_TMP/x" "$C48C_TMP/general/sub"
+: > "$C48C_TMP/x/CLAUDE.local.md"
+: > "$C48C_TMP/general/sub/CLAUDE.local.md"
+c48c_hit=$(c48_scan "$C48C_TMP")
+c48c_n=$(printf '%s\n' "$c48c_hit" | grep -c .)
+rm -rf "$C48C_TMP"
+if [ "$c48c_n" -eq 2 ]; then
+  ok "check 48c: control -- both a depth-1 (x/) and a nested (general/sub/) planted CLAUDE.local.md are detected"
+else
+  ko "check 48c: control -- expected 2 planted CLAUDE.local.md hits, got $c48c_n: check 48 is vacuous or depth-limited"
+fi
 
 # ---------------------------------------------------------------------------
 # Check 49 -- PROJECT_CONTEXT.md key strings appear only at line start
