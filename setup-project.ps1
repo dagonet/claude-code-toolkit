@@ -284,6 +284,30 @@ function Set-ProtectedBranches {
                             "- **Protected branches**: $protectedBranches")
 }
 
+# Set-DerivedDefaults (v4.0.1, item 5) -- twin of setup-project.sh's
+# set_derived_defaults. The template ships `- **Gate-checked branches**:
+# none` and `- **Post-edit build**: none` as LITERAL text now (no
+# `{{...}}` token), so a plain hashtable substitution has nothing left to
+# match for these two keys once the template default equals a manual
+# bootstrap's own answer. $replacements is populated by Add-Derived calls
+# further down the script by the time this runs (called from the file
+# rendering paths below, same as Set-ProtectedBranches), so a direct
+# lookup is enough -- no parallel-array search needed the way bash needs one.
+function Set-DerivedDefaults {
+    param([string]$Text)
+    $gcb = $replacements['{{GATE_CHECKED_BRANCHES}}']
+    $pob = $replacements['{{POST_EDIT_BUILD}}']
+    if ($gcb -and $gcb -ne 'none') {
+        $Text = [regex]::Replace($Text, '(?m)^- \*\*Gate-checked [Bb]ranches\*\*:.*$',
+                                 "- **Gate-checked branches**: $gcb")
+    }
+    if ($pob -and $pob -ne 'none') {
+        $Text = [regex]::Replace($Text, '(?m)^- \*\*Post-edit build\*\*:.*$',
+                                 "- **Post-edit build**: $pob")
+    }
+    return $Text
+}
+
 # Explicit command flags -- set before any variant-derived default so they win
 if ($BuildCmd)  { $replacements['{{BUILD_COMMAND}}']  = $BuildCmd }
 if ($TestCmd)   { $replacements['{{TEST_COMMAND}}']   = $TestCmd }
@@ -662,7 +686,10 @@ function Get-RenderedContent {
     }
     $text = Get-Content -Path $File.Source -Encoding UTF8 -Raw
     foreach ($key in $replacements.Keys) { $text = $text.Replace($key, $replacements[$key]) }
-    if ($File.RelPath -eq 'PROJECT_CONTEXT.md') { $text = Set-ProtectedBranches -Text $text }
+    if ($File.RelPath -eq 'PROJECT_CONTEXT.md') {
+        $text = Set-ProtectedBranches -Text $text
+        $text = Set-DerivedDefaults -Text $text
+    }
     if (Test-ShouldWrapClaudeMd $File.RelPath) {
         $existing = Get-Content -Path (Join-Path $TargetDir "CLAUDE.md") -Encoding UTF8 -Raw
         $text = Merge-IntoCustomRegion -Rendered $text -Body $existing
@@ -980,7 +1007,10 @@ foreach ($f in $templateFiles) {
     # Get-RenderedContent, so the transform has to be applied here too or the two
     # modes disagree about the one line that decides whether the trunk is
     # protected. (The .sh half had exactly this bug, caught by a bootstrap test.)
-    if ($f.RelPath -eq 'PROJECT_CONTEXT.md') { $content = Set-ProtectedBranches -Text $content }
+    if ($f.RelPath -eq 'PROJECT_CONTEXT.md') {
+        $content = Set-ProtectedBranches -Text $content
+        $content = Set-DerivedDefaults -Text $content
+    }
     Write-Utf8NoBom -Path $targetFile -Content $content
     $copiedFiles += $f.RelPath
     Add-RenderedFile -RelPath $f.RelPath -Text $content

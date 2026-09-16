@@ -44,6 +44,8 @@ EXPECTED = {
     "region_bytes_raw",
     "new_template_files_detail",
     "superseded_keys",
+    "missing_declared_keys",
+    "optional_absent_detail",
 }
 
 
@@ -198,6 +200,45 @@ def _witness_superseded_keys(tmp_path) -> bool:
             and "lastSyncedVersion" not in out and "lastSyncedVersionOf" not in out)
 
 
+def _witness_missing_declared_keys(tmp_path) -> bool:
+    """A required key held only under its deprecated spelling is reported
+    under its CANONICAL name with reason "deprecated_spelling" (v4.0.1, item
+    2) -- exercised through a real audit_keys() call, not `hasattr`.
+    """
+    rule = {
+        "pattern": "PROJECT_CONTEXT.md", "ownership": "once", "audit": "keys",
+        "required_keys": ["Protected branches", "Gate"],
+        "deprecated_keys": {"Gate Command": "Gate"},
+    }
+    proj = "- **Protected branches**: main\n- **Gate Command**: old-gate.sh\n"
+    tpl = "- **Protected branches**: main\n- **Gate**: g\n"
+    res = v3.audit_keys(proj, tpl, None, rule)
+    return (res["missing_required"] == []
+            and {"key": "Gate", "reason": "deprecated_spelling", "template_default": "g"}
+            in res["missing_declared_keys"])
+
+
+def _witness_optional_absent_detail(tmp_path) -> bool:
+    """optional_absent_detail carries the rule's per-key none_meaning /
+    effect_when_absent for a key that is actually absent -- and the same
+    key never appears in missing_declared_keys (the ownership rule).
+    """
+    rule = {
+        "pattern": "PROJECT_CONTEXT.md", "ownership": "once", "audit": "keys",
+        "required_keys": ["Gate"],
+        "optional_keys": {"Test": {"effect_when_absent": "Gate fallback",
+                                   "none_meaning": "not declared"}},
+    }
+    proj = "- **Gate**: g\n"
+    tpl = "- **Gate**: g\n- **Test**: t\n"
+    res = v3.audit_keys(proj, tpl, None, rule)
+    return (res["optional_absent"] == ["Test"]
+            and res["optional_absent_detail"] == [{"key": "Test", "template_default": "t",
+                                                     "effect_when_absent": "Gate fallback",
+                                                     "none_meaning": "not declared"}]
+            and "Test" not in [e["key"] for e in res["missing_declared_keys"]])
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -208,6 +249,8 @@ WITNESSES = {
     "region_bytes_raw": _witness_region_bytes_raw,
     "new_template_files_detail": _witness_new_template_files_detail,
     "superseded_keys": _witness_superseded_keys,
+    "missing_declared_keys": _witness_missing_declared_keys,
+    "optional_absent_detail": _witness_optional_absent_detail,
 }
 
 
