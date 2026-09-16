@@ -3725,6 +3725,186 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 50 -- item 23. Every mcp__<alias>__<tool> token in an agent's
+# `tools:` line must name a tool that alias's OWN MCP server actually
+# exports today. A tool renamed or removed in mcp-dev-servers silently
+# turns the allowlist entry into a dead token (measured: 87 of 87
+# dotnet-tools calls once failed this way).
+#
+# Two independent censuses, via scripts/lib/list-mcp-tools.py (system
+# `python`, never server/.venv): a STATIC scan of the source tree, and an
+# IMPORT census (`asyncio.run(mcp.list_tools())`) run in mcp-dev-servers'
+# own venv -- possible only for a REGISTERED alias. Disagreement between
+# them, or an allowlisted tool absent from the static census, is the red.
+#
+# Source tree: MCP_DEV_SERVERS_DIR (env), else derived from any REGISTERED
+# mcp-dev-servers-family alias's venv path in ~/.claude.json
+# (mcpServers.<alias>.command ending in .venv/Scripts/<exe> or
+# .venv/bin/<exe> -> repo root is everything before the .venv segment) --
+# never a hardcoded path: this is a public template repo, and
+# setup-project.sh's own --mcp-dev-servers-path already takes the same
+# value from its caller. If neither yields an existing directory, the
+# WHOLE check is one SKIP line naming the variable -- never a silent green
+# (constraint 9).
+# ---------------------------------------------------------------------------
+note "Check 50: agent-allowlisted mcp__<alias>__<tool> tokens exist in the installed MCP servers (item 23)"
+
+C50_LIB="${MCP_TOOLS_LIB:-scripts/lib/list-mcp-tools.py}"
+C50_FAMILY="git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools"
+C50_REGISTRATION="${MCP_TOOLS_REGISTRATION:-$HOME/.claude.json}"
+
+# c50_decide <json> <csv-tokens> -- prints 7 lines: status(ko|skip|ok),
+# module, comma-missing, comma-disagreement, skip_reason, static_n,
+# imported_n(-1 if null). Single source of the comparison logic, shared by
+# the real check below and the 50c control, so both exercise the SAME
+# decision, not two independently-written greps (the 47c/48c lesson).
+c50_decide() {
+  python - "$1" "$2" <<'C50_DECIDE_PY'
+import json, sys
+d = json.loads(sys.argv[1])
+tokens = [t for t in sys.argv[2].split(",") if t]
+static = set(d.get("static") or [])
+imported = d.get("imported")
+skip_reason = d.get("skip_reason")
+missing = sorted(t for t in tokens if t not in static)
+disagreement = None
+if imported is not None:
+    si, ii = static, set(imported)
+    if si != ii:
+        disagreement = sorted(si.symmetric_difference(ii))
+if missing or disagreement:
+    status = "ko"
+elif skip_reason:
+    status = "skip"
+else:
+    status = "ok"
+print(status)
+print(d.get("module") or "")
+print(",".join(missing))
+print(",".join(disagreement) if disagreement else "")
+print(skip_reason or "")
+print(len(static))
+print(len(imported) if imported is not None else -1)
+C50_DECIDE_PY
+}
+
+c50_source_dir="${MCP_DEV_SERVERS_DIR:-}"
+if [ -z "$c50_source_dir" ] && [ -f "$C50_REGISTRATION" ]; then
+  c50_source_dir=$(python - "$C50_REGISTRATION" "$C50_FAMILY" <<'C50_DERIVE_PY'
+import json, sys
+reg_path, family = sys.argv[1], sys.argv[2].split()
+try:
+    data = json.load(open(reg_path, encoding="utf-8"))
+except (OSError, ValueError):
+    sys.exit(0)
+servers = data.get("mcpServers", {})
+for alias in family:
+    cmd = servers.get(alias, {}).get("command", "")
+    norm = cmd.replace("\\", "/")
+    for marker in ("/.venv/Scripts/", "/.venv/bin/"):
+        idx = norm.find(marker)
+        if idx != -1:
+            print(norm[:idx])
+            sys.exit(0)
+C50_DERIVE_PY
+)
+fi
+
+if ! command -v python >/dev/null 2>&1; then
+  ok "check 50: SKIP -- no system 'python' on PATH; check 50 did not run (0 assertions)"
+elif [ -z "$c50_source_dir" ]; then
+  ok "check 50: SKIP -- MCP_DEV_SERVERS_DIR not set and no registered mcp-dev-servers-family alias found in $C50_REGISTRATION; check 50 did not run (0 assertions; set MCP_DEV_SERVERS_DIR to enable it)"
+elif [ ! -d "$c50_source_dir" ]; then
+  ok "check 50: SKIP -- MCP_DEV_SERVERS_DIR='$c50_source_dir' is not a directory; check 50 did not run (0 assertions)"
+else
+  c50_all_tokens=$(grep -h '^tools:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null \
+    | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+' | sort -u)
+
+  c50_skipped=0
+  c50_total=0
+  for c50_alias in $C50_FAMILY; do
+    c50_total=$((c50_total + 1))
+    c50_tokens_csv=$(printf '%s\n' "$c50_all_tokens" | awk -F'__' -v a="$c50_alias" '$2==a {print $3}' | tr '\n' ',')
+    c50_json=$(python "$C50_LIB" --source-dir "$c50_source_dir" --registration "$C50_REGISTRATION" --alias "$c50_alias" 2>&1)
+    c50_json_rc=$?
+    if [ "$c50_json_rc" -ne 0 ]; then
+      ko "check 50: $c50_alias: list-mcp-tools.py failed (rc=$c50_json_rc): $c50_json"
+      continue
+    fi
+    c50_out=$(c50_decide "$c50_json" "$c50_tokens_csv")
+    c50_status=$(printf '%s\n' "$c50_out" | sed -n '1p')
+    c50_module=$(printf '%s\n' "$c50_out" | sed -n '2p')
+    c50_missing=$(printf '%s\n' "$c50_out" | sed -n '3p')
+    c50_disagree=$(printf '%s\n' "$c50_out" | sed -n '4p')
+    c50_skip_reason=$(printf '%s\n' "$c50_out" | sed -n '5p')
+    c50_static_n=$(printf '%s\n' "$c50_out" | sed -n '6p')
+
+    [ -n "$c50_skip_reason" ] && c50_skipped=$((c50_skipped + 1))
+
+    case "$c50_status" in
+      ko)
+        c50_reason=""
+        [ -n "$c50_missing" ] && c50_reason="allowlisted tool(s) absent from $c50_alias's static census: $c50_missing"
+        if [ -n "$c50_disagree" ]; then
+          [ -n "$c50_reason" ] && c50_reason="$c50_reason; "
+          c50_reason="${c50_reason}static and import censuses disagree: $c50_disagree"
+        fi
+        ko "check 50: $c50_alias ($c50_module): $c50_reason"
+        ;;
+      skip)
+        ok "check 50: $c50_alias: import census skipped ($c50_skip_reason); static census only ($c50_static_n tools)"
+        ;;
+      ok)
+        ok "check 50: $c50_alias ($c50_module): static and import censuses agree ($c50_static_n tools)"
+        ;;
+      *)
+        ko "check 50: $c50_alias: c50_decide returned no status (census output unparseable): $c50_json"
+        ;;
+    esac
+  done
+  ok "check 50: $c50_skipped of $c50_total import censuses skipped"
+
+  # Aliases actually referenced by an agent but outside the mcp-dev-servers
+  # family -- reported once with their token count, never silently ignored.
+  c50_used_aliases=$(printf '%s\n' "$c50_all_tokens" | awk -F'__' '{print $2}' | sort -u)
+  for c50_alias in $c50_used_aliases; do
+    [ -n "$c50_alias" ] || continue
+    case " $C50_FAMILY " in
+      *" $c50_alias "*) continue ;;
+    esac
+    c50_n=$(printf '%s\n' "$c50_all_tokens" | awk -F'__' -v a="$c50_alias" '$2==a' | wc -l | tr -d ' ')
+    ok "check 50: not censused: $c50_alias ($c50_n tokens)"
+  done
+
+  # 50c control (v4.0.1 review): a scratch copy of one server module with
+  # ONE tool function renamed, run through the SAME static scanner and the
+  # SAME c50_decide comparison the real check above uses -- never a
+  # separately-written grep. Registration is a scratch fixture with the
+  # alias deliberately absent, so this control never touches the real
+  # ~/.claude.json and never needs a real venv.
+  note "Check 50c: control -- a renamed tool function is flagged"
+  c50c_src="$c50_source_dir/src/mcp_dev_servers/github_mcp.py"
+  if [ ! -f "$c50c_src" ]; then
+    ko "check 50c: control -- github_mcp.py not found under $c50_source_dir/src/mcp_dev_servers; cannot exercise the control"
+  else
+    C50C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c50c)
+    mkdir -p "$C50C_TMP/src/mcp_dev_servers"
+    sed 's/\bgh_repo_from_origin\b/gh_repo_from_origin_renamed/' "$c50c_src" > "$C50C_TMP/src/mcp_dev_servers/github_mcp.py"
+    printf '{"mcpServers":{}}' > "$C50C_TMP/registration.json"
+    c50c_json=$(python "$C50_LIB" --source-dir "$C50C_TMP" --registration "$C50C_TMP/registration.json" --alias github-tools 2>&1)
+    c50c_out=$(c50_decide "$c50c_json" "gh_repo_from_origin")
+    c50c_status=$(printf '%s\n' "$c50c_out" | sed -n '1p')
+    c50c_missing=$(printf '%s\n' "$c50c_out" | sed -n '3p')
+    rm -rf "$C50C_TMP"
+    if [ "$c50c_status" = "ko" ] && [ "$c50c_missing" = "gh_repo_from_origin" ]; then
+      ok "check 50c: control -- renaming gh_repo_from_origin in a scratch copy of github_mcp.py is flagged: $c50c_missing"
+    else
+      ko "check 50c: control -- renamed gh_repo_from_origin NOT flagged (status=$c50c_status, missing=$c50c_missing): check 50 is vacuous"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
