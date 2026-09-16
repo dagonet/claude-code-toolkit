@@ -7,9 +7,23 @@
 # the gate artifact that hooks/gate-before-merge.sh checks before allowing
 # a PR merge:
 #
-#   .gate/last-pass.json  (at the repo toplevel of the current checkout/worktree)
+#   <common git dir>/gate/last-pass.<HEAD sha>.json  (v4.0.1, item 17 -- see
+#   gc_gate_dir's header note in hooks/lib/git-cmd.sh for why this is the
+#   COMMON git dir, not the toplevel of the invoking checkout/worktree: it is
+#   the one location every worktree of a repo resolves to, so a gate run from
+#   a linked worktree is visible to a merge attempted from the main checkout.
+#   Falls back to the pre-4.0.1 <toplevel>/.gate on git < 2.31.)
 #   {"sha":"<HEAD sha>","tree":"<working-tree hash>","branch":"<branch>",
 #    "ts":"<UTC ISO-8601>","status":"pass"}
+#
+#   The sha suffix (not a single fixed filename) is deliberate: the directory
+#   is now SHARED by every worktree, so two worktrees gating concurrently must
+#   not clobber each other's artifact. gate-before-merge.sh looks up the exact
+#   filename for the sha it is merging first, then falls back to a tree scan
+#   (see its header note). Artifacts older than 24h are pruned on the next
+#   successful run (below) -- always well past GC_GATE_TTL_S, the freshness
+#   window gate-before-merge.sh enforces, so pruning can never delete an
+#   artifact a merge would still honour.
 #
 # ARTIFACT DOC NOTE (v3.0.4 item A4, FIXED v3.1): the TREE arm of
 # gate-before-merge's freshness check IS LOAD-BEARING, not a nice-to-have --
@@ -79,7 +93,7 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   echo "Usage: bash hooks/run-gate.sh"
   echo ""
   echo "Runs the Gate command from PROJECT_CONTEXT.md (**Gate**: <command>)."
-  echo "Green: writes .gate/last-pass.json (checked by gate-before-merge.sh) and prints GATE PASS <sha>."
+  echo "Green: writes <common git dir>/gate/last-pass.<sha>.json (checked by gate-before-merge.sh) and prints GATE PASS <sha>."
   echo "Red:   deletes the artifact and exits 1 (78 when the failure is terminal — see hooks/lib/git-cmd.sh)."
   echo "No Gate configured: prints GATE SKIP and exits 0."
   echo ""
@@ -111,6 +125,19 @@ fi
 GC_BOM=$(printf '\357\273\277')
 GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 
+# GC_GATE_TTL_S and gc_gate_dir, defined locally for the same standalone
+# reason as GC_KEY_PRE above (v4.0.1, item 17). The definitions and the
+# reasons live in hooks/lib/git-cmd.sh; scripts/verify-template-consistency.sh
+# asserts all three stay in step.
+GC_GATE_TTL_S=3600
+gc_gate_dir() {
+  local common
+  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  if [ -n "$common" ]; then printf '%s/gate\n' "$common"; return 0; fi
+  echo "WARN: git < 2.31: gate artifacts stay at <toplevel>/.gate (per-worktree)" >&2
+  printf '%s/.gate\n' "$(git -C "$1" rev-parse --show-toplevel)"
+}
+
 # Read Gate command from PROJECT_CONTEXT.md. Tolerates: an optional leading
 # UTF-8 BOM, leading "- " / "* " list
 # markers, the "**Gate Command**:" label style (java/python variants), and
@@ -136,8 +163,12 @@ esac
 
 HEAD_SHA=$(git -C "$CWD" rev-parse HEAD 2>/dev/null)
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
-ARTIFACT_DIR="$REPO_TOP/.gate"
-ARTIFACT="$ARTIFACT_DIR/last-pass.json"
+ARTIFACT_DIR=$(gc_gate_dir "$CWD")
+# Sha-keyed filename, not a single fixed name (v4.0.1, item 17): the
+# directory above is now shared by every worktree of the repo, so a fixed
+# name would let two worktrees gating concurrently clobber each other's
+# artifact. See the header note for the full rationale.
+ARTIFACT="$ARTIFACT_DIR/last-pass.$HEAD_SHA.json"
 
 echo "GATE: running: $GATE_CMD"
 # This `exit 1` DELIBERATELY STAYS 1 and is not a terminal 78 (v2.2.5 round 3):
@@ -283,9 +314,29 @@ if [ "$GATE_RC" -eq 0 ]; then
   fi
   mkdir -p "$ARTIFACT_DIR"
   TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # Atomic write (v4.0.1 addendum to item 17): the shared directory now has
+  # readers from OTHER processes -- a concurrent gate-before-merge.sh in
+  # another worktree scanning this directory for a tree match -- so a partial
+  # write must never be observable. Write to a sibling .tmp file and `mv` it
+  # into place: `mv` is atomic within one filesystem, and the tmp file always
+  # lands in the artifact's own directory. Readers (gate-before-merge.sh's
+  # exact lookup and its tree scan) both skip `*.tmp` for this reason.
+  ARTIFACT_TMP="$ARTIFACT.tmp"
   printf '{"sha":"%s","tree":"%s","branch":"%s","ts":"%s","status":"pass"}\n' \
-    "$HEAD_SHA" "$TREE_HASH" "${BRANCH:-unknown}" "$TS" > "$ARTIFACT"
+    "$HEAD_SHA" "$TREE_HASH" "${BRANCH:-unknown}" "$TS" > "$ARTIFACT_TMP"
+  mv -f "$ARTIFACT_TMP" "$ARTIFACT"
   echo "GATE PASS $HEAD_SHA"
+  # Prune (v4.0.1 addendum to item 17): the directory is shared across every
+  # worktree and never swept by a commit (it lives inside .git), so without
+  # this it grows one file per gate run forever. The prune window is DERIVED
+  # from GC_GATE_TTL_S (3600s = 1h), never set independently: 24h is always
+  # 24x the freshness window gate-before-merge.sh enforces, so pruning can
+  # never delete an artifact a merge would still honour. That relation is
+  # structural, not asserted with a runtime self-check -- a self-check that
+  # can never go red for any positive GC_GATE_TTL_S is not a check; if the
+  # derivation is ever replaced with an independent constant, add a real one.
+  prune_min=$(( GC_GATE_TTL_S * 24 / 60 ))
+  find "$ARTIFACT_DIR" -maxdepth 1 -name 'last-pass.*.json' -mmin "+$prune_min" -delete 2>/dev/null || true
   exit 0
 elif [ "$GATE_RC" -eq "$GC_TERMINAL_RC" ]; then
   # TERMINAL: reachable only when the clamp above let the 78 through, i.e.

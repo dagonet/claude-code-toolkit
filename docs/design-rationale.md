@@ -120,7 +120,7 @@ Cut to the rationale file:
   not that the baseline moved correctly") — that catalogue lives in the
   CHANGELOG's verification-instrument entries already; repeating it in
   `CLAUDE.md` duplicated it in the wrong file.
-- **Why the PO reads `.gate/last-pass.json` instead of running anything.**
+- **Why the PO reads the `<common git dir>/gate/last-pass.<sha>.json` artifact instead of running anything.**
   The gate is dispatched to `ops` or the coder and its result is read, not
   reproduced — this is `hooks/enforce-delegation.sh`'s domain and is
   documented there, not restated per-rule in `CLAUDE.md`.
