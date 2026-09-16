@@ -1236,9 +1236,11 @@ if [[ -n "${TS_WIN_EXE:-}" ]]; then
             ;;
     esac
     # `|| verify_rc=$?` (not a bare statement) is required under `set -e`: a
-    # FAIL line makes the exe exit 1, and an unguarded nonzero exit here would
-    # abort the whole bootstrap -- exactly the "not fatal" contract this step
-    # promises to violate.
+    # FAIL line makes the exe exit 1, and a bare statement's unguarded
+    # nonzero exit would abort the whole bootstrap under `set -euo pipefail`.
+    # This step's contract is that a verify FAIL is reported, never fatal to
+    # setup -- `|| verify_rc=$?` is what `set -e` cannot see as an error, so
+    # it is what keeps that contract instead of silently breaking it.
     verify_rc=0
     ( cd "$TARGET_DIR" && "$TS_EXE" --verify . --template-repo "$verify_repo_arg" ) || verify_rc=$?
     if [[ "$verify_rc" -ne 0 ]]; then
