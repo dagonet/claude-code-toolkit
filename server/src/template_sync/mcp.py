@@ -215,12 +215,24 @@ def _reject_msys_path(p: str) -> str | None:
     ever depending on which drive the server process happens to be running
     from at the moment of the call.
 
+    Gated on `os.name == "nt"`, the SAME condition `_resolve_path` gates its
+    conversion on (Task 5 fix round 1, outside review): the `^/[A-Za-z]/`
+    shape is ambiguous -- on Windows it is MSYS's drive-letter spelling and
+    genuinely dangerous (the silent stray tree above); on a POSIX host that
+    exact shape is an ordinary, real absolute path (`/g/git/proj`, `/e/src/x`
+    are valid POSIX paths with no drive-letter meaning at all), and
+    rejecting it there would refuse a project that is exactly where it says
+    it is, citing an empty drive in the error (`pathlib.Path.cwd().drive` is
+    `""` on POSIX). One concept -- "this leading segment might be an MSYS
+    drive letter" -- one condition, shared with `_resolve_path`.
+
     Returns an error string, or None when `p` is not MSYS-shaped (including
-    an empty string, e.g. an unset optional `backup_dir`).
+    an empty string, e.g. an unset optional `backup_dir`) or this process is
+    not on Windows.
     """
     if not p:
         return None
-    if re.match(r"^/[A-Za-z]/", p):
+    if os.name == "nt" and re.match(r"^/[A-Za-z]/", p):
         drive = pathlib.Path.cwd().drive or "<drive>"
         return (f"MSYS path '{p}' would write a literal {drive}\\{p[1]}\\ tree -- "
                 "pass a Windows path (G:\\...) or a repo-relative path")
