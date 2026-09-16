@@ -5804,7 +5804,7 @@ expect "(RUN-GATE) truncate-to-true: no last-pass.<sha>.json minted on an unrun 
 # byte-unchanged by either row above -- both ran with REPO_TOP resolved to
 # their own throwaway repo, never to this one.
 RG_SELFGATE_AFTER=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
-expect "(RUN-GATE) real checkout's own gate directory untouched" \
+expect "(RUN-GATE) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER"
 
 # ---------------------------------------------------------------------------
@@ -5929,7 +5929,7 @@ fi
 # checkout's own shared gate directory must be byte-unchanged across the
 # whole block, not just the pre-A2 rows the earlier guard bracketed.
 RG_SELFGATE_AFTER_A2=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
-expect "(RUN-GATE A2) real checkout's own gate directory untouched" \
+expect "(RUN-GATE A2) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER_A2"
 
 # ---------------------------------------------------------------------------

@@ -242,7 +242,7 @@ An agent that has to go looking for any of the five is under-briefed — a promp
 2. **One task per developer, one worktree** — no multitasking, no writes outside the assigned worktree.
 3. **Max parallel workstreams** as specified in `PROJECT_CONTEXT.md`.
 4. **Architect reviews BEFORE development** (T4).
-5. **Developers own feature-work merges** — wait for the PO's go-ahead; `architect` returns work to the PO. Template syncs are PO-run (`template_*` in no subagent's `tools:`).
+5. **Developers own the merge and its sequencing** — wait for the PO's go-ahead. Agents without `Bash` (`architect`) return work to the PO. Template syncs are PO-run.
 6. **Post-rebase verification required** — rebuild + retest before merge.
 7. **Max 3 fix cycles per task** — then PO selects (a) scope reduction, (b) architect re-design, or (c) human escalation.
 8. **Workstream agents are ephemeral** — shut down after their phase.
