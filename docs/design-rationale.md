@@ -1,6 +1,6 @@
 # Design rationale — why the template files say what they say
 
-The operative files (`CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`) carry
+The operative files (`CLAUDE.md`, `AGENT_TEAM.md`) carry
 **facts and instructions only**. Every "why" lives here, keyed by file and
 section, so an instruction can be short and its reasoning can still be found.
 Check 35 in `scripts/verify-template-consistency.sh` enforces the byte budget
@@ -275,4 +275,6 @@ patterns / approaches / bugs" with light variation per row.
 
 ## CLAUDE.local.md
 
-(populated by Task 4)
+Retired in v4.0.1 (item 16): the template no longer ships this file. A
+project that already has one keeps it -- never manifest-tracked, gitignored,
+untouched by a sync.

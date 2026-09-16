@@ -112,7 +112,7 @@ The 2×2 above cannot express deletion, and this doc did not mention it at all �
 
 `keep-mine` appears in none of the shipped documentation outside a mid-sync resolution prompt, and **all four consumers surveyed use it for the files they care about most.** It is a concept, not just a menu item, and it has a cost worth stating before you choose it.
 
-Resolving a file `keep-mine` (`template_apply_file(source="skip")`) keeps the project's version and records `"resolution": "keep-mine"` on that file's manifest entry. `CLAUDE.local.md` is the routine case.
+Resolving a file `keep-mine` (`template_apply_file(source="skip")`) keeps the project's version and records `"resolution": "keep-mine"` on that file's manifest entry. `CLAUDE.local.md` (retired from the template in v4.0.1) was the routine case for consumers who synced before then; the manifest entry is dropped on their next sync since the template no longer tracks the file, and their local copy is left untouched.
 
 **The trade-off, stated plainly: a `keep-mine` file never receives template improvements again, and you re-decide it on every sync.** The template will keep moving; your copy will not follow. The recorded resolution is what lets a guard tell a user-approved divergence from an accidental one — a check keyed on the file's path instead would fire on the correct outcome.
 

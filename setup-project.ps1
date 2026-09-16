@@ -4,7 +4,7 @@
     Sets up a new project with Claude Code configuration from a template variant.
 
 .DESCRIPTION
-    Copies template files (CLAUDE.md, CLAUDE.local.md, AGENT_TEAM.md, PROJECT_CONTEXT.md,
+    Copies template files (CLAUDE.md, AGENT_TEAM.md, PROJECT_CONTEXT.md,
     PROJECT_STATE.md, VERIFICATION_PLAYBOOK.md, .claude/, .editorconfig, .gitattributes, gitignore)
     to a target project directory and replaces {{PLACEHOLDER}} tokens with provided values.
 
@@ -481,7 +481,7 @@ function Get-TemplateFiles {
     $files = @()
 
     # Top-level markdown and config files
-    foreach ($name in @("CLAUDE.md", "CLAUDE.local.md", "AGENT_TEAM.md", "PROJECT_CONTEXT.md", "PROJECT_STATE.md", "VERIFICATION_PLAYBOOK.md")) {
+    foreach ($name in @("CLAUDE.md", "AGENT_TEAM.md", "PROJECT_CONTEXT.md", "PROJECT_STATE.md", "VERIFICATION_PLAYBOOK.md")) {
         $path = Join-Path $Source $name
         if (Test-Path $path) {
             $files += @{ Source = $path; RelPath = $name; IsGitignore = $false }
@@ -598,8 +598,8 @@ elseif ($classifyNames.Count -gt 0) {
 
 # Manifest key + ownership class for template file $File, from the
 # classification above. Returns $null when the classifier did not match
-# (e.g. CLAUDE.local.md -- unclassified_template_files server-side), which
-# the caller uses to leave the file out of the manifest entirely.
+# (no ownership rule; surfaced as unclassified_template_files server-side),
+# which the caller uses to leave the file out of the manifest entirely.
 function Get-ManifestKeyAndOwnership {
     param($File)
     $cname = Get-OwnershipClassifyName $File

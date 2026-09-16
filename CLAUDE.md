@@ -4,7 +4,7 @@ Template repo for bootstrapping projects with Claude Code config. It ships no ap
 
 ## Layout
 
-- `templates/<variant>/` — six variants: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`. Each carries `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, `gitignore`, `.claude/{settings.json,agents/,rules/}`.
+- `templates/<variant>/` — six variants: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`. Each carries `CLAUDE.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, `gitignore`, `.claude/{settings.json,agents/,rules/}`.
 - `user-level-reference/` — the copyable source for `~/.claude/` (CLAUDE.md, settings.json, agents, skills, hooks).
 - `hooks/` — the canonical enforcement hooks, referenced by both template settings and agent frontmatter.
 - `scripts/` — verification and propagation tooling. `setup-project.sh` / `.ps1` bootstrap a project.

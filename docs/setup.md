@@ -168,12 +168,11 @@ chmod +x ~/repos/claude-code-toolkit/setup-project.sh
 
 If you prefer to set things up by hand:
 
-1. **Copy template files** from `templates/<variant>/` to your project root. This includes `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, and the `.claude/` directory (agents + `settings.json`).
+1. **Copy template files** from `templates/<variant>/` to your project root. This includes `CLAUDE.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, and the `.claude/` directory (agents + `settings.json`). (`CLAUDE.local.md` was retired in v4.0.1 -- the template no longer offers one; if your project already has one, it stays and is never touched by a sync.)
 
    ```bash
    # Bash
    cp -r ~/repos/claude-code-toolkit/templates/general/CLAUDE.md .
-   cp -r ~/repos/claude-code-toolkit/templates/general/CLAUDE.local.md .
    cp -r ~/repos/claude-code-toolkit/templates/general/AGENT_TEAM.md .
    cp -r ~/repos/claude-code-toolkit/templates/general/PROJECT_CONTEXT.md .
    cp -r ~/repos/claude-code-toolkit/templates/general/PROJECT_STATE.md .

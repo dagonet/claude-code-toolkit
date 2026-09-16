@@ -53,7 +53,7 @@ Anthropic's [context-engineering guidance for Claude 5 generation models](https:
 | | Baseline | v1.5 | v2.0 | v2.1 | **v3.1** | Loaded |
 |---|---|---|---|---|---|---|
 | `templates/general/CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | **6,143** | every session |
-| `templates/general/CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** | every session |
+| `templates/general/CLAUDE.local.md` (retired v4.0.1) | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** | every session |
 | user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | **5,076** | every session |
 | `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | **3,170** | every session |
 | **always-loaded total** | **41,167** | 32,538 | 25,814 | 25,999 | **23,044 (−44%)** | |
@@ -109,7 +109,7 @@ Each CLAUDE.md and AGENT_TEAM.md includes a variant-specific table mapping task 
 
 All templates grant permissions for **all** known MCP servers (git, github, ollama, dotnet-tools, rust-tools, windows-mcp, sqlite, searxng, playwright, context7, open-brain, template-sync-tools). If a server is not registered in the active scope, the permission is a harmless no-op.
 
-`CLAUDE.local.md` contains MCP usage rules (e.g., "prefer `cargo_build` over Bash `cargo build`"). This file is gitignored because it references machine-specific paths.
+`CLAUDE.local.md` (retired v4.0.1: no longer offered by the template) held MCP usage rules (e.g., "prefer `cargo_build` over Bash `cargo build`"), gitignored because it referenced machine-specific paths. A project that already has one keeps it; the file is never touched by a sync.
 
 ### MCP Layering
 
@@ -182,7 +182,6 @@ claude-code-toolkit/
 │   │   │   ├── settings.json
 │   │   │   └── agents/ (6 agents)
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md                  # v2.0 (shared across all variants)
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -193,7 +192,6 @@ claude-code-toolkit/
 │   │   │   └── agents/ (7 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -204,7 +202,6 @@ claude-code-toolkit/
 │   │   │   └── agents/ (7 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -216,7 +213,6 @@ claude-code-toolkit/
 │   │   ├── rustfmt.toml                   # Rust formatter config
 │   │   ├── .prettierrc                    # TypeScript/CSS formatter config
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -227,7 +223,6 @@ claude-code-toolkit/
 │       │   └── agents/ (7 agents)
 │       ├── .editorconfig
 │       ├── CLAUDE.md
-│       ├── CLAUDE.local.md
 │       ├── AGENT_TEAM.md
 │       ├── PROJECT_CONTEXT.md
 │       ├── PROJECT_STATE.md
