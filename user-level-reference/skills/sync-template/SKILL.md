@@ -212,6 +212,16 @@ After migration, tell the user which **declared `PROJECT_CONTEXT.md` keys their 
 
 This is not hypothetical. One consumer traced their own earlier probe being *vacuous* to a missing `**Gate-checked branches**` — the hook path never iterated, the check could not fail, and nothing in any sync would ever have told them.
 
+**`key_audit.missing_declared_keys`** (v4.0.1, item 2; capability `missing_declared_keys`) collapses three sources into one actionable list: a required key truly absent, one held only under a deprecated spelling, and one whose value is still an unfilled `{{...}}` token. Report **one line per entry**, naming the `reason` and the `template_default`:
+
+```
+- Gate: absent (template default: `{{GATE_COMMAND}}`)
+- Gate: deprecated_spelling -- held as "Gate Command"; rename to "Gate"
+- Test: unfilled -- still reads "{{TEST_COMMAND}}"
+```
+
+An optional key that is simply absent does **not** appear here — it is `optional_absent` only (below, and step 8). Do not re-derive this list from `missing_required`/`placeholder_keys`/`deprecated_keys` yourself; the server has already applied the ownership rule that keeps the two lists disjoint.
+
 **Calling migrate on an already-v3 manifest is harmless.** It returns the no-op before loading ownership and writes nothing.
 
 ### 2. Compute Status
@@ -1020,6 +1030,14 @@ Any hit is a file the template wrote with an unfilled placeholder — `template_
 Version labels are server-authoritative under v3 (`template_version` / `template_commit`). The client no longer stamps them; `lastSyncedVersion` / `lastSyncedVersionOf` are dropped by migrate and finalize and reported as `superseded_keys_dropped`.
 
 ### 8. Report
+
+**Report `key_audit.optional_absent_detail`** (v4.0.1, item 18; capability `optional_absent_detail`) for every key it lists, one line each, in this exact shape:
+
+```
+absent — effect: <effect_when_absent>; declare only if you want the other behaviour
+```
+
+**Never** phrase it as "declare it or accept the default" — for most of these keys (`**Test**` above all: absent means pre-commit falls back to the Gate, which mints the artifact, so commit and merge are one run; declaring it adds a second run per commit) absent is the BETTER state for most consumers, and "accept the default" reads as a passive fallback rather than the actively-preferred outcome it usually is. `none_meaning` is available on the same entry if the user asks what a literal `none` on that key does — do not volunteer it unprompted; it disagrees per key by design (see `docs/template-sync.md`).
 
 Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line. **It compares against the last RELEASED tag, not the working tree** (v2.2.5 round 4): a live `~/.claude/` matching an unshipped branch used to report 0 drift, so the delivery probe certified that an unreviewed revision had reached a user. Reference files that exist only on a branch are listed as `UNRELEASED`, never counted as in-sync.
 

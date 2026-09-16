@@ -182,6 +182,57 @@ fi
 expect "sh snippet names no single repo as THE trusted repo" 0 \
   "$(grep -cF -- '**Trusted repo**:' "$TMPROOT/automode.out")"
 
+# --- v4.0.1 item 5: the two DERIVED placeholders default to `none` ----------
+#
+# templates/general/PROJECT_CONTEXT.md now ships `- **Gate-checked
+# branches**: none` and `- **Post-edit build**: none` as LITERAL text (no
+# `{{...}}` token) -- apply_replacements' plain token substitution has
+# nothing left to match for these two keys, so add_derived's value only
+# reaches the file through set_derived_defaults' own line rewrite. A general
+# bootstrap (no override) must still read `none` on both lines -- the
+# no-op branch of that rewrite, which also has to leave the line's trailing
+# comment intact. A dotnet bootstrap must read the real dotnet build command
+# on Post-edit build -- the branch that rewrites the line.
+derived_line() { # <project dir> <key>
+  grep -E "^- \*\*$2\*\*:" "$1/PROJECT_CONTEXT.md" 2>/dev/null | head -1
+}
+# Strip a trailing "<!-- ... -->" HTML comment and surrounding space, so the
+# assertion checks the VALUE setup wrote, not whether a comment survived.
+derived_value_only() { # <line>
+  printf '%s' "$1" | sed -E 's/[[:space:]]*<!--.*-->[[:space:]]*$//'
+}
+
+GENDIR="$TMPROOT/derived-general"
+mkdir -p "$GENDIR"
+bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+  --target-path "$GENDIR" > "$TMPROOT/derived-general.out" 2>&1
+expect "general bootstrap: Gate-checked branches defaults to none" \
+  "- **Gate-checked branches**: none" \
+  "$(derived_value_only "$(derived_line "$GENDIR" 'Gate-checked branches')")"
+expect "general bootstrap: Post-edit build defaults to none" \
+  "- **Post-edit build**: none" \
+  "$(derived_value_only "$(derived_line "$GENDIR" 'Post-edit build')")"
+
+DOTNETDIR="$TMPROOT/derived-dotnet"
+mkdir -p "$DOTNETDIR"
+bash "$ROOT/setup-project.sh" --variant dotnet --project-name SetupFixture \
+  --target-path "$DOTNETDIR" > "$TMPROOT/derived-dotnet.out" 2>&1
+DOTNET_POB_WANT=$(grep -E "add_derived '\{\{POST_EDIT_BUILD\}\}'" "$ROOT/setup-project.sh" \
+  | head -1 | sed -E "s/^[[:space:]]*add_derived '\{\{POST_EDIT_BUILD\}\}' \"([^\"]*)\"/\1/")
+if [ -z "$DOTNET_POB_WANT" ]; then
+  expect "dotnet POST_EDIT_BUILD default is readable from setup-project.sh" "non-empty" ""
+else
+  expect "dotnet bootstrap: Post-edit build gets the real dotnet build command" \
+    "- **Post-edit build**: $DOTNET_POB_WANT" \
+    "$(derived_value_only "$(derived_line "$DOTNETDIR" 'Post-edit build')")"
+fi
+# Control: dotnet does NOT derive Gate-checked branches (no variant does at
+# bootstrap time) -- still `none`, proving the general-bootstrap PASS above
+# is not vacuously true for every variant regardless of override.
+expect "dotnet bootstrap: Gate-checked branches still defaults to none" \
+  "- **Gate-checked branches**: none" \
+  "$(derived_value_only "$(derived_line "$DOTNETDIR" 'Gate-checked branches')")"
+
 # --- v4.0: the template-sync registration points at the toolkit's OWN exe --
 #
 # setup asserted the exe exists BEFORE writing the path -- otherwise the

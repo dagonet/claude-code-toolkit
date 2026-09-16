@@ -2441,6 +2441,17 @@ writeartifact "$GCB_EMPTY" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 check "(2.7 extent) empty value treated as none, not match-everything" \
   "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_EMPTY")"
 
+# v4.0.1 item 5: the literal `none` is now templates/*/PROJECT_CONTEXT.md's
+# SHIPPED default for this key (no {{...}} placeholder) rather than an
+# occasional consumer choice -- pin gc_gate_checked_branches' existing
+# reading of it (git-cmd.sh:969-970, unchanged by this release: no real
+# branch is gate-checked, same as absent) now that every fresh bootstrap
+# writes this value by default.
+GCB_NONE=$(gcbrepo gcb-none m113-session-2026-09-03 '- **Gate-checked branches**: none')
+writeartifact "$GCB_NONE" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check "(2.7 extent, v4.0.1 item 5) literal 'none' treated as none, not match-everything" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_NONE")"
+
 # --- hazard rows (task-2.7 fix round 1, review finding 1 / F1) -------------
 # Critical: `for gcgbb in $(gc_gate_checked_branches "$1")` in
 # gc_branch_is_gate_checked (hooks/lib/git-cmd.sh) word-splits UNQUOTED, so a

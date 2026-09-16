@@ -210,3 +210,19 @@ Project-owned content goes INSIDE the markers. When both the template and the pr
 `project.md` is `once`-class: the v2→v3 migration seeds it only when the project does not already have one, and every later sync leaves an existing copy untouched. **Steady state is to KEEP the file and replace its body** — never delete it, because a deleted `once`-class file simply returns via `new_template_files` on the next sync (registered again as `{"ownership": "once"}`, zero bytes written if you re-add it yourself first).
 
 **The migration's out-of-region record lives in `backup_dir`, never in `project.md`.** When `template_migrate_manifest` finds CLAUDE.md edits outside the `PROJECT-CUSTOM` region, it writes them to `<backup_dir>/CLAUDE.md.out-of-region.diff` (beside the existing `CLAUDE.md.pre-migration` and `template-manifest.json.pre-migration` copies) and reports the path as `project_md_record` (`null` when there was nothing to record, or on a `dry_run`) — never embedded as a fenced diff inside `project.md` itself, which would put a one-time migration artifact into a file every session loads forever.
+
+## Key audit: `missing_declared_keys` and `optional_absent` (v4.0.1, items 2, 18)
+
+`key_audit.missing_declared_keys` (`[{key, reason, template_default}]`, `reason ∈ absent|deprecated_spelling|unfilled`) is every key the consumer's own variant declares that is not held in a form the hooks read. `template_default` is always the **consumer's own variant's** value, never a value copied from another variant. **Ownership rule:** an optional key that is simply absent is reported once, in `optional_absent` (+`optional_absent_detail`) — never duplicated into `missing_declared_keys`.
+
+**Design rule: every optional key states its off-when-absent behaviour, and whether `none` is a valid, deliberate way to write "off" — decided when the key is added, not left implicit.** `optional_absent_detail` (`[{key, template_default, effect_when_absent, none_meaning}]`, source: `templates/ownership.json`'s `optional_keys` map) exists because these disagree per key and must **not** be made uniform by fiat:
+
+| key | effect when absent | what a literal `none` means |
+|---|---|---|
+| `**Test**` | pre-commit falls back to the Gate, which mints the artifact — commit and merge are one run | not declared (fixed since v3.0.3: `hooks/pre-commit-test.sh` treats a trimmed, case-insensitive `none` as absent and falls through to the Gate; before that it was eval'd as a shell command and blocked every commit) |
+| `**Gate-checked branches**` | no branch gets the artifact-freshness-only merge lane | no branch is gate-checked — `hooks/lib/git-cmd.sh`'s `gc_gate_checked_branches` reads it as an empty branch list, the SAME as absent. Do not read `none` here as widening access, and do not "fix" this reader to treat `none` as anything else: penumbra, panoscribe and open-brain all carry the literal `none` today as setup's derived default, and redefining it would silently turn merge gating ON for all three |
+| `**Post-edit build**` | `hooks/post-edit-build.sh` is inert | no-op — treated exactly like absent |
+| `**PO write surface**` | write surface stays at the template default | the template default — no extra prefixes added |
+| `**Test (frontend)**` | no separate frontend test step runs | no-op |
+
+A new optional key added later must get its own row here (and its own `optional_keys` entry in `templates/ownership.json`) **before** it ships — an undocumented key defaults to the generic `"feature off"` / `"not defined for this key"` pair, which is a placeholder for "nobody decided yet," not a real answer.

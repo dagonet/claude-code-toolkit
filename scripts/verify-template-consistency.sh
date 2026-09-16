@@ -3598,6 +3598,84 @@ fi
 rm -rf "$c47_scratch"
 
 # ---------------------------------------------------------------------------
+# Check 49 -- PROJECT_CONTEXT.md key strings appear only at line start
+# (v4.0.1 item 21). The declared-key readers (hooks/lib/git-cmd.sh,
+# hooks/pre-commit-test.sh, v3.py's KEY_LINE_RE) all grep `**Key**:`
+# ANCHORED at the start of a (list-marker-stripped) line -- they would
+# happily match the same string sitting mid-sentence too, so a decoy like
+# templates/general/PROJECT_CONTEXT.md's old line 8 ("...the branch named
+# on the `**Protected branches**:` line directly below...") was safe only
+# as long as every reader stayed line-anchored.
+#
+# THE OBVIOUS VERSION OF THIS CHECK IS VACUOUS (measured against the
+# unmodified tree, v4.0.1 review): excluding every grep hit whose OWN line
+# starts with `**` discards every list-item line wholesale -- which is
+# every line capable of carrying a decoy, line 8 included, since line 8
+# ITSELF starts with `- **Branch strategy**:`. That version reported zero
+# bad lines on the tree containing the defect it exists to catch. The fix
+# below strips only the ONE legitimate, line-anchored `**Key**:` token a
+# real reader matches (a leading list marker plus the first key, and only
+# when it sits at column 0) and then searches what is LEFT on that line for
+# a second occurrence -- the actual decoy.
+# ---------------------------------------------------------------------------
+note "Check 49: PROJECT_CONTEXT.md key strings appear only at line start (line-anchored readers)"
+C49_KEYS="Protected branches|Gate|Test|Build|Format|Lint|Gate-checked branches|Post-edit build"
+
+# c49_scan <file> -- prints one "file:line: content" row per mid-line decoy
+# found in <file>. Shared by the real scan below and the 49c control so
+# both exercise the identical logic.
+c49_scan() {
+  local c49_f="$1" c49_row c49_loc c49_content c49_rest
+  while IFS= read -r c49_row; do
+    [ -n "$c49_row" ] || continue
+    c49_loc=$(printf '%s' "$c49_row" | cut -d: -f1-2)
+    c49_content=$(printf '%s' "$c49_row" | cut -d: -f3-)
+    # Strip ONLY the leading, line-anchored "- **Key**:" (list marker +
+    # the FIRST key token, if and only if it starts the content) -- a
+    # decoy line's own key (e.g. "Branch strategy") is not in $C49_KEYS,
+    # so the substitution does not match and c49_rest == c49_content,
+    # which still contains the decoy for the grep below to find.
+    c49_rest=$(printf '%s' "$c49_content" | sed -E "s/^[-*[:space:]]*\*\*($C49_KEYS)\*\*://")
+    if printf '%s' "$c49_rest" | grep -qE "\*\*($C49_KEYS)\*\*:"; then
+      printf '%s: %s\n' "$c49_loc" "$c49_content"
+    fi
+  done < <(grep -nE "\*\*($C49_KEYS)\*\*:" "$c49_f" 2>/dev/null)
+}
+
+c49_bad=""
+for c49_f in templates/*/PROJECT_CONTEXT.md; do
+  [ -f "$c49_f" ] || continue
+  c49_hit=$(c49_scan "$c49_f")
+  [ -n "$c49_hit" ] && c49_bad="$c49_bad
+$c49_hit"
+done
+c49_bad=$(printf '%s' "$c49_bad" | sed '/^$/d')
+if [ -z "$c49_bad" ]; then
+  ok "check 49: no mid-line key decoys"
+else
+  ko "check 49: key string mid-line (a non-anchored reader would match it first): $(printf '%s' "$c49_bad" | tr '\n' ';')"
+fi
+
+# 49c control, planted in the SHAPE of the real defect (v4.0.1 review): a
+# list item whose OWN key sits at column 0 (the legitimate anchor) AND a
+# SECOND, different key token mid-line -- not a bare "text **Gate**: x",
+# which the vacuous check above also "catches" and would certify a scan
+# that misses the actual defect shape.
+C49C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c49c)
+mkdir -p "$C49C_TMP/templates/controlvariant"
+cat > "$C49C_TMP/templates/controlvariant/PROJECT_CONTEXT.md" <<'C49C_EOF'
+- **Gate**: bash gate.sh (see the `**Test**:` field below for the fast path)
+- **Test**: none
+C49C_EOF
+c49c_hit=$(c49_scan "$C49C_TMP/templates/controlvariant/PROJECT_CONTEXT.md")
+rm -rf "$C49C_TMP"
+if [ -n "$c49c_hit" ]; then
+  ok "check 49c: control -- a planted mid-line decoy (Gate line naming Test) is caught"
+else
+  ko "check 49c: control -- planted mid-line decoy NOT caught: check 49 is vacuous"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"

@@ -198,6 +198,47 @@ def _resolve_path(p: str) -> pathlib.Path:
     return pathlib.Path(p).resolve()
 
 
+def _reject_msys_path(p: str) -> str | None:
+    """Refuse a bash-shaped MSYS path on a WRITE tool (v4.0.1, item 9).
+
+    Unlike `_resolve_path` (used for read-only lookups such as
+    `applied_files_path`), the three tools that write to disk
+    (`template_apply_file`, `template_finalize_sync`,
+    `template_migrate_manifest`) call `pathlib.Path(project_path).resolve()`
+    directly -- on Windows a leading `/` with no drive letter of its own is
+    resolved relative to the CURRENT drive, not converted the way MSYS
+    intends `/g/git/proj` to mean `G:\\git\\proj`. A consumer running from
+    `G:` who passes `/c/Users/...` (or, measured, the reverse) gets a
+    literal, silently-created `G:\\c\\Users\\...` tree instead of an error.
+    Rejecting the shape outright -- rather than adding the same conversion
+    `_resolve_path` does to these three tools too -- keeps a write path from
+    ever depending on which drive the server process happens to be running
+    from at the moment of the call.
+
+    Gated on `os.name == "nt"`, the SAME condition `_resolve_path` gates its
+    conversion on (Task 5 fix round 1, outside review): the `^/[A-Za-z]/`
+    shape is ambiguous -- on Windows it is MSYS's drive-letter spelling and
+    genuinely dangerous (the silent stray tree above); on a POSIX host that
+    exact shape is an ordinary, real absolute path (`/g/git/proj`, `/e/src/x`
+    are valid POSIX paths with no drive-letter meaning at all), and
+    rejecting it there would refuse a project that is exactly where it says
+    it is, citing an empty drive in the error (`pathlib.Path.cwd().drive` is
+    `""` on POSIX). One concept -- "this leading segment might be an MSYS
+    drive letter" -- one condition, shared with `_resolve_path`.
+
+    Returns an error string, or None when `p` is not MSYS-shaped (including
+    an empty string, e.g. an unset optional `backup_dir`) or this process is
+    not on Windows.
+    """
+    if not p:
+        return None
+    if os.name == "nt" and re.match(r"^/[A-Za-z]/", p):
+        drive = pathlib.Path.cwd().drive or "<drive>"
+        return (f"MSYS path '{p}' would write a literal {drive}\\{p[1]}\\ tree -- "
+                "pass a Windows path (G:\\...) or a repo-relative path")
+    return None
+
+
 def _apply_placeholders(content: str, placeholders: dict[str, str]) -> str:
     """Replace {{KEY}} tokens with concrete values."""
     for key, val in placeholders.items():
@@ -1338,6 +1379,10 @@ async def template_apply_file(
         tell a preserved region apart from real drift. Both fall back to
         full-file hashes when only one side carries the markers.
     """
+    for _msys_p in (project_path, backup_dir):
+        _msys_err = _reject_msys_path(_msys_p)
+        if _msys_err:
+            return json.dumps({"error": _msys_err}, ensure_ascii=False)
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
     if manifest is None:
@@ -1493,6 +1538,9 @@ async def template_finalize_sync(
     already present on disk needs no apply call at all: it lands
     `{"ownership": "once"}` here with zero bytes touched.
     """
+    _msys_err = _reject_msys_path(project_path)
+    if _msys_err:
+        return json.dumps({"error": _msys_err}, ensure_ascii=False)
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
     if manifest is None:
@@ -1734,6 +1782,10 @@ async def template_migrate_manifest(
         tool did not run it), unknown_keys, warnings, backup, written.
     """
     from . import v3
+    for _msys_p in (project_path, backup_dir):
+        _msys_err = _reject_msys_path(_msys_p)
+        if _msys_err:
+            return json.dumps({"error": _msys_err}, ensure_ascii=False)
     pp = pathlib.Path(project_path).resolve()
     return json.dumps(v3.migrate_manifest(pp, backup_dir, dry_run, skill_version),
                       ensure_ascii=False)

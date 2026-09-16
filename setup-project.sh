@@ -338,6 +338,42 @@ set_protected_branches() {
     printf '%s' "$1" | sed "s|^- \*\*Protected branches\*\*:.*|- **Protected branches**: $PROTECTED_BRANCHES|"
 }
 
+# derived_value <placeholder key, e.g. '{{POST_EDIT_BUILD}}'> -- looks up the
+# value add_derived (or an explicit flag via add_replacement) settled on for
+# that key. Parallel-array lookup mirrors add_derived's own loop.
+derived_value() {
+    local i
+    for i in "${!PH_KEYS[@]}"; do
+        [[ "${PH_KEYS[$i]}" == "$1" ]] && { printf '%s' "${PH_VALS[$i]}"; return 0; }
+    done
+    return 1
+}
+
+# set_derived_defaults <rendered PROJECT_CONTEXT.md text> (v4.0.1, item 5)
+#
+# The template now ships `- **Gate-checked branches**: none` and
+# `- **Post-edit build**: none` as LITERAL text (no `{{...}}` token), so
+# apply_replacements' token substitution has nothing left to match once the
+# template default is the string a manual bootstrap would also write --
+# add_derived's value never reaches the file for these two keys unless the
+# whole VALUE LINE is rewritten, the same shape set_protected_branches
+# already uses above. Mirrors it further: a derive that agrees with the
+# template's own shipped default (`none`) is a no-op, so the line's inline
+# HTML comment survives on the common path; only a REAL override (the
+# dotnet post-edit-build command) rewrites the line and drops the comment.
+set_derived_defaults() {
+    local text="$1" gcb pob
+    gcb="$(derived_value '{{GATE_CHECKED_BRANCHES}}')"
+    pob="$(derived_value '{{POST_EDIT_BUILD}}')"
+    if [[ -n "$gcb" && "$gcb" != "none" ]]; then
+        text="$(printf '%s' "$text" | sed "s|^- \*\*Gate-checked [Bb]ranches\*\*:.*|- **Gate-checked branches**: $gcb|")"
+    fi
+    if [[ -n "$pob" && "$pob" != "none" ]]; then
+        text="$(printf '%s' "$text" | sed "s|^- \*\*Post-edit build\*\*:.*|- **Post-edit build**: $pob|")"
+    fi
+    printf '%s' "$text"
+}
+
 PROJECT_NAME_LOWER="$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]')"
 add_replacement '{{PROJECT_NAME}}' "$PROJECT_NAME"
 add_replacement '{{PROJECT_NAME_LOWER}}' "$PROJECT_NAME_LOWER"
@@ -560,6 +596,7 @@ render_file() {
     rendered="$(apply_replacements "$(<"${FILE_SOURCES[$idx]}")")"
     if [[ "${FILE_RELS[$idx]}" == "PROJECT_CONTEXT.md" ]]; then
         rendered="$(set_protected_branches "$rendered")"
+        rendered="$(set_derived_defaults "$rendered")"
     fi
     if should_wrap_claude_md "${FILE_RELS[$idx]}"; then
         rendered="$(wrap_into_custom_region "$rendered" "$(<"$TARGET_DIR/CLAUDE.md")")"
@@ -993,6 +1030,7 @@ for i in "${!FILE_SOURCES[@]}"; do
     # disagree about the one line that decides whether the trunk is protected.
     if [[ "$rel" == "PROJECT_CONTEXT.md" ]]; then
         content="$(set_protected_branches "$content")"
+        content="$(set_derived_defaults "$content")"
     fi
     # Every `$(...)` above stripped the source's trailing newline (if any) --
     # restore it so the byte written, and hashed, matches what ps1 (which

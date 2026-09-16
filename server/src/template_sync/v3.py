@@ -52,6 +52,8 @@ CAPABILITIES = (
     "region_bytes_raw",
     "new_template_files_detail",
     "superseded_keys",
+    "missing_declared_keys",
+    "optional_absent_detail",
 )
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
@@ -534,12 +536,66 @@ def audit_keys(proj_text: str, tpl_text: str, tpl_at_sync_text: str | None, rule
             if ph_value is None or _norm_ws(proj[name]) != _norm_ws(ph_value):
                 divergence.append({"key": name, "key_value": proj[name],
                                    "placeholder": ph_name, "placeholder_value": ph_value})
+
+    # missing_declared_keys (v4.0.1, item 2): every key the consumer's own
+    # variant declares that the consumer does NOT hold in a form the hooks
+    # read, collapsed from three sources into one list the skill can act on
+    # without re-deriving it: a required key truly absent (reason "absent"),
+    # a required key held only under a deprecated spelling -- exact_holdings
+    # above already lets that satisfy missing_required, so it is reported
+    # here under its CANONICAL name, not the spelling on disk (reason
+    # "deprecated_spelling"), and any key whose proj value is still an
+    # unfilled `{{...}}` token (reason "unfilled").
+    # Ownership rule (penumbra): an OPTIONAL key that is simply absent is
+    # reported once, in optional_absent(+detail) only -- never duplicated
+    # here. The exclusion is not vacuous for "deprecated_spelling": an
+    # optional key held only under a deprecated spelling has no exact/loose
+    # match under its canonical name either, so it lands in BOTH
+    # optional_absent (find_key does not know the old spelling) and this
+    # loop unless excluded -- required/absent and unfilled cannot collide
+    # with optional_absent by construction (missing_required only holds
+    # required keys; placeholder_keys only holds keys the consumer DOES
+    # have), but this one can and is exercised by a test.
+    missing_declared_keys: list[dict] = []
+    for key in missing_required:
+        missing_declared_keys.append({"key": key, "reason": "absent", "template_default": tpl.get(key)})
+    for old, new in deprecated_map.items():
+        if old in proj and new not in optional_absent:
+            missing_declared_keys.append(
+                {"key": new, "reason": "deprecated_spelling", "template_default": tpl.get(new)})
+    for key in placeholder_keys:
+        if key not in optional_absent:
+            missing_declared_keys.append(
+                {"key": key, "reason": "unfilled", "template_default": tpl.get(key)})
+
+    # optional_absent_detail (v4.0.1, item 18): one entry per key in
+    # optional_absent, naming what staying absent means for THIS key --
+    # `none_meaning` disagrees across keys today (measured from the hook
+    # code, hooks/lib/git-cmd.sh and hooks/pre-commit-test.sh; see
+    # templates/ownership.json's optional_keys) and must not be made
+    # uniform by fiat. A key with no entry in the rule's `optional_keys`
+    # falls back to the generic pair below.
+    optional_rule_keys = rule.get("optional_keys") or {}
+    optional_absent_detail = [
+        {
+            "key": key,
+            "template_default": tpl.get(key),
+            "effect_when_absent": (optional_rule_keys.get(key) or {}).get(
+                "effect_when_absent", "feature off"),
+            "none_meaning": (optional_rule_keys.get(key) or {}).get(
+                "none_meaning", "not defined for this key"),
+        }
+        for key in optional_absent
+    ]
+
     return {
         "missing_required": missing_required,
         "qualified_only": qualified_only,
         "optional_absent": optional_absent,
+        "optional_absent_detail": optional_absent_detail,
         "placeholder_keys": placeholder_keys,
         "deprecated_keys": deprecated,
+        "missing_declared_keys": missing_declared_keys,
         "required": detail,
         "placeholder_key_divergence": divergence,
         "warnings": warnings,
