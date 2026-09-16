@@ -282,6 +282,20 @@ else
   skip "sh: written template-sync command resolves to the toolkit exe" "$TS_VENV_REASON" 1
 fi
 
+# --- v4.0.1 item 22: template_verify runs as setup's own last step ---------
+#
+# Same $TS_VENV_PRESENT/$TS_VENV_REASON split as above: a registered exe
+# means the bootstrap's tail is the verify summary line
+# ("N PASS, M FAIL, K SKIP, J INFO"); no exe (a checkout with no server/.venv,
+# the same population check 46 already treats as a loud, named absence rather
+# than a silent skip) means the row SKIPs in-band, not fails.
+if [ "$TS_VENV_PRESENT" -eq 1 ]; then
+  expect "sh bootstrap ends with the template_verify summary line" 1 \
+    "$(grep -cE '^[0-9]+ PASS, [0-9]+ FAIL, [0-9]+ SKIP, [0-9]+ INFO$' "$TMPROOT/automode.out" 2>/dev/null || echo 0)"
+else
+  skip "sh bootstrap ends with the template_verify summary line" "$TS_VENV_REASON" 1
+fi
+
 # --- the PowerShell half, where it can run ---------------------------------
 #
 # The two scripts are independent implementations of the same contract, and the

@@ -226,3 +226,46 @@ Project-owned content goes INSIDE the markers. When both the template and the pr
 | `**Test (frontend)**` | no separate frontend test step runs | no-op |
 
 A new optional key added later must get its own row here (and its own `optional_keys` entry in `templates/ownership.json`) **before** it ships — an undocumented key defaults to the generic `"feature off"` / `"not defined for this key"` pair, which is a placeholder for "nobody decided yet," not a real answer.
+
+## `template_verify`: the consumer consistency check (v4.0.1, item 22)
+
+A read-only, synchronous tool: `template_verify(project_path, template_repo="", mode="post_commit")` → `{ok, mode, summary, lines: [{id, status, measured, expected, remedy}]}`. `template_repo` resolves the same way `template_compute_status` does (an override, else the manifest's own `templateRepo`) — a server installed from a different checkout must never verify against the wrong repo silently. `status` is one of `PASS` / `FAIL` / `SKIP` / `INFO`. `ok` is true only when no line is `FAIL`, and `summary` (`"N PASS, M FAIL, K SKIP, J INFO"`) always prints every count, so a SKIP-heavy green is never mistaken for a real one.
+
+**Scope, stated precisely.** It verifies END STATE — it would have caught the superseded `lastSynced*` pair, the missing manifest keys, the missing trailing newline and the `.gitignore` new-file residue, all as they would have looked the moment the sync finished. It cannot catch a PROCESS defect that leaves no trace once the sync completes correctly — a `get_diff` error, a refused `source="skip"`, a `$0` snippet, the gate artifact's TTL, a leftover remote branch. Those are each closed by their own item; `template_verify` closes the family of "the sync finished, but something about the result is wrong and nobody noticed" defects (constraint 9 in the v4.0.1 spec).
+
+**Only conditions that CAN fail are FAIL lines.** `placeholder_key_divergence` and `orphans` are deliberately absent from `template_verify` — they live in `template_compute_status` as informational fields: `placeholder_key_divergence` is non-empty on every mature consumer and never actionable on its own, and `orphans` are by definition project-owned files the template has no claim on, so listing them as a defect invites deleting something the template never shipped.
+
+**The 21 lines, in order:**
+
+| id | kind | fails when |
+|---|---|---|
+| `manifest_valid` | FAIL | the manifest fails to load or is missing a required field |
+| `manifest_version_3` | FAIL | `manifest_version` is not `3` |
+| `template_commit_known` | FAIL | `template_commit` (or `lastSynced`) is not a commit the template repo knows (`git cat-file -e <sha>^{commit}`) |
+| `template_behind_head` | INFO | never — reports `git describe --tags HEAD` and whether the template-tracked tree (`tracked_paths` in `ownership.json`) differs between the synced commit and HEAD. The template repo advancing past the synced commit is NOT a failure: the checkout moves on every pull, and a correctly synced consumer must not be told its sync failed the moment the toolkit gains a commit |
+| `requires_server` | FAIL | the running server's version does not satisfy the manifest's `requires_server` floor |
+| `no_errors` | FAIL | the template variant directory (`templates/<variant>/`) is missing |
+| `no_warnings` | FAIL | `templates/ownership.json` itself carries a parse/shape warning |
+| `unknown_keys_empty` | FAIL | the manifest carries a top-level key this server does not recognise — remedy: run `/sync-template` on toolkit ≥ 4.0.1; finalize drops the superseded keys |
+| `superseded_absent` | FAIL | any of `lastSynced` / `lastSyncedVersion` / `lastSyncedVersionOf` is still present (`v3.SUPERSEDED_KEYS`) |
+| `server_skew` | FAIL / INFO / SKIP | FAIL when the running server is installed from this template repo (`server_in_template_repo`) AND `server/` differs from the imported commit — either a committed diff (`git diff --quiet <server_commit> HEAD -- server/`) or an uncommitted change (`git status --porcelain -- server/`); a dirty working tree alone is exactly the state a toolkit checkout is in during a release, so the two-commit diff alone is not enough. INFO when `server/` is clean but `server_commit != HEAD` (docs-only or template-only commits since). SKIP when the running server was not installed from this template repo at all |
+| `status_clean` | FAIL | any tracked file is `TEMPLATE_UPDATED`, `LOCAL_EDITED` or `MISSING`, or (defensively) `CONFLICT` |
+| `gate_self_reference_empty` | FAIL | a `**Gate**:`/`**Test**:` value points at a template-class path |
+| `unclassified_empty` | FAIL | a scanned template file matches no `ownership.json` rule |
+| `new_template_files_empty` | FAIL | a template/once-class file the template ships is not yet a manifest entry — remedy names the project → template path mapping (via `template_path_for`) so the register-or-apply call is copy-pasteable |
+| `classes_and_hashes` | FAIL | a manifest entry's shape is wrong (`template`-class without a valid hash, or `once`-class carrying one), or the `IDENTICAL` count does not equal the number of `template`-class entries |
+| `region_markers` | FAIL | a manifest-tracked file's on-disk content carries an unmatched PROJECT-CUSTOM `BEGIN`/`END` marker (`v3.markers_malformed`) |
+| `manifest_bytes` | FAIL | the manifest file's raw bytes carry a BOM, a CRLF, or do not end with exactly one LF |
+| `declared_keys` | FAIL | any audited once-file's `key_audit.missing_declared_keys` (Task 5) is non-empty |
+| `encoding_drift` | INFO | never — lists per-file BOM/CRLF drift between the project copy and the current template |
+| `project_md_seed_current` | INFO | never — reports whether `.claude/rules/project.md` still carries the pre-v4.0.1 seed's false "delivered to nobody" sentence, with the CHANGELOG's downstream-migration remedy when it does |
+| `tree_clean` | FAIL (`post_commit`) / SKIP (`pre_commit`) | `mode="post_commit"`: `git status --porcelain` in the project is non-empty. `mode="pre_commit"`: always SKIPs, with a reason — the sync writes files before committing them by design (SKILL.md step 8 runs before the commit) |
+
+**Modes.** `mode="pre_commit"` is for SKILL.md step 8 (the report, before the commit): an uncommitted, dirty tree is expected there, so `tree_clean` SKIPs rather than FAILing. `mode="post_commit"` (the default) is for step 9b (right after the commit) and for the fleet script: an uncommitted tree at that point is a real defect.
+
+**Three call sites.**
+1. **The sync skill** (`SKILL.md` step 8, then step 9b) — `mode="pre_commit"` before the commit, `mode="post_commit"` after it; any `FAIL` in either call means the sync is not complete.
+2. **`setup-project.sh` / `.ps1`**, as their very last step, when the registered `template-sync-tools` exe exists — a `FAIL` is printed and reported, never fatal to the bootstrap itself.
+3. **`scripts/verify-consumers.sh <dir>…`** — a fleet script for the PO to run across every known consumer checkout (`mode="post_commit"`), printing one summary line per consumer. `unknown_keys_empty` FAILs, by design, on every consumer that has not yet synced on toolkit ≥ 4.0.1 — the remedy text says so, and a fleet run right after a release is meant to read as "who still needs to sync," not as a defect list.
+
+**CLI.** `mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]` prints one line per result (`<STATUS> <id>: <measured>  (expected <expected>)[; remedy]`) then the summary line, and exits `0` iff `ok`. SKIP (with a reason) when git is unavailable at all — a missing template repo, a project that is not a git checkout for `tree_clean`, or a server not installed from the template repo for `server_skew`.

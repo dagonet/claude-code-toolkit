@@ -54,6 +54,7 @@ CAPABILITIES = (
     "superseded_keys",
     "missing_declared_keys",
     "optional_absent_detail",
+    "template_verify",
 )
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"

@@ -1225,4 +1225,18 @@ Write-AutoModeSnippet
 Write-Host ""
 Write-TemplateSyncSnippet
 
+# --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
+# $tsExe/$tsRegister are resolved above, once, before the DryRun/real-run
+# fork. A FAIL line is reported, not fatal -- setup's job is done by this
+# point; the user reads the lines and the remedy text names the fix.
+if ($tsRegister -and $tsExe) {
+    Write-Host ""
+    Write-Host "Verifying the bootstrap:"
+    & $tsExe --verify $TargetDir --template-repo $PSScriptRoot
+    $verifyRc = $LASTEXITCODE
+    if ($verifyRc -ne 0) {
+        Write-Host "  (verify reported FAIL line(s) above -- not fatal to setup; each remedy names the fix)"
+    }
+}
+
 Write-Host ""
