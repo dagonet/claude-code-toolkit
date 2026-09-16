@@ -43,6 +43,7 @@ EXPECTED = {
     "skill_version_floor",
     "region_bytes_raw",
     "new_template_files_detail",
+    "superseded_keys",
 }
 
 
@@ -170,6 +171,33 @@ def _witness_new_template_files_detail(tmp_path) -> bool:
             and res["new_template_files_detail"] == [{"path": ".gitignore", "template_path": "gitignore"}])
 
 
+def _witness_superseded_keys(tmp_path) -> bool:
+    """finalize_v3 drops the v2-era lastSynced*/lastSyncedVersion*/
+    lastSyncedVersionOf trio unconditionally (v4.0.1, item 8). The witness
+    is a real finalize on a manifest carrying the agreeing-values form the
+    consumers carry today, not `hasattr`.
+    """
+    repo = tmp_path / "tk"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "CLAUDE.md", "ownership": "template"}],
+    }), encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    manifest = {
+        "manifest_version": 3, "template_version": "v3.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.2", "files": {},
+        "lastSyncedVersion": "v4.0.0", "lastSyncedVersionOf": "0000000",
+    }
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    return (res.get("superseded_keys_dropped") == ["lastSyncedVersion", "lastSyncedVersionOf"]
+            and "lastSyncedVersion" not in out and "lastSyncedVersionOf" not in out)
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -179,6 +207,7 @@ WITNESSES = {
     "skill_version_floor": _witness_skill_version_floor,
     "region_bytes_raw": _witness_region_bytes_raw,
     "new_template_files_detail": _witness_new_template_files_detail,
+    "superseded_keys": _witness_superseded_keys,
 }
 
 

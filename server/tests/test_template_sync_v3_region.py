@@ -375,8 +375,14 @@ def test_migration_leaves_the_region_in_claude_md_and_reports_it(tmp_path):
     assert "MY HARD RULE: never force-push main." not in pmd, "region must not be duplicated"
     assert res["region_left_in_place"] is True
     assert res["region_bytes"] > 0
-    # Out-of-region edits are still what an apply would discard, so they stay reported.
-    assert "MY OUT OF REGION EDIT" in pmd
+    # v4.0.1 item 14: out-of-region edits are still what an apply would
+    # discard, so they stay reported -- but NOT inside project.md, which has
+    # no `paths:` key and loads at every session start. They surface in
+    # `out_of_region_diff` (and, on a real write, get recorded under
+    # backup_dir as CLAUDE.md.out-of-region.diff -- dry_run writes nothing).
+    assert "MY OUT OF REGION EDIT" not in pmd
+    assert "MY OUT OF REGION EDIT" in res["out_of_region_diff"]
+    assert res["project_md_record"] is None   # dry_run: nothing written
     assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == project_claude
 
 
