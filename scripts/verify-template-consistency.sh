@@ -3501,46 +3501,89 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 47 -- skill bodies carry no positional tokens (v4.0.1). The Skill tool
-# substitutes $0-$9 / ${N} / $ARGUMENTS textually across the whole body before
-# any shell snippet runs; a skill invoked with an argument has those tokens
-# replaced in-place, corrupting every shell snippet that used them as
-# variables. $0-$9 / ${N} have no legitimate use in ANY skill body (a shell
-# snippet needing a positional-looking name should use a NAMED variable
-# instead) and are banned unconditionally. $ARGUMENTS is different: it is the
-# documented substitution point for a skill that declares `argument-hint` in
-# its own frontmatter (challenge, retro-review, sprint all do, and reference
-# $ARGUMENTS only in prose, never inside a shell snippet) -- banning it there
-# too would make this check permanently red on working, by-design skills. So
-# $ARGUMENTS is checked only for a skill that does NOT declare argument-hint,
-# where it has no reason to appear at all. Two-sided: 47c plants a $1 in a
-# throwaway string and asserts the same pattern catches it, so a pattern that
-# stopped matching would go red here instead of silently passing check 47
-# vacuously; the argument-hint exemption itself is exercised live by every
-# shipped skill that declares it (real fixture, not a synthetic one).
+# Check 47 -- skill bodies carry no positional tokens (v4.0.1; tightened
+# v4.0.1 fix round 1). The Skill tool substitutes $0-$9 / ${N} / $ARGUMENTS
+# textually across the whole body before any shell snippet runs -- textually
+# meaning inside a fenced shell snippet too, so a skill invoked with an
+# argument has any of these tokens replaced in-place with raw, unescaped
+# user text. Inside a fence that is worse than mangling: a shape like
+# `grep -r "$ARGUMENTS" .` becomes a shell-injection point, not just a
+# broken command (reviewer-planted case, fix round 1 -- the argument-hint
+# exemption below used to be unconditional and let this through).
+#
+# $0-$9 / ${N} have no legitimate use in ANY skill body, prose or fence (a
+# shell snippet needing a positional-looking name should use a NAMED
+# variable instead), and are banned unconditionally everywhere.
+#
+# $ARGUMENTS is different: it is the documented substitution point for a
+# skill that declares `argument-hint` in its own frontmatter (challenge,
+# retro-review, sprint all do). In PROSE that is exactly the intended use,
+# so banning it unconditionally would make this check permanently red on
+# working, by-design skills. INSIDE a fenced code block it is the
+# shell-injection shape above, so it is banned there even when
+# argument-hint is declared. A skill that does NOT declare argument-hint has
+# no legitimate use for $ARGUMENTS anywhere, fence or prose.
+#
+# The scan lives in one function, c47_scan, so 47c can exercise the SAME
+# code the real check runs rather than a parallel literal -- the fix-round-1
+# finding was that the prior 47c probed a pattern that appeared nowhere in
+# check 47 itself, so it stayed green even when check 47's own greps broke.
+# 47c now builds a throwaway skills tree and asserts c47_scan flags both a
+# bare $1 and a fenced $ARGUMENTS under a declared argument-hint, and does
+# NOT flag the same $ARGUMENTS used in prose right next to it -- exercising
+# the loop, the glob, and both branches of the condition.
 # ---------------------------------------------------------------------------
-note "Check 47: skill bodies carry no positional tokens (the Skill tool substitutes \$0-\$9 / \${N} textually; \$ARGUMENTS is checked only where argument-hint is not declared)"
-c47_hits=""
-for c47_f in user-level-reference/skills/*/SKILL.md; do
-  [ -f "$c47_f" ] || continue
-  c47_h1=$(grep -nE '\$[0-9]|\$\{[0-9]\}' "$c47_f" 2>/dev/null)
-  [ -n "$c47_h1" ] && c47_hits="$c47_hits
-$c47_h1"
-  if ! grep -qE '^argument-hint:' "$c47_f" 2>/dev/null; then
-    c47_h2=$(grep -n '\$ARGUMENTS' "$c47_f" 2>/dev/null)
-    [ -n "$c47_h2" ] && c47_hits="$c47_hits
-$c47_h2"
-  fi
-done
-c47_hits=$(printf '%s' "$c47_hits" | sed '/^$/d')
+c47_scan() {   # <skills-root-dir> -> "path:line:content" hits, one per line, empty when clean
+  c47_dir="$1"
+  c47_out=""
+  while IFS= read -r c47_f; do
+    [ -f "$c47_f" ] || continue
+    c47_h=$(grep -HnE '\$[0-9]|\$\{[0-9]\}' "$c47_f" 2>/dev/null)
+    [ -n "$c47_h" ] && c47_out="$c47_out
+$c47_h"
+    if grep -qE '^argument-hint:' "$c47_f" 2>/dev/null; then
+      # argument-hint declared: $ARGUMENTS is the documented placeholder in
+      # PROSE (allowed); banned only INSIDE a fenced code block (``` ... ```).
+      c47_h=$(awk -v fn="$c47_f" '
+        /^```/ { infence = !infence; next }
+        infence && /\$ARGUMENTS/ { print fn ":" NR ":" $0 }
+      ' "$c47_f")
+    else
+      # no argument-hint declared: $ARGUMENTS has no legitimate use anywhere.
+      c47_h=$(grep -HnF '$ARGUMENTS' "$c47_f" 2>/dev/null)
+    fi
+    [ -n "$c47_h" ] && c47_out="$c47_out
+$c47_h"
+  done <<EOF
+$(find "$c47_dir" -type f -name 'SKILL.md' 2>/dev/null)
+EOF
+  printf '%s\n' "$c47_out" | sed '/^$/d'
+}
+
+note "Check 47: skill bodies carry no positional tokens (\$0-\$9/\${N} always; \$ARGUMENTS inside a fence, or anywhere without argument-hint)"
+c47_hits=$(c47_scan "user-level-reference/skills")
 if [ -n "$c47_hits" ]; then
   ko "check 47: positional token(s) in a skill body -- any argument corrupts the shell snippets: $(printf '%s' "$c47_hits" | head -5 | tr '\n' ';')"
 else
-  ok "check 47: no \$0-\$9 / \${N} in any skill body, and no \$ARGUMENTS in a skill that does not declare argument-hint"
+  ok "check 47: no \$0-\$9/\${N} in any skill body; no \$ARGUMENTS in a fence, or anywhere in a skill without argument-hint"
 fi
-# 47c control: the pattern must detect a planted token (two-sided).
-c47_probe=$(printf 'x "$1" y\n' | grep -cE '\$[0-9]|\$\{[0-9]\}|\$ARGUMENTS')
-[ "$c47_probe" -eq 1 ] && ok "check 47c: control -- the pattern detects a planted \$1" || ko "check 47c: control -- the pattern did not detect a planted \$1"
+
+# 47c control: exercises c47_scan itself, not a parallel probe (fix round 1).
+c47_scratch="${TMPDIR:-/tmp}/c47-control-$$"
+rm -rf "$c47_scratch"
+mkdir -p "$c47_scratch/plain-skill" "$c47_scratch/argword-skill"
+printf -- '---\nname: plain-skill\n---\nbody with a stray positional: "$1"\n' > "$c47_scratch/plain-skill/SKILL.md"
+printf -- '---\nname: argword-skill\nargument-hint: "[x]"\n---\nProse use is fine: $ARGUMENTS\n\n```sh\necho "$ARGUMENTS"\n```\n' > "$c47_scratch/argword-skill/SKILL.md"
+c47_probe=$(c47_scan "$c47_scratch")
+c47_probe_n=$(printf '%s\n' "$c47_probe" | sed '/^$/d' | wc -l | tr -d ' ')
+if printf '%s' "$c47_probe" | grep -qF "plain-skill/SKILL.md" \
+   && printf '%s' "$c47_probe" | grep -qF "argword-skill/SKILL.md" \
+   && [ "$c47_probe_n" -eq 2 ]; then
+  ok "check 47c: control -- c47_scan flags the planted \$1 (plain-skill) and the fenced \$ARGUMENTS under argument-hint (argword-skill), and nothing else -- $c47_probe_n hit(s), prose \$ARGUMENTS correctly unflagged"
+else
+  ko "check 47c: control -- c47_scan did not flag exactly the two planted cases (bare \$1; fenced \$ARGUMENTS under argument-hint) -- got $c47_probe_n hit(s): $(printf '%s' "$c47_probe" | tr '\n' ';')"
+fi
+rm -rf "$c47_scratch"
 
 # ---------------------------------------------------------------------------
 echo
