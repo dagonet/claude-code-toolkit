@@ -3524,14 +3524,21 @@ fi
 # argument-hint is declared. A skill that does NOT declare argument-hint has
 # no legitimate use for $ARGUMENTS anywhere, fence or prose.
 #
+# The fence toggle matches an INDENTED fence too (a fence opened under a
+# list item, e.g. "   ```sh"), not just one starting at column 0 -- an
+# anchor of bare /^```/ never toggles on an indented fence, so content
+# inside it reads as prose and a fenced $ARGUMENTS there passes uncaught
+# (fix round 2; the shipped sync-template SKILL.md has 4 such fences today).
+#
 # The scan lives in one function, c47_scan, so 47c can exercise the SAME
 # code the real check runs rather than a parallel literal -- the fix-round-1
 # finding was that the prior 47c probed a pattern that appeared nowhere in
 # check 47 itself, so it stayed green even when check 47's own greps broke.
-# 47c now builds a throwaway skills tree and asserts c47_scan flags both a
-# bare $1 and a fenced $ARGUMENTS under a declared argument-hint, and does
-# NOT flag the same $ARGUMENTS used in prose right next to it -- exercising
-# the loop, the glob, and both branches of the condition.
+# 47c now builds a throwaway skills tree and asserts c47_scan flags a bare
+# $1, a fenced $ARGUMENTS under a declared argument-hint, and the SAME thing
+# inside an INDENTED fence (fix round 2) -- and does NOT flag the same
+# $ARGUMENTS used in prose right next to it -- exercising the loop, the
+# glob, and every branch of the condition.
 # ---------------------------------------------------------------------------
 c47_scan() {   # <skills-root-dir> -> "path:line:content" hits, one per line, empty when clean
   c47_dir="$1"
@@ -3543,9 +3550,10 @@ c47_scan() {   # <skills-root-dir> -> "path:line:content" hits, one per line, em
 $c47_h"
     if grep -qE '^argument-hint:' "$c47_f" 2>/dev/null; then
       # argument-hint declared: $ARGUMENTS is the documented placeholder in
-      # PROSE (allowed); banned only INSIDE a fenced code block (``` ... ```).
+      # PROSE (allowed); banned only INSIDE a fenced code block (``` ... ```),
+      # indented or not (a fence opened under a list item still counts).
       c47_h=$(awk -v fn="$c47_f" '
-        /^```/ { infence = !infence; next }
+        /^[[:space:]]*```/ { infence = !infence; next }
         infence && /\$ARGUMENTS/ { print fn ":" NR ":" $0 }
       ' "$c47_f")
     else
@@ -3571,17 +3579,21 @@ fi
 # 47c control: exercises c47_scan itself, not a parallel probe (fix round 1).
 c47_scratch="${TMPDIR:-/tmp}/c47-control-$$"
 rm -rf "$c47_scratch"
-mkdir -p "$c47_scratch/plain-skill" "$c47_scratch/argword-skill"
+mkdir -p "$c47_scratch/plain-skill" "$c47_scratch/argword-skill" "$c47_scratch/indented-fence-skill"
 printf -- '---\nname: plain-skill\n---\nbody with a stray positional: "$1"\n' > "$c47_scratch/plain-skill/SKILL.md"
 printf -- '---\nname: argword-skill\nargument-hint: "[x]"\n---\nProse use is fine: $ARGUMENTS\n\n```sh\necho "$ARGUMENTS"\n```\n' > "$c47_scratch/argword-skill/SKILL.md"
+# fix round 2 (F7): an INDENTED fence (opened under a list item) must toggle
+# the same as a column-0 one, so $ARGUMENTS inside it is still caught.
+printf -- '---\nname: indented-fence-skill\nargument-hint: "[x]"\n---\n1. a step\n   ```sh\n   echo "$ARGUMENTS"\n   ```\n' > "$c47_scratch/indented-fence-skill/SKILL.md"
 c47_probe=$(c47_scan "$c47_scratch")
 c47_probe_n=$(printf '%s\n' "$c47_probe" | sed '/^$/d' | wc -l | tr -d ' ')
 if printf '%s' "$c47_probe" | grep -qF "plain-skill/SKILL.md" \
    && printf '%s' "$c47_probe" | grep -qF "argword-skill/SKILL.md" \
-   && [ "$c47_probe_n" -eq 2 ]; then
-  ok "check 47c: control -- c47_scan flags the planted \$1 (plain-skill) and the fenced \$ARGUMENTS under argument-hint (argword-skill), and nothing else -- $c47_probe_n hit(s), prose \$ARGUMENTS correctly unflagged"
+   && printf '%s' "$c47_probe" | grep -qF "indented-fence-skill/SKILL.md" \
+   && [ "$c47_probe_n" -eq 3 ]; then
+  ok "check 47c: control -- c47_scan flags the planted \$1 (plain-skill), the fenced \$ARGUMENTS under argument-hint (argword-skill), and the INDENTED-fenced \$ARGUMENTS (indented-fence-skill), and nothing else -- $c47_probe_n hit(s), prose \$ARGUMENTS correctly unflagged"
 else
-  ko "check 47c: control -- c47_scan did not flag exactly the two planted cases (bare \$1; fenced \$ARGUMENTS under argument-hint) -- got $c47_probe_n hit(s): $(printf '%s' "$c47_probe" | tr '\n' ';')"
+  ko "check 47c: control -- c47_scan did not flag exactly the three planted cases (bare \$1; fenced \$ARGUMENTS under argument-hint; indented-fenced \$ARGUMENTS) -- got $c47_probe_n hit(s): $(printf '%s' "$c47_probe" | tr '\n' ';')"
 fi
 rm -rf "$c47_scratch"
 
