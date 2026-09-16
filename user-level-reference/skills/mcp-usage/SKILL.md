@@ -7,7 +7,7 @@ description: Occasional MCP procedures — use when digesting a large input, ext
 
 Procedures that used to live inline in every project's `CLAUDE.local.md`. They are needed occasionally, not on every turn, so they load on demand.
 
-`CLAUDE.local.md` keeps only what binds every turn: which servers are registered, the git/GitHub MCP-only requirement, Open Brain, trust/verification, and failure handling.
+That always-on half — which servers are registered, the git/GitHub MCP-only requirement, Open Brain, trust/verification, and failure handling — lived in `CLAUDE.local.md` for a project bootstrapped before v4.0.1. The template no longer ships that file; for a newer project the always-on channel is `CLAUDE.md`'s PROJECT-CUSTOM region.
 
 ## Ollama availability & warm-up
 

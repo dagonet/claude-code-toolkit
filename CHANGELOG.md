@@ -32,7 +32,7 @@
 - Replace the header of `.claude/rules/project.md` with the v4.0.1 seed (or add a `paths:` block).
 - **Nothing about hook BEHAVIOUR changes in this release.** `**Test**: none` already meant "not declared, Gate fallback" as of v3.0.3 (before that: run as a shell command, blocking every commit) — this release only corrects two stale `PROJECT_CONTEXT.md` comment blocks that still described the pre-v3.0.3 behaviour, and adds `optional_absent_detail`/`missing_declared_keys` so the skill can report the (unchanged) per-key semantics without re-deriving them. A consumer syncing v4.0.1 sees new manifest/status fields, not a functional change to any hook.
 - Pass a Windows path (`G:\...`) or a repo-relative path to any `template_*` write tool — an MSYS path (`/g/...`) is now refused outright rather than silently mis-resolved.
-- `CLAUDE.local.md` is no longer offered by the template; your copy stays and is never touched by a sync; `unclassified_template_files` is expected empty from now on.
+- `CLAUDE.local.md` is no longer offered by the template; your copy stays and is never touched by a sync; `unclassified_template_files` is expected empty from now on. A project bootstrapped fresh under v4.0.1 or later never receives the always-on MCP/session-start guidance that used to ship inline in `CLAUDE.local.md` (registered-server list, git/GitHub MCP-only requirement, Open Brain session-start mandate, trust/verification, failure handling) — `CLAUDE.md`'s PROJECT-CUSTOM region is the place for that content now.
 
 ## v4.0.0 — 2026-09-14
 
