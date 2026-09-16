@@ -55,9 +55,15 @@ TOOL_RE = re.compile(
 # alias it answers to -- e.g. `mcp = FastMCP("github-tools")`.
 FASTMCP_RE = re.compile(r"""FastMCP\(\s*["']([^"']+)["']""")
 
-# A module can spread its tools across sibling files, aggregated into the
-# main module via a relative import (`from .x import ...`).
-SIBLING_IMPORT_RE = re.compile(r"^from[ \t]+\.(\w+)[ \t]+import\b", re.MULTILINE)
+# The static scanner only reads the ONE module file named by FastMCP(<alias>)
+# -- it does not follow imports. A module that aggregates tools from a
+# sibling file via a relative import (`from .x import ...`) would silently
+# under-report, so that shape is detected and refused rather than guessed at
+# (fix round 1, F2: no module in mcp-dev-servers does this today -- zero
+# matches across all six -- so there is nothing to verify a sibling-follow
+# against; asserting flatness and refusing is safer than exercising untested
+# code on the day it finally matters).
+MULTI_MODULE_IMPORT_RE = re.compile(r"^from[ \t]+\.\w+[ \t]+import\b", re.MULTILINE)
 
 SELF_TEST_SAMPLE = '''\
 from fastmcp import FastMCP
@@ -80,6 +86,28 @@ def static_scan(text: str) -> List[str]:
     return [m.group(1) for m in TOOL_RE.finditer(text)]
 
 
+def assert_no_dunder(names: List[str], context: str) -> None:
+    """Fail loudly (rc 1) if any exported tool name contains a literal
+    double underscore. Every downstream consumer of a census -- most
+    concretely, check 50's `awk -F'__'` split of a `mcp__<alias>__<tool>`
+    token in verify-template-consistency.sh -- assumes the alias and the
+    tool name never contain "__" themselves, only the separators between
+    "mcp", the alias and the tool. A tool name that broke that assumption
+    would silently corrupt the split rather than raise anywhere, so it is
+    checked here, at the one place that sees every tool name mcp-dev-servers
+    exports, and refused outright rather than passed on to be misread.
+    """
+    bad = sorted(n for n in names if "__" in n)
+    if bad:
+        print(
+            f"FATAL: {context} exports tool name(s) containing '__' "
+            f"(double underscore), which breaks the mcp__<alias>__<tool> "
+            f"token split every downstream reader assumes: {bad!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def find_module_for_alias(source_dir: Path, alias: str) -> Optional[str]:
     """The module (file stem) under <source_dir>/src/mcp_dev_servers whose
     FastMCP instance is named `alias`, or None if no module declares it.
@@ -98,18 +126,20 @@ def find_module_for_alias(source_dir: Path, alias: str) -> Optional[str]:
     return None
 
 
-def static_census(source_dir: Path, module: str) -> List[str]:
-    """Static census for `module`, plus any sibling module it aggregates
-    via `from .x import ...`.
+def static_census(source_dir: Path, module: str) -> Tuple[List[str], Optional[str]]:
+    """Static census for `module`. Returns (names, None) normally, or
+    ([], skip_reason) when the module cannot be safely censused -- today
+    that is only a module shaped like a multi-file aggregator (see
+    MULTI_MODULE_IMPORT_RE): the static scanner reads exactly one file, so
+    scanning it alone would silently under-report rather than merely skip.
     """
     pkg_dir = source_dir / "src" / "mcp_dev_servers"
     main_text = (pkg_dir / f"{module}.py").read_text(encoding="utf-8")
-    names = set(static_scan(main_text))
-    for sibling in SIBLING_IMPORT_RE.findall(main_text):
-        sib_path = pkg_dir / f"{sibling}.py"
-        if sib_path.is_file():
-            names.update(static_scan(sib_path.read_text(encoding="utf-8")))
-    return sorted(names)
+    if MULTI_MODULE_IMPORT_RE.search(main_text):
+        return [], "multi-module server not supported"
+    names = sorted(set(static_scan(main_text)))
+    assert_no_dunder(names, f"{module} static census")
+    return names, None
 
 
 def venv_python(source_dir: Path) -> Optional[Path]:
@@ -161,9 +191,11 @@ def import_census(
         )
         return None, f"import failed: {first_line}"
     try:
-        return json.loads(proc.stdout), None
+        names = json.loads(proc.stdout)
     except ValueError:
         return None, "import failed: unparseable output"
+    assert_no_dunder(names, f"{module} import census")
+    return names, None
 
 
 def run_self_test() -> int:
@@ -214,7 +246,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(result))
         return 0
     result["module"] = module
-    result["static"] = static_census(source_dir, module)
+    static_names, static_skip = static_census(source_dir, module)
+    result["static"] = static_names
+    if static_skip:
+        result["skip_reason"] = static_skip
+        print(json.dumps(result))
+        return 0
 
     if not is_registered(registration_path, alias):
         result["skip_reason"] = "unregistered"

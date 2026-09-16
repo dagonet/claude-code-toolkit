@@ -3725,11 +3725,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 50 -- item 23. Every mcp__<alias>__<tool> token in an agent's
-# `tools:` line must name a tool that alias's OWN MCP server actually
-# exports today. A tool renamed or removed in mcp-dev-servers silently
-# turns the allowlist entry into a dead token (measured: 87 of 87
-# dotnet-tools calls once failed this way).
+# Check 50 -- item 23. Every mcp__<alias>__<tool> token named EXPLICITLY in
+# an agent's `tools:` line, OR in templates/*/.claude/settings.json /
+# user-level-reference/settings.json (permissions allow/deny and hook
+# matchers -- fix round 1, F1), must name a tool that alias's OWN MCP
+# server actually exports today. A tool renamed or removed in
+# mcp-dev-servers silently turns the allowlist entry into a dead token
+# (measured: 87 of 87 dotnet-tools calls once failed this way), and a
+# settings.json entry is the ENFORCEMENT layer -- a stale name there
+# silently DENIES a tool or disarms a gate hook's matcher, which is at
+# least as real a defect as a dead allowlist entry. A wildcard grant
+# (`mcp__<alias>__*`) has no name to go stale, so it is not a token.
 #
 # Two independent censuses, via scripts/lib/list-mcp-tools.py (system
 # `python`, never server/.venv): a STATIC scan of the source tree, and an
@@ -3753,13 +3759,19 @@ C50_LIB="${MCP_TOOLS_LIB:-scripts/lib/list-mcp-tools.py}"
 C50_FAMILY="git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools"
 C50_REGISTRATION="${MCP_TOOLS_REGISTRATION:-$HOME/.claude.json}"
 
-# c50_decide <json> <csv-tokens> -- prints 7 lines: status(ko|skip|ok),
+# c50_decide <json> <csv-tokens> -- prints 8 lines: status(ko|skip|ok),
 # module, comma-missing, comma-disagreement, skip_reason, static_n,
-# imported_n(-1 if null). Single source of the comparison logic, shared by
-# the real check below and the 50c control, so both exercise the SAME
-# decision, not two independently-written greps (the 47c/48c lesson).
+# imported_n(-1 if null), comma-static-names. Single source of the
+# comparison logic, shared by the real check below and the 50c control, so
+# both exercise the SAME decision, not two independently-written greps
+# (the 47c/48c lesson).
 c50_decide() {
-  python - "$1" "$2" <<'C50_DECIDE_PY'
+  # tr -d '\r': system `python` on this platform writes CRLF even to a
+  # pipe: a stray \r survives into the captured variable and into any
+  # comparison that isn't routed through `sed` (which happens to strip it)
+  # -- found via check 50d, whose direct string equality failed against a
+  # visually-identical value for exactly this reason (fix round 1).
+  python - "$1" "$2" <<'C50_DECIDE_PY' | tr -d '\r'
 import json, sys
 d = json.loads(sys.argv[1])
 tokens = [t for t in sys.argv[2].split(",") if t]
@@ -3785,7 +3797,41 @@ print(",".join(disagreement) if disagreement else "")
 print(skip_reason or "")
 print(len(static))
 print(len(imported) if imported is not None else -1)
+print(",".join(sorted(static)))
 C50_DECIDE_PY
+}
+
+# c50_parse_settings <settings.json path>... -- prints one "KIND<TAB>token"
+# line per explicit mcp__<alias>__<tool> name found in each file's
+# permissions.allow, permissions.deny, or any hooks.*[].matcher (KIND is
+# ALLOW, DENY or MATCHER; a wildcard grant like mcp__<alias>__* has no
+# name and prints nothing). Single source of the settings.json parsing
+# logic, shared by the real check below and the 50d control (fix round 1),
+# so both exercise the SAME split, not two independently-written parsers.
+c50_parse_settings() {
+  python - "$@" <<'C50_SETTINGS_PY' | tr -d '\r'
+import json, re, sys
+TOKEN_RE = re.compile(r'^mcp__[A-Za-z0-9_-]+__[a-z0-9_]+$')
+for path in sys.argv[1:]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        continue
+    perms = data.get("permissions", {}) or {}
+    for t in perms.get("allow", []) or []:
+        if TOKEN_RE.match(t):
+            print(f"ALLOW\t{t}")
+    for t in perms.get("deny", []) or []:
+        if TOKEN_RE.match(t):
+            print(f"DENY\t{t}")
+    for phase in (data.get("hooks", {}) or {}).values():
+        for group in phase or []:
+            matcher = (group or {}).get("matcher", "") or ""
+            for part in matcher.split("|"):
+                if TOKEN_RE.match(part):
+                    print(f"MATCHER\t{part}")
+C50_SETTINGS_PY
 }
 
 c50_source_dir="${MCP_DEV_SERVERS_DIR:-}"
@@ -3807,7 +3853,8 @@ for alias in family:
             print(norm[:idx])
             sys.exit(0)
 C50_DERIVE_PY
-)
+    )
+  c50_source_dir=$(printf '%s' "$c50_source_dir" | tr -d '\r')
 fi
 
 if ! command -v python >/dev/null 2>&1; then
@@ -3817,8 +3864,28 @@ elif [ -z "$c50_source_dir" ]; then
 elif [ ! -d "$c50_source_dir" ]; then
   ok "check 50: SKIP -- MCP_DEV_SERVERS_DIR='$c50_source_dir' is not a directory; check 50 did not run (0 assertions)"
 else
-  c50_all_tokens=$(grep -h '^tools:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null \
-    | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+' | sort -u)
+  # Token sources: agent `tools:` lines, AND
+  # templates/*/.claude/settings.json + user-level-reference/settings.json
+  # (fix round 1, F1). settings.json is parsed by KEY, not by a blind
+  # regex over the file, because the two arrays it can name a token in do
+  # not fail the same way: an ALLOW entry or a hook `matcher` naming a
+  # nonexistent tool is a dead grant / a disarmed gate -- ko-eligible,
+  # exactly like a `tools:` line. A DENY entry naming a nonexistent tool
+  # denies nothing TODAY but can be a deliberate standing block against a
+  # name mcp-dev-servers might add later; it is reported, never ko'd,
+  # UNLESS that same name also grants somewhere (tools:/allow/matcher), in
+  # which case the grant side already covers it. (Fix round 1 review:
+  # rewriting templates/*/settings.json content is out of this task's
+  # scope -- that tree is read-only here.) Either array's tool-name class
+  # ([a-z0-9_]+, no `*`) already excludes a wildcard grant
+  # (`mcp__<alias>__*`) on its own -- nothing to go stale about a name
+  # that isn't there.
+  c50_agent_tokens=$(grep -h '^tools:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null \
+    | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+')
+  c50_settings_parsed=$(c50_parse_settings templates/*/.claude/settings.json user-level-reference/settings.json)
+  c50_settings_grant_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="ALLOW"||$1=="MATCHER"{print $2}' | sed '/^$/d' | sort -u)
+  c50_settings_deny_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="DENY"{print $2}' | sed '/^$/d' | sort -u)
+  c50_all_tokens=$(printf '%s\n%s\n' "$c50_agent_tokens" "$c50_settings_grant_tokens" | sed '/^$/d' | sort -u)
 
   c50_skipped=0
   c50_total=0
@@ -3827,6 +3894,7 @@ else
     c50_tokens_csv=$(printf '%s\n' "$c50_all_tokens" | awk -F'__' -v a="$c50_alias" '$2==a {print $3}' | tr '\n' ',')
     c50_json=$(python "$C50_LIB" --source-dir "$c50_source_dir" --registration "$C50_REGISTRATION" --alias "$c50_alias" 2>&1)
     c50_json_rc=$?
+    c50_json=$(printf '%s' "$c50_json" | tr -d '\r')
     if [ "$c50_json_rc" -ne 0 ]; then
       ko "check 50: $c50_alias: list-mcp-tools.py failed (rc=$c50_json_rc): $c50_json"
       continue
@@ -3838,6 +3906,7 @@ else
     c50_disagree=$(printf '%s\n' "$c50_out" | sed -n '4p')
     c50_skip_reason=$(printf '%s\n' "$c50_out" | sed -n '5p')
     c50_static_n=$(printf '%s\n' "$c50_out" | sed -n '6p')
+    c50_static_csv=$(printf '%s\n' "$c50_out" | sed -n '8p')
 
     [ -n "$c50_skip_reason" ] && c50_skipped=$((c50_skipped + 1))
 
@@ -3861,6 +3930,23 @@ else
         ko "check 50: $c50_alias: c50_decide returned no status (census output unparseable): $c50_json"
         ;;
     esac
+
+    # Deny-only names for this alias (see the token-source comment above):
+    # informational when absent from the static census, silent when
+    # present (a deny naming a real tool is unremarkable).
+    c50_deny_alias_csv=$(printf '%s\n' "$c50_settings_deny_tokens" | awk -F'__' -v a="$c50_alias" '$2==a {print $3}' | sed '/^$/d' | sort -u)
+    if [ -n "$c50_deny_alias_csv" ]; then
+      c50_deny_absent=$(printf '%s\n' "$c50_deny_alias_csv" | while IFS= read -r c50_t; do
+        [ -n "$c50_t" ] || continue
+        case ",$c50_static_csv," in
+          *",$c50_t,"*) ;;
+          *) printf '%s\n' "$c50_t" ;;
+        esac
+      done | tr '\n' ',' | sed 's/,$//')
+      if [ -n "$c50_deny_absent" ]; then
+        ok "check 50: $c50_alias: deny-only entries naming no current tool ($c50_deny_absent) -- deny nothing today, not a dead grant"
+      fi
+    fi
   done
   ok "check 50: $c50_skipped of $c50_total import censuses skipped"
 
@@ -3892,6 +3978,7 @@ else
     sed 's/\bgh_repo_from_origin\b/gh_repo_from_origin_renamed/' "$c50c_src" > "$C50C_TMP/src/mcp_dev_servers/github_mcp.py"
     printf '{"mcpServers":{}}' > "$C50C_TMP/registration.json"
     c50c_json=$(python "$C50_LIB" --source-dir "$C50C_TMP" --registration "$C50C_TMP/registration.json" --alias github-tools 2>&1)
+    c50c_json=$(printf '%s' "$c50c_json" | tr -d '\r')
     c50c_out=$(c50_decide "$c50c_json" "gh_repo_from_origin")
     c50c_status=$(printf '%s\n' "$c50c_out" | sed -n '1p')
     c50c_missing=$(printf '%s\n' "$c50c_out" | sed -n '3p')
@@ -3901,6 +3988,36 @@ else
     else
       ko "check 50c: control -- renamed gh_repo_from_origin NOT flagged (status=$c50c_status, missing=$c50c_missing): check 50 is vacuous"
     fi
+  fi
+
+  # 50d control (fix round 1, F1 review): a scratch settings.json fixture
+  # with one name in EACH of allow/deny/a hook matcher, plus one wildcard,
+  # run through the SAME c50_parse_settings function the real extraction
+  # above uses -- proves the ALLOW/DENY/MATCHER split (and the wildcard
+  # exclusion) is real, not merely true of today's tree happening to have
+  # only git-tools denies.
+  note "Check 50d: control -- settings.json allow/deny/matcher split is real"
+  C50D_TMP=$(mktemp 2>/dev/null || mktemp -t c50d)
+  cat > "$C50D_TMP" <<'C50D_FIXTURE'
+{
+  "permissions": {
+    "allow": ["mcp__fixture-tools__allowed_one", "mcp__fixture-tools__*"],
+    "deny": ["mcp__fixture-tools__denied_one"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "mcp__fixture-tools__matcher_one|Bash", "hooks": []}
+    ]
+  }
+}
+C50D_FIXTURE
+  c50d_actual=$(c50_parse_settings "$C50D_TMP" | sort)
+  rm -f "$C50D_TMP"
+  c50d_expected=$(printf 'ALLOW\tmcp__fixture-tools__allowed_one\nDENY\tmcp__fixture-tools__denied_one\nMATCHER\tmcp__fixture-tools__matcher_one' | sort)
+  if [ "$c50d_actual" = "$c50d_expected" ]; then
+    ok "check 50d: control -- allow/deny/matcher split correctly on a fixture; wildcard (mcp__fixture-tools__*) excluded"
+  else
+    ko "check 50d: control -- settings.json parser mismatch: expected [$(printf '%s' "$c50d_expected" | tr '\n' ';')] got [$(printf '%s' "$c50d_actual" | tr '\n' ';')]: check 50's settings.json source is unverified"
   fi
 fi
 
