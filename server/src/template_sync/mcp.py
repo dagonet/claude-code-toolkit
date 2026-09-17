@@ -441,7 +441,6 @@ def template_path_for(rel_path: str, manifest: dict | None = None) -> str:
     if manifest is not None:
         template_repo = manifest.get("templateRepo")
         if template_repo:
-            from . import v3
             rules = v3.load_ownership(template_repo)
             if rules is not None:
                 mapped = rules.template_path_for(norm)
@@ -816,6 +815,12 @@ def _three_way_merge(base: str, theirs: str, ours: str, file_path: str = "") -> 
     }
 
 
+def _registered_tool_names() -> list[str]:
+    """The names this process can DISPATCH -- fixed at import, unlike the
+    lazily importable module tree. Read from the FastMCP tool manager."""
+    return sorted(t.name for t in mcp._tool_manager.list_tools())
+
+
 # -------------------------
 # MCP Tools
 # -------------------------
@@ -839,22 +844,20 @@ async def template_load_manifest(project_path: str) -> str:
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
     if manifest is None:
-        from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": False,
-                           "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
+                           "capabilities": list(v3.CAPABILITIES),
+                           "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
     if errors:
-        from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
-                           "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
-
-    from . import v3
+                           "capabilities": list(v3.CAPABILITIES),
+                           "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
     warnings = []
     template_dir = _get_template_dir(manifest)
@@ -884,6 +887,7 @@ async def template_load_manifest(project_path: str) -> str:
             "server_source": _server_source(),
             "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
             "capabilities": list(v3.CAPABILITIES),
+            "registered_tools": _registered_tool_names(),
             "migration_required": False,
             "variant": manifest.get("variant", ""),
             "templateRepo": manifest.get("templateRepo", ""),
@@ -937,6 +941,7 @@ async def template_load_manifest(project_path: str) -> str:
         "server_source": _server_source(),
         "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
         "capabilities": list(v3.CAPABILITIES),
+        "registered_tools": _registered_tool_names(),
         "migration_required": migration_required,
         "variant": manifest.get("variant", ""),
         "templateRepo": manifest.get("templateRepo", ""),
@@ -1033,7 +1038,6 @@ async def template_compute_status(
     if variant:
         manifest["variant"] = variant
 
-    from . import v3
     if v3.is_v3(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
@@ -1392,7 +1396,6 @@ async def template_apply_file(
 
     placeholders = manifest.get("placeholders", {})
 
-    from . import v3
     if v3.is_v3(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
@@ -1590,7 +1593,6 @@ async def template_finalize_sync(
     except json.JSONDecodeError:
         acknowledged = []
 
-    from . import v3
     if v3.is_v3(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
@@ -1800,7 +1802,6 @@ async def template_migrate_manifest(
         write mode refuses), gate_unverified (a **Gate**: is declared and this
         tool did not run it), unknown_keys, warnings, backup, written.
     """
-    from . import v3
     for _msys_p in (project_path, backup_dir):
         _msys_err = _reject_msys_path(_msys_p)
         if _msys_err:
@@ -1983,7 +1984,6 @@ async def template_verify(
         with a reason and counted in the summary, so a SKIP-heavy green is
         never mistaken for a real green.
     """
-    from . import verify
     return json.dumps(verify.run(project_path, template_repo, mode), ensure_ascii=False)
 
 
@@ -2012,7 +2012,6 @@ def _cli_verify(argv: list[str]) -> int:
     if project_path is None:
         print("usage: mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]")
         return 2
-    from . import verify
     result = verify.run(project_path, template_repo, mode)
     for line in result["lines"]:
         suffix = f"; {line['remedy']}" if line.get("remedy") else ""
@@ -2030,3 +2029,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# Eager, and at the BOTTOM: v3.py and verify.py do `from . import mcp as core`
+# at module level, so this import must run after every name above exists
+# (a top-of-file placement boots today only because neither module touches
+# core.* at module level -- an unpinned invariant; v4.0.2 spec item 5).
+from . import v3, verify  # noqa: E402

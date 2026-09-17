@@ -56,7 +56,15 @@ CAPABILITIES = (
     "optional_absent_detail",
     "template_verify",
     "deleted_acknowledged",
+    "registered_tools",
 )
+# CAPABILITIES mixes three kinds of name -- a FIELD a response carries
+# (local_diff_kind), a BEHAVIOUR (region_splice), and a TOOL that must be
+# dispatchable (template_verify). Only the tool-shaped names are
+# dispatch-checkable: test_template_sync_capabilities asserts each is in the
+# live registry AND that no other capability name is a registered tool, so a
+# new tool-shaped capability left out of this tuple is a red test.
+TOOL_CAPABILITIES = ("template_verify",)
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
 CLASSES = ("template", "once", "project")

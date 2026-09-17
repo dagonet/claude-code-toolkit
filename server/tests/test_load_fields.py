@@ -45,6 +45,25 @@ def _write_v2_project(tmp_path):
     return proj
 
 
+def _write_manifest_missing_a_required_field(tmp_path):
+    """A valid-JSON manifest with a non-None `manifest` but a non-empty
+    `errors` list -- the "errors shape" (mcp.py's second `template_load_manifest`
+    return, distinct from both the no-manifest-at-all shape and the legacy v2
+    shape above): `_load_manifest` appends "Missing required field: files"
+    (mcp.py:352) while still returning the parsed dict, since `placeholders`
+    is present but `files` is not.
+    """
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    manifest = {"version": 2, "variant": "general", "templateRepo": str(repo), "placeholders": {}}
+    (proj / ".claude" / "template-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return proj
+
+
 def test_load_response_carries_server_commit_unconditionally(tmp_path):
     v2_project = _write_v2_project(tmp_path)
     # template_load_manifest is async; the moved suite's own helper awaits it
@@ -81,6 +100,60 @@ def test_load_response_carries_server_commit_on_the_v3_path(tmp_path):
     assert r["valid"] is True
     assert r["manifest_version"] == 3
     assert r["server_commit"] == ts.SERVER_COMMIT
+
+
+# --- registered_tools: identity/registry/capabilities pinned at one moment
+# (Task 2, v4.0.2 spec item 5). Every template_load_manifest response shape
+# carries it beside "capabilities" -- the brief names three ("manifest-less",
+# "errors", "v3"), but mcp.py has FOUR return dicts with "capabilities": the
+# no-manifest-at-all shape and the errors-present shape are textually
+# identical in KEYS (both "valid": False / same field set) yet are two
+# distinct return statements, and the legacy v2 shape (this file's
+# `_write_v2_project` fixture) is a fourth. All four are asserted here so a
+# v2-manifest consumer is never silently missing the capability the registry
+# equally advertises to it.
+
+
+def test_load_response_carries_registered_tools_with_no_manifest_at_all(tmp_path):
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"))))
+    assert r["valid"] is False
+    assert r["registered_tools"] == ts._registered_tool_names()
+    assert r["registered_tools"] == sorted(r["registered_tools"])
+    assert "template_verify" in r["registered_tools"]
+
+
+def test_load_response_carries_registered_tools_on_the_errors_shape(tmp_path):
+    proj = _write_manifest_missing_a_required_field(tmp_path)
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    assert r["valid"] is False
+    assert r["errors"] == ["Missing required field: files"]
+    assert r["registered_tools"] == ts._registered_tool_names()
+    assert "template_verify" in r["registered_tools"]
+
+
+def test_load_response_carries_registered_tools_on_the_v3_path(tmp_path):
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({"rules": []}), encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    manifest = {
+        "manifest_version": 3, "template_version": "3.1.0", "template_commit": "abc1234",
+        "variant": "general", "placeholders": {}, "requires_server": ">=0.3.0", "files": {},
+        "templateRepo": str(repo),
+    }
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    assert r["valid"] is True
+    assert r["registered_tools"] == ts._registered_tool_names()
+    assert "template_verify" in r["registered_tools"]
+
+
+def test_load_response_carries_registered_tools_on_the_legacy_v2_path(tmp_path):
+    v2_project = _write_v2_project(tmp_path)
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(v2_project))))
+    assert r["registered_tools"] == ts._registered_tool_names()
+    assert "template_verify" in r["registered_tools"]
 
 
 @pytest.mark.parametrize("template_repo_form", [

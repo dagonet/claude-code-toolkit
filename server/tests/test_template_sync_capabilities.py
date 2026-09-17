@@ -23,6 +23,9 @@ proxy.
 
 import asyncio
 import json
+import pathlib
+import subprocess
+import sys
 
 import pytest
 
@@ -49,6 +52,7 @@ EXPECTED = {
     "optional_absent_detail",
     "template_verify",
     "deleted_acknowledged",
+    "registered_tools",
 }
 
 
@@ -87,6 +91,42 @@ def test_capabilities_present_on_a_valid_load(tmp_path):
     res = _load(proj)
     assert res["valid"] is True
     assert set(res["capabilities"]) == EXPECTED
+
+
+def test_tool_capabilities_subset_of_registry():
+    names = set(ts._registered_tool_names())
+    assert set(v3.TOOL_CAPABILITIES) <= names, (set(v3.TOOL_CAPABILITIES) - names)
+
+
+def test_no_non_tool_capability_is_a_registered_tool():
+    """Clause 2: a tool-shaped capability left out of TOOL_CAPABILITIES is a
+    red test, not a visible omission."""
+    names = set(ts._registered_tool_names())
+    leaked = (set(v3.CAPABILITIES) - set(v3.TOOL_CAPABILITIES)) & names
+    assert leaked == set(), leaked
+
+
+def test_clause_2_fires_when_a_tool_capability_is_undeclared(monkeypatch):
+    monkeypatch.setattr(v3, "TOOL_CAPABILITIES", ())
+    names = set(ts._registered_tool_names())
+    assert (set(v3.CAPABILITIES) - set(v3.TOOL_CAPABILITIES)) & names == {"template_verify"}
+
+
+def test_fresh_interpreter_import_pins_v3_and_verify_eagerly():
+    """Identity, registry and capabilities must be captured at ONE moment.
+    A hybrid process (old mcp.py, new lazily loaded v3.py) advertised
+    template_verify with a nine-tool registry (v4.0.1 rollout, R29)."""
+    code = ("import sys, template_sync.mcp as m; "
+            "assert 'template_sync.v3' in sys.modules and 'template_sync.verify' in sys.modules; "
+            "print(len(m._registered_tool_names()))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    # HARD-CODED on purpose (reviewer, v4.0.2): derive an expectation when it is
+    # a property of data that legitimately varies (variant count, declared
+    # keys); hard-code it when the expectation IS the decision being pinned
+    # (check 22's deny list, TOOL_CAPABILITIES, this registry -- complete at
+    # import). Deriving here would assert the registry equals itself.
+    assert out.stdout.strip() == "10"
 
 
 # --- one witness per name: the capability must actually do what it claims ----
@@ -288,6 +328,18 @@ def _witness_deleted_acknowledged(tmp_path) -> bool:
             and "deleted_acknowledged" in v3.CAPABILITIES)
 
 
+def _witness_registered_tools(tmp_path) -> bool:
+    """Exercised through a real, manifest-less load: `registered_tools` must
+    equal the live FastMCP registry and include `template_verify`, the one
+    capability this suite already pins as dispatchable.
+    """
+    res = _load(tmp_path / "no-such-project")
+    names = ts._registered_tool_names()
+    return (res["registered_tools"] == names
+            and res["registered_tools"] == sorted(res["registered_tools"])
+            and "template_verify" in res["registered_tools"])
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -302,6 +354,7 @@ WITNESSES = {
     "optional_absent_detail": _witness_optional_absent_detail,
     "template_verify": _witness_template_verify,
     "deleted_acknowledged": _witness_deleted_acknowledged,
+    "registered_tools": _witness_registered_tools,
 }
 
 
