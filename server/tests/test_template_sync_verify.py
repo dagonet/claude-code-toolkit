@@ -124,6 +124,29 @@ def _by_id(res: dict) -> dict:
     return {l["id"]: l for l in res["lines"]}
 
 
+def _acknowledged_fixture(tmp_path):
+    """MM-Agent's shape: a template-class file the template no longer ships,
+    kept by the project and acknowledged by hand (SKILL.md step 6)."""
+    repo, proj, commit = _good_fixture(tmp_path)
+    tpl_hook = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "hooks/g.sh")
+    tpl_hook.unlink()
+    _recommit(repo, "template drops hooks/g.sh")
+    m = _read_manifest(proj)
+    m["deletedAcknowledged"] = ["hooks/g.sh"]
+    _write_manifest(proj, m)
+    _recommit(proj, "acknowledge kept hook")
+    return repo, proj
+
+
+def test_acknowledged_kept_file_is_not_a_fail(tmp_path):
+    repo, proj = _acknowledged_fixture(tmp_path)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    by = _by_id(res)
+    assert by["unknown_keys_empty"]["status"] == "PASS", by["unknown_keys_empty"]
+    assert by["classes_and_hashes"]["status"] == "PASS", by["classes_and_hashes"]
+    assert "acknowledged_kept=1" in by["classes_and_hashes"]["measured"]
+
+
 # --- PASS fixture + mode switch ---------------------------------------------
 
 

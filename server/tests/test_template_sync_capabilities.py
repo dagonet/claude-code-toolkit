@@ -48,6 +48,7 @@ EXPECTED = {
     "missing_declared_keys",
     "optional_absent_detail",
     "template_verify",
+    "deleted_acknowledged",
 }
 
 
@@ -257,6 +258,36 @@ def _witness_template_verify(tmp_path) -> bool:
             and "template_verify" in v3.CAPABILITIES)
 
 
+def _witness_deleted_acknowledged(tmp_path) -> bool:
+    """Exercised through a real `compute_status_v3` call: a template-class
+    entry whose template file is absent and whose path is listed in
+    `deletedAcknowledged` reports ACKNOWLEDGED_KEPT, not TEMPLATE_DELETED.
+    """
+    repo = tmp_path / "tk"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "hooks/**", "ownership": "template"}],
+    }), encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / "hooks").mkdir(parents=True)
+    (proj / "hooks" / "g.sh").write_text("g\n", encoding="utf-8", newline="")
+    manifest = {
+        "manifest_version": 3, "template_version": "v3.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.2",
+        "files": {"hooks/g.sh": {"hash": "sha256:" + ts._sha256("g\n"), "ownership": "template"}},
+        "deletedAcknowledged": ["hooks/g.sh"],
+    }
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    rules = v3.load_ownership(str(repo))
+    res = v3.compute_status_v3(proj, manifest, rules)
+    return (res["files"]["hooks/g.sh"]["status"] == "ACKNOWLEDGED_KEPT"
+            and res["summary"]["acknowledged_kept"] == 1
+            and "deleted_acknowledged" in v3.CAPABILITIES)
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -270,6 +301,7 @@ WITNESSES = {
     "missing_declared_keys": _witness_missing_declared_keys,
     "optional_absent_detail": _witness_optional_absent_detail,
     "template_verify": _witness_template_verify,
+    "deleted_acknowledged": _witness_deleted_acknowledged,
 }
 
 

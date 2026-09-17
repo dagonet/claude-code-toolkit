@@ -257,7 +257,8 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     unknown = v3.unknown_top_level_keys(manifest)
     if unknown:
         emit(_line("unknown_keys_empty", "FAIL", f"unknown top-level keys: {unknown}", "[]",
-                   "run /sync-template on toolkit >= 4.0.1; finalize drops the superseded keys"))
+                   "remove or rename the key (a key starting 'x-' is consumer-owned and is never "
+                   "promoted; every other unknown key is preserved but read by nothing)"))
     else:
         emit(_line("unknown_keys_empty", "PASS", "no unknown top-level keys", "[]"))
 
@@ -338,12 +339,14 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     else:
         emit(_line("new_template_files_empty", "PASS", "no new, unregistered template files", "[]"))
 
+    acknowledged = {p for p, info in status["files"].items() if info.get("status") == "ACKNOWLEDGED_KEPT"}
     invalid_entries = []
     template_class_count = 0
     for path, entry in manifest.get("files", {}).items():
         ownership = entry.get("ownership")
         if ownership == "template":
-            template_class_count += 1
+            if core._normalize_path(path) not in acknowledged:
+                template_class_count += 1
             if not v3.parse_hash(entry.get("hash", "")):
                 invalid_entries.append(f"{path}: ownership=template but hash is not sha256:<64 hex>")
         elif ownership == "once":
@@ -354,17 +357,18 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     identical_count = summary.get("identical", 0)
     if invalid_entries or identical_count != template_class_count:
         emit(_line("classes_and_hashes", "FAIL",
-                   f"identical={identical_count}, template_class_count={template_class_count}; "
-                   f"invalid entries: {invalid_entries}",
+                   f"identical={identical_count}, template_class_count={template_class_count}, "
+                   f"acknowledged_kept={len(acknowledged)}; invalid entries: {invalid_entries}",
                    "every files entry is template-with-hash or once-without-hash; "
-                   "IDENTICAL count == template-class count",
+                   "IDENTICAL count == template-class count (acknowledged-kept entries excluded)",
                    "run /sync-template to bring template-class files up to date; fix any malformed manifest entry"))
     else:
         emit(_line("classes_and_hashes", "PASS",
-                   f"identical={identical_count} == template_class_count={template_class_count}; "
+                   f"identical={identical_count} == template_class_count={template_class_count}, "
+                   f"acknowledged_kept={len(acknowledged)}; "
                    "every entry template-with-hash or once-without-hash",
                    "every files entry is template-with-hash or once-without-hash; "
-                   "IDENTICAL count == template-class count"))
+                   "IDENTICAL count == template-class count (acknowledged-kept entries excluded)"))
 
     tracked_paths = list(manifest.get("files", {}).keys())
     malformed = []
