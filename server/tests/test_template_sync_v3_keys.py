@@ -98,6 +98,22 @@ def test_optional_absent_key_is_detailed_and_never_missing_declared():
 VARIANTS = ["general", "dotnet", "dotnet-maui", "rust-tauri", "java", "python"]
 
 
+def test_log_location_optional_absent_has_specific_none_meaning():
+    """v4.0.2 item 4: the `Log location` key (general/dotnet/dotnet-maui
+    spelling; rust-tauri also uses this spelling but carries a fixed value,
+    never a placeholder) gets its own none_meaning in ownership.json's
+    optional_keys instead of the generic 'not defined for this key'
+    fallback. General's own template text is used (not python's PY_TPL_TEXT)
+    because python/java spell this key 'Log Path' instead -- a spelling
+    divergence this item does not fix, reported separately."""
+    gen_tpl_text = (REPO_ROOT / "templates" / "general" / "PROJECT_CONTEXT.md").read_text(encoding="utf-8")
+    res = v3.audit_keys("- **Protected branches**: main\n- **Gate**: g\n", gen_tpl_text, None, RULE)
+    assert "Log location" in res["optional_absent"]
+    detail = next(d for d in res["optional_absent_detail"] if d["key"] == "Log location")
+    assert detail["none_meaning"] == "no log directory declared"
+    assert detail["none_meaning"] != "not defined for this key"
+
+
 def test_every_declared_key_is_accounted_for_exactly_once_per_variant():
     """Audited against an EMPTY project, every key the variant's own
     PROJECT_CONTEXT.md declares must land in exactly one of

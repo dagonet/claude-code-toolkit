@@ -36,6 +36,10 @@
         "Test (frontend)": {
           "effect_when_absent": "no separate frontend test step runs; the Gate/Test above is the only automated check",
           "none_meaning": "no-op -- no frontend test step"
+        },
+        "Log location": {
+          "effect_when_absent": "purely documentation -- no hook or agent reads this key mechanically",
+          "none_meaning": "no log directory declared"
         }
       } },
     { "pattern": "PROJECT_STATE.md",          "ownership": "once" },

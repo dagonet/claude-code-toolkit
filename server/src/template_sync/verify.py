@@ -54,6 +54,9 @@ LINES = (
     ("declared_keys", FAIL_LINE),
     ("encoding_drift", INFO_LINE),
     ("project_md_seed_current", INFO_LINE),
+    ("legacy_gate_dir", INFO_LINE),
+    ("once_notes_changed", INFO_LINE),
+    ("project_md_scoped_consistent", INFO_LINE),
     ("tree_clean", FAIL_LINE),
 )
 
@@ -124,8 +127,23 @@ def _check_tree_clean(pp: pathlib.Path, mode: str) -> dict:
     if dirty:
         preview = "; ".join(dirty[:5]) + (f" (+{len(dirty) - 5} more)" if len(dirty) > 5 else "")
         return _line("tree_clean", "FAIL", f"{len(dirty)} dirty path(s): {preview}", expected,
-                     "commit the sync (SKILL.md step 9) before verifying with mode=post_commit")
+                     "commit the sync (SKILL.md step 9) before verifying with mode=post_commit -- "
+                     "or, if the named paths are unrelated in-flight work, commit or stash them "
+                     "separately first")
     return _line("tree_clean", "PASS", "0 dirty paths", expected)
+
+
+def _project_md_scoped(project_md: str) -> bool:
+    """True when `project_md` opens with a `---\\n ... \\n---\\n` frontmatter
+    block that declares a `paths:` key (v4.0.2, item 12) -- the shape
+    `.claude/rules/project.md` takes when a consumer has scoped it away from
+    the unscoped, always-loaded default the seed sentences describe."""
+    if not project_md.startswith("---\n"):
+        return False
+    end = project_md.find("\n---\n", 4)
+    if end == -1:
+        return False
+    return "paths:" in project_md[4:end]
 
 
 def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -> dict:
@@ -305,11 +323,24 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     updated, edited, missing = (summary.get("template_updated", 0), summary.get("local_edited", 0),
                                 summary.get("missing", 0))
     if updated or edited or missing or conflicts:
-        emit(_line("status_clean", "FAIL",
-                   f"template_updated={updated}, local_edited={edited}, missing={missing}, "
-                   f"CONFLICT={len(conflicts)}",
-                   "0 updated / 0 edited / 0 missing, no CONFLICT",
-                   "run /sync-template to bring the project back up to date"))
+        # A stale STORED hash (v4.0.2, item 16): `finalize_sync(new_files=...)`
+        # only ADDS entries -- a tracked path updated on disk outside
+        # template_apply_file keeps its stale hash and reads LOCAL_EDITED with
+        # an EMPTY local_diff (the overwrite-would-discard diff is empty
+        # because the project already equals the template; only the STORED
+        # hash disagrees). That is a different remedy than a real local edit.
+        stale = [p for p, i in status["files"].items()
+                 if i.get("status") == "LOCAL_EDITED" and i.get("local_diff") == ""]
+        measured = (f"template_updated={updated}, local_edited={edited}, missing={missing}, "
+                    f"CONFLICT={len(conflicts)}")
+        remedy = "run /sync-template to bring the project back up to date"
+        if stale:
+            measured += f"; stale stored hash (LOCAL_EDITED, empty local_diff): {stale}"
+            remedy += ("; for a stale stored hash pass the path in "
+                       "template_finalize_sync(applied_files=[...]) -- new_files never refreshes "
+                       "a tracked entry")
+        emit(_line("status_clean", "FAIL", measured,
+                   "0 updated / 0 edited / 0 missing, no CONFLICT", remedy))
     else:
         emit(_line("status_clean", "PASS",
                    f"template_updated=0, local_edited=0, missing=0, CONFLICT=0 (of {len(status['files'])} tracked)",
@@ -410,18 +441,91 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         emit(_line("encoding_drift", "INFO", "no encoding drift (bom/crlf) on any tracked file",
                    "n/a (informational)"))
 
-    # --- project_md_seed_current (INFO) -------------------------------------
+    # --- project_md_seed_current / project_md_scoped_consistent (INFO) ------
+    # A `paths:`-scoped project.md is exempt from the seed-sentence check:
+    # the seed sentences are ABOUT being unscoped ("This file has no
+    # `paths:` key...", "...loads it at EVERY session start"), so a scoped
+    # file has made them inapplicable by its own edit -- do not "fix" this
+    # exemption by flagging scoped files on THIS line; a scoped file that
+    # still carries either sentence verbatim is a self-contradiction, and
+    # that has its own line below.
     project_md = core._read_file(pp / v3.PROJECT_MD)
+    scoped = project_md is not None and _project_md_scoped(project_md)
     if project_md is None:
         emit(_line("project_md_seed_current", "INFO", f"{v3.PROJECT_MD} not present", "n/a (informational)"))
+    elif scoped:
+        emit(_line("project_md_seed_current", "INFO",
+                   "scoped (paths: present); seed sentences not applicable",
+                   "n/a (informational)"))
     elif "delivered to nobody" in project_md:
         emit(_line("project_md_seed_current", "INFO",
                    f"{v3.PROJECT_MD} still carries the pre-v4.0.1 seed's false 'delivered to nobody' sentence",
                    "n/a (informational)",
                    "replace the header of .claude/rules/project.md with the v4.0.1 seed (or add a paths: block) "
                    "-- see CHANGELOG.md's v4.0.1 downstream-migration section"))
+    elif "picked up at the NEXT session start" not in project_md:
+        emit(_line("project_md_seed_current", "INFO",
+                   f"{v3.PROJECT_MD} seed predates v4.0.2 (no next-session sentence)",
+                   "n/a (informational)",
+                   "replace the header of .claude/rules/project.md with the v4.0.2 seed (or add a paths: block) "
+                   "-- see CHANGELOG.md's v4.0.2 downstream-migration section"))
     else:
         emit(_line("project_md_seed_current", "INFO", f"{v3.PROJECT_MD} seed is current", "n/a (informational)"))
+
+    if not scoped:
+        emit(_line("project_md_scoped_consistent", "INFO", "n/a (unscoped or absent)", "n/a (informational)"))
+    else:
+        unscoped_sentences = ("This file has no `paths:` key", "loads it at EVERY session start")
+        if any(s in project_md for s in unscoped_sentences):
+            emit(_line("project_md_scoped_consistent", "INFO",
+                       "scoped file still carries the unscoped seed sentence(s)",
+                       "n/a (informational)",
+                       "delete the unscoped seed sentences -- they describe a file without paths:"))
+        else:
+            emit(_line("project_md_scoped_consistent", "INFO", "scoped, no unscoped sentence",
+                       "n/a (informational)"))
+
+    # --- legacy_gate_dir (INFO) ---------------------------------------------
+    # v4.0.1 moved the gate artifact under <common git dir>/gate/; a leftover
+    # project-relative .gate/ is never itself a defect (item 4, penumbra: a
+    # **Log location** can legitimately point there), so this never fails --
+    # it only names the three known artifact-file names, by name, for
+    # deletion, and counts (never names) everything else so a consumer's own
+    # logs are never listed as if they were gate output.
+    gate_dir = pp / ".gate"
+    if not gate_dir.is_dir():
+        emit(_line("legacy_gate_dir", "INFO", "no legacy .gate/ directory", "n/a (informational)"))
+    else:
+        artifact_names = ("last-pass.json", "last-precommit.json", "last-precommit-noop.json")
+        arts = [n for n in artifact_names if (gate_dir / n).is_file()]
+        others = sum(1 for e in gate_dir.iterdir() if e.name not in arts)
+        emit(_line("legacy_gate_dir", "INFO",
+                   f"legacy .gate/ present: artifact files {arts}; {others} other entries",
+                   "n/a (informational)",
+                   "delete the listed artifact files by name (the gate now writes under "
+                   "<common git dir>/gate/); these are not gate artifacts -- leave them "
+                   "(a **Log location** may point here); never delete the directory"))
+
+    # --- once_notes_changed (INFO) ------------------------------------------
+    notes_changed = [
+        (path, info["key_audit"]["template_notes_changed"])
+        for path, info in status["files"].items()
+        if info.get("ownership") == "once" and info.get("key_audit", {}).get("template_notes_changed")
+    ]
+    if notes_changed:
+        # `_finalize` requires exactly one result row per id (the
+        # `template_verify` witness asserts len(lines) == len(LINES)), so a
+        # once-class file per row would break that invariant on a consumer
+        # with more than one changed file -- emit ONE line, every file
+        # "; "-joined (ruling R2).
+        parts = "; ".join(f"{path}: template guidance comments changed (hunks: {len(hunks)})"
+                          for path, hunks in notes_changed)
+        emit(_line("once_notes_changed", "INFO", parts, "n/a (informational)",
+                   "read the hunks with template_get_diff and update your copy by hand -- "
+                   "once-class files are never overwritten"))
+    else:
+        emit(_line("once_notes_changed", "INFO", "no once-class file has changed template notes",
+                   "n/a (informational)"))
 
     emit(_check_manifest_bytes(pp))
     emit(_check_tree_clean(pp, mode))

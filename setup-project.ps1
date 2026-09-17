@@ -320,7 +320,9 @@ if ($RepoUrl)       { $replacements['{{REPO_URL}}']       = $RepoUrl }
 if ($SolutionFile)  { $replacements['{{SOLUTION_FILE}}']  = $SolutionFile }
 if ($TechStack)     { $replacements['{{TECH_STACK}}']     = $TechStack }
 if ($WorktreeBase)  { $replacements['{{WORKTREE_BASE}}']  = $WorktreeBase }
-if ($LogPath)       { $replacements['{{LOG_PATH}}']       = $LogPath }
+# v4.0.2 item 4: defaults to `none`, not left as the literal `{{LOG_PATH}}`
+# token -- PS 5.1 has no ternary, so this is an explicit if/else.
+if ($LogPath) { $replacements['{{LOG_PATH}}'] = $LogPath } else { $replacements['{{LOG_PATH}}'] = 'none' }
 if ($MauiProject)   { $replacements['{{MAUI_PROJECT}}']   = $MauiProject }
 if ($TestProject)   { $replacements['{{TEST_PROJECT}}']   = $TestProject }
 if ($DbPath)        { $replacements['{{DB_DIRECTORY}}']   = $DbPath }
@@ -1098,7 +1100,8 @@ if ($RepoUrl)      { $placeholderMap['REPO_URL']      = $RepoUrl }
 if ($SolutionFile) { $placeholderMap['SOLUTION_FILE']  = $SolutionFile }
 if ($TechStack)    { $placeholderMap['TECH_STACK']     = $TechStack }
 if ($WorktreeBase) { $placeholderMap['WORKTREE_BASE']  = $WorktreeBase }
-if ($LogPath)      { $placeholderMap['LOG_PATH']       = $LogPath }
+# v4.0.2 item 4: defaults to `none`, matching the $replacements site above.
+if ($LogPath) { $placeholderMap['LOG_PATH'] = $LogPath } else { $placeholderMap['LOG_PATH'] = 'none' }
 if ($MauiProject)  { $placeholderMap['MAUI_PROJECT']   = $MauiProject }
 if ($TestProject)  { $placeholderMap['TEST_PROJECT']   = $TestProject }
 if ($DbPath)       { $placeholderMap['DB_DIRECTORY']   = $DbPath }
