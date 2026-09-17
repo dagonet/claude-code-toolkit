@@ -282,6 +282,20 @@ else
   skip "sh: written template-sync command resolves to the toolkit exe" "$TS_VENV_REASON" 1
 fi
 
+# --- v4.0.1 item 22: template_verify runs as setup's own last step ---------
+#
+# Same $TS_VENV_PRESENT/$TS_VENV_REASON split as above: a registered exe
+# means the bootstrap's tail is the verify summary line
+# ("N PASS, M FAIL, K SKIP, J INFO"); no exe (a checkout with no server/.venv,
+# the same population check 46 already treats as a loud, named absence rather
+# than a silent skip) means the row SKIPs in-band, not fails.
+if [ "$TS_VENV_PRESENT" -eq 1 ]; then
+  expect "sh bootstrap ends with the template_verify summary line" 1 \
+    "$(grep -cE '^[0-9]+ PASS, [0-9]+ FAIL, [0-9]+ SKIP, [0-9]+ INFO$' "$TMPROOT/automode.out" 2>/dev/null || echo 0)"
+else
+  skip "sh bootstrap ends with the template_verify summary line" "$TS_VENV_REASON" 1
+fi
+
 # --- the PowerShell half, where it can run ---------------------------------
 #
 # The two scripts are independent implementations of the same contract, and the
@@ -336,6 +350,31 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   bom_files=$(cd "$PSDIR" && find . -type f -exec sh -c 'head -c3 "$1" | od -An -tx1 | tr -d " \n" | grep -q "^efbbbf" && echo "$1"' _ {} \;)
   expect "ps1 bootstrap writes no UTF-8 BOM" "" "$bom_files"
   expect "ps1 manifest has no BOM" "7b" "$(head -c1 "$PSDIR/.claude/template-manifest.json" | od -An -tx1 | tr -d ' ')"
+
+  # --- v4.0.1 item 12's class (Task 9 pre-review round): ConvertTo-Json
+  # (PS 5.1) writes `r`n between lines and no trailing newline at all -- a
+  # ps1-bootstrapped manifest carried CRLF internally and ZERO trailing
+  # newlines (measured: 136 CR bytes, last byte a bare '}' with no LF at
+  # all), which is exactly what template_verify's manifest_bytes line
+  # (v4.0.1 item 22) exists to catch, and what item 12 already fixed on the
+  # server's own finalize/migrate writers. Byte-level, not text-compared --
+  # line endings are exactly what is under test. sh's manifest is the
+  # CONTROL: it was already correct, so these rows must PASS on sh whether
+  # or not ps1 is fixed, proving the check discriminates rather than always
+  # passing.
+  ps_manifest_for_bytes="$PSDIR/.claude/template-manifest.json"
+  sh_manifest_for_bytes="$TMPROOT/develop-real/.claude/template-manifest.json"
+  sh_cr_count=$(tr -dc '\r' < "$sh_manifest_for_bytes" | wc -c | tr -d ' ')
+  ps_cr_count=$(tr -dc '\r' < "$ps_manifest_for_bytes" | wc -c | tr -d ' ')
+  expect "sh manifest has no CR bytes (control)" 0 "$sh_cr_count"
+  expect "ps1 manifest has no CR bytes" 0 "$ps_cr_count"
+  sh_last2=$(tail -c2 "$sh_manifest_for_bytes" | od -An -tx1 | tr -d ' \n')
+  ps_last2=$(tail -c2 "$ps_manifest_for_bytes" | od -An -tx1 | tr -d ' \n')
+  # "7d0a" = '}' + LF: the file ends with exactly one trailing LF, not zero
+  # (bare '}', ends in "...7d") and not two ("0a0a").
+  expect "sh manifest ends with exactly one trailing LF (control)" "7d0a" "$sh_last2"
+  expect "ps1 manifest ends with exactly one trailing LF" "7d0a" "$ps_last2"
+
   SHDIR="$TMPROOT/develop-real"
   sh_list=$(cd "$SHDIR" && find . -type f | sort)
   ps_list=$(cd "$PSDIR" && find . -type f | sort)

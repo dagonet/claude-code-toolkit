@@ -1217,4 +1217,35 @@ print_automode_snippet
 echo ""
 print_template_sync_snippet
 
+# --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
+#
+# TS_WIN_EXE is resolved above, once, before the dry-run/real-run fork; it is
+# set only when the exe was verified to resolve in the Win32 namespace the
+# consumer (claude.exe) actually reads from (or, on a POSIX host, is just the
+# raw path). A FAIL line is reported, not fatal -- setup's job is done by
+# this point; the user reads the lines and the remedy text names the fix.
+if [[ -n "${TS_WIN_EXE:-}" ]]; then
+    echo ""
+    echo "Verifying the bootstrap:"
+    verify_repo_arg="$SCRIPT_DIR"
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*)
+            if command -v cygpath >/dev/null 2>&1; then
+                verify_repo_arg="$(cygpath -w "$SCRIPT_DIR" 2>/dev/null || echo "$SCRIPT_DIR")"
+            fi
+            ;;
+    esac
+    # `|| verify_rc=$?` (not a bare statement) is required under `set -e`: a
+    # FAIL line makes the exe exit 1, and a bare statement's unguarded
+    # nonzero exit would abort the whole bootstrap under `set -euo pipefail`.
+    # This step's contract is that a verify FAIL is reported, never fatal to
+    # setup -- `|| verify_rc=$?` is what `set -e` cannot see as an error, so
+    # it is what keeps that contract instead of silently breaking it.
+    verify_rc=0
+    ( cd "$TARGET_DIR" && "$TS_EXE" --verify . --template-repo "$verify_repo_arg" ) || verify_rc=$?
+    if [[ "$verify_rc" -ne 0 ]]; then
+        echo "  (verify reported FAIL line(s) above -- not fatal to setup; each remedy names the fix)"
+    fi
+fi
+
 echo ""

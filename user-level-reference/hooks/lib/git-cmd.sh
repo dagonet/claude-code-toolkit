@@ -124,6 +124,15 @@
 # scripts/verify-template-consistency.sh asserts the two copies agree.
 GC_TERMINAL_RC=78
 
+# GC_GATE_TTL_S (v4.0.1, item 17) -- the single source of truth for how long a
+# gate artifact stays acceptable to gate-before-merge.sh (mtime-based
+# freshness check). hooks/run-gate.sh derives its prune window from THIS
+# constant rather than a second hardcoded number, so "the prune window is
+# always longer than the accept window" is structural: run-gate.sh repeats the
+# literal (same standalone reason as GC_KEY_PRE/GC_TERMINAL_RC above) and
+# scripts/verify-template-consistency.sh asserts the two copies agree.
+GC_GATE_TTL_S=3600
+
 # Fail CLOSED when the JSON reader is missing: without it GC_CMD would be empty
 # and every gate would allow every command.
 gc_json_lib="$(dirname "${BASH_SOURCE[0]:-$0}")/json.sh"
@@ -757,6 +766,31 @@ GC_DASHU
 # gc_current_branch <repo>
 gc_current_branch() {
   git -C "$1" branch --show-current 2>/dev/null
+}
+
+# gc_gate_dir <cwd> -- the gate artifact directory shared by every worktree of
+# a repo: <common git dir>/gate. Inside .git, so never a working-tree object
+# (v4.0.1, item 17): no gitignore entry needed, cannot be swept into a commit,
+# one location for every worktree by construction. `--path-format=absolute`
+# (git >= 2.31) is required: the bare `--git-common-dir` prints a RELATIVE
+# `.git` from the main checkout and an ABSOLUTE path from a linked worktree --
+# two different spellings of the same directory, which is exactly the
+# difference that would break a worktree-to-main-checkout handoff. Prints
+# forward slashes on Windows (`G:/git/...`); callers must never compare it
+# against a backslash spelling. Falls back to <toplevel>/.gate (the pre-4.0.1,
+# per-worktree location) on git < 2.31, with a WARN -- a caller writing a
+# diagnostic that must never itself block (pre-commit-test.sh's pct_note) is
+# responsible for swallowing that WARN, same as every other failure there.
+#
+# hooks/run-gate.sh repeats this function (same standalone reason as
+# GC_KEY_PRE/GC_TERMINAL_RC/GC_GATE_TTL_S above); scripts/verify-template-
+# consistency.sh asserts the two copies agree.
+gc_gate_dir() {
+  local common
+  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  if [ -n "$common" ]; then printf '%s/gate\n' "$common"; return 0; fi
+  echo "WARN: git < 2.31: gate artifacts stay at <toplevel>/.gate (per-worktree)" >&2
+  printf '%s/.gate\n' "$(git -C "$1" rev-parse --show-toplevel)"
 }
 
 # gc_is_placeholder <value> -- true for an unreplaced `{{...}}`.

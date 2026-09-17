@@ -1002,6 +1002,32 @@ else
   ko "GC_TERMINAL_RC definition drifted: found in $gtr_have of 2 files (git-cmd.sh, run-gate.sh)"
 fi
 
+# 21c-2i. GC_GATE_TTL_S and gc_gate_dir, same census for the same reason
+# (v4.0.1, item 17): run-gate.sh cannot source git-cmd.sh (it must run with no
+# JSON parser on PATH), so it repeats both the constant and the function.
+GC_GATE_TTL_S_DEF='GC_GATE_TTL_S=3600'
+gts_have=0
+for gtsf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+  grep -qF "$GC_GATE_TTL_S_DEF" "$gtsf" && gts_have=$((gts_have + 1))
+done
+if [ "$gts_have" -eq 2 ]; then
+  ok "GC_GATE_TTL_S defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "GC_GATE_TTL_S definition drifted: found in $gts_have of 2 files (git-cmd.sh, run-gate.sh)"
+fi
+
+# The gc_gate_dir FUNCTION BODY, not just a one-line constant -- extracted by
+# its opening/closing braces from each file and compared verbatim. A textual
+# grep -qF of one distinctive line would miss a drift inside the body that
+# leaves that one line untouched; the whole function is what must agree.
+ggd_lib=$(awk '/^gc_gate_dir\(\) \{/,/^}/' hooks/lib/git-cmd.sh)
+ggd_run=$(awk '/^gc_gate_dir\(\) \{/,/^}/' hooks/run-gate.sh)
+if [ -n "$ggd_lib" ] && [ "$ggd_lib" = "$ggd_run" ]; then
+  ok "gc_gate_dir defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "gc_gate_dir definition drifted or missing between git-cmd.sh and run-gate.sh"
+fi
+
 # 21c-2g. The retro base-dir helper, same census for the same reason (v3.0.4,
 # item A6b, a consequence of mirroring retro-brief.sh in check 21a above).
 #

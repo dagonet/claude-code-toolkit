@@ -118,33 +118,37 @@ Resolving a file `keep-mine` (`template_apply_file(source="skip")`) keeps the pr
 
 **Do not reach for the `PROJECT-CUSTOM` region as a substitute, and do not demote a region to a `keep-mine`.** They solve different problems: a region keeps *part* of a file project-owned while the rest keeps tracking the template; `keep-mine` freezes the *whole* file. Choosing `keep-mine` for something a region would have covered gives up every future template fix in that file to protect a few lines.
 
-## The Gate Artifact: `.gate/last-pass.json`
+## The Gate Artifact: `<common git dir>/gate/last-pass.<sha>.json`
 
 **This format is a contract, not an implementation detail.** Replacing `hooks/run-gate.sh` wholesale is a supported shape — the terminal-exit contract is public precisely so that a project can supply its own runner — which makes the artifact the interface between the half that runs the gate and the half that reads it. It had not been written down anywhere, and one consumer discovered their own runner's shape by reading their own script.
 
-`hooks/run-gate.sh` writes, at the repo toplevel of the current checkout **or worktree**:
+**Location (v4.0.1, item 17).** `hooks/run-gate.sh` writes inside `.git`, not at the repo toplevel: `<common git dir>/gate/last-pass.<HEAD sha>.json`, where `<common git dir>` is `git rev-parse --path-format=absolute --git-common-dir` (git ≥ 2.31; `gc_gate_dir` in `hooks/lib/git-cmd.sh`). That directory is the SAME one whether resolved from the repo's main checkout or from any of its linked worktrees, so an artifact written by a gate run in one checkout is visible to a merge attempted from another — the handoff a worktree coder's gate run and a PO's main-checkout merge need. Being inside `.git` also means the artifact is never a gitignore concern and can never be swept into a commit. On git < 2.31 it falls back to the pre-4.0.1 `<repo toplevel>/.gate` (per-worktree, with a `WARN` on stderr).
+
+**Filename, not one fixed name.** The directory is shared by every worktree, so a single fixed filename would let two worktrees gating concurrently clobber each other's artifact — the filename is keyed on the sha `hooks/run-gate.sh` captured at write time. `gate-before-merge.sh`'s lookup, in order: (1) the exact filename for the sha it is about to merge; (2) failing that, every `last-pass.*.json` in the directory, newest mtime first, for one whose `tree` matches — deliberately blessing a commit whose own sha was never gated when another commit (a different worktree, a cherry-pick, a message-only rebase) gated the identical tree, because the tree is what was actually tested (see below); (3) failing that, the legacy `<repo toplevel>/.gate/last-pass.json`, with a `NOTE:` deprecation line on stderr — read for one release only.
+
+Each artifact file contains:
 
 ```json
 {"sha":"<HEAD sha>","tree":"<working-tree hash>","branch":"<branch>","ts":"<UTC ISO-8601>","status":"pass"}
 ```
 
-What `hooks/gate-before-merge.sh` actually **reads** is narrower than what is written, and that asymmetry is the useful half of the contract:
+What `hooks/gate-before-merge.sh` actually **reads** from the selected file is narrower than what is written, and that asymmetry is the useful half of the contract:
 
 | Key | Read by the gate? | Notes |
 |---|---|---|
 | `sha` | **yes** | must equal the checkout's `HEAD` |
 | `tree` | **yes** | *or* must equal `HEAD^{tree}`; either match is sufficient. Added in v2.1.5 — this is the half that survives a squash, and the half that matches when the gate ran just before `git commit` |
 | `branch` | no | informational |
-| `ts` | no | **freshness is judged from the file's mtime, not from this field** — the artifact must be younger than 60 minutes |
+| `ts` | no | **freshness is judged from the file's mtime, not from this field** — the artifact must be younger than `GC_GATE_TTL_S` (`hooks/lib/git-cmd.sh`; 3600s = 60 minutes) |
 | `status` | no | informational |
 
-A minimal replacement runner therefore needs `sha` **or** `tree`, plus a fresh mtime. Two parsing rules matter if you write your own: the reader tolerates whitespace after the colon (`{"sha": "…"}` is valid JSON and a consumer emitted exactly that, was silently read as empty, and got blocked on every merge with `artifact sha: none`), and a red gate **deletes** the artifact rather than writing `"status":"fail"` — absence is the failure signal.
+A minimal replacement runner therefore needs `sha` **or** `tree`, plus a fresh mtime, written to a sha-keyed filename in the shared directory above. Two parsing rules matter if you write your own: the reader tolerates whitespace after the colon (`{"sha": "…"}` is valid JSON and a consumer emitted exactly that, was silently read as empty, and got blocked on every merge with `artifact sha: none`), and a red gate **deletes** its own sha's artifact rather than writing `"status":"fail"` — absence is the failure signal. `hooks/run-gate.sh` also writes atomically (a sibling `.tmp` file, then `mv`) and prunes `last-pass.*.json` files older than 24h on every successful run, since the directory is shared and never swept by a commit.
 
 ### Two artifacts, not one (v4.0.1, item 15)
 
-`last-pass.json` (above) is written by `hooks/run-gate.sh`, including when `pre-commit-test.sh` falls back to running the Gate itself on a Gate-only repo (no `**Test**` declared, or `**Test**` is `none`). A SECOND artifact, `last-precommit.json`, is written by `pre-commit-test.sh` on the ordinary Test path (a `**Test**` key IS declared) and carries `tree` only — no `sha`. Consumers correlating the two must key on `tree`, never `sha`.
+`last-pass.<sha>.json` (above) is written by `hooks/run-gate.sh`, including when `pre-commit-test.sh` falls back to running the Gate itself on a Gate-only repo (no `**Test**` declared, or `**Test**` is `none`). A SECOND artifact, `last-precommit.<tree>.json` (same directory, filename keyed on the gated TREE rather than a sha), is written by `pre-commit-test.sh` on the ordinary Test path (a `**Test**` key IS declared) and carries `tree` only — no `sha`. Consumers correlating the two must key on `tree`, never `sha`.
 
-**`sha` is advisory, `tree` is the matching key.** When `last-pass.json` is minted by the Gate fallback DURING a commit, `pre-commit-test.sh` runs the gate BEFORE the commit object exists, so the `sha` it records is HEAD *at hook time* — the commit's PARENT, not the commit itself (measured: `sha` = parent, `tree` = `HEAD^{tree}` of the finished commit). `gate-before-merge.sh` reads that correctly because it accepts either a `sha` OR a `tree` match (the table above) and the `tree` match is the one that succeeds in this case. Reading `sha` in that artifact as "the gated commit" is the error this note exists to head off; `tree` is what actually decided the match, and the gate's own success-path output says which arm matched (`matched: tree` / `matched: sha`).
+**`sha` is advisory, `tree` is the matching key.** When `last-pass.<sha>.json` is minted by the Gate fallback DURING a commit, `pre-commit-test.sh` runs the gate BEFORE the commit object exists, so the `sha` it records is HEAD *at hook time* — the commit's PARENT, not the commit itself (measured: `sha` = parent, `tree` = `HEAD^{tree}` of the finished commit). `gate-before-merge.sh` reads that correctly because it accepts either a `sha` OR a `tree` match (the table above) and the `tree` match is the one that succeeds in this case. Reading `sha` in that artifact as "the gated commit" is the error this note exists to head off; `tree` is what actually decided the match, and the gate's own success-path output says which arm matched AND which file (`matched: tree (<path>)` / `matched: sha (<path>)`).
 
 Both artifacts live together in **the gate artifact directory** — the same directory `last-pass.json` above is written to; a future release may relocate that directory without changing either filename or field shape.
 
@@ -226,3 +230,46 @@ Project-owned content goes INSIDE the markers. When both the template and the pr
 | `**Test (frontend)**` | no separate frontend test step runs | no-op |
 
 A new optional key added later must get its own row here (and its own `optional_keys` entry in `templates/ownership.json`) **before** it ships — an undocumented key defaults to the generic `"feature off"` / `"not defined for this key"` pair, which is a placeholder for "nobody decided yet," not a real answer.
+
+## `template_verify`: the consumer consistency check (v4.0.1, item 22)
+
+A read-only, synchronous tool: `template_verify(project_path, template_repo="", mode="post_commit")` → `{ok, mode, summary, lines: [{id, status, measured, expected, remedy}]}`. `template_repo` resolves the same way `template_compute_status` does (an override, else the manifest's own `templateRepo`) — a server installed from a different checkout must never verify against the wrong repo silently. `status` is one of `PASS` / `FAIL` / `SKIP` / `INFO`. `ok` is true only when no line is `FAIL`, and `summary` (`"N PASS, M FAIL, K SKIP, J INFO"`) always prints every count, so a SKIP-heavy green is never mistaken for a real one.
+
+**Scope, stated precisely.** It verifies END STATE — it would have caught the superseded `lastSynced*` pair, the missing manifest keys, the missing trailing newline and the `.gitignore` new-file residue, all as they would have looked the moment the sync finished. It cannot catch a PROCESS defect that leaves no trace once the sync completes correctly — a `get_diff` error, a refused `source="skip"`, a `$0` snippet, the gate artifact's TTL, a leftover remote branch. Those are each closed by their own item; `template_verify` closes the family of "the sync finished, but something about the result is wrong and nobody noticed" defects (constraint 9 in the v4.0.1 spec).
+
+**Only conditions that CAN fail are FAIL lines.** `placeholder_key_divergence` and `orphans` are deliberately absent from `template_verify` — they live in `template_compute_status` as informational fields: `placeholder_key_divergence` is non-empty on every mature consumer and never actionable on its own, and `orphans` are by definition project-owned files the template has no claim on, so listing them as a defect invites deleting something the template never shipped.
+
+**The 21 lines, in order:**
+
+| id | kind | fails when |
+|---|---|---|
+| `manifest_valid` | FAIL | the manifest fails to load or is missing a required field |
+| `manifest_version_3` | FAIL | `manifest_version` is not `3` |
+| `template_commit_known` | FAIL | `template_commit` (or `lastSynced`) is not a commit the template repo knows (`git cat-file -e <sha>^{commit}`) |
+| `template_behind_head` | INFO | never — reports `git describe --tags HEAD` and whether the template-tracked tree (`tracked_paths` in `ownership.json`) differs between the synced commit and HEAD. The template repo advancing past the synced commit is NOT a failure: the checkout moves on every pull, and a correctly synced consumer must not be told its sync failed the moment the toolkit gains a commit |
+| `requires_server` | FAIL | the running server's version does not satisfy the manifest's `requires_server` floor |
+| `no_errors` | FAIL | the template variant directory (`templates/<variant>/`) is missing |
+| `no_warnings` | FAIL | `templates/ownership.json` itself carries a parse/shape warning |
+| `unknown_keys_empty` | FAIL | the manifest carries a top-level key this server does not recognise — remedy: run `/sync-template` on toolkit ≥ 4.0.1; finalize drops the superseded keys |
+| `superseded_absent` | FAIL | any of `lastSynced` / `lastSyncedVersion` / `lastSyncedVersionOf` is still present (`v3.SUPERSEDED_KEYS`) |
+| `server_skew` | FAIL / INFO / SKIP | FAIL when the running server is installed from this template repo (`server_in_template_repo`) AND `server/` differs from the imported commit — either a committed diff (`git diff --quiet <server_commit> HEAD -- server/`) or an uncommitted change (`git status --porcelain -- server/`); a dirty working tree alone is exactly the state a toolkit checkout is in during a release, so the two-commit diff alone is not enough. INFO when `server/` is clean but `server_commit != HEAD` (docs-only or template-only commits since). SKIP when the running server was not installed from this template repo at all |
+| `status_clean` | FAIL | any tracked file is `TEMPLATE_UPDATED`, `LOCAL_EDITED` or `MISSING`, or (defensively) `CONFLICT` |
+| `gate_self_reference_empty` | FAIL | a `**Gate**:`/`**Test**:` value points at a template-class path |
+| `unclassified_empty` | FAIL | a scanned template file matches no `ownership.json` rule |
+| `new_template_files_empty` | FAIL | a template/once-class file the template ships is not yet a manifest entry — remedy names the project → template path mapping (via `template_path_for`) so the register-or-apply call is copy-pasteable |
+| `classes_and_hashes` | FAIL | a manifest entry's shape is wrong (`template`-class without a valid hash, or `once`-class carrying one), or the `IDENTICAL` count does not equal the number of `template`-class entries |
+| `region_markers` | FAIL | a manifest-tracked file's on-disk content carries an unmatched PROJECT-CUSTOM `BEGIN`/`END` marker (`v3.markers_malformed`) |
+| `manifest_bytes` | FAIL | the manifest file's raw bytes carry a BOM, a CRLF, or do not end with exactly one LF |
+| `declared_keys` | FAIL | any audited once-file's `key_audit.missing_declared_keys` (Task 5) is non-empty |
+| `encoding_drift` | INFO | never — lists per-file BOM/CRLF drift between the project copy and the current template |
+| `project_md_seed_current` | INFO | never — reports whether `.claude/rules/project.md` still carries the pre-v4.0.1 seed's false "delivered to nobody" sentence, with the CHANGELOG's downstream-migration remedy when it does |
+| `tree_clean` | FAIL (`post_commit`) / SKIP (`pre_commit`) | `mode="post_commit"`: `git status --porcelain` in the project is non-empty. `mode="pre_commit"`: always SKIPs, with a reason — the sync writes files before committing them by design (SKILL.md step 8 runs before the commit) |
+
+**Modes.** `mode="pre_commit"` is for SKILL.md step 8 (the report, before the commit): an uncommitted, dirty tree is expected there, so `tree_clean` SKIPs rather than FAILing. `mode="post_commit"` (the default) is for step 9b (right after the commit) and for the fleet script: an uncommitted tree at that point is a real defect.
+
+**Three call sites.**
+1. **The sync skill** (`SKILL.md` step 8, then step 9b) — `mode="pre_commit"` before the commit, `mode="post_commit"` after it; any `FAIL` in either call means the sync is not complete.
+2. **`setup-project.sh` / `.ps1`**, as their very last step, when the registered `template-sync-tools` exe exists — a `FAIL` is printed and reported, never fatal to the bootstrap itself.
+3. **`scripts/verify-consumers.sh <dir>…`** — a fleet script for the PO to run across every known consumer checkout (`mode="post_commit"`), printing one summary line per consumer. `unknown_keys_empty` FAILs, by design, on every consumer that has not yet synced on toolkit ≥ 4.0.1 — the remedy text says so, and a fleet run right after a release is meant to read as "who still needs to sync," not as a defect list.
+
+**CLI.** `mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]` prints one line per result (`<STATUS> <id>: <measured>  (expected <expected>)[; remedy]`) then the summary line, and exits `0` iff `ok`. SKIP (with a reason) when git is unavailable at all — a missing template repo, a project that is not a git checkout for `tree_clean`, or a server not installed from the template repo for `server_skew`.
