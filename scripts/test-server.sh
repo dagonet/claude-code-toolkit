@@ -17,9 +17,12 @@ else
 fi
 # v4.0.1 (fix round 1, constraint 9): name what was tested on the path that
 # actually runs the suite too, not only on the no-venv error path -- a green
-# gate run used to say nothing about which venv it used. STDERR only: the gate
-# and check 46 both read stdout (for absence of "skip", for the probed-dir
-# substring on the error path), so this must never land there.
+# gate run used to say nothing about which venv it used. STDERR only, and
+# safe there: check 46 captures this script's combined output (`2>&1`) but
+# only to probe the NO-VENV arm, which `exit 2`s above before this line is
+# ever reached; on the has-venv arm this line runs but goes to stderr, so
+# stdout -- what the gate and any pytest-output scraping actually read --
+# stays machine-clean either way.
 echo "test-server.sh: using venv $VENV" >&2
 
 # --basetemp outside the checkout: keeps `git status` clean -- gate runs must
