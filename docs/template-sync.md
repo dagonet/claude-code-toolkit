@@ -118,33 +118,37 @@ Resolving a file `keep-mine` (`template_apply_file(source="skip")`) keeps the pr
 
 **Do not reach for the `PROJECT-CUSTOM` region as a substitute, and do not demote a region to a `keep-mine`.** They solve different problems: a region keeps *part* of a file project-owned while the rest keeps tracking the template; `keep-mine` freezes the *whole* file. Choosing `keep-mine` for something a region would have covered gives up every future template fix in that file to protect a few lines.
 
-## The Gate Artifact: `.gate/last-pass.json`
+## The Gate Artifact: `<common git dir>/gate/last-pass.<sha>.json`
 
 **This format is a contract, not an implementation detail.** Replacing `hooks/run-gate.sh` wholesale is a supported shape — the terminal-exit contract is public precisely so that a project can supply its own runner — which makes the artifact the interface between the half that runs the gate and the half that reads it. It had not been written down anywhere, and one consumer discovered their own runner's shape by reading their own script.
 
-`hooks/run-gate.sh` writes, at the repo toplevel of the current checkout **or worktree**:
+**Location (v4.0.1, item 17).** `hooks/run-gate.sh` writes inside `.git`, not at the repo toplevel: `<common git dir>/gate/last-pass.<HEAD sha>.json`, where `<common git dir>` is `git rev-parse --path-format=absolute --git-common-dir` (git ≥ 2.31; `gc_gate_dir` in `hooks/lib/git-cmd.sh`). That directory is the SAME one whether resolved from the repo's main checkout or from any of its linked worktrees, so an artifact written by a gate run in one checkout is visible to a merge attempted from another — the handoff a worktree coder's gate run and a PO's main-checkout merge need. Being inside `.git` also means the artifact is never a gitignore concern and can never be swept into a commit. On git < 2.31 it falls back to the pre-4.0.1 `<repo toplevel>/.gate` (per-worktree, with a `WARN` on stderr).
+
+**Filename, not one fixed name.** The directory is shared by every worktree, so a single fixed filename would let two worktrees gating concurrently clobber each other's artifact — the filename is keyed on the sha `hooks/run-gate.sh` captured at write time. `gate-before-merge.sh`'s lookup, in order: (1) the exact filename for the sha it is about to merge; (2) failing that, every `last-pass.*.json` in the directory, newest mtime first, for one whose `tree` matches — deliberately blessing a commit whose own sha was never gated when another commit (a different worktree, a cherry-pick, a message-only rebase) gated the identical tree, because the tree is what was actually tested (see below); (3) failing that, the legacy `<repo toplevel>/.gate/last-pass.json`, with a `NOTE:` deprecation line on stderr — read for one release only.
+
+Each artifact file contains:
 
 ```json
 {"sha":"<HEAD sha>","tree":"<working-tree hash>","branch":"<branch>","ts":"<UTC ISO-8601>","status":"pass"}
 ```
 
-What `hooks/gate-before-merge.sh` actually **reads** is narrower than what is written, and that asymmetry is the useful half of the contract:
+What `hooks/gate-before-merge.sh` actually **reads** from the selected file is narrower than what is written, and that asymmetry is the useful half of the contract:
 
 | Key | Read by the gate? | Notes |
 |---|---|---|
 | `sha` | **yes** | must equal the checkout's `HEAD` |
 | `tree` | **yes** | *or* must equal `HEAD^{tree}`; either match is sufficient. Added in v2.1.5 — this is the half that survives a squash, and the half that matches when the gate ran just before `git commit` |
 | `branch` | no | informational |
-| `ts` | no | **freshness is judged from the file's mtime, not from this field** — the artifact must be younger than 60 minutes |
+| `ts` | no | **freshness is judged from the file's mtime, not from this field** — the artifact must be younger than `GC_GATE_TTL_S` (`hooks/lib/git-cmd.sh`; 3600s = 60 minutes) |
 | `status` | no | informational |
 
-A minimal replacement runner therefore needs `sha` **or** `tree`, plus a fresh mtime. Two parsing rules matter if you write your own: the reader tolerates whitespace after the colon (`{"sha": "…"}` is valid JSON and a consumer emitted exactly that, was silently read as empty, and got blocked on every merge with `artifact sha: none`), and a red gate **deletes** the artifact rather than writing `"status":"fail"` — absence is the failure signal.
+A minimal replacement runner therefore needs `sha` **or** `tree`, plus a fresh mtime, written to a sha-keyed filename in the shared directory above. Two parsing rules matter if you write your own: the reader tolerates whitespace after the colon (`{"sha": "…"}` is valid JSON and a consumer emitted exactly that, was silently read as empty, and got blocked on every merge with `artifact sha: none`), and a red gate **deletes** its own sha's artifact rather than writing `"status":"fail"` — absence is the failure signal. `hooks/run-gate.sh` also writes atomically (a sibling `.tmp` file, then `mv`) and prunes `last-pass.*.json` files older than 24h on every successful run, since the directory is shared and never swept by a commit.
 
 ### Two artifacts, not one (v4.0.1, item 15)
 
-`last-pass.json` (above) is written by `hooks/run-gate.sh`, including when `pre-commit-test.sh` falls back to running the Gate itself on a Gate-only repo (no `**Test**` declared, or `**Test**` is `none`). A SECOND artifact, `last-precommit.json`, is written by `pre-commit-test.sh` on the ordinary Test path (a `**Test**` key IS declared) and carries `tree` only — no `sha`. Consumers correlating the two must key on `tree`, never `sha`.
+`last-pass.<sha>.json` (above) is written by `hooks/run-gate.sh`, including when `pre-commit-test.sh` falls back to running the Gate itself on a Gate-only repo (no `**Test**` declared, or `**Test**` is `none`). A SECOND artifact, `last-precommit.<tree>.json` (same directory, filename keyed on the gated TREE rather than a sha), is written by `pre-commit-test.sh` on the ordinary Test path (a `**Test**` key IS declared) and carries `tree` only — no `sha`. Consumers correlating the two must key on `tree`, never `sha`.
 
-**`sha` is advisory, `tree` is the matching key.** When `last-pass.json` is minted by the Gate fallback DURING a commit, `pre-commit-test.sh` runs the gate BEFORE the commit object exists, so the `sha` it records is HEAD *at hook time* — the commit's PARENT, not the commit itself (measured: `sha` = parent, `tree` = `HEAD^{tree}` of the finished commit). `gate-before-merge.sh` reads that correctly because it accepts either a `sha` OR a `tree` match (the table above) and the `tree` match is the one that succeeds in this case. Reading `sha` in that artifact as "the gated commit" is the error this note exists to head off; `tree` is what actually decided the match, and the gate's own success-path output says which arm matched (`matched: tree` / `matched: sha`).
+**`sha` is advisory, `tree` is the matching key.** When `last-pass.<sha>.json` is minted by the Gate fallback DURING a commit, `pre-commit-test.sh` runs the gate BEFORE the commit object exists, so the `sha` it records is HEAD *at hook time* — the commit's PARENT, not the commit itself (measured: `sha` = parent, `tree` = `HEAD^{tree}` of the finished commit). `gate-before-merge.sh` reads that correctly because it accepts either a `sha` OR a `tree` match (the table above) and the `tree` match is the one that succeeds in this case. Reading `sha` in that artifact as "the gated commit" is the error this note exists to head off; `tree` is what actually decided the match, and the gate's own success-path output says which arm matched AND which file (`matched: tree (<path>)` / `matched: sha (<path>)`).
 
 Both artifacts live together in **the gate artifact directory** — the same directory `last-pass.json` above is written to; a future release may relocate that directory without changing either filename or field shape.
 
