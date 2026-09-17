@@ -178,6 +178,42 @@ def test_finalize_acknowledged_deleted_refuses_unknown_path(tmp_path):
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == before   # manifest NOT written
 
 
+def _ack_once_present_fixture(tmp_path):
+    """v3 project whose template dropped .claude/rules/project.md (once-class);
+    the project still has it (Task 1 review F1: this is NOT the
+    TEMPLATE_DELETED/ACKNOWLEDGED_KEPT case the by-name refusal names --
+    a once-class PRESENT file was never going to become ACKNOWLEDGED_KEPT
+    at all, since that status only replaces TEMPLATE_DELETED)."""
+    repo, proj = _mk_v3(tmp_path,
+                        template={"CLAUDE.md": "v1\n"},
+                        project={"CLAUDE.md": "v1\n", ".claude/rules/project.md": "mine\n"},
+                        entries={"CLAUDE.md": _tpl_entry("v1\n"),
+                                 ".claude/rules/project.md": {"ownership": "once"}})
+    _init_repo(repo)
+    _git(repo, "tag", "v3.1.0")
+    return repo, proj
+
+
+def test_finalize_acknowledged_deleted_refuses_once_class_present_with_the_answer(tmp_path):
+    """RED first: the substring is absent today (Task 1 review F1). The
+    by-name refusal is correct but incomplete for this case -- a once-class
+    file the project still has was never going to reach ACKNOWLEDGED_KEPT
+    (that status only replaces TEMPLATE_DELETED), so the consumer needs to
+    be told there is nothing to acknowledge, not just that the state doesn't
+    match.
+    """
+    repo, proj = _ack_once_present_fixture(tmp_path)
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = json.loads(manifest_path.read_text(encoding="utf-8"))
+    res = _run(ts.template_finalize_sync(
+        str(proj), acknowledged_deleted=json.dumps([".claude/rules/project.md"])))
+    assert "error" in res and ".claude/rules/project.md" in res["error"]
+    assert "manifest NOT written" in res["error"]
+    assert ("a once-class file you still have is already yours; nothing to acknowledge"
+            in res["error"])
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == before   # manifest NOT written
+
+
 def test_finalize_acknowledged_and_deleted_overlap_refused(tmp_path):
     repo, proj = _ack_fixture(tmp_path)
     res = _run(ts.template_finalize_sync(

@@ -56,7 +56,15 @@ CAPABILITIES = (
     "optional_absent_detail",
     "template_verify",
     "deleted_acknowledged",
+    "registered_tools",
 )
+# CAPABILITIES mixes three kinds of name -- a FIELD a response carries
+# (local_diff_kind), a BEHAVIOUR (region_splice), and a TOOL that must be
+# dispatchable (template_verify). Only the tool-shaped names are
+# dispatch-checkable: test_template_sync_capabilities asserts each is in the
+# live registry AND that no other capability name is a registered tool, so a
+# new tool-shaped capability left out of this tuple is a red test.
+TOOL_CAPABILITIES = ("template_verify",)
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
 CLASSES = ("template", "once", "project")
@@ -1252,9 +1260,18 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     if ack_new:
         status_now = compute_status_v3(pp, manifest, rules)["files"]
         for p in sorted(ack_new):
-            if p not in status_now or status_now[p]["status"] not in ("TEMPLATE_DELETED", "ACKNOWLEDGED_KEPT"):
+            entry_status = status_now.get(p, {}).get("status")
+            if p not in status_now or entry_status not in ("TEMPLATE_DELETED", "ACKNOWLEDGED_KEPT"):
+                # A once-class PRESENT file was never going to reach
+                # ACKNOWLEDGED_KEPT -- that status only ever replaces
+                # TEMPLATE_DELETED (line ~1001 above), so a once-class file
+                # the project still has is not an acknowledgement candidate
+                # at all. Name that answer instead of just the mismatch
+                # (Task 1 review F1).
+                hint = (" -- a once-class file you still have is already yours; nothing to acknowledge"
+                        if entry_status == "PRESENT" else "")
                 return {"error": f"acknowledged_deleted: {p} is not a TEMPLATE_DELETED/ACKNOWLEDGED_KEPT "
-                                  "path — manifest NOT written"}
+                                  f"path — manifest NOT written{hint}"}
             if p in explicit:
                 return {"error": f"{p} is in both deleted_files and acknowledged_deleted — manifest NOT written"}
     merged = sorted(acknowledged_paths(manifest) | ack_new)

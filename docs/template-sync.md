@@ -99,6 +99,18 @@ Impossible under the old reading; ordinary under the correct one — a file can 
 
 v1 manifests (missing `version`, `templateRawHash`, `localHash`) are auto-migrated to v2 by the `template_load_manifest` MCP tool.
 
+### `template_load_manifest` response: identity, registry, capabilities (v4.0.2, item 5)
+
+Every response shape carries three kinds of fact about the running process, resolved together at ONE moment — server import — not read independently:
+
+- **Identity**: `server_version`, `server_commit`, `server_source`, `server_in_template_repo`. Which build this process is.
+- **Registry**: `registered_tools` — the sorted names this process can DISPATCH, read from the FastMCP tool manager. Fixed at import, same as identity.
+- **Capabilities**: `capabilities` — what the loaded module tree (`v3.py`, `verify.py`) supports.
+
+Before v4.0.2, `mcp.py` imported `v3` and `verify` **lazily**, inside each tool body, while the identity fields and the tool registry were already fixed at import. A server process started before a release could therefore advertise a NEW capability (read from the lazily-imported, since-updated module) under an OLD registry that never gained the matching tool — a pre-release server advertised `template_verify` in `capabilities` while its registry held nine tools without it. `mcp.py` now imports `v3` and `verify` eagerly, at the bottom of the module (`from . import v3, verify  # noqa: E402`, after every `@mcp.tool()` definition) — bottom, not top, because `v3.py` and `verify.py` do `from . import mcp as core` at module level, and a top-of-file placement would create the import cycle `mcp -> v3 -> mcp`. One import moment now pins identity, registry and capabilities together, so a hybrid process cannot exist: a restart is what fixes drift, and the fields agree on what a restart would change.
+
+`v3.CAPABILITIES` mixes three kinds of name: a **field** a response carries (`local_diff_kind`), a **behaviour** (`region_splice`), and a **tool** that must be dispatchable (`template_verify`). Only tool-shaped names are dispatch-checkable, so `v3.TOOL_CAPABILITIES` (currently `("template_verify",)`) names the subset of `CAPABILITIES` a client can cross-check against `registered_tools` — `set(TOOL_CAPABILITIES) <= set(registered_tools)` should always hold on a healthy build, and a new tool-shaped capability left out of `TOOL_CAPABILITIES` is a red test (`test_template_sync_capabilities.py`), not a silent gap.
+
 ## Deletion: `TEMPLATE_DELETED`
 
 The 2×2 above cannot express deletion, and this doc did not mention it at all — zero hits for `delet`, `TEMPLATE_DELETED` or `git rm` across the whole file — while consumers were performing deletions on every release that retired something. **The contract is here; the step-by-step mechanics stay in the skill, which owns the ordering and the safety rules (a file whose `PROJECT-CUSTOM` region is non-empty is never offered for deletion).**
