@@ -40,6 +40,10 @@
         "Log location": {
           "effect_when_absent": "purely documentation -- no hook or agent reads this key mechanically",
           "none_meaning": "no log directory declared"
+        },
+        "Log Path": {
+          "effect_when_absent": "purely documentation -- no hook or agent reads this key mechanically",
+          "none_meaning": "no log directory declared"
         }
       } },
     { "pattern": "PROJECT_STATE.md",          "ownership": "once" },

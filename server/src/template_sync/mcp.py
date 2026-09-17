@@ -817,7 +817,14 @@ def _three_way_merge(base: str, theirs: str, ours: str, file_path: str = "") -> 
 
 def _registered_tool_names() -> list[str]:
     """The names this process can DISPATCH -- fixed at import, unlike the
-    lazily importable module tree. Read from the FastMCP tool manager."""
+    lazily importable module tree. Reads the PRIVATE `mcp._tool_manager.
+    list_tools()` deliberately: the public `mcp.list_tools()` is a coroutine
+    (`inspect.iscoroutinefunction` -> True), and this is a sync helper called
+    from inside four dict literals with no running-loop-safe `asyncio.run`
+    available there. The choice is pinned by the `registered_tools`
+    assertions in test_load_fields.py and test_template_sync_capabilities.py,
+    plus the fresh-interpreter witness -- an `mcp` SDK bump that drops
+    `_tool_manager` fails the suite, not production."""
     return sorted(t.name for t in mcp._tool_manager.list_tools())
 
 

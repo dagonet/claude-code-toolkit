@@ -514,6 +514,28 @@ def test_legacy_gate_dir_null_case(tmp_path):
     assert line["status"] == "INFO" and "no legacy" in line["measured"]
 
 
+def test_legacy_gate_dir_runs_on_the_manifest_less_path(tmp_path):
+    """Task 3 addendum item C / ruling R8: legacy_gate_dir reads only
+    pp/".gate" -- no manifest, no rules, no status needed -- so it belongs
+    in _SHAPE_INDEPENDENT alongside manifest_bytes/tree_clean and must
+    actually run (not cascade-SKIP) on a directory with no manifest at all,
+    the same place manifest_bytes/tree_clean already run."""
+    proj = tmp_path / "proj"
+    gate = proj / ".gate"
+    gate.mkdir(parents=True)
+    (gate / "last-pass.json").write_text("{}")
+
+    res = verify.run(str(proj), "", "post_commit")
+    assert len(res["lines"]) == len(verify.LINES)
+    # A missing manifest still FAILs exactly manifest_valid; ok stays False --
+    # legacy_gate_dir running here must not introduce any new FAIL.
+    assert _only_fail(res) == ["manifest_valid"]
+    assert res["ok"] is False
+    line = _by_id(res)["legacy_gate_dir"]
+    assert line["status"] == "INFO"
+    assert "last-pass.json" in line["measured"]
+
+
 def test_once_notes_changed_reports_hunk_count(tmp_path):
     # PROJECT_CONTEXT.md is once-class with audit=keys in OWNERSHIP; change a
     # template COMMENT line only (never a **Key**: line), so

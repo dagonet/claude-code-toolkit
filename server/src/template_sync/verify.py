@@ -65,7 +65,8 @@ _IDS = tuple(i for i, _ in LINES)
 # Ids computed independently of manifest shape (raw bytes / project git
 # state) -- these still run even when every v3-dependent id below them is
 # short-circuited to SKIP.
-_SHAPE_INDEPENDENT = ("manifest_valid", "manifest_version_3", "manifest_bytes", "tree_clean")
+_SHAPE_INDEPENDENT = ("manifest_valid", "manifest_version_3", "manifest_bytes", "tree_clean",
+                      "legacy_gate_dir")
 
 
 def _line(id_: str, status: str, measured: str, expected: str, remedy: str = "") -> dict:
@@ -133,6 +134,30 @@ def _check_tree_clean(pp: pathlib.Path, mode: str) -> dict:
     return _line("tree_clean", "PASS", "0 dirty paths", expected)
 
 
+def _check_legacy_gate_dir(pp: pathlib.Path) -> dict:
+    """v4.0.1 moved the gate artifact under <common git dir>/gate/; a
+    leftover project-relative .gate/ is never itself a defect (item 4,
+    penumbra: a **Log location** can legitimately point there), so this
+    never fails -- it only names the three known artifact-file names, by
+    name, for deletion, and counts (never names) everything else so a
+    consumer's own logs are never listed as if they were gate output. Reads
+    only `pp` -- no manifest, no rules, no status -- so it is
+    shape-independent (Task 3 addendum, ruling R8) and runs at every early
+    return in `run()`, not just the full success path."""
+    gate_dir = pp / ".gate"
+    if not gate_dir.is_dir():
+        return _line("legacy_gate_dir", "INFO", "no legacy .gate/ directory", "n/a (informational)")
+    artifact_names = ("last-pass.json", "last-precommit.json", "last-precommit-noop.json")
+    arts = [n for n in artifact_names if (gate_dir / n).is_file()]
+    others = sum(1 for e in gate_dir.iterdir() if e.name not in arts)
+    return _line("legacy_gate_dir", "INFO",
+                 f"legacy .gate/ present: artifact files {arts}; {others} other entries",
+                 "n/a (informational)",
+                 "delete the listed artifact files by name (the gate now writes under "
+                 "<common git dir>/gate/); these are not gate artifacts -- leave them "
+                 "(a **Log location** may point here); never delete the directory")
+
+
 def _project_md_scoped(project_md: str) -> bool:
     """True when `project_md` opens with a `---\\n ... \\n---\\n` frontmatter
     block that declares a `paths:` key (v4.0.2, item 12) -- the shape
@@ -163,6 +188,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                    ".claude/template-manifest.json"))
         _cascade_skip(results, done, "no manifest at .claude/template-manifest.json")
         emit(_check_manifest_bytes(pp))
+        emit(_check_legacy_gate_dir(pp))
         emit(_check_tree_clean(pp, mode))
         return _finalize(results, mode)
 
@@ -188,6 +214,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                   "see manifest_valid / manifest_version_3")
         _cascade_skip(results, done, reason)
         emit(_check_manifest_bytes(pp))
+        emit(_check_legacy_gate_dir(pp))
         emit(_check_tree_clean(pp, mode))
         return _finalize(results, mode)
 
@@ -215,6 +242,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         reason = f"{v3.OWNERSHIP_FILE} not found in template repo -- this checkout predates v3.1"
         _cascade_skip(results, done, reason)
         emit(_check_manifest_bytes(pp))
+        emit(_check_legacy_gate_dir(pp))
         emit(_check_tree_clean(pp, mode))
         return _finalize(results, mode)
 
@@ -486,25 +514,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                        "n/a (informational)"))
 
     # --- legacy_gate_dir (INFO) ---------------------------------------------
-    # v4.0.1 moved the gate artifact under <common git dir>/gate/; a leftover
-    # project-relative .gate/ is never itself a defect (item 4, penumbra: a
-    # **Log location** can legitimately point there), so this never fails --
-    # it only names the three known artifact-file names, by name, for
-    # deletion, and counts (never names) everything else so a consumer's own
-    # logs are never listed as if they were gate output.
-    gate_dir = pp / ".gate"
-    if not gate_dir.is_dir():
-        emit(_line("legacy_gate_dir", "INFO", "no legacy .gate/ directory", "n/a (informational)"))
-    else:
-        artifact_names = ("last-pass.json", "last-precommit.json", "last-precommit-noop.json")
-        arts = [n for n in artifact_names if (gate_dir / n).is_file()]
-        others = sum(1 for e in gate_dir.iterdir() if e.name not in arts)
-        emit(_line("legacy_gate_dir", "INFO",
-                   f"legacy .gate/ present: artifact files {arts}; {others} other entries",
-                   "n/a (informational)",
-                   "delete the listed artifact files by name (the gate now writes under "
-                   "<common git dir>/gate/); these are not gate artifacts -- leave them "
-                   "(a **Log location** may point here); never delete the directory"))
+    emit(_check_legacy_gate_dir(pp))
 
     # --- once_notes_changed (INFO) ------------------------------------------
     notes_changed = [
