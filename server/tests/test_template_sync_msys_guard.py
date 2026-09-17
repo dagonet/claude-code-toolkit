@@ -19,6 +19,11 @@ import os
 from template_sync import mcp as ts
 
 MSYS_PATH = "/g/git/msys-guard-fixture"
+# This literal is never actually written to: every guarded tool here refuses
+# on the MSYS shape before it gets far enough to touch a manifest at that
+# path (there is none), so the fixture never needs a real "msys-guard-fixture"
+# tree. A future test that DOES need a manifest under this path must build it
+# under `tmp_path`, not under this literal (v4.0.1 review carry-over).
 
 
 def _snapshot(root) -> set[str]:

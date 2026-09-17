@@ -1,2 +1,2 @@
-4.0.0
-The template-sync MCP server ships from this repo's server/ directory as package template_sync, with checks 43-46, a third gate command, and the rollback target corrected to mcp-dev-servers 0.3.9.
+4.0.1
+Consumer-rollout fixes: sync-path defects (region_bytes, dotfile diff, trailing newline, MSYS paths) fixed at the source, superseded manifest keys dropped, gate artifacts moved into the common git dir, a new read-only template_verify consistency check, and CLAUDE.local.md retired.

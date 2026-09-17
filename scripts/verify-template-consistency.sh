@@ -1659,6 +1659,15 @@ done
 #     the check that verifies the remaining 5 against the real server);
 #     this check's job stays narrower and unchanged -- the 5 names that
 #     ARE real stay denied in every variant.
+#
+#     R26: this check's own hard-coded `GIT_MCP_DENY` list stays hard-coded
+#     ON PURPOSE -- it IS the specification of intent (which write ops MUST
+#     be denied), settings.json is the artifact it audits against that
+#     spec, and check 50 is the separate check that verifies those names
+#     still exist upstream in the real server. Deriving this list FROM
+#     settings.json or from the server's own export list would make the
+#     check a tautology (a file compared against a copy of itself); nobody
+#     should "fix" that asymmetry.
 # ---------------------------------------------------------------------------
 echo
 GIT_MCP_DENY="git_push git_commit git_revert git_rebase git_reset"
