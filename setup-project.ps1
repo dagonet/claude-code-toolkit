@@ -4,7 +4,7 @@
     Sets up a new project with Claude Code configuration from a template variant.
 
 .DESCRIPTION
-    Copies template files (CLAUDE.md, CLAUDE.local.md, AGENT_TEAM.md, PROJECT_CONTEXT.md,
+    Copies template files (CLAUDE.md, AGENT_TEAM.md, PROJECT_CONTEXT.md,
     PROJECT_STATE.md, VERIFICATION_PLAYBOOK.md, .claude/, .editorconfig, .gitattributes, gitignore)
     to a target project directory and replaces {{PLACEHOLDER}} tokens with provided values.
 
@@ -284,6 +284,30 @@ function Set-ProtectedBranches {
                             "- **Protected branches**: $protectedBranches")
 }
 
+# Set-DerivedDefaults (v4.0.1, item 5) -- twin of setup-project.sh's
+# set_derived_defaults. The template ships `- **Gate-checked branches**:
+# none` and `- **Post-edit build**: none` as LITERAL text now (no
+# `{{...}}` token), so a plain hashtable substitution has nothing left to
+# match for these two keys once the template default equals a manual
+# bootstrap's own answer. $replacements is populated by Add-Derived calls
+# further down the script by the time this runs (called from the file
+# rendering paths below, same as Set-ProtectedBranches), so a direct
+# lookup is enough -- no parallel-array search needed the way bash needs one.
+function Set-DerivedDefaults {
+    param([string]$Text)
+    $gcb = $replacements['{{GATE_CHECKED_BRANCHES}}']
+    $pob = $replacements['{{POST_EDIT_BUILD}}']
+    if ($gcb -and $gcb -ne 'none') {
+        $Text = [regex]::Replace($Text, '(?m)^- \*\*Gate-checked [Bb]ranches\*\*:.*$',
+                                 "- **Gate-checked branches**: $gcb")
+    }
+    if ($pob -and $pob -ne 'none') {
+        $Text = [regex]::Replace($Text, '(?m)^- \*\*Post-edit build\*\*:.*$',
+                                 "- **Post-edit build**: $pob")
+    }
+    return $Text
+}
+
 # Explicit command flags -- set before any variant-derived default so they win
 if ($BuildCmd)  { $replacements['{{BUILD_COMMAND}}']  = $BuildCmd }
 if ($TestCmd)   { $replacements['{{TEST_COMMAND}}']   = $TestCmd }
@@ -457,7 +481,7 @@ function Get-TemplateFiles {
     $files = @()
 
     # Top-level markdown and config files
-    foreach ($name in @("CLAUDE.md", "CLAUDE.local.md", "AGENT_TEAM.md", "PROJECT_CONTEXT.md", "PROJECT_STATE.md", "VERIFICATION_PLAYBOOK.md")) {
+    foreach ($name in @("CLAUDE.md", "AGENT_TEAM.md", "PROJECT_CONTEXT.md", "PROJECT_STATE.md", "VERIFICATION_PLAYBOOK.md")) {
         $path = Join-Path $Source $name
         if (Test-Path $path) {
             $files += @{ Source = $path; RelPath = $name; IsGitignore = $false }
@@ -574,8 +598,8 @@ elseif ($classifyNames.Count -gt 0) {
 
 # Manifest key + ownership class for template file $File, from the
 # classification above. Returns $null when the classifier did not match
-# (e.g. CLAUDE.local.md -- unclassified_template_files server-side), which
-# the caller uses to leave the file out of the manifest entirely.
+# (no ownership rule; surfaced as unclassified_template_files server-side),
+# which the caller uses to leave the file out of the manifest entirely.
 function Get-ManifestKeyAndOwnership {
     param($File)
     $cname = Get-OwnershipClassifyName $File
@@ -662,7 +686,10 @@ function Get-RenderedContent {
     }
     $text = Get-Content -Path $File.Source -Encoding UTF8 -Raw
     foreach ($key in $replacements.Keys) { $text = $text.Replace($key, $replacements[$key]) }
-    if ($File.RelPath -eq 'PROJECT_CONTEXT.md') { $text = Set-ProtectedBranches -Text $text }
+    if ($File.RelPath -eq 'PROJECT_CONTEXT.md') {
+        $text = Set-ProtectedBranches -Text $text
+        $text = Set-DerivedDefaults -Text $text
+    }
     if (Test-ShouldWrapClaudeMd $File.RelPath) {
         $existing = Get-Content -Path (Join-Path $TargetDir "CLAUDE.md") -Encoding UTF8 -Raw
         $text = Merge-IntoCustomRegion -Rendered $text -Body $existing
@@ -980,7 +1007,10 @@ foreach ($f in $templateFiles) {
     # Get-RenderedContent, so the transform has to be applied here too or the two
     # modes disagree about the one line that decides whether the trunk is
     # protected. (The .sh half had exactly this bug, caught by a bootstrap test.)
-    if ($f.RelPath -eq 'PROJECT_CONTEXT.md') { $content = Set-ProtectedBranches -Text $content }
+    if ($f.RelPath -eq 'PROJECT_CONTEXT.md') {
+        $content = Set-ProtectedBranches -Text $content
+        $content = Set-DerivedDefaults -Text $content
+    }
     Write-Utf8NoBom -Path $targetFile -Content $content
     $copiedFiles += $f.RelPath
     Add-RenderedFile -RelPath $f.RelPath -Text $content
@@ -1146,7 +1176,13 @@ $manifest = [ordered]@{
 }
 if ($script:classifierFallback) { $manifest.classifier = "powershell-fallback" }
 
-$manifestJson = $manifest | ConvertTo-Json -Depth 4
+# ConvertTo-Json (PS 5.1) writes `r`n between lines and no trailing newline at
+# all -- a prettier-checked consumer (or template_verify's manifest_bytes
+# line, v4.0.1 item 22) goes red on a ps1-bootstrapped manifest even though
+# the JSON content itself is correct. Normalize to LF-only, one trailing LF,
+# matching what the server's own finalize/migrate writers produce (v4.0.1
+# item 12) and what setup-project.sh's manifest writer already produces.
+$manifestJson = (($manifest | ConvertTo-Json -Depth 4) -replace "`r`n", "`n") + "`n"
 $manifestPath = Join-Path (Join-Path $TargetDir ".claude") "template-manifest.json"
 $manifestDir  = Split-Path $manifestPath -Parent
 if (-not (Test-Path $manifestDir)) {
@@ -1194,5 +1230,19 @@ Write-AutoModeSnippet
 
 Write-Host ""
 Write-TemplateSyncSnippet
+
+# --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
+# $tsExe/$tsRegister are resolved above, once, before the DryRun/real-run
+# fork. A FAIL line is reported, not fatal -- setup's job is done by this
+# point; the user reads the lines and the remedy text names the fix.
+if ($tsRegister -and $tsExe) {
+    Write-Host ""
+    Write-Host "Verifying the bootstrap:"
+    & $tsExe --verify $TargetDir --template-repo $PSScriptRoot
+    $verifyRc = $LASTEXITCODE
+    if ($verifyRc -ne 0) {
+        Write-Host "  (verify reported FAIL line(s) above -- not fatal to setup; each remedy names the fix)"
+    }
+}
 
 Write-Host ""

@@ -1002,6 +1002,32 @@ else
   ko "GC_TERMINAL_RC definition drifted: found in $gtr_have of 2 files (git-cmd.sh, run-gate.sh)"
 fi
 
+# 21c-2i. GC_GATE_TTL_S and gc_gate_dir, same census for the same reason
+# (v4.0.1, item 17): run-gate.sh cannot source git-cmd.sh (it must run with no
+# JSON parser on PATH), so it repeats both the constant and the function.
+GC_GATE_TTL_S_DEF='GC_GATE_TTL_S=3600'
+gts_have=0
+for gtsf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+  grep -qF "$GC_GATE_TTL_S_DEF" "$gtsf" && gts_have=$((gts_have + 1))
+done
+if [ "$gts_have" -eq 2 ]; then
+  ok "GC_GATE_TTL_S defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "GC_GATE_TTL_S definition drifted: found in $gts_have of 2 files (git-cmd.sh, run-gate.sh)"
+fi
+
+# The gc_gate_dir FUNCTION BODY, not just a one-line constant -- extracted by
+# its opening/closing braces from each file and compared verbatim. A textual
+# grep -qF of one distinctive line would miss a drift inside the body that
+# leaves that one line untouched; the whole function is what must agree.
+ggd_lib=$(awk '/^gc_gate_dir\(\) \{/,/^}/' hooks/lib/git-cmd.sh)
+ggd_run=$(awk '/^gc_gate_dir\(\) \{/,/^}/' hooks/run-gate.sh)
+if [ -n "$ggd_lib" ] && [ "$ggd_lib" = "$ggd_run" ]; then
+  ok "gc_gate_dir defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "gc_gate_dir definition drifted or missing between git-cmd.sh and run-gate.sh"
+fi
+
 # 21c-2g. The retro base-dir helper, same census for the same reason (v3.0.4,
 # item A6b, a consequence of mirroring retro-brief.sh in check 21a above).
 #
@@ -1618,11 +1644,34 @@ done
 #     registered at USER level, so it stays reachable in every project — and
 #     under "defaultMode": "auto" an MCP git_push to main runs with no hook on
 #     it. The deny list is what keeps the gates from being bypassable.
-#     Denying a tool the server does not expose is a harmless no-op.
+#
+#     CORRECTED (v4.0.1, Task 8 fix rounds 2-3, ruling R23/R25): this
+#     check's own comment used to read "denying a tool the server does not
+#     expose is a harmless no-op." Measured false: check 50 (item 23)
+#     established that a stale deny FAILS OPEN, not closed -- a denied
+#     name the server doesn't export protects nothing, and an upstream
+#     rename of a REAL denied tool would silently reopen it while this
+#     check stayed green regardless, since it only checks the deny list's
+#     own TEXT, never the server's actual tool set. `git_merge` and
+#     `git_push_tags` were exactly this: denied names that never existed
+#     in mcp-dev-servers (git_push already covers tag pushes via its own
+#     `tags: bool` parameter). Removed from the deny list (check 50 is now
+#     the check that verifies the remaining 5 against the real server);
+#     this check's job stays narrower and unchanged -- the 5 names that
+#     ARE real stay denied in every variant.
+#
+#     R26: this check's own hard-coded `GIT_MCP_DENY` list stays hard-coded
+#     ON PURPOSE -- it IS the specification of intent (which write ops MUST
+#     be denied), settings.json is the artifact it audits against that
+#     spec, and check 50 is the separate check that verifies those names
+#     still exist upstream in the real server. Deriving this list FROM
+#     settings.json or from the server's own export list would make the
+#     check a tautology (a file compared against a copy of itself); nobody
+#     should "fix" that asymmetry.
 # ---------------------------------------------------------------------------
 echo
-GIT_MCP_DENY="git_push git_commit git_revert git_merge git_rebase git_reset git_push_tags"
-GIT_MCP_DENY_N=7
+GIT_MCP_DENY="git_push git_commit git_revert git_rebase git_reset"
+GIT_MCP_DENY_N=5
 for v in $VARIANTS; do
   s="templates/$v/.claude/settings.json"
   missing=""
@@ -2988,14 +3037,14 @@ fi
 # TWO-SIDED: the control arm proves the comparison executes. A check that
 # cannot fail looks exactly like one that passed.
 # ---------------------------------------------------------------------------
-note "Check 35: byte budget on templates/*/{CLAUDE.md,CLAUDE.local.md,AGENT_TEAM.md}"
+note "Check 35: byte budget on templates/*/{CLAUDE.md,AGENT_TEAM.md}"
 BUDGET_CLAUDE_MD=6144
-BUDGET_CLAUDE_LOCAL_MD=12288
 BUDGET_AGENT_TEAM_MD=20480
+c33_pairs=("CLAUDE.md:$BUDGET_CLAUDE_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD")
 c33_fail=0
 c33_rows=0
-for v in general dotnet dotnet-maui rust-tauri java python; do
-  for pair in "CLAUDE.md:$BUDGET_CLAUDE_MD" "CLAUDE.local.md:$BUDGET_CLAUDE_LOCAL_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD"; do
+for v in $VARIANTS; do
+  for pair in "${c33_pairs[@]}"; do
     f="templates/$v/${pair%%:*}"; b="${pair##*:}"
     [ -f "$f" ] || { ko "check 35: $f missing — the budget cannot be measured"; c33_fail=1; continue; }
     sz=$(wc -c < "$f" | tr -d '[:space:]')
@@ -3006,22 +3055,26 @@ for v in general dotnet dotnet-maui rust-tauri java python; do
     fi
   done
 done
+# Expected row count is derived from the loop shape (pairs x variants), not
+# hard-coded, so dropping/adding a budgeted file never needs a manual count
+# update here.
+c33_variant_count=$(printf '%s\n' "$VARIANTS" | wc -w)
+c33_expected_rows=$(( ${#c33_pairs[@]} * c33_variant_count ))
 # Control arm: the comparison above must be able to fire. Evaluate the same
 # expression against a budget of 0 for the first file; if that does not read
 # as over-budget, the arithmetic is broken and every row above was vacuous.
 c33_ctrl_sz=$(wc -c < templates/general/CLAUDE.md | tr -d '[:space:]')
-if [ "$c33_ctrl_sz" -gt 0 ] && [ "$c33_rows" -eq 18 ]; then
-  [ "$c33_fail" -eq 0 ] && ok "check 35: 18/18 files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, CLAUDE.local.md<=$BUDGET_CLAUDE_LOCAL_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
+if [ "$c33_ctrl_sz" -gt 0 ] && [ "$c33_rows" -eq "$c33_expected_rows" ]; then
+  [ "$c33_fail" -eq 0 ] && ok "check 35: $c33_rows/$c33_expected_rows files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
 else
-  ko "check 35: CONTROL FAILED — rows=$c33_rows (want 18), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
+  ko "check 35: CONTROL FAILED — rows=$c33_rows (want $c33_expected_rows), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
 fi
 
 # ---------------------------------------------------------------------------
 # Check 36 — OWNERSHIP TABLE COVERAGE (v3.1, spec §6).
 #
-# Every file a consumer actually receives — templates/<variant>/** (minus the
-# known CLAUDE.local.md exception, gone at Phase 3) plus the repo-root hooks/**
-# tree setup-project.sh copies verbatim — must match a rule in
+# Every file a consumer actually receives — templates/<variant>/** plus the
+# repo-root hooks/** tree setup-project.sh copies verbatim — must match a rule in
 # templates/ownership.json (first match wins). A file with no class is a red
 # gate, not an implicit `template`.
 #
@@ -3460,18 +3513,20 @@ esac
 #   (b) the script's own behavior with the venv ABSENT is an ERROR (exit 2,
 #       naming 'server/install.sh'), never a silent/soft skip -- a gate that
 #       skips is a gate that passed vacuously.
-# Arm (b) runs BOTH ways a checkout can be found in: if server/.venv exists
-# here, it is moved aside for the single invocation and restored immediately
-# after (trap-guarded so an interrupted run still restores it); if it does not
-# exist, the no-venv behavior is already the checkout's real state and needs
-# no move. Either way this arm is exercised on every run, never skipped for
-# lack of a venv. (Two concurrent gate runs in the SAME worktree can collide on
-# the moved-aside directory -- per-worktree venvs make cross-worktree runs
-# safe; accepted, not engineered around.) Recovery: if the process dies at a
-# point the EXIT trap cannot fire (e.g. SIGKILL), the venv is left behind as
-# `server/.venv.check46-<pid>` and every later gate run fails at command three
-# looking like a missing install -- `mv server/.venv.check46-<pid> server/.venv`
-# restores it.
+# v4.0.1 item 11: arm (b) used to prove the no-venv path by MOVING the real
+# server/.venv aside for the single invocation and moving it back after. On
+# the live checkout, an MCP server process can hold that directory open
+# (Windows file locking), so the move failed and every per-commit **Test**
+# went red for a reason with nothing to do with the code being committed --
+# this script blocked commits to itself. FIX: test-server.sh now honours
+# TS_VENV_DIR, an env override for where it looks for the venv (default
+# server/.venv, unchanged for every normal invocation). This arm points it at
+# a freshly created EMPTY temp directory instead -- no python is found there
+# by construction, so the no-venv arm is proven without ever touching the
+# real venv, and there is nothing to move back, so nothing to recover if the
+# process dies mid-check. The fixture-error branch below (mktemp failing) is
+# a tooling problem, not a red result, and is reported as `ko` with a
+# distinct FIXTURE ERROR message so it is never mistaken for a real failure.
 # ---------------------------------------------------------------------------
 note "Check 46: **Gate** names test-server.sh; test-server.sh exits 2 (never skips) with no venv"
 c46_gate=$(grep -E "^[-*[:space:]]*\*\*Gate\*\*:" PROJECT_CONTEXT.md 2>/dev/null | head -1)
@@ -3483,23 +3538,601 @@ esac
 if [ ! -x scripts/test-server.sh ]; then
   ko "check 46: scripts/test-server.sh missing or not executable"
 else
-  c46_moved=0
-  if [ -d server/.venv ]; then
-    c46_aside="server/.venv.check46-$$"
-    mv server/.venv "$c46_aside"
-    trap 'mv "$c46_aside" server/.venv 2>/dev/null' EXIT
-    c46_moved=1
-  fi
-  c46_out=$(bash scripts/test-server.sh 2>&1)
-  c46_rc=$?
-  if [ "$c46_moved" -eq 1 ]; then
-    mv "$c46_aside" server/.venv
-    trap - EXIT
-  fi
-  if [ "$c46_rc" -eq 2 ] && printf '%s' "$c46_out" | grep -q "server/install.sh" && ! printf '%s' "$c46_out" | grep -qi "skip"; then
-    ok "check 46: scripts/test-server.sh exits 2 with an install message and no 'skip' when server/.venv is absent"
+  c46_empty=$(mktemp -d 2>/dev/null || mktemp -d -t c46)
+  if [ -z "$c46_empty" ] || [ ! -d "$c46_empty" ]; then
+    ko "check 46: FIXTURE ERROR -- could not create an empty temp dir for the no-venv arm (not a red result; fix the fixture)"
   else
-    ko "check 46: scripts/test-server.sh must exit 2 naming server/install.sh (never 'skip') when server/.venv is absent -- got rc=$c46_rc, output: $c46_out"
+    c46_out=$(TS_VENV_DIR="$c46_empty" bash scripts/test-server.sh 2>&1)
+    c46_rc=$?
+    rmdir "$c46_empty" 2>/dev/null
+    if [ "$c46_rc" -eq 2 ] && printf '%s' "$c46_out" | grep -q "server/install.sh" && printf '%s' "$c46_out" | grep -qF "$c46_empty" && ! printf '%s' "$c46_out" | grep -qi "skip"; then
+      ok "check 46: scripts/test-server.sh exits 2 naming the probed dir and server/install.sh (never 'skip') with no venv"
+    else
+      ko "check 46: scripts/test-server.sh must exit 2 naming the probed dir and server/install.sh (never 'skip') when the venv is absent -- got rc=$c46_rc, output: $c46_out"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Check 47 -- skill bodies carry no positional tokens (v4.0.1; tightened
+# v4.0.1 fix round 1). The Skill tool substitutes $0-$9 / ${N} / $ARGUMENTS
+# textually across the whole body before any shell snippet runs -- textually
+# meaning inside a fenced shell snippet too, so a skill invoked with an
+# argument has any of these tokens replaced in-place with raw, unescaped
+# user text. Inside a fence that is worse than mangling: a shape like
+# `grep -r "$ARGUMENTS" .` becomes a shell-injection point, not just a
+# broken command (reviewer-planted case, fix round 1 -- the argument-hint
+# exemption below used to be unconditional and let this through).
+#
+# $0-$9 / ${N} have no legitimate use in ANY skill body, prose or fence (a
+# shell snippet needing a positional-looking name should use a NAMED
+# variable instead), and are banned unconditionally everywhere.
+#
+# $ARGUMENTS is different: it is the documented substitution point for a
+# skill that declares `argument-hint` in its own frontmatter (challenge,
+# retro-review, sprint all do). In PROSE that is exactly the intended use,
+# so banning it unconditionally would make this check permanently red on
+# working, by-design skills. INSIDE a fenced code block it is the
+# shell-injection shape above, so it is banned there even when
+# argument-hint is declared. A skill that does NOT declare argument-hint has
+# no legitimate use for $ARGUMENTS anywhere, fence or prose.
+#
+# The fence toggle matches an INDENTED fence too (a fence opened under a
+# list item, e.g. "   ```sh"), not just one starting at column 0 -- an
+# anchor of bare /^```/ never toggles on an indented fence, so content
+# inside it reads as prose and a fenced $ARGUMENTS there passes uncaught
+# (fix round 2; the shipped sync-template SKILL.md has 4 such fences today).
+#
+# The scan lives in one function, c47_scan, so 47c can exercise the SAME
+# code the real check runs rather than a parallel literal -- the fix-round-1
+# finding was that the prior 47c probed a pattern that appeared nowhere in
+# check 47 itself, so it stayed green even when check 47's own greps broke.
+# 47c now builds a throwaway skills tree and asserts c47_scan flags a bare
+# $1, a fenced $ARGUMENTS under a declared argument-hint, and the SAME thing
+# inside an INDENTED fence (fix round 2) -- and does NOT flag the same
+# $ARGUMENTS used in prose right next to it -- exercising the loop, the
+# glob, and every branch of the condition.
+# ---------------------------------------------------------------------------
+c47_scan() {   # <skills-root-dir> -> "path:line:content" hits, one per line, empty when clean
+  c47_dir="$1"
+  c47_out=""
+  while IFS= read -r c47_f; do
+    [ -f "$c47_f" ] || continue
+    c47_h=$(grep -HnE '\$[0-9]|\$\{[0-9]\}' "$c47_f" 2>/dev/null)
+    [ -n "$c47_h" ] && c47_out="$c47_out
+$c47_h"
+    if grep -qE '^argument-hint:' "$c47_f" 2>/dev/null; then
+      # argument-hint declared: $ARGUMENTS is the documented placeholder in
+      # PROSE (allowed); banned only INSIDE a fenced code block (``` ... ```),
+      # indented or not (a fence opened under a list item still counts).
+      c47_h=$(awk -v fn="$c47_f" '
+        /^[[:space:]]*```/ { infence = !infence; next }
+        infence && /\$ARGUMENTS/ { print fn ":" NR ":" $0 }
+      ' "$c47_f")
+    else
+      # no argument-hint declared: $ARGUMENTS has no legitimate use anywhere.
+      c47_h=$(grep -HnF '$ARGUMENTS' "$c47_f" 2>/dev/null)
+    fi
+    [ -n "$c47_h" ] && c47_out="$c47_out
+$c47_h"
+  done <<EOF
+$(find "$c47_dir" -type f -name 'SKILL.md' 2>/dev/null)
+EOF
+  printf '%s\n' "$c47_out" | sed '/^$/d'
+}
+
+note "Check 47: skill bodies carry no positional tokens (\$0-\$9/\${N} always; \$ARGUMENTS inside a fence, or anywhere without argument-hint)"
+c47_hits=$(c47_scan "user-level-reference/skills")
+if [ -n "$c47_hits" ]; then
+  ko "check 47: positional token(s) in a skill body -- any argument corrupts the shell snippets: $(printf '%s' "$c47_hits" | head -5 | tr '\n' ';')"
+else
+  ok "check 47: no \$0-\$9/\${N} in any skill body; no \$ARGUMENTS in a fence, or anywhere in a skill without argument-hint"
+fi
+
+# 47c control: exercises c47_scan itself, not a parallel probe (fix round 1).
+c47_scratch="${TMPDIR:-/tmp}/c47-control-$$"
+rm -rf "$c47_scratch"
+mkdir -p "$c47_scratch/plain-skill" "$c47_scratch/argword-skill" "$c47_scratch/indented-fence-skill"
+printf -- '---\nname: plain-skill\n---\nbody with a stray positional: "$1"\n' > "$c47_scratch/plain-skill/SKILL.md"
+printf -- '---\nname: argword-skill\nargument-hint: "[x]"\n---\nProse use is fine: $ARGUMENTS\n\n```sh\necho "$ARGUMENTS"\n```\n' > "$c47_scratch/argword-skill/SKILL.md"
+# fix round 2 (F7): an INDENTED fence (opened under a list item) must toggle
+# the same as a column-0 one, so $ARGUMENTS inside it is still caught.
+printf -- '---\nname: indented-fence-skill\nargument-hint: "[x]"\n---\n1. a step\n   ```sh\n   echo "$ARGUMENTS"\n   ```\n' > "$c47_scratch/indented-fence-skill/SKILL.md"
+c47_probe=$(c47_scan "$c47_scratch")
+c47_probe_n=$(printf '%s\n' "$c47_probe" | sed '/^$/d' | wc -l | tr -d ' ')
+if printf '%s' "$c47_probe" | grep -qF "plain-skill/SKILL.md" \
+   && printf '%s' "$c47_probe" | grep -qF "argword-skill/SKILL.md" \
+   && printf '%s' "$c47_probe" | grep -qF "indented-fence-skill/SKILL.md" \
+   && [ "$c47_probe_n" -eq 3 ]; then
+  ok "check 47c: control -- c47_scan flags the planted \$1 (plain-skill), the fenced \$ARGUMENTS under argument-hint (argword-skill), and the INDENTED-fenced \$ARGUMENTS (indented-fence-skill), and nothing else -- $c47_probe_n hit(s), prose \$ARGUMENTS correctly unflagged"
+else
+  ko "check 47c: control -- c47_scan did not flag exactly the three planted cases (bare \$1; fenced \$ARGUMENTS under argument-hint; indented-fenced \$ARGUMENTS) -- got $c47_probe_n hit(s): $(printf '%s' "$c47_probe" | tr '\n' ';')"
+fi
+rm -rf "$c47_scratch"
+
+# ---------------------------------------------------------------------------
+# Check 48 -- no variant ships CLAUDE.local.md (retired v4.0.1, item 16). The
+# file is no longer part of the template; an existing consumer's own copy is
+# project-owned (gitignored, never manifest-tracked) and untouched by a sync
+# -- this check only guards against the template growing one back.
+#
+# RECURSIVE (fix round 1): setup-project.sh copies templates/<variant>/**
+# recursively, so a reappearance nested below the variant root (e.g.
+# general/sub/CLAUDE.local.md) would still ship. A depth-1 glob
+# (*/CLAUDE.local.md) misses that; find does not.
+#
+# TWO-SIDED: 48c plants a CLAUDE.local.md under a scratch base -- one at
+# depth 1 and one nested deeper -- and calls the SAME function the real
+# check uses, so the control exercises the identical scan rather than a
+# separately-written literal grep, and proves depth is not a blind spot.
+# ---------------------------------------------------------------------------
+note "Check 48: no variant ships CLAUDE.local.md (retired v4.0.1; consumer copies are theirs and untouched)"
+
+# c48_scan <base-dir> -- prints one path per CLAUDE.local.md found anywhere
+# under <base-dir>, at any depth.
+c48_scan() { find "$1" -type f -name CLAUDE.local.md 2>/dev/null || true; }
+
+c48_hit=$(c48_scan templates)
+if [ -z "$c48_hit" ]; then
+  ok "check 48: no CLAUDE.local.md anywhere under templates/"
+else
+  ko "check 48: CLAUDE.local.md reappeared: $(printf '%s' "$c48_hit" | tr '\n' ';')"
+fi
+
+# 48c control: plant one at depth 1 AND one nested deeper under a throwaway
+# base, and confirm c48_scan finds BOTH -- a depth-1-only scan would find
+# just the first and pass this control too, so require count == 2.
+C48C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c48c)
+mkdir -p "$C48C_TMP/x" "$C48C_TMP/general/sub"
+: > "$C48C_TMP/x/CLAUDE.local.md"
+: > "$C48C_TMP/general/sub/CLAUDE.local.md"
+c48c_hit=$(c48_scan "$C48C_TMP")
+c48c_n=$(printf '%s\n' "$c48c_hit" | grep -c .)
+rm -rf "$C48C_TMP"
+if [ "$c48c_n" -eq 2 ]; then
+  ok "check 48c: control -- both a depth-1 (x/) and a nested (general/sub/) planted CLAUDE.local.md are detected"
+else
+  ko "check 48c: control -- expected 2 planted CLAUDE.local.md hits, got $c48c_n: check 48 is vacuous or depth-limited"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 49 -- PROJECT_CONTEXT.md key strings appear only at line start
+# (v4.0.1 item 21). The declared-key readers (hooks/lib/git-cmd.sh,
+# hooks/pre-commit-test.sh, v3.py's KEY_LINE_RE) all grep `**Key**:`
+# ANCHORED at the start of a (list-marker-stripped) line -- they would
+# happily match the same string sitting mid-sentence too, so a decoy like
+# templates/general/PROJECT_CONTEXT.md's old line 8 ("...the branch named
+# on the `**Protected branches**:` line directly below...") was safe only
+# as long as every reader stayed line-anchored.
+#
+# THE OBVIOUS VERSION OF THIS CHECK IS VACUOUS (measured against the
+# unmodified tree, v4.0.1 review): excluding every grep hit whose OWN line
+# starts with `**` discards every list-item line wholesale -- which is
+# every line capable of carrying a decoy, line 8 included, since line 8
+# ITSELF starts with `- **Branch strategy**:`. That version reported zero
+# bad lines on the tree containing the defect it exists to catch. The fix
+# below strips only the ONE legitimate, line-anchored `**Key**:` token a
+# real reader matches (a leading list marker plus the first key, and only
+# when it sits at column 0) and then searches what is LEFT on that line for
+# a second occurrence -- the actual decoy.
+# ---------------------------------------------------------------------------
+note "Check 49: PROJECT_CONTEXT.md key strings appear only at line start (line-anchored readers)"
+C49_KEYS="Protected branches|Gate|Test|Build|Format|Lint|Gate-checked branches|Post-edit build"
+
+# c49_scan <file> -- prints one "file:line: content" row per mid-line decoy
+# found in <file>. Shared by the real scan below and the 49c control so
+# both exercise the identical logic.
+c49_scan() {
+  local c49_f="$1" c49_row c49_loc c49_content c49_rest
+  while IFS= read -r c49_row; do
+    [ -n "$c49_row" ] || continue
+    c49_loc=$(printf '%s' "$c49_row" | cut -d: -f1-2)
+    c49_content=$(printf '%s' "$c49_row" | cut -d: -f3-)
+    # Strip ONLY the leading, line-anchored "- **Key**:" (list marker +
+    # the FIRST key token, if and only if it starts the content) -- a
+    # decoy line's own key (e.g. "Branch strategy") is not in $C49_KEYS,
+    # so the substitution does not match and c49_rest == c49_content,
+    # which still contains the decoy for the grep below to find.
+    c49_rest=$(printf '%s' "$c49_content" | sed -E "s/^[-*[:space:]]*\*\*($C49_KEYS)\*\*://")
+    if printf '%s' "$c49_rest" | grep -qE "\*\*($C49_KEYS)\*\*:"; then
+      printf '%s: %s\n' "$c49_loc" "$c49_content"
+    fi
+  done < <(grep -nE "\*\*($C49_KEYS)\*\*:" "$c49_f" 2>/dev/null)
+}
+
+c49_bad=""
+for c49_f in templates/*/PROJECT_CONTEXT.md; do
+  [ -f "$c49_f" ] || continue
+  c49_hit=$(c49_scan "$c49_f")
+  [ -n "$c49_hit" ] && c49_bad="$c49_bad
+$c49_hit"
+done
+c49_bad=$(printf '%s' "$c49_bad" | sed '/^$/d')
+if [ -z "$c49_bad" ]; then
+  ok "check 49: no mid-line key decoys"
+else
+  ko "check 49: key string mid-line (a non-anchored reader would match it first): $(printf '%s' "$c49_bad" | tr '\n' ';')"
+fi
+
+# 49c control, planted in the SHAPE of the real defect (v4.0.1 review): a
+# list item whose OWN key sits at column 0 (the legitimate anchor) AND a
+# SECOND, different key token mid-line -- not a bare "text **Gate**: x",
+# which the vacuous check above also "catches" and would certify a scan
+# that misses the actual defect shape.
+C49C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c49c)
+mkdir -p "$C49C_TMP/templates/controlvariant"
+cat > "$C49C_TMP/templates/controlvariant/PROJECT_CONTEXT.md" <<'C49C_EOF'
+- **Gate**: bash gate.sh (see the `**Test**:` field below for the fast path)
+- **Test**: none
+C49C_EOF
+c49c_hit=$(c49_scan "$C49C_TMP/templates/controlvariant/PROJECT_CONTEXT.md")
+rm -rf "$C49C_TMP"
+if [ -n "$c49c_hit" ]; then
+  ok "check 49c: control -- a planted mid-line decoy (Gate line naming Test) is caught"
+else
+  ko "check 49c: control -- planted mid-line decoy NOT caught: check 49 is vacuous"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 50 -- item 23. Every mcp__<alias>__<tool> token named EXPLICITLY in
+# an agent's `tools:` line, OR in templates/*/.claude/settings.json /
+# user-level-reference/settings.json (permissions allow/deny and hook
+# matchers -- fix round 1, F1), must name a tool that alias's OWN MCP
+# server actually exports today. A tool renamed or removed in
+# mcp-dev-servers silently turns the allowlist entry into a dead token
+# (measured: 87 of 87 dotnet-tools calls once failed this way), and a
+# settings.json entry is the ENFORCEMENT layer -- a stale name there
+# silently DENIES a tool or disarms a gate hook's matcher, which is at
+# least as real a defect as a dead allowlist entry. A wildcard grant
+# (`mcp__<alias>__*`) has no name to go stale, so it is not a token.
+#
+# Two independent censuses, via scripts/lib/list-mcp-tools.py (system
+# `python`, never server/.venv): a STATIC scan of the source tree, and an
+# IMPORT census (`asyncio.run(mcp.list_tools())`) run in mcp-dev-servers'
+# own venv -- possible only for a REGISTERED alias. Disagreement between
+# them, or an allowlisted tool absent from the static census, is the red.
+#
+# Source tree: MCP_DEV_SERVERS_DIR (env), else derived from any REGISTERED
+# mcp-dev-servers-family alias's venv path in ~/.claude.json
+# (mcpServers.<alias>.command ending in .venv/Scripts/<exe> or
+# .venv/bin/<exe> -> repo root is everything before the .venv segment) --
+# never a hardcoded path: this is a public template repo, and
+# setup-project.sh's own --mcp-dev-servers-path already takes the same
+# value from its caller. If neither yields an existing directory, the
+# WHOLE check is one SKIP line naming the variable -- never a silent green
+# (constraint 9).
+# ---------------------------------------------------------------------------
+note "Check 50: agent-allowlisted mcp__<alias>__<tool> tokens exist in the installed MCP servers (item 23)"
+
+C50_LIB="${MCP_TOOLS_LIB:-scripts/lib/list-mcp-tools.py}"
+C50_FAMILY="git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools"
+C50_REGISTRATION="${MCP_TOOLS_REGISTRATION:-$HOME/.claude.json}"
+
+# Fix round 2, R23(a): a deny entry naming no tool in its alias's static
+# census FAILS OPEN if left unverified -- a rename upstream (e.g.
+# `git_push` -> `git_push_ref`) makes a deliberately-blocked destructive
+# tool silently reachable again in every variant while check 50 stayed
+# green under fix round 1's report-only treatment. A deny-absent name is
+# now `ko`, exactly like a grant-absent name, UNLESS it is listed here as
+# a deliberately forward-looking deny for a name that does not exist yet.
+# Deliberately forward-looking denies for names that do not exist yet --
+# none. (Fix round 2 found `git_merge` and `git_push_tags` absent from
+# git_mcp.py's static census in git-tools' deny list; ruling R25 (fix
+# round 3) confirmed both STALE, not forward-looking, and removed them
+# from the deny list in templates/*/.claude/settings.json (x6) and
+# user-level-reference/settings.json instead of listing them here --
+# listing a stale name would misuse this exception to silence a real
+# finding rather than fix it. See the report for the resolution.)
+C50_SPECULATIVE_DENY=()
+
+# c50_decide <json> <csv-tokens> -- prints 8 lines: status(ko|skip|ok),
+# module, comma-missing, comma-disagreement, skip_reason, static_n,
+# imported_n(-1 if null), comma-static-names. Single source of the
+# comparison logic, shared by the real check below and the 50c control, so
+# both exercise the SAME decision, not two independently-written greps
+# (the 47c/48c lesson).
+c50_decide() {
+  # tr -d '\r': system `python` on this platform writes CRLF even to a
+  # pipe: a stray \r survives into the captured variable and into any
+  # comparison that isn't routed through `sed` (which happens to strip it)
+  # -- found via check 50d, whose direct string equality failed against a
+  # visually-identical value for exactly this reason (fix round 1).
+  python - "$1" "$2" <<'C50_DECIDE_PY' | tr -d '\r'
+import json, sys
+d = json.loads(sys.argv[1])
+tokens = [t for t in sys.argv[2].split(",") if t]
+static = set(d.get("static") or [])
+imported = d.get("imported")
+skip_reason = d.get("skip_reason")
+missing = sorted(t for t in tokens if t not in static)
+disagreement = None
+if imported is not None:
+    si, ii = static, set(imported)
+    if si != ii:
+        disagreement = sorted(si.symmetric_difference(ii))
+if missing or disagreement:
+    status = "ko"
+elif skip_reason:
+    status = "skip"
+else:
+    status = "ok"
+print(status)
+print(d.get("module") or "")
+print(",".join(missing))
+print(",".join(disagreement) if disagreement else "")
+print(skip_reason or "")
+print(len(static))
+print(len(imported) if imported is not None else -1)
+print(",".join(sorted(static)))
+C50_DECIDE_PY
+}
+
+# c50_deny_check <comma-static-names> <comma-deny-names> -- prints the
+# comma-joined subset of deny-names that are absent from static-names AND
+# not in C50_SPECULATIVE_DENY (fix round 2, R23(a)). Single source of the
+# deny-verification logic, shared by the real check below and the 50c
+# deny-rename control, so both exercise the SAME decision.
+c50_deny_check() {
+  python - "$1" "$2" "$(printf '%s\n' "${C50_SPECULATIVE_DENY[@]:-}" | tr '\n' ',')" <<'C50_DENY_PY' | tr -d '\r'
+import sys
+static = set(s for s in sys.argv[1].split(",") if s)
+deny = [s for s in sys.argv[2].split(",") if s]
+speculative = set(s for s in sys.argv[3].split(",") if s)
+ko = sorted(d for d in deny if d not in static and d not in speculative)
+print(",".join(ko))
+C50_DENY_PY
+}
+
+# c50_parse_settings <settings.json path>... -- prints one "KIND<TAB>token"
+# line per explicit mcp__<alias>__<tool> name found in each file's
+# permissions.allow, permissions.deny, or any hooks.*[].matcher (KIND is
+# ALLOW, DENY or MATCHER; a wildcard grant like mcp__<alias>__* has no
+# name and prints nothing). Single source of the settings.json parsing
+# logic, shared by the real check below and the 50d control (fix round 1),
+# so both exercise the SAME split, not two independently-written parsers.
+c50_parse_settings() {
+  python - "$@" <<'C50_SETTINGS_PY' | tr -d '\r'
+import json, re, sys
+TOKEN_RE = re.compile(r'^mcp__[A-Za-z0-9_-]+__[a-z0-9_]+$')
+for path in sys.argv[1:]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        continue
+    perms = data.get("permissions", {}) or {}
+    for t in perms.get("allow", []) or []:
+        if TOKEN_RE.match(t):
+            print(f"ALLOW\t{t}")
+    for t in perms.get("deny", []) or []:
+        if TOKEN_RE.match(t):
+            print(f"DENY\t{t}")
+    for phase in (data.get("hooks", {}) or {}).values():
+        for group in phase or []:
+            matcher = (group or {}).get("matcher", "") or ""
+            for part in matcher.split("|"):
+                if TOKEN_RE.match(part):
+                    print(f"MATCHER\t{part}")
+C50_SETTINGS_PY
+}
+
+c50_source_dir="${MCP_DEV_SERVERS_DIR:-}"
+if [ -z "$c50_source_dir" ] && [ -f "$C50_REGISTRATION" ]; then
+  c50_source_dir=$(python - "$C50_REGISTRATION" "$C50_FAMILY" <<'C50_DERIVE_PY'
+import json, sys
+reg_path, family = sys.argv[1], sys.argv[2].split()
+try:
+    data = json.load(open(reg_path, encoding="utf-8"))
+except (OSError, ValueError):
+    sys.exit(0)
+servers = data.get("mcpServers", {})
+for alias in family:
+    cmd = servers.get(alias, {}).get("command", "")
+    norm = cmd.replace("\\", "/")
+    for marker in ("/.venv/Scripts/", "/.venv/bin/"):
+        idx = norm.find(marker)
+        if idx != -1:
+            print(norm[:idx])
+            sys.exit(0)
+C50_DERIVE_PY
+    )
+  c50_source_dir=$(printf '%s' "$c50_source_dir" | tr -d '\r')
+fi
+
+if ! command -v python >/dev/null 2>&1; then
+  ok "check 50: SKIP -- no system 'python' on PATH; check 50 did not run (0 assertions)"
+elif [ -z "$c50_source_dir" ]; then
+  ok "check 50: SKIP -- MCP_DEV_SERVERS_DIR not set and no registered mcp-dev-servers-family alias found in $C50_REGISTRATION; check 50 did not run (0 assertions; set MCP_DEV_SERVERS_DIR to enable it)"
+elif [ ! -d "$c50_source_dir" ]; then
+  ok "check 50: SKIP -- MCP_DEV_SERVERS_DIR='$c50_source_dir' is not a directory; check 50 did not run (0 assertions)"
+else
+  # Token sources: agent `tools:` lines, AND
+  # templates/*/.claude/settings.json + user-level-reference/settings.json
+  # (fix round 1, F1). settings.json is parsed by KEY, not by a blind
+  # regex over the file, because ALLOW/MATCHER and DENY name different
+  # KINDS of tokens even though both are now ko-eligible: an ALLOW entry
+  # or a hook `matcher` naming a nonexistent tool is a dead grant / a
+  # disarmed gate (fails CLOSED -- someone notices a denied operation).
+  # A DENY entry naming a nonexistent tool denies nothing TODAY, and FAILS
+  # OPEN if left unverified: a rename upstream makes a deliberately
+  # blocked tool silently reachable again while this check stays green
+  # (fix round 2, R23(a) -- measured on git-tools' own deny list, see
+  # C50_SPECULATIVE_DENY above and the report). A deny-absent name is
+  # therefore `ko`, exactly like a grant-absent name, unless listed in
+  # C50_SPECULATIVE_DENY as a deliberate forward-looking entry. (Fix round
+  # 1 review, still true in round 2: rewriting templates/*/settings.json
+  # content is out of this task's scope -- that tree is read-only here, so
+  # a stale deny is reported as a defect for its owner, not silently
+  # fixed.) Either array's tool-name class ([a-z0-9_]+, no `*`) already
+  # excludes a wildcard grant (`mcp__<alias>__*`) on its own -- nothing to
+  # go stale about a name
+  # that isn't there.
+  c50_agent_tokens=$(grep -h '^tools:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null \
+    | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+')
+  c50_settings_parsed=$(c50_parse_settings templates/*/.claude/settings.json user-level-reference/settings.json)
+  c50_settings_grant_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="ALLOW"||$1=="MATCHER"{print $2}' | sed '/^$/d' | sort -u)
+  c50_settings_deny_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="DENY"{print $2}' | sed '/^$/d' | sort -u)
+  c50_all_tokens=$(printf '%s\n%s\n' "$c50_agent_tokens" "$c50_settings_grant_tokens" | sed '/^$/d' | sort -u)
+
+  c50_skipped=0
+  c50_total=0
+  for c50_alias in $C50_FAMILY; do
+    c50_total=$((c50_total + 1))
+    c50_tokens_csv=$(printf '%s\n' "$c50_all_tokens" | awk -F'__' -v a="$c50_alias" '$2==a {print $3}' | tr '\n' ',')
+    c50_json=$(python "$C50_LIB" --source-dir "$c50_source_dir" --registration "$C50_REGISTRATION" --alias "$c50_alias" 2>&1)
+    c50_json_rc=$?
+    c50_json=$(printf '%s' "$c50_json" | tr -d '\r')
+    if [ "$c50_json_rc" -ne 0 ]; then
+      ko "check 50: $c50_alias: list-mcp-tools.py failed (rc=$c50_json_rc): $c50_json"
+      continue
+    fi
+    c50_out=$(c50_decide "$c50_json" "$c50_tokens_csv")
+    c50_status=$(printf '%s\n' "$c50_out" | sed -n '1p')
+    c50_module=$(printf '%s\n' "$c50_out" | sed -n '2p')
+    c50_missing=$(printf '%s\n' "$c50_out" | sed -n '3p')
+    c50_disagree=$(printf '%s\n' "$c50_out" | sed -n '4p')
+    c50_skip_reason=$(printf '%s\n' "$c50_out" | sed -n '5p')
+    c50_static_n=$(printf '%s\n' "$c50_out" | sed -n '6p')
+    c50_static_csv=$(printf '%s\n' "$c50_out" | sed -n '8p')
+
+    [ -n "$c50_skip_reason" ] && c50_skipped=$((c50_skipped + 1))
+
+    # Deny-side verification (fix round 2, R23(a)): a deny entry naming no
+    # tool in this alias's static census FAILS OPEN if left unverified --
+    # ko, exactly like a grant-absent name, unless C50_SPECULATIVE_DENY
+    # names it as deliberately forward-looking. Computed via the SAME
+    # c50_deny_check function the 50c deny-rename control below uses.
+    c50_deny_alias_csv=$(printf '%s\n' "$c50_settings_deny_tokens" | awk -F'__' -v a="$c50_alias" '$2==a {print $3}' | sed '/^$/d' | tr '\n' ',')
+    c50_deny_ko=""
+    [ -n "$c50_deny_alias_csv" ] && c50_deny_ko=$(c50_deny_check "$c50_static_csv" "$c50_deny_alias_csv")
+
+    c50_reason=""
+    if [ "$c50_status" = "ko" ]; then
+      [ -n "$c50_missing" ] && c50_reason="allowlisted tool(s) absent from $c50_alias's static census: $c50_missing"
+      if [ -n "$c50_disagree" ]; then
+        [ -n "$c50_reason" ] && c50_reason="$c50_reason; "
+        c50_reason="${c50_reason}static and import censuses disagree: $c50_disagree"
+      fi
+    fi
+    if [ -n "$c50_deny_ko" ]; then
+      [ -n "$c50_reason" ] && c50_reason="$c50_reason; "
+      c50_reason="${c50_reason}deny entries naming no tool in $c50_alias's static census: $c50_deny_ko -- a stale deny FAILS OPEN (the block silently stops applying if upstream renames the target); fix the deny list in templates/*/.claude/settings.json + user-level-reference/settings.json, or add a deliberate forward-looking name to C50_SPECULATIVE_DENY"
+    fi
+
+    if [ -n "$c50_reason" ]; then
+      ko "check 50: $c50_alias${c50_module:+ ($c50_module)}: $c50_reason"
+    else
+      case "$c50_status" in
+        skip)
+          ok "check 50: $c50_alias: import census skipped ($c50_skip_reason); static census only ($c50_static_n tools)"
+          ;;
+        ok)
+          ok "check 50: $c50_alias ($c50_module): static and import censuses agree ($c50_static_n tools)"
+          ;;
+        *)
+          ko "check 50: $c50_alias: c50_decide returned no status (census output unparseable): $c50_json"
+          ;;
+      esac
+    fi
+  done
+  ok "check 50: $c50_skipped of $c50_total import censuses skipped"
+
+  # Aliases actually referenced by an agent but outside the mcp-dev-servers
+  # family -- reported once with their token count, never silently ignored.
+  c50_used_aliases=$(printf '%s\n' "$c50_all_tokens" | awk -F'__' '{print $2}' | sort -u)
+  for c50_alias in $c50_used_aliases; do
+    [ -n "$c50_alias" ] || continue
+    case " $C50_FAMILY " in
+      *" $c50_alias "*) continue ;;
+    esac
+    c50_n=$(printf '%s\n' "$c50_all_tokens" | awk -F'__' -v a="$c50_alias" '$2==a' | wc -l | tr -d ' ')
+    ok "check 50: not censused: $c50_alias ($c50_n tokens)"
+  done
+
+  # 50c control (v4.0.1 review; arm B added fix round 2): a scratch copy
+  # of one server module with ONE tool function renamed, run through the
+  # SAME static scanner and the SAME comparison the real check above uses
+  # -- never a separately-written grep. Registration is a scratch fixture
+  # with the alias deliberately absent, so this control never touches the
+  # real ~/.claude.json and never needs a real venv.
+  note "Check 50c (arm A): control -- a renamed ALLOW-side tool function is flagged"
+  c50c_src="$c50_source_dir/src/mcp_dev_servers/github_mcp.py"
+  if [ ! -f "$c50c_src" ]; then
+    ko "check 50c (arm A): control -- github_mcp.py not found under $c50_source_dir/src/mcp_dev_servers; cannot exercise the control"
+  else
+    C50C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c50c)
+    mkdir -p "$C50C_TMP/src/mcp_dev_servers"
+    sed 's/\bgh_repo_from_origin\b/gh_repo_from_origin_renamed/' "$c50c_src" > "$C50C_TMP/src/mcp_dev_servers/github_mcp.py"
+    printf '{"mcpServers":{}}' > "$C50C_TMP/registration.json"
+    c50c_json=$(python "$C50_LIB" --source-dir "$C50C_TMP" --registration "$C50C_TMP/registration.json" --alias github-tools 2>&1)
+    c50c_json=$(printf '%s' "$c50c_json" | tr -d '\r')
+    c50c_out=$(c50_decide "$c50c_json" "gh_repo_from_origin")
+    c50c_status=$(printf '%s\n' "$c50c_out" | sed -n '1p')
+    c50c_missing=$(printf '%s\n' "$c50c_out" | sed -n '3p')
+    rm -rf "$C50C_TMP"
+    if [ "$c50c_status" = "ko" ] && [ "$c50c_missing" = "gh_repo_from_origin" ]; then
+      ok "check 50c (arm A): control -- renaming gh_repo_from_origin in a scratch copy of github_mcp.py is flagged: $c50c_missing"
+    else
+      ko "check 50c (arm A): control -- renamed gh_repo_from_origin NOT flagged (status=$c50c_status, missing=$c50c_missing): check 50 is vacuous"
+    fi
+  fi
+
+  # 50c arm B (fix round 2, R23(a)): rename one of git-tools' seven real
+  # DENY targets (git_push -- a genuine tool, genuinely denied) in a
+  # scratch copy of git_mcp.py, and assert c50_deny_check flags it --
+  # proves the deny-side ko path is real, not just the grant-side path
+  # arm A already covered. Same shared c50_deny_check function the real
+  # loop above uses; git-tools is unregistered in this scratch fixture
+  # too (empty mcpServers), consistent with the real (unregistered) run.
+  note "Check 50c (arm B): control -- a renamed DENY-target tool function is flagged"
+  c50c2_src="$c50_source_dir/src/mcp_dev_servers/git_mcp.py"
+  if [ ! -f "$c50c2_src" ]; then
+    ko "check 50c (arm B): control -- git_mcp.py not found under $c50_source_dir/src/mcp_dev_servers; cannot exercise the control"
+  else
+    C50C2_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c50c2)
+    mkdir -p "$C50C2_TMP/src/mcp_dev_servers"
+    sed 's/\bgit_push\b/git_push_renamed/g' "$c50c2_src" > "$C50C2_TMP/src/mcp_dev_servers/git_mcp.py"
+    printf '{"mcpServers":{}}' > "$C50C2_TMP/registration.json"
+    c50c2_json=$(python "$C50_LIB" --source-dir "$C50C2_TMP" --registration "$C50C2_TMP/registration.json" --alias git-tools 2>&1)
+    c50c2_json=$(printf '%s' "$c50c2_json" | tr -d '\r')
+    c50c2_static_csv=$(printf '%s\n' "$c50c2_json" | python -c 'import json,sys; print(",".join(sorted(json.loads(sys.stdin.read()).get("static") or [])))' 2>/dev/null | tr -d '\r')
+    c50c2_deny_ko=$(c50_deny_check "$c50c2_static_csv" "git_push")
+    rm -rf "$C50C2_TMP"
+    if [ "$c50c2_deny_ko" = "git_push" ]; then
+      ok "check 50c (arm B): control -- renaming git_push in a scratch copy of git_mcp.py is flagged: $c50c2_deny_ko"
+    else
+      ko "check 50c (arm B): control -- renamed git_push (a genuine deny target) NOT flagged (deny_ko=$c50c2_deny_ko): the deny-side ko path is vacuous"
+    fi
+  fi
+
+  # 50d control (fix round 1, F1 review): a scratch settings.json fixture
+  # with one name in EACH of allow/deny/a hook matcher, plus one wildcard,
+  # run through the SAME c50_parse_settings function the real extraction
+  # above uses -- proves the ALLOW/DENY/MATCHER split (and the wildcard
+  # exclusion) is real, not merely true of today's tree happening to have
+  # only git-tools denies.
+  note "Check 50d: control -- settings.json allow/deny/matcher split is real"
+  C50D_TMP=$(mktemp 2>/dev/null || mktemp -t c50d)
+  cat > "$C50D_TMP" <<'C50D_FIXTURE'
+{
+  "permissions": {
+    "allow": ["mcp__fixture-tools__allowed_one", "mcp__fixture-tools__*"],
+    "deny": ["mcp__fixture-tools__denied_one"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "mcp__fixture-tools__matcher_one|Bash", "hooks": []}
+    ]
+  }
+}
+C50D_FIXTURE
+  c50d_actual=$(c50_parse_settings "$C50D_TMP" | sort)
+  rm -f "$C50D_TMP"
+  c50d_expected=$(printf 'ALLOW\tmcp__fixture-tools__allowed_one\nDENY\tmcp__fixture-tools__denied_one\nMATCHER\tmcp__fixture-tools__matcher_one' | sort)
+  if [ "$c50d_actual" = "$c50d_expected" ]; then
+    ok "check 50d: control -- allow/deny/matcher split correctly on a fixture; wildcard (mcp__fixture-tools__*) excluded"
+  else
+    ko "check 50d: control -- settings.json parser mismatch: expected [$(printf '%s' "$c50d_expected" | tr '\n' ';')] got [$(printf '%s' "$c50d_actual" | tr '\n' ';')]: check 50's settings.json source is unverified"
   fi
 fi
 

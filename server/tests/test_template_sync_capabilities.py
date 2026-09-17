@@ -28,6 +28,7 @@ import pytest
 
 from template_sync import mcp as ts
 from template_sync import v3
+from template_sync import verify
 
 BEGIN = "<!-- PROJECT-CUSTOM:BEGIN -->"
 END = "<!-- PROJECT-CUSTOM:END -->"
@@ -41,6 +42,12 @@ EXPECTED = {
     "local_diff_kind",
     "server_source",
     "skill_version_floor",
+    "region_bytes_raw",
+    "new_template_files_detail",
+    "superseded_keys",
+    "missing_declared_keys",
+    "optional_absent_detail",
+    "template_verify",
 }
 
 
@@ -127,6 +134,129 @@ def _witness_skill_version_floor(tmp_path) -> bool:
             and undeclared is True)
 
 
+def _witness_region_bytes_raw(tmp_path) -> bool:
+    """The `"\\n\\nX\\n\\n"` fixture (v4.0.1 item 6): a body without a
+    trailing blank line cannot distinguish the raw span from the two
+    stripped definitions it replaced, so this is the one shape that proves
+    which definition `region_bytes_raw` -- and the `region_bytes` field it
+    now backs -- actually ships.
+    """
+    body = "\n\nX\n\n"
+    content = "# T\n<!-- PROJECT-CUSTOM:BEGIN -->" + body + "<!-- PROJECT-CUSTOM:END -->\n"
+    return (v3.region_bytes_raw(content) == len(body.encode())
+            and v3.region_bytes_raw("# T\n<!-- PROJECT-CUSTOM:BEGIN --><!-- PROJECT-CUSTOM:END -->\n") == 0)
+
+
+def _witness_new_template_files_detail(tmp_path) -> bool:
+    """Exercised through the actual v3 status payload (compute_status_v3 --
+    the dispatch target for every real, v3-manifest consumer), not
+    `hasattr`, and with a NON-identity row: `.gitignore` -> `gitignore` is
+    the shape that proves the detail list carries real information rather
+    than echoing the path back at itself.
+    """
+    if ts.template_path_for(".gitignore") != "gitignore":
+        return False
+    repo = tmp_path / "tk"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "general" / "gitignore").write_text("*.log\n", encoding="utf-8", newline="")
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "gitignore", "ownership": "once", "target": ".gitignore"}],
+    }), encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps({
+        "manifest_version": 3, "template_version": "3.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.0", "files": {},
+    }), encoding="utf-8")
+    res = json.loads(asyncio.run(ts.template_compute_status(str(proj))))
+    return (res["new_template_files"] == [".gitignore"]
+            and res["new_template_files_detail"] == [{"path": ".gitignore", "template_path": "gitignore"}])
+
+
+def _witness_superseded_keys(tmp_path) -> bool:
+    """finalize_v3 drops the v2-era lastSynced*/lastSyncedVersion*/
+    lastSyncedVersionOf trio unconditionally (v4.0.1, item 8). The witness
+    is a real finalize on a manifest carrying the agreeing-values form the
+    consumers carry today, not `hasattr`.
+    """
+    repo = tmp_path / "tk"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "CLAUDE.md", "ownership": "template"}],
+    }), encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    manifest = {
+        "manifest_version": 3, "template_version": "v3.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.2", "files": {},
+        "lastSyncedVersion": "v4.0.0", "lastSyncedVersionOf": "0000000",
+    }
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    return (res.get("superseded_keys_dropped") == ["lastSyncedVersion", "lastSyncedVersionOf"]
+            and "lastSyncedVersion" not in out and "lastSyncedVersionOf" not in out)
+
+
+def _witness_missing_declared_keys(tmp_path) -> bool:
+    """A required key held only under its deprecated spelling is reported
+    under its CANONICAL name with reason "deprecated_spelling" (v4.0.1, item
+    2) -- exercised through a real audit_keys() call, not `hasattr`.
+    """
+    rule = {
+        "pattern": "PROJECT_CONTEXT.md", "ownership": "once", "audit": "keys",
+        "required_keys": ["Protected branches", "Gate"],
+        "deprecated_keys": {"Gate Command": "Gate"},
+    }
+    proj = "- **Protected branches**: main\n- **Gate Command**: old-gate.sh\n"
+    tpl = "- **Protected branches**: main\n- **Gate**: g\n"
+    res = v3.audit_keys(proj, tpl, None, rule)
+    return (res["missing_required"] == []
+            and {"key": "Gate", "reason": "deprecated_spelling", "template_default": "g"}
+            in res["missing_declared_keys"])
+
+
+def _witness_optional_absent_detail(tmp_path) -> bool:
+    """optional_absent_detail carries the rule's per-key none_meaning /
+    effect_when_absent for a key that is actually absent -- and the same
+    key never appears in missing_declared_keys (the ownership rule).
+    """
+    rule = {
+        "pattern": "PROJECT_CONTEXT.md", "ownership": "once", "audit": "keys",
+        "required_keys": ["Gate"],
+        "optional_keys": {"Test": {"effect_when_absent": "Gate fallback",
+                                   "none_meaning": "not declared"}},
+    }
+    proj = "- **Gate**: g\n"
+    tpl = "- **Gate**: g\n- **Test**: t\n"
+    res = v3.audit_keys(proj, tpl, None, rule)
+    return (res["optional_absent"] == ["Test"]
+            and res["optional_absent_detail"] == [{"key": "Test", "template_default": "t",
+                                                     "effect_when_absent": "Gate fallback",
+                                                     "none_meaning": "not declared"}]
+            and "Test" not in [e["key"] for e in res["missing_declared_keys"]])
+
+
+def _witness_template_verify(tmp_path) -> bool:
+    """Exercised through a real `verify.run` call on a project with no
+    manifest at all -- not `hasattr`. A missing manifest FAILs exactly
+    `manifest_valid` and SKIPs every other line (nothing else can be safely
+    evaluated without a manifest to read), so `ok` is False and the summary
+    reports the SKIP count in-band rather than reading as a real green."""
+    res = verify.run(str(tmp_path / "no-such-project"), "", "post_commit")
+    lines = {l["id"]: l["status"] for l in res["lines"]}
+    return (res["ok"] is False
+            and lines.get("manifest_valid") == "FAIL"
+            and lines.get("tree_clean") in ("SKIP", "FAIL")
+            and len(res["lines"]) == len(verify.LINES)
+            and res["summary"].endswith(" INFO")
+            and "template_verify" in v3.CAPABILITIES)
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -134,6 +264,12 @@ WITNESSES = {
     "local_diff_kind": _witness_local_diff_kind,
     "server_source": _witness_server_source,
     "skill_version_floor": _witness_skill_version_floor,
+    "region_bytes_raw": _witness_region_bytes_raw,
+    "new_template_files_detail": _witness_new_template_files_detail,
+    "superseded_keys": _witness_superseded_keys,
+    "missing_declared_keys": _witness_missing_declared_keys,
+    "optional_absent_detail": _witness_optional_absent_detail,
+    "template_verify": _witness_template_verify,
 }
 
 

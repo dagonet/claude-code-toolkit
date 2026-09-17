@@ -113,6 +113,20 @@ def test_explicit_deleted_files_are_dropped_even_if_template_ships_them(tmp_path
     assert "hooks/unwanted.sh" not in _manifest_files(proj)
 
 
+def test_v2_finalize_manifest_ends_with_exactly_one_newline(tmp_path):
+    """v4.0.1 fix round 1, item F3: there are THREE manifest writers, not two
+    -- the v2 branch of template_finalize_sync (mcp.py) wrote the same
+    trailing-newline-less json.dumps() the v3 finalize and migrate writers
+    did (v4.0.1 item 12 fixed those two; this one was missed). The
+    assertion is on BYTES, matching the v3 twin tests in
+    test_template_sync_v3_finalize.py and test_template_sync_v3_migration.py.
+    """
+    _, proj = _mk(tmp_path, tracked={"CLAUDE.md": "# hi\n"}, project_files={"CLAUDE.md": "# hi\n"})
+    _finalize(proj)
+    data = (proj / ".claude" / "template-manifest.json").read_bytes()
+    assert data.endswith(b"\n") and not data.endswith(b"\n\n"), data[-8:]
+
+
 # --- H5: git output must be decoded as UTF-8 --------------------------------
 
 EM_DASH_BODY = "# Project State — panoscribe\n\n## Backlog\n"

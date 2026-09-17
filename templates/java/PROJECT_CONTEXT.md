@@ -13,11 +13,11 @@
 - **Format Command**: {{FORMAT_COMMAND}}
 - **Lint Command**: {{LINT_COMMAND}}
 - **Gate**: {{GATE_COMMAND}}
-- **Post-edit build**: {{POST_EDIT_BUILD}}
+- **Post-edit build**: none <!-- setup fills {{POST_EDIT_BUILD}}; none = no post-edit build -->
 <!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none
 <!-- extra path prefixes the PO may write directly, space-separated; `none` = the template default -->
-<!-- Declaring BOTH means the Test runs on commit and the Gate does not, so no artifact is minted and every merge needs a separate `bash hooks/run-gate.sh`. Worth it only above roughly gate_seconds / (gate_seconds - test_seconds) commits per PR — measure yours. Below that, declare the Gate alone and leave the Test field empty (a literal `none` is NOT an opt-out here: it is eval'd as a command and blocks every commit — measured 2026-09-03). -->
+<!-- Declaring BOTH means the Test runs on commit and the Gate does not, so no artifact is minted and every merge needs a separate `bash hooks/run-gate.sh`. Worth it only above roughly gate_seconds / (gate_seconds - test_seconds) commits per PR — measure yours. Below that, declare the Gate alone and leave the Test field empty: a literal `none` IS an opt-out here (fixed since v3.0.3) -- pre-commit-test.sh treats a trimmed, case-insensitive `none` as absent and falls through to the Gate, the same as leaving the field out. -->
 <!-- Join Gate command steps with `&&`, never `;` — `;` discards an earlier step's failure status, so `<real gate> ; <anything>` exits 0 and the gate mints a pass artifact on a failing suite. -->
 - **Java Version**: {{JAVA_VERSION}}
 
@@ -32,7 +32,7 @@
 ## Workflow Configuration
 
 - **Task source**: `plan-files`
-- **Branch strategy**: feature branches per task, PR into the trunk — the branch named on the `**Protected branches**:` line directly below (see AGENT_TEAM.md Mode Behavior Table for naming convention). Prose for humans — **no hook reads this line**, and it is deliberately placeholder-free: nothing fills a placeholder here on a sync, so one would report unresolved on every apply, forever, on a value that is supposed to be there.
+- **Branch strategy**: feature branches per task, PR into the trunk — the branch named under Protected branches below (see AGENT_TEAM.md Mode Behavior Table for naming convention). Prose for humans — **no hook reads this line**, and it is deliberately placeholder-free: nothing fills a placeholder here on a sync, so one would report unresolved on every apply, forever, on a value that is supposed to be there.
 <!-- THE line the protection hooks read; space- or comma-separated names.
      EDIT THIS if your trunk is not main/master — nothing fills it in for you,
      and a trunk that is not named here is NOT protected.
@@ -45,12 +45,12 @@
      PR. GLOBS, space- or comma-separated. Absent, `none`, or empty all mean
      "no gate-checked branches"; an unfilled {{...}} is reported, not silently
      dropped. A branch listed here AND above is still protected. -->
-- **Gate-checked branches**: {{GATE_CHECKED_BRANCHES}}
+- **Gate-checked branches**: none <!-- setup fills {{GATE_CHECKED_BRANCHES}}; none = no branch is gate-checked (the merge guard demands a gate artifact only on the branches listed here) -->
 - **Max parallel workstreams**: 5
 - **Commit convention**: `feat:`, `fix:`, `chore:`, `test:`, `docs:` prefixes
 - **Issue labels** (github-issues mode only): `feature`, `bug`, `tech-debt`
 
 ## Preprocessing
 
-- **Ollama**: available (MCP: `ollama-tools`) -- see CLAUDE.local.md for usage rules
+- **Ollama**: available (MCP: `ollama-tools`) -- see the `mcp-usage` skill for usage rules
 - **Context7**: available (MCP: `context7`)

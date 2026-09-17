@@ -182,6 +182,57 @@ fi
 expect "sh snippet names no single repo as THE trusted repo" 0 \
   "$(grep -cF -- '**Trusted repo**:' "$TMPROOT/automode.out")"
 
+# --- v4.0.1 item 5: the two DERIVED placeholders default to `none` ----------
+#
+# templates/general/PROJECT_CONTEXT.md now ships `- **Gate-checked
+# branches**: none` and `- **Post-edit build**: none` as LITERAL text (no
+# `{{...}}` token) -- apply_replacements' plain token substitution has
+# nothing left to match for these two keys, so add_derived's value only
+# reaches the file through set_derived_defaults' own line rewrite. A general
+# bootstrap (no override) must still read `none` on both lines -- the
+# no-op branch of that rewrite, which also has to leave the line's trailing
+# comment intact. A dotnet bootstrap must read the real dotnet build command
+# on Post-edit build -- the branch that rewrites the line.
+derived_line() { # <project dir> <key>
+  grep -E "^- \*\*$2\*\*:" "$1/PROJECT_CONTEXT.md" 2>/dev/null | head -1
+}
+# Strip a trailing "<!-- ... -->" HTML comment and surrounding space, so the
+# assertion checks the VALUE setup wrote, not whether a comment survived.
+derived_value_only() { # <line>
+  printf '%s' "$1" | sed -E 's/[[:space:]]*<!--.*-->[[:space:]]*$//'
+}
+
+GENDIR="$TMPROOT/derived-general"
+mkdir -p "$GENDIR"
+bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+  --target-path "$GENDIR" > "$TMPROOT/derived-general.out" 2>&1
+expect "general bootstrap: Gate-checked branches defaults to none" \
+  "- **Gate-checked branches**: none" \
+  "$(derived_value_only "$(derived_line "$GENDIR" 'Gate-checked branches')")"
+expect "general bootstrap: Post-edit build defaults to none" \
+  "- **Post-edit build**: none" \
+  "$(derived_value_only "$(derived_line "$GENDIR" 'Post-edit build')")"
+
+DOTNETDIR="$TMPROOT/derived-dotnet"
+mkdir -p "$DOTNETDIR"
+bash "$ROOT/setup-project.sh" --variant dotnet --project-name SetupFixture \
+  --target-path "$DOTNETDIR" > "$TMPROOT/derived-dotnet.out" 2>&1
+DOTNET_POB_WANT=$(grep -E "add_derived '\{\{POST_EDIT_BUILD\}\}'" "$ROOT/setup-project.sh" \
+  | head -1 | sed -E "s/^[[:space:]]*add_derived '\{\{POST_EDIT_BUILD\}\}' \"([^\"]*)\"/\1/")
+if [ -z "$DOTNET_POB_WANT" ]; then
+  expect "dotnet POST_EDIT_BUILD default is readable from setup-project.sh" "non-empty" ""
+else
+  expect "dotnet bootstrap: Post-edit build gets the real dotnet build command" \
+    "- **Post-edit build**: $DOTNET_POB_WANT" \
+    "$(derived_value_only "$(derived_line "$DOTNETDIR" 'Post-edit build')")"
+fi
+# Control: dotnet does NOT derive Gate-checked branches (no variant does at
+# bootstrap time) -- still `none`, proving the general-bootstrap PASS above
+# is not vacuously true for every variant regardless of override.
+expect "dotnet bootstrap: Gate-checked branches still defaults to none" \
+  "- **Gate-checked branches**: none" \
+  "$(derived_value_only "$(derived_line "$DOTNETDIR" 'Gate-checked branches')")"
+
 # --- v4.0: the template-sync registration points at the toolkit's OWN exe --
 #
 # setup asserted the exe exists BEFORE writing the path -- otherwise the
@@ -229,6 +280,20 @@ else
   TS_JSON_NEEDLE=""
   skip "sh: template-sync snippet's command field equals the installer's own output" "$TS_VENV_REASON" 1
   skip "sh: written template-sync command resolves to the toolkit exe" "$TS_VENV_REASON" 1
+fi
+
+# --- v4.0.1 item 22: template_verify runs as setup's own last step ---------
+#
+# Same $TS_VENV_PRESENT/$TS_VENV_REASON split as above: a registered exe
+# means the bootstrap's tail is the verify summary line
+# ("N PASS, M FAIL, K SKIP, J INFO"); no exe (a checkout with no server/.venv,
+# the same population check 46 already treats as a loud, named absence rather
+# than a silent skip) means the row SKIPs in-band, not fails.
+if [ "$TS_VENV_PRESENT" -eq 1 ]; then
+  expect "sh bootstrap ends with the template_verify summary line" 1 \
+    "$(grep -cE '^[0-9]+ PASS, [0-9]+ FAIL, [0-9]+ SKIP, [0-9]+ INFO$' "$TMPROOT/automode.out" 2>/dev/null || echo 0)"
+else
+  skip "sh bootstrap ends with the template_verify summary line" "$TS_VENV_REASON" 1
 fi
 
 # --- the PowerShell half, where it can run ---------------------------------
@@ -285,6 +350,31 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   bom_files=$(cd "$PSDIR" && find . -type f -exec sh -c 'head -c3 "$1" | od -An -tx1 | tr -d " \n" | grep -q "^efbbbf" && echo "$1"' _ {} \;)
   expect "ps1 bootstrap writes no UTF-8 BOM" "" "$bom_files"
   expect "ps1 manifest has no BOM" "7b" "$(head -c1 "$PSDIR/.claude/template-manifest.json" | od -An -tx1 | tr -d ' ')"
+
+  # --- v4.0.1 item 12's class (Task 9 pre-review round): ConvertTo-Json
+  # (PS 5.1) writes `r`n between lines and no trailing newline at all -- a
+  # ps1-bootstrapped manifest carried CRLF internally and ZERO trailing
+  # newlines (measured: 136 CR bytes, last byte a bare '}' with no LF at
+  # all), which is exactly what template_verify's manifest_bytes line
+  # (v4.0.1 item 22) exists to catch, and what item 12 already fixed on the
+  # server's own finalize/migrate writers. Byte-level, not text-compared --
+  # line endings are exactly what is under test. sh's manifest is the
+  # CONTROL: it was already correct, so these rows must PASS on sh whether
+  # or not ps1 is fixed, proving the check discriminates rather than always
+  # passing.
+  ps_manifest_for_bytes="$PSDIR/.claude/template-manifest.json"
+  sh_manifest_for_bytes="$TMPROOT/develop-real/.claude/template-manifest.json"
+  sh_cr_count=$(tr -dc '\r' < "$sh_manifest_for_bytes" | wc -c | tr -d ' ')
+  ps_cr_count=$(tr -dc '\r' < "$ps_manifest_for_bytes" | wc -c | tr -d ' ')
+  expect "sh manifest has no CR bytes (control)" 0 "$sh_cr_count"
+  expect "ps1 manifest has no CR bytes" 0 "$ps_cr_count"
+  sh_last2=$(tail -c2 "$sh_manifest_for_bytes" | od -An -tx1 | tr -d ' \n')
+  ps_last2=$(tail -c2 "$ps_manifest_for_bytes" | od -An -tx1 | tr -d ' \n')
+  # "7d0a" = '}' + LF: the file ends with exactly one trailing LF, not zero
+  # (bare '}', ends in "...7d") and not two ("0a0a").
+  expect "sh manifest ends with exactly one trailing LF (control)" "7d0a" "$sh_last2"
+  expect "ps1 manifest ends with exactly one trailing LF" "7d0a" "$ps_last2"
+
   SHDIR="$TMPROOT/develop-real"
   sh_list=$(cd "$SHDIR" && find . -type f | sort)
   ps_list=$(cd "$PSDIR" && find . -type f | sort)
@@ -315,7 +405,8 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   MANIFEST_CHECK="$TMPROOT/manifest-check.cjs"
   cat > "$MANIFEST_CHECK" <<'NODE_EOF'
 const fs = require("fs");
-const [, , shPath, psPath, shDir, wantVersion] = process.argv;
+const path = require("path");
+const [, , shPath, psPath, shDir, psDir, wantVersion] = process.argv;
 const sh = JSON.parse(fs.readFileSync(shPath, "utf8"));
 const ps = JSON.parse(fs.readFileSync(psPath, "utf8"));
 
@@ -366,15 +457,20 @@ function checkHashes(m, label) {
 checkHashes(sh, "SH");
 checkHashes(ps, "PS");
 
-function checkGitignoreKeys(m, label) {
+function checkGitignoreKeys(m, label, dir) {
   const errs = [];
   if (!m.files[".gitignore"]) errs.push("no .gitignore entry under the project-path key");
   if (m.files["gitignore"]) errs.push("a bare 'gitignore' key is present (should be renamed to .gitignore)");
-  if (m.files["CLAUDE.local.md"]) errs.push("CLAUDE.local.md is present (should be absent, unclassified_template_files)");
+  if (m.files["CLAUDE.local.md"]) errs.push("CLAUDE.local.md is present in the manifest (retired v4.0.1, should be absent)");
+  // Stronger than a manifest-only check (v4.0.1 item 16): the template no
+  // longer ships CLAUDE.local.md at all, so the file must not exist on disk
+  // in the bootstrapped project either -- not just be missing/unclassified
+  // in the manifest.
+  if (fs.existsSync(path.join(dir, "CLAUDE.local.md"))) errs.push("CLAUDE.local.md exists in the bootstrapped dir (retired v4.0.1, should be absent)");
   console.log(`ROW4_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
 }
-checkGitignoreKeys(sh, "SH");
-checkGitignoreKeys(ps, "PS");
+checkGitignoreKeys(sh, "SH", shDir);
+checkGitignoreKeys(ps, "PS", psDir);
 
 // Row 5: identical after normalising template_commit, templateRepo, and (if
 // present) classifier. Key order is deliberately not part of the comparison
@@ -419,7 +515,6 @@ if (shStr === psStr) {
 // Row 6: recompute sha256 over the file on disk for one `template` entry and
 // compare to the manifest value — catches a hash computed pre-replacement.
 const crypto = require("crypto");
-const path = require("path");
 const [pickKey] = Object.entries(sh.files).find(([, v]) => v.ownership === "template") || [];
 if (!pickKey) {
   console.log("ROW6: FAIL no template entry found to check");
@@ -435,7 +530,7 @@ if (!pickKey) {
 NODE_EOF
 
   WANT_TEMPLATE_VERSION="v$(head -1 "$ROOT/VERSION" | tr -d '\r\n')"
-  MANIFEST_RESULTS="$(node "$MANIFEST_CHECK" "$SH_MANIFEST" "$PS_MANIFEST" "$SHMDIR" "$WANT_TEMPLATE_VERSION" 2>&1)"
+  MANIFEST_RESULTS="$(node "$MANIFEST_CHECK" "$SH_MANIFEST" "$PS_MANIFEST" "$SHMDIR" "$PSMDIR" "$WANT_TEMPLATE_VERSION" 2>&1)"
   row_result() { echo "$MANIFEST_RESULTS" | grep "^$1:" | head -1; }
 
   expect "sh manifest: shape/required fields (row 1)" "ROW1_SH: PASS" "$(row_result ROW1_SH)"
@@ -444,8 +539,8 @@ NODE_EOF
   expect "ps1 manifest: every files entry ownership template|once (row 2)" "ROW2_PS: PASS" "$(row_result ROW2_PS)"
   expect "sh manifest: hash shape, once carries no hash key (row 3)" "ROW3_SH: PASS" "$(row_result ROW3_SH)"
   expect "ps1 manifest: hash shape, once carries no hash key (row 3)" "ROW3_PS: PASS" "$(row_result ROW3_PS)"
-  expect "sh manifest: .gitignore key, no gitignore/CLAUDE.local.md keys (row 4)" "ROW4_SH: PASS" "$(row_result ROW4_SH)"
-  expect "ps1 manifest: .gitignore key, no gitignore/CLAUDE.local.md keys (row 4)" "ROW4_PS: PASS" "$(row_result ROW4_PS)"
+  expect "sh manifest/disk: .gitignore key, no gitignore key, CLAUDE.local.md absent (row 4)" "ROW4_SH: PASS" "$(row_result ROW4_SH)"
+  expect "ps1 manifest/disk: .gitignore key, no gitignore key, CLAUDE.local.md absent (row 4)" "ROW4_PS: PASS" "$(row_result ROW4_PS)"
   expect "sh and ps1 manifests agree after normalisation (row 5)" "ROW5: PASS" "$(row_result ROW5)"
   # row 6's PASS line carries the picked filename; compare on the PASS/FAIL word only.
   row6_word=$(row_result ROW6 | sed -E 's/^ROW6: (PASS|FAIL).*/\1/')

@@ -4,7 +4,9 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.0.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.0.1 -->
+
+**This skill takes no arguments.** Invoke it as `/sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
 # Sync Template (Downstream)
 
@@ -18,7 +20,7 @@ Pull updates from the claude-code-toolkit template repo into the current project
 >
 > The fix lives in the SERVER PROCESS, so a consumer on a remote box must **pull, then restart** — a restart alone re-launches the same old code. One breaking field change a caller could key on: `locally_modified` now means "deviates from the template" (it used to mean "changed since the last sync"; that meaning moved to a new `changed_since_sync` field).
 
-> **Platform note, general form: any path handed from bash to python is drive-relative on Windows, not just `/tmp`.** Step 2b's `/tmp` backup-path defect below is one instance of a general hazard, not a one-off — measured a second time in this skill, in step 6b/7b territory: a helper handed `/tmp/ref.txt` from bash died `FileNotFoundError: '/tmp/ref.txt'`, because python resolved it against the process's current drive, not against MSYS's `/` mapping. Wherever a step hands python a bash-typed path (`$TMPDIR`, `/tmp/...`, or any other MSYS-style path), resolve it in bash first and pass the resolved absolute path, or have python derive its own path (`tempfile.gettempdir()`) rather than trusting one that crossed the boundary as text. Each step below that hands python a path repeats this pointer at the point it matters.
+> **Platform note, general form: any path handed from bash to python is drive-relative on Windows, not just `/tmp`.** Step 2b's `/tmp` backup-path defect below is one instance of a general hazard, not a one-off — measured a second time in this skill, in step 6b territory: a helper handed `/tmp/ref.txt` from bash died `FileNotFoundError: '/tmp/ref.txt'`, because python resolved it against the process's current drive, not against MSYS's `/` mapping. Wherever a step hands python a bash-typed path (`$TMPDIR`, `/tmp/...`, or any other MSYS-style path), resolve it in bash first and pass the resolved absolute path, or have python derive its own path (`tempfile.gettempdir()`) rather than trusting one that crossed the boundary as text. Each step below that hands python a path repeats this pointer at the point it matters.
 
 ## Workflow
 
@@ -60,12 +62,12 @@ This gate exists because nothing else can cover the case. A v2 manifest carries 
 The manifest is **`manifest_version: 3`**. Expect and preserve this shape — do not strip anything you do not recognise:
 
 - `variant` — the template variant this project bootstrapped from.
-- `templateRepo` and `lastSynced` are the **only** camelCase top-level keys; every other key is snake_case. Do not "normalise" one style onto the other.
+- `templateRepo` is the **only** camelCase top-level key; every other key is snake_case. Do not "normalise" one style onto the other. (`lastSynced` was the other one, in the v2 shape; v4.0.1 drops it, along with `lastSyncedVersion`/`lastSyncedVersionOf`, at every migrate and finalize — see "Version labels are server-authoritative" below.)
 - `placeholders` — the substitution map.
 - `template_version` — **v-prefixed** (`"v3.1.0"`, never `"3.1.0"`).
 - `template_commit` — a 40-hex sha, a short sha, **or the literal string `"unknown"`**, which is treated as **absent** for base resolution (a three-way diff cannot pick a base off `"unknown"`; fall back the same way you would for a missing key).
 - `requires_server` — appears **only** in the `">=X.Y.Z"` form. Any other spec string (a caret range, a bare version, an `<`/`~` operator) is a **named error** to report to the user, not a spec to interpret and not a silent pass.
-- `unknown_keys` / `unknown_file_keys` — the manifest's own record of fields it did not recognise. **These survive round-trip.** Do not strip them when you re-serialize anything; a future manifest version's fields ride through this skill's writes unharmed only because nothing here deletes what it does not understand.
+- `unknown_keys` / `unknown_file_keys` — the manifest's own record of fields it did not recognise. **These survive round-trip.** Do not strip them when you re-serialize anything; a future manifest version's fields ride through this skill's writes unharmed only because nothing here deletes what it does not understand. **The one exception (v4.0.1, item 8):** `lastSynced`, `lastSyncedVersion` and `lastSyncedVersionOf` are dropped unconditionally by both `template_migrate_manifest` and `template_finalize_sync`, never listed in `unknown_keys`, and reported instead in `superseded_keys_dropped`. They duplicate the server-written `template_version`/`template_commit` above, so a client-derived copy can only drift — this is the only top-level key family this skill does not need to preserve.
 
 ### 1b. Ownership classes
 
@@ -84,16 +86,18 @@ Before calling `template_compute_status` (next step) — which resolves against 
 git -C <templateRepo> describe --exact-match --tags 2>/dev/null
 ```
 
-**Mechanism (MM-Agent, 2026-09-05):** `template_compute_status` resolves against the checkout's HEAD, not the tag. A toolkit checkout left on a docs branch at `v3.0.3-1-g847da93` still had every `AUTO_UPDATE` hash matching the tagged build — the diffs came out identical — while the manifest would have recorded that untagged commit as `lastSynced`: a sha with no version any human can name from the manifest alone.
+**Mechanism (MM-Agent, 2026-09-05):** `template_compute_status` resolves against the checkout's HEAD, not the tag. A toolkit checkout left on a docs branch at `v3.0.3-1-g847da93` still had every `AUTO_UPDATE` hash matching the tagged build — the diffs came out identical — while the manifest would have recorded that untagged commit as `template_commit`: a sha with no version any human can name from the manifest alone.
 
-**Two consumers hit the moving-HEAD case independently (MM-Agent, penumbra), and the rule that makes the stamped label actually answer "which release am I on" needs four outcomes, not one:**
+**Two consumers hit the moving-HEAD case independently (MM-Agent, penumbra), and the rule that makes the recorded label actually answer "which release am I on" needs four outcomes, not one:**
 
-**Obtaining "that tag" / "the nearest tag" used in cases 2 and 3 below (penumbra):** `git -C <templateRepo> describe --tags --abbrev=0 HEAD` — this returns the nearest ANCESTOR tag, not the latest tag ever created, so a checkout that has moved past a newer tag on an unrelated branch still resolves to the tag it actually descends from. This is the one place `--abbrev=0` is the correct form (7b bans `--abbrev=0` for the stamped label itself, because that flag hides the `-N-gSHA` suffix that distinguishes case 2 from case 3) — do not diff HEAD against the repo's latest tag by name, or a checkout on an older release line gets misclassified.
+**Obtaining "that tag" / "the nearest tag" used in cases 2 and 3 below (penumbra):** `git -C <templateRepo> describe --tags --abbrev=0 HEAD` — this returns the nearest ANCESTOR tag, not the latest tag ever created, so a checkout that has moved past a newer tag on an unrelated branch still resolves to the tag it actually descends from. Do not diff HEAD against the repo's latest tag by name, or a checkout on an older release line gets misclassified.
 
-1. **HEAD IS the tag** (`describe --exact-match` prints a label) → proceed; `lastSynced` = HEAD, label = the tag.
-2. **HEAD is a DESCENDANT of a tag AND the manifest-tracked template tree at HEAD equals the tree at that tag** — verified with `git -C <templateRepo> diff --quiet <tag> HEAD -- hooks scripts templates user-level-reference` reporting clean → the checkout has moved on docs-only commits since the tag, and every file this sync would actually apply is byte-identical to the release. **Rewrite `lastSynced` to the TAG COMMIT before step 7b runs** (or have finalize record it), so `--exact-match` succeeds and the stamped label is the release name — not a `-N-gSHA` suffix that reads as "synced to an unreleased commit" when the truth is "synced to the release, from a drifted checkout." `lastSyncedVersionOf` = the tag commit, keeping the label a pure function of `lastSynced`. Worked example: tag `v3.0.3` at `86561fe`, checkout at `5ce2d14` (two docs-only commits past the tag, identical tracked tree) → record `86561fe` / `v3.0.3`, never `5ce2d14` / `v3.0.3-2-g5ce2d14`. **The instrument is conservative, not exact (penumbra):** the `git diff --quiet <tag> HEAD -- hooks scripts templates user-level-reference` path list is a fixed superset of any single manifest — `templates` alone spans every variant — so a change confined to a variant this project doesn't even use still marks the diff dirty and lands the consumer in case 3 (the `-N-gSHA` suffix) even though its own manifest-tracked tree at HEAD is identical to the tag. A false-dirty result lands in case 3; it never produces a false-clean in case 2. A consumer seeing an unexpected suffix here should check which variant moved before suspecting the rule itself.
-3. **The template tree at HEAD actually DIFFERS from the nearest tag under the manifest's tracked paths** → today's behaviour, unchanged: record HEAD as `lastSynced`, keep the `describe` suffix, and keep step 7b's "the suffix is the signal, not noise" — that sentence is scoped to THIS case, where the extra commits carry real content past the tag, never to case 2, where they do not.
-4. **Anything else** — not a descendant of any tag, or `describe` finds no tag at all → **STOP** and tell the user: "the toolkit checkout is on `<branch>@<sha>` (`git describe` = `<label>`), not a release tag — sync would record that untagged commit as `lastSynced`; ask the release owner to put the checkout on the tag, or confirm you mean to sync an untagged tree."
+**Since v4.0.1 (item 8) this whole resolution is SERVER-SIDE and automatic — `template_finalize_sync`'s `derive_template_version` walks the reachable tags at finalize time and records `template_commit`/`template_version` itself; nothing here needs the skill to stamp a label after the fact (the old step 7b is gone). The four cases below describe what that server-side derivation produces, for reading the result, not a client-side procedure to run.**
+
+1. **HEAD IS the tag** (`describe --exact-match` prints a label) → `template_commit` = HEAD, `template_version` = the tag.
+2. **HEAD is a DESCENDANT of a tag AND the manifest-tracked template tree at HEAD equals the tree at that tag** — verified with `git -C <templateRepo> diff --quiet <tag> HEAD -- hooks scripts templates user-level-reference` reporting clean → the checkout has moved on docs-only commits since the tag, and every file this sync would actually apply is byte-identical to the release. `derive_template_version` finds this tag itself (it walks tags merged into HEAD and picks the nearest one whose tracked tree matches), so `template_commit`/`template_version` land as the release identity — not a `-N-gSHA` suffix that reads as "synced to an unreleased commit" when the truth is "synced to the release, from a drifted checkout." Worked example: tag `v3.0.3` at `86561fe`, checkout at `5ce2d14` (two docs-only commits past the tag, identical tracked tree) → `template_commit`/`template_version` land as `86561fe` / `v3.0.3`, never `5ce2d14` / `v3.0.3-2-g5ce2d14`. **The instrument is conservative, not exact (penumbra):** the `git diff --quiet <tag> HEAD -- hooks scripts templates user-level-reference` path list is a fixed superset of any single manifest — `templates` alone spans every variant — so a change confined to a variant this project doesn't even use still marks the diff dirty and lands the consumer in case 3 (the `-N-gSHA` suffix) even though its own manifest-tracked tree at HEAD is identical to the tag. A false-dirty result lands in case 3; it never produces a false-clean in case 2. A consumer seeing an unexpected suffix here should check which variant moved before suspecting the rule itself.
+3. **The template tree at HEAD actually DIFFERS from the nearest tag under the manifest's tracked paths** → `template_commit` = HEAD, `template_version` = `null` (`derive_template_version` finds no matching tag and warns `untagged_template_tree`) — the untagged state is the signal, not noise; that reading is scoped to THIS case, where the extra commits carry real content past the tag, never to case 2, where they do not.
+4. **Anything else** — not a descendant of any tag, or `describe` finds no tag at all → **STOP** and tell the user: "the toolkit checkout is on `<branch>@<sha>` (`git describe` = `<label>`), not a release tag — sync would record that untagged commit as `template_commit`; ask the release owner to put the checkout on the tag, or confirm you mean to sync an untagged tree."
 
 ### 1c. Migrate the Manifest to v3 (v3.1.3 — the step this file had been GATING without describing)
 
@@ -194,9 +198,10 @@ Then report:
 
 - **`dropped_entries`** — project-class entries removed from tracking. One rehearsal silently stopped tracking `CLAUDE.local.md`; correct under v3, but say it.
 - **`redundant_project_file`** — byte-identical copies. **A SUGGESTION ONLY; nothing is ever deleted.**
-- **`unknown_keys` / `unknown_file_keys`** — preserved, not dropped. `unknown_file_keys` is where a `reason` deviation appears on an entry that *survives*.
+- **`unknown_keys` / `unknown_file_keys`** — preserved, not dropped, with ONE exception (v4.0.1, item 8): the `lastSynced`/`lastSyncedVersion`/`lastSyncedVersionOf` trio is dropped unconditionally and reported separately in `superseded_keys_dropped`, never in `unknown_keys`. `unknown_file_keys` is where a `reason` deviation appears on an entry that *survives*.
 - **`dropped_file_keys`** (0.3.5+) — the same annotations on entries the migration *drops*. Absent on 0.3.4: that is the version signal, not "none"; the 1c-i census is your only view of them there.
-- **`region_left_in_place: true` and `region_bytes`** — **the region stays in `CLAUDE.md`; it is never copied into `project.md`.** What `project.md` gets is a header plus the **out-of-region** hunks fenced as `diff`, when there are any — measured at 136 bytes on a fixture with `hunk_count: 0`, so do not read "136 bytes" as "always header-only". Before 0.3.5 the tool's docstring claimed the region itself was written verbatim; following it sent a consumer to open a file that did not contain their instructions. 0.3.5 fixed the docstring and pinned it against the artifact with a test. The behaviour was right all along — an unscoped rules file is delivered to nobody, which is why the v3.1 cutover was reversed.
+- **`superseded_keys_dropped`** (v4.0.1) — the `lastSynced`/`lastSyncedVersion`/`lastSyncedVersionOf` keys migration actually removed, if the v2 manifest carried any. Report it when non-empty; these are gone for good, by design (item 8), not a loss to warn about.
+- **`region_left_in_place: true` and `region_bytes`** — **the region stays in `CLAUDE.md`; it is never copied into `project.md`.** `project.md` gets the v4.0.1 seed header ONLY (v4.0.1, item 14) — measured at a fixed byte count regardless of `hunk_count`, so a non-zero `hunk_count` does NOT mean the diff is in the file. The **out-of-region** hunks, when there are any, are written instead to `<backup_dir>/CLAUDE.md.out-of-region.diff` (`project_md_record` in the migrate response names the path, or is `null` when there were none, or on a `dry_run`) — **never into `project.md` itself**. This is the opposite reason from 0.3.5's: `project.md` has **no `paths:` key**, so it is loaded at **every session start**, same priority as `CLAUDE.md` — an unscoped rules file is delivered to EVERY session, not to nobody (measured with this repo's own `zz-load-probe.md`), which is exactly why a migration diff must not live there. Before 0.3.5 the tool's docstring claimed the region itself was written verbatim; 0.3.5 fixed the docstring. v4.0.1 corrects the delivery claim that justified the placement in the first place — see the "Delivery reality" paragraph in step 3.
 - **`region_bytes` counts the region BODY**, not the block: one measured file reports 2695 where the block including its marker lines is 2814. Two correct numbers with different boundaries — do not diff them and report a discrepancy.
 
 #### 1c-vi. Name what `once` will silently never deliver
@@ -206,6 +211,16 @@ Then report:
 After migration, tell the user which **declared `PROJECT_CONTEXT.md` keys their file lacks**, because a `once` class means nothing will ever prompt them again. As of v3.1: `**Gate-checked branches**`, `**PO write surface**`, `**Post-edit build**`. Compare their file against the shipped template's key list and name the gaps.
 
 This is not hypothetical. One consumer traced their own earlier probe being *vacuous* to a missing `**Gate-checked branches**` — the hook path never iterated, the check could not fail, and nothing in any sync would ever have told them.
+
+**`key_audit.missing_declared_keys`** (v4.0.1, item 2; capability `missing_declared_keys`) collapses three sources into one actionable list: a required key truly absent, one held only under a deprecated spelling, and one whose value is still an unfilled `{{...}}` token. Report **one line per entry**, naming the `reason` and the `template_default`:
+
+```
+- Gate: absent (template default: `{{GATE_COMMAND}}`)
+- Gate: deprecated_spelling -- held as "Gate Command"; rename to "Gate"
+- Test: unfilled -- still reads "{{TEST_COMMAND}}"
+```
+
+An optional key that is simply absent does **not** appear here — it is `optional_absent` only (below, and step 8). Do not re-derive this list from `missing_required`/`placeholder_keys`/`deprecated_keys` yourself; the server has already applied the ownership rule that keeps the two lists disjoint.
 
 **Calling migrate on an already-v3 manifest is harmless.** It returns the no-op before loading ownership and writes nothing.
 
@@ -239,9 +254,11 @@ If everything is up-to-date and no new files, report "Already in sync" and final
 
 ### 2b. Back Up the GITIGNORED Tracked Files (MANDATORY, before any write)
 
+**Every path you hand to a `template_*` WRITE tool is Win32 (`G:\…`) or repo-relative — never an MSYS path (`/g/…`).** This session runs in Git Bash, where the project root reads as `/g/git/...`; passed straight through to a server WRITE call, that MSYS spelling is taken as a literal relative segment and the server writes a stray `G:\g\...` tree instead of touching the real project files. Convert with `cygpath -w` (or build the Win32 path directly) before every `template_apply_file` / `template_finalize_sync` / `template_migrate_manifest` call. (The server itself also rejects a leading `/<letter>/` on write — a later fix — but this step does not rely on that backstop.)
+
 **Every other file this sync touches is recoverable; these are not.** A wrong `template_apply_file` on a tracked file is a `git checkout --` away, and it shows up in the PR diff before anyone merges it. A file that is BOTH manifest-tracked AND gitignored has no history, no diff, and no undo — an erroneous overwrite is simply gone.
 
-`CLAUDE.local.md` is the file this describes in every variant: gitignored by the shipped `.gitignore`, tracked by the manifest, and deviating **by design** in any project that customised its MCP rules. Back it up first and by name.
+`CLAUDE.local.md` is the file this describes for a project bootstrapped before v4.0.1: gitignored by the shipped `.gitignore`, tracked by the manifest, and deviating **by design** in any project that customised its MCP rules. The template no longer ships this file (retired v4.0.1) — a v4.0.1-or-later bootstrap has no file matching this description, and that is expected, not a defect. Back it up first and by name wherever one exists.
 
 Derive the set rather than assuming it is only that one — a project may gitignore more. **Use exactly this invocation; the "obvious" implementation of the previous wording backed up nothing and reported success on two different repos.**
 
@@ -273,7 +290,7 @@ for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; e
 **Two assertions, both required before the result is trusted:**
 
 1. **Cross-check the methods.** Run both and assert they return the same set; print `both methods agree` before copying anything. `git status --porcelain --ignored` (which lists `!! <path>`) is a third, independent confirmation if they disagree.
-2. **Assert non-empty when the manifest tracks `CLAUDE.local.md`** — every variant ships it and every shipped `.gitignore` ignores it, so an empty set there is impossible and means the check failed, not that there is nothing to protect. **This assertion is the one that does not depend on getting the invocation right**, which is why it exists: it catches the whole class, including the next variant of it. An empty set with `CLAUDE.local.md` in the manifest stops the sync; it does not proceed with `Backup: <dir> []`.
+2. **Assert non-empty when the manifest tracks `CLAUDE.local.md`** — a consumer bootstrapped before v4.0.1 has it tracked by the manifest and ignored by the shipped `.gitignore`, so an empty set there is impossible for THAT consumer and means the check failed, not that there is nothing to protect. On a v4.0.1-or-later bootstrap the manifest never tracks the file at all, so this assertion legitimately does not apply and an empty set is correct — condition the assertion on the manifest actually tracking the key, not on the variant. **This assertion is the one that does not depend on getting the invocation right**, which is why it exists: it catches the whole class, including the next variant of it. An empty set with `CLAUDE.local.md` in the manifest stops the sync; it does not proceed with `Backup: <dir> []`.
 
 **What each of those two can and cannot tell you (v2.2.5, and it matters when one of them fires).** The cross-check is what actually caught the `\r` defect above: one method disagreed with two others, and the disagreement *localised* the fault to path hygiene. The non-empty assertion is the opposite instrument — it would have fired on the same defect and told the consumer only that the set was empty, sending them hunting a manifest bug that did not exist. **It tells you SOMETHING is wrong, not WHAT.** Keep both: assertion 1 diagnoses, assertion 2 is the last line and survives the case assertion 1 cannot reach — both arms of the cross-check call `git check-ignore`, so they share an implementation and can be wrong *together*. Four syncs and assertion 2 has never fired; that is what an invariant is supposed to do, not evidence it is dead weight.
 
@@ -345,7 +362,7 @@ Two general rules govern how they, and every guard in this file, are written. Ne
 
 > **A guard that cannot be observed firing is indistinguishable from one that was deleted — so every guard against an invisible failure ships with a CONTROL that makes it visible.** A comment defends a guard against a reader; it does not defend it against a refactor, a merge, or a tidy-up six months out. A control converts *"this looks redundant"* into *"deleting this turns something red"*. Verify each control **by deleting its guard**: if the control still passes, it is decorative and tests the surrounding machinery instead. And a control SET needs both arms — positives alone cannot distinguish a working guard from one that fires on everything.
 
-**I1 — a file that EXISTS in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in.** `new_template_files` means *absent from the MANIFEST*, not *absent from the PROJECT*: `template_compute_status` decides that list by manifest membership alone and never looks at the disk. A path that is present on disk, untracked in the manifest, and also shipped by the template therefore appears in `new_template_files` while step 6b rule 4 says — correctly — that it must be registered `source="skip"`. Step 5 runs first, so following the numbering lets the destructive reading win. It has: a consumer lost a 156-line project-specific gate this way, and **step 2b cannot cover it**, because 2b backs up *manifest-tracked* paths and this file's defining property is that it is not one. The reporter recovered only because the file happened to be git-tracked; a gitignored one would simply be gone. The user cannot save themselves either — they are asked "add this new file?" about a file that already exists with their content in it, and "yes" is the reasonable answer to the question as posed.
+**I1 — a file that EXISTS in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in.** `new_template_files` means *absent from the MANIFEST*, not *absent from the PROJECT*: `template_compute_status` decides that list by manifest membership alone and never looks at the disk. A path that is present on disk, untracked in the manifest, and also shipped by the template therefore appears in `new_template_files` while step 6b rule 4 registers it the register-or-apply way (v4.0.1: the server refuses `source="skip"` for every ownership class, so identical-to-template registers via `finalize_sync(new_files=[...])` and differing-from-template accepts the template outright — see step 6b's own text). Step 5 runs first, so following the numbering lets the destructive reading win. It has: a consumer lost a 156-line project-specific gate this way, and **step 2b cannot cover it**, because 2b backs up *manifest-tracked* paths and this file's defining property is that it is not one. The reporter recovered only because the file happened to be git-tracked; a gitignored one would simply be gone. The user cannot save themselves either — they are asked "add this new file?" about a file that already exists with their content in it, and "yes" is the reasonable answer to the question as posed.
 
 **I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. **State this as a PRECONDITION, not as an ordering rule, and check it where the write happens:** immediately before writing `settings.json`, verify every `hooks/` path it references exists and is non-empty; refuse the write otherwise. An ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose — while a precondition checked at the point of the write does not. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
 
@@ -359,6 +376,8 @@ Two general rules govern how they, and every guard in this file, are written. Ne
 > So it is **checked at the point of the first write, like I2**, not asserted as an ordering rule: before the first write of the sync, if `TEMPLATE_DELETED` contains an agent file, refuse until the baseline exists. It is **gated on a non-empty `TEMPLATE_DELETED`**, so it costs an ordinary sync nothing at all.
 
 ### 3. Auto-Update Files
+
+**Same path rule as step 2b: every `file_path` passed to `template_apply_file` here is Win32 or repo-relative, never the MSYS `/g/…` spelling this shell shows you.**
 
 > **⚠ NO HOOK-FILE WRITES WHILE A LIVE RUN IS IN FLIGHT (v3.0.4, MM-Agent).** `template_apply_file`'s write is an atomic rename onto the target path. `gate-before-merge.sh` is registered on the broad `Bash|PowerShell` matcher, so a process that fires that matcher on a loop — a polling game, a watch script, any long-running dev loop — keeps the file lock-held on nearly every call, and the rename onto it fails `WinError 5` (access denied) mid-sync. Measured live: three consecutive `hooks/gate-before-merge.sh` writes failed this way while the other hook writes in the same sync landed fine. **The discriminating fact: only the hook wired to the broad `Bash|PowerShell` matcher is lock-held near-continuously — git-verb-only hooks write fine mid-run — so a consumer seeing four writes succeed and one fail may read the failure as transient. It is not transient; it tracks which matcher the failing hook is wired to.** **Before this step, check for anything issuing Bash/PowerShell calls on a loop and pause or finish it before writing `hooks/`.** The partial state left behind is inert only if the interrupted run issued no git verbs during the window it was running unprotected — say which in the report; do not assume it and move on. Same family as the pre-sync verification section's "verification → restart → sync → live re-run" ordering below: a live process and a sync touching the same enforcement layer do not interleave safely.
 
@@ -375,7 +394,7 @@ Call `template_apply_file(project_path=".", file_path=F, source="template")`.
 5. `.claude/settings.json` — last of the enforcement wiring, so every script it names already exists in its new form.
 6. everything else (`CLAUDE.md`, `AGENT_TEAM.md`, docs, …).
 
-> **Delivery reality for `.claude/rules/*.md`, one paragraph, because it changes what advice this skill may give.** A rules file is delivered to a session **only** when a tool call touches a file its `paths:` key matches; it is **never** present at session or subagent start. A rules file with **no `paths:` key is delivered to nobody** — measured, not theoretical. Delivery also appears to be **once per context**, not once per matching tool call. Because of this: **never advise moving safety rules, prohibitions, or tool-selection guidance into a `.claude/rules/*.md` file** — that content needs to be present unconditionally, and a `paths:`-scoped rules file cannot deliver it. `project.md` (the `once`-class file introduced in step 1b) exists for `paths:`-scoped PROJECT CONVENTIONS only, never for anything that must be enforced or read before a tool call fires.
+> **Delivery reality for `.claude/rules/*.md`, corrected (v4.0.1, item 14 — measured with this repo's own `zz-load-probe.md`), because it changes what advice this skill may give.** A **scoped** rules file (one carrying a `paths:` frontmatter key) is delivered to a session **only** when a tool call touches a file its `paths:` key matches; it is **never** present at session or subagent start. An **unscoped** rules file — **no `paths:` key at all** — is the opposite: it loads at **EVERY session start**, at the same priority as `CLAUDE.md`. The earlier claim here — "no `paths:` key is delivered to nobody" — was wrong; it drove the v3.1 decision to keep always-on content in `CLAUDE.md`'s PROJECT-CUSTOM region rather than `project.md`. That decision stays the toolkit's convention under v4.0.1, but for the DIFFERENT reason a rule written in both places exists twice and drifts, never because an unscoped `.claude/rules/*.md` file fails to deliver — it does not. `project.md` (the `once`-class file introduced in step 1b, re-seeded under v4.0.1 with a header that says exactly this) exists for `paths:`-scoped PROJECT CONVENTIONS by convention, not because the delivery mechanism forces it; steady state is to KEEP the file and replace its body, never delete it (a deleted `once`-class file returns via `new_template_files` on the next sync — see step 5).
 
 The same order applies to the CONFLICT resolutions in step 4 and the new files in step 5: never write `settings.json` before the hooks it wires. If `hooks/` is missing or partial at the project root, run step 6b's restore BEFORE writing `.claude/settings.json` — the order above is useless if the scripts it protects were never materialised.
 
@@ -400,12 +419,17 @@ for f in "$H"/*.sh "$H"/lib/*.sh; do
 done
 
 # b. no-push-main, the one gate that needs no config and touches nothing.
-probe() { # <hook> <command>
-  printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$2" "$R" \
-    | bash "$H/$1.sh" >/dev/null 2>&1
-  echo "$1 [$2] exit=$?"
+# HOOK_NAME and CMD are named explicitly on each iteration below, never read
+# as shell positional parameters -- a positional reference here would also be
+# the token the Skill tool substitutes when this skill is invoked with an
+# argument, corrupting the probe.
+probe_hook() {
+  printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$CMD" "$R" \
+    | bash "$H/$HOOK_NAME.sh" >/dev/null 2>&1
+  echo "$HOOK_NAME [$CMD] exit=$?"
 }
-for c in "git push origin main" "ls -la" "true"; do probe no-push-main "$c"; done
+HOOK_NAME="no-push-main"
+for CMD in "git push origin main" "ls -la" "true"; do probe_hook; done
 ```
 
 Expect **2**, **0**, **0**. That is the whole routine check: deterministic on every install, no configuration required, and it reads nothing but `PROJECT_CONTEXT.md` and `git branch --show-current`.
@@ -418,9 +442,9 @@ Expect **2**, **0**, **0**. That is the whole routine check: deterministic on ev
 | `pre-commit-test` | `git commit -m x` | **only if the suite FAILS.** It *runs* `**Test**`, or `run-gate.sh`, to find out |
 | `gate-before-merge` | `git merge feature/x` | only on a protected branch with no fresh artifact |
 
-Measured, and neither case is a corner case: in a `**Test**`-configured repo with a green suite the commit row exits **0**; in a Gate-only repo `pre-commit-test` shells into `run-gate.sh`, which on green **writes `.gate/last-pass.json`** — after which `gate-before-merge` finds a fresh artifact and also exits 0. Feeding all three a shared push-to-main payload is wrong for a different reason again: `pre-commit-test` returns 0 for a push (it gates *commits*) and `no-push-main` returns 0 for a commit or a merge.
+Measured, and neither case is a corner case: in a `**Test**`-configured repo with a green suite the commit row exits **0**; in a Gate-only repo `pre-commit-test` shells into `run-gate.sh`, which on green **writes `last-pass.<sha>.json`** under `<common git dir>/gate/` (v4.0.1, item 17) — after which `gate-before-merge` finds a fresh artifact and also exits 0. Feeding all three a shared push-to-main payload is wrong for a different reason again: `pre-commit-test` returns 0 for a push (it gates *commits*) and `no-push-main` returns 0 for a commit or a merge.
 
-> **The two rows below are NOT read-only. They run your full test suite — field-measured at 616 seconds, ~10 minutes, on a real three-project repo — and they can mint a gate artifact.** `pre-commit-test.sh` executes `**Test**`, or `run-gate.sh` when there is no `**Test**` field, and a green `run-gate.sh` writes `.gate/last-pass.json` keyed to the current HEAD/tree. That artifact is exactly what `gate-before-merge.sh` looks for, so a probe run can leave a *real* merge un-gated until it expires (60 minutes). Run these deliberately, on a repo you are already building in, and `rm -f .gate/last-pass.json` afterwards. Never as part of a routine sync.
+> **The two rows below are NOT read-only. They run your full test suite — field-measured at 616 seconds, ~10 minutes, on a real three-project repo — and they can mint a gate artifact.** `pre-commit-test.sh` executes `**Test**`, or `run-gate.sh` when there is no `**Test**` field, and a green `run-gate.sh` writes `<common git dir>/gate/last-pass.<sha>.json` (v4.0.1, item 17 — shared by every worktree of the repo) keyed to the current HEAD/tree. That artifact is exactly what `gate-before-merge.sh` looks for, so a probe run can leave a *real* merge un-gated until it expires (`GC_GATE_TTL_S`, 3600s = 60 minutes). Run these deliberately, on a repo you are already building in, and delete the minted `last-pass.<sha>.json` from `<common git dir>/gate/` afterwards. Never as part of a routine sync.
 >
 > ```sh
 > probe pre-commit-test   "git commit -m x"      # 2 only if the suite FAILS
@@ -499,19 +523,18 @@ For each file with status `CONFLICT`:
      > **Why 127 is an error rather than a shrug, and why the previous wording was a fail-open.** `rc=127` is bash's own verdict about the file it was handed — *"No such file or directory"*. It is not "the interpreter failed to launch". Treating it as did-not-run waves through `bash -n hooks/deleted-thing.sh` on a manifest that still references a script no longer on disk — and **a missing hook script is exactly the condition this toolkit's 127-wrapper exists to catch** (a hook whose script is gone exits 127 and the tool call proceeds). Recording it as "unknown, carry on" would reinstall that fail-open one layer up, inside the checker. The all-127 row above was bash correctly reporting that none of the three paths was visible to the bash that actually ran — a fact about the *invocation*, which the `shutil.which` line is what fixes. The same table applies to `node --check` and to any other checker invoked by name. (This is the `command -v python3` App-Installer stub class again: the name resolves, the program is not the one you meant.)
 
    - *Accept template* is off the table when it would silently drop project content: an EMPTY `PROJECT-CUSTOM` region while headings the template does not carry sit outside it (list those headings), or — for `.claude/settings.json` — a `matcher` string naming agents the template version no longer mentions, e.g. a project-added `cpp-coder` (list those agent names; accept-template reverts their hook wiring). In either case route to the splice path (`source="provided"`) instead.
-3. Present what is left:
+3. **Under manifest v3, a template-class file has no keep-mine resolution.** `apply_file_v3` refuses `source="skip"` for EVERY ownership class, template included — there is no server-side "leave it as mine" for a file the template also ships. The refusal, verbatim: `source='skip' is refused under manifest v3 for {ownership}-class files: there is no keep-mine class -- fix the template or declare a key`. So for a `CONFLICT` file, present only the resolutions the server can actually execute:
    - If `has_conflicts` is **false** and `auto_merged` passed step 2: show it and offer to apply.
    - Otherwise show the conflict markers and the `unified_diff`, and ask the user how to resolve, offering only the options step 2 did not disqualify:
      - **Accept merged** (if they edit the merged content)
      - **Accept template** (discard local changes)
-     - **Keep mine** (acknowledge template change but keep project version)
-     - **Splice** (`source="provided"` with hand-merged content)
+     - **Splice** (`source="provided"` with hand-merged content) — this is how "keep mine" is expressed: move the project-specific content INTO the file's `PROJECT-CUSTOM` region (or hand-merge it alongside the template's new lines) and apply that as the splice content. There is no other way to keep it; a bare "leave it alone" is not a resolution the server accepts.
 
-     > **⚠ A `hooks/*.sh` SPLICE MUST NOT BE APPLIED WITH THE `Edit` TOOL.** `enforce-delegation.sh` denies main-thread `Edit`/`Write`/`NotebookEdit` outside the PO write surface, and `hooks/` is not on that surface — a hook script is enforcement code, and the PO hand-editing it is exactly what the rule exists to prevent. **That deny is correct and long-standing; do not work around it and do not reach for `.claude/delegation-off`.** The sanctioned route is `template_apply_file(source="provided", content=...)`, composing the merged content in a script rather than by hand, followed by `template_apply_file(source="skip")` to register the result. This is the modal conflict for any consumer carrying a gate deviation, so the route has to be named here rather than discovered: a consumer who got through did so by using `template_apply_file` plus a script for unrelated reasons — luck, not design.
+     > **⚠ A `hooks/*.sh` SPLICE MUST NOT BE APPLIED WITH THE `Edit` TOOL.** `enforce-delegation.sh` denies main-thread `Edit`/`Write`/`NotebookEdit` outside the PO write surface, and `hooks/` is not on that surface — a hook script is enforcement code, and the PO hand-editing it is exactly what the rule exists to prevent. **That deny is correct and long-standing; do not work around it and do not reach for `.claude/delegation-off`.** The sanctioned route is `template_apply_file(source="provided", content=...)`, composing the merged content in a script rather than by hand — that single call both writes the file and registers the result in the manifest; there is no follow-up `source="skip"` call (the server refuses `skip` under manifest v3 for every ownership class, so an earlier revision's two-call sequence cannot work as written). This is the modal conflict for any consumer carrying a gate deviation, so the route has to be named here rather than discovered: a consumer who got through did so by using `template_apply_file` plus a script for unrelated reasons — luck, not design.
 
 4. Apply the user's choice:
    - Accept merged/template: `template_apply_file(source="provided", content=...)` or `template_apply_file(source="template")`
-   - Keep mine: `template_apply_file(source="skip")`
+   - Keep mine: NOT `template_apply_file(source="skip")` — the server refuses it. Move the content to keep into the `PROJECT-CUSTOM` region (or hand-merge it into the template's new content) and apply it as `template_apply_file(source="provided", content=...)`.
 
 > **PROJECT-CUSTOM region:** the server preserves content between `<!-- PROJECT-CUSTOM:BEGIN -->` and `<!-- PROJECT-CUSTOM:END -->` mechanically (when both template and project carry the markers). If the consumer's `template-sync-tools` server predates region support, preserve the project's region verbatim in any manual `CLAUDE.md` merge — never let accept-template clobber it.
 >
@@ -522,11 +545,19 @@ For each file with status `CONFLICT`:
 > ### ⚠ DO NOT IMPLEMENT THAT CHECK. RUN THE SHIPPED ONE (v2.4.0).
 >
 > ```
-> bash "$(dirname "$0")/region.sh" --scan .        # classify every region-bearing file
-> bash "$(dirname "$0")/region.sh" --body <path>   # the region body, verbatim
+> bash ~/.claude/skills/sync-template/region.sh --scan .        # classify every region-bearing file
+> bash ~/.claude/skills/sync-template/region.sh --body <path>   # the region body, verbatim
 > ```
 >
-> `region.sh` ships next to this file. **Two independent consumers implemented "is the region empty?" from the paragraph above and both got the REASSURING answer wrongly**, which is why it is now code:
+> **The rule above is outcome-shaped, not code-shaped: check the exit code before trusting the output.** An empty `--scan` result is a valid "no regions" ONLY when the command exited 0. ANY non-zero exit — 127 (region.sh missing), 126 (not executable), a missing `bash`, or anything else — is a hard error naming `~/.claude/skills/sync-template/region.sh`, and STOPS the sync; it is never read as "no regions". A failed scan and a clean scan otherwise print the same empty output, and treating the failure as "no regions" clears the accept-template disqualifier above on a file that actually has PROJECT-CUSTOM content. Run it this way, capturing the exit code alongside the output and branching on the code FIRST:
+> ```
+> out=$(bash ~/.claude/skills/sync-template/region.sh --scan .); rc=$?
+> # rc != 0  -> hard error naming ~/.claude/skills/sync-template/region.sh; stop the sync
+> # rc == 0 and out empty -> no regions, proceed
+> # rc == 0 and out non-empty -> classify each listed file
+> ```
+>
+> `region.sh` ships next to this file, installed at `~/.claude/skills/sync-template/region.sh`. **Two independent consumers implemented "is the region empty?" from the paragraph above and both got the REASSURING answer wrongly**, which is why it is now code:
 >
 > - `PROJECT-CUSTOM:BEGIN\s*-->` matches **nothing** — the shipped marker carries trailing prose: `<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->`
 > - `glob('**/*.md', recursive=True)` does **not** descend into dot-directories, so it skips all of `.claude/` — every agent file.
@@ -563,14 +594,20 @@ For each file with status `CONFLICT`:
 
 ### 5. Handle New Files
 
-`new_template_files` means **absent from the manifest**, NOT absent from the project (invariant I1 above). So for each file in `new_template_files`, **check the disk BEFORE asking anything**:
+`new_template_files` means **absent from the manifest**, NOT absent from the project (invariant I1 above). **First branch on OWNERSHIP CLASS (v4.0.1, item 4) — read each path's class off `templates/ownership.json`'s rules (the same rules `template_load_manifest` used; `once`-class carries no `hash` key at all, ever — step 1b), because the two classes are handled by DIFFERENT tool calls, not by the same one with a different argument:**
 
-1. **The path already exists in the project → this is a CONFLICT, not a new file, and not a silent skip.** Both sides have content, which is the definition of a conflict. Fetch `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`, **show the diff**, and offer the normal step-4 options — **with keep-mine as the default**:
-   - **Keep mine** (DEFAULT) → `template_apply_file(project_path=".", file_path=F, source="skip")`, which registers a manifest entry from the project's existing content and writes nothing, exactly as step 6b rule 4 prescribes for a present-but-untracked hook.
+**`once`-class — never `source="skip"`, it is refused under v3 for every ownership (no keep-mine class exists any more):**
+
+- **Present on disk → REGISTER ONLY, do not call `template_apply_file` at all.** Add the path to `new_files` at step 7's `template_finalize_sync(new_files=[…])` — it lands `{"ownership": "once"}`, **zero bytes written**, the file on disk untouched. This is the route the v2-era "keep mine" default (below, for `template`-class) was trying and failing to reach for a `once`-class file: calling `template_apply_file(source="skip")` here is refused outright ("source='skip' is refused under manifest v3 for once-class files: there is no keep-mine class").
+- **Absent → apply, THEN register.** `template_apply_file(project_path=".", file_path=F, source="template")` creates it (`created_from_template`); its result then joins `applied_files` at step 7, exactly like a `template`-class new file below. **This arm is UNMEASURED by any consumer** — no `once`-class file has ever been added by a template revision until now — so verify it against the fixture rather than assuming the present-case logic covers it too.
+
+**`template`-class — unchanged from before v4.0.1:**
+
+1. **The path already exists in the project → this is a CONFLICT, not a new file, and not a silent skip.** Both sides have content, which is the definition of a conflict. Fetch `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`, **show the diff**, and offer the normal step-4 options — **template-class has no keep-mine resolution under v3 (v4.0.1, item 4 + step 3b)**: `source="skip"` is refused unconditionally for every ownership class, the same refusal the once-class note above names ("source='skip' is refused under manifest v3 for {ownership}-class files: there is no keep-mine class -- fix the template or declare a key"), not just for `once`-class files:
+   - **Splice** (`source="provided"`) — now the resolution that expresses "keep mine": move the project's existing content into the file's `PROJECT-CUSTOM` region (or hand-merge it with the template's version) and apply the merged result. See step 4 for the full account of this route.
    - **Accept template** → only on an explicit choice made against the diff; this overwrites their file.
-   - **Splice** (`source="provided"`) → hand-merged content.
 
-   Do not reduce this to a silent skip. Skipping is safe but it *hides* that the template ships a different version of a file the project already has — the consumer who lost a file this way would have been told nothing, and would never have learned the template's `run-gate.sh` existed and differed. That comparison is what produced the whole of item K.
+   Do not reduce this to a silent skip — the server refuses it besides. Skipping is safe but it *hides* that the template ships a different version of a file the project already has — the consumer who lost a file this way would have been told nothing, and would never have learned the template's `run-gate.sh` existed and differed. That comparison is what produced the whole of item K.
 2. **The path does not exist** → ask the user whether to add it. If yes: `template_apply_file(project_path=".", file_path=F, source="template")`.
 
 **`source="template"` appears in this step ONLY inside case 2, and that is deliberate.** An earlier revision presented it as the default with a condition that might override it; a reader executing literally reached the destructive call and the condition lost, even though a rule of exactly the same shape (6b rule 4) was already written down and had been read. **The imperative at the point of action beats the rule stated elsewhere**, so the branch — not the invariant — is what has to make the wrong call unreachable. Invariant I1 above is the backstop, not the fix.
@@ -599,8 +636,10 @@ Apply new libs and hooks BEFORE `.claude/settings.json` is written, even though 
 **Run this BEFORE anything else in this step, on every `TEMPLATE_DELETED` path:**
 
 ```
-bash "$(dirname "$0")/region.sh" <every TEMPLATE_DELETED path>
+bash ~/.claude/skills/sync-template/region.sh <every TEMPLATE_DELETED path>
 ```
+
+Same outcome-shaped rule as step 4: check the exit code before trusting the classification. A non-zero exit from `region.sh` here is a hard error naming `~/.claude/skills/sync-template/region.sh`, never read as "no content" — treating a failed extraction as `EMPTY` is exactly how a region with content gets deleted.
 
 `CONTENT` (or `UNCLOSED`) on any path ⇒ **deletion is NOT OFFERED for that path.** Not defaulted away from, not behind a second confirmation — **absent from the option list.** The only available actions are **relocate the region** to a named survivor, and **defer**. Once the region is empty, the ordinary flow below applies.
 
@@ -717,7 +756,7 @@ grep -oE 'lib/[A-Za-z0-9_.-]+\.sh' hooks/*.sh | sort -u
 
 Add each hit as `hooks/lib/<file>`. They are checked and restored exactly like the scripts in steps 2–4 (`source="template"` when missing — the server resolves the `hooks/lib/` subdirectory against the toolkit root).
 
-> **Match the FORM, not one form.** Until v2.2.1 this step named a single pattern — the `. "$(dirname "$0")/lib/…"` **source** form, plus a literal `lib/git-cmd.sh`. Every node-program hook references its lib as an **assignment** instead (`jlib="$(dirname "$0")/lib/json.sh"` in `bash-output-guard`, `enforce-agent-contract`, `enforce-delegation`, `read-size-gate`, `require-skills-block`, `retro-brief`, `retro-ledger`), so an agent following this step *literally* never collected `hooks/lib/json.sh`, never noticed it missing, and those seven hooks disabled themselves while the sync report said clean. The three git gates were unaffected — they source `lib/git-cmd.sh` behind a hard `[ -f … ] || exit 2` and fail CLOSED. Over-collecting is harmless: a lib already present is a no-op, and a lib named only in a comment still resolves to a real file.
+> **Match the FORM, not one form.** Until v2.2.1 this step named a single pattern — the `dirname`-of-this-script **source** form (a hook script sourcing its lib by resolving its own directory at runtime), plus a literal `lib/git-cmd.sh`. Every node-program hook references its lib as an **assignment** instead (a `jlib=` variable set from the same dirname-of-this-script expression, pointing at `lib/json.sh`, in `bash-output-guard`, `enforce-agent-contract`, `enforce-delegation`, `read-size-gate`, `require-skills-block`, `retro-brief`, `retro-ledger`), so an agent following this step *literally* never collected `hooks/lib/json.sh`, never noticed it missing, and those seven hooks disabled themselves while the sync report said clean. The three git gates were unaffected — they source `lib/git-cmd.sh` behind a hard `[ -f … ] || exit 2` and fail CLOSED. Over-collecting is harmless: a lib already present is a no-op, and a lib named only in a comment still resolves to a real file.
 1c. **Cross-check the collected count against an INDEPENDENT source before trusting it (v2.2.6).** The defect above did not announce itself: it produced a number, and every file behind that number really was present, so `5 referenced, 5 present` read as a clean verify. **A collector returning a partial result reads as success** — the fixture-that-passes-vacuously class, one layer out. The counts alone cannot tell you the collector worked; a second, differently-sourced count can.
 
 ```
@@ -733,7 +772,12 @@ on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the confi
 
 2. For each referenced script: verify `hooks/<name>.sh` exists at the project repo root and is non-empty.
 3. For any MISSING script: call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="template")` — the server resolves root-tracked `hooks/` paths against the toolkit ROOT (variants do NOT ship `hooks/` — never look in `templates/<variant>/hooks/`, it does not exist) and both materializes the file AND returns its manifest entry in one call. Never hand-copy. Add each result to the collected `applied_files`.
-4. For every referenced hook script PRESENT at the project root, NOT tracked in the manifest, AND NOT already applied by any earlier step of this sync (the two sets are disjoint): call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="skip")` and add the result to `applied_files`. `source="skip"` registers a manifest entry from the project's existing file content WITHOUT writing — NEVER use `source="template"` here, it would silently overwrite locally-edited hook scripts. Once registered, future `template_compute_status` runs track hook drift like any other file.
+4. For every referenced hook script PRESENT at the project root, NOT tracked in the manifest, AND NOT already applied by any earlier step of this sync (the two sets are disjoint): **this is the SAME register-or-apply route steps 4 and 5 use for a template-class file, because `hooks/*.sh` is template-class and template-class has no keep-mine under v3.** `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="skip")` is refused, measured verbatim: `source='skip' is refused under manifest v3 for template-class files: there is no keep-mine class -- fix the template or declare a key`. Do this instead:
+   - Call `template_get_diff(project_path=".", file_path="hooks/<name>.sh", diff_type="three_way")` against the template's current version. **`diff_type="three_way"` has no `has_changes` key** (its keys are `base_content`, `diff_type`, `fallback_to_two_way`, `file_path`, `merge_result`, `project_content`, `template_content`, `unified_diff` — `has_changes` exists only on `diff_type="full"`); the working signal is `unified_diff`: **empty → identical, non-empty → differs.** (Using `diff_type="full"` and reading its `has_changes` is the other valid route; either way, name the signal you are actually reading.)
+   - **Identical to the template (`unified_diff` empty)** → register it, writing nothing: `template_finalize_sync(new_files=["hooks/<name>.sh"])`. This is the same call step 5 uses to register a present `once`-class file, applied here to a template-class one that happens to already match.
+   - **Differs from the template (`unified_diff` non-empty)** → there is no keep-mine to fall back to, and the call needs `backup_dir`: `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="template", backup_dir=<dir>)` overwrites it with the template's version (`action: "written_from_template"`), saving the project's pre-image and diff under `<backup_dir>/hooks/` first. **Without `backup_dir` the call is refused, measured verbatim: `<path> is LOCAL_EDITED; refusing to overwrite without backup_dir (the pre-image and diff must be saved first)`** — that refusal IS the contract for this destructive overwrite, not an error to work around. `<dir>` here may be the same physical directory step 2b already created — reusing the location costs nothing — but that is directory reuse only, not a coverage claim: 1c-iii's note that "2b backs up a *different set* (gitignored tracked files) and does not cover this" still holds; this call's own `backup_dir` argument, not 2b's earlier copy, is what actually protects THIS file. If the project's current content has anything worth keeping beyond what the backup preserves, additionally move it to a project-owned location before this call.
+   - `source="skip"` is never used for this case. Add each result to the collected `applied_files`. Once registered or applied, future `template_compute_status` runs track hook drift like any other file.
+   - **Open question for a later release (v4.0.2+), not for this sync:** whether "keep mine" should mean something different for a present-but-untracked hook than it does for CLAUDE.md/agent files (a hook has no PROJECT-CUSTOM region to splice project content into) is a redesign question, not an instruction gap — this step already tells you what to run today.
 
    > **Compare against the manifest PLUS this sync's own applied set — never the on-disk manifest alone (yutraffic).** `template_finalize_sync` is the only tool that WRITES the manifest, so mid-sync the manifest on disk still reflects the START of the sync. A hook this sync itself materialized (measured: `hooks/deny-secret-reads.sh`, applied in step 5's `new_template_files`, not step 3) reads back as PRESENT-BUT-UNTRACKED if tracked-ness is re-derived from the on-disk manifest alone. Computing it that way gets a false positive on a file already correctly registered `source="template"` and re-registers it here with `source="skip"` — the wrong resolution for a file the sync just applied fresh, as opposed to one the project modified. Union the manifest with the `applied_files` collected so far in THIS sync before testing tracked-ness; that is what "NOT already applied by any earlier step of this sync" above means in practice (penumbra: the measured applying step was 5, not 3, so the rule line is worded against the sync as a whole rather than a specific step number).
 5. Report the verified list, **including the independent count from 1c** — the cross-check is worth nothing if its second number never reaches the report:
@@ -876,9 +920,9 @@ The five forms above are scoped to the **project tree**. `~/.claude/` is not in 
 
 Call `template_finalize_sync(project_path=".", applied_files=<JSON array of all template_apply_file results>)`.
 
-**Re-register keep-mine files LAST** — every `source="skip"` registration is the last action before finalize, after every edit including the sync's own write-up into `PROJECT_STATE.md`. A hash recorded before a later edit describes nothing, and on a file with a live PROJECT-CUSTOM region those stale part hashes are exactly what the next sync's classification reads.
+**Re-register keep-mine files LAST** — every keep-mine registration (step 6b's register-or-apply route for a present-but-untracked hook via `template_finalize_sync(new_files=[...])`, or step 4/5's `source="provided"` splice under v3) is the last action before finalize, after every edit including the sync's own write-up into `PROJECT_STATE.md`. A hash recorded before a later edit describes nothing, and on a file with a live PROJECT-CUSTOM region those stale part hashes are exactly what the next sync's classification reads.
 
-**Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's `source="skip"` set — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it. **If no entry carries a hint, there is nothing to do here** — this clause exists for manifests that predate the part-hash fields, and a recently-synced repo has already re-registered everything (measured: `hint: ""` on all 36 entries of one consumer). An empty hint set is the healthy state, not a missing step.
+**Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's keep-mine registration set (step 4's `source="provided"` splice under v3, not `source="skip"`) — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it. **If no entry carries a hint, there is nothing to do here** — this clause exists for manifests that predate the part-hash fields, and a recently-synced repo has already re-registered everything (measured: `hint: ""` on all 36 entries of one consumer). An empty hint set is the healthy state, not a missing step.
 
 Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
 
@@ -983,161 +1027,23 @@ That third row is the sweep failing at its entire job, quietly — the same shap
 
 Any hit is a file the template wrote with an unfilled placeholder — `template_apply_file` substitutes only placeholders present in the project's manifest, so a key the manifest predates (`DEFAULT_BRANCH`, `GATE_COMMAND`, `WORKTREE_BASE`, `LOG_PATH`) lands as a literal on **both** accept-template and accept-merged. Fill it or delete the line; list every hit under `Warnings:` either way. This one grep is what stands between a consumer and a config value that reads as data — v2.2.0 shipped `- **Protected branches**: {{DEFAULT_BRANCH}}`, and until v2.2.1's resolver fix that literal silently unprotected trunk.
 
-### 7b. Stamp the Version Fields into the Manifest (v2.2.5)
-
-`lastSynced` is a **commit sha**, and nothing else in a synced repo carries a version marker. So "which toolkit version is this repo on?" currently needs the toolkit checkout present *and* its tags fetched. Measured across four live consumers, every one of them was an opaque hex string. Two additive manifest fields fix that:
-
-| Field | Value | Written by |
-|---|---|---|
-| `lastSyncedVersion` | the toolkit tag for `lastSynced` | **this skill** (client-side, DERIVED — recomputed on every sync) |
-| `lastSyncedVersionOf` | the `lastSynced` sha `lastSyncedVersion` was computed from | **this skill** — the staleness backstop; see rule 2b |
-| `templateSyncToolsVersion` | the `template-sync-tools` version that performed the sync | **the server**, when it starts emitting a version — this skill never guesses it |
-
-**Both are optional labels. NEVER fail, block or roll back a sync over either one** — an unresolvable version is a missing label, not an error. Absent means *unknown*, never *stale*: every pre-v2.2.5 manifest stays valid unchanged.
-
-**Resolve `lastSyncedVersion`** against the manifest's own `templateRepo` and `lastSynced`, in this order — first one that succeeds wins:
-
-```
-git -C <templateRepo> describe --tags --exact-match <lastSynced>   # v2.2.5
-git -C <templateRepo> describe --tags <lastSynced>                 # v2.2.4-3-gabc1234
-#                     ^^^^^^^^^^^^ NO --abbrev=0, DELIBERATELY. With it the
-#   fallback returns the nearest ANCESTOR tag — a bare `v2.2.4` for a commit
-#   strictly NEWER than v2.2.4 — so the manifest would record a version OLDER
-#   than the one actually applied, with no error and no empty string. `""` is
-#   honest: it is unknown announcing itself. A bare ancestor tag is confidently
-#   wrong, and it fires on exactly the consumers who sync off-tag to pick up a
-#   fix early. The `-3-gabc1234` suffix is the signal, not noise; do not tidy it.
-```
-
-**Checking a `lastSynced` against a tag needs `^{commit}` — TAG TYPE VARIES, so ALWAYS DEREF (v2.2.6, corrected v3.0.1).** On an *annotated* tag, the tag name resolves to the **tag object's** sha, not the commit's:
-
-```
-git rev-parse v2.2.5            -> 300020f     <- the TAG OBJECT. Never equals lastSynced.
-git rev-parse v2.2.5^{commit}   -> 640ba5e     <- the commit. This is what lastSynced holds.
-```
-
-> **Do NOT rely on "toolkit releases are annotated" — that claim was in this file and it is false.** The tag type depends on **how the release was cut**: `git tag -a` (and `git tag -s`) creates an **annotated** tag with its own object; a release cut through the **GitHub API** — including the GitHub MCP release tools this repo's own guidance prefers — creates a **LIGHTWEIGHT** tag, which is a plain ref straight to the commit. **v2.3.0 is lightweight for exactly that reason.** The cause is stated here rather than left out because without it the next releaser has no way to know which kind they are about to make.
->
-> `^{commit}` is a no-op on a lightweight tag and the correction on an annotated one, so **deref unconditionally and never branch on the type.** A rule of the form "these are annotated, so deref" rots the first time someone cuts one the other way — which has already happened.
-
-Anyone verifying a consumer's `lastSynced` against the tag without `^{commit}` reports a **false mismatch** and goes hunting a sync bug that does not exist. `describe --tags` above is unaffected (it takes a commit and returns a name), and `verify-user-level-drift.sh` already derefs correctly — this is a rule for the humans and release notes doing the comparison by hand.
-
-**Distinguish the ways this can fail to resolve — an opaque `""` reproduces, one level down, the opaque `lastSynced` this whole step exists to fix (v2.2.5).** Four distinct outcomes, four distinct values:
-
-| state | value written | how to read it |
-|---|---|---|
-| resolved to a tag | `"v2.2.5"` | exact; `--exact-match` succeeded |
-| untagged but resolvable | `"v2.2.4-3-gabc1234"` | three commits past v2.2.4 — a real, precise answer, not a failure |
-| no toolkit checkout reachable | `"unknown:no-checkout"` | `templateRepo` is absent, or `git -C` cannot open it |
-| checkout present, no tags | `"unknown:no-tags"` | fetch tags (`git fetch --tags`) and re-run to label it |
-| this skill never ran | key **ABSENT** | a pre-v2.2.5 manifest; absent means unknown, never stale |
-
-Never write a bare `""` — it is indistinguishable from "resolved, to nothing". The bounded shape of the failure, measured: on a host with the toolkit checked out and its 18 tags fetched, `--exact-match` resolves correctly, so the unresolved states are specific to **no checkout, a shallow clone, or a fetch without tags** — a bounded defect, not an open-ended one.
-
-**Control, both arms, and assert the untagged arm POSITIVELY.** A tagged HEAD must resolve to the exact tag; an **untagged** HEAD must produce a value matching `-g[0-9a-f]{7,}`, i.e. it *carries the describe suffix*. Do **not** phrase the second as "is not an ancestor tag": that is awkward to express and passes **vacuously** on an empty string, a malformed value, or a swallowed exception — a fixture with the shape of a failing-arm test whose failing arm can go green for reasons unrelated to the guarantee. "Carries the suffix" is one positive assertion that an `--abbrev=0` refactor breaks on its first run, which is the named regression actually being guarded.
-
-> **SELECT THE UNTAGGED COMMIT BY THE PROPERTY, NEVER BY POSITION — and assert the fixture HAS the property before concluding anything (v2.2.6; hit independently by three consumers, one of whom "nearly reported your implementation as broken").** Arm 2 needs an untagged commit and this step never said how to find one, so the obvious `<release-sha>~1` gets used. On a well-tagged repo — i.e. this one — the previous commit is very often **the previous release**: `640ba5e~1` is `d67b507`, itself tagged `v2.2.4`, so `describe --tags` correctly returns a bare tag and the arm reports FAIL. **That failure is indistinguishable from the `--abbrev=0` regression the arm exists to catch**, and the tempting next move is to "fix" the resolver, which is working.
->
-> ```sh
-> # Walk back until describe --exact-match FAILS; that commit is untagged BY MEASUREMENT.
-> c=$(git -C <templateRepo> rev-parse HEAD)
-> while git -C <templateRepo> describe --tags --exact-match "$c" >/dev/null 2>&1; do
->   c=$(git -C <templateRepo> rev-parse "$c~1")
-> done
-> # assert the fixture's property FIRST, then the implementation's behaviour:
-> git -C <templateRepo> describe --tags --exact-match "$c" >/dev/null 2>&1 && { echo "FIXTURE INVALID: $c is tagged"; exit 1; }
-> git -C <templateRepo> describe --tags "$c" | grep -Eq -- '-g[0-9a-f]{7,}' || { echo "arm2 FAIL"; exit 1; }
-> ```
->
-> **The general rule, which outlives this arm: a control must assert its own fixture carries the property under test, or the control's failure cannot be told from the regression it guards.** Position is provenance; taggedness is the property. Bites hardest on the repos that tag most carefully.
-
-**Run those through the Bash tool, not from inside the stamping script.** Consumer manifests store `templateRepo` as an MSYS path (`/g/git/claude-code-toolkit` in all four measured) and native `git.exe` spawned from Python cannot resolve it — it exits non-zero, both fallbacks "fail", and the label silently comes out `""` on a repo whose tags are right there. Measured: same sha, same repo, `''` from a Python `subprocess` versus `v2.2.3` from Bash. Resolve the string in Bash, hand it to the script.
-
-**Do NOT invent `templateSyncToolsVersion`.** Write it only from a version the *server itself* reports in a `template_*` response. As of `template-sync-tools` 0.2.x no response carries one — which is the underlying complaint: a consumer found on 0.1.0 this week could only discover it by describing a symptom. Until the server emits one, leave the key **absent** and report `Sync server: unknown` (see step 8). A user-typed or inferred number in a server-owned file is worse than no field at all, because the next reader cannot tell it apart from an authoritative one.
-
-**How to write them, mechanically:**
-
-1. **After** `template_finalize_sync` and after the post-finalize self-check — finalize rewrites the manifest, so a stamp applied before it is discarded.
-2. **Never-clobber, and it does NOT apply to a DERIVED field (v2.2.5 round 4).** The rule is: *only write a key that is absent or empty* — a future server that writes these fields authoritatively must win, and the client never clobbers a value it did not write.
-
-   **Never-clobber exists to protect values the client cannot REPRODUCE** — server-authoritative data, hand-edited resolutions, anything where overwriting destroys information that cannot be recovered. **A derived field is by definition reproducible**, so it is not in the class the rule protects, and applying the rule to it converts *"do not destroy information"* into *"preserve a wrong answer"*.
-
-   **The corollary is the actionable half, and it covers every future field of this shape:**
-
-   > **A derived field is rewritten with its source, or not at all. If `lastSynced` changes, everything computed from it is recomputed in the same write.**
-
-   So `lastSyncedVersion` — a pure function of `templateRepo` + `lastSynced`, and `lastSynced` changes on every sync — is **recomputed and overwritten every time, unconditionally**. Never-clobber applies **solely** to `templateSyncToolsVersion`, for the stated reason (the client cannot observe it), not because it appears on a list of exceptions. Written as a class exclusion deliberately: a named exemption for `lastSyncedVersion` is something a future editor can fail to extend to the next derived field, and the trap would be re-set silently.
-
-   **Why this is not a tidy-up: a stale version label is WORSE than an absent one.** Absent reads as *unknown* and sends the reader to the sha. Stale reads as *authoritative* and answers *"do I have the fix?"* **wrongly** — the exact question this step was opened to answer, failing hardest on the consumers who sync most often. Under the old wording there was no third case: if `template_finalize_sync` preserves the key, every subsequent sync leaves a confidently-wrong label; if it drops it, the rule was dead code for this field. Harmful or vacuous.
-
-   **Confirmed which of the two `template_finalize_sync` actually does (source read, v3.0.4): it PRESERVES.** The server mutates its in-memory manifest dict in place, touching only `lastSynced`, `version` and `files`, then serializes that same dict — every other pre-existing top-level key, `lastSyncedVersion`/`lastSyncedVersionOf` included, survives untouched and unmoved. So `template_finalize_sync` is never the source of a stale label; a repo carries one only because a *previous* 7b stamped it and a *later* sync changed `lastSynced` without this step re-running to recompute it. That is the case this backstop exists to expose:
-
-   **The routine third case, not a corner one: a repo stamped by an OLDER 7b, synced again.** `lastSyncedVersionOf` (the sha the label was computed for) then differs from the manifest's current `lastSynced` (the sha the finalize call just wrote) until THIS sync's 7b recomputes both. Seeing `lastSyncedVersionOf != lastSynced` right after finalize and before this step runs is expected, not a defect — it is exactly the staleness the companion key is there to make visible, and recomputing it unconditionally (the rule above) is what clears it every time.
-
-2b. **Backstop, for when the exclusion is forgotten: store what the label was computed FROM.** A version label that cannot be checked against the thing it labels is itself a value that needs provenance. Write `lastSyncedVersionOf` beside it, carrying the `lastSynced` sha the label was derived from:
-
-   ```json
-     "lastSynced": "707052c",
-     "lastSyncedVersion": "v2.2.3",
-     "lastSyncedVersionOf": "707052c",
-   ```
-
-   A reader then compares the two: **equal means the label is good; unequal means it is stale AND KNOWN STALE.** That converts a confidently wrong answer into a detectable one, which is the whole difference this step exists to deliver. Step 8 reports `{lastSyncedVersion} (stale — computed for {lastSyncedVersionOf}, manifest is at {lastSynced})` when they disagree, and the two unresolved-state values (`unknown:no-checkout`, `unknown:no-tags`) are written with the same companion key so the pairing has no gaps. The fifth table row — key **ABSENT** — has no value to pair and takes no companion key.
-3. Write with the Write tool + a scratchpad script (`json.load` / `json.dump`), never by hand-editing the JSON and never by a long `python -c` command line — the same rule as `applied_files` in step 7. Preserve `indent=2`, LF endings, no BOM, and `ensure_ascii=False`. The manifest path this script reads is inside the project tree, not `/tmp` — but if you stage anything through a temp path first, see the bash→python platform note in the intro: resolve it in bash before handing it to the script.
-
-   **REBUILD the top-level mapping in the documented order — do NOT assign into the loaded one (v2.2.6).** Python dicts are insertion-ordered and `json.dump` follows, so the natural `m = json.load(...); m["lastSyncedVersion"] = …; json.dump(m, …)` **appends** both keys after every pre-existing key. Measured on a consumer manifest: `lastSynced` landed at line 5 and its two labels at lines **276-277**, past the entire `files` map, **270 lines from the field they annotate**.
-
-   That is not cosmetic *in this step's own terms*. 7b exists so a human can read the version **without opening the toolkit**. Below the `files` map, a reader checking the header sees a bare sha and concludes the version was never stamped — which is exactly what one consumer's user did, and they were right to. **The feature is the visibility; the placement is the feature.**
-
-   The documented top-level order, which is also the order the docs table lists:
-
-   ```
-   version, variant, templateRepo, lastSynced, lastSyncedVersion, lastSyncedVersionOf,
-   templateSyncToolsVersion (when present), placeholders, files
-   ```
-
-   ```python
-   ORDER = ["version", "variant", "templateRepo", "lastSynced",
-            "lastSyncedVersion", "lastSyncedVersionOf",
-            "templateSyncToolsVersion", "placeholders", "files"]
-   out = {k: m[k] for k in ORDER if k in m}
-   out.update({k: v for k, v in m.items() if k not in out})   # unknown keys survive, at the end
-   ```
-
-   The `update` line is required, not tidy: `template_finalize_sync` mutates and re-dumps the RAW manifest, so **unknown top-level keys are preserved** (measured with a planted canary). Dropping them here would destroy data the server deliberately keeps.
-
-3b. **Assert POSITION, not presence — every existing check in this step is blind to it (v2.2.6).** After writing, `template_compute_status` is clean, `template_load_manifest` is valid, and a `json.load` key check is green — **all three read BY KEY**, so all three pass with the labels 270 lines out of place. The step's own verification is structurally incapable of catching the one thing the step is for.
-
-   ```python
-   assert list(manifest)[:6] == ["version", "variant", "templateRepo",
-                                 "lastSynced", "lastSyncedVersion", "lastSyncedVersionOf"], list(manifest)[:6]
-   ```
-
-   A pre-v2 manifest that carries `version` last is the one legitimate exception — the v1→v2 migration appends it by assignment and no sync has ever corrected it. Report that as `manifest key order: pre-v2 shape (version last)` rather than failing; it is a server-side fix, not something to hand-repair here.
-
-4. Re-run `template_compute_status` afterwards; it must still be clean. If the stamp upset anything, revert the two keys and report — the sync is still good, the label is not worth a corrupt manifest.
-5. `.claude/template-manifest.json` is already in the step-9 `git add`, so nothing extra to stage.
-
-Before → after, on a real consumer manifest — **note where the two new keys sit**: immediately after the field they annotate, in the header, not appended at the end of the file:
-
-```json
-  "templateRepo": "/g/git/claude-code-toolkit",
-  "lastSynced": "707052c",
-+ "lastSyncedVersion": "v2.2.3",
-+ "lastSyncedVersionOf": "707052c",
-  "placeholders": { ... },
-  "files": { ... }
-```
-
-A consumer re-ordered their own manifest to this shape as a pure move: parsed content identical, byte count identical, 3 insertions / 3 deletions, every entry still valid.
-
-**Provenance, say it out loud when asked:** `lastSyncedVersion` is *client-written by this skill*, derived from the same `templateRepo` + `lastSynced` the server wrote, so it is reproducible and checkable — but it is not server-authoritative, and a repo synced by an older skill will not have it.
+Version labels are server-authoritative under v3 (`template_version` / `template_commit`). The client no longer stamps them; `lastSyncedVersion` / `lastSyncedVersionOf` are dropped by migrate and finalize and reported as `superseded_keys_dropped`.
 
 ### 8. Report
 
+**Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
+
+**Report `key_audit.optional_absent_detail`** (v4.0.1, item 18; capability `optional_absent_detail`) for every key it lists, one line each, in this exact shape:
+
+```
+absent — effect: <effect_when_absent>; declare only if you want the other behaviour
+```
+
+**Never** phrase it as "declare it or accept the default" — for most of these keys (`**Test**` above all: absent means pre-commit falls back to the Gate, which mints the artifact, so commit and merge are one run; declaring it adds a second run per commit) absent is the BETTER state for most consumers, and "accept the default" reads as a passive fallback rather than the actively-preferred outcome it usually is. `none_meaning` is available on the same entry if the user asks what a literal `none` on that key does — do not volunteer it unprompted; it disagrees per key by design (see `docs/template-sync.md`).
+
 Then run `bash <toolkit>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line. **It compares against the last RELEASED tag, not the working tree** (v2.2.5 round 4): a live `~/.claude/` matching an unshipped branch used to report 0 drift, so the delivery probe certified that an unreviewed revision had reached a user. Reference files that exist only on a branch are listed as `UNRELEASED`, never counted as in-sync.
 
-**If it exits 2 with `cannot resolve a released reference`, fold that into the report as `User-level: drift not checked (no released reference)` and CARRY ON.** A shallow clone or a fetch without tags is a measured consumer state, and this step is a probe, not a gate — the same rule as step 7b's version labels: an unresolvable version is a missing label, never a reason to fail or roll back a sync. **Do not silently retry with `--worktree`**: that reinstates the comparison that reports 0 drift against an unshipped branch, which is the failure the released-tag default exists to close. Say it was not checked.
+**If it exits 2 with `cannot resolve a released reference`, fold that into the report as `User-level: drift not checked (no released reference)` and CARRY ON.** A shallow clone or a fetch without tags is a measured consumer state, and this step is a probe, not a gate — the same rule as version derivation elsewhere in this skill: an unresolvable version is a missing label, never a reason to fail or roll back a sync. **Do not silently retry with `--worktree`**: that reinstates the comparison that reports 0 drift against an unshipped branch, which is the failure the released-tag default exists to close. Say it was not checked.
 
 **DEFINITION OF DONE FOR A USER-LEVEL FILE IS RESTART-REQUIRED, NOT RE-COPY (v2.2.5 round 4).** Copying `SKILL.md` into `~/.claude/skills/` changes nothing for any session already running — including this one. The report has told users *"Restart before relying on changed agent definitions or skills"* for several versions; **the skill knew this about agents and not about itself.** So when this sync changed a user-level skill or agent, the delivery step is not complete until the session is restarted, and the report says so with the file named. Anyone mid-session while a copy is installed is running the previous version's steps against the new manifest.
 
@@ -1167,26 +1073,24 @@ Sync complete: {variant} @ {new_commit}
   Warnings:     [list — every placeholder-sweep hit belongs here]
   User-level:   [one-line verify-user-level-drift.sh summary]
   Gates:        live (parser: {backend} — {consequence})
-  Toolkit:      {lastSyncedVersion} ({lastSynced})
-                [when lastSyncedVersionOf != lastSynced: "STALE LABEL — computed
-                 for {lastSyncedVersionOf}; read the sha, not the version"]
+  Toolkit:      {template_version} ({template_commit})
+  Superseded:   [superseded_keys_dropped — omit the line entirely when empty]
   SKILL body:   {the version marker at the top of this file, as LOADED}
-  Sync server:  {templateSyncToolsVersion}
+  Sync server:  {server_version, from template_load_manifest}
   Backup:       {step-2b directory, ABSOLUTE and RESOLVED} [{gitignored tracked files copied}]
 ```
 
 `Backup:` prints `os.path.realpath(...)` of the directory that was actually written — never `/tmp/...` and never the `${TMPDIR:-/tmp}` expression. On Windows the two differ and the reported one does not exist (step 2b).
 
-`Toolkit:` and `Sync server:` (v2.2.5) exist so a human sees both versions without opening the manifest — the whole point of step 7b. Print what step 7b resolved, and print the honest shape when it resolved nothing:
+**`Toolkit:` and `Sync server:` exist so a human sees both versions without opening the manifest. Since v4.0.1 (item 8) both are SERVER-reported, not client-stamped** — `template_finalize_sync`'s response already carries `template_commit`/`template_version` (see step 1b above) and `template_load_manifest`'s response carries `server_version`; this step only prints what an earlier call already returned, nothing here is computed by the skill. Print the honest shape when the server could not resolve a version:
 
 ```
-Toolkit:      v2.2.5 (d67b507)
-Toolkit:      v2.2.4-3-gabc1234 (abc1234) — untagged commit, three past v2.2.4
-Toolkit:      unknown:no-tags (abc1234) — checkout present but no tags; `git fetch --tags` and re-run to label it
-Toolkit:      unknown:no-checkout (abc1234) — no toolkit checkout reachable at the manifest's templateRepo
-Toolkit:      (field absent) — synced by a pre-v2.2.5 skill; unknown, not stale
-Sync server:  unknown (server reports no version — client never guesses it)
+Toolkit:      v4.0.1 (d67b507)
+Toolkit:      null (abc1234) — untagged commit; no reachable tag has an identical tracked tree
+Sync server:  0.4.2
 ```
+
+**`Superseded:` reports `superseded_keys_dropped` from the finalize response** — the `lastSynced`/`lastSyncedVersion`/`lastSyncedVersionOf` trio this sync's `template_finalize_sync` call actually removed, if any. Omit the line when the list is empty; do not print `Superseded: []`.
 
 `Spliced:` is its own category on purpose: the conflict guidance now recommends splicing over accept-template for files that carry project values, and a spliced file is neither auto-updated nor merged by the server. Reporting it as "Skipped" hides work that was actually done.
 
@@ -1198,11 +1102,13 @@ Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appen
 
 Match the plugin's **heading**, not the phrase: `grep -c '^# context-mode' CLAUDE.md` must be `0`. The template's own text mentions "context-mode" by design (the sentinel section under `## context-mode plugin`), so a substring grep reports a false positive on a perfectly clean file; only a line *starting* `# context-mode` is the re-appended plugin block.
 
-Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, `.gate/`, stray output files) that were never part of the sync.
+Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, a legacy pre-4.0.1 `.gate/` directory if one is still present, stray output files) that were never part of the sync. (Since v4.0.1 the gate artifact itself lives under `<common git dir>/gate/`, inside `.git`, so it is no longer a working-tree object `add -A` could sweep in at all — this caution now covers everything else.)
 
 **Write the commit MESSAGE to a file and use `git commit -F <path>` — never a heredoc, and never a long `-m` (v2.2.5).** The gates scan the whole command STRING, so a message body that merely *describes* what this sync changed ("adopts the new merge gate", "gh pr merge is now blocked without a fresh artifact") is matched by `gate-before-merge.sh` on the commit that carries it. A sync commit describes gate changes by its nature, which makes this step the most likely place in the whole skill to hit it — and the block is uninterpretable, because it does not tell you whether the gate works or whether your own message was the violation. Same reasoning as the "probes must live in a script file" rule in step 3, arriving from a third direction. Write the message with the **Write tool** (not a Bash heredoc — the heredoc body is part of the command string too) to `"${TMPDIR:-/tmp}/sync-msg.txt"`, then `git commit -F` that path. The short `-m` this step used to prescribe dodged the gate by luck, not design.
 
-**Edit in one tool call; `git add <files>` + `git commit -F <file OUTSIDE the repo>` in the NEXT call (v3.0.3).** Never batch the edit with the commit. The commit hook is `PreToolUse`: it hashes the working tree BEFORE the call runs, so a mutation made in the same call is gated in its *pre-mutation* state — the artifact then describes the parent's tree, and the merge gate reads it as stale. "Commit exactly what was gated" reads as satisfied at the moment you type the batched call, which is why this has to be stated as a SHAPE and not as an intention. Two consumers hit it in one evening. `.gate/last-precommit.json` now carries a `tree` field for exactly this: an artifact tree equal to `HEAD^{tree}` means the mutation was batched with the commit; equal to neither that nor the working tree means an untracked file was swept in by `add -A`.
+**Edit in one tool call; `git add <files>` + `git commit -F <file OUTSIDE the repo>` in the NEXT call (v3.0.3).** Never batch the edit with the commit. The commit hook is `PreToolUse`: it hashes the working tree BEFORE the call runs, so a mutation made in the same call is gated in its *pre-mutation* state — the artifact then describes the parent's tree, and the merge gate reads it as stale. "Commit exactly what was gated" reads as satisfied at the moment you type the batched call, which is why this has to be stated as a SHAPE and not as an intention. Two consumers hit it in one evening. `last-precommit.<tree>.json` (under `<common git dir>/gate/` — v4.0.1, item 17) now carries a `tree` field for exactly this: an artifact tree equal to `HEAD^{tree}` means the mutation was batched with the commit; equal to neither that nor the working tree means an untracked file was swept in by `add -A`.
+
+> **Two artifacts exist, and they carry different fields (v4.0.1, item 15).** `last-precommit.json`, written by `pre-commit-test.sh` on the Test path, carries `tree` only — no `sha`. `last-pass.json`, written by `run-gate.sh` (including the Gate-fallback path `pre-commit-test.sh` takes on a Gate-only repo), carries both `sha` and `tree`. **`tree` is the matching key; `sha` is advisory.** When `last-pass.json` is minted by the Gate fallback DURING a commit (Test absent or `none`, so `pre-commit-test.sh` runs the Gate itself), its `sha` is HEAD *at hook time* — that is the commit's PARENT, not the commit being made, because the hook runs before the commit object exists. Read `sha` in that artifact as "the tree was gated at this parent", never as "this exact commit was gated" — `tree` is what `gate-before-merge.sh` actually compares.
 
 **The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool), or `--fill` to reuse the commit message. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
 
@@ -1218,7 +1124,10 @@ git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** p
 # --> now delegate ONE `bash hooks/run-gate.sh` run to `ops` (the PO cannot run the gate)
 git push -u origin <branch>
 gh pr create --fill
-gh pr merge --squash --delete-branch               # (or the MCP merge tool)
+gh pr merge --squash --delete-branch               # `gh` only: it has a --delete-branch flag.
+# The MCP merge tool has NO --delete-branch equivalent. Using it: merge with
+# the MCP tool, then delete the remote branch as its OWN, separate tool call:
+git push origin --delete <branch>
 git checkout main                                  # local main still carries the PRE-sync hooks
                                                    # until it fast-forwards
 git pull --ff-only                                 # allowed by BOTH hook versions; if a refusal
@@ -1227,20 +1136,34 @@ git pull --ff-only                                 # allowed by BOTH hook versio
 git fetch -p                                       # drops the phantom remote-tracking ref
 ```
 
+**`git push origin --delete <branch>` MUST be its own tool call, never chained onto anything else (v4.0.1, item 20).** The obvious-looking shortcut — `git branch -d <branch> ; git push origin --delete <branch>`, or chaining the delete onto the merge — is refused by the git-command guard. Quoted verbatim from a measured refusal:
+
+> `clause class: mover (not inert, not tracked) — flag '-d' is not on the read-only allowlist for 'git branch', so this clause is not provably inert … run the two as SEPARATE calls`
+
+So: delete the LOCAL branch (if at all) and the REMOTE branch as two separate calls, never one compound command, and never assume the MCP merge tool did the remote delete for you — it has no `--delete-branch` option.
+
 **Write the last two as two commands, not as `git checkout main && git pull --ff-only`.** Stated truthfully, because the reason changed under this procedure's feet: the chained form **blocked on v3.0.2** and is **allowed from v3.0.3**, because a bare `--ff-only` pull fetches first and can only fast-forward to the upstream, so its verdict does not depend on which branch the mover lands on — and refusing it would be a denied legitimate command. The mover rule is unchanged for the case it exists for: `git checkout <protected> && git merge <x>` is still refused, because there the landing is real and the branch decides. Keep the two-call form anyway — it is the shape that reads the same under both hook versions, and a consumer on a v3.0.2 checkout still hits the block. The two lines are IN the block on purpose: the reader who needs them is the one who was surprised by a refusal on `main` and is primed to read it as a broken release, and that reader copies from the block, not from the prose under it.
 
 **A fast commit with no visible output is the harness dropping non-blocking hook stderr, not the hook skipping.** `pre-commit-test.sh` does not path-filter and has no "no source files" branch — it runs the Test Command (or `run-gate.sh`) on every commit, unconditionally. The `passed. (Ns)` marker is printed and you do not see it. **The elapsed seconds are the evidence**; a fast commit means a fast Test suite.
 
-**Read the gate's verdict from `GATE PASS` or `.gate/last-pass.json` — NEVER from the exit code of a pipeline (v2.2.6).** `bash hooks/run-gate.sh | tail -100` is an entirely natural thing to do with a multi-minute chatty command, and it reports **`tail`'s** exit code, not the gate's. A consumer's delegated `ops` agent hit this and reported honestly that it could not supply the rc; a less careful one gets `0` from `tail` on a red gate. Two rules, both cheap:
+**Read the gate's verdict from `GATE PASS` or `last-pass.<sha>.json` (under `<common git dir>/gate/` — v4.0.1, item 17) — NEVER from the exit code of a pipeline (v2.2.6).** `bash hooks/run-gate.sh | tail -100` is an entirely natural thing to do with a multi-minute chatty command, and it reports **`tail`'s** exit code, not the gate's. A consumer's delegated `ops` agent hit this and reported honestly that it could not supply the rc; a less careful one gets `0` from `tail` on a red gate. Two rules, both cheap:
 
 - **Do not pipe the gate if you need its rc.** If you must pipe for volume, set `set -o pipefail` first — the same hazard the placeholder sweep already warns about, one command over.
-- **The authoritative sources are the `GATE PASS <sha>` line and the artifact** (`.gate/last-pass.json` — `"status":"pass"` with sha/tree matching HEAD). The gate is LUCKIER than the sweep precisely because it writes an artifact; use it. Quote the `GATE PASS` line in the report rather than asserting "exit 0".
+- **The authoritative sources are the `GATE PASS <sha>` line and the artifact** (`last-pass.json` — `"status":"pass"` with sha/tree matching HEAD). The gate is LUCKIER than the sweep precisely because it writes an artifact; use it. Quote the `GATE PASS` line in the report rather than asserting "exit 0".
 
 Gate **after** the commit, never before: the artifact must match the PR head by sha or tree. A gate run before the commit reports "artifact stale" at merge time unless the tree is byte-identical either side of the commit.
+
+**The artifact expires (v4.0.1, item 19).** `gate-before-merge.sh` enforces a 60-minute TTL (3600s) on `last-pass.json`: if the merge is attempted more than 60 minutes after the artifact was written, the gate refuses it as stale even though sha/tree still match. Re-run `bash hooks/run-gate.sh` (delegated to `ops`, as above) before retrying the merge if the gap between gating and merging crossed that window — a sync that gates, then waits on user review, then merges, is the routine way to hit it.
 
 **The commit gate keys on the WORKING TREE at gate time — commit exactly what was gated.** A chained `git add … && git commit` is fine (the tree the gate hashed is the tree the commit gets); so is `git commit -a`. A *partial* add after the gate ran mismatches by design — the committed tree is not what was gated — and the merge gate will correctly demand a fresh run.
 
 CI fires on `pull_request` and on push-to-main; a bare branch push produces **no** run. Open the PR first, then look up the run id — an empty workflow list right after `git push` is not a CI failure.
+
+### 9b. Verify After the Commit
+
+Call `template_verify(project_path=<project>, mode="post_commit")` (v4.0.1, item 22) right after the commit lands. This is the SAME check as step 8's, run again with `mode="post_commit"` now that the manifest and every applied file are committed — `tree_clean` FAILs this time if anything is still uncommitted (step 8's pre-commit call SKIPped it on purpose). Any `FAIL` line here means the commit did not actually finish the sync; fix it and commit again before opening the PR.
+
+**Quote the summary line (`"N PASS, M FAIL, K SKIP, J INFO"`) in the PR body.** It is the one-line, machine-checkable proof that the committed state — not just the pre-commit report — is clean; a reviewer reads it instead of re-deriving the same 21 checks by hand.
 
 ## Pre-sync verification
 
@@ -1279,13 +1202,13 @@ For each new arm: delete the arm, re-run the suite, count the rows that flip. **
 - NEVER delete a project-owned file the template never shipped. A `TEMPLATE_DELETED` file is different: ask, and delete it with `git rm` when the user accepts (step 6)
 - NEVER apply an `auto_merged` body without checking it for dropped lines — and, for a hook, without a `bash -n`
 - NEVER finalize without the hook-script verification (step 6b), sourced libs included — a missing script or lib fails open and silently disables enforcement
-- NEVER register PRESENT hooks with `source="template"` in step 6b — `source="skip"` for present-but-untracked (registration must not overwrite local edits); `source="template"` is ONLY for scripts missing from disk (step 3)
-- NEVER write a path from the template that already EXISTS in the project without an explicit conflict resolution (invariant I1) — a `new_template_files` entry that is present on disk is presented as a CONFLICT defaulting to keep-mine (`source="skip"`), never added with `source="template"` on the strength of a "yes" to "add this new file?"
+- NEVER register a PRESENT-but-untracked hook with `source="skip"` in step 6b — v3 refuses it for template-class files; diff it against the template first: identical registers via `finalize_sync(new_files=[...])` (writes nothing), differing accepts the template with `source="template"` (destructive; move anything worth keeping out first). `source="template"` unconditionally (no diff needed) is for scripts MISSING from disk (step 3)
+- NEVER write a path from the template that already EXISTS in the project without an explicit conflict resolution (invariant I1) — a `new_template_files` entry that is present on disk is presented as a CONFLICT (once-class: register via `finalize_sync(new_files=…)`; template-class: keep-mine via `source="provided"` splice, never `source="skip"` — v3 refuses it), never added with `source="template"` on the strength of a "yes" to "add this new file?"
 - NEVER write `.claude/settings.json` before every script it references exists on disk (invariant I2), whichever step introduced those scripts
 - NEVER record `rc=127` or `rc=126` from `bash -n` (or any checker) as a PASS — 0 and 2 are the only verdicts, 126/127 are hard ERRORS naming the path, and "the check did not run" is a raised `FileNotFoundError`, not a return code (step 4)
 - NEVER exec a checker by bare name, and never by a hardcoded platform path — resolve it once with `shutil.which` (or the shell equivalent) and exec the absolute path it returns (step 4)
 - NEVER hand-assemble or re-type `applied_files` entries — collect the tool results verbatim
 - ALWAYS re-run `template_compute_status` after finalize and report anything other than a clean result
-- ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `lastSynced`)
-- NEVER fail or roll back a sync because a version label would not resolve (step 7b), and NEVER write `templateSyncToolsVersion` from anything but a server-reported value
+- ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `template_commit`/`template_version`)
+- NEVER fail or roll back a sync because `template_version` comes back `null` (no reachable tag matches) — that is a real, honest answer, not a resolution failure
 - All hashing, diffing, and placeholder replacement is handled by the MCP tools — do NOT compute hashes or apply placeholders manually

@@ -198,6 +198,47 @@ def _resolve_path(p: str) -> pathlib.Path:
     return pathlib.Path(p).resolve()
 
 
+def _reject_msys_path(p: str) -> str | None:
+    """Refuse a bash-shaped MSYS path on a WRITE tool (v4.0.1, item 9).
+
+    Unlike `_resolve_path` (used for read-only lookups such as
+    `applied_files_path`), the three tools that write to disk
+    (`template_apply_file`, `template_finalize_sync`,
+    `template_migrate_manifest`) call `pathlib.Path(project_path).resolve()`
+    directly -- on Windows a leading `/` with no drive letter of its own is
+    resolved relative to the CURRENT drive, not converted the way MSYS
+    intends `/g/git/proj` to mean `G:\\git\\proj`. A consumer running from
+    `G:` who passes `/c/Users/...` (or, measured, the reverse) gets a
+    literal, silently-created `G:\\c\\Users\\...` tree instead of an error.
+    Rejecting the shape outright -- rather than adding the same conversion
+    `_resolve_path` does to these three tools too -- keeps a write path from
+    ever depending on which drive the server process happens to be running
+    from at the moment of the call.
+
+    Gated on `os.name == "nt"`, the SAME condition `_resolve_path` gates its
+    conversion on (Task 5 fix round 1, outside review): the `^/[A-Za-z]/`
+    shape is ambiguous -- on Windows it is MSYS's drive-letter spelling and
+    genuinely dangerous (the silent stray tree above); on a POSIX host that
+    exact shape is an ordinary, real absolute path (`/g/git/proj`, `/e/src/x`
+    are valid POSIX paths with no drive-letter meaning at all), and
+    rejecting it there would refuse a project that is exactly where it says
+    it is, citing an empty drive in the error (`pathlib.Path.cwd().drive` is
+    `""` on POSIX). One concept -- "this leading segment might be an MSYS
+    drive letter" -- one condition, shared with `_resolve_path`.
+
+    Returns an error string, or None when `p` is not MSYS-shaped (including
+    an empty string, e.g. an unset optional `backup_dir`) or this process is
+    not on Windows.
+    """
+    if not p:
+        return None
+    if os.name == "nt" and re.match(r"^/[A-Za-z]/", p):
+        drive = pathlib.Path.cwd().drive or "<drive>"
+        return (f"MSYS path '{p}' would write a literal {drive}\\{p[1]}\\ tree -- "
+                "pass a Windows path (G:\\...) or a repo-relative path")
+    return None
+
+
 def _apply_placeholders(content: str, placeholders: dict[str, str]) -> str:
     """Replace {{KEY}} tokens with concrete values."""
     for key, val in placeholders.items():
@@ -362,20 +403,68 @@ def _is_root_tracked(rel_path: str) -> bool:
     return any(norm.startswith(prefix) for prefix in _ROOT_TRACKED_PREFIXES)
 
 
+# Project-relative dotfile name -> template-relative name. `.gitignore` is the
+# only dotfile today: git will not track a template-owned file named
+# `.gitignore` inside templates/<variant>/ (it would gitignore the template
+# tree itself), so the template copy is named `gitignore` and the project
+# copy is `.gitignore`. This is the FALLBACK only (v4.0.1 fix round 1, item
+# F4): when a manifest is available, template_path_for() below derives the
+# mapping from the template repo's own templates/ownership.json `target`
+# fields -- the same data OwnershipRules.template_path_for (v3.py) reads --
+# so there is exactly one place a new dotfile rule needs to be added, and the
+# hardcoded literal here can never silently disagree with it for a mapping
+# ownership.json actually declares. The rules branch is gated on
+# `manifest.get("templateRepo")`, which a v2 manifest carries too -- there is
+# no v2/v3 split here, deliberately (v4.0.1 fix round 2): one mapping for
+# every manifest version is the point of F4. This literal is the answer only
+# when NO manifest is given, the manifest has no `templateRepo`, or the
+# template repo has no templates/ownership.json to read.
+_DOTFILE_MAP = {".gitignore": "gitignore"}   # project name -> template name
+
+
+def template_path_for(rel_path: str, manifest: dict | None = None) -> str:
+    """Template-relative name for a project-relative path (dotfile mapping).
+
+    Prefers the mapping derived from the template repo's own
+    templates/ownership.json (via OwnershipRules.template_path_for) when a
+    manifest carrying a `templateRepo` is given and that repo has an
+    ownership.json -- a v2 manifest qualifies exactly the same way a v3 one
+    does, deliberately (v4.0.1 fix round 2: one mapping for both manifest
+    versions is the point of F4, not a v2/v3 split). Falls back to the
+    hardcoded _DOTFILE_MAP only when no manifest is given, the manifest has
+    no `templateRepo`, or the template repo has no ownership.json to read.
+    A test in test_template_sync_diff_alias.py pins that the two can never
+    disagree for every `target` rule the shipped ownership.json declares,
+    and a v2-manifest test pins that the rules branch applies there too.
+    """
+    norm = _normalize_path(rel_path)
+    if manifest is not None:
+        template_repo = manifest.get("templateRepo")
+        if template_repo:
+            from . import v3
+            rules = v3.load_ownership(template_repo)
+            if rules is not None:
+                mapped = rules.template_path_for(norm)
+                if mapped != norm:
+                    return mapped
+    return _DOTFILE_MAP.get(norm, norm)
+
+
 def _template_file_path(manifest: dict, rel_path: str) -> pathlib.Path:
     """Get full path to a template file.
 
     Most files live under templates/<variant>/, but root-tracked paths
     (e.g. shared hooks/) are resolved against the toolkit repo root.
     """
-    if _is_root_tracked(rel_path):
-        return _resolve_path(manifest["templateRepo"]) / _normalize_path(rel_path)
-    return _get_template_dir(manifest) / rel_path
+    mapped = template_path_for(rel_path, manifest)
+    if _is_root_tracked(mapped):
+        return _resolve_path(manifest["templateRepo"]) / _normalize_path(mapped)
+    return _get_template_dir(manifest) / mapped
 
 
 def _template_git_path(manifest: dict, rel_path: str) -> str:
     """Repo-root-relative path of a template file (for `git show`)."""
-    norm = _normalize_path(rel_path)
+    norm = template_path_for(rel_path, manifest)
     if _is_root_tracked(norm):
         return norm
     return f"templates/{manifest.get('variant', '')}/{norm}"
@@ -398,7 +487,11 @@ def _scan_template_files(
         for p in template_dir.rglob("*"):
             if p.is_file():
                 rel = _normalize_path(str(p.relative_to(template_dir)))
-                # Skip gitignore (merge-only, not template-owned)
+                # Skip gitignore (merge-only, not template-owned). Its project
+                # name `.gitignore` enters `new_template_files` downstream via
+                # v3's rules.project_path_for in compute_status_v3 (v3.py),
+                # not through this scan; template_path_for() above is the
+                # reverse (project -> template name) mapping used elsewhere.
                 if rel == "gitignore":
                     continue
                 files.add(rel)
@@ -917,6 +1010,16 @@ async def template_compute_status(
         `key_audit` per audited once file, `encoding_drift` per file (BOM/EOL
         only differences, informational), and `gate_self_reference` /
         `gate_unverified` at top level. CONFLICT never appears for v3.
+
+        gate_unverified: true when an audited once file (matched by a
+        literal-path "keys" rule) declares a `**Gate**:` key -- constant true
+        on any Gate-declaring repo, for every call, dry-run or not; nothing in
+        this tool clears it, because this tool never runs the gate it is
+        naming. It is NOT commit state and does not mean "the gate is
+        currently failing" or "the gate has not run since the last commit" --
+        it means only "a Gate is declared here", which a consumer should read
+        as a standing reminder to actually run `bash hooks/run-gate.sh`
+        themselves, not as a verdict this call produced.
     """
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
@@ -1072,6 +1175,13 @@ async def template_compute_status(
     )
     tracked = set(manifest.get("files", {}).keys())
     new_files = [f for f in all_template_files if f not in tracked and f not in ALWAYS_PROJECT_SPECIFIC]
+    # new_template_files stays a list of project-path strings -- it is pinned
+    # by exact equality (test_template_sync_v3_status.py:296,
+    # test_template_sync_paths.py:103-105) and round-trips as-is into
+    # template_finalize_sync(new_files=...). new_template_files_detail is the
+    # additive, parallel surface a caller uses to resolve each path's
+    # template-relative name (v4.0.1, item 3).
+    new_files_detail = [{"path": f, "template_path": template_path_for(f, manifest)} for f in new_files]
 
     # Detect deleted template files already counted above
     deleted_files = [p for p, s in files_status.items() if s["status"] == "TEMPLATE_DELETED"]
@@ -1081,6 +1191,7 @@ async def template_compute_status(
         "last_synced_commit": manifest.get("lastSynced", ""),
         "files": files_status,
         "new_template_files": new_files,
+        "new_template_files_detail": new_files_detail,
         "deleted_template_files": deleted_files,
         "summary": summary,
     }, ensure_ascii=False)
@@ -1242,7 +1353,16 @@ async def template_apply_file(
             - "skip": don't change the project file, just update manifest hashes
               ("keep mine" -- the entry records resolution="keep-mine" for
               reporting; the CONFLICT the next status call reports comes from
-              the recorded part hashes, not from that field)
+              the recorded part hashes, not from that field). Manifest v3
+              has no keep-mine class: "skip" is REFUSED for every ownership
+              (template and once alike) with "source='skip' is refused under
+              manifest v3 for <ownership>-class files". For a once-class
+              file that is already present, do not call this tool at all --
+              go straight to template_finalize_sync(new_files=[path]), which
+              registers it as {"ownership": "once"} with zero bytes written.
+              For a once-class file that is absent, "template" creates it
+              (action="created_from_template"); its result then joins
+              applied_files/new_files at finalize like any other new file.
         content: File content to write (only used when source="provided")
         backup_dir: Manifest v3 only. Directory that receives `<file>.pre-sync`
             and `<file>.diff` before a LOCAL_EDITED template-class file is
@@ -1259,6 +1379,10 @@ async def template_apply_file(
         tell a preserved region apart from real drift. Both fall back to
         full-file hashes when only one side carries the markers.
     """
+    for _msys_p in (project_path, backup_dir):
+        _msys_err = _reject_msys_path(_msys_p)
+        if _msys_err:
+            return json.dumps({"error": _msys_err}, ensure_ascii=False)
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
     if manifest is None:
@@ -1401,8 +1525,22 @@ async def template_finalize_sync(
     Manifest v3: entries carry `hash` (sha256:-prefixed) and `ownership`;
     `template_commit` is HEAD of the template repo and `template_version` the
     nearest reachable tag whose tracked tree is identical (null when none).
-    Unknown top-level keys are preserved and listed in `unknown_keys`.
+    Unknown top-level keys are preserved and listed in `unknown_keys` --
+    with ONE exception: the v2-era `lastSynced`/`lastSyncedVersion`/
+    `lastSyncedVersionOf` keys are dropped unconditionally and listed in
+    `superseded_keys_dropped` instead (v4.0.1, item 8). They duplicate the
+    server-written `template_version`/`template_commit` above, so a
+    client-derived copy can only drift.
+
+    Once-class new files: pass their path in `new_files`, never in
+    `applied_files` and never via `template_apply_file(source="skip")`
+    (refused under v3 -- there is no keep-mine class). A once-class path
+    already present on disk needs no apply call at all: it lands
+    `{"ownership": "once"}` here with zero bytes touched.
     """
+    _msys_err = _reject_msys_path(project_path)
+    if _msys_err:
+        return json.dumps({"error": _msys_err}, ensure_ascii=False)
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
     if manifest is None:
@@ -1531,7 +1669,7 @@ async def template_finalize_sync(
     # Write manifest atomically
     manifest_path = pp / ".claude" / "template-manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_json = json.dumps(manifest, indent=2, ensure_ascii=False)
+    manifest_json = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
     _write_file_atomic(manifest_path, manifest_json)
 
     consumed = sorted(
@@ -1568,10 +1706,18 @@ async def template_migrate_manifest(
     Steps (toolkit spec §7): extract the PROJECT-CUSTOM region from CLAUDE.md;
     diff the remainder against the template CLAUDE.md at the held revision
     (template_commit, else the template_version tag, never the current
-    template), placeholder-rendered; write .claude/rules/project.md with a
-    header and the out-of-region hunks fenced as ```diff; rewrite the
-    manifest as v3 (entries classified by templates/ownership.json,
-    project-class entries dropped, unknown top-level keys preserved).
+    template), placeholder-rendered; write .claude/rules/project.md with the
+    v4.0.1 seed header ONLY (v4.0.1, item 14) -- the out-of-region hunks are
+    written instead to `<backup_dir>/CLAUDE.md.out-of-region.diff`, never
+    into project.md, because project.md has no `paths:` key and is therefore
+    loaded at EVERY session start, same priority as CLAUDE.md -- an unscoped
+    file is delivered to every session, not to nobody, so a migration diff
+    does not belong there; rewrite the manifest as v3 (entries classified by
+    templates/ownership.json, project-class entries dropped, unknown
+    top-level keys preserved except the superseded `lastSynced`/
+    `lastSyncedVersion`/`lastSyncedVersionOf` trio, which is dropped
+    unconditionally and reported in `superseded_keys_dropped` -- v4.0.1,
+    item 8).
 
     The PROJECT-CUSTOM region is NOT copied into project.md. Under the toolkit
     v3.1 reversal the region STAYS in CLAUDE.md, so copying it would not
@@ -1610,7 +1756,15 @@ async def template_migrate_manifest(
 
     Returns:
         JSON with migrated, dry_run, migration_base, hunk_count, project_md,
-        project_md_bytes, project_md_existing, region_was_seed (the region
+        project_md_bytes, project_md_existing, out_of_region_diff (the raw
+        unified diff text project_md_record's path holds on a real write --
+        present even on a dry_run, for preview, since nothing is written
+        then -- v4.0.1, item 14), project_md_record (the
+        out-of-region diff's path under backup_dir, or null when there were
+        no hunks or this was a dry_run -- v4.0.1, item 14),
+        superseded_keys_dropped (the lastSynced/lastSyncedVersion/
+        lastSyncedVersionOf keys actually present and dropped -- v4.0.1,
+        item 8), region_was_seed (the region
         was the toolkit's untouched seed and is omitted), dropped_entries,
         dropped_file_keys ([{path, keys}] -- consumer annotations on entries
         being dropped, which no other field would report; the values survive in
@@ -1628,6 +1782,10 @@ async def template_migrate_manifest(
         tool did not run it), unknown_keys, warnings, backup, written.
     """
     from . import v3
+    for _msys_p in (project_path, backup_dir):
+        _msys_err = _reject_msys_path(_msys_p)
+        if _msys_err:
+            return json.dumps({"error": _msys_err}, ensure_ascii=False)
     pp = pathlib.Path(project_path).resolve()
     return json.dumps(v3.migrate_manifest(pp, backup_dir, dry_run, skill_version),
                       ensure_ascii=False)
@@ -1772,7 +1930,82 @@ async def template_propagate_to_variants(
     }, ensure_ascii=False)
 
 
+@mcp.tool()
+async def template_verify(
+    project_path: str,
+    template_repo: str = "",
+    mode: str = "post_commit",
+) -> str:
+    """
+    Read-only consumer consistency check (v4.0.1, item 22). Verifies END
+    STATE, not process -- it would have caught the superseded-keys pair, the
+    missing manifest keys, the missing trailing newline and the .gitignore
+    new-file residue; it cannot catch a process defect that leaves no trace
+    (a get_diff error, a refused skip, a $0 snippet).
+
+    `template_repo` resolves the way template_compute_status does (an
+    override, else manifest["templateRepo"]) -- a server installed from a
+    different checkout must not verify against the wrong repo silently.
+    `mode="pre_commit"` treats an uncommitted, dirty working tree as expected
+    (the sync writes files before committing them); `mode="post_commit"`
+    (the default) treats it as a FAIL. Call it with mode="pre_commit" before
+    the sync's commit (SKILL.md step 8) and mode="post_commit" after it
+    (step 9b).
+
+    Args:
+        project_path: Path to the project root directory
+        template_repo: Override templateRepo from manifest (optional)
+        mode: "pre_commit" or "post_commit" (default)
+
+    Returns:
+        JSON {ok, mode, summary: "N PASS, M FAIL, K SKIP, J INFO",
+        lines: [{id, status: PASS|FAIL|SKIP|INFO, measured, expected, remedy}]}.
+        `ok` is true only when no line is FAIL. A SKIP is always reported
+        with a reason and counted in the summary, so a SKIP-heavy green is
+        never mistaken for a real green.
+    """
+    from . import verify
+    return json.dumps(verify.run(project_path, template_repo, mode), ensure_ascii=False)
+
+
+def _cli_verify(argv: list[str]) -> int:
+    """`mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]`.
+
+    Prints one line per result, then the summary; exits 0 iff `ok`.
+    """
+    project_path = None
+    template_repo = ""
+    mode = "post_commit"
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--template-repo" and i + 1 < len(argv):
+            template_repo = argv[i + 1]
+            i += 2
+        elif arg == "--mode" and i + 1 < len(argv):
+            mode = argv[i + 1]
+            i += 2
+        elif project_path is None:
+            project_path = arg
+            i += 1
+        else:
+            i += 1
+    if project_path is None:
+        print("usage: mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]")
+        return 2
+    from . import verify
+    result = verify.run(project_path, template_repo, mode)
+    for line in result["lines"]:
+        suffix = f"; {line['remedy']}" if line.get("remedy") else ""
+        print(f"{line['status']} {line['id']}: {line['measured']}  (expected {line['expected']}){suffix}")
+    print(result["summary"])
+    return 0 if result["ok"] else 1
+
+
 def main():
+    import sys
+    if sys.argv[1:2] == ["--verify"]:
+        sys.exit(_cli_verify(sys.argv[2:]))
     mcp.run(transport="stdio")
 
 

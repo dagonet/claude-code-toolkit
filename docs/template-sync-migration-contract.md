@@ -17,6 +17,16 @@ the authority, prose is a claim about it.
 Fields carry the release that introduced them. **`requires_skill` is enforced as of 0.3.7**
 — it was declared-but-ignored before that, and §8 says exactly what it now does.
 
+**v4.0.1 note.** The v2-era `lastSynced`/`lastSyncedVersion`/`lastSyncedVersionOf` keys
+(`v3.SUPERSEDED_KEYS`) are now dropped unconditionally by both this tool and
+`template_finalize_sync`, reported in `superseded_keys_dropped` — they duplicated the
+server-authoritative `template_version`/`template_commit` under v3 and could only drift. A
+new read-only tool, `template_verify(project_path, mode="pre_commit"|"post_commit")`, checks a
+consumer's end state (manifest shape, superseded keys absent, missing/unknown keys, gate
+artifacts, region markers, and more) without writing anything — see `docs/template-sync.md`.
+**`manifest_version` stays 3**: every v4.0.1 manifest field is additive, so an older server
+still round-trips a v4.0.1 manifest correctly, preserving fields it does not recognise.
+
 ---
 
 ## 1. Who calls it, and when
@@ -178,7 +188,11 @@ step later in the same sync is what rewrites it.
 `project.md` gets a header plus the out-of-region hunks fenced as ` ```diff `. **The
 PROJECT-CUSTOM region is not copied into it.** Under the v3.1 reversal the region stays in
 `CLAUDE.md`, so copying it would duplicate rather than relocate it — and the duplicate is the
-dangerous half, because an unscoped `project.md` is delivered to no agent. The region is
+dangerous half: not because an unscoped `project.md` fails to deliver (corrected in v4.0.1,
+item 14 — it loads at every session start, same as the region, once it carries no `paths:`
+key), but because a rule written in BOTH places exists twice and drifts the moment either copy
+is edited. Keeping one authoritative copy (the region) and a reported diff (here) avoids that;
+writing the same content into both is the actual hazard. The region is
 reported instead (`region_left_in_place`, `region_bytes`, `region_was_seed`).
 
 Refusals:

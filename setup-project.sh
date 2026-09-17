@@ -338,6 +338,42 @@ set_protected_branches() {
     printf '%s' "$1" | sed "s|^- \*\*Protected branches\*\*:.*|- **Protected branches**: $PROTECTED_BRANCHES|"
 }
 
+# derived_value <placeholder key, e.g. '{{POST_EDIT_BUILD}}'> -- looks up the
+# value add_derived (or an explicit flag via add_replacement) settled on for
+# that key. Parallel-array lookup mirrors add_derived's own loop.
+derived_value() {
+    local i
+    for i in "${!PH_KEYS[@]}"; do
+        [[ "${PH_KEYS[$i]}" == "$1" ]] && { printf '%s' "${PH_VALS[$i]}"; return 0; }
+    done
+    return 1
+}
+
+# set_derived_defaults <rendered PROJECT_CONTEXT.md text> (v4.0.1, item 5)
+#
+# The template now ships `- **Gate-checked branches**: none` and
+# `- **Post-edit build**: none` as LITERAL text (no `{{...}}` token), so
+# apply_replacements' token substitution has nothing left to match once the
+# template default is the string a manual bootstrap would also write --
+# add_derived's value never reaches the file for these two keys unless the
+# whole VALUE LINE is rewritten, the same shape set_protected_branches
+# already uses above. Mirrors it further: a derive that agrees with the
+# template's own shipped default (`none`) is a no-op, so the line's inline
+# HTML comment survives on the common path; only a REAL override (the
+# dotnet post-edit-build command) rewrites the line and drops the comment.
+set_derived_defaults() {
+    local text="$1" gcb pob
+    gcb="$(derived_value '{{GATE_CHECKED_BRANCHES}}')"
+    pob="$(derived_value '{{POST_EDIT_BUILD}}')"
+    if [[ -n "$gcb" && "$gcb" != "none" ]]; then
+        text="$(printf '%s' "$text" | sed "s|^- \*\*Gate-checked [Bb]ranches\*\*:.*|- **Gate-checked branches**: $gcb|")"
+    fi
+    if [[ -n "$pob" && "$pob" != "none" ]]; then
+        text="$(printf '%s' "$text" | sed "s|^- \*\*Post-edit build\*\*:.*|- **Post-edit build**: $pob|")"
+    fi
+    printf '%s' "$text"
+}
+
 PROJECT_NAME_LOWER="$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]')"
 add_replacement '{{PROJECT_NAME}}' "$PROJECT_NAME"
 add_replacement '{{PROJECT_NAME_LOWER}}' "$PROJECT_NAME_LOWER"
@@ -560,6 +596,7 @@ render_file() {
     rendered="$(apply_replacements "$(<"${FILE_SOURCES[$idx]}")")"
     if [[ "${FILE_RELS[$idx]}" == "PROJECT_CONTEXT.md" ]]; then
         rendered="$(set_protected_branches "$rendered")"
+        rendered="$(set_derived_defaults "$rendered")"
     fi
     if should_wrap_claude_md "${FILE_RELS[$idx]}"; then
         rendered="$(wrap_into_custom_region "$rendered" "$(<"$TARGET_DIR/CLAUDE.md")")"
@@ -700,7 +737,7 @@ declare -a FILE_IS_GITIGNORE=()
 # is `^gitignore$` and will not match the renamed form.
 declare -a FILE_CLASSIFY_NAMES=()
 
-for name in CLAUDE.md CLAUDE.local.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md VERIFICATION_PLAYBOOK.md; do
+for name in CLAUDE.md AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md VERIFICATION_PLAYBOOK.md; do
     if [[ -f "$TEMPLATE_DIR/$name" ]]; then
         FILE_SOURCES+=("$TEMPLATE_DIR/$name")
         FILE_RELS+=("$name")
@@ -763,8 +800,9 @@ fi
 
 # Manifest key + ownership class for FILE index $1, from the classifier
 # results above. Prints "<key>\t<ownership>" ("-" ownership means the
-# classifier did not match -- e.g. CLAUDE.local.md -- and the file is left
-# out of the manifest entirely, per the ownership-cutover contract.
+# classifier did not match -- e.g. a project-added file with no ownership
+# rule -- and the file is left out of the manifest entirely, per the
+# ownership-cutover contract.
 manifest_entry_for() {
     local idx="$1" cname own target
     cname="${FILE_CLASSIFY_NAMES[$idx]}"
@@ -785,9 +823,9 @@ manifest_entry_for() {
 }
 
 # Record a manifest row for FILE index $1 using the content actually written
-# ($2). Unclassified files (e.g. CLAUDE.local.md -- retired to
-# unclassified_template_files on the server side) are silently left out, per
-# contract. `once` entries get no hash at all; $2 is ignored for them.
+# ($2). Unclassified files (no ownership rule match; surfaced server-side as
+# unclassified_template_files) are silently left out, per contract. `once`
+# entries get no hash at all; $2 is ignored for them.
 add_manifest_entry() {
     local idx="$1" written="$2" key own
     IFS=$'\t' read -r key own < <(manifest_entry_for "$idx")
@@ -993,6 +1031,7 @@ for i in "${!FILE_SOURCES[@]}"; do
     # disagree about the one line that decides whether the trunk is protected.
     if [[ "$rel" == "PROJECT_CONTEXT.md" ]]; then
         content="$(set_protected_branches "$content")"
+        content="$(set_derived_defaults "$content")"
     fi
     # Every `$(...)` above stripped the source's trailing newline (if any) --
     # restore it so the byte written, and hashed, matches what ps1 (which
@@ -1177,5 +1216,36 @@ print_automode_snippet
 
 echo ""
 print_template_sync_snippet
+
+# --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
+#
+# TS_WIN_EXE is resolved above, once, before the dry-run/real-run fork; it is
+# set only when the exe was verified to resolve in the Win32 namespace the
+# consumer (claude.exe) actually reads from (or, on a POSIX host, is just the
+# raw path). A FAIL line is reported, not fatal -- setup's job is done by
+# this point; the user reads the lines and the remedy text names the fix.
+if [[ -n "${TS_WIN_EXE:-}" ]]; then
+    echo ""
+    echo "Verifying the bootstrap:"
+    verify_repo_arg="$SCRIPT_DIR"
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*)
+            if command -v cygpath >/dev/null 2>&1; then
+                verify_repo_arg="$(cygpath -w "$SCRIPT_DIR" 2>/dev/null || echo "$SCRIPT_DIR")"
+            fi
+            ;;
+    esac
+    # `|| verify_rc=$?` (not a bare statement) is required under `set -e`: a
+    # FAIL line makes the exe exit 1, and a bare statement's unguarded
+    # nonzero exit would abort the whole bootstrap under `set -euo pipefail`.
+    # This step's contract is that a verify FAIL is reported, never fatal to
+    # setup -- `|| verify_rc=$?` is what `set -e` cannot see as an error, so
+    # it is what keeps that contract instead of silently breaking it.
+    verify_rc=0
+    ( cd "$TARGET_DIR" && "$TS_EXE" --verify . --template-repo "$verify_repo_arg" ) || verify_rc=$?
+    if [[ "$verify_rc" -ne 0 ]]; then
+        echo "  (verify reported FAIL line(s) above -- not fatal to setup; each remedy names the fix)"
+    fi
+fi
 
 echo ""

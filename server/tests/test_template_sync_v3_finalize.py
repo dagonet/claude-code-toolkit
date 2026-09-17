@@ -181,6 +181,19 @@ def test_finalize_leaves_an_equal_floor_alone(tmp_path):
     assert out["requires_server"] == ">=0.3.2"
 
 
+def test_finalize_manifest_ends_with_exactly_one_newline(tmp_path):
+    """v4.0.1 item 12: a prettier-checked consumer goes red after a clean
+    sync because finalize wrote no trailing newline at all. The assertion is
+    on BYTES, not on a parsed-and-reserialized comparison, so a fix that
+    reads correctly under json.loads but is still missing the newline on
+    disk cannot pass this by accident."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n"}, project={"CLAUDE.md": "v1\n"},
+                        entries={}, requires_server=">=0.3.2")
+    _run(ts.template_finalize_sync(str(proj), "[]"))
+    data = (proj / ".claude" / "template-manifest.json").read_bytes()
+    assert data.endswith(b"\n") and not data.endswith(b"\n\n"), data[-8:]
+
+
 def test_finalize_does_not_rewrite_a_floor_it_cannot_parse(tmp_path):
     """An unparseable floor already makes load refuse. Rewriting it would
     silently repair a manifest the server does not understand."""
@@ -281,6 +294,105 @@ def test_finalize_v2_path_echoes_consumed_template_hash(tmp_path):
     res = _run(ts.template_finalize_sync(str(proj), applied))
     assert res["consumed_entries"] == 1
     assert res["consumed"] == [{"path": "CLAUDE.md", "hash": h}]
+
+
+def test_finalize_drops_superseded_lastsynced_keys(tmp_path):
+    """v4.0.1 item 8: lastSyncedVersion/lastSyncedVersionOf duplicate the
+    server-written template_version/template_commit under v3, so a
+    client-derived copy can only drift -- the ONE exception to
+    preserve-unknown. Fixture is the agreeing-values form the consumers
+    carry today (open-brain, panoscribe): lastSyncedVersionOf equal to the
+    manifest's own template_commit."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n"}, project={"CLAUDE.md": "v1\n"},
+                        entries={}, requires_server=">=0.3.2")
+    m = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    before_commit = m["template_commit"]
+    m["lastSyncedVersion"] = "v4.0.0"
+    m["lastSyncedVersionOf"] = before_commit
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(m), encoding="utf-8")
+
+    res = _run(ts.template_finalize_sync(str(proj), "[]"))
+    assert res["superseded_keys_dropped"] == ["lastSyncedVersion", "lastSyncedVersionOf"]
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    assert "lastSyncedVersion" not in out and "lastSyncedVersionOf" not in out and "lastSynced" not in out
+    # Byte-stable otherwise: only the fields finalize itself owns (files,
+    # template_version, template_commit) may legitimately differ.
+    for key in ("manifest_version", "variant", "templateRepo", "placeholders", "requires_server"):
+        assert out[key] == m[key]
+    assert out["template_commit"] == before_commit   # no git repo -> falls back unchanged
+    assert out["files"] == {}
+
+
+def test_finalize_reads_lastsynced_as_fallback_commit_before_dropping_it(tmp_path):
+    """v4.0.1 item 8: `manifest_commit()` reads `lastSynced` as a fallback
+    when `template_commit` is absent, and that read must happen BEFORE
+    `drop_superseded` removes the key -- otherwise a manifest missing
+    `template_commit` but carrying the v2-era `lastSynced` would finalize
+    with an EMPTY commit instead of falling back correctly. A v3 manifest
+    should not normally carry `lastSynced` at all, but a hand-edited or
+    pre-4.0.1-finalized one might, and this pins the ordering so a future
+    refactor cannot swap the two calls silently."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n"}, project={"CLAUDE.md": "v1\n"},
+                        entries={}, requires_server=">=0.3.2")
+    m = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    del m["template_commit"]
+    m["lastSynced"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps(m), encoding="utf-8")
+
+    res = _run(ts.template_finalize_sync(str(proj), "[]"))
+    assert res["template_commit"] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    assert res["superseded_keys_dropped"] == ["lastSynced"]
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    assert out["template_commit"] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    assert "lastSynced" not in out
+
+
+def test_finalize_registers_a_present_once_class_new_file_without_touching_it(tmp_path):
+    """v4.0.1 item 4, arm (a): a once-class path already on disk needs no
+    apply call at all -- template_finalize_sync(new_files=[path]) alone
+    registers it as {"ownership": "once"}, zero bytes touched."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n", ".claude/rules/project.md": "template seed\n"},
+                        project={"CLAUDE.md": "v1\n", ".claude/rules/project.md": "consumer's own words\n"},
+                        entries={})
+    before = (proj / ".claude" / "rules" / "project.md").read_text(encoding="utf-8")
+    res = _run(ts.template_finalize_sync(str(proj), "[]", new_files=json.dumps([".claude/rules/project.md"])))
+    assert res["files_added"] == 1
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    assert out["files"][".claude/rules/project.md"] == {"ownership": "once"}
+    assert (proj / ".claude" / "rules" / "project.md").read_text(encoding="utf-8") == before   # untouched
+
+
+def test_finalize_registers_an_absent_once_class_new_file_after_apply(tmp_path):
+    """v4.0.1 item 4, arm (b) -- UNMEASURED by any consumer until now: an
+    absent once-class path is created by template_apply_file, then
+    registered at finalize via new_files, exactly like a template-class new
+    file. The apply result can ALSO be threaded through applied_files (it
+    carries a manifest_entry), but the simpler new_files-only route this
+    test exercises is what step 5 of the skill recommends."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n", ".claude/rules/project.md": "template seed\n"},
+                        project={"CLAUDE.md": "v1\n"}, entries={})
+    assert not (proj / ".claude" / "rules" / "project.md").exists()
+    apply_res = _run(ts.template_apply_file(str(proj), ".claude/rules/project.md", source="template"))
+    assert apply_res["action"] == "created_from_template"
+    assert (proj / ".claude" / "rules" / "project.md").read_text(encoding="utf-8") == "template seed\n"
+
+    res = _run(ts.template_finalize_sync(str(proj), "[]", new_files=json.dumps([".claude/rules/project.md"])))
+    assert res["files_added"] == 1
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    assert out["files"][".claude/rules/project.md"] == {"ownership": "once"}
+
+
+def test_apply_file_refuses_skip_on_a_present_once_class_file(tmp_path):
+    """v4.0.1 item 4, arm (c): the documented refusal -- pinned so a future
+    change to the message text is a deliberate edit, not an accident."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n", ".claude/rules/project.md": "template seed\n"},
+                        project={"CLAUDE.md": "v1\n", ".claude/rules/project.md": "mine\n"}, entries={})
+    res = _run(ts.template_apply_file(str(proj), ".claude/rules/project.md", source="skip"))
+    assert res["error"] == (
+        "source='skip' is refused under manifest v3 for once-class files: "
+        "there is no keep-mine class -- fix the template or declare a key"
+    )
+    assert (proj / ".claude" / "rules" / "project.md").read_text(encoding="utf-8") == "mine\n"   # untouched
 
 
 def test_finalize_v3_preserves_per_file_unknown_keys(tmp_path):

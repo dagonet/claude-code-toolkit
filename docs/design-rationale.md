@@ -1,6 +1,6 @@
 # Design rationale — why the template files say what they say
 
-The operative files (`CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`) carry
+The operative files (`CLAUDE.md`, `AGENT_TEAM.md`) carry
 **facts and instructions only**. Every "why" lives here, keyed by file and
 section, so an instruction can be short and its reasoning can still be found.
 Check 35 in `scripts/verify-template-consistency.sh` enforces the byte budget
@@ -120,7 +120,7 @@ Cut to the rationale file:
   not that the baseline moved correctly") — that catalogue lives in the
   CHANGELOG's verification-instrument entries already; repeating it in
   `CLAUDE.md` duplicated it in the wrong file.
-- **Why the PO reads `.gate/last-pass.json` instead of running anything.**
+- **Why the PO reads the `<common git dir>/gate/last-pass.<sha>.json` artifact instead of running anything.**
   The gate is dispatched to `ops` or the coder and its result is read, not
   reproduced — this is `hooks/enforce-delegation.sh`'s domain and is
   documented there, not restated per-rule in `CLAUDE.md`.
@@ -275,4 +275,6 @@ patterns / approaches / bugs" with light variation per row.
 
 ## CLAUDE.local.md
 
-(populated by Task 4)
+Retired in v4.0.1 (item 16): the template no longer ships this file. A
+project that already has one keeps it -- never manifest-tracked, gitignored,
+untouched by a sync.

@@ -15,7 +15,29 @@
       "deprecated_keys": { "Gate Command": "Gate", "Test Command": "Test" },
       "aliases": {},
       "placeholder_map": { "Build": "BUILD_COMMAND", "Test": "TEST_COMMAND",
-                           "Format": "FORMAT_COMMAND", "Lint": "LINT_COMMAND" } },
+                           "Format": "FORMAT_COMMAND", "Lint": "LINT_COMMAND" },
+      "optional_keys": {
+        "Test": {
+          "effect_when_absent": "pre-commit falls back to the Gate, which mints the artifact -- commit and merge are one run; declaring Test adds a second run per commit",
+          "none_meaning": "not declared -- hooks/pre-commit-test.sh treats the literal value `none` (case-insensitive, trimmed) as absent and falls through to the Gate (fixed since v3.0.3; before that it was eval'd as a command and blocked every commit)"
+        },
+        "Gate-checked branches": {
+          "effect_when_absent": "no branch gets the artifact-freshness-only merge lane; every branch is either protected or fully ungated",
+          "none_meaning": "no branch is gate-checked -- hooks/lib/git-cmd.sh's gc_gate_checked_branches reads it as an empty branch list, same as absent; DO NOT read `none` here as widening access"
+        },
+        "Post-edit build": {
+          "effect_when_absent": "hooks/post-edit-build.sh is inert -- no build runs after Edit/Write",
+          "none_meaning": "no-op -- hooks/post-edit-build.sh treats `none` exactly like absent"
+        },
+        "PO write surface": {
+          "effect_when_absent": "the PO's write surface stays at the template default (docs/plans, PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/, CLAUDE.md, AGENT_TEAM.md)",
+          "none_meaning": "the template default -- no extra prefixes are added"
+        },
+        "Test (frontend)": {
+          "effect_when_absent": "no separate frontend test step runs; the Gate/Test above is the only automated check",
+          "none_meaning": "no-op -- no frontend test step"
+        }
+      } },
     { "pattern": "PROJECT_STATE.md",          "ownership": "once" },
     { "pattern": "VERIFICATION_PLAYBOOK.md",  "ownership": "once" },
     { "pattern": "gitignore",                 "ownership": "once", "target": ".gitignore" },

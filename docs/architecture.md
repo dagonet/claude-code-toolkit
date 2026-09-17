@@ -53,7 +53,7 @@ Anthropic's [context-engineering guidance for Claude 5 generation models](https:
 | | Baseline | v1.5 | v2.0 | v2.1 | **v3.1** | Loaded |
 |---|---|---|---|---|---|---|
 | `templates/general/CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | **6,143** | every session |
-| `templates/general/CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** | every session |
+| `templates/general/CLAUDE.local.md` (retired v4.0.1) | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** | every session |
 | user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | **5,076** | every session |
 | `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | **3,170** | every session |
 | **always-loaded total** | **41,167** | 32,538 | 25,814 | 25,999 | **23,044 (−44%)** | |
@@ -72,7 +72,7 @@ The largest single document in the repo is deliberately *not* in the always-load
 
 - **v1.4 moved** — ten MCP procedures into the `mcp-usage` skill, the per-agent Open Brain tables into `AGENT_TEAM.md`. The on-demand side growing while the always-loaded side shrinks is the intended direction.
 - **v1.5 deleted** — *Working Preferences* 18 bullets → 11, because five were already enforced by a hook or by the harness itself and two carried no behavioural content. Deleting prose that a mechanism enforces is safe in a way that deleting an unenforced rule is not; the section now names the enforcing hooks instead of restating their rules.
-- **v2.0-pr4 scoped** — language conventions (*Code Style (MANDATORY)*, *Enforcement Notes*, the per-variant *Project Conventions*) moved verbatim into `.claude/rules/*.md`, each with a `paths:` frontmatter glob list. A scoped rule loads only when Claude reads or edits a matching file. **Corrected in v3.1, on measurement:** a rule **without** `paths:` does not "load at launch at CLAUDE.md cost" as this document previously stated — **it is delivered to nobody**, and no rules content of any kind is in a subagent's context at spawn even when scoped. A missing `paths:` key means "matches nothing", not "matches everything". The toolkit therefore ships scoped rules only — but the reason is the opposite of the one given before, and the practical consequence is that safety rules, prohibitions and tool-selection guidance cannot live in a rules file at all. The always-loaded CLAUDE.md now differs between variants by a single pointer line.
+- **v2.0-pr4 scoped** — language conventions (*Code Style (MANDATORY)*, *Enforcement Notes*, the per-variant *Project Conventions*) moved verbatim into `.claude/rules/*.md`, each with a `paths:` frontmatter glob list. A scoped rule loads only when Claude reads or edits a matching file, absent from a subagent's context at spawn even when scoped. **Corrected in v3.1, on measurement, then corrected again in v4.0.1 (item 14) because the v3.1 correction overshot:** v3.1 said a rule **without** `paths:` "is delivered to nobody" — false. An unscoped rule file loads at **every session start**, at `CLAUDE.md` priority; a missing `paths:` key means "always", not "never". Scoped rules stay the toolkit's default for language conventions because those apply to a subset of files, not because unscoped delivery is broken. The practical consequence: safety rules, prohibitions and always-on project conventions CAN live in an unscoped rules file (`.claude/rules/project.md` is exactly that, by design) — writing the same rule there AND in `CLAUDE.md`'s PROJECT-CUSTOM region is what actually goes wrong, because then it exists twice and drifts. The always-loaded CLAUDE.md now differs between variants by a single pointer line.
 - **v2.0-pr4 round 2 routed by audience** — two more sections left the always-loaded set once it was clear *who* each one binds. *Open Brain Context for Agents* said nothing `AGENT_TEAM.md` → *Open Brain Context for Agents* did not already say in more detail, so CLAUDE.md keeps a pointer and the tables stay on-demand. *Working Preferences* binds **developer agents**, not the PO, and all 12 coders preload `karpathy-guidelines` (`skills:`, PR3) — so its 11 bullets moved into that skill and reach the agents that act on them at spawn, at zero always-loaded cost. The hook-enforcement line stayed behind because it is PO-relevant. The routing question is not "is this important?" but "who needs it, and when?". Moving prose out of the always-loaded set removes the check that used to guard it implicitly, so check 20 pins the skill's heading and its bullet count — a floor of 11, the v1.5 post-trim set, parsed from the section rather than hard-coded to the file's current length.
 
 **CLAUDE.md is facts, not procedure.** The per-line test is "would removing this cause Claude to make a mistake?". Procedures belong in skills, "every time X do Y" belongs in a hook, "never X" belongs in a deterministic guardrail, and anything that only applies to a subset of files belongs in `.claude/rules/`. Emphasis is rationed: at most one `MUST`/`MANDATORY`-style line per CLAUDE.md (the Superpowers header, which hooks and the verify script both pin).
@@ -109,7 +109,7 @@ Each CLAUDE.md and AGENT_TEAM.md includes a variant-specific table mapping task 
 
 All templates grant permissions for **all** known MCP servers (git, github, ollama, dotnet-tools, rust-tools, windows-mcp, sqlite, searxng, playwright, context7, open-brain, template-sync-tools). If a server is not registered in the active scope, the permission is a harmless no-op.
 
-`CLAUDE.local.md` contains MCP usage rules (e.g., "prefer `cargo_build` over Bash `cargo build`"). This file is gitignored because it references machine-specific paths.
+`CLAUDE.local.md` (retired v4.0.1: no longer offered by the template) held MCP usage rules (e.g., "prefer `cargo_build` over Bash `cargo build`"), gitignored because it referenced machine-specific paths. A project that already has one keeps it; the file is never touched by a sync.
 
 ### MCP Layering
 
@@ -149,7 +149,7 @@ All templates include hooks in `.claude/settings.json` that enforce workflow rul
 | **PreToolUse** on `Bash\|PowerShell` | The three git gates — `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` — read `tool_input.command`, split it into clauses, unwrap `bash -c "…"`-style payloads, and refuse anything they cannot parse. `git -C <path>` retargets the repo; `<cwd>/.claude/git-guard-off` disables all three. **Which command forms are gated is not derivable from this row and is deliberately not listed here** — `merge` is gated unless it is a pure catch-up to the branch's own configured upstream, `pull` is gated by form (only the refspec-free `--ff-only` is allowed), `--abort`/`--continue`/`--quit` are always allowed. The verdict table is in `docs/verification.md`, and the contract itself is the header comment of `hooks/gate-before-merge.sh`, which is the copy that syncs to consumers. Superseded the v2.0 blanket Bash-git block, which banned the git CLI outright and blocked 1,240 turns in 6 weeks (deleted in v2.1) | All |
 | **PreToolUse** on `Edit\|Write\|NotebookEdit` + `Bash` | `hooks/enforce-delegation.sh` — main-thread (PO) discrimination via the `agent_id` stdin field (present only inside subagents): denies PO edits outside the orchestration write surface, which is: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, **and any path outside the repo root** (scratchpad, `~/.claude`). Stated here because a PO otherwise learns the boundary by being blocked; note the hook's own DENY string omits `CLAUDE.local.md` and the outside-the-repo clause, so it under-reports what it allows. Also denies PO build/test-runner Bash (incl. `run-gate.sh` — the PO verifies via the gate artifact). Subagent calls always pass. Deliberately fail-open with a WARN-wrapper (a 127-wrap would paralyze subagent edits when the script is missing); kill-switch `.claude/delegation-off` | All |
 | **PreToolUse** on `Read` | `hooks/read-size-gate.sh` — rewrites an unbounded `Read` to `limit: 500` via `updatedInput` and tells the caller which offset to pass next; it never refuses a call. Wired **fail-open** (127 → exit 0) | All |
-| **PreToolUse** on `mcp__MCP_DOCKER__merge_pull_request\|mcp__github-tools__github_pr_auto_merge` | `hooks/gate-before-merge.sh` — the MCP half of the merge gate; hard-blocks PR merge/auto-merge unless `.gate/last-pass.json` is younger than 60 minutes **and** its `sha` equals HEAD **or** its `tree` equals `HEAD^{tree}` — the tree half has been there since v2.1.5 and is the half that survives a squash, so "SHA-matching" understates it (written by the non-hook runner `hooks/run-gate.sh` from the `**Gate**:` command in PROJECT_CONTEXT.md; no-op while Gate is unset). Also duplicated inline in merge-owning coder agents' frontmatter, whose matcher additionally covers `Bash` (`gh pr merge`) | All |
+| **PreToolUse** on `mcp__MCP_DOCKER__merge_pull_request\|mcp__github-tools__github_pr_auto_merge` | `hooks/gate-before-merge.sh` — the MCP half of the merge gate; hard-blocks PR merge/auto-merge unless a `<common git dir>/gate/last-pass.<sha>.json` artifact (v4.0.1, item 17 — shared across every worktree of the repo) is younger than `GC_GATE_TTL_S` (3600s = 60 minutes) **and** its `sha` equals HEAD **or** its `tree` equals `HEAD^{tree}` — the tree half has been there since v2.1.5 and is the half that survives a squash, so "SHA-matching" understates it (written by the non-hook runner `hooks/run-gate.sh` from the `**Gate**:` command in PROJECT_CONTEXT.md; no-op while Gate is unset). Also duplicated inline in merge-owning coder agents' frontmatter, whose matcher additionally covers `Bash` (`gh pr merge`) | All |
 | **PreToolUse** on `Agent` | One spawn gate, 127-wrapped fail-closed: `hooks/require-skills-block.sh` — a spawn prompt for an agent that the `AGENT_TEAM.md` *Spawn-Prompt Binding Table* binds to a skill must carry a `## Required Skills` block naming it; the hook reads the table's own row set, which is why `verify-template-consistency.sh` diffs script against table | All |
 | **PreToolUse** on `mcp__windows-mcp__Click\|Type` | Blocks Click/Type for test automation (use FlaUI) | dotnet-maui |
 | **PostToolUse** on `Edit\|Write` | Runs build/lint check after edits for immediate feedback | dotnet, dotnet-maui, rust-tauri, python |
@@ -182,7 +182,6 @@ claude-code-toolkit/
 │   │   │   ├── settings.json
 │   │   │   └── agents/ (6 agents)
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md                  # v2.0 (shared across all variants)
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -193,7 +192,6 @@ claude-code-toolkit/
 │   │   │   └── agents/ (7 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -204,7 +202,6 @@ claude-code-toolkit/
 │   │   │   └── agents/ (7 agents)
 │   │   ├── .editorconfig
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -216,7 +213,6 @@ claude-code-toolkit/
 │   │   ├── rustfmt.toml                   # Rust formatter config
 │   │   ├── .prettierrc                    # TypeScript/CSS formatter config
 │   │   ├── CLAUDE.md
-│   │   ├── CLAUDE.local.md
 │   │   ├── AGENT_TEAM.md
 │   │   ├── PROJECT_CONTEXT.md
 │   │   ├── PROJECT_STATE.md
@@ -227,7 +223,6 @@ claude-code-toolkit/
 │       │   └── agents/ (7 agents)
 │       ├── .editorconfig
 │       ├── CLAUDE.md
-│       ├── CLAUDE.local.md
 │       ├── AGENT_TEAM.md
 │       ├── PROJECT_CONTEXT.md
 │       ├── PROJECT_STATE.md

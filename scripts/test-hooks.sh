@@ -72,6 +72,24 @@ mkrepo() { # <name> <branch> -> prints path
   printf '%s\n' "$d"
 }
 
+# v4.0.1 (item 17) -- gate artifacts moved from <repo toplevel>/.gate to
+# <common git dir>/gate, sha/tree-keyed filenames instead of one fixed name.
+# These three mirror gc_gate_dir (hooks/lib/git-cmd.sh) so every fixture below
+# targets the same directory and filename the hooks themselves compute,
+# rather than a second, independently-typed guess at the path.
+gatedir() { # <repo> -> prints the shared gate directory for <repo>
+  printf '%s/gate\n' "$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+}
+gatepassfile() { # <repo> <sha> -> prints last-pass.<sha>.json's path
+  printf '%s/last-pass.%s.json\n' "$(gatedir "$1")" "$2"
+}
+precommitfile() { # <repo> <tree> -> prints last-precommit.<tree>.json's path
+  printf '%s/last-precommit.%s.json\n' "$(gatedir "$1")" "$2"
+}
+precommitnoopfile() { # <repo> <tree> -> prints last-precommit-noop.<tree>.json's path
+  printf '%s/last-precommit-noop.%s.json\n' "$(gatedir "$1")" "$2"
+}
+
 # --- payload construction, without an interpreter ---------------------------
 #
 # v2.2.1: every builder below was a `node -e` one-liner. On a node-less host
@@ -483,7 +501,7 @@ check_msg "success names the elapsed seconds" "$ROOT/$H" 0 \
 # gate-before-merge.sh still needs a separate `bash hooks/run-gate.sh` before
 # merging a Test-path repo.
 expect "(R2-5) Test-path commit leaves no gate artifact" "0" \
-  "$([ -f "$OKREPO/.gate/last-pass.json" ] && echo 1 || echo 0)"
+  "$(ls "$(gatedir "$OKREPO")"/last-pass.*.json 2>/dev/null | grep -c .)"
 check "commit with failing tests"        "$H" 2 "$(mkjson Bash 'git commit -m "x"' "$BADREPO")"
 check "commit with no PROJECT_CONTEXT"   "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$BARE")"
 check "non-commit git command"           "$H" 0 "$(mkjson Bash 'git status --short' "$BADREPO")"
@@ -526,6 +544,52 @@ printf '# ctx\n\n- **Test**: `false`\n' > "$SPACEBAD/PROJECT_CONTEXT.md"
 printf '# ctx\n\n- **Test**: `true`\n'  > "$SPACEOK/PROJECT_CONTEXT.md"
 check "spaced -C, target tests fail"     "$H" 2 "$(mkjson Bash "git -C \"$SPACEBAD\" commit -m y" "$OKREPO")"
 check "spaced -C, target tests pass"     "$H" 0 "$(mkjson Bash "git -C \"$SPACEOK\" commit -m y" "$BADREPO")"
+
+# --- v4.0.1 item 10: a bare `commit` token that is a VALUE (a --grep pattern,
+# or the pattern argument to `git grep`) rather than the real subcommand used
+# to be matched by the old positional-walk fallback, which stopped scanning at
+# the FIRST bare word equal to the verb regardless of where in the argv it
+# sat. `commit` is now matched only at git's real subcommand position.
+check "item 10: bare 'commit' as --grep VALUE does not run Test"   "$H" 0 "$(mkjson Bash "git -C $BADREPO log --grep commit" "$OKREPO")"
+check "item 10: bare 'commit' as grep pattern does not run Test"   "$H" 0 "$(mkjson Bash "git -C $BADREPO grep commit" "$OKREPO")"
+check "item 10: peel syntax never ran Test (regression guard)"     "$H" 0 "$(mkjson Bash "git -C $BADREPO rev-parse HEAD^{commit}" "$OKREPO")"
+check "item 10: -c then -C then commit still runs Test"            "$H" 2 "$(mkjson Bash "git -c a=b -C $BADREPO commit -m y" "$OKREPO")"
+
+# --- v4.0.1 item 10, F1-F3 (outside review of the first draft of this fix).
+# F1: the matcher's first-token-only mode used to `exit` on a mismatch rather
+# than restarting, so a SINGLE unsplit segment holding more than one `git`
+# invocation could lose a later real commit. Every caller here pre-splits via
+# gc_segments before calling the matcher, so these rows exercise the FULL
+# hook, not the matcher in isolation -- they pin the end-to-end behaviour the
+# restart makes robust regardless of caller-side splitting.
+check "item 10 (F1): compound && segment still runs Test on the commit half" "$H" 2 "$(mkjson Bash "git add -A && git commit -m x" "$BADREPO")"
+check "item 10 (F1): compound ; segment still runs Test on the commit half"  "$H" 2 "$(mkjson Bash "git add . ; git commit -m x" "$BADREPO")"
+check "item 10 (F1): cd into target then commit resolves the cd target"     "$H" 2 "$(mkjson Bash "cd $BADREPO && git commit -m x" "$OKREPO")"
+check "item 10 (F1): grep-value commit does not mask a later real commit"   "$H" 2 "$(mkjson Bash "git -C $BADREPO log --grep commit && git -C $BADREPO commit -m x" "$OKREPO")"
+# F2: the git-token test must not degrade to a bare "ends in git" match on an
+# awk that treats an unescaped \g as plain g -- pin both the false positive it
+# must not gain and the true positive (a Windows-style backslash path) it must
+# not lose.
+check "item 10 (F2): a bare word ending in 'git' is not the git token"      "$H" 0 "$(mkjson Bash "notgit commit -m x" "$BADREPO")"
+check "item 10 (F2): a backslash path to git is still recognised"          "$H" 2 "$(mkjson Bash "C:\\bin\\git commit -m x" "$BADREPO")"
+# F3: the deleted fast path was, incidentally, the only thing that matched a
+# quoted or parenthesised wrapper around a real commit -- the walk itself now
+# strips a leading/trailing quote or paren from each token before testing it.
+check "item 10 (F3): bash -c wrapper still runs Test"                      "$H" 2 "$(mkjson Bash "bash -c \"git commit -m x\"" "$BADREPO")"
+check "item 10 (F3): sh -lc wrapper still runs Test"                       "$H" 2 "$(mkjson Bash "sh -lc \"git commit -m x\"" "$BADREPO")"
+check "item 10 (F3): subshell wrapper still runs Test"                     "$H" 2 "$(mkjson Bash "(git commit -m x)" "$BADREPO")"
+# --- v4.0.1 fix round 1: the A6.10 rows in the gate-before-merge.sh block
+# exercise the substitution-opener strip only through the merge arm; nothing
+# pinned it through the COMMIT path until now.
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (dollar-paren)" "$H" 2 "$(mkjson Bash 'echo $(git commit -m x)' "$BADREPO")"
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (backtick)"     "$H" 2 "$(mkjson Bash 'echo `git commit -m x`' "$BADREPO")"
+check "item 10 (F3): substitution opener: previously caught only by the deleted GC_GIT_PRE fast path (process-sub)"  "$H" 2 "$(mkjson Bash 'diff <(git commit -m x) f' "$BADREPO")"
+# review round 2: the matcher itself must never write to stderr -- a hook or
+# caller that captures stderr would carry an awk warning into gate logs on
+# every single call, forever. Measured silent on this awk; pinned as a
+# regression guard regardless of which awk a consumer runs.
+GCSTDERR=$(bash -c 'source hooks/lib/git-cmd.sh; gc_matches_subcommand "git commit -m x" commit' 2>&1 >/dev/null)
+expect "gc_matches_subcommand writes nothing to stderr" "0" "${#GCSTDERR}"
 
 mkdir -p "$BADREPO/.claude" && : > "$BADREPO/.claude/git-guard-off"
 check "kill switch disables the gate"    "$H" 0 "$(mkjson Bash 'git commit -m "x"' "$BADREPO")"
@@ -625,18 +689,19 @@ expect "failure output is tailed to 20"  "0" "$(grep -cx 'LINE1' "$tailerr")"
 
 # --- v2.1.3 (consumer feedback, Yutraffic): run-gate.sh takes over commit-time
 # gating when it exists alongside a **Gate** field. A green run must write
-# .gate/last-pass.json as a side effect (so gate-before-merge is satisfied
-# without a second gate run), and a red run must exit 2 naming run-gate.sh.
-rm -f "$GATEONLYOK/.gate/last-pass.json"
+# last-pass.<sha>.json under the shared gate directory (v4.0.1, item 17) as a
+# side effect (so gate-before-merge is satisfied without a second gate run),
+# and a red run must exit 2 naming run-gate.sh.
 RUNGATESHA=$(git -C "$GATEONLYOK" rev-parse HEAD)
+rm -f "$(gatepassfile "$GATEONLYOK" "$RUNGATESHA")"
 printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "(a) run-gate.sh path: exit 0 on pass" "0" "$?"
 expect "(a) run-gate.sh path: artifact written" "1" \
-  "$([ -f "$GATEONLYOK/.gate/last-pass.json" ] && echo 1 || echo 0)"
-ARTSHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
+  "$([ -f "$(gatepassfile "$GATEONLYOK" "$RUNGATESHA")" ] && echo 1 || echo 0)"
+ARTSHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$(gatepassfile "$GATEONLYOK" "$RUNGATESHA")" 2>/dev/null)
 expect "(a) run-gate.sh path: artifact sha matches HEAD" "$RUNGATESHA" "$ARTSHA"
-ARTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)
+ARTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$GATEONLYOK" "$RUNGATESHA")" 2>/dev/null)
 # v2.1.5, updated v3.1 (penumbra, arm a): the recorded tree is the WORKING
 # tree at gate time, TRACKED FILES ONLY (`add -u`, not `add -A` -- see below)
 # -- PROJECT_CONTEXT.md was still untracked when the hook fired, so it is
@@ -652,9 +717,10 @@ expect "(2.5a) run-gate.sh path: artifact tree matches tracked-only committed tr
 
 GATEONLYOK_AA=$(mkrepo gateonlyok-aa main)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$GATEONLYOK_AA/PROJECT_CONTEXT.md"
+GATEONLYOK_AA_SHA=$(git -C "$GATEONLYOK_AA" rev-parse HEAD)
 printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK_AA")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
-AATREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$GATEONLYOK_AA/.gate/last-pass.json" 2>/dev/null)
+AATREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$GATEONLYOK_AA" "$GATEONLYOK_AA_SHA")" 2>/dev/null)
 git -C "$GATEONLYOK_AA" add -A >/dev/null 2>&1
 git -C "$GATEONLYOK_AA" commit -q -m "add-A commit" >/dev/null 2>&1
 expect "(2.5a) the same untracked file, committed via add -A, mismatches" "mismatch" \
@@ -669,10 +735,11 @@ printf '# ctx\n\n- **Gate**: `true`\n' > "$DIRTYGATE/PROJECT_CONTEXT.md"
 git -C "$DIRTYGATE" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$DIRTYGATE" commit -q -m "add gate" >/dev/null 2>&1
 echo unstaged >> "$DIRTYGATE/seed.txt"   # unstaged edit to a tracked file
+DIRTYGATE_SHA=$(git -C "$DIRTYGATE" rev-parse HEAD)
 printf '%s' "$(mkjson Bash 'git commit -m x' "$DIRTYGATE")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "(2.5b) dirty working tree: exit 0 on pass" "0" "$?"
-DIRTYTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$DIRTYGATE/.gate/last-pass.json" 2>/dev/null)
+DIRTYTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$DIRTYGATE" "$DIRTYGATE_SHA")" 2>/dev/null)
 echo dummy > "$DIRTYGATE/dummy.txt"
 git -C "$DIRTYGATE" add dummy.txt >/dev/null 2>&1
 git -C "$DIRTYGATE" commit -q -m "unrelated commit" >/dev/null 2>&1
@@ -689,10 +756,11 @@ git -C "$CADD" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$CADD" commit -q -m "add gate" >/dev/null 2>&1
 echo hello > "$CADD/new.py"
 git -C "$CADD" add new.py >/dev/null 2>&1
+CADD_SHA=$(git -C "$CADD" rev-parse HEAD)
 printf '%s' "$(mkjson Bash 'git commit -m x' "$CADD")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "(2.5c) staged-new-file gate: exit 0 on pass" "0" "$?"
-CADDTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$CADD/.gate/last-pass.json" 2>/dev/null)
+CADDTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$CADD" "$CADD_SHA")" 2>/dev/null)
 git -C "$CADD" commit -q -m x >/dev/null 2>&1
 expect "(2.5c) recorded tree == committed tree (staged new file)" \
   "$(git -C "$CADD" rev-parse 'HEAD^{tree}')" "$CADDTREE"
@@ -722,11 +790,11 @@ check_msg "Gate:placeholder alone -- WARN path, no false green" \
 # not silently exit 0 because a "Test" field merely exists.
 TESTPLACEHOLDER_REALGATE=$(mkrepo committestplaceholder main)
 printf '# ctx\n\n- **Test**: `{{TEST_COMMAND}}`\n- **Gate**: `true`\n' > "$TESTPLACEHOLDER_REALGATE/PROJECT_CONTEXT.md"
-rm -f "$TESTPLACEHOLDER_REALGATE/.gate/last-pass.json"
+rm -f "$(gatedir "$TESTPLACEHOLDER_REALGATE")"/last-pass.*.json 2>/dev/null
 check "Test:placeholder + Gate:real -- falls through to run-gate.sh" \
   "$H" 0 "$(mkjson Bash 'git commit -m x' "$TESTPLACEHOLDER_REALGATE")"
 expect "Test:placeholder + Gate:real -- run-gate.sh actually ran (artifact written)" \
-  "1" "$([ -f "$TESTPLACEHOLDER_REALGATE/.gate/last-pass.json" ] && echo 1 || echo 0)"
+  "1" "$(ls "$(gatedir "$TESTPLACEHOLDER_REALGATE")"/last-pass.*.json 2>/dev/null | grep -c .)"
 
 BOTHPLACEHOLDER=$(mkrepo commitbothplaceholder main)
 printf '# ctx\n\n- **Test**: `{{TEST_COMMAND}}`\n- **Gate**: `{{GATE_COMMAND}}`\n' > "$BOTHPLACEHOLDER/PROJECT_CONTEXT.md"
@@ -743,11 +811,11 @@ check_msg "Test:placeholder + Gate:placeholder -- WARN path" \
 # silently fall back to the legacy eval path instead of running run-gate.sh.
 RELCHECK=$(mkrepo relcheck main)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$RELCHECK/PROJECT_CONTEXT.md"
-rm -f "$RELCHECK/.gate/last-pass.json"
+rm -f "$(gatedir "$RELCHECK")"/last-pass.*.json 2>/dev/null
 relrc=$(cd "$ROOT" && printf '%s' "$(mkjson Bash "git -C \"$RELCHECK\" commit -m x" "$ROOT")" | bash hooks/pre-commit-test.sh >/dev/null 2>&1; echo $?)
 expect "(R2-3) relative \$0, -C to another repo: exit 0" "0" "$relrc"
 expect "(R2-3) relative \$0: run-gate.sh actually ran (artifact written)" \
-  "1" "$([ -f "$RELCHECK/.gate/last-pass.json" ] && echo 1 || echo 0)"
+  "1" "$(ls "$(gatedir "$RELCHECK")"/last-pass.*.json 2>/dev/null | grep -c .)"
 
 # (c) no run-gate.sh next to the hook: existing Gate/Test eval path unchanged
 NORUNGATE="$TMPROOT/norungate"
@@ -777,9 +845,15 @@ done
 NOGATE=$(mkrepo gatenone main)
 H=hooks/gate-before-merge.sh
 
-writeartifact() { # <repo> <sha>
-  mkdir -p "$1/.gate"
-  printf '{"sha":"%s"}\n' "$2" > "$1/.gate/last-pass.json"
+writeartifact() { # <repo> <sha> -- v4.0.1 (item 17): one last-pass.<sha>.json
+  # per call, named after the sha it claims (the filename a real run-gate.sh
+  # would use), in the shared gate directory. Clears any other last-pass.*.json
+  # left by an earlier call in this same repo first, so a "stale sha" write
+  # cannot be blessed by a leftover fresh one from an earlier assertion in the
+  # same test.
+  mkdir -p "$(gatedir "$1")"
+  rm -f "$(gatedir "$1")"/last-pass.*.json 2>/dev/null
+  printf '{"sha":"%s"}\n' "$2" > "$(gatepassfile "$1" "$2")"
 }
 
 # --- Bash branch: merge-shaped commands need a fresh artifact
@@ -839,6 +913,14 @@ printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SPACEGATE/PROJECT_C
 check "spaced -C merge, target on main"  "$H" 2 "$(mkjson Bash "git -C \"$SPACEGATE\" merge feature" "$GATEFEAT2")"
 check "gh pr merge still gated"          "$H" 2 "$(mkjson Bash 'gh pr merge 12' "$GATEREPO")"
 
+# --- v4.0.1 item 10 posture pin: `commit` is now matched only at git's real
+# subcommand position, but `merge`/`push` are deliberately NOT narrowed the
+# same way -- a bare `merge` operand anywhere after an unrecognised verb
+# (`show-branch merge`) must still refuse. This proves the item-10 fix did not
+# also loosen the merge/push posture.
+check "item 10: merge posture unchanged: bare 'merge' operand after an unrecognised verb still refuses" "$H" 2 "$(mkjson Bash "git -C $GATEONLYOK show-branch merge" "$GATEONLYOK")"
+check "item 10: quoted operand: deliberate widening, v4.0.1" "$H" 2 "$(mkjson Bash "git -C $GATEONLYOK log --grep \"merge\"" "$GATEONLYOK")"
+
 # ---------------------------------------------------------------------------
 # v2.4.0 (A6): merging FROM a protected branch is refused before the artifact
 # is read. THE CONTROL IS TWO-SIDED AND THE POSITIVE ARM IS THE LOAD-BEARING
@@ -872,8 +954,13 @@ writeartifact "$GATENONE" "$(git -C "$GATENONE" rev-parse HEAD)"
 check "(A6) 'Protected branches: none' is honoured, merge on main allowed" \
   "$H" 0 "$(mkjson Bash 'gh pr merge 12 --squash' "$GATENONE")"
 # Defect 1: the staleness message must name BOTH keys, not just the sha — the
-# tree key is the half that survives a squash.
-writeartifact "$GATEFEAT" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+# tree key is the half that survives a squash. v4.0.1 (item 17): the artifact
+# is written at the filename the exact lookup will actually find (named for
+# THIS repo's real HEAD sha), but its CONTENT claims a different sha and no
+# tree — found, but genuinely stale, exercising the comparison block rather
+# than the "not found" path a mismatched FILENAME would hit instead.
+mkdir -p "$(gatedir "$GATEFEAT")"
+printf '{"sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}\n' > "$(gatepassfile "$GATEFEAT" "$FEATSHA")"
 check_msg "(A6) staleness message reports the tree key too" \
   "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 5 --squash' "$GATEFEAT")" \
   "artifact tree:"
@@ -1293,11 +1380,12 @@ check "(2.6c N3 posture) show-branch merge is a bare merge operand, refused" "$H
 # want-0 commit row actually MINTED a fresh pass artifact, rather than passing
 # vacuously because run-gate.sh was absent (which also exits 0, with a WARN,
 # and mints nothing).
-rm -f "$GATEONLYOK/.gate/last-pass.json"
+GATEONLYOK_SHA2=$(git -C "$GATEONLYOK" rev-parse HEAD)
+rm -f "$(gatedir "$GATEONLYOK")"/last-pass.*.json 2>/dev/null
 printf '%s' "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "(2.6c vacuity) commit row against run-gate.sh mints status:pass" "1" \
-  "$(grep -c '\"status\":\"pass\"' "$GATEONLYOK/.gate/last-pass.json" 2>/dev/null)"
+  "$(grep -c '\"status\":\"pass\"' "$(gatepassfile "$GATEONLYOK" "$GATEONLYOK_SHA2")" 2>/dev/null)"
 
 # THE MOVER RULE, BOTH POLARITIES, on a checkout onto a protected branch. The
 # rule refuses when the VERDICT DEPENDS on the branch the mover lands on. It
@@ -1461,6 +1549,7 @@ A6ALLOW='git -C "$1" rev-parse --abbrev-ref --symbolic-full-name
 git -C "$1" rev-parse --verify --quiet
 git -C "$CWD" rev-parse
 git -C "$CWD" rev-parse --show-toplevel
+git -C "$CWD" rev-parse --verify
 git -C "$a6pc_repo" config --get'
 # reasons, one per line above, in order:
 #   1  the upstream's NAME for the DENY text                      display only
@@ -1468,7 +1557,10 @@ git -C "$a6pc_repo" config --get'
 #   3  HEAD and HEAD^{tree} for the artifact comparison — decides a verdict, but
 #      from the artifact's own keys, never from a remote-tracking ref
 #   4  the repo toplevel                                          not a ref read
-#   5  branch.<cur>.merge, compared by NAME to the branch's own name; the value
+#   5  the candidate sha for the gate artifact's exact filename lookup (v4.0.1,
+#      item 17) — `--verify ...^{commit}`, validated against a hex-sha shape
+#      before use, never from a remote-tracking ref or command text
+#   6  branch.<cur>.merge, compared by NAME to the branch's own name; the value
 #      of any ref is never consulted
 A6FORMS=$(grep -vE '^[[:space:]]*#' "$ROOT/hooks/gate-before-merge.sh" \
   | grep -vE '^[[:space:]]*(echo|printf)[[:space:]]' \
@@ -1978,22 +2070,26 @@ PRETTYGATE=$(mkrepo gateprettyartifact feature/pretty)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$PRETTYGATE/PROJECT_CONTEXT.md"
 PRETTYSHA=$(git -C "$PRETTYGATE" rev-parse HEAD)
 PRETTYTREE=$(git -C "$PRETTYGATE" rev-parse 'HEAD^{tree}')
-mkdir -p "$PRETTYGATE/.gate"
+mkdir -p "$(gatedir "$PRETTYGATE")"
+# v4.0.1 (item 17): the exact-filename lookup is keyed on HEAD's sha, which
+# never moves across the three writes below -- the FILENAME stays
+# last-pass.<PRETTYSHA>.json throughout, only the CONTENT changes, exactly
+# like the single fixed last-pass.json this test predates.
 printf '{\n  "sha": "%s",\n  "tree": "%s",\n  "branch": "feature/pretty",\n  "status": "pass"\n}\n' \
-  "$PRETTYSHA" "$PRETTYTREE" > "$PRETTYGATE/.gate/last-pass.json"
+  "$PRETTYSHA" "$PRETTYTREE" > "$(gatepassfile "$PRETTYGATE" "$PRETTYSHA")"
 check "(A6) pretty-printed artifact is accepted (sha key)" \
   "$H" 0 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
 # tree-only arm: no sha key at all, spaced spelling — must still match by tree.
 printf '{\n  "tree": "%s",\n  "sha": "%s",\n  "status": "pass"\n}\n' \
   "$PRETTYTREE" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
-  > "$PRETTYGATE/.gate/last-pass.json"
+  > "$(gatepassfile "$PRETTYGATE" "$PRETTYSHA")"
 check "(A6) pretty-printed artifact is accepted (tree key)" \
   "$H" 0 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
 # Negative arm: a spaced spelling carrying values that match NEITHER key must
 # still block — the widening must not have turned into "accept anything".
 printf '{\n  "sha": "%s",\n  "tree": "%s"\n}\n' \
   "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "cafebabecafebabecafebabecafebabecafebabe" \
-  > "$PRETTYGATE/.gate/last-pass.json"
+  > "$(gatepassfile "$PRETTYGATE" "$PRETTYSHA")"
 check "(A6) pretty-printed but genuinely stale still blocks" \
   "$H" 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
 
@@ -2237,7 +2333,7 @@ check "(A6.C) arm2 commit: -C P(-C) -C U(-C, Test true)" "hooks/pre-commit-test.
 # the exit code already discriminates — and the ARTIFACT LOCATION is asserted
 # too, because that is the reading that caught it.
 expect "(A6.C) arm2 commit: the artifact lands in the TARGET repo" "1" \
-  "$([ -f "$A6U_CORE/.gate/last-precommit.json" ] && echo 1 || echo 0)"
+  "$(ls "$(gatedir "$A6U_CORE")"/last-precommit.*.json 2>/dev/null | grep -c .)"
 # THE MIRROR FACE. A path containing `--no-pager` must not read as a GLOBAL —
 # the substring bug has a false-negative face (gate skipped) and a false-
 # positive face (legitimate command refused), and only the second gets people
@@ -2246,7 +2342,7 @@ A6NP=$(a6host "host--no-pager-y/repo" main)
 printf '# ctx\n\n- **Test**: `false`\n' > "$A6NP/PROJECT_CONTEXT.md"
 check "(A6.C) mirror: --no-pager in a PATH runs the Test" "hooks/pre-commit-test.sh" 2 "$(mkjson Bash "git -C $A6NP commit -m y" "$A6U_PLAIN")"
 expect "(A6.C) mirror: the artifact says path=test, not global-refused" "1" \
-  "$(grep -c '"path":"test"' "$A6NP/.gate/last-precommit.json" 2>/dev/null || echo 0)"
+  "$(grep -c '"path":"test"' "$(ls "$(gatedir "$A6NP")"/last-precommit.*.json 2>/dev/null | head -1)" 2>/dev/null || echo 0)"
 # Restore the Gate fields the clones above share.
 printf '%b' "$A6CTX" > "$A6P_CORE/PROJECT_CONTEXT.md"
 printf '%b' "$A6CTX" > "$A6U_CORE/PROJECT_CONTEXT.md"
@@ -2285,7 +2381,7 @@ done
 # Task 2.7 -- `**Gate-checked branches**:` (companion spec). A session branch
 # (MM-Agent's `m113-session-*`) may declare itself artifact-checked on MERGE
 # without being PROTECTED: a merge onto it still needs a fresh sha/tree-matched
-# .gate/last-pass.json, but `git push origin <branch>` stays ungated -- the
+# last-pass.<sha>.json artifact, but `git push origin <branch>` stays ungated -- the
 # whole point of the declaration is to avoid recreating the push blocker the
 # session-branch migration exists to escape.
 #
@@ -2311,7 +2407,12 @@ gcbrepo() { # <name> <branch> <extra-context-line(s), may contain \n> -> prints 
 # --- base rows -------------------------------------------------------------
 GCB_SESSION=$(gcbrepo gcb-session m113-session-2026-09-03 "$GCB_CTX_MERGE_LINE")
 GCB_SESSION_SHA=$(git -C "$GCB_SESSION" rev-parse HEAD)
-writeartifact "$GCB_SESSION" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+# v4.0.1 (item 17): write at the filename the exact lookup will actually find
+# (named for the repo's real HEAD sha) but with mismatched CONTENT — found,
+# genuinely stale, exercising the comparison/message block rather than the
+# "not found" path a mismatched FILENAME (plain writeartifact) would hit.
+mkdir -p "$(gatedir "$GCB_SESSION")"
+printf '{"sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}\n' > "$(gatepassfile "$GCB_SESSION" "$GCB_SESSION_SHA")"
 check_msg "(2.7) merge onto a gate-checked branch, stale artifact" \
   "$ROOT/$H" 2 "$(mkjson Bash 'git merge other' "$GCB_SESSION")" \
   "is gate-checked (PROJECT_CONTEXT.md **Gate-checked branches**)"
@@ -2387,6 +2488,17 @@ writeartifact "$GCB_EMPTY" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 check "(2.7 extent) empty value treated as none, not match-everything" \
   "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_EMPTY")"
 
+# v4.0.1 item 5: the literal `none` is now templates/*/PROJECT_CONTEXT.md's
+# SHIPPED default for this key (no {{...}} placeholder) rather than an
+# occasional consumer choice -- pin gc_gate_checked_branches' existing
+# reading of it (git-cmd.sh:969-970, unchanged by this release: no real
+# branch is gate-checked, same as absent) now that every fresh bootstrap
+# writes this value by default.
+GCB_NONE=$(gcbrepo gcb-none m113-session-2026-09-03 '- **Gate-checked branches**: none')
+writeartifact "$GCB_NONE" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+check "(2.7 extent, v4.0.1 item 5) literal 'none' treated as none, not match-everything" \
+  "$H" 0 "$(mkjson Bash 'git merge other' "$GCB_NONE")"
+
 # --- hazard rows (task-2.7 fix round 1, review finding 1 / F1) -------------
 # Critical: `for gcgbb in $(gc_gate_checked_branches "$1")` in
 # gc_branch_is_gate_checked (hooks/lib/git-cmd.sh) word-splits UNQUOTED, so a
@@ -2399,7 +2511,11 @@ check "(2.7 extent) empty value treated as none, not match-everything" \
 # they differ ONLY in whether the test process's cwd holds files a bare `*`
 # could expand to -- proving the defect is cwd-dependent, not value-dependent.
 GCB_HAZARD=$(gcbrepo gcb-hazard m113-session-2026-09-03 '- **Gate-checked branches**: *')
-writeartifact "$GCB_HAZARD" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+GCB_HAZARD_SHA=$(git -C "$GCB_HAZARD" rev-parse HEAD)
+# v4.0.1 (item 17): same reasoning as GCB_SESSION above — write at the
+# filename the exact lookup will find, with mismatched content.
+mkdir -p "$(gatedir "$GCB_HAZARD")"
+printf '{"sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}\n' > "$(gatepassfile "$GCB_HAZARD" "$GCB_HAZARD_SHA")"
 
 GCB_HAZ_POP="$TMPROOT/gcb-hazard-populated-cwd"
 mkdir -p "$GCB_HAZ_POP"
@@ -2560,10 +2676,10 @@ echo payload > "$SEPCALL/newfile.py"
 printf '%s' "$(mkjson Bash 'git add newfile.py' "$SEPCALL")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "(R4b) separate calls: add-only payload allowed" "0" "$?"
-expect "(R4b) separate calls: add-only does not mint last-precommit.json" "" \
-  "$([ -f "$SEPCALL/.gate/last-precommit.json" ] && echo present)"
+expect "(R4b) separate calls: add-only does not mint last-precommit.<tree>.json" "" \
+  "$([ -n "$(ls "$(gatedir "$SEPCALL")"/last-precommit.*.json 2>/dev/null)" ] && echo present)"
 expect "(R4b) separate calls: add-only writes the noop file instead" "present" \
-  "$([ -f "$SEPCALL/.gate/last-precommit-noop.json" ] && echo present)"
+  "$([ -n "$(ls "$(gatedir "$SEPCALL")"/last-precommit-noop.*.json 2>/dev/null)" ] && echo present)"
 git -C "$SEPCALL" add newfile.py >/dev/null 2>&1
 
 # payload B: `git commit -m x`, with newfile.py now staged -- mints.
@@ -2571,7 +2687,7 @@ printf '%s' "$(mkjson Bash 'git commit -m x' "$SEPCALL")" \
   | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "(R4b) separate calls: commit-only payload allowed" "0" "$?"
 git -C "$SEPCALL" commit -q -m x >/dev/null 2>&1
-SEPCALLTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$SEPCALL/.gate/last-precommit.json" 2>/dev/null)
+SEPCALLTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(ls "$(gatedir "$SEPCALL")"/last-precommit.*.json 2>/dev/null | head -1)" 2>/dev/null)
 expect "(R4b) separate calls: mint's tree == HEAD^{tree}" \
   "$(git -C "$SEPCALL" rev-parse 'HEAD^{tree}')" "$SEPCALLTREE"
 check "(R4b) separate calls: merge gate accepts the mint" \
@@ -2583,14 +2699,15 @@ printf '# ctx\n\n- **Gate**: `true`\n' > "$IGNTREE/PROJECT_CONTEXT.md"
 printf '.gate/\nbuild/\n' > "$IGNTREE/.gitignore"
 git -C "$IGNTREE" add -A >/dev/null 2>&1
 git -C "$IGNTREE" commit -q -m "add gate" >/dev/null 2>&1
+IGNTREE_SHA=$(git -C "$IGNTREE" rev-parse HEAD)
 ( cd "$IGNTREE" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
-IGNTREE1=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$IGNTREE/.gate/last-pass.json" 2>/dev/null)
+IGNTREE1=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$IGNTREE" "$IGNTREE_SHA")" 2>/dev/null)
 expect "(R4c) clean tree: recorded tree == HEAD^{tree}" \
   "$(git -C "$IGNTREE" rev-parse 'HEAD^{tree}')" "$IGNTREE1"
 mkdir -p "$IGNTREE/build" && echo junk > "$IGNTREE/build/out.o"
 ( cd "$IGNTREE" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
-IGNTREE2=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$IGNTREE/.gate/last-pass.json" 2>/dev/null)
-expect "(R4c) ignored file + .gate/ do not change the tree" "$IGNTREE1" "$IGNTREE2"
+IGNTREE2=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$IGNTREE" "$IGNTREE_SHA")" 2>/dev/null)
+expect "(R4c) ignored file + the gate directory do not change the tree" "$IGNTREE1" "$IGNTREE2"
 # and the REAL index is untouched by the temp-index hash
 expect "(R4c) real index untouched by the gate" "" \
   "$(git -C "$IGNTREE" diff --cached --name-only)"
@@ -2608,11 +2725,114 @@ git -C "$WTMAIN" worktree add -q -b wt-feature "$WTLINK" >/dev/null 2>&1
 WTIDX=$(git -C "$WTLINK" rev-parse --git-path index)
 WTIDXBEFORE=$(md5sum "$WTIDX" 2>/dev/null | cut -d' ' -f1)
 ( cd "$WTLINK" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
-WTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$WTLINK/.gate/last-pass.json" 2>/dev/null)
+WTLINK_SHA=$(git -C "$WTLINK" rev-parse HEAD)
+WTTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$WTLINK" "$WTLINK_SHA")" 2>/dev/null)
 expect "(R4d) linked worktree: tree == its own HEAD^{tree}" \
   "$(git -C "$WTLINK" rev-parse 'HEAD^{tree}')" "$WTTREE"
 expect "(R4d) linked worktree: its index file is byte-unchanged" \
   "$WTIDXBEFORE" "$(md5sum "$WTIDX" 2>/dev/null | cut -d' ' -f1)"
+
+# ===========================================================================
+# v4.0.1 item 17 -- gate artifact in the COMMON git dir, shared across every
+# worktree/checkout of a repo (a worktree coder cannot git -C into the main
+# checkout, and pre-4.0.1 the artifact was per-invoking-checkout, so a gate
+# run in one checkout was invisible to a merge attempted from another).
+# Reuses WTMAIN (the main checkout of this throwaway repo, on `main`) and
+# WTLINK (its linked worktree, on `wt-feature`, just gated by R4d above,
+# minting last-pass.<sha>.json under their SHARED common git dir).
+# ===========================================================================
+echo
+echo "=== v4.0.1 item 17: shared gate artifact directory ==="
+
+# --git-common-dir must resolve to the SAME directory whether asked from the
+# main checkout or from a linked worktree -- the exact fact the whole fix
+# depends on (reviewer session, design doc item 17).
+WTMAIN_GATEDIR=$(git -C "$WTMAIN" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/gate
+WTLINK_GATEDIR=$(git -C "$WTLINK" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/gate
+expect "(item 17) --git-common-dir resolves identically: main checkout vs. linked worktree" \
+  "$WTMAIN_GATEDIR" "$WTLINK_GATEDIR"
+
+# `- **Protected branches**: none` on WTMAIN ONLY, for the rows below that use
+# it as the merge cwd -- item 17 is about ARTIFACT LOCATION, not the separate,
+# deliberate refuse-on-protected-branch guard already exhaustively covered
+# above (gc_on_main); conflating the two would fail this row for a reason
+# item 17 does not touch. A plain (uncommitted) rewrite is enough: these hooks
+# read PROJECT_CONTEXT.md straight off disk, never from HEAD.
+printf '# ctx\n\n- **Gate**: `true`\n- **Protected branches**: none\n' > "$WTMAIN/PROJECT_CONTEXT.md"
+
+# WTLINK branched off WTMAIN's HEAD with no new commit, so its sha AND tree
+# are identical to WTMAIN's -- the fast exact-filename path, not the tree
+# scan. This is the brief's literal scenario: an artifact minted from a
+# linked worktree blesses a merge attempted from the main checkout.
+check "item 17: artifact written from a linked worktree blesses the merge from the main checkout" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 1' "$WTMAIN")"
+
+# A commit WTLINK never gated must still be refused -- the shared directory
+# must not bless EVERY commit of the repo, only the ones an artifact names.
+echo unrelated > "$WTMAIN/unrelated.txt"
+git -C "$WTMAIN" add -A >/dev/null 2>&1
+git -C "$WTMAIN" commit -q -m "unrelated change, never gated" >/dev/null 2>&1
+check "item 17: a commit no artifact names is still refused" \
+  "$H" 2 "$(mkjson Bash 'gh pr merge 1' "$WTMAIN")"
+# `reset --hard` discards ALL working-tree state, including the uncommitted
+# Protected-branches override above (it was never committed on purpose, so
+# the unrelated commit above did not carry it either) -- reapply it.
+git -C "$WTMAIN" reset -q --hard HEAD~1 >/dev/null 2>&1
+printf '# ctx\n\n- **Gate**: `true`\n- **Protected branches**: none\n' > "$WTMAIN/PROJECT_CONTEXT.md"
+
+# --- concurrent worktrees: two artifacts must coexist in the shared
+# directory without clobbering each other (controller review round).
+WTLINK2="$TMPROOT/gateworktree-linked-2"
+git -C "$WTMAIN" worktree add -q -b wt-feature-2 "$WTLINK2" >/dev/null 2>&1
+echo f2 > "$WTLINK2/f2.txt"
+git -C "$WTLINK2" add -A >/dev/null 2>&1
+git -C "$WTLINK2" commit -q -m "feature 2 change" >/dev/null 2>&1
+( cd "$WTLINK2" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+WTLINK2_SHA=$(git -C "$WTLINK2" rev-parse HEAD)
+expect "item 17: two worktrees gating concurrently -- both artifacts present" "2" \
+  "$(ls -1 "$WTMAIN_GATEDIR"/last-pass.*.json 2>/dev/null | grep -c .)"
+check "item 17: WTLINK's own artifact still blesses its own merge after WTLINK2 gated" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 1' "$WTMAIN")"
+check "item 17: WTLINK2's merge is blessed by its OWN artifact, not WTLINK's" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 2' "$WTLINK2")"
+
+# --- SAME TREE, DIFFERENT SHA (R20, pinned decision): a commit that was never
+# itself gated is still blessed when another commit -- a different worktree, a
+# cherry-pick, a message-only rebase -- gated the IDENTICAL tree. WTLINK3
+# branches off the same base as WTLINK2 and reproduces its content under a
+# DIFFERENT commit message, so its tree matches WTLINK2's gated tree but its
+# sha does not; WTLINK3 is never gated itself.
+WTLINK3="$TMPROOT/gateworktree-linked-3"
+git -C "$WTMAIN" worktree add -q -b wt-feature-3 "$WTLINK3" >/dev/null 2>&1
+cp "$WTLINK2/f2.txt" "$WTLINK3/f2.txt"
+git -C "$WTLINK3" add -A >/dev/null 2>&1
+git -C "$WTLINK3" commit -q -m "same tree, different message" >/dev/null 2>&1
+WTLINK3_SHA=$(git -C "$WTLINK3" rev-parse HEAD)
+expect "item 17 (R20): WTLINK2 and WTLINK3 share a tree but not a sha" "1" \
+  "$([ "$(git -C "$WTLINK2" rev-parse 'HEAD^{tree}')" = "$(git -C "$WTLINK3" rev-parse 'HEAD^{tree}')" ] && [ "$WTLINK2_SHA" != "$WTLINK3_SHA" ] && echo 1 || echo 0)"
+R20_OUT=$(printf '%s' "$(mkjson Bash 'gh pr merge 3' "$WTLINK3")" | bash "$ROOT/hooks/gate-before-merge.sh" 2>/dev/null)
+R20_RC=$?
+expect "item 17 (R20): same-tree-different-sha commit is blessed" "0" "$R20_RC"
+expect "item 17 (R20): success echo says 'matched: tree'" "1" \
+  "$(printf '%s' "$R20_OUT" | grep -c 'matched: tree')"
+expect "item 17 (R20): success echo names WTLINK2's artifact file, not WTLINK3's" "1" \
+  "$(printf '%s' "$R20_OUT" | grep -cF "last-pass.$WTLINK2_SHA.json")"
+
+# --- legacy pre-4.0.1 path (one release only): an artifact ONLY at the old
+# <repo toplevel>/.gate/last-pass.json location still blesses the merge, with
+# a deprecation NOTE on stderr.
+LEGACYGATE=$(mkrepo gatelegacy feature/legacy)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$LEGACYGATE/PROJECT_CONTEXT.md"
+git -C "$LEGACYGATE" add -A >/dev/null 2>&1
+git -C "$LEGACYGATE" commit -q -m "add gate" >/dev/null 2>&1
+LEGSHA=$(git -C "$LEGACYGATE" rev-parse HEAD)
+LEGTREE=$(git -C "$LEGACYGATE" rev-parse 'HEAD^{tree}')
+mkdir -p "$LEGACYGATE/.gate"
+printf '{"sha":"%s","tree":"%s","branch":"feature/legacy","ts":"2020-01-01T00:00:00Z","status":"pass"}\n' \
+  "$LEGSHA" "$LEGTREE" > "$LEGACYGATE/.gate/last-pass.json"
+check_msg "item 17: legacy-path-only artifact still blesses the merge, with a NOTE" \
+  "$ROOT/hooks/gate-before-merge.sh" 0 "$(mkjson Bash 'gh pr merge 1' "$LEGACYGATE")" \
+  "NOTE: legacy artifact path"
 
 # ===========================================================================
 # v2.4.0 (A6, second half): THE CHECKOUT CAN MOVE UNDER A RUNNING GATE.
@@ -2637,18 +2857,21 @@ git -C "$MOVEREPO" commit -q -m "gate cfg" >/dev/null 2>&1
 echo second > "$MOVEREPO/second.txt"
 git -C "$MOVEREPO" add -A >/dev/null 2>&1
 git -C "$MOVEREPO" commit -q -m "second commit" >/dev/null 2>&1
+# Both arms start from the SAME HEAD (arm (a) only swaps the **Gate** command,
+# never commits) -- one sha for both assertions below.
+MOVEREPO_SHA=$(git -C "$MOVEREPO" rev-parse HEAD)
 # (b) the stable arm first, so a failure in (a) cannot be blamed on the setup.
 ( cd "$MOVEREPO" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
 expect "(A6) stable checkout: gate exits 0" "0" "$?"
 expect "(A6) stable checkout: artifact written" "1" \
-  "$([ -f "$MOVEREPO/.gate/last-pass.json" ] && echo 1 || echo 0)"
+  "$([ -f "$(gatepassfile "$MOVEREPO" "$MOVEREPO_SHA")" ] && echo 1 || echo 0)"
 # (a) now a gate command that moves HEAD out from under itself.
 printf '# ctx\n\n- **Gate**: `git checkout -q --detach HEAD~1`\n' > "$MOVEREPO/PROJECT_CONTEXT.md"
 moveerr=$(mktemp)
 ( cd "$MOVEREPO" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$moveerr" )
 expect "(A6) moving checkout: gate exits nonzero" "1" "$?"
 expect "(A6) moving checkout: NO artifact is left behind" "0" \
-  "$([ -f "$MOVEREPO/.gate/last-pass.json" ] && echo 1 || echo 0)"
+  "$([ -f "$(gatepassfile "$MOVEREPO" "$MOVEREPO_SHA")" ] && echo 1 || echo 0)"
 expect "(A6) moving checkout: the reason is named" "1" \
   "$(grep -cF 'the checkout moved while the gate was running' "$moveerr")"
 
@@ -4826,7 +5049,7 @@ check "placeholder develop trunk: merge gated" "$GB" 2 \
 #   (1) the three Test rows (exit 0 / 1 / 78) panoscribe measured, each with
 #       the fixture's OWN exit asserted first — finding 59's consumer produced
 #       a probe that could not fail by mis-quoting exactly this script;
-#   (2) the `.gate/last-precommit.json` DIAGNOSTIC (Task 3½): a PreToolUse hook
+#   (2) the last-precommit.<tree>.json DIAGNOSTIC (Task 3½): a PreToolUse hook
 #       completes before the tool runs and the harness drops non-blocking hook
 #       stderr, so this file is the only side effect that outlives the hook and
 #       can place it relative to the command it gates;
@@ -4854,8 +5077,15 @@ done
 pct_ctx() { # <test-script> -- Gate declared too, so no want-0 row is vacuous
   printf '# ctx\n\n- **Test**: `bash %s`\n- **Gate**: `bash %s`\n' "$1" "$1" > "$PCTREPO/PROJECT_CONTEXT.md"
 }
-PCTART="$PCTREPO/.gate/last-precommit.json"
-PCTNOOP="$PCTREPO/.gate/last-precommit-noop.json"
+# v4.0.1 (item 17): PCTART/PCTNOOP are fixed paths again, not a glob per call
+# -- PROJECT_CONTEXT.md and the tc*.sh scripts below are NEVER `git add`ed in
+# this repo, so `add -u -- .` (tracked paths only) never picks them up and the
+# gated tree stays the CONSTANT tree of mkrepo's own seed commit for every row
+# in this whole block. The noop file's tree segment is always the literal
+# "unknown" (pct_capture_tree never runs on the no-commit-segment path).
+PCTREPO_TREE=$(git -C "$PCTREPO" rev-parse HEAD^{tree})
+PCTART=$(precommitfile "$PCTREPO" "$PCTREPO_TREE")
+PCTNOOP=$(precommitnoopfile "$PCTREPO" unknown)
 pct_field() { # <file> <key> -> value (string, number, or bool), no jq dependency
   sed -n \
     -e 's/.*"'"$2"'":"\([^"]*\)".*/\1/p' \
@@ -4873,7 +5103,7 @@ for rc in 0 1 78; do
     expect "(PCT) artifact path=test for tc$rc" "test" "$(pct_field "$PCTART" path)"
     expect "(PCT) artifact rc=$rc for tc$rc"    "$rc"   "$(pct_field "$PCTART" rc)"
   else
-    printf 'FAIL  %-42s (no %s)\n' "(PCT) artifact written for tc$rc" ".gate/last-precommit.json"
+    printf 'FAIL  %-42s (no %s)\n' "(PCT) artifact written for tc$rc" "$(precommitfile "$PCTREPO" "$PCTREPO_TREE")"
     fail=$((fail + 2))
   fi
 done
@@ -4935,9 +5165,10 @@ printf '# ctx\n\n- **Test**: `true`\n- **Gate**: `true`\n' > "$PCTCLEAN/PROJECT_
 git -C "$PCTCLEAN" add PROJECT_CONTEXT.md >/dev/null 2>&1
 git -C "$PCTCLEAN" commit -q -m ctx >/dev/null 2>&1
 check "(PCT) clean-tree commit allowed" "$PCT" 0 "$(mkjson Bash 'git commit -m x' "$PCTCLEAN")"
+PCTCLEAN_TREE=$(git -C "$PCTCLEAN" rev-parse 'HEAD^{tree}')
 expect "(PCT) artifact tree == HEAD^{commit}'s tree" \
-  "$(git -C "$PCTCLEAN" rev-parse 'HEAD^{tree}')" \
-  "$(pct_field "$PCTCLEAN/.gate/last-precommit.json" tree)"
+  "$PCTCLEAN_TREE" \
+  "$(pct_field "$(precommitfile "$PCTCLEAN" "$PCTCLEAN_TREE")" tree)"
 # (1) the ordinary-failure path keeps its advice and its escape hatch
 pct_ctx tc1.sh
 check_msg "(PCT) ordinary failure keeps the re-run advice" "$ROOT/$PCT" 2 \
@@ -4986,7 +5217,10 @@ check_msg "(PCT) no-push-main names what it could not determine" "$ROOT/hooks/no
 PCT8=hooks/pre-commit-test.sh
 PCT8REPO=$(mkrepo pct-8h main)
 printf '# ctx\n\n- **Test**: `exit 0`\n- **Gate**: `exit 0`\n' > "$PCT8REPO/PROJECT_CONTEXT.md"
-PCT8ART="$PCT8REPO/.gate/last-precommit.json"
+# v4.0.1 (item 17): PROJECT_CONTEXT.md above is never `git add`ed, so (same
+# reasoning as PCTREPO_TREE) the gated tree stays constant at the seed commit.
+PCT8REPO_TREE=$(git -C "$PCT8REPO" rev-parse HEAD^{tree})
+PCT8ART=$(precommitfile "$PCT8REPO" "$PCT8REPO_TREE")
 rm -f "$PCT8ART"
 check "(PCT8) control: plain commit, Test exit 0"  "$PCT8" 0 "$(mkjson Bash 'git commit -m x' "$PCT8REPO")"
 expect "(PCT8) control artifact path=test" "test" "$(pct_field "$PCT8ART" path)"
@@ -4994,8 +5228,14 @@ rm -f "$PCT8ART"
 check "(PCT8) -P commit: inert global reaches the Test" "$PCT8" 0 "$(mkjson Bash 'git -P commit -m x' "$PCT8REPO")"
 expect "(PCT8) -P artifact path=test (was no-commit-segment)" "test" "$(pct_field "$PCT8ART" path)"
 rm -f "$PCT8ART"
+# v4.0.1 (item 17): global-refused exits BEFORE pct_capture_tree ever runs
+# (the refusal fires inside the segment-matching loop, ahead of the Test/Gate
+# path that captures PCT_TREE), so its treeseg is the literal "unknown", not
+# PCT8REPO_TREE -- same reasoning as PCTNOOP above.
+PCT8ART_UNKNOWN=$(precommitfile "$PCT8REPO" unknown)
+rm -f "$PCT8ART_UNKNOWN"
 check "(PCT8) -c commit refused by the classifier"  "$PCT8" 2 "$(mkjson Bash 'git -c core.x=y commit -m x' "$PCT8REPO")"
-expect "(PCT8) refusal artifact path=global-refused" "global-refused" "$(pct_field "$PCT8ART" path)"
+expect "(PCT8) refusal artifact path=global-refused" "global-refused" "$(pct_field "$PCT8ART_UNKNOWN" path)"
 
 # `- **Test**: none` BLOCKED EVERY COMMIT (measured 2026-09-04): the hook ran a
 # command literally called `none`, took 127, and refused. The value that reads
@@ -5354,7 +5594,11 @@ check "(METACHAR) \$PWD/P resolves against the PAYLOAD cwd, not the hook's" "$MC
 # unresolved fold silently fell back to `$base` and ran the WRONG repo's Test.
 # g1 = the cwd repo (Test PASSES, branch `work`); g2 = the target repo (Test
 # FAILS, branch `feat`). "marker" below means: which repo's
-# .gate/last-precommit.json the run actually wrote to.
+# last-precommit.<tree>.json the run actually wrote to. v4.0.1 (item 17): the
+# marker file's exact name is looked up by glob rather than precomputed --
+# PROJECT_CONTEXT.md is never `git add`ed in either repo below, so in practice
+# each repo's gated tree is constant, but the glob makes that an
+# implementation detail this fixture does not need to know.
 # ---------------------------------------------------------------------------
 UR_G1=$(mkrepo ur-g1 work)
 printf '# ctx\n\n- **Test**: `true`\n' > "$UR_G1/PROJECT_CONTEXT.md"
@@ -5363,15 +5607,15 @@ printf '# ctx\n\n- **Test**: `false`\n' > "$UR_G2/PROJECT_CONTEXT.md"
 UR_PCT=hooks/pre-commit-test.sh
 
 ur_marker_check() { # <label> <want_rc> <json> <marker_repo> <want_path_field>
-  rm -f "$4/.gate/last-precommit.json"
+  rm -f "$(gatedir "$4")"/last-precommit.*.json 2>/dev/null
   printf '%s' "$3" | bash "$ROOT/$UR_PCT" >/dev/null 2>&1
   urm_got=$?
-  urm_file="$4/.gate/last-precommit.json"
-  if [ "$urm_got" = "$2" ] && [ -f "$urm_file" ] && grep -qF "\"path\":\"$5\"" "$urm_file"; then
+  urm_file=$(ls "$(gatedir "$4")"/last-precommit.*.json 2>/dev/null | head -1)
+  if [ "$urm_got" = "$2" ] && [ -n "$urm_file" ] && [ -f "$urm_file" ] && grep -qF "\"path\":\"$5\"" "$urm_file"; then
     printf 'PASS  %-42s (exit %s, marker path=%s)\n' "$1" "$urm_got" "$5"; pass=$((pass + 1))
   else
     printf 'FAIL  %-42s (want %s+path=%s, got %s file=%s)\n' \
-      "$1" "$2" "$5" "$urm_got" "$([ -f "$urm_file" ] && head -c 200 "$urm_file" || echo MISSING)"
+      "$1" "$2" "$5" "$urm_got" "$([ -n "$urm_file" ] && [ -f "$urm_file" ] && head -c 200 "$urm_file" || echo MISSING)"
     fail=$((fail + 1))
   fi
 }
@@ -5379,13 +5623,13 @@ ur_marker_check() { # <label> <want_rc> <json> <marker_repo> <want_path_field>
 # 1. no operand resolves -- was rc=0, marker=g1, before the fix (DtG: restore
 #    the pre-defect-3a wiring -- call gc_repo_for with no unresolved check
 #    ahead of it -- and this row flips 2 -> 0 with the marker unmoved).
-rm -f "$UR_G2/.gate/last-precommit.json"
+rm -f "$(gatedir "$UR_G2")"/last-precommit.*.json 2>/dev/null
 ur_marker_check "(UNRESOLVED) -C nope1 -C nope2 commit -- refuses" 2 \
   "$(mkjson Bash 'git -C nope1 -C nope2 commit' "$UR_G1")" "$UR_G1" "unresolved-c"
 # ...and two-sided: g2's Test never ran at all, so its marker must stay absent
 # -- proves this is a refusal, not merely "g1 happened to be written too".
 expect "(UNRESOLVED) -C nope1 -C nope2 commit -- g2 untouched" "0" \
-  "$([ -f "$UR_G2/.gate/last-precommit.json" ] && echo 1 || echo 0)"
+  "$(ls "$(gatedir "$UR_G2")"/last-precommit.*.json 2>/dev/null | grep -c .)"
 # 2. both real -- resolves the target, g1 is only ever the payload cwd.
 ur_marker_check "(UNRESOLVED) -C g1 -C g2 commit -- resolves target" 2 \
   "$(mkjson Bash "git -C $UR_G1 -C $UR_G2 commit" "$UR_G1")" "$UR_G2" test
@@ -5498,10 +5742,12 @@ check "(FIELD) **Protected branches**: value repeating the marker -- whole value
 # a **Gate** value containing the literal marker a second time was truncated
 # at the LAST occurrence instead of returning the whole value. Both rows run
 # entirely inside their own THROWAWAY mkrepo checkout (REPO_TOP resolves from
-# cwd, so run-gate.sh never touches this checkout's own .gate/last-pass.json);
-# the guard assertion below confirms that directly.
+# cwd, so run-gate.sh never touches this real checkout's OWN shared gate
+# directory); the guard assertion below confirms that directly. v4.0.1 (item
+# 17): the guard snapshots the WHOLE shared gate directory (not one guessed
+# filename) so it also catches a stray file landing there under any name.
 # ---------------------------------------------------------------------------
-RG_SELFGATE_BEFORE=$(cat "$ROOT/.gate/last-pass.json" 2>/dev/null; echo)
+RG_SELFGATE_BEFORE=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
 
 # (control) a plain **Gate** value with no embedded marker -- passes
 # identically pre-fix and post-fix; proves the two rows below fail on a
@@ -5511,16 +5757,17 @@ RG_PLAIN=$(mkrepo rg-plain main)
 printf '# ctx\n\n- **Gate**: true\n' > "$RG_PLAIN/PROJECT_CONTEXT.md"
 git -C "$RG_PLAIN" add -A >/dev/null 2>&1
 git -C "$RG_PLAIN" commit -q -m "add gate" >/dev/null 2>&1
+RG_PLAIN_HEADSHA=$(git -C "$RG_PLAIN" rev-parse HEAD)
 ( cd "$RG_PLAIN" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
 expect "(RUN-GATE control) plain **Gate**: true -- exits 0" "0" "$?"
-expect "(RUN-GATE control) plain **Gate**: true -- last-pass.json minted" "1" \
-  "$([ -f "$RG_PLAIN/.gate/last-pass.json" ] && echo 1 || echo 0)"
+expect "(RUN-GATE control) plain **Gate**: true -- last-pass.<sha>.json minted" "1" \
+  "$([ -f "$(gatepassfile "$RG_PLAIN" "$RG_PLAIN_HEADSHA")" ] && echo 1 || echo 0)"
 # end-to-end: the artifact must be keyed on THIS repo's HEAD/tree -- the exact
 # fields gate-before-merge.sh reads back at merge time. A parse fix that
 # recovers the right command but mis-keys the artifact would pass every row
 # above and still hand gate-before-merge a receipt for the wrong commit.
-RG_PLAIN_SHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$RG_PLAIN/.gate/last-pass.json" 2>/dev/null)
-RG_PLAIN_TREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$RG_PLAIN/.gate/last-pass.json" 2>/dev/null)
+RG_PLAIN_SHA=$(sed -n 's/.*"sha":"\([^"]*\)".*/\1/p' "$(gatepassfile "$RG_PLAIN" "$RG_PLAIN_HEADSHA")" 2>/dev/null)
+RG_PLAIN_TREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(gatepassfile "$RG_PLAIN" "$RG_PLAIN_HEADSHA")" 2>/dev/null)
 expect "(RUN-GATE control) artifact sha == repo HEAD" \
   "$(git -C "$RG_PLAIN" rev-parse HEAD)" "$RG_PLAIN_SHA"
 expect "(RUN-GATE control) artifact tree == repo HEAD^{tree}" \
@@ -5538,25 +5785,26 @@ expect "(RUN-GATE) truncate-to-garbage: whole value ran (FIRST present)" "1" \
 
 # (b) truncate-to-true -- THE SEVERITY ROW: a real failing gate followed by
 # the marker + `true`. Pre-fix, the sed truncated the value down to `true`,
-# so the gate exited 0 and minted .gate/last-pass.json WITHOUT ever running
+# so the gate exited 0 and minted a pass artifact WITHOUT ever running
 # `bash -c 'exit 1'` -- a PR-editable value could mint a passing gate receipt
 # on an unrun suite. Post-fix the whole value runs, the real command fails,
 # and no artifact is written.
 RG_SEVERITY=$(mkrepo rg-severity main)
 printf "# ctx\n\n- **Gate**: bash -c 'exit 1' && echo **Gate**: true\n" > "$RG_SEVERITY/PROJECT_CONTEXT.md"
-rm -f "$RG_SEVERITY/.gate/last-pass.json"
+RG_SEVERITY_HEADSHA=$(git -C "$RG_SEVERITY" rev-parse HEAD)
+rm -f "$(gatepassfile "$RG_SEVERITY" "$RG_SEVERITY_HEADSHA")"
 ( cd "$RG_SEVERITY" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
 RG_SEVERITY_RC=$?
 expect "(RUN-GATE) truncate-to-true: exits non-zero (real failure runs)" "1" \
   "$([ "$RG_SEVERITY_RC" -ne 0 ] && echo 1 || echo 0)"
-expect "(RUN-GATE) truncate-to-true: no last-pass.json minted on an unrun suite" "0" \
-  "$([ -f "$RG_SEVERITY/.gate/last-pass.json" ] && echo 1 || echo 0)"
+expect "(RUN-GATE) truncate-to-true: no last-pass.<sha>.json minted on an unrun suite" "0" \
+  "$([ -f "$(gatepassfile "$RG_SEVERITY" "$RG_SEVERITY_HEADSHA")" ] && echo 1 || echo 0)"
 
-# GUARD, two-sided: this checkout's own .gate/last-pass.json (if any) must be
+# GUARD, two-sided: this real checkout's own shared gate directory must be
 # byte-unchanged by either row above -- both ran with REPO_TOP resolved to
 # their own throwaway repo, never to this one.
-RG_SELFGATE_AFTER=$(cat "$ROOT/.gate/last-pass.json" 2>/dev/null; echo)
-expect "(RUN-GATE) real checkout's own last-pass.json untouched" \
+RG_SELFGATE_AFTER=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
+expect "(RUN-GATE) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER"
 
 # ---------------------------------------------------------------------------
@@ -5589,10 +5837,11 @@ rg_row() { # <label> <gate-value> <want-marker 0|1> <want-artifact 0|1>
   printf -- "- **Gate**: %s\n- **Protected branches**: main\n" "$rgr_gate" > "$rgr_d/PROJECT_CONTEXT.md"
   git -C "$rgr_d" add -A >/dev/null 2>&1
   git -C "$rgr_d" commit -q -m gate >/dev/null 2>&1
+  rgr_sha=$(git -C "$rgr_d" rev-parse HEAD)
   rm -f "$rgr_d/gate-ran.marker"
   ( cd "$rgr_d" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
   rgr_marker=$([ -f "$rgr_d/gate-ran.marker" ] && echo 1 || echo 0)
-  rgr_artifact=$([ -f "$rgr_d/.gate/last-pass.json" ] && echo 1 || echo 0)
+  rgr_artifact=$([ -f "$(gatepassfile "$rgr_d" "$rgr_sha")" ] && echo 1 || echo 0)
   expect "(RUN-GATE A2) $rgr_label -- marker" "$rgr_wm" "$rgr_marker"
   expect "(RUN-GATE A2) $rgr_label -- artifact" "$rgr_wa" "$rgr_artifact"
 }
@@ -5652,10 +5901,11 @@ if grep -qF "$RG_ANCHOR" "$ROOT/hooks/run-gate.sh"; then
       printf -- "- **Gate**: %s\n- **Protected branches**: main\n" "$rgd_gate" > "$rgd_d/PROJECT_CONTEXT.md"
       git -C "$rgd_d" add -A >/dev/null 2>&1
       git -C "$rgd_d" commit -q -m gate >/dev/null 2>&1
+      rgd_sha=$(git -C "$rgd_d" rev-parse HEAD)
       rm -f "$rgd_d/gate-ran.marker"
       ( cd "$rgd_d" && bash "$RG_GREEDY_SH" >/dev/null 2>&1 )
       rgd_marker=$([ -f "$rgd_d/gate-ran.marker" ] && echo 1 || echo 0)
-      rgd_artifact=$([ -f "$rgd_d/.gate/last-pass.json" ] && echo 1 || echo 0)
+      rgd_artifact=$([ -f "$(gatepassfile "$rgd_d" "$rgd_sha")" ] && echo 1 || echo 0)
       expect "(RUN-GATE A2 DtG-greedy) $rgd_label -- marker" "$rgd_wm" "$rgd_marker"
       expect "(RUN-GATE A2 DtG-greedy) $rgd_label -- artifact" "$rgd_wa" "$rgd_artifact"
     }
@@ -5676,10 +5926,10 @@ fi
 
 # GUARD, two-sided, bracketing the A2 block above too: every rg_row/rg_dtg_row
 # invocation ran with REPO_TOP resolved to its own throwaway repo, so this
-# checkout's own .gate/last-pass.json must be byte-unchanged across the
+# checkout's own shared gate directory must be byte-unchanged across the
 # whole block, not just the pre-A2 rows the earlier guard bracketed.
-RG_SELFGATE_AFTER_A2=$(cat "$ROOT/.gate/last-pass.json" 2>/dev/null; echo)
-expect "(RUN-GATE A2) real checkout's own last-pass.json untouched" \
+RG_SELFGATE_AFTER_A2=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
+expect "(RUN-GATE A2) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER_A2"
 
 # ---------------------------------------------------------------------------
