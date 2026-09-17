@@ -1004,8 +1004,10 @@ async def template_compute_status(
         differences are not counted).
 
         For a v3 manifest the statuses are IDENTICAL / TEMPLATE_UPDATED /
-        LOCAL_EDITED / TEMPLATE_DELETED (template class) and PRESENT / MISSING
-        (once class); the result also carries `orphans`,
+        LOCAL_EDITED / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (template class)
+        and PRESENT / MISSING / ACKNOWLEDGED_KEPT (once class) --
+        ACKNOWLEDGED_KEPT replaces TEMPLATE_DELETED for a path listed in the
+        manifest's `deletedAcknowledged`; the result also carries `orphans`,
         `unclassified_template_files`, `local_diff` per LOCAL_EDITED file,
         `key_audit` per audited once file, `encoding_drift` per file (BOM/EOL
         only differences, informational), and `gate_self_reference` /
@@ -1491,6 +1493,7 @@ async def template_finalize_sync(
     applied_files: str = "[]",
     new_files: str = "[]",
     deleted_files: str = "[]",
+    acknowledged_deleted: str = "[]",
     applied_files_path: str = "",
 ) -> str:
     """
@@ -1512,6 +1515,11 @@ async def template_finalize_sync(
         deleted_files: JSON array of relative paths the project deliberately
             removed; their entries are dropped even if the template still
             ships the file (optional)
+        acknowledged_deleted: JSON array of repo-relative paths the project
+            KEEPS although the template dropped them (optional); merged into
+            `deletedAcknowledged`. Refused for a path that is not currently
+            TEMPLATE_DELETED/ACKNOWLEDGED_KEPT (v3 only -- v2 has no
+            acknowledgement contract and ignores this argument)
         applied_files_path: Path to a local JSON file holding the same array
             as applied_files, written by the caller from the tool results so
             nothing is retyped. When given, applied_files is ignored.
@@ -1525,6 +1533,11 @@ async def template_finalize_sync(
     Manifest v3: entries carry `hash` (sha256:-prefixed) and `ownership`;
     `template_commit` is HEAD of the template repo and `template_version` the
     nearest reachable tag whose tracked tree is identical (null when none).
+    `new_files` REGISTERS a path not yet tracked (never touches an existing
+    entry); `applied_files` REFRESHES a tracked entry's hash -- a tracked
+    file updated outside `template_apply_file` keeps a stale hash and reads
+    LOCAL_EDITED with an empty `local_diff` until it is passed in
+    `applied_files`.
     Unknown top-level keys are preserved and listed in `unknown_keys` --
     with ONE exception: the v2-era `lastSynced`/`lastSyncedVersion`/
     `lastSyncedVersionOf` keys are dropped unconditionally and listed in
@@ -1572,13 +1585,19 @@ async def template_finalize_sync(
     except json.JSONDecodeError:
         deleted = []
 
+    try:
+        acknowledged = json.loads(acknowledged_deleted)
+    except json.JSONDecodeError:
+        acknowledged = []
+
     from . import v3
     if v3.is_v3(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
-        return json.dumps(v3.finalize_v3(pp, manifest, rules, applied, new, deleted), ensure_ascii=False)
+        return json.dumps(v3.finalize_v3(pp, manifest, rules, applied, new, deleted, acknowledged), ensure_ascii=False)
 
+    # v2 has no acknowledgement contract -- acknowledged_deleted is ignored below.
     # Validate before touching the manifest (downstream finding 2026-07-19 #6:
     # hand-typed hashes with stray characters silently corrupted a manifest).
     import re as _re

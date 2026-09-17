@@ -76,8 +76,8 @@ def test_server_source_present_on_a_valid_v3_load(tmp_path):
 
 
 def test_unknown_top_level_keys():
-    m = {"manifest_version": 3, "files": {}, "deletedAcknowledged": [], "variant": "general"}
-    assert v3.unknown_top_level_keys(m) == ["deletedAcknowledged"]
+    m = {"manifest_version": 3, "files": {}, "x-consumer-note": [], "variant": "general"}
+    assert v3.unknown_top_level_keys(m) == ["x-consumer-note"]
 
 
 # --- template_load_manifest as the v3 gate (Task 3) ---------------------------

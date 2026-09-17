@@ -118,7 +118,7 @@ def test_finalize_v3_writes_prefixed_hashes_and_reports_unknown_keys(tmp_path):
                         project={"CLAUDE.md": "v1\n", ".claude/rules/project.md": "mine\n", "hooks/new.sh": "n\n"},
                         entries={"CLAUDE.md": _tpl_entry("v0\n")})
     m = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
-    m["deletedAcknowledged"] = ["x.md"]
+    m["x-consumer-note"] = ["x.md"]
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps(m), encoding="utf-8")
     _init_repo(repo)
     _git(repo, "tag", "v3.1.0")
@@ -132,7 +132,7 @@ def test_finalize_v3_writes_prefixed_hashes_and_reports_unknown_keys(tmp_path):
     assert res["manifest_written"] is True
     assert res["template_commit"] == head
     assert res["template_version"] == "v3.1.0"
-    assert res["unknown_keys"] == ["deletedAcknowledged"]
+    assert res["unknown_keys"] == ["x-consumer-note"]
     assert res["files_updated"] == 2 and res["files_added"] == 1
 
     out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
@@ -140,11 +140,50 @@ def test_finalize_v3_writes_prefixed_hashes_and_reports_unknown_keys(tmp_path):
     assert out["template_commit"] == head
     assert out["template_version"] == "v3.1.0"
     assert out["requires_server"] == ">=0.3.2"   # raised from the fixture's >=0.3.0
-    assert out["deletedAcknowledged"] == ["x.md"]
+    assert out["x-consumer-note"] == ["x.md"]
     assert "lastSynced" not in out and "version" not in out
     assert out["files"]["CLAUDE.md"] == {"hash": "sha256:" + ts._sha256("v1\n"), "ownership": "template"}
     assert out["files"][".claude/rules/project.md"] == {"ownership": "once"}
     assert out["files"]["hooks/new.sh"] == {"hash": "sha256:" + ts._sha256("n\n"), "ownership": "template"}
+
+
+def _ack_fixture(tmp_path):
+    """v3 project whose template dropped hooks/g.sh; the project keeps it."""
+    repo, proj = _mk_v3(tmp_path,
+                        template={"CLAUDE.md": "v1\n"},
+                        project={"CLAUDE.md": "v1\n", "hooks/g.sh": "g\n"},
+                        entries={"CLAUDE.md": _tpl_entry("v1\n"), "hooks/g.sh": _tpl_entry("g\n")})
+    _init_repo(repo)
+    _git(repo, "tag", "v3.1.0")
+    return repo, proj
+
+
+def test_finalize_acknowledged_deleted_merges_sorted_unique(tmp_path):
+    repo, proj = _ack_fixture(tmp_path)
+    res = _run(ts.template_finalize_sync(
+        str(proj), acknowledged_deleted=json.dumps(["hooks/g.sh", "hooks/g.sh"])))
+    assert res["acknowledged_deleted"] == ["hooks/g.sh"]
+    out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    assert out["deletedAcknowledged"] == ["hooks/g.sh"]
+    assert "hooks/g.sh" in out["files"]          # entry stays; only the status changes
+
+
+def test_finalize_acknowledged_deleted_refuses_unknown_path(tmp_path):
+    repo, proj = _ack_fixture(tmp_path)
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = json.loads(manifest_path.read_text(encoding="utf-8"))
+    res = _run(ts.template_finalize_sync(
+        str(proj), acknowledged_deleted=json.dumps(["hooks/typo.sh"])))
+    assert "error" in res and "hooks/typo.sh" in res["error"]
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == before   # manifest NOT written
+
+
+def test_finalize_acknowledged_and_deleted_overlap_refused(tmp_path):
+    repo, proj = _ack_fixture(tmp_path)
+    res = _run(ts.template_finalize_sync(
+        str(proj), deleted_files=json.dumps(["hooks/g.sh"]),
+        acknowledged_deleted=json.dumps(["hooks/g.sh"])))
+    assert "error" in res and "hooks/g.sh" in res["error"]
 
 
 def test_finalize_raises_a_floor_below_the_splice_floor(tmp_path):

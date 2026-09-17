@@ -298,7 +298,7 @@ def test_compute_status_v3_classifies_every_class(tmp_path):
     assert res["orphans"] == [".claude/agents/game-tester.md"]
     assert res["summary"] == {
         "identical": 2, "template_updated": 1, "local_edited": 1, "template_deleted": 0,
-        "present": 1, "missing": 1,
+        "present": 1, "missing": 1, "acknowledged_kept": 0,
     }
     assert "CONFLICT" not in json.dumps(res)
 
@@ -316,6 +316,44 @@ def test_compute_status_v3_unclassified_and_deleted(tmp_path):
     assert res["deleted_template_files"] == ["hooks/gone.sh"]
     assert res["summary"]["template_deleted"] == 1
     assert res["gate_self_reference"] == [] and res["gate_unverified"] is False
+
+
+def test_compute_status_v3_acknowledged_kept_template_and_once(tmp_path):
+    """v4.0.2 item 15: a TEMPLATE_DELETED path listed in `deletedAcknowledged`
+    reports ACKNOWLEDGED_KEPT instead -- for both template-class and
+    once-class entries, since the override applies after status is set for
+    either class. Two-sided: the same fixture WITHOUT the key still reports
+    TEMPLATE_DELETED (the control)."""
+    repo, proj = _mk_v3(
+        tmp_path,
+        template={"CLAUDE.md": "x"},
+        project={"CLAUDE.md": "x", "hooks/gone.sh": "old"},
+        entries={
+            "CLAUDE.md": _tpl_entry("x"),
+            "hooks/gone.sh": _tpl_entry("old"),
+            "notes/retired.md": {"ownership": "once"},
+        },
+    )
+    manifest_path = proj / ".claude" / "template-manifest.json"
+
+    # Control: without deletedAcknowledged, both entries are TEMPLATE_DELETED.
+    res = _status(proj)
+    assert res["files"]["hooks/gone.sh"]["status"] == "TEMPLATE_DELETED"
+    assert res["files"]["notes/retired.md"]["status"] == "TEMPLATE_DELETED"
+    assert res["summary"]["template_deleted"] == 2
+    assert res["summary"]["acknowledged_kept"] == 0
+    assert res["deleted_template_files"] == ["hooks/gone.sh", "notes/retired.md"]
+
+    m = json.loads(manifest_path.read_text(encoding="utf-8"))
+    m["deletedAcknowledged"] = ["hooks/gone.sh", "notes/retired.md"]
+    manifest_path.write_text(json.dumps(m), encoding="utf-8", newline="")
+
+    res = _status(proj)
+    assert res["files"]["hooks/gone.sh"]["status"] == "ACKNOWLEDGED_KEPT"
+    assert res["files"]["notes/retired.md"]["status"] == "ACKNOWLEDGED_KEPT"
+    assert res["summary"]["acknowledged_kept"] == 2
+    assert res["summary"]["template_deleted"] == 0
+    assert res["deleted_template_files"] == []
 
 
 def test_compute_status_v3_encoding_drift_and_gate(tmp_path):

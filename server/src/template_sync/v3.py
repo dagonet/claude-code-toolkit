@@ -55,6 +55,7 @@ CAPABILITIES = (
     "missing_declared_keys",
     "optional_absent_detail",
     "template_verify",
+    "deleted_acknowledged",
 )
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
@@ -175,12 +176,26 @@ def load_ownership(template_repo: str) -> OwnershipRules | None:
 
 HASH_RE = re.compile(r"^(?:sha256:)?([0-9a-f]{64})$")
 
+# `deletedAcknowledged`: repo-relative paths (sorted, deduplicated, `/`-
+# separated) the project has decided to KEEP although the template no longer
+# ships them (SKILL.md step 6). compute_status_v3 reports such a path
+# ACKNOWLEDGED_KEPT instead of TEMPLATE_DELETED, and the entry stays in
+# `files` -- if the template ever ships the file again, tracking resumes as
+# TEMPLATE_UPDATED/LOCAL_EDITED like any other template-class entry.
+# Keys starting "x-" are consumer-owned: never known, never dropped, never
+# reported beyond unknown_keys.
 KNOWN_TOP_LEVEL_V3 = {
     "manifest_version", "template_version", "template_commit", "lastSynced",
     "variant", "templateRepo", "placeholders", "requires_server", "files",
+    "deletedAcknowledged",
     # v2 keys that migration removes; listed so they are never reported as unknown
     "version",
 }
+
+
+def acknowledged_paths(manifest: dict) -> set[str]:
+    return {core._normalize_path(p) for p in manifest.get("deletedAcknowledged", [])
+            if isinstance(p, str) and p}
 
 
 def is_v3(manifest: dict) -> bool:
@@ -920,7 +935,9 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
     summary = {
         "identical": 0, "template_updated": 0, "local_edited": 0,
         "template_deleted": 0, "present": 0, "missing": 0,
+        "acknowledged_kept": 0,
     }
+    acknowledged = acknowledged_paths(manifest)
 
     for proj_rel, entry in manifest.get("files", {}).items():
         proj_rel = core._normalize_path(proj_rel)
@@ -972,6 +989,9 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
             info["template_changed"] = (
                 tpl_replaced is not None and core._sha256(tpl_replaced) != parse_hash(entry.get("hash", ""))
             )
+
+        if status == "TEMPLATE_DELETED" and proj_rel in acknowledged:
+            status = "ACKNOWLEDGED_KEPT"
 
         info["status"] = status
         summary[status.lower()] += 1
@@ -1164,7 +1184,7 @@ def derive_template_version(repo: str, commit: str, tracked_paths: list[str]) ->
 
 
 def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
-                applied: list, new: list, deleted: list) -> dict:
+                applied: list, new: list, deleted: list, acknowledged: list) -> dict:
     invalid: list[str] = []
     for item in applied:
         fp = item.get("file_path", "")
@@ -1227,11 +1247,25 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         added += 1
 
     explicit = {core._normalize_path(p) for p in deleted if isinstance(p, str) and p}
+
+    ack_new = {core._normalize_path(p) for p in acknowledged if isinstance(p, str) and p}
+    if ack_new:
+        status_now = compute_status_v3(pp, manifest, rules)["files"]
+        for p in sorted(ack_new):
+            if p not in status_now or status_now[p]["status"] not in ("TEMPLATE_DELETED", "ACKNOWLEDGED_KEPT"):
+                return {"error": f"acknowledged_deleted: {p} is not a TEMPLATE_DELETED/ACKNOWLEDGED_KEPT "
+                                  "path — manifest NOT written"}
+            if p in explicit:
+                return {"error": f"{p} is in both deleted_files and acknowledged_deleted — manifest NOT written"}
+    merged = sorted(acknowledged_paths(manifest) | ack_new)
+
     dropped = []
     for fp in list(files):
         if fp in explicit:
             del files[fp]
             dropped.append(fp)
+            continue
+        if fp in merged:
             continue
         if core._template_file_path(manifest, rules.template_path_for(fp)).is_file():
             continue
@@ -1254,6 +1288,8 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     out["requires_server"], raised, floor_warning = raise_floor(manifest.get("requires_server"))
     if floor_warning:
         warnings.append(floor_warning)
+    if merged:
+        out["deletedAcknowledged"] = merged
     out["files"] = dict(sorted(files.items()))
     superseded_dropped = drop_superseded(out)
     unknown = unknown_top_level_keys(out)
@@ -1273,6 +1309,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         "superseded_keys_dropped": superseded_dropped,
         "unknown_keys": unknown,
         "unknown_file_keys": sorted(unknown_files, key=lambda d: d["path"]),
+        "acknowledged_deleted": merged,
         **({"requires_server_raised": raised} if raised else {}),
         "consumed_entries": len(consumed),
         "consumed": consumed,
