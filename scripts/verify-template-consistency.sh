@@ -1618,11 +1618,25 @@ done
 #     registered at USER level, so it stays reachable in every project — and
 #     under "defaultMode": "auto" an MCP git_push to main runs with no hook on
 #     it. The deny list is what keeps the gates from being bypassable.
-#     Denying a tool the server does not expose is a harmless no-op.
+#
+#     CORRECTED (v4.0.1, Task 8 fix rounds 2-3, ruling R23/R25): this
+#     check's own comment used to read "denying a tool the server does not
+#     expose is a harmless no-op." Measured false: check 50 (item 23)
+#     established that a stale deny FAILS OPEN, not closed -- a denied
+#     name the server doesn't export protects nothing, and an upstream
+#     rename of a REAL denied tool would silently reopen it while this
+#     check stayed green regardless, since it only checks the deny list's
+#     own TEXT, never the server's actual tool set. `git_merge` and
+#     `git_push_tags` were exactly this: denied names that never existed
+#     in mcp-dev-servers (git_push already covers tag pushes via its own
+#     `tags: bool` parameter). Removed from the deny list (check 50 is now
+#     the check that verifies the remaining 5 against the real server);
+#     this check's job stays narrower and unchanged -- the 5 names that
+#     ARE real stay denied in every variant.
 # ---------------------------------------------------------------------------
 echo
-GIT_MCP_DENY="git_push git_commit git_revert git_merge git_rebase git_reset git_push_tags"
-GIT_MCP_DENY_N=7
+GIT_MCP_DENY="git_push git_commit git_revert git_rebase git_reset"
+GIT_MCP_DENY_N=5
 for v in $VARIANTS; do
   s="templates/$v/.claude/settings.json"
   missing=""
@@ -3759,6 +3773,23 @@ C50_LIB="${MCP_TOOLS_LIB:-scripts/lib/list-mcp-tools.py}"
 C50_FAMILY="git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools"
 C50_REGISTRATION="${MCP_TOOLS_REGISTRATION:-$HOME/.claude.json}"
 
+# Fix round 2, R23(a): a deny entry naming no tool in its alias's static
+# census FAILS OPEN if left unverified -- a rename upstream (e.g.
+# `git_push` -> `git_push_ref`) makes a deliberately-blocked destructive
+# tool silently reachable again in every variant while check 50 stayed
+# green under fix round 1's report-only treatment. A deny-absent name is
+# now `ko`, exactly like a grant-absent name, UNLESS it is listed here as
+# a deliberately forward-looking deny for a name that does not exist yet.
+# Deliberately forward-looking denies for names that do not exist yet --
+# none. (Fix round 2 found `git_merge` and `git_push_tags` absent from
+# git_mcp.py's static census in git-tools' deny list; ruling R25 (fix
+# round 3) confirmed both STALE, not forward-looking, and removed them
+# from the deny list in templates/*/.claude/settings.json (x6) and
+# user-level-reference/settings.json instead of listing them here --
+# listing a stale name would misuse this exception to silence a real
+# finding rather than fix it. See the report for the resolution.)
+C50_SPECULATIVE_DENY=()
+
 # c50_decide <json> <csv-tokens> -- prints 8 lines: status(ko|skip|ok),
 # module, comma-missing, comma-disagreement, skip_reason, static_n,
 # imported_n(-1 if null), comma-static-names. Single source of the
@@ -3799,6 +3830,22 @@ print(len(static))
 print(len(imported) if imported is not None else -1)
 print(",".join(sorted(static)))
 C50_DECIDE_PY
+}
+
+# c50_deny_check <comma-static-names> <comma-deny-names> -- prints the
+# comma-joined subset of deny-names that are absent from static-names AND
+# not in C50_SPECULATIVE_DENY (fix round 2, R23(a)). Single source of the
+# deny-verification logic, shared by the real check below and the 50c
+# deny-rename control, so both exercise the SAME decision.
+c50_deny_check() {
+  python - "$1" "$2" "$(printf '%s\n' "${C50_SPECULATIVE_DENY[@]:-}" | tr '\n' ',')" <<'C50_DENY_PY' | tr -d '\r'
+import sys
+static = set(s for s in sys.argv[1].split(",") if s)
+deny = [s for s in sys.argv[2].split(",") if s]
+speculative = set(s for s in sys.argv[3].split(",") if s)
+ko = sorted(d for d in deny if d not in static and d not in speculative)
+print(",".join(ko))
+C50_DENY_PY
 }
 
 # c50_parse_settings <settings.json path>... -- prints one "KIND<TAB>token"
@@ -3867,18 +3914,23 @@ else
   # Token sources: agent `tools:` lines, AND
   # templates/*/.claude/settings.json + user-level-reference/settings.json
   # (fix round 1, F1). settings.json is parsed by KEY, not by a blind
-  # regex over the file, because the two arrays it can name a token in do
-  # not fail the same way: an ALLOW entry or a hook `matcher` naming a
-  # nonexistent tool is a dead grant / a disarmed gate -- ko-eligible,
-  # exactly like a `tools:` line. A DENY entry naming a nonexistent tool
-  # denies nothing TODAY but can be a deliberate standing block against a
-  # name mcp-dev-servers might add later; it is reported, never ko'd,
-  # UNLESS that same name also grants somewhere (tools:/allow/matcher), in
-  # which case the grant side already covers it. (Fix round 1 review:
-  # rewriting templates/*/settings.json content is out of this task's
-  # scope -- that tree is read-only here.) Either array's tool-name class
-  # ([a-z0-9_]+, no `*`) already excludes a wildcard grant
-  # (`mcp__<alias>__*`) on its own -- nothing to go stale about a name
+  # regex over the file, because ALLOW/MATCHER and DENY name different
+  # KINDS of tokens even though both are now ko-eligible: an ALLOW entry
+  # or a hook `matcher` naming a nonexistent tool is a dead grant / a
+  # disarmed gate (fails CLOSED -- someone notices a denied operation).
+  # A DENY entry naming a nonexistent tool denies nothing TODAY, and FAILS
+  # OPEN if left unverified: a rename upstream makes a deliberately
+  # blocked tool silently reachable again while this check stays green
+  # (fix round 2, R23(a) -- measured on git-tools' own deny list, see
+  # C50_SPECULATIVE_DENY above and the report). A deny-absent name is
+  # therefore `ko`, exactly like a grant-absent name, unless listed in
+  # C50_SPECULATIVE_DENY as a deliberate forward-looking entry. (Fix round
+  # 1 review, still true in round 2: rewriting templates/*/settings.json
+  # content is out of this task's scope -- that tree is read-only here, so
+  # a stale deny is reported as a defect for its owner, not silently
+  # fixed.) Either array's tool-name class ([a-z0-9_]+, no `*`) already
+  # excludes a wildcard grant (`mcp__<alias>__*`) on its own -- nothing to
+  # go stale about a name
   # that isn't there.
   c50_agent_tokens=$(grep -h '^tools:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null \
     | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+')
@@ -3910,42 +3962,42 @@ else
 
     [ -n "$c50_skip_reason" ] && c50_skipped=$((c50_skipped + 1))
 
-    case "$c50_status" in
-      ko)
-        c50_reason=""
-        [ -n "$c50_missing" ] && c50_reason="allowlisted tool(s) absent from $c50_alias's static census: $c50_missing"
-        if [ -n "$c50_disagree" ]; then
-          [ -n "$c50_reason" ] && c50_reason="$c50_reason; "
-          c50_reason="${c50_reason}static and import censuses disagree: $c50_disagree"
-        fi
-        ko "check 50: $c50_alias ($c50_module): $c50_reason"
-        ;;
-      skip)
-        ok "check 50: $c50_alias: import census skipped ($c50_skip_reason); static census only ($c50_static_n tools)"
-        ;;
-      ok)
-        ok "check 50: $c50_alias ($c50_module): static and import censuses agree ($c50_static_n tools)"
-        ;;
-      *)
-        ko "check 50: $c50_alias: c50_decide returned no status (census output unparseable): $c50_json"
-        ;;
-    esac
+    # Deny-side verification (fix round 2, R23(a)): a deny entry naming no
+    # tool in this alias's static census FAILS OPEN if left unverified --
+    # ko, exactly like a grant-absent name, unless C50_SPECULATIVE_DENY
+    # names it as deliberately forward-looking. Computed via the SAME
+    # c50_deny_check function the 50c deny-rename control below uses.
+    c50_deny_alias_csv=$(printf '%s\n' "$c50_settings_deny_tokens" | awk -F'__' -v a="$c50_alias" '$2==a {print $3}' | sed '/^$/d' | tr '\n' ',')
+    c50_deny_ko=""
+    [ -n "$c50_deny_alias_csv" ] && c50_deny_ko=$(c50_deny_check "$c50_static_csv" "$c50_deny_alias_csv")
 
-    # Deny-only names for this alias (see the token-source comment above):
-    # informational when absent from the static census, silent when
-    # present (a deny naming a real tool is unremarkable).
-    c50_deny_alias_csv=$(printf '%s\n' "$c50_settings_deny_tokens" | awk -F'__' -v a="$c50_alias" '$2==a {print $3}' | sed '/^$/d' | sort -u)
-    if [ -n "$c50_deny_alias_csv" ]; then
-      c50_deny_absent=$(printf '%s\n' "$c50_deny_alias_csv" | while IFS= read -r c50_t; do
-        [ -n "$c50_t" ] || continue
-        case ",$c50_static_csv," in
-          *",$c50_t,"*) ;;
-          *) printf '%s\n' "$c50_t" ;;
-        esac
-      done | tr '\n' ',' | sed 's/,$//')
-      if [ -n "$c50_deny_absent" ]; then
-        ok "check 50: $c50_alias: deny-only entries naming no current tool ($c50_deny_absent) -- deny nothing today, not a dead grant"
+    c50_reason=""
+    if [ "$c50_status" = "ko" ]; then
+      [ -n "$c50_missing" ] && c50_reason="allowlisted tool(s) absent from $c50_alias's static census: $c50_missing"
+      if [ -n "$c50_disagree" ]; then
+        [ -n "$c50_reason" ] && c50_reason="$c50_reason; "
+        c50_reason="${c50_reason}static and import censuses disagree: $c50_disagree"
       fi
+    fi
+    if [ -n "$c50_deny_ko" ]; then
+      [ -n "$c50_reason" ] && c50_reason="$c50_reason; "
+      c50_reason="${c50_reason}deny entries naming no tool in $c50_alias's static census: $c50_deny_ko -- a stale deny FAILS OPEN (the block silently stops applying if upstream renames the target); fix the deny list in templates/*/.claude/settings.json + user-level-reference/settings.json, or add a deliberate forward-looking name to C50_SPECULATIVE_DENY"
+    fi
+
+    if [ -n "$c50_reason" ]; then
+      ko "check 50: $c50_alias${c50_module:+ ($c50_module)}: $c50_reason"
+    else
+      case "$c50_status" in
+        skip)
+          ok "check 50: $c50_alias: import census skipped ($c50_skip_reason); static census only ($c50_static_n tools)"
+          ;;
+        ok)
+          ok "check 50: $c50_alias ($c50_module): static and import censuses agree ($c50_static_n tools)"
+          ;;
+        *)
+          ko "check 50: $c50_alias: c50_decide returned no status (census output unparseable): $c50_json"
+          ;;
+      esac
     fi
   done
   ok "check 50: $c50_skipped of $c50_total import censuses skipped"
@@ -3962,16 +4014,16 @@ else
     ok "check 50: not censused: $c50_alias ($c50_n tokens)"
   done
 
-  # 50c control (v4.0.1 review): a scratch copy of one server module with
-  # ONE tool function renamed, run through the SAME static scanner and the
-  # SAME c50_decide comparison the real check above uses -- never a
-  # separately-written grep. Registration is a scratch fixture with the
-  # alias deliberately absent, so this control never touches the real
-  # ~/.claude.json and never needs a real venv.
-  note "Check 50c: control -- a renamed tool function is flagged"
+  # 50c control (v4.0.1 review; arm B added fix round 2): a scratch copy
+  # of one server module with ONE tool function renamed, run through the
+  # SAME static scanner and the SAME comparison the real check above uses
+  # -- never a separately-written grep. Registration is a scratch fixture
+  # with the alias deliberately absent, so this control never touches the
+  # real ~/.claude.json and never needs a real venv.
+  note "Check 50c (arm A): control -- a renamed ALLOW-side tool function is flagged"
   c50c_src="$c50_source_dir/src/mcp_dev_servers/github_mcp.py"
   if [ ! -f "$c50c_src" ]; then
-    ko "check 50c: control -- github_mcp.py not found under $c50_source_dir/src/mcp_dev_servers; cannot exercise the control"
+    ko "check 50c (arm A): control -- github_mcp.py not found under $c50_source_dir/src/mcp_dev_servers; cannot exercise the control"
   else
     C50C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c50c)
     mkdir -p "$C50C_TMP/src/mcp_dev_servers"
@@ -3984,9 +4036,37 @@ else
     c50c_missing=$(printf '%s\n' "$c50c_out" | sed -n '3p')
     rm -rf "$C50C_TMP"
     if [ "$c50c_status" = "ko" ] && [ "$c50c_missing" = "gh_repo_from_origin" ]; then
-      ok "check 50c: control -- renaming gh_repo_from_origin in a scratch copy of github_mcp.py is flagged: $c50c_missing"
+      ok "check 50c (arm A): control -- renaming gh_repo_from_origin in a scratch copy of github_mcp.py is flagged: $c50c_missing"
     else
-      ko "check 50c: control -- renamed gh_repo_from_origin NOT flagged (status=$c50c_status, missing=$c50c_missing): check 50 is vacuous"
+      ko "check 50c (arm A): control -- renamed gh_repo_from_origin NOT flagged (status=$c50c_status, missing=$c50c_missing): check 50 is vacuous"
+    fi
+  fi
+
+  # 50c arm B (fix round 2, R23(a)): rename one of git-tools' seven real
+  # DENY targets (git_push -- a genuine tool, genuinely denied) in a
+  # scratch copy of git_mcp.py, and assert c50_deny_check flags it --
+  # proves the deny-side ko path is real, not just the grant-side path
+  # arm A already covered. Same shared c50_deny_check function the real
+  # loop above uses; git-tools is unregistered in this scratch fixture
+  # too (empty mcpServers), consistent with the real (unregistered) run.
+  note "Check 50c (arm B): control -- a renamed DENY-target tool function is flagged"
+  c50c2_src="$c50_source_dir/src/mcp_dev_servers/git_mcp.py"
+  if [ ! -f "$c50c2_src" ]; then
+    ko "check 50c (arm B): control -- git_mcp.py not found under $c50_source_dir/src/mcp_dev_servers; cannot exercise the control"
+  else
+    C50C2_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c50c2)
+    mkdir -p "$C50C2_TMP/src/mcp_dev_servers"
+    sed 's/\bgit_push\b/git_push_renamed/g' "$c50c2_src" > "$C50C2_TMP/src/mcp_dev_servers/git_mcp.py"
+    printf '{"mcpServers":{}}' > "$C50C2_TMP/registration.json"
+    c50c2_json=$(python "$C50_LIB" --source-dir "$C50C2_TMP" --registration "$C50C2_TMP/registration.json" --alias git-tools 2>&1)
+    c50c2_json=$(printf '%s' "$c50c2_json" | tr -d '\r')
+    c50c2_static_csv=$(printf '%s\n' "$c50c2_json" | python -c 'import json,sys; print(",".join(sorted(json.loads(sys.stdin.read()).get("static") or [])))' 2>/dev/null | tr -d '\r')
+    c50c2_deny_ko=$(c50_deny_check "$c50c2_static_csv" "git_push")
+    rm -rf "$C50C2_TMP"
+    if [ "$c50c2_deny_ko" = "git_push" ]; then
+      ok "check 50c (arm B): control -- renaming git_push in a scratch copy of git_mcp.py is flagged: $c50c2_deny_ko"
+    else
+      ko "check 50c (arm B): control -- renamed git_push (a genuine deny target) NOT flagged (deny_ko=$c50c2_deny_ko): the deny-side ko path is vacuous"
     fi
   fi
 
