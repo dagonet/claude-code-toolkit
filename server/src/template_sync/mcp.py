@@ -1010,9 +1010,10 @@ async def template_compute_status(
 
         For a v3 manifest the statuses are IDENTICAL / TEMPLATE_UPDATED /
         LOCAL_EDITED / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (template class)
-        and PRESENT / MISSING / ACKNOWLEDGED_KEPT (once class) --
-        ACKNOWLEDGED_KEPT replaces TEMPLATE_DELETED for a path listed in the
-        manifest's `deletedAcknowledged`; the result also carries `orphans`,
+        and PRESENT / MISSING / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (once
+        class) -- for both classes ACKNOWLEDGED_KEPT replaces TEMPLATE_DELETED
+        (never PRESENT or MISSING) for a path listed in the manifest's
+        `deletedAcknowledged`; the result also carries `orphans`,
         `unclassified_template_files`, `local_diff` per LOCAL_EDITED file,
         `key_audit` per audited once file, `encoding_drift` per file (BOM/EOL
         only differences, informational), and `gate_self_reference` /

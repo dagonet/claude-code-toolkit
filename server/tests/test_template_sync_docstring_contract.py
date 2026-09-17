@@ -90,6 +90,24 @@ def test_new_seed_assertion_rejects_the_old_seed_the_weak_one_could_not():
     assert "delivered to nobody" in old_seed
 
 
+def test_compute_status_docstring_names_template_deleted_as_the_once_class_route_to_acknowledged_kept():
+    """Task 1 review F1: the PUBLISHED docstring of template_compute_status
+    (the surface an MCP caller reads, not an internal v3.py comment) listed
+    the once-class statuses as PRESENT / MISSING / ACKNOWLEDGED_KEPT --
+    but a once-class entry only ever reaches ACKNOWLEDGED_KEPT via
+    TEMPLATE_DELETED (template stopped shipping the file AND it is off
+    disk); PRESENT and MISSING never become it. TEMPLATE_DELETED belongs in
+    the once-class list too, and the route must be named.
+    """
+    doc = _doc(ts.template_compute_status)
+    assert doc, "the tool must have a docstring -- it is the caller's contract"
+    assert "PRESENT / MISSING / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (once" in doc
+    assert "ACKNOWLEDGED_KEPT replaces TEMPLATE_DELETED" in doc
+    # Two-sided: the template-class list is untouched by this fix.
+    assert "IDENTICAL / TEMPLATE_UPDATED" in doc
+    assert "LOCAL_EDITED / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (template class)" in doc
+
+
 def test_seed_body_pinned_inside_the_template_seed_file():
     """v4.0.1 item 14 has TWO seed prose sources: `v3.PROJECT_MD_SEED_BODY`
     (what a MIGRATED consumer gets, via build_project_md) and
