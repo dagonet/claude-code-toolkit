@@ -1,2 +1,2 @@
-4.0.1
-Consumer-rollout fixes: sync-path defects (region_bytes, dotfile diff, trailing newline, MSYS paths) fixed at the source, superseded manifest keys dropped, gate artifacts moved into the common git dir, a new read-only template_verify consistency check, and CLAUDE.local.md retired.
+4.0.2
+Rollout follow-ups: deletedAcknowledged implemented (ACKNOWLEDGED_KEPT, finalize acknowledged_deleted), identity/registry/capabilities pinned at one import with registered_tools, three new template_verify INFO lines and sharper remedies, require-skills-block payload-shape guard, post-edit-build lowercase, gate self-check rows attribute artifacts by name, skill contract corrections (finalize commit/version, 2b assert-ran, branch choice, hook keep-mine = rename), project.md seed and LOG_PATH default.
