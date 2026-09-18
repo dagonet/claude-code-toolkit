@@ -3385,8 +3385,8 @@ check "SHAPE: prompt without subagent_type is general-purpose, unbound" "$H" 0 \
 check "SHAPE: SendMessage payload is not the hook's tool, untouched" "$H" 0 "$(mksend 'hi')"
 check_msg "SHAPE: params-nested refusal names tool_input.prompt" "$ROOT/$H" 2 \
   "$(mkspawn_params coder 'Do the thing.')" "tool_input.prompt"
-check_msg "SHAPE: params-nested refusal lists top-level keys" "$ROOT/$H" 2 \
-  "$(mkspawn_params coder 'Do the thing.')" "Top-level keys:"
+check_msg "SHAPE: params-nested refusal lists keys present (any depth)" "$ROOT/$H" 2 \
+  "$(mkspawn_params coder 'Do the thing.')" "Keys present (any depth):"
 
 # ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an

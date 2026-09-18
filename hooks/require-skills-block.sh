@@ -119,7 +119,7 @@ esac
 # SUBAGENT_TYPE the way the dead top-level fallback used to.
 PROMPT=$(json_get "$HOOK_PAYLOAD" tool_input.prompt)
 if [ -z "$PROMPT" ]; then
-  echo "BLOCKED: Agent payload carries no tool_input.prompt -- the shape this hook reads is not what arrived; refusing (fail closed). Top-level keys: $(printf '%s' "$HOOK_PAYLOAD" | grep -oE '"[a-zA-Z_]+":' | tr -d '":' | tr '\n' ' ')" >&2
+  echo "BLOCKED: Agent payload carries no tool_input.prompt -- the shape this hook reads is not what arrived; refusing (fail closed). Keys present (any depth): $(printf '%s' "$HOOK_PAYLOAD" | grep -oE '"[a-zA-Z_]+":' | tr -d '":' | tr '\n' ' ')" >&2
   exit 2
 fi
 SUBAGENT_TYPE=$(json_get "$HOOK_PAYLOAD" tool_input.subagent_type)
