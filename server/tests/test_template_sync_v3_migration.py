@@ -175,6 +175,8 @@ def test_migration_region_and_hunks(tmp_path):
     # nobody" one), so that pair alone cannot distinguish old from new.
     # Compare directly against the real constant instead.
     assert v3.PROJECT_MD_SEED_BODY in md               # the v4.0.1 seed body
+    # v4.0.2 item 12: the next-session-pickup sentence is part of the seed.
+    assert "picked up at the NEXT session start" in md
     assert "delivered to nobody" not in md
     assert "Project-specific instructions" not in md      # never diffed against the current template
     diff_path = backup / "CLAUDE.md.out-of-region.diff"
@@ -291,6 +293,7 @@ def test_migration_vacuity_control(tmp_path):
     assert "```diff" not in md
     assert SEED not in md                       # the toolkit's seed is not the consumer's content
     assert v3.PROJECT_MD_SEED_BODY in md        # the v4.0.1 seed body, always present -- F1, see above
+    assert "picked up at the NEXT session start" in md   # v4.0.2 item 12
     assert "delivered to nobody" not in md
     assert not (tmp_path / "b" / "CLAUDE.md.out-of-region.diff").exists()   # no hunks, nothing to record
     assert res["project_md_record"] is None

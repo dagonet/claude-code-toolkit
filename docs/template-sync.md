@@ -252,7 +252,7 @@ A read-only, synchronous tool: `template_verify(project_path, template_repo="", 
 
 **Only conditions that CAN fail are FAIL lines.** `placeholder_key_divergence` and `orphans` are deliberately absent from `template_verify` — they live in `template_compute_status` as informational fields: `placeholder_key_divergence` is non-empty on every mature consumer and never actionable on its own, and `orphans` are by definition project-owned files the template has no claim on, so listing them as a defect invites deleting something the template never shipped.
 
-**The 21 lines, in order:**
+**The 24 lines, in order:**
 
 | id | kind | fails when |
 |---|---|---|
@@ -266,7 +266,7 @@ A read-only, synchronous tool: `template_verify(project_path, template_repo="", 
 | `unknown_keys_empty` | FAIL | the manifest carries a top-level key this server does not recognise — remedy: remove or rename the key (a key starting `x-` is consumer-owned and is never promoted; every other unknown key is preserved but read by nothing). `deletedAcknowledged` is a KNOWN key since v4.0.2 and never fails this line |
 | `superseded_absent` | FAIL | any of `lastSynced` / `lastSyncedVersion` / `lastSyncedVersionOf` is still present (`v3.SUPERSEDED_KEYS`) |
 | `server_skew` | FAIL / INFO / SKIP | FAIL when the running server is installed from this template repo (`server_in_template_repo`) AND `server/` differs from the imported commit — either a committed diff (`git diff --quiet <server_commit> HEAD -- server/`) or an uncommitted change (`git status --porcelain -- server/`); a dirty working tree alone is exactly the state a toolkit checkout is in during a release, so the two-commit diff alone is not enough. INFO when `server/` is clean but `server_commit != HEAD` (docs-only or template-only commits since). SKIP when the running server was not installed from this template repo at all |
-| `status_clean` | FAIL | any tracked file is `TEMPLATE_UPDATED`, `LOCAL_EDITED` or `MISSING`, or (defensively) `CONFLICT` |
+| `status_clean` | FAIL | any tracked file is `TEMPLATE_UPDATED`, `LOCAL_EDITED` or `MISSING`, or (defensively) `CONFLICT`. v4.0.2: a `LOCAL_EDITED` path with an EMPTY `local_diff` is a STALE STORED HASH, not a real local edit (`finalize_sync(new_files=...)` only adds entries; only `applied_files` refreshes a tracked path's hash) — named separately in `measured`, with its own remedy pointing at `template_finalize_sync(applied_files=[...])` |
 | `gate_self_reference_empty` | FAIL | a `**Gate**:`/`**Test**:` value points at a template-class path |
 | `unclassified_empty` | FAIL | a scanned template file matches no `ownership.json` rule |
 | `new_template_files_empty` | FAIL | a template/once-class file the template ships is not yet a manifest entry — remedy names the project → template path mapping (via `template_path_for`) so the register-or-apply call is copy-pasteable |
@@ -275,8 +275,11 @@ A read-only, synchronous tool: `template_verify(project_path, template_repo="", 
 | `manifest_bytes` | FAIL | the manifest file's raw bytes carry a BOM, a CRLF, or do not end with exactly one LF |
 | `declared_keys` | FAIL | any audited once-file's `key_audit.missing_declared_keys` (Task 5) is non-empty |
 | `encoding_drift` | INFO | never — lists per-file BOM/CRLF drift between the project copy and the current template |
-| `project_md_seed_current` | INFO | never — reports whether `.claude/rules/project.md` still carries the pre-v4.0.1 seed's false "delivered to nobody" sentence, with the CHANGELOG's downstream-migration remedy when it does |
-| `tree_clean` | FAIL (`post_commit`) / SKIP (`pre_commit`) | `mode="post_commit"`: `git status --porcelain` in the project is non-empty. `mode="pre_commit"`: always SKIPs, with a reason — the sync writes files before committing them by design (SKILL.md step 8 runs before the commit) |
+| `project_md_seed_current` | INFO | never — reports whether `.claude/rules/project.md` still carries the pre-v4.0.1 seed's false "delivered to nobody" sentence (v4.0.1), predates the v4.0.2 "picked up at the NEXT session start" sentence with neither the false sentence nor `paths:` frontmatter, is current, or is `paths:`-scoped (the seed sentences are about being unscoped, so a scoped file is exempt from this line by its own edit — see `project_md_scoped_consistent`) |
+| `legacy_gate_dir` (v4.0.2) | INFO | never — absent: "no legacy `.gate/` directory". Present: names which of the three known artifact files (`last-pass.json`, `last-precommit.json`, `last-precommit-noop.json`) are still there (remedy: delete those by name — the gate now writes under `<common git dir>/gate/`) and the COUNT of other entries, which are never gate artifacts and are never named (a `**Log location**` may legitimately point here) |
+| `once_notes_changed` (v4.0.2) | INFO | never — one once-class file's guidance comments (never a `**Key**:` line) changed on the template side since the synced commit, per file with a hunk count, `"; "`-joined into a single line when more than one file qualifies (`_finalize` requires exactly one result row per id); none → "no once-class file has changed template notes" |
+| `project_md_scoped_consistent` (v4.0.2) | INFO | never — unscoped or absent: "n/a". Scoped and still carrying either unscoped seed sentence verbatim ("This file has no `paths:` key…" / "…loads it at EVERY session start"): the self-contradiction, remedy "delete the unscoped seed sentences". Scoped and clean: "scoped, no unscoped sentence" |
+| `tree_clean` | FAIL (`post_commit`) / SKIP (`pre_commit`) | `mode="post_commit"`: `git status --porcelain` in the project is non-empty (remedy also names the unrelated-in-flight-work escape hatch: commit or stash those paths separately first). `mode="pre_commit"`: always SKIPs, with a reason — the sync writes files before committing them by design (SKILL.md step 8 runs before the commit) |
 
 **Modes.** `mode="pre_commit"` is for SKILL.md step 8 (the report, before the commit): an uncommitted, dirty tree is expected there, so `tree_clean` SKIPs rather than FAILing. `mode="post_commit"` (the default) is for step 9b (right after the commit) and for the fleet script: an uncommitted tree at that point is a real defect.
 

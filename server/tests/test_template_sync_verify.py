@@ -34,7 +34,33 @@ OWNERSHIP = {
 
 CLAUDE_CONTENT = "# T\nrule one\n"
 HOOK_CONTENT = "echo g\n"
-PROJECT_MD_CONTENT = "# Project instructions\n\nCurrent seed, no stale sentence here.\n"
+
+# V401_SEED: the pre-v4.0.2 `PROJECT_MD_SEED_BODY` text, captured verbatim
+# HERE (not read off the constant) so the "predates v4.0.2" arm of
+# test_project_md_lines actually exercises the old shape rather than
+# silently tracking whatever the constant says today.
+V401_SEED = (
+    "This file has no `paths:` key, so Claude Code loads it at EVERY session start,\n"
+    "at the same priority as CLAUDE.md. Anything you write here is always on.\n"
+    "\n"
+    "To scope it to files instead, add a frontmatter block at the very top:\n"
+    "\n"
+    "    ---\n"
+    "    paths:\n"
+    "      - \"src/**/*.py\"\n"
+    "      - \"pyproject.toml\"\n"
+    "    ---\n"
+    "\n"
+    "Always-on project rules belong in CLAUDE.md's PROJECT-CUSTOM region, not here;\n"
+    "a rule in both places exists twice and drifts."
+)
+# V402_SEED: read from the constant (v4.0.2, item 12) so it can never drift
+# from what verify.py's project_md_seed_current actually checks against.
+V402_SEED = v3.PROJECT_MD_SEED_BODY
+
+# The v4.0.2 seed (so the good fixture stays INFO-clean: the "current" arm,
+# never "predates").
+PROJECT_MD_CONTENT = "# Project instructions\n\n" + V402_SEED + "\n"
 CONTEXT_CONTENT = "- **Protected branches**: main\n- **Gate**: bash scripts/gate.sh\n"
 
 
@@ -165,7 +191,12 @@ def test_pass_fixture_is_all_green(tmp_path):
     # server_skew SKIPs: this fixture's "toolkit" repo is not the tree the
     # running server process was imported from.
     assert skip_ids == {"server_skew"}
-    assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current"}
+    # v4.0.2 extends this to six: the three new INFO lines (legacy_gate_dir,
+    # once_notes_changed, project_md_scoped_consistent) all emit their null
+    # case on this healthy fixture -- none may SKIP here (a SKIP would be a
+    # defect in the line, not grounds to widen this set).
+    assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
+                        "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
 
     n_pass = len(verify.LINES) - len(skip_ids) - len(info_ids) - len(fail_ids)
     assert res["summary"] == f"{n_pass} PASS, 0 FAIL, {len(skip_ids)} SKIP, {len(info_ids)} INFO"
@@ -460,6 +491,107 @@ def test_info_lines_nonempty_on_crlf_bom_and_stale_seed(tmp_path):
     assert by_id["encoding_drift"]["measured"] != "no encoding drift (bom/crlf) on any tracked file"
     assert by_id["project_md_seed_current"]["status"] == "INFO"
     assert "delivered to nobody" in by_id["project_md_seed_current"]["measured"]
+
+
+# --- v4.0.2 new INFO lines and remedies --------------------------------------
+
+
+def test_legacy_gate_dir_names_artifacts_and_counts_the_rest(tmp_path):
+    repo, proj, _ = _good_fixture(tmp_path)
+    g = proj / ".gate"; g.mkdir()
+    (g / "last-pass.json").write_text("{}")
+    (g / "run-2026-09-01.log").write_text("x"); (g / "run-2026-09-02.log").write_text("y")
+    _recommit(proj)
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["legacy_gate_dir"]
+    assert line["status"] == "INFO"
+    assert "last-pass.json" in line["measured"] and "2 other entr" in line["measured"]
+    assert "by name" in line["remedy"] and "leave them" in line["remedy"]
+
+
+def test_legacy_gate_dir_null_case(tmp_path):
+    repo, proj, _ = _good_fixture(tmp_path)
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["legacy_gate_dir"]
+    assert line["status"] == "INFO" and "no legacy" in line["measured"]
+
+
+def test_legacy_gate_dir_runs_on_the_manifest_less_path(tmp_path):
+    """Task 3 addendum item C / ruling R8: legacy_gate_dir reads only
+    pp/".gate" -- no manifest, no rules, no status needed -- so it belongs
+    in _SHAPE_INDEPENDENT alongside manifest_bytes/tree_clean and must
+    actually run (not cascade-SKIP) on a directory with no manifest at all,
+    the same place manifest_bytes/tree_clean already run."""
+    proj = tmp_path / "proj"
+    gate = proj / ".gate"
+    gate.mkdir(parents=True)
+    (gate / "last-pass.json").write_text("{}")
+
+    res = verify.run(str(proj), "", "post_commit")
+    assert len(res["lines"]) == len(verify.LINES)
+    # A missing manifest still FAILs exactly manifest_valid; ok stays False --
+    # legacy_gate_dir running here must not introduce any new FAIL.
+    assert _only_fail(res) == ["manifest_valid"]
+    assert res["ok"] is False
+    line = _by_id(res)["legacy_gate_dir"]
+    assert line["status"] == "INFO"
+    assert "last-pass.json" in line["measured"]
+
+
+def test_once_notes_changed_reports_hunk_count(tmp_path):
+    # PROJECT_CONTEXT.md is once-class with audit=keys in OWNERSHIP; change a
+    # template COMMENT line only (never a **Key**: line), so
+    # key_audit.template_notes_changed is non-empty without touching
+    # status_clean or classes_and_hashes (once-class status is presence-only,
+    # and only the TEMPLATE's own copy changes -- the project's is untouched).
+    repo, proj, commit = _good_fixture(tmp_path)
+    tpl_context = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
+    tpl_context.write_text(CONTEXT_CONTENT + "<!-- a new guidance comment -->\n",
+                           encoding="utf-8", newline="")
+    _recommit(repo, "template gains a guidance comment")
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["once_notes_changed"]
+    assert line["status"] == "INFO" and "PROJECT_CONTEXT.md" in line["measured"] and "hunks: 1" in line["measured"]
+
+
+def test_once_notes_changed_null_case(tmp_path):
+    repo, proj, commit = _good_fixture(tmp_path)
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["once_notes_changed"]
+    assert line["status"] == "INFO" and "no once-class file has changed template notes" in line["measured"]
+
+
+def test_status_clean_names_stale_hash_remedy(tmp_path):
+    repo, proj, _ = _good_fixture(tmp_path)
+    m = _read_manifest(proj); m["files"]["hooks/g.sh"]["hash"] = "sha256:" + "0" * 64
+    _write_manifest(proj, m); _recommit(proj)
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["status_clean"]
+    assert line["status"] == "FAIL" and "stale stored hash" in line["measured"]
+    assert "applied_files" in line["remedy"]
+
+
+def test_tree_clean_remedy_mentions_unrelated_work(tmp_path):
+    repo, proj, commit = _good_fixture(tmp_path)
+    (proj / "scratch.txt").write_text("x", encoding="utf-8", newline="")
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["tree_clean"]
+    assert "unrelated" in line["remedy"] and "separately" in line["remedy"]
+
+
+@pytest.mark.parametrize("body,seed,scoped", [
+    ("This file has been delivered to nobody.\n", "stale", "n/a"),
+    (V401_SEED, "predates", "n/a"),
+    (V402_SEED, "current", "n/a"),
+    ("---\npaths:\n  - \"src/**\"\n---\n# mine\n", "scoped", "clean"),
+    ("---\npaths:\n  - \"src/**\"\n---\n" + V402_SEED, "scoped", "contradiction"),
+])
+def test_project_md_lines(tmp_path, body, seed, scoped):
+    repo, proj, commit = _good_fixture(tmp_path)
+    (proj / ".claude" / "rules" / "project.md").write_text(body, encoding="utf-8", newline="")
+    _recommit(proj)
+    by_id = _by_id(verify.run(str(proj), str(repo), "post_commit"))
+
+    seed_map = {"stale": "pre-v4.0.1", "predates": "predates v4.0.2",
+               "current": "seed is current", "scoped": "scoped"}
+    scoped_map = {"n/a": "n/a", "clean": "no unscoped sentence", "contradiction": "still carries"}
+    assert seed_map[seed] in by_id["project_md_seed_current"]["measured"], by_id["project_md_seed_current"]
+    assert scoped_map[scoped] in by_id["project_md_scoped_consistent"]["measured"], \
+        by_id["project_md_scoped_consistent"]
 
 
 # --- template_behind_head sub-arms -------------------------------------------
