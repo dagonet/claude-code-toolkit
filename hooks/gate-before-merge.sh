@@ -695,6 +695,16 @@ case "$GC_TOOL" in
   *) exit 0 ;;          # unknown tool, or a payload with no command key at all
 esac
 
+# v4.0.3 item 12 -- widen GC_CMD to include the body of any script segment it
+# invokes (`bash|sh|source|. <path>`, depth 1), BEFORE the git-token
+# pre-filter just below AND the segment walk further down: both must see the
+# SAME text, or a script's `git merge`/`git push` would pass the pre-filter's
+# "no git token" fast exit before the walk that would have caught it ever
+# runs. See gc_script_body / gc_augmented_cmd in hooks/lib/git-cmd.sh for the
+# 16 KB cap and the depth-1/TOCTOU residuals. No-op for the mcp__* tools
+# (empty GC_CMD there).
+GC_CMD="$(gc_augmented_cmd "$CWD")"
+
 # v3.0.3 item 25 — EXIT BEFORE DOING ANY WORK ON A PAYLOAD THAT CANNOT BE GATED.
 #
 # The ~1.5 s this gate spends per call is WORK, not parse: measured, comments

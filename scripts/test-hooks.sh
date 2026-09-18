@@ -1740,6 +1740,49 @@ check_msg "(A6.13/PCT) -C control blocked by the TEST" "$ROOT/$PCT62" 2 "$(mkjso
 check_msg "(A6.13) -c BEFORE -C merge: the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash "git -c a=b -C $A6CLONE merge feature/y" "$A6CLONE")" "global option"
 check_msg "(A6.13) -C twice merge: the MERGE arm"      "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE -C $A6CLONE merge feature/y" "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
 
+# ===========================================================================
+# v4.0.3 item 12 -- `bash|sh|source|. <script>` bypassed every commit/merge/
+# push gate: the script's TEXT was never read, only the command line naming
+# it. gc_script_body (hooks/lib/git-cmd.sh) now reads the first 16 KB of the
+# named regular file, and gc_augmented_cmd appends it to GC_CMD BEFORE the
+# segment walk (and, in gate-before-merge.sh / no-push-main.sh, before their
+# git-token pre-filter too -- both must see the same text, or the pre-filter's
+# "no git token" fast exit fires before the walk that would have caught it
+# ever runs). Depth 1 only (a script invoking another script is a documented
+# residual) and capped at 16 KB (a script whose gated line sits past that
+# offset is not read) -- both pinned below, not merely described.
+# ===========================================================================
+PCT12=$(mkrepo pct12 main)
+printf '#!/usr/bin/env bash\nexit 1\n' > "$PCT12/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n' > "$PCT12/PROJECT_CONTEXT.md"
+printf 'git add x\ngit commit -m x\n' > "$PCT12/s.sh"
+printf 'echo hi\n' > "$PCT12/nogit.sh"
+printf '# git commit here\necho hi\n' > "$PCT12/comment.sh"
+printf 'bash inner.sh\n' > "$PCT12/outer.sh"
+printf 'git commit -m x\n' > "$PCT12/inner.sh"
+mkdir -p "$PCT12/somedir"
+# the gated line sits after byte 20000 -- well past the 16 KB (16384-byte) cap
+{ nchars 20000 '#'; printf '\ngit commit -m x\n'; nchars 20000 '#'; printf '\n'; } > "$PCT12/big.sh"
+
+check "(item12/PCT) bash s.sh: script body gates the commit"        "$PCT62" 2 "$(mkjson Bash 'bash s.sh' "$PCT12")"
+check_msg "(item12/PCT) bash s.sh: the TEST actually ran"           "$ROOT/$PCT62" 2 "$(mkjson Bash 'bash s.sh' "$PCT12")" "re-run it and fix"
+check "(item12/PCT) sh s.sh: gated the same way"                    "$PCT62" 2 "$(mkjson Bash 'sh s.sh' "$PCT12")"
+check "(item12/PCT) . s.sh: gated the same way"                     "$PCT62" 2 "$(mkjson Bash '. s.sh' "$PCT12")"
+check "(item12/PCT) source s.sh: gated the same way"                "$PCT62" 2 "$(mkjson Bash 'source s.sh' "$PCT12")"
+check "(item12/PCT) bash nogit.sh: nothing to gate"                 "$PCT62" 0 "$(mkjson Bash 'bash nogit.sh' "$PCT12")"
+check "(item12/PCT) bash missing.sh: file absent, no run"           "$PCT62" 0 "$(mkjson Bash 'bash missing.sh' "$PCT12")"
+check "(item12/PCT) bash comment.sh: false positive, pinned"        "$PCT62" 2 "$(mkjson Bash 'bash comment.sh' "$PCT12")"
+check "(item12/PCT) bash outer.sh: depth-1 residual, pinned"        "$PCT62" 0 "$(mkjson Bash 'bash outer.sh' "$PCT12")"
+check "(item12/PCT) bash big.sh: 16 KB cap, pinned"                 "$PCT62" 0 "$(mkjson Bash 'bash big.sh' "$PCT12")"
+check "(item12/PCT) bash somedir: a directory, not a file"          "$PCT62" 0 "$(mkjson Bash 'bash somedir' "$PCT12")"
+check "(item12/PCT) CONTROL bash -c \"git commit -m x\": unchanged" "$PCT62" 2 "$(mkjson Bash 'bash -c "git commit -m x"' "$PCT12")"
+
+printf 'git merge feature/y\n' > "$GATEREPO/m.sh"
+check "(item12) bash m.sh: script body gates the merge (gate-before-merge.sh)" "$H" 2 "$(mkjson Bash 'bash m.sh' "$GATEREPO")"
+
+printf 'git push origin main\n' > "$MAINREPO/p.sh"
+check "(item12) bash p.sh: script body gates the push (no-push-main.sh)" "hooks/no-push-main.sh" 2 "$(mkjson Bash 'bash p.sh' "$MAINREPO")"
+
 # --- v3.1 (penumbra): gc_matches_subcommand's -C fallback no longer treats a
 # token merely EQUAL to the verb, or containing it after a `-`, as a match for
 # the whole remainder. Over-refusal only -- these are all want-0 rows -- plus

@@ -215,6 +215,15 @@ fi
 
 [ -n "$GC_CMD" ] || { pct_note empty-cmd -1; exit 0; }
 
+# v4.0.3 item 12 -- widen GC_CMD to include the body of any script segment it
+# invokes (`bash|sh|source|. <path>`, depth 1) BEFORE splitting into segments,
+# so a `git commit` inside such a script is gated exactly as if typed. See
+# gc_script_body / gc_augmented_cmd in hooks/lib/git-cmd.sh for the 16 KB cap
+# and the depth-1/TOCTOU residuals. cmd_len in the diagnostic artifact below
+# reflects the augmented length on this path -- accepted, it is a diagnostic
+# field, not a gate.
+GC_CMD="$(gc_augmented_cmd "$GC_CWD")"
+
 # Find the repo of the first `git commit` in the command line (if any).
 base="$GC_CWD"
 REPO_PATH=""

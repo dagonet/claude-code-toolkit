@@ -431,6 +431,50 @@ gc_seg_quoted() {
   done
 }
 
+# gc_script_body <segment> <cwd> -- when a segment runs a SCRIPT FILE
+# (`bash|sh|source|. <path> [args]`, wrappers already stripped), print the
+# first 16 KB of that file so the caller can feed it to the same matcher as
+# extra segments. Depth 1 only: a script that invokes another script is a
+# documented residual (v4.0.3 item 12). TOCTOU residual: the hook reads the
+# file, allows the command, and nothing stops the file changing before bash
+# runs it -- unfixable at this layer, stated so nobody believes the gate is
+# stronger than it is. `[ -f ]`, never `[ -r ]`: a directory is readable.
+gc_script_body() {
+  local seg="$1" cwd="$2" tok path=""
+  set -- $seg
+  case "$1" in bash|sh|source|.) ;; *) return 0 ;; esac
+  shift
+  for tok in "$@"; do case "$tok" in -*) continue ;; *) path="$tok"; break ;; esac; done
+  [ -n "$path" ] || return 0
+  case "$path" in /*|[A-Za-z]:*) ;; *) path="$cwd/$path" ;; esac
+  [ -f "$path" ] || return 0
+  head -c 16384 "$path" 2>/dev/null
+}
+
+# gc_augmented_cmd <cwd> -- GC_CMD, plus the body of every script segment
+# (gc_script_body, depth 1: a body is never itself re-scanned for further
+# script segments) appended after the segment that named it. Walks the CURRENT
+# gc_segments() output exactly once, over the UNMODIFIED $GC_CMD -- so the
+# result is the same text whether a caller feeds it straight back into
+# gc_segments/gc_seg_quoted (the two stay index-aligned because both read the
+# identical augmented string) or into a plain git-token grep (v4.0.3 item 12:
+# the pre-filter in gate-before-merge.sh/no-push-main.sh must see the same
+# text the segment walk does, or a script's `git merge`/`git push` passes the
+# "no git token" fast exit before the walk that would have caught it ever
+# runs).
+gc_augmented_cmd() {
+  local cwd="$1" out="$GC_CMD" seg body
+  while IFS= read -r seg; do
+    [ -n "$seg" ] || continue
+    body=$(gc_script_body "$seg" "$cwd")
+    [ -n "$body" ] && out="$out
+$body"
+  done <<GC_AUG_SEGS
+$(gc_segments)
+GC_AUG_SEGS
+  printf '%s' "$out"
+}
+
 # Prints the `cd <target>` argument of a segment, if the segment is a bare cd.
 gc_cd_target() {
   printf '%s\n' "$1" | sed -n 's/^[[:space:]]*cd[[:space:]]\+\([^[:space:]]\+\)[[:space:]]*$/\1/p' | head -1
