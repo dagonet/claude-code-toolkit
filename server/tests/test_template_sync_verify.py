@@ -469,6 +469,29 @@ def test_classes_and_hashes_fails_on_unenumerated_status(tmp_path, monkeypatch):
     assert "unenumerated=NEW_STATUS" in line["measured"], line
 
 
+def test_classes_and_hashes_unenumerated_none_no_crash(tmp_path, monkeypatch):
+    """Review round 1: a template-class manifest path compute_status_v3
+    does not report at all (entry_status resolves to None via .get(...,
+    {}).get("status")) must not raise -- sorting a mix of None and string
+    unenumerated values crashes a plain sorted(set(...)) with TypeError."""
+    repo, proj, commit = _good_fixture(tmp_path)
+    real_compute = v3.compute_status_v3
+
+    def _patched(pp, manifest, rules):
+        result = real_compute(pp, manifest, rules)
+        for path in list(result["files"]):
+            if result["files"][path].get("ownership") == "template":
+                del result["files"][path]
+                break
+        return result
+
+    monkeypatch.setattr(v3, "compute_status_v3", _patched)
+    res = verify.run(str(proj), str(repo), "post_commit")  # must not raise
+    line = _by_id(res)["classes_and_hashes"]
+    assert line["status"] == "FAIL", line
+    assert "unenumerated=None" in line["measured"], line
+
+
 def test_region_markers_fails_alone(tmp_path):
     """Broken markers on a ONCE-class file: content changes there never
     affect status (once-class status is presence-only)."""

@@ -443,15 +443,12 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         else:
             unenumerated.append(entry_status)
 
-    template_class_count = len(template_class_paths)
-    bucket_sum = sum(buckets.values())
-    # bucket_sum != template_class_count can never fire on its own: every
-    # template_class_paths entry lands in exactly one bucket or in
-    # unenumerated, so bucket_sum + len(unenumerated) == template_class_count
-    # by construction -- this arm is implied by `unenumerated` being
-    # non-empty. Kept anyway (named explicitly in the design spec) as a
-    # defensive second signal; `unenumerated` is the discriminating check.
-    unenumerated_distinct = sorted(set(unenumerated))
+    # unenumerated may mix None (a template-class path compute_status_v3
+    # omitted from `files`, .get(...).get("status") resolving to None) with
+    # a str (an actual unenumerated status name) -- sorted(set(...)) alone
+    # raises TypeError comparing str and NoneType, so the dedupe sorts by
+    # str() (review round 1: test_classes_and_hashes_unenumerated_none_no_crash).
+    unenumerated_distinct = sorted(set(unenumerated), key=str)
     partition_text = " ".join(f"{s.lower()}={buckets[s]}" for s in TEMPLATE_CLASS_STATUSES)
     if unenumerated_distinct:
         partition_text += " " + " ".join(f"unenumerated={u}" for u in unenumerated_distinct)
@@ -459,7 +456,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                 "every template-class entry's status is one of "
                 + ", ".join(TEMPLATE_CLASS_STATUSES))
 
-    if invalid_entries or unenumerated or bucket_sum != template_class_count:
+    if invalid_entries or unenumerated:
         measured = partition_text
         if invalid_entries:
             measured += f"; invalid entries: {invalid_entries}"
