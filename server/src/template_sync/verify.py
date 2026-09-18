@@ -68,6 +68,20 @@ _IDS = tuple(i for i, _ in LINES)
 _SHAPE_INDEPENDENT = ("manifest_valid", "manifest_version_3", "manifest_bytes", "tree_clean",
                       "legacy_gate_dir")
 
+# classes_and_hashes (item 10): the closed enumeration of statuses a
+# template-class manifest entry can carry. A status not listed here falls
+# OUTSIDE the partition and fails the line as `unenumerated=<status>` --
+# never add a catch-all `else` bucket and never derive the total from
+# `len(entries)`, either of which would make the sum equal the
+# template-class count BY CONSTRUCTION and defeat the check (reviewer's
+# acceptance rule: a one-line change to compute_status_v3 that adds a new
+# status without extending this tuple must make classes_and_hashes FAIL --
+# see test_classes_and_hashes_fails_on_unenumerated_status).
+TEMPLATE_CLASS_STATUSES = (
+    "IDENTICAL", "TEMPLATE_UPDATED", "LOCAL_EDITED",
+    "TEMPLATE_DELETED", "ACKNOWLEDGED_KEPT", "CONFLICT",
+)
+
 
 def _line(id_: str, status: str, measured: str, expected: str, remedy: str = "") -> dict:
     return {"id": id_, "status": status, "measured": measured, "expected": expected, "remedy": remedy}
@@ -398,14 +412,20 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     else:
         emit(_line("new_template_files_empty", "PASS", "no new, unregistered template files", "[]"))
 
-    acknowledged = {p for p, info in status["files"].items() if info.get("status") == "ACKNOWLEDGED_KEPT"}
+    # classes_and_hashes (item 10): SHAPE (template-with-hash / once-
+    # without-hash, as before) plus a closed status PARTITION over every
+    # template-class entry. Drift itself -- whether the partition holds
+    # anything other than all-IDENTICAL -- is status_clean's assertion
+    # alone; duplicating it here (the old `identical_count !=
+    # template_class_count` arm) made one accepted deviation (e.g. an
+    # ACKNOWLEDGED_KEPT or a LOCAL_EDITED file) FAIL two lines for the same
+    # reason.
     invalid_entries = []
-    template_class_count = 0
+    template_class_paths = []
     for path, entry in manifest.get("files", {}).items():
         ownership = entry.get("ownership")
         if ownership == "template":
-            if core._normalize_path(path) not in acknowledged:
-                template_class_count += 1
+            template_class_paths.append((path, core._normalize_path(path)))
             if not v3.parse_hash(entry.get("hash", "")):
                 invalid_entries.append(f"{path}: ownership=template but hash is not sha256:<64 hex>")
         elif ownership == "once":
@@ -413,21 +433,37 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                 invalid_entries.append(f"{path}: ownership=once but carries a hash key")
         else:
             invalid_entries.append(f"{path}: ownership is {ownership!r}, not template/once")
-    identical_count = summary.get("identical", 0)
-    if invalid_entries or identical_count != template_class_count:
-        emit(_line("classes_and_hashes", "FAIL",
-                   f"identical={identical_count}, template_class_count={template_class_count}, "
-                   f"acknowledged_kept={len(acknowledged)}; invalid entries: {invalid_entries}",
-                   "every files entry is template-with-hash or once-without-hash; "
-                   "IDENTICAL count == template-class count (acknowledged-kept entries excluded)",
+
+    buckets = {s: 0 for s in TEMPLATE_CLASS_STATUSES}
+    unenumerated = []
+    for path, norm in template_class_paths:
+        entry_status = status["files"].get(norm, {}).get("status")
+        if entry_status in buckets:
+            buckets[entry_status] += 1
+        else:
+            unenumerated.append(entry_status)
+
+    # unenumerated may mix None (a template-class path compute_status_v3
+    # omitted from `files`, .get(...).get("status") resolving to None) with
+    # a str (an actual unenumerated status name) -- sorted(set(...)) alone
+    # raises TypeError comparing str and NoneType, so the dedupe sorts by
+    # str() (review round 1: test_classes_and_hashes_unenumerated_none_no_crash).
+    unenumerated_distinct = sorted(set(unenumerated), key=str)
+    partition_text = " ".join(f"{s.lower()}={buckets[s]}" for s in TEMPLATE_CLASS_STATUSES)
+    if unenumerated_distinct:
+        partition_text += " " + " ".join(f"unenumerated={u}" for u in unenumerated_distinct)
+    expected = ("every files entry is template-with-hash or once-without-hash; "
+                "every template-class entry's status is one of "
+                + ", ".join(TEMPLATE_CLASS_STATUSES))
+
+    if invalid_entries or unenumerated:
+        measured = partition_text
+        if invalid_entries:
+            measured += f"; invalid entries: {invalid_entries}"
+        emit(_line("classes_and_hashes", "FAIL", measured, expected,
                    "run /sync-template to bring template-class files up to date; fix any malformed manifest entry"))
     else:
-        emit(_line("classes_and_hashes", "PASS",
-                   f"identical={identical_count} == template_class_count={template_class_count}, "
-                   f"acknowledged_kept={len(acknowledged)}; "
-                   "every entry template-with-hash or once-without-hash",
-                   "every files entry is template-with-hash or once-without-hash; "
-                   "IDENTICAL count == template-class count (acknowledged-kept entries excluded)"))
+        emit(_line("classes_and_hashes", "PASS", partition_text, expected))
 
     tracked_paths = list(manifest.get("files", {}).keys())
     malformed = []
@@ -489,14 +525,21 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         emit(_line("project_md_seed_current", "INFO",
                    f"{v3.PROJECT_MD} still carries the pre-v4.0.1 seed's false 'delivered to nobody' sentence",
                    "n/a (informational)",
-                   "replace the header of .claude/rules/project.md with the v4.0.1 seed (or add a paths: block) "
-                   "-- see CHANGELOG.md's v4.0.1 downstream-migration section"))
+                   "hand-edit .claude/rules/project.md (once-class: the sync never writes it): "
+                   "remove the false 'This file has been delivered to nobody' sentence and add the sentence "
+                   "'A new or edited rules file is picked up at the NEXT session start, not the current one' "
+                   "to the header, or replace the whole header with the v4.0.2 seed; if the body holds "
+                   "migration hunks (a pre-v4.0.1 migration), move them into the region or a scoped rules "
+                   "file FIRST -- see CHANGELOG.md's v4.0.2 downstream-migration section"))
     elif "picked up at the NEXT session start" not in project_md:
         emit(_line("project_md_seed_current", "INFO",
                    f"{v3.PROJECT_MD} seed predates v4.0.2 (no next-session sentence)",
                    "n/a (informational)",
-                   "replace the header of .claude/rules/project.md with the v4.0.2 seed (or add a paths: block) "
-                   "-- see CHANGELOG.md's v4.0.2 downstream-migration section"))
+                   "hand-edit .claude/rules/project.md (once-class: the sync never writes it): "
+                   "add the sentence 'A new or edited rules file is picked up at the NEXT session start, "
+                   "not the current one' to the header, or replace the whole header with the v4.0.2 seed; "
+                   "if the body holds migration hunks (a pre-v4.0.1 migration), move them into the region "
+                   "or a scoped rules file FIRST -- see CHANGELOG.md's v4.0.2 downstream-migration section"))
     else:
         emit(_line("project_md_seed_current", "INFO", f"{v3.PROJECT_MD} seed is current", "n/a (informational)"))
 

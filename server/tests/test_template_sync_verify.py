@@ -426,6 +426,76 @@ def test_classes_and_hashes_fails_alone_on_invalid_shape(tmp_path):
     assert _only_fail(res) == ["classes_and_hashes"]
 
 
+def test_local_edited_pair_shape_pass_status_fail(tmp_path):
+    """MM-Agent's shape (item 10): two template-class files edited locally
+    used to fire classes_and_hashes too, because its old check duplicated
+    status_clean's drift assertion (IDENTICAL count == template-class
+    count). classes_and_hashes now asserts SHAPE plus a closed status
+    PARTITION -- LOCAL_EDITED is one of the enumerated buckets, so the
+    partition is complete and this line PASSes; the drift itself stays
+    with status_clean alone."""
+    repo, proj, commit = _good_fixture(tmp_path)
+    (proj / "CLAUDE.md").write_text("# T\nrule one, edited\n", encoding="utf-8", newline="")
+    (proj / "hooks" / "g.sh").write_text("echo g, edited\n", encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    by = _by_id(res)
+    assert by["classes_and_hashes"]["status"] == "PASS", by["classes_and_hashes"]
+    assert "local_edited=2" in by["classes_and_hashes"]["measured"]
+    assert by["status_clean"]["status"] == "FAIL", by["status_clean"]
+    assert "local_edited=2" in by["status_clean"]["measured"]
+
+
+def test_classes_and_hashes_fails_on_unenumerated_status(tmp_path, monkeypatch):
+    """The partition witness (reviewer's acceptance rule): a one-line
+    production change that makes compute_status_v3 emit a status not in
+    TEMPLATE_CLASS_STATUSES, without extending the tuple, must make this
+    line FAIL -- otherwise the enumeration is not actually closed."""
+    repo, proj, commit = _good_fixture(tmp_path)
+    real_compute = v3.compute_status_v3
+
+    def _patched(pp, manifest, rules):
+        result = real_compute(pp, manifest, rules)
+        for info in result["files"].values():
+            if info.get("ownership") == "template":
+                info["status"] = "NEW_STATUS"
+                break
+        return result
+
+    monkeypatch.setattr(v3, "compute_status_v3", _patched)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["classes_and_hashes"]
+    assert line["status"] == "FAIL", line
+    assert "unenumerated=NEW_STATUS" in line["measured"], line
+
+
+def test_classes_and_hashes_unenumerated_none_no_crash(tmp_path, monkeypatch):
+    """Review round 2: two-sided -- one template-class path compute_status_v3
+    omits entirely (entry_status resolves to None via .get(..., {}).get(
+    "status")) AND a second template-class path relabelled to an actual
+    unenumerated status string, so `unenumerated` holds two DISTINCT values
+    (None and a str). A plain sorted(set(...)) raises TypeError comparing
+    str and NoneType on exactly this shape; sorting by str() must not."""
+    repo, proj, commit = _good_fixture(tmp_path)
+    real_compute = v3.compute_status_v3
+
+    def _patched(pp, manifest, rules):
+        result = real_compute(pp, manifest, rules)
+        template_paths = [p for p, info in result["files"].items()
+                          if info.get("ownership") == "template"]
+        assert len(template_paths) >= 2, template_paths  # fixture must supply both sides
+        del result["files"][template_paths[0]]
+        result["files"][template_paths[1]]["status"] = "NEW_STATUS"
+        return result
+
+    monkeypatch.setattr(v3, "compute_status_v3", _patched)
+    res = verify.run(str(proj), str(repo), "post_commit")  # must not raise
+    line = _by_id(res)["classes_and_hashes"]
+    assert line["status"] == "FAIL", line
+    assert "unenumerated=None" in line["measured"], line
+    assert "unenumerated=NEW_STATUS" in line["measured"], line
+
+
 def test_region_markers_fails_alone(tmp_path):
     """Broken markers on a ONCE-class file: content changes there never
     affect status (once-class status is presence-only)."""
@@ -592,6 +662,31 @@ def test_project_md_lines(tmp_path, body, seed, scoped):
     assert seed_map[seed] in by_id["project_md_seed_current"]["measured"], by_id["project_md_seed_current"]
     assert scoped_map[scoped] in by_id["project_md_scoped_consistent"]["measured"], \
         by_id["project_md_scoped_consistent"]
+
+
+def test_project_md_remedies_hand_edit_and_move_hunks(tmp_path):
+    """Both project_md_seed_current remedy arms (items 9, 11) say the
+    consumer HAND-EDITS the once-class file the sync never writes, name the
+    sentence that must be added, and tell a consumer migrated before
+    v4.0.1 to move any migration hunks out of the header FIRST."""
+    repo, proj, commit = _good_fixture(tmp_path)
+
+    (proj / ".claude" / "rules" / "project.md").write_text(V401_SEED, encoding="utf-8", newline="")
+    _recommit(proj)
+    predates = _by_id(verify.run(str(proj), str(repo), "post_commit"))["project_md_seed_current"]
+    assert predates["status"] == "INFO"
+    assert "hand-edit" in predates["remedy"]
+    assert "picked up at the NEXT session start" in predates["remedy"]
+    assert "move them" in predates["remedy"]
+
+    (proj / ".claude" / "rules" / "project.md").write_text(
+        "This file has been delivered to nobody.\n", encoding="utf-8", newline="")
+    _recommit(proj)
+    stale = _by_id(verify.run(str(proj), str(repo), "post_commit"))["project_md_seed_current"]
+    assert stale["status"] == "INFO"
+    assert "hand-edit" in stale["remedy"]
+    assert "picked up at the NEXT session start" in stale["remedy"]
+    assert "move them" in stale["remedy"]
 
 
 # --- template_behind_head sub-arms -------------------------------------------
