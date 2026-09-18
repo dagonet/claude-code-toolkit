@@ -470,19 +470,22 @@ def test_classes_and_hashes_fails_on_unenumerated_status(tmp_path, monkeypatch):
 
 
 def test_classes_and_hashes_unenumerated_none_no_crash(tmp_path, monkeypatch):
-    """Review round 1: a template-class manifest path compute_status_v3
-    does not report at all (entry_status resolves to None via .get(...,
-    {}).get("status")) must not raise -- sorting a mix of None and string
-    unenumerated values crashes a plain sorted(set(...)) with TypeError."""
+    """Review round 2: two-sided -- one template-class path compute_status_v3
+    omits entirely (entry_status resolves to None via .get(..., {}).get(
+    "status")) AND a second template-class path relabelled to an actual
+    unenumerated status string, so `unenumerated` holds two DISTINCT values
+    (None and a str). A plain sorted(set(...)) raises TypeError comparing
+    str and NoneType on exactly this shape; sorting by str() must not."""
     repo, proj, commit = _good_fixture(tmp_path)
     real_compute = v3.compute_status_v3
 
     def _patched(pp, manifest, rules):
         result = real_compute(pp, manifest, rules)
-        for path in list(result["files"]):
-            if result["files"][path].get("ownership") == "template":
-                del result["files"][path]
-                break
+        template_paths = [p for p, info in result["files"].items()
+                          if info.get("ownership") == "template"]
+        assert len(template_paths) >= 2, template_paths  # fixture must supply both sides
+        del result["files"][template_paths[0]]
+        result["files"][template_paths[1]]["status"] = "NEW_STATUS"
         return result
 
     monkeypatch.setattr(v3, "compute_status_v3", _patched)
@@ -490,6 +493,7 @@ def test_classes_and_hashes_unenumerated_none_no_crash(tmp_path, monkeypatch):
     line = _by_id(res)["classes_and_hashes"]
     assert line["status"] == "FAIL", line
     assert "unenumerated=None" in line["measured"], line
+    assert "unenumerated=NEW_STATUS" in line["measured"], line
 
 
 def test_region_markers_fails_alone(tmp_path):
