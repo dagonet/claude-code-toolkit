@@ -395,7 +395,10 @@ add_replacement '{{DEFAULT_BRANCH}}' "$DEFAULT_BRANCH"
 # placeholder), or the two implementations diverge exactly as the dry-run and
 # real-run paths did in v2.2.0/v2.2.1.
 [[ -n "$WORKTREE_BASE" ]]  && add_replacement '{{WORKTREE_BASE}}' "$WORKTREE_BASE"
-[[ -n "$LOG_PATH" ]]       && add_replacement '{{LOG_PATH}}' "$LOG_PATH"
+# v4.0.2 item 4: defaults to `none`, not left as the literal `{{LOG_PATH}}`
+# token -- the -n guard is dropped for this key only (the derived-placeholder
+# convention already used by Gate-checked branches / Post-edit build).
+add_replacement '{{LOG_PATH}}' "${LOG_PATH:-none}"
 [[ -n "$MAUI_PROJECT" ]]   && add_replacement '{{MAUI_PROJECT}}' "$MAUI_PROJECT"
 [[ -n "$TEST_PROJECT" ]]   && add_replacement '{{TEST_PROJECT}}' "$TEST_PROJECT"
 [[ -n "$DB_PATH" ]]        && add_replacement '{{DB_DIRECTORY}}' "$DB_PATH"

@@ -99,6 +99,18 @@ Impossible under the old reading; ordinary under the correct one — a file can 
 
 v1 manifests (missing `version`, `templateRawHash`, `localHash`) are auto-migrated to v2 by the `template_load_manifest` MCP tool.
 
+### `template_load_manifest` response: identity, registry, capabilities (v4.0.2, item 5)
+
+Every response shape carries three kinds of fact about the running process, resolved together at ONE moment — server import — not read independently:
+
+- **Identity**: `server_version`, `server_commit`, `server_source`, `server_in_template_repo`. Which build this process is.
+- **Registry**: `registered_tools` — the sorted names this process can DISPATCH, read from the FastMCP tool manager. Fixed at import, same as identity.
+- **Capabilities**: `capabilities` — what the loaded module tree (`v3.py`, `verify.py`) supports.
+
+Before v4.0.2, `mcp.py` imported `v3` and `verify` **lazily**, inside each tool body, while the identity fields and the tool registry were already fixed at import. A server process started before a release could therefore advertise a NEW capability (read from the lazily-imported, since-updated module) under an OLD registry that never gained the matching tool — a pre-release server advertised `template_verify` in `capabilities` while its registry held nine tools without it. `mcp.py` now imports `v3` and `verify` eagerly, at the bottom of the module (`from . import v3, verify  # noqa: E402`, after every `@mcp.tool()` definition) — bottom, not top, because `v3.py` and `verify.py` do `from . import mcp as core` at module level, and a top-of-file placement would create the import cycle `mcp -> v3 -> mcp`. One import moment now pins identity, registry and capabilities together, so a hybrid process cannot exist: a restart is what fixes drift, and the fields agree on what a restart would change.
+
+`v3.CAPABILITIES` mixes three kinds of name: a **field** a response carries (`local_diff_kind`), a **behaviour** (`region_splice`), and a **tool** that must be dispatchable (`template_verify`). Only tool-shaped names are dispatch-checkable, so `v3.TOOL_CAPABILITIES` (currently `("template_verify",)`) names the subset of `CAPABILITIES` a client can cross-check against `registered_tools` — `set(TOOL_CAPABILITIES) <= set(registered_tools)` should always hold on a healthy build, and a new tool-shaped capability left out of `TOOL_CAPABILITIES` is a red test (`test_template_sync_capabilities.py`), not a silent gap.
+
 ## Deletion: `TEMPLATE_DELETED`
 
 The 2×2 above cannot express deletion, and this doc did not mention it at all — zero hits for `delet`, `TEMPLATE_DELETED` or `git rm` across the whole file — while consumers were performing deletions on every release that retired something. **The contract is here; the step-by-step mechanics stay in the skill, which owns the ordering and the safety rules (a file whose `PROJECT-CUSTOM` region is non-empty is never offered for deletion).**
@@ -107,6 +119,7 @@ The 2×2 above cannot express deletion, and this doc did not mention it at all �
 - **A manifest entry drops when the template no longer ships the file AND the project no longer has it.** Both halves. Removing it upstream while the project keeps its copy leaves the entry in place, which is correct: the project still has a file whose provenance you want recorded.
 - **`deleted_files` is not required when `git rm` precedes finalize.** Deleting on disk first is a supported order — finalize then observes the absence rather than being told about it.
 - **Assert on the count of dropped entries that finalize reports, not on its exit code.** "The deletion took" and "finalize ran and changed nothing" are indistinguishable from the exit code alone; the count is the only thing that separates them. (The field name is the server's to state — this repo ships no definition of it, so do not hard-code one from memory.)
+- **`ACKNOWLEDGED_KEPT` (v4.0.2, capability `deleted_acknowledged`): keeping a `TEMPLATE_DELETED` file without re-reporting it forever.** `template_finalize_sync(acknowledged_deleted=[...])` merges the given paths (union, sorted, deduplicated) into the manifest's `deletedAcknowledged` key; refused by name for a path that is not currently `TEMPLATE_DELETED`/`ACKNOWLEDGED_KEPT`, and refused when a path is also in `deleted_files` in the same call. `template_compute_status` then reports those paths `ACKNOWLEDGED_KEPT` instead of `TEMPLATE_DELETED`, and the entry stays in `files` — if the template ever ships the file again, tracking resumes as `TEMPLATE_UPDATED`/`LOCAL_EDITED` like any other template-class entry. This is distinct from `deleted_files`, which drops the entry entirely rather than keeping it acknowledged.
 
 ## `keep-mine`: the mechanism for files you never want overwritten
 
@@ -239,7 +252,7 @@ A read-only, synchronous tool: `template_verify(project_path, template_repo="", 
 
 **Only conditions that CAN fail are FAIL lines.** `placeholder_key_divergence` and `orphans` are deliberately absent from `template_verify` — they live in `template_compute_status` as informational fields: `placeholder_key_divergence` is non-empty on every mature consumer and never actionable on its own, and `orphans` are by definition project-owned files the template has no claim on, so listing them as a defect invites deleting something the template never shipped.
 
-**The 21 lines, in order:**
+**The 24 lines, in order:**
 
 | id | kind | fails when |
 |---|---|---|
@@ -250,26 +263,31 @@ A read-only, synchronous tool: `template_verify(project_path, template_repo="", 
 | `requires_server` | FAIL | the running server's version does not satisfy the manifest's `requires_server` floor |
 | `no_errors` | FAIL | the template variant directory (`templates/<variant>/`) is missing |
 | `no_warnings` | FAIL | `templates/ownership.json` itself carries a parse/shape warning |
-| `unknown_keys_empty` | FAIL | the manifest carries a top-level key this server does not recognise — remedy: run `/sync-template` on toolkit ≥ 4.0.1; finalize drops the superseded keys |
+| `unknown_keys_empty` | FAIL | the manifest carries a top-level key this server does not recognise — remedy: remove or rename the key (a key starting `x-` is consumer-owned and is never promoted; every other unknown key is preserved but read by nothing). `deletedAcknowledged` is a KNOWN key since v4.0.2 and never fails this line |
 | `superseded_absent` | FAIL | any of `lastSynced` / `lastSyncedVersion` / `lastSyncedVersionOf` is still present (`v3.SUPERSEDED_KEYS`) |
 | `server_skew` | FAIL / INFO / SKIP | FAIL when the running server is installed from this template repo (`server_in_template_repo`) AND `server/` differs from the imported commit — either a committed diff (`git diff --quiet <server_commit> HEAD -- server/`) or an uncommitted change (`git status --porcelain -- server/`); a dirty working tree alone is exactly the state a toolkit checkout is in during a release, so the two-commit diff alone is not enough. INFO when `server/` is clean but `server_commit != HEAD` (docs-only or template-only commits since). SKIP when the running server was not installed from this template repo at all |
-| `status_clean` | FAIL | any tracked file is `TEMPLATE_UPDATED`, `LOCAL_EDITED` or `MISSING`, or (defensively) `CONFLICT` |
+| `status_clean` | FAIL | any tracked file is `TEMPLATE_UPDATED`, `LOCAL_EDITED` or `MISSING`, or (defensively) `CONFLICT`. v4.0.2: a `LOCAL_EDITED` path with an EMPTY `local_diff` is a STALE STORED HASH, not a real local edit (`finalize_sync(new_files=...)` only adds entries; only `applied_files` refreshes a tracked path's hash) — named separately in `measured`, with its own remedy pointing at `template_finalize_sync(applied_files=[...])` |
 | `gate_self_reference_empty` | FAIL | a `**Gate**:`/`**Test**:` value points at a template-class path |
 | `unclassified_empty` | FAIL | a scanned template file matches no `ownership.json` rule |
 | `new_template_files_empty` | FAIL | a template/once-class file the template ships is not yet a manifest entry — remedy names the project → template path mapping (via `template_path_for`) so the register-or-apply call is copy-pasteable |
-| `classes_and_hashes` | FAIL | a manifest entry's shape is wrong (`template`-class without a valid hash, or `once`-class carrying one), or the `IDENTICAL` count does not equal the number of `template`-class entries |
+| `classes_and_hashes` | FAIL | a manifest entry's shape is wrong (`template`-class without a valid hash, or `once`-class carrying one), or the `IDENTICAL` count does not equal the number of `template`-class entries **excluding `ACKNOWLEDGED_KEPT` ones** (v4.0.2: a template-class entry acknowledged via `deletedAcknowledged` is not counted in the denominator, so an acknowledged, kept file cannot hold this line permanently red) |
 | `region_markers` | FAIL | a manifest-tracked file's on-disk content carries an unmatched PROJECT-CUSTOM `BEGIN`/`END` marker (`v3.markers_malformed`) |
 | `manifest_bytes` | FAIL | the manifest file's raw bytes carry a BOM, a CRLF, or do not end with exactly one LF |
 | `declared_keys` | FAIL | any audited once-file's `key_audit.missing_declared_keys` (Task 5) is non-empty |
 | `encoding_drift` | INFO | never — lists per-file BOM/CRLF drift between the project copy and the current template |
-| `project_md_seed_current` | INFO | never — reports whether `.claude/rules/project.md` still carries the pre-v4.0.1 seed's false "delivered to nobody" sentence, with the CHANGELOG's downstream-migration remedy when it does |
-| `tree_clean` | FAIL (`post_commit`) / SKIP (`pre_commit`) | `mode="post_commit"`: `git status --porcelain` in the project is non-empty. `mode="pre_commit"`: always SKIPs, with a reason — the sync writes files before committing them by design (SKILL.md step 8 runs before the commit) |
+| `project_md_seed_current` | INFO | never — reports whether `.claude/rules/project.md` still carries the pre-v4.0.1 seed's false "delivered to nobody" sentence (v4.0.1), predates the v4.0.2 "picked up at the NEXT session start" sentence with neither the false sentence nor `paths:` frontmatter, is current, or is `paths:`-scoped (the seed sentences are about being unscoped, so a scoped file is exempt from this line by its own edit — see `project_md_scoped_consistent`) |
+| `legacy_gate_dir` (v4.0.2) | INFO | never — absent: "no legacy `.gate/` directory". Present: names which of the three known artifact files (`last-pass.json`, `last-precommit.json`, `last-precommit-noop.json`) are still there (remedy: delete those by name — the gate now writes under `<common git dir>/gate/`) and the COUNT of other entries, which are never gate artifacts and are never named (a `**Log location**` may legitimately point here) |
+| `once_notes_changed` (v4.0.2) | INFO | never — one once-class file's guidance comments (never a `**Key**:` line) changed on the template side since the synced commit, per file with a hunk count, `"; "`-joined into a single line when more than one file qualifies (`_finalize` requires exactly one result row per id); none → "no once-class file has changed template notes" |
+| `project_md_scoped_consistent` (v4.0.2) | INFO | never — unscoped or absent: "n/a". Scoped and still carrying either unscoped seed sentence verbatim ("This file has no `paths:` key…" / "…loads it at EVERY session start"): the self-contradiction, remedy "delete the unscoped seed sentences". Scoped and clean: "scoped, no unscoped sentence" |
+| `tree_clean` | FAIL (`post_commit`) / SKIP (`pre_commit`) | `mode="post_commit"`: `git status --porcelain` in the project is non-empty (remedy also names the unrelated-in-flight-work escape hatch: commit or stash those paths separately first). `mode="pre_commit"`: always SKIPs, with a reason — the sync writes files before committing them by design (SKILL.md step 8 runs before the commit) |
 
 **Modes.** `mode="pre_commit"` is for SKILL.md step 8 (the report, before the commit): an uncommitted, dirty tree is expected there, so `tree_clean` SKIPs rather than FAILing. `mode="post_commit"` (the default) is for step 9b (right after the commit) and for the fleet script: an uncommitted tree at that point is a real defect.
 
 **Three call sites.**
 1. **The sync skill** (`SKILL.md` step 8, then step 9b) — `mode="pre_commit"` before the commit, `mode="post_commit"` after it; any `FAIL` in either call means the sync is not complete.
 2. **`setup-project.sh` / `.ps1`**, as their very last step, when the registered `template-sync-tools` exe exists — a `FAIL` is printed and reported, never fatal to the bootstrap itself.
-3. **`scripts/verify-consumers.sh <dir>…`** — a fleet script for the PO to run across every known consumer checkout (`mode="post_commit"`), printing one summary line per consumer. `unknown_keys_empty` FAILs, by design, on every consumer that has not yet synced on toolkit ≥ 4.0.1 — the remedy text says so, and a fleet run right after a release is meant to read as "who still needs to sync," not as a defect list.
+3. **`scripts/verify-consumers.sh <dir>…`** — a fleet script for the PO to run across every known consumer checkout (`mode="post_commit"`), printing one summary line per consumer. `unknown_keys_empty` FAILs, by design, on every consumer that has not yet synced on toolkit ≥ 4.0.1 — the remedy text says so, and a fleet run right after a release is meant to read as "who still needs to sync," not as a defect list. Branch hygiene, if ever added to this script: key on the REMOTE (`git ls-remote --heads`) or squash-tolerant semantics (`git cherry`, tree equality) — after a squash merge `git branch -d` refuses the local sync branch while the remote delete succeeds (Yutraffic, open-brain 2026-09-17).
 
 **CLI.** `mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]` prints one line per result (`<STATUS> <id>: <measured>  (expected <expected>)[; remedy]`) then the summary line, and exits `0` iff `ok`. SKIP (with a reason) when git is unavailable at all — a missing template repo, a project that is not a git checkout for `tree_clean`, or a server not installed from the template repo for `server_skew`.
+
+**Consumer-side audits key off the manifest, never a release literal (item 13, v4.0.2).** open-brain's own audit hard-coded `v4.0.0` and went red on the first correct v4.0.1 sync. A consumer-side audit instead asserts `HEAD == manifest.template_commit` and `manifest.template_version == git describe --tags --abbrev=0 <template_commit>` — the same identical-tree rule `template_verify`'s case 2 (`SKILL.md` step 1b) already applies when deriving `template_version` from a checkout that has moved past its tag on docs-only commits.

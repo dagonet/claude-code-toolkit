@@ -441,7 +441,6 @@ def template_path_for(rel_path: str, manifest: dict | None = None) -> str:
     if manifest is not None:
         template_repo = manifest.get("templateRepo")
         if template_repo:
-            from . import v3
             rules = v3.load_ownership(template_repo)
             if rules is not None:
                 mapped = rules.template_path_for(norm)
@@ -816,6 +815,19 @@ def _three_way_merge(base: str, theirs: str, ours: str, file_path: str = "") -> 
     }
 
 
+def _registered_tool_names() -> list[str]:
+    """The names this process can DISPATCH -- fixed at import, unlike the
+    lazily importable module tree. Reads the PRIVATE `mcp._tool_manager.
+    list_tools()` deliberately: the public `mcp.list_tools()` is a coroutine
+    (`inspect.iscoroutinefunction` -> True), and this is a sync helper called
+    from inside four dict literals with no running-loop-safe `asyncio.run`
+    available there. The choice is pinned by the `registered_tools`
+    assertions in test_load_fields.py and test_template_sync_capabilities.py,
+    plus the fresh-interpreter witness -- an `mcp` SDK bump that drops
+    `_tool_manager` fails the suite, not production."""
+    return sorted(t.name for t in mcp._tool_manager.list_tools())
+
+
 # -------------------------
 # MCP Tools
 # -------------------------
@@ -839,22 +851,20 @@ async def template_load_manifest(project_path: str) -> str:
     pp = pathlib.Path(project_path).resolve()
     manifest, errors = _load_manifest(pp)
     if manifest is None:
-        from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": False,
-                           "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
+                           "capabilities": list(v3.CAPABILITIES),
+                           "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
     if errors:
-        from . import v3 as _v3
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
-                           "capabilities": list(_v3.CAPABILITIES)}, ensure_ascii=False)
-
-    from . import v3
+                           "capabilities": list(v3.CAPABILITIES),
+                           "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
     warnings = []
     template_dir = _get_template_dir(manifest)
@@ -884,6 +894,7 @@ async def template_load_manifest(project_path: str) -> str:
             "server_source": _server_source(),
             "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
             "capabilities": list(v3.CAPABILITIES),
+            "registered_tools": _registered_tool_names(),
             "migration_required": False,
             "variant": manifest.get("variant", ""),
             "templateRepo": manifest.get("templateRepo", ""),
@@ -937,6 +948,7 @@ async def template_load_manifest(project_path: str) -> str:
         "server_source": _server_source(),
         "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
         "capabilities": list(v3.CAPABILITIES),
+        "registered_tools": _registered_tool_names(),
         "migration_required": migration_required,
         "variant": manifest.get("variant", ""),
         "templateRepo": manifest.get("templateRepo", ""),
@@ -1004,8 +1016,11 @@ async def template_compute_status(
         differences are not counted).
 
         For a v3 manifest the statuses are IDENTICAL / TEMPLATE_UPDATED /
-        LOCAL_EDITED / TEMPLATE_DELETED (template class) and PRESENT / MISSING
-        (once class); the result also carries `orphans`,
+        LOCAL_EDITED / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (template class)
+        and PRESENT / MISSING / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (once
+        class) -- for both classes ACKNOWLEDGED_KEPT replaces TEMPLATE_DELETED
+        (never PRESENT or MISSING) for a path listed in the manifest's
+        `deletedAcknowledged`; the result also carries `orphans`,
         `unclassified_template_files`, `local_diff` per LOCAL_EDITED file,
         `key_audit` per audited once file, `encoding_drift` per file (BOM/EOL
         only differences, informational), and `gate_self_reference` /
@@ -1031,7 +1046,6 @@ async def template_compute_status(
     if variant:
         manifest["variant"] = variant
 
-    from . import v3
     if v3.is_v3(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
@@ -1390,7 +1404,6 @@ async def template_apply_file(
 
     placeholders = manifest.get("placeholders", {})
 
-    from . import v3
     if v3.is_v3(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
@@ -1491,6 +1504,7 @@ async def template_finalize_sync(
     applied_files: str = "[]",
     new_files: str = "[]",
     deleted_files: str = "[]",
+    acknowledged_deleted: str = "[]",
     applied_files_path: str = "",
 ) -> str:
     """
@@ -1512,6 +1526,11 @@ async def template_finalize_sync(
         deleted_files: JSON array of relative paths the project deliberately
             removed; their entries are dropped even if the template still
             ships the file (optional)
+        acknowledged_deleted: JSON array of repo-relative paths the project
+            KEEPS although the template dropped them (optional); merged into
+            `deletedAcknowledged`. Refused for a path that is not currently
+            TEMPLATE_DELETED/ACKNOWLEDGED_KEPT (v3 only -- v2 has no
+            acknowledgement contract and ignores this argument)
         applied_files_path: Path to a local JSON file holding the same array
             as applied_files, written by the caller from the tool results so
             nothing is retyped. When given, applied_files is ignored.
@@ -1525,6 +1544,11 @@ async def template_finalize_sync(
     Manifest v3: entries carry `hash` (sha256:-prefixed) and `ownership`;
     `template_commit` is HEAD of the template repo and `template_version` the
     nearest reachable tag whose tracked tree is identical (null when none).
+    `new_files` REGISTERS a path not yet tracked (never touches an existing
+    entry); `applied_files` REFRESHES a tracked entry's hash -- a tracked
+    file updated outside `template_apply_file` keeps a stale hash and reads
+    LOCAL_EDITED with an empty `local_diff` until it is passed in
+    `applied_files`.
     Unknown top-level keys are preserved and listed in `unknown_keys` --
     with ONE exception: the v2-era `lastSynced`/`lastSyncedVersion`/
     `lastSyncedVersionOf` keys are dropped unconditionally and listed in
@@ -1572,13 +1596,18 @@ async def template_finalize_sync(
     except json.JSONDecodeError:
         deleted = []
 
-    from . import v3
+    try:
+        acknowledged = json.loads(acknowledged_deleted)
+    except json.JSONDecodeError:
+        acknowledged = []
+
     if v3.is_v3(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
-        return json.dumps(v3.finalize_v3(pp, manifest, rules, applied, new, deleted), ensure_ascii=False)
+        return json.dumps(v3.finalize_v3(pp, manifest, rules, applied, new, deleted, acknowledged), ensure_ascii=False)
 
+    # v2 has no acknowledgement contract -- acknowledged_deleted is ignored below.
     # Validate before touching the manifest (downstream finding 2026-07-19 #6:
     # hand-typed hashes with stray characters silently corrupted a manifest).
     import re as _re
@@ -1781,7 +1810,6 @@ async def template_migrate_manifest(
         write mode refuses), gate_unverified (a **Gate**: is declared and this
         tool did not run it), unknown_keys, warnings, backup, written.
     """
-    from . import v3
     for _msys_p in (project_path, backup_dir):
         _msys_err = _reject_msys_path(_msys_p)
         if _msys_err:
@@ -1964,7 +1992,6 @@ async def template_verify(
         with a reason and counted in the summary, so a SKIP-heavy green is
         never mistaken for a real green.
     """
-    from . import verify
     return json.dumps(verify.run(project_path, template_repo, mode), ensure_ascii=False)
 
 
@@ -1993,7 +2020,6 @@ def _cli_verify(argv: list[str]) -> int:
     if project_path is None:
         print("usage: mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]")
         return 2
-    from . import verify
     result = verify.run(project_path, template_repo, mode)
     for line in result["lines"]:
         suffix = f"; {line['remedy']}" if line.get("remedy") else ""
@@ -2011,3 +2037,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# Eager, and at the BOTTOM: v3.py and verify.py do `from . import mcp as core`
+# at module level, so this import must run after every name above exists
+# (a top-of-file placement boots today only because neither module touches
+# core.* at module level -- an unpinned invariant; v4.0.2 spec item 5).
+from . import v3, verify  # noqa: E402

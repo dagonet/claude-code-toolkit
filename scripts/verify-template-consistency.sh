@@ -253,6 +253,23 @@ else
   ko "ops.md drift detected — variants are NOT byte-identical"
 fi
 
+# ---------------------------------------------------------------------------
+# 12b. Task 3 addendum item D / ruling R8: .claude/rules/project.md is seeded
+#      identically in all six variants (cp from templates/general/, v4.0.2
+#      item 12) -- nothing asserted this until now. Same md5sum-across-glob
+#      shape as AGENT_TEAM.md / settings.json / ops.md above (check 36's
+#      C36_PENDING_RULES allowlist mentions this file for an unrelated
+#      purpose -- it exempts project.md from the "every ownership.json rule
+#      pattern matches something" check, not a byte-identity check).
+# ---------------------------------------------------------------------------
+project_md_hashes=$(md5sum templates/*/.claude/rules/project.md 2>/dev/null | awk '{print $1}' | sort -u | wc -l)
+if [ "$project_md_hashes" = "1" ]; then
+  ok "project.md byte-identical across all 6 variants"
+else
+  ko "project.md drift detected — variants are NOT byte-identical"
+  md5sum templates/*/.claude/rules/project.md
+fi
+
 # Expected counts are computed by glob, not hard-coded, so adding an agent type
 # does not silently invalidate the assertion.
 #   report agents = every template agent file EXCEPT the coders (coder.md and the

@@ -134,7 +134,7 @@ def _mk_v2(tmp_path, project_claude: str, extra_project: dict | None = None,
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps({
         "version": 2, "templateRepo": str(repo), "variant": "general",
         "lastSynced": commit, "placeholders": {"NAME": "Demo"}, "files": files,
-        "deletedAcknowledged": ["old.md"],
+        "x-consumer-note": ["old.md"],
     }), encoding="utf-8", newline="")
     return repo, proj, commit
 
@@ -175,6 +175,8 @@ def test_migration_region_and_hunks(tmp_path):
     # nobody" one), so that pair alone cannot distinguish old from new.
     # Compare directly against the real constant instead.
     assert v3.PROJECT_MD_SEED_BODY in md               # the v4.0.1 seed body
+    # v4.0.2 item 12: the next-session-pickup sentence is part of the seed.
+    assert "picked up at the NEXT session start" in md
     assert "delivered to nobody" not in md
     assert "Project-specific instructions" not in md      # never diffed against the current template
     diff_path = backup / "CLAUDE.md.out-of-region.diff"
@@ -191,8 +193,8 @@ def test_migration_region_and_hunks(tmp_path):
     assert m["template_commit"] == commit
     assert m["template_version"] == "v2.3.0"
     assert m["requires_server"] == ">=0.3.2"   # the splice floor, not the v3 floor
-    assert m["deletedAcknowledged"] == ["old.md"]
-    assert res["unknown_keys"] == ["deletedAcknowledged"]
+    assert m["x-consumer-note"] == ["old.md"]
+    assert res["unknown_keys"] == ["x-consumer-note"]
     assert "version" not in m and "lastSynced" not in m
     assert m["files"]["CLAUDE.md"] == {"hash": "sha256:" + ts._sha256(TPL_V2_RENDERED), "ownership": "template"}
     assert m["files"][".claude/settings.json"]["ownership"] == "template"
@@ -222,7 +224,10 @@ def test_migration_reports_the_keep_mine_entries_it_drops(tmp_path):
 
     Measured by penumbra on a real tree: migration is careful with keys it
     does NOT understand (`reason` survives under unknown_file_keys,
-    `deletedAcknowledged` under unknown_keys) and discarded the one it does.
+    `x-consumer-note` under unknown_keys) and discarded the one it does.
+    The exemplar is the reserved `x-*` shape, not a plausible feature name,
+    because a plausible feature name gets promoted (lastSynced* in v4.0.1,
+    deletedAcknowledged in v4.0.2) and costs this rewrite each time.
     (The `lastSyncedVersion` pair used to be the unknown-keys example too --
     v4.0.1 makes it the ONE exception: dropped unconditionally and reported
     in `superseded_keys_dropped`, not preserved. See
@@ -288,6 +293,7 @@ def test_migration_vacuity_control(tmp_path):
     assert "```diff" not in md
     assert SEED not in md                       # the toolkit's seed is not the consumer's content
     assert v3.PROJECT_MD_SEED_BODY in md        # the v4.0.1 seed body, always present -- F1, see above
+    assert "picked up at the NEXT session start" in md   # v4.0.2 item 12
     assert "delivered to nobody" not in md
     assert not (tmp_path / "b" / "CLAUDE.md.out-of-region.diff").exists()   # no hunks, nothing to record
     assert res["project_md_record"] is None
@@ -408,7 +414,7 @@ def test_migration_open_brain_manifest_shape(tmp_path):
     assert res["migrated"] is True
     # v4.0.1 item 8: the lastSynced* trio is the ONE exception to
     # preserve-unknown -- dropped unconditionally, reported separately.
-    assert res["unknown_keys"] == ["deletedAcknowledged"]
+    assert res["unknown_keys"] == ["x-consumer-note"]
     assert res["superseded_keys_dropped"] == ["lastSynced", "lastSyncedVersion", "lastSyncedVersionOf"]
     out = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
     assert out["template_version"] == "v2.3.0"                 # server-written

@@ -213,6 +213,21 @@ expect "general bootstrap: Post-edit build defaults to none" \
   "- **Post-edit build**: none" \
   "$(derived_value_only "$(derived_line "$GENDIR" 'Post-edit build')")"
 
+# --- v4.0.2 item 4: LOG_PATH defaults to `none` at bootstrap ---------------
+#
+# Before this item, add_replacement (sh) / `if ($LogPath)` (ps1) ran only
+# when the flag was given, so a default bootstrap left the literal
+# `{{LOG_PATH}}` token in PROJECT_CONTEXT.md's **Log location** line. This is
+# a plain-placeholder default (templates/*/PROJECT_CONTEXT.md ships
+# `{{LOG_PATH}}`, not a literal `none`) -- the same shape as WORKTREE_BASE
+# above, not the Gate-checked-branches/Post-edit-build "derived, literal-none
+# rewrite" mechanism.
+expect "general bootstrap: Log location defaults to none" \
+  "- **Log location**: none" \
+  "$(derived_value_only "$(derived_line "$GENDIR" 'Log location')")"
+expect "general bootstrap: no {{LOG_PATH}} placeholder survives" 0 \
+  "$(grep -c '{{LOG_PATH}}' "$GENDIR/PROJECT_CONTEXT.md")"
+
 DOTNETDIR="$TMPROOT/derived-dotnet"
 mkdir -p "$DOTNETDIR"
 bash "$ROOT/setup-project.sh" --variant dotnet --project-name SetupFixture \
@@ -332,6 +347,14 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   # that was MISSING (only the snippet count was checked), not a row that
   # exercises the defect. See the no-.git arm below for the row that does.
   expect "ps1 exits 0 on the develop fixture" 0 "$PS_DEVELOP_RC"
+
+  # v4.0.2 item 4: same LOG_PATH default, ps1 side (PSDIR carries no
+  # -LogPath flag, matching the sh GENDIR fixture above).
+  expect "ps1 bootstrap: Log location defaults to none" \
+    "- **Log location**: none" \
+    "$(derived_value_only "$(derived_line "$PSDIR" 'Log location')")"
+  expect "ps1 bootstrap: no {{LOG_PATH}} placeholder survives" 0 \
+    "$(grep -c '{{LOG_PATH}}' "$PSDIR/PROJECT_CONTEXT.md")"
 
   # v4.0: ps1's registration must resolve to the SAME toolkit exe as sh's --
   # same needle, built once above from the sh-side resolution.

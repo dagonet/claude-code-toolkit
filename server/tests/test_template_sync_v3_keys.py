@@ -98,6 +98,38 @@ def test_optional_absent_key_is_detailed_and_never_missing_declared():
 VARIANTS = ["general", "dotnet", "dotnet-maui", "rust-tauri", "java", "python"]
 
 
+def test_log_location_optional_absent_has_specific_none_meaning():
+    """v4.0.2 item 4: the `Log location` key (general/dotnet/dotnet-maui/
+    rust-tauri spelling; rust-tauri carries a fixed value, never a
+    placeholder, so it never lands in optional_absent) gets its own
+    none_meaning in ownership.json's optional_keys instead of the generic
+    'not defined for this key' fallback. General's own template text is
+    used to exercise it."""
+    gen_tpl_text = (REPO_ROOT / "templates" / "general" / "PROJECT_CONTEXT.md").read_text(encoding="utf-8")
+    res = v3.audit_keys("- **Protected branches**: main\n- **Gate**: g\n", gen_tpl_text, None, RULE)
+    assert "Log location" in res["optional_absent"]
+    detail = next(d for d in res["optional_absent_detail"] if d["key"] == "Log location")
+    assert detail["none_meaning"] == "no log directory declared"
+    assert detail["none_meaning"] != "not defined for this key"
+
+
+def test_log_path_spelling_optional_absent_has_the_same_none_meaning():
+    """Task 3 addendum item B / ruling R7: python and java spell this key
+    `Log Path`, not `Log location` (measured: templates/python/
+    PROJECT_CONTEXT.md:29, templates/java/PROJECT_CONTEXT.md:30). Data-only
+    fix -- ownership.json's optional_keys gets a SECOND entry with the SAME
+    none_meaning text, no template rename (renaming a once-class key would
+    surface as missing_declared_keys on every python/java consumer; the
+    spelling unification itself is deferred). python's own template text
+    (PY_TPL_TEXT, already loaded above) is used since it carries the 'Log
+    Path' spelling, unlike general's 'Log location'."""
+    res = v3.audit_keys("- **Protected branches**: main master\n- **Gate**: g\n", PY_TPL_TEXT, None, RULE)
+    assert "Log Path" in res["optional_absent"]
+    detail = next(d for d in res["optional_absent_detail"] if d["key"] == "Log Path")
+    assert detail["none_meaning"] == "no log directory declared"
+    assert detail["none_meaning"] != "not defined for this key"
+
+
 def test_every_declared_key_is_accounted_for_exactly_once_per_variant():
     """Audited against an EMPTY project, every key the variant's own
     PROJECT_CONTEXT.md declares must land in exactly one of

@@ -55,7 +55,16 @@ CAPABILITIES = (
     "missing_declared_keys",
     "optional_absent_detail",
     "template_verify",
+    "deleted_acknowledged",
+    "registered_tools",
 )
+# CAPABILITIES mixes three kinds of name -- a FIELD a response carries
+# (local_diff_kind), a BEHAVIOUR (region_splice), and a TOOL that must be
+# dispatchable (template_verify). Only the tool-shaped names are
+# dispatch-checkable: test_template_sync_capabilities asserts each is in the
+# live registry AND that no other capability name is a registered tool, so a
+# new tool-shaped capability left out of this tuple is a red test.
+TOOL_CAPABILITIES = ("template_verify",)
 OWNERSHIP_FILE = "templates/ownership.json"
 PROJECT_MD = ".claude/rules/project.md"
 CLASSES = ("template", "once", "project")
@@ -175,12 +184,26 @@ def load_ownership(template_repo: str) -> OwnershipRules | None:
 
 HASH_RE = re.compile(r"^(?:sha256:)?([0-9a-f]{64})$")
 
+# `deletedAcknowledged`: repo-relative paths (sorted, deduplicated, `/`-
+# separated) the project has decided to KEEP although the template no longer
+# ships them (SKILL.md step 6). compute_status_v3 reports such a path
+# ACKNOWLEDGED_KEPT instead of TEMPLATE_DELETED, and the entry stays in
+# `files` -- if the template ever ships the file again, tracking resumes as
+# TEMPLATE_UPDATED/LOCAL_EDITED like any other template-class entry.
+# Keys starting "x-" are consumer-owned: never known, never dropped, never
+# reported beyond unknown_keys.
 KNOWN_TOP_LEVEL_V3 = {
     "manifest_version", "template_version", "template_commit", "lastSynced",
     "variant", "templateRepo", "placeholders", "requires_server", "files",
+    "deletedAcknowledged",
     # v2 keys that migration removes; listed so they are never reported as unknown
     "version",
 }
+
+
+def acknowledged_paths(manifest: dict) -> set[str]:
+    return {core._normalize_path(p) for p in manifest.get("deletedAcknowledged", [])
+            if isinstance(p, str) and p}
 
 
 def is_v3(manifest: dict) -> bool:
@@ -920,7 +943,9 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
     summary = {
         "identical": 0, "template_updated": 0, "local_edited": 0,
         "template_deleted": 0, "present": 0, "missing": 0,
+        "acknowledged_kept": 0,
     }
+    acknowledged = acknowledged_paths(manifest)
 
     for proj_rel, entry in manifest.get("files", {}).items():
         proj_rel = core._normalize_path(proj_rel)
@@ -972,6 +997,9 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
             info["template_changed"] = (
                 tpl_replaced is not None and core._sha256(tpl_replaced) != parse_hash(entry.get("hash", ""))
             )
+
+        if status == "TEMPLATE_DELETED" and proj_rel in acknowledged:
+            status = "ACKNOWLEDGED_KEPT"
 
         info["status"] = status
         summary[status.lower()] += 1
@@ -1164,7 +1192,7 @@ def derive_template_version(repo: str, commit: str, tracked_paths: list[str]) ->
 
 
 def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
-                applied: list, new: list, deleted: list) -> dict:
+                applied: list, new: list, deleted: list, acknowledged: list) -> dict:
     invalid: list[str] = []
     for item in applied:
         fp = item.get("file_path", "")
@@ -1227,11 +1255,34 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         added += 1
 
     explicit = {core._normalize_path(p) for p in deleted if isinstance(p, str) and p}
+
+    ack_new = {core._normalize_path(p) for p in acknowledged if isinstance(p, str) and p}
+    if ack_new:
+        status_now = compute_status_v3(pp, manifest, rules)["files"]
+        for p in sorted(ack_new):
+            entry_status = status_now.get(p, {}).get("status")
+            if p not in status_now or entry_status not in ("TEMPLATE_DELETED", "ACKNOWLEDGED_KEPT"):
+                # A once-class PRESENT file was never going to reach
+                # ACKNOWLEDGED_KEPT -- that status only ever replaces
+                # TEMPLATE_DELETED (line ~1001 above), so a once-class file
+                # the project still has is not an acknowledgement candidate
+                # at all. Name that answer instead of just the mismatch
+                # (Task 1 review F1).
+                hint = (" -- a once-class file you still have is already yours; nothing to acknowledge"
+                        if entry_status == "PRESENT" else "")
+                return {"error": f"acknowledged_deleted: {p} is not a TEMPLATE_DELETED/ACKNOWLEDGED_KEPT "
+                                  f"path — manifest NOT written{hint}"}
+            if p in explicit:
+                return {"error": f"{p} is in both deleted_files and acknowledged_deleted — manifest NOT written"}
+    merged = sorted(acknowledged_paths(manifest) | ack_new)
+
     dropped = []
     for fp in list(files):
         if fp in explicit:
             del files[fp]
             dropped.append(fp)
+            continue
+        if fp in merged:
             continue
         if core._template_file_path(manifest, rules.template_path_for(fp)).is_file():
             continue
@@ -1254,6 +1305,8 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     out["requires_server"], raised, floor_warning = raise_floor(manifest.get("requires_server"))
     if floor_warning:
         warnings.append(floor_warning)
+    if merged:
+        out["deletedAcknowledged"] = merged
     out["files"] = dict(sorted(files.items()))
     superseded_dropped = drop_superseded(out)
     unknown = unknown_top_level_keys(out)
@@ -1273,6 +1326,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         "superseded_keys_dropped": superseded_dropped,
         "unknown_keys": unknown,
         "unknown_file_keys": sorted(unknown_files, key=lambda d: d["path"]),
+        "acknowledged_deleted": merged,
         **({"requires_server_raised": raised} if raised else {}),
         "consumed_entries": len(consumed),
         "consumed": consumed,
@@ -1291,6 +1345,9 @@ MIGRATION_MARKER = "<!-- template-sync: project-owned; migrated from CLAUDE.md a
 PROJECT_MD_SEED_BODY = (
     "This file has no `paths:` key, so Claude Code loads it at EVERY session start,\n"
     "at the same priority as CLAUDE.md. Anything you write here is always on.\n"
+    "\n"
+    "A new or edited rules file is picked up at the NEXT session start, not the current\n"
+    "one -- restart the session to test a change.\n"
     "\n"
     "To scope it to files instead, add a frontmatter block at the very top:\n"
     "\n"

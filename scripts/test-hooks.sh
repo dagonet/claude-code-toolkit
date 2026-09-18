@@ -2094,6 +2094,36 @@ check "(A6) pretty-printed but genuinely stale still blocks" \
   "$H" 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
 
 # ---------------------------------------------------------------------------
+# v4.0.2 (item 8): on a Gate-only repo the commit-minted artifact is keyed on
+# the PARENT sha (HEAD at hook time), so tier 1 of the lookup (exact filename
+# for HEAD's own sha) never hits for that class; tier 2 (newest-first tree
+# scan) is what allows the merge. No fixture above pins it: the (A6) rows
+# above all write the artifact at the HEAD-sha FILENAME -- a tier-1 hit.
+# `mkrepo` gives PRETTYGATE only one commit; add a second so HEAD^ exists.
+# ---------------------------------------------------------------------------
+echo second >> "$PRETTYGATE/seed.txt"
+git -C "$PRETTYGATE" add -A >/dev/null 2>&1
+git -C "$PRETTYGATE" commit -q -m "second (item 8 fixture)" >/dev/null 2>&1
+PARENTSHA=$(git -C "$PRETTYGATE" rev-parse 'HEAD^')
+PARENTROWTREE=$(git -C "$PRETTYGATE" rev-parse 'HEAD^{tree}')
+# The ONLY artifact here is named for the parent, and its tree matches the
+# CURRENT HEAD's tree (not $PRETTYTREE, which is HEAD^'s tree since the extra
+# commit above -- reusing it here would make this row assert nothing).
+rm -f "$(gatedir "$PRETTYGATE")"/last-pass.*.json
+printf '{\n  "sha": "%s",\n  "tree": "%s",\n  "status": "pass"\n}\n' "$PARENTSHA" "$PARENTROWTREE" \
+  > "$(gatepassfile "$PRETTYGATE" "$PARENTSHA")"
+check "(item 8) parent-sha artifact with HEAD's tree blesses via tree scan" \
+  "$H" 0 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
+# Negative: same filename (still keyed on the parent sha), tree of an
+# unrelated commit -- a deterministic bijective hex permutation of HEAD's real
+# tree, still a valid-looking 40-hex value, but not equal to it.
+FOREIGNTREE=$(printf '%s' "$PARENTROWTREE" | tr '0-9a-f' 'a-f0-9')
+printf '{\n  "sha": "%s",\n  "tree": "%s",\n  "status": "pass"\n}\n' "$PARENTSHA" "$FOREIGNTREE" \
+  > "$(gatepassfile "$PRETTYGATE" "$PARENTSHA")"
+check "(item 8) parent-sha artifact with a foreign tree still blocks" \
+  "$H" 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$PRETTYGATE")"
+
+# ---------------------------------------------------------------------------
 # v3.0.3 defect 1 — REPEATED `git -C` IS FOLDED IN ARGV ORDER.
 #
 # MEASURED (git 2.55.0, this host): `-C` is repeatable and CUMULATIVE, each
@@ -3287,14 +3317,14 @@ WITHBLOCK='Do the thing.
 
 check "cpp-coder without skills block"   "$H" 2 "$(mkspawn cpp-coder 'Do the thing.')"
 check "go-coder without skills block"    "$H" 2 "$(mkspawn go-coder 'Do the thing.')"
-check "cpp-coder with skills block"      "$H" 0 "$(mkspawn cpp-coder "$WITHBLOCK")"
+check "cpp-coder with skills block"      "$H" 2 "$(mkspawn cpp-coder "$WITHBLOCK")"
 check "coder without skills block"       "$H" 2 "$(mkspawn coder 'Do the thing.')"
 check "rust-coder without skills block"  "$H" 2 "$(mkspawn rust-coder 'Do the thing.')"
 check "tester without skills block"      "$H" 2 "$(mkspawn tester 'Do the thing.')"
-check "code-reviewer is unbound"         "$H" 0 "$(mkspawn code-reviewer 'Do the thing.')"
+check "code-reviewer is unbound"         "$H" 2 "$(mkspawn code-reviewer 'Do the thing.')"
 # The suffix rule must not over-match: 'coder-helper' is not a coder.
-check "coder-helper is not a coder"      "$H" 0 "$(mkspawn coder-helper 'Do the thing.')"
-check "unknown subagent_type passes"     "$H" 0 "$(mkspawn Explore 'Do the thing.')"
+check "coder-helper is not a coder"      "$H" 2 "$(mkspawn coder-helper 'Do the thing.')"
+check "unknown subagent_type passes"     "$H" 2 "$(mkspawn Explore 'Do the thing.')"
 
 # --- THE HARNESS'S REAL PAYLOAD SHAPE (v3.0.0) ------------------------------
 #
@@ -3311,19 +3341,21 @@ check "unknown subagent_type passes"     "$H" 0 "$(mkspawn Explore 'Do the thing
 # the block matters more than the fix: a fixture that agrees with the code about
 # an input the world never produces is a fixture that cannot fail.
 #
-# `mkspawn` is deliberately LEFT flat rather than converted, so both shapes stay
-# covered — the live Agent payload cannot be observed from inside the suite, and
-# a hook that reads only one shape is how this defect happened in the first
-# place.
-#
-# ⚠ THE NEGATIVE ARM IS THE ONE THAT MATTERS, AND THE `WITH block` ROWS PROVE
-# ALMOST NOTHING ON THEIR OWN — they passed throughout the entire period the
-# hook was inert. On a disciplined repo every spawn carries the block, so the
-# hook's only observable behaviour is SILENCE, and silence is also exactly what
-# a dead guard produces. Pass and absence are indistinguishable from where a
-# compliant consumer stands. That is the vacuous-fixture shape scaled up to an
-# entire enforcement layer, and it is why the four `without skills block` rows
-# below are the assertion and the rest is corroboration.
+# v4.0.2 (item 14): the rows above now expect 2, not 0. The flat shape never
+# came from any Claude Code client — it was the shape THIS TOOLKIT's own hook
+# wrongly READ before toolkit v3.0.0 ($.subagent_type at the top level;
+# "pre-v3.0.0" is the toolkit's own versioning, not the client's). Every
+# PreToolUse payload the harness sends nests the tool's arguments under
+# `tool_input` (re-measured from this session's own transcript on 2026-09-17,
+# client 2.1.274, with an assistant tool_use block recorded under an older
+# 2.1.220 session showing the same nested shape: `"name":"Agent","input":
+# {"subagent_type":...,"prompt":...}`, which is exactly `tool_input` once the
+# harness wraps it for the hook). `mkspawn` is kept as a fixture builder
+# specifically BECAUSE nothing sends it: it is the unrecognised-shape probe for
+# item 14's fail-closed refusal, not a second legitimate shape to tolerate. The
+# `WITH block` and "unbound"/"passes" rows flip too — a shape the hook cannot
+# read is refused regardless of content, per the shape witness in
+# hooks/require-skills-block.sh (`tool_input.prompt`).
 mkspawn_nested() { # <subagent_type> <prompt> -- the shape the harness sends
   printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":"%s","prompt":"%s"},"cwd":"%s"}\n' \
     "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$ROOT")"
@@ -3337,6 +3369,24 @@ check "NESTED: coder WITH skills block"         "$H" 0 "$(mkspawn_nested coder "
 check "NESTED: architect WITH skills block"     "$H" 0 "$(mkspawn_nested architect "$WITHBLOCK")"
 check "NESTED: code-reviewer is unbound"        "$H" 0 "$(mkspawn_nested code-reviewer 'Do the thing.')"
 check "NESTED: unknown type passes"             "$H" 0 "$(mkspawn_nested game-tester 'Do the thing.')"
+
+# v4.0.2 (item 14): further shape probes.
+mkspawn_params() { # the nested `params` shape a stale consumer memory described
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"params":{"subagent_type":"%s","prompt":"%s"}},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$ROOT")"
+}
+mksend() { # SendMessage-shaped payload: no prompt, and not the Agent tool
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"SendMessage","tool_input":{"to":"x","message":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$(jesc "$ROOT")"
+}
+check "SHAPE: params-nested payload is refused (no tool_input.prompt)" "$H" 2 "$(mkspawn_params coder 'Do the thing.')"
+check "SHAPE: prompt without subagent_type is general-purpose, unbound" "$H" 0 \
+  '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"prompt":"Do the thing.","description":"d"},"cwd":"."}'
+check "SHAPE: SendMessage payload is not the hook's tool, untouched" "$H" 0 "$(mksend 'hi')"
+check_msg "SHAPE: params-nested refusal names tool_input.prompt" "$ROOT/$H" 2 \
+  "$(mkspawn_params coder 'Do the thing.')" "tool_input.prompt"
+check_msg "SHAPE: params-nested refusal lists keys present (any depth)" "$ROOT/$H" 2 \
+  "$(mkspawn_params coder 'Do the thing.')" "Keys present (any depth):"
 
 # ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an
@@ -3528,6 +3578,17 @@ printf '# ctx\n\n- **Post-edit build**: none\n' > "$PEBNONE/PROJECT_CONTEXT.md"
 PEBNONE_OUT=$(runpeb "$PEBNONE"); PEBNONE_RC=$?
 expect "post-edit-build: none -> exit 0" 0 "$PEBNONE_RC"
 expect "post-edit-build: none -> silent" "" "$PEBNONE_OUT"
+
+# v4.0.2 (item 2): the field value must be lowercased before the `none` match.
+# Pre-fix the hook ran `bash -c None`, which exits 127 ("command not found")
+# and prints "post-edit-build: command exited 127" to stderr -- the SILENT
+# assertion is the red one; the exit-0 assertion was already true (the hook
+# never blocks) and stays green either way.
+PEBNONEUC="$PEBDIR/none-uc"; mkdir -p "$PEBNONEUC"
+printf '# ctx\n\n- **Post-edit build**: None\n' > "$PEBNONEUC/PROJECT_CONTEXT.md"
+PEBNONEUC_OUT=$(runpeb "$PEBNONEUC"); PEBNONEUC_RC=$?
+expect "post-edit-build: None (capitalised) -> exit 0" 0 "$PEBNONEUC_RC"
+expect "post-edit-build: None (capitalised) -> silent, nothing executed" "" "$PEBNONEUC_OUT"
 
 PEBPH="$PEBDIR/placeholder"; mkdir -p "$PEBPH"
 printf '# ctx\n\n- **Post-edit build**: {{POST_EDIT_BUILD}}\n' > "$PEBPH/PROJECT_CONTEXT.md"
@@ -4661,19 +4722,29 @@ fi
 # json_get, and it matches on a multi-line field (prompt) — a backend that
 # mangled the newlines would turn `^## Required Skills$` from a match into a
 # miss and the gate would stop blocking. Exercised on both non-node backends.
+#
+# v4.0.2 (item 14, second instance): these two rows used to build their payload
+# with `mkspawn` (FLAT). Since item 14 makes require-skills-block.sh refuse any
+# flat payload before ever reaching the multi-line match (no `tool_input.prompt`
+# at all), a flat "skills block present passes" row would now assert 2 for a
+# reason that has nothing to do with backend newline handling, and the "passes"
+# half of this parity check would silently stop meaning what its own comment
+# says. Switched to `mkspawn_nested` (the real, nested shape) so the multi-line
+# `tool_input.prompt` match is what these rows actually exercise, on both
+# backends, same as it always claimed to.
 if [ -n "$HAVE_PY" ]; then
 check_env "python3: skills block present passes" "$PYONLY" hooks/require-skills-block.sh 0 \
-  "$(mkspawn coder "$WITHBLOCK")"
+  "$(mkspawn_nested coder "$WITHBLOCK")"
 check_env "python3: missing skills block blocks"  "$PYONLY" hooks/require-skills-block.sh 2 \
-  "$(mkspawn coder 'Do the thing.')"
+  "$(mkspawn_nested coder 'Do the thing.')"
 else
 skip "python3 require-skills cases" "no python3 on this host" 2
 fi
 if [ -n "$HAVE_JQ" ]; then
 check_env "jq: skills block present passes"       "$JQONLY" hooks/require-skills-block.sh 0 \
-  "$(mkspawn coder "$WITHBLOCK")"
+  "$(mkspawn_nested coder "$WITHBLOCK")"
 check_env "jq: missing skills block blocks"       "$JQONLY" hooks/require-skills-block.sh 2 \
-  "$(mkspawn coder 'Do the thing.')"
+  "$(mkspawn_nested coder 'Do the thing.')"
 else
 skip "jq require-skills cases" "no jq on this host" 2
 fi
@@ -5743,11 +5814,34 @@ check "(FIELD) **Protected branches**: value repeating the marker -- whole value
 # at the LAST occurrence instead of returning the whole value. Both rows run
 # entirely inside their own THROWAWAY mkrepo checkout (REPO_TOP resolves from
 # cwd, so run-gate.sh never touches this real checkout's OWN shared gate
-# directory); the guard assertion below confirms that directly. v4.0.1 (item
-# 17): the guard snapshots the WHOLE shared gate directory (not one guessed
-# filename) so it also catches a stray file landing there under any name.
+# directory); the guard assertion below confirms that directly.
+#
+# v4.0.1 (item 17) made the gate directory SHARED across every worktree of
+# this repo (<common git dir>/gate/). The guard used to snapshot the WHOLE
+# directory listing to catch a stray file under any name -- but that listing
+# also moves when any OTHER worktree gates concurrently (a peer's commit
+# minting last-precommit.<tree>.json, or any hook's noop probe minting
+# last-precommit-noop.*.json), and it went red 2/1107 on a healthy run within
+# two days of shipping. Task 4 addendum (R6, 2026-09-17/18): attribute BY
+# NAME instead. A row can only pollute THIS checkout's own record by wrongly
+# resolving REPO_TOP to $ROOT, and if it does, the file it writes is named
+# for $ROOT's own HEAD sha or tree specifically -- last-pass.$RG_SELF_SHA.json
+# or last-precommit.$RG_SELF_TREE.json. Snapshotting just those two named
+# files' mtime+size keeps the same detection power (a REPO_TOP bug still
+# moves a stamp) without being perturbed by a concurrent worktree's
+# differently-named artifacts.
 # ---------------------------------------------------------------------------
-RG_SELFGATE_BEFORE=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
+RG_SELF_SHA=$(git -C "$ROOT" rev-parse HEAD)
+RG_SELF_TREE=$(git -C "$ROOT" rev-parse 'HEAD^{tree}')
+selfstamp() { # <file> -> "mtime size" of ONE named file, or "absent"
+  if [ -f "$1" ]; then stat -c '%Y %s' "$1" 2>/dev/null || echo present; else echo absent; fi
+}
+rg_selfstamps() { # -> the two stamps this checkout's own artifacts would carry
+  printf '%s|%s\n' \
+    "$(selfstamp "$(gatedir "$ROOT")/last-pass.$RG_SELF_SHA.json")" \
+    "$(selfstamp "$(gatedir "$ROOT")/last-precommit.$RG_SELF_TREE.json")"
+}
+RG_SELFGATE_BEFORE=$(rg_selfstamps)
 
 # (control) a plain **Gate** value with no embedded marker -- passes
 # identically pre-fix and post-fix; proves the two rows below fail on a
@@ -5800,11 +5894,14 @@ expect "(RUN-GATE) truncate-to-true: exits non-zero (real failure runs)" "1" \
 expect "(RUN-GATE) truncate-to-true: no last-pass.<sha>.json minted on an unrun suite" "0" \
   "$([ -f "$(gatepassfile "$RG_SEVERITY" "$RG_SEVERITY_HEADSHA")" ] && echo 1 || echo 0)"
 
-# GUARD, two-sided: this real checkout's own shared gate directory must be
+# GUARD, two-sided: this real checkout's own named gate artifacts must be
 # byte-unchanged by either row above -- both ran with REPO_TOP resolved to
-# their own throwaway repo, never to this one.
-RG_SELFGATE_AFTER=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
-expect "(RUN-GATE) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
+# their own throwaway repo, never to this one. A moved stamp here means a row
+# wrote THIS checkout's artifact, i.e. a REPO_TOP resolution bug -- not
+# concurrency: a concurrent worktree cannot move a stamp keyed on $ROOT's own
+# sha/tree (see the comment above RG_SELF_SHA).
+RG_SELFGATE_AFTER=$(rg_selfstamps)
+expect "(RUN-GATE) no artifact minted for this checkout (named files' stamps unchanged; a concurrent worktree cannot move them)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER"
 
 # ---------------------------------------------------------------------------
@@ -5926,10 +6023,12 @@ fi
 
 # GUARD, two-sided, bracketing the A2 block above too: every rg_row/rg_dtg_row
 # invocation ran with REPO_TOP resolved to its own throwaway repo, so this
-# checkout's own shared gate directory must be byte-unchanged across the
-# whole block, not just the pre-A2 rows the earlier guard bracketed.
-RG_SELFGATE_AFTER_A2=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
-expect "(RUN-GATE A2) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
+# checkout's own named gate artifacts must be byte-unchanged across the whole
+# block, not just the pre-A2 rows the earlier guard bracketed. A moved stamp
+# means a row wrote THIS checkout's artifact (REPO_TOP resolution bug), not
+# concurrency -- see the comment above RG_SELF_SHA.
+RG_SELFGATE_AFTER_A2=$(rg_selfstamps)
+expect "(RUN-GATE A2) no artifact minted for this checkout (named files' stamps unchanged; a concurrent worktree cannot move them)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER_A2"
 
 # ---------------------------------------------------------------------------
