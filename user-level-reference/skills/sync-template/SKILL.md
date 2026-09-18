@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.0.2 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.0.3 -->
 
 **This skill takes no arguments.** Invoke it as `/sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -1170,7 +1170,7 @@ CI fires on `pull_request` and on push-to-main; a bare branch push produces **no
 
 Call `template_verify(project_path=<project>, mode="post_commit")` (v4.0.1, item 22) right after the commit lands. This is the SAME check as step 8's, run again with `mode="post_commit"` now that the manifest and every applied file are committed — `tree_clean` FAILs this time if anything is still uncommitted (step 8's pre-commit call SKIPped it on purpose). Any `FAIL` line here means the commit did not actually finish the sync; fix it and commit again before opening the PR.
 
-**Quote the summary line (`"N PASS, M FAIL, K SKIP, J INFO"`) in the PR body.** It is the one-line, machine-checkable proof that the committed state — not just the pre-commit report — is clean; a reviewer reads it instead of re-deriving the same 21 checks by hand. The expected `post_commit` line is `N+1 PASS, 0 FAIL, 0 SKIP, M INFO` — one more PASS than step 8's `pre_commit` line, because `tree_clean` now PASSes instead of SKIPping.
+**Quote the summary line (`"N PASS, M FAIL, K SKIP, J INFO"`) in the PR body.** It is the one-line, machine-checkable proof that the committed state — not just the pre-commit report — is clean; a reviewer reads it instead of re-deriving every check by hand. The expected `post_commit` line is `N+1 PASS, 0 FAIL, 0 SKIP, M INFO` — one more PASS than step 8's `pre_commit` line, because `tree_clean` now PASSes instead of SKIPping.
 
 ## Pre-sync verification
 

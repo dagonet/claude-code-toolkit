@@ -1,5 +1,33 @@
 # Changelog
 
+## v4.0.3 — 2026-09-19
+
+**Process note: spec/plan PR #137, three task PRs (#138 Task 2, #139 Task 1, #140 Task 3), every commit reviewed by an outside session at its exact sha in a detached worktree, a full gate at every head.** Hook suite 1116 → 1162 assertions; server suite 349 → 353. Rulings R1–R5 in the ledger. Two login expiries interrupted the hooks implementer mid-task; it reconciled its worktree against a pre-commit snapshot each time and the reviewer verified every mirror byte-identical afterwards. Harness fact recorded for future briefs: the Bash tool backgrounds any call at 600 s, so a full hook-suite run always backgrounds — implementers poll the log with bounded loops instead of idling.
+
+### Fixed
+- **item 12** — `bash|sh|source|. <script>` arguments are read by the three guard hooks (first 16 KB, regular files only, depth 1; nested scripts and TOCTOU are documented residuals). `bash s.sh` with a `git commit` inside was ungated while `bash -c` was gated, and the user-level `CLAUDE.md` rule steered people into that shape; that sentence now says the hooks read the script. Rows in all three parsers.
+- **item 13** — an expired gate artifact (past the 3600 s TTL) is accepted within the 24 h prune window when the tree AND an environment fingerprint match: `run-gate.sh` records `env` (sha256 over `pyvenv.cfg`, the sorted `*.dist-info` listing, the venv `python --version`, `node --version`) and `env_detail` (the labelled lines the hash is computed from — one computation, two renderings); `gate-before-merge.sh` names the differing contributor when it blocks. A review-gated sync no longer re-gates for an unchanged tree in an unchanged environment. Tree-only, env-less and over-window artifacts still block.
+- **item 8** — `gc_gate_dir` refuses an unresolved target: first-line empty guard (an empty target succeeded for the wrong reason — `git -C ""` is the cwd); `--show-toplevel` is resolved FIRST and the git-version fallback runs only on a resolved top, so the literal `/.gate` at the MSYS root, the false "git < 2.31" warning and the leaked `fatal:` are gone — ordering, not a probe, is what fixes it. Callers skip their writes when the directory is unresolved; records carry `gate_dir`. The reappearing legacy no-op record itself traced to v4.0.1 F6 (the pre-sync hook on `main` between checkout and merge); the v4.0.2 migration wording stands.
+- **item 10** — `template_verify`'s `classes_and_hashes` asserts entry shape plus a CLOSED status partition (`TEMPLATE_CLASS_STATUSES`; an unenumerated status fails the line by name); drift belongs to `status_clean` alone, so one accepted deviation no longer produces two FAIL lines. The redundant sum arm was dropped (it was camouflage for a `sorted()` crash on a `None` status, now fixed and pinned two-sided).
+- **items 9/11** — both `project_md_seed_current` remedies say the consumer hand-edits the once-class file, name the sentence that changed, and tell a pre-v4.0.1 migrated consumer to move hunks out first.
+
+### Added
+- `pre-commit-test.sh` prunes its own records (`last-precommit.*`, `last-precommit-noop.*`) older than the derived 24 h window `GC_GATE_PRUNE_S` — one expression shared with `run-gate.sh`'s prune and item 13's window (item 4).
+- Sync skill: an empty backup set (a) is the expected steady state for a v4.0.1+ consumer (item 7); the empty-string sha256 `e3b0c442…` is the tell that a path resolved to nothing (item 5); expected verify lines stated per mode.
+- The consistency script's copy census covers `gc_gate_dir`, `GC_GATE_PRUNE_S`, `gc_sha256`, `gc_gate_env` (two standalone copies asserted equal).
+
+### Changed
+- CHANGELOG v4.0.2 step 5 names the enforcing-vs-inert pair for `require-skills-block.sh` (item 6); `CLAUDE.md`/docs record that four project-level hooks are deliberately unmirrored (item 2).
+- **Moved to v4.1:** v4.0.2 item 3 (the region MCP seed line) — option B removes the region from the template `CLAUDE.md`; the guidance goes into the `.claude/project-instructions.md` seed (R1).
+
+### Downstream migration
+0. Restart the MCP server; `template_load_manifest` must report `server_commit` equal to `git -C <templateRepo> rev-parse HEAD`, and `registered_tools` must be present.
+1. Run `/sync-template` with no arguments. Expect `template_updated` = `hooks/pre-commit-test.sh`, `hooks/gate-before-merge.sh`, `hooks/no-push-main.sh`, `hooks/run-gate.sh`, `hooks/lib/git-cmd.sh` and nothing else.
+2. After applying, run the two consumer checks: (a) the enforcing-vs-inert pair for `require-skills-block.sh` — a `coder` spawn WITHOUT a `## Required Skills` block exits 2, WITH one exits 0; (b) the script-file row — `bash s.sh` where `s.sh` contains `git commit` runs your Test; a script without a git verb does not.
+3. `project_md_seed_current`'s remedy now says what to hand-edit; act on it or scope the file with `paths:`.
+4. A review-gated sync no longer re-gates when the tree and the environment are unchanged within 24 h; when it blocks, the message names the changed contributor (`pyvenv`, `dist`, `py`, `node`).
+5. Expected `template_verify` lines: pre_commit `N PASS, 0 FAIL, 1 SKIP (tree_clean), M INFO` (`server_skew` may SKIP too); post_commit `N+1 PASS, 0 FAIL, 0 SKIP, M INFO`.
+
 ## v4.0.2 — 2026-09-18
 
 **Process note: five task PRs (#130 Task 1, #131 Task 2, #132 Task 3, #133 Task 5, #134 Task 4) plus the spec/plan PR #129, every commit reviewed by an outside session at its exact sha in a detached worktree, a full gate run at every stacked head.** Hook suite 1107 → 1116 assertions (Task 4); server suite 318 → 349. Rulings R1–R11 in the ledger. One implementer stalled (Task 4) and one addendum implementer stalled the same way; both implementers' work was verified, the pre-fix defect reproduced RED by reversion, and the work committed by the controller with the disclosure named in the commit message.
