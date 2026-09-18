@@ -1783,6 +1783,102 @@ check "(item12) bash m.sh: script body gates the merge (gate-before-merge.sh)" "
 printf 'git push origin main\n' > "$MAINREPO/p.sh"
 check "(item12) bash p.sh: script body gates the push (no-push-main.sh)" "hooks/no-push-main.sh" 2 "$(mkjson Bash 'bash p.sh' "$MAINREPO")"
 
+# ===========================================================================
+# v4.0.3 item 8 (R2) -- gc_gate_dir(<non-repo target>) used to fail both git
+# calls, print the literal `/.gate` (the MSYS root, outside every repo),
+# WARN "git < 2.31" (false on a current git) and let the fallback's own
+# `fatal:` leak beside it; gc_gate_dir("") resolved against the PROCESS cwd
+# and returned the CORRECT directory of the WRONG repo. Fixed: an empty or
+# unresolved target now returns rc 1, empty stdout, no stderr.
+# ===========================================================================
+GGD8_OUT=""; GGD8_ERR=""; GGD8_RC=""
+(
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "/nonexistent-dir-403" >"$TMPROOT/ggd8.out" 2>"$TMPROOT/ggd8.err"
+  echo $? > "$TMPROOT/ggd8.rc"
+)
+GGD8_OUT=$(cat "$TMPROOT/ggd8.out" 2>/dev/null)
+GGD8_ERR=$(cat "$TMPROOT/ggd8.err" 2>/dev/null)
+GGD8_RC=$(cat "$TMPROOT/ggd8.rc" 2>/dev/null)
+expect "(item8) gc_gate_dir non-repo target: rc 1"          "1" "$GGD8_RC"
+expect "(item8) gc_gate_dir non-repo target: empty stdout"  "" "$GGD8_OUT"
+expect "(item8) gc_gate_dir non-repo target: empty stderr"  "" "$GGD8_ERR"
+expect "(item8) gc_gate_dir non-repo target: no stray /.gate at the fs root" "absent" "$([ -e /.gate ] && echo present || echo absent)"
+
+(
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "" >"$TMPROOT/ggd8e.out" 2>"$TMPROOT/ggd8e.err"
+  echo $? > "$TMPROOT/ggd8e.rc"
+)
+expect "(item8) gc_gate_dir empty target: rc 1" "1" "$(cat "$TMPROOT/ggd8e.rc" 2>/dev/null)"
+expect "(item8) gc_gate_dir empty target: empty stdout" "" "$(cat "$TMPROOT/ggd8e.out" 2>/dev/null)"
+
+# Through pre-commit-test.sh: a `-C <non-repo>` segment that never becomes a
+# commit segment. NOTE (measured, reported per the brief/spec-disagreement
+# instruction): pct_note's OWN toplevel pre-check (`git -C "$_pn_base"
+# rev-parse --show-toplevel`, hooks/pre-commit-test.sh) already returns 0
+# before ever calling gc_gate_dir when $_pn_base does not resolve, so this
+# row does not actually drive gc_gate_dir with the unresolved target -- it
+# is a general "no crash, nothing written outside the fixture repo, no
+# stray /.gate" regression guard, not a direct exercise of the item 8 fix.
+# The two gc_gate_dir unit rows above are what is genuinely RED today.
+GGD8REPO=$(mkrepo ggd8repo main)
+# NOTE: the no-commit-segment path never calls pct_capture_tree, so PCT_TREE
+# stays empty and pct_note names the file "unknown" (see the existing
+# PCTNOOP=$(precommitnoopfile "$PCTREPO" unknown) precedent elsewhere in this
+# suite) -- NOT the fixture's actual HEAD^{tree}.
+GGD8_NOOPFILE=$(precommitnoopfile "$GGD8REPO" unknown)
+# Existence, not a selfstamp mtime/size comparison (R6's own pattern is
+# NAME-scoped for concurrent-worktree noise; a before/after STAMP diff on a
+# single-writer fixture like this one adds a second-resolution race for no
+# extra power once the gate_dir-field assertion below already proves the
+# write is from THIS fix -- so this checks the plain fact instead).
+expect "(item8) the fixture repo's own noop record absent before the write" \
+  "absent" "$([ -f "$GGD8_NOOPFILE" ] && echo present || echo absent)"
+check "(item8) git -C <non-repo> status through pre-commit-test.sh: allowed" \
+  "$PCT62" 0 "$(mkjson Bash 'git -C /nonexistent-dir-403 status' "$GGD8REPO")"
+expect "(item8) the fixture repo's own noop record present after the write" \
+  "present" "$([ -f "$GGD8_NOOPFILE" ] && echo present || echo absent)"
+expect "(item8) still no stray /.gate at the fs root" "absent" "$([ -e /.gate ] && echo present || echo absent)"
+GGD8_GDFIELD=$(grep -o '"gate_dir"[[:space:]]*:[[:space:]]*"[^"]*"' "$GGD8_NOOPFILE" 2>/dev/null)
+expect "(item8) the noop record now carries a gate_dir field" "present" "$([ -n "$GGD8_GDFIELD" ] && echo present || echo absent)"
+
+# Old-git fallback still reachable: a `git` shim first on PATH that rejects
+# `--path-format` (as git < 2.31 does) but answers `--show-toplevel`.
+GITSHIM_REAL=$(command -v git)
+GITSHIM_DIR="$TMPROOT/gitshim-old"
+mkdir -p "$GITSHIM_DIR"
+printf '#!/usr/bin/env bash\ncase " $* " in\n  *"--path-format"*) exit 129 ;;\nesac\nexec "%s" "$@"\n' "$GITSHIM_REAL" > "$GITSHIM_DIR/git"
+chmod +x "$GITSHIM_DIR/git"
+(
+  PATH="$GITSHIM_DIR:$PATH"
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "$GGD8REPO" >"$TMPROOT/ggd8old.out" 2>"$TMPROOT/ggd8old.err"
+  echo $? > "$TMPROOT/ggd8old.rc"
+)
+GGD8OLD_OUT=$(cat "$TMPROOT/ggd8old.out" 2>/dev/null)
+GGD8OLD_ERR=$(cat "$TMPROOT/ggd8old.err" 2>/dev/null)
+GGD8REPO_TOP=$(git -C "$GGD8REPO" rev-parse --show-toplevel)
+expect "(item8) old-git shim: WARN on stderr" "present" "$(printf '%s' "$GGD8OLD_ERR" | grep -q 'WARN: git < 2.31' && echo present || echo absent)"
+expect "(item8) old-git shim: legacy <toplevel>/.gate path" "$GGD8REPO_TOP/.gate" "$GGD8OLD_OUT"
+
+# RED-check control: a shim that ACCEPTS --path-format (never rejects) must
+# flip the row above -- no WARN, the shared <common-dir>/gate path instead --
+# proving the WARN row is not vacuously true.
+GITSHIM2_DIR="$TMPROOT/gitshim-new"
+mkdir -p "$GITSHIM2_DIR"
+printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$GITSHIM_REAL" > "$GITSHIM2_DIR/git"
+chmod +x "$GITSHIM2_DIR/git"
+(
+  PATH="$GITSHIM2_DIR:$PATH"
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "$GGD8REPO" >"$TMPROOT/ggd8new.out" 2>"$TMPROOT/ggd8new.err"
+  echo $? > "$TMPROOT/ggd8new.rc"
+)
+expect "(item8) RED-check: accepting shim prints no WARN" "" "$(cat "$TMPROOT/ggd8new.err" 2>/dev/null)"
+expect "(item8) RED-check: accepting shim's row differs from the rejecting shim's" \
+  "differ" "$([ "$(cat "$TMPROOT/ggd8new.out" 2>/dev/null)" != "$GGD8OLD_OUT" ] && echo differ || echo same)"
+
 # --- v3.1 (penumbra): gc_matches_subcommand's -C fallback no longer treats a
 # token merely EQUAL to the verb, or containing it after a `-`, as a match for
 # the whole remainder. Over-refusal only -- these are all want-0 rows -- plus

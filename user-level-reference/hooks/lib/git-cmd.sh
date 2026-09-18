@@ -829,12 +829,29 @@ gc_current_branch() {
 # hooks/run-gate.sh repeats this function (same standalone reason as
 # GC_KEY_PRE/GC_TERMINAL_RC/GC_GATE_TTL_S above); scripts/verify-template-
 # consistency.sh asserts the two copies agree.
+#
+# v4.0.3 item 8 (R2, reviewer, measured on git 2.55): `gc_gate_dir
+# <non-repo target>` used to fail BOTH git calls, print the literal `/.gate`
+# (the MSYS root -- `C:\Program Files\Git\.gate` -- outside every repo), warn
+# `WARN: git < 2.31` (false on a current git) and let the fallback's own
+# `fatal:` leak beside it; `gc_gate_dir ""` resolved against the PROCESS cwd
+# and returned the CORRECT directory of the WRONG repo -- a plausible answer
+# for the wrong reason. FIX: `[ -n "$1" ] || return 1` FIRST, before any git
+# call -- an empty target must never reach `git -C ""`, which git reads as
+# "the cwd" and answers successfully. Then resolve the target to its
+# toplevel with `--show-toplevel`; only THAT call's failure means "unresolved"
+# (return 1, print nothing, no WARN). The `--path-format=absolute
+# --git-common-dir` probe runs against the resolved $top, and its OWN
+# failure (a toplevel that resolved but is running an old git) is the one
+# case that still gets the documented WARN + <toplevel>/.gate fallback.
 gc_gate_dir() {
-  local common
-  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  local top common
+  [ -n "$1" ] || return 1
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 1   # unresolved target: nothing
+  common=$(git -C "$top" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
   if [ -n "$common" ]; then printf '%s/gate\n' "$common"; return 0; fi
   echo "WARN: git < 2.31: gate artifacts stay at <toplevel>/.gate (per-worktree)" >&2
-  printf '%s/.gate\n' "$(git -C "$1" rev-parse --show-toplevel)"
+  printf '%s/.gate\n' "$top"
 }
 
 # gc_is_placeholder <value> -- true for an unreplaced `{{...}}`.

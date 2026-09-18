@@ -128,14 +128,18 @@ GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 # GC_GATE_TTL_S and gc_gate_dir, defined locally for the same standalone
 # reason as GC_KEY_PRE above (v4.0.1, item 17). The definitions and the
 # reasons live in hooks/lib/git-cmd.sh; scripts/verify-template-consistency.sh
-# asserts all three stay in step.
+# asserts all three stay in step. v4.0.3 item 8: gc_gate_dir refuses an
+# unresolved target instead of printing /.gate with a false git-version
+# warning -- see the header note on the git-cmd.sh copy.
 GC_GATE_TTL_S=3600
 gc_gate_dir() {
-  local common
-  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  local top common
+  [ -n "$1" ] || return 1
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 1   # unresolved target: nothing
+  common=$(git -C "$top" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
   if [ -n "$common" ]; then printf '%s/gate\n' "$common"; return 0; fi
   echo "WARN: git < 2.31: gate artifacts stay at <toplevel>/.gate (per-worktree)" >&2
-  printf '%s/.gate\n' "$(git -C "$1" rev-parse --show-toplevel)"
+  printf '%s/.gate\n' "$top"
 }
 
 # Read Gate command from PROJECT_CONTEXT.md. Tolerates: an optional leading
@@ -164,6 +168,16 @@ esac
 HEAD_SHA=$(git -C "$CWD" rev-parse HEAD 2>/dev/null)
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
 ARTIFACT_DIR=$(gc_gate_dir "$CWD")
+# v4.0.3 item 8: gc_gate_dir now refuses (empty stdout, rc 1) rather than
+# printing a plausible-looking path for an unresolved target. REPO_TOP was
+# already validated above, so this is not expected to fire from this call
+# site in practice -- defensive, not reachable by a known live path. TERMINAL
+# (not 1): re-running from the same cwd cannot make the target resolve any
+# differently, same class as the "not inside a git repository" guard above.
+if [ -z "$ARTIFACT_DIR" ]; then
+  echo "GATE ERROR: gate directory unresolved" >&2
+  exit "$GC_TERMINAL_RC"
+fi
 # Sha-keyed filename, not a single fixed name (v4.0.1, item 17): the
 # directory above is now shared by every worktree of the repo, so a fixed
 # name would let two worktrees gating concurrently clobber each other's

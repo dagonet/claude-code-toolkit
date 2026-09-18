@@ -167,9 +167,9 @@ pct_note() { # <path-label> <rc, or -1 where no subshell ran>
   # matched_in_quoted as well.
   if [ "$1" = no-commit-segment ]; then
     _pn_noop="$_pn_gd/last-precommit-noop.$_pn_treeseg.json"
-    printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","kind":"no-commit-segment"}\n' \
+    printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","kind":"no-commit-segment","gate_dir":"%s"}\n' \
       "$1" "$2" "$PCT_TREE" "$((_pn_t1 - PCT_HOOK_T0))" "${#GC_CMD}" "$_pn_tool" \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$_pn_gd" \
       > "$_pn_noop.tmp" 2>/dev/null && mv -f "$_pn_noop.tmp" "$_pn_noop" 2>/dev/null || return 0
     return 0
   fi
@@ -182,9 +182,9 @@ pct_note() { # <path-label> <rc, or -1 where no subshell ran>
   # the shape `bash -c "git commit -m x"` -- as opposed to an unwrapped `git
   # commit -m x`; see gc_seg_quoted in hooks/lib/git-cmd.sh.
   _pn_art="$_pn_gd/last-precommit.$_pn_treeseg.json"
-  printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","matched_in_quoted":%s}\n' \
+  printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","matched_in_quoted":%s,"gate_dir":"%s"}\n' \
     "$1" "$2" "$PCT_TREE" "$((_pn_t1 - PCT_HOOK_T0))" "${#GC_CMD}" "$_pn_tool" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$PCT_QUOTED" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$PCT_QUOTED" "$_pn_gd" \
     > "$_pn_art.tmp" 2>/dev/null && mv -f "$_pn_art.tmp" "$_pn_art" 2>/dev/null || return 0
   return 0
 }
