@@ -1961,6 +1961,36 @@ check "(item13) expired + tree ok + no env key: blocked" "$H" 2 "$(mkjson Bash '
 # inherits a deliberately-expired/mismatched one for $A13REPO.
 a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-" >/dev/null
 
+# ===========================================================================
+# v4.0.3 item 4 -- pre-commit records (last-precommit.<tree>.json,
+# last-precommit-noop.<tree>.json) were never pruned. Fixed: pruned by the
+# SAME derived window (GC_GATE_PRUNE_S) at the artifact-write path in
+# pre-commit-test.sh, mirroring run-gate.sh's existing last-pass.*.json
+# prune. Two synthetic, artificially-aged records in the SAME shared gate
+# directory a real commit-path write will touch; a fresh one (this fixture's
+# own current-tree record, written by the assertion itself) must survive.
+# ===========================================================================
+PCT4REPO=$(mkrepo pct4repo main)
+printf '#!/usr/bin/env bash\nexit 0\n' > "$PCT4REPO/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n' > "$PCT4REPO/PROJECT_CONTEXT.md"
+PCT4_GD=$(gatedir "$PCT4REPO")
+mkdir -p "$PCT4_GD"
+PCT4_OLD=$(precommitfile "$PCT4REPO" "deadbeef4444deadbeef4444deadbeef4444dead")
+PCT4_OLD_NOOP=$(precommitnoopfile "$PCT4REPO" "deadbeef5555deadbeef5555deadbeef5555dead")
+printf '{"path":"test","rc":0,"tree":"deadbeef4444deadbeef4444deadbeef4444dead"}\n' > "$PCT4_OLD"
+printf '{"path":"no-commit-segment","rc":-1,"tree":"deadbeef5555deadbeef5555deadbeef5555dead","kind":"no-commit-segment"}\n' > "$PCT4_OLD_NOOP"
+touch -d '-2 days' "$PCT4_OLD" "$PCT4_OLD_NOOP"
+expect "(item4) aged precommit record exists before the write" "present" "$([ -f "$PCT4_OLD" ] && echo present || echo absent)"
+expect "(item4) aged precommit-noop record exists before the write" "present" "$([ -f "$PCT4_OLD_NOOP" ] && echo present || echo absent)"
+check "(item4) a real commit-path write still succeeds" "$PCT62" 0 "$(mkjson Bash 'git commit -m x' "$PCT4REPO")"
+expect "(item4) the aged precommit record is pruned"       "absent" "$([ -f "$PCT4_OLD" ] && echo present || echo absent)"
+expect "(item4) the aged precommit-noop record is pruned"  "absent" "$([ -f "$PCT4_OLD_NOOP" ] && echo present || echo absent)"
+PCT4_FRESH_TREE=$(git -C "$PCT4REPO" rev-parse 'HEAD^{tree}')
+expect "(item4) a fresh record (this run's own) survives"  "present" "$([ -f "$(precommitfile "$PCT4REPO" "$PCT4_FRESH_TREE")" ] && echo present || echo absent)"
+# run-gate.sh's own last-pass prune stays untouched by this change.
+expect "(item4) run-gate.sh's last-pass prune line still derives from GC_GATE_PRUNE_S" \
+  "present" "$(grep -q 'prune_min=\$(( GC_GATE_PRUNE_S / 60 ))' "$ROOT/hooks/run-gate.sh" && echo present || echo absent)"
+
 # --- v3.1 (penumbra): gc_matches_subcommand's -C fallback no longer treats a
 # token merely EQUAL to the verb, or containing it after a `-`, as a match for
 # the whole remainder. Over-refusal only -- these are all want-0 rows -- plus
