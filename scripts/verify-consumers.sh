@@ -17,6 +17,11 @@
 # with `cygpath -w` -- never handed an MSYS path directly. This script `cd`s
 # into each consumer directory and passes `.` (bare, relative), and converts
 # $TOOLKIT to its Win32 form before passing it as --template-repo.
+#
+# Branch hygiene, if ever added: key on the REMOTE (`git ls-remote --heads`)
+# or squash-tolerant semantics (`git cherry`, tree equality) -- after a
+# squash merge `git branch -d` refuses the local sync branch while the
+# remote delete succeeds (Yutraffic, open-brain 2026-09-17).
 
 set -u
 
