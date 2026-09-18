@@ -35,7 +35,7 @@
 2. If you acknowledged kept files by hand (`deletedAcknowledged`), `unknown_keys_empty` now PASSes and `classes_and_hashes` counts them as `acknowledged_kept`; new acknowledgements go through `template_finalize_sync(acknowledged_deleted=[...])`.
 3. If `project_md_seed_current` says "predates v4.0.2", replace the header of `.claude/rules/project.md` with the v4.0.2 seed (or scope the file with `paths:`); a scoped file that still carries the unscoped seed sentences shows on `project_md_scoped_consistent`.
 4. `legacy_gate_dir` names any of the three legacy artifact files still under `.gate/` — delete those by name after `git pull --ff-only`; leave everything else there.
-5. Hooks: `require-skills-block.sh` now refuses an Agent payload with no `tool_input.prompt` (fail closed) and ignores non-Agent tools; `post-edit-build.sh` treats `None` like `none`. Apply both via the sync.
+5. Hooks: `require-skills-block.sh` now refuses an Agent payload with no `tool_input.prompt` (fail closed) and ignores non-Agent tools; `post-edit-build.sh` treats `None` like `none`. Apply both via the sync. After applying, run the enforcing-vs-inert pair: a `coder` spawn WITHOUT a `## Required Skills` block must exit 2 and WITH one exit 0 — probing only the new shape-witness arms yields 2s and proves nothing about the hook's purpose.
 6. `scripts/verify-consumers.sh` is unchanged in interface.
 
 ## v4.0.1 — 2026-09-17
