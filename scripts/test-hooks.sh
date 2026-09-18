@@ -1879,6 +1879,88 @@ expect "(item8) RED-check: accepting shim prints no WARN" "" "$(cat "$TMPROOT/gg
 expect "(item8) RED-check: accepting shim's row differs from the rejecting shim's" \
   "differ" "$([ "$(cat "$TMPROOT/ggd8new.out" 2>/dev/null)" != "$GGD8OLD_OUT" ] && echo differ || echo same)"
 
+# ===========================================================================
+# v4.0.3 item 13 -- an expired-but-tree-identical gate artifact forced a full
+# re-gate. Fixed: gate-before-merge.sh's freshness check now accepts an
+# artifact past the ordinary GC_GATE_TTL_S when its tree equals HEAD^{tree}
+# AND its environment fingerprint (gc_gate_env, hooks/lib/git-cmd.sh) still
+# matches, up to GC_GATE_PRUNE_S (24x the TTL). The fixture's server/.venv is
+# built INSIDE this throwaway repo -- never the real toolkit venv.
+# ===========================================================================
+# On a FEATURE branch, deliberately -- a repo checked out ON a protected
+# branch hits the A6 "merge from a protected branch" refusal unconditionally,
+# before the artifact is ever read (see GATEFEAT/GATEREPO's own pairing
+# above), which would make every row below pass or fail for the wrong reason.
+A13REPO=$(mkrepo a13repo feature/z)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$A13REPO/PROJECT_CONTEXT.md"
+mkdir -p "$A13REPO/server/.venv/Lib/site-packages"
+printf 'home = /usr\nversion = 3.12.0\n' > "$A13REPO/server/.venv/pyvenv.cfg"
+A13_SHA=$(git -C "$A13REPO" rev-parse HEAD)
+A13_TREE=$(git -C "$A13REPO" rev-parse 'HEAD^{tree}')
+
+a13_env_hash()   { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" 2>/dev/null ); }
+a13_env_detail() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null | tr '\n' '|' ); }
+
+a13_writeartifact() { # <repo> <sha_field|-> <tree_field|-> <env_field|-> <env_detail_field|-> <touch-spec|->
+  mkdir -p "$(gatedir "$1")"
+  rm -f "$(gatedir "$1")"/last-pass.*.json 2>/dev/null
+  af="$(gatepassfile "$1" "$A13_SHA")"
+  a13j='{'
+  [ "$2" = "-" ] || a13j="${a13j}\"sha\":\"$2\","
+  [ "$3" = "-" ] || a13j="${a13j}\"tree\":\"$3\","
+  a13j="${a13j}\"branch\":\"main\",\"ts\":\"2020-01-01T00:00:00Z\",\"status\":\"pass\""
+  [ "$4" = "-" ] || a13j="${a13j},\"env\":\"$4\""
+  [ "$5" = "-" ] || a13j="${a13j},\"env_detail\":\"$5\""
+  a13j="${a13j}}"
+  printf '%s\n' "$a13j" > "$af"
+  [ "$6" = "-" ] || touch -d "$6" "$af"
+  printf '%s' "$af"
+}
+
+A13_ENV0=$(a13_env_hash "$A13REPO")
+A13_DETAIL0=$(a13_env_detail "$A13REPO")
+
+# (1) expired, identical tree, identical env -> allowed, reason on stderr.
+A13_AF=$(a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours")
+check "(item13) expired + tree ok + env ok: allowed"  "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+check_msg "(item13) allow reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "accepted on tree identity"
+
+# (2) same, but pyvenv.cfg has moved one byte since the artifact was minted.
+printf 'home = /usr\nversion = 3.12.1\n' > "$A13REPO/server/.venv/pyvenv.cfg"
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
+check "(item13) expired + tree ok + env CHANGED (pyvenv): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+check_msg "(item13) block names the pyvenv contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: pyvenv"
+printf 'home = /usr\nversion = 3.12.0\n' > "$A13REPO/server/.venv/pyvenv.cfg"   # restore
+
+# (3) same, but a dist-info directory appeared since minting.
+mkdir -p "$A13REPO/server/.venv/Lib/site-packages/zzz-1.0.dist-info"
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
+check "(item13) expired + tree ok + env CHANGED (dist-info added): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+check_msg "(item13) block names the dist contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: dist"
+rm -rf "$A13REPO/server/.venv/Lib/site-packages/zzz-1.0.dist-info"   # restore
+
+# (4) tree+env identical, but older than the prune window (24h): blocked.
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-25 hours" >/dev/null
+check "(item13) tree ok + env ok but past the PRUNE window (25h): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# (5) a foreign tree (sha matches, tree does not) -- the extension requires
+# an EXACT tree match, not merely a sha match; expired -> blocked.
+a13_writeartifact "$A13REPO" "$A13_SHA" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
+check "(item13) expired + foreign tree: blocked (sha match alone is not enough)" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# (6) a sha-only artifact (no tree key at all), expired: blocked, no extension.
+a13_writeartifact "$A13REPO" "$A13_SHA" "-" "-" "-" "-2 hours" >/dev/null
+check "(item13) expired + no tree key: blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# (7) tree matches but no env key at all (an older writer's artifact),
+# expired past the ordinary TTL: blocked -- no silent extension.
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "-" "-" "-2 hours" >/dev/null
+check "(item13) expired + tree ok + no env key: blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# Restore a fresh, ordinary artifact so nothing downstream in this section
+# inherits a deliberately-expired/mismatched one for $A13REPO.
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-" >/dev/null
+
 # --- v3.1 (penumbra): gc_matches_subcommand's -C fallback no longer treats a
 # token merely EQUAL to the verb, or containing it after a `-`, as a match for
 # the whole remainder. Over-refusal only -- these are all want-0 rows -- plus

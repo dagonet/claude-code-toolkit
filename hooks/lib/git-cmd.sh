@@ -133,6 +133,19 @@ GC_TERMINAL_RC=78
 # scripts/verify-template-consistency.sh asserts the two copies agree.
 GC_GATE_TTL_S=3600
 
+# GC_GATE_PRUNE_S (v4.0.3, R4) -- ONE derived expression, defined once, for
+# every 24h-from-the-TTL window in this codebase: run-gate.sh's existing
+# last-pass.*.json prune, the new pre-commit-test.sh last-precommit*.json
+# prune (item 4), and the tree+env TTL extension (item 13). Never three
+# independently-typed "* 24" literals -- a change to GC_GATE_TTL_S must move
+# all three together, which only happens if there is exactly one expression
+# to move. Seconds; a caller needing minutes (`find -mmin`) divides by 60
+# itself, same as the pre-existing run-gate.sh line did before this constant
+# existed. hooks/run-gate.sh repeats this line (same standalone reason as
+# GC_GATE_TTL_S/gc_gate_dir above); scripts/verify-template-consistency.sh
+# asserts the two copies agree.
+GC_GATE_PRUNE_S=$(( GC_GATE_TTL_S * 24 ))
+
 # Fail CLOSED when the JSON reader is missing: without it GC_CMD would be empty
 # and every gate would allow every command.
 gc_json_lib="$(dirname "${BASH_SOURCE[0]:-$0}")/json.sh"
@@ -852,6 +865,98 @@ gc_gate_dir() {
   if [ -n "$common" ]; then printf '%s/gate\n' "$common"; return 0; fi
   echo "WARN: git < 2.31: gate artifacts stay at <toplevel>/.gate (per-worktree)" >&2
   printf '%s/.gate\n' "$top"
+}
+
+# gc_sha256 <stdin -> lowercase hex sha256>. Never `sha256sum <path>` -- that
+# prints the PATH into the digest input, which would make a fingerprint
+# depend on the absolute path of the file being hashed (see gc_gate_env
+# below, whose whole point is a fingerprint that agrees across worktrees at
+# different absolute paths). Tries sha256sum (Linux, Git Bash), then
+# shasum -a 256 (macOS ships this, not sha256sum, by default), then openssl.
+# Prints nothing and returns 1 when none is on PATH -- callers must treat
+# that as "cannot compute", never as an empty-string hash that would
+# spuriously match another "cannot compute" (fail CLOSED, v4.0.3 item 13).
+gc_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 | awk '{print $NF}'
+  else
+    return 1
+  fi
+}
+
+# gc_gate_env <repo_top> [-v] -- v4.0.3 item 13: the environment fingerprint
+# the tree+env TTL extension in gate-before-merge.sh keys on. Concatenates
+# labelled contributors the server test suite's outcome can depend on, one
+# per line:
+#   pyvenv=<sha256 of server/.venv/pyvenv.cfg, or "absent">
+#   dist=<sha256 of the SORTED, newline-joined *.dist-info directory NAMES
+#         (basenames only) under the venv's site-packages, or "absent" -- a
+#         directory read that moves on any install, upgrade or removal, so
+#         `pip install -U mcp` into an existing venv changes the fingerprint>
+#   py=<venv python --version, or "absent">
+#   node=<node --version if node is on PATH, or "absent">
+# Default output: the sha256 hex of that text (this is what "env" in the
+# gate artifact stores). With a second argument "-v": the labelled lines
+# themselves, for a human or run-gate.sh's own per-contributor storage --
+# never re-derived from the aggregate hash, which is one-way by design.
+#
+# PATH-INDEPENDENT BY CONSTRUCTION (reviewer): hashes are computed via
+# gc_sha256 (stdin only, see above) and the dist-info listing uses basenames
+# only -- so two worktrees of the same repo, at different absolute paths,
+# with byte-identical venvs, fingerprint identically. Required: the gate
+# artifact directory is shared by every worktree (gc_gate_dir), and a merge
+# can happen from a different worktree than the one that minted the
+# artifact.
+#
+# FAILS CLOSED: if gc_sha256 has no backend at all, this returns 1 and
+# prints nothing -- callers must NOT treat that as an empty-string
+# fingerprint (two "cannot compute" states would then spuriously "match").
+gc_gate_env() {
+  local top="$1" verbose="${2:-}" venv sp pyver nodever pyvenv_h dist_h out _gge_cand
+  [ -n "$top" ] || return 1
+  venv="$top/server/.venv"
+
+  if [ -f "$venv/pyvenv.cfg" ]; then
+    pyvenv_h=$(gc_sha256 < "$venv/pyvenv.cfg") || return 1
+  else
+    pyvenv_h=absent
+  fi
+
+  sp=""
+  [ -d "$venv/Lib/site-packages" ] && sp="$venv/Lib/site-packages"
+  if [ -z "$sp" ]; then
+    for _gge_cand in "$venv"/lib/python*/site-packages; do
+      [ -d "$_gge_cand" ] && { sp="$_gge_cand"; break; }
+    done
+  fi
+  if [ -n "$sp" ]; then
+    dist_h=$( (cd "$sp" 2>/dev/null && ls -1d -- *.dist-info 2>/dev/null) | LC_ALL=C sort | gc_sha256) || return 1
+    [ -n "$dist_h" ] || dist_h=absent
+  else
+    dist_h=absent
+  fi
+
+  pyver=absent
+  if [ -x "$venv/bin/python" ]; then
+    pyver=$("$venv/bin/python" --version 2>&1)
+  elif [ -x "$venv/Scripts/python.exe" ]; then
+    pyver=$("$venv/Scripts/python.exe" --version 2>&1)
+  fi
+
+  nodever=absent
+  command -v node >/dev/null 2>&1 && nodever=$(node --version 2>&1)
+
+  out=$(printf 'pyvenv=%s\ndist=%s\npy=%s\nnode=%s\n' "$pyvenv_h" "$dist_h" "$pyver" "$nodever")
+
+  if [ "$verbose" = "-v" ]; then
+    printf '%s' "$out"
+  else
+    printf '%s' "$out" | gc_sha256
+  fi
 }
 
 # gc_is_placeholder <value> -- true for an unreplaced `{{...}}`.
