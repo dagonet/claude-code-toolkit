@@ -5814,11 +5814,34 @@ check "(FIELD) **Protected branches**: value repeating the marker -- whole value
 # at the LAST occurrence instead of returning the whole value. Both rows run
 # entirely inside their own THROWAWAY mkrepo checkout (REPO_TOP resolves from
 # cwd, so run-gate.sh never touches this real checkout's OWN shared gate
-# directory); the guard assertion below confirms that directly. v4.0.1 (item
-# 17): the guard snapshots the WHOLE shared gate directory (not one guessed
-# filename) so it also catches a stray file landing there under any name.
+# directory); the guard assertion below confirms that directly.
+#
+# v4.0.1 (item 17) made the gate directory SHARED across every worktree of
+# this repo (<common git dir>/gate/). The guard used to snapshot the WHOLE
+# directory listing to catch a stray file under any name -- but that listing
+# also moves when any OTHER worktree gates concurrently (a peer's commit
+# minting last-precommit.<tree>.json, or any hook's noop probe minting
+# last-precommit-noop.*.json), and it went red 2/1107 on a healthy run within
+# two days of shipping. Task 4 addendum (R6, 2026-09-17/18): attribute BY
+# NAME instead. A row can only pollute THIS checkout's own record by wrongly
+# resolving REPO_TOP to $ROOT, and if it does, the file it writes is named
+# for $ROOT's own HEAD sha or tree specifically -- last-pass.$RG_SELF_SHA.json
+# or last-precommit.$RG_SELF_TREE.json. Snapshotting just those two named
+# files' mtime+size keeps the same detection power (a REPO_TOP bug still
+# moves a stamp) without being perturbed by a concurrent worktree's
+# differently-named artifacts.
 # ---------------------------------------------------------------------------
-RG_SELFGATE_BEFORE=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
+RG_SELF_SHA=$(git -C "$ROOT" rev-parse HEAD)
+RG_SELF_TREE=$(git -C "$ROOT" rev-parse 'HEAD^{tree}')
+selfstamp() { # <file> -> "mtime size" of ONE named file, or "absent"
+  if [ -f "$1" ]; then stat -c '%Y %s' "$1" 2>/dev/null || echo present; else echo absent; fi
+}
+rg_selfstamps() { # -> the two stamps this checkout's own artifacts would carry
+  printf '%s|%s\n' \
+    "$(selfstamp "$(gatedir "$ROOT")/last-pass.$RG_SELF_SHA.json")" \
+    "$(selfstamp "$(gatedir "$ROOT")/last-precommit.$RG_SELF_TREE.json")"
+}
+RG_SELFGATE_BEFORE=$(rg_selfstamps)
 
 # (control) a plain **Gate** value with no embedded marker -- passes
 # identically pre-fix and post-fix; proves the two rows below fail on a
@@ -5871,11 +5894,14 @@ expect "(RUN-GATE) truncate-to-true: exits non-zero (real failure runs)" "1" \
 expect "(RUN-GATE) truncate-to-true: no last-pass.<sha>.json minted on an unrun suite" "0" \
   "$([ -f "$(gatepassfile "$RG_SEVERITY" "$RG_SEVERITY_HEADSHA")" ] && echo 1 || echo 0)"
 
-# GUARD, two-sided: this real checkout's own shared gate directory must be
+# GUARD, two-sided: this real checkout's own named gate artifacts must be
 # byte-unchanged by either row above -- both ran with REPO_TOP resolved to
-# their own throwaway repo, never to this one.
-RG_SELFGATE_AFTER=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
-expect "(RUN-GATE) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
+# their own throwaway repo, never to this one. A moved stamp here means a row
+# wrote THIS checkout's artifact, i.e. a REPO_TOP resolution bug -- not
+# concurrency: a concurrent worktree cannot move a stamp keyed on $ROOT's own
+# sha/tree (see the comment above RG_SELF_SHA).
+RG_SELFGATE_AFTER=$(rg_selfstamps)
+expect "(RUN-GATE) no artifact minted for this checkout (named files' stamps unchanged; a concurrent worktree cannot move them)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER"
 
 # ---------------------------------------------------------------------------
@@ -5997,10 +6023,12 @@ fi
 
 # GUARD, two-sided, bracketing the A2 block above too: every rg_row/rg_dtg_row
 # invocation ran with REPO_TOP resolved to its own throwaway repo, so this
-# checkout's own shared gate directory must be byte-unchanged across the
-# whole block, not just the pre-A2 rows the earlier guard bracketed.
-RG_SELFGATE_AFTER_A2=$(ls -la "$(gatedir "$ROOT")" 2>/dev/null)
-expect "(RUN-GATE A2) real checkout's own gate directory untouched (another worktree may have gated concurrently during this run -- re-run before investigating)" \
+# checkout's own named gate artifacts must be byte-unchanged across the whole
+# block, not just the pre-A2 rows the earlier guard bracketed. A moved stamp
+# means a row wrote THIS checkout's artifact (REPO_TOP resolution bug), not
+# concurrency -- see the comment above RG_SELF_SHA.
+RG_SELFGATE_AFTER_A2=$(rg_selfstamps)
+expect "(RUN-GATE A2) no artifact minted for this checkout (named files' stamps unchanged; a concurrent worktree cannot move them)" \
   "$RG_SELFGATE_BEFORE" "$RG_SELFGATE_AFTER_A2"
 
 # ---------------------------------------------------------------------------
