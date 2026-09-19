@@ -1260,7 +1260,10 @@ async def template_get_diff(
     tpl_raw = _read_file(_template_file_path(manifest, file_path))
     if tpl_raw is None:
         return json.dumps({"error": f"Template file not found: {file_path}"}, ensure_ascii=False)
-    tpl_current = v3.template_content(pp, manifest, None, file_path, tpl_raw)
+    try:
+        tpl_current = v3.template_content(pp, manifest, None, file_path, tpl_raw)
+    except (v3.GrantsError, v3.GrantRefused) as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     # Read current project content
     proj_current = _read_file(pp / file_path)
@@ -1273,7 +1276,10 @@ async def template_get_diff(
         git_path = _template_git_path(manifest, file_path)
         base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
         if base_raw is not None:
-            base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
+            try:
+                base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
+            except (v3.GrantsError, v3.GrantRefused) as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     # Fallback: if no base available, use current template as base (two-way)
     fallback_used = False

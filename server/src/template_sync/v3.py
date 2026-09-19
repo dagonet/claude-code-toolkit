@@ -66,6 +66,7 @@ CAPABILITIES = (
     "template_verify",
     "deleted_acknowledged",
     "registered_tools",
+    "agent_grants",
 )
 # CAPABILITIES mixes three kinds of name -- a FIELD a response carries
 # (local_diff_kind), a BEHAVIOUR (region_splice), and a TOOL that must be
@@ -1203,7 +1204,13 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
         tpl_rel = rules.template_path_for(proj_rel)
         ownership = entry.get("ownership") or rules.class_of(tpl_rel) or "template"
         tpl_raw, tpl_flags = read_with_flags(core._template_file_path(manifest, tpl_rel))
-        tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
+        try:
+            tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
+        except (GrantsError, GrantRefused) as e:
+            # Refuse-not-guess (R-C): an apply/status ERROR for every agent
+            # path -- abort the whole status computation rather than report
+            # a partial or silently-degraded result for the other files.
+            return {"error": str(e)}
         proj_content, proj_flags = read_with_flags(pp / proj_rel)
         info: dict = {"ownership": ownership, "template_path": tpl_rel,
                       "project_file_missing": proj_content is None,
@@ -1340,7 +1347,11 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
                              "move the logic to a non-template path (e.g. scripts/gate.sh) and point the key there"}
 
     tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
-    tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
+    try:
+        tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
+    except (GrantsError, GrantRefused) as e:
+        # Refuse-not-guess (R-C): nothing is written; the manifest is untouched.
+        return {"error": str(e)}
     if source == "template" and tpl_replaced is None:
         return {"error": f"Template file not found: {tpl_rel}"}
     target = pp / proj_rel
