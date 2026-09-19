@@ -858,6 +858,13 @@ HOOKS_NO_MIRROR=(
   # require-skills-block.sh: enforces this repo's "## Required Skills" spawn
   # convention (AGENT_TEAM.md), which is project-team-only.
   "require-skills-block.sh"
+  # deny-claude-md-writes.sh (v4.1, spec §6): project scope only -- a
+  # user-level deny would refuse CLAUDE.md writes in every non-consumer repo
+  # on the machine, including this toolkit's own checkout and every project
+  # that has never run /sync-template at all. It denies only when
+  # <root>/.claude/template-manifest.json exists with manifest_version 4, a
+  # condition a bare ~/.claude install has no way to meet for itself.
+  "deny-claude-md-writes.sh"
 )
 # FINDING (v3.0.4, A6): retro-brief.sh (SessionStart, reads the ledger) and
 # retro-ledger.sh (SubagentStop, writes it) both key off cwd -> project slug

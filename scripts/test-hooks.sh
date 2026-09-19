@@ -4915,6 +4915,18 @@ printf '%s' "$(mkjson Bash 'git push origin main' "$FEATREPO")" \
 expect "no parser: guard-off still opens" 0 "$?"
 rm -f "$FEATREPO/.claude/git-guard-off"
 
+# v4.1 spec §6 -- hooks/deny-claude-md-writes.sh shares the same fail-closed
+# posture: with no parser at all it cannot even read tool_name, so it refuses
+# rather than silently let the edit through. Reuses MAINREPO; the payload
+# shape and the manifest content are both irrelevant here because json_have
+# is checked before any field is read. Placed in THIS block (not a `check`
+# row near the hook's own fixtures below) so scripts/test-hooks-parser-matrix.sh
+# counts it: the matrix restricts the outer PATH to one backend at a time and
+# always leaves ONE parser available, so a true "zero parser" case can only be
+# exercised here, where check_env overrides PATH regardless of the outer run.
+check_env "no parser: deny-claude-md-writes Edit CLAUDE.md" "$NOPARSER" hooks/deny-claude-md-writes.sh 2 \
+  "$(mkjson Edit 'unused' "$MAINREPO")" "$NEEDLE_BLOCK"
+
 # A mirror that copied git-cmd.sh but not the new json.sh must fail closed too,
 # not fall back to an undefined reader.
 NOJSONLIB="$TMPROOT/nojsonlib"
@@ -5715,6 +5727,129 @@ check "(DSR) environment.ts allowed"              "$DSR" 0 "$(mkjson Bash 'cat e
 
 check "(DSR) unparseable payload refused"     "$DSR" 2 '{"tool_name":"Read",'
 check "(DSR) a Read with no file_path allowed" "$DSR" 0 "$(mkjson_nocmd Read "$DSRCWD")"
+
+# ===========================================================================
+# v4.1 spec §6 -- hooks/deny-claude-md-writes.sh: under a manifest v4
+# consumer, the repo-root CLAUDE.md is template-owned and the next sync
+# overwrites it, so the editing tools refuse to write it there.
+#
+# Polarity, stated because it is the whole design (memory: gate-design
+# cannot-determine-refuses): an unreadable manifest, or no JSON parser at
+# all, is exit 2 -- the same fail-closed posture as deny-secret-reads.sh
+# above (its no-parser row lives with the other git-gate no-parser rows, see
+# NEEDLE_BLOCK, because the parser matrix can only exercise a true
+# zero-parser case there). Manifest ABSENT, or a version other than 4,
+# ALLOWS -- a v3 consumer, or a repo that has never run /sync-template
+# (including this toolkit's own checkout), is unaffected BY CONSTRUCTION:
+# nothing in the hook special-cases the toolkit path.
+# ===========================================================================
+DCM=hooks/deny-claude-md-writes.sh
+
+mkjson_dcm() { # <tool_name> <field> <path> <cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"%s":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$2" "$(jesc "$(natpath "$3")")" "$(jesc "$4")"
+}
+
+# Two-sided row (spec §6): a permission_mode in the payload changes nothing
+# here -- this hook's exit code IS the decision, evaluated before any
+# permission mode is consulted. Asserted below, not merely assumed.
+mkjson_dcm_bypass() { # <tool_name> <field> <path> <cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"%s":"%s"},"cwd":"%s","permission_mode":"bypassPermissions"}\n' \
+    "$(jesc "$1")" "$2" "$(jesc "$(natpath "$3")")" "$(jesc "$4")"
+}
+
+DCMREPO=$(mkrepo dcm-v4 main)
+mkdir -p "$DCMREPO/.claude" "$DCMREPO/docs"
+printf '{"manifest_version":4}\n' > "$DCMREPO/.claude/template-manifest.json"
+
+DCMREPO_V3=$(mkrepo dcm-v3 main)
+mkdir -p "$DCMREPO_V3/.claude"
+printf '{"manifest_version":3}\n' > "$DCMREPO_V3/.claude/template-manifest.json"
+
+DCMREPO_NOMAN=$(mkrepo dcm-noman main)
+
+DCMREPO_BAD=$(mkrepo dcm-badmanifest main)
+mkdir -p "$DCMREPO_BAD/.claude"
+printf 'not json at all' > "$DCMREPO_BAD/.claude/template-manifest.json"
+
+# --- deny: the four editing tools, all under a v4 manifest ------------------
+check "(DCM) deny Edit CLAUDE.md under v4 manifest"          "$DCM" 2 \
+  "$(mkjson_dcm Edit file_path "$DCMREPO/CLAUDE.md" "$DCMREPO")"
+check "(DCM) deny Write CLAUDE.md under v4 manifest"         "$DCM" 2 \
+  "$(mkjson_dcm Write file_path "$DCMREPO/CLAUDE.md" "$DCMREPO")"
+check "(DCM) deny MultiEdit CLAUDE.md under v4 manifest"     "$DCM" 2 \
+  "$(mkjson_dcm MultiEdit file_path "$DCMREPO/CLAUDE.md" "$DCMREPO")"
+check "(DCM) deny NotebookEdit CLAUDE.md (notebook_path) under v4 manifest" "$DCM" 2 \
+  "$(mkjson_dcm NotebookEdit notebook_path "$DCMREPO/CLAUDE.md" "$DCMREPO")"
+
+# --- allow: a nested CLAUDE.md, and the once-class instructions file -------
+check "(DCM) allow: .claude/project-instructions.md under v4" "$DCM" 0 \
+  "$(mkjson_dcm Edit file_path "$DCMREPO/.claude/project-instructions.md" "$DCMREPO")"
+check "(DCM) allow: nested docs/CLAUDE.md under v4"           "$DCM" 0 \
+  "$(mkjson_dcm Edit file_path "$DCMREPO/docs/CLAUDE.md" "$DCMREPO")"
+
+# --- allow: no manifest / a v3 manifest -------------------------------------
+check "(DCM) allow: no manifest at all"                      "$DCM" 0 \
+  "$(mkjson_dcm Edit file_path "$DCMREPO_NOMAN/CLAUDE.md" "$DCMREPO_NOMAN")"
+check "(DCM) allow: manifest v3"                             "$DCM" 0 \
+  "$(mkjson_dcm Edit file_path "$DCMREPO_V3/CLAUDE.md" "$DCMREPO_V3")"
+
+# --- allow: the toolkit's OWN checkout, no manifest at its root ------------
+# The precondition is asserted, not assumed: this row's whole point is that
+# the toolkit root carries no v4 manifest BY CONSTRUCTION (nothing in the
+# hook exempts this path specially). A manifest appearing at the toolkit
+# root later must flip this PRECONDITION loudly, not leave a same-answer
+# exit-0 assertion looking unchanged in a diff.
+if [ -f "$ROOT/.claude/template-manifest.json" ]; then
+  printf 'FAIL  %-42s (precondition: %s exists)\n' "(DCM) toolkit root has no manifest (precondition)" "$ROOT/.claude/template-manifest.json"
+  fail=$((fail + 1))
+else
+  printf 'PASS  %-42s (absent)\n' "(DCM) toolkit root has no manifest (precondition)"
+  pass=$((pass + 1))
+fi
+check "(DCM) allow: toolkit's own root, no manifest"          "$DCM" 0 \
+  "$(mkjson_dcm Edit file_path "$ROOT/CLAUDE.md" "$ROOT")"
+
+# --- deny wins over every permission mode -----------------------------------
+check "(DCM) deny survives bypassPermissions"                 "$DCM" 2 \
+  "$(mkjson_dcm_bypass Edit file_path "$DCMREPO/CLAUDE.md" "$DCMREPO")"
+
+# --- cannot-determine refuses ------------------------------------------------
+check_msg "(DCM) exit 2 on an unreadable manifest"            "$ROOT/$DCM" 2 \
+  "$(mkjson_dcm Edit file_path "$DCMREPO_BAD/CLAUDE.md" "$DCMREPO_BAD")" \
+  "cannot determine manifest version"
+check "(DCM) exit 2 on unparseable stdin"                     "$DCM" 2 '{"tool_name":"Edit",'
+
+# --- the message names the remedy path --------------------------------------
+check_msg "(DCM) the denial names .claude/project-instructions.md" "$ROOT/$DCM" 2 \
+  "$(mkjson_dcm Edit file_path "$DCMREPO/CLAUDE.md" "$DCMREPO")" \
+  ".claude/project-instructions.md"
+
+# --- a tool shape this hook cannot read passes through ----------------------
+# The matcher already excludes non-editing tools; this pins the contract
+# stated in the header: a call this hook cannot read is never denied.
+check "(DCM) an unmatched tool_name passes through"           "$DCM" 0 \
+  "$(mkjson_dcm Bash command "$DCMREPO/CLAUDE.md" "$DCMREPO")"
+
+# --- R-L: two hooks, one path. Under v4 the deny hook and
+# enforce-delegation.sh disagree on the SAME payload (the deny wins in
+# effect -- Claude Code applies any matching deny); under v3 they agree.
+# Both sides asserted so a future change to either hook that reopens R-L
+# shows up here, not only in prose. (No existing row in this file, before
+# this block, asserted the unqualified "CLAUDE.md is PO-writable" claim --
+# confirmed by a whole-file grep for the literal "CLAUDE.md" before this
+# block was written; it returned nothing.)
+DCM_V4_PAYLOAD=$(mkjson_dcm Edit file_path "$DCMREPO/CLAUDE.md" "$DCMREPO")
+check "(R-L) v4: deny-claude-md-writes denies CLAUDE.md"      "$DCM" 2 "$DCM_V4_PAYLOAD"
+out=$(printf '%s' "$DCM_V4_PAYLOAD" | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "(R-L) v4: enforce-delegation still ALLOWS the same payload" "pass" "$got"
+
+DCM_V3_PAYLOAD=$(mkjson_dcm Edit file_path "$DCMREPO_V3/CLAUDE.md" "$DCMREPO_V3")
+check "(R-L) v3: deny-claude-md-writes allows CLAUDE.md"      "$DCM" 0 "$DCM_V3_PAYLOAD"
+out=$(printf '%s' "$DCM_V3_PAYLOAD" | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
+expect "(R-L) v3: enforce-delegation also allows (both hooks agree)" "pass" "$got"
 
 # ===========================================================================
 # v3.0.3 PERMANENT REGRESSION FIXTURES for three security fixes that shipped
