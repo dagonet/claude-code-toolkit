@@ -50,18 +50,19 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; the project's own MCP notes say *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
-**The trim pass, measured.** The always-loaded surface went **41,167 B → 15,725 B (−62%)** on the `general` variant, across v1.4, v1.5, v2.0, v2.1, the v3.1 diet and the v4.0.1 retirement of `CLAUDE.local.md`. Every column is `wc -c` on the shipped files at that release, and **every release adds its own column** (the same table, with per-variant totals, is in [`docs/architecture.md`](docs/architecture.md)):
+**The trim pass, measured.** The surface loaded by the end of bootstrap went **41,167 B → 15,725 B (−62%)** on the `general` variant (the harness-injected part 40,221 → 12,303 B), across v1.4, v1.5, v2.0, v2.1, the v3.1 diet and the v4.0.1 retirement of `CLAUDE.local.md`. Every column is `wc -c` on the shipped files at that release, and **every release adds its own column** (the same table, with per-variant totals, is in [`docs/architecture.md`](docs/architecture.md)):
 
 | File | Baseline | v1.5 | v2.0 | v2.1 | v3.1 | **v4.0.3** |
 |---|---|---|---|---|---|---|
 | `CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | 6,143 | **6,143** |
 | `CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | 8,655 | **— (retired v4.0.1)** |
 | user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | 5,076 | **5,453** |
-| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | 3,170 | **3,422** |
 | `.claude/rules/project.md` (unscoped) | — | — | — | — | 634 | **707** |
-| **total** | **41,167** | 32,538 | 25,814 | 25,999 | 23,044 | **15,725** |
+| **harness-injected at session start** | **40,221** | 31,592 | 24,868 | 25,053 | 19,874 | **12,303** |
+| `PROJECT_CONTEXT.md` (read at bootstrap step 3, not injected) | 946 | 946 | 946 | 946 | 3,170 | **3,422** |
+| **at the end of bootstrap** | **41,167** | 32,538 | 25,814 | 25,999 | 23,044 | **15,725** |
 
-`PROJECT_CONTEXT.md` grew on purpose: it is where the declared keys live, and every byte added there removes prose a hook would otherwise have to trust an agent to remember. `project.md` joins the table at v4.0.3 because v4.0.1 measured that an unscoped rules file loads at every session start (it was already shipping at v3.1; the v3.1 total did not count it).
+Column file sets, so every historical figure is reproducible from its release tag: Baseline through v3.1 injected = `CLAUDE.md` + `CLAUDE.local.md` + user-level `CLAUDE.md` (v3.1 also shipped the unscoped `project.md`, not yet counted); v4.0.3 injected = `CLAUDE.md` + `project.md` + user-level `CLAUDE.md`; "end of bootstrap" adds `PROJECT_CONTEXT.md` in every column. Two subtotals, because they are two quantities (reviewer, #145): the harness injects `CLAUDE.md`, the user-level `CLAUDE.md` and the unscoped rules file unconditionally at session start; `PROJECT_CONTEXT.md` arrives as a tool result because bootstrap step 3 tells the model to read it — a different lever, a different certainty, and 22% of the headline. `PROJECT_CONTEXT.md` grew on purpose: it is where the declared keys live, and every byte added there removes prose a hook would otherwise have to trust an agent to remember. `project.md` joins the table at v4.0.3 because v4.0.1 measured that an unscoped rules file loads at every session start (it was already shipping at v3.1; the v3.1 total did not count it).
 
 **v3.1 made the budget a ratchet rather than a intention.** Consistency check 35 caps `CLAUDE.md` at 6,144 B and `AGENT_TEAM.md` at 20,480 B per variant, measured against what the files are now — so a file cannot grow back without the check going red and someone deciding that it should. All six variants sit within a few bytes of the cap (`general` at 6,143 of 6,144), which is what a ratchet looks like when it is working.
 
