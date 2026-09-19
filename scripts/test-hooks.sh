@@ -1740,6 +1740,257 @@ check_msg "(A6.13/PCT) -C control blocked by the TEST" "$ROOT/$PCT62" 2 "$(mkjso
 check_msg "(A6.13) -c BEFORE -C merge: the CLASSIFIER" "$ROOT/$H" 2 "$(mkjson Bash "git -c a=b -C $A6CLONE merge feature/y" "$A6CLONE")" "global option"
 check_msg "(A6.13) -C twice merge: the MERGE arm"      "$ROOT/$H" 2 "$(mkjson Bash "git -C $A6CLONE -C $A6CLONE merge feature/y" "$A6CLONE")" "a merge on a protected branch is gated unconditionally"
 
+# ===========================================================================
+# v4.0.3 item 12 -- `bash|sh|source|. <script>` bypassed every commit/merge/
+# push gate: the script's TEXT was never read, only the command line naming
+# it. gc_script_body (hooks/lib/git-cmd.sh) now reads the first 16 KB of the
+# named regular file, and gc_augmented_cmd appends it to GC_CMD BEFORE the
+# segment walk (and, in gate-before-merge.sh / no-push-main.sh, before their
+# git-token pre-filter too -- both must see the same text, or the pre-filter's
+# "no git token" fast exit fires before the walk that would have caught it
+# ever runs). Depth 1 only (a script invoking another script is a documented
+# residual) and capped at 16 KB (a script whose gated line sits past that
+# offset is not read) -- both pinned below, not merely described.
+# ===========================================================================
+PCT12=$(mkrepo pct12 main)
+printf '#!/usr/bin/env bash\nexit 1\n' > "$PCT12/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n' > "$PCT12/PROJECT_CONTEXT.md"
+printf 'git add x\ngit commit -m x\n' > "$PCT12/s.sh"
+printf 'echo hi\n' > "$PCT12/nogit.sh"
+printf '# git commit here\necho hi\n' > "$PCT12/comment.sh"
+printf 'bash inner.sh\n' > "$PCT12/outer.sh"
+printf 'git commit -m x\n' > "$PCT12/inner.sh"
+mkdir -p "$PCT12/somedir"
+# the gated line sits after byte 20000 -- well past the 16 KB (16384-byte) cap
+{ nchars 20000 '#'; printf '\ngit commit -m x\n'; nchars 20000 '#'; printf '\n'; } > "$PCT12/big.sh"
+
+check "(item12/PCT) bash s.sh: script body gates the commit"        "$PCT62" 2 "$(mkjson Bash 'bash s.sh' "$PCT12")"
+check_msg "(item12/PCT) bash s.sh: the TEST actually ran"           "$ROOT/$PCT62" 2 "$(mkjson Bash 'bash s.sh' "$PCT12")" "re-run it and fix"
+check "(item12/PCT) sh s.sh: gated the same way"                    "$PCT62" 2 "$(mkjson Bash 'sh s.sh' "$PCT12")"
+check "(item12/PCT) . s.sh: gated the same way"                     "$PCT62" 2 "$(mkjson Bash '. s.sh' "$PCT12")"
+check "(item12/PCT) source s.sh: gated the same way"                "$PCT62" 2 "$(mkjson Bash 'source s.sh' "$PCT12")"
+check "(item12/PCT) bash nogit.sh: nothing to gate"                 "$PCT62" 0 "$(mkjson Bash 'bash nogit.sh' "$PCT12")"
+check "(item12/PCT) bash missing.sh: file absent, no run"           "$PCT62" 0 "$(mkjson Bash 'bash missing.sh' "$PCT12")"
+check "(item12/PCT) bash comment.sh: false positive, pinned"        "$PCT62" 2 "$(mkjson Bash 'bash comment.sh' "$PCT12")"
+check "(item12/PCT) bash outer.sh: depth-1 residual, pinned"        "$PCT62" 0 "$(mkjson Bash 'bash outer.sh' "$PCT12")"
+check "(item12/PCT) bash big.sh: 16 KB cap, pinned"                 "$PCT62" 0 "$(mkjson Bash 'bash big.sh' "$PCT12")"
+check "(item12/PCT) bash somedir: a directory, not a file"          "$PCT62" 0 "$(mkjson Bash 'bash somedir' "$PCT12")"
+check "(item12/PCT) CONTROL bash -c \"git commit -m x\": unchanged" "$PCT62" 2 "$(mkjson Bash 'bash -c "git commit -m x"' "$PCT12")"
+
+printf 'git merge feature/y\n' > "$GATEREPO/m.sh"
+check "(item12) bash m.sh: script body gates the merge (gate-before-merge.sh)" "$H" 2 "$(mkjson Bash 'bash m.sh' "$GATEREPO")"
+
+printf 'git push origin main\n' > "$MAINREPO/p.sh"
+check "(item12) bash p.sh: script body gates the push (no-push-main.sh)" "hooks/no-push-main.sh" 2 "$(mkjson Bash 'bash p.sh' "$MAINREPO")"
+
+# ===========================================================================
+# v4.0.3 item 8 (R2) -- gc_gate_dir(<non-repo target>) used to fail both git
+# calls, print the literal `/.gate` (the MSYS root, outside every repo),
+# WARN "git < 2.31" (false on a current git) and let the fallback's own
+# `fatal:` leak beside it; gc_gate_dir("") resolved against the PROCESS cwd
+# and returned the CORRECT directory of the WRONG repo. Fixed: an empty or
+# unresolved target now returns rc 1, empty stdout, no stderr.
+# ===========================================================================
+GGD8_OUT=""; GGD8_ERR=""; GGD8_RC=""
+(
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "/nonexistent-dir-403" >"$TMPROOT/ggd8.out" 2>"$TMPROOT/ggd8.err"
+  echo $? > "$TMPROOT/ggd8.rc"
+)
+GGD8_OUT=$(cat "$TMPROOT/ggd8.out" 2>/dev/null)
+GGD8_ERR=$(cat "$TMPROOT/ggd8.err" 2>/dev/null)
+GGD8_RC=$(cat "$TMPROOT/ggd8.rc" 2>/dev/null)
+expect "(item8) gc_gate_dir non-repo target: rc 1"          "1" "$GGD8_RC"
+expect "(item8) gc_gate_dir non-repo target: empty stdout"  "" "$GGD8_OUT"
+expect "(item8) gc_gate_dir non-repo target: empty stderr"  "" "$GGD8_ERR"
+expect "(item8) gc_gate_dir non-repo target: no stray /.gate at the fs root" "absent" "$([ -e /.gate ] && echo present || echo absent)"
+
+(
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "" >"$TMPROOT/ggd8e.out" 2>"$TMPROOT/ggd8e.err"
+  echo $? > "$TMPROOT/ggd8e.rc"
+)
+expect "(item8) gc_gate_dir empty target: rc 1" "1" "$(cat "$TMPROOT/ggd8e.rc" 2>/dev/null)"
+expect "(item8) gc_gate_dir empty target: empty stdout" "" "$(cat "$TMPROOT/ggd8e.out" 2>/dev/null)"
+
+# Through pre-commit-test.sh: a `-C <non-repo>` segment that never becomes a
+# commit segment. NOTE (measured, reported per the brief/spec-disagreement
+# instruction): pct_note's OWN toplevel pre-check (`git -C "$_pn_base"
+# rev-parse --show-toplevel`, hooks/pre-commit-test.sh) already returns 0
+# before ever calling gc_gate_dir when $_pn_base does not resolve, so this
+# row does not actually drive gc_gate_dir with the unresolved target -- it
+# is a general "no crash, nothing written outside the fixture repo, no
+# stray /.gate" regression guard, not a direct exercise of the item 8 fix.
+# The two gc_gate_dir unit rows above are what is genuinely RED today.
+GGD8REPO=$(mkrepo ggd8repo main)
+# NOTE: the no-commit-segment path never calls pct_capture_tree, so PCT_TREE
+# stays empty and pct_note names the file "unknown" (see the existing
+# PCTNOOP=$(precommitnoopfile "$PCTREPO" unknown) precedent elsewhere in this
+# suite) -- NOT the fixture's actual HEAD^{tree}.
+GGD8_NOOPFILE=$(precommitnoopfile "$GGD8REPO" unknown)
+# Existence, not a selfstamp mtime/size comparison (R6's own pattern is
+# NAME-scoped for concurrent-worktree noise; a before/after STAMP diff on a
+# single-writer fixture like this one adds a second-resolution race for no
+# extra power once the gate_dir-field assertion below already proves the
+# write is from THIS fix -- so this checks the plain fact instead).
+expect "(item8) the fixture repo's own noop record absent before the write" \
+  "absent" "$([ -f "$GGD8_NOOPFILE" ] && echo present || echo absent)"
+check "(item8) git -C <non-repo> status through pre-commit-test.sh: allowed" \
+  "$PCT62" 0 "$(mkjson Bash 'git -C /nonexistent-dir-403 status' "$GGD8REPO")"
+expect "(item8) the fixture repo's own noop record present after the write" \
+  "present" "$([ -f "$GGD8_NOOPFILE" ] && echo present || echo absent)"
+expect "(item8) still no stray /.gate at the fs root" "absent" "$([ -e /.gate ] && echo present || echo absent)"
+GGD8_GDFIELD=$(grep -o '"gate_dir"[[:space:]]*:[[:space:]]*"[^"]*"' "$GGD8_NOOPFILE" 2>/dev/null)
+expect "(item8) the noop record now carries a gate_dir field" "present" "$([ -n "$GGD8_GDFIELD" ] && echo present || echo absent)"
+
+# Old-git fallback still reachable: a `git` shim first on PATH that rejects
+# `--path-format` (as git < 2.31 does) but answers `--show-toplevel`.
+GITSHIM_REAL=$(command -v git)
+GITSHIM_DIR="$TMPROOT/gitshim-old"
+mkdir -p "$GITSHIM_DIR"
+printf '#!/usr/bin/env bash\ncase " $* " in\n  *"--path-format"*) exit 129 ;;\nesac\nexec "%s" "$@"\n' "$GITSHIM_REAL" > "$GITSHIM_DIR/git"
+chmod +x "$GITSHIM_DIR/git"
+(
+  PATH="$GITSHIM_DIR:$PATH"
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "$GGD8REPO" >"$TMPROOT/ggd8old.out" 2>"$TMPROOT/ggd8old.err"
+  echo $? > "$TMPROOT/ggd8old.rc"
+)
+GGD8OLD_OUT=$(cat "$TMPROOT/ggd8old.out" 2>/dev/null)
+GGD8OLD_ERR=$(cat "$TMPROOT/ggd8old.err" 2>/dev/null)
+GGD8REPO_TOP=$(git -C "$GGD8REPO" rev-parse --show-toplevel)
+expect "(item8) old-git shim: WARN on stderr" "present" "$(printf '%s' "$GGD8OLD_ERR" | grep -q 'WARN: git < 2.31' && echo present || echo absent)"
+expect "(item8) old-git shim: legacy <toplevel>/.gate path" "$GGD8REPO_TOP/.gate" "$GGD8OLD_OUT"
+
+# RED-check control: a shim that ACCEPTS --path-format (never rejects) must
+# flip the row above -- no WARN, the shared <common-dir>/gate path instead --
+# proving the WARN row is not vacuously true.
+GITSHIM2_DIR="$TMPROOT/gitshim-new"
+mkdir -p "$GITSHIM2_DIR"
+printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$GITSHIM_REAL" > "$GITSHIM2_DIR/git"
+chmod +x "$GITSHIM2_DIR/git"
+(
+  PATH="$GITSHIM2_DIR:$PATH"
+  . "$ROOT/hooks/lib/git-cmd.sh"
+  gc_gate_dir "$GGD8REPO" >"$TMPROOT/ggd8new.out" 2>"$TMPROOT/ggd8new.err"
+  echo $? > "$TMPROOT/ggd8new.rc"
+)
+expect "(item8) RED-check: accepting shim prints no WARN" "" "$(cat "$TMPROOT/ggd8new.err" 2>/dev/null)"
+expect "(item8) RED-check: accepting shim's row differs from the rejecting shim's" \
+  "differ" "$([ "$(cat "$TMPROOT/ggd8new.out" 2>/dev/null)" != "$GGD8OLD_OUT" ] && echo differ || echo same)"
+
+# ===========================================================================
+# v4.0.3 item 13 -- an expired-but-tree-identical gate artifact forced a full
+# re-gate. Fixed: gate-before-merge.sh's freshness check now accepts an
+# artifact past the ordinary GC_GATE_TTL_S when its tree equals HEAD^{tree}
+# AND its environment fingerprint (gc_gate_env, hooks/lib/git-cmd.sh) still
+# matches, up to GC_GATE_PRUNE_S (24x the TTL). The fixture's server/.venv is
+# built INSIDE this throwaway repo -- never the real toolkit venv.
+# ===========================================================================
+# On a FEATURE branch, deliberately -- a repo checked out ON a protected
+# branch hits the A6 "merge from a protected branch" refusal unconditionally,
+# before the artifact is ever read (see GATEFEAT/GATEREPO's own pairing
+# above), which would make every row below pass or fail for the wrong reason.
+A13REPO=$(mkrepo a13repo feature/z)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$A13REPO/PROJECT_CONTEXT.md"
+mkdir -p "$A13REPO/server/.venv/Lib/site-packages"
+printf 'home = /usr\nversion = 3.12.0\n' > "$A13REPO/server/.venv/pyvenv.cfg"
+A13_SHA=$(git -C "$A13REPO" rev-parse HEAD)
+A13_TREE=$(git -C "$A13REPO" rev-parse 'HEAD^{tree}')
+
+a13_env_hash()   { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" 2>/dev/null ); }
+a13_env_detail() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null | tr '\n' '|' ); }
+
+a13_writeartifact() { # <repo> <sha_field|-> <tree_field|-> <env_field|-> <env_detail_field|-> <touch-spec|->
+  mkdir -p "$(gatedir "$1")"
+  rm -f "$(gatedir "$1")"/last-pass.*.json 2>/dev/null
+  af="$(gatepassfile "$1" "$A13_SHA")"
+  a13j='{'
+  [ "$2" = "-" ] || a13j="${a13j}\"sha\":\"$2\","
+  [ "$3" = "-" ] || a13j="${a13j}\"tree\":\"$3\","
+  a13j="${a13j}\"branch\":\"main\",\"ts\":\"2020-01-01T00:00:00Z\",\"status\":\"pass\""
+  [ "$4" = "-" ] || a13j="${a13j},\"env\":\"$4\""
+  [ "$5" = "-" ] || a13j="${a13j},\"env_detail\":\"$5\""
+  a13j="${a13j}}"
+  printf '%s\n' "$a13j" > "$af"
+  [ "$6" = "-" ] || touch -d "$6" "$af"
+  printf '%s' "$af"
+}
+
+A13_ENV0=$(a13_env_hash "$A13REPO")
+A13_DETAIL0=$(a13_env_detail "$A13REPO")
+
+# (1) expired, identical tree, identical env -> allowed, reason on stderr.
+A13_AF=$(a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours")
+check "(item13) expired + tree ok + env ok: allowed"  "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+check_msg "(item13) allow reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "accepted on tree identity"
+
+# (2) same, but pyvenv.cfg has moved one byte since the artifact was minted.
+printf 'home = /usr\nversion = 3.12.1\n' > "$A13REPO/server/.venv/pyvenv.cfg"
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
+check "(item13) expired + tree ok + env CHANGED (pyvenv): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+check_msg "(item13) block names the pyvenv contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: pyvenv"
+printf 'home = /usr\nversion = 3.12.0\n' > "$A13REPO/server/.venv/pyvenv.cfg"   # restore
+
+# (3) same, but a dist-info directory appeared since minting.
+mkdir -p "$A13REPO/server/.venv/Lib/site-packages/zzz-1.0.dist-info"
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
+check "(item13) expired + tree ok + env CHANGED (dist-info added): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+check_msg "(item13) block names the dist contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: dist"
+rm -rf "$A13REPO/server/.venv/Lib/site-packages/zzz-1.0.dist-info"   # restore
+
+# (4) tree+env identical, but older than the prune window (24h): blocked.
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-25 hours" >/dev/null
+check "(item13) tree ok + env ok but past the PRUNE window (25h): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# (5) a foreign tree (sha matches, tree does not) -- the extension requires
+# an EXACT tree match, not merely a sha match; expired -> blocked.
+a13_writeartifact "$A13REPO" "$A13_SHA" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
+check "(item13) expired + foreign tree: blocked (sha match alone is not enough)" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# (6) a sha-only artifact (no tree key at all), expired: blocked, no extension.
+a13_writeartifact "$A13REPO" "$A13_SHA" "-" "-" "-" "-2 hours" >/dev/null
+check "(item13) expired + no tree key: blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# (7) tree matches but no env key at all (an older writer's artifact),
+# expired past the ordinary TTL: blocked -- no silent extension.
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "-" "-" "-2 hours" >/dev/null
+check "(item13) expired + tree ok + no env key: blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# Restore a fresh, ordinary artifact so nothing downstream in this section
+# inherits a deliberately-expired/mismatched one for $A13REPO.
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-" >/dev/null
+
+# ===========================================================================
+# v4.0.3 item 4 -- pre-commit records (last-precommit.<tree>.json,
+# last-precommit-noop.<tree>.json) were never pruned. Fixed: pruned by the
+# SAME derived window (GC_GATE_PRUNE_S) at the artifact-write path in
+# pre-commit-test.sh, mirroring run-gate.sh's existing last-pass.*.json
+# prune. Two synthetic, artificially-aged records in the SAME shared gate
+# directory a real commit-path write will touch; a fresh one (this fixture's
+# own current-tree record, written by the assertion itself) must survive.
+# ===========================================================================
+PCT4REPO=$(mkrepo pct4repo main)
+printf '#!/usr/bin/env bash\nexit 0\n' > "$PCT4REPO/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n' > "$PCT4REPO/PROJECT_CONTEXT.md"
+PCT4_GD=$(gatedir "$PCT4REPO")
+mkdir -p "$PCT4_GD"
+PCT4_OLD=$(precommitfile "$PCT4REPO" "deadbeef4444deadbeef4444deadbeef4444dead")
+PCT4_OLD_NOOP=$(precommitnoopfile "$PCT4REPO" "deadbeef5555deadbeef5555deadbeef5555dead")
+printf '{"path":"test","rc":0,"tree":"deadbeef4444deadbeef4444deadbeef4444dead"}\n' > "$PCT4_OLD"
+printf '{"path":"no-commit-segment","rc":-1,"tree":"deadbeef5555deadbeef5555deadbeef5555dead","kind":"no-commit-segment"}\n' > "$PCT4_OLD_NOOP"
+touch -d '-2 days' "$PCT4_OLD" "$PCT4_OLD_NOOP"
+expect "(item4) aged precommit record exists before the write" "present" "$([ -f "$PCT4_OLD" ] && echo present || echo absent)"
+expect "(item4) aged precommit-noop record exists before the write" "present" "$([ -f "$PCT4_OLD_NOOP" ] && echo present || echo absent)"
+check "(item4) a real commit-path write still succeeds" "$PCT62" 0 "$(mkjson Bash 'git commit -m x' "$PCT4REPO")"
+expect "(item4) the aged precommit record is pruned"       "absent" "$([ -f "$PCT4_OLD" ] && echo present || echo absent)"
+expect "(item4) the aged precommit-noop record is pruned"  "absent" "$([ -f "$PCT4_OLD_NOOP" ] && echo present || echo absent)"
+PCT4_FRESH_TREE=$(git -C "$PCT4REPO" rev-parse 'HEAD^{tree}')
+expect "(item4) a fresh record (this run's own) survives"  "present" "$([ -f "$(precommitfile "$PCT4REPO" "$PCT4_FRESH_TREE")" ] && echo present || echo absent)"
+# run-gate.sh's own last-pass prune stays untouched by this change.
+expect "(item4) run-gate.sh's last-pass prune line still derives from GC_GATE_PRUNE_S" \
+  "present" "$(grep -q 'prune_min=\$(( GC_GATE_PRUNE_S / 60 ))' "$ROOT/hooks/run-gate.sh" && echo present || echo absent)"
+
 # --- v3.1 (penumbra): gc_matches_subcommand's -C fallback no longer treats a
 # token merely EQUAL to the verb, or containing it after a `-`, as a match for
 # the whole remainder. Over-refusal only -- these are all want-0 rows -- plus

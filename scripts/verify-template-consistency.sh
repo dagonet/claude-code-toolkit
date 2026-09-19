@@ -1045,6 +1045,39 @@ else
   ko "gc_gate_dir definition drifted or missing between git-cmd.sh and run-gate.sh"
 fi
 
+# v4.0.3 item 13 -- GC_GATE_PRUNE_S, gc_sha256 and gc_gate_env grew the same
+# standalone-copy problem GC_GATE_TTL_S/gc_gate_dir already have (run-gate.sh
+# cannot source git-cmd.sh). Same census shapes: a one-line constant compared
+# textually, two function BODIES compared verbatim by their opening/closing
+# braces (a textual grep of one distinctive line would miss a drift that
+# leaves that line untouched).
+GC_GATE_PRUNE_S_DEF='GC_GATE_PRUNE_S=$(( GC_GATE_TTL_S * 24 ))'
+gps_have=0
+for gpsf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+  grep -qF "$GC_GATE_PRUNE_S_DEF" "$gpsf" && gps_have=$((gps_have + 1))
+done
+if [ "$gps_have" -eq 2 ]; then
+  ok "GC_GATE_PRUNE_S defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "GC_GATE_PRUNE_S definition drifted: found in $gps_have of 2 files (git-cmd.sh, run-gate.sh)"
+fi
+
+gs256_lib=$(awk '/^gc_sha256\(\) \{/,/^}/' hooks/lib/git-cmd.sh)
+gs256_run=$(awk '/^gc_sha256\(\) \{/,/^}/' hooks/run-gate.sh)
+if [ -n "$gs256_lib" ] && [ "$gs256_lib" = "$gs256_run" ]; then
+  ok "gc_sha256 defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "gc_sha256 definition drifted or missing between git-cmd.sh and run-gate.sh"
+fi
+
+gge_lib=$(awk '/^gc_gate_env\(\) \{/,/^}/' hooks/lib/git-cmd.sh)
+gge_run=$(awk '/^gc_gate_env\(\) \{/,/^}/' hooks/run-gate.sh)
+if [ -n "$gge_lib" ] && [ "$gge_lib" = "$gge_run" ]; then
+  ok "gc_gate_env defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "gc_gate_env definition drifted or missing between git-cmd.sh and run-gate.sh"
+fi
+
 # 21c-2g. The retro base-dir helper, same census for the same reason (v3.0.4,
 # item A6b, a consequence of mirroring retro-brief.sh in check 21a above).
 #
