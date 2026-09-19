@@ -14,6 +14,7 @@ import json
 import pathlib
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -522,6 +523,49 @@ def test_agent_grants_resolvable_real_census_passes_when_every_token_resolves(tm
     line = _by_id(res)["agent_grants_resolvable"]
     assert line["status"] == "PASS", line
     assert "resolved=1" in line["measured"]
+
+
+def test_census_budget_two_sided_within_budget_resolves_exhausted_skips(tmp_path, monkeypatch):
+    """J2 (fix round 2): a TOTAL census budget across the whole
+    agent_grants_resolvable computation, not just a per-alias ceiling.
+    Two-sided with a FAKE census that sleeps: "git-tools" fits inside the
+    (tiny, monkeypatched) budget and resolves for real; "github-tools" --
+    alphabetically AFTER "git-tools", so the sorted-iteration ruling
+    (controller addendum (a)) puts it on the exhausted side deterministically
+    -- is never even attempted (the fake census's own call count proves the
+    cutoff, not just the message) and SKIPs naming itself and the budget
+    reason."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    monkeypatch.setattr(verify, "AGENT_GRANTS_CENSUS_BUDGET_S", 0.03)
+    calls: list[str] = []
+
+    def fake_derive(registration_path, alias):
+        return str(tmp_path)  # any real directory -- only is_dir() is checked
+
+    def fake_census(template_repo, source_dir, registration_path, alias):
+        calls.append(alias)
+        time.sleep(0.05)  # exceeds the 0.03s budget after this ONE call
+        return (["real_tool"], None)
+
+    monkeypatch.setattr(verify, "_derive_mcp_dev_servers_source_dir", fake_derive)
+    monkeypatch.setattr(verify, "_census_mcp_dev_servers_alias", fake_census)
+
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {
+            "foo": ["mcp__git-tools__real_tool", "mcp__github-tools__real_tool"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    # Side A (within budget): exactly one census call was attempted, and it
+    # was for "git-tools" (sorted-first) -- the fake census really ran.
+    assert calls == ["git-tools"], calls
+    # Side B (budget exhausted): "github-tools" SKIPs, naming itself and the
+    # budget cause, WITHOUT a census call ever being attempted for it.
+    assert line["status"] == "SKIP", line
+    assert line["measured"] == "alias github-tools: census budget exhausted before it was reached"
 
 
 def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypatch):

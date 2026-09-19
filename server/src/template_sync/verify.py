@@ -28,6 +28,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import time
 
 from . import mcp as core
 from . import v3
@@ -318,6 +319,30 @@ def _agent_template_path_by_name(manifest: dict, agent_name: str) -> pathlib.Pat
 MCP_DEV_SERVERS_FAMILY = ("git-tools", "github-tools", "dotnet-tools", "ollama-tools",
                           "rust-tools", "python-tools")
 
+# Ceiling on ONE alias's census subprocess (scripts/lib/list-mcp-tools.py).
+# Named so the "why 30" sits beside the value it bounds; kept as a FLOOR
+# inside AGENT_GRANTS_CENSUS_BUDGET_S below (fix round 2, J2) -- an alias
+# census already STARTED is never truncated early just because the
+# remaining total budget is smaller than this ceiling; it is simply never
+# STARTED once the total budget is already spent.
+AGENT_GRANTS_CENSUS_PER_ALIAS_TIMEOUT_S = 30.0
+
+# J2 (fix round 2): a TOTAL budget for the WHOLE agent_grants_resolvable
+# computation in one template_verify call, not a per-alias ceiling alone --
+# worst case before this existed was ~7 aliases x 30s = 3.5 minutes of
+# apparent hang if every venv were broken, and a verify that hangs is a
+# verify people stop running. The accepted trade: one hanging/broken
+# server's census must not blind the rest of the line -- bounded and
+# honest (some aliases SKIP, named, with a reason) beats unbounded and
+# complete (a report nobody waits for). Consumed across aliases, iterated
+# in SORTED order so which alias lands on which side of the cutoff depends
+# on the data, never on dict/set iteration order; every alias the budget
+# does not reach SKIPs naming itself and "census budget exhausted before it
+# was reached" -- NEVER PASSes on that account. Per-call cache is kept
+# alongside this budget (cross-call caching would go stale when a server is
+# re-registered).
+AGENT_GRANTS_CENSUS_BUDGET_S = 30.0
+
 
 def _mcp_registration_path() -> pathlib.Path:
     override = os.environ.get("MCP_TOOLS_REGISTRATION")
@@ -365,7 +390,7 @@ def _census_mcp_dev_servers_alias(template_repo: str, source_dir: str, registrat
         proc = subprocess.run(
             [py, str(lib), "--source-dir", source_dir, "--registration", str(registration_path),
              "--alias", alias],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=AGENT_GRANTS_CENSUS_PER_ALIAS_TIMEOUT_S,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"list-mcp-tools.py failed: {e}"
@@ -419,34 +444,51 @@ def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
     skip_aliases: dict[str, str] = {}
     resolved = 0
 
+    # Group by alias and iterate ALIASES in SORTED order (fix round 2,
+    # controller addendum (a)): the census budget is consumed per ALIAS
+    # (one subprocess per alias, cached), so which alias lands on which
+    # side of the budget cutoff must depend on the data (alphabetical),
+    # never on dict/set iteration order.
+    alias_tokens: dict[str, list[tuple[str, str]]] = {}
     for tok in tokens:
         alias, _sep, name = tok[len("mcp__"):].partition("__")
+        alias_tokens.setdefault(alias, []).append((tok, name))
+
+    budget_start = time.monotonic()
+    for alias in sorted(alias_tokens):
+        toks_for_alias = alias_tokens[alias]
         if alias == "template-sync-tools":
-            if name in registered:
-                resolved += 1
-            else:
-                not_exported.append(tok)
-            continue
-        if alias in MCP_DEV_SERVERS_FAMILY:
-            if alias not in census_cache:
-                source_dir = _derive_mcp_dev_servers_source_dir(registration_path, alias)
-                if source_dir is None:
-                    census_cache[alias] = (None, f"alias {alias}: no census route (not registered)")
-                elif not pathlib.Path(source_dir).is_dir():
-                    census_cache[alias] = (None, f"alias {alias}: no census route (source dir not found)")
-                elif not template_repo:
-                    census_cache[alias] = (None, f"alias {alias}: no census route (templateRepo unknown)")
-                else:
-                    census_cache[alias] = _census_mcp_dev_servers_alias(
-                        template_repo, source_dir, registration_path, alias)
-            names, skip_reason = census_cache[alias]
-            if names is not None:
-                if name in names:
+            for tok, name in toks_for_alias:
+                if name in registered:
                     resolved += 1
                 else:
                     not_exported.append(tok)
-            else:
-                skip_aliases[alias] = skip_reason or f"alias {alias}: no census route"
+            continue
+        if alias in MCP_DEV_SERVERS_FAMILY:
+            if alias not in census_cache:
+                if time.monotonic() - budget_start >= AGENT_GRANTS_CENSUS_BUDGET_S:
+                    census_cache[alias] = (
+                        None, f"alias {alias}: census budget exhausted before it was reached")
+                else:
+                    source_dir = _derive_mcp_dev_servers_source_dir(registration_path, alias)
+                    if source_dir is None:
+                        census_cache[alias] = (None, f"alias {alias}: no census route (not registered)")
+                    elif not pathlib.Path(source_dir).is_dir():
+                        census_cache[alias] = (None, f"alias {alias}: no census route (source dir not found)")
+                    elif not template_repo:
+                        census_cache[alias] = (None, f"alias {alias}: no census route (templateRepo unknown)")
+                    else:
+                        census_cache[alias] = _census_mcp_dev_servers_alias(
+                            template_repo, source_dir, registration_path, alias)
+            names, skip_reason = census_cache[alias]
+            for tok, name in toks_for_alias:
+                if names is not None:
+                    if name in names:
+                        resolved += 1
+                    else:
+                        not_exported.append(tok)
+                else:
+                    skip_aliases[alias] = skip_reason or f"alias {alias}: no census route"
             continue
         skip_aliases.setdefault(alias, f"alias {alias}: no census route")
 
