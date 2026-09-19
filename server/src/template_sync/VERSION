@@ -1,2 +1,2 @@
-4.0.2
-Rollout follow-ups: deletedAcknowledged implemented (ACKNOWLEDGED_KEPT, finalize acknowledged_deleted), identity/registry/capabilities pinned at one import with registered_tools, three new template_verify INFO lines and sharper remedies, require-skills-block payload-shape guard, post-edit-build lowercase, gate self-check rows attribute artifacts by name, skill contract corrections (finalize commit/version, 2b assert-ran, branch choice, hook keep-mine = rename), project.md seed and LOG_PATH default.
+4.0.3
+Rollout follow-ups II: guard hooks read script-file bodies, expired gate artifacts accepted within 24h on tree+environment identity, gc_gate_dir refuses unresolved targets, pre-commit records pruned, classes_and_hashes = closed status partition, project.md remedies say hand-edit.
