@@ -294,16 +294,34 @@ def test_floor_without_the_comparison_operator_is_unparseable(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# An already-v3 manifest is still a no-op, ahead of the floor check.
+# An already-v4 manifest is still a no-op, ahead of the floor check.
+#
+# v4.1: a v3 manifest is no longer a terminal no-op state -- migrate_manifest
+# on a v3 manifest now attempts the v3->v4 step (a v2 consumer migrates
+# TWICE). Only a v4 manifest is idempotent.
 # ---------------------------------------------------------------------------
 
-def test_already_v3_is_still_a_noop_even_with_a_declared_floor(tmp_path):
+def test_already_v4_is_still_a_noop_even_with_a_declared_floor(tmp_path):
     """The no-op must not become a refusal: a caller that calls migrate
-    unconditionally on an already-migrated project is doing nothing wrong."""
+    unconditionally on an already-migrated (v4) project is doing nothing
+    wrong."""
     repo, proj, commit = _mk_v2(tmp_path, PROJ_CLAUDE)
     _declare(repo, ">=v3.1.3")
     first = _migrate(proj, backup_dir=str(tmp_path / "b"), skill_version="v3.1.5")
     assert first["migrated"] is True
+
+    # Simulate an already-fully-migrated (v4) project directly: this
+    # fixture's PROJ_CLAUDE deliberately carries text OUTSIDE the region
+    # (for the v2->v3 skill-floor tests elsewhere in this file), which would
+    # make a REAL v3->v4 migration refuse on an unrelated out-of-region
+    # diff -- the no-op behaviour this test pins is orthogonal to that.
+    mf = proj / ".claude" / "template-manifest.json"
+    m = json.loads(mf.read_text(encoding="utf-8"))
+    m["manifest_version"] = 4
+    m["instructions_file"] = ".claude/project-instructions.md"
+    m["agent_grants"] = ".claude/agent-grants.json"
+    mf.write_text(json.dumps(m), encoding="utf-8", newline="")
+
     again = _migrate(proj, backup_dir=str(tmp_path / "b2"))
     assert "error" not in again
-    assert again["migrated"] is False and "reason" in again
+    assert again["migrated"] is False and again.get("already_v4") is True and "reason" in again

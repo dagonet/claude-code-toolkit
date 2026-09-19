@@ -985,6 +985,7 @@ class GrantRefused(Exception):
 
 
 AGENT_GRANTS_FILE = ".claude/agent-grants.json"
+INSTRUCTIONS_FILE_DEFAULT = ".claude/project-instructions.md"
 AGENTS_DIR_PREFIX = ".claude/agents/"
 
 # mcp__<alias>__<tool>. Anything else is a malformed token (GrantsError).
@@ -1885,6 +1886,289 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     }
 
 
+# -------------------------
+# v3 -> v4 migration (spec §7 step 1c, §9)
+# -------------------------
+
+def _tools_line_diff(tpl_text: str, proj_text: str) -> tuple[list[str], list[str]] | None:
+    """(original_tools, added_tools) when `proj_text` differs from
+    `tpl_text` ONLY by additional, order-preserving entries appended to the
+    `tools:` frontmatter line -- None when the diff touches anything else,
+    either side lacks a `tools:` line, or the project's list is not exactly
+    the template's list plus a suffix (step 6b: a grants entry replaces the
+    rename route for exactly this shape)."""
+    tpl_m = _TOOLS_LINE_RE.search(tpl_text)
+    proj_m = _TOOLS_LINE_RE.search(proj_text)
+    if tpl_m is None or proj_m is None:
+        return None
+    tpl_rest = tpl_text[:tpl_m.start()] + tpl_text[tpl_m.end():]
+    proj_rest = proj_text[:proj_m.start()] + proj_text[proj_m.end():]
+    if tpl_rest != proj_rest:
+        return None
+    tpl_tools = [t.strip() for t in tpl_m.group(1).split(",") if t.strip()]
+    proj_tools = [t.strip() for t in proj_m.group(1).split(",") if t.strip()]
+    if len(proj_tools) <= len(tpl_tools) or proj_tools[:len(tpl_tools)] != tpl_tools:
+        return None
+    return tpl_tools, proj_tools[len(tpl_tools):]
+
+
+def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
+    """Plan (never writes) a v3 -> v4 migration (spec §7 step 1c, §9).
+
+    Refuse-not-guess: (c) any CLAUDE.md diff outside the PROJECT-CUSTOM
+    region, measured against the HELD (last-synced) template, is a REFUSAL
+    naming the diff -- resolved by moving the text into the region BEFORE
+    migrating (spec §9.2: the region is the one place the migration KNOWS is
+    project content, so staging text there is how a consumer tells it what
+    to move; it will not guess placement). (d) An EXISTING
+    .claude/project-instructions.md is a REFUSAL naming the path (R-K,
+    reviewer Q1): the migration writes that file FROM the region body, so a
+    silent "keep the existing file" would strand the region body in a
+    CLAUDE.md about to lose it -- never a silent once-class skip.
+
+    An agent whose LOCAL_EDITED diff is CONFINED to additions on its
+    `tools:` line (R-D: only an agent that SHIPS one) becomes a grants.json
+    entry instead (step 6b); an agent that gained a `tools:` line the
+    template ships NONE for is an (c)-class refusal, never a synthesised
+    grant.
+    """
+    warnings = list(rules.warnings)
+
+    proj_claude = core._read_file(pp / "CLAUDE.md") or ""
+    proj_part, proj_region = core._split_custom_region(proj_claude)
+    region_body = _region_body(proj_region)
+
+    tpl_rel = rules.template_path_for("CLAUDE.md")
+    tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
+    new_claude = template_content(pp, manifest, rules, "CLAUDE.md", tpl_raw)
+    if new_claude is None:
+        return {"error": "the template no longer ships CLAUDE.md for this variant -- cannot migrate"}
+
+    base, base_label, warn = resolve_base(pp, manifest, rules, tpl_rel)
+    if warn:
+        warnings.append(warn)
+    region_was_seed = None
+    out_of_region_diff = ""
+    if base is not None:
+        base_part, base_region = core._split_custom_region(base)
+        out_of_region_diff = _unified(base_part, proj_part, f"CLAUDE.md@{base_label}", "CLAUDE.md@project")
+        if region_body is not None and base_region is not None:
+            region_was_seed = _norm_ws(region_body) == _norm_ws(_region_body(base_region) or "")
+            if region_was_seed:
+                region_body = None
+
+    # (b) grant-shaped agent diffs.
+    placeholders = manifest.get("placeholders", {})
+    grants_plan: dict[str, list[str]] = {}
+    no_tools_line_refusals: list[str] = []
+    for proj_rel, entry in manifest.get("files", {}).items():
+        proj_rel = core._normalize_path(proj_rel)
+        if entry.get("ownership") != "template" or not proj_rel.startswith(AGENTS_DIR_PREFIX):
+            continue
+        tpl_rel_agent = rules.template_path_for(proj_rel)
+        agent_tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel_agent))
+        agent_proj = core._read_file(pp / proj_rel)
+        if agent_tpl_raw is None or agent_proj is None:
+            continue
+        # `manifest` here is still the OLD v3 manifest (is_v4_manifest is
+        # False), so template_content() is a placeholder-only no-op --
+        # exactly the plain rendering this detection step needs.
+        agent_tpl_rendered = template_content(pp, manifest, rules, proj_rel, agent_tpl_raw)
+        if agent_tpl_rendered is None or agent_tpl_rendered == agent_proj:
+            continue
+        diff = _tools_line_diff(agent_tpl_rendered, agent_proj)
+        if diff is not None:
+            agent_name = agent_name_of(agent_tpl_rendered)
+            if agent_name:
+                grants_plan[agent_name] = diff[1]
+        elif _TOOLS_LINE_RE.search(agent_tpl_rendered) is None and _TOOLS_LINE_RE.search(agent_proj):
+            no_tools_line_refusals.append(proj_rel)
+
+    if no_tools_line_refusals:
+        return {
+            "error": f"agent(s) gained a tools: line the template does not ship: "
+                     f"{sorted(no_tools_line_refusals)} -- resolve by hand before migrating",
+            "out_of_region_diff": out_of_region_diff,
+        }
+    if out_of_region_diff.strip():
+        return {
+            "error": "CLAUDE.md diverges from the held template outside the PROJECT-CUSTOM region -- "
+                     "move the text into the region BEFORE migrating (spec §9.2), then migrate again",
+            "out_of_region_diff": out_of_region_diff,
+        }
+
+    instructions_target = pp / INSTRUCTIONS_FILE_DEFAULT
+    if instructions_target.is_file():
+        return {
+            "error": f"{INSTRUCTIONS_FILE_DEFAULT} already exists -- the migration writes this file "
+                     "from the region body; move or remove the existing file first",
+        }
+
+    seed_tpl_raw = core._read_file(core._template_file_path(manifest, INSTRUCTIONS_FILE_DEFAULT))
+    seed_header = seed_tpl_raw if seed_tpl_raw is not None else (
+        "# Project instructions\n\n"
+        "Imported at the end of CLAUDE.md; where the two conflict, this file wins.\n\n"
+    )
+    if region_body:
+        instructions_content = seed_header.rstrip("\n") + "\n\n" + region_body.rstrip("\n") + "\n"
+    else:
+        instructions_content = seed_header
+    agent_grants_content = json.dumps(
+        {"schema": 1, "grants": dict(sorted(grants_plan.items()))}, indent=2, ensure_ascii=False) + "\n"
+
+    repo = core._template_repo_resolved(manifest)
+    commit = core._git_head(repo) or manifest_commit(manifest)
+    version, vwarn = derive_template_version(repo, commit, rules.tracked_paths) if commit else (None, "untagged_template_tree")
+    if vwarn:
+        warnings.append(vwarn)
+
+    new_manifest = {k: v for k, v in manifest.items() if k != "version"}
+    new_manifest["manifest_version"] = MANIFEST_VERSION_V4
+    new_manifest["template_version"] = version
+    new_manifest["template_commit"] = commit
+    new_manifest["requires_server"] = f">={MIN_SERVER_FOR_V4}"
+    new_manifest["instructions_file"] = INSTRUCTIONS_FILE_DEFAULT
+    new_manifest["agent_grants"] = AGENT_GRANTS_FILE
+
+    # Hash PREVIEW (dry_run writes nothing, so template_content() cannot yet
+    # read agent-grants.json off disk) -- computed here via splice_tools()
+    # directly, mathematically identical to what template_content() will
+    # produce once the WRITE path (migrate_manifest) writes the grants file
+    # FIRST and re-hashes every entry through template_content() -- that
+    # second pass, not this preview, is where H2's guarantee has to hold and
+    # is where the dedicated writer witness checks it.
+    files: dict[str, dict] = {}
+    for fp, entry in manifest.get("files", {}).items():
+        fp = core._normalize_path(fp)
+        if entry.get("ownership") == "template":
+            if fp == "CLAUDE.md":
+                files[fp] = {"hash": format_hash(core._sha256(new_claude)), "ownership": "template"}
+                continue
+            tpl_rel_e = rules.template_path_for(fp)
+            raw_e = core._read_file(core._template_file_path(manifest, tpl_rel_e))
+            # `manifest` is still the OLD v3 manifest here too -- a
+            # placeholder-only no-op, same reasoning as above.
+            rendered_e = template_content(pp, manifest, rules, fp, raw_e)
+            if rendered_e is not None and fp.startswith(AGENTS_DIR_PREFIX):
+                agent_name_e = agent_name_of(rendered_e)
+                if agent_name_e and agent_name_e in grants_plan:
+                    rendered_e = splice_tools(rendered_e, grants_plan[agent_name_e])
+            files[fp] = {"hash": format_hash(core._sha256(rendered_e)) if rendered_e is not None else "",
+                         "ownership": "template"}
+        elif entry.get("ownership") == "once":
+            files[fp] = {"ownership": "once"}
+    files[INSTRUCTIONS_FILE_DEFAULT] = {"ownership": "once"}
+    files[AGENT_GRANTS_FILE] = {"ownership": "once"}
+    new_manifest["files"] = dict(sorted(files.items()))
+    superseded_dropped = drop_superseded(new_manifest)
+
+    return {
+        "manifest": new_manifest,
+        "region_body": region_body,
+        "region_was_seed": region_was_seed,
+        "region_bytes": region_bytes_raw(proj_claude),
+        "out_of_region_diff": out_of_region_diff,
+        "migration_base": base_label,
+        "grants_plan": grants_plan,
+        "instructions_content": instructions_content,
+        "agent_grants_content": agent_grants_content,
+        "claude_md_content": new_claude,
+        "superseded_keys_dropped": superseded_dropped,
+        "unknown_keys": unknown_top_level_keys(new_manifest),
+        "warnings": warnings,
+    }
+
+
+def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_run: bool,
+                         skill_version: str) -> dict:
+    """The v3 -> v4 branch of migrate_manifest (spec §7 step 1c, §9)."""
+    rules = load_ownership(manifest["templateRepo"])
+    if rules is None:
+        return {"error": f"cannot migrate: {OWNERSHIP_FILE} not found in the template repo"}
+    ok, refusal, floor_warning, bypassed = skill_floor_satisfied(rules.requires_skill, skill_version)
+    if not ok and not dry_run:
+        return {"error": refusal, "skill_version": (skill_version or "").strip(),
+                **({"skill_version_unknown": True} if not (skill_version or "").strip() else {})}
+
+    plan = migrate_v3_to_v4(pp, manifest, rules)
+    if "error" in plan:
+        return plan
+    plan["dry_run"] = dry_run
+    plan["skill_version"] = (skill_version or "").strip()
+    if not plan["skill_version"]:
+        plan["skill_version_unknown"] = True
+    if bypassed:
+        plan["skill_version_bypassed"] = True
+    if floor_warning:
+        plan["warnings"].append(floor_warning)
+    if not ok:
+        plan["warnings"].append("skill_version would refuse a write: " + refusal)
+
+    if dry_run:
+        plan["migrated"] = False
+        plan["backup"] = None
+        plan["written"] = []
+        plan["report_path"] = None
+        return plan
+
+    if not backup_dir:
+        return {"error": "backup_dir is required to migrate (pre-migration CLAUDE.md and manifest are copied "
+                         "there); use dry_run=true to preview"}
+
+    bdir = pathlib.Path(backup_dir).resolve()
+    bdir.mkdir(parents=True, exist_ok=True)
+    claude_bak = bdir / "CLAUDE.md.pre-migration"
+    manifest_bak = bdir / "template-manifest.json.pre-migration"
+    core._write_file_atomic(claude_bak, core._read_file(pp / "CLAUDE.md") or "")
+    core._write_file_atomic(manifest_bak, core._read_file(pp / ".claude" / "template-manifest.json") or "")
+
+    # Write order matters (H2): agent-grants.json FIRST, so every hash below
+    # -- computed through template_content(), never _apply_placeholders
+    # directly -- reads the SAME grants the next apply/status call will.
+    grants_target = pp / AGENT_GRANTS_FILE
+    grants_target.parent.mkdir(parents=True, exist_ok=True)
+    core._write_file_atomic(grants_target, plan["agent_grants_content"])
+
+    instructions_target = pp / INSTRUCTIONS_FILE_DEFAULT
+    instructions_target.parent.mkdir(parents=True, exist_ok=True)
+    core._write_file_atomic(instructions_target, plan["instructions_content"])
+
+    claude_target = pp / "CLAUDE.md"
+    core._write_file_atomic(claude_target, plan["claude_md_content"])
+
+    final_manifest = dict(plan["manifest"])
+    final_files: dict[str, dict] = {}
+    for fp, entry in plan["manifest"]["files"].items():
+        if entry.get("ownership") == "template":
+            tpl_rel_e = rules.template_path_for(fp)
+            raw_e = core._read_file(core._template_file_path(manifest, tpl_rel_e))
+            rendered_e = template_content(pp, final_manifest, rules, fp, raw_e)
+            final_files[fp] = {"hash": format_hash(core._sha256(rendered_e)) if rendered_e is not None else "",
+                               "ownership": "template"}
+        else:
+            final_files[fp] = entry
+    final_manifest["files"] = dict(sorted(final_files.items()))
+
+    manifest_path = pp / ".claude" / "template-manifest.json"
+    core._write_file_atomic(manifest_path, json.dumps(final_manifest, indent=2, ensure_ascii=False) + "\n")
+
+    report = {
+        "migrated": True, "from": "v3", "to": "v4",
+        "region_was_seed": plan["region_was_seed"], "region_bytes": plan["region_bytes"],
+        "grants_plan": plan["grants_plan"], "warnings": plan["warnings"],
+    }
+    report_path = bdir / "migration-report.json"
+    core._write_file_atomic(report_path, json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+
+    plan["manifest"] = final_manifest
+    plan["migrated"] = True
+    plan["backup"] = {"claude_md": str(claude_bak), "manifest": str(manifest_bak)}
+    plan["written"] = [AGENT_GRANTS_FILE, INSTRUCTIONS_FILE_DEFAULT, "CLAUDE.md",
+                       ".claude/template-manifest.json"]
+    plan["report_path"] = str(report_path)
+    return plan
+
+
 def migrate_manifest(pp: pathlib.Path, backup_dir: str, dry_run: bool,
                      skill_version: str = "") -> dict:
     manifest, errors = core._load_manifest(pp)
@@ -1892,8 +2176,11 @@ def migrate_manifest(pp: pathlib.Path, backup_dir: str, dry_run: bool,
         return {"error": errors[0]}
     if errors:
         return {"error": "; ".join(errors)}
+    if is_v4_manifest(manifest):
+        return {"migrated": False, "dry_run": dry_run, "already_v4": True,
+                "reason": "manifest is already v4 -- nothing to migrate"}
     if is_v3(manifest):
-        return {"migrated": False, "dry_run": dry_run, "reason": "manifest is already v3 -- nothing to migrate"}
+        return _migrate_v3_manifest(pp, manifest, backup_dir, dry_run, skill_version)
     # Only v2 has the fields this migration reads. A v1 entry carries no
     # localHash and may carry no templateHash, so migrating one sets the
     # baseline to the CURRENT template -- recording "identical" for a file the

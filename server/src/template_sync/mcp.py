@@ -1771,13 +1771,42 @@ async def template_migrate_manifest(
     measured by two consumers who documented the artifact over the docstring,
     correctly. tests/test_template_sync_docstring_contract.py now pins the two
     together so the prose cannot drift back alone.)
-    Idempotent: an existing project.md is never overwritten and a v3 manifest
-    is skipped. CLAUDE.md itself is not touched here -- the apply step
+    Idempotent for v2 -> v3: an existing project.md is never overwritten.
+    CLAUDE.md itself is not touched by the v2 -> v3 step -- the apply step
     overwrites it in the same sync. A v1 manifest is REFUSED (a missing
     `version` key reads as 1, as in template_load_manifest): a v1 entry has no
     localHash, so migrating it would baseline against the current template and
     report a deviating file as identical. Run template_load_manifest and
     template_finalize_sync to persist v2 first.
+
+    v3 -> v4 (spec §7 step 1c, §9, v4.1): a v3 manifest is NO LONGER a
+    terminal no-op -- calling this on one now attempts the v3 -> v4 step (a
+    v2 consumer therefore migrates TWICE: v2 -> v3, then v3 -> v4; only a v4
+    manifest is idempotent, reported as `already_v4`). Dry-run lists (a) the
+    PROJECT-CUSTOM region body that will move to
+    `.claude/project-instructions.md` verbatim (an EMPTY region moves a
+    header-only seed with no body); (b) every LOCAL_EDITED agent whose diff
+    is CONFINED to additions on its `tools:` line becomes a
+    `.claude/agent-grants.json` entry instead (only an agent that SHIPS a
+    `tools:` line qualifies -- one that gained a `tools:` line the template
+    ships none for is refused, never a synthesised grant); (c) ANY OTHER
+    CLAUDE.md diff outside the region, measured against the HELD (last-
+    synced) template -- REFUSED with the diff in `out_of_region_diff`, NO
+    WRITES: move the text into the region BEFORE migrating (refuse-not-
+    guess -- the migration will not guess where local text belongs); (d) an
+    EXISTING `.claude/project-instructions.md` -- REFUSED naming the path,
+    NO WRITES: the migration writes that file FROM the region body, so a
+    silent "keep the existing file" would strand it. A real run requires
+    `backup_dir` (same as v2 -> v3) and writes, in order,
+    `.claude/agent-grants.json`, `.claude/project-instructions.md`,
+    `CLAUDE.md` (= the variant template, placeholder-rendered and, for an
+    agent file, grant-spliced), and the v4 manifest (`instructions_file`,
+    `agent_grants` declarations, `requires_server ">=4.1.0"`, every
+    template-class hash re-derived AFTER the writes above, so a
+    grants-carrying agent's stored hash is the SPLICED hash the very next
+    status call reads back as IDENTICAL); the report goes to
+    `<backup_dir>/migration-report.json`, never in-repo (v4.0.1 item 14's
+    rule extended to this step).
 
     Args:
         project_path: Path to the project root directory
