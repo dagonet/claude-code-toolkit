@@ -184,15 +184,20 @@ def test_ungrantable_tools_size_measured_via_imported_constant():
     assert len(v3.UNGRANTABLE_TOOLS) == 15, sorted(v3.UNGRANTABLE_TOOLS)
 
 
-def test_ungrantable_tools_covers_the_merge_pr_family_and_agent():
-    merge_pr_family = {
-        "mcp__MCP_DOCKER__merge_pull_request",
-        "mcp__github-tools__github_pr_auto_merge",
-        "mcp__MCP_DOCKER__create_pull_request",
-        "mcp__MCP_DOCKER__update_pull_request",
-    }
-    assert merge_pr_family <= v3.UNGRANTABLE_TOOLS
-    assert "Agent" in v3.UNGRANTABLE_TOOLS
+# R-Q (fix round 1): a `merge_pr_family <= v3.UNGRANTABLE_TOOLS` test used to
+# stand here, checking a HAND-WRITTEN literal (the four merge/PR tokens)
+# against ANOTHER hand-written literal (UNGRANTABLE_TOOLS) containing the
+# IDENTICAL four tokens -- it could only fail by a typo in one of the two
+# copies, never by any real property of a withheld set (coder.md's own
+# tools: line already PROVES the "withheld from coders" premise false for
+# this family -- see the report). Constraint 9: a test that cannot fail
+# against a real change is not a check. Deleted; `UNGRANTABLE_TOOLS`'s
+# literal is UNCHANGED. The real check is BEHAVIOURAL, by token, exercised
+# elsewhere in this file: `test_load_grants_ungrantable_token_raises_naming_token`,
+# `test_grant_token_shape_admits_uppercase_alias`, and
+# `test_apply_refuses_ungrantable_token_by_name` all assert that a grant of
+# a SPECIFIC UNGRANTABLE_TOOLS member is actually REFUSED -- the property
+# that matters, and the one a stale or wrong entry would actually break.
 
 
 # --- splice_tools ----------------------------------------------------------
