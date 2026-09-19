@@ -35,7 +35,7 @@ INFO_LINE = "INFO_LINE"
 # and test_template_sync_verify.py derives its PASS-fixture counts from it.
 LINES = (
     ("manifest_valid", FAIL_LINE),
-    ("manifest_version_3", FAIL_LINE),
+    ("manifest_version_supported", FAIL_LINE),
     ("template_commit_known", FAIL_LINE),
     ("template_behind_head", INFO_LINE),
     ("requires_server", FAIL_LINE),
@@ -50,6 +50,19 @@ LINES = (
     ("new_template_files_empty", FAIL_LINE),
     ("classes_and_hashes", FAIL_LINE),
     ("region_markers", FAIL_LINE),
+    # v4.1 (spec §6, §7; rulings R-J, R-K): six new ids, appended in this
+    # order right after region_markers. claude_md_identical /
+    # import_line_present / instructions_file_present run under v4 only and
+    # SKIP under v3 (legacy: "manifest v3: no import yet"; window: "manifest
+    # v3: migrate first (owned by status_clean)" -- R-K, ONE fact ONE FAIL).
+    # The agent_grants_* three run under every manifest version this server
+    # dispatches on (v3 and v4 alike).
+    ("claude_md_identical", FAIL_LINE),
+    ("import_line_present", FAIL_LINE),
+    ("instructions_file_present", FAIL_LINE),
+    ("agent_grants_resolvable", FAIL_LINE),
+    ("agent_grants_names_known", FAIL_LINE),
+    ("agent_grants_extendable", FAIL_LINE),
     ("manifest_bytes", FAIL_LINE),
     ("declared_keys", FAIL_LINE),
     ("encoding_drift", INFO_LINE),
@@ -65,7 +78,7 @@ _IDS = tuple(i for i, _ in LINES)
 # Ids computed independently of manifest shape (raw bytes / project git
 # state) -- these still run even when every v3-dependent id below them is
 # short-circuited to SKIP.
-_SHAPE_INDEPENDENT = ("manifest_valid", "manifest_version_3", "manifest_bytes", "tree_clean",
+_SHAPE_INDEPENDENT = ("manifest_valid", "manifest_version_supported", "manifest_bytes", "tree_clean",
                       "legacy_gate_dir")
 
 # classes_and_hashes (item 10): the closed enumeration of statuses a
@@ -189,6 +202,219 @@ def _project_md_scoped(project_md: str) -> bool:
     return "paths:" in project_md[4:end]
 
 
+# --- v4.1: claude_md_identical / import_line_present / instructions_file_present
+# --- (spec §6, §7; rulings R-J, R-K) ---------------------------------------
+
+INSTRUCTIONS_FILE_DEFAULT = ".claude/project-instructions.md"
+
+
+def _claude_md_window_reason(manifest: dict, rules) -> str:
+    """The SKIP reason for the three CLAUDE.md-related lines under a v3
+    manifest: legacy (nothing to import yet) or window (migrate first, owned
+    by status_clean) -- R-K: the two SKIP sets are equal and told apart only
+    by this reason string."""
+    tpl_rel = rules.template_path_for("CLAUDE.md")
+    tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
+    if v3.claude_md_window_active(manifest, tpl_rel, tpl_raw):
+        return "manifest v3: migrate first (owned by status_clean)"
+    return "manifest v3: no import yet"
+
+
+def _check_claude_md_identical(pp: pathlib.Path, manifest: dict, rules) -> dict:
+    tpl_rel = rules.template_path_for("CLAUDE.md")
+    tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
+    try:
+        tpl_content = v3.template_content(pp, manifest, rules, "CLAUDE.md", tpl_raw)
+    except (v3.GrantsError, v3.GrantRefused) as e:
+        # v4.1 commit-3 concern 3, narrowed: this line is now defended;
+        # status_clean/classes_and_hashes (which read compute_status_v3
+        # directly) remain the ones still exposed to a malformed grants file.
+        return _line("claude_md_identical", "FAIL", str(e), "byte-identical to template_content()",
+                     "fix .claude/agent-grants.json")
+    proj_claude = core._read_file(pp / "CLAUDE.md")
+    if tpl_content is None:
+        return _line("claude_md_identical", "FAIL", "template CLAUDE.md not found",
+                     "byte-identical to template_content()",
+                     "the toolkit no longer ships CLAUDE.md for this variant")
+    if proj_claude is None:
+        return _line("claude_md_identical", "FAIL", "CLAUDE.md not found in the project",
+                     "byte-identical to template_content()", "run /sync-template")
+    if proj_claude == tpl_content:
+        return _line("claude_md_identical", "PASS", "byte-identical to template_content()",
+                     "byte-identical to template_content()")
+    diff = v3._unified(tpl_content, proj_claude, "template", "project")
+    return _line("claude_md_identical", "FAIL", f"diverges from template_content():\n{diff}",
+                 "byte-identical to template_content()",
+                 "run /sync-template -- CLAUDE.md is template-owned under v4; move project text into "
+                 ".claude/project-instructions.md")
+
+
+def _check_import_line_present(pp: pathlib.Path) -> dict:
+    """v4-only (R-K amended): the stated case is the TEMPLATE regression
+    route -- a variant template loses the @ line, a consumer syncs from a
+    branch/fork/unreleased checkout where the toolkit's own last-line check
+    never ran, their CLAUDE.md becomes byte-identical to the broken
+    template, claude_md_identical PASSes, and this is the only line that can
+    report the import silently gone."""
+    proj_claude = core._read_file(pp / "CLAUDE.md")
+    if proj_claude is None:
+        return _line("import_line_present", "FAIL", "CLAUDE.md not found in the project",
+                     "last line is @.claude/project-instructions.md", "run /sync-template")
+    last_line = proj_claude.splitlines()[-1] if proj_claude.strip() else ""
+    if last_line == "@.claude/project-instructions.md":
+        return _line("import_line_present", "PASS", "last line is the @ import line",
+                     "last line is @.claude/project-instructions.md")
+    return _line("import_line_present", "FAIL", f"last line is {last_line!r}",
+                 "last line is @.claude/project-instructions.md",
+                 "the template's import line was lost upstream -- see docs/template-sync.md")
+
+
+def _check_instructions_file_present(pp: pathlib.Path, manifest: dict) -> dict:
+    inst_path = core._normalize_path(manifest.get("instructions_file", INSTRUCTIONS_FILE_DEFAULT))
+    if (pp / inst_path).is_file():
+        return _line("instructions_file_present", "PASS", f"{inst_path} exists", f"{inst_path} exists")
+    return _line("instructions_file_present", "FAIL", f"{inst_path} not found", f"{inst_path} exists",
+                 "the once-class file was deleted by hand -- restore it (an ordinary sync never re-seeds it)")
+
+
+# --- v4.1: agent_grants_resolvable / agent_grants_names_known /
+# --- agent_grants_extendable (spec §4) -- run under every manifest version.
+
+
+def _shipped_agent_names(manifest: dict) -> set[str]:
+    agents_dir = core._get_template_dir(manifest) / ".claude" / "agents"
+    names: set[str] = set()
+    if agents_dir.is_dir():
+        for p in sorted(agents_dir.glob("*.md")):
+            text = core._read_file(p)
+            if text is not None:
+                name = v3.agent_name_of(text)
+                if name:
+                    names.add(name)
+    return names
+
+
+def _agent_template_path_by_name(manifest: dict, agent_name: str) -> pathlib.Path | None:
+    agents_dir = core._get_template_dir(manifest) / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        return None
+    for p in sorted(agents_dir.glob("*.md")):
+        text = core._read_file(p)
+        if text is not None and v3.agent_name_of(text) == agent_name:
+            return p
+    return None
+
+
+def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
+    """Every granted token must exist in its server's exports (a typo must
+    never silently grant nothing). Only the `template-sync-tools` alias is
+    resolvable by THIS process (it is the live registry this server itself
+    exports, via `_registered_tool_names()`) -- there is no cross-server MCP
+    registry available inside a FastMCP process, and the v4.0.1
+    `list-mcp-tools.py` route needs a `--source-dir` per alias this call has
+    no way to supply. For any other alias: if `~/.claude.json` is readable at
+    all the token is counted, by name, as unresolved (never FAILed on that
+    account alone); if it is not even readable, the line SKIPs rather than
+    guessing -- a SKIP is the honest answer for cannot-determine on a
+    read-only reporting line, and it is not fail-open, since the shape/policy
+    refusal already happened in `load_grants` at apply time. (Documented as a
+    concern for Task 4's skill table: this line SKIPs, not PASSes, on a
+    consumer machine with third-party-aliased grants and no readable
+    ~/.claude.json.)"""
+    try:
+        grants = v3.load_grants(pp)
+    except (v3.GrantsError, v3.GrantRefused) as e:
+        return _line("agent_grants_resolvable", "FAIL", str(e),
+                     "every granted token exists in its server's exports",
+                     "fix .claude/agent-grants.json")
+    if not (pp / v3.AGENT_GRANTS_FILE).is_file():
+        return _line("agent_grants_resolvable", "PASS", "no grants file", "n/a (informational)")
+    tokens = sorted({t for toks in grants.values() for t in toks})
+    if not tokens:
+        return _line("agent_grants_resolvable", "PASS", "grants=0", "n/a (informational)")
+    registered = set(core._registered_tool_names())
+    not_exported: list[str] = []
+    unresolved_by_name: list[str] = []
+    resolved = 0
+    for tok in tokens:
+        alias, _sep, name = tok[len("mcp__"):].partition("__")
+        if alias == "template-sync-tools":
+            if name in registered:
+                resolved += 1
+            else:
+                not_exported.append(tok)
+        else:
+            unresolved_by_name.append(tok)
+    if not_exported:
+        return _line("agent_grants_resolvable", "FAIL", f"not exported: {not_exported}",
+                     "every granted token exists in its server's exports",
+                     "fix the token name in .claude/agent-grants.json (or remove it if the tool was "
+                     "renamed/removed)")
+    home_registration = pathlib.Path.home() / ".claude.json"
+    if unresolved_by_name and not home_registration.is_file():
+        return _skip("agent_grants_resolvable",
+                     f"cannot resolve {len(unresolved_by_name)} token(s) "
+                     f"(no MCP registration at {home_registration}): {unresolved_by_name}")
+    measured = f"resolved={resolved}"
+    if unresolved_by_name:
+        measured += f"; unresolved by name (no source dir known to this process): {unresolved_by_name}"
+    return _line("agent_grants_resolvable", "PASS", measured, "n/a (informational)")
+
+
+def _check_agent_grants_names_known(pp: pathlib.Path, manifest: dict) -> dict:
+    try:
+        grants = v3.load_grants(pp)
+    except (v3.GrantsError, v3.GrantRefused) as e:
+        return _line("agent_grants_names_known", "FAIL", str(e),
+                     "every grant key names a shipped agent", "fix .claude/agent-grants.json")
+    if not grants:
+        return _line("agent_grants_names_known", "PASS", "grants=0",
+                     "every grant key names a shipped agent")
+    shipped = _shipped_agent_names(manifest)
+    unknown = sorted(k for k in grants if k not in shipped)
+    if unknown:
+        return _line("agent_grants_names_known", "FAIL", f"unknown agent name(s): {unknown}",
+                     f"every grant key in {sorted(shipped)}",
+                     "fix the agent name in .claude/agent-grants.json")
+    return _line("agent_grants_names_known", "PASS",
+                 f"{len(grants)} grant key(s), all shipped agents",
+                 "every grant key names a shipped agent")
+
+
+def _check_agent_grants_extendable(pp: pathlib.Path, manifest: dict) -> dict:
+    try:
+        grants = v3.load_grants(pp)
+    except (v3.GrantsError, v3.GrantRefused) as e:
+        return _line("agent_grants_extendable", "FAIL", str(e),
+                     "every grant key names an agent with a one-line tools:",
+                     "fix .claude/agent-grants.json")
+    if not grants:
+        return _line("agent_grants_extendable", "PASS", "grants=0",
+                     "every grant key names an agent with a one-line tools:")
+    placeholders = manifest.get("placeholders", {})
+    bad: list[str] = []
+    for agent_name, agent_grants in grants.items():
+        path = _agent_template_path_by_name(manifest, agent_name)
+        if path is None:
+            continue  # unknown name -- owned by agent_grants_names_known, not duplicated here
+        raw = core._read_file(path)
+        rendered = core._apply_placeholders(raw or "", placeholders)
+        try:
+            v3.splice_tools(rendered, agent_grants)
+        except v3.GrantRefused:
+            bad.append(agent_name)
+        except v3.GrantsError:
+            continue  # a shape defect (list-form/*), not "no tools: line" -- a different check's business
+    if bad:
+        return _line("agent_grants_extendable", "FAIL",
+                     f"agent(s) with no tools: line: {sorted(bad)}",
+                     "every grant key names an agent with a one-line tools:",
+                     "remove the grant, or give the agent a tools: line")
+    return _line("agent_grants_extendable", "PASS",
+                 f"{len(grants)} grant key(s), all extendable",
+                 "every grant key names an agent with a one-line tools:")
+
+
 def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -> dict:
     pp = pathlib.Path(project_path).resolve()
     results: list[dict] = []
@@ -221,15 +447,16 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         emit(_line("manifest_valid", "PASS", "no errors", "no errors"))
 
     mv = manifest.get("manifest_version")
-    if mv == 3:
-        emit(_line("manifest_version_3", "PASS", f"manifest_version={mv}", "3"))
+    mv_supported = v3.manifest_supported(manifest)
+    if mv_supported:
+        emit(_line("manifest_version_supported", "PASS", f"manifest_version={mv}", "3 or 4"))
     else:
-        emit(_line("manifest_version_3", "FAIL", f"manifest_version={mv!r}", "3",
-                   "run template_migrate_manifest to upgrade this manifest to v3"))
+        emit(_line("manifest_version_supported", "FAIL", f"manifest_version={mv!r}", "3 or 4",
+                   "run template_migrate_manifest to upgrade this manifest to v3 or v4"))
 
-    if mv != 3 or "templateRepo" not in manifest or "variant" not in manifest:
-        reason = ("manifest is not v3, or is missing templateRepo/variant -- "
-                  "see manifest_valid / manifest_version_3")
+    if not mv_supported or "templateRepo" not in manifest or "variant" not in manifest:
+        reason = ("manifest is not v3 or v4, or is missing templateRepo/variant -- "
+                  "see manifest_valid / manifest_version_supported")
         _cascade_skip(results, done, reason)
         emit(_check_manifest_bytes(pp))
         emit(_check_legacy_gate_dir(pp))
@@ -492,6 +719,22 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         emit(_line("region_markers", "PASS",
                    f"markers well-formed on {len(tracked_paths)} of {len(tracked_paths)} tracked files",
                    "no malformed PROJECT-CUSTOM markers"))
+
+    # --- claude_md_identical / import_line_present / instructions_file_present
+    if v3.is_v4_manifest(manifest):
+        emit(_check_claude_md_identical(pp, manifest, rules))
+        emit(_check_import_line_present(pp))
+        emit(_check_instructions_file_present(pp, manifest))
+    else:
+        reason = _claude_md_window_reason(manifest, rules)
+        emit(_skip("claude_md_identical", reason))
+        emit(_skip("import_line_present", reason))
+        emit(_skip("instructions_file_present", reason))
+
+    # --- agent_grants_resolvable / agent_grants_names_known / agent_grants_extendable
+    emit(_check_agent_grants_resolvable(pp, manifest))
+    emit(_check_agent_grants_names_known(pp, manifest))
+    emit(_check_agent_grants_extendable(pp, manifest))
 
     # --- declared_keys ----------------------------------------------------
     missing_all = []

@@ -150,6 +150,138 @@ def _good_fixture(tmp_path, ownership: dict | None = None):
     return repo, proj, commit
 
 
+# --- v4.1: a green v4 fixture, and a v3-window fixture (spec §6, §7; R-J/R-K)
+
+CLAUDE_CONTENT_V4 = "# T\nrule one\n@.claude/project-instructions.md\n"
+# R-H: the agent KEEPS its PROJECT-CUSTOM region under v4 -- only CLAUDE.md's
+# is removed.
+AGENT_CONTENT_V4 = ("---\nname: foo\ntools: Read, Write\n---\n"
+                    "body\n<!-- PROJECT-CUSTOM:BEGIN -->\n<!-- PROJECT-CUSTOM:END -->\n")
+INSTRUCTIONS_CONTENT_V4 = "# Project instructions\n\nSeed body\n"
+GRANTS_CONTENT_V4 = json.dumps({"schema": 1, "grants": {}}) + "\n"
+
+OWNERSHIP_V4 = {
+    "tracked_paths": ["hooks", "templates"],
+    "rules": [
+        {"pattern": "hooks/**", "ownership": "template"},
+        {"pattern": "CLAUDE.md", "ownership": "template"},
+        {"pattern": ".claude/agents/*.md", "ownership": "template"},
+        {"pattern": ".claude/rules/project.md", "ownership": "once"},
+        {"pattern": ".claude/project-instructions.md", "ownership": "once"},
+        {"pattern": ".claude/agent-grants.json", "ownership": "once"},
+        {
+            "pattern": "PROJECT_CONTEXT.md", "ownership": "once", "audit": "keys",
+            "required_keys": ["Protected branches", "Gate"],
+        },
+    ],
+}
+
+
+def _good_fixture_v4(tmp_path):
+    """A fully-synced, git-committed v4 project against a git-committed
+    toolkit repo. Every FAIL-capable line is expected PASS except
+    server_skew (R-H: region_markers PASSes here too -- it keeps measuring
+    the agent's region; import_line_present PASSes, not SKIPs, since this is
+    v4)."""
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general" / ".claude" / "agents").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps(OWNERSHIP_V4), encoding="utf-8")
+    m = {"templateRepo": str(repo), "variant": "general"}
+    template_files = {
+        "CLAUDE.md": CLAUDE_CONTENT_V4, "hooks/g.sh": HOOK_CONTENT,
+        "PROJECT_CONTEXT.md": CONTEXT_CONTENT, ".claude/rules/project.md": PROJECT_MD_CONTENT,
+        ".claude/agents/foo.md": AGENT_CONTENT_V4,
+        ".claude/project-instructions.md": INSTRUCTIONS_CONTENT_V4,
+        ".claude/agent-grants.json": GRANTS_CONTENT_V4,
+    }
+    for rel, content in template_files.items():
+        p = ts._template_file_path(m, rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8", newline="")
+    commit = _init_repo(repo)
+    _git(repo, "tag", "v4.1.0")
+
+    proj = tmp_path / "proj"
+    (proj / ".claude" / "rules").mkdir(parents=True)
+    (proj / ".claude" / "agents").mkdir(parents=True)
+    (proj / "hooks").mkdir(parents=True)
+    for rel, content in template_files.items():
+        (proj / rel).write_text(content, encoding="utf-8", newline="")
+
+    entries = {
+        "CLAUDE.md": {"hash": "sha256:" + ts._sha256(CLAUDE_CONTENT_V4), "ownership": "template"},
+        "hooks/g.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
+        ".claude/agents/foo.md": {"hash": "sha256:" + ts._sha256(AGENT_CONTENT_V4), "ownership": "template"},
+        ".claude/rules/project.md": {"ownership": "once"},
+        "PROJECT_CONTEXT.md": {"ownership": "once"},
+        ".claude/project-instructions.md": {"ownership": "once"},
+        ".claude/agent-grants.json": {"ownership": "once"},
+    }
+    manifest = {
+        "manifest_version": 4,
+        "template_version": "v4.1.0",
+        "template_commit": commit,
+        "variant": "general",
+        "templateRepo": str(repo),
+        "placeholders": {},
+        "requires_server": ">=4.1.0",
+        "instructions_file": ".claude/project-instructions.md",
+        "agent_grants": ".claude/agent-grants.json",
+        "files": entries,
+    }
+    _write_manifest(proj, manifest)
+    _init_repo(proj)
+    return repo, proj, commit
+
+
+def _window_fixture(tmp_path):
+    """A v3 manifest whose CURRENT checkout's template has ALREADY dropped
+    the region (the v3-manifest window, R-J): CLAUDE.md reads
+    MIGRATION_REQUIRED and status_clean is the ONE FAIL (R-K)."""
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps(OWNERSHIP), encoding="utf-8")
+    window_claude = "# T\nrule one\n@.claude/project-instructions.md\n"  # no markers -- v4.1+ shape
+    m = {"templateRepo": str(repo), "variant": "general"}
+    for rel, content in {"CLAUDE.md": window_claude, "hooks/g.sh": HOOK_CONTENT,
+                         "PROJECT_CONTEXT.md": CONTEXT_CONTENT,
+                         ".claude/rules/project.md": PROJECT_MD_CONTENT}.items():
+        p = ts._template_file_path(m, rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8", newline="")
+    commit = _init_repo(repo)
+
+    proj = tmp_path / "proj"
+    (proj / ".claude" / "rules").mkdir(parents=True)
+    (proj / "hooks").mkdir(parents=True)
+    # The project's HELD CLAUDE.md always carries the region (R-J: a v3
+    # consumer's own committed copy always has it).
+    (proj / "CLAUDE.md").write_text(CLAUDE_CONTENT, encoding="utf-8", newline="")
+    (proj / "hooks" / "g.sh").write_text(HOOK_CONTENT, encoding="utf-8", newline="")
+    (proj / ".claude" / "rules" / "project.md").write_text(PROJECT_MD_CONTENT, encoding="utf-8", newline="")
+    (proj / "PROJECT_CONTEXT.md").write_text(CONTEXT_CONTENT, encoding="utf-8", newline="")
+
+    entries = {
+        "CLAUDE.md": {"hash": "sha256:" + ts._sha256(CLAUDE_CONTENT), "ownership": "template"},
+        "hooks/g.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
+        ".claude/rules/project.md": {"ownership": "once"},
+        "PROJECT_CONTEXT.md": {"ownership": "once"},
+    }
+    manifest = {
+        "manifest_version": 3,
+        "template_version": "v3.1.0",
+        "template_commit": commit,
+        "variant": "general",
+        "templateRepo": str(repo),
+        "placeholders": {},
+        "requires_server": ">=0.3.2",
+        "files": entries,
+    }
+    _write_manifest(proj, manifest)
+    _init_repo(proj)
+    return repo, proj, commit
+
+
 def _only_fail(res: dict) -> list[str]:
     return [l["id"] for l in res["lines"] if l["status"] == "FAIL"]
 
@@ -197,8 +329,11 @@ def test_pass_fixture_is_all_green(tmp_path):
     fail_ids = {l["id"] for l in lines if l["status"] == "FAIL"}
     assert fail_ids == set()
     # server_skew SKIPs: this fixture's "toolkit" repo is not the tree the
-    # running server process was imported from.
-    assert skip_ids == {"server_skew"}
+    # running server process was imported from. v4.1 (R-K): this fixture is
+    # the v3 LEGACY situation (a v3 manifest, template still carrying the
+    # region) -- the three CLAUDE.md-related lines SKIP "no import yet".
+    assert skip_ids == {"server_skew", "claude_md_identical", "import_line_present",
+                        "instructions_file_present"}
     # v4.0.2 extends this to six: the three new INFO lines (legacy_gate_dir,
     # once_notes_changed, project_md_scoped_consistent) all emit their null
     # case on this healthy fixture -- none may SKIP here (a SKIP would be a
@@ -210,6 +345,88 @@ def test_pass_fixture_is_all_green(tmp_path):
     assert res["summary"] == f"{n_pass} PASS, 0 FAIL, {len(skip_ids)} SKIP, {len(info_ids)} INFO"
     assert res["ok"] is True
     assert res["mode"] == "post_commit"
+
+
+def test_lines_count_is_30():
+    """Constraint 5: stated by hand, moves in the SAME commit as the six new
+    ids -- never derived from anything, so it is a red flag by itself if a
+    later edit changes LINES without touching this number."""
+    assert len(verify.LINES) == 30
+
+
+def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    lines = res["lines"]
+    assert len(lines) == len(verify.LINES)
+
+    skip_ids = {l["id"] for l in lines if l["status"] == "SKIP"}
+    info_ids = {l["id"] for l in lines if l["status"] == "INFO"}
+    fail_ids = {l["id"] for l in lines if l["status"] == "FAIL"}
+    assert fail_ids == set(), _by_id(res)
+    # R-H: region_markers PASSes here (it keeps measuring the agent's own
+    # region); import_line_present PASSes, not SKIPs, since this IS v4.
+    assert skip_ids == {"server_skew"}
+    # All six new ids are FAIL_LINE kind (never INFO_LINE), so info_ids is
+    # unchanged from the v3 fixture's set.
+    assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
+                        "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
+    by_id = _by_id(res)
+    assert by_id["claude_md_identical"]["status"] == "PASS"
+    assert by_id["import_line_present"]["status"] == "PASS"
+    assert by_id["instructions_file_present"]["status"] == "PASS"
+    assert by_id["agent_grants_resolvable"]["status"] == "PASS"
+    assert "no grants file" not in by_id["agent_grants_resolvable"]["measured"]  # the file IS present
+    assert "grants=0" in by_id["agent_grants_resolvable"]["measured"]
+    assert by_id["agent_grants_names_known"]["status"] == "PASS"
+    assert by_id["agent_grants_extendable"]["status"] == "PASS"
+    assert res["ok"] is True
+
+
+def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
+    repo, proj, commit = _window_fixture(tmp_path)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    fail_ids = {l["id"] for l in res["lines"] if l["status"] == "FAIL"}
+    skip_ids = {l["id"] for l in res["lines"] if l["status"] == "SKIP"}
+    assert fail_ids == {"status_clean"}, _by_id(res)
+    assert skip_ids == {"server_skew", "claude_md_identical", "import_line_present",
+                        "instructions_file_present"}
+    line = _by_id(res)["status_clean"]
+    assert "CLAUDE.md" in line["measured"]
+    assert line["remedy"] == v3.MIGRATION_REQUIRED_REMEDY
+    assert res["ok"] is False
+
+
+def test_import_line_present_two_sided_template_regression(tmp_path, monkeypatch):
+    """The stated case (R-K amended): the TEMPLATE loses the @ line, the
+    consumer syncs from that broken checkout and matches it exactly --
+    claude_md_identical PASSes (they match) while import_line_present is the
+    ONLY line that can report the import silently gone."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+
+    tpl_claude = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "CLAUDE.md")
+    broken = CLAUDE_CONTENT_V4.replace("@.claude/project-instructions.md\n", "")
+    assert broken != CLAUDE_CONTENT_V4 and not broken.endswith("@.claude/project-instructions.md\n")
+    tpl_claude.write_text(broken, encoding="utf-8", newline="")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "template regresses: loses the @ line")
+    new_commit = _git_out(repo, "rev-parse", "HEAD")
+
+    # The consumer re-applies (matches the broken template exactly) and
+    # finalizes against the new commit.
+    (proj / "CLAUDE.md").write_text(broken, encoding="utf-8", newline="")
+    m = _read_manifest(proj)
+    m["files"]["CLAUDE.md"] = {"hash": "sha256:" + ts._sha256(broken), "ownership": "template"}
+    m["template_commit"] = new_commit
+    _write_manifest(proj, m)
+    _recommit(proj)
+
+    res = verify.run(str(proj), str(repo), "post_commit")
+    by_id = _by_id(res)
+    assert by_id["claude_md_identical"]["status"] == "PASS", by_id["claude_md_identical"]
+    assert by_id["import_line_present"]["status"] == "FAIL", by_id["import_line_present"]
 
 
 def test_tree_clean_mode_switch_both_ways(tmp_path):
@@ -235,7 +452,7 @@ def test_manifest_valid_fails_alone(tmp_path):
     assert _only_fail(res) == ["manifest_valid"]
 
 
-def test_manifest_version_3_fails_alone(tmp_path):
+def test_manifest_version_supported_fails_alone(tmp_path):
     repo, proj, commit = _good_fixture(tmp_path)
     m = _read_manifest(proj)
     m["manifest_version"] = 2
@@ -244,7 +461,7 @@ def test_manifest_version_3_fails_alone(tmp_path):
     _recommit(proj)
     res = verify.run(str(proj), str(repo), "post_commit")
     assert res["ok"] is False
-    assert _only_fail(res) == ["manifest_version_3"]
+    assert _only_fail(res) == ["manifest_version_supported"]
 
 
 def test_template_commit_known_fails_alone_on_unknown_sha(tmp_path):
