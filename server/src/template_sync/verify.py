@@ -391,14 +391,23 @@ def _check_agent_grants_extendable(pp: pathlib.Path, manifest: dict) -> dict:
     if not grants:
         return _line("agent_grants_extendable", "PASS", "grants=0",
                      "every grant key names an agent with a one-line tools:")
-    placeholders = manifest.get("placeholders", {})
     bad: list[str] = []
+    # Force template_content()'s placeholder-only path (F1-c2 fix): this
+    # loop needs the UN-spliced rendering to test splice_tools() itself --
+    # calling template_content() with the REAL (v4) manifest would already
+    # splice this exact agent's own grants (it is iterating grants.items()),
+    # double-splicing when splice_tools() runs again below. A shallow copy
+    # with manifest_version forced to 3 is inert for this purpose (rules is
+    # never consulted by template_content -- see its docstring).
+    plain_manifest = dict(manifest, manifest_version=3)
     for agent_name, agent_grants in grants.items():
         path = _agent_template_path_by_name(manifest, agent_name)
         if path is None:
             continue  # unknown name -- owned by agent_grants_names_known, not duplicated here
         raw = core._read_file(path)
-        rendered = core._apply_placeholders(raw or "", placeholders)
+        rendered = v3.template_content(pp, plain_manifest, None, f"{v3.AGENTS_DIR_PREFIX}{path.name}", raw)
+        if rendered is None:
+            continue
         try:
             v3.splice_tools(rendered, agent_grants)
         except v3.GrantRefused:

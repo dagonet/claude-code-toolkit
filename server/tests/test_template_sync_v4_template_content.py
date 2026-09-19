@@ -16,7 +16,6 @@ constant (constraint 9).
 import pathlib
 import re
 
-from template_sync import mcp as mcp_mod
 from template_sync import v3 as v3_mod
 
 # Matches a CALL to _apply_placeholders(, excluding its own `def` line (the
@@ -43,21 +42,20 @@ def _template_content_span(lines: list[str]) -> tuple[int, int] | None:
 
 
 def test_apply_placeholders_called_only_inside_template_content():
-    v3_path = pathlib.Path(v3_mod.__file__)
-    mcp_path = pathlib.Path(mcp_mod.__file__)
-
-    v3_lines = v3_path.read_text(encoding="utf-8").splitlines()
-    span = _template_content_span(v3_lines)
+    """Fix round 1, F1-c2: this must sweep the WHOLE package (the docstring
+    above already claimed "whole-package grep" -- the implementation only
+    scanned v3.py and mcp.py, so a producer in any OTHER module in the
+    package, e.g. a future verify.py call, would have passed silently)."""
+    pkg = pathlib.Path(v3_mod.__file__).parent
 
     outside: list[str] = []
-    for i, line in enumerate(v3_lines):
-        if _CALL_RE.search(line):
-            if span is None or not (span[0] <= i < span[1]):
-                outside.append(f"v3.py:{i + 1}: {line.strip()}")
-
-    for i, line in enumerate(mcp_path.read_text(encoding="utf-8").splitlines()):
-        if _CALL_RE.search(line):
-            outside.append(f"mcp.py:{i + 1}: {line.strip()}")
+    for path in sorted(pkg.glob("*.py")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        span = _template_content_span(lines) if path.name == "v3.py" else None
+        for i, line in enumerate(lines):
+            if _CALL_RE.search(line):
+                if span is None or not (span[0] <= i < span[1]):
+                    outside.append(f"{path.name}:{i + 1}: {line.strip()}")
 
     assert outside == [], (
         "_apply_placeholders() called outside template_content()'s body -- "
