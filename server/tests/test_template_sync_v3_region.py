@@ -49,14 +49,22 @@ def _run(coro):
 
 
 def mk(tmp_path, template_now: str, project: str, template_at_sync: str | None = None,
-       with_git: bool = True, entry_hash_of: str | None = None):
+       with_git: bool = True, entry_hash_of: str | None = None, rel: str = "CLAUDE.md"):
     """Toolkit repo whose HEAD ships `template_now`; when `template_at_sync`
-    differs, that older content is what the manifest's template_commit points at."""
+    differs, that older content is what the manifest's template_commit points
+    at. `rel` (v4.1, R-J): a handful of tests below exercise a template with
+    NO markers or MALFORMED markers on purpose (the general region-orphaned/
+    malformed-marker mechanism, filename-agnostic in the production code) --
+    on the literal path "CLAUDE.md" that now also collides with the v4.1
+    v3-manifest window predicate (spec §7), which is keyed on that exact
+    filename. Those tests pass rel="AGENT_TEAM.md" (already a template-class
+    rule in OWNERSHIP above) to keep testing the SAME region mechanism
+    without tripping a v4.1 concept their fixture predates."""
     repo, proj = tmp_path / "tk", tmp_path / "proj"
     (repo / "templates" / "general").mkdir(parents=True)
     (repo / "templates" / "ownership.json").write_text(json.dumps(OWNERSHIP), encoding="utf-8")
     at_sync = template_at_sync if template_at_sync is not None else template_now
-    (repo / "templates" / "general" / "CLAUDE.md").write_text(at_sync, encoding="utf-8", newline="")
+    (repo / "templates" / "general" / rel).write_text(at_sync, encoding="utf-8", newline="")
     commit = "unknown"
     if with_git:
         _git(repo, "init", "-q")
@@ -64,19 +72,19 @@ def mk(tmp_path, template_now: str, project: str, template_at_sync: str | None =
         _git(repo, "commit", "-q", "-m", "at sync")
         commit = _head(repo)
     if template_at_sync is not None:
-        (repo / "templates" / "general" / "CLAUDE.md").write_text(template_now, encoding="utf-8", newline="")
+        (repo / "templates" / "general" / rel).write_text(template_now, encoding="utf-8", newline="")
         if with_git:
             _git(repo, "add", "-A")
             _git(repo, "commit", "-q", "-m", "template moved on")
 
     (proj / ".claude").mkdir(parents=True)
-    (proj / "CLAUDE.md").write_text(project, encoding="utf-8", newline="")
+    (proj / rel).write_text(project, encoding="utf-8", newline="")
     baseline = entry_hash_of if entry_hash_of is not None else at_sync
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps({
         "manifest_version": 3, "template_version": "v3.1.0", "template_commit": commit,
         "requires_server": ">=0.3.0", "variant": "general", "templateRepo": str(repo),
         "placeholders": {},
-        "files": {"CLAUDE.md": {"hash": "sha256:" + ts._sha256(baseline), "ownership": "template"}},
+        "files": {rel: {"hash": "sha256:" + ts._sha256(baseline), "ownership": "template"}},
     }), encoding="utf-8", newline="")
     return repo, proj
 
@@ -121,8 +129,9 @@ def test_edit_outside_the_region_is_still_local_edited(tmp_path):
 def test_single_sided_markers_keep_whole_file_semantics(tmp_path):
     # Template has no region; the project invented one. Not project-owned.
     _, proj = mk(tmp_path, template_now="# Toolkit\n\nrule one\n",
-                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n{END}\n")
-    assert status_of(proj)["status"] == "LOCAL_EDITED"
+                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n{END}\n",
+                 rel="AGENT_TEAM.md")
+    assert status_of(proj, rel="AGENT_TEAM.md")["status"] == "LOCAL_EDITED"
 
 
 # --- apply --------------------------------------------------------------------
@@ -174,10 +183,11 @@ def test_region_only_difference_does_not_demand_backup_dir(tmp_path):
 
 
 def test_apply_without_markers_on_either_side_is_unchanged(tmp_path):
-    _, proj = mk(tmp_path, template_now="# Toolkit\n\nrule one\n", project="# Toolkit\n\nrule one\n")
-    res = _run(ts.template_apply_file(str(proj), "CLAUDE.md"))
+    _, proj = mk(tmp_path, template_now="# Toolkit\n\nrule one\n", project="# Toolkit\n\nrule one\n",
+                 rel="AGENT_TEAM.md")
+    res = _run(ts.template_apply_file(str(proj), "AGENT_TEAM.md"))
     assert res["region_preserved"] is False
-    assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == "# Toolkit\n\nrule one\n"
+    assert (proj / "AGENT_TEAM.md").read_text(encoding="utf-8") == "# Toolkit\n\nrule one\n"
 
 
 # --- orphaned region: template has no markers ---------------------------------
@@ -194,8 +204,9 @@ def test_apply_without_markers_on_either_side_is_unchanged(tmp_path):
 
 def test_region_orphaned_is_reported_when_the_template_has_no_markers(tmp_path):
     _, proj = mk(tmp_path, template_now="# Toolkit\n\nrule one\n",
-                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n{END}\n")
-    info = status_of(proj)
+                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n{END}\n",
+                 rel="AGENT_TEAM.md")
+    info = status_of(proj, rel="AGENT_TEAM.md")
     assert info["region_orphaned"] is True
     assert info["status"] == "LOCAL_EDITED"
 
@@ -224,8 +235,9 @@ def test_malformed_begin_without_end_is_not_a_region(tmp_path):
     # as malformed instead, so the promise "you are told before a region is
     # dropped" has no hole in it.
     _, proj = mk(tmp_path, template_now="# Toolkit\n\nrule one\n",
-                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n")
-    info = status_of(proj)
+                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n",
+                 rel="AGENT_TEAM.md")
+    info = status_of(proj, rel="AGENT_TEAM.md")
     assert "region_orphaned" not in info
     assert info["region_markers_malformed"] == "project"
 
@@ -270,8 +282,9 @@ def test_region_markers_malformed_absent_when_there_are_no_markers(tmp_path):
 
 def test_apply_also_reports_region_markers_malformed(tmp_path):
     _, proj = mk(tmp_path, template_now="# Toolkit\n\nrule one\n",
-                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n")
-    res = _run(ts.template_apply_file(str(proj), "CLAUDE.md", backup_dir=str(tmp_path / "bak")))
+                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n",
+                 rel="AGENT_TEAM.md")
+    res = _run(ts.template_apply_file(str(proj), "AGENT_TEAM.md", backup_dir=str(tmp_path / "bak")))
     assert res["region_markers_malformed"] == "project"
     safe = mk(tmp_path / "safe", template_now=tpl("rule one"), project=tpl("rule one", MINE))[1]
     assert "region_markers_malformed" not in _run(
@@ -281,8 +294,9 @@ def test_apply_also_reports_region_markers_malformed(tmp_path):
 def test_apply_also_reports_region_orphaned(tmp_path):
     """A caller that goes straight to apply still gets told, on the same key."""
     _, proj = mk(tmp_path, template_now="# Toolkit\n\nrule one\n",
-                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n{END}\n")
-    res = _run(ts.template_apply_file(str(proj), "CLAUDE.md", backup_dir=str(tmp_path / "bak")))
+                 project=f"# Toolkit\n\nrule one\n{BEGIN}\n{MINE}\n{END}\n",
+                 rel="AGENT_TEAM.md")
+    res = _run(ts.template_apply_file(str(proj), "AGENT_TEAM.md", backup_dir=str(tmp_path / "bak")))
     assert res["region_orphaned"] is True
     safe = mk(tmp_path / "safe", template_now=tpl("rule one"), project=tpl("rule one", MINE))[1]
     assert "region_orphaned" not in _run(

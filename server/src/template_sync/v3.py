@@ -1186,6 +1186,31 @@ def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     return None, "unavailable", "migration_base_unavailable"
 
 
+# -------------------------
+# The v3-manifest window (spec §7, ruling R-J)
+# -------------------------
+#
+# A v4.1+ server serving a consumer whose manifest is still v3 is the
+# mirror of v4.0's "door one": MIN_SERVER_FOR_V4 refuses an OLD server on a
+# NEW (v4) manifest, but nothing stops a NEW server applying a region-less
+# template CLAUDE.md over a v3 consumer whose project content still lives in
+# the region -- unless CLAUDE.md specifically refuses until the consumer
+# migrates. Detected against the CURRENT checkout's template, never the
+# held commit (a v3 consumer's held commit always carries the region, so
+# only the current templates/<variant>/CLAUDE.md can reveal that the
+# toolkit itself has moved to v4.1): a v3 consumer synced from a pre-v4.1
+# checkout is LEGACY, not in the window, and behaves exactly as today.
+MIGRATION_REQUIRED_REMEDY = "migrate first (template_migrate_manifest, dry-run then backup_dir)"
+
+
+def claude_md_window_active(manifest: dict, tpl_rel: str, tpl_raw: str | None) -> bool:
+    """True exactly for CLAUDE.md, under a v3 manifest, when the CURRENT
+    checkout's variant template carries no PROJECT-CUSTOM markers."""
+    if tpl_rel != "CLAUDE.md" or not is_v3(manifest) or tpl_raw is None:
+        return False
+    return core.CUSTOM_REGION_BEGIN not in tpl_raw and core.CUSTOM_REGION_END not in tpl_raw
+
+
 def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
     placeholders = manifest.get("placeholders", {})
     repo_root = core._resolve_path(manifest["templateRepo"])
@@ -1195,7 +1220,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
     summary = {
         "identical": 0, "template_updated": 0, "local_edited": 0,
         "template_deleted": 0, "present": 0, "missing": 0,
-        "acknowledged_kept": 0,
+        "acknowledged_kept": 0, "migration_required": 0,
     }
     acknowledged = acknowledged_paths(manifest)
 
@@ -1204,6 +1229,19 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
         tpl_rel = rules.template_path_for(proj_rel)
         ownership = entry.get("ownership") or rules.class_of(tpl_rel) or "template"
         tpl_raw, tpl_flags = read_with_flags(core._template_file_path(manifest, tpl_rel))
+
+        if claude_md_window_active(manifest, tpl_rel, tpl_raw):
+            proj_content, proj_flags = read_with_flags(pp / proj_rel)
+            files_status[proj_rel] = {
+                "ownership": ownership, "template_path": tpl_rel,
+                "project_file_missing": proj_content is None,
+                "encoding_drift": [],
+                "status": "MIGRATION_REQUIRED",
+                "remedy": MIGRATION_REQUIRED_REMEDY,
+            }
+            summary["migration_required"] += 1
+            continue
+
         try:
             tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
         except (GrantsError, GrantRefused) as e:
@@ -1347,6 +1385,10 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
                              "move the logic to a non-template path (e.g. scripts/gate.sh) and point the key there"}
 
     tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
+    if claude_md_window_active(manifest, tpl_rel, tpl_raw):
+        # The v3-manifest window (R-J): nothing is written, the region body
+        # on disk is byte-identical before and after this call.
+        return {"error": f"CLAUDE.md: {MIGRATION_REQUIRED_REMEDY}"}
     try:
         tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
     except (GrantsError, GrantRefused) as e:

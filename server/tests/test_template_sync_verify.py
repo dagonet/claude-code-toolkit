@@ -32,7 +32,15 @@ OWNERSHIP = {
     ],
 }
 
-CLAUDE_CONTENT = "# T\nrule one\n"
+# v4.1, ruling R-J: this fixture models a v4.0.x TOOLKIT CHECKOUT -- its
+# template CLAUDE.md carries the PROJECT-CUSTOM markers, matching every
+# pre-v4.1 template. WITHOUT them, this fixture's v3 manifest would silently
+# fall into the v3-manifest window the moment the window predicate lands
+# (commit 4): CLAUDE.md would read MIGRATION_REQUIRED and status_clean would
+# FAIL -- the "fix" an implementer would reach for there is weakening this
+# suite's assertions, which is exactly the failure mode the markers below
+# are here to prevent from looking like success.
+CLAUDE_CONTENT = "# T\nrule one\n<!-- PROJECT-CUSTOM:BEGIN -->\n<!-- PROJECT-CUSTOM:END -->\n"
 HOOK_CONTENT = "echo g\n"
 
 # V401_SEED: the pre-v4.0.2 `PROJECT_MD_SEED_BODY` text, captured verbatim

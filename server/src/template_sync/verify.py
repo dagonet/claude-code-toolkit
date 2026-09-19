@@ -80,6 +80,10 @@ _SHAPE_INDEPENDENT = ("manifest_valid", "manifest_version_3", "manifest_bytes", 
 TEMPLATE_CLASS_STATUSES = (
     "IDENTICAL", "TEMPLATE_UPDATED", "LOCAL_EDITED",
     "TEMPLATE_DELETED", "ACKNOWLEDGED_KEPT", "CONFLICT",
+    # v4.1, the v3-manifest window (spec §7, ruling R-J): a NEW template-class
+    # status, added BY HAND (constraint 5) -- a v3 consumer's CLAUDE.md read
+    # by a v4.1+ toolkit checkout that has already dropped the region.
+    "MIGRATION_REQUIRED",
 )
 
 
@@ -365,7 +369,15 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     conflicts = [p for p, info in status["files"].items() if info.get("status") == "CONFLICT"]
     updated, edited, missing = (summary.get("template_updated", 0), summary.get("local_edited", 0),
                                 summary.get("missing", 0))
-    if updated or edited or missing or conflicts:
+    migration_required = [p for p, info in status["files"].items()
+                          if info.get("status") == "MIGRATION_REQUIRED"]
+    if migration_required:
+        # The v3-manifest window (R-J, R-K): ONE fact, ONE FAIL, ONE remedy --
+        # reported alone, ahead of any other drift this consumer may also
+        # carry, because migrating is the one action that resolves it.
+        emit(_line("status_clean", "FAIL", f"MIGRATION_REQUIRED: {sorted(migration_required)}",
+                   "0 updated / 0 edited / 0 missing, no CONFLICT", v3.MIGRATION_REQUIRED_REMEDY))
+    elif updated or edited or missing or conflicts:
         # A stale STORED hash (v4.0.2, item 16): `finalize_sync(new_files=...)`
         # only ADDS entries -- a tracked path updated on disk outside
         # template_apply_file keeps its stale hash and reads LOCAL_EDITED with
