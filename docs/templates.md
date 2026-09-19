@@ -118,20 +118,22 @@ See `docs/architecture.md` → *MCP Layering* and `mcp-servers/HOWTO.md` → *Pr
 | `{{TECH_STACK}}` | Technology stack description | .NET 10, MAUI, SQLite |
 | `{{MAUI_PROJECT}}` | MAUI project path (MAUI) | src/MyApp.MAUI |
 | `{{TEST_PROJECT}}` | Test project path | tests/MyApp.Tests |
+| `{{GATE_CHECKED_BRANCHES}}` | Fills `**Gate-checked branches**:` in `PROJECT_CONTEXT.md` — glob list of branches whose merges the gate checks in addition to the protected set. Setup writes `none` (= no branch is gate-checked); edit the key afterwards to opt in | none |
+| `{{POST_EDIT_BUILD}}` | Fills `**Post-edit build**:` in `PROJECT_CONTEXT.md`, the command `hooks/post-edit-build.sh` runs after every edit. Derived: `dotnet build --no-restore -v q` for the dotnet variants, `none` (= no post-edit build) for the others | dotnet build --no-restore -v q |
 
-## Template Manifest (v2)
+## Template Manifest (v3)
 
-The setup script generates `.claude/template-manifest.json` in each target project. The v2 format tracks:
+The setup script generates `.claude/template-manifest.json` in each target project (`manifest_version: 3`; older v2 manifests are migrated by `template_migrate_manifest`). It records:
 
-- **Version**: schema version (`2`)
-- **Variant**: which template was applied (general, dotnet, dotnet-maui, rust-tauri, java, python)
-- **Template repo path**: absolute path to the claude-code-toolkit repo on disk
-- **Last synced commit**: git commit hash at time of setup/sync
-- **Placeholder values**: the concrete values used during setup (for reverse-mapping by `/contribute-upstream`)
-- **Per-file hashes**: `templateHash` (after placeholder replacement), `templateRawHash` (before replacement), `localHash` (project file at last sync)
-- **Modification status**: whether each file has been locally modified since initial setup
+- **`manifest_version`**: schema version (`3`)
+- **`variant`**: which template was applied (general, dotnet, dotnet-maui, rust-tauri, java, python)
+- **`templateRepo`**: absolute path to the claude-code-toolkit repo on disk
+- **`template_version`** / **`template_commit`**: the toolkit tag and commit the tracked tree matches at setup/sync
+- **`requires_server`**: the template-sync server floor (`>=0.3.2`), enforced on every later sync
+- **`placeholders`**: the concrete values used during setup (for reverse-mapping by `/contribute-upstream`)
+- **`files`**: one entry per tracked path — `{"ownership": "template", "hash": "sha256:<hex>"}` for files the template owns (the hash is of the rendered content the server wrote, so a later diff is measurable), `{"ownership": "once"}` for files seeded once and then yours; files the ownership table does not name are yours and have no entry
 
-The `templateRawHash` detects template changes without recomputing placeholder replacement. The `localHash` serves as the common ancestor for three-way merge during conflict resolution.
+The full field reference, key order and the historical v2 shape are in [`template-sync.md`](template-sync.md#manifest-v3-claudetemplate-manifestjson).
 
 The manifest is consumed by the **template-sync-tools** MCP server, which powers the `/sync-template` and `/contribute-upstream` skills. See [`template-sync.md`](template-sync.md) for the full workflow.
 

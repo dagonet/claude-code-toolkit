@@ -1,6 +1,6 @@
 # Design rationale — why the template files say what they say
 
-The operative files (`CLAUDE.md`, `AGENT_TEAM.md`) carry
+This is the reasoning record for the toolkit's template files (the toolkit itself is a template repository that bootstraps a Claude Code configuration into a project; see the README). The operative files (`CLAUDE.md`, `AGENT_TEAM.md`) carry
 **facts and instructions only**. Every "why" lives here, keyed by file and
 section, so an instruction can be short and its reasoning can still be found.
 Check 35 in `scripts/verify-template-consistency.sh` enforces the byte budget
@@ -18,6 +18,8 @@ Measured at `bf436dc` (before) and after the v3.1 diet (this commit):
 | rust-tauri | 12,583 | 6,139 |
 | java | 12,232 | 6,135 |
 | python | 12,258 | 6,139 |
+
+At v4.0.3 (2026-09-19, `wc -c`): general 6,143 · dotnet 6,140 · dotnet-maui 6,139 · rust-tauri 6,141 · java 6,135 · python 6,139 — within 1–9 B of the cap, which is what a ratchet looks like when it holds.
 
 Budget: `BUDGET_CLAUDE_MD = 6144` (`scripts/verify-template-consistency.sh`).
 For the non-`general` variants, language-specific overflow (agent-fallback
@@ -148,9 +150,13 @@ and the one line above the opening marker containing the literal
 `context-mode` survive verbatim in every variant — check 26 pins both the
 literal and its position, and the context-mode MCP server's own
 `writeRoutingInstructions()` writer checks the file for that literal before
-appending its own routing block. Both markers and the sentinel line are
-removed together in a later, separate ownership-transfer commit per the
-v3.1 plan — not here.
+appending its own routing block. Both markers and the sentinel line were
+to be removed together in a later, separate ownership-transfer commit per the
+v3.1 plan — not here. Still pending at v4.0.3: that change is v4.1
+(`docs/plans/2026-09-18-v4.1-design.md`), which removes the `CLAUDE.md`
+region only, keeps the sentinel line by rewriting it to point at the new
+`.claude/project-instructions.md`, and leaves the 47 agent and
+`AGENT_TEAM.md` regions in place.
 
 ## AGENT_TEAM.md
 
@@ -164,6 +170,8 @@ Byte-identical across all six variants, measured at `3975c1a` (before) and at th
 | rust-tauri | 35,845 | 20,472 |
 | java | 35,845 | 20,472 |
 | python | 35,845 | 20,472 |
+
+At v4.0.3 (2026-09-19): 20,467 B, all six variants, still byte-identical.
 
 Budget: `BUDGET_AGENT_TEAM_MD = 20480` (`scripts/verify-template-consistency.sh`, check 35).
 
