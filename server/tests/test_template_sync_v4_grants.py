@@ -389,6 +389,36 @@ def test_writer_witness_finalize_hash_matches_on_disk_spliced_bytes(tmp_path):
     assert entry_hash == ts._sha256(on_disk_bytes.decode("utf-8"))
     assert entry_hash != ts._sha256(FOO_TPL), "must not be the un-spliced template's hash"
 
+    # Fix round 1, F2-c3: witness 5 only exercised the APPLIED path, where
+    # finalize_v3 ECHOES the hash apply already computed -- the NEW-FILE
+    # branch (`for fp in new:`, v3.py ~1540-1559) computes its OWN baseline
+    # via a separate template_content() call and was unreached by any
+    # witness. Extend with a second agent, applied to disk (spliced) but
+    # registered through `new_files` instead of `applied_files`, so THIS
+    # call goes through the new-file branch specifically.
+    bar_tpl = "---\nname: bar\ntools: Read\n---\nbody\n"
+    (ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, ".claude/agents/bar.md")
+     ).write_text(bar_tpl, encoding="utf-8", newline="")
+    grants_path = proj / ".claude" / "agent-grants.json"
+    grants_path.write_text(
+        json.dumps({"schema": 1, "grants": {
+            "foo": ["mcp__glider__symbol_lookup"], "bar": ["mcp__glider__decompile"]}}),
+        encoding="utf-8", newline="")
+    bar_res = _run(ts.template_apply_file(str(proj), file_path=".claude/agents/bar.md", source="template"))
+    assert "error" not in bar_res, bar_res
+
+    fin2 = _run(ts.template_finalize_sync(
+        str(proj), applied_files="[]", new_files=json.dumps([".claude/agents/bar.md"]),
+        deleted_files="[]", acknowledged_deleted="[]"))
+    assert "error" not in fin2, fin2
+
+    written2 = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
+    bar_entry_hash = v3.parse_hash(written2["files"][".claude/agents/bar.md"]["hash"])
+    bar_on_disk = (proj / ".claude" / "agents" / "bar.md").read_bytes()
+    assert bar_entry_hash == ts._sha256(bar_on_disk.decode("utf-8"))
+    assert "mcp__glider__decompile" in bar_on_disk.decode("utf-8")
+    assert bar_entry_hash != ts._sha256(bar_tpl), "must not be the un-spliced template's hash"
+
 
 # --- refusals ----------------------------------------------------------
 
