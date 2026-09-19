@@ -50,17 +50,18 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; the project's own MCP notes say *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
-**The trim pass, measured.** The always-loaded surface went **41,167 B → 23,044 B (−44%)** on the `general` variant, across v1.4, v1.5, v2.0, v2.1 and the v3.1 diet:
+**The trim pass, measured.** The always-loaded surface went **41,167 B → 15,725 B (−62%)** on the `general` variant, across v1.4, v1.5, v2.0, v2.1, the v3.1 diet and the v4.0.1 retirement of `CLAUDE.local.md`. Every column is `wc -c` on the shipped files at that release, and **every release adds its own column** (the same table, with per-variant totals, is in [`docs/architecture.md`](docs/architecture.md)):
 
-| File | Baseline | v1.5 | v2.0 | v2.1 | **v3.1** |
-|---|---|---|---|---|---|
-| `CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | **6,143** |
-| `CLAUDE.local.md` (retired v4.0.1) | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | **5,076** |
-| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | **3,170** |
-| **total** | **41,167** | 32,538 | 25,814 | 25,999 | **23,044** |
+| File | Baseline | v1.5 | v2.0 | v2.1 | v3.1 | **v4.0.3** |
+|---|---|---|---|---|---|---|
+| `CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | 6,143 | **6,143** |
+| `CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | 8,655 | **— (retired v4.0.1)** |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | 5,076 | **5,453** |
+| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | 3,170 | **3,422** |
+| `.claude/rules/project.md` (unscoped) | — | — | — | — | 634 | **707** |
+| **total** | **41,167** | 32,538 | 25,814 | 25,999 | 23,044 | **15,725** |
 
-`PROJECT_CONTEXT.md` grew on purpose: it is where the declared keys live, and every byte added there removes prose a hook would otherwise have to trust an agent to remember.
+`PROJECT_CONTEXT.md` grew on purpose: it is where the declared keys live, and every byte added there removes prose a hook would otherwise have to trust an agent to remember. `project.md` joins the table at v4.0.3 because v4.0.1 measured that an unscoped rules file loads at every session start (it was already shipping at v3.1; the v3.1 total did not count it).
 
 **v3.1 made the budget a ratchet rather than a intention.** Consistency check 35 caps `CLAUDE.md` at 6,144 B and `AGENT_TEAM.md` at 20,480 B per variant, measured against what the files are now — so a file cannot grow back without the check going red and someone deciding that it should. All six variants sit within a few bytes of the cap (`general` at 6,143 of 6,144), which is what a ratchet looks like when it is working.
 
