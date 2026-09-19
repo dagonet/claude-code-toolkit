@@ -55,7 +55,7 @@ Follow these steps to configure Claude Code on a fresh machine:
 
 ## What's Included
 
-### Agents (9)
+### Agents (6)
 
 Models and effort below are the values in each `agents/*.md` frontmatter — keep this table in step with the files. Aliases only: a model proxy reroutes them, a pinned `claude-*` id bypasses it. The **session** effort level is left unset (the model's own default); the orchestrator model is picked per session with `/model` — `fable` for T3/T4 work, `opus` for T1/T2.
 
@@ -100,7 +100,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 ### Hooks
 
-`hooks/` mirrors, byte for byte, the subset of the toolkit-root `hooks/` directory that is useful at user level: the fail-open `bash-output-guard.sh` and `read-size-gate.sh`, the fail-closed `no-push-main.sh` that `settings.json` binds, the two git gates `pre-commit-test.sh` and `gate-before-merge.sh` (files only — not bound at user level), and `lib/git-cmd.sh`, which the gates source. The toolkit root remains the canonical source; `scripts/verify-template-consistency.sh` asserts every file here is identical to `hooks/<same relative path>`, so a drifted mirror is a red build rather than a silently older contract. A hook script missing at runtime exits `127`; the wrappers in `settings.json` translate that to `exit 2` so enforcement fails closed rather than silently off.
+`hooks/` mirrors, byte for byte, the subset of the toolkit-root `hooks/` directory that is useful at user level — ten scripts plus `lib/`: the fail-open `bash-output-guard.sh` and `read-size-gate.sh`, the fail-closed `no-push-main.sh` and `deny-secret-reads.sh` that `settings.json` binds, the git gates `pre-commit-test.sh` and `gate-before-merge.sh` with `run-gate.sh` (files only — not bound at user level), `post-edit-build.sh`, the retro pair `retro-brief.sh` / `retro-ledger.sh`, and `lib/git-cmd.sh`, which the gates source. Four project-only hooks are deliberately NOT mirrored (`enforce-delegation.sh`, `enforce-agent-contract.sh`, `agent-budget-warn.sh`, `require-skills-block.sh` — `HOOKS_NO_MIRROR` in the consistency script), because they read project-level agent files and would fail closed in a repo without a `hooks/` directory. The toolkit root remains the canonical source; `scripts/verify-template-consistency.sh` asserts every file here is identical to `hooks/<same relative path>`, so a drifted mirror is a red build rather than a silently older contract. A hook script missing at runtime exits `127`; the wrappers in `settings.json` translate that to `exit 2` so enforcement fails closed rather than silently off.
 
 ### Routines
 

@@ -44,23 +44,25 @@ This toolkit is designed around the same idea, and the numbers are measured rath
 
 | Blog principle | How the toolkit applies it |
 |---|---|
-| **Progressive disclosure** | `AGENT_TEAM.md` is **20,472 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, writing a spawn brief, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **8 skills** load on trigger, not up front. Language conventions live in path-scoped `.claude/rules/*.md` files that arrive only when Claude touches a matching file (13 files, 16,215 B across all six variants). |
+| **Progressive disclosure** | `AGENT_TEAM.md` is **20,467 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, writing a spawn brief, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all **8 skills** load on trigger, not up front. Language conventions live in path-scoped `.claude/rules/*.md` files that arrive only when Claude touches a matching file (13 files, 16,653 B across all six variants). |
 | **Mechanism over mandate** | **14 hook scripts** enforce the rules that prose used to repeat — tests before a commit, no push to main, skills-in-spawn-prompt, merge gate, delegation, subagent budget, a per-project post-edit build, and a retro ledger of subagent failures replayed at session start. Consistency assertions and hook fixtures keep them from drifting; **the counts live in `CHANGELOG.md` and nowhere else**, deliberately, so there is one place for them to drift out of rather than three. Where a hook enforces a rule, the prose does not need to shout it. |
 | **Declared keys over remembered rules** (v3.1) | A project states its facts once in `PROJECT_CONTEXT.md` and a hook reads them: `**Gate**`, `**Test**`, `**Protected branches**`, `**Gate-checked branches**`, `**Post-edit build**`, `**PO write surface**`. An unfilled `{{placeholder}}` is *reported*, never silently treated as absent. The same move as putting tool instructions in tool descriptions — the rule lives where it is enforced, not where someone has to remember it. |
 | **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; the project's own MCP notes say *when* to prefer a server, not what its parameters are. |
 | **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
 
-**The trim pass, measured.** The always-loaded surface went **41,167 B → 23,044 B (−44%)** on the `general` variant, across v1.4, v1.5, v2.0, v2.1 and the v3.1 diet:
+**The trim pass, measured.** The surface loaded by the end of bootstrap went **41,167 B → 15,725 B (−62%)** on the `general` variant (the harness-injected part 40,221 → 12,303 B), across v1.4, v1.5, v2.0, v2.1, the v3.1 diet and the v4.0.1 retirement of `CLAUDE.local.md`. Every column is `wc -c` on the shipped files at that release, and **every release adds its own column** (the same table, with per-variant totals, is in [`docs/architecture.md`](docs/architecture.md)):
 
-| File | Baseline | v1.5 | v2.0 | v2.1 | **v3.1** |
-|---|---|---|---|---|---|
-| `CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | **6,143** |
-| `CLAUDE.local.md` (retired v4.0.1) | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | **5,076** |
-| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | **3,170** |
-| **total** | **41,167** | 32,538 | 25,814 | 25,999 | **23,044** |
+| File | Baseline | v1.5 | v2.0 | v2.1 | v3.1 | **v4.0.3** |
+|---|---|---|---|---|---|---|
+| `CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | 6,143 | **6,143** |
+| `CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | 8,655 | **— (retired v4.0.1)** |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | 5,076 | **5,453** |
+| `.claude/rules/project.md` (unscoped) | — | — | — | — | 634 | **707** |
+| **harness-injected at session start** | **40,221** | 31,592 | 24,868 | 25,053 | 19,874 | **12,303** |
+| `PROJECT_CONTEXT.md` (read at bootstrap step 3, not injected) | 946 | 946 | 946 | 946 | 3,170 | **3,422** |
+| **at the end of bootstrap** | **41,167** | 32,538 | 25,814 | 25,999 | 23,044 | **15,725** |
 
-`PROJECT_CONTEXT.md` grew on purpose: it is where the declared keys live, and every byte added there removes prose a hook would otherwise have to trust an agent to remember.
+Column file sets, so every historical figure is reproducible from its release tag: Baseline through v3.1 injected = `CLAUDE.md` + `CLAUDE.local.md` + user-level `CLAUDE.md` (v3.1 also shipped the unscoped `project.md`, not yet counted); v4.0.3 injected = `CLAUDE.md` + `project.md` + user-level `CLAUDE.md`; "end of bootstrap" adds `PROJECT_CONTEXT.md` in every column. Two subtotals, because they are two quantities (reviewer, #145): the harness injects `CLAUDE.md`, the user-level `CLAUDE.md` and the unscoped rules file unconditionally at session start; `PROJECT_CONTEXT.md` arrives as a tool result because bootstrap step 3 tells the model to read it — a different lever, a different certainty, and 22% of the headline. `PROJECT_CONTEXT.md` grew on purpose: it is where the declared keys live, and every byte added there removes prose a hook would otherwise have to trust an agent to remember. `project.md` joins the table at v4.0.3 because v4.0.1 measured that an unscoped rules file loads at every session start (it was already shipping at v3.1; the v3.1 total did not count it).
 
 **v3.1 made the budget a ratchet rather than a intention.** Consistency check 35 caps `CLAUDE.md` at 6,144 B and `AGENT_TEAM.md` at 20,480 B per variant, measured against what the files are now — so a file cannot grow back without the check going red and someone deciding that it should. All six variants sit within a few bytes of the cap (`general` at 6,143 of 6,144), which is what a ratchet looks like when it is working.
 
@@ -78,7 +80,7 @@ A second round routed two more sections by **audience** rather than by topic. *O
 
 **v2.1 unhobbled three more places, and each one removed a rule rather than adding one.** The plan gate is gone — a coder spawn no longer needs a `docs/plans/` file carrying `Tier:` and challenge evidence, because Boris Cherny's *"I don't use plan mode anymore … it just doesn't need it"* describes the models this toolkit targets; what replaces it is the task brief in the spawn prompt, which is prose, not a second mechanism. The session-level `effortLevel: medium` is gone too: `xhigh` is the documented default for Opus 4.7 and later, so pinning a level capped the model below its own default on every turn — effort is now raised only on `architect` and `code-reviewer`, where judgement happens, and model choice is a written policy (`/model fable` for T3/T4) rather than a setting. And the tier table gained an exit: work too big for one pass is answered with **"use a workflow"**, letting Claude script its own fan-out instead of the PO hand-decomposing it. Two rules deleted, one judgement call added — the direction the blog argues for.
 
-Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (39 checks; the assertion count lives in `CHANGELOG.md`), so none of the cuts could silently break enforcement — including the exact Superpowers header, the `superpowers:` token the checks require, and (new in PR4) that every rules file is genuinely path-scoped and that the relocated developer preferences survive in the skill that now carries them.
+Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (the check and assertion counts live in `CHANGELOG.md`, nowhere else), so none of the cuts could silently break enforcement — including the exact Superpowers header, the `superpowers:` token the checks require, and (new in PR4) that every rules file is genuinely path-scoped and that the relocated developer preferences survive in the skill that now carries them.
 
 If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
 
@@ -132,7 +134,7 @@ Full comparison + project-level MCP matrix: [`docs/templates.md`](docs/templates
 
 ## Related projects
 
-- [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) — seven custom MCP servers (95 tools) for git, GitHub, .NET, Rust, Ollama, Python, and (until 0.4.0) template-sync. Used by every variant. (`template-sync-tools` itself now ships from this repo's own `server/` as of v4.0.0 — see [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).)
+- [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) — six custom MCP servers (87 tools, static census at `0a20b97`) for git, GitHub, .NET, Rust, Ollama and Python. Used by every variant. `template-sync-tools` moved out at 0.4.0 and now ships from this repo's own `server/` (v4.0.0+) — see [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
 - [**open-brain**](https://github.com/dagonet/open-brain) — persistent memory MCP server for storing decisions, insights, and context across sessions.
 
 ## Contributing

@@ -2,6 +2,8 @@
 
 [Back to README](../README.md)
 
+The toolkit is a template repository: it ships a Claude Code configuration (agents, skills, hooks, rules, MCP permissions) that `setup-project` copies into a project and `/sync-template` keeps current, and no application code. This document describes how those pieces fit together — the configuration layers, the agent team, the hooks, and the repository layout.
+
 ## Layered Configuration
 
 Claude Code supports layered configuration: **project-level `.claude/` overrides user-level `~/.claude/`** for same-named items.
@@ -48,23 +50,24 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 ## Context Budget
 
-Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant, 2026-07-29):
+Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant; the version columns are historical `wc -c` figures, the last column is `wc -c` at v4.0.3, 2026-09-19):
 
-| | Baseline | v1.5 | v2.0 | v2.1 | **v3.1** | Loaded |
-|---|---|---|---|---|---|---|
-| `templates/general/CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | **6,143** | every session |
-| `templates/general/CLAUDE.local.md` (retired v4.0.1) | 13,845 | 9,352 | 9,417 | 9,417 | **8,655** | every session |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | **5,076** | every session |
-| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | **3,170** | every session |
-| **always-loaded total** | **41,167** | 32,538 | 25,814 | 25,999 | **23,044 (−44%)** | |
-| `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 53,288 | **20,472** | **on demand only** |
-| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | 2,519 | on demand |
-| `.claude/rules/*.md` (general) | — | — | 0 B | 0 B | **634 B** | **on matching file touch** |
-| skills | 11 | 12 | **7** | **8** | 8 | on trigger |
+| | Baseline | v1.5 | v2.0 | v2.1 | v3.1 | **v4.0.3** | Loaded |
+|---|---|---|---|---|---|---|---|
+| `templates/general/CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | 6,143 | **6,143** | every session |
+| `templates/general/CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | 8,655 | **— (retired v4.0.1)** | — |
+| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | 5,076 | **5,453** | every session |
+| `.claude/rules/project.md` (unscoped, `once`) | — | — | — | — | 634 | **707** | every session (measured v4.0.1: an unscoped rules file loads at session start) |
+| **harness-injected at session start** | **40,221** | 31,592 | 24,868 | 25,053 | 19,874 | **12,303** | unconditional |
+| `PROJECT_CONTEXT.md` | 946 | 946 | 946 | 946 | 3,170 | **3,422** | read on instruction (bootstrap step 3) as a tool result; hooks read it too, but a PreToolUse hook's bytes never reach the model |
+| **at the end of bootstrap** | **41,167** | 32,538 | 25,814 | 25,999 | 23,044 | **15,725 (−62%)** | |
+| `AGENT_TEAM.md` | 47,968 | 49,724 | 49,724 | 53,288 | 20,472 | **20,467** | **on demand only** |
+| `VERIFICATION_PLAYBOOK.md` | 2,519 | 2,519 | 2,519 | 2,519 | 2,519 | **2,519** | on demand |
+| skills | 11 | 12 | 7 | 8 | 8 | **8** | on trigger |
 
-Per-variant always-loaded totals now: general **23,044** · python 23,745 · java 23,852 · rust-tauri 25,277 · dotnet 25,477 · dotnet-maui 27,037. The other variants defer 2,468–4,024 B each into `.claude/rules/` (dotnet 2,468 · dotnet-maui 2,884 · python 3,012 · java 3,193 · rust-tauri 4,024), and no project ever receives more than its own variant's set.
+Column file sets (each reproducible from its release tag): Baseline through v3.1 injected = `CLAUDE.md` + `CLAUDE.local.md` + user-level `CLAUDE.md`; v4.0.3 injected = `CLAUDE.md` + `project.md` + user-level `CLAUDE.md`; "end of bootstrap" adds `PROJECT_CONTEXT.md` in every column. The v3.1 total counted `CLAUDE.local.md`, which v4.0.1 retired, and did not yet count `project.md`, which v4.0.1 measured as loading at every session start — the v4.0.3 column counts what actually loads today, in two subtotals because they are two quantities (reviewer, #145): the harness-injected set shrinks by editing files and is unconditional; the `PROJECT_CONTEXT.md` read shrinks by changing an instruction, happens only if the model follows step 3, and may not recur after `/clear` or `/compact`. Per variant at v4.0.3 — harness-injected (variant `CLAUDE.md` + `project.md` + the user-level `CLAUDE.md`): general **12,303** · java 12,295 · python 12,299 · dotnet-maui 12,299 · dotnet 12,300 · rust-tauri 12,301; at the end of bootstrap (+ `PROJECT_CONTEXT.md`): general **15,725** · python 15,854 · java 15,875 · dotnet 15,901 · rust-tauri 16,073 · dotnet-maui 16,252. The non-`general` variants defer their language conventions into `paths:`-scoped `.claude/rules/` files that arrive only on a matching file touch (all rules per variant, `project.md` included: dotnet 2,541 · dotnet-maui 2,957 · python 3,085 · java 3,266 · rust-tauri 4,097 B), and no project ever receives more than its own variant's set.
 
-Two v3.1 movements are worth reading rather than skimming. **`AGENT_TEAM.md` fell 53,288 → 20,472 B** — the largest single cut in the toolkit's history, and it is enforced rather than intended: consistency check 35 caps it at 20,480 B and `CLAUDE.md` at 6,144 B per variant, so neither can grow back without the check going red and someone deciding it should. **`PROJECT_CONTEXT.md` grew 946 → 3,170 B on purpose**, because that is where the declared keys live; every byte added there removes prose that a hook would otherwise have to trust an agent to remember.
+Two v3.1 movements are worth reading rather than skimming. **`AGENT_TEAM.md` fell 53,288 → 20,472 B** (20,467 at v4.0.3) — the largest single cut in the toolkit's history, and it is enforced rather than intended: consistency check 35 caps it at 20,480 B and `CLAUDE.md` at 6,144 B per variant, so neither can grow back without the check going red and someone deciding it should. **`PROJECT_CONTEXT.md` grew 946 → 3,170 B on purpose** (3,422 at v4.0.3, as declared keys were added), because that is where the declared keys live; every byte added there removes prose that a hook would otherwise have to trust an agent to remember.
 
 Every **v2.0** figure is `wc -c` on the shipped file, not an arithmetic carry-forward — which is what the separate **pre-PR4** column is for: PR1–PR3 moved `CLAUDE.md` (13,735 → 13,892) and `CLAUDE.local.md` (9,352 → 9,413) for reasons unrelated to the trim, so those deltas must not be attributed to PR4. The user-level row's drop is PR5 deleting the context-mode routing block.
 
@@ -149,10 +152,11 @@ All templates include hooks in `.claude/settings.json` that enforce workflow rul
 | **PreToolUse** on `Bash\|PowerShell` | The three git gates — `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` — read `tool_input.command`, split it into clauses, unwrap `bash -c "…"`-style payloads, and refuse anything they cannot parse. `git -C <path>` retargets the repo; `<cwd>/.claude/git-guard-off` disables all three. **Which command forms are gated is not derivable from this row and is deliberately not listed here** — `merge` is gated unless it is a pure catch-up to the branch's own configured upstream, `pull` is gated by form (only the refspec-free `--ff-only` is allowed), `--abort`/`--continue`/`--quit` are always allowed. The verdict table is in `docs/verification.md`, and the contract itself is the header comment of `hooks/gate-before-merge.sh`, which is the copy that syncs to consumers. Superseded the v2.0 blanket Bash-git block, which banned the git CLI outright and blocked 1,240 turns in 6 weeks (deleted in v2.1) | All |
 | **PreToolUse** on `Edit\|Write\|NotebookEdit` + `Bash` | `hooks/enforce-delegation.sh` — main-thread (PO) discrimination via the `agent_id` stdin field (present only inside subagents): denies PO edits outside the orchestration write surface, which is: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENT_TEAM.md`, **and any path outside the repo root** (scratchpad, `~/.claude`). Stated here because a PO otherwise learns the boundary by being blocked; note the hook's own DENY string omits `CLAUDE.local.md` and the outside-the-repo clause, so it under-reports what it allows. Also denies PO build/test-runner Bash (incl. `run-gate.sh` — the PO verifies via the gate artifact). Subagent calls always pass. Deliberately fail-open with a WARN-wrapper (a 127-wrap would paralyze subagent edits when the script is missing); kill-switch `.claude/delegation-off` | All |
 | **PreToolUse** on `Read` | `hooks/read-size-gate.sh` — rewrites an unbounded `Read` to `limit: 500` via `updatedInput` and tells the caller which offset to pass next; it never refuses a call. Wired **fail-open** (127 → exit 0) | All |
-| **PreToolUse** on `mcp__MCP_DOCKER__merge_pull_request\|mcp__github-tools__github_pr_auto_merge` | `hooks/gate-before-merge.sh` — the MCP half of the merge gate; hard-blocks PR merge/auto-merge unless a `<common git dir>/gate/last-pass.<sha>.json` artifact (v4.0.1, item 17 — shared across every worktree of the repo) is younger than `GC_GATE_TTL_S` (3600s = 60 minutes) **and** its `sha` equals HEAD **or** its `tree` equals `HEAD^{tree}` — the tree half has been there since v2.1.5 and is the half that survives a squash, so "SHA-matching" understates it (written by the non-hook runner `hooks/run-gate.sh` from the `**Gate**:` command in PROJECT_CONTEXT.md; no-op while Gate is unset). Also duplicated inline in merge-owning coder agents' frontmatter, whose matcher additionally covers `Bash` (`gh pr merge`) | All |
+| **PreToolUse** on `Read\|Bash` | `hooks/deny-secret-reads.sh` — refuses (exit 2) a `Read` of a secret-shaped path (`.env`, `.env.<anything>`, not `.env.example`) and a Bash clause whose reader verb names one; fail-closed on an unparsable payload or a missing JSON parser. Registered at user level too (the one deny hook that is), because the hazard is the same in every repo | All |
+| **PreToolUse** on `mcp__MCP_DOCKER__merge_pull_request\|mcp__github-tools__github_pr_auto_merge` | `hooks/gate-before-merge.sh` — the MCP half of the merge gate; hard-blocks PR merge/auto-merge unless a `<common git dir>/gate/last-pass.<sha>.json` artifact (v4.0.1, item 17 — shared across every worktree of the repo) is younger than `GC_GATE_TTL_S` (3600s = 60 minutes) **and** its `sha` equals HEAD **or** its `tree` equals `HEAD^{tree}` — the tree half has been there since v2.1.5 and is the half that survives a squash, so "SHA-matching" understates it; since v4.0.3 (item 13) an artifact past the TTL is still accepted for up to 24 h when its `tree` equals `HEAD^{tree}` **and** its `env` fingerprint (venv config, installed dist-info, python/node versions) matches, and the allow message says so (written by the non-hook runner `hooks/run-gate.sh` from the `**Gate**:` command in PROJECT_CONTEXT.md; no-op while Gate is unset). Also duplicated inline in merge-owning coder agents' frontmatter, whose matcher additionally covers `Bash` (`gh pr merge`) | All |
 | **PreToolUse** on `Agent` | One spawn gate, 127-wrapped fail-closed: `hooks/require-skills-block.sh` — a spawn prompt for an agent that the `AGENT_TEAM.md` *Spawn-Prompt Binding Table* binds to a skill must carry a `## Required Skills` block naming it; the hook reads the table's own row set, which is why `verify-template-consistency.sh` diffs script against table | All |
 | **PreToolUse** on `mcp__windows-mcp__Click\|Type` | Blocks Click/Type for test automation (use FlaUI) | dotnet-maui |
-| **PostToolUse** on `Edit\|Write` | Runs build/lint check after edits for immediate feedback | dotnet, dotnet-maui, rust-tauri, python |
+| **PostToolUse** on `Edit\|Write` | `hooks/post-edit-build.sh` — runs the command declared as `**Post-edit build**:` in `PROJECT_CONTEXT.md` after an edit for immediate feedback; a no-op when the key is absent; always exits 0 (a post-edit check must never block). Registered in every variant since v3.1; only variants that declare the key run anything | All (key-driven) |
 | **PostToolUse** on `Bash\|PowerShell` | `hooks/bash-output-guard.sh` — `tool_response.stdout` and `stderr` over 12,000 chars are each written whole to `$TMPDIR/claude-bash-out/<session>-<epoch>[-stderr].log` and replaced in the transcript by head 4,000 + a marker naming the log + tail 4,000, via `hookSpecificOutput.updatedToolOutput` (same shape as `tool_response`, sibling fields copied). Payload reaches `node` on stdin, never argv — a 200 KB log exceeds the platform argument caps. Always exits 0, registered **unwrapped** — it can only ever pass output through | All |
 | **SubagentStop** | Two hooks fire: a pipeline echo nudging the PO to advance the workstream when an agent finishes, and `hooks/enforce-agent-contract.sh` — a stop-gate that exit-2 blocks a coder from ending without `## Gate Results` + `## Spec Compliance` and a reviewer from ending without findings or the literal word `clean`. A marker file bounds it to one forced continuation; a second non-compliant stop passes with a `CONTRACT-ENFORCER:` stderr signal to the PO. Deliberately fail-open when broken and **never** 127-wrapped (a missing stop-gate must not trap agents in an unstoppable loop). Its verdict and loop-guard behaviour are covered by a behavioural fixture in `scripts/test-hooks.sh` (12 assertions, added v2.2.2 after a field report) — until then it had only degraded-path cases, which pass whatever the verdict logic does, and two defects lived in that gap | All |
 | **SubagentStop** (no matcher) | `hooks/retro-ledger.sh` — parses the finished subagent's own transcript (`agent_transcript_path`), counts `tool_result` blocks matching `No such tool available\|BLOCKED:\|DELEGATE:\|CONTRACT VIOLATION\|hook error`, and appends one line per failing run to the project's auto-memory `memory/retro.md` (dead tools, blocking hook basenames, error count). Fail-open by construction and registered **unwrapped** — it cannot block, so a 127 wrapper would only invent a failure mode | All |
@@ -166,73 +170,43 @@ Additionally, the 11 merge-owning coder agents carry the merge gate inline in th
 
 ```
 claude-code-toolkit/
-├── README.md
-├── setup-project.ps1                      # Automated setup (Windows)
-├── setup-project.sh                       # Automated setup (Linux/macOS)
+├── README.md · AGENTS.md · CHANGELOG.md · VERSION · CLAUDE.md   # CLAUDE.md = this repo's own project instructions
+├── setup-project.sh / setup-project.ps1   # Bootstrap a project from a variant (Linux/macOS · Windows)
+├── hooks/                                 # Root-tracked enforcement hooks (14 scripts) + hooks/lib/; copied whole into projects
+├── scripts/                               # verify-template-consistency.sh, test-hooks.sh, test-server.sh, verify-consumers.sh, propagation tooling
+├── server/                                # The template-sync MCP server (Python package template_sync; install.sh / install.ps1; tests/)
 ├── docs/
 │   ├── getting-started.md                 # Prerequisites, adoption tiers, MCP servers
 │   ├── setup.md                           # Setup walkthrough (Windows + Linux/macOS)
-│   ├── templates.md                       # Template details and placeholder reference
+│   ├── templates.md                       # Variant comparison, placeholders, manifest
 │   ├── architecture.md                    # This file
-│   ├── verification.md                    # Post-setup verification checklist
-│   └── template-sync.md                   # Keeping projects in sync with templates
+│   ├── design-rationale.md                # Why the template files say what they say (byte budgets, cuts)
+│   ├── verification.md                    # Verification playbook: gates, hooks, verdict table
+│   ├── template-sync.md                   # Keeping projects in sync with templates
+│   ├── template-sync-migration-contract.md# Manifest format contract the server implements
+│   └── plans/                             # Committed design specs and implementation plans, dated
 ├── templates/
+│   ├── ownership.json                     # File classes (template / once), tracked paths, declared keys, skill floor
 │   ├── general/                           # Any project, any language
 │   │   ├── .claude/
-│   │   │   ├── settings.json
-│   │   │   └── agents/ (6 agents)
-│   │   ├── CLAUDE.md
-│   │   ├── AGENT_TEAM.md                  # v2.0 (shared across all variants)
-│   │   ├── PROJECT_CONTEXT.md
-│   │   ├── PROJECT_STATE.md
-│   │   └── gitignore
-│   ├── dotnet/                            # .NET projects
-│   │   ├── .claude/
-│   │   │   ├── settings.json
-│   │   │   └── agents/ (7 agents)
-│   │   ├── .editorconfig
-│   │   ├── CLAUDE.md
-│   │   ├── AGENT_TEAM.md
-│   │   ├── PROJECT_CONTEXT.md
-│   │   ├── PROJECT_STATE.md
-│   │   └── gitignore
-│   ├── dotnet-maui/                       # .NET MAUI desktop apps
-│   │   ├── .claude/
-│   │   │   ├── settings.json
-│   │   │   └── agents/ (7 agents)
-│   │   ├── .editorconfig
-│   │   ├── CLAUDE.md
-│   │   ├── AGENT_TEAM.md
-│   │   ├── PROJECT_CONTEXT.md
-│   │   ├── PROJECT_STATE.md
-│   │   └── gitignore
-│   ├── rust-tauri/                        # Rust/Tauri v2 desktop apps
-│   │   ├── .claude/
-│   │   │   ├── settings.json
-│   │   │   └── agents/ (7 agents)
-│   │   ├── rustfmt.toml                   # Rust formatter config
-│   │   ├── .prettierrc                    # TypeScript/CSS formatter config
-│   │   ├── CLAUDE.md
-│   │   ├── AGENT_TEAM.md
-│   │   ├── PROJECT_CONTEXT.md
-│   │   ├── PROJECT_STATE.md
-│   │   └── gitignore
-│   └── python/                            # Python projects
-│       ├── .claude/
-│       │   ├── settings.json
-│       │   └── agents/ (7 agents)
-│       ├── .editorconfig
-│       ├── CLAUDE.md
-│       ├── AGENT_TEAM.md
-│       ├── PROJECT_CONTEXT.md
-│       ├── PROJECT_STATE.md
-│       └── gitignore
+│   │   │   ├── settings.json              # Permissions + hook registration (identical across variants)
+│   │   │   ├── agents/                    # 6 agents: Explore, architect, code-reviewer, coder, ops, tester
+│   │   │   └── rules/project.md           # once-class project rules seed
+│   │   ├── CLAUDE.md · AGENT_TEAM.md · PROJECT_CONTEXT.md · PROJECT_STATE.md · VERIFICATION_PLAYBOOK.md · gitignore
+│   ├── dotnet/                            # + dotnet-coder, rules/csharp.md, .editorconfig
+│   ├── dotnet-maui/                       # + dotnet-coder, rules/csharp.md + xaml.md, .editorconfig
+│   ├── rust-tauri/                        # + rust-coder, rules/rust.md + frontend.md, rustfmt.toml, .prettierrc
+│   ├── java/                              # + java-coder, rules/java.md, .editorconfig
+│   └── python/                            # + python-coder, rules/python.md, .editorconfig
 ├── mcp-servers/
 │   └── HOWTO.md                           # MCP server installation guide
 └── user-level-reference/                  # ~/.claude/ reference for new machines
-    ├── agents/                            # generic agent definitions (incl. Explore)
+    ├── CLAUDE.md · settings.json          # user-level instructions and settings
+    ├── agents/                            # 6 generic agent definitions (incl. Explore)
     ├── skills/                            # 8 skills (commands were merged into skills)
-    ├── hooks/                             # byte-identical mirror of the root hooks/ subset used at user level
+    ├── hooks/                             # byte-identical mirror of the root hooks/ subset used at user level (10 of 14)
     ├── .mcp.json.template                 # MCP server config template
     └── settings-reference.md              # Annotated settings reference
 ```
+
+`AGENT_TEAM.md`, the generic agents and the hook scripts are byte-identical across the six variants; `scripts/verify-template-consistency.sh` asserts it.

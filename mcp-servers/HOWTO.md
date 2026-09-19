@@ -255,11 +255,11 @@ Create a fine-grained Personal Access Token at https://github.com/settings/perso
 
 **Troubleshooting:** if no github tools show up in `ToolSearch`, the token is likely unset or invalid. The plugin's MCP server fails silently when auth fails — you will see no error, just no tools.
 
-## Template Sync Tools (8 tools)
+## Template Sync Tools (10 tools)
 
-Deterministic template syncing: manifest management, file status computation, three-way merge, placeholder replacement/reversal, cross-variant propagation. Used by the `/sync-template` and `/contribute-upstream` skills.
+Deterministic template syncing: manifest management and migration, file status computation, three-way merge, placeholder replacement/reversal, cross-variant propagation, and the consumer-side consistency check. Used by the `/sync-template` and `/contribute-upstream` skills and by `scripts/verify-consumers.sh`.
 
-**Tools:** `template_load_manifest`, `template_compute_status`, `template_get_diff`, `template_apply_file`, `template_finalize_sync`, `template_reverse_placeholders`, `template_check_cross_variant`, `template_propagate_to_variants`
+**Tools:** `template_load_manifest`, `template_migrate_manifest`, `template_compute_status`, `template_get_diff`, `template_apply_file`, `template_finalize_sync`, `template_verify`, `template_reverse_placeholders`, `template_check_cross_variant`, `template_propagate_to_variants` (the registered set is `grep -c '@mcp.tool' server/src/template_sync/mcp.py`)
 
 **Since v4.0.0 this server ships from `server/` in this repo (`claude-code-toolkit`), not from `mcp-dev-servers`.** The contract it implements lives at [`docs/template-sync-migration-contract.md`](../docs/template-sync-migration-contract.md). `mcp-dev-servers` still gates `dotnet-tools` and `rust-tools` via `--mcp-dev-servers-path` — only template-sync-tools moved.
 
