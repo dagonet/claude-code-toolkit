@@ -12,6 +12,7 @@ mutation itself does not also trip tree_clean.
 
 import json
 import pathlib
+import shutil
 import subprocess
 
 import pytest
@@ -19,6 +20,10 @@ import pytest
 from template_sync import mcp as ts
 from template_sync import v3
 from template_sync import verify
+
+# server/tests/test_x.py -> parents[0]=tests, [1]=server, [2]=toolkit root
+# (same convention as test_template_sync_docstring_contract.py's ROOT).
+TOOLKIT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 OWNERSHIP = {
     "tracked_paths": ["hooks", "templates"],
@@ -405,6 +410,9 @@ def test_agent_grants_resolvable_fails_on_nonexistent_template_sync_tool(tmp_pat
 
 
 def test_agent_grants_resolvable_skips_without_registration_for_third_party_alias(tmp_path, monkeypatch):
+    """R-N (fix round 1): "glider" is neither `template-sync-tools` nor a
+    mcp-dev-servers-family alias -- there is no census route for it at all,
+    so this SKIPs naming the alias, regardless of ~/.claude.json."""
     monkeypatch.setattr(ts, "__version__", "4.1.0")
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "no-such-home")
     repo, proj, commit = _good_fixture_v4(tmp_path)
@@ -415,10 +423,18 @@ def test_agent_grants_resolvable_skips_without_registration_for_third_party_alia
     res = verify.run(str(proj), str(repo), "post_commit")
     line = _by_id(res)["agent_grants_resolvable"]
     assert line["status"] == "SKIP", line
-    assert "cannot resolve" in line["measured"]
+    assert "alias glider: no census route" in line["measured"]
 
 
-def test_agent_grants_resolvable_counts_unresolved_by_name_when_registration_readable(tmp_path, monkeypatch):
+def test_agent_grants_resolvable_never_passes_an_unresolved_alias_even_with_registration(tmp_path, monkeypatch):
+    """R-N, INVERTING the c5b witness this replaces
+    (`test_agent_grants_resolvable_counts_unresolved_by_name_when_registration_readable`,
+    fix round 1 task-1-fix1-brief.md): that test asserted PASS-by-name for a
+    third-party alias merely because ~/.claude.json was READABLE -- R-N
+    rules that a FALSE GREEN (the alias still has no real census route: it
+    is not registered in THIS fake ~/.claude.json, and "glider" is not in
+    the mcp-dev-servers family regardless). The corrected behaviour is
+    SKIP, naming the alias, whether or not the registration file exists."""
     monkeypatch.setattr(ts, "__version__", "4.1.0")
     fake_home = tmp_path / "fake-home"
     fake_home.mkdir()
@@ -431,9 +447,81 @@ def test_agent_grants_resolvable_counts_unresolved_by_name_when_registration_rea
     _recommit(proj)
     res = verify.run(str(proj), str(repo), "post_commit")
     line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "SKIP", line
+    assert "alias glider: no census route" in line["measured"]
+
+
+def _mk_mcp_dev_servers_family_registration(tmp_path, alias: str, tool_names: list[str]):
+    """A REAL census route for `alias` (R-N): a fake ~/.claude.json
+    registering it with a `.venv/Scripts/...` command path (check 50's own
+    derivation marker), a fake mcp-dev-servers source tree at the derived
+    directory shipping a module with `FastMCP("<alias>")` and one
+    `@mcp.tool()`-decorated function per name in `tool_names` (the STATIC
+    census route -- no real venv/import needed, matching how check 50
+    itself falls back when a registered alias has no live venv). Returns
+    (fake_home, mcp_dev_servers_dir)."""
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    mcp_dev_servers_dir = tmp_path / "mcp-dev-servers"
+    pkg_dir = mcp_dev_servers_dir / "src" / "mcp_dev_servers"
+    pkg_dir.mkdir(parents=True)
+    body = "\n".join(f"@mcp.tool()\ndef {name}(x):\n    return x\n" for name in tool_names)
+    (pkg_dir / f"{alias.replace('-', '_')}.py").write_text(
+        f'FastMCP("{alias}")\n\n{body}', encoding="utf-8", newline="")
+    fake_venv_command = str(mcp_dev_servers_dir / ".venv" / "Scripts" / f"mcp-{alias}.exe")
+    (fake_home / ".claude.json").write_text(
+        json.dumps({"mcpServers": {alias: {"command": fake_venv_command}}}), encoding="utf-8")
+    return fake_home, mcp_dev_servers_dir
+
+
+def _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path):
+    """A _good_fixture_v4 toolkit repo that also ships a REAL copy of
+    scripts/lib/list-mcp-tools.py at the SAME repo-relative path -- R-N's
+    census subprocess resolves the script from the manifest's own
+    templateRepo, so the fixture toolkit repo needs it too."""
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    lib_dir = repo / "scripts" / "lib"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(TOOLKIT_ROOT / "scripts" / "lib" / "list-mcp-tools.py", lib_dir / "list-mcp-tools.py")
+    return repo, proj, commit
+
+
+def test_agent_grants_resolvable_real_census_fails_on_a_nonexistent_family_tool(tmp_path, monkeypatch):
+    """R-N: a REAL census route (the mcp-dev-servers family) resolves for
+    real -- a token naming a tool absent from the (statically-censused)
+    module FAILs by name, proving actual resolution happened rather than a
+    generic SKIP."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    fake_home, _mds_dir = _mk_mcp_dev_servers_family_registration(tmp_path, "git-tools", ["git_status"])
+    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
+    repo, proj, commit = _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {
+            "foo": ["mcp__git-tools__git_status", "mcp__git-tools__git_nonexistent"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "FAIL", line
+    assert "mcp__git-tools__git_nonexistent" in line["measured"]
+    assert "mcp__git-tools__git_status" not in line["measured"], \
+        "the real token must not be named alongside the missing one"
+
+
+def test_agent_grants_resolvable_real_census_passes_when_every_token_resolves(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    fake_home, _mds_dir = _mk_mcp_dev_servers_family_registration(
+        tmp_path, "git-tools", ["git_status", "git_commit"])
+    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
+    repo, proj, commit = _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__git-tools__git_status"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
     assert line["status"] == "PASS", line
-    assert "unresolved by name" in line["measured"]
-    assert "mcp__glider__symbol_lookup" in line["measured"]
+    assert "resolved=1" in line["measured"]
 
 
 def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypatch):

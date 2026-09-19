@@ -23,7 +23,11 @@ can never disagree in length.
 
 from __future__ import annotations
 
+import json
+import os
 import pathlib
+import shutil
+import subprocess
 
 from . import mcp as core
 from . import v3
@@ -305,22 +309,96 @@ def _agent_template_path_by_name(manifest: dict, agent_name: str) -> pathlib.Pat
     return None
 
 
+# R-N (fix round 1): the "mcp-dev-servers family" -- aliases whose source
+# tree and census route check 50 (scripts/verify-template-consistency.sh)
+# already knows how to find, via a REGISTERED alias's venv path in
+# ~/.claude.json. Kept as the SAME six names check 50 uses (C50_FAMILY),
+# never re-derived, so the two lists cannot silently disagree about which
+# aliases have a real census route.
+MCP_DEV_SERVERS_FAMILY = ("git-tools", "github-tools", "dotnet-tools", "ollama-tools",
+                          "rust-tools", "python-tools")
+
+
+def _mcp_registration_path() -> pathlib.Path:
+    override = os.environ.get("MCP_TOOLS_REGISTRATION")
+    return pathlib.Path(override) if override else pathlib.Path.home() / ".claude.json"
+
+
+def _derive_mcp_dev_servers_source_dir(registration_path: pathlib.Path, alias: str) -> str | None:
+    """Exactly check 50's own derivation: `mcpServers.<alias>.command`,
+    normalized to forward slashes, everything before the FIRST
+    `/.venv/Scripts/` or `/.venv/bin/` segment. None when the registration
+    file is unreadable, the alias is not registered, or its command carries
+    neither marker."""
+    try:
+        data = json.loads(registration_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    cmd = (data.get("mcpServers", {}).get(alias) or {}).get("command", "")
+    if not cmd:
+        return None
+    norm = cmd.replace("\\", "/")
+    for marker in ("/.venv/Scripts/", "/.venv/bin/"):
+        idx = norm.find(marker)
+        if idx != -1:
+            return norm[:idx]
+    return None
+
+
+def _census_mcp_dev_servers_alias(template_repo: str, source_dir: str, registration_path: pathlib.Path,
+                                  alias: str) -> tuple[list[str] | None, str | None]:
+    """(names, skip_reason) via scripts/lib/list-mcp-tools.py (system
+    python, resolved from the manifest's OWN templateRepo -- the toolkit
+    checkout the consumer already points at), run exactly as check 50 runs
+    it. The STATIC census is the membership set check 50 itself checks
+    tokens against (the import census there is used only for drift
+    detection, never as the primary "does this exist" source), so a
+    registered alias with no live venv still resolves via the static
+    scan -- consistent with check 50's own tolerant fallback."""
+    lib = pathlib.Path(template_repo) / "scripts" / "lib" / "list-mcp-tools.py"
+    if not lib.is_file():
+        return None, f"{lib} not found"
+    py = shutil.which("python") or shutil.which("python3")
+    if py is None:
+        return None, "no system python on PATH"
+    try:
+        proc = subprocess.run(
+            [py, str(lib), "--source-dir", source_dir, "--registration", str(registration_path),
+             "--alias", alias],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, f"list-mcp-tools.py failed: {e}"
+    if proc.returncode != 0:
+        return None, f"list-mcp-tools.py exit {proc.returncode}: {(proc.stderr or proc.stdout).strip()[:200]}"
+    out = proc.stdout.strip()
+    if not out:
+        return None, "list-mcp-tools.py produced no output"
+    try:
+        data = json.loads(out.splitlines()[-1])
+    except ValueError:
+        return None, "list-mcp-tools.py: unparseable output"
+    static = data.get("static")
+    if not static:
+        return None, data.get("skip_reason") or f'no FastMCP("{alias}") module found under {source_dir}'
+    return static, None
+
+
 def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
-    """Every granted token must exist in its server's exports (a typo must
-    never silently grant nothing). Only the `template-sync-tools` alias is
-    resolvable by THIS process (it is the live registry this server itself
-    exports, via `_registered_tool_names()`) -- there is no cross-server MCP
-    registry available inside a FastMCP process, and the v4.0.1
-    `list-mcp-tools.py` route needs a `--source-dir` per alias this call has
-    no way to supply. For any other alias: if `~/.claude.json` is readable at
-    all the token is counted, by name, as unresolved (never FAILed on that
-    account alone); if it is not even readable, the line SKIPs rather than
-    guessing -- a SKIP is the honest answer for cannot-determine on a
-    read-only reporting line, and it is not fail-open, since the shape/policy
-    refusal already happened in `load_grants` at apply time. (Documented as a
-    concern for Task 4's skill table: this line SKIPs, not PASSes, on a
-    consumer machine with third-party-aliased grants and no readable
-    ~/.claude.json.)"""
+    """Every granted token must exist in its server's exports -- a typo must
+    never silently grant nothing, and this line must never PASS a token it
+    could not actually resolve (R-N). Two real census routes:
+    `template-sync-tools` (this process's own live registry, via
+    `_registered_tool_names()`) and the mcp-dev-servers family (source dir
+    derived from a REGISTERED alias's venv path exactly as check 50 derives
+    it, censused via `scripts/lib/list-mcp-tools.py`'s import route,
+    resolved against the manifest's own `templateRepo`). PASS/FAIL by token
+    where a route exists; SKIP naming the alias ("alias X: no census
+    route") for every other alias, or when the family alias has no
+    registration/venv to derive a source dir from -- SKIP is the honest
+    cannot-determine answer for a read-only reporting line, and it is not
+    fail-open, since the shape/policy refusal already happened in
+    `load_grants` at apply time."""
     try:
         grants = v3.load_grants(pp)
     except (v3.GrantsError, v3.GrantRefused) as e:
@@ -332,10 +410,15 @@ def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
     tokens = sorted({t for toks in grants.values() for t in toks})
     if not tokens:
         return _line("agent_grants_resolvable", "PASS", "grants=0", "n/a (informational)")
+
     registered = set(core._registered_tool_names())
+    registration_path = _mcp_registration_path()
+    template_repo = manifest.get("templateRepo", "")
+    census_cache: dict[str, tuple[list[str] | None, str | None]] = {}
     not_exported: list[str] = []
-    unresolved_by_name: list[str] = []
+    skip_aliases: dict[str, str] = {}
     resolved = 0
+
     for tok in tokens:
         alias, _sep, name = tok[len("mcp__"):].partition("__")
         if alias == "template-sync-tools":
@@ -343,22 +426,38 @@ def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
                 resolved += 1
             else:
                 not_exported.append(tok)
-        else:
-            unresolved_by_name.append(tok)
+            continue
+        if alias in MCP_DEV_SERVERS_FAMILY:
+            if alias not in census_cache:
+                source_dir = _derive_mcp_dev_servers_source_dir(registration_path, alias)
+                if source_dir is None:
+                    census_cache[alias] = (None, f"alias {alias}: no census route (not registered)")
+                elif not pathlib.Path(source_dir).is_dir():
+                    census_cache[alias] = (None, f"alias {alias}: no census route (source dir not found)")
+                elif not template_repo:
+                    census_cache[alias] = (None, f"alias {alias}: no census route (templateRepo unknown)")
+                else:
+                    census_cache[alias] = _census_mcp_dev_servers_alias(
+                        template_repo, source_dir, registration_path, alias)
+            names, skip_reason = census_cache[alias]
+            if names is not None:
+                if name in names:
+                    resolved += 1
+                else:
+                    not_exported.append(tok)
+            else:
+                skip_aliases[alias] = skip_reason or f"alias {alias}: no census route"
+            continue
+        skip_aliases.setdefault(alias, f"alias {alias}: no census route")
+
     if not_exported:
         return _line("agent_grants_resolvable", "FAIL", f"not exported: {not_exported}",
                      "every granted token exists in its server's exports",
                      "fix the token name in .claude/agent-grants.json (or remove it if the tool was "
                      "renamed/removed)")
-    home_registration = pathlib.Path.home() / ".claude.json"
-    if unresolved_by_name and not home_registration.is_file():
-        return _skip("agent_grants_resolvable",
-                     f"cannot resolve {len(unresolved_by_name)} token(s) "
-                     f"(no MCP registration at {home_registration}): {unresolved_by_name}")
-    measured = f"resolved={resolved}"
-    if unresolved_by_name:
-        measured += f"; unresolved by name (no source dir known to this process): {unresolved_by_name}"
-    return _line("agent_grants_resolvable", "PASS", measured, "n/a (informational)")
+    if skip_aliases:
+        return _skip("agent_grants_resolvable", "; ".join(sorted(skip_aliases.values())))
+    return _line("agent_grants_resolvable", "PASS", f"resolved={resolved}", "n/a (informational)")
 
 
 def _check_agent_grants_names_known(pp: pathlib.Path, manifest: dict) -> dict:
