@@ -11,6 +11,7 @@ mutation itself does not also trip tree_clean.
 """
 
 import json
+import pathlib
 import subprocess
 
 import pytest
@@ -382,6 +383,57 @@ def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
     assert by_id["agent_grants_names_known"]["status"] == "PASS"
     assert by_id["agent_grants_extendable"]["status"] == "PASS"
     assert res["ok"] is True
+
+
+def test_agent_grants_resolvable_fails_on_nonexistent_template_sync_tool(tmp_path, monkeypatch):
+    """The one alias `agent_grants_resolvable` can resolve FOR REAL: a
+    `template-sync-tools` token naming a tool that is not in the live
+    registry FAILs. (Every REAL template_* tool is itself in
+    UNGRANTABLE_TOOLS, so a fake name is the only way to exercise this
+    alias's resolution path at all without tripping the earlier
+    ungrantable-token refusal in load_grants -- noted in the report.)"""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__template-sync-tools__template_nonexistent"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "FAIL", line
+    assert "template_nonexistent" in line["measured"]
+
+
+def test_agent_grants_resolvable_skips_without_registration_for_third_party_alias(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "no-such-home")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "SKIP", line
+    assert "cannot resolve" in line["measured"]
+
+
+def test_agent_grants_resolvable_counts_unresolved_by_name_when_registration_readable(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    (fake_home / ".claude.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "PASS", line
+    assert "unresolved by name" in line["measured"]
+    assert "mcp__glider__symbol_lookup" in line["measured"]
 
 
 def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
