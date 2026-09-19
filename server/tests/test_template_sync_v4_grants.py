@@ -122,14 +122,26 @@ def test_load_grants_malformed_token_raises_naming_token(tmp_path):
 
 
 def test_load_grants_ungrantable_token_raises_naming_token(tmp_path):
-    """A lowercase-alias ungrantable token (the shape check must pass first
-    for the UNGRANTABLE_TOOLS check to be reached at all -- see the
-    MCP_DOCKER-family concern in the report)."""
+    """A lowercase-alias ungrantable token."""
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / "agent-grants.json").write_text(
         json.dumps({"schema": 1, "grants": {"foo": ["mcp__template-sync-tools__template_verify"]}}),
         encoding="utf-8")
     with pytest.raises(v3.GrantsError, match="template_verify"):
+        v3.load_grants(tmp_path)
+
+
+def test_grant_token_shape_admits_uppercase_alias(tmp_path):
+    """R-O (fix round 1): the alias segment admits UPPERCASE -- exactly
+    check 50's own TOKEN_RE. A grant of an MCP_DOCKER-family UNGRANTABLE
+    token is refused BY TOKEN (UNGRANTABLE_TOOLS), not by shape -- the two
+    checks answer different questions and this proves which one fired."""
+    assert v3._GRANT_TOKEN_RE.match("mcp__MCP_DOCKER__merge_pull_request")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__MCP_DOCKER__merge_pull_request"]}}),
+        encoding="utf-8")
+    with pytest.raises(v3.GrantsError, match="merge_pull_request"):
         v3.load_grants(tmp_path)
 
 
@@ -150,9 +162,10 @@ def test_load_grants_valid_returns_dict(tmp_path):
 # subseteq a small hand-written frozenset (measured: templates/general's own
 # coder.md already carries mcp__MCP_DOCKER__merge_pull_request /
 # create_pull_request in ITS OWN tools: line, which a literal sibling-diff
-# would then have to explain away rather than assert against). Scoped
-# instead, per that guidance, to the three families spec §4 actually names:
-# every registered template_* sync tool (measured against the LIVE
+# would then have to explain away rather than assert against).
+#
+# Scoped instead, per that guidance, to the three families spec §4 actually
+# names: every registered template_* sync tool (measured against the LIVE
 # _registered_tool_names() registry, not a hardcoded list), the four
 # merge/PR tokens, and Agent.
 
@@ -162,6 +175,13 @@ def test_ungrantable_tools_covers_every_registered_template_tool():
     assert registered, "sanity: the live registry must expose template_* tools"
     tokens = {f"mcp__template-sync-tools__{n}" for n in registered}
     assert tokens <= v3.UNGRANTABLE_TOOLS, tokens - v3.UNGRANTABLE_TOOLS
+
+
+def test_ungrantable_tools_size_measured_via_imported_constant():
+    """R-O (fix round 1): the witness set is measured through the IMPORTED
+    constant itself, not a grep window over source text -- 15 members (the
+    ten registered template_* tools + the four merge/PR tokens + Agent)."""
+    assert len(v3.UNGRANTABLE_TOOLS) == 15, sorted(v3.UNGRANTABLE_TOOLS)
 
 
 def test_ungrantable_tools_covers_the_merge_pr_family_and_agent():

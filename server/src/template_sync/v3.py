@@ -989,7 +989,13 @@ INSTRUCTIONS_FILE_DEFAULT = ".claude/project-instructions.md"
 AGENTS_DIR_PREFIX = ".claude/agents/"
 
 # mcp__<alias>__<tool>. Anything else is a malformed token (GrantsError).
-_GRANT_TOKEN_RE = re.compile(r"^mcp__[a-z0-9_-]+__[a-z0-9_]+$")
+# R-O (fix round 1): the alias segment admits UPPERCASE -- exactly check 50's
+# own TOKEN_RE in scripts/verify-template-consistency.sh
+# (`^mcp__[A-Za-z0-9_-]+__[a-z0-9_]+$`), so a real alias like MCP_DOCKER is
+# expressible as a grant token at all (previously the shape check itself
+# refused every MCP_DOCKER-family UNGRANTABLE_TOOLS entry before the
+# UNGRANTABLE_TOOLS membership check was ever reached).
+_GRANT_TOKEN_RE = re.compile(r"^mcp__[A-Za-z0-9_-]+__[a-z0-9_]+$")
 
 # UNGRANTABLE_TOOLS is a HAND-WRITTEN literal (spec §4 decision), never
 # derived from the withheld sets of shipped agents -- deriving it from the
