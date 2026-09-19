@@ -484,13 +484,27 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                    "upgrade template-sync-tools (bash server/install.sh in the toolkit checkout) and restart"))
 
     template_dir = core._get_template_dir(manifest)
-    if template_dir.is_dir():
-        emit(_line("no_errors", "PASS", f"template directory found: {template_dir}",
-                   "template variant directory exists"))
-    else:
+    # R-C (original brief): a malformed .claude/agent-grants.json is an
+    # apply/status ERROR for every agent path, reported through THIS
+    # existing FAIL line -- no new line. Checked here (before `rules` is
+    # even loaded) so a shape defect is visible even when the rest of the
+    # v3-dependent chain below never runs.
+    grants_shape_error = None
+    try:
+        v3.load_grants(pp)
+    except v3.GrantsError as e:
+        grants_shape_error = str(e)
+    if not template_dir.is_dir():
         emit(_line("no_errors", "FAIL", f"template directory not found: {template_dir}",
                    "template variant directory exists",
                    "fix templateRepo/variant in .claude/template-manifest.json"))
+    elif grants_shape_error:
+        emit(_line("no_errors", "FAIL", grants_shape_error,
+                   "template variant directory exists; .claude/agent-grants.json is well-formed",
+                   "fix .claude/agent-grants.json"))
+    else:
+        emit(_line("no_errors", "PASS", f"template directory found: {template_dir}",
+                   "template variant directory exists"))
 
     rules = v3.load_ownership(manifest["templateRepo"])
     if rules is None:
@@ -601,65 +615,92 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     # --- status_clean / gate_self_reference_empty / unclassified_empty / ----
     # --- new_template_files_empty / classes_and_hashes / region_markers -----
     status = v3.compute_status_v3(pp, manifest, rules)
-    summary = status["summary"]
-    conflicts = [p for p, info in status["files"].items() if info.get("status") == "CONFLICT"]
-    updated, edited, missing = (summary.get("template_updated", 0), summary.get("local_edited", 0),
-                                summary.get("missing", 0))
-    migration_required = [p for p, info in status["files"].items()
-                          if info.get("status") == "MIGRATION_REQUIRED"]
-    if migration_required:
-        # The v3-manifest window (R-J, R-K): ONE fact, ONE FAIL, ONE remedy --
-        # reported alone, ahead of any other drift this consumer may also
-        # carry, because migrating is the one action that resolves it.
-        emit(_line("status_clean", "FAIL", f"MIGRATION_REQUIRED: {sorted(migration_required)}",
-                   "0 updated / 0 edited / 0 missing, no CONFLICT", v3.MIGRATION_REQUIRED_REMEDY))
-    elif updated or edited or missing or conflicts:
-        # A stale STORED hash (v4.0.2, item 16): `finalize_sync(new_files=...)`
-        # only ADDS entries -- a tracked path updated on disk outside
-        # template_apply_file keeps its stale hash and reads LOCAL_EDITED with
-        # an EMPTY local_diff (the overwrite-would-discard diff is empty
-        # because the project already equals the template; only the STORED
-        # hash disagrees). That is a different remedy than a real local edit.
-        stale = [p for p, i in status["files"].items()
-                 if i.get("status") == "LOCAL_EDITED" and i.get("local_diff") == ""]
-        measured = (f"template_updated={updated}, local_edited={edited}, missing={missing}, "
-                    f"CONFLICT={len(conflicts)}")
-        remedy = "run /sync-template to bring the project back up to date"
-        if stale:
-            measured += f"; stale stored hash (LOCAL_EDITED, empty local_diff): {stale}"
-            remedy += ("; for a stale stored hash pass the path in "
-                       "template_finalize_sync(applied_files=[...]) -- new_files never refreshes "
-                       "a tracked entry")
-        emit(_line("status_clean", "FAIL", measured,
-                   "0 updated / 0 edited / 0 missing, no CONFLICT", remedy))
-    else:
-        emit(_line("status_clean", "PASS",
-                   f"template_updated=0, local_edited=0, missing=0, CONFLICT=0 (of {len(status['files'])} tracked)",
-                   "0 updated / 0 edited / 0 missing, no CONFLICT"))
+    # R-P (fix round 1): compute_status_v3 returns {"error": ...} on a
+    # malformed grants file (R-C) rather than raising -- every line below
+    # that reads status[...] must report FAIL with that message instead of
+    # crashing with a KeyError (never a null-case green either). Grepped
+    # (constraint 11) -- every `status[` / status-dict read in this module:
+    # status["summary"], status["files"] (x6, including the entry_status
+    # lookup for classes_and_hashes and the key_audit/encoding_drift/
+    # once_notes_changed loops below), status["gate_self_reference"],
+    # status["unclassified_template_files"], status["new_template_files"].
+    # All are inside this block or the declared_keys/encoding_drift/
+    # once_notes_changed blocks further down, each now guarded the same way.
+    status_error = status.get("error") if isinstance(status, dict) else "compute_status_v3 returned a non-dict result"
 
-    gate_hits = status["gate_self_reference"]
-    if gate_hits:
-        emit(_line("gate_self_reference_empty", "FAIL", f"{gate_hits}", "[]",
-                   "move the **Gate**/**Test** command off a template-class path "
-                   "(e.g. scripts/gate.sh) and point the key there"))
+    if status_error:
+        emit(_line("status_clean", "FAIL", status_error, "0 updated / 0 edited / 0 missing, no CONFLICT",
+                   "fix the error above (see no_errors)"))
     else:
-        emit(_line("gate_self_reference_empty", "PASS", "no gate self-reference", "[]"))
+        summary = status["summary"]
+        conflicts = [p for p, info in status["files"].items() if info.get("status") == "CONFLICT"]
+        updated, edited, missing = (summary.get("template_updated", 0), summary.get("local_edited", 0),
+                                    summary.get("missing", 0))
+        migration_required = [p for p, info in status["files"].items()
+                              if info.get("status") == "MIGRATION_REQUIRED"]
+        if migration_required:
+            # The v3-manifest window (R-J, R-K): ONE fact, ONE FAIL, ONE remedy --
+            # reported alone, ahead of any other drift this consumer may also
+            # carry, because migrating is the one action that resolves it.
+            emit(_line("status_clean", "FAIL", f"MIGRATION_REQUIRED: {sorted(migration_required)}",
+                       "0 updated / 0 edited / 0 missing, no CONFLICT", v3.MIGRATION_REQUIRED_REMEDY))
+        elif updated or edited or missing or conflicts:
+            # A stale STORED hash (v4.0.2, item 16): `finalize_sync(new_files=...)`
+            # only ADDS entries -- a tracked path updated on disk outside
+            # template_apply_file keeps its stale hash and reads LOCAL_EDITED with
+            # an EMPTY local_diff (the overwrite-would-discard diff is empty
+            # because the project already equals the template; only the STORED
+            # hash disagrees). That is a different remedy than a real local edit.
+            stale = [p for p, i in status["files"].items()
+                     if i.get("status") == "LOCAL_EDITED" and i.get("local_diff") == ""]
+            measured = (f"template_updated={updated}, local_edited={edited}, missing={missing}, "
+                        f"CONFLICT={len(conflicts)}")
+            remedy = "run /sync-template to bring the project back up to date"
+            if stale:
+                measured += f"; stale stored hash (LOCAL_EDITED, empty local_diff): {stale}"
+                remedy += ("; for a stale stored hash pass the path in "
+                           "template_finalize_sync(applied_files=[...]) -- new_files never refreshes "
+                           "a tracked entry")
+            emit(_line("status_clean", "FAIL", measured,
+                       "0 updated / 0 edited / 0 missing, no CONFLICT", remedy))
+        else:
+            emit(_line("status_clean", "PASS",
+                       f"template_updated=0, local_edited=0, missing=0, CONFLICT=0 (of {len(status['files'])} tracked)",
+                       "0 updated / 0 edited / 0 missing, no CONFLICT"))
 
-    unclassified = status["unclassified_template_files"]
-    if unclassified:
-        emit(_line("unclassified_empty", "FAIL", f"{unclassified}", "[]",
-                   f"add a rule for these paths to {v3.OWNERSHIP_FILE}, or reclassify them as project-owned"))
+    if status_error:
+        emit(_line("gate_self_reference_empty", "FAIL", status_error, "[]",
+                   "fix the error above (see no_errors)"))
     else:
-        emit(_line("unclassified_empty", "PASS", "no unclassified template files", "[]"))
+        gate_hits = status["gate_self_reference"]
+        if gate_hits:
+            emit(_line("gate_self_reference_empty", "FAIL", f"{gate_hits}", "[]",
+                       "move the **Gate**/**Test** command off a template-class path "
+                       "(e.g. scripts/gate.sh) and point the key there"))
+        else:
+            emit(_line("gate_self_reference_empty", "PASS", "no gate self-reference", "[]"))
 
-    new_files = status["new_template_files"]
-    if new_files:
-        mapping = ", ".join(f"{p} -> {core.template_path_for(p, manifest)}" for p in new_files)
-        emit(_line("new_template_files_empty", "FAIL", f"{new_files}", "[]",
-                   "register once-class files via template_finalize_sync(new_files=[...]) "
-                   f"(zero bytes written) or apply template-class files; template paths: {mapping}"))
+    if status_error:
+        emit(_line("unclassified_empty", "FAIL", status_error, "[]", "fix the error above (see no_errors)"))
     else:
-        emit(_line("new_template_files_empty", "PASS", "no new, unregistered template files", "[]"))
+        unclassified = status["unclassified_template_files"]
+        if unclassified:
+            emit(_line("unclassified_empty", "FAIL", f"{unclassified}", "[]",
+                       f"add a rule for these paths to {v3.OWNERSHIP_FILE}, or reclassify them as project-owned"))
+        else:
+            emit(_line("unclassified_empty", "PASS", "no unclassified template files", "[]"))
+
+    if status_error:
+        emit(_line("new_template_files_empty", "FAIL", status_error, "[]", "fix the error above (see no_errors)"))
+    else:
+        new_files = status["new_template_files"]
+        if new_files:
+            mapping = ", ".join(f"{p} -> {core.template_path_for(p, manifest)}" for p in new_files)
+            emit(_line("new_template_files_empty", "FAIL", f"{new_files}", "[]",
+                       "register once-class files via template_finalize_sync(new_files=[...]) "
+                       f"(zero bytes written) or apply template-class files; template paths: {mapping}"))
+        else:
+            emit(_line("new_template_files_empty", "PASS", "no new, unregistered template files", "[]"))
 
     # classes_and_hashes (item 10): SHAPE (template-with-hash / once-
     # without-hash, as before) plus a closed status PARTITION over every
@@ -669,50 +710,56 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     # template_class_count` arm) made one accepted deviation (e.g. an
     # ACKNOWLEDGED_KEPT or a LOCAL_EDITED file) FAIL two lines for the same
     # reason.
-    invalid_entries = []
-    template_class_paths = []
-    for path, entry in manifest.get("files", {}).items():
-        ownership = entry.get("ownership")
-        if ownership == "template":
-            template_class_paths.append((path, core._normalize_path(path)))
-            if not v3.parse_hash(entry.get("hash", "")):
-                invalid_entries.append(f"{path}: ownership=template but hash is not sha256:<64 hex>")
-        elif ownership == "once":
-            if "hash" in entry:
-                invalid_entries.append(f"{path}: ownership=once but carries a hash key")
-        else:
-            invalid_entries.append(f"{path}: ownership is {ownership!r}, not template/once")
-
-    buckets = {s: 0 for s in TEMPLATE_CLASS_STATUSES}
-    unenumerated = []
-    for path, norm in template_class_paths:
-        entry_status = status["files"].get(norm, {}).get("status")
-        if entry_status in buckets:
-            buckets[entry_status] += 1
-        else:
-            unenumerated.append(entry_status)
-
-    # unenumerated may mix None (a template-class path compute_status_v3
-    # omitted from `files`, .get(...).get("status") resolving to None) with
-    # a str (an actual unenumerated status name) -- sorted(set(...)) alone
-    # raises TypeError comparing str and NoneType, so the dedupe sorts by
-    # str() (review round 1: test_classes_and_hashes_unenumerated_none_no_crash).
-    unenumerated_distinct = sorted(set(unenumerated), key=str)
-    partition_text = " ".join(f"{s.lower()}={buckets[s]}" for s in TEMPLATE_CLASS_STATUSES)
-    if unenumerated_distinct:
-        partition_text += " " + " ".join(f"unenumerated={u}" for u in unenumerated_distinct)
-    expected = ("every files entry is template-with-hash or once-without-hash; "
-                "every template-class entry's status is one of "
-                + ", ".join(TEMPLATE_CLASS_STATUSES))
-
-    if invalid_entries or unenumerated:
-        measured = partition_text
-        if invalid_entries:
-            measured += f"; invalid entries: {invalid_entries}"
-        emit(_line("classes_and_hashes", "FAIL", measured, expected,
-                   "run /sync-template to bring template-class files up to date; fix any malformed manifest entry"))
+    if status_error:
+        expected = ("every files entry is template-with-hash or once-without-hash; "
+                    "every template-class entry's status is one of "
+                    + ", ".join(TEMPLATE_CLASS_STATUSES))
+        emit(_line("classes_and_hashes", "FAIL", status_error, expected, "fix the error above (see no_errors)"))
     else:
-        emit(_line("classes_and_hashes", "PASS", partition_text, expected))
+        invalid_entries = []
+        template_class_paths = []
+        for path, entry in manifest.get("files", {}).items():
+            ownership = entry.get("ownership")
+            if ownership == "template":
+                template_class_paths.append((path, core._normalize_path(path)))
+                if not v3.parse_hash(entry.get("hash", "")):
+                    invalid_entries.append(f"{path}: ownership=template but hash is not sha256:<64 hex>")
+            elif ownership == "once":
+                if "hash" in entry:
+                    invalid_entries.append(f"{path}: ownership=once but carries a hash key")
+            else:
+                invalid_entries.append(f"{path}: ownership is {ownership!r}, not template/once")
+
+        buckets = {s: 0 for s in TEMPLATE_CLASS_STATUSES}
+        unenumerated = []
+        for path, norm in template_class_paths:
+            entry_status = status["files"].get(norm, {}).get("status")
+            if entry_status in buckets:
+                buckets[entry_status] += 1
+            else:
+                unenumerated.append(entry_status)
+
+        # unenumerated may mix None (a template-class path compute_status_v3
+        # omitted from `files`, .get(...).get("status") resolving to None) with
+        # a str (an actual unenumerated status name) -- sorted(set(...)) alone
+        # raises TypeError comparing str and NoneType, so the dedupe sorts by
+        # str() (review round 1: test_classes_and_hashes_unenumerated_none_no_crash).
+        unenumerated_distinct = sorted(set(unenumerated), key=str)
+        partition_text = " ".join(f"{s.lower()}={buckets[s]}" for s in TEMPLATE_CLASS_STATUSES)
+        if unenumerated_distinct:
+            partition_text += " " + " ".join(f"unenumerated={u}" for u in unenumerated_distinct)
+        expected = ("every files entry is template-with-hash or once-without-hash; "
+                    "every template-class entry's status is one of "
+                    + ", ".join(TEMPLATE_CLASS_STATUSES))
+
+        if invalid_entries or unenumerated:
+            measured = partition_text
+            if invalid_entries:
+                measured += f"; invalid entries: {invalid_entries}"
+            emit(_line("classes_and_hashes", "FAIL", measured, expected,
+                       "run /sync-template to bring template-class files up to date; fix any malformed manifest entry"))
+        else:
+            emit(_line("classes_and_hashes", "PASS", partition_text, expected))
 
     tracked_paths = list(manifest.get("files", {}).keys())
     malformed = []
@@ -746,29 +793,39 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     emit(_check_agent_grants_extendable(pp, manifest))
 
     # --- declared_keys ----------------------------------------------------
-    missing_all = []
-    audited_count = 0
-    for path, info in status["files"].items():
-        ka = info.get("key_audit")
-        if ka is None:
-            continue
-        audited_count += 1
-        for item in ka.get("missing_declared_keys", []):
-            missing_all.append({"path": path, **item})
-    if missing_all:
-        emit(_line("declared_keys", "FAIL", f"{missing_all}", "[]",
-                   "declare the missing keys, or run /sync-template to re-derive template_default"))
+    if status_error:
+        emit(_line("declared_keys", "FAIL", status_error, "[]", "fix the error above (see no_errors)"))
     else:
-        emit(_line("declared_keys", "PASS", f"0 missing across {audited_count} audited file(s)", "[]"))
+        missing_all = []
+        audited_count = 0
+        for path, info in status["files"].items():
+            ka = info.get("key_audit")
+            if ka is None:
+                continue
+            audited_count += 1
+            for item in ka.get("missing_declared_keys", []):
+                missing_all.append({"path": path, **item})
+        if missing_all:
+            emit(_line("declared_keys", "FAIL", f"{missing_all}", "[]",
+                       "declare the missing keys, or run /sync-template to re-derive template_default"))
+        else:
+            emit(_line("declared_keys", "PASS", f"0 missing across {audited_count} audited file(s)", "[]"))
 
     # --- encoding_drift (INFO) ---------------------------------------------
-    drift = [{"path": p, "drift": info["encoding_drift"]}
-             for p, info in status["files"].items() if info.get("encoding_drift")]
-    if drift:
-        emit(_line("encoding_drift", "INFO", f"{drift}", "n/a (informational)"))
+    # INFO_LINE kind (never FAIL_LINE): an error dict is reported as INFO
+    # naming the error, never as a null-case "no drift" green and never a
+    # crash -- but never "FAIL" either, which would be the wrong kind for an
+    # id that can never affect `ok` by design.
+    if status_error:
+        emit(_line("encoding_drift", "INFO", f"cannot compute -- {status_error}", "n/a (informational)"))
     else:
-        emit(_line("encoding_drift", "INFO", "no encoding drift (bom/crlf) on any tracked file",
-                   "n/a (informational)"))
+        drift = [{"path": p, "drift": info["encoding_drift"]}
+                 for p, info in status["files"].items() if info.get("encoding_drift")]
+        if drift:
+            emit(_line("encoding_drift", "INFO", f"{drift}", "n/a (informational)"))
+        else:
+            emit(_line("encoding_drift", "INFO", "no encoding drift (bom/crlf) on any tracked file",
+                       "n/a (informational)"))
 
     # --- project_md_seed_current / project_md_scoped_consistent (INFO) ------
     # A `paths:`-scoped project.md is exempt from the seed-sentence check:
@@ -825,25 +882,28 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     emit(_check_legacy_gate_dir(pp))
 
     # --- once_notes_changed (INFO) ------------------------------------------
-    notes_changed = [
-        (path, info["key_audit"]["template_notes_changed"])
-        for path, info in status["files"].items()
-        if info.get("ownership") == "once" and info.get("key_audit", {}).get("template_notes_changed")
-    ]
-    if notes_changed:
-        # `_finalize` requires exactly one result row per id (the
-        # `template_verify` witness asserts len(lines) == len(LINES)), so a
-        # once-class file per row would break that invariant on a consumer
-        # with more than one changed file -- emit ONE line, every file
-        # "; "-joined (ruling R2).
-        parts = "; ".join(f"{path}: template guidance comments changed (hunks: {len(hunks)})"
-                          for path, hunks in notes_changed)
-        emit(_line("once_notes_changed", "INFO", parts, "n/a (informational)",
-                   "read the hunks with template_get_diff and update your copy by hand -- "
-                   "once-class files are never overwritten"))
+    if status_error:
+        emit(_line("once_notes_changed", "INFO", f"cannot compute -- {status_error}", "n/a (informational)"))
     else:
-        emit(_line("once_notes_changed", "INFO", "no once-class file has changed template notes",
-                   "n/a (informational)"))
+        notes_changed = [
+            (path, info["key_audit"]["template_notes_changed"])
+            for path, info in status["files"].items()
+            if info.get("ownership") == "once" and info.get("key_audit", {}).get("template_notes_changed")
+        ]
+        if notes_changed:
+            # `_finalize` requires exactly one result row per id (the
+            # `template_verify` witness asserts len(lines) == len(LINES)), so a
+            # once-class file per row would break that invariant on a consumer
+            # with more than one changed file -- emit ONE line, every file
+            # "; "-joined (ruling R2).
+            parts = "; ".join(f"{path}: template guidance comments changed (hunks: {len(hunks)})"
+                              for path, hunks in notes_changed)
+            emit(_line("once_notes_changed", "INFO", parts, "n/a (informational)",
+                       "read the hunks with template_get_diff and update your copy by hand -- "
+                       "once-class files are never overwritten"))
+        else:
+            emit(_line("once_notes_changed", "INFO", "no once-class file has changed template notes",
+                       "n/a (informational)"))
 
     emit(_check_manifest_bytes(pp))
     emit(_check_tree_clean(pp, mode))

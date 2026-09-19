@@ -436,6 +436,29 @@ def test_agent_grants_resolvable_counts_unresolved_by_name_when_registration_rea
     assert "mcp__glider__symbol_lookup" in line["measured"]
 
 
+def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypatch):
+    """R-P (fix round 1): compute_status_v3 returns {"error": ...} on a
+    malformed .claude/agent-grants.json (R-C) rather than raising --
+    verify.run must not KeyError in status_clean/classes_and_hashes (or any
+    other status-dependent line); every one of them reports FAIL with the
+    error message instead, and no_errors (the ORIGINAL R-C route) FAILs
+    with it too. len(lines) == 30 still holds -- no line is silently
+    dropped by the error path."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text("not json", encoding="utf-8", newline="")
+    _recommit(proj)
+
+    res = verify.run(str(proj), str(repo), "post_commit")
+    assert len(res["lines"]) == len(verify.LINES) == 30
+    by_id = _by_id(res)
+    for id_ in ("no_errors", "status_clean", "classes_and_hashes"):
+        line = by_id[id_]
+        assert line["status"] == "FAIL", (id_, line)
+        assert "not valid JSON" in line["measured"], (id_, line)
+    assert res["ok"] is False
+
+
 def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
     repo, proj, commit = _window_fixture(tmp_path)
     res = verify.run(str(proj), str(repo), "post_commit")
