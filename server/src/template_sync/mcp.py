@@ -1074,8 +1074,11 @@ async def template_compute_status(
             summary["template_deleted"] += 1
             continue
 
-        # Current template hash (after placeholder replacement)
-        tpl_replaced = _apply_placeholders(tpl_content, placeholders)
+        # Current template hash (after placeholder replacement). v2 has no
+        # OwnershipRules and no grants -- template_content(rules=None) is a
+        # placeholder-only no-op here (R-B: routed through the one helper
+        # anyway, so a producer added later cannot bypass it unnoticed).
+        tpl_replaced = v3.template_content(pp, manifest, None, rel_path, tpl_content)
         tpl_hash_new = _sha256(tpl_replaced)
 
         # Previous template hash from manifest
@@ -1247,14 +1250,17 @@ async def template_get_diff(
     if manifest is None:
         return json.dumps({"error": errors[0]}, ensure_ascii=False)
 
-    placeholders = manifest.get("placeholders", {})
     last_synced = manifest.get("lastSynced", "")
 
-    # Read current template content (post-replacement)
+    # Read current template content (post-replacement). No OwnershipRules is
+    # loaded on this generic diff path for either manifest version --
+    # template_content never consults `rules` (it is accepted for signature
+    # uniformity with the callers that have one; see its docstring), so None
+    # is safe here for a v2, v3 or v4 manifest alike.
     tpl_raw = _read_file(_template_file_path(manifest, file_path))
     if tpl_raw is None:
         return json.dumps({"error": f"Template file not found: {file_path}"}, ensure_ascii=False)
-    tpl_current = _apply_placeholders(tpl_raw, placeholders)
+    tpl_current = v3.template_content(pp, manifest, None, file_path, tpl_raw)
 
     # Read current project content
     proj_current = _read_file(pp / file_path)
@@ -1267,7 +1273,7 @@ async def template_get_diff(
         git_path = _template_git_path(manifest, file_path)
         base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
         if base_raw is not None:
-            base_content = _apply_placeholders(base_raw, placeholders)
+            base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
 
     # Fallback: if no base available, use current template as base (two-way)
     fallback_used = False
@@ -1407,8 +1413,6 @@ async def template_apply_file(
     if manifest is None:
         return json.dumps({"error": errors[0]}, ensure_ascii=False)
 
-    placeholders = manifest.get("placeholders", {})
-
     if v3.manifest_supported(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
@@ -1420,7 +1424,7 @@ async def template_apply_file(
 
     # Read current template content
     tpl_raw = _read_file(_template_file_path(manifest, file_path))
-    tpl_replaced = _apply_placeholders(tpl_raw, placeholders) if tpl_raw else ""
+    tpl_replaced = v3.template_content(pp, manifest, None, file_path, tpl_raw) or ""
     tpl_raw_hash = _sha256(tpl_raw) if tpl_raw else ""
     tpl_hash = _sha256(tpl_replaced) if tpl_replaced else ""
 
@@ -1660,11 +1664,10 @@ async def template_finalize_sync(
     # has no baseline, and template_compute_status would have offered to
     # overwrite whatever the project has there.
     added_count = 0
-    placeholders = manifest.get("placeholders", {})
     for fp in new:
         if fp not in files:
             tpl_raw = _read_file(_template_file_path(manifest, fp))
-            tpl_replaced = _apply_placeholders(tpl_raw, placeholders) if tpl_raw else ""
+            tpl_replaced = v3.template_content(pp, manifest, None, fp, tpl_raw) or ""
             proj_content = _read_file(pp / _normalize_path(fp))
             local_part_hash, tpl_part_hash = _part_hashes(proj_content or "", tpl_replaced)
             files[fp] = {

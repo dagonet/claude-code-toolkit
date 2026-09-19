@@ -959,16 +959,216 @@ def _git_commit_exists(repo: str, ref: str) -> bool:
     return core._run_git(["cat-file", "-e", f"{ref}^{{commit}}"], cwd=repo)["exit_code"] == 0
 
 
-def resolve_base(manifest: dict, rel_path: str) -> tuple[str | None, str, str | None]:
-    """Placeholder-replaced template content of `rel_path` at the held revision.
+# -------------------------
+# v4 agent grants splice (spec §4, §5)
+# -------------------------
+
+class GrantsError(Exception):
+    """.claude/agent-grants.json is malformed, or a token is not a valid
+    mcp__<alias>__<tool> name, or a token names an UNGRANTABLE tool.
+    Refuse-not-guess (ruling R-C): every agent path -- apply and status
+    alike -- errors out rather than silently ignoring the defect."""
+
+
+class GrantRefused(Exception):
+    """A grant names an agent whose frontmatter carries no `tools:` line --
+    that agent already inherits every tool including MCP, so a grant for it
+    has nothing to extend. Never synthesises an allowlist."""
+
+    def __init__(self, agent_name: str):
+        self.agent_name = agent_name
+        super().__init__(
+            f"{agent_name} ships no `tools:` line and already inherits every tool -- "
+            "remove the grant"
+        )
+
+
+AGENT_GRANTS_FILE = ".claude/agent-grants.json"
+AGENTS_DIR_PREFIX = ".claude/agents/"
+
+# mcp__<alias>__<tool>. Anything else is a malformed token (GrantsError).
+_GRANT_TOKEN_RE = re.compile(r"^mcp__[a-z0-9_-]+__[a-z0-9_]+$")
+
+# UNGRANTABLE_TOOLS is a HAND-WRITTEN literal (spec §4 decision), never
+# derived from the withheld sets of shipped agents -- deriving it from the
+# data it is meant to be a floor under would make the data equal itself and
+# defeat the point of the check (reviewer). Three families: Agent itself
+# (no coder spawns subagents), every registered template_* sync tool (a
+# coder must never sync/verify/migrate the template that governs it), and
+# the merge/PR tools the template withholds from coders (only reviewers and
+# the PO merge). tests/test_template_sync_v4_grants.py asserts
+# union(withheld sets of every shipped agent) subseteq UNGRANTABLE_TOOLS.
+UNGRANTABLE_TOOLS = frozenset({
+    "Agent",
+    "mcp__template-sync-tools__template_load_manifest",
+    "mcp__template-sync-tools__template_compute_status",
+    "mcp__template-sync-tools__template_get_diff",
+    "mcp__template-sync-tools__template_apply_file",
+    "mcp__template-sync-tools__template_reverse_placeholders",
+    "mcp__template-sync-tools__template_finalize_sync",
+    "mcp__template-sync-tools__template_migrate_manifest",
+    "mcp__template-sync-tools__template_check_cross_variant",
+    "mcp__template-sync-tools__template_propagate_to_variants",
+    "mcp__template-sync-tools__template_verify",
+    "mcp__MCP_DOCKER__merge_pull_request",
+    "mcp__github-tools__github_pr_auto_merge",
+    "mcp__MCP_DOCKER__create_pull_request",
+    "mcp__MCP_DOCKER__update_pull_request",
+})
+
+
+def load_grants(pp: pathlib.Path) -> dict[str, list[str]]:
+    """Read .claude/agent-grants.json: {agent name: [mcp__alias__tool, ...]}.
+
+    Absent file -> {} (no grants -- the splice is a no-op everywhere).
+    Malformed (not JSON, wrong schema, `grants` not an object, a value not a
+    list of validly-shaped tokens, or a token naming an UNGRANTABLE tool) ->
+    GrantsError naming the defect (R-C: refuse, never guess).
+    """
+    raw = core._read_file(pp / AGENT_GRANTS_FILE)
+    if raw is None:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise GrantsError(f"{AGENT_GRANTS_FILE} is not valid JSON: {e}")
+    if not isinstance(data, dict):
+        raise GrantsError(f"{AGENT_GRANTS_FILE}: top level must be a JSON object")
+    if data.get("schema") != 1:
+        raise GrantsError(f"{AGENT_GRANTS_FILE}: \"schema\" must be 1, got {data.get('schema')!r}")
+    grants = data.get("grants")
+    if not isinstance(grants, dict):
+        raise GrantsError(f"{AGENT_GRANTS_FILE}: \"grants\" must be a JSON object")
+    out: dict[str, list[str]] = {}
+    for agent_name, tokens in grants.items():
+        if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
+            raise GrantsError(
+                f"{AGENT_GRANTS_FILE}: grants[{agent_name!r}] must be a list of strings")
+        for tok in tokens:
+            if not _GRANT_TOKEN_RE.match(tok):
+                raise GrantsError(
+                    f"{AGENT_GRANTS_FILE}: grants[{agent_name!r}] has a malformed token "
+                    f"{tok!r} -- expected mcp__<alias>__<tool>")
+            if tok in UNGRANTABLE_TOOLS:
+                raise GrantsError(
+                    f"{AGENT_GRANTS_FILE}: grants[{agent_name!r}] grants ungrantable tool {tok!r}")
+        out[agent_name] = list(tokens)
+    return out
+
+
+def _frontmatter_body(text: str) -> str | None:
+    """The text between an agent file's leading `---` markers, or None when
+    the file does not open with a frontmatter block."""
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 4)
+    if end == -1:
+        return None
+    return text[4:end]
+
+
+_NAME_FIELD_RE = re.compile(r"^name:\s*(.*)$", re.M)
+_TOOLS_LINE_RE = re.compile(r"^tools:[ \t]*(.*)$", re.M)
+
+
+def agent_name_of(text: str) -> str | None:
+    """The `name:` frontmatter field of an agent file's rendered content."""
+    body = _frontmatter_body(text)
+    if body is None:
+        return None
+    m = _NAME_FIELD_RE.search(body)
+    return m.group(1).strip() or None if m else None
+
+
+def splice_tools(agent_text: str, grants_for_agent: list[str]) -> str:
+    """Append `grants_for_agent` to the agent's frontmatter `tools:` line,
+    deduplicated, original order then grant order (spec §5).
+
+    The `tools:` line must sit on ONE line inside the leading `---` block; a
+    list form (nothing after the colon -- a YAML sequence follows on later
+    lines) or a bare `*` wildcard -> GrantsError("unsupported tools: shape").
+    An agent with NO `tools:` line already inherits every tool including MCP
+    -- a grant for it has nothing to extend -> GrantRefused(agent_name),
+    never a synthesised allowlist.
+    """
+    if not grants_for_agent:
+        return agent_text
+    body = _frontmatter_body(agent_text)
+    agent_name = agent_name_of(agent_text) or "<unnamed agent>"
+    if body is None:
+        raise GrantRefused(agent_name)
+    m = _TOOLS_LINE_RE.search(body)
+    if m is None:
+        raise GrantRefused(agent_name)
+    value = m.group(1).strip()
+    if value == "" or value == "*":
+        raise GrantsError(f"{agent_name}: unsupported tools: shape ({m.group(0)!r})")
+    original = [t.strip() for t in value.split(",") if t.strip()]
+    merged = list(original)
+    for tok in grants_for_agent:
+        if tok not in merged:
+            merged.append(tok)
+    new_line = "tools: " + ", ".join(merged)
+    abs_start = 4 + m.start()
+    abs_end = 4 + m.end()
+    return agent_text[:abs_start] + new_line + agent_text[abs_end:]
+
+
+def template_content(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
+                     proj_rel: str, tpl_raw: str | None) -> str | None:
+    """Placeholder-rendered content of a template file AS IT APPLIES TO THIS
+    PROJECT -- the ONE producer of `tpl_replaced` (spec §5, reviewer D3).
+    None when `tpl_raw` is None (the template no longer ships the file).
+
+    `rules` is accepted for signature uniformity with the callers (which
+    always have manifest+rules together) and for callers that resolve
+    `proj_rel` from a template-relative path via `rules.project_path_for` --
+    it is not otherwise consulted here: the agents-directory test below is a
+    plain path-prefix check, true regardless of ownership class.
+
+    Splices per-agent tool grants into a `.claude/agents/*` file under a v4
+    manifest whose agent-grants.json carries a non-empty entry for that
+    agent's `name:` field. NO-OPS (placeholders only) for every other path,
+    and for every manifest carrying no grants at all -- v2, v3, and a v4
+    manifest whose grants file is empty or absent -- so the existing v2/v3
+    regression suites are the witness that nothing else moved.
+    """
+    del rules  # see docstring
+    if tpl_raw is None:
+        return None
+    placeholders = manifest.get("placeholders", {})
+    rendered = core._apply_placeholders(tpl_raw, placeholders)
+    if not is_v4_manifest(manifest):
+        return rendered
+    norm = core._normalize_path(proj_rel)
+    if not norm.startswith(AGENTS_DIR_PREFIX):
+        return rendered
+    grants = load_grants(pp)
+    if not grants:
+        return rendered
+    agent_name = agent_name_of(rendered)
+    agent_grants = grants.get(agent_name) if agent_name else None
+    if not agent_grants:
+        return rendered
+    return splice_tools(rendered, agent_grants)
+
+
+def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
+                 rel_path: str) -> tuple[str | None, str, str | None]:
+    """template_content() of `rel_path` at the held revision.
 
     Chain (review §6.4): template_commit (alias lastSynced) -> the
     template_version tag's commit -> unavailable. Never the current template.
-    Returns (content, base_label, warning).
+    Returns (content, base_label, warning). `rel_path` is TEMPLATE-relative
+    (a tpl_rel); threaded to template_content via
+    `rules.project_path_for(rel_path)` deliberately (H1) -- for an agent file
+    the two happen to be equal today, but the base provider must not rely on
+    that coincidence: a moved template-relative name would otherwise read
+    the wrong grants entry, or none, silently.
     """
     repo = core._template_repo_resolved(manifest)
     git_path = core._template_git_path(manifest, rel_path)
-    placeholders = manifest.get("placeholders", {})
+    proj_rel = rules.project_path_for(rel_path)
     candidates = []
     commit = manifest_commit(manifest)
     if commit and commit != "unknown":
@@ -981,7 +1181,7 @@ def resolve_base(manifest: dict, rel_path: str) -> tuple[str | None, str, str | 
             continue
         raw = core._git_show_file(repo, ref, git_path)
         if raw is not None:
-            return core._apply_placeholders(raw, placeholders), ref, None
+            return template_content(pp, manifest, rules, proj_rel, raw), ref, None
     return None, "unavailable", "migration_base_unavailable"
 
 
@@ -1003,7 +1203,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
         tpl_rel = rules.template_path_for(proj_rel)
         ownership = entry.get("ownership") or rules.class_of(tpl_rel) or "template"
         tpl_raw, tpl_flags = read_with_flags(core._template_file_path(manifest, tpl_rel))
-        tpl_replaced = core._apply_placeholders(tpl_raw, placeholders) if tpl_raw is not None else None
+        tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
         proj_content, proj_flags = read_with_flags(pp / proj_rel)
         info: dict = {"ownership": ownership, "template_path": tpl_rel,
                       "project_file_missing": proj_content is None,
@@ -1015,7 +1215,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
                 status = "PRESENT"
                 rule = rules.rule_for(tpl_rel) or {}
                 if rule.get("audit") == "keys" and tpl_replaced is not None:
-                    base, base_label, warn = resolve_base(manifest, tpl_rel)
+                    base, base_label, warn = resolve_base(pp, manifest, rules, tpl_rel)
                     audit = audit_keys(proj_content, tpl_replaced, base, rule, placeholders)
                     audit["base"] = base_label
                     if base is not None:
@@ -1031,7 +1231,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
             if status == "LOCAL_EDITED":
                 corrected = region_status(
                     entry_hash, tpl_replaced, proj_content,
-                    lambda: resolve_base(manifest, tpl_rel)[0],
+                    lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
                 )
                 if corrected is not None:
                     status, local_diff = corrected, None
@@ -1139,9 +1339,8 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
             return {"error": f"gate_self_reference: **{hit['key']}**: points at template-class {proj_rel}; "
                              "move the logic to a non-template path (e.g. scripts/gate.sh) and point the key there"}
 
-    placeholders = manifest.get("placeholders", {})
     tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
-    tpl_replaced = core._apply_placeholders(tpl_raw, placeholders) if tpl_raw is not None else None
+    tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
     if source == "template" and tpl_replaced is None:
         return {"error": f"Template file not found: {tpl_rel}"}
     target = pp / proj_rel
@@ -1177,7 +1376,7 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
             if status == "LOCAL_EDITED":
                 corrected = region_status(
                     baseline, tpl_replaced, proj_existing,
-                    lambda: resolve_base(manifest, tpl_rel)[0],
+                    lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
                 )
                 if corrected is not None:
                     status, local_diff = corrected, None
@@ -1260,7 +1459,6 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         return {"error": "applied_files validation failed — manifest NOT written", "invalid_entries": invalid}
 
     files = {core._normalize_path(k): v for k, v in manifest.get("files", {}).items()}
-    placeholders = manifest.get("placeholders", {})
     warnings = list(rules.warnings)
 
     updated = 0
@@ -1298,7 +1496,8 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
             if tpl_raw is None:
                 warnings.append(f"new file {fp}: template file {tpl_rel} not found -- skipped")
                 continue
-            files[fp] = {"hash": format_hash(core._sha256(core._apply_placeholders(tpl_raw, placeholders))),
+            files[fp] = {"hash": format_hash(core._sha256(
+                             template_content(pp, manifest, rules, fp, tpl_raw))),
                          "ownership": "template"}
         else:
             warnings.append(f"new file {fp}: no template/once rule -- skipped")
@@ -1493,13 +1692,12 @@ def region_bytes_raw(content: str | None) -> int:
 
 def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
     warnings = list(rules.warnings)
-    placeholders = manifest.get("placeholders", {})
     repo = core._template_repo_resolved(manifest)
 
     # Steps 1-2: region + out-of-region hunks against the held, rendered base.
     proj_claude = core._read_file(pp / "CLAUDE.md") or ""
     proj_part, proj_region = core._split_custom_region(proj_claude)
-    base, base_label, warn = resolve_base(manifest, "CLAUDE.md")
+    base, base_label, warn = resolve_base(pp, manifest, rules, "CLAUDE.md")
     if warn:
         warnings.append(warn)
     hunks = ""
@@ -1555,7 +1753,8 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
                 new_entry = {"hash": format_hash(hex_digest), "ownership": "template"}
             else:
                 tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
-                new_entry = {"hash": format_hash(core._sha256(core._apply_placeholders(tpl_raw or "", placeholders))),
+                rendered = template_content(pp, manifest, rules, proj_rel, tpl_raw) or ""
+                new_entry = {"hash": format_hash(core._sha256(rendered)),
                              "ownership": "template"}
                 warnings.append(f"{proj_rel}: no templateHash in v2 entry -- baseline set to the current template")
         elif cls == "once":
@@ -1582,7 +1781,7 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
                 dropped_file_keys.append({"path": proj_rel, "keys": annotations})
             on_disk = core._read_file(pp / proj_rel)
             if on_disk is not None:
-                held, _label, _w = resolve_base(manifest, tpl_rel)
+                held, _label, _w = resolve_base(pp, manifest, rules, tpl_rel)
                 if held is not None and held == on_disk:
                     redundant.append(proj_rel)
 
