@@ -328,9 +328,10 @@ def _git_show_file(repo: str, commit: str, file_path: str) -> str | None:
 def _load_manifest(project_path: pathlib.Path) -> tuple[dict | None, list[str]]:
     """Load and parse the manifest file. Returns (manifest, errors).
 
-    v3 manifests (manifest_version == 3) require template_commit and
+    v3/v4 manifests (manifest_version in (3, 4)) require template_commit and
     requires_server on top of the v2 fields; lastSynced is accepted as an
-    alias of template_commit.
+    alias of template_commit. v4 manifests additionally require the two
+    declaration keys instructions_file and agent_grants (spec §5 header).
     """
     manifest_path = project_path / ".claude" / "template-manifest.json"
     content = _read_file(manifest_path)
@@ -343,10 +344,13 @@ def _load_manifest(project_path: pathlib.Path) -> tuple[dict | None, list[str]]:
 
     errors = []
     required = ["variant", "templateRepo", "placeholders", "files"]
-    if manifest.get("manifest_version") == 3:
+    mv = manifest.get("manifest_version")
+    if mv in (3, 4):
         required += ["requires_server"]
         if not (manifest.get("template_commit") or manifest.get("lastSynced")):
             errors.append("Missing required field: template_commit")
+    if mv == 4:
+        required += ["instructions_file", "agent_grants"]
     for field in required:
         if field not in manifest:
             errors.append(f"Missing required field: {field}")
@@ -874,8 +878,9 @@ async def template_load_manifest(project_path: str) -> str:
             f"Update templateRepo in .claude/template-manifest.json."
         )
 
-    if v3.is_v3(manifest):
-        ok, reason = v3.requires_server_satisfied(manifest.get("requires_server", ""), __version__)
+    if v3.manifest_supported(manifest):
+        ok, reason = v3.requires_server_satisfied(
+            v3.effective_requires_server_spec(manifest), __version__)
         if not ok:
             errors.append(reason)
         rules = v3.load_ownership(manifest["templateRepo"]) if not errors else None
@@ -888,7 +893,7 @@ async def template_load_manifest(project_path: str) -> str:
             warnings.extend(rules.warnings)
         return json.dumps({
             "valid": len(errors) == 0,
-            "manifest_version": 3,
+            "manifest_version": manifest.get("manifest_version"),
             "server_version": __version__,
             "server_commit": SERVER_COMMIT,
             "server_source": _server_source(),
@@ -1046,7 +1051,7 @@ async def template_compute_status(
     if variant:
         manifest["variant"] = variant
 
-    if v3.is_v3(manifest):
+    if v3.manifest_supported(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
@@ -1404,7 +1409,7 @@ async def template_apply_file(
 
     placeholders = manifest.get("placeholders", {})
 
-    if v3.is_v3(manifest):
+    if v3.manifest_supported(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
@@ -1601,7 +1606,7 @@ async def template_finalize_sync(
     except json.JSONDecodeError:
         acknowledged = []
 
-    if v3.is_v3(manifest):
+    if v3.manifest_supported(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)

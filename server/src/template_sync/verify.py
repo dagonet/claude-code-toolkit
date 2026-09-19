@@ -233,7 +233,8 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         return _finalize(results, mode)
 
     # --- requires_server / no_errors / no_warnings ---------------------------
-    ok_rs, reason_rs = v3.requires_server_satisfied(manifest.get("requires_server", ""), core.__version__)
+    ok_rs, reason_rs = v3.requires_server_satisfied(
+        v3.effective_requires_server_spec(manifest), core.__version__)
     if ok_rs:
         emit(_line("requires_server", "PASS",
                    f"requires_server={manifest.get('requires_server', '')!r} satisfied by server {core.__version__}",

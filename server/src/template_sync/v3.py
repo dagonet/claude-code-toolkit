@@ -27,6 +27,15 @@ from . import mcp as core
 MIN_SERVER_FOR_V3 = "0.3.2"
 MANIFEST_VERSION_V3 = 3
 
+# MIN_SERVER_FOR_V4 names the OLDEST server that can read a v4 manifest
+# without applying a region-less CLAUDE.md over a v3 consumer -- the server
+# that knows CLAUDE.md is template-owned under v4 (spec §7's v3-manifest
+# window) and refuses to apply it while the consumer's manifest is still v3.
+# It is NOT the current version and must not track VERSION, for the same
+# reason MIN_SERVER_FOR_V3 above does not.
+MIN_SERVER_FOR_V4 = "4.1.0"
+MANIFEST_VERSION_V4 = 4
+
 # Capabilities a caller may gate on, reported by template_load_manifest.
 #
 # A version is a proxy for a capability, and every proxy eventually disagrees
@@ -198,6 +207,10 @@ KNOWN_TOP_LEVEL_V3 = {
     "deletedAcknowledged",
     # v2 keys that migration removes; listed so they are never reported as unknown
     "version",
+    # v4 declarations (spec §5 header, Decision 2): the paths are fixed today;
+    # the keys exist so a v3 server refuses a v4 manifest by shape and a
+    # future release can move them without a new top-level key.
+    "instructions_file", "agent_grants",
 }
 
 
@@ -208,6 +221,18 @@ def acknowledged_paths(manifest: dict) -> set[str]:
 
 def is_v3(manifest: dict) -> bool:
     return manifest.get("manifest_version") == MANIFEST_VERSION_V3
+
+
+def is_v4_manifest(manifest: dict) -> bool:
+    return manifest.get("manifest_version") == MANIFEST_VERSION_V4
+
+
+def manifest_supported(manifest: dict) -> bool:
+    """True for a manifest_version this server can dispatch on -- 3 or 4.
+
+    Acceptance only: sites that mean the v3 SHAPE specifically (the region
+    splice, region_bytes) keep calling is_v3 directly."""
+    return manifest.get("manifest_version") in (MANIFEST_VERSION_V3, MANIFEST_VERSION_V4)
 
 
 def manifest_commit(manifest: dict) -> str:
@@ -335,6 +360,32 @@ def skill_floor_satisfied(spec: str, claimed: str) -> tuple[bool, str, str, bool
             + _SKILL_REMEDY.format(tag=floor)
         ), "", False
     return True, "", "", False
+
+
+def effective_requires_server_spec(manifest: dict) -> str:
+    """The floor actually enforced for `manifest`, fed to requires_server_satisfied.
+
+    A v3 manifest's declared `requires_server` is returned unchanged. A v4
+    manifest is raised to at least MIN_SERVER_FOR_V4 regardless of what its
+    own field says: migration always writes ">=4.1.0" there (spec §7 step
+    1c), so a v4 manifest declaring less is either hand-edited or the
+    product of a migration bug, and a server that merely satisfies the
+    understated value would run the v4 splice/window logic it may predate.
+    Never loosens a v4 manifest's own floor when it already reads at or
+    above MIN_SERVER_FOR_V4 (a consumer may have pinned a stricter one).
+    """
+    declared = (manifest.get("requires_server") or "").strip()
+    if not is_v4_manifest(manifest):
+        return declared
+    floor_spec = f">={MIN_SERVER_FOR_V4}"
+    if not declared.startswith(">="):
+        return floor_spec
+    try:
+        have = parse_version(declared[2:])
+        floor = parse_version(MIN_SERVER_FOR_V4)
+    except ValueError:
+        return floor_spec
+    return declared if have >= floor else floor_spec
 
 
 def requires_server_satisfied(spec: str, server_version: str) -> tuple[bool, str]:
@@ -1035,7 +1086,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
     gate_hits, gate_declared = collect_gate_refs(pp, rules)
 
     return {
-        "manifest_version": 3,
+        "manifest_version": manifest.get("manifest_version", MANIFEST_VERSION_V3),
         "template_commit": core._git_head(core._template_repo_resolved(manifest)) or "unknown",
         "template_version": manifest.get("template_version"),
         "last_synced_commit": manifest_commit(manifest),
@@ -1299,7 +1350,11 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         warnings.append(warn)
 
     out = {k: v for k, v in manifest.items() if k != "version"}
-    out["manifest_version"] = MANIFEST_VERSION_V3
+    # finalize_v3 serves both v3 and v4 manifests (v3.manifest_supported
+    # dispatch, commit 1) -- it must write back the version it was GIVEN,
+    # never force v3, or every v4 finalize would downgrade the consumer's
+    # manifest out from under the migration that raised it.
+    out["manifest_version"] = manifest.get("manifest_version", MANIFEST_VERSION_V3)
     out["template_version"] = version
     out["template_commit"] = commit
     out["requires_server"], raised, floor_warning = raise_floor(manifest.get("requires_server"))
@@ -1316,7 +1371,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     core._write_file_atomic(manifest_path, json.dumps(out, indent=2, ensure_ascii=False) + "\n")
     return {
         "manifest_path": ".claude/template-manifest.json",
-        "manifest_version": 3,
+        "manifest_version": out["manifest_version"],
         "template_commit": commit,
         "template_version": version,
         "files_updated": updated,
