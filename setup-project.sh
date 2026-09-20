@@ -1205,19 +1205,18 @@ done
 
 {
     echo "{"
-    echo "  \"manifest_version\": 3,"
+    echo "  \"manifest_version\": 4,"
     echo "  \"variant\": \"$VARIANT\","
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
     echo "  \"template_version\": $template_version_json,"
     echo "  \"template_commit\": \"$template_commit\","
-    # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
-    # the region splice, so applying CLAUDE.md under them overwrites a populated
-    # PROJECT-CUSTOM region with the template's empty seed. The floor is enforced
-    # at template_load_manifest, so this refuses on every sync after the first --
-    # including a consumer who downgrades, or the same repo opened on a machine
-    # whose server process is older. It cannot protect the FIRST migration (a v2
-    # manifest carries no floor); the sync skill's server_version check does that.
-    echo "  \"requires_server\": \">=0.3.2\","
+    # >=4.1.0 (MIN_SERVER_FOR_V4, server/src/template_sync/v3.py): a v3-era
+    # server has no region-less CLAUDE.md handling, no instructions_file/
+    # agent_grants declarations, and no agent-grants splice -- refusing it
+    # loudly on a v4 manifest is the documented v4.1 decision (spec sect 8,
+    # "Decisions taken" item 2), the mirror of the old >=0.3.2 floor this
+    # replaces (which guarded the v3 region splice, now retired for CLAUDE.md).
+    echo "  \"requires_server\": \">=4.1.0\","
     echo "  \"placeholders\": {"
     last=$((${#MPH_KEYS[@]} - 1))
     for j in $(seq 0 "$last"); do
@@ -1238,7 +1237,15 @@ done
         fi
         echo "    }$comma"
     done
-    echo "  }"
+    echo "  },"
+    # v4 declaration keys (spec sect 5 header; server/src/template_sync/mcp.py
+    # _load_manifest requires both when manifest_version == 4). Literal
+    # constants, not derived from FILE_RELS: they name the FIXED paths the
+    # server reads for the CLAUDE.md `@` import and the agent-grants splice,
+    # not a per-project setting -- INSTRUCTIONS_FILE_DEFAULT/AGENT_GRANTS_FILE
+    # in server/src/template_sync/v3.py are the same two literals.
+    echo "  \"instructions_file\": \".claude/project-instructions.md\","
+    echo "  \"agent_grants\": \".claude/agent-grants.json\""
     echo "}"
 } > "$manifest_path"
 

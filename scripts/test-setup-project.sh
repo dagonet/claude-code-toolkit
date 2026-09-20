@@ -435,7 +435,7 @@ const ps = JSON.parse(fs.readFileSync(psPath, "utf8"));
 
 function checkShape(m, label) {
   const errs = [];
-  if (m.manifest_version !== 3) errs.push(`manifest_version !== 3 (${m.manifest_version})`);
+  if (m.manifest_version !== 4) errs.push(`manifest_version !== 4 (${m.manifest_version})`);
   if (typeof m.variant !== "string" || !m.variant) errs.push("variant missing/not a string");
   if (typeof m.templateRepo !== "string" || !m.templateRepo) errs.push("templateRepo missing/not a string");
   if (typeof m.placeholders !== "object" || m.placeholders === null) errs.push("placeholders missing/not an object");
@@ -445,9 +445,19 @@ function checkShape(m, label) {
   // its own template_commit. An assertion that repeats the emitter's constant
   // tests nothing; this one fails if either writer stops tracking VERSION.
   if (m.template_version !== wantVersion) errs.push(`template_version !== "${wantVersion}" (${m.template_version})`);
-  if (m.requires_server !== ">=0.3.2") errs.push(`requires_server !== ">=0.3.2" (${m.requires_server})`);
+  // >=4.1.0 (MIN_SERVER_FOR_V4): the v4.1 manifest floor, replacing the old
+  // >=0.3.2 v3 region-splice floor now that CLAUDE.md carries no region.
+  if (m.requires_server !== ">=4.1.0") errs.push(`requires_server !== ">=4.1.0" (${m.requires_server})`);
   if (!/^[0-9a-f]{40}$/.test(m.template_commit) && m.template_commit !== "unknown") {
     errs.push(`template_commit not a 40-hex sha or "unknown" (${m.template_commit})`);
+  }
+  // v4 declaration keys (spec sect 5 header) -- literal paths, the same two
+  // the server's INSTRUCTIONS_FILE_DEFAULT/AGENT_GRANTS_FILE constants name.
+  if (m.instructions_file !== ".claude/project-instructions.md") {
+    errs.push(`instructions_file !== ".claude/project-instructions.md" (${m.instructions_file})`);
+  }
+  if (m.agent_grants !== ".claude/agent-grants.json") {
+    errs.push(`agent_grants !== ".claude/agent-grants.json" (${m.agent_grants})`);
   }
   console.log(`ROW1_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
 }
