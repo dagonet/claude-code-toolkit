@@ -568,6 +568,77 @@ def test_census_budget_two_sided_within_budget_resolves_exhausted_skips(tmp_path
     assert line["measured"] == "alias github-tools: census budget exhausted before it was reached"
 
 
+def _mk_registered_family_alias(fake_home: pathlib.Path, alias: str, mds_dir: pathlib.Path) -> None:
+    """Register `alias` in a fake ~/.claude.json pointing its command at a
+    `.venv/Scripts/...` path under `mds_dir` -- `mds_dir` itself is not
+    required to exist unless the test wants "source dir not found" to be
+    FALSE."""
+    fake_home.mkdir(parents=True, exist_ok=True)
+    (fake_home / ".claude.json").write_text(
+        json.dumps({"mcpServers": {alias: {"command": str(mds_dir / ".venv" / "Scripts" / f"mcp-{alias}.exe")}}}),
+        encoding="utf-8")
+
+
+@pytest.mark.parametrize("cause", [
+    "source_dir_missing", "template_repo_unknown", "list_mcp_tools_fails", "budget_exhausted",
+])
+def test_agent_grants_resolvable_degraded_arms_name_alias_and_cause(cause, tmp_path, monkeypatch):
+    """J1 (fix round 2): R-N's requirement is SKIP naming the alias AND the
+    cause -- a degraded arm that SKIPs with a generic or empty `measured` is
+    a silent hole the consumer cannot act on. One parametrized test over
+    every degrade cause, unit-level (`_check_agent_grants_resolvable`
+    called directly -- "templateRepo unknown" cannot be reached through a
+    full `verify.run()`, since a manifest with no templateRepo fails much
+    earlier in the cascade for unrelated reasons)."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    alias = "git-tools"
+    pp = tmp_path / "proj"
+    (pp / ".claude").mkdir(parents=True)
+    (pp / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": [f"mcp__{alias}__some_tool"]}}),
+        encoding="utf-8", newline="")
+    manifest = {"templateRepo": str(tmp_path / "toolkit")}
+
+    if cause == "source_dir_missing":
+        _mk_registered_family_alias(tmp_path / "home1", alias, tmp_path / "nonexistent-mds")
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home1")
+        expected_cause = "source dir not found"
+
+    elif cause == "template_repo_unknown":
+        manifest["templateRepo"] = ""
+        mds_dir = tmp_path / "mds-tru"
+        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
+        _mk_registered_family_alias(tmp_path / "home2", alias, mds_dir)
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home2")
+        expected_cause = "templateRepo unknown"
+
+    elif cause == "list_mcp_tools_fails":
+        mds_dir = tmp_path / "mds-fail"
+        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
+        _mk_registered_family_alias(tmp_path / "home3", alias, mds_dir)
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home3")
+        lib_dir = pathlib.Path(manifest["templateRepo"]) / "scripts" / "lib"
+        lib_dir.mkdir(parents=True)
+        (lib_dir / "list-mcp-tools.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8", newline="")
+        expected_cause = "list-mcp-tools.py exit 1"
+
+    elif cause == "budget_exhausted":
+        monkeypatch.setattr(verify, "AGENT_GRANTS_CENSUS_BUDGET_S", 0.0)
+        mds_dir = tmp_path / "mds-budget"
+        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
+        _mk_registered_family_alias(tmp_path / "home4", alias, mds_dir)
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home4")
+        expected_cause = "census budget exhausted before it was reached"
+
+    else:
+        pytest.fail(f"unhandled cause {cause!r}")
+
+    line = verify._check_agent_grants_resolvable(pp, manifest)
+    assert line["status"] == "SKIP", line
+    assert alias in line["measured"], line
+    assert expected_cause in line["measured"], line
+
+
 def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypatch):
     """R-P (fix round 1): compute_status_v3 returns {"error": ...} on a
     malformed .claude/agent-grants.json (R-C) rather than raising --

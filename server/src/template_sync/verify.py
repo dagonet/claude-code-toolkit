@@ -478,8 +478,18 @@ def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
                     elif not template_repo:
                         census_cache[alias] = (None, f"alias {alias}: no census route (templateRepo unknown)")
                     else:
-                        census_cache[alias] = _census_mcp_dev_servers_alias(
+                        names_c, reason_c = _census_mcp_dev_servers_alias(
                             template_repo, source_dir, registration_path, alias)
+                        # J1 (fix round 2): prefix the alias HERE, at the one
+                        # place `_census_mcp_dev_servers_alias`'s own reason
+                        # (list-mcp-tools.py exit code, unparseable output,
+                        # etc.) enters the cache -- that function does not
+                        # name the alias itself, and a SKIP with a generic or
+                        # alias-less reason is a silent hole the consumer
+                        # cannot act on. Every other branch above already
+                        # constructs its reason pre-prefixed.
+                        census_cache[alias] = (
+                            names_c, f"alias {alias}: {reason_c}" if reason_c else None)
             names, skip_reason = census_cache[alias]
             for tok, name in toks_for_alias:
                 if names is not None:
