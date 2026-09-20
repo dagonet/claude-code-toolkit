@@ -4227,6 +4227,189 @@ C50D_FIXTURE
 fi
 
 # ---------------------------------------------------------------------------
+# 51. TEMPLATE CLAUDE.md ENDS WITH THE @ IMPORT; THE TAIL BLOCK IS
+#     BYTE-IDENTICAL ACROSS VARIANTS (v4.1, spec sect 2, Task 3).
+#
+#     The whole point of the tail block is that the harness's import
+#     mechanism finds it -- an import line that is not the literal last line,
+#     or a tail that drifted between variants, defeats the "always loaded"
+#     property section 2 depends on. `tail -n 4 | sha256sum` is the same
+#     instrument the plan's report uses (constraint 10: `wc -c`/`sha256sum`,
+#     never a locale-dependent length()).
+# ---------------------------------------------------------------------------
+echo
+note "Check 51: every variant CLAUDE.md ends with the @ import; the last four lines are byte-identical across all six"
+c51_bad=""
+c51_hashes=""
+for v in $VARIANTS; do
+  f="templates/$v/CLAUDE.md"
+  if [ ! -f "$f" ]; then
+    c51_bad="$c51_bad $f(missing)"
+    continue
+  fi
+  c51_last=$(tail -n 1 "$f")
+  if [ "$c51_last" != "@.claude/project-instructions.md" ]; then
+    c51_bad="$c51_bad $f(last-line=[$c51_last])"
+  fi
+  c51_h=$(tail -n 4 "$f" | sha256sum | cut -d' ' -f1)
+  c51_hashes="$c51_hashes $c51_h"
+done
+c51_uniq=$(printf '%s\n' $c51_hashes | sort -u | wc -l | tr -d ' ')
+if [ -z "$c51_bad" ] && [ "$c51_uniq" = "1" ]; then
+  ok "check 51: all six variant CLAUDE.md files end with @.claude/project-instructions.md and share one tail-4-lines hash"
+else
+  ko "check 51: last-line problems:[$c51_bad] tail-hash-uniques=$c51_uniq (want 1)"
+fi
+
+# ---------------------------------------------------------------------------
+# 52. NO PROJECT-CUSTOM MARKER SURVIVES IN ANY VARIANT CLAUDE.md (v4.1,
+#     rulings R-F/R-H, Task 3).
+#
+#     Scoped deliberately to `templates/*/CLAUDE.md`, NOT `templates/**` --
+#     the 47 AGENT_TEAM.md/agent regions are UNCHANGED this release (R-H) and
+#     an unscoped grep here would read as an instruction to strip them. This
+#     is the coarse, whole-file-text sibling of check 31 arm A's
+#     region.sh-classifier version; the two are independent instruments over
+#     the same fact.
+# ---------------------------------------------------------------------------
+echo
+note "Check 52: no PROJECT-CUSTOM marker in any variant CLAUDE.md (scope: templates/*/CLAUDE.md only, R-H)"
+c52_hits=$(grep -l PROJECT-CUSTOM templates/*/CLAUDE.md 2>/dev/null || true)
+if [ -z "$c52_hits" ]; then
+  ok "check 52: grep -l PROJECT-CUSTOM templates/*/CLAUDE.md is empty"
+else
+  ko "check 52: PROJECT-CUSTOM marker survives in:$(printf ' %s' $c52_hits)"
+fi
+
+# ---------------------------------------------------------------------------
+# 53. EVERY SHIPPED AGENT HAS EXACTLY ONE ONE-LINE `tools:` (v4.1, spec sect
+#     4/5, ruling R-E, plan constraint 12).
+#
+#     An agent with no `tools:` line inherits every tool including MCP and
+#     the merge/PR tools the template withholds from coders -- the splice's
+#     grant-refusal rule (spec sect 5) is defence-in-depth behind THIS check.
+#     No "OR none" arm: R-E's whole point is that the missing-line shape is a
+#     FAIL, not a tolerated alternative that would wave a future agent
+#     through. Measured today: 41/41 shipped agents already have exactly one
+#     one-line `tools:` (D1's original "five coders ship none" premise was an
+#     instrument error -- a 20-line sed window that missed line 26/etc.,
+#     corrected before this plan). Because every shipped agent already
+#     passes, the acceptance arm (appendix C) is exercised on a SCRATCH COPY,
+#     never on a shipped file (plan constraint 12): delete the line, add a
+#     second, reshape to a YAML list, or add a wildcard, and each must flip
+#     the classifier to non-OK, naming the file.
+# ---------------------------------------------------------------------------
+echo
+note "Check 53: every shipped agent has exactly one one-line tools: line (no list form, no wildcard)"
+
+# c53_classify <path> -- prints OK, MISSING, MULTIPLE, WILDCARD or LISTFORM.
+# A free function (not inlined) so the acceptance-arm flips below call the
+# EXACT SAME logic the census uses -- two copies of this predicate is how a
+# check and its own acceptance test would silently drift apart.
+c53_classify() {
+  f="$1"
+  n=$(grep -c '^tools:' "$f")
+  if [ "$n" -eq 0 ]; then printf 'MISSING'; return; fi
+  if [ "$n" -gt 1 ]; then printf 'MULTIPLE'; return; fi
+  lineno=$(grep -n '^tools:' "$f" | head -1 | cut -d: -f1)
+  line=$(sed -n "${lineno}p" "$f")
+  case "$line" in
+    *'*'*) printf 'WILDCARD'; return ;;
+  esac
+  nextline=$(sed -n "$((lineno + 1))p" "$f")
+  if printf '%s\n' "$nextline" | grep -qE '^[[:space:]]*-([[:space:]]|$)'; then
+    printf 'LISTFORM'; return
+  fi
+  printf 'OK'
+}
+
+c53_agents=0
+c53_one_line=0
+c53_bad=""
+for f in templates/*/.claude/agents/*.md user-level-reference/agents/*.md; do
+  [ -f "$f" ] || continue
+  c53_agents=$((c53_agents + 1))
+  c53_r=$(c53_classify "$f")
+  if [ "$c53_r" = "OK" ]; then
+    c53_one_line=$((c53_one_line + 1))
+  else
+    c53_bad="$c53_bad $f($c53_r)"
+  fi
+done
+if [ -z "$c53_bad" ] && [ "$c53_agents" -gt 0 ]; then
+  ok "check 53: agents=$c53_agents one_line=$c53_one_line -- every shipped agent has exactly one one-line tools: line"
+else
+  ko "check 53: agents=$c53_agents one_line=$c53_one_line -- bad:$c53_bad"
+fi
+
+# Acceptance arm (appendix C): four flips on a SCRATCH COPY of one shipped
+# agent, never on the shipped file itself (constraint 12).
+c53_scratch=$(mktemp -d)
+cp templates/general/.claude/agents/coder.md "$c53_scratch/coder.md"
+
+sed '/^tools:/d' "$c53_scratch/coder.md" > "$c53_scratch/no-tools.md"
+c53_f1=$(c53_classify "$c53_scratch/no-tools.md")
+if [ "$c53_f1" != "OK" ]; then
+  ok "check 53 (flip 1 -- delete the tools: line): classifier flips to $c53_f1, naming the file"
+else
+  ko "check 53 (flip 1): deleting the tools: line did NOT flip the classifier -- the acceptance rule fails"
+fi
+
+{ cat "$c53_scratch/coder.md"; printf 'tools: Read\n'; } > "$c53_scratch/dup-tools.md"
+c53_f2=$(c53_classify "$c53_scratch/dup-tools.md")
+if [ "$c53_f2" != "OK" ]; then
+  ok "check 53 (flip 2 -- add a second tools: line): classifier flips to $c53_f2, naming the file"
+else
+  ko "check 53 (flip 2): a second tools: line did NOT flip the classifier -- the acceptance rule fails"
+fi
+
+awk '/^tools:/ && !done { print "tools:"; print "  - Read"; done = 1; next } { print }' \
+  "$c53_scratch/coder.md" > "$c53_scratch/list-tools.md"
+c53_f3=$(c53_classify "$c53_scratch/list-tools.md")
+if [ "$c53_f3" != "OK" ]; then
+  ok "check 53 (flip 3 -- YAML list form): classifier flips to $c53_f3, naming the file"
+else
+  ko "check 53 (flip 3): a list-form tools: did NOT flip the classifier -- the acceptance rule fails"
+fi
+
+sed 's/^tools:.*/tools: */' "$c53_scratch/coder.md" > "$c53_scratch/wild-tools.md"
+c53_f4=$(c53_classify "$c53_scratch/wild-tools.md")
+if [ "$c53_f4" != "OK" ]; then
+  ok "check 53 (flip 4 -- wildcard): classifier flips to $c53_f4, naming the file"
+else
+  ko "check 53 (flip 4): a wildcard tools: did NOT flip the classifier -- the acceptance rule fails"
+fi
+rm -rf "$c53_scratch"
+
+# ---------------------------------------------------------------------------
+# 54. THE TWO SEEDS ARE BYTE-IDENTICAL ACROSS VARIANTS; agent-grants.json IS
+#     EXACTLY THE SPEC'D BYTES (v4.1, spec sect 3/4, Task 3).
+# ---------------------------------------------------------------------------
+echo
+note "Check 54: the two seed files are byte-identical across all six variants; agent-grants.json is exactly {\"schema\":1,\"grants\":{}} + LF"
+c54_bad=""
+c54_pi_hashes=""
+c54_ag_hashes=""
+for v in $VARIANTS; do
+  c54_pi="templates/$v/.claude/project-instructions.md"
+  c54_ag="templates/$v/.claude/agent-grants.json"
+  if [ ! -f "$c54_pi" ]; then c54_bad="$c54_bad $c54_pi(missing)"; continue; fi
+  if [ ! -f "$c54_ag" ]; then c54_bad="$c54_bad $c54_ag(missing)"; continue; fi
+  c54_pi_hashes="$c54_pi_hashes $(sha256sum "$c54_pi" | cut -d' ' -f1)"
+  c54_ag_hashes="$c54_ag_hashes $(sha256sum "$c54_ag" | cut -d' ' -f1)"
+done
+c54_pi_uniq=$(printf '%s\n' $c54_pi_hashes | sort -u | wc -l | tr -d ' ')
+c54_ag_uniq=$(printf '%s\n' $c54_ag_hashes | sort -u | wc -l | tr -d ' ')
+c54_expected_ag_hash=$(printf '{"schema":1,"grants":{}}\n' | sha256sum | cut -d' ' -f1)
+c54_actual_ag_hash=$(printf '%s\n' $c54_ag_hashes | head -1)
+if [ -z "$c54_bad" ] && [ "$c54_pi_uniq" = "1" ] && [ "$c54_ag_uniq" = "1" ] \
+   && [ "$c54_actual_ag_hash" = "$c54_expected_ag_hash" ]; then
+  ok "check 54: both seeds byte-identical across all six variants; agent-grants.json == {\"schema\":1,\"grants\":{}} + LF"
+else
+  ko "check 54: bad:[$c54_bad] project-instructions.md uniques=$c54_pi_uniq (want 1) agent-grants.json uniques=$c54_ag_uniq (want 1) agent-grants.json matches spec bytes: $([ "$c54_actual_ag_hash" = "$c54_expected_ag_hash" ] && echo yes || echo no)"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
