@@ -435,7 +435,7 @@ const ps = JSON.parse(fs.readFileSync(psPath, "utf8"));
 
 function checkShape(m, label) {
   const errs = [];
-  if (m.manifest_version !== 3) errs.push(`manifest_version !== 3 (${m.manifest_version})`);
+  if (m.manifest_version !== 4) errs.push(`manifest_version !== 4 (${m.manifest_version})`);
   if (typeof m.variant !== "string" || !m.variant) errs.push("variant missing/not a string");
   if (typeof m.templateRepo !== "string" || !m.templateRepo) errs.push("templateRepo missing/not a string");
   if (typeof m.placeholders !== "object" || m.placeholders === null) errs.push("placeholders missing/not an object");
@@ -445,9 +445,19 @@ function checkShape(m, label) {
   // its own template_commit. An assertion that repeats the emitter's constant
   // tests nothing; this one fails if either writer stops tracking VERSION.
   if (m.template_version !== wantVersion) errs.push(`template_version !== "${wantVersion}" (${m.template_version})`);
-  if (m.requires_server !== ">=0.3.2") errs.push(`requires_server !== ">=0.3.2" (${m.requires_server})`);
+  // >=4.1.0 (MIN_SERVER_FOR_V4): the v4.1 manifest floor, replacing the old
+  // >=0.3.2 v3 region-splice floor now that CLAUDE.md carries no region.
+  if (m.requires_server !== ">=4.1.0") errs.push(`requires_server !== ">=4.1.0" (${m.requires_server})`);
   if (!/^[0-9a-f]{40}$/.test(m.template_commit) && m.template_commit !== "unknown") {
     errs.push(`template_commit not a 40-hex sha or "unknown" (${m.template_commit})`);
+  }
+  // v4 declaration keys (spec sect 5 header) -- literal paths, the same two
+  // the server's INSTRUCTIONS_FILE_DEFAULT/AGENT_GRANTS_FILE constants name.
+  if (m.instructions_file !== ".claude/project-instructions.md") {
+    errs.push(`instructions_file !== ".claude/project-instructions.md" (${m.instructions_file})`);
+  }
+  if (m.agent_grants !== ".claude/agent-grants.json") {
+    errs.push(`agent_grants !== ".claude/agent-grants.json" (${m.agent_grants})`);
   }
   console.log(`ROW1_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
 }
@@ -569,19 +579,23 @@ NODE_EOF
   row6_word=$(row_result ROW6 | sed -E 's/^ROW6: (PASS|FAIL).*/\1/')
   expect "manifest hash matches sha256 of the file as written (row 6)" "PASS" "$row6_word"
 
-  # --- v3.1 Phase 3: a rerun must not shrink the manifest --------------------
+  # --- v4.1 Task 3: CLAUDE.md is template-class (no region); the two seeds are
+  # once-class ------------------------------------------------------------
   #
-  # Under manifest v3 a file absent from `files` is project-owned BY
+  # Under manifest v3 (and v4) a file absent from `files` is project-owned BY
   # DEFINITION, so rebuilding the manifest from only this run's writes would
   # silently reclassify every file the run did not touch as project-owned,
-  # and sync stops updating them for good. Bootstrap once, strip the
-  # PROJECT-CUSTOM markers from the written CLAUDE.md (simulating an older
-  # project that predates them), then rerun with
-  # --wrap-existing-claude-md/-WrapExistingClaudeMd: that flag rewrites
-  # CLAUDE.md ONLY -- every other file already exists and is skipped -- so it
-  # is exactly the "writes a subset" shape the bug report describes, AND it
-  # changes CLAUDE.md's content (the old body moves inside a new
-  # PROJECT-CUSTOM region), giving row 3 a real hash change to check.
+  # and sync stops updating them for good -- that hazard is exercised here
+  # against the seeds instead of the (now retired) region wrap: CLAUDE.md no
+  # longer carries a PROJECT-CUSTOM region (spec sect 1-2, rulings R-F/R-H)
+  # and must be byte-identical to the variant template after placeholder
+  # substitution (templates/general/CLAUDE.md has none today, so this reduces
+  # to a direct byte compare), ending in the `@` import line; the two
+  # once-class seeds (`.claude/project-instructions.md`,
+  # `.claude/agent-grants.json`, spec sect 3-4) must exist with their exact
+  # seeded bytes. A second, plain rerun over the SAME target must change
+  # NONE of the three: CLAUDE.md is template-class but already matches, and
+  # the seeds are once-class and never regenerated.
   RERUN_SH="$TMPROOT/rerun-sh"
   RERUN_PS="$TMPROOT/rerun-ps"
   mkdir -p "$RERUN_SH" "$RERUN_PS"
@@ -593,16 +607,31 @@ NODE_EOF
   cp "$RERUN_SH/.claude/template-manifest.json" "$TMPROOT/rerun-sh-manifest-1.json"
   cp "$RERUN_PS/.claude/template-manifest.json" "$TMPROOT/rerun-ps-manifest-1.json"
 
-  # Strip the markers the same way in both trees so the wrap fires on rerun.
-  sed -i '/<!-- Project-specific rules and plugin routing blocks/,$d' "$RERUN_SH/CLAUDE.md"
-  sed -i '/<!-- Project-specific rules and plugin routing blocks/,$d' "$RERUN_PS/CLAUDE.md"
+  # After the first run: CLAUDE.md matches the shipped template byte-for-byte
+  # (no placeholders live in CLAUDE.md today, so a direct cmp is the honest
+  # form of "after placeholders"), its last line is the `@` import, and both
+  # seeds exist with exactly the seeded bytes.
+  expect "sh: CLAUDE.md is byte-identical to templates/general/CLAUDE.md" 0 \
+    "$(cmp -s "$RERUN_SH/CLAUDE.md" "$ROOT/templates/general/CLAUDE.md"; echo $?)"
+  expect "ps1: CLAUDE.md is byte-identical to templates/general/CLAUDE.md" 0 \
+    "$(cmp -s "$RERUN_PS/CLAUDE.md" "$ROOT/templates/general/CLAUDE.md"; echo $?)"
+  expect "sh: CLAUDE.md's last line is the @ import" "@.claude/project-instructions.md" "$(tail -n 1 "$RERUN_SH/CLAUDE.md")"
+  expect "ps1: CLAUDE.md's last line is the @ import" "@.claude/project-instructions.md" "$(tail -n 1 "$RERUN_PS/CLAUDE.md")"
+  expect "sh: .claude/project-instructions.md seeded" 0 \
+    "$(cmp -s "$RERUN_SH/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
+  expect "ps1: .claude/project-instructions.md seeded" 0 \
+    "$(cmp -s "$RERUN_PS/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
+  expect "sh: .claude/agent-grants.json seeded (exact bytes)" 0 \
+    "$(cmp -s "$RERUN_SH/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
+  expect "ps1: .claude/agent-grants.json seeded (exact bytes)" 0 \
+    "$(cmp -s "$RERUN_PS/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
 
+  # A plain second run, no flags: nothing above may change.
   bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
-    --target-path "$RERUN_SH" --default-branch develop --wrap-existing-claude-md \
-    > "$TMPROOT/rerun-sh-2.out" 2>&1
+    --target-path "$RERUN_SH" --default-branch develop > "$TMPROOT/rerun-sh-2.out" 2>&1
   "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
     -Variant general -ProjectName SetupFixture -TargetPath "$RERUN_PS" \
-    -DefaultBranch develop -WrapExistingClaudeMd > "$TMPROOT/rerun-ps-2.out" 2>&1
+    -DefaultBranch develop > "$TMPROOT/rerun-ps-2.out" 2>&1
   cp "$RERUN_SH/.claude/template-manifest.json" "$TMPROOT/rerun-sh-manifest-2.json"
   cp "$RERUN_PS/.claude/template-manifest.json" "$TMPROOT/rerun-ps-manifest-2.json"
 
@@ -615,30 +644,25 @@ const m2 = JSON.parse(fs.readFileSync(m2Path, "utf8"));
 const k1 = Object.keys(m1.files);
 const k2 = new Set(Object.keys(m2.files));
 
-// Row 1: the discriminating row -- fails today. The second manifest's keys
-// must be a SUPERSET of the first's; nothing this run left untouched may
-// disappear from `files`.
+// Row 1: the second manifest's keys must be a SUPERSET of the first's --
+// nothing this run left untouched may disappear from `files`.
 const lost = k1.filter((k) => !k2.has(k));
 console.log(`ROW1: ${lost.length ? "FAIL lost keys: " + lost.join(", ") : "PASS"}`);
 
-// Row 2: an untouched entry -- anything but CLAUDE.md, which this run DID
-// rewrite -- is byte-identical (same ownership, same hash) across the runs.
-const untouchedKey = k1.find((k) => k !== "CLAUDE.md");
-if (!untouchedKey) {
-  console.log("ROW2: FAIL no untouched key to compare");
-} else {
-  const same = JSON.stringify(m1.files[untouchedKey]) === JSON.stringify(m2.files[untouchedKey]);
-  console.log(`ROW2: ${same ? "PASS" : "FAIL " + untouchedKey + " changed"}`);
-}
+// Row 2: EVERY entry is byte-identical (same ownership, same hash where a
+// hash applies) across the two runs -- a plain rerun changes nothing.
+const changed = k1.filter((k) => JSON.stringify(m1.files[k]) !== JSON.stringify(m2.files[k]));
+console.log(`ROW2: ${changed.length ? "FAIL changed: " + changed.join(", ") : "PASS"}`);
 
-// Row 3: the touched entry (CLAUDE.md) has a refreshed hash -- its content
-// genuinely changed (old body moved inside a new PROJECT-CUSTOM region).
+// Row 3: CLAUDE.md specifically did not change hash (it is template-class,
+// with no region to touch -- a hash change here would mean the "plain
+// rerun" path silently rewrote a file that should have been skipped).
 const c1 = m1.files["CLAUDE.md"];
 const c2 = m2.files["CLAUDE.md"];
 if (!c1 || !c2) {
   console.log("ROW3: FAIL CLAUDE.md entry missing from one of the manifests");
-} else if (c1.hash === c2.hash) {
-  console.log("ROW3: FAIL hash did not change across the wrap rerun");
+} else if (c1.hash !== c2.hash) {
+  console.log("ROW3: FAIL hash changed across the plain rerun");
 } else {
   console.log("ROW3: PASS");
 }
@@ -649,11 +673,22 @@ NODE_EOF
   rerun_row() { echo "$1" | grep "^$2:" | head -1; }
 
   expect "sh rerun: second manifest is a superset of the first (row 1)" "ROW1: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW1)"
-  expect "sh rerun: an untouched entry is byte-identical across runs (row 2)" "ROW2: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW2)"
-  expect "sh rerun: touched entry's hash was refreshed (row 3)" "ROW3: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW3)"
+  expect "sh rerun: every entry is unchanged (row 2)" "ROW2: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW2)"
+  expect "sh rerun: CLAUDE.md's hash did not change (row 3)" "ROW3: PASS" "$(rerun_row "$RERUN_SH_RESULTS" ROW3)"
   expect "ps1 rerun: second manifest is a superset of the first (row 1)" "ROW1: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW1)"
-  expect "ps1 rerun: an untouched entry is byte-identical across runs (row 2)" "ROW2: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW2)"
-  expect "ps1 rerun: touched entry's hash was refreshed (row 3)" "ROW3: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW3)"
+  expect "ps1 rerun: every entry is unchanged (row 2)" "ROW2: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW2)"
+  expect "ps1 rerun: CLAUDE.md's hash did not change (row 3)" "ROW3: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW3)"
+
+  # The two seeds, specifically, are untouched bytes on disk too (once-class:
+  # the manifest rows above prove the metadata; this proves the file itself).
+  expect "sh: .claude/project-instructions.md untouched by the rerun" 0 \
+    "$(cmp -s "$RERUN_SH/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
+  expect "ps1: .claude/project-instructions.md untouched by the rerun" 0 \
+    "$(cmp -s "$RERUN_PS/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
+  expect "sh: .claude/agent-grants.json untouched by the rerun" 0 \
+    "$(cmp -s "$RERUN_SH/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
+  expect "ps1: .claude/agent-grants.json untouched by the rerun" 0 \
+    "$(cmp -s "$RERUN_PS/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
 
   # --- v3.1 Phase 3: .claude/rules/project.md is seeded once, then left alone ---
   #
@@ -681,8 +716,11 @@ NODE_EOF
 
   # A user edit is the real test of "seed once, then leave alone" -- an
   # unchanged file would pass a naive comparison even if the script silently
-  # regenerated it from the template. Edit it, rerun (the wrap flag proves the
-  # rerun DOES write other files), and the edit must survive verbatim.
+  # regenerated it from the template. Edit it, rerun with
+  # --wrap-existing-claude-md/-WrapExistingClaudeMd (CLAUDE.md exists, so this
+  # run DOES write it -- with identical bytes, since it is template-class and
+  # already current -- while the once-class seeds and project.md sit
+  # untouched), and the edit must survive verbatim.
   printf '\nMY CUSTOM RULE\n' >> "$RULES_SH"
   printf '\nMY CUSTOM RULE\n' >> "$RULES_PS"
   RULES_SH_BEFORE="$(cat "$RULES_SH")"

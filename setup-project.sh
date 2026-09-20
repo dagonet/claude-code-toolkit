@@ -15,7 +15,10 @@ set -euo pipefail
 #   --worktree-base --log-path --default-branch
 #
 #   --wrap-existing-claude-md   keep an existing CLAUDE.md by moving its full
-#                               content into the template's PROJECT-CUSTOM region
+#                               content into .claude/project-instructions.md
+#                               (v4.1: CLAUDE.md carries no PROJECT-CUSTOM
+#                               region any more -- see docs/plans/2026-09-18-
+#                               v4.1-design.md sect 1-2)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CALLER_CWD="$(pwd)"
@@ -138,7 +141,7 @@ if [[ -n "$PACKAGE_MANAGER" ]] && [[ "$PACKAGE_MANAGER" != "pip" && "$PACKAGE_MA
 fi
 
 if [[ "$FORCE" == true && "$WRAP_EXISTING_CLAUDE_MD" == true ]]; then
-    echo "Error: --force and --wrap-existing-claude-md conflict — --force overwrites an existing CLAUDE.md, --wrap-existing-claude-md preserves it inside the PROJECT-CUSTOM region. Pass one or the other." >&2
+    echo "Error: --force and --wrap-existing-claude-md conflict — --force overwrites an existing CLAUDE.md, --wrap-existing-claude-md preserves its content by moving it into .claude/project-instructions.md. Pass one or the other." >&2
     exit 1
 fi
 
@@ -497,16 +500,32 @@ fi
 # by naming a glob on the PROJECT_CONTEXT.md line themselves.
 add_derived '{{GATE_CHECKED_BRANCHES}}' "none"
 
-# True when $1 ends with a trailing newline. Every `$(...)` capture of that
-# file's content (however many bash function calls it passes through) strips
-# ALL trailing newlines, which PowerShell's `Get-Content -Raw` does not --
-# that divergence used to be invisible (nothing compared the two writers'
-# byte output); the ownership-cutover manifest's per-file hash now makes it a
-# cross-writer hash mismatch on every template file ending in a newline.
-# Cheaper to restore the one newline at the write site than to fight command
-# substitution's stripping at every intermediate step.
-file_ends_with_newline() {
-    [[ "$(tail -c 1 "$1")" == "" ]]
+# Count of trailing LF bytes at the end of $1 (0 if none), capped at 4 -- no
+# shipped source needs more. Every `$(...)` capture of a file's content
+# (however many bash function calls it passes through) strips ALL trailing
+# newlines, which PowerShell's `Get-Content -Raw` does not -- that divergence
+# used to be invisible (nothing compared the two writers' byte output); the
+# ownership-cutover manifest's per-file hash now makes it a cross-writer hash
+# mismatch on every template file ending in a newline. An earlier version of
+# this restored only a single newline (cheaper than fighting command
+# substitution's stripping at every intermediate step) because no shipped
+# file ended in more than one; `.claude/project-instructions.md` (v4.1, spec
+# sect 3: "+ one blank line") is the first that ends in two, and restoring
+# only one would silently drop that seed's trailing blank line on every
+# bootstrap. The count itself is safe to capture via `$(...)` (it is plain
+# digits, nothing for command substitution to strip); the newlines it
+# describes are appended by the CALLER with a bash loop, never round-tripped
+# through another `$(...)`, which would strip them right back off.
+trailing_newline_count() {
+    local f="$1" n=0 i
+    for ((i = 1; i <= 4; i++)); do
+        if [[ "$(tail -c "$i" "$f" | tr -d '\n')" == "" ]]; then
+            n=$i
+        else
+            break
+        fi
+    done
+    printf '%s' "$n"
 }
 
 # --- SHA-256 helper ---
@@ -529,29 +548,46 @@ apply_replacements() {
     printf '%s' "$text"
 }
 
-# --- Wrap an existing CLAUDE.md into the template's PROJECT-CUSTOM region ---
+# --- Move an existing CLAUDE.md's content into the instructions seed ---
 #
-# Without --wrap-existing-claude-md an existing CLAUDE.md is skipped outright, so
-# a consumer whose file is all hard rules gets none of the template. Wrapping
-# keeps every one of their rules — inside the region sync-template preserves.
-wrap_into_custom_region() {
-    # $1 = rendered template text, $2 = existing CLAUDE.md text
-    printf '%s' "$1" | CUSTOM_BODY="$2" awk '
-        index($0, "<!-- PROJECT-CUSTOM:BEGIN") { print; print ""; print ENVIRON["CUSTOM_BODY"]; print ""; inside = 1; next }
-        index($0, "<!-- PROJECT-CUSTOM:END")   { inside = 0 }
-        inside { next }
-        { print }
-    '
+# v4.1: CLAUDE.md is a template-class file with NO PROJECT-CUSTOM region to
+# splice into any more (docs/plans/2026-09-18-v4.1-design.md sect 1-2) --
+# `claude_md_identical` requires the consumer's CLAUDE.md to be byte-identical
+# to the rendered template, so nothing can be wrapped inside it. Without
+# --wrap-existing-claude-md an existing CLAUDE.md is skipped outright, so a
+# consumer whose file is all hard rules gets none of the template. Wrapping
+# now keeps every one of their rules by moving the file's full prior content
+# into `.claude/project-instructions.md` (the once-class file CLAUDE.md's own
+# `@` line imports) instead of splicing it back into CLAUDE.md itself.
+append_existing_claude_md() {
+    # $1 = rendered instructions-seed text, $2 = existing CLAUDE.md text
+    printf '%s\n<!-- Moved here from the previous CLAUDE.md by --wrap-existing-claude-md -->\n\n%s\n' "$1" "$2"
 }
 
-# True when this file is an existing CLAUDE.md that --wrap-existing-claude-md applies to.
+# True when this file is an existing CLAUDE.md that --wrap-existing-claude-md
+# applies to -- it is overwritten with the plain template instead of being
+# skipped, on the strength of should_migrate_claude_md_into_instructions below
+# actually moving its content somewhere first.
 should_wrap_claude_md() {
     [[ "$1" == "CLAUDE.md" ]] || return 1
     [[ "$WRAP_EXISTING_CLAUDE_MD" == true ]] || return 1
     [[ "$FORCE" != true ]] || return 1
     [[ -f "$TARGET_DIR/CLAUDE.md" ]] || return 1
-    # Nesting two PROJECT-CUSTOM regions would corrupt sync-template's region logic.
-    ! grep -qF 'PROJECT-CUSTOM:BEGIN' "$TARGET_DIR/CLAUDE.md"
+}
+
+# True when this file is the instructions seed AND there is a pre-existing
+# CLAUDE.md whose content --wrap-existing-claude-md is moving into it. Once
+# the seed exists on disk this is false on every later run -- the seed is
+# once-class (never overwritten), so a second wrap must not re-merge into it;
+# the file's OWN generic "exists, skip unless --force" handling already
+# protects it, this guard only decides whether THIS run's write is a plain
+# seed or a seed-plus-migrated-content write.
+should_migrate_claude_md_into_instructions() {
+    [[ "$1" == ".claude/project-instructions.md" ]] || return 1
+    [[ "$WRAP_EXISTING_CLAUDE_MD" == true ]] || return 1
+    [[ "$FORCE" != true ]] || return 1
+    [[ -f "$TARGET_DIR/CLAUDE.md" ]] || return 1
+    [[ ! -f "$TARGET_DIR/.claude/project-instructions.md" ]] || return 1
 }
 
 # --- .gitignore merge block ---
@@ -580,11 +616,7 @@ gitignore_append_block() {
 # One-line hint appended to an existing-CLAUDE.md skip, naming the way out.
 claude_md_skip_hint() {
     [[ "$1" == "CLAUDE.md" ]] || return 0
-    if [[ "$WRAP_EXISTING_CLAUDE_MD" == true ]]; then
-        printf '%s' " — already carries a PROJECT-CUSTOM region, nothing to wrap"
-    else
-        printf '%s' " — pass --wrap-existing-claude-md to keep it inside the template's PROJECT-CUSTOM region"
-    fi
+    printf '%s' " — pass --wrap-existing-claude-md to move its content into .claude/project-instructions.md"
 }
 
 # Exact text that would be written for FILE_SOURCES[$1] — used by both modes.
@@ -601,8 +633,8 @@ render_file() {
         rendered="$(set_protected_branches "$rendered")"
         rendered="$(set_derived_defaults "$rendered")"
     fi
-    if should_wrap_claude_md "${FILE_RELS[$idx]}"; then
-        rendered="$(wrap_into_custom_region "$rendered" "$(<"$TARGET_DIR/CLAUDE.md")")"
+    if should_migrate_claude_md_into_instructions "${FILE_RELS[$idx]}"; then
+        rendered="$(append_existing_claude_md "$rendered" "$(<"$TARGET_DIR/CLAUDE.md")")"
     fi
     printf '%s' "$rendered"
 }
@@ -911,8 +943,10 @@ if [[ "$DRY_RUN" == true ]]; then
         target_file="$TARGET_DIR/${FILE_RELS[$i]}"
         if [[ "${FILE_IS_GITIGNORE[$i]}" == true ]] && [[ -f "$target_file" ]]; then
             action="APPEND"
+        elif should_migrate_claude_md_into_instructions "${FILE_RELS[$i]}"; then
+            action="CREATE (existing CLAUDE.md content moved in)"
         elif should_wrap_claude_md "${FILE_RELS[$i]}"; then
-            action="WRAP (existing content moves into the PROJECT-CUSTOM region)"
+            action="OVERWRITE (existing content moves to .claude/project-instructions.md)"
         elif [[ -f "$target_file" ]] && [[ "$FORCE" != true ]]; then
             action="SKIP (exists)$(claude_md_skip_hint "${FILE_RELS[$i]}")"
         elif [[ -f "$target_file" ]] && [[ "$FORCE" == true ]]; then
@@ -1009,15 +1043,41 @@ for i in "${!FILE_SOURCES[@]}"; do
         continue
     fi
 
-    # Wrap an existing CLAUDE.md instead of skipping it
+    # Overwrite an existing CLAUDE.md instead of skipping it -- its content is
+    # moved into the instructions seed by the branch below, not kept here.
     if should_wrap_claude_md "$rel"; then
         wrapped="$(render_file "$i")"
+        # Every `$(...)` above stripped the source's trailing newline(s), if
+        # any -- restore them so the byte written matches the plain "CREATE"
+        # path exactly.
+        wrapped_nl=$(trailing_newline_count "$src")
+        for ((wni = 0; wni < wrapped_nl; wni++)); do wrapped+=$'\n'; done
         printf '%s' "$wrapped" > "$target_file"
-        copied+=("$rel (existing content wrapped into PROJECT-CUSTOM)")
+        if should_migrate_claude_md_into_instructions ".claude/project-instructions.md"; then
+            copied+=("$rel (existing content will be moved to .claude/project-instructions.md)")
+        else
+            copied+=("$rel (overwritten; .claude/project-instructions.md is already seeded, nothing to move)")
+        fi
         record_rendered "$rel" "$wrapped"
-        # Hash covers the content AS WRITTEN, i.e. the wrapped file, not the
-        # pre-wrap intermediate.
+        # Hash covers the content AS WRITTEN, i.e. the plain template.
         add_manifest_entry "$i" "$wrapped"
+        continue
+    fi
+
+    # Move a pre-existing CLAUDE.md's content into the freshly seeded
+    # instructions file instead of writing it as an ordinary once-class seed --
+    # see should_migrate_claude_md_into_instructions above.
+    if should_migrate_claude_md_into_instructions "$rel"; then
+        rendered_seed="$(render_file "$i")"
+        # append_existing_claude_md already ends its output in a newline, but
+        # the `$(...)` above stripped it along with everything else -- restore
+        # exactly one, matching the plain once-class seed write below.
+        rendered_seed+=$'\n'
+        mkdir -p "$(dirname "$target_file")"
+        printf '%s' "$rendered_seed" > "$target_file"
+        copied+=("$rel (existing CLAUDE.md content moved in)")
+        record_rendered "$rel" "$rendered_seed"
+        add_manifest_entry "$i" "$rendered_seed"
         continue
     fi
 
@@ -1036,10 +1096,11 @@ for i in "${!FILE_SOURCES[@]}"; do
         content="$(set_protected_branches "$content")"
         content="$(set_derived_defaults "$content")"
     fi
-    # Every `$(...)` above stripped the source's trailing newline (if any) --
-    # restore it so the byte written, and hashed, matches what ps1 (which
-    # never strips it) writes for the same source.
-    file_ends_with_newline "$src" && content+=$'\n'
+    # Every `$(...)` above stripped the source's trailing newline(s), if any --
+    # restore them so the bytes written, and hashed, match what ps1 (which
+    # never strips them) writes for the same source.
+    content_nl=$(trailing_newline_count "$src")
+    for ((cni = 0; cni < content_nl; cni++)); do content+=$'\n'; done
     printf '%s' "$content" > "$target_file"
     copied+=("$rel")
     record_rendered "$rel" "$content"
@@ -1144,19 +1205,18 @@ done
 
 {
     echo "{"
-    echo "  \"manifest_version\": 3,"
+    echo "  \"manifest_version\": 4,"
     echo "  \"variant\": \"$VARIANT\","
     echo "  \"templateRepo\": \"$(json_escape "$SCRIPT_DIR")\","
     echo "  \"template_version\": $template_version_json,"
     echo "  \"template_commit\": \"$template_commit\","
-    # >=0.3.2, not >=0.3.0: 0.3.0 and 0.3.1 read a v3 manifest happily but lack
-    # the region splice, so applying CLAUDE.md under them overwrites a populated
-    # PROJECT-CUSTOM region with the template's empty seed. The floor is enforced
-    # at template_load_manifest, so this refuses on every sync after the first --
-    # including a consumer who downgrades, or the same repo opened on a machine
-    # whose server process is older. It cannot protect the FIRST migration (a v2
-    # manifest carries no floor); the sync skill's server_version check does that.
-    echo "  \"requires_server\": \">=0.3.2\","
+    # >=4.1.0 (MIN_SERVER_FOR_V4, server/src/template_sync/v3.py): a v3-era
+    # server has no region-less CLAUDE.md handling, no instructions_file/
+    # agent_grants declarations, and no agent-grants splice -- refusing it
+    # loudly on a v4 manifest is the documented v4.1 decision (spec sect 8,
+    # "Decisions taken" item 2), the mirror of the old >=0.3.2 floor this
+    # replaces (which guarded the v3 region splice, now retired for CLAUDE.md).
+    echo "  \"requires_server\": \">=4.1.0\","
     echo "  \"placeholders\": {"
     last=$((${#MPH_KEYS[@]} - 1))
     for j in $(seq 0 "$last"); do
@@ -1177,7 +1237,15 @@ done
         fi
         echo "    }$comma"
     done
-    echo "  }"
+    echo "  },"
+    # v4 declaration keys (spec sect 5 header; server/src/template_sync/mcp.py
+    # _load_manifest requires both when manifest_version == 4). Literal
+    # constants, not derived from FILE_RELS: they name the FIXED paths the
+    # server reads for the CLAUDE.md `@` import and the agent-grants splice,
+    # not a per-project setting -- INSTRUCTIONS_FILE_DEFAULT/AGENT_GRANTS_FILE
+    # in server/src/template_sync/v3.py are the same two literals.
+    echo "  \"instructions_file\": \".claude/project-instructions.md\","
+    echo "  \"agent_grants\": \".claude/agent-grants.json\""
     echo "}"
 } > "$manifest_path"
 
