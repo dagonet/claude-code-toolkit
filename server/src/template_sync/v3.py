@@ -1671,8 +1671,8 @@ PROJECT_MD_SEED_BODY = (
     "      - \"pyproject.toml\"\n"
     "    ---\n"
     "\n"
-    "Always-on project rules belong in CLAUDE.md's PROJECT-CUSTOM region, not here;\n"
-    "a rule in both places exists twice and drifts."
+    "Always-on project rules belong in `.claude/project-instructions.md` (imported at\n"
+    "the end of CLAUDE.md), not here; a rule in both places exists twice and drifts."
 )
 
 
