@@ -858,6 +858,13 @@ HOOKS_NO_MIRROR=(
   # require-skills-block.sh: enforces this repo's "## Required Skills" spawn
   # convention (AGENT_TEAM.md), which is project-team-only.
   "require-skills-block.sh"
+  # deny-claude-md-writes.sh (v4.1, spec §6): project scope only -- a
+  # user-level deny would refuse CLAUDE.md writes in every non-consumer repo
+  # on the machine, including this toolkit's own checkout and every project
+  # that has never run /sync-template at all. It denies only when
+  # <root>/.claude/template-manifest.json exists with manifest_version 4, a
+  # condition a bare ~/.claude install has no way to meet for itself.
+  "deny-claude-md-writes.sh"
 )
 # FINDING (v3.0.4, A6): retro-brief.sh (SessionStart, reads the ledger) and
 # retro-ledger.sh (SubagentStop, writes it) both key off cwd -> project slug
@@ -1943,19 +1950,22 @@ fi
 
 # ---------------------------------------------------------------------------
 # 26. templates/*/CLAUDE.md context-mode sentinel (v2.1.3 fix round 2, derived
-#     over variants). The line immediately ABOVE `PROJECT-CUSTOM:BEGIN` in
-#     every variant CLAUDE.md must name `context-mode`, so a consumer syncing
-#     the region sees where a plugin routing block belongs before it re-lands
-#     inside the preserved region.
+#     over variants; retargeted in the v4.1 plan, Task 3 -- R-F). The region
+#     this check originally anchored on (`PROJECT-CUSTOM:BEGIN`) is gone from
+#     CLAUDE.md (spec sect 2); the sentinel's carrier line now sits directly
+#     above the tail block's precedence sentence instead, per ruling R-F, so
+#     the anchor moves with it. check 37's whole-file grep is the surviving
+#     coarse instrument; this one still pins the sentinel's POSITION, not just
+#     its presence.
 # ---------------------------------------------------------------------------
 echo
 sentinel_missing=""
 for v in $VARIANTS; do
   f="templates/$v/CLAUDE.md"
   [ -f "$f" ] || { sentinel_missing="$sentinel_missing $f(missing)"; continue; }
-  line=$(grep -n -F '<!-- PROJECT-CUSTOM:BEGIN' "$f" | head -1 | cut -d: -f1)
+  line=$(grep -n -F 'Project-specific instructions live in the imported file below' "$f" | head -1 | cut -d: -f1)
   if [ -z "$line" ]; then
-    sentinel_missing="$sentinel_missing $f(no-marker)"
+    sentinel_missing="$sentinel_missing $f(no-tail-block)"
     continue
   fi
   prev=$((line - 1))
@@ -1966,7 +1976,7 @@ for v in $VARIANTS; do
   esac
 done
 if [ -z "$sentinel_missing" ]; then
-  ok "all $(printf '%s\n' "$VARIANTS" | wc -w) variant CLAUDE.md files carry the context-mode sentinel line above PROJECT-CUSTOM:BEGIN"
+  ok "all $(printf '%s\n' "$VARIANTS" | wc -w) variant CLAUDE.md files carry the context-mode sentinel line above the tail block's precedence sentence"
 else
   ko "CLAUDE.md context-mode sentinel missing/wrong line in:$sentinel_missing"
 fi
@@ -2282,6 +2292,10 @@ else
   # block, with both marker lines left verbatim — the BEGIN marker's em-dash
   # and trailing prose are exactly what a naive `BEGIN\s*-->` extractor chokes
   # on, so normalising them would destroy the property under test.
+  #
+  # v4.1: CLAUDE.md is no longer one of the planted files (it carries no
+  # region, R-F/R-H) — plant.sh now plants two (AGENT_TEAM.md, coder.md), not
+  # three; the region count below is updated to match.
   r28f="scripts/fixtures/project-custom-regions"
   if [ ! -f "$r28f/plant.sh" ]; then
     ko "$r28f/plant.sh missing — the region guards have no planted fixture, and found content cannot fail them"
@@ -2291,13 +2305,14 @@ else
     if bash "$r28f/plant.sh" "$r28p" >/dev/null 2>&1; then
       r28pscan=$(bash "$REGION_SH" --scan "$r28p" 2>/dev/null)
       r28pc=$(printf '%s\n' "$r28pscan" | grep -c '^CONTENT	')
-      if [ "$r28pc" = "3" ]; then
-        ok "region extractor: all 3 planted real regions are reported CONTENT"
+      if [ "$r28pc" = "2" ]; then
+        ok "region extractor: both planted real regions are reported CONTENT"
       else
-        ko "region extractor: $r28pc of 3 planted real regions reported CONTENT — the false clean that destroys regions"
+        ko "region extractor: $r28pc of 2 planted real regions reported CONTENT — the false clean that destroys regions"
       fi
-      # The other eight regions in the same tree are still placeholder-only and
-      # must stay EMPTY. A guard that fires on all eleven gets switched off.
+      # The other regions in the same tree (agents CLAUDE.md was never one of)
+      # are still placeholder-only and must stay EMPTY. A guard that fires on
+      # every one of them gets switched off.
       r28pe=$(printf '%s\n' "$r28pscan" | grep -c '^EMPTY	')
       if [ "$r28pe" -ge 1 ]; then
         ok "region extractor: $r28pe untouched regions in the same tree remain EMPTY"
@@ -2733,6 +2748,15 @@ rm -rf "$b1_tmp"
 #     the splice BYTE-EXACTLY; a placeholder-only region must be classified
 #     EMPTY. A check that only ever asserts the reassuring answer is the
 #     extractor defect this whole programme exists to stop.
+#
+#     v4.1 (Task 3, appendix D): CLAUDE.md no longer carries a region at all
+#     (R-F/R-H), so it is dropped from the two-file scratch set arms B-D plant
+#     into (AGENT_TEAM.md and coder.md still carry theirs -- the 47 files stay
+#     LIVE, R-H). Arm A is RETARGETED from "classify EMPTY before planting" (a
+#     precondition, now folded into the both-arms-precondition check below
+#     instead of consuming the arm-A label) to "no PROJECT-CUSTOM marker in any
+#     variant CLAUDE.md" -- exercising region.sh's own NOMARKERS verdict,
+#     independently of check 52's plain grep on the same fact.
 # ---------------------------------------------------------------------------
 echo
 B1_REGION_SH="user-level-reference/skills/sync-template/region.sh"
@@ -2740,33 +2764,49 @@ B1_PLANT="scripts/fixtures/project-custom-regions/plant.sh"
 if [ ! -f "$B1_REGION_SH" ] || [ ! -f "$B1_PLANT" ]; then
   ko "check 31: $B1_REGION_SH or $B1_PLANT missing — region preservation is unexercised"
 else
+  # Arm A (retargeted, v4.1): region.sh must classify NOMARKERS for every
+  # variant CLAUDE.md -- the region truly left the file, per the extractor
+  # itself, not merely per a substring grep (check 52 is the coarser sibling).
+  b2_claude_bad=""
+  for v in $VARIANTS; do
+    f="templates/$v/CLAUDE.md"
+    cls=$(bash "$B1_REGION_SH" "$f" 2>/dev/null | cut -f1)
+    [ "$cls" = "NOMARKERS" ] || b2_claude_bad="$b2_claude_bad $f($cls)"
+  done
+  if [ -z "$b2_claude_bad" ]; then
+    ok "check 31 (arm A): region.sh classifies every variant CLAUDE.md as NOMARKERS"
+  else
+    ko "check 31 (arm A): expected NOMARKERS for every variant CLAUDE.md, got:$b2_claude_bad"
+  fi
+
   b2_tmp=$(mktemp -d)
   mkdir -p "$b2_tmp/consumer/.claude/agents"
-  cp templates/general/AGENT_TEAM.md templates/general/CLAUDE.md "$b2_tmp/consumer/"
+  cp templates/general/AGENT_TEAM.md "$b2_tmp/consumer/"
   cp templates/general/.claude/agents/coder.md "$b2_tmp/consumer/.claude/agents/"
 
-  # Arm A (BOTH-ARMS PRECONDITION): before planting, every one of the three must
-  # classify EMPTY. If they did not, arm B's CONTENT result would prove nothing
-  # about the planting.
+  # BOTH-ARMS PRECONDITION (was arm A pre-v4.1): before planting, the two
+  # remaining shipped region-bearing files (AGENT_TEAM.md, coder.md -- CLAUDE.md
+  # is no longer one of them) must classify EMPTY. If they did not, the CONTENT
+  # result below would prove nothing about the planting.
   b2_pre=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
-    "$b2_tmp/consumer/CLAUDE.md" "$b2_tmp/consumer/.claude/agents/coder.md" \
+    "$b2_tmp/consumer/.claude/agents/coder.md" \
     2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
   if [ "$b2_pre" = "EMPTY " ]; then
-    ok "check 31 (arm A): the three shipped region-bearing files classify EMPTY before planting"
+    ok "check 31 (precondition): the two shipped region-bearing files classify EMPTY before planting"
   else
-    ko "check 31 (arm A): expected all three shipped files to classify EMPTY before planting, got: $b2_pre"
+    ko "check 31 (precondition): expected both shipped files to classify EMPTY before planting, got: $b2_pre"
   fi
 
   if ! bash "$B1_PLANT" "$b2_tmp/consumer" >/dev/null 2>&1; then
     ko "check 31: plant.sh failed against a freshly copied template tree — the shipped placeholder block has changed shape"
   else
     b2_post=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
-      "$b2_tmp/consumer/CLAUDE.md" "$b2_tmp/consumer/.claude/agents/coder.md" \
+      "$b2_tmp/consumer/.claude/agents/coder.md" \
       2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
     if [ "$b2_post" = "CONTENT " ]; then
-      ok "check 31 (arm B): all three classify CONTENT once real region content is planted"
+      ok "check 31 (arm B): both classify CONTENT once real region content is planted"
     else
-      ko "check 31 (arm B): expected all three to classify CONTENT after planting, got: $b2_post"
+      ko "check 31 (arm B): expected both to classify CONTENT after planting, got: $b2_post"
     fi
 
     # Arm C: THE SHRINK ITSELF. Build a new template part that is a ~97%
@@ -3269,47 +3309,47 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 39 — PROJECT-CUSTOM STAYS, AND THE POINTER LINE NAMES BOTH HOMES
-# (v3.1 Phase 3, task 3.2). The plan asked for CLAUDE.md to become fully
-# template-owned with project instructions moved to `.claude/rules/project.md`;
-# that move was reversed on measurement (an unscoped or session-start-absent
-# rules file reaches nobody, so CLAUDE.md's PROJECT-CUSTOM region is the only
-# always-on channel). This check is the inversion of what the plan asked for:
-# the markers staying, plus a pointer line naming both homes, is now the
-# invariant, not their removal.
+# Check 39 — SUPERSEDED BY v4.1 (spec 2026-09-18, rulings R-F/R-H; retargeted
+# in Task 3 of the v4.1 plan). This check was v3.1 Phase 3's reversal of an
+# earlier plan to make CLAUDE.md fully template-owned: it existed BECAUSE (a)
+# an unscoped or session-start-absent rules file reaches nobody, so the
+# PROJECT-CUSTOM region was the only always-on channel, and (b) the sync
+# server's splice only round-trips a consumer's region when BOTH sides carry
+# the markers — removing them from the template would have silently discarded
+# every consumer's region on their next sync.
 #
-# THE SECOND REASON, and it is the one that makes this check load-bearing
-# rather than stylistic: the sync server preserves a consumer's region by
-# splicing it into the template, and that splice happens only when BOTH sides
-# carry the markers. Measured on a real consumer fixture (penumbra, 2026-09-09,
-# 24 runs across two server builds): with the markers present in the template,
-# a region-only difference round-trips byte-identically in the WORKING file;
-# with the markers ABSENT from the template, the consumer's region is dropped
-# from the working file and survives only in `backup_dir`. That holds on both
-# the pre- and post-fix server, so it is a property of the design, not a bug
-# someone will fix later.
-#
-# So removing these markers from the template does not merely change where
-# instructions live — IT SILENTLY DISCARDS EVERY CONSUMER'S REGION ON THEIR NEXT
-# SYNC. If you are here because the delivery rationale above no longer applies
-# and you are about to delete the markers, this is the reason not to: the
-# guarantee is conditional on the template shipping them, and the failure lands
-# on the consumer, not on us. Change the server's splice rule first, or accept
-# that you are choosing the data loss.
+# v4.1 resolves both reasons the check was guarding against, by changing the
+# server's splice rule first (the exact escape this check's own header names):
+# (a) `.claude/project-instructions.md` is imported by a plain `@` line at the
+# end of CLAUDE.md, so it is always loaded at session start — the "reaches
+# nobody" failure this check was raised against does not apply to an imported
+# file; (b) the data-loss path is closed by construction, not by assumption —
+# `template_apply_file` REFUSES to apply a region-less CLAUDE.md over a v3
+# manifest (`MIGRATION_REQUIRED`, detected against the CURRENT checkout's
+# template, spec §7 / plan ruling R-J) until `template_migrate_manifest` has
+# moved the region body verbatim into `project-instructions.md`; only then does
+# CLAUDE.md become a template-class file with no region to splice, overwritten
+# outright by `claude_md_identical`, with `deny-claude-md-writes.sh` (Task 2)
+# refusing a project edit to it under the resulting v4 manifest. No consumer
+# reaches a region-less template without the migration having already moved
+# their content out. So the CLAUDE.md-region half of this check is
+# retired (checks 51/52 assert the new invariant: last line is the `@` import,
+# no PROJECT-CUSTOM marker survives); the pointer-to-conventions half survives
+# under a narrower assertion, since removing that line is still a real
+# regression. The 47 `AGENT_TEAM.md`/agent regions are UNCHANGED (R-H) and
+# this check never touched them.
 # ---------------------------------------------------------------------------
 echo
-note "Check 39: every variant CLAUDE.md keeps PROJECT-CUSTOM:BEGIN/END and a pointer line naming both homes"
+note "Check 39: every variant CLAUDE.md points at .claude/rules/ conventions (v4.1: PROJECT-CUSTOM assertions retired, see checks 51/52)"
 c39_fail=0
 for v in $VARIANTS; do
   f="templates/$v/CLAUDE.md"
   if [ ! -f "$f" ]; then
     ko "check 39: $f missing"; c39_fail=1; continue
   fi
-  grep -qF '<!-- PROJECT-CUSTOM:BEGIN' "$f" || { ko "check 39: $f missing PROJECT-CUSTOM:BEGIN"; c39_fail=1; }
-  [ "$(tail -n 1 "$f")" = "<!-- PROJECT-CUSTOM:END -->" ] || { ko "check 39: $f missing/misplaced PROJECT-CUSTOM:END"; c39_fail=1; }
   grep -qF '.claude/rules/' "$f" || { ko "check 39: $f has no pointer line naming .claude/rules/"; c39_fail=1; }
 done
-[ "$c39_fail" -eq 0 ] && ok "check 39: 6/6 variant CLAUDE.md files carry both PROJECT-CUSTOM markers and a .claude/rules/ pointer line"
+[ "$c39_fail" -eq 0 ] && ok "check 39: 6/6 variant CLAUDE.md files carry a .claude/rules/ pointer line"
 
 # ---------------------------------------------------------------------------
 # Check 40 — no variant may ship a PROJECT_CONTEXT.md key spelling that our OWN
@@ -4184,6 +4224,189 @@ C50D_FIXTURE
   else
     ko "check 50d: control -- settings.json parser mismatch: expected [$(printf '%s' "$c50d_expected" | tr '\n' ';')] got [$(printf '%s' "$c50d_actual" | tr '\n' ';')]: check 50's settings.json source is unverified"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# 51. TEMPLATE CLAUDE.md ENDS WITH THE @ IMPORT; THE TAIL BLOCK IS
+#     BYTE-IDENTICAL ACROSS VARIANTS (v4.1, spec sect 2, Task 3).
+#
+#     The whole point of the tail block is that the harness's import
+#     mechanism finds it -- an import line that is not the literal last line,
+#     or a tail that drifted between variants, defeats the "always loaded"
+#     property section 2 depends on. `tail -n 4 | sha256sum` is the same
+#     instrument the plan's report uses (constraint 10: `wc -c`/`sha256sum`,
+#     never a locale-dependent length()).
+# ---------------------------------------------------------------------------
+echo
+note "Check 51: every variant CLAUDE.md ends with the @ import; the last four lines are byte-identical across all six"
+c51_bad=""
+c51_hashes=""
+for v in $VARIANTS; do
+  f="templates/$v/CLAUDE.md"
+  if [ ! -f "$f" ]; then
+    c51_bad="$c51_bad $f(missing)"
+    continue
+  fi
+  c51_last=$(tail -n 1 "$f")
+  if [ "$c51_last" != "@.claude/project-instructions.md" ]; then
+    c51_bad="$c51_bad $f(last-line=[$c51_last])"
+  fi
+  c51_h=$(tail -n 4 "$f" | sha256sum | cut -d' ' -f1)
+  c51_hashes="$c51_hashes $c51_h"
+done
+c51_uniq=$(printf '%s\n' $c51_hashes | sort -u | wc -l | tr -d ' ')
+if [ -z "$c51_bad" ] && [ "$c51_uniq" = "1" ]; then
+  ok "check 51: all six variant CLAUDE.md files end with @.claude/project-instructions.md and share one tail-4-lines hash"
+else
+  ko "check 51: last-line problems:[$c51_bad] tail-hash-uniques=$c51_uniq (want 1)"
+fi
+
+# ---------------------------------------------------------------------------
+# 52. NO PROJECT-CUSTOM MARKER SURVIVES IN ANY VARIANT CLAUDE.md (v4.1,
+#     rulings R-F/R-H, Task 3).
+#
+#     Scoped deliberately to `templates/*/CLAUDE.md`, NOT `templates/**` --
+#     the 47 AGENT_TEAM.md/agent regions are UNCHANGED this release (R-H) and
+#     an unscoped grep here would read as an instruction to strip them. This
+#     is the coarse, whole-file-text sibling of check 31 arm A's
+#     region.sh-classifier version; the two are independent instruments over
+#     the same fact.
+# ---------------------------------------------------------------------------
+echo
+note "Check 52: no PROJECT-CUSTOM marker in any variant CLAUDE.md (scope: templates/*/CLAUDE.md only, R-H)"
+c52_hits=$(grep -l PROJECT-CUSTOM templates/*/CLAUDE.md 2>/dev/null || true)
+if [ -z "$c52_hits" ]; then
+  ok "check 52: grep -l PROJECT-CUSTOM templates/*/CLAUDE.md is empty"
+else
+  ko "check 52: PROJECT-CUSTOM marker survives in:$(printf ' %s' $c52_hits)"
+fi
+
+# ---------------------------------------------------------------------------
+# 53. EVERY SHIPPED AGENT HAS EXACTLY ONE ONE-LINE `tools:` (v4.1, spec sect
+#     4/5, ruling R-E, plan constraint 12).
+#
+#     An agent with no `tools:` line inherits every tool including MCP and
+#     the merge/PR tools the template withholds from coders -- the splice's
+#     grant-refusal rule (spec sect 5) is defence-in-depth behind THIS check.
+#     No "OR none" arm: R-E's whole point is that the missing-line shape is a
+#     FAIL, not a tolerated alternative that would wave a future agent
+#     through. Measured today: 41/41 shipped agents already have exactly one
+#     one-line `tools:` (D1's original "five coders ship none" premise was an
+#     instrument error -- a 20-line sed window that missed line 26/etc.,
+#     corrected before this plan). Because every shipped agent already
+#     passes, the acceptance arm (appendix C) is exercised on a SCRATCH COPY,
+#     never on a shipped file (plan constraint 12): delete the line, add a
+#     second, reshape to a YAML list, or add a wildcard, and each must flip
+#     the classifier to non-OK, naming the file.
+# ---------------------------------------------------------------------------
+echo
+note "Check 53: every shipped agent has exactly one one-line tools: line (no list form, no wildcard)"
+
+# c53_classify <path> -- prints OK, MISSING, MULTIPLE, WILDCARD or LISTFORM.
+# A free function (not inlined) so the acceptance-arm flips below call the
+# EXACT SAME logic the census uses -- two copies of this predicate is how a
+# check and its own acceptance test would silently drift apart.
+c53_classify() {
+  f="$1"
+  n=$(grep -c '^tools:' "$f")
+  if [ "$n" -eq 0 ]; then printf 'MISSING'; return; fi
+  if [ "$n" -gt 1 ]; then printf 'MULTIPLE'; return; fi
+  lineno=$(grep -n '^tools:' "$f" | head -1 | cut -d: -f1)
+  line=$(sed -n "${lineno}p" "$f")
+  case "$line" in
+    *'*'*) printf 'WILDCARD'; return ;;
+  esac
+  nextline=$(sed -n "$((lineno + 1))p" "$f")
+  if printf '%s\n' "$nextline" | grep -qE '^[[:space:]]*-([[:space:]]|$)'; then
+    printf 'LISTFORM'; return
+  fi
+  printf 'OK'
+}
+
+c53_agents=0
+c53_one_line=0
+c53_bad=""
+for f in templates/*/.claude/agents/*.md user-level-reference/agents/*.md; do
+  [ -f "$f" ] || continue
+  c53_agents=$((c53_agents + 1))
+  c53_r=$(c53_classify "$f")
+  if [ "$c53_r" = "OK" ]; then
+    c53_one_line=$((c53_one_line + 1))
+  else
+    c53_bad="$c53_bad $f($c53_r)"
+  fi
+done
+if [ -z "$c53_bad" ] && [ "$c53_agents" -gt 0 ]; then
+  ok "check 53: agents=$c53_agents one_line=$c53_one_line -- every shipped agent has exactly one one-line tools: line"
+else
+  ko "check 53: agents=$c53_agents one_line=$c53_one_line -- bad:$c53_bad"
+fi
+
+# Acceptance arm (appendix C): four flips on a SCRATCH COPY of one shipped
+# agent, never on the shipped file itself (constraint 12).
+c53_scratch=$(mktemp -d)
+cp templates/general/.claude/agents/coder.md "$c53_scratch/coder.md"
+
+sed '/^tools:/d' "$c53_scratch/coder.md" > "$c53_scratch/no-tools.md"
+c53_f1=$(c53_classify "$c53_scratch/no-tools.md")
+if [ "$c53_f1" != "OK" ]; then
+  ok "check 53 (flip 1 -- delete the tools: line): classifier flips to $c53_f1, naming the file"
+else
+  ko "check 53 (flip 1): deleting the tools: line did NOT flip the classifier -- the acceptance rule fails"
+fi
+
+{ cat "$c53_scratch/coder.md"; printf 'tools: Read\n'; } > "$c53_scratch/dup-tools.md"
+c53_f2=$(c53_classify "$c53_scratch/dup-tools.md")
+if [ "$c53_f2" != "OK" ]; then
+  ok "check 53 (flip 2 -- add a second tools: line): classifier flips to $c53_f2, naming the file"
+else
+  ko "check 53 (flip 2): a second tools: line did NOT flip the classifier -- the acceptance rule fails"
+fi
+
+awk '/^tools:/ && !done { print "tools:"; print "  - Read"; done = 1; next } { print }' \
+  "$c53_scratch/coder.md" > "$c53_scratch/list-tools.md"
+c53_f3=$(c53_classify "$c53_scratch/list-tools.md")
+if [ "$c53_f3" != "OK" ]; then
+  ok "check 53 (flip 3 -- YAML list form): classifier flips to $c53_f3, naming the file"
+else
+  ko "check 53 (flip 3): a list-form tools: did NOT flip the classifier -- the acceptance rule fails"
+fi
+
+sed 's/^tools:.*/tools: */' "$c53_scratch/coder.md" > "$c53_scratch/wild-tools.md"
+c53_f4=$(c53_classify "$c53_scratch/wild-tools.md")
+if [ "$c53_f4" != "OK" ]; then
+  ok "check 53 (flip 4 -- wildcard): classifier flips to $c53_f4, naming the file"
+else
+  ko "check 53 (flip 4): a wildcard tools: did NOT flip the classifier -- the acceptance rule fails"
+fi
+rm -rf "$c53_scratch"
+
+# ---------------------------------------------------------------------------
+# 54. THE TWO SEEDS ARE BYTE-IDENTICAL ACROSS VARIANTS; agent-grants.json IS
+#     EXACTLY THE SPEC'D BYTES (v4.1, spec sect 3/4, Task 3).
+# ---------------------------------------------------------------------------
+echo
+note "Check 54: the two seed files are byte-identical across all six variants; agent-grants.json is exactly {\"schema\":1,\"grants\":{}} + LF"
+c54_bad=""
+c54_pi_hashes=""
+c54_ag_hashes=""
+for v in $VARIANTS; do
+  c54_pi="templates/$v/.claude/project-instructions.md"
+  c54_ag="templates/$v/.claude/agent-grants.json"
+  if [ ! -f "$c54_pi" ]; then c54_bad="$c54_bad $c54_pi(missing)"; continue; fi
+  if [ ! -f "$c54_ag" ]; then c54_bad="$c54_bad $c54_ag(missing)"; continue; fi
+  c54_pi_hashes="$c54_pi_hashes $(sha256sum "$c54_pi" | cut -d' ' -f1)"
+  c54_ag_hashes="$c54_ag_hashes $(sha256sum "$c54_ag" | cut -d' ' -f1)"
+done
+c54_pi_uniq=$(printf '%s\n' $c54_pi_hashes | sort -u | wc -l | tr -d ' ')
+c54_ag_uniq=$(printf '%s\n' $c54_ag_hashes | sort -u | wc -l | tr -d ' ')
+c54_expected_ag_hash=$(printf '{"schema":1,"grants":{}}\n' | sha256sum | cut -d' ' -f1)
+c54_actual_ag_hash=$(printf '%s\n' $c54_ag_hashes | head -1)
+if [ -z "$c54_bad" ] && [ "$c54_pi_uniq" = "1" ] && [ "$c54_ag_uniq" = "1" ] \
+   && [ "$c54_actual_ag_hash" = "$c54_expected_ag_hash" ]; then
+  ok "check 54: both seeds byte-identical across all six variants; agent-grants.json == {\"schema\":1,\"grants\":{}} + LF"
+else
+  ko "check 54: bad:[$c54_bad] project-instructions.md uniques=$c54_pi_uniq (want 1) agent-grants.json uniques=$c54_ag_uniq (want 1) agent-grants.json matches spec bytes: $([ "$c54_actual_ag_hash" = "$c54_expected_ag_hash" ] && echo yes || echo no)"
 fi
 
 # ---------------------------------------------------------------------------

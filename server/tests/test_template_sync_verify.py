@@ -11,13 +11,20 @@ mutation itself does not also trip tree_clean.
 """
 
 import json
+import pathlib
+import shutil
 import subprocess
+import time
 
 import pytest
 
 from template_sync import mcp as ts
 from template_sync import v3
 from template_sync import verify
+
+# server/tests/test_x.py -> parents[0]=tests, [1]=server, [2]=toolkit root
+# (same convention as test_template_sync_docstring_contract.py's ROOT).
+TOOLKIT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 OWNERSHIP = {
     "tracked_paths": ["hooks", "templates"],
@@ -32,7 +39,15 @@ OWNERSHIP = {
     ],
 }
 
-CLAUDE_CONTENT = "# T\nrule one\n"
+# v4.1, ruling R-J: this fixture models a v4.0.x TOOLKIT CHECKOUT -- its
+# template CLAUDE.md carries the PROJECT-CUSTOM markers, matching every
+# pre-v4.1 template. WITHOUT them, this fixture's v3 manifest would silently
+# fall into the v3-manifest window the moment the window predicate lands
+# (commit 4): CLAUDE.md would read MIGRATION_REQUIRED and status_clean would
+# FAIL -- the "fix" an implementer would reach for there is weakening this
+# suite's assertions, which is exactly the failure mode the markers below
+# are here to prevent from looking like success.
+CLAUDE_CONTENT = "# T\nrule one\n<!-- PROJECT-CUSTOM:BEGIN -->\n<!-- PROJECT-CUSTOM:END -->\n"
 HOOK_CONTENT = "echo g\n"
 
 # V401_SEED: the pre-v4.0.2 `PROJECT_MD_SEED_BODY` text, captured verbatim
@@ -142,6 +157,138 @@ def _good_fixture(tmp_path, ownership: dict | None = None):
     return repo, proj, commit
 
 
+# --- v4.1: a green v4 fixture, and a v3-window fixture (spec §6, §7; R-J/R-K)
+
+CLAUDE_CONTENT_V4 = "# T\nrule one\n@.claude/project-instructions.md\n"
+# R-H: the agent KEEPS its PROJECT-CUSTOM region under v4 -- only CLAUDE.md's
+# is removed.
+AGENT_CONTENT_V4 = ("---\nname: foo\ntools: Read, Write\n---\n"
+                    "body\n<!-- PROJECT-CUSTOM:BEGIN -->\n<!-- PROJECT-CUSTOM:END -->\n")
+INSTRUCTIONS_CONTENT_V4 = "# Project instructions\n\nSeed body\n"
+GRANTS_CONTENT_V4 = json.dumps({"schema": 1, "grants": {}}) + "\n"
+
+OWNERSHIP_V4 = {
+    "tracked_paths": ["hooks", "templates"],
+    "rules": [
+        {"pattern": "hooks/**", "ownership": "template"},
+        {"pattern": "CLAUDE.md", "ownership": "template"},
+        {"pattern": ".claude/agents/*.md", "ownership": "template"},
+        {"pattern": ".claude/rules/project.md", "ownership": "once"},
+        {"pattern": ".claude/project-instructions.md", "ownership": "once"},
+        {"pattern": ".claude/agent-grants.json", "ownership": "once"},
+        {
+            "pattern": "PROJECT_CONTEXT.md", "ownership": "once", "audit": "keys",
+            "required_keys": ["Protected branches", "Gate"],
+        },
+    ],
+}
+
+
+def _good_fixture_v4(tmp_path):
+    """A fully-synced, git-committed v4 project against a git-committed
+    toolkit repo. Every FAIL-capable line is expected PASS except
+    server_skew (R-H: region_markers PASSes here too -- it keeps measuring
+    the agent's region; import_line_present PASSes, not SKIPs, since this is
+    v4)."""
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general" / ".claude" / "agents").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps(OWNERSHIP_V4), encoding="utf-8")
+    m = {"templateRepo": str(repo), "variant": "general"}
+    template_files = {
+        "CLAUDE.md": CLAUDE_CONTENT_V4, "hooks/g.sh": HOOK_CONTENT,
+        "PROJECT_CONTEXT.md": CONTEXT_CONTENT, ".claude/rules/project.md": PROJECT_MD_CONTENT,
+        ".claude/agents/foo.md": AGENT_CONTENT_V4,
+        ".claude/project-instructions.md": INSTRUCTIONS_CONTENT_V4,
+        ".claude/agent-grants.json": GRANTS_CONTENT_V4,
+    }
+    for rel, content in template_files.items():
+        p = ts._template_file_path(m, rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8", newline="")
+    commit = _init_repo(repo)
+    _git(repo, "tag", "v4.1.0")
+
+    proj = tmp_path / "proj"
+    (proj / ".claude" / "rules").mkdir(parents=True)
+    (proj / ".claude" / "agents").mkdir(parents=True)
+    (proj / "hooks").mkdir(parents=True)
+    for rel, content in template_files.items():
+        (proj / rel).write_text(content, encoding="utf-8", newline="")
+
+    entries = {
+        "CLAUDE.md": {"hash": "sha256:" + ts._sha256(CLAUDE_CONTENT_V4), "ownership": "template"},
+        "hooks/g.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
+        ".claude/agents/foo.md": {"hash": "sha256:" + ts._sha256(AGENT_CONTENT_V4), "ownership": "template"},
+        ".claude/rules/project.md": {"ownership": "once"},
+        "PROJECT_CONTEXT.md": {"ownership": "once"},
+        ".claude/project-instructions.md": {"ownership": "once"},
+        ".claude/agent-grants.json": {"ownership": "once"},
+    }
+    manifest = {
+        "manifest_version": 4,
+        "template_version": "v4.1.0",
+        "template_commit": commit,
+        "variant": "general",
+        "templateRepo": str(repo),
+        "placeholders": {},
+        "requires_server": ">=4.1.0",
+        "instructions_file": ".claude/project-instructions.md",
+        "agent_grants": ".claude/agent-grants.json",
+        "files": entries,
+    }
+    _write_manifest(proj, manifest)
+    _init_repo(proj)
+    return repo, proj, commit
+
+
+def _window_fixture(tmp_path):
+    """A v3 manifest whose CURRENT checkout's template has ALREADY dropped
+    the region (the v3-manifest window, R-J): CLAUDE.md reads
+    MIGRATION_REQUIRED and status_clean is the ONE FAIL (R-K)."""
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps(OWNERSHIP), encoding="utf-8")
+    window_claude = "# T\nrule one\n@.claude/project-instructions.md\n"  # no markers -- v4.1+ shape
+    m = {"templateRepo": str(repo), "variant": "general"}
+    for rel, content in {"CLAUDE.md": window_claude, "hooks/g.sh": HOOK_CONTENT,
+                         "PROJECT_CONTEXT.md": CONTEXT_CONTENT,
+                         ".claude/rules/project.md": PROJECT_MD_CONTENT}.items():
+        p = ts._template_file_path(m, rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8", newline="")
+    commit = _init_repo(repo)
+
+    proj = tmp_path / "proj"
+    (proj / ".claude" / "rules").mkdir(parents=True)
+    (proj / "hooks").mkdir(parents=True)
+    # The project's HELD CLAUDE.md always carries the region (R-J: a v3
+    # consumer's own committed copy always has it).
+    (proj / "CLAUDE.md").write_text(CLAUDE_CONTENT, encoding="utf-8", newline="")
+    (proj / "hooks" / "g.sh").write_text(HOOK_CONTENT, encoding="utf-8", newline="")
+    (proj / ".claude" / "rules" / "project.md").write_text(PROJECT_MD_CONTENT, encoding="utf-8", newline="")
+    (proj / "PROJECT_CONTEXT.md").write_text(CONTEXT_CONTENT, encoding="utf-8", newline="")
+
+    entries = {
+        "CLAUDE.md": {"hash": "sha256:" + ts._sha256(CLAUDE_CONTENT), "ownership": "template"},
+        "hooks/g.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
+        ".claude/rules/project.md": {"ownership": "once"},
+        "PROJECT_CONTEXT.md": {"ownership": "once"},
+    }
+    manifest = {
+        "manifest_version": 3,
+        "template_version": "v3.1.0",
+        "template_commit": commit,
+        "variant": "general",
+        "templateRepo": str(repo),
+        "placeholders": {},
+        "requires_server": ">=0.3.2",
+        "files": entries,
+    }
+    _write_manifest(proj, manifest)
+    _init_repo(proj)
+    return repo, proj, commit
+
+
 def _only_fail(res: dict) -> list[str]:
     return [l["id"] for l in res["lines"] if l["status"] == "FAIL"]
 
@@ -189,8 +336,11 @@ def test_pass_fixture_is_all_green(tmp_path):
     fail_ids = {l["id"] for l in lines if l["status"] == "FAIL"}
     assert fail_ids == set()
     # server_skew SKIPs: this fixture's "toolkit" repo is not the tree the
-    # running server process was imported from.
-    assert skip_ids == {"server_skew"}
+    # running server process was imported from. v4.1 (R-K): this fixture is
+    # the v3 LEGACY situation (a v3 manifest, template still carrying the
+    # region) -- the three CLAUDE.md-related lines SKIP "no import yet".
+    assert skip_ids == {"server_skew", "claude_md_identical", "import_line_present",
+                        "instructions_file_present"}
     # v4.0.2 extends this to six: the three new INFO lines (legacy_gate_dir,
     # once_notes_changed, project_md_scoped_consistent) all emit their null
     # case on this healthy fixture -- none may SKIP here (a SKIP would be a
@@ -202,6 +352,359 @@ def test_pass_fixture_is_all_green(tmp_path):
     assert res["summary"] == f"{n_pass} PASS, 0 FAIL, {len(skip_ids)} SKIP, {len(info_ids)} INFO"
     assert res["ok"] is True
     assert res["mode"] == "post_commit"
+
+
+def test_lines_count_is_30():
+    """Constraint 5: stated by hand, moves in the SAME commit as the six new
+    ids -- never derived from anything, so it is a red flag by itself if a
+    later edit changes LINES without touching this number."""
+    assert len(verify.LINES) == 30
+
+
+def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    lines = res["lines"]
+    assert len(lines) == len(verify.LINES)
+
+    skip_ids = {l["id"] for l in lines if l["status"] == "SKIP"}
+    info_ids = {l["id"] for l in lines if l["status"] == "INFO"}
+    fail_ids = {l["id"] for l in lines if l["status"] == "FAIL"}
+    assert fail_ids == set(), _by_id(res)
+    # R-H: region_markers PASSes here (it keeps measuring the agent's own
+    # region); import_line_present PASSes, not SKIPs, since this IS v4.
+    assert skip_ids == {"server_skew"}
+    # All six new ids are FAIL_LINE kind (never INFO_LINE), so info_ids is
+    # unchanged from the v3 fixture's set.
+    assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
+                        "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
+    by_id = _by_id(res)
+    assert by_id["claude_md_identical"]["status"] == "PASS"
+    assert by_id["import_line_present"]["status"] == "PASS"
+    assert by_id["instructions_file_present"]["status"] == "PASS"
+    assert by_id["agent_grants_resolvable"]["status"] == "PASS"
+    assert "no grants file" not in by_id["agent_grants_resolvable"]["measured"]  # the file IS present
+    assert "grants=0" in by_id["agent_grants_resolvable"]["measured"]
+    assert by_id["agent_grants_names_known"]["status"] == "PASS"
+    assert by_id["agent_grants_extendable"]["status"] == "PASS"
+    assert res["ok"] is True
+
+
+def test_agent_grants_resolvable_fails_on_nonexistent_template_sync_tool(tmp_path, monkeypatch):
+    """The one alias `agent_grants_resolvable` can resolve FOR REAL: a
+    `template-sync-tools` token naming a tool that is not in the live
+    registry FAILs. (Every REAL template_* tool is itself in
+    UNGRANTABLE_TOOLS, so a fake name is the only way to exercise this
+    alias's resolution path at all without tripping the earlier
+    ungrantable-token refusal in load_grants -- noted in the report.)"""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__template-sync-tools__template_nonexistent"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "FAIL", line
+    assert "template_nonexistent" in line["measured"]
+
+
+def test_agent_grants_resolvable_skips_without_registration_for_third_party_alias(tmp_path, monkeypatch):
+    """R-N (fix round 1): "glider" is neither `template-sync-tools` nor a
+    mcp-dev-servers-family alias -- there is no census route for it at all,
+    so this SKIPs naming the alias, regardless of ~/.claude.json."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "no-such-home")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "SKIP", line
+    assert "alias glider: no census route" in line["measured"]
+
+
+def test_agent_grants_resolvable_never_passes_an_unresolved_alias_even_with_registration(tmp_path, monkeypatch):
+    """R-N, INVERTING the c5b witness this replaces
+    (`test_agent_grants_resolvable_counts_unresolved_by_name_when_registration_readable`,
+    fix round 1 task-1-fix1-brief.md): that test asserted PASS-by-name for a
+    third-party alias merely because ~/.claude.json was READABLE -- R-N
+    rules that a FALSE GREEN (the alias still has no real census route: it
+    is not registered in THIS fake ~/.claude.json, and "glider" is not in
+    the mcp-dev-servers family regardless). The corrected behaviour is
+    SKIP, naming the alias, whether or not the registration file exists."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    (fake_home / ".claude.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "SKIP", line
+    assert "alias glider: no census route" in line["measured"]
+
+
+def _mk_mcp_dev_servers_family_registration(tmp_path, alias: str, tool_names: list[str]):
+    """A REAL census route for `alias` (R-N): a fake ~/.claude.json
+    registering it with a `.venv/Scripts/...` command path (check 50's own
+    derivation marker), a fake mcp-dev-servers source tree at the derived
+    directory shipping a module with `FastMCP("<alias>")` and one
+    `@mcp.tool()`-decorated function per name in `tool_names` (the STATIC
+    census route -- no real venv/import needed, matching how check 50
+    itself falls back when a registered alias has no live venv). Returns
+    (fake_home, mcp_dev_servers_dir)."""
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    mcp_dev_servers_dir = tmp_path / "mcp-dev-servers"
+    pkg_dir = mcp_dev_servers_dir / "src" / "mcp_dev_servers"
+    pkg_dir.mkdir(parents=True)
+    body = "\n".join(f"@mcp.tool()\ndef {name}(x):\n    return x\n" for name in tool_names)
+    (pkg_dir / f"{alias.replace('-', '_')}.py").write_text(
+        f'FastMCP("{alias}")\n\n{body}', encoding="utf-8", newline="")
+    fake_venv_command = str(mcp_dev_servers_dir / ".venv" / "Scripts" / f"mcp-{alias}.exe")
+    (fake_home / ".claude.json").write_text(
+        json.dumps({"mcpServers": {alias: {"command": fake_venv_command}}}), encoding="utf-8")
+    return fake_home, mcp_dev_servers_dir
+
+
+def _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path):
+    """A _good_fixture_v4 toolkit repo that also ships a REAL copy of
+    scripts/lib/list-mcp-tools.py at the SAME repo-relative path -- R-N's
+    census subprocess resolves the script from the manifest's own
+    templateRepo, so the fixture toolkit repo needs it too."""
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    lib_dir = repo / "scripts" / "lib"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(TOOLKIT_ROOT / "scripts" / "lib" / "list-mcp-tools.py", lib_dir / "list-mcp-tools.py")
+    return repo, proj, commit
+
+
+def test_agent_grants_resolvable_real_census_fails_on_a_nonexistent_family_tool(tmp_path, monkeypatch):
+    """R-N: a REAL census route (the mcp-dev-servers family) resolves for
+    real -- a token naming a tool absent from the (statically-censused)
+    module FAILs by name, proving actual resolution happened rather than a
+    generic SKIP."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    fake_home, _mds_dir = _mk_mcp_dev_servers_family_registration(tmp_path, "git-tools", ["git_status"])
+    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
+    repo, proj, commit = _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {
+            "foo": ["mcp__git-tools__git_status", "mcp__git-tools__git_nonexistent"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "FAIL", line
+    assert "mcp__git-tools__git_nonexistent" in line["measured"]
+    assert "mcp__git-tools__git_status" not in line["measured"], \
+        "the real token must not be named alongside the missing one"
+
+
+def test_agent_grants_resolvable_real_census_passes_when_every_token_resolves(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    fake_home, _mds_dir = _mk_mcp_dev_servers_family_registration(
+        tmp_path, "git-tools", ["git_status", "git_commit"])
+    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
+    repo, proj, commit = _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__git-tools__git_status"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    assert line["status"] == "PASS", line
+    assert "resolved=1" in line["measured"]
+
+
+def test_census_budget_two_sided_within_budget_resolves_exhausted_skips(tmp_path, monkeypatch):
+    """J2 (fix round 2): a TOTAL census budget across the whole
+    agent_grants_resolvable computation, not just a per-alias ceiling.
+    Two-sided with a FAKE census that sleeps: "git-tools" fits inside the
+    (tiny, monkeypatched) budget and resolves for real; "github-tools" --
+    alphabetically AFTER "git-tools", so the sorted-iteration ruling
+    (controller addendum (a)) puts it on the exhausted side deterministically
+    -- is never even attempted (the fake census's own call count proves the
+    cutoff, not just the message) and SKIPs naming itself and the budget
+    reason."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    monkeypatch.setattr(verify, "AGENT_GRANTS_CENSUS_BUDGET_S", 0.03)
+    calls: list[str] = []
+
+    def fake_derive(registration_path, alias):
+        return str(tmp_path)  # any real directory -- only is_dir() is checked
+
+    def fake_census(template_repo, source_dir, registration_path, alias):
+        calls.append(alias)
+        time.sleep(0.05)  # exceeds the 0.03s budget after this ONE call
+        return (["real_tool"], None)
+
+    monkeypatch.setattr(verify, "_derive_mcp_dev_servers_source_dir", fake_derive)
+    monkeypatch.setattr(verify, "_census_mcp_dev_servers_alias", fake_census)
+
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {
+            "foo": ["mcp__git-tools__real_tool", "mcp__github-tools__real_tool"]}}),
+        encoding="utf-8", newline="")
+    _recommit(proj)
+
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["agent_grants_resolvable"]
+    # Side A (within budget): exactly one census call was attempted, and it
+    # was for "git-tools" (sorted-first) -- the fake census really ran.
+    assert calls == ["git-tools"], calls
+    # Side B (budget exhausted): "github-tools" SKIPs, naming itself and the
+    # budget cause, WITHOUT a census call ever being attempted for it.
+    assert line["status"] == "SKIP", line
+    assert line["measured"] == "alias github-tools: census budget exhausted before it was reached"
+
+
+def _mk_registered_family_alias(fake_home: pathlib.Path, alias: str, mds_dir: pathlib.Path) -> None:
+    """Register `alias` in a fake ~/.claude.json pointing its command at a
+    `.venv/Scripts/...` path under `mds_dir` -- `mds_dir` itself is not
+    required to exist unless the test wants "source dir not found" to be
+    FALSE."""
+    fake_home.mkdir(parents=True, exist_ok=True)
+    (fake_home / ".claude.json").write_text(
+        json.dumps({"mcpServers": {alias: {"command": str(mds_dir / ".venv" / "Scripts" / f"mcp-{alias}.exe")}}}),
+        encoding="utf-8")
+
+
+@pytest.mark.parametrize("cause", [
+    "source_dir_missing", "template_repo_unknown", "list_mcp_tools_fails", "budget_exhausted",
+])
+def test_agent_grants_resolvable_degraded_arms_name_alias_and_cause(cause, tmp_path, monkeypatch):
+    """J1 (fix round 2): R-N's requirement is SKIP naming the alias AND the
+    cause -- a degraded arm that SKIPs with a generic or empty `measured` is
+    a silent hole the consumer cannot act on. One parametrized test over
+    every degrade cause, unit-level (`_check_agent_grants_resolvable`
+    called directly -- "templateRepo unknown" cannot be reached through a
+    full `verify.run()`, since a manifest with no templateRepo fails much
+    earlier in the cascade for unrelated reasons)."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    alias = "git-tools"
+    pp = tmp_path / "proj"
+    (pp / ".claude").mkdir(parents=True)
+    (pp / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": [f"mcp__{alias}__some_tool"]}}),
+        encoding="utf-8", newline="")
+    manifest = {"templateRepo": str(tmp_path / "toolkit")}
+
+    if cause == "source_dir_missing":
+        _mk_registered_family_alias(tmp_path / "home1", alias, tmp_path / "nonexistent-mds")
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home1")
+        expected_cause = "source dir not found"
+
+    elif cause == "template_repo_unknown":
+        manifest["templateRepo"] = ""
+        mds_dir = tmp_path / "mds-tru"
+        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
+        _mk_registered_family_alias(tmp_path / "home2", alias, mds_dir)
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home2")
+        expected_cause = "templateRepo unknown"
+
+    elif cause == "list_mcp_tools_fails":
+        mds_dir = tmp_path / "mds-fail"
+        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
+        _mk_registered_family_alias(tmp_path / "home3", alias, mds_dir)
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home3")
+        lib_dir = pathlib.Path(manifest["templateRepo"]) / "scripts" / "lib"
+        lib_dir.mkdir(parents=True)
+        (lib_dir / "list-mcp-tools.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8", newline="")
+        expected_cause = "list-mcp-tools.py exit 1"
+
+    elif cause == "budget_exhausted":
+        monkeypatch.setattr(verify, "AGENT_GRANTS_CENSUS_BUDGET_S", 0.0)
+        mds_dir = tmp_path / "mds-budget"
+        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
+        _mk_registered_family_alias(tmp_path / "home4", alias, mds_dir)
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home4")
+        expected_cause = "census budget exhausted before it was reached"
+
+    else:
+        pytest.fail(f"unhandled cause {cause!r}")
+
+    line = verify._check_agent_grants_resolvable(pp, manifest)
+    assert line["status"] == "SKIP", line
+    assert alias in line["measured"], line
+    assert expected_cause in line["measured"], line
+
+
+def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypatch):
+    """R-P (fix round 1): compute_status_v3 returns {"error": ...} on a
+    malformed .claude/agent-grants.json (R-C) rather than raising --
+    verify.run must not KeyError in status_clean/classes_and_hashes (or any
+    other status-dependent line); every one of them reports FAIL with the
+    error message instead, and no_errors (the ORIGINAL R-C route) FAILs
+    with it too. len(lines) == 30 still holds -- no line is silently
+    dropped by the error path."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    (proj / ".claude" / "agent-grants.json").write_text("not json", encoding="utf-8", newline="")
+    _recommit(proj)
+
+    res = verify.run(str(proj), str(repo), "post_commit")
+    assert len(res["lines"]) == len(verify.LINES) == 30
+    by_id = _by_id(res)
+    for id_ in ("no_errors", "status_clean", "classes_and_hashes"):
+        line = by_id[id_]
+        assert line["status"] == "FAIL", (id_, line)
+        assert "not valid JSON" in line["measured"], (id_, line)
+    assert res["ok"] is False
+
+
+def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
+    repo, proj, commit = _window_fixture(tmp_path)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    fail_ids = {l["id"] for l in res["lines"] if l["status"] == "FAIL"}
+    skip_ids = {l["id"] for l in res["lines"] if l["status"] == "SKIP"}
+    assert fail_ids == {"status_clean"}, _by_id(res)
+    assert skip_ids == {"server_skew", "claude_md_identical", "import_line_present",
+                        "instructions_file_present"}
+    line = _by_id(res)["status_clean"]
+    assert "CLAUDE.md" in line["measured"]
+    assert line["remedy"] == v3.MIGRATION_REQUIRED_REMEDY
+    assert res["ok"] is False
+
+
+def test_import_line_present_two_sided_template_regression(tmp_path, monkeypatch):
+    """The stated case (R-K amended): the TEMPLATE loses the @ line, the
+    consumer syncs from that broken checkout and matches it exactly --
+    claude_md_identical PASSes (they match) while import_line_present is the
+    ONLY line that can report the import silently gone."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+
+    tpl_claude = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "CLAUDE.md")
+    broken = CLAUDE_CONTENT_V4.replace("@.claude/project-instructions.md\n", "")
+    assert broken != CLAUDE_CONTENT_V4 and not broken.endswith("@.claude/project-instructions.md\n")
+    tpl_claude.write_text(broken, encoding="utf-8", newline="")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "template regresses: loses the @ line")
+    new_commit = _git_out(repo, "rev-parse", "HEAD")
+
+    # The consumer re-applies (matches the broken template exactly) and
+    # finalizes against the new commit.
+    (proj / "CLAUDE.md").write_text(broken, encoding="utf-8", newline="")
+    m = _read_manifest(proj)
+    m["files"]["CLAUDE.md"] = {"hash": "sha256:" + ts._sha256(broken), "ownership": "template"}
+    m["template_commit"] = new_commit
+    _write_manifest(proj, m)
+    _recommit(proj)
+
+    res = verify.run(str(proj), str(repo), "post_commit")
+    by_id = _by_id(res)
+    assert by_id["claude_md_identical"]["status"] == "PASS", by_id["claude_md_identical"]
+    assert by_id["import_line_present"]["status"] == "FAIL", by_id["import_line_present"]
 
 
 def test_tree_clean_mode_switch_both_ways(tmp_path):
@@ -227,7 +730,7 @@ def test_manifest_valid_fails_alone(tmp_path):
     assert _only_fail(res) == ["manifest_valid"]
 
 
-def test_manifest_version_3_fails_alone(tmp_path):
+def test_manifest_version_supported_fails_alone(tmp_path):
     repo, proj, commit = _good_fixture(tmp_path)
     m = _read_manifest(proj)
     m["manifest_version"] = 2
@@ -236,7 +739,7 @@ def test_manifest_version_3_fails_alone(tmp_path):
     _recommit(proj)
     res = verify.run(str(proj), str(repo), "post_commit")
     assert res["ok"] is False
-    assert _only_fail(res) == ["manifest_version_3"]
+    assert _only_fail(res) == ["manifest_version_supported"]
 
 
 def test_template_commit_known_fails_alone_on_unknown_sha(tmp_path):

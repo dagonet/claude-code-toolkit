@@ -12,7 +12,9 @@ back on its own.
 """
 
 import inspect
+import json
 import pathlib
+import subprocess
 
 from template_sync import mcp as ts
 from template_sync import v3
@@ -106,6 +108,48 @@ def test_compute_status_docstring_names_template_deleted_as_the_once_class_route
     # Two-sided: the template-class list is untouched by this fix.
     assert "IDENTICAL / TEMPLATE_UPDATED" in doc
     assert "LOCAL_EDITED / TEMPLATE_DELETED / ACKNOWLEDGED_KEPT (template class)" in doc
+
+
+def test_migrate_docstring_pins_the_v3_to_v4_refuse_not_guess_claims(tmp_path):
+    """v4.1 plan Task 1 commit 6: extend the docstring pin for the v3->v4
+    branch. Two claims, both behavioural, both checked against the real
+    implementation so the prose cannot drift back alone: (1) a v3 manifest
+    is no longer idempotent -- migrate_manifest attempts v3->v4 on it; (2)
+    an EXISTING .claude/project-instructions.md refuses the migration by
+    NAMING THE PATH, rather than silently keeping it (R-K, reviewer Q1)."""
+    doc = _doc(ts.template_migrate_manifest)
+    assert "NO LONGER" in doc and "terminal no-op" in doc
+    assert "already_v4" in doc
+    assert ".claude/project-instructions.md" in doc and "REFUSED naming the path" in doc
+
+    # Behavioural arm: a real fixture, not just prose-in-prose.
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "CLAUDE.md", "ownership": "template"}],
+    }), encoding="utf-8")
+    claude = "# T\nrule one\n@.claude/project-instructions.md\n"
+    (repo / "templates" / "general" / "CLAUDE.md").write_text(claude, encoding="utf-8", newline="")
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "i"]):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                       cwd=str(repo), check=True, capture_output=True)
+
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / "CLAUDE.md").write_text(claude, encoding="utf-8", newline="")
+    (proj / ".claude" / "project-instructions.md").write_text("existing\n", encoding="utf-8", newline="")
+    manifest = {
+        "manifest_version": 3, "template_version": "v3.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.2",
+        "files": {"CLAUDE.md": {"hash": "sha256:" + ts._sha256(claude), "ownership": "template"}},
+    }
+    (proj / ".claude" / "template-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8", newline="")
+    res = v3.migrate_manifest(proj, backup_dir="", dry_run=True)
+    assert "error" in res, res
+    assert ".claude/project-instructions.md" in res["error"]
 
 
 def test_seed_body_pinned_inside_the_template_seed_file():

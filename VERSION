@@ -1,2 +1,2 @@
-4.0.3
-Rollout follow-ups II: guard hooks read script-file bodies, expired gate artifacts accepted within 24h on tree+environment identity, gc_gate_dir refuses unresolved targets, pre-commit records pruned, classes_and_hashes = closed status partition, project.md remedies say hand-edit.
+4.1.0
+Manifest v4 (option B): CLAUDE.md becomes template-owned and byte-identical, its PROJECT-CUSTOM region moves to the always-imported .claude/project-instructions.md, agent tool grants splice into agents' tools: lines, a project-scope hook denies CLAUDE.md writes, and a v3-consumer migration window closes CLAUDE.md syncs until they migrate.

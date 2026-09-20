@@ -32,15 +32,22 @@
 # equally good at catching a truncating preserve; if you add fixtures, stay in
 # the 750–1000 B range.
 #
-# The three files span shapes the machinery treats differently:
+# The two files span shapes the machinery treats differently:
 #   .claude/agents/coder.md  the modal TEMPLATE_DELETED case
 #   AGENT_TEAM.md            target of the later ~97% shrink — preservation
 #                            must survive a near-total template-part deletion
-#   CLAUDE.md                deviates OUTSIDE its region too, so it exercises
-#                            deviation and preservation together
+#
+# v4.1 (Task 3, spec sect 1-2, ruling R-F/R-H): CLAUDE.md no longer carries a
+# PROJECT-CUSTOM region at all -- it is template-class, byte-identical to the
+# rendered template, with project content living in the imported
+# .claude/project-instructions.md instead. Planting into CLAUDE.md is
+# therefore retired; CLAUDE.md.region stays committed alongside this script
+# (real region content is hard to come by -- see the PROVENANCE note above)
+# but nothing plants it any more. The 47 AGENT_TEAM.md/agent regions are
+# UNCHANGED and this fixture still exercises both of them.
 #
 # Usage: bash plant.sh <target-tree>
-#   Plants into <target-tree>/{.claude/agents/coder.md,AGENT_TEAM.md,CLAUDE.md}
+#   Plants into <target-tree>/{.claude/agents/coder.md,AGENT_TEAM.md}
 #   wherever the shipped placeholder block is present. Prints one line per
 #   file: PLANTED <path> <bytes>, or SKIP <path> <reason>.
 # Exit 0 only when every file that exists was planted.
@@ -84,5 +91,4 @@ plant() { # <relative path> <region file>
 rc=0
 plant ".claude/agents/coder.md" "coder.md.region" || rc=1
 plant "AGENT_TEAM.md"           "AGENT_TEAM.md.region" || rc=1
-plant "CLAUDE.md"               "CLAUDE.md.region" || rc=1
 exit "$rc"

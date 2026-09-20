@@ -75,25 +75,40 @@ def _apply(proj, **kw):
     return _run(ts.template_apply_file(str(proj), **kw))
 
 
+# v4.1, ruling R-J: these CLAUDE.md-named fixtures must carry PROJECT-CUSTOM
+# markers on both the template and project sides, or the v3-manifest window
+# predicate (spec §7, keyed on the literal filename "CLAUDE.md" under a v3
+# manifest whose current template carries no markers) intercepts them before
+# the behaviour each test actually means to exercise -- one test failed
+# outright (KeyError on "action", the window's {"error": ...} shape has no
+# such key) and a second PASSED FOR THE WRONG REASON (the window's remedy
+# text happens to contain the substring "backup_dir" too, so
+# `"backup_dir" in res["error"]` was true by coincidence, not because the
+# intended local-edit-without-backup_dir refusal ran).
+_REGION = "<!-- PROJECT-CUSTOM:BEGIN -->\n<!-- PROJECT-CUSTOM:END -->\n"
+
+
 def test_template_identical_or_updated_writes_without_backup(tmp_path):
-    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v2 {{NAME}}\n"},
-                        project={"CLAUDE.md": "v1 Demo\n"},
-                        entries={"CLAUDE.md": _tpl_entry("v1 {{NAME}}\n", {"NAME": "Demo"})},
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v2 {{NAME}}\n" + _REGION},
+                        project={"CLAUDE.md": "v1 Demo\n" + _REGION},
+                        entries={"CLAUDE.md": _tpl_entry("v1 {{NAME}}\n" + _REGION, {"NAME": "Demo"})},
                         placeholders={"NAME": "Demo"})
     res = _apply(proj, file_path="CLAUDE.md")
     assert res["action"] == "written_from_template"
     assert res["backup"] is None
     assert res["local_edit_overwritten"] is False
-    assert res["manifest_entry"] == {"hash": "sha256:" + ts._sha256("v2 Demo\n"), "ownership": "template"}
-    assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == "v2 Demo\n"
+    assert res["manifest_entry"] == {"hash": "sha256:" + ts._sha256("v2 Demo\n" + _REGION), "ownership": "template"}
+    assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == "v2 Demo\n" + _REGION
 
 
 def test_local_edit_refused_without_backup_dir(tmp_path):
-    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n"}, project={"CLAUDE.md": "v1 mine\n"},
-                        entries={"CLAUDE.md": _tpl_entry("v1\n")})
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n" + _REGION},
+                        project={"CLAUDE.md": "v1 mine\n" + _REGION},
+                        entries={"CLAUDE.md": _tpl_entry("v1\n" + _REGION)})
     res = _apply(proj, file_path="CLAUDE.md")
     assert "backup_dir" in res["error"]
-    assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == "v1 mine\n"
+    assert "migrate first" not in res["error"], res  # the intended refusal, not the window's
+    assert (proj / "CLAUDE.md").read_text(encoding="utf-8") == "v1 mine\n" + _REGION
 
 
 def test_local_edit_backed_up_then_overwritten(tmp_path):
@@ -117,11 +132,11 @@ def test_skip_refused_on_template_class(tmp_path):
 
 
 def test_provided_on_template_class(tmp_path):
-    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n"}, project={}, entries={})
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n" + _REGION}, project={}, entries={})
     res = _apply(proj, file_path="CLAUDE.md", source="provided", content="custom\n")
     assert res["action"] == "created_from_provided"
     assert res["manifest_entry"]["ownership"] == "template"
-    assert res["manifest_entry"]["hash"] == "sha256:" + ts._sha256("v1\n")
+    assert res["manifest_entry"]["hash"] == "sha256:" + ts._sha256("v1\n" + _REGION)
 
 
 def test_once_created_when_missing_and_kept_when_present(tmp_path):

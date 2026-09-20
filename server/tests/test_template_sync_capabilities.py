@@ -53,6 +53,7 @@ EXPECTED = {
     "template_verify",
     "deleted_acknowledged",
     "registered_tools",
+    "agent_grants",
 }
 
 
@@ -340,6 +341,48 @@ def _witness_registered_tools(tmp_path) -> bool:
             and "template_verify" in res["registered_tools"])
 
 
+def _witness_agent_grants(tmp_path) -> bool:
+    """Exercised through compute_status_v3 on a v4 manifest: a grants file +
+    an agent -> spliced content, IDENTICAL status, empty local_diff (spec §5
+    first witness)."""
+    repo = tmp_path / "tk"
+    (repo / "templates" / "general" / ".claude" / "agents").mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": ".claude/agents/**", "ownership": "template"}],
+    }), encoding="utf-8")
+    agent_tpl = "---\nname: foo\ntools: Read, Write\n---\nbody\n"
+    (repo / "templates" / "general" / ".claude" / "agents" / "foo.md").write_text(
+        agent_tpl, encoding="utf-8", newline="")
+
+    proj = tmp_path / "proj"
+    (proj / ".claude" / "agents").mkdir(parents=True)
+    (proj / ".claude" / "agent-grants.json").write_text(
+        json.dumps({"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}),
+        encoding="utf-8", newline="")
+
+    manifest = {
+        "manifest_version": 4, "template_version": "v4.1.0", "template_commit": "0000000",
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=4.1.0",
+        "instructions_file": ".claude/project-instructions.md",
+        "agent_grants": ".claude/agent-grants.json",
+        "files": {},
+    }
+    rules = v3.load_ownership(str(repo))
+    spliced = v3.template_content(proj, manifest, rules, ".claude/agents/foo.md", agent_tpl)
+    (proj / ".claude" / "agents" / "foo.md").write_text(spliced, encoding="utf-8", newline="")
+    manifest["files"][".claude/agents/foo.md"] = {
+        "hash": "sha256:" + ts._sha256(spliced), "ownership": "template"}
+
+    res = v3.compute_status_v3(proj, manifest, rules)
+    info = res["files"][".claude/agents/foo.md"]
+    return (info["status"] == "IDENTICAL"
+            and not info.get("local_diff")
+            and "mcp__glider__symbol_lookup" in spliced
+            and "agent_grants" in v3.CAPABILITIES)
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -355,6 +398,7 @@ WITNESSES = {
     "template_verify": _witness_template_verify,
     "deleted_acknowledged": _witness_deleted_acknowledged,
     "registered_tools": _witness_registered_tools,
+    "agent_grants": _witness_agent_grants,
 }
 
 
