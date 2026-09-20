@@ -10,8 +10,9 @@
 
     Command flags apply to every variant and always win over a variant-derived default:
     -BuildCmd, -TestCmd, -FormatCmd, -LintCmd, -GateCmd, -WorktreeBase, -LogPath, -DefaultBranch.
-    -WrapExistingClaudeMd keeps an existing CLAUDE.md by moving its full content into the
-    template's PROJECT-CUSTOM region instead of skipping the file.
+    -WrapExistingClaudeMd keeps an existing CLAUDE.md by moving its full content into
+    .claude/project-instructions.md instead of skipping the file (v4.1: CLAUDE.md carries
+    no PROJECT-CUSTOM region any more -- see docs/plans/2026-09-18-v4.1-design.md sect 1-2).
 
 .EXAMPLE
     .\setup-project.ps1 -Variant general -ProjectName "MyProject" -RepoUrl "https://github.com/user/myproject"
@@ -127,7 +128,7 @@ if ($Variant -eq "python") {
 }
 
 if ($Force -and $WrapExistingClaudeMd) {
-    Write-Error "-Force and -WrapExistingClaudeMd conflict -- -Force overwrites an existing CLAUDE.md, -WrapExistingClaudeMd preserves it inside the PROJECT-CUSTOM region. Pass one or the other."
+    Write-Error "-Force and -WrapExistingClaudeMd conflict -- -Force overwrites an existing CLAUDE.md, -WrapExistingClaudeMd preserves its content by moving it into .claude/project-instructions.md. Pass one or the other."
     return
 }
 
@@ -613,37 +614,49 @@ function Get-ManifestKeyAndOwnership {
     return @{ Key = $key; Ownership = $entry.ownership }
 }
 
-# --- Wrap an existing CLAUDE.md into the template's PROJECT-CUSTOM region ---
+# --- Move an existing CLAUDE.md's content into the instructions seed ---
 #
-# Without -WrapExistingClaudeMd an existing CLAUDE.md is skipped outright, so a
-# consumer whose file is all hard rules gets none of the template. Wrapping keeps
-# every one of their rules -- inside the region sync-template preserves.
-function Merge-IntoCustomRegion {
+# v4.1: CLAUDE.md is a template-class file with NO PROJECT-CUSTOM region to
+# splice into any more (docs/plans/2026-09-18-v4.1-design.md sect 1-2) --
+# claude_md_identical requires the consumer's CLAUDE.md to be byte-identical
+# to the rendered template, so nothing can be wrapped inside it. Without
+# -WrapExistingClaudeMd an existing CLAUDE.md is skipped outright, so a
+# consumer whose file is all hard rules gets none of the template. Wrapping
+# now keeps every one of their rules by moving the file's full prior content
+# into .claude/project-instructions.md (the once-class file CLAUDE.md's own
+# `@` line imports) instead of splicing it back into CLAUDE.md itself.
+function Add-ExistingClaudeMd {
     param([string]$Rendered, [string]$Body)
-    $out = New-Object System.Collections.Generic.List[string]
-    $inside = $false
-    foreach ($line in ($Rendered -split "`n")) {
-        if ($line.Contains("<!-- PROJECT-CUSTOM:BEGIN")) {
-            $out.Add($line); $out.Add(""); $out.Add($Body.TrimEnd("`r", "`n")); $out.Add("")
-            $inside = $true
-            continue
-        }
-        if ($line.Contains("<!-- PROJECT-CUSTOM:END")) { $inside = $false }
-        if ($inside) { continue }
-        $out.Add($line)
-    }
-    return ($out -join "`n")
+    return $Rendered + "`n<!-- Moved here from the previous CLAUDE.md by -WrapExistingClaudeMd -->`n`n" + $Body.TrimEnd("`r", "`n") + "`n"
 }
 
+# True when this file is an existing CLAUDE.md that -WrapExistingClaudeMd
+# applies to -- it is overwritten with the plain template instead of being
+# skipped, on the strength of Test-ShouldMigrateClaudeMdIntoInstructions below
+# actually moving its content somewhere first.
 function Test-ShouldWrapClaudeMd {
     param([string]$RelPath)
     if ($RelPath -ne "CLAUDE.md") { return $false }
     if (-not $WrapExistingClaudeMd) { return $false }
     if ($Force) { return $false }
     $existing = Join-Path $TargetDir "CLAUDE.md"
-    if (-not (Test-Path $existing)) { return $false }
-    # Nesting two PROJECT-CUSTOM regions would corrupt sync-template's region logic.
-    return -not ((Get-Content -Path $existing -Encoding UTF8 -Raw).Contains("PROJECT-CUSTOM:BEGIN"))
+    return (Test-Path $existing)
+}
+
+# True when this file is the instructions seed AND there is a pre-existing
+# CLAUDE.md whose content -WrapExistingClaudeMd is moving into it. Once the
+# seed exists on disk this is false on every later run -- the seed is
+# once-class (never overwritten), so a second wrap must not re-merge into it;
+# the file's OWN generic "exists, skip unless -Force" handling already
+# protects it, this guard only decides whether THIS run's write is a plain
+# seed or a seed-plus-migrated-content write.
+function Test-ShouldMigrateClaudeMdIntoInstructions {
+    param([string]$RelPath)
+    if ($RelPath -ne ".claude/project-instructions.md" -and $RelPath -ne ".claude\project-instructions.md") { return $false }
+    if (-not $WrapExistingClaudeMd) { return $false }
+    if ($Force) { return $false }
+    if (-not (Test-Path (Join-Path $TargetDir "CLAUDE.md"))) { return $false }
+    return -not (Test-Path (Join-Path $TargetDir ".claude/project-instructions.md"))
 }
 
 # --- .gitignore merge block ---
@@ -672,8 +685,7 @@ function Get-GitignoreAppendBlock {
 function Get-ClaudeMdSkipHint {
     param([string]$RelPath)
     if ($RelPath -ne "CLAUDE.md") { return "" }
-    if ($WrapExistingClaudeMd) { return " -- already carries a PROJECT-CUSTOM region, nothing to wrap" }
-    return " -- pass -WrapExistingClaudeMd to keep it inside the template's PROJECT-CUSTOM region"
+    return " -- pass -WrapExistingClaudeMd to move its content into .claude/project-instructions.md"
 }
 
 # Exact text that would be written for a template file -- used by both modes.
@@ -692,9 +704,9 @@ function Get-RenderedContent {
         $text = Set-ProtectedBranches -Text $text
         $text = Set-DerivedDefaults -Text $text
     }
-    if (Test-ShouldWrapClaudeMd $File.RelPath) {
+    if (Test-ShouldMigrateClaudeMdIntoInstructions $File.RelPath) {
         $existing = Get-Content -Path (Join-Path $TargetDir "CLAUDE.md") -Encoding UTF8 -Raw
-        $text = Merge-IntoCustomRegion -Rendered $text -Body $existing
+        $text = Add-ExistingClaudeMd -Rendered $text -Body $existing
     }
     return $text
 }
@@ -853,7 +865,8 @@ if ($DryRun) {
         $targetFile = Join-Path $TargetDir $f.RelPath
         $exists = Test-Path $targetFile
         $action = if ($f.IsGitignore -and $exists) { "APPEND" }
-                  elseif (Test-ShouldWrapClaudeMd $f.RelPath) { "WRAP (existing content moves into the PROJECT-CUSTOM region)" }
+                  elseif (Test-ShouldMigrateClaudeMdIntoInstructions $f.RelPath) { "CREATE (existing CLAUDE.md content moved in)" }
+                  elseif (Test-ShouldWrapClaudeMd $f.RelPath) { "OVERWRITE (existing content moves to .claude/project-instructions.md)" }
                   elseif ($exists -and -not $Force) { "SKIP (exists)" + (Get-ClaudeMdSkipHint $f.RelPath) }
                   elseif ($exists -and $Force) { "OVERWRITE" }
                   else { "CREATE" }
@@ -967,14 +980,19 @@ foreach ($f in $templateFiles) {
         continue
     }
 
-    # Wrap an existing CLAUDE.md instead of skipping it
+    # Overwrite an existing CLAUDE.md instead of skipping it -- its content is
+    # moved into the instructions seed by the branch below, not kept here.
     if (Test-ShouldWrapClaudeMd $f.RelPath) {
         $wrapped = Get-RenderedContent -File $f
         Write-Utf8NoBom -Path $targetFile -Content $wrapped
-        $copiedFiles += "$($f.RelPath) (existing content wrapped into PROJECT-CUSTOM)"
+        if (Test-ShouldMigrateClaudeMdIntoInstructions ".claude/project-instructions.md") {
+            $copiedFiles += "$($f.RelPath) (existing content will be moved to .claude/project-instructions.md)"
+        }
+        else {
+            $copiedFiles += "$($f.RelPath) (overwritten; .claude/project-instructions.md is already seeded, nothing to move)"
+        }
         Add-RenderedFile -RelPath $f.RelPath -Text $wrapped
-        # Hash covers the content AS WRITTEN, i.e. the wrapped file, not the
-        # pre-wrap intermediate.
+        # Hash covers the content AS WRITTEN, i.e. the plain template.
         $manifestInfo = Get-ManifestKeyAndOwnership -File $f
         if ($manifestInfo) {
             if ($manifestInfo.Ownership -eq "template") {
@@ -983,6 +1001,25 @@ foreach ($f in $templateFiles) {
             else {
                 $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
             }
+        }
+        continue
+    }
+
+    # Move a pre-existing CLAUDE.md's content into the freshly seeded
+    # instructions file instead of writing it as an ordinary once-class seed --
+    # see Test-ShouldMigrateClaudeMdIntoInstructions above.
+    if (Test-ShouldMigrateClaudeMdIntoInstructions $f.RelPath) {
+        $renderedSeed = Get-RenderedContent -File $f
+        $parentDir = Split-Path $targetFile -Parent
+        if (-not (Test-Path $parentDir)) {
+            New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+        }
+        Write-Utf8NoBom -Path $targetFile -Content $renderedSeed
+        $copiedFiles += "$($f.RelPath) (existing CLAUDE.md content moved in)"
+        Add-RenderedFile -RelPath $f.RelPath -Text $renderedSeed
+        $manifestInfo = Get-ManifestKeyAndOwnership -File $f
+        if ($manifestInfo) {
+            $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
         }
         continue
     }

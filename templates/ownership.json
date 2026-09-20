@@ -7,6 +7,8 @@
     { "pattern": ".claude/settings.json",     "ownership": "template" },
     { "pattern": ".claude/agents/*.md",       "ownership": "template" },
     { "pattern": ".claude/rules/project.md",  "ownership": "once" },
+    { "pattern": ".claude/project-instructions.md", "ownership": "once" },
+    { "pattern": ".claude/agent-grants.json", "ownership": "once" },
     { "pattern": ".claude/rules/*.md",        "ownership": "template" },
     { "pattern": "hooks/**",                  "ownership": "template" },
     { "pattern": ".gitattributes",            "ownership": "template" },
