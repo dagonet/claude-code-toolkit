@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.0.3 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.1.0 -->
 
 **This skill takes no arguments.** Invoke it as `/sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
