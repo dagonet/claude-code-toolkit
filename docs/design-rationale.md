@@ -21,6 +21,8 @@ Measured at `bf436dc` (before) and after the v3.1 diet (this commit):
 
 At v4.0.3 (2026-09-19, `wc -c`): general 6,143 · dotnet 6,140 · dotnet-maui 6,139 · rust-tauri 6,141 · java 6,135 · python 6,139 — within 1–9 B of the cap, which is what a ratchet looks like when it holds.
 
+At v4.1.0 (2026-09-19, `wc -c`, measured by Task 3): general 6,114 · dotnet 6,111 · dotnet-maui 6,110 · rust-tauri 6,112 · java 6,106 · python 6,110 — every variant **−29 B** from v4.0.3, not a ratchet violation: the PROJECT-CUSTOM region block and the lines 3–4 blockquote left (−16 B net, once the rewritten context-mode sentinel line and a dropped blank line are counted — see "PROJECT-CUSTOM region" below), and the delegation write-surface enumeration on line 32 dropped `` `CLAUDE.md` `` (−13 B, R-L) since `CLAUDE.md` is no longer PO-writable under manifest v4 at all. Headroom widened to 30–38 B per variant.
+
 Budget: `BUDGET_CLAUDE_MD = 6144` (`scripts/verify-template-consistency.sh`).
 For the non-`general` variants, language-specific overflow (agent-fallback
 detail, build/test/debugging conventions, and — for `rust-tauri` — the
@@ -143,20 +145,46 @@ active work state, in-flight agent work, merge sequence) are fact-shaped
 retention rules and stayed; the parenthetical reasoning for retaining them
 is exactly the kind of "why" this file exists to hold.
 
-### PROJECT-CUSTOM region
+### PROJECT-CUSTOM region (retired from `CLAUDE.md` at v4.1.0)
 
-No cuts. The markers (`<!-- PROJECT-CUSTOM:BEGIN -->` / `<!-- PROJECT-CUSTOM:END -->`)
-and the one line above the opening marker containing the literal
-`context-mode` survive verbatim in every variant — check 26 pins both the
-literal and its position, and the context-mode MCP server's own
-`writeRoutingInstructions()` writer checks the file for that literal before
-appending its own routing block. Both markers and the sentinel line were
-to be removed together in a later, separate ownership-transfer commit per the
-v3.1 plan — not here. Still pending at v4.0.3: that change is v4.1
-(`docs/plans/2026-09-18-v4.1-design.md`), which removes the `CLAUDE.md`
-region only, keeps the sentinel line by rewriting it to point at the new
-`.claude/project-instructions.md`, and leaves the 47 agent and
-`AGENT_TEAM.md` regions in place.
+**Through v4.0.3:** no cuts. The markers (`<!-- PROJECT-CUSTOM:BEGIN -->` /
+`<!-- PROJECT-CUSTOM:END -->`) and the one line above the opening marker
+containing the literal `context-mode` survived verbatim in every variant —
+check 26 pinned both the literal and its position, and the context-mode MCP
+server's own `writeRoutingInstructions()` writer checks the file for that
+literal before appending its own routing block. Both markers and the
+sentinel line were slated for removal in a later, separate
+ownership-transfer commit per the v3.1 plan — not then.
+
+**At v4.1.0, that later commit is this one** (`docs/plans/2026-09-18-v4.1-design.md`,
+option B): the `PROJECT-CUSTOM` region is REMOVED from the template
+`CLAUDE.md` in all six variants, and ONLY there — `AGENT_TEAM.md` and the 41
+`.claude/agents/*.md` files keep theirs unchanged, and every region
+instrument (`region.sh`, `region_markers`, `is_empty()`) stays live for those
+47 files. `CLAUDE.md` becomes byte-identical per variant, ending in a plain
+tail block: a precedence sentence addressed to the model, an editing note in
+an HTML comment, and `@.claude/project-instructions.md` as the last line.
+Project content that used to live in the region now lives in that
+once-class file (seeded at bootstrap; at migration, the former region body
+verbatim). **The sentinel survives, rewritten, not removed** — check 26/37
+now pin the literal `context-mode` on the line immediately above the tail
+block, rewritten to point at `.claude/project-instructions.md` instead of a
+region that no longer exists (R-F). It has to survive because it defends
+against a non-tool write the new `hooks/deny-claude-md-writes.sh` cannot
+stop: the context-mode plugin's own writer appends its routing block
+whenever the file lacks that substring (measured on a consumer install,
+`server.bundle.mjs:11`), and on a keep-mine-less, region-less `CLAUDE.md`
+that append would loop every session start into `CONFLICT`.
+
+**Why `CLAUDE.md` alone, not the other 47.** A region split file-agnostically
+in v2.1.2 for a reason that only `CLAUDE.md` needed solved differently:
+`CLAUDE.md` is the one file a `@import` line can point away from, so its
+region's content had somewhere real to go (a project-owned file the server
+never touches). An agent file has no equivalent — its "project content" is a
+`tools:` addition, which v4.1.0 solves with a server-spliced grants file
+(`.claude/agent-grants.json`) instead, and its region stays for genuine prose
+customisation. Retiring the other 47 regions is a v4.2 decision with its own
+spec, not a side effect of this one.
 
 ## AGENT_TEAM.md
 
@@ -172,6 +200,8 @@ Byte-identical across all six variants, measured at `3975c1a` (before) and at th
 | python | 35,845 | 20,472 |
 
 At v4.0.3 (2026-09-19): 20,467 B, all six variants, still byte-identical.
+
+At v4.1.0 (2026-09-19, fix round 1, R-R): 20,454 B, all six variants, still byte-identical (sha256 `048a72457d37f2a5dd484bdc68b3adeb87f7c5c5ab459e02aa17332aad1e2438`) — `−13 B`, the same delegation write-surface enumeration fix as `CLAUDE.md`'s line 32 (R-L): `` , `CLAUDE.md` `` dropped from "**The PO NEVER edits code, at any tier.** Write surface: …". `AGENT_TEAM.md`'s own `PROJECT-CUSTOM` region is unaffected by v4.1.0 (§1 scopes region removal to `CLAUDE.md` alone) — this is the unrelated write-surface fix riding along, not a region change.
 
 Budget: `BUDGET_AGENT_TEAM_MD = 20480` (`scripts/verify-template-consistency.sh`, check 35).
 
