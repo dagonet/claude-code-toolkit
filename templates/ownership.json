@@ -32,7 +32,7 @@
           "none_meaning": "no-op -- hooks/post-edit-build.sh treats `none` exactly like absent"
         },
         "PO write surface": {
-          "effect_when_absent": "the PO's write surface stays at the template default (docs/plans, PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/, CLAUDE.md, AGENT_TEAM.md)",
+          "effect_when_absent": "the PO's write surface stays at the template default (docs/plans, PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/, AGENT_TEAM.md)",
           "none_meaning": "the template default -- no extra prefixes are added"
         },
         "Test (frontend)": {
