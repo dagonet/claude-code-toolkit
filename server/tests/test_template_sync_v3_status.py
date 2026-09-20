@@ -26,6 +26,14 @@ OWNERSHIP = {
     ],
 }
 
+# v4.1, ruling R-J: a CLAUDE.md fixture under a v3 manifest whose CURRENT
+# template carries no PROJECT-CUSTOM markers now falls into the v3-manifest
+# window predicate (spec §7) -- tests below that use "CLAUDE.md" as their
+# template-class fixture filename (rather than testing the window itself,
+# which this pre-v4.1 file predates) carry this region on both sides to stay
+# in the "legacy v3" state their assertions actually exercise.
+_REGION = "<!-- PROJECT-CUSTOM:BEGIN -->\n<!-- PROJECT-CUSTOM:END -->\n"
+
 
 def _mk_v3(tmp_path, template: dict[str, str], project: dict[str, str],
            entries: dict[str, dict], placeholders: dict | None = None,
@@ -257,19 +265,19 @@ def test_compute_status_v3_classifies_every_class(tmp_path):
     repo, proj = _mk_v3(
         tmp_path,
         template={
-            "CLAUDE.md": "# {{NAME}}\n", "hooks/gate.sh": "g2", ".claude/agents/coder.md": "c",
+            "CLAUDE.md": "# {{NAME}}\n" + _REGION, "hooks/gate.sh": "g2", ".claude/agents/coder.md": "c",
             ".claude/rules/project.md": "# Project instructions\n",
             "PROJECT_CONTEXT.md": "**Protected branches**: main\n**Gate**: g\n**Test**: t\n",
             ".claude/agents/new.md": "n", "gitignore": "*.log\n",
             "notes/x.md": "x", ".claude/settings.json": "{}",
         },
         project={
-            "CLAUDE.md": "# Demo\n", "hooks/gate.sh": "g1", ".claude/agents/coder.md": "c edited",
+            "CLAUDE.md": "# Demo\n" + _REGION, "hooks/gate.sh": "g1", ".claude/agents/coder.md": "c edited",
             "PROJECT_CONTEXT.md": "**Protected branches**: main\n", ".claude/agents/game-tester.md": "t",
             ".claude/settings.json": "{}",
         },
         entries={
-            "CLAUDE.md": _tpl_entry("# {{NAME}}\n", {"NAME": "Demo"}),
+            "CLAUDE.md": _tpl_entry("# {{NAME}}\n" + _REGION, {"NAME": "Demo"}),
             "hooks/gate.sh": _tpl_entry("g1"),
             ".claude/agents/coder.md": _tpl_entry("c"),
             ".claude/settings.json": _tpl_entry("{}"),
@@ -298,7 +306,7 @@ def test_compute_status_v3_classifies_every_class(tmp_path):
     assert res["orphans"] == [".claude/agents/game-tester.md"]
     assert res["summary"] == {
         "identical": 2, "template_updated": 1, "local_edited": 1, "template_deleted": 0,
-        "present": 1, "missing": 1, "acknowledged_kept": 0,
+        "present": 1, "missing": 1, "acknowledged_kept": 0, "migration_required": 0,
     }
     assert "CONFLICT" not in json.dumps(res)
 
@@ -395,9 +403,11 @@ def test_compute_status_v3_local_diff_kind(tmp_path):
     # pure insertion -- the skill prints the "move it to project.md" remedy only then.
     repo, proj = _mk_v3(
         tmp_path,
-        template={"CLAUDE.md": "# T\nrule 1\n", ".claude/agents/coder.md": "c\n"},
-        project={"CLAUDE.md": "# T\nrule 1\nmy project rule\n", ".claude/agents/coder.md": "c edited\n"},
-        entries={"CLAUDE.md": _tpl_entry("# T\nrule 1\n"), ".claude/agents/coder.md": _tpl_entry("c\n")},
+        template={"CLAUDE.md": "# T\nrule 1\n" + _REGION, ".claude/agents/coder.md": "c\n"},
+        project={"CLAUDE.md": "# T\nrule 1\nmy project rule\n" + _REGION,
+                ".claude/agents/coder.md": "c edited\n"},
+        entries={"CLAUDE.md": _tpl_entry("# T\nrule 1\n" + _REGION),
+                ".claude/agents/coder.md": _tpl_entry("c\n")},
     )
     res = _status(proj)
     f = res["files"]

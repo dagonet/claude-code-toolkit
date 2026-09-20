@@ -313,14 +313,21 @@ def test_migration_region_only_no_migrated_heading(tmp_path):
     assert "Migrated from CLAUDE.md" not in md and "```diff" not in md
 
 
-def test_migration_idempotent_and_keeps_existing_project_md(tmp_path):
+def test_migration_keeps_existing_project_md_then_v3_to_v4_refuses_on_out_of_region_text(tmp_path):
+    """v4.1: a v3 manifest is no longer a terminal no-op -- calling migrate
+    again now attempts the v3->v4 step (a v2 consumer migrates TWICE). This
+    fixture's PROJ_CLAUDE deliberately carries text OUTSIDE the region, so
+    the second call correctly REFUSES with the out-of-region diff (spec
+    §9.2: move the text into the region first) rather than silently
+    no-opping -- the old "idempotent" expectation predates v4.1."""
     repo, proj, commit = _mk_v2(tmp_path, PROJ_CLAUDE, extra_project={".claude/rules/project.md": "mine\n"})
     res = _migrate(proj, backup_dir=str(tmp_path / "b"))
     assert res["project_md_existing"] is True
     assert (proj / ".claude" / "rules" / "project.md").read_text(encoding="utf-8") == "mine\n"
     res2 = _migrate(proj, backup_dir=str(tmp_path / "b"))
-    assert res2["migrated"] is False
-    assert "already" in res2["reason"]
+    assert "error" in res2, res2
+    assert "out_of_region_diff" in res2
+    assert "My extra rule" in res2["out_of_region_diff"]
 
 
 def test_migration_dry_run_writes_nothing(tmp_path):
@@ -368,14 +375,19 @@ def test_migration_falls_back_to_tag_commit(tmp_path):
     assert res["hunk_count"] == 1
 
 
-def test_migration_requires_ownership_file_and_skips_v3(tmp_path):
+def test_migration_requires_ownership_file_and_v3_attempts_v3_to_v4(tmp_path):
     repo, proj, commit = _mk_v2(tmp_path, PROJ_CLAUDE, ownership=False)
     res = _migrate(proj, dry_run=True)
     assert "ownership.json" in res["error"]
 
+    # v4.1: a v3 manifest is no longer a terminal no-op -- dry_run here
+    # previews the v3->v4 step instead (nothing outside the region, no
+    # project-instructions.md yet, so it plans cleanly).
     repo2, proj2 = _mk_v3(tmp_path / "v3", template={"CLAUDE.md": "x"}, project={}, entries={})
     res2 = _migrate(proj2, dry_run=True)
-    assert res2["migrated"] is False and "already" in res2["reason"]
+    assert "error" not in res2, res2
+    assert res2["migrated"] is False and res2["dry_run"] is True
+    assert res2["manifest"]["manifest_version"] == 4
 
 
 def test_migration_refuses_gate_self_reference(tmp_path):

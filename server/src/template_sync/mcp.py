@@ -328,9 +328,10 @@ def _git_show_file(repo: str, commit: str, file_path: str) -> str | None:
 def _load_manifest(project_path: pathlib.Path) -> tuple[dict | None, list[str]]:
     """Load and parse the manifest file. Returns (manifest, errors).
 
-    v3 manifests (manifest_version == 3) require template_commit and
+    v3/v4 manifests (manifest_version in (3, 4)) require template_commit and
     requires_server on top of the v2 fields; lastSynced is accepted as an
-    alias of template_commit.
+    alias of template_commit. v4 manifests additionally require the two
+    declaration keys instructions_file and agent_grants (spec §5 header).
     """
     manifest_path = project_path / ".claude" / "template-manifest.json"
     content = _read_file(manifest_path)
@@ -343,10 +344,13 @@ def _load_manifest(project_path: pathlib.Path) -> tuple[dict | None, list[str]]:
 
     errors = []
     required = ["variant", "templateRepo", "placeholders", "files"]
-    if manifest.get("manifest_version") == 3:
+    mv = manifest.get("manifest_version")
+    if mv in (3, 4):
         required += ["requires_server"]
         if not (manifest.get("template_commit") or manifest.get("lastSynced")):
             errors.append("Missing required field: template_commit")
+    if mv == 4:
+        required += ["instructions_file", "agent_grants"]
     for field in required:
         if field not in manifest:
             errors.append(f"Missing required field: {field}")
@@ -874,8 +878,9 @@ async def template_load_manifest(project_path: str) -> str:
             f"Update templateRepo in .claude/template-manifest.json."
         )
 
-    if v3.is_v3(manifest):
-        ok, reason = v3.requires_server_satisfied(manifest.get("requires_server", ""), __version__)
+    if v3.manifest_supported(manifest):
+        ok, reason = v3.requires_server_satisfied(
+            v3.effective_requires_server_spec(manifest), __version__)
         if not ok:
             errors.append(reason)
         rules = v3.load_ownership(manifest["templateRepo"]) if not errors else None
@@ -888,7 +893,7 @@ async def template_load_manifest(project_path: str) -> str:
             warnings.extend(rules.warnings)
         return json.dumps({
             "valid": len(errors) == 0,
-            "manifest_version": 3,
+            "manifest_version": manifest.get("manifest_version"),
             "server_version": __version__,
             "server_commit": SERVER_COMMIT,
             "server_source": _server_source(),
@@ -1046,7 +1051,7 @@ async def template_compute_status(
     if variant:
         manifest["variant"] = variant
 
-    if v3.is_v3(manifest):
+    if v3.manifest_supported(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
@@ -1069,8 +1074,11 @@ async def template_compute_status(
             summary["template_deleted"] += 1
             continue
 
-        # Current template hash (after placeholder replacement)
-        tpl_replaced = _apply_placeholders(tpl_content, placeholders)
+        # Current template hash (after placeholder replacement). v2 has no
+        # OwnershipRules and no grants -- template_content(rules=None) is a
+        # placeholder-only no-op here (R-B: routed through the one helper
+        # anyway, so a producer added later cannot bypass it unnoticed).
+        tpl_replaced = v3.template_content(pp, manifest, None, rel_path, tpl_content)
         tpl_hash_new = _sha256(tpl_replaced)
 
         # Previous template hash from manifest
@@ -1242,14 +1250,20 @@ async def template_get_diff(
     if manifest is None:
         return json.dumps({"error": errors[0]}, ensure_ascii=False)
 
-    placeholders = manifest.get("placeholders", {})
     last_synced = manifest.get("lastSynced", "")
 
-    # Read current template content (post-replacement)
+    # Read current template content (post-replacement). No OwnershipRules is
+    # loaded on this generic diff path for either manifest version --
+    # template_content never consults `rules` (it is accepted for signature
+    # uniformity with the callers that have one; see its docstring), so None
+    # is safe here for a v2, v3 or v4 manifest alike.
     tpl_raw = _read_file(_template_file_path(manifest, file_path))
     if tpl_raw is None:
         return json.dumps({"error": f"Template file not found: {file_path}"}, ensure_ascii=False)
-    tpl_current = _apply_placeholders(tpl_raw, placeholders)
+    try:
+        tpl_current = v3.template_content(pp, manifest, None, file_path, tpl_raw)
+    except (v3.GrantsError, v3.GrantRefused) as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     # Read current project content
     proj_current = _read_file(pp / file_path)
@@ -1262,7 +1276,10 @@ async def template_get_diff(
         git_path = _template_git_path(manifest, file_path)
         base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
         if base_raw is not None:
-            base_content = _apply_placeholders(base_raw, placeholders)
+            try:
+                base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
+            except (v3.GrantsError, v3.GrantRefused) as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     # Fallback: if no base available, use current template as base (two-way)
     fallback_used = False
@@ -1402,9 +1419,7 @@ async def template_apply_file(
     if manifest is None:
         return json.dumps({"error": errors[0]}, ensure_ascii=False)
 
-    placeholders = manifest.get("placeholders", {})
-
-    if v3.is_v3(manifest):
+    if v3.manifest_supported(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
@@ -1415,7 +1430,7 @@ async def template_apply_file(
 
     # Read current template content
     tpl_raw = _read_file(_template_file_path(manifest, file_path))
-    tpl_replaced = _apply_placeholders(tpl_raw, placeholders) if tpl_raw else ""
+    tpl_replaced = v3.template_content(pp, manifest, None, file_path, tpl_raw) or ""
     tpl_raw_hash = _sha256(tpl_raw) if tpl_raw else ""
     tpl_hash = _sha256(tpl_replaced) if tpl_replaced else ""
 
@@ -1601,7 +1616,7 @@ async def template_finalize_sync(
     except json.JSONDecodeError:
         acknowledged = []
 
-    if v3.is_v3(manifest):
+    if v3.manifest_supported(manifest):
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
@@ -1655,11 +1670,10 @@ async def template_finalize_sync(
     # has no baseline, and template_compute_status would have offered to
     # overwrite whatever the project has there.
     added_count = 0
-    placeholders = manifest.get("placeholders", {})
     for fp in new:
         if fp not in files:
             tpl_raw = _read_file(_template_file_path(manifest, fp))
-            tpl_replaced = _apply_placeholders(tpl_raw, placeholders) if tpl_raw else ""
+            tpl_replaced = v3.template_content(pp, manifest, None, fp, tpl_raw) or ""
             proj_content = _read_file(pp / _normalize_path(fp))
             local_part_hash, tpl_part_hash = _part_hashes(proj_content or "", tpl_replaced)
             files[fp] = {
@@ -1757,13 +1771,42 @@ async def template_migrate_manifest(
     measured by two consumers who documented the artifact over the docstring,
     correctly. tests/test_template_sync_docstring_contract.py now pins the two
     together so the prose cannot drift back alone.)
-    Idempotent: an existing project.md is never overwritten and a v3 manifest
-    is skipped. CLAUDE.md itself is not touched here -- the apply step
+    Idempotent for v2 -> v3: an existing project.md is never overwritten.
+    CLAUDE.md itself is not touched by the v2 -> v3 step -- the apply step
     overwrites it in the same sync. A v1 manifest is REFUSED (a missing
     `version` key reads as 1, as in template_load_manifest): a v1 entry has no
     localHash, so migrating it would baseline against the current template and
     report a deviating file as identical. Run template_load_manifest and
     template_finalize_sync to persist v2 first.
+
+    v3 -> v4 (spec §7 step 1c, §9, v4.1): a v3 manifest is NO LONGER a
+    terminal no-op -- calling this on one now attempts the v3 -> v4 step (a
+    v2 consumer therefore migrates TWICE: v2 -> v3, then v3 -> v4; only a v4
+    manifest is idempotent, reported as `already_v4`). Dry-run lists (a) the
+    PROJECT-CUSTOM region body that will move to
+    `.claude/project-instructions.md` verbatim (an EMPTY region moves a
+    header-only seed with no body); (b) every LOCAL_EDITED agent whose diff
+    is CONFINED to additions on its `tools:` line becomes a
+    `.claude/agent-grants.json` entry instead (only an agent that SHIPS a
+    `tools:` line qualifies -- one that gained a `tools:` line the template
+    ships none for is refused, never a synthesised grant); (c) ANY OTHER
+    CLAUDE.md diff outside the region, measured against the HELD (last-
+    synced) template -- REFUSED with the diff in `out_of_region_diff`, NO
+    WRITES: move the text into the region BEFORE migrating (refuse-not-
+    guess -- the migration will not guess where local text belongs); (d) an
+    EXISTING `.claude/project-instructions.md` -- REFUSED naming the path,
+    NO WRITES: the migration writes that file FROM the region body, so a
+    silent "keep the existing file" would strand it. A real run requires
+    `backup_dir` (same as v2 -> v3) and writes, in order,
+    `.claude/agent-grants.json`, `.claude/project-instructions.md`,
+    `CLAUDE.md` (= the variant template, placeholder-rendered and, for an
+    agent file, grant-spliced), and the v4 manifest (`instructions_file`,
+    `agent_grants` declarations, `requires_server ">=4.1.0"`, every
+    template-class hash re-derived AFTER the writes above, so a
+    grants-carrying agent's stored hash is the SPLICED hash the very next
+    status call reads back as IDENTICAL); the report goes to
+    `<backup_dir>/migration-report.json`, never in-repo (v4.0.1 item 14's
+    rule extended to this step).
 
     Args:
         project_path: Path to the project root directory
