@@ -1941,16 +1941,22 @@ def _v4_entry_for(fp: str, entry: dict, *, pp: pathlib.Path, manifest: dict, rul
     stored hash is PRESERVED, never silently repaired (spec 1.1's
     discriminating fixture), and a template file the template no longer
     ships (deletedAcknowledged) never resolves to `hash: ""` (bug b).
-    Unknown per-file keys (consumer annotations, e.g. `reason`) are always
-    merged forward via `carry_unknown_file_keys` (spec 1.1's wording covers
-    every unwritten entry, not just `once` -- applying it uniformly here is
-    a strict superset of the `once`-only reading and costs nothing).
+    Unknown per-file keys (consumer annotations, e.g. `reason`) are ALWAYS
+    merged forward via `carry_unknown_file_keys`, in every branch below,
+    written or not (spec 1.1's wording means it literally: a migration
+    transforms entries, it does not rebuild them, and that applies to a
+    written entry too -- only its HASH is recomputed, never its
+    annotations).
     """
     ownership = entry.get("ownership")
     if ownership == "template":
         if fp == "CLAUDE.md":
-            # Written fresh from the CURRENT template -- not carried.
-            return {"hash": format_hash(core._sha256(new_claude)), "ownership": "template"}, [], None
+            # Written fresh from the CURRENT template -- the HASH is not
+            # carried (it must reflect the new content), but any consumer
+            # annotation on this entry still is.
+            new_entry, carried = carry_unknown_file_keys(
+                entry, {"hash": format_hash(core._sha256(new_claude)), "ownership": "template"})
+            return new_entry, carried, None
         agent_name = grant_agent_paths.get(fp)
         if agent_name is not None:
             tpl_rel_e = rules.template_path_for(fp)
@@ -1971,6 +1977,22 @@ def _v4_entry_for(fp: str, entry: dict, *, pp: pathlib.Path, manifest: dict, rul
         return new_entry, carried, None
     # Defensive: neither known ownership -- preserve verbatim rather than guess.
     return dict(entry), [], None
+
+
+def _v4_seed_entry(prior: dict | None) -> tuple[dict, list[str]]:
+    """The v4 manifest entry for a fixed once-class seed path the migration
+    creates (`.claude/project-instructions.md`, `.claude/agent-grants.json`)
+    (spec 1.1 fix round 1): carries any consumer annotation on a
+    PRE-EXISTING entry for that path forward, exactly like every other
+    entry -- but PINS ownership to `"once"` and drops any `hash`
+    unconditionally, whatever an old v3 manifest claimed for it. A v3
+    manifest that happened to list this path `"ownership": "template"` must
+    NOT ship a v4 entry the next sync could then treat as template-owned
+    and silently overwrite -- that would clobber a consumer's own grants or
+    instructions file, a worse defect than losing the annotation. `hash` is
+    dropped for free: it is a KNOWN_FILE_KEYS_V3 key, so
+    `carry_unknown_file_keys` never carries it."""
+    return carry_unknown_file_keys(prior or {}, {"ownership": "once"})
 
 
 def check_baseline_invariant(old_manifest: dict, new_manifest: dict, will_write) -> dict:
@@ -2107,7 +2129,9 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     if instructions_target.is_file():
         return {
             "error": f"{INSTRUCTIONS_FILE_DEFAULT} already exists -- the migration writes this file "
-                     "from the region body; move or remove the existing file first",
+                     "from the region body; move or remove the existing file first (if a previous "
+                     "migration of this consumer refused after writing, this may be its own "
+                     "leftover -- compare it with <backup_dir>)",
         }
 
     seed_tpl_raw = core._read_file(core._template_file_path(manifest, INSTRUCTIONS_FILE_DEFAULT))
@@ -2161,8 +2185,11 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
                      f"{sorted(set(unavailable_agents))} cannot be re-hashed -- "
                      "fetch the held template commit and retry",
         }
-    files[INSTRUCTIONS_FILE_DEFAULT] = {"ownership": "once"}
-    files[AGENT_GRANTS_FILE] = {"ownership": "once"}
+    for seed_fp in (INSTRUCTIONS_FILE_DEFAULT, AGENT_GRANTS_FILE):
+        seed_entry, seed_carried = _v4_seed_entry(files.get(seed_fp))
+        files[seed_fp] = seed_entry
+        if seed_carried:
+            carried_file_keys[seed_fp] = seed_carried
     new_manifest["files"] = dict(sorted(files.items()))
     superseded_dropped = drop_superseded(new_manifest)
 
@@ -2287,13 +2314,18 @@ def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_
                          f"['{unavailable_agent}'] cannot be re-hashed -- this is unreachable given "
                          "migrate_v3_to_v4()'s pre-write refusal with identical inputs; report it as a "
                          "server defect. CLAUDE.md, .claude/project-instructions.md and "
-                         ".claude/agent-grants.json were already written; the manifest was not",
+                         ".claude/agent-grants.json were already written; the manifest was not"
+                         f"; pre-migration copies are in {bdir} (CLAUDE.md.pre-migration, "
+                         "template-manifest.json.pre-migration)",
             }
         final_files[fp] = new_entry
         if carried:
             carried_file_keys[fp] = carried
-    final_files[INSTRUCTIONS_FILE_DEFAULT] = {"ownership": "once"}
-    final_files[AGENT_GRANTS_FILE] = {"ownership": "once"}
+    for seed_fp in (INSTRUCTIONS_FILE_DEFAULT, AGENT_GRANTS_FILE):
+        seed_entry, seed_carried = _v4_seed_entry(final_files.get(seed_fp))
+        final_files[seed_fp] = seed_entry
+        if seed_carried:
+            carried_file_keys[seed_fp] = seed_carried
     final_manifest["files"] = dict(sorted(final_files.items()))
     # Reconcile with the preview: same helper, same inputs, so this is
     # provably identical to plan["carried_file_keys"] today -- overwriting

@@ -506,3 +506,66 @@ def test_mixed_agent_reapplied_from_template_reads_identical(v3_consumer):
     res = apply_file(v3_consumer, ".claude/agents/coder.md", source="template")
     assert "error" not in res, res
     assert compute_status(v3_consumer)["files"][".claude/agents/coder.md"]["status"] == "IDENTICAL"
+
+
+# =============================================================================
+# v4.1.1 Task 1, fix round 1: every v4 entry carries its annotations,
+# CLAUDE.md included; the two seed entries (project-instructions.md,
+# agent-grants.json) never ship a clobberable stale ownership/hash.
+# =============================================================================
+
+
+def test_claude_md_reason_is_carried_and_reported(v3_consumer):
+    v3_consumer.old_manifest["files"]["CLAUDE.md"]["reason"] = "kept"
+    v3_consumer.write_manifest()
+    report = migrate_v3_to_v4_write(v3_consumer)
+    assert "error" not in report, report
+    assert report["manifest"]["files"]["CLAUDE.md"]["reason"] == "kept"
+    assert report["carried_file_keys"]["CLAUDE.md"] == ["reason"]
+
+
+def test_plain_template_entry_reason_is_carried(v3_consumer):
+    v3_consumer.old_manifest["files"]["AGENT_TEAM.md"]["reason"] = "kept"
+    v3_consumer.write_manifest()
+    report = migrate_v3_to_v4_write(v3_consumer)
+    assert "error" not in report, report
+    assert report["manifest"]["files"]["AGENT_TEAM.md"]["reason"] == "kept"
+    assert report["carried_file_keys"]["AGENT_TEAM.md"] == ["reason"]
+
+
+def test_grant_agent_reason_is_carried(v3_consumer):
+    v3_consumer.add_tools_to_agent(".claude/agents/coder.md", ["mcp__glider__find_references"])
+    v3_consumer.old_manifest["files"][".claude/agents/coder.md"]["reason"] = "kept"
+    v3_consumer.write_manifest()
+    report = migrate_v3_to_v4_write(v3_consumer)
+    assert "error" not in report, report
+    assert report["manifest"]["files"][".claude/agents/coder.md"]["reason"] == "kept"
+    assert report["carried_file_keys"][".claude/agents/coder.md"] == ["reason"]
+
+
+def test_instructions_seed_entry_ownership_forced_to_once_reason_carried(v3_consumer):
+    # A v3 manifest that already (mis-)lists the seed path as template-class
+    # with a hash: migration must not let a v4 manifest ship it that way --
+    # the next sync would then treat it as template-owned and overwrite the
+    # consumer's own project-instructions.md.
+    v3_consumer.old_manifest["files"][".claude/project-instructions.md"] = {
+        "ownership": "template", "hash": "sha256:" + "a" * 64, "reason": "kept"}
+    v3_consumer.write_manifest()
+    report = migrate_v3_to_v4_write(v3_consumer)
+    assert "error" not in report, report
+    entry = report["manifest"]["files"][".claude/project-instructions.md"]
+    assert entry["ownership"] == "once"
+    assert entry["reason"] == "kept"
+    assert "hash" not in entry
+
+
+def test_agent_grants_seed_entry_ownership_forced_to_once_reason_carried(v3_consumer):
+    v3_consumer.old_manifest["files"][".claude/agent-grants.json"] = {
+        "ownership": "template", "hash": "sha256:" + "a" * 64, "reason": "kept"}
+    v3_consumer.write_manifest()
+    report = migrate_v3_to_v4_write(v3_consumer)
+    assert "error" not in report, report
+    entry = report["manifest"]["files"][".claude/agent-grants.json"]
+    assert entry["ownership"] == "once"
+    assert entry["reason"] == "kept"
+    assert "hash" not in entry
