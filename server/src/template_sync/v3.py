@@ -1918,6 +1918,90 @@ def _tools_line_diff(tpl_text: str, proj_text: str) -> tuple[list[str], list[str
     return tpl_tools, proj_tools[len(tpl_tools):]
 
 
+def _v4_entry_for(fp: str, entry: dict, *, pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
+                  grant_agent_paths: dict[str, str], grants_plan: dict[str, list[str]],
+                  new_claude: str) -> tuple[dict | None, list[str], str | None]:
+    """The ONE per-entry v4-manifest decision (spec 1.1, review #17 x3):
+    used by BOTH the dry-run preview loop and the write-path re-hash, so
+    there is exactly one producer of a v4 manifest entry (H2 shape) -- the
+    invariant `check_baseline_invariant` checks is then true by
+    construction, not by two code paths happening to agree.
+
+    Returns (new_entry, carried_keys, unavailable_agent). `new_entry` is
+    None only when `fp` is a grants-plan agent whose HELD base could not be
+    rendered -- the caller collects `unavailable_agent` across every entry
+    and refuses the WHOLE migration (grants are all-or-nothing: a silently
+    un-spliced baseline is worse than a loud refusal, spec 1.1).
+
+    Every entry the migration does not write (everything except CLAUDE.md,
+    which is written fresh, and grants-plan agents, whose manifest hash
+    must reflect the grant even though their FILE is not written to disk)
+    carries `entry["hash"]` forward UNCHANGED -- no render, no
+    `template_content()` call at all -- so a stale or deliberately corrupt
+    stored hash is PRESERVED, never silently repaired (spec 1.1's
+    discriminating fixture), and a template file the template no longer
+    ships (deletedAcknowledged) never resolves to `hash: ""` (bug b).
+    Unknown per-file keys (consumer annotations, e.g. `reason`) are always
+    merged forward via `carry_unknown_file_keys` (spec 1.1's wording covers
+    every unwritten entry, not just `once` -- applying it uniformly here is
+    a strict superset of the `once`-only reading and costs nothing).
+    """
+    ownership = entry.get("ownership")
+    if ownership == "template":
+        if fp == "CLAUDE.md":
+            # Written fresh from the CURRENT template -- not carried.
+            return {"hash": format_hash(core._sha256(new_claude)), "ownership": "template"}, [], None
+        agent_name = grant_agent_paths.get(fp)
+        if agent_name is not None:
+            tpl_rel_e = rules.template_path_for(fp)
+            held_rendered, _base_label, _warn = resolve_base(pp, manifest, rules, tpl_rel_e)
+            if held_rendered is None:
+                return None, [], agent_name
+            spliced = splice_tools(held_rendered, grants_plan[agent_name])
+            new_entry, carried = carry_unknown_file_keys(
+                entry, {"hash": format_hash(core._sha256(spliced)), "ownership": "template"})
+            return new_entry, carried, None
+        # Not written by the migration -- carry the stored hash forward
+        # unchanged. This IS the fix for #17's three symptoms.
+        new_entry, carried = carry_unknown_file_keys(
+            entry, {"hash": entry.get("hash", ""), "ownership": "template"})
+        return new_entry, carried, None
+    if ownership == "once":
+        new_entry, carried = carry_unknown_file_keys(entry, {"ownership": "once"})
+        return new_entry, carried, None
+    # Defensive: neither known ownership -- preserve verbatim rather than guess.
+    return dict(entry), [], None
+
+
+def check_baseline_invariant(old_manifest: dict, new_manifest: dict, will_write) -> dict:
+    """Pure invariant (spec 1.1): every v4 entry NOT in `will_write` must
+    carry its OLD hash forward unchanged. `will_write` is the set of paths
+    whose hash the migration is ALLOWED to change -- CLAUDE.md (written
+    fresh), the two new once-class files it creates, and every grants-plan
+    agent path (re-hashed via the held base even though the migration never
+    writes that agent's bytes to disk).
+
+    A violation means `_v4_entry_for` regressed to reconstructing an entry
+    instead of deriving it -- report it, never accept it silently. It
+    cannot false-positive: under carry-forward, previewed and stored are
+    both literally `entry["hash"]`, even for a deliberately corrupt one, so
+    a violation here means the producer changed a baseline it does not own.
+    `will_write` may be a set or any other string container; only
+    membership (`in`) is used.
+    """
+    old_files = old_manifest.get("files", {})
+    violations = []
+    for path, new_entry in new_manifest.get("files", {}).items():
+        if path in will_write:
+            continue
+        old_entry = old_files.get(path)
+        if old_entry is None:
+            continue
+        if new_entry.get("hash") != old_entry.get("hash"):
+            violations.append(path)
+    return {"ok": not violations, "violations": sorted(violations)}
+
+
 def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
     """Plan (never writes) a v3 -> v4 migration (spec §7 step 1c, §9).
 
@@ -1966,6 +2050,7 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     # (b) grant-shaped agent diffs.
     placeholders = manifest.get("placeholders", {})
     grants_plan: dict[str, list[str]] = {}
+    grant_agent_paths: dict[str, str] = {}
     no_tools_line_refusals: list[str] = []
     for proj_rel, entry in manifest.get("files", {}).items():
         proj_rel = core._normalize_path(proj_rel)
@@ -1982,12 +2067,27 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
         agent_tpl_rendered = template_content(pp, manifest, rules, proj_rel, agent_tpl_raw)
         if agent_tpl_rendered is None or agent_tpl_rendered == agent_proj:
             continue
-        diff = _tools_line_diff(agent_tpl_rendered, agent_proj)
+        # Route through the region split BEFORE the tools-only diff (spec
+        # 1.2, #31): without this, an agent carrying a tools: addition AND
+        # region content classifies as `mixed` on the WHOLE text and is
+        # skipped here, so grants_plan stays empty for it -- exactly the
+        # risk grants exist to close (MM-Agent's 16 + 22 project tools got
+        # no durable home). Same split `region_status` (`:932`) already
+        # uses -- no second stripper.
+        #
+        # Residual (stated per the brief): this compares against the
+        # CURRENT template (HEAD)'s non-region part, so a template edit to
+        # the agent's tools: line between the held commit and HEAD still
+        # reads as not-tools-only here -- the held-base comparison is v4.2.
+        tpl_nonregion, _tpl_region = core._split_custom_region(agent_tpl_rendered)
+        proj_nonregion, _proj_region = core._split_custom_region(agent_proj)
+        diff = _tools_line_diff(tpl_nonregion, proj_nonregion)
         if diff is not None:
             agent_name = agent_name_of(agent_tpl_rendered)
             if agent_name:
                 grants_plan[agent_name] = diff[1]
-        elif _TOOLS_LINE_RE.search(agent_tpl_rendered) is None and _TOOLS_LINE_RE.search(agent_proj):
+                grant_agent_paths[proj_rel] = agent_name
+        elif _TOOLS_LINE_RE.search(tpl_nonregion) is None and _TOOLS_LINE_RE.search(proj_nonregion):
             no_tools_line_refusals.append(proj_rel)
 
     if no_tools_line_refusals:
@@ -2036,37 +2136,38 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     new_manifest["instructions_file"] = INSTRUCTIONS_FILE_DEFAULT
     new_manifest["agent_grants"] = AGENT_GRANTS_FILE
 
-    # Hash PREVIEW (dry_run writes nothing, so template_content() cannot yet
-    # read agent-grants.json off disk) -- computed here via splice_tools()
-    # directly, mathematically identical to what template_content() will
-    # produce once the WRITE path (migrate_manifest) writes the grants file
-    # FIRST and re-hashes every entry through template_content() -- that
-    # second pass, not this preview, is where H2's guarantee has to hold and
-    # is where the dedicated writer witness checks it.
+    # Hash PREVIEW: derive, never construct (spec 1.1). Every entry the
+    # migration does not write carries its stored hash forward UNCHANGED --
+    # no render at all -- through the single producer `_v4_entry_for`, which
+    # the write-path re-hash below calls again on the same (fp, entry)
+    # pairs, so the two can never disagree (H2 shape).
     files: dict[str, dict] = {}
+    carried_file_keys: dict[str, list[str]] = {}
+    unavailable_agents: list[str] = []
     for fp, entry in manifest.get("files", {}).items():
         fp = core._normalize_path(fp)
-        if entry.get("ownership") == "template":
-            if fp == "CLAUDE.md":
-                files[fp] = {"hash": format_hash(core._sha256(new_claude)), "ownership": "template"}
-                continue
-            tpl_rel_e = rules.template_path_for(fp)
-            raw_e = core._read_file(core._template_file_path(manifest, tpl_rel_e))
-            # `manifest` is still the OLD v3 manifest here too -- a
-            # placeholder-only no-op, same reasoning as above.
-            rendered_e = template_content(pp, manifest, rules, fp, raw_e)
-            if rendered_e is not None and fp.startswith(AGENTS_DIR_PREFIX):
-                agent_name_e = agent_name_of(rendered_e)
-                if agent_name_e and agent_name_e in grants_plan:
-                    rendered_e = splice_tools(rendered_e, grants_plan[agent_name_e])
-            files[fp] = {"hash": format_hash(core._sha256(rendered_e)) if rendered_e is not None else "",
-                         "ownership": "template"}
-        elif entry.get("ownership") == "once":
-            files[fp] = {"ownership": "once"}
+        new_entry, carried, unavailable_agent = _v4_entry_for(
+            fp, entry, pp=pp, manifest=manifest, rules=rules,
+            grant_agent_paths=grant_agent_paths, grants_plan=grants_plan, new_claude=new_claude)
+        if new_entry is None:
+            unavailable_agents.append(unavailable_agent)
+            continue
+        files[fp] = new_entry
+        if carried:
+            carried_file_keys[fp] = carried
+    if unavailable_agents:
+        return {
+            "error": "migration_base unavailable; grant agents "
+                     f"{sorted(set(unavailable_agents))} cannot be re-hashed -- "
+                     "fetch the held template commit and retry",
+        }
     files[INSTRUCTIONS_FILE_DEFAULT] = {"ownership": "once"}
     files[AGENT_GRANTS_FILE] = {"ownership": "once"}
     new_manifest["files"] = dict(sorted(files.items()))
     superseded_dropped = drop_superseded(new_manifest)
+
+    will_write = sorted({"CLAUDE.md", INSTRUCTIONS_FILE_DEFAULT, AGENT_GRANTS_FILE} | set(grant_agent_paths))
+    baseline_invariant = check_baseline_invariant(manifest, new_manifest, set(will_write))
 
     return {
         "manifest": new_manifest,
@@ -2076,6 +2177,10 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
         "out_of_region_diff": out_of_region_diff,
         "migration_base": base_label,
         "grants_plan": grants_plan,
+        "grant_agent_paths": grant_agent_paths,
+        "will_write": will_write,
+        "carried_file_keys": carried_file_keys,
+        "baseline_invariant": baseline_invariant,
         "instructions_content": instructions_content,
         "agent_grants_content": agent_grants_content,
         "claude_md_content": new_claude,
@@ -2110,6 +2215,19 @@ def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_
     if not ok:
         plan["warnings"].append("skill_version would refuse a write: " + refusal)
 
+    if not dry_run and not plan["baseline_invariant"]["ok"]:
+        # Defensive tripwire (spec 1.1): with `_v4_entry_for` as the single
+        # producer this can only fire if a future change breaks that
+        # invariant -- refuse loudly BEFORE any write (backup_dir is not
+        # even created yet) rather than let a silently-rewritten baseline
+        # land on disk.
+        return {
+            "error": "baseline invariant violated for "
+                     f"{plan['baseline_invariant']['violations']}: the migration would rewrite a "
+                     "baseline it does not write -- this is a server defect, report it with these "
+                     "paths; nothing was written",
+        }
+
     if dry_run:
         plan["migrated"] = False
         plan["backup"] = None
@@ -2142,18 +2260,47 @@ def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_
     claude_target = pp / "CLAUDE.md"
     core._write_file_atomic(claude_target, plan["claude_md_content"])
 
+    # Write-path re-hash (spec 1.1): the SAME per-entry decision as the
+    # preview above, via the SAME `_v4_entry_for` helper on the SAME (fp,
+    # entry) pairs from the OLD v3 manifest -- so this loop cannot diverge
+    # from the preview's `plan["manifest"]["files"]` (H2 shape: exactly one
+    # producer). `unavailable_agent` is unreachable here in practice:
+    # migrate_v3_to_v4() already refused, before any write, when a
+    # grants-plan base was unavailable, and this loop is fed identical
+    # inputs -- so a hit here is the same defect the baseline-invariant
+    # tripwire above already guards against, not a new failure mode. Unlike
+    # that pre-write refusal, grants.json/project-instructions.md/CLAUDE.md
+    # are ALREADY on disk by this point -- the message says so rather than
+    # repeating "nothing was written", which would be false here.
     final_manifest = dict(plan["manifest"])
     final_files: dict[str, dict] = {}
-    for fp, entry in plan["manifest"]["files"].items():
-        if entry.get("ownership") == "template":
-            tpl_rel_e = rules.template_path_for(fp)
-            raw_e = core._read_file(core._template_file_path(manifest, tpl_rel_e))
-            rendered_e = template_content(pp, final_manifest, rules, fp, raw_e)
-            final_files[fp] = {"hash": format_hash(core._sha256(rendered_e)) if rendered_e is not None else "",
-                               "ownership": "template"}
-        else:
-            final_files[fp] = entry
+    carried_file_keys: dict[str, list[str]] = {}
+    for fp, entry in manifest.get("files", {}).items():
+        fp = core._normalize_path(fp)
+        new_entry, carried, unavailable_agent = _v4_entry_for(
+            fp, entry, pp=pp, manifest=manifest, rules=rules,
+            grant_agent_paths=plan["grant_agent_paths"], grants_plan=plan["grants_plan"],
+            new_claude=plan["claude_md_content"])
+        if new_entry is None:
+            return {
+                "error": "migration_base unavailable; grant agents "
+                         f"['{unavailable_agent}'] cannot be re-hashed -- this is unreachable given "
+                         "migrate_v3_to_v4()'s pre-write refusal with identical inputs; report it as a "
+                         "server defect. CLAUDE.md, .claude/project-instructions.md and "
+                         ".claude/agent-grants.json were already written; the manifest was not",
+            }
+        final_files[fp] = new_entry
+        if carried:
+            carried_file_keys[fp] = carried
+    final_files[INSTRUCTIONS_FILE_DEFAULT] = {"ownership": "once"}
+    final_files[AGENT_GRANTS_FILE] = {"ownership": "once"}
     final_manifest["files"] = dict(sorted(final_files.items()))
+    # Reconcile with the preview: same helper, same inputs, so this is
+    # provably identical to plan["carried_file_keys"] today -- overwriting
+    # with the write-path's own result means the reported field can never
+    # silently drift from the manifest actually written, even if a future
+    # change makes the two loops take different branches.
+    plan["carried_file_keys"] = carried_file_keys
 
     manifest_path = pp / ".claude" / "template-manifest.json"
     core._write_file_atomic(manifest_path, json.dumps(final_manifest, indent=2, ensure_ascii=False) + "\n")
