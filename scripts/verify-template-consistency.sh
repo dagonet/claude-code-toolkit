@@ -10,9 +10,11 @@
 
 set -u
 fail=0
+skip_count=0
 note() { printf "  %s\n" "$*"; }
 ok() { printf "PASS  %s\n" "$*"; }
 ko() { printf "FAIL  %s\n" "$*"; fail=1; }
+skip() { printf "SKIP  %s\n" "$*"; skip_count=$((skip_count + 1)); }
 
 VARIANTS="general dotnet dotnet-maui rust-tauri java python"
 
@@ -3266,8 +3268,7 @@ rm -f "$c36_full_file" "$c36_rel_file" "$c36_class_file" "${c36_class_file}.join
 note "Check 37: the context-mode sentinel is in every templates/*/CLAUDE.md and the root CLAUDE.md; both plugin writers re-measured where installed"
 c37_fail=0
 c37_files=0
-for f in templates/general/CLAUDE.md templates/dotnet/CLAUDE.md templates/dotnet-maui/CLAUDE.md \
-         templates/rust-tauri/CLAUDE.md templates/java/CLAUDE.md templates/python/CLAUDE.md CLAUDE.md; do
+for f in templates/*/CLAUDE.md CLAUDE.md; do
   c37_files=$((c37_files + 1))
   grep -q 'context-mode' "$f" || { ko "check 37: $f lacks the context-mode sentinel -- the plugin's launcher will append its routing block on the next server spawn"; c37_fail=1; }
 done
@@ -3287,6 +3288,24 @@ if [ "$c37_measured" -eq 0 ]; then
   note "check 37: context-mode plugin not installed here -- writer predicate not re-measured (sentinel still asserted in $c37_files files)"
 fi
 [ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in $c37_files/7 files (6 variants + root); $c37_measured installed writer(s) still gate on includes(\"context-mode\")"
+
+# ---------------------------------------------------------------------------
+# Check 55 — the declared $VARIANTS list (:17) equals the set of templates/*/
+# directories actually on disk. Check 37's glob (above) absorbs an undeclared
+# directory silently; this check is what turns that silence red. The
+# declaration at :17 STAYS -- it is a statement of intent this check verifies
+# reality against (the same relationship UNGRANTABLE_TOOLS has to its own
+# census). Compared as SETS: the declaration is not sorted and must not be
+# reordered to satisfy the comparator.
+# ---------------------------------------------------------------------------
+note "Check 55: the declared VARIANTS list equals the set of templates/*/ directories on disk"
+c55_declared=$(printf '%s\n' $VARIANTS | LC_ALL=C sort)
+c55_disk=$(for d in templates/*/; do d=${d%/}; printf '%s\n' "${d#templates/}"; done | LC_ALL=C sort)
+if [ "$c55_declared" = "$c55_disk" ]; then
+  ok "check 55: VARIANTS ($(printf '%s\n' "$VARIANTS" | wc -w)) == templates/*/ on disk"
+else
+  ko "check 55: declared VARIANTS and templates/*/ differ -- declared: [$(printf '%s ' $c55_declared)] disk: [$(printf '%s ' $c55_disk)]; a variant not on line 17 is invisible to every 'for v in \$VARIANTS' check"
+fi
 
 # ---------------------------------------------------------------------------
 # Check 38 — VERSION two-line convention (v3.1). Line 1 = semver, line 2 = this
@@ -3536,6 +3555,31 @@ else
   if [ "$c42_low" != "$c42_bare" ]; then
     ko "check 42: requires_skill '$c42_floor' is ABOVE this toolkit's own VERSION ($c42_ours) -- no consumer can meet it, so every write-mode migration would be refused with no server release involved"
     c42_fail=1
+  fi
+fi
+# Arm 2 -- requires_skill is non-decreasing since the previous release. Arm 1
+# above only catches a floor ABOVE VERSION; a stale-low floor is invisible to
+# it (measured: everything-but-the-floor moved -> 420/0 at v4.1.0). The
+# previous release's NAME comes from the CHANGELOG's second '## v' heading (a
+# deliberate statement living in the gated commit) -- never
+# `git describe --tags --abbrev=0`, which answers "nearest reachable tag" and
+# moves with reachability and with any non-release tag.
+c42_bare=${c42_bare:-}
+c42_prev=$(grep -m2 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed -n '2p' | sed 's/^## //')
+if [ -z "$c42_prev" ]; then
+  ko "check 42 arm 2: CHANGELOG.md has no second '## v' heading -- the previous release cannot be named"; c42_fail=1
+elif ! c42_prev_commit=$(git rev-parse --verify --quiet "${c42_prev}^{commit}"); then
+  # DETECTION, not permission: a tag absent locally does not make a decrease likelier; SKIP by name.
+  # (#15's extension is a PERMISSION and fails closed on absent data -- opposite polarity, on purpose.)
+  skip "check 42 arm 2: previous release tag ${c42_prev} not present locally -- fetch tags (git fetch --tags) to enable the non-decreasing check"
+else
+  c42_prev_floor=$(git show "${c42_prev_commit}:templates/ownership.json" | sed -n 's/.*"requires_skill"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  c42_prev_bare=${c42_prev_floor#>=}
+  c42_low2=$(printf '%s\n%s\n' "$c42_prev_bare" "$c42_bare" | sort -V | head -1)
+  if [ -n "$c42_prev_bare" ] && [ "$c42_low2" != "$c42_prev_bare" ]; then
+    ko "check 42 arm 2: requires_skill '$c42_floor' is BELOW the previous release's '$c42_prev_floor' (${c42_prev}) -- a lowered floor re-admits skill bodies that release deliberately excluded"; c42_fail=1
+  else
+    ok "check 42 arm 2: requires_skill '$c42_floor' >= previous release ${c42_prev}'s '$c42_prev_floor'"
   fi
 fi
 # Control arm: the same comparison must be able to fire. Evaluate it against a
@@ -4411,6 +4455,9 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
+if [ "$skip_count" -gt 0 ]; then
+  echo "$skip_count check(s) skipped"
+fi
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
   exit 0
