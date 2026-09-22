@@ -3615,16 +3615,36 @@ fi
 # Check 56 -- the floor is a compatibility judgement a person signs, not a
 # value check 42 can derive (arm 3, a declared-floor-equality check, was
 # considered and not built -- both releases' floors staying stale together is
-# exactly the green case it would exist to catch). This check only asserts
-# PRESENCE of that signed judgement in the newest CHANGELOG section, never its
-# content -- the content is Task 6's own call, made once, above.
+# exactly the green case it would exist to catch). PRESENCE of a signed
+# 'Floor reviewed:' line is not enough on its own: nothing else in this
+# script ties a CHANGELOG heading to VERSION -- check 42 arm 2 reads a
+# heading too, but only to find the PREVIOUS release, and passes on an
+# unbumped VERSION by comparing a tag to itself -- so a release that bumps
+# VERSION without adding its own CHANGELOG section would otherwise pass on
+# the section still sitting from the release before it. This check asserts
+# TWO things in one counted line: the newest '## v' heading names THIS
+# release (its version equals VERSION line 1), and that section carries the
+# signed line -- kept as one PASS/FAIL rather than two, since a release with
+# no matching section has no floor judgement of its own to read either way.
+# Either extraction (VERSION, the heading) being unreadable is checked FIRST,
+# before the comparison, so an empty value can never compare equal to
+# another empty value and pass by accident. The `ko` message names exactly
+# which of the three conditions failed.
 # ---------------------------------------------------------------------------
-note "Check 56: the newest CHANGELOG section carries a signed 'Floor reviewed:' line"
+note "Check 56: the newest CHANGELOG section is this release's own, and signs a 'Floor reviewed:' line"
+c56_hv=$(grep -m1 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed 's/^## v//')
+c56_fv=$(head -1 VERSION 2>/dev/null | tr -d '\r\n')
 c56_section=$(awk '/^## v[0-9]/{n++} n==1{print} n==2{exit}' CHANGELOG.md)
-case "$c56_section" in
-  *"Floor reviewed: unchanged"*|*"Floor reviewed: raised to >=v"*) ok "check 56: newest CHANGELOG section states its floor judgement" ;;
-  *) ko "check 56: newest CHANGELOG section has no 'Floor reviewed: unchanged — <reason>' / 'Floor reviewed: raised to >=vX.Y.Z — <reason>' line -- the floor is a compatibility judgement a person signs, not a value a check can derive" ;;
-esac
+if [ -z "$c56_hv" ] || [ -z "$c56_fv" ]; then
+  ko "check 56: VERSION or the newest '## v' heading is unreadable -- VERSION='${c56_fv:-<empty>}' heading='${c56_hv:-<empty>}'"
+elif [ "$c56_hv" != "$c56_fv" ]; then
+  ko "check 56: newest CHANGELOG section is v$c56_hv, VERSION is $c56_fv"
+else
+  case "$c56_section" in
+    *"Floor reviewed: unchanged"*|*"Floor reviewed: raised to >=v"*) ok "check 56: newest CHANGELOG section (v$c56_hv) is this release's own and states its floor judgement" ;;
+    *) ko "check 56: newest CHANGELOG section (v$c56_hv) carries no signed 'Floor reviewed:' line" ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
