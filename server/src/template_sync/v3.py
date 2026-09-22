@@ -1486,6 +1486,42 @@ def _tree_id(repo: str, ref: str, path: str) -> str | None:
     return r["stdout"].strip() if r["exit_code"] == 0 else None
 
 
+def consumer_template_paths(manifest: dict, rules: OwnershipRules) -> list[str]:
+    """Repo-root git paths of THIS manifest's template-owned entries -- the
+    CONSUMER's set, not ownership.json's universe (`rules.tracked_paths`,
+    every path the template repo tracks whether or not any consumer holds
+    it). Feeds `derive_template_version` so a commit touching a path this
+    consumer does not track (spec §1.4, #9) keeps case 2 (the tag's
+    version) instead of flipping every consumer to case 3 on a docs-only
+    edit outside their own file set.
+
+    An entry's ownership comes from its own `ownership` field when present
+    (v3/v4 manifest shape); a v2 entry -- read mid migrate_v2_to_v3, before
+    that key exists on the manifest at all -- falls back to the CURRENT
+    ownership.json classification via `rules.class_of` (via
+    `rules.template_path_for`, the same template-relative form `class_of`
+    itself matches rules against).
+
+    The returned strings are repo-root `git rev-parse <ref>:<path>` paths
+    (`core._template_git_path`: `templates/<variant>/<pattern>` for a normal
+    entry, the bare pattern for a root-tracked one like `hooks/**`) --
+    `derive_template_version`'s `_tree_id` resolves paths against the WHOLE
+    template repo, not the variant subtree, so a bare template-relative
+    pattern (e.g. "CLAUDE.md") would silently compare the toolkit repo's OWN
+    root CLAUDE.md instead of templates/<variant>/CLAUDE.md.
+    """
+    paths: set[str] = set()
+    for proj_rel, entry in manifest.get("files", {}).items():
+        proj_rel = core._normalize_path(proj_rel)
+        tpl_rel = rules.template_path_for(proj_rel)
+        ownership = entry.get("ownership") if isinstance(entry, dict) else None
+        if ownership is None:
+            ownership = rules.class_of(tpl_rel)
+        if ownership == "template":
+            paths.add(core._template_git_path(manifest, proj_rel))
+    return sorted(paths)
+
+
 def derive_template_version(repo: str, commit: str, tracked_paths: list[str]) -> tuple[str | None, str | None]:
     """Nearest reachable tag whose tree over the tracked paths equals the
     tree at `commit` (review §6.3). Never `git describe`."""
@@ -1604,7 +1640,8 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     repo = core._template_repo_resolved(manifest)
     head = core._run_git(["rev-parse", "HEAD"], cwd=repo)
     commit = head["stdout"].strip() if head["exit_code"] == 0 else manifest_commit(manifest)
-    version, warn = derive_template_version(repo, commit, rules.tracked_paths)
+    version, warn = derive_template_version(
+        repo, commit, consumer_template_paths({**manifest, "files": files}, rules))
     if warn:
         warnings.append(warn)
 
@@ -1846,7 +1883,9 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
                     redundant.append(proj_rel)
 
     commit = manifest_commit(manifest)
-    version, vwarn = derive_template_version(repo, commit, rules.tracked_paths) if commit else (None, "untagged_template_tree")
+    version, vwarn = derive_template_version(
+        repo, commit, consumer_template_paths({**manifest, "files": files}, rules)
+    ) if commit else (None, "untagged_template_tree")
     if vwarn:
         warnings.append(vwarn)
     new_manifest = {k: v for k, v in manifest.items() if k not in ("version", "files")}
@@ -2148,7 +2187,9 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
 
     repo = core._template_repo_resolved(manifest)
     commit = core._git_head(repo) or manifest_commit(manifest)
-    version, vwarn = derive_template_version(repo, commit, rules.tracked_paths) if commit else (None, "untagged_template_tree")
+    version, vwarn = derive_template_version(
+        repo, commit, consumer_template_paths(manifest, rules)
+    ) if commit else (None, "untagged_template_tree")
     if vwarn:
         warnings.append(vwarn)
 
