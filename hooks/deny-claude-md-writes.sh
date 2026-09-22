@@ -117,15 +117,55 @@ dcm_pre_path() {
     | sed 's/^.*:[[:space:]]*"//;s/"$//'
 }
 
+# Fix round 1 (Class A): exit 0 here must be a POSITIVE determination -- a
+# file_path/notebook_path value was actually read from stdin AND it does not
+# end in "claude.md" (case-insensitive) -- never a default for "the cheap
+# read found nothing". Two pre-existing fixtures caught the earlier version
+# of this getting it backwards: with no JSON parser on PATH, and with
+# unparseable stdin (`{"tool_name":"Edit",` -- no tool_input at all), grep
+# finds no file_path/notebook_path KEY, DCM_PRE came back empty, and the old
+# `case "" in *claude.md) ;; *) exit 0` fell into the `*)` arm and ALLOWED --
+# exactly the cannot-determine case this hook must refuse, not clear. An
+# EMPTY DCM_PRE now falls through to the full path below unconditionally,
+# which fails closed exactly as it did before the pre-filter existed (parser
+# check, json_valid, exit 2).
 DCM_PRE=$(dcm_pre_path "$DCM_JSON")
-case "$(printf '%s' "$DCM_PRE" | tr 'A-Z' 'a-z')" in
-  *claude.md) ;;                                   # might be CLAUDE.md -- proceed
-  *) exit 0 ;;                                      # #24: zero interpreter spawns
-esac
+if [ -n "$DCM_PRE" ]; then
+  case "$(printf '%s' "$DCM_PRE" | tr 'A-Z' 'a-z')" in
+    *claude.md) ;;                                  # might be CLAUDE.md -- fall through
+    *) exit 0 ;;                                     # positive determination: not CLAUDE.md
+  esac
+fi
 
 # dcm_norm <path> -- see the PATH NORMALISATION note above.
+#
+# Fix round 1 (Class B): the single-drive-letter MSYS fold (`/c/...` ->
+# `c:/...`) only covers ONE MSYS mount shape. Git Bash's own `/tmp` is a
+# DIFFERENT, named mount (`/tmp/xyz` -> `C:/Users/<user>/AppData/Local/
+# Temp/xyz`, measured on this box) that the single-letter regex cannot
+# express -- test-hooks.sh's own fixtures build their throwaway repos under
+# system `mktemp -d`, which resolves under exactly this mount, so EVERY #23
+# fixture's cwd/file_path silently failed to normalise to the same string
+# `git rev-parse --show-toplevel` returns (always drive-letter form) and the
+# comparison always missed. `cygpath -m` (already this file's second choice
+# behind nothing -- test-hooks.sh's own `natpath` helper uses it for the same
+# reason) understands every MSYS mount, not only the drive-letter ones, and
+# is a pure lexical/mount-table rewrite -- confirmed on a non-existent path,
+# so it does not violate "the normaliser must not require the path to
+# exist". Applied ONLY to a string that already starts with `/`: a RELATIVE
+# input (`./CLAUDE.md`, `docs/../CLAUDE.md`) must not be handed to `cygpath`
+# before it is joined with the payload's own cwd, or it resolves against
+# the HOOK PROCESS's cwd instead -- wrong base entirely. The single-letter
+# regex stays as the fallback for a host with no `cygpath` (plain WSL/Linux).
 dcm_norm() {
   dn=$(printf '%s' "$1" | tr '\\' '/')
+  case "$dn" in
+    /*)
+      if command -v cygpath >/dev/null 2>&1; then
+        dnc=$(cygpath -m -- "$dn" 2>/dev/null) && [ -n "$dnc" ] && dn="$dnc"
+      fi
+      ;;
+  esac
   case "$dn" in
     /[A-Za-z]/*)
       dnl=$(printf '%s' "${dn#/}" | cut -c1 | tr 'A-Z' 'a-z')
