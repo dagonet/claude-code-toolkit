@@ -456,7 +456,7 @@ The same order applies to the CONFLICT resolutions in step 4 and the new files i
 
 Put each payload JSON string in its own file, written with the **file tool**, under `${TMPDIR:-/tmp}` — never inside the repo, where the gate could read it as tracked content: `"${TMPDIR:-/tmp}/probe-push-main.json"`, `"${TMPDIR:-/tmp}/probe-ls.json"`, `"${TMPDIR:-/tmp}/probe-true.json"`. The probe SCRIPT then only `cat`s these files into the hook's stdin and carries no git verb anywhere in its own text. **Assembling the verb from string fragments (`"git" " push" " origin" " main"` concatenated at runtime) is evasion, not a workaround, and it is not what this step teaches** — it does not test the gate, it defeats it, and a probe built that way tells you nothing about whether the real hook still catches the real case.
 
-**A heredoc body is part of the command string too** — `bash <<'EOF' … EOF` is not an escape from the previous paragraph, it is the same string with a different delimiter. Three sessions in two days hit exactly this. Write probe scripts with the **file tool** and run `bash <path>`.
+**A heredoc body is part of the command string too** — `bash <<'EOF' … EOF` is not an escape from the previous paragraph, it is the same string with a different delimiter. Three sessions in two days hit exactly this. Write probe scripts with the **file tool** and run `bash <path>` — and payloads live in their own data files outside the repo, never typed or heredoc'd into the probe script itself; the script carries no gate verb.
 
 **And check every payload PARSES (`jq .`) before believing a 2.** An unescaped `"` in a JSON payload makes the hook fail closed — at exit 2, which reads as "gated" and is not. A malformed probe and a working gate are indistinguishable by exit code alone.
 
@@ -1233,12 +1233,12 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 > **Reopened for v4.1.1 (never shipped in v4.1.0, though its PR claimed it) — verify the augmented text actually reached the gate, don't just trust the exit code.** `pre-commit-test.sh` widens `GC_CMD` via `gc_augmented_cmd` (the typed invocation, one newline, then the first 16 KB of any script segment's body it names — `gc_script_body` in `hooks/lib/git-cmd.sh`) BEFORE it writes its diagnostic record, and that record's `cmd_len` field is `${#GC_CMD}` measured AFTER the widening — the augmented length, never the typed one. `cmd_len` is a diagnostic field, not a gate: it proves what the hook SAW, never that the hook blocked. To confirm the widening reached a given script, print the three numbers a prober can compute independently and compare them against the artifact's own `cmd_len`:
 >
 > ```sh
-> inv_len=${#INVOCATION}                    # the literal command string you probed with
-> body_len=$(wc -c < "$SCRIPT" | tr -d ' ')  # capped: gc_script_body reads at most 16 KB
+> inv_len=${#INVOCATION}                       # the literal command string you probed with
+> body=$(head -c 16384 "$SCRIPT"); body_len=${#body}   # NOT `wc -c` -- see below
 > echo "len(invocation)=$inv_len len(body)=$body_len cmd_len=$(( inv_len + 1 + body_len ))"
 > ```
 >
-> and read the matching artifact's own `cmd_len` back: a value short of that sum (or of `inv_len + 1 + 16384` when the body exceeds the cap) means the body was never appended — the exact silent failure item #11 closes, now checkable from the artifact instead of inferred from an exit code alone.
+> **Compute the body the way the hook computes it — a `body=$(...)` assignment, not `wc -c`.** `gc_augmented_cmd` reads the body via `body=$(gc_script_body "$seg" "$cwd")`, and command substitution strips ALL of a file's trailing newlines before the append; `wc -c` does not, so it over-predicts `cmd_len` by exactly the number of trailing newlines the script file happens to end in — on a well-formed script (one trailing newline) that reads as "short of the sum" for a hook that is working correctly. `head -c 16384 "$SCRIPT"` assigned through `$(...)`, as above, reproduces both the stripping and the 16 KB cap in one expression, so `cmd_len == inv_len + 1 + body_len` holds exactly, whether or not the script ends in a newline. Read the matching artifact's own `cmd_len` back and compare: any *other* value means the body was never appended — the exact silent failure item #11 closes, now checkable from the artifact instead of inferred from an exit code alone. (When the body is at or past the 16 KB cap, `body_len` saturates at 16384 or one less — trailing-newline stripping applies to the capped read too — so treat `inv_len + 1 + 16384` as an upper bound on `cmd_len` there, not the exact predicted value.)
 
 **The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool), or `--fill` to reuse the commit message. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
 
@@ -1305,6 +1305,8 @@ Call `template_verify(project_path=<project>, mode="post_commit")` (v4.0.1, item
 
 **A v4 consumer's clean line legitimately reads either of two ways — both are the healthy state, not one a variant of the other:** `23 PASS, 0 FAIL, 1 SKIP, 7 INFO` (`server_skew` SKIPs — the sync server was not installed from this template repo, the ordinary case) or `24 PASS, 0 FAIL, 0 SKIP, 7 INFO` (`server_skew` PASSes on its own account, when the sync server IS installed from this template repo and its imported commit is current — four consumers were measured hitting this second row). Read whichever `server_skew`'s own line actually reports; neither shape is a defect in the other's presence.
 
+**All four baselines above are valid from the tip that carries `project_md_seed_differs` onward — `LINES = 31`.** A sync server built from an older checkout reports `LINES = 30` and an INFO count of 6, not 7 — read `PASS = 30 - skip - fail - 6` there instead, and do not paste these numbers verbatim without first checking which `LINES` your own `template_verify` response actually reports.
+
 ## Pre-sync verification
 
 **When a release changes refusal behaviour on commands people type by hand, nobody syncs until this comes back.** The risk is not a missed bypass — it is a regression that blocks routine work and gets the guard switched off. Verify **read-only against the TAG**: extract the hooks from the tag into a throwaway repo; do not install, do not sync, do not touch your tree.
@@ -1315,7 +1317,7 @@ Call `template_verify(project_path=<project>, mode="post_commit")` (v4.0.1, item
 2. **Assert the fixture carries the property before measuring it.** A probe that cannot fail looks exactly like one that passed.
 3. **`set -o pipefail`, and check the payload parses (`jq .`) before you believe a verdict.** An unescaped `"` makes the hook fail closed at **exit 2, which reads as "gated" and is not.** In one night three sessions hit the pipe-exit-code error and two hit the quote one.
 
-Write probe scripts with your file-writing tool and run `bash <path>`. A heredoc containing git clauses is refused by the gates' own whole-string scan — the heredoc body IS the command string.
+Write probe scripts with your file-writing tool and run `bash <path>`. A heredoc containing git clauses is refused by the gates' own whole-string scan — the heredoc body IS the command string. **Payloads live in data files outside the repo, never typed or assembled inside the probe script — the script itself carries no gate verb** (step 3's data-file rule above; a script that builds its own payload inline puts the literal git text in the very file the gate reads when deciding whether to let it run).
 
 ### The four named traps, each hit by a different session
 
