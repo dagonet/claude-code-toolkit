@@ -3566,8 +3566,12 @@ fi
 # where heading 1 hasn't moved on to the new release yet, so comparing
 # against it catches a lowering immediately; otherwise heading 1 is the
 # unreleased version this commit is building toward, so heading 2 -- the
-# release commit itself -- is the true previous release. Post-tag, heading 1
-# resolves to itself, comparing equal and passing. Never
+# release commit itself -- is the true previous release. After the tag,
+# heading 1 IS the release just cut, so this arm is comparing the working
+# tree's own floor against the floor that release shipped with -- the
+# comparison that protects the entire next development cycle against the
+# floor quietly slipping back down; it reads exactly equal only at the
+# tagged commit itself, and moves apart the moment either floor does. Never
 # `git describe --tags --abbrev=0`, which answers "nearest reachable tag" and
 # moves with reachability and with any non-release tag.
 c42_bare=${c42_bare:-}
@@ -3606,6 +3610,21 @@ if [ "$c42_ctl" != "$c42_ours" ]; then
   c42_fail=1
 fi
 [ "$c42_fail" -eq 0 ] && ok "check 42: requires_skill '$c42_floor' is tag-shaped and <= $c42_ours; control detected v99.0.0 as above"
+
+# ---------------------------------------------------------------------------
+# Check 56 -- the floor is a compatibility judgement a person signs, not a
+# value check 42 can derive (arm 3, a declared-floor-equality check, was
+# considered and not built -- both releases' floors staying stale together is
+# exactly the green case it would exist to catch). This check only asserts
+# PRESENCE of that signed judgement in the newest CHANGELOG section, never its
+# content -- the content is Task 6's own call, made once, above.
+# ---------------------------------------------------------------------------
+note "Check 56: the newest CHANGELOG section carries a signed 'Floor reviewed:' line"
+c56_section=$(awk '/^## v[0-9]/{n++} n==1{print} n==2{exit}' CHANGELOG.md)
+case "$c56_section" in
+  *"Floor reviewed: unchanged"*|*"Floor reviewed: raised to >=v"*) ok "check 56: newest CHANGELOG section states its floor judgement" ;;
+  *) ko "check 56: newest CHANGELOG section has no 'Floor reviewed: unchanged — <reason>' / 'Floor reviewed: raised to >=vX.Y.Z — <reason>' line -- the floor is a compatibility judgement a person signs, not a value a check can derive" ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
