@@ -1784,6 +1784,69 @@ printf 'git push origin main\n' > "$MAINREPO/p.sh"
 check "(item12) bash p.sh: script body gates the push (no-push-main.sh)" "hooks/no-push-main.sh" 2 "$(mkjson Bash 'bash p.sh' "$MAINREPO")"
 
 # ===========================================================================
+# v4.1.1 #11 -- gc_script_body anchored on the segment's FIRST token, so a
+# wrapped invocation (`command bash p.sh`, `env A=1 bash p.sh`, an absolute-
+# path or flagged wrapper) never reached the 16 KB body reader. Fixed: a
+# bounded leading-run scan over the RAW (quote-intact) segment text --
+# gc_seg_raw, index-aligned with gc_segments by construction (quote removal
+# never moves a &&/;/| boundary) -- basename-matching `bash|sh` at ANY
+# position in the run and `.`/`source` ONLY at position 1 (both are shell
+# BUILTINS, not PATH executables -- wrapping them through env/nice/timeout/
+# nohup, which all execve a real binary, does not actually invoke them; this
+# is also what keeps `find . -exec bash {} \;`'s own `.` operand from being
+# misread as the interpreter). The scan STOPS at the first quote character:
+# an interpreter word is never itself inside quotes, so a quote seen before a
+# match means whatever follows belongs to someone else's argument, not this
+# segment's own head -- this is what keeps `git commit -m "run bash x.sh"`,
+# `gh pr merge --body "see bash notes.sh"`, `echo "run bash x.sh"` and `npm
+# run lint -- "bash x.sh"` from reading a body out of a quoted string after
+# gc_segments' own quote-stripping would otherwise make it indistinguishable
+# from a real invocation.
+# ===========================================================================
+printf 'git push origin main\n' > "$MAINREPO/probe.sh"
+printf 'git push origin main\n' > "$MAINREPO/x.sh"
+printf 'git push origin main\n' > "$MAINREPO/notes.sh"
+
+# --- wrapped invocations: DENY (exit 2), same as the bare `bash p.sh` control -
+check "(#11) command bash p.sh: wrapper scanned"            "hooks/no-push-main.sh" 2 "$(mkjson Bash 'command bash p.sh' "$MAINREPO")"
+check "(#11) env A=1 bash p.sh: wrapper scanned"             "hooks/no-push-main.sh" 2 "$(mkjson Bash 'env A=1 bash p.sh' "$MAINREPO")"
+check "(#11) exec bash p.sh: wrapper scanned"                "hooks/no-push-main.sh" 2 "$(mkjson Bash 'exec bash p.sh' "$MAINREPO")"
+check "(#11) nohup bash p.sh: wrapper scanned"                "hooks/no-push-main.sh" 2 "$(mkjson Bash 'nohup bash p.sh' "$MAINREPO")"
+check "(#11) /usr/bin/env bash p.sh: absolute-path wrapper"  "hooks/no-push-main.sh" 2 "$(mkjson Bash '/usr/bin/env bash p.sh' "$MAINREPO")"
+check "(#11) env -i bash p.sh: flagged wrapper"               "hooks/no-push-main.sh" 2 "$(mkjson Bash 'env -i bash p.sh' "$MAINREPO")"
+check "(#11) nice -n 10 bash p.sh: flag+value wrapper"        "hooks/no-push-main.sh" 2 "$(mkjson Bash 'nice -n 10 bash p.sh' "$MAINREPO")"
+check "(#11) timeout -s KILL 5 bash p.sh: flag+value wrapper" "hooks/no-push-main.sh" 2 "$(mkjson Bash 'timeout -s KILL 5 bash p.sh' "$MAINREPO")"
+check "(#11) bash \"probe.sh\": quote AFTER the interpreter"  "hooks/no-push-main.sh" 2 "$(mkjson Bash 'bash "probe.sh"' "$MAINREPO")"
+
+# --- quote-stop: NOT read (the interpreter word would sit after a quote) ---
+check "(#11) git commit -m \"run bash x.sh\": body not read" "hooks/no-push-main.sh" 0 "$(mkjson Bash 'git commit -m "run bash x.sh"' "$MAINREPO")"
+check "(#11) gh pr merge --body \"see bash notes.sh\": not read" "hooks/no-push-main.sh" 0 "$(mkjson Bash 'gh pr merge 1 --body "see bash notes.sh"' "$MAINREPO")"
+check "(#11) echo \"run bash x.sh\": not read"                "hooks/no-push-main.sh" 0 "$(mkjson Bash 'echo "run bash x.sh"' "$MAINREPO")"
+check "(#11) npm run lint -- \"bash x.sh\": not read"         "hooks/no-push-main.sh" 0 "$(mkjson Bash 'npm run lint -- "bash x.sh"' "$MAINREPO")"
+
+# --- RESIDUAL: a TRUE residual, current behaviour asserted so a change is
+# visible -- both resolve to a placeholder path ({}) the hook cannot resolve,
+# NOT because the scan fails to reach `bash` (it does, past `find`/`.`/
+# `-name`/`p.sh`/`-exec`, none of which is itself a match at a position past
+# 1). Do not "fix" these into a pass.
+check "(#11 RESIDUAL) find . -name p.sh -exec bash {} \\;: placeholder path" "hooks/no-push-main.sh" 0 "$(mkjson Bash 'find . -name p.sh -exec bash {} \;' "$MAINREPO")"
+check "(#11 RESIDUAL) xargs -I{} bash {}: placeholder path"  "hooks/no-push-main.sh" 0 "$(mkjson Bash 'xargs -I{} bash {}' "$MAINREPO")"
+check "(#11 RESIDUAL) bash \"my script.sh\": quoted path w/ space never resolves (quotes deleted, then word-split on the space -- pre-existing, silent direction)" "hooks/no-push-main.sh" 0 "$(mkjson Bash 'bash "my script.sh"' "$MAINREPO")"
+
+# --- REGRESSION ACCEPTED: read at v4.1.0 (quotes were already stripped by
+# gc_segments before the OLD $1-anchor check ever ran, so $1 was literally
+# `bash`), NOT read at v4.1.1 (the raw-text quote-stop scan sees the quote
+# BEFORE it ever gets to compare the token) -- asserted at its NEW behaviour
+# so the record says what changed, not "always broken".
+check "(#11 REGRESSION accepted) \"bash\" probe.sh: quoted interpreter head now missed" "hooks/no-push-main.sh" 0 "$(mkjson Bash '"bash" probe.sh' "$MAINREPO")"
+
+# --- design decision, documented as its own fixture: `.`/`source` match ONLY
+# at the segment's own head (see the block comment above) -- a wrapped dot/
+# source invocation is a residual, not a hole the quote-stop needed to close.
+check "(#11 design) command . p.sh: bare dot only matches at position 1"    "hooks/no-push-main.sh" 0 "$(mkjson Bash 'command . p.sh' "$MAINREPO")"
+check "(#11 design) command source p.sh: same, for source"                 "hooks/no-push-main.sh" 0 "$(mkjson Bash 'command source p.sh' "$MAINREPO")"
+
+# ===========================================================================
 # v4.0.3 item 8 (R2) -- gc_gate_dir(<non-repo target>) used to fail both git
 # calls, print the literal `/.gate` (the MSYS root, outside every repo),
 # WARN "git < 2.31" (false on a current git) and let the fallback's own
@@ -1893,8 +1956,19 @@ expect "(item8) RED-check: accepting shim's row differs from the rejecting shim'
 # above), which would make every row below pass or fail for the wrong reason.
 A13REPO=$(mkrepo a13repo feature/z)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$A13REPO/PROJECT_CONTEXT.md"
-mkdir -p "$A13REPO/server/.venv/Lib/site-packages"
+mkdir -p "$A13REPO/server/.venv/Lib/site-packages" "$A13REPO/server/.venv/bin"
 printf 'home = /usr\nversion = 3.12.0\n' > "$A13REPO/server/.venv/pyvenv.cfg"
+# v4.1.1 #15 -- gc_gate_env now computes `dist` by RUNNING the interpreter the
+# gate would run (site.getsitepackages() + os.listdir, filtered to
+# *.dist-info), not by listing site-packages itself. This fixture's venv is
+# fake (no real python), so it carries its own stub interpreter: `-c` lists
+# *.dist-info directly under ../Lib/site-packages relative to the stub's OWN
+# location (mirroring a real venv's bin/ + Lib/site-packages layout), which
+# keeps this whole block -- including the pre-existing dist-info-added
+# assertion below -- working exactly as it did when dist_h came from a bare
+# `ls -1d *.dist-info`.
+printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python 3.12.0"; exit 0 ;;\n  -c)\n    d="$(dirname -- "$0")/../Lib/site-packages"\n    [ -d "$d" ] || exit 0\n    ( cd "$d" 2>/dev/null && ls -1d -- *.dist-info 2>/dev/null ) | LC_ALL=C sort\n    exit 0 ;;\nesac\nexit 1\n' > "$A13REPO/server/.venv/bin/python"
+chmod +x "$A13REPO/server/.venv/bin/python"
 A13_SHA=$(git -C "$A13REPO" rev-parse HEAD)
 A13_TREE=$(git -C "$A13REPO" rev-parse 'HEAD^{tree}')
 
@@ -1951,6 +2025,85 @@ check "(item13) expired + foreign tree: blocked (sha match alone is not enough)"
 # (6) a sha-only artifact (no tree key at all), expired: blocked, no extension.
 a13_writeartifact "$A13REPO" "$A13_SHA" "-" "-" "-" "-2 hours" >/dev/null
 check "(item13) expired + no tree key: blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+
+# restore a clean, matching baseline artifact for the rows below
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
+
+# ===========================================================================
+# v4.1.1 #15 -- gc_gate_env derived pyvenv/dist/py ONLY from <repo>/server/
+# .venv; a consumer with system Python and no in-repo venv read all three
+# "absent", so the tree+env extension (item 13) could never see a python-side
+# dependency change on exactly the repos whose gate is python. Fixed: `dist`
+# now comes from whichever interpreter the gate actually runs (the venv's own
+# python when the venv is present, else python3/python on PATH when it is
+# not), and gate-before-merge.sh now VOIDS the extension outright whenever
+# EITHER side's env_detail contains an `=absent` contributor -- an
+# absent-vs-absent pair would otherwise hash equal and read as "unchanged".
+# ===========================================================================
+
+# (a) no server/.venv at all, python3 on PATH -> dist= is NOT absent.
+A15NOVENV=$(mkrepo a15novenv main)
+A15_DETAIL_NOVENV=$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$A15NOVENV" -v 2>/dev/null )
+case "$A15_DETAIL_NOVENV" in
+  *"dist=absent"*)
+    printf 'FAIL  %-42s (dist=absent: %s)\n' "(#15) no venv + python3 on PATH: dist not absent" "$A15_DETAIL_NOVENV"
+    fail=$((fail + 1))
+    ;;
+  *)
+    printf 'PASS  %-42s (%s)\n' "(#15) no venv + python3 on PATH: dist not absent" "$(printf '%s' "$A15_DETAIL_NOVENV" | grep '^dist=')"
+    pass=$((pass + 1))
+    ;;
+esac
+
+# (b) two fixture venvs, same `python --version`, different dist-info
+# listings -> different aggregate hashes.
+A15V_A=$(mkrepo a15venva main)
+A15V_B=$(mkrepo a15venvb main)
+for a15r in "$A15V_A" "$A15V_B"; do
+  mkdir -p "$a15r/server/.venv/Lib/site-packages" "$a15r/server/.venv/bin"
+  printf 'home = /usr\nversion = 3.12.0\n' > "$a15r/server/.venv/pyvenv.cfg"
+  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python 3.12.0"; exit 0 ;;\n  -c)\n    d="$(dirname -- "$0")/../Lib/site-packages"\n    [ -d "$d" ] || exit 0\n    ( cd "$d" 2>/dev/null && ls -1d -- *.dist-info 2>/dev/null ) | LC_ALL=C sort\n    exit 0 ;;\nesac\nexit 1\n' > "$a15r/server/.venv/bin/python"
+  chmod +x "$a15r/server/.venv/bin/python"
+done
+mkdir -p "$A15V_A/server/.venv/Lib/site-packages/aaa-1.0.dist-info"
+mkdir -p "$A15V_B/server/.venv/Lib/site-packages/bbb-2.0.dist-info"
+A15_ENV_A=$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$A15V_A" 2>/dev/null )
+A15_ENV_B=$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$A15V_B" 2>/dev/null )
+expect_ne_label="(#15) two venvs, same py version, different dist-info -> different hash"
+if [ -n "$A15_ENV_A" ] && [ "$A15_ENV_A" != "$A15_ENV_B" ]; then
+  printf 'PASS  %-42s (%s != %s)\n' "$expect_ne_label" "$A15_ENV_A" "$A15_ENV_B"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (%s == %s)\n' "$expect_ne_label" "$A15_ENV_A" "$A15_ENV_B"
+  fail=$((fail + 1))
+fi
+
+# (c) a venv with pyvenv.cfg present but no interpreter -> py=absent (no
+# fallback to a system python3/python -- a present-but-broken venv is a real
+# problem, not something to paper over).
+A15BROKEN=$(mkrepo a15broken main)
+mkdir -p "$A15BROKEN/server/.venv"
+printf 'home = /usr\nversion = 3.12.0\n' > "$A15BROKEN/server/.venv/pyvenv.cfg"
+A15_DETAIL_BROKEN=$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$A15BROKEN" -v 2>/dev/null )
+case "$A15_DETAIL_BROKEN" in
+  *"py=absent"*)
+    printf 'PASS  %-42s (%s)\n' "(#15) venv present, interpreter missing: py=absent" "$(printf '%s' "$A15_DETAIL_BROKEN" | grep '^py=')"
+    pass=$((pass + 1))
+    ;;
+  *)
+    printf 'FAIL  %-42s (%s)\n' "(#15) venv present, interpreter missing: py=absent" "$A15_DETAIL_BROKEN"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# (d) gate-before-merge.sh: expired + tree equal + env_detail containing
+# dist=absent -> BLOCKED, label names the absent contributor.
+A13_DETAIL_ABSENT=$(printf '%s' "$A13_DETAIL0" | sed 's/dist=[^|]*/dist=absent/')
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL_ABSENT" "-2 hours" >/dev/null
+check "(#15) expired + tree ok + artifact env_detail has dist=absent: blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+check_msg "(#15) block names the absent contributor"         "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "dist=absent"
+# restore the clean baseline for anything appended after this block
+a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
 
 # (7) tree matches but no env key at all (an older writer's artifact),
 # expired past the ordinary TTL: blocked -- no silent extension.
@@ -5850,6 +6003,90 @@ check "(R-L) v3: deny-claude-md-writes allows CLAUDE.md"      "$DCM" 0 "$DCM_V3_
 out=$(printf '%s' "$DCM_V3_PAYLOAD" | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
 expect "(R-L) v3: enforce-delegation also allows (both hooks agree)" "pass" "$got"
+
+# ===========================================================================
+# v4.1.1 #23/#24 -- deny-claude-md-writes.sh: ONE path normaliser for the
+# payload path, the cwd and the root alike (backslash -> forward slash, MSYS
+# single-letter form /x/... -> drive form x:/..., drive letter case-folded,
+# ./ and x/../ segments collapsed, whole path lower-cased on MSYS/MinGW/
+# Cygwin), a relative path resolved against the payload CWD (not the root --
+# the pre-existing bug this closes), plus a basename pre-filter -- a grep-only
+# check on the RAW JSON text, BEFORE json_have/json_valid/json_get -- so a
+# non-CLAUDE.md payload exits 0 with zero interpreter spawns (#24).
+# mkjson_dcm_raw skips natpath on BOTH arguments: natpath (used by mkjson_dcm)
+# rewrites a Git-Bash /c/... path to its Windows-native C:/... spelling via
+# cygpath -m, which would silently erase the exact MSYS shape #23 exists to
+# exercise.
+# ===========================================================================
+mkjson_dcm_raw() { # <tool_name> <field> <raw_path> <raw_cwd>
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{"%s":"%s"},"cwd":"%s"}\n' \
+    "$(jesc "$1")" "$2" "$(jesc "$3")" "$(jesc "$4")"
+}
+
+# --- #23: every measured bypass shape now DENIES ----------------------------
+check "(#23) MSYS /x/... form (never equalled the folded x:/ root)" "$DCM" 2 \
+  "$(mkjson_dcm_raw Edit file_path "$DCMREPO/CLAUDE.md" "$DCMREPO")"
+check "(#23) ./CLAUDE.md"                                     "$DCM" 2 \
+  "$(mkjson_dcm_raw Edit file_path "./CLAUDE.md" "$DCMREPO")"
+check "(#23) docs/../CLAUDE.md"                                "$DCM" 2 \
+  "$(mkjson_dcm_raw Edit file_path "docs/../CLAUDE.md" "$DCMREPO")"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    check "(#23) claude.md (case-insensitive filesystem, Windows)" "$DCM" 2 \
+      "$(mkjson_dcm_raw Edit file_path "claude.md" "$DCMREPO")"
+    ;;
+  *)
+    skip "(#23) claude.md (case-insensitive filesystem, Windows)" "not on Windows"
+    ;;
+esac
+
+# --- #23: cwd=<root>/docs + a RELATIVE CLAUDE.md resolves against cwd, not
+# root -- the bug: old code joined every relative path against the ROOT
+# regardless of cwd, so this exact row used to DENY (it read as the root's
+# own CLAUDE.md). It is out of this hook's scope (a nested CLAUDE.md), so it
+# must ALLOW.
+check "(#23) cwd=<root>/docs + CLAUDE.md resolves against cwd: allowed" "$DCM" 0 \
+  "$(mkjson_dcm_raw Edit file_path "CLAUDE.md" "$DCMREPO/docs")"
+
+# --- #23 RESIDUAL: trailing-dot form. Decided by the PRE-FILTER (a suffix
+# check for literal "claude.md"), not the normaliser -- "claude.md." does not
+# end in "claude.md", so this never reaches dcm_norm at all. Record actual.
+check "(#23 RESIDUAL) CLAUDE.md. (trailing dot; decided at the pre-filter)" "$DCM" 0 \
+  "$(mkjson_dcm_raw Edit file_path "CLAUDE.md." "$DCMREPO")"
+
+# --- #24: a non-CLAUDE.md payload exits 0 with a PATH that has no
+# python3/node/jq at all -- proof the pre-filter runs, and returns, before
+# any JSON helper. Deliberately NOT mkpathdir's broad default tool set (which
+# would mask a leak behind tools the pre-filter has no business needing):
+# only what the hook's OWN pre-filter code calls (sh, git, sed, grep, head,
+# tr, dirname -- the hook's very first line locates lib/json.sh via
+# `dirname "$0"`, unconditionally, ahead of the pre-filter; measured RED
+# without it: "dirname: command not found", a fixture bug, not a hook one,
+# since sourcing the lib is not part of the JSON-parsing cost the pre-filter
+# exists to avoid). `uname` is deliberately absent -- dcm_norm calls it, but
+# only in the "rest" phase after the pre-filter, and stubbing it in would
+# hide exactly the leak this fixture exists to catch (see
+# hooks/deny-claude-md-writes.sh and the report for this task).
+DCM24_TOOLS="sh git sed grep head tr dirname"
+DCM24PD="$TMPROOT/path-dcm24"
+mkdir -p "$DCM24PD"
+for dcm24t in $DCM24_TOOLS; do
+  dcm24r=$(command -v "$dcm24t" 2>/dev/null) || dcm24r=""
+  [ -n "$dcm24r" ] || continue
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$dcm24r" > "$DCM24PD/$dcm24t"
+  chmod +x "$DCM24PD/$dcm24t"
+done
+DCM24_PAYLOAD=$(mkjson_dcm Edit file_path "$DCMREPO/src/x.py" "$DCMREPO")
+DCM24TMP="$TMPROOT/dcm24tmp"; rm -rf "$DCM24TMP"; mkdir -p "$DCM24TMP"
+printf '%s' "$DCM24_PAYLOAD" | PATH="$DCM24PD" TMPDIR="$DCM24TMP" "$BASHABS" "$ROOT/$DCM" >/dev/null 2>"$TMPROOT/dcm24.err"
+DCM24_RC=$?
+if [ "$DCM24_RC" = 0 ]; then
+  printf 'PASS  %-42s (exit %s)\n' "(#24) non-CLAUDE.md payload, no python3/node/jq on PATH" "$DCM24_RC"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (want 0, got %s: %s)\n' "(#24) non-CLAUDE.md payload, no python3/node/jq on PATH" "$DCM24_RC" "$(head -1 "$TMPROOT/dcm24.err")"
+  fail=$((fail + 1))
+fi
 
 # ===========================================================================
 # v3.0.3 PERMANENT REGRESSION FIXTURES for three security fixes that shipped
