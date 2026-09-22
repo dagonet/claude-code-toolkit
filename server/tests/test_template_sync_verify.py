@@ -10,6 +10,7 @@ hash state), and every proj-side mutation is followed by a commit so the
 mutation itself does not also trip tree_clean.
 """
 
+import asyncio
 import json
 import pathlib
 import shutil
@@ -69,6 +70,17 @@ V401_SEED = (
     "Always-on project rules belong in CLAUDE.md's PROJECT-CUSTOM region, not here;\n"
     "a rule in both places exists twice and drifts."
 )
+# V401_SEED_NO_MARKER: V401_SEED's shape (predates v4.0.2 -- no next-session
+# sentence) WITHOUT a PROJECT-CUSTOM reference, so it exercises the
+# "predates v4.0.2" arm in isolation. v4.1.1 (spec §2.1) inserts a NEW
+# harm-keyed arm BEFORE the "predates"/"delivered to nobody" arms, and
+# V401_SEED itself names PROJECT-CUSTOM -- it now correctly routes to that
+# new arm first (see test_seed_current_flags_project_custom_reference and
+# the "project_custom" case of test_project_md_lines below), so a body that
+# still wants to exercise "predates" alone must not carry the marker.
+V401_SEED_NO_MARKER = V401_SEED.replace(
+    "Always-on project rules belong in CLAUDE.md's PROJECT-CUSTOM region, not here;",
+    "Always-on project rules belong in the project instructions file, not here;")
 # V402_SEED: read from the constant (v4.0.2, item 12) so it can never drift
 # from what verify.py's project_md_seed_current actually checks against.
 V402_SEED = v3.PROJECT_MD_SEED_BODY
@@ -345,7 +357,11 @@ def test_pass_fixture_is_all_green(tmp_path):
     # once_notes_changed, project_md_scoped_consistent) all emit their null
     # case on this healthy fixture -- none may SKIP here (a SKIP would be a
     # defect in the line, not grounds to widen this set).
+    # v4.1.1 (spec §2.1) adds a seventh: project_md_seed_differs, a fact-only
+    # INFO line that reads "matches" on this fixture (the project and
+    # template copies of project.md are byte-identical, PROJECT_MD_CONTENT).
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
+                        "project_md_seed_differs",
                         "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
 
     n_pass = len(verify.LINES) - len(skip_ids) - len(info_ids) - len(fail_ids)
@@ -354,11 +370,12 @@ def test_pass_fixture_is_all_green(tmp_path):
     assert res["mode"] == "post_commit"
 
 
-def test_lines_count_is_30():
-    """Constraint 5: stated by hand, moves in the SAME commit as the six new
-    ids -- never derived from anything, so it is a red flag by itself if a
-    later edit changes LINES without touching this number."""
-    assert len(verify.LINES) == 30
+def test_lines_count_is_31():
+    """Constraint 5: stated by hand, moves in the SAME commit as the ids it
+    counts -- never derived from anything, so it is a red flag by itself if a
+    later edit changes LINES without touching this number. 30 -> 31 in
+    v4.1.1 (spec §2.1): project_md_seed_differs."""
+    assert len(verify.LINES) == 31
 
 
 def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
@@ -375,9 +392,12 @@ def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
     # R-H: region_markers PASSes here (it keeps measuring the agent's own
     # region); import_line_present PASSes, not SKIPs, since this IS v4.
     assert skip_ids == {"server_skew"}
-    # All six new ids are FAIL_LINE kind (never INFO_LINE), so info_ids is
-    # unchanged from the v3 fixture's set.
+    # All six v4.1 new ids are FAIL_LINE kind (never INFO_LINE), so info_ids
+    # is unchanged from the v3 fixture's set, plus v4.1.1's
+    # project_md_seed_differs (also fact-only INFO here: this fixture's
+    # project and template copies of project.md are byte-identical).
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
+                        "project_md_seed_differs",
                         "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
     by_id = _by_id(res)
     assert by_id["claude_md_identical"]["status"] == "PASS"
@@ -645,15 +665,15 @@ def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypa
     verify.run must not KeyError in status_clean/classes_and_hashes (or any
     other status-dependent line); every one of them reports FAIL with the
     error message instead, and no_errors (the ORIGINAL R-C route) FAILs
-    with it too. len(lines) == 30 still holds -- no line is silently
-    dropped by the error path."""
+    with it too. len(lines) == len(verify.LINES) still holds -- no line is
+    silently dropped by the error path."""
     monkeypatch.setattr(ts, "__version__", "4.1.0")
     repo, proj, commit = _good_fixture_v4(tmp_path)
     (proj / ".claude" / "agent-grants.json").write_text("not json", encoding="utf-8", newline="")
     _recommit(proj)
 
     res = verify.run(str(proj), str(repo), "post_commit")
-    assert len(res["lines"]) == len(verify.LINES) == 30
+    assert len(res["lines"]) == len(verify.LINES) == 31
     by_id = _by_id(res)
     for id_ in ("no_errors", "status_clean", "classes_and_hashes"):
         line = by_id[id_]
@@ -1148,7 +1168,12 @@ def test_tree_clean_remedy_mentions_unrelated_work(tmp_path):
 
 @pytest.mark.parametrize("body,seed,scoped", [
     ("This file has been delivered to nobody.\n", "stale", "n/a"),
-    (V401_SEED, "predates", "n/a"),
+    (V401_SEED_NO_MARKER, "predates", "n/a"),
+    # v4.1.1 (spec §2.1): the harm-keyed arm fires BEFORE "predates"/"stale"
+    # -- V401_SEED itself names PROJECT-CUSTOM, so it now reads as this new
+    # case rather than "predates" (V401_SEED_NO_MARKER above is the fixture
+    # that isolates "predates" from this drift).
+    (V401_SEED, "project_custom", "n/a"),
     (V402_SEED, "current", "n/a"),
     ("---\npaths:\n  - \"src/**\"\n---\n# mine\n", "scoped", "clean"),
     ("---\npaths:\n  - \"src/**\"\n---\n" + V402_SEED, "scoped", "contradiction"),
@@ -1160,7 +1185,8 @@ def test_project_md_lines(tmp_path, body, seed, scoped):
     by_id = _by_id(verify.run(str(proj), str(repo), "post_commit"))
 
     seed_map = {"stale": "pre-v4.0.1", "predates": "predates v4.0.2",
-               "current": "seed is current", "scoped": "scoped"}
+               "current": "seed is current", "scoped": "scoped",
+               "project_custom": "references PROJECT-CUSTOM"}
     scoped_map = {"n/a": "n/a", "clean": "no unscoped sentence", "contradiction": "still carries"}
     assert seed_map[seed] in by_id["project_md_seed_current"]["measured"], by_id["project_md_seed_current"]
     assert scoped_map[scoped] in by_id["project_md_scoped_consistent"]["measured"], \
@@ -1174,7 +1200,7 @@ def test_project_md_remedies_hand_edit_and_move_hunks(tmp_path):
     v4.0.1 to move any migration hunks out of the header FIRST."""
     repo, proj, commit = _good_fixture(tmp_path)
 
-    (proj / ".claude" / "rules" / "project.md").write_text(V401_SEED, encoding="utf-8", newline="")
+    (proj / ".claude" / "rules" / "project.md").write_text(V401_SEED_NO_MARKER, encoding="utf-8", newline="")
     _recommit(proj)
     predates = _by_id(verify.run(str(proj), str(repo), "post_commit"))["project_md_seed_current"]
     assert predates["status"] == "INFO"
@@ -1242,3 +1268,247 @@ def test_cli_verify_exit_code_and_output(tmp_path, capsys):
     out2 = capsys.readouterr().out
     assert rc2 == 1
     assert "FAIL requires_server" in out2
+
+
+# =============================================================================
+# v4.1.1 Task 2 (spec sections 1.3, 1.4, 2.1): manifest_migration, per-consumer
+# case 2 (consumer_template_paths), and the seed line that cannot lie
+# (project_md_seed_differs). Fixtures below wrap the SAME builders the rest
+# of this file already uses (_good_fixture = a v3 "legacy" situation,
+# _good_fixture_v4 = v4, _window_fixture = the v3-manifest window) so the
+# three SITUATIONS the last test in this section needs are the same ones
+# test_pass_fixture_is_all_green / test_v4_fixture_is_all_green /
+# test_window_fixture_status_clean_is_the_one_fail already exercise.
+# =============================================================================
+
+# OWNERSHIP_V4 (module-level, above) already declares rules for BOTH v4-only
+# marker paths (.claude/project-instructions.md, .claude/agent-grants.json)
+# -- exactly the signal _manifest_migration_to (mcp.py) reads to answer "to":
+# 4. Reusing it (rather than the plain OWNERSHIP dict, which lacks both) for
+# v3_consumer is what makes a v3 manifest against THIS template read
+# manifest_migration.to == 4 -- "a v3 manifest against a v4-capable
+# template" (spec §1.3's witness) is exactly what a v3-manifest-shaped
+# _good_fixture with OWNERSHIP_V4 is.
+
+
+def template_verify_lines(consumer, mode: str = "post_commit") -> dict:
+    return _by_id(verify.run(str(consumer.root), str(consumer.repo), mode))
+
+
+class _Task2Consumer:
+    """Adapter exposing `.root` (project dir), `.repo` (template repo dir),
+    `.manifest` (the on-disk manifest dict) and `.rules` (freshly re-loaded
+    OwnershipRules) -- plus `.write` (hand-edit a once-class file and
+    recommit, e.g. .claude/rules/project.md) and `.track` (add a path to
+    this consumer's OWN manifest as a template-owned entry; only `ownership`
+    is read by consumer_template_paths, so no hash is needed)."""
+
+    def __init__(self, repo, root, manifest):
+        self.repo = repo
+        self.root = root
+        self.manifest = manifest
+
+    @property
+    def rules(self):
+        return v3.load_ownership(str(self.repo))
+
+    def write(self, rel_path: str, content: str):
+        p = self.root / rel_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8", newline="")
+        _recommit(self.root, f"edit {rel_path}")
+
+    def track(self, proj_rel: str):
+        files = dict(self.manifest.get("files", {}))
+        files[proj_rel] = {"ownership": "template"}
+        self.manifest = dict(self.manifest, files=files)
+        _write_manifest(self.root, self.manifest)
+        _recommit(self.root, f"track {proj_rel}")
+
+
+@pytest.fixture
+def v3_consumer(tmp_path):
+    # A distinct subdirectory per fixture (test_lines_count_is_31_and_every_
+    # situation_table_lists_the_new_line requests v4_consumer,
+    # v3_legacy_consumer AND v3_window_consumer in ONE test -- tmp_path is
+    # shared across all fixtures a single test requests, and each builder
+    # below does `(tmp_path / "toolkit" / ...).mkdir(parents=True)` with no
+    # exist_ok, so three builders sharing one bare tmp_path collide).
+    repo, proj, commit = _good_fixture(tmp_path / "v3-consumer", ownership=OWNERSHIP_V4)
+    return _Task2Consumer(repo, proj, _read_manifest(proj))
+
+
+@pytest.fixture
+def v3_legacy_consumer(tmp_path):
+    repo, proj, commit = _good_fixture(tmp_path / "v3-legacy")
+    return _Task2Consumer(repo, proj, _read_manifest(proj))
+
+
+@pytest.fixture
+def v4_consumer(tmp_path, monkeypatch):
+    # consumer_template_paths (v3.py) resolves a project-relative path to a
+    # repo-root git path via core._template_git_path, which treats only
+    # "hooks/**" as root-tracked (core._ROOT_TRACKED_PREFIXES) -- every
+    # other entry gets the "templates/<variant>/" prefix, which is correct
+    # for a real template-owned file (CLAUDE.md, agents/*.md, ...). The #9
+    # witness (spec §1.4) deliberately names user-level-reference/README.md
+    # -- a real toolkit top-level dir with the SAME repo-root shape as
+    # hooks/, but one no real consumer manifest has ever held an entry for
+    # (it ships to ~/.claude/, not into a project checkout), so production
+    # code never grew a second prefix for it. Widening the prefix set for
+    # THIS fixture only reproduces that shape for the witness without
+    # touching production code or the constant's real-world meaning.
+    monkeypatch.setattr(ts, "_ROOT_TRACKED_PREFIXES", ts._ROOT_TRACKED_PREFIXES + ("user-level-reference/",))
+    repo, proj, commit = _good_fixture_v4(tmp_path / "v4")
+    return _Task2Consumer(repo, proj, _read_manifest(proj))
+
+
+@pytest.fixture
+def v3_window_consumer(tmp_path):
+    repo, proj, commit = _window_fixture(tmp_path / "v3-window")
+    return _Task2Consumer(repo, proj, _read_manifest(proj))
+
+
+class _TemplateRepoHandle:
+    def __init__(self, path):
+        self.path = path
+
+    @property
+    def head(self) -> str:
+        return _git_out(self.path, "rev-parse", "HEAD")
+
+    def tag(self, name: str):
+        _git(self.path, "tag", name)
+
+    def commit_edit(self, repo_rel_path: str, content: str):
+        p = self.path / repo_rel_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8", newline="")
+        _git(self.path, "add", "-A")
+        _git(self.path, "commit", "-q", "-m", f"edit {repo_rel_path}")
+
+
+@pytest.fixture
+def template_repo(v4_consumer):
+    """The SAME repo `v4_consumer` already points at -- the case2/case3
+    witnesses mutate the template repo a consumer has already loaded, then
+    re-derive against it; a separately-built repo would make every
+    tag/commit these tests make invisible to v4_consumer.manifest/.rules."""
+    return _TemplateRepoHandle(v4_consumer.repo)
+
+
+# --- manifest_migration (spec §1.3) -----------------------------------------
+
+
+def test_manifest_migration_reports_v3_to_v4(v3_consumer):
+    out = json.loads(asyncio.run(ts.template_load_manifest(str(v3_consumer.root))))
+    assert out["manifest_migration"] == {"from": 3, "to": 4, "required": True}
+    assert out["migration_required"] is False          # unchanged: the v2->v3 answer
+
+
+def test_manifest_migration_false_on_v4(v4_consumer):
+    out = json.loads(asyncio.run(ts.template_load_manifest(str(v4_consumer.root))))
+    assert out["manifest_migration"] == {"from": 4, "to": 4, "required": False}
+
+
+# --- per-consumer case 2 (spec §1.4) ----------------------------------------
+
+
+def test_case2_survives_commit_to_path_this_consumer_does_not_track(template_repo, v4_consumer):
+    template_repo.tag("v9.9.9")
+    template_repo.commit_edit("user-level-reference/README.md", "docs only\n")
+    version, warn = v3.derive_template_version(
+        str(template_repo.path), template_repo.head,
+        v3.consumer_template_paths(v4_consumer.manifest, v4_consumer.rules))
+    assert (version, warn) == ("v9.9.9", None)
+
+
+def test_case3_on_commit_to_tracked_path(template_repo, v4_consumer):
+    template_repo.tag("v9.9.9")
+    template_repo.commit_edit("templates/general/CLAUDE.md", "changed\n")
+    version, warn = v3.derive_template_version(
+        str(template_repo.path), template_repo.head,
+        v3.consumer_template_paths(v4_consumer.manifest, v4_consumer.rules))
+    assert (version, warn) == (None, "untagged_template_tree")
+
+
+def test_case3_when_this_consumer_tracks_the_touched_path(template_repo, v4_consumer):
+    # per-consumer set, not a global exclusion
+    v4_consumer.track("user-level-reference/README.md")
+    template_repo.tag("v9.9.9")
+    template_repo.commit_edit("user-level-reference/README.md", "docs only\n")
+    version, warn = v3.derive_template_version(
+        str(template_repo.path), template_repo.head,
+        v3.consumer_template_paths(v4_consumer.manifest, v4_consumer.rules))
+    assert version is None
+
+
+# --- the seed line that cannot lie (spec §2.1) ------------------------------
+
+# Both names resolve to the file's own PROJECT_MD_CONTENT (the CURRENT,
+# R-G-reworded shipped seed: "# Project instructions" + v3.PROJECT_MD_SEED_BODY
+# -- already ships the ".claude/project-instructions.md (imported at the end
+# of CLAUDE.md)" sentence). The two replace() calls below each need their
+# target substring present in the base text -- both are, in this one shape --
+# so there is only one "current" shape to mutate away from in either
+# direction; the brief's two names do not need two different base strings.
+SEED_V402_HEADER = PROJECT_MD_CONTENT
+SEED_V411_HEADER = PROJECT_MD_CONTENT
+
+
+def test_seed_current_flags_project_custom_reference(v4_consumer):
+    # NOTE (brief line found wrong): the brief's literal replace() target
+    # (".claude/project-instructions.md (imported at the end of CLAUDE.md)")
+    # does not occur in the live v3.PROJECT_MD_SEED_BODY -- the real
+    # sentence wraps the path in backticks AND breaks the line inside the
+    # parenthetical ("`.claude/project-instructions.md` (imported at\nthe
+    # end of CLAUDE.md)"), so the brief's exact string is never a substring
+    # match; using it verbatim leaves the header BYTE-IDENTICAL to what
+    # _good_fixture_v4 already committed (a silent no-op .write() that then
+    # fails the fixture's own git commit with "nothing to commit"). Matched
+    # against the real text below.
+    assert SEED_V402_HEADER.replace(
+        "Always-on project rules belong in `.claude/project-instructions.md` (imported at\n"
+        "the end of CLAUDE.md), not here;",
+        "Always-on project rules belong in CLAUDE.md's PROJECT-CUSTOM region, not here;",
+    ) != SEED_V402_HEADER, "replace() target must actually match the live seed text"
+    v4_consumer.write(".claude/rules/project.md", SEED_V402_HEADER.replace(
+        "Always-on project rules belong in `.claude/project-instructions.md` (imported at\n"
+        "the end of CLAUDE.md), not here;",
+        "Always-on project rules belong in CLAUDE.md's PROJECT-CUSTOM region, not here;",
+    ))
+    line = template_verify_lines(v4_consumer)["project_md_seed_current"]
+    assert line["status"] == "INFO" and "PROJECT-CUSTOM" in line["measured"]
+    assert "repoint" in line["remedy"] and "project-instructions.md" in line["remedy"]
+
+
+def test_seed_current_on_consumer_reworded_header_without_marker(v4_consumer):
+    v4_consumer.write(".claude/rules/project.md", SEED_V411_HEADER.replace(
+        "Always-on project rules", "Our always-on rules"))
+    line = template_verify_lines(v4_consumer)["project_md_seed_current"]
+    assert line["measured"].endswith("seed is current")
+
+
+def test_seed_differs_is_a_fact_with_no_remedy(v4_consumer):
+    v4_consumer.write(".claude/rules/project.md", SEED_V411_HEADER.replace(
+        "Always-on project rules", "Our always-on rules"))
+    line = template_verify_lines(v4_consumer)["project_md_seed_differs"]
+    assert line["status"] == "INFO" and "differs from the shipped seed" in line["measured"]
+    assert not any(verb in line.get("remedy", "") for verb in ("replace", "update", "consider", "should"))
+
+
+def test_seed_differs_matches_when_consumer_appended_rules_after_the_seed(v4_consumer):
+    """Prefix, not byte-compare: appending after the shipped seed still
+    reads as a match (the header text itself is untouched)."""
+    v4_consumer.write(".claude/rules/project.md", PROJECT_MD_CONTENT + "\nOur own extra rule.\n")
+    line = template_verify_lines(v4_consumer)["project_md_seed_differs"]
+    assert line["status"] == "INFO"
+    assert "matches the shipped seed" in line["measured"]
+    assert "remedy" not in line or line["remedy"] in ("", "n/a (informational)")
+
+
+def test_lines_count_is_31_and_every_situation_table_lists_the_new_line(
+        v4_consumer, v3_legacy_consumer, v3_window_consumer):
+    for c in (v4_consumer, v3_legacy_consumer, v3_window_consumer):
+        lines = template_verify_lines(c)
+        assert len(lines) == 31 and "project_md_seed_differs" in lines

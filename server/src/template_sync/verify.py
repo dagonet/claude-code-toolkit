@@ -72,6 +72,12 @@ LINES = (
     ("declared_keys", FAIL_LINE),
     ("encoding_drift", INFO_LINE),
     ("project_md_seed_current", INFO_LINE),
+    # v4.1.1 (spec §2.1): a harm-keyed FACT, separate from project_md_seed_current's
+    # harm-keyed JUDGEMENT -- "mine differs" and "mine is harmful" never share
+    # an answer. A prefix test against the shipped seed, no remedy (a
+    # deliberate, once-class edit is not something this line tells the
+    # consumer to undo).
+    ("project_md_seed_differs", INFO_LINE),
     ("legacy_gate_dir", INFO_LINE),
     ("once_notes_changed", INFO_LINE),
     ("project_md_scoped_consistent", INFO_LINE),
@@ -994,6 +1000,17 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         emit(_line("project_md_seed_current", "INFO",
                    "scoped (paths: present); seed sentences not applicable",
                    "n/a (informational)"))
+    elif "PROJECT-CUSTOM" in project_md:
+        # Harm-keyed, not a byte-compare (§2.1): the header still points a
+        # consumer at the region v4.1.0 removed. Fires before the two
+        # pre-v4.0.2 sentence arms below -- the harm arms fire before
+        # "current", and a header can name PROJECT-CUSTOM independently of
+        # (and even alongside, MM-Agent measured both) those two drifts.
+        emit(_line("project_md_seed_current", "INFO",
+                   f"{v3.PROJECT_MD} header references PROJECT-CUSTOM, a region v4.1.0 removed",
+                   "n/a (informational)",
+                   "hand-edit .claude/rules/project.md (once-class: the sync never writes it): "
+                   "repoint the sentence at .claude/project-instructions.md"))
     elif "delivered to nobody" in project_md:
         emit(_line("project_md_seed_current", "INFO",
                    f"{v3.PROJECT_MD} still carries the pre-v4.0.1 seed's false 'delivered to nobody' sentence",
@@ -1015,6 +1032,33 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                    "or a scoped rules file FIRST -- see CHANGELOG.md's v4.0.2 downstream-migration section"))
     else:
         emit(_line("project_md_seed_current", "INFO", f"{v3.PROJECT_MD} seed is current", "n/a (informational)"))
+
+    # --- project_md_seed_differs (INFO, fact only, no remedy) ---------------
+    # Two questions, two lines (§2.1): project_md_seed_current is a JUDGEMENT
+    # ("is this seed current / harmful"); this one is a FACT ("does this
+    # consumer's file still start with the shipped seed text"), answered by a
+    # PREFIX test, never a byte-compare of the whole file -- a consumer who
+    # appended their own rules after the seed is not "different" by this
+    # line's answer, only one who edited the seed text itself is. No remedy:
+    # a deliberate, once-class edit is not something this line tells the
+    # consumer to undo -- it only points at where the shipped text lives.
+    if project_md is None:
+        emit(_line("project_md_seed_differs", "INFO", f"{v3.PROJECT_MD} not present", "n/a (informational)"))
+    else:
+        shipped_seed_path = core._template_file_path(manifest, v3.PROJECT_MD)
+        shipped_seed = core._read_file(shipped_seed_path)
+        if shipped_seed is None:
+            emit(_line("project_md_seed_differs", "INFO",
+                       f"shipped seed not found at {shipped_seed_path} -- cannot compare",
+                       "n/a (informational)"))
+        elif project_md.startswith(shipped_seed):
+            emit(_line("project_md_seed_differs", "INFO",
+                       "seed matches the shipped seed (rules appended after it)", "n/a (informational)"))
+        else:
+            emit(_line("project_md_seed_differs", "INFO",
+                       "seed text differs from the shipped seed at this template", "n/a (informational)",
+                       "shipped seed: templates/<variant>/.claude/rules/project.md; this file is once-class "
+                       "and no sync writes it"))
 
     if not scoped:
         emit(_line("project_md_scoped_consistent", "INFO", "n/a (unscoped or absent)", "n/a (informational)"))
