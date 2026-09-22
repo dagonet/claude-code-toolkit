@@ -687,9 +687,18 @@ def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
     res = verify.run(str(proj), str(repo), "post_commit")
     fail_ids = {l["id"] for l in res["lines"] if l["status"] == "FAIL"}
     skip_ids = {l["id"] for l in res["lines"] if l["status"] == "SKIP"}
+    info_ids = {l["id"] for l in res["lines"] if l["status"] == "INFO"}
     assert fail_ids == {"status_clean"}, _by_id(res)
     assert skip_ids == {"server_skew", "claude_md_identical", "import_line_present",
                         "instructions_file_present"}
+    # v4.1.1 (spec §2.1): symmetric with test_pass_fixture_is_all_green /
+    # test_v4_fixture_is_all_green -- project_md_seed_differs is not
+    # manifest-version-gated, so the window situation's INFO set is the
+    # SAME seven ids as the v3-legacy situation (this fixture's project.md
+    # and the template's copy are byte-identical, PROJECT_MD_CONTENT).
+    assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
+                        "project_md_seed_differs",
+                        "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
     line = _by_id(res)["status_clean"]
     assert "CLAUDE.md" in line["measured"]
     assert line["remedy"] == v3.MIGRATION_REQUIRED_REMEDY
@@ -1345,20 +1354,28 @@ def v3_legacy_consumer(tmp_path):
 
 
 @pytest.fixture
-def v4_consumer(tmp_path, monkeypatch):
+def v4_consumer(tmp_path):
     # consumer_template_paths (v3.py) resolves a project-relative path to a
-    # repo-root git path via core._template_git_path, which treats only
-    # "hooks/**" as root-tracked (core._ROOT_TRACKED_PREFIXES) -- every
-    # other entry gets the "templates/<variant>/" prefix, which is correct
-    # for a real template-owned file (CLAUDE.md, agents/*.md, ...). The #9
-    # witness (spec §1.4) deliberately names user-level-reference/README.md
-    # -- a real toolkit top-level dir with the SAME repo-root shape as
-    # hooks/, but one no real consumer manifest has ever held an entry for
-    # (it ships to ~/.claude/, not into a project checkout), so production
-    # code never grew a second prefix for it. Widening the prefix set for
-    # THIS fixture only reproduces that shape for the witness without
-    # touching production code or the constant's real-world meaning.
-    monkeypatch.setattr(ts, "_ROOT_TRACKED_PREFIXES", ts._ROOT_TRACKED_PREFIXES + ("user-level-reference/",))
+    # repo-root git path via core._template_git_path: "hooks/g.sh" is
+    # already root-tracked (core._ROOT_TRACKED_PREFIXES, UNMODIFIED here)
+    # and "CLAUDE.md" / ".claude/agents/foo.md" get the
+    # "templates/<variant>/" prefix -- all production-real, no test-only
+    # widening of that constant. Fix round 1 dropped an earlier version of
+    # this fixture that widened _ROOT_TRACKED_PREFIXES via monkeypatch so a
+    # single synthetic path (user-level-reference/README.md) could serve as
+    # BOTH the #9 case-2 ("does not track") and case-3 ("tracks it")
+    # witnesses -- the reviewer measured that with the real constant
+    # emptied, those tests stayed green only because the monkeypatch
+    # supplied its own prefix (11 OTHER tests went red on the same change),
+    # i.e. redundancy lost, not protection. The two witnesses below (in the
+    # case2/case3 tests, not this fixture) now stand on two DIFFERENT
+    # real, root-tracked hooks/ paths: hooks/g.sh (this fixture's own
+    # already-template-owned entry, for "tracks it") and hooks/other.sh (a
+    # path this fixture's manifest does NOT hold, for "does not track") --
+    # both resolve under the SAME unmodified "hooks/" prefix, so the
+    # discriminator is genuinely "tracked or not", not "resolved correctly
+    # or not" (see the report's fix-round-1 section for the emptied-prefix
+    # RED confirmation on the tracked one).
     repo, proj, commit = _good_fixture_v4(tmp_path / "v4")
     return _Task2Consumer(repo, proj, _read_manifest(proj))
 
@@ -1415,8 +1432,13 @@ def test_manifest_migration_false_on_v4(v4_consumer):
 
 
 def test_case2_survives_commit_to_path_this_consumer_does_not_track(template_repo, v4_consumer):
+    # hooks/other.sh is root-tracked under the SAME unmodified "hooks/"
+    # prefix as v4_consumer's own hooks/g.sh entry -- it resolves correctly
+    # (no templates/<variant>/ misprefix to hide behind); it is green
+    # because this consumer's manifest simply does not hold it, not because
+    # it resolved somewhere consumer_template_paths never looks.
     template_repo.tag("v9.9.9")
-    template_repo.commit_edit("user-level-reference/README.md", "docs only\n")
+    template_repo.commit_edit("hooks/other.sh", "echo other\n")
     version, warn = v3.derive_template_version(
         str(template_repo.path), template_repo.head,
         v3.consumer_template_paths(v4_consumer.manifest, v4_consumer.rules))
@@ -1433,10 +1455,18 @@ def test_case3_on_commit_to_tracked_path(template_repo, v4_consumer):
 
 
 def test_case3_when_this_consumer_tracks_the_touched_path(template_repo, v4_consumer):
-    # per-consumer set, not a global exclusion
-    v4_consumer.track("user-level-reference/README.md")
+    # per-consumer set, not a global exclusion: hooks/g.sh is a
+    # template-owned entry v4_consumer ALREADY holds (_good_fixture_v4's
+    # template_files dict) -- no synthetic .track() needed. It resolves
+    # under the SAME unmodified "hooks/" root-tracked prefix as
+    # test_case2's hooks/other.sh above; the difference between the two
+    # tests is purely "does this consumer's manifest hold this path",
+    # which is exactly what #9 (spec §1.4) is about. This is also the
+    # discriminating witness: emptying core._ROOT_TRACKED_PREFIXES makes
+    # this test fail (see the report's fix-round-1 section) -- it is not
+    # accidentally green.
     template_repo.tag("v9.9.9")
-    template_repo.commit_edit("user-level-reference/README.md", "docs only\n")
+    template_repo.commit_edit("hooks/g.sh", "echo changed\n")
     version, warn = v3.derive_template_version(
         str(template_repo.path), template_repo.head,
         v3.consumer_template_paths(v4_consumer.manifest, v4_consumer.rules))
@@ -1483,6 +1513,12 @@ def test_seed_current_flags_project_custom_reference(v4_consumer):
 
 
 def test_seed_current_on_consumer_reworded_header_without_marker(v4_consumer):
+    # Guard (fix round 1, item 4): without it a no-op replace() (target
+    # substring absent) would leave the seed UNMUTATED, which also reads
+    # "current" -- a false PASS that tests nothing. Same shape as the
+    # PROJECT-CUSTOM fixture's guard above.
+    assert SEED_V411_HEADER.replace("Always-on project rules", "Our always-on rules") != SEED_V411_HEADER, \
+        "replace() target must actually match the live seed text"
     v4_consumer.write(".claude/rules/project.md", SEED_V411_HEADER.replace(
         "Always-on project rules", "Our always-on rules"))
     line = template_verify_lines(v4_consumer)["project_md_seed_current"]
@@ -1490,6 +1526,8 @@ def test_seed_current_on_consumer_reworded_header_without_marker(v4_consumer):
 
 
 def test_seed_differs_is_a_fact_with_no_remedy(v4_consumer):
+    assert SEED_V411_HEADER.replace("Always-on project rules", "Our always-on rules") != SEED_V411_HEADER, \
+        "replace() target must actually match the live seed text"
     v4_consumer.write(".claude/rules/project.md", SEED_V411_HEADER.replace(
         "Always-on project rules", "Our always-on rules"))
     line = template_verify_lines(v4_consumer)["project_md_seed_differs"]

@@ -1010,7 +1010,8 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                    f"{v3.PROJECT_MD} header references PROJECT-CUSTOM, a region v4.1.0 removed",
                    "n/a (informational)",
                    "hand-edit .claude/rules/project.md (once-class: the sync never writes it): "
-                   "repoint the sentence at .claude/project-instructions.md"))
+                   "repoint the sentence at .claude/project-instructions.md; an older seed sentence "
+                   "may also be present; re-run after fixing"))
     elif "delivered to nobody" in project_md:
         emit(_line("project_md_seed_current", "INFO",
                    f"{v3.PROJECT_MD} still carries the pre-v4.0.1 seed's false 'delivered to nobody' sentence",
