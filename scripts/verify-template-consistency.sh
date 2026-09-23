@@ -10,9 +10,11 @@
 
 set -u
 fail=0
+skip_count=0
 note() { printf "  %s\n" "$*"; }
 ok() { printf "PASS  %s\n" "$*"; }
 ko() { printf "FAIL  %s\n" "$*"; fail=1; }
+skip() { printf "SKIP  %s\n" "$*"; skip_count=$((skip_count + 1)); }
 
 VARIANTS="general dotnet dotnet-maui rust-tauri java python"
 
@@ -3266,8 +3268,7 @@ rm -f "$c36_full_file" "$c36_rel_file" "$c36_class_file" "${c36_class_file}.join
 note "Check 37: the context-mode sentinel is in every templates/*/CLAUDE.md and the root CLAUDE.md; both plugin writers re-measured where installed"
 c37_fail=0
 c37_files=0
-for f in templates/general/CLAUDE.md templates/dotnet/CLAUDE.md templates/dotnet-maui/CLAUDE.md \
-         templates/rust-tauri/CLAUDE.md templates/java/CLAUDE.md templates/python/CLAUDE.md CLAUDE.md; do
+for f in templates/*/CLAUDE.md CLAUDE.md; do
   c37_files=$((c37_files + 1))
   grep -q 'context-mode' "$f" || { ko "check 37: $f lacks the context-mode sentinel -- the plugin's launcher will append its routing block on the next server spawn"; c37_fail=1; }
 done
@@ -3286,7 +3287,25 @@ done
 if [ "$c37_measured" -eq 0 ]; then
   note "check 37: context-mode plugin not installed here -- writer predicate not re-measured (sentinel still asserted in $c37_files files)"
 fi
-[ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in $c37_files/7 files (6 variants + root); $c37_measured installed writer(s) still gate on includes(\"context-mode\")"
+[ "$c37_fail" -eq 0 ] && ok "check 37: sentinel present in $c37_files files ($((c37_files - 1)) variants + root); $c37_measured installed writer(s) still gate on includes(\"context-mode\")"
+
+# ---------------------------------------------------------------------------
+# Check 55 — the declared $VARIANTS list (:17) equals the set of templates/*/
+# directories actually on disk. Check 37's glob (above) absorbs an undeclared
+# directory silently; this check is what turns that silence red. The
+# declaration at :17 STAYS -- it is a statement of intent this check verifies
+# reality against (the same relationship UNGRANTABLE_TOOLS has to its own
+# census). Compared as SETS: the declaration is not sorted and must not be
+# reordered to satisfy the comparator.
+# ---------------------------------------------------------------------------
+note "Check 55: the declared VARIANTS list equals the set of templates/*/ directories on disk"
+c55_declared=$(printf '%s\n' $VARIANTS | LC_ALL=C sort)
+c55_disk=$(for d in templates/*/; do d=${d%/}; printf '%s\n' "${d#templates/}"; done | LC_ALL=C sort)
+if [ "$c55_declared" = "$c55_disk" ]; then
+  ok "check 55: VARIANTS ($(printf '%s\n' "$VARIANTS" | wc -w)) == templates/*/ on disk"
+else
+  ko "check 55: declared VARIANTS and templates/*/ differ -- declared: [$(printf '%s ' $c55_declared)] disk: [$(printf '%s ' $c55_disk)]; a variant not on line 17 is invisible to every 'for v in \$VARIANTS' check"
+fi
 
 # ---------------------------------------------------------------------------
 # Check 38 — VERSION two-line convention (v3.1). Line 1 = semver, line 2 = this
@@ -3538,6 +3557,50 @@ else
     c42_fail=1
   fi
 fi
+# Arm 2 -- requires_skill is non-decreasing since the previous release. Arm 1
+# above only catches a floor ABOVE VERSION; a stale-low floor is invisible to
+# it (measured: everything-but-the-floor moved -> 420/0 at v4.1.0). The
+# previous release's NAME comes from the CHANGELOG, and which heading names it
+# depends on the phase this commit is in: heading 1 is the previous release
+# whenever it is ALREADY a released (tagged) commit -- development phase,
+# where heading 1 hasn't moved on to the new release yet, so comparing
+# against it catches a lowering immediately; otherwise heading 1 is the
+# unreleased version this commit is building toward, so heading 2 -- the
+# release commit itself -- is the true previous release. After the tag,
+# heading 1 IS the release just cut, so this arm is comparing the working
+# tree's own floor against the floor that release shipped with -- the
+# comparison that protects the entire next development cycle against the
+# floor quietly slipping back down; it reads exactly equal only at the
+# tagged commit itself, and moves apart the moment either floor does. Never
+# `git describe --tags --abbrev=0`, which answers "nearest reachable tag" and
+# moves with reachability and with any non-release tag.
+c42_bare=${c42_bare:-}
+c42_h1=$(grep -m1 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed 's/^## //')
+if git rev-parse --verify --quiet "${c42_h1}^{commit}" >/dev/null 2>&1; then
+  c42_prev=$c42_h1
+else
+  c42_prev=$(grep -m2 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed -n '2p' | sed 's/^## //')
+fi
+if [ -z "$c42_prev" ]; then
+  ko "check 42 arm 2: CHANGELOG.md has no second '## v' heading -- the previous release cannot be named"; c42_fail=1
+elif ! c42_prev_commit=$(git rev-parse --verify --quiet "${c42_prev}^{commit}"); then
+  # DETECTION, not permission: a tag absent locally does not make a decrease likelier; SKIP by name.
+  # (#15's extension is a PERMISSION and fails closed on absent data -- opposite polarity, on purpose.)
+  skip "check 42 arm 2: previous release tag ${c42_prev} not present locally -- fetch tags (git fetch --tags) to enable the non-decreasing check"
+else
+  c42_prev_floor=$(git show "${c42_prev_commit}:templates/ownership.json" | sed -n 's/.*"requires_skill"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  c42_prev_bare=${c42_prev_floor#>=}
+  if [ -z "$c42_prev_bare" ]; then
+    skip "check 42 arm 2: ${c42_prev}'s templates/ownership.json has no readable requires_skill -- cannot compare"
+  else
+    c42_low2=$(printf '%s\n%s\n' "$c42_prev_bare" "$c42_bare" | sort -V | head -1)
+    if [ "$c42_low2" != "$c42_prev_bare" ]; then
+      ko "check 42 arm 2: requires_skill '$c42_floor' is BELOW the previous release's '$c42_prev_floor' (${c42_prev}) -- a lowered floor re-admits skill bodies that release deliberately excluded"; c42_fail=1
+    else
+      ok "check 42 arm 2: requires_skill '$c42_floor' >= previous release ${c42_prev}'s '$c42_prev_floor'"
+    fi
+  fi
+fi
 # Control arm: the same comparison must be able to fire. Evaluate it against a
 # floor that is certainly above us; if that reads as "not above", the sort is
 # not doing what the check claims.
@@ -3547,6 +3610,41 @@ if [ "$c42_ctl" != "$c42_ours" ]; then
   c42_fail=1
 fi
 [ "$c42_fail" -eq 0 ] && ok "check 42: requires_skill '$c42_floor' is tag-shaped and <= $c42_ours; control detected v99.0.0 as above"
+
+# ---------------------------------------------------------------------------
+# Check 56 -- the floor is a compatibility judgement a person signs, not a
+# value check 42 can derive (arm 3, a declared-floor-equality check, was
+# considered and not built -- both releases' floors staying stale together is
+# exactly the green case it would exist to catch). PRESENCE of a signed
+# 'Floor reviewed:' line is not enough on its own: nothing else in this
+# script ties a CHANGELOG heading to VERSION -- check 42 arm 2 reads a
+# heading too, but only to find the PREVIOUS release, and passes on an
+# unbumped VERSION by comparing a tag to itself -- so a release that bumps
+# VERSION without adding its own CHANGELOG section would otherwise pass on
+# the section still sitting from the release before it. This check asserts
+# TWO things in one counted line: the newest '## v' heading names THIS
+# release (its version equals VERSION line 1), and that section carries the
+# signed line -- kept as one PASS/FAIL rather than two, since a release with
+# no matching section has no floor judgement of its own to read either way.
+# Either extraction (VERSION, the heading) being unreadable is checked FIRST,
+# before the comparison, so an empty value can never compare equal to
+# another empty value and pass by accident. The `ko` message names exactly
+# which of the three conditions failed.
+# ---------------------------------------------------------------------------
+note "Check 56: the newest CHANGELOG section is this release's own, and signs a 'Floor reviewed:' line"
+c56_hv=$(grep -m1 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed 's/^## v//')
+c56_fv=$(head -1 VERSION 2>/dev/null | tr -d '\r\n')
+c56_section=$(awk '/^## v[0-9]/{n++} n==1{print} n==2{exit}' CHANGELOG.md)
+if [ -z "$c56_hv" ] || [ -z "$c56_fv" ]; then
+  ko "check 56: VERSION or the newest '## v' heading is unreadable -- VERSION='${c56_fv:-<empty>}' heading='${c56_hv:-<empty>}'"
+elif [ "$c56_hv" != "$c56_fv" ]; then
+  ko "check 56: newest CHANGELOG section is v$c56_hv, VERSION is $c56_fv"
+else
+  case "$c56_section" in
+    *"Floor reviewed: unchanged"*|*"Floor reviewed: raised to >=v"*) ok "check 56: newest CHANGELOG section (v$c56_hv) is this release's own and states its floor judgement" ;;
+    *) ko "check 56: newest CHANGELOG section (v$c56_hv) carries no signed 'Floor reviewed:' line" ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
@@ -4411,6 +4509,9 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
+if [ "$skip_count" -gt 0 ]; then
+  echo "$skip_count check(s) skipped"
+fi
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASSED"
   exit 0

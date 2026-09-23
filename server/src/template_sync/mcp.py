@@ -836,6 +836,36 @@ def _registered_tool_names() -> list[str]:
 # MCP Tools
 # -------------------------
 
+def _manifest_migration_to(rules, from_version):
+    """The manifest_version this consumer should migrate TOWARD, given the
+    CURRENT template's ownership.json (`rules`; None when that file itself
+    is absent -- a pre-v3.1 checkout, cannot-determine, so the answer is
+    `from_version` unchanged: no claimed path).
+
+    v4 when ownership.json already declares rules for BOTH v4-only paths
+    (v3.AGENT_GRANTS_FILE + v3.INSTRUCTIONS_FILE_DEFAULT) -- the signal this
+    template repo has adopted the v3->v4 migration; v3 for any other
+    ownership.json (pre-v4.1 shape, rules present but those two absent).
+
+    Never answers BELOW the manifest's own current version: a manifest
+    already at v4 proves ITS template supported v4 at the time it migrated,
+    even if the ownership.json this particular read sees does not carry the
+    two marker rules (e.g. a minimal test fixture) -- a consumer manifest is
+    not a proxy for its own ownership.json's present shape.
+    """
+    if rules is None:
+        return from_version
+    ceiling = (
+        v3.MANIFEST_VERSION_V4
+        if rules.rule_for(v3.AGENT_GRANTS_FILE) is not None
+        and rules.rule_for(v3.INSTRUCTIONS_FILE_DEFAULT) is not None
+        else v3.MANIFEST_VERSION_V3
+    )
+    if from_version is not None and from_version > ceiling:
+        return from_version
+    return ceiling
+
+
 @mcp.tool()
 async def template_load_manifest(project_path: str) -> str:
     """
@@ -845,6 +875,12 @@ async def template_load_manifest(project_path: str) -> str:
     server_version; a v2 manifest reports migration_required when the
     template repo ships templates/ownership.json (call
     template_migrate_manifest before any other step).
+
+    migration_required answers the v2->v3 question ONLY and is kept for one
+    release (removed in v4.2) -- read manifest_migration instead, which
+    answers both v2->v3 and v3->v4 against the CURRENT template's manifest
+    version: {"from": <this manifest's version>, "to": <the template's
+    ceiling>, "required": bool}.
 
     Args:
         project_path: Path to the project root directory
@@ -891,6 +927,8 @@ async def template_load_manifest(project_path: str) -> str:
             )
         if rules is not None:
             warnings.extend(rules.warnings)
+        mv_from = manifest.get("manifest_version")
+        mv_to = _manifest_migration_to(rules, mv_from)
         return json.dumps({
             "valid": len(errors) == 0,
             "manifest_version": manifest.get("manifest_version"),
@@ -901,6 +939,7 @@ async def template_load_manifest(project_path: str) -> str:
             "capabilities": list(v3.CAPABILITIES),
             "registered_tools": _registered_tool_names(),
             "migration_required": False,
+            "manifest_migration": {"from": mv_from, "to": mv_to, "required": mv_from != mv_to},
             "variant": manifest.get("variant", ""),
             "templateRepo": manifest.get("templateRepo", ""),
             "template_commit": v3.manifest_commit(manifest),
@@ -942,7 +981,10 @@ async def template_load_manifest(project_path: str) -> str:
 
     # A v2 manifest migrates to v3 only when the toolkit checkout ships the
     # ownership table -- without it the server behaves exactly as 0.2.x.
-    migration_required = v3.load_ownership(manifest["templateRepo"]) is not None
+    rules_v2 = v3.load_ownership(manifest["templateRepo"])
+    migration_required = rules_v2 is not None
+    mv2_from = manifest.get("version", 1)
+    mv2_to = _manifest_migration_to(rules_v2, mv2_from)
 
     return json.dumps({
         "valid": len(errors) == 0,
@@ -955,6 +997,7 @@ async def template_load_manifest(project_path: str) -> str:
         "capabilities": list(v3.CAPABILITIES),
         "registered_tools": _registered_tool_names(),
         "migration_required": migration_required,
+        "manifest_migration": {"from": mv2_from, "to": mv2_to, "required": mv2_from != mv2_to},
         "variant": manifest.get("variant", ""),
         "templateRepo": manifest.get("templateRepo", ""),
         "lastSynced": manifest.get("lastSynced", ""),
