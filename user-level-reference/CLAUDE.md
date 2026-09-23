@@ -14,6 +14,24 @@ This machine runs Windows 11 with Git Bash as the shell.
 - Multi-line/compound Bash commands can be conservatively blocked by guard hooks (unparseable → fail-closed). Write the logic to a script file and run `bash <path>` — the guard hooks read the script's first 16 KB, so a `git commit`/`merge`/`push` inside it is gated exactly as if typed (a script that calls another script is not followed)
 - context-mode sandbox `/tmp` paths are invisible to native `git -C` ("cannot change to ..."). Run git-dependent scripts and fixtures via the Bash tool (real Git Bash), not `ctx_execute`
 
+## Git Worktrees — declared location
+
+Worktrees for repos under `G:/git/` go in **`G:/git/.worktrees/<repo-name>/<worktree-name>`**
+(e.g. `G:/git/.worktrees/mcp-dev-servers/fix-parser`), never inside the repo.
+
+This is the "declared worktree directory preference" that `superpowers:using-git-worktrees` looks
+for first, so it overrides that skill's `.worktrees/`-at-project-root default without prompting.
+It also applies to any manual `git worktree add` — pass this path explicitly.
+
+- The parent dir is outside every repo, so no `.gitignore` entry is needed or checked; if the
+  skill's "verify the directory is ignored" step objects, that check assumes a project-local
+  directory and does not apply here.
+- **Exception, not configurable:** Claude Code's own `EnterWorktree` tool always creates under
+  `<repo>/.claude/worktrees/`. There is no setting for its location (`worktree.baseRef` is the
+  only `worktree.*` setting, and it selects the base ref, not the path). To keep worktrees in the
+  declared location, use `git worktree add` rather than `EnterWorktree`.
+- Clean up stale registrations with `git worktree prune` after removing a worktree directory.
+
 ## Sub-Agent File Write Discipline
 
 - Do NOT delegate file writes to sub-agents for files with complex escaping

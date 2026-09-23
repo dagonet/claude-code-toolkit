@@ -192,6 +192,8 @@ See `PROJECT_CONTEXT.md` for the worktree base path; see Mode Behavior Table for
 - On completion (PR merged), the developer removes the worktree and deletes the branch.
 - `isolation: worktree` cuts from **`origin/main`**, not local `main` or the session branch — a worktree coder lags until an unlanded session PR lands. PO check: `git rev-list --count <base>..<session-branch>` = 0, and `git cat-file -e <base>:<path>` succeeds for every file the brief names. Untracked files are never in the worktree — hand the coder an absolute path.
 
+**Background jobs outlive the agent that spawned them:** A backgrounded job is not scoped to the agent that started it. A `sleep`-and-act cleanup delegated to a background job ran an hour after its agent had handed back and deleted a live lock (MM-Agent, 2026-09-22); a stopped gate's child processes ran on after `TaskStop` and the kill was denied to the agent that noticed (this toolkit, same day). Rules: cleanup belongs in the agent's OWN final turn, or is handed to a NAMED successor explicitly; a successor that finds a resource already released SAYS so instead of claiming the release; the agent that notices an orphan may be unable to end it, so detection and reporting are load-bearing — report the pid and the command line, never assume it stopped.
+
 ---
 
 ## Merge Protocol
