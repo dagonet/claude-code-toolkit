@@ -1205,6 +1205,17 @@ def test_tree_clean_remedy_mentions_unrelated_work(tmp_path):
         "Always-on project rules belong in `.claude/project-instructions.md`",
         "Always-on project rules belong in\n`.claude/project-instructions.md`"),
      "current", "n/a"),
+    # Fix round 1 (reviewer-caught regression in f72cf26): a note-to-self
+    # carrying the NEW recommended wording pasted ABOVE a live guidance line
+    # that still names PROJECT-CUSTOM ("half-applied the repair"). The note
+    # is its own line inside a multi-line HTML comment (not sharing the
+    # "<!--" delimiter's line, which would not match PROJECT_MD_GUIDANCE_STEM
+    # at all and would fail to exercise the "first line" vs "any line"
+    # distinction) -- see the case D note in verify.py's
+    # _guidance_line_names_region and task-2-report.md's "Fix round 1"
+    # section for why the delimiter placement matters here.
+    ("# Project instructions\n\n<!--\nAlways-on project rules belong in `.claude/project-instructions.md`\n-->\n\n"
+     + V401_SEED + "\n", "project_custom", "n/a"),
     ("---\npaths:\n  - \"src/**\"\n---\n# mine\n", "scoped", "clean"),
     ("---\npaths:\n  - \"src/**\"\n---\n" + V402_SEED, "scoped", "contradiction"),
 ])

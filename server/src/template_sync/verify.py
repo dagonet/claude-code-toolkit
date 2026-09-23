@@ -121,13 +121,16 @@ PROJECT_MD_GUIDANCE_STEM = "Always-on project rules belong in"
 
 
 def _guidance_line_names_region(project_md: str) -> bool:
-    """True when the FIRST line beginning with PROJECT_MD_GUIDANCE_STEM names
-    PROJECT-CUSTOM. Reads that one line only; a file with no such line is
-    False and falls through to the older-seed arms."""
-    for line in project_md.splitlines():
-        if line.lstrip().startswith(PROJECT_MD_GUIDANCE_STEM):
-            return "PROJECT-CUSTOM" in line
-    return False
+    """True when ANY line beginning with PROJECT_MD_GUIDANCE_STEM names
+    PROJECT-CUSTOM; a file with no such line is False and falls through to
+    the older-seed arms. Deliberately not "the first such line": a consumer
+    who half-applied the repair -- pasting the new recommended wording above
+    a live guidance line that still names PROJECT-CUSTOM -- must still trip
+    this arm; "first line wins" silently cleared the harm on exactly that
+    file (fix round 1, reviewer-caught regression in f72cf26)."""
+    return any("PROJECT-CUSTOM" in line
+               for line in project_md.splitlines()
+               if line.lstrip().startswith(PROJECT_MD_GUIDANCE_STEM))
 
 
 def _line(id_: str, status: str, measured: str, expected: str, remedy: str = "") -> dict:
