@@ -342,6 +342,14 @@ if ($TechStack)     { $replacements['{{TECH_STACK}}']     = $TechStack }
 if (-not $WorktreeBase) {
     $wtbParentStripped = $WorktreeBaseParent -replace '^\.\./', ''
     $wtbTop = [System.IO.Path]::GetFullPath((Join-Path $TargetDir ".."))
+    # Fix round 1: mirrors the guard on the .sh side -- GetFullPath is pure
+    # lexical resolution and does not itself throw on a nonexistent path, but
+    # refuse anyway rather than let an unexpectedly empty/null $wtbTop compose
+    # a root-level `/../.worktrees/<project>`.
+    if (-not $wtbTop) {
+        Write-Error "setup-project: cannot resolve the worktree parent for $TargetDir"
+        return
+    }
     $WorktreeBase = ((Join-Path $wtbTop (Join-Path $wtbParentStripped $ProjectName)) -replace '\\', '/')
 }
 if ($WorktreeBase)  { $replacements['{{WORKTREE_BASE}}']  = $WorktreeBase }

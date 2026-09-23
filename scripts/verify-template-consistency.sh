@@ -3682,12 +3682,34 @@ fi
 # the code's (v4.1.2 #2). SKILL.md states `LINES = <n>`; verify.py's LINES
 # tuple is the single source of truth. The doc was true when written and
 # would drift silently when LINES moves. Empty read on either side refuses.
+#
+# Fix round 1: the awk count's STATED ASSUMPTION is one tuple entry per
+# line -- it counts LINES matching `^[[:space:]]*\("` (line-level, not
+# occurrence-level), so a comment line, a `LINES: tuple = (` type
+# annotation, and a wrapped entry all count correctly (a comment line
+# never starts with `("`; a wrapped entry's continuation lines don't
+# either; a mistyped header never sets `f` at all, and 0 is caught by the
+# empty-read arm below) -- but TWO entries hand-collapsed onto one line
+# (`("a", X), ("b", Y),`) undercount by exactly the number of extra
+# entries on that line, silently, and could pass a doc figure that is
+# itself stale by the same amount. Self-check in the SAME awk pass: count
+# `("` OCCURRENCES per line (via gsub on a copy of the line, not $0) and
+# flag if any line in the tuple window carries more than one -- the
+# approximation is then honest about when it cannot be trusted, rather
+# than trusting a shape it was never designed to count.
 # ---------------------------------------------------------------------------
 echo
 note "Check 58: SKILL.md's stated LINES count == len(verify.LINES)"
 c58_doc=$(grep -o 'LINES = [0-9][0-9]*' user-level-reference/skills/sync-template/SKILL.md | head -1 | sed 's/LINES = //')
-c58_code=$(awk '/^LINES = \(/{f=1;next} f&&/^\)/{exit} f&&/^[[:space:]]*\("/{n++} END{print n+0}' server/src/template_sync/verify.py)
-if [ -z "$c58_doc" ] || [ "${c58_code:-0}" = "0" ]; then
+c58_stats=$(awk '/^LINES = \(/{f=1;next} f&&/^\)/{exit} f&&/^[[:space:]]*\("/{n++; line=$0; cnt=gsub(/\("/,"&",line); if(cnt>1){multi=1}} END{print (n+0)" "(multi+0)}' server/src/template_sync/verify.py)
+# Split "N M" without `set --` -- this script takes no CLI args itself, but
+# functions called later in the file with no explicit args would otherwise
+# inherit these as their own $1/$2.
+c58_code="${c58_stats%% *}"
+c58_multi="${c58_stats##* }"
+if [ "$c58_multi" = "1" ]; then
+  ko "check 58: LINES tuple has more than one entry on a line — the one-per-line count cannot be trusted"
+elif [ -z "$c58_doc" ] || [ "${c58_code:-0}" = "0" ]; then
   ko "check 58: cannot read the count -- SKILL.md says '${c58_doc:-<empty>}', verify.py LINES tuple counted '${c58_code:-<empty>}' entries"
 elif [ "$c58_doc" = "$c58_code" ]; then
   ok "check 58: SKILL.md LINES = $c58_doc == verify.LINES ($c58_code entries)"

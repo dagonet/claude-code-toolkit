@@ -416,6 +416,13 @@ add_replacement '{{DEFAULT_BRANCH}}' "$DEFAULT_BRANCH"
 # shape.
 if [[ -z "$WORKTREE_BASE" ]]; then
   _wt_top="$(cd "$TARGET_DIR/.." && pwd -P)"
+  # Fix round 1: `cd`+`pwd -P` reads empty (not an error `set -e` catches, a
+  # silent empty string) if $TARGET_DIR does not exist -- today unreachable,
+  # since :114-118 `mkdir -p`s the target before this point ever runs, but
+  # that safety lives ~300 lines away and this release's shape for every
+  # other fail-empty path here is to refuse loudly, not compose
+  # `/../.worktrees/<project>` off the filesystem root.
+  [[ -n "$_wt_top" ]] || { echo "setup-project: cannot resolve the worktree parent for $TARGET_DIR" >&2; exit 1; }
   if command -v cygpath >/dev/null 2>&1; then
     _wt_top="$(cygpath -m "$_wt_top" 2>/dev/null || printf '%s' "$_wt_top")"
   fi
