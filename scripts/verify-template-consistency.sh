@@ -3566,8 +3566,12 @@ fi
 # where heading 1 hasn't moved on to the new release yet, so comparing
 # against it catches a lowering immediately; otherwise heading 1 is the
 # unreleased version this commit is building toward, so heading 2 -- the
-# release commit itself -- is the true previous release. Post-tag, heading 1
-# resolves to itself, comparing equal and passing. Never
+# release commit itself -- is the true previous release. After the tag,
+# heading 1 IS the release just cut, so this arm is comparing the working
+# tree's own floor against the floor that release shipped with -- the
+# comparison that protects the entire next development cycle against the
+# floor quietly slipping back down; it reads exactly equal only at the
+# tagged commit itself, and moves apart the moment either floor does. Never
 # `git describe --tags --abbrev=0`, which answers "nearest reachable tag" and
 # moves with reachability and with any non-release tag.
 c42_bare=${c42_bare:-}
@@ -3606,6 +3610,41 @@ if [ "$c42_ctl" != "$c42_ours" ]; then
   c42_fail=1
 fi
 [ "$c42_fail" -eq 0 ] && ok "check 42: requires_skill '$c42_floor' is tag-shaped and <= $c42_ours; control detected v99.0.0 as above"
+
+# ---------------------------------------------------------------------------
+# Check 56 -- the floor is a compatibility judgement a person signs, not a
+# value check 42 can derive (arm 3, a declared-floor-equality check, was
+# considered and not built -- both releases' floors staying stale together is
+# exactly the green case it would exist to catch). PRESENCE of a signed
+# 'Floor reviewed:' line is not enough on its own: nothing else in this
+# script ties a CHANGELOG heading to VERSION -- check 42 arm 2 reads a
+# heading too, but only to find the PREVIOUS release, and passes on an
+# unbumped VERSION by comparing a tag to itself -- so a release that bumps
+# VERSION without adding its own CHANGELOG section would otherwise pass on
+# the section still sitting from the release before it. This check asserts
+# TWO things in one counted line: the newest '## v' heading names THIS
+# release (its version equals VERSION line 1), and that section carries the
+# signed line -- kept as one PASS/FAIL rather than two, since a release with
+# no matching section has no floor judgement of its own to read either way.
+# Either extraction (VERSION, the heading) being unreadable is checked FIRST,
+# before the comparison, so an empty value can never compare equal to
+# another empty value and pass by accident. The `ko` message names exactly
+# which of the three conditions failed.
+# ---------------------------------------------------------------------------
+note "Check 56: the newest CHANGELOG section is this release's own, and signs a 'Floor reviewed:' line"
+c56_hv=$(grep -m1 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed 's/^## v//')
+c56_fv=$(head -1 VERSION 2>/dev/null | tr -d '\r\n')
+c56_section=$(awk '/^## v[0-9]/{n++} n==1{print} n==2{exit}' CHANGELOG.md)
+if [ -z "$c56_hv" ] || [ -z "$c56_fv" ]; then
+  ko "check 56: VERSION or the newest '## v' heading is unreadable -- VERSION='${c56_fv:-<empty>}' heading='${c56_hv:-<empty>}'"
+elif [ "$c56_hv" != "$c56_fv" ]; then
+  ko "check 56: newest CHANGELOG section is v$c56_hv, VERSION is $c56_fv"
+else
+  case "$c56_section" in
+    *"Floor reviewed: unchanged"*|*"Floor reviewed: raised to >=v"*) ok "check 56: newest CHANGELOG section (v$c56_hv) is this release's own and states its floor judgement" ;;
+    *) ko "check 56: newest CHANGELOG section (v$c56_hv) carries no signed 'Floor reviewed:' line" ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as

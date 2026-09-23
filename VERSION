@@ -1,2 +1,2 @@
-4.1.0
-Manifest v4 (option B): CLAUDE.md becomes template-owned and byte-identical, its PROJECT-CUSTOM region moves to the always-imported .claude/project-instructions.md, agent tool grants splice into agents' tools: lines, a project-scope hook denies CLAUDE.md writes, and a v3-consumer migration window closes CLAUDE.md syncs until they migrate.
+4.1.1
+Rollout patch: migrate_v3_to_v4 derives every carried-forward entry's hash and annotations instead of reconstructing them, the grants detector routes through the region split, an honest manifest_migration signal replaces the frozen v2-only field, case 2 compares only this consumer's own tracked paths, the consistency script closes the undeclared-variant sentinel hole and gains a non-decreasing skill-floor check, and the hooks close the wrapped-command prefix gap, harden deny-claude-md-writes.sh's path normaliser and basename pre-filter, and widen the gate's environment fingerprint.
