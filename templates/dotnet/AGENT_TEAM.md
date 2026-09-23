@@ -26,13 +26,13 @@ Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Sessio
 
 **A sub-agent only has the tools its `tools:` frontmatter lists** — a platform limitation, not a config error. Git needs `Bash`; GitHub writes need the matching `mcp__MCP_DOCKER__*` tool. **`.claude/agents/<name>.md` is the source of truth — read the target agent's `tools:` line before putting an operation in its spawn prompt.**
 
-### Can do their own git + GitHub I/O:
+### Agents that can do their own git + GitHub I/O:
 `coder`/`<lang>-coder` (`Bash` + PR tools); `code-reviewer` (`Bash`, review-write); `tester` (`Bash`, issue-comment).
 
-### Without `Bash`:
+### Agents without `Bash`:
 `architect` — cannot commit, push, create PRs, merge, or post comments.
 
-### Same rule, every tool
+### The rule that covers every tool, not just `Bash`
 `Explore`/`code-reviewer` hold neither `Edit` nor `Write`. `Explore`/`architect`/`ops` hold no GitHub MCP tool. `isolation: worktree` (`coder`, `tester`, `<lang>-coder`) means those agents cannot reach the main checkout for a sync.
 
 **PO responsibility:** if an agent lacks a needed tool, it returns the work product and the PO performs the git/GitHub I/O.
@@ -198,7 +198,7 @@ See `PROJECT_CONTEXT.md` for the worktree base path; see Mode Behavior Table for
 
 ## Merge Protocol
 
-After review and testing pass, the developer executes the merge — git/GitHub MCP tools are listed explicitly in its `tools:` frontmatter (`coder`, `<lang>-coder`, `general-purpose`). Agents without `Bash` (`architect`) return work to the PO for the git/GitHub I/O.
+After review and testing pass, the developer executes the merge — git/GitHub MCP tools are listed explicitly in its `tools:` frontmatter (`coder`, `<lang>-coder`, `general-purpose`).
 
 ### Steps (Developer-executed)
 

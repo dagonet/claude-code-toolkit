@@ -20,7 +20,7 @@ Pull updates from the claude-code-toolkit template repo into the current project
 >
 > The fix lives in the SERVER PROCESS, so a consumer on a remote box must **pull, then restart** — a restart alone re-launches the same old code. One breaking field change a caller could key on: `locally_modified` now means "deviates from the template" (it used to mean "changed since the last sync"; that meaning moved to a new `changed_since_sync` field).
 
-> **Platform note, general form: any path derived from an unset shell variable is drive-relative on Windows, not just `/tmp`** — a plain redirect `> "$TMPDIR/x"` with `TMPDIR` unset writes `/x`, two checks die with permission errors, and one of them can make `region.sh --scan` LOOK non-zero, which this step defines as a hard error: a false trail (penumbra). Step 2b's `/tmp` backup-path defect below is one instance of a general hazard, not a one-off — measured a second time in this skill, in step 6b territory: a helper handed `/tmp/ref.txt` from bash died `FileNotFoundError: '/tmp/ref.txt'`, because python resolved it against the process's current drive, not against MSYS's `/` mapping. Wherever a step hands python a bash-typed path (`$TMPDIR`, `/tmp/...`, or any other MSYS-style path), resolve it in bash first and pass the resolved absolute path, or have python derive its own path (`tempfile.gettempdir()`) rather than trusting one that crossed the boundary as text. Each step below that hands python a path repeats this pointer at the point it matters.
+> **Platform note, general form: two mechanisms, two symptoms.** An unset shell variable in bash (`"$UNSET/x.txt"` → `/x.txt`) resolves under the MSYS root (`C:\Program Files\Git\`) and fails LOUDLY with `Permission denied` — which can make `region.sh --scan` look non-zero. A `/`-rooted path handed to a native Windows program (python's `os.path.abspath('/tmp/x')` → `G:\tmp\x`) resolves against the CURRENT DRIVE's root and writes there SILENTLY — the more dangerous of the two, so it is not folded under the loud one. Step 2b's `/tmp` backup-path defect below is one instance of a general hazard, not a one-off — measured a second time in this skill, in step 6b territory: a helper handed `/tmp/ref.txt` from bash died `FileNotFoundError: '/tmp/ref.txt'`, because python resolved it against the process's current drive, not against MSYS's `/` mapping. Wherever a step hands python a bash-typed path (`$TMPDIR`, `/tmp/...`, or any other MSYS-style path), resolve it in bash first and pass the resolved absolute path, or have python derive its own path (`tempfile.gettempdir()`) rather than trusting one that crossed the boundary as text. Each step below that hands python a path repeats this pointer at the point it matters.
 
 ## Workflow
 
@@ -1240,9 +1240,10 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 > # Predict cmd_len the way the hook computes it -- never re-derive the cap,
 > # the comment strip or the continuation join by hand (three transforms that
 > # each moved once already; a copy drifts on the next rule change).
-> pred=$( . hooks/lib/json.sh; . hooks/lib/git-cmd.sh
->         GC_CMD=$(printf '%s' "$INVOCATION" | cmd_join_continuations)
->         gc_augmented_cmd "$PWD" | wc -c | tr -d ' ' )
+> x=$( . hooks/lib/json.sh; . hooks/lib/git-cmd.sh
+>      GC_CMD=$(printf '%s' "$INVOCATION" | cmd_join_continuations)
+>      gc_augmented_cmd "$PWD" )
+> pred=$(printf '%s' "$x" | wc -c | tr -d ' ')
 > # then compare $pred with the cmd_len in last-precommit-noop.*.json
 > ```
 >
