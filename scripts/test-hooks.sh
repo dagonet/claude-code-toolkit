@@ -2969,20 +2969,21 @@ printf '#!/bin/sh\nBR=refs/heads/x\n: "${BR#refs/heads/}"; git push origin main\
 printf '#!/bin/sh\n# note \\\ngit push origin main\n' > "$S8/comment-then-continued-push.sh"
 check "#8 verb only inside a # comment: allowed"     "$GBM" 0 "$(mkjson Bash "bash $S8/comment-only.sh" "$GATEFEAT")"
 # v4.1.2 verification fix (task 1 report): the brief's own shape --
-# `git push origin "${BR#refs/heads/}"`, want 0 -- does not discriminate.
-# $GATEFEAT is on feature/y (not protected) and the push destination there is
-# a live, unresolved parameter expansion; gate-before-merge.sh's push-target
-# check allows an unresolvable destination from a branch that is not itself
-# protected regardless of whether the `#` mid-line was handled correctly
-# (measured identically against base c450ac6 and this branch's hooks) -- both
-# a correct whole-line-only strip and a wrong "truncate at first #" strip land
-# on the same unresolvable-destination allow. Rewritten so the `#` sits INSIDE
-# a parameter expansion that is NOT the line's first character, on a line
-# that ALSO carries a statically resolvable protected push after a `;`:
+# `git push origin "${BR#refs/heads/}"`, want 0 -- cannot discriminate, BY
+# CONSTRUCTION, a correct whole-line-only strip from a wrong "truncate at
+# first #" strip: a correct strip leaves the line as `${BR#refs/heads/}` (an
+# unresolved destination); a wrong strip truncates it to `"${BR` (also an
+# unresolved destination, just a shorter unresolved string). Either way
+# gate-before-merge.sh's push-target check sees "no resolvable destination"
+# and, from a branch that is not itself protected, allows -- so the verdict
+# cannot differ between the correct and the wrong implementation, whatever it
+# happens to read. Rewritten so the `#` sits INSIDE a parameter expansion that
+# is NOT the line's first character, on a line that ALSO carries a statically
+# resolvable protected push after a `;`:
 # `: "${BR#refs/heads/}"; git push origin main`. Correct (whole-line-only)
 # strip: the line's first non-blank char is `:`, so the whole line survives
 # and "git push origin main" gates (2, same mechanism the "comment-then-
-# continued-push" row below already proves for a literal, un-expanded push).
+# continued-push" row below also exercises for a literal, un-expanded push).
 # A wrong "delete from first # to EOL" strip truncates at `${BR#`, deleting
 # ...`refs/heads/}"; git push origin main` along with it -- no push token
 # survives -- allow (0). The two implementations now diverge on this row.
