@@ -1989,7 +1989,27 @@ A13OLD=$(mktemp -d)
 git -C "$ROOT" show 'v4.1.1^{commit}:hooks/lib/git-cmd.sh' > "$A13OLD/git-cmd.sh"
 git -C "$ROOT" show 'v4.1.1^{commit}:hooks/lib/json.sh' > "$A13OLD/json.sh"
 a13_env_hash_old() { ( . "$A13OLD/git-cmd.sh"; gc_gate_env "$1" 2>/dev/null ); }
-expect "§3 aggregate fingerprint unchanged from v4.1.1 on a venv repo" "$(a13_env_hash_old "$A13REPO")" "$(a13_env_hash "$A13REPO")"
+A13_AGG_OLD=$(a13_env_hash_old "$A13REPO")
+A13_AGG_NEW=$(a13_env_hash "$A13REPO")
+# The reviewer measured this trap (effa6f4, v4/task-4-fingerprint): expect()
+# is a bare `[ "$2" = "$3" ]` (scripts/test-hooks.sh:291-299). If gc_sha256
+# has no backend on the host, it fails silently in BOTH the old library and
+# the new one (see :994 "FAILS CLOSED... returns 1"), so BOTH aggregates
+# collapse to the empty string, and "" = "" satisfies the equality -- this
+# fixture would read PASS for a continuity check that never actually ran.
+# Assert the shape of each side FIRST so an empty or otherwise malformed
+# aggregate fails by name instead of passing by matching its equally-broken
+# twin. expect() itself stays generic -- other callers legitimately compare
+# empty strings.
+a13_is_hex64() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
+if a13_is_hex64 "$A13_AGG_OLD" && a13_is_hex64 "$A13_AGG_NEW"; then
+  printf 'PASS  %-42s (%s)\n' "§3 continuity: both aggregates are 64-hex (an empty or malformed side cannot pass by equality)" "ok"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  %-42s (old=%s new=%s)\n' "§3 continuity: both aggregates are 64-hex (an empty or malformed side cannot pass by equality)" "$A13_AGG_OLD" "$A13_AGG_NEW"
+  fail=$((fail + 1))
+fi
+expect "§3 aggregate fingerprint unchanged from v4.1.1 on a venv repo" "$A13_AGG_OLD" "$A13_AGG_NEW"
 expect "§3 pyvenv component == sha256(pyvenv.cfg)" "pyvenv=$(gc_sha256 < "$A13REPO/server/.venv/pyvenv.cfg" 2>/dev/null || ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_sha256 < "$A13REPO/server/.venv/pyvenv.cfg" ))" "$(a13_env_detail "$A13REPO" | tr '|' '\n' | grep '^pyvenv=')"
 # Present-but-broken venv: pyvenv PRESENT, dist/py absent -> the void fires
 # via dist/py (the ONE-DIRECTIONAL absent claim, spec §3).
