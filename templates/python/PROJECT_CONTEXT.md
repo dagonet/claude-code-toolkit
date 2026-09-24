@@ -25,7 +25,7 @@
 
 - **Source Root**: src/  <!-- or {{PROJECT_NAME_LOWER}}/ — adjust to project layout -->
 - **Test Root**: tests/
-- **Worktree Base**: {{WORKTREE_BASE}}
+- **Worktree Base**: {{WORKTREE_BASE}} (convention only — read by nothing mechanical; Claude Code's own EnterWorktree always uses `<repo>/.claude/worktrees/` and cannot be redirected)
 - **Log Path**: {{LOG_PATH}}
 
 ## Workflow Configuration

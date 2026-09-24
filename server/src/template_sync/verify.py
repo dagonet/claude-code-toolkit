@@ -110,6 +110,28 @@ TEMPLATE_CLASS_STATUSES = (
     "MIGRATION_REQUIRED",
 )
 
+# v4.1.2 (spec §2): project_md_seed_current's harm-keyed arm fires on the
+# GUIDANCE LINE -- the one that starts with this stem and tells the consumer
+# where always-on project rules belong -- not on the PROJECT-CUSTOM token
+# anywhere in the file. A consumer's own migration note ("this used to live
+# in ... PROJECT-CUSTOM region") is prose ABOUT the retired region, not a
+# pointer AT it, and must not trip this arm once the guidance line itself has
+# been repointed.
+PROJECT_MD_GUIDANCE_STEM = "Always-on project rules belong in"
+
+
+def _guidance_line_names_region(project_md: str) -> bool:
+    """True when ANY line beginning with PROJECT_MD_GUIDANCE_STEM names
+    PROJECT-CUSTOM; a file with no such line is False and falls through to
+    the older-seed arms. Deliberately not "the first such line": a consumer
+    who half-applied the repair -- pasting the new recommended wording above
+    a live guidance line that still names PROJECT-CUSTOM -- must still trip
+    this arm; "first line wins" silently cleared the harm on exactly that
+    file (fix round 1, reviewer-caught regression in f72cf26)."""
+    return any("PROJECT-CUSTOM" in line
+               for line in project_md.splitlines()
+               if line.lstrip().startswith(PROJECT_MD_GUIDANCE_STEM))
+
 
 def _line(id_: str, status: str, measured: str, expected: str, remedy: str = "") -> dict:
     return {"id": id_, "status": status, "measured": measured, "expected": expected, "remedy": remedy}
@@ -1000,18 +1022,22 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         emit(_line("project_md_seed_current", "INFO",
                    "scoped (paths: present); seed sentences not applicable",
                    "n/a (informational)"))
-    elif "PROJECT-CUSTOM" in project_md:
-        # Harm-keyed, not a byte-compare (§2.1): the header still points a
-        # consumer at the region v4.1.0 removed. Fires before the two
-        # pre-v4.0.2 sentence arms below -- the harm arms fire before
-        # "current", and a header can name PROJECT-CUSTOM independently of
-        # (and even alongside, MM-Agent measured both) those two drifts.
+    elif _guidance_line_names_region(project_md):
+        # Harm-keyed on the SENTENCE, not the token (v4.1.2 spec §2): the line
+        # that starts "Always-on project rules belong in" is the one that points
+        # a consumer somewhere; only when THAT line names PROJECT-CUSTOM is the
+        # consumer being pointed at the region v4.1.0 removed. Prose elsewhere
+        # in the file -- a consumer's own note that the region was retired --
+        # is prose ABOUT the thing, and never fires this arm (panoscribe
+        # measured the substring form firing on exactly such a note, with the
+        # guidance already repointed, and a remedy that had nothing to fix).
         emit(_line("project_md_seed_current", "INFO",
-                   f"{v3.PROJECT_MD} header references PROJECT-CUSTOM, a region v4.1.0 removed",
+                   f"{v3.PROJECT_MD} guidance line points at PROJECT-CUSTOM, a region v4.1.0 removed",
                    "n/a (informational)",
                    "hand-edit .claude/rules/project.md (once-class: the sync never writes it): "
-                   "repoint the sentence at .claude/project-instructions.md; an older seed sentence "
-                   "may also be present; re-run after fixing"))
+                   "repoint the 'Always-on project rules belong in' sentence at "
+                   ".claude/project-instructions.md; an older seed sentence may also be present; "
+                   "re-run after fixing"))
     elif "delivered to nobody" in project_md:
         emit(_line("project_md_seed_current", "INFO",
                    f"{v3.PROJECT_MD} still carries the pre-v4.0.1 seed's false 'delivered to nobody' sentence",
@@ -1057,7 +1083,9 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                        "seed matches the shipped seed (rules appended after it)", "n/a (informational)"))
         else:
             emit(_line("project_md_seed_differs", "INFO",
-                       "seed text differs from the shipped seed at this template", "n/a (informational)",
+                       "seed text differs from the shipped seed at this template "
+                       "(an annotation inserted INSIDE the seed text also reads as differs -- that is the "
+                       "consumer's own edit, and it carries no remedy by design)", "n/a (informational)",
                        "shipped seed: templates/<variant>/.claude/rules/project.md; this file is once-class "
                        "and no sync writes it"))
 

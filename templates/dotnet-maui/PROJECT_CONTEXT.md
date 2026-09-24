@@ -40,7 +40,7 @@
 
 ## Paths
 
-- **Worktree base**: {{WORKTREE_BASE}}
+- **Worktree base**: {{WORKTREE_BASE}} (convention only — read by nothing mechanical; Claude Code's own EnterWorktree always uses `<repo>/.claude/worktrees/` and cannot be redirected)
 - **Architecture docs**: `README.md`, `docs/`
 - **Database directory**: `{{DB_DIRECTORY}}`  <!-- optional: remove if project doesn't use SQLite -->
 - **Database file**: `{{DB_PATH}}`  <!-- optional: remove if project doesn't use SQLite -->

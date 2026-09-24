@@ -40,7 +40,7 @@
 
 ## Paths
 
-- **Worktree base**: {{WORKTREE_BASE}}
+- **Worktree base**: {{WORKTREE_BASE}} (convention only — read by nothing mechanical; Claude Code's own EnterWorktree always uses `<repo>/.claude/worktrees/` and cannot be redirected)
 - **Architecture docs**: `README.md`, `docs/`
 - **Log location**: stdout (structured logging via `log` crate)
 

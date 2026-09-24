@@ -6,5 +6,5 @@ CLAUDE.local.md
 /.mcp.json
 .claude/liveness.log
 .gate/
-# agent worktrees — the WORKTREE_BASE default in setup-project.sh/.ps1
+# EnterWorktree's fixed location (no setting); the bootstrapper's default now lives OUTSIDE the repo (../.worktrees/<project>) and needs no ignore
 .claude/worktrees/
