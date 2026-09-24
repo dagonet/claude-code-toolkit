@@ -394,6 +394,29 @@ check "cd sub then bare push (on main)"  "$H" 2 "$(mkjson Bash 'cd sub && git pu
 check "bare push while on main"          "$H" 2 "$(mkjson Bash 'git push' "$MAINREPO")"
 check "PowerShell push origin main"      "$H" 2 "$(mkjson PowerShell 'git push origin main' "$FEATREPO")"
 check "push after a ; separator"         "$H" 2 "$(mkjson Bash 'echo hi; git push origin main' "$FEATREPO")"
+
+# v4.1.2 spec §1 -- backslash-newline continuations are ONE shell line (POSIX
+# deletes the pair). Every reader of the command text joins them ONCE at the
+# origin (gc_read, via cmd_join_continuations in lib/json.sh). Fixture files
+# are written byte-exact with printf %b and od-verified below, because nested
+# escaping wrote the wrong bytes on the reviewer's first probe.
+CONT=$(printf 'git push \\\norigin main')
+# v4.1.2 fix (task report): the brief's own self-check string had one
+# backslash too many. od -An -c prints a real backslash BYTE as one `\`
+# character and the LF byte as the two-character symbol `\n`; this line's
+# single backslash + one newline therefore renders as `\` + `\n` = two
+# backslash characters then `n`, not three. Measured directly; the downstream
+# fixtures using $CONT below were never affected (they read the correct
+# joined text either way -- only this self-check's expected literal was off).
+[ "$(printf '%s' "$CONT" | od -An -c | tr -d ' \n')" = 'gitpush\\noriginmain' ] || echo "FAIL  continuation fixture bytes are wrong: $(printf '%s' "$CONT" | od -An -c | tr -d '\n')"
+check "continued push, feature branch (§1 twin)"  "$H" 2 "$(mkjson Bash "$CONT" "$FEATREPO")"
+check "continued push origin feature"            "$H" 0 "$(mkjson Bash "$(printf 'git push \\\norigin feature')" "$FEATREPO")"
+check "continued push, CRLF"                     "$H" 2 "$(mkjson Bash "$(printf 'git push \\\r\norigin main')" "$FEATREPO")"
+check "continuation at END of command"           "$H" 2 "$(mkjson Bash "$(printf 'git push origin main \\\n')" "$FEATREPO")"
+check "mid-word join: git pu\\<LF>sh"            "$H" 2 "$(mkjson Bash "$(printf 'git pu\\\nsh origin main')" "$FEATREPO")"
+check "even backslashes: NOT joined (2nd seg)"   "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\ngit push origin main')" "$FEATREPO")"
+check "odd backslashes (3): joined"              "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\\\ngit push origin main')" "$FEATREPO")"
+
 # v2.3.0: the ACCEPTED FALSE POSITIVE, asserted POSITIVELY. This gate is
 # fail-CLOSED and scans the whole command string, which is what makes the
 # `bash -c "…"` wrapper above unevadable; the price is that `echo "git push
@@ -831,6 +854,80 @@ check_msg "(c) no run-gate.sh: Gate command evaluated directly" "$NORUNGATE/pre-
 check_msg "(c) no run-gate.sh: WARN names the fallback" "$NORUNGATE/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'git commit -m x' "$GATEONLYOK")" \
   "WARN: pre-commit-test: run-gate.sh not found next to this hook"
+
+# v4.1.2 spec §1 -- a continued `git commit` still runs the test.
+# Deviation from the brief, measured directly (probed against base c450ac6
+# and this branch's hooks with a scratch payload, see task report): the
+# brief's own shape (continuation between `commit` and `-m x`) and its
+# $OKREPO/want-0 do not discriminate -- BOTH base and fixed hooks already
+# read `git commit \<LF>-m x` as gated (segment 1, "git commit \", still
+# matches the subcommand even without the join) and $OKREPO's Test is `true`
+# either way, so the row would pass unmodified. The shape that discriminates
+# is a continuation INSIDE THE VERB ITSELF (`git \<LF>commit`, mirroring the
+# no-push-main section's "mid-word join" fixture): base reads this as two
+# segments ("git \" / "commit -m x") and MISSES the commit (exit 0, measured);
+# the join fixes it (exit 2, measured). $BADREPO (Test: `false`, want 2) is
+# used rather than $OKREPO so a hook that silently no-ops (empty-cmd fallback,
+# also exit 0) cannot be mistaken for one that correctly joined and gated.
+check "continued git commit runs the test (verb split)" "$H" 2 "$(mkjson Bash "$(printf 'git \\\ncommit -m x')" "$BADREPO")"
+
+# v4.1.2 spec §1 (reviewer, plan round 1) -- a FAILED join must fall back to
+# the RAW text, never to empty: the join is a $(...) assignment, and an empty
+# GC_CMD hits `[ -n "$GC_CMD" ] || exit 0` (:234) -- every commit ungated.
+# Deviation from the brief, forced by measurement (task report): an end-to-end
+# "PATH with no awk" invocation of the whole hook cannot isolate this property
+# -- hooks/lib/git-cmd.sh's OWN subcommand matcher (gc_matches_subcommand)
+# also calls awk independently (measured: with awk absent, "git commit -m x"
+# stops matching as a commit at all, in BOTH base and fixed hooks, for a
+# reason that has nothing to do with the join), so an exit-code probe under a
+# no-awk PATH proves nothing about THIS fallback specifically. Also:
+# check_env/$BASHABS are defined later in this file and not yet in scope this
+# early ("check_env: command not found" in the red run).
+# Tests the fallback directly instead, at the unit it actually lives in --
+# same pattern as the "gc_matches_subcommand writes nothing to stderr" probe
+# elsewhere in this section: source the libs, override cmd_join_continuations
+# to produce nothing (exactly what a missing awk does to it -- the pipe's
+# right side never starts, so the pipe's stdout is empty), read a payload
+# through gc_read_stdin via a FILE redirect (a `|` pipe would run
+# gc_read_stdin in a subshell and its GC_CMD/GC_TOOL assignments would never
+# reach this shell -- measured directly, the earlier draft of this fixture
+# had exactly that bug), and confirm GC_CMD equals the untouched raw text --
+# continuation and all -- never empty.
+NOAWK_RAW=$(printf 'git \\\ncommit -m x')
+printf '%s' "$(mkjson Bash "$NOAWK_RAW" "$BADREPO")" > "$TMPROOT/noawk_payload.json"
+NOAWK_GC_CMD=$( . "$ROOT/hooks/lib/json.sh"; . "$ROOT/hooks/lib/git-cmd.sh"; cmd_join_continuations() { :; }; gc_read_stdin < "$TMPROOT/noawk_payload.json"; printf '%s' "$GC_CMD" )
+expect "join fallback: awk absent -- GC_CMD stays the raw text, not empty" "$NOAWK_RAW" "$NOAWK_GC_CMD"
+
+# v4.1.2 T1<->T5 INTERFACE: the skill's cmd_len recipe must equal what the
+# hook records. Recipe = call the hook's own pipeline (cmd_join_continuations
+# + gc_augmented_cmd), never re-derive cap/strip/join by hand.
+# The probe carries a NON-ASCII byte on a CODE line (a comment line would be
+# stripped before it counts) and the hook runs under a UTF-8 locale: under
+# LANG unset an ASCII probe counts bytes on both sides and this fixture would
+# stay green whether or not the ruler bug exists (reviewer, plan round 2:
+# `${#x}` is 10 for `echo Größe` under C.UTF-8 and 12 under C; `wc -c` is 12
+# under both). The hook records BYTES; the recipe counts bytes; same ruler on
+# every machine, whatever locale the harness or the user's shell carries.
+# Locale probed rather than assumed (resolution rule): C.UTF-8, else
+# en_US.UTF-8, else skip by name -- never pass under a C locale, where the
+# two sides cannot discriminate.
+S9LOC=""
+for s9cand in C.UTF-8 en_US.UTF-8; do
+  if [ "$(LC_ALL="$s9cand" LANG="$s9cand" bash -c 'locale charmap' 2>/dev/null)" = "UTF-8" ]; then
+    S9LOC="$s9cand"; break
+  fi
+done
+if [ -n "$S9LOC" ]; then
+  S9=$(mktemp -d); printf '#!/bin/sh\n# a comment\necho Größe\n' > "$S9/probe.sh"
+  S9INV="bash $S9/probe.sh"
+  s9_pred=$( . "$ROOT/hooks/lib/json.sh"; . "$ROOT/hooks/lib/git-cmd.sh"; GC_CMD=$(printf '%s' "$S9INV" | cmd_join_continuations); gc_augmented_cmd "$S9" | wc -c | tr -d ' ' )
+  rm -f "$(precommitnoopfile "$OKREPO" unknown)"
+  printf '%s' "$(mkjson Bash "$S9INV" "$OKREPO")" | LC_ALL="$S9LOC" LANG="$S9LOC" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+  s9_rec=$(jfield "$(cat "$(precommitnoopfile "$OKREPO" unknown)")" cmd_len)
+  expect "cmd_len: recipe (hook pipeline, bytes) == recorded, non-ASCII code line, UTF-8 locale" "$s9_pred" "$s9_rec"
+else
+  skip "cmd_len: recipe == recorded, non-ASCII code line, UTF-8 locale" "no C.UTF-8/en_US.UTF-8 locale on this host" 1
+fi
 
 # ===========================================================================
 # gate-before-merge.sh
@@ -1771,7 +1868,14 @@ check "(item12/PCT) . s.sh: gated the same way"                     "$PCT62" 2 "
 check "(item12/PCT) source s.sh: gated the same way"                "$PCT62" 2 "$(mkjson Bash 'source s.sh' "$PCT12")"
 check "(item12/PCT) bash nogit.sh: nothing to gate"                 "$PCT62" 0 "$(mkjson Bash 'bash nogit.sh' "$PCT12")"
 check "(item12/PCT) bash missing.sh: file absent, no run"           "$PCT62" 0 "$(mkjson Bash 'bash missing.sh' "$PCT12")"
-check "(item12/PCT) bash comment.sh: false positive, pinned"        "$PCT62" 2 "$(mkjson Bash 'bash comment.sh' "$PCT12")"
+# v4.1.2 #8 -- UPDATED, not a new row: this WAS a pinned false positive
+# (a `git commit` mentioned only in a whole-line `#` comment used to gate
+# anyway, because gc_script_body had no comment strip at all). Measured red
+# under the fix (want 2, got 0) -- correctly so: #8's whole-line comment strip
+# removes this line before the verb scan, and there is no real commit left in
+# comment.sh's body ("echo hi" only). This is the strongest evidence in this
+# file that the strip actually runs: it flips a real, pre-existing row.
+check "(item12/PCT) bash comment.sh: comment-only git mention now allowed (#8 fix)" "$PCT62" 0 "$(mkjson Bash 'bash comment.sh' "$PCT12")"
 check "(item12/PCT) bash outer.sh: depth-1 residual, pinned"        "$PCT62" 0 "$(mkjson Bash 'bash outer.sh' "$PCT12")"
 check "(item12/PCT) bash big.sh: 16 KB cap, pinned"                 "$PCT62" 0 "$(mkjson Bash 'bash big.sh' "$PCT12")"
 check "(item12/PCT) bash somedir: a directory, not a file"          "$PCT62" 0 "$(mkjson Bash 'bash somedir' "$PCT12")"
@@ -2810,6 +2914,44 @@ check_msg "(A6.9) --attr-source refusal names the option" "$ROOT/$H" 2 "$(mkjson
 for g in '--icase-pathspecs' '--noglob-pathspecs' '--glob-pathspecs' '--no-advice'; do
   check "(A6.9) unlisted global $g refused by the unknown default" "$H" 2 "$(mkjson Bash "git $g pull --ff-only" "$A6CLONE")"
 done
+
+# v4.1.2 spec §1 -- the fast-exit grep at :739-741 is line-oriented; before the
+# join, `gh pr \<LF>merge 123` fast-exited 0 and the merge gate never ran
+# (reviewer, measured). With the join at the origin both greps see one line.
+# Uses $GATEFEAT (deviation from the brief's $MAINREPO, which carries no
+# **Gate** command and would exit 0 via the "no Gate configured" path
+# regardless of the join -- see task report): $GATEFEAT has a **Gate** command
+# configured and no fresh artifact, so it reaches the gated 2 for the right
+# reason, matching the sibling "gh pr merge without artifact" row above.
+GBM=hooks/gate-before-merge.sh
+check "gh pr \\<LF>merge is gated (no artifact)"  "$GBM" 2 "$(mkjson Bash "$(printf 'gh pr \\\nmerge 123')" "$GATEFEAT")"
+check "gh \\<LF>pr merge is gated (no artifact)"  "$GBM" 2 "$(mkjson Bash "$(printf 'gh \\\npr merge 123')" "$GATEFEAT")"
+
+# v4.1.2 #8 -- gc_script_body strips WHOLE-LINE comments (first non-blank `#`)
+# before the verb scan, never "everything after #": parameter expansion uses #.
+# Order with the join is load-bearing (spec §0): strip on the body FIRST, join
+# on the assembled text AFTER -- bash does not continue a line inside a comment.
+S8=$(mktemp -d); mkdir -p "$S8"
+printf '#!/bin/sh\n# note: git push origin main is what we avoid\necho ok\n' > "$S8/comment-only.sh"
+printf '#!/bin/sh\nBR=refs/heads/x\ngit push origin "${BR#refs/heads/}"\n' > "$S8/param-expansion.sh"
+printf '#!/bin/sh\n# note \\\ngit push origin main\n' > "$S8/comment-then-continued-push.sh"
+check "#8 verb only inside a # comment: allowed"     "$GBM" 0 "$(mkjson Bash "bash $S8/comment-only.sh" "$GATEFEAT")"
+# Deviation from the brief, measured (task report): $GATEFEAT is checked out
+# on feature/y (not protected), and the push destination here is genuinely
+# UNRESOLVABLE (a live parameter expansion, never evaluated by this static
+# scan). gate-before-merge.sh's push-target check does not fail-closed on an
+# unresolvable destination from a branch that is not itself protected -- it
+# allows (measured identically against base c450ac6 and this branch's hooks;
+# the strip/join changes do not touch this). Recorded, not reasoned. This
+# probe's real job -- proving the mid-line `#` in `${BR#refs/heads/}` is NOT
+# read as a comment opener, so the code line survives intact -- is only
+# weakly pinned by its exit code (a naive strip that truncated the line at
+# the first `#` would plausibly ALSO resolve to an unresolvable-destination
+# allow here); the strongest evidence for the whole-line-only strip is the
+# regression fix below ("(item12/PCT) bash comment.sh") and the "#8 order"
+# row's exit 2, both of which do flip on a wrong strip.
+check "#8 \${BR#refs/heads/} on a code line: allowed (destination unresolvable, not protected)" "$GBM" 0 "$(mkjson Bash "bash $S8/param-expansion.sh" "$GATEFEAT")"
+check "#8 order: comment \\<LF> then push is gated"  "$GBM" 2 "$(mkjson Bash "bash $S8/comment-then-continued-push.sh" "$GATEFEAT")"
 
 # ===========================================================================
 # Task 2.7 -- `**Gate-checked branches**:` (companion spec). A session branch
@@ -4824,6 +4966,20 @@ pytest -q'
 check_delegation "here-string is not an opener"   deny 'cat f.md <<<EOF
 pytest -q
 EOF'
+
+# v4.1.2 spec §1 -- JS side: yutraffic's false deny. The one-line form was
+# always allowed; the continued form put `hooks/run-gate.sh` at a segment
+# start. Joined, the joined segment starts with `git`.
+# Deviation from the brief: this hook always exits 0 (advisory JSON on
+# stdout, not the exit code -- confirmed directly against the hook source and
+# by probing it), so the brief's literal `check "$ED" 0/2 ...` snippet cannot
+# discriminate pass/deny here. Uses check_delegation, this section's own
+# pass/deny helper (reads hookSpecificOutput.permissionDecision), matching
+# every sibling fixture around it.
+check_delegation "git add list, one line (regression)"  pass 'git add -- hooks/lib/git-cmd.sh hooks/gate-before-merge.sh hooks/run-gate.sh scripts/x.sh'
+check_delegation "git add list, continued (the fix)"    pass "$(printf 'git add -- hooks/lib/git-cmd.sh \\\n  hooks/gate-before-merge.sh \\\n  hooks/run-gate.sh')"
+check_delegation "bash \\<LF>hooks/run-gate.sh still denied" deny "$(printf 'bash \\\nhooks/run-gate.sh')"
+
 # subagent calls always pass, exemption or not
 subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
@@ -5802,6 +5958,23 @@ else
   printf 'FAIL  %-42s (found a rejected evasion phrase)\n' "(DSR) deny text has no evasion-teaching phrase"; fail=$((fail + 1))
 fi
 check "(DSR) Bash: cat .env denied"           "$DSR" 2 "$(mkjson Bash 'cat .env' "$DSRCWD")"
+
+# v4.1.2 spec §1 -- DSR reads tool_input.command directly and never sourced
+# git-cmd.sh; its tr tokeniser made the continuation's LF a token boundary.
+# Fixture 8: proves the call site REACHES cmd_join_continuations in json.sh.
+# Uses $DSRCWD (this section's own cwd variable) in place of the brief's
+# $REPO, which does not exist in this file.
+check "(DSR) cat .e\\<LF>nv"          "$DSR" 2 "$(mkjson Bash "$(printf 'cat .e\\\nnv')" "$DSRCWD")"
+check "(DSR) ca\\<LF>t .env"          "$DSR" 2 "$(mkjson Bash "$(printf 'ca\\\nt .env')" "$DSRCWD")"
+check "(DSR) cat .env.lo\\<LF>cal"    "$DSR" 2 "$(mkjson Bash "$(printf 'cat .env.lo\\\ncal')" "$DSRCWD")"
+check "(DSR) cat \".e\\<LF>nv\" (quoted)" "$DSR" 2 "$(mkjson Bash "$(printf 'cat ".e\\\nnv"')" "$DSRCWD")"
+# PowerShell continuation is the BACKTICK; whether it can split a token the
+# way bash's backslash can is NOT established (spec §1). Verdict recorded.
+# Measured 0 (red run): the backtick continuation does NOT reach the
+# tokeniser as one token today -- recorded; the join stays backslash-only
+# (spec §1).
+check "(DSR) PowerShell: ca\`<LF>t .env (recorded)" "$DSR" 0 "$(mkjson PowerShell "$(printf 'ca`\nt .env')" "$DSRCWD")"
+
 check "(DSR) Bash: sed -n p ./.env denied"    "$DSR" 2 "$(mkjson Bash 'sed -n p ./.env' "$DSRCWD")"
 check "(DSR) Bash: grep in a quoted path denied" "$DSR" 2 "$(mkjson Bash 'grep KEY "$PWD/.env.local"' "$DSRCWD")"
 check "(DSR) Bash: cat .env | head denied"    "$DSR" 2 "$(mkjson Bash 'cat .env | head' "$DSRCWD")"
@@ -6039,6 +6212,33 @@ case "$(uname -s 2>/dev/null)" in
     skip "(#23) claude.md (case-insensitive filesystem, Windows)" "not on Windows"
     ;;
 esac
+
+# v4.1.2 #1 -- the case fold keys on the FILESYSTEM (does .GIT resolve at the
+# root?), not on uname. The "no" arm is a real NTFS directory made
+# case-sensitive with fsutil (works unelevated on an EMPTY directory); SKIP by
+# name where fsutil or the feature is unavailable -- never pass.
+# Uses mkjson_dcm_raw (this section's own Edit-payload builder; there is no
+# "mkedit" helper in this file) and $DCMREPO (manifest v4 already configured
+# above) rather than the brief's $REPO for the case-INSENSITIVE arm, so the
+# hook actually has something to deny.
+CS=$(mktemp -d)
+if command -v fsutil.exe >/dev/null 2>&1 && fsutil.exe file setCaseSensitiveInfo "$(natpath "$CS")" enable >/dev/null 2>&1; then
+  git -C "$CS" init -q >/dev/null 2>&1
+  git -C "$CS" config user.email t@t.t
+  git -C "$CS" config user.name t
+  git -C "$CS" config commit.gpgsign false
+  git -C "$CS" commit -q --allow-empty -m init >/dev/null 2>&1
+  if [ -e "$CS/.GIT" ]; then
+    skip "#1 case-sensitive dir: .GIT still resolves" "fsutil reported success but the flag did not take" 1
+  else
+    check "#1 claude.md on a case-SENSITIVE fs: allowed (different file)" "$DCM" 0 \
+      "$(mkjson_dcm_raw Edit file_path "$CS/claude.md" "$CS")"
+  fi
+else
+  skip "#1 case-sensitive fs arm" "fsutil setCaseSensitiveInfo unavailable on this host" 1
+fi
+check "#1 claude.md on a case-INSENSITIVE fs: denied" "$DCM" 2 \
+  "$(mkjson_dcm_raw Edit file_path "$DCMREPO/claude.md" "$DCMREPO")"
 
 # --- #23: cwd=<root>/docs + a RELATIVE CLAUDE.md resolves against cwd, not
 # root -- the bug: old code joined every relative path against the ROOT

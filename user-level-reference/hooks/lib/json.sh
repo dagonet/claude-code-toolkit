@@ -233,3 +233,39 @@ json_require_node() {
   fi
   return 1
 }
+
+# cmd_join_continuations -- stdin -> stdout. Deletes every backslash-newline
+# pair (optional CR before the LF) whose run of preceding backslashes is ODD,
+# i.e. exactly what POSIX sh does before it tokenises: `git pu\<LF>sh` is the
+# verb `push`, and `a\\<LF>` is `a\` followed by a real command boundary.
+#
+# WHY THIS LIVES IN json.sh AND NOT git-cmd.sh OR A NEW FILE (v4.1.2, outside
+# reviewer, measured): every command-reading hook already sources this file --
+# including the user-level, machine-wide, fail-closed deny-secret-reads.sh,
+# where a NEW sourced dependency is a new propagation point whose one missed
+# copy blocks every Bash call on the machine (with the guard) or silently
+# skips the join (without it). Sourcing git-cmd.sh instead costs ~57 ms per
+# call machine-wide from a hook that never runs git. One definition here: zero
+# new surface, ~zero cost. The name is neutral on purpose.
+cmd_join_continuations() {
+  # The input's trailing newline (present or not) is preserved EXACTLY: the
+  # sync-template skill's step-3 probe asserts cmd_len == len(invocation) + 1
+  # + len(body), and a join that added or dropped one byte would move that
+  # figure -- the v4.1.1 #3 correction was about precisely this byte.
+  local _cj_in _cj_trail=0 _cj_nl
+  _cj_nl=$(printf '\n')
+  _cj_in=$(cat; printf x); _cj_in=${_cj_in%x}
+  case "$_cj_in" in *"$_cj_nl") _cj_trail=1 ;; esac
+  printf '%s' "$_cj_in" | awk 'BEGIN{ORS=""; pend=""; first=1}
+  {
+    line=$0; cr=""
+    if (line ~ /\r$/) { cr="\r"; line=substr(line,1,length(line)-1) }
+    n=0; i=length(line)
+    while (i>0 && substr(line,i,1)=="\\") { n++; i-- }
+    if (n % 2 == 1) { pend=pend substr(line,1,length(line)-1) }
+    else { if (!first) print "\n"; print pend line cr; pend=""; first=0 }
+  }
+  END{ if (pend!="") { if (!first) print "\n"; print pend } }'
+  [ "$_cj_trail" = 1 ] && printf '\n'
+  return 0
+}

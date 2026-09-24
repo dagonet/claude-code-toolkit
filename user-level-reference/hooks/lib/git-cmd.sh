@@ -311,6 +311,17 @@ gc_read_stdin() {
       # not have, and the case is not reachable from Claude Code, which always
       # sends a string. Revisit if a real payload ever shows otherwise.
       GC_CMD=$(json_get "$GC_JSON" tool_input.command)
+      # v4.1.2 spec §1: join backslash-newline continuations ONCE, here, before
+      # gc_protect_c_paths and before any reader -- gc_seg_raw, gc_segments,
+      # gc_seg_quoted, gc_augmented_cmd's walk and both guards' fast-exit greps
+      # all inherit joined text. A continuation between `gh pr` and `merge`
+      # fast-exited the merge gate before this line existed (measured).
+      # A FAILED join falls back to the RAW text (reviewer, plan round 1): an
+      # empty assignment would hit the guards' `[ -n ]` fast exits and allow
+      # everything -- v4.1.1's behaviour is the floor, never allow-all.
+      if [ -n "$GC_CMD" ]; then
+        _gc_j=$(printf '%s' "$GC_CMD" | cmd_join_continuations) && [ -n "$_gc_j" ] && GC_CMD="$_gc_j"
+      fi
       ;;
     *)
       GC_CMD=""
@@ -523,7 +534,14 @@ gc_script_body() {
   [ -n "$path" ] || return 0
   case "$path" in /*|[A-Za-z]:*) ;; *) path="$cwd/$path" ;; esac
   [ -f "$path" ] || return 0
-  head -c 16384 "$path" 2>/dev/null
+  # v4.1.2 #8: whole-line comments (first non-blank character `#`) are never
+  # commands, so they are stripped BEFORE the verb scan -- and only whole
+  # lines: `"${BR#refs/heads/}"` on a code line keeps its `#`. The
+  # continuation join runs on this output in gc_augmented_cmd, AFTER this
+  # strip (spec §0): bash does not continue a line inside a comment, so
+  # join-then-strip would merge `# note \<LF>git push origin main` into the
+  # comment and delete the push.
+  head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#'
 }
 
 # gc_augmented_cmd <cwd> -- GC_CMD, plus the body of every script segment
@@ -539,10 +557,13 @@ gc_script_body() {
 # walk does, or a script's `git merge`/`git push` passes the "no git token"
 # fast exit before the walk that would have caught it ever runs).
 gc_augmented_cmd() {
-  local cwd="$1" out="$GC_CMD" seg body
+  local cwd="$1" out="$GC_CMD" seg body _gc_bj
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
     body=$(gc_script_body "$seg" "$cwd")
+    if [ -n "$body" ]; then
+      _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
+    fi
     [ -n "$body" ] && out="$out
 $body"
   done <<GC_AUG_SEGS

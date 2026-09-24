@@ -703,6 +703,8 @@ esac
 # runs. See gc_script_body / gc_augmented_cmd in hooks/lib/git-cmd.sh for the
 # 16 KB cap and the depth-1/TOCTOU residuals. No-op for the mcp__* tools
 # (empty GC_CMD there).
+# v4.1.2: the continuation join runs once at the origin (gc_read) and on each
+# appended body, so this text is already joined.
 GC_CMD="$(gc_augmented_cmd "$CWD")"
 
 # v3.0.3 item 25 — EXIT BEFORE DOING ANY WORK ON A PAYLOAD THAT CANNOT BE GATED.
