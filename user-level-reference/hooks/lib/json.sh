@@ -253,7 +253,14 @@ cmd_join_continuations() {
   # + len(body), and a join that added or dropped one byte would move that
   # figure -- the v4.1.1 #3 correction was about precisely this byte.
   local _cj_in _cj_trail=0 _cj_nl
-  _cj_nl=$(printf '\n')
+  # v4.1.2 fix (task 1 verification): $(printf '\n') strips its own trailing
+  # newline like any command substitution, so this used to assign EMPTY --
+  # `case "$_cj_in" in *"$_cj_nl")` then matched *every* string (the empty
+  # pattern), so _cj_trail was always 1 and a newline was appended even to
+  # input with none. Same guard-byte idiom as the next line fixes it: append
+  # a marker, let the substitution strip only ITS trailing newline, then trim
+  # the marker back off, leaving the newline character intact in the var.
+  _cj_nl=$(printf '\nx'); _cj_nl=${_cj_nl%x}
   _cj_in=$(cat; printf x); _cj_in=${_cj_in%x}
   case "$_cj_in" in *"$_cj_nl") _cj_trail=1 ;; esac
   printf '%s' "$_cj_in" | awk 'BEGIN{ORS=""; pend=""; first=1}

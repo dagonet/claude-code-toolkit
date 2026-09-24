@@ -417,6 +417,21 @@ check "mid-word join: git pu\\<LF>sh"            "$H" 2 "$(mkjson Bash "$(printf
 check "even backslashes: NOT joined (2nd seg)"   "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\ngit push origin main')" "$FEATREPO")"
 check "odd backslashes (3): joined"              "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\\\ngit push origin main')" "$FEATREPO")"
 
+# v4.1.2 verification fix (task 1 report) -- cmd_join_continuations' own
+# comment promises the input's trailing newline (present or not) is preserved
+# EXACTLY. `_cj_nl=$(printf '\n')` strips ITS OWN trailing newline via command
+# substitution, so it was assigning empty; `case "$_cj_in" in *"$_cj_nl")`
+# then matched every string via the empty pattern, so a newline was appended
+# unconditionally -- inert everywhere today because every call site wraps the
+# call in `$(...)`, which strips trailing newlines anyway regardless, but a
+# direct pipe (the T1<->T5 interface note says the skill calls the hook's own
+# pipeline) would see the wrong byte count. Pinned directly against the
+# function, unwrapped, so the property is asserted rather than assumed.
+CJ_NONL=$( . "$ROOT/hooks/lib/json.sh"; printf 'abc' | cmd_join_continuations | wc -c | tr -d ' ' )
+expect "cmd_join_continuations: no trailing NL in -> none out (3 bytes)" 3 "$CJ_NONL"
+CJ_NL=$( . "$ROOT/hooks/lib/json.sh"; printf 'abc\n' | cmd_join_continuations | wc -c | tr -d ' ' )
+expect "cmd_join_continuations: trailing NL in -> preserved (4 bytes)" 4 "$CJ_NL"
+
 # v2.3.0: the ACCEPTED FALSE POSITIVE, asserted POSITIVELY. This gate is
 # fail-CLOSED and scans the whole command string, which is what makes the
 # `bash -c "…"` wrapper above unevadable; the price is that `echo "git push
@@ -2921,8 +2936,25 @@ done
 # Uses $GATEFEAT (deviation from the brief's $MAINREPO, which carries no
 # **Gate** command and would exit 0 via the "no Gate configured" path
 # regardless of the join -- see task report): $GATEFEAT has a **Gate** command
-# configured and no fresh artifact, so it reaches the gated 2 for the right
-# reason, matching the sibling "gh pr merge without artifact" row above.
+# configured, so it reaches the gated 2 for the right reason, matching the
+# sibling "gh pr merge without artifact" row above.
+#
+# v4.1.2 verification fix (task 1 report, controller-flagged): the comment
+# above (and originally the #8 rows below) claimed "no fresh artifact" on
+# $GATEFEAT, but $GATEFEAT is a SHARED variable across this whole section, and
+# line ~1082 (`writeartifact "$GATEFEAT" "$FEATSHA"`) leaves a FRESH artifact
+# for $GATEFEAT's still-current HEAD in place -- nothing between there and
+# here advances $GATEFEAT's HEAD or clears its gate dir. With that artifact
+# present, "gh pr merge"/"git push origin main" against $GATEFEAT reads
+# ALLOWED (fresh artifact = already reviewed) regardless of the join or the
+# comment strip -- measured: all four rows below (these two plus the two #8
+# push rows) read "want 2 got 0" against the unmodified tree, not because the
+# join or strip failed (probed directly: gc_read_stdin/gc_augmented_cmd/the
+# pre-filter and gh-pr-merge greps all produce the correct joined, single-line
+# text and match), but because of this stale-fresh artifact. Cleared here,
+# same idiom writeartifact() itself uses, so these four rows see the
+# "no artifact" state their names describe.
+rm -f "$(gatedir "$GATEFEAT")"/last-pass.*.json 2>/dev/null
 GBM=hooks/gate-before-merge.sh
 check "gh pr \\<LF>merge is gated (no artifact)"  "$GBM" 2 "$(mkjson Bash "$(printf 'gh pr \\\nmerge 123')" "$GATEFEAT")"
 check "gh \\<LF>pr merge is gated (no artifact)"  "$GBM" 2 "$(mkjson Bash "$(printf 'gh \\\npr merge 123')" "$GATEFEAT")"
@@ -2933,24 +2965,28 @@ check "gh \\<LF>pr merge is gated (no artifact)"  "$GBM" 2 "$(mkjson Bash "$(pri
 # on the assembled text AFTER -- bash does not continue a line inside a comment.
 S8=$(mktemp -d); mkdir -p "$S8"
 printf '#!/bin/sh\n# note: git push origin main is what we avoid\necho ok\n' > "$S8/comment-only.sh"
-printf '#!/bin/sh\nBR=refs/heads/x\ngit push origin "${BR#refs/heads/}"\n' > "$S8/param-expansion.sh"
+printf '#!/bin/sh\nBR=refs/heads/x\n: "${BR#refs/heads/}"; git push origin main\n' > "$S8/param-expansion.sh"
 printf '#!/bin/sh\n# note \\\ngit push origin main\n' > "$S8/comment-then-continued-push.sh"
 check "#8 verb only inside a # comment: allowed"     "$GBM" 0 "$(mkjson Bash "bash $S8/comment-only.sh" "$GATEFEAT")"
-# Deviation from the brief, measured (task report): $GATEFEAT is checked out
-# on feature/y (not protected), and the push destination here is genuinely
-# UNRESOLVABLE (a live parameter expansion, never evaluated by this static
-# scan). gate-before-merge.sh's push-target check does not fail-closed on an
-# unresolvable destination from a branch that is not itself protected -- it
-# allows (measured identically against base c450ac6 and this branch's hooks;
-# the strip/join changes do not touch this). Recorded, not reasoned. This
-# probe's real job -- proving the mid-line `#` in `${BR#refs/heads/}` is NOT
-# read as a comment opener, so the code line survives intact -- is only
-# weakly pinned by its exit code (a naive strip that truncated the line at
-# the first `#` would plausibly ALSO resolve to an unresolvable-destination
-# allow here); the strongest evidence for the whole-line-only strip is the
-# regression fix below ("(item12/PCT) bash comment.sh") and the "#8 order"
-# row's exit 2, both of which do flip on a wrong strip.
-check "#8 \${BR#refs/heads/} on a code line: allowed (destination unresolvable, not protected)" "$GBM" 0 "$(mkjson Bash "bash $S8/param-expansion.sh" "$GATEFEAT")"
+# v4.1.2 verification fix (task 1 report): the brief's own shape --
+# `git push origin "${BR#refs/heads/}"`, want 0 -- does not discriminate.
+# $GATEFEAT is on feature/y (not protected) and the push destination there is
+# a live, unresolved parameter expansion; gate-before-merge.sh's push-target
+# check allows an unresolvable destination from a branch that is not itself
+# protected regardless of whether the `#` mid-line was handled correctly
+# (measured identically against base c450ac6 and this branch's hooks) -- both
+# a correct whole-line-only strip and a wrong "truncate at first #" strip land
+# on the same unresolvable-destination allow. Rewritten so the `#` sits INSIDE
+# a parameter expansion that is NOT the line's first character, on a line
+# that ALSO carries a statically resolvable protected push after a `;`:
+# `: "${BR#refs/heads/}"; git push origin main`. Correct (whole-line-only)
+# strip: the line's first non-blank char is `:`, so the whole line survives
+# and "git push origin main" gates (2, same mechanism the "comment-then-
+# continued-push" row below already proves for a literal, un-expanded push).
+# A wrong "delete from first # to EOL" strip truncates at `${BR#`, deleting
+# ...`refs/heads/}"; git push origin main` along with it -- no push token
+# survives -- allow (0). The two implementations now diverge on this row.
+check "#8 \${BR#refs/heads/} mid-line, real push after ;: gated"  "$GBM" 2 "$(mkjson Bash "bash $S8/param-expansion.sh" "$GATEFEAT")"
 check "#8 order: comment \\<LF> then push is gated"  "$GBM" 2 "$(mkjson Bash "bash $S8/comment-then-continued-push.sh" "$GATEFEAT")"
 
 # ===========================================================================
@@ -6228,6 +6264,18 @@ if command -v fsutil.exe >/dev/null 2>&1 && fsutil.exe file setCaseSensitiveInfo
   git -C "$CS" config user.name t
   git -C "$CS" config commit.gpgsign false
   git -C "$CS" commit -q --allow-empty -m init >/dev/null 2>&1
+  # v4.1.2 verification fix (task 1 report): without a manifest, the hook
+  # exits 0 at the "$DCM_MANIFEST" check (deny-claude-md-writes.sh:244) no
+  # matter what dcm_norm did with the case fold -- a WRONGLY folded pair
+  # (bug: DCM_NPATH and DCM_TARGET both lowered even on a case-sensitive fs)
+  # would ALSO land on exit 0 here, via the manifest gate, not via a correct
+  # "different file" path mismatch. Seeding the same manifest_version:4 shape
+  # $DCMREPO uses (line ~6089) makes the two outcomes diverge: correctly NOT
+  # folded -> path mismatch at :241, exit 0, manifest never read; wrongly
+  # folded -> paths match, manifest read, version 4 -> BLOCKED, exit 2. Only
+  # with the manifest present does "expect 0" actually pin the fold behavior.
+  mkdir -p "$CS/.claude"
+  printf '{"manifest_version":4}\n' > "$CS/.claude/template-manifest.json"
   if [ -e "$CS/.GIT" ]; then
     skip "#1 case-sensitive dir: .GIT still resolves" "fsutil reported success but the flag did not take" 1
   else
