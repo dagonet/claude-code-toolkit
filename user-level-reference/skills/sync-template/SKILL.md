@@ -1243,12 +1243,11 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 > x=$( . hooks/lib/json.sh; . hooks/lib/git-cmd.sh
 >      command -v cmd_join_continuations >/dev/null 2>&1 || { echo "this project's hooks predate v4.1.2 (no cmd_join_continuations) -- run /sync-template first, then re-probe" >&2; exit 2; }
 >      GC_CMD=$(printf '%s' "$INVOCATION" | cmd_join_continuations)
->      gc_augmented_cmd "$PWD" )
-> pred=$(printf '%s' "$x" | wc -c | tr -d ' ')
+>      gc_augmented_cmd "$PWD" ) && pred=$(printf '%s' "$x" | wc -c | tr -d ' ')
 > # then compare $pred with the cmd_len in last-precommit-noop.*.json
 > ```
 >
-> **This recipe itself is skew-sensitive (v4.1.2): it sources the CURRENT PROJECT's own `hooks/lib/`, not the toolkit checkout's.** The skill body and a project's hooks update on different cadences — the skill by propagation (`user-level-reference/` → `~/.claude`), the hooks by that project's own `/sync-template` — so a session that has the v4.1.2 skill loaded but is probing a project still synced to v4.1.1 hooks would source a `json.sh` with no `cmd_join_continuations` and get a `command not found` folded into an empty `x`, read as `pred=0`: a misleading result, not a loud one. The `command -v` guard above turns that into a named, loud refusal instead of a silent wrong number.
+> **This recipe itself is skew-sensitive (v4.1.2): it sources the CURRENT PROJECT's own `hooks/lib/`, not the toolkit checkout's.** The skill body and a project's hooks update on different cadences — the skill by propagation (`user-level-reference/` → `~/.claude`), the hooks by that project's own `/sync-template` — so a session that has the v4.1.2 skill loaded but is probing a project still synced to v4.1.1 hooks would source a `json.sh` with no `cmd_join_continuations` and get a `command not found` folded into an empty `x`, read as `pred=0`: a misleading result, not a loud one. The `command -v` guard above turns that into a named, loud refusal instead of a silent wrong number — **and the `&&` before `pred=` is load-bearing, not decoration**: the guard's `exit 2` only ends the `x=$(...)` subshell, so a bare `pred=$(printf '%s' "$x" | ...)` on its own line would still run right after, on the now-empty `$x`, printing the same misleading 0 the guard exists to prevent (measured). Chaining with `&&` means `pred` is never computed when the subshell exited non-zero.
 >
 > The three-term formula `len(invocation) + 1 + len(body)` is retained as the EXPLANATION of what the pipeline does (invocation, one separator newline, the capped/stripped/joined body), never as the number to compute. **`cmd_len` is BYTES** (v4.1.2: the hook records `wc -c`, not `${#GC_CMD}`, so the figure no longer depends on the locale the harness happens to carry — under a UTF-8 locale the old character count read two short per `ö`); the recipe's `wc -c` is the same ruler.
 
