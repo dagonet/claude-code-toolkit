@@ -448,6 +448,16 @@ expect "cmd_join_continuations: trailing NL in -> preserved (4 bytes)" 4 "$CJ_NL
 CJ_CRIN=$(printf 'echo a\r\necho b\n'; printf x); CJ_CRIN=${CJ_CRIN%x}
 CJ_CROUT=$( . "$ROOT/hooks/lib/json.sh"; printf '%s' "$CJ_CRIN" | cmd_join_continuations | od -An -c | tr -d ' \n' )
 CJ_CRWANT=$(printf '%s' "$CJ_CRIN" | od -An -c | tr -d ' \n')
+# v4.1.2 fix round 3 (outside reviewer, measured): CJ_CRWANT is derived from
+# CJ_CRIN itself, so if the capture ever silently lost the CR this row's
+# want/got would still match and it would PASS while testing nothing.
+# od -An -c renders a real CR byte as the two-character symbol `\r`, so this
+# reads the very string the row already computed -- no new capture, no new
+# failure mode of its own.
+case "$CJ_CRWANT" in
+  *'\r'*) ;;
+  *) echo "FAIL  join CR row: input lost its CR -- row would pass vacuously"; fail=$((fail + 1)) ;;
+esac
 expect "join: CR on an ORDINARY line is kept (BINMODE=3; was stripped on Windows by gawk text mode)" "$CJ_CRWANT" "$CJ_CROUT"
 
 # Controller addendum (fix round 2 pin): a CONTINUATION whose backslash is
