@@ -2136,6 +2136,24 @@ A13_TREE=$(git -C "$A13REPO" rev-parse 'HEAD^{tree}')
 a13_env_hash()   { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" 2>/dev/null ); }
 a13_env_detail() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null | tr '\n' '|' ); }
 
+# Matrix finding (scripts/test-hooks-parser-matrix.sh, python3-only + jq-only
+# configurations, v4.1.2 release): gc_gate_env's fourth contributor is `node`
+# (hooks/lib/git-cmd.sh:993 -- node --version if node is on PATH, else
+# "absent"), and the tree+env extension below VOIDS outright the moment
+# EITHER side's env_detail contains an `=absent` contributor, by design
+# (v4.1.1 #15, spec docs/plans/2026-09-21-v4.1.1-design.md §4.3). On a host
+# with no node on PATH, node=absent is unconditional, so every GRANT-shaped
+# row below can never observe a GRANT and every "names the X contributor"
+# message is preempted by the node=absent label instead -- same class of gap
+# as the pyvenv item this release fixed, not fixed here (v4.1.3 design item).
+# Decided ONCE, from the same `command -v` definition of "present" the hooks
+# themselves use (see the HAVE_* probe note above this section), so these
+# rows run normally in the node configuration and skip in the restricted
+# ones.
+NODE13_PRESENT=0
+command -v node >/dev/null 2>&1 && NODE13_PRESENT=1
+NODE13_SKIP_REASON="node absent on PATH -- the tree+env extension VOIDS on any absent contributor by design (v4.1.1 #15); this row can only grant with node present"
+
 # v4.1.2 spec §3 -- pyvenv is interpreter-PREFIX identity. Artifact CONTINUITY
 # is a claim about the AGGREGATE fingerprint, so it is pinned on the aggregate:
 # the v4.1.1 gc_gate_env (read from the tag) and this one must hash a fixed
@@ -2219,8 +2237,13 @@ if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
   printf '{"sha":"%s","tree":"%s","branch":"main","ts":"2020-01-01T00:00:00Z","status":"pass","env":"%s","env_detail":"%s"}\n' \
     "$A13SYSFEAT_SHA" "$A13SYSFEAT_TREE" "$A13SYSFEAT_ENV0" "$A13SYSFEAT_DETAIL0" > "$A13SYSFEAT_AF"
   touch -d "-2 hours" "$A13SYSFEAT_AF"
-  check "§3 extension grants on the no-venv shape (the case the item exists for)" "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")"
-  check_msg "§3 extension grants on the no-venv shape: reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")" "accepted on tree identity"
+  if [ "$NODE13_PRESENT" -eq 1 ]; then
+    check "§3 extension grants on the no-venv shape (the case the item exists for)" "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")"
+    check_msg "§3 extension grants on the no-venv shape: reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")" "accepted on tree identity"
+  else
+    skip "§3 extension grants on the no-venv shape (the case the item exists for)" "$NODE13_SKIP_REASON"
+    skip "§3 extension grants on the no-venv shape: reason names tree identity" "$NODE13_SKIP_REASON"
+  fi
 else
   skip "§3 no-venv repo reads pyvenv=sys:<hash>" "no python3/python on PATH"
   skip "§3 sys: value == sha256(sys.prefix) computed independently" "no python3/python on PATH"
@@ -2249,21 +2272,34 @@ A13_DETAIL0=$(a13_env_detail "$A13REPO")
 
 # (1) expired, identical tree, identical env -> allowed, reason on stderr.
 A13_AF=$(a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours")
-check "(item13) expired + tree ok + env ok: allowed"  "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
-check_msg "(item13) allow reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "accepted on tree identity"
+if [ "$NODE13_PRESENT" -eq 1 ]; then
+  check "(item13) expired + tree ok + env ok: allowed"  "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
+  check_msg "(item13) allow reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "accepted on tree identity"
+else
+  skip "(item13) expired + tree ok + env ok: allowed" "$NODE13_SKIP_REASON"
+  skip "(item13) allow reason names tree identity" "$NODE13_SKIP_REASON"
+fi
 
 # (2) same, but pyvenv.cfg has moved one byte since the artifact was minted.
 printf 'home = /usr\nversion = 3.12.1\n' > "$A13REPO/server/.venv/pyvenv.cfg"
 a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
 check "(item13) expired + tree ok + env CHANGED (pyvenv): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
-check_msg "(item13) block names the pyvenv contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: pyvenv"
+if [ "$NODE13_PRESENT" -eq 1 ]; then
+  check_msg "(item13) block names the pyvenv contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: pyvenv"
+else
+  skip "(item13) block names the pyvenv contributor" "$NODE13_SKIP_REASON"
+fi
 printf 'home = /usr\nversion = 3.12.0\n' > "$A13REPO/server/.venv/pyvenv.cfg"   # restore
 
 # (3) same, but a dist-info directory appeared since minting.
 mkdir -p "$A13REPO/server/.venv/Lib/site-packages/zzz-1.0.dist-info"
 a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
 check "(item13) expired + tree ok + env CHANGED (dist-info added): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
-check_msg "(item13) block names the dist contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: dist"
+if [ "$NODE13_PRESENT" -eq 1 ]; then
+  check_msg "(item13) block names the dist contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: dist"
+else
+  skip "(item13) block names the dist contributor" "$NODE13_SKIP_REASON"
+fi
 rm -rf "$A13REPO/server/.venv/Lib/site-packages/zzz-1.0.dist-info"   # restore
 
 # (4) tree+env identical, but older than the prune window (24h): blocked.
