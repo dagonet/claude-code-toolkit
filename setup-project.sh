@@ -34,10 +34,16 @@ DB_FILENAME=""
 TECH_STACK=""
 # Default, not a constant: --worktree-base still wins. Agent worktrees have to
 # land SOMEWHERE, and an empty value left `{{WORKTREE_BASE}}` in the rendered
-# PROJECT_CONTEXT.md. The value is asserted against templates/*/gitignore by
-# verify-template-consistency.sh — a default the ignore rules do not cover puts
-# a full repo checkout in `git status`.
-WORKTREE_BASE=".claude/worktrees"
+# PROJECT_CONTEXT.md. v4.1.2 (spec §4): the default is OUTSIDE the repo,
+# <toplevel>/../.worktrees/<project name>, anchored to the repo root (never the
+# cwd) -- for every repo under one parent directory this is the user-level
+# rule "G:/git/.worktrees/<repo>/<name>". The PARENT literal below is what
+# verify-template-consistency.sh check 26b reads as authoritative; the
+# composition happens once PROJECT_NAME is known. Claude Code's own
+# EnterWorktree ignores this key entirely (always <repo>/.claude/worktrees/,
+# no setting), which is why every variant gitignore keeps ignoring that path.
+WORKTREE_BASE_PARENT="../.worktrees"
+WORKTREE_BASE=""
 LOG_PATH=""
 MAUI_PROJECT=""
 TEST_PROJECT=""
@@ -392,11 +398,43 @@ add_replacement '{{DEFAULT_BRANCH}}' "$DEFAULT_BRANCH"
 [[ -n "$REPO_URL" ]]      && add_replacement '{{REPO_URL}}' "$REPO_URL"
 [[ -n "$SOLUTION_FILE" ]]  && add_replacement '{{SOLUTION_FILE}}' "$SOLUTION_FILE"
 [[ -n "$TECH_STACK" ]]     && add_replacement '{{TECH_STACK}}' "$TECH_STACK"
-# The -n guard is now always true for a default bootstrap, and is KEPT for
-# parity with setup-project.ps1's `if ($WorktreeBase)`: on an explicit
-# `--worktree-base ""` both scripts must behave the same way (leave the
-# placeholder), or the two implementations diverge exactly as the dry-run and
-# real-run paths did in v2.2.0/v2.2.1.
+# v4.1.2 (spec §4): WORKTREE_BASE is empty until composed here -- the default
+# is <toplevel>/../.worktrees/<project name>, resolved against TARGET_DIR
+# (setup-project.sh does not `git init` the target, so TARGET_DIR -- not a
+# `git rev-parse --show-toplevel` -- IS the toplevel this bootstrap knows).
+# $TARGET_DIR is already the resolved, mkdir'd absolute path (see :114-118),
+# so it is reused rather than re-resolving $TARGET_PATH a second time.
+#
+# On a Windows shell bash's own `pwd -P` is MSYS-namespaced (`/g/...`), which
+# is useless written into a file a native (non-MSYS) consumer -- Explorer, the
+# .ps1 bootstrapper, an agent's own tools -- will read; `cygpath -m` (same
+# idiom as the template-sync registration above) turns it into the Win32
+# namespace with forward slashes (`G:/...`), which setup-project.ps1's own
+# composition (Resolve-Path + `-replace '\\','/'`) produces natively. Same
+# fallback posture as the registration code: cygpath missing/failing leaves
+# the raw (MSYS) path rather than aborting the bootstrap over a cosmetic path
+# shape.
+if [[ -z "$WORKTREE_BASE" ]]; then
+  _wt_top="$(cd "$TARGET_DIR/.." && pwd -P)"
+  # Fix round 1: `cd`+`pwd -P` reads empty (not an error `set -e` catches, a
+  # silent empty string) if $TARGET_DIR does not exist -- today unreachable,
+  # since :114-118 `mkdir -p`s the target before this point ever runs, but
+  # that safety lives ~300 lines away and this release's shape for every
+  # other fail-empty path here is to refuse loudly, not compose
+  # `/../.worktrees/<project>` off the filesystem root.
+  [[ -n "$_wt_top" ]] || { echo "setup-project: cannot resolve the worktree parent for $TARGET_DIR" >&2; exit 1; }
+  if command -v cygpath >/dev/null 2>&1; then
+    _wt_top="$(cygpath -m "$_wt_top" 2>/dev/null || printf '%s' "$_wt_top")"
+  fi
+  WORKTREE_BASE="$_wt_top/${WORKTREE_BASE_PARENT#../}/$PROJECT_NAME"
+fi
+# v4.1.2: the fill-if-empty block above means WORKTREE_BASE is now non-empty
+# by the time this guard runs, for both a plain default bootstrap AND an
+# explicit `--worktree-base ""` -- the pre-v4.1.2 escape hatch (an explicit
+# empty override left `{{WORKTREE_BASE}}` unresolved) no longer exists; there
+# is no longer a way to opt the key out. The -n guard is KEPT anyway, for
+# parity with setup-project.ps1's `if ($WorktreeBase)` site, which composes
+# the same way.
 [[ -n "$WORKTREE_BASE" ]]  && add_replacement '{{WORKTREE_BASE}}' "$WORKTREE_BASE"
 # v4.0.2 item 4: defaults to `none`, not left as the literal `{{LOG_PATH}}`
 # token -- the -n guard is dropped for this key only (the derived-placeholder
