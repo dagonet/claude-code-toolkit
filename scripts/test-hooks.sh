@@ -432,6 +432,38 @@ expect "cmd_join_continuations: no trailing NL in -> none out (3 bytes)" 3 "$CJ_
 CJ_NL=$( . "$ROOT/hooks/lib/json.sh"; printf 'abc\n' | cmd_join_continuations | wc -c | tr -d ' ' )
 expect "cmd_join_continuations: trailing NL in -> preserved (4 bytes)" 4 "$CJ_NL"
 
+# v4.1.2 fix round 2 (outside reviewer, measured) -- on Windows, gawk reads
+# stdin in TEXT MODE and silently converts CRLF to LF before the program
+# ever sees $0, so the `line ~ /\r$/` branch a few lines above never fires
+# there and CR is stripped from EVERY line, not just continuation lines --
+# breaking the documented "CR kept on ordinary lines" contract on this
+# platform only. `awk -v BINMODE=3` makes gawk read raw bytes so the CR
+# survives into $0; mawk/BSD awk ignore the unknown variable and never
+# translated in the first place. Byte-exact via od -An -c, same idiom as the
+# CONT fixture check above, because a $(...) string-equality check alone
+# would not surface a dropped CR reliably.
+# Guard-byte capture (same idiom as _cj_in inside the function itself): a
+# bare $(printf ...) strips ITS OWN trailing newline, which would silently
+# drop the very byte this fixture exists to keep.
+CJ_CRIN=$(printf 'echo a\r\necho b\n'; printf x); CJ_CRIN=${CJ_CRIN%x}
+CJ_CROUT=$( . "$ROOT/hooks/lib/json.sh"; printf '%s' "$CJ_CRIN" | cmd_join_continuations | od -An -c | tr -d ' \n' )
+CJ_CRWANT=$(printf '%s' "$CJ_CRIN" | od -An -c | tr -d ' \n')
+expect "join: CR on an ORDINARY line is kept (BINMODE=3; was stripped on Windows by gawk text mode)" "$CJ_CRWANT" "$CJ_CROUT"
+
+# Controller addendum (fix round 2 pin): a CONTINUATION whose backslash is
+# followed by CR LF takes a DIFFERENT route under BINMODE=3 than before --
+# the explicit `/\r$/` branch now sees the CR (raw bytes) and strips it
+# before the trailing-backslash count runs, where previously gawk's own
+# text-mode translation had already removed the CR ahead of the awk program
+# and the branch never fired -- but the joined BYTES must be identical
+# either way: "ab" + one trailing LF, same as before this fix. This is the
+# pin against a second row moving: only the ordinary-line CR row above
+# should change output under the fix; this row must not.
+CJ2_IN=$(printf 'a\\\r\nb\n'; printf x); CJ2_IN=${CJ2_IN%x}
+CJ2_WANT=$(printf 'ab\n'; printf x); CJ2_WANT=${CJ2_WANT%x}
+CJ2_OUT=$( . "$ROOT/hooks/lib/json.sh"; printf '%s' "$CJ2_IN" | cmd_join_continuations; printf x); CJ2_OUT=${CJ2_OUT%x}
+expect "join: \\<CR><LF> continuation still joins to ab under BINMODE=3 (route changed, bytes did not)" "$CJ2_WANT" "$CJ2_OUT"
+
 # v2.3.0: the ACCEPTED FALSE POSITIVE, asserted POSITIVELY. This gate is
 # fail-CLOSED and scans the whole command string, which is what makes the
 # `bash -c "…"` wrapper above unevadable; the price is that `echo "git push

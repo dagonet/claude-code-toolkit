@@ -263,7 +263,16 @@ cmd_join_continuations() {
   _cj_nl=$(printf '\nx'); _cj_nl=${_cj_nl%x}
   _cj_in=$(cat; printf x); _cj_in=${_cj_in%x}
   case "$_cj_in" in *"$_cj_nl") _cj_trail=1 ;; esac
-  printf '%s' "$_cj_in" | awk 'BEGIN{ORS=""; pend=""; first=1}
+  # v4.1.2 fix round 2 (outside reviewer, measured): on Windows, gawk opens
+  # stdin in TEXT MODE and translates CRLF to LF before the program ever
+  # sees $0, so the /\r$/ branch below never matches and CR is stripped from
+  # EVERY line, not just continuation lines -- silently breaking the
+  # documented "CR kept on ordinary lines" contract on this platform only.
+  # -v BINMODE=3 makes gawk read stdin/stdout as raw bytes, so the CR
+  # survives into $0 and the existing branch handles it as designed; mawk
+  # and BSD awk ignore an unknown BINMODE variable and never did text-mode
+  # translation in the first place, so this is a no-op there.
+  printf '%s' "$_cj_in" | awk -v BINMODE=3 'BEGIN{ORS=""; pend=""; first=1}
   {
     line=$0; cr=""
     if (line ~ /\r$/) { cr="\r"; line=substr(line,1,length(line)-1) }
