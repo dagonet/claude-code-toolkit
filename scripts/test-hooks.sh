@@ -2973,11 +2973,11 @@ check "#8 verb only inside a # comment: allowed"     "$GBM" 0 "$(mkjson Bash "ba
 # CONSTRUCTION, a correct whole-line-only strip from a wrong "truncate at
 # first #" strip: a correct strip leaves the line as `${BR#refs/heads/}` (an
 # unresolved destination); a wrong strip truncates it to `"${BR` (also an
-# unresolved destination, just a shorter unresolved string). Either way
-# gate-before-merge.sh's push-target check sees "no resolvable destination"
-# and, from a branch that is not itself protected, allows -- so the verdict
-# cannot differ between the correct and the wrong implementation, whatever it
-# happens to read. Rewritten so the `#` sits INSIDE a parameter expansion that
+# unresolved destination, just a shorter unresolved string). Either way the
+# destination gate-before-merge.sh's push-target check sees is unresolved --
+# so whatever verdict that check gives an unresolved destination, it gives
+# the SAME verdict to both implementations, and the row cannot discriminate
+# them. Rewritten so the `#` sits INSIDE a parameter expansion that
 # is NOT the line's first character, on a line that ALSO carries a statically
 # resolvable protected push after a `;`:
 # `: "${BR#refs/heads/}"; git push origin main`. Correct (whole-line-only)
