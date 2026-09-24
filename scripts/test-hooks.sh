@@ -1975,6 +1975,72 @@ A13_TREE=$(git -C "$A13REPO" rev-parse 'HEAD^{tree}')
 a13_env_hash()   { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" 2>/dev/null ); }
 a13_env_detail() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null | tr '\n' '|' ); }
 
+# v4.1.2 spec §3 -- pyvenv is interpreter-PREFIX identity. Artifact CONTINUITY
+# is a claim about the AGGREGATE fingerprint, so it is pinned on the aggregate:
+# the v4.1.1 gc_gate_env (read from the tag) and this one must hash a fixed
+# venv fixture identically.
+# git-cmd.sh fails CLOSED (exit 2) at source time when its sibling json.sh
+# is missing (:151-155 -- "without it GC_CMD would be empty and every gate
+# would allow every command"), so the isolated copy needs json.sh alongside
+# it too, or a13_env_hash_old would exit 2 before gc_gate_env ever runs and
+# both sides of the comparison below would read empty -- a false PASS for
+# the wrong reason, not a real continuity check.
+A13OLD=$(mktemp -d)
+git -C "$ROOT" show 'v4.1.1^{commit}:hooks/lib/git-cmd.sh' > "$A13OLD/git-cmd.sh"
+git -C "$ROOT" show 'v4.1.1^{commit}:hooks/lib/json.sh' > "$A13OLD/json.sh"
+a13_env_hash_old() { ( . "$A13OLD/git-cmd.sh"; gc_gate_env "$1" 2>/dev/null ); }
+expect "§3 aggregate fingerprint unchanged from v4.1.1 on a venv repo" "$(a13_env_hash_old "$A13REPO")" "$(a13_env_hash "$A13REPO")"
+expect "§3 pyvenv component == sha256(pyvenv.cfg)" "pyvenv=$(gc_sha256 < "$A13REPO/server/.venv/pyvenv.cfg" 2>/dev/null || ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_sha256 < "$A13REPO/server/.venv/pyvenv.cfg" ))" "$(a13_env_detail "$A13REPO" | tr '|' '\n' | grep '^pyvenv=')"
+# Present-but-broken venv: pyvenv PRESENT, dist/py absent -> the void fires
+# via dist/py (the ONE-DIRECTIONAL absent claim, spec §3).
+A13BROKEN=$(mkrepo a13broken main); mkdir -p "$A13BROKEN/server/.venv"; printf 'home = /nowhere\n' > "$A13BROKEN/server/.venv/pyvenv.cfg"
+a13_broken=$(a13_env_detail "$A13BROKEN")
+case "$a13_broken" in pyvenv=absent*) echo "FAIL  §3 broken venv must read pyvenv=<hash>, got absent"; fail=$((fail+1));; *dist=absent*py=absent*) echo "PASS  §3 broken venv: pyvenv present, dist/py absent"; pass=$((pass+1));; *) echo "FAIL  §3 broken venv detail unexpected: $a13_broken"; fail=$((fail+1));; esac
+
+# The sys:<hash> shape and the GRANT case both need a real interpreter on
+# PATH -- skip all three by name (not fail) when this host has none.
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  # No venv, interpreter on PATH: a sys: value, never absent.
+  A13SYS=$(mkrepo a13sys main); mkdir -p "$A13SYS/server"
+  a13_sys=$(a13_env_detail "$A13SYS" | tr '|' '\n' | grep '^pyvenv=')
+  case "$a13_sys" in pyvenv=sys:*) echo "PASS  §3 no-venv repo reads pyvenv=sys:<hash>"; pass=$((pass+1));; *) echo "FAIL  §3 no-venv repo reads '$a13_sys', want pyvenv=sys:<hash>"; fail=$((fail+1));; esac
+  a13_prefix=$( ( py=$(command -v python3 || command -v python); "$py" -c 'import sys; print(sys.prefix)' ) 2>/dev/null)
+  expect "§3 sys: value == sha256(sys.prefix) computed independently" "pyvenv=sys:$(printf '%s' "$a13_prefix" | ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_sha256 ))" "$a13_sys"
+
+  # GRANT fixture: the tree+env extension actually GRANTS on the system-
+  # interpreter (no-venv) shape once all four contributors are non-absent --
+  # "the case the item exists for" (spec §3). This needs its OWN repo on a
+  # feature branch with a PROJECT_CONTEXT.md Gate line -- unlike $A13SYS
+  # (branch "main", no PROJECT_CONTEXT.md): on a protected branch the merge
+  # gate refuses on A6 before item13 logic ever runs, and with no Gate
+  # command configured the hook no-ops (exit 0) for an unrelated reason --
+  # either would make this assertion pass without exercising the extension
+  # at all (mirrors A13REPO's own feature-branch + PROJECT_CONTEXT.md setup
+  # above, for the same reason).
+  # a13_writeartifact (defined below) keys the artifact FILENAME on the
+  # global $A13_SHA (A13REPO's own sha, by design -- every other caller in
+  # this section targets $A13REPO), so it cannot be reused for a second
+  # repo; write this repo's artifact directly under its OWN sha instead.
+  A13SYSFEAT=$(mkrepo a13sysfeat feature/z)
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$A13SYSFEAT/PROJECT_CONTEXT.md"
+  A13SYSFEAT_SHA=$(git -C "$A13SYSFEAT" rev-parse HEAD)
+  A13SYSFEAT_TREE=$(git -C "$A13SYSFEAT" rev-parse 'HEAD^{tree}')
+  A13SYSFEAT_ENV0=$(a13_env_hash "$A13SYSFEAT")
+  A13SYSFEAT_DETAIL0=$(a13_env_detail "$A13SYSFEAT")
+  A13SYSFEAT_GATEDIR="$(gatedir "$A13SYSFEAT")"
+  mkdir -p "$A13SYSFEAT_GATEDIR"
+  rm -f "$A13SYSFEAT_GATEDIR"/last-pass.*.json 2>/dev/null
+  A13SYSFEAT_AF="$(gatepassfile "$A13SYSFEAT" "$A13SYSFEAT_SHA")"
+  printf '{"sha":"%s","tree":"%s","branch":"main","ts":"2020-01-01T00:00:00Z","status":"pass","env":"%s","env_detail":"%s"}\n' \
+    "$A13SYSFEAT_SHA" "$A13SYSFEAT_TREE" "$A13SYSFEAT_ENV0" "$A13SYSFEAT_DETAIL0" > "$A13SYSFEAT_AF"
+  touch -d "-2 hours" "$A13SYSFEAT_AF"
+  check "§3 extension grants on the no-venv shape (the case the item exists for)" "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")"
+else
+  skip "§3 no-venv repo reads pyvenv=sys:<hash>" "no python3/python on PATH"
+  skip "§3 sys: value == sha256(sys.prefix) computed independently" "no python3/python on PATH"
+  skip "§3 extension grants on the no-venv shape (the case the item exists for)" "no python3/python on PATH"
+fi
+
 a13_writeartifact() { # <repo> <sha_field|-> <tree_field|-> <env_field|-> <env_detail_field|-> <touch-spec|->
   mkdir -p "$(gatedir "$1")"
   rm -f "$(gatedir "$1")"/last-pass.*.json 2>/dev/null
