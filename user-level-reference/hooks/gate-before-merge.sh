@@ -1523,6 +1523,8 @@ if [ "$ARTIFACT_EPOCH" -eq 0 ] || [ "$AGE" -gt "$GC_GATE_TTL_S" ]; then
         # contributor never masks it. Polarity from the spec (§4.3): names no
         # language, a node-only consumer earns the extension back by adding
         # contributors that do not read absent.
+        # v4.1.2: a no-venv repo now reads pyvenv=sys:<hash> and becomes
+        # ELIGIBLE; the void rule itself is unchanged.
         A13_ABSENT=""
         [ -n "$ARTIFACT_ENV_DETAIL" ] && A13_ABSENT=$(a13_first_absent_label "$ARTIFACT_ENV_DETAIL")
         [ -n "$A13_ABSENT" ] || A13_ABSENT=$(a13_first_absent_label "$CURRENT_DETAIL")
