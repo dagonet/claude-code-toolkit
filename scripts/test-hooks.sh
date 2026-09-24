@@ -2004,7 +2004,11 @@ if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
   A13SYS=$(mkrepo a13sys main); mkdir -p "$A13SYS/server"
   a13_sys=$(a13_env_detail "$A13SYS" | tr '|' '\n' | grep '^pyvenv=')
   case "$a13_sys" in pyvenv=sys:*) echo "PASS  §3 no-venv repo reads pyvenv=sys:<hash>"; pass=$((pass+1));; *) echo "FAIL  §3 no-venv repo reads '$a13_sys', want pyvenv=sys:<hash>"; fail=$((fail+1));; esac
-  a13_prefix=$( ( py=$(command -v python3 || command -v python); "$py" -c 'import sys; print(sys.prefix)' ) 2>/dev/null)
+  # sys.stdout.write, not print: gc_gate_env hashes sys.prefix's bytes
+  # exactly, with no trailing newline -- print() would add one and this
+  # independent computation would then hash a different string than the
+  # implementation does.
+  a13_prefix=$( ( py=$(command -v python3 || command -v python); "$py" -c 'import sys; sys.stdout.write(sys.prefix)' ) 2>/dev/null)
   expect "§3 sys: value == sha256(sys.prefix) computed independently" "pyvenv=sys:$(printf '%s' "$a13_prefix" | ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_sha256 ))" "$a13_sys"
 
   # GRANT fixture: the tree+env extension actually GRANTS on the system-
@@ -2035,10 +2039,12 @@ if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
     "$A13SYSFEAT_SHA" "$A13SYSFEAT_TREE" "$A13SYSFEAT_ENV0" "$A13SYSFEAT_DETAIL0" > "$A13SYSFEAT_AF"
   touch -d "-2 hours" "$A13SYSFEAT_AF"
   check "§3 extension grants on the no-venv shape (the case the item exists for)" "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")"
+  check_msg "§3 extension grants on the no-venv shape: reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")" "accepted on tree identity"
 else
   skip "§3 no-venv repo reads pyvenv=sys:<hash>" "no python3/python on PATH"
   skip "§3 sys: value == sha256(sys.prefix) computed independently" "no python3/python on PATH"
   skip "§3 extension grants on the no-venv shape (the case the item exists for)" "no python3/python on PATH"
+  skip "§3 extension grants on the no-venv shape: reason names tree identity" "no python3/python on PATH"
 fi
 
 a13_writeartifact() { # <repo> <sha_field|-> <tree_field|-> <env_field|-> <env_detail_field|-> <touch-spec|->

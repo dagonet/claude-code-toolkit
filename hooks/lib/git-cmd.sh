@@ -995,7 +995,7 @@ gc_sha256() {
 # prints nothing -- callers must NOT treat that as an empty-string
 # fingerprint (two "cannot compute" states would then spuriously "match").
 gc_gate_env() {
-  local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe
+  local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe pyvenv_pfx
   [ -n "$top" ] || return 1
   venv="$top/server/.venv"
 
@@ -1030,7 +1030,16 @@ gc_gate_env() {
     py_exe=$(command -v python3 2>/dev/null)
     [ -n "$py_exe" ] || py_exe=$(command -v python 2>/dev/null)
     if [ -n "$py_exe" ]; then
-      pyvenv_h=$("$py_exe" -c 'import sys; print(sys.prefix)' 2>/dev/null | gc_sha256) && [ -n "$pyvenv_h" ] && pyvenv_h="sys:$pyvenv_h" || pyvenv_h=absent
+      # sys.stdout.write, not print: the hash covers sys.prefix's bytes
+      # exactly, with no trailing newline riding along -- and an interpreter
+      # that resolves but yields nothing (a transient failure) must read
+      # "absent" too, not sha256("") (a real, misleading hash of no input).
+      pyvenv_pfx=$("$py_exe" -c 'import sys; sys.stdout.write(sys.prefix)' 2>/dev/null)
+      if [ -n "$pyvenv_pfx" ]; then
+        pyvenv_h=$(printf '%s' "$pyvenv_pfx" | gc_sha256) && [ -n "$pyvenv_h" ] && pyvenv_h="sys:$pyvenv_h" || pyvenv_h=absent
+      else
+        pyvenv_h=absent
+      fi
     else
       pyvenv_h=absent
     fi
