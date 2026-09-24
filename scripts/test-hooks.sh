@@ -2146,12 +2146,29 @@ a13_env_detail() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/
 # row below can never observe a GRANT and every "names the X contributor"
 # message is preempted by the node=absent label instead -- same class of gap
 # as the pyvenv item this release fixed, not fixed here (v4.1.3 design item).
-# Decided ONCE, from the same `command -v` definition of "present" the hooks
-# themselves use (see the HAVE_* probe note above this section), so these
-# rows run normally in the node configuration and skip in the restricted
-# ones.
-NODE13_PRESENT=0
-command -v node >/dev/null 2>&1 && NODE13_PRESENT=1
+#
+# Decided from what the HOOK reads (the item-12 invariant: the fixture and
+# the code must use the same definition of "present"), not from a bare
+# `command -v node`: $A13REPO already exists with its own fixture venv, and
+# node's presence on PATH does not depend on which repo gc_gate_env is asked
+# about (it is a plain `command -v node` inside the function itself), so
+# this repo's own env_detail -- read through the same a13_env_detail helper
+# every other row in this section already uses -- is exactly what the hook
+# would see. Decided ONCE, before any row below reads it.
+NODE13_ABSENT=0
+case "$(a13_env_detail "$A13REPO")" in
+  *"node=absent"*) NODE13_ABSENT=1 ;;
+esac
+# Rows whose PASS shape depends on a GRANT: under NODE13_ABSENT the hook's
+# outcome is DEFINED (exit 2, reason names node=absent), not unknowable, so
+# those rows ASSERT that outcome (check_msg) instead of skipping -- a skip
+# measures nothing and stays green even after v4.1.3 makes node-not-installed
+# determinable differently; an assertion of the void goes red that day and
+# forces the fixture to be revisited. Only the pyvenv/dist LABEL
+# sub-assertions -- unreachable once node's absence preempts them, since
+# a13_first_absent_label (hooks/gate-before-merge.sh) scans pyvenv,dist,py,
+# node in that order and node is always last -- skip by name.
+NODE13_VOID_NEEDLE="node=absent"
 NODE13_SKIP_REASON="node absent on PATH -- the tree+env extension VOIDS on any absent contributor by design (v4.1.1 #15); this row can only grant with node present"
 
 # v4.1.2 spec §3 -- pyvenv is interpreter-PREFIX identity. Artifact CONTINUITY
@@ -2237,12 +2254,12 @@ if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
   printf '{"sha":"%s","tree":"%s","branch":"main","ts":"2020-01-01T00:00:00Z","status":"pass","env":"%s","env_detail":"%s"}\n' \
     "$A13SYSFEAT_SHA" "$A13SYSFEAT_TREE" "$A13SYSFEAT_ENV0" "$A13SYSFEAT_DETAIL0" > "$A13SYSFEAT_AF"
   touch -d "-2 hours" "$A13SYSFEAT_AF"
-  if [ "$NODE13_PRESENT" -eq 1 ]; then
+  if [ "$NODE13_ABSENT" -eq 0 ]; then
     check "§3 extension grants on the no-venv shape (the case the item exists for)" "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")"
     check_msg "§3 extension grants on the no-venv shape: reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")" "accepted on tree identity"
   else
-    skip "§3 extension grants on the no-venv shape (the case the item exists for)" "$NODE13_SKIP_REASON"
-    skip "§3 extension grants on the no-venv shape: reason names tree identity" "$NODE13_SKIP_REASON"
+    check_msg "§3 extension grants on the no-venv shape (the case the item exists for)" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")" "$NODE13_VOID_NEEDLE"
+    check_msg "§3 extension grants on the no-venv shape: reason names tree identity" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13SYSFEAT")" "$NODE13_VOID_NEEDLE"
   fi
 else
   skip "§3 no-venv repo reads pyvenv=sys:<hash>" "no python3/python on PATH"
@@ -2272,19 +2289,19 @@ A13_DETAIL0=$(a13_env_detail "$A13REPO")
 
 # (1) expired, identical tree, identical env -> allowed, reason on stderr.
 A13_AF=$(a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours")
-if [ "$NODE13_PRESENT" -eq 1 ]; then
+if [ "$NODE13_ABSENT" -eq 0 ]; then
   check "(item13) expired + tree ok + env ok: allowed"  "$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
   check_msg "(item13) allow reason names tree identity" "$ROOT/$H" 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "accepted on tree identity"
 else
-  skip "(item13) expired + tree ok + env ok: allowed" "$NODE13_SKIP_REASON"
-  skip "(item13) allow reason names tree identity" "$NODE13_SKIP_REASON"
+  check_msg "(item13) expired + tree ok + env ok: allowed" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "$NODE13_VOID_NEEDLE"
+  check_msg "(item13) allow reason names tree identity" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "$NODE13_VOID_NEEDLE"
 fi
 
 # (2) same, but pyvenv.cfg has moved one byte since the artifact was minted.
 printf 'home = /usr\nversion = 3.12.1\n' > "$A13REPO/server/.venv/pyvenv.cfg"
 a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
 check "(item13) expired + tree ok + env CHANGED (pyvenv): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
-if [ "$NODE13_PRESENT" -eq 1 ]; then
+if [ "$NODE13_ABSENT" -eq 0 ]; then
   check_msg "(item13) block names the pyvenv contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: pyvenv"
 else
   skip "(item13) block names the pyvenv contributor" "$NODE13_SKIP_REASON"
@@ -2295,7 +2312,7 @@ printf 'home = /usr\nversion = 3.12.0\n' > "$A13REPO/server/.venv/pyvenv.cfg"   
 mkdir -p "$A13REPO/server/.venv/Lib/site-packages/zzz-1.0.dist-info"
 a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "-2 hours" >/dev/null
 check "(item13) expired + tree ok + env CHANGED (dist-info added): blocked" "$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")"
-if [ "$NODE13_PRESENT" -eq 1 ]; then
+if [ "$NODE13_ABSENT" -eq 0 ]; then
   check_msg "(item13) block names the dist contributor" "$ROOT/$H" 2 "$(mkjson Bash 'gh pr merge 1 --squash' "$A13REPO")" "environment changed: dist"
 else
   skip "(item13) block names the dist contributor" "$NODE13_SKIP_REASON"
