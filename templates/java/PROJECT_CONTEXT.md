@@ -26,7 +26,7 @@
 - **Source Root**: src/main/java  <!-- adjust for multi-module projects -->
 - **Test Root**: src/test/java
 - **Resources**: src/main/resources
-- **Worktree Base**: {{WORKTREE_BASE}}
+- **Worktree Base**: {{WORKTREE_BASE}} (convention only — read by nothing mechanical; Claude Code's own EnterWorktree always uses `<repo>/.claude/worktrees/` and cannot be redirected)
 - **Log Path**: {{LOG_PATH}}
 
 ## Workflow Configuration

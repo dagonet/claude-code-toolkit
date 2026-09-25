@@ -47,9 +47,14 @@ param(
     [string]$TechStack,
     # Default, not a constant: -WorktreeBase still wins. Both `if ($WorktreeBase)`
     # sites below (the replacement map and the sync manifest) therefore fire for a
-    # default bootstrap. Kept in sync with setup-project.sh's WORKTREE_BASE and
-    # with templates/*/gitignore by verify-template-consistency.sh.
-    [string]$WorktreeBase = ".claude/worktrees",
+    # default bootstrap. v4.1.2 (spec §4): the default is OUTSIDE the repo,
+    # <toplevel>/../.worktrees/<project name>, anchored to the repo root (never
+    # the cwd), composed below from $WorktreeBaseParent (not a param -- mirrors
+    # setup-project.sh's WORKTREE_BASE_PARENT, a fixed default with no CLI flag
+    # of its own). Claude Code's own EnterWorktree ignores this key entirely
+    # (always <repo>/.claude/worktrees/, no setting), which is why every variant
+    # gitignore keeps ignoring that path.
+    [string]$WorktreeBase = "",
     [string]$LogPath,
     [string]$MauiProject,
     [string]$TestProject,
@@ -81,6 +86,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $CallerCwd = (Get-Location).Path
+
+# v4.1.2 (spec §4): the PARENT literal below is what
+# verify-template-consistency.sh check 26b reads as authoritative on the sh
+# side (setup-project.sh's WORKTREE_BASE_PARENT); this line is checked
+# against it. Not a param -- setup-project.sh exposes no
+# --worktree-base-parent flag either, only --worktree-base.
+$WorktreeBaseParent = "../.worktrees"
 
 # --- Resolve paths ---
 $TemplateDir = Join-Path (Join-Path $PSScriptRoot "templates") $Variant
@@ -320,6 +332,26 @@ if ($GateCmd)   { $replacements['{{GATE_COMMAND}}']   = $GateCmd }
 if ($RepoUrl)       { $replacements['{{REPO_URL}}']       = $RepoUrl }
 if ($SolutionFile)  { $replacements['{{SOLUTION_FILE}}']  = $SolutionFile }
 if ($TechStack)     { $replacements['{{TECH_STACK}}']     = $TechStack }
+# v4.1.2 (spec §4): compose the same default setup-project.sh composes --
+# <toplevel>/../.worktrees/<project name>, resolved against $TargetDir (this
+# script does not `git init` the target either, so $TargetDir IS the
+# toplevel this bootstrap knows). [IO.Path]::GetFullPath, not Resolve-Path:
+# under $ErrorActionPreference = "Stop", Resolve-Path throws when the parent
+# does not exist yet (a fresh -TargetPath whose own directory is not created
+# until far below, at the New-Item call) -- GetFullPath needs no existing path.
+if (-not $WorktreeBase) {
+    $wtbParentStripped = $WorktreeBaseParent -replace '^\.\./', ''
+    $wtbTop = [System.IO.Path]::GetFullPath((Join-Path $TargetDir ".."))
+    # Fix round 1: mirrors the guard on the .sh side -- GetFullPath is pure
+    # lexical resolution and does not itself throw on a nonexistent path, but
+    # refuse anyway rather than let an unexpectedly empty/null $wtbTop compose
+    # a root-level `/../.worktrees/<project>`.
+    if (-not $wtbTop) {
+        Write-Error "setup-project: cannot resolve the worktree parent for $TargetDir"
+        return
+    }
+    $WorktreeBase = ((Join-Path $wtbTop (Join-Path $wtbParentStripped $ProjectName)) -replace '\\', '/')
+}
 if ($WorktreeBase)  { $replacements['{{WORKTREE_BASE}}']  = $WorktreeBase }
 # v4.0.2 item 4: defaults to `none`, not left as the literal `{{LOG_PATH}}`
 # token -- PS 5.1 has no ternary, so this is an explicit if/else.

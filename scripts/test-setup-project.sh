@@ -118,18 +118,45 @@ expect "rerun reports that the file was not written" 1 \
 # Two things have to hold and neither is implied by the other: a plain run
 # fills the field, and an explicit flag still overrides it.
 #
-# The expected value is read from setup-project.sh rather than restated here —
-# verify-template-consistency.sh check 26b is what pins that value across the
-# .ps1 and the six gitignores. This fixture asserts it REACHES the file.
-WTB_DEFAULT=$(grep -E '^WORKTREE_BASE="' "$ROOT/setup-project.sh" | head -1 | sed 's/^WORKTREE_BASE="//; s/".*$//')
+# v4.1.2 (spec §4): the default moved OUTSIDE the repo -- composed as
+# <toplevel>/../.worktrees/<project name> -- so the expectation here is
+# COMPOSED the same way the bootstrappers compose it, not restated as a
+# literal. WTB_PARENT (the fixed piece) is read from setup-project.sh rather
+# than restated here — verify-template-consistency.sh check 26b is what pins
+# that value across the .ps1 and the six gitignores. This fixture asserts the
+# COMPOSITION reaches the file correctly.
+WTB_PARENT=$(grep -E '^WORKTREE_BASE_PARENT="' "$ROOT/setup-project.sh" | head -1 | sed 's/^WORKTREE_BASE_PARENT="//; s/".*$//')
 
 worktree_line() { # <project dir>
-  grep -E '^- \*\*Worktree base\*\*:' "$1/PROJECT_CONTEXT.md" 2>/dev/null | head -1
+  grep -E '^- \*\*Worktree [Bb]ase\*\*:' "$1/PROJECT_CONTEXT.md" 2>/dev/null | head -1
 }
 
-if [ -z "$WTB_DEFAULT" ]; then
+# The value only -- strips the label and the v4.1.2 "(convention only ...)"
+# clause Step 5 appends, so callers compare against a composed path without
+# also restating the clause on every row.
+worktree_value() { # <project dir>
+  worktree_line "$1" | sed -E 's/^- \*\*Worktree [Bb]ase\*\*: //; s/ \(convention only.*\)$//'
+}
+
+# Compose the expected default the way BOTH bootstrappers compose it: resolve
+# the parent of <target dir>, strip WTB_PARENT's leading `../`, append it +
+# <project name>. On this Windows host, normalise through `cygpath -m` (Win32
+# namespace, forward slashes) when available -- the same normalisation
+# setup-project.sh applies before writing the value, and the shape
+# setup-project.ps1's own composition (.NET GetFullPath + `-replace
+# '\\','/'`) produces natively -- so a POSIX-only host and a Windows host each
+# get an expectation matching what THAT host's bootstrappers actually write.
+wtb_expect() { # <target dir> <project name>
+  base="$(cd "$1/.." && pwd -P)"
+  if command -v cygpath >/dev/null 2>&1; then
+    base="$(cygpath -m "$base" 2>/dev/null || printf '%s' "$base")"
+  fi
+  printf '%s/%s/%s' "$base" "${WTB_PARENT#../}" "$2"
+}
+
+if [ -z "$WTB_PARENT" ]; then
   # Refuse rather than compare against an empty string, which every line matches.
-  expect "WORKTREE_BASE default is readable from setup-project.sh" "non-empty" ""
+  expect "WORKTREE_BASE_PARENT is readable from setup-project.sh" "non-empty" ""
 else
   # Fresh dirs: a rerun over an existing PROJECT_CONTEXT.md is not written at
   # all, and the assertion would read a stale file.
@@ -137,15 +164,22 @@ else
   mkdir -p "$WTBDIR"
   bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
     --target-path "$WTBDIR" > "$TMPROOT/wtb-default.out" 2>&1
-  expect "default bootstrap fills the worktree base" \
-    "- **Worktree base**: $WTB_DEFAULT" "$(worktree_line "$WTBDIR")"
+  # The default is <toplevel>/../.worktrees/<project>, resolved. The target dir
+  # IS the toplevel this bootstrap knows (setup-project.sh does not `git init`
+  # it). Compose the expectation the same way the script does, then resolve
+  # both sides.
+  WTB_EXPECT=$(wtb_expect "$WTBDIR" SetupFixture)
+  expect "default bootstrap fills the worktree base (composed, resolved)" \
+    "$WTB_EXPECT" "$(worktree_value "$WTBDIR")"
+  # Review Focus 5: bootstrap renders the path; it never creates it.
+  expect "default bootstrap does not create the worktree dir" "absent" "$([ -e "$WTB_EXPECT" ] && echo present || echo absent)"
 
   WTBOVR="$TMPROOT/wtb-override"
   mkdir -p "$WTBOVR"
   bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
     --target-path "$WTBOVR" --worktree-base "custom/wt" > "$TMPROOT/wtb-override.out" 2>&1
   expect "--worktree-base still overrides the default" \
-    "- **Worktree base**: custom/wt" "$(worktree_line "$WTBOVR")"
+    "custom/wt" "$(worktree_value "$WTBOVR")"
 fi
 
 # --- the autoMode snippet is GENERIC and USER-scoped (v3.0.3, item 23) -----
@@ -263,7 +297,7 @@ expect "dotnet bootstrap: Gate-checked branches still defaults to none" \
 # assertion failure that looks like a template-sync-tools regression, these
 # rows (and their PowerShell/installer counterparts below) are skipped with
 # the same "run bash server/install.sh" reason, the same shape as the
-# existing $WTB_DEFAULT/$AM_WANT refusals above.
+# existing $WTB_PARENT/$AM_WANT refusals above.
 TS_EXE_EXPECTED="$ROOT/server/.venv/Scripts/mcp-template-sync-tools.exe"
 [ -x "$TS_EXE_EXPECTED" ] || TS_EXE_EXPECTED="$ROOT/server/.venv/bin/mcp-template-sync-tools"
 TS_VENV_REASON="server/.venv absent -- run 'bash server/install.sh' once per checkout"
@@ -329,9 +363,14 @@ if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
   expect "ps1 writes the same protected line as sh" \
     "- **Protected branches**: develop" "$(protected_line "$PSDIR")"
   # No -WorktreeBase passed: the .ps1 parameter default must reach the file
-  # through BOTH `if ($WorktreeBase)` sites, exactly as the .sh default does.
-  expect "ps1 writes the same worktree base as sh" \
-    "- **Worktree base**: $WTB_DEFAULT" "$(worktree_line "$PSDIR")"
+  # through BOTH `if ($WorktreeBase)` sites, composed the same way the .sh
+  # default is (check 26b pins $WorktreeBaseParent against WTB_PARENT). This
+  # is the row that actually exercises the Win32-vs-MSYS path-namespace
+  # mismatch: wtb_expect's `cygpath -m` normalisation is what makes the two
+  # bootstrappers' independently-composed absolute paths comparable at all.
+  PS_WTB_EXPECT=$(wtb_expect "$PSDIR" SetupFixture)
+  expect "ps1 writes the same worktree base as sh (composed, resolved)" \
+    "$PS_WTB_EXPECT" "$(worktree_value "$PSDIR")"
   if [ -n "$AM_WANT" ]; then
     expect "ps1 snippet prints the reference's generic entry" 1 \
       "$(grep -cF -- "$AM_WANT" "$TMPROOT/ps-develop.out")"

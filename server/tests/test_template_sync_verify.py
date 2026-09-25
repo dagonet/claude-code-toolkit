@@ -1184,6 +1184,38 @@ def test_tree_clean_remedy_mentions_unrelated_work(tmp_path):
     # that isolates "predates" from this drift).
     (V401_SEED, "project_custom", "n/a"),
     (V402_SEED, "current", "n/a"),
+    # v4.1.2 spec §2 (panoscribe, two-sided): a historical NOTE naming the
+    # retired region, with the guidance line already repointed -> current.
+    (PROJECT_MD_CONTENT + "\nMigration note: this used to live in CLAUDE.md's PROJECT-CUSTOM region.\n",
+     "current", "n/a"),
+    # Same file, note reworded -> also current (the guidance line decides).
+    (PROJECT_MD_CONTENT + "\nMigration note: this used to live in the old region.\n",
+     "current", "n/a"),
+    # The retired v4.0.1 guidance sentence itself, with a realistic header
+    # -> the harm arm.
+    ("# Project instructions\n\n" + V401_SEED + "\n", "project_custom", "n/a"),
+    # Guidance AND note both name it -> ONE line, the harm arm (not two);
+    # the exactly-one-line assertion lives in
+    # test_seed_current_guidance_and_note_yields_one_line below.
+    ("# Project instructions\n\n" + V401_SEED + "\nNote: PROJECT-CUSTOM again.\n",
+     "project_custom", "n/a"),
+    # Review Focus 4: guidance line wrapped by an editor -> first line names
+    # nothing -> older arms -> current. Deliberate, pinned.
+    (PROJECT_MD_CONTENT.replace(
+        "Always-on project rules belong in `.claude/project-instructions.md`",
+        "Always-on project rules belong in\n`.claude/project-instructions.md`"),
+     "current", "n/a"),
+    # Fix round 1 (reviewer-caught regression in f72cf26): a note-to-self
+    # carrying the NEW recommended wording pasted ABOVE a live guidance line
+    # that still names PROJECT-CUSTOM ("half-applied the repair"). The note
+    # is its own line inside a multi-line HTML comment (not sharing the
+    # "<!--" delimiter's line, which would not match PROJECT_MD_GUIDANCE_STEM
+    # at all and would fail to exercise the "first line" vs "any line"
+    # distinction) -- see the case D note in verify.py's
+    # _guidance_line_names_region and task-2-report.md's "Fix round 1"
+    # section for why the delimiter placement matters here.
+    ("# Project instructions\n\n<!--\nAlways-on project rules belong in `.claude/project-instructions.md`\n-->\n\n"
+     + V401_SEED + "\n", "project_custom", "n/a"),
     ("---\npaths:\n  - \"src/**\"\n---\n# mine\n", "scoped", "clean"),
     ("---\npaths:\n  - \"src/**\"\n---\n" + V402_SEED, "scoped", "contradiction"),
 ])
@@ -1195,11 +1227,29 @@ def test_project_md_lines(tmp_path, body, seed, scoped):
 
     seed_map = {"stale": "pre-v4.0.1", "predates": "predates v4.0.2",
                "current": "seed is current", "scoped": "scoped",
-               "project_custom": "references PROJECT-CUSTOM"}
+               # v4.1.2 spec §2: the message names the GUIDANCE LINE, not a
+               # "header" (the arm no longer fires on the token anywhere in
+               # the file, so its wording says exactly what it now checks).
+               "project_custom": "guidance line points at PROJECT-CUSTOM"}
     scoped_map = {"n/a": "n/a", "clean": "no unscoped sentence", "contradiction": "still carries"}
     assert seed_map[seed] in by_id["project_md_seed_current"]["measured"], by_id["project_md_seed_current"]
     assert scoped_map[scoped] in by_id["project_md_scoped_consistent"]["measured"], \
         by_id["project_md_scoped_consistent"]
+
+
+def test_seed_current_guidance_and_note_yields_one_line(tmp_path):
+    """v4.1.2 spec §2 (panoscribe, two-sided): when BOTH the guidance line
+    and a separate note name PROJECT-CUSTOM, the harm arm fires once --
+    project_md_seed_current is a single-emit id (one `elif` chain), never
+    two lines for one file."""
+    repo, proj, commit = _good_fixture(tmp_path)
+    body = "# Project instructions\n\n" + V401_SEED + "\nNote: PROJECT-CUSTOM again.\n"
+    (proj / ".claude" / "rules" / "project.md").write_text(body, encoding="utf-8", newline="")
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    seed_current_lines = [l for l in res["lines"] if l["id"] == "project_md_seed_current"]
+    assert len(seed_current_lines) == 1, seed_current_lines
+    assert "PROJECT-CUSTOM" in seed_current_lines[0]["measured"]
 
 
 def test_project_md_remedies_hand_edit_and_move_hunks(tmp_path):

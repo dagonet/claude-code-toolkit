@@ -1984,56 +1984,68 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 26b. The WORKTREE_BASE default is ignored by every variant (v2.2.6).
+# 26b. The WORKTREE_BASE default is ignored by every variant (v2.2.6),
+#      re-shaped for v4.1.2 (spec §4): the default moved OUTSIDE the repo
+#      (<toplevel>/../.worktrees/<project name>), so arm (c) below is now
+#      CONDITIONAL, keyed on where the composed default actually RESOLVES --
+#      not on the leading `../` in the literal, which a repo nested under its
+#      own worktree base (`../<own-repo>/.wt` resolving back inside) would
+#      make lie.
 #
-#      `{{WORKTREE_BASE}}` used to default to empty, so only a consumer who
-#      passed --worktree-base under `.claude/` was exposed. Giving it a default
-#      makes the gap universal: every bootstrapped repo places agent worktrees
-#      there, `coder`/`tester` both run `isolation: worktree`, and
-#      a full repo checkout then shows as untracked files that `git add -A`
-#      would stage. This repo cannot reproduce it — its own .gitignore
-#      blanket-ignores `/.claude/`, while the SHIPPED gitignore is deliberately
-#      selective (settings.json and agents/ stay tracked). So the defect is
-#      invisible in the one place it would be noticed, and is asserted here.
-#
-#      ONE authoritative value: setup-project.sh. The .ps1 default and all six
-#      gitignores are checked AGAINST it rather than against a second copy of
-#      the literal — three independent copies is how they drift apart. If the
-#      value cannot be determined the check REFUSES; an empty needle would make
-#      every arm below vacuously green.
+#      ONE authoritative value: setup-project.sh's WORKTREE_BASE_PARENT. The
+#      .ps1 default, docs/templates.md, and all six gitignores are checked
+#      AGAINST it rather than against a second copy of the literal -- three
+#      independent copies is how they drift apart. If the value cannot be
+#      determined the check REFUSES; an empty needle would make every arm
+#      below vacuously green.
 # ---------------------------------------------------------------------------
 echo
-wtb=$(grep -E '^WORKTREE_BASE="' setup-project.sh 2>/dev/null | head -1 | sed 's/^WORKTREE_BASE="//; s/".*$//')
+wtb=$(grep -E '^WORKTREE_BASE_PARENT="' setup-project.sh 2>/dev/null | head -1 | sed 's/^WORKTREE_BASE_PARENT="//; s/".*$//')
 case "$wtb" in
   ''|*'{{'*)
-    ko "WORKTREE_BASE default: cannot determine it from setup-project.sh (got '$wtb') — every arm below would pass vacuously"
+    ko "WORKTREE_BASE_PARENT: cannot determine it from setup-project.sh (got '$wtb') — every arm below would pass vacuously"
     ;;
   *)
-    ok "WORKTREE_BASE default: setup-project.sh is authoritative at '$wtb'"
-
-    wtb_ps_want="[string]\$WorktreeBase = \"$wtb\""
-    if grep -qF -- "$wtb_ps_want" setup-project.ps1 2>/dev/null; then
-      ok "WORKTREE_BASE default: setup-project.ps1 agrees ($wtb_ps_want)"
-    else
-      ko "WORKTREE_BASE default: setup-project.ps1 does not carry '$wtb_ps_want' — the two bootstrappers place worktrees differently"
-    fi
-
-    # docs/templates.md states the default in prose. A stated default that
-    # drifts is worse than no statement, so it is checked from the same value.
-    if grep -qF -- "defaults to \`$wtb\`" docs/templates.md 2>/dev/null; then
-      ok "WORKTREE_BASE default: docs/templates.md states '$wtb'"
-    else
-      ko "WORKTREE_BASE default: docs/templates.md does not state 'defaults to \`$wtb\`'"
-    fi
-
-    for v in general dotnet dotnet-maui rust-tauri java python; do
-      # Exact line: a substring match is satisfied by the `.claude/` comment
-      # header already at the top of every one of these files.
-      if grep -qxF -- "$wtb/" "templates/$v/gitignore" 2>/dev/null; then
-        ok "templates/$v/gitignore: ignores $wtb/"
-      else
-        ko "templates/$v/gitignore: missing '$wtb/' — the default worktree base would show as untracked files"
-      fi
+    ok "WORKTREE_BASE_PARENT: setup-project.sh is authoritative at '$wtb'"
+    # ONE named normalisation for the cross-file comparison: backslashes to
+    # forward slashes, nothing else -- `..\.worktrees` in the ps1 agrees,
+    # `../worktrees` does not.
+    wtb_n=$(printf '%s' "$wtb" | tr '\\' '/')
+    wtb_ps=$(grep -E '^\s*\$WorktreeBaseParent\s*=\s*"' setup-project.ps1 2>/dev/null | head -1 | sed 's/^[^"]*"//; s/".*$//' | tr '\\' '/')
+    if [ "$wtb_ps" = "$wtb_n" ]; then ok "WORKTREE_BASE_PARENT: setup-project.ps1 agrees ('$wtb_ps')"; else ko "WORKTREE_BASE_PARENT: setup-project.ps1 carries '$wtb_ps', not '$wtb_n'"; fi
+    if grep -qF -- "defaults to \`$wtb/<project name>\`" docs/templates.md 2>/dev/null; then ok "WORKTREE_BASE_PARENT: docs/templates.md states the composed default"; else ko "WORKTREE_BASE_PARENT: docs/templates.md does not state 'defaults to \`$wtb/<project name>\`'"; fi
+    # (b) ALWAYS: EnterWorktree's fixed, repo-internal location is ignored,
+    #     independent of the default (the built-in tool has no setting).
+    for v in $VARIANTS; do
+      if grep -qxF -- ".claude/worktrees/" "templates/$v/gitignore" 2>/dev/null; then ok "templates/$v/gitignore: ignores .claude/worktrees/ (EnterWorktree's fixed location)"; else ko "templates/$v/gitignore: missing '.claude/worktrees/' — EnterWorktree always creates there"; fi
+    done
+    # (c) CONDITIONAL, keyed on the RESOLVED location, not on a leading `../`
+    #     (`../<own-repo>/.wt` resolves back inside): compose the default
+    #     against this repo's toplevel exactly as the bootstrappers do, resolve
+    #     the deepest existing ancestor, re-append, and prefix-compare.
+    #     `git rev-parse --show-toplevel` on this platform can print the Win32
+    #     namespace (`G:/...`) while bash's own `pwd -P` prints the MSYS
+    #     namespace (`/g/...`) for the identical directory -- normalise
+    #     through `cd ... && pwd -P`, the same idiom setup-project.sh:160
+    #     already uses to compare a git toplevel against its own resolution,
+    #     so the prefix test below compares like with like.
+    wtb_top_raw=$(git rev-parse --show-toplevel 2>/dev/null | tr '\\' '/')
+    wtb_top=$(cd "$wtb_top_raw" 2>/dev/null && pwd -P | tr '\\' '/')
+    wtb_cand="$wtb_top/$wtb_n/probe"
+    wtb_dir="$wtb_cand"; wtb_tail=""
+    while [ ! -d "$wtb_dir" ]; do wtb_tail="/$(basename "$wtb_dir")$wtb_tail"; wtb_dir=$(dirname "$wtb_dir"); done
+    wtb_res="$(cd "$wtb_dir" && pwd -P | tr '\\' '/')$wtb_tail"
+    case "$wtb_res" in
+      "$wtb_top"/*)
+        wtb_rel=${wtb_res#"$wtb_top"/}; wtb_rel=${wtb_rel%/probe}
+        for v in $VARIANTS; do
+          if grep -qxF -- "$wtb_rel/" "templates/$v/gitignore" 2>/dev/null; then ok "templates/$v/gitignore: ignores the repo-internal default $wtb_rel/"; else ko "templates/$v/gitignore: default resolves INSIDE the repo ($wtb_rel/) and is not ignored"; fi
+        done ;;
+      *) ok "WORKTREE_BASE_PARENT: default resolves outside the repo ($wtb_res) — nothing to ignore for it" ;;
+    esac
+    # (d) the PROJECT_CONTEXT key carries the convention-only clause, verbatim, in all six.
+    for v in $VARIANTS; do
+      if grep -qF -- "convention only — read by nothing mechanical; Claude Code's own EnterWorktree always uses \`<repo>/.claude/worktrees/\` and cannot be redirected" "templates/$v/PROJECT_CONTEXT.md"; then ok "templates/$v/PROJECT_CONTEXT.md: worktree key carries the EnterWorktree clause"; else ko "templates/$v/PROJECT_CONTEXT.md: worktree key lacks the EnterWorktree clause"; fi
     done
     ;;
 esac
@@ -3644,6 +3656,65 @@ else
     *"Floor reviewed: unchanged"*|*"Floor reviewed: raised to >=v"*) ok "check 56: newest CHANGELOG section (v$c56_hv) is this release's own and states its floor judgement" ;;
     *) ko "check 56: newest CHANGELOG section (v$c56_hv) carries no signed 'Floor reviewed:' line" ;;
   esac
+fi
+
+# ---------------------------------------------------------------------------
+# Check 57 -- CHANGELOG.md is ordered newest-first (v4.1.2 #6). Two checks
+# already REST on that premise without stating it: check 42 arm 2 reads the
+# second `## v` heading as "the previous release", check 56 reads the first as
+# "this release". A reordering would fail both silently; this makes it one
+# loud failure. Empty extraction fails by name (both-absent rule, v4.1.1).
+# ---------------------------------------------------------------------------
+echo
+note "Check 57: CHANGELOG.md heading 1 sorts >= heading 2 (newest-first, the premise checks 42/56 share)"
+c57_h1=$(grep -m1 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed 's/^## v//')
+c57_h2=$(grep -m2 -o '^## v[0-9][0-9.]*' CHANGELOG.md | sed -n '2p' | sed 's/^## v//')
+if [ -z "$c57_h1" ] || [ -z "$c57_h2" ]; then
+  ko "check 57: fewer than two '## v' headings readable -- h1='${c57_h1:-<empty>}' h2='${c57_h2:-<empty>}'"
+elif [ "$(printf '%s\n%s\n' "$c57_h2" "$c57_h1" | sort -V | tail -1)" = "$c57_h1" ]; then
+  ok "check 57: CHANGELOG.md newest-first (v$c57_h1 >= v$c57_h2)"
+else
+  ko "check 57: CHANGELOG.md heading 1 is v$c57_h1 but heading 2 is v$c57_h2 -- not newest-first; checks 42 arm 2 and 56 read the wrong sections"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 58 -- the sync-template skill's documented verify line count equals
+# the code's (v4.1.2 #2). SKILL.md states `LINES = <n>`; verify.py's LINES
+# tuple is the single source of truth. The doc was true when written and
+# would drift silently when LINES moves. Empty read on either side refuses.
+#
+# Fix round 1: the awk count's STATED ASSUMPTION is one tuple entry per
+# line -- it counts LINES matching `^[[:space:]]*\("` (line-level, not
+# occurrence-level), so a comment line, a `LINES: tuple = (` type
+# annotation, and a wrapped entry all count correctly (a comment line
+# never starts with `("`; a wrapped entry's continuation lines don't
+# either; a mistyped header never sets `f` at all, and 0 is caught by the
+# empty-read arm below) -- but TWO entries hand-collapsed onto one line
+# (`("a", X), ("b", Y),`) undercount by exactly the number of extra
+# entries on that line, silently, and could pass a doc figure that is
+# itself stale by the same amount. Self-check in the SAME awk pass: count
+# `("` OCCURRENCES per line (via gsub on a copy of the line, not $0) and
+# flag if any line in the tuple window carries more than one -- the
+# approximation is then honest about when it cannot be trusted, rather
+# than trusting a shape it was never designed to count.
+# ---------------------------------------------------------------------------
+echo
+note "Check 58: SKILL.md's stated LINES count == len(verify.LINES)"
+c58_doc=$(grep -o 'LINES = [0-9][0-9]*' user-level-reference/skills/sync-template/SKILL.md | head -1 | sed 's/LINES = //')
+c58_stats=$(awk '/^LINES = \(/{f=1;next} f&&/^\)/{exit} f&&/^[[:space:]]*\("/{n++; line=$0; cnt=gsub(/\("/,"&",line); if(cnt>1){multi=1}} END{print (n+0)" "(multi+0)}' server/src/template_sync/verify.py)
+# Split "N M" without `set --` -- this script takes no CLI args itself, but
+# functions called later in the file with no explicit args would otherwise
+# inherit these as their own $1/$2.
+c58_code="${c58_stats%% *}"
+c58_multi="${c58_stats##* }"
+if [ "$c58_multi" = "1" ]; then
+  ko "check 58: LINES tuple has more than one entry on a line — the one-per-line count cannot be trusted"
+elif [ -z "$c58_doc" ] || [ "${c58_code:-0}" = "0" ]; then
+  ko "check 58: cannot read the count -- SKILL.md says '${c58_doc:-<empty>}', verify.py LINES tuple counted '${c58_code:-<empty>}' entries"
+elif [ "$c58_doc" = "$c58_code" ]; then
+  ok "check 58: SKILL.md LINES = $c58_doc == verify.LINES ($c58_code entries)"
+else
+  ko "check 58: SKILL.md says LINES = $c58_doc but verify.LINES has $c58_code entries"
 fi
 
 # ---------------------------------------------------------------------------
