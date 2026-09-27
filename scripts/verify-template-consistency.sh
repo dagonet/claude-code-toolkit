@@ -3759,6 +3759,41 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 61 -- the seven report states are ONE list in two files (v4.2.0).
+# (a) The pm-report style's rule-5 line and board.html's STATES labels must be
+#     the same set of exactly seven -- two copies of one list drift apart
+#     silently otherwise. Empty or partial reads refuse.
+# (b) The backlog-board skill states the three data rules whose breach fails
+#     silently at runtime (rows without `order` vanish, unpinned writes are
+#     refused, republishing churns versions without touching data).
+# ---------------------------------------------------------------------------
+echo
+note "Check 61: report states identical in pm-report.md and board.html; board data rules stated"
+c61_style=$(grep -m1 '^5\. \*\*States (exactly these):\*\* ' user-level-reference/output-styles/pm-report.md 2>/dev/null \
+  | sed 's/^5\. \*\*States (exactly these):\*\* //' | tr -d '\r' | sed 's/, /\n/g' | sort)
+c61_board=$(grep -o 'label: "[^"]*"' user-level-reference/skills/backlog-board/board.html 2>/dev/null \
+  | sed 's/^label: "//; s/"$//' | sort)
+c61_ns=$(printf '%s\n' "$c61_style" | grep -c .)
+c61_nb=$(printf '%s\n' "$c61_board" | grep -c .)
+if [ "$c61_ns" -ne 7 ] || [ "$c61_nb" -ne 7 ]; then
+  ko "check 61a: expected 7 states on each side, read style=$c61_ns board=$c61_nb"
+elif [ "$c61_style" = "$c61_board" ]; then
+  ok "check 61a: the 7 report states match between pm-report.md and board.html"
+else
+  ko "check 61a: state labels differ -- style: [$(printf '%s;' $c61_style)] board: [$(printf '%s;' $c61_board)]"
+fi
+c61_skill=user-level-reference/skills/backlog-board/SKILL.md
+c61_missing=""
+for c61_lit in 'Every row needs an `order`' 'if_version' 'Never republish the page for a data change'; do
+  grep -qF "$c61_lit" "$c61_skill" 2>/dev/null || c61_missing="$c61_missing [$c61_lit]"
+done
+if [ -z "$c61_missing" ]; then
+  ok "check 61b: backlog-board SKILL.md states the order / if_version / no-republish rules"
+else
+  ko "check 61b: $c61_skill missing:$c61_missing"
+fi
+
+# ---------------------------------------------------------------------------
 # Check 62 -- the reference UserPromptSubmit time hook is the exact inline
 # command the v4.2.0 spec names. Inline on purpose: no script file means no
 # stale-path noise (the context-mode incident, 2026-09-26) and nothing for
