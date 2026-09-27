@@ -62,6 +62,7 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
     ]
   },
   "enableAllProjectMcpServers": true,
+  "outputStyle": "pm-report",
   "hooks": {
     "PreToolUse": [
       {
@@ -81,6 +82,16 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/bash-output-guard.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
           }
         ]
       }
@@ -228,6 +239,14 @@ Automatically enables all MCP servers defined in project-level `.mcp.json` files
 
 **Why this is safe now: `ENABLE_TOOL_SEARCH`.** Claude Code defers MCP tool definitions by default — the model is given a tool-search facility and pulls a server's schemas only when it needs them, instead of paying for every registered tool in the session prefix. That removes the tool-bloat problem that motivated context-mode's "route everything through the sandbox" mandate, which is why v2.0 demotes context-mode to optional. Enabling a server you rarely use now costs approximately nothing at startup.
 
+### `outputStyle`
+
+```json
+"outputStyle": "pm-report"
+```
+
+Names the default output style, by its frontmatter `name:`, for every new session (v4.2.0). `pm-report` (`output-styles/pm-report.md`) reports to the user as a product manager reads — plain language, a `[HH:MM]` timestamp, updates only on state change. `/output-style default` switches a session back to Claude Code's own technical style at any time; the setting only picks what a *new* session starts with. Claude Code falls back silently when the named style cannot be found, which is why consistency check 60 pins the file existing with a matching `name:`.
+
 ### `contextCompactionThreshold`
 
 ```json
@@ -272,6 +291,7 @@ Events used by this toolkit:
 | `PostToolUse` | After a tool succeeds | No (informational) |
 | `SubagentStop` | When a subagent finishes | **Yes (exit code 2)** — `hooks/enforce-agent-contract.sh` relies on this to force one continuation when a coder stops without `## Gate Results` |
 | `PreCompact` | Before context compaction | No (informational) |
+| `UserPromptSubmit` | Before the user's prompt is processed | Yes (exit code 2) — stdout is injected into context; used here for the inline time hook, not for blocking |
 
 **Other lifecycle events — available, mostly unbound by this toolkit:**
 
@@ -282,7 +302,7 @@ Events used by this toolkit:
 | `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
-The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptSubmit`, `UserPromptExpansion`, `SessionEnd`, `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`.
+The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptExpansion`, `SessionEnd`, `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`.
 
 > **Hook config hot-reloads.** Editing a `hooks` block takes effect without restarting the session — verified by binding a new hook mid-session and seeing it fire on the next event.
 
@@ -435,6 +455,16 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 - Both streams short, a missing `tool_response`, or an unparseable payload → no output at all, the result passes through untouched.
 - Always exits 0 and is registered **unwrapped**: it cannot block, so a 127 wrapper would only invent a failure mode.
 - Rollback: remove the matcher group. Old log files are never pruned — clear `$TMPDIR/claude-bash-out/` yourself if it grows.
+
+### Time hook (UserPromptSubmit, User-Level)
+
+`user-level-reference/settings.json` registers one `UserPromptSubmit` hook, inline, no script file:
+
+```json
+"command": "LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
+```
+
+It runs before every user message is processed and prints one line — `Current local time: HH:MM (YYYY-MM-DD Www)` — which Claude Code injects into that turn's context; the `pm-report` output style's rule 1 reads it for its `[HH:MM]` timestamp instead of estimating the time. `LC_ALL=C` forces the `%a` weekday abbreviation to English regardless of the machine's own locale, so the line's shape never depends on where it runs. Inline on purpose: a script file would be one more path for consistency check 21's mirror walk to track and one more thing that can go missing at `127`; a one-line `date` command has neither problem.
 
 ### Model & Effort (session settings)
 

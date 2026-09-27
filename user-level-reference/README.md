@@ -1,6 +1,6 @@
 # User-Level Claude Code Configuration Reference
 
-This directory contains reference copies of the user-level (`~/.claude/`) configuration for Claude Code. These files document the full setup of agents, skills, hooks, MCP server configuration, and settings used across all projects on this machine.
+This directory contains reference copies of the user-level (`~/.claude/`) configuration for Claude Code. These files document the full setup of agents, skills, output styles, hooks, MCP server configuration, and settings used across all projects on this machine.
 
 > **Commands were merged into skills.** Anthropic made `.claude/commands/<n>.md` equivalent to `.claude/skills/<n>/SKILL.md`; slash commands still work, but a skill is the forward-compatible artifact. This directory no longer ships a `commands/` directory — delete `~/.claude/commands/` when you sync.
 
@@ -36,7 +36,10 @@ Follow these steps to configure Claude Code on a fresh machine:
 6. **Configure MCP servers**
    `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
 
-7. **Configure settings.json**
+7. **Copy output styles to `~/.claude/output-styles/`**
+   Copy `output-styles/pm-report.md` from this directory to `~/.claude/output-styles/`. It is the default report style referenced by `outputStyle` in `settings.json` (next step); `/output-style default` switches a session back to the technical style.
+
+8. **Configure settings.json**
    Copy **`settings.json`** from this directory to `~/.claude/settings.json`. Hook commands use `~/.claude/hooks/…`; **`~` and `$HOME` both expand inside a hook `command` string** (verified empirically — a probe bound at both forms fired and resolved to the real absolute path), so no path editing is needed.
 
    **If you already have a `~/.claude/settings.json`, merge — do not overwrite.** Your file
@@ -99,6 +102,12 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 | `refactor` | `karpathy-guidelines` + `superpowers:test-driven-development` |
 | `/new-feature`, `/user-story`, `/spec-to-issues`, `/traceability`, `/arch-doc`, `/api-design`, `/tech-debt`, `/coverage-report`, `/dependency-audit`, `/dotnet-analyze`, `/ef-check`, `/nuget-audit`, `/pre-release`, `/godot-run`, `/issue-create`, `/add-tests` | deleted — near-zero measured use; the agent roster (`architect`, `tester`, `coder`, `ops`) covers the same ground. *(The roster named here was `requirements-engineer` / `test-writer` when these commands were deleted; both were retired by absorption in v3.0.0 — into `architect` and `tester` respectively.)* |
 
+### Output styles (1)
+
+| Style | Default? | Purpose |
+|-------|----------|---------|
+| `pm-report` | yes (`outputStyle` in `settings.json`) | Plain-language, state-change reporting for a product-manager reader; pairs with the `backlog-board` skill. `/output-style default` switches a session back to the technical style. |
+
 ### Hooks
 
 `hooks/` mirrors, byte for byte, the subset of the toolkit-root `hooks/` directory that is useful at user level — ten scripts plus `lib/`: the fail-open `bash-output-guard.sh` and `read-size-gate.sh`, the fail-closed `no-push-main.sh` and `deny-secret-reads.sh` that `settings.json` binds, the git gates `pre-commit-test.sh` and `gate-before-merge.sh` with `run-gate.sh` (files only — not bound at user level), `post-edit-build.sh`, the retro pair `retro-brief.sh` / `retro-ledger.sh`, and `lib/git-cmd.sh`, which the gates source. Four project-only hooks are deliberately NOT mirrored (`enforce-delegation.sh`, `enforce-agent-contract.sh`, `agent-budget-warn.sh`, `require-skills-block.sh` — `HOOKS_NO_MIRROR` in the consistency script), because they read project-level agent files and would fail closed in a repo without a `hooks/` directory. The toolkit root remains the canonical source; `scripts/verify-template-consistency.sh` asserts every file here is identical to `hooks/<same relative path>`, so a drifted mirror is a red build rather than a silently older contract. A hook script missing at runtime exits `127`; the wrappers in `settings.json` translate that to `exit 2` so enforcement fails closed rather than silently off.
@@ -141,6 +150,7 @@ prompt body into the routine when you create it; nothing here is loaded automati
 `settings-reference.md` -- Full annotated documentation of `~/.claude/settings.json` covering:
 - Environment variables (shell override, 1M context, tool search)
 - Permission rules (allow, deny, ask, `defaultMode`, `autoMode.environment`)
-- The v2.0 hook set
+- `outputStyle`
+- The v2.0 hook set, plus the `UserPromptSubmit` time hook
 - Enabled plugins with descriptions
 - Extended thinking, MCP auto-enable, and context compaction settings
