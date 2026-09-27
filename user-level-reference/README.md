@@ -70,7 +70,7 @@ Models and effort below are the values in each `agents/*.md` frontmatter — kee
 
 > **User-level agents are not template agents.** A user-level agent applies in *every* repo and its frontmatter `hooks:` travel with it, so it may only reference scripts and paths that exist everywhere. The copies here deliberately omit the `hooks/gate-before-merge.sh` PreToolUse hooks that `templates/*/.claude/agents/coder.md` carries — those fail closed (`127` → `exit 2`) in any repo without a `hooks/` directory, which would make PR merges impossible. `scripts/verify-template-consistency.sh` asserts both halves of this rule. Body prose may still mention `hooks/run-gate.sh`, because that is conditional on the project's `Gate` field and the agent simply skips it when absent.
 
-### Skills (8)
+### Skills (9)
 
 Explicit workflows carry `disable-model-invocation: true` so they run only when you type the slash command; the rest auto-trigger from their `description`.
 
@@ -84,6 +84,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 | `retro-review` | `/retro-review [project-dir]` only | Local maintenance sweep: the subagent-failure retro ledger, `verify-user-level-drift.sh`, and consumer repos behind the toolkit `VERSION` → a ≤ 30-line summary in auto-memory. The local counterpart to the `toolkit-nightly-check` routine |
 | `karpathy-guidelines` | auto | Writing any new code — mechanically enforced on `coder`/`*-coder` spawns via `hooks/require-skills-block.sh`; carries the *Toolkit working preferences (developer agents)* section |
 | `mcp-usage` | auto | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
+| `backlog-board` | auto | Create or update a project's live backlog board (a version-pinned, database-backed page); pairs with the `pm-report` output style |
 
 **What replaced the culled artifacts**
 

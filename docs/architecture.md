@@ -208,7 +208,7 @@ claude-code-toolkit/
 └── user-level-reference/                  # ~/.claude/ reference for new machines
     ├── CLAUDE.md · settings.json          # user-level instructions and settings
     ├── agents/                            # 6 generic agent definitions (incl. Explore)
-    ├── skills/                            # 8 skills (commands were merged into skills)
+    ├── skills/                            # 9 skills (commands were merged into skills)
     ├── hooks/                             # byte-identical mirror of the root hooks/ subset used at user level (10 of 14)
     ├── .mcp.json.template                 # MCP server config template
     └── settings-reference.md              # Annotated settings reference
