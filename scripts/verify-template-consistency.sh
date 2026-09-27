@@ -3759,6 +3759,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 62 -- the reference UserPromptSubmit time hook is the exact inline
+# command the v4.2.0 spec names. Inline on purpose: no script file means no
+# stale-path noise (the context-mode incident, 2026-09-26) and nothing for
+# check 21's mirror walk to orphan. `LC_ALL=C` keeps `%a` English on a
+# non-English machine, so the line's shape never depends on the locale.
+# ---------------------------------------------------------------------------
+echo
+note "Check 62: user-level-reference/settings.json registers the exact UserPromptSubmit time command"
+c62_want="LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
+if ! grep -q '"UserPromptSubmit"' user-level-reference/settings.json; then
+  ko "check 62: user-level-reference/settings.json has no UserPromptSubmit hook"
+elif grep -qF "\"command\": \"$c62_want\"" user-level-reference/settings.json; then
+  ok "check 62: UserPromptSubmit runs: $c62_want"
+else
+  ko "check 62: the UserPromptSubmit command is not exactly: $c62_want"
+fi
+
+# ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
 # server_version; parse_version at every consumer accepts EXACTLY three dotted
 # integers. A `v` or a `-rc1` here makes requires_server_satisfied return False

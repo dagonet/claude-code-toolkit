@@ -7203,6 +7203,19 @@ else
   pass=$((pass + 1))
 fi
 
+# ---- v4.2.0: the user-level UserPromptSubmit time hook (inline command) ----
+# The command is read FROM the reference settings, not retyped here, so this
+# proves what ships. Run under a German locale: LC_ALL=C must win.
+UPS_CMD=$(grep -o "LC_ALL=C date '+Current local time: [^']*'" "$ROOT/user-level-reference/settings.json" | head -1)
+expect "time hook: command present in reference settings" "yes" "$([ -n "$UPS_CMD" ] && echo yes || echo no)"
+UPS_RE='^Current local time: [0-2][0-9]:[0-5][0-9] \([0-9]{4}-[0-9]{2}-[0-9]{2} [A-Z][a-z]{2}\)$'
+for UPS_LOC in C de_DE.UTF-8; do
+  UPS_OUT=$(LANG="$UPS_LOC" LC_TIME="$UPS_LOC" bash -c "$UPS_CMD" 2>/dev/null); UPS_RC=$?
+  UPS_LINES=$(printf '%s\n' "$UPS_OUT" | wc -l | tr -d ' ')
+  expect "time hook: one well-formed line, exit 0 (LANG=$UPS_LOC)" "0 1 match" \
+    "$UPS_RC $UPS_LINES $(printf '%s' "$UPS_OUT" | grep -qE "$UPS_RE" && echo match || echo "no-match[$UPS_OUT]")"
+done
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

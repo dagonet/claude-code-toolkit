@@ -73,13 +73,14 @@ The user can switch to the detailed technical style with `/output-style default`
 
 ```json
 "UserPromptSubmit": [
-  { "hooks": [ { "type": "command", "command": "date '+Current local time: %H:%M (%Y-%m-%d %a)'" } ] }
+  { "hooks": [ { "type": "command", "command": "LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'" } ] }
 ]
 ```
 
 - **Inline on purpose:** no file means nothing to go missing (the context-mode stale-hook incident of 2026-09-26 cannot recur), and consistency check 21 — which fails any `user-level-reference/hooks/` file without a root `hooks/` original — is not involved.
 - Always exits 0; one process per user message; runs whether or not the style is active (hooks cannot see the active style; a correct clock is harmless in the technical style too). ~45 bytes of context per message.
 - Existing hook commands already run through bash on this machine (they use `$?` and `[ ]`), so `date` with a format string works on Windows/Git Bash.
+- `LC_ALL=C` keeps `%a` English (`Sat`, not `Sa`) on a non-English machine, so the line's shape never depends on the locale (found while planning).
 
 ## Component 3 — skill `backlog-board`
 
@@ -103,7 +104,7 @@ The user can switch to the detailed technical style with `/output-style default`
   2. The reference `outputStyle` names a file that exists under `user-level-reference/output-styles/`.
   3. The seven state keys are the same set in `pm-report.md` and `board.html` (pinned together: two copies of one list).
   4. The `UserPromptSubmit` command in the reference settings equals the one this spec names.
-- `scripts/test-hooks.sh`: execute the inline command; stdout matches `^Current local time: [0-2][0-9]:[0-5][0-9] \([0-9]{4}-[0-9]{2}-[0-9]{2}, [A-Z][a-z]{2}\)$`, exit 0.
+- `scripts/test-hooks.sh`: execute the inline command; stdout matches `^Current local time: [0-2][0-9]:[0-5][0-9] \([0-9]{4}-[0-9]{2}-[0-9]{2} [A-Z][a-z]{2}\)$`, exit 0.
 - Context budget: the style is injected at every session start → new measured row in README *The trim pass, measured* and `docs/architecture.md` *Context Budget* (`wc -c`), plus the skill description; per the per-release rule, a fresh measured column for v4.2.0.
 - CHANGELOG v4.2.0 + downstream migration: copy `output-styles/pm-report.md` and `skills/backlog-board/`; add `outputStyle` and the `UserPromptSubmit` entry to `~/.claude/settings.json` (diff live vs reference first — the live file carries machine-specific entries); the default style applies to new sessions; `/output-style default` switches back.
 

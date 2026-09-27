@@ -84,6 +84,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {
