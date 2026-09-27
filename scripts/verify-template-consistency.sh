@@ -3822,9 +3822,19 @@ fi
 # that removes the terminator entirely, which made awk read to end-of-file;
 # the awk program sets `done` only when it finds a real terminator (either
 # shape) and exits non-zero from END otherwise, so a missing terminator
-# still fails on the awk exit code (fix round 1b), and an overrun into a
-# sibling array can no longer happen either, because that sibling's own
-# `]`/`],` is never mistaken for anything but its own close.
+# still fails on the awk exit code (fix round 1b). An overrun into a
+# sibling array is closed by a SEPARATE guard, not by recognising `],` alone:
+# a misindented `UserPromptSubmit` terminator (neither `]` nor `],` at its
+# own indentation) can still be followed by a sibling key line that DOES sit
+# at that same indentation -- fixture 6 (Task 5 fix round 2, second pass)
+# reproduced exactly this and got a false PASS from the `],`-only fix, since
+# nothing stopped the walk before it reached the sibling's own closing
+# bracket. The awk program now also exits 3 the moment it sees ANY line,
+# before a terminator is found, whose first `length(indent)+1` characters
+# are `indent` followed by a double quote -- a new key at UserPromptSubmit's
+# own nesting level, which can only mean UserPromptSubmit's own terminator
+# was already missed (nothing at a deeper nesting level starts a line that
+# way, since every value line here is indented further than its key).
 # ---------------------------------------------------------------------------
 echo
 note "Check 62: user-level-reference/settings.json registers the exact UserPromptSubmit time command, inside the UserPromptSubmit block itself"
@@ -3833,14 +3843,22 @@ if ! grep -q '"UserPromptSubmit"' user-level-reference/settings.json; then
   ko "check 62: user-level-reference/settings.json has no UserPromptSubmit hook"
 else
   c62_block=$(awk '
-    /"UserPromptSubmit"/ { match($0, /^[ \t]*/); indent = substr($0, RSTART, RLENGTH); inb = 1 }
-    inb { print }
-    inb && ($0 == indent "]" || $0 == indent "],") { done = 1; exit }
+    /"UserPromptSubmit"/ {
+      match($0, /^[ \t]*/); indent = substr($0, RSTART, RLENGTH)
+      inb = 1
+      print
+      next
+    }
+    inb {
+      if (index($0, indent "\"") == 1) { exit 3 }
+      print
+      if ($0 == indent "]" || $0 == indent "],") { done = 1; exit }
+    }
     END { if (!done) exit 3 }
   ' user-level-reference/settings.json)
   c62_rc=$?
   if [ "$c62_rc" -ne 0 ] || [ -z "$c62_block" ]; then
-    ko "check 62: found a UserPromptSubmit key but its array has no closing ']' or '],' at the key's own indentation -- cannot determine what command it runs"
+    ko "check 62: found a UserPromptSubmit key but its array has no closing ']' or '],' at the key's own indentation before either a sibling key or end of file -- cannot determine what command it runs"
   elif printf '%s\n' "$c62_block" | grep -qF "\"command\": \"$c62_want\""; then
     ok "check 62: UserPromptSubmit runs: $c62_want"
   else
