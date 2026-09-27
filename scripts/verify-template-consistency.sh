@@ -3752,7 +3752,7 @@ if [ -z "$c60_name" ]; then
   ko "check 60: user-level-reference/settings.json sets no outputStyle"
 elif [ ! -f "$c60_f" ]; then
   ko "check 60: outputStyle is '$c60_name' but $c60_f does not exist"
-elif awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c60_f" | grep -qx "name: $c60_name"; then
+elif awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c60_f" | grep -Fqx "name: $c60_name"; then
   ok "check 60: outputStyle '$c60_name' -> $c60_f (name: matches)"
 else
   ko "check 60: $c60_f exists but its frontmatter 'name:' is not '$c60_name'"
