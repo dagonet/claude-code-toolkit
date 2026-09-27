@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # verify-user-level-drift.sh [--worktree | <git-ref>]
 #
-# Diff user-level-reference/{CLAUDE.md,hooks/**,skills/**,agents/**} against
+# Diff user-level-reference/{CLAUDE.md,hooks/**,skills/**,agents/**,output-styles/**} against
 # the live ~/.claude/ tree.
 #
 # Direction of truth: **the reference leads, the live copy follows.** The repo
@@ -52,7 +52,7 @@
 # gate. Do not read a green run here as evidence about it.
 #
 # SCOPE, AND WHAT IS DELIBERATELY NOT COMPARED.
-# The loop below covers CLAUDE.md + hooks/ + skills/ + agents/.
+# The loop below covers CLAUDE.md + hooks/ + skills/ + agents/ + output-styles/.
 # `user-level-reference/settings.json` is EXCLUDED ON PURPOSE: it is reference
 # material a reader merges by hand, not a file this project installs. A user's
 # own ~/.claude/settings.json legitimately carries their personal permissions,
@@ -157,7 +157,7 @@ check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md"
 
 # The file SET comes from the reference too, not from the working tree: a file
 # added on a branch must not enlarge a released-tree comparison.
-for sub in hooks skills agents; do
+for sub in hooks skills agents output-styles; do
   if [ "$MODE" = "worktree" ]; then
     [ -d "user-level-reference/$sub" ] || continue
     files=$(find "user-level-reference/$sub" -type f)
@@ -177,7 +177,7 @@ done
 # Files on this branch that the released reference does not carry. Reported so
 # an in-flight addition is visible rather than invisible; never a failure.
 if [ "$MODE" = "tag" ]; then
-  for sub in hooks skills agents; do
+  for sub in hooks skills agents output-styles; do
     [ -d "user-level-reference/$sub" ] || continue
     while IFS= read -r f; do
       git cat-file -e "$REF:$f" 2>/dev/null && continue
@@ -338,7 +338,7 @@ processed=0
 processed_list=""
 scanned=0
 scanned_rel=0
-for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks user-level-reference/skills user-level-reference/agents -type f 2>/dev/null); do
+for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks user-level-reference/skills user-level-reference/agents user-level-reference/output-styles -type f 2>/dev/null); do
   [ -f "$f" ] || continue
   rel="${f#user-level-reference/}"
   live="$LIVE_ROOT/$rel"
