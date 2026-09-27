@@ -425,3 +425,13 @@ git commit -F <message file outside the repo>   # "docs(release): v4.2.0 -- CHAN
 3. **Live install — ask the user first** (it edits the live `~/.claude/settings.json`): copy the style and the skill, add the two settings entries after diffing live vs reference; `bash scripts/verify-user-level-drift.sh --worktree` → 0 drift.
 4. **Live acceptance** (spec): a fresh session's first message starts with `[HH:MM]` within a minute of `date`; `/output-style default` switches to the technical style and back; in a scratch project, create a board, change one row via a pinned `batch`, see the page update, no republish.
 5. Open the PR `feat/pm-reporting` → `main`; the user runs the merge. Tag `v4.2.0` and the GitHub release after the merge, as for v4.1.2.
+
+---
+
+## Execution notes (2026-09-27)
+
+Three corrections made during execution, against this plan as written above; the plan's own code blocks are left as originally written (they are a record of what was drafted, not what shipped) — the shipped text is in the files at the commits below.
+
+- **R-3 (`99f50ca`):** check 60's name match is `grep -Fqx`, not `grep -qx` as Task 1 Step 1 wrote it above. A plain `-qx` is a regex match, so `pm.report` (the `.` an unquoted-regex wildcard) matches the literal `pm-report`, which the check's third arm reads as `name:` agreeing with `outputStyle` when the two strings actually differ. `-F` makes the comparison literal, closing that gap.
+- **R-4 (`6e12866`):** the fixture regex and the spec's own command have no comma between the date and the weekday — `\([0-9]{4}-[0-9]{2}-[0-9]{2} [A-Z][a-z]{2}\)`. Task 2 Step 2 above wrote the regex with `, ` (`\([0-9]{4}-[0-9]{2}-[0-9]{2}, [A-Z][a-z]{2}\)`), which never matched the actual command's output (`date '+... (%Y-%m-%d %a)'` prints no comma) and would have failed the fixture the moment it ran for real, not just on perturbation.
+- **R-5 (`5c35ec2`):** check 61b's literal for the update rule is pinned as `each entry pinned with \`if_version\``, not the bare `if_version` string Task 3 Step 1 wrote above. The bare string also matches SKILL.md's Create step, which explicitly notes new documents need "no `if_version`" — so a check written against the bare token stayed green even after the Update step's own pinning sentence was deleted, which is exactly the silent-drift shape check 61 exists to catch. The fix pins the fuller phrase so it can only match the Update rule. Check 61a's diagnostic message was fixed in the same commit to keep multi-word labels whole (`printf '%s;' $c61_style` word-splits on the unquoted expansion, corrupting any label with an internal space in the FAIL message) rather than changing the check's pass/fail logic.
