@@ -3799,16 +3799,35 @@ fi
 # stale-path noise (the context-mode incident, 2026-09-26) and nothing for
 # check 21's mirror walk to orphan. `LC_ALL=C` keeps `%a` English on a
 # non-English machine, so the line's shape never depends on the locale.
+# SCOPED, not whole-file: an earlier cut grepped '"UserPromptSubmit"' and the
+# command literal independently over the whole file, so the exact command
+# sitting under an unrelated hook (e.g. PreToolUse) while UserPromptSubmit
+# held something else read as a false PASS -- reproduced and fixed here
+# (v4.2.0, Task 5 fix round 1). The command must now be found INSIDE the
+# UserPromptSubmit array itself. Extraction assumes this file's own
+# formatting: the array's closing `]` sits at the SAME indentation as the
+# `"UserPromptSubmit":` key line (true for every hooks.* array in this file,
+# confirmed by reading it) -- a reformat that breaks that assumption should
+# make the extract empty or wrong, which fails closed below, not silently.
 # ---------------------------------------------------------------------------
 echo
-note "Check 62: user-level-reference/settings.json registers the exact UserPromptSubmit time command"
+note "Check 62: user-level-reference/settings.json registers the exact UserPromptSubmit time command, inside the UserPromptSubmit block itself"
 c62_want="LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
 if ! grep -q '"UserPromptSubmit"' user-level-reference/settings.json; then
   ko "check 62: user-level-reference/settings.json has no UserPromptSubmit hook"
-elif grep -qF "\"command\": \"$c62_want\"" user-level-reference/settings.json; then
-  ok "check 62: UserPromptSubmit runs: $c62_want"
 else
-  ko "check 62: the UserPromptSubmit command is not exactly: $c62_want"
+  c62_block=$(awk '
+    /"UserPromptSubmit"/ { match($0, /^[ \t]*/); indent = substr($0, RSTART, RLENGTH); inb = 1 }
+    inb { print }
+    inb && $0 == indent "]" { exit }
+  ' user-level-reference/settings.json)
+  if [ -z "$c62_block" ]; then
+    ko "check 62: found a UserPromptSubmit key but could not read its array block (empty extract) -- cannot determine what command it runs"
+  elif printf '%s\n' "$c62_block" | grep -qF "\"command\": \"$c62_want\""; then
+    ok "check 62: UserPromptSubmit runs: $c62_want"
+  else
+    ko "check 62: the UserPromptSubmit block's command is not exactly: $c62_want"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
