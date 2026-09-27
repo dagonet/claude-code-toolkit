@@ -3723,15 +3723,24 @@ fi
 # engineering instructions unless its frontmatter says
 # `keep-coding-instructions: true` (Claude Code output-styles docs). Losing
 # the line is silent at runtime, so it must be loud here. Only the exact bare
-# line passes; a missing file or empty frontmatter refuses.
+# line passes; a missing file, an unclosed frontmatter fence (the extractor
+# would otherwise print to EOF), or empty frontmatter all refuse.
 # ---------------------------------------------------------------------------
 echo
 note "Check 59: output style pm-report.md keeps 'keep-coding-instructions: true'"
 c59_f=user-level-reference/output-styles/pm-report.md
 c59_fm=""
-[ -f "$c59_f" ] && c59_fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c59_f")
-if [ -z "$c59_fm" ]; then
-  ko "check 59: $c59_f missing or has no frontmatter"
+c59_rc=1
+if [ -f "$c59_f" ]; then
+  c59_fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{c=1;exit} inb{print} END{if(!c)exit 3}' "$c59_f")
+  c59_rc=$?
+fi
+if [ ! -f "$c59_f" ]; then
+  ko "check 59: $c59_f missing"
+elif [ "$c59_rc" -ne 0 ]; then
+  ko "check 59: $c59_f frontmatter fence is never closed with a second '---' -- cannot read it"
+elif [ -z "$c59_fm" ]; then
+  ko "check 59: $c59_f has no frontmatter"
 elif printf '%s\n' "$c59_fm" | grep -qx 'keep-coding-instructions: true'; then
   ok "check 59: $c59_f keeps keep-coding-instructions: true"
 else
@@ -3742,17 +3751,26 @@ fi
 # Check 60 -- the reference default output style is one this repo ships
 # (v4.2.0). Claude Code falls back silently when `outputStyle` names a style
 # it cannot find, so a rename or typo would switch the default off unnoticed.
-# The file must exist AND its frontmatter `name:` must equal the setting.
+# The file must exist, its frontmatter fence must close (the extractor would
+# otherwise print to EOF), AND its frontmatter `name:` must equal the setting.
 # ---------------------------------------------------------------------------
 echo
 note "Check 60: user-level-reference/settings.json outputStyle names a shipped style"
 c60_name=$(grep -o '"outputStyle": *"[^"]*"' user-level-reference/settings.json | head -1 | sed 's/^"outputStyle": *"//; s/"$//')
 c60_f="user-level-reference/output-styles/$c60_name.md"
+c60_fm=""
+c60_rc=1
+if [ -n "$c60_name" ] && [ -f "$c60_f" ]; then
+  c60_fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{c=1;exit} inb{print} END{if(!c)exit 3}' "$c60_f")
+  c60_rc=$?
+fi
 if [ -z "$c60_name" ]; then
   ko "check 60: user-level-reference/settings.json sets no outputStyle"
 elif [ ! -f "$c60_f" ]; then
   ko "check 60: outputStyle is '$c60_name' but $c60_f does not exist"
-elif awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c60_f" | grep -Fqx "name: $c60_name"; then
+elif [ "$c60_rc" -ne 0 ]; then
+  ko "check 60: $c60_f frontmatter fence is never closed with a second '---' -- cannot read its name:"
+elif printf '%s\n' "$c60_fm" | grep -Fqx "name: $c60_name"; then
   ok "check 60: outputStyle '$c60_name' -> $c60_f (name: matches)"
 else
   ko "check 60: $c60_f exists but its frontmatter 'name:' is not '$c60_name'"
@@ -3764,8 +3782,9 @@ fi
 #     the same set of exactly seven -- two copies of one list drift apart
 #     silently otherwise. Empty or partial reads refuse.
 # (b) The backlog-board skill states the three data rules whose breach fails
-#     silently at runtime (rows without `order` vanish, unpinned writes are
-#     refused, republishing churns versions without touching data).
+#     silently at runtime (rows without `order` vanish, an unpinned write can
+#     overwrite a change made since it was read, republishing churns versions
+#     without touching data).
 # ---------------------------------------------------------------------------
 echo
 note "Check 61: report states identical in pm-report.md and board.html; board data rules stated"

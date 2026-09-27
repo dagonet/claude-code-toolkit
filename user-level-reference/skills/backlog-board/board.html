@@ -117,8 +117,9 @@ footer{color:var(--muted);font-size:13px;max-width:65ch}
     tally.textContent = "";
     var counts = {};
     items.forEach(function (it) {
-      var st = STATES[it.state] || STATES.open;
-      counts[it.state] = (counts[it.state] || 0) + 1;
+      var key = STATES[it.state] ? it.state : "open";
+      var st = STATES[key];
+      counts[key] = (counts[key] || 0) + 1;
       var li = document.createElement("li");
       var t = document.createElement("span");
       t.className = "title";
