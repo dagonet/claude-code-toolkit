@@ -3780,11 +3780,11 @@ if [ "$c61_ns" -ne 7 ] || [ "$c61_nb" -ne 7 ]; then
 elif [ "$c61_style" = "$c61_board" ]; then
   ok "check 61a: the 7 report states match between pm-report.md and board.html"
 else
-  ko "check 61a: state labels differ -- style: [$(printf '%s;' $c61_style)] board: [$(printf '%s;' $c61_board)]"
+  ko "check 61a: state labels differ -- style: [$(printf '%s' "$c61_style" | tr '\n' ';')] board: [$(printf '%s' "$c61_board" | tr '\n' ';')]"
 fi
 c61_skill=user-level-reference/skills/backlog-board/SKILL.md
 c61_missing=""
-for c61_lit in 'Every row needs an `order`' 'if_version' 'Never republish the page for a data change'; do
+for c61_lit in 'Every row needs an `order`' 'each entry pinned with `if_version`' 'Never republish the page for a data change'; do
   grep -qF "$c61_lit" "$c61_skill" 2>/dev/null || c61_missing="$c61_missing [$c61_lit]"
 done
 if [ -z "$c61_missing" ]; then
