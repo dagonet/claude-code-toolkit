@@ -3805,16 +3805,26 @@ fi
 # held something else read as a false PASS -- reproduced and fixed here
 # (v4.2.0, Task 5 fix round 1). The command must now be found INSIDE the
 # UserPromptSubmit array itself. Extraction assumes this file's own
-# formatting: the array's closing `]` sits at the SAME indentation as the
-# `"UserPromptSubmit":` key line (true for every hooks.* array in this file,
-# confirmed by reading it). A first cut of this fix only checked for an EMPTY
+# formatting: a hooks.* array closes with EITHER a bare `]` (the array is
+# the LAST key under `hooks`) OR `],` (a trailing comma -- every array that
+# is NOT the last key), at the SAME indentation as its own key line. A first
+# cut of this fix recognised only the bare `]`, which happened to work only
+# because UserPromptSubmit is the last key in the reference file today -- an
+# array that closes with `],` (PreToolUse, PostToolUse) was never matched,
+# so the extract silently overran past its own terminator into the NEXT
+# sibling array and stopped at ITS closing bracket instead; if
+# UserPromptSubmit held the wrong command and a later sibling held the exact
+# one, that read as a false PASS (fixture 5, Task 5 fix round 2 -- reproduced
+# on a scratch file before this fix landed). Both terminator shapes are now
+# accepted. A still-earlier cut of this fix only checked for an EMPTY
 # extract, which can never happen once the key line itself matches (awk
-# always prints at least that one line) -- the real failure mode is a
-# reformat that removes the matching-indentation `]` entirely, which made
-# awk read to end-of-file and silently hand back a huge, wrong extract. The
-# awk program now sets `done` only when it finds that exact terminator and
-# exits non-zero from END otherwise, so a missing terminator fails on the
-# awk exit code, not on emptiness (fix round 1b, same review).
+# always prints at least that one line) -- that failure mode was a reformat
+# that removes the terminator entirely, which made awk read to end-of-file;
+# the awk program sets `done` only when it finds a real terminator (either
+# shape) and exits non-zero from END otherwise, so a missing terminator
+# still fails on the awk exit code (fix round 1b), and an overrun into a
+# sibling array can no longer happen either, because that sibling's own
+# `]`/`],` is never mistaken for anything but its own close.
 # ---------------------------------------------------------------------------
 echo
 note "Check 62: user-level-reference/settings.json registers the exact UserPromptSubmit time command, inside the UserPromptSubmit block itself"
@@ -3825,12 +3835,12 @@ else
   c62_block=$(awk '
     /"UserPromptSubmit"/ { match($0, /^[ \t]*/); indent = substr($0, RSTART, RLENGTH); inb = 1 }
     inb { print }
-    inb && $0 == indent "]" { done = 1; exit }
+    inb && ($0 == indent "]" || $0 == indent "],") { done = 1; exit }
     END { if (!done) exit 3 }
   ' user-level-reference/settings.json)
   c62_rc=$?
   if [ "$c62_rc" -ne 0 ] || [ -z "$c62_block" ]; then
-    ko "check 62: found a UserPromptSubmit key but its array has no closing ']' at the key's own indentation -- cannot determine what command it runs"
+    ko "check 62: found a UserPromptSubmit key but its array has no closing ']' or '],' at the key's own indentation -- cannot determine what command it runs"
   elif printf '%s\n' "$c62_block" | grep -qF "\"command\": \"$c62_want\""; then
     ok "check 62: UserPromptSubmit runs: $c62_want"
   else
