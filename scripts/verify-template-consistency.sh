@@ -3807,8 +3807,14 @@ fi
 # UserPromptSubmit array itself. Extraction assumes this file's own
 # formatting: the array's closing `]` sits at the SAME indentation as the
 # `"UserPromptSubmit":` key line (true for every hooks.* array in this file,
-# confirmed by reading it) -- a reformat that breaks that assumption should
-# make the extract empty or wrong, which fails closed below, not silently.
+# confirmed by reading it). A first cut of this fix only checked for an EMPTY
+# extract, which can never happen once the key line itself matches (awk
+# always prints at least that one line) -- the real failure mode is a
+# reformat that removes the matching-indentation `]` entirely, which made
+# awk read to end-of-file and silently hand back a huge, wrong extract. The
+# awk program now sets `done` only when it finds that exact terminator and
+# exits non-zero from END otherwise, so a missing terminator fails on the
+# awk exit code, not on emptiness (fix round 1b, same review).
 # ---------------------------------------------------------------------------
 echo
 note "Check 62: user-level-reference/settings.json registers the exact UserPromptSubmit time command, inside the UserPromptSubmit block itself"
@@ -3819,10 +3825,12 @@ else
   c62_block=$(awk '
     /"UserPromptSubmit"/ { match($0, /^[ \t]*/); indent = substr($0, RSTART, RLENGTH); inb = 1 }
     inb { print }
-    inb && $0 == indent "]" { exit }
+    inb && $0 == indent "]" { done = 1; exit }
+    END { if (!done) exit 3 }
   ' user-level-reference/settings.json)
-  if [ -z "$c62_block" ]; then
-    ko "check 62: found a UserPromptSubmit key but could not read its array block (empty extract) -- cannot determine what command it runs"
+  c62_rc=$?
+  if [ "$c62_rc" -ne 0 ] || [ -z "$c62_block" ]; then
+    ko "check 62: found a UserPromptSubmit key but its array has no closing ']' at the key's own indentation -- cannot determine what command it runs"
   elif printf '%s\n' "$c62_block" | grep -qF "\"command\": \"$c62_want\""; then
     ok "check 62: UserPromptSubmit runs: $c62_want"
   else
