@@ -3718,6 +3718,47 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 59 -- the pm-report output style keeps Claude Code's engineering
+# instructions (v4.2.0). A custom output style DROPS the built-in software-
+# engineering instructions unless its frontmatter says
+# `keep-coding-instructions: true` (Claude Code output-styles docs). Losing
+# the line is silent at runtime, so it must be loud here. Only the exact bare
+# line passes; a missing file or empty frontmatter refuses.
+# ---------------------------------------------------------------------------
+echo
+note "Check 59: output style pm-report.md keeps 'keep-coding-instructions: true'"
+c59_f=user-level-reference/output-styles/pm-report.md
+c59_fm=""
+[ -f "$c59_f" ] && c59_fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c59_f")
+if [ -z "$c59_fm" ]; then
+  ko "check 59: $c59_f missing or has no frontmatter"
+elif printf '%s\n' "$c59_fm" | grep -qx 'keep-coding-instructions: true'; then
+  ok "check 59: $c59_f keeps keep-coding-instructions: true"
+else
+  ko "check 59: $c59_f frontmatter lacks the exact line 'keep-coding-instructions: true' -- the style would drop Claude Code's engineering instructions"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 60 -- the reference default output style is one this repo ships
+# (v4.2.0). Claude Code falls back silently when `outputStyle` names a style
+# it cannot find, so a rename or typo would switch the default off unnoticed.
+# The file must exist AND its frontmatter `name:` must equal the setting.
+# ---------------------------------------------------------------------------
+echo
+note "Check 60: user-level-reference/settings.json outputStyle names a shipped style"
+c60_name=$(grep -o '"outputStyle": *"[^"]*"' user-level-reference/settings.json | head -1 | sed 's/^"outputStyle": *"//; s/"$//')
+c60_f="user-level-reference/output-styles/$c60_name.md"
+if [ -z "$c60_name" ]; then
+  ko "check 60: user-level-reference/settings.json sets no outputStyle"
+elif [ ! -f "$c60_f" ]; then
+  ko "check 60: outputStyle is '$c60_name' but $c60_f does not exist"
+elif awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c60_f" | grep -qx "name: $c60_name"; then
+  ok "check 60: outputStyle '$c60_name' -> $c60_f (name: matches)"
+else
+  ko "check 60: $c60_f exists but its frontmatter 'name:' is not '$c60_name'"
+fi
+
+# ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
 # server_version; parse_version at every consumer accepts EXACTLY three dotted
 # integers. A `v` or a `-rc1` here makes requires_server_satisfied return False

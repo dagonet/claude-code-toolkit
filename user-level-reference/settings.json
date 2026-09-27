@@ -52,6 +52,7 @@
     ]
   },
   "enableAllProjectMcpServers": true,
+  "outputStyle": "pm-report",
   "hooks": {
     "PreToolUse": [
       {
