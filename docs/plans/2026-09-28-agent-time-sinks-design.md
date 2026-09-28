@@ -12,6 +12,7 @@ Stop agents paying for test runs that prove nothing new, stop the budget brake f
 1. A merge gate never re-runs the `**Test**` legs on a tree whose commit-hook run already passed them (same Test command, same environment, still fresh) — in a project that opts in.
 2. A commit whose staged paths all fall outside a project's declared code paths skips its test run — in a project that opts in — and the merge gate still tests it in full.
 3. A subagent at its tool-call budget can still commit.
+3a. No sub-agent spawn silently runs on the orchestrator's model: a spawn without an explicit model whose type has no model of its own runs on the project default (`sonnet` unless set).
 4. The three command shapes behind the observed hangs and runaway loops are refused before they run, each with one line of advice; every legitimate look-alike still runs.
 5. With every new key unset, every existing project behaves exactly as today.
 
@@ -74,6 +75,25 @@ PreToolUse on `Bash`, in all six variants' settings and mirrored to `user-level-
 - `templates/dotnet/.claude/rules/csharp.md` and `templates/dotnet-maui/.claude/rules/csharp.md` (path-scoped): `Run dotnet format with a relative path (or none): a forward-slash absolute path checks 0 files and exits 0 -- a vacuous pass.`
 - `user-level-reference/CLAUDE.md`, the platform bullet that says to write compound logic to a script file: add `-- write that file with the Write tool, never a heredoc`. Always-loaded bytes grow; measured in the release tables.
 
+## Part C — model floor for spawns without a model (added 2026-09-28, user priority)
+
+**Measured:** general-purpose spawns that pass no `model` run on the orchestrator's model — in the other projects on this machine 31 such runs ran on Opus (29) and Fable (2), about 1 in 7 general-purpose spawns; a passed `model` is always honoured (194 runs). The handbook rule "Never pass `model` in the Agent call — each agent file owns its own" (`AGENT_TEAM.md:58`) is right for typed agents and exactly what causes the expensive fallback for general-purpose and other built-ins. User decision: fix it in v4.3.0, hook + handbook line, default `sonnet`.
+
+### C1. `hooks/model-floor.sh`
+
+PreToolUse on `Agent`, all six variants' settings, mirrored to `user-level-reference/hooks/` + the user-level settings (the cost leak is machine-wide).
+
+1. `tool_input.model` set → exit 0, no output (an explicit choice is never touched).
+2. Resolve `subagent_type`'s agent file — `<project>/.claude/agents/<type>.md`, else `~/.claude/agents/<type>.md`; its frontmatter `model:` is one of `haiku|sonnet|opus|fable` → exit 0 (a typed agent owns its model).
+3. Otherwise (no agent file — `general-purpose` and other built-ins — or `model: inherit`): set the model to the project default — new optional `PROJECT_CONTEXT.md` key `**Subagent default model**:` (one of the four aliases); unset, empty, an unfilled placeholder or an invalid value → `sonnet`. Print `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{…complete original tool_input…,"model":"<default>"}}}` and one stderr note `model-floor: <type> had no model -> <default>`.
+4. Jev routing switched on for this clone (`<git common dir>/jev/config.json` with `"route": true`) → exit 0, no output: the Jev hook applies the same default itself, so two hooks never both rewrite one spawn (their precedence is undefined).
+5. Advisory polarity: no parser / unreadable payload / any error → exit 0, no output (today's behaviour — the spawn inherits). A missing script is silent (the context-mode lesson).
+6. Side effect, stated: `permissionDecision: "allow"` pre-approves that Agent call; a deny from any parallel hook (e.g. `require-skills-block.sh`) still blocks it — verified on a live payload in the implementation plan (shared with Jev Phase 1a's identical question).
+
+### C2. Handbook line
+
+`AGENT_TEAM.md:58` (all six variants, byte-identical): "Never pass `model` in the Agent call — each agent file owns its own." becomes a statement that typed agents own their model and that a spawn of a type without one (general-purpose, built-ins) gets the project default from `hooks/model-floor.sh` unless the orchestrator passes one. **Constraint:** `AGENT_TEAM.md` has 38 B of headroom under check 35's 20,480 B cap — the new sentence must fit, or a redundant sentence elsewhere is trimmed in the same change.
+
 ## Checks and tests
 
 - `scripts/test-hooks.sh` fixtures, two-sided:
@@ -81,6 +101,7 @@ PreToolUse on `Bash`, in all six variants' settings and mirrored to `user-level-
   - A2: reuse on an exact match; full run on a changed Test line, a changed environment, a stale record, a record without the new fields, `rc` ≠ 0, `**Gate extra**` unset.
   - A3: commit at the threshold → exit 0 with warning; `git push` at the threshold → exit 2; wrapped commit → exit 0.
   - B1: every refused shape → exit 2; every look-alike → exit 0; kill switch → exit 0; no parser → exit 0.
+  - C1: explicit model untouched; typed agent with a model untouched; `general-purpose` → `sonnet` with `updatedInput` equal to the input except `model`; `model: inherit` agent → default; `**Subagent default model**: haiku` honoured; invalid/placeholder value → `sonnet`; Jev routing on → no output; no parser → no output, exit 0.
 - `scripts/verify-template-consistency.sh`: existing mirror (21/21a) and registration checks cover B1 automatically; add assertions that the two new keys are documented in every variant's `PROJECT_CONTEXT.md` template as commented, unset examples, and that no variant sets them.
 - The parser matrix runs before tagging (B1 and A3 read the payload through the parser layer).
 
