@@ -51,7 +51,7 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 ## Context Budget
 
-Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant; the version columns are historical `wc -c` figures, the last column is `wc -c` at v4.2.0, 2026-09-27):
+Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant; the version columns are historical `wc -c` figures, the last column is `wc -c` at v4.2.0, 2026-09-28):
 
 | | Baseline (v1.3) | v1.5 | v2.0 | v2.1 | v3.1 (v3.1.0) | v4.0.3 | v4.1.0 | v4.1.1 | v4.1.2 | **v4.2.0** | Loaded |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -178,7 +178,7 @@ Additionally, the 11 merge-owning coder agents carry the merge gate inline in th
 claude-code-toolkit/
 ├── README.md · AGENTS.md · CHANGELOG.md · VERSION · CLAUDE.md   # CLAUDE.md = this repo's own project instructions
 ├── setup-project.sh / setup-project.ps1   # Bootstrap a project from a variant (Linux/macOS · Windows)
-├── hooks/                                 # Root-tracked enforcement hooks (14 scripts) + hooks/lib/; copied whole into projects
+├── hooks/                                 # Root-tracked enforcement hooks (15 scripts) + hooks/lib/; copied whole into projects
 ├── scripts/                               # verify-template-consistency.sh, test-hooks.sh, test-server.sh, verify-consumers.sh, propagation tooling
 ├── server/                                # The template-sync MCP server (Python package template_sync; install.sh / install.ps1; tests/)
 ├── docs/

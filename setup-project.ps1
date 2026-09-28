@@ -1007,7 +1007,7 @@ foreach ($f in $templateFiles) {
         # gitignore is `once` ownership -- no hash regardless of branch above.
         $manifestInfo = Get-ManifestKeyAndOwnership -File $f
         if ($manifestInfo) {
-            $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
+            $manifestFiles[$manifestInfo.Key] = [ordered]@{ ownership = "once" }
         }
         continue
     }
@@ -1028,10 +1028,10 @@ foreach ($f in $templateFiles) {
         $manifestInfo = Get-ManifestKeyAndOwnership -File $f
         if ($manifestInfo) {
             if ($manifestInfo.Ownership -eq "template") {
-                $manifestFiles[$manifestInfo.Key] = @{ ownership = "template"; hash = "sha256:" + (Get-ContentHash $wrapped) }
+                $manifestFiles[$manifestInfo.Key] = [ordered]@{ ownership = "template"; hash = "sha256:" + (Get-ContentHash $wrapped) }
             }
             else {
-                $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
+                $manifestFiles[$manifestInfo.Key] = [ordered]@{ ownership = "once" }
             }
         }
         continue
@@ -1051,7 +1051,7 @@ foreach ($f in $templateFiles) {
         Add-RenderedFile -RelPath $f.RelPath -Text $renderedSeed
         $manifestInfo = Get-ManifestKeyAndOwnership -File $f
         if ($manifestInfo) {
-            $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
+            $manifestFiles[$manifestInfo.Key] = [ordered]@{ ownership = "once" }
         }
         continue
     }
@@ -1089,10 +1089,10 @@ foreach ($f in $templateFiles) {
     $manifestInfo = Get-ManifestKeyAndOwnership -File $f
     if ($manifestInfo) {
         if ($manifestInfo.Ownership -eq "template") {
-            $manifestFiles[$manifestInfo.Key] = @{ ownership = "template"; hash = "sha256:" + (Get-ContentHash $content) }
+            $manifestFiles[$manifestInfo.Key] = [ordered]@{ ownership = "template"; hash = "sha256:" + (Get-ContentHash $content) }
         }
         else {
-            $manifestFiles[$manifestInfo.Key] = @{ ownership = "once" }
+            $manifestFiles[$manifestInfo.Key] = [ordered]@{ ownership = "once" }
         }
     }
 }
@@ -1211,7 +1211,11 @@ if (Test-Path $existingManifestPath) {
         if ($oldManifest.files) {
             foreach ($prop in $oldManifest.files.PSObject.Properties) {
                 if (-not $manifestFiles.ContainsKey($prop.Name)) {
-                    $oldEntry = @{ ownership = $prop.Value.ownership }
+                    # [ordered], like every other manifest entry: a plain @{} serialises its
+                    # keys in a per-process order under PowerShell 7's randomized string
+                    # hashing, so a plain re-run could rewrite identical entries with
+                    # `hash` and `ownership` swapped (measured 1 in 8 processes, 2026-09-28).
+                    $oldEntry = [ordered]@{ ownership = $prop.Value.ownership }
                     if ($prop.Value.PSObject.Properties.Name -contains 'hash') {
                         $oldEntry['hash'] = $prop.Value.hash
                     }
