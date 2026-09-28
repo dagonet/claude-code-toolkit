@@ -359,16 +359,34 @@ TEST_PATHS=$(grep -E "${GC_KEY_PRE}\*\*Test paths\*\*:" "$REPO_PATH/PROJECT_CONT
 case "$TEST_PATHS" in *\{\{*\}\}*) TEST_PATHS="" ;; esac
 if [ -n "$TEST_PATHS" ]; then
   set -f
+  # v4.3.0 A1 fix round 1 (S-4): git pathspec magic (a word beginning with
+  # `:`, e.g. `:(exclude)*`, `:!x`) can make `git status ... -- $TEST_PATHS`
+  # exit 0 with EMPTY output regardless of the real changes -- a silent,
+  # permanent skip that the existing fail-closed guard (which only catches a
+  # non-zero git exit) does not catch. Detected before the git call, with
+  # set -f still in effect since a plain word may itself be a glob.
+  _tp_magic=""
   # shellcheck disable=SC2086 # word-splitting the pathspec list is intended
-  if _tp_hits=$(git -C "$REPO_PATH" status --porcelain --untracked-files=all -- $TEST_PATHS 2>/dev/null); then
+  for _tp_w in $TEST_PATHS; do
+    case "$_tp_w" in
+      :*) _tp_magic=1 ;;
+    esac
+  done
+  if [ -n "$_tp_magic" ]; then
     set +f
-    if [ -z "$_tp_hits" ]; then
-      echo "pre-commit-test: no changed path matches **Test paths** ($TEST_PATHS) -- tests skipped for this commit; the merge gate still runs in full" >&2
-      pct_note test-paths-skip 0
-      exit 0
+    echo "pre-commit-test: WARN **Test paths** uses git pathspec magic (':...'), which can match nothing -- ignoring it and running the tests" >&2
+  else
+    # shellcheck disable=SC2086 # word-splitting the pathspec list is intended
+    if _tp_hits=$(git -C "$REPO_PATH" status --porcelain --untracked-files=all -- $TEST_PATHS 2>/dev/null); then
+      set +f
+      if [ -z "$_tp_hits" ]; then
+        echo "pre-commit-test: no changed path matches **Test paths** ($TEST_PATHS) -- tests skipped for this commit; the merge gate still runs in full" >&2
+        pct_note test-paths-skip 0
+        exit 0
+      fi
     fi
+    set +f
   fi
-  set +f
 fi
 
 # Read test command from PROJECT_CONTEXT.md through GC_KEY_PRE (see the header

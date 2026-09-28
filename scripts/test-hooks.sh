@@ -7276,6 +7276,23 @@ R=$(tp_repo tp_ph "{{TEST_PATHS}}"); echo d > "$R/docs/a.md"
 tp_run "$R" 'git commit -m x'; tp_expect "A1: placeholder -> treated unset" RAN "$R"
 R=$(tp_repo tp_del "src/"); git -C "$R" rm -q seed.txt >/dev/null 2>&1; echo c > "$R/src/k.c"; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" commit -q -m k >/dev/null 2>&1; git -C "$R" rm -q src/k.c >/dev/null 2>&1
 tp_run "$R" 'git commit -m x'; tp_expect "A1: deletion under src/ -> run" RAN "$R"
+# v4.3.0 A1 fix round 1 (S-4): a `:`-leading word is git pathspec magic (e.g.
+# `:(exclude)*`), which can make `git status ... -- $TEST_PATHS` exit 0 with
+# EMPTY output regardless of real changes -- a silent permanent skip the
+# non-zero-exit fail-closed guard alone does not catch. Detected and ignored
+# (falls through to running tests, with a WARN) before the git call.
+tp_expect_warn() { # <label> <repo>
+  if grep -qF "WARN **Test paths** uses git pathspec magic" "$2/.tp_out" 2>/dev/null; then
+    printf 'PASS  %-42s (%s)\n' "$1" "warned"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (%s)\n' "$1" "not warned"; fail=$((fail + 1))
+  fi
+}
+R=$(tp_repo tp_magic1 ":(exclude)*"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-4: pathspec magic alone -> tests run" RAN "$R"
+tp_expect_warn "A1 S-4: pathspec magic alone -> WARN on stderr" "$R"
+R=$(tp_repo tp_magic2 "src/ :(exclude)src/gen"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-4: plain+magic pathspecs, docs-only -> tests run" RAN "$R"
 # ---- end v4.3.0 A1
 
 echo "----------------------------------------------------------------"
