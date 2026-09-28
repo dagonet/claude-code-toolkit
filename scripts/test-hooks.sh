@@ -7230,6 +7230,54 @@ for UPS_LOC in $UPS_LOCS; do
     "$UPS_RC $UPS_LINES $(printf '%s' "$UPS_OUT" | grep -qE "$UPS_RE" && echo match || echo "no-match[$UPS_OUT]")"
 done
 
+# ---- v4.3.0 A1: **Test paths** (opt-in docs-only skip) ----
+TPH=hooks/pre-commit-test.sh
+tp_repo() { # <name> <test-paths-line-or-empty> -> repo whose Test writes a marker file
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\ntouch TP-SUITE-RAN\nexit 0\n' > "$r/tc.sh"
+  { printf '# ctx\n\n- **Test**: `bash tc.sh`\n- **Gate**: `bash tc.sh`\n'; [ -n "$2" ] && printf -- '- **Test paths**: %s\n' "$2"; } > "$r/PROJECT_CONTEXT.md"
+  mkdir -p "$r/src" "$r/docs"; echo "$r"
+}
+# Fixture note (v4.3.0 A1): pre-commit-test.sh captures a PASSING Test
+# command's stdout/stderr to a tempfile and deletes it on success
+# (hooks/pre-commit-test.sh ~:495,525,568-578) -- a marker ECHOED by tc.sh
+# would never reach the hook's own output regardless of whether tc.sh ran. So
+# tc.sh instead touches a marker FILE, a side effect that survives the
+# swallow, inside $REPO_PATH (the hook `cd`s there before eval'ing **Test**).
+tp_run() { printf '%s' "$(mkjson Bash "$2" "$1")" | bash "$ROOT/$TPH" >"$1/.tp_out" 2>&1; }
+tp_expect() { # <label> <want: RAN|SKIP> <repo>
+  # Two-sided: "marker absent" alone is also what an unrelated early exit
+  # (BLOCKED, no-commit-segment, ...) produces. A SKIP verdict must additionally
+  # carry the hook's own **Test paths** skip line, or it is reported as neither.
+  got=SKIP; [ -f "$3/TP-SUITE-RAN" ] && got=RAN
+  if [ "$got" = SKIP ] && ! grep -q 'no changed path matches \*\*Test paths\*\*' "$3/.tp_out" 2>/dev/null; then
+    got=NEITHER
+  fi
+  if [ "$got" = "$2" ]; then printf 'PASS  %-42s (%s)\n' "$1" "$got"; pass=$((pass + 1))
+  else printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$2" "$got"; fail=$((fail + 1)); fi
+}
+R=$(tp_repo tp_unset ""); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: key unset -> tests run" RAN "$R"
+R=$(tp_repo tp_docs "src/"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: docs-only change -> skipped" SKIP "$R"
+R=$(tp_repo tp_code "src/"); echo c > "$R/src/a.c"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: code change -> tests run" RAN "$R"
+R=$(tp_repo tp_addcommit "src/"); echo c > "$R/src/b.c"; echo d > "$R/docs/b.md"
+tp_run "$R" 'git add docs/b.md && git commit -m x'; tp_expect "A1: add&&commit, code unstaged -> run (R-C)" RAN "$R"
+# zz.c is TRACKED and unchanged (committed below) -- it exists only so that,
+# absent set -f, the hook's *own* shell would glob-expand the unquoted
+# pathspec "*.c" against ITS inherited cwd (this repo's root, via the cd
+# below) into the literal "zz.c", a path with no status, silently turning a
+# real code change into a false SKIP. With set -f the pathspec reaches git
+# literally and git's OWN (non-shell) glob matching finds src/g.c.
+R=$(tp_repo tp_glob "*.c"); touch "$R/zz.c"; git -C "$R" add zz.c >/dev/null 2>&1; git -C "$R" commit -q -m zz >/dev/null 2>&1; echo c > "$R/src/g.c"
+( cd "$R" && tp_run "$R" 'git commit -m x' ); tp_expect "A1: glob pathspec not shell-expanded" RAN "$R"
+R=$(tp_repo tp_ph "{{TEST_PATHS}}"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: placeholder -> treated unset" RAN "$R"
+R=$(tp_repo tp_del "src/"); git -C "$R" rm -q seed.txt >/dev/null 2>&1; echo c > "$R/src/k.c"; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" commit -q -m k >/dev/null 2>&1; git -C "$R" rm -q src/k.c >/dev/null 2>&1
+tp_run "$R" 'git commit -m x'; tp_expect "A1: deletion under src/ -> run" RAN "$R"
+# ---- end v4.3.0 A1
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

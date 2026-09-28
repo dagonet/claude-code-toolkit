@@ -349,6 +349,28 @@ GC_SEGMENTS
 # a `cd` clause can point anywhere. Absolute, and fixed before any cd below.
 PCT_ARTIFACT_BASE="$REPO_PATH"
 
+# v4.3.0 A1 -- **Test paths** (opt-in). Unset, empty or an unfilled placeholder
+# = test everything (today). When set: skip the Test line only if NO changed
+# path -- staged, unstaged or untracked (R-C: `git add x && git commit` has not
+# staged x yet when this hook runs) -- matches the pathspecs. set -f keeps the
+# shell from expanding a glob pathspec against the cwd. git failing to
+# evaluate the pathspecs falls through to the test run (fail-closed).
+TEST_PATHS=$(grep -E "${GC_KEY_PRE}\*\*Test paths\*\*:" "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed -E "s/${GC_KEY_PRE}\\*\\*Test paths\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" | head -1)
+case "$TEST_PATHS" in *\{\{*\}\}*) TEST_PATHS="" ;; esac
+if [ -n "$TEST_PATHS" ]; then
+  set -f
+  # shellcheck disable=SC2086 # word-splitting the pathspec list is intended
+  if _tp_hits=$(git -C "$REPO_PATH" status --porcelain --untracked-files=all -- $TEST_PATHS 2>/dev/null); then
+    set +f
+    if [ -z "$_tp_hits" ]; then
+      echo "pre-commit-test: no changed path matches **Test paths** ($TEST_PATHS) -- tests skipped for this commit; the merge gate still runs in full" >&2
+      pct_note test-paths-skip 0
+      exit 0
+    fi
+  fi
+  set +f
+fi
+
 # Read test command from PROJECT_CONTEXT.md through GC_KEY_PRE (see the header
 # note on that constant in hooks/lib/git-cmd.sh: a leading UTF-8 BOM otherwise
 # hides a key that sits on line 1, and THIS hook's no-field arm is warn+allow).

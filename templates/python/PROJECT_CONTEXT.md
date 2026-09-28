@@ -13,6 +13,7 @@
 - **Format Command**: {{FORMAT_COMMAND}}
 - **Lint Command**: {{LINT_COMMAND}}
 - **Gate**: {{GATE_COMMAND}}
+<!-- - **Test paths**: src/ tests/ -- optional, unset here by default; unset = every commit runs **Test**; space-separated git pathspecs of code a test could exercise; a commit touching none of them (staged, unstaged or untracked) skips **Test** for that commit only, and the merge gate still runs in full -->
 - **Post-edit build**: none <!-- setup fills {{POST_EDIT_BUILD}}; none = no post-edit build -->
 <!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none

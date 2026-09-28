@@ -3478,11 +3478,20 @@ c41_bad=0
 # still notices readers disappearing.
 #
 # The predicate wants a real reader line -- a `grep -E` against
-# PROJECT_CONTEXT.md naming a **Gate**/**Test** key -- not the prose around it,
-# which mentions both file and key freely.
+# PROJECT_CONTEXT.md naming the EXACT **Gate**/**Test** key (bare, or with the
+# `( Command)?` tolerance) -- not the prose around it, which mentions both file
+# and key freely, and not a DIFFERENT key that merely starts with the same
+# word, e.g. v4.3.0's `**Test paths**:` (hooks/pre-commit-test.sh) or
+# `**Gate extra**:` (a later reader) -- neither ever had an old "... Command"
+# spelling to tolerate, so requiring the tolerance on them would be
+# meaningless, and without this anchor they were caught by the old substring
+# match and flagged as false positives (v4.3.0 A1, tree 502bbbb). Anchoring on
+# the key's closing `\*\*:` -- immediately after the bare name or after the
+# optional `( Command)?` -- keeps the four known readers matched and excludes
+# every other `Gate `.../`Test `... key.
 c41_readers=$(grep -n 'grep -E' hooks/*.sh 2>/dev/null \
               | grep 'PROJECT_CONTEXT\.md' \
-              | grep -E '\\\*\\\*(Gate|Test)')
+              | grep -E '\\\*\\\*(Gate|Test)(\( Command\)\?)?\\\*\\\*:')
 if [ -z "$c41_readers" ]; then
   ko "check 41: found NO declared-key reader lines at all -- the enumerator is broken, or every reader was removed; either way this check is vacuous"
   c41_fail=1
