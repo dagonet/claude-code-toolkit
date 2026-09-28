@@ -46,6 +46,7 @@ Stop agents paying for test runs that prove nothing new, stop the budget brake f
   5. it is fresh under the rule `gate-before-merge.sh` already applies to gate artifacts (3600 s; up to 24 h on tree + environment identity).
 - On reuse, run-gate runs only `**Gate extra**`; on its success the written gate artifact carries `"reused_test": "<record file name>"` and the output says `GATE PASS <sha> (Test legs reused from <record>)`.
 - Any doubt (unreadable record, parser missing, field absent) → full Gate.
+- **Per-leg results (added 2026-09-28 for Jev Phase 1b):** when `**Gate extra**` is set, run-gate records each extra leg's command hash, exit code and duration in the gate artifact (`"legs": [{"sha256": "...", "rc": 0, "elapsed_s": 312}, ...]`), whether or not the Test legs were reused. Legs are the `**Gate extra**` value split only on top-level `&&` outside quotes; if that split is ambiguous (quotes, subshells, here-docs), the whole value is recorded as ONE leg. This is a record only — it changes no decision.
 
 ### A3. Commits pass the budget brake (T3)
 
