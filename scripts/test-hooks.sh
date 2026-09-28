@@ -7209,7 +7209,21 @@ fi
 UPS_CMD=$(grep -o "LC_ALL=C date '+Current local time: [^']*'" "$ROOT/user-level-reference/settings.json" | head -1)
 expect "time hook: command present in reference settings" "yes" "$([ -n "$UPS_CMD" ] && echo yes || echo no)"
 UPS_RE='^Current local time: [0-2][0-9]:[0-5][0-9] \([0-9]{4}-[0-9]{2}-[0-9]{2} [A-Z][a-z]{2}\)$'
-for UPS_LOC in C de_DE.UTF-8; do
+# Precondition: de_DE.UTF-8 must actually be installed on this host, or the
+# LC_ALL=C-wins assertion below would trivially pass for the wrong reason (no
+# German locale present to override). Strip the LC_ALL=C prefix and run the
+# bare command under LANG/LC_TIME=de_DE.UTF-8; if the day name still comes
+# back English, the locale is not installed here and that row is skipped by
+# name instead of run.
+UPS_CMD_NOLOCALE="${UPS_CMD#LC_ALL=C }"
+UPS_PRECHECK=$(LANG=de_DE.UTF-8 LC_TIME=de_DE.UTF-8 bash -c "$UPS_CMD_NOLOCALE" 2>/dev/null)
+if printf '%s' "$UPS_PRECHECK" | grep -qE '[[:space:]](Mon|Tue|Wed|Thu|Fri|Sat|Sun)\)$'; then
+  skip "time hook: one well-formed line, exit 0 (LANG=de_DE.UTF-8)" "de_DE.UTF-8 locale not installed on this host"
+  UPS_LOCS="C"
+else
+  UPS_LOCS="C de_DE.UTF-8"
+fi
+for UPS_LOC in $UPS_LOCS; do
   UPS_OUT=$(LANG="$UPS_LOC" LC_TIME="$UPS_LOC" bash -c "$UPS_CMD" 2>/dev/null); UPS_RC=$?
   UPS_LINES=$(printf '%s\n' "$UPS_OUT" | wc -l | tr -d ' ')
   expect "time hook: one well-formed line, exit 0 (LANG=$UPS_LOC)" "0 1 match" \

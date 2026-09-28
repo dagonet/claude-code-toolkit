@@ -3735,14 +3735,20 @@ if [ -f "$c59_f" ]; then
   c59_fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{c=1;exit} inb{print} END{if(!c)exit 3}' "$c59_f")
   c59_rc=$?
 fi
+c59_nkey=0
+if [ -n "$c59_fm" ]; then
+  c59_nkey=$(printf '%s\n' "$c59_fm" | grep -c '^keep-coding-instructions:')
+fi
 if [ ! -f "$c59_f" ]; then
   ko "check 59: $c59_f missing"
 elif [ "$c59_rc" -ne 0 ]; then
   ko "check 59: $c59_f frontmatter fence is never closed with a second '---' -- cannot read it"
 elif [ -z "$c59_fm" ]; then
   ko "check 59: $c59_f has no frontmatter"
+elif [ "$c59_nkey" -ne 1 ]; then
+  ko "check 59: $c59_f frontmatter has $c59_nkey 'keep-coding-instructions:' lines, expected exactly 1 -- a duplicate key's effective value is ambiguous"
 elif printf '%s\n' "$c59_fm" | grep -qx 'keep-coding-instructions: true'; then
-  ok "check 59: $c59_f keeps keep-coding-instructions: true"
+  ok "check 59: $c59_f keeps keep-coding-instructions: true (exactly one key)"
 else
   ko "check 59: $c59_f frontmatter lacks the exact line 'keep-coding-instructions: true' -- the style would drop Claude Code's engineering instructions"
 fi
@@ -3777,17 +3783,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 61 -- the seven report states are ONE list in two files (v4.2.0).
+# Check 61 -- the seven report states are ONE list in three places (v4.2.0).
 # (a) The pm-report style's rule-5 line and board.html's STATES labels must be
 #     the same set of exactly seven -- two copies of one list drift apart
 #     silently otherwise. Empty or partial reads refuse.
 # (b) The backlog-board skill states the three data rules whose breach fails
-#     silently at runtime (rows without `order` vanish, an unpinned write can
-#     overwrite a change made since it was read, republishing churns versions
-#     without touching data).
+#     silently at runtime (rows without `order` sort last, out of place, an
+#     unpinned write can overwrite a change made since it was read,
+#     republishing churns versions without touching data).
+# (c) The backlog-board SKILL.md `## States` table's key->label pairs must
+#     equal board.html's STATES object's key->label pairs -- a key typo in
+#     either file breaks the pairing silently otherwise (an item with that
+#     key would render as an unknown-state chip instead of its intended
+#     label). Exactly seven pairs on each side; empty or partial reads
+#     refuse.
 # ---------------------------------------------------------------------------
 echo
-note "Check 61: report states identical in pm-report.md and board.html; board data rules stated"
+note "Check 61: report states identical in pm-report.md and board.html; board data rules stated; SKILL.md/board.html key->label pairs match"
 c61_style=$(grep -m1 '^5\. \*\*States (exactly these):\*\* ' user-level-reference/output-styles/pm-report.md 2>/dev/null \
   | sed 's/^5\. \*\*States (exactly these):\*\* //' | tr -d '\r' | sed 's/, /\n/g' | sort)
 c61_board=$(grep -o 'label: "[^"]*"' user-level-reference/skills/backlog-board/board.html 2>/dev/null \
@@ -3810,6 +3822,19 @@ if [ -z "$c61_missing" ]; then
   ok "check 61b: backlog-board SKILL.md states the order / if_version / no-republish rules"
 else
   ko "check 61b: $c61_skill missing:$c61_missing"
+fi
+c61c_skill=$(grep -oE '^\| `[a-z]+` \| [^|]+ \|$' "$c61_skill" 2>/dev/null \
+  | sed -E 's/^\| `([a-z]+)` \| (.+) \|$/\1:\2/' | sort)
+c61c_board=$(grep -oE '"[a-z]+": \{label: "[^"]*"' user-level-reference/skills/backlog-board/board.html 2>/dev/null \
+  | sed -E 's/^"([a-z]+)": \{label: "([^"]*)"$/\1:\2/' | sort)
+c61c_ns=$(printf '%s\n' "$c61c_skill" | grep -c .)
+c61c_nb=$(printf '%s\n' "$c61c_board" | grep -c .)
+if [ "$c61c_ns" -ne 7 ] || [ "$c61c_nb" -ne 7 ]; then
+  ko "check 61c: expected 7 key->label pairs on each side, read skill=$c61c_ns board=$c61c_nb"
+elif [ "$c61c_skill" = "$c61c_board" ]; then
+  ok "check 61c: the 7 key->label pairs match between SKILL.md's States table and board.html's STATES object"
+else
+  ko "check 61c: key->label pairs differ -- skill: [$(printf '%s' "$c61c_skill" | tr '\n' ';')] board: [$(printf '%s' "$c61c_board" | tr '\n' ';')]"
 fi
 
 # ---------------------------------------------------------------------------
@@ -3856,7 +3881,7 @@ fi
 # way, since every value line here is indented further than its key).
 # ---------------------------------------------------------------------------
 echo
-note "Check 62: user-level-reference/settings.json registers the exact UserPromptSubmit time command, inside the UserPromptSubmit block itself"
+note "Check 62: user-level-reference/settings.json's UserPromptSubmit block has exactly one command, equal to the exact time command"
 c62_want="LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
 if ! grep -q '"UserPromptSubmit"' user-level-reference/settings.json; then
   ko "check 62: user-level-reference/settings.json has no UserPromptSubmit hook"
@@ -3878,10 +3903,15 @@ else
   c62_rc=$?
   if [ "$c62_rc" -ne 0 ] || [ -z "$c62_block" ]; then
     ko "check 62: found a UserPromptSubmit key but its array has no closing ']' or '],' at the key's own indentation before either a sibling key or end of file -- cannot determine what command it runs"
-  elif printf '%s\n' "$c62_block" | grep -qF "\"command\": \"$c62_want\""; then
-    ok "check 62: UserPromptSubmit runs: $c62_want"
   else
-    ko "check 62: the UserPromptSubmit block's command is not exactly: $c62_want"
+    c62_ncmd=$(printf '%s\n' "$c62_block" | grep -c '"command":')
+    if [ "$c62_ncmd" -ne 1 ]; then
+      ko "check 62: expected exactly one \"command\": line in the UserPromptSubmit block, found $c62_ncmd"
+    elif printf '%s\n' "$c62_block" | grep -qF "\"command\": \"$c62_want\""; then
+      ok "check 62: UserPromptSubmit runs exactly one command, equal to: $c62_want"
+    else
+      ko "check 62: the UserPromptSubmit block's command is not exactly: $c62_want"
+    fi
   fi
 fi
 

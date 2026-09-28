@@ -26,7 +26,7 @@ If the user declines, record `Backlog board: declined` in this project's auto-me
 1. Load the `artifact-capabilities` skill (required before passing `capabilities`).
 2. Copy `~/.claude/skills/backlog-board/board.html` into the session scratchpad and replace `__PROJECT_NAME__` with the project's plain name.
 3. Publish it with the Artifact tool: `capabilities: {"db": {}}`, icon `list`, a one-sentence description. It is private by default.
-4. Seed the data with ONE `ArtifactData` `batch` of `set` writes (new documents, so no `if_version`): collection `backlog`, doc ids `item-01`, `item-02`, ..., data `{order, title, state, note}`; and collection `meta`, doc `latest`, data `{headline, updated}`. Every row needs an `order` -- the page sorts by it, and a row without one is shown out of order or not at all. `updated` is an ISO 8601 string from `date -Iseconds`.
+4. Seed the data with ONE `ArtifactData` `batch` of `set` writes (new documents, so no `if_version`): collection `backlog`, doc ids `item-01`, `item-02`, ..., data `{order, title, state, note}`; and collection `meta`, doc `latest`, data `{headline, updated}`. Every row needs an `order` -- the page sorts by it, and a row without one is shown at the end, out of place. `updated` is an ISO 8601 string from `date -Iseconds`.
 5. Record the page address in this project's auto-memory as a `project` memory ("Backlog board: <url>"). Never in a committed file.
 
 ## Update -- on every state change

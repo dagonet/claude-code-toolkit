@@ -63,6 +63,7 @@ ol.board li{background:var(--surface);border:1px solid var(--line);border-radius
 .s-open{color:var(--open);background:var(--open-bg)}
 .s-waiting{color:var(--waiting);background:var(--waiting-bg)}
 .s-blocked{color:var(--blocked);background:var(--blocked-bg)}
+.s-unknown{color:var(--muted);background:var(--open-bg);border:1px dashed var(--line)}
 .offline{color:var(--muted);font-size:14px}
 footer{color:var(--muted);font-size:13px;max-width:65ch}
 @media (max-width:480px){ol.board li{grid-template-columns:1fr}.chip{justify-self:start}}
@@ -116,17 +117,23 @@ footer{color:var(--muted);font-size:13px;max-width:65ch}
     board.textContent = "";
     tally.textContent = "";
     var counts = {};
+    var unknownCount = 0;
     items.forEach(function (it) {
-      var key = STATES[it.state] ? it.state : "open";
-      var st = STATES[key];
-      counts[key] = (counts[key] || 0) + 1;
+      var st = STATES[it.state];
       var li = document.createElement("li");
       var t = document.createElement("span");
       t.className = "title";
       t.textContent = it.title || "";
       var c = document.createElement("span");
-      c.className = "chip " + st.cls;
-      c.textContent = st.label;
+      if (st) {
+        counts[it.state] = (counts[it.state] || 0) + 1;
+        c.className = "chip " + st.cls;
+        c.textContent = st.label;
+      } else {
+        unknownCount += 1;
+        c.className = "chip s-unknown";
+        c.textContent = "Unknown state: " + (it.state ? it.state : "(none)");
+      }
       li.appendChild(t);
       li.appendChild(c);
       if (it.note) {
@@ -144,6 +151,12 @@ footer{color:var(--muted);font-size:13px;max-width:65ch}
       s.textContent = counts[k] + " " + STATES[k].label;
       tally.appendChild(s);
     });
+    if (unknownCount) {
+      var u = document.createElement("span");
+      u.className = "s-unknown";
+      u.textContent = unknownCount + " Unknown";
+      tally.appendChild(u);
+    }
   }
 
   function renderNews(d) {
