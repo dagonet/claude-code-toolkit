@@ -52,6 +52,7 @@
     ]
   },
   "enableAllProjectMcpServers": true,
+  "outputStyle": "pm-report",
   "hooks": {
     "PreToolUse": [
       {
@@ -80,6 +81,16 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/bash-output-guard.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
           }
         ]
       }

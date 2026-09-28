@@ -3718,6 +3718,204 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 59 -- the pm-report output style keeps Claude Code's engineering
+# instructions (v4.2.0). A custom output style DROPS the built-in software-
+# engineering instructions unless its frontmatter says
+# `keep-coding-instructions: true` (Claude Code output-styles docs). Losing
+# the line is silent at runtime, so it must be loud here. Only the exact bare
+# line passes; a missing file, an unclosed frontmatter fence (the extractor
+# would otherwise print to EOF), or empty frontmatter all refuse.
+# ---------------------------------------------------------------------------
+echo
+note "Check 59: output style pm-report.md keeps 'keep-coding-instructions: true'"
+c59_f=user-level-reference/output-styles/pm-report.md
+c59_fm=""
+c59_rc=1
+if [ -f "$c59_f" ]; then
+  c59_fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{c=1;exit} inb{print} END{if(!c)exit 3}' "$c59_f")
+  c59_rc=$?
+fi
+c59_nkey=0
+if [ -n "$c59_fm" ]; then
+  c59_nkey=$(printf '%s\n' "$c59_fm" | grep -c '^keep-coding-instructions:')
+fi
+if [ ! -f "$c59_f" ]; then
+  ko "check 59: $c59_f missing"
+elif [ "$c59_rc" -ne 0 ]; then
+  ko "check 59: $c59_f frontmatter fence is never closed with a second '---' -- cannot read it"
+elif [ -z "$c59_fm" ]; then
+  ko "check 59: $c59_f has no frontmatter"
+elif [ "$c59_nkey" -ne 1 ]; then
+  ko "check 59: $c59_f frontmatter has $c59_nkey 'keep-coding-instructions:' lines, expected exactly 1 -- a duplicate key's effective value is ambiguous"
+elif printf '%s\n' "$c59_fm" | grep -qx 'keep-coding-instructions: true'; then
+  ok "check 59: $c59_f keeps keep-coding-instructions: true (exactly one key)"
+else
+  ko "check 59: $c59_f frontmatter lacks the exact line 'keep-coding-instructions: true' -- the style would drop Claude Code's engineering instructions"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 60 -- the reference default output style is one this repo ships
+# (v4.2.0). Claude Code falls back silently when `outputStyle` names a style
+# it cannot find, so a rename or typo would switch the default off unnoticed.
+# The file must exist, its frontmatter fence must close (the extractor would
+# otherwise print to EOF), AND its frontmatter `name:` must equal the setting.
+# ---------------------------------------------------------------------------
+echo
+note "Check 60: user-level-reference/settings.json outputStyle names a shipped style"
+c60_name=$(grep -o '"outputStyle": *"[^"]*"' user-level-reference/settings.json | head -1 | sed 's/^"outputStyle": *"//; s/"$//')
+c60_f="user-level-reference/output-styles/$c60_name.md"
+c60_fm=""
+c60_rc=1
+if [ -n "$c60_name" ] && [ -f "$c60_f" ]; then
+  c60_fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{c=1;exit} inb{print} END{if(!c)exit 3}' "$c60_f")
+  c60_rc=$?
+fi
+if [ -z "$c60_name" ]; then
+  ko "check 60: user-level-reference/settings.json sets no outputStyle"
+elif [ ! -f "$c60_f" ]; then
+  ko "check 60: outputStyle is '$c60_name' but $c60_f does not exist"
+elif [ "$c60_rc" -ne 0 ]; then
+  ko "check 60: $c60_f frontmatter fence is never closed with a second '---' -- cannot read its name:"
+elif printf '%s\n' "$c60_fm" | grep -Fqx "name: $c60_name"; then
+  ok "check 60: outputStyle '$c60_name' -> $c60_f (name: matches)"
+else
+  ko "check 60: $c60_f exists but its frontmatter 'name:' is not '$c60_name'"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 61 -- the seven report states are ONE list in three places (v4.2.0).
+# (a) The pm-report style's rule-5 line and board.html's STATES labels must be
+#     the same set of exactly seven -- two copies of one list drift apart
+#     silently otherwise. Empty or partial reads refuse.
+# (b) The backlog-board skill states the three data rules whose breach fails
+#     silently at runtime (rows without `order` sort last, out of place, an
+#     unpinned write can overwrite a change made since it was read,
+#     republishing churns versions without touching data).
+# (c) The backlog-board SKILL.md `## States` table's key->label pairs must
+#     equal board.html's STATES object's key->label pairs -- a key typo in
+#     either file breaks the pairing silently otherwise (an item with that
+#     key would render as an unknown-state chip instead of its intended
+#     label). Exactly seven pairs on each side; empty or partial reads
+#     refuse.
+# ---------------------------------------------------------------------------
+echo
+note "Check 61: report states identical in pm-report.md and board.html; board data rules stated; SKILL.md/board.html key->label pairs match"
+c61_style=$(grep -m1 '^5\. \*\*States (exactly these):\*\* ' user-level-reference/output-styles/pm-report.md 2>/dev/null \
+  | sed 's/^5\. \*\*States (exactly these):\*\* //' | tr -d '\r' | sed 's/, /\n/g' | sort)
+c61_board=$(grep -o 'label: "[^"]*"' user-level-reference/skills/backlog-board/board.html 2>/dev/null \
+  | sed 's/^label: "//; s/"$//' | sort)
+c61_ns=$(printf '%s\n' "$c61_style" | grep -c .)
+c61_nb=$(printf '%s\n' "$c61_board" | grep -c .)
+if [ "$c61_ns" -ne 7 ] || [ "$c61_nb" -ne 7 ]; then
+  ko "check 61a: expected 7 states on each side, read style=$c61_ns board=$c61_nb"
+elif [ "$c61_style" = "$c61_board" ]; then
+  ok "check 61a: the 7 report states match between pm-report.md and board.html"
+else
+  ko "check 61a: state labels differ -- style: [$(printf '%s' "$c61_style" | tr '\n' ';')] board: [$(printf '%s' "$c61_board" | tr '\n' ';')]"
+fi
+c61_skill=user-level-reference/skills/backlog-board/SKILL.md
+c61_missing=""
+for c61_lit in 'Every row needs an `order`' 'each entry pinned with `if_version`' 'Never republish the page for a data change'; do
+  grep -qF "$c61_lit" "$c61_skill" 2>/dev/null || c61_missing="$c61_missing [$c61_lit]"
+done
+if [ -z "$c61_missing" ]; then
+  ok "check 61b: backlog-board SKILL.md states the order / if_version / no-republish rules"
+else
+  ko "check 61b: $c61_skill missing:$c61_missing"
+fi
+c61c_skill=$(grep -oE '^\| `[a-z]+` \| [^|]+ \|$' "$c61_skill" 2>/dev/null \
+  | sed -E 's/^\| `([a-z]+)` \| (.+) \|$/\1:\2/' | sort)
+c61c_board=$(grep -oE '"[a-z]+": \{label: "[^"]*"' user-level-reference/skills/backlog-board/board.html 2>/dev/null \
+  | sed -E 's/^"([a-z]+)": \{label: "([^"]*)"$/\1:\2/' | sort)
+c61c_ns=$(printf '%s\n' "$c61c_skill" | grep -c .)
+c61c_nb=$(printf '%s\n' "$c61c_board" | grep -c .)
+if [ "$c61c_ns" -ne 7 ] || [ "$c61c_nb" -ne 7 ]; then
+  ko "check 61c: expected 7 key->label pairs on each side, read skill=$c61c_ns board=$c61c_nb"
+elif [ "$c61c_skill" = "$c61c_board" ]; then
+  ok "check 61c: the 7 key->label pairs match between SKILL.md's States table and board.html's STATES object"
+else
+  ko "check 61c: key->label pairs differ -- skill: [$(printf '%s' "$c61c_skill" | tr '\n' ';')] board: [$(printf '%s' "$c61c_board" | tr '\n' ';')]"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 62 -- the reference UserPromptSubmit time hook is the exact inline
+# command the v4.2.0 spec names. Inline on purpose: no script file means no
+# stale-path noise (the context-mode incident, 2026-09-26) and nothing for
+# check 21's mirror walk to orphan. `LC_ALL=C` keeps `%a` English on a
+# non-English machine, so the line's shape never depends on the locale.
+# SCOPED, not whole-file: an earlier cut grepped '"UserPromptSubmit"' and the
+# command literal independently over the whole file, so the exact command
+# sitting under an unrelated hook (e.g. PreToolUse) while UserPromptSubmit
+# held something else read as a false PASS -- reproduced and fixed here
+# (v4.2.0, Task 5 fix round 1). The command must now be found INSIDE the
+# UserPromptSubmit array itself. Extraction assumes this file's own
+# formatting: a hooks.* array closes with EITHER a bare `]` (the array is
+# the LAST key under `hooks`) OR `],` (a trailing comma -- every array that
+# is NOT the last key), at the SAME indentation as its own key line. A first
+# cut of this fix recognised only the bare `]`, which happened to work only
+# because UserPromptSubmit is the last key in the reference file today -- an
+# array that closes with `],` (PreToolUse, PostToolUse) was never matched,
+# so the extract silently overran past its own terminator into the NEXT
+# sibling array and stopped at ITS closing bracket instead; if
+# UserPromptSubmit held the wrong command and a later sibling held the exact
+# one, that read as a false PASS (fixture 5, Task 5 fix round 2 -- reproduced
+# on a scratch file before this fix landed). Both terminator shapes are now
+# accepted. A still-earlier cut of this fix only checked for an EMPTY
+# extract, which can never happen once the key line itself matches (awk
+# always prints at least that one line) -- that failure mode was a reformat
+# that removes the terminator entirely, which made awk read to end-of-file;
+# the awk program sets `done` only when it finds a real terminator (either
+# shape) and exits non-zero from END otherwise, so a missing terminator
+# still fails on the awk exit code (fix round 1b). An overrun into a
+# sibling array is closed by a SEPARATE guard, not by recognising `],` alone:
+# a misindented `UserPromptSubmit` terminator (neither `]` nor `],` at its
+# own indentation) can still be followed by a sibling key line that DOES sit
+# at that same indentation -- fixture 6 (Task 5 fix round 2, second pass)
+# reproduced exactly this and got a false PASS from the `],`-only fix, since
+# nothing stopped the walk before it reached the sibling's own closing
+# bracket. The awk program now also exits 3 the moment it sees ANY line,
+# before a terminator is found, whose first `length(indent)+1` characters
+# are `indent` followed by a double quote -- a new key at UserPromptSubmit's
+# own nesting level, which can only mean UserPromptSubmit's own terminator
+# was already missed (nothing at a deeper nesting level starts a line that
+# way, since every value line here is indented further than its key).
+# ---------------------------------------------------------------------------
+echo
+note "Check 62: user-level-reference/settings.json's UserPromptSubmit block has exactly one command, equal to the exact time command"
+c62_want="LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
+if ! grep -q '"UserPromptSubmit"' user-level-reference/settings.json; then
+  ko "check 62: user-level-reference/settings.json has no UserPromptSubmit hook"
+else
+  c62_block=$(awk '
+    /"UserPromptSubmit"/ {
+      match($0, /^[ \t]*/); indent = substr($0, RSTART, RLENGTH)
+      inb = 1
+      print
+      next
+    }
+    inb {
+      if (index($0, indent "\"") == 1) { exit 3 }
+      print
+      if ($0 == indent "]" || $0 == indent "],") { done = 1; exit }
+    }
+    END { if (!done) exit 3 }
+  ' user-level-reference/settings.json)
+  c62_rc=$?
+  if [ "$c62_rc" -ne 0 ] || [ -z "$c62_block" ]; then
+    ko "check 62: found a UserPromptSubmit key but its array has no closing ']' or '],' at the key's own indentation before either a sibling key or end of file -- cannot determine what command it runs"
+  else
+    c62_ncmd=$(printf '%s\n' "$c62_block" | grep -c '"command":')
+    if [ "$c62_ncmd" -ne 1 ]; then
+      ko "check 62: expected exactly one \"command\": line in the UserPromptSubmit block, found $c62_ncmd"
+    elif printf '%s\n' "$c62_block" | grep -qF "\"command\": \"$c62_want\""; then
+      ok "check 62: UserPromptSubmit runs exactly one command, equal to: $c62_want"
+    else
+      ko "check 62: the UserPromptSubmit block's command is not exactly: $c62_want"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
 # server_version; parse_version at every consumer accepts EXACTLY three dotted
 # integers. A `v` or a `-rc1` here makes requires_server_satisfied return False

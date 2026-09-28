@@ -1,0 +1,185 @@
+<title>Backlog Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+:root{
+  --bg:#f3f4f2;--surface:#ffffff;--ink:#16191c;--muted:#5d6670;--line:#dfe2e0;
+  --accent:#d1361f;
+  --done:#1f7a4d;--done-bg:#e3f2ea;
+  --progress:#1c5fb8;--progress-bg:#e3ecf8;
+  --testing:#7a4bb3;--testing-bg:#efe7f8;
+  --rework:#b35a00;--rework-bg:#fbeedd;
+  --open:#5d6670;--open-bg:#eceeed;
+  --waiting:#a8123a;--waiting-bg:#fbe4ea;
+  --blocked:#16191c;--blocked-bg:#dcdedd;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#121517;--surface:#1b1f22;--ink:#eceeed;--muted:#9aa3ab;--line:#2b3136;
+    --accent:#ff6a4d;
+    --done:#5fd197;--done-bg:#15301f;
+    --progress:#7fb0f5;--progress-bg:#172638;
+    --testing:#c29bf0;--testing-bg:#2a1f38;
+    --rework:#f0a14d;--rework-bg:#352513;
+    --open:#9aa3ab;--open-bg:#23282c;
+    --waiting:#ff7a9b;--waiting-bg:#3a1621;
+    --blocked:#eceeed;--blocked-bg:#30363b;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121517;--surface:#1b1f22;--ink:#eceeed;--muted:#9aa3ab;--line:#2b3136;
+  --accent:#ff6a4d;
+  --done:#5fd197;--done-bg:#15301f;
+  --progress:#7fb0f5;--progress-bg:#172638;
+  --testing:#c29bf0;--testing-bg:#2a1f38;
+  --rework:#f0a14d;--rework-bg:#352513;
+  --open:#9aa3ab;--open-bg:#23282c;
+  --waiting:#ff7a9b;--waiting-bg:#3a1621;
+  --blocked:#eceeed;--blocked-bg:#30363b;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding-inline:16px;padding-block:28px 48px;display:grid;gap:22px}
+header{display:grid;gap:6px;border-bottom:3px solid var(--accent);padding-bottom:14px}
+.eyebrow{font:500 12px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+h1{margin:0;font:700 clamp(30px,6vw,44px)/1 "Barlow Condensed",Impact,sans-serif;letter-spacing:.01em;text-wrap:balance}
+.news{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:6px;padding:14px 16px;display:grid;gap:4px}
+.news p{margin:0;max-width:65ch}
+.stamp{font:500 12px/1.2 "IBM Plex Mono",ui-monospace,monospace;color:var(--muted);font-variant-numeric:tabular-nums}
+.tally{display:flex;flex-wrap:wrap;gap:8px}
+.tally span{font:600 13px/1 "IBM Plex Sans",sans-serif;padding:7px 10px;border-radius:999px}
+ol.board{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+ol.board li{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px 14px;display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:start}
+.title{font-weight:600}
+.note{grid-column:1/-1;color:var(--muted);font-size:14px;max-width:70ch}
+.chip{font:600 12px/1 "IBM Plex Sans",sans-serif;padding:6px 9px;border-radius:999px;white-space:nowrap}
+.s-done{color:var(--done);background:var(--done-bg)}
+.s-progress{color:var(--progress);background:var(--progress-bg)}
+.s-testing{color:var(--testing);background:var(--testing-bg)}
+.s-rework{color:var(--rework);background:var(--rework-bg)}
+.s-open{color:var(--open);background:var(--open-bg)}
+.s-waiting{color:var(--waiting);background:var(--waiting-bg)}
+.s-blocked{color:var(--blocked);background:var(--blocked-bg)}
+.s-unknown{color:var(--muted);background:var(--open-bg);border:1px dashed var(--line)}
+.offline{color:var(--muted);font-size:14px}
+footer{color:var(--muted);font-size:13px;max-width:65ch}
+@media (max-width:480px){ol.board li{grid-template-columns:1fr}.chip{justify-self:start}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">__PROJECT_NAME__ &middot; backlog</div>
+    <h1>Backlog Board</h1>
+  </header>
+
+  <section class="news" aria-live="polite">
+    <div class="stamp" id="newsTime">Waiting for the latest update</div>
+    <p id="newsText">The board fills in when the live data connects.</p>
+  </section>
+
+  <div class="tally" id="tally"></div>
+
+  <ol class="board" id="board">
+    <li><span class="title">Loading the backlog</span><span class="chip s-open">Open</span></li>
+  </ol>
+
+  <p class="offline" id="offline" hidden>Live data is not available in this view, so the list above may be out of date.</p>
+
+  <footer>Claude updates this board whenever an item changes state.</footer>
+</div>
+
+<script>
+(function () {
+  var STATES = {
+    "done": {label: "Done", cls: "s-done"},
+    "progress": {label: "In progress", cls: "s-progress"},
+    "testing": {label: "Testing live", cls: "s-testing"},
+    "rework": {label: "Needs rework", cls: "s-rework"},
+    "open": {label: "Open", cls: "s-open"},
+    "waiting": {label: "Waiting on you", cls: "s-waiting"},
+    "blocked": {label: "Blocked", cls: "s-blocked"}
+  };
+  var ORDER = ["waiting", "rework", "blocked", "testing", "progress", "open", "done"];
+
+  function fmt(iso) {
+    if (!iso) { return ""; }
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) { return String(iso); }
+    return d.toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"});
+  }
+
+  function renderBoard(items) {
+    var board = document.getElementById("board");
+    var tally = document.getElementById("tally");
+    board.textContent = "";
+    tally.textContent = "";
+    var counts = {};
+    var unknownCount = 0;
+    items.forEach(function (it) {
+      var st = Object.prototype.hasOwnProperty.call(STATES, it.state) ? STATES[it.state] : null;
+      var li = document.createElement("li");
+      var t = document.createElement("span");
+      t.className = "title";
+      t.textContent = it.title || "";
+      var c = document.createElement("span");
+      if (st) {
+        counts[it.state] = (counts[it.state] || 0) + 1;
+        c.className = "chip " + st.cls;
+        c.textContent = st.label;
+      } else {
+        unknownCount += 1;
+        c.className = "chip s-unknown";
+        c.textContent = "Unknown state: " + (it.state ? it.state : "(none)");
+      }
+      li.appendChild(t);
+      li.appendChild(c);
+      if (it.note) {
+        var n = document.createElement("span");
+        n.className = "note";
+        n.textContent = it.note;
+        li.appendChild(n);
+      }
+      board.appendChild(li);
+    });
+    ORDER.forEach(function (k) {
+      if (!counts[k]) { return; }
+      var s = document.createElement("span");
+      s.className = STATES[k].cls;
+      s.textContent = counts[k] + " " + STATES[k].label;
+      tally.appendChild(s);
+    });
+    if (unknownCount) {
+      var u = document.createElement("span");
+      u.className = "s-unknown";
+      u.textContent = unknownCount + " Unknown";
+      tally.appendChild(u);
+    }
+  }
+
+  function renderNews(d) {
+    if (!d) { return; }
+    document.getElementById("newsText").textContent = d.headline || "";
+    document.getElementById("newsTime").textContent = d.updated ? "Updated " + fmt(d.updated) : "";
+  }
+
+  async function start() {
+    var db = null;
+    try { db = await claude.use("db"); } catch (e) { db = null; }
+    if (!db) {
+      document.getElementById("offline").hidden = false;
+      document.getElementById("board").textContent = "";
+      return;
+    }
+    db.collection("backlog").orderBy("order").onSnapshot(function (snap) {
+      renderBoard(snap.docs.map(function (d) { return d.data() || {}; }));
+    }, function () { document.getElementById("offline").hidden = false; });
+    db.doc("meta/latest").onSnapshot(function (s) { renderNews(s.data()); }, function () {});
+  }
+
+  if (window.claude && typeof window.claude.use === "function") { start(); }
+  else { document.getElementById("offline").hidden = false; document.getElementById("board").textContent = ""; }
+})();
+</script>
