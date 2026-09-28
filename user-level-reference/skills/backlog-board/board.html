@@ -119,7 +119,7 @@ footer{color:var(--muted);font-size:13px;max-width:65ch}
     var counts = {};
     var unknownCount = 0;
     items.forEach(function (it) {
-      var st = STATES[it.state];
+      var st = Object.prototype.hasOwnProperty.call(STATES, it.state) ? STATES[it.state] : null;
       var li = document.createElement("li");
       var t = document.createElement("span");
       t.className = "title";
