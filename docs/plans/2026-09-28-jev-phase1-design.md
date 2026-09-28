@@ -36,7 +36,7 @@ Let an opted-in project route each subagent spawn to the cheapest adequate model
 ### Per spawn (`jev_route.py`, synchronous)
 
 1. Read the PreToolUse payload. Not an `Agent` call, or `tool_input.model` set → log `explicit`/`skip`, exit 0, no output.
-2. Resolve the default model from the agent file's `model:` frontmatter: `<project>/.claude/agents/<subagent_type>.md`, else `~/.claude/agents/<subagent_type>.md`. Missing, `inherit`, or not one of `haiku|sonnet|opus|fable` → log `no-default`, change nothing.
+2. Resolve the default model from the agent file's `model:` frontmatter: `<project>/.claude/agents/<subagent_type>.md`, else `~/.claude/agents/<subagent_type>.md`. Missing (`general-purpose` and other built-ins), `inherit`, or not one of `haiku|sonnet|opus|fable` → the default is the v4.3.0 model floor (`**Subagent default model**`, else `sonnet`) — while Jev routing is on, v4.3.0's `hooks/model-floor.sh` steps aside and this hook applies that floor itself, so the spawn never inherits the orchestrator's model even when Jev's call fails (updated 2026-09-28; previously "log `no-default`, change nothing", which left such spawns on the orchestrator's model).
 3. Build `state` = `agent_type`, `description`, `prompt`; redact (D3) then trim to 4,000 chars; residual finding → log `egress-refused`, change nothing.
 4. Key from `TYPESAFE_API_KEY`, else `HKCU\Environment` (winreg); in a header only, never argv, never logged. No key → log `no-key`, change nothing.
 5. `POST https://api.typesafe.ai/v1/systemone` with the Phase 0 `model` and `effort` questions (same instructions and criteria), `model` pinned to the config value; client timeout 2 s.
