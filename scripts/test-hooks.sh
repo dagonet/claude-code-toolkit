@@ -7256,13 +7256,25 @@ tp_expect() { # <label> <want: RAN|SKIP> <repo>
   if [ "$got" = "$2" ]; then printf 'PASS  %-42s (%s)\n' "$1" "$got"; pass=$((pass + 1))
   else printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$2" "$got"; fail=$((fail + 1)); fi
 }
+# v4.3.0 A1 fix round 2 (S-5): a "src/" pathspec word must resolve to at
+# least one TRACKED file (hooks/pre-commit-test.sh's `git ls-files` check,
+# ~:379-394) or the hook treats it as invalid and runs tests unconditionally,
+# never reaching the real git-status skip decision. tp_repo alone never
+# commits anything under src/, so every "src/"-using row below needs a
+# tracked, otherwise-irrelevant anchor file there for its OWN pathspec to
+# validate -- independent of whatever the row's actual test change is.
+tp_seed_src() { # <repo> -- commit a tracked, unrelated file under src/
+  echo keep > "$1/src/.keep"
+  git -C "$1" add src/.keep >/dev/null 2>&1
+  git -C "$1" commit -q -m src-seed >/dev/null 2>&1
+}
 R=$(tp_repo tp_unset ""); echo d > "$R/docs/a.md"
 tp_run "$R" 'git commit -m x'; tp_expect "A1: key unset -> tests run" RAN "$R"
-R=$(tp_repo tp_docs "src/"); echo d > "$R/docs/a.md"
+R=$(tp_repo tp_docs "src/"); tp_seed_src "$R"; echo d > "$R/docs/a.md"
 tp_run "$R" 'git commit -m x'; tp_expect "A1: docs-only change -> skipped" SKIP "$R"
-R=$(tp_repo tp_code "src/"); echo c > "$R/src/a.c"
+R=$(tp_repo tp_code "src/"); tp_seed_src "$R"; echo c > "$R/src/a.c"
 tp_run "$R" 'git commit -m x'; tp_expect "A1: code change -> tests run" RAN "$R"
-R=$(tp_repo tp_addcommit "src/"); echo c > "$R/src/b.c"; echo d > "$R/docs/b.md"
+R=$(tp_repo tp_addcommit "src/"); tp_seed_src "$R"; echo c > "$R/src/b.c"; echo d > "$R/docs/b.md"
 tp_run "$R" 'git add docs/b.md && git commit -m x'; tp_expect "A1: add&&commit, code unstaged -> run (R-C)" RAN "$R"
 # zz.c is TRACKED and unchanged (committed below) -- it exists only so that,
 # absent set -f, the hook's *own* shell would glob-expand the unquoted
@@ -7274,7 +7286,12 @@ R=$(tp_repo tp_glob "*.c"); touch "$R/zz.c"; git -C "$R" add zz.c >/dev/null 2>&
 ( cd "$R" && tp_run "$R" 'git commit -m x' ); tp_expect "A1: glob pathspec not shell-expanded" RAN "$R"
 R=$(tp_repo tp_ph "{{TEST_PATHS}}"); echo d > "$R/docs/a.md"
 tp_run "$R" 'git commit -m x'; tp_expect "A1: placeholder -> treated unset" RAN "$R"
-R=$(tp_repo tp_del "src/"); git -C "$R" rm -q seed.txt >/dev/null 2>&1; echo c > "$R/src/k.c"; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" commit -q -m k >/dev/null 2>&1; git -C "$R" rm -q src/k.c >/dev/null 2>&1
+# src/keep.txt is committed ALONGSIDE k.c (S-5 fix round 2) so that once k.c
+# is deleted, "src/" still resolves to a tracked file (keep.txt) -- otherwise
+# this row's own pathspec would fail S-5's ls-files check for an unrelated
+# reason (the directory going fully untracked) and it would pass via the
+# invalid-entry fallback instead of the deletion actually being detected.
+R=$(tp_repo tp_del "src/"); git -C "$R" rm -q seed.txt >/dev/null 2>&1; echo c > "$R/src/k.c"; echo k > "$R/src/keep.txt"; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" commit -q -m k >/dev/null 2>&1; git -C "$R" rm -q src/k.c >/dev/null 2>&1
 tp_run "$R" 'git commit -m x'; tp_expect "A1: deletion under src/ -> run" RAN "$R"
 # v4.3.0 A1 fix round 1 (S-4): a `:`-leading word is git pathspec magic (e.g.
 # `:(exclude)*`), which can make `git status ... -- $TEST_PATHS` exit 0 with
@@ -7293,6 +7310,35 @@ tp_run "$R" 'git commit -m x'; tp_expect "A1 S-4: pathspec magic alone -> tests 
 tp_expect_warn "A1 S-4: pathspec magic alone -> WARN on stderr" "$R"
 R=$(tp_repo tp_magic2 "src/ :(exclude)src/gen"); echo d > "$R/docs/a.md"
 tp_run "$R" 'git commit -m x'; tp_expect "A1 S-4: plain+magic pathspecs, docs-only -> tests run" RAN "$R"
+# v4.3.0 A1 fix round 2 (S-5): a pathspec word that matches NO tracked file --
+# a typo, a renamed/removed directory, or literal quotes that reached this
+# hook as part of the word itself -- makes `git status ... -- $TEST_PATHS`
+# exit 0 with EMPTY output the same way S-4's magic does: a silent, permanent
+# skip. Validated one word at a time against `git ls-files` (fail-closed:
+# ANY invalid word ignores the WHOLE value and runs tests unconditionally,
+# even when other words in the same value are perfectly valid).
+tp_expect_warn_entry() { # <label> <repo> <entry-substring>
+  if grep -qF "WARN **Test paths** entry '$3' matches no tracked file" "$2/.tp_out" 2>/dev/null; then
+    printf 'PASS  %-42s (%s)\n' "$1" "warned:$3"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (%s)\n' "$1" "not warned for '$3'"; fail=$((fail + 1))
+  fi
+}
+# typo: "srcc/" never matches a tracked file in a fresh tp_repo checkout.
+R=$(tp_repo tp_typo "srcc/"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: typo pathspec (srcc/) -> tests run" RAN "$R"
+tp_expect_warn_entry "A1 S-5: typo pathspec -> WARN names 'srcc/'" "$R" "srcc/"
+# literal quotes: the value in PROJECT_CONTEXT.md is prose, not shell syntax,
+# so the extracted word carries its quote CHARACTERS to `git ls-files`
+# unchanged; no real path is ever named `"src/"` (quotes included).
+R=$(tp_repo tp_quoted '"src/"'); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: literal-quoted pathspec (\"src/\") -> tests run" RAN "$R"
+# mixed valid + invalid: src/ is seeded (tracked) and genuinely valid on its
+# own; docs-missing/ is not. The whole value must still be ignored -- a good
+# word does not rescue a bad one in the same list.
+R=$(tp_repo tp_mixed "src/ docs-missing/"); tp_seed_src "$R"; echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: one bad word among good ones -> tests run" RAN "$R"
+tp_expect_warn_entry "A1 S-5: one bad word among good ones -> WARN names 'docs-missing/'" "$R" "docs-missing/"
 # ---- end v4.3.0 A1
 
 echo "----------------------------------------------------------------"

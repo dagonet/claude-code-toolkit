@@ -376,16 +376,37 @@ if [ -n "$TEST_PATHS" ]; then
     set +f
     echo "pre-commit-test: WARN **Test paths** uses git pathspec magic (':...'), which can match nothing -- ignoring it and running the tests" >&2
   else
-    # shellcheck disable=SC2086 # word-splitting the pathspec list is intended
-    if _tp_hits=$(git -C "$REPO_PATH" status --porcelain --untracked-files=all -- $TEST_PATHS 2>/dev/null); then
-      set +f
-      if [ -z "$_tp_hits" ]; then
-        echo "pre-commit-test: no changed path matches **Test paths** ($TEST_PATHS) -- tests skipped for this commit; the merge gate still runs in full" >&2
-        pct_note test-paths-skip 0
-        exit 0
+    # v4.3.0 A1 fix round 2 (S-5): a word that matches NO tracked file --
+    # a typo (srcc/), a renamed/removed directory, or literal quotes that
+    # reached this hook as part of the word itself ("src/") -- makes
+    # `git status ... -- $TEST_PATHS` exit 0 with EMPTY output the same way
+    # pathspec magic does: a silent, permanent skip. Validated one word at a
+    # time (quoted, so a real glob word is not re-expanded by the shell here;
+    # set -f is still in effect from above) against `git ls-files`, which
+    # must print at least one line for a word to count as real. Only when
+    # EVERY word validates does the existing git-status skip decision apply.
+    _tp_invalid=""
+    for _tp_w in $TEST_PATHS; do
+      if ! _tp_lsout=$(git -C "$REPO_PATH" ls-files -- "$_tp_w" 2>/dev/null) || [ -z "$_tp_lsout" ]; then
+        _tp_invalid="$_tp_w"
+        break
       fi
+    done
+    if [ -n "$_tp_invalid" ]; then
+      set +f
+      echo "pre-commit-test: WARN **Test paths** entry '$_tp_invalid' matches no tracked file -- ignoring **Test paths**, running the tests" >&2
+    else
+      # shellcheck disable=SC2086 # word-splitting the pathspec list is intended
+      if _tp_hits=$(git -C "$REPO_PATH" status --porcelain --untracked-files=all -- $TEST_PATHS 2>/dev/null); then
+        set +f
+        if [ -z "$_tp_hits" ]; then
+          echo "pre-commit-test: no changed path matches **Test paths** ($TEST_PATHS) -- tests skipped for this commit; the merge gate still runs in full" >&2
+          pct_note test-paths-skip 0
+          exit 0
+        fi
+      fi
+      set +f
     fi
-    set +f
   fi
 fi
 
