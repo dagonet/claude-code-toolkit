@@ -7821,6 +7821,102 @@ expect "FR5 drain then pass: run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev
 # ---- end v4.3.0 fix round 5
 # ---- end v4.3.0 A2
 
+# ---- v4.3.0 A3: the budget brake lets a `git commit` through ----
+# At BLOCK_AT the hook used to refuse EVERY call, including the commit that
+# saves the work -- and hooks run in parallel, so pre-commit-test had already
+# spent its run by then. The brake now allows a commit call (exit 0, budget text
+# on stderr, an audit line) and keeps blocking everything else. The counter is
+# seeded to BLOCK_AT-1 the way the SendMessage block above does (white-box, so
+# the suite does not pay 120 spawns per row). The hook is parser-free, so the
+# rows drive it with raw payloads built by mkjson-shaped printf, never json.sh.
+echo
+echo "=== hooks/agent-budget-warn.sh (a commit passes the ceiling, v4.3.0 A3) ==="
+
+A3CWD="$TMPROOT/a3cwd"
+mkdir -p "$A3CWD/.claude"
+
+a3_payload() { # <tool_name> <tool_input body, already JSON> <agent_id>
+  printf '{"session_id":"a3sess","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{%s},"cwd":"%s","agent_id":"%s"}\n' \
+    "$(jesc "$1")" "$2" "$(jesc "$A3CWD")" "$(jesc "$3")"
+}
+a3_cmd() { # <tool_name> <shell command> <agent_id> -- a Bash-shaped payload
+  a3_payload "$1" "\"command\":\"$(jesc "$2")\"" "$3"
+}
+
+# <label> <tmp> <payload> <want_exit> [needle]   -- run the hook once at call N
+a3_run() {
+  a3_label="$1"; a3_tmp="$2"; a3_pl="$3"; a3_want="$4"; a3_needle="${5:-}"
+  a3_err="$TMPROOT/a3.err"
+  printf '%s' "$a3_pl" | TMPDIR="$a3_tmp" bash "$ROOT/hooks/agent-budget-warn.sh" \
+    >/dev/null 2>"$a3_err"
+  a3_got=$?
+  if [ "$a3_got" = "$a3_want" ] &&
+     { [ -z "$a3_needle" ] || grep -qF "$a3_needle" "$a3_err"; }; then
+    printf 'PASS  %-46s (exit %s)\n' "$a3_label" "$a3_got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-46s (want %s%s, got %s: %s)\n' "$a3_label" "$a3_want" \
+      "${a3_needle:+ + \"$a3_needle\"}" "$a3_got" "$(head -1 "$a3_err")"
+    fail=$((fail + 1))
+  fi
+}
+# <label> <tool> <command> <want_exit> [needle]  -- a fresh agent seeded to 119
+a3_at120() {
+  a3_n=$((a3_n + 1))
+  a3_t="$TMPROOT/a3bud$a3_n"
+  mkdir -p "$a3_t/claude-agent-budget/a3sess"
+  printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+  a3_run "$1" "$a3_t" "$(a3_cmd "$2" "$3" a3-agent)" "$4" "${5:-}"
+}
+a3_n=0
+
+a3_at120 "A3 call 120 'git commit -m x' passes"        Bash "git commit -m x" 0 "BUDGET: 120 tool calls"
+a3_at120 "A3 call 120 'git -C /x commit -m y' passes"  Bash "git -C /x commit -m y" 0 "this commit is allowed"
+a3_at120 "A3 call 120 'git -c k=v commit' passes"      Bash "git -c k=v commit" 0
+a3_at120 "A3 call 120 'cd d && git commit' passes"     Bash "cd /d && git commit -m z" 0
+a3_at120 "A3 call 120 PowerShell commit passes"        PowerShell "git commit -m x" 0
+# The command string arrives JSON-escaped, so a quoted commit carries \" in it.
+a3_at120 "A3 call 120 bash -c \"git commit\" passes"   Bash 'bash -c "git commit -m x"' 0
+a3_at120 "A3 call 120 'git push origin f' blocks"      Bash "git push origin f" 2 "BUDGET: this spawn has made 120"
+a3_at120 "A3 call 120 'git log --grep commit' blocks"  Bash "git log --grep commit" 2
+a3_at120 "A3 call 120 'echo commit' blocks"            Bash "echo commit" 2
+a3_at120 "A3 call 120 'git status' blocks"             Bash "git status" 2
+# A non-Bash tool whose input merely contains a commit-looking string is not a commit.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 120 Read blocks" "$a3_t" \
+  "$(a3_payload Read "\"file_path\":\"/x/git commit\"" a3-agent)" 2 "BUDGET: this spawn has made 120"
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 120 Write w/ commit text in command blocks" "$a3_t" \
+  "$(a3_payload Write "\"command\":\"git commit -m x\"" a3-agent)" 2
+
+# The brake is not softened elsewhere: a later threshold (180) still blocks a
+# non-commit, and lets a commit through.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 179 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 180 non-commit blocks" "$a3_t" "$(a3_cmd Bash "ls" a3-agent)" 2
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 179 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 180 commit passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+
+# A commit that is NOT on a threshold call is untouched by all of this.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 10 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 11 commit passes, no budget text" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+[ ! -s "$a3_err" ] && expect "A3 call 11 commit: stderr silent" "silent" "silent" \
+  || expect "A3 call 11 commit: stderr silent" "silent" "$(head -1 "$a3_err")"
+
+# The audit line names the action, so a post-mortem can tell an allowed commit
+# from a block. log_event needs $CWD/.claude to exist (it does: A3CWD above).
+rm -f "$A3CWD/.claude/liveness.log"
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 audit: commit at 120 passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+expect "A3 audit line records action=commit-allowed" "yes" \
+  "$(grep -q 'agent=a3-agent calls=120 action=commit-allowed' "$A3CWD/.claude/liveness.log" 2>/dev/null && echo yes || echo no)"
+# ---- end v4.3.0 A3
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

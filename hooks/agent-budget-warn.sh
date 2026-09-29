@@ -115,6 +115,19 @@ printf '%s' "$N" > "$COUNTER" 2>/dev/null || exit 0
 # Block on each threshold crossing: BLOCK_AT, then every BLOCK_EVERY past it
 # (120, 180, 240, ...). Strictly -eq / modulo-zero, so calls in between pass.
 if [ "$N" -eq "$BLOCK_AT" ] || { [ "$N" -gt "$BLOCK_AT" ] && [ $(( (N - BLOCK_AT) % BLOCK_EVERY )) -eq 0 ]; }; then
+  # v4.3.0 A3 -- a commit is the one call worth allowing at budget exhaustion:
+  # hooks run in parallel, so blocking it after pre-commit-test ran wastes the
+  # run AND loses the work. Parser-free: a raw match on the payload. A false
+  # positive lets one non-commit call through once -- the brake still fires on
+  # every other call. The command arrives JSON-escaped, so the prefix before
+  # `git` accepts backslash escapes (`bash -c \"git commit ...\"`); the plan's
+  # `[^"]*` stopped at the first \" and missed a quoted commit.
+  if { [ "$TOOL_NAME" = "Bash" ] || [ "$TOOL_NAME" = "PowerShell" ]; } \
+     && printf '%s' "$INPUT" | grep -Eq '"command":"([^"\\]|\\.)*\bgit\b([[:space:]]+-[^[:space:]"]+([[:space:]]+[^-[:space:]"][^[:space:]"]*)?)*[[:space:]]+commit\b'; then
+    log_event commit-allowed
+    echo "BUDGET: $N tool calls -- this commit is allowed so the work is saved; every other call stays blocked. Report and stop after it." >&2
+    exit 0
+  fi
   log_event block
   cat >&2 <<EOF
 BUDGET: this spawn has made $N tool calls (median is 15; 120 is the first ceiling).
