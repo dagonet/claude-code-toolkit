@@ -7649,6 +7649,61 @@ R=$(a2_repo fr2_positive); a2_commit "$R"; a2_rungate "$R"
 expect "FR2 positive control: safe pair still splits (extra leg ran)" "yes" "$(a2_has "$R/.a2_gate_out" A2-EXTRA-RAN)"
 expect "FR2 positive control: safe pair -- run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
 # ---- end v4.3.0 fix round 2
+
+# ---- v4.3.0 fix round 3 (opus re-review of C2, ruling S-11) ----
+# Two NEW wrong-PASS paths found INSIDE the round-2 allow-list itself.
+
+# (1) Critical: the assignment regex missed the `NAME+=value` APPEND form.
+# `PATH+=:sub` genuinely mutates the (already-exported) PATH when run
+# combined; pcheck.sh below deliberately FAILS when it observes that
+# mutation, simulating "the combined Gate correctly propagated a state
+# change and a downstream check caught it". A wrongly split leg runs
+# `PATH+=:sub` in its own throwaway `bash -c`, the mutation never reaches
+# the next leg's fresh process, and pcheck.sh sees a clean PATH -- a false
+# PASS where the plain Gate gives rc != 0.
+fr3_pcheck_repo() {
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR3-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\ncase "$PATH" in *:sub) exit 1 ;; esac\necho FR3-PCHECK-CLEAN\nexit 0\n' > "$r/pcheck.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && PATH+=:sub && bash pcheck.sh`\n- **Gate extra**: `PATH+=:sub && bash pcheck.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr3_pcheck_repo fr3_pathappend); a2_commit "$R"; a2_rungate "$R"
+expect "FR3 += assignment (PATH+=:sub): run-gate exits non-zero (matches plain Gate)" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR3 += assignment (PATH+=:sub): no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# (2) Important: an empty/whitespace-only leg (from a leading, trailing, or
+# doubled `&&`) was silently SKIPPED (`continue`) instead of being refused --
+# the run loop then ran only the remaining, normal-looking legs and reported
+# rc 0, where the plain Gate (the IDENTICAL text, run as ONE combined
+# command) is a bash SYNTAX ERROR (measured rc 2, always non-zero).
+fr3_empty_repo() { # <name> <gate-extra-text> -> repo dir
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR3E-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho FR3E-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr3_empty_check() { # <label> <gate-extra-text>
+  fr3r=$(fr3_empty_repo "fr3e_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2")
+  a2_commit "$fr3r"; a2_rungate "$fr3r"
+  expect "FR3 empty leg ($1): run-gate exits non-zero (matches plain Gate's syntax error)" "yes" \
+    "$([ "$(cat "$fr3r/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+  expect "FR3 empty leg ($1): no artifact written" "yes" "$([ ! -f "$(a2_artifact "$fr3r")" ] && echo yes || echo no)"
+}
+fr3_empty_check 'middle-double-&&' 'bash x.sh && && bash x.sh'
+fr3_empty_check 'trailing-&&' 'bash x.sh &&'
+fr3_empty_check 'leading-&&' '&& bash x.sh'
+
+# Four previously-unfixtured bypasses from the round-2 review's own list
+# (already correctly refused by round 2's allow-list; adding coverage now,
+# per the controller's request):
+fr2_check 'backslash-cd-bare' '\cd sub && bash x.sh'
+fr2_check 'eval-escaped-space' 'eval cd\ sub && bash x.sh'
+fr2_check 'default-assign-indirect' ': ${D:=sub/} && bash ${D}x.sh'
+fr2_check 'hash-indirect' 'hash -p ./sub/x.sh bash && bash x.sh'
+# ---- end v4.3.0 fix round 3
 # ---- end v4.3.0 A2
 
 echo "----------------------------------------------------------------"

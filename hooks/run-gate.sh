@@ -307,10 +307,13 @@ rg_stateless() {
   set -- $rgst_trim
   set +f
   for rgst_tok in "$@"; do
-    # A NAME=value assignment token (env-var-style prefix). Checked at any
-    # position, not only the first, per this function's whole stance: doubt
-    # refuses.
-    if printf '%s' "$rgst_tok" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
+    # A NAME=value OR NAME+=value assignment token (env-var-style prefix;
+    # fix round 3, S-11 -- the round-2 regex missed the `+=` append form,
+    # measured: `PATH+=:sub && bash pcheck.sh` split rc 0 where the plain
+    # Gate's own `PATH+=:sub` really changed PATH and the plain Gate's own
+    # pcheck.sh correctly saw it and failed). Checked at any position, not
+    # only the first, per this function's whole stance: doubt refuses.
+    if printf '%s' "$rgst_tok" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*\+?='; then
       return 1
     fi
     # Verb denylist, widened (fix round 2): `eval`, `exec`, `trap`, `read`,
@@ -342,15 +345,36 @@ rg_stateless() {
 if [ -n "$GATE_EXTRA" ]; then
   RG_LEGS=$(printf '%s' "$GATE_EXTRA" | sed -E 's/[[:space:]]*&&[[:space:]]*/\n/g')
   RG_UNSAFE=0
+  # v4.3.0 fix round 3, S-11 (I2 re-review -- "empty legs skip refusal
+  # instead of triggering it"). A LEADING or TRAILING `&&` (`&& bash x.sh`;
+  # `bash x.sh &&`) names an EMPTY part at that end. The trailing case is
+  # invisible to the split-then-inspect walk below: `$(...)` command
+  # substitution strips ALL trailing newlines from sed's own output, and the
+  # substitution that produces the empty final leg does so BY INSERTING that
+  # trailing newline -- so the empty leg it just created is exactly what
+  # gets stripped before $RG_LEGS is ever read. Checked directly against the
+  # (whitespace-trimmed, but otherwise UNSPLIT) **Gate extra** text, which
+  # command substitution has not yet had a chance to mangle. MEASURED:
+  # `bash x.sh &&` and `&& bash x.sh` both split rc 0 pre-fix where the
+  # plain Gate is a bash syntax error (rc 1).
+  RG_EXTRA_TRIMMED=$(printf '%s' "$GATE_EXTRA" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  case "$RG_EXTRA_TRIMMED" in
+    '&&'*|*'&&') RG_UNSAFE=1 ;;
+  esac
   rg_stateless "$RG_TEST" || RG_UNSAFE=1
+  # v4.3.0 fix round 3: NO `continue` on an empty/whitespace-only leg -- it
+  # must be REFUSED, not silently skipped. `rg_stateless` already refuses an
+  # empty trimmed string on its own (`[ -n "$rgst_trim" ] || return 1`), so
+  # simply always calling it is enough; skipping the call is what let a
+  # MIDDLE empty leg (`bash x.sh && && bash x.sh`, which the split above DOES
+  # preserve as a genuine blank line) vanish unchecked.
   while IFS= read -r rg_chk_leg; do
-    [ -n "$rg_chk_leg" ] || continue
     rg_stateless "$rg_chk_leg" || RG_UNSAFE=1
   done <<RG_STATE_CHECK
 $RG_LEGS
 RG_STATE_CHECK
   if [ "$RG_UNSAFE" = 1 ]; then
-    echo "run-gate: WARN **Test** or a **Gate extra** leg is not an allow-listed state-free simple command (character set or verb) -- ignoring **Gate extra**, running the full Gate" >&2
+    echo "run-gate: WARN **Test** or a **Gate extra** leg is not an allow-listed state-free simple command (character set, verb, assignment, or an empty leg) -- ignoring **Gate extra**, running the full Gate" >&2
     GATE_EXTRA=""
   fi
 fi
@@ -565,9 +589,13 @@ else
     # split, once, alongside the S-7 state-free check above, and the check
     # and the run must walk the IDENTICAL list or a leg could be validated
     # against one split and executed against a different one.
+    # v4.3.0 fix round 3, S-11: no `continue`-on-empty here either -- this
+    # loop must never actually SEE an empty leg, because the validation
+    # section above now refuses the whole **Gate extra** (clearing it, so
+    # this branch is never reached at all) the moment any leg -- Test
+    # included -- is empty or whitespace-only.
     RG_LEGS_ARR=""
     while IFS= read -r rg_leg; do
-      [ -n "$rg_leg" ] || continue
       rg_t0=$(date +%s 2>/dev/null || echo 0)
       bash -c "$rg_leg"
       rg_leg_rc=$?
