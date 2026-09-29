@@ -7944,6 +7944,73 @@ a3_run "A3 uncount: next non-commit is blocked" "$a3_t" "$(a3_cmd Bash "ls" a3-a
 expect "A3 uncount: a block still counts (120)" "120" "$(cat "$a3_ctr" 2>/dev/null)"
 # ---- end v4.3.0 A3
 
+# ---- v4.3.0 B1: deny-hang-shapes refuses three hang-prone command shapes ----
+# Spec Part B1 + plan refinement R-B. Advisory PreToolUse(Bash) hook: a heredoc
+# written into a file, a sleep wait loop, and a leading `cd` before TWO OR MORE
+# further commands. `cd <dir> && <one command>` stays allowed (the merge guard
+# itself requires `cd <gated worktree> && gh pr merge ...`), and a redirect or a
+# quoted string is not a second command.
+echo "=== hooks/deny-hang-shapes.sh (v4.3.0 B1) ==="
+b1() { # <label> <expected_exit> <command>
+  check "B1 $1" hooks/deny-hang-shapes.sh "$2" "$(mkjson Bash "$3" "$TMPROOT")"
+}
+b1nl=$'\n'
+# -- shape 1: a heredoc written into a file -> refused
+b1 "heredoc: cat > f <<'EOF'"          2 "cat > f.txt <<'EOF'${b1nl}body${b1nl}EOF"
+b1 "heredoc: cat <<EOF > f"            2 "cat <<EOF > f.txt${b1nl}body${b1nl}EOF"
+b1 "heredoc: cat <<EOF >> f"           2 "cat <<EOF >> f.txt${b1nl}body${b1nl}EOF"
+b1 "heredoc: tee f <<EOF"              2 "tee f.txt <<EOF${b1nl}body${b1nl}EOF"
+b1 "heredoc: tee -a f <<EOF"           2 "tee -a f.txt <<EOF${b1nl}body${b1nl}EOF"
+b1 "heredoc: cd x && cat > f <<EOF"    2 "cd /x && cat > f.txt <<'EOF'${b1nl}body${b1nl}EOF"
+# -- shape 1: heredocs that are NOT a file write -> allowed
+b1 "ok: message heredoc in a commit"   0 "git commit -m \"\$(cat <<'EOF'${b1nl}fix: x${b1nl}EOF${b1nl})\""
+b1 "ok: python - <<EOF"                0 "python - <<EOF${b1nl}print(1)${b1nl}EOF"
+b1 "ok: cat <<EOF | sort"              0 "cat <<EOF | sort${b1nl}b${b1nl}a${b1nl}EOF"
+b1 "ok: cat <<EOF >/dev/null"          0 "cat <<EOF >/dev/null${b1nl}x${b1nl}EOF"
+b1 "ok: cat <<EOF 2>&1"                0 "cat <<EOF 2>&1${b1nl}x${b1nl}EOF"
+b1 "ok: cat <<< here-string > f"       0 "cat <<< \"x\" > f.txt"
+b1 "ok: cmd 2>&1"                      0 "cmd 2>&1"
+# -- shape 2: a sleep wait loop -> refused
+b1 "wait: until [ -f m ]; sleep"       2 "until [ -f m ]; do sleep 5; done"
+b1 "wait: while true; sleep"           2 "while true; do sleep 1; done"
+b1 "wait: inside bash -c"              2 "bash -c 'while true; do sleep 1; done'"
+b1 "wait: multi-line loop"             2 "while true${b1nl}do${b1nl}  sleep 1${b1nl}done"
+# -- shape 2: allowed
+b1 "ok: sleep 5"                       0 "sleep 5"
+b1 "ok: for loop without sleep"        0 "for f in a b; do echo \$f; done"
+b1 "ok: while without sleep"           0 "while read l; do echo \$l; done < f"
+b1 "ok: loop words in a heredoc body"  0 "git commit -m \"\$(cat <<'EOF'${b1nl}while true; do sleep 1; done${b1nl}EOF${b1nl})\""
+# -- shape 3: a leading cd before two or more commands -> refused
+b1 "cd: ; chain with a for loop"       2 "cd /tmp; sed -i s/a/b/ f; for i in 1 2; do echo \$i; done"
+b1 "cd: && a && b"                     2 "cd /tmp && a && b"
+b1 "cd: && a || b"                     2 "cd /tmp && a || b"
+b1 "cd: newline-separated commands"    2 "cd /tmp${b1nl}sed -i s/a/b/ f${b1nl}ls"
+b1 "cd: leading whitespace"            2 "  cd /tmp && a && b"
+b1 "cd: quoted dir + two commands"     2 "cd \"/tmp/a b\" && a && b"
+# -- shape 3: allowed (one command after the cd, or no cd, or a redirect)
+b1 "ok: cd alone"                      0 "cd /tmp"
+b1 "ok: cd && gh pr merge (merge guard shape)" 0 "cd /g/x && gh pr merge 171"
+b1 "ok: bash -c 'cd /tmp && a && b'"   0 "bash -c 'cd /tmp && a && b'"
+b1 "ok: cd && cmd > log 2>&1 (redirects)" 0 "cd /g/x && bash hooks/run-gate.sh > log 2>&1"
+b1 "ok: cd && cmd 2>&1 | tail"         0 "cd /g/x && bash hooks/run-gate.sh 2>&1 | tail -5"
+b1 "ok: cd && cmd &"                   0 "cd /g/x && bash hooks/run-gate.sh > log 2>&1 &"
+b1 "ok: cd && cmd; (trailing ;)"       0 "cd /g/x && ls;"
+b1 "ok: cd && quoted ';' in message"   0 "cd /g/x && git commit -m \"a; b && c\""
+b1 "ok: cd && find -exec \\;"          0 "cd /g/x && find . -name x -exec rm {} \\;"
+b1 "ok: cd && message heredoc in a commit" 0 "cd /g/x && git commit -m \"\$(cat <<'EOF'${b1nl}fix: a; b${b1nl}second line${b1nl}EOF${b1nl})\""
+b1 "ok: a && b (no cd)"                0 "a && b && c"
+b1 "ok: cdx is not cd"                 0 "cdx /tmp && a && b"
+# -- advisory: no command / no parser / kill switch
+check "B1 ok: payload without a command" hooks/deny-hang-shapes.sh 0 "$(mkjson_nocmd Bash "$TMPROOT")"
+check "B1 ok: not JSON"                  hooks/deny-hang-shapes.sh 0 "not json at all"
+b1_ks="$TMPROOT/b1ks"; mkdir -p "$b1_ks/.claude"; : > "$b1_ks/.claude/git-guard-off"
+check "B1 kill switch: refused shape passes" hooks/deny-hang-shapes.sh 0 "$(mkjson Bash "cd /tmp && a && b" "$b1_ks")"
+# -- the refusal names the advice
+check_msg "B1 msg: heredoc advice"   "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cat > f <<EOF${b1nl}x${b1nl}EOF" "$TMPROOT")" "Write tool"
+check_msg "B1 msg: wait-loop advice" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "end your turn"
+check_msg "B1 msg: cd advice"        "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "env -C"
+# ---- end v4.3.0 B1
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
