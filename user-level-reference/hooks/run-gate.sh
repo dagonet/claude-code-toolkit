@@ -277,70 +277,70 @@ if [ -n "$GATE_EXTRA" ] && [ "$(printf '%s' "$GATE_CMD" | rg_norm)" != "$(printf
   GATE_EXTRA=""
 fi
 
-# v4.3.0 fix round 1, S-7 (C2 -- "leg splitting drops shell state"). A part
-# (**Test**, or one **Gate extra** leg) is STATE-FREE only if none of these
-# hold; splitting a stateful part into separate `bash -c` invocations
-# silently drops shell state (cwd, exports, sourced functions/aliases, `set`
-# options) one single combined Gate invocation would have carried across.
-# MEASURED: `**Gate extra**: cd sub && bash x.sh` with a failing sub/x.sh
-# splits into TWO legs ("cd sub", "bash x.sh"), each its own fresh `bash -c`
-# starting back at REPO_TOP -- the second leg then runs the WRONG (top-level)
-# x.sh and the real failure is missed: the plain Gate gives rc=1, extra mode
-# gave rc=0 and minted a PASS artifact. A conservative ALLOW-LIST, not a
-# parser: ANY doubt refuses the split (and therefore reuse) outright, never
-# widens it. Checked on **Test** too, not only legs -- the Test/extra
-# BOUNDARY has the identical flaw: a **Test** that itself does `cd sub &&
-# bash t.sh` loses that `cd` the moment it and the first leg run as two
-# separate processes instead of one chained shell, even though R-A's plain
-# TEXT comparison above sees nothing wrong with it.
+# v4.3.0 fix round 2, S-10 (C2 re-review). Round 1 shipped a DENYLIST over
+# whitespace-separated tokens, and the re-review reproduced NINE wrong-PASS
+# bypasses of it, each giving a split rc 0 where the plain Gate gives rc 1:
+# `c\d sub` and `\cd sub` (a backslash inside the word defeats an exact-token
+# match -- bash removes it before running "cd" for real), `true&&cd sub`
+# (no space around `&&` used to leave "true&&cd" as ONE token under
+# whitespace-only splitting), `eval cd\ sub`, `{cd,sub}` (brace expansion
+# produces "cd sub" only once bash itself parses the word), `cd${IFS}sub`,
+# `printf -v D sub/ && bash ${D}x.sh`, `: ${D:=sub/} && bash ${D}x.sh`,
+# `read D < d.txt && bash ${D}x.sh`, `hash -p ./sub/x.sh bash && bash x.sh`.
+# A DENYLIST over tokens cannot enumerate every way shell syntax can build or
+# hide a word; this is now a real ALLOW-list -- refuse anything outside a
+# small, enumerated safe character set BEFORE tokens are even considered, so
+# none of the above ever reaches the token/verb scan in the first place.
 rg_stateless() {
   rgst_t="$1"
-  # Existing split-ambiguity exclusions (a quote, `$(`, a backtick, `(`,
-  # `<<`) also make a part un-splittable outright -- kept here rather than
-  # only at the split site so "state-free" and "safely splittable" are one
-  # question, not two that could drift apart.
-  case "$rgst_t" in
-    *"'"*|*'"'*|*'$('*|*'`'*|*'('*|*'<<'*) return 1 ;;
-  esac
-  # `;` and `||` anywhere, and a LONE `|` / LONE `&` (sequencing or
-  # backgrounding a single `bash -c` per part cannot reproduce). `&&` is
-  # DELIBERATELY not denylisted on its own -- it is the ordinary chaining
-  # this whole spec's own **Test**/**Gate** examples use, and is only a
-  # problem in combination with a denylisted verb, which the token scan
-  # below catches regardless of how many `&&`s surround it.
-  case "$rgst_t" in *';'*|*'||'*) return 1 ;; esac
-  rgst_np=$(printf '%s' "$rgst_t" | sed 's/||//g')
-  case "$rgst_np" in *'|'*) return 1 ;; esac
-  rgst_na=$(printf '%s' "$rgst_t" | sed 's/&&//g')
-  case "$rgst_na" in *'&'*) return 1 ;; esac
+  rgst_trim=$(printf '%s' "$rgst_t" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  [ -n "$rgst_trim" ] || return 1
+  # Character allow-list: letters, digits, `_ . / : @ % + , = SPACE -` ONLY.
+  # Excludes, by construction and not by enumeration, EVERY mechanism above:
+  # backslash, `$`, `{` `}`, `<` `>`, `*` `?` `[` `]`, `~`, `&` `|`, `;`, a
+  # backtick, a quote, `(` `)`. Anchored full-string, not a substring test.
+  if ! printf '%s' "$rgst_trim" | grep -Eq '^[A-Za-z0-9_./:@%+,= -]+$'; then
+    return 1
+  fi
   set -f
   # shellcheck disable=SC2086
-  set -- $rgst_t
+  set -- $rgst_trim
   set +f
   for rgst_tok in "$@"; do
+    # A NAME=value assignment token (env-var-style prefix). Checked at any
+    # position, not only the first, per this function's whole stance: doubt
+    # refuses.
+    if printf '%s' "$rgst_tok" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
+      return 1
+    fi
+    # Verb denylist, widened (fix round 2): `eval`, `exec`, `trap`, `read`,
+    # `printf`, `hash`, and the other indirection/builtin-state verbs the
+    # bypasses above actually used, alongside round 1's cd/pushd/popd/
+    # export/source/./set/umask/alias/unset/shopt. This scan is now a
+    # SECOND, independent line of defence behind the character allow-list
+    # above (most of the bypasses were already stopped there) -- kept
+    # because a token-shaped denylist still catches a plain, otherwise
+    # allow-list-legal "eval something" that the character check alone
+    # would pass.
     case "$rgst_tok" in
-      # A NAME=value assignment token (env-var-style prefix). Checked at any
-      # position, not only the first, per this function's whole stance: doubt
-      # refuses.
-      [A-Za-z_][A-Za-z0-9_]*=*) return 1 ;;
-    esac
-    case "$rgst_tok" in
-      cd|pushd|popd|export|source|.|set|umask|alias|unset|shopt) return 1 ;;
+      cd|pushd|popd|export|source|.|set|umask|alias|unset|shopt|eval|exec|trap|read|printf|hash|ulimit|builtin|command|declare|typeset|local|readonly|let|mapfile|readarray|getopts|enable)
+        return 1 ;;
     esac
   done
   return 0
 }
 
 # Legs, computed ONCE here (not re-derived in the run section) so the
-# state-free check and the actual run walk the IDENTICAL list. Split on
-# top-level ` && ` only when the value carries none of the metacharacters
-# rg_stateless already refuses on -- otherwise the whole value is ONE leg
-# (spec A2: an ambiguous split is recorded and run as one leg).
+# state-free check and the actual run walk the IDENTICAL list. Split on `&&`
+# with optional surrounding whitespace (fix round 2: round 1 split on the
+# literal ` && ` only, which is exactly what let `true&&cd sub` through as
+# one un-inspected token). Every part -- **Test** and every leg -- is
+# validated by rg_stateless below; the character allow-list it applies makes
+# a SEPARATE "is this ambiguous to split" exclusion unnecessary (any of the
+# old ambiguity metacharacters -- a quote, `$(`, a backtick, `(`, `<<` -- is
+# already outside the allowed character set and refuses the whole thing).
 if [ -n "$GATE_EXTRA" ]; then
-  case "$GATE_EXTRA" in
-    *"'"*|*'"'*|*'$('*|*'`'*|*'('*|*'<<'*) RG_LEGS="$GATE_EXTRA" ;;
-    *) RG_LEGS=$(printf '%s' "$GATE_EXTRA" | sed 's/ && /\n/g') ;;
-  esac
+  RG_LEGS=$(printf '%s' "$GATE_EXTRA" | sed -E 's/[[:space:]]*&&[[:space:]]*/\n/g')
   RG_UNSAFE=0
   rg_stateless "$RG_TEST" || RG_UNSAFE=1
   while IFS= read -r rg_chk_leg; do
@@ -350,7 +350,7 @@ if [ -n "$GATE_EXTRA" ]; then
 $RG_LEGS
 RG_STATE_CHECK
   if [ "$RG_UNSAFE" = 1 ]; then
-    echo "run-gate: WARN **Test** or a **Gate extra** leg is not a state-free simple command -- ignoring **Gate extra**, running the full Gate" >&2
+    echo "run-gate: WARN **Test** or a **Gate extra** leg is not an allow-listed state-free simple command (character set or verb) -- ignoring **Gate extra**, running the full Gate" >&2
     GATE_EXTRA=""
   fi
 fi

@@ -7601,6 +7601,54 @@ expect "FR1 assignment-prefixed leg: run-gate exit 0 (full Gate still passes)" "
 # not reproducible portably or quickly in this suite. Covered by `cp -p`
 # alone (both hooks), which preserves the REAL index file's timestamps on the
 # temp copy instead of stamping "now" -- see the S-8 comments in both hooks.
+
+# ---- v4.3.0 fix round 2 (opus re-review of C2, ruling S-10) ----
+# Round 1's rg_stateless was a DENYLIST over whitespace-separated tokens; the
+# re-review reproduced NINE wrong-PASS bypasses of it (see hooks/run-gate.sh
+# for the full list and mechanism per bypass). Each row here builds
+# **Gate extra**: "<bypass> && bash x.sh" where sub/x.sh FAILS and the
+# top-level x.sh PASSES -- pre-fix, the bypass let the split treat the
+# malicious prefix as state-free, ran the WRONG (top-level) x.sh in a fresh
+# `bash -c`, and reported a wrong PASS where the plain Gate (the same text,
+# run as ONE combined command, no split at all) gives rc != 0. Post-fix, the
+# allow-list refuses the part, the whole **Gate extra** is dropped, and the
+# FULL Gate runs as one combined command -- correctly finding sub/x.sh.
+fr2_repo() { # <name> <gate-extra-text> [seed-cmd, eval'd with $r in scope] -> repo dir
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho FR2-SUB-XSH-RAN\nexit 1\n' > "$r/sub/x.sh"
+  printf '#!/usr/bin/env bash\necho FR2-TOP-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  [ -z "${3:-}" ] || eval "$3"
+  # %s substitution, never embedded in the format string itself: some of
+  # these values contain a backslash, which a printf FORMAT string (unlike
+  # an argument substituted via %s) would try to interpret as its own escape.
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr2_check() { # <label> <gate-extra-text> [seed-cmd]
+  fr2r=$(fr2_repo "fr2_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2" "${3:-}")
+  a2_commit "$fr2r"; a2_rungate "$fr2r"
+  expect "FR2 bypass ($1): sub/x.sh really ran" "yes" "$(a2_has "$fr2r/.a2_gate_out" FR2-SUB-XSH-RAN)"
+  expect "FR2 bypass ($1): top-level x.sh did NOT run" "no" "$(a2_has "$fr2r/.a2_gate_out" FR2-TOP-XSH-RAN)"
+  expect "FR2 bypass ($1): run-gate exits non-zero" "yes" \
+    "$([ "$(cat "$fr2r/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+  expect "FR2 bypass ($1): no artifact written" "yes" "$([ ! -f "$(a2_artifact "$fr2r")" ] && echo yes || echo no)"
+}
+
+fr2_check 'backslash-cd' 'c\d sub && bash x.sh'
+fr2_check 'no-space-&&' 'true&&cd sub && bash x.sh'
+fr2_check 'brace-expansion' '{cd,sub} && bash x.sh'
+fr2_check 'IFS-word-split' 'cd${IFS}sub && bash x.sh'
+fr2_check 'printf-v-indirect' 'printf -v D sub/ && bash ${D}x.sh'
+fr2_check 'read-indirect' 'read D < d.txt && bash ${D}x.sh' 'printf "sub/\n" > "$r/d.txt"'
+
+# Positive control: a plain safe pair must still split and reuse -- the
+# round-2 tightening must not widen into refusing legitimate legs.
+R=$(a2_repo fr2_positive); a2_commit "$R"; a2_rungate "$R"
+expect "FR2 positive control: safe pair still splits (extra leg ran)" "yes" "$(a2_has "$R/.a2_gate_out" A2-EXTRA-RAN)"
+expect "FR2 positive control: safe pair -- run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+# ---- end v4.3.0 fix round 2
 # ---- end v4.3.0 A2
 
 echo "----------------------------------------------------------------"
