@@ -7915,6 +7915,33 @@ mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-age
 a3_run "A3 audit: commit at 120 passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
 expect "A3 audit line records action=commit-allowed" "yes" \
   "$(grep -q 'agent=a3-agent calls=120 action=commit-allowed' "$A3CWD/.claude/liveness.log" 2>/dev/null && echo yes || echo no)"
+
+# --- fix round 1 (S-14 b): wider commit detection -------------------------------
+# An option's argument may be an escaped-quoted string (a path or a value with a
+# space), the binary may be git.exe, and `commit` must END the word so that
+# `git commit-graph` / `git commit-tree` are not commits.
+a3_at120 "A3 -C \"path with spaces\" commit passes"     Bash 'git -C "my dir/x" commit -m x' 0
+a3_at120 "A3 -c user.name=\"A B\" commit passes"        Bash 'git -c user.name="A B" commit -m x' 0
+a3_at120 "A3 git.exe commit passes"                     Bash 'git.exe commit -m x' 0
+a3_at120 "A3 git.exe -C /x commit passes"               PowerShell 'git.exe -C /x commit -m x' 0
+a3_at120 "A3 bare 'git commit' (no args) passes"        Bash 'git commit' 0
+a3_at120 "A3 bash -c \"git commit\" (quote ends it)"    Bash 'bash -c "git commit"' 0
+a3_at120 "A3 'git commit-graph write' blocks"           Bash 'git commit-graph write' 2
+a3_at120 "A3 'git commit-tree abc' blocks"              Bash 'git commit-tree abc' 2
+a3_at120 "A3 'git -C \"a b\" status' blocks"            Bash 'git -C "a b" status' 2
+
+# --- fix round 1 (S-14 a): an allowed commit is NOT counted --------------------
+# Otherwise the commit consumes the threshold (-eq fires once per value) and the
+# next block is 60 calls away; exit-0 stderr is the only stop signal and is
+# likely invisible to the model. Same hazard, same remedy as SendMessage.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"; a3_ctr="$a3_t/claude-agent-budget/a3sess/a3-agent"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_ctr"
+a3_run "A3 uncount: commit at 120 passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+expect "A3 uncount: counter is back at 119" "119" "$(cat "$a3_ctr" 2>/dev/null)"
+a3_run "A3 uncount: a second commit passes again" "$a3_t" "$(a3_cmd Bash "git commit -m y" a3-agent)" 0
+expect "A3 uncount: counter still 119" "119" "$(cat "$a3_ctr" 2>/dev/null)"
+a3_run "A3 uncount: next non-commit is blocked" "$a3_t" "$(a3_cmd Bash "ls" a3-agent)" 2 "BUDGET: this spawn has made 120"
+expect "A3 uncount: a block still counts (120)" "120" "$(cat "$a3_ctr" 2>/dev/null)"
 # ---- end v4.3.0 A3
 
 echo "----------------------------------------------------------------"
