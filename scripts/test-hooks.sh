@@ -8046,6 +8046,38 @@ b1 "I-3 cd: && pipe|while, then c"            2 "cd /x && ls | while read f; do 
 b1 "I-3 cd: two loops"                        2 "cd /x && for a in b; do c; done; for d in e; do f; done"
 # -- fix round 1 (review M-1): > /dev/stderr / /dev/stdout is not a file target
 b1 "M-1 ok: cat <<EOF > /dev/stderr"          0 "cat <<EOF > /dev/stderr${b1nl}x${b1nl}EOF"
+# -- fix round 2 (re-review N-1, ruling S-18): a -c body is exposed ONLY for a shell
+# (bash/sh/zsh/dash/ksh, optionally path-prefixed, flag -c or a cluster ending in c),
+# and ONLY to shapes 1 and 2. For shape 3 a quoted body is one word, always.
+b1 "N-1 ok: cd && python -c \"a; b\""            0 "cd /x && python -c \"import sys; print(1); print(2)\""
+b1 "N-1 ok: cd && python3 -c \"...; ...\""       0 "cd /x && python3 -c \"import os; print(os.getcwd())\""
+b1 "N-1 ok: cd && bash -c 'a; b; c'"             0 "cd /x && bash -c 'a; b; c'"
+b1 "N-1 ok: cd && psql -c \"a; b\""              0 "cd /x && psql -c \"select 1; select 2\""
+b1 "N-1 ok: psql -c \"a; b\" (no cd)"            0 "psql -c \"select 1; select 2\""
+b1 "N-1 ok: grep -rc 'cat > f <<EOF' x"          0 "grep -rc 'cat > f <<EOF' x"
+b1 "N-1 ok: grep -c 'while..sleep..done' f"      0 "grep -c 'while x; do sleep 1; done' f"
+b1 "N-1 ok: git commit -c '...while..sleep..done'" 0 "git commit -c 'while x; do sleep 1; done'"
+b1 "N-1 ok: python -c body is not shell"         0 "python -c 'while true; do sleep 1; done'"
+b1 "N-1 wait: bash -c \"while..sleep..done\""    2 "bash -c \"while true; do sleep 1; done\""
+b1 "N-1 wait: /bin/bash -lc '...'"               2 "/bin/bash -lc 'until x; do sleep 1; done'"
+b1 "N-1 wait: sh -ec \"...\""                    2 "sh -ec \"while :; do sleep 1; done\""
+b1 "N-1 wait: zsh -c '...'"                      2 "zsh -c 'while true; do sleep 1; done'"
+b1 "N-1 wait: cd && bash -c 'loop'"              2 "cd /x && bash -c 'while true; do sleep 1; done'"
+b1 "N-1 heredoc: sh -c 'cat > f <<EOF'"          2 "sh -c 'cat > f <<EOF'"
+b1 "N-1 heredoc: bash -lc 'tee f <<EOF'"         2 "bash -lc 'tee f.txt <<EOF'"
+b1 "N-1 cd: && a && bash -c 'x; y'"             2 "cd /x && a && bash -c 'x; y'"
+# -- fix round 2 (re-review N-2): a compound nested directly inside ( ) or { } is
+# still ONE command after the cd (a word after ( or { is in command position)
+b1 "N-2 ok: cd && ( for ..; done; b )"           0 "cd /x && ( for f in *; do a; done; b )"
+b1 "N-2 ok: cd && { for ..; done; b; }"          0 "cd /x && { for f in *; do a; done; b; }"
+b1 "N-2 ok: cd && ( case .. esac )"              0 "cd /x && ( case \$a in x) echo 1;; esac )"
+b1 "N-2 ok: cd && { case .. esac; }"             0 "cd /x && { case \$x in a) b;; esac; }"
+b1 "N-2 ok: cd && (for glued to paren)"          0 "cd /x && (for f in *; do a; done; b)"
+b1 "N-2 ok: cd && ( if..fi; b )"                 0 "cd /x && ( if a; then b; fi; c )"
+b1 "N-2 ok: cd && { ( a; b ); c; }"              0 "cd /x && { ( a; b ); c; }"
+b1 "N-2 cd: && a && ( b )"                       2 "cd /x && a && ( b )"
+b1 "N-2 cd: ( for..done; b ) && c"               2 "cd /x && ( for f in *; do a; done; b ) && c"
+b1 "N-2 cd: { case..esac; } ; c"                 2 "cd /x && { case \$x in a) b;; esac; } ; c"
 # ---- end v4.3.0 B1
 
 echo "----------------------------------------------------------------"

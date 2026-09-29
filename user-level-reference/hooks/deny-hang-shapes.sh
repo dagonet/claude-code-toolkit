@@ -26,15 +26,23 @@ DH_HERE="(^|[^<])<<-?[[:space:]]*[\"$DH_Q]?[A-Za-z_]"
 DH_NL2=$(printf '\002')
 DH_SEP=$(printf '\001')
 
-# dh_norm -- stdin -> stdout. Quoted text is data, not commands: every quoted
-# string collapses to the one word Q, so a command that only MENTIONS a shape (a
-# grep pattern, a commit message, an issue body) is left alone. ONE exception:
-# the body of `bash -c '...'` / `sh -c "..."` is exposed first, because a loop
-# inside one still hangs. Double quotes honour backslash escapes; single quotes
-# have none. Newlines survive (mapped out and back) so a string may span lines.
+# dh_norm [expose] -- stdin -> stdout. Quoted text is data, not commands: every
+# quoted string collapses to the one word Q, so a command that only MENTIONS a
+# shape (a grep pattern, a commit message, an issue body) is left alone. With the
+# argument `expose` ONE exception applies (shapes 1 and 2 only, ruling S-18): the
+# body of `bash -c '...'` / `sh -lc "..."` -- a SHELL (bash sh zsh dash ksh,
+# optionally path-prefixed) given -c or a short-flag cluster ending in c -- is
+# exposed first, because a loop inside one still hangs. Shape 3 never exposes: a
+# quoted body is one word for it, even for a shell (`cd d && bash -c 'a; b'` is
+# ONE command; so is `python -c "a; b"`). Double quotes honour backslash escapes;
+# single quotes have none. Newlines survive (mapped out and back) so a string may
+# span lines.
 dh_norm() {
+  local _shell='((^|[;&|[:space:](])([^[:space:]]*\/)?(bash|sh|zsh|dash|ksh)([[:space:]]+-[a-zA-Z]+)*[[:space:]]+-[a-zA-Z]*c[[:space:]]+)'
   tr '\n' "$DH_NL2" \
-    | sed -E 's/(-[a-zA-Z]*c[[:space:]]+)'\''([^'\'']*)'\''/\1 \2 /g; s/(-[a-zA-Z]*c[[:space:]]+)"(([^"\\]|\\.)*)"/\1 \2 /g' \
+    | if [ "${1:-}" = expose ]; then
+        sed -E "s/${_shell}'([^']*)'/\\1 \\6 /g; s/${_shell}\"(([^\"\\\\]|\\\\.)*)\"/\\1 \\6 /g"
+      else cat; fi \
     | sed -E 's/"([^"\\]|\\.)*"|'\''[^'\'']*'\''/Q/g' \
     | tr "$DH_NL2" '\n'
 }
@@ -45,7 +53,7 @@ case "$DH_CMD" in
     # The delimiter's own quotes (<<'EOF') come off first, so they do not read as a string.
     DH_T=$(printf '%s\n' "$DH_CMD" | head -1 \
       | sed -E 's/<<(-?)[[:space:]]*'\''([A-Za-z_][A-Za-z_0-9]*)'\''/<<\1\2/g; s/<<(-?)[[:space:]]*"([A-Za-z_][A-Za-z_0-9]*)"/<<\1\2/g' \
-      | dh_norm \
+      | dh_norm expose \
       | sed -E 's#[0-9]*>&[0-9]+##g; s#>+[[:space:]]*/dev/(null|stdout|stderr)##g')
     if printf '%s' "$DH_T" | grep -Eq "$DH_HERE"; then
       if printf '%s' "$DH_T" | grep -Eq '(^|[;&|[:space:]])cat[[:space:]][^|;&]*>{1,2}[[:space:]]*[^&[:space:]]' \
@@ -69,7 +77,7 @@ esac
 # 2. A wait loop (quoted text is data; a bash -c body is not).
 case "$DH_HEAD" in
   *sleep*)
-    DH_W=$(printf '%s' "$DH_HEAD" | dh_norm)
+    DH_W=$(printf '%s' "$DH_HEAD" | dh_norm expose)
     DH_B='(^|[;&|({[:space:]])'
     if printf '%s' "$DH_W" | grep -Eq "${DH_B}(while|until)[[:space:]]" \
        && printf '%s' "$DH_W" | grep -Eq "${DH_B}sleep[[:space:]]" \
@@ -98,10 +106,11 @@ case "$DH_TRIM" in
           nw = split(s, w, /[ \t]+/)
           for (i = 1; i <= nw; i++) {
             t = w[i]
-            c = (i == 1 || w[i-1] ~ /^(then|do|else|elif|\||!|time)$/)
+            c = (i == 1 || w[i-1] ~ /^(then|do|else|elif|\||!|time|\(|\{)$/)
+            while (c && t ~ /^\(/) { st[++sp] = "("; t = substr(t, 2) }
+            if (t == "") continue
             if (c && t ~ /^(for|while|until|if|case)$/) st[++sp] = t
             else if (c && t == "{") st[++sp] = "{"
-            else if (c && t ~ /^\(/) st[++sp] = "("
             else if (c && t ~ /^(done|fi|esac|\})$/ && sp > 0) sp--
             tmp = t
             while (sp > 0 && st[sp] == "(" && sub(/\)$/, "", tmp)) sp--
