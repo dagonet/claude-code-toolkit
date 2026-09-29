@@ -7704,6 +7704,85 @@ fr2_check 'eval-escaped-space' 'eval cd\ sub && bash x.sh'
 fr2_check 'default-assign-indirect' ': ${D:=sub/} && bash ${D}x.sh'
 fr2_check 'hash-indirect' 'hash -p ./sub/x.sh bash && bash x.sh'
 # ---- end v4.3.0 fix round 3
+
+# ---- v4.3.0 fix round 4 (opus re-review of C2, ruling S-12) ----
+# The round-3 re-review reproduced a wrong PASS through a builtin nobody had
+# denylisted: `coproc sleep 5 && jobs -x bash chk.sh %1`. Run as ONE `bash -c`
+# the job table carries the coproc across `&&`, so `jobs -x` rewrites `%1`
+# into the coproc's process-group id and chk.sh (fails on a numeric argument)
+# exits 1. Split, the second leg's fresh shell has no job 1, `%1` reaches
+# chk.sh unrewritten, and the split gave rc 0 plus an artifact. Three denylist
+# rounds leaked (9, then 2, then 1); S-12 replaces the builtin denylist with a
+# FIRST-WORD ALLOW-list, so the rows below compare every refused shape
+# against the plain Gate (the same text, run as one command, computed here
+# independently of run-gate.sh) instead of against a guessed outcome.
+fr4_repo() { # <name> <gate-extra-text> -> repo dir (t.sh/x.sh/chk.sh/scripts/x.sh/bin/npm all pass except chk.sh on a number)
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR4-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho FR4-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '#!/usr/bin/env bash\necho "FR4-CHK-ARG=$1"\ncase "$1" in *[!0-9]*|"") exit 0 ;; esac\nexit 1\n' > "$r/chk.sh"
+  mkdir -p "$r/scripts" "$r/bin"
+  printf '#!/usr/bin/env bash\necho FR4-SCRIPTS-XSH-RAN\nexit 0\n' > "$r/scripts/x.sh"
+  printf '#!/usr/bin/env bash\necho "FR4-FAKE-NPM-RAN $*"\nexit 0\n' > "$r/bin/npm"
+  chmod +x "$r/scripts/x.sh" "$r/bin/npm" 2>/dev/null
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr4_rungate() { # <repo> -- a2_rungate with the repo's bin/ first on PATH (fake npm)
+  ( cd "$1" && PATH="$1/bin:$PATH" bash "$ROOT/hooks/run-gate.sh" ) >"$1/.a2_gate_out" 2>&1
+  printf '%s' "$?" > "$1/.a2_gate_rc"
+}
+fr4_plain_rc() { # <repo> <gate-extra-text> -> rc of the plain combined Gate, run once, unsplit
+  fr4_whole="bash t.sh && $2"
+  ( cd "$1" && PATH="$1/bin:$PATH" bash -c "$fr4_whole" ) >/dev/null 2>&1 </dev/null
+  printf '%s' "$?"
+}
+fr4_refused() { # <label> <gate-extra-text> -- no split, no reuse, rc == the plain Gate's
+  fr4r=$(fr4_repo "fr4n_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2")
+  a2_commit "$fr4r"; fr4_rungate "$fr4r"
+  fr4_want=$(fr4_plain_rc "$fr4r" "$2")
+  fr4_got=$(cat "$fr4r/.a2_gate_rc" 2>/dev/null)
+  expect "FR4 refused ($1): allow-list WARN printed (no split)" "yes" "$(a2_has "$fr4r/.a2_gate_out" 'not an allow-listed')"
+  expect "FR4 refused ($1): Test not reused" "no" "$(a2_has "$fr4r/.a2_gate_out" 'Test legs reused from')"
+  expect "FR4 refused ($1): no split legs recorded" "no" "$(a2_has "$(a2_artifact "$fr4r")" '"legs":[{')"
+  expect "FR4 refused ($1): run-gate rc zero-ness equals the plain Gate's ($fr4_want)" \
+    "$([ "$fr4_want" = 0 ] && echo zero || echo nonzero)" "$([ "$fr4_got" = 0 ] && echo zero || echo nonzero)"
+  expect "FR4 refused ($1): artifact iff the plain Gate passes" \
+    "$([ "$fr4_want" = 0 ] && echo yes || echo no)" "$([ -f "$(a2_artifact "$fr4r")" ] && echo yes || echo no)"
+}
+fr4_split() { # <label> <gate-extra-text> <marker the leg prints> -- splits, leg recorded, reuse iff env usable
+  fr4r=$(fr4_repo "fr4p_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2")
+  a2_commit "$fr4r"; fr4_rungate "$fr4r"
+  expect "FR4 allowed ($1): no allow-list WARN" "no" "$(a2_has "$fr4r/.a2_gate_out" 'not an allow-listed')"
+  expect "FR4 allowed ($1): the leg ran" "yes" "$(a2_has "$fr4r/.a2_gate_out" "$3")"
+  expect "FR4 allowed ($1): split leg recorded" "yes" "$(a2_has "$(a2_artifact "$fr4r")" '"legs":[{')"
+  expect "FR4 allowed ($1): Test reused iff env fingerprint usable" "$A2_R1_REUSEDNAME" \
+    "$(a2_has "$(a2_artifact "$fr4r")" '"reused_test":"last-precommit.')"
+  expect "FR4 allowed ($1): run-gate exit 0" "0" "$(cat "$fr4r/.a2_gate_rc" 2>/dev/null)"
+}
+
+# The reproduced Critical: must equal the plain Gate (rc != 0, no artifact).
+fr4_refused 'coproc-jobs' 'coproc sleep 5 && jobs -x bash chk.sh %1'
+R="$TMPROOT/fr4n_coproc_jobs"
+expect "FR4 coproc/jobs: plain Gate really fails here (fixture sanity)" "nonzero" \
+  "$([ "$(fr4_plain_rc "$R" 'coproc sleep 5 && jobs -x bash chk.sh %1')" = 0 ] && echo zero || echo nonzero)"
+expect "FR4 coproc/jobs: run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR4 coproc/jobs: no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# First-word negatives: a builtin or keyword, an absolute path, a parent path.
+fr4_refused 'first-word-wait' 'wait && bash x.sh'
+fr4_refused 'first-word-true' 'true && bash x.sh'
+fr4_refused 'first-word-absolute' '/usr/bin/bash x.sh'
+fr4_refused 'first-word-parent' '../x.sh'
+# A job spec as a LATER word, with an allow-listed first word (rule c).
+fr4_refused 'later-word-jobspec' 'bash chk.sh %1'
+
+# Positives: an allow-listed program, a relative script path, a package runner.
+fr4_split 'bash' 'bash x.sh' FR4-XSH-RAN
+fr4_split 'relative-script' './scripts/x.sh' FR4-SCRIPTS-XSH-RAN
+fr4_split 'npm' 'npm test' 'FR4-FAKE-NPM-RAN test'
+# ---- end v4.3.0 fix round 4
 # ---- end v4.3.0 A2
 
 echo "----------------------------------------------------------------"

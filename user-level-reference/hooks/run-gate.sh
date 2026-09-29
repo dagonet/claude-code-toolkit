@@ -306,7 +306,30 @@ rg_stateless() {
   # shellcheck disable=SC2086
   set -- $rgst_trim
   set +f
+  # v4.3.0 fix round 4, S-12: FIRST-WORD ALLOW-list. Rounds 1-3 denylisted
+  # shell verbs and leaked every round (9, then 2, then 1 wrong-PASS bypass;
+  # the last one `coproc sleep 5 && jobs -x bash chk.sh %1`, where the job
+  # table carries the coproc across `&&`). State can only cross a split
+  # boundary through the shell that runs the parts, and a part whose first
+  # word is an external program (or a relative path to a script) changes no
+  # state in that shell. So the first word must be one of these names, or a
+  # relative path: contains `/`, no `..`, not absolute. Anything else --
+  # every builtin, keyword and function name -- refuses. Keep this `case`
+  # alternation on ONE line (a continuation silently corrupts a pattern).
+  case "$1" in
+    bash|sh|python|python3|node|npm|npx|pnpm|yarn|cargo|dotnet|go|mvn|gradle|./gradlew|pytest|make|ctest|rake|bundle|composer|php|ruby|perl|deno|bun) ;;
+    /*|*..*) return 1 ;;
+    */*) ;;
+    *) return 1 ;;
+  esac
   for rgst_tok in "$@"; do
+    # A word beginning with `%` is a job spec to `jobs -x`, `kill`, `wait`,
+    # `fg`, `bg` (S-12 rule c). Refused at EVERY position, the first word
+    # included (stricter than the ruling, which names later words only: a
+    # first word like `%1/x` is a relative path to the list above).
+    case "$rgst_tok" in
+      %*) return 1 ;;
+    esac
     # A NAME=value OR NAME+=value assignment token (env-var-style prefix;
     # fix round 3, S-11 -- the round-2 regex missed the `+=` append form,
     # measured: `PATH+=:sub && bash pcheck.sh` split rc 0 where the plain
@@ -374,7 +397,7 @@ if [ -n "$GATE_EXTRA" ]; then
 $RG_LEGS
 RG_STATE_CHECK
   if [ "$RG_UNSAFE" = 1 ]; then
-    echo "run-gate: WARN **Test** or a **Gate extra** leg is not an allow-listed state-free simple command (character set, verb, assignment, or an empty leg) -- ignoring **Gate extra**, running the full Gate" >&2
+    echo "run-gate: WARN **Test** or a **Gate extra** leg is not an allow-listed state-free simple command (character set, first word, job spec, verb, assignment, or an empty leg) -- ignoring **Gate extra**, running the full Gate" >&2
     GATE_EXTRA=""
   fi
 fi
