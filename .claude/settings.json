@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then exit 0; fi; exit $c"
+            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\" ] || exit 0; bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\""
           }
         ]
       }

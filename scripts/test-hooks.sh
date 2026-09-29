@@ -8009,6 +8009,43 @@ check "B1 kill switch: refused shape passes" hooks/deny-hang-shapes.sh 0 "$(mkjs
 check_msg "B1 msg: heredoc advice"   "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cat > f <<EOF${b1nl}x${b1nl}EOF" "$TMPROOT")" "Write tool"
 check_msg "B1 msg: wait-loop advice" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "end your turn"
 check_msg "B1 msg: cd advice"        "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "env -C"
+# -- fix round 1 (review I-1): text inside QUOTES is data, not a shape. A command
+# that only MENTIONS a shape (grep pattern, commit message, issue body) passes;
+# the body of bash -c / sh -c stays scanned because a loop there still hangs.
+b1 "I-1 ok: grep for a wait loop"             0 "grep -n 'while true; do sleep 1; done' scripts/test-hooks.sh"
+b1 "I-1 ok: -m message names a wait loop"     0 "git commit -m \"docs: a while loop with sleep 5 hangs until done\""
+b1 "I-1 ok: --body names a wait loop"         0 "gh issue comment 5 --body \"the agent ran while true; do sleep 5; done and hung\""
+b1 "I-1 ok: rg pattern names a wait loop"     0 "rg -n 'until .* sleep [0-9]+; done' hooks/"
+b1 "I-1 ok: grep '<<EOF' | tee hits"          0 "grep -rn '<<EOF' hooks/ | tee hits.txt"
+b1 "I-1 ok: echo mentions cat > f <<EOF"      0 "echo 'never run cat > f <<EOF in a hook'"
+b1 "I-1 ok: -m message names cat > f <<EOF"   0 "git commit -m \"docs: explain why cat > f <<EOF hangs\""
+b1 "I-1 wait: inside sh -c \"...\""           2 "sh -c \"while true; do sleep 1; done\""
+b1 "I-1 wait: inside bash -lc '...'"          2 "bash -lc 'until x; do sleep 1; done'"
+b1 "I-1 heredoc: inside bash -c '...'"        2 "bash -c 'cat <<EOF > f.txt'"
+b1 "I-1 ok: bash -c body without a loop"      0 "bash -c 'echo while; sleep 1'"
+# -- fix round 1 (review I-2): an escaped quote does not end a double-quoted string
+b1 "I-2 ok: cd && msg with \\\" and ; &&"      0 "cd /x && git commit -m \"say \\\"a; b\\\" && c\""
+b1 "I-2 ok: cd && apostrophe inside \"...\""  0 "cd /x && echo \"it's a; b\""
+b1 "I-2 ok: cd && ; inside '...'"             0 "cd /x && echo 'a; b && c'"
+b1 "I-2 cd: escaped quote, then 2 commands"   2 "cd /x && a && echo \"say \\\"x\\\"\""
+# -- fix round 1 (review I-3, ruling S-16): after a leading cd a pipeline and ONE
+# compound command (for/while/until..done, if..fi, case..esac, { }, ( )) are each one command
+b1 "I-3 ok: cd && for loop"                   0 "cd /x && for f in *.sh; do bash -n \"\$f\"; done"
+b1 "I-3 ok: cd && if"                         0 "cd /x && if [ -f a ]; then echo y; fi"
+b1 "I-3 ok: cd && pipe | while"               0 "cd /x && git ls-files | while read -r f; do wc -c \"\$f\"; done"
+b1 "I-3 ok: cd && case"                       0 "cd /x && case \$a in x) echo x;; *) echo y;; esac"
+b1 "I-3 ok: cd && { group; }"                 0 "cd /x && { echo a; echo b; }"
+b1 "I-3 ok: cd && ( subshell; )"              0 "cd /x && (echo a; echo b)"
+b1 "I-3 ok: cd && nested for"                 0 "cd /x && for a in b; do for c in d; do e; done; done"
+b1 "I-3 ok: cd, newline, multi-line for"      0 "cd /x${b1nl}for f in a; do${b1nl}  echo \$f${b1nl}done"
+b1 "I-3 ok: cd && if/elif/else/fi"            0 "cd /x && if a; then b; elif c; then d; else e; fi"
+b1 "I-3 cd: && a && for loop"                 2 "cd /x && a && for f in *; do echo \$f; done"
+b1 "I-3 cd: && for loop && b"                 2 "cd /x && for f in a; do echo \$f; done && b"
+b1 "I-3 cd: && if ..; fi; c"                  2 "cd /x && if a; then b; fi; c"
+b1 "I-3 cd: && pipe|while, then c"            2 "cd /x && ls | while read f; do echo \$f; done; c"
+b1 "I-3 cd: two loops"                        2 "cd /x && for a in b; do c; done; for d in e; do f; done"
+# -- fix round 1 (review M-1): > /dev/stderr / /dev/stdout is not a file target
+b1 "M-1 ok: cat <<EOF > /dev/stderr"          0 "cat <<EOF > /dev/stderr${b1nl}x${b1nl}EOF"
 # ---- end v4.3.0 B1
 
 echo "----------------------------------------------------------------"
