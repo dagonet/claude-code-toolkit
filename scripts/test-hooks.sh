@@ -8078,6 +8078,25 @@ b1 "N-2 ok: cd && { ( a; b ); c; }"              0 "cd /x && { ( a; b ); c; }"
 b1 "N-2 cd: && a && ( b )"                       2 "cd /x && a && ( b )"
 b1 "N-2 cd: ( for..done; b ) && c"               2 "cd /x && ( for f in *; do a; done; b ) && c"
 b1 "N-2 cd: { case..esac; } ; c"                 2 "cd /x && { case \$x in a) b;; esac; } ; c"
+# -- fix round 3 (re-review N-3): the closing side is peeled like the opening side.
+# A close keyword glued to ) or } (done) fi) esac) esac)}) still ends its compound
+# command, so what follows it is counted -- one glued close must not hide the rest.
+b1 "N-3 cd: (for..done); b; sed; make"           2 "cd /x && (for f in *; do a; done); sed x; make"
+b1 "N-3 cd: (for..done); b"                      2 "cd /x && (for f in *; do a; done); b"
+b1 "N-3 cd: (for..done); sed; make; make test"   2 "cd /x && (for f in *; do a; done); sed -i s/a/b/ f; make; make test; git add -A"
+b1 "N-3 cd: (for..done) newline make newline make" 2 "cd /x && (for f in *; do a; done)${b1nl}make${b1nl}make test${b1nl}npm run build"
+b1 "N-3 cd: (if..fi) && c"                       2 "cd /x && (if a; then b; fi) && c"
+b1 "N-3 cd: (if..fi); c; d; e"                   2 "cd /x && (if [ -f a ]; then b; fi); c; d; e"
+b1 "N-3 cd: (case..esac); c; d"                  2 "cd /x && (case \$a in x) y;; esac); c; d"
+b1 "N-3 cd: (while..done) && b"                  2 "cd /x && (while read l; do a; done) && b"
+b1 "N-3 cd: {(case..esac)} ; c"                  2 "cd /x && {(case \$x in a) b;; esac)} ; c"
+b1 "N-3 cd: { for..done; } ; c"                  2 "cd /x && { for f in *; do a; done; } ; c"
+b1 "N-3 ok: cd && (for..done)"                   0 "cd /x && (for f in *; do a; done)"
+b1 "N-3 ok: cd && (for..done);"                  0 "cd /x && (for f in *; do a; done);"
+b1 "N-3 ok: cd && (if..fi)"                      0 "cd /x && (if a; then b; fi)"
+b1 "N-3 ok: cd && (case..esac)"                  0 "cd /x && (case \$a in x) y;; esac)"
+b1 "N-3 ok: cd && nested glued (for..)"          0 "cd /x && (for a in b; do (for c in d; do e; done); done)"
+b1 "N-3 ok: cd && \${var} inside a group"        0 "cd /x && { echo \${x}; echo \${y}; }"
 # ---- end v4.3.0 B1
 
 echo "----------------------------------------------------------------"

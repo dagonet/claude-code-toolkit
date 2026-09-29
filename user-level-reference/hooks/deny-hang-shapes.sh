@@ -111,9 +111,24 @@ case "$DH_TRIM" in
             if (t == "") continue
             if (c && t ~ /^(for|while|until|if|case)$/) st[++sp] = t
             else if (c && t == "{") st[++sp] = "{"
-            else if (c && t ~ /^(done|fi|esac|\})$/ && sp > 0) sp--
-            tmp = t
-            while (sp > 0 && st[sp] == "(" && sub(/\)$/, "", tmp)) sp--
+            # The closing side is peeled like the opening side: a close keyword (or a
+            # bare group close) may carry trailing ) and } -- `done)` `esac)}` `}` --
+            # so pop the keyword first, then each glued group close in order.
+            k = t; tl = ""
+            if (match(k, /[)}]+$/)) {
+              stem = substr(k, 1, RSTART - 1)
+              if (stem == "" || stem ~ /^(done|fi|esac)$/) { tl = substr(k, RSTART); k = stem }
+            }
+            if (c && k ~ /^(done|fi|esac)$/ && sp > 0) sp--
+            if (tl != "") {
+              for (j = 1; j <= length(tl); j++) {
+                ch = substr(tl, j, 1)
+                if (sp > 0 && ((ch == ")" && st[sp] == "(") || (ch == "}" && st[sp] == "{"))) sp--
+              }
+            } else {
+              tmp = t
+              while (sp > 0 && st[sp] == "(" && sub(/\)$/, "", tmp)) sp--
+            }
           }
         }
         END { print n + 0 }')
