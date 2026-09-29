@@ -7484,6 +7484,123 @@ expect "A2: extra leg fails -- run-gate exits non-zero" "yes" \
   "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
 expect "A2: extra leg fails -- no artifact written" "yes" \
   "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# ---- v4.3.0 fix round 1 (opus review C1/C2/I1/I2, rulings S-6/S-7/S-8) ----
+# FR1 row 1/2: C1 -- "wrong reuse across directories". A commit issued from a
+# SUBDIRECTORY of the repo resolves REPO_PATH (and so PCT_ARTIFACT_BASE) to
+# that subdirectory: pre-commit-test.sh reads sub/PROJECT_CONTEXT.md and runs
+# sub/t.sh, while hooks/run-gate.sh always reads the TOPLEVEL's own
+# PROJECT_CONTEXT.md. If the two **Test** fields are byte-identical text
+# (plausible, not an attack), a plain text comparison sees a match even
+# though sub/t.sh and the toplevel's own t.sh are different files with
+# different behaviour.
+fr1_c1_setup() { # <name> worktree|plain -> prints the "sub" dir to commit from
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho C1-TOP-RAN\nexit 1\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho C1-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho C1-SUB-RAN\nexit 0\n' > "$r/sub/t.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh`\n' > "$r/sub/PROJECT_CONTEXT.md"
+  git -C "$r" add -A >/dev/null 2>&1
+  git -C "$r" commit -q -m "fr1 c1 setup" >/dev/null 2>&1
+  if [ "$2" = worktree ]; then
+    wt="$TMPROOT/${1}-wt"
+    git -C "$r" worktree add -q "$wt" -b "${1}-wtbranch" >/dev/null 2>&1
+    printf '%s\n' "$wt/sub"
+  else
+    printf '%s\n' "$r/sub"
+  fi
+}
+
+# Row 1: linked worktree, commit from sub/ -- NO reuse, and the full Gate
+# fails (the toplevel's OWN t.sh, run for real, exits 1).
+WTSUB=$(fr1_c1_setup fr1c1wt worktree)
+a2_commit "$WTSUB"; a2_rungate "$WTSUB"
+expect "FR1 C1 (linked worktree): toplevel Test actually ran" "yes" "$(a2_has "$WTSUB/.a2_gate_out" C1-TOP-RAN)"
+expect "FR1 C1 (linked worktree): sub/'s Test never substituted in" "no" "$(a2_has "$WTSUB/.a2_gate_out" C1-SUB-RAN)"
+expect "FR1 C1 (linked worktree): run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$WTSUB/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR1 C1 (linked worktree): no artifact written" "yes" \
+  "$([ ! -f "$(a2_artifact "$WTSUB")" ] && echo yes || echo no)"
+
+# Row 2: the same shape from a subdirectory of a PLAIN checkout (I1's own
+# reproduction case: --git-path index prints RELATIVE there) -- still no
+# reuse, and the precommit record itself must not be a spurious EMPTY TREE
+# with reusable fields populated (I1/I2, S-8).
+PLAINSUB=$(fr1_c1_setup fr1c1plain plain)
+a2_commit "$PLAINSUB"
+REC_PLAIN=$(a2_precommit_record "$PLAINSUB")
+expect "FR1 I1 (plain checkout, subdir commit): precommit record exists" "yes" \
+  "$([ -f "$REC_PLAIN" ] && echo yes || echo no)"
+expect "FR1 I1 (plain checkout, subdir commit): record tree is NOT the empty tree" "no" \
+  "$(a2_has "$REC_PLAIN" '"tree":"4b825dc642cb6eb9a060e54bf8d69288fbee4904"')"
+expect "FR1 I1 (plain checkout, subdir commit): no reusable test_sha256 (cross-dir)" "yes" \
+  "$(a2_has "$REC_PLAIN" '"test_sha256":""')"
+a2_rungate "$PLAINSUB"
+expect "FR1 C1 (plain checkout): toplevel Test actually ran" "yes" "$(a2_has "$PLAINSUB/.a2_gate_out" C1-TOP-RAN)"
+expect "FR1 C1 (plain checkout): run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$PLAINSUB/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+
+# FR1 row 3: C2 -- "leg splitting drops shell state". `**Gate extra**: cd sub
+# && bash x.sh` splits (naively) into TWO legs ("cd sub", "bash x.sh"), each
+# its own fresh `bash -c` from REPO_TOP -- the second leg then runs the WRONG
+# (top-level) x.sh instead of sub/x.sh. With S-7, "cd sub" is a STATEFUL leg
+# (denylisted verb), so the split is refused and the full Gate runs as ONE
+# `bash -c`, correctly finding sub/x.sh (which fails).
+fr1_c2_repo() {
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho C2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho C2-SUB-XSH-RAN\nexit 1\n' > "$r/sub/x.sh"
+  printf '#!/usr/bin/env bash\necho C2-TOP-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && cd sub && bash x.sh`\n- **Gate extra**: `cd sub && bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr1_c2_repo fr1c2); a2_commit "$R"; a2_rungate "$R"
+expect "FR1 C2: sub/x.sh really ran (not the top-level one)" "yes" "$(a2_has "$R/.a2_gate_out" C2-SUB-XSH-RAN)"
+expect "FR1 C2: top-level x.sh did NOT run" "no" "$(a2_has "$R/.a2_gate_out" C2-TOP-XSH-RAN)"
+expect "FR1 C2: run-gate exits non-zero (the real failure is caught)" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR1 C2: no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# FR1 row 4: the Test/extra BOUNDARY has the identical flaw -- a **Test**
+# that itself does `cd sub && bash t.sh` must not be split away from a leg
+# that depends on landing in sub/ too. No split -> the combined `bash -c`
+# preserves the cd, and the leg (bash x.sh, only present under sub/) is found;
+# a wrongly-split run would instead look for x.sh at REPO_TOP and fail.
+fr1_c2b_repo() {
+  r=$(mkrepo "$1" main)
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho C2B-SUB-TSH-RAN\nexit 0\n' > "$r/sub/t.sh"
+  printf '#!/usr/bin/env bash\necho C2B-SUB-XSH-RAN\nexit 0\n' > "$r/sub/x.sh"
+  printf '# ctx\n\n- **Test**: `cd sub && bash t.sh`\n- **Gate**: `cd sub && bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr1_c2b_repo fr1c2b); a2_commit "$R"; a2_rungate "$R"
+expect "FR1 Test/extra boundary: no split -- combined run succeeds (exit 0)" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+expect "FR1 Test/extra boundary: not reused/split (no 'reused from' message)" "no" "$(a2_has "$R/.a2_gate_out" 'Test legs reused from')"
+expect "FR1 Test/extra boundary: artifact legs:[] (fell back to full Gate)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
+
+# FR1 row 5: an assignment-prefixed leg (`FOO=1 bash x.sh`) must also refuse
+# the split, mechanically -- no reuse message, legs:[].
+fr1_c2c_repo() {
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho C2C-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho C2C-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && FOO=1 bash x.sh`\n- **Gate extra**: `FOO=1 bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr1_c2c_repo fr1c2c); a2_commit "$R"; a2_rungate "$R"
+expect "FR1 assignment-prefixed leg: no split (no 'reused from' message)" "no" "$(a2_has "$R/.a2_gate_out" 'Test legs reused from')"
+expect "FR1 assignment-prefixed leg: artifact legs:[] (fell back to full Gate)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
+expect "FR1 assignment-prefixed leg: run-gate exit 0 (full Gate still passes)" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+
+# FR1 row 6 (racy same-second same-size edit, I2): not independently
+# fixtured -- a deterministic same-second/same-size stat-cache collision is
+# not reproducible portably or quickly in this suite. Covered by `cp -p`
+# alone (both hooks), which preserves the REAL index file's timestamps on the
+# temp copy instead of stamping "now" -- see the S-8 comments in both hooks.
 # ---- end v4.3.0 A2
 
 echo "----------------------------------------------------------------"

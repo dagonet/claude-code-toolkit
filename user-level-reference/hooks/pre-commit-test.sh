@@ -87,6 +87,12 @@ RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
 PCT_HOOK_T0=$(date +%s 2>/dev/null || echo 0)
 PCT_ARTIFACT_BASE=""
 PCT_TREE=""
+# v4.3.0 fix round 1, S-8 (I1) -- true when pct_capture_tree's own index copy
+# could not be trusted (the real index was not actually copied, or the
+# resulting tree is the universal git EMPTY TREE) -- see that function.
+# pct_note reads this to withhold test_sha256/env (a reusable-record field)
+# rather than let a spurious empty-tree measurement enter a reuse decision.
+PCT_TREE_SUSPECT=false
 # v3.1 — whether the commit segment this hook matched came from inside an
 # unwrapped quoted payload (`bash -c "git commit ..."`, `sh -lc "..."`). Set
 # once a commit segment is found (below); false until then, so every path that
@@ -116,9 +122,30 @@ pct_capture_tree() {
   _pt_d=$(mktemp -d 2>/dev/null) || return 0
   # `--git-path index`, never a hardcoded .git/index: in a linked worktree the
   # index lives under .git/worktrees/<name>/.
-  cp "$(git -C "$_pt_top" rev-parse --git-path index)" "$_pt_d/index" 2>/dev/null || true
+  # v4.3.0 fix round 1, S-8 (I1/I2). `--path-format=absolute`: the BARE
+  # `--git-path` prints a path RELATIVE TO THE CALLING PROCESS'S OWN cwd in a
+  # plain (non-worktree) checkout -- from a cwd other than $_pt_top (e.g. this
+  # hook invoked with `-C` a subdirectory, or from inside one) that relative
+  # path resolves to a nonexistent file, `cp` used to fail SILENTLY, and the
+  # subsequent `add -u` on a freshly-created EMPTY index does nothing at all,
+  # producing the git EMPTY TREE instead of a real measurement. `-p`
+  # preserves the REAL index file's timestamps on the copy rather than
+  # stamping "now" -- without it, git's own racy-git protection can misjudge
+  # a same-second edit as already reflected in the copy (measured stale 7 of
+  # 8; matches hooks/run-gate.sh's own identical fix).
+  _pt_idx=$(git -C "$_pt_top" rev-parse --path-format=absolute --git-path index 2>/dev/null)
+  _pt_copied=false
+  if [ -n "$_pt_idx" ] && cp -p "$_pt_idx" "$_pt_d/index" 2>/dev/null; then
+    _pt_copied=true
+  fi
   GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" add -u -- . >/dev/null 2>&1
   PCT_TREE=$(GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" write-tree 2>/dev/null)
+  # Universal git empty-tree object id -- a content hash, not a per-repo
+  # value, so there is nothing to drift between this literal and the copy in
+  # hooks/run-gate.sh.
+  if [ "$_pt_copied" != true ] || [ "$PCT_TREE" = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]; then
+    PCT_TREE_SUSPECT=true
+  fi
   rm -rf "$_pt_d"
   return 0
 }
@@ -199,9 +226,33 @@ pct_note() { # <path-label> <rc, or -1 where no subshell ran>
   # ever relaxed it, which is a trap this file declines to lay.
   _pn_tsha=""
   _pn_env=""
-  if [ "$1" = test ] && [ "$2" = 0 ]; then
-    _pn_tsha=$(printf '%s' "$TEST_CMD" | gc_sha256 2>/dev/null)
-    _pn_env=$(gc_gate_env "$PCT_ARTIFACT_BASE" 2>/dev/null)
+  if [ "$1" = test ] && [ "$2" = 0 ] && [ "$PCT_TREE_SUSPECT" != true ]; then
+    # v4.3.0 fix round 1, S-6 (C1 -- "wrong reuse across directories"). These
+    # two fields must describe the TOPLEVEL's own **Test**, never a
+    # subdirectory's. A commit issued from cwd sub/ (a linked worktree, or a
+    # plain checkout's own subdirectory) resolves REPO_PATH -- and so
+    # PCT_ARTIFACT_BASE/`$_pn_base` -- to sub/, reads sub/PROJECT_CONTEXT.md,
+    # and runs sub/t.sh; but hooks/run-gate.sh always reads **Test** and
+    # computes its environment fingerprint from the TOPLEVEL. If sub/'s
+    # **Test** text happens to be byte-identical to the toplevel's own (an
+    # entirely plausible coincidence, not an attack -- MEASURED: reused,
+    # GATE PASS, and the failing top-level Test never ran), the two would
+    # otherwise "match" while describing two different scripts. `pwd -P`
+    # (physical, symlink-resolved) rather than a plain string compare of
+    # `$_pn_base` vs `$_pn_top`: a bind mount or a symlinked checkout could
+    # make the TEXT of the two paths differ while the DIRECTORY is the same
+    # one, or vice versa -- physical identity is the actual question.
+    _pn_base_phys=$(cd "$_pn_base" 2>/dev/null && pwd -P)
+    _pn_top_phys=$(cd "$_pn_top" 2>/dev/null && pwd -P)
+    if [ -n "$_pn_base_phys" ] && [ "$_pn_base_phys" = "$_pn_top_phys" ]; then
+      _pn_tsha=$(printf '%s' "$TEST_CMD" | gc_sha256 2>/dev/null)
+      # The environment fingerprint is computed from `$_pn_top` (the same
+      # name hooks/run-gate.sh's own REPO_TOP resolves to), never from
+      # `$PCT_ARTIFACT_BASE` -- this check just proved the two are
+      # physically identical, but `$_pn_top` is the name the rest of this
+      # function already uses for that toplevel.
+      _pn_env=$(gc_gate_env "$_pn_top" 2>/dev/null)
+    fi
   fi
   printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","matched_in_quoted":%s,"gate_dir":"%s","test_sha256":"%s","env":"%s"}\n' \
     "$1" "$2" "$PCT_TREE" "$((_pn_t1 - PCT_HOOK_T0))" "$(printf '%s' "$GC_CMD" | wc -c | tr -d ' ')" "$_pn_tool" \
