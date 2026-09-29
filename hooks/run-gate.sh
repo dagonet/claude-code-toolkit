@@ -617,10 +617,25 @@ else
     # section above now refuses the whole **Gate extra** (clearing it, so
     # this branch is never reached at all) the moment any leg -- Test
     # included -- is empty or whitespace-only.
+    # v4.3.0 fix round 5, S-13: the loop's own stdin is the here-doc holding
+    # the leg list, so a leg that read stdin (`cat`, a test runner waiting on
+    # input) used to swallow the remaining legs -- they never ran, GATE PASS.
+    # fd 3 keeps the CALLER's stdin, and every leg reads that, exactly what
+    # its counterpart in the one-command Gate reads. Closed after the loop.
+    #
+    # Known limits of splitting (not closed by any check above; one fresh
+    # `bash -c` per leg behaves like the fresh shell the reused Test ran in):
+    # (a) bash's command hash table -- a leg that installs a binary shadowing
+    #     one an earlier leg already ran can make the one-command Gate reuse
+    #     the old hashed path where a split leg looks it up anew;
+    # (b) BASH_FUNC_* exported functions and BASH_ENV from the caller's
+    #     environment are imported/sourced once per leg when split, once in
+    #     the plain Gate.
+    exec 3<&0
     RG_LEGS_ARR=""
     while IFS= read -r rg_leg; do
       rg_t0=$(date +%s 2>/dev/null || echo 0)
-      bash -c "$rg_leg"
+      bash -c "$rg_leg" <&3 3<&-
       rg_leg_rc=$?
       rg_t1=$(date +%s 2>/dev/null || echo 0)
       rg_leg_sha=$(printf '%s' "$rg_leg" | gc_sha256 2>/dev/null)
@@ -632,6 +647,7 @@ else
     done <<RG_LEG_LIST
 $RG_LEGS
 RG_LEG_LIST
+    exec 3<&-
     LEGS_JSON="[$RG_LEGS_ARR]"
   fi
 fi

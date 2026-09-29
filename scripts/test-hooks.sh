@@ -7783,6 +7783,42 @@ fr4_split 'bash' 'bash x.sh' FR4-XSH-RAN
 fr4_split 'relative-script' './scripts/x.sh' FR4-SCRIPTS-XSH-RAN
 fr4_split 'npm' 'npm test' 'FR4-FAKE-NPM-RAN test'
 # ---- end v4.3.0 fix round 4
+
+# ---- v4.3.0 fix round 5 (opus re-review of C2, ruling S-13) ----
+# The split legs used to run inside `while read ... done <<here-doc`, so each
+# leg's stdin WAS the here-doc holding the remaining legs: a leg that reads
+# stdin (drain.sh = `cat >/dev/null`) swallowed the rest of the list, the later
+# legs never ran, and the split reported PASS where the plain Gate (one
+# command, legs reading the caller's stdin) runs fail.sh and gives rc 1.
+# run-gate's own stdin is /dev/null here so both runs see the same caller stdin.
+fr5_repo() { # <name> <gate-extra-text> -> repo with drain.sh/fail.sh/x.sh
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR5-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\necho FR5-DRAIN-RAN\nexit 0\n' > "$r/drain.sh"
+  printf '#!/usr/bin/env bash\necho FR5-FAIL-RAN\nexit 1\n' > "$r/fail.sh"
+  printf '#!/usr/bin/env bash\necho FR5-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr5_rungate() { # <repo> -- a2_rungate with stdin from /dev/null
+  ( cd "$1" && bash "$ROOT/hooks/run-gate.sh" ) </dev/null >"$1/.a2_gate_out" 2>&1
+  printf '%s' "$?" > "$1/.a2_gate_rc"
+}
+R=$(fr5_repo fr5_drainfail 'bash drain.sh && bash fail.sh'); a2_commit "$R"; fr5_rungate "$R"
+expect "FR5 drain then fail: plain Gate really fails here (fixture sanity)" "nonzero" \
+  "$([ "$(fr4_plain_rc "$R" 'bash drain.sh && bash fail.sh')" = 0 ] && echo zero || echo nonzero)"
+expect "FR5 drain then fail: drain leg ran" "yes" "$(a2_has "$R/.a2_gate_out" FR5-DRAIN-RAN)"
+expect "FR5 drain then fail: fail.sh really ran (not swallowed)" "yes" "$(a2_has "$R/.a2_gate_out" FR5-FAIL-RAN)"
+expect "FR5 drain then fail: run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR5 drain then fail: no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+R=$(fr5_repo fr5_drainpass 'bash drain.sh && bash x.sh'); a2_commit "$R"; fr5_rungate "$R"
+expect "FR5 drain then pass: drain leg ran" "yes" "$(a2_has "$R/.a2_gate_out" FR5-DRAIN-RAN)"
+expect "FR5 drain then pass: second leg really ran" "yes" "$(a2_has "$R/.a2_gate_out" FR5-XSH-RAN)"
+expect "FR5 drain then pass: two legs recorded" "yes" "$(a2_has "$(a2_artifact "$R")" '},{"sha256"')"
+expect "FR5 drain then pass: run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+# ---- end v4.3.0 fix round 5
 # ---- end v4.3.0 A2
 
 echo "----------------------------------------------------------------"
