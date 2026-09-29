@@ -260,6 +260,19 @@ case "$GATE_CMD" in
     ;;
 esac
 
+# v4.3.0 A2 -- **Gate extra** (opt-in). Sound only if Gate == Test && Gate
+# extra (R-A, spec Part A2/plan refinement R-A); otherwise ignore it and run
+# the full Gate exactly as before. Read here, once, with the same
+# GC_KEY_PRE-anchored field grammar the other extractors on this page use.
+rg_field() { grep -E "${GC_KEY_PRE}\*\*$1\*\*:" "$REPO_TOP/PROJECT_CONTEXT.md" 2>/dev/null | sed -E "s/${GC_KEY_PRE}\\*\\*$1\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" | head -1; }
+rg_norm() { tr -s ' \t' '  ' | sed 's/^ //;s/ $//'; }
+GATE_EXTRA=$(rg_field 'Gate extra'); RG_TEST=$(rg_field 'Test')
+case "$GATE_EXTRA$RG_TEST" in *\{\{*\}\}*) GATE_EXTRA="" ;; esac
+if [ -n "$GATE_EXTRA" ] && [ "$(printf '%s' "$GATE_CMD" | rg_norm)" != "$(printf '%s && %s' "$RG_TEST" "$GATE_EXTRA" | rg_norm)" ]; then
+  echo "run-gate: WARN **Gate extra** is set but **Gate** is not exactly '<Test> && <Gate extra>' -- ignoring **Gate extra**, running the full Gate" >&2
+  GATE_EXTRA=""
+fi
+
 HEAD_SHA=$(git -C "$CWD" rev-parse HEAD 2>/dev/null)
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
 ARTIFACT_DIR=$(gc_gate_dir "$CWD")
@@ -346,6 +359,39 @@ cp "$(git -C "$REPO_TOP" rev-parse --git-path index)" "$TMPIDX" 2>/dev/null || t
 GIT_INDEX_FILE="$TMPIDX" git -C "$REPO_TOP" add -u -- . >/dev/null 2>&1
 TREE_HASH=$(GIT_INDEX_FILE="$TMPIDX" git -C "$REPO_TOP" write-tree 2>/dev/null)
 
+# v4.3.0 A2 -- ENV_HASH/ENV_DETAIL, MOVED UP from after the gate command exits
+# (v4.0.3 item 13's computation, unchanged in VALUE -- restated at the write
+# site below rather than duplicated) so the **Gate extra** reuse decision,
+# which must be settled before anything runs, can compare against the same
+# fingerprint the artifact will go on to store. FAILS CLOSED exactly as
+# before: gc_gate_env returns 1 with no output when it has no sha256 backend,
+# leaving ENV_HASH/ENV_DETAIL empty.
+ENV_HASH=$(gc_gate_env "$REPO_TOP" 2>/dev/null) || ENV_HASH=""
+ENV_DETAIL=""
+[ -n "$ENV_HASH" ] && ENV_DETAIL=$(gc_gate_env "$REPO_TOP" -v 2>/dev/null | tr '\n' '|')
+
+# v4.3.0 A2 -- **Gate extra** reuse decision (R-A already validated above).
+# Sound only when hooks/pre-commit-test.sh left a record for THIS EXACT
+# working tree that ran the **Test** line itself (path "test" -- never
+# "test-paths-skip" (A1) or any other pct_note label), passed (rc 0), used
+# the identical **Test** command (test_sha256) and environment (env), and is
+# still fresh under the same 24h rule gate-before-merge.sh already applies to
+# gate artifacts (GC_GATE_PRUNE_S). ENV_HASH empty, or ENV_DETAIL carrying an
+# `=absent` contributor, voids the comparison outright -- same polarity as
+# gate-before-merge.sh's own tree+env TTL extension (v4.1.1 #15): a
+# cannot-determine fingerprint must never sit inside a matching aggregate.
+REUSED=""
+RG_REC="$ARTIFACT_DIR/last-precommit.$TREE_HASH.json"
+if [ -n "$GATE_EXTRA" ] && [ -f "$RG_REC" ] && [ -n "$ENV_HASH" ] && ! printf '%s' "$ENV_DETAIL" | grep -q '=absent'; then
+  rg_rec() { grep -o "\"$1\":\"[^\"]*\"" "$RG_REC" | head -1 | sed "s/\"$1\":\"//;s/\"\$//"; }
+  rg_age=$(( $(date +%s) - $(stat -c %Y "$RG_REC" 2>/dev/null || stat -f %m "$RG_REC" 2>/dev/null || echo 0) ))
+  if [ "$(rg_rec path)" = test ] && grep -q '"rc":0,' "$RG_REC" \
+     && [ "$(rg_rec test_sha256)" = "$(printf '%s' "$RG_TEST" | gc_sha256)" ] \
+     && [ "$(rg_rec env)" = "$ENV_HASH" ] && [ "$rg_age" -le "$GC_GATE_PRUNE_S" ]; then
+    REUSED=$(basename "$RG_REC")
+  fi
+fi
+
 RUN_GATE_ACTIVE=1
 export RUN_GATE_ACTIVE
 # The provenance channel for the recursion guard at the top of this file. It
@@ -364,8 +410,65 @@ export RUN_GATE_ACTIVE
 RUN_GATE_TERMINAL="$TMPD/terminal"
 export RUN_GATE_TERMINAL
 rm -f "$RUN_GATE_TERMINAL"
-bash -c "$GATE_CMD"
-GATE_RC=$?
+
+# v4.3.0 A2 -- run section. RUN_GATE_ACTIVE stays exported (above) around
+# EVERY command this section runs, reused-Test-skip or not, exactly as
+# before: a nested run-gate.sh at any depth, in any leg, must still see it.
+#
+# GATE_EXTRA empty: the ORIGINAL single command, byte-for-byte (the
+# consistency script's registration/mirror checks anchor on this exact
+# literal) -- LEGS_JSON stays "[]", untouched by anything below.
+#
+# GATE_EXTRA set: **Test** runs first UNLESS REUSED names a record to skip it
+# (R-A already guarantees Gate == Test && Gate extra, so this is sound), then
+# each **Gate extra** leg runs in argv order, stopping at the first failure.
+# Per-leg results are recorded whether or not Test was reused -- R-A: "run-gate
+# always runs Test and each extra leg as separate steps, so per-leg results
+# exist whether or not Test is reused." A leg's own 78 is NOT given terminal
+# treatment here; the single clamp below (keyed on the provenance marker, not
+# on which command ran) still covers it, same as the plain-Gate path always
+# has.
+LEGS_JSON="[]"
+if [ -z "$GATE_EXTRA" ]; then
+  bash -c "$GATE_CMD"
+  GATE_RC=$?
+else
+  GATE_RC=0
+  if [ -n "$REUSED" ]; then
+    echo "run-gate: Test legs reused from $REUSED"
+  else
+    bash -c "$RG_TEST"
+    GATE_RC=$?
+  fi
+  if [ "$GATE_RC" -eq 0 ]; then
+    # Legs = **Gate extra** split on top-level ` && ` ONLY when the value
+    # carries none of the shell metacharacters that would make a naive split
+    # wrong (a quote, `$(`, a backtick, `(`, `<<`) -- otherwise the whole
+    # value is ONE leg, run and recorded as such (spec A2: "if that split is
+    # ambiguous ... the whole value is recorded as ONE leg").
+    case "$GATE_EXTRA" in
+      *"'"*|*'"'*|*'$('*|*'`'*|*'('*|*'<<'*) RG_LEGS="$GATE_EXTRA" ;;
+      *) RG_LEGS=$(printf '%s' "$GATE_EXTRA" | sed 's/ && /\n/g') ;;
+    esac
+    RG_LEGS_ARR=""
+    while IFS= read -r rg_leg; do
+      [ -n "$rg_leg" ] || continue
+      rg_t0=$(date +%s 2>/dev/null || echo 0)
+      bash -c "$rg_leg"
+      rg_leg_rc=$?
+      rg_t1=$(date +%s 2>/dev/null || echo 0)
+      rg_leg_sha=$(printf '%s' "$rg_leg" | gc_sha256 2>/dev/null)
+      RG_LEGS_ARR="${RG_LEGS_ARR:+$RG_LEGS_ARR,}{\"sha256\":\"$rg_leg_sha\",\"rc\":$rg_leg_rc,\"elapsed_s\":$((rg_t1 - rg_t0))}"
+      if [ "$rg_leg_rc" -ne 0 ]; then
+        GATE_RC=$rg_leg_rc
+        break
+      fi
+    done <<RG_LEG_LIST
+$RG_LEGS
+RG_LEG_LIST
+    LEGS_JSON="[$RG_LEGS_ARR]"
+  fi
+fi
 
 # THE CLAMP. NOT DEAD CODE — DELETING IT OPENS A COLLISION CHANNEL (v2.2.5
 # round 3). Until this release every nonzero from the gate command collapsed to
@@ -447,12 +550,18 @@ if [ "$GATE_RC" -eq 0 ]; then
   # minted where the fingerprint could not be computed carries no `env` at
   # all, which gate-before-merge.sh's extension already treats as "not
   # eligible for the extension" (same as an older writer's artifact).
-  ENV_HASH=$(gc_gate_env "$REPO_TOP" 2>/dev/null) || ENV_HASH=""
-  ENV_DETAIL=""
-  [ -n "$ENV_HASH" ] && ENV_DETAIL=$(gc_gate_env "$REPO_TOP" -v 2>/dev/null | tr '\n' '|')
+  # v4.3.0 A2: ENV_HASH/ENV_DETAIL are no longer (re)computed here -- they were
+  # moved BEFORE the run (above, alongside TREE_HASH) so the **Gate extra**
+  # reuse decision could use them; the values stored below are identical to
+  # what that earlier computation produced, per the CAVEAT two paragraphs up
+  # (both are taken before the gate command runs).
+  # `reused_test` (v4.3.0 A2): the reused record's filename, or "" when Test
+  # ran (GATE_EXTRA unset/invalid, or no eligible record). `legs` (A2): one
+  # entry per **Gate extra** leg actually run this invocation -- "[]" when
+  # GATE_EXTRA is not in effect.
   ARTIFACT_TMP="$ARTIFACT.tmp"
-  printf '{"sha":"%s","tree":"%s","branch":"%s","ts":"%s","status":"pass","env":"%s","env_detail":"%s"}\n' \
-    "$HEAD_SHA" "$TREE_HASH" "${BRANCH:-unknown}" "$TS" "$ENV_HASH" "$ENV_DETAIL" > "$ARTIFACT_TMP"
+  printf '{"sha":"%s","tree":"%s","branch":"%s","ts":"%s","status":"pass","env":"%s","env_detail":"%s","reused_test":"%s","legs":%s}\n' \
+    "$HEAD_SHA" "$TREE_HASH" "${BRANCH:-unknown}" "$TS" "$ENV_HASH" "$ENV_DETAIL" "$REUSED" "$LEGS_JSON" > "$ARTIFACT_TMP"
   mv -f "$ARTIFACT_TMP" "$ARTIFACT"
   echo "GATE PASS $HEAD_SHA"
   # Prune (v4.0.1 addendum to item 17): the directory is shared across every

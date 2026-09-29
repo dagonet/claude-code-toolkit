@@ -7341,6 +7341,151 @@ tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: one bad word among good ones -
 tp_expect_warn_entry "A1 S-5: one bad word among good ones -> WARN names 'docs-missing/'" "$R" "docs-missing/"
 # ---- end v4.3.0 A1
 
+# ---- v4.3.0 A2: **Gate extra** reuse + per-leg results ----
+# Fixture note (mirrors A1's own): pre-commit-test.sh captures a PASSING
+# run's stdout/stderr to a tempfile and deletes it on success, and
+# run-gate.sh's **Test**/leg commands run with NO redirection at all -- they
+# inherit THIS process's stdout/stderr, same as the plain **Gate** path
+# always has -- so `bash hooks/run-gate.sh`'s OWN captured output is where
+# A2-TEST-RAN / A2-EXTRA-RAN show up, never pre-commit-test.sh's.
+a2_repo() { # <name> -> repo with t.sh/x.sh + Test/Gate/Gate-extra wired so R-A holds
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho A2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho A2-EXTRA-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+a2_repo_noextra() { # <name> -> same, but **Gate extra** unset (row 6)
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho A2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho A2-EXTRA-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+a2_repo_extrafail() { # <name> -> **Gate extra** leg fails (row 7)
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho A2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho A2-EXTRA-RAN\nexit 1\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+a2_commit() { # <repo> -- stage everything, feed pre-commit-test.sh the commit
+  # payload (this writes the last-precommit.<tree>.json record under test),
+  # then really run the commit it gated -- this suite drives the hook
+  # directly instead of through the full Claude Code harness, so the tool
+  # call the hook would have gated is reproduced by hand right after it.
+  git -C "$1" add -A >/dev/null 2>&1
+  printf '%s' "$(mkjson Bash 'git commit -m x' "$1")" | bash "$ROOT/hooks/pre-commit-test.sh" >"$1/.a2_pct_out" 2>&1
+  git -C "$1" commit -q -m x >/dev/null 2>&1
+}
+a2_rungate() { # <repo> -- runs hooks/run-gate.sh with cwd=<repo>, capturing
+  # stdout+stderr to .a2_gate_out and the exit code to .a2_gate_rc
+  ( cd "$1" && bash "$ROOT/hooks/run-gate.sh" ) >"$1/.a2_gate_out" 2>&1
+  printf '%s' "$?" > "$1/.a2_gate_rc"
+}
+a2_artifact() { # <repo> -> last-pass.<HEAD sha>.json path for the repo's CURRENT HEAD
+  gatepassfile "$1" "$(git -C "$1" rev-parse HEAD 2>/dev/null)"
+}
+a2_precommit_record() { # <repo> -> last-precommit.<tree>.json path for HEAD^{tree}
+  precommitfile "$1" "$(git -C "$1" rev-parse 'HEAD^{tree}' 2>/dev/null)"
+}
+a2_has() { grep -qF "$2" "$1" 2>/dev/null && echo yes || echo no; } # <file> <needle>
+
+# Matrix finding, same as gate-before-merge.sh's own §3 rows (search
+# NODE13_ABSENT above): gc_gate_env's reuse-eligibility check VOIDS outright
+# the moment ENV_DETAIL carries ANY `=absent` contributor (by design -- the
+# same v4.1.1 #15 polarity hooks/run-gate.sh's own reuse decision repeats).
+# scripts/test-hooks-parser-matrix.sh's python3-only/jq-only configurations
+# hide `node` (and jq-only hides python3 too), so under a restricted parser
+# configuration ENV_DETAIL genuinely, CORRECTLY carries `node=absent` and
+# reuse is genuinely, correctly voided -- a restricted run is not a bug here,
+# it is the fail-closed behaviour working as designed. The outcome is
+# DETERMINED by which contributors are absent on THIS host under THIS PATH,
+# so it is ASSERTED (branched), never skipped -- same idiom as NODE13_ABSENT.
+a2_env_detail() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null | tr '\n' '|' ); }
+A2_ENV_VOID=0
+case "$(a2_env_detail "$TMPROOT")" in *"=absent"*) A2_ENV_VOID=1 ;; esac
+if [ "$A2_ENV_VOID" = 1 ]; then A2_R1_TESTRUN=yes; A2_R1_REUSEDNAME=no
+else A2_R1_TESTRUN=no; A2_R1_REUSEDNAME=yes; fi
+
+# Row 1: matching record -> reuse (when the environment fingerprint is usable
+# on this host/PATH; see A2_ENV_VOID above). The extra leg always runs and is
+# always recorded regardless (R-A: per-leg results exist whether or not Test
+# was reused) -- only whether Test itself re-runs, and whether the artifact
+# names a reused record, depend on the fingerprint being usable.
+R=$(a2_repo a2_match); a2_commit "$R"; a2_rungate "$R"
+expect "A2: reuse -- extra leg ran" "yes" "$(a2_has "$R/.a2_gate_out" A2-EXTRA-RAN)"
+expect "A2: reuse -- test re-run iff env fingerprint unusable" "$A2_R1_TESTRUN" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+expect "A2: reuse -- artifact names the reused record iff env fingerprint usable" "$A2_R1_REUSEDNAME" "$(a2_has "$(a2_artifact "$R")" '"reused_test":"last-precommit.')"
+expect "A2: reuse -- one leg recorded" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+expect "A2: reuse -- leg rc 0" "yes" "$(a2_has "$(a2_artifact "$R")" '"rc":0')"
+expect "A2: reuse -- run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+
+# Row 2: **Test** changed after the commit (the OLD record still exists) ->
+# NOT reused. **Gate** no longer equals **Test** && **Gate extra** (R-A), so
+# **Gate extra** is ignored outright with a WARN and the full **Gate** runs --
+# which is why A2-TEST-RAN reappears (**Gate** itself still runs `bash t.sh`).
+# This row alone does not isolate test_sha256 (R-A already fails first, and
+# PROJECT_CONTEXT.md is tracked so the edit also moves TREE_HASH, so the OLD
+# record would not even be found by name) -- rows 2b/2c below isolate the
+# test_sha256 and path guards directly, per Review Focus #3.
+R=$(a2_repo a2_testchanged); a2_commit "$R"
+printf '# ctx\n\n- **Test**: `bash t.sh x`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$R/PROJECT_CONTEXT.md"
+a2_rungate "$R"
+expect "A2: Test line changed -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+expect "A2: Test line changed -- R-A WARN printed, full Gate runs" "yes" "$(a2_has "$R/.a2_gate_out" 'WARN **Gate extra**')"
+
+# Row 2b: record test_sha256 differs (hand-edited; PROJECT_CONTEXT.md and the
+# rest of the record untouched, so R-A still holds and the record is still
+# found under the unchanged TREE_HASH) -> NOT reused purely on the sha guard.
+R=$(a2_repo a2_badsha); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"test_sha256":"[^"]*"/"test_sha256":"deadbeef"/' "$REC"
+a2_rungate "$R"
+expect "A2: record test_sha256 differs -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 2c: record path != test (hand-edited to the A1 skip literal, the one
+# real-world way a non-"test" path reaches this record) -> NOT reused purely
+# on the path guard, isolated from rc/sha/env/freshness.
+R=$(a2_repo a2_badpath); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"path":"test"/"path":"test-paths-skip"/' "$REC"
+a2_rungate "$R"
+expect "A2: record path != test -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 3: record rc != 0 (hand-edited) -> NOT reused; Test and the leg both run
+# and are still recorded (R-A: per-leg results exist whether or not reused).
+R=$(a2_repo a2_badrc); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"rc":0,/"rc":1,/' "$REC"
+a2_rungate "$R"
+expect "A2: record rc!=0 -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+expect "A2: record rc!=0 -- extra leg still ran and recorded" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+
+# Row 4: record older than 24h -> NOT reused (freshness fails).
+R=$(a2_repo a2_stale); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); touch -d '-25 hours' "$REC" 2>/dev/null
+a2_rungate "$R"
+expect "A2: record older than 24h -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 5: record env differs (hand-edited) -> NOT reused.
+R=$(a2_repo a2_badenv); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"env":"[^"]*"/"env":"x"/' "$REC"
+a2_rungate "$R"
+expect "A2: record env differs -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 6: **Gate extra** unset -> full Gate, legs:[] and reused_test:"".
+R=$(a2_repo_noextra a2_noextra); a2_commit "$R"; a2_rungate "$R"
+expect "A2: Gate extra unset -- full Gate runs (both markers)" "yes yes" \
+  "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN) $(a2_has "$R/.a2_gate_out" A2-EXTRA-RAN)"
+expect "A2: Gate extra unset -- artifact legs:[]" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
+expect "A2: Gate extra unset -- artifact reused_test empty" "yes" "$(a2_has "$(a2_artifact "$R")" '"reused_test":""')"
+
+# Row 7: the extra leg itself fails -> run-gate exits non-zero, no artifact.
+R=$(a2_repo_extrafail a2_extrafail); a2_commit "$R"; a2_rungate "$R"
+expect "A2: extra leg fails -- run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "A2: extra leg fails -- no artifact written" "yes" \
+  "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+# ---- end v4.3.0 A2
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

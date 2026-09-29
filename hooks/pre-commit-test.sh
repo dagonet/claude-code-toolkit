@@ -188,9 +188,24 @@ pct_note() { # <path-label> <rc, or -1 where no subshell ran>
   # the shape `bash -c "git commit -m x"` -- as opposed to an unwrapped `git
   # commit -m x`; see gc_seg_quoted in hooks/lib/git-cmd.sh.
   _pn_art="$_pn_gd/last-precommit.$_pn_treeseg.json"
-  printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","matched_in_quoted":%s,"gate_dir":"%s"}\n' \
+  # v4.3.0 A2 -- test_sha256/env, on THIS file only (the -noop file above is
+  # unrelated and unchanged). Populated ONLY when this call reports a real,
+  # PASSING **Test** run ($1=test, rc=0): a skip (test-paths-skip, A1), a
+  # failure, the Gate fallback (labelled "gate"), or any other pct_note label
+  # must never look like a reusable Test record to hooks/run-gate.sh, whose
+  # own reuse check (R-A, spec Part A2) requires path=="test" AND rc==0 before
+  # it even reads these two fields -- storing them elsewhere would create a
+  # record that COULD spuriously satisfy that requirement if a future edit
+  # ever relaxed it, which is a trap this file declines to lay.
+  _pn_tsha=""
+  _pn_env=""
+  if [ "$1" = test ] && [ "$2" = 0 ]; then
+    _pn_tsha=$(printf '%s' "$TEST_CMD" | gc_sha256 2>/dev/null)
+    _pn_env=$(gc_gate_env "$PCT_ARTIFACT_BASE" 2>/dev/null)
+  fi
+  printf '{"path":"%s","rc":%s,"tree":"%s","elapsed_s":%s,"cmd_len":%s,"tool":"%s","ts":"%s","matched_in_quoted":%s,"gate_dir":"%s","test_sha256":"%s","env":"%s"}\n' \
     "$1" "$2" "$PCT_TREE" "$((_pn_t1 - PCT_HOOK_T0))" "$(printf '%s' "$GC_CMD" | wc -c | tr -d ' ')" "$_pn_tool" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$PCT_QUOTED" "$_pn_gd" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$PCT_QUOTED" "$_pn_gd" "$_pn_tsha" "$_pn_env" \
     > "$_pn_art.tmp" 2>/dev/null && mv -f "$_pn_art.tmp" "$_pn_art" 2>/dev/null || return 0
   pct_prune "$_pn_gd"
   return 0

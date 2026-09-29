@@ -41,6 +41,8 @@ the absolute numbers as host-local; the ~10x ratio is the part that travels.
 - **Format**: none — every file is LF-only Markdown or shell; `verify-template-consistency.sh` asserts the line endings
 - **Lint**: none — see Build
 - **Gate**: `bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh && bash scripts/test-server.sh`
+- **Gate extra**: `bash scripts/test-hooks.sh && bash scripts/test-server.sh`
+<!-- Opts this repo in: Gate == Test && Gate extra (R-A holds), so hooks/run-gate.sh may reuse a passing commit-time **Test** run instead of re-running verify-template-consistency.sh at merge time. The comment MUST sit on its own line -- GC_KEY_PRE anchors the **Gate extra** field's own line at column 0 (after an optional BOM/list-marker), and a trailing comment on the SAME line would leave the field's own sed-stripped value carrying a stray `<!--...-->` tail, silently breaking R-A's equality check. -->
 - **Post-edit build**: none
 <!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none
