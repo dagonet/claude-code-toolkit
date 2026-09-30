@@ -39,3 +39,4 @@ the code MUST be rewritten until it complies.
 - Check null-coalescing patterns when working with nullable types (Money?, etc.)
 - After branch merges, verify no `using` directives were dropped
 - Run `dotnet format` to ensure `.editorconfig` compliance
+- Pass `dotnet format` a relative path (or none): a forward-slash absolute path checks 0 files and exits 0 -- a vacuous pass
