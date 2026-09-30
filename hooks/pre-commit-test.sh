@@ -458,7 +458,10 @@ pct_single_commit() { # <raw command> -- 0 only for one plain `git commit`, noth
       while :; do
         case "$hrest" in *$'\n'*) ;; *) return 1 ;; esac
         hline="${hrest%%$'\n'*}"; hrest="${hrest#*$'\n'}"
-        [ "$hline" = "$hx" ] && break
+        # Ruling S-34: bash ends the body at a line that STARTS with the delimiter
+        # followed by `)` and runs the rest of that line. Any line that starts with the
+        # delimiter but is not exactly it is doubt: not a lone commit.
+        case "$hline" in "$hx") break ;; "$hx"*) return 1 ;; esac
       done
       [ "$hrest" = ')"' ] || return 1
       s="${hhead}x" ;;

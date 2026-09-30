@@ -7398,6 +7398,15 @@ tp_i1_repo tp_s33_a;    tp_run_ml "$R" "$(tp_hd '-a ' "'EOF'" 'subject' '')"; tp
 tp_i1_repo tp_s33_bt;   tp_run_ml "$R" 'git commit -m "`git rm -q src/a.c`"'; tp_expect "A1 S-33: backtick message -> tests run" RAN "$R"
 tp_i1_repo tp_s33_dash; tp_run_ml "$R" "$(tp_hd '' "-'EOF'" 'subject' '')"; tp_expect "A1 S-33: <<- form -> tests run" RAN "$R"
 tp_i1_repo tp_s33_two;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" 'subject' '')"$'\ngit push'; tp_expect "A1 S-33: a second command -> tests run" RAN "$R"
+# Ruling S-34: bash ends a quoted heredoc inside $( ) at a body line that STARTS with
+# the delimiter followed by `)`, and runs what follows on that line. The matcher ends
+# the body only at a line exactly equal to the delimiter; any OTHER line that starts
+# with the delimiter is doubt, so the tests run (a delimiter-prefix line such as
+# `EOFyz` is refused too: conservative, accepted).
+tp_i1_repo tp_s34_rep;  tp_run_ml "$R" "$(tp_hd '--allow-empty ' "'EOF'" $'msg\nEOF)" ; git rm -q src/a.c ; git commit -m y' '')"; tp_expect "A1 S-34: body line EOF)\" ; <cmd> hides a second command -> tests run" RAN "$R"
+tp_i1_repo tp_s34_par;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF)' '')"; tp_expect "A1 S-34: body line EOF) -> tests run" RAN "$R"
+tp_i1_repo tp_s34_psp;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF )' '')"; tp_expect "A1 S-34: body line 'EOF )' -> tests run" RAN "$R"
+tp_i1_repo tp_s34_pre;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'msg\nEOFyz' '')"; tp_expect "A1 S-34: body line EOFyz (delimiter prefix) -> tests run" RAN "$R"
 # ---- end v4.3.0 A1
 
 # ---- v4.3.0 A2: **Gate extra** reuse + per-leg results ----
