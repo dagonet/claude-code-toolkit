@@ -557,6 +557,24 @@ if [ -n "$TEST_PATHS" ]; then
   fi
 fi
 
+# v4.3.0 (final review I-2, ruling S-31): PreToolUse hooks run in parallel, so a
+# call that hooks/deny-hang-shapes.sh refuses (`cd <wt> && git add x && git
+# commit ...` is the common one) would still pay for a full Test run here, and
+# then be retried in another shape and pay again. Ask that hook about the SAME
+# payload: only when it answers EXACTLY 2 (refused) is the call not going to run,
+# and the most restrictive decision wins, so no tests are spent on it. Any other
+# answer, or no such file next to this hook, proceeds to the tests as before.
+PCT_DHS="$(cd "$(dirname "$0")" && pwd)/deny-hang-shapes.sh"
+if [ -f "$PCT_DHS" ]; then
+  pct_dhs_rc=0
+  printf '%s' "$GC_JSON" | bash "$PCT_DHS" >/dev/null 2>&1 || pct_dhs_rc=$?
+  if [ "$pct_dhs_rc" -eq 2 ]; then
+    pct_note deny-hang-shapes-refused -1
+    echo "pre-commit-test: this call is refused by deny-hang-shapes -- tests not run for it" >&2
+    exit 0
+  fi
+fi
+
 # Read test command from PROJECT_CONTEXT.md through GC_KEY_PRE (see the header
 # note on that constant in hooks/lib/git-cmd.sh: a leading UTF-8 BOM otherwise
 # hides a key that sits on line 1, and THIS hook's no-field arm is warn+allow).
