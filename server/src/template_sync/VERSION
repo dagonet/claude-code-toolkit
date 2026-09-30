@@ -1,2 +1,2 @@
-4.2.0
-PM-level reporting: a switchable, default-on pm-report output style, an inline UserPromptSubmit time hook and a backlog-board skill -- all three user-level files, no template, hook or server-code change (checks 59-62, drift covers output-styles/**).
+4.3.0
+Agent time sinks: an opt-in Test paths skip and a Gate extra reuse of the commit-time test run, a budget brake that lets a commit through, two advisory hooks (deny-hang-shapes, model-floor), and the model-ownership wording -- template hook, settings and PROJECT_CONTEXT changes, no server-code change.
