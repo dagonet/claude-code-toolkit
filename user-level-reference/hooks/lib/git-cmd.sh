@@ -510,17 +510,93 @@ gc_seg_raw() {
 # direction: the quote-stop fires on the very first token, before it is ever
 # basename-compared, so this is not read even though gc_segments' own quote
 # stripping would have made $1 literally `bash` under the old $1-anchor code.
+# GC_SCAN_AWK (v4.3.0, S-38) -- the comment/doc-text strip for a SHELL script
+# body, run by gc_script_body. Conservative by construction: anything it is
+# unsure about is KEPT (the scan then reads more text, never less).
+#   - a line whose first non-blank char is `#` is dropped (the v4.1.2 rule,
+#     applied even inside a quoted string, as before);
+#   - a trailing comment is cut only at a `#` that follows whitespace, sits
+#     outside single/double quotes, outside a `${ ... }` expansion, and is not
+#     backslash-escaped -- so `"a # b"`, `${#x}`, `$#`, `a#b` all stay;
+#   - the body of a QUOTED-delimiter heredoc (`<<'EOF'`, `<<"EOF"`, `<<\EOF`)
+#     is dropped ONLY when the line opening it is a plain `cat` with nothing
+#     after the marker that could run the text (no `|`, `&`, `;`, backtick,
+#     `$(`): `bash <<'EOF'` and `cat <<'EOF' | sh` EXECUTE their body, so they
+#     are kept. An unquoted-delimiter heredoc body is kept verbatim (whole-line
+#     strip only, no quote tracking inside it).
+# No single quotes inside: the program is one single-quoted shell string; a
+# literal apostrophe is "\047".
+GC_SCAN_AWK='
+function cut(s,   n, i, c, sq, dq, br, pw, o, nx) {
+  n = length(s); sq = 0; dq = 0; br = 0; pw = 1; o = ""
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (sq) { if (c == "\047") sq = 0; o = o c; pw = 0; continue }
+    if (c == "\\") { o = o c substr(s, i + 1, 1); i++; pw = 0; continue }
+    if (dq) { if (c == "\"") dq = 0; o = o c; pw = 0; continue }
+    if (c == "\047") { sq = 1; o = o c; pw = 0; continue }
+    if (c == "\"") { dq = 1; o = o c; pw = 0; continue }
+    if (c == "$" && substr(s, i + 1, 1) == "{") { br++; o = o "${"; i++; pw = 0; continue }
+    if (br > 0) { if (c == "}") br--; o = o c; pw = 0; continue }
+    if (c == "#" && pw) break
+    o = o c
+    pw = (c == " " || c == "\t")
+  }
+  # an unterminated quote/brace at end of line: keep the whole line, unstripped
+  if (sq || dq || br > 0) return s
+  return o
+}
+{
+  line = $0
+  if (hd) {
+    t = line
+    if (hdash) sub(/^\t+/, "", t)
+    if (t == hdelim) { hd = 0; next }
+    if (hdrop) next
+    if (line ~ /^[ \t]*#/) next
+    print line
+    next
+  }
+  if (line ~ /^[ \t]*#/) next
+  out = cut(line)
+  if (out ~ /^[ \t]*$/) next
+  print out
+  if (match(out, /<<-?[ \t]*[\\"\047A-Za-z_0-9]/) && substr(out, RSTART - 1, 1) != "<" && substr(out, RSTART + 2, 1) != "<") {
+    pre = substr(out, 1, RSTART - 1)
+    s = substr(out, RSTART + 2); hdash = 0
+    if (substr(s, 1, 1) == "-") { hdash = 1; s = substr(s, 2) }
+    sub(/^[ \t]+/, "", s)
+    quoted = 0
+    if (substr(s, 1, 1) == "\\") { quoted = 1; s = substr(s, 2) }
+    q = substr(s, 1, 1)
+    if (q == "\047" || q == "\"") {
+      quoted = 1; s = substr(s, 2); e = index(s, q)
+      if (e > 0) { hdelim = substr(s, 1, e - 1); after = substr(s, e + 1) } else { hdelim = ""; after = "" }
+    } else if (match(s, /^[A-Za-z_0-9]+/)) {
+      hdelim = substr(s, 1, RLENGTH); after = substr(s, RLENGTH + 1)
+    } else { hdelim = ""; after = "" }
+    if (hdelim != "") {
+      hd = 1
+      hdrop = (quoted && pre ~ /^[ \t]*cat([ \t]|$)/ && (pre after) !~ /[|&;`]|\$\(/) ? 1 : 0
+    }
+  }
+}'
+
 gc_script_body() {
-  local seg="$1" cwd="$2" tok clean base path="" pos=1
+  local seg="$1" cwd="$2" tok clean base path="" pos=1 mode=sh out want=0 lc
   set -- $seg
   while [ $# -gt 0 ]; do
     tok="$1"
     case "$tok" in *[\"\']*) return 0 ;; esac
     clean=$(printf '%s' "$tok" | tr -d "\"'")
-    base=${clean##*/}
+    base=${clean##*/}; base=${base##*\\}
     case "$base" in
       bash|sh) break ;;
       .|source) [ "$pos" = 1 ] && break ;;
+      # v4.3.0 (S-38): `powershell|pwsh[.exe] ... -File|-f <path>` runs a script
+      # file too; any position in the run, like bash/sh (case-insensitive).
+      *) lc=$(printf '%s' "$base" | tr 'A-Z' 'a-z')
+         case "$lc" in powershell|powershell.exe|pwsh|pwsh.exe) mode=ps; break ;; esac ;;
     esac
     shift
     pos=$((pos + 1))
@@ -529,6 +605,13 @@ gc_script_body() {
   shift
   for tok in "$@"; do
     clean=$(printf '%s' "$tok" | tr -d "\"'")
+    if [ "$mode" = ps ]; then
+      # the path is the word after -File / -f; every other word is skipped
+      if [ "$want" = 1 ]; then path="$clean"; break; fi
+      lc=$(printf '%s' "$clean" | tr 'A-Z' 'a-z')
+      case "$lc" in -file|-f) want=1 ;; esac
+      continue
+    fi
     case "$clean" in -*) continue ;; *) path="$clean"; break ;; esac
   done
   [ -n "$path" ] || return 0
@@ -541,6 +624,20 @@ gc_script_body() {
   # strip (spec §0): bash does not continue a line inside a comment, so
   # join-then-strip would merge `# note \<LF>git push origin main` into the
   # comment and delete the push.
+  #
+  # v4.3.0 (S-38): a PowerShell script (`-File`) gets the whole-line strip only
+  # (its comments are `#` lines; `<# #>` blocks are kept, the conservative
+  # side). A shell script additionally loses trailing `# ...` comments and the
+  # body of a quoted-delimiter `cat` heredoc -- see GC_SCAN_AWK. If awk is
+  # absent or fails, fall back to the whole-line strip alone: the scan reads
+  # MORE text, never less, so the fail-closed direction holds.
+  if [ "$mode" = ps ]; then
+    head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#'
+    return 0
+  fi
+  if command -v awk >/dev/null 2>&1; then
+    out=$(head -c 16384 "$path" 2>/dev/null | LC_ALL=C awk "$GC_SCAN_AWK") && { printf '%s\n' "$out"; return 0; }
+  fi
   head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#'
 }
 

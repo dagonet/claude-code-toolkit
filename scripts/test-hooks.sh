@@ -8499,6 +8499,66 @@ else
 fi
 # ---- end v4.3.0 C1
 
+# ---- v4.3.0 SCAN: the script-body scan ignores comments; powershell -File is scanned (S-38) ----
+# gc_script_body feeds a named script's first 16 KB to the same verb matcher as
+# the typed command. Rows: a verb only in a comment is not a commit; a verb in
+# code still is; `#` inside quotes / `${#x}` never starts a comment; a
+# PowerShell -File script is scanned (was a fail-open: its `git commit` skipped
+# the Test). The fixture Test is `exit 1`: want 2 = the hook saw a commit and
+# ran the failing Test, want 0 = it did not see one.
+SCANH=hooks/pre-commit-test.sh
+SCANR=$(mkrepo scan43 main)
+mkdir -p "$SCANR/hooks"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$SCANR/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n' > "$SCANR/PROJECT_CONTEXT.md"
+cp "$ROOT/hooks/run-gate.sh" "$SCANR/hooks/run-gate.sh"
+printf '#!/bin/sh\n# git commit -m x\necho hi\n' > "$SCANR/c-only.sh"
+printf 'echo hi # git commit -m x\n' > "$SCANR/c-trail.sh"
+printf 'echo hi\ngit commit -m x\n' > "$SCANR/real.sh"
+printf 'echo "a # b"\ngit commit -m x\n' > "$SCANR/qhash.sh"
+printf 'echo "a # b"; git commit -m x\n' > "$SCANR/qhash-same-line.sh"
+printf 'x=abc; echo ${#x}; git commit -m x\n' > "$SCANR/brace-hash.sh"
+printf 'git commit -m x # because\n' > "$SCANR/real-trail.sh"
+printf 'cat <<'"'"'EOF'"'"'\ngit commit -m x\nEOF\necho ok\n' > "$SCANR/heredoc-doc.sh"
+printf 'bash <<'"'"'EOF'"'"'\ngit commit -m x\nEOF\n' > "$SCANR/heredoc-run.sh"
+printf 'cat <<'"'"'EOF'"'"' | sh\ngit commit -m x\nEOF\n' > "$SCANR/heredoc-pipe.sh"
+printf 'git commit -m y\n' > "$SCANR/x.ps1"
+printf '# git commit -m y\nWrite-Host hi\n' > "$SCANR/c.ps1"
+check "SCAN comment-only git mention: not a commit"            "$SCANH" 0 "$(mkjson Bash 'bash c-only.sh' "$SCANR")"
+check "SCAN trailing-comment git mention: not a commit"        "$SCANH" 0 "$(mkjson Bash 'bash c-trail.sh' "$SCANR")"
+check "SCAN real git commit line: still a commit"              "$SCANH" 2 "$(mkjson Bash 'bash real.sh' "$SCANR")"
+check "SCAN real commit after echo \"a # b\" line: a commit"     "$SCANH" 2 "$(mkjson Bash 'bash qhash.sh' "$SCANR")"
+check "SCAN real commit after \"a # b\"; on one line: a commit"  "$SCANH" 2 "$(mkjson Bash 'bash qhash-same-line.sh' "$SCANR")"
+check "SCAN real commit after \${#x}: a commit"                  "$SCANH" 2 "$(mkjson Bash 'bash brace-hash.sh' "$SCANR")"
+check "SCAN real commit with a trailing comment: a commit"     "$SCANH" 2 "$(mkjson Bash 'bash real-trail.sh' "$SCANR")"
+check "SCAN quoted-heredoc cat body: not a commit"             "$SCANH" 0 "$(mkjson Bash 'bash heredoc-doc.sh' "$SCANR")"
+check "SCAN quoted-heredoc fed to bash: a commit"              "$SCANH" 2 "$(mkjson Bash 'bash heredoc-run.sh' "$SCANR")"
+check "SCAN quoted-heredoc piped to sh: a commit"              "$SCANH" 2 "$(mkjson Bash 'bash heredoc-pipe.sh' "$SCANR")"
+check "SCAN bash hooks/run-gate.sh (the real file): not a commit" "$SCANH" 0 "$(mkjson Bash 'bash hooks/run-gate.sh' "$SCANR")"
+check "SCAN powershell -File with git commit: a commit"        "$SCANH" 2 "$(mkjson Bash 'powershell -NoProfile -File x.ps1' "$SCANR")"
+check "SCAN powershell -File, verb only in # comment: not"     "$SCANH" 0 "$(mkjson Bash 'powershell -NoProfile -File c.ps1' "$SCANR")"
+check "SCAN pwsh -f with git commit: a commit"                 "$SCANH" 2 "$(mkjson Bash 'pwsh -f x.ps1' "$SCANR")"
+check "SCAN pwsh.exe -ExecutionPolicy Bypass -File: a commit"  "$SCANH" 2 "$(mkjson Bash 'pwsh.exe -ExecutionPolicy Bypass -File x.ps1' "$SCANR")"
+check "SCAN powershell -File missing.ps1: nothing to scan"     "$SCANH" 0 "$(mkjson Bash 'powershell -File missing.ps1' "$SCANR")"
+# The other consumers of gc_script_body: no-push-main and gate-before-merge.
+SCANM=$(mkrepo scan43m main)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SCANM/PROJECT_CONTEXT.md"
+printf 'echo hi # git push origin main\n' > "$SCANM/pc.sh"
+printf 'git push origin main # go\n' > "$SCANM/pr.sh"
+printf 'git push origin main\n' > "$SCANM/p.ps1"
+printf '# git push origin main\nWrite-Host hi\n' > "$SCANM/pcm.ps1"
+printf 'echo hi # git merge feature/y\n' > "$SCANM/mc.sh"
+printf 'git merge feature/y # go\n' > "$SCANM/mr.sh"
+printf 'git merge feature/y\n' > "$SCANM/m.ps1"
+check "SCAN no-push-main: trailing-comment push: allowed"      hooks/no-push-main.sh 0 "$(mkjson Bash 'bash pc.sh' "$SCANM")"
+check "SCAN no-push-main: real push + trailing comment: gated" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash pr.sh' "$SCANM")"
+check "SCAN no-push-main: powershell -File push: gated"        hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File p.ps1' "$SCANM")"
+check "SCAN no-push-main: powershell -File comment push: ok"   hooks/no-push-main.sh 0 "$(mkjson Bash 'pwsh -File pcm.ps1' "$SCANM")"
+check "SCAN gate-before-merge: trailing-comment merge: allowed" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'bash mc.sh' "$SCANM")"
+check "SCAN gate-before-merge: real merge + comment: gated"    hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash mr.sh' "$SCANM")"
+check "SCAN gate-before-merge: powershell -File merge: gated"  hooks/gate-before-merge.sh 2 "$(mkjson Bash 'powershell -File m.ps1' "$SCANM")"
+# ---- end v4.3.0 SCAN
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
