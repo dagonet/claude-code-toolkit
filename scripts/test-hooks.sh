@@ -8147,7 +8147,7 @@ echo "=== hooks/model-floor.sh (v4.3.0 C1) ==="
 C1_BASH=$(command -v bash)
 # The hook steps aside when this is set (S-23); a developer's own environment
 # must not turn every floor row silent. The S-23 rows set it themselves.
-unset CLAUDE_CODE_SUBAGENT_MODEL
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
 C1_HAVE_NODE=1; have_backend node    || C1_HAVE_NODE=""
 C1_HAVE_PY=1;   have_backend python3 || C1_HAVE_PY=""
 C1_HAVE_JQ=1;   have_backend jq      || C1_HAVE_JQ=""
@@ -8333,12 +8333,37 @@ c1_run - "$C1HOME" "$(c1_payload fbonly - "$C1CWD")";             c1_silent "C1 
 # come from --agents / managed settings / a plugin that this hook cannot see
 c1_run - "$C1HOME" "$(c1_payload mystery - "$C1CWD")";            c1_silent "C1 S-22 unknown type, no file -> silent"
 c1_run - "$C1HOME" "$(c1_payload 'plug:agent' - "$C1CWD")";       c1_silent "C1 S-22 plugin-style type -> silent"
-# S-23: the user's own native floor wins
+# S-23 + S-30: the user's own native default wins only where it applies. It must
+# hold a REAL model (alias or full claude-* id -- `inherit`, empty and junk mean
+# unset). Without CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 it covers general-purpose and
+# an untyped spawn only; Plan, Explore, `claude` and a `model: inherit` agent keep
+# the floor. With FORCE=1 it covers every spawn.
+unset CLAUDE_CODE_SUBAGENT_MODEL_FORCE
 export CLAUDE_CODE_SUBAGENT_MODEL=haiku
-c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-23 CLAUDE_CODE_SUBAGENT_MODEL set -> silent"
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-30 var=haiku, general-purpose -> silent"
+c1_run - "$C1HOME" "$(c1_payload - - "$C1CWD")";                  c1_silent "C1 S-30 var=haiku, no type -> silent"
+c1_floor "C1 S-30 var=haiku, Plan still floored"                  - Plan sonnet
+c1_floor "C1 S-30 var=haiku, Explore still floored"               - Explore sonnet
+c1_floor "C1 S-30 var=haiku, claude still floored"                - claude sonnet
+c1_floor "C1 S-30 var=haiku, model: inherit agent still floored"  - inh sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-30 var=full claude-* id, general-purpose -> silent"
+c1_floor "C1 S-30 var=full claude-* id, Plan still floored"       - Plan sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=inherit
+c1_floor "C1 S-30 var=inherit = unset -> floor applies"           - general-purpose sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=gpt4
+c1_floor "C1 S-30 var=junk = unset -> floor applies"              - general-purpose sonnet
 export CLAUDE_CODE_SUBAGENT_MODEL=
 c1_floor "C1 S-23 CLAUDE_CODE_SUBAGENT_MODEL empty -> floor applies" - general-purpose sonnet
-unset CLAUDE_CODE_SUBAGENT_MODEL
+export CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
+c1_floor "C1 S-30 FORCE=1 with an empty var -> floor applies"     - Plan sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=haiku
+c1_run - "$C1HOME" "$(c1_payload Plan - "$C1CWD")";               c1_silent "C1 S-30 var=haiku + FORCE=1, Plan -> silent"
+c1_run - "$C1HOME" "$(c1_payload inh - "$C1CWD")";                c1_silent "C1 S-30 var=haiku + FORCE=1, model: inherit agent -> silent"
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-30 var=haiku + FORCE=1, general-purpose -> silent"
+export CLAUDE_CODE_SUBAGENT_MODEL=inherit
+c1_floor "C1 S-30 var=inherit + FORCE=1 -> floor applies"         - Plan sonnet
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
 # S-20: types that carry their own model, or ignore an override
 c1_run - "$C1HOME" "$(c1_payload statusline-setup - "$C1CWD")";   c1_silent "C1 S-20 statusline-setup -> silent"
 c1_run - "$C1HOME" "$(c1_payload claude-code-guide - "$C1CWD")";  c1_silent "C1 S-20 claude-code-guide -> silent"

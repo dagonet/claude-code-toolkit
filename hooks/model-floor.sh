@@ -4,8 +4,8 @@
 # runs on the project default instead of the orchestrator's model (v4.3.0, spec
 # Part C). Never touches an explicit model or a typed agent's own model. Steps
 # aside while Jev routing is on (it applies the same floor) and while the user
-# has set CLAUDE_CODE_SUBAGENT_MODEL (a native floor that already respects an
-# agent's own model). ADVISORY: any doubt -> exit 0, no output (the spawn
+# has set CLAUDE_CODE_SUBAGENT_MODEL to a real model (S-30; see the step-aside
+# below for exactly what that covers). ADVISORY: any doubt -> exit 0, no output (the spawn
 # inherits, as before v4.3.0).
 #
 # The output is `updatedInput` ONLY -- deliberately no `permissionDecision`. A
@@ -25,8 +25,15 @@ lib="$(dirname "$0")/lib/json.sh"
 # shellcheck source=lib/json.sh
 . "$lib"
 MF_JSON=$(cat)
-# S-23: the user chose a native floor; do not override it.
-[ -n "${CLAUDE_CODE_SUBAGENT_MODEL:-}" ] && exit 0
+# S-23/S-30: CLAUDE_CODE_SUBAGENT_MODEL is a native default only when it holds a
+# REAL model (an alias or a full claude-* id); `inherit` or empty means unset.
+# With CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 it covers every spawn, so step aside
+# here. Without FORCE it covers only general-purpose and an untyped spawn
+# (checked once the type is known, below): it does not reach Plan, Explore,
+# `claude` or an agent whose own model is `inherit`, and those keep the floor.
+MF_ENV_REAL=""
+case "${CLAUDE_CODE_SUBAGENT_MODEL:-}" in haiku|sonnet|opus|fable|claude-*) MF_ENV_REAL=1 ;; esac
+[ -n "$MF_ENV_REAL" ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-}" = 1 ] && exit 0
 case "$MF_JSON" in "$JSON_BOM"*) MF_JSON=${MF_JSON#"$JSON_BOM"} ;; esac
 json_have || exit 0
 json_valid "$MF_JSON" || exit 0
@@ -34,6 +41,7 @@ json_valid "$MF_JSON" || exit 0
 [ -n "$(json_get "$MF_JSON" tool_input.model)" ] && exit 0
 MF_TYPE=$(json_get "$MF_JSON" tool_input.subagent_type)
 [ -n "$MF_TYPE" ] || MF_TYPE=general-purpose
+[ -n "$MF_ENV_REAL" ] && [ "$MF_TYPE" = general-purpose ] && exit 0
 case "$MF_TYPE" in *[!A-Za-z0-9_.-]*|.*) exit 0 ;; esac
 # Types that carry a model of their own (statusline-setup: sonnet,
 # claude-code-guide: haiku) or ignore a model override (fork): step aside.
