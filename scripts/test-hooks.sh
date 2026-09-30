@@ -7371,6 +7371,33 @@ tp_i1_repo tp_i1_open;  tp_run "$R" 'git commit -m "unterminated';            tp
 tp_i1_repo tp_i1_lone;  tp_run "$R" 'git commit -m x';                        tp_expect "A1 I-1: a lone git commit still skips" SKIP "$R"
 tp_i1_repo tp_i1_quot;  tp_run "$R" 'git commit -m "docs: a && b; c | d"';    tp_expect "A1 I-1: operators inside quotes are data -> skipped" SKIP "$R"
 tp_i1_repo tp_i1_dash;  tp_run "$R" "git -C $R commit --no-verify -m 'x y'";  tp_expect "A1 I-1: lone git -C <dir> commit --no-verify -> skipped" SKIP "$R"
+# v4.3.0 A1 fix (ruling S-33): Claude Code's standard commit form, a quoted-heredoc
+# `-m "$(cat <<'EOF' ... EOF )"`, is a lone commit too: a QUOTED delimiter makes the
+# body literal text. Anything else -- another substitution, an unquoted delimiter
+# (the body is expanded), `<<-`, text after the closing `)"`, a second command, a
+# flag that changes what is committed -- still runs the tests.
+# The suite's jesc runs its `s///` BEFORE the N-loop joins the lines, so it escapes only
+# the first line of a multi-line command. A heredoc message needs every line escaped,
+# hence this local runner: join first, escape after.
+tp_run_ml() { # <repo> <multi-line command>
+  local je
+  je=$(printf '%s.' "$2" | sed -e ':a' -e '$!{N;ba' -e '}' -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\n/\\n/g')
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' \
+    "${je%.}" "$(jesc "$1")" | bash "$ROOT/$TPH" >"$1/.tp_out" 2>&1
+}
+tp_hd() { # <flags before -m> <open quote form> <body> <closer tail> -> the command
+  printf '%s' "git commit ${1}-m \"\$(cat <<${2}"$'\n'"${3}"$'\n'"EOF"$'\n'")\"${4}"
+}
+tp_i1_repo tp_s33_sq;   tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'subject\n\nbody with $(x) and `y` and "q"' '')"; tp_expect "A1 S-33: quoted-heredoc message ('EOF') -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_dq;   tp_run_ml "$R" "$(tp_hd '' '"EOF"' $'subject\n\nbody' '')"; tp_expect "A1 S-33: quoted-heredoc message (\"EOF\") -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_ws;   tp_run_ml "$R" "$(tp_hd '--no-verify ' "'EOF'" 'subject' '  ')"; tp_expect "A1 S-33: trailing whitespace after the closer -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_unq;  tp_run_ml "$R" "$(tp_hd '' 'EOF' 'subject' '')"; tp_expect "A1 S-33: unquoted delimiter -> tests run" RAN "$R"
+tp_i1_repo tp_s33_body; tp_run_ml "$R" "$(tp_hd '' 'EOF' 'subject $(rm x)' '')"; tp_expect "A1 S-33: unquoted delimiter, body has \$(rm x) -> tests run" RAN "$R"
+tp_i1_repo tp_s33_tail; tp_run_ml "$R" "$(tp_hd '' "'EOF'" 'subject' ' && git push')"; tp_expect "A1 S-33: text after the closing )\" -> tests run" RAN "$R"
+tp_i1_repo tp_s33_a;    tp_run_ml "$R" "$(tp_hd '-a ' "'EOF'" 'subject' '')"; tp_expect "A1 S-33: -a with the heredoc -> tests run" RAN "$R"
+tp_i1_repo tp_s33_bt;   tp_run_ml "$R" 'git commit -m "`git rm -q src/a.c`"'; tp_expect "A1 S-33: backtick message -> tests run" RAN "$R"
+tp_i1_repo tp_s33_dash; tp_run_ml "$R" "$(tp_hd '' "-'EOF'" 'subject' '')"; tp_expect "A1 S-33: <<- form -> tests run" RAN "$R"
+tp_i1_repo tp_s33_two;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" 'subject' '')"$'\ngit push'; tp_expect "A1 S-33: a second command -> tests run" RAN "$R"
 # ---- end v4.3.0 A1
 
 # ---- v4.3.0 A2: **Gate extra** reuse + per-leg results ----

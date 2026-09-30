@@ -436,6 +436,33 @@ pct_single_commit() { # <raw command> -- 0 only for one plain `git commit`, noth
   local s="$1" n i=0 ch q="" tok="" have=0 k=0 nt t cl c
   local -a toks=()
   s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"
+  # Ruling S-33: Claude Code's standard commit form, `-m "$(cat <<'X'` <body> `X` `)"`
+  # at the very end of the command, is a lone commit. Only with a QUOTED delimiter
+  # (the body is then literal text) and only when the text after the terminator
+  # line is exactly `)"`. The whole substitution is replaced by a plain word and the
+  # rest goes through the scanner below, so the flags before `-m` still obey the
+  # -a/-i/-o/pathspec rule. Anything else (unquoted or `<<-`, another substitution,
+  # trailing text, a second command) is not matched here and the scanner refuses `$`.
+  local hd='"$(cat <<' hhead hrest hq hx hline
+  case "$s" in
+    *"$hd"*)
+      hhead="${s%%"$hd"*}"; hrest="${s#*"$hd"}"
+      case "$hhead" in *[[:space:]]-m[[:space:]]) ;; *) return 1 ;; esac
+      hq="${hrest:0:1}"
+      case "$hq" in "'"|'"') ;; *) return 1 ;; esac
+      hrest="${hrest:1}"; hx="${hrest%%"$hq"*}"
+      [[ "$hx" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+      hrest="${hrest#"$hx$hq"}"
+      [ "${hrest:0:1}" = $'\n' ] || return 1
+      hrest="${hrest:1}"
+      while :; do
+        case "$hrest" in *$'\n'*) ;; *) return 1 ;; esac
+        hline="${hrest%%$'\n'*}"; hrest="${hrest#*$'\n'}"
+        [ "$hline" = "$hx" ] && break
+      done
+      [ "$hrest" = ')"' ] || return 1
+      s="${hhead}x" ;;
+  esac
   n=${#s}
   while [ "$i" -lt "$n" ]; do
     ch="${s:$i:1}"; i=$((i + 1))
