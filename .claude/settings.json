@@ -36,6 +36,15 @@
             "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\" ] || exit 0; bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh\" ] || exit 0; bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -8099,6 +8099,198 @@ b1 "N-3 ok: cd && nested glued (for..)"          0 "cd /x && (for a in b; do (fo
 b1 "N-3 ok: cd && \${var} inside a group"        0 "cd /x && { echo \${x}; echo \${y}; }"
 # ---- end v4.3.0 B1
 
+# ---- v4.3.0 C1: model-floor gives a model-less spawn the project default ----
+# Spec Part C + S-19/S-20/S-21. PreToolUse(Agent): a spawn with no explicit
+# model whose agent type has no model of its own gets the project default
+# (`**Subagent default model**` in PROJECT_CONTEXT.md, else sonnet) instead of
+# inheriting the orchestrator's. STDOUT is the contract -- exactly one
+# {"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{...}}}
+# object, and NO permissionDecision (an "allow" would skip the user's prompt).
+echo "=== hooks/model-floor.sh (v4.3.0 C1) ==="
+# Self-contained so `run-block.sh C1` (which carries only the helpers defined
+# above line 400) runs the same rows as the full suite.
+. "$ROOT/hooks/lib/json.sh"
+C1_BASH=$(command -v bash)
+C1_HAVE_NODE=1; have_backend node    || C1_HAVE_NODE=""
+C1_HAVE_PY=1;   have_backend python3 || C1_HAVE_PY=""
+C1_HAVE_JQ=1;   have_backend jq      || C1_HAVE_JQ=""
+C1_TOOLS="sh bash git grep sed tr head tail cut cat wc stat date mktemp dirname basename sort uniq mkdir rm ls awk env find touch cp expr"
+c1_pathdir() { # <name> [backend ...] -> a PATH dir holding the core tools + only those backends
+  c1d="$TMPROOT/c1path-$1"; shift
+  mkdir -p "$c1d"
+  for c1t in $C1_TOOLS "$@"; do
+    c1r=$(command -v "$c1t" 2>/dev/null) || continue
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$c1r" > "$c1d/$c1t"
+    chmod +x "$c1d/$c1t"
+  done
+  printf '%s\n' "$c1d"
+}
+c1_seen() { PATH="$1" "$C1_BASH" -c "command -v $2 >/dev/null 2>&1" && echo 0 || echo 1; }
+C1_NOPARSER=$(c1_pathdir none)
+expect "C1 fixture PATH hides node"    1 "$(c1_seen "$C1_NOPARSER" node)"
+expect "C1 fixture PATH hides python3" 1 "$(c1_seen "$C1_NOPARSER" python3)"
+expect "C1 fixture PATH hides jq"      1 "$(c1_seen "$C1_NOPARSER" jq)"
+C1_NODEONLY=""; C1_PYONLY=""; C1_JQONLY=""
+if [ -n "$C1_HAVE_NODE" ]; then C1_NODEONLY=$(c1_pathdir nodeonly node); fi
+if [ -n "$C1_HAVE_PY" ];   then C1_PYONLY=$(c1_pathdir pyonly python3); fi
+if [ -n "$C1_HAVE_JQ" ];   then C1_JQONLY=$(c1_pathdir jqonly jq); fi
+
+C1R=$(mkrepo c1repo main)
+C1HOME="$TMPROOT/c1home"; mkdir -p "$C1HOME"
+mkdir -p "$C1R/.claude/agents"
+printf -- '---\nname: typed\nmodel: haiku\n---\nbody\n'      > "$C1R/.claude/agents/typed.md"
+printf -- '---\nname: inh\nmodel: inherit\n---\nbody\n'      > "$C1R/.claude/agents/inh.md"
+printf -- '---\r\nname: inhcrlf\r\nmodel: inherit\r\n---\r\n' > "$C1R/.claude/agents/inhcrlf.md"
+printf -- '---\nname: fullid\nmodel: claude-opus-4-1\n---\n'  > "$C1R/.claude/agents/fullid.md"
+printf -- '---\nname: nomodel\ndescription: x\n---\nbody\n'   > "$C1R/.claude/agents/nomodel.md"
+C1CWD=$(natpath "$C1R")
+C1PROMPT=$'Do the thing \xe2\x80\x94 "quoted"\nsecond line'
+
+c1_payload() { # <type|-> <model|-> <cwd> -> Agent payload; '-' = key absent. zz_unknown must survive.
+  c1ty=""; [ "$1" = "-" ] || c1ty="\"subagent_type\":\"$(jesc "$1")\","
+  c1mo=""; [ "$2" = "-" ] || c1mo="\"model\":\"$(jesc "$2")\","
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{%s%s"prompt":"%s","description":"d","zz_unknown":1},"cwd":"%s"}' \
+    "$c1ty" "$c1mo" "$(jesc "$C1PROMPT")" "$(jesc "$3")"
+}
+C1OUTF="$TMPROOT/c1.out"; C1ERRF="$TMPROOT/c1.err"
+c1_run() { # <pathdir|-> <home> <json> -> C1_RC; stdout in $C1OUTF, stderr in $C1ERRF
+  if [ "$1" = "-" ]; then
+    printf '%s' "$3" | HOME="$2" "$C1_BASH" "$ROOT/hooks/model-floor.sh" >"$C1OUTF" 2>"$C1ERRF"
+  else
+    printf '%s' "$3" | PATH="$1" HOME="$2" "$C1_BASH" "$ROOT/hooks/model-floor.sh" >"$C1OUTF" 2>"$C1ERRF"
+  fi
+  C1_RC=$?
+}
+c1_silent() { # <label> -> exit 0 and 0 bytes of stdout
+  expect "$1" "rc=0 stdout_bytes=0" "rc=$C1_RC stdout_bytes=$(wc -c < "$C1OUTF" | tr -d ' ')"
+}
+c1_floor() { # <label> <pathdir|-> <type|-> <want model> -- the full updatedInput contract
+  c1_run "$2" "$C1HOME" "$(c1_payload "$3" - "$C1CWD")"
+  c1o=$(<"$C1OUTF")
+  expect "$1: exit 0"                          0 "$C1_RC"
+  expect "$1: model floored"                   "$4" "$(jfield "$c1o" hookSpecificOutput.updatedInput.model)"
+  expect "$1: hookEventName"                   PreToolUse "$(jfield "$c1o" hookSpecificOutput.hookEventName)"
+  expect "$1: NO permissionDecision key"       0 "$(printf '%s' "$c1o" | grep -c permissionDecision)"
+  expect "$1: prompt survives (em dash, quote, newline)" "$C1PROMPT" "$(jfield "$c1o" hookSpecificOutput.updatedInput.prompt | tr -d '\r')"
+  expect "$1: description survives"            d "$(jfield "$c1o" hookSpecificOutput.updatedInput.description)"
+  expect "$1: zz_unknown survives"             1 "$(jfield "$c1o" hookSpecificOutput.updatedInput.zz_unknown)"
+  if [ "$3" != "-" ]; then
+    expect "$1: subagent_type survives"        "$3" "$(jfield "$c1o" hookSpecificOutput.updatedInput.subagent_type)"
+  fi
+  expect "$1: stdout is exactly one JSON object" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
+  expect "$1: stdout is valid JSON"            0 "$(json_valid "$c1o" && echo 0 || echo 1)"
+  expect "$1: stderr names type and model"     1 "$(grep -c "^model-floor: ${3/#-/general-purpose} had no model -> $4\$" "$C1ERRF" | tr -d ' ')"
+}
+
+# row 1 / 4: the emitted JSON under EACH parser path (node, python3, jq)
+c1_floor "C1 row1 general-purpose (default parser)" - general-purpose sonnet
+c1_floor "C1 row4 inherit (default parser)"         - inh sonnet
+# Each forced-parser PATH is self-checked FIRST: a row that still sees node would
+# pass green and prove nothing about the python3 / jq emitters.
+if [ -n "$C1_HAVE_NODE" ]; then
+  expect "C1 node-only PATH keeps node"        0 "$(c1_seen "$C1_NODEONLY" node)"
+  c1_floor "C1 row1 general-purpose (node)"    "$C1_NODEONLY" general-purpose sonnet
+  c1_floor "C1 row4 inherit (node)"            "$C1_NODEONLY" inh sonnet
+else skip "C1 node parser rows" "no node on this host" 23; fi
+if [ -n "$C1_HAVE_PY" ]; then
+  expect "C1 python3-only PATH hides node"     1 "$(c1_seen "$C1_PYONLY" node)"
+  expect "C1 python3-only PATH keeps python3"  0 "$(c1_seen "$C1_PYONLY" python3)"
+  c1_floor "C1 row1 general-purpose (python3)" "$C1_PYONLY" general-purpose sonnet
+  c1_floor "C1 row4 inherit (python3)"         "$C1_PYONLY" inh sonnet
+else skip "C1 python3 parser rows" "no python3 on this host" 24; fi
+if [ -n "$C1_HAVE_JQ" ]; then
+  expect "C1 jq-only PATH hides node"          1 "$(c1_seen "$C1_JQONLY" node)"
+  expect "C1 jq-only PATH hides python3"       1 "$(c1_seen "$C1_JQONLY" python3)"
+  expect "C1 jq-only PATH keeps jq"            0 "$(c1_seen "$C1_JQONLY" jq)"
+  c1_floor "C1 row1 general-purpose (jq)"      "$C1_JQONLY" general-purpose sonnet
+  c1_floor "C1 row4 inherit (jq)"              "$C1_JQONLY" inh sonnet
+else skip "C1 jq parser rows" "no jq on this host" 25; fi
+# other types that get the floor
+c1_floor "C1 no subagent_type at all"   - - sonnet
+c1_floor "C1 Plan"                      - Plan sonnet
+c1_floor "C1 Explore without a file"    - Explore sonnet
+c1_floor "C1 file with no model key"    - nomodel sonnet
+c1_floor "C1 CRLF file, model: inherit" - inhcrlf sonnet
+
+# row 2: an explicit model (any value) is never touched
+c1_run - "$C1HOME" "$(c1_payload general-purpose opus "$C1CWD")"; c1_silent "C1 row2 explicit model opus -> silent"
+c1_run - "$C1HOME" "$(c1_payload inh haiku "$C1CWD")";            c1_silent "C1 row2b explicit model on an inherit agent -> silent"
+# row 3: a typed agent's own model
+c1_run - "$C1HOME" "$(c1_payload typed - "$C1CWD")";              c1_silent "C1 row3 typed (model: haiku) -> silent"
+c1_run - "$C1HOME" "$(c1_payload fullid - "$C1CWD")";             c1_silent "C1 row3b agent with a full model id -> silent"
+mkdir -p "$C1HOME/.claude/agents"
+printf -- '---\nname: uagent\nmodel: opus\n---\n' > "$C1HOME/.claude/agents/uagent.md"
+c1_run - "$C1HOME" "$(c1_payload uagent - "$C1CWD")";             c1_silent "C1 row3c user-level agent with a model -> silent"
+# S-20: types that carry their own model, or ignore an override
+c1_run - "$C1HOME" "$(c1_payload statusline-setup - "$C1CWD")";   c1_silent "C1 S-20 statusline-setup -> silent"
+c1_run - "$C1HOME" "$(c1_payload claude-code-guide - "$C1CWD")";  c1_silent "C1 S-20 claude-code-guide -> silent"
+c1_run - "$C1HOME" "$(c1_payload fork - "$C1CWD")";               c1_silent "C1 S-20 fork -> silent"
+# row 5: the project default
+printf '# ctx\n- **Subagent default model**: haiku\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 PROJECT_CONTEXT haiku"         - general-purpose haiku
+printf '\357\273\277- **Subagent default model**: haiku\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 BOM on line 1 does not hide the key" - general-purpose haiku
+printf '# ctx\n- **Subagent default model**: `opus`\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 PROJECT_CONTEXT opus in backticks" - general-purpose opus
+printf '# ctx\n- **Subagent default model**: {{SUBAGENT_DEFAULT_MODEL}}\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 unfilled placeholder -> sonnet" - general-purpose sonnet
+printf '# ctx\n- **Subagent default model**: gpt4\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 unknown value gpt4 -> sonnet"   - general-purpose sonnet
+printf '# ctx\n- **Subagent default model**: (optional; default `sonnet`) the model a spawn gets\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 the template's own placeholder line -> sonnet" - general-purpose sonnet
+rm -f "$C1R/PROJECT_CONTEXT.md"
+# row 6: Jev routing on -> step aside
+C1GD=$(git -C "$C1R" rev-parse --path-format=absolute --git-common-dir)
+mkdir -p "$C1GD/jev"; printf '{"route": true}\n' > "$C1GD/jev/config.json"
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 row6 jev route true -> silent"
+printf '{"route": false}\n' > "$C1GD/jev/config.json"
+c1_floor "C1 row6b jev route false -> floor applies" - general-purpose sonnet
+rm -rf "$C1GD/jev"
+# row 7: path-unsafe type names
+c1_run - "$C1HOME" "$(c1_payload '../x' - "$C1CWD")";             c1_silent "C1 row7 subagent_type ../x -> silent"
+c1_run - "$C1HOME" "$(c1_payload 'a/b' - "$C1CWD")";              c1_silent "C1 row7b subagent_type a/b -> silent"
+c1_run - "$C1HOME" "$(c1_payload '.hidden' - "$C1CWD")";          c1_silent "C1 row7c subagent_type .hidden -> silent"
+# row 8: no parser -> the advisory hook does nothing
+c1_run "$C1_NOPARSER" "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")"; c1_silent "C1 row8 no parser -> silent"
+# other payloads
+c1_run - "$C1HOME" "$(mkjson Bash 'echo hi' "$C1CWD")";           c1_silent "C1 not the Agent tool -> silent"
+c1_run - "$C1HOME" 'not json at all';                            c1_silent "C1 invalid JSON -> silent"
+c1_run - "$C1HOME" '';                                           c1_silent "C1 empty stdin -> silent"
+c1_run - "$C1HOME" '{"tool_name":"Agent","tool_input":"a string","cwd":"."}'; c1_silent "C1 tool_input not an object -> silent"
+
+# registration: every settings file carries the SILENT wrapper on the Agent
+# matcher, and the wrapper is silent when the hook file is absent
+if [ -n "$C1_HAVE_NODE" ]; then
+  C1_TPL='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh" ] || exit 0; bash "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh"'
+  C1_USR='f="$HOME/.claude/hooks/model-floor.sh"; [ -f "$f" ] || exit 0; bash "$f"'
+  c1_cmd() { # <settings file> -> the model-floor command(s) registered on matcher Agent, one per line
+    node -e '
+      var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
+      (s.hooks.PreToolUse || []).forEach(function (g) { if (g.matcher !== "Agent") return;
+        g.hooks.forEach(function (h) { if (h.command.indexOf("model-floor.sh") >= 0) o.push(h.command); }); });
+      process.stdout.write(o.join("\n"));' "$(natpath "$1")"
+  }
+  for c1v in general dotnet dotnet-maui rust-tauri java python; do
+    expect "C1 registered on Agent: templates/$c1v" "$C1_TPL" "$(c1_cmd "$ROOT/templates/$c1v/.claude/settings.json")"
+  done
+  expect "C1 registered on Agent: root .claude/settings.json" "$C1_TPL" "$(c1_cmd "$ROOT/.claude/settings.json")"
+  expect "C1 registered on Agent: user-level-reference"       "$C1_USR" "$(c1_cmd "$ROOT/user-level-reference/settings.json")"
+  # silent when the hook file is missing: exit 0, 0 bytes of stdout AND stderr
+  C1EMPTY="$TMPROOT/c1empty"; mkdir -p "$C1EMPTY"
+  for c1w in "$C1_TPL" "$C1_USR"; do
+    CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$c1w" </dev/null >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+    expect "C1 wrapper silent when hook file missing (${c1w%%;*})" "rc=0 out=0 err=0" \
+      "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
+  done
+  # and passes the hook's stdout through untouched when the file is present
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1HOME" "$C1_BASH" -c "$C1_TPL" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"
+  expect "C1 template wrapper passes the hook's JSON through" sonnet "$(jfield "$(<"$C1OUTF")" hookSpecificOutput.updatedInput.model)"
+  expect "C1 template wrapper adds nothing to stdout" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
+else
+  skip "C1 registration + wrapper rows" "no node on this host" 12
+fi
+# ---- end v4.3.0 C1
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

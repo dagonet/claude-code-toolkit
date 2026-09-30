@@ -81,6 +81,15 @@
             "command": "f=\"$HOME/.claude/hooks/deny-hang-shapes.sh\"; [ -f \"$f\" ] || exit 0; bash \"$f\""
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/hooks/model-floor.sh\"; [ -f \"$f\" ] || exit 0; bash \"$f\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

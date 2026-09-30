@@ -30,6 +30,7 @@
 - **Gate**: `dotnet format {{SOLUTION_FILE}} --verify-no-changes && dotnet build {{SOLUTION_FILE}} && dotnet test`
 <!-- - **Test paths**: src/ tests/ -- optional, unset here by default; unset = every commit runs **Test**; space-separated git pathspecs of code a test could exercise; a commit touching none of them (staged, unstaged or untracked) skips **Test** for that commit only, and the merge gate still runs in full; plain paths/globs only -- ':' pathspec magic is ignored -->
 <!-- - **Gate extra**: bash scripts/lint.sh && bash scripts/typecheck.sh -- optional, unset here by default; the Gate legs beyond **Test**; honoured only when **Gate** is exactly `<Test> && <Gate extra>` (R-A) -- lets the merge gate reuse a passing commit-time **Test** run for the same content instead of re-running it -->
+- **Subagent default model**: (optional; default `sonnet`) the model a sub-agent spawn gets when neither the call nor its agent file sets one -- general-purpose and built-in agents otherwise inherit the orchestrator's (most expensive) model
 - **Post-edit build**: none <!-- setup fills {{POST_EDIT_BUILD}}; none = no post-edit build -->
 <!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none
