@@ -7339,6 +7339,38 @@ tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: literal-quoted pathspec (\"src
 R=$(tp_repo tp_mixed "src/ docs-missing/"); tp_seed_src "$R"; echo d > "$R/docs/a.md"
 tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: one bad word among good ones -> tests run" RAN "$R"
 tp_expect_warn_entry "A1 S-5: one bad word among good ones -> WARN names 'docs-missing/'" "$R" "docs-missing/"
+# v4.3.0 A1 fix (final review I-1, ruling S-28): the skip applies ONLY to a lone
+# `git commit`. A clause ahead of the commit that mutates a matching path (git rm,
+# git mv, sed -i), `-a` / `--all` / `-i` / `--include` / `-o` / `--only`, and a
+# pathspec after `--` all change what the commit contains, and the tree this hook
+# sees is the tree BEFORE the command runs -- so each of them must run the tests.
+# Every row below has a clean tree plus a docs-only change, the exact state in
+# which a lone commit is skipped, so RAN can only come from the command shape.
+tp_i1_repo() { # <name> -> repo with tracked src/a.c and a docs-only working change
+  R=$(tp_repo "$1" "src/"); tp_seed_src "$R"
+  echo one > "$R/src/a.c"; git -C "$R" add src/a.c >/dev/null 2>&1; git -C "$R" commit -q -m a >/dev/null 2>&1
+  echo d > "$R/docs/a.md"
+}
+tp_i1_repo tp_i1_rm;    tp_run "$R" 'git rm -q src/a.c && git commit -m x';   tp_expect "A1 I-1: git rm && commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_mv;    tp_run "$R" 'git mv src/a.c docs/a.c && git commit -m x'; tp_expect "A1 I-1: git mv && commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_sed;   tp_run "$R" 'sed -i s/one/two/ src/a.c && git commit -am x'; tp_expect "A1 I-1: sed -i && commit -am -> tests run" RAN "$R"
+tp_i1_repo tp_i1_a;     tp_run "$R" 'git commit -a -m x';                     tp_expect "A1 I-1: git commit -a -> tests run" RAN "$R"
+tp_i1_repo tp_i1_am;    tp_run "$R" 'git commit -am x';                       tp_expect "A1 I-1: git commit -am -> tests run" RAN "$R"
+tp_i1_repo tp_i1_all;   tp_run "$R" 'git commit --all -m x';                  tp_expect "A1 I-1: git commit --all -> tests run" RAN "$R"
+tp_i1_repo tp_i1_inc;   tp_run "$R" 'git commit --include src/a.c -m x';      tp_expect "A1 I-1: git commit --include -> tests run" RAN "$R"
+tp_i1_repo tp_i1_only;  tp_run "$R" 'git commit --only -m x';                 tp_expect "A1 I-1: git commit --only -> tests run" RAN "$R"
+tp_i1_repo tp_i1_o;     tp_run "$R" 'git commit -o -m x';                     tp_expect "A1 I-1: git commit -o -> tests run" RAN "$R"
+tp_i1_repo tp_i1_path;  tp_run "$R" 'git commit -m x -- src/a.c';             tp_expect "A1 I-1: pathspec after -- -> tests run" RAN "$R"
+tp_i1_repo tp_i1_bare;  tp_run "$R" 'git commit -m x src/a.c';                tp_expect "A1 I-1: bare pathspec -> tests run" RAN "$R"
+tp_i1_repo tp_i1_semi;  tp_run "$R" 'rm -f src/a.c; git commit -m x';         tp_expect "A1 I-1: rm ; commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_pipe;  tp_run "$R" 'echo y | git commit -m x';               tp_expect "A1 I-1: piped commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_sub;   tp_run "$R" 'git commit -m "$(git rm -q src/a.c)"';   tp_expect "A1 I-1: command substitution in the message -> tests run" RAN "$R"
+tp_i1_repo tp_i1_open;  tp_run "$R" 'git commit -m "unterminated';            tp_expect "A1 I-1: unterminated quote -> tests run" RAN "$R"
+# The lone commit still skips, quotes and a `-C` prefix included; the operators
+# INSIDE quotes are data.
+tp_i1_repo tp_i1_lone;  tp_run "$R" 'git commit -m x';                        tp_expect "A1 I-1: a lone git commit still skips" SKIP "$R"
+tp_i1_repo tp_i1_quot;  tp_run "$R" 'git commit -m "docs: a && b; c | d"';    tp_expect "A1 I-1: operators inside quotes are data -> skipped" SKIP "$R"
+tp_i1_repo tp_i1_dash;  tp_run "$R" "git -C $R commit --no-verify -m 'x y'";  tp_expect "A1 I-1: lone git -C <dir> commit --no-verify -> skipped" SKIP "$R"
 # ---- end v4.3.0 A1
 
 # ---- v4.3.0 A2: **Gate extra** reuse + per-leg results ----

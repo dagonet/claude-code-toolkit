@@ -311,6 +311,9 @@ fi
 # and the depth-1/TOCTOU residuals. cmd_len in the diagnostic artifact below
 # reflects the augmented length, in BYTES, on this path -- accepted, it is a
 # diagnostic field, not a gate.
+# The command as typed, before the script-body widening: the **Test paths** skip
+# (v4.3.0 A1, S-28) judges THIS text, never the widened one.
+PCT_RAW_CMD="$GC_CMD"
 GC_CMD="$(gc_augmented_cmd "$GC_CWD")"
 
 # Find the repo of the first `git commit` in the command line (if any).
@@ -421,8 +424,86 @@ PCT_ARTIFACT_BASE="$REPO_PATH"
 # staged x yet when this hook runs) -- matches the pathspecs. set -f keeps the
 # shell from expanding a glob pathspec against the cwd. git failing to
 # evaluate the pathspecs falls through to the test run (fail-closed).
+#
+# v4.3.0 A1 fix (final review I-1, ruling S-28): the tree this hook inspects is
+# the tree BEFORE the command runs, so any clause ahead of the commit (git rm,
+# git mv, sed -i, a redirect, a script) can change a matching path without the
+# `git status` below seeing it, and `git commit -a` / `-i` / `-o` / a pathspec
+# commits paths that `git status` does not report the way this decision needs.
+# The skip therefore applies ONLY to a lone `git commit` (pct_single_commit);
+# anything else, and any doubt, runs the tests.
+pct_single_commit() { # <raw command> -- 0 only for one plain `git commit`, nothing else
+  local s="$1" n i=0 ch q="" tok="" have=0 k=0 nt t cl c
+  local -a toks=()
+  s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"
+  n=${#s}
+  while [ "$i" -lt "$n" ]; do
+    ch="${s:$i:1}"; i=$((i + 1))
+    case "$q" in
+      "'") if [ "$ch" = "'" ]; then q=""; else tok="$tok$ch"; fi; continue ;;
+      '"')
+        case "$ch" in
+          '"') q="" ;;
+          '$'|'`') return 1 ;;
+          '\') tok="$tok${s:$i:1}"; i=$((i + 1)) ;;
+          *) tok="$tok$ch" ;;
+        esac
+        continue ;;
+    esac
+    case "$ch" in
+      "'") q="'"; have=1 ;;
+      '"') q='"'; have=1 ;;
+      '\'|'&'|';'|'|'|'<'|'>'|'('|')'|'{'|'}'|'$'|'`'|'!'|'#'|'*'|'?'|'['|$'\n'|$'\r') return 1 ;;
+      ' '|$'\t') if [ "$have" = 1 ] || [ -n "$tok" ]; then toks+=("$tok"); tok=""; have=0; fi ;;
+      *) tok="$tok$ch" ;;
+    esac
+  done
+  [ -z "$q" ] || return 1
+  if [ "$have" = 1 ] || [ -n "$tok" ]; then toks+=("$tok"); fi
+  nt=${#toks[@]}
+  [ "$nt" -ge 2 ] || return 1
+  [ "${toks[0]}" = git ] || return 1
+  k=1
+  while [ "$k" -lt "$nt" ]; do
+    case "${toks[$k]}" in
+      -C) k=$((k + 2)) ;;
+      --no-pager|-P|--paginate|--no-optional-locks|--literal-pathspecs) k=$((k + 1)) ;;
+      commit) break ;;
+      *) return 1 ;;
+    esac
+  done
+  [ "$k" -lt "$nt" ] && [ "${toks[$k]}" = commit ] || return 1
+  k=$((k + 1))
+  while [ "$k" -lt "$nt" ]; do
+    t="${toks[$k]}"; k=$((k + 1))
+    case "$t" in
+      --) return 1 ;;
+      --message|--file|--author|--date|--cleanup|--template|--reuse-message|--reedit-message) k=$((k + 1)) ;;
+      --message=*|--file=*|--author=*|--date=*|--cleanup=*|--template=*|--gpg-sign=*) ;;
+      --amend|--no-verify|--allow-empty|--allow-empty-message|--no-edit|--edit|--signoff|--no-signoff|--verbose|--quiet|--no-gpg-sign|--gpg-sign|--no-post-rewrite|--reset-author) ;;
+      --*) return 1 ;;
+      -?*)
+        cl="${t#-}"
+        while [ -n "$cl" ]; do
+          c="${cl:0:1}"; cl="${cl:1}"
+          case "$c" in
+            m|F|C|c|t) [ -z "$cl" ] && k=$((k + 1)); cl="" ;;
+            S) cl="" ;;
+            n|s|v|q|e) ;;
+            *) return 1 ;;
+          esac
+        done ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
 TEST_PATHS=$(grep -E "${GC_KEY_PRE}\*\*Test paths\*\*:" "$REPO_PATH/PROJECT_CONTEXT.md" 2>/dev/null | sed -E "s/${GC_KEY_PRE}\\*\\*Test paths\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" | head -1)
 case "$TEST_PATHS" in *\{\{*\}\}*) TEST_PATHS="" ;; esac
+if [ -n "$TEST_PATHS" ] && ! pct_single_commit "$PCT_RAW_CMD"; then
+  echo "pre-commit-test: **Test paths** applies only to a lone \`git commit\` (no chained command, -a/-i/-o or pathspec) -- running the tests" >&2
+  TEST_PATHS=""
+fi
 if [ -n "$TEST_PATHS" ]; then
   set -f
   # v4.3.0 A1 fix round 1 (S-4): git pathspec magic (a word beginning with
