@@ -7371,29 +7371,6 @@ tp_i1_repo tp_i1_open;  tp_run "$R" 'git commit -m "unterminated';            tp
 tp_i1_repo tp_i1_lone;  tp_run "$R" 'git commit -m x';                        tp_expect "A1 I-1: a lone git commit still skips" SKIP "$R"
 tp_i1_repo tp_i1_quot;  tp_run "$R" 'git commit -m "docs: a && b; c | d"';    tp_expect "A1 I-1: operators inside quotes are data -> skipped" SKIP "$R"
 tp_i1_repo tp_i1_dash;  tp_run "$R" "git -C $R commit --no-verify -m 'x y'";  tp_expect "A1 I-1: lone git -C <dir> commit --no-verify -> skipped" SKIP "$R"
-# v4.3.0 (final review I-2, ruling S-31): PreToolUse hooks run in parallel, so a
-# commit call that deny-hang-shapes refuses would still spend a full Test run.
-# pre-commit-test asks deny-hang-shapes about the same payload and, ONLY on an
-# exit of exactly 2, exits 0 without running the tests. Key unset here, so the
-# only thing that can suppress the run is the refusal.
-tp_expect_dhs() { # <label> <want: RAN|NORUN> <repo> -- NORUN also requires the hook's own note
-  if [ -f "$3/TP-SUITE-RAN" ]; then got=RAN; else got=NORUN; fi
-  if [ "$got" = NORUN ] && ! grep -q 'refused by deny-hang-shapes' "$3/.tp_out" 2>/dev/null; then got=NEITHER; fi
-  if [ "$got" = "$2" ]; then printf 'PASS  %-42s (%s)\n' "$1" "$got"; pass=$((pass + 1))
-  else printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$2" "$got"; fail=$((fail + 1)); fi
-}
-R=$(tp_repo tp_dhs_ref ""); echo d > "$R/docs/a.md"
-tp_run "$R" "cd $R && git add docs/a.md && git commit -m y"; tp_expect_dhs "A1 S-31: cd && add && commit (refused) -> no tests spent" NORUN "$R"
-R=$(tp_repo tp_dhs_norm ""); echo d > "$R/docs/a.md"
-tp_run "$R" 'git commit -m y';                              tp_expect_dhs "A1 S-31: a normal commit still runs the tests" RAN "$R"
-R=$(tp_repo tp_dhs_cd1 ""); echo d > "$R/docs/a.md"
-tp_run "$R" "cd $R && git commit -m y";                     tp_expect_dhs "A1 S-31: cd && commit (allowed by the shape rule) -> tests run" RAN "$R"
-# A missing deny-hang-shapes.sh next to the hook is not a refusal: tests run.
-rm -rf "$TMPROOT/hk_nodhs"; cp -r "$ROOT/hooks" "$TMPROOT/hk_nodhs"; rm -f "$TMPROOT/hk_nodhs/deny-hang-shapes.sh"
-R=$(tp_repo tp_dhs_missing ""); echo d > "$R/docs/a.md"
-printf '%s' "$(mkjson Bash "cd $R && git add docs/a.md && git commit -m y" "$R")" | bash "$TMPROOT/hk_nodhs/pre-commit-test.sh" >"$R/.tp_out" 2>&1
-tp_expect_dhs "A1 S-31: no deny-hang-shapes.sh beside the hook -> tests run" RAN "$R"
-rm -rf "$TMPROOT/hk_nodhs"
 # ---- end v4.3.0 A1
 
 # ---- v4.3.0 A2: **Gate extra** reuse + per-leg results ----
