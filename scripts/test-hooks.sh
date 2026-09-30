@@ -378,8 +378,15 @@ expect "jesc: trailing newline survives" 1 \
 RT_ML2=$'first line\nsecond "q" and back\\slash\nthird "z" \\y'
 expect "jesc: quotes and backslashes on later lines round-trip" "$RT_ML2" \
   "$(jfield "$(mkjson Bash "$RT_ML2" /x)" tool_input.command | tr -d '\r')"
-expect "jesc: multi-line payload is valid JSON (node)" ok \
-  "$(printf '%s' "$(mkjson Bash "$RT_ML2" /x)" | node -e 'try{JSON.parse(require("fs").readFileSync(0,"utf8"));console.log("ok")}catch(e){console.log("bad")}')"
+# Needs node itself as the independent parser: with node hidden (the parser
+# matrix's python3 and jq runs) it SKIPs by name, like every other node row
+# (S-39) -- never "want ok, got ''".
+if [ -n "$HAVE_NODE" ]; then
+  expect "jesc: multi-line payload is valid JSON (node)" ok \
+    "$(printf '%s' "$(mkjson Bash "$RT_ML2" /x)" | node -e 'try{JSON.parse(require("fs").readFileSync(0,"utf8"));console.log("ok")}catch(e){console.log("bad")}')"
+else
+  skip "jesc: multi-line payload is valid JSON (node)" "no node on this host"
+fi
 
 # ===========================================================================
 # no-push-main.sh
