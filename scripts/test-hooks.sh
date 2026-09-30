@@ -8323,6 +8323,12 @@ printf '# ctx\n- **Subagent default model**: gpt4\n' > "$C1R/PROJECT_CONTEXT.md"
 c1_floor "C1 row5 unknown value gpt4 -> sonnet"   - general-purpose sonnet
 printf '# ctx\n- **Subagent default model**: (optional; default `sonnet`) the model a spawn gets\n' > "$C1R/PROJECT_CONTEXT.md"
 c1_floor "C1 row5 the template's own placeholder line -> sonnet" - general-purpose sonnet
+# S-27: the shipped template line is a commented example; even with a valid
+# alias inside the comment it must be inert, and a live line after it must win.
+printf '# ctx\n<!-- - **Subagent default model**: opus -- optional -->\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 commented example is inert -> sonnet" - general-purpose sonnet
+printf '# ctx\n<!-- - **Subagent default model**: opus -- optional -->\n- **Subagent default model**: haiku\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 live line after the commented example wins" - general-purpose haiku
 rm -f "$C1R/PROJECT_CONTEXT.md"
 # row 6: Jev routing on -> step aside
 C1GD=$(git -C "$C1R" rev-parse --path-format=absolute --git-common-dir)

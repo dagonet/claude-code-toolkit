@@ -3925,6 +3925,93 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 63 -- the three opt-in PROJECT_CONTEXT.md keys ship only as commented,
+# unset examples (v4.3.0 spec "Checks and tests"; final review I-4/I-5, ruling
+# S-27). `**Test paths**` makes pre-commit-test skip **Test** for a commit that
+# touches none of its paths, `**Gate extra**` splits the Gate line, and
+# `**Subagent default model**` sets the model-floor default. A LIVE line in a
+# template would switch that behaviour on in every consumer at bootstrap -- and
+# because the readers take the FIRST matching line, a live prose bullet also
+# shadows the consumer's own later setting. So in each of the six variants every
+# occurrence of each key must sit inside an HTML comment, and each key must be
+# documented (occur at all). c63_scan blanks every <!-- ... --> region (the
+# comment state carries across lines, and text after a same-line `-->` is live
+# again), then reports any key left in the live text; a comment that is never
+# closed is reported too, since it would hide everything after it. Shared by
+# the real scan and the 63c controls, which plant live lines in a scratch copy
+# -- never in a real template.
+# ---------------------------------------------------------------------------
+note "Check 63: **Test paths**, **Gate extra**, **Subagent default model** appear in every variant's PROJECT_CONTEXT.md only inside an HTML comment (documented, never set)"
+C63_KEYS='Test paths|Gate extra|Subagent default model'
+
+# c63_scan <file> -- prints "file:line: text" for each key occurrence outside a
+# comment, and "file: unclosed <!--" for a comment left open at end of file.
+c63_scan() {
+  awk -v re="\\\\*\\\\*(${C63_KEYS})\\\\*\\\\*" '
+    { line = $0; out = ""
+      while (length(line) > 0) {
+        if (inc) {
+          p = index(line, "-->")
+          if (p == 0) { line = "" } else { line = substr(line, p + 3); inc = 0 }
+        } else {
+          p = index(line, "<!--")
+          if (p == 0) { out = out line; line = "" }
+          else { out = out substr(line, 1, p - 1) " "; line = substr(line, p + 4); inc = 1 }
+        }
+      }
+      if (out ~ re) print FILENAME ":" NR ": " $0
+    }
+    END { if (inc) print FILENAME ": unclosed <!--" }
+  ' "$1"
+}
+
+c63_bad=""
+for v in $VARIANTS; do
+  c63_f="templates/$v/PROJECT_CONTEXT.md"
+  if [ ! -f "$c63_f" ]; then c63_bad="$c63_bad $c63_f(missing)"; continue; fi
+  c63_hit=$(c63_scan "$c63_f")
+  [ -n "$c63_hit" ] && c63_bad="$c63_bad [live: $(printf '%s' "$c63_hit" | tr '\n' ';')]"
+  for c63_k in "Test paths" "Gate extra" "Subagent default model"; do
+    grep -qF "**$c63_k**" "$c63_f" || c63_bad="$c63_bad $c63_f(no commented example of $c63_k)"
+  done
+done
+if [ -z "$c63_bad" ]; then
+  ok "check 63: all six variants document the three keys only inside HTML comments; none sets one"
+else
+  ko "check 63: a key is set live or undocumented (a live line switches the behaviour on in every consumer):$c63_bad"
+fi
+
+# 63c controls: scratch copies of a real template. RED side -- a live line for
+# each key, one after a same-line closed comment, and an unclosed comment must
+# each be flagged; GREEN side -- a key inside a single-line and a multi-line
+# comment, and the untouched real template, must not be.
+C63C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c63c)
+c63c_real="templates/general/PROJECT_CONTEXT.md"
+c63c_fail=""
+for c63c_case in \
+  "live-test-paths|- **Test paths**: src/" \
+  "live-gate-extra|- **Gate extra**: bash scripts/lint.sh" \
+  "live-model|- **Subagent default model**: haiku" \
+  "live-after-comment|<!-- note --> - **Test paths**: src/"; do
+  c63c_name=${c63c_case%%|*}; c63c_line=${c63c_case#*|}
+  cp "$c63c_real" "$C63C_TMP/$c63c_name.md"
+  printf '%s\n' "$c63c_line" >> "$C63C_TMP/$c63c_name.md"
+  [ -n "$(c63_scan "$C63C_TMP/$c63c_name.md")" ] || c63c_fail="$c63c_fail $c63c_name(not flagged)"
+done
+cp "$c63c_real" "$C63C_TMP/unclosed.md"
+printf '%s\n' '<!-- never closed' '- **Gate extra**: x' >> "$C63C_TMP/unclosed.md"
+[ -n "$(c63_scan "$C63C_TMP/unclosed.md")" ] || c63c_fail="$c63c_fail unclosed(not flagged)"
+printf '%s\n' '<!--' '- **Test paths**: src/' '-->' '<!-- - **Gate extra**: x -->' > "$C63C_TMP/commented.md"
+[ -z "$(c63_scan "$C63C_TMP/commented.md")" ] || c63c_fail="$c63c_fail commented(falsely flagged)"
+[ -z "$(c63_scan "$c63c_real")" ] || c63c_fail="$c63c_fail real-template(falsely flagged)"
+rm -rf "$C63C_TMP"
+if [ -z "$c63c_fail" ]; then
+  ok "check 63c: control -- planted live lines (three keys, after a comment, unclosed comment) are flagged; commented and real templates are not"
+else
+  ko "check 63c: control failed:$c63c_fail -- check 63 is vacuous or over-strict"
+fi
+
+# ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
 # server_version; parse_version at every consumer accepts EXACTLY three dotted
 # integers. A `v` or a `-rc1` here makes requires_server_satisfied return False
