@@ -260,7 +260,7 @@ fi
 if printf '%s' "$DH_CMD" | grep -Eq '(^|[;&|[:space:]])(while|until)[[:space:]]' \
    && printf '%s' "$DH_CMD" | grep -Eq '(^|[;&|[:space:]])sleep[[:space:]]' \
    && printf '%s' "$DH_CMD" | grep -Eq '(^|[;&|[:space:]])done([;&|[:space:]]|$)'; then
-  dh_refuse "end your turn instead of waiting in a loop -- you are re-invoked when the background job finishes."
+  dh_refuse "don't poll: run the command you are waiting on in the foreground (Bash timeout up to 600000 ms), or start it with run_in_background and wait for its completion notice; to watch a condition use the Monitor tool."
 fi
 
 # 3. A leading cd followed by two or more commands (R-B).

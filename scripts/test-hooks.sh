@@ -8039,7 +8039,8 @@ b1_ks="$TMPROOT/b1ks"; mkdir -p "$b1_ks/.claude"; : > "$b1_ks/.claude/git-guard-
 check "B1 kill switch: refused shape passes" hooks/deny-hang-shapes.sh 0 "$(mkjson Bash "cd /tmp && a && b" "$b1_ks")"
 # -- the refusal names the advice
 check_msg "B1 msg: heredoc advice"   "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cat > f <<EOF${b1nl}x${b1nl}EOF" "$TMPROOT")" "Write tool"
-check_msg "B1 msg: wait-loop advice" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "end your turn"
+check_msg "B1 msg: wait-loop advice" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "use the Monitor tool"
+check_nomsg "B1 msg: wait-loop advice no end-your-turn" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "end your turn"
 check_msg "B1 msg: cd advice"        "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "git -C <dir>, or put the steps in a script file"
 check_nomsg "B1 msg: cd advice no env -C" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "env -C"
 # -- fix round 1 (review I-1): text inside QUOTES is data, not a shape. A command

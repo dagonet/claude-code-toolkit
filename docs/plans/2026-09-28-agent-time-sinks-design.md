@@ -64,7 +64,7 @@ PreToolUse on `Bash`, in all six variants' settings and mirrored to `user-level-
 | Refused shape | Allowed look-alikes (each a fixture) | Advice |
 |---|---|---|
 | a heredoc whose output is redirected into a file: `cat > f <<'EOF'`, `cat <<EOF > f`, `cat <<EOF >> f`, `tee f <<EOF` | `git commit -m "$(cat <<'EOF' … EOF)"`; `python - <<EOF`; a heredoc piped into a command | `Write files with the Write tool (a heredoc into a file can hang an unattended agent).` |
-| a wait loop: `while`/`until` … `sleep` … `done` in one command | `sleep 5` alone; `for f in …; do …; done` without `sleep` | `End your turn instead of waiting in a loop; you are re-invoked when the background job finishes.` |
+| a wait loop: `while`/`until` … `sleep` … `done` in one command | `sleep 5` alone; `for f in …; do …; done` without `sleep` | `Do not poll: run the command you are waiting on in the foreground (Bash timeout up to 600000 ms), or start it with run_in_background and wait for its completion notice; to watch a condition use the Monitor tool.` (Ruling S-29: a subagent that ends its turn to wait may never be re-invoked, so that advice is not given.) |
 | a leading `cd <dir>` followed by `&&` or `;` and further commands | `cd <dir>` alone; `cd` inside `bash -c '…'` | `Use absolute paths or git -C <dir>, or put the steps in a script file and run bash <path>, instead of a leading cd.` (Ruling S-26: `env -C <dir> <cmd>` is NOT advised -- the git gates judge the cwd repo, not the `-C` target.) |
 
 - Advisory, not a safety gate: no parser available, or an unparseable payload → exit 0. Registered with the silent wrapper `[ -f "$f" ] && bash "$f"; …` so a missing script is silent (the context-mode stale-hook lesson). Honours `.claude/git-guard-off`.

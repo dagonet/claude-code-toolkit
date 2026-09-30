@@ -82,7 +82,7 @@ case "$DH_HEAD" in
     if printf '%s' "$DH_W" | grep -Eq "${DH_B}(while|until)[[:space:]]" \
        && printf '%s' "$DH_W" | grep -Eq "${DH_B}sleep[[:space:]]" \
        && printf '%s' "$DH_W" | grep -Eq "${DH_B}done([;&|)}[:space:]]|\$)"; then
-      dh_refuse "end your turn instead of waiting in a loop -- you are re-invoked when the background job finishes."
+      dh_refuse "don't poll: run the command you are waiting on in the foreground (Bash timeout up to 600000 ms), or start it with run_in_background and wait for its completion notice; to watch a condition use the Monitor tool."
     fi
     ;;
 esac
