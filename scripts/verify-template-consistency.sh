@@ -3943,7 +3943,7 @@ fi
 # lines in scratch copies -- never in a real template.
 # ---------------------------------------------------------------------------
 note "Check 63: **Test paths**, **Gate extra**, **Subagent default model** appear in every variant's PROJECT_CONTEXT.md on no line the hooks' key pattern matches (documented in a one-line comment, never set)"
-C63_KEYS='Test paths|Gate extra|Subagent default model'
+C63_KEYS='Test paths|Gate extra( Command)?|Subagent default model'
 # GC_BOM / GC_KEY_PRE: the same text as hooks/lib/git-cmd.sh, run-gate.sh and
 # model-floor.sh (the definition census above pins the copies together).
 GC_BOM=$(printf '\357\273\277')
@@ -3982,6 +3982,7 @@ c63c_fail=""
 for c63c_case in \
   "live-test-paths|- **Test paths**: src/" \
   "live-gate-extra|- **Gate extra**: bash scripts/lint.sh" \
+  "live-gate-extra-command|- **Gate extra Command**: x" \
   "live-model|- **Subagent default model**: haiku"; do
   c63c_name=${c63c_case%%|*}; c63c_line=${c63c_case#*|}
   cp "$c63c_real" "$C63C_TMP/$c63c_name.md"
