@@ -8111,6 +8111,9 @@ echo "=== hooks/model-floor.sh (v4.3.0 C1) ==="
 # above line 400) runs the same rows as the full suite.
 . "$ROOT/hooks/lib/json.sh"
 C1_BASH=$(command -v bash)
+# The hook steps aside when this is set (S-23); a developer's own environment
+# must not turn every floor row silent. The S-23 rows set it themselves.
+unset CLAUDE_CODE_SUBAGENT_MODEL
 C1_HAVE_NODE=1; have_backend node    || C1_HAVE_NODE=""
 C1_HAVE_PY=1;   have_backend python3 || C1_HAVE_PY=""
 C1_HAVE_JQ=1;   have_backend jq      || C1_HAVE_JQ=""
@@ -8143,6 +8146,20 @@ printf -- '---\nname: inh\nmodel: inherit\n---\nbody\n'      > "$C1R/.claude/age
 printf -- '---\r\nname: inhcrlf\r\nmodel: inherit\r\n---\r\n' > "$C1R/.claude/agents/inhcrlf.md"
 printf -- '---\nname: fullid\nmodel: claude-opus-4-1\n---\n'  > "$C1R/.claude/agents/fullid.md"
 printf -- '---\nname: nomodel\ndescription: x\n---\nbody\n'   > "$C1R/.claude/agents/nomodel.md"
+# S-22: identity is the frontmatter `name:`, the tree is scanned recursively.
+printf -- '---\nname: code-reviewer\nmodel: opus\n---\nbody\n' > "$C1R/.claude/agents/reviewer-file.md"
+mkdir -p "$C1R/.claude/agents/team"
+printf -- '---\nname: nested\nmodel: opus\n---\n'             > "$C1R/.claude/agents/team/nested.md"
+printf -- '---\nname: inhname\nmodel: inherit\n---\n'          > "$C1R/.claude/agents/x-file.md"
+printf -- '---\ndescription: no name key\nmodel: haiku\n---\n' > "$C1R/.claude/agents/fbonly.md"
+printf '\357\273\277---\nname: bomagent\nmodel: opus\n---\n'   > "$C1R/.claude/agents/bom-file.md"
+printf -- '---\nname: dup\nmodel: inherit\n---\n'              > "$C1R/.claude/agents/dup.md"
+# user-level agents: a plain one, one in a subdirectory, and a `dup` that the
+# project's own `dup` (model: inherit) must shadow without falling through.
+mkdir -p "$C1HOME/.claude/agents/sub"
+printf -- '---\nname: uagent\nmodel: opus\n---\n'    > "$C1HOME/.claude/agents/uagent.md"
+printf -- '---\nname: homenested\nmodel: opus\n---\n' > "$C1HOME/.claude/agents/sub/whatever.md"
+printf -- '---\nname: dup\nmodel: opus\n---\n'        > "$C1HOME/.claude/agents/dup.md"
 C1CWD=$(natpath "$C1R")
 C1PROMPT=$'Do the thing \xe2\x80\x94 "quoted"\nsecond line'
 
@@ -8182,6 +8199,45 @@ c1_floor() { # <label> <pathdir|-> <type|-> <want model> -- the full updatedInpu
   expect "$1: stderr names type and model"     1 "$(grep -c "^model-floor: ${3/#-/general-purpose} had no model -> $4\$" "$C1ERRF" | tr -d ' ')"
 }
 
+# c1_canon <json> <dotted.path> -- the object at that path with `model` removed
+# and keys sorted, so two objects compare equal iff they are deeply equal apart
+# from `model` (and key order). Empty on failure.
+c1_canon() {
+  if [ -n "$C1_HAVE_JQ" ]; then
+    printf '%s' "$1" | jq -S -c --arg p "$2" 'getpath($p | split(".")) | del(.model)' 2>/dev/null
+  elif [ -n "$C1_HAVE_PY" ]; then
+    printf '%s' "$1" | python3 -c '
+import json, sys
+v = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+for k in sys.argv[1].split("."):
+    v = v[k]
+v.pop("model", None)
+sys.stdout.buffer.write(json.dumps(v, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+' "$2" 2>/dev/null
+  else
+    printf '%s' "$1" | node -e '
+var v = JSON.parse(require("fs").readFileSync(0, "utf8"));
+process.argv[1].split(".").forEach(function (k) { v = v[k]; });
+delete v.model;
+function c(x) { if (Array.isArray(x)) return x.map(c);
+  if (x && typeof x === "object") return ["@o"].concat(Object.keys(x).sort().map(function (k) { return [k, c(x[k])]; }));
+  return x; }
+process.stdout.write(JSON.stringify(c(v)));' "$2" 2>/dev/null
+  fi
+}
+# A tool_input with every value class an emitter could mangle: nested object,
+# array, null/true/false, empty {} and [], a `__proto__` key, U+2028, a tab, a
+# non-ASCII letter. (Integers only: node re-renders 1.0 as 1.)
+C1TI='{"subagent_type":"general-purpose","prompt":"deep","description":"d","zz_unknown":1,"nested":{"a":[1,2,{"b":null}],"t":true,"f":false,"e":{},"l":[]},"__proto__":{"x":1},"u":"a bé","tab":"x\ty"}'
+c1_deep() { # <label> <pathdir|-> -- the WHOLE tool_input survives, minus model
+  c1dp="{\"session_id\":\"t\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Agent\",\"tool_input\":$C1TI,\"cwd\":\"$(jesc "$C1CWD")\"}"
+  c1_run "$2" "$C1HOME" "$c1dp"
+  c1o=$(<"$C1OUTF")
+  c1want=$(c1_canon "$c1dp" tool_input); [ -n "$c1want" ] || c1want="CANON-FAILED"
+  expect "$1: whole tool_input survives (deep compare)" "$c1want" "$(c1_canon "$c1o" hookSpecificOutput.updatedInput)"
+  expect "$1: deep payload is floored"                  sonnet "$(jfield "$c1o" hookSpecificOutput.updatedInput.model)"
+}
+
 # row 1 / 4: the emitted JSON under EACH parser path (node, python3, jq)
 c1_floor "C1 row1 general-purpose (default parser)" - general-purpose sonnet
 c1_floor "C1 row4 inherit (default parser)"         - inh sonnet
@@ -8191,26 +8247,40 @@ if [ -n "$C1_HAVE_NODE" ]; then
   expect "C1 node-only PATH keeps node"        0 "$(c1_seen "$C1_NODEONLY" node)"
   c1_floor "C1 row1 general-purpose (node)"    "$C1_NODEONLY" general-purpose sonnet
   c1_floor "C1 row4 inherit (node)"            "$C1_NODEONLY" inh sonnet
-else skip "C1 node parser rows" "no node on this host" 23; fi
+  c1_deep  "C1 deep (node)"                    "$C1_NODEONLY"
+else skip "C1 node parser rows" "no node on this host" 25; fi
 if [ -n "$C1_HAVE_PY" ]; then
   expect "C1 python3-only PATH hides node"     1 "$(c1_seen "$C1_PYONLY" node)"
   expect "C1 python3-only PATH keeps python3"  0 "$(c1_seen "$C1_PYONLY" python3)"
   c1_floor "C1 row1 general-purpose (python3)" "$C1_PYONLY" general-purpose sonnet
   c1_floor "C1 row4 inherit (python3)"         "$C1_PYONLY" inh sonnet
-else skip "C1 python3 parser rows" "no python3 on this host" 24; fi
+  c1_deep  "C1 deep (python3)"                 "$C1_PYONLY"
+  # an overflowing number would be written as the non-JSON token Infinity
+  c1_run "$C1_PYONLY" "$C1HOME" "{\"tool_name\":\"Agent\",\"tool_input\":{\"prompt\":\"p\",\"n\":1e400},\"cwd\":\"$(jesc "$C1CWD")\"}"
+  c1_silent "C1 python3 refuses to emit Infinity (allow_nan=False)"
+else skip "C1 python3 parser rows" "no python3 on this host" 27; fi
 if [ -n "$C1_HAVE_JQ" ]; then
   expect "C1 jq-only PATH hides node"          1 "$(c1_seen "$C1_JQONLY" node)"
   expect "C1 jq-only PATH hides python3"       1 "$(c1_seen "$C1_JQONLY" python3)"
   expect "C1 jq-only PATH keeps jq"            0 "$(c1_seen "$C1_JQONLY" jq)"
   c1_floor "C1 row1 general-purpose (jq)"      "$C1_JQONLY" general-purpose sonnet
   c1_floor "C1 row4 inherit (jq)"              "$C1_JQONLY" inh sonnet
-else skip "C1 jq parser rows" "no jq on this host" 25; fi
-# other types that get the floor
+  c1_deep  "C1 deep (jq)"                      "$C1_JQONLY"
+else skip "C1 jq parser rows" "no jq on this host" 27; fi
+# the canonicaliser itself agrees with a known-different object (a deep compare
+# that cannot tell two objects apart would pass every emitter)
+expect "C1 canon tells a dropped nested key apart" 1 \
+  "$([ "$(c1_canon '{"a":{"b":1,"c":2}}' a)" != "$(c1_canon '{"a":{"b":1}}' a)" ] && echo 1 || echo 0)"
+expect "C1 canon ignores model and key order" "$(c1_canon '{"a":{"b":1,"c":2,"model":"x"}}' a)" "$(c1_canon '{"a":{"c":2,"b":1}}' a)"
+# other types that get the floor: the known inheriting built-ins, with no file
 c1_floor "C1 no subagent_type at all"   - - sonnet
 c1_floor "C1 Plan"                      - Plan sonnet
 c1_floor "C1 Explore without a file"    - Explore sonnet
+c1_floor "C1 claude built-in"           - claude sonnet
 c1_floor "C1 file with no model key"    - nomodel sonnet
 c1_floor "C1 CRLF file, model: inherit" - inhcrlf sonnet
+c1_floor "C1 S-22 name in a differently-named file, model: inherit" - inhname sonnet
+c1_floor "C1 S-22 project file (inherit) wins over the user-level one" - dup sonnet
 
 # row 2: an explicit model (any value) is never touched
 c1_run - "$C1HOME" "$(c1_payload general-purpose opus "$C1CWD")"; c1_silent "C1 row2 explicit model opus -> silent"
@@ -8218,9 +8288,23 @@ c1_run - "$C1HOME" "$(c1_payload inh haiku "$C1CWD")";            c1_silent "C1 
 # row 3: a typed agent's own model
 c1_run - "$C1HOME" "$(c1_payload typed - "$C1CWD")";              c1_silent "C1 row3 typed (model: haiku) -> silent"
 c1_run - "$C1HOME" "$(c1_payload fullid - "$C1CWD")";             c1_silent "C1 row3b agent with a full model id -> silent"
-mkdir -p "$C1HOME/.claude/agents"
-printf -- '---\nname: uagent\nmodel: opus\n---\n' > "$C1HOME/.claude/agents/uagent.md"
 c1_run - "$C1HOME" "$(c1_payload uagent - "$C1CWD")";             c1_silent "C1 row3c user-level agent with a model -> silent"
+# S-22: a name that differs from its filename, or sits in a subdirectory
+c1_run - "$C1HOME" "$(c1_payload code-reviewer - "$C1CWD")";      c1_silent "C1 S-22 name != filename (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload nested - "$C1CWD")";             c1_silent "C1 S-22 project subdirectory agent (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload homenested - "$C1CWD")";         c1_silent "C1 S-22 user-level subdirectory agent (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload bomagent - "$C1CWD")";           c1_silent "C1 S-22 BOM before the frontmatter (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload fbonly - "$C1CWD")";             c1_silent "C1 S-22 filename fallback, no name key (haiku) -> silent"
+# S-22: no file at all -> only the known built-ins are floored; anything else may
+# come from --agents / managed settings / a plugin that this hook cannot see
+c1_run - "$C1HOME" "$(c1_payload mystery - "$C1CWD")";            c1_silent "C1 S-22 unknown type, no file -> silent"
+c1_run - "$C1HOME" "$(c1_payload 'plug:agent' - "$C1CWD")";       c1_silent "C1 S-22 plugin-style type -> silent"
+# S-23: the user's own native floor wins
+export CLAUDE_CODE_SUBAGENT_MODEL=haiku
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-23 CLAUDE_CODE_SUBAGENT_MODEL set -> silent"
+export CLAUDE_CODE_SUBAGENT_MODEL=
+c1_floor "C1 S-23 CLAUDE_CODE_SUBAGENT_MODEL empty -> floor applies" - general-purpose sonnet
+unset CLAUDE_CODE_SUBAGENT_MODEL
 # S-20: types that carry their own model, or ignore an override
 c1_run - "$C1HOME" "$(c1_payload statusline-setup - "$C1CWD")";   c1_silent "C1 S-20 statusline-setup -> silent"
 c1_run - "$C1HOME" "$(c1_payload claude-code-guide - "$C1CWD")";  c1_silent "C1 S-20 claude-code-guide -> silent"
@@ -8262,7 +8346,10 @@ c1_run - "$C1HOME" '{"tool_name":"Agent","tool_input":"a string","cwd":"."}'; c1
 # matcher, and the wrapper is silent when the hook file is absent
 if [ -n "$C1_HAVE_NODE" ]; then
   C1_TPL='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh" ] || exit 0; bash "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh"'
-  C1_USR='f="$HOME/.claude/hooks/model-floor.sh"; [ -f "$f" ] || exit 0; bash "$f"'
+  # S-24: the user-level wrapper steps aside when the project has its own copy,
+  # so a spawn never has two updatedInput emitters racing (last one wins, order
+  # non-deterministic).
+  C1_USR='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh" ] && exit 0; f="$HOME/.claude/hooks/model-floor.sh"; [ -f "$f" ] || exit 0; bash "$f"'
   c1_cmd() { # <settings file> -> the model-floor command(s) registered on matcher Agent, one per line
     node -e '
       var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
@@ -8286,8 +8373,24 @@ if [ -n "$C1_HAVE_NODE" ]; then
   CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1HOME" "$C1_BASH" -c "$C1_TPL" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"
   expect "C1 template wrapper passes the hook's JSON through" sonnet "$(jfield "$(<"$C1OUTF")" hookSpecificOutput.updatedInput.model)"
   expect "C1 template wrapper adds nothing to stdout" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
+  # S-24, the three cases of the user-level wrapper. A real user-level install
+  # under a temp HOME: hooks/model-floor.sh + hooks/lib/json.sh.
+  C1UH="$TMPROOT/c1userhome"; mkdir -p "$C1UH/.claude/hooks/lib"
+  cp "$ROOT/user-level-reference/hooks/model-floor.sh" "$C1UH/.claude/hooks/model-floor.sh"
+  cp "$ROOT/user-level-reference/hooks/lib/json.sh"    "$C1UH/.claude/hooks/lib/json.sh"
+  # (a) the project has its own copy -> the user-level one is silent
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1UH" "$C1_BASH" -c "$C1_USR" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-24 user-level wrapper + project copy -> silent" "rc=0 out=0 err=0" \
+    "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
+  # (b) no project copy -> the user-level hook runs and emits
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1UH" "$C1_BASH" -c "$C1_USR" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-24 user-level wrapper, no project copy -> runs" "rc=0 sonnet" \
+    "rc=$C1_RC $(jfield "$(<"$C1OUTF")" hookSpecificOutput.updatedInput.model)"
+  expect "C1 S-24 user-level wrapper adds nothing to stdout" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
+  # (c) no file at all -> silent: the "missing" loop above runs C1_USR with an
+  #     empty HOME and an empty CLAUDE_PROJECT_DIR (rc 0, 0 bytes out and err)
 else
-  skip "C1 registration + wrapper rows" "no node on this host" 12
+  skip "C1 registration + wrapper rows" "no node on this host" 15
 fi
 # ---- end v4.3.0 C1
 
