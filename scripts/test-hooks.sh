@@ -8008,7 +8008,8 @@ check "B1 kill switch: refused shape passes" hooks/deny-hang-shapes.sh 0 "$(mkjs
 # -- the refusal names the advice
 check_msg "B1 msg: heredoc advice"   "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cat > f <<EOF${b1nl}x${b1nl}EOF" "$TMPROOT")" "Write tool"
 check_msg "B1 msg: wait-loop advice" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "end your turn"
-check_msg "B1 msg: cd advice"        "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "env -C"
+check_msg "B1 msg: cd advice"        "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "git -C <dir>, or put the steps in a script file"
+check_nomsg "B1 msg: cd advice no env -C" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "env -C"
 # -- fix round 1 (review I-1): text inside QUOTES is data, not a shape. A command
 # that only MENTIONS a shape (grep pattern, commit message, issue body) passes;
 # the body of bash -c / sh -c stays scanned because a loop there still hangs.

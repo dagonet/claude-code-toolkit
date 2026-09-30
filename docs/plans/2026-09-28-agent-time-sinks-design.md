@@ -65,10 +65,10 @@ PreToolUse on `Bash`, in all six variants' settings and mirrored to `user-level-
 |---|---|---|
 | a heredoc whose output is redirected into a file: `cat > f <<'EOF'`, `cat <<EOF > f`, `cat <<EOF >> f`, `tee f <<EOF` | `git commit -m "$(cat <<'EOF' … EOF)"`; `python - <<EOF`; a heredoc piped into a command | `Write files with the Write tool (a heredoc into a file can hang an unattended agent).` |
 | a wait loop: `while`/`until` … `sleep` … `done` in one command | `sleep 5` alone; `for f in …; do …; done` without `sleep` | `End your turn instead of waiting in a loop; you are re-invoked when the background job finishes.` |
-| a leading `cd <dir>` followed by `&&` or `;` and further commands | `cd <dir>` alone; `cd` inside `bash -c '…'` | `Use absolute paths, git -C <dir>, or env -C <dir> <cmd> instead of a leading cd.` |
+| a leading `cd <dir>` followed by `&&` or `;` and further commands | `cd <dir>` alone; `cd` inside `bash -c '…'` | `Use absolute paths or git -C <dir>, or put the steps in a script file and run bash <path>, instead of a leading cd.` (Ruling S-26: `env -C <dir> <cmd>` is NOT advised -- the git gates judge the cwd repo, not the `-C` target.) |
 
 - Advisory, not a safety gate: no parser available, or an unparseable payload → exit 0. Registered with the silent wrapper `[ -f "$f" ] && bash "$f"; …` so a missing script is silent (the context-mode stale-hook lesson). Honours `.claude/git-guard-off`.
-- `env -C <dir> <cmd>` verified working in Git Bash (GNU coreutils 8.32, 2026-09-28).
+- `env -C <dir> <cmd>` works in Git Bash (GNU coreutils 8.32) but is deliberately not advised: `gc_dash_c_list` / `gc_global_options` in `hooks/lib/git-cmd.sh` do not resolve it, so a git command behind it is gated against the wrong repository (final review C-1, ruling S-26).
 
 ### B2. One line of prose each (T4, T6)
 

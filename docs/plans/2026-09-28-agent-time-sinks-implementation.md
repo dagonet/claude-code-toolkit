@@ -268,7 +268,7 @@ DH_TRIM=$(printf '%s' "$DH_CMD" | sed -E '1s/^[[:space:]]+//')
 if printf '%s' "$DH_TRIM" | grep -Eq '^cd[[:space:]]+[^;&|]+[[:space:]]*(&&|;)'; then
   DH_REST=$(printf '%s' "$DH_TRIM" | sed -E '1s/^cd[[:space:]]+[^;&|]+[[:space:]]*(&&|;)//')
   if printf '%s' "$DH_REST" | grep -Eq '(&&|;|\|\|)' || [ "$(printf '%s\n' "$DH_REST" | grep -c .)" -gt 1 ]; then
-    dh_refuse "use absolute paths, git -C <dir>, or env -C <dir> <cmd> instead of a leading cd before several commands."
+    dh_refuse "use absolute paths or git -C <dir>, or put the steps in a script file and run bash <path>, instead of a leading cd before several commands."
   fi
 fi
 exit 0

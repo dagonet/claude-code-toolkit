@@ -133,7 +133,7 @@ case "$DH_TRIM" in
         }
         END { print n + 0 }')
     if [ "${DH_N:-0}" -ge 3 ]; then
-      dh_refuse "use absolute paths, git -C <dir>, or env -C <dir> <cmd> instead of a leading cd before several commands."
+      dh_refuse "use absolute paths or git -C <dir>, or put the steps in a script file and run bash <path>, instead of a leading cd before several commands."
     fi
     ;;
 esac
