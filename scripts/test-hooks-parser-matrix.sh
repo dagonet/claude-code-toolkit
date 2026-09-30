@@ -74,9 +74,10 @@ trap 'rm -rf "$OUTDIR"' EXIT
 #        registered hook commands)
 #    +1  the jesc self-check "multi-line payload is valid JSON (node)" (S-39:
 #        it FAILED without node in the 177 run; it now skips by name)
-#  = 178 for python3 (135 + 2 + 25 + 15 + 1; 177 + the jesc row). The v4.3.0
-#  blocks A1, A2, A3, B1 and SCAN skip nothing without node (measured with
-#  node hidden from PATH).
+#  = 178 for python3 (135 + 2 + 25 + 15 + 1; 177 + the jesc row). Blocks A3,
+#  B1 and SCAN skip nothing without node (measured with node hidden from
+#  PATH); blocks A1 and A2 contain no `skip` call (counted statically, not
+#  measured).
 # jq also hides python3: 151 + the same 43 + 27 "C1 python3 parser rows"
 #  = 221.
 EXP_NODE_SKIP=0

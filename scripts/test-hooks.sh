@@ -8506,13 +8506,15 @@ else
 fi
 # ---- end v4.3.0 C1
 
-# ---- v4.3.0 SCAN: the script-body scan ignores comments; powershell -File is scanned (S-38) ----
+# ---- v4.3.0 SCAN: whole-line comments only (v4.1.2); any .ps1 argument to powershell/pwsh is scanned (S-40) ----
 # gc_script_body feeds a named script's first 16 KB to the same verb matcher as
-# the typed command. Rows: a verb only in a comment is not a commit; a verb in
-# code still is; `#` inside quotes / `${#x}` never starts a comment; a
-# PowerShell -File script is scanned (was a fail-open: its `git commit` skipped
-# the Test). The fixture Test is `exit 1`: want 2 = the hook saw a commit and
-# ran the failing Test, want 0 = it did not see one.
+# the typed command. S-40 (overrides S-38): only WHOLE-LINE `#` comments are
+# stripped -- trailing comments and heredoc bodies are read, because a text
+# strip inside a gate scan fails open (C1/C2/I1 of the S-38 review). A trailing
+# `# git commit` is therefore conservatively a commit. A PowerShell script
+# (any .ps1 argument to powershell/pwsh, -File or not) is scanned too. The
+# fixture Test is `exit 1`: want 2 = the hook saw a commit and ran the failing
+# Test, want 0 = it did not see one.
 SCANH=hooks/pre-commit-test.sh
 SCANR=$(mkrepo scan43 main)
 mkdir -p "$SCANR/hooks"
@@ -8532,13 +8534,13 @@ printf 'cat <<'"'"'EOF'"'"' | sh\ngit commit -m x\nEOF\n' > "$SCANR/heredoc-pipe
 printf 'git commit -m y\n' > "$SCANR/x.ps1"
 printf '# git commit -m y\nWrite-Host hi\n' > "$SCANR/c.ps1"
 check "SCAN comment-only git mention: not a commit"            "$SCANH" 0 "$(mkjson Bash 'bash c-only.sh' "$SCANR")"
-check "SCAN trailing-comment git mention: not a commit"        "$SCANH" 0 "$(mkjson Bash 'bash c-trail.sh' "$SCANR")"
+check "SCAN trailing-comment git mention: conservatively a commit" "$SCANH" 2 "$(mkjson Bash 'bash c-trail.sh' "$SCANR")"
 check "SCAN real git commit line: still a commit"              "$SCANH" 2 "$(mkjson Bash 'bash real.sh' "$SCANR")"
 check "SCAN real commit after echo \"a # b\" line: a commit"     "$SCANH" 2 "$(mkjson Bash 'bash qhash.sh' "$SCANR")"
 check "SCAN real commit after \"a # b\"; on one line: a commit"  "$SCANH" 2 "$(mkjson Bash 'bash qhash-same-line.sh' "$SCANR")"
 check "SCAN real commit after \${#x}: a commit"                  "$SCANH" 2 "$(mkjson Bash 'bash brace-hash.sh' "$SCANR")"
 check "SCAN real commit with a trailing comment: a commit"     "$SCANH" 2 "$(mkjson Bash 'bash real-trail.sh' "$SCANR")"
-check "SCAN quoted-heredoc cat body: not a commit"             "$SCANH" 0 "$(mkjson Bash 'bash heredoc-doc.sh' "$SCANR")"
+check "SCAN quoted-heredoc cat body: conservatively a commit"   "$SCANH" 2 "$(mkjson Bash 'bash heredoc-doc.sh' "$SCANR")"
 check "SCAN quoted-heredoc fed to bash: a commit"              "$SCANH" 2 "$(mkjson Bash 'bash heredoc-run.sh' "$SCANR")"
 check "SCAN quoted-heredoc piped to sh: a commit"              "$SCANH" 2 "$(mkjson Bash 'bash heredoc-pipe.sh' "$SCANR")"
 check "SCAN bash hooks/run-gate.sh (the real file): not a commit" "$SCANH" 0 "$(mkjson Bash 'bash hooks/run-gate.sh' "$SCANR")"
@@ -8547,6 +8549,40 @@ check "SCAN powershell -File, verb only in # comment: not"     "$SCANH" 0 "$(mkj
 check "SCAN pwsh -f with git commit: a commit"                 "$SCANH" 2 "$(mkjson Bash 'pwsh -f x.ps1' "$SCANR")"
 check "SCAN pwsh.exe -ExecutionPolicy Bypass -File: a commit"  "$SCANH" 2 "$(mkjson Bash 'pwsh.exe -ExecutionPolicy Bypass -File x.ps1' "$SCANR")"
 check "SCAN powershell -File missing.ps1: nothing to scan"     "$SCANH" 0 "$(mkjson Bash 'powershell -File missing.ps1' "$SCANR")"
+# I2: any .ps1 argument, with or without -File; quoted; BOM; case.
+printf 'git commit -m y\n' > "$SCANR/my script.ps1"
+printf '\357\273\277git commit -m y\n' > "$SCANR/bom.ps1"
+printf 'git commit -m y\n' > "$SCANR/up.PS1"
+check "SCAN pwsh x.ps1 (positional, no -File): a commit"        "$SCANH" 2 "$(mkjson Bash 'pwsh x.ps1' "$SCANR")"
+check "SCAN powershell ./x.ps1: a commit"                       "$SCANH" 2 "$(mkjson Bash 'powershell ./x.ps1' "$SCANR")"
+check "SCAN powershell -fil x.ps1 (abbreviation): a commit"     "$SCANH" 2 "$(mkjson Bash 'powershell -fil x.ps1' "$SCANR")"
+check "SCAN pwsh -File:x.ps1: a commit"                         "$SCANH" 2 "$(mkjson Bash 'pwsh -File:x.ps1' "$SCANR")"
+check "SCAN POWERSHELL.EXE -FILE X.PS1 (any case): a commit"    "$SCANH" 2 "$(mkjson Bash 'POWERSHELL.EXE -FILE up.PS1' "$SCANR")"
+check "SCAN pwsh -File double-quoted path with spaces: a commit" "$SCANH" 2 "$(mkjson Bash 'pwsh -File "my script.ps1"' "$SCANR")"
+check "SCAN pwsh -File single-quoted path with spaces: a commit" "$SCANH" 2 "$(mkjson Bash "pwsh -File 'my script.ps1'" "$SCANR")"
+check "SCAN pwsh -File bom.ps1 (UTF-8 BOM on line 1): a commit" "$SCANH" 2 "$(mkjson Bash 'pwsh -File bom.ps1' "$SCANR")"
+check "SCAN pwsh -NoProfile -Command bash real.sh: still scans the .sh" "$SCANH" 2 "$(mkjson Bash 'pwsh -NoProfile -Command bash real.sh' "$SCANR")"
+# S-38 review reproducers (C1, C2, I1, M2): verbs the S-38 strip lost. Want 2.
+printf 'git commit -m "subject\n\nFixes #12" && echo done\n' > "$SCANR/a01.sh"
+printf "python3 -c '\nimport sys  # helper\nprint(1)  # done'; git commit -m x\n" > "$SCANR/a02.sh"
+printf "cat > run.sh <<'EOF'\ngit commit -m x\nEOF\nbash run.sh\n" > "$SCANR/a03.sh"
+printf "cat <<'EOF'\ngit commit -m x\nEOF\n" > "$SCANR/gen.sh"
+printf "f() {\ncat <<'EOF'\ngit commit -m x\nEOF\n}\nf | bash\n" > "$SCANR/a12.sh"
+printf "(\ncat <<'EOF'\ngit commit -m x\nEOF\n) | sh\n" > "$SCANR/a14.sh"
+printf "cat <<'EOF' \\\\\n| bash\ngit commit -m x\nEOF\n" > "$SCANR/a11.sh"
+printf 'cat "notes <<'"'"'EOF'"'"'.txt"\ngit commit -m x\n' > "$SCANR/a06.sh"
+printf 'cat <<"E"OF\ndoc\nEOF\ngit commit -m x\n' > "$SCANR/a07.sh"
+printf "echo \$'a\\\\' # '; git commit -m x\n" > "$SCANR/a13.sh"
+check "SCAN C1 a01: commit after multi-line quoted # string"    "$SCANH" 2 "$(mkjson Bash 'bash a01.sh' "$SCANR")"
+check "SCAN C1 a02: python -c multi-line quote with # comments" "$SCANH" 2 "$(mkjson Bash 'bash a02.sh' "$SCANR")"
+check "SCAN C2 a03: cat > run.sh heredoc, then bash run.sh"     "$SCANH" 2 "$(mkjson Bash 'bash a03.sh' "$SCANR")"
+check "SCAN C2 gen.sh | bash: quoted heredoc piped outside"     "$SCANH" 2 "$(mkjson Bash 'bash gen.sh | bash' "$SCANR")"
+check "SCAN C2 a12: heredoc in a function piped to bash"        "$SCANH" 2 "$(mkjson Bash 'bash a12.sh' "$SCANR")"
+check "SCAN C2 a14: heredoc in a subshell piped to sh"          "$SCANH" 2 "$(mkjson Bash 'bash a14.sh' "$SCANR")"
+check "SCAN C2 a11: pipe on a continuation line"                "$SCANH" 2 "$(mkjson Bash 'bash a11.sh' "$SCANR")"
+check "SCAN I1 a06: heredoc marker inside a quoted filename"    "$SCANH" 2 "$(mkjson Bash 'bash a06.sh' "$SCANR")"
+check "SCAN I1 a07: split-quote heredoc delimiter"              "$SCANH" 2 "$(mkjson Bash 'bash a07.sh' "$SCANR")"
+check "SCAN M2 a13: ANSI-C quoting with an escaped quote"       "$SCANH" 2 "$(mkjson Bash 'bash a13.sh' "$SCANR")"
 # The other consumers of gc_script_body: no-push-main and gate-before-merge.
 SCANM=$(mkrepo scan43m main)
 printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SCANM/PROJECT_CONTEXT.md"
@@ -8557,13 +8593,40 @@ printf '# git push origin main\nWrite-Host hi\n' > "$SCANM/pcm.ps1"
 printf 'echo hi # git merge feature/y\n' > "$SCANM/mc.sh"
 printf 'git merge feature/y # go\n' > "$SCANM/mr.sh"
 printf 'git merge feature/y\n' > "$SCANM/m.ps1"
-check "SCAN no-push-main: trailing-comment push: allowed"      hooks/no-push-main.sh 0 "$(mkjson Bash 'bash pc.sh' "$SCANM")"
+check "SCAN no-push-main: trailing-comment push: gated (conservative)" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash pc.sh' "$SCANM")"
 check "SCAN no-push-main: real push + trailing comment: gated" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash pr.sh' "$SCANM")"
 check "SCAN no-push-main: powershell -File push: gated"        hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File p.ps1' "$SCANM")"
 check "SCAN no-push-main: powershell -File comment push: ok"   hooks/no-push-main.sh 0 "$(mkjson Bash 'pwsh -File pcm.ps1' "$SCANM")"
-check "SCAN gate-before-merge: trailing-comment merge: allowed" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'bash mc.sh' "$SCANM")"
+check "SCAN gate-before-merge: echo hi # git merge: head is echo, not a merge (v4.1.2 too)" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'bash mc.sh' "$SCANM")"
 check "SCAN gate-before-merge: real merge + comment: gated"    hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash mr.sh' "$SCANM")"
 check "SCAN gate-before-merge: powershell -File merge: gated"  hooks/gate-before-merge.sh 2 "$(mkjson Bash 'powershell -File m.ps1' "$SCANM")"
+# S-38 review reproducers through the other two gates.
+printf 'git commit -m "subject\n\nFixes #12" && git push origin main\n' > "$SCANM/a01.sh"
+printf 'git add -A\ngit commit -m "subject\n\nsee #7" && git merge feature/y\n' > "$SCANM/a01m.sh"
+printf "python3 -c '\nimport sys  # helper\nprint(1)  # done'; git push origin main\n" > "$SCANM/a02.sh"
+printf "cat > run.sh <<'EOF'\ngit push origin main\nEOF\nbash run.sh\n" > "$SCANM/a03.sh"
+printf "cat <<'EOF' > m2.sh\ngit merge feature/y\nEOF\nsh m2.sh\n" > "$SCANM/a03m.sh"
+printf "cat <<'EOF'\ngit push origin main\nEOF\n" > "$SCANM/gen.sh"
+printf "f() {\ncat <<'EOF'\ngit push origin main\nEOF\n}\nf | bash\n" > "$SCANM/a12.sh"
+printf 'cat "notes <<'"'"'EOF'"'"'.txt"\ngit push origin main\n' > "$SCANM/a06.sh"
+printf 'cat <<"E"OF\ndoc\nEOF\ngit push origin main\n' > "$SCANM/a07.sh"
+printf "echo \$'a\\\\' # '; git push origin main\n" > "$SCANM/a13.sh"
+printf '\357\273\277git push origin main\n' > "$SCANM/bom.ps1"
+check "SCAN no-push-main C1 a01: push after multi-line # string"  hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a01.sh' "$SCANM")"
+check "SCAN gate-before-merge C1 a01m: merge after # string"      hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash a01m.sh' "$SCANM")"
+check "SCAN no-push-main C1 a02: python -c quote with # comments" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a02.sh' "$SCANM")"
+check "SCAN no-push-main C2 a03: cat > run.sh heredoc, bash run.sh" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a03.sh' "$SCANM")"
+check "SCAN gate-before-merge C2 a03m: heredoc to m2.sh, sh m2.sh" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash a03m.sh' "$SCANM")"
+check "SCAN no-push-main C2 gen.sh | bash"                        hooks/no-push-main.sh 2 "$(mkjson Bash 'bash gen.sh | bash' "$SCANM")"
+check "SCAN no-push-main C2 a12: function heredoc | bash"         hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a12.sh' "$SCANM")"
+check "SCAN no-push-main I1 a06: heredoc marker in a quoted name" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a06.sh' "$SCANM")"
+check "SCAN no-push-main I1 a07: split-quote heredoc delimiter"   hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a07.sh' "$SCANM")"
+check "SCAN no-push-main M2 a13: ANSI-C quoting"                  hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a13.sh' "$SCANM")"
+check "SCAN no-push-main I2: pwsh p.ps1 (positional): gated"      hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh p.ps1' "$SCANM")"
+check "SCAN no-push-main I2: powershell -fil p.ps1: gated"        hooks/no-push-main.sh 2 "$(mkjson Bash 'powershell -fil p.ps1' "$SCANM")"
+check "SCAN no-push-main I2: pwsh -File bom.ps1 (BOM): gated"     hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File bom.ps1' "$SCANM")"
+check "SCAN gate-before-merge I2: pwsh m.ps1 (positional): gated" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'pwsh m.ps1' "$SCANM")"
+check "SCAN gate-before-merge I2: powershell ./m.ps1: gated"      hooks/gate-before-merge.sh 2 "$(mkjson Bash 'powershell ./m.ps1' "$SCANM")"
 # ---- end v4.3.0 SCAN
 
 echo "----------------------------------------------------------------"
