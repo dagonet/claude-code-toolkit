@@ -111,8 +111,12 @@ precommitnoopfile() { # <repo> <tree> -> prints last-precommit-noop.<tree>.json'
 jesc() { # <string> -> the string as a JSON string BODY (no surrounding quotes)
   # The trailing '.' is a sentinel: `$(...)` strips trailing newlines, so a
   # value ending in one would silently round-trip a byte short without it.
+  # Ruling S-36: the lines are JOINED first (the :a/N loop), and only then are
+  # `\` and `"` escaped, so every line is escaped -- with the `s///` commands ahead
+  # of the loop they ran on the first cycle only and a multi-line value kept raw
+  # `"` and `\` on lines 2+ (invalid JSON the hooks silently treated as "no input").
   je=$(printf '%s.' "$1" \
-    | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')
+    | sed -e ':a' -e '$!{N;ba' -e '}' -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\n/\\n/g')
   printf '%s' "${je%.}"
 }
 
@@ -369,6 +373,13 @@ RT_TRAIL='a
 '
 expect "jesc: trailing newline survives" 1 \
   "$(printf '%s' "$(mkspawn coder "$RT_TRAIL")" | grep -c '"prompt":"a\\n"')"
+# Ruling S-36: a `"` and a `\` on line 2+ of a multi-line value must be escaped
+# too; before the fix only line 1 was, and the payload was invalid JSON.
+RT_ML2=$'first line\nsecond "q" and back\\slash\nthird "z" \\y'
+expect "jesc: quotes and backslashes on later lines round-trip" "$RT_ML2" \
+  "$(jfield "$(mkjson Bash "$RT_ML2" /x)" tool_input.command | tr -d '\r')"
+expect "jesc: multi-line payload is valid JSON (node)" ok \
+  "$(printf '%s' "$(mkjson Bash "$RT_ML2" /x)" | node -e 'try{JSON.parse(require("fs").readFileSync(0,"utf8"));console.log("ok")}catch(e){console.log("bad")}')"
 
 # ===========================================================================
 # no-push-main.sh
@@ -7376,37 +7387,30 @@ tp_i1_repo tp_i1_dash;  tp_run "$R" "git -C $R commit --no-verify -m 'x y'";  tp
 # body literal text. Anything else -- another substitution, an unquoted delimiter
 # (the body is expanded), `<<-`, text after the closing `)"`, a second command, a
 # flag that changes what is committed -- still runs the tests.
-# The suite's jesc runs its `s///` BEFORE the N-loop joins the lines, so it escapes only
-# the first line of a multi-line command. A heredoc message needs every line escaped,
-# hence this local runner: join first, escape after.
-tp_run_ml() { # <repo> <multi-line command>
-  local je
-  je=$(printf '%s.' "$2" | sed -e ':a' -e '$!{N;ba' -e '}' -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\n/\\n/g')
-  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' \
-    "${je%.}" "$(jesc "$1")" | bash "$ROOT/$TPH" >"$1/.tp_out" 2>&1
-}
+# A heredoc message is a multi-line command with `"` and `\` on later lines; jesc
+# escapes every line since ruling S-36, so tp_run carries it (no local runner).
 tp_hd() { # <flags before -m> <open quote form> <body> <closer tail> -> the command
   printf '%s' "git commit ${1}-m \"\$(cat <<${2}"$'\n'"${3}"$'\n'"EOF"$'\n'")\"${4}"
 }
-tp_i1_repo tp_s33_sq;   tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'subject\n\nbody with $(x) and `y` and "q"' '')"; tp_expect "A1 S-33: quoted-heredoc message ('EOF') -> skipped" SKIP "$R"
-tp_i1_repo tp_s33_dq;   tp_run_ml "$R" "$(tp_hd '' '"EOF"' $'subject\n\nbody' '')"; tp_expect "A1 S-33: quoted-heredoc message (\"EOF\") -> skipped" SKIP "$R"
-tp_i1_repo tp_s33_ws;   tp_run_ml "$R" "$(tp_hd '--no-verify ' "'EOF'" 'subject' '  ')"; tp_expect "A1 S-33: trailing whitespace after the closer -> skipped" SKIP "$R"
-tp_i1_repo tp_s33_unq;  tp_run_ml "$R" "$(tp_hd '' 'EOF' 'subject' '')"; tp_expect "A1 S-33: unquoted delimiter -> tests run" RAN "$R"
-tp_i1_repo tp_s33_body; tp_run_ml "$R" "$(tp_hd '' 'EOF' 'subject $(rm x)' '')"; tp_expect "A1 S-33: unquoted delimiter, body has \$(rm x) -> tests run" RAN "$R"
-tp_i1_repo tp_s33_tail; tp_run_ml "$R" "$(tp_hd '' "'EOF'" 'subject' ' && git push')"; tp_expect "A1 S-33: text after the closing )\" -> tests run" RAN "$R"
-tp_i1_repo tp_s33_a;    tp_run_ml "$R" "$(tp_hd '-a ' "'EOF'" 'subject' '')"; tp_expect "A1 S-33: -a with the heredoc -> tests run" RAN "$R"
-tp_i1_repo tp_s33_bt;   tp_run_ml "$R" 'git commit -m "`git rm -q src/a.c`"'; tp_expect "A1 S-33: backtick message -> tests run" RAN "$R"
-tp_i1_repo tp_s33_dash; tp_run_ml "$R" "$(tp_hd '' "-'EOF'" 'subject' '')"; tp_expect "A1 S-33: <<- form -> tests run" RAN "$R"
-tp_i1_repo tp_s33_two;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" 'subject' '')"$'\ngit push'; tp_expect "A1 S-33: a second command -> tests run" RAN "$R"
+tp_i1_repo tp_s33_sq;   tp_run "$R" "$(tp_hd '' "'EOF'" $'subject\n\nbody with $(x) and `y` and "q"' '')"; tp_expect "A1 S-33: quoted-heredoc message ('EOF') -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_dq;   tp_run "$R" "$(tp_hd '' '"EOF"' $'subject\n\nbody' '')"; tp_expect "A1 S-33: quoted-heredoc message (\"EOF\") -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_ws;   tp_run "$R" "$(tp_hd '--no-verify ' "'EOF'" 'subject' '  ')"; tp_expect "A1 S-33: trailing whitespace after the closer -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_unq;  tp_run "$R" "$(tp_hd '' 'EOF' 'subject' '')"; tp_expect "A1 S-33: unquoted delimiter -> tests run" RAN "$R"
+tp_i1_repo tp_s33_body; tp_run "$R" "$(tp_hd '' 'EOF' 'subject $(rm x)' '')"; tp_expect "A1 S-33: unquoted delimiter, body has \$(rm x) -> tests run" RAN "$R"
+tp_i1_repo tp_s33_tail; tp_run "$R" "$(tp_hd '' "'EOF'" 'subject' ' && git push')"; tp_expect "A1 S-33: text after the closing )\" -> tests run" RAN "$R"
+tp_i1_repo tp_s33_a;    tp_run "$R" "$(tp_hd '-a ' "'EOF'" 'subject' '')"; tp_expect "A1 S-33: -a with the heredoc -> tests run" RAN "$R"
+tp_i1_repo tp_s33_bt;   tp_run "$R" 'git commit -m "`git rm -q src/a.c`"'; tp_expect "A1 S-33: backtick message -> tests run" RAN "$R"
+tp_i1_repo tp_s33_dash; tp_run "$R" "$(tp_hd '' "-'EOF'" 'subject' '')"; tp_expect "A1 S-33: <<- form -> tests run" RAN "$R"
+tp_i1_repo tp_s33_two;  tp_run "$R" "$(tp_hd '' "'EOF'" 'subject' '')"$'\ngit push'; tp_expect "A1 S-33: a second command -> tests run" RAN "$R"
 # Ruling S-34: bash ends a quoted heredoc inside $( ) at a body line that STARTS with
 # the delimiter followed by `)`, and runs what follows on that line. The matcher ends
 # the body only at a line exactly equal to the delimiter; any OTHER line that starts
 # with the delimiter is doubt, so the tests run (a delimiter-prefix line such as
 # `EOFyz` is refused too: conservative, accepted).
-tp_i1_repo tp_s34_rep;  tp_run_ml "$R" "$(tp_hd '--allow-empty ' "'EOF'" $'msg\nEOF)" ; git rm -q src/a.c ; git commit -m y' '')"; tp_expect "A1 S-34: body line EOF)\" ; <cmd> hides a second command -> tests run" RAN "$R"
-tp_i1_repo tp_s34_par;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF)' '')"; tp_expect "A1 S-34: body line EOF) -> tests run" RAN "$R"
-tp_i1_repo tp_s34_psp;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF )' '')"; tp_expect "A1 S-34: body line 'EOF )' -> tests run" RAN "$R"
-tp_i1_repo tp_s34_pre;  tp_run_ml "$R" "$(tp_hd '' "'EOF'" $'msg\nEOFyz' '')"; tp_expect "A1 S-34: body line EOFyz (delimiter prefix) -> tests run" RAN "$R"
+tp_i1_repo tp_s34_rep;  tp_run "$R" "$(tp_hd '--allow-empty ' "'EOF'" $'msg\nEOF)" ; git rm -q src/a.c ; git commit -m y' '')"; tp_expect "A1 S-34: body line EOF)\" ; <cmd> hides a second command -> tests run" RAN "$R"
+tp_i1_repo tp_s34_par;  tp_run "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF)' '')"; tp_expect "A1 S-34: body line EOF) -> tests run" RAN "$R"
+tp_i1_repo tp_s34_psp;  tp_run "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF )' '')"; tp_expect "A1 S-34: body line 'EOF )' -> tests run" RAN "$R"
+tp_i1_repo tp_s34_pre;  tp_run "$R" "$(tp_hd '' "'EOF'" $'msg\nEOFyz' '')"; tp_expect "A1 S-34: body line EOFyz (delimiter prefix) -> tests run" RAN "$R"
 # ---- end v4.3.0 A1
 
 # ---- v4.3.0 A2: **Gate extra** reuse + per-leg results ----
