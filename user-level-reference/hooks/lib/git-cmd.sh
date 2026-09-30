@@ -468,48 +468,77 @@ gc_seg_raw() {
   printf '%s\n' "$GC_CMD" | tr '|;' '\n\n' | sed 's/&&/\n/g'
 }
 
-# gc_ps_script_body <raw_segment> <cwd> -- v4.3.0 (S-38, widened S-40): when a
-# segment runs `powershell|pwsh` (optionally `.exe`, any case, any path prefix,
-# any position in the leading run, same quote-stop as gc_script_body) and ANY
-# argument is a path ending in `.ps1` (any case; double-quoted, single-quoted
-# or bare; with or without -File/-f/-fil/-File: in front), print the first
-# 16 KB of that file with a UTF-8 BOM and whole-line `#` comments removed. That
-# is ALL it strips (no trailing-comment or heredoc handling -- a text strip in
-# a gate scan is fail-open-prone, S-40). Unreadable / missing file: prints
-# nothing, exactly like gc_script_body for an unreadable shell script (the
-# scan adds no text -- the same fail-open residual, not a new one). Multiple
-# spaces inside a quoted path collapse to one (the segment is re-split).
-gc_ps_script_body() {
-  local seg="$1" cwd="$2" tok clean base lc rest path="" t
-  set -- $seg
+# gc_seg_is_ps <raw_segment> -- v4.3.0 (S-38, S-40, S-41): succeeds when the
+# segment's leading run (same walk and same quote-stop as gc_script_body)
+# contains a `powershell|pwsh` word (optionally `.exe`, any case, any path
+# prefix, forward or back slashes).
+gc_seg_is_ps() {
+  local tok clean base lc
+  set -- $1
   while [ $# -gt 0 ]; do
     tok="$1"
-    case "$tok" in *[\"\']*) return 0 ;; esac
+    case "$tok" in *[\"\']*) return 1 ;; esac
     clean=$(printf '%s' "$tok" | tr -d "\"'")
     base=${clean##*/}; base=${base##*\\}
     lc=$(printf '%s' "$base" | tr 'A-Z' 'a-z')
-    case "$lc" in powershell|powershell.exe|pwsh|pwsh.exe) break ;; esac
+    case "$lc" in powershell|powershell.exe|pwsh|pwsh.exe) return 0 ;; esac
     shift
   done
-  [ $# -gt 0 ] || return 0
-  shift
-  rest="$*"
-  # first .ps1 argument: "quoted", 'quoted' or bare; earliest in the text wins
-  local re_dq='"([^"]*[.][pP][sS]1)"' re_sq="'([^']*[.][pP][sS]1)'" re_bare='([^[:space:]"'"'"']*[.][pP][sS]1)([[:space:]]|$)'
-  local best=-1 cand pos re
-  for re in "$re_dq" "$re_sq" "$re_bare"; do
-    if [[ "$rest" =~ $re ]]; then
-      cand="${BASH_REMATCH[1]}"
-      t="${rest%%"${BASH_REMATCH[0]}"*}"; pos=${#t}
-      if [ "$best" -lt 0 ] || [ "$pos" -lt "$best" ]; then best=$pos; path="$cand"; fi
-    fi
+  return 1
+}
+
+# gc_ps_script_bodies <cwd> -- S-41. Called once, only when some segment of
+# $GC_CMD runs powershell/pwsh. Collects EVERY word of the WHOLE command that
+# ends in `.ps1` (case-insensitive): bare words, and quoted strings ending in
+# `.ps1` (so `"my  script.ps1"` keeps its spaces; a `-Command "& ./x.ps1"` or
+# `"./a.ps1; ./x.ps1"` string is split on ; & | and each piece is cleaned of a
+# leading `&` call operator / `. ` dot-source / `-File:` prefix). Every
+# candidate that is an existing file contributes its first 16 KB, with a UTF-8
+# BOM and whole-line `#` comments removed -- and NOTHING else stripped. The
+# caller does NOT run the shell backslash-continuation join over this text
+# (PowerShell continues on a backtick). Unreadable/missing file: no text, the
+# same direction as an unreadable shell script. At most 16 candidates.
+gc_ps_script_bodies() {
+  local cwd="$1" s re cand piece p seen="" n=0
+  local -a cands=()
+  local re_q='["'"'"']([^"'"'"']*[.][pP][sS]1)["'"'"']'
+  local re_b='([^[:space:]"'"'"';&|(){}]+[.][pP][sS]1)([[:space:]"'"'"';&|(){}]|$)'
+  s="$GC_CMD"
+  while [[ "$s" =~ $re_q ]]; do
+    cand="${BASH_REMATCH[1]}"; s=${s#*"${BASH_REMATCH[0]}"}
+    cands+=("$cand")
+    # a quoted string may hold several ;/&/| separated commands
+    case "$cand" in *[\;\&\|]*)
+      while IFS= read -r piece; do cands+=("$piece"); done <<GC_PS_SPLIT
+$(printf '%s\n' "$cand" | tr ';&|' '\n\n\n')
+GC_PS_SPLIT
+    ;; esac
   done
-  [ -n "$path" ] || return 0
-  # -File:x.ps1 / -f:x.ps1 -- drop the option prefix up to the colon
-  case "$path" in -*:*) path=${path#*:} ;; esac
-  case "$path" in /*|[A-Za-z]:*) ;; *) path="$cwd/$path" ;; esac
-  [ -f "$path" ] || return 0
-  head -c 16384 "$path" 2>/dev/null | LC_ALL=C sed '1s/^\xEF\xBB\xBF//' | grep -v '^[[:space:]]*#'
+  s="$GC_CMD"
+  while [[ "$s" =~ $re_b ]]; do
+    cand="${BASH_REMATCH[1]}"; s=${s#*"${BASH_REMATCH[0]}"}
+    cands+=("$cand")
+  done
+  for cand in "${cands[@]}"; do
+    # strip leading blanks, call operator `&`, dot-source `. `, then a -File: prefix
+    while :; do
+      case "$cand" in
+        [[:space:]]*) cand=${cand#?} ;;
+        \&*) cand=${cand#?} ;;
+        ". "*) cand=${cand#??} ;;
+        *) break ;;
+      esac
+    done
+    case "$cand" in -*:*) cand=${cand#*:} ;; esac
+    case "$cand" in *[.][pP][sS]1) ;; *) continue ;; esac
+    case "$cand" in /*|[A-Za-z]:*) p="$cand" ;; *) p="$cwd/$cand" ;; esac
+    case "$seen" in *"|$p|"*) continue ;; esac
+    seen="$seen|$p|"
+    [ -f "$p" ] || continue
+    n=$((n + 1)); [ "$n" -le 16 ] || break
+    head -c 16384 "$p" 2>/dev/null | LC_ALL=C sed '1s/^\xEF\xBB\xBF//' | grep -v '^[[:space:]]*#'
+    printf '\n'
+  done
   return 0
 }
 
@@ -602,10 +631,11 @@ gc_script_body() {
 # walk does, or a script's `git merge`/`git push` passes the "no git token"
 # fast exit before the walk that would have caught it ever runs).
 gc_augmented_cmd() {
-  local cwd="$1" out="$GC_CMD" seg body _gc_bj
+  local cwd="$1" out="$GC_CMD" seg body _gc_bj _gc_ps=0
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
-    body=$(gc_script_body "$seg" "$cwd"; gc_ps_script_body "$seg" "$cwd")
+    gc_seg_is_ps "$seg" && _gc_ps=1
+    body=$(gc_script_body "$seg" "$cwd")
     if [ -n "$body" ]; then
       _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
     fi
@@ -614,6 +644,13 @@ $body"
   done <<GC_AUG_SEGS
 $(gc_seg_raw)
 GC_AUG_SEGS
+  # S-41: PowerShell script bodies are appended AFTER the shell join (a `\` at
+  # the end of a .ps1 line is not a continuation).
+  if [ "$_gc_ps" = 1 ]; then
+    body=$(gc_ps_script_bodies "$cwd")
+    [ -n "$body" ] && out="$out
+$body"
+  fi
   printf '%s' "$out"
 }
 

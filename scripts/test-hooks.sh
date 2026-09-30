@@ -8600,6 +8600,17 @@ check "SCAN no-push-main: powershell -File comment push: ok"   hooks/no-push-mai
 check "SCAN gate-before-merge: echo hi # git merge: head is echo, not a merge (v4.1.2 too)" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'bash mc.sh' "$SCANM")"
 check "SCAN gate-before-merge: real merge + comment: gated"    hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash mr.sh' "$SCANM")"
 check "SCAN gate-before-merge: powershell -File merge: gated"  hooks/gate-before-merge.sh 2 "$(mkjson Bash 'powershell -File m.ps1' "$SCANM")"
+# S-41 (I3/M4/M5): every .ps1 word of a powershell/pwsh command, -Command strings included.
+printf 'git commit -m y\n' > "$SCANR/q  r.ps1"
+check "SCAN I3 powershell -Command \"& ./x.ps1\": a commit"       "$SCANH" 2 "$(mkjson Bash 'powershell -Command "& ./x.ps1"' "$SCANR")"
+check "SCAN I3 powershell -Command \"&./x.ps1\": a commit"        "$SCANH" 2 "$(mkjson Bash 'powershell -Command "&./x.ps1"' "$SCANR")"
+check "SCAN I3 powershell -c \". ./x.ps1\" (dot-source): a commit" "$SCANH" 2 "$(mkjson Bash 'powershell -c ". ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"./c.ps1; ./x.ps1\" (2nd script): a commit" "$SCANH" 2 "$(mkjson Bash 'pwsh -c "./c.ps1; ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"./c.ps1 && ./x.ps1\": a commit"           "$SCANH" 2 "$(mkjson Bash 'pwsh -c "./c.ps1 && ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"& ./c.ps1; & ./x.ps1\": a commit"         "$SCANH" 2 "$(mkjson Bash 'pwsh -c "& ./c.ps1; & ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"./c.ps1; ./c.ps1\" (no verb anywhere): not" "$SCANH" 0 "$(mkjson Bash 'pwsh -c "./c.ps1; ./c.ps1"' "$SCANR")"
+check "SCAN M4 pwsh -File \"q  r.ps1\" (run of spaces): a commit"  "$SCANH" 2 "$(mkjson Bash 'pwsh -File "q  r.ps1"' "$SCANR")"
+check "SCAN I3 a .ps1 word with no powershell in the command: not" "$SCANH" 0 "$(mkjson Bash 'echo x.ps1' "$SCANR")"
 # S-38 review reproducers through the other two gates.
 printf 'git commit -m "subject\n\nFixes #12" && git push origin main\n' > "$SCANM/a01.sh"
 printf 'git add -A\ngit commit -m "subject\n\nsee #7" && git merge feature/y\n' > "$SCANM/a01m.sh"
@@ -8627,6 +8638,11 @@ check "SCAN no-push-main I2: powershell -fil p.ps1: gated"        hooks/no-push-
 check "SCAN no-push-main I2: pwsh -File bom.ps1 (BOM): gated"     hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File bom.ps1' "$SCANM")"
 check "SCAN gate-before-merge I2: pwsh m.ps1 (positional): gated" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'pwsh m.ps1' "$SCANM")"
 check "SCAN gate-before-merge I2: powershell ./m.ps1: gated"      hooks/gate-before-merge.sh 2 "$(mkjson Bash 'powershell ./m.ps1' "$SCANM")"
+# S-41 M5: a trailing backslash in a .ps1 is not a continuation; the next line's push is seen.
+printf 'Set-Location C:\\work\\\ngit push origin main\n' > "$SCANM/b5.ps1"
+check "SCAN no-push-main M5: .ps1 line ending in backslash, push on the next line" hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File b5.ps1' "$SCANM")"
+check "SCAN no-push-main I3: -Command \"& ./p.ps1\": gated"        hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -Command "& ./p.ps1"' "$SCANM")"
+check "SCAN gate-before-merge I3: -c \"./pcm.ps1; ./m.ps1\": gated" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'pwsh -c "./pcm.ps1; ./m.ps1"' "$SCANM")"
 # ---- end v4.3.0 SCAN
 
 echo "----------------------------------------------------------------"
