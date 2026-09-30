@@ -3932,37 +3932,27 @@ fi
 # `**Subagent default model**` sets the model-floor default. A LIVE line in a
 # template would switch that behaviour on in every consumer at bootstrap -- and
 # because the readers take the FIRST matching line, a live prose bullet also
-# shadows the consumer's own later setting. So in each of the six variants every
-# occurrence of each key must sit inside an HTML comment, and each key must be
-# documented (occur at all). c63_scan blanks every <!-- ... --> region (the
-# comment state carries across lines, and text after a same-line `-->` is live
-# again), then reports any key left in the live text; a comment that is never
-# closed is reported too, since it would hide everything after it. Shared by
-# the real scan and the 63c controls, which plant live lines in a scratch copy
-# -- never in a real template.
+# shadows the consumer's own later setting. The readers (pre-commit-test.sh,
+# run-gate.sh rg_field, model-floor.sh) match a LINE anchored at GC_KEY_PRE and
+# know nothing of HTML comments (ruling S-35), so the check asks the readers'
+# own question: c63_scan fails on any line matching
+# `${GC_KEY_PRE}\*\*<key>\*\*:` -- a line inside a multi-line <!-- ... --> block
+# is live to the hooks, while a one-line `<!-- - **Key**: ... -->` example is
+# safe only because `<!--` breaks the anchor. Each key must also be documented
+# (occur at all). Shared by the real scan and the 63c controls, which plant
+# lines in scratch copies -- never in a real template.
 # ---------------------------------------------------------------------------
-note "Check 63: **Test paths**, **Gate extra**, **Subagent default model** appear in every variant's PROJECT_CONTEXT.md only inside an HTML comment (documented, never set)"
+note "Check 63: **Test paths**, **Gate extra**, **Subagent default model** appear in every variant's PROJECT_CONTEXT.md on no line the hooks' key pattern matches (documented in a one-line comment, never set)"
 C63_KEYS='Test paths|Gate extra|Subagent default model'
+# GC_BOM / GC_KEY_PRE: the same text as hooks/lib/git-cmd.sh, run-gate.sh and
+# model-floor.sh (the definition census above pins the copies together).
+GC_BOM=$(printf '\357\273\277')
+GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 
-# c63_scan <file> -- prints "file:line: text" for each key occurrence outside a
-# comment, and "file: unclosed <!--" for a comment left open at end of file.
+# c63_scan <file> -- prints "file:line: text" for each line the readers' own
+# pattern matches for one of the three keys.
 c63_scan() {
-  awk -v re="\\\\*\\\\*(${C63_KEYS})\\\\*\\\\*" '
-    { line = $0; out = ""
-      while (length(line) > 0) {
-        if (inc) {
-          p = index(line, "-->")
-          if (p == 0) { line = "" } else { line = substr(line, p + 3); inc = 0 }
-        } else {
-          p = index(line, "<!--")
-          if (p == 0) { out = out line; line = "" }
-          else { out = out substr(line, 1, p - 1) " "; line = substr(line, p + 4); inc = 1 }
-        }
-      }
-      if (out ~ re) print FILENAME ":" NR ": " $0
-    }
-    END { if (inc) print FILENAME ": unclosed <!--" }
-  ' "$1"
+  grep -nE "${GC_KEY_PRE}\*\*(${C63_KEYS})\*\*:" "$1" 2>/dev/null | sed "s|^|$1:|"
 }
 
 c63_bad=""
@@ -3976,23 +3966,23 @@ for v in $VARIANTS; do
   done
 done
 if [ -z "$c63_bad" ]; then
-  ok "check 63: all six variants document the three keys only inside HTML comments; none sets one"
+  ok "check 63: no line of any variant's PROJECT_CONTEXT.md matches the hooks' key pattern for the three keys; each is documented in a one-line comment"
 else
   ko "check 63: a key is set live or undocumented (a live line switches the behaviour on in every consumer):$c63_bad"
 fi
 
-# 63c controls: scratch copies of a real template. RED side -- a live line for
-# each key, one after a same-line closed comment, and an unclosed comment must
-# each be flagged; GREEN side -- a key inside a single-line and a multi-line
-# comment, and the untouched real template, must not be.
+# 63c controls: scratch copies of a real template. RED side -- a line the
+# readers' pattern matches, for each key, plain or inside a multi-line comment
+# (ruling S-35: the readers ignore comments) or an unclosed one, must be flagged;
+# GREEN side -- single-line `<!-- - **Key**: ... -->` examples (`<!--` breaks the
+# anchor, so no reader sees them) and the untouched real template must not be.
 C63C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c63c)
 c63c_real="templates/general/PROJECT_CONTEXT.md"
 c63c_fail=""
 for c63c_case in \
   "live-test-paths|- **Test paths**: src/" \
   "live-gate-extra|- **Gate extra**: bash scripts/lint.sh" \
-  "live-model|- **Subagent default model**: haiku" \
-  "live-after-comment|<!-- note --> - **Test paths**: src/"; do
+  "live-model|- **Subagent default model**: haiku"; do
   c63c_name=${c63c_case%%|*}; c63c_line=${c63c_case#*|}
   cp "$c63c_real" "$C63C_TMP/$c63c_name.md"
   printf '%s\n' "$c63c_line" >> "$C63C_TMP/$c63c_name.md"
@@ -4001,12 +3991,18 @@ done
 cp "$c63c_real" "$C63C_TMP/unclosed.md"
 printf '%s\n' '<!-- never closed' '- **Gate extra**: x' >> "$C63C_TMP/unclosed.md"
 [ -n "$(c63_scan "$C63C_TMP/unclosed.md")" ] || c63c_fail="$c63c_fail unclosed(not flagged)"
-printf '%s\n' '<!--' '- **Test paths**: src/' '-->' '<!-- - **Gate extra**: x -->' > "$C63C_TMP/commented.md"
-[ -z "$(c63_scan "$C63C_TMP/commented.md")" ] || c63c_fail="$c63c_fail commented(falsely flagged)"
+for c63c_key in "Test paths|src/" "Gate extra|x" "Subagent default model|haiku"; do
+  c63c_kn=${c63c_key%%|*}; c63c_kv=${c63c_key#*|}
+  cp "$c63c_real" "$C63C_TMP/multiline.md"
+  printf '%s\n' '<!--' "- **$c63c_kn**: $c63c_kv" '-->' >> "$C63C_TMP/multiline.md"
+  [ -n "$(c63_scan "$C63C_TMP/multiline.md")" ] || c63c_fail="$c63c_fail multiline-comment-$c63c_kn(not flagged)"
+done
+printf '%s\n' '<!-- - **Test paths**: src/ -->' '<!-- - **Gate extra**: x -->' '<!-- - **Subagent default model**: haiku -->' '<!-- note --> - **Test paths**: src/' > "$C63C_TMP/oneline.md"
+[ -z "$(c63_scan "$C63C_TMP/oneline.md")" ] || c63c_fail="$c63c_fail oneline-comment(falsely flagged)"
 [ -z "$(c63_scan "$c63c_real")" ] || c63c_fail="$c63c_fail real-template(falsely flagged)"
 rm -rf "$C63C_TMP"
 if [ -z "$c63c_fail" ]; then
-  ok "check 63c: control -- planted live lines (three keys, after a comment, unclosed comment) are flagged; commented and real templates are not"
+  ok "check 63c: control -- planted key lines (plain, inside a multi-line comment, unclosed comment) are flagged; one-line commented examples and real templates are not"
 else
   ko "check 63c: control failed:$c63c_fail -- check 63 is vacuous or over-strict"
 fi
