@@ -8501,8 +8501,34 @@ if [ -n "$C1_HAVE_NODE" ]; then
   expect "C1 S-24 user-level wrapper adds nothing to stdout" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
   # (c) no file at all -> silent: the "missing" loop above runs C1_USR with an
   #     empty HOME and an empty CLAUDE_PROJECT_DIR (rc 0, 0 bytes out and err)
+
+  # S-42: the user-level deny-hang-shapes registration carries the same
+  # project-copy step-aside, so a Bash call is refused once, not twice.
+  C1_HUSR='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh" ] && exit 0; f="$HOME/.claude/hooks/deny-hang-shapes.sh"; [ -f "$f" ] || exit 0; bash "$f"'
+  C1_HGOT=$(node -e '
+    var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
+    (s.hooks.PreToolUse || []).forEach(function (g) { if (g.matcher !== "Bash") return;
+      g.hooks.forEach(function (h) { if (h.command.indexOf("deny-hang-shapes.sh") >= 0) o.push(h.command); }); });
+    process.stdout.write(o.join("\n"));' "$(natpath "$ROOT/user-level-reference/settings.json")")
+  expect "C1 S-42 registered on Bash: user-level-reference" "$C1_HUSR" "$C1_HGOT"
+  C1HH="$TMPROOT/c1hanghome"; mkdir -p "$C1HH/.claude/hooks/lib"
+  cp "$ROOT/user-level-reference/hooks/deny-hang-shapes.sh" "$C1HH/.claude/hooks/deny-hang-shapes.sh"
+  cp "$ROOT/user-level-reference/hooks/lib/json.sh"         "$C1HH/.claude/hooks/lib/json.sh"
+  C1HP="$(mkjson Bash 'cd /a && b && c' "$C1CWD")"
+  # (a) project copy present -> silent
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-42 deny-hang-shapes user-level + project copy -> silent" "rc=0 out=0 err=0" \
+    "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
+  # (b) no project copy -> the user-level hook runs and refuses (exit 2, advice on stderr)
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-42 deny-hang-shapes user-level, no project copy -> runs" "rc=2 refused" \
+    "rc=$C1_RC $(grep -q 'git -C' "$C1ERRF" && echo refused)"
+  # (c) no file at all -> silent
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-42 deny-hang-shapes user-level, no file -> silent" "rc=0 out=0 err=0" \
+    "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
 else
-  skip "C1 registration + wrapper rows" "no node on this host" 15
+  skip "C1 registration + wrapper rows" "no node on this host" 19
 fi
 # ---- end v4.3.0 C1
 

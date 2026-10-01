@@ -78,7 +78,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=\"$HOME/.claude/hooks/deny-hang-shapes.sh\"; [ -f \"$f\" ] || exit 0; bash \"$f\""
+            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\" ] && exit 0; f=\"$HOME/.claude/hooks/deny-hang-shapes.sh\"; [ -f \"$f\" ] || exit 0; bash \"$f\""
           }
         ]
       },
