@@ -72,6 +72,24 @@
             "command": "bash ~/.claude/hooks/deny-secret-reads.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/deny-secret-reads.sh -- secrets protection offline.' >&2; exit 2; fi; exit $c"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\" ] && exit 0; f=\"$HOME/.claude/hooks/deny-hang-shapes.sh\"; [ -f \"$f\" ] || exit 0; bash \"$f\""
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh\" ] && exit 0; f=\"$HOME/.claude/hooks/model-floor.sh\"; [ -f \"$f\" ] || exit 0; bash \"$f\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -62,9 +62,27 @@ trap 'rm -rf "$OUTDIR"' EXIT
 #        (Task 2.3, `pipeline: true|notify`)
 #  = 135 measured for python3; the same +32 gives 151 measured for jq.
 # Both restricted runs reported 0 failures at that tree.
+# v4.3.0 recalibration (S-39), again derived: the first matrix run of this
+# release reported 177 python3 skips against 135 (+/-20). Every extra skip is
+# a node-only (or python3-only, in the jq run) row added after the last
+# calibration, counted by name from the `skip` calls in test-hooks.sh:
+#    +2  item13 expired-artifact rows "block names the pyvenv / dist
+#        contributor" (v4.1.1 #15): skipped when node is absent, because the
+#        tree+env extension voids by design without a node contributor
+#   +25  v4.3.0 C1 "C1 node parser rows" (model-floor, node backend)
+#   +15  v4.3.0 C1 "C1 registration + wrapper rows" (need node to parse the
+#        registered hook commands)
+#    +1  the jesc self-check "multi-line payload is valid JSON (node)" (S-39:
+#        it FAILED without node in the 177 run; it now skips by name)
+#  = 178 for python3 (135 + 2 + 25 + 15 + 1; 177 + the jesc row). Blocks A3,
+#  B1 and SCAN skip nothing without node (measured with node hidden from
+#  PATH); blocks A1 and A2 contain no `skip` call (counted statically, not
+#  measured).
+# jq also hides python3: 151 + the same 43 + 27 "C1 python3 parser rows"
+#  = 221.
 EXP_NODE_SKIP=0
-EXP_PY_SKIP=135
-EXP_JQ_SKIP=151
+EXP_PY_SKIP=178
+EXP_JQ_SKIP=221
 BAND=20
 
 matrix_fail=0

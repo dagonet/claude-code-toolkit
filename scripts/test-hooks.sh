@@ -111,8 +111,12 @@ precommitnoopfile() { # <repo> <tree> -> prints last-precommit-noop.<tree>.json'
 jesc() { # <string> -> the string as a JSON string BODY (no surrounding quotes)
   # The trailing '.' is a sentinel: `$(...)` strips trailing newlines, so a
   # value ending in one would silently round-trip a byte short without it.
+  # Ruling S-36: the lines are JOINED first (the :a/N loop), and only then are
+  # `\` and `"` escaped, so every line is escaped -- with the `s///` commands ahead
+  # of the loop they ran on the first cycle only and a multi-line value kept raw
+  # `"` and `\` on lines 2+ (invalid JSON the hooks silently treated as "no input").
   je=$(printf '%s.' "$1" \
-    | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')
+    | sed -e ':a' -e '$!{N;ba' -e '}' -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\n/\\n/g')
   printf '%s' "${je%.}"
 }
 
@@ -369,6 +373,20 @@ RT_TRAIL='a
 '
 expect "jesc: trailing newline survives" 1 \
   "$(printf '%s' "$(mkspawn coder "$RT_TRAIL")" | grep -c '"prompt":"a\\n"')"
+# Ruling S-36: a `"` and a `\` on line 2+ of a multi-line value must be escaped
+# too; before the fix only line 1 was, and the payload was invalid JSON.
+RT_ML2=$'first line\nsecond "q" and back\\slash\nthird "z" \\y'
+expect "jesc: quotes and backslashes on later lines round-trip" "$RT_ML2" \
+  "$(jfield "$(mkjson Bash "$RT_ML2" /x)" tool_input.command | tr -d '\r')"
+# Needs node itself as the independent parser: with node hidden (the parser
+# matrix's python3 and jq runs) it SKIPs by name, like every other node row
+# (S-39) -- never "want ok, got ''".
+if [ -n "$HAVE_NODE" ]; then
+  expect "jesc: multi-line payload is valid JSON (node)" ok \
+    "$(printf '%s' "$(mkjson Bash "$RT_ML2" /x)" | node -e 'try{JSON.parse(require("fs").readFileSync(0,"utf8"));console.log("ok")}catch(e){console.log("bad")}')"
+else
+  skip "jesc: multi-line payload is valid JSON (node)" "no node on this host"
+fi
 
 # ===========================================================================
 # no-push-main.sh
@@ -7229,6 +7247,1429 @@ for UPS_LOC in $UPS_LOCS; do
   expect "time hook: one well-formed line, exit 0 (LANG=$UPS_LOC)" "0 1 match" \
     "$UPS_RC $UPS_LINES $(printf '%s' "$UPS_OUT" | grep -qE "$UPS_RE" && echo match || echo "no-match[$UPS_OUT]")"
 done
+
+# ---- v4.3.0 A1: **Test paths** (opt-in docs-only skip) ----
+TPH=hooks/pre-commit-test.sh
+tp_repo() { # <name> <test-paths-line-or-empty> -> repo whose Test writes a marker file
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\ntouch TP-SUITE-RAN\nexit 0\n' > "$r/tc.sh"
+  { printf '# ctx\n\n- **Test**: `bash tc.sh`\n- **Gate**: `bash tc.sh`\n'; [ -n "$2" ] && printf -- '- **Test paths**: %s\n' "$2"; } > "$r/PROJECT_CONTEXT.md"
+  mkdir -p "$r/src" "$r/docs"; echo "$r"
+}
+# Fixture note (v4.3.0 A1): pre-commit-test.sh captures a PASSING Test
+# command's stdout/stderr to a tempfile and deletes it on success
+# (hooks/pre-commit-test.sh ~:495,525,568-578) -- a marker ECHOED by tc.sh
+# would never reach the hook's own output regardless of whether tc.sh ran. So
+# tc.sh instead touches a marker FILE, a side effect that survives the
+# swallow, inside $REPO_PATH (the hook `cd`s there before eval'ing **Test**).
+tp_run() { printf '%s' "$(mkjson Bash "$2" "$1")" | bash "$ROOT/$TPH" >"$1/.tp_out" 2>&1; }
+tp_expect() { # <label> <want: RAN|SKIP> <repo>
+  # Two-sided: "marker absent" alone is also what an unrelated early exit
+  # (BLOCKED, no-commit-segment, ...) produces. A SKIP verdict must additionally
+  # carry the hook's own **Test paths** skip line, or it is reported as neither.
+  got=SKIP; [ -f "$3/TP-SUITE-RAN" ] && got=RAN
+  if [ "$got" = SKIP ] && ! grep -q 'no changed path matches \*\*Test paths\*\*' "$3/.tp_out" 2>/dev/null; then
+    got=NEITHER
+  fi
+  if [ "$got" = "$2" ]; then printf 'PASS  %-42s (%s)\n' "$1" "$got"; pass=$((pass + 1))
+  else printf 'FAIL  %-42s (want %s, got %s)\n' "$1" "$2" "$got"; fail=$((fail + 1)); fi
+}
+# v4.3.0 A1 fix round 2 (S-5): a "src/" pathspec word must resolve to at
+# least one TRACKED file (hooks/pre-commit-test.sh's `git ls-files` check,
+# ~:379-394) or the hook treats it as invalid and runs tests unconditionally,
+# never reaching the real git-status skip decision. tp_repo alone never
+# commits anything under src/, so every "src/"-using row below needs a
+# tracked, otherwise-irrelevant anchor file there for its OWN pathspec to
+# validate -- independent of whatever the row's actual test change is.
+tp_seed_src() { # <repo> -- commit a tracked, unrelated file under src/
+  echo keep > "$1/src/.keep"
+  git -C "$1" add src/.keep >/dev/null 2>&1
+  git -C "$1" commit -q -m src-seed >/dev/null 2>&1
+}
+R=$(tp_repo tp_unset ""); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: key unset -> tests run" RAN "$R"
+R=$(tp_repo tp_docs "src/"); tp_seed_src "$R"; echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: docs-only change -> skipped" SKIP "$R"
+R=$(tp_repo tp_code "src/"); tp_seed_src "$R"; echo c > "$R/src/a.c"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: code change -> tests run" RAN "$R"
+R=$(tp_repo tp_addcommit "src/"); tp_seed_src "$R"; echo c > "$R/src/b.c"; echo d > "$R/docs/b.md"
+tp_run "$R" 'git add docs/b.md && git commit -m x'; tp_expect "A1: add&&commit, code unstaged -> run (R-C)" RAN "$R"
+# zz.c is TRACKED and unchanged (committed below) -- it exists only so that,
+# absent set -f, the hook's *own* shell would glob-expand the unquoted
+# pathspec "*.c" against ITS inherited cwd (this repo's root, via the cd
+# below) into the literal "zz.c", a path with no status, silently turning a
+# real code change into a false SKIP. With set -f the pathspec reaches git
+# literally and git's OWN (non-shell) glob matching finds src/g.c.
+R=$(tp_repo tp_glob "*.c"); touch "$R/zz.c"; git -C "$R" add zz.c >/dev/null 2>&1; git -C "$R" commit -q -m zz >/dev/null 2>&1; echo c > "$R/src/g.c"
+( cd "$R" && tp_run "$R" 'git commit -m x' ); tp_expect "A1: glob pathspec not shell-expanded" RAN "$R"
+R=$(tp_repo tp_ph "{{TEST_PATHS}}"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1: placeholder -> treated unset" RAN "$R"
+# src/keep.txt is committed ALONGSIDE k.c (S-5 fix round 2) so that once k.c
+# is deleted, "src/" still resolves to a tracked file (keep.txt) -- otherwise
+# this row's own pathspec would fail S-5's ls-files check for an unrelated
+# reason (the directory going fully untracked) and it would pass via the
+# invalid-entry fallback instead of the deletion actually being detected.
+R=$(tp_repo tp_del "src/"); git -C "$R" rm -q seed.txt >/dev/null 2>&1; echo c > "$R/src/k.c"; echo k > "$R/src/keep.txt"; git -C "$R" add -A >/dev/null 2>&1; git -C "$R" commit -q -m k >/dev/null 2>&1; git -C "$R" rm -q src/k.c >/dev/null 2>&1
+tp_run "$R" 'git commit -m x'; tp_expect "A1: deletion under src/ -> run" RAN "$R"
+# v4.3.0 A1 fix round 1 (S-4): a `:`-leading word is git pathspec magic (e.g.
+# `:(exclude)*`), which can make `git status ... -- $TEST_PATHS` exit 0 with
+# EMPTY output regardless of real changes -- a silent permanent skip the
+# non-zero-exit fail-closed guard alone does not catch. Detected and ignored
+# (falls through to running tests, with a WARN) before the git call.
+tp_expect_warn() { # <label> <repo>
+  if grep -qF "WARN **Test paths** uses git pathspec magic" "$2/.tp_out" 2>/dev/null; then
+    printf 'PASS  %-42s (%s)\n' "$1" "warned"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (%s)\n' "$1" "not warned"; fail=$((fail + 1))
+  fi
+}
+R=$(tp_repo tp_magic1 ":(exclude)*"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-4: pathspec magic alone -> tests run" RAN "$R"
+tp_expect_warn "A1 S-4: pathspec magic alone -> WARN on stderr" "$R"
+R=$(tp_repo tp_magic2 "src/ :(exclude)src/gen"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-4: plain+magic pathspecs, docs-only -> tests run" RAN "$R"
+# v4.3.0 A1 fix round 2 (S-5): a pathspec word that matches NO tracked file --
+# a typo, a renamed/removed directory, or literal quotes that reached this
+# hook as part of the word itself -- makes `git status ... -- $TEST_PATHS`
+# exit 0 with EMPTY output the same way S-4's magic does: a silent, permanent
+# skip. Validated one word at a time against `git ls-files` (fail-closed:
+# ANY invalid word ignores the WHOLE value and runs tests unconditionally,
+# even when other words in the same value are perfectly valid).
+tp_expect_warn_entry() { # <label> <repo> <entry-substring>
+  if grep -qF "WARN **Test paths** entry '$3' matches no tracked file" "$2/.tp_out" 2>/dev/null; then
+    printf 'PASS  %-42s (%s)\n' "$1" "warned:$3"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (%s)\n' "$1" "not warned for '$3'"; fail=$((fail + 1))
+  fi
+}
+# typo: "srcc/" never matches a tracked file in a fresh tp_repo checkout.
+R=$(tp_repo tp_typo "srcc/"); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: typo pathspec (srcc/) -> tests run" RAN "$R"
+tp_expect_warn_entry "A1 S-5: typo pathspec -> WARN names 'srcc/'" "$R" "srcc/"
+# literal quotes: the value in PROJECT_CONTEXT.md is prose, not shell syntax,
+# so the extracted word carries its quote CHARACTERS to `git ls-files`
+# unchanged; no real path is ever named `"src/"` (quotes included).
+R=$(tp_repo tp_quoted '"src/"'); echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: literal-quoted pathspec (\"src/\") -> tests run" RAN "$R"
+# mixed valid + invalid: src/ is seeded (tracked) and genuinely valid on its
+# own; docs-missing/ is not. The whole value must still be ignored -- a good
+# word does not rescue a bad one in the same list.
+R=$(tp_repo tp_mixed "src/ docs-missing/"); tp_seed_src "$R"; echo d > "$R/docs/a.md"
+tp_run "$R" 'git commit -m x'; tp_expect "A1 S-5: one bad word among good ones -> tests run" RAN "$R"
+tp_expect_warn_entry "A1 S-5: one bad word among good ones -> WARN names 'docs-missing/'" "$R" "docs-missing/"
+# v4.3.0 A1 fix (final review I-1, ruling S-28): the skip applies ONLY to a lone
+# `git commit`. A clause ahead of the commit that mutates a matching path (git rm,
+# git mv, sed -i), `-a` / `--all` / `-i` / `--include` / `-o` / `--only`, and a
+# pathspec after `--` all change what the commit contains, and the tree this hook
+# sees is the tree BEFORE the command runs -- so each of them must run the tests.
+# Every row below has a clean tree plus a docs-only change, the exact state in
+# which a lone commit is skipped, so RAN can only come from the command shape.
+tp_i1_repo() { # <name> -> repo with tracked src/a.c and a docs-only working change
+  R=$(tp_repo "$1" "src/"); tp_seed_src "$R"
+  echo one > "$R/src/a.c"; git -C "$R" add src/a.c >/dev/null 2>&1; git -C "$R" commit -q -m a >/dev/null 2>&1
+  echo d > "$R/docs/a.md"
+}
+tp_i1_repo tp_i1_rm;    tp_run "$R" 'git rm -q src/a.c && git commit -m x';   tp_expect "A1 I-1: git rm && commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_mv;    tp_run "$R" 'git mv src/a.c docs/a.c && git commit -m x'; tp_expect "A1 I-1: git mv && commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_sed;   tp_run "$R" 'sed -i s/one/two/ src/a.c && git commit -am x'; tp_expect "A1 I-1: sed -i && commit -am -> tests run" RAN "$R"
+tp_i1_repo tp_i1_a;     tp_run "$R" 'git commit -a -m x';                     tp_expect "A1 I-1: git commit -a -> tests run" RAN "$R"
+tp_i1_repo tp_i1_am;    tp_run "$R" 'git commit -am x';                       tp_expect "A1 I-1: git commit -am -> tests run" RAN "$R"
+tp_i1_repo tp_i1_all;   tp_run "$R" 'git commit --all -m x';                  tp_expect "A1 I-1: git commit --all -> tests run" RAN "$R"
+tp_i1_repo tp_i1_inc;   tp_run "$R" 'git commit --include src/a.c -m x';      tp_expect "A1 I-1: git commit --include -> tests run" RAN "$R"
+tp_i1_repo tp_i1_only;  tp_run "$R" 'git commit --only -m x';                 tp_expect "A1 I-1: git commit --only -> tests run" RAN "$R"
+tp_i1_repo tp_i1_o;     tp_run "$R" 'git commit -o -m x';                     tp_expect "A1 I-1: git commit -o -> tests run" RAN "$R"
+tp_i1_repo tp_i1_path;  tp_run "$R" 'git commit -m x -- src/a.c';             tp_expect "A1 I-1: pathspec after -- -> tests run" RAN "$R"
+tp_i1_repo tp_i1_bare;  tp_run "$R" 'git commit -m x src/a.c';                tp_expect "A1 I-1: bare pathspec -> tests run" RAN "$R"
+tp_i1_repo tp_i1_semi;  tp_run "$R" 'rm -f src/a.c; git commit -m x';         tp_expect "A1 I-1: rm ; commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_pipe;  tp_run "$R" 'echo y | git commit -m x';               tp_expect "A1 I-1: piped commit -> tests run" RAN "$R"
+tp_i1_repo tp_i1_sub;   tp_run "$R" 'git commit -m "$(git rm -q src/a.c)"';   tp_expect "A1 I-1: command substitution in the message -> tests run" RAN "$R"
+tp_i1_repo tp_i1_open;  tp_run "$R" 'git commit -m "unterminated';            tp_expect "A1 I-1: unterminated quote -> tests run" RAN "$R"
+# The lone commit still skips, quotes and a `-C` prefix included; the operators
+# INSIDE quotes are data.
+tp_i1_repo tp_i1_lone;  tp_run "$R" 'git commit -m x';                        tp_expect "A1 I-1: a lone git commit still skips" SKIP "$R"
+tp_i1_repo tp_i1_quot;  tp_run "$R" 'git commit -m "docs: a && b; c | d"';    tp_expect "A1 I-1: operators inside quotes are data -> skipped" SKIP "$R"
+tp_i1_repo tp_i1_dash;  tp_run "$R" "git -C $R commit --no-verify -m 'x y'";  tp_expect "A1 I-1: lone git -C <dir> commit --no-verify -> skipped" SKIP "$R"
+# v4.3.0 A1 fix (ruling S-33): Claude Code's standard commit form, a quoted-heredoc
+# `-m "$(cat <<'EOF' ... EOF )"`, is a lone commit too: a QUOTED delimiter makes the
+# body literal text. Anything else -- another substitution, an unquoted delimiter
+# (the body is expanded), `<<-`, text after the closing `)"`, a second command, a
+# flag that changes what is committed -- still runs the tests.
+# A heredoc message is a multi-line command with `"` and `\` on later lines; jesc
+# escapes every line since ruling S-36, so tp_run carries it (no local runner).
+tp_hd() { # <flags before -m> <open quote form> <body> <closer tail> -> the command
+  printf '%s' "git commit ${1}-m \"\$(cat <<${2}"$'\n'"${3}"$'\n'"EOF"$'\n'")\"${4}"
+}
+tp_i1_repo tp_s33_sq;   tp_run "$R" "$(tp_hd '' "'EOF'" $'subject\n\nbody with $(x) and `y` and "q"' '')"; tp_expect "A1 S-33: quoted-heredoc message ('EOF') -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_dq;   tp_run "$R" "$(tp_hd '' '"EOF"' $'subject\n\nbody' '')"; tp_expect "A1 S-33: quoted-heredoc message (\"EOF\") -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_ws;   tp_run "$R" "$(tp_hd '--no-verify ' "'EOF'" 'subject' '  ')"; tp_expect "A1 S-33: trailing whitespace after the closer -> skipped" SKIP "$R"
+tp_i1_repo tp_s33_unq;  tp_run "$R" "$(tp_hd '' 'EOF' 'subject' '')"; tp_expect "A1 S-33: unquoted delimiter -> tests run" RAN "$R"
+tp_i1_repo tp_s33_body; tp_run "$R" "$(tp_hd '' 'EOF' 'subject $(rm x)' '')"; tp_expect "A1 S-33: unquoted delimiter, body has \$(rm x) -> tests run" RAN "$R"
+tp_i1_repo tp_s33_tail; tp_run "$R" "$(tp_hd '' "'EOF'" 'subject' ' && git push')"; tp_expect "A1 S-33: text after the closing )\" -> tests run" RAN "$R"
+tp_i1_repo tp_s33_a;    tp_run "$R" "$(tp_hd '-a ' "'EOF'" 'subject' '')"; tp_expect "A1 S-33: -a with the heredoc -> tests run" RAN "$R"
+tp_i1_repo tp_s33_bt;   tp_run "$R" 'git commit -m "`git rm -q src/a.c`"'; tp_expect "A1 S-33: backtick message -> tests run" RAN "$R"
+tp_i1_repo tp_s33_dash; tp_run "$R" "$(tp_hd '' "-'EOF'" 'subject' '')"; tp_expect "A1 S-33: <<- form -> tests run" RAN "$R"
+tp_i1_repo tp_s33_two;  tp_run "$R" "$(tp_hd '' "'EOF'" 'subject' '')"$'\ngit push'; tp_expect "A1 S-33: a second command -> tests run" RAN "$R"
+# Ruling S-34: bash ends a quoted heredoc inside $( ) at a body line that STARTS with
+# the delimiter followed by `)`, and runs what follows on that line. The matcher ends
+# the body only at a line exactly equal to the delimiter; any OTHER line that starts
+# with the delimiter is doubt, so the tests run (a delimiter-prefix line such as
+# `EOFyz` is refused too: conservative, accepted).
+tp_i1_repo tp_s34_rep;  tp_run "$R" "$(tp_hd '--allow-empty ' "'EOF'" $'msg\nEOF)" ; git rm -q src/a.c ; git commit -m y' '')"; tp_expect "A1 S-34: body line EOF)\" ; <cmd> hides a second command -> tests run" RAN "$R"
+tp_i1_repo tp_s34_par;  tp_run "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF)' '')"; tp_expect "A1 S-34: body line EOF) -> tests run" RAN "$R"
+tp_i1_repo tp_s34_psp;  tp_run "$R" "$(tp_hd '' "'EOF'" $'msg\nEOF )' '')"; tp_expect "A1 S-34: body line 'EOF )' -> tests run" RAN "$R"
+tp_i1_repo tp_s34_pre;  tp_run "$R" "$(tp_hd '' "'EOF'" $'msg\nEOFyz' '')"; tp_expect "A1 S-34: body line EOFyz (delimiter prefix) -> tests run" RAN "$R"
+# ---- end v4.3.0 A1
+
+# ---- v4.3.0 A2: **Gate extra** reuse + per-leg results ----
+# Fixture note (mirrors A1's own): pre-commit-test.sh captures a PASSING
+# run's stdout/stderr to a tempfile and deletes it on success, and
+# run-gate.sh's **Test**/leg commands run with NO redirection at all -- they
+# inherit THIS process's stdout/stderr, same as the plain **Gate** path
+# always has -- so `bash hooks/run-gate.sh`'s OWN captured output is where
+# A2-TEST-RAN / A2-EXTRA-RAN show up, never pre-commit-test.sh's.
+a2_repo() { # <name> -> repo with t.sh/x.sh + Test/Gate/Gate-extra wired so R-A holds
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho A2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho A2-EXTRA-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+a2_repo_noextra() { # <name> -> same, but **Gate extra** unset (row 6)
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho A2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho A2-EXTRA-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+a2_repo_extrafail() { # <name> -> **Gate extra** leg fails (row 7)
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho A2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho A2-EXTRA-RAN\nexit 1\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+a2_commit() { # <repo> -- stage everything, feed pre-commit-test.sh the commit
+  # payload (this writes the last-precommit.<tree>.json record under test),
+  # then really run the commit it gated -- this suite drives the hook
+  # directly instead of through the full Claude Code harness, so the tool
+  # call the hook would have gated is reproduced by hand right after it.
+  git -C "$1" add -A >/dev/null 2>&1
+  printf '%s' "$(mkjson Bash 'git commit -m x' "$1")" | bash "$ROOT/hooks/pre-commit-test.sh" >"$1/.a2_pct_out" 2>&1
+  git -C "$1" commit -q -m x >/dev/null 2>&1
+}
+a2_rungate() { # <repo> -- runs hooks/run-gate.sh with cwd=<repo>, capturing
+  # stdout+stderr to .a2_gate_out and the exit code to .a2_gate_rc
+  ( cd "$1" && bash "$ROOT/hooks/run-gate.sh" ) >"$1/.a2_gate_out" 2>&1
+  printf '%s' "$?" > "$1/.a2_gate_rc"
+}
+a2_artifact() { # <repo> -> last-pass.<HEAD sha>.json path for the repo's CURRENT HEAD
+  gatepassfile "$1" "$(git -C "$1" rev-parse HEAD 2>/dev/null)"
+}
+a2_precommit_record() { # <repo> -> last-precommit.<tree>.json path for HEAD^{tree}
+  precommitfile "$1" "$(git -C "$1" rev-parse 'HEAD^{tree}' 2>/dev/null)"
+}
+a2_has() { grep -qF "$2" "$1" 2>/dev/null && echo yes || echo no; } # <file> <needle>
+
+# Matrix finding, same as gate-before-merge.sh's own §3 rows (search
+# NODE13_ABSENT above): gc_gate_env's reuse-eligibility check VOIDS outright
+# the moment ENV_DETAIL carries ANY `=absent` contributor (by design -- the
+# same v4.1.1 #15 polarity hooks/run-gate.sh's own reuse decision repeats).
+# scripts/test-hooks-parser-matrix.sh's python3-only/jq-only configurations
+# hide `node` (and jq-only hides python3 too), so under a restricted parser
+# configuration ENV_DETAIL genuinely, CORRECTLY carries `node=absent` and
+# reuse is genuinely, correctly voided -- a restricted run is not a bug here,
+# it is the fail-closed behaviour working as designed. The outcome is
+# DETERMINED by which contributors are absent on THIS host under THIS PATH,
+# so it is ASSERTED (branched), never skipped -- same idiom as NODE13_ABSENT.
+a2_env_detail() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null | tr '\n' '|' ); }
+A2_ENV_VOID=0
+case "$(a2_env_detail "$TMPROOT")" in *"=absent"*) A2_ENV_VOID=1 ;; esac
+if [ "$A2_ENV_VOID" = 1 ]; then A2_R1_TESTRUN=yes; A2_R1_REUSEDNAME=no
+else A2_R1_TESTRUN=no; A2_R1_REUSEDNAME=yes; fi
+
+# Row 1: matching record -> reuse (when the environment fingerprint is usable
+# on this host/PATH; see A2_ENV_VOID above). The extra leg always runs and is
+# always recorded regardless (R-A: per-leg results exist whether or not Test
+# was reused) -- only whether Test itself re-runs, and whether the artifact
+# names a reused record, depend on the fingerprint being usable.
+R=$(a2_repo a2_match); a2_commit "$R"; a2_rungate "$R"
+expect "A2: reuse -- extra leg ran" "yes" "$(a2_has "$R/.a2_gate_out" A2-EXTRA-RAN)"
+expect "A2: reuse -- test re-run iff env fingerprint unusable" "$A2_R1_TESTRUN" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+expect "A2: reuse -- artifact names the reused record iff env fingerprint usable" "$A2_R1_REUSEDNAME" "$(a2_has "$(a2_artifact "$R")" '"reused_test":"last-precommit.')"
+expect "A2: reuse -- one leg recorded" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+expect "A2: reuse -- leg rc 0" "yes" "$(a2_has "$(a2_artifact "$R")" '"rc":0')"
+expect "A2: reuse -- run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+
+# Row 2: **Test** changed after the commit (the OLD record still exists) ->
+# NOT reused. **Gate** no longer equals **Test** && **Gate extra** (R-A), so
+# **Gate extra** is ignored outright with a WARN and the full **Gate** runs --
+# which is why A2-TEST-RAN reappears (**Gate** itself still runs `bash t.sh`).
+# This row alone does not isolate test_sha256 (R-A already fails first, and
+# PROJECT_CONTEXT.md is tracked so the edit also moves TREE_HASH, so the OLD
+# record would not even be found by name) -- rows 2b/2c below isolate the
+# test_sha256 and path guards directly, per Review Focus #3.
+R=$(a2_repo a2_testchanged); a2_commit "$R"
+printf '# ctx\n\n- **Test**: `bash t.sh x`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$R/PROJECT_CONTEXT.md"
+a2_rungate "$R"
+expect "A2: Test line changed -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+expect "A2: Test line changed -- R-A WARN printed, full Gate runs" "yes" "$(a2_has "$R/.a2_gate_out" 'WARN **Gate extra**')"
+
+# Row 2b: record test_sha256 differs (hand-edited; PROJECT_CONTEXT.md and the
+# rest of the record untouched, so R-A still holds and the record is still
+# found under the unchanged TREE_HASH) -> NOT reused purely on the sha guard.
+R=$(a2_repo a2_badsha); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"test_sha256":"[^"]*"/"test_sha256":"deadbeef"/' "$REC"
+a2_rungate "$R"
+expect "A2: record test_sha256 differs -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 2c: record path != test (hand-edited to the A1 skip literal, the one
+# real-world way a non-"test" path reaches this record) -> NOT reused purely
+# on the path guard, isolated from rc/sha/env/freshness.
+R=$(a2_repo a2_badpath); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"path":"test"/"path":"test-paths-skip"/' "$REC"
+a2_rungate "$R"
+expect "A2: record path != test -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 3: record rc != 0 (hand-edited) -> NOT reused; Test and the leg both run
+# and are still recorded (R-A: per-leg results exist whether or not reused).
+R=$(a2_repo a2_badrc); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"rc":0,/"rc":1,/' "$REC"
+a2_rungate "$R"
+expect "A2: record rc!=0 -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+expect "A2: record rc!=0 -- extra leg still ran and recorded" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+
+# Row 4: record older than 24h -> NOT reused (freshness fails).
+R=$(a2_repo a2_stale); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); touch -d '-25 hours' "$REC" 2>/dev/null
+a2_rungate "$R"
+expect "A2: record older than 24h -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 5: record env differs (hand-edited) -> NOT reused.
+R=$(a2_repo a2_badenv); a2_commit "$R"
+REC=$(a2_precommit_record "$R"); sed -i 's/"env":"[^"]*"/"env":"x"/' "$REC"
+a2_rungate "$R"
+expect "A2: record env differs -- NOT reused (test re-run)" "yes" "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN)"
+
+# Row 6: **Gate extra** unset -> full Gate, legs:[] and reused_test:"".
+R=$(a2_repo_noextra a2_noextra); a2_commit "$R"; a2_rungate "$R"
+expect "A2: Gate extra unset -- full Gate runs (both markers)" "yes yes" \
+  "$(a2_has "$R/.a2_gate_out" A2-TEST-RAN) $(a2_has "$R/.a2_gate_out" A2-EXTRA-RAN)"
+expect "A2: Gate extra unset -- artifact legs:[]" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
+expect "A2: Gate extra unset -- artifact reused_test empty" "yes" "$(a2_has "$(a2_artifact "$R")" '"reused_test":""')"
+
+# Row 7: the extra leg itself fails -> run-gate exits non-zero, no artifact.
+R=$(a2_repo_extrafail a2_extrafail); a2_commit "$R"; a2_rungate "$R"
+expect "A2: extra leg fails -- run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "A2: extra leg fails -- no artifact written" "yes" \
+  "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# ---- v4.3.0 fix round 1 (opus review C1/C2/I1/I2, rulings S-6/S-7/S-8) ----
+# FR1 row 1/2: C1 -- "wrong reuse across directories". A commit issued from a
+# SUBDIRECTORY of the repo resolves REPO_PATH (and so PCT_ARTIFACT_BASE) to
+# that subdirectory: pre-commit-test.sh reads sub/PROJECT_CONTEXT.md and runs
+# sub/t.sh, while hooks/run-gate.sh always reads the TOPLEVEL's own
+# PROJECT_CONTEXT.md. If the two **Test** fields are byte-identical text
+# (plausible, not an attack), a plain text comparison sees a match even
+# though sub/t.sh and the toplevel's own t.sh are different files with
+# different behaviour.
+fr1_c1_setup() { # <name> worktree|plain -> prints the "sub" dir to commit from
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho C1-TOP-RAN\nexit 1\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho C1-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho C1-SUB-RAN\nexit 0\n' > "$r/sub/t.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh`\n' > "$r/sub/PROJECT_CONTEXT.md"
+  git -C "$r" add -A >/dev/null 2>&1
+  git -C "$r" commit -q -m "fr1 c1 setup" >/dev/null 2>&1
+  if [ "$2" = worktree ]; then
+    wt="$TMPROOT/${1}-wt"
+    git -C "$r" worktree add -q "$wt" -b "${1}-wtbranch" >/dev/null 2>&1
+    printf '%s\n' "$wt/sub"
+  else
+    printf '%s\n' "$r/sub"
+  fi
+}
+
+# Row 1: linked worktree, commit from sub/ -- NO reuse, and the full Gate
+# fails (the toplevel's OWN t.sh, run for real, exits 1).
+WTSUB=$(fr1_c1_setup fr1c1wt worktree)
+a2_commit "$WTSUB"; a2_rungate "$WTSUB"
+expect "FR1 C1 (linked worktree): toplevel Test actually ran" "yes" "$(a2_has "$WTSUB/.a2_gate_out" C1-TOP-RAN)"
+expect "FR1 C1 (linked worktree): sub/'s Test never substituted in" "no" "$(a2_has "$WTSUB/.a2_gate_out" C1-SUB-RAN)"
+expect "FR1 C1 (linked worktree): run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$WTSUB/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR1 C1 (linked worktree): no artifact written" "yes" \
+  "$([ ! -f "$(a2_artifact "$WTSUB")" ] && echo yes || echo no)"
+
+# Row 2: the same shape from a subdirectory of a PLAIN checkout (I1's own
+# reproduction case: --git-path index prints RELATIVE there) -- still no
+# reuse, and the precommit record itself must not be a spurious EMPTY TREE
+# with reusable fields populated (I1/I2, S-8).
+PLAINSUB=$(fr1_c1_setup fr1c1plain plain)
+a2_commit "$PLAINSUB"
+REC_PLAIN=$(a2_precommit_record "$PLAINSUB")
+expect "FR1 I1 (plain checkout, subdir commit): precommit record exists" "yes" \
+  "$([ -f "$REC_PLAIN" ] && echo yes || echo no)"
+expect "FR1 I1 (plain checkout, subdir commit): record tree is NOT the empty tree" "no" \
+  "$(a2_has "$REC_PLAIN" '"tree":"4b825dc642cb6eb9a060e54bf8d69288fbee4904"')"
+expect "FR1 I1 (plain checkout, subdir commit): no reusable test_sha256 (cross-dir)" "yes" \
+  "$(a2_has "$REC_PLAIN" '"test_sha256":""')"
+a2_rungate "$PLAINSUB"
+expect "FR1 C1 (plain checkout): toplevel Test actually ran" "yes" "$(a2_has "$PLAINSUB/.a2_gate_out" C1-TOP-RAN)"
+expect "FR1 C1 (plain checkout): run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$PLAINSUB/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+
+# FR1 row 3: C2 -- "leg splitting drops shell state". `**Gate extra**: cd sub
+# && bash x.sh` splits (naively) into TWO legs ("cd sub", "bash x.sh"), each
+# its own fresh `bash -c` from REPO_TOP -- the second leg then runs the WRONG
+# (top-level) x.sh instead of sub/x.sh. With S-7, "cd sub" is a STATEFUL leg
+# (denylisted verb), so the split is refused and the full Gate runs as ONE
+# `bash -c`, correctly finding sub/x.sh (which fails).
+fr1_c2_repo() {
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho C2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho C2-SUB-XSH-RAN\nexit 1\n' > "$r/sub/x.sh"
+  printf '#!/usr/bin/env bash\necho C2-TOP-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && cd sub && bash x.sh`\n- **Gate extra**: `cd sub && bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr1_c2_repo fr1c2); a2_commit "$R"; a2_rungate "$R"
+expect "FR1 C2: sub/x.sh really ran (not the top-level one)" "yes" "$(a2_has "$R/.a2_gate_out" C2-SUB-XSH-RAN)"
+expect "FR1 C2: top-level x.sh did NOT run" "no" "$(a2_has "$R/.a2_gate_out" C2-TOP-XSH-RAN)"
+expect "FR1 C2: run-gate exits non-zero (the real failure is caught)" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR1 C2: no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# FR1 row 4: the Test/extra BOUNDARY has the identical flaw -- a **Test**
+# that itself does `cd sub && bash t.sh` must not be split away from a leg
+# that depends on landing in sub/ too. No split -> the combined `bash -c`
+# preserves the cd, and the leg (bash x.sh, only present under sub/) is found;
+# a wrongly-split run would instead look for x.sh at REPO_TOP and fail.
+fr1_c2b_repo() {
+  r=$(mkrepo "$1" main)
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho C2B-SUB-TSH-RAN\nexit 0\n' > "$r/sub/t.sh"
+  printf '#!/usr/bin/env bash\necho C2B-SUB-XSH-RAN\nexit 0\n' > "$r/sub/x.sh"
+  printf '# ctx\n\n- **Test**: `cd sub && bash t.sh`\n- **Gate**: `cd sub && bash t.sh && bash x.sh`\n- **Gate extra**: `bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr1_c2b_repo fr1c2b); a2_commit "$R"; a2_rungate "$R"
+expect "FR1 Test/extra boundary: no split -- combined run succeeds (exit 0)" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+expect "FR1 Test/extra boundary: not reused/split (no 'reused from' message)" "no" "$(a2_has "$R/.a2_gate_out" 'Test legs reused from')"
+expect "FR1 Test/extra boundary: artifact legs:[] (fell back to full Gate)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
+
+# FR1 row 5: an assignment-prefixed leg (`FOO=1 bash x.sh`) must also refuse
+# the split, mechanically -- no reuse message, legs:[].
+fr1_c2c_repo() {
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho C2C-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho C2C-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && FOO=1 bash x.sh`\n- **Gate extra**: `FOO=1 bash x.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr1_c2c_repo fr1c2c); a2_commit "$R"; a2_rungate "$R"
+expect "FR1 assignment-prefixed leg: no split (no 'reused from' message)" "no" "$(a2_has "$R/.a2_gate_out" 'Test legs reused from')"
+expect "FR1 assignment-prefixed leg: artifact legs:[] (fell back to full Gate)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
+expect "FR1 assignment-prefixed leg: run-gate exit 0 (full Gate still passes)" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+
+# FR1 row 6 (racy same-second same-size edit, I2): not independently
+# fixtured -- a deterministic same-second/same-size stat-cache collision is
+# not reproducible portably or quickly in this suite. Covered by `cp -p`
+# alone (both hooks), which preserves the REAL index file's timestamps on the
+# temp copy instead of stamping "now" -- see the S-8 comments in both hooks.
+
+# ---- v4.3.0 fix round 2 (opus re-review of C2, ruling S-10) ----
+# Round 1's rg_stateless was a DENYLIST over whitespace-separated tokens; the
+# re-review reproduced NINE wrong-PASS bypasses of it (see hooks/run-gate.sh
+# for the full list and mechanism per bypass). Each row here builds
+# **Gate extra**: "<bypass> && bash x.sh" where sub/x.sh FAILS and the
+# top-level x.sh PASSES -- pre-fix, the bypass let the split treat the
+# malicious prefix as state-free, ran the WRONG (top-level) x.sh in a fresh
+# `bash -c`, and reported a wrong PASS where the plain Gate (the same text,
+# run as ONE combined command, no split at all) gives rc != 0. Post-fix, the
+# allow-list refuses the part, the whole **Gate extra** is dropped, and the
+# FULL Gate runs as one combined command -- correctly finding sub/x.sh.
+fr2_repo() { # <name> <gate-extra-text> [seed-cmd, eval'd with $r in scope] -> repo dir
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR2-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho FR2-SUB-XSH-RAN\nexit 1\n' > "$r/sub/x.sh"
+  printf '#!/usr/bin/env bash\necho FR2-TOP-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  [ -z "${3:-}" ] || eval "$3"
+  # %s substitution, never embedded in the format string itself: some of
+  # these values contain a backslash, which a printf FORMAT string (unlike
+  # an argument substituted via %s) would try to interpret as its own escape.
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr2_check() { # <label> <gate-extra-text> [seed-cmd]
+  fr2r=$(fr2_repo "fr2_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2" "${3:-}")
+  a2_commit "$fr2r"; a2_rungate "$fr2r"
+  expect "FR2 bypass ($1): sub/x.sh really ran" "yes" "$(a2_has "$fr2r/.a2_gate_out" FR2-SUB-XSH-RAN)"
+  expect "FR2 bypass ($1): top-level x.sh did NOT run" "no" "$(a2_has "$fr2r/.a2_gate_out" FR2-TOP-XSH-RAN)"
+  expect "FR2 bypass ($1): run-gate exits non-zero" "yes" \
+    "$([ "$(cat "$fr2r/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+  expect "FR2 bypass ($1): no artifact written" "yes" "$([ ! -f "$(a2_artifact "$fr2r")" ] && echo yes || echo no)"
+}
+
+fr2_check 'backslash-cd' 'c\d sub && bash x.sh'
+fr2_check 'no-space-&&' 'true&&cd sub && bash x.sh'
+fr2_check 'brace-expansion' '{cd,sub} && bash x.sh'
+fr2_check 'IFS-word-split' 'cd${IFS}sub && bash x.sh'
+fr2_check 'printf-v-indirect' 'printf -v D sub/ && bash ${D}x.sh'
+fr2_check 'read-indirect' 'read D < d.txt && bash ${D}x.sh' 'printf "sub/\n" > "$r/d.txt"'
+
+# Positive control: a plain safe pair must still split and reuse -- the
+# round-2 tightening must not widen into refusing legitimate legs.
+R=$(a2_repo fr2_positive); a2_commit "$R"; a2_rungate "$R"
+expect "FR2 positive control: safe pair still splits (extra leg ran)" "yes" "$(a2_has "$R/.a2_gate_out" A2-EXTRA-RAN)"
+expect "FR2 positive control: safe pair -- run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+# ---- end v4.3.0 fix round 2
+
+# ---- v4.3.0 fix round 3 (opus re-review of C2, ruling S-11) ----
+# Two NEW wrong-PASS paths found INSIDE the round-2 allow-list itself.
+
+# (1) Critical: the assignment regex missed the `NAME+=value` APPEND form.
+# `PATH+=:sub` genuinely mutates the (already-exported) PATH when run
+# combined; pcheck.sh below deliberately FAILS when it observes that
+# mutation, simulating "the combined Gate correctly propagated a state
+# change and a downstream check caught it". A wrongly split leg runs
+# `PATH+=:sub` in its own throwaway `bash -c`, the mutation never reaches
+# the next leg's fresh process, and pcheck.sh sees a clean PATH -- a false
+# PASS where the plain Gate gives rc != 0.
+fr3_pcheck_repo() {
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR3-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\ncase "$PATH" in *:sub) exit 1 ;; esac\necho FR3-PCHECK-CLEAN\nexit 0\n' > "$r/pcheck.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && PATH+=:sub && bash pcheck.sh`\n- **Gate extra**: `PATH+=:sub && bash pcheck.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(fr3_pcheck_repo fr3_pathappend); a2_commit "$R"; a2_rungate "$R"
+expect "FR3 += assignment (PATH+=:sub): run-gate exits non-zero (matches plain Gate)" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR3 += assignment (PATH+=:sub): no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# (2) Important: an empty/whitespace-only leg (from a leading, trailing, or
+# doubled `&&`) was silently SKIPPED (`continue`) instead of being refused --
+# the run loop then ran only the remaining, normal-looking legs and reported
+# rc 0, where the plain Gate (the IDENTICAL text, run as ONE combined
+# command) is a bash SYNTAX ERROR (measured rc 2, always non-zero).
+fr3_empty_repo() { # <name> <gate-extra-text> -> repo dir
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR3E-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho FR3E-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr3_empty_check() { # <label> <gate-extra-text>
+  fr3r=$(fr3_empty_repo "fr3e_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2")
+  a2_commit "$fr3r"; a2_rungate "$fr3r"
+  expect "FR3 empty leg ($1): run-gate exits non-zero (matches plain Gate's syntax error)" "yes" \
+    "$([ "$(cat "$fr3r/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+  expect "FR3 empty leg ($1): no artifact written" "yes" "$([ ! -f "$(a2_artifact "$fr3r")" ] && echo yes || echo no)"
+}
+fr3_empty_check 'middle-double-&&' 'bash x.sh && && bash x.sh'
+fr3_empty_check 'trailing-&&' 'bash x.sh &&'
+fr3_empty_check 'leading-&&' '&& bash x.sh'
+
+# Four previously-unfixtured bypasses from the round-2 review's own list
+# (already correctly refused by round 2's allow-list; adding coverage now,
+# per the controller's request):
+fr2_check 'backslash-cd-bare' '\cd sub && bash x.sh'
+fr2_check 'eval-escaped-space' 'eval cd\ sub && bash x.sh'
+fr2_check 'default-assign-indirect' ': ${D:=sub/} && bash ${D}x.sh'
+fr2_check 'hash-indirect' 'hash -p ./sub/x.sh bash && bash x.sh'
+# ---- end v4.3.0 fix round 3
+
+# ---- v4.3.0 fix round 4 (opus re-review of C2, ruling S-12) ----
+# The round-3 re-review reproduced a wrong PASS through a builtin nobody had
+# denylisted: `coproc sleep 5 && jobs -x bash chk.sh %1`. Run as ONE `bash -c`
+# the job table carries the coproc across `&&`, so `jobs -x` rewrites `%1`
+# into the coproc's process-group id and chk.sh (fails on a numeric argument)
+# exits 1. Split, the second leg's fresh shell has no job 1, `%1` reaches
+# chk.sh unrewritten, and the split gave rc 0 plus an artifact. Three denylist
+# rounds leaked (9, then 2, then 1); S-12 replaces the builtin denylist with a
+# FIRST-WORD ALLOW-list, so the rows below compare every refused shape
+# against the plain Gate (the same text, run as one command, computed here
+# independently of run-gate.sh) instead of against a guessed outcome.
+fr4_repo() { # <name> <gate-extra-text> -> repo dir (t.sh/x.sh/chk.sh/scripts/x.sh/bin/npm all pass except chk.sh on a number)
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR4-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho FR4-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '#!/usr/bin/env bash\necho "FR4-CHK-ARG=$1"\ncase "$1" in *[!0-9]*|"") exit 0 ;; esac\nexit 1\n' > "$r/chk.sh"
+  mkdir -p "$r/scripts" "$r/bin"
+  printf '#!/usr/bin/env bash\necho FR4-SCRIPTS-XSH-RAN\nexit 0\n' > "$r/scripts/x.sh"
+  printf '#!/usr/bin/env bash\necho "FR4-FAKE-NPM-RAN $*"\nexit 0\n' > "$r/bin/npm"
+  chmod +x "$r/scripts/x.sh" "$r/bin/npm" 2>/dev/null
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr4_rungate() { # <repo> -- a2_rungate with the repo's bin/ first on PATH (fake npm)
+  ( cd "$1" && PATH="$1/bin:$PATH" bash "$ROOT/hooks/run-gate.sh" ) >"$1/.a2_gate_out" 2>&1
+  printf '%s' "$?" > "$1/.a2_gate_rc"
+}
+fr4_plain_rc() { # <repo> <gate-extra-text> -> rc of the plain combined Gate, run once, unsplit
+  fr4_whole="bash t.sh && $2"
+  ( cd "$1" && PATH="$1/bin:$PATH" bash -c "$fr4_whole" ) >/dev/null 2>&1 </dev/null
+  printf '%s' "$?"
+}
+fr4_refused() { # <label> <gate-extra-text> -- no split, no reuse, rc == the plain Gate's
+  fr4r=$(fr4_repo "fr4n_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2")
+  a2_commit "$fr4r"; fr4_rungate "$fr4r"
+  fr4_want=$(fr4_plain_rc "$fr4r" "$2")
+  fr4_got=$(cat "$fr4r/.a2_gate_rc" 2>/dev/null)
+  expect "FR4 refused ($1): allow-list WARN printed (no split)" "yes" "$(a2_has "$fr4r/.a2_gate_out" 'not an allow-listed')"
+  expect "FR4 refused ($1): Test not reused" "no" "$(a2_has "$fr4r/.a2_gate_out" 'Test legs reused from')"
+  expect "FR4 refused ($1): no split legs recorded" "no" "$(a2_has "$(a2_artifact "$fr4r")" '"legs":[{')"
+  expect "FR4 refused ($1): run-gate rc zero-ness equals the plain Gate's ($fr4_want)" \
+    "$([ "$fr4_want" = 0 ] && echo zero || echo nonzero)" "$([ "$fr4_got" = 0 ] && echo zero || echo nonzero)"
+  expect "FR4 refused ($1): artifact iff the plain Gate passes" \
+    "$([ "$fr4_want" = 0 ] && echo yes || echo no)" "$([ -f "$(a2_artifact "$fr4r")" ] && echo yes || echo no)"
+}
+fr4_split() { # <label> <gate-extra-text> <marker the leg prints> -- splits, leg recorded, reuse iff env usable
+  fr4r=$(fr4_repo "fr4p_$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)" "$2")
+  a2_commit "$fr4r"; fr4_rungate "$fr4r"
+  expect "FR4 allowed ($1): no allow-list WARN" "no" "$(a2_has "$fr4r/.a2_gate_out" 'not an allow-listed')"
+  expect "FR4 allowed ($1): the leg ran" "yes" "$(a2_has "$fr4r/.a2_gate_out" "$3")"
+  expect "FR4 allowed ($1): split leg recorded" "yes" "$(a2_has "$(a2_artifact "$fr4r")" '"legs":[{')"
+  expect "FR4 allowed ($1): Test reused iff env fingerprint usable" "$A2_R1_REUSEDNAME" \
+    "$(a2_has "$(a2_artifact "$fr4r")" '"reused_test":"last-precommit.')"
+  expect "FR4 allowed ($1): run-gate exit 0" "0" "$(cat "$fr4r/.a2_gate_rc" 2>/dev/null)"
+}
+
+# The reproduced Critical: must equal the plain Gate (rc != 0, no artifact).
+fr4_refused 'coproc-jobs' 'coproc sleep 5 && jobs -x bash chk.sh %1'
+R="$TMPROOT/fr4n_coproc_jobs"
+expect "FR4 coproc/jobs: plain Gate really fails here (fixture sanity)" "nonzero" \
+  "$([ "$(fr4_plain_rc "$R" 'coproc sleep 5 && jobs -x bash chk.sh %1')" = 0 ] && echo zero || echo nonzero)"
+expect "FR4 coproc/jobs: run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR4 coproc/jobs: no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+# First-word negatives: a builtin or keyword, an absolute path, a parent path.
+fr4_refused 'first-word-wait' 'wait && bash x.sh'
+fr4_refused 'first-word-true' 'true && bash x.sh'
+fr4_refused 'first-word-absolute' '/usr/bin/bash x.sh'
+fr4_refused 'first-word-parent' '../x.sh'
+# A job spec as a LATER word, with an allow-listed first word (rule c).
+fr4_refused 'later-word-jobspec' 'bash chk.sh %1'
+
+# Positives: an allow-listed program, a relative script path, a package runner.
+fr4_split 'bash' 'bash x.sh' FR4-XSH-RAN
+fr4_split 'relative-script' './scripts/x.sh' FR4-SCRIPTS-XSH-RAN
+fr4_split 'npm' 'npm test' 'FR4-FAKE-NPM-RAN test'
+# ---- end v4.3.0 fix round 4
+
+# ---- v4.3.0 fix round 5 (opus re-review of C2, ruling S-13) ----
+# The split legs used to run inside `while read ... done <<here-doc`, so each
+# leg's stdin WAS the here-doc holding the remaining legs: a leg that reads
+# stdin (drain.sh = `cat >/dev/null`) swallowed the rest of the list, the later
+# legs never ran, and the split reported PASS where the plain Gate (one
+# command, legs reading the caller's stdin) runs fail.sh and gives rc 1.
+# run-gate's own stdin is /dev/null here so both runs see the same caller stdin.
+fr5_repo() { # <name> <gate-extra-text> -> repo with drain.sh/fail.sh/x.sh
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho FR5-TEST-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\necho FR5-DRAIN-RAN\nexit 0\n' > "$r/drain.sh"
+  printf '#!/usr/bin/env bash\necho FR5-FAIL-RAN\nexit 1\n' > "$r/fail.sh"
+  printf '#!/usr/bin/env bash\necho FR5-XSH-RAN\nexit 0\n' > "$r/x.sh"
+  printf '# ctx\n\n- **Test**: `bash t.sh`\n- **Gate**: `bash t.sh && %s`\n- **Gate extra**: `%s`\n' "$2" "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+fr5_rungate() { # <repo> -- a2_rungate with stdin from /dev/null
+  ( cd "$1" && bash "$ROOT/hooks/run-gate.sh" ) </dev/null >"$1/.a2_gate_out" 2>&1
+  printf '%s' "$?" > "$1/.a2_gate_rc"
+}
+R=$(fr5_repo fr5_drainfail 'bash drain.sh && bash fail.sh'); a2_commit "$R"; fr5_rungate "$R"
+expect "FR5 drain then fail: plain Gate really fails here (fixture sanity)" "nonzero" \
+  "$([ "$(fr4_plain_rc "$R" 'bash drain.sh && bash fail.sh')" = 0 ] && echo zero || echo nonzero)"
+expect "FR5 drain then fail: drain leg ran" "yes" "$(a2_has "$R/.a2_gate_out" FR5-DRAIN-RAN)"
+expect "FR5 drain then fail: fail.sh really ran (not swallowed)" "yes" "$(a2_has "$R/.a2_gate_out" FR5-FAIL-RAN)"
+expect "FR5 drain then fail: run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+expect "FR5 drain then fail: no artifact written" "yes" "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
+
+R=$(fr5_repo fr5_drainpass 'bash drain.sh && bash x.sh'); a2_commit "$R"; fr5_rungate "$R"
+expect "FR5 drain then pass: drain leg ran" "yes" "$(a2_has "$R/.a2_gate_out" FR5-DRAIN-RAN)"
+expect "FR5 drain then pass: second leg really ran" "yes" "$(a2_has "$R/.a2_gate_out" FR5-XSH-RAN)"
+expect "FR5 drain then pass: two legs recorded" "yes" "$(a2_has "$(a2_artifact "$R")" '},{"sha256"')"
+expect "FR5 drain then pass: run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+# ---- end v4.3.0 fix round 5
+# ---- end v4.3.0 A2
+
+# ---- v4.3.0 A3: the budget brake lets a `git commit` through ----
+# At BLOCK_AT the hook used to refuse EVERY call, including the commit that
+# saves the work -- and hooks run in parallel, so pre-commit-test had already
+# spent its run by then. The brake now allows a commit call (exit 0, budget text
+# on stderr, an audit line) and keeps blocking everything else. The counter is
+# seeded to BLOCK_AT-1 the way the SendMessage block above does (white-box, so
+# the suite does not pay 120 spawns per row). The hook is parser-free, so the
+# rows drive it with raw payloads built by mkjson-shaped printf, never json.sh.
+echo
+echo "=== hooks/agent-budget-warn.sh (a commit passes the ceiling, v4.3.0 A3) ==="
+
+A3CWD="$TMPROOT/a3cwd"
+mkdir -p "$A3CWD/.claude"
+
+a3_payload() { # <tool_name> <tool_input body, already JSON> <agent_id>
+  printf '{"session_id":"a3sess","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{%s},"cwd":"%s","agent_id":"%s"}\n' \
+    "$(jesc "$1")" "$2" "$(jesc "$A3CWD")" "$(jesc "$3")"
+}
+a3_cmd() { # <tool_name> <shell command> <agent_id> -- a Bash-shaped payload
+  a3_payload "$1" "\"command\":\"$(jesc "$2")\"" "$3"
+}
+
+# <label> <tmp> <payload> <want_exit> [needle]   -- run the hook once at call N
+a3_run() {
+  a3_label="$1"; a3_tmp="$2"; a3_pl="$3"; a3_want="$4"; a3_needle="${5:-}"
+  a3_err="$TMPROOT/a3.err"
+  printf '%s' "$a3_pl" | TMPDIR="$a3_tmp" bash "$ROOT/hooks/agent-budget-warn.sh" \
+    >/dev/null 2>"$a3_err"
+  a3_got=$?
+  if [ "$a3_got" = "$a3_want" ] &&
+     { [ -z "$a3_needle" ] || grep -qF "$a3_needle" "$a3_err"; }; then
+    printf 'PASS  %-46s (exit %s)\n' "$a3_label" "$a3_got"
+    pass=$((pass + 1))
+  else
+    printf 'FAIL  %-46s (want %s%s, got %s: %s)\n' "$a3_label" "$a3_want" \
+      "${a3_needle:+ + \"$a3_needle\"}" "$a3_got" "$(head -1 "$a3_err")"
+    fail=$((fail + 1))
+  fi
+}
+# <label> <tool> <command> <want_exit> [needle]  -- a fresh agent seeded to 119
+a3_at120() {
+  a3_n=$((a3_n + 1))
+  a3_t="$TMPROOT/a3bud$a3_n"
+  mkdir -p "$a3_t/claude-agent-budget/a3sess"
+  printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+  a3_run "$1" "$a3_t" "$(a3_cmd "$2" "$3" a3-agent)" "$4" "${5:-}"
+}
+a3_n=0
+
+a3_at120 "A3 call 120 'git commit -m x' passes"        Bash "git commit -m x" 0 "BUDGET: 120 tool calls"
+a3_at120 "A3 call 120 'git -C /x commit -m y' passes"  Bash "git -C /x commit -m y" 0 "this commit is allowed"
+a3_at120 "A3 call 120 'git -c k=v commit' passes"      Bash "git -c k=v commit" 0
+a3_at120 "A3 call 120 'cd d && git commit' passes"     Bash "cd /d && git commit -m z" 0
+a3_at120 "A3 call 120 PowerShell commit passes"        PowerShell "git commit -m x" 0
+# The command string arrives JSON-escaped, so a quoted commit carries \" in it.
+a3_at120 "A3 call 120 bash -c \"git commit\" passes"   Bash 'bash -c "git commit -m x"' 0
+a3_at120 "A3 call 120 'git push origin f' blocks"      Bash "git push origin f" 2 "BUDGET: this spawn has made 120"
+a3_at120 "A3 call 120 'git log --grep commit' blocks"  Bash "git log --grep commit" 2
+a3_at120 "A3 call 120 'echo commit' blocks"            Bash "echo commit" 2
+a3_at120 "A3 call 120 'git status' blocks"             Bash "git status" 2
+# A non-Bash tool whose input merely contains a commit-looking string is not a commit.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 120 Read blocks" "$a3_t" \
+  "$(a3_payload Read "\"file_path\":\"/x/git commit\"" a3-agent)" 2 "BUDGET: this spawn has made 120"
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 120 Write w/ commit text in command blocks" "$a3_t" \
+  "$(a3_payload Write "\"command\":\"git commit -m x\"" a3-agent)" 2
+
+# The brake is not softened elsewhere: a later threshold (180) still blocks a
+# non-commit, and lets a commit through.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 179 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 180 non-commit blocks" "$a3_t" "$(a3_cmd Bash "ls" a3-agent)" 2
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 179 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 180 commit passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+
+# A commit that is NOT on a threshold call is untouched by all of this.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 10 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 call 11 commit passes, no budget text" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+[ ! -s "$a3_err" ] && expect "A3 call 11 commit: stderr silent" "silent" "silent" \
+  || expect "A3 call 11 commit: stderr silent" "silent" "$(head -1 "$a3_err")"
+
+# The audit line names the action, so a post-mortem can tell an allowed commit
+# from a block. log_event needs $CWD/.claude to exist (it does: A3CWD above).
+rm -f "$A3CWD/.claude/liveness.log"
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+a3_run "A3 audit: commit at 120 passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+expect "A3 audit line records action=commit-allowed" "yes" \
+  "$(grep -q 'agent=a3-agent calls=120 action=commit-allowed' "$A3CWD/.claude/liveness.log" 2>/dev/null && echo yes || echo no)"
+
+# --- fix round 1 (S-14 b): wider commit detection -------------------------------
+# An option's argument may be an escaped-quoted string (a path or a value with a
+# space), the binary may be git.exe, and `commit` must END the word so that
+# `git commit-graph` / `git commit-tree` are not commits.
+a3_at120 "A3 -C \"path with spaces\" commit passes"     Bash 'git -C "my dir/x" commit -m x' 0
+a3_at120 "A3 -c user.name=\"A B\" commit passes"        Bash 'git -c user.name="A B" commit -m x' 0
+a3_at120 "A3 git.exe commit passes"                     Bash 'git.exe commit -m x' 0
+a3_at120 "A3 git.exe -C /x commit passes"               PowerShell 'git.exe -C /x commit -m x' 0
+a3_at120 "A3 bare 'git commit' (no args) passes"        Bash 'git commit' 0
+a3_at120 "A3 bash -c \"git commit\" (quote ends it)"    Bash 'bash -c "git commit"' 0
+a3_at120 "A3 'git commit-graph write' blocks"           Bash 'git commit-graph write' 2
+a3_at120 "A3 'git commit-tree abc' blocks"              Bash 'git commit-tree abc' 2
+a3_at120 "A3 'git -C \"a b\" status' blocks"            Bash 'git -C "a b" status' 2
+
+# --- fix round 1 (S-14 a): an allowed commit is NOT counted --------------------
+# Otherwise the commit consumes the threshold (-eq fires once per value) and the
+# next block is 60 calls away; exit-0 stderr is the only stop signal and is
+# likely invisible to the model. Same hazard, same remedy as SendMessage.
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"; a3_ctr="$a3_t/claude-agent-budget/a3sess/a3-agent"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_ctr"
+a3_run "A3 uncount: commit at 120 passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
+expect "A3 uncount: counter is back at 119" "119" "$(cat "$a3_ctr" 2>/dev/null)"
+a3_run "A3 uncount: a second commit passes again" "$a3_t" "$(a3_cmd Bash "git commit -m y" a3-agent)" 0
+expect "A3 uncount: counter still 119" "119" "$(cat "$a3_ctr" 2>/dev/null)"
+a3_run "A3 uncount: next non-commit is blocked" "$a3_t" "$(a3_cmd Bash "ls" a3-agent)" 2 "BUDGET: this spawn has made 120"
+expect "A3 uncount: a block still counts (120)" "120" "$(cat "$a3_ctr" 2>/dev/null)"
+# ---- end v4.3.0 A3
+
+# ---- v4.3.0 B1: deny-hang-shapes refuses three hang-prone command shapes ----
+# Spec Part B1 + plan refinement R-B. Advisory PreToolUse(Bash) hook: a heredoc
+# written into a file, a sleep wait loop, and a leading `cd` before TWO OR MORE
+# further commands. `cd <dir> && <one command>` stays allowed (the merge guard
+# itself requires `cd <gated worktree> && gh pr merge ...`), and a redirect or a
+# quoted string is not a second command.
+echo "=== hooks/deny-hang-shapes.sh (v4.3.0 B1) ==="
+b1() { # <label> <expected_exit> <command>
+  check "B1 $1" hooks/deny-hang-shapes.sh "$2" "$(mkjson Bash "$3" "$TMPROOT")"
+}
+b1nl=$'\n'
+# -- shape 1: a heredoc written into a file -> refused
+b1 "heredoc: cat > f <<'EOF'"          2 "cat > f.txt <<'EOF'${b1nl}body${b1nl}EOF"
+b1 "heredoc: cat <<EOF > f"            2 "cat <<EOF > f.txt${b1nl}body${b1nl}EOF"
+b1 "heredoc: cat <<EOF >> f"           2 "cat <<EOF >> f.txt${b1nl}body${b1nl}EOF"
+b1 "heredoc: tee f <<EOF"              2 "tee f.txt <<EOF${b1nl}body${b1nl}EOF"
+b1 "heredoc: tee -a f <<EOF"           2 "tee -a f.txt <<EOF${b1nl}body${b1nl}EOF"
+b1 "heredoc: cd x && cat > f <<EOF"    2 "cd /x && cat > f.txt <<'EOF'${b1nl}body${b1nl}EOF"
+# -- shape 1: heredocs that are NOT a file write -> allowed
+b1 "ok: message heredoc in a commit"   0 "git commit -m \"\$(cat <<'EOF'${b1nl}fix: x${b1nl}EOF${b1nl})\""
+b1 "ok: python - <<EOF"                0 "python - <<EOF${b1nl}print(1)${b1nl}EOF"
+b1 "ok: cat <<EOF | sort"              0 "cat <<EOF | sort${b1nl}b${b1nl}a${b1nl}EOF"
+b1 "ok: cat <<EOF >/dev/null"          0 "cat <<EOF >/dev/null${b1nl}x${b1nl}EOF"
+b1 "ok: cat <<EOF 2>&1"                0 "cat <<EOF 2>&1${b1nl}x${b1nl}EOF"
+b1 "ok: cat <<< here-string > f"       0 "cat <<< \"x\" > f.txt"
+b1 "ok: cmd 2>&1"                      0 "cmd 2>&1"
+# -- shape 2: a sleep wait loop -> refused
+b1 "wait: until [ -f m ]; sleep"       2 "until [ -f m ]; do sleep 5; done"
+b1 "wait: while true; sleep"           2 "while true; do sleep 1; done"
+b1 "wait: inside bash -c"              2 "bash -c 'while true; do sleep 1; done'"
+b1 "wait: multi-line loop"             2 "while true${b1nl}do${b1nl}  sleep 1${b1nl}done"
+# -- shape 2: allowed
+b1 "ok: sleep 5"                       0 "sleep 5"
+b1 "ok: for loop without sleep"        0 "for f in a b; do echo \$f; done"
+b1 "ok: while without sleep"           0 "while read l; do echo \$l; done < f"
+b1 "ok: loop words in a heredoc body"  0 "git commit -m \"\$(cat <<'EOF'${b1nl}while true; do sleep 1; done${b1nl}EOF${b1nl})\""
+# -- shape 3: a leading cd before two or more commands -> refused
+b1 "cd: ; chain with a for loop"       2 "cd /tmp; sed -i s/a/b/ f; for i in 1 2; do echo \$i; done"
+b1 "cd: && a && b"                     2 "cd /tmp && a && b"
+b1 "cd: && a || b"                     2 "cd /tmp && a || b"
+b1 "cd: newline-separated commands"    2 "cd /tmp${b1nl}sed -i s/a/b/ f${b1nl}ls"
+b1 "cd: leading whitespace"            2 "  cd /tmp && a && b"
+b1 "cd: quoted dir + two commands"     2 "cd \"/tmp/a b\" && a && b"
+# -- shape 3: allowed (one command after the cd, or no cd, or a redirect)
+b1 "ok: cd alone"                      0 "cd /tmp"
+b1 "ok: cd && gh pr merge (merge guard shape)" 0 "cd /g/x && gh pr merge 171"
+b1 "ok: bash -c 'cd /tmp && a && b'"   0 "bash -c 'cd /tmp && a && b'"
+b1 "ok: cd && cmd > log 2>&1 (redirects)" 0 "cd /g/x && bash hooks/run-gate.sh > log 2>&1"
+b1 "ok: cd && cmd 2>&1 | tail"         0 "cd /g/x && bash hooks/run-gate.sh 2>&1 | tail -5"
+b1 "ok: cd && cmd &"                   0 "cd /g/x && bash hooks/run-gate.sh > log 2>&1 &"
+b1 "ok: cd && cmd; (trailing ;)"       0 "cd /g/x && ls;"
+b1 "ok: cd && quoted ';' in message"   0 "cd /g/x && git commit -m \"a; b && c\""
+b1 "ok: cd && find -exec \\;"          0 "cd /g/x && find . -name x -exec rm {} \\;"
+b1 "ok: cd && message heredoc in a commit" 0 "cd /g/x && git commit -m \"\$(cat <<'EOF'${b1nl}fix: a; b${b1nl}second line${b1nl}EOF${b1nl})\""
+b1 "ok: a && b (no cd)"                0 "a && b && c"
+b1 "ok: cdx is not cd"                 0 "cdx /tmp && a && b"
+# -- advisory: no command / no parser / kill switch
+check "B1 ok: payload without a command" hooks/deny-hang-shapes.sh 0 "$(mkjson_nocmd Bash "$TMPROOT")"
+check "B1 ok: not JSON"                  hooks/deny-hang-shapes.sh 0 "not json at all"
+b1_ks="$TMPROOT/b1ks"; mkdir -p "$b1_ks/.claude"; : > "$b1_ks/.claude/git-guard-off"
+check "B1 kill switch: refused shape passes" hooks/deny-hang-shapes.sh 0 "$(mkjson Bash "cd /tmp && a && b" "$b1_ks")"
+# -- the refusal names the advice
+check_msg "B1 msg: heredoc advice"   "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cat > f <<EOF${b1nl}x${b1nl}EOF" "$TMPROOT")" "Write tool"
+check_msg "B1 msg: wait-loop advice" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "use the Monitor tool"
+check_nomsg "B1 msg: wait-loop advice no end-your-turn" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "until x; do sleep 1; done" "$TMPROOT")" "end your turn"
+check_msg "B1 msg: cd advice"        "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "git -C <dir>, or put the steps in a script file"
+check_nomsg "B1 msg: cd advice no env -C" "$ROOT/hooks/deny-hang-shapes.sh" 2 "$(mkjson Bash "cd /a && b && c" "$TMPROOT")" "env -C"
+# -- fix round 1 (review I-1): text inside QUOTES is data, not a shape. A command
+# that only MENTIONS a shape (grep pattern, commit message, issue body) passes;
+# the body of bash -c / sh -c stays scanned because a loop there still hangs.
+b1 "I-1 ok: grep for a wait loop"             0 "grep -n 'while true; do sleep 1; done' scripts/test-hooks.sh"
+b1 "I-1 ok: -m message names a wait loop"     0 "git commit -m \"docs: a while loop with sleep 5 hangs until done\""
+b1 "I-1 ok: --body names a wait loop"         0 "gh issue comment 5 --body \"the agent ran while true; do sleep 5; done and hung\""
+b1 "I-1 ok: rg pattern names a wait loop"     0 "rg -n 'until .* sleep [0-9]+; done' hooks/"
+b1 "I-1 ok: grep '<<EOF' | tee hits"          0 "grep -rn '<<EOF' hooks/ | tee hits.txt"
+b1 "I-1 ok: echo mentions cat > f <<EOF"      0 "echo 'never run cat > f <<EOF in a hook'"
+b1 "I-1 ok: -m message names cat > f <<EOF"   0 "git commit -m \"docs: explain why cat > f <<EOF hangs\""
+b1 "I-1 wait: inside sh -c \"...\""           2 "sh -c \"while true; do sleep 1; done\""
+b1 "I-1 wait: inside bash -lc '...'"          2 "bash -lc 'until x; do sleep 1; done'"
+b1 "I-1 heredoc: inside bash -c '...'"        2 "bash -c 'cat <<EOF > f.txt'"
+b1 "I-1 ok: bash -c body without a loop"      0 "bash -c 'echo while; sleep 1'"
+# -- fix round 1 (review I-2): an escaped quote does not end a double-quoted string
+b1 "I-2 ok: cd && msg with \\\" and ; &&"      0 "cd /x && git commit -m \"say \\\"a; b\\\" && c\""
+b1 "I-2 ok: cd && apostrophe inside \"...\""  0 "cd /x && echo \"it's a; b\""
+b1 "I-2 ok: cd && ; inside '...'"             0 "cd /x && echo 'a; b && c'"
+b1 "I-2 cd: escaped quote, then 2 commands"   2 "cd /x && a && echo \"say \\\"x\\\"\""
+# -- fix round 1 (review I-3, ruling S-16): after a leading cd a pipeline and ONE
+# compound command (for/while/until..done, if..fi, case..esac, { }, ( )) are each one command
+b1 "I-3 ok: cd && for loop"                   0 "cd /x && for f in *.sh; do bash -n \"\$f\"; done"
+b1 "I-3 ok: cd && if"                         0 "cd /x && if [ -f a ]; then echo y; fi"
+b1 "I-3 ok: cd && pipe | while"               0 "cd /x && git ls-files | while read -r f; do wc -c \"\$f\"; done"
+b1 "I-3 ok: cd && case"                       0 "cd /x && case \$a in x) echo x;; *) echo y;; esac"
+b1 "I-3 ok: cd && { group; }"                 0 "cd /x && { echo a; echo b; }"
+b1 "I-3 ok: cd && ( subshell; )"              0 "cd /x && (echo a; echo b)"
+b1 "I-3 ok: cd && nested for"                 0 "cd /x && for a in b; do for c in d; do e; done; done"
+b1 "I-3 ok: cd, newline, multi-line for"      0 "cd /x${b1nl}for f in a; do${b1nl}  echo \$f${b1nl}done"
+b1 "I-3 ok: cd && if/elif/else/fi"            0 "cd /x && if a; then b; elif c; then d; else e; fi"
+b1 "I-3 cd: && a && for loop"                 2 "cd /x && a && for f in *; do echo \$f; done"
+b1 "I-3 cd: && for loop && b"                 2 "cd /x && for f in a; do echo \$f; done && b"
+b1 "I-3 cd: && if ..; fi; c"                  2 "cd /x && if a; then b; fi; c"
+b1 "I-3 cd: && pipe|while, then c"            2 "cd /x && ls | while read f; do echo \$f; done; c"
+b1 "I-3 cd: two loops"                        2 "cd /x && for a in b; do c; done; for d in e; do f; done"
+# -- fix round 1 (review M-1): > /dev/stderr / /dev/stdout is not a file target
+b1 "M-1 ok: cat <<EOF > /dev/stderr"          0 "cat <<EOF > /dev/stderr${b1nl}x${b1nl}EOF"
+# -- fix round 2 (re-review N-1, ruling S-18): a -c body is exposed ONLY for a shell
+# (bash/sh/zsh/dash/ksh, optionally path-prefixed, flag -c or a cluster ending in c),
+# and ONLY to shapes 1 and 2. For shape 3 a quoted body is one word, always.
+b1 "N-1 ok: cd && python -c \"a; b\""            0 "cd /x && python -c \"import sys; print(1); print(2)\""
+b1 "N-1 ok: cd && python3 -c \"...; ...\""       0 "cd /x && python3 -c \"import os; print(os.getcwd())\""
+b1 "N-1 ok: cd && bash -c 'a; b; c'"             0 "cd /x && bash -c 'a; b; c'"
+b1 "N-1 ok: cd && psql -c \"a; b\""              0 "cd /x && psql -c \"select 1; select 2\""
+b1 "N-1 ok: psql -c \"a; b\" (no cd)"            0 "psql -c \"select 1; select 2\""
+b1 "N-1 ok: grep -rc 'cat > f <<EOF' x"          0 "grep -rc 'cat > f <<EOF' x"
+b1 "N-1 ok: grep -c 'while..sleep..done' f"      0 "grep -c 'while x; do sleep 1; done' f"
+b1 "N-1 ok: git commit -c '...while..sleep..done'" 0 "git commit -c 'while x; do sleep 1; done'"
+b1 "N-1 ok: python -c body is not shell"         0 "python -c 'while true; do sleep 1; done'"
+b1 "N-1 wait: bash -c \"while..sleep..done\""    2 "bash -c \"while true; do sleep 1; done\""
+b1 "N-1 wait: /bin/bash -lc '...'"               2 "/bin/bash -lc 'until x; do sleep 1; done'"
+b1 "N-1 wait: sh -ec \"...\""                    2 "sh -ec \"while :; do sleep 1; done\""
+b1 "N-1 wait: zsh -c '...'"                      2 "zsh -c 'while true; do sleep 1; done'"
+b1 "N-1 wait: cd && bash -c 'loop'"              2 "cd /x && bash -c 'while true; do sleep 1; done'"
+b1 "N-1 heredoc: sh -c 'cat > f <<EOF'"          2 "sh -c 'cat > f <<EOF'"
+b1 "N-1 heredoc: bash -lc 'tee f <<EOF'"         2 "bash -lc 'tee f.txt <<EOF'"
+b1 "N-1 cd: && a && bash -c 'x; y'"             2 "cd /x && a && bash -c 'x; y'"
+# -- fix round 2 (re-review N-2): a compound nested directly inside ( ) or { } is
+# still ONE command after the cd (a word after ( or { is in command position)
+b1 "N-2 ok: cd && ( for ..; done; b )"           0 "cd /x && ( for f in *; do a; done; b )"
+b1 "N-2 ok: cd && { for ..; done; b; }"          0 "cd /x && { for f in *; do a; done; b; }"
+b1 "N-2 ok: cd && ( case .. esac )"              0 "cd /x && ( case \$a in x) echo 1;; esac )"
+b1 "N-2 ok: cd && { case .. esac; }"             0 "cd /x && { case \$x in a) b;; esac; }"
+b1 "N-2 ok: cd && (for glued to paren)"          0 "cd /x && (for f in *; do a; done; b)"
+b1 "N-2 ok: cd && ( if..fi; b )"                 0 "cd /x && ( if a; then b; fi; c )"
+b1 "N-2 ok: cd && { ( a; b ); c; }"              0 "cd /x && { ( a; b ); c; }"
+b1 "N-2 cd: && a && ( b )"                       2 "cd /x && a && ( b )"
+b1 "N-2 cd: ( for..done; b ) && c"               2 "cd /x && ( for f in *; do a; done; b ) && c"
+b1 "N-2 cd: { case..esac; } ; c"                 2 "cd /x && { case \$x in a) b;; esac; } ; c"
+# -- fix round 3 (re-review N-3): the closing side is peeled like the opening side.
+# A close keyword glued to ) or } (done) fi) esac) esac)}) still ends its compound
+# command, so what follows it is counted -- one glued close must not hide the rest.
+b1 "N-3 cd: (for..done); b; sed; make"           2 "cd /x && (for f in *; do a; done); sed x; make"
+b1 "N-3 cd: (for..done); b"                      2 "cd /x && (for f in *; do a; done); b"
+b1 "N-3 cd: (for..done); sed; make; make test"   2 "cd /x && (for f in *; do a; done); sed -i s/a/b/ f; make; make test; git add -A"
+b1 "N-3 cd: (for..done) newline make newline make" 2 "cd /x && (for f in *; do a; done)${b1nl}make${b1nl}make test${b1nl}npm run build"
+b1 "N-3 cd: (if..fi) && c"                       2 "cd /x && (if a; then b; fi) && c"
+b1 "N-3 cd: (if..fi); c; d; e"                   2 "cd /x && (if [ -f a ]; then b; fi); c; d; e"
+b1 "N-3 cd: (case..esac); c; d"                  2 "cd /x && (case \$a in x) y;; esac); c; d"
+b1 "N-3 cd: (while..done) && b"                  2 "cd /x && (while read l; do a; done) && b"
+b1 "N-3 cd: {(case..esac)} ; c"                  2 "cd /x && {(case \$x in a) b;; esac)} ; c"
+b1 "N-3 cd: { for..done; } ; c"                  2 "cd /x && { for f in *; do a; done; } ; c"
+b1 "N-3 ok: cd && (for..done)"                   0 "cd /x && (for f in *; do a; done)"
+b1 "N-3 ok: cd && (for..done);"                  0 "cd /x && (for f in *; do a; done);"
+b1 "N-3 ok: cd && (if..fi)"                      0 "cd /x && (if a; then b; fi)"
+b1 "N-3 ok: cd && (case..esac)"                  0 "cd /x && (case \$a in x) y;; esac)"
+b1 "N-3 ok: cd && nested glued (for..)"          0 "cd /x && (for a in b; do (for c in d; do e; done); done)"
+b1 "N-3 ok: cd && \${var} inside a group"        0 "cd /x && { echo \${x}; echo \${y}; }"
+# ---- end v4.3.0 B1
+
+# ---- v4.3.0 C1: model-floor gives a model-less spawn the project default ----
+# Spec Part C + S-19/S-20/S-21. PreToolUse(Agent): a spawn with no explicit
+# model whose agent type has no model of its own gets the project default
+# (`**Subagent default model**` in PROJECT_CONTEXT.md, else sonnet) instead of
+# inheriting the orchestrator's. STDOUT is the contract -- exactly one
+# {"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{...}}}
+# object, and NO permissionDecision (an "allow" would skip the user's prompt).
+echo "=== hooks/model-floor.sh (v4.3.0 C1) ==="
+# Self-contained so `run-block.sh C1` (which carries only the helpers defined
+# above line 400) runs the same rows as the full suite.
+. "$ROOT/hooks/lib/json.sh"
+C1_BASH=$(command -v bash)
+# The hook steps aside when this is set (S-23); a developer's own environment
+# must not turn every floor row silent. The S-23 rows set it themselves.
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+C1_HAVE_NODE=1; have_backend node    || C1_HAVE_NODE=""
+C1_HAVE_PY=1;   have_backend python3 || C1_HAVE_PY=""
+C1_HAVE_JQ=1;   have_backend jq      || C1_HAVE_JQ=""
+C1_TOOLS="sh bash git grep sed tr head tail cut cat wc stat date mktemp dirname basename sort uniq mkdir rm ls awk env find touch cp expr"
+c1_pathdir() { # <name> [backend ...] -> a PATH dir holding the core tools + only those backends
+  c1d="$TMPROOT/c1path-$1"; shift
+  mkdir -p "$c1d"
+  for c1t in $C1_TOOLS "$@"; do
+    c1r=$(command -v "$c1t" 2>/dev/null) || continue
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$c1r" > "$c1d/$c1t"
+    chmod +x "$c1d/$c1t"
+  done
+  printf '%s\n' "$c1d"
+}
+c1_seen() { PATH="$1" "$C1_BASH" -c "command -v $2 >/dev/null 2>&1" && echo 0 || echo 1; }
+C1_NOPARSER=$(c1_pathdir none)
+expect "C1 fixture PATH hides node"    1 "$(c1_seen "$C1_NOPARSER" node)"
+expect "C1 fixture PATH hides python3" 1 "$(c1_seen "$C1_NOPARSER" python3)"
+expect "C1 fixture PATH hides jq"      1 "$(c1_seen "$C1_NOPARSER" jq)"
+C1_NODEONLY=""; C1_PYONLY=""; C1_JQONLY=""
+if [ -n "$C1_HAVE_NODE" ]; then C1_NODEONLY=$(c1_pathdir nodeonly node); fi
+if [ -n "$C1_HAVE_PY" ];   then C1_PYONLY=$(c1_pathdir pyonly python3); fi
+if [ -n "$C1_HAVE_JQ" ];   then C1_JQONLY=$(c1_pathdir jqonly jq); fi
+
+C1R=$(mkrepo c1repo main)
+C1HOME="$TMPROOT/c1home"; mkdir -p "$C1HOME"
+mkdir -p "$C1R/.claude/agents"
+printf -- '---\nname: typed\nmodel: haiku\n---\nbody\n'      > "$C1R/.claude/agents/typed.md"
+printf -- '---\nname: inh\nmodel: inherit\n---\nbody\n'      > "$C1R/.claude/agents/inh.md"
+printf -- '---\r\nname: inhcrlf\r\nmodel: inherit\r\n---\r\n' > "$C1R/.claude/agents/inhcrlf.md"
+printf -- '---\nname: fullid\nmodel: claude-opus-4-1\n---\n'  > "$C1R/.claude/agents/fullid.md"
+printf -- '---\nname: nomodel\ndescription: x\n---\nbody\n'   > "$C1R/.claude/agents/nomodel.md"
+# S-22: identity is the frontmatter `name:`, the tree is scanned recursively.
+printf -- '---\nname: code-reviewer\nmodel: opus\n---\nbody\n' > "$C1R/.claude/agents/reviewer-file.md"
+mkdir -p "$C1R/.claude/agents/team"
+printf -- '---\nname: nested\nmodel: opus\n---\n'             > "$C1R/.claude/agents/team/nested.md"
+printf -- '---\nname: inhname\nmodel: inherit\n---\n'          > "$C1R/.claude/agents/x-file.md"
+printf -- '---\ndescription: no name key\nmodel: haiku\n---\n' > "$C1R/.claude/agents/fbonly.md"
+printf '\357\273\277---\nname: bomagent\nmodel: opus\n---\n'   > "$C1R/.claude/agents/bom-file.md"
+printf -- '---\nname: dup\nmodel: inherit\n---\n'              > "$C1R/.claude/agents/dup.md"
+# user-level agents: a plain one, one in a subdirectory, and a `dup` that the
+# project's own `dup` (model: inherit) must shadow without falling through.
+mkdir -p "$C1HOME/.claude/agents/sub"
+printf -- '---\nname: uagent\nmodel: opus\n---\n'    > "$C1HOME/.claude/agents/uagent.md"
+printf -- '---\nname: homenested\nmodel: opus\n---\n' > "$C1HOME/.claude/agents/sub/whatever.md"
+printf -- '---\nname: dup\nmodel: opus\n---\n'        > "$C1HOME/.claude/agents/dup.md"
+C1CWD=$(natpath "$C1R")
+C1PROMPT=$'Do the thing \xe2\x80\x94 "quoted"\nsecond line'
+
+c1_payload() { # <type|-> <model|-> <cwd> -> Agent payload; '-' = key absent. zz_unknown must survive.
+  c1ty=""; [ "$1" = "-" ] || c1ty="\"subagent_type\":\"$(jesc "$1")\","
+  c1mo=""; [ "$2" = "-" ] || c1mo="\"model\":\"$(jesc "$2")\","
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{%s%s"prompt":"%s","description":"d","zz_unknown":1},"cwd":"%s"}' \
+    "$c1ty" "$c1mo" "$(jesc "$C1PROMPT")" "$(jesc "$3")"
+}
+C1OUTF="$TMPROOT/c1.out"; C1ERRF="$TMPROOT/c1.err"
+c1_run() { # <pathdir|-> <home> <json> -> C1_RC; stdout in $C1OUTF, stderr in $C1ERRF
+  if [ "$1" = "-" ]; then
+    printf '%s' "$3" | HOME="$2" "$C1_BASH" "$ROOT/hooks/model-floor.sh" >"$C1OUTF" 2>"$C1ERRF"
+  else
+    printf '%s' "$3" | PATH="$1" HOME="$2" "$C1_BASH" "$ROOT/hooks/model-floor.sh" >"$C1OUTF" 2>"$C1ERRF"
+  fi
+  C1_RC=$?
+}
+c1_silent() { # <label> -> exit 0 and 0 bytes of stdout
+  expect "$1" "rc=0 stdout_bytes=0" "rc=$C1_RC stdout_bytes=$(wc -c < "$C1OUTF" | tr -d ' ')"
+}
+c1_floor() { # <label> <pathdir|-> <type|-> <want model> -- the full updatedInput contract
+  c1_run "$2" "$C1HOME" "$(c1_payload "$3" - "$C1CWD")"
+  c1o=$(<"$C1OUTF")
+  expect "$1: exit 0"                          0 "$C1_RC"
+  expect "$1: model floored"                   "$4" "$(jfield "$c1o" hookSpecificOutput.updatedInput.model)"
+  expect "$1: hookEventName"                   PreToolUse "$(jfield "$c1o" hookSpecificOutput.hookEventName)"
+  expect "$1: NO permissionDecision key"       0 "$(printf '%s' "$c1o" | grep -c permissionDecision)"
+  expect "$1: prompt survives (em dash, quote, newline)" "$C1PROMPT" "$(jfield "$c1o" hookSpecificOutput.updatedInput.prompt | tr -d '\r')"
+  expect "$1: description survives"            d "$(jfield "$c1o" hookSpecificOutput.updatedInput.description)"
+  expect "$1: zz_unknown survives"             1 "$(jfield "$c1o" hookSpecificOutput.updatedInput.zz_unknown)"
+  if [ "$3" != "-" ]; then
+    expect "$1: subagent_type survives"        "$3" "$(jfield "$c1o" hookSpecificOutput.updatedInput.subagent_type)"
+  fi
+  expect "$1: stdout is exactly one JSON object" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
+  expect "$1: stdout is valid JSON"            0 "$(json_valid "$c1o" && echo 0 || echo 1)"
+  expect "$1: stderr names type and model"     1 "$(grep -c "^model-floor: ${3/#-/general-purpose} had no model -> $4\$" "$C1ERRF" | tr -d ' ')"
+}
+
+# c1_canon <json> <dotted.path> -- the object at that path with `model` removed
+# and keys sorted, so two objects compare equal iff they are deeply equal apart
+# from `model` (and key order). Empty on failure.
+c1_canon() {
+  if [ -n "$C1_HAVE_JQ" ]; then
+    printf '%s' "$1" | jq -S -c --arg p "$2" 'getpath($p | split(".")) | del(.model)' 2>/dev/null
+  elif [ -n "$C1_HAVE_PY" ]; then
+    printf '%s' "$1" | python3 -c '
+import json, sys
+v = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+for k in sys.argv[1].split("."):
+    v = v[k]
+v.pop("model", None)
+sys.stdout.buffer.write(json.dumps(v, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+' "$2" 2>/dev/null
+  else
+    printf '%s' "$1" | node -e '
+var v = JSON.parse(require("fs").readFileSync(0, "utf8"));
+process.argv[1].split(".").forEach(function (k) { v = v[k]; });
+delete v.model;
+function c(x) { if (Array.isArray(x)) return x.map(c);
+  if (x && typeof x === "object") return ["@o"].concat(Object.keys(x).sort().map(function (k) { return [k, c(x[k])]; }));
+  return x; }
+process.stdout.write(JSON.stringify(c(v)));' "$2" 2>/dev/null
+  fi
+}
+# A tool_input with every value class an emitter could mangle: nested object,
+# array, null/true/false, empty {} and [], a `__proto__` key, U+2028, a tab, a
+# non-ASCII letter. (Integers only: node re-renders 1.0 as 1.)
+C1TI='{"subagent_type":"general-purpose","prompt":"deep","description":"d","zz_unknown":1,"nested":{"a":[1,2,{"b":null}],"t":true,"f":false,"e":{},"l":[]},"__proto__":{"x":1},"u":"a bé","tab":"x\ty"}'
+c1_deep() { # <label> <pathdir|-> -- the WHOLE tool_input survives, minus model
+  c1dp="{\"session_id\":\"t\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Agent\",\"tool_input\":$C1TI,\"cwd\":\"$(jesc "$C1CWD")\"}"
+  c1_run "$2" "$C1HOME" "$c1dp"
+  c1o=$(<"$C1OUTF")
+  c1want=$(c1_canon "$c1dp" tool_input); [ -n "$c1want" ] || c1want="CANON-FAILED"
+  expect "$1: whole tool_input survives (deep compare)" "$c1want" "$(c1_canon "$c1o" hookSpecificOutput.updatedInput)"
+  expect "$1: deep payload is floored"                  sonnet "$(jfield "$c1o" hookSpecificOutput.updatedInput.model)"
+}
+
+# row 1 / 4: the emitted JSON under EACH parser path (node, python3, jq)
+c1_floor "C1 row1 general-purpose (default parser)" - general-purpose sonnet
+c1_floor "C1 row4 inherit (default parser)"         - inh sonnet
+# Each forced-parser PATH is self-checked FIRST: a row that still sees node would
+# pass green and prove nothing about the python3 / jq emitters.
+if [ -n "$C1_HAVE_NODE" ]; then
+  expect "C1 node-only PATH keeps node"        0 "$(c1_seen "$C1_NODEONLY" node)"
+  c1_floor "C1 row1 general-purpose (node)"    "$C1_NODEONLY" general-purpose sonnet
+  c1_floor "C1 row4 inherit (node)"            "$C1_NODEONLY" inh sonnet
+  c1_deep  "C1 deep (node)"                    "$C1_NODEONLY"
+else skip "C1 node parser rows" "no node on this host" 25; fi
+if [ -n "$C1_HAVE_PY" ]; then
+  expect "C1 python3-only PATH hides node"     1 "$(c1_seen "$C1_PYONLY" node)"
+  expect "C1 python3-only PATH keeps python3"  0 "$(c1_seen "$C1_PYONLY" python3)"
+  c1_floor "C1 row1 general-purpose (python3)" "$C1_PYONLY" general-purpose sonnet
+  c1_floor "C1 row4 inherit (python3)"         "$C1_PYONLY" inh sonnet
+  c1_deep  "C1 deep (python3)"                 "$C1_PYONLY"
+  # an overflowing number would be written as the non-JSON token Infinity
+  c1_run "$C1_PYONLY" "$C1HOME" "{\"tool_name\":\"Agent\",\"tool_input\":{\"prompt\":\"p\",\"n\":1e400},\"cwd\":\"$(jesc "$C1CWD")\"}"
+  c1_silent "C1 python3 refuses to emit Infinity (allow_nan=False)"
+else skip "C1 python3 parser rows" "no python3 on this host" 27; fi
+if [ -n "$C1_HAVE_JQ" ]; then
+  expect "C1 jq-only PATH hides node"          1 "$(c1_seen "$C1_JQONLY" node)"
+  expect "C1 jq-only PATH hides python3"       1 "$(c1_seen "$C1_JQONLY" python3)"
+  expect "C1 jq-only PATH keeps jq"            0 "$(c1_seen "$C1_JQONLY" jq)"
+  c1_floor "C1 row1 general-purpose (jq)"      "$C1_JQONLY" general-purpose sonnet
+  c1_floor "C1 row4 inherit (jq)"              "$C1_JQONLY" inh sonnet
+  c1_deep  "C1 deep (jq)"                      "$C1_JQONLY"
+else skip "C1 jq parser rows" "no jq on this host" 27; fi
+# the canonicaliser itself agrees with a known-different object (a deep compare
+# that cannot tell two objects apart would pass every emitter)
+expect "C1 canon tells a dropped nested key apart" 1 \
+  "$([ "$(c1_canon '{"a":{"b":1,"c":2}}' a)" != "$(c1_canon '{"a":{"b":1}}' a)" ] && echo 1 || echo 0)"
+expect "C1 canon ignores model and key order" "$(c1_canon '{"a":{"b":1,"c":2,"model":"x"}}' a)" "$(c1_canon '{"a":{"c":2,"b":1}}' a)"
+# other types that get the floor: the known inheriting built-ins, with no file
+c1_floor "C1 no subagent_type at all"   - - sonnet
+c1_floor "C1 Plan"                      - Plan sonnet
+c1_floor "C1 Explore without a file"    - Explore sonnet
+c1_floor "C1 claude built-in"           - claude sonnet
+c1_floor "C1 file with no model key"    - nomodel sonnet
+c1_floor "C1 CRLF file, model: inherit" - inhcrlf sonnet
+c1_floor "C1 S-22 name in a differently-named file, model: inherit" - inhname sonnet
+c1_floor "C1 S-22 project file (inherit) wins over the user-level one" - dup sonnet
+
+# row 2: an explicit model (any value) is never touched
+c1_run - "$C1HOME" "$(c1_payload general-purpose opus "$C1CWD")"; c1_silent "C1 row2 explicit model opus -> silent"
+c1_run - "$C1HOME" "$(c1_payload inh haiku "$C1CWD")";            c1_silent "C1 row2b explicit model on an inherit agent -> silent"
+# row 3: a typed agent's own model
+c1_run - "$C1HOME" "$(c1_payload typed - "$C1CWD")";              c1_silent "C1 row3 typed (model: haiku) -> silent"
+c1_run - "$C1HOME" "$(c1_payload fullid - "$C1CWD")";             c1_silent "C1 row3b agent with a full model id -> silent"
+c1_run - "$C1HOME" "$(c1_payload uagent - "$C1CWD")";             c1_silent "C1 row3c user-level agent with a model -> silent"
+# S-22: a name that differs from its filename, or sits in a subdirectory
+c1_run - "$C1HOME" "$(c1_payload code-reviewer - "$C1CWD")";      c1_silent "C1 S-22 name != filename (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload nested - "$C1CWD")";             c1_silent "C1 S-22 project subdirectory agent (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload homenested - "$C1CWD")";         c1_silent "C1 S-22 user-level subdirectory agent (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload bomagent - "$C1CWD")";           c1_silent "C1 S-22 BOM before the frontmatter (opus) -> silent"
+c1_run - "$C1HOME" "$(c1_payload fbonly - "$C1CWD")";             c1_silent "C1 S-22 filename fallback, no name key (haiku) -> silent"
+# S-22: no file at all -> only the known built-ins are floored; anything else may
+# come from --agents / managed settings / a plugin that this hook cannot see
+c1_run - "$C1HOME" "$(c1_payload mystery - "$C1CWD")";            c1_silent "C1 S-22 unknown type, no file -> silent"
+c1_run - "$C1HOME" "$(c1_payload 'plug:agent' - "$C1CWD")";       c1_silent "C1 S-22 plugin-style type -> silent"
+# S-23 + S-30: the user's own native default wins only where it applies. It must
+# hold a REAL model (alias or full claude-* id -- `inherit`, empty and junk mean
+# unset). Without CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 it covers general-purpose and
+# an untyped spawn only; Plan, Explore, `claude` and a `model: inherit` agent keep
+# the floor. With FORCE=1 it covers every spawn.
+unset CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+export CLAUDE_CODE_SUBAGENT_MODEL=haiku
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-30 var=haiku, general-purpose -> silent"
+c1_run - "$C1HOME" "$(c1_payload - - "$C1CWD")";                  c1_silent "C1 S-30 var=haiku, no type -> silent"
+c1_floor "C1 S-30 var=haiku, Plan still floored"                  - Plan sonnet
+c1_floor "C1 S-30 var=haiku, Explore still floored"               - Explore sonnet
+c1_floor "C1 S-30 var=haiku, claude still floored"                - claude sonnet
+c1_floor "C1 S-30 var=haiku, model: inherit agent still floored"  - inh sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-30 var=full claude-* id, general-purpose -> silent"
+c1_floor "C1 S-30 var=full claude-* id, Plan still floored"       - Plan sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=inherit
+c1_floor "C1 S-30 var=inherit = unset -> floor applies"           - general-purpose sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=gpt4
+c1_floor "C1 S-30 var=junk = unset -> floor applies"              - general-purpose sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=
+c1_floor "C1 S-23 CLAUDE_CODE_SUBAGENT_MODEL empty -> floor applies" - general-purpose sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
+c1_floor "C1 S-30 FORCE=1 with an empty var -> floor applies"     - Plan sonnet
+export CLAUDE_CODE_SUBAGENT_MODEL=haiku
+c1_run - "$C1HOME" "$(c1_payload Plan - "$C1CWD")";               c1_silent "C1 S-30 var=haiku + FORCE=1, Plan -> silent"
+c1_run - "$C1HOME" "$(c1_payload inh - "$C1CWD")";                c1_silent "C1 S-30 var=haiku + FORCE=1, model: inherit agent -> silent"
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 S-30 var=haiku + FORCE=1, general-purpose -> silent"
+export CLAUDE_CODE_SUBAGENT_MODEL=inherit
+c1_floor "C1 S-30 var=inherit + FORCE=1 -> floor applies"         - Plan sonnet
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+# S-20: types that carry their own model, or ignore an override
+c1_run - "$C1HOME" "$(c1_payload statusline-setup - "$C1CWD")";   c1_silent "C1 S-20 statusline-setup -> silent"
+c1_run - "$C1HOME" "$(c1_payload claude-code-guide - "$C1CWD")";  c1_silent "C1 S-20 claude-code-guide -> silent"
+c1_run - "$C1HOME" "$(c1_payload fork - "$C1CWD")";               c1_silent "C1 S-20 fork -> silent"
+# row 5: the project default
+printf '# ctx\n- **Subagent default model**: haiku\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 PROJECT_CONTEXT haiku"         - general-purpose haiku
+printf '\357\273\277- **Subagent default model**: haiku\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 BOM on line 1 does not hide the key" - general-purpose haiku
+printf '# ctx\n- **Subagent default model**: `opus`\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 PROJECT_CONTEXT opus in backticks" - general-purpose opus
+printf '# ctx\n- **Subagent default model**: {{SUBAGENT_DEFAULT_MODEL}}\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 unfilled placeholder -> sonnet" - general-purpose sonnet
+printf '# ctx\n- **Subagent default model**: gpt4\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 unknown value gpt4 -> sonnet"   - general-purpose sonnet
+printf '# ctx\n- **Subagent default model**: (optional; default `sonnet`) the model a spawn gets\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 the template's own placeholder line -> sonnet" - general-purpose sonnet
+# S-27: the shipped template line is a commented example; even with a valid
+# alias inside the comment it must be inert, and a live line after it must win.
+printf '# ctx\n<!-- - **Subagent default model**: opus -- optional -->\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 commented example is inert -> sonnet" - general-purpose sonnet
+printf '# ctx\n<!-- - **Subagent default model**: opus -- optional -->\n- **Subagent default model**: haiku\n' > "$C1R/PROJECT_CONTEXT.md"
+c1_floor "C1 row5 live line after the commented example wins" - general-purpose haiku
+rm -f "$C1R/PROJECT_CONTEXT.md"
+# row 6: Jev routing on -> step aside
+C1GD=$(git -C "$C1R" rev-parse --path-format=absolute --git-common-dir)
+mkdir -p "$C1GD/jev"; printf '{"route": true}\n' > "$C1GD/jev/config.json"
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 row6 jev route true -> silent"
+printf '{"route": false}\n' > "$C1GD/jev/config.json"
+c1_floor "C1 row6b jev route false -> floor applies" - general-purpose sonnet
+rm -rf "$C1GD/jev"
+# row 7: path-unsafe type names
+c1_run - "$C1HOME" "$(c1_payload '../x' - "$C1CWD")";             c1_silent "C1 row7 subagent_type ../x -> silent"
+c1_run - "$C1HOME" "$(c1_payload 'a/b' - "$C1CWD")";              c1_silent "C1 row7b subagent_type a/b -> silent"
+c1_run - "$C1HOME" "$(c1_payload '.hidden' - "$C1CWD")";          c1_silent "C1 row7c subagent_type .hidden -> silent"
+# row 8: no parser -> the advisory hook does nothing
+c1_run "$C1_NOPARSER" "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")"; c1_silent "C1 row8 no parser -> silent"
+# other payloads
+c1_run - "$C1HOME" "$(mkjson Bash 'echo hi' "$C1CWD")";           c1_silent "C1 not the Agent tool -> silent"
+c1_run - "$C1HOME" 'not json at all';                            c1_silent "C1 invalid JSON -> silent"
+c1_run - "$C1HOME" '';                                           c1_silent "C1 empty stdin -> silent"
+c1_run - "$C1HOME" '{"tool_name":"Agent","tool_input":"a string","cwd":"."}'; c1_silent "C1 tool_input not an object -> silent"
+
+# registration: every settings file carries the SILENT wrapper on the Agent
+# matcher, and the wrapper is silent when the hook file is absent
+if [ -n "$C1_HAVE_NODE" ]; then
+  C1_TPL='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh" ] || exit 0; bash "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh"'
+  # S-24: the user-level wrapper steps aside when the project has its own copy,
+  # so a spawn never has two updatedInput emitters racing (last one wins, order
+  # non-deterministic).
+  C1_USR='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh" ] && exit 0; f="$HOME/.claude/hooks/model-floor.sh"; [ -f "$f" ] || exit 0; bash "$f"'
+  c1_cmd() { # <settings file> -> the model-floor command(s) registered on matcher Agent, one per line
+    node -e '
+      var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
+      (s.hooks.PreToolUse || []).forEach(function (g) { if (g.matcher !== "Agent") return;
+        g.hooks.forEach(function (h) { if (h.command.indexOf("model-floor.sh") >= 0) o.push(h.command); }); });
+      process.stdout.write(o.join("\n"));' "$(natpath "$1")"
+  }
+  for c1v in general dotnet dotnet-maui rust-tauri java python; do
+    expect "C1 registered on Agent: templates/$c1v" "$C1_TPL" "$(c1_cmd "$ROOT/templates/$c1v/.claude/settings.json")"
+  done
+  expect "C1 registered on Agent: root .claude/settings.json" "$C1_TPL" "$(c1_cmd "$ROOT/.claude/settings.json")"
+  expect "C1 registered on Agent: user-level-reference"       "$C1_USR" "$(c1_cmd "$ROOT/user-level-reference/settings.json")"
+  # silent when the hook file is missing: exit 0, 0 bytes of stdout AND stderr
+  C1EMPTY="$TMPROOT/c1empty"; mkdir -p "$C1EMPTY"
+  for c1w in "$C1_TPL" "$C1_USR"; do
+    CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$c1w" </dev/null >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+    expect "C1 wrapper silent when hook file missing (${c1w%%;*})" "rc=0 out=0 err=0" \
+      "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
+  done
+  # and passes the hook's stdout through untouched when the file is present
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1HOME" "$C1_BASH" -c "$C1_TPL" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"
+  expect "C1 template wrapper passes the hook's JSON through" sonnet "$(jfield "$(<"$C1OUTF")" hookSpecificOutput.updatedInput.model)"
+  expect "C1 template wrapper adds nothing to stdout" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
+  # S-24, the three cases of the user-level wrapper. A real user-level install
+  # under a temp HOME: hooks/model-floor.sh + hooks/lib/json.sh.
+  C1UH="$TMPROOT/c1userhome"; mkdir -p "$C1UH/.claude/hooks/lib"
+  cp "$ROOT/user-level-reference/hooks/model-floor.sh" "$C1UH/.claude/hooks/model-floor.sh"
+  cp "$ROOT/user-level-reference/hooks/lib/json.sh"    "$C1UH/.claude/hooks/lib/json.sh"
+  # (a) the project has its own copy -> the user-level one is silent
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1UH" "$C1_BASH" -c "$C1_USR" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-24 user-level wrapper + project copy -> silent" "rc=0 out=0 err=0" \
+    "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
+  # (b) no project copy -> the user-level hook runs and emits
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1UH" "$C1_BASH" -c "$C1_USR" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-24 user-level wrapper, no project copy -> runs" "rc=0 sonnet" \
+    "rc=$C1_RC $(jfield "$(<"$C1OUTF")" hookSpecificOutput.updatedInput.model)"
+  expect "C1 S-24 user-level wrapper adds nothing to stdout" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
+  # (c) no file at all -> silent: the "missing" loop above runs C1_USR with an
+  #     empty HOME and an empty CLAUDE_PROJECT_DIR (rc 0, 0 bytes out and err)
+
+  # S-42: the user-level deny-hang-shapes registration carries the same
+  # project-copy step-aside, so a Bash call is refused once, not twice.
+  C1_HUSR='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh" ] && exit 0; f="$HOME/.claude/hooks/deny-hang-shapes.sh"; [ -f "$f" ] || exit 0; bash "$f"'
+  C1_HGOT=$(node -e '
+    var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
+    (s.hooks.PreToolUse || []).forEach(function (g) { if (g.matcher !== "Bash") return;
+      g.hooks.forEach(function (h) { if (h.command.indexOf("deny-hang-shapes.sh") >= 0) o.push(h.command); }); });
+    process.stdout.write(o.join("\n"));' "$(natpath "$ROOT/user-level-reference/settings.json")")
+  expect "C1 S-42 registered on Bash: user-level-reference" "$C1_HUSR" "$C1_HGOT"
+  C1HH="$TMPROOT/c1hanghome"; mkdir -p "$C1HH/.claude/hooks/lib"
+  cp "$ROOT/user-level-reference/hooks/deny-hang-shapes.sh" "$C1HH/.claude/hooks/deny-hang-shapes.sh"
+  cp "$ROOT/user-level-reference/hooks/lib/json.sh"         "$C1HH/.claude/hooks/lib/json.sh"
+  C1HP="$(mkjson Bash 'cd /a && b && c' "$C1CWD")"
+  # (a) project copy present -> silent
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-42 deny-hang-shapes user-level + project copy -> silent" "rc=0 out=0 err=0" \
+    "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
+  # (b) no project copy -> the user-level hook runs and refuses (exit 2, advice on stderr)
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-42 deny-hang-shapes user-level, no project copy -> runs" "rc=2 refused" \
+    "rc=$C1_RC $(grep -q 'git -C' "$C1ERRF" && echo refused)"
+  # (c) no file at all -> silent
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  expect "C1 S-42 deny-hang-shapes user-level, no file -> silent" "rc=0 out=0 err=0" \
+    "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
+else
+  skip "C1 registration + wrapper rows" "no node on this host" 19
+fi
+# ---- end v4.3.0 C1
+
+# ---- v4.3.0 SCAN: whole-line comments only (v4.1.2); any .ps1 argument to powershell/pwsh is scanned (S-40) ----
+# gc_script_body feeds a named script's first 16 KB to the same verb matcher as
+# the typed command. S-40 (overrides S-38): only WHOLE-LINE `#` comments are
+# stripped -- trailing comments and heredoc bodies are read, because a text
+# strip inside a gate scan fails open (C1/C2/I1 of the S-38 review). A trailing
+# `# git commit` is therefore conservatively a commit. A PowerShell script
+# (any .ps1 argument to powershell/pwsh, -File or not) is scanned too. The
+# fixture Test is `exit 1`: want 2 = the hook saw a commit and ran the failing
+# Test, want 0 = it did not see one.
+SCANH=hooks/pre-commit-test.sh
+SCANR=$(mkrepo scan43 main)
+mkdir -p "$SCANR/hooks"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$SCANR/tc.sh"
+printf '# ctx\n\n- **Test**: `bash tc.sh`\n' > "$SCANR/PROJECT_CONTEXT.md"
+cp "$ROOT/hooks/run-gate.sh" "$SCANR/hooks/run-gate.sh"
+printf '#!/bin/sh\n# git commit -m x\necho hi\n' > "$SCANR/c-only.sh"
+printf 'echo hi # git commit -m x\n' > "$SCANR/c-trail.sh"
+printf 'echo hi\ngit commit -m x\n' > "$SCANR/real.sh"
+printf 'echo "a # b"\ngit commit -m x\n' > "$SCANR/qhash.sh"
+printf 'echo "a # b"; git commit -m x\n' > "$SCANR/qhash-same-line.sh"
+printf 'x=abc; echo ${#x}; git commit -m x\n' > "$SCANR/brace-hash.sh"
+printf 'git commit -m x # because\n' > "$SCANR/real-trail.sh"
+printf 'cat <<'"'"'EOF'"'"'\ngit commit -m x\nEOF\necho ok\n' > "$SCANR/heredoc-doc.sh"
+printf 'bash <<'"'"'EOF'"'"'\ngit commit -m x\nEOF\n' > "$SCANR/heredoc-run.sh"
+printf 'cat <<'"'"'EOF'"'"' | sh\ngit commit -m x\nEOF\n' > "$SCANR/heredoc-pipe.sh"
+printf 'git commit -m y\n' > "$SCANR/x.ps1"
+printf '# git commit -m y\nWrite-Host hi\n' > "$SCANR/c.ps1"
+check "SCAN comment-only git mention: not a commit"            "$SCANH" 0 "$(mkjson Bash 'bash c-only.sh' "$SCANR")"
+check "SCAN trailing-comment git mention: conservatively a commit" "$SCANH" 2 "$(mkjson Bash 'bash c-trail.sh' "$SCANR")"
+check "SCAN real git commit line: still a commit"              "$SCANH" 2 "$(mkjson Bash 'bash real.sh' "$SCANR")"
+check "SCAN real commit after echo \"a # b\" line: a commit"     "$SCANH" 2 "$(mkjson Bash 'bash qhash.sh' "$SCANR")"
+check "SCAN real commit after \"a # b\"; on one line: a commit"  "$SCANH" 2 "$(mkjson Bash 'bash qhash-same-line.sh' "$SCANR")"
+check "SCAN real commit after \${#x}: a commit"                  "$SCANH" 2 "$(mkjson Bash 'bash brace-hash.sh' "$SCANR")"
+check "SCAN real commit with a trailing comment: a commit"     "$SCANH" 2 "$(mkjson Bash 'bash real-trail.sh' "$SCANR")"
+check "SCAN quoted-heredoc cat body: conservatively a commit"   "$SCANH" 2 "$(mkjson Bash 'bash heredoc-doc.sh' "$SCANR")"
+check "SCAN quoted-heredoc fed to bash: a commit"              "$SCANH" 2 "$(mkjson Bash 'bash heredoc-run.sh' "$SCANR")"
+check "SCAN quoted-heredoc piped to sh: a commit"              "$SCANH" 2 "$(mkjson Bash 'bash heredoc-pipe.sh' "$SCANR")"
+check "SCAN bash hooks/run-gate.sh (the real file): not a commit" "$SCANH" 0 "$(mkjson Bash 'bash hooks/run-gate.sh' "$SCANR")"
+check "SCAN powershell -File with git commit: a commit"        "$SCANH" 2 "$(mkjson Bash 'powershell -NoProfile -File x.ps1' "$SCANR")"
+check "SCAN powershell -File, verb only in # comment: not"     "$SCANH" 0 "$(mkjson Bash 'powershell -NoProfile -File c.ps1' "$SCANR")"
+check "SCAN pwsh -f with git commit: a commit"                 "$SCANH" 2 "$(mkjson Bash 'pwsh -f x.ps1' "$SCANR")"
+check "SCAN pwsh.exe -ExecutionPolicy Bypass -File: a commit"  "$SCANH" 2 "$(mkjson Bash 'pwsh.exe -ExecutionPolicy Bypass -File x.ps1' "$SCANR")"
+check "SCAN powershell -File missing.ps1: nothing to scan"     "$SCANH" 0 "$(mkjson Bash 'powershell -File missing.ps1' "$SCANR")"
+# I2: any .ps1 argument, with or without -File; quoted; BOM; case.
+printf 'git commit -m y\n' > "$SCANR/my script.ps1"
+printf '\357\273\277git commit -m y\n' > "$SCANR/bom.ps1"
+printf 'git commit -m y\n' > "$SCANR/up.PS1"
+check "SCAN pwsh x.ps1 (positional, no -File): a commit"        "$SCANH" 2 "$(mkjson Bash 'pwsh x.ps1' "$SCANR")"
+check "SCAN powershell ./x.ps1: a commit"                       "$SCANH" 2 "$(mkjson Bash 'powershell ./x.ps1' "$SCANR")"
+check "SCAN powershell -fil x.ps1 (abbreviation): a commit"     "$SCANH" 2 "$(mkjson Bash 'powershell -fil x.ps1' "$SCANR")"
+check "SCAN pwsh -File:x.ps1: a commit"                         "$SCANH" 2 "$(mkjson Bash 'pwsh -File:x.ps1' "$SCANR")"
+check "SCAN POWERSHELL.EXE -FILE X.PS1 (any case): a commit"    "$SCANH" 2 "$(mkjson Bash 'POWERSHELL.EXE -FILE up.PS1' "$SCANR")"
+check "SCAN pwsh -File double-quoted path with spaces: a commit" "$SCANH" 2 "$(mkjson Bash 'pwsh -File "my script.ps1"' "$SCANR")"
+check "SCAN pwsh -File single-quoted path with spaces: a commit" "$SCANH" 2 "$(mkjson Bash "pwsh -File 'my script.ps1'" "$SCANR")"
+check "SCAN pwsh -File bom.ps1 (UTF-8 BOM on line 1): a commit" "$SCANH" 2 "$(mkjson Bash 'pwsh -File bom.ps1' "$SCANR")"
+check "SCAN pwsh -NoProfile -Command bash real.sh: still scans the .sh" "$SCANH" 2 "$(mkjson Bash 'pwsh -NoProfile -Command bash real.sh' "$SCANR")"
+# S-38 review reproducers (C1, C2, I1, M2): verbs the S-38 strip lost. Want 2.
+printf 'git commit -m "subject\n\nFixes #12" && echo done\n' > "$SCANR/a01.sh"
+printf "python3 -c '\nimport sys  # helper\nprint(1)  # done'; git commit -m x\n" > "$SCANR/a02.sh"
+printf "cat > run.sh <<'EOF'\ngit commit -m x\nEOF\nbash run.sh\n" > "$SCANR/a03.sh"
+printf "cat <<'EOF'\ngit commit -m x\nEOF\n" > "$SCANR/gen.sh"
+printf "f() {\ncat <<'EOF'\ngit commit -m x\nEOF\n}\nf | bash\n" > "$SCANR/a12.sh"
+printf "(\ncat <<'EOF'\ngit commit -m x\nEOF\n) | sh\n" > "$SCANR/a14.sh"
+printf "cat <<'EOF' \\\\\n| bash\ngit commit -m x\nEOF\n" > "$SCANR/a11.sh"
+printf 'cat "notes <<'"'"'EOF'"'"'.txt"\ngit commit -m x\n' > "$SCANR/a06.sh"
+printf 'cat <<"E"OF\ndoc\nEOF\ngit commit -m x\n' > "$SCANR/a07.sh"
+printf "echo \$'a\\\\' # '; git commit -m x\n" > "$SCANR/a13.sh"
+check "SCAN C1 a01: commit after multi-line quoted # string"    "$SCANH" 2 "$(mkjson Bash 'bash a01.sh' "$SCANR")"
+check "SCAN C1 a02: python -c multi-line quote with # comments" "$SCANH" 2 "$(mkjson Bash 'bash a02.sh' "$SCANR")"
+check "SCAN C2 a03: cat > run.sh heredoc, then bash run.sh"     "$SCANH" 2 "$(mkjson Bash 'bash a03.sh' "$SCANR")"
+check "SCAN C2 gen.sh | bash: quoted heredoc piped outside"     "$SCANH" 2 "$(mkjson Bash 'bash gen.sh | bash' "$SCANR")"
+check "SCAN C2 a12: heredoc in a function piped to bash"        "$SCANH" 2 "$(mkjson Bash 'bash a12.sh' "$SCANR")"
+check "SCAN C2 a14: heredoc in a subshell piped to sh"          "$SCANH" 2 "$(mkjson Bash 'bash a14.sh' "$SCANR")"
+check "SCAN C2 a11: pipe on a continuation line"                "$SCANH" 2 "$(mkjson Bash 'bash a11.sh' "$SCANR")"
+check "SCAN I1 a06: heredoc marker inside a quoted filename"    "$SCANH" 2 "$(mkjson Bash 'bash a06.sh' "$SCANR")"
+check "SCAN I1 a07: split-quote heredoc delimiter"              "$SCANH" 2 "$(mkjson Bash 'bash a07.sh' "$SCANR")"
+check "SCAN M2 a13: ANSI-C quoting with an escaped quote"       "$SCANH" 2 "$(mkjson Bash 'bash a13.sh' "$SCANR")"
+# The other consumers of gc_script_body: no-push-main and gate-before-merge.
+SCANM=$(mkrepo scan43m main)
+printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$SCANM/PROJECT_CONTEXT.md"
+printf 'echo hi # git push origin main\n' > "$SCANM/pc.sh"
+printf 'git push origin main # go\n' > "$SCANM/pr.sh"
+printf 'git push origin main\n' > "$SCANM/p.ps1"
+printf '# git push origin main\nWrite-Host hi\n' > "$SCANM/pcm.ps1"
+printf 'echo hi # git merge feature/y\n' > "$SCANM/mc.sh"
+printf 'git merge feature/y # go\n' > "$SCANM/mr.sh"
+printf 'git merge feature/y\n' > "$SCANM/m.ps1"
+check "SCAN no-push-main: trailing-comment push: gated (conservative)" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash pc.sh' "$SCANM")"
+check "SCAN no-push-main: real push + trailing comment: gated" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash pr.sh' "$SCANM")"
+check "SCAN no-push-main: powershell -File push: gated"        hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File p.ps1' "$SCANM")"
+check "SCAN no-push-main: powershell -File comment push: ok"   hooks/no-push-main.sh 0 "$(mkjson Bash 'pwsh -File pcm.ps1' "$SCANM")"
+check "SCAN gate-before-merge: echo hi # git merge: head is echo, not a merge (v4.1.2 too)" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'bash mc.sh' "$SCANM")"
+check "SCAN gate-before-merge: real merge + comment: gated"    hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash mr.sh' "$SCANM")"
+check "SCAN gate-before-merge: powershell -File merge: gated"  hooks/gate-before-merge.sh 2 "$(mkjson Bash 'powershell -File m.ps1' "$SCANM")"
+# S-41 (I3/M4/M5): every .ps1 word of a powershell/pwsh command, -Command strings included.
+printf 'git commit -m y\n' > "$SCANR/q  r.ps1"
+check "SCAN I3 powershell -Command \"& ./x.ps1\": a commit"       "$SCANH" 2 "$(mkjson Bash 'powershell -Command "& ./x.ps1"' "$SCANR")"
+check "SCAN I3 powershell -Command \"&./x.ps1\": a commit"        "$SCANH" 2 "$(mkjson Bash 'powershell -Command "&./x.ps1"' "$SCANR")"
+check "SCAN I3 powershell -c \". ./x.ps1\" (dot-source): a commit" "$SCANH" 2 "$(mkjson Bash 'powershell -c ". ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"./c.ps1; ./x.ps1\" (2nd script): a commit" "$SCANH" 2 "$(mkjson Bash 'pwsh -c "./c.ps1; ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"./c.ps1 && ./x.ps1\": a commit"           "$SCANH" 2 "$(mkjson Bash 'pwsh -c "./c.ps1 && ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"& ./c.ps1; & ./x.ps1\": a commit"         "$SCANH" 2 "$(mkjson Bash 'pwsh -c "& ./c.ps1; & ./x.ps1"' "$SCANR")"
+check "SCAN I3 pwsh -c \"./c.ps1; ./c.ps1\" (no verb anywhere): not" "$SCANH" 0 "$(mkjson Bash 'pwsh -c "./c.ps1; ./c.ps1"' "$SCANR")"
+check "SCAN M4 pwsh -File \"q  r.ps1\" (run of spaces): a commit"  "$SCANH" 2 "$(mkjson Bash 'pwsh -File "q  r.ps1"' "$SCANR")"
+check "SCAN I3 a .ps1 word with no powershell in the command: not" "$SCANH" 0 "$(mkjson Bash 'echo x.ps1' "$SCANR")"
+# S-38 review reproducers through the other two gates.
+printf 'git commit -m "subject\n\nFixes #12" && git push origin main\n' > "$SCANM/a01.sh"
+printf 'git add -A\ngit commit -m "subject\n\nsee #7" && git merge feature/y\n' > "$SCANM/a01m.sh"
+printf "python3 -c '\nimport sys  # helper\nprint(1)  # done'; git push origin main\n" > "$SCANM/a02.sh"
+printf "cat > run.sh <<'EOF'\ngit push origin main\nEOF\nbash run.sh\n" > "$SCANM/a03.sh"
+printf "cat <<'EOF' > m2.sh\ngit merge feature/y\nEOF\nsh m2.sh\n" > "$SCANM/a03m.sh"
+printf "cat <<'EOF'\ngit push origin main\nEOF\n" > "$SCANM/gen.sh"
+printf "f() {\ncat <<'EOF'\ngit push origin main\nEOF\n}\nf | bash\n" > "$SCANM/a12.sh"
+printf 'cat "notes <<'"'"'EOF'"'"'.txt"\ngit push origin main\n' > "$SCANM/a06.sh"
+printf 'cat <<"E"OF\ndoc\nEOF\ngit push origin main\n' > "$SCANM/a07.sh"
+printf "echo \$'a\\\\' # '; git push origin main\n" > "$SCANM/a13.sh"
+printf '\357\273\277git push origin main\n' > "$SCANM/bom.ps1"
+check "SCAN no-push-main C1 a01: push after multi-line # string"  hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a01.sh' "$SCANM")"
+check "SCAN gate-before-merge C1 a01m: merge after # string"      hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash a01m.sh' "$SCANM")"
+check "SCAN no-push-main C1 a02: python -c quote with # comments" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a02.sh' "$SCANM")"
+check "SCAN no-push-main C2 a03: cat > run.sh heredoc, bash run.sh" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a03.sh' "$SCANM")"
+check "SCAN gate-before-merge C2 a03m: heredoc to m2.sh, sh m2.sh" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'bash a03m.sh' "$SCANM")"
+check "SCAN no-push-main C2 gen.sh | bash"                        hooks/no-push-main.sh 2 "$(mkjson Bash 'bash gen.sh | bash' "$SCANM")"
+check "SCAN no-push-main C2 a12: function heredoc | bash"         hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a12.sh' "$SCANM")"
+check "SCAN no-push-main I1 a06: heredoc marker in a quoted name" hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a06.sh' "$SCANM")"
+check "SCAN no-push-main I1 a07: split-quote heredoc delimiter"   hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a07.sh' "$SCANM")"
+check "SCAN no-push-main M2 a13: ANSI-C quoting"                  hooks/no-push-main.sh 2 "$(mkjson Bash 'bash a13.sh' "$SCANM")"
+check "SCAN no-push-main I2: pwsh p.ps1 (positional): gated"      hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh p.ps1' "$SCANM")"
+check "SCAN no-push-main I2: powershell -fil p.ps1: gated"        hooks/no-push-main.sh 2 "$(mkjson Bash 'powershell -fil p.ps1' "$SCANM")"
+check "SCAN no-push-main I2: pwsh -File bom.ps1 (BOM): gated"     hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File bom.ps1' "$SCANM")"
+check "SCAN gate-before-merge I2: pwsh m.ps1 (positional): gated" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'pwsh m.ps1' "$SCANM")"
+check "SCAN gate-before-merge I2: powershell ./m.ps1: gated"      hooks/gate-before-merge.sh 2 "$(mkjson Bash 'powershell ./m.ps1' "$SCANM")"
+# S-41 M5: a trailing backslash in a .ps1 is not a continuation; the next line's push is seen.
+printf 'Set-Location C:\\work\\\ngit push origin main\n' > "$SCANM/b5.ps1"
+check "SCAN no-push-main M5: .ps1 line ending in backslash, push on the next line" hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -File b5.ps1' "$SCANM")"
+check "SCAN no-push-main I3: -Command \"& ./p.ps1\": gated"        hooks/no-push-main.sh 2 "$(mkjson Bash 'pwsh -Command "& ./p.ps1"' "$SCANM")"
+check "SCAN gate-before-merge I3: -c \"./pcm.ps1; ./m.ps1\": gated" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'pwsh -c "./pcm.ps1; ./m.ps1"' "$SCANM")"
+# ---- end v4.3.0 SCAN
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

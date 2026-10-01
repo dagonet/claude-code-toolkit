@@ -11,7 +11,7 @@ This machine runs Windows 11 with Git Bash as the shell.
 - Avoid `grep -r` in Bash — pick the search tool from the Read & Search Tool Selection table below
 - **PO / main thread only** (subagents do not have MCP servers — never route these to a spawn): read release notes via the MCP GitHub tools, and cut GitHub releases with them rather than `gh release create`
 - PowerShell 5.1 reads BOM-less UTF-8 as ANSI — never rewrite files containing non-ASCII via PS `Get-Content`/`WriteAllText` (mojibakes `—` into `â€”`). Use Bash/the Edit tool, or read with `[IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)`
-- Multi-line/compound Bash commands can be conservatively blocked by guard hooks (unparseable → fail-closed). Write the logic to a script file and run `bash <path>` — the guard hooks read the script's first 16 KB, so a `git commit`/`merge`/`push` inside it is gated exactly as if typed (a script that calls another script is not followed)
+- Multi-line/compound Bash commands can be conservatively blocked by guard hooks (unparseable → fail-closed). Write the logic to a script file -- with the Write tool, never a heredoc -- and run `bash <path>` — the guard hooks read the script's first 16 KB, so a `git commit`/`merge`/`push` inside it is gated exactly as if typed (a script that calls another script is not followed)
 - context-mode sandbox `/tmp` paths are invisible to native `git -C` ("cannot change to ..."). Run git-dependent scripts and fixtures via the Bash tool (real Git Bash), not `ctx_execute`
 
 ## Git Worktrees — declared location
@@ -31,6 +31,12 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
   only `worktree.*` setting, and it selects the base ref, not the path). To keep worktrees in the
   declared location, use `git worktree add` rather than `EnterWorktree`.
 - Clean up stale registrations with `git worktree prune` after removing a worktree directory.
+
+## Sub-Agent Model Choice
+
+- **Every Agent spawn names its `model` explicitly.** A type without its own model (`general-purpose`, other built-ins, `model: inherit`) otherwise inherits the orchestrator's — the most expensive one (measured: 31 such spawns ran on Opus/Fable).
+- **The orchestrator picks per task:** reading, searching, summarising, extracting → `haiku`; implementing, testing, fixing from a clear brief → `sonnet`; reviewing safety-critical code, architecture, debugging an unclear cause → `opus`; `fable` only when `opus` is not enough. Raise `effort` for many-step work or verification that is easy to skip; lower it for lookups.
+- A typed agent's own `model:` is the default when the task fits it; a decider model (Jev) may later route within these bounds.
 
 ## Sub-Agent File Write Discipline
 

@@ -27,6 +27,24 @@
             "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh -- enforcement offline. Check that hooks/ exists at the project root.' >&2; exit 2; fi; exit $c"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\" ] || exit 0; bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh\" ] || exit 0; bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
