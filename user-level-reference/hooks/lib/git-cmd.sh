@@ -688,33 +688,102 @@ gc_script_body() {
 # gate-before-merge.sh/no-push-main.sh must see the same text the segment
 # walk does, or a script's `git merge`/`git push` passes the "no git token"
 # fast exit before the walk that would have caught it ever runs).
+GC_NL='
+'
+# gc_synth_cd <dir> -- v4.3.1 G3: the line that puts the segment walk back in
+# <dir> before a script body. Spaces travel as \001 (gc_cd_target decodes).
+# Nothing for a <dir> holding a character that would split or quote a segment:
+# that body is then appended without a reset, the v4.3.0 behaviour (R-7).
+gc_synth_cd() {
+  case "$1" in *[\;\&\|\"\']*|*"$GC_NL"*) return 0 ;; esac
+  printf 'cd %s' "${1// /$GC_SOH}"
+}
+# v4.3.1 G3: the typed command comes first, unchanged. Then, for each script
+# segment, a synthetic `cd <dir>` line and the body, where <dir> is the cwd in
+# effect at the segment that named the script (tracked over the typed `cd`s;
+# after an unresolvable `cd`, EVERY cwd seen so far, at most 8 -- fail-closed:
+# that only adds text). PowerShell bodies are appended once per distinct cwd a
+# powershell/pwsh segment ran in. Bodies are NOT spliced in mid-command (R-6):
+# a body's own `cd` would then move the later TYPED segments. Spaces in <dir>
+# travel as \001; a <dir> holding `; & |`, a quote or a newline gets no
+# synthetic `cd` and the body is appended as in v4.3.0 (R-7).
 gc_augmented_cmd() {
-  local cwd="$1" out="$GC_CMD" seg body _gc_bj _gc_ps=0
+  local cur="$1" cwds="$1" uncertain=0 out="$GC_CMD" seg sc tgt cls rel d c body _gc_bj synth ps_cwds="" n
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
-    gc_seg_is_ps "$seg" && _gc_ps=1
-    body=$(gc_script_body "$seg" "$cwd")
-    if [ -n "$body" ]; then
-      _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
+    sc=${seg//\"/}
+    sc=${sc//\'/}
+    tgt=$(gc_cd_target "$sc")
+    if [ -n "$tgt" ]; then
+      cls=$(gc_classify_c "$tgt" "$cur" | sed -n 1p)
+      rel=0
+      case "$tgt" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$cls" = 1 ] && rel=1 ;; esac
+      if [ "$cls" = 3 ]; then
+        uncertain=1
+      elif [ "$uncertain" = 1 ] && [ "$rel" = 1 ]; then
+        # relative cd after an unresolvable one: every candidate moves
+        n=0
+        while IFS= read -r d; do
+          [ -n "$d" ] || continue
+          n=$((n + 1)); [ "$n" -le 8 ] || break
+          d=$(gc_resolve "$d" "$tgt")
+          case "$GC_NL$cwds$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) cwds="$cwds$GC_NL$d" ;; esac
+        done <<GC_AUG_REL
+$cwds
+GC_AUG_REL
+      else
+        cur=$(gc_resolve "$cur" "$tgt")
+        uncertain=0
+        case "$GC_NL$cwds$GC_NL" in *"$GC_NL$cur$GC_NL"*) ;; *) cwds="$cwds$GC_NL$cur" ;; esac
+      fi
+      continue
     fi
-    [ -n "$body" ] && out="$out
-$body"
+    if [ "$uncertain" = 1 ]; then c=$cwds; else c=$cur; fi
+    if gc_seg_is_ps "$seg"; then
+      while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        case "$GC_NL$ps_cwds$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) ps_cwds="$ps_cwds$GC_NL$d" ;; esac
+      done <<GC_AUG_PSC
+$c
+GC_AUG_PSC
+    fi
+    n=0
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      n=$((n + 1)); [ "$n" -le 8 ] || break
+      body=$(gc_script_body "$seg" "$d")
+      [ -n "$body" ] || continue
+      _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
+      synth=$(gc_synth_cd "$d")
+      out="$out$GC_NL$synth$GC_NL$body"
+    done <<GC_AUG_CWDS
+$c
+GC_AUG_CWDS
   done <<GC_AUG_SEGS
 $(gc_seg_raw)
 GC_AUG_SEGS
-  # S-41: PowerShell script bodies are appended AFTER the shell join (a `\` at
-  # the end of a .ps1 line is not a continuation).
-  if [ "$_gc_ps" = 1 ]; then
-    body=$(gc_ps_script_bodies "$cwd")
-    [ -n "$body" ] && out="$out
-$body"
-  fi
+  # S-41: PowerShell bodies are NOT run through the shell continuation join.
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    body=$(gc_ps_script_bodies "$d")
+    [ -n "$body" ] || continue
+    synth=$(gc_synth_cd "$d")
+    out="$out$GC_NL$synth$GC_NL$body"
+  done <<GC_AUG_PS
+$ps_cwds
+GC_AUG_PS
   printf '%s' "$out"
 }
 
 # Prints the `cd <target>` argument of a segment, if the segment is a bare cd.
+# v4.3.1 G3: bash regex instead of sed|head (same answer for a one-line
+# segment, two fewer spawns per segment), and \001 decodes to a space -- the
+# synthetic `cd` gc_augmented_cmd writes before a script body carries spaces
+# that way (gc_protect_c_paths' convention).
 gc_cd_target() {
-  printf '%s\n' "$1" | sed -n 's/^[[:space:]]*cd[[:space:]]\+\([^[:space:]]\+\)[[:space:]]*$/\1/p' | head -1
+  if [[ $1 =~ ^[[:space:]]*cd[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]//$GC_SOH/ }"
+  fi
 }
 
 # gc_git_c IS GONE (v3.0.3 defect 1). It required `-C` to sit immediately after

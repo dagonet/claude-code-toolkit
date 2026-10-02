@@ -8813,6 +8813,52 @@ done
 check "G2 T2-2 no-push-main: 'git'.exe push origin feat from a feature repo -> allowed" hooks/no-push-main.sh 0 "$(mkjson Bash "'git'.exe push origin feat" "$G2O")"
 # ---- end v4.3.1 G2
 
+# ---- v4.3.1 G3: script bodies are judged in the directory the script runs in ----
+g3_repo() { # <name> -> repo on main: Test fails, Gate set, scripts c.sh (commit), bare.sh (bare push), m.sh (merge), cdsub.sh, ok.sh, c.ps1
+  r=$(mkrepo "$1" main)
+  printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$r/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Test**: `exit 1`\n' > "$r/sub/PROJECT_CONTEXT.md"
+  printf 'git commit -m x\n' > "$r/c.sh"
+  printf 'git push\n' > "$r/bare.sh"
+  printf 'git merge feature/y\n' > "$r/m.sh"
+  printf 'cd sub\n' > "$r/cdsub.sh"
+  printf 'echo hi\n' > "$r/ok.sh"
+  printf 'git commit -m x\n' > "$r/c.ps1"
+  printf '%s\n' "$r"
+}
+G3R=$(g3_repo g3main)
+G3O=$(mkrepo g3other feat)
+printf '# ctx\n\n- **Test**: `exit 0`\n' > "$G3O/PROJECT_CONTEXT.md"
+G3SP=$(g3_repo "g3 sp")
+# cause (b): a later cd moved the judgement (C-1: the target is a repo whose Test is green, so only the hidden verb refuses)
+check "G3 pre-commit-test: bash c.sh; cd <other repo>"       hooks/pre-commit-test.sh 2   "$(mkjson Bash "bash c.sh; cd $G3O" "$G3R")"
+check "G3 no-push-main: bash bare.sh; cd <other repo>"       hooks/no-push-main.sh 2      "$(mkjson Bash "bash bare.sh; cd $G3O" "$G3R")"
+check "G3 gate-before-merge: bash m.sh; cd <other repo>"     hooks/gate-before-merge.sh 2 "$(mkjson Bash "bash m.sh; cd $G3O" "$G3R")"
+check "G3 pre-commit-test: pwsh -File c.ps1 && cd <other>"   hooks/pre-commit-test.sh 2   "$(mkjson Bash "pwsh -File c.ps1 && cd $G3O" "$G3R")"
+# pin (C-1): already refuses before the fix, because sub/ has a failing Test of its own
+check "G3 pin: pre-commit-test: bash c.sh; cd sub"           hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash c.sh; cd sub' "$G3R")"
+# cause (a): the script path resolves where it is named
+check "G3 no-push-main: cd sub; bash ../bare.sh"             hooks/no-push-main.sh 2      "$(mkjson Bash 'cd sub; bash ../bare.sh' "$G3R")"
+check "G3 pre-commit-test: cd sub; bash ../c.sh"             hooks/pre-commit-test.sh 2   "$(mkjson Bash 'cd sub; bash ../c.sh' "$G3R")"
+# unresolvable cd: every cwd seen so far is scanned
+check "G3 pre-commit-test: cd \"\$X\"; bash c.sh (pin)"      hooks/pre-commit-test.sh 2   "$(mkjson Bash 'cd "$X"; bash c.sh' "$G3R")"
+check "G3 pre-commit-test: cd \"\$X\"; cd sub; bash ../c.sh" hooks/pre-commit-test.sh 2   "$(mkjson Bash 'cd "$X"; cd sub; bash ../c.sh' "$G3R")"
+# a body's own cd must not move a later TYPED commit (pin; why bodies are not spliced mid-command, R-6)
+check "G3 pin: bash cdsub.sh; git commit -m x"               hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash cdsub.sh; git commit -m x' "$G3R")"
+# a cwd with a space (Review Focus 2): the hidden-verb shape, from the repo named "g3 sp"
+check "G3 pre-commit-test: path with a space, bash c.sh; cd <other repo>" hooks/pre-commit-test.sh 2 "$(mkjson Bash "bash c.sh; cd $G3O" "$G3SP")"
+check "G3 pin: path with a space, bash c.sh; cd sub"         hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash c.sh; cd sub' "$G3SP")"
+# controls
+check "G3 control: bash c.sh"                                hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash c.sh' "$G3R")"
+check "G3 control: bash ok.sh; cd <other repo>"              hooks/pre-commit-test.sh 0   "$(mkjson Bash "bash ok.sh; cd $G3O" "$G3R")"
+# gc_cd_target: the rewrite answers like the sed it replaces, and decodes \001
+expect "G3 gc_cd_target: plain"           "x"       "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_cd_target '  cd   x  ' )"
+expect "G3 gc_cd_target: two words"       ""        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_cd_target 'cd a b' )"
+expect "G3 gc_cd_target: not a cd"        ""        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_cd_target 'cdx y' )"
+expect "G3 gc_cd_target: \\001 is a space" "/a b"   "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_cd_target "cd /a$(printf '\001')b" )"
+expect "G3 gc_synth_cd: refuses a ;"      ""        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_synth_cd '/a;b' )"
+# ---- end v4.3.1 G3
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
