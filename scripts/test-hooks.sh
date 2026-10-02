@@ -8671,6 +8671,70 @@ check "SCAN no-push-main I3: -Command \"& ./p.ps1\": gated"        hooks/no-push
 check "SCAN gate-before-merge I3: -c \"./pcm.ps1; ./m.ps1\": gated" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'pwsh -c "./pcm.ps1; ./m.ps1"' "$SCANM")"
 # ---- end v4.3.0 SCAN
 
+# ---- v4.3.1 G1: the per-commit run has a budget; over it the whole tree dies and the commit is refused ----
+G1H="$ROOT/hooks/pre-commit-test.sh"
+g1_repo() { # <name> <PROJECT_CONTEXT.md body> -> repo on main
+  r=$(mkrepo "$1" main)
+  printf '%s\n' "$2" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+g1_run() { # <repo> <stderr file> -- a commit payload, 3 s test-only budget; returns the hook's exit
+  printf '%s' "$(mkjson Bash 'git commit -m x' "$1")" | PCT_TEST_TIMEOUT_TESTONLY_S=3 bash "$G1H" >/dev/null 2>"$2"
+}
+g1_rec() { ls -1t "$(gatedir "$1")"/last-precommit.*.json 2>/dev/null | head -1; }
+g1_yes() { if "$@"; then echo yes; else echo no; fi; }
+g1_native=no
+if [ -r "/proc/$$/winpid" ] && command -v cmd >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then g1_native=yes; fi
+g1_slow() { # <repo> -- slow.sh: a bash heartbeat child (self-bounded, 20 s), a native one on Git Bash, then sleep 20
+  printf '@echo off\r\nfor /l %%%%i in (1,1,20) do (\r\n  echo x>>"%%~dp0hbn.txt"\r\n  ping -n 2 127.0.0.1 >nul\r\n)\r\n' > "$1/hb.cmd"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '( n=0; while [ $n -lt 100 ]; do echo x >> "%s/hb.txt"; sleep 0.2; n=$((n + 1)); done ) &\n' "$1"
+    [ "$g1_native" = yes ] && printf 'cmd //c "%s" &\n' "$(cygpath -w "$1/hb.cmd")"
+    printf 'sleep 20\n'
+  } > "$1/slow.sh"
+}
+G1S=$(g1_repo g1slow '- **Test**: `bash slow.sh`'); g1_slow "$G1S"
+g1t0=$SECONDS; g1_run "$G1S" "$TMPROOT/g1s.err"; g1rc=$?; g1el=$((SECONDS - g1t0))
+expect "G1: Test over budget -> commit refused"        2   "$g1rc"
+expect "G1: refusal names the budget"                  yes "$(g1_yes grep -qF 'Test exceeded its 3 s budget -- commit refused' "$TMPROOT/g1s.err")"
+expect "G1: hook returned at the budget (< 15 s)"      yes "$(g1_yes [ "$g1el" -lt 15 ])"
+expect "G1: record path test, rc \"timeout\""          yes "$(g1_yes grep -q '"path":"test","rc":"timeout"' "$(g1_rec "$G1S")")"
+expect "G1: no survivor warning"                       no  "$(g1_yes grep -q 'still alive after the kill' "$TMPROOT/g1s.err")"
+g1a=$(wc -c < "$G1S/hb.txt" 2>/dev/null || echo 0); sleep 2; g1b=$(wc -c < "$G1S/hb.txt" 2>/dev/null || echo 0)
+expect "G1: the Test's bash grandchild died"           "$g1a" "$g1b"
+if [ "$g1_native" = yes ]; then
+  g1c=$(wc -c < "$G1S/hbn.txt" 2>/dev/null || echo 0); sleep 3; g1d=$(wc -c < "$G1S/hbn.txt" 2>/dev/null || echo 0)
+  expect "G1: the Test's native grandchild died"       "$g1c" "$g1d"
+else
+  skip "G1: the Test's native grandchild died" "no Git Bash /proc/<pid>/winpid" 1
+fi
+G1F=$(g1_repo g1fast '- **Test**: `exit 0`')
+g1_run "$G1F" "$TMPROOT/g1f.err"; expect "G1: Test inside the budget -> allowed as before" 0 "$?"
+expect "G1: green run still prints passed"             yes "$(g1_yes grep -qF "PRE-COMMIT: 'exit 0' passed." "$TMPROOT/g1f.err")"
+G1X=$(g1_repo g1fail '- **Test**: `exit 1`')
+g1_run "$G1X" "$TMPROOT/g1x.err"; expect "G1: failing Test -> refused as before" 2 "$?"
+expect "G1: a failing Test is not called a timeout"    no  "$(g1_yes grep -q 'exceeded its' "$TMPROOT/g1x.err")"
+G1G=$(g1_repo g1gate '- **Gate**: `bash slow.sh`'); g1_slow "$G1G"
+g1_run "$G1G" "$TMPROOT/g1g.err"; expect "G1: Gate-only repo, run-gate over budget -> refused (R-2)" 2 "$?"
+expect "G1: Gate fallback record path gate, rc \"timeout\"" yes "$(g1_yes grep -q '"path":"gate","rc":"timeout"' "$(g1_rec "$G1G")")"
+expect "G1: a stopped gate run writes no artifact"     0   "$(ls "$(gatedir "$G1G")"/last-pass.*.json 2>/dev/null | grep -c .)"
+g1_key() { # <label> <key value> <WARN|quiet> <unique suffix> -- fast Test, no override
+  r=$(g1_repo "g1k$4" "$(printf -- '- **Test**: `exit 0`\n- **Test timeout**: %s' "$2")")
+  if [ "$3" = WARN ]; then
+    check_msg "G1: **Test timeout** $1 -> WARN + default" "$G1H" 0 "$(mkjson Bash 'git commit -m x' "$r")" "**Test timeout**"
+  else
+    check_nomsg "G1: **Test timeout** $1 -> accepted" "$G1H" 0 "$(mkjson Bash 'git commit -m x' "$r")" "**Test timeout**"
+  fi
+}
+g1_key "abc"               abc               WARN  1
+g1_key "10 (below 30)"     10                WARN  2
+g1_key "3301 (above 3300)" 3301              WARN  3
+g1_key "600"               600               quiet 4
+g1_key "backticked 600"    '`600`'           quiet 5
+g1_key "placeholder"       '{{TEST_TIMEOUT}}' quiet 6
+# ---- end v4.3.1 G1
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

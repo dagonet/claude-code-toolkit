@@ -278,6 +278,141 @@ pct_prune() {
   find "$1" -maxdepth 1 \( -name 'last-precommit.*.json' -o -name 'last-precommit-noop.*.json' \) -mmin "+$_pp_min" -delete 2>/dev/null || true
 }
 
+# v4.3.1 G1 -- THE PER-COMMIT RUN HAS A BUDGET BELOW THE HARNESS HOOK TIMEOUT.
+# MM-Agent, 2026-09-30: a 641 s and a 1981 s Test outlived the harness's 600 s
+# hook timeout; the harness killed THIS hook, treated that as a NON-blocking
+# error and let the commit through, while the Test's children ran on as
+# orphans. The run now happens in a child this hook owns, in its own process
+# group (set -m), and stops at the budget: every member's native Windows
+# subtree dies first (taskkill //T on /proc/<pid>/winpid -- measured
+# 2026-10-02: taskkill on the leader's winpid ALONE leaves cygwin and native
+# grandchildren running, because a cygwin exec breaks the Windows parent
+# chain), then the group itself; the commit is REFUSED (exit 2). Every
+# registration carries "timeout": PCT_TIMEOUT_MAX + 60 (consistency check 64),
+# so this budget always fires before the harness does.
+PCT_TIMEOUT_DEFAULT=540
+PCT_TIMEOUT_MIN=30
+PCT_TIMEOUT_MAX=3300
+
+# pct_budget <repo> -- the budget in seconds: **Test timeout** when it is a
+# whole number in PCT_TIMEOUT_MIN..PCT_TIMEOUT_MAX, else (WARN) the default.
+# Unset, empty or an unfilled {{...}} placeholder is the default, silently.
+# PCT_TEST_TIMEOUT_TESTONLY_S is for the fixtures only and can only SHORTEN the
+# budget (1-29 s, below the configurable range): a larger value would let the
+# harness kill the hook first, which is the fail-open this budget closes.
+pct_budget() {
+  _pb_v=$(grep -E "${GC_KEY_PRE}\*\*Test timeout\*\*:" "$1/PROJECT_CONTEXT.md" 2>/dev/null | sed -E "s/${GC_KEY_PRE}\\*\\*Test timeout\\*\\*:[[:space:]]*//;s/[[:space:]]*\$//;s/^\`//;s/\`\$//" | head -1)
+  case "$_pb_v" in *\{\{*\}\}*) _pb_v="" ;; esac
+  _pb_b=$PCT_TIMEOUT_DEFAULT
+  if [ -n "$_pb_v" ]; then
+    case "$_pb_v" in
+      *[!0-9]*)
+        echo "pre-commit-test: WARN **Test timeout** '$_pb_v' is not a whole number of seconds ($PCT_TIMEOUT_MIN-$PCT_TIMEOUT_MAX) -- using $PCT_TIMEOUT_DEFAULT" >&2 ;;
+      *)
+        if [ "${#_pb_v}" -le 5 ] && [ "$_pb_v" -ge "$PCT_TIMEOUT_MIN" ] && [ "$_pb_v" -le "$PCT_TIMEOUT_MAX" ]; then
+          _pb_b=$_pb_v
+        else
+          echo "pre-commit-test: WARN **Test timeout** '$_pb_v' is outside $PCT_TIMEOUT_MIN-$PCT_TIMEOUT_MAX -- using $PCT_TIMEOUT_DEFAULT" >&2
+        fi ;;
+    esac
+  fi
+  case "${PCT_TEST_TIMEOUT_TESTONLY_S:-}" in
+    [1-9]|1[0-9]|2[0-9]) _pb_b=$PCT_TEST_TIMEOUT_TESTONLY_S ;;
+  esac
+  printf '%s\n' "$_pb_b"
+}
+
+# pct_group_members <pgid> -- how many live processes are still in the group.
+# Git Bash/Cygwin: /proc/<pid>/pgid (read with the builtin -- no spawn per
+# process). Elsewhere: ps -A -o pgid=.
+pct_group_members() {
+  _pg_n=0
+  if [ -r "/proc/$$/pgid" ]; then
+    for _pg_d in /proc/[0-9]*; do
+      _pg_g=""
+      { read -r _pg_g < "$_pg_d/pgid"; } 2>/dev/null
+      [ "$_pg_g" = "$1" ] && _pg_n=$((_pg_n + 1))
+    done
+  else
+    _pg_n=$(ps -A -o pgid= 2>/dev/null | awk -v g="$1" '$1 == g { n++ } END { print n + 0 }')
+  fi
+  printf '%s\n' "${_pg_n:-0}"
+}
+
+# pct_kill_group <pgid> -- every member's native subtree first (Git Bash), then
+# the whole group.
+pct_kill_group() {
+  if [ -r "/proc/$$/pgid" ]; then
+    for _pk_d in /proc/[0-9]*; do
+      _pk_g=""
+      _pk_w=""
+      { read -r _pk_g < "$_pk_d/pgid"; } 2>/dev/null
+      [ "$_pk_g" = "$1" ] || continue
+      { read -r _pk_w < "$_pk_d/winpid"; } 2>/dev/null
+      [ -n "$_pk_w" ] && taskkill //F //T //PID "$_pk_w" >/dev/null 2>&1
+    done
+  fi
+  kill -KILL -- "-$1" 2>/dev/null
+  return 0
+}
+
+# pct_run_bounded <budget_s> <outfile> <command...> -- runs the command in a
+# subshell (the containment of a consumer value's exit/exec, v2.2.5 round 5,
+# lives HERE now), in its own process group, stdin from /dev/null, output to
+# <outfile>. Sets PCT_RC to its exit status, or to the string "timeout" when
+# the budget ran out and the group was killed; PCT_LEFT counts survivors.
+# $SECONDS, not date: no spawn per tick, and a loaded machine slows the loop,
+# not the clock.
+pct_run_bounded() {
+  _rb_budget=$1
+  _rb_out=$2
+  shift 2
+  PCT_LEFT=0
+  set -m
+  ( "$@" ) > "$_rb_out" 2>&1 < /dev/null &
+  _rb_pid=$!
+  set +m
+  # Its own process group no longer dies with this hook: if the hook itself is
+  # signalled (a cancel, or a harness timeout on a registration without the
+  # field), take the group down first. An uncatchable kill (SIGKILL,
+  # TerminateProcess) still orphans it -- a stated Known limit.
+  trap 'pct_kill_group "$_rb_pid"; exit 2' TERM INT HUP
+  _rb_t0=$SECONDS
+  while kill -0 "$_rb_pid" 2>/dev/null; do
+    if [ $((SECONDS - _rb_t0)) -ge "$_rb_budget" ]; then
+      pct_kill_group "$_rb_pid"
+      wait "$_rb_pid" 2>/dev/null
+      for _rb_i in 1 2 3 4 5; do
+        PCT_LEFT=$(pct_group_members "$_rb_pid")
+        [ "$PCT_LEFT" -eq 0 ] 2>/dev/null && break
+        pct_kill_group "$_rb_pid"
+        sleep 1
+      done
+      trap - TERM INT HUP
+      PCT_RC=timeout
+      return 0
+    fi
+    sleep 1
+  done
+  wait "$_rb_pid"
+  PCT_RC=$?
+  trap - TERM INT HUP
+  return 0
+}
+
+# pct_refuse_timeout <budget> <label> -- the over-budget refusal. Never returns.
+pct_refuse_timeout() {
+  echo "BLOCKED: pre-commit-test: Test exceeded its $1 s budget -- commit refused. Shorten the per-commit Test (fast subset) and move the full suite to **Gate** / **Gate extra**, or raise **Test timeout** (max $PCT_TIMEOUT_MAX)." >&2
+  echo "  stopped: '$2' and every process it started" >&2
+  if [ "${PCT_LEFT:-0}" -gt 0 ] 2>/dev/null; then
+    echo "  WARN: $PCT_LEFT process(es) of that run were still alive after the kill -- check for orphans before re-running" >&2
+  fi
+  echo "--- last 20 lines ---" >&2
+  tail -20 "$OUT" >&2
+  rm -f "$OUT"
+  exit 2
+}
+
 gc_read_stdin
 gc_guard_off && exit 0
 
@@ -666,8 +801,12 @@ if [ -z "$TEST_CMD" ]; then
       cd "$REPO_PATH" || { pct_note gate -1; echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
       OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
       pct_capture_tree
-      bash "$RUN_GATE" > "$OUT" 2>&1
-      PCT_RC=$?
+      PCT_BUDGET=$(pct_budget "$REPO_PATH")
+      pct_run_bounded "$PCT_BUDGET" "$OUT" bash "$RUN_GATE"
+      if [ "$PCT_RC" = timeout ]; then
+        pct_note gate '"timeout"'
+        pct_refuse_timeout "$PCT_BUDGET" "run-gate.sh"
+      fi
       pct_note gate "$PCT_RC"
       if [ "$PCT_RC" -eq 0 ]; then
         rm -f "$OUT"
@@ -759,9 +898,14 @@ PCT_T0=$(date +%s 2>/dev/null || echo 0)
 # below). R5g in scripts/test-hooks.sh drives this BEHAVIOURALLY -- the source
 # censuses in verify-template-consistency.sh cannot reach a value that arrives
 # as config DATA rather than as hook SOURCE.
+# v4.3.1 G1: that subshell now lives in pct_run_bounded, which also gives it its own process group and the budget.
 pct_capture_tree
-( eval "$TEST_CMD" ) > "$OUT" 2>&1
-PCT_RC=$?
+PCT_BUDGET=$(pct_budget "$REPO_PATH")
+pct_run_bounded "$PCT_BUDGET" "$OUT" eval "$TEST_CMD"
+if [ "$PCT_RC" = timeout ]; then
+  pct_note test '"timeout"'
+  pct_refuse_timeout "$PCT_BUDGET" "$TEST_CMD"
+fi
 # v3.0.3 diagnostic. Records the child's number as data; nothing here BRANCHES
 # on it — see the long note below and census 21c-2h in
 # scripts/verify-template-consistency.sh.
