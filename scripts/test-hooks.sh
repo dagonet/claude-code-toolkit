@@ -8702,9 +8702,11 @@ expect "G1: hook returned at the budget (< 15 s)"      yes "$(g1_yes [ "$g1el" -
 expect "G1: record path test, rc \"timeout\""          yes "$(g1_yes grep -q '"path":"test","rc":"timeout"' "$(g1_rec "$G1S")")"
 expect "G1: no survivor warning"                       no  "$(g1_yes grep -q 'still alive after the kill' "$TMPROOT/g1s.err")"
 g1a=$(wc -c < "$G1S/hb.txt" 2>/dev/null || echo 0); sleep 2; g1b=$(wc -c < "$G1S/hb.txt" 2>/dev/null || echo 0)
+expect "G1: the Test's bash grandchild had started (T1-2)" yes "$(g1_yes [ "$g1a" -gt 0 ])"
 expect "G1: the Test's bash grandchild died"           "$g1a" "$g1b"
 if [ "$g1_native" = yes ]; then
   g1c=$(wc -c < "$G1S/hbn.txt" 2>/dev/null || echo 0); sleep 3; g1d=$(wc -c < "$G1S/hbn.txt" 2>/dev/null || echo 0)
+  expect "G1: the Test's native grandchild had started (T1-2)" yes "$(g1_yes [ "$g1c" -gt 0 ])"
   expect "G1: the Test's native grandchild died"       "$g1c" "$g1d"
 else
   skip "G1: the Test's native grandchild died" "no Git Bash /proc/<pid>/winpid" 1
@@ -8719,6 +8721,15 @@ G1G=$(g1_repo g1gate '- **Gate**: `bash slow.sh`'); g1_slow "$G1G"
 g1_run "$G1G" "$TMPROOT/g1g.err"; expect "G1: Gate-only repo, run-gate over budget -> refused (R-2)" 2 "$?"
 expect "G1: Gate fallback record path gate, rc \"timeout\"" yes "$(g1_yes grep -q '"path":"gate","rc":"timeout"' "$(g1_rec "$G1G")")"
 expect "G1: a stopped gate run writes no artifact"     0   "$(ls "$(gatedir "$G1G")"/last-pass.*.json 2>/dev/null | grep -c .)"
+# T1-1: the hook-wide ceiling (hook start) stops a run whose own budget (540 s default, no budget override) has not run out
+G1C=$(g1_repo g1ceil '- **Test**: `bash slow.sh`'); g1_slow "$G1C"
+g1t0=$SECONDS
+printf '%s' "$(mkjson Bash 'git commit -m x' "$G1C")" | PCT_TEST_CEILING_TESTONLY_S=6 bash "$G1H" >/dev/null 2>"$TMPROOT/g1c.err"; g1crc=$?
+g1el=$((SECONDS - g1t0))
+expect "G1: hook-wide ceiling over, budget not -> refused"   2   "$g1crc"
+expect "G1: ceiling refusal names the ceiling"         yes "$(g1_yes grep -qF 'hook-wide ceiling' "$TMPROOT/g1c.err")"
+expect "G1: ceiling stopped the run well before the 540 s budget (< 15 s)" yes "$(g1_yes [ "$g1el" -lt 15 ])"
+expect "G1: ceiling record path test, rc \"timeout\""  yes "$(g1_yes grep -q '"path":"test","rc":"timeout"' "$(g1_rec "$G1C")")"
 g1_key() { # <label> <key value> <WARN|quiet> <unique suffix> -- fast Test, no override
   r=$(g1_repo "g1k$4" "$(printf -- '- **Test**: `exit 0`\n- **Test timeout**: %s' "$2")")
   if [ "$3" = WARN ]; then

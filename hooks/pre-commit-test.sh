@@ -289,10 +289,33 @@ pct_prune() {
 # grandchildren running, because a cygwin exec breaks the Windows parent
 # chain), then the group itself; the commit is REFUSED (exit 2). Every
 # registration carries "timeout": PCT_TIMEOUT_MAX + 60 (consistency check 64),
-# so this budget always fires before the harness does.
+# so this budget fires before the harness does -- PROVIDED the work around the
+# run fits in the 60 s margin, which a loaded machine can break (measured: one
+# running gate slows every spawn 10-30x). Hence the hook-wide ceiling below.
 PCT_TIMEOUT_DEFAULT=540
 PCT_TIMEOUT_MIN=30
 PCT_TIMEOUT_MAX=3300
+# v4.3.1 T1-1: the per-run budget counts from the fork; the harness counts from
+# hook start. The run therefore ALSO stops when bash $SECONDS (hook start)
+# reaches the registration timeout (PCT_TIMEOUT_MAX + 60) minus
+# PCT_CEIL_RESERVE, whichever limit comes first. 45 s is what the kill path
+# needs after the ceiling trips: up to 5 kill rounds (one taskkill spawn per
+# group member each, 1 s sleeps) plus the record, prune and refusal text, at
+# spawn latencies several times the idle ones; the remaining 15 s of the margin
+# absorb poll granularity.
+PCT_CEIL_RESERVE=45
+
+# pct_ceiling -- the hook-wide ceiling in seconds since hook start.
+# PCT_TEST_CEILING_TESTONLY_S is for the fixtures only and can only LOWER it
+# (a whole number below the real ceiling), never raise it past the harness timeout.
+pct_ceiling() {
+  _pc_c=$((PCT_TIMEOUT_MAX + 60 - PCT_CEIL_RESERVE))
+  case "${PCT_TEST_CEILING_TESTONLY_S:-}" in
+    ''|*[!0-9]*) ;;
+    *) [ "${#PCT_TEST_CEILING_TESTONLY_S}" -le 4 ] && [ "$PCT_TEST_CEILING_TESTONLY_S" -ge 1 ] && [ "$PCT_TEST_CEILING_TESTONLY_S" -lt "$_pc_c" ] && _pc_c=$PCT_TEST_CEILING_TESTONLY_S ;;
+  esac
+  printf '%s\n' "$_pc_c"
+}
 
 # pct_budget <repo> -- the budget in seconds: **Test timeout** when it is a
 # whole number in PCT_TIMEOUT_MIN..PCT_TIMEOUT_MAX, else (WARN) the default.
@@ -378,8 +401,15 @@ pct_run_bounded() {
   # TerminateProcess) still orphans it -- a stated Known limit.
   trap 'pct_kill_group "$_rb_pid"; exit 2' TERM INT HUP
   _rb_t0=$SECONDS
+  _rb_ceil=$(pct_ceiling)
+  PCT_CEIL_HIT=0
   while kill -0 "$_rb_pid" 2>/dev/null; do
-    if [ $((SECONDS - _rb_t0)) -ge "$_rb_budget" ]; then
+    # Either limit stops the run: the per-run budget (counted from the fork) or
+    # the hook-wide ceiling (bash $SECONDS counts from hook start).
+    if [ "$SECONDS" -ge "$_rb_ceil" ] && [ $((SECONDS - _rb_t0)) -lt "$_rb_budget" ]; then
+      PCT_CEIL_HIT=1
+    fi
+    if [ $((SECONDS - _rb_t0)) -ge "$_rb_budget" ] || [ "$PCT_CEIL_HIT" -eq 1 ] || [ "$SECONDS" -ge "$_rb_ceil" ]; then
       pct_kill_group "$_rb_pid"
       wait "$_rb_pid" 2>/dev/null
       for _rb_i in 1 2 3 4 5; do
@@ -402,7 +432,11 @@ pct_run_bounded() {
 
 # pct_refuse_timeout <budget> <label> -- the over-budget refusal. Never returns.
 pct_refuse_timeout() {
+  if [ "${PCT_CEIL_HIT:-0}" -eq 1 ]; then
+    echo "BLOCKED: pre-commit-test: the hook-wide ceiling ($(pct_ceiling) s since hook start, set by the harness timeout $((PCT_TIMEOUT_MAX + 60)) s) was reached before the $1 s budget ran out -- commit refused. Shorten the per-commit Test or lower **Test timeout**." >&2
+  else
   echo "BLOCKED: pre-commit-test: Test exceeded its $1 s budget -- commit refused. Shorten the per-commit Test (fast subset) and move the full suite to **Gate** / **Gate extra**, or raise **Test timeout** (max $PCT_TIMEOUT_MAX)." >&2
+  fi
   echo "  stopped: '$2' and every process it started" >&2
   if [ "${PCT_LEFT:-0}" -gt 0 ] 2>/dev/null; then
     echo "  WARN: $PCT_LEFT process(es) of that run were still alive after the kill -- check for orphans before re-running" >&2
