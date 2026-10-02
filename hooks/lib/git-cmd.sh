@@ -213,7 +213,8 @@ GC_CMD=""
 # shell identifier; `/opt/a=b/git` and `C:\x=y\git` are commands (git).
 gc_is_assignment_word() { # <token>
   case "$1" in
-    [A-Za-z_]*=*) case "${1%%=*}" in *[!A-Za-z0-9_]*) return 1 ;; *) return 0 ;; esac ;;
+    [A-Za-z_]*=*) _gcaw=${1%%=*}; _gcaw=${_gcaw%+}   # T2-4: NAME+=value appends
+      case "$_gcaw" in *[!A-Za-z0-9_]*) return 1 ;; *) return 0 ;; esac ;;
   esac
   return 1
 }
@@ -240,7 +241,7 @@ gc_is_git_word() { # <token>
 }
 # The awk copy, prepended to every awk program that opens a git invocation
 # (gc_matches_subcommand, gc_push_args). The caller passes -v bs='\' -v sq="'".
-GC_AWK_IS_GIT='function is_git(t,   l, q, i, u) { if (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) return 0; q = substr(t, 1, 1); if (length(t) > 1 && (q == "\"" || q == sq) && substr(t, length(t), 1) == q) t = substr(t, 2, length(t) - 2); l = tolower(t); if (length(l) > 4 && substr(l, length(l) - 3) == ".exe") l = substr(l, 1, length(l) - 4); if (l == "git" || l ~ /\/git$/ || substr(l, length(l) - 3, 4) == bs "git") return 1; u = l; while ((i = index(u, bs)) > 0) u = substr(u, 1, i - 1) substr(u, i + 1); return (u == "git" || u == "git.exe") }
+GC_AWK_IS_GIT='function is_git(t,   l, q, i, u) { if (t ~ /^[A-Za-z_][A-Za-z0-9_]*[+]?=/) return 0; q = substr(t, 1, 1); if (length(t) > 1 && (q == "\"" || q == sq) && substr(t, length(t), 1) == q) t = substr(t, 2, length(t) - 2); l = tolower(t); if (length(l) > 4 && substr(l, length(l) - 3) == ".exe") l = substr(l, 1, length(l) - 4); if (l == "git" || l ~ /\/git$/ || substr(l, length(l) - 3, 4) == bs "git") return 1; u = l; while ((i = index(u, bs)) > 0) u = substr(u, 1, i - 1) substr(u, i + 1); return (u == "git" || u == "git.exe") }
 '
 # The hooks' fast pre-filter (no-push-main.sh, gate-before-merge.sh): any
 # token that could be git, so the segment walk runs. Wider than
