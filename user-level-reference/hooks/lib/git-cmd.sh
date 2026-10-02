@@ -201,6 +201,37 @@ GC_CMD=""
 # falls to the `*)` (subcommand) arm, printing `ok`. That is the same verdict
 # the pre-v3.0.3 code gave, so this does not widen it; gc_matches_subcommand's
 # own fail-closed retry is what covers the quoted-path case for the verdict.
+# v4.3.1 G2 -- ONE definition of "this word runs git", for every recogniser.
+# git and git.exe in any case (Windows resolves GIT.EXE, Git, git.exe alike),
+# bare or after a / or \ path, with one pair of surrounding quotes removed.
+# v4.1.2-v4.3.0 accepted only `git`, `*/git`, `*\git`: `git.exe push origin
+# main` and `"git" push origin main` passed all three gates (v4.3.0 scan-fix
+# reviews). Pinned by the G2 parity rows in scripts/test-hooks.sh -- the shell
+# and the awk copies below must answer the same spellings (C-7: the awk copy
+# strips the same one pair of quotes, so a quoted "git" is a parity row too).
+gc_is_git_word() { # <token>
+  _giw=$1
+  case "$_giw" in *=*) return 1 ;; esac   # an assignment (GIT_DIR=/x/git) is never the git word
+  case "$_giw" in
+    \"*\") _giw=${_giw#\"}; _giw=${_giw%\"} ;;
+    \'*\') _giw=${_giw#\'}; _giw=${_giw%\'} ;;
+  esac
+  case "$_giw" in
+    [Gg][Ii][Tt]|[Gg][Ii][Tt].[Ee][Xx][Ee]) return 0 ;;
+    */[Gg][Ii][Tt]|*/[Gg][Ii][Tt].[Ee][Xx][Ee]) return 0 ;;
+    *\\[Gg][Ii][Tt]|*\\[Gg][Ii][Tt].[Ee][Xx][Ee]) return 0 ;;
+  esac
+  return 1
+}
+# The awk copy, prepended to every awk program that opens a git invocation
+# (gc_matches_subcommand, gc_push_args). The caller passes -v bs='\' -v sq="'".
+GC_AWK_IS_GIT='function is_git(t,   l, q) { if (index(t, "=") > 0) return 0; q = substr(t, 1, 1); if (length(t) > 1 && (q == "\"" || q == sq) && substr(t, length(t), 1) == q) t = substr(t, 2, length(t) - 2); l = tolower(t); if (length(l) > 4 && substr(l, length(l) - 3) == ".exe") l = substr(l, 1, length(l) - 4); return (l == "git" || l ~ /\/git$/ || substr(l, length(l) - 3, 4) == bs "git") }
+'
+# The hooks' fast pre-filter (no-push-main.sh, gate-before-merge.sh): any
+# token that could be git, so the segment walk runs. Wider than
+# gc_is_git_word on purpose (it only decides whether to LOOK).
+GC_GIT_WORD_RE='(^|[^[:alnum:]_-])["'"'"']?[Gg][Ii][Tt](\.[Ee][Xx][Ee])?["'"'"']?([[:space:]]|$)'
+
 gc_global_options() {
   gcgo_seg="$1"
   # `set -f` BEFORE the unquoted split (v3.0.3, phantom-token audit). Word
@@ -220,10 +251,10 @@ gc_global_options() {
     if [ "$gcgo_sawgit" -eq 0 ]; then
       case "$gcgo_tok" in
         env) continue ;;
-        git) gcgo_sawgit=1; continue ;;
         *=*) case "$gcgo_tok" in GIT_*=*|*_GIT_*=*) printf 'env:%s\n' "${gcgo_tok%%=*}"; return ;; esac; continue ;;
-        *)   continue ;;
       esac
+      gc_is_git_word "$gcgo_tok" && gcgo_sawgit=1
+      continue
     fi
     case "$gcgo_tok" in
       -C)   shift; continue ;;                                    # resolved by the caller
@@ -847,9 +878,7 @@ gc_dash_c_list() {
   printf '%s\n' "$1" | tr ' \t' '\n\n' | while IFS= read -r gcdl_t; do
     [ -n "$gcdl_t" ] || continue
     if [ "$gcdl_seen" -eq 0 ]; then
-      case "$gcdl_t" in
-        git|*/git|*\\git) gcdl_seen=1 ;;
-      esac
+      gc_is_git_word "$gcdl_t" && gcdl_seen=1
       continue
     fi
     case "$gcdl_want" in
@@ -1461,8 +1490,9 @@ gc_on_main() {
 #      warning, which would let a bare word merely ENDING in "git" (`notgit`)
 #      open the walk. FIX: `is_git()` below tests equality, a `/git` suffix, or
 #      a literal `\git` suffix via `substr()`, none of which depend on
-#      backslash-in-regex escaping semantics.
-#   F3 (quoted wrappers and substitution openers): the deleted fast path was,
+#      backslash-in-regex escaping semantics. v4.3.1 G2: is_git() now comes
+#      from GC_AWK_IS_GIT (git/git.exe, any case).
+#   F3(quoted wrappers and substitution openers): the deleted fast path was,
 #      incidentally, the only thing that matched `bash -c "git commit -m x"`,
 #      `sh -lc "git commit -m x"`, `(git commit -m x)`, and — this is also how
 #      gate-before-merge.sh's A6.10 command-substitution rows stayed gated —
@@ -1501,10 +1531,9 @@ gc_matches_subcommand() {
   # more thing an unusual awk could get creatively wrong; passed in as data
   # instead, so is_git()'s backslash-path test does not depend on any awk's
   # string-literal escape handling at all.
-  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk -v verb="$2" -v first_only="$_gc_first_only" -v sq="'" -v bs='\' '
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk -v verb="$2" -v first_only="$_gc_first_only" -v sq="'" -v bs='\' "$GC_AWK_IS_GIT"'
     BEGIN { seen_git = 0; want_value = 0; wrap = "^[\"($<>`" sq "]+|[\")`" sq "]+$" }
     $0 == "" { next }
-    function is_git(t) { return (t == "git" || t ~ /\/git$/ || substr(t, length(t) - 3, 4) == bs "git") }
     {
       tok = $0
       gsub(wrap, "", tok)                  # quoted / parenthesised wrappers: bash -c "git …", (git …)
@@ -1559,13 +1588,13 @@ gc_matches_subcommand() {
 # past it and finding the real `push` token keeps that case covered while
 # still being non-greedy: only the FIRST `push` token ends the scan.
 gc_push_args() {
-  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk '
+  printf '%s\n' "$1" | tr ' \t' '\n\n' | awk -v sq="'" -v bs='\' "$GC_AWK_IS_GIT"'
     BEGIN { seen_git = 0; want_value = 0; found = 0 }
     $0 == "" { next }
     {
       tok = $0
       if (!seen_git) {
-        if (tok == "git" || tok ~ /\/git$/ || tok ~ /\\git$/) seen_git = 1
+        if (is_git(tok)) seen_git = 1
         next
       }
       if (found) { print tok; next }

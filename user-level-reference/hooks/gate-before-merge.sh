@@ -738,7 +738,8 @@ GC_CMD="$(gc_augmented_cmd "$CWD")"
 # that pattern-matched on the subcommand would pass every timing test and
 # re-open finding 62 in the same change — fast and wrong.
 if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
-  if ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])git([[:space:]]|$)' &&
+  # v4.3.1 G2: GC_GIT_WORD_RE (hooks/lib/git-cmd.sh) also opens the walk for git.exe, GIT and a quoted "git".
+  if ! printf '%s\n' "$GC_CMD" | grep -qE "$GC_GIT_WORD_RE" &&
      ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
     exit 0
   fi

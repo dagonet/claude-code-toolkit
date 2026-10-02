@@ -8748,6 +8748,40 @@ g1_key "backticked 600"    '`600`'           quiet 5
 g1_key "placeholder"       '{{TEST_TIMEOUT}}' quiet 6
 # ---- end v4.3.1 G1
 
+# ---- v4.3.1 G2: git.exe / GIT / quoted git / path-qualified git are git to every gate ----
+G2R=$(mkrepo g2main main)
+printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$G2R/PROJECT_CONTEXT.md"
+G2O=$(mkrepo g2other feat)
+for sp in git.exe GIT Git.Exe '"git"' "'git'" '"git.exe"' /usr/bin/git.exe 'C:\Git\cmd\git.exe'; do
+  check "G2 no-push-main: $sp push origin main"          hooks/no-push-main.sh 2      "$(mkjson Bash "$sp push origin main" "$G2R")"
+  check "G2 no-push-main: bare $sp push on main"         hooks/no-push-main.sh 2      "$(mkjson Bash "$sp push" "$G2R")"
+  check "G2 gate-before-merge: $sp merge on main"        hooks/gate-before-merge.sh 2 "$(mkjson Bash "$sp merge feature/y" "$G2R")"
+  check "G2 pre-commit-test: $sp commit (Test fails)"    hooks/pre-commit-test.sh 2   "$(mkjson Bash "$sp commit -m x" "$G2R")"
+done
+check_msg "G2 pre-commit-test: git.exe -c ... commit -> global refused" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git.exe -c core.hooksPath=x commit -m y' "$G2R")" "carries the global option"
+check "G2 no-push-main: git.exe -C <protected> push from a feature cwd" hooks/no-push-main.sh 2 "$(mkjson Bash "git.exe -C $G2R push" "$G2O")"
+check "G2 no-push-main: git.exe -C <feature repo> push origin feat"    hooks/no-push-main.sh 0 "$(mkjson Bash "git.exe -C $G2O push origin feat" "$G2R")"
+# Wrapper words already refuse (R-5): regression pins.
+for w in 'command git' 'env A=1 git' 'exec git' 'nohup git' 'time git'; do
+  check "G2 pin: $w push origin main" hooks/no-push-main.sh 2 "$(mkjson Bash "$w push origin main" "$G2R")"
+done
+# Not git: must stay allowed.
+for nw in gitk git-lfs notgit digit.exe; do
+  check "G2 not git: $nw push origin main" hooks/no-push-main.sh 0 "$(mkjson Bash "$nw push origin main" "$G2R")"
+done
+# Parity: the shell recognisers and the awk ones answer the same spellings
+# (C-7: "git" is a parity row too, so the awk copy's own quote strip is tested).
+for sp in git.exe GIT /usr/bin/git.exe 'C:\Git\cmd\git.exe' '"git"'; do
+  expect "G2 parity gc_dash_c_list: $sp -C /x push"      "/x"        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_dash_c_list "$sp -C /x push" )"
+  expect "G2 parity gc_global_options: $sp -c a=b commit" "refuse:-c" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_global_options "$sp -c a=b commit" )"
+  expect "G2 parity gc_push_args: $sp push origin main"  "origin main" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_push_args "$sp push origin main" )"
+  expect "G2 parity gc_matches_subcommand: $sp push"     yes "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_matches_subcommand "$sp push origin main" push && echo yes || echo no )"
+done
+# An assignment is never the git word: the env refusal must survive the new predicate.
+expect "G2 pin: GIT_DIR=/x/git git commit -> env refusal" "env:GIT_DIR" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_global_options 'GIT_DIR=/x/git git commit' )"
+# ---- end v4.3.1 G2
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
