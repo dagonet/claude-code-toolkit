@@ -131,7 +131,10 @@ Expected: `BLOCK v4.3.0 C1: N passed, 0 failed, S skipped`. Write the exact `N`/
 
 - [ ] **Step 3: Freeze the golden copy** from the base release tag:
 
-Run: `git -C G:/git/.worktrees/claude-code-toolkit/jev-phase1 show "v$(head -1 G:/git/.worktrees/claude-code-toolkit/jev-phase1/VERSION):hooks/model-floor.sh"`, and write its output with the Write tool to `scripts/fixtures/model-floor-golden/model-floor.sh`. Then `cmp scripts/fixtures/model-floor-golden/model-floor.sh hooks/model-floor.sh`. It must be identical, because the branch has not touched model-floor yet. If `VERSION` still reads `4.3.0`, the rebase has not happened: stop and tell the controller.
+`hooks/model-floor.sh` holds an invisible literal U+FEFF in its node emitter (`.replace(/^…/, "")`, ~:99; `grep -c $'\xef\xbb\xbf' hooks/model-floor.sh` prints 1). Re-typing the file through the Write tool would drop that byte silently, so **copy, never transcribe**:
+- `mkdir -p scripts/fixtures/model-floor-golden && cp hooks/model-floor.sh scripts/fixtures/model-floor-golden/model-floor.sh`. This is valid because the branch has not touched model-floor yet.
+- Verify against the tag: `git -C G:/git/.worktrees/claude-code-toolkit/jev-phase1 show "v$(head -1 G:/git/.worktrees/claude-code-toolkit/jev-phase1/VERSION):hooks/model-floor.sh" | cmp - scripts/fixtures/model-floor-golden/model-floor.sh`. It must print nothing.
+- If `VERSION` still reads `4.3.0`, the rebase has not happened: stop and tell the controller.
 
 - [ ] **Step 4: Write the J-DIFF block** (insert before the final tally):
 
@@ -395,7 +398,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 fi
 ```
 
-- [ ] **Step 4: Rewrite `hooks/model-floor.sh`.** Keep v4.3.0's lines 1-22 (the header comment) verbatim. Add this paragraph after them, then replace lines 23-90 with the code below, and keep lines 91-131 (the emitters and stderr line) byte-identical:
+- [ ] **Step 4: Edit `hooks/model-floor.sh` with the Edit tool. Never Write the whole file.** The node emitter (~:99) holds a literal U+FEFF that a whole-file rewrite would drop. No test would notice, because bash strips the BOM before node runs. Before editing, record `grep -c $'\xef\xbb\xbf' hooks/model-floor.sh` (1). Keep v4.3.0's lines 1-22 (the header comment) verbatim. Add this paragraph after them, then replace lines 23-90 with the code below, and leave lines 91-131 (the emitters and stderr line) untouched:
 
 ```bash
 #
@@ -427,7 +430,7 @@ am_jev_routing "$AM_ROOT" && exit 0
 MF_DEF=$AM_MODEL
 ```
 
-Then mirror both files: `cp hooks/lib/agent-model.sh user-level-reference/hooks/lib/agent-model.sh` and `cp hooks/model-floor.sh user-level-reference/hooks/model-floor.sh`.
+Then mirror both files: `cp hooks/lib/agent-model.sh user-level-reference/hooks/lib/agent-model.sh` and `cp hooks/model-floor.sh user-level-reference/hooks/model-floor.sh`. Re-check the BOM byte: `grep -c $'\xef\xbb\xbf' hooks/model-floor.sh user-level-reference/hooks/model-floor.sh` must print 1 for each file. Task 3's header edit needs the same check.
 
 - [ ] **Step 5: The one allowed C1 edit.** The S-24 case (b) installs a user-level copy under a temp HOME. That copy now needs the lib, or it goes silent and the row "C1 S-24 user-level wrapper, no project copy -> runs" fails. After the line `cp "$ROOT/user-level-reference/hooks/lib/json.sh"    "$C1UH/.claude/hooks/lib/json.sh"` (~:8492) add:
 
@@ -2721,7 +2724,9 @@ rm -rf "$C64C_TMP"
     6. `/jev report`'s outcome join is retro-ledger failure rows, not report status (R-6);
     7. effort is logged only;
     8. a consumer whose hooks predate v4.4.0 cannot be switched on (`on` refuses, R-8);
-    9. a session started in a subdirectory with its own `.claude/` is not modelled.
+    9. a session started in a subdirectory with its own `.claude/` is not modelled;
+    10. if the resolver call times out (2 s) while model-floor has stepped aside, the router stays silent and the spawn inherits;
+    11. a consumer who accepts the new `hooks/model-floor.sh` but not `hooks/lib/agent-model.sh` in a partial sync silently loses the floor, because model-floor exits 0 without its lib.
   - **`### Downstream migration`:**
     - this repo's live install: copy `user-level-reference/hooks/lib/agent-model.sh` and `user-level-reference/hooks/model-floor.sh` to `~/.claude/hooks/`, and `user-level-reference/skills/jev/` to `~/.claude/skills/jev/` (no `__pycache__`);
     - `verify-user-level-drift.sh` must report 0;
@@ -2736,18 +2741,18 @@ rm -rf "$C64C_TMP"
 
 ### Task 11 (controller only): gate, matrix, review, live checks, merge
 
-1. **Gate.** With the user's go (the gate stalls the whole machine), measure spawn latency before and after, then run `bash hooks/run-gate.sh` in the foreground with timeout 600000. Then run the parser matrix (`bash scripts/test-hooks-parser-matrix.sh`, ~90 min). It is mandatory here: model-floor embeds node and Python is a hook language now. Expect `EXP_JQ_SKIP` in band, including J-PY's 4.
+1. **Gate.** With the user's go (the gate stalls the whole machine), measure spawn latency before and after, then run `bash hooks/run-gate.sh` in the foreground with timeout 600000. Then run the parser matrix (`bash scripts/test-hooks-parser-matrix.sh`, ~90 min). It is mandatory here: model-floor embeds node and Python is a hook language now. Expect `EXP_JQ_SKIP` in band, including J-PY's 4. If J-PY's E2E rows flake under the gate (which slows process spawns 10-30x across the machine), suspect `RESOLVER_TIMEOUT` (2 s on a bash call that makes 2-3 git calls) before the transport. A slow resolver returns None and the router goes silent.
 2. **Push, PR, and outside review** at the exact sha by mcp-dev-servers. Fixes go on the branch.
 3. **L1 live check, no egress: a parallel exit-2 hook still wins over an `updatedInput` rewrite.**
    - In a scratch git repo outside every repo (`$SCRATCH/jev-live`), copy `hooks/model-floor.sh` and `hooks/lib/{json.sh,agent-model.sh}`.
    - Write a `.claude/settings.json` with two `PreToolUse` entries on matcher `Agent`: model-floor (the template wrapper) and `echo "LIVE-DENY exit-2 probe" >&2; exit 2`.
-   - Run `claude -p "Use the Agent tool exactly once: subagent_type Plan, NO model parameter, prompt 'Reply with the single word ok.' Then print the tool result verbatim." --output-format json` from that directory, as `cd <dir> && claude -p …`, one command after the `cd`.
+   - Run `claude -p --model opus "Use the Agent tool exactly once: subagent_type Plan, NO model parameter, prompt 'Reply with the single word ok.' Then print the tool result verbatim." --output-format json` from that directory, as `cd <dir> && claude -p …`, one command after the `cd`. Pinning the orchestrator to opus makes the probe two-sided: a sonnet subagent then proves the floor fired, not that it inherited. First confirm that `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is unset. This host's live `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` covers general-purpose only, never Plan, unless `_FORCE` is set.
    - Expect: the tool result carries `LIVE-DENY`, and no `subagents/` transcript is created for that session under `~/.claude/projects/<slug>/`.
    - Remove the deny entry and re-run. Expect: the subagent transcript's `message.model` is `claude-sonnet-*` (the floor). This shows that `updatedInput` without `permissionDecision` applies, and that exit 2 beats it.
 4. **Merge only on the user's explicit go** (spec status line). Merge from the gated worktree, fill `<pending gate>`, tag, release, and do the live install per Downstream migration. `verify-user-level-drift.sh` must report 0.
 5. **L2 opt-in live smoke**, which costs at most two real API calls. Run it only if the user says so.
    - In `$SCRATCH/jev-live` (with no deny hook), run `python3 ~/.claude/skills/jev/jev_ctl.py on`. Save a copy of `settings.local.json`'s pre-on state first; it is absent here.
-   - Spawn exactly as in L1, with Plan and no `model`.
+   - Spawn exactly as in L1 (`claude -p --model opus`, Plan, no `model`).
    - Check:
      - (a) one event file in `.git/jev/events/` with a reason from `REASONS`;
      - (b) `grep -c "Reply with the single word"` on it is 0, and the key is absent;
