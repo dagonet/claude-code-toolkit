@@ -487,6 +487,7 @@ fi
 # (v4.3.0 A1, S-28) judges THIS text, never the widened one.
 PCT_RAW_CMD="$GC_CMD"
 GC_CMD="$(gc_augmented_cmd "$GC_CWD")"
+gc_aug_overflow_refuse pre-commit-test
 
 # Find the repo of the first `git commit` in the command line (if any).
 base="$GC_CWD"

@@ -8856,7 +8856,53 @@ expect "G3 gc_cd_target: plain"           "x"       "$( . "$ROOT/hooks/lib/git-c
 expect "G3 gc_cd_target: two words"       ""        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_cd_target 'cd a b' )"
 expect "G3 gc_cd_target: not a cd"        ""        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_cd_target 'cdx y' )"
 expect "G3 gc_cd_target: \\001 is a space" "/a b"   "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_cd_target "cd /a$(printf '\001')b" )"
-expect "G3 gc_synth_cd: refuses a ;"      ""        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_synth_cd '/a;b' )"
+expect "G3 gc_synth_cd: a ; travels as \006"  "cd /a$(printf '\006')b"  "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_synth_cd '/a;b' )"
+# fix round 1 (T3-1): a cd/pushd/popd the tracker cannot model makes the cwd uncertain -> every cwd seen so far
+printf 'echo hi\n' > "$G3O/x.sh"
+printf 'git push\n' > "$G3R/x.sh"
+for g3f in 'cd -' 'cd -P ..' 'cd -- ..' 'cd' 'popd'; do
+  check "G3 T3-1 pre-commit-test: cd sub; $g3f; bash c.sh"          hooks/pre-commit-test.sh 2   "$(mkjson Bash "cd sub; $g3f; bash c.sh" "$G3R")"
+  check "G3 T3-1 no-push-main: cd sub; $g3f; bash bare.sh"          hooks/no-push-main.sh 2      "$(mkjson Bash "cd sub; $g3f; bash bare.sh" "$G3R")"
+  check "G3 T3-1 gate-before-merge: cd sub; $g3f; bash m.sh"        hooks/gate-before-merge.sh 2 "$(mkjson Bash "cd sub; $g3f; bash m.sh" "$G3R")"
+done
+# a fully determined cd is NOT widened: x.sh is benign in the other repo
+check "G3 pin: no-push-main: cd <other repo>; bash ./x.sh (determined)" hooks/no-push-main.sh 0   "$(mkjson Bash "cd $G3O; bash ./x.sh" "$G3R")"
+# T3-2: the scan cap never drops the current cwd; past the cap the gates refuse
+for g3i in 1 2 3 4 5 6 7 8; do mkdir -p "$G3O/d$g3i"; done
+g3c9='cd d1; cd ../d2; cd ../d3; cd ../d4; cd ../d5; cd ../d6; cd ../d7; cd ../d8'
+g3c7='cd d1; cd ../d2; cd ../d3; cd ../d4; cd ../d5; cd ../d6'
+check "G3 T3-2 no-push-main: 8 cds; cd <protected>; cd \"\$X\"; bash bare.sh (overflow refuses)" hooks/no-push-main.sh 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash bare.sh" "$G3O")"
+check_msg "G3 T3-2 no-push-main: the overflow refusal advises a script file" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash bare.sh" "$G3O")" "put the steps in a script file"
+check "G3 T3-2 pre-commit-test: 8 cds; cd <protected>; cd \"\$X\"; bash c.sh" hooks/pre-commit-test.sh 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash c.sh" "$G3O")"
+check "G3 T3-2 gate-before-merge: 8 cds; cd <protected>; cd \"\$X\"; bash m.sh" hooks/gate-before-merge.sh 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash m.sh" "$G3O")"
+check "G3 T3-2 no-push-main: 6 cds (8 cwds, no overflow); cd <protected>; cd \"\$X\"; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "$g3c7; cd $G3R; cd \"\$X\"; bash bare.sh" "$G3O")"
+check "G3 T3-2 control: 9 certain cds then bash ok.sh is not refused" hooks/no-push-main.sh 0 "$(mkjson Bash "$g3c9; cd $G3R; bash ok.sh" "$G3O")"
+# T3-4: a cwd holding an apostrophe or a dollar sign still gets its synthetic cd.
+# MSYS does not path-convert an argument holding a quote character, so the
+# native git cannot open an /tmp/...o'brien path: that repo is initialised and
+# addressed through its platform spelling (natpath).
+G3AP=$(g3_repo "o'brien")
+G3AP=$(natpath "$G3AP")
+git -C "$G3AP" init -q >/dev/null 2>&1
+git -C "$G3AP" config user.email t@t.t; git -C "$G3AP" config user.name t; git -C "$G3AP" config commit.gpgsign false
+git -C "$G3AP" add -A >/dev/null 2>&1
+git -C "$G3AP" commit -q -m seed >/dev/null 2>&1
+git -C "$G3AP" branch -M main >/dev/null 2>&1
+G3DL=$(g3_repo 'd$x')
+for g3d in "$G3AP" "$G3DL"; do
+  if ! git -C "$g3d" rev-parse --git-dir >/dev/null 2>&1; then
+    skip "G3 T3-4 cwd $g3d" "git cannot open this path on this host" 3
+    continue
+  fi
+  check "G3 T3-4 pre-commit-test: cwd $g3d, bash c.sh; cd <other repo>"  hooks/pre-commit-test.sh 2   "$(mkjson Bash "bash c.sh; cd $G3O" "$g3d")"
+  check "G3 T3-4 no-push-main: cwd $g3d, bash bare.sh; cd <other repo>"  hooks/no-push-main.sh 2      "$(mkjson Bash "bash bare.sh; cd $G3O" "$g3d")"
+  check "G3 T3-4 gate-before-merge: cwd $g3d, bash m.sh; cd <other repo>" hooks/gate-before-merge.sh 2 "$(mkjson Bash "bash m.sh; cd $G3O" "$g3d")"
+done
+# git-free: the synthetic cd round-trips every special character back to the real directory
+g3rt="$TMPROOT/g3 rt"'/a'"'"'b$d`e;f&g'
+mkdir -p "$g3rt"
+expect "G3 T3-4 gc_synth_cd round-trips ' \$ \` ; & and a space" "$g3rt" \
+  "$( . "$ROOT/hooks/lib/git-cmd.sh"; s=$(gc_synth_cd "$g3rt"); gc_resolve "$TMPROOT" "$(gc_cd_target "$s")" )"
 # ---- end v4.3.1 G3
 
 echo "----------------------------------------------------------------"

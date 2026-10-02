@@ -676,44 +676,113 @@ gc_script_body() {
   head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#'
 }
 
-# gc_augmented_cmd <cwd> -- GC_CMD, plus the body of every script segment
-# (gc_script_body, depth 1: a body is never itself re-scanned for further
-# script segments) appended after the segment that named it. Walks
-# gc_seg_raw's output exactly once (v4.1.1: was gc_segments -- gc_script_body
-# now needs the quote-intact form; see its own docstring), over the
-# UNMODIFIED $GC_CMD -- so the result is the same text whether a caller feeds
-# it straight back into gc_segments/gc_seg_quoted/gc_seg_raw (all three stay
-# index-aligned because they read the identical augmented string) or into a
-# plain git-token grep (v4.0.3 item 12: the pre-filter in
-# gate-before-merge.sh/no-push-main.sh must see the same text the segment
-# walk does, or a script's `git merge`/`git push` passes the "no git token"
-# fast exit before the walk that would have caught it ever runs).
 GC_NL='
 '
-# gc_synth_cd <dir> -- v4.3.1 G3: the line that puts the segment walk back in
-# <dir> before a script body. Spaces travel as \001 (gc_cd_target decodes).
-# Nothing for a <dir> holding a character that would split or quote a segment:
-# that body is then appended without a reset, the v4.3.0 behaviour (R-7).
+# Placeholder bytes for a synthetic `cd` (v4.3.1 G3, T3-4). A quote cannot be
+# shell-escaped here: every walk strips quote characters before it splits, so
+# `'o'\''brien'` would reach it as `o\brien`. Each character that would split,
+# quote or expand a segment is carried as one control byte instead (\001 = a
+# space, gc_protect_c_paths' convention) and gc_c_resolves decodes them just
+# before its `[ -d ]` test. None is [:space:], so gc_cd_target's word still holds.
+GC_P_SQ=$(printf '\002')
+GC_P_DQ=$(printf '\003')
+GC_P_DOL=$(printf '\004')
+GC_P_BT=$(printf '\005')
+GC_P_SEMI=$(printf '\006')
+GC_P_AMP=$(printf '\016')
+GC_P_PIPE=$(printf '\017')
+GC_P_NL=$(printf '\020')
+# Appended to the augmented text when more cwds are in play than the scan cap
+# allows; gc_aug_overflow_refuse turns it into a refusal.
+GC_AUG_OVERFLOW_MARK=$(printf '\021GC-CWD-OVERFLOW\021')
+# gc_synth_cd <dir> -- the line that puts the segment walk back in <dir>
+# before a script body (placeholders above; empty only for an empty <dir>).
 gc_synth_cd() {
-  case "$1" in *[\;\&\|\"\']*|*"$GC_NL"*) return 0 ;; esac
-  printf 'cd %s' "${1// /$GC_SOH}"
+  local d="$1"
+  [ -n "$d" ] || return 0
+  d=${d// /$GC_SOH}
+  d=${d//\'/$GC_P_SQ}
+  d=${d//\"/$GC_P_DQ}
+  d=${d//\$/$GC_P_DOL}
+  d=${d//\`/$GC_P_BT}
+  d=${d//\;/$GC_P_SEMI}
+  d=${d//\&/$GC_P_AMP}
+  d=${d//\|/$GC_P_PIPE}
+  d=${d//"$GC_NL"/$GC_P_NL}
+  printf 'cd %s' "$d"
 }
+# gc_aug_cands <original> <current> <all> -- the cwds to scan, one per line:
+# the original and the current first (never dropped by the cap), then the rest
+# newest first.
+gc_aug_cands() {
+  local seen="" d
+  for d in "$1" "$2"; do
+    [ -n "$d" ] || continue
+    case "$GC_NL$seen$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) seen="$seen$GC_NL$d"; printf '%s\n' "$d" ;; esac
+  done
+  printf '%s\n' "$3" | tac | while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    case "$GC_NL$seen$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) seen="$seen$GC_NL$d"; printf '%s\n' "$d" ;; esac
+  done
+}
+# gc_seg_may_run_script <raw_segment> -- succeeds when any word of the segment
+# is bash, sh, source, `.` or a powershell/pwsh (over-broad on purpose: it only
+# decides whether a cwd-cap overflow matters).
+gc_seg_may_run_script() {
+  local t b
+  for t in $1; do
+    t=${t//[\"\']/}; b=${t##*/}; b=${b##*\\}
+    case "$b" in bash|sh|source|.|powershell|powershell.exe|pwsh|pwsh.exe|PowerShell|PowerShell.exe) return 0 ;; esac
+  done
+  return 1
+}
+# gc_aug_overflow_refuse <hook> -- called right after GC_CMD is augmented.
+gc_aug_overflow_refuse() {
+  case "$GC_CMD" in
+    *"$GC_AUG_OVERFLOW_MARK"*)
+      echo "BLOCKED: $1: this command changes directory in more than 8 ways the hook cannot resolve, so it cannot tell where a script it runs would act -- refusing rather than guessing. Use absolute paths, git -C <dir>, or put the steps in a script file and run bash <path>." >&2
+      exit 2 ;;
+  esac
+  return 0
+}
+# gc_augmented_cmd <cwd> -- GC_CMD, plus the body of every script segment
+# (gc_script_body, depth 1: a body is never itself re-scanned for further
+# script segments). Walks gc_seg_raw's output exactly once, over the UNMODIFIED
+# $GC_CMD -- so the result is the same text whether a caller feeds it back into
+# gc_segments/gc_seg_quoted/gc_seg_raw (index-aligned, same augmented string) or
+# into a plain git-token grep (v4.0.3 item 12: the pre-filter in
+# gate-before-merge.sh/no-push-main.sh must see the same text the segment walk
+# does, or a script's verbs pass the "no git token" fast exit first).
 # v4.3.1 G3: the typed command comes first, unchanged. Then, for each script
 # segment, a synthetic `cd <dir>` line and the body, where <dir> is the cwd in
-# effect at the segment that named the script (tracked over the typed `cd`s;
-# after an unresolvable `cd`, EVERY cwd seen so far, at most 8 -- fail-closed:
-# that only adds text). PowerShell bodies are appended once per distinct cwd a
-# powershell/pwsh segment ran in. Bodies are NOT spliced in mid-command (R-6):
-# a body's own `cd` would then move the later TYPED segments. Spaces in <dir>
-# travel as \001; a <dir> holding `; & |`, a quote or a newline gets no
-# synthetic `cd` and the body is appended as in v4.3.0 (R-7).
+# effect at the segment that named the script, tracked over the typed `cd`s.
+# Any cd/pushd/popd the tracker cannot model with certainty (`cd -`, an option,
+# no argument, a $/backtick/glob target, pushd, popd) makes the cwd UNCERTAIN:
+# a later script is then scanned under EVERY cwd seen so far plus the original
+# (fail-closed: that only adds text). The scan cap is 8 cwds, the current and
+# original never dropped; past it the output carries GC_AUG_OVERFLOW_MARK and the
+# gates refuse. PowerShell bodies are appended once per distinct cwd a
+# powershell/pwsh segment ran in. Bodies are NOT spliced in mid-command (R-6): a
+# body's own `cd` would then move the later TYPED segments. Special characters
+# in <dir> travel as placeholder bytes (above).
 gc_augmented_cmd() {
-  local cur="$1" cwds="$1" uncertain=0 out="$GC_CMD" seg sc tgt cls rel d c body _gc_bj synth ps_cwds="" n
+  local cur="$1" cwds="$1" orig="$1" uncertain=0 out="$GC_CMD" seg sc tgt cls rel d c body _gc_bj synth ps_cwds="" n first overflow=0
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
     sc=${seg//\"/}
     sc=${sc//\'/}
     tgt=$(gc_cd_target "$sc")
+    first=""
+    [[ $sc =~ ^[[:space:]]*([^[:space:]]+) ]] && first=${BASH_REMATCH[1]}
+    if [ "$first" = pushd ] || [ "$first" = popd ]; then
+      uncertain=1
+      continue
+    fi
+    if [ "$first" = cd ]; then
+      case "$tgt" in
+        ""|-*|*[*?[]*) uncertain=1; continue ;;
+      esac
+    fi
     if [ -n "$tgt" ]; then
       cls=$(gc_classify_c "$tgt" "$cur" | sed -n 1p)
       rel=0
@@ -738,7 +807,13 @@ GC_AUG_REL
       fi
       continue
     fi
-    if [ "$uncertain" = 1 ]; then c=$cwds; else c=$cur; fi
+    if [ "$uncertain" = 1 ]; then
+      c=$(gc_aug_cands "$orig" "$cur" "$cwds")
+      n=$(printf '%s\n' "$c" | grep -c .)
+      if [ "$n" -gt 8 ] && gc_seg_may_run_script "$seg"; then overflow=1; fi
+    else
+      c=$cur
+    fi
     if gc_seg_is_ps "$seg"; then
       while IFS= read -r d; do
         [ -n "$d" ] || continue
@@ -772,6 +847,7 @@ GC_AUG_SEGS
   done <<GC_AUG_PS
 $ps_cwds
 GC_AUG_PS
+  if [ "$overflow" = 1 ]; then out="$out$GC_NL$GC_AUG_OVERFLOW_MARK"; fi
   printf '%s' "$out"
 }
 
@@ -886,9 +962,19 @@ gc_c_resolves() {
   gccr_cls=$(printf '%s\n' "$gccr_out" | sed -n 1p)
   case "$gccr_cls" in
     1)
-      case "$1" in
-        /*|[A-Za-z]:[/\\]*) [ -d "$1" ] && printf '%s\n' "$1" ;;
-        *)                  [ -d "$2/$1" ] && printf '%s\n' "$2/$1" ;;
+      # v4.3.1 G3: decode the synthetic-cd placeholders (gc_synth_cd) first.
+      gccr_op=$1
+      gccr_op=${gccr_op//$GC_P_SQ/\'}
+      gccr_op=${gccr_op//$GC_P_DQ/\"}
+      gccr_op=${gccr_op//$GC_P_DOL/\$}
+      gccr_op=${gccr_op//$GC_P_BT/\`}
+      gccr_op=${gccr_op//$GC_P_SEMI/;}
+      gccr_op=${gccr_op//$GC_P_AMP/\&}   # bash 5.2: a bare & in a replacement is the matched text
+      gccr_op=${gccr_op//$GC_P_PIPE/|}
+      gccr_op=${gccr_op//$GC_P_NL/$GC_NL}
+      case "$gccr_op" in
+        /*|[A-Za-z]:[/\\]*) [ -d "$gccr_op" ] && printf '%s\n' "$gccr_op" ;;
+        *)                  [ -d "$2/$gccr_op" ] && printf '%s\n' "$2/$gccr_op" ;;
       esac
       ;;
     2)

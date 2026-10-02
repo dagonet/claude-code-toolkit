@@ -54,6 +54,7 @@ fi
 # gc_script_body / gc_augmented_cmd in hooks/lib/git-cmd.sh for the 16 KB cap
 # and the depth-1/TOCTOU residuals.
 GC_CMD="$(gc_augmented_cmd "$GC_CWD")"
+gc_aug_overflow_refuse no-push-main
 
 # v3.0.3 item 25 — exit before doing any work on a payload that cannot be gated.
 # See the long note on the same block in hooks/gate-before-merge.sh: the cost is

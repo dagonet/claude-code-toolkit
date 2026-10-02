@@ -706,6 +706,7 @@ esac
 # v4.1.2: the continuation join runs once at the origin (gc_read) and on each
 # appended body, so this text is already joined.
 GC_CMD="$(gc_augmented_cmd "$CWD")"
+gc_aug_overflow_refuse gate-before-merge
 
 # v3.0.3 item 25 — EXIT BEFORE DOING ANY WORK ON A PAYLOAD THAT CANNOT BE GATED.
 #
