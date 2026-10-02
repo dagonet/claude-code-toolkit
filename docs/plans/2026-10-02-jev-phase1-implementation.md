@@ -27,6 +27,7 @@
 | `scripts/test-hooks-parser-matrix.sh` | `EXP_*` constants | `EXP_JQ_SKIP` + 4 |
 | `scripts/verify-template-consistency.sh` | new checks (numbering) | census 21c-2a, check 63 comment, new check 64 |
 | `CHANGELOG.md`, `VERSION`, `server/src/template_sync/VERSION`, sync-template `SKILL.md` marker, `README.md`, `docs/architecture.md` tables | release section and a column | release section and the next column, measured on top of v4.3.1's |
+| `user-level-reference/CLAUDE.md` (always-loaded, live copy must drift 0) | unknown | the U-1 sentence in `## Sub-Agent Model Choice` (Task 9) |
 | `templates/*/AGENT_TEAM.md` (20,476 of 20,480 B) | unknown | **not touched**. The rule exception lives in the jev SKILL.md only. |
 
 ## Global Constraints
@@ -37,7 +38,7 @@
 - Hook scripts and `hooks/lib/*` are byte-identical to `user-level-reference/hooks/` (checks 21, 21c). The template variants are not touched by this plan.
 - Spec literals, verbatim:
   - config `{"model": "jev-1.13.0", "threshold": 0.8, "route": true, "legs": false}` at `<git common dir>/jev/config.json`;
-  - registration `f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0`, matcher `Agent`, `"timeout": 5`, in `.claude/settings.local.json`;
+  - registration `f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0`, matcher `Agent`, `"timeout": 5`, in `.claude/settings.local.json`, plus (U-1) one `SessionStart` entry in the same file, `SESSION_COMMAND` in Task 8, which prints the "omit `model`" line;
   - endpoint `POST https://api.typesafe.ai/v1/systemone`, `Authorization: Bearer <TYPESAFE_API_KEY>`, key from the environment, else `HKCU\Environment` (winreg), never in argv or a log;
   - client timeout 2 s; state = `agent_type` + `description` + `prompt`, redacted, then trimmed to 4,000 chars;
   - bounds: `|index(choice) − index(default)| ≤ 1` on `haiku < sonnet < opus < fable`, `review|architect` never below `sonnet`, `confidence ≥ threshold`;
@@ -56,13 +57,22 @@
   - A *typed* spawn with its own model gets output only for a valid move that differs from that model.
 - **R-2 (the switch is per clone, registration is per checkout).** v4.3.0's `model-floor.sh:88` steps aside when `<common dir>/jev/config.json` says `"route": true`. The registration, though, lives in one checkout's `.claude/settings.local.json`. Under the spec as written, a sibling worktree, a deleted skill, a missing `python3`, or the spec's `/jev off` (which removes the entry but leaves `route: true`) all leave a spawn with no emitter, and it inherits. Fix: model-floor steps aside only when all four hold: route true, `~/.claude/skills/jev/jev_route.py` exists, `python3` is on PATH, and this checkout's `settings.local.json` names the router. Separately, `/jev off` writes `"route": false` first. This deliberately changes C1 row 6 (Task 3).
 - **R-3 (D2 and Non-goals vs step 2).** D2 and the Non-goals say "no `hooks/` file … nothing ships to consumers" and "off mainline". Step 2, added 2026-10-02, requires reusing model-floor's code, which means a `hooks/lib/` file shipped to every consumer, and the brief asks for a v4.4.0 release. This plan treats step 2 as superseding D2 for the shared lib only. Nothing Jev-specific ships in a template or a consumer hook. The off-mainline line is enforced as "merge needs the user's go".
-- **R-4 (`CLAUDE_CODE_SUBAGENT_MODEL`).** Where that variable covers a spawn, the resolver answers `env`. The router logs `reason: "env"` and changes nothing: whether `updatedInput.model` even beats the native variable is unverified. Note that this machine's live settings set `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, so general-purpose and untyped spawns are out of Jev's reach here.
+- **R-4 (`CLAUDE_CODE_SUBAGENT_MODEL`), reversed by U-1.** model-floor keeps stepping aside where that variable covers a spawn. The router does NOT.
+  - For such a spawn the resolver answers `env <the variable's value>`. The router routes from that value as the default (±1 step, role floor).
+  - On any failure it emits nothing, so the native default applies, exactly as for a typed agent.
+  - Jev's `updatedInput.model` is a per-invocation model and is meant to outrank the env default. Task 11 verifies this live: with `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` set (this host's live setting), a general-purpose spawn must run on Jev's pick.
+  - Under `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` the harness may override every per-call model. That is unverified and listed under Known limits.
 - **R-5 (full-id defaults).** A typed agent whose model is a full id (`claude-opus-4-1`) is bounded by its family (`opus`). An id with no family (`gpt-5`) gets `reason: "pinned"` and is never changed.
 - **R-6 (the report's outcome join).** The spec wants routed spawns "whose agent later reported BLOCKED/NEEDS_CONTEXT, joined … from the SubagentStop retro ledger". The ledger records none of that. `hooks/retro-ledger.sh` writes a minute-resolution row only for tool_result failures (hook blocks, dead tools), never the agent's report status. `/jev report` therefore lists ledger failure rows of the same `agent_type` within 60 min after a routed spawn, and its output says that this is not report status.
 - **R-7 (trim).** The spike's `trim()` returns cap + marker (~4,029 chars). The router's trim keeps the whole state, marker included, at ≤ 4,000. One Phase 0 test is tightened to match, and one test is added.
 - **R-8 (`jev_ctl.py`).** The spec lists SKILL.md + `jev_route.py` + `redact.py`. On/off/status/report go in a fourth script so that `off` can restore `settings.local.json` byte for byte, which an editing model cannot guarantee. On refuses when the active `model-floor.sh` predates v4.4.0. Such a copy steps aside on the config alone, which is exactly R-2's failure.
 - **R-9 (Phase 1b).** The spec names no release for 1b, and its Testing section covers 1a only. 1b is out of scope. The config still carries `"legs": false`, and `/jev on legs` prints the usage line.
-- **Open question for the user, not resolved here.** `user-level-reference/CLAUDE.md:37` (and the live copy) says "Every Agent spawn names its `model` explicitly", and D5 never overrides an explicit model. Under that rule Jev routes almost nothing. The SKILL.md is `disable-model-invocation`, so its rule-exception text never reaches the orchestrator at spawn time. The live smoke (Task 11) deliberately omits `model`. Whether to amend the user-level rule is the user's call.
+- **U-1 (user ruling, 2026-10-02): "Jev decides, I don't."** This closes the open question raised on the plan's first draft: `user-level-reference/CLAUDE.md:37` says "every Agent spawn names its `model` explicitly", and D5 never overrides an explicit model, so Jev would route almost nothing.
+  - While Jev routing is on in a repo, the orchestrator omits `model` on Agent spawns and Jev picks one per launch. An explicit `model` is still never overridden (D5); the orchestrator simply does not pass one.
+  - The rule gets the one-sentence exception "unless Jev routing is on in this repo" (Task 9).
+  - The orchestrator has to KNOW the switch is on, and a new session starts blind: the SKILL.md is `disable-model-invocation`, and `settings.local.json` is never shown to the model. So `/jev on` also registers a `SessionStart` entry that prints one line into each new session ("Jev routing is ON in this repo: omit `model` on Agent spawns …"). `/jev on`'s output says the same.
+  - `/jev off` removes the entry and says to name `model` again (Task 8).
+  - R-4 is reversed as a consequence.
 
 ## Review Focus
 
@@ -233,7 +243,7 @@ Expected: `BLOCK v4.4.0 J-DIFF: 113 passed, 0 failed, 0 skipped`, which is 37 `j
 
 **Files:**
 - Create: `hooks/lib/agent-model.sh`; copy it to `user-level-reference/hooks/lib/agent-model.sh`
-- Modify: `hooks/model-floor.sh` (full rewrite below); copy it to `user-level-reference/hooks/model-floor.sh`
+- Modify: `hooks/model-floor.sh` (lines 23-90 replaced in place, Step 4); copy it to `user-level-reference/hooks/model-floor.sh`
 - Modify: `scripts/test-hooks.sh`:
   - C1 S-24 temp-HOME setup (~:8490-8492): add ONE `cp`;
   - new J-LIB block after J-DIFF.
@@ -242,7 +252,7 @@ Expected: `BLOCK v4.4.0 J-DIFF: 113 passed, 0 failed, 0 skipped`, which is 37 `j
   - check 63 comment (~:3932-3948).
 
 **Interfaces:**
-- Produces, when sourced: `am_env_forced` (rc 0/1); `am_resolve <type> <cwd>`, which sets `AM_KIND` (`own|floor|env|none`), `AM_MODEL`, `AM_EFFORT`, `AM_ROOT`; `am_jev_routing <root>` (rc 0 = step aside), which sets `AM_GD`.
+- Produces, when sourced: `am_env_forced` (rc 0/1); `am_resolve <type> <cwd>`, which sets `AM_KIND` (`own|floor|env|none`), `AM_MODEL` (for `env`: the value of `CLAUDE_CODE_SUBAGENT_MODEL`, per U-1), `AM_EFFORT`, `AM_ROOT`; `am_jev_routing <root>` (rc 0 = step aside), which sets `AM_GD`.
 - Produces, when executed: `bash agent-model.sh <type> <cwd>` prints exactly one line, `<kind> <model|-> <jev 0|1> <effort|-> <git common dir|->`. The last field may contain spaces. Task 7's `run_resolver` parses it with `^(own|floor|env|none) (\S+) ([01]) (\S+) (.+)$`.
 
 - [ ] **Step 1: Write the J-LIB block** (after `# ---- end v4.4.0 J-DIFF`):
@@ -277,10 +287,11 @@ printf '# ctx\n- **Subagent default model**: haiku\n' > "$JLR/PROJECT_CONTEXT.md
 expect "J-LIB project default haiku"               "floor haiku 0 -"         "$(jl_cli general-purpose)"
 rm -f "$JLR/PROJECT_CONTEXT.md"
 export CLAUDE_CODE_SUBAGENT_MODEL=haiku
-expect "J-LIB env default covers general-purpose"  "env - 0 -"               "$(jl_cli general-purpose)"
+# U-1: the env answer carries the variable's value -- the default Jev routes from
+expect "J-LIB env default covers general-purpose"  "env haiku 0 -"           "$(jl_cli general-purpose)"
 expect "J-LIB env default does not cover Plan"     "floor sonnet 0 -"        "$(jl_cli Plan)"
 export CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
-expect "J-LIB env default + FORCE covers Plan"     "env - 0 -"               "$(jl_cli Plan)"
+expect "J-LIB env default + FORCE covers Plan"     "env haiku 0 -"           "$(jl_cli Plan)"
 unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
 expect "J-LIB 5th field is the git common dir"     "$JLGD" "$(HOME="$JLH" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$JLCWD" | cut -d' ' -f5-)"
 expect "J-LIB exactly one output line"             1 "$(HOME="$JLH" bash "$ROOT/hooks/lib/agent-model.sh" Plan "$JLCWD" | wc -l | tr -d ' ')"
@@ -308,7 +319,9 @@ expect "J-LIB mirror is byte-identical"            same "$(cmp -s "$ROOT/hooks/l
 #       floor -- no model of its own (`inherit`, none, or a known inheriting
 #                built-in with no file): **Subagent default model**, else sonnet
 #       env   -- CLAUDE_CODE_SUBAGENT_MODEL holds a real model and covers this
-#                spawn (S-23/S-30): the native default wins, nobody rewrites
+#                spawn (S-23/S-30); AM_MODEL is its value. model-floor steps
+#                aside (the native default wins); the Jev router routes from
+#                that value (user ruling U-1)
 #       none  -- a self-modelled built-in, a type no visible file defines, or an
 #                unsafe name: change nothing
 # Agent identity (S-22): the frontmatter `name:`, .claude/agents/ scanned
@@ -348,8 +361,8 @@ am_find() {
 am_resolve() {
   AM_KIND=none; AM_MODEL=""; AM_EFFORT=""; AM_ROOT=""
   am_t=${1:-general-purpose}
-  am_env_forced && { AM_KIND=env; return 0; }
-  [ -n "$AM_ENV_REAL" ] && [ "$am_t" = general-purpose ] && { AM_KIND=env; return 0; }
+  am_env_forced && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
+  [ -n "$AM_ENV_REAL" ] && [ "$am_t" = general-purpose ] && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
   case "$am_t" in *[!A-Za-z0-9_.-]*|.*) return 0 ;; esac
   # Types that carry a model of their own (statusline-setup: sonnet,
   # claude-code-guide: haiku) or ignore a model override (fork).
@@ -1138,7 +1151,7 @@ def emit(tool_input, model):
 **Files:**
 - Modify: `user-level-reference/skills/jev/jev_route.py` (append after `emit`)
 - Create: `user-level-reference/skills/jev/tests/test_route.py`
-- Modify: `scripts/test-hooks.sh`, J-PY `JPY_WANT=36` → `63`
+- Modify: `scripts/test-hooks.sh`, J-PY `JPY_WANT=36` → `64`
 
 **Interfaces:**
 - Consumes: Task 5's functions.
@@ -1246,11 +1259,21 @@ class RunTests(unittest.TestCase):
         out, ev, _ = self.go(payload(model="opus"), post=post)
         self.assertEqual((out, ev["reason"], post.calls), (b"", "explicit", []))
 
-    def test_env_and_none_kinds_untouched_and_logged(self):
-        for kind in ("env", "none"):
-            post = Recorder(answer("haiku", 0.99))
-            out, ev, _ = self.go(payload(), resolver=self.res(kind=kind, model=""), post=post)
-            self.assertEqual((out, ev["reason"], post.calls), (b"", kind, []))
+    def test_none_kind_untouched_and_logged(self):
+        post = Recorder(answer("haiku", 0.99))
+        out, ev, _ = self.go(payload(), resolver=self.res(kind="none", model=""), post=post)
+        self.assertEqual((out, ev["reason"], post.calls), (b"", "none", []))
+
+    def test_env_default_does_not_stop_jev(self):
+        # U-1: CLAUDE_CODE_SUBAGENT_MODEL=sonnet covers a model-less general-purpose
+        # spawn; Jev still routes it, from that value, and a failure emits nothing
+        # (the native default applies).
+        out, ev, _ = self.go(payload(), resolver=self.res(kind="env", model="sonnet"),
+                             post=Recorder(answer("opus", 0.95)))
+        self.assertEqual((self.model_of(out), ev["reason"], ev["default"]), ("opus", "applied", "sonnet"))
+        out, ev, _ = self.go(payload(), resolver=self.res(kind="env", model="sonnet"),
+                             post=Recorder(exc=jr.JevTimeout()))
+        self.assertEqual((out, ev["reason"]), (b"", "timeout"))
 
     def test_floor_spawn_routed_within_bounds(self):
         out, ev, _ = self.go(payload(), post=Recorder(answer("opus", 0.95)))
@@ -1394,7 +1417,7 @@ if __name__ == "__main__":
 
 ```python
 REASONS = frozenset({
-    "explicit", "env", "none", "pinned", "egress-refused", "no-key", "no-endpoint",
+    "explicit", "none", "pinned", "egress-refused", "no-key", "no-endpoint",
     "deadline", "timeout", "http-error", "bad-response", "low-confidence",
     "out-of-bounds", "role-floor", "kept", "applied", "error",
 })
@@ -1406,8 +1429,8 @@ EVENT_FIELDS = ("ts", "subagent_type", "kind", "default", "agent_effort", "choic
 class Resolution(NamedTuple):
     """One line of `bash hooks/lib/agent-model.sh <type> <cwd>`."""
     kind: str    # own | floor | env | none
-    model: str   # "" for env/none
-    jev: bool    # model-floor stepped aside: this router owns the spawn
+    model: str   # "" for none; for env the CLAUDE_CODE_SUBAGENT_MODEL value (U-1)
+    jev: bool    # Jev routing is live in this checkout (model-floor stepped aside)
     effort: str  # the agent file's `effort:`, "" when unset
     gd: str      # absolute git common dir, "" when unknown
 
@@ -1552,8 +1575,8 @@ def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.mo
     try:
         if ti.get("model"):
             model, ev["reason"] = None, "explicit"
-        elif res.kind not in ("own", "floor"):
-            model, ev["reason"] = None, res.kind if res.kind in REASONS else "none"
+        elif res.kind not in ("own", "floor", "env"):  # U-1: env routes like own
+            model, ev["reason"] = None, "none"
         else:
             model, ev["reason"], ev["applied"] = _ask(
                 ti, stype, res, env, post or post_with_deadline, registry, clock, t0, ev)
@@ -1567,9 +1590,9 @@ def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.mo
 
 (`run_resolver` and `post_with_deadline` arrive in Task 7. Every Task 6 test injects both, so the names are never looked up yet.)
 
-- [ ] **Step 4: Run.** Expected: `Ran 63 tests … OK`.
+- [ ] **Step 4: Run.** Expected: `Ran 64 tests … OK`.
 
-- [ ] **Step 5: Bump J-PY** `JPY_WANT=63`. `run-block.sh … v4.4.0 J-PY`: 4 passed.
+- [ ] **Step 5: Bump J-PY** `JPY_WANT=64`. `run-block.sh … v4.4.0 J-PY`: 4 passed.
 
 - [ ] **Step 6: Commit** (`feat(jev): router run() -- floor fallback on every failure, loopback-only test mode, key never logged (v4.4.0)`). Paths: `user-level-reference/skills/jev/jev_route.py user-level-reference/skills/jev/tests/test_route.py scripts/test-hooks.sh`.
 
@@ -1581,7 +1604,7 @@ def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.mo
 - Modify: `user-level-reference/skills/jev/jev_route.py` (append `post_with_deadline`, `run_resolver`, `main`, `__main__`)
 - Create: `user-level-reference/skills/jev/tests/jevtest.py` (shared fixtures; not a `test_*.py`, so discovery imports it but runs nothing from it)
 - Create: `user-level-reference/skills/jev/tests/test_e2e.py`
-- Modify: `scripts/test-hooks.sh`, J-PY `JPY_WANT=63` → `76`
+- Modify: `scripts/test-hooks.sh`, J-PY `JPY_WANT=64` → `78`
 
 **Interfaces:**
 - Consumes: `Resolution`, `JevTimeout`, `HttpError`, `run()` from Task 6; the lib CLI line from Tasks 2-3.
@@ -1663,7 +1686,7 @@ class Sandbox:
             with open(self.config, "w", encoding="utf-8", newline="\n") as fh:
                 json.dump({"model": "jev-1.13.0", "threshold": 0.8, "route": route, "legs": False}, fh)
 
-    def env(self, endpoint="http://127.0.0.1:9/v1/systemone", key=KEY):
+    def env(self, endpoint="http://127.0.0.1:9/v1/systemone", key=KEY, extra=None):
         drop = {"TYPESAFE_API_KEY", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_SUBAGENT_MODEL",
                 "CLAUDE_CODE_SUBAGENT_MODEL_FORCE", "JEV_ENDPOINT"}
         env = {k: v for k, v in os.environ.items() if k not in drop}
@@ -1671,6 +1694,7 @@ class Sandbox:
                     "PYTHONDONTWRITEBYTECODE": "1"})
         if key:
             env["TYPESAFE_API_KEY"] = key
+        env.update(extra or {})
         return env
 
     def events(self):
@@ -1747,12 +1771,12 @@ def agent_payload(sandbox, stype="general-purpose", model=None, prompt="Summaris
             "tool_input": ti, "cwd": sandbox.repo}
 
 
-def run_hook(sandbox, payload, endpoint, key=KEY, raw=None):
+def run_hook(sandbox, payload, endpoint, key=KEY, raw=None, extra=None):
     """Run jev_route.py as the registration would. -> (CompletedProcess, seconds)."""
     t0 = time.monotonic()
     data = raw if raw is not None else json.dumps(payload).encode("utf-8")
     cp = subprocess.run([sys.executable, ROUTE], input=data, capture_output=True,
-                        env=sandbox.env(endpoint, key), timeout=20)
+                        env=sandbox.env(endpoint, key, extra), timeout=20)
     return cp, time.monotonic() - t0
 ```
 
@@ -1874,6 +1898,16 @@ class HookTests(unittest.TestCase):
         self.assertEqual((cp.stdout, stub.requests), (b"", []))
         self.assertEqual(json.loads(last_event(sb))["reason"], "explicit")
 
+    def test_hook_env_default_does_not_stop_jev(self):
+        # U-1: with CLAUDE_CODE_SUBAGENT_MODEL set and Jev on, a model-less
+        # general-purpose spawn gets Jev's pick (model-floor alone would step aside).
+        sb = jt.Sandbox(self)
+        stub = jt.Stub(self, "ok", jt.ok_answer("opus", 0.95))
+        cp, _ = jt.run_hook(sb, jt.agent_payload(sb), stub.url, extra={"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"})
+        self.assertEqual((model_of(cp), len(stub.requests)), ("opus", 1))
+        ev = json.loads(last_event(sb))
+        self.assertEqual((ev["kind"], ev["default"], ev["reason"]), ("env", "sonnet", "applied"))
+
     def test_hook_garbage_stdin_exits_zero_silently(self):
         sb = jt.Sandbox(self)
         cp, _ = jt.run_hook(sb, None, "http://127.0.0.1:9/v1/systemone", raw=b"\xff\xfe not json")
@@ -1978,11 +2012,11 @@ if __name__ == "__main__":
     os._exit(_rc)  # never wait for a request thread still blocked in the network
 ```
 
-- [ ] **Step 5: Run.** Expected: `Ran 76 tests … OK`. If the E2E rows fail on HOME or path spelling under Git Bash, print `cp.stderr` from `run_hook` and fix it in `jevtest.py`, not in the router. The router must accept the env the registration really passes, which Task 11's live smoke checks.
+- [ ] **Step 5: Run.** Expected: `Ran 78 tests … OK`. If the E2E rows fail on HOME or path spelling under Git Bash, print `cp.stderr` from `run_hook` and fix it in `jevtest.py`, not in the router. The router must accept the env the registration really passes, which Task 11's live smoke checks.
 
 - [ ] **Step 6: Guard against the real API in tests.** Run Grep for `api.typesafe.ai` in `user-level-reference/skills/jev/tests/`. Expected: hits only in `test_route.py` (asserted to be refused, or compared to `jr.ENDPOINT`). Run Grep for `JEV_TEST_MODE` in `jevtest.py`. Expected: set in `Sandbox.env`.
 
-- [ ] **Step 7: Bump J-PY** `JPY_WANT=76`. `run-block.sh … v4.4.0 J-PY`: 4 passed, and no `__pycache__`.
+- [ ] **Step 7: Bump J-PY** `JPY_WANT=78`. `run-block.sh … v4.4.0 J-PY`: 4 passed, and no `__pycache__`.
 
 - [ ] **Step 8: Commit** (`feat(jev): router transport with a joined deadline, model-floor's resolver reused via its CLI, E2E against a loopback stub (v4.4.0)`). Paths: `user-level-reference/skills/jev/jev_route.py user-level-reference/skills/jev/tests/jevtest.py user-level-reference/skills/jev/tests/test_e2e.py scripts/test-hooks.sh`.
 
@@ -1994,12 +2028,12 @@ if __name__ == "__main__":
 - Create: `user-level-reference/skills/jev/jev_ctl.py`
 - Create: `user-level-reference/skills/jev/SKILL.md`
 - Create: `user-level-reference/skills/jev/tests/test_ctl.py`
-- Modify: `scripts/test-hooks.sh`, J-PY `JPY_WANT=76` → `89`
+- Modify: `scripts/test-hooks.sh`, J-PY `JPY_WANT=78` → `91`
 
 **Interfaces:**
 - Consumes: `jev_route.load_key`, `jev_route._winreg_key`, `jev_route.family`, `jev_route.ORDER`; `jevtest.Sandbox`.
 - Produces:
-  - `REG_COMMAND` (a line of its own, `REG_COMMAND = '…'`, which check 64 extracts), `MARKER`, `CONFIG_ON`, `CtlError`;
+  - `REG_COMMAND` (a line of its own, `REG_COMMAND = '…'`, which check 64 extracts), `SESSION_COMMAND` (U-1: the `SessionStart` notice, also a line of its own), `MARKER`, `CONFIG_ON`, `CtlError`;
   - `main(argv=None, cwd=None, env=None, out=None, registry=None) -> int` (0 ok, 1 refused or error, 2 usage);
   - `ledger_slug(top) -> str`, `_local(ts) -> naive local datetime`.
 
@@ -2054,7 +2088,11 @@ class CtlTests(unittest.TestCase):
         obj = json.loads(self.read(self.t.settings))
         self.assertEqual(obj["hooks"]["PreToolUse"], [{"matcher": "Agent", "hooks": [
             {"type": "command", "command": jc.REG_COMMAND, "timeout": 5}]}])
+        # U-1: a new session must learn that Jev is on, and to omit `model`
+        self.assertEqual(obj["hooks"]["SessionStart"], [{"hooks": [
+            {"type": "command", "command": jc.SESSION_COMMAND, "timeout": 5}]}])
         self.assertIn(".claude/settings.local.json", self.exclude_lines())
+        self.assertIn("omit `model`", text)
 
     def test_on_twice_is_idempotent(self):
         self.ctl("on")
@@ -2077,8 +2115,9 @@ class CtlTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.t.settings))
         self.ctl("on")
         self.assertTrue(os.path.exists(self.t.settings))
-        self.ctl("off")
+        _, text = self.ctl("off")
         self.assertFalse(os.path.exists(self.t.settings))
+        self.assertIn("name `model` on every Agent spawn again", text)  # U-1: the rule returns
 
     def test_off_after_user_edit_removes_only_the_jev_entry(self):
         self.ctl("on")
@@ -2219,7 +2258,10 @@ from collections import Counter  # noqa: E402
 import jev_route  # noqa: E402
 
 REG_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0'
-MARKER = "skills/jev/jev_route.py"
+# U-1: SessionStart stdout reaches the new session's context -- the only way a
+# new session learns the switch is on. No backticks: they would substitute in bash.
+SESSION_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && echo "Jev routing is ON in this repo (/jev on): omit model on Agent spawns -- Jev picks one per launch (user ruling U-1; an explicit model is never changed). /jev off restores naming it."; exit 0'
+MARKER = "skills/jev/jev_route.py"  # in both commands: has/remove find both entries
 CONFIG_ON = {"model": "jev-1.13.0", "threshold": 0.8, "route": True, "legs": False}
 EXCLUDE_LINE = ".claude/settings.local.json"
 LEDGER_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \| ([^|]+?) \| ")
@@ -2302,46 +2344,56 @@ def _is_jev(hook):
     return isinstance(hook, dict) and MARKER in str(hook.get("command", ""))
 
 
-def _pre(obj):
+JEV_EVENTS = ("PreToolUse", "SessionStart")  # the router and the U-1 notice
+
+
+def _groups(obj, event):
     hooks = obj.get("hooks")
-    pre = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
-    return pre if isinstance(pre, list) else []
+    groups = hooks.get(event) if isinstance(hooks, dict) else None
+    return groups if isinstance(groups, list) else []
 
 
 def has_entry(obj):
+    """The ROUTER is registered (PreToolUse)."""
     return any(isinstance(g, dict) and isinstance(g.get("hooks"), list) and any(_is_jev(h) for h in g["hooks"])
-               for g in _pre(obj))
+               for g in _groups(obj, "PreToolUse"))
 
 
 def add_entry(obj):
+    """Add the router (PreToolUse, matcher Agent) and the U-1 SessionStart notice."""
     new = json.loads(json.dumps(obj))
     hooks = new.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise CtlError('.claude/settings.local.json: "hooks" is not an object -- nothing was changed')
-    pre = hooks.setdefault("PreToolUse", [])
-    if not isinstance(pre, list):
-        raise CtlError('.claude/settings.local.json: "hooks.PreToolUse" is not a list -- nothing was changed')
-    pre.append({"matcher": "Agent", "hooks": [{"type": "command", "command": REG_COMMAND, "timeout": 5}]})
+    for event in JEV_EVENTS:
+        if not isinstance(hooks.setdefault(event, []), list):
+            raise CtlError('.claude/settings.local.json: "hooks.{}" is not a list -- nothing was changed'.format(event))
+    hooks["PreToolUse"].append({"matcher": "Agent", "hooks": [{"type": "command", "command": REG_COMMAND, "timeout": 5}]})
+    hooks["SessionStart"].append({"hooks": [{"type": "command", "command": SESSION_COMMAND, "timeout": 5}]})
     return new
 
 
 def remove_entry(obj):
+    """Remove every Jev hook from both events, and any group or event left empty by that."""
     new = json.loads(json.dumps(obj))
     hooks = new.get("hooks")
-    if not isinstance(hooks, dict) or not isinstance(hooks.get("PreToolUse"), list):
+    if not isinstance(hooks, dict):
         return new
-    kept = []
-    for g in hooks["PreToolUse"]:
-        if isinstance(g, dict) and isinstance(g.get("hooks"), list) and any(_is_jev(h) for h in g["hooks"]):
-            rest = [h for h in g["hooks"] if not _is_jev(h)]
-            if not rest:
-                continue
-            g = dict(g, hooks=rest)
-        kept.append(g)
-    if kept:
-        hooks["PreToolUse"] = kept
-    else:
-        del hooks["PreToolUse"]
+    for event in JEV_EVENTS:
+        if not isinstance(hooks.get(event), list):
+            continue
+        kept = []
+        for g in hooks[event]:
+            if isinstance(g, dict) and isinstance(g.get("hooks"), list) and any(_is_jev(h) for h in g["hooks"]):
+                rest = [h for h in g["hooks"] if not _is_jev(h)]
+                if not rest:
+                    continue
+                g = dict(g, hooks=rest)
+            kept.append(g)
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
     if not hooks:
         del new["hooks"]
     return new
@@ -2411,17 +2463,18 @@ def cmd_on(top, gd, env, out, registry):
                 "before_b64": base64.b64encode(before or b"").decode("ascii"), "after": new}
         _write(_snapshot_path(gd, top), _dumps(snap))
         _write(path, _dumps(new))
-        out.write("jev: registered the router in .claude/settings.local.json (PreToolUse, matcher Agent)\n")
+        out.write("jev: registered the router (PreToolUse, matcher Agent) and a session-start notice in "
+                  ".claude/settings.local.json\n")
     _write(_config_path(gd), _dumps(CONFIG_ON))
     if _ensure_excluded(top, gd):
         out.write("jev: added .claude/settings.local.json to .git/info/exclude\n")
     out.write("jev: ON for this clone -- spawns that pass no `model` are routed (one step at most from the "
               "agent's default; review/architect types never below sonnet); other checkouts of this clone "
               "need their own /jev on\n")
-    real = env.get("CLAUDE_CODE_SUBAGENT_MODEL", "")
-    if re.fullmatch(r"haiku|sonnet|opus|fable|claude-\S+", real):
-        out.write("jev: note -- CLAUDE_CODE_SUBAGENT_MODEL={} covers general-purpose spawns; Jev leaves "
-                  "those alone\n".format(real))
+    # U-1: the orchestrator must stop naming a model, or Jev routes nothing.
+    out.write("jev: ORCHESTRATOR -- from now on in this repo, omit `model` on Agent spawns: Jev picks one per "
+              "launch (user ruling U-1; an explicit model is never changed). New sessions are told by the "
+              "session-start notice.\n")
     if not _key_source(env, registry):
         out.write("jev: note -- no TYPESAFE_API_KEY: spawns get the project floor until one is set\n")
     return 0
@@ -2449,7 +2502,7 @@ def cmd_off(top, gd, env, out, registry):
             else:
                 os.remove(path)
             out.write("jev: .claude/settings.local.json restored to its state before /jev on\n")
-        elif has_entry(obj):
+        elif remove_entry(obj) != obj:
             _write(path, _dumps(remove_entry(obj)))
             out.write("jev: .claude/settings.local.json changed since /jev on -- removed only the Jev entry "
                       "(the file was re-serialised)\n")
@@ -2457,6 +2510,8 @@ def cmd_off(top, gd, env, out, registry):
         os.remove(snap_path)
     out.write("jev: OFF for this clone -- model-floor applies the project default again; events stay in "
               "<git common dir>/jev/events/\n")
+    out.write("jev: ORCHESTRATOR -- name `model` on every Agent spawn again (the user-level rule; U-1 "
+              "applied only while Jev was on)\n")
     return 0
 
 
@@ -2599,36 +2654,39 @@ Run exactly one command, using the word the user typed after `/jev` (no word mea
 
 ## What it does
 
-- **On** (per clone): writes `{"model": "jev-1.13.0", "threshold": 0.8, "route": true, "legs": false}` to `<git common dir>/jev/config.json`, registers ONE `PreToolUse` entry (matcher `Agent`) in this checkout's `.claude/settings.local.json`, and excludes that file from git. Another checkout (a worktree) of the same clone needs its own `/jev on`; until then `hooks/model-floor.sh` keeps flooring there.
-- **Per spawn** that passes no `model`: TypeSafe's Jev picks a model in ~0.3 s. It applies only at confidence ≥ 0.8, at most one step from the agent file's default (haiku < sonnet < opus < fable), and never below sonnet for `review`/`architect` types. A spawn with no model of its own always leaves with one: Jev's choice, or the project floor when Jev is unsure, slow (2 s), unreachable or keyless. Effort is logged, never applied.
-- **Off**: the switch goes off first, so `hooks/model-floor.sh` floors again at once. Then the registration is removed. Events stay for `/jev report`.
+- **On** (per clone): writes `{"model": "jev-1.13.0", "threshold": 0.8, "route": true, "legs": false}` to `<git common dir>/jev/config.json`, registers ONE `PreToolUse` entry (matcher `Agent`) and ONE `SessionStart` notice in this checkout's `.claude/settings.local.json`, and excludes that file from git. Another checkout (a worktree) of the same clone needs its own `/jev on`; until then `hooks/model-floor.sh` keeps flooring there.
+- **Per spawn** that passes no `model`: TypeSafe's Jev picks a model in ~0.3 s. It applies only at confidence ≥ 0.8, at most one step from the default (the agent file's model, the project floor, or `CLAUDE_CODE_SUBAGENT_MODEL` where that applies), on haiku < sonnet < opus < fable, and never below sonnet for `review`/`architect` types. A spawn with no model of its own always leaves with one: Jev's choice, or the project floor when Jev is unsure, slow (2 s), unreachable or keyless. Effort is logged, never applied.
+- **Off**: the switch goes off first, so `hooks/model-floor.sh` floors again at once. Then the registration and the notice are removed. Events stay for `/jev report`.
 
-## The one rule exception while on
+## While on: omit `model` (user ruling U-1, 2026-10-02)
 
-AGENT_TEAM.md's "Typed agents own their `model`; a type without one (general-purpose, built-ins) gets the project default via `hooks/model-floor.sh` unless you pass one" is overridden for spawns Jev routes, within the bounds above: Jev may move a typed agent one step from its own model. A `model` passed in the call is never changed, so a spawn that passes one is never routed.
+"Jev decides, I don't." While Jev routing is on in this repo, do NOT pass `model` on Agent spawns. Jev picks one per launch. This is the exception to the user-level rule "every Agent spawn names its `model`". After `/jev off`, name `model` again. A `model` you do pass is never changed, so passing one opts that spawn out of routing.
+
+AGENT_TEAM.md's "Typed agents own their `model`; a type without one (general-purpose, built-ins) gets the project default via `hooks/model-floor.sh` unless you pass one" is overridden for spawns Jev routes, within the bounds above: Jev may move a typed agent one step from its own model.
 
 ## What leaves the machine
 
 Only for a spawn Jev routes: the agent type, description and prompt, with secrets, emails, your username and home paths masked, trimmed to 4,000 characters. A spawn whose text still holds a secret-shaped token is not sent at all. The key (`TYPESAFE_API_KEY`, else `HKCU\Environment`) goes in a header only and is never printed or logged. `<git common dir>/jev/events/` holds decisions and confidences, never the prompt or the key.
 ```
 
-- [ ] **Step 5: Run.** Expected: `Ran 89 tests … OK`. Then run check 47's scan on the new file: `grep -nE '\$[0-9]|\$\{[0-9]\}|\$ARGUMENTS' user-level-reference/skills/jev/SKILL.md` must print nothing.
+- [ ] **Step 5: Run.** Expected: `Ran 91 tests … OK`. Then run check 47's scan on the new file: `grep -nE '\$[0-9]|\$\{[0-9]\}|\$ARGUMENTS' user-level-reference/skills/jev/SKILL.md` must print nothing.
 
-- [ ] **Step 6: Bump J-PY** `JPY_WANT=89`. `run-block.sh … v4.4.0 J-PY`: 4 passed.
+- [ ] **Step 6: Bump J-PY** `JPY_WANT=91`. `run-block.sh … v4.4.0 J-PY`: 4 passed.
 
 - [ ] **Step 7: Commit** (`feat(jev): /jev on|off|status|report -- byte-exact settings round trip, refuses a pre-v4.4.0 model-floor (v4.4.0)`). Paths: `user-level-reference/skills/jev/jev_ctl.py user-level-reference/skills/jev/SKILL.md user-level-reference/skills/jev/tests/test_ctl.py scripts/test-hooks.sh`.
 
 ---
 
-### Task 9: Check 64 (zero footprint, census) and the docs that name skills
+### Task 9: Check 64 (zero footprint, census), the U-1 rule exception, and the docs that name skills
 
 **Files:**
 - Modify: `scripts/verify-template-consistency.sh`, inserting check 64 directly after the check 63c `fi` and before the `# Check 43` banner (~:4010 at 3a901fe). Renumber if v4.3.1 took 64.
+- Modify: `user-level-reference/CLAUDE.md:37` (U-1 exception, one sentence). No byte cap applies to this file: check 35 caps only `templates/*/{CLAUDE.md,AGENT_TEAM.md}`. But it is an always-loaded row in the context tables, so Task 10's column grows.
 - Modify: `README.md:21` (skill count and list)
 - Modify: `user-level-reference/README.md` (skills table, after the `backlog-board` row ~:90)
 
 **Interfaces:**
-- Consumes: `AM_JEV_MARKER='…'` (Task 3), `REG_COMMAND = '…'` (Task 8), `disable-model-invocation: true` (Task 8).
+- Consumes: `AM_JEV_MARKER='…'` (Task 3), `REG_COMMAND = '…'` and `SESSION_COMMAND = '…'` (Task 8), `disable-model-invocation: true` (Task 8).
 
 - [ ] **Step 1: Write check 64 with its control:**
 
@@ -2659,6 +2717,10 @@ c64_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" user-level-reference/skills/
 [ -n "$c64_marker" ] || c64_bad="$c64_bad agent-model.sh(no AM_JEV_MARKER line)"
 [ "$c64_reg" = "$C64_SPEC_REG" ] || c64_bad="$c64_bad jev_ctl.py(REG_COMMAND is not the spec literal: '${c64_reg:-<none>}')"
 case "$c64_reg" in *"$c64_marker"*) ;; *) c64_bad="$c64_bad REG_COMMAND does not contain AM_JEV_MARKER '$c64_marker'" ;; esac
+# U-1: the orchestrator is told to omit `model` while on -- the rule's exception
+# and the session-start notice must both exist, or Jev routes nothing.
+grep -qF 'unless Jev routing is on in this repo' user-level-reference/CLAUDE.md || c64_bad="$c64_bad user-level-reference/CLAUDE.md(no U-1 exception)"
+grep -qE "^SESSION_COMMAND = '.*omit model on Agent spawns.*'\$" user-level-reference/skills/jev/jev_ctl.py || c64_bad="$c64_bad jev_ctl.py(no SESSION_COMMAND telling the orchestrator to omit model)"
 if [ -z "$c64_bad" ]; then
   ok "check 64: no template, root or user-level settings registers jev_route.py; /jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
 else
@@ -2677,9 +2739,10 @@ fi
 rm -rf "$C64C_TMP"
 ```
 
-- [ ] **Step 2: Run it red first.** In a scratch copy (never in the real tree), change `REG_COMMAND` in `jev_ctl.py`, or rename `AM_JEV_MARKER` in the lib, and check that check 64 fails. Simplest way: run the check 64 lines alone with `c64_reg` overridden. Then run the full consistency script on the real tree: `bash scripts/verify-template-consistency.sh 2>&1 | grep -E 'check 64|ALL CHECKS'`. Expected: the two check-64 PASS lines and `ALL CHECKS PASSED`.
+- [ ] **Step 2: Run it red first.** In a scratch copy (never in the real tree), change `REG_COMMAND` in `jev_ctl.py`, or rename `AM_JEV_MARKER` in the lib, and check that check 64 fails. Simplest way: run the check 64 lines alone with `c64_reg` overridden. On the real tree before Step 3, check 64 must FAIL with `user-level-reference/CLAUDE.md(no U-1 exception)`, which is the red side of the U-1 line. After Step 3, run `bash scripts/verify-template-consistency.sh 2>&1 | grep -E 'check 64|ALL CHECKS'`. Expected: the two check-64 PASS lines and `ALL CHECKS PASSED`.
 
 - [ ] **Step 3: Docs.**
+  - **U-1, `user-level-reference/CLAUDE.md:37`** (`## Sub-Agent Model Choice`): change the bold lead `- **Every Agent spawn names its \`model\` explicitly.**` to `- **Every Agent spawn names its \`model\` explicitly — unless Jev routing is on in this repo (\`/jev on\`; a session-start line announces it), then omit \`model\` and Jev picks one per launch.**` Leave the rest of the line and the other bullets unchanged. Use the Edit tool: the file holds non-ASCII (`—`, `→`). Measure `wc -c` before and after for Task 10. The live `~/.claude/CLAUDE.md` follows at install (Task 11), and `verify-user-level-drift.sh` must then report 0.
   - `README.md:21`: `**9 user-level skills**` → `**10 user-level skills**`, and add `` `/jev` `` after `` `/retro-review` `` in the list. Nothing else on that line changes.
   - `user-level-reference/README.md`: after the `backlog-board` row, add:
     `| `jev` | `/jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- one step at most from the agent's default, reviewers never below sonnet, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |`
@@ -2687,7 +2750,7 @@ rm -rf "$C64C_TMP"
 
 - [ ] **Step 4: Verify.** A full consistency run → `ALL CHECKS PASSED`. `bash -n scripts/verify-template-consistency.sh`.
 
-- [ ] **Step 5: Commit** (`test(consistency): check 64 -- Jev ships no registration, /jev is user-invoked, registration and step-aside marker agree; docs list /jev (v4.4.0)`). Paths: `scripts/verify-template-consistency.sh README.md user-level-reference/README.md` (plus `docs/architecture.md` if Step 3 touched it).
+- [ ] **Step 5: Commit** (`test(consistency): check 64 -- Jev ships no registration, /jev is user-invoked, registration and step-aside marker agree; docs list /jev (v4.4.0)`). Paths: `scripts/verify-template-consistency.sh user-level-reference/CLAUDE.md README.md user-level-reference/README.md` (plus `docs/architecture.md` if Step 3 touched it).
 
 ---
 
@@ -2699,14 +2762,14 @@ rm -rf "$C64C_TMP"
   - `templates/*/CLAUDE.md`, `templates/*/.claude/rules/project.md`, `templates/*/.claude/project-instructions.md`, `templates/*/PROJECT_CONTEXT.md`;
   - `user-level-reference/CLAUDE.md`, `user-level-reference/output-styles/pm-report.md`;
   - the on-demand `templates/general/AGENT_TEAM.md`.
-  This plan changes none of them, so the injected and bootstrap subtotals should equal v4.3.1's column. If any differs, find out why before writing the column. The `jev` skill is `disable-model-invocation: true`. Write "adds no bytes to the skill listing" only if Task 11's live session confirms `jev` is absent from the listing; otherwise write "not measured".
+  Of these, the plan changes only `user-level-reference/CLAUDE.md` (the U-1 sentence, Task 9). Both subtotals grow by exactly that file's delta, in every variant's column; any other difference needs explaining before the column is written. The SessionStart notice adds its one printed line (`wc -c` on the echoed text) to the session-start context, but only in a repo where Jev is on. State it in the prose as a conditional per-session cost, not in the always-loaded rows. The `jev` skill is `disable-model-invocation: true`. Write "adds no bytes to the skill listing" only if Task 11's live session confirms `jev` is absent from the listing; otherwise write "not measured".
 - [ ] **Step 2: VERSION.** Line 1 `4.4.0`. Line 2: `Optional Jev spawn routing (user-level /jev skill, off by default, per clone) on model-floor's resolution moved to hooks/lib/agent-model.sh; model-floor steps aside only for a router that will run -- hook lib, user-level skill and check changes, no template or server-code change.` Copy the file to `server/src/template_sync/VERSION` and run `cmp` on the pair.
 - [ ] **Step 3: SKILL marker.** `<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.4.0 -->`. That is the only change to the sync-template skill body.
 - [ ] **Step 4: CHANGELOG.** Add `## v4.4.0 — <tag day>` above v4.3.1, using v4.3.0's section layout (`CHANGELOG.md:3-40` at 3a901fe):
   - **Summary paragraph:** Phase 1a only; Phase 1b out of scope (R-9); merge only on the user's go.
   - **`**Floor reviewed: unchanged — …**`:** "the sync-template skill's sync and migration steps are unchanged; its body changes only its version marker (v4.4.0); the new `hooks/lib/agent-model.sh` and the refactored `hooks/model-floor.sh` reach a consumer through the existing `hooks/**` sync path, and the Jev skill is user-level only."
   - **`### Added`:**
-    - the `jev` skill (router, ctl, redactor, 89 Python tests run by J-PY inside **Gate**);
+    - the `jev` skill (router, ctl, redactor, 91 Python tests run by J-PY inside **Gate**);
     - `hooks/lib/agent-model.sh` with its CLI line;
     - check 64 + 64c;
     - fixture blocks J-DIFF (zero footprint off: byte-identical to the base release), J-LIB, J-MF, J-PY;
@@ -2716,7 +2779,7 @@ rm -rf "$C64C_TMP"
     - model-floor steps aside only when the router will run (R-2, C1 row 6 amended);
     - the definition census now covers three files. Name the corrected check-63 comment, whose claim was false at v4.3.0.
   - **`### Known limits`:**
-    1. under the user-level rule "every spawn names its `model`", Jev routes almost nothing (open question), and where `CLAUDE_CODE_SUBAGENT_MODEL` is set, general-purpose and untyped spawns are left to it (R-4);
+    1. Jev routes only spawns that pass no `model`. Under U-1 the orchestrator omits it while on, but that depends on the orchestrator obeying the rule exception and the session-start notice; a spawn that still names `model` is logged `explicit` and left alone. Whether Jev's per-call `model` outranks `CLAUDE_CODE_SUBAGENT_MODEL` was verified live without `_FORCE` (Task 11); under `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` the harness may override it (unverified, R-4);
     2. per routed spawn: python startup + one bash resolver + ~0.3 s API. Under a machine-wide stall the 5 s hook timeout can kill the router, and then the spawn inherits, since model-floor has stepped aside;
     3. in Phase 0, 12 of 80 runs (15 %) were refused by the residual check, and those spawns get the floor or their own model;
     4. no event rotation;
@@ -2728,11 +2791,11 @@ rm -rf "$C64C_TMP"
     10. if the resolver call times out (2 s) while model-floor has stepped aside, the router stays silent and the spawn inherits;
     11. a consumer who accepts the new `hooks/model-floor.sh` but not `hooks/lib/agent-model.sh` in a partial sync silently loses the floor, because model-floor exits 0 without its lib.
   - **`### Downstream migration`:**
-    - this repo's live install: copy `user-level-reference/hooks/lib/agent-model.sh` and `user-level-reference/hooks/model-floor.sh` to `~/.claude/hooks/`, and `user-level-reference/skills/jev/` to `~/.claude/skills/jev/` (no `__pycache__`);
+    - this repo's live install: copy `user-level-reference/hooks/lib/agent-model.sh` and `user-level-reference/hooks/model-floor.sh` to `~/.claude/hooks/`, `user-level-reference/skills/jev/` to `~/.claude/skills/jev/` (no `__pycache__`), and apply the U-1 sentence to `~/.claude/CLAUDE.md` (the reference leads);
     - `verify-user-level-drift.sh` must report 0;
     - consumers get the lib and the new model-floor via `/sync-template`, and nothing else changes for them;
     - Jev stays off until someone runs `/jev on` in a clone; that needs python3 ≥ 3.8 and `TYPESAFE_API_KEY`.
-  - **Counts:** consistency measured by one full run at this tip; hook suite and server `<pending gate>` (the controller fills them from Task 11, naming where each was measured); J-PY `89`.
+  - **Counts:** consistency measured by one full run at this tip; hook suite and server `<pending gate>` (the controller fills them from Task 11, naming where each was measured); J-PY `91`.
 - [ ] **Step 5: Tables.** Add a v4.4.0 column to README's table and architecture's Context Budget, with sums and the `skills` row at `10`. Add one prose sentence per table stating the measured change (expected: "unchanged from v4.3.1; the release adds a user-invoked skill, a hook lib and checks, none of them always-loaded").
 - [ ] **Step 6: Verify.** A full consistency run: `ALL CHECKS PASSED`, with checks 43, 44, 56 and 57 included. `cmp VERSION server/src/template_sync/VERSION`.
 - [ ] **Step 7: Commit** (`docs(release): v4.4.0 -- CHANGELOG, VERSION, marker, measured context tables`).
@@ -2750,13 +2813,18 @@ rm -rf "$C64C_TMP"
    - Expect: the tool result carries `LIVE-DENY`, and no `subagents/` transcript is created for that session under `~/.claude/projects/<slug>/`.
    - Remove the deny entry and re-run. Expect: the subagent transcript's `message.model` is `claude-sonnet-*` (the floor). This shows that `updatedInput` without `permissionDecision` applies, and that exit 2 beats it.
 4. **Merge only on the user's explicit go** (spec status line). Merge from the gated worktree, fill `<pending gate>`, tag, release, and do the live install per Downstream migration. `verify-user-level-drift.sh` must report 0.
-5. **L2 opt-in live smoke**, which costs at most two real API calls. Run it only if the user says so.
+5. **L2 opt-in live smoke**, which costs at most three real API calls. Run it only if the user says so.
    - In `$SCRATCH/jev-live` (with no deny hook), run `python3 ~/.claude/skills/jev/jev_ctl.py on`. Save a copy of `settings.local.json`'s pre-on state first; it is absent here.
    - Spawn exactly as in L1 (`claude -p --model opus`, Plan, no `model`).
    - Check:
      - (a) one event file in `.git/jev/events/` with a reason from `REASONS`;
      - (b) `grep -c "Reply with the single word"` on it is 0, and the key is absent;
      - (c) the subagent transcript's `message.model` matches the event's `emitted`.
+   - **U-1 precedence check:**
+     - Spawn once more as `general-purpose` with no `model`. This host's live `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` covers that spawn; `_FORCE` must be unset.
+     - If the event shows an applied pick other than sonnet, the transcript's `message.model` must be that pick. That proves the per-call `model` outranks the env default.
+     - If Jev kept sonnet, record "precedence not observed" rather than a pass.
+     - Also confirm the session-start notice: a fresh `claude -p` in the directory, asked "what does your context say about Jev?", quotes the "omit model" line.
    - Then add the exit-2 entry to `.claude/settings.json` and spawn once more. Expect the block (exit 2 wins over the router).
    - Remove the entry, run `jev_ctl.py off`, and confirm `settings.local.json` is gone, matching its pre-on absence.
    - Also run `jev_ctl.py status` before off and confirm it shows no key.
@@ -2779,6 +2847,7 @@ rm -rf "$C64C_TMP"
 | D4 act at confidence ≥ 0.8 | 5, 6 (config threshold) |
 | D5 one step, reviewer floor, explicit never overridden | 5, 6, 7 |
 | D6 effort logged only | 6 (event fields), 8 (report) |
+| U-1 orchestrator omits `model` while on; env default does not stop Jev | 2 (env answer carries the value), 6 and 7 (env routed), 8 (SessionStart notice, on/off output, SKILL.md), 9 (CLAUDE.md exception, check 64), 11 (live precedence) |
 | Switch: config, registration literal, exclude, off, status, report | 8 |
 | Rule-exception statement | 8 (SKILL.md) |
 | Step 2: resolution reused, floor applied while on | 2, 3, 6 (R-1) |
