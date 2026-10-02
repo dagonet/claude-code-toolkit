@@ -31,6 +31,9 @@
 #     message names the whole command, so do not read a failure as "everything
 #     after the first project was fine"; nothing after it was executed at all.
 
+# v4.3.1 T1-5: bash imports SECONDS from the environment; reset it so the hook-wide ceiling counts from THIS hook's start.
+SECONDS=0
+
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_CMD stays empty, and this gate would exit 0 on every commit.
 lib="$(dirname "$0")/lib/git-cmd.sh"

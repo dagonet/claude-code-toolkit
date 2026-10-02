@@ -8686,7 +8686,9 @@ g1_yes() { if "$@"; then echo yes; else echo no; fi; }
 g1_native=no
 if [ -r "/proc/$$/winpid" ] && command -v cmd >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then g1_native=yes; fi
 g1_slow() { # <repo> -- slow.sh: a bash heartbeat child (self-bounded, 20 s), a native one on Git Bash, then sleep 20
-  printf '@echo off\r\nfor /l %%%%i in (1,1,20) do (\r\n  echo x>>"%%~dp0hbn.txt"\r\n  ping -n 2 127.0.0.1 >nul\r\n)\r\n' > "$1/hb.cmd"
+  # hb.cmd runs the loop in a SECOND cmd: a native grandchild of a native process, reachable only by taskkill //T (T1-5)
+  printf '@echo off\r\nfor /l %%%%i in (1,1,20) do (\r\n  echo x>>"%%~dp0hbn.txt"\r\n  ping -n 2 127.0.0.1 >nul\r\n)\r\n' > "$1/hbloop.cmd"
+  printf '@echo off\r\ncmd /c "%%~dp0hbloop.cmd"\r\n' > "$1/hb.cmd"
   {
     printf '#!/usr/bin/env bash\n'
     printf '( n=0; while [ $n -lt 100 ]; do echo x >> "%s/hb.txt"; sleep 0.2; n=$((n + 1)); done ) &\n' "$1"
