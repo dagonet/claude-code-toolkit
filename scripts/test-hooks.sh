@@ -8792,6 +8792,10 @@ expect "G2 pin: env A=1 git -c a=b commit -> refused"     "refuse:-c"   "$( . "$
 expect "G2 T2-4 gc_global_options: GIT_DIR+=/x git commit -> env refusal" "env:GIT_DIR+" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_global_options 'GIT_DIR+=/x git commit' )"
 expect "G2 T2-4 gc_is_git_word: A+=/x/git is an assignment" no "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_is_git_word 'A+=/x/git' && echo yes || echo no )"
 check "G2 T2-4 no-push-main: GIT_DIR+=<protected>/.git git push from a feature cwd" hooks/no-push-main.sh 2 "$(mkjson Bash "GIT_DIR+=$G2R/.git git push origin main" "$G2O")"
+# T2-5: a BARE push (no `origin main`, which no-push-main refuses whatever GIT_DIR is) is judged
+# only by the global-option refusal, so this row alone catches a lost NAME+= assignment rule.
+check_msg "G2 T2-5 no-push-main: bare GIT_DIR+=<protected>/.git git push from a feature cwd -> env refusal" "$ROOT/hooks/no-push-main.sh" 2 \
+  "$(mkjson Bash "GIT_DIR+=$G2R/.git git push" "$G2O")" "GIT_DIR+="
 # T2-1: a path containing '=' is a command, not an assignment (never narrows).
 for sp in /opt/a=b/git 'C:\x=y\git'; do
   check "G2 T2-1 no-push-main: $sp push origin main"      hooks/no-push-main.sh 2      "$(mkjson Bash "$sp push origin main" "$G2R")"
