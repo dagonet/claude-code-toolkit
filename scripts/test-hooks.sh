@@ -8772,14 +8772,37 @@ for nw in gitk git-lfs notgit digit.exe; do
 done
 # Parity: the shell recognisers and the awk ones answer the same spellings
 # (C-7: "git" is a parity row too, so the awk copy's own quote strip is tested).
-for sp in git.exe GIT /usr/bin/git.exe 'C:\Git\cmd\git.exe' '"git"'; do
+for sp in git.exe GIT Git.Exe '"git"' "'git'" '"git.exe"' /usr/bin/git.exe 'C:\Git\cmd\git.exe' /opt/a=b/git 'C:\x=y\git' 'g\it'; do
   expect "G2 parity gc_dash_c_list: $sp -C /x push"      "/x"        "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_dash_c_list "$sp -C /x push" )"
   expect "G2 parity gc_global_options: $sp -c a=b commit" "refuse:-c" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_global_options "$sp -c a=b commit" )"
   expect "G2 parity gc_push_args: $sp push origin main"  "origin main" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_push_args "$sp push origin main" )"
   expect "G2 parity gc_matches_subcommand: $sp push"     yes "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_matches_subcommand "$sp push origin main" push && echo yes || echo no )"
 done
+# Negative parity: not git for either copy.
+for sp in gitk digit git.exe.bak GIT_DIR=/x/git A=git; do
+  expect "G2 neg parity gc_dash_c_list: $sp -C /x push"      ""     "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_dash_c_list "$sp -C /x push" )"
+  expect "G2 neg parity gc_push_args: $sp push origin main"  ""     "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_push_args "$sp push origin main" )"
+  expect "G2 neg parity gc_matches_subcommand: $sp push"     no     "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_matches_subcommand "$sp push origin main" push && echo yes || echo no )"
+  expect "G2 neg parity gc_is_git_word: $sp"                 no     "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_is_git_word "$sp" && echo yes || echo no )"
+done
 # An assignment is never the git word: the env refusal must survive the new predicate.
 expect "G2 pin: GIT_DIR=/x/git git commit -> env refusal" "env:GIT_DIR" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_global_options 'GIT_DIR=/x/git git commit' )"
+expect "G2 pin: env A=1 git -c a=b commit -> refused"     "refuse:-c"   "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_global_options 'env A=1 git -c a=b commit' )"
+# T2-1: a path containing '=' is a command, not an assignment (never narrows).
+for sp in /opt/a=b/git 'C:\x=y\git'; do
+  check "G2 T2-1 no-push-main: $sp push origin main"      hooks/no-push-main.sh 2      "$(mkjson Bash "$sp push origin main" "$G2R")"
+  check "G2 T2-1 no-push-main: $sp -C <protected> push"   hooks/no-push-main.sh 2      "$(mkjson Bash "$sp -C $G2R push" "$G2O")"
+  check "G2 T2-1 gate-before-merge: $sp merge"            hooks/gate-before-merge.sh 2 "$(mkjson Bash "$sp merge feature/y" "$G2R")"
+  check "G2 T2-1 pre-commit-test: $sp commit"             hooks/pre-commit-test.sh 2   "$(mkjson Bash "$sp commit -m x" "$G2R")"
+done
+expect "G2 T2-3b gc_global_options: /opt/a=b/git -c a=b commit" "refuse:-c" "$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_global_options '/opt/a=b/git -c a=b commit' )"
+# T2-2 / T2-3a: quote- and backslash-concatenated git reaches the walk in every gate.
+for sp in "'git'.exe" '"git".exe' 'g"it"' 'gi""t' 'g\it'; do
+  check "G2 T2-2 no-push-main: $sp push origin main"      hooks/no-push-main.sh 2      "$(mkjson Bash "$sp push origin main" "$G2R")"
+  check "G2 T2-2 gate-before-merge: $sp merge"            hooks/gate-before-merge.sh 2 "$(mkjson Bash "$sp merge feature/y" "$G2R")"
+  check "G2 T2-2 pre-commit-test: $sp commit"             hooks/pre-commit-test.sh 2   "$(mkjson Bash "$sp commit -m x" "$G2R")"
+done
+check "G2 T2-2 no-push-main: 'git'.exe push origin feat from a feature repo -> allowed" hooks/no-push-main.sh 0 "$(mkjson Bash "'git'.exe push origin feat" "$G2O")"
 # ---- end v4.3.1 G2
 
 echo "----------------------------------------------------------------"

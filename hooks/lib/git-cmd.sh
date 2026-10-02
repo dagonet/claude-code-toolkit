@@ -209,9 +209,17 @@ GC_CMD=""
 # reviews). Pinned by the G2 parity rows in scripts/test-hooks.sh -- the shell
 # and the awk copies below must answer the same spellings (C-7: the awk copy
 # strips the same one pair of quotes, so a quoted "git" is a parity row too).
+# T2-1: a word is an assignment only when the text before its first `=` is a
+# shell identifier; `/opt/a=b/git` and `C:\x=y\git` are commands (git).
+gc_is_assignment_word() { # <token>
+  case "$1" in
+    [A-Za-z_]*=*) case "${1%%=*}" in *[!A-Za-z0-9_]*) return 1 ;; *) return 0 ;; esac ;;
+  esac
+  return 1
+}
 gc_is_git_word() { # <token>
   _giw=$1
-  case "$_giw" in *=*) return 1 ;; esac   # an assignment (GIT_DIR=/x/git) is never the git word
+  gc_is_assignment_word "$_giw" && return 1   # GIT_DIR=/x/git is never the git word
   case "$_giw" in
     \"*\") _giw=${_giw#\"}; _giw=${_giw%\"} ;;
     \'*\') _giw=${_giw#\'}; _giw=${_giw%\'} ;;
@@ -221,16 +229,31 @@ gc_is_git_word() { # <token>
     */[Gg][Ii][Tt]|*/[Gg][Ii][Tt].[Ee][Xx][Ee]) return 0 ;;
     *\\[Gg][Ii][Tt]|*\\[Gg][Ii][Tt].[Ee][Xx][Ee]) return 0 ;;
   esac
+  # T2-3a: the shell drops a backslash inside a word (`g\it` runs git), so a
+  # word that is git once its backslashes are gone is git too. Only adds.
+  case "$_giw" in
+    *\\*)
+      _giw=$(printf '%s' "$_giw" | tr -d '\\')
+      case "$_giw" in [Gg][Ii][Tt]|[Gg][Ii][Tt].[Ee][Xx][Ee]) return 0 ;; esac ;;
+  esac
   return 1
 }
 # The awk copy, prepended to every awk program that opens a git invocation
 # (gc_matches_subcommand, gc_push_args). The caller passes -v bs='\' -v sq="'".
-GC_AWK_IS_GIT='function is_git(t,   l, q) { if (index(t, "=") > 0) return 0; q = substr(t, 1, 1); if (length(t) > 1 && (q == "\"" || q == sq) && substr(t, length(t), 1) == q) t = substr(t, 2, length(t) - 2); l = tolower(t); if (length(l) > 4 && substr(l, length(l) - 3) == ".exe") l = substr(l, 1, length(l) - 4); return (l == "git" || l ~ /\/git$/ || substr(l, length(l) - 3, 4) == bs "git") }
+GC_AWK_IS_GIT='function is_git(t,   l, q, i, u) { if (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) return 0; q = substr(t, 1, 1); if (length(t) > 1 && (q == "\"" || q == sq) && substr(t, length(t), 1) == q) t = substr(t, 2, length(t) - 2); l = tolower(t); if (length(l) > 4 && substr(l, length(l) - 3) == ".exe") l = substr(l, 1, length(l) - 4); if (l == "git" || l ~ /\/git$/ || substr(l, length(l) - 3, 4) == bs "git") return 1; u = l; while ((i = index(u, bs)) > 0) u = substr(u, 1, i - 1) substr(u, i + 1); return (u == "git" || u == "git.exe") }
 '
 # The hooks' fast pre-filter (no-push-main.sh, gate-before-merge.sh): any
 # token that could be git, so the segment walk runs. Wider than
 # gc_is_git_word on purpose (it only decides whether to LOOK).
 GC_GIT_WORD_RE='(^|[^[:alnum:]_-])["'"'"']?[Gg][Ii][Tt](\.[Ee][Xx][Ee])?["'"'"']?([[:space:]]|$)'
+# T2-2/T2-3a: the pre-filter must see what the walk sees. stdin -> stdout: the
+# text with quotes removed (`'git'.exe`, `g"it"`), then the same with
+# backslashes removed too (`g\it`; the first form keeps `C:\Git\git.exe`).
+gc_git_prefilter_text() {
+  _gpt=$(tr -d "\"'")
+  printf '%s\n' "$_gpt"
+  printf '%s\n' "$_gpt" | tr -d '\\'
+}
 
 gc_global_options() {
   gcgo_seg="$1"
@@ -251,8 +274,11 @@ gc_global_options() {
     if [ "$gcgo_sawgit" -eq 0 ]; then
       case "$gcgo_tok" in
         env) continue ;;
-        *=*) case "$gcgo_tok" in GIT_*=*|*_GIT_*=*) printf 'env:%s\n' "${gcgo_tok%%=*}"; return ;; esac; continue ;;
       esac
+      if gc_is_assignment_word "$gcgo_tok"; then
+        case "$gcgo_tok" in GIT_*=*|*_GIT_*=*) printf 'env:%s\n' "${gcgo_tok%%=*}"; return ;; esac
+        continue
+      fi
       gc_is_git_word "$gcgo_tok" && gcgo_sawgit=1
       continue
     fi
@@ -1492,7 +1518,7 @@ gc_on_main() {
 #      a literal `\git` suffix via `substr()`, none of which depend on
 #      backslash-in-regex escaping semantics. v4.3.1 G2: is_git() now comes
 #      from GC_AWK_IS_GIT (git/git.exe, any case).
-#   F3(quoted wrappers and substitution openers): the deleted fast path was,
+#   F3 (quoted wrappers and substitution openers): the deleted fast path was,
 #      incidentally, the only thing that matched `bash -c "git commit -m x"`,
 #      `sh -lc "git commit -m x"`, `(git commit -m x)`, and — this is also how
 #      gate-before-merge.sh's A6.10 command-substitution rows stayed gated —

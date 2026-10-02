@@ -739,7 +739,7 @@ GC_CMD="$(gc_augmented_cmd "$CWD")"
 # re-open finding 62 in the same change — fast and wrong.
 if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   # v4.3.1 G2: GC_GIT_WORD_RE (hooks/lib/git-cmd.sh) also opens the walk for git.exe, GIT and a quoted "git".
-  if ! printf '%s\n' "$GC_CMD" | grep -qE "$GC_GIT_WORD_RE" &&
+  if ! printf '%s\n' "$GC_CMD" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" &&
      ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
     exit 0
   fi
