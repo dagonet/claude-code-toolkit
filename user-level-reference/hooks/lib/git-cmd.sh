@@ -715,15 +715,24 @@ gc_synth_cd() {
 # the original and the current first (never dropped by the cap), then the rest
 # newest first.
 gc_aug_cands() {
-  local seen="" d
+  # T3-6: reversed with a bash array, not `tac` (absent on macOS, and a missing
+  # tool silently dropped every cwd but the first two -- a fail-open).
+  local seen="" d i
+  local -a all=()
   for d in "$1" "$2"; do
     [ -n "$d" ] || continue
     case "$GC_NL$seen$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) seen="$seen$GC_NL$d"; printf '%s\n' "$d" ;; esac
   done
-  printf '%s\n' "$3" | tac | while IFS= read -r d; do
-    [ -n "$d" ] || continue
+  while IFS= read -r d; do
+    [ -n "$d" ] && all+=("$d")
+  done <<GC_AUG_ALL
+$3
+GC_AUG_ALL
+  for ((i = ${#all[@]} - 1; i >= 0; i--)); do
+    d=${all[i]}
     case "$GC_NL$seen$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) seen="$seen$GC_NL$d"; printf '%s\n' "$d" ;; esac
   done
+  return 0
 }
 # gc_seg_may_run_script <raw_segment> -- succeeds when any word of the segment
 # is bash, sh, source, `.` or a powershell/pwsh (over-broad on purpose: it only

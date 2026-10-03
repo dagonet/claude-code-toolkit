@@ -8881,7 +8881,7 @@ check "G3 T3-2 control: 9 certain cds then bash ok.sh is not refused" hooks/no-p
 # MSYS does not path-convert an argument holding a quote character, so the
 # native git cannot open an /tmp/...o'brien path: that repo is initialised and
 # addressed through its platform spelling (natpath).
-G3AP=$(g3_repo "o'brien")
+G3AP=$(g3_repo "o'brien" 2>/dev/null)
 G3AP=$(natpath "$G3AP")
 git -C "$G3AP" init -q >/dev/null 2>&1
 git -C "$G3AP" config user.email t@t.t; git -C "$G3AP" config user.name t; git -C "$G3AP" config commit.gpgsign false
@@ -8903,6 +8903,23 @@ g3rt="$TMPROOT/g3 rt"'/a'"'"'b$d`e;f&g'
 mkdir -p "$g3rt"
 expect "G3 T3-4 gc_synth_cd round-trips ' \$ \` ; & and a space" "$g3rt" \
   "$( . "$ROOT/hooks/lib/git-cmd.sh"; s=$(gc_synth_cd "$g3rt"); gc_resolve "$TMPROOT" "$(gc_cd_target "$s")" )"
+# T3-6: the scan order must not depend on `tac` (absent on macOS). A PATH without
+# tac, with the same reproducer: the older cwds must still be scanned.
+g3pd="$TMPROOT/path-g3notac"
+mkdir -p "$g3pd"
+for g3t in sh bash git grep sed tr head tail cut cat wc stat date mktemp dirname basename sort uniq mkdir rm ls awk env find touch cp expr node python3 jq; do
+  g3r=$(command -v "$g3t" 2>/dev/null) || continue
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$g3r" > "$g3pd/$g3t"
+  chmod +x "$g3pd/$g3t"
+done
+g3bash=$(command -v bash)
+expect "G3 T3-6 fixture PATH hides tac" 1 "$(PATH="$g3pd" "$g3bash" -c 'command -v tac >/dev/null 2>&1 && echo 0 || echo 1')"
+g3j=$(mkjson Bash "cd $G3R; cd $G3O; cd -; bash bare.sh" "$G3O")
+printf '%s' "$g3j" | PATH="$g3pd" "$g3bash" "$ROOT/hooks/no-push-main.sh" >/dev/null 2>&1
+expect "G3 T3-6 no-push-main without tac: cd R; cd O; cd -; bash bare.sh" 2 "$?"
+g3j=$(mkjson Bash "cd $G3R; cd $G3O; cd -; bash ok.sh" "$G3O")
+printf '%s' "$g3j" | PATH="$g3pd" "$g3bash" "$ROOT/hooks/no-push-main.sh" >/dev/null 2>&1
+expect "G3 T3-6 control, same PATH: cd R; cd O; cd -; bash ok.sh" 0 "$?"
 # ---- end v4.3.1 G3
 
 echo "----------------------------------------------------------------"
