@@ -245,6 +245,9 @@ pct_note() { # <path-label> <rc, or -1 where no subshell ran>
     # `$_pn_base` vs `$_pn_top`: a bind mount or a symlinked checkout could
     # make the TEXT of the two paths differ while the DIRECTORY is the same
     # one, or vice versa -- physical identity is the actual question.
+    # v4.3.1 G6: REPO_PATH is now always the top-level, so this comparison holds
+    # for every commit that reaches a Test; it stays as the guard for any future
+    # path that sets PCT_ARTIFACT_BASE elsewhere.
     _pn_base_phys=$(cd "$_pn_base" 2>/dev/null && pwd -P)
     _pn_top_phys=$(cd "$_pn_top" 2>/dev/null && pwd -P)
     if [ -n "$_pn_base_phys" ] && [ "$_pn_base_phys" = "$_pn_top_phys" ]; then
@@ -500,25 +503,71 @@ segments=$(gc_segments)
 GC_SEG_QUOTED=$(gc_seg_quoted)
 pct_seg_quoted="$GC_SEG_QUOTED"
 
+# v4.3.1 G6 / T3-3 -- EVERY commit segment is judged, not only the first. The
+# cwd of each segment is tracked exactly as gc_augmented_cmd tracks it (same
+# uncertain-cwd rules: `cd -`, options, no argument, a $/backtick/glob target,
+# pushd, popd; candidates = the original, the current and every cwd seen, newest
+# first), and each commit segment's repository is its candidates' top-level.
+pct_cwds="$base"
+pct_orig="$base"
+pct_unc=0
+pct_tops=""
+pct_ntops=0
+pct_seen_commit=0
 pct_seg_idx=0
 while IFS= read -r seg; do
   pct_seg_idx=$((pct_seg_idx + 1))
   [ -n "$seg" ] || continue
 
+  pct_fw=""
+  [[ $seg =~ ^[[:space:]]*([^[:space:]]+) ]] && pct_fw=${BASH_REMATCH[1]}
+  if [ "$pct_fw" = pushd ] || [ "$pct_fw" = popd ]; then
+    pct_unc=1
+    continue
+  fi
   cdt=$(gc_cd_target "$seg")
+  if [ "$pct_fw" = cd ]; then
+    case "$cdt" in
+      ""|-*|*[*?[]*) pct_unc=1; continue ;;
+    esac
+  fi
   if [ -n "$cdt" ]; then
-    base=$(gc_resolve "$base" "$cdt")
+    pct_cls=$(gc_classify_c "$cdt" "$base" | sed -n 1p)
+    pct_rel=0
+    case "$cdt" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$pct_cls" = 1 ] && pct_rel=1 ;; esac
+    if [ "$pct_cls" = 3 ]; then
+      pct_unc=1
+    elif [ "$pct_unc" = 1 ] && [ "$pct_rel" = 1 ]; then
+      # a relative cd after an unresolvable one moves every candidate
+      pct_n=0
+      while IFS= read -r pct_d; do
+        [ -n "$pct_d" ] || continue
+        pct_n=$((pct_n + 1)); [ "$pct_n" -le 8 ] || break
+        pct_d=$(gc_resolve "$pct_d" "$cdt")
+        case "$GC_NL$pct_cwds$GC_NL" in *"$GC_NL$pct_d$GC_NL"*) ;; *) pct_cwds="$pct_cwds$GC_NL$pct_d" ;; esac
+      done <<PCT_REL
+$pct_cwds
+PCT_REL
+    else
+      base=$(gc_resolve "$base" "$cdt")
+      pct_unc=0
+      case "$GC_NL$pct_cwds$GC_NL" in *"$GC_NL$base$GC_NL"*) ;; *) pct_cwds="$pct_cwds$GC_NL$base" ;; esac
+    fi
     continue
   fi
 
   if gc_matches_subcommand "$seg" "commit"; then
     # v3.1 -- resolve matched_in_quoted as soon as the commit segment is
     # known, before any of the pct_note calls below (global-refused,
-    # unresolved-c, gate, test) that must all carry it.
-    case "$(printf '%s\n' "$pct_seg_quoted" | sed -n "${pct_seg_idx}p")" in
-      1) PCT_QUOTED=true ;;
-      *) PCT_QUOTED=false ;;
-    esac
+    # unresolved-c, gate, test) that must all carry it. (The FIRST commit
+    # segment's flag stands for the artifact.)
+    if [ "$pct_seen_commit" = 0 ]; then
+      case "$(printf '%s\n' "$pct_seg_quoted" | sed -n "${pct_seg_idx}p")" in
+        1) PCT_QUOTED=true ;;
+        *) PCT_QUOTED=false ;;
+      esac
+    fi
+    pct_seen_commit=1
     # --- v3.0.3 (finding 62), one block, deliberately small ------------------
     # A global before `commit` used to make the line above false, so this gate
     # exited 0 in 0 s having run no tests: `git -P commit -m x` and
@@ -577,15 +626,61 @@ while IFS= read -r seg; do
       exit 2
     fi
 
-    REPO_PATH=$(gc_repo_for "$seg" "$base")
-    break
+    # v4.3.1 G6 (ruling P-2) -- READ THE CONFIG AT THE REPOSITORY TOP-LEVEL.
+    # gc_repo_for is the directory the commit segment runs in (a `cd sub`, a
+    # payload cwd of sub/, a `git -C sub`), and the reads below used to take
+    # $REPO_PATH/PROJECT_CONTEXT.md literally: from a subdirectory without one
+    # the "nothing to run" arm allowed the commit with no Test (measured 0 at
+    # 3a901fe). A nested repository is its own top-level. No top-level ->
+    # refuse: this gate cannot show the tests passed, and git would fail such a
+    # commit anyway. An uncertain cwd tries every candidate (T3-3): a candidate
+    # that has no top-level refuses, and candidates in two repositories refuse.
+    if [ "$pct_unc" = 1 ]; then
+      pct_cands=$(gc_aug_cands "$pct_orig" "$base" "$pct_cwds")
+      if [ "$(printf '%s\n' "$pct_cands" | grep -c .)" -gt 8 ]; then
+        pct_note no-toplevel -1
+        echo "BLOCKED: pre-commit-test: this command changes directory in more than 8 ways the hook cannot resolve, so it cannot tell which repository the commit lands in -- refusing rather than guessing. Use absolute paths or git -C <dir>." >&2
+        exit 2
+      fi
+    else
+      pct_cands="$base"
+    fi
+    while IFS= read -r pct_cand; do
+      [ -n "$pct_cand" ] || continue
+      pct_rp=$(gc_repo_for "$seg" "$pct_cand")
+      PCT_TOP=$(git -C "$pct_rp" rev-parse --show-toplevel 2>/dev/null)
+      if [ -z "$PCT_TOP" ] || [ ! -d "$PCT_TOP" ]; then
+        pct_note no-toplevel -1
+        echo "BLOCKED: pre-commit-test: cannot find the repository top-level for '$pct_rp' -- refusing rather than committing with no Test. Run the commit from inside the repository (or pass git -C <repo>)." >&2
+        exit 2
+      fi
+      case "$GC_NL$pct_tops$GC_NL" in
+        *"$GC_NL$PCT_TOP$GC_NL"*) ;;
+        *) pct_tops="$pct_tops$GC_NL$PCT_TOP"; pct_ntops=$((pct_ntops + 1)); REPO_PATH="$PCT_TOP" ;;
+      esac
+    done <<PCT_CANDS
+$pct_cands
+PCT_CANDS
   fi
 done <<GC_SEGMENTS
 $segments
 GC_SEGMENTS
 
 # Not a commit -- nothing to gate.
-[ -n "$REPO_PATH" ] || { pct_note no-commit-segment -1; exit 0; }
+[ "$pct_seen_commit" = 1 ] || { pct_note no-commit-segment -1; exit 0; }
+# v4.3.1 T3-3: commits in more than one repository in one command. One Test
+# cannot answer for both, and judging only the first let a failing repository's
+# commit through behind a green one. Fail closed.
+if [ "$pct_ntops" -gt 1 ]; then
+  pct_note multi-repo -1
+  {
+    echo "BLOCKED: pre-commit-test: this command commits in more than one repository (or in one of several repositories the hook cannot tell apart):"
+    printf '%s\n' "$pct_tops" | sed '/^$/d;s/^/  /'
+    echo "  verdict: refused. One Test cannot answer for several repositories -- commit each repository in a separate call."
+  } >&2
+  exit 2
+fi
+[ -n "$REPO_PATH" ] || { pct_note no-toplevel -1; echo "BLOCKED: pre-commit-test: cannot find the repository top-level -- refusing rather than committing with no Test." >&2; exit 2; }
 
 # From here the artifact goes to the repo the COMMIT targets, which `git -C` and
 # a `cd` clause can point anywhere. Absolute, and fixed before any cd below.

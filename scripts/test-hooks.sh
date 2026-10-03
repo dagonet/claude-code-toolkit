@@ -8922,6 +8922,50 @@ printf '%s' "$g3j" | PATH="$g3pd" "$g3bash" "$ROOT/hooks/no-push-main.sh" >/dev/
 expect "G3 T3-6 control, same PATH: cd R; cd O; cd -; bash ok.sh" 0 "$?"
 # ---- end v4.3.1 G3
 
+# ---- v4.3.1 G6: a commit from a subdirectory runs the repository's Test ----
+G6R=$(mkrepo g6 main)                     # mkrepo also creates sub/
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$G6R/PROJECT_CONTEXT.md"
+check "G6: cd sub; git commit -> the top-level Test runs"     hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd sub; git commit -m x' "$G6R")"
+check "G6: cd sub && git commit"                              hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd sub && git commit -m x' "$G6R")"
+check "G6: payload cwd is sub/"                               hooks/pre-commit-test.sh 2 "$(mkjson Bash 'git commit -m x' "$G6R/sub")"
+check "G6: git -C sub commit"                                 hooks/pre-commit-test.sh 2 "$(mkjson Bash 'git -C sub commit -m x' "$G6R")"
+G6OK=$(mkrepo g6ok main)
+printf '# ctx\n\n- **Test**: `exit 0`\n' > "$G6OK/PROJECT_CONTEXT.md"
+check_msg "G6: green top-level Test from sub/ -> allowed, and it ran" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'cd sub; git commit -m x' "$G6OK")" "PRE-COMMIT: 'exit 0' passed."
+# a nested repository inside sub/ is its own top-level
+G6IN="$G6OK/sub/inner"
+mkdir -p "$G6IN"
+git -C "$G6IN" init -q >/dev/null 2>&1
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$G6IN/PROJECT_CONTEXT.md"
+check "G6: nested repository -> its own Test"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd sub/inner; git commit -m x' "$G6OK")"
+# no top-level -> refuse (fail-closed)
+G6N="$TMPROOT/g6-not-a-repo"
+mkdir -p "$G6N"
+check_msg "G6: commit outside any repository -> refused"      "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'git commit -m x' "$G6N")" "cannot find the repository top-level"
+# T3-3: every commit segment is judged; commits in more than one repository are refused
+G6B=$(mkrepo g6b main)                    # a second green repository
+printf '# ctx\n\n- **Test**: `exit 0`\n' > "$G6B/PROJECT_CONTEXT.md"
+printf 'git commit -m x\n' > "$G6B/c.sh"
+check_msg "G6 T3-3: bash c.sh (commits in repo B); cd <repo A> && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash "bash c.sh; cd $G6OK && git commit -m x" "$G6B")" "commit each repository in a separate call"
+check_msg "G6 T3-3: two typed commits in two repositories"    "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash "git commit -m a; cd $G6B && git commit -m b" "$G6OK")" "commit each repository in a separate call"
+check "G6 T3-3: second repository's Test is red, first green"  hooks/pre-commit-test.sh 2 "$(mkjson Bash "git commit -m a; cd $G6R && git commit -m b" "$G6OK")"
+check "G6 T3-3: git -C other repo, then a commit here"        hooks/pre-commit-test.sh 2 "$(mkjson Bash "git -C $G6B commit -m a; git commit -m b" "$G6OK")"
+# positive: two commits in ONE repository run its Test once
+G6C=$(mkrepo g6c main)
+printf '# ctx\n\n- **Test**: `echo x >> %s/g6c.count; exit 0`\n' "$TMPROOT" > "$G6C/PROJECT_CONTEXT.md"
+rm -f "$TMPROOT/g6c.count"
+check_msg "G6 T3-3: two commits in the same repository -> allowed" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m a; cd sub && git commit -m b' "$G6C")" "passed."
+expect "G6 T3-3: ... and the Test ran exactly once" 1 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
+# an uncertain cwd: every candidate is tried; candidates in two repositories refuse
+check "G6 T3-3: cd <repo A>; cd <repo B>; cd -; git commit (two candidates)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6OK; cd $G6B; cd -; git commit -m x" "$G6OK")"
+check "G6 T3-3: cd sub; cd -; git commit (one repository, green) -> allowed" hooks/pre-commit-test.sh 0 "$(mkjson Bash 'cd sub; cd -; git commit -m x' "$G6OK")"
+# ---- end v4.3.1 G6
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
