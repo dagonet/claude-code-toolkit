@@ -8920,6 +8920,15 @@ expect "G3 T3-6 no-push-main without tac: cd R; cd O; cd -; bash bare.sh" 2 "$?"
 g3j=$(mkjson Bash "cd $G3R; cd $G3O; cd -; bash ok.sh" "$G3O")
 printf '%s' "$g3j" | PATH="$g3pd" "$g3bash" "$ROOT/hooks/no-push-main.sh" >/dev/null 2>&1
 expect "G3 T3-6 control, same PATH: cd R; cd O; cd -; bash ok.sh" 0 "$?"
+# T3b-3: a cd that fails stays put, so `cd -` / `popd` after it must not be trusted (the payload repo G3R is on main and bare.sh pushes)
+G3TY="$G3O/typo-does-not-exist"
+check "G3 T3b-3 no-push-main: cd <other>; cd typo; cd -; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash bare.sh" "$G3R")"
+check "G3 T3b-3 no-push-main: pushd <other>; pushd typo; popd; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "pushd $G3O; pushd $G3TY; popd; bash bare.sh" "$G3R")"
+check "G3 T3b-3 no-push-main: cd \$V; cd <other>; cd -; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "cd \$V; cd $G3O; cd -; bash bare.sh" "$G3R")"
+check "G3 T3b-3 no-push-main: pushd <other>; pushd +1; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "pushd $G3O; pushd +1; bash bare.sh" "$G3R")"
+check "G3 T3b-3 pre-commit-test: cd <other>; cd typo; cd -; bash c.sh" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash c.sh" "$G3R")"
+check "G3 T3b-3 gate-before-merge: cd <other>; cd typo; cd -; bash m.sh" hooks/gate-before-merge.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash m.sh" "$G3R")"
+check "G3 T3b-3 control: a known cd - still resolves (bash ok.sh)" hooks/no-push-main.sh 0 "$(mkjson Bash "cd $G3O; cd sub; cd -; bash ok.sh" "$G3R")"
 # ---- end v4.3.1 G3
 
 # ---- v4.3.1 G6: a commit from a subdirectory runs the repository's Test ----
@@ -8991,6 +9000,28 @@ check_msg "G6 T3b-1: cd sub && cd \"\$(git rev-parse --show-toplevel)\" && git c
   "$(mkjson Bash 'cd sub && cd "$(git rev-parse --show-toplevel)" && git commit -m x' "$G6OK")" "passed."
 check_msg "G6 T3b-1: the same without quotes" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'cd sub && cd $(git rev-parse --show-toplevel) && git commit -m x' "$G6OK")" "passed."
+# T3b-3: UNKNOWN is sticky -- a failed/created cd, a lost stack, a rotation, a HOME reassignment
+G6TY="$G6OK/typo-does-not-exist"
+check "G6 T3b-3: cd <green>; cd typo; cd -; git commit (real cwd is the red payload repo)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6OK; cd $G6TY; cd -; git commit -m x" "$G6R")"
+check "G6 T3b-3: pushd <green>; pushd typo; popd; git commit"  hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK; pushd $G6TY; popd; git commit -m x" "$G6R")"
+check "G6 T3b-3: cd \$V; cd <green>; cd -; git commit"          hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd \$V; cd $G6OK; cd -; git commit -m x" "$G6OK")"
+check "G6 T3b-3: pushd <green>/sub; cd \$V; pushd <green>; popd; git commit" hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK/sub; cd \$V; pushd $G6OK; popd; git commit -m x" "$G6OK")"
+check "G6 T3b-3: pushd <green>; pushd +1; git commit (rotation)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK; pushd +1; git commit -m x" "$G6R")"
+check "G6 T3b-3: popd +1; git commit"                           hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK; popd +1; git commit -m x" "$G6R")"
+check "G6 T3b-3: cd -; git commit (nothing to go back to)"      hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -; git commit -m x" "$G6OK")"
+check "G6 T3b-3: git init <new> && cd <new> && git commit"       hooks/pre-commit-test.sh 2 "$(mkjson Bash "git init $TMPROOT/g6new && cd $TMPROOT/g6new && git commit -m x" "$G6OK")"
+check "G6 T3b-3: mkdir d && cd d && git commit"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash "mkdir $TMPROOT/g6mk && cd $TMPROOT/g6mk && git commit -m x" "$G6OK")"
+printf '%s' "$(mkjson Bash "export HOME=$G6R; cd ~ && git commit -m x" "$G6OK")" | HOME="$G6OK" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "G6 T3b-3: export HOME=<red>; cd ~ && git commit (hook HOME is green)" 2 "$?"
+printf '%s' "$(mkjson Bash "cd ~ && git commit -m x" "$G6R")" | HOME="$G6OK" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "G6 T3b-3: control, no HOME assignment: cd ~ && git commit -> the green repo, allowed" 0 "$?"
+# positives that must stay allowed
+check_msg "G6 T3b-3: cd <green>; git commit (payload is red)" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash "cd $G6OK; git commit -m x" "$G6R")" "passed."
+check_msg "G6 T3b-3: cd <green>; cd sub; cd -; git commit (back to a known green repo)" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash "cd $G6OK; cd sub; cd -; git commit -m x" "$G6R")" "passed."
+check_msg "G6 T3b-3: pushd <green>; pushd sub; popd; git commit" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash "pushd $G6OK; pushd sub; popd; git commit -m x" "$G6R")" "passed."
 # ---- end v4.3.1 G6
 
 echo "----------------------------------------------------------------"

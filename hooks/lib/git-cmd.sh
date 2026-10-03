@@ -754,98 +754,138 @@ gc_aug_overflow_refuse() {
   esac
   return 0
 }
-# ---- v4.3.1 T3b-2: THE cwd tracker (one copy, two callers) -------------------
+# ---- v4.3.1 T3b-2/T3b-3: THE cwd tracker (one copy, two callers) -------------
 # gc_augmented_cmd (script bodies are judged where the script runs) and
 # pre-commit-test.sh (the Test runs in the repository the commit lands in) both
 # need to know the directory each segment runs in. They call this and nothing
 # else, so the two can never disagree. State (globals; call it from the main
 # shell, never inside $(...)):
 #   GC_CW_CUR    the tracked cwd          GC_CW_ORIG   where the command started
-#   GC_CW_PREV   the cwd before the last move (what `cd -` returns to)
+#   GC_CW_PREV   what `cd -` returns to ("?" = unknown)
 #   GC_CW_CWDS   every cwd seen, one per line, in order
-#   GC_CW_STACK  the pushd stack, one per line, top last
-#   GC_CW_UNC    1 when the cwd cannot be known (a target that needs the shell to
-#                expand it, a glob, `cd` with no argument, a popd with nothing
-#                tracked). A script scan then covers every cwd seen (adds text);
-#                a COMMIT after it must be refused (T3b-1).
-# What resolves (T3b-1): options -P -L -e -@ -- do not change the target;
-# `pushd B` goes to B; `cd -` goes to GC_CW_PREV; `popd` returns to the cwd
-# before the matching pushd; `~` and $HOME/$PWD forms resolve as gc_classify_c
-# says; `cd "$(git rev-parse --show-toplevel)"` goes to the top-level of the
-# tracked cwd. Anything else sets GC_CW_UNC. After GC_CW_UNC, an absolute cd
-# makes the cwd known again; a relative cd moves every cwd seen (cap 8).
+#   GC_CW_STACK  the pushd stack, one per line, top last ("?" = unknown entry)
+#   GC_CW_HOMEUNK 1 once the command assigns HOME (a later ~ / $HOME is unknown)
+#   GC_CW_UNC    1 when the cwd is UNKNOWN. A script scan then covers every cwd
+#                seen plus the original (adds text); a COMMIT after it must be
+#                refused (T3b-1).
+# UNKNOWN is modelled explicitly (T3b-3) and is sticky and contagious:
+#  - a cd/pushd whose target is not an existing directory at hook time (a typo,
+#    or a directory the same command creates: git init/clone, worktree add,
+#    mkdir) is UNKNOWN -- a failed cd stays put, a created one moves, and the
+#    hook cannot tell which; the same for a $VAR, a glob, ~user, `cd` with no
+#    argument, and ~ / $HOME after the command assigned HOME;
+#  - `cd -` goes to GC_CW_PREV; any unknown move makes PREV unknown, so `cd -`
+#    after one is UNKNOWN;
+#  - `pushd` pushes the cwd it leaves (UNKNOWN when the cwd was unknown, and an
+#    UNKNOWN entry for a pushd whose target is unknown); `popd` pops whatever is
+#    there, UNKNOWN included; an empty or lost stack, a rotation (+N / -N) or any
+#    argument the tracker does not model is UNKNOWN (the stack is then lost).
+# What resolves: options -P -L -e -@ -- do not change the target; `pushd B`;
+# `cd -`; `popd` back to the cwd before the matching pushd; ~ and $HOME/$PWD
+# forms as gc_classify_c says; `cd "$(git rev-parse --show-toplevel)"` (the
+# top-level of the tracked cwd). After UNKNOWN an absolute cd makes the cwd known
+# again; a relative cd moves every cwd seen (cap 8).
 gc_cwd_init() { # <cwd>
-  GC_CW_CUR="$1"; GC_CW_ORIG="$1"; GC_CW_PREV="$1"; GC_CW_CWDS="$1"; GC_CW_STACK=""; GC_CW_UNC=0
+  GC_CW_CUR="$1"; GC_CW_ORIG="$1"; GC_CW_PREV="?"; GC_CW_CWDS="$1"; GC_CW_STACK=""; GC_CW_UNC=0; GC_CW_HOMEUNK=0
+}
+gc_cwd_unk() { # the cwd is no longer known, nor is what `cd -` would return to
+  GC_CW_UNC=1
+  GC_CW_PREV="?"
 }
 gc_cwd_set() { # <dir> -- a certain move
-  GC_CW_PREV="$GC_CW_CUR"
+  if [ "$GC_CW_UNC" = 1 ]; then GC_CW_PREV="?"; else GC_CW_PREV="$GC_CW_CUR"; fi
   GC_CW_CUR="$1"
   GC_CW_UNC=0
   case "$GC_NL$GC_CW_CWDS$GC_NL" in *"$GC_NL$1$GC_NL"*) ;; *) GC_CW_CWDS="$GC_CW_CWDS$GC_NL$1" ;; esac
 }
+gc_cwd_push() { # <entry> -- push the cwd being left (or "?" for an unknown one)
+  GC_CW_STACK="${GC_CW_STACK:+$GC_CW_STACK$GC_NL}$1"
+}
 # gc_cwd_step <segment> -- returns 0 when the segment is a cd/pushd/popd (the
 # state is updated and the caller moves on), 1 when it is not.
 gc_cwd_step() {
-  local seg="$1" first rest t cls rel d n
+  local seg="$1" first rest t cls rel d n known=0 left
   seg=${seg//\"/}
   seg=${seg//\'/}
+  [[ $seg =~ (^|[[:space:]])HOME= ]] && GC_CW_HOMEUNK=1
   [[ $seg =~ ^[[:space:]]*(cd|pushd|popd)([[:space:]]+(.*))?$ ]] || return 1
   first=${BASH_REMATCH[1]}
   rest=${BASH_REMATCH[3]}
   rest=${rest%"${rest##*[![:space:]]}"}
+  left=$GC_CW_CUR
+  [ "$GC_CW_UNC" = 1 ] && left="?"
   if [ "$first" = popd ]; then
-    if [ -n "$rest" ] || [ -z "$GC_CW_STACK" ]; then GC_CW_UNC=1; return 0; fi
+    if [ -n "$rest" ]; then GC_CW_STACK="?"; gc_cwd_unk; return 0; fi
+    if [ -z "$GC_CW_STACK" ]; then gc_cwd_unk; return 0; fi
     d=${GC_CW_STACK##*$GC_NL}
     case "$GC_CW_STACK" in *"$GC_NL"*) GC_CW_STACK=${GC_CW_STACK%$GC_NL*} ;; *) GC_CW_STACK="" ;; esac
-    gc_cwd_set "$d"
+    if [ "$d" = "?" ]; then gc_cwd_unk; else gc_cwd_set "$d"; fi
     return 0
   fi
   if [ "$first" = cd ]; then
     while [[ $rest =~ ^(-P|-L|-e|-@|--)([[:space:]]+(.*))?$ ]]; do rest=${BASH_REMATCH[3]}; done
-  elif [ "$GC_CW_UNC" = 1 ]; then
-    return 0   # pushd while the cwd is unknown: stays unknown
   fi
-  if [ -z "$rest" ]; then GC_CW_UNC=1; return 0; fi
-  if [ "$rest" = - ] && [ "$first" = cd ]; then
-    [ "$GC_CW_UNC" = 1 ] && return 0
-    gc_cwd_set "$GC_CW_PREV"
+  if [ -z "$rest" ]; then   # cd (HOME) / pushd (swaps the top two)
+    [ "$first" = pushd ] && GC_CW_STACK="?"
+    gc_cwd_unk
+    return 0
+  fi
+  if [ "$first" = pushd ] && [[ $rest =~ ^[+-][0-9]+$ ]]; then   # rotation
+    GC_CW_STACK="?"
+    gc_cwd_unk
+    return 0
+  fi
+  if [ "$first" = cd ] && [ "$rest" = - ]; then
+    if [ "$GC_CW_PREV" = "?" ]; then gc_cwd_unk; else gc_cwd_set "$GC_CW_PREV"; fi
     return 0
   fi
   if [[ $rest =~ ^\$\(git[[:space:]]+rev-parse[[:space:]]+--show-toplevel\)$ ]]; then
-    if [ "$GC_CW_UNC" = 1 ]; then return 0; fi
-    t=$(git -C "$GC_CW_CUR" rev-parse --show-toplevel 2>/dev/null)
-    if [ -n "$t" ] && [ -d "$t" ]; then
-      [ "$first" = pushd ] && GC_CW_STACK="${GC_CW_STACK:+$GC_CW_STACK$GC_NL}$GC_CW_CUR"
-      gc_cwd_set "$t"
-    else
-      GC_CW_UNC=1
+    if [ "$GC_CW_UNC" = 0 ]; then
+      t=$(git -C "$GC_CW_CUR" rev-parse --show-toplevel 2>/dev/null)
+      if [ -n "$t" ] && [ -d "$t" ]; then d=$t; known=1; fi
     fi
-    return 0
-  fi
-  t=$(gc_cd_target "cd $rest")
-  case "$t" in
-    ""|*[*?[]*) GC_CW_UNC=1; return 0 ;;
-  esac
-  cls=$(gc_classify_c "$t" "$GC_CW_CUR" | sed -n 1p)
-  if [ "$cls" = 3 ]; then GC_CW_UNC=1; return 0; fi
-  rel=0
-  case "$t" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$cls" = 1 ] && rel=1 ;; esac
-  if [ "$GC_CW_UNC" = 1 ] && [ "$rel" = 1 ]; then
-    # a relative cd after an unknown one moves every cwd seen
-    n=0
-    while IFS= read -r d; do
-      [ -n "$d" ] || continue
-      n=$((n + 1)); [ "$n" -le 8 ] || break
-      d=$(gc_resolve "$d" "$t")
-      case "$GC_NL$GC_CW_CWDS$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) GC_CW_CWDS="$GC_CW_CWDS$GC_NL$d" ;; esac
-    done <<GC_CW_REL
+  else
+    t=$(gc_cd_target "cd $rest")
+    case "$t" in
+      ""|*[*?[]*) ;;
+      *)
+        cls=$(gc_classify_c "$t" "$GC_CW_CUR" | sed -n 1p)
+        if [ "$cls" != 3 ]; then
+          case "$t" in
+            '~'|'~/'*|'$HOME'|'$HOME/'*|'${HOME}'|'${HOME}/'*) [ "$GC_CW_HOMEUNK" = 1 ] && cls=3 ;;
+          esac
+        fi
+        if [ "$cls" != 3 ]; then
+          rel=0
+          case "$t" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$cls" = 1 ] && rel=1 ;; esac
+          if [ "$GC_CW_UNC" = 1 ] && [ "$rel" = 1 ]; then
+            # a relative cd after an unknown one moves every cwd seen
+            [ "$first" = pushd ] && gc_cwd_push "?"
+            n=0
+            while IFS= read -r d; do
+              [ -n "$d" ] || continue
+              n=$((n + 1)); [ "$n" -le 8 ] || break
+              d=$(gc_resolve "$d" "$t")
+              case "$GC_NL$GC_CW_CWDS$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) GC_CW_CWDS="$GC_CW_CWDS$GC_NL$d" ;; esac
+            done <<GC_CW_REL
 $GC_CW_CWDS
 GC_CW_REL
-    return 0
+            gc_cwd_unk
+            return 0
+          fi
+          d=$(gc_c_resolves "$t" "$GC_CW_CUR")
+          [ -n "$d" ] && known=1
+        fi
+        ;;
+    esac
   fi
-  d=$(gc_resolve "$GC_CW_CUR" "$t")
-  [ "$first" = pushd ] && GC_CW_STACK="${GC_CW_STACK:+$GC_CW_STACK$GC_NL}$GC_CW_CUR"
-  gc_cwd_set "$d"
+  if [ "$known" = 1 ]; then
+    [ "$first" = pushd ] && gc_cwd_push "$left"
+    gc_cwd_set "$d"
+  else
+    [ "$first" = pushd ] && gc_cwd_push "?"
+    gc_cwd_unk
+  fi
   return 0
 }
 # gc_augmented_cmd <cwd> -- GC_CMD, plus the body of every script segment
