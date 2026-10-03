@@ -8671,6 +8671,86 @@ check "SCAN no-push-main I3: -Command \"& ./p.ps1\": gated"        hooks/no-push
 check "SCAN gate-before-merge I3: -c \"./pcm.ps1; ./m.ps1\": gated" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'pwsh -c "./pcm.ps1; ./m.ps1"' "$SCANM")"
 # ---- end v4.3.0 SCAN
 
+# ---- v4.4.0 J-DIFF: with Jev off, model-floor answers exactly as the base release ----
+# Spec D1: "zero footprint when off". From v4.4.0 model-floor.sh sources its
+# resolution from lib/agent-model.sh (shared with the Jev router). With no Jev
+# config, or "route": false, it must give the SAME exit code, stdout bytes and
+# stderr bytes as the base release's copy, frozen in
+# scripts/fixtures/model-floor-golden/model-floor.sh, for every payload class
+# C1 exercises. Self-contained: run-block.sh carries only the suite helpers.
+echo "=== model-floor vs the base release (v4.4.0 J-DIFF) ==="
+. "$ROOT/hooks/lib/json.sh"
+JD_BASH=$(command -v bash)
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+JDG="$TMPROOT/jd-gold"; mkdir -p "$JDG/lib"
+cp "$ROOT/scripts/fixtures/model-floor-golden/model-floor.sh" "$JDG/model-floor.sh"
+cp "$ROOT/hooks/lib/json.sh" "$JDG/lib/json.sh"
+JDR=$(mkrepo jdrepo main)
+JDH="$TMPROOT/jdhome"
+mkdir -p "$JDR/.claude/agents/team" "$JDH/.claude/agents/sub"
+printf -- '---\nname: typed\nmodel: haiku\n---\n'              > "$JDR/.claude/agents/typed.md"
+printf -- '---\nname: inh\nmodel: inherit\n---\n'              > "$JDR/.claude/agents/inh.md"
+printf -- '---\r\nname: inhcrlf\r\nmodel: inherit\r\n---\r\n'  > "$JDR/.claude/agents/inhcrlf.md"
+printf -- '---\nname: fullid\nmodel: claude-opus-4-1\n---\n'   > "$JDR/.claude/agents/fullid.md"
+printf -- '---\nname: nomodel\ndescription: x\n---\n'          > "$JDR/.claude/agents/nomodel.md"
+printf -- '---\nname: code-reviewer\nmodel: opus\n---\n'       > "$JDR/.claude/agents/reviewer-file.md"
+printf -- '---\nname: nested\nmodel: opus\n---\n'              > "$JDR/.claude/agents/team/nested.md"
+printf -- '---\ndescription: no name key\nmodel: haiku\n---\n' > "$JDR/.claude/agents/fbonly.md"
+printf '\357\273\277---\nname: bomagent\nmodel: opus\n---\n'   > "$JDR/.claude/agents/bom-file.md"
+printf -- '---\nname: uagent\nmodel: opus\n---\n'              > "$JDH/.claude/agents/uagent.md"
+printf -- '---\nname: homeinh\nmodel: inherit\n---\n'          > "$JDH/.claude/agents/sub/w.md"
+JDCWD=$(natpath "$JDR")
+JDPROMPT=$'Do it \xe2\x80\x94 "quoted"\nline two'
+jd_payload() { # <type|-> <model|-> -> an Agent payload; '-' = key absent
+  jdt=""; [ "$1" = "-" ] || jdt="\"subagent_type\":\"$(jesc "$1")\","
+  jdm=""; [ "$2" = "-" ] || jdm="\"model\":\"$(jesc "$2")\","
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{%s%s"prompt":"%s","description":"d","zz_unknown":1},"cwd":"%s"}' \
+    "$jdt" "$jdm" "$(jesc "$JDPROMPT")" "$(jesc "$JDCWD")"
+}
+jd_cmp() { # <label> <payload> -- golden vs current: exit code, stdout bytes, stderr bytes
+  printf '%s' "$2" | HOME="$JDH" "$JD_BASH" "$JDG/model-floor.sh"       >"$TMPROOT/jd.go" 2>"$TMPROOT/jd.ge"; jd_grc=$?
+  printf '%s' "$2" | HOME="$JDH" "$JD_BASH" "$ROOT/hooks/model-floor.sh" >"$TMPROOT/jd.co" 2>"$TMPROOT/jd.ce"; jd_crc=$?
+  expect "J-DIFF $1: exit code"        "$jd_grc" "$jd_crc"
+  expect "J-DIFF $1: stdout identical" same "$(cmp -s "$TMPROOT/jd.go" "$TMPROOT/jd.co" && echo same || echo differs)"
+  expect "J-DIFF $1: stderr identical" same "$(cmp -s "$TMPROOT/jd.ge" "$TMPROOT/jd.ce" && echo same || echo differs)"
+}
+# Two-sided: the comparison is not vacuous -- the golden copy really emits for
+# a floored type and really stays silent for a typed one.
+jd_cmp "general-purpose" "$(jd_payload general-purpose -)"
+expect "J-DIFF probe: the golden copy emits for general-purpose" sonnet "$(jfield "$(<"$TMPROOT/jd.go")" hookSpecificOutput.updatedInput.model)"
+jd_cmp "typed" "$(jd_payload typed -)"
+expect "J-DIFF probe: the golden copy is silent for a typed agent" 0 "$(wc -c < "$TMPROOT/jd.go" | tr -d ' ')"
+for jd_t in - Plan Explore claude inh inhcrlf nomodel homeinh fullid uagent code-reviewer nested fbonly bomagent mystery plug:agent statusline-setup claude-code-guide fork ../x .hidden; do
+  jd_cmp "type $jd_t" "$(jd_payload "$jd_t" -)"
+done
+jd_cmp "explicit model"           "$(jd_payload general-purpose opus)"
+jd_cmp "not the Agent tool"       "$(mkjson Bash 'echo hi' "$JDCWD")"
+jd_cmp "invalid JSON"             'not json at all'
+jd_cmp "empty stdin"              ''
+jd_cmp "tool_input not an object" '{"tool_name":"Agent","tool_input":"a string","cwd":"."}'
+printf '# ctx\n- **Subagent default model**: haiku\n' > "$JDR/PROJECT_CONTEXT.md"
+jd_cmp "PROJECT_CONTEXT haiku" "$(jd_payload general-purpose -)"
+printf '\357\273\277- **Subagent default model**: opus\n' > "$JDR/PROJECT_CONTEXT.md"
+jd_cmp "PROJECT_CONTEXT BOM on line 1" "$(jd_payload general-purpose -)"
+printf '# ctx\n- **Subagent default model**: {{SUBAGENT_DEFAULT_MODEL}}\n' > "$JDR/PROJECT_CONTEXT.md"
+jd_cmp "PROJECT_CONTEXT placeholder" "$(jd_payload general-purpose -)"
+printf '# ctx\n<!-- - **Subagent default model**: opus -->\n' > "$JDR/PROJECT_CONTEXT.md"
+jd_cmp "PROJECT_CONTEXT commented example" "$(jd_payload general-purpose -)"
+rm -f "$JDR/PROJECT_CONTEXT.md"
+export CLAUDE_CODE_SUBAGENT_MODEL=haiku
+jd_cmp "env haiku, general-purpose" "$(jd_payload general-purpose -)"
+jd_cmp "env haiku, Plan"            "$(jd_payload Plan -)"
+export CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
+jd_cmp "env haiku + FORCE, Plan"    "$(jd_payload Plan -)"
+export CLAUDE_CODE_SUBAGENT_MODEL=inherit
+jd_cmp "env inherit + FORCE, Plan"  "$(jd_payload Plan -)"
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+JDGD=$(git -C "$JDR" rev-parse --path-format=absolute --git-common-dir)
+mkdir -p "$JDGD/jev"; printf '{"route": false}\n' > "$JDGD/jev/config.json"
+jd_cmp "jev config route false" "$(jd_payload general-purpose -)"
+rm -rf "$JDGD/jev"
+# ---- end v4.4.0 J-DIFF
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
