@@ -8490,6 +8490,7 @@ if [ -n "$C1_HAVE_NODE" ]; then
   C1UH="$TMPROOT/c1userhome"; mkdir -p "$C1UH/.claude/hooks/lib"
   cp "$ROOT/user-level-reference/hooks/model-floor.sh" "$C1UH/.claude/hooks/model-floor.sh"
   cp "$ROOT/user-level-reference/hooks/lib/json.sh"    "$C1UH/.claude/hooks/lib/json.sh"
+  cp "$ROOT/user-level-reference/hooks/lib/agent-model.sh" "$C1UH/.claude/hooks/lib/agent-model.sh"
   # (a) the project has its own copy -> the user-level one is silent
   CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1UH" "$C1_BASH" -c "$C1_USR" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
   expect "C1 S-24 user-level wrapper + project copy -> silent" "rc=0 out=0 err=0" \
@@ -8758,6 +8759,46 @@ JD_PIN=$(git -C "$ROOT" rev-parse "v4.3.0:hooks/model-floor.sh" 2>/dev/null) || 
 [ -n "$JD_PIN" ] || JD_PIN="$JD_PIN_FALLBACK"
 expect "J-DIFF pin: the golden is the v4.3.0 model-floor.sh blob" "$JD_PIN" "$(git -C "$ROOT" hash-object --no-filters "$ROOT/scripts/fixtures/model-floor-golden/model-floor.sh")"
 # ---- end v4.4.0 J-DIFF
+
+# ---- v4.4.0 J-LIB: hooks/lib/agent-model.sh, the resolver model-floor and the Jev router share ----
+echo "=== hooks/lib/agent-model.sh (v4.4.0 J-LIB) ==="
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+JLR=$(mkrepo jlrepo main)
+JLH="$TMPROOT/jlhome"; mkdir -p "$JLH/.claude/agents" "$JLR/.claude/agents"
+printf -- '---\nname: typed\nmodel: haiku\neffort: high\n---\n' > "$JLR/.claude/agents/typed.md"
+printf -- '---\nname: inh\nmodel: inherit\n---\n'                > "$JLR/.claude/agents/inh.md"
+printf -- '---\nname: fullid\nmodel: "claude-opus-4-1"\n---\n'    > "$JLR/.claude/agents/fullid.md"
+printf -- '---\nname: uagent\nmodel: opus\n---\n'                 > "$JLH/.claude/agents/uagent.md"
+JLCWD=$(natpath "$JLR")
+JLGD=$(git -C "$JLR" rev-parse --path-format=absolute --git-common-dir)
+jl_cli() { HOME="$JLH" bash "$ROOT/hooks/lib/agent-model.sh" "$1" "$JLCWD" | cut -d' ' -f1-4; }
+expect "J-LIB general-purpose -> floor"            "floor sonnet 0 -"        "$(jl_cli general-purpose)"
+expect "J-LIB empty type = general-purpose"        "floor sonnet 0 -"        "$(jl_cli '')"
+expect "J-LIB Plan (built-in, no file) -> floor"   "floor sonnet 0 -"        "$(jl_cli Plan)"
+expect "J-LIB inherit agent -> floor"              "floor sonnet 0 -"        "$(jl_cli inh)"
+expect "J-LIB typed agent -> own, with its effort" "own haiku 0 high"        "$(jl_cli typed)"
+expect "J-LIB full id, quotes stripped -> own"     "own claude-opus-4-1 0 -" "$(jl_cli fullid)"
+expect "J-LIB user-level agent -> own"             "own opus 0 -"            "$(jl_cli uagent)"
+expect "J-LIB unknown type, no file -> none"       "none - 0 -"              "$(jl_cli mystery)"
+expect "J-LIB statusline-setup -> none"            "none - 0 -"              "$(jl_cli statusline-setup)"
+expect "J-LIB path-unsafe type -> none"            "none - 0 -"              "$(jl_cli '../x')"
+JLINJ="$TMPROOT/jl-injected"
+expect "J-LIB a hostile type is data, not code"    "none - 0 -"              "$(jl_cli "\$(touch $JLINJ)")"
+expect "J-LIB the hostile type ran nothing"        0 "$([ -e "$JLINJ" ] && echo 1 || echo 0)"
+printf '# ctx\n- **Subagent default model**: haiku\n' > "$JLR/PROJECT_CONTEXT.md"
+expect "J-LIB project default haiku"               "floor haiku 0 -"         "$(jl_cli general-purpose)"
+rm -f "$JLR/PROJECT_CONTEXT.md"
+export CLAUDE_CODE_SUBAGENT_MODEL=haiku
+# U-1: the env answer carries the variable's value -- the default Jev routes from
+expect "J-LIB env default covers general-purpose"  "env haiku 0 -"           "$(jl_cli general-purpose)"
+expect "J-LIB env default does not cover Plan"     "floor sonnet 0 -"        "$(jl_cli Plan)"
+export CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
+expect "J-LIB env default + FORCE covers Plan"     "env haiku 0 -"           "$(jl_cli Plan)"
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+expect "J-LIB 5th field is the git common dir"     "$JLGD" "$(HOME="$JLH" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$JLCWD" | cut -d' ' -f5-)"
+expect "J-LIB exactly one output line"             1 "$(HOME="$JLH" bash "$ROOT/hooks/lib/agent-model.sh" Plan "$JLCWD" | wc -l | tr -d ' ')"
+expect "J-LIB mirror is byte-identical"            same "$(cmp -s "$ROOT/hooks/lib/agent-model.sh" "$ROOT/user-level-reference/hooks/lib/agent-model.sh" && echo same || echo differs)"
+# ---- end v4.4.0 J-LIB
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

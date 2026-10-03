@@ -996,18 +996,19 @@ else
   printf '%s\n' "$bom_anchors" | grep -v 'GC_KEY_PRE' | sed 's/^/      /'
 fi
 # run-gate.sh is standalone (it must run with no JSON parser on PATH, which
-# sourcing git-cmd.sh forbids), so it REPEATS the definition. Assert the two
-# copies are the same literal — a duplicated constant that drifts is how the
-# fixed instance and the unfixed one end up in the same release.
+# sourcing git-cmd.sh forbids), so it REPEATS the definition. lib/agent-model.sh
+# repeats it too (one sourced git call per Agent spawn is the cost it avoids).
+# Assert the three copies are the same literal — a duplicated constant that
+# drifts is how the fixed instance and the unfixed one end up in the same release.
 GC_KEY_PRE_DEF='GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"'
 gkp_have=0
-for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh hooks/lib/agent-model.sh; do
   grep -qF "$GC_KEY_PRE_DEF" "$gkf" && gkp_have=$((gkp_have + 1))
 done
-if [ "$gkp_have" -eq 2 ]; then
-  ok "GC_KEY_PRE defined identically in git-cmd.sh and the standalone run-gate.sh"
+if [ "$gkp_have" -eq 3 ]; then
+  ok "GC_KEY_PRE defined identically in git-cmd.sh, the standalone run-gate.sh and agent-model.sh"
 else
-  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 2 files (git-cmd.sh, run-gate.sh)"
+  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 3 files (git-cmd.sh, run-gate.sh, agent-model.sh)"
 fi
 
 # 21c-2b. GC_TERMINAL_RC, same census for the same reason (v2.2.5).
@@ -3933,7 +3934,7 @@ fi
 # template would switch that behaviour on in every consumer at bootstrap -- and
 # because the readers take the FIRST matching line, a live prose bullet also
 # shadows the consumer's own later setting. The readers (pre-commit-test.sh,
-# run-gate.sh rg_field, model-floor.sh) match a LINE anchored at GC_KEY_PRE and
+# run-gate.sh rg_field, lib/agent-model.sh) match a LINE anchored at GC_KEY_PRE and
 # know nothing of HTML comments (ruling S-35), so the check asks the readers'
 # own question: c63_scan fails on any line matching
 # `${GC_KEY_PRE}\*\*<key>\*\*:` -- a line inside a multi-line <!-- ... --> block
@@ -3945,7 +3946,7 @@ fi
 note "Check 63: **Test paths**, **Gate extra**, **Subagent default model** appear in every variant's PROJECT_CONTEXT.md on no line the hooks' key pattern matches (documented in a one-line comment, never set)"
 C63_KEYS='Test paths|Gate extra( Command)?|Subagent default model'
 # GC_BOM / GC_KEY_PRE: the same text as hooks/lib/git-cmd.sh, run-gate.sh and
-# model-floor.sh (the definition census above pins the copies together).
+# lib/agent-model.sh (the definition census, check 21c-2a, pins the three copies together).
 GC_BOM=$(printf '\357\273\277')
 GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 
