@@ -678,348 +678,135 @@ gc_script_body() {
 
 GC_NL='
 '
-# Placeholder bytes for a synthetic `cd` (v4.3.1 G3, T3-4). A quote cannot be
-# shell-escaped here: every walk strips quote characters before it splits, so
-# `'o'\''brien'` would reach it as `o\brien`. Each character that would split,
-# quote or expand a segment is carried as one control byte instead (\001 = a
-# space, gc_protect_c_paths' convention) and gc_c_resolves decodes them just
-# before its `[ -d ]` test. None is [:space:], so gc_cd_target's word still holds.
-GC_P_SQ=$(printf '\002')
-GC_P_DQ=$(printf '\003')
-GC_P_DOL=$(printf '\004')
-GC_P_BT=$(printf '\005')
-GC_P_SEMI=$(printf '\006')
-GC_P_AMP=$(printf '\016')
-GC_P_PIPE=$(printf '\017')
-GC_P_NL=$(printf '\020')
-# Appended to the augmented text when more cwds are in play than the scan cap
-# allows; gc_aug_overflow_refuse turns it into a refusal.
-GC_AUG_OVERFLOW_MARK=$(printf '\021GC-CWD-OVERFLOW\021')
-# gc_synth_cd <dir> -- the line that puts the segment walk back in <dir>
-# before a script body (placeholders above; empty only for an empty <dir>).
-gc_synth_cd() {
-  local d="$1"
-  [ -n "$d" ] || return 0
-  d=${d// /$GC_SOH}
-  d=${d//\'/$GC_P_SQ}
-  d=${d//\"/$GC_P_DQ}
-  d=${d//\$/$GC_P_DOL}
-  d=${d//\`/$GC_P_BT}
-  d=${d//\;/$GC_P_SEMI}
-  d=${d//\&/$GC_P_AMP}
-  d=${d//\|/$GC_P_PIPE}
-  d=${d//"$GC_NL"/$GC_P_NL}
-  printf 'cd %s' "$d"
+# ---- v4.3.1 S-3c: THE simple-cd rule (one detector, three gates) -----------------
+# The three git gates cannot follow a shell's working directory (every model of
+# it was a fail-open one round later: `cd -`, pushd, a failed cd, CDPATH, a
+# subshell, ...), so they do not try. A command that contains a GATED ACTION --
+# a git commit, push or merge, `gh pr merge`, or a script (depth 1) whose body
+# holds one -- may change directory ONLY as ONE leading
+#   cd <absolute existing dir> &&
+# (POSIX /x, MSYS /c/x, or a drive form C:/x C:\x; optionally quoted; no $, `,
+# glob or ~ in it). Anything else is refused (gc_dir_rule returns 1; the caller
+# exits 2). It is word matching on the de-quoted text, not a parser: a directory
+# word ANYWHERE counts (`(cd`, `{ cd`, `then cd`, `builtin cd`, `bash -c 'cd ..'`).
+# The list is closed on purpose; a mechanism missing from it is a known residual
+# (CHANGELOG, Known limits). The repository for all judging is the leading cd's
+# target, else the payload cwd: GC_CWD_E.
+GC_GATED_VERB=""
+# directory-change WORDS (case-insensitive, whole words)
+GC_DIRWORD_RE='(^|[^[:alnum:]_./-])(cd|pushd|popd|chdir|dirs|sl|shopt|eval|source|Set-Location|Push-Location|Pop-Location)([^[:alnum:]_.-]|$)|-WorkingDirectory'
+# env -C / env --chdir (the option, not git's own -C after the command word)
+GC_ENVC_RE='(^|[^[:alnum:]_./-])env([[:space:]]+(-u[[:space:]]+[^[:space:]]+|-[^[:space:]]+|[^[:space:]=-][^[:space:]=]*=[^[:space:]]*))*[[:space:]]+(-C|--chdir)'
+# an assignment that moves where git or cd lands
+GC_DIRVAR_RE='(^|[^[:alnum:]_])(GIT_DIR|GIT_WORK_TREE|CDPATH|HOME|PWD|OLDPWD)='
+
+# gc_dirchange_in <text> -- succeeds when the text holds any of the above.
+# Quotes and backslashes are dropped first (`c""d`, `\cd`), as the verb matchers do.
+gc_dirchange_in() {
+  local t
+  t=$(printf '%s' "$1" | tr -d "\"'\\\\")
+  printf '%s\n' "$t" | grep -qiE "$GC_DIRWORD_RE|$GC_ENVC_RE" && return 0
+  printf '%s\n' "$t" | grep -qE "$GC_DIRVAR_RE"
 }
-# gc_aug_cands <original> <current> <all> -- the cwds to scan, one per line:
-# the original and the current first (never dropped by the cap), then the rest
-# newest first.
-gc_aug_cands() {
-  # T3-6: reversed with a bash array, not `tac` (absent on macOS, and a missing
-  # tool silently dropped every cwd but the first two -- a fail-open).
-  local seen="" d i
-  local -a all=()
-  for d in "$1" "$2"; do
-    [ -n "$d" ] || continue
-    case "$GC_NL$seen$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) seen="$seen$GC_NL$d"; printf '%s\n' "$d" ;; esac
-  done
-  while IFS= read -r d; do
-    [ -n "$d" ] && all+=("$d")
-  done <<GC_AUG_ALL
-$3
-GC_AUG_ALL
-  for ((i = ${#all[@]} - 1; i >= 0; i--)); do
-    d=${all[i]}
-    case "$GC_NL$seen$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) seen="$seen$GC_NL$d"; printf '%s\n' "$d" ;; esac
-  done
-  return 0
-}
-# gc_seg_may_run_script <raw_segment> -- succeeds when any word of the segment
-# is bash, sh, source, `.` or a powershell/pwsh (over-broad on purpose: it only
-# decides whether a cwd-cap overflow matters).
-gc_seg_may_run_script() {
-  local t b
-  for t in $1; do
-    t=${t//[\"\']/}; b=${t##*/}; b=${b##*\\}
-    case "$b" in bash|sh|source|.|powershell|powershell.exe|pwsh|pwsh.exe|PowerShell|PowerShell.exe) return 0 ;; esac
-  done
-  return 1
-}
-# gc_aug_overflow_refuse <hook> -- called right after GC_CMD is augmented.
-gc_aug_overflow_refuse() {
-  case "$GC_CMD" in
-    *"$GC_AUG_OVERFLOW_MARK"*)
-      echo "BLOCKED: $1: this command changes directory in more than 8 ways the hook cannot resolve, so it cannot tell where a script it runs would act -- refusing rather than guessing. Use absolute paths, git -C <dir>, or put the steps in a script file and run bash <path>." >&2
-      exit 2 ;;
-  esac
-  return 0
-}
-# ---- v4.3.1 T3b-2/T3b-3: THE cwd tracker (one copy, two callers) -------------
-# gc_augmented_cmd (script bodies are judged where the script runs) and
-# pre-commit-test.sh (the Test runs in the repository the commit lands in) both
-# need to know the directory each segment runs in. They call this and nothing
-# else, so the two can never disagree. State (globals; call it from the main
-# shell, never inside $(...)):
-#   GC_CW_CUR    the tracked cwd          GC_CW_ORIG   where the command started
-#   GC_CW_PREV   what `cd -` returns to ("?" = unknown)
-#   GC_CW_CWDS   every cwd seen, one per line, in order
-#   GC_CW_STACK  the pushd stack, one per line, top last ("?" = unknown entry)
-#   GC_CW_HOMEUNK 1 once the command assigns HOME (a later ~ / $HOME is unknown)
-#   GC_CW_UNC    1 when the cwd is UNKNOWN. A script scan then covers every cwd
-#                seen plus the original (adds text); a COMMIT after it must be
-#                refused (T3b-1).
-# UNKNOWN is modelled explicitly (T3b-3) and is sticky and contagious:
-#  - a cd/pushd whose target is not an existing directory at hook time (a typo,
-#    or a directory the same command creates: git init/clone, worktree add,
-#    mkdir) is UNKNOWN -- a failed cd stays put, a created one moves, and the
-#    hook cannot tell which; the same for a $VAR, a glob, ~user, `cd` with no
-#    argument, and ~ / $HOME after the command assigned HOME;
-#  - `cd -` goes to GC_CW_PREV; any unknown move makes PREV unknown, so `cd -`
-#    after one is UNKNOWN;
-#  - `pushd` pushes the cwd it leaves (UNKNOWN when the cwd was unknown, and an
-#    UNKNOWN entry for a pushd whose target is unknown); `popd` pops whatever is
-#    there, UNKNOWN included; an empty or lost stack, a rotation (+N / -N) or any
-#    argument the tracker does not model is UNKNOWN (the stack is then lost).
-# What resolves: options -P -L -e -@ -- do not change the target; `pushd B`;
-# `cd -`; `popd` back to the cwd before the matching pushd; ~ and $HOME/$PWD
-# forms as gc_classify_c says; `cd "$(git rev-parse --show-toplevel)"` (the
-# top-level of the tracked cwd). After UNKNOWN an absolute cd makes the cwd known
-# again; a relative cd moves every cwd seen (cap 8).
-gc_cwd_init() { # <cwd>
-  GC_CW_CUR="$1"; GC_CW_ORIG="$1"; GC_CW_PREV="?"; GC_CW_CWDS="$1"; GC_CW_STACK=""; GC_CW_UNC=0; GC_CW_HOMEUNK=0
-  GC_CW_POISON=0; GC_CW_CDPATH=0; GC_CW_CDVAL=""
-  if [ -n "${CDPATH:-}" ]; then GC_CW_CDPATH=1; GC_CW_CDVAL=$CDPATH; fi
-  return 0
-}
-# T3b-4 (allow-list stance): a construct that can change what cd or the
-# directory stack does and that this tracker does not model makes the cwd
-# UNKNOWN from that point on -- every later cd/pushd/popd stays UNKNOWN too.
-gc_cwd_poison() {
-  GC_CW_POISON=1
-  GC_CW_STACK="?"
-  gc_cwd_unk
-}
-gc_cwd_unk() { # the cwd is no longer known, nor is what `cd -` would return to
-  GC_CW_UNC=1
-  GC_CW_PREV="?"
-}
-gc_cwd_set() { # <dir> -- a certain move
-  if [ "$GC_CW_UNC" = 1 ]; then GC_CW_PREV="?"; else GC_CW_PREV="$GC_CW_CUR"; fi
-  GC_CW_CUR="$1"
-  GC_CW_UNC=0
-  case "$GC_NL$GC_CW_CWDS$GC_NL" in *"$GC_NL$1$GC_NL"*) ;; *) GC_CW_CWDS="$GC_CW_CWDS$GC_NL$1" ;; esac
-}
-gc_cwd_push() { # <entry> -- push the cwd being left (or "?" for an unknown one)
-  GC_CW_STACK="${GC_CW_STACK:+$GC_CW_STACK$GC_NL}$1"
-}
-# gc_cwd_step <segment> -- returns 0 when the segment is a cd/pushd/popd (the
-# state is updated and the caller moves on), 1 when it is not.
-gc_cwd_step() {
-  gc_cwd_step_core "$1"
-  local rc=$?
-  # T3b-4: after a poisoning construct every cd/pushd/popd is still followed (so
-  # the script scan gains the directories it names) but the result is UNKNOWN.
-  if [ "$rc" = 0 ] && [ "$GC_CW_POISON" = 1 ]; then GC_CW_STACK="?"; gc_cwd_unk; fi
-  return $rc
-}
-gc_cwd_step_core() {
-  local seg="$1" first rest t cls rel d n known=0 left ent c cdhit=""
-  seg=${seg//\"/}
-  seg=${seg//\'/}
-  [[ $seg =~ (^|[[:space:]])HOME= ]] && GC_CW_HOMEUNK=1
-  if [[ $seg =~ (^|[[:space:]])CDPATH=([^[:space:]]*) ]]; then
-    GC_CW_CDVAL=${BASH_REMATCH[2]}
-    if [ -n "$GC_CW_CDVAL" ]; then GC_CW_CDPATH=1; else GC_CW_CDPATH=0; fi
+
+# gc_text_has_gated <text> -- succeeds when the text holds a git commit/push/merge
+# or `gh pr merge` (the same recognisers the gates use); sets GC_GATED_VERB.
+gc_text_has_gated() {
+  local t seg v
+  t=$(printf '%s' "$1" | tr -d "\"'")
+  if printf '%s\n' "$t" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
+    GC_GATED_VERB="gh pr merge"; return 0
   fi
-  # T3b-4: constructs this tracker does not model (none of these is consumed:
-  # the caller still sees the segment, e.g. to scan `source x.sh`).
-  if [[ $seg =~ (^|[[:space:]])(OLDPWD|PWD|DIRSTACK)(\[[^]]*\])?= ]]; then gc_cwd_poison
-  elif [[ $seg =~ ^[[:space:]]*(shopt|eval|source|\.)([[:space:]]|$) ]]; then gc_cwd_poison
-  elif [[ $seg =~ ^[[:space:]]*(builtin|command)[[:space:]]+(cd|pushd|popd|dirs|set|shopt|eval|source|\.)([[:space:]]|$) ]]; then gc_cwd_poison
-  elif [[ $seg =~ ^[[:space:]]*dirs[[:space:]]+[^[:space:]] ]]; then gc_cwd_poison
-  elif [[ $seg =~ ^[[:space:]]*set[[:space:]]+(.*[[:space:]])?(-[A-Za-z]*P[A-Za-z]*|-o[[:space:]]+physical)([[:space:]]|$) ]]; then gc_cwd_poison
-  fi
-  [[ $seg =~ ^[[:space:]]*(cd|pushd|popd)([[:space:]]+(.*))?$ ]] || return 1
-  first=${BASH_REMATCH[1]}
-  rest=${BASH_REMATCH[3]}
-  rest=${rest%"${rest##*[![:space:]]}"}
-  left=$GC_CW_CUR
-  [ "$GC_CW_UNC" = 1 ] && left="?"
-  if [ "$first" = popd ]; then
-    if [ -n "$rest" ]; then GC_CW_STACK="?"; gc_cwd_unk; return 0; fi
-    if [ -z "$GC_CW_STACK" ]; then gc_cwd_unk; return 0; fi
-    d=${GC_CW_STACK##*$GC_NL}
-    case "$GC_CW_STACK" in *"$GC_NL"*) GC_CW_STACK=${GC_CW_STACK%$GC_NL*} ;; *) GC_CW_STACK="" ;; esac
-    if [ "$d" = "?" ]; then gc_cwd_unk; else gc_cwd_set "$d"; fi
-    return 0
-  fi
-  if [ "$first" = cd ]; then
-    while [[ $rest =~ ^(-P|-L|-e|-@|--)([[:space:]]+(.*))?$ ]]; do rest=${BASH_REMATCH[3]}; done
-  fi
-  if [ -z "$rest" ]; then   # cd (HOME) / pushd (swaps the top two)
-    [ "$first" = pushd ] && GC_CW_STACK="?"
-    gc_cwd_unk
-    return 0
-  fi
-  if [ "$first" = pushd ] && [[ $rest =~ ^[+-][0-9]+$ ]]; then   # rotation
-    GC_CW_STACK="?"
-    gc_cwd_unk
-    return 0
-  fi
-  if [ "$first" = cd ] && [ "$rest" = - ]; then
-    if [ "$GC_CW_PREV" = "?" ]; then gc_cwd_unk; else gc_cwd_set "$GC_CW_PREV"; fi
-    return 0
-  fi
-  if [[ $rest =~ ^\$\(git[[:space:]]+rev-parse[[:space:]]+--show-toplevel\)$ ]]; then
-    if [ "$GC_CW_UNC" = 0 ]; then
-      t=$(git -C "$GC_CW_CUR" rev-parse --show-toplevel 2>/dev/null)
-      if [ -n "$t" ] && [ -d "$t" ]; then d=$t; known=1; fi
-    fi
-  else
-    t=$(gc_cd_target "cd $rest")
-    case "$t" in
-      ""|*[*?[]*) ;;
-      *)
-        cls=$(gc_classify_c "$t" "$GC_CW_CUR" | sed -n 1p)
-        if [ "$cls" != 3 ]; then
-          case "$t" in
-            '~'|'~/'*|'$HOME'|'$HOME/'*|'${HOME}'|'${HOME}/'*) [ "$GC_CW_HOMEUNK" = 1 ] && cls=3 ;;
-          esac
-        fi
-        if [ "$cls" = 1 ] && [ "$GC_CW_CDPATH" = 1 ]; then
-          # CDPATH is searched, in order, for every relative target that does not
-          # start with ./ or ../ ; the first entry holding the directory wins and
-          # the cwd is the fallback. A value the hook cannot read literally (a
-          # variable, ~, a glob, a drive letter) or a cwd that is unknown: UNKNOWN.
-          case "$t" in
-            ./*|../*|.|..|/*|[A-Za-z]:[/\\]*) ;;
-            *)
-              case "$GC_CW_CDVAL" in
-                *'$'*|*'`'*|*'~'*|*[A-Za-z]:[/\\]*|*'*'*|*'?'*) cls=3 ;;
-                *)
-                  if [ "$GC_CW_UNC" = 1 ]; then
-                    cls=3
-                  else
-                    while IFS= read -r ent; do
-                      [ -n "$ent" ] || ent=.
-                      case "$ent" in /*) c=$ent/$t ;; *) c=$GC_CW_CUR/$ent/$t ;; esac
-                      if [ -d "$c" ]; then cdhit=$c; break; fi
-                    done <<<"${GC_CW_CDVAL//:/$GC_NL}"
-                  fi ;;
-              esac ;;
-          esac
-        fi
-        if [ "$cls" != 3 ]; then
-          rel=0
-          case "$t" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$cls" = 1 ] && rel=1 ;; esac
-          if [ "$GC_CW_UNC" = 1 ] && [ "$rel" = 1 ]; then
-            # a relative cd after an unknown one moves every cwd seen
-            [ "$first" = pushd ] && gc_cwd_push "?"
-            n=0
-            while IFS= read -r d; do
-              [ -n "$d" ] || continue
-              n=$((n + 1)); [ "$n" -le 8 ] || break
-              d=$(gc_resolve "$d" "$t")
-              case "$GC_NL$GC_CW_CWDS$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) GC_CW_CWDS="$GC_CW_CWDS$GC_NL$d" ;; esac
-            done <<GC_CW_REL
-$GC_CW_CWDS
-GC_CW_REL
-            gc_cwd_unk
-            return 0
-          fi
-          if [ -n "$cdhit" ]; then d=$cdhit; else d=$(gc_c_resolves "$t" "$GC_CW_CUR"); fi
-          [ -n "$d" ] && known=1
-        fi
-        ;;
-    esac
-  fi
-  if [ "$known" = 1 ]; then
-    [ "$first" = pushd ] && gc_cwd_push "$left"
-    gc_cwd_set "$d"
-  else
-    [ "$first" = pushd ] && gc_cwd_push "?"
-    gc_cwd_unk
-  fi
-  return 0
-}
-# gc_augmented_cmd <cwd> -- GC_CMD, plus the body of every script segment
-# (gc_script_body, depth 1: a body is never itself re-scanned for further
-# script segments). Walks gc_seg_raw's output exactly once, over the UNMODIFIED
-# $GC_CMD -- so the result is the same text whether a caller feeds it back into
-# gc_segments/gc_seg_quoted/gc_seg_raw (index-aligned, same augmented string) or
-# into a plain git-token grep (v4.0.3 item 12: the pre-filter in
-# gate-before-merge.sh/no-push-main.sh must see the same text the segment walk
-# does, or a script's verbs pass the "no git token" fast exit first).
-# v4.3.1 G3: the typed command comes first, unchanged. Then, for each script
-# segment, a synthetic `cd <dir>` line and the body, where <dir> is the cwd in
-# effect at the segment that named the script, tracked over the typed `cd`s.
-# Any cd/pushd/popd the tracker cannot model with certainty (`cd -`, an option,
-# no argument, a $/backtick/glob target, pushd, popd) makes the cwd UNCERTAIN:
-# a later script is then scanned under EVERY cwd seen so far plus the original
-# (fail-closed: that only adds text). The scan cap is 8 cwds, the current and
-# original never dropped; past it the output carries GC_AUG_OVERFLOW_MARK and the
-# gates refuse. PowerShell bodies are appended once per distinct cwd a
-# powershell/pwsh segment ran in. Bodies are NOT spliced in mid-command (R-6): a
-# body's own `cd` would then move the later TYPED segments. Special characters
-# in <dir> travel as placeholder bytes (above).
-gc_augmented_cmd() {
-  local out="$GC_CMD" seg c body _gc_bj synth ps_cwds="" n d overflow=0
-  gc_cwd_init "$1"
+  printf '%s\n' "$t" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" || return 1
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
-    gc_cwd_step "$seg" && continue
-    if [ "$GC_CW_UNC" = 1 ]; then
-      c=$(gc_aug_cands "$GC_CW_ORIG" "$GC_CW_CUR" "$GC_CW_CWDS")
-      n=$(printf '%s\n' "$c" | grep -c .)
-      if [ "$n" -gt 8 ] && gc_seg_may_run_script "$seg"; then overflow=1; fi
-    else
-      c=$GC_CW_CUR
-    fi
-    if gc_seg_is_ps "$seg"; then
-      while IFS= read -r d; do
-        [ -n "$d" ] || continue
-        case "$GC_NL$ps_cwds$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) ps_cwds="$ps_cwds$GC_NL$d" ;; esac
-      done <<GC_AUG_PSC
-$c
-GC_AUG_PSC
-    fi
-    n=0
-    while IFS= read -r d; do
-      [ -n "$d" ] || continue
-      n=$((n + 1)); [ "$n" -le 8 ] || break
-      body=$(gc_script_body "$seg" "$d")
-      [ -n "$body" ] || continue
-      _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
-      synth=$(gc_synth_cd "$d")
-      out="$out$GC_NL$synth$GC_NL$body"
-    done <<GC_AUG_CWDS
-$c
-GC_AUG_CWDS
-  done <<GC_AUG_SEGS
-$(gc_seg_raw)
-GC_AUG_SEGS
-  # S-41: PowerShell bodies are NOT run through the shell continuation join.
-  while IFS= read -r d; do
-    [ -n "$d" ] || continue
-    body=$(gc_ps_script_bodies "$d")
+    for v in commit push merge; do
+      if gc_matches_subcommand "$seg" "$v"; then GC_GATED_VERB="$v"; return 0; fi
+    done
+  done <<GC_TG_SEGS
+$(printf '%s\n' "$t" | tr '|;' '\n\n' | sed 's/&&/\n/g')
+GC_TG_SEGS
+  return 1
+}
+
+# gc_collect_bodies <cwd> -- GC_BODIES: the body of every script segment of
+# $GC_CMD (gc_script_body, depth 1, resolved against <cwd>) and, when a segment
+# runs powershell/pwsh, the .ps1 bodies (S-41: no shell continuation join there).
+gc_collect_bodies() {
+  local seg body _gc_bj ps=0
+  GC_BODIES=()
+  while IFS= read -r seg; do
+    [ -n "$seg" ] || continue
+    gc_seg_is_ps "$seg" && ps=1
+    body=$(gc_script_body "$seg" "$1")
     [ -n "$body" ] || continue
-    synth=$(gc_synth_cd "$d")
-    out="$out$GC_NL$synth$GC_NL$body"
-  done <<GC_AUG_PS
-$ps_cwds
-GC_AUG_PS
-  if [ "$overflow" = 1 ]; then out="$out$GC_NL$GC_AUG_OVERFLOW_MARK"; fi
+    _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
+    GC_BODIES+=("$body")
+  done <<GC_CB_SEGS
+$(gc_seg_raw)
+GC_CB_SEGS
+  if [ "$ps" = 1 ]; then
+    body=$(gc_ps_script_bodies "$1")
+    [ -z "$body" ] || GC_BODIES+=("$body")
+  fi
+  return 0
+}
+
+# gc_augmented_cmd <cwd> -- GC_CMD, then one newline and each script body. The
+# text the gates match on, and what the cmd_len diagnostic measures.
+gc_augmented_cmd() {
+  local out="$GC_CMD" b
+  gc_collect_bodies "$1"
+  for b in "${GC_BODIES[@]}"; do out="$out$GC_NL$b"; done
   printf '%s' "$out"
 }
 
-# Prints the `cd <target>` argument of a segment, if the segment is a bare cd.
-# v4.3.1 G3: bash regex instead of sed|head (same answer for a one-line
-# segment, two fewer spawns per segment), and \001 decodes to a space -- the
-# synthetic `cd` gc_augmented_cmd writes before a script body carries spaces
-# that way (gc_protect_c_paths' convention).
-gc_cd_target() {
-  if [[ $1 =~ ^[[:space:]]*cd[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]//$GC_SOH/ }"
+# gc_dir_rule <gate> <payload cwd> -- the rule. Sets GC_CWD_E and widens GC_CMD
+# with the script bodies; returns 1 (after printing the refusal) when a gated
+# command changes directory in any other way. Call it in the main shell.
+gc_dir_rule() {
+  local gate="$1" typed="$GC_CMD" rest="$GC_CMD" tgt="" b
+  local re_dq='^[[:space:]]*cd[[:space:]]+"([^"]*)"[[:space:]]*&&(.*)$'
+  local re_sq="^[[:space:]]*cd[[:space:]]+'([^']*)'[[:space:]]*&&(.*)\$"
+  local re_bare='^[[:space:]]*cd[[:space:]]+([^[:space:]"'"'"';&|()<>]+)[[:space:]]*&&(.*)$'
+  GC_CWD_E="$2"
+  if [[ $typed =~ $re_dq ]] || [[ $typed =~ $re_sq ]] || [[ $typed =~ $re_bare ]]; then
+    tgt=${BASH_REMATCH[1]}
+    case "$tgt" in
+      /*|[A-Za-z]:[/\\]*) ;;
+      *) tgt="" ;;
+    esac
+    case "$tgt" in *[\$\`\*\?\[~]*) tgt="" ;; esac
+    if [ -n "$tgt" ] && [ -d "$tgt" ]; then
+      rest=${BASH_REMATCH[2]}
+      GC_CWD_E="$tgt"
+    fi
+  fi
+  gc_collect_bodies "$GC_CWD_E"
+  GC_CMD="$typed"
+  for b in "${GC_BODIES[@]}"; do
+    GC_CMD="$GC_CMD$GC_NL$b"
+    # a body that holds a gated verb must not change directory
+    if gc_dirchange_in "$b" && gc_text_has_gated "$b"; then
+      gc_dir_refuse "$gate"; return 1
+    fi
+  done
+  # the typed text changes directory in a way other than the one leading cd: refused
+  # when the command (or a script it runs) holds a gated verb
+  if gc_dirchange_in "$rest"; then
+    if gc_text_has_gated "$typed"; then gc_dir_refuse "$gate"; return 1; fi
+    for b in "${GC_BODIES[@]}"; do
+      if gc_text_has_gated "$b"; then gc_dir_refuse "$gate"; return 1; fi
+    done
+  fi
+  return 0
+}
+gc_dir_refuse() { # <gate>
+  local v="${GC_GATED_VERB:-commit}"
+  if [ "$v" = "gh pr merge" ]; then
+    echo "BLOCKED: $1: a directory change in a command with $v cannot be checked -- use a single leading \`cd <absolute dir> && ...\`." >&2
+  else
+    echo "BLOCKED: $1: a directory change in a command with $v cannot be checked -- use \`git -C <dir> $v\`, or a single leading \`cd <absolute dir> && ...\`." >&2
   fi
 }
 
@@ -1123,16 +910,7 @@ gc_c_resolves() {
   gccr_cls=$(printf '%s\n' "$gccr_out" | sed -n 1p)
   case "$gccr_cls" in
     1)
-      # v4.3.1 G3: decode the synthetic-cd placeholders (gc_synth_cd) first.
       gccr_op=$1
-      gccr_op=${gccr_op//$GC_P_SQ/\'}
-      gccr_op=${gccr_op//$GC_P_DQ/\"}
-      gccr_op=${gccr_op//$GC_P_DOL/\$}
-      gccr_op=${gccr_op//$GC_P_BT/\`}
-      gccr_op=${gccr_op//$GC_P_SEMI/;}
-      gccr_op=${gccr_op//$GC_P_AMP/\&}   # bash 5.2: a bare & in a replacement is the matched text
-      gccr_op=${gccr_op//$GC_P_PIPE/|}
-      gccr_op=${gccr_op//$GC_P_NL/$GC_NL}
       case "$gccr_op" in
         /*|[A-Za-z]:[/\\]*) [ -d "$gccr_op" ] && printf '%s\n' "$gccr_op" ;;
         *)                  [ -d "$2/$gccr_op" ] && printf '%s\n' "$2/$gccr_op" ;;

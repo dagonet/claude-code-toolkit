@@ -420,7 +420,7 @@ a6_pull_catchup() {
 #           `git checkout|switch <target>`. `cd` is NOT inert — declaring it so
 #           would switch OFF working machinery: `cd <protected repo> &&
 #           git merge feature/x` from an unprotected cwd is 2 today, via
-#           gc_cd_target/gc_resolve, and would flip to 0.
+#           the leading-cd base (gc_dir_rule, S-3c), and would flip to 0.
 #   mover   everything else. The arms still run on it; if none fires, it sets
 #           the `mutated` flag the pull/push arms read. This is what keeps the
 #           gated clause itself — which is a `mover` by classification — from
@@ -705,8 +705,10 @@ esac
 # (empty GC_CMD there).
 # v4.1.2: the continuation join runs once at the origin (gc_read) and on each
 # appended body, so this text is already joined.
-GC_CMD="$(gc_augmented_cmd "$CWD")"
-gc_aug_overflow_refuse gate-before-merge
+# v4.3.1 S-3c: gc_dir_rule is the simple-cd rule (lib): it widens GC_CMD as above
+# and refuses a gated command that changes directory in any way but one leading
+# `cd <absolute dir> &&`. GC_CWD_E is the directory everything is judged in.
+gc_dir_rule gate-before-merge "$CWD" || exit 2
 
 # v3.0.3 item 25 — EXIT BEFORE DOING ANY WORK ON A PAYLOAD THAT CANNOT BE GATED.
 #
@@ -798,7 +800,7 @@ A6_CONSUMER_LIST='merge:any-target pull:bare pull:named-refspec push:any'
 
 if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   is_merge=0
-  base="$CWD"
+  base="$GC_CWD_E"
   segments=$(gc_segments)
 
   # v3.0.1 (consumer report) — THE PREMISE THIS GATE READS IS ONE THE COMMAND
@@ -869,12 +871,6 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     a6cls=$A6_CLASS
     A6_SEG_WHY=$A6_CLASS_WHY
     [ "$a6cls" = inert ] && continue
-
-    cdt=$(gc_cd_target "$seg")
-    if [ -n "$cdt" ]; then
-      base=$(gc_resolve "$base" "$cdt")
-      continue
-    fi
 
     if a6_branch_move "$seg"; then
       # Last one wins: a later checkout back onto a feature branch means the

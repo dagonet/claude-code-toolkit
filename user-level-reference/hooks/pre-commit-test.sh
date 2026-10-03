@@ -489,12 +489,14 @@ fi
 # The command as typed, before the script-body widening: the **Test paths** skip
 # (v4.3.0 A1, S-28) judges THIS text, never the widened one.
 PCT_RAW_CMD="$GC_CMD"
-GC_CMD="$(gc_augmented_cmd "$GC_CWD")"
-gc_aug_overflow_refuse pre-commit-test
+# v4.3.1 S-3c: gc_dir_rule is the simple-cd rule (lib): it widens GC_CMD as above
+# and refuses a gated command that changes directory in any way but one leading
+# `cd <absolute dir> &&`. GC_CWD_E is the directory everything is judged in.
+gc_dir_rule pre-commit-test "$GC_CWD" || { pct_note dir-change -1; exit 2; }
 
 # Judge every commit segment of the command line (v4.3.1 G6 / T3-3), not only
 # the first.
-base="$GC_CWD"
+base="$GC_CWD_E"
 REPO_PATH=""
 segments=$(gc_segments)
 # gc_seg_quoted (lib) is a sibling of gc_segments: one 0|1 line per line of
@@ -504,11 +506,8 @@ segments=$(gc_segments)
 GC_SEG_QUOTED=$(gc_seg_quoted)
 pct_seg_quoted="$GC_SEG_QUOTED"
 
-# The cwd of each segment comes from the ONE shared tracker (gc_cwd_step, lib;
-# T3b-2), the same one gc_augmented_cmd uses, so the script scan and this loop
-# cannot disagree about where a segment runs. Each commit segment's repository
-# is the top-level of that cwd.
-gc_cwd_init "$base"
+# Every commit segment runs in GC_CWD_E (S-3c): the one leading cd's target, else
+# the payload cwd. Its repository is the top-level of that directory.
 pct_tops=""
 pct_ntops=0
 pct_seen_commit=0
@@ -516,9 +515,6 @@ pct_seg_idx=0
 while IFS= read -r seg; do
   pct_seg_idx=$((pct_seg_idx + 1))
   [ -n "$seg" ] || continue
-
-  gc_cwd_step "$seg" && continue
-  base="$GC_CW_CUR"
 
   if gc_matches_subcommand "$seg" "commit"; then
     # v3.1 -- resolve matched_in_quoted as soon as the commit segment is
@@ -591,24 +587,14 @@ while IFS= read -r seg; do
     fi
 
     # v4.3.1 G6 (ruling P-2) -- READ THE CONFIG AT THE REPOSITORY TOP-LEVEL.
-    # gc_repo_for is the directory the commit segment runs in (a `cd sub`, a
+    # gc_repo_for is the directory the commit segment runs in (the leading cd, a
     # payload cwd of sub/, a `git -C sub`), and the reads below used to take
     # $REPO_PATH/PROJECT_CONTEXT.md literally: from a subdirectory without one
     # the "nothing to run" arm allowed the commit with no Test (measured 0 at
     # 3a901fe). A nested repository is its own top-level. No top-level ->
     # refuse: this gate cannot show the tests passed, and git would fail such a
     # commit anyway.
-    # T3b-1: a cwd the tracker could not determine (a $VAR, a glob, ~user, a bare
-    # cd, a popd with nothing tracked) refuses the commit that follows it -- the
-    # payload repository's Test would otherwise stand in for the one the commit
-    # actually lands in.
-    if [ "$GC_CW_UNC" = 1 ]; then
-      pct_note unknown-cwd -1
-      echo "BLOCKED: pre-commit-test: the directory this commit runs in could not be determined (failed/unknown cd, directory stack, CDPATH, ...) -- refusing rather than testing the wrong repository; use git -C <dir> for commits." >&2
-      echo "  matched segment: $seg" >&2
-      exit 2
-    fi
-    pct_rp=$(gc_repo_for "$seg" "$GC_CW_CUR")
+    pct_rp=$(gc_repo_for "$seg" "$base")
     PCT_TOP=$(git -C "$pct_rp" rev-parse --show-toplevel 2>/dev/null)
     if [ -z "$PCT_TOP" ] || [ ! -d "$PCT_TOP" ]; then
       pct_note no-toplevel -1
