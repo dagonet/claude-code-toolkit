@@ -8748,7 +8748,15 @@ unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
 JDGD=$(git -C "$JDR" rev-parse --path-format=absolute --git-common-dir)
 mkdir -p "$JDGD/jev"; printf '{"route": false}\n' > "$JDGD/jev/config.json"
 jd_cmp "jev config route false" "$(jd_payload general-purpose -)"
+printf '{"route": true}\n' > "$JDGD/jev/config.json"
+jd_cmp "jev config route true" "$(jd_payload general-purpose -)"
 rm -rf "$JDGD/jev"
+# JT1-1: the golden is pinned to the v4.3.0 blob, so a wrong-target cp cannot
+# silently replace it while every comparison above stays green.
+JD_PIN_FALLBACK=cff06f739b64c69a35d1b263f4e206f7574d98d7
+JD_PIN=$(git -C "$ROOT" rev-parse "v4.3.0:hooks/model-floor.sh" 2>/dev/null) || JD_PIN=""
+[ -n "$JD_PIN" ] || JD_PIN="$JD_PIN_FALLBACK"
+expect "J-DIFF pin: the golden is the v4.3.0 model-floor.sh blob" "$JD_PIN" "$(git -C "$ROOT" hash-object --no-filters "$ROOT/scripts/fixtures/model-floor-golden/model-floor.sh")"
 # ---- end v4.4.0 J-DIFF
 
 echo "----------------------------------------------------------------"
