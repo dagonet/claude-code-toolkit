@@ -604,7 +604,7 @@ while IFS= read -r seg; do
     # actually lands in.
     if [ "$GC_CW_UNC" = 1 ]; then
       pct_note unknown-cwd -1
-      echo "BLOCKED: pre-commit-test: the directory this commit runs in cannot be determined (an earlier cd/pushd/popd has a target the hook cannot resolve: a variable, a glob, ~user, no argument) -- refusing rather than testing the wrong repository. Run the commit with git -C <dir> (use git -C for commits)." >&2
+      echo "BLOCKED: pre-commit-test: the directory this commit runs in could not be determined (failed/unknown cd, directory stack, CDPATH, ...) -- refusing rather than testing the wrong repository; use git -C <dir> for commits." >&2
       echo "  matched segment: $seg" >&2
       exit 2
     fi

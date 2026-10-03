@@ -8694,13 +8694,15 @@ g1_slow() { # <repo> -- slow.sh: a bash heartbeat child (self-bounded, 20 s), a 
     printf '( n=0; while [ $n -lt 100 ]; do echo x >> "%s/hb.txt"; sleep 0.2; n=$((n + 1)); done ) &\n' "$1"
     [ "$g1_native" = yes ] && printf 'cmd //c "%s" &\n' "$(cygpath -w "$1/hb.cmd")"
     printf 'sleep 20\n'
+    printf 'echo x > "%s/after-sleep.txt"\n' "$1"
   } > "$1/slow.sh"
 }
 G1S=$(g1_repo g1slow '- **Test**: `bash slow.sh`'); g1_slow "$G1S"
 g1t0=$SECONDS; g1_run "$G1S" "$TMPROOT/g1s.err"; g1rc=$?; g1el=$((SECONDS - g1t0))
 expect "G1: Test over budget -> commit refused"        2   "$g1rc"
 expect "G1: refusal names the budget"                  yes "$(g1_yes grep -qF 'Test exceeded its 3 s budget -- commit refused' "$TMPROOT/g1s.err")"
-expect "G1: hook returned at the budget (< 15 s)"      yes "$(g1_yes [ "$g1el" -lt 15 ])"
+# load-robust (T3b-4 minor): not a wall-clock bound on the whole run -- the Test's own `sleep 20` must never reach the line after it
+expect "G1: the run stopped at the budget (the after-sleep marker was never written)" no "$(g1_yes [ -e "$G1S/after-sleep.txt" ])"
 expect "G1: record path test, rc \"timeout\""          yes "$(g1_yes grep -q '"path":"test","rc":"timeout"' "$(g1_rec "$G1S")")"
 expect "G1: no survivor warning"                       no  "$(g1_yes grep -q 'still alive after the kill' "$TMPROOT/g1s.err")"
 g1a=$(wc -c < "$G1S/hb.txt" 2>/dev/null || echo 0); sleep 2; g1b=$(wc -c < "$G1S/hb.txt" 2>/dev/null || echo 0)
@@ -8730,7 +8732,7 @@ printf '%s' "$(mkjson Bash 'git commit -m x' "$G1C")" | PCT_TEST_CEILING_TESTONL
 g1el=$((SECONDS - g1t0))
 expect "G1: hook-wide ceiling over, budget not -> refused"   2   "$g1crc"
 expect "G1: ceiling refusal names the ceiling"         yes "$(g1_yes grep -qF 'hook-wide ceiling' "$TMPROOT/g1c.err")"
-expect "G1: ceiling stopped the run well before the 540 s budget (< 15 s)" yes "$(g1_yes [ "$g1el" -lt 15 ])"
+expect "G1: ceiling stopped the run well before the 540 s budget (the after-sleep marker was never written)" no "$(g1_yes [ -e "$G1C/after-sleep.txt" ])"
 expect "G1: ceiling record path test, rc \"timeout\""  yes "$(g1_yes grep -q '"path":"test","rc":"timeout"' "$(g1_rec "$G1C")")"
 g1_key() { # <label> <key value> <WARN|quiet> <unique suffix> -- fast Test, no override
   r=$(g1_repo "g1k$4" "$(printf -- '- **Test**: `exit 0`\n- **Test timeout**: %s' "$2")")
@@ -8929,6 +8931,10 @@ check "G3 T3b-3 no-push-main: pushd <other>; pushd +1; bash bare.sh" hooks/no-pu
 check "G3 T3b-3 pre-commit-test: cd <other>; cd typo; cd -; bash c.sh" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash c.sh" "$G3R")"
 check "G3 T3b-3 gate-before-merge: cd <other>; cd typo; cd -; bash m.sh" hooks/gate-before-merge.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash m.sh" "$G3R")"
 check "G3 T3b-3 control: a known cd - still resolves (bash ok.sh)" hooks/no-push-main.sh 0 "$(mkjson Bash "cd $G3O; cd sub; cd -; bash ok.sh" "$G3R")"
+# T3b-4: CDPATH sends a relative cd elsewhere (the payload repo G3O is on a feature branch; g3main is the protected repo, bare.sh pushes)
+check "G3 T3b-4 no-push-main: export CDPATH=<parent>; cd g3main; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "export CDPATH=$TMPROOT; cd g3main; bash bare.sh" "$G3O")"
+check "G3 T3b-4 no-push-main: shopt -s cdable_vars; cd sub; bash ../bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash 'shopt -s cdable_vars; cd sub; bash ../bare.sh' "$G3R")"
+check "G3 T3b-4 no-push-main: pushd sub; dirs -c; popd; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash 'pushd sub; dirs -c; popd; bash bare.sh' "$G3R")"
 # ---- end v4.3.1 G3
 
 # ---- v4.3.1 G6: a commit from a subdirectory runs the repository's Test ----
@@ -9022,6 +9028,28 @@ check_msg "G6 T3b-3: cd <green>; cd sub; cd -; git commit (back to a known green
   "$(mkjson Bash "cd $G6OK; cd sub; cd -; git commit -m x" "$G6R")" "passed."
 check_msg "G6 T3b-3: pushd <green>; pushd sub; popd; git commit" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash "pushd $G6OK; pushd sub; popd; git commit -m x" "$G6R")" "passed."
+# T3b-4: allow-list stance -- a construct that changes what cd or the stack does and is not modelled makes the cwd UNKNOWN
+check "G6 T3b-4: pushd <red>; dirs -c; popd; git commit"       hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6R; dirs -c; popd; git commit -m x" "$G6OK")"
+check "G6 T3b-4: pushd <red>; dirs +0; popd; git commit"       hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6R; dirs +0; popd; git commit -m x" "$G6OK")"
+check "G6 T3b-4: export CDPATH=<red>; cd sub && git commit"    hooks/pre-commit-test.sh 2 "$(mkjson Bash "export CDPATH=$G6R; cd sub && git commit -m x" "$G6OK")"
+check "G6 T3b-4: CDPATH=<red> then pushd sub && git commit"    hooks/pre-commit-test.sh 2 "$(mkjson Bash "CDPATH=$G6R; pushd sub && git commit -m x" "$G6OK")"
+check "G6 T3b-4: CDPATH=\$X (unreadable); cd sub && git commit" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'export CDPATH=$X; cd sub && git commit -m x' "$G6OK")"
+check_msg "G6 T3b-4: CDPATH set, but cd ./sub is not looked up in it" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash "export CDPATH=$G6R; cd ./sub && git commit -m x" "$G6OK")" "passed."
+check_msg "G6 T3b-4: CDPATH set, the cwd has the directory but CDPATH does not" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash "export CDPATH=$G6OK/sub; cd sub && git commit -m x" "$G6OK")" "passed."
+check "G6 T3b-4: shopt -s cdable_vars; cd sub && git commit"   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'shopt -s cdable_vars; cd sub && git commit -m x' "$G6OK")"
+check "G6 T3b-4: cd sub; OLDPWD=<red>; cd -; git commit"        hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd sub; OLDPWD=$G6R; cd -; git commit -m x" "$G6OK")"
+check "G6 T3b-4: PWD=<red>; cd sub && git commit"              hooks/pre-commit-test.sh 2 "$(mkjson Bash "PWD=$G6R; cd sub && git commit -m x" "$G6OK")"
+check "G6 T3b-4: eval \"cd <red>\"; git commit"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash "eval \"cd $G6R\"; git commit -m x" "$G6OK")"
+printf 'cd %s\n' "$G6R" > "$G6OK/cdr.sh"
+check "G6 T3b-4: source cdr.sh (cds into <red>); git commit"    hooks/pre-commit-test.sh 2 "$(mkjson Bash 'source cdr.sh; git commit -m x' "$G6OK")"
+check "G6 T3b-4: set -P; cd sub && git commit"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash 'set -P; cd sub && git commit -m x' "$G6OK")"
+check "G6 T3b-4: builtin cd <red> && git commit"               hooks/pre-commit-test.sh 2 "$(mkjson Bash "builtin cd $G6R && git commit -m x" "$G6OK")"
+check_msg "G6 T3b-4: a bare dirs listing changes nothing" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'dirs; cd sub; git commit -m x' "$G6OK")" "passed."
+check_msg "G6 T3b-4: the refusal names the likely causes" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'shopt -s cdable_vars; cd sub && git commit -m x' "$G6OK")" "(failed/unknown cd, directory stack, CDPATH, ...)"
 # ---- end v4.3.1 G6
 
 echo "----------------------------------------------------------------"

@@ -787,6 +787,17 @@ gc_aug_overflow_refuse() {
 # again; a relative cd moves every cwd seen (cap 8).
 gc_cwd_init() { # <cwd>
   GC_CW_CUR="$1"; GC_CW_ORIG="$1"; GC_CW_PREV="?"; GC_CW_CWDS="$1"; GC_CW_STACK=""; GC_CW_UNC=0; GC_CW_HOMEUNK=0
+  GC_CW_POISON=0; GC_CW_CDPATH=0; GC_CW_CDVAL=""
+  if [ -n "${CDPATH:-}" ]; then GC_CW_CDPATH=1; GC_CW_CDVAL=$CDPATH; fi
+  return 0
+}
+# T3b-4 (allow-list stance): a construct that can change what cd or the
+# directory stack does and that this tracker does not model makes the cwd
+# UNKNOWN from that point on -- every later cd/pushd/popd stays UNKNOWN too.
+gc_cwd_poison() {
+  GC_CW_POISON=1
+  GC_CW_STACK="?"
+  gc_cwd_unk
 }
 gc_cwd_unk() { # the cwd is no longer known, nor is what `cd -` would return to
   GC_CW_UNC=1
@@ -804,10 +815,30 @@ gc_cwd_push() { # <entry> -- push the cwd being left (or "?" for an unknown one)
 # gc_cwd_step <segment> -- returns 0 when the segment is a cd/pushd/popd (the
 # state is updated and the caller moves on), 1 when it is not.
 gc_cwd_step() {
-  local seg="$1" first rest t cls rel d n known=0 left
+  gc_cwd_step_core "$1"
+  local rc=$?
+  # T3b-4: after a poisoning construct every cd/pushd/popd is still followed (so
+  # the script scan gains the directories it names) but the result is UNKNOWN.
+  if [ "$rc" = 0 ] && [ "$GC_CW_POISON" = 1 ]; then GC_CW_STACK="?"; gc_cwd_unk; fi
+  return $rc
+}
+gc_cwd_step_core() {
+  local seg="$1" first rest t cls rel d n known=0 left ent c cdhit=""
   seg=${seg//\"/}
   seg=${seg//\'/}
   [[ $seg =~ (^|[[:space:]])HOME= ]] && GC_CW_HOMEUNK=1
+  if [[ $seg =~ (^|[[:space:]])CDPATH=([^[:space:]]*) ]]; then
+    GC_CW_CDVAL=${BASH_REMATCH[2]}
+    if [ -n "$GC_CW_CDVAL" ]; then GC_CW_CDPATH=1; else GC_CW_CDPATH=0; fi
+  fi
+  # T3b-4: constructs this tracker does not model (none of these is consumed:
+  # the caller still sees the segment, e.g. to scan `source x.sh`).
+  if [[ $seg =~ (^|[[:space:]])(OLDPWD|PWD|DIRSTACK)(\[[^]]*\])?= ]]; then gc_cwd_poison
+  elif [[ $seg =~ ^[[:space:]]*(shopt|eval|source|\.)([[:space:]]|$) ]]; then gc_cwd_poison
+  elif [[ $seg =~ ^[[:space:]]*(builtin|command)[[:space:]]+(cd|pushd|popd|dirs|set|shopt|eval|source|\.)([[:space:]]|$) ]]; then gc_cwd_poison
+  elif [[ $seg =~ ^[[:space:]]*dirs[[:space:]]+[^[:space:]] ]]; then gc_cwd_poison
+  elif [[ $seg =~ ^[[:space:]]*set[[:space:]]+(.*[[:space:]])?(-[A-Za-z]*P[A-Za-z]*|-o[[:space:]]+physical)([[:space:]]|$) ]]; then gc_cwd_poison
+  fi
   [[ $seg =~ ^[[:space:]]*(cd|pushd|popd)([[:space:]]+(.*))?$ ]] || return 1
   first=${BASH_REMATCH[1]}
   rest=${BASH_REMATCH[3]}
@@ -855,6 +886,29 @@ gc_cwd_step() {
             '~'|'~/'*|'$HOME'|'$HOME/'*|'${HOME}'|'${HOME}/'*) [ "$GC_CW_HOMEUNK" = 1 ] && cls=3 ;;
           esac
         fi
+        if [ "$cls" = 1 ] && [ "$GC_CW_CDPATH" = 1 ]; then
+          # CDPATH is searched, in order, for every relative target that does not
+          # start with ./ or ../ ; the first entry holding the directory wins and
+          # the cwd is the fallback. A value the hook cannot read literally (a
+          # variable, ~, a glob, a drive letter) or a cwd that is unknown: UNKNOWN.
+          case "$t" in
+            ./*|../*|.|..|/*|[A-Za-z]:[/\\]*) ;;
+            *)
+              case "$GC_CW_CDVAL" in
+                *'$'*|*'`'*|*'~'*|*[A-Za-z]:[/\\]*|*'*'*|*'?'*) cls=3 ;;
+                *)
+                  if [ "$GC_CW_UNC" = 1 ]; then
+                    cls=3
+                  else
+                    while IFS= read -r ent; do
+                      [ -n "$ent" ] || ent=.
+                      case "$ent" in /*) c=$ent/$t ;; *) c=$GC_CW_CUR/$ent/$t ;; esac
+                      if [ -d "$c" ]; then cdhit=$c; break; fi
+                    done <<<"${GC_CW_CDVAL//:/$GC_NL}"
+                  fi ;;
+              esac ;;
+          esac
+        fi
         if [ "$cls" != 3 ]; then
           rel=0
           case "$t" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$cls" = 1 ] && rel=1 ;; esac
@@ -873,7 +927,7 @@ GC_CW_REL
             gc_cwd_unk
             return 0
           fi
-          d=$(gc_c_resolves "$t" "$GC_CW_CUR")
+          if [ -n "$cdhit" ]; then d=$cdhit; else d=$(gc_c_resolves "$t" "$GC_CW_CUR"); fi
           [ -n "$d" ] && known=1
         fi
         ;;
