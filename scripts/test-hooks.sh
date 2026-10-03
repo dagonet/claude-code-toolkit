@@ -7565,14 +7565,14 @@ expect "A2: extra leg fails -- no artifact written" "yes" \
   "$([ ! -f "$(a2_artifact "$R")" ] && echo yes || echo no)"
 
 # ---- v4.3.0 fix round 1 (opus review C1/C2/I1/I2, rulings S-6/S-7/S-8) ----
-# FR1 row 1/2: C1 -- "wrong reuse across directories". A commit issued from a
-# SUBDIRECTORY of the repo resolves REPO_PATH (and so PCT_ARTIFACT_BASE) to
-# that subdirectory: pre-commit-test.sh reads sub/PROJECT_CONTEXT.md and runs
-# sub/t.sh, while hooks/run-gate.sh always reads the TOPLEVEL's own
-# PROJECT_CONTEXT.md. If the two **Test** fields are byte-identical text
-# (plausible, not an attack), a plain text comparison sees a match even
-# though sub/t.sh and the toplevel's own t.sh are different files with
-# different behaviour.
+# FR1 row 1/2: C1 -- "wrong reuse across directories". At v4.3.0 a commit issued
+# from a SUBDIRECTORY resolved REPO_PATH to that subdirectory (sub/PROJECT_CONTEXT.md
+# and sub/t.sh), while hooks/run-gate.sh reads the TOPLEVEL's. v4.3.1 G6 (P-2)
+# makes REPO_PATH the top-level for every commit, so the hook no longer runs
+# sub/t.sh at all: these rows now pin the top-level behaviour (the top-level
+# t.sh runs, sub/'s never does, and because the top-level Test is RED the record
+# carries no reusable test_sha256). The pct_note guard that compares the artifact
+# base with the top-level is kept for any future path that sets it elsewhere.
 fr1_c1_setup() { # <name> worktree|plain -> prints the "sub" dir to commit from
   r=$(mkrepo "$1" main)
   printf '#!/usr/bin/env bash\necho C1-TOP-RAN\nexit 1\n' > "$r/t.sh"
@@ -7614,7 +7614,7 @@ expect "FR1 I1 (plain checkout, subdir commit): precommit record exists" "yes" \
   "$([ -f "$REC_PLAIN" ] && echo yes || echo no)"
 expect "FR1 I1 (plain checkout, subdir commit): record tree is NOT the empty tree" "no" \
   "$(a2_has "$REC_PLAIN" '"tree":"4b825dc642cb6eb9a060e54bf8d69288fbee4904"')"
-expect "FR1 I1 (plain checkout, subdir commit): no reusable test_sha256 (cross-dir)" "yes" \
+expect "FR1 I1 (plain checkout, subdir commit): top-level Test is red -> no reusable test_sha256" "yes" \
   "$(a2_has "$REC_PLAIN" '"test_sha256":""')"
 a2_rungate "$PLAINSUB"
 expect "FR1 C1 (plain checkout): toplevel Test actually ran" "yes" "$(a2_has "$PLAINSUB/.a2_gate_out" C1-TOP-RAN)"
@@ -8952,7 +8952,8 @@ check_msg "G6 T3-3: bash c.sh (commits in repo B); cd <repo A> && git commit" "$
   "$(mkjson Bash "bash c.sh; cd $G6OK && git commit -m x" "$G6B")" "commit each repository in a separate call"
 check_msg "G6 T3-3: two typed commits in two repositories"    "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash "git commit -m a; cd $G6B && git commit -m b" "$G6OK")" "commit each repository in a separate call"
-check "G6 T3-3: second repository's Test is red, first green"  hooks/pre-commit-test.sh 2 "$(mkjson Bash "git commit -m a; cd $G6R && git commit -m b" "$G6OK")"
+check_msg "G6 T3-3: first repository green, second red -> refused as multi-repo" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash "git commit -m a; cd $G6R && git commit -m b" "$G6OK")" "commit each repository in a separate call"
 check "G6 T3-3: git -C other repo, then a commit here"        hooks/pre-commit-test.sh 2 "$(mkjson Bash "git -C $G6B commit -m a; git commit -m b" "$G6OK")"
 # positive: two commits in ONE repository run its Test once
 G6C=$(mkrepo g6c main)
@@ -8961,9 +8962,35 @@ rm -f "$TMPROOT/g6c.count"
 check_msg "G6 T3-3: two commits in the same repository -> allowed" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'git commit -m a; cd sub && git commit -m b' "$G6C")" "passed."
 expect "G6 T3-3: ... and the Test ran exactly once" 1 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
-# an uncertain cwd: every candidate is tried; candidates in two repositories refuse
-check "G6 T3-3: cd <repo A>; cd <repo B>; cd -; git commit (two candidates)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6OK; cd $G6B; cd -; git commit -m x" "$G6OK")"
-check "G6 T3-3: cd sub; cd -; git commit (one repository, green) -> allowed" hooks/pre-commit-test.sh 0 "$(mkjson Bash 'cd sub; cd -; git commit -m x' "$G6OK")"
+check_msg "G6 T3-3: cd sub; cd -; git commit (one repository, green) -> allowed and the Test ran" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'cd sub; cd -; git commit -m x' "$G6OK")" "passed."
+# the top-level's Test wins over a failing sub/PROJECT_CONTEXT.md
+G6W=$(mkrepo g6w main)
+printf '# ctx\n\n- **Test**: `exit 0`\n' > "$G6W/PROJECT_CONTEXT.md"
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$G6W/sub/PROJECT_CONTEXT.md"
+check_msg "G6: sub/ is red, the root is green -> the root's Test wins" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'git commit -m x' "$G6W/sub")" "passed."
+# T3b-1: a cd whose target the hook can resolve goes THERE (G6R is the repository whose Test is red; payload repo G6OK is green)
+check "G6 T3b-1: pushd <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6R && git commit -m x" "$G6OK")"
+check "G6 T3b-1: cd -P <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -P $G6R && git commit -m x" "$G6OK")"
+check "G6 T3b-1: cd -L <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -L $G6R && git commit -m x" "$G6OK")"
+check "G6 T3b-1: cd -- <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -- $G6R && git commit -m x" "$G6OK")"
+check "G6 T3b-1: cd <red>; cd <green>; cd -; git commit (back into red)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6R; cd $G6OK; cd -; git commit -m x" "$G6OK")"
+check_msg "G6 T3b-1: pushd <red>; popd; git commit -> back in the green repo" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash "pushd $G6R; popd; git commit -m x" "$G6OK")" "passed."
+# a target that cannot be known refuses a FOLLOWING commit
+check_msg "G6 T3b-1: cd \$VAR && git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash 'cd $BVAR && git commit -m x' "$G6OK")" "use git -C"
+check "G6 T3b-1: cd ~nobody && git commit -> refused"        hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd ~nobody && git commit -m x' "$G6OK")"
+check "G6 T3b-1: cd <glob> && git commit -> refused"         hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6R/s* && git commit -m x" "$G6OK")"
+check "G6 T3b-1: bare cd && git commit -> refused"           hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd && git commit -m x' "$G6OK")"
+check "G6 T3b-1: popd with nothing tracked && git commit -> refused" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'popd && git commit -m x' "$G6OK")"
+check "G6 T3b-1: cd \$VAR alone (no commit after it) is not refused" hooks/pre-commit-test.sh 0 "$(mkjson Bash 'cd $BVAR; ls' "$G6OK")"
+# the rev-parse idiom resolves to the top-level of the tracked cwd
+check_msg "G6 T3b-1: cd sub && cd \"\$(git rev-parse --show-toplevel)\" && git commit" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'cd sub && cd "$(git rev-parse --show-toplevel)" && git commit -m x' "$G6OK")" "passed."
+check_msg "G6 T3b-1: the same without quotes" "$ROOT/hooks/pre-commit-test.sh" 0 \
+  "$(mkjson Bash 'cd sub && cd $(git rev-parse --show-toplevel) && git commit -m x' "$G6OK")" "passed."
 # ---- end v4.3.1 G6
 
 echo "----------------------------------------------------------------"

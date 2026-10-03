@@ -492,7 +492,8 @@ PCT_RAW_CMD="$GC_CMD"
 GC_CMD="$(gc_augmented_cmd "$GC_CWD")"
 gc_aug_overflow_refuse pre-commit-test
 
-# Find the repo of the first `git commit` in the command line (if any).
+# Judge every commit segment of the command line (v4.3.1 G6 / T3-3), not only
+# the first.
 base="$GC_CWD"
 REPO_PATH=""
 segments=$(gc_segments)
@@ -503,14 +504,11 @@ segments=$(gc_segments)
 GC_SEG_QUOTED=$(gc_seg_quoted)
 pct_seg_quoted="$GC_SEG_QUOTED"
 
-# v4.3.1 G6 / T3-3 -- EVERY commit segment is judged, not only the first. The
-# cwd of each segment is tracked exactly as gc_augmented_cmd tracks it (same
-# uncertain-cwd rules: `cd -`, options, no argument, a $/backtick/glob target,
-# pushd, popd; candidates = the original, the current and every cwd seen, newest
-# first), and each commit segment's repository is its candidates' top-level.
-pct_cwds="$base"
-pct_orig="$base"
-pct_unc=0
+# The cwd of each segment comes from the ONE shared tracker (gc_cwd_step, lib;
+# T3b-2), the same one gc_augmented_cmd uses, so the script scan and this loop
+# cannot disagree about where a segment runs. Each commit segment's repository
+# is the top-level of that cwd.
+gc_cwd_init "$base"
 pct_tops=""
 pct_ntops=0
 pct_seen_commit=0
@@ -519,42 +517,8 @@ while IFS= read -r seg; do
   pct_seg_idx=$((pct_seg_idx + 1))
   [ -n "$seg" ] || continue
 
-  pct_fw=""
-  [[ $seg =~ ^[[:space:]]*([^[:space:]]+) ]] && pct_fw=${BASH_REMATCH[1]}
-  if [ "$pct_fw" = pushd ] || [ "$pct_fw" = popd ]; then
-    pct_unc=1
-    continue
-  fi
-  cdt=$(gc_cd_target "$seg")
-  if [ "$pct_fw" = cd ]; then
-    case "$cdt" in
-      ""|-*|*[*?[]*) pct_unc=1; continue ;;
-    esac
-  fi
-  if [ -n "$cdt" ]; then
-    pct_cls=$(gc_classify_c "$cdt" "$base" | sed -n 1p)
-    pct_rel=0
-    case "$cdt" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$pct_cls" = 1 ] && pct_rel=1 ;; esac
-    if [ "$pct_cls" = 3 ]; then
-      pct_unc=1
-    elif [ "$pct_unc" = 1 ] && [ "$pct_rel" = 1 ]; then
-      # a relative cd after an unresolvable one moves every candidate
-      pct_n=0
-      while IFS= read -r pct_d; do
-        [ -n "$pct_d" ] || continue
-        pct_n=$((pct_n + 1)); [ "$pct_n" -le 8 ] || break
-        pct_d=$(gc_resolve "$pct_d" "$cdt")
-        case "$GC_NL$pct_cwds$GC_NL" in *"$GC_NL$pct_d$GC_NL"*) ;; *) pct_cwds="$pct_cwds$GC_NL$pct_d" ;; esac
-      done <<PCT_REL
-$pct_cwds
-PCT_REL
-    else
-      base=$(gc_resolve "$base" "$cdt")
-      pct_unc=0
-      case "$GC_NL$pct_cwds$GC_NL" in *"$GC_NL$base$GC_NL"*) ;; *) pct_cwds="$pct_cwds$GC_NL$base" ;; esac
-    fi
-    continue
-  fi
+  gc_cwd_step "$seg" && continue
+  base="$GC_CW_CUR"
 
   if gc_matches_subcommand "$seg" "commit"; then
     # v3.1 -- resolve matched_in_quoted as soon as the commit segment is
@@ -633,34 +597,28 @@ PCT_REL
     # the "nothing to run" arm allowed the commit with no Test (measured 0 at
     # 3a901fe). A nested repository is its own top-level. No top-level ->
     # refuse: this gate cannot show the tests passed, and git would fail such a
-    # commit anyway. An uncertain cwd tries every candidate (T3-3): a candidate
-    # that has no top-level refuses, and candidates in two repositories refuse.
-    if [ "$pct_unc" = 1 ]; then
-      pct_cands=$(gc_aug_cands "$pct_orig" "$base" "$pct_cwds")
-      if [ "$(printf '%s\n' "$pct_cands" | grep -c .)" -gt 8 ]; then
-        pct_note no-toplevel -1
-        echo "BLOCKED: pre-commit-test: this command changes directory in more than 8 ways the hook cannot resolve, so it cannot tell which repository the commit lands in -- refusing rather than guessing. Use absolute paths or git -C <dir>." >&2
-        exit 2
-      fi
-    else
-      pct_cands="$base"
+    # commit anyway.
+    # T3b-1: a cwd the tracker could not determine (a $VAR, a glob, ~user, a bare
+    # cd, a popd with nothing tracked) refuses the commit that follows it -- the
+    # payload repository's Test would otherwise stand in for the one the commit
+    # actually lands in.
+    if [ "$GC_CW_UNC" = 1 ]; then
+      pct_note unknown-cwd -1
+      echo "BLOCKED: pre-commit-test: the directory this commit runs in cannot be determined (an earlier cd/pushd/popd has a target the hook cannot resolve: a variable, a glob, ~user, no argument) -- refusing rather than testing the wrong repository. Run the commit with git -C <dir> (use git -C for commits)." >&2
+      echo "  matched segment: $seg" >&2
+      exit 2
     fi
-    while IFS= read -r pct_cand; do
-      [ -n "$pct_cand" ] || continue
-      pct_rp=$(gc_repo_for "$seg" "$pct_cand")
-      PCT_TOP=$(git -C "$pct_rp" rev-parse --show-toplevel 2>/dev/null)
-      if [ -z "$PCT_TOP" ] || [ ! -d "$PCT_TOP" ]; then
-        pct_note no-toplevel -1
-        echo "BLOCKED: pre-commit-test: cannot find the repository top-level for '$pct_rp' -- refusing rather than committing with no Test. Run the commit from inside the repository (or pass git -C <repo>)." >&2
-        exit 2
-      fi
-      case "$GC_NL$pct_tops$GC_NL" in
-        *"$GC_NL$PCT_TOP$GC_NL"*) ;;
-        *) pct_tops="$pct_tops$GC_NL$PCT_TOP"; pct_ntops=$((pct_ntops + 1)); REPO_PATH="$PCT_TOP" ;;
-      esac
-    done <<PCT_CANDS
-$pct_cands
-PCT_CANDS
+    pct_rp=$(gc_repo_for "$seg" "$GC_CW_CUR")
+    PCT_TOP=$(git -C "$pct_rp" rev-parse --show-toplevel 2>/dev/null)
+    if [ -z "$PCT_TOP" ] || [ ! -d "$PCT_TOP" ]; then
+      pct_note no-toplevel -1
+      echo "BLOCKED: pre-commit-test: cannot find the repository top-level for '$pct_rp' -- refusing rather than committing with no Test. Run the commit from inside the repository (or pass git -C <repo>)." >&2
+      exit 2
+    fi
+    case "$GC_NL$pct_tops$GC_NL" in
+      *"$GC_NL$PCT_TOP$GC_NL"*) ;;
+      *) pct_tops="$pct_tops$GC_NL$PCT_TOP"; pct_ntops=$((pct_ntops + 1)); REPO_PATH="$PCT_TOP" ;;
+    esac
   fi
 done <<GC_SEGMENTS
 $segments

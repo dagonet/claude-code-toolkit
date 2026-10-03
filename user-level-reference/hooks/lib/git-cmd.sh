@@ -754,6 +754,100 @@ gc_aug_overflow_refuse() {
   esac
   return 0
 }
+# ---- v4.3.1 T3b-2: THE cwd tracker (one copy, two callers) -------------------
+# gc_augmented_cmd (script bodies are judged where the script runs) and
+# pre-commit-test.sh (the Test runs in the repository the commit lands in) both
+# need to know the directory each segment runs in. They call this and nothing
+# else, so the two can never disagree. State (globals; call it from the main
+# shell, never inside $(...)):
+#   GC_CW_CUR    the tracked cwd          GC_CW_ORIG   where the command started
+#   GC_CW_PREV   the cwd before the last move (what `cd -` returns to)
+#   GC_CW_CWDS   every cwd seen, one per line, in order
+#   GC_CW_STACK  the pushd stack, one per line, top last
+#   GC_CW_UNC    1 when the cwd cannot be known (a target that needs the shell to
+#                expand it, a glob, `cd` with no argument, a popd with nothing
+#                tracked). A script scan then covers every cwd seen (adds text);
+#                a COMMIT after it must be refused (T3b-1).
+# What resolves (T3b-1): options -P -L -e -@ -- do not change the target;
+# `pushd B` goes to B; `cd -` goes to GC_CW_PREV; `popd` returns to the cwd
+# before the matching pushd; `~` and $HOME/$PWD forms resolve as gc_classify_c
+# says; `cd "$(git rev-parse --show-toplevel)"` goes to the top-level of the
+# tracked cwd. Anything else sets GC_CW_UNC. After GC_CW_UNC, an absolute cd
+# makes the cwd known again; a relative cd moves every cwd seen (cap 8).
+gc_cwd_init() { # <cwd>
+  GC_CW_CUR="$1"; GC_CW_ORIG="$1"; GC_CW_PREV="$1"; GC_CW_CWDS="$1"; GC_CW_STACK=""; GC_CW_UNC=0
+}
+gc_cwd_set() { # <dir> -- a certain move
+  GC_CW_PREV="$GC_CW_CUR"
+  GC_CW_CUR="$1"
+  GC_CW_UNC=0
+  case "$GC_NL$GC_CW_CWDS$GC_NL" in *"$GC_NL$1$GC_NL"*) ;; *) GC_CW_CWDS="$GC_CW_CWDS$GC_NL$1" ;; esac
+}
+# gc_cwd_step <segment> -- returns 0 when the segment is a cd/pushd/popd (the
+# state is updated and the caller moves on), 1 when it is not.
+gc_cwd_step() {
+  local seg="$1" first rest t cls rel d n
+  seg=${seg//\"/}
+  seg=${seg//\'/}
+  [[ $seg =~ ^[[:space:]]*(cd|pushd|popd)([[:space:]]+(.*))?$ ]] || return 1
+  first=${BASH_REMATCH[1]}
+  rest=${BASH_REMATCH[3]}
+  rest=${rest%"${rest##*[![:space:]]}"}
+  if [ "$first" = popd ]; then
+    if [ -n "$rest" ] || [ -z "$GC_CW_STACK" ]; then GC_CW_UNC=1; return 0; fi
+    d=${GC_CW_STACK##*$GC_NL}
+    case "$GC_CW_STACK" in *"$GC_NL"*) GC_CW_STACK=${GC_CW_STACK%$GC_NL*} ;; *) GC_CW_STACK="" ;; esac
+    gc_cwd_set "$d"
+    return 0
+  fi
+  if [ "$first" = cd ]; then
+    while [[ $rest =~ ^(-P|-L|-e|-@|--)([[:space:]]+(.*))?$ ]]; do rest=${BASH_REMATCH[3]}; done
+  elif [ "$GC_CW_UNC" = 1 ]; then
+    return 0   # pushd while the cwd is unknown: stays unknown
+  fi
+  if [ -z "$rest" ]; then GC_CW_UNC=1; return 0; fi
+  if [ "$rest" = - ] && [ "$first" = cd ]; then
+    [ "$GC_CW_UNC" = 1 ] && return 0
+    gc_cwd_set "$GC_CW_PREV"
+    return 0
+  fi
+  if [[ $rest =~ ^\$\(git[[:space:]]+rev-parse[[:space:]]+--show-toplevel\)$ ]]; then
+    if [ "$GC_CW_UNC" = 1 ]; then return 0; fi
+    t=$(git -C "$GC_CW_CUR" rev-parse --show-toplevel 2>/dev/null)
+    if [ -n "$t" ] && [ -d "$t" ]; then
+      [ "$first" = pushd ] && GC_CW_STACK="${GC_CW_STACK:+$GC_CW_STACK$GC_NL}$GC_CW_CUR"
+      gc_cwd_set "$t"
+    else
+      GC_CW_UNC=1
+    fi
+    return 0
+  fi
+  t=$(gc_cd_target "cd $rest")
+  case "$t" in
+    ""|*[*?[]*) GC_CW_UNC=1; return 0 ;;
+  esac
+  cls=$(gc_classify_c "$t" "$GC_CW_CUR" | sed -n 1p)
+  if [ "$cls" = 3 ]; then GC_CW_UNC=1; return 0; fi
+  rel=0
+  case "$t" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$cls" = 1 ] && rel=1 ;; esac
+  if [ "$GC_CW_UNC" = 1 ] && [ "$rel" = 1 ]; then
+    # a relative cd after an unknown one moves every cwd seen
+    n=0
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      n=$((n + 1)); [ "$n" -le 8 ] || break
+      d=$(gc_resolve "$d" "$t")
+      case "$GC_NL$GC_CW_CWDS$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) GC_CW_CWDS="$GC_CW_CWDS$GC_NL$d" ;; esac
+    done <<GC_CW_REL
+$GC_CW_CWDS
+GC_CW_REL
+    return 0
+  fi
+  d=$(gc_resolve "$GC_CW_CUR" "$t")
+  [ "$first" = pushd ] && GC_CW_STACK="${GC_CW_STACK:+$GC_CW_STACK$GC_NL}$GC_CW_CUR"
+  gc_cwd_set "$d"
+  return 0
+}
 # gc_augmented_cmd <cwd> -- GC_CMD, plus the body of every script segment
 # (gc_script_body, depth 1: a body is never itself re-scanned for further
 # script segments). Walks gc_seg_raw's output exactly once, over the UNMODIFIED
@@ -775,53 +869,17 @@ gc_aug_overflow_refuse() {
 # body's own `cd` would then move the later TYPED segments. Special characters
 # in <dir> travel as placeholder bytes (above).
 gc_augmented_cmd() {
-  local cur="$1" cwds="$1" orig="$1" uncertain=0 out="$GC_CMD" seg sc tgt cls rel d c body _gc_bj synth ps_cwds="" n first overflow=0
+  local out="$GC_CMD" seg c body _gc_bj synth ps_cwds="" n d overflow=0
+  gc_cwd_init "$1"
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
-    sc=${seg//\"/}
-    sc=${sc//\'/}
-    tgt=$(gc_cd_target "$sc")
-    first=""
-    [[ $sc =~ ^[[:space:]]*([^[:space:]]+) ]] && first=${BASH_REMATCH[1]}
-    if [ "$first" = pushd ] || [ "$first" = popd ]; then
-      uncertain=1
-      continue
-    fi
-    if [ "$first" = cd ]; then
-      case "$tgt" in
-        ""|-*|*[*?[]*) uncertain=1; continue ;;
-      esac
-    fi
-    if [ -n "$tgt" ]; then
-      cls=$(gc_classify_c "$tgt" "$cur" | sed -n 1p)
-      rel=0
-      case "$tgt" in /*|[A-Za-z]:[/\\]*) ;; *) [ "$cls" = 1 ] && rel=1 ;; esac
-      if [ "$cls" = 3 ]; then
-        uncertain=1
-      elif [ "$uncertain" = 1 ] && [ "$rel" = 1 ]; then
-        # relative cd after an unresolvable one: every candidate moves
-        n=0
-        while IFS= read -r d; do
-          [ -n "$d" ] || continue
-          n=$((n + 1)); [ "$n" -le 8 ] || break
-          d=$(gc_resolve "$d" "$tgt")
-          case "$GC_NL$cwds$GC_NL" in *"$GC_NL$d$GC_NL"*) ;; *) cwds="$cwds$GC_NL$d" ;; esac
-        done <<GC_AUG_REL
-$cwds
-GC_AUG_REL
-      else
-        cur=$(gc_resolve "$cur" "$tgt")
-        uncertain=0
-        case "$GC_NL$cwds$GC_NL" in *"$GC_NL$cur$GC_NL"*) ;; *) cwds="$cwds$GC_NL$cur" ;; esac
-      fi
-      continue
-    fi
-    if [ "$uncertain" = 1 ]; then
-      c=$(gc_aug_cands "$orig" "$cur" "$cwds")
+    gc_cwd_step "$seg" && continue
+    if [ "$GC_CW_UNC" = 1 ]; then
+      c=$(gc_aug_cands "$GC_CW_ORIG" "$GC_CW_CUR" "$GC_CW_CWDS")
       n=$(printf '%s\n' "$c" | grep -c .)
       if [ "$n" -gt 8 ] && gc_seg_may_run_script "$seg"; then overflow=1; fi
     else
-      c=$cur
+      c=$GC_CW_CUR
     fi
     if gc_seg_is_ps "$seg"; then
       while IFS= read -r d; do
