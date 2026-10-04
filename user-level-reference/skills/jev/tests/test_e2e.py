@@ -30,6 +30,24 @@ class ResolverAndTransportTests(unittest.TestCase):
         res = jr.run_resolver("general-purpose", sb.repo, sb.env())
         self.assertEqual((res.kind, res.model, res.jev, res.effort), ("floor", "sonnet", True, ""))
         self.assertEqual(jt.fwd(res.gd), sb.gd)
+        # The resolver never needs the key: it must not be in the subprocess env.
+        seen = []
+        real = jr.subprocess.run
+
+        def spy(*a, **kw):
+            seen.append(kw.get("env"))
+            return real(*a, **kw)
+
+        env = dict(sb.env(), TYPESAFE_API_KEY=jt.KEY)
+        jr.subprocess.run = spy
+        try:
+            res = jr.run_resolver("general-purpose", sb.repo, env)
+        finally:
+            jr.subprocess.run = real
+        self.assertEqual(res.kind, "floor")
+        self.assertEqual(len(seen), 1)
+        self.assertNotIn("TYPESAFE_API_KEY", seen[0])
+        self.assertIn("PATH", seen[0])
 
     def test_resolver_without_lib_is_none(self):
         sb = jt.Sandbox(self, lib_in_home=False)

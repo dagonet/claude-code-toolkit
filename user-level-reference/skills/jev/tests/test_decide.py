@@ -109,6 +109,16 @@ class PayloadTests(unittest.TestCase):
                     b'{"answers": {"model": {"choice": "opus", "confidence": 1.5}}}',
                     b'{"answers": {"model": {"choice": "opus", "confidence": NaN}}}'):
             self.assertIsNone(jr.parse_answers(raw)[0], raw)
+        # Only finite 0..1 probabilities survive (NaN/inf/negative/>1 dropped), so events stay strict JSON.
+        raw = (b'{"answers": {"model": {"choice": "opus", "confidence": 0.9, "probabilities": '
+               b'{"opus": 0.9, "sonnet": NaN, "haiku": Infinity, "fable": -0.1}, "x": 1}, '
+               b'"effort": {"choice": "high", "confidence": 0.6, "probabilities": '
+               b'{"high": 1.5, "low": -Infinity, "medium": 0.4}}}}')
+        m, e = jr.parse_answers(raw)
+        self.assertEqual(m["probabilities"], {"opus": 0.9})
+        self.assertEqual(e["probabilities"], {"medium": 0.4})
+        json.dumps(m, allow_nan=False)
+        json.dumps(e, allow_nan=False)
 
     def test_emit_copies_whole_tool_input_and_sets_model(self):
         out = json.loads(jr.emit(dict(C1TI), "opus").decode("utf-8"))

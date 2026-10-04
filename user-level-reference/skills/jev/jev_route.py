@@ -121,7 +121,8 @@ def _answer(answers, key, choices):
         return None
     probs = a.get("probabilities") if isinstance(a.get("probabilities"), dict) else {}
     probs = {k: v for k, v in probs.items()
-             if k in choices and isinstance(v, (int, float)) and not isinstance(v, bool)}
+             if k in choices and isinstance(v, (int, float)) and not isinstance(v, bool)
+             and 0.0 <= v <= 1.0}  # finite 0..1 only (the range test is false for NaN)
     return {"choice": choice, "confidence": float(conf), "probabilities": probs}
 
 
@@ -398,7 +399,8 @@ def run_resolver(subagent_type, cwd, env):
         return None
     try:
         cp = subprocess.run([bash, lib, subagent_type, cwd], capture_output=True,
-                            timeout=RESOLVER_TIMEOUT, env=dict(env))
+                            timeout=RESOLVER_TIMEOUT,
+                            env={k: v for k, v in env.items() if k != "TYPESAFE_API_KEY"})
     except (OSError, subprocess.SubprocessError):
         return None
     m = RESOLUTION_RE.match(cp.stdout.decode("utf-8", "replace").strip())
