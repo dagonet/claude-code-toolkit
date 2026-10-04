@@ -697,31 +697,33 @@ GC_NL='
 # The list is closed on purpose; a mechanism missing from it is a known residual
 # (CHANGELOG, Known limits). The repository for all judging is the leading cd's
 # target, else the payload cwd: GC_CWD_E.
+# Script bodies are scanned best-effort (T3c-9): a body's own cd, or a script not found, is judged in GC_CWD_E, not refused.
 GC_GATED_VERB=""
 # directory-change WORDS (case-insensitive, whole words)
 GC_DIRWORD_RE='(^|[^[:alnum:]_./-])(cd|pushd|popd|chdir|dirs|sl|shopt|eval|source|Set-Location|Push-Location|Pop-Location)([^[:alnum:]_.-]|$)|-WorkingDirectory|-wd[[:space:]]'
-# `.` only in COMMAND position (T3c-3, T3c-8): at the start of a line, after ; & | ( { a
-# keyword (then do else elif if while until time ! builtin command), or after a `-c` flag
-# cluster (a wrapped payload, quotes already dropped)
-GC_SRC_RE='(^|[;&|({]|[[:space:]](then|do|else|elif|if|while|until|time|!|builtin|command)[[:space:]]|-[A-Za-z]*c[[:space:]])[[:space:]]*\.[[:space:]]'
+# `.` only in COMMAND position (T3c-3, T3c-8, T3c-11): at the start of a line, after ; & | ( {
+# or a `-c` flag cluster (a wrapped payload, quotes already dropped), each optionally followed
+# by keywords (then do else elif if while until time ! builtin command). Matched per line.
+GC_SRC_RE='(^|[;&|({]|-[A-Za-z]*c[[:space:]])[[:space:]]*((then|do|else|elif|if|while|until|time|!|builtin|command)[[:space:]]+)*\.[[:space:]]'
 # env -C / env --chdir (the option, not git's own -C after the command word)
 GC_ENVC_RE='(^|[^[:alnum:]_./-])env([[:space:]]+(-u[[:space:]]+[^[:space:]]+|-[^[:space:]]+|[^[:space:]=-][^[:space:]=]*=[^[:space:]]*))*[[:space:]]+(-C|--chdir)'
 # where git or cd lands: an assignment of CDPATH / HOME / PWD / OLDPWD. The words GIT_DIR /
 # GIT_WORK_TREE anywhere (export, read, printf -v, $env:...) are matched case-insensitively
-# in gc_dirchange_in (T3c-10: PowerShell env names are).
+# by the word grep in gc_dirchange_in (T3c-10: PowerShell env names are).
 GC_DIRVAR_RE='(^|[^[:alnum:]_])(CDPATH|HOME|PWD|OLDPWD)='
 
 # gc_dirchange_in <text> -- succeeds when the text holds any of the above.
 # The value of a literal -m / -am / --message / --body / --title argument (no $ and no
-# backtick in it) is data, never executed, and is dropped first (T3c-5, T3c-7). Then quotes
-# and backslashes are dropped (`c""d`, `\cd`), as the verb matchers do.
+# backtick in it) is data, never executed, and is dropped first (T3c-5, T3c-7) -- unless the
+# text holds a flag cluster with a `c` in it (a shell -c payload; T3c-12, fail-closed). Then
+# quotes and backslashes are dropped (`c""d`, `\cd`), as the verb matchers do.
 gc_dirchange_in() {
-  local t
-  t=$(printf '%s' "$1" | sed -E \
+  local t=$1
+  printf '%s\n' "$t" | grep -qE '(^|[[:space:]])-[A-Za-z]*c[A-Za-z]*[[:space:]]' || t=$(printf '%s' "$t" | sed -E \
     -e "s/(^|[[:space:]])(-m|-am|--message|--body|--title)[[:space:]=]*\"[^\"\$\`]*\"/\1\2 X/g" \
-    -e "s/(^|[[:space:]])(-m|-am|--message|--body|--title)[[:space:]=]*'[^'\$\`]*'/\1\2 X/g" | tr -d "\"'\\\\")
-  printf '%s\n' "$t" | grep -qiE "$GC_DIRWORD_RE|$GC_ENVC_RE|$GC_SRC_RE" && return 0
-  printf '%s\n' "$t" | grep -qiE 'GIT_DIR|GIT_WORK_TREE' && return 0
+    -e "s/(^|[[:space:]])(-m|-am|--message|--body|--title)[[:space:]=]*'[^'\$\`]*'/\1\2 X/g")
+  t=$(printf '%s' "$t" | tr -d "\"'\\\\")
+  printf '%s\n' "$t" | grep -qiE "$GC_DIRWORD_RE|$GC_ENVC_RE|$GC_SRC_RE|GIT_DIR|GIT_WORK_TREE" && return 0
   printf '%s\n' "$t" | grep -qE "$GC_DIRVAR_RE"
 }
 

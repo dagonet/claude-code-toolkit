@@ -9089,7 +9089,7 @@ check "G3c allowed: gate-before-merge: cd \"<worktree with a space>\" && gh pr m
 check "G3c allowed: gate-before-merge: git -C <feature repo> merge feature/y" hooks/gate-before-merge.sh 0 "$(mkjson Bash "git -C $G3CO merge feature/y" "$G3CP")"
 # ---- end v4.3.1 G3c
 
-# ---- v4.3.1 G3d: fix round 1 of S-3c (T3c-1..6): flat script lookup, pull gated, command-position source/dot, GIT_DIR anywhere, message args skipped ----
+# ---- v4.3.1 G3d: fix rounds 1-3 of S-3c (T3c-1..13): flat script lookup, pull gated, source anywhere / dot in command position, GIT_DIR anywhere, message args skipped (not under -c), -C false refusal pinned ----
 G3DP=$(mkrepo g3dp main)
 printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$G3DP/PROJECT_CONTEXT.md"
 printf 'git push\n' > "$G3DP/bare.sh"
@@ -9158,6 +9158,30 @@ check_msg "G3d T3c-9 a body verb is still judged: bash bare.sh from the protecte
 # T3c-10: GIT_DIR / GIT_WORK_TREE match case-insensitively (PowerShell env names are)
 check_msg "G3d T3c-10 no-push-main: PowerShell \$env:git_dir = x; git push"               "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson PowerShell '$env:git_dir = "/x/.git"; git push' "$G3DO")" "$D3"
 check_msg "G3d KNOWN FALSE REFUSAL: git commit -F- heredoc whose body mentions GIT_DIR"   "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "$(printf 'git commit -F- <<EOF\nfix GIT_DIR handling\nEOF')" "$G3DO")" "$D3"
+# fix round 3 (T3c-11..13)
+# T3c-11: `.` after a keyword that itself begins the text or a line
+check_msg "G3d T3c-11 pre-commit-test: if . ./cdp.sh; then git commit"                   "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'if . ./cdp.sh; then git commit -m x; fi' "$G3DO")" "$D3"
+check_msg "G3d T3c-11 no-push-main: time . ./cdp.sh; git push"                           "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'time . ./cdp.sh; git push' "$G3DO")" "$D3"
+check_msg "G3d T3c-11 no-push-main: ! . ./cdp.sh; git push"                              "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash '! . ./cdp.sh; git push' "$G3DO")" "$D3"
+check_msg "G3d T3c-11 no-push-main: second line begins time . ./cdp.sh"                  "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "$(printf 'true\ntime . ./cdp.sh\ngit push')" "$G3DO")" "$D3"
+check_msg "G3d T3c-11 allowed: find . -name x; git commit (operand dot)"                 "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'find . -name x; git commit -m x' "$G3DO")" "passed."
+check_msg "G3d T3c-11 allowed: cp a . ; git commit (operand dot)"                        "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'cp a . ; git commit -m x' "$G3DO")" "passed."
+check_msg "G3d T3c-11 allowed: ls . | wc -l; git commit (operand dot)"                   "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'ls . | wc -l; git commit -m x' "$G3DO")" "passed."
+check "G3d T3c-11 KNOWN LIMIT allowed: case x in x) . ./cdp.sh;; esac; git push"         hooks/no-push-main.sh 0 "$(mkjson Bash 'case x in x) . ./cdp.sh;; esac; git push' "$G3DO")"
+# T3c-12: no message skip at all when the text holds a shell -c payload flag (fail-closed)
+check_msg "G3d T3c-12 no-push-main: bash -c -m 'cd <P>; git push'"                       "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -c -m 'cd $G3DP; git push'" "$G3DO")" "$D3"
+check_msg "G3d T3c-12 pre-commit-test: bash -c -m 'cd <P>; git commit -m x'"             "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "bash -c -m 'cd $G3DP; git commit -m x'" "$G3DO")" "$D3"
+check_msg "G3d T3c-12 gate-before-merge: bash -c -m 'cd <P>; git merge feature/y'"       "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "bash -c -m 'cd $G3DP; git merge feature/y'" "$G3DO")" "$D3"
+check_msg "G3d T3c-12 no-push-main: bash -c -am 'cd <P>; git push'"                      "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -c -am 'cd $G3DP; git push'" "$G3DO")" "$D3"
+check_msg "G3d T3c-12 no-push-main: bash -cm -m 'cd <P>; git push' (c inside a cluster)"  "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -cm -m 'cd $G3DP; git push'" "$G3DO")" "$D3"
+check_msg "G3d T3c-12 pre-commit-test: sh -c -m \"cd <P>; git commit -m x\""             "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "sh -c -m \"cd $G3DP; git commit -m x\"" "$G3DO")" "$D3"
+check_msg "G3d T3c-12 KNOWN FALSE REFUSAL: wc -c f; git commit -m \"fix cd\" (any -c flag)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'wc -c README.md; git commit -m "fix cd"' "$G3DO")" "$D3"
+check "G3d T3c-12 KNOWN LIMIT allowed: echo \" -m '\"; cd <P>; git push; echo \"'\""     hooks/no-push-main.sh 0 "$(mkjson Bash "echo \" -m '\"; cd $G3DP; git push; echo \"'\"" "$G3DO")"
+# T3c-13: a typed `bash <script>` whose body holds `git -C "$d" commit` is refused by the
+# PRE-EXISTING v3.0.3 unresolved -C rule, not by the simple-cd rule (T3c-9 is "not refused by S-3c")
+printf 'd=/x\ngit -C "$d" commit -q -m seed\n' > "$G3DO/seedc.sh"
+check_msg "G3d T3c-13 KNOWN FALSE REFUSAL (v3.0.3 unresolved -C, not S-3c): bash seedc.sh" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash seedc.sh' "$G3DO")" "the -C target"
+check_nomsg "G3d T3c-13 ... and the message is not the S-3c one"                         "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash seedc.sh' "$G3DO")" "$D3"
 # ---- end v4.3.1 G3d
 
 echo "----------------------------------------------------------------"
