@@ -9363,6 +9363,7 @@ for v4d in "$V4MAIN" "$V4FEAT"; do
   printf '%s\n' 'git commit -m x' 'git push origin main' > "$v4d/c.sh"
   printf '%s\n' 'git $'"'"'\x63ommit'"'"' -m x' 'git push origin $'"'"'ma\x69n'"'"'' > "$v4d/e.sh"
   printf '\357\273\277git push origin main\n' > "$v4d/b.ps1"
+  printf 'git push origin main\n# \000\n' > "$v4d/n.sh"
 done
 V4NEEDLE="use plain quotes"
 v4row() { # <n> <pc> <np> <gbm> <m|-> <command>: all three gates on both fixtures
@@ -9429,6 +9430,10 @@ done <<'V4TABLE'
 47|2|2|2|m|git "${z:-$'\x63ommit'}" -m x
 48|0|0|0|-|echo "${#PATH}" # it's
 49|0|0|0|-|echo "${HOME%"/x"}"
+52|2|2|2|-|true&&bash c.sh
+53|0|2|2|-|true&&pwsh ./b.ps1
+54|2|2|2|-|cd sub; cd ..; true&&bash c.sh
+55|0|2|2|-|bash n.sh
 V4TABLE
 # a # comment with an apostrophe must not hide a later $'
 v4row 50 2 2 2 m "$(printf '%s\n%s' "echo hi # don't" "git push origin \$'ma\\x69n'")"

@@ -650,7 +650,7 @@ GC_PS_SPLIT
     seen="$seen|$p|"
     [ -f "$p" ] || continue
     n=$((n + 1)); [ "$n" -le 16 ] || break
-    head -c 16384 "$p" 2>/dev/null | LC_ALL=C sed "1s/^$GC_BOM//" | LC_ALL=C grep -v '^[[:space:]]*#'
+    head -c 16384 "$p" 2>/dev/null | LC_ALL=C sed "1s/^$GC_BOM//" | LC_ALL=C grep -av '^[[:space:]]*#'
     printf '\n'
   done
   return 0
@@ -734,7 +734,7 @@ gc_script_body() {
   # strip (spec §0): bash does not continue a line inside a comment, so
   # join-then-strip would merge `# note \<LF>git push origin main` into the
   # comment and delete the push.
-  GC_SB=$(head -c 16384 "$path" 2>/dev/null | LC_ALL=C grep -v '^[[:space:]]*#')
+  GC_SB=$(head -c 16384 "$path" 2>/dev/null | LC_ALL=C grep -av '^[[:space:]]*#')
 }
 
 GC_NL='
