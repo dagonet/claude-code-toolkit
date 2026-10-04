@@ -3,7 +3,7 @@
 # has no model of its own (general-purpose, Plan, Explore, `model: inherit`)
 # runs on the project default instead of the orchestrator's model (v4.3.0, spec
 # Part C). Never touches an explicit model or a typed agent's own model. Steps
-# aside while Jev routing is on (it applies the same floor) and while the user
+# aside while the Jev router will run in this checkout (it applies the same floor; see am_jev_routing in lib/agent-model.sh) and while the user
 # has set CLAUDE_CODE_SUBAGENT_MODEL to a real model (S-30; see the step-aside
 # below for exactly what that covers). ADVISORY: any doubt -> exit 0, no output (the spawn
 # inherits, as before v4.3.0).

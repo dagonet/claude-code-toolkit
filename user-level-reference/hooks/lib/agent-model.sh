@@ -88,12 +88,25 @@ am_resolve() {
   AM_KIND=floor
 }
 
-# am_jev_routing <root> -- exit 0 iff model-floor must step aside for the Jev
-# router in this checkout. Sets AM_GD (the absolute git common dir) either way.
+# AM_JEV_MARKER -- the path every /jev registration names. Check 65 asserts the
+# registration jev_ctl.py writes (REG_COMMAND) contains it.
+AM_JEV_MARKER='skills/jev/jev_route.py'
+# am_jev_routing <root> -- exit 0 iff the Jev router WILL run for a spawn in this
+# checkout, so model-floor may step aside (v4.4.0 R-2). All four must hold:
+#   1. <git common dir>/jev/config.json says "route": true      (/jev on, per clone)
+#   2. ~/.claude/skills/jev/jev_route.py exists                  (a deleted skill is silent)
+#   3. python3 runs                                              (the registration runs it)
+#   4. <root>/.claude/settings.local.json names the router       (per CHECKOUT: a sibling
+#      worktree of the same clone has its own settings.local.json)
+# Any one missing -> model-floor floors, so a spawn never has neither emitter.
+# Sets AM_GD (the absolute git common dir) whenever git answers.
 am_jev_routing() {
   AM_GD=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
   [ -n "$AM_GD" ] || return 1
-  grep -Eq '"route"[[:space:]]*:[[:space:]]*true' "$AM_GD/jev/config.json" 2>/dev/null
+  grep -Eq '"route"[[:space:]]*:[[:space:]]*true' "$AM_GD/jev/config.json" 2>/dev/null || return 1
+  [ -f "$HOME/.claude/skills/jev/jev_route.py" ] || return 1
+  python3 -c '' >/dev/null 2>&1 || return 1
+  grep -qF "$AM_JEV_MARKER" "$1/.claude/settings.local.json" 2>/dev/null
 }
 
 # Executed (the Jev router), not sourced: print the one-line answer.

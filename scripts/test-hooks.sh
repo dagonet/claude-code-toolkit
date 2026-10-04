@@ -8435,13 +8435,21 @@ c1_floor "C1 row5 commented example is inert -> sonnet" - general-purpose sonnet
 printf '# ctx\n<!-- - **Subagent default model**: opus -- optional -->\n- **Subagent default model**: haiku\n' > "$C1R/PROJECT_CONTEXT.md"
 c1_floor "C1 row5 live line after the commented example wins" - general-purpose haiku
 rm -f "$C1R/PROJECT_CONTEXT.md"
-# row 6: Jev routing on -> step aside
+# row 6: Jev routing on -> step aside. v4.4.0 R-2: only when the router will
+# really run -- route true AND ~/.claude/skills/jev/jev_route.py AND python3 AND
+# this checkout's settings.local.json registers it (J-MF has the negative rows).
+# One assertion on every host: without python3 the expected answer is the floor.
 C1GD=$(git -C "$C1R" rev-parse --path-format=absolute --git-common-dir)
-mkdir -p "$C1GD/jev"; printf '{"route": true}\n' > "$C1GD/jev/config.json"
-c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")";    c1_silent "C1 row6 jev route true -> silent"
+mkdir -p "$C1GD/jev" "$C1HOME/.claude/skills/jev"; printf '{"route": true}\n' > "$C1GD/jev/config.json"
+: > "$C1HOME/.claude/skills/jev/jev_route.py"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","command":"python3 ~/.claude/skills/jev/jev_route.py"}]}]}}\n' > "$C1R/.claude/settings.local.json"
+c1_run - "$C1HOME" "$(c1_payload general-purpose - "$C1CWD")"
+C1_R6=silent; python3 -c '' >/dev/null 2>&1 || C1_R6=sonnet
+expect "C1 row6 jev router installed+registered -> silent (floor without python3)" "$C1_R6" \
+  "$(if [ -s "$C1OUTF" ]; then jfield "$(<"$C1OUTF")" hookSpecificOutput.updatedInput.model; else echo silent; fi)"
 printf '{"route": false}\n' > "$C1GD/jev/config.json"
 c1_floor "C1 row6b jev route false -> floor applies" - general-purpose sonnet
-rm -rf "$C1GD/jev"
+rm -rf "$C1GD/jev" "$C1HOME/.claude/skills"; rm -f "$C1R/.claude/settings.local.json"
 # row 7: path-unsafe type names
 c1_run - "$C1HOME" "$(c1_payload '../x' - "$C1CWD")";             c1_silent "C1 row7 subagent_type ../x -> silent"
 c1_run - "$C1HOME" "$(c1_payload 'a/b' - "$C1CWD")";              c1_silent "C1 row7b subagent_type a/b -> silent"
@@ -8750,8 +8758,18 @@ JDGD=$(git -C "$JDR" rev-parse --path-format=absolute --git-common-dir)
 mkdir -p "$JDGD/jev"; printf '{"route": false}\n' > "$JDGD/jev/config.json"
 jd_cmp "jev config route false" "$(jd_payload general-purpose -)"
 printf '{"route": true}\n' > "$JDGD/jev/config.json"
-jd_cmp "jev config route true" "$(jd_payload general-purpose -)"
-rm -rf "$JDGD/jev"
+# v4.4.0 R-2: the current copy steps aside only for a router that will run, so
+# for both copies to step aside the router file + this checkout's registration
+# must exist (the frozen golden steps aside on route true alone). Without python3
+# the current copy floors by design: skip the row's 3 assertions.
+if python3 -c '' >/dev/null 2>&1; then
+  mkdir -p "$JDH/.claude/skills/jev"; : > "$JDH/.claude/skills/jev/jev_route.py"
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","command":"python3 ~/.claude/skills/jev/jev_route.py"}]}]}}\n' > "$JDR/.claude/settings.local.json"
+  jd_cmp "jev config route true (router installed+registered)" "$(jd_payload general-purpose -)"
+else
+  skip "J-DIFF jev config route true" "no python3 on this host (the router cannot run)" 3
+fi
+rm -rf "$JDGD/jev" "$JDH/.claude/skills/jev"; rm -f "$JDR/.claude/settings.local.json"
 # JT1-1: the golden is pinned to the v4.3.0 blob, so a wrong-target cp cannot
 # silently replace it while every comparison above stays green.
 JD_PIN_FALLBACK=cff06f739b64c69a35d1b263f4e206f7574d98d7
@@ -8799,6 +8817,55 @@ expect "J-LIB 5th field is the git common dir"     "$JLGD" "$(HOME="$JLH" bash "
 expect "J-LIB exactly one output line"             1 "$(HOME="$JLH" bash "$ROOT/hooks/lib/agent-model.sh" Plan "$JLCWD" | wc -l | tr -d ' ')"
 expect "J-LIB mirror is byte-identical"            same "$(cmp -s "$ROOT/hooks/lib/agent-model.sh" "$ROOT/user-level-reference/hooks/lib/agent-model.sh" && echo same || echo differs)"
 # ---- end v4.4.0 J-LIB
+
+# ---- v4.4.0 J-MF: model-floor steps aside only for a router that will run (R-2) ----
+# v4.3.0 stepped aside on "route": true alone. The switch is per CLONE (the
+# common git dir) but the registration is per CHECKOUT (.claude/settings.local.json),
+# so a sibling worktree, a deleted skill or a missing python3 left a spawn with
+# NO emitter -- it inherited the orchestrator's model. Now all four must hold.
+echo "=== model-floor step-aside (v4.4.0 J-MF) ==="
+. "$ROOT/hooks/lib/json.sh"
+unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
+JMR=$(mkrepo jmrepo main)
+JMH="$TMPROOT/jmhome"; mkdir -p "$JMH/.claude/skills/jev" "$JMR/.claude"
+JMGD=$(git -C "$JMR" rev-parse --path-format=absolute --git-common-dir)
+JMREG='{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","command":"f=\"$HOME/.claude/skills/jev/jev_route.py\"; [ -f \"$f\" ] && python3 \"$f\"; exit 0","timeout":5}]}]}}'
+# With python3 hidden (the jq-only matrix configuration) the router cannot run,
+# so the "fully on" rows expect the floor there -- one assertion either way.
+JM_ON=silent; python3 -c '' >/dev/null 2>&1 || JM_ON=sonnet
+jm_model() { # <cwd> -> the model model-floor emits for a general-purpose spawn, or "silent"
+  printf '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"p"},"cwd":"%s"}' "$(jesc "$(natpath "$1")")" \
+    | HOME="$JMH" bash "$ROOT/hooks/model-floor.sh" >"$TMPROOT/jm.out" 2>/dev/null
+  if [ -s "$TMPROOT/jm.out" ]; then jfield "$(<"$TMPROOT/jm.out")" hookSpecificOutput.updatedInput.model; else echo silent; fi
+}
+jm_state() { # <route true|false|absent> <router file yes|no> <registered yes|no|other>
+  rm -rf "$JMGD/jev"
+  [ "$1" = absent ] || { mkdir -p "$JMGD/jev"; printf '{"route": %s}\n' "$1" > "$JMGD/jev/config.json"; }
+  rm -f "$JMH/.claude/skills/jev/jev_route.py"; [ "$2" = yes ] && : > "$JMH/.claude/skills/jev/jev_route.py"
+  case "$3" in
+    yes)   printf '%s\n' "$JMREG" > "$JMR/.claude/settings.local.json" ;;
+    other) printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo mine"}]}]}}\n' > "$JMR/.claude/settings.local.json" ;;
+    *)     rm -f "$JMR/.claude/settings.local.json" ;;
+  esac
+}
+jm_state true yes yes;   expect "J-MF on: route, router, registration -> model-floor silent" "$JM_ON" "$(jm_model "$JMR")"
+jm_state true yes no;    expect "J-MF this checkout not registered -> floor"                  sonnet "$(jm_model "$JMR")"
+jm_state true yes other; expect "J-MF settings.local.json without the router -> floor"        sonnet "$(jm_model "$JMR")"
+jm_state true no yes;    expect "J-MF router file deleted -> floor"                          sonnet "$(jm_model "$JMR")"
+jm_state false yes yes;  expect "J-MF /jev off (route false) -> floor"                       sonnet "$(jm_model "$JMR")"
+jm_state absent yes yes; expect "J-MF no config at all -> floor"                             sonnet "$(jm_model "$JMR")"
+# A sibling worktree shares the clone's config but not the checkout's settings.
+JMWT="$TMPROOT/jmwt"
+git -C "$JMR" worktree add -q -b jmwt "$JMWT" >/dev/null 2>&1
+jm_state true yes yes
+expect "J-MF worktree shares the common dir"           "$JMGD" "$(git -C "$JMWT" rev-parse --path-format=absolute --git-common-dir)"
+expect "J-MF sibling worktree, unregistered -> floor"  sonnet  "$(jm_model "$JMWT")"
+expect "J-MF main checkout, registered -> on"          "$JM_ON" "$(jm_model "$JMR")"
+JM_CLI_ON=1; [ "$JM_ON" = silent ] || JM_CLI_ON=0
+expect "J-MF lib CLI jev field, registered checkout"   "$JM_CLI_ON" "$(HOME="$JMH" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$(natpath "$JMR")" | cut -d' ' -f3)"
+expect "J-MF lib CLI jev field, sibling worktree"      0 "$(HOME="$JMH" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$(natpath "$JMWT")" | cut -d' ' -f3)"
+rm -rf "$JMGD/jev"
+# ---- end v4.4.0 J-MF
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
