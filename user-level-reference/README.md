@@ -88,6 +88,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 | `karpathy-guidelines` | auto | Writing any new code — mechanically enforced on `coder`/`*-coder` spawns via `hooks/require-skills-block.sh`; carries the *Toolkit working preferences (developer agents)* section |
 | `mcp-usage` | auto | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
 | `backlog-board` | auto | Create or update a project's live backlog board (a version-pinned, database-backed page); pairs with the `pm-report` output style |
+| `jev` | `/jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- one step at most from the agent's default, reviewers never below sonnet, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |
 
 **What replaced the culled artifacts**
 

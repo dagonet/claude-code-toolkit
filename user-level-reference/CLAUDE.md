@@ -34,7 +34,7 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 
 ## Sub-Agent Model Choice
 
-- **Every Agent spawn names its `model` explicitly.** A type without its own model (`general-purpose`, other built-ins, `model: inherit`) otherwise inherits the orchestrator's — the most expensive one (measured: 31 such spawns ran on Opus/Fable).
+- **Every Agent spawn names its `model` explicitly — unless Jev routing is on in this repo (`/jev on`; a session-start line announces it), then omit `model` and Jev picks one per launch.** A type without its own model (`general-purpose`, other built-ins, `model: inherit`) otherwise inherits the orchestrator's — the most expensive one (measured: 31 such spawns ran on Opus/Fable).
 - **The orchestrator picks per task:** reading, searching, summarising, extracting → `haiku`; implementing, testing, fixing from a clear brief → `sonnet`; reviewing safety-critical code, architecture, debugging an unclear cause → `opus`; `fable` only when `opus` is not enough. Raise `effort` for many-step work or verification that is easy to skip; lower it for lookups.
 - A typed agent's own `model:` is the default when the task fits it; a decider model (Jev) may later route within these bounds.
 
