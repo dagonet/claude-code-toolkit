@@ -3947,7 +3947,7 @@ fi
 note "Check 63: **Test paths**, **Gate extra**, **Subagent default model**, **Test timeout** appear in every variant's PROJECT_CONTEXT.md on no line the hooks' key pattern matches (documented in a one-line comment, never set)"
 C63_KEYS='Test paths|Gate extra( Command)?|Subagent default model|Test timeout'
 # GC_BOM / GC_KEY_PRE: the same text as hooks/lib/git-cmd.sh, run-gate.sh and
-# lib/agent-model.sh (the definition census, check 21c-2a, pins the three copies together).
+# lib/agent-model.sh (the definition census, check 21c-2, pins the three copies together).
 GC_BOM=$(printf '\357\273\277')
 GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 

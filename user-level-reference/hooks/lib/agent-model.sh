@@ -32,7 +32,7 @@ case "${CLAUDE_CODE_SUBAGENT_MODEL:-}" in haiku|sonnet|opus|fable|claude-*) AM_E
 am_env_forced() { [ -n "$AM_ENV_REAL" ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-}" = 1 ]; }
 
 # GC_BOM / GC_KEY_PRE: the same text as hooks/lib/git-cmd.sh and run-gate.sh,
-# pinned together by the definition census (check 21c-2a). Sourcing git-cmd.sh
+# pinned together by the definition census (check 21c-2). Sourcing git-cmd.sh
 # here would cost ~57 ms per Agent spawn. A BOM on line 1 must not hide the key.
 GC_BOM=$(printf '\357\273\277')
 GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
