@@ -65,14 +65,14 @@ gpp_install() {
   fi
   gi_hp=$(git -C "$gi_top" config --get core.hooksPath 2>/dev/null)
   if [ -n "$gi_hp" ]; then
-    { echo "pre-push: not installed: core.hooksPath is set ($gi_hp), so git ignores .git/hooks. Add this line to $gi_hp/pre-push yourself:"; gpp_chain; } >&2
+    { echo "pre-push: not installed: core.hooksPath is set ($gi_hp), so git ignores .git/hooks. Add this line as the FIRST line after the shebang of $gi_hp/pre-push; anything below it that reads the refs must read \"\$refs\" instead, e.g. printf '%s\\n' \"\$refs\" | git lfs pre-push \"\$@\":"; gpp_chain; } >&2
     return 1
   fi
   gi_common=$(git -C "$gi_top" rev-parse --git-common-dir 2>/dev/null)
   case "$gi_common" in /*|[A-Za-z]:*) ;; *) gi_common="$gi_top/$gi_common" ;; esac
   gi_dst="$gi_common/hooks/pre-push"
-  if [ -e "$gi_dst" ] && ! grep -qF 'claude-code-toolkit pre-push shim' "$gi_dst" 2>/dev/null; then
-    { echo "pre-push: not installed: $gi_dst already exists and is not this toolkit's shim -- left untouched. Add this line to it yourself:"; gpp_chain; } >&2
+  if { [ -e "$gi_dst" ] || [ -L "$gi_dst" ]; } && [ "$(sed -n 2p "$gi_dst" 2>/dev/null)" != "$(gpp_shim | sed -n 2p)" ]; then
+    { echo "pre-push: not installed: $gi_dst already exists and is not this toolkit's shim -- left untouched. Add this line as the FIRST line after the shebang; anything below it that reads the refs must read \"\$refs\" instead, e.g. printf '%s\\n' \"\$refs\" | git lfs pre-push \"\$@\":"; gpp_chain; } >&2
     return 1
   fi
   if mkdir -p "$gi_common/hooks" 2>/dev/null && gpp_shim > "$gi_dst.tmp.$$" 2>/dev/null &&

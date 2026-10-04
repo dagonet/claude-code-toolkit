@@ -9479,6 +9479,13 @@ expect "V1: not a repository: the reason"            yes "$(v1_yes grep -qF 'is 
 V1S=$(mkrepo v1s main); mkdir -p "$V1S/sub/hooks"; cp -R "$ROOT/hooks/." "$V1S/sub/hooks/"
 expect "V1: hooks only in a subdirectory: --install exits 1 (R-2)" 1 "$(v1_install "$V1S/sub")"
 expect "V1: hooks only in a subdirectory: no shim"   no "$(v1_yes [ -e "$V1S/.git/hooks/pre-push" ])"
+V1M2=$(v1_repo v1m2 -); printf '#!/bin/sh\n# see claude-code-toolkit pre-push shim\nexit 0\n' > "$V1M2/.git/hooks/pre-push"; cp "$V1M2/.git/hooks/pre-push" "$TMPROOT/v1m2.before"
+expect "V1: a hook that only mentions the marker: --install exits 1" 1 "$(v1_install "$V1M2")"
+expect "V1: a foreign-hook message says where the line goes" yes "$(v1_yes grep -qF '"$refs"' "$TMPROOT/v1i.err")"
+expect "V1: a hook that only mentions the marker is untouched" yes "$(v1_yes cmp -s "$TMPROOT/v1m2.before" "$V1M2/.git/hooks/pre-push")"
+V1Y=$(v1_repo v1y -); ln -s "$TMPROOT/v1-nowhere" "$V1Y/.git/hooks/pre-push"
+expect "V1: a dangling symlink pre-push: --install exits 1" 1 "$(v1_install "$V1Y")"
+expect "V1: a dangling symlink pre-push is still a symlink" yes "$(v1_yes [ -L "$V1Y/.git/hooks/pre-push" ])"
 # ---- end v4.3.2 V1
 
 echo "----------------------------------------------------------------"
