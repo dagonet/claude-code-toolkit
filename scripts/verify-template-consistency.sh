@@ -4072,15 +4072,15 @@ fi
 echo
 c69_pred() { # <hook> <setup.sh> <setup.ps1> -> prints each failure; empty when sound
   grep -q 'gc_protected_branches "' "$1" 2>/dev/null || printf ' %s does not call gc_protected_branches;' "$1"
-  grep -qE 'grep[^#]*Protected' "$1" 2>/dev/null && printf ' %s reads **Protected branches** itself;' "$1"
-  grep -qF 'git-pre-push.sh --install' "$2" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$2"
-  grep -qF 'git-pre-push.sh --install' "$3" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$3"
+  grep -v '^[[:space:]]*#' "$1" 2>/dev/null | grep -q Protected && printf ' %s reads **Protected branches** itself;' "$1"
+  grep -qF 'bash "$TARGET_DIR/hooks/git-pre-push.sh" --install' "$2" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$2"
+  grep -qF 'alias.cct-pre-push=!bash hooks/git-pre-push.sh --install' "$3" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$3"
 }
 c69_tmp=$(mktemp -d)
 grep -v 'gc_protected_branches "' hooks/git-pre-push.sh > "$c69_tmp/nocall.sh" 2>/dev/null
 { cat hooks/git-pre-push.sh; printf 'x=$(grep -E "Protected branches" PROJECT_CONTEXT.md)\n'; } > "$c69_tmp/owngrep.sh"
-grep -v 'git-pre-push.sh --install' setup-project.sh > "$c69_tmp/setup.sh" 2>/dev/null
-grep -v 'git-pre-push.sh --install' setup-project.ps1 > "$c69_tmp/setup.ps1" 2>/dev/null
+grep -vF 'bash "$TARGET_DIR/hooks/git-pre-push.sh" --install' setup-project.sh > "$c69_tmp/setup.sh" 2>/dev/null
+grep -vF 'alias.cct-pre-push=!bash hooks/git-pre-push.sh --install' setup-project.ps1 > "$c69_tmp/setup.ps1" 2>/dev/null
 c69_ctl=0
 [ -n "$(c69_pred "$c69_tmp/nocall.sh" setup-project.sh setup-project.ps1)" ] || c69_ctl=1
 [ -n "$(c69_pred "$c69_tmp/owngrep.sh" setup-project.sh setup-project.ps1)" ] || c69_ctl=1
@@ -4093,7 +4093,7 @@ if [ "$c69_ctl" -ne 0 ]; then
 elif [ -n "$c69_bad" ]; then
   ko "check 69:$c69_bad"
 else
-  ok "check 69: hooks/git-pre-push.sh reads the protected set through gc_protected_branches only, and both setup scripts install it; control fires"
+  ok "check 69: hooks/git-pre-push.sh calls gc_protected_branches and names **Protected branches** only in comments, and both setup scripts call the installer; control fires"
 fi
 
 # ---------------------------------------------------------------------------
