@@ -6,6 +6,7 @@ Fake secrets are assembled at runtime so no token-shaped literal is committed.
 import getpass
 import os
 import sys
+import time
 import unittest
 
 sys.dont_write_bytecode = True
@@ -57,6 +58,12 @@ class RedactTests(unittest.TestCase):
         self.assertGreaterEqual(counts.get("key_value", 0), 1)
         out, _ = redact("TYPESAFE_API_KEY=sk-abc")  # short value still masked via key=value
         self.assertNotIn("sk-abc", out)
+        out, _ = redact('{"password": "' + "hunter2" * 2 + '", "api_key":"abcdEF12"}')
+        self.assertNotIn("hunter2", out)
+        self.assertNotIn("abcdEF12", out)
+        out, _ = redact('password="p@ss w0rd" secret: \'has space inside\'')
+        for leak in ("w0rd", "space", "inside"):
+            self.assertNotIn(leak, out)
 
     def test_url_credentials(self):
         self.assertMasked("https://bob:s3cretPass@example.com/x", "s3cretPass", "url_credentials")
@@ -79,6 +86,9 @@ class RedactTests(unittest.TestCase):
         out, counts = redact(text)
         self.assertEqual(out, text)
         self.assertEqual(sum(counts.values()), 0)
+        start = time.monotonic()  # linear-time patterns: the hook timeout is 5 s
+        redact("a." * 50000)
+        self.assertLess(time.monotonic() - start, 2)
 
 
 class TrimTests(unittest.TestCase):
@@ -101,6 +111,7 @@ class TrimTests(unittest.TestCase):
 class ResidualTests(unittest.TestCase):
     def test_flags_unknown_high_entropy_token(self):
         self.assertTrue(residual_findings("value Zq8vN2kLpX4rT7wY1mB6cF9hJ3sD5gA0eU"))
+        self.assertTrue(residual_findings("key Zq8vN2kLpX4rT7wY1mB6cF9hJ3sD5gA0eU."))
 
     def test_ignores_hex_hashes_and_paths(self):
         self.assertEqual(residual_findings("sha b43b14010ee2f9c5ec2825b6f2b9d972b0250ea7 and sha256 " + "a" * 64), [])

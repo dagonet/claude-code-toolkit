@@ -23,9 +23,9 @@ except Exception:  # no passwd entry, no env: nothing to mask by name
 # (kind, regex, replacement). Order matters: specific shapes first, key=value after
 # them (its value lookahead skips what an earlier pattern already masked).
 _PATTERNS = [
-    ("private_key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+    ("private_key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]{0,10000}?-----END [A-Z ]*PRIVATE KEY-----",
      "[REDACTED:private_key]"),
-    ("url_credentials", r"(\b[A-Za-z][A-Za-z0-9+.-]*://[^\s:/@]+:)[^\s@/]+(@)",
+    ("url_credentials", r"((?<![\w+.-])[A-Za-z][A-Za-z0-9+.-]{0,20}://[^\s:/@]{1,64}:)[^\s@/]{1,256}(@)",
      r"\1[REDACTED:url_credentials]\2"),
     ("jwt", r"\beyJ[\w-]+\.[\w-]+\.[\w-]+", "[REDACTED:jwt]"),
     ("api_key", r"\bsk-[A-Za-z0-9_-]{16,}", "[REDACTED:api_key]"),
@@ -35,9 +35,10 @@ _PATTERNS = [
     ("slack_token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}", "[REDACTED:slack_token]"),
     ("bearer", r"(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}", r"\1[REDACTED:bearer]"),
     ("key_value",
-     r"(?i)(\b[\w.-]*(?:password|passwd|secret|token|api[_-]?key)[\w.-]*\s*[=:]\s*)([\"']?)(?!\[REDACTED)[^\s\"']+\2",
-     r"\1\2[REDACTED:key_value]\2"),
-    ("email", r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "[REDACTED:email]"),
+     r"(?i)((?<![\w.-])[\w.-]{0,40}?(?:password|passwd|secret|token|api[_-]?key)[\w.-]{0,40}[\"']?\s*[=:]\s*)"
+     r"(?:\"[^\"\n]*\"|'[^'\n]*'|(?!\[REDACTED)[^\s\"']+)",
+     r"\1[REDACTED:key_value]"),
+    ("email", r"(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}", "[REDACTED:email]"),
 ]
 if _USER:
     _u = re.escape(_USER)
@@ -48,7 +49,7 @@ if _USER:
 _COMPILED = [(kind, re.compile(rx), repl) for kind, rx, repl in _PATTERNS]
 
 _HEXISH = re.compile(r"[0-9a-fA-F]{24,}")
-_TOKEN = re.compile(r"(?<![\w./\\-])[A-Za-z0-9_-]{24,}(?![\w./\\-])")
+_TOKEN = re.compile(r"(?<![\w./\\-])[A-Za-z0-9_-]{24,}(?![\w/\\-])(?!\.\w)")
 
 
 def redact(text):
