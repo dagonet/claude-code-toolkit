@@ -1,2 +1,2 @@
-4.3.0
-Agent time sinks: an opt-in Test paths skip and a Gate extra reuse of the commit-time test run, a budget brake that lets a commit through, two advisory hooks (deny-hang-shapes, model-floor), and the model-ownership wording -- template hook, settings and PROJECT_CONTEXT changes, no server-code change.
+4.3.1
+Gate fail-open fixes (a budgeted per-commit Test that kills its whole tree, git.exe and quoted git, script bodies judged where they run, tree-named commit-time artifacts) and sync-server fixes (pending opt-in notes, strict parameters, files_created).
