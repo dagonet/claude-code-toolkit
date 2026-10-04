@@ -19,6 +19,13 @@ else
 fi
 [ -n "$DH_CWD" ] && [ -f "$DH_CWD/.claude/git-guard-off" ] && exit 0
 [ -n "$DH_CMD" ] || exit 0
+# v4.4.0 C4: every refusal needs `<<` (shape 1), `sleep` (shape 2) or a leading `cd`
+# (shape 3) in the command after continuation joining; a backslash may hide one across a
+# continuation, so it continues too. Over-matches on purpose (any case, any position).
+# Applies to both parse paths above (DH_CMD is set once, either way).
+shopt -s nocasematch
+case "$DH_CMD" in *'\'*|*'<<'*|*sleep*|*cd*) ;; *) shopt -u nocasematch; exit 0 ;; esac
+shopt -u nocasematch
 _j=$(printf '%s' "$DH_CMD" | cmd_join_continuations) && [ -n "$_j" ] && DH_CMD="$_j"
 dh_refuse() { echo "BLOCKED: deny-hang-shapes: $1" >&2; exit 2; }
 

@@ -9518,6 +9518,12 @@ C3WDJ=$(jesc "$C3WD")
 C3H_BASH='{"tool_name":"Bash","cwd":"'"$C3WDJ"'","tool_input":{"command":"ls -la"}}'
 C3H_READ='{"tool_name":"Read","cwd":"'"$C3WDJ"'","tool_input":{"file_path":"'"$C3WDJ"'/notes.txt"}}'
 C3H_AGENT='{"tool_name":"Agent","cwd":"'"$C3WDJ"'","tool_input":{"prompt":"do the thing","subagent_type":"coder"}}'
+# model-floor must get PAST its cwd read: a typed agent whose own file declares a model passes
+# the type checks, finds its file under cwd/.claude/agents and exits there -- so a second
+# cwd read (json_get) anywhere before that point would show as a second interpreter run.
+mkdir -p "$C3WD/.claude/agents"
+printf -- '---\nname: c3m\nmodel: sonnet\n---\nbody\n' > "$C3WD/.claude/agents/c3m.md"
+C3H_AGENTM='{"tool_name":"Agent","cwd":"'"$C3WDJ"'","tool_input":{"prompt":"do the thing","subagent_type":"c3m"}}'
 C3H_WRITE='{"tool_name":"Write","cwd":"'"$C3WDJ"'","tool_input":{"file_path":"'"$C3WDJ"'/CLAUDE.md","content":"x"}}'
 for c3_b in node python3 jq; do
   c3_have=""
@@ -9529,11 +9535,99 @@ for c3_b in node python3 jq; do
   expect "C3: deny-secret-reads spawns one $c3_b on a Bash payload" 1 "$(c3h_n "$c3_b" deny-secret-reads "$C3H_BASH")"
   expect "C3: deny-secret-reads spawns one $c3_b on a Read payload" 1 "$(c3h_n "$c3_b" deny-secret-reads "$C3H_READ")"
   expect "C3: deny-hang-shapes spawns one $c3_b on a Bash payload" 1 "$(c3h_n "$c3_b" deny-hang-shapes "$C3H_BASH")"
-  expect "C3: model-floor spawns one $c3_b on an Agent payload" 1 "$(c3h_n "$c3_b" model-floor "$C3H_AGENT")"
+  expect "C3: model-floor spawns one $c3_b on an Agent payload" 1 "$(c3h_n "$c3_b" model-floor "$C3H_AGENTM")"
   expect "C3: require-skills-block spawns one $c3_b on an Agent payload" 1 "$(c3h_n "$c3_b" require-skills-block "$C3H_AGENT")"
   expect "C3: deny-claude-md-writes spawns one $c3_b on a CLAUDE.md Write payload" 1 "$(c3h_n "$c3_b" deny-claude-md-writes "$C3H_WRITE")"
 done
+# Task 4 review carry (R-T4a): with ONLY jq on PATH the two-document verdict is jq's own. A
+# payload of two JSON documents is rc 1 from json_fields; the three fail-closed hooks refuse it
+# and deny-hang-shapes (fail-open) falls back to json_valid/json_get, which on jq accepts two
+# documents and reads the FIRST -- so a heredoc-into-file command in it is still refused.
+c3j_rc() { # <hook> <payload> -- exit code of one run of the hook with jq the only parser
+  c3j_pd=$(c3h_dir jq) || { echo no-backend; return; }
+  printf '%s' "$2" | ( cd "$C3WD" && env PATH="$c3j_pd" CLAUDE_CODE_SUBAGENT_MODEL= "$c3h_bash" "$ROOT/hooks/$1.sh" ) >/dev/null 2>&1
+  echo $?
+}
+if [ -z "$HAVE_JQ" ]; then
+  skip "C3: jq-only two-document rows (R-T4a)" "no working jq on this host" 4
+else
+  expect "C3: jq-only deny-hang-shapes refuses a two-document heredoc-into-file payload (R-T4a)" 2 "$(c3j_rc deny-hang-shapes '{"tool_name":"Bash","cwd":"'"$C3WDJ"'","tool_input":{"command":"cat > f.txt <<EOF\nx\nEOF"}} {"b":2}')"
+  expect "C3: jq-only deny-secret-reads refuses a two-document payload" 2 "$(c3j_rc deny-secret-reads "$C3H_BASH {\"b\":2}")"
+  expect "C3: jq-only deny-claude-md-writes refuses a two-document payload" 2 "$(c3j_rc deny-claude-md-writes "$C3H_WRITE {\"b\":2}")"
+  expect "C3: jq-only require-skills-block refuses a two-document payload" 2 "$(c3j_rc require-skills-block "$C3H_AGENT {\"b\":2}")"
+fi
 # ---- end v4.4.0 C3
+
+# ---- v4.4.0 C4: builtin early exits in the fail-open hooks (deny-hang-shapes, bash-output-guard) ----
+# deny-hang-shapes: every refusal needs `<<` (shape 1), `sleep` (shape 2) or a leading `cd`
+# (shape 3) in the command after continuation joining; a backslash may hide one across a
+# continuation. The early exit tests the DECODED command with nocasematch (over-matches on
+# purpose) and sits before the cmd_join_continuations/awk forks. bash-output-guard: the engine
+# measures tool_response.stdout and tool_response.stderr and prints only when one is longer than
+# THRESHOLD UTF-16 units; each unit costs at least one byte of the payload, so a payload of
+# THRESHOLD bytes or fewer cannot hold one and the hook exits before any interpreter starts.
+# Consequence (CHANGELOG, Task 13): a small payload now skips the once-per-TMPDIR no-node WARN;
+# the decision class is unchanged. Expected values below are the OLD hooks' answers (8e0fa2f).
+echo "=== v4.4.0 C4 ==="
+c4nl=$'\n'
+c4_cwd=$(jesc "$TMPROOT")
+c4_hs() { # <label> <expected_exit> <command>
+  check "C4 deny-hang-shapes: $1" hooks/deny-hang-shapes.sh "$2" "$(mkjson Bash "$3" "$TMPROOT")"
+}
+c4_hs "heredoc: cat > f <<EOF"            2 "cat > f.txt <<EOF${c4nl}hello${c4nl}EOF"
+c4_hs "heredoc: cat <<'EOF' > f"          2 "cat <<'EOF' > f${c4nl}hello${c4nl}EOF"
+c4_hs "ok: message heredoc via -F-"       0 "git commit -F- <<EOF${c4nl}msg${c4nl}EOF"
+c4_hs "wait: while true; sleep"           2 "while true; do sleep 5; done"
+c4_hs "ok: sleep 30 && ls"                0 "sleep 30 && ls"
+c4_hs "cd: && ls && pwd"                  2 "cd /x && ls && pwd"
+c4_hs "ok: cd /x && ls"                   0 "cd /x && ls"
+c4_hs "ok: here-string"                   0 'ls <<<"x"'
+c4_hs "ok: upper-case SLEEP loop (case-sensitive shapes)" 0 "SLEEP 5; while :; do :; done"
+c4_hs "ok: bare <<EOF"                    0 "<<EOF"
+c4_hs "ok: ls -la (early exit)"           0 "ls -la"
+c4_hs "wait: sleep loop split by a continuation" 2 "while true; do sl\\${c4nl}eep 1; done"
+c4_hs "cd: leading cd split by a continuation"   2 "c\\${c4nl}d /x && ls && pwd"
+c4_post() { # <stdout body, JSON-escaped> -> a PostToolUse payload
+  printf '{"session_id":"c4","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"%s","tool_response":{"stdout":"%s","stderr":"","interrupted":false}}' "$c4_cwd" "$1"
+}
+c4_bog() { # <label> <want 1 = prints a truncation, 0 = silent> <stdout body>
+  c4_t="$TMPROOT/c4tmp.$$.$RANDOM"; mkdir -p "$c4_t"
+  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" bash "$ROOT/hooks/bash-output-guard.sh" 2>/dev/null); c4_rc=$?
+  c4_g=0; [ -n "$c4_o" ] && c4_g=1
+  expect "C4 bash-output-guard: $1" "$2:0" "$c4_g:$c4_rc"
+}
+if [ -z "$HAVE_NODE" ]; then
+  skip "C4: bash-output-guard decision rows" "no working node on this host" 4
+else
+  c4_bog "12,001 chars truncate"        1 "$(yes a | head -n 12001 | tr -d '\n')"
+  c4_bog "6,001 emoji truncate"         1 "$(yes '😀' | head -n 6001 | tr -d '\n')"
+  c4_bog "3,000 e-acute stay whole"     0 "$(yes 'é' | head -n 3000 | tr -d '\n')"
+  c4_bog "11,999 chars stay whole"      0 "$(yes a | head -n 11999 | tr -d '\n')"
+fi
+# Spawn rows: counting shims for the three interpreters and awk, on a whitelist PATH.
+C4LOG="$TMPROOT/c4.log"
+c4_dir() { # prints a PATH dir: basic tools, plus counting shims for node python3 jq awk
+  c4_d="$TMPROOT/c4h"; mkdir -p "$c4_d"
+  for c4_t in sh bash git grep sed tr head tail cut cat wc stat date mktemp dirname basename sort uniq mkdir rm ls env find touch cp expr node python3 jq awk; do
+    c4_r=$(command -v "$c4_t" 2>/dev/null) || continue
+    printf '#!/bin/sh\necho %s >> "%s"\nexec "%s" "$@"\n' "$c4_t" "$C4LOG" "$c4_r" > "$c4_d/$c4_t"; chmod +x "$c4_d/$c4_t"
+  done
+  printf '%s\n' "$c4_d"
+}
+c4_n() { # <hook> <payload> <tool-regex> -- how many of those tools ran during ONE run of the hook
+  c4_pd=$(c4_dir); : > "$C4LOG"
+  printf '%s' "$2" | ( cd "$TMPROOT" && env PATH="$c4_pd" TMPDIR="$TMPROOT" "$(command -v bash)" "$ROOT/hooks/$1.sh" ) >/dev/null 2>&1
+  grep -cE "$3" "$C4LOG" | tr -d ' '
+}
+if [ -z "$HAVE_NODE" ]; then
+  skip "C4: spawn rows" "no working node on this host" 3
+else
+  expect "C4: deny-hang-shapes on ls -la runs one interpreter" 1 "$(c4_n deny-hang-shapes "$(mkjson Bash 'ls -la' "$TMPROOT")" '^(node|python3|jq)$')"
+  expect "C4: deny-hang-shapes on ls -la runs no awk" 0 "$(c4_n deny-hang-shapes "$(mkjson Bash 'ls -la' "$TMPROOT")" '^awk$')"
+  # The bound is on the whole PAYLOAD (about 250 bytes of envelope), so the output is sized to keep it under THRESHOLD.
+  expect "C4: bash-output-guard on a payload of <= 12,000 bytes (11,700-char output) runs no interpreter" 0 "$(c4_n bash-output-guard "$(c4_post "$(yes a | head -n 11700 | tr -d '\n')")" '^(node|python3|jq)$')"
+fi
+# ---- end v4.4.0 C4
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
