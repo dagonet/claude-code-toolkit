@@ -59,6 +59,8 @@ This gate exists because nothing else can cover the case. A v2 manifest carries 
 >
 > **Skew: `server_commit` vs the checkout.** A 4.0+ response also carries `server_commit`, the toolkit commit this server process imported at spawn — read it with `.get("server_commit")` the same way you read `server_in_template_repo`: **absent means a pre-4.0 server**, and there is no skew check to run. When it is present, it can still be `null` — the server was not imported from a git checkout (an installed wheel, a copied tree) — and `null` means "cannot tell", not "differs"; say so once and do not warn, because a restart cannot turn a non-checkout into one. Only when the key is present, non-null, **and** differs from `git -C <templateRepo> rev-parse HEAD` has the toolkit been pulled after the server started: templates on disk are newer than the server code running. Say so and tell the user to restart the MCP server before syncing — the one tag makes this skew easy to miss, and this field is the only place it shows.
 
+> **A `server/` diff that touches only `server/src/template_sync/VERSION` still needs the `/mcp` reconnect (v4.3.1, panoscribe).** The running process holds the VERSION it read at import, so until `template-sync-tools` reconnects, `template_verify` FAILs `server_skew` although no server code changed. Reconnect for ANY change under `server/`; reinstall (`bash server/install.sh`) only when `server/pyproject.toml` — the dependencies — changed.
+
 **The currency question has exactly one right-hand side: `git -C <templateRepo> rev-parse HEAD`, never `git rev-parse <tag>`.** An ANNOTATED tag resolves to the TAG OBJECT's own sha (a real, different, commit-shaped-looking string), not the commit it points at — comparing `server_commit` against a tag name is comparing against the wrong kind of git object, and reads as skew when there is none or as agreement when there is skew. Wherever a tag genuinely is the right-hand side for some other comparison, dereference it first: `<tag>^{commit}`.
 
 A 4.0.2+ response also carries `registered_tools` — the names this process can DISPATCH, fixed at spawn. Read it with `.get("registered_tools")`: absent means a pre-4.0.2 server; present, it is the answer to "is `template_verify` callable here" — the `capabilities` list says what the loaded modules support, never what the registry holds (a pre-release server advertised `template_verify` with a nine-tool registry).
@@ -454,7 +456,7 @@ The same order applies to the CONFLICT resolutions in step 4 and the new files i
 
 **Any hook probe must live in a script file run via `bash <path>`, never inline — and its PAYLOAD STRINGS must live in separate DATA FILES, never typed or assembled inside that script (reopened for v4.1.1: never shipped in v4.1.0, though its PR claimed it).** The gates scan the whole command STRING by design, not just what a git subcommand would actually do — an inline compound command that merely *mentions* `git push origin main` (in a comment, an echo, a string literal) trips the gate it is trying to test. Since v4.0.3 (item #11, the wrapper gap this release closes) that scan also reads the LEADING RUN of any script file executed via `bash <path>`, looking past wrapper tokens for `bash`/`sh`/`source`/`.` — so a probe script that builds its own test payload inline (`for CMD in "git push origin main" ...`) puts the literal string `git push origin main` inside the very file the gate is asked to run, and the gate now reads that script's own body while deciding whether to let `bash <path>` through: the probe becomes a self-test the gate blocks before it ever executes. The result is then uninterpretable: a block does not tell you whether the gate works or whether your own probe was the violation it caught.
 
-Put each payload JSON string in its own file, written with the **file tool**, under `${TMPDIR:-/tmp}` — never inside the repo, where the gate could read it as tracked content: `"${TMPDIR:-/tmp}/probe-push-main.json"`, `"${TMPDIR:-/tmp}/probe-ls.json"`, `"${TMPDIR:-/tmp}/probe-true.json"`. The probe SCRIPT then only `cat`s these files into the hook's stdin and carries no git verb anywhere in its own text. **Assembling the verb from string fragments (`"git" " push" " origin" " main"` concatenated at runtime) is evasion, not a workaround, and it is not what this step teaches** — it does not test the gate, it defeats it, and a probe built that way tells you nothing about whether the real hook still catches the real case.
+Put each payload JSON string in its own file, written with the **file tool**, under `${TMPDIR:-/tmp}` — never inside the repo, where the gate could read it as tracked content: `"${TMPDIR:-/tmp}/probe-<repo>-push-main.json"`, `"${TMPDIR:-/tmp}/probe-<repo>-ls.json"`, `"${TMPDIR:-/tmp}/probe-<repo>-true.json"` (`<repo>` = the repository's directory name). The probe SCRIPT then only `cat`s these files into the hook's stdin and carries no git verb anywhere in its own text. **Assembling the verb from string fragments (`"git" " push" " origin" " main"` concatenated at runtime) is evasion, not a workaround, and it is not what this step teaches** — it does not test the gate, it defeats it, and a probe built that way tells you nothing about whether the real hook still catches the real case.
 
 **A heredoc body is part of the command string too** — `bash <<'EOF' … EOF` is not an escape from the previous paragraph, it is the same string with a different delimiter. Three sessions in two days hit exactly this. Write probe scripts with the **file tool** and run `bash <path>` — and payloads live in their own data files outside the repo, never typed or heredoc'd into the probe script itself; the script carries no gate verb.
 
@@ -462,9 +464,11 @@ Put each payload JSON string in its own file, written with the **file tool**, un
 
 Write the three DATA FILES first, with the **file tool** (never Bash, never inline in the probe script), each holding one JSON payload with `cwd` set to your repo (forward slashes, see the note below):
 
-- `"${TMPDIR:-/tmp}/probe-push-main.json"` — `{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"<repo>"}`
-- `"${TMPDIR:-/tmp}/probe-ls.json"` — `{"tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"<repo>"}`
-- `"${TMPDIR:-/tmp}/probe-true.json"` — `{"tool_name":"Bash","tool_input":{"command":"true"},"cwd":"<repo>"}`
+- `"${TMPDIR:-/tmp}/probe-<repo>-push-main.json"` — `{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"<repo>"}`
+- `"${TMPDIR:-/tmp}/probe-<repo>-ls.json"` — `{"tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"<repo>"}`
+- `"${TMPDIR:-/tmp}/probe-<repo>-true.json"` — `{"tool_name":"Bash","tool_input":{"command":"true"},"cwd":"<repo>"}`
+
+Name them per repo, or write them under the session scratchpad: `${TMPDIR:-/tmp}` is shared by every session on the machine, and two syncs running at once overwrite each other's payloads (panoscribe, open-brain).
 
 Then write the probe SCRIPT — which never types a git verb, only reads the files above — to `"${TMPDIR:-/tmp}/gate-probe.sh"` (or somewhere under `.claude/`) and run it with `bash "$TMPDIR/gate-probe.sh"`. **Do not** write either the script or the data files to a repo-relative path like `probe.sh` — `enforce-delegation.sh` denies main-thread writes outside the PO write surface, so the probe never gets created, and a repo-relative data file is itself tracked content the gate could read.
 
@@ -473,6 +477,8 @@ Then write the probe SCRIPT — which never types a git verb, only reads the fil
 ```sh
 H="${CLAUDE_PROJECT_DIR:-.}/hooks"
 T="${TMPDIR:-/tmp}"
+REPO_DIR=$(pwd -W 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_DIR")
 
 # a. every shipped script must PARSE. One apostrophe inside a `node -e '…'`
 #    body ends the shell string early and silently disables that whole hook.
@@ -489,11 +495,12 @@ done
 # substitutes when this skill is invoked with an argument, corrupting
 # the probe.
 probe_hook() {
+  grep -qF "\"cwd\":\"$REPO_DIR\"" "$PAYLOAD" || { echo "$HOOK_NAME [$PAYLOAD] NOT RUN: its cwd is not $REPO_DIR"; return; }
   cat "$PAYLOAD" | bash "$H/$HOOK_NAME.sh" >/dev/null 2>&1
   echo "$HOOK_NAME [$PAYLOAD] exit=$?"
 }
 HOOK_NAME="no-push-main"
-for PAYLOAD in "$T/probe-push-main.json" "$T/probe-ls.json" "$T/probe-true.json"; do
+for PAYLOAD in "$T/probe-$REPO_NAME-push-main.json" "$T/probe-$REPO_NAME-ls.json" "$T/probe-$REPO_NAME-true.json"; do
   probe_hook
 done
 ```
@@ -542,6 +549,8 @@ Collect all results. Report the list of auto-updated files.
 **`deny-claude-md-writes.sh` (v4.1.0) is version-gated and exits 0 on a v3 manifest — a consumer probing it before migrating reads a harmless exit as "inert," not as evidence the hook is broken.** It refuses a write only once the manifest reads `manifest_version: 4`, where `CLAUDE.md` really is template-owned outright as this section describes; on v3 the file still legitimately carries project content, so the hook has nothing to refuse yet and correctly stays out of the way. Separately: the harness validates an `Edit` call's `old_string` BEFORE any `PreToolUse` hook runs, so an `Edit` whose `old_string` does not occur in the target file returns "String to replace not found" with no hook error at all — **only an edit that would otherwise SUCCEED ever reaches the hook and tests it.** A near-miss `old_string` reads as "the deny hook let it through" to anyone who has not read this paragraph; in fact it never ran.
 
 **A `LOCAL_EDITED` agent whose entire diff is a `tools:` addition is not a rename candidate under v4 — it is a grants entry.** Step 6b below documents the RENAME route for a differing `hooks/*.sh` script; do not generalise that pattern to agents. An agent file has no such route: the fix is to add the granted tool(s) to that agent's entry in `.claude/agent-grants.json` and re-sync, letting the server splice it in (spec §5) — never to hand-edit the agent's `tools:` line, and never to rename the agent file to preserve a local addition. **An agent that ships no `tools:` line at all cannot receive a grant, ever** — it already inherits every tool, including MCP, so a grant has nothing to extend. The server's refusal, verbatim: `"<agent> ships no \`tools:\` line and already inherits every tool — remove the grant"`. If you see that refusal, the fix is to remove the grant from `.claude/agent-grants.json`, not to add a `tools:` line to the agent by hand — this skill does not synthesise allowlists for agents the template ships without one (R-E).
+
+**`has_changes: null` is not "no changes" (v4.3.1, open-brain, MM-Agent).** `template_changes` and `local_changes` diff against the template at the manifest's `template_commit`; when that base cannot be reconstructed they return `has_changes: null` with `base_unavailable_reason` — read `diff_type="full"` instead, and never treat the file as unchanged. A server older than v4.3.1 answered `has_changes: false` with `fallback_to_two_way: true` in that case: on such a server, `fallback_to_two_way: true` means the same thing.
 
 For each file with status `CONFLICT`:
 
@@ -632,6 +641,8 @@ For each file with status `CONFLICT`:
 > # rc == 0 and out empty -> no regions, proceed
 > # rc == 0 and out non-empty -> classify each listed file
 > ```
+>
+> Count classified files from STDOUT only: `region.sh` prints its `region.sh: scanned N files under <dir>` footer on STDERR, and a `2>&1 | wc -l` counts that footer as one more file (penumbra).
 >
 > `region.sh` ships next to this file, installed at `~/.claude/skills/sync-template/region.sh`. **Two independent consumers implemented "is the region empty?" from the paragraph above and both got the REASSURING answer wrongly**, which is why it is now code:
 >
@@ -1009,13 +1020,15 @@ Call `template_finalize_sync(project_path=".", applied_files=<JSON array of all 
 
 `new_files` REGISTERS an untracked path and never touches an existing entry; a tracked file you updated outside `template_apply_file` keeps its stale hash (`LOCAL_EDITED` with an empty `local_diff`) until you pass it in `applied_files`, which REFRESHES the hash; the post-finalize `compute_status` self-check is the control.
 
+**`files_created` (v4.3.1)** counts files the apply CREATED from the template; `files_updated` the ones it rewrote; `files_added` only `new_files` registrations not already tracked — a sync that created new hooks reads `files_created: N, files_added: 0`, which is correct.
+
 **Re-register keep-mine files LAST** — every keep-mine registration (step 6b's register-or-apply route for a present-but-untracked hook via `template_finalize_sync(new_files=[...])`, or step 4/5's `source="provided"` splice under v3) is the last action before finalize, after every edit including the sync's own write-up into `PROJECT_STATE.md`. A hash recorded before a later edit describes nothing, and on a file with a live PROJECT-CUSTOM region those stale part hashes are exactly what the next sync's classification reads.
 
 **Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's keep-mine registration set (step 4's `source="provided"` splice under v3, not `source="skip"`) — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it. **If no entry carries a hint, there is nothing to do here** — this clause exists for manifests that predate the part-hash fields, and a recently-synced repo has already re-registered everything (measured: `hint: ""` on all 36 entries of one consumer). An empty hint set is the healthy state, not a missing step.
 
 Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
 
-**Shape this as two short commands, not one long one.** Write the `applied_files` JSON — and any validator — to the scratchpad with the Write tool, then run `python3 <validator-path> <json-path>`. The payload will always contain hook paths (`hooks/run-gate.sh` among them, by construction), and a long command line carrying them is the shape that has repeatedly tripped a guard: it is also the standing "move logic into a script file" rule, arriving from a third direction. (`<json-path>` here is a path the Write tool just produced, not one typed from bash — see the bash→python platform note in the intro before shortcutting this to a `$TMPDIR`-derived string.)
+**Shape this as two short commands, not one long one.** Write the `applied_files` JSON — and any validator — to the scratchpad with the Write tool, then run `python3 <validator-path> <json-path>`. The payload will always contain hook paths (`hooks/run-gate.sh` among them, by construction), and a long command line carrying them is the shape that has repeatedly tripped a guard: it is also the standing "move logic into a script file" rule, arriving from a third direction. (`<json-path>` here is a path the Write tool just produced, not one typed from bash — see the bash→python platform note in the intro before shortcutting this to a `$TMPDIR`-derived string.) Pass that same file to the server as `applied_files_path=<json-path>` instead of hand-typing `applied_files` into the call.
 
 **Do NOT gate finalize on a client-side re-hash** (removed in v2.2.4, consumer feedback). Earlier versions of this step required recomputing each entry's hash from disk and asserting it matched `localHash`. That is not implementable from the skill text as written, and the file it reddens first is `PROJECT_CONTEXT.md` — the one file this skill's own conflict guidance says every consumer must splice. Both honest responses to that red are bad: finalize anyway (and learn to ignore a guard), or stop a clean sync. The original hand-typed-hash incident is already covered server-side — `template_finalize_sync` rejects malformed hashes — and by the "build `applied_files` programmatically" rule above.
 
@@ -1121,6 +1134,8 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 ### 8. Report
 
 **Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
+
+**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. The next finalize replaces the list.
 
 #### 8a. Expected lines, per mode AND per manifest situation (`LINES` is now 31 — v4.1.0 raised it from 24 to 30; v4.1.1 adds `project_md_seed_differs`, directly after `project_md_seed_current`)
 
@@ -1291,6 +1306,8 @@ git fetch -p                                       # drops the phantom remote-tr
 > `clause class: mover (not inert, not tracked) — flag '-d' is not on the read-only allowlist for 'git branch', so this clause is not provably inert … run the two as SEPARATE calls`
 
 So: delete the LOCAL branch (if at all) and the REMOTE branch as two separate calls, never one compound command, and never assume the MCP merge tool did the remote delete for you — it has no `--delete-branch` option.
+
+**When a harness worktree holds the PR branch, merge WITHOUT `--delete-branch`** — git refuses to delete a branch checked out in a worktree, so `gh pr merge --squash --delete-branch` fails after the merge has landed and reads like a failed merge. Merge, then delete the remote branch, then (after the worktree is removed) the local one, each as its own call (yutraffic).
 
 **Write the last two as two commands, not as `git checkout main && git pull --ff-only`.** Stated truthfully, because the reason changed under this procedure's feet: the chained form **blocked on v3.0.2** and is **allowed from v3.0.3**, because a bare `--ff-only` pull fetches first and can only fast-forward to the upstream, so its verdict does not depend on which branch the mover lands on — and refusing it would be a denied legitimate command. The mover rule is unchanged for the case it exists for: `git checkout <protected> && git merge <x>` is still refused, because there the landing is real and the branch decides. Keep the two-call form anyway — it is the shape that reads the same under both hook versions, and a consumer on a v3.0.2 checkout still hits the block. The two lines are IN the block on purpose: the reader who needs them is the one who was surprised by a refusal on `main` and is primed to read it as a broken release, and that reader copies from the block, not from the prose under it.
 
