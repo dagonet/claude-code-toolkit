@@ -167,11 +167,11 @@ else
   md5sum templates/*/.claude/settings.json
 fi
 
-coder_contract=$(grep -l "## Deliverable Contract" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md 2>/dev/null | wc -l)
+coder_contract=$(grep -lF "## Report (HARD REQUIREMENT)" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md 2>/dev/null | wc -l)
 if [ "$coder_contract" = "11" ]; then
-  ok "Deliverable Contract present in all 11 template coder files"
+  ok "Report section present in all 11 template coder files"
 else
-  ko "Deliverable Contract present in only $coder_contract/11 template coder files"
+  ko "Report section present in only $coder_contract/11 template coder files"
 fi
 
 coder_update_pr=$(grep -l "mcp__MCP_DOCKER__update_pull_request" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md 2>/dev/null | wc -l)
@@ -228,7 +228,7 @@ fi
 # Expected counts are computed by glob, not hard-coded, so adding an agent type
 # does not silently invalidate the assertion.
 #   report agents = every template agent file EXCEPT the coders (coder.md and the
-#   language variants); the coders carry the Deliverable Contract instead.
+#   language variants); the coders carry the Report section instead.
 report_agents=$(ls templates/*/.claude/agents/*.md 2>/dev/null | grep -vE 'coder\.md$' | wc -l)
 mandate_count=$(grep -l "Subagent reporting" templates/*/.claude/agents/*.md 2>/dev/null | wc -l)
 if [ "$mandate_count" = "$report_agents" ]; then
@@ -559,7 +559,7 @@ else
 fi
 
 # Agents that are told to invoke skills need the Skill tool: a subagent whose
-# tools: omits it cannot run the `## Required Skills` block the PO injects.
+# tools: omits it cannot open the skills its `## Skills` table names.
 # Counted over the SAME file list, so adding Skill to one of the excluded
 # agents later is a passing change, not a spurious count mismatch.
 skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
@@ -571,13 +571,17 @@ else
   ko "Skill tool present in only $skill_tool/$skill_users skill-invoking agent files"
 fi
 
-# All 12 coders (11 template + user-level) preload karpathy-guidelines, so the
-# house style is in context from turn one rather than one Skill call later.
-coder_skills=$(grep -l "karpathy-guidelines" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null | wc -l)
-if [ "$coder_skills" = "12" ]; then
-  ok "karpathy-guidelines preloaded via skills: in all 12 coder files"
+# v4.5.0 (A1/A4): no agent preloads a skill. `skills:` frontmatter injects the
+# whole skill text into every spawn ("The full content of each listed skill is
+# injected into the subagent's context at startup", sub-agents reference) --
+# exactly the up-front cost v4.5.0 removed. Each agent opens skills on demand
+# from its own `## Skills` table; the coders carry the karpathy preferences as
+# the `## Working rules` digest (check 67).
+skill_preload=$(grep -lE '^skills:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null)
+if [ -z "$skill_preload" ]; then
+  ok "no agent file preloads a skill via skills: frontmatter"
 else
-  ko "karpathy-guidelines preloaded in only $coder_skills/12 coder files"
+  ko "agent file(s) preload a skill via skills: frontmatter -- the up-front cost v4.5.0 removed is back: $(printf '%s ' $skill_preload)"
 fi
 
 # A coder that cannot create a file is not a coder: 44 Write calls died on the
@@ -656,8 +660,8 @@ done
 # ---------------------------------------------------------------------------
 # 20. Working-preferences custody (v2.0 PR4 round 2).
 #     The 11 developer-agent preferences left every CLAUDE.md and now live ONLY
-#     in the karpathy-guidelines skill, which all 12 coders preload via
-#     `skills:`. Nothing else references them, so a careless edit to that one
+#     in the karpathy-guidelines skill (the main thread's copy; the coders carry
+#     the `## Working rules` digest, check 67). Nothing else references them, so a careless edit to that one
 #     file silently deletes behaviour from every coder in every variant with no
 #     other check going red. Guard the heading and the bullet count.
 #
@@ -5121,6 +5125,40 @@ elif c66_out=$(python3 scripts/measure-process.py --self-test 2>&1); then
 else
   ko "check 66: scripts/measure-process.py --self-test failed: $(printf '%s' "$c66_out" | head -3 | tr '\n' ' ')"
 fi
+
+# ---------------------------------------------------------------------------
+# Check 67 -- the coder's `## Working rules`, `## Skills (...)` and `## Report
+# (HARD REQUIREMENT)` sections are byte-identical in all 12 coder files
+# (v4.5.0 A1/A2/B1). The digest replaced the karpathy-guidelines preload and
+# the Report is what hooks/enforce-agent-contract.sh checks, so one drifted
+# copy silently changes one coder. Each section runs from its heading to the
+# next `## `. Control: a section that extracts 0 B from the reference copy is
+# a failure, never a pass.
+# ---------------------------------------------------------------------------
+note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across the 12 coder files"
+c67_files=$(ls templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null)
+c67_count=$(printf '%s\n' "$c67_files" | grep -c .)
+c67_sec() { # <file> <heading line> -> the section, heading included
+  awk -v h="$2" 'index($0, h) == 1 { f = 1; print; next } f && /^## / { exit } f { print }' "$1"
+}
+for c67_h in '## Working rules' '## Skills (open one only when its trigger fires)' '## Report (HARD REQUIREMENT)'; do
+  c67_ref=$(c67_sec templates/general/.claude/agents/coder.md "$c67_h")
+  if [ -z "$c67_ref" ]; then
+    ko "check 67: '$c67_h' extracts 0 B from templates/general/.claude/agents/coder.md -- the section is missing or the extractor is broken"
+    continue
+  fi
+  c67_bad=""
+  for c67_f in $c67_files; do
+    [ "$(c67_sec "$c67_f" "$c67_h")" = "$c67_ref" ] || c67_bad="$c67_bad $c67_f"
+  done
+  if [ "$c67_count" -ne 12 ]; then
+    ko "check 67: found $c67_count coder files, expected 12"
+  elif [ -n "$c67_bad" ]; then
+    ko "check 67: '$c67_h' differs from templates/general's copy in:$c67_bad"
+  else
+    ok "check 67: '$c67_h' byte-identical in all $c67_count coder files ($(printf '%s\n' "$c67_ref" | wc -c | tr -d ' ') B)"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 echo
