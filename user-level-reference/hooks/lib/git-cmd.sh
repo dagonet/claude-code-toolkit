@@ -524,10 +524,14 @@ gc_guard_off() {
   [ -f "$GC_CWD/.claude/git-guard-off" ]
 }
 
+# gc_split_ops -- stdin split on | ; && into lines. awk, not sed 's/&&/\n/g':
+# BSD sed writes a literal n for \n in a replacement (design Q2 #1).
+gc_split_ops() { tr '|;' '\n\n' | awk '{gsub(/&&/,"\n")}1'; }
+
 # Splits GC_CMD into segments on && || ; | and newlines, with quote characters
 # removed so quoted wrapper payloads become plain text in the same segment.
 gc_segments() {
-  printf '%s\n' "$GC_CMD" | tr -d "\"'" | tr '|;' '\n\n' | sed 's/&&/\n/g'
+  printf '%s\n' "$GC_CMD" | tr -d "\"'" | gc_split_ops
 }
 
 # gc_seg_quoted -- sibling of gc_segments, additive (no caller of gc_segments
@@ -550,7 +554,7 @@ gc_segments() {
 # function. Callers assign the result to a variable named GC_SEG_QUOTED
 # themselves, e.g. `GC_SEG_QUOTED=$(gc_seg_quoted)`.
 gc_seg_quoted() {
-  printf '%s\n' "$GC_CMD" | tr '|;' '\n\n' | sed 's/&&/\n/g' | while IFS= read -r _gcsq_raw; do
+  printf '%s\n' "$GC_CMD" | gc_split_ops | while IFS= read -r _gcsq_raw; do
     case "$_gcsq_raw" in
       *[\"\']*) printf '1\n' ;;
       *)        printf '0\n' ;;
@@ -568,7 +572,7 @@ gc_seg_quoted() {
 # scan that only ever saw quote-stripped text cannot tell an interpreter word
 # from the same word sitting inside somebody else's quoted argument.
 gc_seg_raw() {
-  printf '%s\n' "$GC_CMD" | tr '|;' '\n\n' | sed 's/&&/\n/g'
+  printf '%s\n' "$GC_CMD" | gc_split_ops
 }
 
 # gc_seg_is_ps <raw_segment> -- v4.3.0 (S-38, S-40, S-41): succeeds when the
@@ -639,7 +643,7 @@ GC_PS_SPLIT
     seen="$seen|$p|"
     [ -f "$p" ] || continue
     n=$((n + 1)); [ "$n" -le 16 ] || break
-    head -c 16384 "$p" 2>/dev/null | LC_ALL=C sed '1s/^\xEF\xBB\xBF//' | grep -v '^[[:space:]]*#'
+    head -c 16384 "$p" 2>/dev/null | LC_ALL=C sed "1s/^$GC_BOM//" | LC_ALL=C grep -v '^[[:space:]]*#'
     printf '\n'
   done
   return 0
@@ -723,7 +727,7 @@ gc_script_body() {
   # strip (spec §0): bash does not continue a line inside a comment, so
   # join-then-strip would merge `# note \<LF>git push origin main` into the
   # comment and delete the push.
-  GC_SB=$(head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#')
+  GC_SB=$(head -c 16384 "$path" 2>/dev/null | LC_ALL=C grep -v '^[[:space:]]*#')
 }
 
 GC_NL='
@@ -792,7 +796,7 @@ gc_text_has_gated() {
       if gc_matches_subcommand "$seg" "$v"; then GC_GATED_VERB="$v"; return 0; fi
     done
   done <<GC_TG_SEGS
-$(printf '%s\n' "$t" | tr '|;' '\n\n' | sed 's/&&/\n/g')
+$(printf '%s\n' "$t" | gc_split_ops)
 GC_TG_SEGS
   return 1
 }

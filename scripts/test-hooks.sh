@@ -9352,6 +9352,7 @@ cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
 s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
 # ---- end v4.3.1 S6b
 # ==== V4 begin
+# v4.4.0 Q2 rows 40-45: verdicts are GNU sed's; BSD sed must agree (no \n in a replacement, no \xHH).
 # v4.4.0 Q1 option C (docs/plans/2026-10-04-ansi-mac-design.md): a real $'...' or
 # $"..." word is refused by all three gates. Rows 2-37 of the design's verdict
 # table, except 25 and 30 (backslash inside a word, out of scope).
@@ -9417,6 +9418,12 @@ done <<'V4TABLE'
 35|2|2|2|m|IFS=$'\n'; echo hi
 36|0|0|0|-|echo '$'"'"'x'"'"
 37|2|2|2|m|git log --format=$'%h\t%s' -1
+40|0|2|2|-|git checkout feature/x && git push origin main
+41|0|2|2|-|true&&git push origin main
+42|2|0|0|-|true&&git commit -m x
+43|0|0|2|-|echo hi && gh pr merge 5
+44|0|2|2|-|pwsh ./b.ps1
+45|0|0|0|-|git pull --ff-only origin main
 V4TABLE
 # ==== V4 end
 
