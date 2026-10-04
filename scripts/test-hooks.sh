@@ -9528,6 +9528,7 @@ check "V2: /bin/?h c.sh gated"                 hooks/pre-commit-test.sh 2 "$(mkj
 check "V2: /usr/bin/[b]ash c.sh gated"         hooks/pre-commit-test.sh 2 "$(mkjson Bash '/usr/bin/[b]ash c.sh' "$V2R")"
 check "V2: C:\\Tools\\pwsh.exe -File c.ps1 gated" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'C:\Tools\pwsh.exe -File c.ps1' "$V2R")"
 # F1 differential: the v4.3.1 hook and this one give the SAME exit on every listed command
+# (v4.3.2 6b: `git com\mit`, `SH c.sh` and `bash.exe c.sh` were allowed in v4.3.1 and are refused now -- see V3)
 V2B="$TMPROOT/v2base"; mkdir -p "$V2B"
 if git -C "$ROOT" archive 5d3d789 hooks 2>/dev/null | tar -x -C "$V2B" 2>/dev/null && [ -f "$V2B/hooks/pre-commit-test.sh" ]; then
   v2_diff=""
@@ -9545,7 +9546,6 @@ git.exe commit -m x
 'git' commit -m x
 /usr/bin/git commit -m x
 git com"mit" -m x
-git com\mit -m x
 bash c.sh
 sh c.sh
 /bin/sh c.sh
@@ -9574,8 +9574,6 @@ GIT_DIR=x git merge y
 cd sub; bash ../c.sh
 x=1 . ./c.sh
 (sh c.sh)
-SH c.sh
-bash.exe c.sh
 cat c.sh | sh
 echo "git commit -m x"
 git status --short
@@ -9634,6 +9632,54 @@ expect "V2: old git: the record lands in <top>/.gate as before" yes "$(v2_yes [ 
 # F1 glob rule: a glob character always walks (the walk expands globs)
 expect "V2: a glob character walks, not the fast path" yes "$(if [ "$(v2_spawns 'ls *.md')" != "$V2_FAST" ]; then echo yes; else echo no; fi)"
 # ---- end v4.3.2 V2
+
+# ---- v4.3.2 V3: bash.exe/sh.exe runners are scanned; a backslash in a gated verb is removed before matching ----
+V3R=$(mkrepo v3 main)
+printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V3R/PROJECT_CONTEXT.md"
+printf 'git commit -m x\n' > "$V3R/c.sh"
+printf 'git push origin main\n' > "$V3R/p.sh"
+printf 'git merge feature/y\n' > "$V3R/m.sh"
+printf 'echo hi\n' > "$V3R/h.sh"
+# (a) the runner word: bash|sh, optionally .exe, any case, any path prefix with / or \
+for v3r in bash.exe sh.exe BASH.EXE Bash.Exe SH.EXE SH /usr/bin/bash.exe /bin/sh.exe 'C:\Git\bin\bash.exe' 'C:\Git\bin\sh.exe' \
+           'C:\Git\bin\sh' 'C:\Git\bin\BASH.EXE' 'env sh.exe' 'ls && sh.exe' 'nohup /usr/bin/bash.exe'; do
+  check "V3 pre-commit-test: $v3r c.sh (commit)"        hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r c.sh" "$V3R")"
+  check "V3 no-push-main: $v3r p.sh (push origin main)" hooks/no-push-main.sh 2      "$(mkjson Bash "$v3r p.sh" "$V3R")"
+  check "V3 gate-before-merge: $v3r m.sh (merge)"       hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3r m.sh" "$V3R")"
+  check "V3 control: $v3r h.sh holds no gated verb"     hooks/pre-commit-test.sh 0   "$(mkjson Bash "$v3r h.sh" "$V3R")"
+done
+# (b) a backslash inside the verb: the shell removes it, git runs the verb
+check "V3 pre-commit-test: git com\\mit -m x"          hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git com\mit -m x' "$V3R")"
+check "V3 pre-commit-test: git commi\\t -m x"          hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git commi\t -m x' "$V3R")"
+check "V3 pre-commit-test: git -\\C . com\\mit"        hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git -\C . com\mit -m x' "$V3R")"
+check "V3 pre-commit-test: git.exe com\\mit"           hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git.exe com\mit -m x' "$V3R")"
+check "V3 pre-commit-test: g\\it com\\mit"             hooks/pre-commit-test.sh 2   "$(mkjson Bash 'g\it com\mit -m x' "$V3R")"
+check "V3 no-push-main: git pu\\sh origin main"        hooks/no-push-main.sh 2      "$(mkjson Bash 'git pu\sh origin main' "$V3R")"
+check "V3 no-push-main: git pu\\sh (bare, on main)"    hooks/no-push-main.sh 2      "$(mkjson Bash 'git pu\sh' "$V3R")"
+check "V3 no-push-main: git pu\\sh origin HEAD:main"   hooks/no-push-main.sh 2      "$(mkjson Bash 'git pu\sh origin HEAD:main' "$V3R")"
+check "V3 gate-before-merge: git mer\\ge feature/y"    hooks/gate-before-merge.sh 2 "$(mkjson Bash 'git mer\ge feature/y' "$V3R")"
+check "V3 gate-before-merge: git pu\\ll"               hooks/gate-before-merge.sh 2 "$(mkjson Bash 'git pu\ll' "$V3R")"
+# the simple-cd rule goes through the same recogniser
+check_msg "V3 simple-cd: cd sub && git com\\mit -m x"  "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd sub && git com\mit -m x' "$V3R")" "a directory change in a command with"
+check_msg "V3 simple-cd: cd sub && git pu\\sh"         "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub && git pu\sh' "$V3R")" "a directory change in a command with"
+check_msg "V3 simple-cd: cd sub && git mer\\ge x"      "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'cd sub && git mer\ge x' "$V3R")" "a directory change in a command with"
+check_msg "V3 simple-cd: cd sub && bash.exe c.sh"      "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd sub && bash.exe c.sh' "$V3R")" "a directory change in a command with"
+# controls: allowed before and after
+check "V3 control: git status"                         hooks/pre-commit-test.sh 0   "$(mkjson Bash 'git status' "$V3R")"
+check "V3 control: git st\\atus"                       hooks/pre-commit-test.sh 0   "$(mkjson Bash 'git st\atus' "$V3R")"
+check "V3 control: ls sh.exe.txt"                      hooks/pre-commit-test.sh 0   "$(mkjson Bash 'ls sh.exe.txt' "$V3R")"
+check "V3 control: echo C:\\\\x"                       hooks/pre-commit-test.sh 0   "$(mkjson Bash 'echo C:\\x' "$V3R")"
+check "V3 control: bash.exe h.sh (no-push-main)"       hooks/no-push-main.sh 0      "$(mkjson Bash 'bash.exe h.sh' "$V3R")"
+check "V3 control: git st\\atus (no-push-main)"        hooks/no-push-main.sh 0      "$(mkjson Bash 'git st\atus' "$V3R")"
+check "V3 control: git st\\atus (gate-before-merge)"   hooks/gate-before-merge.sh 0 "$(mkjson Bash 'git st\atus' "$V3R")"
+# the fast path: sh.exe is a word that walks; sh.exe.txt does not
+V3SHIM="$TMPROOT/v3shim"; V3LOG="$TMPROOT/v3.log"; mkdir -p "$V3SHIM"
+printf '#!/usr/bin/env bash\necho x >> "%s"\nexec "%s" "$@"\n' "$V3LOG" "$(command -v tr)" > "$V3SHIM/tr"; chmod +x "$V3SHIM/tr"   # the walk runs tr, the fast path runs none (V2 F2)
+v3_walks() { : > "$V3LOG"; printf '%s' "$(mkjson Bash "$1" "$V3R")" | PATH="$V3SHIM:$PATH" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1; [ -s "$V3LOG" ] && echo yes || echo no; }
+expect "V3 fast path: sh.exe c.sh walks"               yes "$(v3_walks 'sh.exe c.sh')"
+expect "V3 fast path: C:\\Git\\bin\\sh.exe h.sh walks" yes "$(v3_walks 'C:\Git\bin\sh.exe h.sh')"
+expect "V3 fast path: ls sh.exe.txt skips the walk"    no  "$(v3_walks 'ls sh.exe.txt')"
+# ---- end v4.3.2 V3
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

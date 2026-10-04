@@ -635,7 +635,9 @@ GC_PS_SPLIT
 #     flags and their values, bare wrapper words, absolute-path wrappers
 #     like `/usr/bin/env`) is skipped -- basename-matched against
 #     `bash|sh|source|.` and, on no match, simply passed over.
-#   - `bash`/`sh` match at ANY position in the run. `.`/`source` match ONLY
+#   - `bash`/`sh` (v4.3.2 6b: optionally `.exe`, any case, any path prefix with
+#     `/` or `\`, as gc_seg_is_ps does for powershell/pwsh) match at ANY position
+#     in the run. `.`/`source` match ONLY
 #     at position 1 (the segment's own head): both are shell BUILTINS, not
 #     PATH executables, so wrapping them through env/nice/timeout/nohup/
 #     command -- all of which execve a real binary -- does not actually
@@ -657,9 +659,9 @@ gc_script_body() {
     tok="$1"
     case "$tok" in *[\"\']*) return 0 ;; esac
     clean=$(printf '%s' "$tok" | tr -d "\"'")
-    base=${clean##*/}
+    base=${clean##*/}; base=${base##*\\}
     case "$base" in
-      bash|sh) break ;;
+      [Bb][Aa][Ss][Hh]|[Bb][Aa][Ss][Hh].[Ee][Xx][Ee]|[Ss][Hh]|[Ss][Hh].[Ee][Xx][Ee]) break ;;
       .|source) [ "$pos" = 1 ] && break ;;
     esac
     shift
@@ -1715,6 +1717,8 @@ gc_matches_subcommand() {
         if (is_git(tok)) seen_git = 1
         next
       }
+      raw = tok
+      while ((i = index(tok, bs)) > 0) tok = substr(tok, 1, i - 1) substr(tok, i + 1)   # v4.3.2 6b: the shell removes a backslash (git com\mit runs commit)
       if (want_value) { want_value = 0; next }
       if (tok == "-C" || tok == "-c" || tok == "--config-env" || tok == "--git-dir" ||
           tok == "--work-tree" || tok == "--namespace" || tok == "--exec-path" ||
@@ -1722,7 +1726,7 @@ gc_matches_subcommand() {
       if (tok ~ /^-/) next                 # single-token global -- skip, not a match
       if (tok == verb) { print "MATCH"; exit }
       if (first_only) {                    # first non-global token was not the verb:
-        seen_git = is_git(tok) ? 1 : 0     # this invocation is done; restart at the NEXT git token
+        seen_git = is_git(raw) ? 1 : 0     # this invocation is done; restart at the NEXT git token
         want_value = 0                     # (a compound segment: git add -A && git commit)
         next
       }
@@ -1771,6 +1775,7 @@ gc_push_args() {
         next
       }
       if (found) { print tok; next }
+      while ((i = index(tok, bs)) > 0) tok = substr(tok, 1, i - 1) substr(tok, i + 1)   # v4.3.2 6b: git pu\sh runs push
       if (want_value) { want_value = 0; next }
       if (tok == "-C" || tok == "-c" || tok == "--config-env" || tok == "--git-dir" ||
           tok == "--work-tree" || tok == "--namespace" || tok == "--exec-path" ||

@@ -519,11 +519,13 @@ fi
 # v4.3.1 S6 -- EXACT FAST PATH for a command that cannot reach a commit. This
 # hook runs on EVERY Bash call; the walk below cost ~1.4 s on an idle machine
 # for `ls -la`. Everything past this point can only refuse a command whose text
-# (quotes and backslashes removed, case ignored) holds one of these words:
+# (quotes and backslashes removed, case ignored; v4.3.2 6b: the verb matchers
+# remove a backslash too, so `git com\mit` is gated and walks) holds one of
+# these words:
 #   commit            the gated verb itself (`git com"mit"`, `GIT COMMIT`);
 #   merge pull push   gc_dir_rule (simple-cd rule) refuses these, and `gh pr merge`,
 #                     after a directory change even with no `commit` in the text;
-#   sh                the WORD sh (/bin/sh; never x.sh or --short), and the substrings
+#   sh                the WORD sh or sh.exe (/bin/sh, C:\Git\bin\sh.exe; never x.sh or --short), and the substrings
 #                     bash, pwsh, powershell -- the words that make the walk read
 #                     a script body (gc_script_body, gc_seg_is_ps);
 #   source, `.`       `source` (substring), and a `.` token: lone or ending in `/.`
@@ -552,11 +554,12 @@ pct_t=${GC_CMD//\"/}; pct_t=${pct_t//\'/}; pct_t=${pct_t//\\/}
 # word match. The bracket patterns live in variables: a literal `}` inside
 # ${...} would end the expansion.
 pct_nw='[^[:alnum:]._]'; pct_sep='[[:space:];&|(){}!`<>]'
-pct_w=" ${pct_t//$pct_nw/ } "; pct_d=" ${pct_t//$pct_sep/ } "
+pct_u=${GC_CMD//\"/}; pct_u=${pct_u//\'/}   # quotes out, backslashes kept: C:\Git\bin\sh.exe
+pct_w=" ${pct_t//$pct_nw/ } "; pct_w2=" ${pct_u//$pct_nw/ } "; pct_d=" ${pct_t//$pct_sep/ } "
 pct_walk=0
 shopt -s nocasematch
 case "$pct_t" in *commit*|*merge*|*pull*|*push*|*source*|*bash*|*pwsh*|*powershell*|*[[?*]*) pct_walk=1 ;; esac
-case "$pct_w" in *" sh "*) pct_walk=1 ;; esac
+case "$pct_w$pct_w2" in *" sh "*|*" sh.exe "*) pct_walk=1 ;; esac
 case "$pct_d" in *" . "*|*"/. "*) pct_walk=1 ;; esac
 shopt -u nocasematch
 [ "$pct_walk" = 1 ] || { pct_note no-commit-segment -1; exit 0; }
