@@ -9,11 +9,10 @@ lib="$(dirname "$0")/lib/json.sh"
 # shellcheck source=lib/json.sh
 . "$lib"
 DH_JSON=$(cat)
-json_have || exit 0
-json_valid "$DH_JSON" || exit 0
-DH_CWD=$(json_get "$DH_JSON" cwd)
+json_fields "$DH_JSON" cwd tool_input.command || exit 0   # v4.4.0 C3: no parser / invalid -> advisory exit 0
+DH_CWD=${JF[0]}
 [ -n "$DH_CWD" ] && [ -f "$DH_CWD/.claude/git-guard-off" ] && exit 0
-DH_CMD=$(json_get "$DH_JSON" tool_input.command)
+DH_CMD=${JF[1]}
 [ -n "$DH_CMD" ] || exit 0
 _j=$(printf '%s' "$DH_CMD" | cmd_join_continuations) && [ -n "$_j" ] && DH_CMD="$_j"
 dh_refuse() { echo "BLOCKED: deny-hang-shapes: $1" >&2; exit 2; }

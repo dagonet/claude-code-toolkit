@@ -109,16 +109,19 @@ lib="$(dirname "$0")/lib/json.sh"
 
 DSR_JSON=$(cat)
 
-json_have || {
+# v4.4.0 C3: one parser run for the verdict and all three fields (rc 2 = no parser, 1 = invalid).
+json_fields "$DSR_JSON" tool_name tool_input.file_path tool_input.command
+DSR_RC=$?
+[ "$DSR_RC" = 2 ] && {
   echo "BLOCKED: deny-secret-reads: no JSON parser (node, python3 or jq) on PATH — this hook cannot inspect the call, and a call it cannot inspect is not one it can clear. Install one of the three." >&2
   exit 2
 }
-json_valid "$DSR_JSON" || {
+[ "$DSR_RC" = 0 ] || {
   echo "BLOCKED: deny-secret-reads: hook payload did not parse — this hook cannot inspect the call. Report the payload; do not work around it." >&2
   exit 2
 }
 
-DSR_TOOL=$(json_get "$DSR_JSON" tool_name)
+DSR_TOOL=${JF[0]}
 
 # The secret shape, as one place. Anchored at a path separator or the start, so
 # `.environment` and `HEAD:.env` do not match, and `./.env` and `/x/.env.staging`
@@ -169,12 +172,12 @@ dsr_deny() { # <path> <location-desc> [extra-clause]
 
 case "$DSR_TOOL" in
   Read)
-    DSR_PATH=$(json_get "$DSR_JSON" tool_input.file_path)
+    DSR_PATH=${JF[1]}
     [ -n "$DSR_PATH" ] || exit 0
     dsr_is_secret "$DSR_PATH" && dsr_deny "$DSR_PATH" "the file path argument"
     ;;
   Bash|PowerShell)
-    DSR_CMD=$(json_get "$DSR_JSON" tool_input.command)
+    DSR_CMD=${JF[2]}
     # v4.1.2 spec §1: this hook never sourced git-cmd.sh, so the continuation
     # join lives in json.sh (already sourced above, fail-closed). Without it
     # `cat .e\<LF>nv` read as two tokens and the .env read was ALLOWED.

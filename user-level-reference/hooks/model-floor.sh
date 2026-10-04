@@ -35,18 +35,17 @@ MF_ENV_REAL=""
 case "${CLAUDE_CODE_SUBAGENT_MODEL:-}" in haiku|sonnet|opus|fable|claude-*) MF_ENV_REAL=1 ;; esac
 [ -n "$MF_ENV_REAL" ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-}" = 1 ] && exit 0
 case "$MF_JSON" in "$JSON_BOM"*) MF_JSON=${MF_JSON#"$JSON_BOM"} ;; esac
-json_have || exit 0
-json_valid "$MF_JSON" || exit 0
-[ "$(json_get "$MF_JSON" tool_name)" = "Agent" ] || exit 0
-[ -n "$(json_get "$MF_JSON" tool_input.model)" ] && exit 0
-MF_TYPE=$(json_get "$MF_JSON" tool_input.subagent_type)
+json_fields "$MF_JSON" tool_name tool_input.model tool_input.subagent_type cwd || exit 0   # v4.4.0 C3: no parser / invalid -> exit 0
+[ "${JF[0]}" = "Agent" ] || exit 0
+[ -n "${JF[1]}" ] && exit 0
+MF_TYPE=${JF[2]}
 [ -n "$MF_TYPE" ] || MF_TYPE=general-purpose
 [ -n "$MF_ENV_REAL" ] && [ "$MF_TYPE" = general-purpose ] && exit 0
 case "$MF_TYPE" in *[!A-Za-z0-9_.-]*|.*) exit 0 ;; esac
 # Types that carry a model of their own (statusline-setup: sonnet,
 # claude-code-guide: haiku) or ignore a model override (fork): step aside.
 case "$MF_TYPE" in statusline-setup|claude-code-guide|fork) exit 0 ;; esac
-MF_CWD=$(json_get "$MF_JSON" cwd); [ -n "$MF_CWD" ] || MF_CWD=.
+MF_CWD=${JF[3]}; [ -n "$MF_CWD" ] || MF_CWD=.
 MF_ROOT=$(git -C "$MF_CWD" rev-parse --show-toplevel 2>/dev/null) || MF_ROOT="$MF_CWD"
 # GC_KEY_PRE, defined locally (same text as hooks/lib/git-cmd.sh and run-gate.sh;
 # sourcing git-cmd.sh here would cost ~57 ms per Agent spawn): a BOM on line 1

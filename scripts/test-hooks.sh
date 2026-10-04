@@ -9491,6 +9491,48 @@ for c3_b in node python3 jq; do
   expect "C3: $c3_b json_fields on an invalid payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" 'garbage' fields)"
   expect "C3: $c3_b json_payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" "${C3P[0]}" payload)"
 done
+# Task 4: the five multi-call hooks parse their payload ONCE. Each hook runs as a fresh
+# process on a PATH holding only the basic tools plus one COUNTING shim for the backend under
+# test (node, python3 or jq), so every interpreter start is one logged line. The payloads are
+# the ones that reach the hook's last parse: a Bash/Read/Agent/Write call that every branch
+# allows or refuses AFTER reading its fields.
+c3h_dir() { # <backend> -> prints a PATH dir: basic tools + the counting shim for <backend>
+  c3h_d="$TMPROOT/c3h-$1"; mkdir -p "$c3h_d"
+  for c3h_t in sh bash git grep sed tr head tail cut cat wc stat date mktemp dirname basename sort uniq mkdir rm ls awk env find touch cp expr; do
+    c3h_r=$(command -v "$c3h_t" 2>/dev/null) || continue
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$c3h_r" > "$c3h_d/$c3h_t"; chmod +x "$c3h_d/$c3h_t"
+  done
+  c3h_r=$(command -v "$1" 2>/dev/null) || return 1
+  printf '#!/bin/sh\necho %s >> "%s"\nexec "%s" "$@"\n' "$1" "$C3LOG" "$c3h_r" > "$c3h_d/$1"; chmod +x "$c3h_d/$1"
+  printf '%s\n' "$c3h_d"
+}
+c3h_n() { # <backend> <hook> <payload> -- parser processes started by ONE run of the hook
+  c3h_pd=$(c3h_dir "$1") || { echo no-backend; return; }
+  : > "$C3LOG"
+  printf '%s' "$3" | ( cd "$C3WD" && env PATH="$c3h_pd" CLAUDE_CODE_SUBAGENT_MODEL= "$c3h_bash" "$ROOT/hooks/$2.sh" ) >/dev/null 2>&1
+  wc -l < "$C3LOG" | tr -d ' '
+}
+c3h_bash=$(command -v bash)
+C3WD="$TMPROOT/c3wd"; mkdir -p "$C3WD"
+C3WDJ=$(jesc "$C3WD")
+C3H_BASH='{"tool_name":"Bash","cwd":"'"$C3WDJ"'","tool_input":{"command":"ls -la"}}'
+C3H_READ='{"tool_name":"Read","cwd":"'"$C3WDJ"'","tool_input":{"file_path":"'"$C3WDJ"'/notes.txt"}}'
+C3H_AGENT='{"tool_name":"Agent","cwd":"'"$C3WDJ"'","tool_input":{"prompt":"do the thing","subagent_type":"coder"}}'
+C3H_WRITE='{"tool_name":"Write","cwd":"'"$C3WDJ"'","tool_input":{"file_path":"'"$C3WDJ"'/CLAUDE.md","content":"x"}}'
+for c3_b in node python3 jq; do
+  c3_have=""
+  case "$c3_b" in node) c3_have=$HAVE_NODE ;; python3) c3_have=$HAVE_PY ;; jq) c3_have=$HAVE_JQ ;; esac
+  if [ -z "$c3_have" ]; then
+    skip "C3: five-hook parse-once spawn rows ($c3_b)" "no working $c3_b on this host" 6
+    continue
+  fi
+  expect "C3: deny-secret-reads spawns one $c3_b on a Bash payload" 1 "$(c3h_n "$c3_b" deny-secret-reads "$C3H_BASH")"
+  expect "C3: deny-secret-reads spawns one $c3_b on a Read payload" 1 "$(c3h_n "$c3_b" deny-secret-reads "$C3H_READ")"
+  expect "C3: deny-hang-shapes spawns one $c3_b on a Bash payload" 1 "$(c3h_n "$c3_b" deny-hang-shapes "$C3H_BASH")"
+  expect "C3: model-floor spawns one $c3_b on an Agent payload" 1 "$(c3h_n "$c3_b" model-floor "$C3H_AGENT")"
+  expect "C3: require-skills-block spawns one $c3_b on an Agent payload" 1 "$(c3h_n "$c3_b" require-skills-block "$C3H_AGENT")"
+  expect "C3: deny-claude-md-writes spawns one $c3_b on a CLAUDE.md Write payload" 1 "$(c3h_n "$c3_b" deny-claude-md-writes "$C3H_WRITE")"
+done
 # ---- end v4.4.0 C3
 
 echo "----------------------------------------------------------------"
