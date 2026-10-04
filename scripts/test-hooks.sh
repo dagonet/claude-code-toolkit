@@ -9585,6 +9585,11 @@ c4_hs "ok: here-string"                   0 'ls <<<"x"'
 c4_hs "ok: upper-case SLEEP loop (case-sensitive shapes)" 0 "SLEEP 5; while :; do :; done"
 c4_hs "ok: bare <<EOF"                    0 "<<EOF"
 c4_hs "ok: ls -la (early exit)"           0 "ls -la"
+c4_hs_json() { # <label> <expected_exit> <raw JSON text of the payload>
+  check "C4 deny-hang-shapes: $1" hooks/deny-hang-shapes.sh "$2" "$3"
+}
+c4_hs_json "heredoc: JSON-escaped (backslash-u 003c, backslash-n) form" 2 \
+  '{"session_id":"c4","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat > f \u003c\u003cEOF\nx\nEOF"},"cwd":"'"$c4_cwd"'"}'
 c4_hs "wait: sleep loop split by a continuation" 2 "while true; do sl\\${c4nl}eep 1; done"
 c4_hs "cd: leading cd split by a continuation"   2 "c\\${c4nl}d /x && ls && pwd"
 c4_post() { # <stdout body, JSON-escaped> -> a PostToolUse payload
@@ -9592,12 +9597,23 @@ c4_post() { # <stdout body, JSON-escaped> -> a PostToolUse payload
 }
 c4_bog() { # <label> <want 1 = prints a truncation, 0 = silent> <stdout body>
   c4_t="$TMPROOT/c4tmp.$$.$RANDOM"; mkdir -p "$c4_t"
-  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" bash "$ROOT/hooks/bash-output-guard.sh" 2>/dev/null); c4_rc=$?
+  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" ${C4LOC:+LC_ALL="$C4LOC" LANG="$C4LOC"} bash "${C4_BOG_HOOK:-$ROOT/hooks/bash-output-guard.sh}" 2>/dev/null); c4_rc=$?
   c4_g=0; [ -n "$c4_o" ] && c4_g=1
   expect "C4 bash-output-guard: $1" "$2:0" "$c4_g:$c4_rc"
 }
+# The rows run under a UTF-8 locale (probed like S9): in the ambient C locale a mutant that counts
+# characters instead of bytes (no LC_ALL=C before ${#TOOL_INPUT}) still truncates, so the emoji row
+# could not catch it. C4_BOG_HOOK is a proof-run override (scratch mutant copy), unset normally.
+C4LOC=""
+for c4cand in C.UTF-8 en_US.UTF-8; do
+  if [ "$(LC_ALL="$c4cand" LANG="$c4cand" bash -c 'locale charmap' 2>/dev/null)" = "UTF-8" ]; then
+    C4LOC="$c4cand"; break
+  fi
+done
 if [ -z "$HAVE_NODE" ]; then
   skip "C4: bash-output-guard decision rows" "no working node on this host" 4
+elif [ -z "$C4LOC" ]; then
+  skip "C4: bash-output-guard decision rows" "no C.UTF-8/en_US.UTF-8 locale on this host" 4
 else
   c4_bog "12,001 chars truncate"        1 "$(yes a | head -n 12001 | tr -d '\n')"
   c4_bog "6,001 emoji truncate"         1 "$(yes '😀' | head -n 6001 | tr -d '\n')"
