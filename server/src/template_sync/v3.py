@@ -1331,7 +1331,8 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
             # parallel surface a caller uses to resolve each path's
             # template-relative name -- .gitignore -> gitignore included
             # (v4.0.1, item 3).
-            new_files_detail.append({"path": proj_rel, "template_path": tpl_rel})
+            new_files_detail.append({"path": proj_rel, "template_path": tpl_rel,
+                                     "present_on_disk": (pp / proj_rel).exists()})
         elif cls is None:
             unclassified.append(tpl_rel)
 
@@ -1372,7 +1373,7 @@ def write_backup(backup_dir: pathlib.Path, proj_rel: str, pre_image: str, diff: 
 
 
 def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_path: str,
-                  source: str, content: str, backup_dir: str) -> dict:
+                  source: str, content: str, backup_dir: str, overwrite_existing: bool = False) -> dict:
     proj_rel = core._normalize_path(file_path)
     tpl_rel = rules.template_path_for(proj_rel)
     entry = manifest.get("files", {}).get(proj_rel) or manifest.get("files", {}).get(file_path) or {}
@@ -1426,6 +1427,13 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
         }
 
     # template class
+    # S-8 (issue #173): `new_template_files` means absent from the MANIFEST, not
+    # from the project. A file that is on disk but untracked is the project's
+    # until the caller -- after asking the user -- says otherwise.
+    if proj_existing is not None and not entry and not overwrite_existing:
+        return {"error": f"{proj_rel} already exists in the project but is not tracked in the manifest; "
+                         "refusing to overwrite it -- ask the user (keep mine / adopt template / merge), "
+                         "then pass overwrite_existing=true to adopt the template or provided content"}
     backup = None
     local_edit = False
     region_preserved = False

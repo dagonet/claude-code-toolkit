@@ -1269,7 +1269,8 @@ async def template_compute_status(
     # template_finalize_sync(new_files=...). new_template_files_detail is the
     # additive, parallel surface a caller uses to resolve each path's
     # template-relative name (v4.0.1, item 3).
-    new_files_detail = [{"path": f, "template_path": template_path_for(f, manifest)} for f in new_files]
+    new_files_detail = [{"path": f, "template_path": template_path_for(f, manifest),
+                         "present_on_disk": (pp / f).exists()} for f in new_files]
 
     # Detect deleted template files already counted above
     deleted_files = [p for p, s in files_status.items() if s["status"] == "TEMPLATE_DELETED"]
@@ -1477,6 +1478,7 @@ async def template_apply_file(
     source: str = "template",
     content: str = "",
     backup_dir: str = "",
+    overwrite_existing: bool = False,
 ) -> str:
     """
     Apply a template file to the project and return the updated manifest entry.
@@ -1506,6 +1508,12 @@ async def template_apply_file(
             and `<file>.diff` before a LOCAL_EDITED template-class file is
             overwritten. Required in that state -- the call is refused without
             it. Ignored for v2 manifests.
+        overwrite_existing: Manifest v3 only (v4.3.1). A template-class file
+            that exists in the project but is NOT tracked in the manifest (a
+            `new_template_files_detail` entry with `present_on_disk: true`) is
+            never written unless this is true -- the call is refused. Pass it
+            only after the user chose to adopt the template or merged content
+            for that file. Tracked files and absent files are unaffected.
 
     Returns:
         JSON with the new manifest entry for this file (hashes, modification
@@ -1531,7 +1539,7 @@ async def template_apply_file(
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
         return json.dumps(
-            v3.apply_file_v3(pp, manifest, rules, file_path, source, content, backup_dir),
+            v3.apply_file_v3(pp, manifest, rules, file_path, source, content, backup_dir, overwrite_existing),
             ensure_ascii=False,
         )
 
