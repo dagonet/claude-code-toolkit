@@ -1097,6 +1097,28 @@ foreach ($f in $templateFiles) {
     }
 }
 
+# --- v4.3.2 P3: the native pre-push shim, installed through git's own shell ---
+# A `!` alias runs under the sh that ships with git (Git for Windows' bash, never
+# WSL's System32\bash.exe), from the top-level -- or from -C outside a
+# repository, where the installer reports "not a git repository". No embedded
+# quotes in the alias value: PS 5.1 mangles them in native arguments (plan R-3).
+$gppNext = $null
+if (Test-Path (Join-Path $TargetDir "hooks/git-pre-push.sh")) {
+    $gppOk = $false
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $prevEapGpp = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & git -C $TargetDir -c "alias.cct-pre-push=!bash hooks/git-pre-push.sh --install ." cct-pre-push
+            $gppOk = ($LASTEXITCODE -eq 0)
+        }
+        finally { $ErrorActionPreference = $prevEapGpp }
+    }
+    if (-not $gppOk) {
+        $gppNext = "Next step: run 'bash hooks/git-pre-push.sh --install' in the project (after 'git init' if it is not a repository yet) -- until then git itself does not refuse pushes to the protected branches."
+    }
+}
+
 # --- Summary ---
 Write-Host ""
 Write-Host "=== Setup Complete ===" -ForegroundColor Green
@@ -1330,3 +1352,4 @@ if ($tsRegister -and $tsExe) {
 }
 
 Write-Host ""
+if ($gppNext) { Write-Host $gppNext }

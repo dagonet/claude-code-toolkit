@@ -1150,6 +1150,18 @@ if [[ -d "$TARGET_DIR/hooks" ]]; then
     chmod +x "$TARGET_DIR/hooks/"*.sh 2>/dev/null
 fi
 
+# --- v4.3.2 P3: the native pre-push shim (refuses pushes to the protected branches) ---
+# Never fails the bootstrap (set -e: the call sits in an `if`). The common flow
+# -- setup into a fresh directory, `git init` afterwards -- cannot install here,
+# so the output ends with a Next step line instead of a silent gap. Not added to
+# `warnings` (plan R-4): existing fixtures read that list.
+gpp_next=""
+if [[ -f "$TARGET_DIR/hooks/git-pre-push.sh" ]]; then
+    if ! bash "$TARGET_DIR/hooks/git-pre-push.sh" --install "$TARGET_DIR"; then
+        gpp_next="Next step: run 'bash hooks/git-pre-push.sh --install' in the project (after 'git init' if it is not a repository yet) -- until then git itself does not refuse pushes to the protected branches."
+    fi
+fi
+
 # --- Summary ---
 echo ""
 echo "=== Setup Complete ==="
@@ -1358,3 +1370,4 @@ if [[ -n "${TS_WIN_EXE:-}" ]]; then
 fi
 
 echo ""
+if [[ -n "$gpp_next" ]]; then echo "$gpp_next"; fi
