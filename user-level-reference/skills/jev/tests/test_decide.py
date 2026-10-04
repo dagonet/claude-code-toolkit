@@ -17,7 +17,7 @@ def ans(choice, conf):
 # Every value class an emitter could mangle (C1's C1TI, as a Python dict).
 C1TI = {"subagent_type": "general-purpose", "prompt": "deep", "description": "d", "zz_unknown": 1,
         "nested": {"a": [1, 2, {"b": None}], "t": True, "f": False, "e": {}, "l": []},
-        "__proto__": {"x": 1}, "u": "a bé ", "tab": "x\ty"}
+        "__proto__": {"x": 1}, "u": "a b\u00e9\u2028", "tab": "x\ty"}
 
 
 class DecideTests(unittest.TestCase):
@@ -122,6 +122,12 @@ class PayloadTests(unittest.TestCase):
 
     def test_emit_refuses_non_json_numbers(self):
         self.assertEqual(jr.emit({"prompt": "p", "n": float("inf")}, "sonnet"), b"")
+        # A lone surrogate must still emit (ASCII escapes), so a floor spawn always leaves with a model.
+        lone = {"subagent_type": "Plan", "prompt": "cut " + chr(0xd83d) + " x"}
+        out = jr.emit(dict(lone), "sonnet")
+        self.assertTrue(out)
+        self.assertEqual(json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"], dict(lone, model="sonnet"))
+        jr.build_request("cut " + chr(0xd83d) + " x", "jev-1.13.0")
 
 
 if __name__ == "__main__":

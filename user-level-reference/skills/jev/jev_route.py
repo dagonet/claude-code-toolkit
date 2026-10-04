@@ -148,7 +148,7 @@ def build_state(tool_input):
 
 def build_request(state, jev_model):
     return json.dumps({"state": state, "model": jev_model, "questions": SPAWN_QUESTIONS},
-                      ensure_ascii=False).encode("utf-8")
+                      ensure_ascii=True).encode("utf-8")
 
 
 def emit(tool_input, model):
@@ -158,7 +158,7 @@ def emit(tool_input, model):
         ti = dict(tool_input)
         ti["model"] = model
         out = json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": ti}},
-                         ensure_ascii=False, allow_nan=False)
+                         ensure_ascii=True, allow_nan=False)  # ASCII escapes: a lone surrogate must not break encode()
     except (TypeError, ValueError):
         return b""
     return out.encode("utf-8")
