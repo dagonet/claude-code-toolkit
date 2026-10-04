@@ -214,7 +214,8 @@ def _witness_new_template_files_detail(tmp_path) -> bool:
     }), encoding="utf-8")
     res = json.loads(asyncio.run(ts.template_compute_status(str(proj))))
     return (res["new_template_files"] == [".gitignore"]
-            and res["new_template_files_detail"] == [{"path": ".gitignore", "template_path": "gitignore"}])
+            and res["new_template_files_detail"] == [
+                {"path": ".gitignore", "template_path": "gitignore", "present_on_disk": False}])
 
 
 def _witness_superseded_keys(tmp_path) -> bool:

@@ -74,7 +74,7 @@ For each contributed file:
 
 Call `template_apply_file(project_path=".", file_path=F, source="skip")` to update the manifest entry (marks the file as back in sync with template).
 
-Call `template_finalize_sync(project_path=".", applied_files=<JSON array of results>)`.
+Write the JSON array of all `template_apply_file` results to a scratchpad file with the Write tool, then call `template_finalize_sync(project_path=".", applied_files_path=<json-path>)`, where `<json-path>` is that file.
 
 ### 7. Report
 

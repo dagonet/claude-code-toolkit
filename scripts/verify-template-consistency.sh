@@ -3925,7 +3925,8 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 63 -- the three opt-in PROJECT_CONTEXT.md keys ship only as commented,
+# Check 63 -- the four opt-in PROJECT_CONTEXT.md keys (the three v4.3.0 ones plus
+# v4.3.1's `**Test timeout**`) ship only as commented,
 # unset examples (v4.3.0 spec "Checks and tests"; final review I-4/I-5, ruling
 # S-27). `**Test paths**` makes pre-commit-test skip **Test** for a commit that
 # touches none of its paths, `**Gate extra**` splits the Gate line, and
@@ -3942,8 +3943,8 @@ fi
 # (occur at all). Shared by the real scan and the 63c controls, which plant
 # lines in scratch copies -- never in a real template.
 # ---------------------------------------------------------------------------
-note "Check 63: **Test paths**, **Gate extra**, **Subagent default model** appear in every variant's PROJECT_CONTEXT.md on no line the hooks' key pattern matches (documented in a one-line comment, never set)"
-C63_KEYS='Test paths|Gate extra( Command)?|Subagent default model'
+note "Check 63: **Test paths**, **Gate extra**, **Subagent default model**, **Test timeout** appear in every variant's PROJECT_CONTEXT.md on no line the hooks' key pattern matches (documented in a one-line comment, never set)"
+C63_KEYS='Test paths|Gate extra( Command)?|Subagent default model|Test timeout'
 # GC_BOM / GC_KEY_PRE: the same text as hooks/lib/git-cmd.sh, run-gate.sh and
 # model-floor.sh (the definition census above pins the copies together).
 GC_BOM=$(printf '\357\273\277')
@@ -3961,12 +3962,12 @@ for v in $VARIANTS; do
   if [ ! -f "$c63_f" ]; then c63_bad="$c63_bad $c63_f(missing)"; continue; fi
   c63_hit=$(c63_scan "$c63_f")
   [ -n "$c63_hit" ] && c63_bad="$c63_bad [live: $(printf '%s' "$c63_hit" | tr '\n' ';')]"
-  for c63_k in "Test paths" "Gate extra" "Subagent default model"; do
+  for c63_k in "Test paths" "Gate extra" "Subagent default model" "Test timeout"; do
     grep -qF "**$c63_k**" "$c63_f" || c63_bad="$c63_bad $c63_f(no commented example of $c63_k)"
   done
 done
 if [ -z "$c63_bad" ]; then
-  ok "check 63: no line of any variant's PROJECT_CONTEXT.md matches the hooks' key pattern for the three keys; each is documented in a one-line comment"
+  ok "check 63: no line of any variant's PROJECT_CONTEXT.md matches the hooks' key pattern for the four keys; each is documented in a one-line comment"
 else
   ko "check 63: a key is set live or undocumented (a live line switches the behaviour on in every consumer):$c63_bad"
 fi
@@ -3983,7 +3984,8 @@ for c63c_case in \
   "live-test-paths|- **Test paths**: src/" \
   "live-gate-extra|- **Gate extra**: bash scripts/lint.sh" \
   "live-gate-extra-command|- **Gate extra Command**: x" \
-  "live-model|- **Subagent default model**: haiku"; do
+  "live-model|- **Subagent default model**: haiku" \
+  "live-test-timeout|- **Test timeout**: 600"; do
   c63c_name=${c63c_case%%|*}; c63c_line=${c63c_case#*|}
   cp "$c63c_real" "$C63C_TMP/$c63c_name.md"
   printf '%s\n' "$c63c_line" >> "$C63C_TMP/$c63c_name.md"
@@ -3992,13 +3994,13 @@ done
 cp "$c63c_real" "$C63C_TMP/unclosed.md"
 printf '%s\n' '<!-- never closed' '- **Gate extra**: x' >> "$C63C_TMP/unclosed.md"
 [ -n "$(c63_scan "$C63C_TMP/unclosed.md")" ] || c63c_fail="$c63c_fail unclosed(not flagged)"
-for c63c_key in "Test paths|src/" "Gate extra|x" "Subagent default model|haiku"; do
+for c63c_key in "Test paths|src/" "Gate extra|x" "Subagent default model|haiku" "Test timeout|600"; do
   c63c_kn=${c63c_key%%|*}; c63c_kv=${c63c_key#*|}
   cp "$c63c_real" "$C63C_TMP/multiline.md"
   printf '%s\n' '<!--' "- **$c63c_kn**: $c63c_kv" '-->' >> "$C63C_TMP/multiline.md"
   [ -n "$(c63_scan "$C63C_TMP/multiline.md")" ] || c63c_fail="$c63c_fail multiline-comment-$c63c_kn(not flagged)"
 done
-printf '%s\n' '<!-- - **Test paths**: src/ -->' '<!-- - **Gate extra**: x -->' '<!-- - **Subagent default model**: haiku -->' '<!-- note --> - **Test paths**: src/' > "$C63C_TMP/oneline.md"
+printf '%s\n' '<!-- - **Test paths**: src/ -->' '<!-- - **Gate extra**: x -->' '<!-- - **Subagent default model**: haiku -->' '<!-- - **Test timeout**: 600 -->' '<!-- note --> - **Test paths**: src/' > "$C63C_TMP/oneline.md"
 [ -z "$(c63_scan "$C63C_TMP/oneline.md")" ] || c63c_fail="$c63c_fail oneline-comment(falsely flagged)"
 [ -z "$(c63_scan "$c63c_real")" ] || c63c_fail="$c63c_fail real-template(falsely flagged)"
 rm -rf "$C63C_TMP"
@@ -4006,6 +4008,52 @@ if [ -z "$c63c_fail" ]; then
   ok "check 63c: control -- planted key lines (plain, inside a multi-line comment, unclosed comment) are flagged; one-line commented examples and real templates are not"
 else
   ko "check 63c: control failed:$c63c_fail -- check 63 is vacuous or over-strict"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 64 -- every registration of hooks/pre-commit-test.sh carries
+# "timeout": PCT_TIMEOUT_MAX + 60 (v4.3.1 G1, R-4). The hook stops its own run
+# at its budget (at most PCT_TIMEOUT_MAX s); the harness kills a hook at the
+# registration's timeout (600 s when absent) and treats that as a NON-blocking
+# error -- the commit proceeds. So the registration must sit above the largest
+# budget. The value is read from the hook, never typed twice. Two-sided: the
+# control strips the field from a scratch copy and expects a finding.
+# ---------------------------------------------------------------------------
+note "Check 64: every pre-commit-test.sh registration carries \"timeout\": PCT_TIMEOUT_MAX + 60"
+c64_max=$(sed -n 's/^PCT_TIMEOUT_MAX=\([0-9][0-9]*\)$/\1/p' hooks/pre-commit-test.sh | head -1)
+c64_scan() { # <settings.json> <want> -> prints "<file>: <regs> registration(s), <ok> with the timeout" when they differ or none exist
+  c64_regs=$(grep -c 'hooks/pre-commit-test\.sh' "$1" 2>/dev/null)
+  c64_ok=$(grep -A1 'hooks/pre-commit-test\.sh' "$1" 2>/dev/null | grep -cE "^[[:space:]]*\"timeout\": $2[[:space:]]*,?\$")
+  if [ "${c64_regs:-0}" -eq 0 ] || [ "${c64_ok:-0}" -ne "${c64_regs:-0}" ]; then
+    printf '%s: %s registration(s), %s with "timeout": %s\n' "$1" "${c64_regs:-0}" "${c64_ok:-0}" "$2"
+  fi
+}
+if [ -z "$c64_max" ]; then
+  ko "check 64: cannot read PCT_TIMEOUT_MAX from hooks/pre-commit-test.sh -- re-point this check before trusting it"
+else
+  c64_want=$((c64_max + 60))
+  c64_bad=""
+  c64_n=0
+  for c64_f in $(for v in $VARIANTS; do printf 'templates/%s/.claude/settings.json\n' "$v"; done) .claude/settings.json; do
+    c64_n=$((c64_n + 1))
+    c64_hit=$(c64_scan "$c64_f" "$c64_want")
+    [ -n "$c64_hit" ] && c64_bad="$c64_bad [$c64_hit]"
+  done
+  c64_expected=$(( $(printf '%s\n' "$VARIANTS" | wc -w) + 1 ))
+  C64_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c64)
+  grep -v '"timeout": ' templates/general/.claude/settings.json > "$C64_TMP/nofield.json"
+  c64_ctrl=$(c64_scan "$C64_TMP/nofield.json" "$c64_want")
+  c64_ctrl2=$(c64_scan templates/general/.claude/settings.json "$((c64_want - 1))")
+  rm -rf "$C64_TMP"
+  if [ -z "$c64_ctrl" ] || [ -z "$c64_ctrl2" ]; then
+    ko "check 64: CONTROL FAILED -- a copy without the field or a wrong value was not flagged; the check is vacuous"
+  elif [ "$c64_n" -ne "$c64_expected" ]; then
+    ko "check 64: scanned $c64_n settings files, expected $c64_expected (six variants + root)"
+  elif [ -n "$c64_bad" ]; then
+    ko "check 64: a pre-commit-test.sh registration lacks \"timeout\": $c64_want -- the harness would kill the hook at its default (600 s) and let the commit through:$c64_bad"
+  else
+    ok "check 64: $c64_n settings files register pre-commit-test.sh with \"timeout\": $c64_want (PCT_TIMEOUT_MAX $c64_max + 60); control fires"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
