@@ -80,9 +80,10 @@ trap 'rm -rf "$OUTDIR"' EXIT
 #  measured).
 # jq also hides python3: 151 + the same 43 + 27 "C1 python3 parser rows"
 #  = 221.
+#  v4.4.0 J-PY skips 4 by name when python3 is absent (jq-only); J-DIFF, J-LIB and J-MF skip nothing in any configuration.
 EXP_NODE_SKIP=0
 EXP_PY_SKIP=178
-EXP_JQ_SKIP=221
+EXP_JQ_SKIP=225
 BAND=20
 
 matrix_fail=0

@@ -8871,6 +8871,26 @@ expect "J-MF lib CLI jev field, sibling worktree"      0 "$(HOME="$JMH" bash "$R
 rm -rf "$JMGD/jev"
 # ---- end v4.4.0 J-MF
 
+# ---- v4.4.0 J-PY: the Jev skill's Python tests (stdlib unittest, the system python3 the registration runs) ----
+# No fourth gate command: the suite runs here, inside **Gate**. The count is
+# EXACT so a test file that stops being discovered goes red, and nothing may
+# skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
+# Skipped by name (4) only where python3 is absent: the jq-only matrix config.
+echo "=== user-level-reference/skills/jev (v4.4.0 J-PY) ==="
+JPY_WANT=16
+JPY_DIR="$ROOT/user-level-reference/skills/jev"
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+  JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
+  [ "$JPY_RC" -eq 0 ] || printf '%s\n' "$JPY_OUT" | tail -40
+  expect "J-PY python tests pass"               0 "$JPY_RC"
+  expect "J-PY ran exactly $JPY_WANT tests"     "$JPY_WANT" "$(printf '%s\n' "$JPY_OUT" | sed -n 's/^Ran \([0-9]*\) tests\{0,1\} in .*/\1/p')"
+  expect "J-PY nothing skipped"                 0 "$(printf '%s\n' "$JPY_OUT" | grep -c 'skipped=')"
+  expect "J-PY no __pycache__ in the reference" 0 "$(find "$JPY_DIR" -name __pycache__ | wc -l | tr -d ' ')"
+else
+  skip "J-PY python tests" "no python3 >= 3.8 on this host" 4
+fi
+# ---- end v4.4.0 J-PY
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
