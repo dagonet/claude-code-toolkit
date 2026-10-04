@@ -10,6 +10,7 @@ letting a reader assume both track the same commit.
 
 import asyncio
 import json
+import os
 import pathlib
 import subprocess
 
@@ -156,6 +157,7 @@ def test_load_response_carries_registered_tools_on_the_legacy_v2_path(tmp_path):
     assert "template_verify" in r["registered_tools"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows path namespaces (drive letters, MSYS /g/) only resolve on Windows")
 @pytest.mark.parametrize("template_repo_form", [
     "G:/git/claude-code-toolkit",          # forward slashes, Windows drive
     "G:\\git\\claude-code-toolkit",         # backslashes
@@ -165,6 +167,15 @@ def test_server_in_template_repo_true_across_path_namespaces(template_repo_form,
     # The server's source dir, in Windows form, is inside the repo in all three spellings.
     monkeypatch.setattr(ts, "SERVER_SOURCE_DIR", "G:\\git\\claude-code-toolkit\\server\\src\\template_sync")
     assert ts._server_in_template_repo(template_repo_form) is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX twin of the Windows path-namespace test")
+def test_server_in_template_repo_true_for_an_existing_posix_path(tmp_path, monkeypatch):
+    repo = tmp_path / "claude-code-toolkit"
+    src = repo / "server" / "src" / "template_sync"
+    src.mkdir(parents=True)
+    monkeypatch.setattr(ts, "SERVER_SOURCE_DIR", str(src))
+    assert ts._server_in_template_repo(str(repo)) is True
 
 
 def test_server_in_template_repo_false_for_the_old_server(monkeypatch):

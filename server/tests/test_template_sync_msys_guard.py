@@ -16,6 +16,8 @@ import asyncio
 import json
 import os
 
+import pytest
+
 from template_sync import mcp as ts
 
 MSYS_PATH = "/g/git/msys-guard-fixture"
@@ -41,6 +43,7 @@ class _FakePosixOs:
         return getattr(os, attr)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the MSYS guard is Windows-only by design (mcp.py:258)")
 def test_apply_file_rejects_msys_project_path(tmp_path):
     before = _snapshot(tmp_path)
     res = json.loads(asyncio.run(ts.template_apply_file(MSYS_PATH, "CLAUDE.md")))
@@ -50,6 +53,7 @@ def test_apply_file_rejects_msys_project_path(tmp_path):
     assert _snapshot(tmp_path) == before
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the MSYS guard is Windows-only by design (mcp.py:258)")
 def test_apply_file_rejects_msys_backup_dir(tmp_path):
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -62,6 +66,7 @@ def test_apply_file_rejects_msys_backup_dir(tmp_path):
     assert _snapshot(tmp_path) == before
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the MSYS guard is Windows-only by design (mcp.py:258)")
 def test_finalize_sync_rejects_msys_project_path(tmp_path):
     before = _snapshot(tmp_path)
     res = json.loads(asyncio.run(ts.template_finalize_sync(MSYS_PATH)))
@@ -70,6 +75,7 @@ def test_finalize_sync_rejects_msys_project_path(tmp_path):
     assert _snapshot(tmp_path) == before
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the MSYS guard is Windows-only by design (mcp.py:258)")
 def test_migrate_manifest_rejects_msys_project_path(tmp_path):
     before = _snapshot(tmp_path)
     res = json.loads(asyncio.run(ts.template_migrate_manifest(MSYS_PATH, dry_run=True)))
@@ -78,6 +84,7 @@ def test_migrate_manifest_rejects_msys_project_path(tmp_path):
     assert _snapshot(tmp_path) == before
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the MSYS guard is Windows-only by design (mcp.py:258)")
 def test_migrate_manifest_rejects_msys_backup_dir(tmp_path):
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -135,6 +142,7 @@ def test_migrate_manifest_accepts_msys_shaped_path_on_posix(monkeypatch, tmp_pat
     assert "MSYS path" not in json.dumps(res)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the MSYS guard is Windows-only by design (mcp.py:258)")
 def test_apply_file_still_rejects_msys_shaped_path_on_nt(monkeypatch):
     """The existing Windows behaviour is unchanged -- a real "nt" host still
     refuses, so the round-1 fix narrows the condition rather than disabling
