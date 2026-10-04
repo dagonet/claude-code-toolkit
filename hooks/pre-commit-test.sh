@@ -486,20 +486,33 @@ fi
 #   commit            the gated verb itself (`git com"mit"`, `git com\mit`, `GIT COMMIT`);
 #   merge pull push   gc_dir_rule (simple-cd rule) refuses these, and `gh pr merge`,
 #                     after a directory change even with no `commit` in the text;
-#   sh                bash/sh/pwsh/powershell -- the words that make the walk read
+#   sh                the WORD sh (/bin/sh; never x.sh or --short), and the substrings
+#                     bash, pwsh, powershell -- the words that make the walk read
 #                     a script body (gc_script_body, gc_seg_is_ps);
-#   source, `.`       `source x` and the dot-source `. x` (a `.` followed by
-#                     whitespace or end of text -- broader than a segment-head
-#                     test on purpose: a superset is simpler and fail-closed).
+#   source, `.`       `source` (substring), and a LONE `.` token (`. x`, `ls;. x`;
+#                     never `./x` or a prose dot).
 # With none of them nothing below can refuse, so the walk is skipped and the same
 # no-op record is written. Zero forks: pure parameter expansion and case. Any
 # doubt keeps the walk -- this only ever skips work.
 pct_t=${GC_CMD//\"/}; pct_t=${pct_t//\'/}; pct_t=${pct_t//\\/}
+# v4.3.2 F1 -- `sh` and `.` are matched as WORDS: as substrings they fired on
+# --short, publish, stylish, every x.sh name, and every sentence of prose. A
+# word: the text with each character outside [[:alnum:]._] made a space, so
+# `/bin/sh` fires and `x.sh`/`--short` do not; a lone dot: the text with
+# whitespace and ; & | ( ) { } ! ` < > made spaces, so `. x` and `ls;. x` fire and
+# `./x`, `..` and `end.` do not. bash, pwsh and powershell are named
+# explicitly (*sh* used to cover them); the verb stems stay substrings.
+# Superset proof: design F1. The bracket patterns live in variables: a literal
+# `}` inside ${...} would end the expansion.
+pct_nw='[^[:alnum:]._]'; pct_sep='[[:space:];&|(){}!`<>]'
+pct_w=" ${pct_t//$pct_nw/ } "; pct_d=" ${pct_t//$pct_sep/ } "
+pct_walk=0
 shopt -s nocasematch
-case "$pct_t" in
-  *commit*|*merge*|*pull*|*push*|*sh*|*source*|*.[[:space:]]*|*.) shopt -u nocasematch ;;
-  *) shopt -u nocasematch; pct_note no-commit-segment -1; exit 0 ;;
-esac
+case "$pct_t" in *commit*|*merge*|*pull*|*push*|*source*|*bash*|*pwsh*|*powershell*) pct_walk=1 ;; esac
+case "$pct_w" in *" sh "*) pct_walk=1 ;; esac
+case "$pct_d" in *" . "*) pct_walk=1 ;; esac
+shopt -u nocasematch
+[ "$pct_walk" = 1 ] || { pct_note no-commit-segment -1; exit 0; }
 
 # v4.0.3 item 12 -- widen GC_CMD to include the body of any script segment it
 # invokes (`bash|sh|source|. <path>`, depth 1) BEFORE splitting into segments,

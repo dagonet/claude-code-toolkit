@@ -9352,6 +9352,104 @@ cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
 s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
 # ---- end v4.3.1 S6b
 
+# ---- v4.3.2 V2: word-matched fast-path triggers and a cheap no-op record ----
+V2R=$(mkrepo v2 main)
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$V2R/PROJECT_CONTEXT.md"
+printf 'git commit -m x\n' > "$V2R/c.sh"
+printf 'git commit -m x\n' > "$V2R/c.ps1"
+V2H="$ROOT/hooks/pre-commit-test.sh"
+v2_yes() { if "$@"; then echo yes; else echo no; fi; }   # the block runs on its own under RB
+V2SHIM="$TMPROOT/v2shim"; V2LOG="$TMPROOT/v2.log"; mkdir -p "$V2SHIM"
+for b in node python3 jq git sed awk tr grep date wc find mv mkdir head cat cut; do
+  v2real=$(command -v "$b" 2>/dev/null) || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$b" "$V2LOG" "$v2real" > "$V2SHIM/$b"
+  chmod +x "$V2SHIM/$b"
+done
+v2_spawns() { # <command> [program] -> programs the hook started on that payload (all, or only <program>)
+  : > "$V2LOG"
+  printf '%s' "$(mkjson Bash "$1" "$V2R")" | PATH="$V2SHIM:$PATH" bash "$V2H" >/dev/null 2>&1
+  if [ -n "${2:-}" ]; then grep -cx "$2" "$V2LOG"; else wc -l < "$V2LOG" | tr -d ' '; fi
+}
+v2_spawns 'ls -la' >/dev/null   # warm: the gate directory exists from here on
+V2_FAST=$(v2_spawns 'ls -la')
+# F1: these hold no gated action and must take the fast path (same spawn count as ls -la)
+for v2c in 'git status --short' 'git diff --stat' 'git log --oneline -5' 'echo "done. ok"' \
+           'npm run publish' 'ls ./build.sh' './build.sh' 'cat notes.md' 'ls ..' 'echo stylish'; do
+  expect "V2: fast path: $v2c" "$V2_FAST" "$(v2_spawns "$v2c")"
+done
+# F1: every shape that can reach a commit still walks and is refused (Test exits 1)
+check "V2: /bin/sh c.sh gated"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/sh c.sh' "$V2R")"
+check "V2: /usr/bin/bash c.sh gated"           hooks/pre-commit-test.sh 2 "$(mkjson Bash '/usr/bin/bash c.sh' "$V2R")"
+check "V2: ls&&sh c.sh gated"                  hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&sh c.sh' "$V2R")"
+check "V2: ls|sh c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls|sh c.sh' "$V2R")"
+check "V2: . c.sh gated"                       hooks/pre-commit-test.sh 2 "$(mkjson Bash '. c.sh' "$V2R")"
+check "V2: ls;. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls;. c.sh' "$V2R")"
+check "V2: ls&&. c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&. c.sh' "$V2R")"
+check "V2: C:\\Tools\\pwsh.exe -File c.ps1 gated" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'C:\Tools\pwsh.exe -File c.ps1' "$V2R")"
+# F1 differential: the v4.3.1 hook and this one give the SAME exit on every listed command
+V2B="$TMPROOT/v2base"; mkdir -p "$V2B"
+if git -C "$ROOT" archive 5d3d789 hooks 2>/dev/null | tar -x -C "$V2B" 2>/dev/null && [ -f "$V2B/hooks/pre-commit-test.sh" ]; then
+  v2_diff=""
+  while IFS= read -r v2c; do
+    [ -n "$v2c" ] || continue
+    v2p=$(mkjson Bash "$v2c" "$V2R")
+    printf '%s' "$v2p" | bash "$V2B/hooks/pre-commit-test.sh" >/dev/null 2>&1; v2a=$?
+    printf '%s' "$v2p" | bash "$V2H" >/dev/null 2>&1; v2b=$?
+    [ "$v2a" = "$v2b" ] || v2_diff="$v2_diff [$v2c: $v2a -> $v2b]"
+  done <<'V2_CMDS'
+git commit -m x
+GIT commit -m x
+git.exe commit -m x
+"git" commit -m x
+'git' commit -m x
+/usr/bin/git commit -m x
+git com"mit" -m x
+git com\mit -m x
+bash c.sh
+sh c.sh
+/bin/sh c.sh
+/usr/bin/bash c.sh
+. ./c.sh
+. c.sh
+ls; . ./c.sh
+ls;. c.sh
+ls && . ./c.sh
+ls&&sh c.sh
+ls|sh c.sh
+source c.sh
+pwsh -File c.ps1
+C:\Tools\pwsh.exe -File c.ps1
+cd sub; git merge x
+cd sub; git pull
+cd sub; git push origin main
+cd sub; gh pr merge 1
+GIT_DIR=x git merge y
+cd sub; bash ../c.sh
+x=1 . ./c.sh
+(sh c.sh)
+SH c.sh
+bash.exe c.sh
+cat c.sh | sh
+echo "git commit -m x"
+git status --short
+git log --grep=commit
+git show HEAD:c.sh
+pushd sub
+npm run publish
+ls ./c.sh
+./c.sh
+echo "done. ok"
+echo done.
+grep -c . c.sh
+ls ..
+cd sub; ls
+V2_CMDS
+  expect "V2: same exit as v4.3.1 on every listed command" "" "$v2_diff"
+else
+  skip "V2: same exit as v4.3.1 on every listed command" "commit 5d3d789 is not in this clone" 1
+fi
+# ---- end v4.3.2 V2
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
