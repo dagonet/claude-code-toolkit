@@ -35,17 +35,24 @@ MF_ENV_REAL=""
 case "${CLAUDE_CODE_SUBAGENT_MODEL:-}" in haiku|sonnet|opus|fable|claude-*) MF_ENV_REAL=1 ;; esac
 [ -n "$MF_ENV_REAL" ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-}" = 1 ] && exit 0
 case "$MF_JSON" in "$JSON_BOM"*) MF_JSON=${MF_JSON#"$JSON_BOM"} ;; esac
-json_fields "$MF_JSON" tool_name tool_input.model tool_input.subagent_type cwd || exit 0   # v4.4.0 C3: no parser / invalid -> exit 0
-[ "${JF[0]}" = "Agent" ] || exit 0
-[ -n "${JF[1]}" ] && exit 0
-MF_TYPE=${JF[2]}
+json_fields "$MF_JSON" tool_name tool_input.model tool_input.subagent_type cwd; MF_RC=$?   # v4.4.0 C3: one parser run
+[ "$MF_RC" = 2 ] && exit 0
+if [ "$MF_RC" = 0 ]; then MF_TN=${JF[0]}; MF_MODEL=${JF[1]}; MF_TYPE=${JF[2]}; MF_CWD=${JF[3]}
+else
+  # invalid payloads never come from Claude Code; the fallback only preserves the old jq multi-document verdict
+  json_valid "$MF_JSON" || exit 0
+  MF_TN=$(json_get "$MF_JSON" tool_name); MF_MODEL=$(json_get "$MF_JSON" tool_input.model)
+  MF_TYPE=$(json_get "$MF_JSON" tool_input.subagent_type); MF_CWD=$(json_get "$MF_JSON" cwd)
+fi
+[ "$MF_TN" = "Agent" ] || exit 0
+[ -n "$MF_MODEL" ] && exit 0
 [ -n "$MF_TYPE" ] || MF_TYPE=general-purpose
 [ -n "$MF_ENV_REAL" ] && [ "$MF_TYPE" = general-purpose ] && exit 0
 case "$MF_TYPE" in *[!A-Za-z0-9_.-]*|.*) exit 0 ;; esac
 # Types that carry a model of their own (statusline-setup: sonnet,
 # claude-code-guide: haiku) or ignore a model override (fork): step aside.
 case "$MF_TYPE" in statusline-setup|claude-code-guide|fork) exit 0 ;; esac
-MF_CWD=${JF[3]}; [ -n "$MF_CWD" ] || MF_CWD=.
+[ -n "$MF_CWD" ] || MF_CWD=.
 MF_ROOT=$(git -C "$MF_CWD" rev-parse --show-toplevel 2>/dev/null) || MF_ROOT="$MF_CWD"
 # GC_KEY_PRE, defined locally (same text as hooks/lib/git-cmd.sh and run-gate.sh;
 # sourcing git-cmd.sh here would cost ~57 ms per Agent spawn): a BOM on line 1

@@ -9,10 +9,15 @@ lib="$(dirname "$0")/lib/json.sh"
 # shellcheck source=lib/json.sh
 . "$lib"
 DH_JSON=$(cat)
-json_fields "$DH_JSON" cwd tool_input.command || exit 0   # v4.4.0 C3: no parser / invalid -> advisory exit 0
-DH_CWD=${JF[0]}
+json_fields "$DH_JSON" cwd tool_input.command; DH_RC=$?   # v4.4.0 C3: one parser run
+[ "$DH_RC" = 2 ] && exit 0
+if [ "$DH_RC" = 0 ]; then DH_CWD=${JF[0]}; DH_CMD=${JF[1]}
+else
+  # invalid payloads never come from Claude Code; the fallback only preserves the old jq multi-document verdict
+  json_valid "$DH_JSON" || exit 0
+  DH_CWD=$(json_get "$DH_JSON" cwd); DH_CMD=$(json_get "$DH_JSON" tool_input.command)
+fi
 [ -n "$DH_CWD" ] && [ -f "$DH_CWD/.claude/git-guard-off" ] && exit 0
-DH_CMD=${JF[1]}
 [ -n "$DH_CMD" ] || exit 0
 _j=$(printf '%s' "$DH_CMD" | cmd_join_continuations) && [ -n "$_j" ] && DH_CMD="$_j"
 dh_refuse() { echo "BLOCKED: deny-hang-shapes: $1" >&2; exit 2; }

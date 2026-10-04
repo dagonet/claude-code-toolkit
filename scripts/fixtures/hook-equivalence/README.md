@@ -20,12 +20,12 @@ Tokens the harness expands before running:
 | `@REP:<n>:<text>@` | `<text>` repeated n times (the 20 kB command, the 11,999-char outputs) |
 | `@EMOJI:<n>@` | n copies of U+1F600 (a four-byte character, two UTF-16 units) |
 
-123 rows. Ids by group: `bp01-23` push and branch, `cm01-06` commit and merge
+125 rows. Ids by group: `bp01-23` push and branch, `cm01-06` commit and merge
 gate, `sr01-17` secret reads, `hs01-08` hang shapes, `ps01-08` PowerShell,
 `ag01-05` Agent, `ew01-04` Edit/Write, `pt01-04` PostToolUse output sizes (11,999
 and 12,001 chars, 6,001 emoji, 3,000 `é` escapes), `eh01-14` escapes and
-harmless commands, `mf01-04` malformed input (empty stdin, BOM, two documents,
-array command). Extras: `ss01` SessionStart, `rd01-03` Read (`rd01` is a 2,000-line
+harmless commands, `mf01-06` malformed input (empty stdin, BOM, two documents,
+array command, two documents led by a heredoc-into-file / by `cat .env`). Extras: `ss01` SessionStart, `rd01-03` Read (`rd01` is a 2,000-line
 file, so `read-size-gate` rewrites it), `ok01-12` harmless commands, `ew05-06`
 Edit/Write from a subagent (`agent_id`), `bd01-04` build-runner commands (`bd01`
 from a subagent). Registered protections the first cut missed: `mc01-02` the
@@ -98,6 +98,19 @@ bash scripts/hook-equivalence.sh --config full            # also: --config pytho
 bash scripts/hook-equivalence.sh --config full --mode normal --only 'bp*'
 bash scripts/hook-equivalence.sh --config full --new-root <scratch copy of the tree>
 ```
+
+## Accepted diffs
+
+`accepted.tsv` (columns: id, scenario glob, config, reason) lists differences that
+are known and accepted. A DIFF matching an entry is accepted only when the new
+result is strictly more restrictive: the class goes allow/allow*/context -> deny
+(or ask -> deny), or stays deny with a strict superset of the old deny set. It
+prints `ACCEPTED-STRICTER ... (<reason>)`; a match that is not stricter stays a
+DIFF (`DIFF (accepted entry does not apply: not stricter)`), so the file can never
+accept a new allow. `NEW-ALLOWS: <n>  NEW-DENIES: <m>` counts every row-level
+loosening / tightening, accepted or not. The last line is
+`EQUIVALENCE: <n> decision changes` (n excludes accepted rows, which are then
+counted as `(<k> accepted stricter)`); exit 0 only when n = 0.
 
 ## Known gaps
 

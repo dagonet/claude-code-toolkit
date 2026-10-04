@@ -409,7 +409,29 @@ with ThreadPoolExecutor(max_workers=max(1, int(opt["workers"]))) as ex:
 
 # ---- report ---------------------------------------------------------------
 def fmt(r): return "%s{%s}" % (r[0], ",".join(r[1]))
-changes = 0; notes = 0; envbad = 0; tally = {}
+ACCEPTED = []   # (id, scenario glob, config, reason) from accepted.tsv
+_ap = os.path.join(ROOT, "scripts/fixtures/hook-equivalence/accepted.tsv")
+if os.path.isfile(_ap):
+    for _ln in open(_ap, encoding="utf-8").read().splitlines():
+        if _ln.strip() and not _ln.startswith("#"):
+            _f = _ln.split("\t")
+            if len(_f) >= 4: ACCEPTED.append((_f[0], _f[1], _f[2], _f[3]))
+
+def direction(o, n):
+    """'tighter' / 'looser' / '' for one differing row (class, then deny reason set)."""
+    if RANK[n[0]] != RANK[o[0]]: return "tighter" if RANK[n[0]] > RANK[o[0]] else "looser"
+    if o[0] == "deny":
+        if set(n[1]) > set(o[1]): return "tighter"
+        if set(o[1]) - set(n[1]): return "looser"
+    return ""
+
+def strictly_stricter(o, n):
+    # ONLY these may be accepted: class -> deny from a weaker class, or deny with a strict superset
+    # of deny reasons (everything else, loosening included, stays a DIFF)
+    if n[0] == "deny" and o[0] != "deny": return True
+    return o[0] == "deny" and n[0] == "deny" and set(n[1]) > set(o[1]) and o[3] == n[3]
+
+changes = 0; notes = 0; envbad = 0; tally = {}; accepted_n = 0; new_allows = 0; new_denies = 0
 for (s, m, row), (o, n) in zip(jobs, results):
     scen = s + ("m" if m == "missing" else "")
     t = tally.setdefault((scen, m), {"deny": 0, "ask": 0, "context": 0, "allow": 0})
@@ -421,9 +443,18 @@ for (s, m, row), (o, n) in zip(jobs, results):
             envbad += 1
             print("ENV-INCOMPLETE %s %s %s %s: %s" % (scen, cfg, row[0], who, r[4][0][:160]))
     if (o[0], o[1], o[3]) != (n[0], n[1], n[3]):
-        changes += 1
         extra = "" if o[3] == n[3] else " upd:old=%s new=%s" % (list(o[3]), list(n[3]))
-        print("DIFF %s %s %s: old=%s new=%s%s" % (scen, cfg, row[0], fmt(o), fmt(n), extra))
+        d = direction(o, n)
+        if d == "looser": new_allows += 1
+        elif d == "tighter": new_denies += 1
+        ent = [a for a in ACCEPTED if a[0] == row[0] and fnmatch.fnmatchcase(scen, a[1]) and a[2] in ("*", cfg)]
+        if ent and strictly_stricter(o, n):
+            accepted_n += 1
+            print("ACCEPTED-STRICTER %s %s %s: old=%s new=%s (%s)" % (scen, cfg, row[0], fmt(o), fmt(n), ent[0][3]))
+        else:
+            changes += 1
+            why = " (accepted entry does not apply: not stricter)" if ent else ""
+            print("DIFF%s %s %s %s: old=%s new=%s%s" % (why, scen, cfg, row[0], fmt(o), fmt(n), extra))
     elif o[2] != n[2]:
         notes += 1
         print("NOTE %s %s %s: only the non-blocking-error annotation differs (old=%s%s new=%s%s)"
@@ -440,6 +471,7 @@ print("WALL: %.0f s (config %s, %d rows x %d scenario-modes, %s workers, %d note
       % (time.time() - T0, cfg, len(rows), len(tally), opt["workers"], notes))
 if envbad:
     print("hook-equivalence: %d run(s) hit `command not found` -- the restricted PATH is incomplete" % envbad)
-print("EQUIVALENCE: %d decision changes" % changes)
+print("NEW-ALLOWS: %d  NEW-DENIES: %d" % (new_allows, new_denies))
+print("EQUIVALENCE: %d decision changes%s" % (changes, " (%d accepted stricter)" % accepted_n if accepted_n else ""))
 sys.exit(0 if (changes == 0 and bad_tally == 0 and envbad == 0) else 1)
 PYEOF
