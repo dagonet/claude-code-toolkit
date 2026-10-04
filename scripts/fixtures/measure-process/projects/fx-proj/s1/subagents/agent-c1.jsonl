@@ -1,0 +1,15 @@
+{"type":"user","timestamp":"2026-10-01T12:00:00Z","message":{"role":"user","content":"Do ops."}}
+{"type":"assistant","timestamp":"2026-10-01T12:00:01Z","message":{"id":"o1","role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Monitor","input":{}}],"usage":{"output_tokens":4}}}
+{"type":"user","timestamp":"2026-10-01T12:00:31Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"mmmm"}]}}
+{"type":"assistant","timestamp":"2026-10-01T12:00:32Z","message":{"id":"o2","role":"assistant","content":[{"type":"tool_use","id":"w2","name":"mcp__MCP_DOCKER__create_pull_request","input":{}}],"usage":{"output_tokens":4}}}
+{"type":"user","timestamp":"2026-10-01T12:00:34Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w2","content":"pppppppp"}]}}
+{"type":"assistant","timestamp":"2026-10-01T12:00:35Z","message":{"id":"o3","role":"assistant","content":[{"type":"tool_use","id":"w3","name":"FooTool","input":{}}],"usage":{"output_tokens":4}}}
+{"type":"user","timestamp":"2026-10-01T12:00:36Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w3","content":"ffff"}]}}
+{"type":"assistant","timestamp":"2026-10-01T12:00:37Z","message":{"id":"o4","role":"assistant","content":[{"type":"tool_use","id":"w4","name":"Bash","input":{"command":"git push origin feat"}}],"usage":{"output_tokens":4}}}
+{"type":"user","timestamp":"2026-10-01T12:00:39Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w4","content":"qqqq"}]}}
+{"type":"assistant","timestamp":"2026-10-01T12:00:40Z","message":{"id":"o5","role":"assistant","content":"Done ops.","usage":{"output_tokens":6}}}
+{broken
+{"type":"assistant","message":null}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"nonexistent","content":7}]}}
+[1,2]
+{"type":"user","message":"a string"}

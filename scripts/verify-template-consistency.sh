@@ -4966,6 +4966,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 66 -- scripts/measure-process.py's self-test passes (v4.5.0 Part F4):
+# exact bucket totals and shares on scripts/fixtures/measure-process/, plus a
+# control that a wrong expectation is reported. A missing python3 is a
+# failure, never a skip (the scripts/test-server.sh posture).
+# ---------------------------------------------------------------------------
+note "Check 66: scripts/measure-process.py --self-test"
+if ! python3 -c 'import sys' >/dev/null 2>&1; then
+  ko "check 66: python3 is not usable here -- the measurement self-test cannot run (python3 is a toolkit prerequisite, see server/install.sh)"
+elif c66_out=$(python3 scripts/measure-process.py --self-test 2>&1); then
+  ok "check 66: $c66_out"
+else
+  ko "check 66: scripts/measure-process.py --self-test failed: $(printf '%s' "$c66_out" | head -3 | tr '\n' ' ')"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$skip_count" -gt 0 ]; then
   echo "$skip_count check(s) skipped"

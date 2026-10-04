@@ -1,0 +1,19 @@
+{
+  "subagents": {
+    "events": {"process:rules": 2, "process:prod": 2, "process:review": 2, "process:gate": 1, "process:wait": 1, "process:report": 2,
+               "progress:edit": 1, "progress:commit": 1, "progress:deliver": 2,
+               "neutral:orient": 2, "neutral:spawn": 3, "unclassified": 1},
+    "load": {"process:rules": 1168, "process:prod": 40, "process:review": 20, "process:gate": 480, "process:wait": 16, "process:report": 0,
+             "progress:edit": 20, "progress:commit": 24, "progress:deliver": 28,
+             "neutral:orient": 280, "neutral:spawn": 64, "unclassified": 8},
+    "wall": {"process:gate": 42.0, "progress:commit": 0.0, "process:wait": 30.0, "process:prod": 10.0, "process:report": 1.0},
+    "share": {"load": 0.9599, "out": 0.7054, "wall": 0.9444},
+    "unclassified_top": [["FooTool", 1]]
+  },
+  "main": {
+    "events": {"neutral:spawn": 1, "neutral:orient": 1},
+    "load": {"neutral:spawn": 16, "neutral:orient": 0}
+  },
+  "prod": {"prodded": 1, "runs": 1},
+  "report": {"n": 1, "median": 68, "short": 1, "legacy": 0}
+}
