@@ -8767,7 +8767,11 @@ if python3 -c '' >/dev/null 2>&1; then
   printf '{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","command":"python3 ~/.claude/skills/jev/jev_route.py"}]}]}}\n' > "$JDR/.claude/settings.local.json"
   jd_cmp "jev config route true (router installed+registered)" "$(jd_payload general-purpose -)"
 else
-  skip "J-DIFF jev config route true" "no python3 on this host (the router cannot run)" 3
+  # Deliberate R-2 divergence: no python3 -> the current copy floors (the golden would not). Same 3 assertions.
+  printf '%s' "$(jd_payload general-purpose -)" | HOME="$JDH" "$JD_BASH" "$ROOT/hooks/model-floor.sh" >"$TMPROOT/jd.co" 2>"$TMPROOT/jd.ce"; jd_crc=$?
+  expect "J-DIFF jev route true, no python3 (R-2 divergence): exit code"    0      "$jd_crc"
+  expect "J-DIFF jev route true, no python3 (R-2 divergence): floors"       sonnet "$(jfield "$(<"$TMPROOT/jd.co")" hookSpecificOutput.updatedInput.model)"
+  expect "J-DIFF jev route true, no python3 (R-2 divergence): stderr is the floor diagnostic" "model-floor: general-purpose had no model -> sonnet" "$(<"$TMPROOT/jd.ce")"
 fi
 rm -rf "$JDGD/jev" "$JDH/.claude/skills/jev"; rm -f "$JDR/.claude/settings.local.json"
 # JT1-1: the golden is pinned to the v4.3.0 blob, so a wrong-target cp cannot
