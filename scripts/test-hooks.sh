@@ -9186,6 +9186,11 @@ check "G3d T3c-12 KNOWN LIMIT allowed: echo \" -m '\"; cd <P>; git push; echo \"
 printf 'd=/x\ngit -C "$d" commit -q -m seed\n' > "$G3DO/seedc.sh"
 check_msg "G3d T3c-13 KNOWN FALSE REFUSAL (v3.0.3 unresolved -C, not S-3c): bash seedc.sh" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash seedc.sh' "$G3DO")" "the -C target"
 check_nomsg "G3d T3c-13 ... and the message is not the S-3c one"                         "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash seedc.sh' "$G3DO")" "$D3"
+# T3c-14: ONE -c cluster pattern, matched case-SENSITIVELY: git's/tar's -C is no shell -c, and a c anywhere in the cluster is one
+check_msg "G3d T3c-14 allowed: git -C . commit -m x (-C is not -c)"                      "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git -C . commit -m x' "$G3DO")" "passed."
+check_msg "G3d T3c-14 allowed: tar -xf a.tgz -C . && git commit -m x"                    "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'tar -xf a.tgz -C . && git commit -m x' "$G3DO")" "passed."
+check_msg "G3d T3c-14 no-push-main: bash -cm '. ./cdp.sh; git push' (c first in cluster)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -cm '. ./cdp.sh; git push'" "$G3DO")" "$D3"
+check_msg "G3d T3c-14 no-push-main: bash -ce '. ./cdp.sh; git push'"                      "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -ce '. ./cdp.sh; git push'" "$G3DO")" "$D3"
 # ---- end v4.3.1 G3d
 
 # ---- v4.3.1 G4: commit-time gate artifacts are named by tree; parallel PRs from one parent keep theirs ----

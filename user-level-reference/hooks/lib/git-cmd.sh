@@ -704,7 +704,12 @@ GC_DIRWORD_RE='(^|[^[:alnum:]_./-])(cd|pushd|popd|chdir|dirs|sl|shopt|eval|sourc
 # `.` only in COMMAND position (T3c-3, T3c-8, T3c-11): at the start of a line, after ; & | ( {
 # or a `-c` flag cluster (a wrapped payload, quotes already dropped), each optionally followed
 # by keywords (then do else elif if while until time ! builtin command). Matched per line.
-GC_SRC_RE='(^|[;&|({]|-[A-Za-z]*c[[:space:]])[[:space:]]*((then|do|else|elif|if|while|until|time|!|builtin|command)[[:space:]]+)*\.[[:space:]]'
+# The -c cluster is ONE pattern, GC_CFLAG_RE, matched case-SENSITIVELY (T3c-14): git's and
+# tar's -C is no shell -c, and the c may sit anywhere in the cluster (-cm, -ce).
+GC_CFLAG_RE='(^|[[:space:]])-[A-Za-z]*c[A-Za-z]*[[:space:]]'
+GC_SRC_KW='[[:space:]]*((then|do|else|elif|if|while|until|time|!|builtin|command)[[:space:]]+)*\.[[:space:]]'
+GC_SRC_RE="(^|[;&|({])$GC_SRC_KW"
+GC_SRC_C_RE="$GC_CFLAG_RE$GC_SRC_KW"
 # env -C / env --chdir (the option, not git's own -C after the command word)
 GC_ENVC_RE='(^|[^[:alnum:]_./-])env([[:space:]]+(-u[[:space:]]+[^[:space:]]+|-[^[:space:]]+|[^[:space:]=-][^[:space:]=]*=[^[:space:]]*))*[[:space:]]+(-C|--chdir)'
 # where git or cd lands: an assignment of CDPATH / HOME / PWD / OLDPWD. The words GIT_DIR /
@@ -719,12 +724,12 @@ GC_DIRVAR_RE='(^|[^[:alnum:]_])(CDPATH|HOME|PWD|OLDPWD)='
 # quotes and backslashes are dropped (`c""d`, `\cd`), as the verb matchers do.
 gc_dirchange_in() {
   local t=$1
-  printf '%s\n' "$t" | grep -qE '(^|[[:space:]])-[A-Za-z]*c[A-Za-z]*[[:space:]]' || t=$(printf '%s' "$t" | sed -E \
+  printf '%s\n' "$t" | grep -qE "$GC_CFLAG_RE" || t=$(printf '%s' "$t" | sed -E \
     -e "s/(^|[[:space:]])(-m|-am|--message|--body|--title)[[:space:]=]*\"[^\"\$\`]*\"/\1\2 X/g" \
     -e "s/(^|[[:space:]])(-m|-am|--message|--body|--title)[[:space:]=]*'[^'\$\`]*'/\1\2 X/g")
   t=$(printf '%s' "$t" | tr -d "\"'\\\\")
   printf '%s\n' "$t" | grep -qiE "$GC_DIRWORD_RE|$GC_ENVC_RE|$GC_SRC_RE|GIT_DIR|GIT_WORK_TREE" && return 0
-  printf '%s\n' "$t" | grep -qE "$GC_DIRVAR_RE"
+  printf '%s\n' "$t" | grep -qE "$GC_DIRVAR_RE|$GC_SRC_C_RE"
 }
 
 # gc_text_has_gated <text> -- succeeds when the text holds a git commit/push/merge
