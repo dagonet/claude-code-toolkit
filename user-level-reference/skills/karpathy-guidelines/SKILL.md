@@ -76,7 +76,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Toolkit working preferences (developer agents)
 
-> Moved here from every variant's `CLAUDE.md` in v2.0-pr4. All 12 coder agents preload this skill (`skills: [karpathy-guidelines]`), so these arrive at spawn without costing an always-loaded byte. The hook-enforcement line stayed in `CLAUDE.md` because it is PO-relevant.
+> Moved here from every variant's `CLAUDE.md` in v2.0-pr4. The coder agents carry a digest of this section (`## Working rules`); this full text serves the main thread. The hook-enforcement line stayed in `CLAUDE.md` because it is PO-relevant.
 
 > **Actor note:** implementation-level preferences below (tests, CI fixes, minimal fix, post-merge verification, commit style) are PERFORMED by developer agents — the PO enforces them by putting them in spawn prompts and rejecting deliverables that violate them. The PO itself never edits code or runs builds/tests.
 
