@@ -18,7 +18,14 @@ The user reads as a product manager: they care what changed for the project goal
 6. **Questions first.** A direct question gets a direct answer first; no table unless a state changed.
 7. **Details on request.** Details live in the repo and in memory; end with "ask for details on X" when useful.
 8. **A colleague, not a log.** Ask when something is unclear, push back when a request looks wrong, suggest ideas.
-9. **Board.** If this project has a backlog board (its address is in this project's memory), update it on every state change using the `backlog-board` skill. If not, and the project has a backlog, offer one once -- unless this project's memory records `Backlog board: declined`; when the user declines, record exactly that line.
+9. Dashboard. Project = your working-folder name, except Claude Desktop scratch workspaces (a working folder whose path contains "scratch-workspaces"): there, project = your session name. Session = your own name as ListAgents shows it ("This session is ..."). Helper:
+G:/git/agent-dashboard/.venv/Scripts/python.exe -m agent_dashboard.coord
+- On every state change of a backlog item: create/update its open-brain task (task_create/task_update: project, title, status mapped Open->open, In progress/Testing live/Needs rework->in_progress, Waiting on you/Blocked->blocked, Done->done; metadata = {"state", "order", "note", "board": true}, all four keys every time), then: coord status --project P --session S --state "<state>" --focus "..." --summary "...".
+- When you need a decision from the user: coord ask --project P --session S [--choice A --choice B] "question"; ask it in your chat as usual; SendMessage agent-supervisor one line: "question #<id> posted".
+- If the user answers in your chat first: coord answer <id> "<answer>" --by session.
+- A message from agent-supervisor starting "Answer to question #<id> (via ...)" is the user's answer to your own question #<id> - act on it once. If you get the same answer again for a question you already acted on, ignore the repeat.
+  "Roll call" from agent-supervisor = post status + open questions now.
+- If the dashboard does not answer (exit 2), carry on and report in chat only.
 
 The user can switch to the detailed technical style with `/output-style default`.
 

@@ -3000,7 +3000,7 @@ BUDGET_AGENT_TEAM_MD=20480
 BUDGET_RULES_PROJECT_MD=880
 BUDGET_PROJECT_INSTRUCTIONS_MD=960
 BUDGET_USER_CLAUDE_MD=7856
-BUDGET_PM_REPORT_MD=2992
+BUDGET_PM_REPORT_MD=4096
 # PROJECT_CONTEXT.md is capped PER VARIANT: the variants differ by more than
 # the margin. An unknown variant gets 0, which fails loudly.
 c35_ctx_budget() { # <variant>
@@ -3668,60 +3668,7 @@ else
   ko "check 60: $c60_f exists but its frontmatter 'name:' is not '$c60_name'"
 fi
 
-# ---------------------------------------------------------------------------
-# Check 61 -- the seven report states are ONE list in three places (v4.2.0).
-# (a) The pm-report style's rule-5 line and board.html's STATES labels must be
-#     the same set of exactly seven -- two copies of one list drift apart
-#     silently otherwise. Empty or partial reads refuse.
-# (b) The backlog-board skill states the three data rules whose breach fails
-#     silently at runtime (rows without `order` sort last, out of place, an
-#     unpinned write can overwrite a change made since it was read,
-#     republishing churns versions without touching data).
-# (c) The backlog-board SKILL.md `## States` table's key->label pairs must
-#     equal board.html's STATES object's key->label pairs -- a key typo in
-#     either file breaks the pairing silently otherwise (an item with that
-#     key would render as an unknown-state chip instead of its intended
-#     label). Exactly seven pairs on each side; empty or partial reads
-#     refuse.
-# ---------------------------------------------------------------------------
-echo
-note "Check 61: report states identical in pm-report.md and board.html; board data rules stated; SKILL.md/board.html key->label pairs match"
-c61_style=$(grep -m1 '^5\. \*\*States (exactly these):\*\* ' user-level-reference/output-styles/pm-report.md 2>/dev/null \
-  | sed 's/^5\. \*\*States (exactly these):\*\* //' | tr -d '\r' | sed 's/, /\n/g' | sort)
-c61_board=$(grep -o 'label: "[^"]*"' user-level-reference/skills/backlog-board/board.html 2>/dev/null \
-  | sed 's/^label: "//; s/"$//' | sort)
-c61_ns=$(printf '%s\n' "$c61_style" | grep -c .)
-c61_nb=$(printf '%s\n' "$c61_board" | grep -c .)
-if [ "$c61_ns" -ne 7 ] || [ "$c61_nb" -ne 7 ]; then
-  ko "check 61a: expected 7 states on each side, read style=$c61_ns board=$c61_nb"
-elif [ "$c61_style" = "$c61_board" ]; then
-  ok "check 61a: the 7 report states match between pm-report.md and board.html"
-else
-  ko "check 61a: state labels differ -- style: [$(printf '%s' "$c61_style" | tr '\n' ';')] board: [$(printf '%s' "$c61_board" | tr '\n' ';')]"
-fi
-c61_skill=user-level-reference/skills/backlog-board/SKILL.md
-c61_missing=""
-for c61_lit in 'Every row needs an `order`' 'each entry pinned with `if_version`' 'Never republish the page for a data change'; do
-  grep -qF "$c61_lit" "$c61_skill" 2>/dev/null || c61_missing="$c61_missing [$c61_lit]"
-done
-if [ -z "$c61_missing" ]; then
-  ok "check 61b: backlog-board SKILL.md states the order / if_version / no-republish rules"
-else
-  ko "check 61b: $c61_skill missing:$c61_missing"
-fi
-c61c_skill=$(grep -oE '^\| `[a-z]+` \| [^|]+ \|$' "$c61_skill" 2>/dev/null \
-  | sed -E 's/^\| `([a-z]+)` \| (.+) \|$/\1:\2/' | sort)
-c61c_board=$(grep -oE '"[a-z]+": \{label: "[^"]*"' user-level-reference/skills/backlog-board/board.html 2>/dev/null \
-  | sed -E 's/^"([a-z]+)": \{label: "([^"]*)"$/\1:\2/' | sort)
-c61c_ns=$(printf '%s\n' "$c61c_skill" | grep -c .)
-c61c_nb=$(printf '%s\n' "$c61c_board" | grep -c .)
-if [ "$c61c_ns" -ne 7 ] || [ "$c61c_nb" -ne 7 ]; then
-  ko "check 61c: expected 7 key->label pairs on each side, read skill=$c61c_ns board=$c61c_nb"
-elif [ "$c61c_skill" = "$c61c_board" ]; then
-  ok "check 61c: the 7 key->label pairs match between SKILL.md's States table and board.html's STATES object"
-else
-  ko "check 61c: key->label pairs differ -- skill: [$(printf '%s' "$c61c_skill" | tr '\n' ';')] board: [$(printf '%s' "$c61c_board" | tr '\n' ';')]"
-fi
+# Check 61 -- retired in v4.5.0 with the backlog-board skill (the agent dashboard replaced it).
 
 # ---------------------------------------------------------------------------
 # Check 62 -- the reference UserPromptSubmit time hook is the exact inline
