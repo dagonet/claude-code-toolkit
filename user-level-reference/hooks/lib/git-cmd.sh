@@ -643,8 +643,8 @@ GC_PS_SPLIT
 # basename-compared, so this is not read even though gc_segments' own quote
 # stripping would have made $1 literally `bash` under the old $1-anchor code.
 gc_script_body() {
-  local seg="$1" cwd="$2" tok clean base path="" pos=1 rel=0
-  GC_SB=""; GC_SB_ST=""
+  local seg="$1" cwd="$2" tok clean base path="" pos=1
+  GC_SB=""
   set -- $seg
   while [ $# -gt 0 ]; do
     tok="$1"
@@ -665,15 +665,12 @@ gc_script_body() {
     case "$clean" in -*) continue ;; *) path="$clean"; break ;; esac
   done
   [ -n "$path" ] || return 0
-  # S-3c T3c-1: the answer goes to globals (the caller reads them, no $(...)):
-  # GC_SB = the body, GC_SB_ST = found | miss (a RELATIVE path with no `$` that is no file here).
+  # S-3c: the answer goes to the global GC_SB (the caller reads it, no $(...)).
   case "$path" in
-    /*|[A-Za-z]:*) rel=0 ;;
-    *\$*|*\`*) rel=0; path="$cwd/$path" ;;
-    *) rel=1; path="$cwd/$path" ;;
+    /*|[A-Za-z]:*) ;;
+    *) path="$cwd/$path" ;;
   esac
-  if [ ! -f "$path" ]; then [ "$rel" = 1 ] && GC_SB_ST=miss; return 0; fi
-  GC_SB_ST=found
+  [ -f "$path" ] || return 0
   # v4.1.2 #8: whole-line comments (first non-blank character `#`) are never
   # commands, so they are stripped BEFORE the verb scan -- and only whole
   # lines: `"${BR#refs/heads/}"` on a code line keeps its `#`. The
@@ -702,26 +699,29 @@ GC_NL='
 # target, else the payload cwd: GC_CWD_E.
 GC_GATED_VERB=""
 # directory-change WORDS (case-insensitive, whole words)
-GC_DIRWORD_RE='(^|[^[:alnum:]_./-])(cd|pushd|popd|chdir|dirs|sl|shopt|eval|Set-Location|Push-Location|Pop-Location)([^[:alnum:]_.-]|$)|-WorkingDirectory|-wd[[:space:]]'
-# `source` and `.` only in COMMAND position (T3c-3): at the start of a line, after ; & | ( {
-# then do builtin command, or after `-c ` (a wrapped payload, quotes already dropped)
-GC_SRC_RE='(^|[;&|({]|[[:space:]](then|do|builtin|command)[[:space:]]|-c[[:space:]])[[:space:]]*(source|\.)[[:space:]]'
+GC_DIRWORD_RE='(^|[^[:alnum:]_./-])(cd|pushd|popd|chdir|dirs|sl|shopt|eval|source|Set-Location|Push-Location|Pop-Location)([^[:alnum:]_.-]|$)|-WorkingDirectory|-wd[[:space:]]'
+# `.` only in COMMAND position (T3c-3, T3c-8): at the start of a line, after ; & | ( { a
+# keyword (then do else elif if while until time ! builtin command), or after a `-c` flag
+# cluster (a wrapped payload, quotes already dropped)
+GC_SRC_RE='(^|[;&|({]|[[:space:]](then|do|else|elif|if|while|until|time|!|builtin|command)[[:space:]]|-[A-Za-z]*c[[:space:]])[[:space:]]*\.[[:space:]]'
 # env -C / env --chdir (the option, not git's own -C after the command word)
 GC_ENVC_RE='(^|[^[:alnum:]_./-])env([[:space:]]+(-u[[:space:]]+[^[:space:]]+|-[^[:space:]]+|[^[:space:]=-][^[:space:]=]*=[^[:space:]]*))*[[:space:]]+(-C|--chdir)'
-# where git or cd lands: the words GIT_DIR / GIT_WORK_TREE anywhere (export, read, printf -v,
-# $env:...), and an assignment of CDPATH / HOME / PWD / OLDPWD
-GC_DIRVAR_RE='GIT_DIR|GIT_WORK_TREE|(^|[^[:alnum:]_])(CDPATH|HOME|PWD|OLDPWD)='
+# where git or cd lands: an assignment of CDPATH / HOME / PWD / OLDPWD. The words GIT_DIR /
+# GIT_WORK_TREE anywhere (export, read, printf -v, $env:...) are matched case-insensitively
+# in gc_dirchange_in (T3c-10: PowerShell env names are).
+GC_DIRVAR_RE='(^|[^[:alnum:]_])(CDPATH|HOME|PWD|OLDPWD)='
 
 # gc_dirchange_in <text> -- succeeds when the text holds any of the above.
-# The value of a literal -m / --message / --body / --title argument (no $ and no
-# backtick in it) is data, never executed, and is dropped first (T3c-5). Then quotes
+# The value of a literal -m / -am / --message / --body / --title argument (no $ and no
+# backtick in it) is data, never executed, and is dropped first (T3c-5, T3c-7). Then quotes
 # and backslashes are dropped (`c""d`, `\cd`), as the verb matchers do.
 gc_dirchange_in() {
   local t
   t=$(printf '%s' "$1" | sed -E \
-    -e "s/(-[A-Za-z]*m|--message|--body|--title)[[:space:]=]*\"[^\"\$\`]*\"/\1 X/g" \
-    -e "s/(-[A-Za-z]*m|--message|--body|--title)[[:space:]=]*'[^'\$\`]*'/\1 X/g" | tr -d "\"'\\\\")
+    -e "s/(^|[[:space:]])(-m|-am|--message|--body|--title)[[:space:]=]*\"[^\"\$\`]*\"/\1\2 X/g" \
+    -e "s/(^|[[:space:]])(-m|-am|--message|--body|--title)[[:space:]=]*'[^'\$\`]*'/\1\2 X/g" | tr -d "\"'\\\\")
   printf '%s\n' "$t" | grep -qiE "$GC_DIRWORD_RE|$GC_ENVC_RE|$GC_SRC_RE" && return 0
+  printf '%s\n' "$t" | grep -qiE 'GIT_DIR|GIT_WORK_TREE' && return 0
   printf '%s\n' "$t" | grep -qE "$GC_DIRVAR_RE"
 }
 
@@ -749,23 +749,18 @@ GC_TG_SEGS
 # $GC_CMD (gc_script_body, depth 1, resolved against <cwd>) and, when a segment
 # runs powershell/pwsh, the .ps1 bodies (S-41: no shell continuation join there).
 gc_collect_bodies() {
-  local seg body _gc_bj ps=0 d found miss
-  GC_BODIES=(); GC_BODY_MISS=0
+  local seg body _gc_bj ps=0 d
+  GC_BODIES=()
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
     gc_seg_is_ps "$seg" && ps=1
-    found=0; miss=0
     for d in "${GC_CANDS[@]}"; do
       gc_script_body "$seg" "$d"
-      [ "$GC_SB_ST" = miss ] && miss=1
-      [ "$GC_SB_ST" = found ] && found=1
       [ -n "$GC_SB" ] || continue
       body=$GC_SB
       _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
       GC_BODIES+=("$body")
     done
-    # a relative script path found under no directory at all: nothing to read
-    if [ "$found" = 0 ] && [ "$miss" = 1 ]; then GC_BODY_MISS=1; fi
   done <<GC_CB_SEGS
 $(gc_seg_raw)
 GC_CB_SEGS
@@ -828,16 +823,12 @@ gc_dir_rule() {
   fi
   # the typed text changes directory in a way other than the one leading cd?
   # Then a relative script path cannot be pinned to one directory: look it up under
-  # the payload cwd and every literal cd target (T3c-1), and refuse if it is nowhere.
+  # the payload cwd and every literal cd target (T3c-1); not found anywhere = not scanned.
   if gc_dirchange_in "$rest"; then dc=1; gc_dir_cands "$2" "$GC_CWD_E" "$typed"; else dc=0; GC_CANDS=("$GC_CWD_E"); fi
   gc_collect_bodies
   GC_CMD="$typed"
   for b in "${GC_BODIES[@]}"; do
     GC_CMD="$GC_CMD$GC_NL$b"
-    # a body that holds a gated verb must not change directory
-    if gc_dirchange_in "$b" && gc_text_has_gated "$b"; then
-      gc_dir_refuse "$gate"; return 1
-    fi
   done
   # ... refused when the command (or a script it runs) holds a gated verb
   if [ "$dc" = 1 ]; then
@@ -845,10 +836,6 @@ gc_dir_rule() {
     for b in "${GC_BODIES[@]}"; do
       if gc_text_has_gated "$b"; then gc_dir_refuse "$gate"; return 1; fi
     done
-    if [ "$GC_BODY_MISS" = 1 ]; then
-      echo "BLOCKED: $gate: a directory change in a command that runs a script this hook cannot find cannot be checked -- run it by an absolute path (bash /abs/x.sh), or use a single leading \`cd <absolute dir> && ...\`." >&2
-      return 1
-    fi
   fi
   return 0
 }

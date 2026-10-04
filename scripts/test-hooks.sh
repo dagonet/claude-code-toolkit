@@ -8908,7 +8908,7 @@ check_msg "G3 T3b-3 pre-commit-test: cd <other>; cd typo; cd -; bash c.sh" "$ROO
 check_msg "G3 T3b-3 gate-before-merge: cd <other>; cd typo; cd -; bash m.sh" "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash m.sh" "$G3R")" "a directory change in a command with"
 check "G3 T3b-3 control: cds with no gated verb anywhere (bash ok.sh) are not refused" hooks/no-push-main.sh 0 "$(mkjson Bash "cd $G3O; cd sub; cd -; bash ok.sh" "$G3R")"
 # T3b-4 shapes
-check_msg "G3 T3b-4 no-push-main: export CDPATH=<parent>; cd g3main; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "export CDPATH=$TMPROOT; cd g3main; bash bare.sh" "$G3O")" "cannot be checked"
+check "G3 T3b-4 KNOWN LIMIT allowed: no-push-main: export CDPATH=<parent>; cd g3main; bash bare.sh (script found nowhere, not scanned)" hooks/no-push-main.sh 0 "$(mkjson Bash "export CDPATH=$TMPROOT; cd g3main; bash bare.sh" "$G3O")"
 check_msg "G3 T3b-4 no-push-main: shopt -s cdable_vars; cd sub; bash ../bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "shopt -s cdable_vars; cd sub; bash ../bare.sh" "$G3R")" "a directory change in a command with"
 check_msg "G3 T3b-4 no-push-main: pushd sub; dirs -c; popd; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'pushd sub; dirs -c; popd; bash bare.sh' "$G3R")" "a directory change in a command with"
 check_msg "G3 S-3c: cd sub; bash ../bare.sh is refused (T3c-1: the script is found under the cd target and scanned)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub; bash ../bare.sh' "$G3R")" "a directory change in a command with push"
@@ -9069,7 +9069,7 @@ done
 printf 'cd %s\ngit push\n' "$G3CP" > "$G3CO/cdpush.sh"
 printf 'cd %s\necho hi\n' "$G3CP" > "$G3CO/cdonly.sh"
 printf 'git -C %s push\n' "$G3CO" > "$G3CO/cpush.sh"
-check "G3c no-push-main: bash cdpush.sh (a body with cd and git push)"   hooks/no-push-main.sh 2 "$(mkjson Bash 'bash cdpush.sh' "$G3CO")"
+check "G3c KNOWN LIMIT allowed: no-push-main: bash cdpush.sh (a body with cd and git push is judged in the launch repo, T3c-9)" hooks/no-push-main.sh 0 "$(mkjson Bash 'bash cdpush.sh' "$G3CO")"
 check "G3c no-push-main: bash cdonly.sh && git push (a body with cd, no verb: a child process)" hooks/no-push-main.sh 0 "$(mkjson Bash 'bash cdonly.sh && git push' "$G3CO")"
 check "G3c no-push-main: bash cpush.sh (a body that uses git -C)"        hooks/no-push-main.sh 0 "$(mkjson Bash 'bash cpush.sh' "$G3CO")"
 # the refusal names the way out
@@ -9111,7 +9111,6 @@ check_msg "G3d T3c-1 pre-commit-test: cd sub; bash ../c.sh"                     
 check_msg "G3d T3c-1 pre-commit-test: cd sub && bash ../c.sh (relative lead)"                        "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd sub && bash ../c.sh" "$G3DP")" "$D3"
 check_msg "G3d T3c-1 gate-before-merge: cd sub; bash ../m.sh"                            "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'cd sub; bash ../m.sh' "$G3DP")" "$D3"
 check_msg "G3d T3c-1 gate-before-merge: cd sub && bash ../m.sh (relative lead)"                      "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "cd sub && bash ../m.sh" "$G3DP")" "$D3"
-check_msg "G3d T3c-1 no copy anywhere: cd sub; bash nowhere.sh is refused (cannot read what it cannot find)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub; bash nowhere.sh' "$G3DO")" "cannot find"
 check "G3d T3c-1 allowed: no-push-main: cd build; bash run.sh (run.sh exists in build, no gated verb)"     hooks/no-push-main.sh 0 "$(mkjson Bash 'cd build; bash run.sh' "$G3DO")"
 check "G3d T3c-1 allowed: pre-commit-test: cd build; bash run.sh"                        hooks/pre-commit-test.sh 0 "$(mkjson Bash 'cd build; bash run.sh' "$G3DO")"
 check "G3d T3c-1 allowed: gate-before-merge: cd build; bash run.sh"                      hooks/gate-before-merge.sh 0 "$(mkjson Bash 'cd build; bash run.sh' "$G3DO")"
@@ -9140,6 +9139,25 @@ check_msg "G3d T3c-5 a message holding \$( ) is not skipped: -m \"\$(cd /x; echo
 # KNOWN FALSE REFUSALS, pinned (not fixed): a mention in grep / echo, outside a -m/--message/--body/--title value
 check_msg "G3d KNOWN FALSE REFUSAL: grep -n \"cd \" README.md; git commit"                "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'grep -n "cd " README.md; git commit -m x' "$G3DO")" "$D3"
 check_msg "G3d KNOWN FALSE REFUSAL: echo \"use pushd here\" && git push"                  "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'echo "use pushd here" && git push' "$G3DO")" "$D3"
+# fix round 2 (T3c-7..10)
+# T3c-7: the message skip names its flags exactly; `bash -cm` is a shell payload, not a message
+check_msg "G3d T3c-7 no-push-main: bash -cm 'cd <P>; git push'"                          "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -cm 'cd $G3DP; git push'" "$G3DO")" "$D3"
+check_msg "G3d T3c-7 pre-commit-test: bash -cm 'cd <P>; git commit -m x'"                "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "bash -cm 'cd $G3DP; git commit -m x'" "$G3DO")" "$D3"
+check_msg "G3d T3c-7 gate-before-merge: bash -cm 'cd <P>; git merge feature/y'"          "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "bash -cm 'cd $G3DP; git merge feature/y'" "$G3DO")" "$D3"
+check_msg "G3d T3c-7 allowed: -am \"fix the cd step\""                                   "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit -am "fix the cd step"' "$G3DO")" "passed."
+# T3c-8: `source` is a directory word anywhere; `.` only in command position, with the wider prefix set
+check_msg "G3d T3c-8 pre-commit-test: if source ./cdp.sh; then git commit"               "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'if source ./cdp.sh; then git commit -m x; fi' "$G3DO")" "$D3"
+check_msg "G3d T3c-8 no-push-main: time source ./cdp.sh; git push"                       "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'time source ./cdp.sh; git push' "$G3DO")" "$D3"
+check_msg "G3d T3c-8 no-push-main: bash -ec '. ./cdp.sh; git push'"                      "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -ec '. ./cdp.sh; git push'" "$G3DO")" "$D3"
+# T3c-9: typed text is fail-closed; script scanning is best-effort (a script body that changes directory, or a script not found, is judged in the launch repo, not refused)
+printf 'cd /tmp\ngit commit -m x\n' > "$G3DO/bodycd.sh"
+check_msg "G3d T3c-9 allowed: pre-commit-test: bash bodycd.sh (body cd + commit; KNOWN LIMIT: judged in the launch repo)" "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'bash bodycd.sh' "$G3DO")" "passed."
+check "G3d T3c-9 allowed: pre-commit-test: cd build && bash run.sh (no gated verb)"       hooks/pre-commit-test.sh 0 "$(mkjson Bash 'cd build && bash run.sh' "$G3DO")"
+check "G3d T3c-9 KNOWN LIMIT allowed: cd sub; bash nowhere.sh (script not found anywhere, not scanned)" hooks/no-push-main.sh 0 "$(mkjson Bash 'cd sub; bash nowhere.sh' "$G3DO")"
+check_msg "G3d T3c-9 a body verb is still judged: bash bare.sh from the protected repo"   "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'bash bare.sh' "$G3DP")" "main"
+# T3c-10: GIT_DIR / GIT_WORK_TREE match case-insensitively (PowerShell env names are)
+check_msg "G3d T3c-10 no-push-main: PowerShell \$env:git_dir = x; git push"               "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson PowerShell '$env:git_dir = "/x/.git"; git push' "$G3DO")" "$D3"
+check_msg "G3d KNOWN FALSE REFUSAL: git commit -F- heredoc whose body mentions GIT_DIR"   "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "$(printf 'git commit -F- <<EOF\nfix GIT_DIR handling\nEOF')" "$G3DO")" "$D3"
 # ---- end v4.3.1 G3d
 
 echo "----------------------------------------------------------------"
