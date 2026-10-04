@@ -9385,7 +9385,9 @@ done
 # R-1 audit (the amendment's `. "$0"` form is only exit-code-faithful if none of these shapes exists).
 # Scope: shell code that runs sourced or wrapped. enforce-delegation/retro-ledger embed JS whose `return` is not shell.
 # mawk-safe: `\b` is not a word boundary in mawk, so the pattern is return([^a-zA-Z0-9_]|$).
-C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{.*\} *$/{d=0} /^\}/{d=0} !d && /^[[:space:]]*return([^a-zA-Z0-9_]|$)/{print FILENAME":"FNR": "$0}'
+C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{.*\}[[:space:]]*(;|#.*)?$/{d=0} /^\}/{d=0} !d && !/^[[:space:]]*#/ && !/^[A-Z_]+=[\047]/ && /(^[[:space:]]*|(&&|\|\||;|then|do|else)[[:space:]]*)return([^a-zA-Z0-9_]|$)/{print FILENAME":"FNR": "$0}'
+# A mid-line return (`[ x ] && return 4`, `|| return 0`, `; return`, `then return`) is matched too; the one exemption is an awk program held in a string assignment (hooks/lib/git-cmd.sh).
+# Not handled: an indented closing brace ending a column-0 function does not reset the depth flag (a later top-level return in that file would be missed after it; none exists, and the one-line/col-0 resets cover every function here).
 C2ARFILES=""
 for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes require-skills-block; do
   C2ARFILES="$C2ARFILES $ROOT/hooks/$c2a_h.sh"
@@ -9398,17 +9400,24 @@ expect "C2a: R-1 control: the same awk reports exactly one hit on a copy with a 
 printf 'f() { return 1; }\nreturn 5\n' > "$TMPROOT/c2a-ret1.sh"
 expect "C2a: R-1 control: a one-line function does not mask a later top-level return" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret1.sh" | wc -l | tr -d ' ')"
+# Case-insensitive (grep -i), so the command word must be skipped: `exit 2'` inside a trap body is not the EXIT signal. Shape: trap <quoted-or-bare command> [signals...] EXIT|0.
+C2ATRAPRE="^[^#]*trap +('[^']*'|\"[^\"]*\"|[^ '\"]+) +([A-Za-z0-9_]+ +)*(EXIT|0)([^A-Za-z0-9_]|\$)"
+cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-ret2.sh"; printf '[ -n "$x" ] && return 4\n' >> "$TMPROOT/c2a-ret2.sh"
+expect "C2a: R-1 control: a mid-line && return is caught (exactly one hit)" 1 \
+  "$(awk "$C2AAWK" "$TMPROOT/c2a-ret2.sh" | wc -l | tr -d ' ')"
+printf 'f() { :; } # c\nreturn 5\n' > "$TMPROOT/c2a-ret3.sh"
+expect "C2a: R-1 control: a one-line function with a trailing comment does not mask a later return" 1 \
+  "$(awk "$C2AAWK" "$TMPROOT/c2a-ret3.sh" | wc -l | tr -d ' ')"
 expect "C2a: R-2 the EXIT-trap hooks are exactly the six (run-gate.sh is not a registered hook)" \
   "deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh require-skills-block.sh" \
-  "$(grep -l 'trap .* EXIT' "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | sort | tr '\n' ' ' | sed 's/ $//')"
-C2ATRAPRE='^[^#]*trap .*(EXIT|[[:space:]]0)([[:space:]]|$)'
+  "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | sort | tr '\n' ' ' | sed 's/ $//')"
 for c2a_h in $C2AHOOKS; do
-  expect "C2a: R-2 $c2a_h has exactly one EXIT/0 trap" 1 "$(grep -cE "$C2ATRAPRE" "$ROOT/hooks/$c2a_h.sh")"
+  expect "C2a: R-2 $c2a_h has exactly one EXIT/0 trap" 1 "$(grep -ciE "$C2ATRAPRE" "$ROOT/hooks/$c2a_h.sh")"
 done
 expect "C2a: R-2 no hook lib sets an EXIT/0 trap (sourced after the hook's, it would replace it)" 0 \
-  "$(cat "$ROOT"/hooks/lib/*.sh | grep -cE "$C2ATRAPRE")"
-cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-trap2.sh"; printf "trap 'x' EXIT\n" >> "$TMPROOT/c2a-trap2.sh"
-expect "C2a: R-2 control: the per-hook count goes to 2 on a copy with a second EXIT trap" 2 "$(grep -cE "$C2ATRAPRE" "$TMPROOT/c2a-trap2.sh")"
+  "$(cat "$ROOT"/hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")"
+cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-trap2.sh"; printf "trap 'x' exit;\n" >> "$TMPROOT/c2a-trap2.sh"
+expect "C2a: R-2 control: the per-hook count goes to 2 on a copy with a second EXIT trap" 2 "$(grep -ciE "$C2ATRAPRE" "$TMPROOT/c2a-trap2.sh")"
 expect "C2a: R-1 the set -u hooks are exactly the four non-sourced ones" \
   "agent-budget-warn.sh post-edit-build.sh retro-brief.sh retro-ledger.sh" \
   "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh | xargs -n1 basename | sort | tr '\n' ' ' | sed 's/ $//')"
