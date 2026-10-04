@@ -840,6 +840,7 @@ expect "(2.5b) dirty working tree: exit 0 on pass" "0" "$?"
 # v4.3.1 G4: a gate run on a dirty tracked tree is named by that tree, not by HEAD's sha;
 # the fresh repo holds exactly one artifact, so read the newest.
 DIRTYTREE=$(sed -n 's/.*"tree":"\([^"]*\)".*/\1/p' "$(ls -1t "$(gatedir "$DIRTYGATE")"/last-pass.*.json 2>/dev/null | head -1)" 2>/dev/null)
+expect "(2.5b) a tree was recorded" yes "$([ -n "$DIRTYTREE" ] && echo yes || echo no)"
 echo dummy > "$DIRTYGATE/dummy.txt"
 git -C "$DIRTYGATE" add dummy.txt >/dev/null 2>&1
 git -C "$DIRTYGATE" commit -q -m "unrelated commit" >/dev/null 2>&1

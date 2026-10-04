@@ -717,7 +717,7 @@ fi
 if [ "$GATE_RC" -eq 0 ]; then
   HEAD_SHA_AFTER=$(git -C "$REPO_TOP" rev-parse HEAD 2>/dev/null)
   if [ "$HEAD_SHA_AFTER" != "$HEAD_SHA" ]; then
-    rm -f "$ARTIFACT"
+    rm -f "$ARTIFACT" "$ARTIFACT_DIR/last-pass.$HEAD_SHA.json" "$ARTIFACT_DIR/last-pass.tree-$TREE_HASH.json"
     echo "GATE ERROR: the checkout moved while the gate was running (HEAD was ${HEAD_SHA:-unknown} at start, is ${HEAD_SHA_AFTER:-unknown} now)." >&2
     echo "The run does not describe any single state, so no artifact was written. Settle the checkout and re-run 'bash hooks/run-gate.sh'." >&2
     exit 1
@@ -793,10 +793,10 @@ elif [ "$GATE_RC" -eq "$GC_TERMINAL_RC" ]; then
   # again — which is the exact defect this branch exists to fix. The code is
   # propagated so the caller (pre-commit-test.sh) can suppress ITS retry advice
   # by the same structural test, without knowing which guard fired.
-  rm -f "$ARTIFACT"
+  rm -f "$ARTIFACT" "$ARTIFACT_DIR/last-pass.$HEAD_SHA.json" "$ARTIFACT_DIR/last-pass.tree-$TREE_HASH.json"
   exit "$GC_TERMINAL_RC"
 else
-  rm -f "$ARTIFACT"
+  rm -f "$ARTIFACT" "$ARTIFACT_DIR/last-pass.$HEAD_SHA.json" "$ARTIFACT_DIR/last-pass.tree-$TREE_HASH.json"
   echo "GATE FAILED: '$GATE_CMD' exited nonzero. Fix the failures and re-run 'bash hooks/run-gate.sh'." >&2
   exit 1
 fi
