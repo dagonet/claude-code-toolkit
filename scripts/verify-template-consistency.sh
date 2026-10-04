@@ -2867,39 +2867,70 @@ fi
 #
 # TWO-SIDED: the control arm proves the comparison executes. A check that
 # cannot fail looks exactly like one that passed.
+#
+# v4.5.0 (spec C1): v4.0.3 -> v4.3.0 grew the bootstrap surface by 6,847 B, all
+# of it in files no budget covered, so every always-loaded file is capped now.
+# A new cap = the file's size at the v4.5.0 release commit + 128 B (under 2 KB)
+# or 256 B, rounded up to 16. Caps bind the TEMPLATE SEEDS only:
+# PROJECT_CONTEXT.md and rules/project.md are once-class, so a consumer's own
+# copy is never measured here.
 # ---------------------------------------------------------------------------
-note "Check 35: byte budget on templates/*/{CLAUDE.md,AGENT_TEAM.md}"
+note "Check 35: byte budget on every always-loaded template file (CLAUDE.md, AGENT_TEAM.md, rules/project.md, project-instructions.md, PROJECT_CONTEXT.md per variant; the user-level CLAUDE.md and pm-report)"
 BUDGET_CLAUDE_MD=6144
 BUDGET_AGENT_TEAM_MD=20480
-c33_pairs=("CLAUDE.md:$BUDGET_CLAUDE_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD")
+BUDGET_RULES_PROJECT_MD=880
+BUDGET_PROJECT_INSTRUCTIONS_MD=960
+BUDGET_USER_CLAUDE_MD=7856
+BUDGET_PM_REPORT_MD=2992
+# PROJECT_CONTEXT.md is capped PER VARIANT: the variants differ by more than
+# the margin. An unknown variant gets 0, which fails loudly.
+c35_ctx_budget() { # <variant>
+  case "$1" in
+    general) echo 5392 ;;
+    dotnet) echo 5568 ;;
+    dotnet-maui) echo 5920 ;;
+    rust-tauri) echo 5744 ;;
+    java) echo 5552 ;;
+    python) echo 5520 ;;
+    *) echo 0 ;;
+  esac
+}
+c33_pairs=("CLAUDE.md:$BUDGET_CLAUDE_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD" ".claude/rules/project.md:$BUDGET_RULES_PROJECT_MD" ".claude/project-instructions.md:$BUDGET_PROJECT_INSTRUCTIONS_MD" "PROJECT_CONTEXT.md:per-variant")
+c35_single=("user-level-reference/CLAUDE.md:$BUDGET_USER_CLAUDE_MD" "user-level-reference/output-styles/pm-report.md:$BUDGET_PM_REPORT_MD")
 c33_fail=0
 c33_rows=0
+c35_row() { # <file> <budget>
+  [ -f "$1" ] || { ko "check 35: $1 missing — the budget cannot be measured"; c33_fail=1; return; }
+  sz=$(wc -c < "$1" | tr -d '[:space:]')
+  c33_rows=$((c33_rows + 1))
+  if [ "$sz" -gt "$2" ]; then
+    ko "check 35: $1 is $sz bytes, budget $2 (+$((sz - $2)))"
+    c33_fail=1
+  fi
+}
 for v in $VARIANTS; do
   for pair in "${c33_pairs[@]}"; do
-    f="templates/$v/${pair%%:*}"; b="${pair##*:}"
-    [ -f "$f" ] || { ko "check 35: $f missing — the budget cannot be measured"; c33_fail=1; continue; }
-    sz=$(wc -c < "$f" | tr -d '[:space:]')
-    c33_rows=$((c33_rows + 1))
-    if [ "$sz" -gt "$b" ]; then
-      ko "check 35: $f is $sz bytes, budget $b (+$((sz - b)))"
-      c33_fail=1
-    fi
+    b="${pair##*:}"
+    [ "$b" = per-variant ] && b=$(c35_ctx_budget "$v")
+    c35_row "templates/$v/${pair%%:*}" "$b"
   done
 done
-# Expected row count is derived from the loop shape (pairs x variants), not
-# hard-coded, so dropping/adding a budgeted file never needs a manual count
-# update here.
+for pair in "${c35_single[@]}"; do
+  c35_row "${pair%%:*}" "${pair##*:}"
+done
+# Expected row count is derived from the loop shape (pairs x variants +
+# singles), not hard-coded, so dropping/adding a budgeted file never needs a
+# manual count update here.
 c33_variant_count=$(printf '%s\n' "$VARIANTS" | wc -w)
-c33_expected_rows=$(( ${#c33_pairs[@]} * c33_variant_count ))
-# Control arm: the comparison above must be able to fire. Evaluate the same
-# expression against a budget of 0 for the first file; if that does not read
-# as over-budget, the arithmetic is broken and every row above was vacuous.
+c33_expected_rows=$(( ${#c33_pairs[@]} * c33_variant_count + ${#c35_single[@]} ))
+# Control arm: the comparison above must be able to fire.
 c33_ctrl_sz=$(wc -c < templates/general/CLAUDE.md | tr -d '[:space:]')
 if [ "$c33_ctrl_sz" -gt 0 ] && [ "$c33_rows" -eq "$c33_expected_rows" ]; then
-  [ "$c33_fail" -eq 0 ] && ok "check 35: $c33_rows/$c33_expected_rows files within budget (CLAUDE.md<=$BUDGET_CLAUDE_MD, AGENT_TEAM.md<=$BUDGET_AGENT_TEAM_MD); control arm fires"
+  [ "$c33_fail" -eq 0 ] && ok "check 35: $c33_rows/$c33_expected_rows files within budget; control arm fires"
 else
   ko "check 35: CONTROL FAILED — rows=$c33_rows (want $c33_expected_rows), control size=$c33_ctrl_sz; the budget comparison did not run over every file"
 fi
+ok "check 35 (info): the harness-injected surface is capped at $((BUDGET_CLAUDE_MD + BUDGET_RULES_PROJECT_MD + BUDGET_PROJECT_INSTRUCTIONS_MD + BUDGET_USER_CLAUDE_MD + BUDGET_PM_REPORT_MD)) B in every variant (CLAUDE.md + rules/project.md + project-instructions.md + user-level CLAUDE.md + pm-report)"
 
 # ---------------------------------------------------------------------------
 # Check 36 — OWNERSHIP TABLE COVERAGE (v3.1, spec §6).
