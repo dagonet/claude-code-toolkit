@@ -52,7 +52,7 @@ Counts, never carried forward:
 3. Consumers get the lib and the new model-floor via `/sync-template`; apply both files together. Nothing else changes for them.
 4. Jev stays off until someone runs `/jev on` in a clone; that needs python3 ≥ 3.8 and `TYPESAFE_API_KEY`. Each worktree of a clone needs its own `/jev on`. While on, the redacted, trimmed spawn text leaves the machine for every routed spawn.
 
-## v4.3.1 — {{FILL: tag day}}
+## v4.3.1 — 2026-10-04
 
 Gate fail-open fixes and sync-server fixes. A commit whose Test runs too long is now refused instead of slipping through (G1). `git.exe`, quoted `git` and path-qualified `git` are git to every gate (G2). A `cd` can no longer hide a gated verb: a typed command with a gated action may change directory only with one leading `cd <absolute dir> &&` (G3). Parallel PRs from one parent no longer overwrite each other's gate artifact (G4). A commit from a subdirectory runs the repository top-level's Test (G6). On the sync side, opt-in notes survive finalize (S1), unknown parameters are refused (S2), `files_created` is reported (S3), `template_get_diff` reads the right base (S7), and a sync can no longer overwrite an untracked file that already exists on disk (S-8, issue #173). The gates are faster per Bash call (S6): `pre-commit-test.sh` skips its walk for a command with no gated word, and all three gates read the payload with one parser call.
 
@@ -104,10 +104,10 @@ Sync:
 - **S-8 (S8-3, parked):** a template file identical to the untracked on-disk file is still refused rather than registered; `files_created` is never non-zero under manifest v2; the tag-fallback warning is untested.
 
 Counts, never carried forward:
-- **Consistency:** **439** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the branch tree with this section in place, result ALL CHECKS PASSED (v4.3.0: 450). Measured on Linux, where the v4.3.0 tag is not present locally, so check 38 and check 42 arm 2 skip, and the bootstrap fixtures skip 21 assertions. Final Windows run: {{FILL: PASS-line count from the final local Windows run}}.
-- **Hook suite** via the parser matrix at {{FILL: commit}}: node {{FILL: passed/failed/skipped}}, python3 {{FILL: passed/failed/skipped}}, jq {{FILL: passed/failed/skipped}}. Gate timings: {{FILL: measured gate run seconds}}.
-- **Server suite** at {{FILL: commit}} on Windows: {{FILL: passed/failed}}.
-- **Live G1 check** on a scratch consumer (`**Test**` = `sleep 720`, `**Test timeout**` = 660): {{FILL: refused after N s, `"rc":"timeout"` present, no `sleep 720` survivor}}.
+- **Consistency:** **439** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the branch tree with this section in place, result ALL CHECKS PASSED (v4.3.0: 450). Measured on Linux, where the v4.3.0 tag is not present locally, so check 38 and check 42 arm 2 skip, and the bootstrap fixtures skip 21 assertions. Final Windows run at 5d3d789: **451** PASS lines, ALL CHECKS PASSED; bootstrap fixtures (check 27) 86 passed, 0 failed, 0 skipped.
+- **Hook suite** via the parser matrix at 5d3d789 (Windows, PASSED, 20,186 s): node 2606/0/0 (2606 assertions, skip 0 exact), python3 2411/0/182 (2593, band ~178 ±20), jq 2368/0/225 (2593, band ~221 ±20). Gate timings: `hooks/run-gate.sh` exit 0 in 5,652 s (94 min), `test-hooks.sh` 2606 passed, 0 failed, 0 skipped.
+- **Server suite** at 5d3d789 on Windows: 496 passed, 0 failed (153.57 s).
+- **Live G1 check** on a scratch consumer (`**Test**` = `sleep 720`, `**Test timeout**` = 660): refused after 671 s by the hook's own record (673 s wall clock, Windows 11), exit 2, `"rc":"timeout"` present, no `sleep 720` survivor.
 - **Hooks:** 17 scripts under `hooks/` (unchanged), 12 mirrored.
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,863 B (unchanged), end of bootstrap 22,991 B (v4.3.0: 22,572); per-variant figures are in `docs/architecture.md`.
 
