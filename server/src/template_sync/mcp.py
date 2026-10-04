@@ -1300,8 +1300,12 @@ async def template_get_diff(
     - full: template-current vs project-current ("unified" is an alias)
     - three_way: three-way merge with conflict markers
 
-    For three_way, reconstructs the common ancestor via git show at lastSynced commit.
-    Falls back to two-way if git history is unavailable.
+    The base is the template at the manifest's held revision (template_commit,
+    then the template_version tag, under a v3/v4 manifest; lastSynced under
+    v2). When it cannot be reconstructed, template_changes and local_changes
+    return has_changes: null with base_unavailable_reason and an empty diff --
+    never false (v4.3.1); three_way falls back to two-way and says so in
+    fallback_to_two_way.
 
     Args:
         project_path: Path to the project root directory
@@ -1336,18 +1340,47 @@ async def template_get_diff(
     if proj_current is None:
         return json.dumps({"error": f"Project file not found: {file_path}"}, ensure_ascii=False)
 
-    # Reconstruct base (common ancestor) via git show
+    # v4.3.1 S7 (ruling P-1) -- THE BASE IS THE TEMPLATE AT THE HELD REVISION.
+    # This read only the v2 key `lastSynced`; a v3/v4 manifest holds
+    # `template_commit` (finalize drops `lastSynced`), so no base was ever found,
+    # the two-way fallback made base = current template, and template_changes
+    # compared the template with itself: has_changes: false on files
+    # compute_status had just called TEMPLATE_UPDATED (open-brain, MM-Agent).
+    # v3/v4 now use compute_status's own chain (v3.resolve_base); v2 keeps
+    # lastSynced.
     base_content = None
-    if last_synced:
-        git_path = _template_git_path(manifest, file_path)
-        base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
-        if base_raw is not None:
+    base_label = "unavailable"
+    base_reason = ""
+    if v3.manifest_supported(manifest):
+        rules = v3.load_ownership(manifest["templateRepo"])
+        if rules is None:
+            base_reason = f"base unavailable: manifest v3/v4 needs {v3.OWNERSHIP_FILE} in the template repo"
+        else:
             try:
-                base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
+                base_content, base_label, _warn = v3.resolve_base(
+                    pp, manifest, rules, rules.template_path_for(_normalize_path(file_path)))
             except (v3.GrantsError, v3.GrantRefused) as e:
                 return json.dumps({"error": str(e)}, ensure_ascii=False)
+            if base_content is None:
+                base_reason = (
+                    "base unavailable: neither template_commit "
+                    f"{v3.manifest_commit(manifest) or '(none)'} nor template_version "
+                    f"{manifest.get('template_version') or '(none)'} resolves in the template repo")
+    else:
+        if last_synced:
+            git_path = _template_git_path(manifest, file_path)
+            base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
+            if base_raw is not None:
+                try:
+                    base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
+                except (v3.GrantsError, v3.GrantRefused) as e:
+                    return json.dumps({"error": str(e)}, ensure_ascii=False)
+                base_label = last_synced
+        if base_content is None:
+            base_reason = f"base unavailable: lastSynced {last_synced or '(none)'} is not readable in the template repo"
 
-    # Fallback: if no base available, use current template as base (two-way)
+    # three_way keeps its documented two-way fallback; the two base-relative
+    # diffs never pretend (below).
     fallback_used = False
     if base_content is None:
         base_content = tpl_current
@@ -1357,13 +1390,21 @@ async def template_get_diff(
         "file_path": file_path,
         "diff_type": diff_type,
         "fallback_to_two_way": fallback_used,
+        "base": base_label,
     }
 
-    if diff_type == "template_changes":
+    if diff_type in ("template_changes", "local_changes") and fallback_used:
+        # Never "no changes" without a base: has_changes is unknown.
+        result["unified_diff"] = ""
+        result["has_changes"] = None
+        result["base_unavailable_reason"] = (
+            base_reason + " -- use diff_type=\"full\" to compare template and project")
+
+    elif diff_type == "template_changes":
         diff = list(unified_diff(
             base_content.splitlines(keepends=True),
             tpl_current.splitlines(keepends=True),
-            fromfile=f"{file_path} (base @ {last_synced})",
+            fromfile=f"{file_path} (base @ {base_label})",
             tofile=f"{file_path} (template current)",
         ))
         result["unified_diff"] = "".join(diff)
@@ -1373,7 +1414,7 @@ async def template_get_diff(
         diff = list(unified_diff(
             base_content.splitlines(keepends=True),
             proj_current.splitlines(keepends=True),
-            fromfile=f"{file_path} (base @ {last_synced})",
+            fromfile=f"{file_path} (base @ {base_label})",
             tofile=f"{file_path} (project current)",
         ))
         result["unified_diff"] = "".join(diff)
