@@ -125,8 +125,20 @@ class CtlTests(unittest.TestCase):
     def test_status_never_prints_the_key(self):
         env = self.t.env()
         env["TYPESAFE_API_KEY"] = "env-secret-4567"
-        self.ctl("on", env=env)
-        _, text = self.ctl("status", env=env, registry=lambda: "hkcu-secret-8910")
+        seen, real = [], jc.subprocess.run
+
+        def spy(*a, **kw):
+            seen.append(kw.get("env"))
+            return real(*a, **kw)
+
+        jc.subprocess.run = spy
+        try:
+            self.ctl("on", env=env)
+            _, text = self.ctl("status", env=env, registry=lambda: "hkcu-secret-8910")
+        finally:
+            jc.subprocess.run = real
+        self.assertTrue(seen)  # MH-1: no subprocess (git, check-ignore, resolver) is handed the key
+        self.assertFalse(any(e is None or "TYPESAFE_API_KEY" in e for e in seen))
         self.assertNotIn("env-secret-4567", text)
         self.assertNotIn("hkcu-secret-8910", text)
         self.assertIn("TYPESAFE_API_KEY: set (environment)", text)

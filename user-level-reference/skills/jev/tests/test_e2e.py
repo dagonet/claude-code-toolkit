@@ -46,8 +46,8 @@ class ResolverAndTransportTests(unittest.TestCase):
             jr.subprocess.run = real
         self.assertEqual(res.kind, "floor")
         self.assertEqual(len(seen), 1)
-        self.assertNotIn("TYPESAFE_API_KEY", seen[0])
-        self.assertIn("PATH", seen[0])
+        self.assertFalse("TYPESAFE_API_KEY" in seen[0])  # MH-2: a failure never prints the environment
+        self.assertTrue("PATH" in seen[0])
 
     def test_resolver_without_lib_is_none(self):
         sb = jt.Sandbox(self, lib_in_home=False)

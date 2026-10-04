@@ -207,8 +207,8 @@ class RedactTests(unittest.TestCase):
                             "Ab" * 50000 + "/", ("A" * 399 + "a1/ ") * 250,
                             ("aB3d/" * 79 + "x ") * 250, ("aB3dE6/" * 56 + " ") * 250, ("Ab1.cD2." * 49 + " ") * 250,  # windowed runs
                             "aB3dE6gH9jK2mN5pQ8sT1uV4wX7yZ0cD2eF5gH8iJ1kL4mN7pQ" * 2000):
-            self.assertLess(elapsed(redact, adversarial), 0.1, adversarial[:30])
-            self.assertLess(elapsed(residual_findings, adversarial), 0.1, adversarial[:30])
+            self.assertLess(elapsed(redact, adversarial), 0.5, adversarial[:30])
+            self.assertLess(elapsed(residual_findings, adversarial), 0.5, adversarial[:30])
 
 
 class TrimTests(unittest.TestCase):

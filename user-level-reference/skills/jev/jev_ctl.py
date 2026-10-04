@@ -209,7 +209,7 @@ def _key_source(env, registry):
     return None
 
 
-def cmd_on(top, gd, env, out, registry):
+def cmd_on(top, gd, env, out, key_src):
     if not os.path.isfile(os.path.join(_home(env), ".claude", "skills", "jev", "jev_route.py")):
         raise CtlError("~/.claude/skills/jev/jev_route.py is not installed -- copy user-level-reference/skills/jev/ "
                        "to ~/.claude/skills/jev/ first; nothing was changed")
@@ -244,12 +244,12 @@ def cmd_on(top, gd, env, out, registry):
     out.write("jev: ORCHESTRATOR -- from now on in this repo, omit `model` on Agent spawns: Jev picks one per "
               "launch (user ruling U-1; an explicit model is never changed). New sessions are told by the "
               "session-start notice.\n")
-    if not _key_source(env, registry):
+    if not key_src:
         out.write("jev: note -- no TYPESAFE_API_KEY: spawns get the project floor until one is set\n")
     return 0
 
 
-def cmd_off(top, gd, env, out, registry):
+def cmd_off(top, gd, env, out, key_src):
     cfg = _read_config(gd) or dict(CONFIG_ON)
     cfg["route"] = False
     _write(_config_path(gd), _dumps(cfg))  # FIRST: model-floor floors again whatever happens below
@@ -297,7 +297,7 @@ def _events(gd):
     return evs
 
 
-def cmd_status(top, gd, env, out, registry):
+def cmd_status(top, gd, env, out, key_src):
     cfg = _read_config(gd)
     route = bool(cfg and cfg.get("route") is True)
     out.write("jev: switch (this clone): {}\n".format("on" if route else "off"))
@@ -309,7 +309,7 @@ def cmd_status(top, gd, env, out, registry):
         registered = False
     installed = os.path.isfile(os.path.join(_home(env), ".claude", "skills", "jev", "jev_route.py"))
     lib = resolver_lib(env, top)
-    src = _key_source(env, registry)
+    src = key_src
     out.write("jev: router registered in this checkout: {}\n".format("yes" if registered else "no"))
     out.write("jev: router installed (~/.claude/skills/jev/jev_route.py): {}\n".format("yes" if installed else "no"))
     out.write("jev: resolver: {}\n".format(lib or "MISSING"))
@@ -359,7 +359,7 @@ def _idx(model):
     return jev_route.ORDER.index(model) if model in jev_route.ORDER else -1
 
 
-def cmd_report(top, gd, env, out, registry):
+def cmd_report(top, gd, env, out, key_src):
     evs = _events(gd)
     out.write("jev report: {} spawns seen\n".format(len(evs)))
     if not evs:
@@ -401,9 +401,11 @@ def main(argv=None, cwd=None, env=None, out=None, registry=None):
     if cmd not in handlers or len(argv) > 1:
         out.write(USAGE)
         return 2
+    key_src = _key_source(env, registry)
+    env = {k: v for k, v in env.items() if k != "TYPESAFE_API_KEY"}  # MH-1: no subprocess needs the key
     try:
         top, gd = locate(cwd or os.getcwd(), env)
-        return handlers[cmd](top, gd, env, out, registry)
+        return handlers[cmd](top, gd, env, out, key_src)
     except (CtlError, OSError) as exc:
         out.write("jev: error: {}\n".format(exc))
         return 1
