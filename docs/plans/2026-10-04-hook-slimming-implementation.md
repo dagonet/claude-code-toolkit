@@ -544,8 +544,9 @@ Wrapper `W='[ -r "$0" ] || { echo "HOOK SCRIPT MISSING: $0 -- enforcement offlin
 | k | `FUNCNAME`, `BASH_SOURCE[1]`, `LINENO` | empty, none, 1 | identical |
 | l | path is a directory | (bash: 126) | `.`: is a directory → 1 (both non-blocking) |
 
-Top-level-`return` audit command (no hits at `8c118a8`):
-`awk 'FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^\}/{d=0} !d && /^[[:space:]]*return\b/{print FILENAME":"FNR": "$0}' hooks/*.sh hooks/lib/*.sh`.
+Top-level-`return` audit command. CORRECTION: the original command (`... /^[[:space:]]*return\b/ ...`) matched nothing under mawk, because `\b` is not a word boundary there (`printf 'return 5\n' | awk '/^[[:space:]]*return\b/{print "hit"}'` prints nothing), so its "no hits at `8c118a8`" proved nothing; it also left a one-line function `f() { ...; }` holding d=1 for the rest of the file. Corrected command, scoped to shell code that runs sourced or wrapped (the embedded JS in enforce-delegation/retro-ledger is not shell):
+`awk 'FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{.*\} *$/{d=0} /^\}/{d=0} !d && /^[[:space:]]*return([^a-zA-Z0-9_]|$)/{print FILENAME":"FNR": "$0}' hooks/{no-push-main,deny-secret-reads,deny-hang-shapes,model-floor,bash-output-guard,pre-commit-test,gate-before-merge,deny-claude-md-writes,require-skills-block}.sh hooks/lib/*.sh`
+Result on `feat/hook-slimming`: no hits; the same awk over a temp copy of a hook with `return 5` appended reports exactly one hit (control row in block C2a).
 
 EXIT-trap audit: `grep -n "trap" hooks/*.sh`. Only `pre-commit-test.sh` traps (TERM INT HUP), and `run-gate.sh` (EXIT, not a registered hook). `set -u` hooks: `agent-budget-warn`, `post-edit-build`, `retro-brief`, `retro-ledger`.
 
