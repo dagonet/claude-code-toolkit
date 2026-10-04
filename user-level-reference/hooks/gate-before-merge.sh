@@ -122,6 +122,7 @@
 #      `git rev-parse --verify HEAD^{commit}` ONLY, never from command text,
 #      and validated against `^[0-9a-f]{7,40}$` before it is used to build a
 #      path);
+#   1b. the exact filename last-pass.tree-<HEAD^{tree}>.json (v4.3.1 G4);
 #   2. a scan of `last-pass.*.json` in that directory, newest mtime first,
 #      skipping `*.tmp` (an in-progress atomic write), for one whose "tree"
 #      matches — this is a PINNED decision (R20): it deliberately blesses a
@@ -1350,6 +1351,16 @@ if [ -n "$GATE_DIR" ] && [ -n "$HEAD_SHA_PATH" ] && [ -f "$GATE_DIR/last-pass.$H
   ARTIFACT="$GATE_DIR/last-pass.$HEAD_SHA_PATH.json"
 fi
 
+# 1b. v4.3.1 G4 -- exact filename for HEAD's TREE: a gate that ran before the
+#     commit existed names its artifact last-pass.tree-<tree>.json. The tree
+#     came only from `git rev-parse HEAD^{tree}` above; its shape is validated
+#     before it builds a path. Freshness and the sha-or-tree match below apply
+#     unchanged.
+if [ -z "$ARTIFACT" ] && [ -n "$GATE_DIR" ] && printf '%s' "$HEAD_TREE" | grep -qE '^[0-9a-f]{40,64}$' \
+   && [ -f "$GATE_DIR/last-pass.tree-$HEAD_TREE.json" ]; then
+  ARTIFACT="$GATE_DIR/last-pass.tree-$HEAD_TREE.json"
+fi
+
 # 2. Tree scan, newest mtime first, skipping `*.tmp` (an in-progress atomic
 #    write from hooks/run-gate.sh — never a finished artifact). SAME TREE,
 #    DIFFERENT SHA is a pinned decision (R20, v4.0.1): this deliberately
@@ -1379,7 +1390,7 @@ if [ -z "$ARTIFACT" ] && [ -f "$REPO_TOP/.gate/last-pass.json" ]; then
 fi
 
 if [ -z "$ARTIFACT" ]; then
-  echo "BLOCKED: No gate artifact found. Run 'bash hooks/run-gate.sh' on the PR branch head (green gate writes <common git dir>/gate/last-pass.<sha>.json), then merge." >&2
+  echo "BLOCKED: No gate artifact found. Run 'bash hooks/run-gate.sh' on the PR branch head (green gate writes <common git dir>/gate/last-pass.<sha>.json, or last-pass.tree-<tree>.json when run before the commit), then merge." >&2
   exit 2
 fi
 
