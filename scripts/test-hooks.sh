@@ -9647,7 +9647,7 @@ fi
 # quote-stripped token, and that accepts only a basename starting `.e` (any case: `.env…`, `.e*v`,
 # `.e?v`) -- the regex needs `.env`, the glob heuristic needs `.e` -- or, conservatively, a token
 # carrying a backslash. The early exit sits after the one parse and its BLOCKED branches, before the
-# `tr` token pipelines. Expected values are the OLD hook's answers (9007349), not what the rows "should" be:
+# `tr` token pipelines. Expected values are the OLD hook's answers (unchanged since PHASEC_BASE a56ca34), not what the rows "should" be:
 # `curl -F f=@.env x`, `cat .\env` and PowerShell `Get-Content .env` are 0 there (key `f` is not
 # input-shaped; a backslash token matches neither shape; Get-Content is no listed verb).
 c4_sr() { # <label> <expected_exit> <tool> <command>
@@ -9675,6 +9675,8 @@ check "C4 deny-secret-reads: Read config/.env.staging" hooks/deny-secret-reads.s
 check "C4 deny-secret-reads: ok: Read README.md"   hooks/deny-secret-reads.sh 0 "$(c4_rd "$TMPROOT/README.md")"
 c4_sr "cat \".e\"nv"                      2 Bash 'cat ".e"nv'
 c4_sr "cat .\\env (old: allowed)"         0 Bash 'cat .\env'
+c4_sr "cat .\\<LF>env (continuation joins to .env)" 2 Bash "$(printf 'cat .\\\nenv')"
+c4_sr "cat .\\<LF>ENV.local (continuation, case)"   2 Bash "$(printf 'cat .\\\nENV.local')"
 c4_sr "cat \$HOME/.env"                   2 Bash 'cat $HOME/.env'
 c4_sr "cat .ENV (case)"                   2 Bash "cat .ENV"
 c4_sr "cp '.'env /dev/stdout"             2 Bash "cp '.'env /dev/stdout"
