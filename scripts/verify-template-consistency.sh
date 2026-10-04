@@ -824,6 +824,8 @@ HOOKS_NO_MIRROR=(
   # settings.json -- a bare ~/.claude install has no repository to install it
   # into and no harness that would run it.
   "git-pre-push.sh"
+  # now-brief.sh (v4.5.0): reads PROJECT_STATE.md, a template-shipped project file; a bare user-level install has no "## Now" to print.
+  "now-brief.sh"
 )
 # FINDING (v3.0.4, A6): retro-brief.sh (SessionStart, reads the ledger) and
 # retro-ledger.sh (SubagentStop, writes it) both key off cwd -> project slug

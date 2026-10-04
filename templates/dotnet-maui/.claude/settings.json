@@ -187,15 +187,14 @@
             "command": "exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/verify-hooks.sh\""
           }
         ]
-      }
-    ],
-    "PreCompact": [
+      },
       {
-        "matcher": "auto",
+        "matcher": "compact",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '=== PRE-COMPACTION STATE ===' && (cat docs/plans/*.md 2>/dev/null | head -50 || echo 'No plan files') && echo '---' && (git worktree list 2>/dev/null || true) && echo '---' && (git branch --sort=-committerdate 2>/dev/null | head -10 || true)"
+            "timeout": 10,
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/now-brief.sh\"; [ -r \"$f\" ] || exit 0; exec bash \"$f\""
           }
         ]
       }

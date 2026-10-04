@@ -65,7 +65,7 @@ for h in agent-budget-warn.sh enforce-delegation.sh \
          enforce-agent-contract.sh no-push-main.sh read-size-gate.sh \
          run-gate.sh \
          gate-before-merge.sh pre-commit-test.sh \
-         retro-ledger.sh retro-brief.sh
+         retro-ledger.sh retro-brief.sh now-brief.sh
 do
   if [ -s "$PROJ/hooks/$h" ]; then yes_ "hooks/$h"
   else no_ "hooks/$h missing or empty"; MISSING=$((MISSING+1)); fi

@@ -11310,7 +11310,7 @@ for c5_h in pre-commit-test no-push-main gate-before-merge deny-secret-reads den
 c5_row gate-before-merge F 2
 for c5_h in read-size-gate enforce-delegation agent-budget-warn; do c5_row "$c5_h" W; done
 c5_row enforce-delegation W 2
-for c5_h in model-floor deny-hang-shapes; do c5_row "$c5_h" O; done
+for c5_h in model-floor deny-hang-shapes now-brief; do c5_row "$c5_h" O; done
 for c5_h in bash-output-guard post-edit-build enforce-agent-contract retro-ledger retro-brief verify-hooks; do c5_row "$c5_h" U; done
 # F with the script present but no bash on PATH: 2 (a failed `exec bash` would exit 127 and let the call through)
 c5_pd="$TMPROOT/c5p-nobash"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/hooks" "$C5E-path"; cp "$ROOT/hooks/no-push-main.sh" "$c5_pd/hooks/"
@@ -11319,7 +11319,7 @@ c5_out=$(printf '{}' | env PATH="$C5E-path" CLAUDE_PROJECT_DIR="$c5_pd" /bin/sh 
 expect "C5 (g): F with the script present but no bash on PATH: exit 2" 2 "$c5_rc"
 expect "C5 (g): ... and says bash was not found" 1 "$(printf '%s' "$c5_out" | grep -c '^HOOK BLOCKED: bash not found on PATH')"
 # every F/W/O/U string in the six variants and the agents is the same as general's (byte-identical set; here: the strings exist once per entry)
-expect "C5 (g): the template carries 18 registrations in the new forms (F+W+O+U), none in the old wrapper form" "18:0" "$(grep -c '"command": "\(f=\|exec bash \)' "$C5TPL"):$(grep -c 'c=\$?' "$C5TPL")"
+expect "C5 (g): the template carries 19 registrations in the new forms (F+W+O+U), none in the old wrapper form" "19:0" "$(grep -c '"command": "\(f=\|exec bash \)' "$C5TPL"):$(grep -c 'c=\$?' "$C5TPL")"
 # ---- end v4.4.0 C5
 
 # ---- v4.4.0 ET -- a gate artifact never records git's EMPTY tree.
@@ -11484,6 +11484,56 @@ printf '%s' '{"tool_name":"Agent","tool_input":{"subagent_type":"coder","prompt"
 expect "A5 old registration over the stub: spawn passes" 0 "$?"
 expect "A5 old registration over the stub: silent" 0 "$(wc -c < "$TMPROOT/a5.err" | tr -d ' ')"
 # ---- end v4.5.0 A5
+
+# ---- v4.5.0 E1: now-brief.sh re-shows PROJECT_STATE.md ## Now after a compaction ----
+E1H="$ROOT/hooks/now-brief.sh"
+E1C='{"session_id":"t","hook_event_name":"SessionStart","source":"compact","cwd":"."}'
+e1_run() { # <project dir> <payload> -- stdout to $TMPROOT/e1.out; returns the hook's exit
+  printf '%s' "$2" | CLAUDE_PROJECT_DIR="$1" bash "$E1H" > "$TMPROOT/e1.out" 2>"$TMPROOT/e1.err"
+}
+e1_has() { if grep -qF -- "$1" "$TMPROOT/e1.out"; then echo yes; else echo no; fi; }
+E1P="$TMPROOT/e1p"; mkdir -p "$E1P"
+printf '# P — Project State\n\n## Now\n\n- **Goal:** ship v4.5\n<!-- private note -->\n- **Current step:** Task 3\n<!--\nhidden line\n-->\n- **Next step:** Task 4\n\n## Current Sprint\n\nsprint text\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 section present: exit 0" 0 "$?"
+expect "E1 header with the file age"         yes "$(e1_has '=== Re-shown after compaction: PROJECT_STATE.md ## Now (file changed 0 h ago) ===')"
+expect "E1 section text follows the header"  "- **Goal:** ship v4.5" "$(sed -n 2p "$TMPROOT/e1.out")"
+expect "E1 next step printed"                yes "$(e1_has '- **Next step:** Task 4')"
+expect "E1 one-line HTML comment stripped"   no  "$(e1_has 'private note')"
+expect "E1 multi-line HTML comment stripped" no  "$(e1_has 'hidden line')"
+expect "E1 the next ## heading ends it"      no  "$(e1_has 'sprint text')"
+printf '# P\n\n## Current Sprint\n\nx\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 section absent: exit 0" 0 "$?"
+expect "E1 section absent: the hint"         yes "$(e1_has 'now-brief: PROJECT_STATE.md has no "## Now" section')"
+expect "E1 section absent: one line"         1   "$(wc -l < "$TMPROOT/e1.out" | tr -d ' ')"
+printf '# P\n\n## Now\n\n<!-- only a comment -->\n\n## Current Sprint\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 empty section: the hint" yes "$(e1_has 'has no "## Now" section')"
+rm -f "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 file absent: exit 0" 0 "$?"
+expect "E1 file absent: silent"              0   "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
+printf '# P\n\n## Now\n\n- **Goal:** g\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" '{"session_id":"t","hook_event_name":"SessionStart","source":"startup","cwd":"."}'
+expect "E1 source startup: silent"           0   "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
+e1_run "$E1P" 'not json'
+expect "E1 unreadable stdin: printed (the matcher decides)" yes "$(e1_has '- **Goal:** g')"
+{ printf '# P\n\n## Now\n\n'; e1_i=0; while [ $e1_i -lt 60 ]; do printf -- '- line %02d of a long goal, padded to about fifty bytes.\n' "$e1_i"; e1_i=$((e1_i + 1)); done; } > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"
+expect "E1 3 KB section: output <= 1024 B"   yes "$([ "$(wc -c < "$TMPROOT/e1.out")" -le 1024 ] && echo yes || echo no)"
+expect "E1 3 KB section: ends with the marker" "… (truncated at 1 KB; read PROJECT_STATE.md)" "$(tail -1 "$TMPROOT/e1.out")"
+expect "E1 3 KB section: cut at a line end"  yes "$(sed '$d' "$TMPROOT/e1.out" | tail -1 | grep -q 'fifty bytes\.$' && echo yes || echo no)"
+{ printf '# P\n\n## Now\n\n'; e1_i=0; while [ $e1_i -lt 40 ]; do printf -- '- Schritt %02d — Übergabe prüfen — Größe in Bytes, nicht Zeichen\n' "$e1_i"; e1_i=$((e1_i + 1)); done; } > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"
+expect "E1 non-ASCII section: output <= 1024 BYTES" yes "$([ "$(wc -c < "$TMPROOT/e1.out")" -le 1024 ] && echo yes || echo no)"
+expect "E1 non-ASCII section: cut at a line end" yes "$(sed '$d' "$TMPROOT/e1.out" | tail -1 | grep -q 'nicht Zeichen$' && echo yes || echo no)"
+printf '# P\r\n\r\n## Now \r\n\r\n- **Goal:** crlf goal\r\n\r\n## Next\r\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"
+expect "E1 CRLF file: section printed, no CR" "- **Goal:** crlf goal" "$(sed -n 2p "$TMPROOT/e1.out")"
+# The registration's wrapper, verbatim from templates/*/.claude/settings.json, with no script.
+E1W='f="${CLAUDE_PROJECT_DIR:-.}/hooks/now-brief.sh"; [ -r "$f" ] || exit 0; exec bash "$f"'
+E1E="$TMPROOT/e1empty"; mkdir -p "$E1E"
+printf '%s' "$E1C" | CLAUDE_PROJECT_DIR="$E1E" bash -c "$E1W" > "$TMPROOT/e1.out" 2>&1
+expect "E1 wrapper, script missing: exit 0"  0 "$?"
+expect "E1 wrapper, script missing: silent"  0 "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
+# ---- end v4.5.0 E1
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

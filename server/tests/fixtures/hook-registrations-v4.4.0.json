@@ -1,5 +1,5 @@
 {
-  "_comment": "Frozen hook-registration table (v4.4.0). Row: label;event;matcher;script;form. Single source of truth for check 71 in scripts/verify-template-consistency.sh and for server/tests/test_template_sync_settings_hooks.py. Edit only with a deliberate registration change (R-5). v4.5.0: the require-skills-block row is removed (hook retired, unregistered).",
+  "_comment": "Frozen hook-registration table (v4.4.0). Row: label;event;matcher;script;form. Single source of truth for check 71 in scripts/verify-template-consistency.sh and for server/tests/test_template_sync_settings_hooks.py. Edit only with a deliberate registration change (R-5). v4.5.0: the require-skills-block row is removed (hook retired, unregistered); now-brief (SessionStart compact, O) is added.",
   "rows": [
     "general;PreToolUse;Bash|PowerShell;pre-commit-test;F",
     "general;PreToolUse;Bash|PowerShell;no-push-main;F",
@@ -19,6 +19,7 @@
     "general;SubagentStop;;retro-ledger;U",
     "general;SessionStart;;retro-brief;U",
     "general;SessionStart;;verify-hooks;U",
+    "general;SessionStart;compact;now-brief;O",
     "root;PreToolUse;Bash|PowerShell;pre-commit-test;F",
     "root;PreToolUse;Bash|PowerShell;no-push-main;F",
     "root;PreToolUse;Bash|PowerShell;gate-before-merge;F",
