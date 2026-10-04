@@ -28,13 +28,14 @@
 # An `updatedInput` / `updatedToolOutput` emission is compared too (name and a
 # digest of its content); a change there is reported as a difference.
 #
-# Scenarios (each payload runs in all three, in a normal and a "missing" mode):
+# Scenarios (each payload runs in all four, in a normal and a "missing" mode):
 #   S1 plain project (git repo, no hooks/, no project settings): user-level only
 #   S2 toolkit project, bootstrapped by THAT set's own setup-project.sh
 #      (--variant general): user-level + the project's template registrations
+#   S4 the S2 project with NO user-level hooks/settings (project registrations alone)
 #   S3 this repo's own registration shape: a temp project holding that set's root
 #      .claude/settings.json + hooks/ (registers only some hooks: the C5 fixture)
-#   missing mode (S1m/S2m/S3m): the same, with every hooks/*.sh and
+#   missing mode (S1m..S4m): the same, with every hooks/*.sh and
 #      ~/.claude/hooks/*.sh renamed away (lib/ stays), old and new alike
 # Every row runs in its own copy of the scenario (a temp repo on branch main with
 # a staged change), so rows cannot influence each other and run in parallel.
@@ -49,7 +50,7 @@
 # Usage:
 #   scripts/hook-equivalence.sh [--config full|python3|jq] [--base <sha>]
 #       [--only <id-glob>] [--new-root <dir>] [--mode normal|missing|both]
-#       [--scenarios S1,S2,S3] [--workers N] [--list 1]   (--list: print every row's result)
+#       [--scenarios S1,S2,S3,S4] [--workers N] [--list 1]   (--list: print every row's result)
 # Output: one `DIFF <scenario> <config> <id>: old=<class>{<cats>} new=<class>{<cats>}`
 # per difference, a per-class TALLY per scenario, and a last line
 # `EQUIVALENCE: <n> decision changes`. Exit 0 only when n = 0 and every normal
@@ -67,7 +68,7 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = sys.argv[1]
 args = sys.argv[2:]
 opt = {"config": "full", "base": "", "only": "", "new-root": "", "mode": "both",
-       "scenarios": "S1,S2,S3", "list": "", "workers": str(os.cpu_count() or 2)}
+       "scenarios": "S1,S2,S3,S4", "list": "", "workers": str(os.cpu_count() or 2)}
 i = 0
 while i < len(args):
     a = args[i]
@@ -84,14 +85,17 @@ BASH = shutil.which("bash") or "/bin/bash"
 CORPUS = os.path.join(ROOT, "scripts/fixtures/hook-equivalence/corpus.tsv")
 
 def die(msg):
-    print("hook-equivalence: " + msg, file=sys.stderr); sys.exit(2)
+    print("hook-equivalence: " + msg, file=sys.stderr)
+    try: shutil.rmtree(WORK, ignore_errors=True)
+    except NameError: pass
+    sys.exit(2)
 
 def sh(argv, **kw):
     return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw)
 
 # ---- base sha -------------------------------------------------------------
 base = opt["base"]
-if not base:
+if not base:   # then base.txt (the SDD scratch override, git-ignored), then the committed base.sha
     bf = os.path.join(ROOT, ".superpowers/sdd/2026-10-04-hook-slimming/base.txt")
     try:
         for line in open(bf):
@@ -100,7 +104,13 @@ if not base:
     except OSError:
         pass
 if not base:
-    die("no --base given and no PHASEC_BASE in .superpowers/sdd/2026-10-04-hook-slimming/base.txt")
+    try:
+        for line in open(os.path.join(ROOT, "scripts/fixtures/hook-equivalence/base.sha")):
+            if re.fullmatch(r"[0-9a-f]{7,40}", line.strip()): base = line.strip(); break
+    except OSError:
+        pass
+if not base:
+    die("no --base given, no PHASEC_BASE in base.txt and no scripts/fixtures/hook-equivalence/base.sha")
 NEW_ROOT = os.path.abspath(opt["new-root"] or ROOT)
 
 WORK = tempfile.mkdtemp(prefix="hookeq-")
@@ -185,6 +195,9 @@ def fixtures(proj):
     wfile(proj + "/src/a.txt", "one\n")
     wfile(proj + "/big.txt", "".join("line %d\n" % n for n in range(2000)))
     wfile(proj + "/n.ipynb", "{}\n")
+    # SubagentStop transcripts: a compliant coder report and a non-compliant one
+    for nm, txt in (("tr-ok", "done\n## Gate Results\nok\n## Spec Compliance\n1 DONE"), ("tr-bad", "I am finished")):
+        wfile(proj + "/" + nm + ".jsonl", json.dumps({"type": "assistant", "message": {"content": txt}}) + "\n")
 
 def finish_repo(proj):
     fixtures(proj)
@@ -202,13 +215,15 @@ def build_set(name, root):
     """Returns {scenario: template dir containing home/ and proj/}; normal mode only."""
     out = {}
     base_dir = os.path.join(WORK, name)
-    for scen in ("S1", "S2", "S3"):
+    for scen in ("S1", "S2", "S3", "S4"):
         d = os.path.join(base_dir, scen)
         home, proj = d + "/home", d + "/proj"
-        os.makedirs(home + "/.claude"); os.makedirs(proj)
+        os.makedirs(home + "/.claude")
+        out[scen] = d
+        if scen == "S4": continue      # S4 is copied from S2 below, with an EMPTY ~/.claude
+        os.makedirs(proj)
         shutil.copytree(root + "/user-level-reference/hooks", home + "/.claude/hooks", symlinks=True)
         wfile(home + "/.claude/settings.json", open(root + "/user-level-reference/settings.json", encoding="utf-8").read())
-        out[scen] = d
     # S1: plain project
     p = out["S1"] + "/proj"
     git(p, "init", "-q", "-b", "main"); finish_repo(p)
@@ -229,6 +244,9 @@ def build_set(name, root):
     wfile(p3 + "/.claude/settings.json", open(root + "/.claude/settings.json", encoding="utf-8").read())
     shutil.copy(out["S2"] + "/proj/PROJECT_CONTEXT.md", p3 + "/PROJECT_CONTEXT.md")
     finish_repo(p3)
+    # S4: the S2 project with NO user-level hooks or settings, so a regression of a
+    # PROJECT registration is not masked by the user-level copy of the same guard
+    shutil.copytree(out["S2"] + "/proj", out["S4"] + "/proj", symlinks=True)
     return out
 
 def make_missing(tmpl_dir):
@@ -280,6 +298,8 @@ def load_regs(settings_paths, event, tool):
             die("cannot parse %s: %s" % (sp, e))
         for grp in (doc.get("hooks") or {}).get(event, []) or []:
             m = grp.get("matcher")
+            # Claude Code tests a matcher as a regex; fullmatch is equivalent for the
+            # current `A|B` matchers (plain names joined by |)
             if m not in (None, "", "*") and not re.fullmatch(m, tool or ""):
                 continue
             for h in grp.get("hooks", []) or []:
@@ -334,7 +354,7 @@ def classify(event, rc, out, norm):
         for k in ("updatedInput", "updatedToolOutput"):
             if k in hso:
                 upd.append(hashlib.sha1(norm(json.dumps(hso[k], sort_keys=True)).encode()).hexdigest()[:8])
-    if cls == "allow" and text.strip() and event in ("PostToolUse", "SessionStart"):
+    if cls == "allow" and text.strip() and event in ("PostToolUse", "SessionStart", "UserPromptSubmit"):
         cls = "context"
     return cls, False, upd
 
@@ -349,7 +369,8 @@ def run_row(job):
         shutil.copytree(tmpl, sb + "/s", symlinks=True)
         home, proj = sb + "/s/home", sb + "/s/proj"
         uf = home + "/.claude/settings.json"
-        wfile(uf, render_user_settings(open(uf, encoding="utf-8").read(), home))
+        if os.path.isfile(uf):
+            wfile(uf, render_user_settings(open(uf, encoding="utf-8").read(), home))
         # the sandbox path, and the spill-log name (TMPDIR + a timestamp) that
         # bash-output-guard embeds in its truncation marker, are not decisions
         norm = lambda s: re.sub(r"[^\"\s]*claude-bash-out/[^\"\s\]]*\.log", "@LOG@", s.replace(sb, "@SB@"))
@@ -369,7 +390,7 @@ def run_row(job):
         if merged != "deny": cats = set()
         if merged != "allow": star = False
         nf = [l for l in stderr_all.decode("utf-8", "replace").splitlines() if "command not found" in l]
-        return (merged, tuple(sorted(cats)), star, tuple(sorted(upd)), nf[:2])
+        return (merged, tuple(sorted(cats)), star, tuple(sorted(set(upd))), nf[:2])
     finally:
         shutil.rmtree(sb, ignore_errors=True)
 

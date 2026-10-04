@@ -20,7 +20,7 @@ Tokens the harness expands before running:
 | `@REP:<n>:<text>@` | `<text>` repeated n times (the 20 kB command, the 11,999-char outputs) |
 | `@EMOJI:<n>@` | n copies of U+1F600 (a four-byte character, two UTF-16 units) |
 
-115 rows. Ids by group: `bp01-23` push and branch, `cm01-06` commit and merge
+123 rows. Ids by group: `bp01-23` push and branch, `cm01-06` commit and merge
 gate, `sr01-17` secret reads, `hs01-08` hang shapes, `ps01-08` PowerShell,
 `ag01-05` Agent, `ew01-04` Edit/Write, `pt01-04` PostToolUse output sizes (11,999
 and 12,001 chars, 6,001 emoji, 3,000 `é` escapes), `eh01-14` escapes and
@@ -28,7 +28,13 @@ harmless commands, `mf01-04` malformed input (empty stdin, BOM, two documents,
 array command). Extras: `ss01` SessionStart, `rd01-03` Read (`rd01` is a 2,000-line
 file, so `read-size-gate` rewrites it), `ok01-12` harmless commands, `ew05-06`
 Edit/Write from a subagent (`agent_id`), `bd01-04` build-runner commands (`bd01`
-from a subagent). Rows whose expected class is `allow` are deliberate: `sr13`,
+from a subagent). Registered protections the first cut missed: `mc01-02` the
+MCP merge tools (gate-before-merge's MCP matcher), `sa01-04` SubagentStop with
+and without a valid agent contract (`tr-ok.jsonl` / `tr-bad.jsonl` are written
+into every scenario project; `sa03` has no transcript, `sa04` is a `notify`
+agent), `pe01` PostToolUse Write (post-edit-build), `up01` UserPromptSubmit (the
+inline date hook; only its class is compared, so the clock does not matter).
+Rows whose expected class is `allow` are deliberate: `sr13`,
 `sr14`, `hs03`, `hs07`, `hs08`, `bp19-22` and the harmless rows prove the
 protections are not simply denying everything.
 
@@ -57,7 +63,9 @@ protections are not simply denying everything.
   set's own `setup-project.sh --variant general` (so the bootstrap itself is
   exercised, not imitated), plus user-level hooks; S3 a temp project holding that
   set's root `.claude/settings.json` and `hooks/` (it registers only some hooks:
-  the C5 step-aside bypass fixture). All three are git repos on `main` with a
+  the C5 step-aside bypass fixture); S4 the S2 project with NO user-level hooks
+  or settings, so a regression of a PROJECT registration is not masked by the
+  user-level copy of the same guard (a reason category is a name set). All four are git repos on `main` with a
   staged change, `push.sh` / `push.ps1` scripts that push main, and `.env*`
   files; `PROJECT_CONTEXT.md` carries Test and Gate = `true`, so no real suite
   runs. Every row runs in its own copy of the scenario, rows run in parallel, and
@@ -69,10 +77,16 @@ protections are not simply denying everything.
   parser it keeps must be found and run, the others must not be found) and exits
   2 if the restriction did not apply; any `command not found` in a hook's stderr
   (an incomplete shim) exits non-zero as `ENV-INCOMPLETE`.
-- **Tally rule:** every normal scenario must have at least 25 `deny` and 25
-  `allow` rows (not enforced under `--only`, nor in missing mode, where nearly
-  everything denies by design), or the run fails: a corpus that all allows
-  proves nothing.
+- **Tally rule:** every normal scenario (S1-S4) must have at least 25 `deny` and
+  25 `allow` rows, or the run fails: a corpus that all allows proves nothing. The
+  floor is checked on UNCHUNKED runs only: a chunked (`--only`) run does not
+  check it, and neither does missing mode, where nearly everything denies by
+  design.
+- **Base:** the old side is `--base <sha>`, else `PHASEC_BASE=` in the git-ignored
+  `.superpowers/sdd/2026-10-04-hook-slimming/base.txt` if present, else the
+  committed `base.sha` (a fresh checkout runs without the ignored file).
+- **Matchers:** Claude Code tests a matcher as a regex and the harness uses
+  `fullmatch`; that is equivalent for the current `A|B` matchers.
 
 Output: `DIFF <scenario> <config> <id>: old=<class>{<cats>} new=<class>{<cats>}`
 per difference, `TALLY` lines, `WALL`, and a last line
@@ -85,18 +99,26 @@ bash scripts/hook-equivalence.sh --config full --mode normal --only 'bp*'
 bash scripts/hook-equivalence.sh --config full --new-root <scratch copy of the tree>
 ```
 
+## Known gaps
+
+- Missing mode is all-or-nothing (every project and user-level script is renamed
+  away at once), so the C5 case "global missing, project copy present and
+  registered" is not exercised.
+- Until Task 8 ships `render-user-hooks.sh` the harness renders `@BASH@` /
+  `@HOOKS@` itself; Task 8 switches it to call the renderer.
+
 ## Measured (Linux, 4 cores, 4 workers, base a56ca34 = new)
 
 | run | rows x scenario-modes | wall |
 |---|---|---|
-| `--config full` (normal + missing) | 115 x 6 | 204 s |
-| `--config python3` (normal + missing) | 115 x 6 | 149 s |
-| `--config jq` (normal + missing) | 115 x 6 | 117 s |
+| `--config full` (normal + missing) | 123 x 8 | 384 s |
+| `--config python3` (normal + missing) | 123 x 8 | 352 s |
+| `--config jq` (normal + missing) | 123 x 8 | 239 s |
 
-All three: `EQUIVALENCE: 0 decision changes`. Normal-mode tallies (deny / allow):
-full S1 47/66, S2 60/52, S3 52/61; python3 S1 47/68, S2 54/61, S3 52/63; jq S1
-48/67, S2 55/60, S3 53/62. A `--mode normal` run takes about 140-190 s on `full`
-(about 45 s of it is building the scenarios, including two `setup-project.sh` runs).
+All three: `EQUIVALENCE: 0 decision changes`. Normal-mode tallies (deny / allow;
+context rows are the rest):
+full S1 47/73, S2 63/56, S3 54/66, S4 63/57; python3 S1 47/75, S2 56/66, S3
+54/68, S4 56/67; jq S1 48/74, S2 57/65, S3 55/67, S4 57/66.
 
 ## Self-test of the harness (recorded at its introduction)
 
@@ -114,7 +136,19 @@ sed -i '1a exit 0' $S/hooks/no-push-main.sh $S/user-level-reference/hooks/no-pus
 bash scripts/hook-equivalence.sh --config full --mode normal --new-root $S --only 'bp*'
 ```
 
-Result: 51 `DIFF` lines (17 in S1, where the user-level hook is the only push guard
-and the class falls deny -> allow; 17 each in S2 and S3, where
-`gate-before-merge` still denies, so the class stays `deny` and the reason
-category loses `no-push-main`), `EQUIVALENCE: 51 decision changes`, exit 1.
+Result: 68 `DIFF` lines, 17 per scenario (S1: the user-level hook is the only push
+guard, so the class falls deny -> allow; S2, S3, S4: `gate-before-merge` still
+denies, so the class stays `deny` and the reason category loses `no-push-main`),
+`EQUIVALENCE: 68 decision changes`, exit 1.
+
+(c) Control for the project registrations (S4). A scratch copy where ONLY
+`templates/general/.claude/settings.json` changes: the missing-script branch of
+the `deny-secret-reads` registration goes from `exit 2` to `exit 0`:
+
+```
+bash scripts/hook-equivalence.sh --config full --mode missing --new-root <scratch> --only 'sr*'
+```
+
+Result: 17 `DIFF` lines, all in S4m (old category carries `deny-secret-reads`, new
+does not); S2m, which still has the user-level copy, hides it - exactly why S4
+exists. `EQUIVALENCE: 17 decision changes`.
