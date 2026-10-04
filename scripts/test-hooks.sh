@@ -9679,6 +9679,36 @@ v3_walks() { : > "$V3LOG"; printf '%s' "$(mkjson Bash "$1" "$V3R")" | PATH="$V3S
 expect "V3 fast path: sh.exe c.sh walks"               yes "$(v3_walks 'sh.exe c.sh')"
 expect "V3 fast path: C:\\Git\\bin\\sh.exe h.sh walks" yes "$(v3_walks 'C:\Git\bin\sh.exe h.sh')"
 expect "V3 fast path: ls sh.exe.txt skips the walk"    no  "$(v3_walks 'ls sh.exe.txt')"
+# Review round 1: the gh merge words, a backslash inside the runner word, and a backslash in a push refspec
+for v3g in 'gh pr mer\ge 1' 'g\h pr merge 1' 'gh p\r merge 1' 'git log; gh pr mer\ge 1' 'gh pr "merge" 1' "gh pr me''rge 1" 'gh pr merge 1' 'gh p\r "mer\ge" 1'; do
+  check "V3 gate-before-merge: $v3g"                   hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3g" "$V3R")"
+done
+check_msg "V3 simple-cd: cd sub && gh pr mer\\ge 1"    "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'cd sub && gh pr mer\ge 1' "$V3R")" "a directory change in a command with"
+check "V3 control: gh pr view 1 (gate-before-merge)"   hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr view 1' "$V3R")"
+check "V3 control: gh pr vi\\ew 1 (gate-before-merge)" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr vi\ew 1' "$V3R")"
+check "V3 control: gh pr view 1 (no-push-main)"        hooks/no-push-main.sh 0      "$(mkjson Bash 'gh pr view 1' "$V3R")"
+for v3r in 'b\ash' 's\h' 'b\ash.exe' 's\h.exe' '/bin/s\h' 'env b\ash'; do
+  check "V3 pre-commit-test: $v3r c.sh"                hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r c.sh" "$V3R")"
+  check "V3 no-push-main: $v3r p.sh"                   hooks/no-push-main.sh 2      "$(mkjson Bash "$v3r p.sh" "$V3R")"
+  check "V3 gate-before-merge: $v3r m.sh"              hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3r m.sh" "$V3R")"
+  check "V3 control: $v3r h.sh"                        hooks/pre-commit-test.sh 0   "$(mkjson Bash "$v3r h.sh" "$V3R")"
+done
+printf 'git commit -m x\n' > "$V3R/c.ps1"
+for v3r in 'pw\sh' 'pwsh.e\xe' 'power\shell' 'C:\Tools\pw\sh.exe'; do
+  check "V3 pre-commit-test: $v3r -File c.ps1"         hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r -File c.ps1" "$V3R")"
+done
+V3F=$(mkrepo v3f feat)
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$V3F/PROJECT_CONTEXT.md"
+for v3p in 'git push origin ma\in' 'git push origin HEAD:ma\in' 'git push origin refs/heads/ma\in' 'git pu\sh origin ma\in' 'git push origin feat:ma\in' 'git push or\igin m\ain'; do
+  check "V3 no-push-main (main): $v3p"                 hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3R")"
+  check "V3 no-push-main (feature repo): $v3p"         hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3F")"
+done
+check "V3 control: git push origin fe\\at from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin fe\at' "$V3F")"
+check "V3 control: git push origin feat from a feature repo"   hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin feat' "$V3F")"
+check "V3 control: git push --ta\\gs from a feature repo"      hooks/no-push-main.sh 0 "$(mkjson Bash 'git push --ta\gs' "$V3F")"
+# `git -\C commit -m x` reads as `-C commit` (the shell removes the backslash): -C takes `commit` as its directory and
+# git itself refuses the rest (exit 129, unknown option -m), so nothing is committed. Pinned at what the gate now returns.
+check "V3 pin: git -\\C commit -m x (git itself refuses it)" hooks/pre-commit-test.sh 0 "$(mkjson Bash 'git -\C commit -m x' "$V3R")"
 # ---- end v4.3.2 V3
 
 echo "----------------------------------------------------------------"

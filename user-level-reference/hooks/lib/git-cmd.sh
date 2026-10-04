@@ -547,6 +547,10 @@ gc_seg_is_ps() {
     base=${clean##*/}; base=${base##*\\}
     lc=$(printf '%s' "$base" | tr 'A-Z' 'a-z')
     case "$lc" in powershell|powershell.exe|pwsh|pwsh.exe) return 0 ;; esac
+    # v4.3.2 6b review: the shell removes a backslash inside the word (pw\sh)
+    base=${clean//\\/}; base=${base##*/}
+    lc=$(printf '%s' "$base" | tr 'A-Z' 'a-z')
+    case "$lc" in powershell|powershell.exe|pwsh|pwsh.exe) return 0 ;; esac
     shift
   done
   return 1
@@ -652,7 +656,7 @@ GC_PS_SPLIT
 # basename-compared, so this is not read even though gc_segments' own quote
 # stripping would have made $1 literally `bash` under the old $1-anchor code.
 gc_script_body() {
-  local seg="$1" cwd="$2" tok clean base path="" pos=1
+  local seg="$1" cwd="$2" tok clean base bb path="" pos=1
   GC_SB=""
   set -- $seg
   while [ $# -gt 0 ]; do
@@ -660,6 +664,11 @@ gc_script_body() {
     case "$tok" in *[\"\']*) return 0 ;; esac
     clean=$(printf '%s' "$tok" | tr -d "\"'")
     base=${clean##*/}; base=${base##*\\}
+    # v4.3.2 6b review: also the basename of the backslash-removed word (b\ash)
+    bb=${clean//\\/}; bb=${bb##*/}
+    case "$bb" in
+      [Bb][Aa][Ss][Hh]|[Bb][Aa][Ss][Hh].[Ee][Xx][Ee]|[Ss][Hh]|[Ss][Hh].[Ee][Xx][Ee]) break ;;
+    esac
     case "$base" in
       [Bb][Aa][Ss][Hh]|[Bb][Aa][Ss][Hh].[Ee][Xx][Ee]|[Ss][Hh]|[Ss][Hh].[Ee][Xx][Ee]) break ;;
       .|source) [ "$pos" = 1 ] && break ;;
@@ -741,12 +750,23 @@ gc_dirchange_in() {
   printf '%s\n' "$t" | grep -qE "$GC_DIRVAR_RE|$GC_SRC_C_RE"
 }
 
+# gc_has_ghpr_merge <text> -- v4.3.2 6b review: succeeds when the text holds
+# the three words gh pr merge as typed, with quotes removed, or with quotes and
+# backslashes removed (the shell removes both before it runs the command).
+gc_has_ghpr_merge() {
+  local re='(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge' t
+  printf '%s\n' "$1" | grep -qE "$re" && return 0
+  t=$(printf '%s' "$1" | tr -d "\"'") && printf '%s\n' "$t" | grep -qE "$re" && return 0
+  t=$(printf '%s' "$1" | tr -d "\"'\\\\")
+  printf '%s\n' "$t" | grep -qE "$re"
+}
+
 # gc_text_has_gated <text> -- succeeds when the text holds a git commit/push/merge
 # or `gh pr merge` (the same recognisers the gates use); sets GC_GATED_VERB.
 gc_text_has_gated() {
   local t seg v
   t=$(printf '%s' "$1" | tr -d "\"'")
-  if printf '%s\n' "$t" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
+  if gc_has_ghpr_merge "$1"; then
     GC_GATED_VERB="gh pr merge"; return 0
   fi
   printf '%s\n' "$t" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" || return 1
@@ -1774,7 +1794,11 @@ gc_push_args() {
         if (is_git(tok)) seen_git = 1
         next
       }
-      if (found) { print tok; next }
+      if (found) {                         # v4.3.2 6b review: a refspec loses its backslashes (ma\in); a flag keeps its raw form
+        r = tok
+        while ((i = index(r, bs)) > 0) r = substr(r, 1, i - 1) substr(r, i + 1)
+        print (substr(r, 1, 1) == "-" ? tok : r); next
+      }
       while ((i = index(tok, bs)) > 0) tok = substr(tok, 1, i - 1) substr(tok, i + 1)   # v4.3.2 6b: git pu\sh runs push
       if (want_value) { want_value = 0; next }
       if (tok == "-C" || tok == "-c" || tok == "--config-env" || tok == "--git-dir" ||

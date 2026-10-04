@@ -744,7 +744,7 @@ gc_dir_rule gate-before-merge "$CWD" || exit 2
 if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   # v4.3.1 G2: GC_GIT_WORD_RE (hooks/lib/git-cmd.sh) also opens the walk for git.exe, GIT and a quoted "git".
   if ! printf '%s\n' "$GC_CMD" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" &&
-     ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
+     ! gc_has_ghpr_merge "$GC_CMD"; then
     exit 0
   fi
 fi
@@ -886,7 +886,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     fi
 
     # 1. gh pr merge (any flags)
-    if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b'; then
+    if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b' || gc_has_ghpr_merge "$seg"; then
       is_merge=1
       A6_KIND=ghpr
       A6_MOVED_VERB="gh pr merge"
