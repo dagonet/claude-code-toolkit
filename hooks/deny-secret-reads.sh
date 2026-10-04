@@ -178,6 +178,19 @@ case "$DSR_TOOL" in
     ;;
   Bash|PowerShell)
     DSR_CMD=${JF[2]}
+    # v4.4.0 C4: a Bash/PowerShell refusal needs a token whose basename dsr_is_secret
+    # accepts -- it starts `.e` (`.env…`, `.e*`, `.e?v`) -- and the token walk strips
+    # quotes first (`tr -d '"'"'"`), so test the quote-stripped text: `cat .'e'nv` must
+    # continue. A backslash may hide one across a continuation. Case-insensitive, like
+    # dsr_is_secret. Placed after the one parse and its BLOCKED branches, so an
+    # unparseable payload still blocks, and before cmd_join_continuations.
+    _dsr_q=${DSR_CMD//[\"\']/}
+    shopt -s nocasematch
+    case "$_dsr_q" in
+      *'.e'*|*'\'*) ;;
+      *) shopt -u nocasematch; exit 0 ;;
+    esac
+    shopt -u nocasematch
     # v4.1.2 spec §1: this hook never sourced git-cmd.sh, so the continuation
     # join lives in json.sh (already sourced above, fail-closed). Without it
     # `cat .e\<LF>nv` read as two tokens and the .env read was ALLOWED.
