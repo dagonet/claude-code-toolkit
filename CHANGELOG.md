@@ -52,9 +52,9 @@ Sync:
 - **S-8 (S8-3, parked):** a template file identical to the untracked on-disk file is still refused rather than registered; `files_created` is never non-zero under manifest v2; the tag-fallback warning is untested.
 
 Counts, never carried forward:
-- **Consistency:** **439** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the branch tree with this section in place, result ALL CHECKS PASSED (v4.3.0: 450). Measured on Linux, where the v4.3.0 tag is not present locally, so check 38 and check 42 arm 2 skip, and the bootstrap fixtures skip 21 assertions. Final Windows run: {{FILL: PASS-line count from the final local Windows run}}.
-- **Hook suite** via the parser matrix at {{FILL: commit}}: node {{FILL: passed/failed/skipped}}, python3 {{FILL: passed/failed/skipped}}, jq {{FILL: passed/failed/skipped}}. Gate timings: {{FILL: measured gate run seconds}}.
-- **Server suite** at {{FILL: commit}} on Windows: {{FILL: passed/failed}}.
+- **Consistency:** **439** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the branch tree with this section in place, result ALL CHECKS PASSED (v4.3.0: 450). Measured on Linux, where the v4.3.0 tag is not present locally, so check 38 and check 42 arm 2 skip, and the bootstrap fixtures skip 21 assertions. Final Windows run at 5d3d789: **451** PASS lines, ALL CHECKS PASSED; bootstrap fixtures (check 27) 86 passed, 0 failed, 0 skipped.
+- **Hook suite** via the parser matrix at 5d3d789 (Windows, PASSED, 20,186 s): node 2606/0/0 (2606 assertions, skip 0 exact), python3 2411/0/182 (2593, band ~178 ±20), jq 2368/0/225 (2593, band ~221 ±20). Gate timings: `hooks/run-gate.sh` exit 0 in 5,652 s (94 min), `test-hooks.sh` 2606 passed, 0 failed, 0 skipped.
+- **Server suite** at 5d3d789 on Windows: 496 passed, 0 failed (153.57 s).
 - **Live G1 check** on a scratch consumer (`**Test**` = `sleep 720`, `**Test timeout**` = 660): {{FILL: refused after N s, `"rc":"timeout"` present, no `sleep 720` survivor}}.
 - **Hooks:** 17 scripts under `hooks/` (unchanged), 12 mirrored.
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,863 B (unchanged), end of bootstrap 22,991 B (v4.3.0: 22,572); per-variant figures are in `docs/architecture.md`.
