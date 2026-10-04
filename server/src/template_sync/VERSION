@@ -1,2 +1,2 @@
-4.4.0
-Optional Jev spawn routing (user-level /jev skill, off by default, per clone) on model-floor's resolution moved to hooks/lib/agent-model.sh; model-floor steps aside only for a router that will run -- hook lib, user-level skill and check changes, no template or server-code change.
+4.5.0
+Less bureaucracy: skills open on demand, a short coder report, a lean handbook, byte caps on every always-loaded file, the goal re-shown after compaction, and a process-vs-progress measurement -- template agent, settings, hook and check changes, no server-code change.

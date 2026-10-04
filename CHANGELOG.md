@@ -1,5 +1,80 @@
 # Changelog
 
+## v4.5.0 — 2026-10-04
+
+Less bureaucracy. Process had grown to a large share of what a subagent spends: skill text was 84% of a coder spawn (BL §1), the coder's report was half gate output, and a blocking hook demanded a skills block in every spawn prompt. Skills now open on demand from a short table in each agent (an override line makes it win over the `CLAUDE.md` triggers), the coder's report is short and never pastes gate output, `AGENT_TEAM.md` drops the copy-paste snippets and the binding table (20,462 → 17,741 B), `require-skills-block.sh` is unregistered and shrinks to a no-op stub for one release, a new `now-brief.sh` re-shows the `## Now` goal after compaction, every always-loaded file is byte-capped by check 35, and `scripts/measure-process.py` measures process against progress from transcripts. No server-code change. This branch merges into `main` only on the user's go.
+
+**Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body changes only its version marker (v4.5.0); the agent files, settings, hooks, AGENT_TEAM.md, CLAUDE.md and the PROJECT_STATE.md seed reach a consumer through the existing sync path, and the one-release stub keeps a stale require-skills-block registration from failing closed.**
+
+### Added
+- **`hooks/now-brief.sh` and its registration (E).** `SessionStart`, matcher `compact`, `"timeout": 10`: after a compaction it prints the `## Now` section of `PROJECT_STATE.md` (capped at 1,024 bytes, cut at a line end, never mid-character), or a hint to add one. It replaces the `PreCompact` block, which never reached the model.
+- **The `## Now` seed (E3)** in `PROJECT_STATE.md`: `- **Goal:**`, `- **Current step:**`, `- **Next step:**`.
+- **`scripts/measure-process.py` (F; R-1, R-11).** Reads Claude Code transcripts and splits subagent effort into process (skills, gate runs, reports, hand-offs) and progress; a `Skill` call is sized as its `tool_result` plus the `isMeta` row that carries the skill text (R-1); a text-only turn is `neutral:orient` and `SubagentHandback` is `process:report` (R-11). Output is LF. Its `--self-test` runs inside the gate.
+- **Consistency checks 66 (the script's self-test), 67 (the coder's `## Working rules`, `## Skills` and `## Report (HARD REQUIREMENT)` are byte-identical across the 12 coder files) and 68 (no workflow file carries `## Required Skills`, `require-skills-block` or `.gate/last-pass`).**
+- **The per-release process-share row** under both context tables (`README.md`, `docs/architecture.md`).
+
+### Changed
+- **Skills on demand (A1; R-14).** Every agent file carries `## Skills (open one only when its trigger fires)` and the override line `Inside this agent this table replaces the skill triggers in \`CLAUDE.md\`. No trigger fired: open no skill.`; the `skills:` preload lines are gone. The tester's and architect's sections sit before `## Verification Tiers` and `## Output Style` respectively, with the coder's heading and override line.
+- **The karpathy digest (A2; R-6).** The long karpathy guidance in the coder files becomes a short digest; the root-cause bullet that exists in the seven `coder.md` copies only is folded into it.
+- **The short report (B1) and the stop-gate's two forms (B2; R-9).** `## Report (HARD REQUIREMENT)` replaces `## Deliverable Contract`; `enforce-agent-contract.sh` accepts the short form and still accepts the legacy `## Gate Results` + `## Spec Compliance` form. Its key patterns tolerate a leading list marker (`- `, `* `).
+- **`AGENT_TEAM.md` (D, E4; R-5, R-7): 20,462 → 17,741 B per variant.** The copy-paste snippets and the binding table are gone; the TDD example is written `superpowers:test-driven-development` (check 2 reads `superpowers:`); the skills paragraph drops its v3.0.0 absorption note (already in the v3.0.0 entry).
+- **`CLAUDE.md` lines (A6):** the skills mandate and the six binding-table pointers go from every variant's `CLAUDE.md`; `general` 6,114 → 5,977 B (−137 B). The other docs that described the mandate as live (R-15: `README.md`, `docs/templates.md`, `docs/template-sync.md`, `docs/design-rationale.md`) and `docs/settings-reference.md`'s SubagentStop, PreCompact and SessionStart rows are corrected; `docs/architecture.md` drops ">= 80% coverage" from its tiers.
+- **Check 35 caps every always-loaded template file (C).** Was: `CLAUDE.md` 6,144 and `AGENT_TEAM.md` 20,480. Now each file's size at this release + 128 B (under 2 KB) or 256 B, rounded up to 16: `CLAUDE.md` 6,144 (min of that rule's 6,240 and the 6,144 ceiling), `AGENT_TEAM.md` 20,480 (unchanged), `.claude/rules/project.md` 880 (742 B), `.claude/project-instructions.md` 960 (823 B), user-level `CLAUDE.md` 7,856 (7,585 B), `pm-report.md` 2,992 (2,736 B), and `PROJECT_CONTEXT.md` per variant: general 5,392 (5,128 B), dotnet 5,568 (5,307 B), dotnet-maui 5,920 (5,659 B), rust-tauri 5,744 (5,478 B), java 5,552 (5,295 B), python 5,520 (5,261 B). 32 files (five per variant times six, plus the two user-level files); one info line gives the injected ceiling, 17,953 B. Caps bind the template seeds only: `PROJECT_CONTEXT.md` and `rules/project.md` are once-class, so a consumer's own copy is never measured. Why: v4.0.3 → v4.3.0 grew the bootstrap surface by 6,847 B, all in files no budget covered.
+- **Checks 11, 18, 20, 29 and 30.** Check 11 asserts `## Report (HARD REQUIREMENT)` in the 11 template coders (R-4). Check 29 shrinks to the one assertion that still matters: `pipeline: true` is exactly the coder family plus `code-reviewer`, the eligibility `enforce-agent-contract.sh` depends on (R-2). Check 30's citation floor goes 40 → 30 (R-3: 45 citations at v4.3.0, 8 removed).
+- **The parity canary (R-8):** the heredoc-into-file pair becomes a multi-line leading `cd` with two more commands (exit 2) and a heredoc look-alike with `cat > notes.txt` on line 2 (exit 0); joined onto one line the exits swap, which is what makes it a canary for newline handling.
+- **Parser matrix (R-10):** `EXP_PY_SKIP` and `EXP_JQ_SKIP` each + 17 (the B2 block needs node).
+
+### Removed
+- **The `require-skills-block.sh` registration.** The script stays for this release as a no-op stub that always exits 0, so a consumer whose `settings.json` still registers it (through the fail-closed 127 wrapper) is not blocked. It is deleted next release.
+- **The `PreCompact` block** (never reached the model; `now-brief.sh` replaces it).
+- **Checks 4, 5, 8, 9, 10 and the check-23 tail**, which asserted the retired mandate; the copy-paste snippets and the binding table; "Coverage >= 80%" from the tiers.
+
+### Measured (S1–S13)
+Skill sizes are as measured 2026-10-03 (spec); re-measure on the release machine (the superpowers plugin is not installed on the build container): `test-driven-development` 9,578 B, `systematic-debugging` 9,465 B, `writing-plans` 9,092 B, `brainstorming` 17,548 B, `verification-before-completion` 3,650 B (8,780 − 5,130). Every toolkit-file size is `wc -c` on this release's tree. Agent files: coder 5,154 B, code-reviewer 6,620 B, tester 5,761 B, architect 4,211 B (`templates/general`).
+
+| | Spec prediction | Measured |
+|---|---|---|
+| S1 coder spawn (before 29,075 B) | ≈5,130 B no trigger; ≤ 8,780 B with one verification load; ≥ 20 KB less | **5,154 B** no trigger (−23,921 B); **8,804 B** with `verification-before-completion` (−20,271 B). The one-load figure is 24 B over the spec's bound; the saving is still over 20 KB |
+| S2 coder + code-reviewer (before 35,695 B) | 11,750 B; 21,328 B with TDD | **11,774 B**; **21,352 B** with TDD |
+| S3 + tester (before 63,879 B) | ≈27,000 B; ≈36,500 B if the tester opens systematic-debugging | **27,113 B** (coder + reviewer + tester + TDD; 17,535 B without TDD); **36,578 B** with systematic-debugging |
+| S4 + architect (before 94,375 B) | ≈40,300 B; ≈67,300 B worst case | **40,416 B** (S3's four agents + TDD + writing-plans); **67,429 B** worst case (+ brainstorming + systematic-debugging) |
+| S5 realised skill bytes per T1/T2 coder spawn | mean < 5 KB | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`) · after: pending: `docs/plans/measurements/process-v4.5.md`. Spec BL §1 for reference: 57% of 333 coder spawns invoked any skill |
+| S6 coder final report | median ≤ 1,200 B, 0 B pasted gate output | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`); spec BL §5 (v4.3.0): mean 3,822 B, median 3,792 B · after: pending: `docs/plans/measurements/process-v4.5.md` |
+| S7 coder runs prodded by the contract hook | ≤ 25% | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`); spec BL §5 (v4.3.0): 168 of 333 (51%) · after: pending: `docs/plans/measurements/process-v4.5.md` |
+| S8 `AGENT_TEAM.md` | ≤ 17,800 B, cap stays 20,480 | **17,741 B** in every variant |
+| S9 always-loaded, `general` | v4.5's own delta ≈ −280 B | harness-injected **17,863 B** (v4.4.0: 18,000, −137 B); end of bootstrap **22,991 B** (v4.4.0: 23,128, −137 B). The delta is −137 B, not ≈ −280 B: A6 removed less from `CLAUDE.md` than the spec predicted. Per-variant figures are in `docs/architecture.md` |
+| S10 hook registrations in template settings | 18 | **18** (`"type": "command"` in `templates/general/.claude/settings.json`) |
+| S11 blocking hooks on an `Agent` spawn | 0 | **0** (the only `Agent` matcher is `model-floor`, which rewrites and never blocks) |
+| S12 hook scripts under `hooks/*.sh` | 18 during v4.5; 17 after the stub's deletion | **18** (17 after the stub's deletion) |
+| S13 process share of subagent effort | 25% lower relative by context load; wall-clock does not rise | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`) · after: pending: `docs/plans/measurements/process-v4.5.md` |
+
+### Known limits
+1. The legacy report form passes through v4.x and ends at v5.0.
+2. The hook checks the report's shape, not that it covers every brief item.
+3. The `require-skills-block.sh` stub ships for one release.
+4. `## Now` reaches existing consumers only by hand (`PROJECT_STATE.md` is once-class, with no notes channel) or through the hint after their first compaction.
+5. `now-brief.sh` cuts at the first `#`-line, so a `###` inside `## Now` ends it.
+6. An unreadable `SessionStart` stdin leaves the decision to the matcher.
+7. `measure-process.py` heuristics: the gate pattern also matches a commit message naming `pytest`; a commit over 10 s counts its wall-clock as gate time; worktree slugs fold by name prefix (a repo whose name prefixes another's is over-included); `--until` is by a transcript's first timestamp.
+8. S1 holds only if the override line wins over the `CLAUDE.md` triggers (R2); Task 8 measures it.
+9. The S1–S4 skill sizes are the spec's 2026-10-03 figures, not measured on the build container.
+10. S5, S6, S7 and S13 "after" values and the "before" baseline are pending: they come from the local transcripts, not from this tree.
+
+Counts, never carried forward:
+- **Consistency:** **424** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.4.0: 447). Measured on Linux, where the v4.3.1 tag does not exist locally, so check 42 arm 2 skips, and the bootstrap fixtures skip 21 assertions.
+- **Hook suite:** `<pending gate>`. **Server suite:** `<pending gate>` (Linux, Task 7: 486 passed, 9 failed, 1 skipped; the 9 are the known Windows-path tests, 3 in `test_load_fields.py` and 6 in `test_template_sync_msys_guard.py`).
+- **Hooks:** 18 scripts under `hooks/` (17 after the stub's deletion), 12 mirrored (unchanged).
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,863 B, end of bootstrap 22,991 B. Per-variant figures are in `docs/architecture.md`.
+
+### Downstream migration
+0. Restart sessions after the sync (agent definitions are cached at session start).
+1. `/sync-template`: brings the agent files, `AGENT_TEAM.md`, `CLAUDE.md`, `settings.json` (no `require-skills-block` registration, no `PreCompact`, the `compact` `SessionStart` group), `hooks/now-brief.sh`, the stub and `enforce-agent-contract.sh`.
+2. **By hand:** add to `PROJECT_STATE.md`, after its title, the `## Now` block with `- **Goal:**`, `- **Current step:**`, `- **Next step:**` (the sync never writes this once-class file; `now-brief` prints a hint until you do).
+3. Stop pasting `## Required Skills` into spawn prompts; edit any `PROJECT-CUSTOM` region or own agent that says to.
+4. Your own `pipeline: true` agents (e.g. `mm-runner`) keep the legacy report until v5.0.
+5. A `LOCAL_EDITED` or keep-mine `settings.json`: remove the `require-skills-block` registration before the next release deletes the stub — `grep -n require-skills-block .claude/settings.json` must print nothing — or every Agent spawn fails closed.
+6. User level: copy `user-level-reference/agents/{coder,tester,architect}.md` to `~/.claude/agents/` and `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/`; `bash scripts/verify-user-level-drift.sh` → 0 drift. No user-level hook or settings entry changes.
+
 ## v4.4.0 — {{FILL: tag day}}
 
 Optional Jev spawn routing, Phase 1a. A new user-level `/jev` skill can switch on, per clone, a router that asks TypeSafe's Jev which model a sub-agent spawn should run on. It only routes spawns that pass no `model`, it moves at most one step from the agent's default, and on any failure the spawn gets the project floor. Off is the default, and with Jev off the release changes nothing a consumer can observe: `hooks/model-floor.sh` now sources its resolution from the new `hooks/lib/agent-model.sh` (shared with the router), and fixture block J-DIFF proves it answers byte for byte like the v4.3.0 copy. Phase 1b (`on legs`, effort routing) is out of scope (R-9). This branch merges into `main` only on the user's go.
