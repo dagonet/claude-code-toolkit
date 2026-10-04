@@ -16,7 +16,7 @@ Under both forms, the old wrapper's "exit 127 → exit 2" mapping moves **into**
 
 ## Global Constraints
 
-- **Base.** Execute on the **v4.4 integration branch**: `feat/v4.3.2` (design and plan in `docs/plans/2026-10-04-v4.3.2-*.md` there), with Jev and the push-hook/speed work merged in. Its pushed head may be stale, so the controller names the exact base commit in Task 0, and this plan never cites line numbers. Every edit is located by **function name or named block**. `WT` below is the integration worktree the controller names in Task 0. Use Git Bash spelling and spell it out in every command, because Bash state does not persist between calls.
+- **Base (execution ruling, 2026-10-04).** Executed on `feat/hook-slimming` (v4.3.1-based, `PHASEC_BASE` = `a56ca34`), **not** on `feat/v4.3.2`, which is not merged here; v4.3.2-only references below (its fixture blocks V1/V2, its F1/F2 fast path, "after the last `# ---- end v4.3.2` block") read as their v4.3.1 equivalents (insert after `# ---- end v4.3.1 S6b`). The original text follows. Execute on the **v4.4 integration branch**: `feat/v4.3.2` (design and plan in `docs/plans/2026-10-04-v4.3.2-*.md` there), with Jev and the push-hook/speed work merged in. Its pushed head may be stale, so the controller names the exact base commit in Task 0, and this plan never cites line numbers. Every edit is located by **function name or named block**. `WT` below is the integration worktree the controller names in Task 0. Use Git Bash spelling and spell it out in every command, because Bash state does not persist between calls.
 - **Files both efforts touch:** `hooks/lib/json.sh`, `hooks/lib/git-cmd.sh`, `hooks/pre-commit-test.sh`, `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh` and `scripts/test-hooks.sh`, plus `scripts/verify-template-consistency.sh` and `setup-project.sh`/`.ps1` (v4.3.2 P3). Before each task that touches one of them, run `git -C $WT log --oneline -3 -- <file>`. If v4.3.2 changed it after Task 0's base, re-read the named function before editing. Never resolve a conflict by dropping a v4.3.2 hunk.
 - **KISS** is a standing user rule. Each task does what it names and nothing more.
 - **Fail closed.** A protection that cannot determine the answer refuses. Phase C adds **zero new allows**. The equivalence corpus (Task 1) is the proof: same decision class and same reason category for every payload, in all three parser configurations.
@@ -296,14 +296,15 @@ Before writing it, the implementer reads `dsr_is_secret`, `DSR_SECRET_RE`, the a
 **Files:** `hooks/no-push-main.sh`, `hooks/gate-before-merge.sh`, `hooks/lib/git-cmd.sh` (function `gc_read_stdin` only); mirrors. Test: block `C4` (append). **Shared with v4.3.2:** re-read `gc_read_stdin` and both hooks' heads on the integration branch first. v4.3.2's design left exactly this out ("a verb pre-filter for no-push-main and gate-before-merge … candidate for later").
 
 **Design (one parse, unchanged polarity).**
-- `gc_read_stdin` gains a pre-parsed entry. If `GC_PREPARSED` is set (its value is `json_payload`'s rc), it skips `GC_JSON=$(cat)` and `json_payload` and continues from `gc_rc=$GC_PREPARSED`. All its refusal branches (rc 2, rc ≠ 0) stay as they are.
+- `gc_read_stdin` gains a pre-parsed entry. If `GC_PREPARSED` is set (its value is `json_payload`'s rc), it runs `GC_JSON=$GC_PRE_JSON; gc_rc=$GC_PREPARSED` in place of `GC_JSON=$(cat)` + `json_payload`. The assignment runs **inside the function**, after `git-cmd.sh`'s top-level resets (`GC_JSON=""`, `GC_TOOL`, `GC_CWD`, `GC_CMD`), so `gc_cmd_unreadable` still sees the raw payload. `JP_*` survive the re-source of `json.sh`, which assigns only `JSON_PARSER`, `JSON_BOM`, `JSON_PROBE` and `JSON_WARN_TTL`. All its refusal branches (rc 2, rc ≠ 0) stay as they are. (Pre-flight review round 2, Critical: an earlier draft read stdin into `GC_JSON` in the head; the lib's top-level `GC_JSON=""` wiped it, and `{"command":""}`, `null`, an array, an object, `"tool_name":""` and a missing `tool_name` went 2 → 0. Reproduced.)
+- Re-sourcing `json.sh` resets the `JSON_PARSER` memo, so a later `json_*` call re-probes (extra spawns, no decision change). Avoid it: source `json.sh` only if `json_payload` is not yet defined, or keep the memo; the C4 spawn-count row pins it.
 - Each hook's head becomes:
   1. The trap (Task 2).
   2. Source `lib/json.sh` (`[ -f ] || BLOCKED exit 2`, the same message shape as the git-cmd lib check).
-  3. `GC_JSON=$(cat)`; `json_payload "$GC_JSON"`; `GC_PREPARSED=$?`.
+  3. `GC_PRE_JSON=$(cat)`; `json_payload "$GC_PRE_JSON"`; `GC_PREPARSED=$?`.
   4. The early exit: only when `GC_PREPARSED = 0`, `JP_TOOL` is `Bash` or `PowerShell`, `JP_CMD` is non-empty, and the predicate below finds no candidate.
   5. Otherwise source `git-cmd.sh` and continue exactly as today (`gc_read_stdin` uses the pre-parsed state).
-- The guard-off file, the MCP-tool-name case and `gc_cmd_unreadable` all need either an `rc ≠ 0` payload or a non-Bash tool, so the early exit cannot reach past them.
+- The guard-off file and the MCP-tool-name case need either an `rc ≠ 0` payload or a non-Bash tool. `gc_cmd_unreadable` needs an empty command with tool Bash, PowerShell or empty. The early exit requires rc 0, a non-empty `JP_CMD` and tool Bash/PowerShell, so it cannot reach any of them. The slow path must still see `GC_JSON` (see `GC_PRE_JSON` above).
 - Predicate (an over-match; derive the final list from the code, see below):
 
 ```bash
@@ -335,7 +336,7 @@ Before writing it, the implementer lists every recogniser in `gc_collect_bodies`
 
 - [ ] **Step 1: RED.** Append to `C4`:
   - Spawn-count rows: `ls -la` → `git-cmd.sh` not sourced. Assert it with a temp hooks copy whose `lib/git-cmd.sh` begins with `echo SOURCED >&2`, and expect no `SOURCED`. And exactly one parser run. `git status` must still be sourced.
-  - Decision rows: all 24 push/commit/merge corpus rows, both hooks, plus `GiT push origin main`, `x=1;. ./p.sh`, `(.  ./p.sh)`, `ls`+LF+`. ./p.sh`, `ls;`+TAB+`. ./p.sh`, `g"i"t push origin main`, `g''it merge feature` (gate-before-merge), `echo|sh`, `pwsh -File p.ps1`, a truncated payload (must still block: rc 1), an empty payload (block), and the no-parser configuration (block).
+  - Decision rows: all 24 push/commit/merge corpus rows, both hooks, plus `GiT push origin main`, `x=1;. ./p.sh`, `(.  ./p.sh)`, `ls`+LF+`. ./p.sh`, `ls;`+TAB+`. ./p.sh`, `g"i"t push origin main`, `g''it merge feature` (gate-before-merge), `echo|sh`, `pwsh -File p.ps1`, a truncated payload (must still block: rc 1), an empty payload (block), the no-parser configuration (block), and the unreadable-command rows that must exit 2 in both hooks: `"command":""`, `"command":null`, an array, an object, `"tool_name":""` with `ls`, and no `tool_name`.
 - [ ] **Step 2.** Implement `gc_read_stdin`'s pre-parsed entry first and run every existing `gc_read_stdin` fixture block. Then the two hook heads. Mirror `lib/git-cmd.sh`, `no-push-main.sh` and `gate-before-merge.sh`, then `cmp`.
 - [ ] **Step 3: GREEN.** `RB C4`. Regressions: the v4.3.1 G1–G6, S6, S6b blocks and the v4.3.2 V1 and V2 blocks (`grep -n '^# ---- v4.3.[12] ' scripts/test-hooks.sh`), every block naming `no-push-main` or `gate-before-merge`, then the equivalence run (all configs) and the full consistency run.
 - [ ] **Step 4: Commit** `perf(v4.4.0): C4 -- git gates exit before sourcing git-cmd.sh when no git, gh or script word can occur`.
@@ -621,3 +622,8 @@ Minor findings:
 - (11) `deny-hang-shapes` moved after its parse.
 - (12) and (13) recorded as Known limits (f) and (e); the harness classes non-blocking errors as `allow*`.
 - (14) Row 1 made precise; alias row added.
+
+**Round 2** (opus, 2026-10-04, pre-flight on `12afe72..a56ca34`): REJECT on one Critical, fixed in this revision.
+- **C (new):** Task 7's head read stdin into `GC_JSON`, which `git-cmd.sh`'s top-level `GC_JSON=""` wipes, so `gc_cmd_unreadable` saw nothing and `{"command":""}`, `null`, array/object commands, `"tool_name":""` and a missing `tool_name` went 2 → 0. Now `GC_PRE_JSON`, assigned to `GC_JSON` inside `gc_read_stdin`; six exit-2 rows added.
+- **Minor:** re-sourcing `json.sh` resets the `JSON_PARSER` memo (spawns only); noted in Task 7.
+- The round-1 Criticals were re-tested empirically against today's hooks: no predicate lets through anything refused today.
