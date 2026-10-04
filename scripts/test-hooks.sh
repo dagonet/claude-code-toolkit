@@ -9351,6 +9351,74 @@ s6b_pathcheck "S6b: a short-record node is skipped, push refused by the gate" "$
 cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
 s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
 # ---- end v4.3.1 S6b
+# ==== V4 begin
+# v4.4.0 Q1 option C (docs/plans/2026-10-04-ansi-mac-design.md): a real $'...' or
+# $"..." word is refused by all three gates. Rows 2-37 of the design's verdict
+# table, except 25 and 30 (backslash inside a word, out of scope).
+V4MAIN=$(mkrepo v4main main)
+V4FEAT=$(mkrepo v4feat feature/x)
+for v4d in "$V4MAIN" "$V4FEAT"; do
+  printf '# ctx\n\n- **Test**: `false`\n- **Gate**: `false`\n' > "$v4d/PROJECT_CONTEXT.md"
+  printf '%s\n' 'git commit -m x' 'git push origin main' > "$v4d/c.sh"
+  printf '%s\n' 'git $'"'"'\x63ommit'"'"' -m x' 'git push origin $'"'"'ma\x69n'"'"'' > "$v4d/e.sh"
+  printf '\357\273\277git push origin main\n' > "$v4d/b.ps1"
+done
+V4NEEDLE="use plain quotes"
+v4row() { # <n> <pc> <np> <gbm> <m|-> <command>: all three gates on both fixtures
+  v4n=$1; v4e1=$2; v4e2=$3; v4e3=$4; v4m=$5; v4c=$6
+  for v4f in main feat; do
+    if [ "$v4f" = main ]; then v4d=$V4MAIN; else v4d=$V4FEAT; fi
+    v4j=$(mkjson Bash "$v4c" "$v4d")
+    for v4g in pre-commit-test:$v4e1 no-push-main:$v4e2 gate-before-merge:$v4e3; do
+      v4h=${v4g%%:*}; v4w=${v4g##*:}
+      if [ "$v4m" = m ]; then
+        check_msg "V4 r$v4n ${v4h#pre-commit-} $v4f" "$ROOT/hooks/$v4h.sh" "$v4w" "$v4j" "$V4NEEDLE"
+      else
+        check "V4 r$v4n ${v4h#pre-commit-} $v4f" "hooks/$v4h.sh" "$v4w" "$v4j"
+      fi
+    done
+  done
+}
+while IFS='|' read -r v4n v4a v4b v4c v4m v4cmd; do
+  [ -n "$v4n" ] || continue
+  v4row "$v4n" "$v4a" "$v4b" "$v4c" "$v4m" "$v4cmd"
+done <<'V4TABLE'
+2|2|2|2|m|git $'\x63ommit' -m x
+3|2|2|2|m|git $'commit' -m x
+4|2|2|2|m|git $'\143ommit' -m x
+5|2|2|2|m|$'git' commit -m x
+6|2|2|2|m|$'\x67it' commit -m x
+7|2|2|2|m|$'\x73h' c.sh
+8|2|2|2|m|$'sh' c.sh
+9|2|2|2|m|bash $'c.sh'
+10|2|2|2|m|bash $'\x63.sh'
+11|0|2|2|-|git push origin main
+12|2|2|2|m|git push origin $'ma\x69n'
+13|2|2|2|m|git push origin $'main'
+14|2|2|2|m|git $'push' origin main
+15|2|2|2|m|git $'\x70ush' origin main
+16|2|2|2|m|git push origin $'HEAD:ma\x69n'
+17|0|0|2|-|gh pr merge 5
+18|2|2|2|m|gh pr $'merge' 5
+19|2|2|2|m|gh pr $'\x6derge' 5
+20|2|2|2|m|gh $'pr' merge 5
+21|2|2|2|m|git $'merge' feature/x
+22|2|2|2|m|git $'\x6derge' feature/x
+23|2|2|2|m|git commit -m $'line1\nline2'
+24|0|2|2|-|git push origin "ma"'in'
+26|2|2|2|-|sh c.sh
+27|2|2|2|-|bash c.sh
+28|2|2|2|m|git $"commit" -m x
+29|2|2|2|m|git push origin $"main"
+31|2|2|2|m|bash e.sh
+32|2|2|2|m|echo "$(git $'\x63ommit' -m x)"
+33|2|0|0|-|git commit -m "$(printf 'a\nb')"
+34|0|0|0|-|grep -n "foo$" seed.txt && git status
+35|2|2|2|m|IFS=$'\n'; echo hi
+36|0|0|0|-|echo '$'"'"'x'"'"
+37|2|2|2|m|git log --format=$'%h\t%s' -1
+V4TABLE
+# ==== V4 end
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

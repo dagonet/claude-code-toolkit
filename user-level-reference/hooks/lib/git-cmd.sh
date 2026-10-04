@@ -393,6 +393,44 @@ gc_read_stdin() {
       ;;
   esac
   GC_CMD=$(gc_protect_c_paths "$GC_CMD")
+  if [ -n "$GC_CMD" ] && printf '%s' "$GC_CMD" | gc_dollar_quote; then
+    gc_guard_off && return 0
+    echo "BLOCKED: the git gates cannot check \$'...' or \$\"...\" quoting -- use plain quotes, and printf for escapes. Or create <cwd>/.claude/git-guard-off to opt out." >&2
+    exit 2
+  fi
+}
+
+# gc_dollar_quote -- stdin; 0 when the text holds a real $'...' or $"..." word,
+# 1 otherwise. Quote-aware, POSIX awk: skips '...', "..." (except inside $( ) and
+# backticks, scanned as normal context) and backslash-escaped characters. Design:
+# docs/plans/2026-10-04-ansi-mac-design.md Q1 option C. Documented residuals: a
+# script body that encodes the git word itself passes the body check; a backtick
+# inside "..." closes at the next backtick (errs closed).
+gc_dollar_quote() {
+  awk '
+    { b = b $0 "\n" }
+    END {
+      sq = "\047"; dq = "\""; st = "n"; n = length(b)
+      for (i = 1; i <= n; i++) {
+        c = substr(b, i, 1); t = substr(st, length(st), 1)
+        if (t == "s") { if (c == sq) st = substr(st, 1, length(st) - 1); continue }
+        if (t == "d") {
+          if (c == "\\") i++
+          else if (c == dq) st = substr(st, 1, length(st) - 1)
+          else if (c == "$" && substr(b, i + 1, 1) == "(") { st = st "p"; i++ }
+          else if (c == "`") st = st "b"
+          continue
+        }
+        if (c == "\\") { i++; continue }
+        if (c == "$") { d = substr(b, i + 1, 1); if (d == sq || d == dq) exit 0 }
+        else if (c == sq) st = st "s"
+        else if (c == dq) st = st "d"
+        else if (c == "`") { if (t == "b") st = substr(st, 1, length(st) - 1); else st = st "b" }
+        else if (c == "(" && t == "p") st = st "p"
+        else if (c == ")" && t == "p") st = substr(st, 1, length(st) - 1)
+      }
+      exit 1
+    }'
 }
 
 # gc_cmd_unreadable -- true when this invocation is one the git gates were
@@ -843,6 +881,12 @@ gc_dir_rule() {
   GC_CMD="$typed"
   for b in "${GC_BODIES[@]}"; do
     GC_CMD="$GC_CMD$GC_NL$b"
+    if printf '%s' "$b" | gc_dollar_quote &&
+      { printf '%s\n' "$b" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" ||
+        printf '%s\n' "$b" | grep -qE '(^|[^[:alnum:]_-])gh([^[:alnum:]_-]|$)'; }; then
+      echo "BLOCKED: $gate: a script this command runs uses \$'...' or \$\"...\" quoting with a git or gh word -- the gates cannot check it; use plain quotes, and printf for escapes." >&2
+      return 1
+    fi
   done
   # ... refused when the command (or a script it runs) holds a gated verb
   if [ "$dc" = 1 ]; then
