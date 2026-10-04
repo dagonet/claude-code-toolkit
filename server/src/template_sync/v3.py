@@ -1560,6 +1560,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     warnings = list(rules.warnings)
 
     updated = 0
+    created = 0
     unknown_files: list[dict] = []
     for item in applied:
         fp = core._normalize_path(item["file_path"])
@@ -1573,7 +1574,12 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         files[fp], carried = carry_unknown_file_keys(files.get(fp, {}), new_entry)
         if carried:
             unknown_files.append({"path": fp, "keys": carried})
-        updated += 1
+        # v4.3.1 S3: a file the apply CREATED is reported apart from one it
+        # rewrote (3 consumers read files_added: 0 as "no new hooks arrived").
+        if str(item.get("action", "")).startswith("created_from_"):
+            created += 1
+        else:
+            updated += 1
     consumed = sorted(
         ({"path": core._normalize_path(i["file_path"]),
           "hash": files[core._normalize_path(i["file_path"])].get("hash")} for i in applied),
@@ -1701,6 +1707,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         "manifest_version": out["manifest_version"],
         "template_commit": commit,
         "template_version": version,
+        "files_created": created,
         "files_updated": updated,
         "files_added": added,
         "files_dropped": len(dropped),

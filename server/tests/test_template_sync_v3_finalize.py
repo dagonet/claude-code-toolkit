@@ -371,6 +371,40 @@ def test_finalize_v2_path_echoes_consumed_template_hash(tmp_path):
     assert res["consumed"] == [{"path": "CLAUDE.md", "hash": h}]
 
 
+def test_finalize_counts_files_created_separately(tmp_path):
+    """v4.3.1 S3: a file created from the template is `files_created`, not `files_updated`."""
+    repo, proj = _mk_v3(tmp_path, template={"hooks/g.sh": "g1\n", "hooks/new.sh": "n\n"},
+                        project={"hooks/g.sh": "g0\n"}, entries={"hooks/g.sh": _tpl_entry("g0\n")})
+    _init_repo(repo)
+    created = _run(ts.template_apply_file(str(proj), "hooks/new.sh", source="template"))
+    assert created["action"] == "created_from_template"
+    written = _run(ts.template_apply_file(str(proj), "hooks/g.sh", source="template"))
+    assert written["action"] == "written_from_template"
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([created, written]),
+                                         new_files=json.dumps(["hooks/new.sh"])))
+    assert res["files_created"] == 1
+    assert res["files_updated"] == 1
+    assert res["files_added"] == 0   # already registered through applied_files
+
+
+def test_finalize_v2_path_counts_files_created_separately(tmp_path):
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "general" / "CLAUDE.md").write_text("v1\n", encoding="utf-8", newline="")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / "CLAUDE.md").write_text("v1\n", encoding="utf-8", newline="")
+    (proj / ".claude" / "template-manifest.json").write_text(json.dumps({
+        "version": 2, "templateRepo": str(repo), "variant": "general", "placeholders": {},
+        "lastSynced": "", "files": {},
+    }), encoding="utf-8")
+    h = ts._sha256("v1\n")
+    applied = json.dumps([{"file_path": "CLAUDE.md", "action": "created_from_template", "manifest_entry": {
+        "templateHash": h, "templateRawHash": h, "localHash": h, "locallyModified": False}}])
+    res = _run(ts.template_finalize_sync(str(proj), applied))
+    assert res["files_created"] == 1 and res["files_updated"] == 0
+
+
 def test_finalize_drops_superseded_lastsynced_keys(tmp_path):
     """v4.0.1 item 8: lastSyncedVersion/lastSyncedVersionOf duplicate the
     server-written template_version/template_commit under v3, so a

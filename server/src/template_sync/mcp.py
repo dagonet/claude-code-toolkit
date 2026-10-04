@@ -21,10 +21,33 @@ import tempfile
 import time
 from difflib import SequenceMatcher, unified_diff
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from . import __version__
 
-mcp = FastMCP("template-sync-tools")
+
+class _StrictFastMCP(FastMCP):
+    """v4.3.1 S2 -- every tool refuses an argument it does not declare.
+
+    FastMCP's argument model DROPS unknown keys before the tool function runs,
+    so `template_verify(phase="pre_commit")` (yutraffic: the parameter is
+    `mode`) ran mode=post_commit in silence and FAILed tree_clean. A decorator
+    on the function cannot see the dropped key; this override sees the raw
+    arguments, once, for every tool, against the tool's own schema."""
+
+    async def call_tool(self, name, arguments):
+        tool = self._tool_manager.get_tool(name)
+        if tool is not None:
+            accepted = sorted((tool.parameters or {}).get("properties", {}))
+            unknown = sorted(set(arguments or {}) - set(accepted))
+            if unknown:
+                raise ToolError(
+                    f"{name}: unknown parameter(s) {', '.join(unknown)} -- nothing was run. "
+                    f"Accepted parameters: {', '.join(accepted)}")
+        return await super().call_tool(name, arguments)
+
+
+mcp = _StrictFastMCP("template-sync-tools")
 
 _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -1602,6 +1625,10 @@ async def template_finalize_sync(
         files whose template guidance comments changed in this sync (v4.3.1);
         also stored in the manifest until the next finalize replaces it, and
         reported by template_verify's once_notes_changed line.
+        `files_created` counts applied entries whose action is created_from_*
+        (a new file written from the template or provided content);
+        `files_updated` counts the other applied entries; `files_added` counts
+        new_files registrations that were not already tracked (v4.3.1).
 
     Manifest v3: entries carry `hash` (sha256:-prefixed) and `ownership`;
     `template_commit` is HEAD of the template repo and `template_version` the
@@ -1699,6 +1726,7 @@ async def template_finalize_sync(
 
     # Update entries from applied files
     updated_count = 0
+    created_count = 0
     for item in applied:
         fp = item.get("file_path", "")
         entry = item.get("manifest_entry", {})
@@ -1711,7 +1739,10 @@ async def template_finalize_sync(
             elif not new_entry.get("locallyModified") and "reason" in new_entry:
                 del new_entry["reason"]
             files[fp] = new_entry
-            updated_count += 1
+            if str(item.get("action", "")).startswith("created_from_"):
+                created_count += 1
+            else:
+                updated_count += 1
 
     # Add new files. Real hashes only -- an entry with an empty templateHash
     # has no baseline, and template_compute_status would have offered to
@@ -1772,6 +1803,7 @@ async def template_finalize_sync(
     return json.dumps({
         "manifest_path": ".claude/template-manifest.json",
         "last_synced": new_head,
+        "files_created": created_count,
         "files_updated": updated_count,
         "files_added": added_count,
         "files_dropped": len(dropped_entries),
@@ -2073,7 +2105,8 @@ async def template_verify(
     Args:
         project_path: Path to the project root directory
         template_repo: Override templateRepo from manifest (optional)
-        mode: "pre_commit" or "post_commit" (default)
+        mode: "pre_commit" or "post_commit" (default); any other value is
+            refused (v4.3.1) -- it used to run post_commit silently
 
     Returns:
         JSON {ok, mode, summary: "N PASS, M FAIL, K SKIP, J INFO",
@@ -2082,6 +2115,11 @@ async def template_verify(
         with a reason and counted in the summary, so a SKIP-heavy green is
         never mistaken for a real green.
     """
+    if mode not in verify.MODES:
+        return json.dumps({
+            "error": f"mode must be one of {', '.join(verify.MODES)}; got {mode!r} -- nothing was run",
+            "accepted_modes": list(verify.MODES),
+        }, ensure_ascii=False)
     return json.dumps(verify.run(project_path, template_repo, mode), ensure_ascii=False)
 
 
@@ -2109,6 +2147,9 @@ def _cli_verify(argv: list[str]) -> int:
             i += 1
     if project_path is None:
         print("usage: mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]")
+        return 2
+    if mode not in verify.MODES:
+        print(f"--mode must be one of {', '.join(verify.MODES)}; got {mode!r}")
         return 2
     result = verify.run(project_path, template_repo, mode)
     for line in result["lines"]:
