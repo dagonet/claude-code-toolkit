@@ -334,3 +334,92 @@ def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.mo
     ev["emitted"] = model if out else None
     ev["latency_s"] = round(clock() - t0, 3)
     return out, ev, res.gd
+
+
+RESOLUTION_RE = re.compile(r"^(own|floor|env|none) (\S+) ([01]) (\S+) (.+)$")
+
+
+def post_with_deadline(url, body, key, timeout, env):
+    """POST in a worker thread joined with `timeout`. urllib's own timeout is per
+    socket operation (a slow drip never trips it) and name resolution has none,
+    so only the join bounds the wall clock. Raises JevTimeout or HttpError."""
+    box = {}
+    handlers = [urllib.request.ProxyHandler({})] if env.get("JEV_TEST_MODE") == "1" else []
+    opener = urllib.request.build_opener(*handlers)
+
+    def work():
+        req = urllib.request.Request(url, data=body, method="POST", headers={
+            "Authorization": "Bearer " + key, "Content-Type": "application/json"})
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                box["status"], box["raw"] = resp.status, resp.read(MAX_RESPONSE)
+        except urllib.error.HTTPError as exc:
+            box["status"] = exc.code
+        except Exception as exc:  # noqa: BLE001 -- any failure is "no answer"
+            box["exc"] = exc
+
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise JevTimeout()
+    exc = box.get("exc")
+    if exc is not None:
+        if isinstance(exc, (TimeoutError, socket.timeout)) or isinstance(getattr(exc, "reason", None), (TimeoutError, socket.timeout)):
+            raise JevTimeout()
+        raise HttpError(type(exc).__name__)
+    if box.get("status") != 200:
+        raise HttpError(str(box.get("status")))
+    return box["raw"]
+
+
+def run_resolver(subagent_type, cwd, env):
+    """Run model-floor's own resolution (hooks/lib/agent-model.sh) -- the project's
+    copy when CLAUDE_PROJECT_DIR has one (the S-24 precedence), else the user-level
+    one. Arguments go in argv, never into program text. None when unavailable."""
+    cands = []
+    if env.get("CLAUDE_PROJECT_DIR"):
+        cands.append(os.path.join(env["CLAUDE_PROJECT_DIR"], "hooks", "lib", "agent-model.sh"))
+    home = env.get("HOME") or os.path.expanduser("~")
+    cands.append(os.path.join(home, ".claude", "hooks", "lib", "agent-model.sh"))
+    lib = next((c for c in cands if os.path.isfile(c)), None)
+    bash = shutil.which("bash", path=env.get("PATH"))
+    if not lib or not bash:
+        return None
+    try:
+        cp = subprocess.run([bash, lib, subagent_type, cwd], capture_output=True,
+                            timeout=RESOLVER_TIMEOUT, env=dict(env))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = RESOLUTION_RE.match(cp.stdout.decode("utf-8", "replace").strip())
+    if not m:
+        return None
+    kind, model, jev, effort, gd = m.groups()
+    return Resolution(kind, "" if model == "-" else model, jev == "1",
+                      "" if effort == "-" else effort, "" if gd == "-" else gd)
+
+
+def main():
+    try:
+        out, ev, gd = run(sys.stdin.buffer.read(), dict(os.environ))
+    except Exception:  # noqa: BLE001 -- never fail a spawn
+        return 0
+    if out:
+        sys.stdout.buffer.write(out)
+        sys.stdout.buffer.flush()
+    if ev is not None and gd:
+        try:
+            write_event(gd, ev)
+        except OSError:
+            pass
+    if out and ev is not None:
+        sys.stderr.write("jev: {} {} -> {} ({})\n".format(
+            ev["subagent_type"], ev["default"] or "-", ev["emitted"], ev["reason"]))
+    return 0
+
+
+if __name__ == "__main__":
+    _rc = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_rc)  # never wait for a request thread still blocked in the network
