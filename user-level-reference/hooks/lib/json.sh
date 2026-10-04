@@ -108,9 +108,9 @@ json_probe_ok() {
 # Cheap while the probe was a `command -v` builtin; not cheap now that it execs
 # an interpreter. So the callers below call THIS in their own shell and read
 # $JSON_PARSER, and `json_parser` stays as the printing wrapper for the few
-# places that want the name. gc_read_stdin's json_have call runs in the hook's
-# top-level shell, so the later `$(json_get …)` subshells inherit the resolved
-# value and the whole gate costs one probe.
+# places that want the name. The git gates no longer come through here: since
+# v4.3.1 S6b gc_read_stdin calls json_payload, whose one interpreter run is the
+# probe (canary), the validity check and the field read.
 json_parser_init() {
   [ -n "$JSON_PARSER" ] && return 0
   JSON_PARSER=none
@@ -200,8 +200,9 @@ json_read_payload() {
         var o = "";
         try { o += rd(JSON.parse(process.argv[1]), "jp.k"); } catch (e) {}
         o += "\u0000";
-        var v, ok = true;
-        try { v = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch (e) { ok = false; }
+        var v, s, ok = true;
+        try { s = require("fs").readFileSync(0, "utf8"); } catch (e) { process.exit(0); }
+        try { v = JSON.parse(s); } catch (e) { ok = false; }
         if (!ok) o += "I\u0000";
         else {
           o += "V\u0000";
@@ -232,7 +233,11 @@ except Exception:
     pass
 o += b"\x00"
 try:
-    v = json.loads(sys.stdin.buffer.read().decode("utf-8-sig", "replace"))
+    s = sys.stdin.buffer.read().decode("utf-8-sig", "replace")
+except Exception:
+    sys.exit(0)
+try:
+    v = json.loads(s)
 except Exception:
     o += b"I\x00"
 else:
@@ -267,7 +272,7 @@ sys.stdout.buffer.write(o)
 # in the same node -> python3 -> jq order, and the winner is memoised in
 # JSON_PARSER for any later json_get.
 json_payload() {
-  local _jp_b _jp_c _jp_v
+  local _jp_b _jp_c _jp_v _jp_ok
   JP_TOOL=""; JP_CWD=""; JP_CMD=""
   case "$1" in "$JSON_BOM"*) set -- "${1#"$JSON_BOM"}" ;; esac
   if [ -z "$1" ]; then
@@ -278,16 +283,21 @@ json_payload() {
   for _jp_b in ${JSON_PARSER:-node python3 jq}; do
     [ "$_jp_b" = none ] && return 2
     command -v "$_jp_b" >/dev/null 2>&1 || continue
-    { IFS= read -r -d '' _jp_c; IFS= read -r -d '' _jp_v
-      IFS= read -r -d '' JP_TOOL; IFS= read -r -d '' JP_CWD; IFS= read -r -d '' JP_CMD
+    # every read must find its NUL: a short record is a failed canary
+    _jp_ok=1
+    { IFS= read -r -d '' _jp_c && IFS= read -r -d '' _jp_v || _jp_ok=0
+      if [ "$_jp_ok" = 1 ] && [ "$_jp_v" = V ]; then
+        IFS= read -r -d '' JP_TOOL && IFS= read -r -d '' JP_CWD && IFS= read -r -d '' JP_CMD || _jp_ok=0
+      fi
     } < <(json_read_payload "$_jp_b" "$1")
-    if [ "$_jp_c" != ok ]; then JP_TOOL=""; JP_CWD=""; JP_CMD=""; continue; fi
+    if [ "$_jp_ok" != 1 ] || [ "$_jp_c" != ok ]; then JP_TOOL=""; JP_CWD=""; JP_CMD=""; continue; fi
     JSON_PARSER=$_jp_b
     if [ "$_jp_v" != V ]; then JP_TOOL=""; JP_CWD=""; JP_CMD=""; return 1; fi
     # the old `$(json_get ...)` stripped every trailing newline; so does this
-    while [ "${JP_TOOL%$'\n'}" != "$JP_TOOL" ]; do JP_TOOL=${JP_TOOL%$'\n'}; done
-    while [ "${JP_CWD%$'\n'}" != "$JP_CWD" ]; do JP_CWD=${JP_CWD%$'\n'}; done
-    while [ "${JP_CMD%$'\n'}" != "$JP_CMD" ]; do JP_CMD=${JP_CMD%$'\n'}; done
+    # (case + ${x%?} is linear; a `[ "${x%$'\n'}" != "$x" ]` loop is not)
+    while :; do case "$JP_TOOL" in *$'\n') JP_TOOL=${JP_TOOL%?} ;; *) break ;; esac; done
+    while :; do case "$JP_CWD" in *$'\n') JP_CWD=${JP_CWD%?} ;; *) break ;; esac; done
+    while :; do case "$JP_CMD" in *$'\n') JP_CMD=${JP_CMD%?} ;; *) break ;; esac; done
     return 0
   done
   JSON_PARSER=none

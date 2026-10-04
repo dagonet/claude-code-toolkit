@@ -18,7 +18,7 @@
 #   - v2.2.1: three more ways a gate could not determine the answer, all of
 #     which used to resolve to "allow" and now resolve to "refuse":
 #     an unparseable payload (gc_read_stdin), a parser that is present but
-#     broken (json.sh's json_probe_ok), and an unreplaced `{{...}}`
+#     broken (json_payload's canary), and an unreplaced `{{...}}`
 #     config value (gc_is_placeholder).
 #
 # WHY THESE GATES SCAN THE WHOLE STRING, and why enforce-delegation.sh does the
@@ -333,7 +333,8 @@ gc_read_stdin() {
   # v4.3.1 S6b: ONE interpreter run parses the payload, returns the three fields
   # and doubles as the validity check and the parser probe (json_payload; it was
   # five spawns: probe, json_valid, three json_get). rc 2 = no working parser,
-  # 1 = the payload does not parse (empty stdin included), 0 = fields in JP_*.
+  # anything else non-zero (1 = does not parse, empty stdin included; 127 =
+  # json_payload missing) refuses too; 0 = fields in JP_*.
   json_payload "$GC_JSON"
   gc_rc=$?
   if [ "$gc_rc" = 2 ]; then
@@ -351,7 +352,7 @@ gc_read_stdin() {
   # the problem, so the message is deliberately distinct from the no-parser one:
   # from outside, the two used to be indistinguishable, which is what made the
   # first report of this read as a false alarm.
-  if [ "$gc_rc" = 1 ]; then
+  if [ "$gc_rc" != 0 ]; then
     GC_CWD=$(pwd)
     GC_TOOL=""
     GC_CMD=""

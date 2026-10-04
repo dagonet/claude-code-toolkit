@@ -9280,11 +9280,22 @@ S6BMUTE="$TMPROOT/s6bmute"; mkdir -p "$S6BMUTE"
 printf '#!/bin/sh\nexit 0\n' > "$S6BMUTE/node"; chmod +x "$S6BMUTE/node"
 S6BPUSH="$(mkjson Bash 'git push origin main' "$S6BR")"
 errf="$TMPROOT/s6b.err"
-printf '%s' "$S6BPUSH" | PATH="$S6BMUTE:$PATH" bash "$S6BN" >/dev/null 2>"$errf"; s6b_rc=$?
-expect "S6b: a mute node falls through, push still refused" "2 yes" "$s6b_rc $(grep -q 'no JSON parser' "$errf" && echo no || echo yes)"
+s6b_pathcheck() { # <label> <dir> <want> <needle> -- the push payload with <dir> ahead on PATH
+  printf '%s' "$S6BPUSH" | PATH="$2:$PATH" bash "$S6BN" >/dev/null 2>"$errf"; s6b_rc=$?
+  if [ "$s6b_rc" = "$3" ] && grep -qF "$4" "$errf"; then pass=$((pass + 1)); printf 'PASS  %-42s (exit %s)\n' "$1" "$s6b_rc"
+  else fail=$((fail + 1)); printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' "$1" "$3" "$4" "$s6b_rc" "$(head -1 "$errf")"; fi
+}
+s6b_pathcheck "S6b: a mute node falls through, push refused by the gate" "$S6BMUTE" 2 "protected branch"
+# a node that prints a well-formed record with a WRONG canary and a Read tool: trusting it allows the push
+S6BWRONG="$TMPROOT/s6bwrong"; mkdir -p "$S6BWRONG"
+printf '#!/bin/sh\nprintf '"'"'x\\0V\\0Read\\0\\0\\0'"'"'\n' > "$S6BWRONG/node"; chmod +x "$S6BWRONG/node"
+s6b_pathcheck "S6b: a wrong-canary node is skipped, push refused by the gate" "$S6BWRONG" 2 "protected branch"
+# a node that prints only `ok` (short record, no verdict) is a failed canary too
+S6BSHORT="$TMPROOT/s6bshort"; mkdir -p "$S6BSHORT"
+printf '#!/bin/sh\nprintf ok\n' > "$S6BSHORT/node"; chmod +x "$S6BSHORT/node"
+s6b_pathcheck "S6b: a short-record node is skipped, push refused by the gate" "$S6BSHORT" 2 "protected branch"
 cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
-printf '%s' "$S6BPUSH" | PATH="$S6BMUTE:$PATH" bash "$S6BN" >/dev/null 2>"$errf"; s6b_rc=$?
-expect "S6b: all three parsers mute: exit 2 with the no-parser line" "2 yes" "$s6b_rc $(grep -q 'no JSON parser' "$errf" && echo yes || echo no)"
+s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
 # ---- end v4.3.1 S6b
 
 echo "----------------------------------------------------------------"
