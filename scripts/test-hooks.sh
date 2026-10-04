@@ -9183,6 +9183,60 @@ printf 'd=/x\ngit -C "$d" commit -q -m seed\n' > "$G3DO/seedc.sh"
 check_msg "G3d T3c-13 KNOWN FALSE REFUSAL (v3.0.3 unresolved -C, not S-3c): bash seedc.sh" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash seedc.sh' "$G3DO")" "the -C target"
 check_nomsg "G3d T3c-13 ... and the message is not the S-3c one"                         "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash seedc.sh' "$G3DO")" "$D3"
 # ---- end v4.3.1 G3d
+# ---- v4.3.1 S6: a command that cannot reach a commit takes the exact fast path ----
+S6R=$(mkrepo s6 main)
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$S6R/PROJECT_CONTEXT.md"
+printf 'git commit -m x\n' > "$S6R/c.sh"
+printf 'git commit -m x\n' > "$S6R/c.ps1"
+printf 'git commit -m x\n' > "$S6R/rc"
+mkdir -p "$S6R/sub"
+printf 'git merge x\n' > "$S6R/sub/m.sh"
+S6H=hooks/pre-commit-test.sh
+check "S6: . ./rc gated (dot rule, no 'sh' in the name)" "$S6H" 2 "$(mkjson Bash '. ./rc' "$S6R")"
+check "S6: ls;. ./rc gated"           "$S6H" 2 "$(mkjson Bash 'ls;. ./rc' "$S6R")"
+# equivalence: every shape that can reach a commit still walks and is gated
+check "S6: git commit gated"          "$S6H" 2 "$(mkjson Bash 'git commit -m x' "$S6R")"
+check "S6: bash c.sh gated"           "$S6H" 2 "$(mkjson Bash 'bash c.sh' "$S6R")"
+check "S6: sh c.sh gated"             "$S6H" 2 "$(mkjson Bash 'sh c.sh' "$S6R")"
+check "S6: . ./c.sh gated"            "$S6H" 2 "$(mkjson Bash '. ./c.sh' "$S6R")"
+check "S6: ls; . ./c.sh gated"        "$S6H" 2 "$(mkjson Bash 'ls; . ./c.sh' "$S6R")"
+check "S6: ls && . ./c.sh gated"      "$S6H" 2 "$(mkjson Bash 'ls && . ./c.sh' "$S6R")"
+check "S6: source c.sh gated"         "$S6H" 2 "$(mkjson Bash 'source c.sh' "$S6R")"
+check "S6: pwsh -File c.ps1 gated"    "$S6H" 2 "$(mkjson Bash 'pwsh -File c.ps1' "$S6R")"
+# spellings of the verb that the fast path must not mistake for a no-op
+check "S6: git.exe commit gated"      "$S6H" 2 "$(mkjson Bash 'git.exe commit -m x' "$S6R")"
+check "S6: \"git\" commit gated"      "$S6H" 2 "$(mkjson Bash '"git" commit -m x' "$S6R")"
+check "S6: 'git' commit gated"        "$S6H" 2 "$(mkjson Bash "'git' commit -m x" "$S6R")"
+check "S6: /usr/bin/git commit gated" "$S6H" 2 "$(mkjson Bash '/usr/bin/git commit -m x' "$S6R")"
+check "S6: GIT commit gated"          "$S6H" 2 "$(mkjson Bash 'GIT commit -m x' "$S6R")"
+check "S6: git com\"mit\" gated"      "$S6H" 2 "$(mkjson Bash 'git com"mit" -m x' "$S6R")"
+# gc_dir_rule refusals reachable with no commit/sh/source text at all
+check "S6: cd sub; git merge x"       "$S6H" 2 "$(mkjson Bash 'cd sub; git merge x' "$S6R")"
+check "S6: cd sub; git pull"          "$S6H" 2 "$(mkjson Bash 'cd sub; git pull' "$S6R")"
+check "S6: cd sub; git push origin main" "$S6H" 2 "$(mkjson Bash 'cd sub; git push origin main' "$S6R")"
+check "S6: cd sub; gh pr merge 1"     "$S6H" 2 "$(mkjson Bash 'cd sub; gh pr merge 1' "$S6R")"
+check "S6: cd sub; GIT_DIR=x git merge y" "$S6H" 2 "$(mkjson Bash 'cd sub; GIT_DIR=x git merge y' "$S6R")"
+check "S6: GIT_DIR=x git merge y"     "$S6H" 2 "$(mkjson Bash 'GIT_DIR=x git merge y' "$S6R")"
+# scanned scripts
+check "S6: cd sub; bash m.sh (body has git merge)" "$S6H" 2 "$(mkjson Bash 'cd sub; bash m.sh' "$S6R")"
+# controls: take the fast path
+check "S6: ls -la allowed"            "$S6H" 0 "$(mkjson Bash 'ls -la' "$S6R")"
+check "S6: echo hi > out.txt allowed" "$S6H" 0 "$(mkjson Bash 'echo hi > out.txt' "$S6R")"
+expect "S6: ls -la still writes the no-op record" yes "$(ls "$(gatedir "$S6R")"/last-precommit-noop.*.json >/dev/null 2>&1 && echo yes || echo no)"
+# structural pin: same token count and lengths; only one can contain a commit
+S6SHIM="$TMPROOT/s6shim"
+S6LOG="$TMPROOT/s6.log"
+mkdir -p "$S6SHIM"
+for b in node python3 jq git sed awk tr grep date wc find mv head cat; do
+  s6real=$(command -v "$b" 2>/dev/null) || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$b" "$S6LOG" "$s6real" > "$S6SHIM/$b"
+  chmod +x "$S6SHIM/$b"
+done
+s6_count() { : > "$S6LOG"; printf '%s' "$(mkjson Bash "$1" "$S6R")" | PATH="$S6SHIM:$PATH" bash "$ROOT/$S6H" >/dev/null 2>&1; wc -l < "$S6LOG" | tr -d ' '; }
+S6_FAST=$(s6_count 'ls -la xcomxitx')
+S6_WALK=$(s6_count 'ls -la xcommitx')
+expect "S6: the fast path spawns at least 5 fewer programs ($S6_FAST vs $S6_WALK)" yes "$([ $((S6_WALK - S6_FAST)) -ge 5 ] && echo yes || echo no)"
+# ---- end v4.3.1 S6
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
