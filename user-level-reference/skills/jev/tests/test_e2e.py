@@ -40,6 +40,12 @@ class ResolverAndTransportTests(unittest.TestCase):
         raw = jr.post_with_deadline(stub.url, b'{"x": 1}', jt.KEY, 2.0, {"JEV_TEST_MODE": "1"})
         self.assertEqual(json.loads(raw.decode("utf-8"))["answers"]["model"]["choice"], "opus")
         self.assertEqual(stub.requests[0]["auth"], "Bearer " + jt.KEY)
+        # A redirect is never followed: urllib would resend the Bearer key to the Location host.
+        target = jt.Stub(self, "ok", jt.ok_answer())
+        redirector = jt.Stub(self, "302", location=target.url)
+        with self.assertRaises(jr.HttpError):
+            jr.post_with_deadline(redirector.url, b"{}", jt.KEY, 2.0, {"JEV_TEST_MODE": "1"})
+        self.assertEqual((len(redirector.requests), target.requests), (1, []))
 
     def test_post_with_deadline_bounds_a_hang(self):
         stub = jt.Stub(self, "hang")

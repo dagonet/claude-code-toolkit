@@ -336,6 +336,14 @@ def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.mo
     return out, ev, res.gd
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a 3xx: urllib would resend the Bearer header to the Location host.
+    Returning None makes the 3xx raise HTTPError, which is an http-error -> floor."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 RESOLUTION_RE = re.compile(r"^(own|floor|env|none) (\S+) ([01]) (\S+) (.+)$")
 
 
@@ -344,7 +352,9 @@ def post_with_deadline(url, body, key, timeout, env):
     socket operation (a slow drip never trips it) and name resolution has none,
     so only the join bounds the wall clock. Raises JevTimeout or HttpError."""
     box = {}
-    handlers = [urllib.request.ProxyHandler({})] if env.get("JEV_TEST_MODE") == "1" else []
+    handlers = [_NoRedirect()]
+    if env.get("JEV_TEST_MODE") == "1":
+        handlers.append(urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
 
     def work():

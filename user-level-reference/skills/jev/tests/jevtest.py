@@ -90,13 +90,19 @@ class Sandbox:
 class Stub:
     """A loopback /v1/systemone: mode ok | hang | drip | 500 | garbage. Records requests."""
 
-    def __init__(self, case, mode, body=None):
-        self.mode, self.body, self.requests = mode, body, []
+    def __init__(self, case, mode, body=None, location=None):
+        self.mode, self.body, self.requests, self.location = mode, body, [], location
         stub = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
+
+            def do_GET(self):  # only a followed redirect lands here: record it, answer 404
+                stub.requests.append({"auth": self.headers.get("Authorization"), "body": b""})
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def do_POST(self):
                 n = int(self.headers.get("Content-Length") or 0)
@@ -115,6 +121,12 @@ class Stub:
                             time.sleep(0.5)
                     except OSError:  # the client gave up, as the test expects
                         pass
+                    return
+                if stub.mode == "302":  # redirect to stub.location
+                    self.send_response(302)
+                    self.send_header("Location", stub.location)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
                     return
                 if stub.mode == "500":
                     self.send_response(500)
