@@ -867,6 +867,11 @@ HOOKS_NO_MIRROR=(
   # <root>/.claude/template-manifest.json exists with manifest_version 4, a
   # condition a bare ~/.claude install has no way to meet for itself.
   "deny-claude-md-writes.sh"
+  # git-pre-push.sh (v4.3.2, design P3): a NATIVE git hook installed per clone
+  # as a shim in <git common dir>/hooks/pre-push, never registered in any
+  # settings.json -- a bare ~/.claude install has no repository to install it
+  # into and no harness that would run it.
+  "git-pre-push.sh"
 )
 # FINDING (v3.0.4, A6): retro-brief.sh (SessionStart, reads the ledger) and
 # retro-ledger.sh (SubagentStop, writes it) both key off cwd -> project slug
