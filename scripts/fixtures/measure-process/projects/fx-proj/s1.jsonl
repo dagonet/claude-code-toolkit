@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-10-01T09:00:00Z","message":{"role":"user","content":"go"}}
+{"type":"assistant","timestamp":"2026-10-01T09:00:01Z","message":{"id":"x1","role":"assistant","content":[{"type":"tool_use","id":"y1","name":"Agent","input":{"subagent_type":"coder","prompt":"Do X."}}],"usage":{"output_tokens":7}}}
+{"type":"user","timestamp":"2026-10-01T09:01:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"y1","content":"aaaaaaaaaaaaaaaa"}]}}
+{"type":"assistant","timestamp":"2026-10-01T09:01:06Z","message":{"id":"x2","role":"assistant","content":"ok","usage":{"output_tokens":2}}}

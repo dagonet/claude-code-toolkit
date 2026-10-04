@@ -1,0 +1,17 @@
+{"type":"user","timestamp":"2026-10-01T10:00:00Z","cwd":"/nonexistent/fx","message":{"role":"user","content":"Do X.\n\n## Required Skills\n- karpathy-guidelines"}}
+{"type":"assistant","timestamp":"2026-10-01T10:00:01Z","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"u1","name":"Read","input":{"file_path":"a.txt"}}],"usage":{"output_tokens":10}}}
+{"type":"user","timestamp":"2026-10-01T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u1","content":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}]}}
+{"type":"assistant","timestamp":"2026-10-01T10:00:03Z","message":{"id":"m2","role":"assistant","content":[{"type":"tool_use","id":"u2","name":"Skill","input":{"skill":"superpowers:test-driven-development"}}],"usage":{"output_tokens":10}}}
+{"type":"user","timestamp":"2026-10-01T10:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u2","content":"Launching skill: superpowers:test-driven-development"}]}}
+{"type":"user","isMeta":true,"sourceToolUseID":"u2","timestamp":"2026-10-01T10:00:04Z","message":{"role":"user","content":[{"type":"text","text":"ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"}]}}
+{"type":"assistant","timestamp":"2026-10-01T10:00:05Z","message":{"id":"m3","role":"assistant","content":[{"type":"tool_use","id":"u3","name":"Edit","input":{"file_path":"a.txt"}}],"usage":{"output_tokens":20}}}
+{"type":"user","timestamp":"2026-10-01T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u3","content":"okay"}]}}
+{"type":"assistant","timestamp":"2026-10-01T10:00:07Z","message":{"id":"m4","role":"assistant","content":[{"type":"tool_use","id":"u4","name":"Bash","input":{"command":"bash hooks/run-gate.sh"}}],"usage":{"output_tokens":10}}}
+{"type":"user","timestamp":"2026-10-01T10:00:37Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u4","content":"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"}]}}
+{"type":"assistant","timestamp":"2026-10-01T10:00:38Z","message":{"id":"m5","role":"assistant","content":[{"type":"tool_use","id":"u5","name":"Bash","input":{"command":"git commit -m x"}}],"usage":{"output_tokens":10}}}
+{"type":"user","timestamp":"2026-10-01T10:00:50Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u5","content":"cccccccc"}]}}
+{"type":"assistant","timestamp":"2026-10-01T10:00:51Z","message":{"id":"m6","role":"assistant","content":"Done.","usage":{"output_tokens":50}}}
+{"type":"user","timestamp":"2026-10-01T10:00:52Z","message":{"role":"user","content":"Stop hook feedback:\n[x]: CONTRACT VIOLATION: missing"}}
+{"type":"assistant","timestamp":"2026-10-01T10:00:53Z","message":{"id":"m7","role":"assistant","content":[{"type":"tool_use","id":"u6","name":"Bash","input":{"command":"bash hooks/run-gate.sh"}}],"usage":{"output_tokens":10}}}
+{"type":"user","timestamp":"2026-10-01T10:01:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u6","content":"gggggggggggggggggggggggggggggggggggggggg"}]}}
+{"type":"assistant","timestamp":"2026-10-01T10:01:04Z","message":{"id":"m8","role":"assistant","content":"- [pass] 1. X\nCommit: abc1234\nGate: GATE PASS abc1234\nConcerns: none","usage":{"output_tokens":40}}}

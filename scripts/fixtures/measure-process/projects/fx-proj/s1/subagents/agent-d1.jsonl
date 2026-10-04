@@ -1,0 +1,3 @@
+{"type":"user","timestamp":"2026-10-01T13:00:00Z","message":{"role":"user","content":"Do Y."}}
+{"type":"assistant","timestamp":"2026-10-01T13:00:01Z","message":{"id":"p1","role":"assistant","content":[{"type":"tool_use","id":"z1","name":"SubagentHandback","input":{"message":"Y done."}}],"usage":{"output_tokens":3}}}
+{"type":"user","timestamp":"2026-10-01T13:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"z1","content":"ok"}]}}
