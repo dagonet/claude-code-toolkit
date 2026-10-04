@@ -1016,7 +1016,7 @@ The five forms above are scoped to the **project tree**. `~/.claude/` is not in 
 
 ### 7. Finalize
 
-Call `template_finalize_sync(project_path=".", applied_files=<JSON array of all template_apply_file results>)`.
+Call `template_finalize_sync(project_path=".", applied_files_path=<json-path>)`, where `<json-path>` is the JSON file of all `template_apply_file` results written as described below.
 
 `new_files` REGISTERS an untracked path and never touches an existing entry; a tracked file you updated outside `template_apply_file` keeps its stale hash (`LOCAL_EDITED` with an empty `local_diff`) until you pass it in `applied_files`, which REFRESHES the hash; the post-finalize `compute_status` self-check is the control.
 

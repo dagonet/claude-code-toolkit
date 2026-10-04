@@ -62,6 +62,7 @@ Counts, never carried forward: consistency **438** PASS lines (full run at `0a98
 2. Add `"outputStyle": "pm-report"` and the `UserPromptSubmit` entry to `~/.claude/settings.json` — diff the live file against the reference first, since the live file carries machine-specific entries the reference does not.
 3. The default applies to NEW sessions only; `/output-style default` switches a session back to the technical style at any time.
 4. No `/sync-template` needed — no template changed this release.
+   **Erratum (v4.3.1):** true only for a consumer already synced to v4.1.2 or later; a consumer on an earlier toolkit must run `/sync-template`.
 5. Run `bash scripts/verify-user-level-drift.sh` and confirm 0 drift. The drift probe excludes `settings.json` by design, so verify the two new settings by hand: `grep -F '"outputStyle": "pm-report"' ~/.claude/settings.json` and `grep -F "LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'" ~/.claude/settings.json` must both print a line.
 
 ## v4.1.2 — 2026-09-24
@@ -92,6 +93,7 @@ Counts, never carried forward: consistency **438** PASS lines (full run at `0a98
 2. **No manifest migration this release** — `manifest_migration` is unchanged, and nothing here touches `template_migrate_manifest` or the manifest-v4 shape.
 3. **`--worktree-base` behaviour change is bootstrap-only** — it affects a fresh `setup-project.sh`/`.ps1` run, never an existing project's `PROJECT_CONTEXT.md`, which the sync never rewrites.
 4. The one-line `git add <path>` then `git commit` rule from prior releases is no longer strictly needed once this release's hooks land (a chained `git add … && git commit` is no longer the specific hazard it once was for a NEW file, since the gate hashes the working tree the same way either order), but following it stays harmless and is not being retracted here.
+   **Erratum (v4.3.1):** wrong for a commit that adds NEW files — the gate hashes tracked files only, so a chained `git add <new file> && git commit` commits a tree the gate never hashed (#19, measured). Follow the sync-template skill, step 9: `git add` is its own tool call, before `git commit`, always.
 5. No once-class seed changed this release (§ below) — no consumer's `.claude/rules/project.md` or `.claude/project-instructions.md` needs a repoint on this release's account alone.
 
 **Nothing this release retires.** Every once-class seed (`templates/*/.claude/rules/project.md`, `templates/*/.claude/project-instructions.md`, `templates/*/.claude/agent-grants.json`) is byte-identical to its v4.1.1 copy, and `git diff --diff-filter=DR` between v4.1.1 and this tip shows no file deleted or renamed — a harm-keyed arm needs a release-task step to ask what the release itself retires, not a detector, and the answer for this release is nothing.
