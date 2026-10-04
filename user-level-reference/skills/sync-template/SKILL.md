@@ -1137,6 +1137,8 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. The next finalize replaces the list.
 
+**Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
+
 #### 8a. Expected lines, per mode AND per manifest situation (`LINES` is now 31 — v4.1.0 raised it from 24 to 30; v4.1.1 adds `project_md_seed_differs`, directly after `project_md_seed_current`)
 
 **Read `manifest_version_supported` by name — this is a renamed id, not a new one (R-A).** Its predecessor named only the version-3 case, which became a lie the moment a v4 manifest could PASS it too; the count and the closed set are otherwise unchanged. A fleet script or notice still grepping for the old, version-scoped spelling finds nothing after this release and needs updating on its own side, not this skill's.

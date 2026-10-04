@@ -9352,6 +9352,142 @@ cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
 s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
 # ---- end v4.3.1 S6b
 
+# ---- v4.3.2 V1: a native git pre-push hook refuses protected branches however the push starts ----
+V1Z=0000000000000000000000000000000000000000
+V1NL='
+'
+V1E="$TMPROOT/v1-empty.gitconfig"; : > "$V1E"
+v1g() { GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 git "$@"; }   # no global core.hooksPath can leak in
+v1_yes() { if "$@"; then echo yes; else echo no; fi; }
+v1_repo() { # <name> <PROJECT_CONTEXT.md body, or - for none> -> repo on main; hooks/ (and the body) committed
+  r=$(mkrepo "$1" main)
+  cp -R "$ROOT/hooks" "$r/hooks"
+  [ "$2" = - ] || printf '%s\n' "$2" > "$r/PROJECT_CONTEXT.md"
+  v1g -C "$r" add -A >/dev/null 2>&1
+  v1g -C "$r" commit -q -m hooks >/dev/null 2>&1
+  printf '%s\n' "$r"
+}
+v1_hook() { # <repo> <stdin> -> allowed|refused; stderr in $TMPROOT/v1.err. Run as git runs it: cwd = top-level.
+  if ( cd "$1" && printf '%s\n' "$2" | GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 bash "$1/hooks/git-pre-push.sh" origin "$TMPROOT/none.git" ) >/dev/null 2>"$TMPROOT/v1.err"
+  then echo allowed; else echo refused; fi
+}
+v1_line() { # <repo> <remote ref> [delete] -> one pre-push stdin line
+  s=$(git -C "$1" rev-parse HEAD)
+  if [ "${3:-}" = delete ]; then printf '(delete) %s %s %s' "$V1Z" "$2" "$s"
+  else printf 'refs/heads/x %s %s %s' "$s" "$2" "$V1Z"; fi
+}
+V1A=$(v1_repo v1a '- **Protected branches**: main')
+expect "V1: update of main refused"                  refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/main)")"
+expect "V1: refusal names branch, remote and escape" yesyes "$(v1_yes grep -qF "of protected branch 'main' on remote 'origin' refused" "$TMPROOT/v1.err")$(v1_yes grep -qF 'git push --no-verify' "$TMPROOT/v1.err")"
+expect "V1: delete of main refused"                  refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/main delete)")"
+expect "V1: a delete is called a delete"             yes "$(v1_yes grep -qF "delete of protected branch 'main'" "$TMPROOT/v1.err")"
+expect "V1: feature branch allowed"                  allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/feature/x)")"
+expect "V1: tag allowed"                             allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/tags/v1)")"
+expect "V1: a tag named main allowed"                allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/tags/main)")"
+expect "V1: look-alike mainline allowed"             allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/mainline)")"
+expect "V1: look-alike feature/main allowed"         allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/feature/main)")"
+expect "V1: two refs, one protected -> refused"      refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/feature/x)$V1NL$(v1_line "$V1A" refs/heads/main)")"
+expect "V1: empty stdin allowed"                     allowed "$(v1_hook "$V1A" '')"
+V1D=$(v1_repo v1d '- **Protected branches**: develop')
+expect "V1: develop list: main allowed"              allowed "$(v1_hook "$V1D" "$(v1_line "$V1D" refs/heads/main)")"
+expect "V1: develop list: develop refused"           refused "$(v1_hook "$V1D" "$(v1_line "$V1D" refs/heads/develop)")"
+V1N=$(v1_repo v1n '- **Protected branches**: none')
+expect "V1: none: main allowed"                      allowed "$(v1_hook "$V1N" "$(v1_line "$V1N" refs/heads/main)")"
+V1F=$(v1_repo v1f '# ctx without the field')
+expect "V1: no field: main refused (default set)"    refused "$(v1_hook "$V1F" "$(v1_line "$V1F" refs/heads/main)")"
+expect "V1: no field: master refused (default set)"  refused "$(v1_hook "$V1F" "$(v1_line "$V1F" refs/heads/master)")"
+V1M=$(v1_repo v1m -)
+expect "V1: no PROJECT_CONTEXT.md: main refused"     refused "$(v1_hook "$V1M" "$(v1_line "$V1M" refs/heads/main)")"
+V1P=$(v1_repo v1p '- **Protected branches**: {{PROTECTED_BRANCHES}}')
+expect "V1: placeholder: main refused"               refused "$(v1_hook "$V1P" "$(v1_line "$V1P" refs/heads/main)")"
+V1U=$(v1_repo v1u '- **Protected branches**: develop')
+chmod 000 "$V1U/PROJECT_CONTEXT.md"
+if [ -r "$V1U/PROJECT_CONTEXT.md" ]; then
+  skip "V1: unreadable PROJECT_CONTEXT.md refuses every push" "file still readable after chmod 000 (root, or Windows)" 2
+else
+  expect "V1: unreadable PROJECT_CONTEXT.md: feature refused" refused "$(v1_hook "$V1U" "$(v1_line "$V1U" refs/heads/feature/x)")"
+  expect "V1: unreadable: the message says so"       yes "$(v1_yes grep -qF 'cannot be read' "$TMPROOT/v1.err")"
+fi
+chmod 644 "$V1U/PROJECT_CONTEXT.md"
+V1L=$(v1_repo v1l '- **Protected branches**: main'); rm -f "$V1L/hooks/lib/git-cmd.sh"
+expect "V1: lib missing: feature refused"            refused "$(v1_hook "$V1L" "$(v1_line "$V1L" refs/heads/feature/x)")"
+expect "V1: lib missing: the message names it"       yes "$(v1_yes grep -qF 'lib/git-cmd.sh missing' "$TMPROOT/v1.err")"
+V1C=$(v1_repo v1c '- **Protected branches**: main'); printf ':\n' > "$V1C/hooks/lib/git-cmd.sh"
+expect "V1: corrupt lib: feature refused"            refused "$(v1_hook "$V1C" "$(v1_line "$V1C" refs/heads/feature/x)")"
+expect "V1: corrupt lib: the message says corrupt"   yes "$(v1_yes grep -qF 'corrupt' "$TMPROOT/v1.err")"
+V1J=$(v1_repo v1j '- **Protected branches**: main'); rm -f "$V1J/hooks/lib/json.sh"
+expect "V1: json.sh missing: feature refused"        refused "$(v1_hook "$V1J" "$(v1_line "$V1J" refs/heads/feature/x)")"
+v1_remote() { # <repo> -> a bare origin with main pushed (before any hook is installed); prints its path
+  b="$TMPROOT/$(basename "$1").git"
+  v1g init -q --bare "$b" >/dev/null 2>&1
+  v1g -C "$1" remote add origin "$b"
+  v1g -C "$1" push -q origin main >/dev/null 2>&1
+  printf '%s\n' "$b"
+}
+v1_install() { GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 bash "$1/hooks/git-pre-push.sh" --install "$1" >/dev/null 2>"$TMPROOT/v1i.err"; echo $?; }
+v1_push() { # <repo> <push args...> -> landed|refused; stderr in $TMPROOT/v1p.err
+  r=$1; shift
+  if v1g -C "$r" push "$@" >/dev/null 2>"$TMPROOT/v1p.err"; then echo landed; else echo refused; fi
+}
+v1_rsha() { v1g --git-dir="$1" rev-parse -q --verify "refs/$2" 2>/dev/null || echo none; }
+V1R=$(v1_repo v1r '- **Protected branches**: main'); V1RB=$(v1_remote "$V1R"); V1R0=$(v1_rsha "$V1RB" heads/main)
+expect "V1: --install exits 0"                       0 "$(v1_install "$V1R")"
+V1SHIM="$(git -C "$V1R" rev-parse --path-format=absolute --git-common-dir)/hooks/pre-push"
+expect "V1: the shim carries the marker"             yes "$(v1_yes grep -qF 'claude-code-toolkit pre-push shim' "$V1SHIM")"
+expect "V1: the shim is executable"                  yes "$(v1_yes [ -x "$V1SHIM" ])"
+expect "V1: the shim is LF only"                     0 "$(tr -cd '\r' < "$V1SHIM" | wc -c | tr -d ' ')"
+cp "$V1SHIM" "$TMPROOT/v1shim.before"
+expect "V1: a second --install exits 0"              0 "$(v1_install "$V1R")"
+expect "V1: a second --install writes the same shim" yes "$(v1_yes cmp -s "$TMPROOT/v1shim.before" "$V1SHIM")"
+v1g -C "$V1R" commit -q --allow-empty -m two
+expect "V1: git push origin main refused"            refused "$(v1_push "$V1R" origin main)"
+expect "V1: the remote main is unchanged"            "$V1R0" "$(v1_rsha "$V1RB" heads/main)"
+v1g -C "$V1R" checkout -q -b feature/a
+expect "V1: a feature push lands"                    landed "$(v1_push "$V1R" origin feature/a)"
+expect "V1: HEAD:main from a feature branch refused" refused "$(v1_push "$V1R" origin HEAD:main)"
+expect "V1: :main (delete) refused"                  refused "$(v1_push "$V1R" origin :main)"
+expect "V1: --delete main refused"                   refused "$(v1_push "$V1R" origin --delete main)"
+expect "V1: main is still on the remote"             "$V1R0" "$(v1_rsha "$V1RB" heads/main)"
+v1g -C "$V1R" tag v1
+expect "V1: a tag push lands"                        landed "$(v1_push "$V1R" origin v1)"
+v1g -C "$V1R" checkout -q -b feature/b
+expect "V1: a mixed push is refused"                 refused "$(v1_push "$V1R" origin feature/b HEAD:main)"
+expect "V1: the mixed push landed nothing"           none "$(v1_rsha "$V1RB" heads/feature/b)"
+printf '#!/usr/bin/env bash\ngit push origin HEAD:main\n' > "$TMPROOT/v1p.sh"
+expect "V1: a push from a script is refused"         refused "$(if ( cd "$V1R" && GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 bash "$TMPROOT/v1p.sh" ) >/dev/null 2>&1; then echo landed; else echo refused; fi)"
+v1g init -q --bare "$TMPROOT/v1fork.git" >/dev/null 2>&1; v1g -C "$V1R" remote add fork "$TMPROOT/v1fork.git"
+expect "V1: main on a second remote refused"         refused "$(v1_push "$V1R" fork HEAD:main)"
+v1g -C "$V1R" worktree add -q "$TMPROOT/v1wt" -b feature/wt >/dev/null 2>&1
+expect "V1: a push from a linked worktree refused"   refused "$(v1_push "$TMPROOT/v1wt" origin HEAD:main)"
+v1g -C "$V1R" checkout -q -b old "$(v1g -C "$V1R" rev-list --max-parents=0 HEAD)"
+expect "V1: a checkout without the hook file: refused by the shim" refused "$(v1_push "$V1R" origin old)"
+expect "V1: the shim says the checkout predates it"  yes "$(v1_yes grep -qF 'is missing (this checkout predates v4.3.2' "$TMPROOT/v1p.err")"
+v1g -C "$V1R" checkout -q feature/a
+expect "V1: --no-verify lands (the documented escape)" landed "$(v1_push "$V1R" --no-verify origin feature/a:main)"
+# installer refusals
+V1X=$(v1_repo v1x -); printf '#!/bin/sh\nexit 0\n' > "$V1X/.git/hooks/pre-push"; cp "$V1X/.git/hooks/pre-push" "$TMPROOT/v1x.before"
+expect "V1: a foreign pre-push: --install exits 1"   1 "$(v1_install "$V1X")"
+expect "V1: a foreign pre-push is untouched"         yes "$(v1_yes cmp -s "$TMPROOT/v1x.before" "$V1X/.git/hooks/pre-push")"
+expect "V1: a foreign pre-push: reason + chain line" yesyes "$(v1_yes grep -qF "is not this toolkit's shim" "$TMPROOT/v1i.err")$(v1_yes grep -qF 'hooks/git-pre-push.sh" "$@" || exit 1' "$TMPROOT/v1i.err")"
+V1K=$(v1_repo v1k -); v1g -C "$V1K" config core.hooksPath .husky
+expect "V1: core.hooksPath set: --install exits 1"   1 "$(v1_install "$V1K")"
+expect "V1: core.hooksPath set: nothing written"     no "$(v1_yes [ -e "$V1K/.git/hooks/pre-push" ])"
+expect "V1: core.hooksPath set: the reason"          yes "$(v1_yes grep -qF 'core.hooksPath is set' "$TMPROOT/v1i.err")"
+mkdir -p "$TMPROOT/v1plain/hooks"; cp -R "$ROOT/hooks/." "$TMPROOT/v1plain/hooks/"
+expect "V1: not a repository: --install exits 1"     1 "$(v1_install "$TMPROOT/v1plain")"
+expect "V1: not a repository: the reason"            yes "$(v1_yes grep -qF 'is not a git repository' "$TMPROOT/v1i.err")"
+V1S=$(mkrepo v1s main); mkdir -p "$V1S/sub/hooks"; cp -R "$ROOT/hooks/." "$V1S/sub/hooks/"
+expect "V1: hooks only in a subdirectory: --install exits 1 (R-2)" 1 "$(v1_install "$V1S/sub")"
+expect "V1: hooks only in a subdirectory: no shim"   no "$(v1_yes [ -e "$V1S/.git/hooks/pre-push" ])"
+V1M2=$(v1_repo v1m2 -); printf '#!/bin/sh\n# see claude-code-toolkit pre-push shim\nexit 0\n' > "$V1M2/.git/hooks/pre-push"; cp "$V1M2/.git/hooks/pre-push" "$TMPROOT/v1m2.before"
+expect "V1: a hook that only mentions the marker: --install exits 1" 1 "$(v1_install "$V1M2")"
+expect "V1: a foreign-hook message says where the line goes" yes "$(v1_yes grep -qF '"$refs"' "$TMPROOT/v1i.err")"
+expect "V1: a hook that only mentions the marker is untouched" yes "$(v1_yes cmp -s "$TMPROOT/v1m2.before" "$V1M2/.git/hooks/pre-push")"
+V1Y=$(v1_repo v1y -); ln -s "$TMPROOT/v1-nowhere" "$V1Y/.git/hooks/pre-push"
+expect "V1: a dangling symlink pre-push: --install exits 1" 1 "$(v1_install "$V1Y")"
+expect "V1: a dangling symlink pre-push is still a symlink" yes "$(v1_yes [ -L "$V1Y/.git/hooks/pre-push" ])"
+# ---- end v4.3.2 V1
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

@@ -937,6 +937,33 @@ else
   skip "setup-project.ps1 no-.git bootstrap" "no PowerShell on this host" 7
 fi
 
+# --- v4.3.2 V1 (bootstrap): setup installs the native pre-push shim -----------
+# A git-initialised target gets <common dir>/hooks/pre-push; a target that is
+# not a repository yet still bootstraps (exit 0) and prints the Next step line.
+PPDIR="$TMPROOT/pp-repo"; mkdir -p "$PPDIR"; git -C "$PPDIR" init -q
+GIT_CONFIG_GLOBAL=/dev/null bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+  --target-path "$PPDIR" > "$TMPROOT/pp-repo.out" 2>&1
+expect "sh: setup into a repository exits 0"            0 "$?"
+expect "sh: the pre-push shim is installed"             1 "$(grep -c 'claude-code-toolkit pre-push shim' "$PPDIR/.git/hooks/pre-push" 2>/dev/null || echo 0)"
+PPNO="$TMPROOT/pp-plain"; mkdir -p "$PPNO"
+bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+  --target-path "$PPNO" > "$TMPROOT/pp-plain.out" 2>&1
+expect "sh: setup into a non-repository still exits 0"  0 "$?"
+expect "sh: the Next step line names the installer"     1 "$(grep -c "^Next step: run 'bash hooks/git-pre-push.sh --install'" "$TMPROOT/pp-plain.out")"
+if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
+  PSPP="$TMPROOT/ps-pp-repo"; mkdir -p "$PSPP"; git -C "$PSPP" init -q
+  GIT_CONFIG_GLOBAL=/dev/null "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$PSPP" > "$TMPROOT/ps-pp-repo.out" 2>&1
+  expect "ps1: the pre-push shim is installed"          1 "$(grep -c 'claude-code-toolkit pre-push shim' "$PSPP/.git/hooks/pre-push" 2>/dev/null || echo 0)"
+  PSPN="$TMPROOT/ps-pp-plain"; mkdir -p "$PSPN"
+  "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$PSPN" > "$TMPROOT/ps-pp-plain.out" 2>&1
+  expect "ps1: setup into a non-repository still exits 0" 0 "$?"
+  expect "ps1: the Next step line names the installer"  1 "$(grep -c "^Next step: run 'bash hooks/git-pre-push.sh --install'" "$TMPROOT/ps-pp-plain.out")"
+else
+  skip "setup-project.ps1 pre-push install" "no PowerShell on this host" 3
+fi
+
 echo "----------------------------------------------------------------"
 echo "test-setup-project.sh: $pass passed, $fail failed, $skipped skipped ($((pass + fail + skipped)) assertions)"
 [ "$fail" -eq 0 ] || exit 1
