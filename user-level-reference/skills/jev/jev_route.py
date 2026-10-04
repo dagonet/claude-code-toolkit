@@ -162,3 +162,175 @@ def emit(tool_input, model):
     except (TypeError, ValueError):
         return b""
     return out.encode("utf-8")
+
+
+REASONS = frozenset({
+    "explicit", "none", "pinned", "egress-refused", "no-key", "no-endpoint",
+    "deadline", "timeout", "http-error", "bad-response", "low-confidence",
+    "out-of-bounds", "role-floor", "kept", "applied", "error",
+})
+EVENT_FIELDS = ("ts", "subagent_type", "kind", "default", "agent_effort", "choice", "confidence",
+                "probabilities", "effort_choice", "effort_confidence", "applied", "reason",
+                "emitted", "latency_s")
+
+
+class Resolution(NamedTuple):
+    """One line of `bash hooks/lib/agent-model.sh <type> <cwd>`."""
+    kind: str    # own | floor | env | none
+    model: str   # "" for none; for env the CLAUDE_CODE_SUBAGENT_MODEL value (U-1)
+    jev: bool    # Jev routing is live in this checkout (model-floor stepped aside)
+    effort: str  # the agent file's `effort:`, "" when unset
+    gd: str      # absolute git common dir, "" when unknown
+
+
+class JevTimeout(Exception):
+    """No answer within the deadline."""
+
+
+class HttpError(Exception):
+    """A non-200 status or a transport failure."""
+
+
+def _winreg_key():
+    if sys.platform != "win32":
+        return ""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+            val, _ = winreg.QueryValueEx(k, "TYPESAFE_API_KEY")
+            return str(val)
+    except OSError:
+        return ""
+
+
+def load_key(env, registry=None):
+    """TYPESAFE_API_KEY from env, else HKCU\\Environment. Test mode never reads the registry."""
+    key = (env.get("TYPESAFE_API_KEY") or "").strip()
+    if key or env.get("JEV_TEST_MODE") == "1":
+        return key
+    return ((registry or _winreg_key)() or "").strip()
+
+
+def pick_endpoint(env):
+    """The real endpoint, always -- except in test mode, which may only reach http://127.0.0.1."""
+    if env.get("JEV_TEST_MODE") != "1":
+        return ENDPOINT
+    url = env.get("JEV_ENDPOINT") or ""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme == "http" and parts.hostname == "127.0.0.1":
+        return url
+    return None
+
+
+def read_config(gd):
+    """-> (jev model, threshold) from <gd>/jev/config.json; defaults for anything unreadable."""
+    model, threshold = JEV_MODEL_DEFAULT, THRESHOLD_DEFAULT
+    try:
+        with open(os.path.join(gd, "jev", "config.json"), "rb") as fh:
+            cfg = json.loads(fh.read().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return model, threshold
+    if isinstance(cfg, dict):
+        if isinstance(cfg.get("model"), str) and re.fullmatch(r"jev-[0-9]+(\.[0-9]+)*", cfg["model"]):
+            model = cfg["model"]
+        t = cfg.get("threshold")
+        if isinstance(t, (int, float)) and not isinstance(t, bool) and 0.5 <= t <= 1.0:
+            threshold = float(t)
+    return model, threshold
+
+
+def _now_utc():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def write_event(gd, ev, now=None):
+    """<gd>/jev/events/<YYYYmmddTHHMMSSffffffZ>-<pid>.json -- no colon (NTFS)."""
+    now = now or _now_utc()
+    d = os.path.join(gd, "jev", "events")
+    os.makedirs(d, exist_ok=True)
+    name = "{}-{}.json".format(now.strftime("%Y%m%dT%H%M%S%fZ"), os.getpid())
+    with open(os.path.join(d, name), "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(ev, fh, sort_keys=True, ensure_ascii=False)
+        fh.write("\n")
+
+
+def _new_event(stype, res):
+    return {"ts": _now_utc().isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "subagent_type": stype or "general-purpose", "kind": res.kind, "default": res.model,
+            "agent_effort": res.effort, "choice": None, "confidence": None, "probabilities": {},
+            "effort_choice": None, "effort_confidence": None, "applied": False, "reason": "error",
+            "emitted": None, "latency_s": None}
+
+
+def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
+    """Ask Jev and bound the answer. -> (model to emit or None, reason, applied)."""
+    fallback = res.model if res.kind == "floor" else None
+    if family(res.model) is None:
+        return fallback, "pinned", False
+    state, findings = build_state(ti)
+    if findings:
+        return fallback, "egress-refused", False
+    key = load_key(env, registry)
+    if not key:
+        return fallback, "no-key", False
+    url = pick_endpoint(env)
+    if not url:
+        return fallback, "no-endpoint", False
+    jev_model, threshold = read_config(res.gd)
+    budget = min(HTTP_TIMEOUT, DEADLINE - (clock() - t0))
+    if budget <= 0.05:
+        return fallback, "deadline", False
+    try:
+        raw = post(url, build_request(state, jev_model), key, budget, env)
+    except JevTimeout:
+        return fallback, "timeout", False
+    except (HttpError, OSError):
+        return fallback, "http-error", False
+    model_ans, effort_ans = parse_answers(raw)
+    if effort_ans:
+        ev["effort_choice"], ev["effort_confidence"] = effort_ans["choice"], effort_ans["confidence"]
+    if model_ans:
+        ev["choice"], ev["confidence"] = model_ans["choice"], model_ans["confidence"]
+        ev["probabilities"] = model_ans["probabilities"]
+    model, applied, reason = decide(res.kind, res.model, stype, model_ans, threshold)
+    return model, reason, applied
+
+
+def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.monotonic):
+    """The whole hook minus process I/O. -> (stdout bytes, event or None, git common dir).
+
+    An event of None means Jev is off for this checkout (the resolver says
+    model-floor did not step aside, or there is no resolver): no output, no
+    file, no network -- the zero-footprint path.
+    """
+    t0 = clock()
+    try:
+        payload = json.loads(stdin_bytes.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError):
+        return b"", None, ""
+    if not isinstance(payload, dict) or payload.get("tool_name") != "Agent":
+        return b"", None, ""
+    ti = payload.get("tool_input")
+    if not isinstance(ti, dict):
+        return b"", None, ""
+    stype = ti.get("subagent_type") if isinstance(ti.get("subagent_type"), str) else ""
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else "."
+    res = (resolver or run_resolver)(stype, cwd, env)
+    if res is None or not res.jev or not res.gd:
+        return b"", None, ""
+    ev = _new_event(stype, res)
+    fallback = res.model if res.kind == "floor" else None
+    try:
+        if ti.get("model"):
+            model, ev["reason"] = None, "explicit"
+        elif res.kind not in ("own", "floor", "env"):  # U-1: env routes like own
+            model, ev["reason"] = None, "none"
+        else:
+            model, ev["reason"], ev["applied"] = _ask(
+                ti, stype, res, env, post or post_with_deadline, registry, clock, t0, ev)
+    except Exception:  # noqa: BLE001 -- the router must never fail a spawn
+        model, ev["reason"], ev["applied"] = fallback, "error", False
+    out = emit(ti, model) if model else b""
+    ev["emitted"] = model if out else None
+    ev["latency_s"] = round(clock() - t0, 3)
+    return out, ev, res.gd
