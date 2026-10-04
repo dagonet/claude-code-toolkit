@@ -9237,6 +9237,55 @@ S6_FAST=$(s6_count 'ls -la xcomxitx')
 S6_WALK=$(s6_count 'ls -la xcommitx')
 expect "S6: the fast path spawns at least 5 fewer programs ($S6_FAST vs $S6_WALK)" yes "$([ $((S6_WALK - S6_FAST)) -ge 5 ] && echo yes || echo no)"
 # ---- end v4.3.1 S6
+# ---- v4.3.1 S6b: the payload is read by ONE parser call ----
+S6BR=$(mkrepo s6b main)
+S6BN="$ROOT/hooks/no-push-main.sh"
+S6BP="$ROOT/hooks/pre-commit-test.sh"
+S6BG="$ROOT/hooks/gate-before-merge.sh"
+S6BSHIM="$TMPROOT/s6bshim"; S6BLOG="$TMPROOT/s6b.log"; mkdir -p "$S6BSHIM"
+for b in node python3 jq; do
+  s6breal=$(command -v "$b" 2>/dev/null) || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$b" "$S6BLOG" "$s6breal" > "$S6BSHIM/$b"
+  chmod +x "$S6BSHIM/$b"
+done
+s6b_spawns() { # <hook> -- parser processes started by a no-op `ls -la` payload
+  : > "$S6BLOG"; printf '%s' "$(mkjson Bash 'ls -la' "$S6BR")" | PATH="$S6BSHIM:$PATH" bash "$1" >/dev/null 2>&1; wc -l < "$S6BLOG" | tr -d ' '
+}
+expect "S6b: no-push-main spawns one parser process"      1 "$(s6b_spawns "$S6BN")"
+expect "S6b: pre-commit-test spawns one parser process"   1 "$(s6b_spawns "$S6BP")"
+expect "S6b: gate-before-merge spawns one parser process" 1 "$(s6b_spawns "$S6BG")"
+# fidelity of the three fields through a gate
+check_msg "S6b: trailing newline in the command"  "$S6BN" 2 "$(mkjson Bash "$(printf 'git push origin main\n')" "$S6BR")" "main"
+check_msg "S6b: embedded NUL (git pu\\u0000sh) is dropped, push still refused" "$S6BN" 2 \
+  "$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git pu\u0000sh origin main"},"cwd":"'"$S6BR"'"}')" "main"
+check_msg "S6b: em dash in the command"           "$S6BN" 2 "$(mkjson Bash 'git push origin main # — x' "$S6BR")" "main"
+check     "S6b: em dash, no verb, allowed"        hooks/no-push-main.sh 0 "$(mkjson Bash 'ls # — x' "$S6BR")"
+check_msg "S6b: cwd missing falls back to the process cwd" "$S6BN" 2 \
+  '{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}' "main"
+check     "S6b: Bash with no tool_input allowed"  hooks/no-push-main.sh 0 '{"tool_name":"Bash","cwd":"/tmp"}'
+check     "S6b: command as a number allowed"      hooks/no-push-main.sh 0 "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":12},\"cwd\":\"$S6BR\"}"
+check_msg "S6b: command as an object refused"     "$S6BN" 2 "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":{\"a\":1}},\"cwd\":\"$S6BR\"}" "could not read"
+# refusals unchanged
+check_msg "S6b: invalid JSON refused"             "$S6BN" 2 'garbage' "did not parse"
+check_msg "S6b: empty stdin refused"              "$S6BP" 2 '' "did not parse"
+check_msg "S6b: trailing garbage refused"         "$S6BG" 2 '{"a":1} x' "did not parse"
+check_msg "S6b: two documents refused"            "$S6BN" 2 '{"a":1} {"b":2}' "did not parse"
+if [ -n "$HAVE_NODE$HAVE_PY" ]; then
+  check "S6b: a null payload parses, no command, allowed" hooks/no-push-main.sh 0 'null'
+else
+  check_msg "S6b: a null payload refused (jq -e refuses it)" "$S6BN" 2 'null' "did not parse"
+fi
+# fallback: a backend that runs but extracts nothing is skipped, not trusted
+S6BMUTE="$TMPROOT/s6bmute"; mkdir -p "$S6BMUTE"
+printf '#!/bin/sh\nexit 0\n' > "$S6BMUTE/node"; chmod +x "$S6BMUTE/node"
+S6BPUSH="$(mkjson Bash 'git push origin main' "$S6BR")"
+errf="$TMPROOT/s6b.err"
+printf '%s' "$S6BPUSH" | PATH="$S6BMUTE:$PATH" bash "$S6BN" >/dev/null 2>"$errf"; s6b_rc=$?
+expect "S6b: a mute node falls through, push still refused" "2 yes" "$s6b_rc $(grep -q 'no JSON parser' "$errf" && echo no || echo yes)"
+cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
+printf '%s' "$S6BPUSH" | PATH="$S6BMUTE:$PATH" bash "$S6BN" >/dev/null 2>"$errf"; s6b_rc=$?
+expect "S6b: all three parsers mute: exit 2 with the no-parser line" "2 yes" "$s6b_rc $(grep -q 'no JSON parser' "$errf" && echo yes || echo no)"
+# ---- end v4.3.1 S6b
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
