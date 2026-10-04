@@ -147,53 +147,6 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. Hook ↔ binding-table drift check (only runs if hook exists)
-# ---------------------------------------------------------------------------
-HOOK="hooks/require-skills-block.sh"
-if [ -f "$HOOK" ]; then
-  TABLE="templates/general/AGENT_TEAM.md"
-
-  check_pair() {
-    local subagent="$1"
-    local skill="$2"
-    if grep -q "$skill" "$HOOK" && grep -q "$skill" "$TABLE"; then
-      ok "drift: $subagent → $skill present in both hook and binding table"
-    elif grep -q "$skill" "$HOOK" && ! grep -q "$skill" "$TABLE"; then
-      ko "drift: $skill in $HOOK but missing from $TABLE"
-    elif ! grep -q "$skill" "$HOOK" && grep -q "$skill" "$TABLE"; then
-      ko "drift: $skill in $TABLE but missing from $HOOK"
-    fi
-  }
-
-  check_pair "coder" "karpathy-guidelines"
-  check_pair "coder" "test-driven-development"
-  check_pair "coder" "verification-before-completion"
-  check_pair "coder" "receiving-code-review"
-  check_pair "tester" "systematic-debugging"
-  # v3.0.0 (item B2): these two pairs used to be keyed on `test-writer` and
-  # `requirements-engineer`. Both names were ABSORBED — into `tester` and
-  # `architect` respectively — so the pairs are RE-KEYED onto the survivors
-  # rather than deleted. Deleting them would have been the quiet failure:
-  # check_pair prints NOTHING when a skill is absent from BOTH sides, so a pair
-  # left naming a retired agent goes vacuous, reporting neither PASS nor FAIL.
-  # Re-keying keeps the assertion doing work against the agent that now owns the
-  # skill. `test-driven-development` in particular would otherwise have kept
-  # passing off `coder`'s row — a pass for the wrong reason.
-  check_pair "tester" "test-driven-development"
-  check_pair "architect" "writing-plans"
-  check_pair "architect" "brainstorming"
-
-  # R2: coder row must NOT contain requesting-code-review in EITHER place
-  if grep -q "requesting-code-review" "$HOOK"; then
-    ko "drift: $HOOK contains 'requesting-code-review' (R2 says drop it from coder row)"
-  else
-    ok "drift: $HOOK does not contain 'requesting-code-review' (R2)"
-  fi
-else
-  note "hooks/require-skills-block.sh not present yet — drift check skipped (will run after Chunk B)"
-fi
-
-# ---------------------------------------------------------------------------
 # 11. Gate + contract lock-in (PR #38 / session-mining round 2)
 # ---------------------------------------------------------------------------
 for v in $VARIANTS; do
@@ -833,8 +786,8 @@ fi
 #      team (enforce-delegation.sh has no delegation surface to enforce),
 #      no project-team deliverable contract (enforce-agent-contract.sh has
 #      nothing to bind to), no per-task tool-call budget (agent-budget-warn.sh
-#      has nothing to warn about), no "## Required Skills" spawn convention
-#      (require-skills-block.sh has no skills binding to check). The mirrored
+#      has nothing to warn about), no project-team skills convention
+#      (the retired require-skills-block.sh stub). The mirrored
 #      hooks are exactly the ones whose subject is the developer's MACHINE
 #      (git gates, secrets, output/read size, the retro ledger and its brief
 #      — both keyed on cwd -> project slug under the user's own
@@ -857,8 +810,7 @@ HOOKS_NO_MIRROR=(
   # agent-budget-warn.sh: warns against THIS repo's per-task tool-call budget
   # convention; a personal ~/.claude install has no such budget to warn about.
   "agent-budget-warn.sh"
-  # require-skills-block.sh: enforces this repo's "## Required Skills" spawn
-  # convention (AGENT_TEAM.md), which is project-team-only.
+  # require-skills-block.sh: retired in v4.5.0 -- an unregistered no-op stub that ships for one release so a stale registration cannot fail closed; delete this entry together with the stub.
   "require-skills-block.sh"
   # deny-claude-md-writes.sh (v4.1, spec §6): project scope only -- a
   # user-level deny would refuse CLAUDE.md writes in every non-consumer repo
@@ -1965,11 +1917,6 @@ for v in $VARIANTS; do
     ok "$s: no enumerated coder matcher left"
   fi
 done
-if grep -q 'coder|\*-coder)' hooks/require-skills-block.sh; then
-  ok "hooks/require-skills-block.sh: binds any <lang>-coder, not an enumeration"
-else
-  ko "hooks/require-skills-block.sh: coder binding is still an enumeration"
-fi
 
 # ---------------------------------------------------------------------------
 # 24. Hook commands are cwd-independent (v2.1.2, consumer report #3).
@@ -2477,225 +2424,52 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 29. "Deliberately exempt" must be distinguishable from "silently fell out"
-#     (v2.4.0, item A5).
-#
-#     In hooks/require-skills-block.sh the exempt arm and the `*)` default arm
-#     are BYTE-IDENTICAL IN EFFECT — both `exit 0`. An agent exempted on
-#     purpose and an agent whose name silently fell out of the enumeration
-#     produce the same result, with no signal at runtime or afterwards. That is
-#     precisely why a consumer could not tell whether their own `game-tester`
-#     was unbound deliberately.
-#
-#     THE RUNTIME FIX IS UNAVAILABLE. Making `*)` warn before exiting 0 sends
-#     the warning down a channel measured, earlier in this programme, not to
-#     reach the lead. A warning nobody receives is the same silence with more
-#     code, and it reads as fixed. So the check is STATIC and lives here, where
-#     output demonstrably reaches someone, and it fires at BUILD time — which
-#     is also what makes it catch a consolidation's own damage: delete or
-#     rename an agent without updating the case arm and the gate is red before
-#     the release ships, rather than silent after.
-#
-#     ⚠ EVALUATE EACH PATTERN IN ITS OWN LANGUAGE. NEVER STRING-COMPARE ARM
-#     LABELS TO FILENAMES. `coder|*-coder)` is a GLOB, not a name:
-#     `dotnet-coder`, `java-coder`, `python-coder` and `rust-coder` all ship as
-#     agent files and appear NOWHERE as literals in any arm — they are covered
-#     only by the glob. A set-equality check against the labels goes red on day
-#     one against the exact generalisation that makes the hook correct. The
-#     same trap sits in the settings.json matcher `^([a-z0-9]+-)?coder$`. Arm C
-#     below asserts that trap is not re-entered.
-#
-#     SCOPED TO THE TOOLKIT'S OWN SHIPPED AGENT SET, deliberately. A consumer's
-#     project-owned agent must remain legitimately unbound with no gate failure
-#     in THEIR repo — a gate that goes red on a consumer's own file is the
-#     cries-wolf failure this release exists to reduce.
+# 29. `pipeline: true` is exactly the coder family + code-reviewer
+# (v2.4.0 item A5; trimmed in v4.5.0). Until v4.5.0 this check also evaluated
+# the case arms of hooks/require-skills-block.sh (arms A, B, D and the
+# case-arm half of E); v4.5.0 retired that hook to a no-op stub with no arms,
+# so those arms went with it. What stays never depended on that hook: the
+# eligibility hooks/enforce-agent-contract.sh reads, matched with the hook's
+# OWN regex. A <lang>-coder that loses the flag, or a report agent that gains
+# it, fails OPEN and silent at the stop-gate -- nothing else reports it.
+# SCOPED TO THE TOOLKIT'S OWN SHIPPED AGENT SET: a consumer's own agent stays
+# legitimately unflagged with no gate failure in their repo.
 # ---------------------------------------------------------------------------
 echo
-A5_HOOK="hooks/require-skills-block.sh"
-if [ ! -f "$A5_HOOK" ]; then
-  ko "$A5_HOOK missing — the skills binding is unenumerated"
+a5_names=$( { ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null; } \
+  | sed 's@.*/@@;s@\.md$@@' | sort -u )
+a5_true_names=$(
+  for a5f in templates/*/.claude/agents/*.md; do
+    [ -f "$a5f" ] || continue
+    awk '/^---$/{n++; next} n==1' "$a5f" \
+      | grep -qE '^pipeline:[[:space:]]*true[[:space:]]*$' \
+      && basename "$a5f" .md
+  done | sort -u
+)
+if [ -z "$a5_true_names" ]; then
+  ko "check 29: no agent file under templates/*/.claude/agents/ carries pipeline: true"
 else
-  # Arm labels, taken from the case statement and used AS PATTERNS. `*)` is
-  # excluded on purpose: it matches everything, so including it would make this
-  # whole check vacuously true — which is the failure it exists to detect.
-  a5_arms=$(sed -n '/case "\$SUBAGENT_TYPE" in/,/^esac$/p' "$A5_HOOK" \
-    | grep -E '^[[:space:]]+[A-Za-z0-9_|*?.-]+\)[[:space:]]*$' \
-    | sed 's/^[[:space:]]*//;s/)[[:space:]]*$//' \
-    | grep -vx '\*')
-
-  if [ -z "$a5_arms" ]; then
-    ko "check 29: no case arms parsed out of $A5_HOOK — the check would pass vacuously, so it fails instead"
+  # Coverage: every shipped coder-shaped name carries the flag (a new
+  # <lang>-coder is covered without editing this list).
+  a5_disagree=""
+  for a5n in $a5_names; do
+    case "$a5n" in
+      coder|*-coder)
+        printf '%s\n' "$a5_true_names" | grep -qx "$a5n" || a5_disagree="$a5_disagree $a5n" ;;
+    esac
+  done
+  # Fixed expectations, keyed by the hook's own regex, never by this file's text.
+  a5_e_bad=""
+  for a5n in coder dotnet-coder rust-coder java-coder python-coder code-reviewer; do
+    printf '%s\n' "$a5_true_names" | grep -qx "$a5n" || a5_e_bad="$a5_e_bad ${a5n}-NO-MATCH"
+  done
+  for a5n in tester architect ops Explore zz-unbound-probe; do
+    printf '%s\n' "$a5_true_names" | grep -qx "$a5n" && a5_e_bad="$a5_e_bad ${a5n}-MATCHES-but-must-not"
+  done
+  if [ -z "$a5_disagree" ] && [ -z "$a5_e_bad" ]; then
+    ok "check 29: pipeline: true is exactly the coder family + code-reviewer ($(printf '%s\n' "$a5_true_names" | wc -l | tr -d ' ') names); tester/architect/ops/Explore and a probe name carry no flag"
   else
-    ok "check 29: parsed $(printf '%s\n' "$a5_arms" | wc -l | tr -d ' ') case arms from $A5_HOOK"
-
-    # a5_matches <name> -- does any arm match, EVALUATED AS A SHELL GLOB?
-    #
-    # THE `|` MUST BE SPLIT BEFORE THE `case`, and this is not a nicety: in a
-    # case arm `|` is SYNTAX, not data, so `case $n in $arm)` with
-    # $arm='coder|*-coder' tests the single literal pattern "coder|*-coder" and
-    # matches nothing. The first version of this check did exactly that and
-    # reported all nine shipped names unbound — a check failing loudly, which
-    # is the good direction, but it is the same "evaluate the pattern in its
-    # own language" trap the check exists to enforce, sprung on the check
-    # itself. Split on `|`, then glob each alternative.
-    a5_matches() {
-      a5m_name="$1"
-      while IFS= read -r a5m_arm; do
-        [ -n "$a5m_arm" ] || continue
-        a5m_old_ifs=$IFS
-        IFS='|'
-        for a5m_alt in $a5m_arm; do
-          IFS=$a5m_old_ifs
-          [ -n "$a5m_alt" ] || continue
-          case "$a5m_name" in
-            $a5m_alt) return 0 ;;
-          esac
-          IFS='|'
-        done
-        IFS=$a5m_old_ifs
-      done <<A5_ARMS
-$a5_arms
-A5_ARMS
-      return 1
-    }
-
-    # The shipped agent set: every variant plus the user-level reference copies.
-    a5_names=$( { ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null; } \
-      | sed 's@.*/@@;s@\.md$@@' | sort -u )
-    a5_unmatched=""
-    for a5n in $a5_names; do
-      a5_matches "$a5n" || a5_unmatched="$a5_unmatched $a5n"
-    done
-    if [ -z "$a5_unmatched" ]; then
-      ok "check 29 (arm A): every shipped agent name matches a case arm or the explicit exempt list ($(printf '%s\n' $a5_names | wc -l | tr -d ' ') names)"
-    else
-      ko "check 29 (arm A): shipped agent(s) match NO case arm —$a5_unmatched. Either bind them in $A5_HOOK or add them to the explicit exempt arm; falling through to \`*)\` is indistinguishable from having silently fallen out."
-    fi
-
-    # Arm B (NEGATIVE SELF-TEST): a name the toolkit does not ship must NOT
-    # match. Without this, an arm-parsing bug that yielded `*` — or a
-    # `a5_matches` that always returned 0 — would make arm A green for the
-    # wrong reason. A check that cannot report a miss has not reported a hit.
-    if a5_matches "zz-unbound-probe"; then
-      ko "check 29 (arm B): the synthetic name 'zz-unbound-probe' matched an arm — the arm set is over-broad and arm A is passing vacuously"
-    else
-      ok "check 29 (arm B): a non-shipped name correctly matches no arm"
-    fi
-
-    # Arm C: THE TWO-PATTERN-LANGUAGES INVARIANT. The same intent is written as
-    # a shell glob in the hook (`coder|*-coder`) and, until v3.1 (R17), a regex
-    # in settings.json (`^([a-z0-9]+-)?coder$`). That matcher is retired:
-    # eligibility now lives in the agent file's own frontmatter (`pipeline:
-    # true|notify`, hooks/enforce-agent-contract.sh), so the SECOND pattern
-    # language is the set of agent files carrying `pipeline: true` — the exact
-    # replacement for the old contract matcher's name set (coder family +
-    # code-reviewer). A fix applied to one language is NOT applied to the
-    # other by any grep keyed on a single syntax, so consolidating or renaming
-    # `coder` breaks the hook's glob and the agent file's flag at once —
-    # silently, because both forms fail OPEN when a name stops matching.
-    # Rather than a hand-maintained expected set (which drifts), assert the
-    # two languages agree on the shipped names.
-    a5_true_names=$(
-      for a5f in templates/*/.claude/agents/*.md; do
-        [ -f "$a5f" ] || continue
-        awk '/^---$/{n++; next} n==1' "$a5f" \
-          | grep -qE '^pipeline:[[:space:]]*true[[:space:]]*$' \
-          && basename "$a5f" .md
-      done | sort -u
-    )
-    if [ -z "$a5_true_names" ]; then
-      ko "check 29 (arm C): no agent file under templates/*/.claude/agents/ carries pipeline: true"
-    else
-      # ONE DIRECTION ONLY, and the asymmetry is deliberate. `pipeline: true`
-      # is exactly the coder-family + code-reviewer set (not broader like the
-      # old echo matcher was) but equality is still the wrong relation here:
-      # the property that actually breaks under a consolidation is the
-      # COVERAGE one — every name the hook's coder glob binds must also carry
-      # the flag. A `<lang>-coder` added to one language and not the other is
-      # silently unhooked, and both forms fail OPEN, so nothing else reports it.
-      a5_disagree=""
-      for a5n in $a5_names; do
-        case "$a5n" in
-          coder|*-coder)
-            printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
-              || a5_disagree="$a5_disagree $a5n"
-            ;;
-        esac
-      done
-      if [ -z "$a5_disagree" ]; then
-        ok "check 29 (arm C): every name the hook's coder glob binds also carries pipeline: true"
-      else
-        ko "check 29 (arm C): bound by the shell glob but missing pipeline: true —$a5_disagree. The two pattern languages have drifted; both fail OPEN and silently."
-      fi
-
-      # Arm D: the trap itself. The domain coders must be covered BY THE GLOB
-      # while existing as no literal in any arm. If someone "fixes" check 29 by
-      # enumerating them, this arm says so — the enumeration is exactly what
-      # silently unbinds the next variant coder a project adds.
-      a5_literal=""
-      for a5n in $a5_names; do
-        case "$a5n" in
-          *-coder)
-            if printf '%s\n' "$a5_arms" | grep -qx "$a5n"; then a5_literal="$a5_literal $a5n"; fi
-            ;;
-        esac
-      done
-      if [ -z "$a5_literal" ]; then
-        ok "check 29 (arm D): domain coders are covered by the glob, not enumerated as literals"
-      else
-        ko "check 29 (arm D): domain coder(s) enumerated as literal arms —$a5_literal. The glob exists so a project's own <lang>-coder is bound too; enumerating defeats it."
-      fi
-
-      # Arm E: EXISTENCE PROVES NOTHING — MATCHING IS THE PROPERTY (v3.0.0,
-      # item B2).
-      #
-      # A control that asserts an agent FILE exists does not detect the failure
-      # a consolidation can cause. The dangerous case is a RENAME breaking the
-      # skills `case` arm and the agent file's OWN `pipeline: true` flag AT THE
-      # SAME SILENT MOMENT: nothing errors, every file is present, and the
-      # enforcement layer is simply gone. Arms A-D cover the shell-glob
-      # language and the coder family; this arm covers the OTHER pattern
-      # language — until v3.1 (R17) a settings.json regex, now the frontmatter
-      # flag — for every name the enforcement layer names, evaluated as SET
-      # MEMBERSHIP rather than comparing label text.
-      #
-      # This is why v3.0.0 ABSORBS rather than renames: the survivors keep the
-      # names these patterns already match, so the patterns are untouched.
-      # Arm E is what turns that from a stated intention into a checked one.
-      #
-      # ⚠ THE EXPECTATIONS BELOW ARE FIXED, AND THE SET IS KEYED BY THE HOOK
-      # THAT READS IT (`grep -qE '^pipeline:...'` in
-      # hooks/enforce-agent-contract.sh), NEVER BY ITS OWN TEXT. The
-      # settings.json-era version of this arm selected matchers by grepping
-      # them for the very names it then tested, so deleting a name from a
-      # matcher made the arm skip that matcher and report green — a check
-      # keyed on the thing under test. Recomputing $a5_true_names from the
-      # SAME regex the hook itself runs keeps that trap closed.
-      a5_e_bad=""
-
-      # 1. the shell-glob language — the skills hook's case arms.
-      for a5n in coder dotnet-coder rust-coder java-coder python-coder tester architect; do
-        a5_matches "$a5n" || a5_e_bad="$a5_e_bad case-arm:$a5n"
-      done
-
-      # 2. the frontmatter-flag language — pipeline: true is exactly the old
-      # contract set (coder family + code-reviewer); tester/architect carry
-      # `pipeline: notify` instead (R17) and must NOT appear here.
-      for a5n in coder dotnet-coder rust-coder java-coder python-coder code-reviewer; do
-        printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
-          || a5_e_bad="$a5_e_bad pipeline-true:${a5n}-NO-MATCH"
-      done
-      for a5n in tester architect ops Explore zz-unbound-probe; do
-        printf '%s\n' "$a5_true_names" | grep -qx "$a5n" \
-          && a5_e_bad="$a5_e_bad pipeline-true:${a5n}-MATCHES-but-must-not"
-      done
-
-      if [ -z "$a5_e_bad" ]; then
-        ok "check 29 (arm E): every survivor name MATCHES its binding sites in BOTH pattern languages, and every non-bound name still misses them"
-      else
-        ko "check 29 (arm E): binding-site mismatch —$a5_e_bad. Existence proves nothing here; a name that stops matching fails OPEN and SILENT — the hook is simply never invoked, with no block, no warning and every file present."
-      fi
-    fi
+    ko "check 29: pipeline: true set is wrong --${a5_disagree:+ coder-shaped without the flag:$a5_disagree;}${a5_e_bad:+ binding mismatch:$a5_e_bad}. A name that stops matching fails OPEN and SILENT at hooks/enforce-agent-contract.sh."
   fi
 fi
 

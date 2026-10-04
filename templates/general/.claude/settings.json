@@ -97,10 +97,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/require-skills-block.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
-          },
-          {
-            "type": "command",
             "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh\"; [ -r \"$f\" ] || exit 0; exec bash \"$f\""
           }
         ]
