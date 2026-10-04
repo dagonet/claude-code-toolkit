@@ -82,8 +82,9 @@ trap 'rm -rf "$OUTDIR"' EXIT
 #  = 221.
 #  v4.4.0 J-PY skips 4 by name when python3 is absent (jq-only); J-DIFF, J-LIB and J-MF skip nothing in any configuration.
 EXP_NODE_SKIP=0
-EXP_PY_SKIP=178
-EXP_JQ_SKIP=225
+# v4.5.0: +17 each -- block B2 needs node (the contract hook's transcript scan) and skips its 17 assertions without it.
+EXP_PY_SKIP=195
+EXP_JQ_SKIP=242
 BAND=20
 
 matrix_fail=0

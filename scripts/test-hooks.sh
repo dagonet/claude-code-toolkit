@@ -9572,6 +9572,64 @@ else
 fi
 # ---- end v4.4.0 J-PY
 
+# ---- v4.5.0 B2: the coder report is a short checklist; the legacy two-section form still passes ----
+. "$ROOT/hooks/lib/json.sh"
+if have_backend node; then
+B2P="$TMPROOT/b2proj"
+mkdir -p "$B2P/.claude/agents"
+printf -- '---\nname: coder\npipeline: true\n---\nCoder body.\n' > "$B2P/.claude/agents/coder.md"
+b2() { # <label> <want exit> <final report text> <agent id> <TMPDIR> [stderr needle]
+  b2_tr="$TMPROOT/b2-$4.jsonl"
+  trow_str "$3" > "$b2_tr"
+  mkdir -p "$5"
+  printf '%s' "$(mkstop "$B2P" coder "$4" "$b2_tr")" \
+    | TMPDIR="$5" CLAUDE_PROJECT_DIR="$B2P" bash "$ROOT/hooks/enforce-agent-contract.sh" >/dev/null 2>"$TMPROOT/b2.err"
+  b2_got=$?
+  if [ "$b2_got" = "$2" ] && { [ -z "${6:-}" ] || grep -qF -- "$6" "$TMPROOT/b2.err"; }; then
+    printf 'PASS  %-42s (exit %s)\n' "$1" "$b2_got"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s%s, got %s: %s)\n' "$1" "$2" "${6:+ + \"$6\"}" "$b2_got" "$(head -1 "$TMPROOT/b2.err")"; fail=$((fail + 1))
+  fi
+}
+B2_SHORT='Implemented both items.
+
+- [pass] 1. Add the parser
+- [fail] 2. Update the docs — out of time
+Commit: abc1234
+Gate: GATE PASS abc1234def
+PR: none
+Concerns: none'
+b2 "B2 short form passes"                  0 "$B2_SHORT" s1 "$TMPROOT/b2t1"
+b2 "B2 bold keys + backticked sha pass"    0 "$(printf -- '- [pass] 1. X\n**Commit:** `abc1234def`\n**Gate:** GATE PASS abc1234def\n**Concerns:** none')" s2 "$TMPROOT/b2t2"
+b2 "B2 list-marker keys pass"              0 "$(printf -- '- [pass] 1. X\n- Commit: abc1234\n- Gate: GATE PASS abc1234\n- Concerns: none')" s3 "$TMPROOT/b2t3"
+b2 "B2 zero-diff report passes"            0 "$(printf -- '- [n/a] 1. Fix X — already fixed on main\nCommit: none — nothing to change\nGate: none — no change\nConcerns: none')" s4 "$TMPROOT/b2t4"
+B2_INDENT='Done.
+
+    - [pass] 1. Add the parser
+    - [n/a] 2. Docs — nothing user-facing changed
+    Commit: abc1234 | none — <why>
+    Gate: GATE PASS abc1234
+    PR: none
+    Concerns: none'
+b2 "B2 the agent file's indented example passes" 0 "$B2_INDENT" s4b "$TMPROOT/b2t4b"
+b2 "B2 legacy two-section form passes"     0 "$(printf 'Done.\n\n## Gate Results\nGATE PASS abc1234\n\n## Spec Compliance\n1. DONE')" s5 "$TMPROOT/b2t5"
+b2 "B2 no checklist line -> prod"          2 "$(printf 'Commit: abc1234\nGate: GATE PASS abc1234\nConcerns: none')" s6 "$TMPROOT/b2t6" "a '- [pass|fail|n/a] <n>. <item>' line"
+b2 "B2 no Commit line -> prod"             2 "$(printf -- '- [pass] 1. X\nGate: GATE PASS abc1234\nConcerns: none')" s7 "$TMPROOT/b2t7" "a 'Commit: <sha>|none' line"
+b2 "B2 Commit with no sha or none -> prod" 2 "$(printf -- '- [pass] 1. X\nCommit: pending\nGate: GATE PASS abc1234\nConcerns: none')" s8 "$TMPROOT/b2t8" "a 'Commit: <sha>|none' line"
+b2 "B2 no Gate line -> prod"               2 "$(printf -- '- [pass] 1. X\nCommit: abc1234\nConcerns: none')" s9 "$TMPROOT/b2t9" "a 'Gate:' line"
+b2 "B2 no Concerns line -> prod"           2 "$(printf -- '- [pass] 1. X\nCommit: abc1234\nGate: GATE PASS abc1234')" s10 "$TMPROOT/b2t10" "a 'Concerns:' line"
+b2 "B2 [done] is not a checklist state"    2 "$(printf -- '- [done] 1. X\nCommit: abc1234\nGate: GATE PASS abc1234\nConcerns: none')" s11 "$TMPROOT/b2t11" "CONTRACT VIOLATION"
+b2 "B2 empty final text -> prod"           2 "" s12 "$TMPROOT/b2t12" "End with the short report"
+expect "B2 the prod never says to run the gate" 0 "$(grep -c 'run-gate' "$TMPROOT/b2.err")"
+B2_PART="$(printf -- '- [pass] 1. X\nCommit: abc1234\nGate: GATE PASS abc1234')"
+b2 "B2 loop guard: stop 1 prods"           2 "$B2_PART" loop "$TMPROOT/b2loop" "CONTRACT VIOLATION"
+b2 "B2 loop guard: stop 2 lets through"    0 "$B2_PART" loop "$TMPROOT/b2loop" "CONTRACT-ENFORCER"
+b2 "B2 loop guard: stop 3 lets through"    0 "$B2_PART" loop "$TMPROOT/b2loop" "CONTRACT-ENFORCER"
+else
+skip "v4.5.0 B2 short-form contract" "no node on this host" 17
+fi
+# ---- end v4.5.0 B2
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
