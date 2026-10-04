@@ -502,14 +502,18 @@ pct_t=${GC_CMD//\"/}; pct_t=${pct_t//\'/}; pct_t=${pct_t//\\/}
 # whitespace and ; & | ( ) { } ! ` < > made spaces, so `. x`, `ls;. x` and a token
 # ending in `/.` (`x/. c.sh`: the walk takes its basename as a dot-source) fire and
 # `./x`, `..` and `end.` do not. bash, pwsh and powershell are named
-# explicitly (*sh* used to cover them); the verb stems stay substrings.
-# Superset proof: design F1. The bracket patterns live in variables: a literal
+# explicitly (*sh* used to cover them); the verb stems stay substrings. A glob
+# character ([ ? *) always walks: the walk expands globs (`set -- $seg` in
+# gc_script_body), so `/bin/[s]h c.sh` or `/bin/?h c.sh` runs a script the word
+# match cannot see.
+# Superset proof: design F1 (words and lone dots), plus the glob rule: any text
+# the word match cannot judge for certain holds a glob character and walks. The bracket patterns live in variables: a literal
 # `}` inside ${...} would end the expansion.
 pct_nw='[^[:alnum:]._]'; pct_sep='[[:space:];&|(){}!`<>]'
 pct_w=" ${pct_t//$pct_nw/ } "; pct_d=" ${pct_t//$pct_sep/ } "
 pct_walk=0
 shopt -s nocasematch
-case "$pct_t" in *commit*|*merge*|*pull*|*push*|*source*|*bash*|*pwsh*|*powershell*) pct_walk=1 ;; esac
+case "$pct_t" in *commit*|*merge*|*pull*|*push*|*source*|*bash*|*pwsh*|*powershell*|*[[?*]*) pct_walk=1 ;; esac
 case "$pct_w" in *" sh "*) pct_walk=1 ;; esac
 case "$pct_d" in *" . "*|*"/. "*) pct_walk=1 ;; esac
 shopt -u nocasematch

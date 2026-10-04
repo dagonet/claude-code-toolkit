@@ -9387,6 +9387,9 @@ check "V2: x/. c.sh gated"                     hooks/pre-commit-test.sh 2 "$(mkj
 check "V2: ./. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash './. c.sh' "$V2R")"
 check "V2: ls;. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls;. c.sh' "$V2R")"
 check "V2: ls&&. c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&. c.sh' "$V2R")"
+check "V2: /bin/[s]h c.sh gated"               hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/[s]h c.sh' "$V2R")"
+check "V2: /bin/?h c.sh gated"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/?h c.sh' "$V2R")"
+check "V2: /usr/bin/[b]ash c.sh gated"         hooks/pre-commit-test.sh 2 "$(mkjson Bash '/usr/bin/[b]ash c.sh' "$V2R")"
 check "V2: C:\\Tools\\pwsh.exe -File c.ps1 gated" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'C:\Tools\pwsh.exe -File c.ps1' "$V2R")"
 # F1 differential: the v4.3.1 hook and this one give the SAME exit on every listed command
 V2B="$TMPROOT/v2base"; mkdir -p "$V2B"
@@ -9411,6 +9414,10 @@ bash c.sh
 sh c.sh
 /bin/sh c.sh
 /usr/bin/bash c.sh
+/bin/[s]h c.sh
+/bin/?h c.sh
+/usr/bin/[b]ash c.sh
+ls; /bin/[s]h c.sh
 . ./c.sh
 . c.sh
 x/. c.sh
