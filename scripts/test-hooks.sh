@@ -9597,13 +9597,13 @@ c4_post() { # <stdout body, JSON-escaped> -> a PostToolUse payload
 }
 c4_bog() { # <label> <want 1 = prints a truncation, 0 = silent> <stdout body>
   c4_t="$TMPROOT/c4tmp.$$.$RANDOM"; mkdir -p "$c4_t"
-  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" ${C4LOC:+LC_ALL="$C4LOC" LANG="$C4LOC"} bash "${C4_BOG_HOOK:-$ROOT/hooks/bash-output-guard.sh}" 2>/dev/null); c4_rc=$?
+  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" ${C4LOC:+LC_ALL="$C4LOC" LANG="$C4LOC"} bash "$ROOT/hooks/bash-output-guard.sh" 2>/dev/null); c4_rc=$?
   c4_g=0; [ -n "$c4_o" ] && c4_g=1
   expect "C4 bash-output-guard: $1" "$2:0" "$c4_g:$c4_rc"
 }
 # The rows run under a UTF-8 locale (probed like S9): in the ambient C locale a mutant that counts
 # characters instead of bytes (no LC_ALL=C before ${#TOOL_INPUT}) still truncates, so the emoji row
-# could not catch it. C4_BOG_HOOK is a proof-run override (scratch mutant copy), unset normally.
+# could not catch it.
 C4LOC=""
 for c4cand in C.UTF-8 en_US.UTF-8; do
   if [ "$(LC_ALL="$c4cand" LANG="$c4cand" bash -c 'locale charmap' 2>/dev/null)" = "UTF-8" ]; then
