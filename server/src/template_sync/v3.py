@@ -206,6 +206,8 @@ KNOWN_TOP_LEVEL_V3 = {
     "manifest_version", "template_version", "template_commit", "lastSynced",
     "variant", "templateRepo", "placeholders", "requires_server", "files",
     "deletedAcknowledged",
+    # v4.3.1 S1: written by finalize, read by template_verify
+    "pending_once_notes",
     # v2 keys that migration removes; listed so they are never reported as unknown
     "version",
     # v4 declarations (spec §5 header, Decision 2): the paths are fixed today;
@@ -1645,6 +1647,30 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     if warn:
         warnings.append(warn)
 
+    # v4.3.1 S1 -- once-class files whose template GUIDANCE lines (never a
+    # **Key**: line) changed in this sync. compute_status_v3 measures them
+    # against the manifest's OLD template_commit; the moment `out` below is
+    # written that base moves, and template_verify can no longer see them (3 of
+    # 3 consumers, 2026-09-30). So finalize records them. The list is REPLACED
+    # on every finalize; a status error leaves the stored list untouched and
+    # says so in `warnings` -- a diagnostic must never fail the finalize.
+    pending = None
+    try:
+        st = compute_status_v3(pp, manifest, rules)
+    except Exception as e:  # noqa: BLE001
+        st = {"error": f"{type(e).__name__}: {e}"}
+    if isinstance(st, dict) and "error" not in st:
+        from_commit = manifest_commit(manifest)
+        pending = [
+            {"file": path, "from_commit": from_commit, "to_commit": commit}
+            for path, info in sorted(st.get("files", {}).items())
+            if info.get("ownership") == "once"
+            and (info.get("key_audit") or {}).get("template_notes_changed")
+        ]
+    else:
+        err = st.get("error") if isinstance(st, dict) else "compute_status_v3 returned a non-dict result"
+        warnings.append(f"pending_once_notes not recomputed: {err}")
+
     out = {k: v for k, v in manifest.items() if k != "version"}
     # finalize_v3 serves both v3 and v4 manifests (v3.manifest_supported
     # dispatch, commit 1) -- it must write back the version it was GIVEN,
@@ -1653,6 +1679,11 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     out["manifest_version"] = manifest.get("manifest_version", MANIFEST_VERSION_V3)
     out["template_version"] = version
     out["template_commit"] = commit
+    if pending is not None:
+        if pending:
+            out["pending_once_notes"] = pending
+        else:
+            out.pop("pending_once_notes", None)
     out["requires_server"], raised, floor_warning = raise_floor(manifest.get("requires_server"))
     if floor_warning:
         warnings.append(floor_warning)
@@ -1673,6 +1704,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         "files_updated": updated,
         "files_added": added,
         "files_dropped": len(dropped),
+        "pending_once_notes": out.get("pending_once_notes", []),
         "dropped_entries": sorted(dropped),
         "superseded_keys_dropped": superseded_dropped,
         "unknown_keys": unknown,

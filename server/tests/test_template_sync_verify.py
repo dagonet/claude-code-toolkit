@@ -1600,3 +1600,55 @@ def test_lines_count_is_31_and_every_situation_table_lists_the_new_line(
     for c in (v4_consumer, v3_legacy_consumer, v3_window_consumer):
         lines = template_verify_lines(c)
         assert len(lines) == 31 and "project_md_seed_differs" in lines
+
+
+def _notes_changed_fixture(tmp_path):
+    repo, proj, old_commit = _good_fixture(tmp_path)
+    tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
+    # A comment line only, never a **Key**: line -- the same shape
+    # test_once_notes_changed_reports_hunk_count uses.
+    tpl.write_text(CONTEXT_CONTENT + "<!-- a new optional key, described in a comment -->\n",
+                   encoding="utf-8", newline="")
+    _recommit(repo, "template gains an optional key comment")
+    return repo, proj, old_commit, _git_out(repo, "rev-parse", "HEAD")
+
+
+def test_pending_once_notes_is_a_known_top_level_key():
+    assert "pending_once_notes" in v3.KNOWN_TOP_LEVEL_V3
+
+
+def test_finalize_records_pending_once_notes_and_verify_reports_them(tmp_path):
+    repo, proj, old_commit, new_commit = _notes_changed_fixture(tmp_path)
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    want = [{"file": "PROJECT_CONTEXT.md", "from_commit": old_commit, "to_commit": new_commit}]
+    assert res["pending_once_notes"] == want
+    assert "pending_once_notes" not in res["unknown_keys"]
+    assert _read_manifest(proj)["pending_once_notes"] == want
+    _recommit(proj, "sync")
+    out = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(out)["once_notes_changed"]
+    assert line["status"] == "INFO"
+    assert ("new optional template notes in PROJECT_CONTEXT.md since " + old_commit[:12]
+            + ": review and adopt by hand") in line["measured"]
+    assert "unknown_keys_empty" not in _only_fail(out)
+
+
+def test_next_finalize_replaces_pending_once_notes(tmp_path):
+    repo, proj, old_commit, new_commit = _notes_changed_fixture(tmp_path)
+    asyncio.run(ts.template_finalize_sync(str(proj)))
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == []
+    assert "pending_once_notes" not in _read_manifest(proj)
+
+
+def test_finalize_keeps_pending_once_notes_when_status_fails(tmp_path, monkeypatch):
+    repo, proj, commit = _good_fixture(tmp_path)
+    m = _read_manifest(proj)
+    kept = [{"file": "PROJECT_CONTEXT.md", "from_commit": "a" * 40, "to_commit": "b" * 40}]
+    m["pending_once_notes"] = kept
+    _write_manifest(proj, m)
+    monkeypatch.setattr(v3, "compute_status_v3", lambda *a, **k: {"error": "boom"})
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert _read_manifest(proj)["pending_once_notes"] == kept
+    assert res["pending_once_notes"] == kept
+    assert any("pending_once_notes not recomputed: boom" in w for w in res["warnings"])

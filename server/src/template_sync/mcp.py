@@ -1598,6 +1598,10 @@ async def template_finalize_sync(
         consumed: `consumed_entries` and `consumed` = [{path, hash}] with the
         hash exactly as stored (sha256:-prefixed under v3, templateHash under
         v2) for the caller's post-finalize self-check.
+        `pending_once_notes` = [{file, from_commit, to_commit}] -- once-class
+        files whose template guidance comments changed in this sync (v4.3.1);
+        also stored in the manifest until the next finalize replaces it, and
+        reported by template_verify's once_notes_changed line.
 
     Manifest v3: entries carry `hash` (sha256:-prefixed) and `ownership`;
     `template_commit` is HEAD of the template repo and `template_version` the
