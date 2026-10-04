@@ -35,7 +35,7 @@ _PATTERNS = [
     ("slack_token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}", "[REDACTED:slack_token]"),
     ("bearer", r"(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}", r"\1[REDACTED:bearer]"),
     ("key_value",
-     r"(?i)((?<![\w.-])[\w.-]{0,40}?(?:password|passwd|secret|token|api[_-]?key)[\w.-]{0,40}[\"']?\s*[=:]\s*)"
+     r"(?i)((?<![\w.-])[\w.-]{0,64}?(?:password|passwd|secret|token|api[_-]?key)[\w.-]{0,64}[\"']?\s*[=:]\s*)"
      r"(?:\"[^\"\n]*\"|'[^'\n]*'|(?!\[REDACTED)[^\s\"']+)",
      r"\1[REDACTED:key_value]"),
     ("email", r"(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}", "[REDACTED:email]"),
@@ -49,7 +49,7 @@ if _USER:
 _COMPILED = [(kind, re.compile(rx), repl) for kind, rx, repl in _PATTERNS]
 
 _HEXISH = re.compile(r"[0-9a-fA-F]{24,}")
-_TOKEN = re.compile(r"(?<![\w./\\-])[A-Za-z0-9_-]{24,}(?![\w/\\-])(?!\.\w)")
+_TOKEN = re.compile(r"(?<![\w.\\-])[A-Za-z0-9_-]{24,}(?![\w/\\-])(?!\.\w)")
 
 
 def redact(text):

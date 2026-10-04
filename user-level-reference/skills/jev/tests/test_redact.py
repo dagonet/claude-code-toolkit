@@ -64,6 +64,8 @@ class RedactTests(unittest.TestCase):
         out, _ = redact('password="p@ss w0rd" secret: \'has space inside\'')
         for leak in ("w0rd", "space", "inside"):
             self.assertNotIn(leak, out)
+        out, _ = redact("SPRING_DATASOURCE_HIKARI_CONNECTION_PROPERTIES_PASSWORD=hunter2")
+        self.assertNotIn("hunter2", out)
 
     def test_url_credentials(self):
         self.assertMasked("https://bob:s3cretPass@example.com/x", "s3cretPass", "url_credentials")
@@ -112,6 +114,8 @@ class ResidualTests(unittest.TestCase):
     def test_flags_unknown_high_entropy_token(self):
         self.assertTrue(residual_findings("value Zq8vN2kLpX4rT7wY1mB6cF9hJ3sD5gA0eU"))
         self.assertTrue(residual_findings("key Zq8vN2kLpX4rT7wY1mB6cF9hJ3sD5gA0eU."))
+        hook = "https://hooks.slack" + ".com/services/T0ABCDEFG/B0ABCDEFG/" + "aB3dE6gH9jK2mN5pQ8sT1uV4"
+        self.assertTrue(residual_findings("post to " + hook))
 
     def test_ignores_hex_hashes_and_paths(self):
         self.assertEqual(residual_findings("sha b43b14010ee2f9c5ec2825b6f2b9d972b0250ea7 and sha256 " + "a" * 64), [])
