@@ -42,8 +42,8 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 |------|-------|--------|--------|
 | T1 Trivial | < 10 lines, config/style | 1 coder (solo, uniform PR pipeline) | Coder runs gate (build + existing suite) |
 | T2 Simple | 1-2 files, < 50 lines | coder + code-reviewer | Tests if logic changes; coder runs gate |
-| T3 Standard | Multi-file, < 200 lines | coder + reviewer + tester | TDD required, >= 80% coverage |
-| T4 Complex | Architectural, > 200 lines | architect + coder(s) + reviewer + tester | Full BDD/TDD, >= 80% coverage |
+| T3 Standard | Multi-file, < 200 lines | coder + reviewer + tester | TDD required |
+| T4 Complex | Architectural, > 200 lines | architect + coder(s) + reviewer + tester | Full BDD/TDD |
 
 **Model & effort policy:** the orchestrator model is a per-session `/model` choice — `fable` for T3/T4 (multi-file or architectural) sessions, `opus` for T1/T2. Fable 5 needs fewer prompts and steers and sustains longer, higher-autonomy sessions, at roughly 2× Opus price. Session effort ships **unset** (the model's own default); effort is raised per role in the agent frontmatter — `architect` and `code-reviewer` at `xhigh`, workers at `medium`, `Explore` at `low`. Full rule set: `AGENT_TEAM.md` → *Model & Effort Policy*.
 
