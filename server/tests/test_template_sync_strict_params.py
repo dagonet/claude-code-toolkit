@@ -37,6 +37,7 @@ def test_template_verify_rejects_an_unknown_mode_value(tmp_path):
     res = json.loads(asyncio.run(ts.template_verify(str(tmp_path), "", "precommit")))
     assert "precommit" in res["error"] and "pre_commit" in res["error"] and "post_commit" in res["error"]
     assert res["accepted_modes"] == ["pre_commit", "post_commit"]
+    assert res["ok"] is False
 
 
 def test_cli_verify_rejects_an_unknown_mode_value(tmp_path, capsys):

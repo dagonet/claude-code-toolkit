@@ -403,6 +403,7 @@ def test_finalize_v2_path_counts_files_created_separately(tmp_path):
         "templateHash": h, "templateRawHash": h, "localHash": h, "locallyModified": False}}])
     res = _run(ts.template_finalize_sync(str(proj), applied))
     assert res["files_created"] == 1 and res["files_updated"] == 0
+    assert res["pending_once_notes"] == []
 
 
 def test_finalize_drops_superseded_lastsynced_keys(tmp_path):

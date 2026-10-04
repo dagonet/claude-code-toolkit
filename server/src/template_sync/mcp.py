@@ -1514,6 +1514,10 @@ async def template_apply_file(
             never written unless this is true -- the call is refused. Pass it
             only after the user chose to adopt the template or merged content
             for that file. Tracked files and absent files are unaffected.
+            There is deliberately no such guard on a v2 manifest: the skill
+            migrates v2 -> v3 -> v4 before any apply, and v2 already has
+            source="skip" as a real keep-mine. Only a direct tool caller on a
+            v2 manifest can still overwrite an untracked file.
 
     Returns:
         JSON with the new manifest entry for this file (hashes, modification
@@ -1859,6 +1863,7 @@ async def template_finalize_sync(
         "dropped_entries": sorted(dropped_entries),
         "consumed_entries": len(consumed),
         "consumed": consumed,
+        "pending_once_notes": [],
         "manifest_written": True,
     }, ensure_ascii=False)
 
@@ -2166,6 +2171,7 @@ async def template_verify(
     """
     if mode not in verify.MODES:
         return json.dumps({
+            "ok": False,
             "error": f"mode must be one of {', '.join(verify.MODES)}; got {mode!r} -- nothing was run",
             "accepted_modes": list(verify.MODES),
         }, ensure_ascii=False)

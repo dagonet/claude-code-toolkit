@@ -38,9 +38,6 @@ INFO_LINE = "INFO_LINE"
 
 # Order is the contract: the CLI and the fleet script print in this order,
 # and test_template_sync_verify.py derives its PASS-fixture counts from it.
-# v4.3.1 S2: the only modes run() understands; anything else is refused by its callers.
-MODES = ("pre_commit", "post_commit")
-
 LINES = (
     ("manifest_valid", FAIL_LINE),
     ("manifest_version_supported", FAIL_LINE),
@@ -86,6 +83,9 @@ LINES = (
     ("project_md_scoped_consistent", INFO_LINE),
     ("tree_clean", FAIL_LINE),
 )
+
+# v4.3.1 S2: the only modes run() understands; anything else is refused by its callers.
+MODES = ("pre_commit", "post_commit")
 
 _IDS = tuple(i for i, _ in LINES)
 
