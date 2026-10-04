@@ -9459,6 +9459,44 @@ V2_CMDS
 else
   skip "V2: same exit as v4.3.1 on every listed command" "commit 5d3d789 is not in this clone" 1
 fi
+# F2: the fast path's no-op record costs one git call and no date/wc/tr/find/mkdir
+v2_spawns 'ls -la' >/dev/null
+expect "V2: fast path runs git once"                    1 "$(v2_spawns 'ls -la' git)"
+expect "V2: fast path runs no wc"                       0 "$(v2_spawns 'ls -la' wc)"
+expect "V2: fast path runs no tr"                       0 "$(v2_spawns 'ls -la' tr)"
+expect "V2: fast path runs no find"                     0 "$(v2_spawns 'ls -la' find)"
+expect "V2: fast path runs no mkdir once the dir exists" 0 "$(v2_spawns 'ls -la' mkdir)"
+if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 2 ]; }; then
+  expect "V2: fast path runs no date (bash >= 4.2)"     0 "$(v2_spawns 'ls -la' date)"
+else
+  skip "V2: fast path runs no date (bash >= 4.2)" "bash ${BASH_VERSION} has no printf %(...)T" 1
+fi
+# F2: the record keeps its file, its keys and their meaning
+V2F="$(gatedir "$V2R")/last-precommit-noop.unknown.json"; rm -f "$V2F"
+V2CMD='ls -la # — x'
+v2h0=$(date -u +%Y-%m-%dT%H)
+printf '%s' "$(mkjson Bash "$V2CMD" "$V2R")" | TZ=JST-9 bash "$V2H" >/dev/null 2>&1
+v2h1=$(date -u +%Y-%m-%dT%H)
+v2f() { sed -n "s/.*\"$1\":\"\\{0,1\\}\\([^\",}]*\\).*/\\1/p" "$V2F"; }
+expect "V2: the no-op record is written"                yes "$(v2_yes [ -f "$V2F" ])"
+expect "V2: path, kind, rc, tree"                       "no-commit-segment|no-commit-segment|-1|" "$(v2f path)|$(v2f kind)|$(v2f rc)|$(v2f tree)"
+expect "V2: cmd_len counts bytes"                       "$(printf '%s' "$V2CMD" | wc -c | tr -d ' ')" "$(v2f cmd_len)"
+expect "V2: ts is UTC (TZ=JST-9 set)"                   yes "$(v2ts=$(v2f ts); case "$v2ts" in "$v2h0"*Z|"$v2h1"*Z) echo yes ;; *) echo "no: $v2ts" ;; esac)"
+expect "V2: gate_dir is the shared gate directory"      "$(gatedir "$V2R")" "$(v2f gate_dir)"
+expect "V2: elapsed_s is a whole number"                yes "$(case "$(v2f elapsed_s)" in ''|*[!0-9]*) echo no ;; *) echo yes ;; esac)"
+expect "V2: tool is Bash"                               Bash "$(v2f tool)"
+# F2: outside a repository nothing is written; an old git (no --path-format) keeps the old place
+mkdir -p "$TMPROOT/v2plain"
+check "V2: outside a repository allowed"               hooks/pre-commit-test.sh 0 "$(mkjson Bash 'ls -la' "$TMPROOT/v2plain")"
+expect "V2: outside a repository no gate dir"           no "$(v2_yes [ -e "$TMPROOT/v2plain/.gate" ])"
+V2OG="$TMPROOT/v2oldgit"; mkdir -p "$V2OG"
+printf '#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in --path-format=*) exit 129 ;; esac; done\nexec "%s" "$@"\n' "$(command -v git)" > "$V2OG/git"
+chmod +x "$V2OG/git"
+V2O=$(mkrepo v2old main)
+printf '%s' "$(mkjson Bash 'ls -la' "$V2O")" | PATH="$V2OG:$PATH" bash "$V2H" >/dev/null 2>&1
+expect "V2: old git: the record lands in <top>/.gate as before" yes "$(v2_yes [ -f "$V2O/.gate/last-precommit-noop.unknown.json" ])"
+# F1 glob rule: a glob character always walks (the walk expands globs)
+expect "V2: a glob character walks, not the fast path" yes "$(if [ "$(v2_spawns 'ls *.md')" != "$V2_FAST" ]; then echo yes; else echo no; fi)"
 # ---- end v4.3.2 V2
 
 echo "----------------------------------------------------------------"
