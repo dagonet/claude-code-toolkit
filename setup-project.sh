@@ -1158,7 +1158,7 @@ fi
 gpp_next=""
 if [[ -f "$TARGET_DIR/hooks/git-pre-push.sh" ]]; then
     if ! bash "$TARGET_DIR/hooks/git-pre-push.sh" --install "$TARGET_DIR"; then
-        gpp_next="Next step: run 'bash hooks/git-pre-push.sh --install' in the project (after 'git init' if it is not a repository yet) -- until then git itself does not refuse pushes to the protected branches."
+        gpp_next="Next step: run 'bash hooks/git-pre-push.sh --install' in the project (after 'git init' if it is not a repository yet; if it printed a 'pre-push: not installed' reason above, act on that instead) -- until then git itself does not refuse pushes to the protected branches."
     fi
 fi
 

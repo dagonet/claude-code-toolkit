@@ -1115,7 +1115,7 @@ if (Test-Path (Join-Path $TargetDir "hooks/git-pre-push.sh")) {
         finally { $ErrorActionPreference = $prevEapGpp }
     }
     if (-not $gppOk) {
-        $gppNext = "Next step: run 'bash hooks/git-pre-push.sh --install' in the project (after 'git init' if it is not a repository yet) -- until then git itself does not refuse pushes to the protected branches."
+        $gppNext = "Next step: run 'bash hooks/git-pre-push.sh --install' in the project (after 'git init' if it is not a repository yet; if it printed a 'pre-push: not installed' reason above, act on that instead) -- until then git itself does not refuse pushes to the protected branches."
     }
 }
 
