@@ -32,6 +32,15 @@ PATHS = [
     "/usr/share/ca-certificates/mozilla/HiPKI_Root_CA_-_G1.crt",
     "/usr/lib/x86_64-linux-gnu/libSvtAv1Enc.so.1.7.0",
     "/usr/share/cmake-3.28/Modules/Platform/Windows3x-OpenWatcom-CXX.cmake",
+    "bin/Debug/net8.0/Extensions/IsNullOrEmpty.cs",
+    "src/Api.V2/Services/ToJsonString.cs",
+    "tests/UnitTests2/Helpers/IsNullOrEmptyTests.cs",
+    "/usr/share/cmake-3.28/Modules/FindPerlLibs.cmake",
+    "Windows.Win32.UI.WindowsAndMessaging.PInvoke.SetWindowPos",
+    "Avalonia.Win32.WindowImpl.HandleWindowMessage",
+    "MyNamespace.Sub1.Sub2.Sub3.ViewModels.MainWindowViewModel",
+    "src/IoT/MQTTv5/X509CertLoader.cs",
+    "src/Extensions/AddDbContext.cs and src/Native/UsePkgConfig.cs",
 ]
 # Random AWS-style secrets (base64 over [A-Za-z0-9+/]) that earlier heuristics missed, bare and behind paths.
 RANDOM_B64 = [
@@ -193,6 +202,9 @@ class RedactTests(unittest.TestCase):
                             "password" * 12500, "a" * 100000, "A1" * 50000, "aB3/" * 25000, "aB3+" * 25000,
                             "ya29." * 20000, "hooks.slack.com/services/" * 4000, "AccountKey=" * 9000,
                             "".join(chr(97 + i % 26) + "/" for i in range(50000)),
+                            "A" * 100000 + "a1/", "x/Aa" + "A" * 100000 + "1", "/" + "aB" * 50000 + "1",
+                            ("A" * 10000 + "a1/ ") * 10, "/" + "aB1" * 33000, "A1/" * 33000, "a1" * 50000 + "/Aa",
+                            "Ab" * 50000 + "/", ("A" * 399 + "a1/ ") * 250,
                             ("aB3d/" * 79 + "x ") * 250, ("aB3dE6/" * 56 + " ") * 250, ("Ab1.cD2." * 49 + " ") * 250,  # windowed runs
                             "aB3dE6gH9jK2mN5pQ8sT1uV4wX7yZ0cD2eF5gH8iJ1kL4mN7pQ" * 2000):
             self.assertLess(elapsed(redact, adversarial), 0.1, adversarial[:30])

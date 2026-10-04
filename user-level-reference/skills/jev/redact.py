@@ -85,38 +85,48 @@ def redact(text):
     return text, counts
 
 
-_LETTER_PAIR = re.compile(r"(?=[A-Za-z]{2})")
-_CASE_FLIP = re.compile(r"(?=[a-z][A-Z]|[A-Z][a-z])")
 _LOWER, _UPPER, _DIGIT = re.compile(r"[a-z]"), re.compile(r"[A-Z]"), re.compile(r"\d")
-# 7M in K7MDENG / 3oVM in EZ513oVM: a digit inside a word that has an upper-case letter and is NOT followed by
-# a plain word piece. Random text has these; trailing version digits (Service2), Int64RangeMatch, 7z-compressed,
-# 4t64 and all-lowercase names do not.
-_DIGIT_IN_WORD = re.compile(r"[A-Z][A-Za-z0-9]*\d(?![A-Z]?[a-z]{2})[A-Za-z][A-Za-z0-9]|\d(?![A-Z]?[a-z]{2})[A-Z][A-Za-z0-9]")
+# Word pieces of a CamelCase / alphanumeric name: an acronym (MQTT in MQTTv5), a Word / word, a digit run.
+# Ordinary names split into pieces of 2+ letters; random base64 shatters into many 1-letter pieces.
+_PIECE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 _WINDOW_SEGS = 6  # longest stretch of segments judged on its own (a secret hiding behind a path prefix)
 _WINDOW_RUN = 400  # only runs up to this long are windowed; keeps the scan linear and cheap
 
 
-def _case_stats(text):
-    """(letter pairs, case changes) over adjacent letters; random base64 changes case about half the time."""
-    return (sum(1 for _ in _LETTER_PAIR.finditer(text)), sum(1 for _ in _CASE_FLIP.finditer(text)))
+def _shatter(seg):
+    """How badly seg shatters into short pieces: 2 per 1-letter piece, 1 per 2-letter piece after the first.
+    IsNullOrEmpty scores 1, ToJsonString and SetWindowPos 0; random base64 scores about 1 per 4 chars."""
+    score = 0
+    for i, p in enumerate(_PIECE.findall(seg)):
+        if len(p) == 1 and not p.isdigit():
+            score += 2
+        elif len(p) == 2 and i and not p.isdigit():
+            score += 1
+    return score
 
 
 def _wordish(seg):
-    """A path/identifier segment: letters (up to 3 trailing digits) that change case rarely (<= 1 in 4)."""
+    """A path/identifier segment: letters (up to 3 trailing digits) that split into words."""
     m = _WORDISH.fullmatch(seg)
-    if not m or len(m.group(1)) < 3:
-        return False
-    return _case_stats(m.group(1))[1] * 4 <= len(m.group(1))
+    return bool(m) and len(m.group(1)) >= 3 and _shatter(m.group(1)) <= 1
 
 
 def _secret_segment(seg):
-    """One segment that is random on its own: long enough, mixed case, and flipping case like random text."""
-    if len(seg) < 12 or "_" in seg or "-" in seg:
+    """One segment that is random on its own: 12+ chars, shattering at about one point per 6 chars."""
+    if len(seg) < 12 or "_" in seg or "-" in seg or not _UPPER.search(seg):
         return False  # snake/kebab names (HiPKI_Root_CA_-_G1) are identifiers, not random
-    pairs, changes = _case_stats(seg)
-    if pairs < 10 or changes * 20 <= pairs * 7:  # fewer than 35% flips: ordinary CamelCase
-        return False
-    return bool(_DIGIT_IN_WORD.search(seg)) or changes * 20 > pairs * 9  # a digit inside a word, or coin-toss flips
+    score = _shatter(seg)
+    return score >= 4 and score * 6 >= len(seg)
+
+
+def _stretch_is_random(segs):
+    """Several short segments (4+ chars) that together shatter like random text."""
+    score = chars = 0
+    for seg in segs:
+        if len(seg) >= 4 and "_" not in seg and "-" not in seg and _UPPER.search(seg):  # x509v3 is not random
+            score += _shatter(seg)
+            chars += len(seg)
+    return score >= 4 and score * 6 >= chars
 
 
 def _random_looking(core, windowed=False):
@@ -130,13 +140,10 @@ def _random_looking(core, windowed=False):
         return False  # many separators for its length: a path or URL
     if any(_secret_segment(seg) for seg in segs):
         return True  # one random-looking segment is decisive, whatever words surround it
-    pairs, changes = _case_stats(core)
-    if pairs >= 12 and changes * 100 >= pairs * 30 and _DIGIT_IN_WORD.search(core):
-        return True  # case flips like random text, with digits inside words, across the whole token
+    if _stretch_is_random(segs):
+        return True
     if windowed:
         return False  # a window needs positive evidence; "not enough words" is only enough for the whole token
-    if _DIGIT_IN_WORD.search(core):
-        return True  # digits inside words are not how paths and package names are spelled
     return sum(1 for seg in segs if _wordish(seg)) < 2  # two word-like segments: a path or package name
 
 
@@ -145,7 +152,7 @@ def _b64_secret(run):
     stripped = run.rstrip(".")  # a sentence-ending dot is not part of the token
     padded = stripped.endswith("=")
     core = stripped.rstrip("=")
-    if len(core) < 32 or not (padded or re.search(r"[/.+]", core)):
+    if len(core) < 32 or not (padded or _SEGMENT_SPLIT.search(core)):
         return False  # no separators: _TOKEN's job
     if _random_looking(core):
         return True
