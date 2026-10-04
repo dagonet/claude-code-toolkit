@@ -311,8 +311,7 @@ Events used by this toolkit:
 |-------|--------------|-----------|
 | `PreToolUse` | Before a tool executes | Yes (exit code 2) |
 | `PostToolUse` | After a tool succeeds | No (informational) |
-| `SubagentStop` | When a subagent finishes | **Yes (exit code 2)** — `hooks/enforce-agent-contract.sh` relies on this to force one continuation when a coder stops without `## Gate Results` |
-| `PreCompact` | Before context compaction | No (informational) |
+| `SubagentStop` | When a subagent finishes | **Yes (exit code 2)** — `hooks/enforce-agent-contract.sh` relies on this to force one continuation when a coder stops without its report (the v4.5.0 short report, or the legacy `## Gate Results` + `## Spec Compliance` form) |
 | `UserPromptSubmit` | Before the user's prompt is processed | Yes (exit code 2) — stdout is injected into context; used here for the inline time hook, not for blocking |
 
 **Other lifecycle events — available, mostly unbound by this toolkit:**
@@ -320,7 +319,7 @@ Events used by this toolkit:
 | Event | When It Fires | Can Block? | Why it matters |
 |-------|--------------|-----------|----------------|
 | `Stop` | Main thread finishes its response | Yes | The only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
-| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`; stdout is injected into the session context. |
+| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`, and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; stdout is injected into the session context. |
 | `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
