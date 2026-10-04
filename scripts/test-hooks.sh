@@ -9423,6 +9423,76 @@ expect "C2a: R-1 the set -u hooks are exactly the four non-sourced ones" \
   "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh | xargs -n1 basename | sort | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v4.4.0 C2a
 
+# ---- v4.4.0 C3: json_fields -- any field list, ONE parser run; json_payload is built on it ----
+# For each backend (forced through JSON_PARSER, in a subshell so the memo never leaks):
+# json_fields over six fields must equal the old per-field json_get answers, with the
+# json_valid verdict as its return code; json_payload must equal the same json_gets.
+# The one deliberate difference: two documents are invalid for json_fields on EVERY backend
+# (as json_payload has said since S6b); `jq -e .` alone would have accepted them.
+C3F="tool_name cwd tool_input.command tool_input.file_path tool_input.subagent_type tool_input.model"
+C3P=(); C3D=()
+c3_add() { C3P[${#C3P[@]}]=$1; C3D[${#C3D[@]}]=${2:-}; }
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"ls","file_path":"/a/b","subagent_type":"coder","model":"opus"}}'
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"echo \"hi\" x","file_path":"/a\"b"}}'
+c3_add '{"tool_name":"Bash","cwd":"C:\\r\\s","tool_input":{"command":"a\\b\\\\c"}}'
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"a\nb\nc\n\n","file_path":"x\n"}}'
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"a\tb\t","model":"\t"}}'
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"git pu\u0000sh x","file_path":"\u0000"}}'
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"caf\u00e9 \u00e9","model":"\u00e9"}}'
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"x \ud83d\ude00 y"}}'
+c3_add "${JSON_BOM}"'{"tool_name":"Read","cwd":"/r","tool_input":{"file_path":"/q"}}'
+c3_add 'null'
+c3_add 'false'
+c3_add '{"a":1} {"b":2}' twodoc
+c3_add ''
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":12,"file_path":true,"model":1.5}}'
+c3_add '{"tool_name":"Bash","cwd":"/r","tool_input":{"command":{"a":1},"file_path":[1],"model":null}}'
+c3_new() { # <backend> <payload> -- json_fields + json_payload, one line
+  ( JSON_PARSER=$1; json_fields "$2" $C3F; c3_rc=$?; c3_o="$c3_rc"; c3_i=0
+    while [ "$c3_i" -lt 6 ]; do c3_o="$c3_o|${JF[c3_i]:-}"; c3_i=$((c3_i + 1)); done
+    json_payload "$2"; c3_o="$c3_o|$?|$JP_TOOL|$JP_CWD|$JP_CMD"; printf '%s|END' "$c3_o" )
+}
+c3_old() { # <backend> <payload> <twodoc?> -- the pre-C3 per-field json_valid + json_get answers
+  ( JSON_PARSER=$1; c3_rc=0
+    if [ "$3" = twodoc ] || ! json_valid "$2"; then c3_rc=1; fi
+    c3_o="$c3_rc"
+    if [ "$c3_rc" = 0 ]; then
+      for c3_f in $C3F; do c3_o="$c3_o|$(json_get "$2" "$c3_f")"; done
+      c3_o="$c3_o|0|$(json_get "$2" tool_name)|$(json_get "$2" cwd)|$(json_get "$2" tool_input.command)"
+    else
+      c3_o="$c3_o|||||||$c3_rc|||"
+    fi
+    printf '%s|END' "$c3_o" )
+}
+C3SHIM="$TMPROOT/c3shim"; C3LOG="$TMPROOT/c3.log"; mkdir -p "$C3SHIM"
+for b in node python3 jq; do
+  c3real=$(command -v "$b" 2>/dev/null) || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$b" "$C3LOG" "$c3real" > "$C3SHIM/$b"
+  chmod +x "$C3SHIM/$b"
+done
+c3_shim_n() { # <backend> <payload> <fn> -- parser processes started by one json_fields / json_payload call
+  : > "$C3LOG"
+  ( PATH="$C3SHIM:$PATH"; JSON_PARSER=$1; if [ "$3" = fields ]; then json_fields "$2" $C3F; else json_payload "$2"; fi ) >/dev/null 2>&1
+  wc -l < "$C3LOG" | tr -d ' '
+}
+for c3_b in node python3 jq; do
+  c3_have=""
+  case "$c3_b" in node) c3_have=$HAVE_NODE ;; python3) c3_have=$HAVE_PY ;; jq) c3_have=$HAVE_JQ ;; esac
+  if [ -z "$c3_have" ]; then
+    skip "C3: json_fields parity and spawn rows ($c3_b)" "no working $c3_b on this host" 18
+    continue
+  fi
+  c3_n=0
+  while [ "$c3_n" -lt "${#C3P[@]}" ]; do
+    expect "C3: $c3_b json_fields + json_payload == json_get, payload $c3_n" "$(c3_old "$c3_b" "${C3P[c3_n]}" "${C3D[c3_n]}" 2>/dev/null)" "$(c3_new "$c3_b" "${C3P[c3_n]}")"
+    c3_n=$((c3_n + 1))
+  done
+  expect "C3: $c3_b json_fields over six fields spawns one parser process" 1 "$(c3_shim_n "$c3_b" "${C3P[0]}" fields)"
+  expect "C3: $c3_b json_fields on an invalid payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" 'garbage' fields)"
+  expect "C3: $c3_b json_payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" "${C3P[0]}" payload)"
+done
+# ---- end v4.4.0 C3
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
