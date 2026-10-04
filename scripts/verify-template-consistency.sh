@@ -60,28 +60,6 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Spawn-Prompt Binding Table present in every AGENT_TEAM.md
-# ---------------------------------------------------------------------------
-for v in $VARIANTS; do
-  if grep -q "^### Spawn-Prompt Binding Table$" "templates/$v/AGENT_TEAM.md"; then
-    ok "templates/$v/AGENT_TEAM.md: Spawn-Prompt Binding Table present"
-  else
-    ko "templates/$v/AGENT_TEAM.md: Spawn-Prompt Binding Table missing"
-  fi
-done
-
-# ---------------------------------------------------------------------------
-# 5. PO responsibility bullet present in every AGENT_TEAM.md
-# ---------------------------------------------------------------------------
-for v in $VARIANTS; do
-  if grep -q "Spawn-prompt skill injection" "templates/$v/AGENT_TEAM.md"; then
-    ok "templates/$v/AGENT_TEAM.md: PO 'Spawn-prompt skill injection' bullet present"
-  else
-    ko "templates/$v/AGENT_TEAM.md: PO 'Spawn-prompt skill injection' bullet missing"
-  fi
-done
-
-# ---------------------------------------------------------------------------
 # 6. The plan gate is gone (v2.1 PR7). Boris Cherny, Jun 2026: "I don't use plan
 #    mode anymore … it just doesn't need it." Plans are optional artifacts now
 #    and every spawn carries its brief instead, so no workflow doc may
@@ -110,40 +88,6 @@ if [ "$agent_team_hashes" = "1" ]; then
 else
   ko "AGENT_TEAM.md drift detected — variants are NOT byte-identical"
   md5sum templates/*/AGENT_TEAM.md
-fi
-
-# ---------------------------------------------------------------------------
-# 8. R5 copy-paste snippets present (≥ 5 ## Required Skills blocks in general AGENT_TEAM.md)
-# ---------------------------------------------------------------------------
-required_blocks=$(grep -c "^## Required Skills$" templates/general/AGENT_TEAM.md)
-if [ "$required_blocks" -ge 5 ]; then
-  ok "templates/general/AGENT_TEAM.md: $required_blocks copy-paste '## Required Skills' blocks present (≥ 5)"
-else
-  ko "templates/general/AGENT_TEAM.md: only $required_blocks '## Required Skills' blocks (expected ≥ 5)"
-fi
-
-# ---------------------------------------------------------------------------
-# 9. R2/R3 binding-table edits applied
-# ---------------------------------------------------------------------------
-coder_row=$(grep -A0 "^| \`coder\`" templates/general/AGENT_TEAM.md | head -1)
-if echo "$coder_row" | grep -q "requesting-code-review"; then
-  ko "templates/general/AGENT_TEAM.md: coder row still contains 'requesting-code-review' (R2 not applied)"
-else
-  ok "templates/general/AGENT_TEAM.md: coder row no longer contains 'requesting-code-review' (R2)"
-fi
-# ⚠ R3 IS DELIBERATELY REVERSED IN v3.0.0 (item B2), AND THE POLARITY OF THIS
-# ASSERTION IS FLIPPED TO SAY SO OUT LOUD. R3 dropped `brainstorming` from the
-# architect row, and that was correct while a SEPARATE `requirements-engineer`
-# owned requirements exploration. v3.0.0 absorbed that agent INTO `architect`,
-# so the same agent now does both jobs and needs the skill R3 removed. The
-# assertion is re-pointed rather than deleted: an absence whose reason has
-# expired must not be allowed to outlive it silently, and a deleted check would
-# have let the skill drift back out with nothing noticing.
-arch_row=$(grep -A0 "^| \`architect\`" templates/general/AGENT_TEAM.md | head -1)
-if echo "$arch_row" | grep -q "brainstorming"; then
-  ok "templates/general/AGENT_TEAM.md: architect row carries 'brainstorming' (v3.0.0 absorbed requirements-engineer; R3 reversed on purpose)"
-else
-  ko "templates/general/AGENT_TEAM.md: architect row is missing 'brainstorming' — it absorbed requirements-engineer in v3.0.0 and must carry that agent's skill, or the absorption dropped a capability"
 fi
 
 # ---------------------------------------------------------------------------
@@ -698,12 +642,13 @@ fi
 
 # The pointer left behind in CLAUDE.md has to resolve. `## Required Skills` was
 # the original target and it no longer exists in CLAUDE.md (PR4 cut the table
-# that defined it), so pin the skill name instead of the stale anchor.
+# that defined it). v4.5.0: the preferences reach coders as the digest in each
+# coder's `## Working rules` (check 67), so the pointer names that section.
 for v in $VARIANTS; do
-  if grep -q 'karpathy-guidelines' "templates/$v/CLAUDE.md"; then
-    ok "templates/$v/CLAUDE.md: points at the karpathy-guidelines skill for developer preferences"
+  if grep -q 'Working rules' "templates/$v/CLAUDE.md"; then
+    ok "templates/$v/CLAUDE.md: points at each coder's Working rules for developer preferences"
   else
-    ko "templates/$v/CLAUDE.md: no pointer to karpathy-guidelines — the moved preferences are orphaned"
+    ko "templates/$v/CLAUDE.md: no pointer to the coders' Working rules — the moved preferences are orphaned"
   fi
 done
 
@@ -2513,10 +2458,11 @@ fi
 # stops matching and reports zero unresolved out of zero collected. 62 citations
 # were collected when this shipped; the floor is set well below that so ordinary
 # prose edits do not trip it, and well above zero so a broken collector does.
-if [ "$b1_total" -ge 40 ]; then
-  ok "check 30 (arm C): collector recovered $b1_total citations (floor 40)"
+# v4.5.0 retired 8 citations (six CLAUDE.md -> *Spawn-Prompt Binding Table* lines, two in the retired hook): 45 -> 37 at the v4.3.0 base, so the floor is 30 -- still far above the zero a broken collector returns.
+if [ "$b1_total" -ge 30 ]; then
+  ok "check 30 (arm C): collector recovered $b1_total citations (floor 30)"
 else
-  ko "check 30 (arm C): collector recovered only $b1_total citations (floor 40) — the citation syntax has drifted away from the collected shapes, or the collector is broken. A zero here would otherwise report as ZERO UNRESOLVED."
+  ko "check 30 (arm C): collector recovered only $b1_total citations (floor 30) — the citation syntax has drifted away from the collected shapes, or the collector is broken. A zero here would otherwise report as ZERO UNRESOLVED."
 fi
 
 rm -rf "$b1_tmp"
@@ -4793,6 +4739,38 @@ for c67_h in '## Working rules' '## Skills (open one only when its trigger fires
     ok "check 67: '$c67_h' byte-identical in all $c67_count coder files ($(printf '%s\n' "$c67_ref" | wc -c | tr -d ' ') B)"
   fi
 done
+
+# ---------------------------------------------------------------------------
+# Check 68 -- the skills spawn mandate is gone and stays gone (v4.5.0 A4,
+# modelled on check 6). Each agent opens its skills on demand from the
+# `## Skills` table in its own definition; no workflow file may bring back
+# the "## Required Skills" block, name the retired hook, or point at the
+# pre-v4.3.1 gate artifact `.gate/last-pass`; no variant's settings.json may
+# register the retired hook. One alternation per file, so a partial revival
+# fails on the file it lives in. An absence grep passes vacuously on a missing
+# file: each file is guarded, and a control proves the grep fires.
+# ---------------------------------------------------------------------------
+note "Check 68: no workflow file carries '## Required Skills', require-skills-block or .gate/last-pass"
+C68_LITERALS='## Required Skills|require-skills-block|\.gate/last-pass'
+c68_n=0
+c68_bad=""
+for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json" templates/$v/.claude/agents/*.md; done) user-level-reference/agents/*.md; do
+  [ -f "$c68_f" ] || { ko "check 68: $c68_f missing"; continue; }
+  c68_n=$((c68_n + 1))
+  if grep -qE "$C68_LITERALS" "$c68_f"; then
+    c68_bad="$c68_bad $c68_f[$(grep -oE "$C68_LITERALS" "$c68_f" | sort -u | tr '\n' ',' | sed 's/,$//')]"
+  fi
+done
+c68_tmp=$(mktemp)
+{ cat templates/general/AGENT_TEAM.md; printf '\n## Required Skills\n'; } > "$c68_tmp"
+if ! grep -qE "$C68_LITERALS" "$c68_tmp"; then
+  ko "check 68: CONTROL FAILED -- a copy with '## Required Skills' appended was not flagged; the check is vacuous"
+elif [ -n "$c68_bad" ]; then
+  ko "check 68: the retired skills mandate is back in:$c68_bad"
+else
+  ok "check 68: $c68_n files carry no '## Required Skills', no require-skills-block, no .gate/last-pass; control fires"
+fi
+rm -f "$c68_tmp"
 
 # ---------------------------------------------------------------------------
 echo
