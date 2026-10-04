@@ -2204,6 +2204,8 @@ NODE13_SKIP_REASON="node absent on PATH -- the tree+env extension VOIDS on any a
 # both sides of the comparison below would read empty -- a false PASS for
 # the wrong reason, not a real continuity check.
 A13OLD=$(mktemp -d)
+expect "A13 precondition: tag v4.1.1 present" "yes" \
+  "$(git -C "$ROOT" rev-parse -q --verify 'v4.1.1^{commit}' >/dev/null 2>&1 && echo yes || echo 'no - tag v4.1.1 missing - run git fetch --tags')"
 git -C "$ROOT" show 'v4.1.1^{commit}:hooks/lib/git-cmd.sh' > "$A13OLD/git-cmd.sh"
 git -C "$ROOT" show 'v4.1.1^{commit}:hooks/lib/json.sh' > "$A13OLD/json.sh"
 a13_env_hash_old() { ( . "$A13OLD/git-cmd.sh"; gc_gate_env "$1" 2>/dev/null ); }
@@ -4921,7 +4923,7 @@ mkdir -p "$FIXROOT/.claude/agents/sub"
   echo '---'
   echo 'Must never be reached via agent_type=sub/coder.'
 } > "$FIXROOT/.claude/agents/sub/coder.md"
-FIXCWD="$(cd "$FIXROOT" && pwd -W)"
+FIXCWD="$(cd "$FIXROOT" && { pwd -W 2>/dev/null || pwd; })"
 
 ELIG_NODELIV="$TMPROOT/elig-nodeliv.jsonl"
 trow_str 'Still working, no report yet.' > "$ELIG_NODELIV"
@@ -6495,8 +6497,13 @@ if command -v fsutil.exe >/dev/null 2>&1 && fsutil.exe file setCaseSensitiveInfo
 else
   skip "#1 case-sensitive fs arm" "fsutil setCaseSensitiveInfo unavailable on this host" 1
 fi
+if [ -e "$DCMREPO/.GIT" ]; then
 check "#1 claude.md on a case-INSENSITIVE fs: denied" "$DCM" 2 \
   "$(mkjson_dcm_raw Edit file_path "$DCMREPO/claude.md" "$DCMREPO")"
+else
+check "#1 claude.md on a case-sensitive fs: claude.md is a different file" "$DCM" 0 \
+  "$(mkjson_dcm_raw Edit file_path "$DCMREPO/claude.md" "$DCMREPO")"
+fi
 
 # --- #23: cwd=<root>/docs + a RELATIVE CLAUDE.md resolves against cwd, not
 # root -- the bug: old code joined every relative path against the ROOT
@@ -7701,6 +7708,7 @@ fr2_repo() { # <name> <gate-extra-text> [seed-cmd, eval'd with $r in scope] -> r
   printf '#!/usr/bin/env bash\necho FR2-TEST-RAN\nexit 0\n' > "$r/t.sh"
   mkdir -p "$r/sub"
   printf '#!/usr/bin/env bash\necho FR2-SUB-XSH-RAN\nexit 1\n' > "$r/sub/x.sh"
+  chmod +x "$r/sub/x.sh"
   printf '#!/usr/bin/env bash\necho FR2-TOP-XSH-RAN\nexit 0\n' > "$r/x.sh"
   [ -z "${3:-}" ] || eval "$3"
   # %s substitution, never embedded in the format string itself: some of
