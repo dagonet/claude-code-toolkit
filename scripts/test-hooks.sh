@@ -9372,6 +9372,7 @@ v4row() { # <n> <pc> <np> <gbm> <m|-> <command>: all three gates on both fixture
     v4j=$(mkjson Bash "$v4c" "$v4d")
     for v4g in pre-commit-test:$v4e1 no-push-main:$v4e2 gate-before-merge:$v4e3; do
       v4h=${v4g%%:*}; v4w=${v4g##*:}
+      # check prefixes $ROOT itself; check_msg takes an absolute hook path
       if [ "$v4m" = m ]; then
         check_msg "V4 r$v4n ${v4h#pre-commit-} $v4f" "$ROOT/hooks/$v4h.sh" "$v4w" "$v4j" "$V4NEEDLE"
       else
@@ -9424,7 +9425,20 @@ done <<'V4TABLE'
 43|0|0|2|-|echo hi && gh pr merge 5
 44|0|2|2|-|pwsh ./b.ps1
 45|0|0|0|-|git pull --ff-only origin main
+46|2|2|2|m|git push origin "${z:-$'ma\x69n'}"
+47|2|2|2|m|git "${z:-$'\x63ommit'}" -m x
+48|0|0|0|-|echo "${#PATH}" # it's
+49|0|0|0|-|echo "${HOME%"/x"}"
 V4TABLE
+# a # comment with an apostrophe must not hide a later $'
+v4row 50 2 2 2 m "$(printf '%s\n%s' "echo hi # don't" "git push origin \$'ma\\x69n'")"
+# the escape hatch still wins: git-guard-off in the payload cwd allows all three
+V4OFF=$(mkrepo v4off main)
+mkdir -p "$V4OFF/.claude"; : > "$V4OFF/.claude/git-guard-off"
+V4OFFJ=$(mkjson Bash "git push origin \$'ma\\x69n'" "$V4OFF")
+for v4h in pre-commit-test no-push-main gate-before-merge; do
+  check "V4 r51 guard-off $v4h" "hooks/$v4h.sh" 0 "$V4OFFJ"
+done
 # ==== V4 end
 
 echo "----------------------------------------------------------------"

@@ -401,11 +401,13 @@ gc_read_stdin() {
 }
 
 # gc_dollar_quote -- stdin; 0 when the text holds a real $'...' or $"..." word,
-# 1 otherwise. Quote-aware, POSIX awk: skips '...', "..." (except inside $( ) and
-# backticks, scanned as normal context) and backslash-escaped characters. Design:
-# docs/plans/2026-10-04-ansi-mac-design.md Q1 option C. Documented residuals: a
-# script body that encodes the git word itself passes the body check; a backtick
-# inside "..." closes at the next backtick (errs closed).
+# 1 otherwise. Quote-aware, POSIX awk: skips '...', "..." (but scans $( ), ${ },
+# backticks as code), backslash escapes and # comments. Design:
+# docs/plans/2026-10-04-ansi-mac-design.md Q1 option C. Residuals: a heredoc body
+# with an odd number of apostrophes can hide a later $'; a case label's ) inside
+# "$(...)" closes the $( early; $$'x' is refused (errs closed); a script body that
+# encodes the git word itself passes the body check; backticks inside "..." close
+# at the next backtick (errs closed).
 gc_dollar_quote() {
   awk '
     { b = b $0 "\n" }
@@ -414,13 +416,18 @@ gc_dollar_quote() {
       for (i = 1; i <= n; i++) {
         c = substr(b, i, 1); t = substr(st, length(st), 1)
         if (t == "s") { if (c == sq) st = substr(st, 1, length(st) - 1); continue }
-        if (t == "d") {
+        if (t == "d" || t == "r") {
           if (c == "\\") i++
-          else if (c == dq) st = substr(st, 1, length(st) - 1)
+          else if (t == "d" && c == dq) st = substr(st, 1, length(st) - 1)
+          else if (t == "r" && c == "}") st = substr(st, 1, length(st) - 1)
+          else if (t == "r" && (c == dq || c == sq)) st = st (c == dq ? "d" : "s")
           else if (c == "$" && substr(b, i + 1, 1) == "(") { st = st "p"; i++ }
+          else if (c == "$" && substr(b, i + 1, 1) == "{") { st = st "r"; i++ }
+          else if (t == "r" && c == "$" && (substr(b, i + 1, 1) == sq || substr(b, i + 1, 1) == dq)) exit 0
           else if (c == "`") st = st "b"
           continue
         }
+        if (c == "#" && (i == 1 || index(" \t\n;&|()<>", substr(b, i - 1, 1)))) { while (i < n && substr(b, i + 1, 1) != "\n") i++; continue }
         if (c == "\\") { i++; continue }
         if (c == "$") { d = substr(b, i + 1, 1); if (d == sq || d == dq) exit 0 }
         else if (c == sq) st = st "s"
