@@ -21,10 +21,33 @@ import tempfile
 import time
 from difflib import SequenceMatcher, unified_diff
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from . import __version__
 
-mcp = FastMCP("template-sync-tools")
+
+class _StrictFastMCP(FastMCP):
+    """v4.3.1 S2 -- every tool refuses an argument it does not declare.
+
+    FastMCP's argument model DROPS unknown keys before the tool function runs,
+    so `template_verify(phase="pre_commit")` (yutraffic: the parameter is
+    `mode`) ran mode=post_commit in silence and FAILed tree_clean. A decorator
+    on the function cannot see the dropped key; this override sees the raw
+    arguments, once, for every tool, against the tool's own schema."""
+
+    async def call_tool(self, name, arguments):
+        tool = self._tool_manager.get_tool(name)
+        if tool is not None:
+            accepted = sorted((tool.parameters or {}).get("properties", {}))
+            unknown = sorted(set(arguments or {}) - set(accepted))
+            if unknown:
+                raise ToolError(
+                    f"{name}: unknown parameter(s) {', '.join(unknown)} -- nothing was run. "
+                    f"Accepted parameters: {', '.join(accepted)}")
+        return await super().call_tool(name, arguments)
+
+
+mcp = _StrictFastMCP("template-sync-tools")
 
 _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -1246,7 +1269,8 @@ async def template_compute_status(
     # template_finalize_sync(new_files=...). new_template_files_detail is the
     # additive, parallel surface a caller uses to resolve each path's
     # template-relative name (v4.0.1, item 3).
-    new_files_detail = [{"path": f, "template_path": template_path_for(f, manifest)} for f in new_files]
+    new_files_detail = [{"path": f, "template_path": template_path_for(f, manifest),
+                         "present_on_disk": (pp / f).exists()} for f in new_files]
 
     # Detect deleted template files already counted above
     deleted_files = [p for p, s in files_status.items() if s["status"] == "TEMPLATE_DELETED"]
@@ -1277,8 +1301,12 @@ async def template_get_diff(
     - full: template-current vs project-current ("unified" is an alias)
     - three_way: three-way merge with conflict markers
 
-    For three_way, reconstructs the common ancestor via git show at lastSynced commit.
-    Falls back to two-way if git history is unavailable.
+    The base is the template at the manifest's held revision (template_commit,
+    then the template_version tag, under a v3/v4 manifest; lastSynced under
+    v2). When it cannot be reconstructed, template_changes and local_changes
+    return has_changes: null with base_unavailable_reason and an empty diff --
+    never false (v4.3.1); three_way falls back to two-way and says so in
+    fallback_to_two_way.
 
     Args:
         project_path: Path to the project root directory
@@ -1313,18 +1341,47 @@ async def template_get_diff(
     if proj_current is None:
         return json.dumps({"error": f"Project file not found: {file_path}"}, ensure_ascii=False)
 
-    # Reconstruct base (common ancestor) via git show
+    # v4.3.1 S7 (ruling P-1) -- THE BASE IS THE TEMPLATE AT THE HELD REVISION.
+    # This read only the v2 key `lastSynced`; a v3/v4 manifest holds
+    # `template_commit` (finalize drops `lastSynced`), so no base was ever found,
+    # the two-way fallback made base = current template, and template_changes
+    # compared the template with itself: has_changes: false on files
+    # compute_status had just called TEMPLATE_UPDATED (open-brain, MM-Agent).
+    # v3/v4 now use compute_status's own chain (v3.resolve_base); v2 keeps
+    # lastSynced.
     base_content = None
-    if last_synced:
-        git_path = _template_git_path(manifest, file_path)
-        base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
-        if base_raw is not None:
+    base_label = "unavailable"
+    base_reason = ""
+    if v3.manifest_supported(manifest):
+        rules = v3.load_ownership(manifest["templateRepo"])
+        if rules is None:
+            base_reason = f"base unavailable: manifest v3/v4 needs {v3.OWNERSHIP_FILE} in the template repo"
+        else:
             try:
-                base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
+                base_content, base_label, _warn = v3.resolve_base(
+                    pp, manifest, rules, rules.template_path_for(_normalize_path(file_path)))
             except (v3.GrantsError, v3.GrantRefused) as e:
                 return json.dumps({"error": str(e)}, ensure_ascii=False)
+            if base_content is None:
+                base_reason = (
+                    "base unavailable: neither template_commit "
+                    f"{v3.manifest_commit(manifest) or '(none)'} nor template_version "
+                    f"{manifest.get('template_version') or '(none)'} resolves in the template repo")
+    else:
+        if last_synced:
+            git_path = _template_git_path(manifest, file_path)
+            base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
+            if base_raw is not None:
+                try:
+                    base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
+                except (v3.GrantsError, v3.GrantRefused) as e:
+                    return json.dumps({"error": str(e)}, ensure_ascii=False)
+                base_label = last_synced
+        if base_content is None:
+            base_reason = f"base unavailable: lastSynced {last_synced or '(none)'} is not readable in the template repo"
 
-    # Fallback: if no base available, use current template as base (two-way)
+    # three_way keeps its documented two-way fallback; the two base-relative
+    # diffs never pretend (below).
     fallback_used = False
     if base_content is None:
         base_content = tpl_current
@@ -1334,13 +1391,21 @@ async def template_get_diff(
         "file_path": file_path,
         "diff_type": diff_type,
         "fallback_to_two_way": fallback_used,
+        "base": base_label,
     }
 
-    if diff_type == "template_changes":
+    if diff_type in ("template_changes", "local_changes") and fallback_used:
+        # Never "no changes" without a base: has_changes is unknown.
+        result["unified_diff"] = ""
+        result["has_changes"] = None
+        result["base_unavailable_reason"] = (
+            base_reason + " -- use diff_type=\"full\" to compare template and project")
+
+    elif diff_type == "template_changes":
         diff = list(unified_diff(
             base_content.splitlines(keepends=True),
             tpl_current.splitlines(keepends=True),
-            fromfile=f"{file_path} (base @ {last_synced})",
+            fromfile=f"{file_path} (base @ {base_label})",
             tofile=f"{file_path} (template current)",
         ))
         result["unified_diff"] = "".join(diff)
@@ -1350,7 +1415,7 @@ async def template_get_diff(
         diff = list(unified_diff(
             base_content.splitlines(keepends=True),
             proj_current.splitlines(keepends=True),
-            fromfile=f"{file_path} (base @ {last_synced})",
+            fromfile=f"{file_path} (base @ {base_label})",
             tofile=f"{file_path} (project current)",
         ))
         result["unified_diff"] = "".join(diff)
@@ -1413,6 +1478,7 @@ async def template_apply_file(
     source: str = "template",
     content: str = "",
     backup_dir: str = "",
+    overwrite_existing: bool = False,
 ) -> str:
     """
     Apply a template file to the project and return the updated manifest entry.
@@ -1442,6 +1508,16 @@ async def template_apply_file(
             and `<file>.diff` before a LOCAL_EDITED template-class file is
             overwritten. Required in that state -- the call is refused without
             it. Ignored for v2 manifests.
+        overwrite_existing: Manifest v3 only (v4.3.1). A template-class file
+            that exists in the project but is NOT tracked in the manifest (a
+            `new_template_files_detail` entry with `present_on_disk: true`) is
+            never written unless this is true -- the call is refused. Pass it
+            only after the user chose to adopt the template or merged content
+            for that file. Tracked files and absent files are unaffected.
+            There is deliberately no such guard on a v2 manifest: the skill
+            migrates v2 -> v3 -> v4 before any apply, and v2 already has
+            source="skip" as a real keep-mine. Only a direct tool caller on a
+            v2 manifest can still overwrite an untracked file.
 
     Returns:
         JSON with the new manifest entry for this file (hashes, modification
@@ -1467,7 +1543,7 @@ async def template_apply_file(
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
         return json.dumps(
-            v3.apply_file_v3(pp, manifest, rules, file_path, source, content, backup_dir),
+            v3.apply_file_v3(pp, manifest, rules, file_path, source, content, backup_dir, overwrite_existing),
             ensure_ascii=False,
         )
 
@@ -1598,6 +1674,14 @@ async def template_finalize_sync(
         consumed: `consumed_entries` and `consumed` = [{path, hash}] with the
         hash exactly as stored (sha256:-prefixed under v3, templateHash under
         v2) for the caller's post-finalize self-check.
+        `pending_once_notes` = [{file, from_commit, to_commit}] -- once-class
+        files whose template guidance comments changed in this sync (v4.3.1);
+        also stored in the manifest until the next finalize replaces it, and
+        reported by template_verify's once_notes_changed line.
+        `files_created` counts applied entries whose action is created_from_*
+        (a new file written from the template or provided content);
+        `files_updated` counts the other applied entries; `files_added` counts
+        new_files registrations that were not already tracked (v4.3.1).
 
     Manifest v3: entries carry `hash` (sha256:-prefixed) and `ownership`;
     `template_commit` is HEAD of the template repo and `template_version` the
@@ -1695,6 +1779,7 @@ async def template_finalize_sync(
 
     # Update entries from applied files
     updated_count = 0
+    created_count = 0
     for item in applied:
         fp = item.get("file_path", "")
         entry = item.get("manifest_entry", {})
@@ -1707,7 +1792,10 @@ async def template_finalize_sync(
             elif not new_entry.get("locallyModified") and "reason" in new_entry:
                 del new_entry["reason"]
             files[fp] = new_entry
-            updated_count += 1
+            if str(item.get("action", "")).startswith("created_from_"):
+                created_count += 1
+            else:
+                updated_count += 1
 
     # Add new files. Real hashes only -- an entry with an empty templateHash
     # has no baseline, and template_compute_status would have offered to
@@ -1768,12 +1856,14 @@ async def template_finalize_sync(
     return json.dumps({
         "manifest_path": ".claude/template-manifest.json",
         "last_synced": new_head,
+        "files_created": created_count,
         "files_updated": updated_count,
         "files_added": added_count,
         "files_dropped": len(dropped_entries),
         "dropped_entries": sorted(dropped_entries),
         "consumed_entries": len(consumed),
         "consumed": consumed,
+        "pending_once_notes": [],
         "manifest_written": True,
     }, ensure_ascii=False)
 
@@ -2069,7 +2159,8 @@ async def template_verify(
     Args:
         project_path: Path to the project root directory
         template_repo: Override templateRepo from manifest (optional)
-        mode: "pre_commit" or "post_commit" (default)
+        mode: "pre_commit" or "post_commit" (default); any other value is
+            refused (v4.3.1) -- it used to run post_commit silently
 
     Returns:
         JSON {ok, mode, summary: "N PASS, M FAIL, K SKIP, J INFO",
@@ -2078,6 +2169,12 @@ async def template_verify(
         with a reason and counted in the summary, so a SKIP-heavy green is
         never mistaken for a real green.
     """
+    if mode not in verify.MODES:
+        return json.dumps({
+            "ok": False,
+            "error": f"mode must be one of {', '.join(verify.MODES)}; got {mode!r} -- nothing was run",
+            "accepted_modes": list(verify.MODES),
+        }, ensure_ascii=False)
     return json.dumps(verify.run(project_path, template_repo, mode), ensure_ascii=False)
 
 
@@ -2105,6 +2202,9 @@ def _cli_verify(argv: list[str]) -> int:
             i += 1
     if project_path is None:
         print("usage: mcp-template-sync-tools --verify <dir> [--template-repo <dir>] [--mode pre_commit|post_commit]")
+        return 2
+    if mode not in verify.MODES:
+        print(f"--mode must be one of {', '.join(verify.MODES)}; got {mode!r}")
         return 2
     result = verify.run(project_path, template_repo, mode)
     for line in result["lines"]:

@@ -114,7 +114,7 @@ See `docs/architecture.md` → *MCP Layering* and `mcp-servers/HOWTO.md` → *Pr
 | `{{JAVA_VERSION}}` | Java version (Java) | 21 |
 | `{{PYTHON_VERSION}}` | Python version (Python) | 3.12 |
 | `{{LOG_PATH}}` | Log file location | c:\Users\...\Logs\ |
-| `{{WORKTREE_BASE}}` | Git worktree base (defaults to `../.worktrees/<project name>`, resolved against the repo root; convention only — EnterWorktree ignores it; every variant gitignore still covers `.claude/worktrees/`, EnterWorktree's fixed location) | g:/git/.worktrees |
+| `{{WORKTREE_BASE}}` | Git worktree base (defaults to `../.worktrees/<project name>`, resolved against the repo root; convention only — EnterWorktree ignores it; every variant gitignore still covers `.claude/worktrees/`, EnterWorktree's fixed location). Note: `.claude/worktrees/` in `.gitignore` does not stop a flat-config `eslint .` from linting the worktree copies — flat config does not read `.gitignore`; add the path to the config's `ignores` as well (yutraffic). | g:/git/.worktrees |
 | `{{TECH_STACK}}` | Technology stack description | .NET 10, MAUI, SQLite |
 | `{{MAUI_PROJECT}}` | MAUI project path (MAUI) | src/MyApp.MAUI |
 | `{{TEST_PROJECT}}` | Test project path | tests/MyApp.Tests |
