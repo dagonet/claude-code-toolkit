@@ -9192,6 +9192,51 @@ check_msg "G3d T3c-14 allowed: tar -xf a.tgz -C . && git commit -m x"           
 check_msg "G3d T3c-14 no-push-main: bash -cm '. ./cdp.sh; git push' (c first in cluster)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -cm '. ./cdp.sh; git push'" "$G3DO")" "$D3"
 check_msg "G3d T3c-14 no-push-main: bash -ce '. ./cdp.sh; git push'"                      "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -ce '. ./cdp.sh; git push'" "$G3DO")" "$D3"
 # ---- end v4.3.1 G3d
+# ---- v4.3.1 G4: commit-time gate artifacts are named by tree; parallel PRs from one parent keep theirs ----
+G4R=$(mkrepo g4par main)
+printf '#!/usr/bin/env bash\nexit 0\n' > "$G4R/g.sh"
+git -C "$G4R" add g.sh >/dev/null 2>&1
+git -C "$G4R" commit -q -m g >/dev/null 2>&1
+printf '# ctx\n\n- **Gate**: `bash g.sh`\n' > "$G4R/PROJECT_CONTEXT.md"
+g4_yes() { if "$@"; then echo yes; else echo no; fi; }
+g4_branch() { # <branch> <content> -- branch off main, edit a TRACKED file, gate BEFORE the commit, then commit
+  git -C "$G4R" checkout -q main >/dev/null 2>&1
+  git -C "$G4R" checkout -q -b "$1" >/dev/null 2>&1
+  printf '%s\n' "$2" > "$G4R/seed.txt"
+  ( cd "$G4R" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+  git -C "$G4R" commit -q -am "$1" >/dev/null 2>&1
+}
+G4_PARENT=$(git -C "$G4R" rev-parse main)
+g4_branch feat/one one; G4_T1=$(git -C "$G4R" rev-parse 'HEAD^{tree}')
+g4_branch feat/two two; G4_T2=$(git -C "$G4R" rev-parse 'HEAD^{tree}')
+G4D=$(gatedir "$G4R")
+expect "G4: PR 1's commit-time artifact is tree-named"     yes "$(g4_yes [ -f "$G4D/last-pass.tree-$G4_T1.json" ])"
+expect "G4: PR 2's commit-time artifact is tree-named"     yes "$(g4_yes [ -f "$G4D/last-pass.tree-$G4_T2.json" ])"
+expect "G4: no parent-sha artifact from a commit-time run" no  "$(g4_yes [ -f "$G4D/last-pass.$G4_PARENT.json" ])"
+git -C "$G4R" checkout -q feat/one >/dev/null 2>&1
+check "G4: PR 1 merges after PR 2 gated from the same parent" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$G4R")"
+git -C "$G4R" checkout -q feat/two >/dev/null 2>&1
+check "G4: PR 2 merges too"                                    hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr merge 2 --squash' "$G4R")"
+# stale: gated one tree, committed another (Review Focus 3)
+git -C "$G4R" checkout -q main >/dev/null 2>&1
+git -C "$G4R" checkout -q -b feat/three >/dev/null 2>&1
+printf 'three\n' > "$G4R/seed.txt"
+( cd "$G4R" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+printf 'three-b\n' > "$G4R/seed.txt"
+git -C "$G4R" commit -q -am three >/dev/null 2>&1
+check "G4: committed tree differs from the gated one -> refused" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$G4R")"
+# TTL applies to the tree-named lookup (Review Focus 3)
+git -C "$G4R" checkout -q feat/two >/dev/null 2>&1
+# 25 h, not 2 h: within GC_GATE_PRUNE_S (24 h) an expired artifact whose tree and environment
+# still match is accepted on purpose (v4.0.3 item 13, docs/template-sync.md "Expired artifact grace").
+[ -f "$G4D/last-pass.tree-$G4_T2.json" ] && touch -d '25 hours ago' "$G4D/last-pass.tree-$G4_T2.json"
+check "G4: a tree-named artifact past the 24 h grace -> refused" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'gh pr merge 2 --squash' "$G4R")"
+# a clean-tree gate keeps the sha name
+git -C "$G4R" checkout -q feat/one >/dev/null 2>&1
+( cd "$G4R" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
+expect "G4: a clean-tree gate is still sha-named" yes "$(g4_yes [ -f "$G4D/last-pass.$(git -C "$G4R" rev-parse HEAD).json" ])"
+# ---- end v4.3.1 G4
+
 # ---- v4.3.1 S6: a command that cannot reach a commit takes the exact fast path ----
 S6R=$(mkrepo s6 main)
 printf '# ctx\n\n- **Test**: `exit 1`\n' > "$S6R/PROJECT_CONTEXT.md"
@@ -9306,51 +9351,6 @@ s6b_pathcheck "S6b: a short-record node is skipped, push refused by the gate" "$
 cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
 s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
 # ---- end v4.3.1 S6b
-
-# ---- v4.3.1 G4: commit-time gate artifacts are named by tree; parallel PRs from one parent keep theirs ----
-G4R=$(mkrepo g4par main)
-printf '#!/usr/bin/env bash\nexit 0\n' > "$G4R/g.sh"
-git -C "$G4R" add g.sh >/dev/null 2>&1
-git -C "$G4R" commit -q -m g >/dev/null 2>&1
-printf '# ctx\n\n- **Gate**: `bash g.sh`\n' > "$G4R/PROJECT_CONTEXT.md"
-g4_yes() { if "$@"; then echo yes; else echo no; fi; }
-g4_branch() { # <branch> <content> -- branch off main, edit a TRACKED file, gate BEFORE the commit, then commit
-  git -C "$G4R" checkout -q main >/dev/null 2>&1
-  git -C "$G4R" checkout -q -b "$1" >/dev/null 2>&1
-  printf '%s\n' "$2" > "$G4R/seed.txt"
-  ( cd "$G4R" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
-  git -C "$G4R" commit -q -am "$1" >/dev/null 2>&1
-}
-G4_PARENT=$(git -C "$G4R" rev-parse main)
-g4_branch feat/one one; G4_T1=$(git -C "$G4R" rev-parse 'HEAD^{tree}')
-g4_branch feat/two two; G4_T2=$(git -C "$G4R" rev-parse 'HEAD^{tree}')
-G4D=$(gatedir "$G4R")
-expect "G4: PR 1's commit-time artifact is tree-named"     yes "$(g4_yes [ -f "$G4D/last-pass.tree-$G4_T1.json" ])"
-expect "G4: PR 2's commit-time artifact is tree-named"     yes "$(g4_yes [ -f "$G4D/last-pass.tree-$G4_T2.json" ])"
-expect "G4: no parent-sha artifact from a commit-time run" no  "$(g4_yes [ -f "$G4D/last-pass.$G4_PARENT.json" ])"
-git -C "$G4R" checkout -q feat/one >/dev/null 2>&1
-check "G4: PR 1 merges after PR 2 gated from the same parent" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr merge 1 --squash' "$G4R")"
-git -C "$G4R" checkout -q feat/two >/dev/null 2>&1
-check "G4: PR 2 merges too"                                    hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr merge 2 --squash' "$G4R")"
-# stale: gated one tree, committed another (Review Focus 3)
-git -C "$G4R" checkout -q main >/dev/null 2>&1
-git -C "$G4R" checkout -q -b feat/three >/dev/null 2>&1
-printf 'three\n' > "$G4R/seed.txt"
-( cd "$G4R" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
-printf 'three-b\n' > "$G4R/seed.txt"
-git -C "$G4R" commit -q -am three >/dev/null 2>&1
-check "G4: committed tree differs from the gated one -> refused" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$G4R")"
-# TTL applies to the tree-named lookup (Review Focus 3)
-git -C "$G4R" checkout -q feat/two >/dev/null 2>&1
-# 25 h, not 2 h: within GC_GATE_PRUNE_S (24 h) an expired artifact whose tree and environment
-# still match is accepted on purpose (v4.0.3 item 13, docs/template-sync.md "Expired artifact grace").
-[ -f "$G4D/last-pass.tree-$G4_T2.json" ] && touch -d '25 hours ago' "$G4D/last-pass.tree-$G4_T2.json"
-check "G4: a tree-named artifact past the 24 h grace -> refused" hooks/gate-before-merge.sh 2 "$(mkjson Bash 'gh pr merge 2 --squash' "$G4R")"
-# a clean-tree gate keeps the sha name
-git -C "$G4R" checkout -q feat/one >/dev/null 2>&1
-( cd "$G4R" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>&1 )
-expect "G4: a clean-tree gate is still sha-named" yes "$(g4_yes [ -f "$G4D/last-pass.$(git -C "$G4R" rev-parse HEAD).json" ])"
-# ---- end v4.3.1 G4
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
