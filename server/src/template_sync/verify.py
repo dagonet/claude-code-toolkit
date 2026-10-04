@@ -84,6 +84,9 @@ LINES = (
     ("tree_clean", FAIL_LINE),
 )
 
+# v4.3.1 S2: the only modes run() understands; anything else is refused by its callers.
+MODES = ("pre_commit", "post_commit")
+
 _IDS = tuple(i for i, _ in LINES)
 
 # Ids computed independently of manifest shape (raw bytes / project git
@@ -1106,25 +1109,34 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     emit(_check_legacy_gate_dir(pp))
 
     # --- once_notes_changed (INFO) ------------------------------------------
+    # v4.3.1 S1: plus the files finalize recorded in `pending_once_notes` --
+    # after finalize the base has moved, so the live comparison is empty and
+    # this list is the only remaining trace. Still ONE line (ruling R2).
+    pending = [p for p in (manifest.get("pending_once_notes") or [])
+               if isinstance(p, dict) and p.get("file")]
+    pending_txt = "; ".join(
+        f"new optional template notes in {p['file']} since {str(p.get('from_commit') or '')[:12]}: "
+        "review and adopt by hand"
+        for p in pending)
+    remedy = ("read the hunks with template_get_diff and update your copy by hand -- "
+              "once-class files are never overwritten")
     if status_error:
-        emit(_line("once_notes_changed", "INFO", f"cannot compute -- {status_error}", "n/a (informational)"))
+        measured = f"cannot compute -- {status_error}"
+        emit(_line("once_notes_changed", "INFO", measured + (f"; {pending_txt}" if pending else ""),
+                   "n/a (informational)", remedy if pending else ""))
     else:
         notes_changed = [
             (path, info["key_audit"]["template_notes_changed"])
             for path, info in status["files"].items()
             if info.get("ownership") == "once" and info.get("key_audit", {}).get("template_notes_changed")
         ]
-        if notes_changed:
-            # `_finalize` requires exactly one result row per id (the
-            # `template_verify` witness asserts len(lines) == len(LINES)), so a
-            # once-class file per row would break that invariant on a consumer
-            # with more than one changed file -- emit ONE line, every file
-            # "; "-joined (ruling R2).
-            parts = "; ".join(f"{path}: template guidance comments changed (hunks: {len(hunks)})"
-                              for path, hunks in notes_changed)
-            emit(_line("once_notes_changed", "INFO", parts, "n/a (informational)",
-                       "read the hunks with template_get_diff and update your copy by hand -- "
-                       "once-class files are never overwritten"))
+        parts = "; ".join(f"{path}: template guidance comments changed (hunks: {len(hunks)})"
+                          for path, hunks in notes_changed)
+        if notes_changed or pending:
+            # `_finalize` requires exactly one result row per id, so ONE line,
+            # every file "; "-joined (ruling R2).
+            emit(_line("once_notes_changed", "INFO", "; ".join(x for x in (parts, pending_txt) if x),
+                       "n/a (informational)", remedy))
         else:
             emit(_line("once_notes_changed", "INFO", "no once-class file has changed template notes",
                        "n/a (informational)"))
