@@ -643,7 +643,8 @@ GC_PS_SPLIT
 # basename-compared, so this is not read even though gc_segments' own quote
 # stripping would have made $1 literally `bash` under the old $1-anchor code.
 gc_script_body() {
-  local seg="$1" cwd="$2" tok clean base path="" pos=1
+  local seg="$1" cwd="$2" tok clean base path="" pos=1 rel=0
+  GC_SB=""; GC_SB_ST=""
   set -- $seg
   while [ $# -gt 0 ]; do
     tok="$1"
@@ -664,8 +665,15 @@ gc_script_body() {
     case "$clean" in -*) continue ;; *) path="$clean"; break ;; esac
   done
   [ -n "$path" ] || return 0
-  case "$path" in /*|[A-Za-z]:*) ;; *) path="$cwd/$path" ;; esac
-  [ -f "$path" ] || return 0
+  # S-3c T3c-1: the answer goes to globals (the caller reads them, no $(...)):
+  # GC_SB = the body, GC_SB_ST = found | miss (a RELATIVE path with no `$` that is no file here).
+  case "$path" in
+    /*|[A-Za-z]:*) rel=0 ;;
+    *\$*|*\`*) rel=0; path="$cwd/$path" ;;
+    *) rel=1; path="$cwd/$path" ;;
+  esac
+  if [ ! -f "$path" ]; then [ "$rel" = 1 ] && GC_SB_ST=miss; return 0; fi
+  GC_SB_ST=found
   # v4.1.2 #8: whole-line comments (first non-blank character `#`) are never
   # commands, so they are stripped BEFORE the verb scan -- and only whole
   # lines: `"${BR#refs/heads/}"` on a code line keeps its `#`. The
@@ -673,7 +681,7 @@ gc_script_body() {
   # strip (spec §0): bash does not continue a line inside a comment, so
   # join-then-strip would merge `# note \<LF>git push origin main` into the
   # comment and delete the push.
-  head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#'
+  GC_SB=$(head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#')
 }
 
 GC_NL='
@@ -694,18 +702,26 @@ GC_NL='
 # target, else the payload cwd: GC_CWD_E.
 GC_GATED_VERB=""
 # directory-change WORDS (case-insensitive, whole words)
-GC_DIRWORD_RE='(^|[^[:alnum:]_./-])(cd|pushd|popd|chdir|dirs|sl|shopt|eval|source|Set-Location|Push-Location|Pop-Location)([^[:alnum:]_.-]|$)|-WorkingDirectory'
+GC_DIRWORD_RE='(^|[^[:alnum:]_./-])(cd|pushd|popd|chdir|dirs|sl|shopt|eval|Set-Location|Push-Location|Pop-Location)([^[:alnum:]_.-]|$)|-WorkingDirectory|-wd[[:space:]]'
+# `source` and `.` only in COMMAND position (T3c-3): at the start of a line, after ; & | ( {
+# then do builtin command, or after `-c ` (a wrapped payload, quotes already dropped)
+GC_SRC_RE='(^|[;&|({]|[[:space:]](then|do|builtin|command)[[:space:]]|-c[[:space:]])[[:space:]]*(source|\.)[[:space:]]'
 # env -C / env --chdir (the option, not git's own -C after the command word)
 GC_ENVC_RE='(^|[^[:alnum:]_./-])env([[:space:]]+(-u[[:space:]]+[^[:space:]]+|-[^[:space:]]+|[^[:space:]=-][^[:space:]=]*=[^[:space:]]*))*[[:space:]]+(-C|--chdir)'
-# an assignment that moves where git or cd lands
-GC_DIRVAR_RE='(^|[^[:alnum:]_])(GIT_DIR|GIT_WORK_TREE|CDPATH|HOME|PWD|OLDPWD)='
+# where git or cd lands: the words GIT_DIR / GIT_WORK_TREE anywhere (export, read, printf -v,
+# $env:...), and an assignment of CDPATH / HOME / PWD / OLDPWD
+GC_DIRVAR_RE='GIT_DIR|GIT_WORK_TREE|(^|[^[:alnum:]_])(CDPATH|HOME|PWD|OLDPWD)='
 
 # gc_dirchange_in <text> -- succeeds when the text holds any of the above.
-# Quotes and backslashes are dropped first (`c""d`, `\cd`), as the verb matchers do.
+# The value of a literal -m / --message / --body / --title argument (no $ and no
+# backtick in it) is data, never executed, and is dropped first (T3c-5). Then quotes
+# and backslashes are dropped (`c""d`, `\cd`), as the verb matchers do.
 gc_dirchange_in() {
   local t
-  t=$(printf '%s' "$1" | tr -d "\"'\\\\")
-  printf '%s\n' "$t" | grep -qiE "$GC_DIRWORD_RE|$GC_ENVC_RE" && return 0
+  t=$(printf '%s' "$1" | sed -E \
+    -e "s/(-[A-Za-z]*m|--message|--body|--title)[[:space:]=]*\"[^\"\$\`]*\"/\1 X/g" \
+    -e "s/(-[A-Za-z]*m|--message|--body|--title)[[:space:]=]*'[^'\$\`]*'/\1 X/g" | tr -d "\"'\\\\")
+  printf '%s\n' "$t" | grep -qiE "$GC_DIRWORD_RE|$GC_ENVC_RE|$GC_SRC_RE" && return 0
   printf '%s\n' "$t" | grep -qE "$GC_DIRVAR_RE"
 }
 
@@ -720,7 +736,7 @@ gc_text_has_gated() {
   printf '%s\n' "$t" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" || return 1
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
-    for v in commit push merge; do
+    for v in commit push merge pull; do
       if gc_matches_subcommand "$seg" "$v"; then GC_GATED_VERB="$v"; return 0; fi
     done
   done <<GC_TG_SEGS
@@ -733,30 +749,58 @@ GC_TG_SEGS
 # $GC_CMD (gc_script_body, depth 1, resolved against <cwd>) and, when a segment
 # runs powershell/pwsh, the .ps1 bodies (S-41: no shell continuation join there).
 gc_collect_bodies() {
-  local seg body _gc_bj ps=0
-  GC_BODIES=()
+  local seg body _gc_bj ps=0 d found miss
+  GC_BODIES=(); GC_BODY_MISS=0
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
     gc_seg_is_ps "$seg" && ps=1
-    body=$(gc_script_body "$seg" "$1")
-    [ -n "$body" ] || continue
-    _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
-    GC_BODIES+=("$body")
+    found=0; miss=0
+    for d in "${GC_CANDS[@]}"; do
+      gc_script_body "$seg" "$d"
+      [ "$GC_SB_ST" = miss ] && miss=1
+      [ "$GC_SB_ST" = found ] && found=1
+      [ -n "$GC_SB" ] || continue
+      body=$GC_SB
+      _gc_bj=$(printf '%s' "$body" | cmd_join_continuations) && [ -n "$_gc_bj" ] && body="$_gc_bj"
+      GC_BODIES+=("$body")
+    done
+    # a relative script path found under no directory at all: nothing to read
+    if [ "$found" = 0 ] && [ "$miss" = 1 ]; then GC_BODY_MISS=1; fi
   done <<GC_CB_SEGS
 $(gc_seg_raw)
 GC_CB_SEGS
   if [ "$ps" = 1 ]; then
-    body=$(gc_ps_script_bodies "$1")
-    [ -z "$body" ] || GC_BODIES+=("$body")
+    for d in "${GC_CANDS[@]}"; do
+      body=$(gc_ps_script_bodies "$d")
+      [ -z "$body" ] || GC_BODIES+=("$body")
+    done
   fi
   return 0
+}
+
+# gc_dir_cands <payload cwd> <E> <text> -- GC_CANDS, a FLAT list (no order, no state):
+# E, the payload cwd, and every literal cd/pushd target in <text> (absolute, or
+# relative to the payload cwd). A relative script path is looked up under each.
+gc_dir_cands() {
+  local t d re='(^|[^[:alnum:]_./-])(cd|pushd)[[:space:]]+(-[^[:space:]]*[[:space:]]+)*([^[:space:];&|()<>]+)'
+  GC_CANDS=("$2")
+  [ "$1" = "$2" ] || GC_CANDS+=("$1")
+  t=$(printf '%s' "$3" | tr -d "\"'")
+  while [[ $t =~ $re ]]; do
+    d=${BASH_REMATCH[4]}
+    t=${t#*"${BASH_REMATCH[0]}"}
+    case "$d" in *\$*|*\`*|*[\*\?\[]*|\~*) continue ;; esac
+    case "$d" in /*|[A-Za-z]:[/\\]*) ;; *) d="$1/$d" ;; esac
+    GC_CANDS+=("$d")
+  done
 }
 
 # gc_augmented_cmd <cwd> -- GC_CMD, then one newline and each script body. The
 # text the gates match on, and what the cmd_len diagnostic measures.
 gc_augmented_cmd() {
   local out="$GC_CMD" b
-  gc_collect_bodies "$1"
+  GC_CANDS=("$1")
+  gc_collect_bodies
   for b in "${GC_BODIES[@]}"; do out="$out$GC_NL$b"; done
   printf '%s' "$out"
 }
@@ -765,7 +809,7 @@ gc_augmented_cmd() {
 # with the script bodies; returns 1 (after printing the refusal) when a gated
 # command changes directory in any other way. Call it in the main shell.
 gc_dir_rule() {
-  local gate="$1" typed="$GC_CMD" rest="$GC_CMD" tgt="" b
+  local gate="$1" typed="$GC_CMD" rest="$GC_CMD" tgt="" b dc
   local re_dq='^[[:space:]]*cd[[:space:]]+"([^"]*)"[[:space:]]*&&(.*)$'
   local re_sq="^[[:space:]]*cd[[:space:]]+'([^']*)'[[:space:]]*&&(.*)\$"
   local re_bare='^[[:space:]]*cd[[:space:]]+([^[:space:]"'"'"';&|()<>]+)[[:space:]]*&&(.*)$'
@@ -782,7 +826,11 @@ gc_dir_rule() {
       GC_CWD_E="$tgt"
     fi
   fi
-  gc_collect_bodies "$GC_CWD_E"
+  # the typed text changes directory in a way other than the one leading cd?
+  # Then a relative script path cannot be pinned to one directory: look it up under
+  # the payload cwd and every literal cd target (T3c-1), and refuse if it is nowhere.
+  if gc_dirchange_in "$rest"; then dc=1; gc_dir_cands "$2" "$GC_CWD_E" "$typed"; else dc=0; GC_CANDS=("$GC_CWD_E"); fi
+  gc_collect_bodies
   GC_CMD="$typed"
   for b in "${GC_BODIES[@]}"; do
     GC_CMD="$GC_CMD$GC_NL$b"
@@ -791,13 +839,16 @@ gc_dir_rule() {
       gc_dir_refuse "$gate"; return 1
     fi
   done
-  # the typed text changes directory in a way other than the one leading cd: refused
-  # when the command (or a script it runs) holds a gated verb
-  if gc_dirchange_in "$rest"; then
+  # ... refused when the command (or a script it runs) holds a gated verb
+  if [ "$dc" = 1 ]; then
     if gc_text_has_gated "$typed"; then gc_dir_refuse "$gate"; return 1; fi
     for b in "${GC_BODIES[@]}"; do
       if gc_text_has_gated "$b"; then gc_dir_refuse "$gate"; return 1; fi
     done
+    if [ "$GC_BODY_MISS" = 1 ]; then
+      echo "BLOCKED: $gate: a directory change in a command that runs a script this hook cannot find cannot be checked -- run it by an absolute path (bash /abs/x.sh), or use a single leading \`cd <absolute dir> && ...\`." >&2
+      return 1
+    fi
   fi
   return 0
 }

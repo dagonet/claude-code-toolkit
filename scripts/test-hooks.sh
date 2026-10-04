@@ -8796,8 +8796,11 @@ expect "G2 T2-4 gc_is_git_word: A+=/x/git is an assignment" no "$( . "$ROOT/hook
 check "G2 T2-4 no-push-main: GIT_DIR+=<protected>/.git git push from a feature cwd" hooks/no-push-main.sh 2 "$(mkjson Bash "GIT_DIR+=$G2R/.git git push origin main" "$G2O")"
 # T2-5: a BARE push (no `origin main`, which no-push-main refuses whatever GIT_DIR is) is judged
 # only by the global-option refusal, so this row alone catches a lost NAME+= assignment rule.
-check_msg "G2 T2-5 no-push-main: bare GIT_DIR+=<protected>/.git git push from a feature cwd -> env refusal" "$ROOT/hooks/no-push-main.sh" 2 \
-  "$(mkjson Bash "GIT_DIR+=$G2R/.git git push" "$G2O")" "GIT_DIR+="
+# (S-3c: GIT_DIR / GIT_WORK_TREE are now refused earlier, by the simple-cd rule, so the row uses another GIT_ variable.)
+check_msg "G2 T2-5 no-push-main: bare GIT_CONFIG_COUNT+=1 git push from a feature cwd -> env refusal" "$ROOT/hooks/no-push-main.sh" 2 \
+  "$(mkjson Bash "GIT_CONFIG_COUNT+=1 git push" "$G2O")" "GIT_CONFIG_COUNT+="
+check_msg "G2 T2-5 S-3c no-push-main: GIT_DIR+=<protected>/.git git push -> refused by the simple-cd rule" "$ROOT/hooks/no-push-main.sh" 2 \
+  "$(mkjson Bash "GIT_DIR+=$G2R/.git git push" "$G2O")" "a directory change in a command with push"
 # T2-1: a path containing '=' is a command, not an assignment (never narrows).
 for sp in /opt/a=b/git 'C:\x=y\git'; do
   check "G2 T2-1 no-push-main: $sp push origin main"      hooks/no-push-main.sh 2      "$(mkjson Bash "$sp push origin main" "$G2R")"
@@ -8836,23 +8839,23 @@ G3O=$(mkrepo g3other feat)
 printf '# ctx\n\n- **Test**: `exit 0`\n' > "$G3O/PROJECT_CONTEXT.md"
 G3SP=$(g3_repo "g3 sp")
 # a later cd is not the one leading cd: refused next to a script that holds a gated verb
-check "G3 pre-commit-test: bash c.sh; cd <other repo>"       hooks/pre-commit-test.sh 2   "$(mkjson Bash "bash c.sh; cd $G3O" "$G3R")"
-check "G3 no-push-main: bash bare.sh; cd <other repo>"       hooks/no-push-main.sh 2      "$(mkjson Bash "bash bare.sh; cd $G3O" "$G3R")"
-check "G3 gate-before-merge: bash m.sh; cd <other repo>"     hooks/gate-before-merge.sh 2 "$(mkjson Bash "bash m.sh; cd $G3O" "$G3R")"
-check "G3 pre-commit-test: pwsh -File c.ps1 && cd <other>"   hooks/pre-commit-test.sh 2   "$(mkjson Bash "pwsh -File c.ps1 && cd $G3O" "$G3R")"
-check "G3 pin: pre-commit-test: bash c.sh; cd sub"           hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash c.sh; cd sub' "$G3R")"
+check_msg "G3 pre-commit-test: bash c.sh; cd <other repo>" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "bash c.sh; cd $G3O" "$G3R")" "a directory change in a command with"
+check_msg "G3 no-push-main: bash bare.sh; cd <other repo>" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash bare.sh; cd $G3O" "$G3R")" "a directory change in a command with"
+check_msg "G3 gate-before-merge: bash m.sh; cd <other repo>" "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "bash m.sh; cd $G3O" "$G3R")" "a directory change in a command with"
+check_msg "G3 pre-commit-test: pwsh -File c.ps1 && cd <other>" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pwsh -File c.ps1 && cd $G3O" "$G3R")" "a directory change in a command with"
+check_msg "G3 pin: pre-commit-test: bash c.sh; cd sub" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash c.sh; cd sub' "$G3R")" "a directory change in a command with"
 # a script path resolves where it is named: after a non-leading cd the path cannot be resolved, so the command is refused
-check "G3 no-push-main: cd sub; bash ../bare.sh"             hooks/no-push-main.sh 2      "$(mkjson Bash "cd sub; bash $G3R/bare.sh" "$G3R")"
-check "G3 pre-commit-test: cd sub; bash ../c.sh"             hooks/pre-commit-test.sh 2   "$(mkjson Bash "cd sub; bash $G3R/c.sh" "$G3R")"
+check_msg "G3 no-push-main: cd sub; bash ../bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "cd sub; bash ../bare.sh" "$G3R")" "a directory change in a command with"
+check_msg "G3 pre-commit-test: cd sub; bash ../c.sh" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd sub; bash ../c.sh" "$G3R")" "a directory change in a command with"
 check "G3 S-3c no-push-main: cd <abs>/sub && bash ../bare.sh (a leading cd: the script resolves there)" hooks/no-push-main.sh 2 "$(mkjson Bash "cd $G3R/sub && bash ../bare.sh" "$G3O")"
 check "G3 S-3c control: no-push-main: cd <other repo> && bash ./x.sh resolves ./x.sh in <other repo> (benign)" hooks/no-push-main.sh 0 "$(mkjson Bash "cd $G3O && bash ./x.sh" "$G3R")"
-check "G3 pre-commit-test: cd \"\$X\"; bash c.sh (pin)"      hooks/pre-commit-test.sh 2   "$(mkjson Bash 'cd "$X"; bash c.sh' "$G3R")"
-check "G3 pre-commit-test: cd \"\$X\"; cd sub; bash ../c.sh" hooks/pre-commit-test.sh 2   "$(mkjson Bash "cd \"\$X\"; cd sub; bash $G3R/c.sh" "$G3R")"
+check_msg "G3 pre-commit-test: cd \"\$X\"; bash c.sh (pin)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd "$X"; bash c.sh' "$G3R")" "a directory change in a command with"
+check_msg "G3 pre-commit-test: cd \"\$X\"; cd sub; bash ../c.sh" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd \"\$X\"; cd sub; bash ../c.sh" "$G3R")" "a directory change in a command with"
 # a body's own cd does not move a later TYPED commit (a body that holds no gated verb is a child process)
 check "G3 pin: bash cdsub.sh; git commit -m x"               hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash cdsub.sh; git commit -m x' "$G3R")"
 # a cwd with a space (Review Focus 2)
-check "G3 pre-commit-test: path with a space, bash c.sh; cd <other repo>" hooks/pre-commit-test.sh 2 "$(mkjson Bash "bash c.sh; cd $G3O" "$G3SP")"
-check "G3 pin: path with a space, bash c.sh; cd sub"         hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash c.sh; cd sub' "$G3SP")"
+check_msg "G3 pre-commit-test: path with a space, bash c.sh; cd <other repo>" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "bash c.sh; cd $G3O" "$G3SP")" "a directory change in a command with"
+check_msg "G3 pin: path with a space, bash c.sh; cd sub" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'bash c.sh; cd sub' "$G3SP")" "a directory change in a command with"
 # controls
 check "G3 control: bash c.sh"                                hooks/pre-commit-test.sh 2   "$(mkjson Bash 'bash c.sh' "$G3R")"
 check "G3 control: bash ok.sh; cd <other repo>"              hooks/pre-commit-test.sh 0   "$(mkjson Bash "bash ok.sh; cd $G3O" "$G3R")"
@@ -8865,16 +8868,16 @@ for g3f in 'cd -' 'cd -P ..' 'cd -- ..' 'cd' 'popd'; do
   check "G3 T3-1 gate-before-merge: cd sub; $g3f; bash m.sh"        hooks/gate-before-merge.sh 2 "$(mkjson Bash "cd sub; $g3f; bash m.sh" "$G3R")"
 done
 # S-3c: a cd that is not the one leading cd is refused even when it is fully determined, if the payload's ./x.sh holds a verb
-check "G3 S-3c: no-push-main: cd <other repo>; bash ./x.sh -> refused (the payload's x.sh holds git push)" hooks/no-push-main.sh 2 "$(mkjson Bash "cd $G3O; bash ./x.sh" "$G3R")"
+check_msg "G3 S-3c: no-push-main: cd <other repo>; bash ./x.sh -> refused (the payload's x.sh holds git push)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "cd $G3O; bash ./x.sh" "$G3R")" "a directory change in a command with"
 # T3-2 shapes (the scan cap is gone; a long cd chain is simply refused next to a gated script)
 for g3i in 1 2 3 4 5 6 7 8; do mkdir -p "$G3O/d$g3i"; done
 g3c9='cd d1; cd ../d2; cd ../d3; cd ../d4; cd ../d5; cd ../d6; cd ../d7; cd ../d8'
 g3c7='cd d1; cd ../d2; cd ../d3; cd ../d4; cd ../d5; cd ../d6'
-check "G3 T3-2 no-push-main: 8 cds; cd <protected>; cd \"\$X\"; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash $G3R/bare.sh" "$G3O")"
-check_msg "G3 S-3c no-push-main: the refusal advises a single leading cd" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash $G3R/bare.sh" "$G3O")" "a single leading \`cd <absolute dir> && ...\`"
-check "G3 T3-2 pre-commit-test: 8 cds; cd <protected>; cd \"\$X\"; bash c.sh" hooks/pre-commit-test.sh 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash $G3R/c.sh" "$G3O")"
-check "G3 T3-2 gate-before-merge: 8 cds; cd <protected>; cd \"\$X\"; bash m.sh" hooks/gate-before-merge.sh 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash $G3R/m.sh" "$G3O")"
-check "G3 T3-2 no-push-main: 6 cds; cd <protected>; cd \"\$X\"; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "$g3c7; cd $G3R; cd \"\$X\"; bash $G3R/bare.sh" "$G3O")"
+check_msg "G3 T3-2 no-push-main: 8 cds; cd <protected>; cd \"\$X\"; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash bare.sh" "$G3O")" "a directory change in a command with"
+check_msg "G3 S-3c no-push-main: the refusal advises a single leading cd" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash bare.sh" "$G3O")" "a single leading \`cd <absolute dir> && ...\`"
+check_msg "G3 T3-2 pre-commit-test: 8 cds; cd <protected>; cd \"\$X\"; bash c.sh" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash c.sh" "$G3O")" "a directory change in a command with"
+check_msg "G3 T3-2 gate-before-merge: 8 cds; cd <protected>; cd \"\$X\"; bash m.sh" "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "$g3c9; cd $G3R; cd \"\$X\"; bash m.sh" "$G3O")" "a directory change in a command with"
+check_msg "G3 T3-2 no-push-main: 6 cds; cd <protected>; cd \"\$X\"; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "$g3c7; cd $G3R; cd \"\$X\"; bash bare.sh" "$G3O")" "a directory change in a command with"
 check "G3 T3-2 control: 9 certain cds then bash ok.sh (no gated verb anywhere) is not refused" hooks/no-push-main.sh 0 "$(mkjson Bash "$g3c9; cd $G3R; bash ok.sh" "$G3O")"
 # T3-4 shapes: payload cwds holding an apostrophe or a dollar sign. MSYS does not path-convert an argument holding a quote
 # character, so the native git cannot open an /tmp/...o'brien path: that repo is initialised and addressed through its platform spelling (natpath).
@@ -8897,21 +8900,18 @@ for g3d in "$G3AP" "$G3DL"; do
 done
 # T3b-3 shapes: a failed cd / `cd -` / popd chain before a gated script is refused (the payload repo G3R is on main and bare.sh pushes)
 G3TY="$G3O/typo-does-not-exist"
-check "G3 T3b-3 no-push-main: cd <other>; cd typo; cd -; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash bare.sh" "$G3R")"
-check "G3 T3b-3 no-push-main: pushd <other>; pushd typo; popd; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "pushd $G3O; pushd $G3TY; popd; bash bare.sh" "$G3R")"
-check "G3 T3b-3 no-push-main: cd \$V; cd <other>; cd -; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "cd \$V; cd $G3O; cd -; bash bare.sh" "$G3R")"
-check "G3 T3b-3 no-push-main: pushd <other>; pushd +1; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "pushd $G3O; pushd +1; bash bare.sh" "$G3R")"
-check "G3 T3b-3 pre-commit-test: cd <other>; cd typo; cd -; bash c.sh" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash c.sh" "$G3R")"
-check "G3 T3b-3 gate-before-merge: cd <other>; cd typo; cd -; bash m.sh" hooks/gate-before-merge.sh 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash m.sh" "$G3R")"
+check_msg "G3 T3b-3 no-push-main: cd <other>; cd typo; cd -; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash bare.sh" "$G3R")" "a directory change in a command with"
+check_msg "G3 T3b-3 no-push-main: pushd <other>; pushd typo; popd; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "pushd $G3O; pushd $G3TY; popd; bash bare.sh" "$G3R")" "a directory change in a command with"
+check_msg "G3 T3b-3 no-push-main: cd \$V; cd <other>; cd -; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "cd \$V; cd $G3O; cd -; bash bare.sh" "$G3R")" "a directory change in a command with"
+check_msg "G3 T3b-3 no-push-main: pushd <other>; pushd +1; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "pushd $G3O; pushd +1; bash bare.sh" "$G3R")" "a directory change in a command with"
+check_msg "G3 T3b-3 pre-commit-test: cd <other>; cd typo; cd -; bash c.sh" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash c.sh" "$G3R")" "a directory change in a command with"
+check_msg "G3 T3b-3 gate-before-merge: cd <other>; cd typo; cd -; bash m.sh" "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "cd $G3O; cd $G3TY; cd -; bash m.sh" "$G3R")" "a directory change in a command with"
 check "G3 T3b-3 control: cds with no gated verb anywhere (bash ok.sh) are not refused" hooks/no-push-main.sh 0 "$(mkjson Bash "cd $G3O; cd sub; cd -; bash ok.sh" "$G3R")"
 # T3b-4 shapes
-check "G3 T3b-4 no-push-main: export CDPATH=<parent>; cd g3main; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "export CDPATH=$TMPROOT; cd g3main; bash $G3R/bare.sh" "$G3O")"
-check "G3 T3b-4 no-push-main: shopt -s cdable_vars; cd sub; bash ../bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash "shopt -s cdable_vars; cd sub; bash $G3R/bare.sh" "$G3R")"
-check "G3 T3b-4 no-push-main: pushd sub; dirs -c; popd; bash bare.sh" hooks/no-push-main.sh 2 "$(mkjson Bash 'pushd sub; dirs -c; popd; bash bare.sh' "$G3R")"
-# KNOWN LIMIT, pinned so it is a stated fact and not a surprise: a script named by a RELATIVE path after a non-leading cd is looked up
-# where the hook thinks the cwd is (the leading cd, else the payload cwd), is not found there, and so is not scanned. A script
-# named by an absolute path is (rows above). Closing this needs a model of the shell's cwd, which is exactly what S-3c removed.
-check "G3 S-3c KNOWN LIMIT: cd sub; bash ../bare.sh (relative script after a non-leading cd is not found, not scanned: allowed)" hooks/no-push-main.sh 0 "$(mkjson Bash 'cd sub; bash ../bare.sh' "$G3R")"
+check_msg "G3 T3b-4 no-push-main: export CDPATH=<parent>; cd g3main; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "export CDPATH=$TMPROOT; cd g3main; bash bare.sh" "$G3O")" "cannot be checked"
+check_msg "G3 T3b-4 no-push-main: shopt -s cdable_vars; cd sub; bash ../bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "shopt -s cdable_vars; cd sub; bash ../bare.sh" "$G3R")" "a directory change in a command with"
+check_msg "G3 T3b-4 no-push-main: pushd sub; dirs -c; popd; bash bare.sh" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'pushd sub; dirs -c; popd; bash bare.sh' "$G3R")" "a directory change in a command with"
+check_msg "G3 S-3c: cd sub; bash ../bare.sh is refused (T3c-1: the script is found under the cd target and scanned)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub; bash ../bare.sh' "$G3R")" "a directory change in a command with push"
 # ---- end v4.3.1 G3
 
 # ---- v4.3.1 G6: a commit from a subdirectory runs the repository's Test ----
@@ -8919,7 +8919,7 @@ check "G3 S-3c KNOWN LIMIT: cd sub; bash ../bare.sh (relative script after a non
 # Rows that used to resolve a relative / chained / pushd cd now EXPECT the refusal (marked "S-3c: refused"); the positives are re-targeted to the allowed form.
 G6R=$(mkrepo g6 main)                     # mkrepo also creates sub/
 printf '# ctx\n\n- **Test**: `exit 1`\n' > "$G6R/PROJECT_CONTEXT.md"
-check "G6 S-3c: cd sub; git commit -> refused (relative, ;)"  hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd sub; git commit -m x' "$G6R")"
+check_msg "G6 S-3c: cd sub; git commit -> refused (relative, ;)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd sub; git commit -m x' "$G6R")" "a directory change in a command with"
 check "G6: cd <abs>/sub && git commit"                        hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6R/sub && git commit -m x" "$G6R")"
 check "G6: payload cwd is sub/"                               hooks/pre-commit-test.sh 2 "$(mkjson Bash 'git commit -m x' "$G6R/sub")"
 check "G6: git -C sub commit"                                 hooks/pre-commit-test.sh 2 "$(mkjson Bash 'git -C sub commit -m x' "$G6R")"
@@ -8967,20 +8967,20 @@ printf '# ctx\n\n- **Test**: `exit 1`\n' > "$G6W/sub/PROJECT_CONTEXT.md"
 check_msg "G6: sub/ is red, the root is green -> the root's Test wins" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash 'git commit -m x' "$G6W/sub")" "passed."
 # T3b-1 shapes (G6R is the repository whose Test is red; payload repo G6OK is green): every one is refused by the rule
-check "G6 S-3c: pushd <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6R && git commit -m x" "$G6OK")"
-check "G6 S-3c: cd -P <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -P $G6R && git commit -m x" "$G6OK")"
-check "G6 S-3c: cd -L <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -L $G6R && git commit -m x" "$G6OK")"
-check "G6 S-3c: cd -- <red repo> && git commit"            hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -- $G6R && git commit -m x" "$G6OK")"
-check "G6 S-3c: cd <red>; cd <green>; cd -; git commit"    hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6R; cd $G6OK; cd -; git commit -m x" "$G6OK")"
+check_msg "G6 S-3c: pushd <red repo> && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6R && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 S-3c: cd -P <red repo> && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd -P $G6R && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 S-3c: cd -L <red repo> && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd -L $G6R && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 S-3c: cd -- <red repo> && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd -- $G6R && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 S-3c: cd <red>; cd <green>; cd -; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd $G6R; cd $G6OK; cd -; git commit -m x" "$G6OK")" "a directory change in a command with"
 check_msg "G6 S-3c: pushd <red>; popd; git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash "pushd $G6R; popd; git commit -m x" "$G6OK")" "a directory change in a command with commit"
 # a target that cannot be known is refused
 check_msg "G6 T3b-1: cd \$VAR && git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'cd $BVAR && git commit -m x' "$G6OK")" "a directory change in a command with commit"
-check "G6 T3b-1: cd ~nobody && git commit -> refused"        hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd ~nobody && git commit -m x' "$G6OK")"
-check "G6 T3b-1: cd <glob> && git commit -> refused"         hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6R/s* && git commit -m x" "$G6OK")"
-check "G6 T3b-1: bare cd && git commit -> refused"           hooks/pre-commit-test.sh 2 "$(mkjson Bash 'cd && git commit -m x' "$G6OK")"
-check "G6 T3b-1: popd with nothing tracked && git commit -> refused" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'popd && git commit -m x' "$G6OK")"
+check_msg "G6 T3b-1: cd ~nobody && git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd ~nobody && git commit -m x' "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-1: cd <glob> && git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd $G6R/s* && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-1: bare cd && git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd && git commit -m x' "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-1: popd with nothing tracked && git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'popd && git commit -m x' "$G6OK")" "a directory change in a command with"
 check "G6 T3b-1: cd \$VAR alone (no commit after it) is not refused" hooks/pre-commit-test.sh 0 "$(mkjson Bash 'cd $BVAR; ls' "$G6OK")"
 # the rev-parse idiom is no longer modelled: use git -C
 check "G6 S-3c: cd sub && cd \"\$(git rev-parse --show-toplevel)\" && git commit -> refused" hooks/pre-commit-test.sh 2 \
@@ -8989,15 +8989,15 @@ check "G6 S-3c: the same without quotes -> refused" hooks/pre-commit-test.sh 2 \
   "$(mkjson Bash 'cd sub && cd $(git rev-parse --show-toplevel) && git commit -m x' "$G6OK")"
 # T3b-3 shapes: a failed/created cd, a lost stack, a rotation, a HOME reassignment -- all refused
 G6TY="$G6OK/typo-does-not-exist"
-check "G6 T3b-3: cd <green>; cd typo; cd -; git commit (real cwd is the red payload repo)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6OK; cd $G6TY; cd -; git commit -m x" "$G6R")"
-check "G6 T3b-3: pushd <green>; pushd typo; popd; git commit"  hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK; pushd $G6TY; popd; git commit -m x" "$G6R")"
-check "G6 T3b-3: cd \$V; cd <green>; cd -; git commit"          hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd \$V; cd $G6OK; cd -; git commit -m x" "$G6OK")"
-check "G6 T3b-3: pushd <green>/sub; cd \$V; pushd <green>; popd; git commit" hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK/sub; cd \$V; pushd $G6OK; popd; git commit -m x" "$G6OK")"
-check "G6 T3b-3: pushd <green>; pushd +1; git commit (rotation)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK; pushd +1; git commit -m x" "$G6R")"
-check "G6 T3b-3: popd +1; git commit"                           hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK; popd +1; git commit -m x" "$G6R")"
-check "G6 T3b-3: cd -; git commit (nothing to go back to)"      hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd -; git commit -m x" "$G6OK")"
-check "G6 T3b-3: git init <new> && cd <new> && git commit"       hooks/pre-commit-test.sh 2 "$(mkjson Bash "git init $TMPROOT/g6new && cd $TMPROOT/g6new && git commit -m x" "$G6OK")"
-check "G6 T3b-3: mkdir d && cd d && git commit"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash "mkdir $TMPROOT/g6mk && cd $TMPROOT/g6mk && git commit -m x" "$G6OK")"
+check_msg "G6 T3b-3: cd <green>; cd typo; cd -; git commit (real cwd is the red payload repo)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd $G6OK; cd $G6TY; cd -; git commit -m x" "$G6R")" "a directory change in a command with"
+check_msg "G6 T3b-3: pushd <green>; pushd typo; popd; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6OK; pushd $G6TY; popd; git commit -m x" "$G6R")" "a directory change in a command with"
+check_msg "G6 T3b-3: cd \$V; cd <green>; cd -; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd \$V; cd $G6OK; cd -; git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-3: pushd <green>/sub; cd \$V; pushd <green>; popd; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6OK/sub; cd \$V; pushd $G6OK; popd; git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-3: pushd <green>; pushd +1; git commit (rotation)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6OK; pushd +1; git commit -m x" "$G6R")" "a directory change in a command with"
+check_msg "G6 T3b-3: popd +1; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6OK; popd +1; git commit -m x" "$G6R")" "a directory change in a command with"
+check_msg "G6 T3b-3: cd -; git commit (nothing to go back to)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd -; git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-3: git init <new> && cd <new> && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "git init $TMPROOT/g6new && cd $TMPROOT/g6new && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-3: mkdir d && cd d && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "mkdir $TMPROOT/g6mk && cd $TMPROOT/g6mk && git commit -m x" "$G6OK")" "a directory change in a command with"
 printf '%s' "$(mkjson Bash "export HOME=$G6R; cd ~ && git commit -m x" "$G6OK")" | HOME="$G6OK" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "G6 T3b-3: export HOME=<red>; cd ~ && git commit (hook HOME is green)" 2 "$?"
 printf '%s' "$(mkjson Bash "cd ~ && git commit -m x" "$G6R")" | HOME="$G6OK" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
@@ -9005,24 +9005,24 @@ expect "G6 S-3c: cd ~ && git commit -> refused (a ~ target is not an absolute pa
 # positives that must stay allowed: the one leading cd to an absolute existing directory
 check_msg "G6 T3b-3: cd <green> && git commit (payload is red)" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash "cd $G6OK && git commit -m x" "$G6R")" "passed."
-check "G6 S-3c: cd <green>; cd sub; cd -; git commit -> refused" hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd $G6OK; cd sub; cd -; git commit -m x" "$G6R")"
-check "G6 S-3c: pushd <green>; pushd sub; popd; git commit -> refused" hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6OK; pushd sub; popd; git commit -m x" "$G6R")"
+check_msg "G6 S-3c: cd <green>; cd sub; cd -; git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd $G6OK; cd sub; cd -; git commit -m x" "$G6R")" "a directory change in a command with"
+check_msg "G6 S-3c: pushd <green>; pushd sub; popd; git commit -> refused" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6OK; pushd sub; popd; git commit -m x" "$G6R")" "a directory change in a command with"
 # T3b-4 shapes: all refused
-check "G6 T3b-4: pushd <red>; dirs -c; popd; git commit"       hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6R; dirs -c; popd; git commit -m x" "$G6OK")"
-check "G6 T3b-4: pushd <red>; dirs +0; popd; git commit"       hooks/pre-commit-test.sh 2 "$(mkjson Bash "pushd $G6R; dirs +0; popd; git commit -m x" "$G6OK")"
-check "G6 T3b-4: export CDPATH=<red>; cd sub && git commit"    hooks/pre-commit-test.sh 2 "$(mkjson Bash "export CDPATH=$G6R; cd sub && git commit -m x" "$G6OK")"
-check "G6 T3b-4: CDPATH=<red> then pushd sub && git commit"    hooks/pre-commit-test.sh 2 "$(mkjson Bash "CDPATH=$G6R; pushd sub && git commit -m x" "$G6OK")"
-check "G6 T3b-4: CDPATH=\$X (unreadable); cd sub && git commit" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'export CDPATH=$X; cd sub && git commit -m x' "$G6OK")"
-check "G6 S-3c: CDPATH set, cd ./sub && git commit -> refused (relative)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "export CDPATH=$G6R; cd ./sub && git commit -m x" "$G6OK")"
-check "G6 S-3c: CDPATH set, cd sub && git commit -> refused (relative)" hooks/pre-commit-test.sh 2 "$(mkjson Bash "export CDPATH=$G6OK/sub; cd sub && git commit -m x" "$G6OK")"
-check "G6 T3b-4: shopt -s cdable_vars; cd sub && git commit"   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'shopt -s cdable_vars; cd sub && git commit -m x' "$G6OK")"
-check "G6 T3b-4: cd sub; OLDPWD=<red>; cd -; git commit"        hooks/pre-commit-test.sh 2 "$(mkjson Bash "cd sub; OLDPWD=$G6R; cd -; git commit -m x" "$G6OK")"
-check "G6 T3b-4: PWD=<red>; cd sub && git commit"              hooks/pre-commit-test.sh 2 "$(mkjson Bash "PWD=$G6R; cd sub && git commit -m x" "$G6OK")"
-check "G6 T3b-4: eval \"cd <red>\"; git commit"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash "eval \"cd $G6R\"; git commit -m x" "$G6OK")"
+check_msg "G6 T3b-4: pushd <red>; dirs -c; popd; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6R; dirs -c; popd; git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: pushd <red>; dirs +0; popd; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "pushd $G6R; dirs +0; popd; git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: export CDPATH=<red>; cd sub && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "export CDPATH=$G6R; cd sub && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: CDPATH=<red> then pushd sub && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "CDPATH=$G6R; pushd sub && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: CDPATH=\$X (unreadable); cd sub && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'export CDPATH=$X; cd sub && git commit -m x' "$G6OK")" "a directory change in a command with"
+check_msg "G6 S-3c: CDPATH set, cd ./sub && git commit -> refused (relative)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "export CDPATH=$G6R; cd ./sub && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 S-3c: CDPATH set, cd sub && git commit -> refused (relative)" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "export CDPATH=$G6OK/sub; cd sub && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: shopt -s cdable_vars; cd sub && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'shopt -s cdable_vars; cd sub && git commit -m x' "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: cd sub; OLDPWD=<red>; cd -; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd sub; OLDPWD=$G6R; cd -; git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: PWD=<red>; cd sub && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "PWD=$G6R; cd sub && git commit -m x" "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: eval \"cd <red>\"; git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "eval \"cd $G6R\"; git commit -m x" "$G6OK")" "a directory change in a command with"
 printf 'cd %s\n' "$G6R" > "$G6OK/cdr.sh"
-check "G6 T3b-4: source cdr.sh (cds into <red>); git commit"    hooks/pre-commit-test.sh 2 "$(mkjson Bash 'source cdr.sh; git commit -m x' "$G6OK")"
-check "G6 T3b-4: set -P; cd sub && git commit"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash 'set -P; cd sub && git commit -m x' "$G6OK")"
-check "G6 T3b-4: builtin cd <red> && git commit"               hooks/pre-commit-test.sh 2 "$(mkjson Bash "builtin cd $G6R && git commit -m x" "$G6OK")"
+check_msg "G6 T3b-4: source cdr.sh (cds into <red>); git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'source cdr.sh; git commit -m x' "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: set -P; cd sub && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'set -P; cd sub && git commit -m x' "$G6OK")" "a directory change in a command with"
+check_msg "G6 T3b-4: builtin cd <red> && git commit" "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "builtin cd $G6R && git commit -m x" "$G6OK")" "a directory change in a command with"
 check_msg "G6 S-3c: a bare dirs listing with a commit is refused (a directory word)" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'dirs; cd sub; git commit -m x' "$G6OK")" "a directory change in a command with commit"
 check_msg "G6 S-3c: the refusal names the way out" "$ROOT/hooks/pre-commit-test.sh" 2 \
@@ -9088,6 +9088,59 @@ check_msg "G3c allowed: pre-commit-test: cd \"<path with a space>\" && git commi
 check "G3c allowed: gate-before-merge: cd \"<worktree with a space>\" && gh pr merge 5 --repo a/b --merge" hooks/gate-before-merge.sh 0 "$(mkjson Bash "cd \"$G3CS\" && gh pr merge 5 --repo a/b --merge" "$G3CP")"
 check "G3c allowed: gate-before-merge: git -C <feature repo> merge feature/y" hooks/gate-before-merge.sh 0 "$(mkjson Bash "git -C $G3CO merge feature/y" "$G3CP")"
 # ---- end v4.3.1 G3c
+
+# ---- v4.3.1 G3d: fix round 1 of S-3c (T3c-1..6): flat script lookup, pull gated, command-position source/dot, GIT_DIR anywhere, message args skipped ----
+G3DP=$(mkrepo g3dp main)
+printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$G3DP/PROJECT_CONTEXT.md"
+printf 'git push\n' > "$G3DP/bare.sh"
+printf 'git commit -m x\n' > "$G3DP/c.sh"
+printf 'git merge feature/y\n' > "$G3DP/m.sh"
+G3DO=$(mkrepo g3do feat)
+printf '# ctx\n\n- **Test**: `exit 0`\n' > "$G3DO/PROJECT_CONTEXT.md"
+mkdir -p "$G3DO/build"
+printf 'echo hi\n' > "$G3DO/build/run.sh"
+printf 'cd %s\n' "$G3DP" > "$G3DO/cdp.sh"
+G3DS=$(mkrepo "g3d sp" feat)
+printf '# ctx\n\n- **Test**: `exit 0`\n' > "$G3DS/PROJECT_CONTEXT.md"
+D3='a directory change in a command with'
+# T3c-1: a relative script path in a command that also changes directory is looked up under the payload cwd and every literal cd target
+check_msg "G3d T3c-1 no-push-main: cd sub; bash ../bare.sh (payload = protected repo)"  "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub; bash ../bare.sh' "$G3DP")" "$D3"
+check_msg "G3d T3c-1 no-push-main: cd sub && bash ../bare.sh (relative lead)"           "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub && bash ../bare.sh' "$G3DP")" "$D3"
+check_msg "G3d T3c-1 no-push-main: cd <P>/sub; bash ../bare.sh (payload = feature repo)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "cd $G3DP/sub; bash ../bare.sh" "$G3DO")" "$D3"
+check_msg "G3d T3c-1 pre-commit-test: cd sub; bash ../c.sh"                              "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd sub; bash ../c.sh' "$G3DP")" "$D3"
+check_msg "G3d T3c-1 pre-commit-test: cd sub && bash ../c.sh (relative lead)"                        "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd sub && bash ../c.sh" "$G3DP")" "$D3"
+check_msg "G3d T3c-1 gate-before-merge: cd sub; bash ../m.sh"                            "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'cd sub; bash ../m.sh' "$G3DP")" "$D3"
+check_msg "G3d T3c-1 gate-before-merge: cd sub && bash ../m.sh (relative lead)"                      "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "cd sub && bash ../m.sh" "$G3DP")" "$D3"
+check_msg "G3d T3c-1 no copy anywhere: cd sub; bash nowhere.sh is refused (cannot read what it cannot find)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub; bash nowhere.sh' "$G3DO")" "cannot find"
+check "G3d T3c-1 allowed: no-push-main: cd build; bash run.sh (run.sh exists in build, no gated verb)"     hooks/no-push-main.sh 0 "$(mkjson Bash 'cd build; bash run.sh' "$G3DO")"
+check "G3d T3c-1 allowed: pre-commit-test: cd build; bash run.sh"                        hooks/pre-commit-test.sh 0 "$(mkjson Bash 'cd build; bash run.sh' "$G3DO")"
+check "G3d T3c-1 allowed: gate-before-merge: cd build; bash run.sh"                      hooks/gate-before-merge.sh 0 "$(mkjson Bash 'cd build; bash run.sh' "$G3DO")"
+# T3c-2: pull is a gated verb again
+check_msg "G3d T3c-2 gate-before-merge: cd <P>; git pull"                                "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash "cd $G3DP; git pull" "$G3DO")" "a directory change in a command with pull"
+# T3c-3: source and . in command position only
+check_msg "G3d T3c-3 pre-commit-test: . ./cdp.sh; git commit"                            "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash '. ./cdp.sh; git commit -m x' "$G3DO")" "$D3"
+check_msg "G3d T3c-3 pre-commit-test: . ./cdp.sh && git commit"                          "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash '. ./cdp.sh && git commit -m x' "$G3DO")" "$D3"
+check_msg "G3d T3c-3 no-push-main: bash -c '. ./cdp.sh; git push'"                       "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -c '. ./cdp.sh; git push'" "$G3DO")" "$D3"
+check_msg "G3d T3c-3 pre-commit-test: source ./cdp.sh; git commit"                       "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'source ./cdp.sh; git commit -m x' "$G3DO")" "$D3"
+check_msg "G3d T3c-3 allowed: -m \"update source docs\""                                 "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit -m "update source docs"' "$G3DO")" "passed."
+check_msg "G3d T3c-3 allowed: git add . && git commit (a dot that is an operand)"        "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git add . && git commit -m x' "$G3DO")" "passed."
+# T3c-4: GIT_DIR / GIT_WORK_TREE as words, with or without an assignment
+check_msg "G3d T3c-4 no-push-main: export GIT_DIR (no assignment); git push"             "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'export GIT_DIR; git push' "$G3DO")" "$D3"
+check_msg "G3d T3c-4 no-push-main: read GIT_DIR <<< x; export GIT_DIR; git push"          "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'read GIT_DIR <<< /x/.git; export GIT_DIR; git push' "$G3DO")" "$D3"
+check_msg "G3d T3c-4 pre-commit-test: printf -v GIT_WORK_TREE %s x; git commit"            "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'printf -v GIT_WORK_TREE %s /x; git commit -m x' "$G3DO")" "$D3"
+check_msg "G3d T3c-4 no-push-main: PowerShell \$env:GIT_DIR = x; git push"                "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson PowerShell '$env:GIT_DIR = "/x/.git"; git push' "$G3DO")" "$D3"
+# T3c-5: the value of a literal -m / --message / --body / --title is data, not a command
+check_msg "G3d T3c-5 allowed: -m \"fix the cd step\""                                    "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit -m "fix the cd step"' "$G3DO")" "passed."
+check_msg "G3d T3c-5 allowed: -m \"create output dirs\""                                 "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit -m "create output dirs"' "$G3DO")" "passed."
+check_msg "G3d T3c-5 allowed: -m 'add eval harness'"                                     "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash "git commit -m 'add eval harness'" "$G3DO")" "passed."
+check_msg "G3d T3c-5 allowed: --message=\"use pushd here\""                              "$ROOT/hooks/pre-commit-test.sh" 0 "$(mkjson Bash 'git commit --message="use pushd here"' "$G3DO")" "passed."
+check "G3d T3c-5 allowed: gh pr merge --body \"cd fix\" from a feature repo"             hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr merge 5 --repo a/b --merge --body "cd fix"' "$G3DS")"
+check_msg "G3d T3c-5 a real cd next to a message is still refused"                        "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash "cd $G3DP; git commit -m \"docs\"" "$G3DO")" "$D3"
+check_msg "G3d T3c-5 a message holding \$( ) is not skipped: -m \"\$(cd /x; echo y)\""    "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'git commit -m "$(cd /x; echo y)"' "$G3DO")" "$D3"
+# KNOWN FALSE REFUSALS, pinned (not fixed): a mention in grep / echo, outside a -m/--message/--body/--title value
+check_msg "G3d KNOWN FALSE REFUSAL: grep -n \"cd \" README.md; git commit"                "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'grep -n "cd " README.md; git commit -m x' "$G3DO")" "$D3"
+check_msg "G3d KNOWN FALSE REFUSAL: echo \"use pushd here\" && git push"                  "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'echo "use pushd here" && git push' "$G3DO")" "$D3"
+# ---- end v4.3.1 G3d
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
