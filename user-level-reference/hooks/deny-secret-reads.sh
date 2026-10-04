@@ -100,6 +100,8 @@
 # same posture as the three git gates that already share this matcher: a hook
 # that cannot see the call cannot clear it.
 
+trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
+
 lib="$(dirname "$0")/lib/json.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
 # shellcheck source=lib/json.sh

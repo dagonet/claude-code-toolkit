@@ -9352,6 +9352,47 @@ cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
 s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
 # ---- end v4.3.1 S6b
 
+# ---- v4.4.0 C2a: the fail-closed hooks map their own exit 127 to 2 in-hook (the old registration wrapper's job; exec/source forms cannot wrap) ----
+C2AR=$(mkrepo c2a main)
+C2AOK="$(mkjson Bash 'ls -la' "$C2AR")"
+C2AHOOKS="pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes require-skills-block"
+for c2a_h in $C2AHOOKS; do
+  c2a_f="$ROOT/hooks/$c2a_h.sh"
+  # (i) the exact trap line, once
+  expect "C2a: $c2a_h carries the 127 trap line once" 1 "$(grep -c '^trap .\[ "\$?" = 127 \] && exit 2. EXIT' "$c2a_f")"
+  # (ii) behaviour: the hook's own trap line + an unknown command, sourced the way the user-level form runs it
+  c2a_trap=$(grep -m1 '^trap ' "$c2a_f")
+  printf '%s\nnosuch_cct_cmd\n' "$c2a_trap" > "$TMPROOT/c2a-127.sh"
+  printf '%s\nexit 0\n' "$c2a_trap" > "$TMPROOT/c2a-0.sh"
+  printf '%s\nexit 1\n' "$c2a_trap" > "$TMPROOT/c2a-1.sh"
+  bash -c '[ -r "$0" ] || exit 2; . "$0"' "$TMPROOT/c2a-127.sh" >/dev/null 2>&1; expect "C2a: $c2a_h trap + unknown command, sourced: 2" 2 "$?"
+  bash -c '[ -r "$0" ] || exit 2; . "$0"' "$TMPROOT/c2a-0.sh" >/dev/null 2>&1;   expect "C2a: $c2a_h trap + exit 0, sourced: 0" 0 "$?"
+  bash -c '[ -r "$0" ] || exit 2; . "$0"' "$TMPROOT/c2a-1.sh" >/dev/null 2>&1;   expect "C2a: $c2a_h trap + exit 1, sourced: 1" 1 "$?"
+  bash "$TMPROOT/c2a-127.sh" >/dev/null 2>&1; expect "C2a: $c2a_h trap + unknown command, as a script: 2" 2 "$?"
+  # (iii) a non-127 outcome of the real hook is unchanged
+  check "C2a: $c2a_h allows a harmless Bash call (exit 0 unchanged)" "hooks/$c2a_h.sh" 0 "$C2AOK"
+done
+check_msg "C2a: no-push-main still refuses invalid JSON with 2" "$ROOT/hooks/no-push-main.sh" 2 'garbage' "did not parse"
+# the trap is the first executable line: nothing but comments and blanks above it
+for c2a_h in $C2AHOOKS; do
+  expect "C2a: $c2a_h has the trap as its first executable line" 1 \
+    "$(awk '/^[[:space:]]*#/ || NF==0 {next} {print ($0 ~ /^trap .\[ "\$\?" = 127 \] && exit 2. EXIT/) ? 1 : 0; exit}' "$ROOT/hooks/$c2a_h.sh")"
+done
+# mirrors of the four user-level-mirrored hooks are byte-identical
+for c2a_h in pre-commit-test no-push-main gate-before-merge deny-secret-reads; do
+  expect "C2a: user-level mirror of $c2a_h is byte-identical" 0 "$(cmp -s "$ROOT/hooks/$c2a_h.sh" "$ROOT/user-level-reference/hooks/$c2a_h.sh"; echo $?)"
+done
+# R-1 audit (the amendment's `. "$0"` form is only exit-code-faithful if none of these shapes exists)
+expect "C2a: R-1 no top-level return in any hook or hook lib" "" \
+  "$(awk 'FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^\}/{d=0} !d && /^[[:space:]]*return\b/{print FILENAME":"FNR": "$0}' "$ROOT"/hooks/*.sh "$ROOT"/hooks/lib/*.sh)"
+expect "C2a: R-2 the EXIT-trap hooks are exactly the six (run-gate.sh is not a registered hook)" \
+  "deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh require-skills-block.sh" \
+  "$(grep -l 'trap .* EXIT' "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | sort | tr '\n' ' ' | sed 's/ $//')"
+expect "C2a: R-1 the set -u hooks are exactly the four non-sourced ones" \
+  "agent-budget-warn.sh post-edit-build.sh retro-brief.sh retro-ledger.sh" \
+  "$(grep -l '^set -[a-z]*u' "$ROOT"/hooks/*.sh | xargs -n1 basename | sort | tr '\n' ' ' | sed 's/ $//')"
+# ---- end v4.4.0 C2a
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

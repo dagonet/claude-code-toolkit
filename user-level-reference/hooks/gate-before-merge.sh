@@ -168,6 +168,8 @@
 # The payload is parsed through hooks/lib/json.sh (node, python3 or jq); with
 # none of the three on PATH this gate fails CLOSED.
 
+trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
+
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_TOOL stays empty, and this gate would exit 0 on every merge.
 lib="$(dirname "$0")/lib/git-cmd.sh"

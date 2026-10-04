@@ -21,6 +21,8 @@
 # §Architecture). Reads its payload through hooks/lib/json.sh, the shared
 # node/python3/jq reader the git gates use.
 
+trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
+
 # ⚠ NAMED `HOOK_PAYLOAD`, NOT `TOOL_INPUT`, AND THE RENAME IS THE POINT.
 # Until v3.0.0 this held the WHOLE stdin document while being called
 # `TOOL_INPUT`, and the string `tool_input` appeared nowhere in the file. That

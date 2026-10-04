@@ -31,6 +31,8 @@
 #     message names the whole command, so do not read a failure as "everything
 #     after the first project was fine"; nothing after it was executed at all.
 
+trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
+
 # v4.3.1 T1-5: bash imports SECONDS from the environment; reset it so the hook-wide ceiling counts from THIS hook's start.
 SECONDS=0
 
