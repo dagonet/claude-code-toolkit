@@ -25,8 +25,63 @@
 # Not registered in settings.json: installed per clone as a shim in
 # <git common dir>/hooks/pre-push by `bash hooks/git-pre-push.sh --install`.
 
-gpp_install() { # [<dir>] -- Task 2
-  echo "pre-push: not installed: installer not implemented yet" >&2
+# gpp_shim -- the file --install writes to <git common dir>/hooks/pre-push. It
+# never changes between releases: the logic lives in the tracked
+# hooks/git-pre-push.sh, which every sync updates. A checkout without that file
+# (a branch older than v4.3.2) is REFUSED -- fail closed -- with the way out.
+gpp_shim() {
+  cat <<'GPP_SHIM'
+#!/bin/sh
+# claude-code-toolkit pre-push shim -- written by `bash hooks/git-pre-push.sh --install`; rewritten on every install, do not edit.
+h="$(git rev-parse --show-toplevel 2>/dev/null)/hooks/git-pre-push.sh"
+if [ ! -f "$h" ]; then
+  echo "BLOCKED: pre-push: $h is missing (this checkout predates v4.3.2, or hooks/ was removed) -- push refused. Merge the trunk into this branch, or push deliberately with 'git push --no-verify'." >&2
+  exit 1
+fi
+exec bash "$h" "$@"
+GPP_SHIM
+}
+
+# gpp_chain -- the line a user adds to a pre-push hook this installer must not
+# overwrite. It saves stdin first: the user's own hook may read the refs too.
+gpp_chain() {
+  cat <<'GPP_CHAIN'
+refs=$(cat); printf '%s\n' "$refs" | bash "$(git rev-parse --show-toplevel)/hooks/git-pre-push.sh" "$@" || exit 1
+GPP_CHAIN
+}
+
+# gpp_install [<dir>] -- 0 installed, 1 not installed (reason on stderr). Never
+# overwrites a foreign hook, never writes where core.hooksPath makes git look
+# elsewhere, and never points a shim at a top-level without this file (R-2).
+gpp_install() {
+  gi_top=$(git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$gi_top" ]; then
+    echo "pre-push: not installed: ${1:-.} is not a git repository -- run 'bash hooks/git-pre-push.sh --install' after 'git init'." >&2
+    return 1
+  fi
+  if [ ! -f "$gi_top/hooks/git-pre-push.sh" ]; then
+    echo "pre-push: not installed: $gi_top/hooks/git-pre-push.sh is missing -- the hooks must live at the repository top-level." >&2
+    return 1
+  fi
+  gi_hp=$(git -C "$gi_top" config --get core.hooksPath 2>/dev/null)
+  if [ -n "$gi_hp" ]; then
+    { echo "pre-push: not installed: core.hooksPath is set ($gi_hp), so git ignores .git/hooks. Add this line to $gi_hp/pre-push yourself:"; gpp_chain; } >&2
+    return 1
+  fi
+  gi_common=$(git -C "$gi_top" rev-parse --git-common-dir 2>/dev/null)
+  case "$gi_common" in /*|[A-Za-z]:*) ;; *) gi_common="$gi_top/$gi_common" ;; esac
+  gi_dst="$gi_common/hooks/pre-push"
+  if [ -e "$gi_dst" ] && ! grep -qF 'claude-code-toolkit pre-push shim' "$gi_dst" 2>/dev/null; then
+    { echo "pre-push: not installed: $gi_dst already exists and is not this toolkit's shim -- left untouched. Add this line to it yourself:"; gpp_chain; } >&2
+    return 1
+  fi
+  if mkdir -p "$gi_common/hooks" 2>/dev/null && gpp_shim > "$gi_dst.tmp.$$" 2>/dev/null &&
+     chmod +x "$gi_dst.tmp.$$" 2>/dev/null && mv -f "$gi_dst.tmp.$$" "$gi_dst" 2>/dev/null; then
+    echo "pre-push: installed $gi_dst (runs hooks/git-pre-push.sh on every push)"
+    return 0
+  fi
+  rm -f "$gi_dst.tmp.$$" 2>/dev/null
+  echo "pre-push: not installed: cannot write $gi_dst" >&2
   return 1
 }
 
