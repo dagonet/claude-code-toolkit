@@ -1,2 +1,2 @@
-4.3.1
-Gate fail-open fixes (a budgeted per-commit Test that kills its whole tree, git.exe and quoted git, script bodies judged where they run, tree-named commit-time artifacts) and sync-server fixes (pending opt-in notes, strict parameters, files_created).
+4.4.0
+Optional Jev spawn routing (user-level /jev skill, off by default, per clone) on model-floor's resolution moved to hooks/lib/agent-model.sh; model-floor steps aside only for a router that will run -- hook lib, user-level skill and check changes, no template or server-code change.
