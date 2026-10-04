@@ -18,7 +18,7 @@
 #   - v2.2.1: three more ways a gate could not determine the answer, all of
 #     which used to resolve to "allow" and now resolve to "refuse":
 #     an unparseable payload (gc_read_stdin), a parser that is present but
-#     broken (json.sh's json_probe_ok), and an unreplaced `{{...}}`
+#     broken (json_payload's canary), and an unreplaced `{{...}}`
 #     config value (gc_is_placeholder).
 #
 # WHY THESE GATES SCAN THE WHOLE STRING, and why enforce-delegation.sh does the
@@ -330,7 +330,14 @@ GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 # Claude Code runs hooks in.
 gc_read_stdin() {
   GC_JSON=$(cat)
-  if ! json_have; then
+  # v4.3.1 S6b: ONE interpreter run parses the payload, returns the three fields
+  # and doubles as the validity check and the parser probe (json_payload; it was
+  # five spawns: probe, json_valid, three json_get). rc 2 = no working parser,
+  # anything else non-zero (1 = does not parse, empty stdin included; 127 =
+  # json_payload missing) refuses too; 0 = fields in JP_*.
+  json_payload "$GC_JSON"
+  gc_rc=$?
+  if [ "$gc_rc" = 2 ]; then
     GC_CWD=$(pwd)
     GC_TOOL=""
     GC_CMD=""
@@ -339,13 +346,13 @@ gc_read_stdin() {
     exit 2
   fi
   # v2.2.1: a payload that does not PARSE is not a payload with no command in
-  # it. json_get returns "" for both, and the gates read "" as "nothing to
+  # it. A field read returns "" for both, and the gates read "" as "nothing to
   # inspect, allow" — so malformed JSON, a truncated payload and empty stdin all
   # exited 0 in silence. The parser is present and working here; the INPUT is
   # the problem, so the message is deliberately distinct from the no-parser one:
   # from outside, the two used to be indistinguishable, which is what made the
   # first report of this read as a false alarm.
-  if ! json_valid "$GC_JSON"; then
+  if [ "$gc_rc" != 0 ]; then
     GC_CWD=$(pwd)
     GC_TOOL=""
     GC_CMD=""
@@ -353,14 +360,14 @@ gc_read_stdin() {
     echo "BLOCKED: hook payload did not parse — the git gates cannot inspect the command. Create <cwd>/.claude/git-guard-off to opt out." >&2
     exit 2
   fi
-  GC_TOOL=$(json_get "$GC_JSON" tool_name)
-  GC_CWD=$(json_get "$GC_JSON" cwd)
+  GC_TOOL=$JP_TOOL
+  GC_CWD=$JP_CWD
   if [ -z "$GC_CWD" ] || [ ! -d "$GC_CWD" ]; then
     GC_CWD=$(pwd)
   fi
   case "$GC_TOOL" in
     Bash|PowerShell)
-      # ACCEPTED AND DOCUMENTED, not fixed: json_get prints "" for a
+      # ACCEPTED AND DOCUMENTED, not fixed: the read yields "" for a
       # `tool_input.command` that is an object or an array, which is
       # indistinguishable here from the key being absent — and an absent key IS
       # a legitimate allow (a Bash payload carrying no command must not block
@@ -368,7 +375,7 @@ gc_read_stdin() {
       # two apart needs a "key present but non-scalar" probe that json.sh does
       # not have, and the case is not reachable from Claude Code, which always
       # sends a string. Revisit if a real payload ever shows otherwise.
-      GC_CMD=$(json_get "$GC_JSON" tool_input.command)
+      GC_CMD=$JP_CMD
       # v4.1.2 spec §1: join backslash-newline continuations ONCE, here, before
       # gc_protect_c_paths and before any reader -- gc_seg_raw, gc_segments,
       # gc_seg_quoted, gc_augmented_cmd's walk and both guards' fast-exit greps
@@ -408,7 +415,7 @@ gc_read_stdin() {
 # strictly worse. Of the three states, two are ALREADY fail-closed and only the
 # third is live:
 #
-#   stdin empty or unreadable   -> gc_read_stdin exits 2 (json_valid treats
+#   stdin empty or unreadable   -> gc_read_stdin exits 2 (json_payload treats
 #                                  empty stdin as INVALID, deliberately).
 #   no JSON parser on PATH      -> gc_read_stdin exits 2.
 #   payload parsed, GC_CMD ""   -> HERE. It splits three ways:

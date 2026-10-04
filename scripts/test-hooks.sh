@@ -9192,6 +9192,120 @@ check_msg "G3d T3c-14 allowed: tar -xf a.tgz -C . && git commit -m x"           
 check_msg "G3d T3c-14 no-push-main: bash -cm '. ./cdp.sh; git push' (c first in cluster)" "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -cm '. ./cdp.sh; git push'" "$G3DO")" "$D3"
 check_msg "G3d T3c-14 no-push-main: bash -ce '. ./cdp.sh; git push'"                      "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash "bash -ce '. ./cdp.sh; git push'" "$G3DO")" "$D3"
 # ---- end v4.3.1 G3d
+# ---- v4.3.1 S6: a command that cannot reach a commit takes the exact fast path ----
+S6R=$(mkrepo s6 main)
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$S6R/PROJECT_CONTEXT.md"
+printf 'git commit -m x\n' > "$S6R/c.sh"
+printf 'git commit -m x\n' > "$S6R/c.ps1"
+printf 'git commit -m x\n' > "$S6R/rc"
+mkdir -p "$S6R/sub"
+printf 'git merge x\n' > "$S6R/sub/m.sh"
+S6H=hooks/pre-commit-test.sh
+check "S6: . ./rc gated (dot rule, no 'sh' in the name)" "$S6H" 2 "$(mkjson Bash '. ./rc' "$S6R")"
+check "S6: ls;. ./rc gated"           "$S6H" 2 "$(mkjson Bash 'ls;. ./rc' "$S6R")"
+# equivalence: every shape that can reach a commit still walks and is gated
+check "S6: git commit gated"          "$S6H" 2 "$(mkjson Bash 'git commit -m x' "$S6R")"
+check "S6: bash c.sh gated"           "$S6H" 2 "$(mkjson Bash 'bash c.sh' "$S6R")"
+check "S6: sh c.sh gated"             "$S6H" 2 "$(mkjson Bash 'sh c.sh' "$S6R")"
+check "S6: . ./c.sh gated"            "$S6H" 2 "$(mkjson Bash '. ./c.sh' "$S6R")"
+check "S6: ls; . ./c.sh gated"        "$S6H" 2 "$(mkjson Bash 'ls; . ./c.sh' "$S6R")"
+check "S6: ls && . ./c.sh gated"      "$S6H" 2 "$(mkjson Bash 'ls && . ./c.sh' "$S6R")"
+check "S6: source c.sh gated"         "$S6H" 2 "$(mkjson Bash 'source c.sh' "$S6R")"
+check "S6: pwsh -File c.ps1 gated"    "$S6H" 2 "$(mkjson Bash 'pwsh -File c.ps1' "$S6R")"
+# spellings of the verb that the fast path must not mistake for a no-op
+check "S6: git.exe commit gated"      "$S6H" 2 "$(mkjson Bash 'git.exe commit -m x' "$S6R")"
+check "S6: \"git\" commit gated"      "$S6H" 2 "$(mkjson Bash '"git" commit -m x' "$S6R")"
+check "S6: 'git' commit gated"        "$S6H" 2 "$(mkjson Bash "'git' commit -m x" "$S6R")"
+check "S6: /usr/bin/git commit gated" "$S6H" 2 "$(mkjson Bash '/usr/bin/git commit -m x' "$S6R")"
+check "S6: GIT commit gated"          "$S6H" 2 "$(mkjson Bash 'GIT commit -m x' "$S6R")"
+check "S6: git com\"mit\" gated"      "$S6H" 2 "$(mkjson Bash 'git com"mit" -m x' "$S6R")"
+# gc_dir_rule refusals reachable with no commit/sh/source text at all
+check "S6: cd sub; git merge x"       "$S6H" 2 "$(mkjson Bash 'cd sub; git merge x' "$S6R")"
+check "S6: cd sub; git pull"          "$S6H" 2 "$(mkjson Bash 'cd sub; git pull' "$S6R")"
+check "S6: cd sub; git push origin main" "$S6H" 2 "$(mkjson Bash 'cd sub; git push origin main' "$S6R")"
+check "S6: cd sub; gh pr merge 1"     "$S6H" 2 "$(mkjson Bash 'cd sub; gh pr merge 1' "$S6R")"
+check "S6: cd sub; GIT_DIR=x git merge y" "$S6H" 2 "$(mkjson Bash 'cd sub; GIT_DIR=x git merge y' "$S6R")"
+check "S6: GIT_DIR=x git merge y"     "$S6H" 2 "$(mkjson Bash 'GIT_DIR=x git merge y' "$S6R")"
+# scanned scripts
+check "S6: cd sub; bash m.sh (body has git merge)" "$S6H" 2 "$(mkjson Bash 'cd sub; bash m.sh' "$S6R")"
+# controls: take the fast path
+check "S6: ls -la allowed"            "$S6H" 0 "$(mkjson Bash 'ls -la' "$S6R")"
+check "S6: echo hi > out.txt allowed" "$S6H" 0 "$(mkjson Bash 'echo hi > out.txt' "$S6R")"
+expect "S6: ls -la still writes the no-op record" yes "$(ls "$(gatedir "$S6R")"/last-precommit-noop.*.json >/dev/null 2>&1 && echo yes || echo no)"
+# structural pin: same token count and lengths; only one can contain a commit
+S6SHIM="$TMPROOT/s6shim"
+S6LOG="$TMPROOT/s6.log"
+mkdir -p "$S6SHIM"
+for b in node python3 jq git sed awk tr grep date wc find mv head cat; do
+  s6real=$(command -v "$b" 2>/dev/null) || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$b" "$S6LOG" "$s6real" > "$S6SHIM/$b"
+  chmod +x "$S6SHIM/$b"
+done
+s6_count() { : > "$S6LOG"; printf '%s' "$(mkjson Bash "$1" "$S6R")" | PATH="$S6SHIM:$PATH" bash "$ROOT/$S6H" >/dev/null 2>&1; wc -l < "$S6LOG" | tr -d ' '; }
+S6_FAST=$(s6_count 'ls -la xcomxitx')
+S6_WALK=$(s6_count 'ls -la xcommitx')
+expect "S6: the fast path spawns at least 5 fewer programs ($S6_FAST vs $S6_WALK)" yes "$([ $((S6_WALK - S6_FAST)) -ge 5 ] && echo yes || echo no)"
+# ---- end v4.3.1 S6
+# ---- v4.3.1 S6b: the payload is read by ONE parser call ----
+S6BR=$(mkrepo s6b main)
+S6BN="$ROOT/hooks/no-push-main.sh"
+S6BP="$ROOT/hooks/pre-commit-test.sh"
+S6BG="$ROOT/hooks/gate-before-merge.sh"
+S6BSHIM="$TMPROOT/s6bshim"; S6BLOG="$TMPROOT/s6b.log"; mkdir -p "$S6BSHIM"
+for b in node python3 jq; do
+  s6breal=$(command -v "$b" 2>/dev/null) || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$b" "$S6BLOG" "$s6breal" > "$S6BSHIM/$b"
+  chmod +x "$S6BSHIM/$b"
+done
+s6b_spawns() { # <hook> -- parser processes started by a no-op `ls -la` payload
+  : > "$S6BLOG"; printf '%s' "$(mkjson Bash 'ls -la' "$S6BR")" | PATH="$S6BSHIM:$PATH" bash "$1" >/dev/null 2>&1; wc -l < "$S6BLOG" | tr -d ' '
+}
+expect "S6b: no-push-main spawns one parser process"      1 "$(s6b_spawns "$S6BN")"
+expect "S6b: pre-commit-test spawns one parser process"   1 "$(s6b_spawns "$S6BP")"
+expect "S6b: gate-before-merge spawns one parser process" 1 "$(s6b_spawns "$S6BG")"
+# fidelity of the three fields through a gate
+check_msg "S6b: trailing newline in the command"  "$S6BN" 2 "$(mkjson Bash "$(printf 'git push origin main\n')" "$S6BR")" "main"
+check_msg "S6b: embedded NUL (git pu\\u0000sh) is dropped, push still refused" "$S6BN" 2 \
+  "$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git pu\u0000sh origin main"},"cwd":"'"$S6BR"'"}')" "main"
+check_msg "S6b: em dash in the command"           "$S6BN" 2 "$(mkjson Bash 'git push origin main # — x' "$S6BR")" "main"
+check     "S6b: em dash, no verb, allowed"        hooks/no-push-main.sh 0 "$(mkjson Bash 'ls # — x' "$S6BR")"
+check_msg "S6b: cwd missing falls back to the process cwd" "$S6BN" 2 \
+  '{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}' "main"
+check     "S6b: Bash with no tool_input allowed"  hooks/no-push-main.sh 0 '{"tool_name":"Bash","cwd":"/tmp"}'
+check     "S6b: command as a number allowed"      hooks/no-push-main.sh 0 "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":12},\"cwd\":\"$S6BR\"}"
+check_msg "S6b: command as an object refused"     "$S6BN" 2 "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":{\"a\":1}},\"cwd\":\"$S6BR\"}" "could not read"
+# refusals unchanged
+check_msg "S6b: invalid JSON refused"             "$S6BN" 2 'garbage' "did not parse"
+check_msg "S6b: empty stdin refused"              "$S6BP" 2 '' "did not parse"
+check_msg "S6b: trailing garbage refused"         "$S6BG" 2 '{"a":1} x' "did not parse"
+check_msg "S6b: two documents refused"            "$S6BN" 2 '{"a":1} {"b":2}' "did not parse"
+if [ -n "$HAVE_NODE$HAVE_PY" ]; then
+  check "S6b: a null payload parses, no command, allowed" hooks/no-push-main.sh 0 'null'
+else
+  check_msg "S6b: a null payload refused (jq -e refuses it)" "$S6BN" 2 'null' "did not parse"
+fi
+# fallback: a backend that runs but extracts nothing is skipped, not trusted
+S6BMUTE="$TMPROOT/s6bmute"; mkdir -p "$S6BMUTE"
+printf '#!/bin/sh\nexit 0\n' > "$S6BMUTE/node"; chmod +x "$S6BMUTE/node"
+S6BPUSH="$(mkjson Bash 'git push origin main' "$S6BR")"
+errf="$TMPROOT/s6b.err"
+s6b_pathcheck() { # <label> <dir> <want> <needle> -- the push payload with <dir> ahead on PATH
+  printf '%s' "$S6BPUSH" | PATH="$2:$PATH" bash "$S6BN" >/dev/null 2>"$errf"; s6b_rc=$?
+  if [ "$s6b_rc" = "$3" ] && grep -qF "$4" "$errf"; then pass=$((pass + 1)); printf 'PASS  %-42s (exit %s)\n' "$1" "$s6b_rc"
+  else fail=$((fail + 1)); printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' "$1" "$3" "$4" "$s6b_rc" "$(head -1 "$errf")"; fi
+}
+s6b_pathcheck "S6b: a mute node falls through, push refused by the gate" "$S6BMUTE" 2 "protected branch"
+# a node that prints a well-formed record with a WRONG canary and a Read tool: trusting it allows the push
+S6BWRONG="$TMPROOT/s6bwrong"; mkdir -p "$S6BWRONG"
+printf '#!/bin/sh\nprintf '"'"'x\\0V\\0Read\\0\\0\\0'"'"'\n' > "$S6BWRONG/node"; chmod +x "$S6BWRONG/node"
+s6b_pathcheck "S6b: a wrong-canary node is skipped, push refused by the gate" "$S6BWRONG" 2 "protected branch"
+# a node that prints only `ok` (short record, no verdict) is a failed canary too
+S6BSHORT="$TMPROOT/s6bshort"; mkdir -p "$S6BSHORT"
+printf '#!/bin/sh\nprintf ok\n' > "$S6BSHORT/node"; chmod +x "$S6BSHORT/node"
+s6b_pathcheck "S6b: a short-record node is skipped, push refused by the gate" "$S6BSHORT" 2 "protected branch"
+cp "$S6BMUTE/node" "$S6BMUTE/python3"; cp "$S6BMUTE/node" "$S6BMUTE/jq"
+s6b_pathcheck "S6b: all three parsers mute: exit 2 with the no-parser line" "$S6BMUTE" 2 "no JSON parser"
+# ---- end v4.3.1 S6b
 
 # ---- v4.3.1 G4: commit-time gate artifacts are named by tree; parallel PRs from one parent keep theirs ----
 G4R=$(mkrepo g4par main)
