@@ -483,14 +483,14 @@ fi
 # hook runs on EVERY Bash call; the walk below cost ~1.4 s on an idle machine
 # for `ls -la`. Everything past this point can only refuse a command whose text
 # (quotes and backslashes removed, case ignored) holds one of these words:
-#   commit            the gated verb itself (`git com"mit"`, `git com\mit`, `GIT COMMIT`);
+#   commit            the gated verb itself (`git com"mit"`, `GIT COMMIT`);
 #   merge pull push   gc_dir_rule (simple-cd rule) refuses these, and `gh pr merge`,
 #                     after a directory change even with no `commit` in the text;
 #   sh                the WORD sh (/bin/sh; never x.sh or --short), and the substrings
 #                     bash, pwsh, powershell -- the words that make the walk read
 #                     a script body (gc_script_body, gc_seg_is_ps);
-#   source, `.`       `source` (substring), and a LONE `.` token (`. x`, `ls;. x`;
-#                     never `./x` or a prose dot).
+#   source, `.`       `source` (substring), and a `.` token: lone or ending in `/.`
+#                     (`. x`, `ls;. x`, `x/. c.sh`; never `./x` or a prose dot).
 # With none of them nothing below can refuse, so the walk is skipped and the same
 # no-op record is written. Zero forks: pure parameter expansion and case. Any
 # doubt keeps the walk -- this only ever skips work.
@@ -499,7 +499,8 @@ pct_t=${GC_CMD//\"/}; pct_t=${pct_t//\'/}; pct_t=${pct_t//\\/}
 # --short, publish, stylish, every x.sh name, and every sentence of prose. A
 # word: the text with each character outside [[:alnum:]._] made a space, so
 # `/bin/sh` fires and `x.sh`/`--short` do not; a lone dot: the text with
-# whitespace and ; & | ( ) { } ! ` < > made spaces, so `. x` and `ls;. x` fire and
+# whitespace and ; & | ( ) { } ! ` < > made spaces, so `. x`, `ls;. x` and a token
+# ending in `/.` (`x/. c.sh`: the walk takes its basename as a dot-source) fire and
 # `./x`, `..` and `end.` do not. bash, pwsh and powershell are named
 # explicitly (*sh* used to cover them); the verb stems stay substrings.
 # Superset proof: design F1. The bracket patterns live in variables: a literal
@@ -510,7 +511,7 @@ pct_walk=0
 shopt -s nocasematch
 case "$pct_t" in *commit*|*merge*|*pull*|*push*|*source*|*bash*|*pwsh*|*powershell*) pct_walk=1 ;; esac
 case "$pct_w" in *" sh "*) pct_walk=1 ;; esac
-case "$pct_d" in *" . "*) pct_walk=1 ;; esac
+case "$pct_d" in *" . "*|*"/. "*) pct_walk=1 ;; esac
 shopt -u nocasematch
 [ "$pct_walk" = 1 ] || { pct_note no-commit-segment -1; exit 0; }
 

@@ -9383,6 +9383,8 @@ check "V2: /usr/bin/bash c.sh gated"           hooks/pre-commit-test.sh 2 "$(mkj
 check "V2: ls&&sh c.sh gated"                  hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&sh c.sh' "$V2R")"
 check "V2: ls|sh c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls|sh c.sh' "$V2R")"
 check "V2: . c.sh gated"                       hooks/pre-commit-test.sh 2 "$(mkjson Bash '. c.sh' "$V2R")"
+check "V2: x/. c.sh gated"                     hooks/pre-commit-test.sh 2 "$(mkjson Bash 'x/. c.sh' "$V2R")"
+check "V2: ./. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash './. c.sh' "$V2R")"
 check "V2: ls;. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls;. c.sh' "$V2R")"
 check "V2: ls&&. c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&. c.sh' "$V2R")"
 check "V2: C:\\Tools\\pwsh.exe -File c.ps1 gated" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'C:\Tools\pwsh.exe -File c.ps1' "$V2R")"
@@ -9411,6 +9413,8 @@ sh c.sh
 /usr/bin/bash c.sh
 . ./c.sh
 . c.sh
+x/. c.sh
+./. c.sh
 ls; . ./c.sh
 ls;. c.sh
 ls && . ./c.sh
