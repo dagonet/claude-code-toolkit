@@ -4062,6 +4062,41 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 69 -- v4.3.2 P2/P3: the native pre-push hook reads the protected set
+# through gc_protected_branches (the function hooks/no-push-main.sh uses), never
+# through a grep of its own -- two readers of one field is how they drift -- and
+# both bootstrappers install it. (Next free number: v4.4 took 65, v4.5 plans
+# 66-68.) Control: a copy without the call, a copy with its own grep, and
+# setup copies without the install line must each be flagged.
+# ---------------------------------------------------------------------------
+echo
+c69_pred() { # <hook> <setup.sh> <setup.ps1> -> prints each failure; empty when sound
+  grep -q 'gc_protected_branches "' "$1" 2>/dev/null || printf ' %s does not call gc_protected_branches;' "$1"
+  grep -qE 'grep[^#]*Protected' "$1" 2>/dev/null && printf ' %s reads **Protected branches** itself;' "$1"
+  grep -qF 'git-pre-push.sh --install' "$2" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$2"
+  grep -qF 'git-pre-push.sh --install' "$3" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$3"
+}
+c69_tmp=$(mktemp -d)
+grep -v 'gc_protected_branches "' hooks/git-pre-push.sh > "$c69_tmp/nocall.sh" 2>/dev/null
+{ cat hooks/git-pre-push.sh; printf 'x=$(grep -E "Protected branches" PROJECT_CONTEXT.md)\n'; } > "$c69_tmp/owngrep.sh"
+grep -v 'git-pre-push.sh --install' setup-project.sh > "$c69_tmp/setup.sh" 2>/dev/null
+grep -v 'git-pre-push.sh --install' setup-project.ps1 > "$c69_tmp/setup.ps1" 2>/dev/null
+c69_ctl=0
+[ -n "$(c69_pred "$c69_tmp/nocall.sh" setup-project.sh setup-project.ps1)" ] || c69_ctl=1
+[ -n "$(c69_pred "$c69_tmp/owngrep.sh" setup-project.sh setup-project.ps1)" ] || c69_ctl=1
+[ -n "$(c69_pred hooks/git-pre-push.sh "$c69_tmp/setup.sh" setup-project.ps1)" ] || c69_ctl=1
+[ -n "$(c69_pred hooks/git-pre-push.sh setup-project.sh "$c69_tmp/setup.ps1")" ] || c69_ctl=1
+rm -rf "$c69_tmp"
+c69_bad=$(c69_pred hooks/git-pre-push.sh setup-project.sh setup-project.ps1)
+if [ "$c69_ctl" -ne 0 ]; then
+  ko "check 69: CONTROL FAILED -- a copy without the call, with its own grep, or a setup without the install line was not flagged; the check is vacuous"
+elif [ -n "$c69_bad" ]; then
+  ko "check 69:$c69_bad"
+else
+  ok "check 69: hooks/git-pre-push.sh reads the protected set through gc_protected_branches only, and both setup scripts install it; control fires"
+fi
+
+# ---------------------------------------------------------------------------
 # Check 43 — VERSION line 1 is bare X.Y.Z (v4.0). The server reports it as
 # server_version; parse_version at every consumer accepts EXACTLY three dotted
 # integers. A `v` or a `-rc1` here makes requires_server_satisfied return False
