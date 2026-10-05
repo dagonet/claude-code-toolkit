@@ -906,7 +906,9 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # a gh merge counts as a mover for the arms below (`gh pr me\rge; git -C <main> push origin feat`);
       # ghmut = the plain spelling is the ONLY mover so far, which the refspec-free `--ff-only` pull
       # exemption tolerates (`gh pr merge 1; git checkout main; git pull --ff-only` stays allowed)
-      if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b' && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; }; then
+      # v4.4.0: anchored -- a plain `gh pr merge` LATER in a disguised segment
+      # (`sh -c '<gh pr me\rge>' gh pr merge`) is not the plain spelling running
+      if printf '%s\n' "$seg" | grep -qE '^[[:space:]]*gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; }; then
         ghmut=1
       else
         ghmut=0

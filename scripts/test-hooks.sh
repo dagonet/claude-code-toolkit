@@ -10068,6 +10068,18 @@ for v3c in 'gh pr merge 1; git checkout main; git pull --ff-only' 'gh pr merge 1
            'gh pr merge 1 --squash --delete-branch; git checkout main; git pull --ff-only' 'gh pr merge 1; git fetch' 'gh pr merge 1; gh pr merge 2'; do
   check "V3 gate-before-merge (the documented safe flow): $v3c" hooks/gate-before-merge.sh 0 "$(mkjson Bash "$v3c" "$V3G")"
 done
+# v4.4.0 fix (a): ghmut is set only by a segment that STARTS with the plain spelling; a plain
+# `gh pr merge` later in a disguised segment no longer earns the --ff-only pull exemption
+for v3c in "sh -c 'gh pr me\\rge 1' gh pr merge; git checkout main; git pull --ff-only" \
+           "bash -c 'gh pr me\\rge 1' gh pr merge; git checkout main; git pull --ff-only" \
+           "sh -c 'gh pr me\\rge 1' gh pr merge && git checkout main && git pull --ff-only" \
+           "env sh -c 'gh pr me\\rge 1' gh pr merge; git checkout main; git pull --ff-only" \
+           "sh -c \"gh pr mer\\\\ge 1\" gh pr merge; git checkout main; git pull --ff-only" \
+           "x gh pr me\\rge 1 gh pr merge; git checkout main; git pull --ff-only" \
+           "bash -c 'gh pr mer\\ge 1' gh pr merge 2; git checkout main; git pull --ff-only" \
+           "sh -c 'g\\h pr merge 1' x gh pr merge; git checkout main; git pull --ff-only"; do
+  check "V3 gate-before-merge (disguised mover, v4.4.0 a): $v3c" hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3c" "$V3G")"
+done
 check "V3 control: git push origin +feat from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin +feat' "$V3F2")"
 check "V3 control: git push --tags from a feature repo"       hooks/no-push-main.sh 0 "$(mkjson Bash 'git push --tags' "$V3F2")"
 check "V3 control: git push origin feat 2>&1 from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin feat 2>&1' "$V3F2")"
