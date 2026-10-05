@@ -88,6 +88,13 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/verify-hooks.sh\\\"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

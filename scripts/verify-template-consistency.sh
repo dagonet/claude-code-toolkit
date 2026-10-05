@@ -4951,6 +4951,85 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 70 (doctor, repo side; v4.4.0 C2) -- every hook this repo REGISTERS
+# names a script that exists and passes `bash -n`, and every exec-form
+# registration names a program that can be spawned.
+#
+# Scope: the six variant .claude/settings.json, the root .claude/settings.json,
+# every templates/*/.claude/agents/*.md frontmatter, and the user-level
+# reference rendered with the LOCAL bash and @HOOKS@ -> user-level-reference/hooks.
+# The settings files are read by hooks/verify-hooks.sh --report itself, in a
+# fixture project holding a copy of hooks/ (the reader the user runs at every
+# session start is the reader this check exercises). The user-level reference is
+# rendered by scripts/render-user-hooks.sh, so the exec-form program test (an
+# unspawnable program is a NON-blocking error: every check behind it would pass)
+# covers the string a user will actually run.
+#
+# TWO-SIDED: a control deletes one registered hook from a scratch project and
+# expects the report to list it and exit 1, and a second names a nonexistent exec
+# program and expects MISSING PROGRAM -- otherwise a reader that finds nothing
+# would make this check green by construction.
+# ---------------------------------------------------------------------------
+echo
+note "Check 70: every registered hook script exists and passes bash -n; every exec-form program is spawnable (settings, agent frontmatter, rendered user reference)"
+c70_tmp=$(mktemp -d)
+c70_h0="$c70_tmp/home0"; mkdir -p "$c70_h0"
+c70_proj="$c70_tmp/proj"; mkdir -p "$c70_proj/.claude"; cp -R hooks "$c70_proj/hooks"
+c70_bad=""
+c70_scanned=0
+for c70_f in $(for v in $VARIANTS; do printf 'templates/%s/.claude/settings.json\n' "$v"; done) .claude/settings.json; do
+  if [ ! -f "$c70_f" ]; then c70_bad="$c70_bad [$c70_f missing]"; continue; fi
+  cp "$c70_f" "$c70_proj/.claude/settings.json"
+  c70_out=$(env HOME="$c70_h0" CLAUDE_PROJECT_DIR="$c70_proj" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+  c70_scanned=$((c70_scanned + 1))
+  if [ "$c70_rc" -ne 0 ] || [ -n "$c70_out" ]; then c70_bad="$c70_bad [$c70_f: rc=$c70_rc $(printf '%s' "$c70_out" | tr '\n' ' ')]"; fi
+done
+# agent frontmatter registrations
+c70_ag=0
+for c70_a in templates/*/.claude/agents/*.md; do
+  [ -f "$c70_a" ] || continue
+  for c70_s in $(grep -oE 'hooks/[A-Za-z0-9_.-]+\.sh' "$c70_a" | sort -u); do
+    c70_ag=$((c70_ag + 1))
+    if [ ! -f "$c70_s" ]; then c70_bad="$c70_bad [$c70_a: $c70_s missing]"
+    elif ! bash -n "$c70_s" 2>/dev/null; then c70_bad="$c70_bad [$c70_a: $c70_s fails bash -n]"; fi
+  done
+done
+[ "$c70_ag" -gt 0 ] || c70_bad="$c70_bad [no agent frontmatter registration found: the scan is inert]"
+# the user-level reference, rendered with the local bash
+c70_uh="$c70_tmp/uhome"; mkdir -p "$c70_uh/.claude"; cp -R user-level-reference/hooks "$c70_uh/.claude/hooks"
+if c70_ro=$(HOME="$c70_uh" bash scripts/render-user-hooks.sh --write 2>&1); then
+  c70_out=$(env -u CLAUDE_PROJECT_DIR HOME="$c70_uh" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+  if [ "$c70_rc" -ne 0 ] || [ -n "$c70_out" ]; then c70_bad="$c70_bad [user-level reference rendered: rc=$c70_rc $(printf '%s' "$c70_out" | tr '\n' ' ')]"; fi
+  c70_nx=$(grep -c '"args"' "$c70_uh/.claude/settings.json")
+  [ "$c70_nx" -gt 0 ] || c70_bad="$c70_bad [the rendered user-level settings carry no exec-form entry: the program test is inert]"
+else
+  c70_bad="$c70_bad [render-user-hooks.sh --write failed: $(printf '%s' "$c70_ro" | tr '\n' ' ')]"
+fi
+if [ -z "$c70_bad" ]; then
+  ok "check 70: $c70_scanned settings files, $c70_ag agent-frontmatter registrations and the rendered user-level reference: every script exists, passes bash -n, and every exec-form program is spawnable"
+else
+  ko "check 70: $c70_bad"
+fi
+# control 1: a deleted registered hook is listed, exit 1
+cp templates/general/.claude/settings.json "$c70_proj/.claude/settings.json"
+rm -f "$c70_proj/hooks/no-push-main.sh"
+c70_out=$(env HOME="$c70_h0" CLAUDE_PROJECT_DIR="$c70_proj" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+if [ "$c70_rc" -eq 1 ] && printf '%s\n' "$c70_out" | grep -q 'MISSING: .*hooks/no-push-main\.sh'; then
+  ok "check 70 control: verify-hooks.sh --report lists a deleted registered hook and exits 1"
+else
+  ko "check 70 control: a deleted registered hook was NOT reported (rc=$c70_rc out=[$(printf '%s' "$c70_out" | tr '\n' ' ')]) -- the check is green by construction"
+fi
+# control 2: a nonexistent exec-form program is reported (D2)
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s/nowhere/bash","args":["-c",". \\"$0\\"","%s/hooks/retro-brief.sh"]}]}]}}\n' "$c70_tmp" "$c70_proj" > "$c70_proj/.claude/settings.json"
+c70_out=$(env HOME="$c70_h0" CLAUDE_PROJECT_DIR="$c70_proj" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+if [ "$c70_rc" -eq 1 ] && printf '%s\n' "$c70_out" | grep -q '^MISSING PROGRAM: .*nowhere/bash'; then
+  ok "check 70 control: an exec-form command that cannot be spawned is reported MISSING PROGRAM and exits 1"
+else
+  ko "check 70 control: a nonexistent exec-form program was NOT reported (rc=$c70_rc out=[$(printf '%s' "$c70_out" | tr '\n' ' ')])"
+fi
+rm -rf "$c70_tmp"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$skip_count" -gt 0 ]; then
   echo "$skip_count check(s) skipped"

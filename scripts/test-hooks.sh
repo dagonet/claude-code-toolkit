@@ -9947,7 +9947,7 @@ json_valid "$(cat "$TMPROOT/c1-print.json")"
 expect "C1 (a): --print output parses as JSON" 0 "$?"
 expect "C1 (a): --print output has no @BASH@ / @HOOKS@ left" 0 "$(grep -c '@BASH@\|@HOOKS@' "$TMPROOT/c1-print.json")"
 expect "C1 (a): --print output has no tilde" 0 "$(grep -c '~' "$TMPROOT/c1-print.json")"
-expect "C1 (a): the reference carries the placeholders (five exec entries)" 5 "$(grep -c '"command": "@BASH@"' "$C1REF")"
+expect "C1 (a): the reference carries the placeholders (six exec entries)" 6 "$(grep -c '"command": "@BASH@"' "$C1REF")"
 expect "C1 (a): the reference spells no old shell-form user registration" 0 "$(grep -c 'bash ~/.claude/hooks/' "$C1REF")"
 HOME="$C1H" bash "$C1RUH" --list >"$TMPROOT/c1-list.tsv" 2>/dev/null
 expect "C1 (a): --list exits 0" 0 "$?"
@@ -10205,6 +10205,182 @@ expect "C1 (o): System32/bash.exe is still refused" 1 "$?"
 RUH_TEST_OSTYPE=msys RUH_TEST_BASH="$C1W/Git/bin/bash" HOME="$C1H" bash "$C1RUH" --print >/dev/null 2>&1
 expect "C1 (o): Git's bin/bash (.exe appended) is still refused" 1 "$?"
 # ---- end v4.4.0 C1
+
+# ---- v4.4.0 C2b: SessionStart hook verification (hooks/verify-hooks.sh), D2 exec-program check, renderer minors ----
+echo "=== v4.4.0 C2b: verify-hooks.sh ==="
+C2VH="$ROOT/hooks/verify-hooks.sh"
+C2H0="$TMPROOT/c2b-home0"; mkdir -p "$C2H0"
+C2RUH="$ROOT/scripts/render-user-hooks.sh"
+C2REF="$ROOT/user-level-reference/settings.json"
+C2HU="$TMPROOT/c2b-homeu"; rm -rf "$C2HU"; mkdir -p "$C2HU/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$C2HU/.claude/hooks"
+c2b_newhome() { # <name> -> a fresh HOME with the user-level hooks installed; echoes its path
+  c2n_d="$TMPROOT/c2bn-$1"; rm -rf "$c2n_d"; mkdir -p "$c2n_d/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$c2n_d/.claude/hooks"; printf '%s' "$c2n_d"
+}
+c2b_exec() { # <home> <proj> <payload> <command> <arg>... : runs the argv exactly, no shell. Sets C2ERC, C2EOUT
+  c2e_h=$1; c2e_p=$2; c2e_in=$3; shift 3
+  C2EOUT=$(printf '%s' "$c2e_in" | env HOME="$c2e_h" CLAUDE_PROJECT_DIR="$c2e_p" "$@" 2>/dev/null); C2ERC=$?
+}
+c2b_proj() { # <name> -> a project holding every repo hook and the general template settings; echoes its path
+  c2p_d="$TMPROOT/c2b-$1"; rm -rf "$c2p_d"; mkdir -p "$c2p_d/.claude"
+  cp -R "$ROOT/hooks" "$c2p_d/hooks"; cp "$ROOT/templates/general/.claude/settings.json" "$c2p_d/.claude/settings.json"
+  printf '%s' "$c2p_d"
+}
+c2b_run() { # <home> <proj, or - for unset> [verify-hooks args] ; runs the project's copy; sets C2RC, C2OUT
+  c2r_h=$1; c2r_p=$2; shift 2
+  if [ "$c2r_p" = "-" ]; then
+    C2OUT=$(env -u CLAUDE_PROJECT_DIR HOME="$c2r_h" bash "$C2VH" "$@" </dev/null 2>/dev/null); C2RC=$?
+  else
+    C2OUT=$(env HOME="$c2r_h" CLAUDE_PROJECT_DIR="$c2r_p" bash "$c2r_p/hooks/verify-hooks.sh" "$@" </dev/null 2>/dev/null); C2RC=$?
+  fi
+}
+c2b_exec_settings() { # <file> <command> <script path> : one exec-form SessionStart entry
+  printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s","args":["-c",". \\"$0\\"","%s"]}]}]}}\n' "$2" "$3" > "$1"
+}
+
+# healthy: silent, exit 0 (default) and exit 0 (--report)
+c2b_p=$(c2b_proj healthy)
+c2b_run "$C2H0" "$c2b_p"
+expect "C2b: all hooks present -> no output, exit 0" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
+c2b_run "$C2H0" "$c2b_p" --report
+expect "C2b: --report on a healthy project exits 0 with no output" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
+
+# one protection script deleted: named, header + footer, exit 0; --report exits 1
+rm -f "$c2b_p/hooks/no-push-main.sh"
+c2b_run "$C2H0" "$c2b_p"
+expect "C2b: a deleted script -> still exit 0" 0 "$C2RC"
+expect "C2b: ... the block carries the exact header" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED -- [0-9][0-9]* registered hook script(s) missing or broken:$')"
+expect "C2b: ... names the deleted script" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^MISSING: .*hooks/no-push-main\.sh$')"
+expect "C2b: ... ends with the exact footer" 1 "$(printf '%s\n' "$C2OUT" | grep -cF 'Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /sync-template or re-run scripts/render-user-hooks.sh --write.')"
+c2b_run "$C2H0" "$c2b_p" --report
+expect "C2b: --report on it exits 1 and lists the script" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c 'MISSING: .*hooks/no-push-main\.sh')"
+expect "C2b: --report prints no header or footer" 0 "$(printf '%s\n' "$C2OUT" | grep -c 'HOOK CHECK FAILED\|Tell the user')"
+
+# a syntax error -> BROKEN
+c2b_p=$(c2b_proj broken)
+printf 'if then fi (\n' > "$c2b_p/hooks/model-floor.sh"
+c2b_run "$C2H0" "$c2b_p"
+expect "C2b: a script with a syntax error is reported BROKEN (exit 0)" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^BROKEN: .*hooks/model-floor\.sh')"
+
+# run-gate.sh in permissions is not a registration
+c2b_p=$(c2b_proj rungate)
+rm -f "$c2b_p/hooks/run-gate.sh"
+printf '{"permissions":{"allow":["Bash(bash hooks/run-gate.sh*)","Bash(bash ${CLAUDE_PROJECT_DIR}/hooks/run-gate.sh*)"]}}\n' > "$c2b_p/.claude/settings.json"
+c2b_run "$C2H0" "$c2b_p" --report
+expect "C2b: run-gate.sh in permissions is not reported" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
+
+# settings.local.json is read too
+c2b_p=$(c2b_proj local)
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \\"${CLAUDE_PROJECT_DIR:-.}/hooks/not-there.sh\\""}]}]}}\n' > "$c2b_p/.claude/settings.local.json"
+c2b_run "$C2H0" "$c2b_p" --report
+expect "C2b: settings.local.json registrations are checked" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c 'MISSING: .*hooks/not-there\.sh')"
+
+# a user HOME whose name has a space: the rendered exec-form args are read by the parser
+C2HS="$TMPROOT/c2b home x"; rm -rf "$C2HS"; mkdir -p "$C2HS/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$C2HS/.claude/hooks"
+HOME="$C2HS" bash "$C2RUH" --write >/dev/null 2>&1
+expect "C2b: render --write into a HOME with a space exits 0" 0 "$?"
+c2b_run "$C2HS" -
+expect "C2b: rendered user settings under a HOME with a space -> no output, exit 0" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
+mv "$C2HS/.claude/hooks/deny-secret-reads.sh" "$C2HS/deny-secret-reads.sh.away"
+c2b_run "$C2HS" - --report
+expect "C2b: ... a deleted user hook is listed with its whole spaced path" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -cF "MISSING: $C2HS/.claude/hooks/deny-secret-reads.sh")"
+mv "$C2HS/deny-secret-reads.sh.away" "$C2HS/.claude/hooks/deny-secret-reads.sh"
+
+# an unrendered @BASH@ (a hand-copied reference) is reported; --report exits 1
+C2HP="$TMPROOT/c2b-homeph"; rm -rf "$C2HP"; mkdir -p "$C2HP/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$C2HP/.claude/hooks"
+cp "$C2REF" "$C2HP/.claude/settings.json"
+c2b_run "$C2HP" - --report
+expect "C2b: an unrendered @BASH@ settings file -> reported, --report exits 1" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c 'unrendered @')"
+c2b_run "$C2HP" -
+expect "C2b: ... and in SessionStart mode: exit 0 with the block" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED')"
+
+# D2: the exec-form command program must exist and be executable
+C2HX="$TMPROOT/c2b-homex"; rm -rf "$C2HX"; mkdir -p "$C2HX/.claude/hooks"
+printf 'exit 0\n' > "$C2HX/.claude/hooks/x.sh"
+C2BASH=$(command -v bash)
+c2b_exec_settings "$C2HX/.claude/settings.json" "$C2BASH" "$C2HX/.claude/hooks/x.sh"
+c2b_run "$C2HX" - --report
+expect "C2b (D2): a good program path -> silent, exit 0" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
+c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/nowhere/bash" "$C2HX/.claude/hooks/x.sh"
+c2b_run "$C2HX" -
+expect "C2b (D2): a nonexistent program -> MISSING PROGRAM block, exit 0" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*nowhere/bash (exec-form hook command cannot be spawned -- every check it runs is OFF; re-run scripts/render-user-hooks.sh --write)$')"
+expect "C2b (D2): ... inside the HOOK CHECK FAILED block" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED -- 1 ')"
+c2b_run "$C2HX" - --report
+expect "C2b (D2): ... --report exits 1" 1 "$C2RC"
+printf 'not a program\n' > "$C2HX/notexec"; chmod 644 "$C2HX/notexec"
+c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/notexec" "$C2HX/.claude/hooks/x.sh"
+c2b_run "$C2HX" - --report
+expect "C2b (D2): a non-executable program file -> reported, --report exits 1" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*notexec')"
+c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/winbash" "$C2HX/.claude/hooks/x.sh"
+printf '#!/bin/sh\nexit 0\n' > "$C2HX/winbash.exe"; chmod 755 "$C2HX/winbash.exe"
+c2b_run "$C2HX" - --report
+expect "C2b (D2): a program spelled without .exe resolves to an executable .exe -> silent" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
+c2b_exec_settings "$C2HX/.claude/settings.json" "$C2BASH" "$C2HX/.claude/hooks/x.sh"
+
+# a FIFO or a directory at a settings path never hangs the hook
+C2HF="$TMPROOT/c2b-homefifo"; rm -rf "$C2HF"; mkdir -p "$C2HF/.claude/settings.json"
+c2b_p=$(c2b_proj fifo); rm -f "$c2b_p/.claude/settings.json"
+if mkfifo "$c2b_p/.claude/settings.json" 2>/dev/null && command -v timeout >/dev/null 2>&1; then
+  C2OUT=$(env HOME="$C2HF" CLAUDE_PROJECT_DIR="$c2b_p" timeout 10 bash "$c2b_p/hooks/verify-hooks.sh" </dev/null 2>/dev/null); C2RC=$?
+  expect "C2b: a FIFO at project settings.json and a directory at the user one: exit 0 (no hang)" 0 "$C2RC"
+else
+  skip "C2b: FIFO at settings.json" "no mkfifo/timeout on this host" 1
+fi
+
+# registrations
+for c2b_v in general dotnet dotnet-maui rust-tauri java python; do
+  expect "C2b: $c2b_v template registers verify-hooks (SessionStart, unwrapped U form) once" 1 "$(grep -cF '"command": "exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/verify-hooks.sh\""' "$ROOT/templates/$c2b_v/.claude/settings.json")"
+done
+expect "C2b: the six variant settings.json are byte-identical" 1 "$(md5sum "$ROOT"/templates/*/.claude/settings.json | cut -d' ' -f1 | sort -u | wc -l | tr -d ' ')"
+expect "C2b: verify-hooks.sh is byte-identical to its user-level mirror" 0 "$(cmp -s "$ROOT/hooks/verify-hooks.sh" "$ROOT/user-level-reference/hooks/verify-hooks.sh"; echo $?)"
+c2b_want='{"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '"'"''"'"' s < \"$p/.claude/settings.json\"; case $s in *'"'"'}/hooks/verify-hooks.sh\\\"'"'"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}'
+expect "C2b: the user reference registers verify-hooks (SessionStart, UU exec form, own step-aside)" 1 "$(grep -cF -- "$c2b_want" "$C2REF")"
+HOME="$C2HU" bash "$C2RUH" --list 2>/dev/null | awk -F'\t' '$1=="SessionStart" && $6 ~ /verify-hooks\.sh$/' > "$TMPROOT/c2b-list.tsv"
+expect "C2b: --list renders verify-hooks once, under SessionStart" 1 "$(grep -c . "$TMPROOT/c2b-list.tsv")"
+IFS=$'\t' read -r c2b_ev c2b_m c2b_cmd c2b_a1 c2b_a2 c2b_a3 c2b_rest < "$TMPROOT/c2b-list.tsv"
+# the rendered argv, run as Claude Code runs it (no shell): step-aside when the project registers its copy, else runs the hook
+c2b_p=$(c2b_proj stepaside)
+c2b_stepchk() { # <label> <expect rc> ; runs the rendered argv in $c2b_p with the C1H home
+  c2b_exec "$C2HU" "$c2b_p" '{}' "$c2b_cmd" "$c2b_a1" "$c2b_a2" "$c2b_a3"
+}
+rm -f "$C2HU/.claude/hooks/verify-hooks.sh.keep"; mv "$C2HU/.claude/hooks/verify-hooks.sh" "$C2HU/.claude/hooks/verify-hooks.sh.keep"
+printf 'echo GLOBAL-RAN\n' > "$C2HU/.claude/hooks/verify-hooks.sh"
+c2b_stepchk
+expect "C2b: the project registers its copy (template settings) -> the user-level entry steps aside" 0 "$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
+printf '{}\n' > "$c2b_p/.claude/settings.json"
+c2b_stepchk
+expect "C2b: the project does not register its copy -> the user-level entry runs" 1 "$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
+rm -f "$c2b_p/.claude/settings.json"; mkfifo "$c2b_p/.claude/settings.json" 2>/dev/null
+if [ -p "$c2b_p/.claude/settings.json" ] && command -v timeout >/dev/null 2>&1; then
+  c2b_exec "$C2HU" "$c2b_p" '{}' timeout 10 "$c2b_cmd" "$c2b_a1" "$c2b_a2" "$c2b_a3"
+  expect "C2b: a FIFO at the project settings.json: the user-level entry runs, no hang" "0:1" "$C2ERC:$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
+else
+  skip "C2b: FIFO at project settings.json (user-level step-aside)" "no mkfifo/timeout on this host" 1
+fi
+mv "$C2HU/.claude/hooks/verify-hooks.sh.keep" "$C2HU/.claude/hooks/verify-hooks.sh"
+
+# renderer carried minors
+# (a) --write refuses a directory or FIFO at settings.json, changes nothing
+c2b_hh=$(c2b_newhome dirset); mkdir "$c2b_hh/.claude/settings.json"
+HOME="$c2b_hh" bash "$C2RUH" --write >"$c2b_hh/out" 2>"$c2b_hh/err"
+expect "C2b (a): --write refuses (exit 1) a directory at settings.json" 1 "$?"
+expect "C2b (a): ... it is still a directory, with no backup made" "1:0" "$([ -d "$c2b_hh/.claude/settings.json" ] && echo 1 || echo 0):$(ls "$c2b_hh/.claude" | grep -c '\.bak-')"
+expect "C2b (a): ... naming the problem" 1 "$(grep -c 'not a regular file' "$c2b_hh/err")"
+c2b_hh=$(c2b_newhome fifoset)
+if mkfifo "$c2b_hh/.claude/settings.json" 2>/dev/null && command -v timeout >/dev/null 2>&1; then
+  HOME="$c2b_hh" timeout 10 bash "$C2RUH" --write >"$c2b_hh/out" 2>"$c2b_hh/err"
+  expect "C2b (a): --write refuses (exit 1, no hang) a FIFO at settings.json" 1 "$?"
+else
+  skip "C2b (a): FIFO at settings.json" "no mkfifo/timeout on this host" 1
+fi
+# (b) replaced toolkit hooks are named; an idempotent re-run names none
+c2b_hh=$(c2b_newhome repl); cp "$C2REF" "$c2b_hh/.claude/settings.json"
+HOME="$c2b_hh" bash "$C2RUH" --write >"$c2b_hh/out" 2>"$c2b_hh/err"
+expect "C2b (b): --write over a verbatim reference copy names each replaced toolkit hook (six)" 6 "$(grep -c '^replaced toolkit hook: ' "$c2b_hh/out")"
+expect "C2b (b): ... and keeps no foreign hook" 0 "$(grep -c '^kept foreign hook' "$c2b_hh/out")"
+HOME="$c2b_hh" bash "$C2RUH" --write >"$c2b_hh/out2" 2>/dev/null
+expect "C2b (b): an idempotent re-run replaces nothing" 0 "$(grep -c '^replaced toolkit hook: ' "$c2b_hh/out2")"
+expect "C2b (d): verify-hooks has exactly one entry after --write" 1 "$(grep -cF "\"$c2b_hh/.claude/hooks/verify-hooks.sh\"" "$c2b_hh/.claude/settings.json")"
+# ---- end v4.4.0 C2b
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

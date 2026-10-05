@@ -19,7 +19,9 @@
 #             settings.json.bak-<UTC yyyymmddThhmmssZ> (restore it to back out),
 #             keeps hooks this toolkit does not own (merged by event + matcher,
 #             appended after the toolkit's, each printed as `kept foreign hook:
-#             <command>`), refuses a live file that does not parse, and re-reads
+#             <command>`), prints `replaced toolkit hook: <cmd>` for each live entry it
+#             classifies as the toolkit's and drops, refuses a live path that exists
+#             but is not a regular file (directory, FIFO), refuses a live file that does not parse, and re-reads
 #             the result to check that every rendered script path exists.
 #             Idempotent: a second run changes nothing and makes no backup. Keeps the
 #             file mode, writes through a symlinked settings.json to its target, and
@@ -46,7 +48,7 @@ while [ $# -gt 0 ]; do
     --write) MODE=write ;;
     --list)  MODE=list ;;
     --settings) [ $# -ge 2 ] || die "--settings needs a path"; SETTINGS=$2; shift ;;
-    -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
@@ -106,7 +108,7 @@ trap 'rm -rf "$WORK"; [ -z "$TMPF" ] || rm -f "$TMPF"' EXIT
 natpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 
 # ---- the three programs: same contract, one per backend --------------------
-# prog <mode> <ref file> <live file>; modes: print | merge | foreign | list-ref | list-live
+# prog <mode> <ref file> <live file>; modes: print | merge | foreign | replaced | list-ref | list-live
 # Substitutes @BASH@/@HOOKS@ (JSON-aware: values are escaped by the serializer).
 # A hook entry is the toolkit's when its text names /.claude/hooks/<name>.sh OR the
 # unrendered @HOOKS@/<name>.sh (a hand-copied reference) for a <name> the reference
@@ -158,10 +160,11 @@ function lst(hs) {
   function isown(ev, h) { var d = disp(h); return (refd[ev] || []).indexOf(d) >= 0 || own.test(d); }
   var lh = live.hooks === undefined || live.hooks === null ? {} : live.hooks;
   if (typeof lh !== "object" || Array.isArray(lh)) throw new Error("hooks is not an object");
-  var out = {}, foreign = [];
+  var out = {}, foreign = [], replaced = [];
   Object.keys(ref).forEach(function (ev) {
     var groups = JSON.parse(JSON.stringify(ref[ev]));
     arr(lh[ev], "hooks." + ev).forEach(function (g) {
+      arr(g.hooks, "hooks." + ev + " group").forEach(function (h) { if (isown(ev, h)) replaced.push(disp(h)); });
       var keep = arr(g.hooks, "hooks." + ev + " group").filter(function (h) { return !isown(ev, h); });
       if (!keep.length) return;
       keep.forEach(function (h) { foreign.push(disp(h)); });
@@ -178,6 +181,7 @@ function lst(hs) {
     arr(lh[ev], "hooks." + ev).forEach(function (g) { arr(g.hooks, "hooks." + ev + " group").forEach(function (h) { foreign.push(disp(h)); }); });
   });
   if (mode === "foreign") { process.stdout.write(foreign.length ? foreign.join("\n") + "\n" : ""); return; }
+  if (mode === "replaced") { process.stdout.write(replaced.length ? replaced.join("\n") + "\n" : ""); return; }
   live.hooks = out;
   process.stdout.write(JSON.stringify(live, null, 2) + "\n");
 } catch (e) { fail(e); } })();
@@ -238,10 +242,11 @@ try:
     lh = live.get("hooks")
     if lh is None: lh = {}
     if not isinstance(lh, dict): raise Exception("hooks is not an object")
-    out = {}; foreign = []
+    out = {}; foreign = []; replaced = []
     for ev in ref:
         groups = json.loads(json.dumps(ref[ev]))
         for g in arr(lh.get(ev), "hooks." + ev):
+            replaced += [disp(h) for h in arr(g.get("hooks"), "hooks." + ev + " group") if isown(ev, h)]
             keep = [h for h in arr(g.get("hooks"), "hooks." + ev + " group") if not isown(ev, h)]
             if not keep: continue
             foreign += [disp(h) for h in keep]
@@ -258,6 +263,7 @@ try:
         for g in arr(lh[ev], "hooks." + ev):
             for h in arr(g.get("hooks"), "hooks." + ev + " group"): foreign.append(disp(h))
     if mode == "foreign": emit("".join(l + "\n" for l in foreign)); sys.exit(0)
+    if mode == "replaced": emit("".join(l + "\n" for l in replaced)); sys.exit(0)
     live["hooks"] = out
     emit(dump(live))
 except SystemExit: raise
@@ -291,7 +297,11 @@ def lst: to_entries[] | .key as $ev | (.value | arr("hooks." + $ev))[] | . as $g
               | if ($keep | length) == 0 then .
                 else ((to_entries | map(select(.value.matcher == $g.matcher)) | .[0].key) as $i
                       | if $i != null then .[$i].hooks += $keep else . + [$g | .hooks = $keep] end) end);
-          if $mode == "foreign" then
+          if $mode == "replaced" then
+            ($ref | keys_unsorted[]) as $ev
+            | (($lh[$ev]) | arr("hooks." + $ev))[] | (.hooks | arr("group"))[]
+            | select(isown($ev)) | disp
+          elif $mode == "foreign" then
             ($lh | to_entries[]) as $e
             | ($e.value | arr("hooks." + $e.key))[] | (.hooks | arr("group"))[]
             | select((($ref | has($e.key)) | not) or (isown($e.key) | not)) | disp
@@ -333,15 +343,24 @@ case "$MODE" in
       _t=$(readlink -f "$SETTINGS" 2>/dev/null) && [ -n "$_t" ] && [ -f "$_t" ] || die "$SETTINGS is a symlink that cannot be resolved to a regular file: nothing was changed"
       SETTINGS=$_t
     fi
+    # a directory, FIFO or device at the path is not a settings file: refuse before anything reads it
+    if [ -e "$SETTINGS" ] && [ ! -f "$SETTINGS" ]; then die "$SETTINGS exists but is not a regular file: nothing was changed"; fi
     LIVE=$EMPTY
     [ -f "$SETTINGS" ] && LIVE=$SETTINGS
     prog merge "$REF" "$LIVE" > "$WORK/new.json" || die "refusing to write: $SETTINGS could not be merged (does it parse as JSON?). Nothing was changed."
     prog foreign "$REF" "$LIVE" > "$WORK/foreign.txt" || die "refusing to write: $SETTINGS could not be merged. Nothing was changed."
+    prog replaced "$REF" "$LIVE" > "$WORK/replaced.txt" || die "refusing to write: $SETTINGS could not be merged. Nothing was changed."
+    prog list-ref "$REF" "$EMPTY" | awk -F'\t' '{ s = $3; for (i = 4; i <= NF; i++) s = s " " $i; print s }' > "$WORK/rendered.txt"
     noph "$WORK/new.json" || die "refusing to write: the result still contains an unsubstituted @NAME@ placeholder (a foreign entry carries one?). Nothing was changed."
     while IFS= read -r _l; do echo "kept foreign hook: $_l"; done < "$WORK/foreign.txt"
     if [ -f "$SETTINGS" ] && cmp -s "$WORK/new.json" "$SETTINGS"; then
       echo "render-user-hooks: $SETTINGS already carries the rendered hooks (no change, no backup)"
     else
+      # the toolkit's own live entries that differ from the rendered ones are dropped; say so
+      while IFS= read -r _l; do
+        [ -n "$_l" ] || continue
+        grep -Fxq -- "$_l" "$WORK/rendered.txt" || echo "replaced toolkit hook: $_l"
+      done < "$WORK/replaced.txt"
       mkdir -p "$(dirname "$SETTINGS")" || die "cannot create $(dirname "$SETTINGS")"
       if [ -f "$SETTINGS" ]; then
         BAK="$SETTINGS.bak-$(date -u +%Y%m%dT%H%M%SZ)"
