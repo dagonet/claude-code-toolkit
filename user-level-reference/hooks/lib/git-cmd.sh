@@ -148,7 +148,11 @@ GC_GATE_PRUNE_S=$(( GC_GATE_TTL_S * 24 ))
 
 # Fail CLOSED when the JSON reader is missing: without it GC_CMD would be empty
 # and every gate would allow every command.
-gc_json_lib="$(dirname "${BASH_SOURCE[0]:-$0}")/json.sh"
+gc_json_lib="${BASH_SOURCE[0]:-$0}"
+case "$gc_json_lib" in
+  */*) gc_json_lib="${gc_json_lib%/*}/json.sh" ;;
+  *) gc_json_lib="./json.sh" ;;
+esac
 if [ ! -f "$gc_json_lib" ]; then
   echo "BLOCKED: $gc_json_lib missing — run /sync-template step 6b (hooks/lib/json.sh)" >&2
   exit 2
@@ -405,11 +409,17 @@ gc_read_stdin() {
       ;;
   esac
   GC_CMD=$(gc_protect_c_paths "$GC_CMD")
-  if [ -n "$GC_CMD" ] && printf '%s' "$GC_CMD" | gc_dollar_quote; then
-    gc_guard_off && return 0
-    echo "BLOCKED: the git gates cannot check \$'...' or \$\"...\" quoting -- use plain quotes, and printf for escapes. Or create <cwd>/.claude/git-guard-off to opt out." >&2
-    exit 2
-  fi
+  # v4.4.0: gc_dollar_quote exits 0 only at a `$` directly followed by ' or ",
+  # so the awk is skipped (builtin case) when the text holds neither.
+  case "$GC_CMD" in
+    *\$\'* | *\$\"*)
+      if printf '%s' "$GC_CMD" | gc_dollar_quote; then
+        gc_guard_off && return 0
+        echo "BLOCKED: the git gates cannot check \$'...' or \$\"...\" quoting -- use plain quotes, and printf for escapes. Or create <cwd>/.claude/git-guard-off to opt out." >&2
+        exit 2
+      fi
+      ;;
+  esac
 }
 
 # gc_dollar_quote -- stdin; 0 when the text holds a real $'...' or $"..." word,
@@ -599,19 +609,28 @@ gc_seg_raw() {
 # contains a `powershell|pwsh` word (optionally `.exe`, any case, any path
 # prefix, forward or back slashes).
 gc_seg_is_ps() {
-  local tok clean base lc
+  local tok clean base
   set -- $1
   while [ $# -gt 0 ]; do
     tok="$1"
     case "$tok" in *[\"\']*) return 1 ;; esac
-    clean=$(printf '%s' "$tok" | tr -d "\"'")
+    # v4.4.0: builtins only. A token holding a quote returned above, so the old
+    # `tr -d` was a no-op; the ASCII-only case classes replace `tr A-Z a-z`.
+    clean=$tok
     base=${clean##*/}; base=${base##*\\}
-    lc=$(printf '%s' "$base" | tr 'A-Z' 'a-z')
-    case "$lc" in powershell|powershell.exe|pwsh|pwsh.exe) return 0 ;; esac
-    # v4.3.2 6b review: the shell removes a backslash inside the word (pw\sh)
-    base=${clean//\\/}; base=${base##*/}
-    lc=$(printf '%s' "$base" | tr 'A-Z' 'a-z')
-    case "$lc" in powershell|powershell.exe|pwsh|pwsh.exe) return 0 ;; esac
+    case "$base" in
+      [Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll] | [Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll][.][Ee][Xx][Ee] | [Pp][Ww][Ss][Hh] | [Pp][Ww][Ss][Hh][.][Ee][Xx][Ee]) return 0 ;;
+    esac
+    # v4.3.2 6b review: the shell removes a backslash inside the word (pw\sh).
+    # Without a backslash this base equals the one above, so skip the pass.
+    case "$clean" in
+      *\\*)
+        base=${clean//\\/}; base=${base##*/}
+        case "$base" in
+          [Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll] | [Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll][.][Ee][Xx][Ee] | [Pp][Ww][Ss][Hh] | [Pp][Ww][Ss][Hh][.][Ee][Xx][Ee]) return 0 ;;
+        esac
+        ;;
+    esac
     shift
   done
   return 1
@@ -933,12 +952,16 @@ gc_dir_rule() {
   GC_CMD="$typed"
   for b in "${GC_BODIES[@]}"; do
     GC_CMD="$GC_CMD$GC_NL$b"
-    if printf '%s' "$b" | gc_dollar_quote &&
-      { printf '%s\n' "$b" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" ||
-        printf '%s\n' "$b" | grep -qE '(^|[^[:alnum:]_-])gh([^[:alnum:]_-]|$)'; }; then
-      echo "BLOCKED: $gate: a script this command runs uses \$'...' or \$\"...\" quoting with a git or gh word -- the gates cannot check it; use plain quotes, and printf for escapes." >&2
-      return 1
-    fi
+    case "$b" in
+      *\$\'* | *\$\"*)
+        if printf '%s' "$b" | gc_dollar_quote &&
+          { printf '%s\n' "$b" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" ||
+            printf '%s\n' "$b" | grep -qE '(^|[^[:alnum:]_-])gh([^[:alnum:]_-]|$)'; }; then
+          echo "BLOCKED: $gate: a script this command runs uses \$'...' or \$\"...\" quoting with a git or gh word -- the gates cannot check it; use plain quotes, and printf for escapes." >&2
+          return 1
+        fi
+        ;;
+    esac
   done
   # ... refused when the command (or a script it runs) holds a gated verb
   if [ "$dc" = 1 ]; then
