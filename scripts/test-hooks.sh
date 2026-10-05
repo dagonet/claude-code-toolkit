@@ -11310,8 +11310,16 @@ check_msg "ET (2): suspect artifact (tree \"\") never blesses an empty-tree HEAD
   "$(mkjson Bash 'gh pr merge 3 --squash' "$ETWT")" "No gate artifact found"
 printf '{"sha":"%s","tree":"%s","branch":"x","ts":"2099-01-01T00:00:00Z","status":"pass"}\n' "$ETASHA" "$ET_EMPTY" \
   > "$(gatepassfile "$ETR" "$ETASHA")"
-check "ET (2): artifact literally recording the empty tree never blesses it" \
-  hooks/gate-before-merge.sh 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$ETWT")"
+check_msg "ET (2): artifact literally recording the empty tree is skipped by the tier-2 scan (pins that guard)" "$ETGB" 2 \
+  "$(mkjson Bash 'gh pr merge 3 --squash' "$ETWT")" "No gate artifact found"
+# Tier 1b: last-pass.tree-<empty>.json is FOUND by HEAD's tree name (no scan, so
+# the tier-2 guard cannot help); only the ARTIFACT_TREE blanking keeps it from
+# matching. Recording another sha, the block is the stale message with tree none.
+rm -f "$(gatedir "$ETR")"/last-pass.*.json
+printf '{"sha":"%s","tree":"%s","branch":"x","ts":"2099-01-01T00:00:00Z","status":"pass"}\n' "$ETASHA" "$ET_EMPTY" \
+  > "$(gatedir "$ETR")/last-pass.tree-$ET_EMPTY.json"
+check_msg "ET (2): tier-1b tree-named artifact recording the empty tree never blesses it (pins ARTIFACT_TREE guard)" "$ETGB" 2 \
+  "$(mkjson Bash 'gh pr merge 3 --squash' "$ETWT")" "artifact tree: none"
 # ---- end v4.4.0 ET
 
 echo "----------------------------------------------------------------"
