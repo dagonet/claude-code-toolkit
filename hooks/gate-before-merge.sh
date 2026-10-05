@@ -1450,6 +1450,7 @@ if [ -z "$ARTIFACT" ] && [ -n "$GATE_DIR" ] && [ -d "$GATE_DIR" ]; then
     case "$gbm_name" in *.tmp) continue ;; esac
     gbm_f="$GATE_DIR/$gbm_name"
     gbm_tree=$(grep -o '"tree"[[:space:]]*:[[:space:]]*"[^"]*"' "$gbm_f" 2>/dev/null | head -1 | sed 's/.*"tree"[[:space:]]*:[[:space:]]*"//;s/"$//')
+    [ "$gbm_tree" = 4b825dc642cb6eb9a060e54bf8d69288fbee4904 ] && continue
     if [ -n "$gbm_tree" ] && [ "$gbm_tree" = "$HEAD_TREE" ]; then
       ARTIFACT="$gbm_f"
       break
@@ -1491,6 +1492,7 @@ fi
 # tolerant pattern for that reason; do not "simplify" one of them.
 ARTIFACT_SHA=$(grep -o '"sha"[[:space:]]*:[[:space:]]*"[^"]*"' "$ARTIFACT" | head -1 | sed 's/.*"sha"[[:space:]]*:[[:space:]]*"//;s/"$//')
 ARTIFACT_TREE=$(grep -o '"tree"[[:space:]]*:[[:space:]]*"[^"]*"' "$ARTIFACT" | head -1 | sed 's/.*"tree"[[:space:]]*:[[:space:]]*"//;s/"$//')
+[ "$ARTIFACT_TREE" = 4b825dc642cb6eb9a060e54bf8d69288fbee4904 ] && ARTIFACT_TREE=""
 # HEAD_SHA/HEAD_TREE: computed above, before the artifact lookup (v4.0.1
 # addendum to item 17) — not recomputed here.
 

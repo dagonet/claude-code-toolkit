@@ -178,6 +178,11 @@ Against the plan's criteria, honestly:
 
 Already done in this run (Linux only): the full `test-hooks.sh` at cb2314b (3207/8/4, failures identical to a56ca34, above); the equivalence runs (above); the Linux measurement (above). Not done: the parser matrix (awaiting the user's go-ahead), anything on Windows.
 
+### Empty-tree gate artifact
+
+#### Fixed
+- A gate artifact whose index snapshot failed recorded git's empty tree; it now records no tree and warns, and the merge gate never matches the empty tree (one contrived false allow closed; reported by open-brain). The snapshot `cp` in `run-gate.sh` and `pre-commit-test.sh` no longer hides its error. Rows: block ET in `scripts/test-hooks.sh`.
+
 ### Counts and downstream migration (whole release)
 
 Counts, never carried forward:

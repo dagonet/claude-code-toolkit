@@ -151,7 +151,7 @@ pct_capture_tree() {
   # 8; matches hooks/run-gate.sh's own identical fix).
   _pt_idx=$(git -C "$_pt_top" rev-parse --path-format=absolute --git-path index 2>/dev/null)
   _pt_copied=false
-  if [ -n "$_pt_idx" ] && cp -p "$_pt_idx" "$_pt_d/index" 2>/dev/null; then
+  if [ -n "$_pt_idx" ] && cp -p "$_pt_idx" "$_pt_d/index"; then
     _pt_copied=true
   fi
   GIT_INDEX_FILE="$_pt_d/index" git -C "$_pt_top" add -u -- . >/dev/null 2>&1

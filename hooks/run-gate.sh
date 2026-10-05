@@ -498,7 +498,7 @@ TMPIDX="$TMPD/index"   # must not pre-exist: git rejects a 0-byte index
 # same-second edit as already reflected in the copy (measured stale 7 of 8).
 RG_IDX=$(git -C "$REPO_TOP" rev-parse --path-format=absolute --git-path index 2>/dev/null)
 RG_IDX_COPIED=false
-if [ -n "$RG_IDX" ] && cp -p "$RG_IDX" "$TMPIDX" 2>/dev/null; then
+if [ -n "$RG_IDX" ] && cp -p "$RG_IDX" "$TMPIDX"; then
   RG_IDX_COPIED=true
 fi
 GIT_INDEX_FILE="$TMPIDX" git -C "$REPO_TOP" add -u -- . >/dev/null 2>&1
@@ -511,6 +511,7 @@ RG_TREE_SUSPECT=false
 if [ "$RG_IDX_COPIED" != true ] || [ "$TREE_HASH" = "$RG_EMPTY_TREE" ]; then
   RG_TREE_SUSPECT=true
 fi
+if [ "$RG_TREE_SUSPECT" = true ]; then echo "run-gate: WARN could not snapshot the index (${RG_IDX:-unresolved}); artifact records no tree -- merge will need an exact-sha match" >&2; TREE_HASH=""; fi
 
 # v4.3.1 G4 -- WHICH NAME. A run before the commit exists (pre-commit-test.sh's
 # Gate fallback, or a consumer's own commit-time flow) has HEAD = the PARENT,

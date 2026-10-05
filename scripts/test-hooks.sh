@@ -11272,6 +11272,48 @@ expect "C5 (g): ... and says bash was not found" 1 "$(printf '%s' "$c5_out" | gr
 expect "C5 (g): the template carries 19 registrations in the new forms (F+W+O+U), none in the old wrapper form" "19:0" "$(grep -c '"command": "\(f=\|exec bash \)' "$C5TPL"):$(grep -c 'c=\$?' "$C5TPL")"
 # ---- end v4.4.0 C5
 
+# ---- v4.4.0 ET -- a gate artifact never records git's EMPTY tree.
+# A failed index snapshot (run-gate.sh's `cp -p`) left a freshly-created empty
+# index, whose write-tree is 4b825dc...; the artifact then recorded that tree
+# and gate-before-merge.sh matched it against any commit with an empty tree.
+# Writer: records "" and warns. Reader: the empty tree is never a match.
+ET_EMPTY=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+ETGB="$ROOT/hooks/gate-before-merge.sh"
+ETW=$(mkrepo et-writer main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$ETW/PROJECT_CONTEXT.md"
+ETSHIM="$TMPROOT/et-shim"; mkdir -p "$ETSHIM"
+printf '#!/bin/sh\nexit 1\n' > "$ETSHIM/cp"; chmod +x "$ETSHIM/cp"
+ETWSHA=$(git -C "$ETW" rev-parse HEAD)
+ETWERR="$TMPROOT/et-writer.err"
+( cd "$ETW" && PATH="$ETSHIM:$PATH" bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$ETWERR" )
+ETWART=$(gatepassfile "$ETW" "$ETWSHA")
+expect "ET (1): snapshot failure still writes the sha-named artifact" 1 "$([ -f "$ETWART" ] && echo 1 || echo 0)"
+expect "ET (1): artifact records tree \"\" (not the empty tree)" 1 \
+  "$(grep -c '"tree":""' "$ETWART" 2>/dev/null)"
+expect "ET (1): artifact does not contain the empty-tree id" 0 "$(grep -c "$ET_EMPTY" "$ETWART" 2>/dev/null)"
+expect "ET (1): stderr warns 'could not snapshot the index'" 1 \
+  "$(grep -c 'could not snapshot the index' "$ETWERR")"
+
+# Reader: artifact on sha A; linked worktree whose commit has the EMPTY tree.
+ETR=$(mkrepo et-reader main)
+ETASHA=$(git -C "$ETR" rev-parse HEAD)
+ETEMPTYC=$(git -C "$ETR" commit-tree "$ET_EMPTY" -m empty 2>/dev/null)
+ETWT="$TMPROOT/et-reader-wt"
+git -C "$ETR" worktree add -q --detach "$ETWT" "$ETEMPTYC" >/dev/null 2>&1
+printf '# ctx\n\n- **Gate**: `true`\n' > "$ETWT/PROJECT_CONTEXT.md"
+expect "ET (2): fixture worktree HEAD has the empty tree" "$ET_EMPTY" "$(git -C "$ETWT" rev-parse 'HEAD^{tree}' 2>/dev/null)"
+mkdir -p "$(gatedir "$ETR")"
+rm -f "$(gatedir "$ETR")"/last-pass.*.json
+printf '{"sha":"%s","tree":"","branch":"x","ts":"2099-01-01T00:00:00Z","status":"pass"}\n' "$ETASHA" \
+  > "$(gatepassfile "$ETR" "$ETASHA")"
+check_msg "ET (2): suspect artifact (tree \"\") never blesses an empty-tree HEAD" "$ETGB" 2 \
+  "$(mkjson Bash 'gh pr merge 3 --squash' "$ETWT")" "No gate artifact found"
+printf '{"sha":"%s","tree":"%s","branch":"x","ts":"2099-01-01T00:00:00Z","status":"pass"}\n' "$ETASHA" "$ET_EMPTY" \
+  > "$(gatepassfile "$ETR" "$ETASHA")"
+check "ET (2): artifact literally recording the empty tree never blesses it" \
+  hooks/gate-before-merge.sh 2 "$(mkjson Bash 'gh pr merge 3 --squash' "$ETWT")"
+# ---- end v4.4.0 ET
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
