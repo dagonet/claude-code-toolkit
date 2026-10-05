@@ -2374,7 +2374,12 @@ a13_writeartifact "$A13REPO" "$A13_SHA" "$A13_TREE" "$A13_ENV0" "$A13_DETAIL0" "
 # (a) no server/.venv at all, python3 on PATH -> dist= is NOT absent.
 A15NOVENV=$(mkrepo a15novenv main)
 A15_DETAIL_NOVENV=$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$A15NOVENV" -v 2>/dev/null )
+# The row's premise is a python on PATH; the jq-only configuration has none.
+command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || A15_DETAIL_NOVENV="<skip>"
 case "$A15_DETAIL_NOVENV" in
+  "<skip>")
+    skip "(#15) no venv + python3 on PATH" "no python3/python on PATH"
+    ;;
   *"dist=absent"*)
     printf 'FAIL  %-42s (dist=absent: %s)\n' "(#15) no venv + python3 on PATH: dist not absent" "$A15_DETAIL_NOVENV"
     fail=$((fail + 1))
@@ -10837,6 +10842,11 @@ while IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest; do
   c1_x=$(basename "$c1_a3" .sh)
   case " $C1STEP " in *" $c1_x "*) ;; *) continue ;; esac
   c1_p=$(c1_pl "$c1_x" deny)
+  # bash-output-guard's run is observed through its truncation, an embedded node program
+  if [ "$c1_x" = bash-output-guard ] && [ -z "$HAVE_NODE" ]; then
+    skip "C1 (f): $c1_x step-aside states" "no node: the run is not observable" 9
+    continue
+  fi
   for c1_st in template-F old-wrapper permissions-only disabled user-path file-no-registration file-no-settings nofile-registered; do
     c1_pd="$TMPROOT/c1proj-$c1_x-$c1_st"; c1_pset "$c1_st" "$c1_x" "$c1_pd"
     c1_exec "$C1H" "$c1_pd" "$c1_p" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
@@ -11226,8 +11236,12 @@ expect "C5 (b): ... and refuses (2)" 2 "$C5RC"
 c5_pd="$TMPROOT/c5p-root"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/.claude"; cp -R "$ROOT/hooks" "$c5_pd/hooks"; cp "$ROOT/.claude/settings.json" "$c5_pd/.claude/settings.json"
 c5_global deny-secret-reads "$(mkread "$C5R/.env")" "$c5_pd"
 expect "C5 (c): root-settings shape: the global deny-secret-reads still runs and refuses (the file ships, the registration does not)" 2 "$C5RC"
-c5_global bash-output-guard "$(mkpost 40000)" "$c5_pd"
-expect "C5 (c): root-settings shape: the global bash-output-guard still runs (it truncates a 40000-byte result)" 1 "$(printf '%s' "$C5OUT" | grep -c 'chars truncated')"
+if [ -n "$HAVE_NODE" ]; then
+  c5_global bash-output-guard "$(mkpost 40000)" "$c5_pd"
+  expect "C5 (c): root-settings shape: the global bash-output-guard still runs (it truncates a 40000-byte result)" 1 "$(printf '%s' "$C5OUT" | grep -c 'chars truncated')"
+else
+  skip "C5 (c): root-settings shape: the global bash-output-guard still runs" "no node: the truncation is an embedded node program"
+fi
 : > "$C5CNT"; c5_global no-push-main "$C5PUSH" "$c5_pd"
 expect "C5 (c): root-settings shape: no-push-main IS registered there, so the global steps aside (0 runs)" 0 "$(c5_runs)"
 # (d) hooks/ file but no registration: the global runs and refuses
