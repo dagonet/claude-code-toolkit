@@ -841,7 +841,8 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
 
   moved=0
   mutated=0
-  ghp_seg=""; ghp_cwd=""; ghp_split=0   # v4.3.2 6b review 2: the gh arm keeps walking
+  ghmut=0
+  ghp_seg=""; ghp_cwd=""; ghp_split=0  # v4.3.2 6b review 2: the gh arm keeps walking
 
   # v3.0.3 item 2: a pipe anywhere in the command disables the `inert` category
   # for EVERY clause — see a6_clause_class's comment (2). `||` is stripped first
@@ -900,8 +901,16 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # arm fires in another checkout the two cannot share one artifact check: refused below.
       [ -n "$ghp_seg" ] && [ "$ghp_cwd" != "$CWD" ] && ghp_split=1
       ghp_seg=$seg; ghp_cwd=$CWD
-      # a gh merge also changes what a later clause resolves through: it counts as a mover, as it did
-      # when it was an unrecognised clause (`gh pr me\rge; git -C <main> push origin feat`)
+      # after a checkout this clause's verdict is the moved one, as it was when this arm ended the walk
+      [ "$moved" != 0 ] && break
+      # a gh merge counts as a mover for the arms below (`gh pr me\rge; git -C <main> push origin feat`);
+      # ghmut = the plain spelling is the ONLY mover so far, which the refspec-free `--ff-only` pull
+      # exemption tolerates (`gh pr merge 1; git checkout main; git pull --ff-only` stays allowed)
+      if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b' && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; }; then
+        ghmut=1
+      else
+        ghmut=0
+      fi
       mutated=1
       if [ -z "${A6_MUT_SEG:-}" ]; then A6_MUT_SEG=$seg; A6_MUT_WHY=$A6_SEG_WHY; fi
       continue
@@ -1066,7 +1075,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # --ff-only form is allowed on ANY branch, so a preceding branch change
       # does not change its verdict — it stays out of the refusal.
       if [ "$(a6_nonflag_count "$pargs")" -eq 0 ] && a6_has_flag "$pargs" 'ff-only' \
-         && [ "$mutated" = 0 ] && [ "$(gc_global_options "$seg")" = ok ]; then
+         && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; } && [ "$(gc_global_options "$seg")" = ok ]; then
         continue
       fi
       if [ "$moved" != 0 ]; then
@@ -1153,7 +1162,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # resolves through. First one wins, so the DENY text names the earliest
     # unexplained clause rather than whichever one happened to be last.
     if [ "$a6cls" = mover ]; then
-      mutated=1
+      mutated=1; ghmut=0
       if [ -z "${A6_MUT_SEG:-}" ]; then
         A6_MUT_SEG=$seg
         A6_MUT_WHY=$A6_SEG_WHY

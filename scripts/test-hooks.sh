@@ -9736,6 +9736,16 @@ for v3p in 'git push origin \> HEAD' 'git push origin 2\> feat' 'git push origin
 done
 check "V3 gate-before-merge: gh pr mer\\ge 1 && git -C <main> push origin feat" hooks/gate-before-merge.sh 2 "$(mkjson Bash "gh pr mer\\ge 1 && git -C $V3R push origin feat" "$V3G")"
 check "V3 gate-before-merge: x gh pr me\\rge; git -C <main> push origin feat"   hooks/gate-before-merge.sh 2 "$(mkjson Bash "x gh pr me\\rge; git -C $V3R push origin feat" "$V3G")"
+# Review round 3: the gh arm stops on a moved checkout; the gh-merge-then-pull --ff-only flow stays allowed
+for v3c in 'git checkout main; gh pr merge 1; git push origin main' 'git checkout main && gh pr merge 1 && git push origin feat:main' \
+           'git checkout main; gh pr merge 1; git push origin HEAD:main' 'git checkout main; gh pr merge 1; git merge --abort' \
+           'gh pr me\rge 1; git checkout main; git pull --ff-only'; do
+  check "V3 gate-before-merge: $v3c" hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3c" "$V3G")"
+done
+for v3c in 'gh pr merge 1; git checkout main; git pull --ff-only' 'gh pr merge 1; git checkout main && git pull --ff-only' \
+           'gh pr merge 1 --squash --delete-branch; git checkout main; git pull --ff-only' 'gh pr merge 1; git fetch' 'gh pr merge 1; gh pr merge 2'; do
+  check "V3 gate-before-merge (the documented safe flow): $v3c" hooks/gate-before-merge.sh 0 "$(mkjson Bash "$v3c" "$V3G")"
+done
 check "V3 control: git push origin +feat from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin +feat' "$V3F2")"
 check "V3 control: git push --tags from a feature repo"       hooks/no-push-main.sh 0 "$(mkjson Bash 'git push --tags' "$V3F2")"
 check "V3 control: git push origin feat 2>&1 from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin feat 2>&1' "$V3F2")"
