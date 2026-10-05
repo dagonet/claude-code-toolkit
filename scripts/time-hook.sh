@@ -121,6 +121,11 @@ if [ -n "$BASE" ] && command -v python3 >/dev/null 2>&1; then
     cp -R "$ROOT/user-level-reference/hooks" "$TMP/home-new/.claude/hooks"
     cp -R "$TMP/oldroot/user-level-reference/hooks" "$TMP/home-old/.claude/hooks"
     BASHBIN=$(command -v bash)
+    # The bash running THIS script, as an absolute path python can exec: on Windows a
+    # bare "bash" resolves to the WSL stub in System32 (exit 127), not Git Bash.
+    TH_BASH_EXE=$BASH
+    command -v cygpath >/dev/null 2>&1 && TH_BASH_EXE=$(cygpath -w "$BASH")
+    export TH_BASH_EXE
     # argv files (NUL-separated) per set/hook/event, written by the registration reader
     if python3 - "$ROOT" "$TMP" "$BASHBIN" <<'PYEOF'
 import sys, os, re, json, subprocess
@@ -130,7 +135,7 @@ for st, r in (("old", tmp + "/oldroot"), ("new", root)):
     text = open(r + "/user-level-reference/settings.json", encoding="utf-8").read()
     ruh = r + "/scripts/render-user-hooks.sh"
     if os.path.isfile(ruh):
-        pr = subprocess.run(["bash", ruh, "--print"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        pr = subprocess.run([os.environ.get("TH_BASH_EXE") or "bash", ruh, "--print"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=dict(os.environ, HOME=home, RUH_TEST_BASH=bashbin))
         if pr.returncode != 0:
             open(tmp + "/render.err", "w").write("render-user-hooks.sh --print (%s) exit %d: %s" % (st, pr.returncode, pr.stderr.decode("utf-8", "replace")[-300:]))
