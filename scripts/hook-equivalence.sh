@@ -207,8 +207,8 @@ def finish_repo(proj):
     git(proj, "add", "src/a.txt")   # a staged change, so `git commit` has something to commit
 
 def render_user_settings(text, home):
-    # render-user-hooks.sh's substitution, done directly: the absolute bash path
-    # and this row's own ~/.claude/hooks (the template copy is per row)
+    # render-user-hooks.sh's substitution, done directly, for a set that does not ship the
+    # renderer (the OLD set): the absolute bash path and this row's own ~/.claude/hooks
     return text.replace("@BASH@", BASH).replace("@HOOKS@", home + "/.claude/hooks")
 
 def build_set(name, root):
@@ -224,6 +224,19 @@ def build_set(name, root):
         os.makedirs(proj)
         shutil.copytree(root + "/user-level-reference/hooks", home + "/.claude/hooks", symlinks=True)
         wfile(home + "/.claude/settings.json", open(root + "/user-level-reference/settings.json", encoding="utf-8").read())
+        ruh = root + "/scripts/render-user-hooks.sh"
+        if os.path.isfile(ruh):
+            # a set that ships the renderer is rendered BY the renderer (its real output, once per
+            # template; run_row swaps the template's home path for the row's own). A set without
+            # one (the OLD set) keeps the direct @BASH@/@HOOKS@ substitution in render_user_settings.
+            r = subprocess.run(["bash", ruh, "--print"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               env=dict(os.environ, HOME=home, RUH_TEST_BASH=BASH))
+            if r.returncode != 0:
+                die("%s --print failed: %s" % (ruh, r.stderr.decode("utf-8", "replace")[-600:]))
+            sf = home + "/.claude/settings.json"
+            doc = json.load(open(sf, encoding="utf-8"))
+            doc["hooks"] = json.loads(r.stdout.decode("utf-8"))
+            wfile(sf, json.dumps(doc, indent=2) + "\n")
     # S1: plain project
     p = out["S1"] + "/proj"
     git(p, "init", "-q", "-b", "main"); finish_repo(p)
@@ -370,7 +383,8 @@ def run_row(job):
         home, proj = sb + "/s/home", sb + "/s/proj"
         uf = home + "/.claude/settings.json"
         if os.path.isfile(uf):
-            wfile(uf, render_user_settings(open(uf, encoding="utf-8").read(), home))
+            orig = tmpl[:-len("-missing")] if tmpl.endswith("-missing") else tmpl
+            wfile(uf, render_user_settings(open(uf, encoding="utf-8").read().replace(orig + "/home", home), home))
         # the sandbox path, and the spill-log name (TMPDIR + a timestamp) that
         # bash-output-guard embeds in its truncation marker, are not decisions
         norm = lambda s: re.sub(r"[^\"\s]*claude-bash-out/[^\"\s\]]*\.log", "@LOG@", s.replace(sb, "@SB@"))

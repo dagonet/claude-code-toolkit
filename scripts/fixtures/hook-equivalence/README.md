@@ -117,8 +117,10 @@ counted as `(<k> accepted stricter)`); exit 0 only when n = 0.
 - Missing mode is all-or-nothing (every project and user-level script is renamed
   away at once), so the C5 case "global missing, project copy present and
   registered" is not exercised.
-- Until Task 8 ships `render-user-hooks.sh` the harness renders `@BASH@` /
-  `@HOOKS@` itself; Task 8 switches it to call the renderer.
+- A set that ships `scripts/render-user-hooks.sh` (the NEW set, since Task 8) has its user
+  settings rendered by that script's `--print` (once per template, with `RUH_TEST_BASH` = the
+  harness's bash), so the renderer's real output is what runs. The OLD set has no renderer;
+  the harness keeps its direct `@BASH@` / `@HOOKS@` substitution for it.
 
 ## Measured (Linux, 4 cores, 4 workers, base a56ca34 = new)
 

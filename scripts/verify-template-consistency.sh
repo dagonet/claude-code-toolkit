@@ -1607,6 +1607,13 @@ rm -rf "$ULRFIX"
 #         copies. Do not let a cleanup drop either one as overlapping with the
 #         other.
 #
+#         v4.4.0 C1 AMENDS THE VERBATIM HALF FOR ONE FILE: the `hooks` block of
+#         user-level-reference/settings.json is rendered, not copied (`@BASH@`,
+#         `@HOOKS@` -> absolute paths, scripts/render-user-hooks.sh). That file is
+#         the census's single allowlisted path; the render script, the README and
+#         settings-reference.md all say "never copy the hooks block by hand", and
+#         verify-hooks (Task 9) reports a leftover `@X@` in a live settings file.
+
 #         AND FOR THE PROJECT TREE THIS CENSUS IS NECESSARY BUT NOT SUFFICIENT,
 #         WHICH CUTS THE OPPOSITE WAY. The project install is NOT verbatim: it
 #         substitutes, and per sync-template SKILL.md `template_apply_file`
@@ -1636,8 +1643,15 @@ JSONFIX=$(mktemp -d)
 # trips a future sweep pointed at scripts/ is how a detector acquires its first
 # false positive.
 JSON_PH=$(printf '{{%s}}' GATE_COMMAND)
+# v4.4.0 C1: widened from `{{X}}` to `{{X}}` OR `@X@` (@[A-Z]+@). user-level-reference/settings.json
+# carries `@BASH@`/`@HOOKS@` in executable positions ON PURPOSE: scripts/render-user-hooks.sh writes
+# the absolute paths at install time, so that file is no longer a verbatim install and is the ONE
+# allowlisted path (exact, root-relative). A hand-copied `@BASH@` command would be a non-blocking
+# spawn error, i.e. every user protection failing open -- so anywhere else it is a hit.
+JSON_ALLOW='user-level-reference/settings.json'
 json_census() {   # <root>... -> placeholder hits in *.json under those roots
-  grep -rn --include='*.json' -- '{{[A-Z_]\{2,\}}}' "$@" 2>/dev/null
+  grep -rn --include='*.json' -e '{{[A-Z_]\{2,\}}}' -e '@[A-Z][A-Z]*@' "$@" 2>/dev/null \
+    | grep -v "^$JSON_ALLOW:"
 }
 mkdir -p "$JSONFIX/scoped" "$JSONFIX/unscoped"
 printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/in.json"
@@ -1646,8 +1660,15 @@ printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/mcp.json.template"
 json_pos=$(json_census "$JSONFIX/scoped" | grep -c 'in\.json')
 json_neg_scope=$(json_census "$JSONFIX/scoped" | grep -c 'out\.json')
 json_neg_ext=$(json_census "$JSONFIX/scoped" | grep -c 'json\.template')
-if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ]; then
-  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored)"
+# the @X@ form: a hit anywhere, except the one allowlisted root-relative path
+mkdir -p "$JSONFIX/at/templates/x" "$JSONFIX/at/user-level-reference"
+AT_PH=$(printf '@%s@' BASH)
+printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/templates/x/s.json"
+printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/user-level-reference/settings.json"
+printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/user-level-reference/other.json"
+json_at_hits=$( (cd "$JSONFIX/at" && json_census templates user-level-reference) | cut -d: -f1 | sort | tr '\n' ' ')
+if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ] && [ "$json_at_hits" = "templates/x/s.json user-level-reference/other.json " ]; then
+  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored / @X@ hit except the single allowlisted user-level-reference/settings.json)"
   json_hits=$(json_census templates user-level-reference | grep -c .)
   if [ "$json_hits" -eq 0 ]; then
     ok "templates/ + user-level-reference/ (*.json): 0 placeholders — a settings.json hook command is an executable position, so a literal {{...}} there is a 127 fail-open"
@@ -1655,7 +1676,7 @@ if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq
     ko "templates/ + user-level-reference/ (*.json): $json_hits placeholder(s) in a shipped JSON file — JSON has no comments, so every one of these is in a VALUE: $(json_census templates user-level-reference | head -3 | tr '\n' ' ')"
   fi
 else
-  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
+  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0, @X@ hits='$json_at_hits' want 'templates/x/s.json user-level-reference/other.json '). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
 fi
 rm -rf "$JSONFIX"
 

@@ -1315,6 +1315,9 @@ Write-AutoModeSnippet
 Write-Host ""
 Write-TemplateSyncSnippet
 
+Write-Host ""
+Write-Host ("Next step (user-level hooks, once per machine): bash `"{0}/scripts/render-user-hooks.sh`" --write" -f ($PSScriptRoot -replace "\\", "/"))
+
 # --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
 # $tsExe/$tsRegister are resolved above, once, before the DryRun/real-run
 # fork. A FAIL line is reported, not fatal -- setup's job is done by this

@@ -8465,12 +8465,23 @@ if [ -n "$C1_HAVE_NODE" ]; then
   # S-24: the user-level wrapper steps aside when the project has its own copy,
   # so a spawn never has two updatedInput emitters racing (last one wins, order
   # non-deterministic).
-  C1_USR='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh" ] && exit 0; f="$HOME/.claude/hooks/model-floor.sh"; [ -f "$f" ] || exit 0; bash "$f"'
+  # v4.4.0 C1: the user-level registration is EXEC form -- `command` is `@BASH@`, `args` = ["-c", <script>, "@HOOKS@/<hook>.sh"].
+  # The script is the step-aside + the UO tail; c1_usrp prints it, and the rows below run it as
+  # `bash -c <script> <hook path>` -- the argv Claude Code runs after render-user-hooks.sh.
+  C1_USR='@BASH@ @HOOKS@/model-floor.sh'
+  c1_usrp() { # <hook> -> args[1] of that hook's user-level reference entry
+    node -e '
+      var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
+      Object.keys(s.hooks).forEach(function (e) { s.hooks[e].forEach(function (g) { g.hooks.forEach(function (h) {
+        if (h.args && h.args[2] === "@HOOKS@/" + process.argv[2] + ".sh") o.push(h.args[1]); }); }); });
+      process.stdout.write(o.join("\n"));' "$(natpath "$ROOT/user-level-reference/settings.json")" "$1"
+  }
+  C1_USRP=$(c1_usrp model-floor)
   c1_cmd() { # <settings file> -> the model-floor command(s) registered on matcher Agent, one per line
     node -e '
       var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
       (s.hooks.PreToolUse || []).forEach(function (g) { if (g.matcher !== "Agent") return;
-        g.hooks.forEach(function (h) { if (h.command.indexOf("model-floor.sh") >= 0) o.push(h.command); }); });
+        g.hooks.forEach(function (h) { var t = h.command + (h.args ? " " + h.args[2] : ""); if (t.indexOf("model-floor.sh") >= 0) o.push(t); }); });
       process.stdout.write(o.join("\n"));' "$(natpath "$1")"
   }
   for c1v in general dotnet dotnet-maui rust-tauri java python; do
@@ -8481,7 +8492,11 @@ if [ -n "$C1_HAVE_NODE" ]; then
   # silent when the hook file is missing: exit 0, 0 bytes of stdout AND stderr
   C1EMPTY="$TMPROOT/c1empty"; mkdir -p "$C1EMPTY"
   for c1w in "$C1_TPL" "$C1_USR"; do
-    CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$c1w" </dev/null >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+    if [ "$c1w" = "$C1_USR" ]; then
+      CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$C1_USRP" "$C1EMPTY/.claude/hooks/model-floor.sh" </dev/null >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+    else
+      CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$c1w" </dev/null >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+    fi
     expect "C1 wrapper silent when hook file missing (${c1w%%;*})" "rc=0 out=0 err=0" \
       "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
   done
@@ -8495,11 +8510,11 @@ if [ -n "$C1_HAVE_NODE" ]; then
   cp "$ROOT/user-level-reference/hooks/model-floor.sh" "$C1UH/.claude/hooks/model-floor.sh"
   cp "$ROOT/user-level-reference/hooks/lib/json.sh"    "$C1UH/.claude/hooks/lib/json.sh"
   # (a) the project has its own copy -> the user-level one is silent
-  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1UH" "$C1_BASH" -c "$C1_USR" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1UH" "$C1_BASH" -c "$C1_USRP" "$C1UH/.claude/hooks/model-floor.sh" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
   expect "C1 S-24 user-level wrapper + project copy -> silent" "rc=0 out=0 err=0" \
     "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
   # (b) no project copy -> the user-level hook runs and emits
-  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1UH" "$C1_BASH" -c "$C1_USR" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1UH" "$C1_BASH" -c "$C1_USRP" "$C1UH/.claude/hooks/model-floor.sh" <<<"$(c1_payload general-purpose - "$C1CWD")" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
   expect "C1 S-24 user-level wrapper, no project copy -> runs" "rc=0 sonnet" \
     "rc=$C1_RC $(jfield "$(<"$C1OUTF")" hookSpecificOutput.updatedInput.model)"
   expect "C1 S-24 user-level wrapper adds nothing to stdout" "{|}" "$(head -c1 "$C1OUTF")|$(tail -c1 "$C1OUTF")"
@@ -8508,11 +8523,12 @@ if [ -n "$C1_HAVE_NODE" ]; then
 
   # S-42: the user-level deny-hang-shapes registration carries the same
   # project-copy step-aside, so a Bash call is refused once, not twice.
-  C1_HUSR='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/deny-hang-shapes.sh" ] && exit 0; f="$HOME/.claude/hooks/deny-hang-shapes.sh"; [ -f "$f" ] || exit 0; bash "$f"'
+  C1_HUSR='@BASH@ @HOOKS@/deny-hang-shapes.sh'
+  C1_HUSRP=$(c1_usrp deny-hang-shapes)
   C1_HGOT=$(node -e '
     var s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")), o = [];
     (s.hooks.PreToolUse || []).forEach(function (g) { if (g.matcher !== "Bash") return;
-      g.hooks.forEach(function (h) { if (h.command.indexOf("deny-hang-shapes.sh") >= 0) o.push(h.command); }); });
+      g.hooks.forEach(function (h) { var t = h.command + (h.args ? " " + h.args[2] : ""); if (t.indexOf("deny-hang-shapes.sh") >= 0) o.push(t); }); });
     process.stdout.write(o.join("\n"));' "$(natpath "$ROOT/user-level-reference/settings.json")")
   expect "C1 S-42 registered on Bash: user-level-reference" "$C1_HUSR" "$C1_HGOT"
   C1HH="$TMPROOT/c1hanghome"; mkdir -p "$C1HH/.claude/hooks/lib"
@@ -8520,15 +8536,15 @@ if [ -n "$C1_HAVE_NODE" ]; then
   cp "$ROOT/user-level-reference/hooks/lib/json.sh"         "$C1HH/.claude/hooks/lib/json.sh"
   C1HP="$(mkjson Bash 'cd /a && b && c' "$C1CWD")"
   # (a) project copy present -> silent
-  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  CLAUDE_PROJECT_DIR="$ROOT" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSRP" "$C1HH/.claude/hooks/deny-hang-shapes.sh" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
   expect "C1 S-42 deny-hang-shapes user-level + project copy -> silent" "rc=0 out=0 err=0" \
     "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
   # (b) no project copy -> the user-level hook runs and refuses (exit 2, advice on stderr)
-  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1HH" "$C1_BASH" -c "$C1_HUSRP" "$C1HH/.claude/hooks/deny-hang-shapes.sh" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
   expect "C1 S-42 deny-hang-shapes user-level, no project copy -> runs" "rc=2 refused" \
     "rc=$C1_RC $(grep -q 'git -C' "$C1ERRF" && echo refused)"
   # (c) no file at all -> silent
-  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$C1_HUSR" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
+  CLAUDE_PROJECT_DIR="$C1EMPTY" HOME="$C1EMPTY" "$C1_BASH" -c "$C1_HUSRP" "$C1EMPTY/.claude/hooks/deny-hang-shapes.sh" <<<"$C1HP" >"$C1OUTF" 2>"$C1ERRF"; C1_RC=$?
   expect "C1 S-42 deny-hang-shapes user-level, no file -> silent" "rc=0 out=0 err=0" \
     "rc=$C1_RC out=$(wc -c < "$C1OUTF" | tr -d ' ') err=$(wc -c < "$C1ERRF" | tr -d ' ')"
 else
@@ -9881,6 +9897,214 @@ else
   done
 fi
 # ---- end v4.4.0 C4
+
+# ---- v4.4.0 C1: user-level hooks in exec form, rendered with absolute paths (scripts/render-user-hooks.sh) ----
+echo "=== v4.4.0 C1: user-level exec-form registrations ==="
+C1RUH="$ROOT/scripts/render-user-hooks.sh"
+C1REF="$ROOT/user-level-reference/settings.json"
+C1R=$(mkrepo c1repo main)
+C1H="$TMPROOT/c1home"
+mkdir -p "$C1H/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$C1H/.claude/hooks"
+C1HOOKS="no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard"
+C1STEP="no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard"
+c1_old() { # <hook> -> the pre-v4.4 shell-form user registration (sh -c, HOME set by the caller)
+  case "$1" in
+    no-push-main) printf '%s' "bash ~/.claude/hooks/no-push-main.sh; c=\$?; if [ \"\$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/no-push-main.sh -- enforcement offline.' >&2; exit 2; fi; exit \$c" ;;
+    deny-secret-reads) printf '%s' "bash ~/.claude/hooks/deny-secret-reads.sh; c=\$?; if [ \"\$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/deny-secret-reads.sh -- secrets protection offline.' >&2; exit 2; fi; exit \$c" ;;
+    deny-hang-shapes|model-floor) printf '%s' "[ -f \"\${CLAUDE_PROJECT_DIR:-.}/hooks/$1.sh\" ] && exit 0; f=\"\$HOME/.claude/hooks/$1.sh\"; [ -f \"\$f\" ] || exit 0; bash \"\$f\"" ;;
+    bash-output-guard) printf '%s' "bash ~/.claude/hooks/bash-output-guard.sh" ;;
+  esac
+}
+c1_pl() { # <hook> <deny|allow> -> a payload for that hook
+  case "$1:$2" in
+    no-push-main:deny)  mkjson Bash 'git push origin main' "$C1R" ;;
+    deny-secret-reads:deny) mkread "$C1R/.env" ;;
+    deny-hang-shapes:deny)  mkjson Bash 'cd /a && b && c' "$C1R" ;;
+    deny-secret-reads:allow) mkread "$C1R/seed.txt" ;;
+    model-floor:*)      printf '{"tool_name":"Agent","hook_event_name":"PreToolUse","tool_input":{"subagent_type":"general-purpose","prompt":"x"},"cwd":"%s"}\n' "$(jesc "$C1R")" ;;
+    bash-output-guard:deny) mkpost 40000 ;;
+    bash-output-guard:allow) mkpost 10 ;;
+    *:allow) mkjson Bash 'ls -la' "$C1R" ;;
+  esac
+}
+# c1_exec <home> <proj> <payload> <command> <arg>... : runs the argv exactly, no shell. Sets C1RC, C1OUT, C1ERR.
+c1_exec() {
+  c1e_h=$1; c1e_p=$2; c1e_in=$3; shift 3
+  printf '%s' "$c1e_in" | env HOME="$c1e_h" CLAUDE_PROJECT_DIR="$c1e_p" "$@" >"$TMPROOT/c1-out" 2>"$TMPROOT/c1-err"
+  C1RC=$?; C1OUT=$(cat "$TMPROOT/c1-out"); C1ERR=$(cat "$TMPROOT/c1-err")
+}
+c1_execsh() { # <home> <proj> <payload> <command string> -- the old shell form, under sh -c
+  c1e_h=$1; c1e_p=$2; c1e_in=$3; shift 3
+  printf '%s' "$c1e_in" | env HOME="$c1e_h" CLAUDE_PROJECT_DIR="$c1e_p" sh -c "$1" >"$TMPROOT/c1-out" 2>"$TMPROOT/c1-err"
+  C1RC=$?; C1OUT=$(cat "$TMPROOT/c1-out"); C1ERR=$(cat "$TMPROOT/c1-err")
+}
+c1_nonempty() { [ -n "$1" ] && echo 1 || echo 0; }
+
+# (a) --print: parses, nothing unsubstituted, no tilde (exec form does not expand it)
+HOME="$C1H" bash "$C1RUH" --print >"$TMPROOT/c1-print.json" 2>"$TMPROOT/c1-print.err"
+expect "C1 (a): render-user-hooks.sh --print exits 0" 0 "$?"
+json_valid "$(cat "$TMPROOT/c1-print.json")"
+expect "C1 (a): --print output parses as JSON" 0 "$?"
+expect "C1 (a): --print output has no @BASH@ / @HOOKS@ left" 0 "$(grep -c '@BASH@\|@HOOKS@' "$TMPROOT/c1-print.json")"
+expect "C1 (a): --print output has no tilde" 0 "$(grep -c '~' "$TMPROOT/c1-print.json")"
+expect "C1 (a): the reference carries the placeholders (five exec entries)" 5 "$(grep -c '"command": "@BASH@"' "$C1REF")"
+expect "C1 (a): the reference spells no old shell-form user registration" 0 "$(grep -c 'bash ~/.claude/hooks/' "$C1REF")"
+HOME="$C1H" bash "$C1RUH" --list >"$TMPROOT/c1-list.tsv" 2>/dev/null
+expect "C1 (a): --list exits 0" 0 "$?"
+
+# the exact strings: <SA_X> + <TAIL> per polarity (UF / UO / UU)
+c1_sa() { printf '%s' "p=\${CLAUDE_PROJECT_DIR:-.}; if [ -f \\\"\$p/hooks/$1.sh\\\" ] && [ -r \\\"\$p/.claude/settings.json\\\" ]; then IFS= read -r -d '' s < \\\"\$p/.claude/settings.json\\\"; case \$s in *'}/hooks/$1.sh\\\\\\\"'*) exit 0 ;; esac; fi; unset p s; "; }
+for c1_x in $C1STEP; do
+  case "$c1_x" in
+    no-push-main)      c1_tail='[ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"' ;;
+    deny-secret-reads) c1_tail='[ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- secrets protection offline.\" >&2; exit 2; }; . \"$0\"' ;;
+    deny-hang-shapes|model-floor) c1_tail='[ -r \"$0\" ] || exit 0; . \"$0\"' ;;
+    bash-output-guard) c1_tail='. \"$0\"' ;;
+  esac
+  c1_want=$(printf '{"type": "command", "command": "@BASH@", "args": ["-c", "%s%s", "@HOOKS@/%s.sh"]}' "$(c1_sa "$c1_x")" "$c1_tail" "$c1_x")
+  expect "C1 (g): $c1_x is registered with the exact exec-form string (step-aside + tail)" 1 "$(grep -cF -- "$c1_want" "$C1REF")"
+done
+
+# (b) each rendered entry, run as its argv, answers like the old shell form
+C1SEEN=""
+while IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest; do
+  [ -n "$c1_a3" ] || continue
+  c1_x=$(basename "$c1_a3" .sh); C1SEEN="$C1SEEN $c1_x"
+  c1_old_s=$(c1_old "$c1_x")
+  [ -n "$c1_old_s" ] || continue
+  for c1_k in deny allow; do
+    c1_p=$(c1_pl "$c1_x" "$c1_k")
+    c1_execsh "$C1H" "$C1R" "$c1_p" "$c1_old_s"; c1_orc=$C1RC; c1_oout=$(c1_nonempty "$C1OUT")
+    c1_exec "$C1H" "$C1R" "$c1_p" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"; c1_nrc=$C1RC; c1_nout=$(c1_nonempty "$C1OUT")
+    expect "C1 (b): $c1_x/$c1_k: exec-form exit code equals the old shell form's" "$c1_orc" "$c1_nrc"
+    expect "C1 (b): $c1_x/$c1_k: exec-form stdout emptiness equals the old shell form's" "$c1_oout" "$c1_nout"
+  done
+  case "$c1_x" in no-push-main|deny-secret-reads|deny-hang-shapes)
+    c1_exec "$C1H" "$C1R" "$(c1_pl "$c1_x" deny)" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
+    expect "C1 (b): $c1_x refuses its deny payload with 2 through the rendered argv" 2 "$C1RC" ;;
+  esac
+done < "$TMPROOT/c1-list.tsv"
+for c1_x in $C1HOOKS; do
+  expect "C1 (b): $c1_x is rendered exactly once" 1 "$(printf '%s\n' $C1SEEN | grep -c "^$c1_x\$")"
+done
+
+# (c) the script renamed away: UF 2 + HOOK SCRIPT MISSING, UO 0, UU non-zero but not 2
+while IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest; do
+  [ -n "$c1_a3" ] || continue
+  c1_x=$(basename "$c1_a3" .sh)
+  [ -f "$C1H/.claude/hooks/$c1_x.sh" ] || continue
+  mv "$C1H/.claude/hooks/$c1_x.sh" "$C1H/.claude/hooks/$c1_x.sh.offline"
+  c1_exec "$C1H" "$C1R" "$(c1_pl "$c1_x" allow)" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
+  case "$c1_x" in
+    no-push-main|deny-secret-reads)
+      expect "C1 (c): $c1_x missing: exits 2 (UF fail-closed)" 2 "$C1RC"
+      expect "C1 (c): $c1_x missing: says HOOK SCRIPT MISSING" 1 "$(printf '%s' "$C1ERR" | grep -c 'HOOK SCRIPT MISSING')" ;;
+    deny-hang-shapes|model-floor)
+      expect "C1 (c): $c1_x missing: exits 0 (UO fail-open silent)" 0 "$C1RC" ;;
+    bash-output-guard)
+      c1_ok=0; [ "$C1RC" != 0 ] && [ "$C1RC" != 2 ] && c1_ok=1
+      expect "C1 (c): $c1_x missing: non-zero but not 2 (UU unwrapped, non-blocking), got $C1RC" 1 "$c1_ok" ;;
+  esac
+  mv "$C1H/.claude/hooks/$c1_x.sh.offline" "$C1H/.claude/hooks/$c1_x.sh"
+done < "$TMPROOT/c1-list.tsv"
+
+# (d) --write: backup, only the hooks key replaced, foreign hooks kept, idempotent
+C1W="$TMPROOT/c1write"; mkdir -p "$C1W/home/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$C1W/home/.claude/hooks"; C1WS="$C1W/home/.claude/settings.json"
+printf '%s\n' '{' '  "zz": {"k": [1, 2, "three"]},' '  "hooks": {' \
+  '    "PreToolUse": [' \
+  '      {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-push-main.sh; c=$?; exit $c"}, {"type": "command", "command": "bash /opt/agent-dashboard/pressure-gate.sh"}]},' \
+  '      {"matcher": "Edit", "hooks": [{"type": "command", "command": "bash /opt/other/edit-guard.sh"}]}' \
+  '    ],' \
+  '    "Stop": [{"hooks": [{"type": "command", "command": "bash /opt/stop.sh"}]}]' \
+  '  },' '  "last": true' '}' > "$C1WS"
+HOME="$C1W/home" bash "$C1RUH" --write --settings "$C1WS" >"$C1W/out1" 2>"$C1W/err1"
+expect "C1 (d): --write exits 0" 0 "$?"
+expect "C1 (d): a settings.json.bak-<UTC ts> backup exists" 1 "$(ls "$C1WS".bak-* 2>/dev/null | grep -c 'settings\.json\.bak-[0-9]\{8\}T[0-9]\{6\}Z$')"
+expect "C1 (d): the backup holds the pre-write bytes (old no-push-main form)" 1 "$(grep -c 'bash ~/.claude/hooks/no-push-main.sh' "$C1WS".bak-* | head -1)"
+expect "C1 (d): the extra top-level key survives" 1 "$(grep -c '"zz"' "$C1WS")"
+expect "C1 (d): the trailing top-level key survives" 1 "$(grep -c '"last"' "$C1WS")"
+expect "C1 (d): the foreign pressure-gate hook is kept" 1 "$(grep -c 'pressure-gate.sh' "$C1WS")"
+expect "C1 (d): the foreign Edit-matcher hook is kept" 1 "$(grep -c 'edit-guard.sh' "$C1WS")"
+expect "C1 (d): the foreign Stop event is kept" 1 "$(grep -c '/opt/stop.sh' "$C1WS")"
+expect "C1 (d): the old shell-form no-push-main registration is gone" 0 "$(grep -c 'bash ~/.claude/hooks/' "$C1WS")"
+expect "C1 (d): the file has no placeholders" 0 "$(grep -c '@BASH@\|@HOOKS@' "$C1WS")"
+expect "C1 (d): a 'kept foreign hook' line names pressure-gate" 1 "$(grep -c '^kept foreign hook: bash /opt/agent-dashboard/pressure-gate.sh$' "$C1W/out1")"
+json_valid "$(cat "$C1WS")"; expect "C1 (d): the written file parses" 0 "$?"
+expect "C1 (d): the rendered no-push-main entry is in the file" 1 "$(grep -c "$C1W/home/.claude/hooks/no-push-main.sh" "$C1WS")"
+cp "$C1WS" "$C1W/after1"
+HOME="$C1W/home" bash "$C1RUH" --write --settings "$C1WS" >"$C1W/out2" 2>"$C1W/err2"
+expect "C1 (d): a second --write exits 0" 0 "$?"
+expect "C1 (d): a second --write leaves the same bytes (idempotent)" 0 "$(cmp -s "$C1W/after1" "$C1WS"; echo $?)"
+expect "C1 (d): the second run kept the one foreign pressure-gate hook (no duplicate)" 1 "$(grep -c 'pressure-gate.sh' "$C1WS")"
+# a live file that does not parse is refused and left alone
+printf '{ "hooks": ' > "$C1W/bad.json"
+HOME="$C1W/home" bash "$C1RUH" --write --settings "$C1W/bad.json" >/dev/null 2>"$C1W/errbad"
+c1_brc=$?
+expect "C1 (d): an unparseable live settings file is refused (exit non-zero)" 1 "$([ "$c1_brc" != 0 ] && echo 1 || echo 0)"
+expect "C1 (d): the refused file is untouched" 0 "$(cmp -s "$C1W/bad.json" <(printf '{ "hooks": '); echo $?)"
+expect "C1 (d): no backup was made for the refused file" 0 "$(ls "$C1W"/bad.json.bak-* 2>/dev/null | grep -c .)"
+
+# (e) BASH_EXE refusals (RUH_TEST_BASH is the test hook that stands in for the detected path)
+mkdir -p "$C1W/Windows/System32" "$C1W/Git/bin" "$C1W/Git/usr/bin"
+: > "$C1W/Windows/System32/bash.exe"; : > "$C1W/Git/bin/bash.exe"; : > "$C1W/Git/usr/bin/bash.exe"
+for c1_t in "$C1W/Windows/System32/bash.exe" "$C1W/Git/bin/bash.exe" "$C1W/does/not/exist/bash"; do
+  RUH_TEST_BASH="$c1_t" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rb.out" 2>"$C1W/rb.err"
+  c1_rrc=$?
+  expect "C1 (e): refuses BASH_EXE=${c1_t#"$C1W"/} (exit 1, nothing printed)" "1:0" "$c1_rrc:$(grep -c . "$C1W/rb.out" | tr -d ' ')"
+done
+RUH_TEST_BASH="$C1W/Git/usr/bin/bash.exe" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rb.out" 2>"$C1W/rb.err"
+expect "C1 (e): accepts a usr/bin/bash.exe path" 0 "$?"
+expect "C1 (e): ... and renders it as the exec program" 1 "$([ "$(grep -cF "\"command\": \"$C1W/Git/usr/bin/bash.exe\"" "$C1W/rb.out")" -ge 1 ] && echo 1 || echo 0)"
+
+# (f) C5 step-aside: the global copy steps aside only when the project REGISTERS its own copy
+c1_pset() { # <state> <hook> <dir> -- builds the project dir for that state
+  c1s_d=$3; rm -rf "$c1s_d"; mkdir -p "$c1s_d/hooks" "$c1s_d/.claude"
+  c1s_x=$2
+  case "$1" in
+    nofile-registered) rm -rf "$c1s_d/hooks" ;;
+    *) printf '#!/bin/sh\nexit 0\n' > "$c1s_d/hooks/$c1s_x.sh" ;;
+  esac
+  case "$1" in
+    template-F|nofile-registered) printf '%s' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/'"$c1s_x"'.sh\"; [ -r \"$f\" ] || exit 2; exec bash \"$f\""}]}]}}' > "$c1s_d/.claude/settings.json" ;;
+    old-wrapper) printf '%s' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'"$c1s_x"'.sh\"; c=$?; exit $c"}]}]}}' > "$c1s_d/.claude/settings.json" ;;
+    permissions-only) printf '%s' '{"permissions":{"allow":["Bash(bash ${CLAUDE_PROJECT_DIR}/hooks/'"$c1s_x"'.sh)"]}}' > "$c1s_d/.claude/settings.json" ;;
+    disabled) printf '%s' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'"$c1s_x"'.sh.disabled\""}]}]}}' > "$c1s_d/.claude/settings.json" ;;
+    user-path) printf '%s' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"$HOME/.claude/hooks/'"$c1s_x"'.sh\""}]}]}}' > "$c1s_d/.claude/settings.json" ;;
+    file-no-registration) printf '%s' '{"hooks":{}}' > "$c1s_d/.claude/settings.json" ;;
+    file-no-settings) rm -rf "$c1s_d/.claude" ;;
+  esac
+}
+while IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest; do
+  [ -n "$c1_a3" ] || continue
+  c1_x=$(basename "$c1_a3" .sh)
+  case " $C1STEP " in *" $c1_x "*) ;; *) continue ;; esac
+  c1_p=$(c1_pl "$c1_x" deny)
+  for c1_st in template-F old-wrapper permissions-only disabled user-path file-no-registration file-no-settings nofile-registered; do
+    c1_pd="$TMPROOT/c1proj-$c1_x-$c1_st"; c1_pset "$c1_st" "$c1_x" "$c1_pd"
+    c1_exec "$C1H" "$c1_pd" "$c1_p" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
+    c1_ran=0; { [ "$C1RC" != 0 ] || [ -n "$C1OUT" ]; } && c1_ran=1
+    case "$c1_st" in template-F|old-wrapper) c1_want=0 ;; *) c1_want=1 ;; esac
+    expect "C1 (f): $c1_x, project state $c1_st: global copy runs=$c1_want" "$c1_want" "$c1_ran"
+  done
+  c1_pd="$TMPROOT/c1proj-none-$c1_x"; rm -rf "$c1_pd"; mkdir -p "$c1_pd"
+  c1_exec "$C1H" "$c1_pd" "$c1_p" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
+  c1_ran=0; { [ "$C1RC" != 0 ] || [ -n "$C1OUT" ]; } && c1_ran=1
+  expect "C1 (f): $c1_x, no project hooks at all: global copy runs" 1 "$c1_ran"
+done < "$TMPROOT/c1-list.tsv"
+# the real general template's own registration (today's form) also makes the two it carries step aside
+C1TG="$ROOT/templates/general/.claude/settings.json"
+for c1_x in no-push-main deny-secret-reads; do
+  c1_pd="$TMPROOT/c1proj-real-$c1_x"; rm -rf "$c1_pd"; mkdir -p "$c1_pd/hooks" "$c1_pd/.claude"
+  printf '#!/bin/sh\nexit 0\n' > "$c1_pd/hooks/$c1_x.sh"; cp "$C1TG" "$c1_pd/.claude/settings.json"
+  c1_line=$(awk -F'\t' -v x="$c1_x" '$6 ~ /\.sh$/ {n=$6; sub(/.*\//,"",n); sub(/\.sh$/,"",n); if (n==x) print}' "$TMPROOT/c1-list.tsv")
+  IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest <<EOF
+$c1_line
+EOF
+  c1_exec "$C1H" "$c1_pd" "$(c1_pl "$c1_x" deny)" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
+  c1_ran=0; { [ "$C1RC" != 0 ] || [ -n "$C1OUT" ]; } && c1_ran=1
+  expect "C1 (f): $c1_x steps aside for templates/general's own registration" 0 "$c1_ran"
+done
+# ---- end v4.4.0 C1
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

@@ -68,10 +68,25 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/no-push-main.sh; c=$?; if [ \"$c\" = \"127\" ]; then echo 'HOOK SCRIPT MISSING: ~/.claude/hooks/no-push-main.sh -- enforcement offline.' >&2; exit 2; fi; exit $c"
-          }
+          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/no-push-main.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/no-push-main.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/no-push-main.sh"]}
+        ]
+      },
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-secret-reads.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-secret-reads.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- secrets protection offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/deny-secret-reads.sh"]}
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-hang-shapes.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-hang-shapes.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/deny-hang-shapes.sh"]}
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/model-floor.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/model-floor.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/model-floor.sh"]}
         ]
       }
     ],
@@ -79,10 +94,7 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/bash-output-guard.sh"
-          }
+          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/bash-output-guard.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/bash-output-guard.sh\\\"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/bash-output-guard.sh"]}
         ]
       }
     ],
@@ -267,19 +279,28 @@ Controls **when** auto-compact triggers — expressed as a percentage of the cur
 
 Hooks are shell commands that execute in response to Claude Code events. They enforce workflow rules mechanistically rather than relying on prompt instructions alone.
 
+**Do not copy the `hooks` block by hand: run `bash scripts/render-user-hooks.sh --write` from the toolkit root.** The user-level hooks are registered in **exec form** (v4.4.0): `"command"` is the bash program and `"args"` is `["-c", "<one-line script>", "<hooks dir>/<hook>.sh"]`, so Claude Code starts one bash process per hook with no shell around it. Exec form does not expand `~` or `$HOME`, and resolves a bare `bash` through PATH (on Windows that can reach `System32\bash.exe`, the WSL launcher, which fails open for every protection). The reference therefore spells the program and the directory as `@BASH@` and `@HOOKS@`, and the render script writes the absolute Git Bash `usr/bin/bash.exe` (or `command -v bash` elsewhere) and `$HOME/.claude/hooks`. A hand-copied block would spawn a program named `@BASH@`, a non-blocking error, so every user protection would fail open; the consistency script's placeholder census allows `@[A-Z]+@` in this one file only.
+
+`render-user-hooks.sh --print` shows the rendered block; `--write` backs the live file up to `settings.json.bak-<UTC timestamp>` (restore it to back out), replaces only the top-level `hooks` key, keeps hooks it does not own (merged by event and matcher, appended after the toolkit's, each reported as `kept foreign hook: <command>`), refuses a live file that does not parse, re-reads the result to check that every script path exists, and is idempotent. It never touches the `UserPromptSubmit` date hook's text (check 62 pins it).
+
+Each entry's script is `<step-aside>` + `<tail>`. The tail runs the hook **in the same bash process** (`. "$0"`, a builtin), so a hook's `exit N` is the process exit code. The step-aside (C5) makes the global copy exit 0 when the project registers its own copy of the same hook: the project has `hooks/<name>.sh` **and** its `.claude/settings.json` registers it (the text `}/hooks/<name>.sh"` is present, which a permissions entry or a `.sh.disabled` path does not match). A project that ships the script without registering it keeps the global check.
+
 **The v2.0 user-level hook set** (see the *Full Settings JSON* block for exact registration):
 
 | Hook | Event / matcher | Polarity | What it does |
 |---|---|---|---|
-| `no-push-main.sh` | `PreToolUse` on `Bash\|PowerShell` | fail-**closed** (127 → exit 2) | Blocks a push to `main`/`master`, resolving the implicit branch when none is named. v2.0 PR1 moved it onto the Bash matcher because native `git push` is now the supported path. |
-| `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | unwrapped (cannot block) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
+| `no-push-main.sh` | `PreToolUse` on `Bash\|PowerShell` | `UF`: fail-**closed** (missing script → `HOOK SCRIPT MISSING`, exit 2; the hook's own exit 127 → 2 through its in-hook trap) | Blocks a push to `main`/`master`, resolving the implicit branch when none is named. v2.0 PR1 moved it onto the Bash matcher because native `git push` is now the supported path. |
+| `deny-secret-reads.sh` | `PreToolUse` on `Read\|Bash` | `UF`: fail-**closed** (exit 2 when missing) | Refuses reads of secret files (`.env` and friends). |
+| `deny-hang-shapes.sh` | `PreToolUse` on `Bash` | `UO`: fail-open, silent (exit 0 when missing) | Refuses command shapes that hang the harness (heredoc into a file, wait loops, a `cd` chain). |
+| `model-floor.sh` | `PreToolUse` on `Agent` | `UO`: fail-open, silent | Gives a model-less spawn the project default model. |
+| `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | `UU`: unwrapped (cannot block; a missing script is a non-blocking error) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
 | `read-size-gate.sh` | `PreToolUse` on `Read` | fail-**open** | Caps an unbounded `Read` at 500 lines and tells the model the next offset. Recommended user-level install — see below. |
 
 **Retired in v2.1:** `tier-before-coder.sh`. The plan gate is gone — plans are optional artifacts and every spawn carries its task brief instead. Delete the script from `~/.claude/hooks/` and its `Agent` matcher entry from `~/.claude/settings.json`; left registered, it fails closed on a missing script and blocks every coder spawn.
 
 **Retired at user level in v2.0, deleted in v2.1:** the blanket Bash-git block. PR1 replaced "ban the git CLI" with "gate it" — `no-push-main.sh` and the project-level `gate-before-merge.sh` stop the dangerous operations, and everything else runs natively. If you still have the old blanket-block registered, remove it; it now blocks the supported workflow.
 
-Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory.
+Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory. The five entries above carry a step-aside for the project's own registration (C5), so the global and project copies never both run.
 
 #### Hook Events
 
@@ -341,7 +362,7 @@ Hooks fire even when agents use `mode: bypassPermissions` — they enforce polic
 
 A user-level hook may only reference scripts and paths that exist in *every* repo — a fail-closed hook pointing at a repo-scoped script turns every unrelated project into a paralysed session. Do NOT use the inline `if: "Bash(git *)"` glob style at user level: its matcher is conservative on complex multi-line commands and fail-closes on false positives (observed blocking legitimate non-git commands). Prefer a script that parses the command itself.
 
-**Exit-code semantics (important):** a hook command exiting with anything other than 0 or 2 — including **127 when the script file is missing** — is FAIL-OPEN: the tool call proceeds and only a non-blocking error is logged. That is why the example wraps the script call and converts 127 to exit 2 with a `HOOK SCRIPT MISSING` diagnostic; the project templates apply the same wrapper to every PreToolUse script hook. The one deliberate exception: the SubagentStop contract enforcer is NOT wrapped — a missing stop-gate must fail open, or a broken installation would block agents from ever stopping.
+**Exit-code semantics (important):** a hook command exiting with anything other than 0 or 2 — including **127 when the script file is missing** — is FAIL-OPEN: the tool call proceeds and only a non-blocking error is logged. That is why the `UF` tail tests `[ -r "$0" ]` first and exits 2 with a `HOOK SCRIPT MISSING` diagnostic, and why the fail-closed hooks carry an `EXIT` trap that maps their own exit 127 to 2 (an exec/source form cannot wrap the script's exit the way the old `bash x.sh; c=$?` shell form did). The one deliberate exception: the SubagentStop contract enforcer is NOT wrapped — a missing stop-gate must fail open, or a broken installation would block agents from ever stopping.
 
 Project-level templates add additional hooks for format gates, build checks, pipeline tracking, and compaction snapshots. See `docs/templates.md` for per-template hook details.
 

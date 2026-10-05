@@ -1326,6 +1326,9 @@ print_automode_snippet
 echo ""
 print_template_sync_snippet
 
+echo ""
+echo "Next step (user-level hooks, once per machine): bash \"$SCRIPT_DIR/scripts/render-user-hooks.sh\" --write"
+
 # --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
 #
 # TS_WIN_EXE is resolved above, once, before the dry-run/real-run fork; it is
