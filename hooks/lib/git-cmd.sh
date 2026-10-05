@@ -329,14 +329,24 @@ GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 # so it is looked for under the process cwd, which is the project directory
 # Claude Code runs hooks in.
 gc_read_stdin() {
-  GC_JSON=$(cat)
   # v4.3.1 S6b: ONE interpreter run parses the payload, returns the three fields
   # and doubles as the validity check and the parser probe (json_payload; it was
   # five spawns: probe, json_valid, three json_get). rc 2 = no working parser,
   # anything else non-zero (1 = does not parse, empty stdin included; 127 =
   # json_payload missing) refuses too; 0 = fields in JP_*.
-  json_payload "$GC_JSON"
-  gc_rc=$?
+  # v4.4.0 C4: no-push-main / gate-before-merge read stdin and parse BEFORE
+  # sourcing this file (their early exit), and hand the result over in
+  # GC_PRE_JSON (payload), GC_PREPARSED (json_payload's rc) and JP_* (fields).
+  # It is assigned HERE, inside the function, because the top-level
+  # `GC_JSON=""` above would wipe it, and gc_cmd_unreadable reads GC_JSON.
+  if [ -n "${GC_PREPARSED-}" ]; then
+    GC_JSON=$GC_PRE_JSON
+    gc_rc=$GC_PREPARSED
+  else
+    GC_JSON=$(cat)
+    json_payload "$GC_JSON"
+    gc_rc=$?
+  fi
   if [ "$gc_rc" = 2 ]; then
     GC_CWD=$(pwd)
     GC_TOOL=""

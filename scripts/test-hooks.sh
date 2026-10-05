@@ -9689,6 +9689,126 @@ if [ -z "$HAVE_NODE" ]; then
 else
   expect "C4: deny-secret-reads on ls -la runs no tr" 0 "$(c4_n deny-secret-reads "$(mkjson Bash 'ls -la' "$TMPROOT")" '^tr$')"
 fi
+# no-push-main and gate-before-merge (Task 7): both read and parse the payload BEFORE sourcing
+# lib/git-cmd.sh and exit 0 when no git, gh or script word can occur in the command. The rows
+# below are the OLD hooks' answers (git archive of ddf3ea6), per hook: the corpus push, commit
+# and merge rows plus every shape the early-exit predicate could miss (case, quote splitting, a
+# `.` after LF/TAB/;/&/(, runner words), the payloads that must still be refused (truncated,
+# empty, no parser, six unreadable-command shapes), the guard-off file and the MCP tool name.
+c4g_repo=$(mkrepo c4g main)
+printf '**Test**: true\n**Gate**: true\n' > "$c4g_repo/PROJECT_CONTEXT.md"
+printf 'git push origin main\n' > "$c4g_repo/push.sh"
+printf 'git push origin main\n' > "$c4g_repo/push.ps1"
+git -C "$c4g_repo" add -A >/dev/null 2>&1
+git -C "$c4g_repo" commit -q -m c4g >/dev/null 2>&1
+c4g_cwd=$(jesc "$c4g_repo")
+c4g() { # <id> <no-push-main exit> <gate-before-merge exit> <command>
+  c4g_j=$(mkjson Bash "$4" "$c4g_repo")
+  check "C4 no-push-main: $1" hooks/no-push-main.sh "$2" "$c4g_j"
+  check "C4 gate-before-merge: $1" hooks/gate-before-merge.sh "$3" "$c4g_j"
+}
+c4g_raw() { # <label> <no-push-main exit> <gate-before-merge exit> <raw JSON payload>
+  check "C4 no-push-main: $1" hooks/no-push-main.sh "$2" "$4"
+  check "C4 gate-before-merge: $1" hooks/gate-before-merge.sh "$3" "$4"
+}
+c4g bp01 2 2 $'git push origin main'
+c4g bp02 2 2 $'git push origin HEAD:main'
+c4g bp03 2 2 $'git push -f origin master'
+c4g bp04 2 2 $'git push origin :main'
+c4g bp05 2 2 $'git push --delete origin main'
+c4g bp06 2 2 $'git -C /x push origin main'
+c4g bp07 2 2 $'GIT_DIR=x git push origin main'
+c4g bp08 2 2 $'git.exe push origin main'
+c4g bp09 2 2 $'"git" push origin main'
+c4g bp10 2 2 $'cd /repo && git push'
+c4g bp11 2 2 $'ls; git push origin main'
+c4g bp12 2 2 $'bash push.sh'
+c4g bp13 2 2 $'sh ./push.sh'
+c4g bp14 2 2 $'. ./push.sh'
+c4g bp15 2 2 $'ls\n. ./push.sh'
+c4g bp16 2 2 $'ls;\t. ./push.sh'
+c4g bp17 2 2 $'g"i"t push origin main'
+c4g bp18 0 2 $'g\'\'it merge feature'
+c4g bp19 0 0 $'git -c alias.p=push p origin main'
+c4g bp20 0 0 $'git checkout main'
+c4g bp21 0 0 $'git switch -c feature'
+c4g bp22 0 0 $'git branch -D main'
+c4g bp23 0 2 $'gh pr merge 1'
+c4g cm01 0 0 $'git commit -m x'
+c4g cm02 0 2 $'git merge feature'
+c4g cm03 0 2 $'git pull --ff-only'
+c4g cm04 0 2 $'git pull'
+c4g cm05 0 0 $'git status --short'
+c4g cm06 0 0 $'git log --grep=commit'
+c4g x01 2 2 $'GiT push origin main'
+c4g x02 2 2 $'x=1;. ./push.sh'
+c4g x03 0 0 $'(.  ./push.sh)'
+c4g x04 0 0 $'echo|sh'
+c4g x05 2 2 $'pwsh -File push.ps1'
+c4g x06 0 0 $'ls -la'
+c4g x07 0 0 $'echo done. ok'
+c4g x08 0 0 $'npm test'
+c4g x09 0 0 $'git status'
+c4g x10 0 2 $'gh pr merge 1 --squash'
+c4g x11 0 0 $'git push origin feature'
+c4g x12 2 2 $'bash -c \'git push origin main\''
+c4g x13 2 2 $'env sh push.sh'
+c4g x14 2 2 $'GIT push origin master'
+c4g x15 0 0 $'ls && git commit -m x'
+c4g x16 2 2 $'g\\it push origin main'
+c4g x17 0 0 $'$(echo git) push origin main'
+c4g x18 0 0 $'SOURCE ./push.sh'
+c4g x19 2 2 $'powershell -Command "& ./push.ps1"'
+c4g x20 0 0 $'./push.sh'
+c4g x21 2 2 $'ls\n\t. ./push.sh'
+c4g x22 0 0 $'{ . ./push.sh; }'
+c4g x23 0 0 $'ls & . ./push.sh'
+c4g x24 2 2 $'ls && . ./push.sh'
+c4g_raw "truncated payload (still blocks)" 2 2 '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"'"$c4g_cwd"
+c4g_raw "empty payload (still blocks)" 2 2 ''
+c4g_raw 'unreadable: "command":""' 2 2 '{"tool_name":"Bash","tool_input":{"command":""},"cwd":"'"$c4g_cwd"'"}'
+c4g_raw 'unreadable: "command":null' 2 2 '{"tool_name":"Bash","tool_input":{"command":null},"cwd":"'"$c4g_cwd"'"}'
+c4g_raw 'unreadable: command is an array' 2 2 '{"tool_name":"Bash","tool_input":{"command":["git","push"]},"cwd":"'"$c4g_cwd"'"}'
+c4g_raw 'unreadable: command is an object' 2 2 '{"tool_name":"Bash","tool_input":{"command":{"a":1}},"cwd":"'"$c4g_cwd"'"}'
+c4g_raw 'unreadable: "tool_name":"" with ls' 2 2 '{"tool_name":"","tool_input":{"command":"ls"},"cwd":"'"$c4g_cwd"'"}'
+c4g_raw 'unreadable: no tool_name' 2 2 '{"tool_input":{"command":"ls"},"cwd":"'"$c4g_cwd"'"}'
+c4g_raw 'ok: Bash payload with no command key' 0 0 "$(mkjson_nocmd Bash "$c4g_repo")"
+c4g_raw 'ok: Read tool carrying a git push command' 0 0 "$(mkjson Read 'git push origin main' "$c4g_repo")"
+c4g_raw 'MCP merge tool' 0 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$c4g_repo")"
+c4g_raw 'retired MCP git_push tool' 2 2 "$(mkjson_mcp mcp__git-tools__git_push "$c4g_repo")"
+c4g_off=$(mkrepo c4goff main)
+mkdir -p "$c4g_off/.claude"; : > "$c4g_off/.claude/git-guard-off"
+c4g_raw 'guard-off file: git push origin main' 0 0 "$(mkjson Bash 'git push origin main' "$c4g_off")"
+c4g_raw 'guard-off file: unreadable command' 0 0 "$(mkjson_emptycmd Bash "$c4g_off")"
+# no JSON parser on PATH: the early exit never runs (no parse, rc 2), both hooks still refuse
+c4g_np="$TMPROOT/c4gnp"; mkdir -p "$c4g_np"
+for c4g_t in sh bash git grep sed tr head tail cut cat wc stat date mktemp dirname basename sort uniq mkdir rm ls env find touch cp expr awk; do
+  c4g_r=$(command -v "$c4g_t" 2>/dev/null) && ln -sf "$c4g_r" "$c4g_np/$c4g_t"
+done
+for c4g_h in no-push-main gate-before-merge; do
+  mkjson Bash 'ls -la' "$c4g_repo" | env PATH="$c4g_np" "$(command -v bash)" "$ROOT/hooks/$c4g_h.sh" >/dev/null 2>&1
+  expect "C4 $c4g_h: no parser on PATH still refuses ls -la" 2 "$?"
+done
+# Spawn rows. (a) `ls -la` never sources lib/git-cmd.sh: a hooks copy whose copy of it begins
+# with `echo SOURCED >&2`. (b) it takes exactly one parser run, so the JSON_PARSER memo survives
+# the re-source of json.sh. (c) `git status` still sources it.
+c4g_hd="$TMPROOT/c4ghooks"; mkdir -p "$c4g_hd"; cp -R "$ROOT/hooks/." "$c4g_hd/"
+{ echo 'echo SOURCED >&2'; cat "$ROOT/hooks/lib/git-cmd.sh"; } > "$c4g_hd/lib/git-cmd.sh"
+c4g_src() { # <hook> <command> -> how many times that hooks copy sourced lib/git-cmd.sh
+  mkjson Bash "$2" "$c4g_repo" | (cd "$TMPROOT" && bash "$c4g_hd/$1.sh" 2>&1 >/dev/null) | grep -c '^SOURCED$'
+}
+for c4g_h in no-push-main gate-before-merge; do
+  expect "C4 $c4g_h: ls -la does not source git-cmd.sh" 0 "$(c4g_src "$c4g_h" 'ls -la')"
+  expect "C4 $c4g_h: git status still sources git-cmd.sh" 1 "$(c4g_src "$c4g_h" 'git status')"
+done
+if [ -z "$HAVE_NODE" ]; then
+  skip "C4: git gate spawn rows" "no working node on this host" 4
+else
+  for c4g_h in no-push-main gate-before-merge; do
+    expect "C4 $c4g_h: ls -la runs one parser" 1 "$(c4_n "$c4g_h" "$(mkjson Bash 'ls -la' "$c4g_repo")" '^(node|python3|jq)$')"
+    expect "C4 $c4g_h: git status runs one parser" 1 "$(c4_n "$c4g_h" "$(mkjson Bash 'git status' "$c4g_repo")" '^(node|python3|jq)$')"
+  done
+fi
 # ---- end v4.4.0 C4
 
 echo "----------------------------------------------------------------"
