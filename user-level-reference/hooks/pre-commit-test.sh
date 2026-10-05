@@ -68,7 +68,9 @@ RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
 # IT IS A DIAGNOSTIC AND NEVER A GATE. Every failure below is swallowed —
 # unwritable cwd, no git repo, a read-only gate directory, a git older than
 # 2.31 (gc_gate_dir's own fallback WARN is swallowed here too — a diagnostic
-# path must never grow new stderr of its own, v4.0.1 addendum). A diagnostic
+# path must never grow new stderr of its own, v4.0.1 addendum; the one
+# exception: the index `cp` error below is deliberately visible since v4.4.0,
+# to diagnose the empty-tree case). A diagnostic
 # that can block a commit is a second gate nobody declared, and it would be
 # the worst kind: one whose refusal has nothing to do with the tests.
 #
