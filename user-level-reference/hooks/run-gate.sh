@@ -366,7 +366,7 @@ rg_stateless() {
 # old ambiguity metacharacters -- a quote, `$(`, a backtick, `(`, `<<` -- is
 # already outside the allowed character set and refuses the whole thing).
 if [ -n "$GATE_EXTRA" ]; then
-  RG_LEGS=$(printf '%s' "$GATE_EXTRA" | sed -E 's/[[:space:]]*&&[[:space:]]*/\n/g')
+  RG_LEGS=$(printf '%s' "$GATE_EXTRA" | awk '{gsub(/[[:space:]]*&&[[:space:]]*/,"\n")}1')
   RG_UNSAFE=0
   # v4.3.0 fix round 3, S-11 (I2 re-review -- "empty legs skip refusal
   # instead of triggering it"). A LEADING or TRAILING `&&` (`&& bash x.sh`;

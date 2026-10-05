@@ -393,6 +393,51 @@ gc_read_stdin() {
       ;;
   esac
   GC_CMD=$(gc_protect_c_paths "$GC_CMD")
+  if [ -n "$GC_CMD" ] && printf '%s' "$GC_CMD" | gc_dollar_quote; then
+    gc_guard_off && return 0
+    echo "BLOCKED: the git gates cannot check \$'...' or \$\"...\" quoting -- use plain quotes, and printf for escapes. Or create <cwd>/.claude/git-guard-off to opt out." >&2
+    exit 2
+  fi
+}
+
+# gc_dollar_quote -- stdin; 0 when the text holds a real $'...' or $"..." word,
+# 1 otherwise. Quote-aware, POSIX awk: skips '...', "..." (but scans $( ), ${ },
+# backticks as code), backslash escapes and # comments. Design:
+# docs/plans/2026-10-04-ansi-mac-design.md Q1 option C. Residuals: a heredoc body
+# with an odd number of apostrophes can hide a later $'; a case label's ) inside
+# "$(...)" closes the $( early; $$'x' is refused (errs closed); a script body that
+# encodes the git word itself passes the body check; backticks inside "..." close
+# at the next backtick (errs closed).
+gc_dollar_quote() {
+  awk '
+    { b = b $0 "\n" }
+    END {
+      sq = "\047"; dq = "\""; st = "n"; n = length(b)
+      for (i = 1; i <= n; i++) {
+        c = substr(b, i, 1); t = substr(st, length(st), 1)
+        if (t == "s") { if (c == sq) st = substr(st, 1, length(st) - 1); continue }
+        if (t == "d" || t == "r") {
+          if (c == "\\") i++
+          else if (t == "d" && c == dq) st = substr(st, 1, length(st) - 1)
+          else if (t == "r" && c == "}") st = substr(st, 1, length(st) - 1)
+          else if (t == "r" && (c == dq || c == sq)) st = st (c == dq ? "d" : "s")
+          else if (c == "$" && substr(b, i + 1, 1) == "(") { st = st "p"; i++ }
+          else if (c == "$" && substr(b, i + 1, 1) == "{") { st = st "r"; i++ }
+          else if (t == "r" && c == "$" && (substr(b, i + 1, 1) == sq || substr(b, i + 1, 1) == dq)) exit 0
+          else if (c == "`") st = st "b"
+          continue
+        }
+        if (c == "#" && (i == 1 || index(" \t\n;&|()<>", substr(b, i - 1, 1)))) { while (i < n && substr(b, i + 1, 1) != "\n") i++; continue }
+        if (c == "\\") { i++; continue }
+        if (c == "$") { d = substr(b, i + 1, 1); if (d == sq || d == dq) exit 0 }
+        else if (c == sq) st = st "s"
+        else if (c == dq) st = st "d"
+        else if (c == "`") { if (t == "b") st = substr(st, 1, length(st) - 1); else st = st "b" }
+        else if (c == "(" && t == "p") st = st "p"
+        else if (c == ")" && t == "p") st = substr(st, 1, length(st) - 1)
+      }
+      exit 1
+    }'
 }
 
 # gc_cmd_unreadable -- true when this invocation is one the git gates were
@@ -486,10 +531,14 @@ gc_guard_off() {
   [ -f "$GC_CWD/.claude/git-guard-off" ]
 }
 
+# gc_split_ops -- stdin split on | ; && into lines. awk, not sed 's/&&/\n/g':
+# BSD sed writes a literal n for \n in a replacement (design Q2 #1).
+gc_split_ops() { tr '|;' '\n\n' | awk '{gsub(/&&/,"\n")}1'; }
+
 # Splits GC_CMD into segments on && || ; | and newlines, with quote characters
 # removed so quoted wrapper payloads become plain text in the same segment.
 gc_segments() {
-  printf '%s\n' "$GC_CMD" | tr -d "\"'" | tr '|;' '\n\n' | sed 's/&&/\n/g'
+  printf '%s\n' "$GC_CMD" | tr -d "\"'" | gc_split_ops
 }
 
 # gc_seg_quoted -- sibling of gc_segments, additive (no caller of gc_segments
@@ -512,7 +561,7 @@ gc_segments() {
 # function. Callers assign the result to a variable named GC_SEG_QUOTED
 # themselves, e.g. `GC_SEG_QUOTED=$(gc_seg_quoted)`.
 gc_seg_quoted() {
-  printf '%s\n' "$GC_CMD" | tr '|;' '\n\n' | sed 's/&&/\n/g' | while IFS= read -r _gcsq_raw; do
+  printf '%s\n' "$GC_CMD" | gc_split_ops | while IFS= read -r _gcsq_raw; do
     case "$_gcsq_raw" in
       *[\"\']*) printf '1\n' ;;
       *)        printf '0\n' ;;
@@ -530,7 +579,7 @@ gc_seg_quoted() {
 # scan that only ever saw quote-stripped text cannot tell an interpreter word
 # from the same word sitting inside somebody else's quoted argument.
 gc_seg_raw() {
-  printf '%s\n' "$GC_CMD" | tr '|;' '\n\n' | sed 's/&&/\n/g'
+  printf '%s\n' "$GC_CMD" | gc_split_ops
 }
 
 # gc_seg_is_ps <raw_segment> -- v4.3.0 (S-38, S-40, S-41): succeeds when the
@@ -605,7 +654,7 @@ GC_PS_SPLIT
     seen="$seen|$p|"
     [ -f "$p" ] || continue
     n=$((n + 1)); [ "$n" -le 16 ] || break
-    head -c 16384 "$p" 2>/dev/null | LC_ALL=C sed '1s/^\xEF\xBB\xBF//' | grep -v '^[[:space:]]*#'
+    head -c 16384 "$p" 2>/dev/null | LC_ALL=C sed "1s/^$GC_BOM//" | LC_ALL=C grep -av '^[[:space:]]*#'
     printf '\n'
   done
   return 0
@@ -703,7 +752,7 @@ gc_script_body() {
   # strip (spec §0): bash does not continue a line inside a comment, so
   # join-then-strip would merge `# note \<LF>git push origin main` into the
   # comment and delete the push.
-  GC_SB=$(head -c 16384 "$path" 2>/dev/null | grep -v '^[[:space:]]*#')
+  GC_SB=$(head -c 16384 "$path" 2>/dev/null | LC_ALL=C grep -av '^[[:space:]]*#')
 }
 
 GC_NL='
@@ -783,7 +832,7 @@ gc_text_has_gated() {
       if gc_matches_subcommand "$seg" "$v"; then GC_GATED_VERB="$v"; return 0; fi
     done
   done <<GC_TG_SEGS
-$(printf '%s\n' "$t" | tr '|;' '\n\n' | sed 's/&&/\n/g')
+$(printf '%s\n' "$t" | gc_split_ops)
 GC_TG_SEGS
   return 1
 }
@@ -872,6 +921,12 @@ gc_dir_rule() {
   GC_CMD="$typed"
   for b in "${GC_BODIES[@]}"; do
     GC_CMD="$GC_CMD$GC_NL$b"
+    if printf '%s' "$b" | gc_dollar_quote &&
+      { printf '%s\n' "$b" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" ||
+        printf '%s\n' "$b" | grep -qE '(^|[^[:alnum:]_-])gh([^[:alnum:]_-]|$)'; }; then
+      echo "BLOCKED: $gate: a script this command runs uses \$'...' or \$\"...\" quoting with a git or gh word -- the gates cannot check it; use plain quotes, and printf for escapes." >&2
+      return 1
+    fi
   done
   # ... refused when the command (or a script it runs) holds a gated verb
   if [ "$dc" = 1 ]; then

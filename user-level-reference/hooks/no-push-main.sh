@@ -127,7 +127,7 @@ while IFS= read -r seg; do
   # 0 = harmless, 1 = moves onto a protected branch, 2 = target unresolvable.
   if { gc_matches_subcommand "$seg" "checkout" || gc_matches_subcommand "$seg" "switch"; } &&
      ! printf '%s\n' "$seg" | grep -qE '(^|[[:space:]])--([[:space:]]|$)'; then
-    mvargs=$(printf '%s\n' "$seg" | sed -n 's/.*[[:space:]]\(checkout\|switch\)\([[:space:]]\|$\)/\2/p' | head -1)
+    mvargs=$(printf '%s\n' "$seg" | sed -nE 's/.*[[:space:]](checkout|switch)([[:space:]]|$)/\2/p' | head -1)
     mvtarget=$(printf '%s\n' "$mvargs" | tr ' \t' '\n\n' | grep -E '^[^-][^[:space:]]*$' | head -1)
     # Trim: gc_segments splits on `&&`/`;`/`|`, which leaves a leading or
     # trailing space on the clause either side of the delimiter -- interior

@@ -199,7 +199,7 @@ mutated=0
 
 # a6_args <segment> <subcommand> -- everything after `<subcommand>` in a segment.
 a6_args() {
-  printf '%s\n' "$1" | sed -n "s/.*[[:space:]]$2\\([[:space:]]\\|\$\\)/\\1/p" | head -1
+  printf '%s\n' "$1" | sed -nE "s/.*[[:space:]]$2([[:space:]]|\$)/\1/p" | head -1
 }
 
 # a6_strip_redir <args> -- <args> with shell REDIRECTION tokens removed.
