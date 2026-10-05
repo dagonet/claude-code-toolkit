@@ -9816,6 +9816,12 @@ c4g dt01 2 2 $'./. run'
 c4g dt02 2 2 $'/. run'
 c4g dt03 2 2 $'x/. run'
 c4g dt04 2 2 $'ls\n./. run'
+# Fix round 2: a glob character may name a shell (gc_script_body splits segments unquoted, which
+# expands globs), so `*`, `?`, `[` continue to the full check; expected = ddf3ea6's answers.
+c4g gl01 2 2 $'/bin/ba[s]h run'
+c4g gl02 2 2 $'/bin/?h run'
+c4g gl03 2 2 $'ls && /bin/?h run'
+c4g gl04 2 2 $'env /bin/ba[s]h run'
 c4gps() { # <id> <no-push-main exit> <gate-before-merge exit> <command> (PowerShell tool)
   c4g_j=$(mkjson PowerShell "$4" "$c4g_repo")
   check "C4 no-push-main: PowerShell $1" hooks/no-push-main.sh "$2" "$c4g_j"
@@ -9830,7 +9836,7 @@ c4g_envj=$(mkjson Bash 'ls' "$c4g_repo")
 c4g_envp=$(mkjson Bash 'git push origin main' "$c4g_repo")
 for c4g_h in no-push-main gate-before-merge; do
   printf '%s' "$c4g_envp" | GC_PREPARSED=0 GC_PRE_JSON="$c4g_envj" JP_TOOL=Bash JP_CMD=ls JP_CWD="$c4g_repo" bash "$ROOT/hooks/$c4g_h.sh" >/dev/null 2>&1
-  expect "C4 $c4g_h: exported GC_PREPARSED/GC_PRE_JSON/JP_* do not hide a push to main" 2 "$?"
+  expect "C4 $c4g_h: non-regression: exported GC_PREPARSED/GC_PRE_JSON/JP_* do not hide a push to main" 2 "$?"
 done
 c4g_pc=$(mkrepo c4gpc main)
 printf '**Test**: false\n' > "$c4g_pc/PROJECT_CONTEXT.md"
@@ -9840,19 +9846,26 @@ expect "C4 pre-commit-test: control: Test=false refuses git commit" 2 "$?"
 mkjson Bash 'git commit -m x' "$c4g_pc" | GC_PREPARSED=0 GC_PRE_JSON="$(mkjson Bash 'ls' "$c4g_pc")" JP_TOOL=Bash JP_CMD=ls JP_CWD="$c4g_pc" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
 expect "C4 pre-commit-test: exported GC_PREPARSED/GC_PRE_JSON/JP_* do not replace stdin" 2 "$?"
 # Locale: under tr_TR.UTF-8 nocasematch does not fold I to i. The early exit uses explicit classes, so
-# `GIT push origin main` must still source git-cmd.sh (the old hook may itself answer 0 there, so the
-# row asserts the early exit did not fire, not an exit code).
-c4g_tr=""
+# `GIT merge feature` (no `sh`, `gh`, `source`, `ps1`, backslash, `$` or `.` in it) must still source git-cmd.sh
+# (the old hook may itself answer 0 there, so the row asserts the early exit did not fire, not an exit code).
+# `locale -a` never lists a LOCPATH-generated locale, so detect by `locale charmap`; generate the locale
+# into a temp dir with localedef when the host has none installed (skip in-band when it cannot).
+c4g_tr=""; c4g_locpath=""
+c4g_trok() { [ "$(LOCPATH="$c4g_locpath" LC_ALL="$1" LANG="$1" locale charmap 2>/dev/null)" = "UTF-8" ]; }
 for c4g_c in tr_TR.UTF-8 tr_TR.utf8; do
-  if [ "$(LC_ALL="$c4g_c" LANG="$c4g_c" bash -c 'locale charmap' 2>/dev/null)" = "UTF-8" ] &&
-     locale -a 2>/dev/null | grep -qix "$c4g_c"; then c4g_tr="$c4g_c"; break; fi
+  if c4g_trok "$c4g_c"; then c4g_tr="$c4g_c"; break; fi
 done
+if [ -z "$c4g_tr" ] && command -v localedef >/dev/null 2>&1; then
+  c4g_locpath="$TMPROOT/c4gloc"; mkdir -p "$c4g_locpath"
+  localedef -i tr_TR -f UTF-8 "$c4g_locpath/tr_TR.UTF-8" >/dev/null 2>&1
+  c4g_trok tr_TR.UTF-8 && c4g_tr=tr_TR.UTF-8
+fi
 if [ -z "$c4g_tr" ]; then
-  skip "C4: git gates under tr_TR.UTF-8" "no tr_TR.UTF-8 locale on this host" 2
+  skip "C4: git gates under tr_TR.UTF-8" "no tr_TR.UTF-8 locale on this host and localedef cannot generate one" 2
 else
   for c4g_h in no-push-main gate-before-merge; do
-    c4g_n=$(mkjson Bash 'GIT push origin main' "$c4g_repo" | (cd "$TMPROOT" && LC_ALL="$c4g_tr" LANG="$c4g_tr" bash "$c4g_hd/$c4g_h.sh" 2>&1 >/dev/null) | grep -c '^SOURCED$')
-    expect "C4 $c4g_h: GIT push still sources git-cmd.sh under $c4g_tr" 1 "$c4g_n"
+    c4g_n=$(mkjson Bash 'GIT merge feature' "$c4g_repo" | (cd "$TMPROOT" && LOCPATH="$c4g_locpath" LC_ALL="$c4g_tr" LANG="$c4g_tr" bash "$c4g_hd/$c4g_h.sh" 2>&1 >/dev/null) | grep -c '^SOURCED$')
+    expect "C4 $c4g_h: GIT merge still sources git-cmd.sh under $c4g_tr" 1 "$c4g_n"
   done
 fi
 # ---- end v4.4.0 C4
