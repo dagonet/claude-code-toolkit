@@ -339,7 +339,9 @@ gc_read_stdin() {
   # GC_PRE_JSON (payload), GC_PREPARSED (json_payload's rc) and JP_* (fields).
   # It is assigned HERE, inside the function, because the top-level
   # `GC_JSON=""` above would wipe it, and gc_cmd_unreadable reads GC_JSON.
-  if [ -n "${GC_PREPARSED-}" ]; then
+  # Only an explicit `gc_read_stdin --preparsed` (the two gates) takes it over; every
+  # other caller reads stdin and ignores GC_PREPARSED / GC_PRE_JSON in its environment.
+  if [ "${1-}" = --preparsed ]; then
     GC_JSON=$GC_PRE_JSON
     gc_rc=$GC_PREPARSED
   else

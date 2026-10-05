@@ -180,6 +180,7 @@ trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper
 jlib="$(dirname "$0")/lib/json.sh"
 [ -f "$jlib" ] || { echo "BLOCKED: $jlib missing — run /sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
 . "$jlib"
+GC_PRE_JSON=; GC_PREPARSED=; JP_TOOL=; JP_CMD=   # never inherit these from the environment
 GC_PRE_JSON=$(cat)
 json_payload "$GC_PRE_JSON"; GC_PREPARSED=$?
 if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
@@ -191,19 +192,21 @@ if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
       # classifier's verbs (merge, pull, checkout, ...) all follow a git word.
       # GC_GIT_WORD_RE runs on quote-stripped text (gc_git_prefilter_text), so test
       # the quote-stripped command: `g"i"t merge` must continue. A backslash, `$`
-      # or a backtick may build any word, so they continue too. A `.` token is any
-      # `.` preceded by start/whitespace (newline and TAB included)/; & | ( and
-      # followed by whitespace or the end. Over-matches on purpose; bare `./x.sh`,
+      # or a backtick may build any word, so they continue too. A `.` followed by
+      # whitespace or the end, anywhere (`./. run` dot-sources <dir>/. : gc_script_body
+      # takes the token's basename; same test as pre-commit-test's S6). Over-matches on purpose; bare `./x.sh`,
       # `x.cmd`, `python x.py`, `node x.js`, `make` and `npm run` are never scanned.
       _np_q=${JP_CMD//[\"\']/}
-      _np_dot='(^|[[:space:];&|(])\.([[:space:]]|$)'
-      shopt -s nocasematch
-      if [[ $_np_q == *git* || $_np_q == *gh* || $_np_q == *sh* || $_np_q == *source* ||
-            $_np_q == *ps1* || $_np_q == *'\'* || $_np_q == *'$'* || $_np_q == *'`'* ||
+      _np_dot='\.([[:space:]]|$)'
+      # Explicit [Gg][Ii][Tt] classes, not nocasematch: under tr_TR.UTF-8 nocasematch
+      # does not fold I to i, and the early exit must never answer earlier than the old hook.
+      if [[ $_np_q == *[Gg][Ii][Tt]* || $_np_q == *[Gg][Hh]* || $_np_q == *[Ss][Hh]* ||
+            $_np_q == *[Ss][Oo][Uu][Rr][Cc][Ee]* || $_np_q == *[Pp][Ss]1* ||
+            $_np_q == *'\'* || $_np_q == *'$'* || $_np_q == *'`'* ||
             $_np_q =~ $_np_dot ]]; then
-        shopt -u nocasematch
+        :
       else
-        shopt -u nocasematch; exit 0
+        exit 0
       fi ;;
   esac
 fi
@@ -217,7 +220,7 @@ _np_jp=$JSON_PARSER   # git-cmd.sh re-sources json.sh, which resets the parser m
 JSON_PARSER=$_np_jp
 command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: $lib is present but corrupt (gc_current_branch undefined) — this gate cannot evaluate the command, refusing" >&2; exit 2; }
 
-gc_read_stdin
+gc_read_stdin --preparsed
 gc_guard_off && exit 0
 
 CWD="$GC_CWD"

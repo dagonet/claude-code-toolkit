@@ -9699,6 +9699,7 @@ c4g_repo=$(mkrepo c4g main)
 printf '**Test**: true\n**Gate**: true\n' > "$c4g_repo/PROJECT_CONTEXT.md"
 printf 'git push origin main\n' > "$c4g_repo/push.sh"
 printf 'git push origin main\n' > "$c4g_repo/push.ps1"
+printf 'git push origin main\n' > "$c4g_repo/run"
 git -C "$c4g_repo" add -A >/dev/null 2>&1
 git -C "$c4g_repo" commit -q -m c4g >/dev/null 2>&1
 c4g_cwd=$(jesc "$c4g_repo")
@@ -9807,6 +9808,51 @@ else
   for c4g_h in no-push-main gate-before-merge; do
     expect "C4 $c4g_h: ls -la runs one parser" 1 "$(c4_n "$c4g_h" "$(mkjson Bash 'ls -la' "$c4g_repo")" '^(node|python3|jq)$')"
     expect "C4 $c4g_h: git status runs one parser" 1 "$(c4_n "$c4g_h" "$(mkjson Bash 'git status' "$c4g_repo")" '^(node|python3|jq)$')"
+  done
+fi
+# Fix round 1: a `.` followed by whitespace anywhere is a dot-source (gc_script_body takes the
+# token's basename, so `./. run` reads `run`); PowerShell-tool shapes; expected = ddf3ea6's answers.
+c4g dt01 2 2 $'./. run'
+c4g dt02 2 2 $'/. run'
+c4g dt03 2 2 $'x/. run'
+c4g dt04 2 2 $'ls\n./. run'
+c4gps() { # <id> <no-push-main exit> <gate-before-merge exit> <command> (PowerShell tool)
+  c4g_j=$(mkjson PowerShell "$4" "$c4g_repo")
+  check "C4 no-push-main: PowerShell $1" hooks/no-push-main.sh "$2" "$c4g_j"
+  check "C4 gate-before-merge: PowerShell $1" hooks/gate-before-merge.sh "$3" "$c4g_j"
+}
+c4gps ps01 0 0 '& ./push.ps1'
+c4gps ps02 2 2 'pwsh -File push.ps1'
+c4gps ps03 0 0 'ls -la'
+# Explicit hand-over: an exported GC_PREPARSED / GC_PRE_JSON / JP_* (here an `ls` payload that
+# parsed cleanly) must never replace stdin -- in the gates or in pre-commit-test.
+c4g_envj=$(mkjson Bash 'ls' "$c4g_repo")
+c4g_envp=$(mkjson Bash 'git push origin main' "$c4g_repo")
+for c4g_h in no-push-main gate-before-merge; do
+  printf '%s' "$c4g_envp" | GC_PREPARSED=0 GC_PRE_JSON="$c4g_envj" JP_TOOL=Bash JP_CMD=ls JP_CWD="$c4g_repo" bash "$ROOT/hooks/$c4g_h.sh" >/dev/null 2>&1
+  expect "C4 $c4g_h: exported GC_PREPARSED/GC_PRE_JSON/JP_* do not hide a push to main" 2 "$?"
+done
+c4g_pc=$(mkrepo c4gpc main)
+printf '**Test**: false\n' > "$c4g_pc/PROJECT_CONTEXT.md"
+printf 'x\n' > "$c4g_pc/new.txt"; git -C "$c4g_pc" add new.txt >/dev/null 2>&1
+mkjson Bash 'git commit -m x' "$c4g_pc" | bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "C4 pre-commit-test: control: Test=false refuses git commit" 2 "$?"
+mkjson Bash 'git commit -m x' "$c4g_pc" | GC_PREPARSED=0 GC_PRE_JSON="$(mkjson Bash 'ls' "$c4g_pc")" JP_TOOL=Bash JP_CMD=ls JP_CWD="$c4g_pc" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1
+expect "C4 pre-commit-test: exported GC_PREPARSED/GC_PRE_JSON/JP_* do not replace stdin" 2 "$?"
+# Locale: under tr_TR.UTF-8 nocasematch does not fold I to i. The early exit uses explicit classes, so
+# `GIT push origin main` must still source git-cmd.sh (the old hook may itself answer 0 there, so the
+# row asserts the early exit did not fire, not an exit code).
+c4g_tr=""
+for c4g_c in tr_TR.UTF-8 tr_TR.utf8; do
+  if [ "$(LC_ALL="$c4g_c" LANG="$c4g_c" bash -c 'locale charmap' 2>/dev/null)" = "UTF-8" ] &&
+     locale -a 2>/dev/null | grep -qix "$c4g_c"; then c4g_tr="$c4g_c"; break; fi
+done
+if [ -z "$c4g_tr" ]; then
+  skip "C4: git gates under tr_TR.UTF-8" "no tr_TR.UTF-8 locale on this host" 2
+else
+  for c4g_h in no-push-main gate-before-merge; do
+    c4g_n=$(mkjson Bash 'GIT push origin main' "$c4g_repo" | (cd "$TMPROOT" && LC_ALL="$c4g_tr" LANG="$c4g_tr" bash "$c4g_hd/$c4g_h.sh" 2>&1 >/dev/null) | grep -c '^SOURCED$')
+    expect "C4 $c4g_h: GIT push still sources git-cmd.sh under $c4g_tr" 1 "$c4g_n"
   done
 fi
 # ---- end v4.4.0 C4
