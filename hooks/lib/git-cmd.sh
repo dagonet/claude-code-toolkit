@@ -656,7 +656,7 @@ GC_PS_SPLIT
 # basename-compared, so this is not read even though gc_segments' own quote
 # stripping would have made $1 literally `bash` under the old $1-anchor code.
 gc_script_body() {
-  local seg="$1" cwd="$2" tok clean base bb path="" pos=1
+  local seg="$1" cwd="$2" tok clean base bb t2 hit path="" pos=1
   GC_SB=""
   set -- $seg
   while [ $# -gt 0 ]; do
@@ -666,29 +666,36 @@ gc_script_body() {
     base=${clean##*/}; base=${base##*\\}
     # v4.3.2 6b review: also the basename of the backslash-removed word (b\ash)
     bb=${clean//\\/}; bb=${bb##*/}
+    hit=0
     case "$bb" in
-      [Bb][Aa][Ss][Hh]|[Bb][Aa][Ss][Hh].[Ee][Xx][Ee]|[Ss][Hh]|[Ss][Hh].[Ee][Xx][Ee]) break ;;
+      [Bb][Aa][Ss][Hh]|[Bb][Aa][Ss][Hh].[Ee][Xx][Ee]|[Ss][Hh]|[Ss][Hh].[Ee][Xx][Ee]) hit=1 ;;
     esac
     case "$base" in
-      [Bb][Aa][Ss][Hh]|[Bb][Aa][Ss][Hh].[Ee][Xx][Ee]|[Ss][Hh]|[Ss][Hh].[Ee][Xx][Ee]) break ;;
-      .|source) [ "$pos" = 1 ] && break ;;
+      [Bb][Aa][Ss][Hh]|[Bb][Aa][Ss][Hh].[Ee][Xx][Ee]|[Ss][Hh]|[Ss][Hh].[Ee][Xx][Ee]) hit=1 ;;
+      .|source) [ "$pos" = 1 ] && hit=1 ;;
     esac
+    if [ "$hit" = 1 ]; then
+      # v4.3.2 6b review 2: a runner word whose operand is not an existing file
+      # (`sudo -u s\h bash c.sh`: the operand of the first word is `bash`) does not
+      # end the walk -- it goes on to the next runner word.
+      path=""
+      for t2 in "${@:2}"; do
+        clean=$(printf '%s' "$t2" | tr -d "\"'")
+        case "$clean" in -*) continue ;; *) path="$clean"; break ;; esac
+      done
+      if [ -n "$path" ]; then
+        # S-3c: the answer goes to the global GC_SB (the caller reads it, no $(...)).
+        case "$path" in
+          /*|[A-Za-z]:*) ;;
+          *) path="$cwd/$path" ;;
+        esac
+        [ -f "$path" ] && break
+      fi
+    fi
     shift
     pos=$((pos + 1))
   done
   [ $# -gt 0 ] || return 0
-  shift
-  for tok in "$@"; do
-    clean=$(printf '%s' "$tok" | tr -d "\"'")
-    case "$clean" in -*) continue ;; *) path="$clean"; break ;; esac
-  done
-  [ -n "$path" ] || return 0
-  # S-3c: the answer goes to the global GC_SB (the caller reads it, no $(...)).
-  case "$path" in
-    /*|[A-Za-z]:*) ;;
-    *) path="$cwd/$path" ;;
-  esac
-  [ -f "$path" ] || return 0
   # v4.1.2 #8: whole-line comments (first non-blank character `#`) are never
   # commands, so they are stripped BEFORE the verb scan -- and only whole
   # lines: `"${BR#refs/heads/}"` on a code line keeps its `#`. The
@@ -1797,7 +1804,7 @@ gc_push_args() {
       if (found) {                         # v4.3.2 6b review: a refspec loses its backslashes (ma\in); a flag keeps its raw form
         r = tok
         while ((i = index(r, bs)) > 0) r = substr(r, 1, i - 1) substr(r, i + 1)
-        print (substr(r, 1, 1) == "-" ? tok : r); next
+        print (substr(r, 1, 1) == "-" || r ~ /[<>]/ ? tok : r); next
       }
       while ((i = index(tok, bs)) > 0) tok = substr(tok, 1, i - 1) substr(tok, i + 1)   # v4.3.2 6b: git pu\sh runs push
       if (want_value) { want_value = 0; next }
@@ -1819,8 +1826,14 @@ gc_push_args() {
 gc_targets_main_ref() {
   gcta=$(gc_protected_alt "$2")
   [ -n "$gcta" ] || return 1
+  # an escaped redirection word (`\>`, `2\>`) is no refspec and no redirection to the shell, and the walk cannot
+  # tell which clause it belongs to: refused
+  printf '%s\n' "$1" | grep -qE '\\[<>]' && return 0
+  gcta_t=$(printf '%s' "$1" | tr -d '\\')   # v4.3.2 6b review 2: the shell removes a backslash (-\-all)
   printf '%s\n' "$1" | grep -qE '(^|[[:space:]])--(mirror|all)([[:space:]]|=|$)' && return 0
-  printf '%s\n' "$1" | grep -qE "(^|[[:space:]])(refs/heads/)?($gcta)([[:space:]]|\$)" && return 0
+  printf '%s\n' "$gcta_t" | grep -qE '(^|[[:space:]])--(mirror|all)([[:space:]]|=|$)' && return 0
+  # an optional leading `+` is a forced push of the same ref (git push origin +main)
+  printf '%s\n' "$1" | grep -qE "(^|[[:space:]])[+]?(refs/heads/)?($gcta)([[:space:]]|\$)" && return 0
   printf '%s\n' "$1" | grep -qE ":[[:space:]]*(refs/heads/)?($gcta)([[:space:]]|\$)"
 }
 

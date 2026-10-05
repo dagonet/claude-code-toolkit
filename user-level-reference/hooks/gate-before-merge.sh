@@ -841,6 +841,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
 
   moved=0
   mutated=0
+  ghp_seg=""; ghp_cwd=""; ghp_split=0   # v4.3.2 6b review 2: the gh arm keeps walking
 
   # v3.0.3 item 2: a pipe anywhere in the command disables the `inert` category
   # for EVERY clause — see a6_clause_class's comment (2). `||` is stripped first
@@ -894,7 +895,16 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       A6_SEG=$seg
       a6_deny_unresolved_c "$seg" "$base"
       CWD=$(gc_repo_for "$seg" "$base")
-      break
+      # v4.3.2 6b review 2: this arm no longer ends the walk, so a later protected clause
+      # (`gh pr merge; git -C <main> merge x`) still reaches its own arm. When a later
+      # arm fires in another checkout the two cannot share one artifact check: refused below.
+      [ -n "$ghp_seg" ] && [ "$ghp_cwd" != "$CWD" ] && ghp_split=1
+      ghp_seg=$seg; ghp_cwd=$CWD
+      # a gh merge also changes what a later clause resolves through: it counts as a mover, as it did
+      # when it was an unrecognised clause (`gh pr me\rge; git -C <main> push origin feat`)
+      mutated=1
+      if [ -z "${A6_MUT_SEG:-}" ]; then A6_MUT_SEG=$seg; A6_MUT_WHY=$A6_SEG_WHY; fi
+      continue
     fi
 
     # 2. git merge while the checkout is on a protected branch
@@ -1154,6 +1164,12 @@ $segments
 GC_SEGMENTS
 
   [ "$is_merge" = "1" ] || exit 0
+  if [ -n "$ghp_seg" ] && { [ "$ghp_split" = 1 ] || { [ "$A6_SEG" != "$ghp_seg" ] && [ "$CWD" != "$ghp_cwd" ]; }; }; then
+    echo "BLOCKED: gate-before-merge: a gh pr merge and another gated clause in this command act on different checkouts, and one artifact check cannot judge both. Split the call: one gated operation per command." >&2
+    echo "  gh clause:       ${ghp_seg}" >&2
+    echo "  other clause:    ${A6_SEG}" >&2
+    exit 2
+  fi
 fi
 
 REPO_TOP=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)

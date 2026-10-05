@@ -9709,6 +9709,43 @@ check "V3 control: git push --ta\\gs from a feature repo"      hooks/no-push-mai
 # `git -\C commit -m x` reads as `-C commit` (the shell removes the backslash): -C takes `commit` as its directory and
 # git itself refuses the rest (exit 129, unknown option -m), so nothing is committed. Pinned at what the gate now returns.
 check "V3 pin: git -\\C commit -m x (git itself refuses it)" hooks/pre-commit-test.sh 0 "$(mkjson Bash 'git -\C commit -m x' "$V3R")"
+# Review round 2: a later clause after a gh match, escaped redirect words, a runner walk that goes on, +main, escaped --all/--mirror
+V3G=$(mkrepo v3g feat)
+printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `true`\n' > "$V3G/PROJECT_CONTEXT.md"
+git -C "$V3G" add -A >/dev/null 2>&1; git -C "$V3G" commit -q -m ctx >/dev/null 2>&1
+v3sha=$(git -C "$V3G" rev-parse HEAD); v3tree=$(git -C "$V3G" rev-parse 'HEAD^{tree}')
+mkdir -p "$(gatedir "$V3G")"; printf '{"sha":"%s","tree":"%s"}\n' "$v3sha" "$v3tree" > "$(gatepassfile "$V3G" "$v3sha")"
+check "V3 control: gh pr merge 1 from a feature repo with a fresh artifact" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr merge 1' "$V3G")"
+check "V3 control: gh pr mer\\ge 1 from a feature repo with a fresh artifact" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr mer\ge 1' "$V3G")"
+check "V3 control: git -C <main> merge feat is refused"                  hooks/gate-before-merge.sh 2 "$(mkjson Bash "git -C $V3R merge feat" "$V3G")"
+for v3c in 'x gh pr me\rge; git -C @R@ merge feat' 'true gh pr me\rge; git -C @R@ merge feat' 'git commit -m "gh pr me\rge"; git -C @R@ merge feat' \
+           'x gh pr merge; git -C @R@ merge feat' 'git commit -m "gh pr merge"; git -C @R@ merge feat' 'x gh pr "merge" x; git -C @R@ push origin main' \
+           "git commit -m \"gh pr 'merge'\"; git -C @R@ pull" 'gh pr merge 1; git -C @R@ merge feat' 'gh pr mer\ge 1; git -C @R@ push origin main'; do
+  check "V3 gate-before-merge: a later clause after a gh match: $v3c" hooks/gate-before-merge.sh 2 "$(mkjson Bash "${v3c//@R@/$V3R}" "$V3G")"
+done
+V3F2=$V3F
+for v3p in 'git push origin \> main' 'git push origin 2\> main' 'git push origin \>x main' 'git push origin \< main' 'git push origin \&\> main' \
+           'git push origin \--all' 'git push origin -\-all' 'git push origin -\-mirror' \
+           'git push origin +main' 'git push origin +refs/heads/main' 'git push origin +ma\in' 'git push --force origin +main' 'git push origin feat +main' \
+           'git push origin +HEAD:main' 'git push origin +feat:main'; do
+  check "V3 no-push-main (feature repo): $v3p"         hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3F2")"
+  check "V3 no-push-main (main): $v3p"                 hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3R")"
+done
+for v3p in 'git push origin \> HEAD' 'git push origin 2\> feat' 'git push origin 1\>\> HEAD' 'git push \&\> origin feat'; do
+  check "V3 no-push-main (feature repo): an escaped redirect word is refused: $v3p" hooks/no-push-main.sh 2 "$(mkjson Bash "$v3p" "$V3F2")"
+done
+check "V3 gate-before-merge: gh pr mer\\ge 1 && git -C <main> push origin feat" hooks/gate-before-merge.sh 2 "$(mkjson Bash "gh pr mer\\ge 1 && git -C $V3R push origin feat" "$V3G")"
+check "V3 gate-before-merge: x gh pr me\\rge; git -C <main> push origin feat"   hooks/gate-before-merge.sh 2 "$(mkjson Bash "x gh pr me\\rge; git -C $V3R push origin feat" "$V3G")"
+check "V3 control: git push origin +feat from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin +feat' "$V3F2")"
+check "V3 control: git push --tags from a feature repo"       hooks/no-push-main.sh 0 "$(mkjson Bash 'git push --tags' "$V3F2")"
+check "V3 control: git push origin feat 2>&1 from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin feat 2>&1' "$V3F2")"
+for v3r in 'sudo -u s\h bash' 'sudo -u sh bash' 'sudo -u me bash' 'env -i s\h bash' 'nice -n 5 b\ash'; do
+  check "V3 pre-commit-test: $v3r c.sh"               hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r c.sh" "$V3R")"
+  check "V3 no-push-main: $v3r p.sh"                  hooks/no-push-main.sh 2      "$(mkjson Bash "$v3r p.sh" "$V3R")"
+  check "V3 gate-before-merge: $v3r m.sh"             hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3r m.sh" "$V3R")"
+  check "V3 control: $v3r h.sh"                       hooks/pre-commit-test.sh 0   "$(mkjson Bash "$v3r h.sh" "$V3R")"
+done
+check "V3 control: find . -exec bash {} \\;"          hooks/pre-commit-test.sh 0   "$(mkjson Bash 'find . -name x -exec bash {} \;' "$V3R")"
 # ---- end v4.3.2 V3
 
 echo "----------------------------------------------------------------"
