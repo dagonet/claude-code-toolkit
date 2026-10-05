@@ -36,13 +36,19 @@ amlib="$(dirname "$0")/lib/agent-model.sh"
 MF_JSON=$(cat)
 am_env_forced && exit 0
 case "$MF_JSON" in "$JSON_BOM"*) MF_JSON=${MF_JSON#"$JSON_BOM"} ;; esac
-json_have || exit 0
-json_valid "$MF_JSON" || exit 0
-[ "$(json_get "$MF_JSON" tool_name)" = "Agent" ] || exit 0
-[ -n "$(json_get "$MF_JSON" tool_input.model)" ] && exit 0
-MF_TYPE=$(json_get "$MF_JSON" tool_input.subagent_type)
+json_fields "$MF_JSON" tool_name tool_input.model tool_input.subagent_type cwd; MF_RC=$?   # v4.4.0 C3: one parser run
+[ "$MF_RC" = 2 ] && exit 0
+if [ "$MF_RC" = 0 ]; then MF_TN=${JF[0]}; MF_MODEL=${JF[1]}; MF_TYPE=${JF[2]}; MF_CWD=${JF[3]}
+else
+  # invalid payloads never come from Claude Code; the fallback only preserves the old jq multi-document verdict
+  json_valid "$MF_JSON" || exit 0
+  MF_TN=$(json_get "$MF_JSON" tool_name); MF_MODEL=$(json_get "$MF_JSON" tool_input.model)
+  MF_TYPE=$(json_get "$MF_JSON" tool_input.subagent_type); MF_CWD=$(json_get "$MF_JSON" cwd)
+fi
+[ "$MF_TN" = "Agent" ] || exit 0
+[ -n "$MF_MODEL" ] && exit 0
 [ -n "$MF_TYPE" ] || MF_TYPE=general-purpose
-MF_CWD=$(json_get "$MF_JSON" cwd); [ -n "$MF_CWD" ] || MF_CWD=.
+[ -n "$MF_CWD" ] || MF_CWD=.
 am_resolve "$MF_TYPE" "$MF_CWD"
 [ "$AM_KIND" = floor ] || exit 0
 am_jev_routing "$AM_ROOT" && exit 0

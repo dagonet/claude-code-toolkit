@@ -105,7 +105,78 @@ From a read-only spike on 6b9b9d9 (design `docs/plans/2026-10-04-ansi-mac-design
 
 ### Hook slimming Phase C
 
-{{FILL: hook slimming Phase C}}
+Every Bash call used to pay for two shells per hook, up to six parser runs per hook, and the full text analysis of every protection whatever the command. Phase C removes the avoidable part without removing a protection: ZERO new allows is the acceptance rule, and the equivalence harness (`scripts/hook-equivalence.sh`, 125-row corpus, old tree against new tree, every scenario, missing-script mode included) is the proof. The always-loaded context is unchanged (see Counts).
+
+- **C1: hooks start one bash instead of two.** User level (`~/.claude/settings.json`): exec form (`command` = absolute bash, `args` = script), rendered by the new `scripts/render-user-hooks.sh` with absolute paths (commits aeea121, 47aa8db). Projects: shell form kept (ruling D1(a), machine-independent: a WSL `bash` on PATH could otherwise fail open) but ending in `exec bash "$f"`, so the check and the hook share one bash: `f="${CLAUDE_PROJECT_DIR:-.}/hooks/x.sh"; [ -r "$f" ] || { echo ... >&2; exit 2; }; exec bash "$f"` (9acaac2). Fail-closed hooks (`F`/`UF`) exit 2 when the script is missing; fail-open hooks (`W` warns, `O` silent) and the unwrapped ones (`U`, including the SubagentStop stop gate) keep today's polarity. No hook that can emit an allow is ever registered fail-closed. Sync replaces a consumer's hook strings wholesale and never duplicates or drops a matcher (d959b44, five server tests, no server source change).
+- **C2: a missing protection script still blocks (exit 2).** The old wrapper's 127 to 2 now lives in the hook (50e1534, trap in the six fail-closed hooks; return audit pinned). New SessionStart `hooks/verify-hooks.sh` reports missing or broken scripts, and, ruling D2, any exec-form `command` program that is missing or not executable (`MISSING PROGRAM`; that failure is fail-open by the harness's rules, so it is announced loudly, not blocked). Doctor check 70 does the same for the repository; check 71 pins the registration forms (frozen 43-row table in `server/tests/fixtures/hook-registrations-v4.4.0.json`, polarity rules, return and trap audit) (e334ae7, c2f2418, 9acaac2). The drift script covers the live copy.
+- **C3: `json_fields`, one parser run per hook** (7c7e46e, 7964da7, 8e0fa2f): `deny-secret-reads` 4 to 1, `deny-hang-shapes` 4 to 1, `require-skills-block` 4 to 1, `deny-claude-md-writes` 5 to 1, `model-floor` 6 to 1 interpreter runs (`bash-output-guard` is node-only; its saving is C4). Fail-open hooks keep their old invalid-payload verdict (R-T4a: on an invalid payload they fall back to the old reader); the fail-closed ones are never looser (R-T4b).
+- **C4: builtin early exits, before any process is spawned** (766d424, 676c133, d347f6e, 915c558, 69a01dc, 1cc4ee2):
+  - `deny-hang-shapes`: exits when the command (any case) holds none of `<<`, `sleep`, `cd` or a backslash.
+  - `bash-output-guard`: exits when the whole payload is no longer than the 12,000-unit threshold in bytes (a payload that small cannot hold an over-threshold output), so a small payload no longer starts node.
+  - `deny-secret-reads` (Bash and PowerShell): after its one parse, exits when the quote-stripped command holds neither `.e` (any case) nor a backslash, so the token walk is skipped.
+  - `no-push-main` and `gate-before-merge`: exit before sourcing `git-cmd.sh` when no git, gh or script word can occur. The predicate runs on the quote-stripped command and continues, never exits, when it holds any of `git`, `gh`, `sh`, `source` or `ps1` as a substring (explicit `[Gg][Ii][Tt]`-style case classes, not `nocasematch`), `$`, a backtick, a backslash, a glob character (`*?[`), `(` (extglob via `BASHOPTS`), or a `.` token (a `.` followed by whitespace or the end); locale-proof character classes; the pre-parsed payload is handed over explicitly (`gc_read_stdin --preparsed`), and an exported `GC_PREPARSED`, `GC_PRE_JSON` or `JP_*` is not trusted.
+- **C5: each check runs once in toolkit projects (ruling D3).** The user-level copy steps aside only when the project REGISTERS its own copy in `.claude/settings.json` (v4.3.1 keyed on the file only). Step-aside and the `UF` tail require a regular, readable file: a FIFO or a directory at the path no longer hangs or fails open (Task 8 hardening of `<SA_X>`; a directory at a `UF` hook path now exits 2, stricter).
+
+Equivalence results (final runs at fa3a950, controller, frozen worktree, 125 rows x 8 scenario-modes, old tree against new tree): full parsers 0 decision changes, NEW-ALLOWS 0, NEW-DENIES 0 (222 s); python3-only 0 / 0 / 0 (185 s); jq-only 0 decision changes (8 accepted stricter), NEW-ALLOWS 0, NEW-DENIES 8 (164 s). The 8 are accepted as stricter (R-T4c, `accepted.tsv`): the two-document payloads `mf03` and `mf05` in S1 to S4 now join the deny set for `deny-secret-reads` (`deny-hang-shapes` keeps its old verdict under R-T4a); the old jq path read only the first document. No decision loosened anywhere; the harness accepts a listed difference only when strictly stricter, and a deliberately loosened control still fails it.
+
+Measured on Linux (strace, one simulated Bash call through every registration, Pre + Post; processes / execs / node execs, old to new; `scripts/count-hook-procs.sh`, edf9f69):
+
+| Scenario, command | Old | New | Ratio |
+|---|---|---|---|
+| S1 (plain project), `git status` | 151 / 70 / 11 | 97 / 47 / 3 | 64 % |
+| S1, `ls -la` | 136 / 59 / 11 | 23 / 14 / 3 | 17 % |
+| S2 (toolkit project, user hooks too), `git status` | 440 / 210 / 22 | 262 / 135 / 7 | 60 % |
+| S2, `ls -la` | 385 / 173 / 22 | 104 / 65 / 7 | 27 % |
+
+Median ms per hook, 20 runs, `git status` / `ls -la`, old to new (control arm, an unrelated hook: 75 ms): `no-push-main` 97 to 102 / 91 to 40; `deny-secret-reads` 135 to 39 / 137 to 40; `deny-hang-shapes` 135 to 40 / 135 to 40; `bash-output-guard` 68 to 8 / 70 to 8. Gate arms: non-git 39 ms, merge 216 ms. The slowest new hook on Linux is `no-push-main` on `git status` at about 102 ms.
+
+Against the plan's criteria, honestly:
+- **Criteria 1 and 2 (new at most 50 % of old processes): MISSED on Linux for `git status`** (64 % in S1, 60 % in S2), met for `ls -la` (17 % and 27 %). Cause: a git-shaped command still gets the git gates' full analysis (`no-push-main` about 81 processes, `gate-before-merge` about 90, `pre-commit-test` about 44 on `git status`). Narrowing the early exit to the gated verbs is unsafe: an alias (`git p` with `alias.p=push` in `~/.gitconfig`, or `-c alias.p=push`) hides the verb from the command text, so the predicate continues on any git word. The lever is the gate hooks' own analysis (the v4.3.2 "faster gate hooks" work), not another predicate. The shortfall is reported, not waived. {{FILL: Windows process counts, git status and ls -la, S1/S2 old -> new, ratio}}
+- **Criterion 3 (slowest hook at most 400 ms): Windows target, not measured here.** On Linux the slowest hook is about 102 ms. {{FILL: Windows slowest hook, ms}}
+- **Criterion 4 (equivalence, zero new allows): met** (all three parser configurations, above).
+- **Criterion 5 (a missing protection blocks): met on Linux** (exit 2 in the fixtures, the harness's missing mode, and check 71). {{FILL: Windows, deliberately missing `no-push-main.sh` blocks a Bash call, exit 2 and the message shown}}
+
+#### Changed
+- Exec-form hooks are per-machine: `~/.claude/settings.json` holds absolute paths, so `user-level-reference/settings-reference.md` documents the `@BASH@` and `@HOOKS@` placeholders and `render-user-hooks.sh` is the only supported way to write them. The renderer keeps foreign entries (agent-dashboard's `pressure-gate.sh`), replaces placeholders copied from the reference, keeps the file's mode and symlinks, and writes a timestamped backup first.
+- `docs/architecture.md`: the hook table's registration wording follows the new forms.
+- The context tables in `README.md` and `docs/architecture.md` are NOT updated by this section: Phase C changes no always-loaded byte (`git diff --stat a56ca34 -- templates/*/CLAUDE.md templates/*/.claude/rules/project.md user-level-reference/CLAUDE.md templates/*/PROJECT_CONTEXT.md` is empty). The release owner still adds the release's measured column.
+
+#### Known limits
+- (a) A project copy older than the global one now runs alone (C5).
+- (b) On Windows, `exec` in the project form may not save the process slot (D1(a)): the shell form still starts one shell per project hook. {{FILL: Windows, D1 verification: `bash.exe` count in the dashboard snapshot during one hook, with and without `exec`}}
+- (c) A hook whose path holds a `"` or a newline is not supported by the render script.
+- (d) `disableAllHooks` in a project's local settings is not inspected by the step-aside.
+- (e) A `W` hook whose own last command is not found (or with no `bash` on PATH) now shows a non-blocking hook error instead of its WARN line. The decision is the same: the call proceeds.
+- (f) `bash-output-guard` no longer prints its once-per-TMPDIR no-node WARN for outputs under the threshold.
+- (g) A missing exec-form PROGRAM (bad absolute path in `~/.claude/settings.json`) cannot block, because the harness treats it as a non-blocking error; `verify-hooks.sh` and check 70 announce it at session start, and a protection that matters is only as good as that message being read.
+- (h) Windows-only items, unmeasured here: the Windows column of the table above; the exec-form entries running with no shell parent {{FILL: Windows, process tree of one user-level hook}}; the `cygpath` branch of the renderer and the `setup-project.ps1` line (not run on Linux).
+- (i) The jq-only configuration refuses a two-document payload that the old reader let through (accepted stricter, above).
+- (j) Pre-existing gaps found while checking equivalence, identical before and after, NOT fixed here: `curl -F f=@.env` and PowerShell `Get-Content .env` are not read by `deny-secret-reads`, nor are `.\env`, `$'.env'`, `$(printf ...)`; under `LC_ALL=tr_TR.UTF-8` the gates' `awk tolower` lets `GIT push origin main` through (a push-to-main bypass on a Turkish-locale host); `SHELLOPTS=pipefail` in the hook environment lets a push through both gates (suggested: `set +o pipefail +e +u` at the top of every gate hook); `& ./push.ps1` is not gated.
+
+#### Counts, never carried forward
+- **Hook suite, Linux, one full `test-hooks.sh` run at cb2314b:** 3207 passed, 8 failed, 4 skipped (3219); base a56ca34 on the same host: 2593 passed, 8 failed, 4 skipped (2605). The two failure sets are identical and Linux-only: six `enforce-agent-contract` eligibility rows (the fixture uses `pwd -W`, Git Bash only), `#1 claude.md on a case-INSENSITIVE fs` (Linux is case-sensitive), and `FR2 bypass (hash-indirect)` (the fixture lacks `chmod +x`). +614 assertions on the branch, 0 new failures. Not run on Windows.
+- **Parser matrix: NOT run** (needs the user's go-ahead, about 90 minutes). Expected, not verified (the matrix was not run): C3's new rows skip exactly where the S6b parity rows skip; if a configuration's skip count moves out of band, update the matrix's expected-skip constant in the same commit and record old and new here. {{FILL: parser matrix at commit: node / python3 / jq passed/failed/skipped, skip counts}}
+- **Server suite, Linux:** 491 passed, 9 failed, 1 skipped; the 9 are the Windows-path tests that fail identically at a56ca34. {{FILL: server suite on Windows, passed/failed}}
+- **Consistency:** 455 PASS lines, one full run on Linux at this section's commit, ALL CHECKS PASSED (v4.3.1 section: 439). Re-measure at the release tip: {{FILL: PASS-line count of the final full run}}
+- **Always-loaded context:** unchanged from v4.3.1 in bytes (diff above); the release owner's measured column is {{FILL: wc -c at the release tip}}.
+
+#### Downstream migration
+1. Pull or sync the toolkit.
+2. `bash scripts/render-user-hooks.sh --print` and review it, then `--write`. A backup `~/.claude/settings.json.bak-<ts>` is written first (restoring it backs the change out); foreign hooks (for example agent-dashboard's) are kept as they are, and placeholders copied from the reference are replaced with absolute paths.
+3. Copy `user-level-reference/hooks/` (including the new `verify-hooks.sh` and `lib/`) to `~/.claude/hooks/`, as each release does.
+4. In every toolkit project, run `/sync-template`. `.claude/settings.json` is replaced; a LOCAL_EDITED one is backed up first, so re-apply local lines from the backup.
+5. **Restart every running Claude Code session.** Settings hooks load at session start; a running session keeps the old strings.
+6. Run `bash scripts/verify-user-level-drift.sh` and confirm 0 drift.
+7. agent-dashboard: its installer should switch the `pressure-gate.sh` registration to exec form (the agent-supervisor's step); `render-user-hooks.sh --write` leaves that foreign entry untouched.
+
+#### Release gate (checklist for the release owner; each step needs the user's go-ahead)
+- [ ] The full gate: `bash hooks/run-gate.sh`.
+- [ ] The parser matrix: `bash scripts/test-hooks-parser-matrix.sh` (about 90 minutes; required because Phase C touches `hooks/lib/json.sh` and node-embedding hooks). A configuration reporting zero skips is a failure, never an improvement.
+- [ ] The equivalence run on the final tip, all three configurations (`NEW-ALLOWS 0`).
+- [ ] `bash scripts/verify-user-level-drift.sh` reports 0.
+- [ ] Measure on Windows (idle Git Bash, 10-run medians, v4.3.1 protocol) and fill the markers above: (a) the spec section 6 timing harness and the dashboard process counter on one `git status` call, plain and toolkit project, old against new; (b) D1: does `exec bash` inside the Git Bash shell form save a Windows process; (c) the exec-form user entries run with no shell parent; (d) a deliberately missing `no-push-main.sh` blocks a Bash call. Targets: criteria 1-2 at most 50 % of today's processes, criterion 3 slowest hook at most 400 ms. A miss is reported with its number, not waived.
+
+Already done in this run (Linux only): the full `test-hooks.sh` at cb2314b (3207/8/4, failures identical to a56ca34, above); the equivalence runs (above); the Linux measurement (above). Not done: the parser matrix (awaiting the user's go-ahead), anything on Windows.
 
 ### Counts and downstream migration (whole release)
 

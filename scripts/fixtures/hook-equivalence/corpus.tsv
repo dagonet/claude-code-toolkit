@@ -1,0 +1,126 @@
+# id<TAB>event<TAB>tool<TAB>payload  (tokens: @CWD@ @BOM@ @REP:n:text@ @EMOJI:n@; see README.md)
+bp01	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin main"}}
+bp02	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin HEAD:main"}}
+bp03	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push -f origin master"}}
+bp04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin :main"}}
+bp05	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push --delete origin main"}}
+bp06	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git -C /x push origin main"}}
+bp07	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"GIT_DIR=x git push origin main"}}
+bp08	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git.exe push origin main"}}
+bp09	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"\"git\" push origin main"}}
+bp10	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cd /repo && git push"}}
+bp11	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls; git push origin main"}}
+bp12	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"bash push.sh"}}
+bp13	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sh ./push.sh"}}
+bp14	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":". ./push.sh"}}
+bp15	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls\n. ./push.sh"}}
+bp16	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls;\t. ./push.sh"}}
+bp17	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"g\"i\"t push origin main"}}
+bp18	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"g''it merge feature"}}
+bp19	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git -c alias.p=push p origin main"}}
+bp20	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git checkout main"}}
+bp21	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git switch -c feature"}}
+bp22	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git branch -D main"}}
+bp23	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"gh pr merge 1"}}
+cm01	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}
+cm02	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git merge feature"}}
+cm03	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git pull --ff-only"}}
+cm04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git pull"}}
+cm05	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status --short"}}
+cm06	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git log --grep=commit"}}
+sr01	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env"}}
+sr02	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"head -1 ./.env.local"}}
+sr03	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sed -n 1p .env.production"}}
+sr04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"grep KEY .env"}}
+sr05	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cp .env /dev/stdout"}}
+sr06	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl -F f=@.env x"}}
+sr07	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .e*v"}}
+sr08	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .'e'nv"}}
+sr09	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat '.'\"e\"nv"}}
+sr10	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .\"e\"nv"}}
+sr11	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"source .env"}}
+sr12	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":". .env"}}
+sr13	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env.example"}}
+sr14	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .environment"}}
+sr15	PreToolUse	Read	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"@CWD@/.env"}}
+sr16	PreToolUse	Read	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"@CWD@/config/.env.staging"}}
+sr17	PreToolUse	Read	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"@CWD@/README.md"}}
+hs01	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat > f.txt <<EOF\nhello\nEOF"}}
+hs02	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat <<'EOF' > f\nhello\nEOF"}}
+hs03	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -F- <<EOF\nmsg\nEOF"}}
+hs04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"while true; do sleep 5; done"}}
+hs05	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sleep 30 && ls"}}
+hs06	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cd /x && ls && pwd"}}
+hs07	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cd /x && ls"}}
+hs08	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls <<<\"x\""}}
+ps01	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"git push origin main"}}
+ps02	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"& git push origin main"}}
+ps03	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"Get-Content .env"}}
+ps04	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"gc .env"}}
+ps05	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"cat .env"}}
+ps06	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"& .\\push.ps1"}}
+ps07	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"Get-ChildItem"}}
+ps08	PreToolUse	PowerShell	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"PowerShell","tool_input":{"command":"git status"}}
+ag01	PreToolUse	Agent	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"d","prompt":"do the thing","subagent_type":"general-purpose"}}
+ag02	PreToolUse	Agent	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"d","prompt":"do the thing","subagent_type":"general-purpose","model":"sonnet"}}
+ag03	PreToolUse	Agent	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"d","prompt":"look around","subagent_type":"Explore"}}
+ag04	PreToolUse	Agent	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"d","prompt":"implement it","subagent_type":"coder"}}
+ag05	PreToolUse	Agent	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"d","prompt":"implement it\n\n## Required Skills\n- superpowers:test-driven-development\n","subagent_type":"coder"}}
+ew01	PreToolUse	Write	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"@CWD@/CLAUDE.md","content":"x"}}
+ew02	PreToolUse	Edit	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"@CWD@/src/a.txt","old_string":"one","new_string":"uno"}}
+ew03	PreToolUse	Write	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"@CWD@/docs/plans/x.md","content":"plan"}}
+ew04	PreToolUse	NotebookEdit	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"NotebookEdit","tool_input":{"notebook_path":"@CWD@/n.ipynb","new_source":"x"}}
+pt01	PostToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":"@REP:11999:a@","stderr":"","interrupted":false}}
+pt02	PostToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":"@REP:12001:a@","stderr":"","interrupted":false}}
+pt03	PostToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":"@EMOJI:6001@","stderr":"","interrupted":false}}
+pt04	PostToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":"@REP:3000:\u00e9@","stderr":"","interrupted":false}}
+eh01	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"}}
+eh02	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo \"done. ok\""}}
+eh03	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}
+eh04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pwd"}}
+eh05	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"\\\"git\\\" push origin main"}}
+eh06	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"gi\\\nt push origin main"}}
+eh07	PreToolUse	Bash	{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"\u0067it push origin main"}}
+eh08	PreToolUse	Bash	{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat \u002eenv"}}
+eh09	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls\t-la\nls"}}
+eh10	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo \"Grüße\" && git push origin main"}}
+eh11	PreToolUse	Bash	{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo @REP:20000:a@"}}
+eh12	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":""}}
+eh13	PreToolUse	Bash	null
+eh14	PreToolUse	Bash	{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin ma
+mf01	PreToolUse	Bash	
+mf02	PreToolUse	Bash	@BOM@{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin main"}}
+mf03	PreToolUse	Bash	{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin main"}}
+mf04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":["git","push","origin","main"]}}
+mf05	PreToolUse	Bash	{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat > f.txt <<EOF\nx\nEOF"}}{"a":1}
+mf06	PreToolUse	Bash	{"session_id":"s1","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env"}}{"a":1}
+ss01	SessionStart	startup	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"SessionStart","source":"startup"}
+rd01	PreToolUse	Read	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"@CWD@/big.txt"}}
+rd02	PreToolUse	Read	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"@CWD@/big.txt","limit":50}}
+rd03	PreToolUse	Read	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"@CWD@/src/a.txt"}}
+ok01	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}}
+ok02	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git diff --stat"}}
+ok03	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hi"}}
+ok04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat README.md"}}
+ok05	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls src"}}
+ok06	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git log --oneline -3"}}
+ok07	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git branch --show-current"}}
+ok08	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git fetch origin"}}
+ok09	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git add src/a.txt"}}
+ok10	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git stash list"}}
+ok11	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"grep -rn one src"}}
+ok12	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"wc -l README.md"}}
+ew05	PreToolUse	Write	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"@CWD@/src/b.txt","content":"x"},"agent_id":"a1","agent_type":"coder"}
+ew06	PreToolUse	Edit	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"@CWD@/src/a.txt","old_string":"one","new_string":"uno"},"agent_id":"a1","agent_type":"coder"}
+bd01	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","agent_id":"a1","tool_input":{"command":"npm test"}}
+bd02	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest -q"}}
+bd03	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"bash hooks/run-gate.sh"}}
+bd04	PreToolUse	Bash	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"dotnet build"}}
+mc01	PreToolUse	mcp__MCP_DOCKER__merge_pull_request	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"mcp__MCP_DOCKER__merge_pull_request","tool_input":{"owner":"acme","repo":"demo","pullNumber":7,"merge_method":"squash"}}
+mc02	PreToolUse	mcp__github-tools__github_pr_auto_merge	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PreToolUse","tool_name":"mcp__github-tools__github_pr_auto_merge","tool_input":{"owner":"acme","repo":"demo","pull_number":7,"merge_method":"squash"}}
+sa01	SubagentStop	coder	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"SubagentStop","agent_id":"agent-sa01","agent_type":"coder","agent_transcript_path":"@CWD@/tr-ok.jsonl","last_assistant_message":"x"}
+sa02	SubagentStop	coder	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"SubagentStop","agent_id":"agent-sa02","agent_type":"coder","agent_transcript_path":"@CWD@/tr-bad.jsonl","last_assistant_message":"x"}
+sa03	SubagentStop	coder	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"SubagentStop","agent_id":"agent-sa03","agent_type":"coder","agent_transcript_path":"@CWD@/missing.jsonl","last_assistant_message":"x"}
+sa04	SubagentStop	tester	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"SubagentStop","agent_id":"agent-sa04","agent_type":"tester","agent_transcript_path":"@CWD@/tr-bad.jsonl","last_assistant_message":"x"}
+pe01	PostToolUse	Write	{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"@CWD@/src/b.txt","content":"x"},"tool_response":{"filePath":"@CWD@/src/b.txt","success":true}}
+up01	UserPromptSubmit		{"session_id":"s1","transcript_path":"","cwd":"@CWD@","hook_event_name":"UserPromptSubmit","prompt":"hello"}

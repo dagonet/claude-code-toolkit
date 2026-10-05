@@ -168,14 +168,62 @@
 # The payload is parsed through hooks/lib/json.sh (node, python3 or jq); with
 # none of the three on PATH this gate fails CLOSED.
 
+trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
+
+# v4.4.0 C4: read and parse the payload BEFORE sourcing git-cmd.sh (1800 lines),
+# so a command that cannot hold a refusal exits without loading it. ONE parse:
+# gc_read_stdin takes the result over (GC_PRE_JSON / GC_PREPARSED / JP_*), so every
+# refusal branch below (no parser, unparseable, unreadable command, guard-off,
+# MCP tool name) runs exactly as before. The early exit needs rc 0, tool Bash or
+# PowerShell and a non-empty command, so it cannot reach any of them (the MCP
+# merge tools are gated unconditionally and never take it).
+jlib="$(dirname "$0")/lib/json.sh"
+[ -f "$jlib" ] || { echo "BLOCKED: $jlib missing — run /sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
+. "$jlib"
+GC_PRE_JSON=$(cat)
+json_payload "$GC_PRE_JSON"; GC_PREPARSED=$?
+if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
+  case "$JP_TOOL" in
+    Bash|PowerShell)
+      # Every gated path here needs a git or gh word in the typed text, or in a
+      # script body gc_collect_bodies reads (gc_script_body: a bash|sh|source|`.`
+      # head, or gc_seg_is_ps's powershell|pwsh with its .ps1 bodies); the
+      # classifier's verbs (merge, pull, checkout, ...) all follow a git word.
+      # GC_GIT_WORD_RE runs on quote-stripped text (gc_git_prefilter_text), so test
+      # the quote-stripped command: `g"i"t merge` must continue. A backslash, `$`
+      # or a backtick may build any word, and a glob character (`*`, `?`, `[`) or a `(` may name
+      # a shell (`/bin/ba[s]h`, `/bin/ba@(s)h`: gc_script_body splits segments unquoted, which
+      # expands globs, and extglobs too when BASHOPTS=extglob is in the environment;
+      # every extglob form @( +( !( ?( *( contains `(`), so they continue too. A `.`
+      # followed by whitespace or the end, anywhere (`./. run` dot-sources <dir>/. :
+      # gc_script_body takes the token's basename; same test as pre-commit-test's S6).
+      # Over-matches on purpose; bare `./x.sh`, `x.cmd`, `python x.py`, `node x.js`,
+      # `make` and `npm run` are never scanned.
+      _np_q=${JP_CMD//[\"\']/}
+      _np_dot='\.([[:space:]]|$)'
+      # Explicit [Gg][Ii][Tt] classes, not nocasematch: under tr_TR.UTF-8 nocasematch
+      # does not fold I to i, and the early exit must never answer earlier than the old hook.
+      if [[ $_np_q == *[Gg][Ii][Tt]* || $_np_q == *[Gg][Hh]* || $_np_q == *[Ss][Hh]* ||
+            $_np_q == *[Ss][Oo][Uu][Rr][Cc][Ee]* || $_np_q == *[Pp][Ss]1* ||
+            $_np_q == *'\'* || $_np_q == *'$'* || $_np_q == *'`'* || $_np_q == *[*?[]* ||
+            $_np_q == *'('* || $_np_q =~ $_np_dot ]]; then
+        :
+      else
+        exit 0
+      fi ;;
+  esac
+fi
+
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_TOOL stays empty, and this gate would exit 0 on every merge.
 lib="$(dirname "$0")/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
+_np_jp=$JSON_PARSER   # git-cmd.sh re-sources json.sh, which resets the parser memo
 . "$lib"
+JSON_PARSER=$_np_jp
 command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: $lib is present but corrupt (gc_current_branch undefined) — this gate cannot evaluate the command, refusing" >&2; exit 2; }
 
-gc_read_stdin
+gc_read_stdin --preparsed
 gc_guard_off && exit 0
 
 CWD="$GC_CWD"
