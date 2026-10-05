@@ -9700,6 +9700,7 @@ printf '**Test**: true\n**Gate**: true\n' > "$c4g_repo/PROJECT_CONTEXT.md"
 printf 'git push origin main\n' > "$c4g_repo/push.sh"
 printf 'git push origin main\n' > "$c4g_repo/push.ps1"
 printf 'git push origin main\n' > "$c4g_repo/run"
+printf 'git merge feature\n' > "$c4g_repo/mrg"
 git -C "$c4g_repo" add -A >/dev/null 2>&1
 git -C "$c4g_repo" commit -q -m c4g >/dev/null 2>&1
 c4g_cwd=$(jesc "$c4g_repo")
@@ -9822,6 +9823,17 @@ c4g gl01 2 2 $'/bin/ba[s]h run'
 c4g gl02 2 2 $'/bin/?h run'
 c4g gl03 2 2 $'ls && /bin/?h run'
 c4g gl04 2 2 $'env /bin/ba[s]h run'
+# Fix round 3: BASHOPTS=extglob in the environment enables extglob, so gc_script_body's unquoted
+# word split expands `ba@(s)h` to `bash`; every extglob form contains `(`, so `(` continues.
+c4g_ext() { # <id> <no-push-main exit> <gate-before-merge exit> <command> (run under BASHOPTS=extglob)
+  c4g_j=$(mkjson Bash "$4" "$c4g_repo")
+  printf '%s' "$c4g_j" | env BASHOPTS=extglob bash "$ROOT/hooks/no-push-main.sh" >/dev/null 2>&1
+  expect "C4 no-push-main: BASHOPTS=extglob $1" "$2" "$?"
+  printf '%s' "$c4g_j" | env BASHOPTS=extglob bash "$ROOT/hooks/gate-before-merge.sh" >/dev/null 2>&1
+  expect "C4 gate-before-merge: BASHOPTS=extglob $1" "$3" "$?"
+}
+c4g_ext ex01 2 2 $'/bin/ba@(s)h run'
+c4g_ext ex02 0 2 $'ls && /bin/ba@(s)h mrg'
 c4gps() { # <id> <no-push-main exit> <gate-before-merge exit> <command> (PowerShell tool)
   c4g_j=$(mkjson PowerShell "$4" "$c4g_repo")
   check "C4 no-push-main: PowerShell $1" hooks/no-push-main.sh "$2" "$c4g_j"

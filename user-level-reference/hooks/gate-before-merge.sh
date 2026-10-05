@@ -191,11 +191,14 @@ if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
       # classifier's verbs (merge, pull, checkout, ...) all follow a git word.
       # GC_GIT_WORD_RE runs on quote-stripped text (gc_git_prefilter_text), so test
       # the quote-stripped command: `g"i"t merge` must continue. A backslash, `$`
-      # or a backtick may build any word, and a glob character (`*`, `?`, `[`) may name a shell
-      # (`/bin/ba[s]h`: gc_script_body splits segments unquoted, which expands globs), so they continue too. A `.` followed by
-      # whitespace or the end, anywhere (`./. run` dot-sources <dir>/. : gc_script_body
-      # takes the token's basename; same test as pre-commit-test's S6). Over-matches on purpose; bare `./x.sh`,
-      # `x.cmd`, `python x.py`, `node x.js`, `make` and `npm run` are never scanned.
+      # or a backtick may build any word, and a glob character (`*`, `?`, `[`) or a `(` may name
+      # a shell (`/bin/ba[s]h`, `/bin/ba@(s)h`: gc_script_body splits segments unquoted, which
+      # expands globs, and extglobs too when BASHOPTS=extglob is in the environment;
+      # every extglob form @( +( !( ?( *( contains `(`), so they continue too. A `.`
+      # followed by whitespace or the end, anywhere (`./. run` dot-sources <dir>/. :
+      # gc_script_body takes the token's basename; same test as pre-commit-test's S6).
+      # Over-matches on purpose; bare `./x.sh`, `x.cmd`, `python x.py`, `node x.js`,
+      # `make` and `npm run` are never scanned.
       _np_q=${JP_CMD//[\"\']/}
       _np_dot='\.([[:space:]]|$)'
       # Explicit [Gg][Ii][Tt] classes, not nocasematch: under tr_TR.UTF-8 nocasematch
@@ -203,7 +206,7 @@ if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
       if [[ $_np_q == *[Gg][Ii][Tt]* || $_np_q == *[Gg][Hh]* || $_np_q == *[Ss][Hh]* ||
             $_np_q == *[Ss][Oo][Uu][Rr][Cc][Ee]* || $_np_q == *[Pp][Ss]1* ||
             $_np_q == *'\'* || $_np_q == *'$'* || $_np_q == *'`'* || $_np_q == *[*?[]* ||
-            $_np_q =~ $_np_dot ]]; then
+            $_np_q == *'('* || $_np_q =~ $_np_dot ]]; then
         :
       else
         exit 0
