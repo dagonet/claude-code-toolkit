@@ -9451,6 +9451,15 @@ done <<'V4TABLE'
 53|0|2|2|-|true&&pwsh ./b.ps1
 54|2|2|2|-|cd sub; cd ..; true&&bash c.sh
 55|0|2|2|-|bash n.sh
+60|2|2|2|m|git co\mmit $'-m' x
+61|2|2|2|m|bash.exe $'c.sh'
+62|2|2|2|m|gh pr me\rge $'5'
+63|2|2|2|m|git push origin +$'main'
+64|2|2|2|m|C:\Git\bin\sh.exe $'c.sh'
+65|2|2|2|m|git status $'--short'
+66|2|2|2|m|echo "done. ok" $'x'
+67|0|0|0|-|echo "$'x'" && git status --short
+68|0|0|0|-|echo \$'x' && git status --short
 V4TABLE
 # a # comment with an apostrophe must not hide a later $'
 v4row 50 2 2 2 m "$(printf '%s\n%s' "echo hi # don't" "git push origin \$'ma\\x69n'")"
