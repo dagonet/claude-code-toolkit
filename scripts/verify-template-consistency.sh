@@ -1302,49 +1302,12 @@ if (label.startsWith("agent:")) {
 }
 if (out.length) console.log(out.join("\n"));'
 c71_x() { node -e "$C71_JS" "$1" "$2"; }
-C71_TABLE='general;PreToolUse;Bash|PowerShell;pre-commit-test;F
-general;PreToolUse;Bash|PowerShell;no-push-main;F
-general;PreToolUse;Bash|PowerShell;gate-before-merge;F
-general;PreToolUse;Read|Bash;deny-secret-reads;F
-general;PreToolUse;Edit|Write|MultiEdit|NotebookEdit;deny-claude-md-writes;F
-general;PreToolUse;Read;read-size-gate;W
-general;PreToolUse;mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-general;PreToolUse;Agent;require-skills-block;F
-general;PreToolUse;Agent;model-floor;O
-general;PreToolUse;Edit|Write|NotebookEdit;enforce-delegation;W
-general;PreToolUse;Bash;enforce-delegation;W
-general;PreToolUse;Bash;deny-hang-shapes;O
-general;PreToolUse;;agent-budget-warn;W
-general;PostToolUse;Bash|PowerShell;bash-output-guard;U
-general;PostToolUse;Edit|Write;post-edit-build;U
-general;SubagentStop;;enforce-agent-contract;U
-general;SubagentStop;;retro-ledger;U
-general;SessionStart;;retro-brief;U
-general;SessionStart;;verify-hooks;U
-root;PreToolUse;Bash|PowerShell;pre-commit-test;F
-root;PreToolUse;Bash|PowerShell;no-push-main;F
-root;PreToolUse;Bash|PowerShell;gate-before-merge;F
-root;PreToolUse;mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-root;PreToolUse;Bash;deny-hang-shapes;O
-root;PreToolUse;Agent;model-floor;O
-root;PostToolUse;Edit|Write;post-edit-build;U
-user;PreToolUse;Bash|PowerShell;no-push-main;UF
-user;PreToolUse;Read|Bash;deny-secret-reads;UF
-user;PreToolUse;Bash;deny-hang-shapes;UO
-user;PreToolUse;Agent;model-floor;UO
-user;PostToolUse;Bash|PowerShell;bash-output-guard;UU
-user;SessionStart;;verify-hooks;UU
-agent:dotnet-maui/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:dotnet-maui/dotnet-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:dotnet/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:dotnet/dotnet-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:general/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:java/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:java/java-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:python/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:python/python-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:rust-tauri/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
-agent:rust-tauri/rust-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F'
+# The frozen table lives in ONE fixture, shared with the sync server's test
+# (server/tests/test_template_sync_settings_hooks.py). FAIL-CLOSED: an unreadable
+# or empty fixture leaves C71_TABLE empty, which check 71 and the 6b control
+# both report red (never a silent pass on an empty table).
+C71_FIXTURE="server/tests/fixtures/hook-registrations-v4.4.0.json"
+C71_TABLE=$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).rows;if(!Array.isArray(r)||!r.every(x=>typeof x==="string"))process.exit(1);console.log(r.join("\n"))' "$C71_FIXTURE" 2>/dev/null) || C71_TABLE=""
 
 # 21c-3f. CONTROL for the sync skill's hook-reference collector (v2.2.6).
 #
@@ -5176,6 +5139,8 @@ c71_cmp() { # <label> <got> <want>
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
+elif [ -z "$C71_TABLE" ]; then
+  ko "check 71: the frozen table fixture $C71_FIXTURE is missing, unreadable or empty -- fail closed"
 else
   # (1) the frozen set
   c71_cmp "templates/general" "$(c71_x templates/general/.claude/settings.json general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
