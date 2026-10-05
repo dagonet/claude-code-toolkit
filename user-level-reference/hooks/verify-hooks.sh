@@ -34,6 +34,7 @@ VH_HOME=${HOME:-}
 VH_PROBS=""
 VH_N=0
 VH_PROGFAIL=
+VH_NOPARSER=
 VH_SEEN="
 "
 
@@ -171,11 +172,11 @@ EOF
   fi
   vh_init_parser
   if [ -z "$VH_BACKEND" ]; then
-    VH_PROGFAIL=1
+    VH_NOPARSER=1
     vh_problem "NO PARSER: exec-form entries unchecked in $1"
     return 0
   fi
-  vh_ents=$(vh_entries "$1" "$VH_BACKEND")
+  vh_ents=$(vh_entries "$1" "$VH_BACKEND" 2>/dev/null)
   vh_us=$(printf '\037')
   while IFS= read -r vh_line; do
     case $vh_line in
@@ -226,6 +227,12 @@ if [ "$VH_N" -gt 0 ]; then
   echo "HOOK CHECK FAILED -- $VH_N registered hook script(s) missing or broken:"
   printf '%s' "$VH_PROBS"
   echo "Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /sync-template or re-run scripts/render-user-hooks.sh --write."
-  [ -z "$VH_PROGFAIL" ] || echo "A MISSING PROGRAM entry fails OPEN: every check behind it is off until it is fixed."
+  if [ -n "$VH_PROGFAIL" ] && [ -n "$VH_NOPARSER" ]; then
+    echo "A MISSING PROGRAM entry fails OPEN, and NO PARSER means exec-form entries are unchecked: every check behind them may be off until fixed."
+  elif [ -n "$VH_PROGFAIL" ]; then
+    echo "A MISSING PROGRAM entry fails OPEN: every check behind it is off until it is fixed."
+  elif [ -n "$VH_NOPARSER" ]; then
+    echo "NO PARSER means exec-form entries are unchecked: every check behind them may be off until a parser (node, python3 or jq) is available."
+  fi
 fi
 exit 0

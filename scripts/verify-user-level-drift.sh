@@ -274,7 +274,7 @@ fi
 # ones the rest of this script uses (DRIFT_LIVE_SETTINGS for a doctored copy).
 # ---------------------------------------------------------------------------
 if [ -f "$LIVE_SETTINGS" ]; then
-  hk_tmp=$(mktemp -d)
+  hk_tmp=$(mktemp -d "$TMPD/hk.XXXXXX")
   hk_vh="$LIVE_ROOT/hooks/verify-hooks.sh"
   if [ ! -f "$hk_vh" ]; then
     drift=$((drift + 1))

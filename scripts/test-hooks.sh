@@ -9401,8 +9401,8 @@ done
 # R-1 audit (the amendment's `. "$0"` form is only exit-code-faithful if none of these shapes exists).
 # Scope: shell code that runs sourced or wrapped. enforce-delegation/retro-ledger embed JS whose `return` is not shell.
 # mawk-safe: `\b` is not a word boundary in mawk, so the pattern is return([^a-zA-Z0-9_]|$).
-C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{.*\}[[:space:]]*(;|#.*)?$/{d=0} /^\}/{d=0} !d && !/^[[:space:]]*#/ && !/^[A-Z_]+=[\047]/ && /(^[[:space:]]*|(&&|\|\||;|then|do|else)[[:space:]]*)return([^a-zA-Z0-9_]|$)/{print FILENAME":"FNR": "$0}'
-# A mid-line return (`[ x ] && return 4`, `|| return 0`, `; return`, `then return`) is matched too; the one exemption is an awk program held in a string assignment (hooks/lib/git-cmd.sh).
+C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{.*\}[[:space:]]*(;|#.*)?$/{d=0} /^\}/{d=0} !d && !/^[[:space:]]*#/ && !/^GC_AWK_[A-Z_]*=[\047]/ && /(^[[:space:]]*|(&&|\|\||;|then|do|else)[[:space:]]*)return([^a-zA-Z0-9_]|$)/{print FILENAME":"FNR": "$0}'
+# A mid-line return (`[ x ] && return 4`, `|| return 0`, `; return`, `then return`) is matched too; the one exemption is an awk program held in a GC_AWK_* string assignment (hooks/lib/git-cmd.sh).
 # Not handled: an indented closing brace ending a column-0 function does not reset the depth flag (a later top-level return in that file would be missed after it; none exists, and the one-line/col-0 resets cover every function here).
 C2ARFILES=""
 for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes require-skills-block; do
@@ -9417,7 +9417,7 @@ printf 'f() { return 1; }\nreturn 5\n' > "$TMPROOT/c2a-ret1.sh"
 expect "C2a: R-1 control: a one-line function does not mask a later top-level return" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret1.sh" | wc -l | tr -d ' ')"
 # Case-insensitive (grep -i), so the command word must be skipped: `exit 2'` inside a trap body is not the EXIT signal. Shape: trap <quoted-or-bare command> [signals...] EXIT|0.
-C2ATRAPRE="^[^#]*trap +('[^']*'|\"[^\"]*\"|[^ '\"]+) +([A-Za-z0-9_]+ +)*(EXIT|0)([^A-Za-z0-9_]|\$)"
+C2ATRAPRE="^[^#]*trap[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:]'\"]+)[[:space:]]+([A-Za-z0-9_]+[[:space:]]+)*(EXIT|0)([^A-Za-z0-9_]|\$)"
 cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-ret2.sh"; printf '[ -n "$x" ] && return 4\n' >> "$TMPROOT/c2a-ret2.sh"
 expect "C2a: R-1 control: a mid-line && return is caught (exactly one hit)" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret2.sh" | wc -l | tr -d ' ')"
@@ -10398,7 +10398,116 @@ expect "C2b (b): ... and keeps no foreign hook" 0 "$(grep -c '^kept foreign hook
 HOME="$c2b_hh" bash "$C2RUH" --write >"$c2b_hh/out2" 2>/dev/null
 expect "C2b (b): an idempotent re-run replaces nothing" 0 "$(grep -c '^replaced toolkit hook: ' "$c2b_hh/out2")"
 expect "C2b (d): verify-hooks has exactly one entry after --write" 1 "$(grep -cF "\"$c2b_hh/.claude/hooks/verify-hooks.sh\"" "$c2b_hh/.claude/settings.json")"
+# (e) no JSON parser on PATH (v4.4.0 carried minor): NO PARSER is reported, and the footer must not claim a MISSING PROGRAM entry
+C2NP="$TMPROOT/c2b-nopath"; rm -rf "$C2NP"; mkdir -p "$C2NP"
+for c2np_t in sh bash grep sed tr head tail cut cat wc stat date mktemp dirname basename env sort uniq awk ls rm mkdir cp; do
+  c2np_p=$(command -v "$c2np_t" 2>/dev/null); [ -n "$c2np_p" ] && ln -s "$c2np_p" "$C2NP/$c2np_t" 2>/dev/null
+done
+C2NH="$TMPROOT/c2b-homenp"; rm -rf "$C2NH"; mkdir -p "$C2NH/.claude/hooks"
+c2b_exec_settings "$C2NH/.claude/settings.json" "$C2BASH" "$C2NH/.claude/hooks/x.sh"
+C2OUT=$(env -u CLAUDE_PROJECT_DIR PATH="$C2NP" HOME="$C2NH" "$C2BASH" "$C2VH" </dev/null 2>/dev/null); C2RC=$?
+expect "C2b (e): no parser on PATH -> exit 0 and a NO PARSER entry" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^NO PARSER: ')"
+expect "C2b (e): ... the footer carries the NO PARSER sentence" 1 "$(printf '%s\n' "$C2OUT" | grep -cxF 'NO PARSER means exec-form entries are unchecked: every check behind them may be off until a parser (node, python3 or jq) is available.')"
+expect "C2b (e): ... and does not claim a MISSING PROGRAM entry" 0 "$(printf '%s\n' "$C2OUT" | grep -c 'A MISSING PROGRAM entry')"
 # ---- end v4.4.0 C2b
+
+# ---- v4.4.0 C5: project hooks run in one bash; the global copy steps aside only for a REGISTERED project copy; missing-script polarity per form ----
+echo "=== v4.4.0 C5: project registrations (F/W/O/U) and the user-level step-aside ==="
+C5RUH="$ROOT/scripts/render-user-hooks.sh"
+C5TPL="$ROOT/templates/general/.claude/settings.json"
+C5R=$(mkrepo c5repo main)
+C5CNT="$TMPROOT/c5-runs"
+# a HOME holding the RENDERED user-level hooks; the global no-push-main appends 'g' to the run counter when it starts
+C5H="$TMPROOT/c5home"; rm -rf "$C5H"; mkdir -p "$C5H/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$C5H/.claude/hooks"
+sed -i '1a echo g >>"$C5CNT"' "$C5H/.claude/hooks/no-push-main.sh"
+HOME="$C5H" bash "$C5RUH" --write >/dev/null 2>&1
+expect "C5: render-user-hooks.sh --write into the temp HOME exits 0" 0 "$?"
+HOME="$C5H" bash "$C5RUH" --list > "$TMPROOT/c5-list.tsv" 2>/dev/null
+c5_global() { # <hook> <payload> <proj> -> runs the global exec-form entry exactly (no shell); sets C5RC, C5OUT
+  c5g_line=$(awk -F'\t' -v x="$1" '{n=$6; sub(/.*\//,"",n); sub(/\.sh$/,"",n); if (n==x) print}' "$TMPROOT/c5-list.tsv")
+  IFS=$'\t' read -r c5g_ev c5g_m c5g_cmd c5g_a1 c5g_a2 c5g_a3 c5g_rest <<EOF
+$c5g_line
+EOF
+  C5OUT=$(printf '%s' "$2" | env HOME="$C5H" CLAUDE_PROJECT_DIR="$3" C5CNT="$C5CNT" "$c5g_cmd" "$c5g_a1" "$c5g_a2" "$c5g_a3" 2>&1); C5RC=$?
+}
+c5_cmd() { # <settings.json> <hook> [nth] -> the nth registration's command string, JSON-unescaped (the shipped strings carry only \" escapes)
+  grep '"command": ' "$1" | grep "hooks/$2\.sh" | sed -n "${3:-1}p" | sed 's/^[[:space:]]*"command": "//; s/"[,]*$//; s/\\"/"/g'
+}
+c5_project() { # <name> <hook> <instrument 0|1> -> a project holding the repo hooks and the general template settings; echoes its path
+  c5p_d="$TMPROOT/c5p-$1"; rm -rf "$c5p_d"; mkdir -p "$c5p_d/.claude"
+  cp -R "$ROOT/hooks" "$c5p_d/hooks"; cp "$C5TPL" "$c5p_d/.claude/settings.json"
+  [ "$3" = 1 ] && sed -i '1a echo p >>"$C5CNT"' "$c5p_d/hooks/$2.sh"
+  printf '%s' "$c5p_d"
+}
+c5_project_run() { # <proj> <hook> <payload> -> runs the project's own registration (shell form, under sh); sets C5RC, C5OUT
+  c5r_cmd=$(c5_cmd "$1/.claude/settings.json" "$2")
+  C5OUT=$(printf '%s' "$3" | env CLAUDE_PROJECT_DIR="$1" C5CNT="$C5CNT" sh -c "$c5r_cmd" 2>&1); C5RC=$?
+}
+c5_runs() { [ -f "$C5CNT" ] && wc -l < "$C5CNT" | tr -d ' ' || echo 0; }
+C5PUSH="$(mkjson Bash 'git push origin main' "$C5R")"
+
+# (a) toolkit project (the registered template copy): the global no-push-main steps aside, the project's runs once and refuses
+c5_p=$(c5_project toolkit no-push-main 1); : > "$C5CNT"
+c5_global no-push-main "$C5PUSH" "$c5_p"; c5_grc=$C5RC
+c5_project_run "$c5_p" no-push-main "$C5PUSH"
+expect "C5 (a): toolkit project, git push origin main: no-push-main runs exactly once (global steps aside)" 1 "$(c5_runs)"
+expect "C5 (a): ... the one run is the project's" "p" "$(tr -d '\n' < "$C5CNT")"
+expect "C5 (a): ... the project copy refuses (2)" 2 "$C5RC"
+expect "C5 (a): ... the global entry, stepped aside, exits 0" 0 "$c5_grc"
+# (b) plain project (no hooks, no settings): the global runs once and refuses
+c5_pd="$TMPROOT/c5p-plain"; rm -rf "$c5_pd"; mkdir -p "$c5_pd"; : > "$C5CNT"
+c5_global no-push-main "$C5PUSH" "$c5_pd"
+expect "C5 (b): plain project: the global no-push-main runs once" 1 "$(c5_runs)"
+expect "C5 (b): ... and refuses (2)" 2 "$C5RC"
+# (c) this repo's root settings shape: the global deny-secret-reads and bash-output-guard still run (shipped, not registered)
+c5_pd="$TMPROOT/c5p-root"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/.claude"; cp -R "$ROOT/hooks" "$c5_pd/hooks"; cp "$ROOT/.claude/settings.json" "$c5_pd/.claude/settings.json"
+c5_global deny-secret-reads "$(mkread "$C5R/.env")" "$c5_pd"
+expect "C5 (c): root-settings shape: the global deny-secret-reads still runs and refuses (the file ships, the registration does not)" 2 "$C5RC"
+c5_global bash-output-guard "$(mkpost 40000)" "$c5_pd"
+expect "C5 (c): root-settings shape: the global bash-output-guard still runs (it flags a 40000-byte result)" 1 "$([ -n "$C5OUT" ] && echo 1 || echo 0)"
+: > "$C5CNT"; c5_global no-push-main "$C5PUSH" "$c5_pd"
+expect "C5 (c): root-settings shape: no-push-main IS registered there, so the global steps aside (0 runs)" 0 "$(c5_runs)"
+# (d) hooks/ file but no registration: the global runs and refuses
+c5_pd="$TMPROOT/c5p-noreg"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/.claude"; cp -R "$ROOT/hooks" "$c5_pd/hooks"; printf '%s' '{"hooks":{}}' > "$c5_pd/.claude/settings.json"
+: > "$C5CNT"; c5_global no-push-main "$C5PUSH" "$c5_pd"
+expect "C5 (d): file but no registration: the global runs once" 1 "$(c5_runs)"
+expect "C5 (d): ... and refuses (2)" 2 "$C5RC"
+# (e) registration but no file: the global runs
+c5_pd="$TMPROOT/c5p-nofile"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/.claude"; cp "$C5TPL" "$c5_pd/.claude/settings.json"
+: > "$C5CNT"; c5_global no-push-main "$C5PUSH" "$c5_pd"
+expect "C5 (e): registration but no file: the global runs once" 1 "$(c5_runs)"
+expect "C5 (e): ... and refuses (2)" 2 "$C5RC"
+# (f) the whole step-aside matrix (5 hooks x 8 project states) is block C1 (f); not repeated here.
+
+# (g) missing-script polarity, row by row from the polarity table: every registration in templates/general, the script absent
+C5E="$TMPROOT/c5-empty"; rm -rf "$C5E"; mkdir -p "$C5E"
+c5_row() { # <hook> <form> <nth>
+  c5w_cmd=$(c5_cmd "$C5TPL" "$1" "${3:-1}")
+  c5w_out=$(printf '{}' | env CLAUDE_PROJECT_DIR="$C5E" sh -c "$c5w_cmd" 2>&1 >/dev/null); c5w_rc=$?
+  case "$2" in
+    F) expect "C5 (g): F $1 missing: exit 2" 2 "$c5w_rc"
+       expect "C5 (g): F $1 missing: prints HOOK SCRIPT MISSING and the path" 1 "$(printf '%s' "$c5w_out" | grep -c "^HOOK SCRIPT MISSING: $C5E/hooks/$1\.sh -- ")" ;;
+    W) expect "C5 (g): W $1 missing: exit 0" 0 "$c5w_rc"
+       expect "C5 (g): W $1 missing: prints WARN and the path" 1 "$(printf '%s' "$c5w_out" | grep -c "^WARN: $C5E/hooks/$1\.sh missing -- ")" ;;
+    O) expect "C5 (g): O $1 missing: exit 0, silent" "0:0" "$c5w_rc:$(printf '%s' "$c5w_out" | wc -c | tr -d ' ')" ;;
+    U) expect "C5 (g): U $1 missing: a non-blocking error (non-zero, not 2)" 1 "$([ "$c5w_rc" != 0 ] && [ "$c5w_rc" != 2 ] && echo 1 || echo 0)" ;;
+  esac
+}
+for c5_h in pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes require-skills-block; do c5_row "$c5_h" F; done
+c5_row gate-before-merge F 2
+for c5_h in read-size-gate enforce-delegation agent-budget-warn; do c5_row "$c5_h" W; done
+c5_row enforce-delegation W 2
+for c5_h in model-floor deny-hang-shapes; do c5_row "$c5_h" O; done
+for c5_h in bash-output-guard post-edit-build enforce-agent-contract retro-ledger retro-brief verify-hooks; do c5_row "$c5_h" U; done
+# F with the script present but no bash on PATH: 2 (a failed `exec bash` would exit 127 and let the call through)
+c5_pd="$TMPROOT/c5p-nobash"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/hooks" "$C5E-path"; cp "$ROOT/hooks/no-push-main.sh" "$c5_pd/hooks/"
+c5_cmd1=$(c5_cmd "$C5TPL" no-push-main)
+c5_out=$(printf '{}' | env PATH="$C5E-path" CLAUDE_PROJECT_DIR="$c5_pd" /bin/sh -c "$c5_cmd1" 2>&1); c5_rc=$?
+expect "C5 (g): F with the script present but no bash on PATH: exit 2" 2 "$c5_rc"
+expect "C5 (g): ... and says bash was not found" 1 "$(printf '%s' "$c5_out" | grep -c '^HOOK BLOCKED: bash not found on PATH')"
+# every F/W/O/U string in the six variants and the agents is the same as general's (byte-identical set; here: the strings exist once per entry)
+expect "C5 (g): the template carries 19 registrations in the new forms (F+W+O+U), none in the old wrapper form" "19:0" "$(grep -c '"command": "\(f=\|exec bash \)' "$C5TPL"):$(grep -c 'c=\$?' "$C5TPL")"
+# ---- end v4.4.0 C5
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

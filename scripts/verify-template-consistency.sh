@@ -1242,6 +1242,110 @@ else
   fi
 fi
 
+# Shared by 21c-3f (6b collector control) and check 71 (registration polarity):
+# the registration extractor and the frozen registration table. Row shape:
+# label;event;matcher;script;form  (label: general | root | user | agent:<variant>/<file>;
+# forms: F fail-closed, W fail-open WARN, O fail-open silent, U unwrapped, UF/UO/UU user-level exec forms).
+# A removed or added matcher group, or a changed form, turns check 71 red (R-5).
+C71_JS='const fs = require("fs");
+const file = process.argv[process.argv.length - 2], label = process.argv[process.argv.length - 1];
+const Q = "\"";
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function projform(cmd) {
+  const m = /hooks\/([A-Za-z0-9_-]+)\.sh/.exec(cmd);
+  if (!m) return null;
+  const P = "${CLAUDE_PROJECT_DIR:-.}/hooks/" + m[1] + ".sh";
+  const pf = "f=" + Q + P + Q + "; [ -r " + Q + "$f" + Q + " ] || ";
+  const tailF = ". Check that hooks/ exists at the project root." + Q + " >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo " + Q + "HOOK BLOCKED: bash not found on PATH -- $f cannot run" + Q + " >&2; exit 2; }; exec bash " + Q + "$f" + Q;
+  const tailW = ". Check that hooks/ exists at the project root." + Q + " >&2; exit 0; }; exec bash " + Q + "$f" + Q;
+  const forms = {
+    F: new RegExp("^" + esc(pf + "{ echo " + Q + "HOOK SCRIPT MISSING: $f -- ") + "[^\"]+" + esc(tailF) + "$"),
+    W: new RegExp("^" + esc(pf + "{ echo " + Q + "WARN: $f missing -- ") + "[^\"]+" + esc(tailW) + "$"),
+    O: new RegExp("^" + esc(pf + "exit 0; exec bash " + Q + "$f" + Q) + "$"),
+    U: new RegExp("^" + esc("exec bash " + Q + P + Q) + "$"),
+  };
+  for (const k of Object.keys(forms)) if (forms[k].test(cmd)) return [m[1], k];
+  return [m[1], "OTHER"];
+}
+function userform(h) {
+  const a = h.args;
+  if (!Array.isArray(a) || a.length < 3) return null;
+  const m = /([A-Za-z0-9_-]+)\.sh$/.exec(a[a.length - 1]);
+  if (!m) return null;
+  const t = String(a[1]);
+  let k = "OTHER";
+  if (/HOOK SCRIPT MISSING/.test(t) && /exit 2; \}; \. "\$0"$/.test(t)) k = "UF";
+  else if (/\|\| exit 0; \. "\$0"$/.test(t)) k = "UO";
+  else if (/(^|; )\. "\$0"$/.test(t) && !/exit/.test(t.split("unset p s;").pop())) k = "UU";
+  return [m[1], k];
+}
+const out = [];
+if (label.startsWith("agent:")) {
+  let ev = "", mt = "";
+  for (const l of fs.readFileSync(file, "utf8").split("\n")) {
+    let m;
+    if ((m = /^  ([A-Za-z]+):\s*$/.exec(l))) { ev = m[1]; mt = ""; }
+    else if ((m = /^\s*- matcher: "(.*)"\s*$/.exec(l))) mt = m[1];
+    else if ((m = /^\s*command: "(.*)"\s*$/.exec(l)) && /hooks\//.test(m[1])) {
+      const r = projform(m[1].replace(/\\"/g, Q));
+      if (r) out.push([label, ev, mt, r[0], r[1]].join(";"));
+    }
+  }
+} else {
+  const d = JSON.parse(fs.readFileSync(file, "utf8"));
+  for (const ev of Object.keys(d.hooks || {}))
+    for (const g of d.hooks[ev])
+      for (const h of g.hooks) {
+        const r = h.args ? userform(h) : projform(String(h.command));
+        if (r) out.push([label, ev, g.matcher || "", r[0], r[1]].join(";"));
+      }
+}
+if (out.length) console.log(out.join("\n"));'
+c71_x() { node -e "$C71_JS" "$1" "$2"; }
+C71_TABLE='general;PreToolUse;Bash|PowerShell;pre-commit-test;F
+general;PreToolUse;Bash|PowerShell;no-push-main;F
+general;PreToolUse;Bash|PowerShell;gate-before-merge;F
+general;PreToolUse;Read|Bash;deny-secret-reads;F
+general;PreToolUse;Edit|Write|MultiEdit|NotebookEdit;deny-claude-md-writes;F
+general;PreToolUse;Read;read-size-gate;W
+general;PreToolUse;mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+general;PreToolUse;Agent;require-skills-block;F
+general;PreToolUse;Agent;model-floor;O
+general;PreToolUse;Edit|Write|NotebookEdit;enforce-delegation;W
+general;PreToolUse;Bash;enforce-delegation;W
+general;PreToolUse;Bash;deny-hang-shapes;O
+general;PreToolUse;;agent-budget-warn;W
+general;PostToolUse;Bash|PowerShell;bash-output-guard;U
+general;PostToolUse;Edit|Write;post-edit-build;U
+general;SubagentStop;;enforce-agent-contract;U
+general;SubagentStop;;retro-ledger;U
+general;SessionStart;;retro-brief;U
+general;SessionStart;;verify-hooks;U
+root;PreToolUse;Bash|PowerShell;pre-commit-test;F
+root;PreToolUse;Bash|PowerShell;no-push-main;F
+root;PreToolUse;Bash|PowerShell;gate-before-merge;F
+root;PreToolUse;mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+root;PreToolUse;Bash;deny-hang-shapes;O
+root;PreToolUse;Agent;model-floor;O
+root;PostToolUse;Edit|Write;post-edit-build;U
+user;PreToolUse;Bash|PowerShell;no-push-main;UF
+user;PreToolUse;Read|Bash;deny-secret-reads;UF
+user;PreToolUse;Bash;deny-hang-shapes;UO
+user;PreToolUse;Agent;model-floor;UO
+user;PostToolUse;Bash|PowerShell;bash-output-guard;UU
+user;SessionStart;;verify-hooks;UU
+agent:dotnet-maui/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:dotnet-maui/dotnet-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:dotnet/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:dotnet/dotnet-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:general/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:java/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:java/java-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:python/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:python/python-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:rust-tauri/coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F
+agent:rust-tauri/rust-coder.md;PreToolUse;Bash|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F'
+
 # 21c-3f. CONTROL for the sync skill's hook-reference collector (v2.2.6).
 #
 #      Step 6b is the ONLY check a consumer runs to confirm their hooks are
@@ -1255,9 +1359,13 @@ fi
 #
 #      This runs the pattern AS WRITTEN IN SKILL.md (not a copy of it) against a
 #      real shipped settings.json, and compares the result against an
-#      INDEPENDENTLY SOURCED set: the hook paths named in the 127-wrapper's
-#      error MESSAGES, a different region of the same file that the truncating
-#      anchor also loses. Re-anchoring the skill turns this red.
+#      INDEPENDENTLY SOURCED set: the hook paths in the registration strings'
+#      own path assignments (`f=\"...hooks/X.sh\"` and `exec bash \"...hooks/X.sh\"`,
+#      v4.4.0; the F/W messages print $f, so the old message-sourced set would be
+#      EMPTY and the check would pass on 0 of 0). The collector must also return AT
+#      LEAST one reference per F+W+O+U entry of templates/general (the frozen table
+#      of check 71), and a copy with the paths blanked must fall below that floor.
+#      Re-anchoring the skill turns this red.
 skf="user-level-reference/skills/sync-template/SKILL.md"
 sksettings="templates/general/.claude/settings.json"
 if [ ! -f "$skf" ] || [ ! -f "$sksettings" ]; then
@@ -1268,7 +1376,10 @@ else
     ko "6b collector control: no \`grep -o 'hooks/...'\` collector found in $skf step 6b — the step lost its path-shaped extractor"
   else
     sk_got=$(grep -o "$sk_pat" "$sksettings" | sort -u)
-    sk_exp=$(grep -o "\(HOOK SCRIPT MISSING\|WARN\): [^ ]*hooks/[A-Za-z0-9_.-]*\.sh" "$sksettings" | sed 's|.*/hooks/|hooks/|' | sort -u)
+    sk_exp=$(grep -oE '(f=|exec bash )\\"[^ ]*hooks/[A-Za-z0-9_.-]+\.sh' "$sksettings" | sed 's|.*/hooks/|hooks/|' | sort -u)
+    sk_all=$(grep -o "$sk_pat" "$sksettings" | grep -c .)
+    sk_min=$(printf '%s\n' "$C71_TABLE" | grep -c '^general;.*;[FWOU]$')
+    sk_ctl=$(sed 's|hooks/|hoox/|g' "$sksettings" | grep -o "$sk_pat" | grep -c .)
     sk_missing=$(printf '%s\n' "$sk_exp" | grep -Fxv -f <(printf '%s\n' "$sk_got") 2>/dev/null)
     sk_n=$(printf '%s\n' "$sk_got" | grep -c .)
     sk_m=$(printf '%s\n' "$sk_exp" | grep -c .)
@@ -1277,8 +1388,12 @@ else
       printf '%s\n' "$sk_missing" | sed 's/^/      /'
     elif [ "$sk_n" -lt "$sk_m" ]; then
       ko "6b collector control: collector returned $sk_n < $sk_m independently-sourced references"
+    elif [ "$sk_m" -eq 0 ] || [ "$sk_min" -eq 0 ] || [ "$sk_all" -lt "$sk_min" ]; then
+      ko "6b collector control: the collector found $sk_all reference(s) (independent set $sk_m), fewer than the $sk_min F+W+O+U registrations of templates/general -- or the independent set is empty and the check would pass on 0 of 0"
+    elif [ "$sk_ctl" -ge "$sk_min" ]; then
+      ko "6b collector control: the collector still returned $sk_ctl >= $sk_min references on a copy with the hooks/ paths blanked -- the minimum-count assertion cannot go red"
     else
-      ok "6b collector control: the skill's own collector recovers $sk_n reference(s), covering all $sk_m independently sourced from the 127-wrapper messages"
+      ok "6b collector control: the skill's own collector recovers $sk_all reference(s) ($sk_n distinct), covering all $sk_m independently sourced from the registration strings, at least the $sk_min registrations of the frozen table; a blanked copy returns $sk_ctl and goes red"
     fi
   fi
 fi
@@ -1915,11 +2030,14 @@ else
   grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
   grep -n 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
 fi
-ABS_FORM='bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'
+#     v4.4.0: the registration forms are F/W/O (a `f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"`
+#     path assignment) and U (`exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"`).
+ABS_FORM_V='f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/'
+ABS_FORM_U='exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'
 abshook=$(
   {
-    grep -hF "$ABS_FORM" templates/*/.claude/settings.json 2>/dev/null
-    grep -hF "$ABS_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+    grep -hF -e "$ABS_FORM_V" -e "$ABS_FORM_U" templates/*/.claude/settings.json 2>/dev/null
+    grep -hF -e "$ABS_FORM_V" -e "$ABS_FORM_U" templates/*/.claude/agents/*.md 2>/dev/null
   } | grep -c .
 )
 #     `abshook > 0` alone is a coverage hole: a subset reverted to the
@@ -5028,6 +5146,137 @@ else
   ko "check 70 control: a nonexistent exec-form program was NOT reported (rc=$c70_rc out=[$(printf '%s' "$c70_out" | tr '\n' ' ')])"
 fi
 rm -rf "$c70_tmp"
+
+# ---------------------------------------------------------------------------
+# Check 71 (registration polarity, frozen set; v4.4.0 C1+C5, review focus 1-4) --
+# every hook registration (six variants, root, agent frontmatter, user-level
+# reference) is extracted into event;matcher;script;form and compared with the
+# frozen table above. The forms are the polarity table's: F fail-closed (a missing
+# script exits 2), W fail-open WARN, O fail-open silent, U unwrapped, and the
+# user-level UF/UO/UU. The sync server replaces settings.json wholesale (R-5), so a
+# template that DROPS a matcher group silently removes that gate from every
+# consumer: the table makes a removal, an addition or a changed form red.
+# Also: (2) the F/UF hooks carry the in-hook 127->2 trap and no other registered
+# hook (nor any lib) traps EXIT; (3) no allow-capable hook is F/UF; (4) the stop
+# gate is U; (5) a C5 hook's template matcher covers its user-level matcher (else
+# stepping aside drops a tool); (6) the sourced hooks have no top-level return;
+# (7) controls: a mutated copy (one F turned W; a dropped group) must go red.
+# ---------------------------------------------------------------------------
+echo
+note "Check 71: registration polarity -- the frozen (event, matcher, script, form) set; trap, allow, stop-gate, matcher-superset and return audits"
+c71_bad=""
+c71_agents() { for c71_a in templates/*/.claude/agents/*.md; do
+    c71_lab=$(printf '%s' "$c71_a" | sed 's|^templates/||; s|/\.claude/agents/|/|')
+    c71_x "$c71_a" "agent:$c71_lab"
+  done | LC_ALL=C sort; }
+c71_cmp() { # <label> <got> <want>
+  if [ -z "$2" ]; then c71_bad="$c71_bad [$1: the extraction found NO registration]"
+  elif [ "$2" != "$3" ]; then c71_bad="$c71_bad [$1 differs from the frozen table: $(printf '%s\n' "$2" | LC_ALL=C sort > "$c71_tmp/got"; printf '%s\n' "$3" | LC_ALL=C sort > "$c71_tmp/want"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"; fi
+}
+c71_tmp=$(mktemp -d)
+if ! command -v node >/dev/null 2>&1; then
+  ko "check 71: node is not available -- the registration extractor cannot run"
+else
+  # (1) the frozen set
+  c71_cmp "templates/general" "$(c71_x templates/general/.claude/settings.json general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
+  c71_cmp ".claude/settings.json" "$(c71_x .claude/settings.json root)" "$(printf '%s\n' "$C71_TABLE" | grep '^root;')"
+  c71_cmp "user-level-reference/settings.json" "$(c71_x user-level-reference/settings.json user)" "$(printf '%s\n' "$C71_TABLE" | grep '^user;')"
+  c71_cmp "agent frontmatter" "$(c71_agents)" "$(printf '%s\n' "$C71_TABLE" | grep '^agent:' | LC_ALL=C sort)"
+  c71_gen=$(c71_x templates/general/.claude/settings.json general)
+  for c71_v in $VARIANTS; do
+    [ "$(c71_x "templates/$c71_v/.claude/settings.json" general)" = "$c71_gen" ] || c71_bad="$c71_bad [templates/$c71_v/.claude/settings.json registers a different set than templates/general]"
+  done
+  c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -c .)
+  c71_nsc=$(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u | grep -c .)
+
+  # (2) the trap audit. Definitions come from test-hooks.sh block C2a: one each.
+  if [ "$(grep -c '^C2ATRAPRE=' scripts/test-hooks.sh)" -ne 1 ] || [ "$(grep -c '^C2AAWK=' scripts/test-hooks.sh)" -ne 1 ]; then
+    c71_bad="$c71_bad [scripts/test-hooks.sh does not define C2ATRAPRE and C2AAWK exactly once each]"
+  else
+    eval "$(grep '^C2ATRAPRE=' scripts/test-hooks.sh)"; eval "$(grep '^C2AAWK=' scripts/test-hooks.sh)"
+  fi
+  c71_ntrap=0
+  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u); do
+    c71_want=0
+    printf '%s\n' "$C71_TABLE" | awk -F';' -v s="$c71_s" '$4==s && ($5=="F"||$5=="UF"){f=1} END{exit f?0:1}' && c71_want=1
+    c71_got=$(grep -ciE "$C2ATRAPRE" "hooks/$c71_s.sh")
+    if [ "$c71_got" != "$c71_want" ]; then c71_bad="$c71_bad [hooks/$c71_s.sh has $c71_got EXIT/0 trap(s), expected $c71_want]"; fi
+    if [ "$c71_want" = 1 ]; then
+      c71_ntrap=$((c71_ntrap + 1))
+      [ "$(grep -c '^trap .\[ "\$?" = 127 \] && exit 2. EXIT' "hooks/$c71_s.sh")" = 1 ] || c71_bad="$c71_bad [hooks/$c71_s.sh (F/UF) lacks the 127->2 trap line]"
+    fi
+  done
+  [ "$c71_ntrap" -ge 6 ] || c71_bad="$c71_bad [only $c71_ntrap F/UF hooks found, expected at least 6: the audit is inert]"
+  [ "$(cat hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")" = 0 ] || c71_bad="$c71_bad [a hooks/lib/*.sh file sets an EXIT/0 trap]"
+  printf 'trap -- "x" EXIT\n' > "$c71_tmp/t1.sh"; printf "trap 'x'\t0\n" > "$c71_tmp/t2.sh"; printf "trap 'echo exit 2' INT\n" > "$c71_tmp/t3.sh"
+  [ "$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t1.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t2.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t3.sh")" = 110 ] || c71_bad="$c71_bad [the trap regex CONTROL failed: 'trap -- ... EXIT' and a TAB-separated 'trap ... 0' must match, 'trap ... INT' must not]"
+
+  # (3) no allow-capable hook is F/UF; the grep must match read-size-gate (positive control)
+  C71_ALLOW='permissionDecision"?[[:space:]]*:[[:space:]]*"allow"'
+  grep -qE "$C71_ALLOW" hooks/read-size-gate.sh || c71_bad="$c71_bad [the allow grep does not match hooks/read-size-gate.sh: it is inert]"
+  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '($5=="F"||$5=="UF"){print $4}' | sort -u); do
+    ! grep -qE "$C71_ALLOW" "hooks/$c71_s.sh" || c71_bad="$c71_bad [hooks/$c71_s.sh can emit an allow but is registered F/UF]"
+  done
+  # (4) the stop gate is U everywhere it is registered
+  c71_sg=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$4=="enforce-agent-contract"{print $5}')
+  [ -n "$c71_sg" ] && [ "$(printf '%s\n' "$c71_sg" | sort -u)" = "U" ] || c71_bad="$c71_bad [enforce-agent-contract is not registered U (the stop gate is never wrapped): $(printf '%s' "$c71_sg" | tr '\n' ' ')]"
+  # (5) matcher superset for each C5 hook: the template's alternatives cover the user-level matcher's
+  c71_cover() { # <template matcher> <user matcher> -> 0 when every user alternative is a template alternative (an empty template matcher covers all)
+    [ -z "$1" ] && return 0
+    [ -z "$2" ] && return 1
+    for c71_alt in $(printf '%s' "$2" | tr '|' ' '); do
+      case "|$1|" in *"|$c71_alt|"*) ;; *) return 1 ;; esac
+    done
+    return 0
+  }
+  c71_nsa=0
+  while IFS=';' read -r c71_l c71_e c71_m c71_s c71_f; do
+    [ "$c71_l" = user ] || continue
+    grep -qF "*'}/hooks/$c71_s.sh" user-level-reference/settings.json || continue
+    c71_nsa=$((c71_nsa + 1))
+    c71_ok=0
+    while IFS=';' read -r c71_tl c71_te c71_tm c71_ts c71_tf; do
+      [ "$c71_tl" = general ] && [ "$c71_te" = "$c71_e" ] && [ "$c71_ts" = "$c71_s" ] || continue
+      c71_cover "$c71_tm" "$c71_m" && c71_ok=1
+    done <<EOF
+$C71_TABLE
+EOF
+    [ "$c71_ok" = 1 ] || c71_bad="$c71_bad [C5 hook $c71_s: no template registration under $c71_e covers the user-level matcher '$c71_m' -- stepping aside would drop a tool]"
+  done <<EOF
+$C71_TABLE
+EOF
+  [ "$c71_nsa" -ge 5 ] || c71_bad="$c71_bad [only $c71_nsa step-aside hooks found in the user-level reference, expected at least 5: the audit is inert]"
+  c71_cover 'Bash|PowerShell' 'Bash|PowerShell|Read' && c71_bad="$c71_bad [the matcher-superset CONTROL failed: a wider user matcher was judged covered]"
+  c71_cover 'Bash|PowerShell' 'PowerShell' || c71_bad="$c71_bad [the matcher-superset CONTROL failed: a narrower user matcher was judged uncovered]"
+  # (6) no top-level return in a sourced (UF/UO/UU) hook or any lib
+  c71_rf=""
+  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '$5 ~ /^U[FOU]$/ {print $4}' | sort -u); do c71_rf="$c71_rf hooks/$c71_s.sh"; done
+  [ -n "$c71_rf" ] || c71_bad="$c71_bad [no sourced hook found: the return audit is inert]"
+  c71_ret=$(awk "$C2AAWK" $c71_rf hooks/lib/*.sh)
+  [ -z "$c71_ret" ] || c71_bad="$c71_bad [top-level return in a sourced hook or lib: $(printf '%s' "$c71_ret" | tr '\n' ' ')]"
+  printf 'return 5\n' > "$c71_tmp/r1.sh"
+  [ "$(awk "$C2AAWK" "$c71_tmp/r1.sh" | wc -l | tr -d ' ')" = 1 ] || c71_bad="$c71_bad [the return-audit CONTROL failed: a top-level return was not reported]"
+
+  if [ -z "$c71_bad" ]; then
+    ok "check 71: $c71_nrows registrations over $c71_nsc scripts equal the frozen table (six variants, root, user-level, agent frontmatter); $c71_ntrap F/UF hooks trap 127->2, no allow-capable hook is F/UF, the stop gate is U, $c71_nsa C5 matchers covered, no top-level return"
+  else
+    ko "check 71: $c71_bad"
+  fi
+
+  # (7) control: the same extraction on mutated copies must differ from the table
+  c71_mut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="f2w"){for(const x of g)for(const h of x.hooks)if(/deny-secret-reads/.test(h.command))h.command=h.command.replace("HOOK SCRIPT MISSING: $f -- ","WARN: $f missing -- ").replace(/exit 2; \}; command -v bash .*cannot run" >&2; exit 2; \}; /,"exit 0; }; ");}else{for(let i=0;i<g.length;i++)if(g[i].hooks.some(h=>/deny-secret-reads/.test(h.command))){g.splice(i,1);break;}}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
+  c71_want=$(printf '%s\n' "$C71_TABLE" | grep '^general;')
+  for c71_mode in f2w dropgroup; do
+    node -e "$c71_mut" templates/general/.claude/settings.json "$c71_tmp/mut-$c71_mode.json" "$c71_mode" 2>/dev/null
+    c71_got=$(c71_x "$c71_tmp/mut-$c71_mode.json" general 2>/dev/null)
+    if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_want" ]; then
+      ok "check 71 control ($c71_mode): the extraction on a mutated copy differs from the frozen table"
+    else
+      ko "check 71 control ($c71_mode): a mutated copy was NOT detected -- the frozen-set comparison is vacuous"
+    fi
+  done
+fi
+rm -rf "$c71_tmp"
 
 # ---------------------------------------------------------------------------
 echo
