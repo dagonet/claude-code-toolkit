@@ -33,13 +33,15 @@ VH_PROJ=${CLAUDE_PROJECT_DIR:-}
 VH_HOME=${HOME:-}
 VH_PROBS=""
 VH_N=0
+VH_PROGFAIL=
 VH_SEEN="
 "
 
 vh_problem() { VH_N=$((VH_N + 1)); VH_PROBS="$VH_PROBS$1
 "; }
 
-# vh_resolve <path> -> the absolute-or-project-relative path, or empty when it cannot be resolved here
+# vh_resolve <path> -> sets VH_R to the absolute-or-project-relative path; returns 1 when it cannot be resolved here
+# (no command substitution: a subshell per path occurrence was the cost)
 vh_resolve() {
   vh_p=$1
   vh_a='${CLAUDE_PROJECT_DIR:-.}'; vh_p=${vh_p//"$vh_a"/${VH_PROJ:-.}}
@@ -53,13 +55,14 @@ vh_resolve() {
     /*|[A-Za-z]:/*|./*|../*) ;;
     *) vh_p=${VH_PROJ:-.}/$vh_p ;;
   esac
-  printf '%s' "$vh_p"
+  VH_R=$vh_p
 }
 
 # vh_script <raw path> -- check one registered script (once)
 vh_script() {
   case $1 in */run-gate.sh|hooks/run-gate.sh) return 0 ;; esac   # a permission pattern, not a registration
-  vh_r=$(vh_resolve "$1") || return 0
+  vh_resolve "$1" || return 0
+  vh_r=$VH_R
   case "$VH_SEEN" in *"
 $vh_r
 "*) return 0 ;; esac
@@ -72,14 +75,21 @@ $vh_r
 
 # vh_program <command> -- an exec-form command program must exist and be executable
 vh_program() {
-  case $1 in ""|*@*) return 0 ;; esac   # a placeholder is reported on its own
+  # an @NAME@ placeholder is reported on its own; an empty command is a program that cannot be spawned
+  if [ -n "$1" ] && [[ $1 =~ @[A-Z]+@ ]]; then return 0; fi
   vh_c=$1
+  if [ -z "$vh_c" ]; then
+    VH_PROGFAIL=1
+    vh_problem "MISSING PROGRAM: (empty command) (exec-form hook command cannot be spawned -- every check it runs is OFF; re-run scripts/render-user-hooks.sh --write)"
+    return 0
+  fi
   case $vh_c in
     */*|[A-Za-z]:*) ;;
     *) vh_c=$(command -v "$vh_c" 2>/dev/null) || vh_c=$1 ;;
   esac
   if [ -f "$vh_c" ] && [ -x "$vh_c" ]; then return 0; fi
   case $vh_c in *.exe|*.EXE) ;; *) if [ -f "$vh_c.exe" ] && [ -x "$vh_c.exe" ]; then return 0; fi ;; esac
+  VH_PROGFAIL=1
   vh_problem "MISSING PROGRAM: $1 (exec-form hook command cannot be spawned -- every check it runs is OFF; re-run scripts/render-user-hooks.sh --write)"
   return 0
 }
@@ -159,7 +169,9 @@ $vh_paths
 EOF
     return 0
   fi
+  vh_init_parser
   if [ -z "$VH_BACKEND" ]; then
+    VH_PROGFAIL=1
     vh_problem "NO PARSER: exec-form entries unchecked in $1"
     return 0
   fi
@@ -186,13 +198,19 @@ EOF
   return 0
 }
 
+# the parser is only needed for a file that has exec-form entries: initialise it on first use
 VH_BACKEND=""
-vh_jlib="$(dirname "$0")/lib/json.sh"
-if [ -f "$vh_jlib" ]; then
-  . "$vh_jlib"
-  json_parser_init
-  [ "$JSON_PARSER" = "none" ] || VH_BACKEND=$JSON_PARSER
-fi
+VH_PARSER_DONE=""
+vh_init_parser() {
+  [ -z "$VH_PARSER_DONE" ] || return 0
+  VH_PARSER_DONE=1
+  vh_jlib="$(dirname "$0")/lib/json.sh"
+  if [ -f "$vh_jlib" ]; then
+    . "$vh_jlib"
+    json_parser_init
+    [ "$JSON_PARSER" = "none" ] || VH_BACKEND=$JSON_PARSER
+  fi
+}
 
 [ -n "$VH_HOME" ] && vh_file "$VH_HOME/.claude/settings.json"
 if [ -n "$VH_PROJ" ]; then
@@ -208,5 +226,6 @@ if [ "$VH_N" -gt 0 ]; then
   echo "HOOK CHECK FAILED -- $VH_N registered hook script(s) missing or broken:"
   printf '%s' "$VH_PROBS"
   echo "Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /sync-template or re-run scripts/render-user-hooks.sh --write."
+  [ -z "$VH_PROGFAIL" ] || echo "A MISSING PROGRAM entry fails OPEN: every check behind it is off until it is fixed."
 fi
 exit 0

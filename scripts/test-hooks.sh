@@ -10314,6 +10314,17 @@ c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/winbash" "$C2HX/.claude/h
 printf '#!/bin/sh\nexit 0\n' > "$C2HX/winbash.exe"; chmod 755 "$C2HX/winbash.exe"
 c2b_run "$C2HX" - --report
 expect "C2b (D2): a program spelled without .exe resolves to an executable .exe -> silent" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"","args":["-c",". \\"$0\\"","%s"]}]}]}}\n' "$C2HX/.claude/hooks/x.sh" > "$C2HX/.claude/settings.json"
+c2b_run "$C2HX" - --report
+expect "C2b (D2): an exec-form entry with an empty command -> MISSING PROGRAM, --report exits 1" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: ')"
+c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/a@b/bash" "$C2HX/.claude/hooks/x.sh"
+c2b_run "$C2HX" - --report
+expect "C2b (D2): a program path containing a plain @ is checked (reported), not skipped" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*a@b/bash')"
+c2b_run "$C2HX" -
+expect "C2b: a MISSING PROGRAM block ends with the fails-OPEN sentence" 1 "$(printf '%s\n' "$C2OUT" | grep -cxF 'A MISSING PROGRAM entry fails OPEN: every check behind it is off until it is fixed.')"
+c2b_p=$(c2b_proj plainmiss); rm -f "$c2b_p/hooks/no-push-main.sh"
+c2b_run "$C2H0" "$c2b_p"
+expect "C2b: a plain MISSING script block does NOT carry the fails-OPEN sentence" 0 "$(printf '%s\n' "$C2OUT" | grep -c 'fails OPEN')"
 c2b_exec_settings "$C2HX/.claude/settings.json" "$C2BASH" "$C2HX/.claude/hooks/x.sh"
 
 # a FIFO or a directory at a settings path never hangs the hook
@@ -10332,7 +10343,7 @@ for c2b_v in general dotnet dotnet-maui rust-tauri java python; do
 done
 expect "C2b: the six variant settings.json are byte-identical" 1 "$(md5sum "$ROOT"/templates/*/.claude/settings.json | cut -d' ' -f1 | sort -u | wc -l | tr -d ' ')"
 expect "C2b: verify-hooks.sh is byte-identical to its user-level mirror" 0 "$(cmp -s "$ROOT/hooks/verify-hooks.sh" "$ROOT/user-level-reference/hooks/verify-hooks.sh"; echo $?)"
-c2b_want='{"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '"'"''"'"' s < \"$p/.claude/settings.json\"; case $s in *'"'"'}/hooks/verify-hooks.sh\\\"'"'"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}'
+c2b_want='{"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/verify-hooks.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '"'"''"'"' s < \"$p/.claude/settings.json\"; case $s in *'"'"'}/hooks/verify-hooks.sh\\\"'"'"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}'
 expect "C2b: the user reference registers verify-hooks (SessionStart, UU exec form, own step-aside)" 1 "$(grep -cF -- "$c2b_want" "$C2REF")"
 HOME="$C2HU" bash "$C2RUH" --list 2>/dev/null | awk -F'\t' '$1=="SessionStart" && $6 ~ /verify-hooks\.sh$/' > "$TMPROOT/c2b-list.tsv"
 expect "C2b: --list renders verify-hooks once, under SessionStart" 1 "$(grep -c . "$TMPROOT/c2b-list.tsv")"
@@ -10349,6 +10360,13 @@ expect "C2b: the project registers its copy (template settings) -> the user-leve
 printf '{}\n' > "$c2b_p/.claude/settings.json"
 c2b_stepchk
 expect "C2b: the project does not register its copy -> the user-level entry runs" 1 "$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
+cp "$ROOT/templates/general/.claude/settings.json" "$c2b_p/.claude/settings.json"; rm -f "$c2b_p/hooks/verify-hooks.sh"
+c2b_stepchk
+expect "C2b: registered but the project's file is missing -> the user-level entry runs and reports" 1 "$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
+rm -rf "$c2b_p/hooks"
+c2b_stepchk
+expect "C2b: registered but the project has no hooks/ dir -> the user-level entry runs and reports" 1 "$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
+cp -R "$ROOT/hooks" "$c2b_p/hooks"
 rm -f "$c2b_p/.claude/settings.json"; mkfifo "$c2b_p/.claude/settings.json" 2>/dev/null
 if [ -p "$c2b_p/.claude/settings.json" ] && command -v timeout >/dev/null 2>&1; then
   c2b_exec "$C2HU" "$c2b_p" '{}' timeout 10 "$c2b_cmd" "$c2b_a1" "$c2b_a2" "$c2b_a3"

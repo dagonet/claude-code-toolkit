@@ -389,7 +389,7 @@ The matchers are unchanged. UserPromptSubmit `date` is **unchanged** (check 62).
 
 **Files:**
 - Create: `hooks/verify-hooks.sh`, mirrored as `user-level-reference/hooks/verify-hooks.sh`
-- Modify: `templates/*/.claude/settings.json` (SessionStart: add `verify-hooks` U after `retro-brief`), `user-level-reference/settings.json` (SessionStart `verify-hooks` UU, with its own step-aside: exit 0 when the project registers `}/hooks/verify-hooks.sh`), `scripts/verify-template-consistency.sh` (check 70), `scripts/verify-user-level-drift.sh`
+- Modify: `templates/*/.claude/settings.json` (SessionStart: add `verify-hooks` U after `retro-brief`), `user-level-reference/settings.json` (SessionStart `verify-hooks` UU, with its own step-aside: exit 0 only when the project both HAS `hooks/verify-hooks.sh` as a file and registers `}/hooks/verify-hooks.sh`, like `<SA_X>`), `scripts/verify-template-consistency.sh` (check 70), `scripts/verify-user-level-drift.sh`
 - Test: new block `C2b`
 
 **`verify-hooks.sh [--report]`.** Fail-open: a diagnostic never blocks.

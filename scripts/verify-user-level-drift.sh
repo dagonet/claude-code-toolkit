@@ -281,10 +281,14 @@ if [ -f "$LIVE_SETTINGS" ]; then
     drift_list="$drift_list
   MISSING live: $hk_vh (registered hooks cannot be verified)"
   else
+    # A temp HOME holds the settings copy; its .claude/hooks is a symlink to the live
+    # hooks dir, so an old-form `~/.claude/hooks/x.sh` or `$HOME/.claude/hooks/x.sh`
+    # entry resolves to the LIVE tree being checked (not to the empty temp HOME).
     mkdir -p "$hk_tmp/home/.claude"; cp "$LIVE_SETTINGS" "$hk_tmp/home/.claude/settings.json"
+    ln -s "$LIVE_ROOT/hooks" "$hk_tmp/home/.claude/hooks" 2>/dev/null
     env -u CLAUDE_PROJECT_DIR HOME="$hk_tmp/home" bash "$hk_vh" --report </dev/null > "$hk_tmp/vh.out" 2>&1
     hk_rc=$?
-    hk_out=$(sed "s#$hk_tmp/home/.claude/settings.json#$LIVE_SETTINGS#g" "$hk_tmp/vh.out")
+    hk_out=$(sed -e "s#$hk_tmp/home/.claude/settings.json#$LIVE_SETTINGS#g" -e "s#$hk_tmp/home/.claude/hooks#$LIVE_ROOT/hooks#g" "$hk_tmp/vh.out")
     if [ "$hk_rc" -ne 0 ] || [ -n "$hk_out" ]; then
       [ -n "$hk_out" ] || hk_out="verify-hooks.sh --report exited $hk_rc with no output"
       while IFS= read -r hk_l; do
@@ -299,7 +303,7 @@ EOF
   fi
   if [ -f scripts/render-user-hooks.sh ]; then
     cp "$LIVE_SETTINGS" "$hk_tmp/rendered.json"
-    if hk_ro=$(bash scripts/render-user-hooks.sh --write --settings "$hk_tmp/rendered.json" 2>&1); then
+    if bash scripts/render-user-hooks.sh --write --settings "$hk_tmp/rendered.json" >/dev/null 2>"$hk_tmp/render.err"; then
       if ! cmp -s "$LIVE_SETTINGS" "$hk_tmp/rendered.json"; then
         drift=$((drift + 1))
         drift_list="$drift_list
@@ -309,7 +313,7 @@ $(diff "$LIVE_SETTINGS" "$hk_tmp/rendered.json" | head -8 | sed 's/^/    /')"
     else
       drift=$((drift + 1))
       drift_list="$drift_list
-  CANNOT RENDER the hooks block against $LIVE_SETTINGS: $(printf '%s' "$hk_ro" | tr '\n' ' ')"
+  CANNOT RENDER the hooks block against $LIVE_SETTINGS: $(tr '\n' ' ' < "$hk_tmp/render.err")"
     fi
   fi
   rm -rf "$hk_tmp"
