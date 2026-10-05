@@ -121,7 +121,7 @@ Counts, never carried forward:
 - **Hook suite** via the parser matrix at {{FILL: commit}}: node {{FILL: passed/failed/skipped}}, python3 {{FILL: passed/failed/skipped}}, jq {{FILL: passed/failed/skipped}}. The v4.3.1 G/S blocks plus C1 and the four J blocks, run alone on Linux at ff22e0f (the merge of v4.3.1 into Jev Phase 1): 1,093 assertions in both node (1,092 passed, 1 skipped) and python3-only (1,047 passed, 46 skipped). J-PY: **91** tests. Full `scripts/test-hooks.sh` on Linux at 690677f (default parsers): **2753 passed, 0 failed, 4 skipped** (2757 assertions); the 4 skips are host-only rows (Windows case-insensitive `claude.md`, `fsutil` case-sensitive arm, `de_DE.UTF-8` locale, Git Bash `winpid`). Combined tree (d6e2746, V1-V4 added): **3435 passed, 0 failed, 6 skipped** (3441 assertions); the 2 new skips are V1's unreadable-file rows (root ignores `chmod 000`). Blocks V1 V2 V3 V4 S6 S6b G1 G2 G3 G3c G3d G6 SCAN run alone on Linux at 0b60a80: node 1,233 passed, 0 failed, 3 skipped; python3-only and jq-only 1,232 passed, 0 failed, 4 skipped (1,236 assertions each).
 - **Server suite** (no server-code change): Linux at 690677f, with the test fixes, **487 passed, 0 failed, 10 skipped**, the same on the combined tree (d6e2746) (before the fixes: 486 passed, 9 failed — the known Windows-path tests, ruling L-1 — 1 skipped); Windows {{FILL: passed/failed}}.
 - **Hooks:** 18 scripts under `hooks/` (+1, `git-pre-push.sh`, on `HOOKS_NO_MIRROR`), 12 mirrored; `hooks/lib/` gains `agent-model.sh` (mirrored).
-- **Context tables** (`wc -c` at this release's tip, general): harness-injected 18,000 B (v4.3.1: 17,863), end of bootstrap 23,128 B (v4.3.1: 22,991); the +137 B is the U-1 sentence in the user-level `CLAUDE.md`. Per-variant figures are in `docs/architecture.md`.
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 18,000 B (v4.3.1: 17,863), end of bootstrap 23,258 B (v4.3.1: 22,991); +137 B (both subtotals) is the U-1 sentence in the user-level `CLAUDE.md`, and +130 B (bootstrap only) is the Gate-fallback clause in every variant's `PROJECT_CONTEXT.md`. Per-variant figures are in `docs/architecture.md`.
 
 #### Downstream migration
 0. No server-code change; restart the template-sync MCP server (or reconnect, `/mcp`) only so it reports the new `VERSION`.
@@ -133,6 +133,7 @@ Counts, never carried forward:
 3b. GitHub: add a ruleset on the default branch requiring a pull request and blocking force pushes (the server-side layer; `--no-verify` skips the local hook).
 3c. A command that uses `$'...'` or `$"..."` quoting is now refused by the git gates; rewrite it with plain quotes and `printf` for escapes.
 4. Jev stays off until someone runs `/jev on` in a clone; that needs python3 ≥ 3.8 and `TYPESAFE_API_KEY`. Each worktree of a clone needs its own `/jev on`. While on, the redacted, trimmed spawn text leaves the machine for every routed spawn.
+5. `/sync-template` will list `PROJECT_CONTEXT.md` in `pending_once_notes` (the `**Test timeout**` example now says it also bounds the Gate fallback); adopt by hand if you copied the v4.3.1 line.
 
 ## v4.3.1 — 2026-10-04
 

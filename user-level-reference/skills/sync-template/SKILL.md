@@ -138,7 +138,7 @@ git -C <templateRepo> describe --exact-match --tags 2>/dev/null
 grep -n '"resolution"\|"reason"' .claude/template-manifest.json
 ```
 
-This snippet is cwd-relative: run it via `bash <script>` or with an absolute path / `git -C <dir>`, because deny-hang-shapes refuses a leading `cd` followed by several commands.
+This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
 
 Write the paths down. These are deliberate deviations recorded in the v2 manifest, and **v3 has no equivalent, so migration drops them.** This census costs nothing, needs no field, and is the ONLY thing that works on a server too old to report the loss. It is also the census that makes an empty report meaningful — see 1c-iv.
 
@@ -227,7 +227,7 @@ Then report:
 - **`region_left_in_place: true` and `region_bytes`** — **the region stays in `CLAUDE.md`; it is never copied into `project.md`.** `project.md` gets the v4.0.1 seed header ONLY (v4.0.1, item 14) — measured at a fixed byte count regardless of `hunk_count`, so a non-zero `hunk_count` does NOT mean the diff is in the file. The **out-of-region** hunks, when there are any, are written instead to `<backup_dir>/CLAUDE.md.out-of-region.diff` (`project_md_record` in the migrate response names the path, or is `null` when there were none, or on a `dry_run`) — **never into `project.md` itself**. This is the opposite reason from 0.3.5's: `project.md` has **no `paths:` key**, so it is loaded at **every session start**, same priority as `CLAUDE.md` — an unscoped rules file is delivered to EVERY session, not to nobody (measured with this repo's own `zz-load-probe.md`), which is exactly why a migration diff must not live there. Before 0.3.5 the tool's docstring claimed the region itself was written verbatim; 0.3.5 fixed the docstring. v4.0.1 corrects the delivery claim that justified the placement in the first place — see the "Delivery reality" paragraph in step 3.
 - **`region_bytes` counts the region BODY**, not the block: one measured file reports 2695 where the block including its marker lines is 2814. Two correct numbers with different boundaries — do not diff them and report a discrepancy.
 
-**A consumer cross-checking `region_bytes` against `region.sh --body <path>`'s own byte count may see them differ by exactly ±1, in either direction, content-dependent — not data loss, and never "one byte more" as a persistent direction to correct for.** Measured on two consumers: MM-Agent read `region_bytes` one byte ABOVE `--body`'s count (68,818 vs 68,817); panoscribe read the opposite (1693 vs `region.sh` reporting 1692). The sign flips with the file's own content, so there is nothing consistent to chase down — report the byte and move on.
+**A consumer cross-checking `region_bytes` against `bash ~/.claude/skills/sync-template/region.sh --body <path>`'s own byte count may see them differ by exactly ±1, in either direction, content-dependent — not data loss, and never "one byte more" as a persistent direction to correct for.** Measured on two consumers: MM-Agent read `region_bytes` one byte ABOVE `--body`'s count (68,818 vs 68,817); panoscribe read the opposite (1693 vs `region.sh` reporting 1692). The sign flips with the file's own content, so there is nothing consistent to chase down — report the byte and move on.
 
 #### 1c-vi. Name what `once` will silently never deliver
 
@@ -542,7 +542,7 @@ Use **forward slashes** in the JSON `cwd` (`C:/git/foo`, not `C:\git\foo`): a Wi
 
 > **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination. Once Bash works again, finish the sync in the order above and restart per the final report.
 
-> **If Bash is refused (e.g. by a resource-pressure guard) after the hook writes but before the `settings.json` write or before the post-settings probe, the half-state is safe:** wait, then resume at the I2 precondition or at the probe. Never write `settings.json`, and never continue writing after it, without the probe.
+> **If Bash is refused (e.g. by a resource-pressure guard) after the hook writes but before the `settings.json` write or before the post-settings probe, the half-state is safe:** wait, then resume at the I2 precondition or at the probe. Never write `settings.json` until the I2 precondition holds, and never write anything after it until the probe has run.
 
 Collect all results. Report the list of auto-updated files.
 
@@ -833,7 +833,7 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u
 ```
 
-This snippet is cwd-relative: run it via `bash <script>` or give it absolute paths / `git -C <dir>`, because deny-hang-shapes refuses a leading `cd` followed by several commands.
+This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
 
 > **Anchoring on `command:` is the v2.2.5 defect, and it recovered ZERO (v2.2.6, consumer measurement).** Until v2.2.6 this step said "on a `command:` line", justified as keeping the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS pattern out of the set. But the hook path sits **after an escaped quote** inside the command value, so the obvious implementation truncates at the escape:
 >
