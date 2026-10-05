@@ -936,7 +936,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     fi
 
     # 1. gh pr merge (any flags)
-    if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b' || gc_has_ghpr_merge "$seg"; then
+    if printf '%s\n' "$seg" | grep -qE '(^|[^[:alnum:]_])gh[[:space:]]+pr[[:space:]]+merge([^[:alnum:]_]|$)' || gc_has_ghpr_merge "$seg"; then
       is_merge=1
       A6_KIND=ghpr
       A6_MOVED_VERB="gh pr merge"

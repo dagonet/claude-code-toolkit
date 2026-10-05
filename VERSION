@@ -1,2 +1,2 @@
 4.4.0
-Optional Jev spawn routing (user-level /jev skill, off by default, per clone) on model-floor's resolution moved to hooks/lib/agent-model.sh; model-floor steps aside only for a router that will run -- hook lib, user-level skill and check changes, no template or server-code change.
+Optional Jev spawn routing (user-level /jev skill, off by default, per clone), a native pre-push hook and faster git-gate checks, hook slimming (one bash per project hook, exec-form user registrations, verify-hooks), the git gates refusing ANSI-C $'...' quoting plus macOS portability, a gate artifact that never records the empty tree, and Linux test fixes -- hook, lib, setup, settings and check changes, no server-code change.
