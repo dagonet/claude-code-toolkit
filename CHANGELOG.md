@@ -107,6 +107,13 @@ From a read-only spike on 6b9b9d9 (design `docs/plans/2026-10-04-ansi-mac-design
 
 {{FILL: hook slimming Phase C}}
 
+### Docs (consumer-sync findings)
+
+From the v4.3.1 syncs of penumbra, yutraffic, open-brain, panoscribe and MM-Agent:
+
+- **`**Test timeout**` also bounds the Gate fallback:** with no `**Test**`, `hooks/pre-commit-test.sh` runs `run-gate.sh` under the same budget (540 s unset), so a slow Gate-only repo has its commit refused. Said in the commented example in all six `PROJECT_CONTEXT.md`, in the `**Test**` `effect_when_absent` text in `templates/ownership.json` (the server's `key_audit` detail), and in the README and `docs/architecture.md` mentions.
+- **sync-template skill:** a Bash refusal between the hook writes and the `settings.json` write or the post-settings probe is a safe half-state (resume at I2 or the probe); the `/mcp` reconnect alone delivers new server parameters, with no session restart; `region.sh` is shown by its installed path; the cwd-relative snippets say to run via `bash <script>` or `git -C <dir>` (deny-hang-shapes); `pending_once_notes` also persists in the manifest until the next finalize replaces it.
+
 ### Counts and downstream migration (whole release)
 
 Counts, never carried forward:
