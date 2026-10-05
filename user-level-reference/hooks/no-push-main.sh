@@ -68,7 +68,7 @@ gc_dir_rule no-push-main "$GC_CWD" || exit 2
 # exit 0 — on a newline-separated command.
 # v4.3.1 G2: GC_GIT_WORD_RE (hooks/lib/git-cmd.sh) also opens the walk for git.exe, GIT and a quoted "git".
 if ! printf '%s\n' "$GC_CMD" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" &&
-   ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
+   ! gc_has_ghpr_merge "$GC_CMD"; then
   exit 0
 fi
 

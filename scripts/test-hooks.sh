@@ -9580,6 +9580,412 @@ else
 fi
 # ---- end v4.4.0 J-PY
 
+# ---- v4.3.2 V1: a native git pre-push hook refuses protected branches however the push starts ----
+V1Z=0000000000000000000000000000000000000000
+V1NL='
+'
+V1E="$TMPROOT/v1-empty.gitconfig"; : > "$V1E"
+v1g() { GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 git "$@"; }   # no global core.hooksPath can leak in
+v1_yes() { if "$@"; then echo yes; else echo no; fi; }
+v1_repo() { # <name> <PROJECT_CONTEXT.md body, or - for none> -> repo on main; hooks/ (and the body) committed
+  r=$(mkrepo "$1" main)
+  cp -R "$ROOT/hooks" "$r/hooks"
+  [ "$2" = - ] || printf '%s\n' "$2" > "$r/PROJECT_CONTEXT.md"
+  v1g -C "$r" add -A >/dev/null 2>&1
+  v1g -C "$r" commit -q -m hooks >/dev/null 2>&1
+  printf '%s\n' "$r"
+}
+v1_hook() { # <repo> <stdin> -> allowed|refused; stderr in $TMPROOT/v1.err. Run as git runs it: cwd = top-level.
+  if ( cd "$1" && printf '%s\n' "$2" | GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 bash "$1/hooks/git-pre-push.sh" origin "$TMPROOT/none.git" ) >/dev/null 2>"$TMPROOT/v1.err"
+  then echo allowed; else echo refused; fi
+}
+v1_line() { # <repo> <remote ref> [delete] -> one pre-push stdin line
+  s=$(git -C "$1" rev-parse HEAD)
+  if [ "${3:-}" = delete ]; then printf '(delete) %s %s %s' "$V1Z" "$2" "$s"
+  else printf 'refs/heads/x %s %s %s' "$s" "$2" "$V1Z"; fi
+}
+V1A=$(v1_repo v1a '- **Protected branches**: main')
+expect "V1: update of main refused"                  refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/main)")"
+expect "V1: refusal names branch, remote and escape" yesyes "$(v1_yes grep -qF "of protected branch 'main' on remote 'origin' refused" "$TMPROOT/v1.err")$(v1_yes grep -qF 'git push --no-verify' "$TMPROOT/v1.err")"
+expect "V1: delete of main refused"                  refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/main delete)")"
+expect "V1: a delete is called a delete"             yes "$(v1_yes grep -qF "delete of protected branch 'main'" "$TMPROOT/v1.err")"
+expect "V1: feature branch allowed"                  allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/feature/x)")"
+expect "V1: tag allowed"                             allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/tags/v1)")"
+expect "V1: a tag named main allowed"                allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/tags/main)")"
+expect "V1: look-alike mainline allowed"             allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/mainline)")"
+expect "V1: look-alike feature/main allowed"         allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/feature/main)")"
+expect "V1: two refs, one protected -> refused"      refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/feature/x)$V1NL$(v1_line "$V1A" refs/heads/main)")"
+expect "V1: empty stdin allowed"                     allowed "$(v1_hook "$V1A" '')"
+V1D=$(v1_repo v1d '- **Protected branches**: develop')
+expect "V1: develop list: main allowed"              allowed "$(v1_hook "$V1D" "$(v1_line "$V1D" refs/heads/main)")"
+expect "V1: develop list: develop refused"           refused "$(v1_hook "$V1D" "$(v1_line "$V1D" refs/heads/develop)")"
+V1N=$(v1_repo v1n '- **Protected branches**: none')
+expect "V1: none: main allowed"                      allowed "$(v1_hook "$V1N" "$(v1_line "$V1N" refs/heads/main)")"
+V1F=$(v1_repo v1f '# ctx without the field')
+expect "V1: no field: main refused (default set)"    refused "$(v1_hook "$V1F" "$(v1_line "$V1F" refs/heads/main)")"
+expect "V1: no field: master refused (default set)"  refused "$(v1_hook "$V1F" "$(v1_line "$V1F" refs/heads/master)")"
+V1M=$(v1_repo v1m -)
+expect "V1: no PROJECT_CONTEXT.md: main refused"     refused "$(v1_hook "$V1M" "$(v1_line "$V1M" refs/heads/main)")"
+V1P=$(v1_repo v1p '- **Protected branches**: {{PROTECTED_BRANCHES}}')
+expect "V1: placeholder: main refused"               refused "$(v1_hook "$V1P" "$(v1_line "$V1P" refs/heads/main)")"
+V1U=$(v1_repo v1u '- **Protected branches**: develop')
+chmod 000 "$V1U/PROJECT_CONTEXT.md"
+if [ -r "$V1U/PROJECT_CONTEXT.md" ]; then
+  skip "V1: unreadable PROJECT_CONTEXT.md refuses every push" "file still readable after chmod 000 (root, or Windows)" 2
+else
+  expect "V1: unreadable PROJECT_CONTEXT.md: feature refused" refused "$(v1_hook "$V1U" "$(v1_line "$V1U" refs/heads/feature/x)")"
+  expect "V1: unreadable: the message says so"       yes "$(v1_yes grep -qF 'cannot be read' "$TMPROOT/v1.err")"
+fi
+chmod 644 "$V1U/PROJECT_CONTEXT.md"
+V1L=$(v1_repo v1l '- **Protected branches**: main'); rm -f "$V1L/hooks/lib/git-cmd.sh"
+expect "V1: lib missing: feature refused"            refused "$(v1_hook "$V1L" "$(v1_line "$V1L" refs/heads/feature/x)")"
+expect "V1: lib missing: the message names it"       yes "$(v1_yes grep -qF 'lib/git-cmd.sh missing' "$TMPROOT/v1.err")"
+V1C=$(v1_repo v1c '- **Protected branches**: main'); printf ':\n' > "$V1C/hooks/lib/git-cmd.sh"
+expect "V1: corrupt lib: feature refused"            refused "$(v1_hook "$V1C" "$(v1_line "$V1C" refs/heads/feature/x)")"
+expect "V1: corrupt lib: the message says corrupt"   yes "$(v1_yes grep -qF 'corrupt' "$TMPROOT/v1.err")"
+V1J=$(v1_repo v1j '- **Protected branches**: main'); rm -f "$V1J/hooks/lib/json.sh"
+expect "V1: json.sh missing: feature refused"        refused "$(v1_hook "$V1J" "$(v1_line "$V1J" refs/heads/feature/x)")"
+v1_remote() { # <repo> -> a bare origin with main pushed (before any hook is installed); prints its path
+  b="$TMPROOT/$(basename "$1").git"
+  v1g init -q --bare "$b" >/dev/null 2>&1
+  v1g -C "$1" remote add origin "$b"
+  v1g -C "$1" push -q origin main >/dev/null 2>&1
+  printf '%s\n' "$b"
+}
+v1_install() { GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 bash "$1/hooks/git-pre-push.sh" --install "$1" >/dev/null 2>"$TMPROOT/v1i.err"; echo $?; }
+v1_push() { # <repo> <push args...> -> landed|refused; stderr in $TMPROOT/v1p.err
+  r=$1; shift
+  if v1g -C "$r" push "$@" >/dev/null 2>"$TMPROOT/v1p.err"; then echo landed; else echo refused; fi
+}
+v1_rsha() { v1g --git-dir="$1" rev-parse -q --verify "refs/$2" 2>/dev/null || echo none; }
+V1R=$(v1_repo v1r '- **Protected branches**: main'); V1RB=$(v1_remote "$V1R"); V1R0=$(v1_rsha "$V1RB" heads/main)
+expect "V1: --install exits 0"                       0 "$(v1_install "$V1R")"
+V1SHIM="$(git -C "$V1R" rev-parse --path-format=absolute --git-common-dir)/hooks/pre-push"
+expect "V1: the shim carries the marker"             yes "$(v1_yes grep -qF 'claude-code-toolkit pre-push shim' "$V1SHIM")"
+expect "V1: the shim is executable"                  yes "$(v1_yes [ -x "$V1SHIM" ])"
+expect "V1: the shim is LF only"                     0 "$(tr -cd '\r' < "$V1SHIM" | wc -c | tr -d ' ')"
+cp "$V1SHIM" "$TMPROOT/v1shim.before"
+expect "V1: a second --install exits 0"              0 "$(v1_install "$V1R")"
+expect "V1: a second --install writes the same shim" yes "$(v1_yes cmp -s "$TMPROOT/v1shim.before" "$V1SHIM")"
+v1g -C "$V1R" commit -q --allow-empty -m two
+expect "V1: git push origin main refused"            refused "$(v1_push "$V1R" origin main)"
+expect "V1: the remote main is unchanged"            "$V1R0" "$(v1_rsha "$V1RB" heads/main)"
+v1g -C "$V1R" checkout -q -b feature/a
+expect "V1: a feature push lands"                    landed "$(v1_push "$V1R" origin feature/a)"
+expect "V1: HEAD:main from a feature branch refused" refused "$(v1_push "$V1R" origin HEAD:main)"
+expect "V1: :main (delete) refused"                  refused "$(v1_push "$V1R" origin :main)"
+expect "V1: --delete main refused"                   refused "$(v1_push "$V1R" origin --delete main)"
+expect "V1: main is still on the remote"             "$V1R0" "$(v1_rsha "$V1RB" heads/main)"
+v1g -C "$V1R" tag v1
+expect "V1: a tag push lands"                        landed "$(v1_push "$V1R" origin v1)"
+v1g -C "$V1R" checkout -q -b feature/b
+expect "V1: a mixed push is refused"                 refused "$(v1_push "$V1R" origin feature/b HEAD:main)"
+expect "V1: the mixed push landed nothing"           none "$(v1_rsha "$V1RB" heads/feature/b)"
+printf '#!/usr/bin/env bash\ngit push origin HEAD:main\n' > "$TMPROOT/v1p.sh"
+expect "V1: a push from a script is refused"         refused "$(if ( cd "$V1R" && GIT_CONFIG_GLOBAL="$V1E" GIT_CONFIG_NOSYSTEM=1 bash "$TMPROOT/v1p.sh" ) >/dev/null 2>&1; then echo landed; else echo refused; fi)"
+v1g init -q --bare "$TMPROOT/v1fork.git" >/dev/null 2>&1; v1g -C "$V1R" remote add fork "$TMPROOT/v1fork.git"
+expect "V1: main on a second remote refused"         refused "$(v1_push "$V1R" fork HEAD:main)"
+v1g -C "$V1R" worktree add -q "$TMPROOT/v1wt" -b feature/wt >/dev/null 2>&1
+expect "V1: a push from a linked worktree refused"   refused "$(v1_push "$TMPROOT/v1wt" origin HEAD:main)"
+v1g -C "$V1R" checkout -q -b old "$(v1g -C "$V1R" rev-list --max-parents=0 HEAD)"
+expect "V1: a checkout without the hook file: refused by the shim" refused "$(v1_push "$V1R" origin old)"
+expect "V1: the shim says the checkout predates it"  yes "$(v1_yes grep -qF 'is missing (this checkout predates v4.3.2' "$TMPROOT/v1p.err")"
+v1g -C "$V1R" checkout -q feature/a
+expect "V1: --no-verify lands (the documented escape)" landed "$(v1_push "$V1R" --no-verify origin feature/a:main)"
+# installer refusals
+V1X=$(v1_repo v1x -); printf '#!/bin/sh\nexit 0\n' > "$V1X/.git/hooks/pre-push"; cp "$V1X/.git/hooks/pre-push" "$TMPROOT/v1x.before"
+expect "V1: a foreign pre-push: --install exits 1"   1 "$(v1_install "$V1X")"
+expect "V1: a foreign pre-push is untouched"         yes "$(v1_yes cmp -s "$TMPROOT/v1x.before" "$V1X/.git/hooks/pre-push")"
+expect "V1: a foreign pre-push: reason + chain line" yesyes "$(v1_yes grep -qF "is not this toolkit's shim" "$TMPROOT/v1i.err")$(v1_yes grep -qF 'hooks/git-pre-push.sh" "$@" || exit 1' "$TMPROOT/v1i.err")"
+V1K=$(v1_repo v1k -); v1g -C "$V1K" config core.hooksPath .husky
+expect "V1: core.hooksPath set: --install exits 1"   1 "$(v1_install "$V1K")"
+expect "V1: core.hooksPath set: nothing written"     no "$(v1_yes [ -e "$V1K/.git/hooks/pre-push" ])"
+expect "V1: core.hooksPath set: the reason"          yes "$(v1_yes grep -qF 'core.hooksPath is set' "$TMPROOT/v1i.err")"
+mkdir -p "$TMPROOT/v1plain/hooks"; cp -R "$ROOT/hooks/." "$TMPROOT/v1plain/hooks/"
+expect "V1: not a repository: --install exits 1"     1 "$(v1_install "$TMPROOT/v1plain")"
+expect "V1: not a repository: the reason"            yes "$(v1_yes grep -qF 'is not a git repository' "$TMPROOT/v1i.err")"
+V1S=$(mkrepo v1s main); mkdir -p "$V1S/sub/hooks"; cp -R "$ROOT/hooks/." "$V1S/sub/hooks/"
+expect "V1: hooks only in a subdirectory: --install exits 1 (R-2)" 1 "$(v1_install "$V1S/sub")"
+expect "V1: hooks only in a subdirectory: no shim"   no "$(v1_yes [ -e "$V1S/.git/hooks/pre-push" ])"
+V1M2=$(v1_repo v1m2 -); printf '#!/bin/sh\n# see claude-code-toolkit pre-push shim\nexit 0\n' > "$V1M2/.git/hooks/pre-push"; cp "$V1M2/.git/hooks/pre-push" "$TMPROOT/v1m2.before"
+expect "V1: a hook that only mentions the marker: --install exits 1" 1 "$(v1_install "$V1M2")"
+expect "V1: a foreign-hook message says where the line goes" yes "$(v1_yes grep -qF '"$refs"' "$TMPROOT/v1i.err")"
+expect "V1: a hook that only mentions the marker is untouched" yes "$(v1_yes cmp -s "$TMPROOT/v1m2.before" "$V1M2/.git/hooks/pre-push")"
+V1Y=$(v1_repo v1y -); ln -s "$TMPROOT/v1-nowhere" "$V1Y/.git/hooks/pre-push"
+expect "V1: a dangling symlink pre-push: --install exits 1" 1 "$(v1_install "$V1Y")"
+expect "V1: a dangling symlink pre-push is still a symlink" yes "$(v1_yes [ -L "$V1Y/.git/hooks/pre-push" ])"
+# ---- end v4.3.2 V1
+
+# ---- v4.3.2 V2: word-matched fast-path triggers and a cheap no-op record ----
+V2R=$(mkrepo v2 main)
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$V2R/PROJECT_CONTEXT.md"
+printf 'git commit -m x\n' > "$V2R/c.sh"
+printf 'git commit -m x\n' > "$V2R/c.ps1"
+V2H="$ROOT/hooks/pre-commit-test.sh"
+v2_yes() { if "$@"; then echo yes; else echo no; fi; }   # the block runs on its own under RB
+V2SHIM="$TMPROOT/v2shim"; V2LOG="$TMPROOT/v2.log"; mkdir -p "$V2SHIM"
+for b in node python3 jq git sed awk tr grep date wc find mv mkdir head cat cut; do
+  v2real=$(command -v "$b" 2>/dev/null) || continue
+  printf '#!/usr/bin/env bash\necho %s >> "%s"\nexec "%s" "$@"\n' "$b" "$V2LOG" "$v2real" > "$V2SHIM/$b"
+  chmod +x "$V2SHIM/$b"
+done
+v2_spawns() { # <command> [program] -> programs the hook started on that payload (all, or only <program>)
+  : > "$V2LOG"
+  printf '%s' "$(mkjson Bash "$1" "$V2R")" | PATH="$V2SHIM:$PATH" bash "$V2H" >/dev/null 2>&1
+  if [ -n "${2:-}" ]; then grep -cx "$2" "$V2LOG"; else wc -l < "$V2LOG" | tr -d ' '; fi
+}
+v2_spawns 'ls -la' >/dev/null   # warm: the gate directory exists from here on
+V2_FAST=$(v2_spawns 'ls -la')
+# F1: these hold no gated action and must take the fast path (same spawn count as ls -la)
+for v2c in 'git status --short' 'git diff --stat' 'git log --oneline -5' 'echo "done. ok"' \
+           'npm run publish' 'ls ./build.sh' './build.sh' 'cat notes.md' 'ls ..' 'echo stylish'; do
+  expect "V2: fast path: $v2c" "$V2_FAST" "$(v2_spawns "$v2c")"
+done
+# F1: every shape that can reach a commit still walks and is refused (Test exits 1)
+check "V2: /bin/sh c.sh gated"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/sh c.sh' "$V2R")"
+check "V2: /usr/bin/bash c.sh gated"           hooks/pre-commit-test.sh 2 "$(mkjson Bash '/usr/bin/bash c.sh' "$V2R")"
+check "V2: ls&&sh c.sh gated"                  hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&sh c.sh' "$V2R")"
+check "V2: ls|sh c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls|sh c.sh' "$V2R")"
+check "V2: . c.sh gated"                       hooks/pre-commit-test.sh 2 "$(mkjson Bash '. c.sh' "$V2R")"
+check "V2: x/. c.sh gated"                     hooks/pre-commit-test.sh 2 "$(mkjson Bash 'x/. c.sh' "$V2R")"
+check "V2: ./. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash './. c.sh' "$V2R")"
+check "V2: ls;. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls;. c.sh' "$V2R")"
+check "V2: ls&&. c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&. c.sh' "$V2R")"
+check "V2: /bin/[s]h c.sh gated"               hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/[s]h c.sh' "$V2R")"
+check "V2: /bin/?h c.sh gated"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/?h c.sh' "$V2R")"
+check "V2: /usr/bin/[b]ash c.sh gated"         hooks/pre-commit-test.sh 2 "$(mkjson Bash '/usr/bin/[b]ash c.sh' "$V2R")"
+check "V2: C:\\Tools\\pwsh.exe -File c.ps1 gated" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'C:\Tools\pwsh.exe -File c.ps1' "$V2R")"
+# F1 differential: the v4.3.1 hook and this one give the SAME exit on every listed command
+# (v4.3.2 6b: `git com\mit`, `SH c.sh` and `bash.exe c.sh` were allowed in v4.3.1 and are refused now -- see V3)
+V2B="$TMPROOT/v2base"; mkdir -p "$V2B"
+if git -C "$ROOT" archive 5d3d789 hooks 2>/dev/null | tar -x -C "$V2B" 2>/dev/null && [ -f "$V2B/hooks/pre-commit-test.sh" ]; then
+  v2_diff=""
+  while IFS= read -r v2c; do
+    [ -n "$v2c" ] || continue
+    v2p=$(mkjson Bash "$v2c" "$V2R")
+    printf '%s' "$v2p" | bash "$V2B/hooks/pre-commit-test.sh" >/dev/null 2>&1; v2a=$?
+    printf '%s' "$v2p" | bash "$V2H" >/dev/null 2>&1; v2b=$?
+    [ "$v2a" = "$v2b" ] || v2_diff="$v2_diff [$v2c: $v2a -> $v2b]"
+  done <<'V2_CMDS'
+git commit -m x
+GIT commit -m x
+git.exe commit -m x
+"git" commit -m x
+'git' commit -m x
+/usr/bin/git commit -m x
+git com"mit" -m x
+bash c.sh
+sh c.sh
+/bin/sh c.sh
+/usr/bin/bash c.sh
+/bin/[s]h c.sh
+/bin/?h c.sh
+/usr/bin/[b]ash c.sh
+ls; /bin/[s]h c.sh
+. ./c.sh
+. c.sh
+x/. c.sh
+./. c.sh
+ls; . ./c.sh
+ls;. c.sh
+ls && . ./c.sh
+ls&&sh c.sh
+ls|sh c.sh
+source c.sh
+pwsh -File c.ps1
+C:\Tools\pwsh.exe -File c.ps1
+cd sub; git merge x
+cd sub; git pull
+cd sub; git push origin main
+cd sub; gh pr merge 1
+GIT_DIR=x git merge y
+cd sub; bash ../c.sh
+x=1 . ./c.sh
+(sh c.sh)
+cat c.sh | sh
+echo "git commit -m x"
+git status --short
+git log --grep=commit
+git show HEAD:c.sh
+pushd sub
+npm run publish
+ls ./c.sh
+./c.sh
+echo "done. ok"
+echo done.
+grep -c . c.sh
+ls ..
+cd sub; ls
+V2_CMDS
+  expect "V2: same exit as v4.3.1 on every listed command" "" "$v2_diff"
+else
+  skip "V2: same exit as v4.3.1 on every listed command" "commit 5d3d789 is not in this clone" 1
+fi
+# F2: the fast path's no-op record costs one git call and no date/wc/tr/find/mkdir
+v2_spawns 'ls -la' >/dev/null
+expect "V2: fast path runs git once"                    1 "$(v2_spawns 'ls -la' git)"
+expect "V2: fast path runs no wc"                       0 "$(v2_spawns 'ls -la' wc)"
+expect "V2: fast path runs no tr"                       0 "$(v2_spawns 'ls -la' tr)"
+expect "V2: fast path runs no find"                     0 "$(v2_spawns 'ls -la' find)"
+expect "V2: fast path runs no mkdir once the dir exists" 0 "$(v2_spawns 'ls -la' mkdir)"
+if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 2 ]; }; then
+  expect "V2: fast path runs no date (bash >= 4.2)"     0 "$(v2_spawns 'ls -la' date)"
+else
+  skip "V2: fast path runs no date (bash >= 4.2)" "bash ${BASH_VERSION} has no printf %(...)T" 1
+fi
+# F2: the record keeps its file, its keys and their meaning
+V2F="$(gatedir "$V2R")/last-precommit-noop.unknown.json"; rm -f "$V2F"
+V2CMD='ls -la # — x'
+v2h0=$(date -u +%Y-%m-%dT%H)
+printf '%s' "$(mkjson Bash "$V2CMD" "$V2R")" | TZ=JST-9 bash "$V2H" >/dev/null 2>&1
+v2h1=$(date -u +%Y-%m-%dT%H)
+v2f() { sed -n "s/.*\"$1\":\"\\{0,1\\}\\([^\",}]*\\).*/\\1/p" "$V2F"; }
+expect "V2: the no-op record is written"                yes "$(v2_yes [ -f "$V2F" ])"
+expect "V2: path, kind, rc, tree"                       "no-commit-segment|no-commit-segment|-1|" "$(v2f path)|$(v2f kind)|$(v2f rc)|$(v2f tree)"
+expect "V2: cmd_len counts bytes"                       "$(printf '%s' "$V2CMD" | wc -c | tr -d ' ')" "$(v2f cmd_len)"
+expect "V2: ts is UTC (TZ=JST-9 set)"                   yes "$(v2ts=$(v2f ts); case "$v2ts" in "$v2h0"*Z|"$v2h1"*Z) echo yes ;; *) echo "no: $v2ts" ;; esac)"
+expect "V2: gate_dir is the shared gate directory"      "$(gatedir "$V2R")" "$(v2f gate_dir)"
+expect "V2: elapsed_s is a whole number"                yes "$(case "$(v2f elapsed_s)" in ''|*[!0-9]*) echo no ;; *) echo yes ;; esac)"
+expect "V2: tool is Bash"                               Bash "$(v2f tool)"
+# F2: outside a repository nothing is written; an old git (no --path-format) keeps the old place
+mkdir -p "$TMPROOT/v2plain"
+check "V2: outside a repository allowed"               hooks/pre-commit-test.sh 0 "$(mkjson Bash 'ls -la' "$TMPROOT/v2plain")"
+expect "V2: outside a repository no gate dir"           no "$(v2_yes [ -e "$TMPROOT/v2plain/.gate" ])"
+V2OG="$TMPROOT/v2oldgit"; mkdir -p "$V2OG"
+printf '#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in --path-format=*) exit 129 ;; esac; done\nexec "%s" "$@"\n' "$(command -v git)" > "$V2OG/git"
+chmod +x "$V2OG/git"
+V2O=$(mkrepo v2old main)
+printf '%s' "$(mkjson Bash 'ls -la' "$V2O")" | PATH="$V2OG:$PATH" bash "$V2H" >/dev/null 2>&1
+expect "V2: old git: the record lands in <top>/.gate as before" yes "$(v2_yes [ -f "$V2O/.gate/last-precommit-noop.unknown.json" ])"
+# F1 glob rule: a glob character always walks (the walk expands globs)
+expect "V2: a glob character walks, not the fast path" yes "$(if [ "$(v2_spawns 'ls *.md')" != "$V2_FAST" ]; then echo yes; else echo no; fi)"
+# ---- end v4.3.2 V2
+
+# ---- v4.3.2 V3: bash.exe/sh.exe runners are scanned; a backslash in a gated verb is removed before matching ----
+V3R=$(mkrepo v3 main)
+printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V3R/PROJECT_CONTEXT.md"
+printf 'git commit -m x\n' > "$V3R/c.sh"
+printf 'git push origin main\n' > "$V3R/p.sh"
+printf 'git merge feature/y\n' > "$V3R/m.sh"
+printf 'echo hi\n' > "$V3R/h.sh"
+# (a) the runner word: bash|sh, optionally .exe, any case, any path prefix with / or \
+for v3r in bash.exe sh.exe BASH.EXE Bash.Exe SH.EXE SH /usr/bin/bash.exe /bin/sh.exe 'C:\Git\bin\bash.exe' 'C:\Git\bin\sh.exe' \
+           'C:\Git\bin\sh' 'C:\Git\bin\BASH.EXE' 'env sh.exe' 'ls && sh.exe' 'nohup /usr/bin/bash.exe'; do
+  check "V3 pre-commit-test: $v3r c.sh (commit)"        hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r c.sh" "$V3R")"
+  check "V3 no-push-main: $v3r p.sh (push origin main)" hooks/no-push-main.sh 2      "$(mkjson Bash "$v3r p.sh" "$V3R")"
+  check "V3 gate-before-merge: $v3r m.sh (merge)"       hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3r m.sh" "$V3R")"
+  check "V3 control: $v3r h.sh holds no gated verb"     hooks/pre-commit-test.sh 0   "$(mkjson Bash "$v3r h.sh" "$V3R")"
+done
+# (b) a backslash inside the verb: the shell removes it, git runs the verb
+check "V3 pre-commit-test: git com\\mit -m x"          hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git com\mit -m x' "$V3R")"
+check "V3 pre-commit-test: git commi\\t -m x"          hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git commi\t -m x' "$V3R")"
+check "V3 pre-commit-test: git -\\C . com\\mit"        hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git -\C . com\mit -m x' "$V3R")"
+check "V3 pre-commit-test: git.exe com\\mit"           hooks/pre-commit-test.sh 2   "$(mkjson Bash 'git.exe com\mit -m x' "$V3R")"
+check "V3 pre-commit-test: g\\it com\\mit"             hooks/pre-commit-test.sh 2   "$(mkjson Bash 'g\it com\mit -m x' "$V3R")"
+check "V3 no-push-main: git pu\\sh origin main"        hooks/no-push-main.sh 2      "$(mkjson Bash 'git pu\sh origin main' "$V3R")"
+check "V3 no-push-main: git pu\\sh (bare, on main)"    hooks/no-push-main.sh 2      "$(mkjson Bash 'git pu\sh' "$V3R")"
+check "V3 no-push-main: git pu\\sh origin HEAD:main"   hooks/no-push-main.sh 2      "$(mkjson Bash 'git pu\sh origin HEAD:main' "$V3R")"
+check "V3 gate-before-merge: git mer\\ge feature/y"    hooks/gate-before-merge.sh 2 "$(mkjson Bash 'git mer\ge feature/y' "$V3R")"
+check "V3 gate-before-merge: git pu\\ll"               hooks/gate-before-merge.sh 2 "$(mkjson Bash 'git pu\ll' "$V3R")"
+# the simple-cd rule goes through the same recogniser
+check_msg "V3 simple-cd: cd sub && git com\\mit -m x"  "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd sub && git com\mit -m x' "$V3R")" "a directory change in a command with"
+check_msg "V3 simple-cd: cd sub && git pu\\sh"         "$ROOT/hooks/no-push-main.sh" 2 "$(mkjson Bash 'cd sub && git pu\sh' "$V3R")" "a directory change in a command with"
+check_msg "V3 simple-cd: cd sub && git mer\\ge x"      "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'cd sub && git mer\ge x' "$V3R")" "a directory change in a command with"
+check_msg "V3 simple-cd: cd sub && bash.exe c.sh"      "$ROOT/hooks/pre-commit-test.sh" 2 "$(mkjson Bash 'cd sub && bash.exe c.sh' "$V3R")" "a directory change in a command with"
+# controls: allowed before and after
+check "V3 control: git status"                         hooks/pre-commit-test.sh 0   "$(mkjson Bash 'git status' "$V3R")"
+check "V3 control: git st\\atus"                       hooks/pre-commit-test.sh 0   "$(mkjson Bash 'git st\atus' "$V3R")"
+check "V3 control: ls sh.exe.txt"                      hooks/pre-commit-test.sh 0   "$(mkjson Bash 'ls sh.exe.txt' "$V3R")"
+check "V3 control: echo C:\\\\x"                       hooks/pre-commit-test.sh 0   "$(mkjson Bash 'echo C:\\x' "$V3R")"
+check "V3 control: bash.exe h.sh (no-push-main)"       hooks/no-push-main.sh 0      "$(mkjson Bash 'bash.exe h.sh' "$V3R")"
+check "V3 control: git st\\atus (no-push-main)"        hooks/no-push-main.sh 0      "$(mkjson Bash 'git st\atus' "$V3R")"
+check "V3 control: git st\\atus (gate-before-merge)"   hooks/gate-before-merge.sh 0 "$(mkjson Bash 'git st\atus' "$V3R")"
+# the fast path: sh.exe is a word that walks; sh.exe.txt does not
+V3SHIM="$TMPROOT/v3shim"; V3LOG="$TMPROOT/v3.log"; mkdir -p "$V3SHIM"
+printf '#!/usr/bin/env bash\necho x >> "%s"\nexec "%s" "$@"\n' "$V3LOG" "$(command -v tr)" > "$V3SHIM/tr"; chmod +x "$V3SHIM/tr"   # the walk runs tr, the fast path runs none (V2 F2)
+v3_walks() { : > "$V3LOG"; printf '%s' "$(mkjson Bash "$1" "$V3R")" | PATH="$V3SHIM:$PATH" bash "$ROOT/hooks/pre-commit-test.sh" >/dev/null 2>&1; [ -s "$V3LOG" ] && echo yes || echo no; }
+expect "V3 fast path: sh.exe c.sh walks"               yes "$(v3_walks 'sh.exe c.sh')"
+expect "V3 fast path: C:\\Git\\bin\\sh.exe h.sh walks" yes "$(v3_walks 'C:\Git\bin\sh.exe h.sh')"
+expect "V3 fast path: ls sh.exe.txt skips the walk"    no  "$(v3_walks 'ls sh.exe.txt')"
+# Review round 1: the gh merge words, a backslash inside the runner word, and a backslash in a push refspec
+for v3g in 'gh pr mer\ge 1' 'g\h pr merge 1' 'gh p\r merge 1' 'git log; gh pr mer\ge 1' 'gh pr "merge" 1' "gh pr me''rge 1" 'gh pr merge 1' 'gh p\r "mer\ge" 1'; do
+  check "V3 gate-before-merge: $v3g"                   hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3g" "$V3R")"
+done
+check_msg "V3 simple-cd: cd sub && gh pr mer\\ge 1"    "$ROOT/hooks/gate-before-merge.sh" 2 "$(mkjson Bash 'cd sub && gh pr mer\ge 1' "$V3R")" "a directory change in a command with"
+check "V3 control: gh pr view 1 (gate-before-merge)"   hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr view 1' "$V3R")"
+check "V3 control: gh pr vi\\ew 1 (gate-before-merge)" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr vi\ew 1' "$V3R")"
+check "V3 control: gh pr view 1 (no-push-main)"        hooks/no-push-main.sh 0      "$(mkjson Bash 'gh pr view 1' "$V3R")"
+for v3r in 'b\ash' 's\h' 'b\ash.exe' 's\h.exe' '/bin/s\h' 'env b\ash'; do
+  check "V3 pre-commit-test: $v3r c.sh"                hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r c.sh" "$V3R")"
+  check "V3 no-push-main: $v3r p.sh"                   hooks/no-push-main.sh 2      "$(mkjson Bash "$v3r p.sh" "$V3R")"
+  check "V3 gate-before-merge: $v3r m.sh"              hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3r m.sh" "$V3R")"
+  check "V3 control: $v3r h.sh"                        hooks/pre-commit-test.sh 0   "$(mkjson Bash "$v3r h.sh" "$V3R")"
+done
+printf 'git commit -m x\n' > "$V3R/c.ps1"
+for v3r in 'pw\sh' 'pwsh.e\xe' 'power\shell' 'C:\Tools\pw\sh.exe'; do
+  check "V3 pre-commit-test: $v3r -File c.ps1"         hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r -File c.ps1" "$V3R")"
+done
+V3F=$(mkrepo v3f feat)
+printf '# ctx\n\n- **Test**: `exit 1`\n' > "$V3F/PROJECT_CONTEXT.md"
+for v3p in 'git push origin ma\in' 'git push origin HEAD:ma\in' 'git push origin refs/heads/ma\in' 'git pu\sh origin ma\in' 'git push origin feat:ma\in' 'git push or\igin m\ain'; do
+  check "V3 no-push-main (main): $v3p"                 hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3R")"
+  check "V3 no-push-main (feature repo): $v3p"         hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3F")"
+done
+check "V3 control: git push origin fe\\at from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin fe\at' "$V3F")"
+check "V3 control: git push origin feat from a feature repo"   hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin feat' "$V3F")"
+check "V3 control: git push --ta\\gs from a feature repo"      hooks/no-push-main.sh 0 "$(mkjson Bash 'git push --ta\gs' "$V3F")"
+# `git -\C commit -m x` reads as `-C commit` (the shell removes the backslash): -C takes `commit` as its directory and
+# git itself refuses the rest (exit 129, unknown option -m), so nothing is committed. Pinned at what the gate now returns.
+check "V3 pin: git -\\C commit -m x (git itself refuses it)" hooks/pre-commit-test.sh 0 "$(mkjson Bash 'git -\C commit -m x' "$V3R")"
+# Review round 2: a later clause after a gh match, escaped redirect words, a runner walk that goes on, +main, escaped --all/--mirror
+V3G=$(mkrepo v3g feat)
+printf '# ctx\n\n- **Test**: `exit 1`\n- **Gate**: `true`\n' > "$V3G/PROJECT_CONTEXT.md"
+git -C "$V3G" add -A >/dev/null 2>&1; git -C "$V3G" commit -q -m ctx >/dev/null 2>&1
+v3sha=$(git -C "$V3G" rev-parse HEAD); v3tree=$(git -C "$V3G" rev-parse 'HEAD^{tree}')
+mkdir -p "$(gatedir "$V3G")"; printf '{"sha":"%s","tree":"%s"}\n' "$v3sha" "$v3tree" > "$(gatepassfile "$V3G" "$v3sha")"
+check "V3 control: gh pr merge 1 from a feature repo with a fresh artifact" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr merge 1' "$V3G")"
+check "V3 control: gh pr mer\\ge 1 from a feature repo with a fresh artifact" hooks/gate-before-merge.sh 0 "$(mkjson Bash 'gh pr mer\ge 1' "$V3G")"
+check "V3 control: git -C <main> merge feat is refused"                  hooks/gate-before-merge.sh 2 "$(mkjson Bash "git -C $V3R merge feat" "$V3G")"
+for v3c in 'x gh pr me\rge; git -C @R@ merge feat' 'true gh pr me\rge; git -C @R@ merge feat' 'git commit -m "gh pr me\rge"; git -C @R@ merge feat' \
+           'x gh pr merge; git -C @R@ merge feat' 'git commit -m "gh pr merge"; git -C @R@ merge feat' 'x gh pr "merge" x; git -C @R@ push origin main' \
+           "git commit -m \"gh pr 'merge'\"; git -C @R@ pull" 'gh pr merge 1; git -C @R@ merge feat' 'gh pr mer\ge 1; git -C @R@ push origin main'; do
+  check "V3 gate-before-merge: a later clause after a gh match: $v3c" hooks/gate-before-merge.sh 2 "$(mkjson Bash "${v3c//@R@/$V3R}" "$V3G")"
+done
+V3F2=$V3F
+for v3p in 'git push origin \> main' 'git push origin 2\> main' 'git push origin \>x main' 'git push origin \< main' 'git push origin \&\> main' \
+           'git push origin \--all' 'git push origin -\-all' 'git push origin -\-mirror' \
+           'git push origin +main' 'git push origin +refs/heads/main' 'git push origin +ma\in' 'git push --force origin +main' 'git push origin feat +main' \
+           'git push origin +HEAD:main' 'git push origin +feat:main'; do
+  check "V3 no-push-main (feature repo): $v3p"         hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3F2")"
+  check "V3 no-push-main (main): $v3p"                 hooks/no-push-main.sh 2      "$(mkjson Bash "$v3p" "$V3R")"
+done
+for v3p in 'git push origin \> HEAD' 'git push origin 2\> feat' 'git push origin 1\>\> HEAD' 'git push \&\> origin feat'; do
+  check "V3 no-push-main (feature repo): an escaped redirect word is refused: $v3p" hooks/no-push-main.sh 2 "$(mkjson Bash "$v3p" "$V3F2")"
+done
+check "V3 gate-before-merge: gh pr mer\\ge 1 && git -C <main> push origin feat" hooks/gate-before-merge.sh 2 "$(mkjson Bash "gh pr mer\\ge 1 && git -C $V3R push origin feat" "$V3G")"
+check "V3 gate-before-merge: x gh pr me\\rge; git -C <main> push origin feat"   hooks/gate-before-merge.sh 2 "$(mkjson Bash "x gh pr me\\rge; git -C $V3R push origin feat" "$V3G")"
+# Review round 3: the gh arm stops on a moved checkout; the gh-merge-then-pull --ff-only flow stays allowed
+for v3c in 'git checkout main; gh pr merge 1; git push origin main' 'git checkout main && gh pr merge 1 && git push origin feat:main' \
+           'git checkout main; gh pr merge 1; git push origin HEAD:main' 'git checkout main; gh pr merge 1; git merge --abort' \
+           'gh pr me\rge 1; git checkout main; git pull --ff-only'; do
+  check "V3 gate-before-merge: $v3c" hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3c" "$V3G")"
+done
+for v3c in 'gh pr merge 1; git checkout main; git pull --ff-only' 'gh pr merge 1; git checkout main && git pull --ff-only' \
+           'gh pr merge 1 --squash --delete-branch; git checkout main; git pull --ff-only' 'gh pr merge 1; git fetch' 'gh pr merge 1; gh pr merge 2'; do
+  check "V3 gate-before-merge (the documented safe flow): $v3c" hooks/gate-before-merge.sh 0 "$(mkjson Bash "$v3c" "$V3G")"
+done
+check "V3 control: git push origin +feat from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin +feat' "$V3F2")"
+check "V3 control: git push --tags from a feature repo"       hooks/no-push-main.sh 0 "$(mkjson Bash 'git push --tags' "$V3F2")"
+check "V3 control: git push origin feat 2>&1 from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin feat 2>&1' "$V3F2")"
+for v3r in 'sudo -u s\h bash' 'sudo -u sh bash' 'sudo -u me bash' 'env -i s\h bash' 'nice -n 5 b\ash'; do
+  check "V3 pre-commit-test: $v3r c.sh"               hooks/pre-commit-test.sh 2   "$(mkjson Bash "$v3r c.sh" "$V3R")"
+  check "V3 no-push-main: $v3r p.sh"                  hooks/no-push-main.sh 2      "$(mkjson Bash "$v3r p.sh" "$V3R")"
+  check "V3 gate-before-merge: $v3r m.sh"             hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3r m.sh" "$V3R")"
+  check "V3 control: $v3r h.sh"                       hooks/pre-commit-test.sh 0   "$(mkjson Bash "$v3r h.sh" "$V3R")"
+done
+check "V3 control: find . -exec bash {} \\;"          hooks/pre-commit-test.sh 0   "$(mkjson Bash 'find . -name x -exec bash {} \;' "$V3R")"
+# ---- end v4.3.2 V3
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

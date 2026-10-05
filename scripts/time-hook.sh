@@ -116,6 +116,8 @@ printf '%-34s  %8s  %8s  %8s  %8s  %6s\n' '----------------------------------' -
 {
   time_arm 'gate / non-git payload (ls -la)'  "$GATE"    "$(mkjson Bash 'ls -la' "$REPO")"
   time_arm 'gate / merge payload'             "$GATE"    "$(mkjson Bash 'git merge feature/x' "$REPO")"
+  time_arm 'gate / git status --short'        "$GATE"    "$(mkjson Bash 'git status --short' "$REPO")"
+  time_arm 'gate / prose (echo "done. ok")'   "$GATE"    "$(mkjson Bash 'echo "done. ok"' "$REPO")"
   time_arm 'control / unchanged hook'         "$CONTROL" "$(mkjson Bash 'ls -la' "$REPO")"
 } | while IFS='|' read -r l m q1 q3 iqr ex; do
   printf '%-34s  %8s  %8s  %8s  %8s  %6s\n' "$l" "$m" "$q1" "$q3" "$iqr" "$ex"

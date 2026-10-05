@@ -744,7 +744,7 @@ gc_dir_rule gate-before-merge "$CWD" || exit 2
 if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
   # v4.3.1 G2: GC_GIT_WORD_RE (hooks/lib/git-cmd.sh) also opens the walk for git.exe, GIT and a quoted "git".
   if ! printf '%s\n' "$GC_CMD" | gc_git_prefilter_text | grep -qE "$GC_GIT_WORD_RE" &&
-     ! printf '%s\n' "$GC_CMD" | grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]+pr[[:space:]]+merge'; then
+     ! gc_has_ghpr_merge "$GC_CMD"; then
     exit 0
   fi
 fi
@@ -841,6 +841,8 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
 
   moved=0
   mutated=0
+  ghmut=0
+  ghp_seg=""; ghp_cwd=""; ghp_split=0  # v4.3.2 6b review 2: the gh arm keeps walking
 
   # v3.0.3 item 2: a pipe anywhere in the command disables the `inert` category
   # for EVERY clause — see a6_clause_class's comment (2). `||` is stripped first
@@ -886,7 +888,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     fi
 
     # 1. gh pr merge (any flags)
-    if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b'; then
+    if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b' || gc_has_ghpr_merge "$seg"; then
       is_merge=1
       A6_KIND=ghpr
       A6_MOVED_VERB="gh pr merge"
@@ -894,7 +896,24 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       A6_SEG=$seg
       a6_deny_unresolved_c "$seg" "$base"
       CWD=$(gc_repo_for "$seg" "$base")
-      break
+      # v4.3.2 6b review 2: this arm no longer ends the walk, so a later protected clause
+      # (`gh pr merge; git -C <main> merge x`) still reaches its own arm. When a later
+      # arm fires in another checkout the two cannot share one artifact check: refused below.
+      [ -n "$ghp_seg" ] && [ "$ghp_cwd" != "$CWD" ] && ghp_split=1
+      ghp_seg=$seg; ghp_cwd=$CWD
+      # after a checkout this clause's verdict is the moved one, as it was when this arm ended the walk
+      [ "$moved" != 0 ] && break
+      # a gh merge counts as a mover for the arms below (`gh pr me\rge; git -C <main> push origin feat`);
+      # ghmut = the plain spelling is the ONLY mover so far, which the refspec-free `--ff-only` pull
+      # exemption tolerates (`gh pr merge 1; git checkout main; git pull --ff-only` stays allowed)
+      if printf '%s\n' "$seg" | grep -qE '\bgh[[:space:]]+pr[[:space:]]+merge\b' && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; }; then
+        ghmut=1
+      else
+        ghmut=0
+      fi
+      mutated=1
+      if [ -z "${A6_MUT_SEG:-}" ]; then A6_MUT_SEG=$seg; A6_MUT_WHY=$A6_SEG_WHY; fi
+      continue
     fi
 
     # 2. git merge while the checkout is on a protected branch
@@ -1056,7 +1075,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # --ff-only form is allowed on ANY branch, so a preceding branch change
       # does not change its verdict — it stays out of the refusal.
       if [ "$(a6_nonflag_count "$pargs")" -eq 0 ] && a6_has_flag "$pargs" 'ff-only' \
-         && [ "$mutated" = 0 ] && [ "$(gc_global_options "$seg")" = ok ]; then
+         && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; } && [ "$(gc_global_options "$seg")" = ok ]; then
         continue
       fi
       if [ "$moved" != 0 ]; then
@@ -1143,7 +1162,7 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
     # resolves through. First one wins, so the DENY text names the earliest
     # unexplained clause rather than whichever one happened to be last.
     if [ "$a6cls" = mover ]; then
-      mutated=1
+      mutated=1; ghmut=0
       if [ -z "${A6_MUT_SEG:-}" ]; then
         A6_MUT_SEG=$seg
         A6_MUT_WHY=$A6_SEG_WHY
@@ -1154,6 +1173,12 @@ $segments
 GC_SEGMENTS
 
   [ "$is_merge" = "1" ] || exit 0
+  if [ -n "$ghp_seg" ] && { [ "$ghp_split" = 1 ] || { [ "$A6_SEG" != "$ghp_seg" ] && [ "$CWD" != "$ghp_cwd" ]; }; }; then
+    echo "BLOCKED: gate-before-merge: a gh pr merge and another gated clause in this command act on different checkouts, and one artifact check cannot judge both. Split the call: one gated operation per command." >&2
+    echo "  gh clause:       ${ghp_seg}" >&2
+    echo "  other clause:    ${A6_SEG}" >&2
+    exit 2
+  fi
 fi
 
 REPO_TOP=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
