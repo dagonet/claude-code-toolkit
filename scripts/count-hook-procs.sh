@@ -4,9 +4,10 @@
 # Runs ONE simulated Bash call (PreToolUse + PostToolUse, for `git status` and `ls -la`)
 # through ALL registrations that apply, as Claude Code runs them (shell form as
 # `/bin/sh -c "<command>"`, exec form as an argv, CLAUDE_PROJECT_DIR set, payload on
-# stdin), each under `strace -f -e trace=execve,fork,vfork,clone,clone3`, and counts:
-#   procs = forks/clones without CLONE_THREAD + 1 root per hook
-#   execs = successful execve calls          node = execs of a `node` binary
+# stdin), each under `strace -ff -e trace=execve,fork,vfork,clone,clone3`, and counts:
+#   procs = forks/clones without CLONE_THREAD + 1 root per hook (cross-checked against the
+#           per-process strace -ff file count minus thread files; a mismatch warns on stderr)
+#   execs = successful execve calls          node = execs of a node/node.exe binary
 # old = the repository at --base (git archive); new = the working tree.
 # Scenarios (built like scripts/hook-equivalence.sh builds them, Test/Gate = `true`):
 #   S1 plain project (temp git repo, no hooks/): user-level hooks only. Old: the old
@@ -15,7 +16,7 @@
 #   S2 toolkit project bootstrapped by THAT set's setup-project.sh --variant general,
 #      plus the same user-level hooks.
 # Acceptance on Linux (criteria 1-2): the TOTAL ratio new/old <= 50 % in S1 and S2.
-# Skips (exit 0) with a message when strace is absent.
+# Always exits 0 (a measurement tool, not a gate: read the ACCEPTANCE line). Skips (exit 0) with a message when strace is absent.
 #
 # Usage: scripts/count-hook-procs.sh [--base <sha>]
 #   default base: .superpowers/sdd/.../base.txt PHASEC_BASE if present, else
@@ -30,7 +31,7 @@ fi
 PYBIN=$(command -v python3 || true)
 if [ -z "$PYBIN" ]; then echo "count-hook-procs: python3 is required" >&2; exit 2; fi
 exec "$PYBIN" - "$ROOT" "$@" <<'PYEOF'
-import sys, os, re, json, shutil, subprocess, tempfile, shlex
+import sys, os, re, json, shutil, subprocess, tempfile, shlex, glob
 
 ROOT = sys.argv[1]
 args = sys.argv[2:]
@@ -135,21 +136,28 @@ def hook_name(h):
     m = re.search(r"hooks/([A-Za-z0-9_-]+)\.sh", h.get("command", ""))
     return m.group(1) if m else "inline"
 
-def count_trace(path):
-    procs, execs, node = 1, 0, 0
-    for line in open(path, errors="replace"):
-        line = re.sub(r"^\d+\s+", "", line)
-        if line.startswith("<..."): continue            # the resumed half of an unfinished call
-        m = re.match(r"(execve|fork|vfork|clone3?)\(", line)
-        if not m: continue
-        call = m.group(1)
-        if call == "execve":
-            if re.search(r"\)\s+=\s+0\s*$", line):
-                execs += 1
-                em = re.match(r'execve\("([^"]*)"', line)
-                if em and os.path.basename(em.group(1)) == "node": node += 1
-        elif "CLONE_THREAD" not in line and not re.search(r"=\s+-1\s", line):
-            procs += 1
+def count_trace(prefix):
+    # strace -ff writes one file per task (<prefix>.<pid>), so no call is ever split by
+    # "<unfinished ...>"/"<... resumed>" interleaving. Threads get files too; they are the
+    # tasks created by a clone WITH CLONE_THREAD, so processes = files - thread files.
+    files = sorted(glob.glob(glob.escape(prefix) + ".*"))
+    procs, execs, node, forks, threads = 1, 0, 0, 0, 0
+    for path in files:
+        for line in open(path, errors="replace"):
+            m = re.match(r"(execve|fork|vfork|clone3?)\(", line)
+            if not m: continue
+            if m.group(1) == "execve":
+                if re.search(r"\)\s+=\s+0\s*$", line):
+                    execs += 1
+                    em = re.match(r'execve\("([^"]*)"', line)
+                    if em and os.path.basename(em.group(1)) in ("node", "node.exe"): node += 1
+            elif re.search(r"=\s+\d+\s*$", line):      # a successful fork/clone returns the child tid
+                if "CLONE_THREAD" in line: threads += 1
+                else: forks += 1
+    procs = 1 + forks
+    if len(files) - threads != procs:
+        print("count-hook-procs: WARNING process cross-check differs (%d files - %d threads vs %d forks+1) for %s"
+              % (len(files), threads, procs, prefix), file=sys.stderr)
     return procs, execs, node
 
 def call_hook(h, proj, home, payload, n):
@@ -162,7 +170,7 @@ def call_hook(h, proj, home, payload, n):
     else:
         argv = ["/bin/sh", "-c", h["command"]]
     tf = "%s/trace.%d" % (WORK, n)
-    subprocess.run(["strace", "-f", "-s", "64", "-e", "trace=execve,fork,vfork,clone,clone3", "-o", tf] + argv,
+    subprocess.run(["strace", "-ff", "-s", "64", "-e", "trace=execve,fork,vfork,clone,clone3", "-o", tf] + argv,
                    input=payload, cwd=proj, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
     return count_trace(tf)
 
@@ -189,23 +197,25 @@ def measure(root_name, root, scen, cmd):
 
 def ratio(o, n): return "%3d%%" % round(100.0 * n / o) if o else "  - "
 
-print("count-hook-procs: base %s (old) vs working tree (new); strace -f; one Bash call = Pre + Post" % base[:12])
-print("%-4s %-10s %-34s %17s  %17s  %5s" % ("scen", "command", "registration", "old procs/ex/node", "new procs/ex/node", "ratio"))
-rc = 0
-for scen in ("S1", "S2"):
-    for cmd in ("git status", "ls -la"):
-        old = measure("old", old_root, scen, cmd)
-        new = measure("new", ROOT, scen, cmd)
-        to, tn = [0, 0, 0], [0, 0, 0]
-        for k in list(old) + [k for k in new if k not in old]:
-            o, n = old.get(k, (0, 0, 0)), new.get(k, (0, 0, 0))
-            to = [a + b for a, b in zip(to, o)]; tn = [a + b for a, b in zip(tn, n)]
-            label = k[0] + ("#%d" % k[1] if k[1] > 1 else "")
-            print("%-4s %-10s %-34s %5d/%4d/%4d  %5d/%4d/%4d  %5s" % (scen, cmd, label, *o, *n, ratio(o[0], n[0])))
-        print("%-4s %-10s %-34s %5d/%4d/%4d  %5d/%4d/%4d  %5s" % (scen, cmd, "TOTAL", *to, *tn, ratio(to[0], tn[0])))
-        print("")
-        if to[0] and tn[0] * 2 > to[0]: rc = 1
-print("ACCEPTANCE (new <= 50%% of old procs, every scenario/command): %s" % ("MET" if rc == 0 else "MISSED"))
-shutil.rmtree(WORK, ignore_errors=True)
+try:
+    print("count-hook-procs: base %s (old) vs working tree (new); strace -ff; one Bash call = Pre + Post" % base[:12])
+    print("%-4s %-10s %-34s %17s  %17s  %5s" % ("scen", "command", "registration", "old procs/ex/node", "new procs/ex/node", "ratio"))
+    miss = False
+    for scen in ("S1", "S2"):
+        for cmd in ("git status", "ls -la"):
+            old = measure("old", old_root, scen, cmd)
+            new = measure("new", ROOT, scen, cmd)
+            to, tn = [0, 0, 0], [0, 0, 0]
+            for k in list(old) + [k for k in new if k not in old]:
+                o, n = old.get(k, (0, 0, 0)), new.get(k, (0, 0, 0))
+                to = [a + b for a, b in zip(to, o)]; tn = [a + b for a, b in zip(tn, n)]
+                label = k[0] + ("#%d" % k[1] if k[1] > 1 else "")
+                print("%-4s %-10s %-34s %5d/%4d/%4d  %5d/%4d/%4d  %5s" % (scen, cmd, label, *o, *n, ratio(o[0], n[0])))
+            print("%-4s %-10s %-34s %5d/%4d/%4d  %5d/%4d/%4d  %5s" % (scen, cmd, "TOTAL", *to, *tn, ratio(to[0], tn[0])))
+            print("")
+            if to[0] and tn[0] * 2 > to[0]: miss = True
+    print("ACCEPTANCE (new <= 50%% of old procs, every scenario/command): %s" % ("MET" if not miss else "MISSED"))
+finally:
+    shutil.rmtree(WORK, ignore_errors=True)
 sys.exit(0)
 PYEOF

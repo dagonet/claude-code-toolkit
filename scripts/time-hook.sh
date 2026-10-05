@@ -130,8 +130,12 @@ for st, r in (("old", tmp + "/oldroot"), ("new", root)):
     text = open(r + "/user-level-reference/settings.json", encoding="utf-8").read()
     ruh = r + "/scripts/render-user-hooks.sh"
     if os.path.isfile(ruh):
-        out = subprocess.run(["bash", ruh, "--print"], stdout=subprocess.PIPE, check=True,
-                             env=dict(os.environ, HOME=home, RUH_TEST_BASH=bashbin)).stdout.decode()
+        pr = subprocess.run(["bash", ruh, "--print"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            env=dict(os.environ, HOME=home, RUH_TEST_BASH=bashbin))
+        if pr.returncode != 0:
+            open(tmp + "/render.err", "w").write("render-user-hooks.sh --print (%s) exit %d: %s" % (st, pr.returncode, pr.stderr.decode("utf-8", "replace")[-300:]))
+            sys.exit(1)
+        out = pr.stdout.decode()
         hooks = json.loads(out)
     else:
         hooks = json.loads(text.replace("@BASH@", bashbin).replace("@HOOKS@", home + "/.claude/hooks"))["hooks"]
@@ -201,7 +205,7 @@ printf '%-34s  %8s  %8s  %8s  %8s  %6s\n' '----------------------------------' -
       done
     done
   else
-    printf 'per-call arms|SKIPPED (no base sha, python3 or archive)|-|-|-|-\n'
+    printf 'per-call arms|SKIPPED (%s)|-|-|-|-\n' "$(if [ -s "$TMP/render.err" ]; then tr '\n|' '  ' < "$TMP/render.err"; else echo 'no base sha, python3 or archive'; fi)"
   fi
 } | while IFS='|' read -r l m q1 q3 iqr ex; do
   printf '%-34s  %8s  %8s  %8s  %8s  %6s\n' "$l" "$m" "$q1" "$q3" "$iqr" "$ex"
