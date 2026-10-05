@@ -21,7 +21,10 @@
 #             appended after the toolkit's, each printed as `kept foreign hook:
 #             <command>`), refuses a live file that does not parse, and re-reads
 #             the result to check that every rendered script path exists.
-#             Idempotent: a second run changes nothing and makes no backup.
+#             Idempotent: a second run changes nothing and makes no backup. Keeps the
+#             file mode, writes through a symlinked settings.json to its target, and
+#             (like --print) refuses, exit 1, if the output still holds an @NAME@
+#             placeholder. A reference copied verbatim is recognised and replaced.
 #   --list    one line per rendered entry: event, matcher ('-' = none), command,
 #             args... (TAB separated). Used by the fixtures.
 #
@@ -43,7 +46,7 @@ while [ $# -gt 0 ]; do
     --write) MODE=write ;;
     --list)  MODE=list ;;
     --settings) [ $# -ge 2 ] || die "--settings needs a path"; SETTINGS=$2; shift ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
@@ -64,7 +67,6 @@ if [ -n "${RUH_TEST_BASH:-}" ]; then
 elif [ -n "$IS_WIN" ]; then
   command -v cygpath >/dev/null 2>&1 || die "cygpath not found: cannot resolve Git's usr/bin/bash"
   BASH_EXE=$(cygpath -m /usr/bin/bash) || die "cygpath failed"
-  [ -f "$BASH_EXE" ] || { [ -f "$BASH_EXE.exe" ] && BASH_EXE=$BASH_EXE.exe; }
 else
   BASH_EXE=$(command -v bash) || die "bash not found on PATH"
   case "$BASH_EXE" in
@@ -73,11 +75,13 @@ else
     *) die "bash resolves to '$BASH_EXE', not a file path (alias or function?)" ;;
   esac
 fi
+# cygpath -m /usr/bin/bash has no .exe: spell it (Windows hosts only)
+if [ -n "$IS_WIN" ]; then case "$BASH_EXE" in *.exe|*.EXE) ;; *) BASH_EXE=$BASH_EXE.exe ;; esac; fi
 RUH_LC=$(printf '%s' "$BASH_EXE" | tr 'A-Z\\' 'a-z/')
 case "$RUH_LC" in
   */system32/bash.exe) die "refusing $BASH_EXE: System32/bash.exe is the WSL launcher; a WSL bash fails open for every protection" ;;
   */usr/bin/bash.exe) ;;
-  */bin/bash.exe) die "refusing $BASH_EXE: Git's bin/bash.exe is a launcher that starts usr/bin/bash.exe as a second process; use usr/bin/bash.exe" ;;
+  */git/bin/bash.exe) die "refusing $BASH_EXE: Git's bin/bash.exe is a launcher that starts usr/bin/bash.exe as a second process; use usr/bin/bash.exe" ;;
 esac
 [ -f "$BASH_EXE" ] || die "bash program does not exist: $BASH_EXE"
 HOOKS_DIR=$HOME/.claude/hooks
@@ -95,7 +99,8 @@ done
 [ -n "$BACKEND" ] || die "no working JSON parser (node, python3 or jq) found: refusing"
 
 WORK=$(mktemp -d 2>/dev/null || mktemp -d -t ruh) || die "mktemp failed"
-trap 'rm -rf "$WORK"' EXIT
+TMPF=""
+trap 'rm -rf "$WORK"; [ -z "$TMPF" ] || rm -f "$TMPF"' EXIT
 
 # natpath <path>: the spelling a native Windows interpreter can open
 natpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
@@ -103,9 +108,10 @@ natpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else pr
 # ---- the three programs: same contract, one per backend --------------------
 # prog <mode> <ref file> <live file>; modes: print | merge | foreign | list-ref | list-live
 # Substitutes @BASH@/@HOOKS@ (JSON-aware: values are escaped by the serializer).
-# A hook entry is the toolkit's when its text names /.claude/hooks/<name>.sh for a
-# <name> the reference registers, or equals a reference entry on that event (the
-# inline date hook); everything else is foreign and kept.
+# A hook entry is the toolkit's when its text names /.claude/hooks/<name>.sh OR the
+# unrendered @HOOKS@/<name>.sh (a hand-copied reference) for a <name> the reference
+# registers, or equals a reference entry on that event (the inline date hook);
+# everything else is foreign and kept.
 PROG_NODE='
 var fs = require("fs");
 var mode = process.argv[1], refp = process.argv[2], livep = process.argv[3];
@@ -148,7 +154,7 @@ function lst(hs) {
       if (m && names.indexOf(m[1]) < 0) names.push(m[1]);
     }); });
   });
-  var own = new RegExp("/\\.claude/hooks/(" + names.join("|") + ")\\.sh([^A-Za-z0-9_.-]|$)");
+  var own = new RegExp("(/\\.claude/hooks|@HOOKS@)/(" + names.join("|") + ")\\.sh([^A-Za-z0-9_.-]|$)");
   function isown(ev, h) { var d = disp(h); return (refd[ev] || []).indexOf(d) >= 0 || own.test(d); }
   var lh = live.hooks === undefined || live.hooks === null ? {} : live.hooks;
   if (typeof lh !== "object" || Array.isArray(lh)) throw new Error("hooks is not an object");
@@ -225,7 +231,7 @@ try:
                 a = argv(h)
                 m = re.search(r"/([A-Za-z0-9_-]+)\.sh$", a[-1] if a else "")
                 if m and m.group(1) not in names: names.append(m.group(1))
-    own = re.compile(r"/\.claude/hooks/(" + "|".join(re.escape(n) for n in names) + r")\.sh([^A-Za-z0-9_.-]|$)")
+    own = re.compile(r"(/\.claude/hooks|@HOOKS@)/(" + "|".join(re.escape(n) for n in names) + r")\.sh([^A-Za-z0-9_.-]|$)")
     def isown(ev, h):
         d = disp(h)
         return d in refd.get(ev, []) or own.search(d) is not None
@@ -269,13 +275,13 @@ def lst: to_entries[] | .key as $ev | (.value | arr("hooks." + $ev))[] | . as $g
 | if $mode == "print" then $ref
   elif $mode == "list-ref" then ($ref | lst)
   else
-    $l[0] as $live
+    (if ($l | length) != 1 then error("the live settings file must hold exactly one JSON document") else $l[0] end) as $live
     | (if ($live | type) != "object" then error("the live settings file is not a JSON object") else . end)
     | if $mode == "list-live" then ($live.hooks // {} | lst)
       else
         ($ref | map_values([.[].hooks[] | disp])) as $refd
         | ([$ref[][].hooks[] | (.args // []) | select(length > 0) | .[-1] | tostring | capture("/(?<n>[A-Za-z0-9_-]+)\\.sh$")? | .n] | unique) as $names
-        | ("/\\.claude/hooks/(" + ($names | join("|")) + ")\\.sh([^A-Za-z0-9_.-]|$)") as $own
+        | ("(/\\.claude/hooks|@HOOKS@)/(" + ($names | join("|")) + ")\\.sh([^A-Za-z0-9_.-]|$)") as $own
         | ($live.hooks // {}) as $lh
         | (if ($lh | type) != "object" then error("hooks is not an object") else . end)
         | def isown($ev): disp as $d | ((($refd[$ev] // []) | index($d)) != null) or ($d | test($own));
@@ -309,17 +315,29 @@ prog() {
   esac
 }
 
+# noph <file>: fails when the file still carries an @NAME@ placeholder (a copied, unrendered entry)
+noph() { ! grep -Eq '@[A-Z]+@' "$1"; }
+
 EMPTY=$WORK/empty.json
 printf '{}\n' > "$EMPTY"
 
 case "$MODE" in
-  print) prog print "$REF" "$EMPTY" || exit 1 ;;
+  print)
+    prog print "$REF" "$EMPTY" > "$WORK/print.json" || exit 1
+    noph "$WORK/print.json" || die "refusing to print: the output still contains an unsubstituted @NAME@ placeholder"
+    cat "$WORK/print.json" ;;
   list)  prog list-ref "$REF" "$EMPTY" || exit 1 ;;
   write)
+    # a symlinked settings.json: write its resolved target, never replace the link
+    if [ -L "$SETTINGS" ]; then
+      _t=$(readlink -f "$SETTINGS" 2>/dev/null) && [ -n "$_t" ] && [ -f "$_t" ] || die "$SETTINGS is a symlink that cannot be resolved to a regular file: nothing was changed"
+      SETTINGS=$_t
+    fi
     LIVE=$EMPTY
     [ -f "$SETTINGS" ] && LIVE=$SETTINGS
     prog merge "$REF" "$LIVE" > "$WORK/new.json" || die "refusing to write: $SETTINGS could not be merged (does it parse as JSON?). Nothing was changed."
     prog foreign "$REF" "$LIVE" > "$WORK/foreign.txt" || die "refusing to write: $SETTINGS could not be merged. Nothing was changed."
+    noph "$WORK/new.json" || die "refusing to write: the result still contains an unsubstituted @NAME@ placeholder (a foreign entry carries one?). Nothing was changed."
     while IFS= read -r _l; do echo "kept foreign hook: $_l"; done < "$WORK/foreign.txt"
     if [ -f "$SETTINGS" ] && cmp -s "$WORK/new.json" "$SETTINGS"; then
       echo "render-user-hooks: $SETTINGS already carries the rendered hooks (no change, no backup)"
@@ -327,10 +345,14 @@ case "$MODE" in
       mkdir -p "$(dirname "$SETTINGS")" || die "cannot create $(dirname "$SETTINGS")"
       if [ -f "$SETTINGS" ]; then
         BAK="$SETTINGS.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+        [ -e "$BAK" ] && BAK=$BAK.$$
+        [ -e "$BAK" ] && die "backup $BAK already exists: nothing was changed"
         cp -p "$SETTINGS" "$BAK" || die "cannot back up $SETTINGS: nothing was changed"
         echo "render-user-hooks: backup $BAK"
       fi
-      cp "$WORK/new.json" "$SETTINGS.tmp.$$" && mv -f "$SETTINGS.tmp.$$" "$SETTINGS" || die "cannot write $SETTINGS"
+      TMPF="$SETTINGS.tmp.$$"
+      if [ -f "$SETTINGS" ]; then cp -p "$SETTINGS" "$TMPF" || die "cannot write $SETTINGS"; fi   # keeps the file mode
+      cat "$WORK/new.json" > "$TMPF" && mv -f "$TMPF" "$SETTINGS" || die "cannot write $SETTINGS"
       echo "render-user-hooks: wrote the hooks block of $SETTINGS"
     fi
     # re-read: every rendered script path must exist

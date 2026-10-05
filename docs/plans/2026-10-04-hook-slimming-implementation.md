@@ -78,10 +78,11 @@ These are today's registrations, with what each does when the script is missing 
 - **User-level** (exec form). In `user-level-reference/settings.json` the program is the literal token `@BASH@` and the hook directory is `@HOOKS@`. `render-user-hooks.sh` substitutes both (Task 8):
   `{"type": "command", "command": "@BASH@", "args": ["-c", "<SA_X><TAIL>", "@HOOKS@/X.sh"]}`
   - `<SA_X>` (C5 step-aside; empty for `verify-hooks`, which has its own rule, see Task 9):
-    `p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/X.sh\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/X.sh\\\"'*) exit 0 ;; esac; fi; unset p s; `
+    `p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/X.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/X.sh\\\"'*) exit 0 ;; esac; fi; unset p s; `
+    (Review of Task 8: the test is `-f` AND `-r`, so a FIFO or directory at the project's `.claude/settings.json` cannot hang the hook on `read`; the UF/UO tails likewise test `-f` AND `-r`.)
     After JSON decoding, the bash pattern is `*'}/hooks/X.sh\"'*`. That is the literal text `}/hooks/X.sh\"` as it appears in the project's raw `settings.json`, where a JSON-escaped quote closes the path.
-  - `<TAIL>` for **UF**: `[ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- <MSG>.\" >&2; exit 2; }; . \"$0\"`
-  - `<TAIL>` for **UO**: `[ -r \"$0\" ] || exit 0; . \"$0\"`
+  - `<TAIL>` for **UF**: `{ [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- <MSG>.\" >&2; exit 2; }; . \"$0\"`
+  - `<TAIL>` for **UO**: `[ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"`
   - `<TAIL>` for **UU**: `. \"$0\"`
 - **Fail-closed hook trap.** This is the first executable line, directly after the header comment, of each hook marked F/UF: `pre-commit-test`, `no-push-main`, `gate-before-merge`, `deny-secret-reads`, `deny-claude-md-writes`, `require-skills-block`.
   `trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)`

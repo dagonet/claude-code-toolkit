@@ -1646,12 +1646,20 @@ JSON_PH=$(printf '{{%s}}' GATE_COMMAND)
 # v4.4.0 C1: widened from `{{X}}` to `{{X}}` OR `@X@` (@[A-Z]+@). user-level-reference/settings.json
 # carries `@BASH@`/`@HOOKS@` in executable positions ON PURPOSE: scripts/render-user-hooks.sh writes
 # the absolute paths at install time, so that file is no longer a verbatim install and is the ONE
-# allowlisted path (exact, root-relative). A hand-copied `@BASH@` command would be a non-blocking
-# spawn error, i.e. every user protection failing open -- so anywhere else it is a hit.
+# exempted path (exact, root-relative), and there ONLY the `@BASH@` / `@HOOKS@` hits are dropped: a
+# `{{X}}` or an unknown `@FOO@` in that file is still reported. A hand-copied `@BASH@` command would
+# be a non-blocking spawn error, i.e. every user protection failing open -- so elsewhere it is a hit.
 JSON_ALLOW='user-level-reference/settings.json'
 json_census() {   # <root>... -> placeholder hits in *.json under those roots
   grep -rn --include='*.json' -e '{{[A-Z_]\{2,\}}}' -e '@[A-Z][A-Z]*@' "$@" 2>/dev/null \
-    | grep -v "^$JSON_ALLOW:"
+    | while IFS= read -r jc_l; do
+        case $jc_l in
+          "$JSON_ALLOW:"*)
+            jc_r=${jc_l//@BASH@/}; jc_r=${jc_r//@HOOKS@/}
+            printf '%s\n' "$jc_r" | grep -q -e '{{[A-Z_]\{2,\}}}' -e '@[A-Z][A-Z]*@' && printf '%s\n' "$jc_l" ;;
+          *) printf '%s\n' "$jc_l" ;;
+        esac
+      done
 }
 mkdir -p "$JSONFIX/scoped" "$JSONFIX/unscoped"
 printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/in.json"
@@ -1666,9 +1674,13 @@ AT_PH=$(printf '@%s@' BASH)
 printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/templates/x/s.json"
 printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/user-level-reference/settings.json"
 printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/user-level-reference/other.json"
+# control: in the exempted file an unknown @FOO@ and a {{X}} are still hits, @BASH@/@HOOKS@ are not
+mkdir -p "$JSONFIX/at2/user-level-reference"
+printf '%s\n' "{ \"a\": \"$AT_PH $(printf '@%s@' HOOKS)\"," "  \"c\": \"$(printf '@%s@' FOO)\"," "  \"d\": \"$JSON_PH\" }" > "$JSONFIX/at2/user-level-reference/settings.json"
+json_ref_hits=$( (cd "$JSONFIX/at2" && json_census user-level-reference) | grep -c . )
 json_at_hits=$( (cd "$JSONFIX/at" && json_census templates user-level-reference) | cut -d: -f1 | sort | tr '\n' ' ')
-if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ] && [ "$json_at_hits" = "templates/x/s.json user-level-reference/other.json " ]; then
-  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored / @X@ hit except the single allowlisted user-level-reference/settings.json)"
+if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ] && [ "$json_at_hits" = "templates/x/s.json user-level-reference/other.json " ] && [ "$json_ref_hits" -eq 2 ]; then
+  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored / @X@ hit except @BASH@/@HOOKS@ in the single exempted user-level-reference/settings.json, where {{X}} / @FOO@ still hit)"
   json_hits=$(json_census templates user-level-reference | grep -c .)
   if [ "$json_hits" -eq 0 ]; then
     ok "templates/ + user-level-reference/ (*.json): 0 placeholders — a settings.json hook command is an executable position, so a literal {{...}} there is a 127 fail-open"
@@ -1676,7 +1688,7 @@ if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq
     ko "templates/ + user-level-reference/ (*.json): $json_hits placeholder(s) in a shipped JSON file — JSON has no comments, so every one of these is in a VALUE: $(json_census templates user-level-reference | head -3 | tr '\n' ' ')"
   fi
 else
-  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0, @X@ hits='$json_at_hits' want 'templates/x/s.json user-level-reference/other.json '). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
+  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0, @X@ hits='$json_at_hits' want 'templates/x/s.json user-level-reference/other.json ', exempted-file residue=$json_ref_hits want 2). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
 fi
 rm -rf "$JSONFIX"
 

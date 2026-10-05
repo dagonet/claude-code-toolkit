@@ -9953,12 +9953,12 @@ HOME="$C1H" bash "$C1RUH" --list >"$TMPROOT/c1-list.tsv" 2>/dev/null
 expect "C1 (a): --list exits 0" 0 "$?"
 
 # the exact strings: <SA_X> + <TAIL> per polarity (UF / UO / UU)
-c1_sa() { printf '%s' "p=\${CLAUDE_PROJECT_DIR:-.}; if [ -f \\\"\$p/hooks/$1.sh\\\" ] && [ -r \\\"\$p/.claude/settings.json\\\" ]; then IFS= read -r -d '' s < \\\"\$p/.claude/settings.json\\\"; case \$s in *'}/hooks/$1.sh\\\\\\\"'*) exit 0 ;; esac; fi; unset p s; "; }
+c1_sa() { printf '%s' "p=\${CLAUDE_PROJECT_DIR:-.}; if [ -f \\\"\$p/hooks/$1.sh\\\" ] && [ -f \\\"\$p/.claude/settings.json\\\" ] && [ -r \\\"\$p/.claude/settings.json\\\" ]; then IFS= read -r -d '' s < \\\"\$p/.claude/settings.json\\\"; case \$s in *'}/hooks/$1.sh\\\\\\\"'*) exit 0 ;; esac; fi; unset p s; "; }
 for c1_x in $C1STEP; do
   case "$c1_x" in
-    no-push-main)      c1_tail='[ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"' ;;
-    deny-secret-reads) c1_tail='[ -r \"$0\" ] || { echo \"HOOK SCRIPT MISSING: $0 -- secrets protection offline.\" >&2; exit 2; }; . \"$0\"' ;;
-    deny-hang-shapes|model-floor) c1_tail='[ -r \"$0\" ] || exit 0; . \"$0\"' ;;
+    no-push-main)      c1_tail='{ [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"' ;;
+    deny-secret-reads) c1_tail='{ [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- secrets protection offline.\" >&2; exit 2; }; . \"$0\"' ;;
+    deny-hang-shapes|model-floor) c1_tail='[ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"' ;;
     bash-output-guard) c1_tail='. \"$0\"' ;;
   esac
   c1_want=$(printf '{"type": "command", "command": "@BASH@", "args": ["-c", "%s%s", "@HOOKS@/%s.sh"]}' "$(c1_sa "$c1_x")" "$c1_tail" "$c1_x")
@@ -10104,6 +10104,106 @@ EOF
   c1_ran=0; { [ "$C1RC" != 0 ] || [ -n "$C1OUT" ]; } && c1_ran=1
   expect "C1 (f): $c1_x steps aside for templates/general's own registration" 0 "$c1_ran"
 done
+# ---- v4.4.0 C1 fix round 1 (review of Task 8) ----
+c1_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
+c1_newhome() { # <name> -> a fresh HOME with the user-level hooks installed; echoes its path
+  c1n_d="$TMPROOT/c1fr-$1"; rm -rf "$c1n_d"; mkdir -p "$c1n_d/.claude"; cp -R "$ROOT/user-level-reference/hooks" "$c1n_d/.claude/hooks"; printf '%s' "$c1n_d"
+}
+# (h) a verbatim copy of the reference (README step 8) is REPLACED by --write, not kept as foreign
+c1_hh=$(c1_newhome copy); cp "$C1REF" "$c1_hh/.claude/settings.json"
+HOME="$c1_hh" bash "$C1RUH" --write >"$c1_hh/out" 2>"$c1_hh/err"
+expect "C1 (h): --write over a verbatim reference copy exits 0" 0 "$?"
+expect "C1 (h): ... leaves 0 @NAME@ placeholders" 0 "$(grep -Ec '@[A-Z]+@' "$c1_hh/.claude/settings.json")"
+expect "C1 (h): ... keeps no 'foreign' hook (the copy was the toolkit's)" 0 "$(grep -c '^kept foreign hook' "$c1_hh/out")"
+for c1_x in $C1HOOKS; do
+  expect "C1 (h): $c1_x has exactly one entry after --write over the copy" 1 "$(grep -cF "\"$c1_hh/.claude/hooks/$c1_x.sh\"" "$c1_hh/.claude/settings.json")"
+done
+expect "C1 (h): the date hook is not duplicated" 1 "$(grep -c "date '+Current local time" "$c1_hh/.claude/settings.json")"
+# a placeholder that survives (a foreign entry carries one) is refused, file untouched
+c1_hh=$(c1_newhome ph)
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"@FOO@"}]}]}}' > "$c1_hh/.claude/settings.json"; cp "$c1_hh/.claude/settings.json" "$c1_hh/orig"
+HOME="$c1_hh" bash "$C1RUH" --write >"$c1_hh/out" 2>"$c1_hh/err"
+expect "C1 (h): --write refuses (exit 1) when a placeholder would survive" 1 "$?"
+expect "C1 (h): ... and leaves the file untouched" 0 "$(cmp -s "$c1_hh/orig" "$c1_hh/.claude/settings.json"; echo $?)"
+expect "C1 (h): ... naming the placeholder" 1 "$(grep -c 'placeholder' "$c1_hh/err")"
+
+# (i) file mode survives --write
+c1_hh=$(c1_newhome mode); cp "$C1REF" "$c1_hh/.claude/settings.json"; chmod 600 "$c1_hh/.claude/settings.json"
+HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+expect "C1 (i): mode 600 survives --write" 600 "$(c1_mode "$c1_hh/.claude/settings.json")"
+# (j) a symlinked settings.json stays a symlink and its target gets the change
+c1_hh=$(c1_newhome link); mkdir -p "$c1_hh/real"; cp "$C1REF" "$c1_hh/real/settings.json"
+ln -s "$c1_hh/real/settings.json" "$c1_hh/.claude/settings.json"
+HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+expect "C1 (j): --write exits 0 through a symlink" 0 "$?"
+expect "C1 (j): settings.json is still a symlink" 1 "$([ -L "$c1_hh/.claude/settings.json" ] && echo 1 || echo 0)"
+expect "C1 (j): the symlink target got the rendered hooks" 0 "$(grep -Ec '@[A-Z]+@' "$c1_hh/real/settings.json")"
+expect "C1 (j): ... with the absolute hook path" 1 "$(grep -cF "\"$c1_hh/.claude/hooks/no-push-main.sh\"" "$c1_hh/real/settings.json")"
+c1_hh=$(c1_newhome dangle); ln -s "$c1_hh/nowhere.json" "$c1_hh/.claude/settings.json"
+HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+expect "C1 (j): a dangling symlink is refused (exit 1)" 1 "$?"
+expect "C1 (j): ... and still a symlink" 1 "$([ -L "$c1_hh/.claude/settings.json" ] && echo 1 || echo 0)"
+
+# (k) a FIFO at the project's .claude/settings.json must not hang the step-aside (the global copy runs)
+c1_list=$(awk -F'\t' '$6 ~ /no-push-main\.sh$/' "$TMPROOT/c1-list.tsv")
+IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest <<EOF
+$c1_list
+EOF
+c1_pd="$TMPROOT/c1proj-fifo"; rm -rf "$c1_pd"; mkdir -p "$c1_pd/hooks" "$c1_pd/.claude"; printf '#!/bin/sh\nexit 0\n' > "$c1_pd/hooks/no-push-main.sh"
+if mkfifo "$c1_pd/.claude/settings.json" 2>/dev/null && command -v timeout >/dev/null 2>&1; then
+  c1_exec "$C1H" "$c1_pd" "$(c1_pl no-push-main deny)" timeout 10 "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
+  expect "C1 (k): FIFO at project settings.json: the global no-push-main runs and refuses (2, no timeout)" 2 "$C1RC"
+else
+  skip "C1 (k): FIFO at project settings.json" "no mkfifo/timeout on this host" 1
+fi
+
+# (l) a directory at the hook path: UF refuses (2), UO fails open (0)
+for c1_x in no-push-main model-floor; do
+  c1_list=$(awk -F'\t' -v x="$c1_x" '{n=$6; sub(/.*\//,"",n); sub(/\.sh$/,"",n); if (n==x) print}' "$TMPROOT/c1-list.tsv")
+  IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest <<EOF
+$c1_list
+EOF
+  mv "$C1H/.claude/hooks/$c1_x.sh" "$C1H/.claude/hooks/$c1_x.sh.real"; mkdir "$C1H/.claude/hooks/$c1_x.sh"
+  c1_exec "$C1H" "$C1R" "$(c1_pl "$c1_x" allow)" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
+  case "$c1_x" in
+    no-push-main) expect "C1 (l): a directory at the UF hook path exits 2" 2 "$C1RC"
+                  expect "C1 (l): ... saying HOOK SCRIPT MISSING" 1 "$(printf '%s' "$C1ERR" | grep -c 'HOOK SCRIPT MISSING')" ;;
+    *)            expect "C1 (l): a directory at the UO hook path exits 0" 0 "$C1RC" ;;
+  esac
+  rmdir "$C1H/.claude/hooks/$c1_x.sh"; mv "$C1H/.claude/hooks/$c1_x.sh.real" "$C1H/.claude/hooks/$c1_x.sh"
+done
+
+# (m) two --write runs in one second keep both backups
+c1_hh=$(c1_newhome bak); mkdir -p "$c1_hh/shim"
+printf '#!/bin/sh\necho 20260101T000000Z\n' > "$c1_hh/shim/date"; chmod +x "$c1_hh/shim/date"
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"first-one"}]}]}}' > "$c1_hh/.claude/settings.json"
+PATH="$c1_hh/shim:$PATH" HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"second-one"}]}]}}' > "$c1_hh/.claude/settings.json"
+PATH="$c1_hh/shim:$PATH" HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+expect "C1 (m): two same-second --write runs leave two backups" 2 "$(ls "$c1_hh/.claude/" | grep -c '^settings\.json\.bak-')"
+expect "C1 (m): the first backup was not overwritten" 1 "$(grep -l 'first-one' "$c1_hh"/.claude/settings.json.bak-* 2>/dev/null | grep -c .)"
+
+# (n) jq backend: a multi-document live file is refused like node/python3
+c1_hh=$(c1_newhome multi)
+if have_backend jq; then
+  printf '%s\n' '{"hooks":{}}' '{"zz":1}' > "$c1_hh/.claude/settings.json"; cp "$c1_hh/.claude/settings.json" "$c1_hh/orig"
+  RUH_BACKEND=jq HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+  expect "C1 (n): jq backend refuses a two-document live file (exit 1)" 1 "$?"
+  expect "C1 (n): ... and leaves it untouched" 0 "$(cmp -s "$c1_hh/orig" "$c1_hh/.claude/settings.json"; echo $?)"
+else
+  skip "C1 (n): jq multi-document refusal" "no jq on this host" 2
+fi
+
+# (o) Windows spelling by reasoning: cygpath -m /usr/bin/bash has no .exe; Cygwin's bin/bash.exe is fine
+mkdir -p "$C1W/Git/usr/bin" "$C1W/cygwin64/bin"; : > "$C1W/Git/usr/bin/bash.exe"; : > "$C1W/cygwin64/bin/bash.exe"
+RUH_TEST_OSTYPE=msys RUH_TEST_BASH="$C1W/Git/usr/bin/bash" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rw.out" 2>"$C1W/rw.err"
+expect "C1 (o): MSYS, bash path without .exe: accepted, rendered with .exe" "0:1" "$?:$([ "$(grep -cF "\"command\": \"$C1W/Git/usr/bin/bash.exe\"" "$C1W/rw.out")" -ge 1 ] && echo 1 || echo 0)"
+RUH_TEST_OSTYPE=cygwin RUH_TEST_BASH="$C1W/cygwin64/bin/bash.exe" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rw.out" 2>"$C1W/rw.err"
+expect "C1 (o): Cygwin's bin/bash.exe is accepted (not Git's launcher)" 0 "$?"
+RUH_TEST_OSTYPE=msys RUH_TEST_BASH="$C1W/Windows/System32/bash.exe" HOME="$C1H" bash "$C1RUH" --print >/dev/null 2>&1
+expect "C1 (o): System32/bash.exe is still refused" 1 "$?"
+RUH_TEST_OSTYPE=msys RUH_TEST_BASH="$C1W/Git/bin/bash" HOME="$C1H" bash "$C1RUH" --print >/dev/null 2>&1
+expect "C1 (o): Git's bin/bash (.exe appended) is still refused" 1 "$?"
 # ---- end v4.4.0 C1
 
 echo "----------------------------------------------------------------"
