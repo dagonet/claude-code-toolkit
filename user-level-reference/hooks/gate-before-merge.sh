@@ -907,8 +907,9 @@ if [ "$GC_TOOL" = "Bash" ] || [ "$GC_TOOL" = "PowerShell" ]; then
       # ghmut = the plain spelling is the ONLY mover so far, which the refspec-free `--ff-only` pull
       # exemption tolerates (`gh pr merge 1; git checkout main; git pull --ff-only` stays allowed)
       # v4.4.0: anchored -- a plain `gh pr merge` LATER in a disguised segment
-      # (`sh -c '<gh pr me\rge>' gh pr merge`) is not the plain spelling running
-      if printf '%s\n' "$seg" | grep -qE '^[[:space:]]*gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; }; then
+      # (`sh -c '<gh pr me\rge>' gh pr merge`) is not the plain spelling running;
+      # leading NAME=value assignments with a plain value (`GH_TOKEN=x gh pr merge`) are
+      if printf '%s\n' "$seg" | grep -qE '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./:@-]*[[:space:]]+)*gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' && { [ "$mutated" = 0 ] || [ "$ghmut" = 1 ]; }; then
         ghmut=1
       else
         ghmut=0

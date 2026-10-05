@@ -10089,6 +10089,15 @@ for v3c in "sh -c 'gh pr me\\rge 1' gh pr merge; git checkout main; git pull --f
            "sh -c 'g\\h pr merge 1' x gh pr merge; git checkout main; git pull --ff-only"; do
   check "V3 gate-before-merge (disguised mover, v4.4.0 a): $v3c" hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3c" "$V3G")"
 done
+# review: leading NAME=value assignments (plain values) still count as the plain spelling
+for v3c in 'GH_TOKEN=x gh pr merge 1; git checkout main; git pull --ff-only' \
+           'A=1 B=two/x gh pr merge 1 --squash; git checkout main && git pull --ff-only'; do
+  check "V3 gate-before-merge (safe flow, assignment prefix): $v3c" hooks/gate-before-merge.sh 0 "$(mkjson Bash "$v3c" "$V3G")"
+done
+for v3c in "GH_TOKEN=x sh -c 'gh pr me\\rge 1' gh pr merge; git checkout main; git pull --ff-only" \
+           "X=1 bash -c 'gh pr mer\\ge 1' gh pr merge; git checkout main; git pull --ff-only"; do
+  check "V3 gate-before-merge (disguised mover after an assignment): $v3c" hooks/gate-before-merge.sh 2 "$(mkjson Bash "$v3c" "$V3G")"
+done
 check "V3 control: git push origin +feat from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin +feat' "$V3F2")"
 check "V3 control: git push --tags from a feature repo"       hooks/no-push-main.sh 0 "$(mkjson Bash 'git push --tags' "$V3F2")"
 check "V3 control: git push origin feat 2>&1 from a feature repo" hooks/no-push-main.sh 0 "$(mkjson Bash 'git push origin feat 2>&1' "$V3F2")"
