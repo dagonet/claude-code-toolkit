@@ -176,7 +176,7 @@ EOF
     vh_problem "NO PARSER: exec-form entries unchecked in $1"
     return 0
   fi
-  vh_ents=$(vh_entries "$1" "$VH_BACKEND" 2>/dev/null)
+  { vh_ents=$(vh_entries "$1" "$VH_BACKEND"); } 2>/dev/null
   vh_us=$(printf '\037')
   while IFS= read -r vh_line; do
     case $vh_line in

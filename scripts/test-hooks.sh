@@ -8461,7 +8461,7 @@ c1_run - "$C1HOME" '{"tool_name":"Agent","tool_input":"a string","cwd":"."}'; c1
 # registration: every settings file carries the SILENT wrapper on the Agent
 # matcher, and the wrapper is silent when the hook file is absent
 if [ -n "$C1_HAVE_NODE" ]; then
-  C1_TPL='[ -f "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh" ] || exit 0; bash "${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh"'
+  C1_TPL='f="${CLAUDE_PROJECT_DIR:-.}/hooks/model-floor.sh"; [ -r "$f" ] || exit 0; exec bash "$f"'
   # S-24: the user-level wrapper steps aside when the project has its own copy,
   # so a spawn never has two updatedInput emitters racing (last one wins, order
   # non-deterministic).
@@ -10409,6 +10409,11 @@ C2OUT=$(env -u CLAUDE_PROJECT_DIR PATH="$C2NP" HOME="$C2NH" "$C2BASH" "$C2VH" </
 expect "C2b (e): no parser on PATH -> exit 0 and a NO PARSER entry" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^NO PARSER: ')"
 expect "C2b (e): ... the footer carries the NO PARSER sentence" 1 "$(printf '%s\n' "$C2OUT" | grep -cxF 'NO PARSER means exec-form entries are unchecked: every check behind them may be off until a parser (node, python3 or jq) is available.')"
 expect "C2b (e): ... and does not claim a MISSING PROGRAM entry" 0 "$(printf '%s\n' "$C2OUT" | grep -c 'A MISSING PROGRAM entry')"
+# the NUL warning comes from the shell reading the command substitution: a settings file with \u0000 must not leak it
+c2b_p=$(c2b_proj nul)
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash x\\u0000y","args":["-c","true","%s/hooks/model-floor.sh"]}]}]}}\n' "$c2b_p" > "$c2b_p/.claude/settings.json"
+C2NULERR=$(env HOME="$C2H0" CLAUDE_PROJECT_DIR="$c2b_p" bash "$c2b_p/hooks/verify-hooks.sh" --report </dev/null 2>&1 >/dev/null)
+expect "C2b: a NUL (\\u0000) in a settings command leaks no shell warning to stderr" 0 "$(printf '%s' "$C2NULERR" | grep -ci 'null byte')"
 # ---- end v4.4.0 C2b
 
 # ---- v4.4.0 C5: project hooks run in one bash; the global copy steps aside only for a REGISTERED project copy; missing-script polarity per form ----
@@ -10464,7 +10469,7 @@ c5_pd="$TMPROOT/c5p-root"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/.claude"; cp -R "$R
 c5_global deny-secret-reads "$(mkread "$C5R/.env")" "$c5_pd"
 expect "C5 (c): root-settings shape: the global deny-secret-reads still runs and refuses (the file ships, the registration does not)" 2 "$C5RC"
 c5_global bash-output-guard "$(mkpost 40000)" "$c5_pd"
-expect "C5 (c): root-settings shape: the global bash-output-guard still runs (it flags a 40000-byte result)" 1 "$([ -n "$C5OUT" ] && echo 1 || echo 0)"
+expect "C5 (c): root-settings shape: the global bash-output-guard still runs (it truncates a 40000-byte result)" 1 "$(printf '%s' "$C5OUT" | grep -c 'chars truncated')"
 : > "$C5CNT"; c5_global no-push-main "$C5PUSH" "$c5_pd"
 expect "C5 (c): root-settings shape: no-push-main IS registered there, so the global steps aside (0 runs)" 0 "$(c5_runs)"
 # (d) hooks/ file but no registration: the global runs and refuses

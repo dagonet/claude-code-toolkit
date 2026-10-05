@@ -1377,9 +1377,9 @@ else
   else
     sk_got=$(grep -o "$sk_pat" "$sksettings" | sort -u)
     sk_exp=$(grep -oE '(f=|exec bash )\\"[^ ]*hooks/[A-Za-z0-9_.-]+\.sh' "$sksettings" | sed 's|.*/hooks/|hooks/|' | sort -u)
-    sk_all=$(grep -o "$sk_pat" "$sksettings" | grep -c .)
+    sk_all=$(grep '"command":' "$sksettings" | grep -o "$sk_pat" | grep -c .)
     sk_min=$(printf '%s\n' "$C71_TABLE" | grep -c '^general;.*;[FWOU]$')
-    sk_ctl=$(sed 's|hooks/|hoox/|g' "$sksettings" | grep -o "$sk_pat" | grep -c .)
+    sk_ctl=$(sed 's|hooks/|hoox/|g' "$sksettings" | grep '"command":' | grep -o "$sk_pat" | grep -c .)
     sk_missing=$(printf '%s\n' "$sk_exp" | grep -Fxv -f <(printf '%s\n' "$sk_got") 2>/dev/null)
     sk_n=$(printf '%s\n' "$sk_got" | grep -c .)
     sk_m=$(printf '%s\n' "$sk_exp" | grep -c .)
