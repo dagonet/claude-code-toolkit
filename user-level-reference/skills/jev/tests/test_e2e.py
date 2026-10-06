@@ -49,6 +49,28 @@ class ResolverAndTransportTests(unittest.TestCase):
         self.assertFalse("TYPESAFE_API_KEY" in seen[0])  # MH-2: a failure never prints the environment
         self.assertTrue("PATH" in seen[0])
 
+    def test_test_slack_only_in_test_mode(self):
+        sb = jt.Sandbox(self)
+        base = sb.env()
+        envs = [base,
+                {k: v for k, v in base.items() if k != "JEV_TEST_SLACK"},
+                {k: v for k, v in base.items() if k != "JEV_TEST_MODE"},
+                dict(base, JEV_TEST_SLACK="99")]
+        seen = []
+        real = jr.subprocess.run
+
+        def spy(*a, **kw):
+            seen.append(kw.get("timeout"))
+            return real(*a, **kw)
+
+        jr.subprocess.run = spy
+        try:
+            for env in envs:
+                jr.run_resolver("general-purpose", sb.repo, env)
+        finally:
+            jr.subprocess.run = real
+        self.assertEqual(seen, [17.0, 2.0, 2.0, 2.0])
+
     def test_resolver_without_lib_is_none(self):
         sb = jt.Sandbox(self, lib_in_home=False)
         self.assertIsNone(jr.run_resolver("general-purpose", sb.repo, sb.env()))

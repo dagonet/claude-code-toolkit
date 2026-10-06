@@ -278,7 +278,7 @@ def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
     if not url:
         return fallback, "no-endpoint", False
     jev_model, threshold = read_config(res.gd)
-    budget = min(HTTP_TIMEOUT, DEADLINE - (clock() - t0))
+    budget = min(HTTP_TIMEOUT, DEADLINE + _test_slack(env) - (clock() - t0))
     if budget <= 0.05:
         return fallback, "deadline", False
     try:
@@ -384,6 +384,16 @@ def post_with_deadline(url, body, key, timeout, env):
     return box["raw"]
 
 
+def _test_slack(env):
+    # The e2e sandbox runs the real resolver, which took >2 s on a loaded Windows host.
+    # Production never sets it, and the registration's 5 s hook timeout still bounds it.
+    try:
+        slack = float(env["JEV_TEST_SLACK"])
+    except (KeyError, ValueError):
+        return 0.0
+    return slack if env.get("JEV_TEST_MODE") == "1" and 0 <= slack <= 30 else 0.0
+
+
 def run_resolver(subagent_type, cwd, env):
     """Run model-floor's own resolution (hooks/lib/agent-model.sh) -- the project's
     copy when CLAUDE_PROJECT_DIR has one (the S-24 precedence), else the user-level
@@ -399,7 +409,7 @@ def run_resolver(subagent_type, cwd, env):
         return None
     try:
         cp = subprocess.run([bash, lib, subagent_type, cwd], capture_output=True,
-                            timeout=RESOLVER_TIMEOUT,
+                            timeout=RESOLVER_TIMEOUT + _test_slack(env),
                             env={k: v for k, v in env.items() if k != "TYPESAFE_API_KEY"})
     except (OSError, subprocess.SubprocessError):
         return None
