@@ -90,22 +90,24 @@ matrix_fail=0
 
 note() { printf '%s\n' "$*"; }
 
-# Assertions skipped as declared host facts: SKIP lines whose reason starts with
-# the fixed "[host] " marker (skip_host in test-hooks.sh). Prints their sum.
+# Assertions skipped as declared host facts: SKIP lines ENDING in the fixed
+# " [host]" suffix (skip_host in test-hooks.sh). Anchored at the end of the line
+# so a label or reason cannot forge it. Prints their sum.
 host_skips() { # <suite output file>
-  grep '^SKIP  .*(\[host\] ' "$1" 2>/dev/null \
-    | sed -n 's/.*, \([0-9][0-9]*\) assertion(s))$/\1/p' | awk '{ n += $1 } END { print n + 0 }'
+  grep '^SKIP  .*assertion(s))  *\[host\]$' "$1" 2>/dev/null \
+    | sed -n 's/.*, \([0-9][0-9]*\) assertion(s)) *\[host\]$/\1/p' | awk '{ n += $1 } END { print n + 0 }'
 }
 
-# Two-sided self-check of the node band: a [host] skip is tolerated, an
-# untagged one is not (a summary count of 3 with 2 tagged leaves 1 untagged).
+# Two-sided self-check of the node band, with fixture lines built by the same
+# printf format skip() uses: a tagged skip is tolerated, an untagged one is
+# counted, and a label that merely contains "([host] " does not forge the tag.
 hs_tmp="$OUTDIR/selfcheck.out"
-printf 'SKIP  a (r, 1 assertion(s))\nSKIP  b ([host] root, 2 assertion(s))\n' > "$hs_tmp"
-if [ "$(host_skips "$hs_tmp")" = 2 ] && [ $((3 - $(host_skips "$hs_tmp"))) -eq 1 ] \
-   && printf 'SKIP  b ([host] root, 2 assertion(s))\n' > "$hs_tmp" && [ $((2 - $(host_skips "$hs_tmp"))) -eq 0 ]; then
-  note "host-skip band self-check: tagged skip tolerated, untagged skip counted"
+hs_line() { printf 'SKIP  %-42s (%s, %s assertion(s))%s\n' "$1" "$2" "$3" "$4"; } # label reason n tag
+{ hs_line a r 1 ""; hs_line b root 2 " [host]"; hs_line "x ([host] y" r 4 ""; } > "$hs_tmp"
+if [ "$(host_skips "$hs_tmp")" = 2 ]; then
+  note "host-skip band self-check: tagged tolerated, untagged and forged-label counted"
 else
-  note "MATRIX FAIL: host-skip band self-check"
+  note "MATRIX FAIL: host-skip band self-check (got $(host_skips "$hs_tmp") tagged, want 2)"
   matrix_fail=1
 fi
 

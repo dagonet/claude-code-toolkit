@@ -317,19 +317,21 @@ expect() { # <label> <want> <got>
 # A block whose backend is absent on this host SKIPs: reported, never a
 # failure, and the tally counts ASSERTIONS (not blocks) so the totals still
 # add up to the same suite size on every host.
-skip() { # <label> <reason> [assertion-count]
-  skipped=$((skipped + ${3:-1}))
-  printf 'SKIP  %-42s (%s, %s assertion(s))\n' "$1" "$2" "${3:-1}"
+_skip() { # <tag> <label> <reason> [assertion-count]
+  case "$2" in
+    *'[host]'*) printf 'FAIL  %-42s (a skip label must never carry the [host] marker)\n' "$2"; fail=$((fail + 1)); return 0 ;;
+  esac
+  skipped=$((skipped + ${4:-1}))
+  printf 'SKIP  %-42s (%s, %s assertion(s))%s\n' "$2" "$3" "${4:-1}" "$1"
 }
+skip() { _skip "" "$@"; } # <label> <reason> [assertion-count]
 
 # A skip whose reason is a property of the HOST (root/chmod, filesystem case or
 # mode, locale, platform-only, symlink/mkfifo/fsutil/Git Bash availability), not
-# a missing parser. The fixed "[host] " marker lets the parser matrix tolerate
-# it in the node band while any untagged skip there still fails. Counted in the
-# summary line like every other skip.
-skip_host() { # <label> <reason> [assertion-count]
-  skip "$1" "[host] $2" "${3:-1}"
-}
+# a missing parser. The fixed " [host]" SUFFIX (end of line, where no label can
+# forge it) lets the parser matrix tolerate it in the node band while any
+# untagged skip there still fails. Counted in the summary line like every skip.
+skip_host() { _skip " [host]" "$@"; } # <label> <reason> [assertion-count]
 
 # Probed here, not further down, because the first block that needs them is
 # read-size-gate's -- six hooks (read-size-gate, bash-output-guard,
@@ -9969,7 +9971,7 @@ cd sub; ls
 V2_CMDS
   expect "V2: same exit as v4.3.1 on every listed command" "" "$v2_diff"
 else
-  skip_host "V2: same exit as v4.3.1 on every listed command" "commit 5d3d789 is not in this clone" 1
+  skip "V2: same exit as v4.3.1 on every listed command" "commit 5d3d789 is not in this clone" 1
 fi
 # F2: the fast path's no-op record costs one git call and no date/wc/tr/find/mkdir
 v2_spawns 'ls -la' >/dev/null
