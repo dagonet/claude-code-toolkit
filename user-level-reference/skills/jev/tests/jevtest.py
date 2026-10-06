@@ -83,7 +83,9 @@ class Sandbox:
         return sorted(os.listdir(d)) if os.path.isdir(d) else []
 
     def lib_cli(self, stype):
-        cp = subprocess.run(["bash", LIB, stype, self.repo], capture_output=True, env=self.env(), timeout=20)
+        env = self.env()
+        bash = shutil.which("bash", path=env.get("PATH")) or "bash"  # not System32's WSL launcher on Windows
+        cp = subprocess.run([bash, LIB, stype, self.repo], capture_output=True, env=env, timeout=20)
         return cp.stdout.decode("utf-8", "replace").strip()
 
 

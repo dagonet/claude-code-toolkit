@@ -306,12 +306,13 @@ json_fields() {
     if [ "$_jf_ok" != 1 ] || [ "$_jf_c" != ok ]; then continue; fi
     JSON_PARSER=$_jf_b
     [ "$_jf_v" = V ] || return 1
-    # the old `$(json_get ...)` stripped every trailing newline; so does this
+    # the old `$(json_get ...)` stripped every trailing newline (and, on Windows, the CR that
+    # jq.exe's text-mode stdout puts before it); so does this
     # (case + ${x%?} is linear; a `[ "${x%$'\n'}" != "$x" ]` loop is not)
     _jf_i=0
     while [ "$_jf_i" -lt "$_jf_n" ]; do
       _jf_x=${_jf_t[_jf_i]}
-      while :; do case "$_jf_x" in *$'\n') _jf_x=${_jf_x%?} ;; *) break ;; esac; done
+      while :; do case "$_jf_x" in *$'\n'|*$'\r') _jf_x=${_jf_x%?} ;; *) break ;; esac; done
       JF[_jf_i]=$_jf_x
       _jf_i=$((_jf_i + 1))
     done

@@ -38,6 +38,8 @@ the absolute numbers as host-local; the ~10x ratio is the part that travels.
 
 - **Build**: `bash scripts/verify-template-consistency.sh`
 - **Test**: `bash scripts/verify-template-consistency.sh`
+- **Test timeout**: 1200
+<!-- The 540 s default refused v4.4.0's commits on the Windows release host: the same Test measured 299 s on 2026-10-05 and 755-1648 s on 2026-10-06 (machine variance -- ed18b34 itself took 828 s that day). 1200 is the user's choice (2026-10-06). -->
 - **Format**: none — every file is LF-only Markdown or shell; `verify-template-consistency.sh` asserts the line endings
 - **Lint**: none — see Build
 - **Gate**: `bash scripts/verify-template-consistency.sh && bash scripts/test-hooks.sh && bash scripts/test-server.sh`

@@ -133,6 +133,18 @@ natpath() { # <path> -> the same path as the platform spells it
   fi
 }
 
+# Windows (Git Bash/MSYS, Cygwin) semantics the Linux fixtures assume away: shell
+# programs are `*.exe` (a glob must spell the suffix), `ln -s` copies unless asked
+# for a native link, and `/tmp` spells differently to a native process (natpath).
+# T_EXE is empty off Windows, so the Linux spellings are unchanged.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) T_MSYS=1; T_EXE=.exe ;;
+  *) T_MSYS=0; T_EXE= ;;
+esac
+tln() { # <target> <link> -- a real symlink (native on Windows); fails when the host cannot make one
+  if [ "$T_MSYS" = 1 ]; then MSYS=winsymlinks:nativestrict ln -s "$1" "$2" 2>/dev/null; else ln -s "$1" "$2"; fi
+}
+
 nchars() { # <count> <char> -- <count> copies of <char> (replaces "X".repeat(n))
   [ "${1:-0}" -gt 0 ] || return 0
   printf '%*s' "$1" '' | tr ' ' "$2"
@@ -9835,9 +9847,13 @@ V1M2=$(v1_repo v1m2 -); printf '#!/bin/sh\n# see claude-code-toolkit pre-push sh
 expect "V1: a hook that only mentions the marker: --install exits 1" 1 "$(v1_install "$V1M2")"
 expect "V1: a foreign-hook message says where the line goes" yes "$(v1_yes grep -qF '"$refs"' "$TMPROOT/v1i.err")"
 expect "V1: a hook that only mentions the marker is untouched" yes "$(v1_yes cmp -s "$TMPROOT/v1m2.before" "$V1M2/.git/hooks/pre-push")"
-V1Y=$(v1_repo v1y -); ln -s "$TMPROOT/v1-nowhere" "$V1Y/.git/hooks/pre-push"
-expect "V1: a dangling symlink pre-push: --install exits 1" 1 "$(v1_install "$V1Y")"
-expect "V1: a dangling symlink pre-push is still a symlink" yes "$(v1_yes [ -L "$V1Y/.git/hooks/pre-push" ])"
+V1Y=$(v1_repo v1y -)
+if tln "$TMPROOT/v1-nowhere" "$V1Y/.git/hooks/pre-push" && [ -L "$V1Y/.git/hooks/pre-push" ]; then
+  expect "V1: a dangling symlink pre-push: --install exits 1" 1 "$(v1_install "$V1Y")"
+  expect "V1: a dangling symlink pre-push is still a symlink" yes "$(v1_yes [ -L "$V1Y/.git/hooks/pre-push" ])"
+else
+  skip "V1: a dangling symlink pre-push" "this host cannot create a symlink" 2
+fi
 # ---- end v4.3.2 V1
 
 # ---- v4.3.2 V2: word-matched fast-path triggers and a cheap no-op record ----
@@ -9875,9 +9891,10 @@ check "V2: x/. c.sh gated"                     hooks/pre-commit-test.sh 2 "$(mkj
 check "V2: ./. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash './. c.sh' "$V2R")"
 check "V2: ls;. c.sh gated"                    hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls;. c.sh' "$V2R")"
 check "V2: ls&&. c.sh gated"                   hooks/pre-commit-test.sh 2 "$(mkjson Bash 'ls&&. c.sh' "$V2R")"
-check "V2: /bin/[s]h c.sh gated"               hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/[s]h c.sh' "$V2R")"
-check "V2: /bin/?h c.sh gated"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash '/bin/?h c.sh' "$V2R")"
-check "V2: /usr/bin/[b]ash c.sh gated"         hooks/pre-commit-test.sh 2 "$(mkjson Bash '/usr/bin/[b]ash c.sh' "$V2R")"
+# (a glob must match a real file: on Windows the shells are sh.exe/bash.exe, so the .exe spelling is the one that runs)
+check "V2: /bin/[s]h c.sh gated"               hooks/pre-commit-test.sh 2 "$(mkjson Bash "/bin/[s]h$T_EXE c.sh" "$V2R")"
+check "V2: /bin/?h c.sh gated"                 hooks/pre-commit-test.sh 2 "$(mkjson Bash "/bin/?h$T_EXE c.sh" "$V2R")"
+check "V2: /usr/bin/[b]ash c.sh gated"         hooks/pre-commit-test.sh 2 "$(mkjson Bash "/usr/bin/[b]ash$T_EXE c.sh" "$V2R")"
 check "V2: C:\\Tools\\pwsh.exe -File c.ps1 gated" hooks/pre-commit-test.sh 2 "$(mkjson Bash 'C:\Tools\pwsh.exe -File c.ps1' "$V2R")"
 # F1 differential: the v4.3.1 hook and this one give the SAME exit on every listed command
 # (v4.3.2 6b: `git com\mit`, `SH c.sh` and `bash.exe c.sh` were allowed in v4.3.1 and are refused now -- see V3)
@@ -10566,8 +10583,16 @@ c4g_np="$TMPROOT/c4gnp"; mkdir -p "$c4g_np"
 for c4g_t in sh bash git grep sed tr head tail cut cat wc stat date mktemp dirname basename sort uniq mkdir rm ls env find touch cp expr awk; do
   c4g_r=$(command -v "$c4g_t" 2>/dev/null) && ln -sf "$c4g_r" "$c4g_np/$c4g_t"
 done
+# On MSYS a linked/copied tool outside /usr/bin cannot load msys-2.0.dll (the hook would die for that reason,
+# not for the missing parser), so the MSYS PATH is /usr/bin itself; no parser lives there (checked).
+c4g_npp=$c4g_np
+if [ "$T_MSYS" = 1 ]; then
+  c4g_npp=/usr/bin
+  [ -z "$(PATH=/usr/bin; command -v node python3 jq 2>/dev/null)" ] || c4g_npp=
+fi
 for c4g_h in no-push-main gate-before-merge; do
-  mkjson Bash 'ls -la' "$c4g_repo" | env PATH="$c4g_np" "$(command -v bash)" "$ROOT/hooks/$c4g_h.sh" >/dev/null 2>&1
+  if [ -z "$c4g_npp" ]; then skip "C4 $c4g_h: no parser on PATH still refuses ls -la" "a JSON parser sits in /usr/bin on this host"; continue; fi
+  mkjson Bash 'ls -la' "$c4g_repo" | env PATH="$c4g_npp" "$(command -v bash)" "$ROOT/hooks/$c4g_h.sh" >/dev/null 2>&1
   expect "C4 $c4g_h: no parser on PATH still refuses ls -la" 2 "$?"
 done
 # Spawn rows. (a) `ls -la` never sources lib/git-cmd.sh: a hooks copy whose copy of it begins
@@ -10598,10 +10623,11 @@ c4g dt03 2 2 $'x/. run'
 c4g dt04 2 2 $'ls\n./. run'
 # Fix round 2: a glob character may name a shell (gc_script_body splits segments unquoted, which
 # expands globs), so `*`, `?`, `[` continue to the full check; expected = ddf3ea6's answers.
-c4g gl01 2 2 $'/bin/ba[s]h run'
-c4g gl02 2 2 $'/bin/?h run'
-c4g gl03 2 2 $'ls && /bin/?h run'
-c4g gl04 2 2 $'env /bin/ba[s]h run'
+# (T_EXE: the shells are sh.exe/bash.exe on Windows, where a glob that names no real file never runs.)
+c4g gl01 2 2 "/bin/ba[s]h$T_EXE run"
+c4g gl02 2 2 "/bin/?h$T_EXE run"
+c4g gl03 2 2 "ls && /bin/?h$T_EXE run"
+c4g gl04 2 2 "env /bin/ba[s]h$T_EXE run"
 # Fix round 3: BASHOPTS=extglob in the environment enables extglob, so gc_script_body's unquoted
 # word split expands `ba@(s)h` to `bash`; every extglob form contains `(`, so `(` continues.
 c4g_ext() { # <id> <no-push-main exit> <gate-before-merge exit> <command> (run under BASHOPTS=extglob)
@@ -10611,8 +10637,8 @@ c4g_ext() { # <id> <no-push-main exit> <gate-before-merge exit> <command> (run u
   printf '%s' "$c4g_j" | env BASHOPTS=extglob bash "$ROOT/hooks/gate-before-merge.sh" >/dev/null 2>&1
   expect "C4 gate-before-merge: BASHOPTS=extglob $1" "$3" "$?"
 }
-c4g_ext ex01 2 2 $'/bin/ba@(s)h run'
-c4g_ext ex02 0 2 $'ls && /bin/ba@(s)h mrg'
+c4g_ext ex01 2 2 "/bin/ba@(s)h$T_EXE run"
+c4g_ext ex02 0 2 "ls && /bin/ba@(s)h$T_EXE mrg"
 c4gps() { # <id> <no-push-main exit> <gate-before-merge exit> <command> (PowerShell tool)
   c4g_j=$(mkjson PowerShell "$4" "$c4g_repo")
   check "C4 no-push-main: PowerShell $1" hooks/no-push-main.sh "$2" "$c4g_j"
@@ -10793,7 +10819,7 @@ expect "C1 (d): the old shell-form no-push-main registration is gone" 0 "$(grep 
 expect "C1 (d): the file has no placeholders" 0 "$(grep -c '@BASH@\|@HOOKS@' "$C1WS")"
 expect "C1 (d): a 'kept foreign hook' line names pressure-gate" 1 "$(grep -c '^kept foreign hook: bash /opt/agent-dashboard/pressure-gate.sh$' "$C1W/out1")"
 json_valid "$(cat "$C1WS")"; expect "C1 (d): the written file parses" 0 "$?"
-expect "C1 (d): the rendered no-push-main entry is in the file" 1 "$(grep -c "$C1W/home/.claude/hooks/no-push-main.sh" "$C1WS")"
+expect "C1 (d): the rendered no-push-main entry is in the file" 1 "$(grep -c "$(natpath "$C1W")/home/.claude/hooks/no-push-main.sh" "$C1WS")"
 cp "$C1WS" "$C1W/after1"
 HOME="$C1W/home" bash "$C1RUH" --write --settings "$C1WS" >"$C1W/out2" 2>"$C1W/err2"
 expect "C1 (d): a second --write exits 0" 0 "$?"
@@ -10817,7 +10843,7 @@ for c1_t in "$C1W/Windows/System32/bash.exe" "$C1W/Git/bin/bash.exe" "$C1W/does/
 done
 RUH_TEST_BASH="$C1W/Git/usr/bin/bash.exe" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rb.out" 2>"$C1W/rb.err"
 expect "C1 (e): accepts a usr/bin/bash.exe path" 0 "$?"
-expect "C1 (e): ... and renders it as the exec program" 1 "$([ "$(grep -cF "\"command\": \"$C1W/Git/usr/bin/bash.exe\"" "$C1W/rb.out")" -ge 1 ] && echo 1 || echo 0)"
+expect "C1 (e): ... and renders it as the exec program" 1 "$([ "$(grep -cF "\"command\": \"$(natpath "$C1W")/Git/usr/bin/bash.exe\"" "$C1W/rb.out")" -ge 1 ] && echo 1 || echo 0)"
 
 # (f) C5 step-aside: the global copy steps aside only when the project REGISTERS its own copy
 c1_pset() { # <state> <hook> <dir> -- builds the project dir for that state
@@ -10884,7 +10910,7 @@ expect "C1 (h): --write over a verbatim reference copy exits 0" 0 "$?"
 expect "C1 (h): ... leaves 0 @NAME@ placeholders" 0 "$(grep -Ec '@[A-Z]+@' "$c1_hh/.claude/settings.json")"
 expect "C1 (h): ... keeps no 'foreign' hook (the copy was the toolkit's)" 0 "$(grep -c '^kept foreign hook' "$c1_hh/out")"
 for c1_x in $C1HOOKS; do
-  expect "C1 (h): $c1_x has exactly one entry after --write over the copy" 1 "$(grep -cF "\"$c1_hh/.claude/hooks/$c1_x.sh\"" "$c1_hh/.claude/settings.json")"
+  expect "C1 (h): $c1_x has exactly one entry after --write over the copy" 1 "$(grep -cF "\"$(natpath "$c1_hh")/.claude/hooks/$c1_x.sh\"" "$c1_hh/.claude/settings.json")"
 done
 expect "C1 (h): the date hook is not duplicated" 1 "$(grep -c "date '+Current local time" "$c1_hh/.claude/settings.json")"
 # a placeholder that survives (a foreign entry carries one) is refused, file untouched
@@ -10897,20 +10923,31 @@ expect "C1 (h): ... naming the placeholder" 1 "$(grep -c 'placeholder' "$c1_hh/e
 
 # (i) file mode survives --write
 c1_hh=$(c1_newhome mode); cp "$C1REF" "$c1_hh/.claude/settings.json"; chmod 600 "$c1_hh/.claude/settings.json"
-HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
-expect "C1 (i): mode 600 survives --write" 600 "$(c1_mode "$c1_hh/.claude/settings.json")"
+if [ "$(c1_mode "$c1_hh/.claude/settings.json")" = 600 ]; then   # a noacl mount (Windows /tmp) ignores chmod
+  HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+  expect "C1 (i): mode 600 survives --write" 600 "$(c1_mode "$c1_hh/.claude/settings.json")"
+else
+  skip "C1 (i): mode 600 survives --write" "chmod 600 does not take effect on this filesystem"
+fi
 # (j) a symlinked settings.json stays a symlink and its target gets the change
 c1_hh=$(c1_newhome link); mkdir -p "$c1_hh/real"; cp "$C1REF" "$c1_hh/real/settings.json"
-ln -s "$c1_hh/real/settings.json" "$c1_hh/.claude/settings.json"
-HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
-expect "C1 (j): --write exits 0 through a symlink" 0 "$?"
-expect "C1 (j): settings.json is still a symlink" 1 "$([ -L "$c1_hh/.claude/settings.json" ] && echo 1 || echo 0)"
-expect "C1 (j): the symlink target got the rendered hooks" 0 "$(grep -Ec '@[A-Z]+@' "$c1_hh/real/settings.json")"
-expect "C1 (j): ... with the absolute hook path" 1 "$(grep -cF "\"$c1_hh/.claude/hooks/no-push-main.sh\"" "$c1_hh/real/settings.json")"
-c1_hh=$(c1_newhome dangle); ln -s "$c1_hh/nowhere.json" "$c1_hh/.claude/settings.json"
-HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
-expect "C1 (j): a dangling symlink is refused (exit 1)" 1 "$?"
-expect "C1 (j): ... and still a symlink" 1 "$([ -L "$c1_hh/.claude/settings.json" ] && echo 1 || echo 0)"
+if tln "$c1_hh/real/settings.json" "$c1_hh/.claude/settings.json" && [ -L "$c1_hh/.claude/settings.json" ]; then
+  HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+  expect "C1 (j): --write exits 0 through a symlink" 0 "$?"
+  expect "C1 (j): settings.json is still a symlink" 1 "$([ -L "$c1_hh/.claude/settings.json" ] && echo 1 || echo 0)"
+  expect "C1 (j): the symlink target got the rendered hooks" 0 "$(grep -Ec '@[A-Z]+@' "$c1_hh/real/settings.json")"
+  expect "C1 (j): ... with the absolute hook path" 1 "$(grep -cF "\"$(natpath "$c1_hh")/.claude/hooks/no-push-main.sh\"" "$c1_hh/real/settings.json")"
+else
+  skip "C1 (j): symlinked settings.json" "this host cannot create a symlink" 4
+fi
+c1_hh=$(c1_newhome dangle)
+if tln "$c1_hh/nowhere.json" "$c1_hh/.claude/settings.json" && [ -L "$c1_hh/.claude/settings.json" ]; then
+  HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
+  expect "C1 (j): a dangling symlink is refused (exit 1)" 1 "$?"
+  expect "C1 (j): ... and still a symlink" 1 "$([ -L "$c1_hh/.claude/settings.json" ] && echo 1 || echo 0)"
+else
+  skip "C1 (j): dangling symlinked settings.json" "this host cannot create a symlink" 2
+fi
 
 # (k) a FIFO at the project's .claude/settings.json must not hang the step-aside (the global copy runs)
 c1_list=$(awk -F'\t' '$6 ~ /no-push-main\.sh$/' "$TMPROOT/c1-list.tsv")
@@ -10965,7 +11002,7 @@ fi
 # (o) Windows spelling by reasoning: cygpath -m /usr/bin/bash has no .exe; Cygwin's bin/bash.exe is fine
 mkdir -p "$C1W/Git/usr/bin" "$C1W/cygwin64/bin"; : > "$C1W/Git/usr/bin/bash.exe"; : > "$C1W/cygwin64/bin/bash.exe"
 RUH_TEST_OSTYPE=msys RUH_TEST_BASH="$C1W/Git/usr/bin/bash" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rw.out" 2>"$C1W/rw.err"
-expect "C1 (o): MSYS, bash path without .exe: accepted, rendered with .exe" "0:1" "$?:$([ "$(grep -cF "\"command\": \"$C1W/Git/usr/bin/bash.exe\"" "$C1W/rw.out")" -ge 1 ] && echo 1 || echo 0)"
+expect "C1 (o): MSYS, bash path without .exe: accepted, rendered with .exe" "0:1" "$?:$([ "$(grep -cF "\"command\": \"$(natpath "$C1W")/Git/usr/bin/bash.exe\"" "$C1W/rw.out")" -ge 1 ] && echo 1 || echo 0)"
 RUH_TEST_OSTYPE=cygwin RUH_TEST_BASH="$C1W/cygwin64/bin/bash.exe" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rw.out" 2>"$C1W/rw.err"
 expect "C1 (o): Cygwin's bin/bash.exe is accepted (not Git's launcher)" 0 "$?"
 RUH_TEST_OSTYPE=msys RUH_TEST_BASH="$C1W/Windows/System32/bash.exe" HOME="$C1H" bash "$C1RUH" --print >/dev/null 2>&1
@@ -11050,7 +11087,7 @@ c2b_run "$C2HS" -
 expect "C2b: rendered user settings under a HOME with a space -> no output, exit 0" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
 mv "$C2HS/.claude/hooks/deny-secret-reads.sh" "$C2HS/deny-secret-reads.sh.away"
 c2b_run "$C2HS" - --report
-expect "C2b: ... a deleted user hook is listed with its whole spaced path" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -cF "MISSING: $C2HS/.claude/hooks/deny-secret-reads.sh")"
+expect "C2b: ... a deleted user hook is listed with its whole spaced path" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -cF "MISSING: $(natpath "$C2HS")/.claude/hooks/deny-secret-reads.sh")"
 mv "$C2HS/deny-secret-reads.sh.away" "$C2HS/.claude/hooks/deny-secret-reads.sh"
 
 # an unrendered @BASH@ (a hand-copied reference) is reported; --report exits 1
@@ -11165,7 +11202,7 @@ expect "C2b (b): --write over a verbatim reference copy names each replaced tool
 expect "C2b (b): ... and keeps no foreign hook" 0 "$(grep -c '^kept foreign hook' "$c2b_hh/out")"
 HOME="$c2b_hh" bash "$C2RUH" --write >"$c2b_hh/out2" 2>/dev/null
 expect "C2b (b): an idempotent re-run replaces nothing" 0 "$(grep -c '^replaced toolkit hook: ' "$c2b_hh/out2")"
-expect "C2b (d): verify-hooks has exactly one entry after --write" 1 "$(grep -cF "\"$c2b_hh/.claude/hooks/verify-hooks.sh\"" "$c2b_hh/.claude/settings.json")"
+expect "C2b (d): verify-hooks has exactly one entry after --write" 1 "$(grep -cF "\"$(natpath "$c2b_hh")/.claude/hooks/verify-hooks.sh\"" "$c2b_hh/.claude/settings.json")"
 # (e) no JSON parser on PATH (v4.4.0 carried minor): NO PARSER is reported, and the footer must not claim a MISSING PROGRAM entry
 C2NP="$TMPROOT/c2b-nopath"; rm -rf "$C2NP"; mkdir -p "$C2NP"
 for c2np_t in sh bash grep sed tr head tail cut cat wc stat date mktemp dirname basename env sort uniq awk ls rm mkdir cp; do
@@ -11173,10 +11210,20 @@ for c2np_t in sh bash grep sed tr head tail cut cat wc stat date mktemp dirname 
 done
 C2NH="$TMPROOT/c2b-homenp"; rm -rf "$C2NH"; mkdir -p "$C2NH/.claude/hooks"
 c2b_exec_settings "$C2NH/.claude/settings.json" "$C2BASH" "$C2NH/.claude/hooks/x.sh"
+# On MSYS a linked/copied tool outside /usr/bin cannot load msys-2.0.dll, so the PATH is /usr/bin itself
+# (no parser lives there; checked).
+if [ "$T_MSYS" = 1 ]; then
+  C2NP=/usr/bin
+  [ -z "$(PATH=/usr/bin; command -v node python3 jq 2>/dev/null)" ] || C2NP=
+fi
+if [ -z "$C2NP" ]; then
+  skip "C2b (e): no parser on PATH -> NO PARSER entry and footer" "a JSON parser sits in /usr/bin on this host" 3
+else
 C2OUT=$(env -u CLAUDE_PROJECT_DIR PATH="$C2NP" HOME="$C2NH" "$C2BASH" "$C2VH" </dev/null 2>/dev/null); C2RC=$?
 expect "C2b (e): no parser on PATH -> exit 0 and a NO PARSER entry" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^NO PARSER: ')"
 expect "C2b (e): ... the footer carries the NO PARSER sentence" 1 "$(printf '%s\n' "$C2OUT" | grep -cxF 'NO PARSER means exec-form entries are unchecked: every check behind them may be off until a parser (node, python3 or jq) is available.')"
 expect "C2b (e): ... and does not claim a MISSING PROGRAM entry" 0 "$(printf '%s\n' "$C2OUT" | grep -c 'A MISSING PROGRAM entry')"
+fi
 # the NUL warning comes from the shell reading the command substitution: a settings file with \u0000 must not leak it
 c2b_p=$(c2b_proj nul)
 printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash x\\u0000y","args":["-c","true","%s/hooks/model-floor.sh"]}]}]}}\n' "$c2b_p" > "$c2b_p/.claude/settings.json"

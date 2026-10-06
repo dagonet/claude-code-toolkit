@@ -20,6 +20,7 @@ import hashlib  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
+import shutil  # noqa: E402
 import subprocess  # noqa: E402
 from collections import Counter  # noqa: E402
 
@@ -329,7 +330,9 @@ def _routing_live(env, top, lib):
     if not lib:
         return False
     try:
-        cp = subprocess.run(["bash", lib, "general-purpose", top], capture_output=True, timeout=20, env=env)
+        # a bare "bash" resolves to System32's WSL launcher on Windows; use the PATH's (Git) bash like jev_route does
+        bash = shutil.which("bash", path=env.get("PATH")) or "bash"
+        cp = subprocess.run([bash, lib, "general-purpose", top], capture_output=True, timeout=20, env=env)
     except (OSError, subprocess.SubprocessError):
         return False
     fields = cp.stdout.decode("utf-8", "replace").split()
