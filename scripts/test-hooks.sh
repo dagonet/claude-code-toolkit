@@ -322,6 +322,15 @@ skip() { # <label> <reason> [assertion-count]
   printf 'SKIP  %-42s (%s, %s assertion(s))\n' "$1" "$2" "${3:-1}"
 }
 
+# A skip whose reason is a property of the HOST (root/chmod, filesystem case or
+# mode, locale, platform-only, symlink/mkfifo/fsutil/Git Bash availability), not
+# a missing parser. The fixed "[host] " marker lets the parser matrix tolerate
+# it in the node band while any untagged skip there still fails. Counted in the
+# summary line like every other skip.
+skip_host() { # <label> <reason> [assertion-count]
+  skip "$1" "[host] $2" "${3:-1}"
+}
+
 # Probed here, not further down, because the first block that needs them is
 # read-size-gate's -- six hooks (read-size-gate, bash-output-guard,
 # enforce-delegation, retro-ledger, retro-brief, enforce-agent-contract's
@@ -1017,7 +1026,7 @@ if [ -n "$S9LOC" ]; then
   s9_rec=$(jfield "$(cat "$(precommitnoopfile "$OKREPO" unknown)")" cmd_len)
   expect "cmd_len: recipe (hook pipeline, bytes) == recorded, non-ASCII code line, UTF-8 locale" "$s9_pred" "$s9_rec"
 else
-  skip "cmd_len: recipe == recorded, non-ASCII code line, UTF-8 locale" "no C.UTF-8/en_US.UTF-8 locale on this host" 1
+  skip_host "cmd_len: recipe == recorded, non-ASCII code line, UTF-8 locale" "no C.UTF-8/en_US.UTF-8 locale on this host" 1
 fi
 
 # ===========================================================================
@@ -5677,7 +5686,7 @@ expect "no session id: WARN printed once"  "1" "$(warnruns "$NOSESS" "$NOSESS")"
 if touch -d '2 hours ago' "$ONCETMP/claude-hook-warn-read-size-gate" 2>/dev/null; then
   expect "stale session-less marker re-warns" "1" "$(warnruns "$NOSESS")"
 else
-  skip "session-less marker expiry" "touch -d unsupported here"
+  skip_host "session-less marker expiry" "touch -d unsupported here"
 fi
 # The session id lands in a FILENAME, so a value carrying a path separator or
 # `..` must not steer the marker out of the warn directory. Such a value is
@@ -6474,7 +6483,7 @@ case "$(uname -s 2>/dev/null)" in
       "$(mkjson_dcm_raw Edit file_path "claude.md" "$DCMREPO")"
     ;;
   *)
-    skip "(#23) claude.md (case-insensitive filesystem, Windows)" "not on Windows"
+    skip_host "(#23) claude.md (case-insensitive filesystem, Windows)" "not on Windows"
     ;;
 esac
 
@@ -6506,13 +6515,13 @@ if command -v fsutil.exe >/dev/null 2>&1 && fsutil.exe file setCaseSensitiveInfo
   mkdir -p "$CS/.claude"
   printf '{"manifest_version":4}\n' > "$CS/.claude/template-manifest.json"
   if [ -e "$CS/.GIT" ]; then
-    skip "#1 case-sensitive dir: .GIT still resolves" "fsutil reported success but the flag did not take" 1
+    skip_host "#1 case-sensitive dir: .GIT still resolves" "fsutil reported success but the flag did not take" 1
   else
     check "#1 claude.md on a case-SENSITIVE fs: allowed (different file)" "$DCM" 0 \
       "$(mkjson_dcm_raw Edit file_path "$CS/claude.md" "$CS")"
   fi
 else
-  skip "#1 case-sensitive fs arm" "fsutil setCaseSensitiveInfo unavailable on this host" 1
+  skip_host "#1 case-sensitive fs arm" "fsutil setCaseSensitiveInfo unavailable on this host" 1
 fi
 if [ -e "$DCMREPO/.GIT" ]; then
 check "#1 claude.md on a case-INSENSITIVE fs: denied" "$DCM" 2 \
@@ -7264,7 +7273,7 @@ UPS_RE='^Current local time: [0-2][0-9]:[0-5][0-9] \([0-9]{4}-[0-9]{2}-[0-9]{2} 
 UPS_CMD_NOLOCALE="${UPS_CMD#LC_ALL=C }"
 UPS_PRECHECK=$(LANG=de_DE.UTF-8 LC_TIME=de_DE.UTF-8 bash -c "$UPS_CMD_NOLOCALE" 2>/dev/null)
 if printf '%s' "$UPS_PRECHECK" | grep -qE '[[:space:]](Mon|Tue|Wed|Thu|Fri|Sat|Sun)\)$'; then
-  skip "time hook: one well-formed line, exit 0 (LANG=de_DE.UTF-8)" "de_DE.UTF-8 locale not installed on this host"
+  skip_host "time hook: one well-formed line, exit 0 (LANG=de_DE.UTF-8)" "de_DE.UTF-8 locale not installed on this host"
   UPS_LOCS="C"
 else
   UPS_LOCS="C de_DE.UTF-8"
@@ -8767,7 +8776,7 @@ if [ "$g1_native" = yes ]; then
   expect "G1: the Test's native grandchild had started (T1-2)" yes "$(g1_yes [ "$g1c" -gt 0 ])"
   expect "G1: the Test's native grandchild died"       "$g1c" "$g1d"
 else
-  skip "G1: the Test's native grandchild died" "no Git Bash /proc/<pid>/winpid" 1
+  skip_host "G1: the Test's native grandchild died" "no Git Bash /proc/<pid>/winpid" 1
 fi
 G1F=$(g1_repo g1fast '- **Test**: `exit 0`')
 g1_run "$G1F" "$TMPROOT/g1f.err"; expect "G1: Test inside the budget -> allowed as before" 0 "$?"
@@ -8945,7 +8954,7 @@ git -C "$G3AP" branch -M main >/dev/null 2>&1
 G3DL=$(g3_repo 'd$x')
 for g3d in "$G3AP" "$G3DL"; do
   if ! git -C "$g3d" rev-parse --git-dir >/dev/null 2>&1; then
-    skip "G3 T3-4 cwd $g3d" "git cannot open this path on this host" 3
+    skip_host "G3 T3-4 cwd $g3d" "git cannot open this path on this host" 3
     continue
   fi
   check "G3 T3-4 pre-commit-test: cwd $g3d, bash c.sh; cd <other repo>"  hooks/pre-commit-test.sh 2   "$(mkjson Bash "bash c.sh; cd $G3O" "$g3d")"
@@ -9702,7 +9711,7 @@ rm -rf "$JMGD/jev"
 # skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
 # Skipped by name (4) only where python3 is absent: the jq-only matrix config.
 echo "=== user-level-reference/skills/jev (v4.4.0 J-PY) ==="
-JPY_WANT=91
+JPY_WANT=92
 JPY_DIR="$ROOT/user-level-reference/skills/jev"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
   JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
@@ -9767,7 +9776,7 @@ expect "V1: placeholder: main refused"               refused "$(v1_hook "$V1P" "
 V1U=$(v1_repo v1u '- **Protected branches**: develop')
 chmod 000 "$V1U/PROJECT_CONTEXT.md"
 if [ -r "$V1U/PROJECT_CONTEXT.md" ]; then
-  skip "V1: unreadable PROJECT_CONTEXT.md refuses every push" "file still readable after chmod 000 (root, or Windows)" 2
+  skip_host "V1: unreadable PROJECT_CONTEXT.md refuses every push" "file still readable after chmod 000 (root, or Windows)" 2
 else
   expect "V1: unreadable PROJECT_CONTEXT.md: feature refused" refused "$(v1_hook "$V1U" "$(v1_line "$V1U" refs/heads/feature/x)")"
   expect "V1: unreadable: the message says so"       yes "$(v1_yes grep -qF 'cannot be read' "$TMPROOT/v1.err")"
@@ -9852,7 +9861,7 @@ if tln "$TMPROOT/v1-nowhere" "$V1Y/.git/hooks/pre-push" && [ -L "$V1Y/.git/hooks
   expect "V1: a dangling symlink pre-push: --install exits 1" 1 "$(v1_install "$V1Y")"
   expect "V1: a dangling symlink pre-push is still a symlink" yes "$(v1_yes [ -L "$V1Y/.git/hooks/pre-push" ])"
 else
-  skip "V1: a dangling symlink pre-push" "this host cannot create a symlink" 2
+  skip_host "V1: a dangling symlink pre-push" "this host cannot create a symlink" 2
 fi
 # ---- end v4.3.2 V1
 
@@ -9960,7 +9969,7 @@ cd sub; ls
 V2_CMDS
   expect "V2: same exit as v4.3.1 on every listed command" "" "$v2_diff"
 else
-  skip "V2: same exit as v4.3.1 on every listed command" "commit 5d3d789 is not in this clone" 1
+  skip_host "V2: same exit as v4.3.1 on every listed command" "commit 5d3d789 is not in this clone" 1
 fi
 # F2: the fast path's no-op record costs one git call and no date/wc/tr/find/mkdir
 v2_spawns 'ls -la' >/dev/null
@@ -9972,7 +9981,7 @@ expect "V2: fast path runs no mkdir once the dir exists" 0 "$(v2_spawns 'ls -la'
 if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 2 ]; }; then
   expect "V2: fast path runs no date (bash >= 4.2)"     0 "$(v2_spawns 'ls -la' date)"
 else
-  skip "V2: fast path runs no date (bash >= 4.2)" "bash ${BASH_VERSION} has no printf %(...)T" 1
+  skip_host "V2: fast path runs no date (bash >= 4.2)" "bash ${BASH_VERSION} has no printf %(...)T" 1
 fi
 # F2: the record keeps its file, its keys and their meaning
 V2F="$(gatedir "$V2R")/last-precommit-noop.unknown.json"; rm -f "$V2F"
@@ -10409,7 +10418,7 @@ done
 if [ -z "$HAVE_NODE" ]; then
   skip "C4: bash-output-guard decision rows" "no working node on this host" 4
 elif [ -z "$C4LOC" ]; then
-  skip "C4: bash-output-guard decision rows" "no C.UTF-8/en_US.UTF-8 locale on this host" 4
+  skip_host "C4: bash-output-guard decision rows" "no C.UTF-8/en_US.UTF-8 locale on this host" 4
 else
   c4_bog "12,001 chars truncate"        1 "$(yes a | head -n 12001 | tr -d '\n')"
   c4_bog "6,001 emoji truncate"         1 "$(yes '😀' | head -n 6001 | tr -d '\n')"
@@ -10591,7 +10600,7 @@ if [ "$T_MSYS" = 1 ]; then
   [ -z "$(PATH=/usr/bin; command -v node python3 jq 2>/dev/null)" ] || c4g_npp=
 fi
 for c4g_h in no-push-main gate-before-merge; do
-  if [ -z "$c4g_npp" ]; then skip "C4 $c4g_h: no parser on PATH still refuses ls -la" "a JSON parser sits in /usr/bin on this host"; continue; fi
+  if [ -z "$c4g_npp" ]; then skip_host "C4 $c4g_h: no parser on PATH still refuses ls -la" "a JSON parser sits in /usr/bin on this host"; continue; fi
   mkjson Bash 'ls -la' "$c4g_repo" | env PATH="$c4g_npp" "$(command -v bash)" "$ROOT/hooks/$c4g_h.sh" >/dev/null 2>&1
   expect "C4 $c4g_h: no parser on PATH still refuses ls -la" 2 "$?"
 done
@@ -10678,7 +10687,7 @@ if [ -z "$c4g_tr" ] && command -v localedef >/dev/null 2>&1; then
   c4g_trok tr_TR.UTF-8 && c4g_tr=tr_TR.UTF-8
 fi
 if [ -z "$c4g_tr" ]; then
-  skip "C4: git gates under tr_TR.UTF-8" "no tr_TR.UTF-8 locale on this host and localedef cannot generate one" 2
+  skip_host "C4: git gates under tr_TR.UTF-8" "no tr_TR.UTF-8 locale on this host and localedef cannot generate one" 2
 else
   for c4g_h in no-push-main gate-before-merge; do
     c4g_n=$(mkjson Bash 'GIT merge feature' "$c4g_repo" | (cd "$TMPROOT" && LOCPATH="$c4g_locpath" LC_ALL="$c4g_tr" LANG="$c4g_tr" bash "$c4g_hd/$c4g_h.sh" 2>&1 >/dev/null) | grep -c '^SOURCED$')
@@ -10927,7 +10936,7 @@ if [ "$(c1_mode "$c1_hh/.claude/settings.json")" = 600 ]; then   # a noacl mount
   HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>&1
   expect "C1 (i): mode 600 survives --write" 600 "$(c1_mode "$c1_hh/.claude/settings.json")"
 else
-  skip "C1 (i): mode 600 survives --write" "chmod 600 does not take effect on this filesystem"
+  skip_host "C1 (i): mode 600 survives --write" "chmod 600 does not take effect on this filesystem"
 fi
 # (j) a symlinked settings.json stays a symlink and its target gets the change
 c1_hh=$(c1_newhome link); mkdir -p "$c1_hh/real"; cp "$C1REF" "$c1_hh/real/settings.json"
@@ -10938,7 +10947,7 @@ if tln "$c1_hh/real/settings.json" "$c1_hh/.claude/settings.json" && [ -L "$c1_h
   expect "C1 (j): the symlink target got the rendered hooks" 0 "$(grep -Ec '@[A-Z]+@' "$c1_hh/real/settings.json")"
   expect "C1 (j): ... with the absolute hook path" 1 "$(grep -cF "\"$(natpath "$c1_hh")/.claude/hooks/no-push-main.sh\"" "$c1_hh/real/settings.json")"
 else
-  skip "C1 (j): symlinked settings.json" "this host cannot create a symlink" 4
+  skip_host "C1 (j): symlinked settings.json" "this host cannot create a symlink" 4
 fi
 c1_hh=$(c1_newhome dangle)
 if tln "$c1_hh/nowhere.json" "$c1_hh/.claude/settings.json" && [ -L "$c1_hh/.claude/settings.json" ]; then
@@ -10946,7 +10955,7 @@ if tln "$c1_hh/nowhere.json" "$c1_hh/.claude/settings.json" && [ -L "$c1_hh/.cla
   expect "C1 (j): a dangling symlink is refused (exit 1)" 1 "$?"
   expect "C1 (j): ... and still a symlink" 1 "$([ -L "$c1_hh/.claude/settings.json" ] && echo 1 || echo 0)"
 else
-  skip "C1 (j): dangling symlinked settings.json" "this host cannot create a symlink" 2
+  skip_host "C1 (j): dangling symlinked settings.json" "this host cannot create a symlink" 2
 fi
 
 # (k) a FIFO at the project's .claude/settings.json must not hang the step-aside (the global copy runs)
@@ -10959,7 +10968,7 @@ if mkfifo "$c1_pd/.claude/settings.json" 2>/dev/null && command -v timeout >/dev
   c1_exec "$C1H" "$c1_pd" "$(c1_pl no-push-main deny)" timeout 10 "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
   expect "C1 (k): FIFO at project settings.json: the global no-push-main runs and refuses (2, no timeout)" 2 "$C1RC"
 else
-  skip "C1 (k): FIFO at project settings.json" "no mkfifo/timeout on this host" 1
+  skip_host "C1 (k): FIFO at project settings.json" "no mkfifo/timeout on this host" 1
 fi
 
 # (l) a directory at the hook path: UF refuses (2), UO fails open (0)
@@ -11139,7 +11148,7 @@ if mkfifo "$c2b_p/.claude/settings.json" 2>/dev/null && command -v timeout >/dev
   C2OUT=$(env HOME="$C2HF" CLAUDE_PROJECT_DIR="$c2b_p" timeout 10 bash "$c2b_p/hooks/verify-hooks.sh" </dev/null 2>/dev/null); C2RC=$?
   expect "C2b: a FIFO at project settings.json and a directory at the user one: exit 0 (no hang)" 0 "$C2RC"
 else
-  skip "C2b: FIFO at settings.json" "no mkfifo/timeout on this host" 1
+  skip_host "C2b: FIFO at settings.json" "no mkfifo/timeout on this host" 1
 fi
 
 # registrations
@@ -11177,7 +11186,7 @@ if [ -p "$c2b_p/.claude/settings.json" ] && command -v timeout >/dev/null 2>&1; 
   c2b_exec "$C2HU" "$c2b_p" '{}' timeout 10 "$c2b_cmd" "$c2b_a1" "$c2b_a2" "$c2b_a3"
   expect "C2b: a FIFO at the project settings.json: the user-level entry runs, no hang" "0:1" "$C2ERC:$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
 else
-  skip "C2b: FIFO at project settings.json (user-level step-aside)" "no mkfifo/timeout on this host" 1
+  skip_host "C2b: FIFO at project settings.json (user-level step-aside)" "no mkfifo/timeout on this host" 1
 fi
 mv "$C2HU/.claude/hooks/verify-hooks.sh.keep" "$C2HU/.claude/hooks/verify-hooks.sh"
 
@@ -11193,7 +11202,7 @@ if mkfifo "$c2b_hh/.claude/settings.json" 2>/dev/null && command -v timeout >/de
   HOME="$c2b_hh" timeout 10 bash "$C2RUH" --write >"$c2b_hh/out" 2>"$c2b_hh/err"
   expect "C2b (a): --write refuses (exit 1, no hang) a FIFO at settings.json" 1 "$?"
 else
-  skip "C2b (a): FIFO at settings.json" "no mkfifo/timeout on this host" 1
+  skip_host "C2b (a): FIFO at settings.json" "no mkfifo/timeout on this host" 1
 fi
 # (b) replaced toolkit hooks are named; an idempotent re-run names none
 c2b_hh=$(c2b_newhome repl); cp "$C2REF" "$c2b_hh/.claude/settings.json"
@@ -11217,7 +11226,7 @@ if [ "$T_MSYS" = 1 ]; then
   [ -z "$(PATH=/usr/bin; command -v node python3 jq 2>/dev/null)" ] || C2NP=
 fi
 if [ -z "$C2NP" ]; then
-  skip "C2b (e): no parser on PATH -> NO PARSER entry and footer" "a JSON parser sits in /usr/bin on this host" 3
+  skip_host "C2b (e): no parser on PATH -> NO PARSER entry and footer" "a JSON parser sits in /usr/bin on this host" 3
 else
 C2OUT=$(env -u CLAUDE_PROJECT_DIR PATH="$C2NP" HOME="$C2NH" "$C2BASH" "$C2VH" </dev/null 2>/dev/null); C2RC=$?
 expect "C2b (e): no parser on PATH -> exit 0 and a NO PARSER entry" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^NO PARSER: ')"

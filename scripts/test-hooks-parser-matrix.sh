@@ -90,6 +90,25 @@ matrix_fail=0
 
 note() { printf '%s\n' "$*"; }
 
+# Assertions skipped as declared host facts: SKIP lines whose reason starts with
+# the fixed "[host] " marker (skip_host in test-hooks.sh). Prints their sum.
+host_skips() { # <suite output file>
+  grep '^SKIP  .*(\[host\] ' "$1" 2>/dev/null \
+    | sed -n 's/.*, \([0-9][0-9]*\) assertion(s))$/\1/p' | awk '{ n += $1 } END { print n + 0 }'
+}
+
+# Two-sided self-check of the node band: a [host] skip is tolerated, an
+# untagged one is not (a summary count of 3 with 2 tagged leaves 1 untagged).
+hs_tmp="$OUTDIR/selfcheck.out"
+printf 'SKIP  a (r, 1 assertion(s))\nSKIP  b ([host] root, 2 assertion(s))\n' > "$hs_tmp"
+if [ "$(host_skips "$hs_tmp")" = 2 ] && [ $((3 - $(host_skips "$hs_tmp"))) -eq 1 ] \
+   && printf 'SKIP  b ([host] root, 2 assertion(s))\n' > "$hs_tmp" && [ $((2 - $(host_skips "$hs_tmp"))) -eq 0 ]; then
+  note "host-skip band self-check: tagged skip tolerated, untagged skip counted"
+else
+  note "MATRIX FAIL: host-skip band self-check"
+  matrix_fail=1
+fi
+
 # EVERY PATH directory that provides <tool>, not just the first (MSYS spelling).
 #
 # `command -v` alone is not enough and this is measured, not defensive: hiding
@@ -212,13 +231,19 @@ run_config() {
     # The unrestricted configuration: 0 is the ONLY correct answer, so it is
     # asserted EXACTLY. A band here would accept 15 skips as "in band (~0)",
     # which is precisely where a silently-skipping new fixture would hide.
-    if [ "$cfg_skip" -ne 0 ]; then
-      note "  MATRIX FAIL: $cfg_label skipped $cfg_skip, expected exactly 0 — with every"
-      note "               parser present nothing may skip; a skip here is a fixture that"
-      note "               never runs anywhere."
+    # Skips tagged "[host] " by test-hooks.sh's skip_host are declared host
+    # facts (root, fs case/mode, locale, symlink, platform): reported, not
+    # counted. Only UNTAGGED skips must be 0.
+    cfg_host=$(host_skips "$cfg_out")
+    cfg_untagged=$((cfg_skip - cfg_host))
+    [ "$cfg_host" -eq 0 ] || note "  info: $cfg_host skipped assertion(s) are declared host facts ([host]), not counted against the band"
+    if [ "$cfg_untagged" -ne 0 ]; then
+      note "  MATRIX FAIL: $cfg_label skipped $cfg_untagged untagged ($cfg_skip total, $cfg_host [host]), expected exactly 0 — with every"
+      note "               parser present nothing may skip but declared host facts; an untagged"
+      note "               skip here is a fixture that never runs anywhere."
       matrix_fail=$((matrix_fail + 1))
     else
-      note "  skip count 0 — exact, as required with every parser present"
+      note "  untagged skip count 0 — exact, as required with every parser present"
     fi
   elif [ "$cfg_skip" -eq 0 ]; then
     note "  MATRIX FAIL: $cfg_label skipped 0 assertions — a restricted run that"
