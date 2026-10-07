@@ -146,7 +146,9 @@ if isinstance(h, dict):
 sys.stdout.buffer.write(("".join(l + "\n" for l in out)).encode("utf-8"))
 ' < "$1" 2>/dev/null ;;
     jq)
-      jq -r '
+      # jq.exe writes text-mode CRLF; -b (jq >= 1.7) keeps LF so a trailing CR never lands in a path
+      vh_jb=; jq -b -n 1 >/dev/null 2>&1 && vh_jb=-b
+      jq $vh_jb -r '
         def c: tostring | gsub("[\t\r\n\u001f]"; " ");
         (.hooks // {}) | if type == "object" then
           .[] | arrays[] | objects | (.hooks // []) | arrays[] | objects

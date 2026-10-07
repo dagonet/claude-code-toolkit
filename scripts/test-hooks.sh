@@ -11010,6 +11010,26 @@ else
   skip "C1 (n): jq multi-document refusal" "no jq on this host" 2
 fi
 
+# (n2) jq.exe emulation: a fake jq first on PATH turns every LF into CRLF unless -b/--binary is passed (native Windows jq is text-mode)
+c1_hh=$(c1_newhome jqcr)
+if have_backend jq; then
+  mkdir -p "$c1_hh/fakejq"
+  { printf '%s\n' '#!/bin/sh' "REAL='$(command -v jq)'" 'for a in "$@"; do case "$a" in -b|--binary) exec "$REAL" "$@" ;; esac; done' \
+      't=$(mktemp); "$REAL" "$@" > "$t"; rc=$?' \
+      'e='"'"'s/\n/\r\n/g'"'"'; [ "$(tail -c1 "$t" | od -An -tx1 | tr -d " \n")" = 0a ] && e="$e;"'"'"'s/$/\r/'"'"'' \
+      'sed ":a;N;\$!ba;$e" "$t"; rm -f "$t"; exit $rc'; } > "$c1_hh/fakejq/jq"
+  chmod +x "$c1_hh/fakejq/jq"
+  c1_cr=$(PATH="$c1_hh/fakejq:$PATH" jq -n '1,2' | od -An -c | tr -d ' \n')
+  expect "C1 (n2) control: the fake jq emits CRLF without -b" '1\r\n2\r\n' "$c1_cr"
+  c1_cr=$(PATH="$c1_hh/fakejq:$PATH" jq -b -n '1,2' | od -An -c | tr -d ' \n')
+  expect "C1 (n2) control: ... and LF only with -b" '1\n2\n' "$c1_cr"
+  PATH="$c1_hh/fakejq:$PATH" RUH_BACKEND=jq HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>"$c1_hh/err"
+  expect "C1 (n2): --write under CRLF-emitting jq exits 0" 0 "$?"
+  expect "C1 (n2): ... and reports no MISSING script" 0 "$(grep -c 'MISSING' "$c1_hh/err")"
+else
+  skip "C1 (n2): CRLF-jq render" "no jq on this host" 4
+fi
+
 # (o) Windows spelling by reasoning: cygpath -m /usr/bin/bash has no .exe; Cygwin's bin/bash.exe is fine
 mkdir -p "$C1W/Git/usr/bin" "$C1W/cygwin64/bin"; : > "$C1W/Git/usr/bin/bash.exe"; : > "$C1W/cygwin64/bin/bash.exe"
 RUH_TEST_OSTYPE=msys RUH_TEST_BASH="$C1W/Git/usr/bin/bash" HOME="$C1H" bash "$C1RUH" --print >"$C1W/rw.out" 2>"$C1W/rw.err"

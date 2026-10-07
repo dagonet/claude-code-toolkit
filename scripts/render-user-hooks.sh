@@ -313,6 +313,10 @@ def lst: to_entries[] | .key as $ev | (.value | arr("hooks." + $ev))[] | . as $g
   end
 '
 
+# jq.exe (native Windows) writes text-mode CRLF, which leaves a CR on the last TSV field; -b (jq >= 1.7) keeps LF
+JQ_BIN_OPT=
+[ "$BACKEND" != jq ] || ! jq -b -n 1 >/dev/null 2>&1 || JQ_BIN_OPT=-b
+
 # prog <mode> <ref file> <live file> -> stdout
 prog() {
   case "$BACKEND" in
@@ -320,7 +324,7 @@ prog() {
     python3) RUH_B=$BASH_EXE RUH_H=$HOOKS_DIR python3 -c "$PROG_PY" "$1" "$(natpath "$2")" "$(natpath "$3")" ;;
     jq)
       _jo=-r; [ "$1" = print ] || [ "$1" = merge ] && _jo=
-      jq -n $_jo --arg mode "$1" --arg B "$BASH_EXE" --arg H "$HOOKS_DIR" \
+      jq ${JQ_BIN_OPT} -n $_jo --arg mode "$1" --arg B "$BASH_EXE" --arg H "$HOOKS_DIR" \
         --slurpfile r "$2" --slurpfile l "$3" "$PROG_JQ" ;;
   esac
 }

@@ -189,6 +189,9 @@ Already done in this run (Linux only): the full `test-hooks.sh` at cb2314b (3207
 #### Fixed
 - A gate artifact whose index snapshot failed recorded git's empty tree; it now records no tree and warns, and the merge gate never matches the empty tree (one contrived false allow closed; reported by open-brain). The snapshot `cp` in `run-gate.sh` and `pre-commit-test.sh` no longer hides its error. Rows: block ET in `scripts/test-hooks.sh`.
 
+#### Fixed (jq.exe CRLF)
+- **`render-user-hooks.sh` and `verify-hooks.sh` pass `-b` to jq when it accepts it.** Native Windows `jq.exe` writes text-mode CRLF, leaving a CR on the last TSV field (`[ -f "$_a3" ]` failed: 13 false `MISSING script` rows in the matrix jq configuration). `-b` is probed once (`jq -b -n 1`) because older jq rejects it. New two-sided fixture C1 (n2): a fake CRLF jq (control) and a `--write` that must report no MISSING.
+
 ### Docs (consumer-sync findings)
 
 From the v4.3.1 syncs of penumbra, yutraffic, open-brain, panoscribe and MM-Agent:
