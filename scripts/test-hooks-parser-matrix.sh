@@ -82,8 +82,18 @@ trap 'rm -rf "$OUTDIR"' EXIT
 #  = 221.
 #  v4.4.0 J-PY skips 4 by name when python3 is absent (jq-only); J-DIFF, J-LIB and J-MF skip nothing in any configuration.
 EXP_NODE_SKIP=0
-EXP_PY_SKIP=178
-EXP_JQ_SKIP=225
+# v4.4.0 recalibration (2026-10-07), measured not derived. Base = the Windows
+# release-host matrix at v4.3.1 (5d3d789): python3 182, jq 225 (CHANGELOG v4.3.1).
+# Delta = per-config skipped-assertion difference between tag v4.3.1 and a40f9c6,
+# same Linux host, same PATH shape, `bash scripts/test-hooks.sh` run directly:
+#   python3 186 -> 234 (+48): C1(f) 9 + C3 (node) 24 + C4 12 + C5(c) 1 = 46
+#                             new node-only rows, + V1 chmod-000 push rows 2 [host]
+#   jq      233 -> 310 (+77): the same +48, + C3 python3 rows 24, J-PY 4,
+#                             (#15) no-python3 guard 1
+# 182+48 = 230 (python3), 225+77 = 302 (jq). The Windows python3 run at 878afc8
+# skipped 231 (+1 off the sum); the Linux cloud host skipped 234 and 310, both in band.
+EXP_PY_SKIP=230
+EXP_JQ_SKIP=302
 BAND=20
 
 matrix_fail=0
