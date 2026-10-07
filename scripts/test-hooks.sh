@@ -11014,20 +11014,30 @@ fi
 c1_hh=$(c1_newhome jqcr)
 if have_backend jq; then
   mkdir -p "$c1_hh/fakejq"
-  { printf '%s\n' '#!/bin/sh' "REAL='$(command -v jq)'" 'for a in "$@"; do case "$a" in -b|--binary) exec "$REAL" "$@" ;; esac; done' \
-      't=$(mktemp); "$REAL" "$@" > "$t"; rc=$?' \
-      'e='"'"'s/\n/\r\n/g'"'"'; [ "$(tail -c1 "$t" | od -An -tx1 | tr -d " \n")" = 0a ] && e="$e;"'"'"'s/$/\r/'"'"'' \
-      'sed ":a;N;\$!ba;$e" "$t"; rm -f "$t"; exit $rc'; } > "$c1_hh/fakejq/jq"
+  # -b is consumed here, never passed on: the host jq need not know it (jq 1.6 rejects it), and every line,
+  # a one-line output included, gets its CR (the last one only when jq ended it with LF, as jq -j may not)
+  { printf '#!/bin/sh\nREAL=%s\n' "'$(command -v jq)'"
+    cat <<'C1JQ'
+bin=0; n=$#
+while [ "$n" -gt 0 ]; do a=$1; shift; n=$((n - 1)); case "$a" in -b|--binary) bin=1 ;; *) set -- "$@" "$a" ;; esac; done
+[ "$bin" = 1 ] && exec "$REAL" "$@"
+t=$(mktemp); "$REAL" "$@" > "$t"; rc=$?
+e='$!s/$/\r/'; [ "$(tail -c1 "$t" | od -An -tx1 | tr -d ' \n')" = 0a ] && e='s/$/\r/'
+sed "$e" "$t"; rm -f "$t"; exit $rc
+C1JQ
+  } > "$c1_hh/fakejq/jq"
   chmod +x "$c1_hh/fakejq/jq"
   c1_cr=$(PATH="$c1_hh/fakejq:$PATH" jq -n '1,2' | od -An -c | tr -d ' \n')
   expect "C1 (n2) control: the fake jq emits CRLF without -b" '1\r\n2\r\n' "$c1_cr"
   c1_cr=$(PATH="$c1_hh/fakejq:$PATH" jq -b -n '1,2' | od -An -c | tr -d ' \n')
   expect "C1 (n2) control: ... and LF only with -b" '1\n2\n' "$c1_cr"
+  c1_cr=$(PATH="$c1_hh/fakejq:$PATH" jq -n '1' | od -An -c | tr -d ' \n')
+  expect "C1 (n2) control: a one-line output gets its CR too" '1\r\n' "$c1_cr"
   PATH="$c1_hh/fakejq:$PATH" RUH_BACKEND=jq HOME="$c1_hh" bash "$C1RUH" --write >/dev/null 2>"$c1_hh/err"
   expect "C1 (n2): --write under CRLF-emitting jq exits 0" 0 "$?"
   expect "C1 (n2): ... and reports no MISSING script" 0 "$(grep -c 'MISSING' "$c1_hh/err")"
 else
-  skip "C1 (n2): CRLF-jq render" "no jq on this host" 4
+  skip "C1 (n2): CRLF-jq render" "no jq on this host" 5
 fi
 
 # (o) Windows spelling by reasoning: cygpath -m /usr/bin/bash has no .exe; Cygwin's bin/bash.exe is fine
