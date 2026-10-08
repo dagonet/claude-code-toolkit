@@ -11015,14 +11015,16 @@ c1_hh=$(c1_newhome jqcr)
 if have_backend jq; then
   mkdir -p "$c1_hh/fakejq"
   # -b is consumed here, never passed on: the host jq need not know it (jq 1.6 rejects it), and every line,
-  # a one-line output included, gets its CR (the last one only when jq ended it with LF, as jq -j may not)
+  # a one-line output included, gets its CR (the last one only when jq ended it with LF, as jq -j may not).
+  # The host jq's own line endings are normalised first: on Windows the real jq.exe already emits CRLF, so
+  # with -b the fake strips it to LF, and without -b each line ends in exactly one CR either way.
   { printf '#!/bin/sh\nREAL=%s\n' "'$(command -v jq)'"
     cat <<'C1JQ'
 bin=0; n=$#
 while [ "$n" -gt 0 ]; do a=$1; shift; n=$((n - 1)); case "$a" in -b|--binary) bin=1 ;; *) set -- "$@" "$a" ;; esac; done
-[ "$bin" = 1 ] && exec "$REAL" "$@"
 t=$(mktemp); "$REAL" "$@" > "$t"; rc=$?
-e='$!s/$/\r/'; [ "$(tail -c1 "$t" | od -An -tx1 | tr -d ' \n')" = 0a ] && e='s/$/\r/'
+if [ "$bin" = 1 ]; then e='s/\r*$//'
+else e='$!s/\r*$/\r/'; [ "$(tail -c1 "$t" | od -An -tx1 | tr -d ' \n')" = 0a ] && e='s/\r*$/\r/'; fi
 sed "$e" "$t"; rm -f "$t"; exit $rc
 C1JQ
   } > "$c1_hh/fakejq/jq"
