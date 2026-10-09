@@ -17,9 +17,9 @@ Patch. The documented one-time pre-push install was refused by the toolkit's own
 Seven edits to `user-level-reference/skills/sync-template/SKILL.md`; the version marker is now v4.4.2.
 
 1. Step 1, self-check: if the shell is refused under resource pressure, Read the first lines of the installed `SKILL.md` instead of grepping it.
-2. Step 1, "Which branch": the sync branch is created before the first apply; never apply onto the trunk.
+2. Step 1, "Which branch": the sync branch is created before the FIRST write (step 1c-iii's migration if it runs, else step 3), cut from the branch carrying the PROJECT-CUSTOM region; never apply onto the trunk.
 3. Step 1, after `template_load_manifest`: an absent `.claude/template-manifest.json` means not a toolkit project; bootstrap via `AGENTS.md` / setup-project, not sync.
-4. Invariant I2 and the step 6b.1 collector: when they run before the settings write, the `hooks/` paths to verify are those referenced by the incoming (template) `settings.json`, not the on-disk one.
+4. Invariant I2 and the step 6b.1 collector: when they run before the settings write, the `hooks/` paths to verify are those referenced by the incoming (template) `settings.json`, not the on-disk one (`templates/<variant>/.claude/settings.json` in the toolkit checkout; the 6b.1 command takes that path).
 5. Step 2b, set (b): reported as `N new, M on disk`, and never collapses to the empty-list wording when new files exist.
 6. Step 5 case 2: a new file that the incoming `settings.json` or hooks depend on (v4.4.0: `hooks/verify-hooks.sh` for I2, `hooks/lib/agent-model.sh` for model-floor) is not optional, and the skill does not offer to skip it.
 7. Step 6b.1c: `hooks/git-pre-push.sh` is a git hook, never in `settings.json`, so it is the expected unreferenced file.
