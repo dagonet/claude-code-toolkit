@@ -258,6 +258,68 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Registered hooks (v4.4.0 C2) -- the SECOND key-scoped comparison inside
+# settings.json; the file is still not byte-compared and not in the loop above.
+# Two parts, both against the LIVE tree, because a reference that ships exec-form
+# registrations proves nothing about the settings file a machine actually runs:
+#   (1) `verify-hooks.sh --report` (the live copy) reads the live settings with
+#       CLAUDE_PROJECT_DIR unset; every problem it lists is ONE drift: a missing
+#       or broken registered script, an unrendered @NAME@ placeholder, an exec-form
+#       program that cannot be spawned (a non-blocking error: every check behind
+#       it would pass, silently).
+#   (2) the live `hooks` object must equal what scripts/render-user-hooks.sh
+#       writes, foreign entries kept: --write runs on a COPY of the live file and
+#       a difference is one drift. This is how "0 drift" covers the registrations.
+# Nothing is written to the live tree; HOME and the settings path are the same
+# ones the rest of this script uses (DRIFT_LIVE_SETTINGS for a doctored copy).
+# ---------------------------------------------------------------------------
+if [ -f "$LIVE_SETTINGS" ]; then
+  hk_tmp=$(mktemp -d "$TMPD/hk.XXXXXX")
+  hk_vh="$LIVE_ROOT/hooks/verify-hooks.sh"
+  if [ ! -f "$hk_vh" ]; then
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  MISSING live: $hk_vh (registered hooks cannot be verified)"
+  else
+    # A temp HOME holds the settings copy; its .claude/hooks is a symlink to the live
+    # hooks dir, so an old-form `~/.claude/hooks/x.sh` or `$HOME/.claude/hooks/x.sh`
+    # entry resolves to the LIVE tree being checked (not to the empty temp HOME).
+    mkdir -p "$hk_tmp/home/.claude"; cp "$LIVE_SETTINGS" "$hk_tmp/home/.claude/settings.json"
+    ln -s "$LIVE_ROOT/hooks" "$hk_tmp/home/.claude/hooks" 2>/dev/null
+    env -u CLAUDE_PROJECT_DIR HOME="$hk_tmp/home" bash "$hk_vh" --report </dev/null > "$hk_tmp/vh.out" 2>&1
+    hk_rc=$?
+    hk_out=$(sed -e "s#$hk_tmp/home/.claude/settings.json#$LIVE_SETTINGS#g" -e "s#$hk_tmp/home/.claude/hooks#$LIVE_ROOT/hooks#g" "$hk_tmp/vh.out")
+    if [ "$hk_rc" -ne 0 ] || [ -n "$hk_out" ]; then
+      [ -n "$hk_out" ] || hk_out="verify-hooks.sh --report exited $hk_rc with no output"
+      while IFS= read -r hk_l; do
+        [ -n "$hk_l" ] || continue
+        drift=$((drift + 1))
+        drift_list="$drift_list
+  DRIFT: registered hooks in $LIVE_SETTINGS: $hk_l"
+      done <<EOF
+$hk_out
+EOF
+    fi
+  fi
+  if [ -f scripts/render-user-hooks.sh ]; then
+    cp "$LIVE_SETTINGS" "$hk_tmp/rendered.json"
+    if bash scripts/render-user-hooks.sh --write --settings "$hk_tmp/rendered.json" >/dev/null 2>"$hk_tmp/render.err"; then
+      if ! cmp -s "$LIVE_SETTINGS" "$hk_tmp/rendered.json"; then
+        drift=$((drift + 1))
+        drift_list="$drift_list
+  DRIFT: the hooks block of $LIVE_SETTINGS differs from scripts/render-user-hooks.sh (foreign entries kept); run it with --write. First differences:
+$(diff "$LIVE_SETTINGS" "$hk_tmp/rendered.json" | head -8 | sed 's/^/    /')"
+      fi
+    else
+      drift=$((drift + 1))
+      drift_list="$drift_list
+  CANNOT RENDER the hooks block against $LIVE_SETTINGS: $(tr '\n' ' ' < "$hk_tmp/render.err")"
+    fi
+  fi
+  rm -rf "$hk_tmp"
+fi
+
+# ---------------------------------------------------------------------------
 # VERBATIM INSTALL — the property that makes the comparison above VALID.
 #
 # Observable form of "nobody processes these files": the placeholder COUNT in

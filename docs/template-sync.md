@@ -226,7 +226,7 @@ Two things that look like failure but are not:
 
 **Verify a hook enforces, not just that it exits — the enforcing-vs-inert pair.** Probing only the new shape-witness arms (no `tool_input.prompt` → exit 2) yields 2s on every probe and proves nothing about whether the hook still enforces its actual rule. For `require-skills-block.sh`, the real check is a `coder` spawn WITHOUT a `## Required Skills` block (must exit 2) paired with one WITH the block (must exit 0) — the 0/2 pair is the enforcing-vs-inert arm.
 
-These hooks are deliberately **not** registered at user level (`~/.claude/settings.json`): their commands are `bash hooks/…`, resolved relative to the project root, and would break in any repo that has not been synced.
+These hooks are deliberately **not** registered at user level (`~/.claude/settings.json`): their commands run `hooks/…` through the project-form `exec bash "$f"`, resolved relative to the project root, and would break in any repo that has not been synced.
 
 **Four project-level hooks have no `user-level-reference/hooks/` mirror, by design.** `enforce-delegation.sh`, `enforce-agent-contract.sh`, `agent-budget-warn.sh` and `require-skills-block.sh` are project-only — `HOOKS_NO_MIRROR` in `scripts/verify-template-consistency.sh` names them, each with a reason comment. Adding a mirror for one of these creates a file that drifts, not a fix for an omission.
 

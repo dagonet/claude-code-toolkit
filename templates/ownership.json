@@ -20,7 +20,7 @@
                            "Format": "FORMAT_COMMAND", "Lint": "LINT_COMMAND" },
       "optional_keys": {
         "Test": {
-          "effect_when_absent": "pre-commit falls back to the Gate, which mints the artifact -- commit and merge are one run; declaring Test adds a second run per commit",
+          "effect_when_absent": "pre-commit falls back to the Gate, which mints the artifact -- commit and merge are one run, but that Gate run is bounded by the **Test timeout** budget (default 540 s), so a slow Gate-only repo is refused; declaring Test adds a second run per commit",
           "none_meaning": "not declared -- hooks/pre-commit-test.sh treats the literal value `none` (case-insensitive, trimmed) as absent and falls through to the Gate (fixed since v3.0.3; before that it was eval'd as a command and blocked every commit)"
         },
         "Gate-checked branches": {

@@ -80,14 +80,46 @@ trap 'rm -rf "$OUTDIR"' EXIT
 #  measured).
 # jq also hides python3: 151 + the same 43 + 27 "C1 python3 parser rows"
 #  = 221.
+#  v4.4.0 J-PY skips 4 by name when python3 is absent (jq-only); J-DIFF, J-LIB and J-MF skip nothing in any configuration.
 EXP_NODE_SKIP=0
-EXP_PY_SKIP=178
-EXP_JQ_SKIP=221
+# v4.4.0 recalibration (2026-10-07), measured not derived. Base = the Windows
+# release-host matrix at v4.3.1 (5d3d789): python3 182, jq 225 (CHANGELOG v4.3.1).
+# Delta = per-config skipped-assertion difference between tag v4.3.1 and a40f9c6,
+# same Linux host, same PATH shape, `bash scripts/test-hooks.sh` run directly:
+#   python3 186 -> 234 (+48): C1(f) 9 + C3 (node) 24 + C4 12 + C5(c) 1 = 46
+#                             new node-only rows, + V1 chmod-000 push rows 2 [host]
+#   jq      233 -> 310 (+77): the same +48, + C3 python3 rows 24, J-PY 4,
+#                             (#15) no-python3 guard 1
+# 182+48 = 230 (python3), 225+77 = 302 (jq). The Windows python3 run at 878afc8
+# skipped 231 (+1 off the sum); the Linux cloud host skipped 234 and 310, both in band.
+EXP_PY_SKIP=230
+EXP_JQ_SKIP=302
 BAND=20
 
 matrix_fail=0
 
 note() { printf '%s\n' "$*"; }
+
+# Assertions skipped as declared host facts: SKIP lines ENDING in the fixed
+# " [host]" suffix (skip_host in test-hooks.sh). Anchored at the end of the line
+# so a label or reason cannot forge it. Prints their sum.
+host_skips() { # <suite output file>
+  grep '^SKIP  .*assertion(s))  *\[host\]$' "$1" 2>/dev/null \
+    | sed -n 's/.*, \([0-9][0-9]*\) assertion(s)) *\[host\]$/\1/p' | awk '{ n += $1 } END { print n + 0 }'
+}
+
+# Two-sided self-check of the node band, with fixture lines built by the same
+# printf format skip() uses: a tagged skip is tolerated, an untagged one is
+# counted, and a label that merely contains "([host] " does not forge the tag.
+hs_tmp="$OUTDIR/selfcheck.out"
+hs_line() { printf 'SKIP  %-42s (%s, %s assertion(s))%s\n' "$1" "$2" "$3" "$4"; } # label reason n tag
+{ hs_line a r 1 ""; hs_line b root 2 " [host]"; hs_line "x ([host] y" r 4 ""; } > "$hs_tmp"
+if [ "$(host_skips "$hs_tmp")" = 2 ]; then
+  note "host-skip band self-check: tagged tolerated, untagged and forged-label counted"
+else
+  note "MATRIX FAIL: host-skip band self-check (got $(host_skips "$hs_tmp") tagged, want 2)"
+  matrix_fail=1
+fi
 
 # EVERY PATH directory that provides <tool>, not just the first (MSYS spelling).
 #
@@ -211,13 +243,19 @@ run_config() {
     # The unrestricted configuration: 0 is the ONLY correct answer, so it is
     # asserted EXACTLY. A band here would accept 15 skips as "in band (~0)",
     # which is precisely where a silently-skipping new fixture would hide.
-    if [ "$cfg_skip" -ne 0 ]; then
-      note "  MATRIX FAIL: $cfg_label skipped $cfg_skip, expected exactly 0 — with every"
-      note "               parser present nothing may skip; a skip here is a fixture that"
-      note "               never runs anywhere."
+    # Skips tagged "[host] " by test-hooks.sh's skip_host are declared host
+    # facts (root, fs case/mode, locale, symlink, platform): reported, not
+    # counted. Only UNTAGGED skips must be 0.
+    cfg_host=$(host_skips "$cfg_out")
+    cfg_untagged=$((cfg_skip - cfg_host))
+    [ "$cfg_host" -eq 0 ] || note "  info: $cfg_host skipped assertion(s) are declared host facts ([host]), not counted against the band"
+    if [ "$cfg_untagged" -ne 0 ]; then
+      note "  MATRIX FAIL: $cfg_label skipped $cfg_untagged untagged ($cfg_skip total, $cfg_host [host]), expected exactly 0 — with every"
+      note "               parser present nothing may skip but declared host facts; an untagged"
+      note "               skip here is a fixture that never runs anywhere."
       matrix_fail=$((matrix_fail + 1))
     else
-      note "  skip count 0 — exact, as required with every parser present"
+      note "  untagged skip count 0 — exact, as required with every parser present"
     fi
   elif [ "$cfg_skip" -eq 0 ]; then
     note "  MATRIX FAIL: $cfg_label skipped 0 assertions — a restricted run that"

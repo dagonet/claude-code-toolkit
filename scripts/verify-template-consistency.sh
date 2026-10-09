@@ -867,6 +867,11 @@ HOOKS_NO_MIRROR=(
   # <root>/.claude/template-manifest.json exists with manifest_version 4, a
   # condition a bare ~/.claude install has no way to meet for itself.
   "deny-claude-md-writes.sh"
+  # git-pre-push.sh (v4.3.2, design P3): a NATIVE git hook installed per clone
+  # as a shim in <git common dir>/hooks/pre-push, never registered in any
+  # settings.json -- a bare ~/.claude install has no repository to install it
+  # into and no harness that would run it.
+  "git-pre-push.sh"
 )
 # FINDING (v3.0.4, A6): retro-brief.sh (SessionStart, reads the ledger) and
 # retro-ledger.sh (SubagentStop, writes it) both key off cwd -> project slug
@@ -996,18 +1001,19 @@ else
   printf '%s\n' "$bom_anchors" | grep -v 'GC_KEY_PRE' | sed 's/^/      /'
 fi
 # run-gate.sh is standalone (it must run with no JSON parser on PATH, which
-# sourcing git-cmd.sh forbids), so it REPEATS the definition. Assert the two
-# copies are the same literal — a duplicated constant that drifts is how the
-# fixed instance and the unfixed one end up in the same release.
+# sourcing git-cmd.sh forbids), so it REPEATS the definition. lib/agent-model.sh
+# repeats it too (one sourced git call per Agent spawn is the cost it avoids).
+# Assert the three copies are the same literal — a duplicated constant that
+# drifts is how the fixed instance and the unfixed one end up in the same release.
 GC_KEY_PRE_DEF='GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"'
 gkp_have=0
-for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh; do
+for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh hooks/lib/agent-model.sh; do
   grep -qF "$GC_KEY_PRE_DEF" "$gkf" && gkp_have=$((gkp_have + 1))
 done
-if [ "$gkp_have" -eq 2 ]; then
-  ok "GC_KEY_PRE defined identically in git-cmd.sh and the standalone run-gate.sh"
+if [ "$gkp_have" -eq 3 ]; then
+  ok "GC_KEY_PRE defined identically in git-cmd.sh, the standalone run-gate.sh and agent-model.sh"
 else
-  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 2 files (git-cmd.sh, run-gate.sh)"
+  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 3 files (git-cmd.sh, run-gate.sh, agent-model.sh)"
 fi
 
 # 21c-2b. GC_TERMINAL_RC, same census for the same reason (v2.2.5).
@@ -1242,6 +1248,73 @@ else
   fi
 fi
 
+# Shared by 21c-3f (6b collector control) and check 71 (registration polarity):
+# the registration extractor and the frozen registration table. Row shape:
+# label;event;matcher;script;form  (label: general | root | user | agent:<variant>/<file>;
+# forms: F fail-closed, W fail-open WARN, O fail-open silent, U unwrapped, UF/UO/UU user-level exec forms).
+# A removed or added matcher group, or a changed form, turns check 71 red (R-5).
+C71_JS='const fs = require("fs");
+const file = process.argv[process.argv.length - 2], label = process.argv[process.argv.length - 1];
+const Q = "\"";
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function projform(cmd) {
+  const m = /hooks\/([A-Za-z0-9_-]+)\.sh/.exec(cmd);
+  if (!m) return null;
+  const P = "${CLAUDE_PROJECT_DIR:-.}/hooks/" + m[1] + ".sh";
+  const pf = "f=" + Q + P + Q + "; [ -r " + Q + "$f" + Q + " ] || ";
+  const tailF = ". Check that hooks/ exists at the project root." + Q + " >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo " + Q + "HOOK BLOCKED: bash not found on PATH -- $f cannot run" + Q + " >&2; exit 2; }; exec bash " + Q + "$f" + Q;
+  const tailW = ". Check that hooks/ exists at the project root." + Q + " >&2; exit 0; }; exec bash " + Q + "$f" + Q;
+  const forms = {
+    F: new RegExp("^" + esc(pf + "{ echo " + Q + "HOOK SCRIPT MISSING: $f -- ") + "[^\"]+" + esc(tailF) + "$"),
+    W: new RegExp("^" + esc(pf + "{ echo " + Q + "WARN: $f missing -- ") + "[^\"]+" + esc(tailW) + "$"),
+    O: new RegExp("^" + esc(pf + "exit 0; exec bash " + Q + "$f" + Q) + "$"),
+    U: new RegExp("^" + esc("exec bash " + Q + P + Q) + "$"),
+  };
+  for (const k of Object.keys(forms)) if (forms[k].test(cmd)) return [m[1], k];
+  return [m[1], "OTHER"];
+}
+function userform(h) {
+  const a = h.args;
+  if (!Array.isArray(a) || a.length < 3) return null;
+  const m = /([A-Za-z0-9_-]+)\.sh$/.exec(a[a.length - 1]);
+  if (!m) return null;
+  const t = String(a[1]);
+  let k = "OTHER";
+  if (/HOOK SCRIPT MISSING/.test(t) && /exit 2; \}; \. "\$0"$/.test(t)) k = "UF";
+  else if (/\|\| exit 0; \. "\$0"$/.test(t)) k = "UO";
+  else if (/(^|; )\. "\$0"$/.test(t) && !/exit/.test(t.split("unset p s;").pop())) k = "UU";
+  return [m[1], k];
+}
+const out = [];
+if (label.startsWith("agent:")) {
+  let ev = "", mt = "";
+  for (const l of fs.readFileSync(file, "utf8").split("\n")) {
+    let m;
+    if ((m = /^  ([A-Za-z]+):\s*$/.exec(l))) { ev = m[1]; mt = ""; }
+    else if ((m = /^\s*- matcher: "(.*)"\s*$/.exec(l))) mt = m[1];
+    else if ((m = /^\s*command: "(.*)"\s*$/.exec(l)) && /hooks\//.test(m[1])) {
+      const r = projform(m[1].replace(/\\"/g, Q));
+      if (r) out.push([label, ev, mt, r[0], r[1]].join(";"));
+    }
+  }
+} else {
+  const d = JSON.parse(fs.readFileSync(file, "utf8"));
+  for (const ev of Object.keys(d.hooks || {}))
+    for (const g of d.hooks[ev])
+      for (const h of g.hooks) {
+        const r = h.args ? userform(h) : projform(String(h.command));
+        if (r) out.push([label, ev, g.matcher || "", r[0], r[1]].join(";"));
+      }
+}
+if (out.length) console.log(out.join("\n"));'
+c71_x() { node -e "$C71_JS" "$1" "$2"; }
+# The frozen table lives in ONE fixture, shared with the sync server's test
+# (server/tests/test_template_sync_settings_hooks.py). FAIL-CLOSED: an unreadable
+# or empty fixture leaves C71_TABLE empty, which check 71 and the 6b control
+# both report red (never a silent pass on an empty table).
+C71_FIXTURE="server/tests/fixtures/hook-registrations-v4.4.0.json"
+C71_TABLE=$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).rows;if(!Array.isArray(r)||!r.every(x=>typeof x==="string"))process.exit(1);console.log(r.join("\n"))' "$C71_FIXTURE" 2>/dev/null) || C71_TABLE=""
+
 # 21c-3f. CONTROL for the sync skill's hook-reference collector (v2.2.6).
 #
 #      Step 6b is the ONLY check a consumer runs to confirm their hooks are
@@ -1255,9 +1328,13 @@ fi
 #
 #      This runs the pattern AS WRITTEN IN SKILL.md (not a copy of it) against a
 #      real shipped settings.json, and compares the result against an
-#      INDEPENDENTLY SOURCED set: the hook paths named in the 127-wrapper's
-#      error MESSAGES, a different region of the same file that the truncating
-#      anchor also loses. Re-anchoring the skill turns this red.
+#      INDEPENDENTLY SOURCED set: the hook paths in the registration strings'
+#      own path assignments (`f=\"...hooks/X.sh\"` and `exec bash \"...hooks/X.sh\"`,
+#      v4.4.0; the F/W messages print $f, so the old message-sourced set would be
+#      EMPTY and the check would pass on 0 of 0). The collector must also return AT
+#      LEAST one reference per F+W+O+U entry of templates/general (the frozen table
+#      of check 71), and a copy with the paths blanked must fall below that floor.
+#      Re-anchoring the skill turns this red.
 skf="user-level-reference/skills/sync-template/SKILL.md"
 sksettings="templates/general/.claude/settings.json"
 if [ ! -f "$skf" ] || [ ! -f "$sksettings" ]; then
@@ -1268,7 +1345,10 @@ else
     ko "6b collector control: no \`grep -o 'hooks/...'\` collector found in $skf step 6b — the step lost its path-shaped extractor"
   else
     sk_got=$(grep -o "$sk_pat" "$sksettings" | sort -u)
-    sk_exp=$(grep -o "\(HOOK SCRIPT MISSING\|WARN\): [^ ]*hooks/[A-Za-z0-9_.-]*\.sh" "$sksettings" | sed 's|.*/hooks/|hooks/|' | sort -u)
+    sk_exp=$(grep -oE '(f=|exec bash )\\"[^ ]*hooks/[A-Za-z0-9_.-]+\.sh' "$sksettings" | sed 's|.*/hooks/|hooks/|' | sort -u)
+    sk_all=$(grep '"command":' "$sksettings" | grep -o "$sk_pat" | grep -c .)
+    sk_min=$(printf '%s\n' "$C71_TABLE" | grep -c '^general;.*;[FWOU]$')
+    sk_ctl=$(sed 's|hooks/|hoox/|g' "$sksettings" | grep '"command":' | grep -o "$sk_pat" | grep -c .)
     sk_missing=$(printf '%s\n' "$sk_exp" | grep -Fxv -f <(printf '%s\n' "$sk_got") 2>/dev/null)
     sk_n=$(printf '%s\n' "$sk_got" | grep -c .)
     sk_m=$(printf '%s\n' "$sk_exp" | grep -c .)
@@ -1277,8 +1357,12 @@ else
       printf '%s\n' "$sk_missing" | sed 's/^/      /'
     elif [ "$sk_n" -lt "$sk_m" ]; then
       ko "6b collector control: collector returned $sk_n < $sk_m independently-sourced references"
+    elif [ "$sk_m" -eq 0 ] || [ "$sk_min" -eq 0 ] || [ "$sk_all" -lt "$sk_min" ]; then
+      ko "6b collector control: the collector found $sk_all reference(s) (independent set $sk_m), fewer than the $sk_min F+W+O+U registrations of templates/general -- or the independent set is empty and the check would pass on 0 of 0"
+    elif [ "$sk_ctl" -ge "$sk_min" ]; then
+      ko "6b collector control: the collector still returned $sk_ctl >= $sk_min references on a copy with the hooks/ paths blanked -- the minimum-count assertion cannot go red"
     else
-      ok "6b collector control: the skill's own collector recovers $sk_n reference(s), covering all $sk_m independently sourced from the 127-wrapper messages"
+      ok "6b collector control: the skill's own collector recovers $sk_all reference(s) ($sk_n distinct), covering all $sk_m independently sourced from the registration strings, at least the $sk_min registrations of the frozen table; a blanked copy returns $sk_ctl and goes red"
     fi
   fi
 fi
@@ -1607,6 +1691,13 @@ rm -rf "$ULRFIX"
 #         copies. Do not let a cleanup drop either one as overlapping with the
 #         other.
 #
+#         v4.4.0 C1 AMENDS THE VERBATIM HALF FOR ONE FILE: the `hooks` block of
+#         user-level-reference/settings.json is rendered, not copied (`@BASH@`,
+#         `@HOOKS@` -> absolute paths, scripts/render-user-hooks.sh). That file is
+#         the census's single allowlisted path; the render script, the README and
+#         settings-reference.md all say "never copy the hooks block by hand", and
+#         verify-hooks (Task 9) reports a leftover `@X@` in a live settings file.
+
 #         AND FOR THE PROJECT TREE THIS CENSUS IS NECESSARY BUT NOT SUFFICIENT,
 #         WHICH CUTS THE OPPOSITE WAY. The project install is NOT verbatim: it
 #         substitutes, and per sync-template SKILL.md `template_apply_file`
@@ -1636,8 +1727,23 @@ JSONFIX=$(mktemp -d)
 # trips a future sweep pointed at scripts/ is how a detector acquires its first
 # false positive.
 JSON_PH=$(printf '{{%s}}' GATE_COMMAND)
+# v4.4.0 C1: widened from `{{X}}` to `{{X}}` OR `@X@` (@[A-Z]+@). user-level-reference/settings.json
+# carries `@BASH@`/`@HOOKS@` in executable positions ON PURPOSE: scripts/render-user-hooks.sh writes
+# the absolute paths at install time, so that file is no longer a verbatim install and is the ONE
+# exempted path (exact, root-relative), and there ONLY the `@BASH@` / `@HOOKS@` hits are dropped: a
+# `{{X}}` or an unknown `@FOO@` in that file is still reported. A hand-copied `@BASH@` command would
+# be a non-blocking spawn error, i.e. every user protection failing open -- so elsewhere it is a hit.
+JSON_ALLOW='user-level-reference/settings.json'
 json_census() {   # <root>... -> placeholder hits in *.json under those roots
-  grep -rn --include='*.json' -- '{{[A-Z_]\{2,\}}}' "$@" 2>/dev/null
+  grep -rn --include='*.json' -e '{{[A-Z_]\{2,\}}}' -e '@[A-Z][A-Z]*@' "$@" 2>/dev/null \
+    | while IFS= read -r jc_l; do
+        case $jc_l in
+          "$JSON_ALLOW:"*)
+            jc_r=${jc_l//@BASH@/}; jc_r=${jc_r//@HOOKS@/}
+            printf '%s\n' "$jc_r" | grep -q -e '{{[A-Z_]\{2,\}}}' -e '@[A-Z][A-Z]*@' && printf '%s\n' "$jc_l" ;;
+          *) printf '%s\n' "$jc_l" ;;
+        esac
+      done
 }
 mkdir -p "$JSONFIX/scoped" "$JSONFIX/unscoped"
 printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/in.json"
@@ -1646,8 +1752,19 @@ printf '{ "command": "%s" }\n' "$JSON_PH" > "$JSONFIX/scoped/mcp.json.template"
 json_pos=$(json_census "$JSONFIX/scoped" | grep -c 'in\.json')
 json_neg_scope=$(json_census "$JSONFIX/scoped" | grep -c 'out\.json')
 json_neg_ext=$(json_census "$JSONFIX/scoped" | grep -c 'json\.template')
-if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ]; then
-  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored)"
+# the @X@ form: a hit anywhere, except the one allowlisted root-relative path
+mkdir -p "$JSONFIX/at/templates/x" "$JSONFIX/at/user-level-reference"
+AT_PH=$(printf '@%s@' BASH)
+printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/templates/x/s.json"
+printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/user-level-reference/settings.json"
+printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/user-level-reference/other.json"
+# control: in the exempted file an unknown @FOO@ and a {{X}} are still hits, @BASH@/@HOOKS@ are not
+mkdir -p "$JSONFIX/at2/user-level-reference"
+printf '%s\n' "{ \"a\": \"$AT_PH $(printf '@%s@' HOOKS)\"," "  \"c\": \"$(printf '@%s@' FOO)\"," "  \"d\": \"$JSON_PH\" }" > "$JSONFIX/at2/user-level-reference/settings.json"
+json_ref_hits=$( (cd "$JSONFIX/at2" && json_census user-level-reference) | grep -c . )
+json_at_hits=$( (cd "$JSONFIX/at" && json_census templates user-level-reference) | cut -d: -f1 | sort | tr '\n' ' ')
+if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ] && [ "$json_at_hits" = "templates/x/s.json user-level-reference/other.json " ] && [ "$json_ref_hits" -eq 2 ]; then
+  ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored / @X@ hit except @BASH@/@HOOKS@ in the single exempted user-level-reference/settings.json, where {{X}} / @FOO@ still hit)"
   json_hits=$(json_census templates user-level-reference | grep -c .)
   if [ "$json_hits" -eq 0 ]; then
     ok "templates/ + user-level-reference/ (*.json): 0 placeholders — a settings.json hook command is an executable position, so a literal {{...}} there is a 127 fail-open"
@@ -1655,7 +1772,7 @@ if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq
     ko "templates/ + user-level-reference/ (*.json): $json_hits placeholder(s) in a shipped JSON file — JSON has no comments, so every one of these is in a VALUE: $(json_census templates user-level-reference | head -3 | tr '\n' ' ')"
   fi
 else
-  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
+  ko "JSON placeholder census is INERT — its own self-test failed (in-scope hit=$json_pos want 1, out-of-scope=$json_neg_scope want 0, *.json.template=$json_neg_ext want 0, @X@ hits='$json_at_hits' want 'templates/x/s.json user-level-reference/other.json ', exempted-file residue=$json_ref_hits want 2). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
 fi
 rm -rf "$JSONFIX"
 
@@ -1882,11 +1999,14 @@ else
   grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
   grep -n 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
 fi
-ABS_FORM='bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'
+#     v4.4.0: the registration forms are F/W/O (a `f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"`
+#     path assignment) and U (`exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"`).
+ABS_FORM_V='f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/'
+ABS_FORM_U='exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'
 abshook=$(
   {
-    grep -hF "$ABS_FORM" templates/*/.claude/settings.json 2>/dev/null
-    grep -hF "$ABS_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+    grep -hF -e "$ABS_FORM_V" -e "$ABS_FORM_U" templates/*/.claude/settings.json 2>/dev/null
+    grep -hF -e "$ABS_FORM_V" -e "$ABS_FORM_U" templates/*/.claude/agents/*.md 2>/dev/null
   } | grep -c .
 )
 #     `abshook > 0` alone is a coverage hole: a subset reverted to the
@@ -3934,7 +4054,7 @@ fi
 # template would switch that behaviour on in every consumer at bootstrap -- and
 # because the readers take the FIRST matching line, a live prose bullet also
 # shadows the consumer's own later setting. The readers (pre-commit-test.sh,
-# run-gate.sh rg_field, model-floor.sh) match a LINE anchored at GC_KEY_PRE and
+# run-gate.sh rg_field, lib/agent-model.sh) match a LINE anchored at GC_KEY_PRE and
 # know nothing of HTML comments (ruling S-35), so the check asks the readers'
 # own question: c63_scan fails on any line matching
 # `${GC_KEY_PRE}\*\*<key>\*\*:` -- a line inside a multi-line <!-- ... --> block
@@ -3946,7 +4066,7 @@ fi
 note "Check 63: **Test paths**, **Gate extra**, **Subagent default model**, **Test timeout** appear in every variant's PROJECT_CONTEXT.md on no line the hooks' key pattern matches (documented in a one-line comment, never set)"
 C63_KEYS='Test paths|Gate extra( Command)?|Subagent default model|Test timeout'
 # GC_BOM / GC_KEY_PRE: the same text as hooks/lib/git-cmd.sh, run-gate.sh and
-# model-floor.sh (the definition census above pins the copies together).
+# lib/agent-model.sh (the definition census, check 21c-2, pins the three copies together).
 GC_BOM=$(printf '\357\273\277')
 GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"
 
@@ -4054,6 +4174,88 @@ else
   else
     ok "check 64: $c64_n settings files register pre-commit-test.sh with \"timeout\": $c64_want (PCT_TIMEOUT_MAX $c64_max + 60); control fires"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Check 65 -- Jev is opt-in per clone and ships no registration (v4.4.0, spec
+# D1 "zero footprint when off"). (a) No shipped settings file registers the
+# router -- only `/jev on` writes it, into one checkout's settings.local.json.
+# (b) /jev can never be model-invoked (the model must not switch egress on).
+# (c) The registration jev_ctl.py writes is the spec's literal and contains
+# the marker agent-model.sh's am_jev_routing greps for: if those two drift
+# apart, model-floor never steps aside for a live router (two emitters) or
+# steps aside for a dead one (none).
+# ---------------------------------------------------------------------------
+note "Check 65: no shipped settings registers the Jev router; /jev is user-invoked only; the registration and the step-aside marker agree"
+C65_SPEC_REG='f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0'
+c65_scan_settings() { # <settings file> -> prints the file when it registers the router
+  grep -lF 'jev_route.py' "$1" 2>/dev/null
+}
+c65_bad=""
+for c65_f in templates/*/.claude/settings.json .claude/settings.json user-level-reference/settings.json; do
+  [ -n "$(c65_scan_settings "$c65_f")" ] && c65_bad="$c65_bad $c65_f(registers jev_route.py)"
+done
+c65_skill=user-level-reference/skills/jev/SKILL.md
+grep -qx 'disable-model-invocation: true' "$c65_skill" 2>/dev/null || c65_bad="$c65_bad $c65_skill(no 'disable-model-invocation: true' line)"
+c65_marker=$(sed -n "s/^AM_JEV_MARKER='\(.*\)'\$/\1/p" hooks/lib/agent-model.sh | head -1)
+c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" user-level-reference/skills/jev/jev_ctl.py | head -1)
+[ -n "$c65_marker" ] || c65_bad="$c65_bad agent-model.sh(no AM_JEV_MARKER line)"
+[ "$c65_reg" = "$C65_SPEC_REG" ] || c65_bad="$c65_bad jev_ctl.py(REG_COMMAND is not the spec literal: '${c65_reg:-<none>}')"
+case "$c65_reg" in *"$c65_marker"*) ;; *) c65_bad="$c65_bad REG_COMMAND does not contain AM_JEV_MARKER '$c65_marker'" ;; esac
+# U-1: the orchestrator is told to omit `model` while on -- the rule's exception
+# and the session-start notice must both exist, or Jev routes nothing.
+grep -qF 'unless Jev routing is on in this repo' user-level-reference/CLAUDE.md || c65_bad="$c65_bad user-level-reference/CLAUDE.md(no U-1 exception)"
+grep -qE "^SESSION_COMMAND = '.*omit model on Agent spawns.*'\$" user-level-reference/skills/jev/jev_ctl.py || c65_bad="$c65_bad jev_ctl.py(no SESSION_COMMAND telling the orchestrator to omit model)"
+if [ -z "$c65_bad" ]; then
+  ok "check 65: no template, root or user-level settings registers jev_route.py; /jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
+else
+  ko "check 65:$c65_bad"
+fi
+# 65c control: a planted registration in a scratch settings copy is flagged,
+# and the untouched real template is not.
+C65C_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c65c)
+cp templates/general/.claude/settings.json "$C65C_TMP/planted.json"
+printf '%s\n' "$C65_SPEC_REG" >> "$C65C_TMP/planted.json"
+if [ -n "$(c65_scan_settings "$C65C_TMP/planted.json")" ] && [ -z "$(c65_scan_settings templates/general/.claude/settings.json)" ]; then
+  ok "check 65c: control -- a planted router registration is flagged; the real template is not"
+else
+  ko "check 65c: control failed -- check 65's settings scan is vacuous or over-strict"
+fi
+rm -rf "$C65C_TMP"
+
+# ---------------------------------------------------------------------------
+# Check 69 -- v4.3.2 P2/P3: the native pre-push hook reads the protected set
+# through gc_protected_branches (the function hooks/no-push-main.sh uses), never
+# through a grep of its own -- two readers of one field is how they drift -- and
+# both bootstrappers install it. (Next free number: v4.4 took 65, v4.5 plans
+# 66-68.) Control: a copy without the call, a copy with its own grep, and
+# setup copies without the install line must each be flagged.
+# ---------------------------------------------------------------------------
+echo
+c69_pred() { # <hook> <setup.sh> <setup.ps1> -> prints each failure; empty when sound
+  grep -q 'gc_protected_branches "' "$1" 2>/dev/null || printf ' %s does not call gc_protected_branches;' "$1"
+  grep -v '^[[:space:]]*#' "$1" 2>/dev/null | grep -q Protected && printf ' %s reads **Protected branches** itself;' "$1"
+  grep -qF 'bash "$TARGET_DIR/hooks/git-pre-push.sh" --install' "$2" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$2"
+  grep -qF 'alias.cct-pre-push=!bash hooks/git-pre-push.sh --install' "$3" 2>/dev/null || printf ' %s does not install the pre-push shim;' "$3"
+}
+c69_tmp=$(mktemp -d)
+grep -v 'gc_protected_branches "' hooks/git-pre-push.sh > "$c69_tmp/nocall.sh" 2>/dev/null
+{ cat hooks/git-pre-push.sh; printf 'x=$(grep -E "Protected branches" PROJECT_CONTEXT.md)\n'; } > "$c69_tmp/owngrep.sh"
+grep -vF 'bash "$TARGET_DIR/hooks/git-pre-push.sh" --install' setup-project.sh > "$c69_tmp/setup.sh" 2>/dev/null
+grep -vF 'alias.cct-pre-push=!bash hooks/git-pre-push.sh --install' setup-project.ps1 > "$c69_tmp/setup.ps1" 2>/dev/null
+c69_ctl=0
+[ -n "$(c69_pred "$c69_tmp/nocall.sh" setup-project.sh setup-project.ps1)" ] || c69_ctl=1
+[ -n "$(c69_pred "$c69_tmp/owngrep.sh" setup-project.sh setup-project.ps1)" ] || c69_ctl=1
+[ -n "$(c69_pred hooks/git-pre-push.sh "$c69_tmp/setup.sh" setup-project.ps1)" ] || c69_ctl=1
+[ -n "$(c69_pred hooks/git-pre-push.sh setup-project.sh "$c69_tmp/setup.ps1")" ] || c69_ctl=1
+rm -rf "$c69_tmp"
+c69_bad=$(c69_pred hooks/git-pre-push.sh setup-project.sh setup-project.ps1)
+if [ "$c69_ctl" -ne 0 ]; then
+  ko "check 69: CONTROL FAILED -- a copy without the call, with its own grep, or a setup without the install line was not flagged; the check is vacuous"
+elif [ -n "$c69_bad" ]; then
+  ko "check 69:$c69_bad"
+else
+  ok "check 69: hooks/git-pre-push.sh calls gc_protected_branches and names **Protected branches** only in comments, and both setup scripts call the installer; control fires"
 fi
 
 # ---------------------------------------------------------------------------
@@ -4916,6 +5118,218 @@ if [ -z "$c54_bad" ] && [ "$c54_pi_uniq" = "1" ] && [ "$c54_ag_uniq" = "1" ] \
 else
   ko "check 54: bad:[$c54_bad] project-instructions.md uniques=$c54_pi_uniq (want 1) agent-grants.json uniques=$c54_ag_uniq (want 1) agent-grants.json matches spec bytes: $([ "$c54_actual_ag_hash" = "$c54_expected_ag_hash" ] && echo yes || echo no)"
 fi
+
+# ---------------------------------------------------------------------------
+# Check 70 (doctor, repo side; v4.4.0 C2) -- every hook this repo REGISTERS
+# names a script that exists and passes `bash -n`, and every exec-form
+# registration names a program that can be spawned.
+#
+# Scope: the six variant .claude/settings.json, the root .claude/settings.json,
+# every templates/*/.claude/agents/*.md frontmatter, and the user-level
+# reference rendered with the LOCAL bash and @HOOKS@ -> user-level-reference/hooks.
+# The settings files are read by hooks/verify-hooks.sh --report itself, in a
+# fixture project holding a copy of hooks/ (the reader the user runs at every
+# session start is the reader this check exercises). The user-level reference is
+# rendered by scripts/render-user-hooks.sh, so the exec-form program test (an
+# unspawnable program is a NON-blocking error: every check behind it would pass)
+# covers the string a user will actually run.
+#
+# TWO-SIDED: a control deletes one registered hook from a scratch project and
+# expects the report to list it and exit 1, and a second names a nonexistent exec
+# program and expects MISSING PROGRAM -- otherwise a reader that finds nothing
+# would make this check green by construction.
+# ---------------------------------------------------------------------------
+echo
+note "Check 70: every registered hook script exists and passes bash -n; every exec-form program is spawnable (settings, agent frontmatter, rendered user reference)"
+c70_tmp=$(mktemp -d)
+c70_h0="$c70_tmp/home0"; mkdir -p "$c70_h0"
+c70_proj="$c70_tmp/proj"; mkdir -p "$c70_proj/.claude"; cp -R hooks "$c70_proj/hooks"
+c70_bad=""
+c70_scanned=0
+for c70_f in $(for v in $VARIANTS; do printf 'templates/%s/.claude/settings.json\n' "$v"; done) .claude/settings.json; do
+  if [ ! -f "$c70_f" ]; then c70_bad="$c70_bad [$c70_f missing]"; continue; fi
+  cp "$c70_f" "$c70_proj/.claude/settings.json"
+  c70_out=$(env HOME="$c70_h0" CLAUDE_PROJECT_DIR="$c70_proj" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+  c70_scanned=$((c70_scanned + 1))
+  if [ "$c70_rc" -ne 0 ] || [ -n "$c70_out" ]; then c70_bad="$c70_bad [$c70_f: rc=$c70_rc $(printf '%s' "$c70_out" | tr '\n' ' ')]"; fi
+done
+# agent frontmatter registrations
+c70_ag=0
+for c70_a in templates/*/.claude/agents/*.md; do
+  [ -f "$c70_a" ] || continue
+  for c70_s in $(grep -oE 'hooks/[A-Za-z0-9_.-]+\.sh' "$c70_a" | sort -u); do
+    c70_ag=$((c70_ag + 1))
+    if [ ! -f "$c70_s" ]; then c70_bad="$c70_bad [$c70_a: $c70_s missing]"
+    elif ! bash -n "$c70_s" 2>/dev/null; then c70_bad="$c70_bad [$c70_a: $c70_s fails bash -n]"; fi
+  done
+done
+[ "$c70_ag" -gt 0 ] || c70_bad="$c70_bad [no agent frontmatter registration found: the scan is inert]"
+# the user-level reference, rendered with the local bash
+c70_uh="$c70_tmp/uhome"; mkdir -p "$c70_uh/.claude"; cp -R user-level-reference/hooks "$c70_uh/.claude/hooks"
+if c70_ro=$(HOME="$c70_uh" bash scripts/render-user-hooks.sh --write 2>&1); then
+  c70_out=$(env -u CLAUDE_PROJECT_DIR HOME="$c70_uh" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+  if [ "$c70_rc" -ne 0 ] || [ -n "$c70_out" ]; then c70_bad="$c70_bad [user-level reference rendered: rc=$c70_rc $(printf '%s' "$c70_out" | tr '\n' ' ')]"; fi
+  c70_nx=$(grep -c '"args"' "$c70_uh/.claude/settings.json")
+  [ "$c70_nx" -gt 0 ] || c70_bad="$c70_bad [the rendered user-level settings carry no exec-form entry: the program test is inert]"
+else
+  c70_bad="$c70_bad [render-user-hooks.sh --write failed: $(printf '%s' "$c70_ro" | tr '\n' ' ')]"
+fi
+if [ -z "$c70_bad" ]; then
+  ok "check 70: $c70_scanned settings files, $c70_ag agent-frontmatter registrations and the rendered user-level reference: every script exists, passes bash -n, and every exec-form program is spawnable"
+else
+  ko "check 70: $c70_bad"
+fi
+# control 1: a deleted registered hook is listed, exit 1
+cp templates/general/.claude/settings.json "$c70_proj/.claude/settings.json"
+rm -f "$c70_proj/hooks/no-push-main.sh"
+c70_out=$(env HOME="$c70_h0" CLAUDE_PROJECT_DIR="$c70_proj" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+if [ "$c70_rc" -eq 1 ] && printf '%s\n' "$c70_out" | grep -q 'MISSING: .*hooks/no-push-main\.sh'; then
+  ok "check 70 control: verify-hooks.sh --report lists a deleted registered hook and exits 1"
+else
+  ko "check 70 control: a deleted registered hook was NOT reported (rc=$c70_rc out=[$(printf '%s' "$c70_out" | tr '\n' ' ')]) -- the check is green by construction"
+fi
+# control 2: a nonexistent exec-form program is reported (D2)
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s/nowhere/bash","args":["-c",". \\"$0\\"","%s/hooks/retro-brief.sh"]}]}]}}\n' "$c70_tmp" "$c70_proj" > "$c70_proj/.claude/settings.json"
+c70_out=$(env HOME="$c70_h0" CLAUDE_PROJECT_DIR="$c70_proj" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
+if [ "$c70_rc" -eq 1 ] && printf '%s\n' "$c70_out" | grep -q '^MISSING PROGRAM: .*nowhere/bash'; then
+  ok "check 70 control: an exec-form command that cannot be spawned is reported MISSING PROGRAM and exits 1"
+else
+  ko "check 70 control: a nonexistent exec-form program was NOT reported (rc=$c70_rc out=[$(printf '%s' "$c70_out" | tr '\n' ' ')])"
+fi
+rm -rf "$c70_tmp"
+
+# ---------------------------------------------------------------------------
+# Check 71 (registration polarity, frozen set; v4.4.0 C1+C5, review focus 1-4) --
+# every hook registration (six variants, root, agent frontmatter, user-level
+# reference) is extracted into event;matcher;script;form and compared with the
+# frozen table above. The forms are the polarity table's: F fail-closed (a missing
+# script exits 2), W fail-open WARN, O fail-open silent, U unwrapped, and the
+# user-level UF/UO/UU. The sync server replaces settings.json wholesale (R-5), so a
+# template that DROPS a matcher group silently removes that gate from every
+# consumer: the table makes a removal, an addition or a changed form red.
+# Also: (2) the F/UF hooks carry the in-hook 127->2 trap and no other registered
+# hook (nor any lib) traps EXIT; (3) no allow-capable hook is F/UF; (4) the stop
+# gate is U; (5) a C5 hook's template matcher covers its user-level matcher (else
+# stepping aside drops a tool); (6) the sourced hooks have no top-level return;
+# (7) controls: a mutated copy (one F turned W; a dropped group) must go red.
+# ---------------------------------------------------------------------------
+echo
+note "Check 71: registration polarity -- the frozen (event, matcher, script, form) set; trap, allow, stop-gate, matcher-superset and return audits"
+c71_bad=""
+c71_agents() { for c71_a in templates/*/.claude/agents/*.md; do
+    c71_lab=$(printf '%s' "$c71_a" | sed 's|^templates/||; s|/\.claude/agents/|/|')
+    c71_x "$c71_a" "agent:$c71_lab"
+  done | LC_ALL=C sort; }
+c71_cmp() { # <label> <got> <want>
+  if [ -z "$2" ]; then c71_bad="$c71_bad [$1: the extraction found NO registration]"
+  elif [ "$2" != "$3" ]; then c71_bad="$c71_bad [$1 differs from the frozen table: $(printf '%s\n' "$2" | LC_ALL=C sort > "$c71_tmp/got"; printf '%s\n' "$3" | LC_ALL=C sort > "$c71_tmp/want"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"; fi
+}
+c71_tmp=$(mktemp -d)
+if ! command -v node >/dev/null 2>&1; then
+  ko "check 71: node is not available -- the registration extractor cannot run"
+elif [ -z "$C71_TABLE" ]; then
+  ko "check 71: the frozen table fixture $C71_FIXTURE is missing, unreadable or empty -- fail closed"
+else
+  # (1) the frozen set
+  c71_cmp "templates/general" "$(c71_x templates/general/.claude/settings.json general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
+  c71_cmp ".claude/settings.json" "$(c71_x .claude/settings.json root)" "$(printf '%s\n' "$C71_TABLE" | grep '^root;')"
+  c71_cmp "user-level-reference/settings.json" "$(c71_x user-level-reference/settings.json user)" "$(printf '%s\n' "$C71_TABLE" | grep '^user;')"
+  c71_cmp "agent frontmatter" "$(c71_agents)" "$(printf '%s\n' "$C71_TABLE" | grep '^agent:' | LC_ALL=C sort)"
+  c71_gen=$(c71_x templates/general/.claude/settings.json general)
+  for c71_v in $VARIANTS; do
+    [ "$(c71_x "templates/$c71_v/.claude/settings.json" general)" = "$c71_gen" ] || c71_bad="$c71_bad [templates/$c71_v/.claude/settings.json registers a different set than templates/general]"
+  done
+  c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -c .)
+  c71_nsc=$(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u | grep -c .)
+
+  # (2) the trap audit. Definitions come from test-hooks.sh block C2a: one each.
+  if [ "$(grep -c '^C2ATRAPRE=' scripts/test-hooks.sh)" -ne 1 ] || [ "$(grep -c '^C2AAWK=' scripts/test-hooks.sh)" -ne 1 ]; then
+    c71_bad="$c71_bad [scripts/test-hooks.sh does not define C2ATRAPRE and C2AAWK exactly once each]"
+  else
+    eval "$(grep '^C2ATRAPRE=' scripts/test-hooks.sh)"; eval "$(grep '^C2AAWK=' scripts/test-hooks.sh)"
+  fi
+  c71_ntrap=0
+  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u); do
+    c71_want=0
+    printf '%s\n' "$C71_TABLE" | awk -F';' -v s="$c71_s" '$4==s && ($5=="F"||$5=="UF"){f=1} END{exit f?0:1}' && c71_want=1
+    c71_got=$(grep -ciE "$C2ATRAPRE" "hooks/$c71_s.sh")
+    if [ "$c71_got" != "$c71_want" ]; then c71_bad="$c71_bad [hooks/$c71_s.sh has $c71_got EXIT/0 trap(s), expected $c71_want]"; fi
+    if [ "$c71_want" = 1 ]; then
+      c71_ntrap=$((c71_ntrap + 1))
+      [ "$(grep -c '^trap .\[ "\$?" = 127 \] && exit 2. EXIT' "hooks/$c71_s.sh")" = 1 ] || c71_bad="$c71_bad [hooks/$c71_s.sh (F/UF) lacks the 127->2 trap line]"
+    fi
+  done
+  [ "$c71_ntrap" -ge 6 ] || c71_bad="$c71_bad [only $c71_ntrap F/UF hooks found, expected at least 6: the audit is inert]"
+  [ "$(cat hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")" = 0 ] || c71_bad="$c71_bad [a hooks/lib/*.sh file sets an EXIT/0 trap]"
+  printf 'trap -- "x" EXIT\n' > "$c71_tmp/t1.sh"; printf "trap 'x'\t0\n" > "$c71_tmp/t2.sh"; printf "trap 'echo exit 2' INT\n" > "$c71_tmp/t3.sh"
+  [ "$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t1.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t2.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t3.sh")" = 110 ] || c71_bad="$c71_bad [the trap regex CONTROL failed: 'trap -- ... EXIT' and a TAB-separated 'trap ... 0' must match, 'trap ... INT' must not]"
+
+  # (3) no allow-capable hook is F/UF; the grep must match read-size-gate (positive control)
+  C71_ALLOW='permissionDecision"?[[:space:]]*:[[:space:]]*"allow"'
+  grep -qE "$C71_ALLOW" hooks/read-size-gate.sh || c71_bad="$c71_bad [the allow grep does not match hooks/read-size-gate.sh: it is inert]"
+  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '($5=="F"||$5=="UF"){print $4}' | sort -u); do
+    ! grep -qE "$C71_ALLOW" "hooks/$c71_s.sh" || c71_bad="$c71_bad [hooks/$c71_s.sh can emit an allow but is registered F/UF]"
+  done
+  # (4) the stop gate is U everywhere it is registered
+  c71_sg=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$4=="enforce-agent-contract"{print $5}')
+  [ -n "$c71_sg" ] && [ "$(printf '%s\n' "$c71_sg" | sort -u)" = "U" ] || c71_bad="$c71_bad [enforce-agent-contract is not registered U (the stop gate is never wrapped): $(printf '%s' "$c71_sg" | tr '\n' ' ')]"
+  # (5) matcher superset for each C5 hook: the template's alternatives cover the user-level matcher's
+  c71_cover() { # <template matcher> <user matcher> -> 0 when every user alternative is a template alternative (an empty template matcher covers all)
+    [ -z "$1" ] && return 0
+    [ -z "$2" ] && return 1
+    for c71_alt in $(printf '%s' "$2" | tr '|' ' '); do
+      case "|$1|" in *"|$c71_alt|"*) ;; *) return 1 ;; esac
+    done
+    return 0
+  }
+  c71_nsa=0
+  while IFS=';' read -r c71_l c71_e c71_m c71_s c71_f; do
+    [ "$c71_l" = user ] || continue
+    grep -qF "*'}/hooks/$c71_s.sh" user-level-reference/settings.json || continue
+    c71_nsa=$((c71_nsa + 1))
+    c71_ok=0
+    while IFS=';' read -r c71_tl c71_te c71_tm c71_ts c71_tf; do
+      [ "$c71_tl" = general ] && [ "$c71_te" = "$c71_e" ] && [ "$c71_ts" = "$c71_s" ] || continue
+      c71_cover "$c71_tm" "$c71_m" && c71_ok=1
+    done <<EOF
+$C71_TABLE
+EOF
+    [ "$c71_ok" = 1 ] || c71_bad="$c71_bad [C5 hook $c71_s: no template registration under $c71_e covers the user-level matcher '$c71_m' -- stepping aside would drop a tool]"
+  done <<EOF
+$C71_TABLE
+EOF
+  [ "$c71_nsa" -ge 5 ] || c71_bad="$c71_bad [only $c71_nsa step-aside hooks found in the user-level reference, expected at least 5: the audit is inert]"
+  c71_cover 'Bash|PowerShell' 'Bash|PowerShell|Read' && c71_bad="$c71_bad [the matcher-superset CONTROL failed: a wider user matcher was judged covered]"
+  c71_cover 'Bash|PowerShell' 'PowerShell' || c71_bad="$c71_bad [the matcher-superset CONTROL failed: a narrower user matcher was judged uncovered]"
+  # (6) no top-level return in a sourced (UF/UO/UU) hook or any lib
+  c71_rf=""
+  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '$5 ~ /^U[FOU]$/ {print $4}' | sort -u); do c71_rf="$c71_rf hooks/$c71_s.sh"; done
+  [ -n "$c71_rf" ] || c71_bad="$c71_bad [no sourced hook found: the return audit is inert]"
+  c71_ret=$(awk "$C2AAWK" $c71_rf hooks/lib/*.sh)
+  [ -z "$c71_ret" ] || c71_bad="$c71_bad [top-level return in a sourced hook or lib: $(printf '%s' "$c71_ret" | tr '\n' ' ')]"
+  printf 'return 5\n' > "$c71_tmp/r1.sh"
+  [ "$(awk "$C2AAWK" "$c71_tmp/r1.sh" | wc -l | tr -d ' ')" = 1 ] || c71_bad="$c71_bad [the return-audit CONTROL failed: a top-level return was not reported]"
+
+  if [ -z "$c71_bad" ]; then
+    ok "check 71: $c71_nrows registrations over $c71_nsc scripts equal the frozen table (six variants, root, user-level, agent frontmatter); $c71_ntrap F/UF hooks trap 127->2, no allow-capable hook is F/UF, the stop gate is U, $c71_nsa C5 matchers covered, no top-level return"
+  else
+    ko "check 71: $c71_bad"
+  fi
+
+  # (7) control: the same extraction on mutated copies must differ from the table
+  c71_mut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="f2w"){for(const x of g)for(const h of x.hooks)if(/deny-secret-reads/.test(h.command))h.command=h.command.replace("HOOK SCRIPT MISSING: $f -- ","WARN: $f missing -- ").replace(/exit 2; \}; command -v bash .*cannot run" >&2; exit 2; \}; /,"exit 0; }; ");}else{for(let i=0;i<g.length;i++)if(g[i].hooks.some(h=>/deny-secret-reads/.test(h.command))){g.splice(i,1);break;}}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
+  c71_want=$(printf '%s\n' "$C71_TABLE" | grep '^general;')
+  for c71_mode in f2w dropgroup; do
+    node -e "$c71_mut" templates/general/.claude/settings.json "$c71_tmp/mut-$c71_mode.json" "$c71_mode" 2>/dev/null
+    c71_got=$(c71_x "$c71_tmp/mut-$c71_mode.json" general 2>/dev/null)
+    if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_want" ]; then
+      ok "check 71 control ($c71_mode): the extraction on a mutated copy differs from the frozen table"
+    else
+      ko "check 71 control ($c71_mode): a mutated copy was NOT detected -- the frozen-set comparison is vacuous"
+    fi
+  done
+fi
+rm -rf "$c71_tmp"
 
 # ---------------------------------------------------------------------------
 echo

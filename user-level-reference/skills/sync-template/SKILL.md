@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.3.1 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.4.0 -->
 
 **This skill takes no arguments.** Invoke it as `/sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -59,7 +59,7 @@ This gate exists because nothing else can cover the case. A v2 manifest carries 
 >
 > **Skew: `server_commit` vs the checkout.** A 4.0+ response also carries `server_commit`, the toolkit commit this server process imported at spawn — read it with `.get("server_commit")` the same way you read `server_in_template_repo`: **absent means a pre-4.0 server**, and there is no skew check to run. When it is present, it can still be `null` — the server was not imported from a git checkout (an installed wheel, a copied tree) — and `null` means "cannot tell", not "differs"; say so once and do not warn, because a restart cannot turn a non-checkout into one. Only when the key is present, non-null, **and** differs from `git -C <templateRepo> rev-parse HEAD` has the toolkit been pulled after the server started: templates on disk are newer than the server code running. Say so and tell the user to restart the MCP server before syncing — the one tag makes this skew easy to miss, and this field is the only place it shows.
 
-> **A `server/` diff that touches only `server/src/template_sync/VERSION` still needs the `/mcp` reconnect (v4.3.1, panoscribe).** The running process holds the VERSION it read at import, so until `template-sync-tools` reconnects, `template_verify` FAILs `server_skew` although no server code changed. Reconnect for ANY change under `server/`; reinstall (`bash server/install.sh`) only when `server/pyproject.toml` — the dependencies — changed.
+> **A `server/` diff that touches only `server/src/template_sync/VERSION` still needs the `/mcp` reconnect (v4.3.1, panoscribe).** The running process holds the VERSION it read at import, so until `template-sync-tools` reconnects, `template_verify` FAILs `server_skew` although no server code changed. Reconnect for ANY change under `server/`; reinstall (`bash server/install.sh`) only when `server/pyproject.toml` — the dependencies — changed. The `/mcp` reconnect alone delivers new server parameters (they live in the server process); no session restart is needed for them, and the version-marker check at the top of this file concerns the skill body only.
 
 **The currency question has exactly one right-hand side: `git -C <templateRepo> rev-parse HEAD`, never `git rev-parse <tag>`.** An ANNOTATED tag resolves to the TAG OBJECT's own sha (a real, different, commit-shaped-looking string), not the commit it points at — comparing `server_commit` against a tag name is comparing against the wrong kind of git object, and reads as skew when there is none or as agreement when there is skew. Wherever a tag genuinely is the right-hand side for some other comparison, dereference it first: `<tag>^{commit}`.
 
@@ -137,6 +137,8 @@ git -C <templateRepo> describe --exact-match --tags 2>/dev/null
 ```
 grep -n '"resolution"\|"reason"' .claude/template-manifest.json
 ```
+
+This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
 
 Write the paths down. These are deliberate deviations recorded in the v2 manifest, and **v3 has no equivalent, so migration drops them.** This census costs nothing, needs no field, and is the ONLY thing that works on a server too old to report the loss. It is also the census that makes an empty report meaningful — see 1c-iv.
 
@@ -225,7 +227,7 @@ Then report:
 - **`region_left_in_place: true` and `region_bytes`** — **the region stays in `CLAUDE.md`; it is never copied into `project.md`.** `project.md` gets the v4.0.1 seed header ONLY (v4.0.1, item 14) — measured at a fixed byte count regardless of `hunk_count`, so a non-zero `hunk_count` does NOT mean the diff is in the file. The **out-of-region** hunks, when there are any, are written instead to `<backup_dir>/CLAUDE.md.out-of-region.diff` (`project_md_record` in the migrate response names the path, or is `null` when there were none, or on a `dry_run`) — **never into `project.md` itself**. This is the opposite reason from 0.3.5's: `project.md` has **no `paths:` key**, so it is loaded at **every session start**, same priority as `CLAUDE.md` — an unscoped rules file is delivered to EVERY session, not to nobody (measured with this repo's own `zz-load-probe.md`), which is exactly why a migration diff must not live there. Before 0.3.5 the tool's docstring claimed the region itself was written verbatim; 0.3.5 fixed the docstring. v4.0.1 corrects the delivery claim that justified the placement in the first place — see the "Delivery reality" paragraph in step 3.
 - **`region_bytes` counts the region BODY**, not the block: one measured file reports 2695 where the block including its marker lines is 2814. Two correct numbers with different boundaries — do not diff them and report a discrepancy.
 
-**A consumer cross-checking `region_bytes` against `region.sh --body <path>`'s own byte count may see them differ by exactly ±1, in either direction, content-dependent — not data loss, and never "one byte more" as a persistent direction to correct for.** Measured on two consumers: MM-Agent read `region_bytes` one byte ABOVE `--body`'s count (68,818 vs 68,817); panoscribe read the opposite (1693 vs `region.sh` reporting 1692). The sign flips with the file's own content, so there is nothing consistent to chase down — report the byte and move on.
+**A consumer cross-checking `region_bytes` against `bash ~/.claude/skills/sync-template/region.sh --body <path>`'s own byte count may see them differ by exactly ±1, in either direction, content-dependent — not data loss, and never "one byte more" as a persistent direction to correct for.** Measured on two consumers: MM-Agent read `region_bytes` one byte ABOVE `--body`'s count (68,818 vs 68,817); panoscribe read the opposite (1693 vs `region.sh` reporting 1692). The sign flips with the file's own content, so there is nothing consistent to chase down — report the byte and move on.
 
 #### 1c-vi. Name what `once` will silently never deliver
 
@@ -540,6 +542,8 @@ Use **forward slashes** in the JSON `cwd` (`C:/git/foo`, not `C:\git\foo`): a Wi
 
 > **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination. Once Bash works again, finish the sync in the order above and restart per the final report.
 
+> **If Bash is refused (e.g. by a resource-pressure guard) after the hook writes but before the `settings.json` write or before the post-settings probe, the half-state is safe:** wait, then resume at the I2 precondition or at the probe. Never write `settings.json` until the I2 precondition holds, and never write anything after it until the probe has run.
+
 Collect all results. Report the list of auto-updated files.
 
 ### 4. Resolve Conflicts
@@ -745,12 +749,12 @@ So the user cannot choose *"delete with content"*; they can only *"empty, then d
 Required, in order:
 
 1. **Extract with `region.sh`** — the shipped extractor, never a hand-written check. A2 is unsound without it: the hand-written version returns the *reassuring* answer (see step 4's note), a region with content reads as empty, deletion is offered, and the content is gone.
-2. **`CONTENT` ⇒ print the region VERBATIM** (`region.sh --body <path>`) and **withhold the delete option entirely**. Show the user what is at stake in the same breath as the question.
+2. **`CONTENT` ⇒ print the region VERBATIM** (`bash ~/.claude/skills/sync-template/region.sh --body <path>`) and **withhold the delete option entirely**. Show the user what is at stake in the same breath as the question.
 3. **Offer relocate (to a named survivor) or defer.** After a relocate, **BYTE-COMPARE the moved region against the original before deletion becomes reachable**:
 
    ```
-   bash region.sh --body <original>  > "$TMPDIR/region-orig"
-   bash region.sh --body <survivor>  > "$TMPDIR/region-moved"
+   bash ~/.claude/skills/sync-template/region.sh --body <original>  > "$TMPDIR/region-orig"
+   bash ~/.claude/skills/sync-template/region.sh --body <survivor>  > "$TMPDIR/region-moved"
 
    # NON-EMPTY *AND* EQUAL. Both conditions, in this order.
    [ -s "$TMPDIR/region-moved" ] || FAIL "the survivor's region is EMPTY — the relocate did not happen"
@@ -828,6 +832,8 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 ```
 grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u
 ```
+
+This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
 
 > **Anchoring on `command:` is the v2.2.5 defect, and it recovered ZERO (v2.2.6, consumer measurement).** Until v2.2.6 this step said "on a `command:` line", justified as keeping the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS pattern out of the set. But the hook path sits **after an escaped quote** inside the command value, so the obvious implementation truncates at the escape:
 >
@@ -1135,7 +1141,9 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
 
-**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. The next finalize replaces the list.
+**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the next finalize replaces it (an empty recomputed list removes the key).
+
+**Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
 
 #### 8a. Expected lines, per mode AND per manifest situation (`LINES` is now 31 — v4.1.0 raised it from 24 to 30; v4.1.1 adds `project_md_seed_differs`, directly after `project_md_seed_current`)
 
