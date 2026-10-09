@@ -40,7 +40,7 @@ Each template variant provides the following files:
 | `PROJECT_STATE.md` | Sprint state tracking |
 | `.claude/settings.json` | MCP permissions + workflow hooks (MCP enforcement, format gates, pipeline, compaction) |
 | `.claude/agents/` | 6 generic agents (incl. the custom `Explore`, which overrides the built-in one and pins it to haiku) + variant-specific coders |
-| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `no-push-main`, `pre-commit-test`, `read-size-gate`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `agent-budget-warn`, `retro-ledger` + `retro-brief`, `bash-output-guard`, `deny-secret-reads`, (v3.1) `post-edit-build`, (v4.1.0) `deny-claude-md-writes`, and (v4.3.0) `deny-hang-shapes` + `model-floor`, and (v4.3.2) `git-pre-push` (a NATIVE git hook, installed per clone by `bash hooks/git-pre-push.sh --install`, not registered in settings.json) — 18 scripts, plus the shared parsers `lib/git-cmd.sh` and `lib/json.sh`. The two DEPRECATED v2.0 no-op stubs were deleted in v2.1, as announced; `allow-ctx-plan` was deleted in v2.0 PR3 with the context-mode routing rules. **v3.1 added a corrupt-lib sentinel to the four hooks that source `lib/git-cmd.sh`:** a *missing* lib was already fail-closed via the 127 wrapper, but an empty or syntax-broken one made every git gate return 0 silently, so each now checks that a long-standing lib function is defined and refuses when it is not (`post-edit-build` still exits 0 — PostToolUse must never block — but reports it) |
+| `hooks/` | Workflow enforcement scripts, tracked once at the toolkit ROOT and shared across all variants (variants do **not** ship a `hooks/` directory): `no-push-main`, `pre-commit-test`, `read-size-gate`, `require-skills-block`, `run-gate` + `gate-before-merge`, `enforce-agent-contract`, `enforce-delegation`, `agent-budget-warn`, `retro-ledger` + `retro-brief`, `bash-output-guard`, `deny-secret-reads`, (v3.1) `post-edit-build`, (v4.1.0) `deny-claude-md-writes`, and (v4.3.0) `deny-hang-shapes` + `model-floor`, and (v4.3.2) `git-pre-push` (a NATIVE git hook, installed per clone by `bash hooks/git-pre-push.sh --install`, not registered in settings.json), and (v4.4.0) `verify-hooks` (SessionStart: reports registered hook scripts that are missing or broken) — 19 scripts, plus the shared libs `lib/git-cmd.sh`, `lib/json.sh` and `lib/agent-model.sh`. The two DEPRECATED v2.0 no-op stubs were deleted in v2.1, as announced; `allow-ctx-plan` was deleted in v2.0 PR3 with the context-mode routing rules. **v3.1 added a corrupt-lib sentinel to the four hooks that source `lib/git-cmd.sh`:** a *missing* lib was already fail-closed via the 127 wrapper, but an empty or syntax-broken one made every git gate return 0 silently, so each now checks that a long-standing lib function is defined and refuses when it is not (`post-edit-build` still exits 0 — PostToolUse must never block — but reports it) |
 | `gitignore` | Template for .gitignore (copied or merged by the setup script) |
 | `.editorconfig` | Code style for dotnet, dotnet-maui, java, and python variants |
 | `rustfmt.toml` + `.prettierrc` | Code style for rust-tauri variant only |
@@ -127,19 +127,20 @@ See `docs/architecture.md` → *MCP Layering* and `mcp-servers/HOWTO.md` → *Pr
 | `{{GATE_CHECKED_BRANCHES}}` | Fills `**Gate-checked branches**:` in `PROJECT_CONTEXT.md` — glob list of branches whose merges the gate checks in addition to the protected set. Setup writes `none` (= no branch is gate-checked); edit the key afterwards to opt in | none |
 | `{{POST_EDIT_BUILD}}` | Fills `**Post-edit build**:` in `PROJECT_CONTEXT.md`, the command `hooks/post-edit-build.sh` runs after every edit. Derived: `dotnet build --no-restore -v q` for the dotnet variants, `none` (= no post-edit build) for the others | dotnet build --no-restore -v q |
 
-## Template Manifest (v3)
+## Template Manifest (v4)
 
-The setup script generates `.claude/template-manifest.json` in each target project (`manifest_version: 3`; older v2 manifests are migrated by `template_migrate_manifest`). It records:
+The setup script generates `.claude/template-manifest.json` in each target project (`manifest_version: 4` since v4.1.0; older v2 and v3 manifests are migrated by `template_migrate_manifest`). It records:
 
-- **`manifest_version`**: schema version (`3`)
+- **`manifest_version`**: schema version (`4`)
 - **`variant`**: which template was applied (general, dotnet, dotnet-maui, rust-tauri, java, python)
 - **`templateRepo`**: absolute path to the claude-code-toolkit repo on disk
 - **`template_version`** / **`template_commit`**: the toolkit tag and commit the tracked tree matches at setup/sync
-- **`requires_server`**: the template-sync server floor (`>=0.3.2`), enforced on every later sync
+- **`requires_server`**: the template-sync server floor (`>=4.1.0`), enforced on every later sync
+- **`instructions_file`** / **`agent_grants`**: the fixed paths `.claude/project-instructions.md` and `.claude/agent-grants.json` (v4 declaration keys)
 - **`placeholders`**: the concrete values used during setup (for reverse-mapping by `/contribute-upstream`)
 - **`files`**: one entry per tracked path — `{"ownership": "template", "hash": "sha256:<hex>"}` for files the template owns (the hash is of the rendered content the server wrote, so a later diff is measurable), `{"ownership": "once"}` for files seeded once and then yours; files the ownership table does not name are yours and have no entry
 
-The full field reference, key order and the historical v2 shape are in [`template-sync.md`](template-sync.md#manifest-v3-claudetemplate-manifestjson).
+The full field reference, key order and the historical v2 shape are in [`template-sync.md`](template-sync.md#manifest-v3--v4-claudetemplate-manifestjson).
 
 The manifest is consumed by the **template-sync-tools** MCP server, which powers the `/sync-template` and `/contribute-upstream` skills. See [`template-sync.md`](template-sync.md) for the full workflow.
 

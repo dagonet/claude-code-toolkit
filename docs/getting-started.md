@@ -116,9 +116,11 @@ This gives you the full agent team, workflow, and session bootstrap -- just with
 > **Adopting `user-level-reference/settings.json`: merge, do not overwrite.** Your own
 > `~/.claude/settings.json` carries personal keys the reference does not know about
 > (`advisorModel`, `autoCompact*`, `contextCompactionThreshold`, `statusLine`, your model
-> pins). Copy in only the `permissions.deny` entries and the `hooks` block, keeping
-> everything else. Use the v2.1 migration pattern: a short Python script that loads both
-> files as JSON, unions `permissions.deny`, replaces `hooks`, and writes your file back.
+> pins). Copy in only the `permissions.deny` entries, keeping everything else. Use the
+> v2.1 migration pattern: a short Python script that loads both files as JSON, unions
+> `permissions.deny` and writes your file back. Then run `bash scripts/render-user-hooks.sh --write`
+> from the toolkit root for the `hooks` block (do not copy it by hand: it carries `@BASH@`
+> placeholders that must be rendered per machine).
 
 ### Tier 2 -- Recommended
 
