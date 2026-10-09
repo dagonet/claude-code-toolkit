@@ -50,6 +50,20 @@ refs=$(cat); printf '%s\n' "$refs" | bash "$(git rev-parse --show-toplevel)/hook
 GPP_CHAIN
 }
 
+# gpp_real <path> <base> -- the physical (pwd -P) path of <path>, a relative one
+# resolved against <base>; backslashes become '/', trailing slashes go. A last
+# component that does not exist yet is the physical parent plus its name. Prints
+# nothing on any failure (the caller then refuses -- never fails open).
+gpp_real() {
+  gr_p=$(printf '%s' "$1" | tr '\\' '/')
+  while :; do case "$gr_p" in ?*/) gr_p=${gr_p%/} ;; *) break ;; esac; done
+  case "$gr_p" in /*|[A-Za-z]:*) ;; *) gr_p="$2/$gr_p" ;; esac
+  if [ -d "$gr_p" ]; then ( cd -P "$gr_p" 2>/dev/null && pwd -P ); return 0; fi
+  gr_d=${gr_p%/*}; gr_n=${gr_p##*/}
+  [ -n "$gr_d" ] && [ -n "$gr_n" ] && gr_d=$( cd -P "$gr_d" 2>/dev/null && pwd -P ) && [ -n "$gr_d" ] && printf '%s/%s\n' "${gr_d%/}" "$gr_n"
+  return 0
+}
+
 # gpp_install [<dir>] -- 0 installed, 1 not installed (reason on stderr). Never
 # overwrites a foreign hook, never writes where core.hooksPath makes git look
 # elsewhere, and never points a shim at a top-level without this file (R-2).
@@ -63,13 +77,18 @@ gpp_install() {
     echo "pre-push: not installed: $gi_top/hooks/git-pre-push.sh is missing -- the hooks must live at the repository top-level." >&2
     return 1
   fi
+  gi_common=$(git -C "$gi_top" rev-parse --git-common-dir 2>/dev/null)
+  case "$gi_common" in /*|[A-Za-z]:*) ;; *) gi_common="$gi_top/$gi_common" ;; esac
   gi_hp=$(git -C "$gi_top" config --get core.hooksPath 2>/dev/null)
+  # A hooksPath that resolves to the default <common dir>/hooks is the same as unset.
+  if [ -n "$gi_hp" ]; then
+    gi_a=$(gpp_real "$gi_hp" "$gi_top"); gi_b=$(gpp_real "$gi_common/hooks" "$gi_top")
+    if [ -n "$gi_a" ] && [ "$gi_a" = "$gi_b" ]; then gi_hp=""; fi
+  fi
   if [ -n "$gi_hp" ]; then
     { echo "pre-push: not installed: core.hooksPath is set ($gi_hp), so git ignores .git/hooks. Add this line as the FIRST line after the shebang of $gi_hp/pre-push; anything below it that reads the refs must read \"\$refs\" instead, e.g. printf '%s\\n' \"\$refs\" | git lfs pre-push \"\$@\":"; gpp_chain; } >&2
     return 1
   fi
-  gi_common=$(git -C "$gi_top" rev-parse --git-common-dir 2>/dev/null)
-  case "$gi_common" in /*|[A-Za-z]:*) ;; *) gi_common="$gi_top/$gi_common" ;; esac
   gi_dst="$gi_common/hooks/pre-push"
   if { [ -e "$gi_dst" ] || [ -L "$gi_dst" ]; } && [ "$(sed -n 2p "$gi_dst" 2>/dev/null)" != "$(gpp_shim | sed -n 2p)" ]; then
     { echo "pre-push: not installed: $gi_dst already exists and is not this toolkit's shim -- left untouched. Add this line as the FIRST line after the shebang; anything below it that reads the refs must read \"\$refs\" instead, e.g. printf '%s\\n' \"\$refs\" | git lfs pre-push \"\$@\":"; gpp_chain; } >&2

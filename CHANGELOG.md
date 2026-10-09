@@ -2,7 +2,7 @@
 
 ## v4.4.2 — 2026-10-10
 
-Patch. The documented one-time pre-push install was refused by the toolkit's own gates on a protected `main`. `hooks/git-pre-push.sh` changes in message text only; the gates are unchanged. The sync-template skill gains seven clarifications.
+Patch. The documented one-time pre-push install was refused by the toolkit's own gates on a protected `main`. `hooks/git-pre-push.sh` changes in message text, and its installer now treats `core.hooksPath` equal to the default hooks dir as unset; the gates are unchanged. The sync-template skill gains seven clarifications.
 
 **Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body changes by seven clarifications and its version marker (v4.4.2); no `template_*` call, manifest field or server behavior changed, so the `>= 4.1.0` server floor stands.**
 
@@ -11,6 +11,7 @@ Patch. The documented one-time pre-push install was refused by the toolkit's own
 - **Incident (2026-10-10).** Consumer penumbra merged its v4.4.1 sync, then ran the documented one-time install, `bash hooks/git-pre-push.sh --install`, on `main`. `gate-before-merge.sh` BLOCKED it ("refuses this operation on a protected branch"); `no-push-main.sh` refused the same command.
 - **Cause.** `gc_script_body` (`hooks/lib/git-cmd.sh`) reads a script named by `bash <file>` and feeds its code lines (whole-line comments excluded) to the same verb matcher as the typed command. The installer's own refusal messages, at lines 38, 92 and 117, contained the text `git push --no-verify`, which the matcher read as a push. The matched segment was the installer's own `echo "BLOCKED: pre-push: ..."` line.
 - **Fix, text only.** Those three `echo` lines in `hooks/git-pre-push.sh` now say "the --no-verify flag (git then skips this hook)" instead of `git push --no-verify`. The escape stays discoverable in each refusal. No gate was changed and no exemption added. The comment at line 21 still says `git push --no-verify`; it is a whole-line comment, which the scan strips.
+- **`--install` refused on a default `core.hooksPath` (incident: yutraffic).** `--install` refused with "core.hooksPath is set" although the value pointed at the default `<git common dir>/hooks` (absolute Windows `G:\git\X\.git\hooks` or MSYS `/g/git/X/.git/hooks` spelling, a trailing slash, or relative `.git/hooks`, which git resolves against the worktree top). `gpp_install` now computes the common dir first and compares both sides via `cd` + `pwd -P` (`gpp_real`: backslashes to `/`, trailing slashes stripped, relative values against the top-level); equal means treated as unset and the shim is installed. A different directory, or one that cannot be resolved, still refuses with the same message and chain line.
 
 ### Skill
 
@@ -27,12 +28,15 @@ Seven edits to `user-level-reference/skills/sync-template/SKILL.md`; the version
 ### Tests
 
 - New block `v4.4.2 V1b` in `scripts/test-hooks.sh` (6 assertions): in a fixture on a protected `main` with a `**Gate**` line, the real `gate-before-merge.sh` and `no-push-main.sh` both allow `bash hooks/git-pre-push.sh --install` (exit 0) and both refuse `git push origin main` (exit 2). Control: the v4.4.1 installer (`git show v4.4.1:hooks/git-pre-push.sh`) in a second fixture is refused by both (exit 2); the control skips (2 assertions) when the tag is unavailable.
+- 11 new assertions in the `V1` installer-refusal rows (`scripts/test-hooks.sh`, after the `core.hooksPath set` rows): hooksPath = the default dir as an absolute path, as relative `.git/hooks`, and with a trailing slash each exit 0 with the shim present (6); hooksPath = another absolute dir exits 1, writes nothing and prints the chain line (3); hooksPath = `L/../.git/hooks` with `L` a symlink elsewhere (git looks in the other directory) exits 1 and writes nothing (2, the review fix: the comparison uses `cd -P`). Verified red before the fix, green after.
 - `V1: refusal names branch, remote and escape` now looks for `the --no-verify flag`.
-- **Suites at the release tip (Linux container):** `verify-template-consistency.sh` ALL CHECKS PASSED (465 PASS lines, 0 FAIL); `test-hooks.sh` 4098 passed, 0 failed, 6 skipped (4104 assertions; all skips host-tagged); `test-server.sh` 492 passed, 0 failed, 10 skipped. The parser matrix was not run (no `hooks/lib/json.sh` change).
+- **Suites at the release tip (Linux container):** `verify-template-consistency.sh` ALL CHECKS PASSED (466 PASS lines, 0 FAIL); `test-hooks.sh` 4109 passed, 0 failed, 6 skipped (4115 assertions; all skips host-tagged); `test-server.sh` 492 passed, 0 failed, 10 skipped. The parser matrix was not run (no `hooks/lib/json.sh` change).
 
 ### Downstream step
 
 Consumers run `/sync-template`; `hooks/git-pre-push.sh` arrives as an ordinary auto-update. The user-level skill is re-copied from `user-level-reference/skills/sync-template/`, then `bash scripts/verify-user-level-drift.sh` must report 0 drift. A session already running a v4.4.1 skill body keeps that body until restarted.
+
+The FIRST route for the one-time install is a plain terminal at the repo root: `bash hooks/git-pre-push.sh --install`. A `!` prefix in a Claude session only works in the terminal client, not from mobile or desktop. Consumers that already installed the hook need nothing.
 
 ### Context budget
 
