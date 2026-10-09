@@ -2,7 +2,7 @@
 
 ## v4.4.1 — 2026-10-09
 
-Hotfix. The v4.4.0 user-level exec-form hook registrations locked a Windows machine out when Claude Code was started from PowerShell. Every user-level registration string now begins with `PATH=/usr/bin:/bin:$PATH; `. No hook script changed, and no verdict changed.
+Hotfix. The v4.4.0 user-level exec-form hook registrations locked a Windows machine out when Claude Code was started from PowerShell. Every user-level registration string now begins with `export PATH=/usr/bin:/bin:$PATH; `. No hook script changed, and no verdict changed.
 
 **Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body changes only its version marker (v4.4.1); the user-level registration strings are not synced to consumers (they are rendered per machine by `scripts/render-user-hooks.sh`), and no project template, hook, rule or server code changes.**
 
@@ -10,7 +10,7 @@ Hotfix. The v4.4.0 user-level exec-form hook registrations locked a Windows mach
 
 - **Incident (2026-10-09, Windows).** After the v4.4.0 live install, `scripts/render-user-hooks.sh --write` put the user-level hooks into `~/.claude/settings.json` in exec form: `command` = `C:/Program Files/Git/usr/bin/bash.exe`, `args` = `-c <string> <hook path>`. In a Claude Code session whose `claude.exe` was started from PowerShell, PATH is the Windows PATH and does not contain Git's `usr/bin`. Inside the hook, `dirname` and `sed` were "command not found". `deny-secret-reads.sh` (`lib="$(dirname "$0")/lib/json.sh"`) resolved its lib to `/lib/json.sh` and failed closed with `BLOCKED: /lib/json.sh missing`; `no-push-main.sh` did the same. Every Bash, PowerShell and Read call was refused: a fail-closed lockout of the machine. The old shell-form registrations (`bash ~/.claude/hooks/x.sh`) ran under the Git bash that Claude Code itself spawns, which sets PATH, so they never showed it.
 - **Cause.** Exec form runs bash with the PATH of the parent process and no login setup. v4.4.0 assumed the coreutils were on it. The suites ran on hosts with `/usr/bin` on PATH, so they could not see it.
-- **Fix.** The six exec-form `-c` strings in `user-level-reference/settings.json` (and the five mirrored in `user-level-reference/settings-reference.md`) start with `PATH=/usr/bin:/bin:$PATH; ` before anything else, e.g. `PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f ...`. On Git Bash `/usr/bin` is the Git usr/bin; on Linux and macOS it is already there. PATH is only prepended to, so an exported PATH stays exported. The step-aside test, the fail-closed and fail-open tails and the hook scripts are untouched, so no hook changes its verdict and nothing newly fails open. The frozen registration table (`server/tests/fixtures/hook-registrations-v4.4.0.json`, check 71) records script and form, not string text, so it is unchanged and still correct; the classifier in check 71 matches the string tails, which did not move.
+- **Fix.** The six exec-form `-c` strings in `user-level-reference/settings.json` (and the five mirrored in `user-level-reference/settings-reference.md`) start with `export PATH=/usr/bin:/bin:$PATH; ` before anything else, e.g. `export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f ...`. On Git Bash `/usr/bin` is the Git usr/bin; on Linux and macOS `/usr/bin` and `/bin` exist and hold the system coreutils, so the prefix only moves them to the front. `export` makes the assignment reach children even when the parent passed no PATH at all (a bare assignment would stay unexported then). The step-aside test, the fail-closed and fail-open tails and the hook scripts are untouched, so no hook changes its verdict and nothing newly fails open. The frozen registration table (`server/tests/fixtures/hook-registrations-v4.4.0.json`, check 71) records script and form, not string text, so it is unchanged and still correct; the classifier in check 71 matches the string tails, which did not move.
 - **Version marker.** `VERSION` and `server/src/template_sync/VERSION` -> 4.4.1; the sync-template skill's `SYNC-TEMPLATE-SKILL-VERSION` -> v4.4.1 (the marker check ties it to `VERSION`).
 
 ### Tests
@@ -24,11 +24,13 @@ On every machine that rendered v4.4.0 hooks: update the checkout, run `bash scri
 
 ### Context budget
 
-Unchanged. No variant `CLAUDE.md`, unscoped `.claude/rules/project.md`, user-level `CLAUDE.md` or `PROJECT_CONTEXT.md` changed, so the v4.4.0 columns of the context tables in `README.md` and `docs/architecture.md` still describe the shipped files.
+Unchanged, and measured. No variant `CLAUDE.md`, unscoped `.claude/rules/project.md`, user-level `CLAUDE.md` or `PROJECT_CONTEXT.md` changed. A v4.4.1 column was added to the context tables in `README.md` (*The trim pass, measured*) and `docs/architecture.md` (*Context Budget*), re-measured with `wc -c` rather than carried forward; it is identical to v4.4.0's (general: 18,000 B injected, 23,258 B at the end of bootstrap), as v4.1.1's was to v4.1.0's.
 
-### Known limit
+### Known limits
 
-The GitHub v4.4.0 release notes told Windows users to run `bash scripts/render-user-hooks.sh --write`. On v4.4.0 that locks every session started from PowerShell (a session started from Git Bash has the Git PATH and was unaffected). v4.4.1 is the correction; the v4.4.0 notes were not rewritten.
+1. **The prefix puts `/usr/bin:/bin` first for user-level hooks.** On macOS Apple's `/usr/bin` tools therefore precede Homebrew's, and `verify-hooks.sh`'s `bash -n` runs under `/bin/bash` 3.2 (no bash-4-only syntax was found in the hooks).
+2. **Restricted-parser test configurations are re-widened for user-level exec hooks.** `scripts/test-hooks-parser-matrix.sh`'s `path_without` and `scripts/hook-equivalence.sh`'s shim PATH restrict which parsers (node, python3, jq) a hook can find by narrowing PATH; the prefix puts `/usr/bin:/bin` back in front inside user-level exec hooks, so those configurations no longer restrict parsers for user-level fixtures. The parser matrix was NOT re-run for this hotfix (about 90 minutes) and must be run before the next full release.
+3. The GitHub v4.4.0 release notes told Windows users to run `bash scripts/render-user-hooks.sh --write`. On v4.4.0 that locks every session started from PowerShell (a session started from Git Bash has the Git PATH and was unaffected). v4.4.1 is the correction; the v4.4.0 notes were not rewritten.
 
 ## v4.4.0 — 2026-10-08
 

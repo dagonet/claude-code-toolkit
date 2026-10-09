@@ -1,2 +1,2 @@
 4.4.1
-Hotfix: user-level exec-form hook registrations now set PATH=/usr/bin:/bin:$PATH first, so a PowerShell-started Claude Code session (no Git usr/bin on PATH) no longer locks the machine out -- registration strings, one PATH-less regression test, no hook-script change.
+Hotfix: user-level exec-form hook registrations now run export PATH=/usr/bin:/bin:$PATH first, so a PowerShell-started Claude Code session (no Git usr/bin on PATH) no longer locks the machine out -- registration strings, one PATH-less regression test, no hook-script change.

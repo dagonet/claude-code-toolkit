@@ -10753,7 +10753,7 @@ HOME="$C1H" bash "$C1RUH" --list >"$TMPROOT/c1-list.tsv" 2>/dev/null
 expect "C1 (a): --list exits 0" 0 "$?"
 
 # the exact strings: <SA_X> + <TAIL> per polarity (UF / UO / UU)
-c1_sa() { printf '%s' "PATH=/usr/bin:/bin:\$PATH; p=\${CLAUDE_PROJECT_DIR:-.}; if [ -f \\\"\$p/hooks/$1.sh\\\" ] && [ -f \\\"\$p/.claude/settings.json\\\" ] && [ -r \\\"\$p/.claude/settings.json\\\" ]; then IFS= read -r -d '' s < \\\"\$p/.claude/settings.json\\\"; case \$s in *'}/hooks/$1.sh\\\\\\\"'*) exit 0 ;; esac; fi; unset p s; "; }
+c1_sa() { printf '%s' "export PATH=/usr/bin:/bin:\$PATH; p=\${CLAUDE_PROJECT_DIR:-.}; if [ -f \\\"\$p/hooks/$1.sh\\\" ] && [ -f \\\"\$p/.claude/settings.json\\\" ] && [ -r \\\"\$p/.claude/settings.json\\\" ]; then IFS= read -r -d '' s < \\\"\$p/.claude/settings.json\\\"; case \$s in *'}/hooks/$1.sh\\\\\\\"'*) exit 0 ;; esac; fi; unset p s; "; }
 for c1_x in $C1STEP; do
   case "$c1_x" in
     no-push-main)      c1_tail='{ [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"' ;;
@@ -11191,7 +11191,7 @@ for c2b_v in general dotnet dotnet-maui rust-tauri java python; do
 done
 expect "C2b: the six variant settings.json are byte-identical" 1 "$(md5sum "$ROOT"/templates/*/.claude/settings.json | cut -d' ' -f1 | sort -u | wc -l | tr -d ' ')"
 expect "C2b: verify-hooks.sh is byte-identical to its user-level mirror" 0 "$(cmp -s "$ROOT/hooks/verify-hooks.sh" "$ROOT/user-level-reference/hooks/verify-hooks.sh"; echo $?)"
-c2b_want='{"type": "command", "command": "@BASH@", "args": ["-c", "PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/verify-hooks.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '"'"''"'"' s < \"$p/.claude/settings.json\"; case $s in *'"'"'}/hooks/verify-hooks.sh\\\"'"'"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}'
+c2b_want='{"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/verify-hooks.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '"'"''"'"' s < \"$p/.claude/settings.json\"; case $s in *'"'"'}/hooks/verify-hooks.sh\\\"'"'"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}'
 expect "C2b: the user reference registers verify-hooks (SessionStart, UU exec form, own step-aside)" 1 "$(grep -cF -- "$c2b_want" "$C2REF")"
 HOME="$C2HU" bash "$C2RUH" --list 2>/dev/null | awk -F'\t' '$1=="SessionStart" && $6 ~ /verify-hooks\.sh$/' > "$TMPROOT/c2b-list.tsv"
 expect "C2b: --list renders verify-hooks once, under SessionStart" 1 "$(grep -c . "$TMPROOT/c2b-list.tsv")"
@@ -11436,7 +11436,7 @@ P1BASH=$(command -v bash)
 P1H="$TMPROOT/p1home"; P1P="$TMPROOT/p1proj"
 mkdir -p "$P1H/.claude" "$P1P"; cp -R "$ROOT/user-level-reference/hooks" "$P1H/.claude/hooks"
 HOME="$P1H" bash "$C1RUH" --list >"$TMPROOT/p1-list.tsv" 2>/dev/null
-P1PFX='PATH=/usr/bin:/bin:$PATH; '
+P1PFX='export PATH=/usr/bin:/bin:$PATH; '
 p1_run() { # <payload> <bash> <-c> <string> <hook path> -- sets P1RC, P1ERR
   printf '%s' "$1" | env -i HOME="$P1H" CLAUDE_PROJECT_DIR="$P1P" PATH=/nonexistent "$2" "$3" "$4" "$5" >"$TMPROOT/p1-out" 2>"$TMPROOT/p1-err"
   P1RC=$?; P1ERR=$(cat "$TMPROOT/p1-err")
