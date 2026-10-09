@@ -35,7 +35,7 @@ gpp_shim() {
 # claude-code-toolkit pre-push shim -- written by `bash hooks/git-pre-push.sh --install`; rewritten on every install, do not edit.
 h="$(git rev-parse --show-toplevel 2>/dev/null)/hooks/git-pre-push.sh"
 if [ ! -f "$h" ]; then
-  echo "BLOCKED: pre-push: $h is missing (this checkout predates v4.3.2, or hooks/ was removed) -- push refused. Merge the trunk into this branch, or push deliberately with 'git push --no-verify'." >&2
+  echo "BLOCKED: pre-push: $h is missing (this checkout predates v4.3.2, or hooks/ was removed) -- push refused. Merge the trunk into this branch, or push deliberately with the --no-verify flag (git then skips this hook)." >&2
   exit 1
 fi
 exec bash "$h" "$@"
@@ -89,7 +89,7 @@ if [ "${1:-}" = --install ]; then gpp_install "${2:-.}"; exit $?; fi
 
 gpp_lib="$(dirname "$0")/lib/git-cmd.sh"
 if [ ! -f "$gpp_lib" ]; then
-  echo "BLOCKED: pre-push: $gpp_lib missing -- the protected branches cannot be read, push refused. Run /sync-template (hooks/lib/git-cmd.sh), or push deliberately with 'git push --no-verify'." >&2
+  echo "BLOCKED: pre-push: $gpp_lib missing -- the protected branches cannot be read, push refused. Run /sync-template (hooks/lib/git-cmd.sh), or push deliberately with the --no-verify flag (git then skips this hook)." >&2
   exit 1
 fi
 . "$gpp_lib"
@@ -114,7 +114,7 @@ while read -r gpp_lref gpp_lsha gpp_rref gpp_rsha; do
   case "$gpp_rref" in refs/heads/?*) gpp_b=${gpp_rref#refs/heads/} ;; *) continue ;; esac
   case " $gpp_prot " in *" $gpp_b "*) ;; *) continue ;; esac
   case "$gpp_lsha" in *[!0]*) gpp_what=push ;; *) gpp_what=delete ;; esac
-  echo "BLOCKED: pre-push: $gpp_what of protected branch '$gpp_b' on remote '${1:-?}' refused (protected: $gpp_prot). Push a feature branch and open a PR; to push it deliberately: git push --no-verify." >&2
+  echo "BLOCKED: pre-push: $gpp_what of protected branch '$gpp_b' on remote '${1:-?}' refused (protected: $gpp_prot). Push a feature branch and open a PR; to push it deliberately, use the --no-verify flag (git then skips this hook)." >&2
   gpp_rc=1
 done
 exit "$gpp_rc"

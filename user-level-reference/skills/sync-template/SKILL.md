@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.4.1 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.4.2 -->
 
 **This skill takes no arguments.** Invoke it as `/sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -26,13 +26,15 @@ Pull updates from the claude-code-toolkit template repo into the current project
 
 ### 1. Load Manifest
 
-**Which branch.** Sync on the branch where the CURRENT `CLAUDE.md` PROJECT-CUSTOM region lives, as its own commit — on a long-lived session branch that carries the region, `main` is the wrong place even when it is clean. `tree_clean` requires a clean tree, not a particular branch.
+**Which branch.** Sync on the branch where the CURRENT `CLAUDE.md` PROJECT-CUSTOM region lives, as its own commit — on a long-lived session branch that carries the region, `main` is the wrong place even when it is clean. `tree_clean` requires a clean tree, not a particular branch. **Create the sync branch BEFORE the first apply** (before step 2b's backups and every write after it) and never apply onto the trunk: a sync applied on `main` leaves the protected branch dirty and its commit refused by the gates.
 
 **FIRST, assert your own body against the installed file (v2.2.5 round 4).** Before any `template_*` call:
 
 ```
 grep -m1 'SYNC-TEMPLATE-SKILL-VERSION' ~/.claude/skills/sync-template/SKILL.md
 ```
+
+If the shell is refused (resource pressure), Read the first lines of that file with the Read tool instead; the marker is in the first lines.
 
 Compare that to the marker at the top of *this text as you loaded it*, and **state both in the report** (`SKILL body:` line, step 8). If they differ, **STOP**: you are running a stale body against a newer manifest and your steps are not the shipped ones. The remedy is a **session RESTART** — re-copying the file does nothing for a session that has already read it.
 
@@ -46,6 +48,7 @@ Compare that to the marker at the top of *this text as you loaded it*, and **sta
 
 Then call `template_load_manifest(project_path=".")`.
 
+- **No manifest at all** (`.claude/template-manifest.json` absent) = not a toolkit project: bootstrap via `AGENTS.md` / `setup-project`, not sync.
 - If `valid` is false, **stop** and show the errors to the user — this is the only place a `requires_server` mismatch surfaces, so a false here is not recoverable by continuing.
 - If `warnings` mentions v1 migration, inform the user their manifest will be upgraded to v2.
 
@@ -362,7 +365,7 @@ for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; e
 
 > **Why the old wording had to go, stated so it is not re-imported.** It said *"a fresh bootstrap has an empty manifest, so every hand-written file is simultaneously present-on-disk and absent-from-manifest"*. Both halves are false, verified on **both** bootstrap paths: `setup-project.sh` generates the manifest itself and writes a populated `files{}` entry per copied file, and `setup-project.ps1` mirrors it (`templateHash` / `templateRawHash`). So (1) bootstrap does not produce an empty manifest — tree and manifest are consistent the moment it finishes, on Windows as well as POSIX; and (2) bootstrap does not run this skill at all, it is a separate script, so this step never executes on that path. That holds for a toolkit that is a git checkout. A toolkit extracted without `.git` (a ZIP download) leaves a project that LOOKS complete — 30 of 31 files — but has no `.claude/template-manifest.json` and cannot sync: `setup-project.ps1` terminates at its unguarded `git rev-parse` (`:861`, under `$ErrorActionPreference = "Stop"`) before the manifest is written, which is the adoption worst case above produced by the bootstrap itself; `setup-project.sh` is unaffected. Recorded as a v3.1 defect (open-brain). A reader reasoned *"bootstrap means `setup-project.sh`, which I am not running, therefore this paragraph is not about me"* — **and they were right. The warning named the one population that is not exposed**, which is how it got dismissed by exactly the people who need it. Same guard, same second backup set, correct audience.
 
-**`new_template_files` being empty is STRUCTURAL for a mature repo, not a sampling accident** — it means *absent from the MANIFEST*, and a repo that has synced before has every template file tracked. It is non-empty in exactly two situations: the template ADDS a file, or the manifest does not yet describe the tree (adoption, above). Four consecutive consumer syncs reported it empty, so **an empty second set is the expected reading, not evidence that this step ran.** Say which it was in the report.
+**`new_template_files` being empty is STRUCTURAL for a mature repo, not a sampling accident** — it means *absent from the MANIFEST*, and a repo that has synced before has every template file tracked. It is non-empty in exactly two situations: the template ADDS a file, or the manifest does not yet describe the tree (adoption, above). Four consecutive consumer syncs reported it empty, so **an empty second set is the expected reading, not evidence that this step ran.** Say which it was in the report. When `new_template_files` is non-empty, set (b) is reported as `N new, 0 on disk` (or `N new, M on disk`) and never collapses to the empty-list wording.
 
 **Back up a THIRD set: everything ON DISK in every directory a destructive operation TOUCHES (v2.4.0, item A3).**
 
@@ -418,7 +421,7 @@ Two general rules govern how they, and every guard in this file, are written. Ne
 
 **I1 — a file that EXISTS in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in.** `new_template_files` means *absent from the MANIFEST*, not *absent from the PROJECT*: `template_compute_status` decides that list by manifest membership alone; the disk is reported only as the separate `present_on_disk` field on each `new_template_files_detail` entry. A path that is present on disk, untracked in the manifest, and also shipped by the template therefore appears in `new_template_files` while step 6b rule 4 registers it the register-or-apply way (v4.0.1: the server refuses `source="skip"` for every ownership class, so the path is then resolved by the user — keep mine registers via `finalize_sync(new_files=[...])`, adopt template or merge needs `overwrite_existing: true` — see step 6b's own text). Step 5 runs first, so following the numbering lets the destructive reading win. It has: a consumer lost a 156-line project-specific gate this way, and **step 2b cannot cover it**, because 2b backs up *manifest-tracked* paths and this file's defining property is that it is not one. The reporter recovered only because the file happened to be git-tracked; a gitignored one would simply be gone. The user cannot save themselves either — they are asked "add this new file?" about a file that already exists with their content in it, and "yes" is the reasonable answer to the question as posed.
 
-**I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. **State this as a PRECONDITION, not as an ordering rule, and check it where the write happens:** immediately before writing `settings.json`, verify every `hooks/` path it references exists and is non-empty; refuse the write otherwise. An ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose — while a precondition checked at the point of the write does not. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
+**I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. **State this as a PRECONDITION, not as an ordering rule, and check it where the write happens:** immediately before writing `settings.json`, verify every `hooks/` path it references exists and is non-empty; refuse the write otherwise. When this runs before the settings write, the paths to verify are those referenced by the INCOMING (template) `settings.json`, not the on-disk one. An ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose — while a precondition checked at the point of the write does not. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
 
 **I3 — when the `TEMPLATE_DELETED` set is NON-EMPTY, no write in steps 3, 4, 5 or 6b happens until the step-6d BASELINE sweep has been captured for every deleted agent name.** 6d reports a **delta** (`5 -> 0`), and a delta needs a *before*. There is only one moment a before can be taken: while the tree still holds the references the sync is about to rewrite.
 
@@ -702,7 +705,7 @@ For each file with status `CONFLICT`:
    - **Adopt template** (apply the template with `overwrite_existing: true`) → only on an explicit choice made against the diff; this overwrites their file (the pre-image is backed up to `backup_dir`).
 
    Do not reduce this to a silent skip — the server refuses it besides. Skipping is safe but it *hides* that the template ships a different version of a file the project already has — the consumer who lost a file this way would have been told nothing, and would never have learned the template's `run-gate.sh` existed and differed. That comparison is what produced the whole of item K.
-2. **The path does not exist** → ask the user whether to add it. If yes: `template_apply_file(project_path=".", file_path=F, source="template")`.
+2. **The path does not exist** → ask the user whether to add it, EXCEPT a file the incoming `settings.json` or hooks depend on (v4.4.0: `hooks/verify-hooks.sh`, needed by I2; `hooks/lib/agent-model.sh`, needed by the model-floor hook): that one is not optional, so do not offer to skip it. For the others, if yes: `template_apply_file(project_path=".", file_path=F, source="template")`.
 
 **`source="template"` appears in this step ONLY inside case 2, and that is deliberate.** An earlier revision presented it as the default with a condition that might override it; a reader executing literally reached the destructive call and the condition lost, even though a rule of exactly the same shape (6b rule 4) was already written down and had been read. **The imperative at the point of action beats the rule stated elsewhere**, so the branch — not the invariant — is what has to make the wrong call unreachable. Invariant I1 above is the backstop, not the fix.
 
@@ -827,7 +830,7 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 
 > Read the toolkit working tree with Read/Grep, never through the context-mode sandbox: `git -C` fails silently on its `/tmp` paths and `grep -c` comes back 0, so every verification below would report a false clean.
 
-1. Collect every `hooks/<name>.sh` reference in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. **Collect the PATH; do NOT anchor on the `command:` value:**
+1. Collect every `hooks/<name>.sh` reference in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. When this runs before the settings write, collect from the INCOMING (template) `settings.json`, not the on-disk one. **Collect the PATH; do NOT anchor on the `command:` value:**
 
 ```
 grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u
@@ -865,7 +868,7 @@ on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the confi
 
 **Assert `referenced >= on_disk`, and LIST every on-disk hook that appears in neither file.** The two numbers come from different places — one from configuration text, one from the directory — so a truncating regex moves only the first. The observed failure prints `5 referenced, 12 on disk, 7 unreferenced: [...]`, which cannot be read as clean.
 
-`referenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. What is NOT acceptable is a bare count that nobody compared to anything.
+`referenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. `hooks/git-pre-push.sh` is the expected unreferenced file: it is a git hook, installed per clone by `--install`, and never in `settings.json`. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. What is NOT acceptable is a bare count that nobody compared to anything.
 
 > **Verify this cross-check by DELETING the guard it protects.** Re-anchor the step-1 grep on `"command": "[^"]*` and re-run: `referenced` must collapse and the unreferenced list must fill up. A cross-check that stays green with the anchor restored is testing the surrounding machinery, not the collector.
 

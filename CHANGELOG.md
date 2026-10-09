@@ -1,5 +1,43 @@
 # Changelog
 
+## v4.4.2 — 2026-10-10
+
+Patch. The documented one-time pre-push install was refused by the toolkit's own gates on a protected `main`. `hooks/git-pre-push.sh` changes in message text only; the gates are unchanged. The sync-template skill gains seven clarifications.
+
+**Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body changes by seven clarifications and its version marker (v4.4.2); no `template_*` call, manifest field or server behavior changed, so the `>= 4.1.0` server floor stands.**
+
+### Fixed
+
+- **Incident (2026-10-10).** Consumer penumbra merged its v4.4.1 sync, then ran the documented one-time install, `bash hooks/git-pre-push.sh --install`, on `main`. `gate-before-merge.sh` BLOCKED it ("refuses this operation on a protected branch"); `no-push-main.sh` refused the same command.
+- **Cause.** `gc_script_body` (`hooks/lib/git-cmd.sh`) reads a script named by `bash <file>` and feeds its code lines (whole-line comments excluded) to the same verb matcher as the typed command. The installer's own refusal messages, at lines 38, 92 and 117, contained the text `git push --no-verify`, which the matcher read as a push. The matched segment was the installer's own `echo "BLOCKED: pre-push: ..."` line.
+- **Fix, text only.** Those three `echo` lines in `hooks/git-pre-push.sh` now say "the --no-verify flag (git then skips this hook)" instead of `git push --no-verify`. The escape stays discoverable in each refusal. No gate was changed and no exemption added. The comment at line 21 still says `git push --no-verify`; it is a whole-line comment, which the scan strips.
+
+### Skill
+
+Seven edits to `user-level-reference/skills/sync-template/SKILL.md`; the version marker is now v4.4.2.
+
+1. Step 1, self-check: if the shell is refused under resource pressure, Read the first lines of the installed `SKILL.md` instead of grepping it.
+2. Step 1, "Which branch": the sync branch is created before the first apply; never apply onto the trunk.
+3. Step 1, after `template_load_manifest`: an absent `.claude/template-manifest.json` means not a toolkit project; bootstrap via `AGENTS.md` / setup-project, not sync.
+4. Invariant I2 and the step 6b.1 collector: when they run before the settings write, the `hooks/` paths to verify are those referenced by the incoming (template) `settings.json`, not the on-disk one.
+5. Step 2b, set (b): reported as `N new, M on disk`, and never collapses to the empty-list wording when new files exist.
+6. Step 5 case 2: a new file that the incoming `settings.json` or hooks depend on (v4.4.0: `hooks/verify-hooks.sh` for I2, `hooks/lib/agent-model.sh` for model-floor) is not optional, and the skill does not offer to skip it.
+7. Step 6b.1c: `hooks/git-pre-push.sh` is a git hook, never in `settings.json`, so it is the expected unreferenced file.
+
+### Tests
+
+- New block `v4.4.2 V1b` in `scripts/test-hooks.sh` (6 assertions): in a fixture on a protected `main` with a `**Gate**` line, the real `gate-before-merge.sh` and `no-push-main.sh` both allow `bash hooks/git-pre-push.sh --install` (exit 0) and both refuse `git push origin main` (exit 2). Control: the v4.4.1 installer (`git show v4.4.1:hooks/git-pre-push.sh`) in a second fixture is refused by both (exit 2); the control skips (2 assertions) when the tag is unavailable.
+- `V1: refusal names branch, remote and escape` now looks for `the --no-verify flag`.
+- **Suites at the release tip (Linux container):** `verify-template-consistency.sh` ALL CHECKS PASSED (465 PASS lines, 0 FAIL); `test-hooks.sh` 4098 passed, 0 failed, 6 skipped (4104 assertions; all skips host-tagged); `test-server.sh` 492 passed, 0 failed, 10 skipped. The parser matrix was not run (no `hooks/lib/json.sh` change).
+
+### Downstream step
+
+Consumers run `/sync-template`; `hooks/git-pre-push.sh` arrives as an ordinary auto-update. The user-level skill is re-copied from `user-level-reference/skills/sync-template/`, then `bash scripts/verify-user-level-drift.sh` must report 0 drift. A session already running a v4.4.1 skill body keeps that body until restarted.
+
+### Context budget
+
+Unchanged, and measured. No variant `CLAUDE.md`, unscoped `.claude/rules/project.md`, user-level `CLAUDE.md` or `PROJECT_CONTEXT.md` changed. A v4.4.2 column was added to the context tables in `README.md` and `docs/architecture.md`, re-measured with `wc -c` (general: 18,000 B harness-injected, 23,258 B at the end of bootstrap).
+
 ## v4.4.1 — 2026-10-09
 
 Hotfix. The v4.4.0 user-level exec-form hook registrations locked a Windows machine out when Claude Code was started from PowerShell. Every user-level registration string now begins with `export PATH=/usr/bin:/bin:$PATH; `. No hook script changed, and no verdict changed.
