@@ -68,25 +68,25 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/no-push-main.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/no-push-main.sh\\\"'*) exit 0 ;; esac; fi; unset p s; { [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/no-push-main.sh"]}
+          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/no-push-main.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/no-push-main.sh\\\"'*) exit 0 ;; esac; fi; unset p s; { [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/no-push-main.sh"]}
         ]
       },
       {
         "matcher": "Read|Bash",
         "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-secret-reads.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-secret-reads.sh\\\"'*) exit 0 ;; esac; fi; unset p s; { [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- secrets protection offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/deny-secret-reads.sh"]}
+          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-secret-reads.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-secret-reads.sh\\\"'*) exit 0 ;; esac; fi; unset p s; { [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- secrets protection offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/deny-secret-reads.sh"]}
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-hang-shapes.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-hang-shapes.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/deny-hang-shapes.sh"]}
+          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-hang-shapes.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-hang-shapes.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/deny-hang-shapes.sh"]}
         ]
       },
       {
         "matcher": "Agent",
         "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/model-floor.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/model-floor.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/model-floor.sh"]}
+          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/model-floor.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/model-floor.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/model-floor.sh"]}
         ]
       }
     ],
@@ -94,7 +94,7 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/bash-output-guard.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/bash-output-guard.sh\\\"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/bash-output-guard.sh"]}
+          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/bash-output-guard.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/bash-output-guard.sh\\\"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/bash-output-guard.sh"]}
         ]
       }
     ],
