@@ -1,2 +1,2 @@
-4.4.0
-Optional Jev spawn routing (user-level /jev skill, off by default, per clone), a native pre-push hook and faster git-gate checks, hook slimming (one bash per project hook, exec-form user registrations, verify-hooks), the git gates refusing ANSI-C $'...' quoting plus macOS portability, a gate artifact that never records the empty tree, and Linux test fixes -- hook, lib, setup, settings and check changes, no server-code change.
+4.4.1
+Hotfix: user-level exec-form hook registrations now set PATH=/usr/bin:/bin:$PATH first, so a PowerShell-started Claude Code session (no Git usr/bin on PATH) no longer locks the machine out -- registration strings, one PATH-less regression test, no hook-script change.

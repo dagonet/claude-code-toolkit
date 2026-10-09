@@ -1,5 +1,35 @@
 # Changelog
 
+## v4.4.1 — 2026-10-09
+
+Hotfix. The v4.4.0 user-level exec-form hook registrations locked a Windows machine out when Claude Code was started from PowerShell. Every user-level registration string now begins with `PATH=/usr/bin:/bin:$PATH; `. No hook script changed, and no verdict changed.
+
+**Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body changes only its version marker (v4.4.1); the user-level registration strings are not synced to consumers (they are rendered per machine by `scripts/render-user-hooks.sh`), and no project template, hook, rule or server code changes.**
+
+### Fixed
+
+- **Incident (2026-10-09, Windows).** After the v4.4.0 live install, `scripts/render-user-hooks.sh --write` put the user-level hooks into `~/.claude/settings.json` in exec form: `command` = `C:/Program Files/Git/usr/bin/bash.exe`, `args` = `-c <string> <hook path>`. In a Claude Code session whose `claude.exe` was started from PowerShell, PATH is the Windows PATH and does not contain Git's `usr/bin`. Inside the hook, `dirname` and `sed` were "command not found". `deny-secret-reads.sh` (`lib="$(dirname "$0")/lib/json.sh"`) resolved its lib to `/lib/json.sh` and failed closed with `BLOCKED: /lib/json.sh missing`; `no-push-main.sh` did the same. Every Bash, PowerShell and Read call was refused: a fail-closed lockout of the machine. The old shell-form registrations (`bash ~/.claude/hooks/x.sh`) ran under the Git bash that Claude Code itself spawns, which sets PATH, so they never showed it.
+- **Cause.** Exec form runs bash with the PATH of the parent process and no login setup. v4.4.0 assumed the coreutils were on it. The suites ran on hosts with `/usr/bin` on PATH, so they could not see it.
+- **Fix.** The six exec-form `-c` strings in `user-level-reference/settings.json` (and the five mirrored in `user-level-reference/settings-reference.md`) start with `PATH=/usr/bin:/bin:$PATH; ` before anything else, e.g. `PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f ...`. On Git Bash `/usr/bin` is the Git usr/bin; on Linux and macOS it is already there. PATH is only prepended to, so an exported PATH stays exported. The step-aside test, the fail-closed and fail-open tails and the hook scripts are untouched, so no hook changes its verdict and nothing newly fails open. The frozen registration table (`server/tests/fixtures/hook-registrations-v4.4.0.json`, check 71) records script and form, not string text, so it is unchanged and still correct; the classifier in check 71 matches the string tails, which did not move.
+- **Version marker.** `VERSION` and `server/src/template_sync/VERSION` -> 4.4.1; the sync-template skill's `SYNC-TEMPLATE-SKILL-VERSION` -> v4.4.1 (the marker check ties it to `VERSION`).
+
+### Tests
+
+- New block `v4.4.1 P1` at the end of `scripts/test-hooks.sh` (26 assertions, none skipped). It renders the registrations into a temp HOME and runs each of the six exec entries as `env -i HOME=... PATH=/nonexistent <absolute bash> -c <string> <hook path>` with a benign payload. Per entry it asserts: the string starts with the PATH assignment; exit 0; no `command not found` on stderr. For `no-push-main`, `deny-secret-reads` and `deny-hang-shapes` it also asserts the deny payload still exits 2 with a verdict and no `command not found`. Control: the same strings with the PATH assignment removed (= the v4.4.0 strings) are run the same way, and at least five of the six must fail (exit 2 or `command not found`). On Linux with this fix reverted, 17 of the 26 assertions fail (measured), `deny-hang-shapes` fails open on its deny payload, and the control passes; with the fix all 26 pass.
+- `C1 (g)` (exact-string census) and `C2b` (exact `verify-hooks` string) expect the new prefix.
+
+### Downstream step
+
+On every machine that rendered v4.4.0 hooks: update the checkout, run `bash scripts/render-user-hooks.sh --write` again (it backs `settings.json` up first), then `bash scripts/verify-user-level-drift.sh` and require 0 drift. A machine that is already locked out can restore the `settings.json.bak-<UTC>` the v4.4.0 `--write` left, or edit the six `-c` strings by hand, and start a new session.
+
+### Context budget
+
+Unchanged. No variant `CLAUDE.md`, unscoped `.claude/rules/project.md`, user-level `CLAUDE.md` or `PROJECT_CONTEXT.md` changed, so the v4.4.0 columns of the context tables in `README.md` and `docs/architecture.md` still describe the shipped files.
+
+### Known limit
+
+The GitHub v4.4.0 release notes told Windows users to run `bash scripts/render-user-hooks.sh --write`. On v4.4.0 that locks every session started from PowerShell (a session started from Git Bash has the Git PATH and was unaffected). v4.4.1 is the correction; the v4.4.0 notes were not rewritten.
+
 ## v4.4.0 — 2026-10-08
 
 v4.4.0 bundles five parts: Jev spawn routing (Phase 1a), Linux test fixes (test-only), the push-hook and faster-checks work begun as v4.3.2 (merged at b24a5ca, never tagged on its own), ANSI-C quoting and macOS portability in the git gates (merged at c45abf7), and hook slimming Phase C (merged at dd6fd60), plus the empty-tree gate-artifact fix.

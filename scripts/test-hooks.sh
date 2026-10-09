@@ -10753,7 +10753,7 @@ HOME="$C1H" bash "$C1RUH" --list >"$TMPROOT/c1-list.tsv" 2>/dev/null
 expect "C1 (a): --list exits 0" 0 "$?"
 
 # the exact strings: <SA_X> + <TAIL> per polarity (UF / UO / UU)
-c1_sa() { printf '%s' "p=\${CLAUDE_PROJECT_DIR:-.}; if [ -f \\\"\$p/hooks/$1.sh\\\" ] && [ -f \\\"\$p/.claude/settings.json\\\" ] && [ -r \\\"\$p/.claude/settings.json\\\" ]; then IFS= read -r -d '' s < \\\"\$p/.claude/settings.json\\\"; case \$s in *'}/hooks/$1.sh\\\\\\\"'*) exit 0 ;; esac; fi; unset p s; "; }
+c1_sa() { printf '%s' "PATH=/usr/bin:/bin:\$PATH; p=\${CLAUDE_PROJECT_DIR:-.}; if [ -f \\\"\$p/hooks/$1.sh\\\" ] && [ -f \\\"\$p/.claude/settings.json\\\" ] && [ -r \\\"\$p/.claude/settings.json\\\" ]; then IFS= read -r -d '' s < \\\"\$p/.claude/settings.json\\\"; case \$s in *'}/hooks/$1.sh\\\\\\\"'*) exit 0 ;; esac; fi; unset p s; "; }
 for c1_x in $C1STEP; do
   case "$c1_x" in
     no-push-main)      c1_tail='{ [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"' ;;
@@ -11191,7 +11191,7 @@ for c2b_v in general dotnet dotnet-maui rust-tauri java python; do
 done
 expect "C2b: the six variant settings.json are byte-identical" 1 "$(md5sum "$ROOT"/templates/*/.claude/settings.json | cut -d' ' -f1 | sort -u | wc -l | tr -d ' ')"
 expect "C2b: verify-hooks.sh is byte-identical to its user-level mirror" 0 "$(cmp -s "$ROOT/hooks/verify-hooks.sh" "$ROOT/user-level-reference/hooks/verify-hooks.sh"; echo $?)"
-c2b_want='{"type": "command", "command": "@BASH@", "args": ["-c", "p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/verify-hooks.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '"'"''"'"' s < \"$p/.claude/settings.json\"; case $s in *'"'"'}/hooks/verify-hooks.sh\\\"'"'"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}'
+c2b_want='{"type": "command", "command": "@BASH@", "args": ["-c", "PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/verify-hooks.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '"'"''"'"' s < \"$p/.claude/settings.json\"; case $s in *'"'"'}/hooks/verify-hooks.sh\\\"'"'"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/verify-hooks.sh"]}'
 expect "C2b: the user reference registers verify-hooks (SessionStart, UU exec form, own step-aside)" 1 "$(grep -cF -- "$c2b_want" "$C2REF")"
 HOME="$C2HU" bash "$C2RUH" --list 2>/dev/null | awk -F'\t' '$1=="SessionStart" && $6 ~ /verify-hooks\.sh$/' > "$TMPROOT/c2b-list.tsv"
 expect "C2b: --list renders verify-hooks once, under SessionStart" 1 "$(grep -c . "$TMPROOT/c2b-list.tsv")"
@@ -11425,6 +11425,45 @@ printf '{"sha":"%s","tree":"%s","branch":"x","ts":"2099-01-01T00:00:00Z","status
 check_msg "ET (2): tier-1b tree-named artifact recording the empty tree never blesses it (pins ARTIFACT_TREE guard)" "$ETGB" 2 \
   "$(mkjson Bash 'gh pr merge 3 --squash' "$ETWT")" "artifact tree: none"
 # ---- end v4.4.0 ET
+
+# ---- v4.4.1 P1: exec-form user registrations establish their own PATH ----
+# Incident 2026-10-09 (Windows): a claude.exe started from PowerShell has no Git usr/bin on PATH, so inside
+# the hook `dirname`/`sed` were "command not found" and every fail-closed hook refused every call. The suites
+# ran with /usr/bin on PATH and never saw it. Here each rendered exec entry runs under `env -i PATH=/nonexistent`
+# (absolute bash, resolved first). Control: the same string without its leading PATH assignment (= v4.4.0) fails.
+echo "=== v4.4.1 P1: exec-form registrations under a PATH-less environment ==="
+P1BASH=$(command -v bash)
+P1H="$TMPROOT/p1home"; P1P="$TMPROOT/p1proj"
+mkdir -p "$P1H/.claude" "$P1P"; cp -R "$ROOT/user-level-reference/hooks" "$P1H/.claude/hooks"
+HOME="$P1H" bash "$C1RUH" --list >"$TMPROOT/p1-list.tsv" 2>/dev/null
+P1PFX='PATH=/usr/bin:/bin:$PATH; '
+p1_run() { # <payload> <bash> <-c> <string> <hook path> -- sets P1RC, P1ERR
+  printf '%s' "$1" | env -i HOME="$P1H" CLAUDE_PROJECT_DIR="$P1P" PATH=/nonexistent "$2" "$3" "$4" "$5" >"$TMPROOT/p1-out" 2>"$TMPROOT/p1-err"
+  P1RC=$?; P1ERR=$(cat "$TMPROOT/p1-err")
+}
+P1N=0; P1CTL=0
+while IFS=$(printf '\t') read -r p1_ev p1_m p1_cmd p1_a1 p1_a2 p1_a3 p1_rest; do
+  [ "$p1_a1" = "-c" ] && [ -n "$p1_a3" ] || continue
+  p1_x=$(basename "$p1_a3" .sh); P1N=$((P1N + 1))
+  case "$p1_a2" in "$P1PFX"*) p1_pre=1 ;; *) p1_pre=0 ;; esac
+  expect "P1: $p1_x string starts with the PATH assignment" 1 "$p1_pre"
+  p1_pl=$(c1_pl "$p1_x" allow)
+  p1_run "$p1_pl" "$P1BASH" "$p1_a1" "$p1_a2" "$p1_a3"
+  expect "P1: $p1_x benign payload exits 0 under PATH=/nonexistent" 0 "$P1RC"
+  expect "P1: $p1_x prints no 'command not found' under PATH=/nonexistent" 0 "$(printf '%s' "$P1ERR" | grep -c 'command not found')"
+  case "$p1_x" in no-push-main|deny-secret-reads|deny-hang-shapes)
+    p1_run "$(c1_pl "$p1_x" deny)" "$P1BASH" "$p1_a1" "$p1_a2" "$p1_a3"
+    expect "P1: $p1_x still refuses its deny payload with 2 under PATH=/nonexistent" 2 "$P1RC"
+    expect "P1: $p1_x refusal is a verdict, not 'command not found'" 0 "$(printf '%s' "$P1ERR" | grep -c 'command not found')" ;;
+  esac
+  # control: the v4.4.0 string (no PATH assignment) must fail here -- exit 2 or 'command not found'
+  p1_old=${p1_a2#"$P1PFX"}
+  p1_run "$p1_pl" "$P1BASH" "$p1_a1" "$p1_old" "$p1_a3"
+  if [ "$P1RC" -eq 2 ] || printf '%s' "$P1ERR" | grep -q 'command not found'; then P1CTL=$((P1CTL + 1)); fi
+done < "$TMPROOT/p1-list.tsv"
+expect "P1: six exec-form entries were exercised" 6 "$P1N"
+expect "P1 control: the v4.4.0 strings (no PATH assignment) fail under PATH=/nonexistent for at least five entries" 1 "$([ "$P1CTL" -ge 5 ] && echo 1 || echo 0)"
+# ---- end v4.4.1 P1
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
