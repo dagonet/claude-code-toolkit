@@ -283,7 +283,7 @@ Hooks are shell commands that execute in response to Claude Code events. They en
 
 `render-user-hooks.sh --print` shows the rendered block; `--write` backs the live file up to `settings.json.bak-<UTC timestamp>` (restore it to back out), replaces only the top-level `hooks` key, keeps hooks it does not own (merged by event and matcher, appended after the toolkit's, each reported as `kept foreign hook: <command>`), refuses a live file that does not parse, re-reads the result to check that every script path exists, and is idempotent. It never touches the `UserPromptSubmit` date hook's text (check 62 pins it).
 
-Each entry's script is `<step-aside>` + `<tail>`. The tail runs the hook **in the same bash process** (`. "$0"`, a builtin), so a hook's `exit N` is the process exit code. The step-aside (C5) makes the global copy exit 0 when the project registers its own copy of the same hook: the project has `hooks/<name>.sh` **and** its `.claude/settings.json` registers it (the text `}/hooks/<name>.sh"` is present, which a permissions entry or a `.sh.disabled` path does not match). A project that ships the script without registering it keeps the global check.
+Each entry's script is `export PATH=/usr/bin:/bin:$PATH; ` (v4.4.1: exec form runs bash with the parent's PATH, and a session started from PowerShell has no Git `usr/bin` on it, so `dirname` and `sed` would otherwise be "command not found") + `<step-aside>` + `<tail>`. The tail runs the hook **in the same bash process** (`. "$0"`, a builtin), so a hook's `exit N` is the process exit code. The step-aside (C5) makes the global copy exit 0 when the project registers its own copy of the same hook: the project has `hooks/<name>.sh` **and** its `.claude/settings.json` registers it (the text `}/hooks/<name>.sh"` is present, which a permissions entry or a `.sh.disabled` path does not match). A project that ships the script without registering it keeps the global check.
 
 **The v2.0 user-level hook set** (see the *Full Settings JSON* block for exact registration):
 
@@ -294,13 +294,14 @@ Each entry's script is `<step-aside>` + `<tail>`. The tail runs the hook **in th
 | `deny-hang-shapes.sh` | `PreToolUse` on `Bash` | `UO`: fail-open, silent (exit 0 when missing) | Refuses command shapes that hang the harness (heredoc into a file, wait loops, a `cd` chain). |
 | `model-floor.sh` | `PreToolUse` on `Agent` | `UO`: fail-open, silent | Gives a model-less spawn the project default model. |
 | `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | `UU`: unwrapped (cannot block; a missing script is a non-blocking error) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
+| `verify-hooks.sh` | `SessionStart` | `UU`: unwrapped, always exits 0 | Reports registered hook scripts that are missing or broken, and exec-form programs that cannot be spawned; silent when all is well. Registered in `settings.json` but not shown in the *Full Settings JSON* block above. |
 | `read-size-gate.sh` | `PreToolUse` on `Read` | fail-**open** | Caps an unbounded `Read` at 500 lines and tells the model the next offset. Recommended user-level install — see below. |
 
 **Retired in v2.1:** `tier-before-coder.sh`. The plan gate is gone — plans are optional artifacts and every spawn carries its task brief instead. Delete the script from `~/.claude/hooks/` and its `Agent` matcher entry from `~/.claude/settings.json`; left registered, it fails closed on a missing script and blocks every coder spawn.
 
 **Retired at user level in v2.0, deleted in v2.1:** the blanket Bash-git block. PR1 replaced "ban the git CLI" with "gate it" — `no-push-main.sh` and the project-level `gate-before-merge.sh` stop the dangerous operations, and everything else runs natively. If you still have the old blanket-block registered, remove it; it now blocks the supported workflow.
 
-Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory. The five entries above carry a step-aside for the project's own registration (C5), so the global and project copies never both run.
+Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory. The exec-form entries in `settings.json` (the first five rows above, plus the SessionStart `verify-hooks.sh`) carry a step-aside for the project's own registration (C5), so the global and project copies never both run.
 
 #### Hook Events
 
@@ -383,9 +384,8 @@ Templates include the following workflow enforcement hooks (via external scripts
 - The legacy `<repo toplevel>/.gate/` is still gitignored by all templates, for the one-release fallback path.
 
 **No push to main** (`hooks/no-push-main.sh`):
-- Matcher: `mcp__git-tools__git_push`
-- Blocks pushes to `main` or `master` branches. Resolves implicit branch via `git branch --show-current` when the `branch` parameter is omitted.
-- Message: "Use a feature branch and create a PR."
+- Matcher: `Bash|PowerShell` (the native `git push` path; the old `mcp__git-tools__git_push` matcher is gone)
+- Blocks pushes to a protected branch (`main`/`master` by default), resolving the implicit branch when none is named. A native `hooks/git-pre-push.sh` shim (installed per clone) backs it up at the git level.
 
 **Require skills block** (`hooks/require-skills-block.sh`):
 - Matcher: `Agent`

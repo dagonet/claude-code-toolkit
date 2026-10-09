@@ -105,7 +105,7 @@ Collect answers before running the script. Ask only questions relevant to the ch
 - **Tech stack blurb** → `--tech-stack`
 - **Default / protected branch** (defaults to the target repo's current branch, else `main`) → `--default-branch`
 - **Any of the five command flags above** — they apply to every variant and override the derived value.
-- **Existing `CLAUDE.md`?** If the target already has one, ask whether to keep it: `--wrap-existing-claude-md` writes the template and puts their full existing file inside its `PROJECT-CUSTOM` region. Without the flag the file is skipped untouched.
+- **Existing `CLAUDE.md`?** If the target already has one, ask whether to keep it: `--wrap-existing-claude-md` writes the template and moves their full existing file into `.claude/project-instructions.md`. Without the flag the file is skipped untouched.
 
 ---
 
@@ -132,7 +132,7 @@ Collect answers before running the script. Ask only questions relevant to the ch
 # java + gradle, bash
 ./setup-project.sh --variant java --project-name MyService --build-tool gradle --java-version 21
 
-# keep an existing CLAUDE.md by wrapping it into the template's PROJECT-CUSTOM region
+# keep an existing CLAUDE.md by moving its content into .claude/project-instructions.md
 ./setup-project.sh --variant general --project-name MyApp --wrap-existing-claude-md
 
 # python + poetry, PowerShell
