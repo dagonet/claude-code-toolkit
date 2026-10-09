@@ -301,7 +301,7 @@ Each entry's script is `export PATH=/usr/bin:/bin:$PATH; ` (v4.4.1: exec form ru
 
 **Retired at user level in v2.0, deleted in v2.1:** the blanket Bash-git block. PR1 replaced "ban the git CLI" with "gate it" — `no-push-main.sh` and the project-level `gate-before-merge.sh` stop the dangerous operations, and everything else runs natively. If you still have the old blanket-block registered, remove it; it now blocks the supported workflow.
 
-Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory. The exec-form entries in `settings.json` (the five above, plus the SessionStart `verify-hooks.sh`) carry a step-aside for the project's own registration (C5), so the global and project copies never both run.
+Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory. The exec-form entries in `settings.json` (the first five rows above, plus the SessionStart `verify-hooks.sh`) carry a step-aside for the project's own registration (C5), so the global and project copies never both run.
 
 #### Hook Events
 
