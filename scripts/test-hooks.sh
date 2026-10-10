@@ -11397,15 +11397,20 @@ check_msg "ET (2): tier-1b tree-named artifact recording the empty tree never bl
 # Incident 2026-10-09 (Windows): a claude.exe started from PowerShell has no Git usr/bin on PATH, so inside
 # the hook `dirname`/`sed` were "command not found" and every fail-closed hook refused every call. The suites
 # ran with /usr/bin on PATH and never saw it. Here each rendered exec entry runs under `env -i PATH=/nonexistent`
-# (absolute bash, resolved first). Control: the same string without its leading PATH assignment (= v4.4.0) fails.
+# (absolute bash, resolved first) plus one-line parser shims: the incident's PATH had the parsers but not Git's usr/bin,
+# and on Windows the parsers live outside /usr/bin, so a bare /nonexistent hid them and the fail-closed hooks refused
+# for want of a parser (found by the v4.5.0 Windows gate). Control: the same string without its PATH assignment (= v4.4.0) fails.
 echo "=== v4.4.1 P1: exec-form registrations under a PATH-less environment ==="
 P1BASH=$(command -v bash)
-P1H="$TMPROOT/p1home"; P1P="$TMPROOT/p1proj"
-mkdir -p "$P1H/.claude" "$P1P"; cp -R "$ROOT/user-level-reference/hooks" "$P1H/.claude/hooks"
+P1H="$TMPROOT/p1home"; P1P="$TMPROOT/p1proj"; P1BIN="$TMPROOT/p1bin"
+mkdir -p "$P1H/.claude" "$P1P" "$P1BIN"; cp -R "$ROOT/user-level-reference/hooks" "$P1H/.claude/hooks"
 HOME="$P1H" bash "$C1RUH" --list >"$TMPROOT/p1-list.tsv" 2>/dev/null
+for p1_t in node python3 jq; do p1_tp=$(command -v "$p1_t") || continue
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$p1_tp" > "$P1BIN/$p1_t"; chmod +x "$P1BIN/$p1_t"
+done
 P1PFX='export PATH=/usr/bin:/bin:$PATH; '
 p1_run() { # <payload> <bash> <-c> <string> <hook path> -- sets P1RC, P1ERR
-  printf '%s' "$1" | env -i HOME="$P1H" CLAUDE_PROJECT_DIR="$P1P" PATH=/nonexistent "$2" "$3" "$4" "$5" >"$TMPROOT/p1-out" 2>"$TMPROOT/p1-err"
+  printf '%s' "$1" | env -i HOME="$P1H" CLAUDE_PROJECT_DIR="$P1P" PATH="/nonexistent:$P1BIN" "$2" "$3" "$4" "$5" >"$TMPROOT/p1-out" 2>"$TMPROOT/p1-err"
   P1RC=$?; P1ERR=$(cat "$TMPROOT/p1-err")
 }
 P1N=0; P1CTL=0
@@ -11424,6 +11429,7 @@ while IFS=$(printf '\t') read -r p1_ev p1_m p1_cmd p1_a1 p1_a2 p1_a3 p1_rest; do
     expect "P1: $p1_x refusal is a verdict, not 'command not found'" 0 "$(printf '%s' "$P1ERR" | grep -c 'command not found')" ;;
   esac
   # control: the v4.4.0 string (no PATH assignment) must fail here -- exit 2 or 'command not found'
+  # (on Windows the control sits exactly at its floor of 5)
   p1_old=${p1_a2#"$P1PFX"}
   p1_run "$p1_pl" "$P1BASH" "$p1_a1" "$p1_old" "$p1_a3"
   if [ "$P1RC" -eq 2 ] || printf '%s' "$P1ERR" | grep -q 'command not found'; then P1CTL=$((P1CTL + 1)); fi

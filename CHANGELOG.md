@@ -34,6 +34,9 @@ Less bureaucracy. Process had grown to a large share of what a subagent spends: 
 - **`render-user-hooks.sh`:** a live hook group with no toolkit-owned hook stays its own group, appended after the reference groups; another installer's separate group no longer reads as user-level drift forever, and `--write` no longer regroups it.
 - **`verify-user-level-drift.sh`:** the summary line separates file drift from `settings.json`-check drift.
 
+### Fixed (tests)
+- **test-hooks P1 (v4.4.1) on Windows:** the PATH-less run also hid the JSON parsers, which Git Bash keeps outside `/usr/bin`, so three P1 assertions failed on Windows only; the run now keeps one-line parser shims on PATH. Test-only; no hook changed.
+
 ### Removed
 - **The `backlog-board` skill** (`user-level-reference/skills/backlog-board/`) and **consistency check 61**, which compared its board page with rule 5 of `pm-report`.
 - **The `require-skills-block.sh` registration.** The script stays for this release as a no-op stub that always exits 0, so a consumer whose `settings.json` still registers it (through the fail-closed 127 wrapper) is not blocked. It is deleted next release.
