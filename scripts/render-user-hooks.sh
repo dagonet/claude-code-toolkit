@@ -18,7 +18,8 @@
 #             $HOME/.claude/settings.json). Backs the live file up first to
 #             settings.json.bak-<UTC yyyymmddThhmmssZ> (restore it to back out),
 #             keeps hooks this toolkit does not own (merged by event + matcher,
-#             appended after the toolkit's, each printed as `kept foreign hook:
+#             except a live group holding no toolkit-owned hook, which stays its own
+#             group; appended after the toolkit's, each printed as `kept foreign hook:
 #             <command>`), prints `replaced toolkit hook: <cmd>` for each live entry it
 #             classifies as the toolkit's and drops, refuses a live path that exists
 #             but is not a regular file (directory, FIFO), refuses a live file that does not parse, and re-reads
