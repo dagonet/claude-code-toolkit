@@ -23,7 +23,7 @@ Less bureaucracy. Process had grown to a large share of what a subagent spends: 
 - **`pm-report` rule 9 is generic: a status board, if one is set up.** The rule reads "Status board. If a status board or dashboard is set up for this project or machine (its address or helper and how to use it are named in this project's memory or instructions), update it on every state change. If it does not answer, carry on and report in chat only." It names no helper, path or protocol; a machine that has a board names it in its own memory or instructions. The `backlog-board` skill stays retired (Removed, below).
 - **Checks 11, 18, 20, 29 and 30.** Check 11 asserts `## Report (HARD REQUIREMENT)` in the 11 template coders (R-4). Check 18 (was "karpathy-guidelines preloaded in 12 coders") now asserts that no agent file preloads a skill via `skills:`. Check 20's `CLAUDE.md` pointer now looks for `Working rules`. Check 29 shrinks to the one assertion that still matters: `pipeline: true` is exactly the coder family plus `code-reviewer`, the eligibility `enforce-agent-contract.sh` depends on (R-2). Check 30's citation floor goes 40 → 30 (R-3: 45 citations at v4.3.0, 8 removed). Check 71's floor on F/UF (fail-closed) hooks goes 6 → 5, because the retired `require-skills-block.sh` was one of them.
 - **The parity canary (R-8):** the heredoc-into-file pair becomes a multi-line leading `cd` with two more commands (exit 2) and a heredoc look-alike with `cat > notes.txt` on line 2 (exit 0); joined onto one line the exits swap, which is what makes it a canary for newline handling.
-- **Parser matrix (R-10):** `EXP_PY_SKIP` and `EXP_JQ_SKIP` each + 17 (the B2 block needs node).
+- **Parser matrix (R-10):** `EXP_PY_SKIP` and `EXP_JQ_SKIP` measured 250 / 325 (see Counts; the B2 block needs node).
 
 ### Removed
 - **The `backlog-board` skill** (`user-level-reference/skills/backlog-board/`) and **consistency check 61**, which compared its board page with rule 5 of `pm-report`.
@@ -32,14 +32,14 @@ Less bureaucracy. Process had grown to a large share of what a subagent spends: 
 - **Checks 4, 5, 8, 9, 10 and the check-23 tail**, which asserted the retired mandate; the copy-paste snippets and the binding table; "Coverage >= 80%" from the tiers.
 
 ### Measured (S1–S13)
-Skill sizes are as measured 2026-10-03 (spec); re-measure on the release machine (the superpowers plugin is not installed on the build container): `test-driven-development` 9,578 B, `systematic-debugging` 9,465 B, `writing-plans` 9,092 B, `brainstorming` 17,548 B, `verification-before-completion` 3,650 B (8,780 − 5,130). Every toolkit-file size is `wc -c` on this release's tree. Agent files: coder 5,154 B, code-reviewer 6,620 B, tester 5,761 B, architect 4,211 B (`templates/general`).
+Skill sizes are as measured 2026-10-03 (spec); re-measure on the release machine (the superpowers plugin is not installed on the build container): `test-driven-development` 9,578 B, `systematic-debugging` 9,465 B, `writing-plans` 9,092 B, `brainstorming` 17,548 B, `verification-before-completion` 3,650 B (8,780 − 5,130). Every toolkit-file size is `wc -c` on this release's tree. Agent files: coder 5,211 B, code-reviewer 6,620 B, tester 5,761 B, architect 4,211 B (`templates/general`).
 
 | | Spec prediction | Measured |
 |---|---|---|
-| S1 coder spawn (before 29,075 B) | ≈5,130 B no trigger; ≤ 8,780 B with one verification load; ≥ 20 KB less | **5,154 B** no trigger (−23,921 B); **8,804 B** with `verification-before-completion` (−20,271 B). The one-load figure is 24 B over the spec's bound; the saving is still over 20 KB |
-| S2 coder + code-reviewer (before 35,695 B) | 11,750 B; 21,328 B with TDD | **11,774 B**; **21,352 B** with TDD |
-| S3 + tester (before 63,879 B) | ≈27,000 B; ≈36,500 B if the tester opens systematic-debugging | **27,113 B** (coder + reviewer + tester + TDD; 17,535 B without TDD); **36,578 B** with systematic-debugging |
-| S4 + architect (before 94,375 B) | ≈40,300 B; ≈67,300 B worst case | **40,416 B** (S3's three agents + architect + TDD + writing-plans); **67,429 B** worst case (+ brainstorming + systematic-debugging) |
+| S1 coder spawn (before 29,075 B) | ≈5,130 B no trigger; ≤ 8,780 B with one verification load; ≥ 20 KB less | **5,211 B** no trigger (−23,864 B); **8,861 B** with `verification-before-completion` (−20,214 B). The one-load figure is 81 B over the spec's bound; the saving is still over 20 KB |
+| S2 coder + code-reviewer (before 35,695 B) | 11,750 B; 21,328 B with TDD | **11,831 B**; **21,409 B** with TDD |
+| S3 + tester (before 63,879 B) | ≈27,000 B; ≈36,500 B if the tester opens systematic-debugging | **27,170 B** (coder + reviewer + tester + TDD; 17,592 B without TDD); **36,635 B** with systematic-debugging |
+| S4 + architect (before 94,375 B) | ≈40,300 B; ≈67,300 B worst case | **40,473 B** (S3's three agents + architect + TDD + writing-plans); **67,486 B** worst case (+ brainstorming + systematic-debugging) |
 | S5 realised skill bytes per T1/T2 coder spawn | mean < 5 KB | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`) · after: pending: `docs/plans/measurements/process-v4.5.md`. Spec BL §1 for reference: 57% of 333 coder spawns invoked any skill |
 | S6 coder final report | median ≤ 1,200 B, 0 B pasted gate output | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`); spec BL §5 (v4.3.0): mean 3,822 B, median 3,792 B · after: pending: `docs/plans/measurements/process-v4.5.md` |
 | S7 coder runs prodded by the contract hook | ≤ 25% | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`); spec BL §5 (v4.3.0): 168 of 333 (51%) · after: pending: `docs/plans/measurements/process-v4.5.md` |

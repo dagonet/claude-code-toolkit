@@ -3668,7 +3668,7 @@ else
   ko "check 60: $c60_f exists but its frontmatter 'name:' is not '$c60_name'"
 fi
 
-# Check 61 -- retired in v4.5.0 with the backlog-board skill (the agent dashboard replaced it).
+# Check 61 -- retired in v4.5.0 with the backlog-board skill (rule 9 became generic).
 
 # ---------------------------------------------------------------------------
 # Check 62 -- the reference UserPromptSubmit time hook is the exact inline

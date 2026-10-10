@@ -228,7 +228,7 @@ Two things that look like failure but are not:
 
 These hooks are deliberately **not** registered at user level (`~/.claude/settings.json`): their commands run `hooks/…` through the project-form `exec bash "$f"`, resolved relative to the project root, and would break in any repo that has not been synced.
 
-**Six project-level hooks have no `user-level-reference/hooks/` mirror, by design.** `enforce-delegation.sh`, `enforce-agent-contract.sh`, `agent-budget-warn.sh`, `deny-claude-md-writes.sh`, `now-brief.sh` and the retired `require-skills-block.sh` stub are project-only — `HOOKS_NO_MIRROR` in `scripts/verify-template-consistency.sh` names them, each with a reason comment. Adding a mirror for one of these creates a file that drifts, not a fix for an omission.
+**Seven project-level hooks have no `user-level-reference/hooks/` mirror, by design.** `enforce-delegation.sh`, `enforce-agent-contract.sh`, `agent-budget-warn.sh`, `deny-claude-md-writes.sh`, `git-pre-push.sh`, `now-brief.sh` and the retired `require-skills-block.sh` stub are project-only — `HOOKS_NO_MIRROR` in `scripts/verify-template-consistency.sh` names them, each with a reason comment. Adding a mirror for one of these creates a file that drifts, not a fix for an omission.
 
 ## PROJECT-CUSTOM Region
 

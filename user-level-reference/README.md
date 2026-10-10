@@ -107,7 +107,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 | Style | Default? | Purpose |
 |-------|----------|---------|
-| `pm-report` | yes (`outputStyle` in `settings.json`) | Plain-language, state-change reporting for a product-manager reader; pairs with the agent dashboard (rule 9). `/output-style default` switches a session back to the technical style. |
+| `pm-report` | yes (`outputStyle` in `settings.json`) | Plain-language, state-change reporting for a product-manager reader; pairs with a status board or dashboard, if one is set up (rule 9). `/output-style default` switches a session back to the technical style. |
 
 ### Hooks
 
