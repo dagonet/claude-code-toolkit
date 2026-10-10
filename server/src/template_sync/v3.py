@@ -1555,6 +1555,45 @@ def derive_template_version(repo: str, commit: str, tracked_paths: list[str]) ->
     return None, "untagged_template_tree"
 
 
+_KEY_MENTION_RE = re.compile(r"\*\*(?P<key>[^*\n]+?)\*\*:")
+
+
+def _pending_note_open(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
+                       note: dict, info: dict) -> bool:
+    """Whether an earlier pending_once_notes entry is still unadopted.
+
+    A note is a template GUIDANCE change -- typically a commented key example
+    (`<!-- - **Test timeout**: 540 ... -->`), which is never a **Key**: line,
+    so key_audit.optional_absent cannot see it. Its keys are the `**K**:`
+    mentions on the guidance lines added between the note's from_commit and
+    the current template; the note is open while one of them is not held by
+    the consumer. A key the template no longer offers drops out of that diff
+    on its own, so adoption and template removal both close the note; a note
+    that introduced no key closes on the next finalize. With from_commit no
+    longer resolvable, every key the current guidance mentions counts."""
+    tpl_rel = info.get("template_path") or note["file"]
+    try:
+        raw, _ = read_with_flags(core._template_file_path(manifest, tpl_rel))
+        now = template_content(pp, manifest, rules, note["file"], raw)
+        proj, _ = read_with_flags(pp / note["file"])
+        if now is None or proj is None:
+            return False
+        base, _, _ = resolve_base(pp, {**manifest, "template_commit": note.get("from_commit") or "",
+                                       "lastSynced": None, "template_version": None},
+                                  rules, tpl_rel)
+    except Exception:  # noqa: BLE001 -- a diagnostic never fails the finalize
+        return True
+    if base is not None:
+        added = [l[1:] for h in notes_hunks(base, now) for l in h.splitlines()[1:] if l[:1] == "+"]
+    else:
+        added = [l for l in now.splitlines() if not KEY_LINE_RE.match(l)]
+    rule = rules.rule_for(tpl_rel) or {}
+    held = parse_keys(proj)
+    return any(not find_key(held, m.group("key").strip(), rule)
+               and not exact_holdings(held, m.group("key").strip(), rule)
+               for line in added for m in _KEY_MENTION_RE.finditer(line))
+
+
 def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
                 applied: list, new: list, deleted: list, acknowledged: list) -> dict:
     invalid: list[str] = []
@@ -1673,8 +1712,8 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     # **Key**: line) changed in this sync. compute_status_v3 measures them
     # against the manifest's OLD template_commit; the moment `out` below is
     # written that base moves, and template_verify can no longer see them (3 of
-    # 3 consumers, 2026-09-30). So finalize records them. The list is REPLACED
-    # on every finalize; a status error leaves the stored list untouched and
+    # 3 consumers, 2026-09-30). So finalize records them, plus every earlier
+    # note still open; a status error leaves the stored list untouched and
     # says so in `warnings` -- a diagnostic must never fail the finalize.
     pending = None
     try:
@@ -1689,18 +1728,16 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
             if info.get("ownership") == "once"
             and (info.get("key_audit") or {}).get("template_notes_changed")
         ]
-        # Carry forward every earlier still-pending note. A note leaves only
-        # when adopted (the template's optional keys are all held now, so
-        # key_audit.optional_absent is empty) or when the template no longer
-        # carries it (file/audit gone, or its optional key removed -- which
-        # empties optional_absent the same way). A manifest lacking the
-        # field contributes nothing.
+        # Carry forward every earlier note that is still open (see
+        # _pending_note_open): it leaves when the consumer adopts the keys it
+        # introduced or when the template stops offering them. A manifest
+        # lacking the field contributes nothing.
         have = {p["file"] for p in pending}
         for prev in manifest.get("pending_once_notes") or []:
             if not isinstance(prev, dict) or not prev.get("file") or prev["file"] in have:
                 continue
             info = st.get("files", {}).get(prev["file"]) or {}
-            if info.get("ownership") == "once" and (info.get("key_audit") or {}).get("optional_absent"):
+            if info.get("ownership") == "once" and _pending_note_open(pp, manifest, rules, prev, info):
                 pending.append(prev)
                 have.add(prev["file"])
         pending.sort(key=lambda p: p["file"])

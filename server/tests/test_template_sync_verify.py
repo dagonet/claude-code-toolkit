@@ -1660,16 +1660,17 @@ def test_next_finalize_with_nothing_unadopted_clears_pending_once_notes(tmp_path
     assert "pending_once_notes" not in _read_manifest(proj)
 
 
-_OPT_KEY = "- **Test timeout**: 600\n"
+# The real shipped shape: an optional key offered as a COMMENTED example
+# (never a **Key**: line, so key_audit.optional_absent cannot see it).
+_OPT_NOTE = "<!-- - **Test timeout**: 540 -- optional, unset here by default -->\n"
 
 
-def _pending_with_optional_key_fixture(tmp_path):
-    """Template gains a comment AND an optional key; the consumer lacks the
-    key. First finalize records the note; returns the recorded list."""
+def _pending_with_optional_key_fixture(tmp_path, extra_tpl=""):
+    """Template gains a commented optional-key example the consumer lacks.
+    First finalize records the note; returns the recorded list."""
     repo, proj, old_commit = _good_fixture(tmp_path)
     tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
-    tpl.write_text(CONTEXT_CONTENT + _OPT_KEY + "<!-- guidance about the timeout -->\n",
-                   encoding="utf-8", newline="")
+    tpl.write_text(CONTEXT_CONTENT + extra_tpl + _OPT_NOTE, encoding="utf-8", newline="")
     _recommit(repo, "template gains optional key + comment")
     res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
     assert len(res["pending_once_notes"]) == 1
@@ -1705,11 +1706,39 @@ def test_finalize_drops_pending_note_once_consumer_adopted_the_key(tmp_path):
 
 def test_finalize_drops_pending_note_the_template_no_longer_carries(tmp_path):
     repo, proj, tpl, kept = _pending_with_optional_key_fixture(tmp_path)
-    tpl.write_text(CONTEXT_CONTENT + "<!-- guidance about the timeout -->\n", encoding="utf-8", newline="")
-    _recommit(repo, "template drops the optional key")
+    tpl.write_text(CONTEXT_CONTENT, encoding="utf-8", newline="")
+    _recommit(repo, "template drops the optional key example")
+    # Dropping the example is itself a guidance change, reported once by the
+    # sync that sees it (a fresh note replaces the old one) ...
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert [p["from_commit"] for p in res["pending_once_notes"]] == [kept[0]["to_commit"]]
+    # ... and, introducing no key, it is not carried past the next finalize.
     res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
     assert res["pending_once_notes"] == []
     assert "pending_once_notes" not in _read_manifest(proj)
+
+
+def test_unrelated_absent_optional_key_does_not_pin_an_adopted_note(tmp_path):
+    # The consumer never held the template's **Ollama**: line; that must not
+    # keep the Test-timeout note alive once Test timeout is adopted.
+    repo, proj, tpl, kept = _pending_with_optional_key_fixture(
+        tmp_path, extra_tpl="- **Ollama**: available\n")
+    ctx = proj / "PROJECT_CONTEXT.md"
+    ctx.write_text(ctx.read_text(encoding="utf-8") + "- **Test timeout**: 300\n",
+                   encoding="utf-8", newline="")
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == []
+
+
+def test_note_without_a_key_closes_on_the_next_finalize(tmp_path):
+    repo, proj, old_commit, new_commit = _notes_changed_fixture(tmp_path)
+    ctx_tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
+    ctx_tpl.write_text(ctx_tpl.read_text(encoding="utf-8") + "- **Ollama**: available\n",
+                       encoding="utf-8", newline="")
+    _recommit(repo, "template gains a key line the consumer lacks")
+    asyncio.run(ts.template_finalize_sync(str(proj)))
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == []
 
 
 def test_finalize_carry_forward_is_safe_on_a_manifest_lacking_the_field(tmp_path):
