@@ -18,7 +18,8 @@
 #             $HOME/.claude/settings.json). Backs the live file up first to
 #             settings.json.bak-<UTC yyyymmddThhmmssZ> (restore it to back out),
 #             keeps hooks this toolkit does not own (merged by event + matcher,
-#             appended after the toolkit's, each printed as `kept foreign hook:
+#             except a live group holding no toolkit-owned hook, which stays its own
+#             group; appended after the toolkit's, each printed as `kept foreign hook:
 #             <command>`), prints `replaced toolkit hook: <cmd>` for each live entry it
 #             classifies as the toolkit's and drops, refuses a live path that exists
 #             but is not a regular file (directory, FIFO), refuses a live file that does not parse, and re-reads
@@ -168,6 +169,7 @@ function lst(hs) {
       var keep = arr(g.hooks, "hooks." + ev + " group").filter(function (h) { return !isown(ev, h); });
       if (!keep.length) return;
       keep.forEach(function (h) { foreign.push(disp(h)); });
+      if (keep.length === g.hooks.length) { groups.push(g); return; }
       var t = null;
       groups.forEach(function (x) { if (t === null && x.matcher === g.matcher) t = x; });
       if (t) t.hooks = t.hooks.concat(keep);
@@ -250,6 +252,8 @@ try:
             keep = [h for h in arr(g.get("hooks"), "hooks." + ev + " group") if not isown(ev, h)]
             if not keep: continue
             foreign += [disp(h) for h in keep]
+            if len(keep) == len(g["hooks"]):
+                groups.append(g); continue
             t = None
             for x in groups:
                 if t is None and x.get("matcher") == g.get("matcher"): t = x
@@ -295,6 +299,7 @@ def lst: to_entries[] | .key as $ev | (.value | arr("hooks." + $ev))[] | . as $g
             reduce (($lh[$ev]) | arr("hooks." + $ev))[] as $g ($ref[$ev];
               ($g.hooks | arr("hooks." + $ev + " group") | map(select(isown($ev) | not))) as $keep
               | if ($keep | length) == 0 then .
+                elif ($keep | length) == ($g.hooks | length) then . + [$g]
                 else ((to_entries | map(select(.value.matcher == $g.matcher)) | .[0].key) as $i
                       | if $i != null then .[$i].hooks += $keep else . + [$g | .hooks = $keep] end) end);
           if $mode == "replaced" then

@@ -917,7 +917,7 @@ async def template_load_manifest(project_path: str) -> str:
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
-                           "server_in_template_repo": False,
+                           "server_in_template_repo": None,
                            "capabilities": list(v3.CAPABILITIES),
                            "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
@@ -1675,9 +1675,10 @@ async def template_finalize_sync(
         hash exactly as stored (sha256:-prefixed under v3, templateHash under
         v2) for the caller's post-finalize self-check.
         `pending_once_notes` = [{file, from_commit, to_commit}] -- once-class
-        files whose template guidance comments changed in this sync (v4.3.1);
-        also stored in the manifest until the next finalize replaces it, and
-        reported by template_verify's once_notes_changed line.
+        files whose template guidance comments changed in this sync (v4.3.1),
+        plus earlier notes still open (a commented `**Key**:` example they
+        introduced is not yet held by the consumer); stored in the manifest
+        and reported by template_verify's once_notes_changed line.
         `files_created` counts applied entries whose action is created_from_*
         (a new file written from the template or provided content);
         `files_updated` counts the other applied entries; `files_added` counts

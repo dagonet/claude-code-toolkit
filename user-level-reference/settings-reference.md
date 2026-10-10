@@ -281,7 +281,7 @@ Hooks are shell commands that execute in response to Claude Code events. They en
 
 **Do not copy the `hooks` block by hand: run `bash scripts/render-user-hooks.sh --write` from the toolkit root.** The user-level hooks are registered in **exec form** (v4.4.0): `"command"` is the bash program and `"args"` is `["-c", "<one-line script>", "<hooks dir>/<hook>.sh"]`, so Claude Code starts one bash process per hook with no shell around it. Exec form does not expand `~` or `$HOME`, and resolves a bare `bash` through PATH (on Windows that can reach `System32\bash.exe`, the WSL launcher, which fails open for every protection). The reference therefore spells the program and the directory as `@BASH@` and `@HOOKS@`, and the render script writes the absolute Git Bash `usr/bin/bash.exe` (or `command -v bash` elsewhere) and `$HOME/.claude/hooks`. A hand-copied block would spawn a program named `@BASH@`, a non-blocking error, so every user protection would fail open; the consistency script's placeholder census allows `@[A-Z]+@` in this one file only.
 
-`render-user-hooks.sh --print` shows the rendered block; `--write` backs the live file up to `settings.json.bak-<UTC timestamp>` (restore it to back out), replaces only the top-level `hooks` key, keeps hooks it does not own (merged by event and matcher, appended after the toolkit's, each reported as `kept foreign hook: <command>`), refuses a live file that does not parse, re-reads the result to check that every script path exists, and is idempotent. It never touches the `UserPromptSubmit` date hook's text (check 62 pins it).
+`render-user-hooks.sh --print` shows the rendered block; `--write` backs the live file up to `settings.json.bak-<UTC timestamp>` (restore it to back out), replaces only the top-level `hooks` key, keeps hooks it does not own (merged by event and matcher, except a live group holding no toolkit-owned hook, which stays its own group; appended after the toolkit's, each reported as `kept foreign hook: <command>`), refuses a live file that does not parse, re-reads the result to check that every script path exists, and is idempotent. It never touches the `UserPromptSubmit` date hook's text (check 62 pins it).
 
 Each entry's script is `export PATH=/usr/bin:/bin:$PATH; ` (v4.4.1: exec form runs bash with the parent's PATH, and a session started from PowerShell has no Git `usr/bin` on it, so `dirname` and `sed` would otherwise be "command not found") + `<step-aside>` + `<tail>`. The tail runs the hook **in the same bash process** (`. "$0"`, a builtin), so a hook's `exit N` is the process exit code. The step-aside (C5) makes the global copy exit 0 when the project registers its own copy of the same hook: the project has `hooks/<name>.sh` **and** its `.claude/settings.json` registers it (the text `}/hooks/<name>.sh"` is present, which a permissions entry or a `.sh.disabled` path does not match). A project that ships the script without registering it keeps the global check.
 
@@ -292,7 +292,7 @@ Each entry's script is `export PATH=/usr/bin:/bin:$PATH; ` (v4.4.1: exec form ru
 | `no-push-main.sh` | `PreToolUse` on `Bash\|PowerShell` | `UF`: fail-**closed** (missing script → `HOOK SCRIPT MISSING`, exit 2; the hook's own exit 127 → 2 through its in-hook trap) | Blocks a push to `main`/`master`, resolving the implicit branch when none is named. v2.0 PR1 moved it onto the Bash matcher because native `git push` is now the supported path. |
 | `deny-secret-reads.sh` | `PreToolUse` on `Read\|Bash` | `UF`: fail-**closed** (exit 2 when missing) | Refuses reads of secret files (`.env` and friends). |
 | `deny-hang-shapes.sh` | `PreToolUse` on `Bash` | `UO`: fail-open, silent (exit 0 when missing) | Refuses command shapes that hang the harness (heredoc into a file, wait loops, a `cd` chain). |
-| `model-floor.sh` | `PreToolUse` on `Agent` | `UO`: fail-open, silent | Gives a model-less spawn the project default model. |
+| `model-floor.sh` | `PreToolUse` on `Agent` | `UO`: fail-open, silent | Gives a model-less spawn the project default model. With Jev routing on in that clone (`/jev on`) it deliberately exits silently (`hooks/lib/agent-model.sh` `am_jev_routing`), so expect no model-floor output there and check Jev with `/jev report` instead. |
 | `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | `UU`: unwrapped (cannot block; a missing script is a non-blocking error) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
 | `verify-hooks.sh` | `SessionStart` | `UU`: unwrapped, always exits 0 | Reports registered hook scripts that are missing or broken, and exec-form programs that cannot be spawned; silent when all is well. Registered in `settings.json` but not shown in the *Full Settings JSON* block above. |
 | `read-size-gate.sh` | `PreToolUse` on `Read` | fail-**open** | Caps an unbounded `Read` at 500 lines and tells the model the next offset. Recommended user-level install — see below. |
@@ -311,8 +311,7 @@ Events used by this toolkit:
 |-------|--------------|-----------|
 | `PreToolUse` | Before a tool executes | Yes (exit code 2) |
 | `PostToolUse` | After a tool succeeds | No (informational) |
-| `SubagentStop` | When a subagent finishes | **Yes (exit code 2)** — `hooks/enforce-agent-contract.sh` relies on this to force one continuation when a coder stops without `## Gate Results` |
-| `PreCompact` | Before context compaction | No (informational) |
+| `SubagentStop` | When a subagent finishes | **Yes (exit code 2)** — `hooks/enforce-agent-contract.sh` relies on this to force one continuation when a coder stops without its report (the v4.5.0 short report, or the legacy `## Gate Results` + `## Spec Compliance` form) |
 | `UserPromptSubmit` | Before the user's prompt is processed | Yes (exit code 2) — stdout is injected into context; used here for the inline time hook, not for blocking |
 
 **Other lifecycle events — available, mostly unbound by this toolkit:**
@@ -320,7 +319,7 @@ Events used by this toolkit:
 | Event | When It Fires | Can Block? | Why it matters |
 |-------|--------------|-----------|----------------|
 | `Stop` | Main thread finishes its response | Yes | The only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
-| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`; stdout is injected into the session context. |
+| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`, and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; stdout is injected into the session context. |
 | `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
@@ -387,42 +386,7 @@ Templates include the following workflow enforcement hooks (via external scripts
 - Matcher: `Bash|PowerShell` (the native `git push` path; the old `mcp__git-tools__git_push` matcher is gone)
 - Blocks pushes to a protected branch (`main`/`master` by default), resolving the implicit branch when none is named. A native `hooks/git-pre-push.sh` shim (installed per clone) backs it up at the git level.
 
-**Require skills block** (`hooks/require-skills-block.sh`):
-- Matcher: `Agent`
-- Enforces the AGENT_TEAM.md *Spawn-Prompt Binding Table* — when the PO spawns a `Task` whose `subagent_type` is bound (`coder` and variants, `tester`, `architect`), the prompt body must contain a literal `## Required Skills` line listing the skills that subagent must invoke before task work.
-- Pass-through types: `code-reviewer` (no required skills), and any `subagent_type` not in the binding table (e.g. `general-purpose`, `Explore`, `Plan`).
-- Block diagnostic prints the expected skill list plus a copy-pasteable `## Required Skills` block for the PO to drop into the prompt.
-- DRIFT WARNING: the hook's case statement duplicates the AGENT_TEAM.md table. `scripts/verify-template-consistency.sh` diffs the two and fails CI if they diverge — keep them in sync.
-
-All of these hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
-
-#### Optional User-Level Install for `require-skills-block.sh`
-
-The hook is wired into all 6 project templates by default. To also enforce it at the user level (so it covers projects that don't use these templates), copy the script and add the matcher group:
-
-1. Copy `hooks/require-skills-block.sh` from this repo to `~/.claude/hooks/require-skills-block.sh` and `chmod +x` it.
-2. Append the stanza below to the existing `hooks.PreToolUse` array in `~/.claude/settings.json` (do not replace the whole `hooks` block).
-3. Start a new Claude Code session.
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/require-skills-block.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**Rollback:** remove the matcher group and start a new session. **Caveat:** if a project's binding table differs from the user-level hook's hardcoded one, the user-level hook may either over-block (blocks valid project spawns) or under-block (passes prompts the project considers invalid). Project-level installation is the safer default.
+All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and are copied to target projects by the setup script. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
 
 ### Read Size Gate (PreToolUse, User-Level Recommended)
 
@@ -435,7 +399,7 @@ The hook is wired into all 6 project templates by default. To also enforce it at
 - Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
 - Never exits non-zero, so it is registered fail-open: a missing script prints `WARN: <path> missing -- <MSG>. Check that hooks/ exists at the project root.` and exits 0 (the hook's own exit 127 is a non-blocking hook error, Known limit (e) in the v4.4.0 CHANGELOG section).
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
-- Uses `node -e` for JSON parsing (no `jq` dependency). Style-matches `no-push-main.sh`.
+- Parses JSON through `hooks/lib/json.sh` (node, python3 or jq). Style-matches `no-push-main.sh`.
 
 **Recommended install scope: user-level** (`~/.claude/settings.json`). The 22% Read-tool share is paid in target-project sessions, not in `claude-code-toolkit` self-maintenance. Installing at user level covers every project the user opens.
 

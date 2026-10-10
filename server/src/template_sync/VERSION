@@ -1,2 +1,2 @@
-4.4.2
-Patch: the documented one-time `bash hooks/git-pre-push.sh --install` is no longer refused on a protected main -- the installer's own refusal messages (message text only) no longer read as a git push to the gates' script-body scan; plus sync-template skill clarifications (sync branch before the first apply, incoming-settings hook verification, required new files, no-manifest pointer).
+4.5.0
+Less bureaucracy: skills open on demand, a short coder report, a lean handbook, byte caps on every always-loaded file, the goal re-shown after compaction, and a process-vs-progress measurement -- template agent, settings, hook and check changes, plus the sync-feedback server fixes.

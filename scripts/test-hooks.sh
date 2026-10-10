@@ -4123,94 +4123,6 @@ check "Bash commit still runs tests"      hooks/pre-commit-test.sh 2 \
   "$(mkjson Bash 'git commit -m x' "$BADREPO")"
 
 # ===========================================================================
-# require-skills-block.sh — v2.1.1: a project that adds its own language coder
-# (cpp-coder, go-coder, …) must not fall through the binding table. The bound
-# list is now "coder or <lang>-coder", not an enumeration the template owns.
-# ===========================================================================
-echo
-echo "=== hooks/require-skills-block.sh ==="
-H=hooks/require-skills-block.sh
-
-WITHBLOCK='Do the thing.
-
-## Required Skills
-- karpathy-guidelines
-'
-
-check "cpp-coder without skills block"   "$H" 2 "$(mkspawn cpp-coder 'Do the thing.')"
-check "go-coder without skills block"    "$H" 2 "$(mkspawn go-coder 'Do the thing.')"
-check "cpp-coder with skills block"      "$H" 2 "$(mkspawn cpp-coder "$WITHBLOCK")"
-check "coder without skills block"       "$H" 2 "$(mkspawn coder 'Do the thing.')"
-check "rust-coder without skills block"  "$H" 2 "$(mkspawn rust-coder 'Do the thing.')"
-check "tester without skills block"      "$H" 2 "$(mkspawn tester 'Do the thing.')"
-check "code-reviewer is unbound"         "$H" 2 "$(mkspawn code-reviewer 'Do the thing.')"
-# The suffix rule must not over-match: 'coder-helper' is not a coder.
-check "coder-helper is not a coder"      "$H" 2 "$(mkspawn coder-helper 'Do the thing.')"
-check "unknown subagent_type passes"     "$H" 2 "$(mkspawn Explore 'Do the thing.')"
-
-# --- THE HARNESS'S REAL PAYLOAD SHAPE (v3.0.0) ------------------------------
-#
-# ⚠ EVERY FIXTURE ABOVE USES `mkspawn`, WHICH BUILDS A **FLAT** PAYLOAD, AND THE
-# HARNESS DOES NOT SEND THAT SHAPE. It nests under `tool_input`, exactly as
-# `mkjson`/`mkread` already do for every other hook. Until v3.0.0 the hook read
-# `$.subagent_type` at the top level, so against a real spawn `SUBAGENT_TYPE`
-# was always empty, every spawn fell to the `*)` default arm, and THE HOOK
-# EXITED 0 ON EVERY SPAWN EVER MADE — confirmed on the real harness by spawning
-# a bound `architect` with no skills block and watching it launch.
-#
-# The fixtures above all passed throughout, because they exercised a shape
-# nothing sends. THIS is the control that would have caught it, and it is why
-# the block matters more than the fix: a fixture that agrees with the code about
-# an input the world never produces is a fixture that cannot fail.
-#
-# v4.0.2 (item 14): the rows above now expect 2, not 0. The flat shape never
-# came from any Claude Code client — it was the shape THIS TOOLKIT's own hook
-# wrongly READ before toolkit v3.0.0 ($.subagent_type at the top level;
-# "pre-v3.0.0" is the toolkit's own versioning, not the client's). Every
-# PreToolUse payload the harness sends nests the tool's arguments under
-# `tool_input` (re-measured from this session's own transcript on 2026-09-17,
-# client 2.1.274, with an assistant tool_use block recorded under an older
-# 2.1.220 session showing the same nested shape: `"name":"Agent","input":
-# {"subagent_type":...,"prompt":...}`, which is exactly `tool_input` once the
-# harness wraps it for the hook). `mkspawn` is kept as a fixture builder
-# specifically BECAUSE nothing sends it: it is the unrecognised-shape probe for
-# item 14's fail-closed refusal, not a second legitimate shape to tolerate. The
-# `WITH block` and "unbound"/"passes" rows flip too — a shape the hook cannot
-# read is refused regardless of content, per the shape witness in
-# hooks/require-skills-block.sh (`tool_input.prompt`).
-mkspawn_nested() { # <subagent_type> <prompt> -- the shape the harness sends
-  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":"%s","prompt":"%s"},"cwd":"%s"}\n' \
-    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$ROOT")"
-}
-
-check "NESTED: coder without skills block"      "$H" 2 "$(mkspawn_nested coder 'Do the thing.')"
-check "NESTED: architect without skills block"  "$H" 2 "$(mkspawn_nested architect 'Do the thing.')"
-check "NESTED: tester without skills block"     "$H" 2 "$(mkspawn_nested tester 'Do the thing.')"
-check "NESTED: rust-coder without skills block" "$H" 2 "$(mkspawn_nested rust-coder 'Do the thing.')"
-check "NESTED: coder WITH skills block"         "$H" 0 "$(mkspawn_nested coder "$WITHBLOCK")"
-check "NESTED: architect WITH skills block"     "$H" 0 "$(mkspawn_nested architect "$WITHBLOCK")"
-check "NESTED: code-reviewer is unbound"        "$H" 0 "$(mkspawn_nested code-reviewer 'Do the thing.')"
-check "NESTED: unknown type passes"             "$H" 0 "$(mkspawn_nested game-tester 'Do the thing.')"
-
-# v4.0.2 (item 14): further shape probes.
-mkspawn_params() { # the nested `params` shape a stale consumer memory described
-  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"params":{"subagent_type":"%s","prompt":"%s"}},"cwd":"%s"}\n' \
-    "$(jesc "$1")" "$(jesc "$2")" "$(jesc "$ROOT")"
-}
-mksend() { # SendMessage-shaped payload: no prompt, and not the Agent tool
-  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"SendMessage","tool_input":{"to":"x","message":"%s"},"cwd":"%s"}\n' \
-    "$(jesc "$1")" "$(jesc "$ROOT")"
-}
-check "SHAPE: params-nested payload is refused (no tool_input.prompt)" "$H" 2 "$(mkspawn_params coder 'Do the thing.')"
-check "SHAPE: prompt without subagent_type is general-purpose, unbound" "$H" 0 \
-  '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"prompt":"Do the thing.","description":"d"},"cwd":"."}'
-check "SHAPE: SendMessage payload is not the hook's tool, untouched" "$H" 0 "$(mksend 'hi')"
-check_msg "SHAPE: params-nested refusal names tool_input.prompt" "$ROOT/$H" 2 \
-  "$(mkspawn_params coder 'Do the thing.')" "tool_input.prompt"
-check_msg "SHAPE: params-nested refusal lists keys present (any depth)" "$ROOT/$H" 2 \
-  "$(mkspawn_params coder 'Do the thing.')" "Keys present (any depth):"
-
-# ===========================================================================
 # read-size-gate.sh — v2.0 PR3 turns the blocking gate into a CAPPING gate: an
 # unbounded Read is rewritten to limit=500 via hookSpecificOutput.updatedInput
 # (which REPLACES the whole tool_input, so every original field must survive).
@@ -5527,9 +5439,7 @@ check_msg "lib/json.sh missing: gate fails closed" "$NOJSONLIB/no-push-main.sh" 
 # stderr contains "command not found", so the whole block is guarded too.)
 NOLIB="$TMPROOT/nolib"
 mkdir -p "$NOLIB"
-cp "$ROOT/hooks/require-skills-block.sh" "$ROOT/hooks/enforce-agent-contract.sh" "$NOLIB/"
-check_msg "no lib: require-skills warns, passes" "$NOLIB/require-skills-block.sh" 0 \
-  "$(mkspawn coder 'Do the thing.')" "hooks/lib/json.sh missing"
+cp "$ROOT/hooks/enforce-agent-contract.sh" "$NOLIB/"
 check_msg "no lib: agent-contract warns, passes" "$NOLIB/enforce-agent-contract.sh" 0 \
   "$(mkstop "$ROOT" coder a1 /nonexistent)" "hooks/lib/json.sh missing"
 nolib_err="$TMPROOT/nolib.err"
@@ -5566,35 +5476,31 @@ else
 skip "jq git-gate cases" "no jq on this host" 3
 fi
 
-# require-skills-block is the one BLOCKING hook whose verdict now flows through
-# json_get, and it matches on a multi-line field (prompt) — a backend that
-# mangled the newlines would turn `^## Required Skills$` from a match into a
-# miss and the gate would stop blocking. Exercised on both non-node backends.
-#
-# v4.0.2 (item 14, second instance): these two rows used to build their payload
-# with `mkspawn` (FLAT). Since item 14 makes require-skills-block.sh refuse any
-# flat payload before ever reaching the multi-line match (no `tool_input.prompt`
-# at all), a flat "skills block present passes" row would now assert 2 for a
-# reason that has nothing to do with backend newline handling, and the "passes"
-# half of this parity check would silently stop meaning what its own comment
-# says. Switched to `mkspawn_nested` (the real, nested shape) so the multi-line
-# `tool_input.prompt` match is what these rows actually exercise, on both
-# backends, same as it always claimed to.
+# deny-hang-shapes is the BLOCKING hook (it took require-skills-block's place
+# here in v4.5.0, when that hook was retired) whose verdict depends on the
+# NEWLINES of tool_input.command surviving the JSON reader: a multi-line leading
+# `cd` counts one command per line (3 -> refused), and the heredoc rule reads
+# only line 1, so a look-alike with `cat > file` on line 2 is allowed. Measured
+# 2026-10-03 on node, python3 and jq: intact newlines give 2 / 0; the same
+# commands joined onto one line give 0 / 2. A backend that mangled the newlines
+# flips both rows.
+DH_CD=$'cd /tmp\nls\npwd'
+DH_LOOK=$'git commit -F - <<EOF\ncat > notes.txt\nEOF'
 if [ -n "$HAVE_PY" ]; then
-check_env "python3: skills block present passes" "$PYONLY" hooks/require-skills-block.sh 0 \
-  "$(mkspawn_nested coder "$WITHBLOCK")"
-check_env "python3: missing skills block blocks"  "$PYONLY" hooks/require-skills-block.sh 2 \
-  "$(mkspawn_nested coder 'Do the thing.')"
+check_env "python3: multi-line cd + 2 commands refused" "$PYONLY" hooks/deny-hang-shapes.sh 2 \
+  "$(mkjson Bash "$DH_CD" "$TMPROOT")"
+check_env "python3: heredoc look-alike on line 2 allowed" "$PYONLY" hooks/deny-hang-shapes.sh 0 \
+  "$(mkjson Bash "$DH_LOOK" "$TMPROOT")"
 else
-skip "python3 require-skills cases" "no python3 on this host" 2
+skip "python3 deny-hang-shapes newline parity" "no python3 on this host" 2
 fi
 if [ -n "$HAVE_JQ" ]; then
-check_env "jq: skills block present passes"       "$JQONLY" hooks/require-skills-block.sh 0 \
-  "$(mkspawn_nested coder "$WITHBLOCK")"
-check_env "jq: missing skills block blocks"       "$JQONLY" hooks/require-skills-block.sh 2 \
-  "$(mkspawn_nested coder 'Do the thing.')"
+check_env "jq: multi-line cd + 2 commands refused"      "$JQONLY" hooks/deny-hang-shapes.sh 2 \
+  "$(mkjson Bash "$DH_CD" "$TMPROOT")"
+check_env "jq: heredoc look-alike on line 2 allowed"    "$JQONLY" hooks/deny-hang-shapes.sh 0 \
+  "$(mkjson Bash "$DH_LOOK" "$TMPROOT")"
 else
-skip "jq require-skills cases" "no jq on this host" 2
+skip "jq deny-hang-shapes newline parity" "no jq on this host" 2
 fi
 
 # --- encoding: every backend must return the SAME bytes ---------------------
@@ -5642,8 +5548,6 @@ fi
 # --- the fail-open hooks stay open, but say so once -------------------------
 check_env "no parser: read-size-gate warns"    "$NOPARSER" hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "$NEEDLE_WARN"
-check_env "no parser: require-skills warns"    "$NOPARSER" hooks/require-skills-block.sh 0 \
-  "$(mkspawn coder 'no skills block here')" "$NEEDLE_WARN"
 check_env "no parser: enforce-delegation warns" "$NOPARSER" hooks/enforce-delegation.sh 0 \
   "$(mkjson Bash 'pytest' "$DELEGREPO")" "$NEEDLE_WARN"
 check_env "no parser: bash-output-guard warns" "$NOPARSER" hooks/bash-output-guard.sh 0 \
@@ -10206,7 +10110,7 @@ check "V3 control: find . -exec bash {} \\;"          hooks/pre-commit-test.sh 0
 # ---- v4.4.0 C2a: the fail-closed hooks map their own exit 127 to 2 in-hook (the old registration wrapper's job; exec/source forms cannot wrap) ----
 C2AR=$(mkrepo c2a main)
 C2AOK="$(mkjson Bash 'ls -la' "$C2AR")"
-C2AHOOKS="pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes require-skills-block"
+C2AHOOKS="pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes"
 for c2a_h in $C2AHOOKS; do
   c2a_f="$ROOT/hooks/$c2a_h.sh"
   # (i) the exact trap line, once
@@ -10240,7 +10144,7 @@ C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_
 # A mid-line return (`[ x ] && return 4`, `|| return 0`, `; return`, `then return`) is matched too; the one exemption is an awk program held in a GC_AWK_* string assignment (hooks/lib/git-cmd.sh).
 # Not handled: an indented closing brace ending a column-0 function does not reset the depth flag (a later top-level return in that file would be missed after it; none exists, and the one-line/col-0 resets cover every function here).
 C2ARFILES=""
-for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes require-skills-block; do
+for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes; do
   C2ARFILES="$C2ARFILES $ROOT/hooks/$c2a_h.sh"
 done
 expect "C2a: R-1 no top-level return in any sourced/wrapped hook or hook lib" "" \
@@ -10259,8 +10163,8 @@ expect "C2a: R-1 control: a mid-line && return is caught (exactly one hit)" 1 \
 printf 'f() { :; } # c\nreturn 5\n' > "$TMPROOT/c2a-ret3.sh"
 expect "C2a: R-1 control: a one-line function with a trailing comment does not mask a later return" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret3.sh" | wc -l | tr -d ' ')"
-expect "C2a: R-2 the EXIT-trap hooks are exactly the six (run-gate.sh is not a registered hook)" \
-  "deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh require-skills-block.sh" \
+expect "C2a: R-2 the EXIT-trap hooks are exactly the five (run-gate.sh is not a registered hook; v4.5.0 retired require-skills-block)" \
+  "deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh" \
   "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | sort | tr '\n' ' ' | sed 's/ $//')"
 for c2a_h in $C2AHOOKS; do
   expect "C2a: R-2 $c2a_h has exactly one EXIT/0 trap" 1 "$(grep -ciE "$C2ATRAPRE" "$ROOT/hooks/$c2a_h.sh")"
@@ -10380,18 +10284,17 @@ for c3_b in node python3 jq; do
   c3_have=""
   case "$c3_b" in node) c3_have=$HAVE_NODE ;; python3) c3_have=$HAVE_PY ;; jq) c3_have=$HAVE_JQ ;; esac
   if [ -z "$c3_have" ]; then
-    skip "C3: five-hook parse-once spawn rows ($c3_b)" "no working $c3_b on this host" 6
+    skip "C3: four-hook parse-once spawn rows ($c3_b)" "no working $c3_b on this host" 5
     continue
   fi
   expect "C3: deny-secret-reads spawns one $c3_b on a Bash payload" 1 "$(c3h_n "$c3_b" deny-secret-reads "$C3H_BASH")"
   expect "C3: deny-secret-reads spawns one $c3_b on a Read payload" 1 "$(c3h_n "$c3_b" deny-secret-reads "$C3H_READ")"
   expect "C3: deny-hang-shapes spawns one $c3_b on a Bash payload" 1 "$(c3h_n "$c3_b" deny-hang-shapes "$C3H_BASH")"
   expect "C3: model-floor spawns one $c3_b on an Agent payload" 1 "$(c3h_n "$c3_b" model-floor "$C3H_AGENTM")"
-  expect "C3: require-skills-block spawns one $c3_b on an Agent payload" 1 "$(c3h_n "$c3_b" require-skills-block "$C3H_AGENT")"
   expect "C3: deny-claude-md-writes spawns one $c3_b on a CLAUDE.md Write payload" 1 "$(c3h_n "$c3_b" deny-claude-md-writes "$C3H_WRITE")"
 done
 # Task 4 review carry (R-T4a): with ONLY jq on PATH the two-document verdict is jq's own. A
-# payload of two JSON documents is rc 1 from json_fields; the three fail-closed hooks refuse it
+# payload of two JSON documents is rc 1 from json_fields; the two fail-closed hooks refuse it
 # and deny-hang-shapes (fail-open) falls back to json_valid/json_get, which on jq accepts two
 # documents and reads the FIRST -- so a heredoc-into-file command in it is still refused.
 c3j_rc() { # <hook> <payload> -- exit code of one run of the hook with jq the only parser
@@ -10400,12 +10303,11 @@ c3j_rc() { # <hook> <payload> -- exit code of one run of the hook with jq the on
   echo $?
 }
 if [ -z "$HAVE_JQ" ]; then
-  skip "C3: jq-only two-document rows (R-T4a)" "no working jq on this host" 4
+  skip "C3: jq-only two-document rows (R-T4a)" "no working jq on this host" 3
 else
   expect "C3: jq-only deny-hang-shapes refuses a two-document heredoc-into-file payload (R-T4a)" 2 "$(c3j_rc deny-hang-shapes '{"tool_name":"Bash","cwd":"'"$C3WDJ"'","tool_input":{"command":"cat > f.txt <<EOF\nx\nEOF"}} {"b":2}')"
   expect "C3: jq-only deny-secret-reads refuses a two-document payload" 2 "$(c3j_rc deny-secret-reads "$C3H_BASH {\"b\":2}")"
   expect "C3: jq-only deny-claude-md-writes refuses a two-document payload" 2 "$(c3j_rc deny-claude-md-writes "$C3H_WRITE {\"b\":2}")"
-  expect "C3: jq-only require-skills-block refuses a two-document payload" 2 "$(c3j_rc require-skills-block "$C3H_AGENT {\"b\":2}")"
 fi
 # ---- end v4.4.0 C3
 
@@ -11318,6 +11220,27 @@ C2NULERR=$(env HOME="$C2H0" CLAUDE_PROJECT_DIR="$c2b_p" bash "$c2b_p/hooks/verif
 expect "C2b: a NUL (\\u0000) in a settings command leaks no shell warning to stderr" 0 "$(printf '%s' "$C2NULERR" | grep -ci 'null byte')"
 # ---- end v4.4.0 C2b
 
+# ---- render-user-hooks.sh: a foreign-only live group stays its own group (another installer's SessionStart group) ----
+echo "=== render-user-hooks: foreign-only groups are kept as their own group ==="
+for rg_be in node python3 jq; do
+  if ! have_backend "$rg_be"; then skip "RG ($rg_be): foreign-only group rows" "no $rg_be on this host" 5; continue; fi
+  rg_h=$(c2b_newhome "rg-$rg_be")
+  # foreign-only matcher-less group: kept as its own group, last, and a re-render is byte-identical
+  printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash /opt/g.sh"}]}]}}' > "$rg_h/.claude/settings.json"
+  RUH_BACKEND=$rg_be HOME="$rg_h" bash "$C2RUH" --write >/dev/null 2>&1
+  expect "RG ($rg_be): --write over a foreign-only group exits 0" 0 "$?"
+  cp "$rg_h/.claude/settings.json" "$rg_h/r1"
+  expect "RG ($rg_be): the foreign-only group opens its own group object" '{"hooks":[' "$(grep -B4 -F 'opt/g.sh' "$rg_h/r1" | head -2 | tr -d ' \n')"
+  RUH_BACKEND=$rg_be HOME="$rg_h" bash "$C2RUH" --write >/dev/null 2>&1
+  expect "RG ($rg_be): a re-render leaves the same bytes" 0 "$(cmp -s "$rg_h/r1" "$rg_h/.claude/settings.json"; echo $?)"
+  # control: a mixed group (toolkit hook + foreign hook) still merges into the reference group
+  printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash /x/.claude/hooks/verify-hooks.sh"},{"type":"command","command":"bash /opt/f.sh"}]},{"hooks":[{"type":"command","command":"bash /opt/g.sh"}]}]}}' > "$rg_h/.claude/settings.json"
+  RUH_BACKEND=$rg_be HOME="$rg_h" bash "$C2RUH" --write >/dev/null 2>&1
+  expect "RG ($rg_be) control: a mixed group's foreign hook is merged into the reference group (not opening a group)" '<]},{>' "<$(grep -B4 -F 'opt/f.sh' "$rg_h/.claude/settings.json" | head -3 | tr -d ' \n')>"
+  expect "RG ($rg_be) control: ... while the foreign-only group is still its own, after it" '{"hooks":[' "$(grep -B4 -F 'opt/g.sh' "$rg_h/.claude/settings.json" | head -2 | tr -d ' \n')"
+done
+# ---- end render-user-hooks foreign-only groups
+
 # ---- v4.4.0 C5: project hooks run in one bash; the global copy steps aside only for a REGISTERED project copy; missing-script polarity per form ----
 echo "=== v4.4.0 C5: project registrations (F/W/O/U) and the user-level step-aside ==="
 C5RUH="$ROOT/scripts/render-user-hooks.sh"
@@ -11404,11 +11327,11 @@ c5_row() { # <hook> <form> <nth>
     U) expect "C5 (g): U $1 missing: a non-blocking error (non-zero, not 2)" 1 "$([ "$c5w_rc" != 0 ] && [ "$c5w_rc" != 2 ] && echo 1 || echo 0)" ;;
   esac
 }
-for c5_h in pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes require-skills-block; do c5_row "$c5_h" F; done
+for c5_h in pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes; do c5_row "$c5_h" F; done
 c5_row gate-before-merge F 2
 for c5_h in read-size-gate enforce-delegation agent-budget-warn; do c5_row "$c5_h" W; done
 c5_row enforce-delegation W 2
-for c5_h in model-floor deny-hang-shapes; do c5_row "$c5_h" O; done
+for c5_h in model-floor deny-hang-shapes now-brief; do c5_row "$c5_h" O; done
 for c5_h in bash-output-guard post-edit-build enforce-agent-contract retro-ledger retro-brief verify-hooks; do c5_row "$c5_h" U; done
 # F with the script present but no bash on PATH: 2 (a failed `exec bash` would exit 127 and let the call through)
 c5_pd="$TMPROOT/c5p-nobash"; rm -rf "$c5_pd"; mkdir -p "$c5_pd/hooks" "$C5E-path"; cp "$ROOT/hooks/no-push-main.sh" "$c5_pd/hooks/"
@@ -11474,15 +11397,20 @@ check_msg "ET (2): tier-1b tree-named artifact recording the empty tree never bl
 # Incident 2026-10-09 (Windows): a claude.exe started from PowerShell has no Git usr/bin on PATH, so inside
 # the hook `dirname`/`sed` were "command not found" and every fail-closed hook refused every call. The suites
 # ran with /usr/bin on PATH and never saw it. Here each rendered exec entry runs under `env -i PATH=/nonexistent`
-# (absolute bash, resolved first). Control: the same string without its leading PATH assignment (= v4.4.0) fails.
+# (absolute bash, resolved first) plus one-line parser shims: the incident's PATH had the parsers but not Git's usr/bin,
+# and on Windows the parsers live outside /usr/bin, so a bare /nonexistent hid them and the fail-closed hooks refused
+# for want of a parser (found by the v4.5.0 Windows gate). Control: the same string without its PATH assignment (= v4.4.0) fails.
 echo "=== v4.4.1 P1: exec-form registrations under a PATH-less environment ==="
 P1BASH=$(command -v bash)
-P1H="$TMPROOT/p1home"; P1P="$TMPROOT/p1proj"
-mkdir -p "$P1H/.claude" "$P1P"; cp -R "$ROOT/user-level-reference/hooks" "$P1H/.claude/hooks"
+P1H="$TMPROOT/p1home"; P1P="$TMPROOT/p1proj"; P1BIN="$TMPROOT/p1bin"
+mkdir -p "$P1H/.claude" "$P1P" "$P1BIN"; cp -R "$ROOT/user-level-reference/hooks" "$P1H/.claude/hooks"
 HOME="$P1H" bash "$C1RUH" --list >"$TMPROOT/p1-list.tsv" 2>/dev/null
+for p1_t in node python3 jq; do p1_tp=$(command -v "$p1_t") || continue
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$p1_tp" > "$P1BIN/$p1_t"; chmod +x "$P1BIN/$p1_t"
+done
 P1PFX='export PATH=/usr/bin:/bin:$PATH; '
 p1_run() { # <payload> <bash> <-c> <string> <hook path> -- sets P1RC, P1ERR
-  printf '%s' "$1" | env -i HOME="$P1H" CLAUDE_PROJECT_DIR="$P1P" PATH=/nonexistent "$2" "$3" "$4" "$5" >"$TMPROOT/p1-out" 2>"$TMPROOT/p1-err"
+  printf '%s' "$1" | env -i HOME="$P1H" CLAUDE_PROJECT_DIR="$P1P" PATH="/nonexistent:$P1BIN" "$2" "$3" "$4" "$5" >"$TMPROOT/p1-out" 2>"$TMPROOT/p1-err"
   P1RC=$?; P1ERR=$(cat "$TMPROOT/p1-err")
 }
 P1N=0; P1CTL=0
@@ -11501,6 +11429,7 @@ while IFS=$(printf '\t') read -r p1_ev p1_m p1_cmd p1_a1 p1_a2 p1_a3 p1_rest; do
     expect "P1: $p1_x refusal is a verdict, not 'command not found'" 0 "$(printf '%s' "$P1ERR" | grep -c 'command not found')" ;;
   esac
   # control: the v4.4.0 string (no PATH assignment) must fail here -- exit 2 or 'command not found'
+  # (on Windows the control sits exactly at its floor of 5)
   p1_old=${p1_a2#"$P1PFX"}
   p1_run "$p1_pl" "$P1BASH" "$p1_a1" "$p1_old" "$p1_a3"
   if [ "$P1RC" -eq 2 ] || printf '%s' "$P1ERR" | grep -q 'command not found'; then P1CTL=$((P1CTL + 1)); fi
@@ -11508,6 +11437,130 @@ done < "$TMPROOT/p1-list.tsv"
 expect "P1: six exec-form entries were exercised" 6 "$P1N"
 expect "P1 control: the v4.4.0 strings (no PATH assignment) fail under PATH=/nonexistent for at least five entries" 1 "$([ "$P1CTL" -ge 5 ] && echo 1 || echo 0)"
 # ---- end v4.4.1 P1
+
+# ---- v4.5.0 B2: the coder report is a short checklist; the legacy two-section form still passes ----
+. "$ROOT/hooks/lib/json.sh"
+if have_backend node; then
+B2P="$TMPROOT/b2proj"
+mkdir -p "$B2P/.claude/agents"
+printf -- '---\nname: coder\npipeline: true\n---\nCoder body.\n' > "$B2P/.claude/agents/coder.md"
+b2() { # <label> <want exit> <final report text> <agent id> <TMPDIR> [stderr needle]
+  b2_tr="$TMPROOT/b2-$4.jsonl"
+  trow_str "$3" > "$b2_tr"
+  mkdir -p "$5"
+  printf '%s' "$(mkstop "$B2P" coder "$4" "$b2_tr")" \
+    | TMPDIR="$5" CLAUDE_PROJECT_DIR="$B2P" bash "$ROOT/hooks/enforce-agent-contract.sh" >/dev/null 2>"$TMPROOT/b2.err"
+  b2_got=$?
+  if [ "$b2_got" = "$2" ] && { [ -z "${6:-}" ] || grep -qF -- "$6" "$TMPROOT/b2.err"; }; then
+    printf 'PASS  %-42s (exit %s)\n' "$1" "$b2_got"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %-42s (want %s%s, got %s: %s)\n' "$1" "$2" "${6:+ + \"$6\"}" "$b2_got" "$(head -1 "$TMPROOT/b2.err")"; fail=$((fail + 1))
+  fi
+}
+B2_SHORT='Implemented both items.
+
+- [pass] 1. Add the parser
+- [fail] 2. Update the docs — out of time
+Commit: abc1234
+Gate: GATE PASS abc1234def
+PR: none
+Concerns: none'
+b2 "B2 short form passes"                  0 "$B2_SHORT" s1 "$TMPROOT/b2t1"
+b2 "B2 bold keys + backticked sha pass"    0 "$(printf -- '- [pass] 1. X\n**Commit:** `abc1234def`\n**Gate:** GATE PASS abc1234def\n**Concerns:** none')" s2 "$TMPROOT/b2t2"
+b2 "B2 list-marker keys pass"              0 "$(printf -- '- [pass] 1. X\n- Commit: abc1234\n- Gate: GATE PASS abc1234\n- Concerns: none')" s3 "$TMPROOT/b2t3"
+b2 "B2 zero-diff report passes"            0 "$(printf -- '- [n/a] 1. Fix X — already fixed on main\nCommit: none — nothing to change\nGate: none — no change\nConcerns: none')" s4 "$TMPROOT/b2t4"
+B2_INDENT='Done.
+
+    - [pass] 1. Add the parser
+    - [n/a] 2. Docs — nothing user-facing changed
+    Commit: abc1234 | none — <why>
+    Gate: GATE PASS abc1234
+    PR: none
+    Concerns: none'
+b2 "B2 the agent file's indented example passes" 0 "$B2_INDENT" s4b "$TMPROOT/b2t4b"
+b2 "B2 legacy two-section form passes"     0 "$(printf 'Done.\n\n## Gate Results\nGATE PASS abc1234\n\n## Spec Compliance\n1. DONE')" s5 "$TMPROOT/b2t5"
+b2 "B2 no checklist line -> prod"          2 "$(printf 'Commit: abc1234\nGate: GATE PASS abc1234\nConcerns: none')" s6 "$TMPROOT/b2t6" "a '- [pass|fail|n/a] <n>. <item>' line"
+b2 "B2 no Commit line -> prod"             2 "$(printf -- '- [pass] 1. X\nGate: GATE PASS abc1234\nConcerns: none')" s7 "$TMPROOT/b2t7" "a 'Commit: <sha>|none' line"
+b2 "B2 Commit with no sha or none -> prod" 2 "$(printf -- '- [pass] 1. X\nCommit: pending\nGate: GATE PASS abc1234\nConcerns: none')" s8 "$TMPROOT/b2t8" "a 'Commit: <sha>|none' line"
+b2 "B2 no Gate line -> prod"               2 "$(printf -- '- [pass] 1. X\nCommit: abc1234\nConcerns: none')" s9 "$TMPROOT/b2t9" "a 'Gate:' line"
+b2 "B2 no Concerns line -> prod"           2 "$(printf -- '- [pass] 1. X\nCommit: abc1234\nGate: GATE PASS abc1234')" s10 "$TMPROOT/b2t10" "a 'Concerns:' line"
+b2 "B2 [done] is not a checklist state"    2 "$(printf -- '- [done] 1. X\nCommit: abc1234\nGate: GATE PASS abc1234\nConcerns: none')" s11 "$TMPROOT/b2t11" "CONTRACT VIOLATION"
+b2 "B2 empty final text -> prod"           2 "" s12 "$TMPROOT/b2t12" "End with the short report"
+expect "B2 the prod never says to run the gate" 0 "$(grep -c 'run-gate' "$TMPROOT/b2.err")"
+B2_PART="$(printf -- '- [pass] 1. X\nCommit: abc1234\nGate: GATE PASS abc1234')"
+b2 "B2 loop guard: stop 1 prods"           2 "$B2_PART" loop "$TMPROOT/b2loop" "CONTRACT VIOLATION"
+b2 "B2 loop guard: stop 2 lets through"    0 "$B2_PART" loop "$TMPROOT/b2loop" "CONTRACT-ENFORCER"
+b2 "B2 loop guard: stop 3 lets through"    0 "$B2_PART" loop "$TMPROOT/b2loop" "CONTRACT-ENFORCER"
+else
+skip "v4.5.0 B2 short-form contract" "no node on this host" 17
+fi
+# ---- end v4.5.0 B2
+
+# ---- v4.5.0 A5: the require-skills-block.sh stub reads stdin and exits 0, silently ----
+A5S="$ROOT/hooks/require-skills-block.sh"
+for a5p in '{"tool_name":"Agent","tool_input":{"subagent_type":"coder","prompt":"no block"}}' 'not json' ''; do
+  printf '%s' "$a5p" | bash "$A5S" >/dev/null 2>"$TMPROOT/a5.err"
+  expect "A5 stub: exit 0 for '${a5p:0:20}'" 0 "$?"
+  expect "A5 stub: no stderr for '${a5p:0:20}'" 0 "$(wc -c < "$TMPROOT/a5.err" | tr -d ' ')"
+done
+# R5: a consumer settings.json that still carries the v4.4 registration (LOCAL_EDITED,
+# keep-mine) runs the stub through the fail-closed 127 wrapper: the spawn must pass.
+A5W='bash "${CLAUDE_PROJECT_DIR:-.}/hooks/require-skills-block.sh"; c=$?; if [ "$c" = "127" ]; then echo '"'"'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/require-skills-block.sh -- enforcement offline. Check that hooks/ exists at the project root.'"'"' >&2; exit 2; fi; exit $c'
+printf '%s' '{"tool_name":"Agent","tool_input":{"subagent_type":"coder","prompt":"no block"}}' \
+  | CLAUDE_PROJECT_DIR="$ROOT" bash -c "$A5W" >/dev/null 2>"$TMPROOT/a5.err"
+expect "A5 old registration over the stub: spawn passes" 0 "$?"
+expect "A5 old registration over the stub: silent" 0 "$(wc -c < "$TMPROOT/a5.err" | tr -d ' ')"
+# ---- end v4.5.0 A5
+
+# ---- v4.5.0 E1: now-brief.sh re-shows PROJECT_STATE.md ## Now after a compaction ----
+E1H="$ROOT/hooks/now-brief.sh"
+E1C='{"session_id":"t","hook_event_name":"SessionStart","source":"compact","cwd":"."}'
+e1_run() { # <project dir> <payload> -- stdout to $TMPROOT/e1.out; returns the hook's exit
+  printf '%s' "$2" | CLAUDE_PROJECT_DIR="$1" bash "$E1H" > "$TMPROOT/e1.out" 2>"$TMPROOT/e1.err"
+}
+e1_has() { if grep -qF -- "$1" "$TMPROOT/e1.out"; then echo yes; else echo no; fi; }
+E1P="$TMPROOT/e1p"; mkdir -p "$E1P"
+printf '# P — Project State\n\n## Now\n\n- **Goal:** ship v4.5\n<!-- private note -->\n- **Current step:** Task 3\n<!--\nhidden line\n-->\n- **Next step:** Task 4\n\n## Current Sprint\n\nsprint text\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 section present: exit 0" 0 "$?"
+expect "E1 header with the file age"         yes "$(e1_has '=== Re-shown after compaction: PROJECT_STATE.md ## Now (file changed 0 h ago) ===')"
+expect "E1 section text follows the header"  "- **Goal:** ship v4.5" "$(sed -n 2p "$TMPROOT/e1.out")"
+expect "E1 next step printed"                yes "$(e1_has '- **Next step:** Task 4')"
+expect "E1 one-line HTML comment stripped"   no  "$(e1_has 'private note')"
+expect "E1 multi-line HTML comment stripped" no  "$(e1_has 'hidden line')"
+expect "E1 the next ## heading ends it"      no  "$(e1_has 'sprint text')"
+printf '# P\n\n## Current Sprint\n\nx\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 section absent: exit 0" 0 "$?"
+expect "E1 section absent: the hint"         yes "$(e1_has 'now-brief: PROJECT_STATE.md has no "## Now" section')"
+expect "E1 section absent: one line"         1   "$(wc -l < "$TMPROOT/e1.out" | tr -d ' ')"
+printf '# P\n\n## Now\n\n<!-- only a comment -->\n\n## Current Sprint\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 empty section: the hint" yes "$(e1_has 'has no "## Now" section')"
+rm -f "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"; expect "E1 file absent: exit 0" 0 "$?"
+expect "E1 file absent: silent"              0   "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
+printf '# P\n\n## Now\n\n- **Goal:** g\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" '{"session_id":"t","hook_event_name":"SessionStart","source":"startup","cwd":"."}'
+expect "E1 source startup: silent"           0   "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
+e1_run "$E1P" 'not json'
+expect "E1 unreadable stdin: printed (the matcher decides)" yes "$(e1_has '- **Goal:** g')"
+{ printf '# P\n\n## Now\n\n'; e1_i=0; while [ $e1_i -lt 60 ]; do printf -- '- line %02d of a long goal, padded to about fifty bytes.\n' "$e1_i"; e1_i=$((e1_i + 1)); done; } > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"
+expect "E1 3 KB section: output <= 1024 B"   yes "$([ "$(wc -c < "$TMPROOT/e1.out")" -le 1024 ] && echo yes || echo no)"
+expect "E1 3 KB section: ends with the marker" "… (truncated at 1 KB; read PROJECT_STATE.md)" "$(tail -1 "$TMPROOT/e1.out")"
+expect "E1 3 KB section: cut at a line end"  yes "$(sed '$d' "$TMPROOT/e1.out" | tail -1 | grep -q 'fifty bytes\.$' && echo yes || echo no)"
+{ printf '# P\n\n## Now\n\n'; e1_i=0; while [ $e1_i -lt 40 ]; do printf -- '- Schritt %02d — Übergabe prüfen — Größe in Bytes, nicht Zeichen\n' "$e1_i"; e1_i=$((e1_i + 1)); done; } > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"
+expect "E1 non-ASCII section: output <= 1024 BYTES" yes "$([ "$(wc -c < "$TMPROOT/e1.out")" -le 1024 ] && echo yes || echo no)"
+expect "E1 non-ASCII section: cut at a line end" yes "$(sed '$d' "$TMPROOT/e1.out" | tail -1 | grep -q 'nicht Zeichen$' && echo yes || echo no)"
+printf '# P\r\n\r\n## Now \r\n\r\n- **Goal:** crlf goal\r\n\r\n## Next\r\n' > "$E1P/PROJECT_STATE.md"
+e1_run "$E1P" "$E1C"
+expect "E1 CRLF file: section printed, no CR" "- **Goal:** crlf goal" "$(sed -n 2p "$TMPROOT/e1.out")"
+# The registration's wrapper, verbatim from templates/*/.claude/settings.json, with no script.
+E1W='f="${CLAUDE_PROJECT_DIR:-.}/hooks/now-brief.sh"; [ -r "$f" ] || exit 0; exec bash "$f"'
+E1E="$TMPROOT/e1empty"; mkdir -p "$E1E"
+printf '%s' "$E1C" | CLAUDE_PROJECT_DIR="$E1E" bash -c "$E1W" > "$TMPROOT/e1.out" 2>&1
+expect "E1 wrapper, script missing: exit 0"  0 "$?"
+expect "E1 wrapper, script missing: silent"  0 "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
+# ---- end v4.5.0 E1
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

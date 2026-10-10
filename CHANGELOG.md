@@ -1,5 +1,96 @@
 # Changelog
 
+## v4.5.0 — 2026-10-10
+
+Less bureaucracy. Process had grown to a large share of what a subagent spends: skill text was 84% of a coder spawn (BL §1), the coder's report was half gate output, and a blocking hook demanded a skills block in every spawn prompt. Skills now open on demand from a short table in each agent (an override line makes it win over the `CLAUDE.md` triggers), the coder's report is short and never pastes gate output, `AGENT_TEAM.md` drops the copy-paste snippets and the binding table (20,462 → 17,741 B), `require-skills-block.sh` is unregistered and shrinks to a no-op stub for one release, a new `now-brief.sh` re-shows the `## Now` goal after compaction, every always-loaded file is byte-capped by check 35, and `scripts/measure-process.py` measures process against progress from transcripts. The sync-feedback server fixes (below, Fixed) are the only server-code change. This branch merges into `main` only on the user's go.
+
+**Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body adds a finalize HEAD re-check, the docs-only exclude in the case-2 superset check and two more healthy verify shapes, and bumps its version marker (v4.5.0), none of which needs a newer floor; the agent files, settings, hooks, AGENT_TEAM.md, CLAUDE.md and the PROJECT_STATE.md seed reach a consumer through the existing sync path, and the one-release stub keeps a stale require-skills-block registration from failing closed.**
+
+### Added
+- **`hooks/now-brief.sh` and its registration (E).** `SessionStart`, matcher `compact`, `"timeout": 10`: after a compaction it prints the `## Now` section of `PROJECT_STATE.md` (capped at 1,024 bytes, cut at a line end, never mid-character), or a hint to add one. It replaces the `PreCompact` block, which never reached the model.
+- **The `## Now` seed (E3)** in `PROJECT_STATE.md`: `- **Goal:**`, `- **Current step:**`, `- **Next step:**`.
+- **`scripts/measure-process.py` (F; R-1, R-11).** Reads Claude Code transcripts and splits subagent effort into process (skills, gate runs, reports, hand-offs) and progress; a `Skill` call is sized as its `tool_result` plus the `isMeta` row that carries the skill text (R-1); a text-only turn is `neutral:orient` and `SubagentHandback` is `process:report` (R-11). Output is LF. Its `--self-test` runs inside the gate.
+- **Consistency checks 66 (the script's self-test), 67 (the coder's `## Working rules`, `## Skills` and `## Report (HARD REQUIREMENT)` are byte-identical across the 12 coder files) and 68 (no workflow file carries `## Required Skills`, `require-skills-block` or `.gate/last-pass`).**
+- **The per-release process-share row** under both context tables (`README.md`, `docs/architecture.md`).
+
+### Changed
+- **Skills on demand (A1; R-14).** Every agent file carries `## Skills (open one only when its trigger fires)` and the override line `Inside this agent this table replaces the skill triggers in \`CLAUDE.md\`. No trigger fired: open no skill.`; the `skills:` preload lines are gone. The tester's and architect's sections sit before `## Verification Tiers` and `## Output Style` respectively, with the coder's heading and override line.
+- **The karpathy digest (A2; R-6).** The long karpathy guidance in the coder files becomes a short digest; the root-cause bullet that exists in the seven `coder.md` copies only is folded into it.
+- **The short report (B1) and the stop-gate's two forms (B2; R-9).** `## Report (HARD REQUIREMENT)` replaces `## Deliverable Contract`; `enforce-agent-contract.sh` accepts the short form and still accepts the legacy `## Gate Results` + `## Spec Compliance` form. Its key patterns tolerate a leading list marker (`- `, `* `).
+- **`AGENT_TEAM.md` (D, E4; R-5, R-7): 20,462 → 17,741 B per variant.** The copy-paste snippets and the binding table are gone; the TDD example is written `superpowers:test-driven-development` (check 2 reads `superpowers:`); the skills paragraph drops its v3.0.0 absorption note (already in the v3.0.0 entry).
+- **`CLAUDE.md` lines (A6):** the skills mandate and the six binding-table pointers go from every variant's `CLAUDE.md`; `general` 6,114 → 5,977 B (−137 B). The other docs that described the mandate as live (R-15: `README.md`, `docs/templates.md`, `docs/template-sync.md`, `docs/design-rationale.md`) and `user-level-reference/settings-reference.md`'s SubagentStop, PreCompact and SessionStart rows are corrected, and its optional require-skills-block install section is deleted (A6); `docs/architecture.md` drops ">= 80% coverage" from its tiers.
+- **Check 35 caps every always-loaded template file (C).** Was: `CLAUDE.md` 6,144 and `AGENT_TEAM.md` 20,480. Now each file's size at this release + 128 B (under 2 KB) or 256 B, rounded up to 16: `CLAUDE.md` 6,144 (min of that rule's 6,240 and the 6,144 ceiling), `AGENT_TEAM.md` 20,480 (unchanged), `.claude/rules/project.md` 880 (742 B), `.claude/project-instructions.md` 960 (823 B), user-level `CLAUDE.md` 7,856 (7,585 B), `pm-report.md` 2,944 (2,681 B), and `PROJECT_CONTEXT.md` per variant: general 5,392 (5,258 B), dotnet 5,568 (5,437 B), dotnet-maui 5,920 (5,789 B), rust-tauri 5,744 (5,608 B), java 5,552 (5,425 B), python 5,520 (5,391 B); the `PROJECT_CONTEXT.md` caps were set from the v4.3.1 sizes, before v4.4.0 added 130 B to each, so they leave about 130 B of headroom (127 to 136 B) instead of the formula's 256 B. 32 files (five per variant times six, plus the two user-level files); one info line gives the injected ceiling, 18,784 B (6,144 + 880 + 960 + 7,856 + 2,944). Caps bind the template seeds only: `PROJECT_CONTEXT.md` and `rules/project.md` are once-class, so a consumer's own copy is never measured. Why: v4.0.3 → v4.3.0 grew the bootstrap surface by 6,847 B, all in files no budget covered.
+- **`pm-report` rule 9 is generic: a status board, if one is set up.** The rule reads "Status board. If a status board or dashboard is set up for this project or machine (its address or helper and how to use it are named in this project's memory or instructions), update it on every state change. If it does not answer, carry on and report in chat only." It names no helper, path or protocol; a machine that has a board names it in its own memory or instructions. The `backlog-board` skill stays retired (Removed, below).
+- **Checks 11, 18, 20, 29 and 30.** Check 11 asserts `## Report (HARD REQUIREMENT)` in the 11 template coders (R-4). Check 18 (was "karpathy-guidelines preloaded in 12 coders") now asserts that no agent file preloads a skill via `skills:`. Check 20's `CLAUDE.md` pointer now looks for `Working rules`. Check 29 shrinks to the one assertion that still matters: `pipeline: true` is exactly the coder family plus `code-reviewer`, the eligibility `enforce-agent-contract.sh` depends on (R-2). Check 30's citation floor goes 40 → 30 (R-3: 45 citations at v4.3.0, 8 removed). Check 71's floor on F/UF (fail-closed) hooks goes 6 → 5, because the retired `require-skills-block.sh` was one of them.
+- **The parity canary (R-8):** the heredoc-into-file pair becomes a multi-line leading `cd` with two more commands (exit 2) and a heredoc look-alike with `cat > notes.txt` on line 2 (exit 0); joined onto one line the exits swap, which is what makes it a canary for newline handling.
+- **Parser matrix (R-10):** `EXP_PY_SKIP` and `EXP_JQ_SKIP` measured 255 / 335 (see Counts; the B2 block needs node).
+
+### Fixed (from the v4.4.2 sync feedback, merged from `feat/sync-feedback`)
+- **`template_load_manifest`:** `server_in_template_repo` is `null` (not `false`) when no manifest is loaded, so a non-consumer is no longer told to reinstall.
+- **`pending_once_notes` survive finalize:** an unadopted note carries forward until the consumer adopts the key it introduced or the template no longer offers that key.
+- **`key_audit`:** `Test` held under the deprecated `**Test Command**` is described as still honoured, not "falls back to the Gate".
+- **verify `legacy_gate_dir`:** an empty `.gate/` is reported as empty and safe to remove.
+- **sync-template skill:** the third healthy v4 verify shape (`23 PASS, 0 FAIL, 0 SKIP, 8 INFO`, with the `server_skew` INFO) and a fourth `post_commit` reading (`23/0/1/7`, `server_skew` PASS, the one SKIP `agent_grants_resolvable`) are named in 9b; the case-2 superset check ignores `user-level-reference/*.md`; the toolkit HEAD is re-checked at finalize.
+- **`render-user-hooks.sh`:** a live hook group with no toolkit-owned hook stays its own group, appended after the reference groups; another installer's separate group no longer reads as user-level drift forever, and `--write` no longer regroups it.
+- **`verify-user-level-drift.sh`:** the summary line separates file drift from `settings.json`-check drift.
+
+### Fixed (tests)
+- **test-hooks P1 (v4.4.1) on Windows:** the PATH-less run also hid the JSON parsers, which Git Bash keeps outside `/usr/bin`, so three P1 assertions failed on Windows only; the run now keeps one-line parser shims on PATH. Test-only; no hook changed.
+
+### Removed
+- **The `backlog-board` skill** (`user-level-reference/skills/backlog-board/`) and **consistency check 61**, which compared its board page with rule 5 of `pm-report`.
+- **The `require-skills-block.sh` registration.** The script stays for this release as a no-op stub that always exits 0, so a consumer whose `settings.json` still registers it (through the fail-closed 127 wrapper) is not blocked. It is deleted next release.
+- **The `PreCompact` block** (never reached the model; `now-brief.sh` replaces it).
+- **Checks 4, 5, 8, 9, 10 and the check-23 tail**, which asserted the retired mandate; the copy-paste snippets and the binding table; "Coverage >= 80%" from the tiers.
+
+### Measured (S1–S13)
+Skill sizes re-measured on the release machine on 2026-10-10 (superpowers 6.4.1, `wc -c` on each `SKILL.md`): `test-driven-development` 9,578 B, `systematic-debugging` 9,465 B, `writing-plans` 9,092 B, `brainstorming` 17,548 B, `verification-before-completion` 3,646 B; the first four equal the spec's 2026-10-03 figures, the last is 4 B under the spec's derived 3,650 B (8,780 − 5,130). Every toolkit-file size is `wc -c` on this release's tree. Agent files: coder 5,211 B, code-reviewer 6,620 B, tester 5,761 B, architect 4,211 B (`templates/general`).
+
+| | Spec prediction | Measured |
+|---|---|---|
+| S1 coder spawn (before 29,075 B) | ≈5,130 B no trigger; ≤ 8,780 B with one verification load; ≥ 20 KB less | **5,211 B** no trigger (−23,864 B); **8,857 B** with `verification-before-completion` (−20,218 B). The one-load figure is 77 B over the spec's bound; the saving is still over 20 KB |
+| S2 coder + code-reviewer (before 35,695 B) | 11,750 B; 21,328 B with TDD | **11,831 B**; **21,409 B** with TDD |
+| S3 + tester (before 63,879 B) | ≈27,000 B; ≈36,500 B if the tester opens systematic-debugging | **27,170 B** (coder + reviewer + tester + TDD; 17,592 B without TDD); **36,635 B** with systematic-debugging |
+| S4 + architect (before 94,375 B) | ≈40,300 B; ≈67,300 B worst case | **40,473 B** (S3's three agents + architect + TDD + writing-plans); **67,486 B** worst case (+ brainstorming + systematic-debugging) |
+| S5 realised skill bytes per T1/T2 coder spawn | mean < 5 KB | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`) · after: pending: `docs/plans/measurements/process-v4.5.md`. Spec BL §1 for reference: 57% of 333 coder spawns invoked any skill |
+| S6 coder final report | median ≤ 1,200 B, 0 B pasted gate output | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`); spec BL §5 (v4.3.0): mean 3,822 B, median 3,792 B · after: pending: `docs/plans/measurements/process-v4.5.md` |
+| S7 coder runs prodded by the contract hook | ≤ 25% | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`); spec BL §5 (v4.3.0): 168 of 333 (51%) · after: pending: `docs/plans/measurements/process-v4.5.md` |
+| S8 `AGENT_TEAM.md` | ≤ 17,800 B, cap stays 20,480 | **17,741 B** in every variant |
+| S9 always-loaded, `general` | v4.5's own delta ≈ −280 B | harness-injected **17,808** (v4.4.2: 18,000, −192 B); end of bootstrap **23,066** (v4.4.2: 23,258, −192 B). The `CLAUDE.md` trim is −137 B, not ≈ −280 B, and the generic `pm-report` rule 9 adds the other −55 B (2,736 → 2,681): the spec's ≈ −280 counted the removed 281 B line without its ≈150 B replacement; A6's text as specified nets −137 B (not an implementation shortfall). Per-variant figures are in `docs/architecture.md` |
+| S10 hook registrations in template settings | 18 on the v4.3.0 base | **19** `"type": "command"` entries in `templates/general/.claude/settings.json` (v4.4.0 additions included; the `require-skills-block` and `PreCompact` entries are gone, the `compact` `now-brief` entry is new) |
+| S11 blocking hooks on an `Agent` spawn | 0 | **0** (the only `Agent` matcher is `model-floor`, which rewrites and never blocks) |
+| S12 hook scripts under `hooks/*.sh` | 18 during v4.5; 17 after the stub's deletion | **20** on the v4.4.2 base (19 after the stub's deletion) |
+| S13 process share of subagent effort | 25% lower relative by context load; wall-clock does not rise | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`) · after: pending: `docs/plans/measurements/process-v4.5.md` |
+
+### Known limits
+1. The legacy report form passes through v4.x and ends at v5.0.
+2. The hook checks the report's shape, not that it covers every brief item.
+3. The `require-skills-block.sh` stub ships for one release.
+4. `## Now` reaches existing consumers only by hand (`PROJECT_STATE.md` is once-class, with no notes channel) or through the hint after their first compaction.
+5. `now-brief.sh` cuts at the first `#`-line, so a `###` inside `## Now` ends it.
+6. An unreadable `SessionStart` stdin leaves the decision to the matcher.
+7. `measure-process.py` heuristics: the gate pattern also matches a commit message naming `pytest`; a commit over 10 s counts its wall-clock as gate time; worktree slugs fold by name prefix (a repo whose name prefixes another's is over-included); `--until` is by a transcript's first timestamp.
+8. S1 holds only if the override line wins over the `CLAUDE.md` triggers (R2); Task 8 measures it.
+9. The S1–S4 skill sizes are the release machine's superpowers 6.4.1; another plugin version changes them.
+10. S5, S6, S7 and S13 "after" values and the "before" baseline are pending: they come from the local transcripts, not from this tree.
+
+Counts, never carried forward:
+- **Consistency:** **440** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.4.0: 447). Measured on Linux: the bootstrap fixtures run 25 assertions and skip 24 (host-tagged), and check 50 skips (no `MCP_DEV_SERVERS_DIR`).
+- **Hook suite:** 4135 passed, 0 failed, 6 skipped (4141 assertions; Linux, node parser). **Server suite:** 505 passed, 0 failed, 10 skipped (Linux).
+- **Parser matrix:** node 4135 passed, 0 failed, 6 skipped (all `[host]`-tagged); python3-only 3873 passed, 0 failed, 255 skipped; jq-only 3793 passed, 0 failed, 335 skipped (Linux; the jq run used a shadow PATH of symlinks, because `scripts/test-hooks-parser-matrix.sh` hides `/usr/bin` with python3 and so also jq on this host). `EXP_PY_SKIP` / `EXP_JQ_SKIP` are 255 / 335 (band +/-20 unchanged), replacing the 247 / 319 that v4.4.2's 230 / 302 + 17 gave.
+- **Hooks:** 20 scripts under `hooks/` (19 after the stub's deletion), 13 mirrored (unchanged from v4.4.2).
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066. Per-variant figures are in `docs/architecture.md`.
+- **Windows (release machine):** at 0d5d4c9, consistency ALL CHECKS PASSED and the hook suite 4134 passed, 3 failed, 3 skipped (4140 assertions); the 3 failures were the P1 flaw under Fixed (tests). After the fix (953d371): the P1 block alone 26 passed, 0 failed (the same harness reproduced the 3 failures at 0d5d4c9); server suite 514 passed, 0 failed, 1 skipped. The full hook suite and the python3-only and jq-only configurations were not re-run on Windows.
+
+### Downstream migration
+0. Restart sessions after the sync (agent definitions are cached at session start). Server code changed in this release: reinstall the template-sync server (`bash server/install.sh`), then restart sessions or `/mcp` reconnect, and re-copy the sync-template skill (`user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/`).
+1. `/sync-template`: brings the agent files, `AGENT_TEAM.md`, `CLAUDE.md`, `settings.json` (no `require-skills-block` registration, no `PreCompact`, the `compact` `SessionStart` group), `hooks/now-brief.sh`, the stub and `enforce-agent-contract.sh`.
+2. **By hand:** add to `PROJECT_STATE.md`, after its title, the `## Now` block with `- **Goal:**`, `- **Current step:**`, `- **Next step:**` (the sync never writes this once-class file; `now-brief` prints a hint until you do).
+3. Stop pasting `## Required Skills` into spawn prompts; edit any `PROJECT-CUSTOM` region or own agent that says to.
+4. Your own `pipeline: true` agents (e.g. `mm-runner`) keep the legacy report until v5.0.
+5. A `LOCAL_EDITED` or keep-mine `settings.json`: remove the `require-skills-block` registration before the next release deletes the stub — `grep -n require-skills-block .claude/settings.json` must print nothing — or every Agent spawn fails closed.
+6. User level: copy `user-level-reference/agents/{coder,tester,architect}.md` to `~/.claude/agents/` and `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/`; delete `~/.claude/skills/backlog-board/` and copy `user-level-reference/output-styles/pm-report.md` to `~/.claude/output-styles/` (rule 9 is now generic: if your live copy carries a machine-specific dashboard protocol, name that board, its helper and its use in your own memory or instructions first, since the copy replaces it); `bash scripts/verify-user-level-drift.sh` → 0 drift. No user-level hook or settings entry changes.
+
 ## v4.4.2 — 2026-10-10
 
 Patch. The documented one-time pre-push install was refused by the toolkit's own gates on a protected `main`. `hooks/git-pre-push.sh` changes in message text, and its installer now treats `core.hooksPath` equal to the default hooks dir as unset; the gates are unchanged. The sync-template skill gains seven clarifications.

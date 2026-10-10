@@ -92,6 +92,24 @@ def test_optional_absent_key_is_detailed_and_never_missing_declared():
     assert detail["none_meaning"] == rule_detail["none_meaning"]
 
 
+def test_optional_absent_effect_names_the_deprecated_spelling_when_held():
+    """The hook greps `Test( Command)?`, so a consumer holding only
+    `**Test Command**:` is NOT falling back to the Gate."""
+    proj = "- **Protected branches**: main master\n- **Gate**: g\n- **Test Command**: pytest\n"
+    res = v3.audit_keys(proj, PY_TPL_TEXT, None, RULE)
+    detail = next(d for d in res["optional_absent_detail"] if d["key"] == "Test")
+    assert "**Test Command**" in detail["effect_when_absent"]
+    assert "still honoured" in detail["effect_when_absent"]
+    assert "falls back" not in detail["effect_when_absent"]
+
+
+def test_optional_absent_effect_unchanged_when_neither_spelling_is_held():
+    proj = "- **Protected branches**: main master\n- **Gate**: g\n"
+    res = v3.audit_keys(proj, PY_TPL_TEXT, None, RULE)
+    detail = next(d for d in res["optional_absent_detail"] if d["key"] == "Test")
+    assert detail["effect_when_absent"] == RULE["optional_keys"]["Test"]["effect_when_absent"]
+
+
 # --- case 5: per-variant count, derived -------------------------------------
 
 

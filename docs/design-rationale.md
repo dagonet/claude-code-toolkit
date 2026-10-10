@@ -225,6 +225,8 @@ Cut: the connective "why" prose between bullets — e.g. why the PO never review
 code inline is that a `code-reviewer` is spawned from T2 up, which is now
 stated once as the fact rather than argued.
 
+**Retired in v4.5.0:** the skills spawn mandate, `require-skills-block.sh` and checks 4, 5, 8, 9 and 10 are gone; each agent opens skills on demand from its own `## Skills` table (CHANGELOG v4.5.0).
+
 ### Model & Effort Policy
 
 Kept the table-shaped policy (alias-only models, per-role effort, the
@@ -263,6 +265,8 @@ The `plan-files` block is written as a delta on the `github-issues` block
 instead (same shape, different context/architect-guidance line) rather than
 repeating the full template a second time.
 
+**Retired in v4.5.0:** the skills spawn mandate, `require-skills-block.sh` and checks 4, 5, 8, 9 and 10 are gone; each agent opens skills on demand from its own `## Skills` table (CHANGELOG v4.5.0).
+
 ### Worktrees, Merge Protocol
 
 Numbered steps and rules stay; the worktree lag explanation (`isolation:
@@ -294,6 +298,8 @@ check 4, check 5, check 10) and survive byte-exact. The Coder copy-paste
 snippet now says "the Report-agents CRITICAL block above, plus:" instead of
 repeating the CRITICAL paragraph a second time — same instruction, one fewer
 copy of it.
+
+**Retired in v4.5.0:** the skills spawn mandate, `require-skills-block.sh` and checks 4, 5, 8, 9 and 10 are gone; each agent opens skills on demand from its own `## Skills` table (CHANGELOG v4.5.0).
 
 ### Appendix: PROJECT_CONTEXT.md Template
 
