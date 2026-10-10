@@ -4,7 +4,7 @@
 
 Less bureaucracy. Process had grown to a large share of what a subagent spends: skill text was 84% of a coder spawn (BL §1), the coder's report was half gate output, and a blocking hook demanded a skills block in every spawn prompt. Skills now open on demand from a short table in each agent (an override line makes it win over the `CLAUDE.md` triggers), the coder's report is short and never pastes gate output, `AGENT_TEAM.md` drops the copy-paste snippets and the binding table (20,462 → 17,741 B), `require-skills-block.sh` is unregistered and shrinks to a no-op stub for one release, a new `now-brief.sh` re-shows the `## Now` goal after compaction, every always-loaded file is byte-capped by check 35, and `scripts/measure-process.py` measures process against progress from transcripts. The sync-feedback server fixes (below, Fixed) are the only server-code change. This branch merges into `main` only on the user's go.
 
-**Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body changes only its version marker (v4.5.0); the agent files, settings, hooks, AGENT_TEAM.md, CLAUDE.md and the PROJECT_STATE.md seed reach a consumer through the existing sync path, and the one-release stub keeps a stale require-skills-block registration from failing closed.**
+**Floor reviewed: unchanged — the sync-template skill's sync and migration steps are unchanged; its body adds a finalize HEAD re-check, the docs-only exclude in the case-2 superset check and two more healthy verify shapes, and bumps its version marker (v4.5.0), none of which needs a newer floor; the agent files, settings, hooks, AGENT_TEAM.md, CLAUDE.md and the PROJECT_STATE.md seed reach a consumer through the existing sync path, and the one-release stub keeps a stale require-skills-block registration from failing closed.**
 
 ### Added
 - **`hooks/now-brief.sh` and its registration (E).** `SessionStart`, matcher `compact`, `"timeout": 10`: after a compaction it prints the `## Now` section of `PROJECT_STATE.md` (capped at 1,024 bytes, cut at a line end, never mid-character), or a hint to add one. It replaces the `PreCompact` block, which never reached the model.
@@ -27,7 +27,7 @@ Less bureaucracy. Process had grown to a large share of what a subagent spends: 
 
 ### Fixed (from the v4.4.2 sync feedback, merged from `feat/sync-feedback`)
 - **`template_load_manifest`:** `server_in_template_repo` is `null` (not `false`) when no manifest is loaded, so a non-consumer is no longer told to reinstall.
-- **`pending_once_notes` survive finalize:** an unadopted note carries forward until the consumer adopts the key it introduced or the template drops the note.
+- **`pending_once_notes` survive finalize:** an unadopted note carries forward until the consumer adopts the key it introduced or the template no longer offers that key.
 - **`key_audit`:** `Test` held under the deprecated `**Test Command**` is described as still honoured, not "falls back to the Gate".
 - **verify `legacy_gate_dir`:** an empty `.gate/` is reported as empty and safe to remove.
 - **sync-template skill:** the third healthy v4 verify shape (`23 PASS, 0 FAIL, 0 SKIP, 8 INFO`, with the `server_skew` INFO) and a fourth `post_commit` reading (`23/0/1/7`, `server_skew` PASS, the one SKIP `agent_grants_resolvable`) are named in 9b; the case-2 superset check ignores `user-level-reference/*.md`; the toolkit HEAD is re-checked at finalize.
@@ -85,7 +85,7 @@ Counts, never carried forward:
 3. Stop pasting `## Required Skills` into spawn prompts; edit any `PROJECT-CUSTOM` region or own agent that says to.
 4. Your own `pipeline: true` agents (e.g. `mm-runner`) keep the legacy report until v5.0.
 5. A `LOCAL_EDITED` or keep-mine `settings.json`: remove the `require-skills-block` registration before the next release deletes the stub — `grep -n require-skills-block .claude/settings.json` must print nothing — or every Agent spawn fails closed.
-6. User level: copy `user-level-reference/agents/{coder,tester,architect}.md` to `~/.claude/agents/` and `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/`; delete `~/.claude/skills/backlog-board/` and copy `user-level-reference/output-styles/pm-report.md` to `~/.claude/output-styles/` (rule 9 is now generic: if your live copy carries a machine-specific dashboard protocol, name that board, its helper and its use in your own memory or instructions first, since the copy replaces it); `bash scripts/verify-user-level-drift.sh` → 0 drift. No user-level hook or settings entry changes. Re-run `bash scripts/verify-user-level-drift.sh` for 0 drift.
+6. User level: copy `user-level-reference/agents/{coder,tester,architect}.md` to `~/.claude/agents/` and `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/`; delete `~/.claude/skills/backlog-board/` and copy `user-level-reference/output-styles/pm-report.md` to `~/.claude/output-styles/` (rule 9 is now generic: if your live copy carries a machine-specific dashboard protocol, name that board, its helper and its use in your own memory or instructions first, since the copy replaces it); `bash scripts/verify-user-level-drift.sh` → 0 drift. No user-level hook or settings entry changes.
 
 ## v4.4.2 — 2026-10-10
 
