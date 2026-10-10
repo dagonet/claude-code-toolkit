@@ -94,8 +94,9 @@ EXP_NODE_SKIP=0
 # skipped 231 (+1 off the sum); the Linux cloud host skipped 234 and 310, both in band.
 # v4.5.0: +17 each -- block B2 needs node (the contract hook's transcript scan) and skips its 17 assertions without it.
 # v4.5.0 measured on the Linux cloud host at the release tip: python3 250, jq 325 (a Windows host skips 3-4 fewer in python3; the +/-20 band covers both).
-EXP_PY_SKIP=250
-EXP_JQ_SKIP=325
+# v4.5.0 after merging feat/sync-feedback (its new test-hooks rows add skips in the restricted configs): remeasured python3 255, jq 335.
+EXP_PY_SKIP=255
+EXP_JQ_SKIP=335
 BAND=20
 
 matrix_fail=0
