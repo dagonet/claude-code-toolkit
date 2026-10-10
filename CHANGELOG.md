@@ -1,6 +1,6 @@
 # Changelog
 
-## v4.5.0 — {{FILL: tag day}}
+## v4.5.0 — 2026-10-10
 
 Less bureaucracy. Process had grown to a large share of what a subagent spends: skill text was 84% of a coder spawn (BL §1), the coder's report was half gate output, and a blocking hook demanded a skills block in every spawn prompt. Skills now open on demand from a short table in each agent (an override line makes it win over the `CLAUDE.md` triggers), the coder's report is short and never pastes gate output, `AGENT_TEAM.md` drops the copy-paste snippets and the binding table (20,462 → 17,741 B), `require-skills-block.sh` is unregistered and shrinks to a no-op stub for one release, a new `now-brief.sh` re-shows the `## Now` goal after compaction, every always-loaded file is byte-capped by check 35, and `scripts/measure-process.py` measures process against progress from transcripts. The sync-feedback server fixes (below, Fixed) are the only server-code change. This branch merges into `main` only on the user's go.
 
@@ -44,11 +44,11 @@ Less bureaucracy. Process had grown to a large share of what a subagent spends: 
 - **Checks 4, 5, 8, 9, 10 and the check-23 tail**, which asserted the retired mandate; the copy-paste snippets and the binding table; "Coverage >= 80%" from the tiers.
 
 ### Measured (S1–S13)
-Skill sizes are as measured 2026-10-03 (spec); re-measure on the release machine (the superpowers plugin is not installed on the build container): `test-driven-development` 9,578 B, `systematic-debugging` 9,465 B, `writing-plans` 9,092 B, `brainstorming` 17,548 B, `verification-before-completion` 3,650 B (8,780 − 5,130). Every toolkit-file size is `wc -c` on this release's tree. Agent files: coder 5,211 B, code-reviewer 6,620 B, tester 5,761 B, architect 4,211 B (`templates/general`).
+Skill sizes re-measured on the release machine on 2026-10-10 (superpowers 6.4.1, `wc -c` on each `SKILL.md`): `test-driven-development` 9,578 B, `systematic-debugging` 9,465 B, `writing-plans` 9,092 B, `brainstorming` 17,548 B, `verification-before-completion` 3,646 B; the first four equal the spec's 2026-10-03 figures, the last is 4 B under the spec's derived 3,650 B (8,780 − 5,130). Every toolkit-file size is `wc -c` on this release's tree. Agent files: coder 5,211 B, code-reviewer 6,620 B, tester 5,761 B, architect 4,211 B (`templates/general`).
 
 | | Spec prediction | Measured |
 |---|---|---|
-| S1 coder spawn (before 29,075 B) | ≈5,130 B no trigger; ≤ 8,780 B with one verification load; ≥ 20 KB less | **5,211 B** no trigger (−23,864 B); **8,861 B** with `verification-before-completion` (−20,214 B). The one-load figure is 81 B over the spec's bound; the saving is still over 20 KB |
+| S1 coder spawn (before 29,075 B) | ≈5,130 B no trigger; ≤ 8,780 B with one verification load; ≥ 20 KB less | **5,211 B** no trigger (−23,864 B); **8,857 B** with `verification-before-completion` (−20,218 B). The one-load figure is 77 B over the spec's bound; the saving is still over 20 KB |
 | S2 coder + code-reviewer (before 35,695 B) | 11,750 B; 21,328 B with TDD | **11,831 B**; **21,409 B** with TDD |
 | S3 + tester (before 63,879 B) | ≈27,000 B; ≈36,500 B if the tester opens systematic-debugging | **27,170 B** (coder + reviewer + tester + TDD; 17,592 B without TDD); **36,635 B** with systematic-debugging |
 | S4 + architect (before 94,375 B) | ≈40,300 B; ≈67,300 B worst case | **40,473 B** (S3's three agents + architect + TDD + writing-plans); **67,486 B** worst case (+ brainstorming + systematic-debugging) |
@@ -71,7 +71,7 @@ Skill sizes are as measured 2026-10-03 (spec); re-measure on the release machine
 6. An unreadable `SessionStart` stdin leaves the decision to the matcher.
 7. `measure-process.py` heuristics: the gate pattern also matches a commit message naming `pytest`; a commit over 10 s counts its wall-clock as gate time; worktree slugs fold by name prefix (a repo whose name prefixes another's is over-included); `--until` is by a transcript's first timestamp.
 8. S1 holds only if the override line wins over the `CLAUDE.md` triggers (R2); Task 8 measures it.
-9. The S1–S4 skill sizes are the spec's 2026-10-03 figures, not measured on the build container.
+9. The S1–S4 skill sizes are the release machine's superpowers 6.4.1; another plugin version changes them.
 10. S5, S6, S7 and S13 "after" values and the "before" baseline are pending: they come from the local transcripts, not from this tree.
 
 Counts, never carried forward:
@@ -80,6 +80,7 @@ Counts, never carried forward:
 - **Parser matrix:** node 4135 passed, 0 failed, 6 skipped (all `[host]`-tagged); python3-only 3873 passed, 0 failed, 255 skipped; jq-only 3793 passed, 0 failed, 335 skipped (Linux; the jq run used a shadow PATH of symlinks, because `scripts/test-hooks-parser-matrix.sh` hides `/usr/bin` with python3 and so also jq on this host). `EXP_PY_SKIP` / `EXP_JQ_SKIP` are 255 / 335 (band +/-20 unchanged), replacing the 247 / 319 that v4.4.2's 230 / 302 + 17 gave.
 - **Hooks:** 20 scripts under `hooks/` (19 after the stub's deletion), 13 mirrored (unchanged from v4.4.2).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066. Per-variant figures are in `docs/architecture.md`.
+- **Windows (release machine):** at 0d5d4c9, consistency ALL CHECKS PASSED and the hook suite 4134 passed, 3 failed, 3 skipped (4140 assertions); the 3 failures were the P1 flaw under Fixed (tests). After the fix (953d371): the P1 block alone 26 passed, 0 failed (the same harness reproduced the 3 failures at 0d5d4c9); server suite 514 passed, 0 failed, 1 skipped. The full hook suite and the python3-only and jq-only configurations were not re-run on Windows.
 
 ### Downstream migration
 0. Restart sessions after the sync (agent definitions are cached at session start). Server code changed in this release: reinstall the template-sync server (`bash server/install.sh`), then restart sessions or `/mcp` reconnect, and re-copy the sync-template skill (`user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/`).
