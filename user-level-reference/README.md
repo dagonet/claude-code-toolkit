@@ -8,6 +8,8 @@ This directory contains reference copies of the user-level (`~/.claude/`) config
 
 ## New Machine Setup
 
+> **Linux host (agent server):** from a checkout of this repo, `bash scripts/install-user-level-linux.sh` does steps 2-7 below: the reference with a Linux "Platform" section (`scripts/linux/CLAUDE-platform-linux.md`), settings without the Windows-only entries, the rendered hooks, and the plugins superpowers, skill-creator and frontend-design. It never touches `~/.claude.json`, so register MCP servers separately with `claude mcp add --scope user`. It is a stopgap until the v5.0 plugin release replaces it. Afterwards `verify-user-level-drift.sh` reports `CLAUDE.md` and `autoMode.environment` as drift by design.
+
 Follow these steps to configure Claude Code on a fresh machine:
 
 1. **Install Claude Code CLI**
