@@ -654,12 +654,20 @@ def audit_keys(proj_text: str, tpl_text: str, tpl_at_sync_text: str | None, rule
     # uniform by fiat. A key with no entry in the rule's `optional_keys`
     # falls back to the generic pair below.
     optional_rule_keys = rule.get("optional_keys") or {}
+
+    def _effect(key: str) -> str:
+        # The hooks honour the deprecated spelling (`Test( Command)?`), so a
+        # key held that way is not "absent" in effect -- say so.
+        old = next((o for o, n in deprecated_map.items() if n == key and o in proj), None)
+        if old:
+            return f"held under the deprecated spelling `**{old}**`, still honoured"
+        return (optional_rule_keys.get(key) or {}).get("effect_when_absent", "feature off")
+
     optional_absent_detail = [
         {
             "key": key,
             "template_default": tpl.get(key),
-            "effect_when_absent": (optional_rule_keys.get(key) or {}).get(
-                "effect_when_absent", "feature off"),
+            "effect_when_absent": _effect(key),
             "none_meaning": (optional_rule_keys.get(key) or {}).get(
                 "none_meaning", "not defined for this key"),
         }
@@ -1681,6 +1689,21 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
             if info.get("ownership") == "once"
             and (info.get("key_audit") or {}).get("template_notes_changed")
         ]
+        # Carry forward every earlier still-pending note. A note leaves only
+        # when adopted (the template's optional keys are all held now, so
+        # key_audit.optional_absent is empty) or when the template no longer
+        # carries it (file/audit gone, or its optional key removed -- which
+        # empties optional_absent the same way). A manifest lacking the
+        # field contributes nothing.
+        have = {p["file"] for p in pending}
+        for prev in manifest.get("pending_once_notes") or []:
+            if not isinstance(prev, dict) or not prev.get("file") or prev["file"] in have:
+                continue
+            info = st.get("files", {}).get(prev["file"]) or {}
+            if info.get("ownership") == "once" and (info.get("key_audit") or {}).get("optional_absent"):
+                pending.append(prev)
+                have.add(prev["file"])
+        pending.sort(key=lambda p: p["file"])
     else:
         err = st.get("error") if isinstance(st, dict) else "compute_status_v3 returned a non-dict result"
         warnings.append(f"pending_once_notes not recomputed: {err}")

@@ -1110,6 +1110,24 @@ def test_legacy_gate_dir_names_artifacts_and_counts_the_rest(tmp_path):
     assert "by name" in line["remedy"] and "leave them" in line["remedy"]
 
 
+def test_legacy_gate_dir_empty_says_safe_to_remove(tmp_path):
+    repo, proj, _ = _good_fixture(tmp_path)
+    (proj / ".gate").mkdir()
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["legacy_gate_dir"]
+    assert line["status"] == "INFO"
+    assert "empty" in line["measured"]
+    assert "safe to remove" in line["remedy"]
+    assert "never delete the directory" not in line["remedy"]
+
+
+def test_legacy_gate_dir_non_empty_keeps_never_delete_wording(tmp_path):
+    repo, proj, _ = _good_fixture(tmp_path)
+    g = proj / ".gate"; g.mkdir()
+    (g / "run.log").write_text("x")
+    line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["legacy_gate_dir"]
+    assert "never delete the directory" in line["remedy"]
+
+
 def test_legacy_gate_dir_null_case(tmp_path):
     repo, proj, _ = _good_fixture(tmp_path)
     line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["legacy_gate_dir"]
@@ -1633,12 +1651,72 @@ def test_finalize_records_pending_once_notes_and_verify_reports_them(tmp_path):
     assert "unknown_keys_empty" not in _only_fail(out)
 
 
-def test_next_finalize_replaces_pending_once_notes(tmp_path):
+def test_next_finalize_with_nothing_unadopted_clears_pending_once_notes(tmp_path):
+    # The fixture template has no optional key, so nothing is left to adopt.
     repo, proj, old_commit, new_commit = _notes_changed_fixture(tmp_path)
     asyncio.run(ts.template_finalize_sync(str(proj)))
     res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
     assert res["pending_once_notes"] == []
     assert "pending_once_notes" not in _read_manifest(proj)
+
+
+_OPT_KEY = "- **Test timeout**: 600\n"
+
+
+def _pending_with_optional_key_fixture(tmp_path):
+    """Template gains a comment AND an optional key; the consumer lacks the
+    key. First finalize records the note; returns the recorded list."""
+    repo, proj, old_commit = _good_fixture(tmp_path)
+    tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
+    tpl.write_text(CONTEXT_CONTENT + _OPT_KEY + "<!-- guidance about the timeout -->\n",
+                   encoding="utf-8", newline="")
+    _recommit(repo, "template gains optional key + comment")
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert len(res["pending_once_notes"]) == 1
+    return repo, proj, tpl, res["pending_once_notes"]
+
+
+def test_finalize_carries_pending_note_forward_when_template_notes_unchanged(tmp_path):
+    repo, proj, tpl, kept = _pending_with_optional_key_fixture(tmp_path)
+    hook = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "hooks/g.sh")
+    hook.write_text(HOOK_CONTENT + "# touched\n", encoding="utf-8", newline="")
+    _recommit(repo, "unrelated template change")
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == kept
+    assert _read_manifest(proj)["pending_once_notes"] == kept
+
+
+def test_noop_finalize_keeps_pending_notes(tmp_path):
+    repo, proj, tpl, kept = _pending_with_optional_key_fixture(tmp_path)
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == kept
+    assert _read_manifest(proj)["pending_once_notes"] == kept
+
+
+def test_finalize_drops_pending_note_once_consumer_adopted_the_key(tmp_path):
+    repo, proj, tpl, kept = _pending_with_optional_key_fixture(tmp_path)
+    ctx = proj / "PROJECT_CONTEXT.md"
+    ctx.write_text(ctx.read_text(encoding="utf-8") + "- **Test timeout**: 300\n",
+                   encoding="utf-8", newline="")
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == []
+    assert "pending_once_notes" not in _read_manifest(proj)
+
+
+def test_finalize_drops_pending_note_the_template_no_longer_carries(tmp_path):
+    repo, proj, tpl, kept = _pending_with_optional_key_fixture(tmp_path)
+    tpl.write_text(CONTEXT_CONTENT + "<!-- guidance about the timeout -->\n", encoding="utf-8", newline="")
+    _recommit(repo, "template drops the optional key")
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == []
+    assert "pending_once_notes" not in _read_manifest(proj)
+
+
+def test_finalize_carry_forward_is_safe_on_a_manifest_lacking_the_field(tmp_path):
+    repo, proj, commit = _good_fixture(tmp_path)
+    assert "pending_once_notes" not in _read_manifest(proj)
+    res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+    assert res["pending_once_notes"] == []
 
 
 def test_finalize_keeps_pending_once_notes_when_status_fails(tmp_path, monkeypatch):

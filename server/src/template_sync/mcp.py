@@ -917,7 +917,7 @@ async def template_load_manifest(project_path: str) -> str:
         return json.dumps({"valid": False, "errors": errors, "server_version": __version__,
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
-                           "server_in_template_repo": False,
+                           "server_in_template_repo": None,
                            "capabilities": list(v3.CAPABILITIES),
                            "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 

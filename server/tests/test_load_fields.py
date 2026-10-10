@@ -85,6 +85,20 @@ def test_load_response_carries_server_commit_with_no_manifest_at_all(tmp_path):
     assert r["server_commit"] == ts.SERVER_COMMIT
 
 
+def test_server_in_template_repo_is_null_when_no_manifest_is_loaded(tmp_path):
+    # A non-consumer (no manifest) has no templateRepo to be "in": false would
+    # tell it to reinstall the server, so the answer is null.
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"))))
+    assert r["valid"] is False
+    assert r["server_in_template_repo"] is None
+
+
+def test_server_in_template_repo_stays_boolean_with_a_manifest(tmp_path):
+    proj = _write_manifest_missing_a_required_field(tmp_path)
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    assert isinstance(r["server_in_template_repo"], bool)
+
+
 def test_load_response_carries_server_commit_on_the_v3_path(tmp_path):
     repo = tmp_path / "toolkit"
     (repo / "templates" / "general").mkdir(parents=True)
