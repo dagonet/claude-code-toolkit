@@ -2,7 +2,7 @@
 
 ## v4.5.1 — 2026-10-10
 
-Patch. The hook suite no longer fails on a Linux host for reasons that are the host's, not the hooks': a locale-dependent sort in the A6.11 census and a fixture that needs root. The template-sync server stops failing on a manifest whose `templateRepo` is another machine's path. The restart wording is corrected. A Linux user-level install script, from PR #201, is added.
+Patch. The hook suite no longer fails on a Linux host for reasons that are the host's, not the hooks': a locale-dependent sort in the A6.11 census and a fixture that needs root. The template-sync server stops failing on a manifest whose `templateRepo` is another machine's path (server tools only: the sync-template skill's own `<templateRepo>` git commands and its `server_in_template_repo` reading still use the declared path, so a full skill run on such a host remains a known gap for a later release). The restart wording is corrected. A Linux user-level install script, from PR #201, is added.
 
 **Floor reviewed: unchanged — the sync-template skill's sync and migration steps are untouched (its body changes only in its version marker, v4.5.1, which the consistency script ties to `VERSION`, and one sentence on restart versus `/mcp`), so `requires_skill` (`>=v4.1.0`) and every sync and migration step are as v4.5.0 shipped them; the `templateRepo` fallback is an additive server behaviour (a manifest whose `templateRepo` exists resolves exactly as before, no new tool or parameter), which a consumer gets by restarting the server and which no skill instruction depends on, so neither the skill floor nor a manifest `requires_server` needs to rise.**
 
