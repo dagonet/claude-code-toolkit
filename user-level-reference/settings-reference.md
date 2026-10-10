@@ -292,7 +292,7 @@ Each entry's script is `export PATH=/usr/bin:/bin:$PATH; ` (v4.4.1: exec form ru
 | `no-push-main.sh` | `PreToolUse` on `Bash\|PowerShell` | `UF`: fail-**closed** (missing script → `HOOK SCRIPT MISSING`, exit 2; the hook's own exit 127 → 2 through its in-hook trap) | Blocks a push to `main`/`master`, resolving the implicit branch when none is named. v2.0 PR1 moved it onto the Bash matcher because native `git push` is now the supported path. |
 | `deny-secret-reads.sh` | `PreToolUse` on `Read\|Bash` | `UF`: fail-**closed** (exit 2 when missing) | Refuses reads of secret files (`.env` and friends). |
 | `deny-hang-shapes.sh` | `PreToolUse` on `Bash` | `UO`: fail-open, silent (exit 0 when missing) | Refuses command shapes that hang the harness (heredoc into a file, wait loops, a `cd` chain). |
-| `model-floor.sh` | `PreToolUse` on `Agent` | `UO`: fail-open, silent | Gives a model-less spawn the project default model. |
+| `model-floor.sh` | `PreToolUse` on `Agent` | `UO`: fail-open, silent | Gives a model-less spawn the project default model. With Jev routing on in that clone (`/jev on`) it deliberately exits silently (`hooks/lib/agent-model.sh` `am_jev_routing`), so expect no model-floor output there and check Jev with `/jev report` instead. |
 | `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | `UU`: unwrapped (cannot block; a missing script is a non-blocking error) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
 | `verify-hooks.sh` | `SessionStart` | `UU`: unwrapped, always exits 0 | Reports registered hook scripts that are missing or broken, and exec-form programs that cannot be spawned; silent when all is well. Registered in `settings.json` but not shown in the *Full Settings JSON* block above. |
 | `read-size-gate.sh` | `PreToolUse` on `Read` | fail-**open** | Caps an unbounded `Read` at 500 lines and tells the model the next offset. Recommended user-level install — see below. |
@@ -386,7 +386,7 @@ Templates include the following workflow enforcement hooks (via external scripts
 - Matcher: `Bash|PowerShell` (the native `git push` path; the old `mcp__git-tools__git_push` matcher is gone)
 - Blocks pushes to a protected branch (`main`/`master` by default), resolving the implicit branch when none is named. A native `hooks/git-pre-push.sh` shim (installed per clone) backs it up at the git level.
 
-All of these hooks use `node -e` for JSON parsing (no `jq` dependency) and are copied to target projects by the setup script. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
+All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and are copied to target projects by the setup script. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
 
 ### Read Size Gate (PreToolUse, User-Level Recommended)
 
@@ -399,7 +399,7 @@ All of these hooks use `node -e` for JSON parsing (no `jq` dependency) and are c
 - Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
 - Never exits non-zero, so it is registered fail-open: a missing script prints `WARN: <path> missing -- <MSG>. Check that hooks/ exists at the project root.` and exits 0 (the hook's own exit 127 is a non-blocking hook error, Known limit (e) in the v4.4.0 CHANGELOG section).
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
-- Uses `node -e` for JSON parsing (no `jq` dependency). Style-matches `no-push-main.sh`.
+- Parses JSON through `hooks/lib/json.sh` (node, python3 or jq). Style-matches `no-push-main.sh`.
 
 **Recommended install scope: user-level** (`~/.claude/settings.json`). The 22% Read-tool share is paid in target-project sessions, not in `claude-code-toolkit` self-maintenance. Installing at user level covers every project the user opens.
 
