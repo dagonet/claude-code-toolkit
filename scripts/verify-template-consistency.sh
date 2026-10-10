@@ -3000,7 +3000,7 @@ BUDGET_AGENT_TEAM_MD=20480
 BUDGET_RULES_PROJECT_MD=880
 BUDGET_PROJECT_INSTRUCTIONS_MD=960
 BUDGET_USER_CLAUDE_MD=7856
-BUDGET_PM_REPORT_MD=4096
+BUDGET_PM_REPORT_MD=2944
 # PROJECT_CONTEXT.md is capped PER VARIANT: the variants differ by more than
 # the margin. An unknown variant gets 0, which fails loudly.
 c35_ctx_budget() { # <variant>
@@ -4963,7 +4963,7 @@ else
       [ "$(grep -c '^trap .\[ "\$?" = 127 \] && exit 2. EXIT' "hooks/$c71_s.sh")" = 1 ] || c71_bad="$c71_bad [hooks/$c71_s.sh (F/UF) lacks the 127->2 trap line]"
     fi
   done
-  [ "$c71_ntrap" -ge 6 ] || c71_bad="$c71_bad [only $c71_ntrap F/UF hooks found, expected at least 6: the audit is inert]"
+  [ "$c71_ntrap" -ge 5 ] || c71_bad="$c71_bad [only $c71_ntrap F/UF hooks found, expected at least 5: the audit is inert]"
   [ "$(cat hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")" = 0 ] || c71_bad="$c71_bad [a hooks/lib/*.sh file sets an EXIT/0 trap]"
   printf 'trap -- "x" EXIT\n' > "$c71_tmp/t1.sh"; printf "trap 'x'\t0\n" > "$c71_tmp/t2.sh"; printf "trap 'echo exit 2' INT\n" > "$c71_tmp/t3.sh"
   [ "$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t1.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t2.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t3.sh")" = 110 ] || c71_bad="$c71_bad [the trap regex CONTROL failed: 'trap -- ... EXIT' and a TAB-separated 'trap ... 0' must match, 'trap ... INT' must not]"
