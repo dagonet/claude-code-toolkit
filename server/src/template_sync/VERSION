@@ -1,2 +1,2 @@
-4.4.1
-Hotfix: user-level exec-form hook registrations now run export PATH=/usr/bin:/bin:$PATH first, so a PowerShell-started Claude Code session (no Git usr/bin on PATH) no longer locks the machine out -- registration strings, one PATH-less regression test, no hook-script change.
+4.4.2
+Patch: the documented one-time `bash hooks/git-pre-push.sh --install` is no longer refused on a protected main -- the installer's own refusal messages (message text only) no longer read as a git push to the gates' script-body scan; plus sync-template skill clarifications (sync branch before the first apply, incoming-settings hook verification, required new files, no-manifest pointer).

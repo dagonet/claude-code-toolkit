@@ -9753,7 +9753,7 @@ v1_line() { # <repo> <remote ref> [delete] -> one pre-push stdin line
 }
 V1A=$(v1_repo v1a '- **Protected branches**: main')
 expect "V1: update of main refused"                  refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/main)")"
-expect "V1: refusal names branch, remote and escape" yesyes "$(v1_yes grep -qF "of protected branch 'main' on remote 'origin' refused" "$TMPROOT/v1.err")$(v1_yes grep -qF 'git push --no-verify' "$TMPROOT/v1.err")"
+expect "V1: refusal names branch, remote and escape" yesyes "$(v1_yes grep -qF "of protected branch 'main' on remote 'origin' refused" "$TMPROOT/v1.err")$(v1_yes grep -qF 'the --no-verify flag' "$TMPROOT/v1.err")"
 expect "V1: delete of main refused"                  refused "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/main delete)")"
 expect "V1: a delete is called a delete"             yes "$(v1_yes grep -qF "delete of protected branch 'main'" "$TMPROOT/v1.err")"
 expect "V1: feature branch allowed"                  allowed "$(v1_hook "$V1A" "$(v1_line "$V1A" refs/heads/feature/x)")"
@@ -9848,8 +9848,29 @@ V1K=$(v1_repo v1k -); v1g -C "$V1K" config core.hooksPath .husky
 expect "V1: core.hooksPath set: --install exits 1"   1 "$(v1_install "$V1K")"
 expect "V1: core.hooksPath set: nothing written"     no "$(v1_yes [ -e "$V1K/.git/hooks/pre-push" ])"
 expect "V1: core.hooksPath set: the reason"          yes "$(v1_yes grep -qF 'core.hooksPath is set' "$TMPROOT/v1i.err")"
+# core.hooksPath equal to the default <git common dir>/hooks is the same as unset (yutraffic incident)
+V1D=$(v1_repo v1d -); V1DD="$(git -C "$V1D" rev-parse --path-format=absolute --git-common-dir)/hooks"
+v1g -C "$V1D" config core.hooksPath "$V1DD"
+expect "V1: core.hooksPath = the default dir (absolute): --install exits 0" 0 "$(v1_install "$V1D")"
+expect "V1: core.hooksPath = the default dir (absolute): shim present" yes "$(v1_yes grep -qF 'claude-code-toolkit pre-push shim' "$V1DD/pre-push")"
+V1D2=$(v1_repo v1d2 -); v1g -C "$V1D2" config core.hooksPath ".git/hooks"
+expect "V1: core.hooksPath = .git/hooks (relative): --install exits 0" 0 "$(v1_install "$V1D2")"
+expect "V1: core.hooksPath = .git/hooks (relative): shim present" yes "$(v1_yes grep -qF 'claude-code-toolkit pre-push shim' "$V1D2/.git/hooks/pre-push")"
+V1D3=$(v1_repo v1d3 -); v1g -C "$V1D3" config core.hooksPath "$(git -C "$V1D3" rev-parse --path-format=absolute --git-common-dir)/hooks/"
+expect "V1: core.hooksPath = the default dir (trailing slash): --install exits 0" 0 "$(v1_install "$V1D3")"
+expect "V1: core.hooksPath = the default dir (trailing slash): shim present" yes "$(v1_yes grep -qF 'claude-code-toolkit pre-push shim' "$V1D3/.git/hooks/pre-push")"
+V1D4=$(v1_repo v1d4 -); mkdir -p "$TMPROOT/v1other"; v1g -C "$V1D4" config core.hooksPath "$TMPROOT/v1other"
+expect "V1: core.hooksPath = another absolute dir: --install exits 1" 1 "$(v1_install "$V1D4")"
+expect "V1: core.hooksPath = another absolute dir: nothing written" no "$(v1_yes [ -e "$V1D4/.git/hooks/pre-push" ])"
+expect "V1: core.hooksPath = another absolute dir: the chain line" yes "$(v1_yes grep -qF 'hooks/git-pre-push.sh" "$@" || exit 1' "$TMPROOT/v1i.err")"
+V1D5=$(v1_repo v1d5 -); mkdir -p "$TMPROOT/v1o5/sub"
+if ln -s "$TMPROOT/v1o5/sub" "$V1D5/L" 2>/dev/null && [ -L "$V1D5/L" ]; then
+  v1g -C "$V1D5" config core.hooksPath "L/../.git/hooks"
+  expect "V1: core.hooksPath = symlink/../.git/hooks (git looks elsewhere): --install exits 1" 1 "$(v1_install "$V1D5")"
+  expect "V1: core.hooksPath = symlink/../.git/hooks: nothing written" no "$(v1_yes [ -e "$V1D5/.git/hooks/pre-push" ])"
+fi
 mkdir -p "$TMPROOT/v1plain/hooks"; cp -R "$ROOT/hooks/." "$TMPROOT/v1plain/hooks/"
-expect "V1: not a repository: --install exits 1"     1 "$(v1_install "$TMPROOT/v1plain")"
+expect "V1: not a repository: --install exits 1"    1 "$(v1_install "$TMPROOT/v1plain")"
 expect "V1: not a repository: the reason"            yes "$(v1_yes grep -qF 'is not a git repository' "$TMPROOT/v1i.err")"
 V1S=$(mkrepo v1s main); mkdir -p "$V1S/sub/hooks"; cp -R "$ROOT/hooks/." "$V1S/sub/hooks/"
 expect "V1: hooks only in a subdirectory: --install exits 1 (R-2)" 1 "$(v1_install "$V1S/sub")"
@@ -9866,6 +9887,29 @@ else
   skip_host "V1: a dangling symlink pre-push" "this host cannot create a symlink" 2
 fi
 # ---- end v4.3.2 V1
+
+# ---- v4.4.2 V1b: the documented one-time `bash hooks/git-pre-push.sh --install` is not refused on a protected main ----
+# gc_script_body scans the script file for a push/merge; v4.4.1's installer carried
+# `git push --no-verify` in the CODE lines of its own refusal messages and was blocked.
+v1b_gate() { # <hook> <repo> <command> -> the hook's exit code
+  printf '%s' "$(mkjson Bash "$3" "$2")" | bash "$2/hooks/$1.sh" >/dev/null 2>&1; echo $?
+}
+V1B_CTX=$(printf '%s\n' '- **Protected branches**: main' '- **Gate**: true')
+V1B_CMD='bash hooks/git-pre-push.sh --install'
+V1BN=$(v1_repo v1bn "$V1B_CTX")
+expect "V1b: gate-before-merge allows the installer on main" 0 "$(v1b_gate gate-before-merge "$V1BN" "$V1B_CMD")"
+expect "V1b: no-push-main allows the installer on main"      0 "$(v1b_gate no-push-main "$V1BN" "$V1B_CMD")"
+expect "V1b: a real push of main: gate-before-merge refuses" 2 "$(v1b_gate gate-before-merge "$V1BN" 'git push origin main')"
+expect "V1b: a real push of main: no-push-main refuses"      2 "$(v1b_gate no-push-main "$V1BN" 'git push origin main')"
+if git -C "$ROOT" show v4.4.1:hooks/git-pre-push.sh > "$TMPROOT/v1b-old.sh" 2>/dev/null && [ -s "$TMPROOT/v1b-old.sh" ]; then
+  V1BO=$(v1_repo v1bo "$V1B_CTX")
+  cp "$TMPROOT/v1b-old.sh" "$V1BO/hooks/git-pre-push.sh"
+  expect "V1b: control, v4.4.1 installer: gate-before-merge refuses" 2 "$(v1b_gate gate-before-merge "$V1BO" "$V1B_CMD")"
+  expect "V1b: control, v4.4.1 installer: no-push-main refuses"      2 "$(v1b_gate no-push-main "$V1BO" "$V1B_CMD")"
+else
+  skip "V1b: control against the v4.4.1 installer" "tag v4.4.1 not available (shallow clone)" 2
+fi
+# ---- end v4.4.2 V1b
 
 # ---- v4.3.2 V2: word-matched fast-path triggers and a cheap no-op record ----
 V2R=$(mkrepo v2 main)
