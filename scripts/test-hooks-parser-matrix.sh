@@ -93,8 +93,9 @@ EXP_NODE_SKIP=0
 # 182+48 = 230 (python3), 225+77 = 302 (jq). The Windows python3 run at 878afc8
 # skipped 231 (+1 off the sum); the Linux cloud host skipped 234 and 310, both in band.
 # v4.5.0: +17 each -- block B2 needs node (the contract hook's transcript scan) and skips its 17 assertions without it.
-EXP_PY_SKIP=247
-EXP_JQ_SKIP=319
+# v4.5.0 measured on the Linux cloud host at the release tip: python3 250, jq 325 (a Windows host skips 3-4 fewer in python3; the +/-20 band covers both).
+EXP_PY_SKIP=250
+EXP_JQ_SKIP=325
 BAND=20
 
 matrix_fail=0

@@ -64,8 +64,9 @@ Skill sizes are as measured 2026-10-03 (spec); re-measure on the release machine
 11. A sync whose template has no changed `PROJECT_CONTEXT.md` notes returns `pending_once_notes: []` at finalize, and so ERASES an earlier, still-unadopted once-notes reminder (for example **Test timeout**) from the manifest. The carry-forward fix is backlog; until then a consumer should note un-adopted keys in `PROJECT_STATE.md`.
 
 Counts, never carried forward:
-- **Consistency:** **421** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.4.0: 447). Measured on Linux, where the v4.4.0 tag does not exist locally, so check 42 arm 2 skips, and the bootstrap fixtures skip 21 assertions.
-- **Hook suite:** `<pending gate>`. **Server suite:** `<pending gate>` (Linux, Task 7: 486 passed, 9 failed, 1 skipped; the 9 are the known Windows-path tests, 3 in `test_load_fields.py` and 6 in `test_template_sync_msys_guard.py`).
+- **Consistency:** **440** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.4.0: 447). Measured on Linux: the bootstrap fixtures run 25 assertions and skip 24 (host-tagged), and check 50 skips (no `MCP_DEV_SERVERS_DIR`).
+- **Hook suite:** 4120 passed, 0 failed, 6 skipped (4126 assertions; Linux, node parser). **Server suite:** 492 passed, 0 failed, 10 skipped (Linux).
+- **Parser matrix:** node 4120 passed, 0 failed, 6 skipped (all `[host]`-tagged); python3-only 3863 passed, 0 failed, 250 skipped; jq-only 3788 passed, 0 failed, 325 skipped (Linux; the jq run used a shadow PATH of symlinks, because `scripts/test-hooks-parser-matrix.sh` hides `/usr/bin` with python3 and so also jq on this host). `EXP_PY_SKIP` / `EXP_JQ_SKIP` are 250 / 325 (band +/-20 unchanged), replacing the 247 / 319 that v4.4.2's 230 / 302 + 17 gave.
 - **Hooks:** 20 scripts under `hooks/` (19 after the stub's deletion), 13 mirrored (unchanged from v4.4.2).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066. Per-variant figures are in `docs/architecture.md`.
 
@@ -76,7 +77,7 @@ Counts, never carried forward:
 3. Stop pasting `## Required Skills` into spawn prompts; edit any `PROJECT-CUSTOM` region or own agent that says to.
 4. Your own `pipeline: true` agents (e.g. `mm-runner`) keep the legacy report until v5.0.
 5. A `LOCAL_EDITED` or keep-mine `settings.json`: remove the `require-skills-block` registration before the next release deletes the stub — `grep -n require-skills-block .claude/settings.json` must print nothing — or every Agent spawn fails closed.
-6. User level: copy `user-level-reference/agents/{coder,tester,architect}.md` to `~/.claude/agents/` and `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/`; delete `~/.claude/skills/backlog-board/` and copy `user-level-reference/output-styles/pm-report.md` to `~/.claude/output-styles/`; `bash scripts/verify-user-level-drift.sh` → 0 drift. No user-level hook or settings entry changes.
+6. User level: copy `user-level-reference/agents/{coder,tester,architect}.md` to `~/.claude/agents/` and `user-level-reference/skills/karpathy-guidelines/SKILL.md` to `~/.claude/skills/karpathy-guidelines/`; delete `~/.claude/skills/backlog-board/` and copy `user-level-reference/output-styles/pm-report.md` to `~/.claude/output-styles/` (rule 9 is now generic: if your live copy carries a machine-specific dashboard protocol, name that board, its helper and its use in your own memory or instructions first, since the copy replaces it); `bash scripts/verify-user-level-drift.sh` → 0 drift. No user-level hook or settings entry changes.
 
 ## v4.4.2 — 2026-10-10
 
