@@ -462,7 +462,14 @@ if [ "$unreleased" -gt 0 ]; then
   printf '%s\n' "$unreleased_list"
 fi
 
-echo "$checked files checked against ${REF:-working tree}, $in_sync in sync, $drift drift, $unreleased unreleased"
+# Not every drift is a file: the settings.json checks (autoMode, hooks block) add to $drift too.
+file_drift=$((checked - in_sync))
+other_drift=$((drift - file_drift))
+if [ "$other_drift" -gt 0 ]; then
+  echo "$checked files checked against ${REF:-working tree}, $in_sync in sync, $file_drift file drift, $unreleased unreleased; $other_drift other drift (settings.json checks)"
+else
+  echo "$checked files checked against ${REF:-working tree}, $in_sync in sync, $drift drift, $unreleased unreleased"
+fi
 
 # A violated verbatim install fails the run on its own: for an UNRELEASED file no
 # DRIFT line exists to carry it, so folding it into $drift is what makes the

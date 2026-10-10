@@ -11220,6 +11220,27 @@ C2NULERR=$(env HOME="$C2H0" CLAUDE_PROJECT_DIR="$c2b_p" bash "$c2b_p/hooks/verif
 expect "C2b: a NUL (\\u0000) in a settings command leaks no shell warning to stderr" 0 "$(printf '%s' "$C2NULERR" | grep -ci 'null byte')"
 # ---- end v4.4.0 C2b
 
+# ---- render-user-hooks.sh: a foreign-only live group stays its own group (another installer's SessionStart group) ----
+echo "=== render-user-hooks: foreign-only groups are kept as their own group ==="
+for rg_be in node python3 jq; do
+  if ! have_backend "$rg_be"; then skip "RG ($rg_be): foreign-only group rows" "no $rg_be on this host" 5; continue; fi
+  rg_h=$(c2b_newhome "rg-$rg_be")
+  # foreign-only matcher-less group: kept as its own group, last, and a re-render is byte-identical
+  printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash /opt/g.sh"}]}]}}' > "$rg_h/.claude/settings.json"
+  RUH_BACKEND=$rg_be HOME="$rg_h" bash "$C2RUH" --write >/dev/null 2>&1
+  expect "RG ($rg_be): --write over a foreign-only group exits 0" 0 "$?"
+  cp "$rg_h/.claude/settings.json" "$rg_h/r1"
+  expect "RG ($rg_be): the foreign-only group opens its own group object" '{"hooks":[' "$(grep -B4 -F 'opt/g.sh' "$rg_h/r1" | head -2 | tr -d ' \n')"
+  RUH_BACKEND=$rg_be HOME="$rg_h" bash "$C2RUH" --write >/dev/null 2>&1
+  expect "RG ($rg_be): a re-render leaves the same bytes" 0 "$(cmp -s "$rg_h/r1" "$rg_h/.claude/settings.json"; echo $?)"
+  # control: a mixed group (toolkit hook + foreign hook) still merges into the reference group
+  printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash /x/.claude/hooks/verify-hooks.sh"},{"type":"command","command":"bash /opt/f.sh"}]},{"hooks":[{"type":"command","command":"bash /opt/g.sh"}]}]}}' > "$rg_h/.claude/settings.json"
+  RUH_BACKEND=$rg_be HOME="$rg_h" bash "$C2RUH" --write >/dev/null 2>&1
+  expect "RG ($rg_be) control: a mixed group's foreign hook is merged into the reference group (not opening a group)" '<]},{>' "<$(grep -B4 -F 'opt/f.sh' "$rg_h/.claude/settings.json" | head -3 | tr -d ' \n')>"
+  expect "RG ($rg_be) control: ... while the foreign-only group is still its own, after it" '{"hooks":[' "$(grep -B4 -F 'opt/g.sh' "$rg_h/.claude/settings.json" | head -2 | tr -d ' \n')"
+done
+# ---- end render-user-hooks foreign-only groups
+
 # ---- v4.4.0 C5: project hooks run in one bash; the global copy steps aside only for a REGISTERED project copy; missing-script polarity per form ----
 echo "=== v4.4.0 C5: project registrations (F/W/O/U) and the user-level step-aside ==="
 C5RUH="$ROOT/scripts/render-user-hooks.sh"

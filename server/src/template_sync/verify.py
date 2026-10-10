@@ -215,6 +215,11 @@ def _check_legacy_gate_dir(pp: pathlib.Path) -> dict:
     if not gate_dir.is_dir():
         return _line("legacy_gate_dir", "INFO", "no legacy .gate/ directory", "n/a (informational)")
     artifact_names = ("last-pass.json", "last-precommit.json", "last-precommit-noop.json")
+    if not any(gate_dir.iterdir()):
+        return _line("legacy_gate_dir", "INFO", "legacy .gate/ present but empty",
+                     "n/a (informational)",
+                     "the directory is empty and safe to remove (the gate now writes under "
+                     "<common git dir>/gate/)")
     arts = [n for n in artifact_names if (gate_dir / n).is_file()]
     others = sum(1 for e in gate_dir.iterdir() if e.name not in arts)
     return _line("legacy_gate_dir", "INFO",
