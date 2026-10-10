@@ -152,7 +152,7 @@ class OwnershipRules:
 
 def load_ownership(template_repo: str) -> OwnershipRules | None:
     """Read <repo>/templates/ownership.json. None when absent (no v3 template)."""
-    path = core._resolve_path(template_repo) / OWNERSHIP_FILE
+    path = core._effective_template_repo(template_repo) / OWNERSHIP_FILE
     raw = core._read_file(path)
     if raw is None:
         return None
@@ -1230,7 +1230,7 @@ def claude_md_window_active(manifest: dict, tpl_rel: str, tpl_raw: str | None) -
 
 def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
     placeholders = manifest.get("placeholders", {})
-    repo_root = core._resolve_path(manifest["templateRepo"])
+    repo_root = core._effective_template_repo(manifest["templateRepo"])
     template_dir = core._get_template_dir(manifest)
     warnings = list(rules.warnings)
     files_status: dict[str, dict] = {}

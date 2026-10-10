@@ -475,6 +475,8 @@ def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
     registered = set(core._registered_tool_names())
     registration_path = _mcp_registration_path()
     template_repo = manifest.get("templateRepo", "")
+    if template_repo:
+        template_repo = str(core._effective_template_repo(template_repo))
     census_cache: dict[str, tuple[list[str] | None, str | None]] = {}
     not_exported: list[str] = []
     skip_aliases: dict[str, str] = {}
@@ -615,6 +617,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     pp = pathlib.Path(project_path).resolve()
     results: list[dict] = []
     done: set[str] = set()
+    core._REPO_NOTE.set(None)
 
     def emit(line: dict) -> None:
         results.append(line)
@@ -1163,4 +1166,8 @@ def _finalize(results: list[dict], mode: str) -> dict:
     skip_n = sum(1 for r in results if r["status"] == "SKIP")
     info_n = sum(1 for r in results if r["status"] == "INFO")
     summary = f"{pass_n} PASS, {fail_n} FAIL, {skip_n} SKIP, {info_n} INFO"
-    return {"ok": fail_n == 0, "mode": mode, "summary": summary, "lines": results}
+    out = {"ok": fail_n == 0, "mode": mode, "summary": summary, "lines": results}
+    note = core._REPO_NOTE.get()
+    if note:
+        out["template_repo_note"] = note
+    return out

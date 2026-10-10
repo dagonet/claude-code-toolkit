@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.5.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.5.1 -->
 
 **This skill takes no arguments.** Invoke it as `/sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -62,7 +62,7 @@ This gate exists because nothing else can cover the case. A v2 manifest carries 
 >
 > **Skew: `server_commit` vs the checkout.** A 4.0+ response also carries `server_commit`, the toolkit commit this server process imported at spawn — read it with `.get("server_commit")` the same way you read `server_in_template_repo`: **absent means a pre-4.0 server**, and there is no skew check to run. When it is present, it can still be `null` — the server was not imported from a git checkout (an installed wheel, a copied tree) — and `null` means "cannot tell", not "differs"; say so once and do not warn, because a restart cannot turn a non-checkout into one. Only when the key is present, non-null, **and** differs from `git -C <templateRepo> rev-parse HEAD` has the toolkit been pulled after the server started: templates on disk are newer than the server code running. Say so and tell the user to restart the MCP server before syncing — the one tag makes this skew easy to miss, and this field is the only place it shows.
 
-> **A `server/` diff that touches only `server/src/template_sync/VERSION` still needs the `/mcp` reconnect (v4.3.1, panoscribe).** The running process holds the VERSION it read at import, so until `template-sync-tools` reconnects, `template_verify` FAILs `server_skew` although no server code changed. Reconnect for ANY change under `server/`; reinstall (`bash server/install.sh`) only when `server/pyproject.toml` — the dependencies — changed. The `/mcp` reconnect alone delivers new server parameters (they live in the server process); no session restart is needed for them, and the version-marker check at the top of this file concerns the skill body only.
+> **A `server/` diff that touches only `server/src/template_sync/VERSION` still needs the `/mcp` reconnect (v4.3.1, panoscribe).** The running process holds the VERSION it read at import, so until `template-sync-tools` reconnects, `template_verify` FAILs `server_skew` although no server code changed. Reconnect for ANY change under `server/`; reinstall (`bash server/install.sh`) only when `server/pyproject.toml` — the dependencies — changed. The `/mcp` reconnect alone delivers new server parameters (they live in the server process); no session restart is needed for them, and the version-marker check at the top of this file concerns the skill body only. A changed skill body is the opposite case: skills load at session start, so it needs a full session restart (not `/mcp`); `/mcp` reconnect suffices only for a server-code-only change.
 
 **The currency question has exactly one right-hand side: `git -C <templateRepo> rev-parse HEAD`, never `git rev-parse <tag>`.** An ANNOTATED tag resolves to the TAG OBJECT's own sha (a real, different, commit-shaped-looking string), not the commit it points at — comparing `server_commit` against a tag name is comparing against the wrong kind of git object, and reads as skew when there is none or as agreement when there is skew. Wherever a tag genuinely is the right-hand side for some other comparison, dereference it first: `<tag>^{commit}`.
 
