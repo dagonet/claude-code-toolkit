@@ -192,6 +192,36 @@ run_config() {
   cfg_label="$1"; cfg_path="$2"; cfg_exp="$3"; cfg_want="$4"; shift 4
 
   note "=== configuration: $cfg_label ==="
+  # SHADOW DIR. When the configuration's own parser lives in a directory that
+  # path_without had to drop (Linux: node, python3 and jq are all in /usr/bin,
+  # and /bin -> usr/bin), the parser vanishes together with bash, coreutils and
+  # git. Rebuild just those tools in a private dir of symlinks: everything the
+  # dropped dirs provide EXCEPT the hidden parsers, which keeps the suite
+  # runnable and the wanted parser the only one visible. The self-check below
+  # then proves the other parsers are still hidden on the final PATH.
+  if [ -n "$cfg_want" ] && [ -z "$(PATH="$cfg_path" command -v "$cfg_want" 2>/dev/null || true)" ]; then
+    shadow="$OUTDIR/shadow-$cfg_label"
+    mkdir -p "$shadow"
+    want_src=$(command -v "$cfg_want" 2>/dev/null || true)
+    [ -z "$want_src" ] || ln -sf "$want_src" "$shadow/$cfg_want"
+    sh_old_ifs=$IFS
+    IFS=:
+    for entry in $PATH; do
+      IFS=$sh_old_ifs
+      if [ -n "$entry" ] && [ -d "$entry" ] && ! printf '%s\n' ":$cfg_path:" | grep -qF -- ":$entry:"; then
+        for f in "$entry"/*; do
+          [ -x "$f" ] && [ ! -d "$f" ] || continue
+          base=${f##*/}
+          case " $* " in *" $base "*) continue ;; esac
+          [ -e "$shadow/$base" ] || ln -s "$f" "$shadow/$base"
+        done
+      fi
+      IFS=:
+    done
+    IFS=$sh_old_ifs
+    cfg_path="$cfg_path:$shadow"
+    note "  shadow PATH dir $shadow provides only $cfg_want among the parsers"
+  fi
   # SELF-CHECK FIRST. A configuration that still sees the interpreter it was
   # supposed to hide passes green and proves nothing — that is the exact failure
   # this script was written after.
@@ -207,8 +237,9 @@ run_config() {
   if [ -n "$cfg_want" ]; then
     wseen=$(PATH="$cfg_path" command -v "$cfg_want" 2>/dev/null || true)
     if [ -z "$wseen" ]; then
-      note "  MATRIX SKIP: '$cfg_want' is not installed on this host — cannot run $cfg_label"
+      note "  MATRIX FAIL: '$cfg_want' is not installed on this host — cannot run $cfg_label (a skipped configuration proves nothing)"
       note ""
+      matrix_fail=$((matrix_fail + 1))
       return 0
     fi
     note "  resolved: $cfg_want -> $wseen"
