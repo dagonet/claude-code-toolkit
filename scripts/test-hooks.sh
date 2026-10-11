@@ -46,6 +46,9 @@ skipped=0
 ROOT=$(pwd)
 TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t hooktest)
 trap 'rm -rf "$TMPROOT"' EXIT
+# Every fixture runs with a private TMPDIR, so a stale or foreign dir under the
+# caller's /tmp (e.g. a root-owned claude-bash-out) cannot change a result.
+export TMPDIR="$TMPROOT/tmp"; mkdir -p "$TMPDIR"
 
 # --- fixture builders -------------------------------------------------------
 
@@ -4252,9 +4255,9 @@ guard_head=0
 [ "${GUARDSTD:0:4000}" = "$(nchars 4000 A)" ] && [ "${GUARDSTD: -4000}" = "$(nchars 4000 A)" ] && guard_head=1
 expect "guard: head is preserved" 1 "$guard_head"
 expect "guard: full output is on disk" 1 \
-  "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' 2>/dev/null | wc -l | tr -d ' ')"
+  "$(find "$GUARDTMP/claude-bash-out-$UID" -name 'guardsess-*.log' 2>/dev/null | wc -l | tr -d ' ')"
 expect "guard: the log holds all 20 000 chars" 20000 \
-  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' 2>/dev/null | head -1)" | tr -d ' ')"
+  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out-$UID" -name 'guardsess-*.log' 2>/dev/null | head -1)" | tr -d ' ')"
 
 expect "guard: 5 000 chars pass through" "" "$(runguard "$(mkpost 5000)")"
 expect "guard: malformed payload is silent" "" "$(runguard '{not json')"
@@ -4268,7 +4271,7 @@ HUGESTD=$(jfield "$HUGEOUT" hookSpecificOutput.updatedToolOutput.stdout)
 expect "guard: 200 KB payload still truncates" "500" \
   "$( [ -n "$HUGESTD" ] && [ "${#HUGESTD}" -lt 10000 ] && echo 500 || echo 0 )"
 expect "guard: 200 KB full output is on disk" 200000 \
-  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' -size +100k 2>/dev/null | head -1)" | tr -d ' ')"
+  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out-$UID" -name 'guardsess-*.log' -size +100k 2>/dev/null | head -1)" | tr -d ' ')"
 
 # --- fix round 1: stderr is an output stream too. A 20 KB stderr with a tiny
 # stdout was passed through whole.
@@ -4282,11 +4285,34 @@ expect "guard: stderr is truncated too" 1 "$err_trunc"
 ERRSTD=$(jfield "$ERROUT" hookSpecificOutput.updatedToolOutput.stdout)
 expect "guard: small stdout survives untouched" 100 "${#ERRSTD}"
 expect "guard: stderr gets its own log file" 1 \
-  "$(find "$GUARDTMP/claude-bash-out" -name '*-stderr.log' 2>/dev/null | wc -l | tr -d ' ')"
+  "$(find "$GUARDTMP/claude-bash-out-$UID" -name '*-stderr.log' 2>/dev/null | wc -l | tr -d ' ')"
 printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" >/dev/null 2>&1
 expect "guard: always exits 0" 0 $?
+
+# --- v4.5.2: the output dir is per user ($UID) and must be ours. A dir we cannot
+# write to (or a foreign one) means pass-through: exit 0, output untouched, no log.
+# Root passes -w on a 555 dir, so the unusable-dir case is not reproducible as root.
+GUARDBAD="$TMPROOT/guardbad"
+mkdir -p "$GUARDBAD/claude-bash-out-$UID"
+chmod 555 "$GUARDBAD/claude-bash-out-$UID"
+if [ "$(id -u)" != 0 ]; then
+  GBOUT=$(printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDBAD" bash "$ROOT/$GUARD" 2>/dev/null); gb_rc=$?
+  expect "guard: unwritable output dir exits 0" 0 "$gb_rc"
+  expect "guard: unwritable output dir passes output through" "" "$GBOUT"
+  expect "guard: unwritable output dir gets no log" 0 \
+    "$(find "$GUARDBAD" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')"
 else
-skip "bash-output-guard cases" "no node on this host" 15
+  skip "guard: unwritable output dir" "running as root" 3
+fi
+chmod 755 "$GUARDBAD/claude-bash-out-$UID"
+GUARDLOOSE="$TMPROOT/guardloose"
+mkdir -p "$GUARDLOOSE/claude-bash-out-$UID"
+chmod 777 "$GUARDLOOSE/claude-bash-out-$UID"
+printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLOOSE" bash "$ROOT/$GUARD" >/dev/null 2>&1
+expect "guard: own output dir is tightened to 700" 700 \
+  "$(stat -c %a "$GUARDLOOSE/claude-bash-out-$UID" 2>/dev/null || stat -f %Lp "$GUARDLOOSE/claude-bash-out-$UID")"
+else
+skip "bash-output-guard cases" "no node on this host" 19
 fi
 
 # ===========================================================================

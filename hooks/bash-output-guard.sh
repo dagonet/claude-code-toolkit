@@ -16,7 +16,7 @@
 #
 # Behaviour: both `stdout` and `stderr` are checked independently. A stream at
 # or under THRESHOLD chars is untouched; a longer one is written whole to
-# $TMPDIR/claude-bash-out/ (one log per stream) and replaced by head + a
+# $TMPDIR/claude-bash-out-$UID/ (one log per stream) and replaced by head + a
 # truncation marker naming the log file + tail. No stream over the threshold
 # means no output at all.
 #
@@ -58,8 +58,13 @@ if [ -f "$jlib" ]; then
 fi
 command -v node >/dev/null 2>&1 || exit 0
 
-OUTDIR="${TMPDIR:-/tmp}/claude-bash-out"
+# Per-user dir: a shared name on a multi-user host is either someone else's (the
+# hook would silently do nothing) or pre-created by them (they could read the
+# logs). Not ours and writable after mkdir -p -> degrade to pass-through.
+OUTDIR="${TMPDIR:-/tmp}/claude-bash-out-$UID"
 mkdir -p "$OUTDIR" 2>/dev/null || exit 0
+[ -O "$OUTDIR" ] && [ -w "$OUTDIR" ] || exit 0
+chmod 700 "$OUTDIR" 2>/dev/null || exit 0
 
 printf '%s' "$TOOL_INPUT" | node -e '
 try {

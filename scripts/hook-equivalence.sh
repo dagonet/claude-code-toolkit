@@ -387,7 +387,7 @@ def run_row(job):
             wfile(uf, render_user_settings(open(uf, encoding="utf-8").read().replace(orig + "/home", home), home))
         # the sandbox path, and the spill-log name (TMPDIR + a timestamp) that
         # bash-output-guard embeds in its truncation marker, are not decisions
-        norm = lambda s: re.sub(r"[^\"\s]*claude-bash-out/[^\"\s\]]*\.log", "@LOG@", s.replace(sb, "@SB@"))
+        norm = lambda s: re.sub(r"[^\"\s]*claude-bash-out[^\"\s/]*/[^\"\s\]]*\.log", "@LOG@", s.replace(sb, "@SB@"))
         payload = expand(payload_t, proj).encode("utf-8")
         sp = [home + "/.claude/settings.json", proj + "/.claude/settings.json", proj + "/.claude/settings.local.json"]
         hooks_run = []; merged = "allow"; star = False; cats = set(); upd = []
