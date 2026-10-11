@@ -15,6 +15,7 @@ Patch. The template-sync server's `template_check_cross_variant` and `template_p
 - **`bash-output-guard.sh` and its user-level mirror shared one world-readable log directory.** The directory was `${TMPDIR:-/tmp}/claude-bash-out` (mode 775, logs 664, readable by every local user), and a directory owned by another user silently disabled truncation. It is now `${TMPDIR:-/tmp}/claude-bash-out-$UID`; it must be a real directory (not a symlink) owned by the caller, it is chmod 700, and logs are written 0600. Otherwise truncation degrades, with a one-time WARN that says so.
 - **`scripts/test-hooks.sh` depended on the caller's `/tmp`.** It now exports a private `TMPDIR` (`$TMPROOT/tmp`), so a foreign-owned directory in the caller's `/tmp` cannot change a result.
 - **`scripts/test-hooks-parser-matrix.sh` could pass on a skipped configuration.** A restricted configuration whose parser shares a directory with the hidden ones now gets a private shadow directory; `python` is hidden in the jq configuration; a whole-configuration skip fails the verdict (it used to print PARSER MATRIX PASSED).
+- **C1 (b) failed in both restricted matrix configurations on a host whose node lives in `/usr/bin` (`scripts/test-hooks.sh`).** The exec-form registration prepends `/usr/bin:/bin`, so under a node-less PATH the old shell form saw no node (the guard passed output through) and the exec form did (it truncated). The guard's stdout comparison is now `skip_host`-ed when node is hidden but present in `/usr/bin` or `/bin`; the exit-code comparison still runs. Pre-existing, and masked until now because the matrix skipped both configurations on such a host.
 - **Skills.** sync-template: a non-protected session branch that already carries the region is a valid sync branch; scratch and probe files go under the session scratchpad; the sync commit is sync-only (the project's own docs, such as `PROJECT_STATE.md` and plans, are committed separately) — a user decision. contribute-upstream reports the effective write location (`template_repo_note`) instead of the declared `templateRepo`.
 
 ### Downstream migration
@@ -25,8 +26,8 @@ Patch. The template-sync server's `template_check_cross_variant` and `template_p
 
 Counts, never carried forward:
 - **Consistency:** **441** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.5.1: 441).
-- **Hook suite:** TBD-gate (passed / failed / skipped, assertions; v4.5.1: 4135 passed, 0 failed, 6 skipped). Parser matrix: TBD-gate (python3-only and jq-only passed / failed / skipped, EXP).
-- **Server suite:** TBD-gate tests (v4.5.1: 522 passed, 10 skipped on Linux).
+- **Hook suite:** 4139 passed, 0 failed, 6 skipped (4145 assertions) on agent-host-1, non-root, `GATE PASS` at cd34744 (v4.5.1: 4135 passed, 0 failed, 6 skipped). Parser matrix on agent-host-1, where node, python3 and jq all live in `/usr/bin` (the first run there that executes both restricted configurations instead of skipping them): node 4139 / 0 / 6, untagged 0; python3-only 3872 / 0 / 260 (4132); jq-only 3792 / 0 / 340 (4132); `EXP_PY_SKIP` / `EXP_JQ_SKIP` stay 255 / 335 (in band; this host adds the C1 (b) host skips and the four new guard assertions' node skips).
+- **Server suite:** 544 passed, 10 skipped on Linux (v4.5.1: 522 passed, 10 skipped).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.5.1's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
 
 ## v4.5.1 — 2026-10-11
