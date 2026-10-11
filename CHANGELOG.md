@@ -1,5 +1,34 @@
 # Changelog
 
+## v4.5.2 — 2026-10-11
+
+Patch. The template-sync server's `template_check_cross_variant` and `template_propagate_to_variants` now follow the same `templateRepo` fallback as the rest of the server and refuse input they used to act on (propagate wrote a junk relative `G:/...` tree on Linux). `bash-output-guard.sh` stops sharing one world-readable log directory between local users. The parser matrix can no longer print PASSED when a whole configuration was skipped. The sync-template and contribute-upstream skills get wording fixes, and the user decision that the sync commit stays sync-only is recorded.
+
+**Floor reviewed: unchanged — the sync-template skill's sync and migration steps are untouched (its body changes in its version marker, v4.5.2, which the consistency script ties to `VERSION`, in wording — a non-protected session branch that carries the region is fine, scratch files go under the session scratchpad, the sync commit is sync-only — and in the `LINES = 32` / INFO baselines, which state both the new and the older server's counts), so `requires_skill` (`>=v4.1.0`) and every sync and migration step are as v4.5.1 shipped them; the server changes are additive refusals and a fallback for two tools plus one INFO line, which a consumer gets by restarting the server, and a skill at either version works against either server (only the INFO count in its quoted baseline differs by one), so neither the skill floor nor a manifest `requires_server` needs to rise.**
+
+### Added
+- **`retired_rule_names` verify INFO line (`server/src/template_sync/verify.py`).** Reports `require-skills-block`, `Spawn-Prompt Binding Table` and `Required Skills` found in once-class files (the names v4.5.0 retired), so a consumer's own copy that still carries them is visible. `LINES` goes 31 → 32 and every INFO count in the sync-template skill's baselines goes up by one.
+- **Guard fixtures (`scripts/test-hooks.sh`)**: a read-only output directory is repaired, a symlinked directory passes the output through untruncated, the directory is mode 700, the log is mode 600.
+
+### Fixed
+- **`template_check_cross_variant` and `template_propagate_to_variants` ignored the `templateRepo` fallback (`mcp.py`).** Both now resolve the repo through `_effective_template_repo` and surface `template_repo_note` like the other tools. Both refuse a repo with no `templates/`; propagate used to `mkdir` a relative `G:/...` tree under the working directory on Linux. Propagate also refuses a variant outside `KNOWN_VARIANTS` and an absolute, `..` or drive-letter `file_path` before any write; check_cross_variant refuses an unsafe `file_path`.
+- **`bash-output-guard.sh` and its user-level mirror shared one world-readable log directory.** The directory was `${TMPDIR:-/tmp}/claude-bash-out` (mode 775, logs 664, readable by every local user), and a directory owned by another user silently disabled truncation. It is now `${TMPDIR:-/tmp}/claude-bash-out-$UID`; it must be a real directory (not a symlink) owned by the caller, it is chmod 700, and logs are written 0600. Otherwise truncation degrades, with a one-time WARN that says so.
+- **`scripts/test-hooks.sh` depended on the caller's `/tmp`.** It now exports a private `TMPDIR` (`$TMPROOT/tmp`), so a foreign-owned directory in the caller's `/tmp` cannot change a result.
+- **`scripts/test-hooks-parser-matrix.sh` could pass on a skipped configuration.** A restricted configuration whose parser shares a directory with the hidden ones now gets a private shadow directory; `python` is hidden in the jq configuration; a whole-configuration skip fails the verdict (it used to print PARSER MATRIX PASSED).
+- **Skills.** sync-template: a non-protected session branch that already carries the region is a valid sync branch; scratch and probe files go under the session scratchpad; the sync commit is sync-only (the project's own docs, such as `PROJECT_STATE.md` and plans, are committed separately) — a user decision. contribute-upstream reports the effective write location (`template_repo_note`) instead of the declared `templateRepo`.
+
+### Downstream migration
+0. Server code changed: restart sessions so the server restarts; no dependency changed, so no reinstall. Two skill bodies also changed (sync-template, marker v4.5.2; contribute-upstream), and skills load at session start, so a FULL session restart is needed; `/mcp` reconnect alone is not enough.
+1. User level: re-copy `user-level-reference/hooks/bash-output-guard.sh` to `~/.claude/hooks/`, and `user-level-reference/skills/sync-template/SKILL.md` and `user-level-reference/skills/contribute-upstream/SKILL.md` to `~/.claude/skills/<name>/` — or re-run the installer (`bash scripts/install-user-level-linux.sh` on Linux).
+2. Remove the old shared log directory, which may hold logs other local users can read: `rm -rf "${TMPDIR:-/tmp}/claude-bash-out"` (a directory owned by another user can only be removed by that user or root; the new hook never reads it).
+3. Project-level consumers: the project copy of `hooks/bash-output-guard.sh` reaches a consumer through the normal `/sync-template` path.
+
+Counts, never carried forward:
+- **Consistency:** **441** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.5.1: 441).
+- **Hook suite:** TBD-gate (passed / failed / skipped, assertions; v4.5.1: 4135 passed, 0 failed, 6 skipped). Parser matrix: TBD-gate (python3-only and jq-only passed / failed / skipped, EXP).
+- **Server suite:** TBD-gate tests (v4.5.1: 522 passed, 10 skipped on Linux).
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.5.1's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
+
 ## v4.5.1 — 2026-10-11
 
 Patch. The hook suite no longer fails on a Linux host for reasons that are the host's, not the hooks': a locale-dependent sort in the A6.11 census and a fixture that needs root. The template-sync server stops failing on a manifest whose `templateRepo` is another machine's path (server tools and, since the second pass, the sync-template skill, which reads the new `effective_template_repo` for its git commands). The restart wording is corrected. A Linux user-level install script, from PR #201, is added.
