@@ -199,11 +199,13 @@ run_config() {
   # dropped dirs provide EXCEPT the hidden parsers, which keeps the suite
   # runnable and the wanted parser the only one visible. The self-check below
   # then proves the other parsers are still hidden on the final PATH.
-  if [ -n "$cfg_want" ] && [ -z "$(PATH="$cfg_path" command -v "$cfg_want" 2>/dev/null || true)" ]; then
+  # Only when the wanted parser exists at all: a missing one must reach the
+  # "not installed" message below, not a shadow dir built around nothing.
+  want_src=$(command -v "$cfg_want" 2>/dev/null || true)
+  if [ -n "$cfg_want" ] && [ -n "$want_src" ] && [ -z "$(PATH="$cfg_path" command -v "$cfg_want" 2>/dev/null || true)" ]; then
     shadow="$OUTDIR/shadow-$cfg_label"
     mkdir -p "$shadow"
-    want_src=$(command -v "$cfg_want" 2>/dev/null || true)
-    [ -z "$want_src" ] || ln -sf "$want_src" "$shadow/$cfg_want"
+    ln -sf "$want_src" "$shadow/$cfg_want"
     sh_old_ifs=$IFS
     IFS=:
     for entry in $PATH; do
@@ -316,7 +318,8 @@ run_config() {
 # node AND python3, which is what makes jq the first working backend.
 run_config "node"    "$PATH"                                            "$EXP_NODE_SKIP" node
 run_config "python3" "$(path_without "$NODE_DIRS")"                     "$EXP_PY_SKIP"   python3 node
-run_config "jq"      "$(path_without "$NODE_DIRS" "$PY_DIRS")"          "$EXP_JQ_SKIP"   jq      node python3
+# `python` (python-is-python3) is the fallback name run-gate.sh and git-cmd.sh try.
+run_config "jq"      "$(path_without "$NODE_DIRS" "$PY_DIRS" "$(dirs_of python)")" "$EXP_JQ_SKIP"   jq      node python3 python
 
 if [ "$matrix_fail" -eq 0 ]; then
   note "PARSER MATRIX PASSED (3 configurations)"

@@ -60,11 +60,16 @@ command -v node >/dev/null 2>&1 || exit 0
 
 # Per-user dir: a shared name on a multi-user host is either someone else's (the
 # hook would silently do nothing) or pre-created by them (they could read the
-# logs). Not ours and writable after mkdir -p -> degrade to pass-through.
+# logs). Must be a real dir we own (a symlink planted in sticky /tmp could be
+# re-pointed between these checks and node's write) and chmod 700 must succeed;
+# otherwise degrade to pass-through, saying so once.
 OUTDIR="${TMPDIR:-/tmp}/claude-bash-out-$UID"
-mkdir -p "$OUTDIR" 2>/dev/null || exit 0
-[ -O "$OUTDIR" ] && [ -w "$OUTDIR" ] || exit 0
-chmod 700 "$OUTDIR" 2>/dev/null || exit 0
+mkdir -p "$OUTDIR" 2>/dev/null
+if ! { [ ! -L "$OUTDIR" ] && [ -O "$OUTDIR" ] && chmod 700 "$OUTDIR" 2>/dev/null; }; then
+  command -v json_warn_once >/dev/null 2>&1 &&
+    json_warn_once bash-output-guard-dir "" "WARN bash-output-guard: $OUTDIR is not a private dir we own; output truncation inactive"
+  exit 0
+fi
 
 printf '%s' "$TOOL_INPUT" | node -e '
 try {
@@ -89,7 +94,7 @@ try {
     var suffix = field === "stderr" ? "-stderr" : "";
     var logPath = path.join(outDir,
       (payload.session_id || "nosession") + "-" + stamp + suffix + ".log");
-    fs.writeFileSync(logPath, out);
+    fs.writeFileSync(logPath, out, { mode: 0o600 });
 
     var dropped = out.length - keep * 2;
     updated[field] = out.slice(0, keep) +

@@ -4289,28 +4289,38 @@ expect "guard: stderr gets its own log file" 1 \
 printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" >/dev/null 2>&1
 expect "guard: always exits 0" 0 $?
 
-# --- v4.5.2: the output dir is per user ($UID) and must be ours. A dir we cannot
-# write to (or a foreign one) means pass-through: exit 0, output untouched, no log.
-# Root passes -w on a 555 dir, so the unusable-dir case is not reproducible as root.
+# --- v4.5.2: the output dir is per user ($UID) and must be a real dir we own. A
+# symlink (or a foreign dir) means pass-through: exit 0, output untouched, no log.
+# A dir we own but made read-only is repaired by the chmod 700, not refused. The
+# mode cases probe the EFFECT (a noacl mount ignores chmod), not `id -u`.
 GUARDBAD="$TMPROOT/guardbad"
 mkdir -p "$GUARDBAD/claude-bash-out-$UID"
 chmod 555 "$GUARDBAD/claude-bash-out-$UID"
-if [ "$(id -u)" != 0 ]; then
-  GBOUT=$(printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDBAD" bash "$ROOT/$GUARD" 2>/dev/null); gb_rc=$?
-  expect "guard: unwritable output dir exits 0" 0 "$gb_rc"
-  expect "guard: unwritable output dir passes output through" "" "$GBOUT"
-  expect "guard: unwritable output dir gets no log" 0 \
-    "$(find "$GUARDBAD" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')"
-else
-  skip "guard: unwritable output dir" "running as root" 3
-fi
-chmod 755 "$GUARDBAD/claude-bash-out-$UID"
+printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDBAD" bash "$ROOT/$GUARD" >/dev/null 2>&1
+expect "guard: own read-only output dir is repaired and gets the log" 1 \
+  "$(find "$GUARDBAD" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')"
+GUARDLINK="$TMPROOT/guardlink"
+mkdir -p "$GUARDLINK/target"
+ln -s "$GUARDLINK/target" "$GUARDLINK/claude-bash-out-$UID"
+GLOUT=$(printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLINK" bash "$ROOT/$GUARD" 2>/dev/null)
+GLLOGS=$(find "$GUARDLINK/target" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')
+expect "guard: symlinked output dir passes through, no log in the target" "|0" "$GLOUT|$GLLOGS"
 GUARDLOOSE="$TMPROOT/guardloose"
 mkdir -p "$GUARDLOOSE/claude-bash-out-$UID"
 chmod 777 "$GUARDLOOSE/claude-bash-out-$UID"
-printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLOOSE" bash "$ROOT/$GUARD" >/dev/null 2>&1
-expect "guard: own output dir is tightened to 700" 700 \
-  "$(stat -c %a "$GUARDLOOSE/claude-bash-out-$UID" 2>/dev/null || stat -f %Lp "$GUARDLOOSE/claude-bash-out-$UID")"
+GUARDPROBE="$TMPROOT/guardprobe"
+mkdir -p "$GUARDPROBE"
+chmod 700 "$GUARDPROBE"
+if [ "$(stat -c %a "$GUARDPROBE" 2>/dev/null || stat -f %Lp "$GUARDPROBE")" = 700 ]; then
+  printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLOOSE" bash "$ROOT/$GUARD" >/dev/null 2>&1
+  expect "guard: own output dir is tightened to 700" 700 \
+    "$(stat -c %a "$GUARDLOOSE/claude-bash-out-$UID" 2>/dev/null || stat -f %Lp "$GUARDLOOSE/claude-bash-out-$UID")"
+  GLOG=$(find "$GUARDLOOSE/claude-bash-out-$UID" -name '*.log' 2>/dev/null | head -1)
+  expect "guard: log file is mode 600" 600 \
+    "$(stat -c %a "$GLOG" 2>/dev/null || stat -f %Lp "$GLOG")"
+else
+  skip_host "guard: own output dir is tightened to 700, log is 600" "noacl mount: chmod 700 does not read back" 2
+fi
 else
 skip "bash-output-guard cases" "no node on this host" 19
 fi
