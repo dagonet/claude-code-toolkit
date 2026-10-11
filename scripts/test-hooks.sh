@@ -10765,7 +10765,15 @@ while IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest; do
     c1_execsh "$C1H" "$C1R" "$c1_p" "$c1_old_s"; c1_orc=$C1RC; c1_oout=$(c1_nonempty "$C1OUT")
     c1_exec "$C1H" "$C1R" "$c1_p" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"; c1_nrc=$C1RC; c1_nout=$(c1_nonempty "$C1OUT")
     expect "C1 (b): $c1_x/$c1_k: exec-form exit code equals the old shell form's" "$c1_orc" "$c1_nrc"
-    expect "C1 (b): $c1_x/$c1_k: exec-form stdout emptiness equals the old shell form's" "$c1_oout" "$c1_nout"
+    # The exec form prepends /usr/bin:/bin, so on a host whose node lives there a
+    # node-less (matrix) PATH hides node from the old form only: the guard
+    # truncates in one form and passes through in the other.
+    if [ "$c1_x" = bash-output-guard ] && ! command -v node >/dev/null 2>&1 &&
+       PATH=/usr/bin:/bin command -v node >/dev/null 2>&1; then
+      skip_host "C1 (b): $c1_x/$c1_k: exec-form stdout emptiness equals the old shell form's" "node is in /usr/bin or /bin, which the exec form re-adds" 1
+    else
+      expect "C1 (b): $c1_x/$c1_k: exec-form stdout emptiness equals the old shell form's" "$c1_oout" "$c1_nout"
+    fi
   done
   case "$c1_x" in no-push-main|deny-secret-reads|deny-hang-shapes)
     c1_exec "$C1H" "$C1R" "$(c1_pl "$c1_x" deny)" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
