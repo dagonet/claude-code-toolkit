@@ -46,6 +46,9 @@ skipped=0
 ROOT=$(pwd)
 TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t hooktest)
 trap 'rm -rf "$TMPROOT"' EXIT
+# Every fixture runs with a private TMPDIR, so a stale or foreign dir under the
+# caller's /tmp (e.g. a root-owned claude-bash-out) cannot change a result.
+export TMPDIR="$TMPROOT/tmp"; mkdir -p "$TMPDIR"
 
 # --- fixture builders -------------------------------------------------------
 
@@ -4252,9 +4255,9 @@ guard_head=0
 [ "${GUARDSTD:0:4000}" = "$(nchars 4000 A)" ] && [ "${GUARDSTD: -4000}" = "$(nchars 4000 A)" ] && guard_head=1
 expect "guard: head is preserved" 1 "$guard_head"
 expect "guard: full output is on disk" 1 \
-  "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' 2>/dev/null | wc -l | tr -d ' ')"
+  "$(find "$GUARDTMP/claude-bash-out-$UID" -name 'guardsess-*.log' 2>/dev/null | wc -l | tr -d ' ')"
 expect "guard: the log holds all 20 000 chars" 20000 \
-  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' 2>/dev/null | head -1)" | tr -d ' ')"
+  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out-$UID" -name 'guardsess-*.log' 2>/dev/null | head -1)" | tr -d ' ')"
 
 expect "guard: 5 000 chars pass through" "" "$(runguard "$(mkpost 5000)")"
 expect "guard: malformed payload is silent" "" "$(runguard '{not json')"
@@ -4268,7 +4271,7 @@ HUGESTD=$(jfield "$HUGEOUT" hookSpecificOutput.updatedToolOutput.stdout)
 expect "guard: 200 KB payload still truncates" "500" \
   "$( [ -n "$HUGESTD" ] && [ "${#HUGESTD}" -lt 10000 ] && echo 500 || echo 0 )"
 expect "guard: 200 KB full output is on disk" 200000 \
-  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out" -name 'guardsess-*.log' -size +100k 2>/dev/null | head -1)" | tr -d ' ')"
+  "$(wc -c < "$(find "$GUARDTMP/claude-bash-out-$UID" -name 'guardsess-*.log' -size +100k 2>/dev/null | head -1)" | tr -d ' ')"
 
 # --- fix round 1: stderr is an output stream too. A 20 KB stderr with a tiny
 # stdout was passed through whole.
@@ -4282,11 +4285,44 @@ expect "guard: stderr is truncated too" 1 "$err_trunc"
 ERRSTD=$(jfield "$ERROUT" hookSpecificOutput.updatedToolOutput.stdout)
 expect "guard: small stdout survives untouched" 100 "${#ERRSTD}"
 expect "guard: stderr gets its own log file" 1 \
-  "$(find "$GUARDTMP/claude-bash-out" -name '*-stderr.log' 2>/dev/null | wc -l | tr -d ' ')"
+  "$(find "$GUARDTMP/claude-bash-out-$UID" -name '*-stderr.log' 2>/dev/null | wc -l | tr -d ' ')"
 printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDTMP" bash "$ROOT/$GUARD" >/dev/null 2>&1
 expect "guard: always exits 0" 0 $?
+
+# --- v4.5.2: the output dir is per user ($UID) and must be a real dir we own. A
+# symlink (or a foreign dir) means pass-through: exit 0, output untouched, no log.
+# A dir we own but made read-only is repaired by the chmod 700, not refused. The
+# mode cases probe the EFFECT (a noacl mount ignores chmod), not `id -u`.
+GUARDBAD="$TMPROOT/guardbad"
+mkdir -p "$GUARDBAD/claude-bash-out-$UID"
+chmod 555 "$GUARDBAD/claude-bash-out-$UID"
+printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDBAD" bash "$ROOT/$GUARD" >/dev/null 2>&1
+expect "guard: own read-only output dir is repaired and gets the log" 1 \
+  "$(find "$GUARDBAD" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')"
+GUARDLINK="$TMPROOT/guardlink"
+mkdir -p "$GUARDLINK/target"
+ln -s "$GUARDLINK/target" "$GUARDLINK/claude-bash-out-$UID"
+GLOUT=$(printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLINK" bash "$ROOT/$GUARD" 2>/dev/null)
+GLLOGS=$(find "$GUARDLINK/target" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')
+expect "guard: symlinked output dir passes through, no log in the target" "|0" "$GLOUT|$GLLOGS"
+GUARDLOOSE="$TMPROOT/guardloose"
+mkdir -p "$GUARDLOOSE/claude-bash-out-$UID"
+chmod 777 "$GUARDLOOSE/claude-bash-out-$UID"
+GUARDPROBE="$TMPROOT/guardprobe"
+mkdir -p "$GUARDPROBE"
+chmod 700 "$GUARDPROBE"
+if [ "$(stat -c %a "$GUARDPROBE" 2>/dev/null || stat -f %Lp "$GUARDPROBE")" = 700 ]; then
+  printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLOOSE" bash "$ROOT/$GUARD" >/dev/null 2>&1
+  expect "guard: own output dir is tightened to 700" 700 \
+    "$(stat -c %a "$GUARDLOOSE/claude-bash-out-$UID" 2>/dev/null || stat -f %Lp "$GUARDLOOSE/claude-bash-out-$UID")"
+  GLOG=$(find "$GUARDLOOSE/claude-bash-out-$UID" -name '*.log' 2>/dev/null | head -1)
+  expect "guard: log file is mode 600" 600 \
+    "$(stat -c %a "$GLOG" 2>/dev/null || stat -f %Lp "$GLOG")"
 else
-skip "bash-output-guard cases" "no node on this host" 15
+  skip_host "guard: own output dir is tightened to 700, log is 600" "noacl mount: chmod 700 does not read back" 2
+fi
+else
+skip "bash-output-guard cases" "no node on this host" 19
 fi
 
 # ===========================================================================
@@ -10729,7 +10765,15 @@ while IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest; do
     c1_execsh "$C1H" "$C1R" "$c1_p" "$c1_old_s"; c1_orc=$C1RC; c1_oout=$(c1_nonempty "$C1OUT")
     c1_exec "$C1H" "$C1R" "$c1_p" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"; c1_nrc=$C1RC; c1_nout=$(c1_nonempty "$C1OUT")
     expect "C1 (b): $c1_x/$c1_k: exec-form exit code equals the old shell form's" "$c1_orc" "$c1_nrc"
-    expect "C1 (b): $c1_x/$c1_k: exec-form stdout emptiness equals the old shell form's" "$c1_oout" "$c1_nout"
+    # The exec form prepends /usr/bin:/bin, so on a host whose node lives there a
+    # node-less (matrix) PATH hides node from the old form only: the guard
+    # truncates in one form and passes through in the other.
+    if [ "$c1_x" = bash-output-guard ] && ! command -v node >/dev/null 2>&1 &&
+       PATH=/usr/bin:/bin command -v node >/dev/null 2>&1; then
+      skip_host "C1 (b): $c1_x/$c1_k: exec-form stdout emptiness equals the old shell form's" "node is in /usr/bin or /bin, which the exec form re-adds" 1
+    else
+      expect "C1 (b): $c1_x/$c1_k: exec-form stdout emptiness equals the old shell form's" "$c1_oout" "$c1_nout"
+    fi
   done
   case "$c1_x" in no-push-main|deny-secret-reads|deny-hang-shapes)
     c1_exec "$C1H" "$C1R" "$(c1_pl "$c1_x" deny)" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"

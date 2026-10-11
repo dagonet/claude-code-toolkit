@@ -435,11 +435,11 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 
 **Hook** (`hooks/bash-output-guard.sh`), matcher `Bash|PowerShell`:
 - Reads `tool_response` from stdin. Observed shape (2.1.250): `{stdout, stderr, interrupted, isImage, noOutputExpected}`.
-- `stdout` and `stderr` are checked independently. A stream over 12,000 chars is written to `$TMPDIR/claude-bash-out/<session_id>-<epoch>[-stderr].log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output|stderr: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
+- `stdout` and `stderr` are checked independently. A stream over 12,000 chars is written to `$TMPDIR/claude-bash-out-$UID/<session_id>-<epoch>[-stderr].log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output|stderr: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
 - The payload is piped to `node` on stdin, not passed in argv: a 200 KB build log exceeds the platform argument limits, and an exec failure here would silently pass the untruncated output through.
 - Both streams short, a missing `tool_response`, or an unparseable payload → no output at all, the result passes through untouched.
 - Always exits 0 and is registered **unwrapped**: it cannot block, so a 127 wrapper would only invent a failure mode.
-- Rollback: remove the matcher group. Old log files are never pruned — clear `$TMPDIR/claude-bash-out/` yourself if it grows.
+- Rollback: remove the matcher group. Old log files are never pruned — clear `$TMPDIR/claude-bash-out-$UID/` yourself if it grows.
 
 ### Time hook (UserPromptSubmit, User-Level)
 

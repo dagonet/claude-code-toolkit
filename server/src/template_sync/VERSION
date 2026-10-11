@@ -1,2 +1,2 @@
-4.5.1
-Patch: the hook suite no longer depends on locale or root, the template-sync server falls back to its own toolkit checkout when a manifest names a path from another machine, and the restart wording is corrected; a Linux user-level install script is added.
+4.5.2
+Patch: the template-sync server's cross-variant check and propagate use the templateRepo fallback and refuse a repo with no templates/, an unknown variant or an unsafe file_path; the bash-output-guard hook writes private per-user logs; the parser matrix can no longer pass on a skipped configuration; sync-template and contribute-upstream wording is corrected.

@@ -297,3 +297,110 @@ def test_run_git_treats_any_oserror_as_a_failed_call(monkeypatch):
     monkeypatch.setattr(ts.subprocess, "run", boom)
     r = ts._run_git(["rev-parse", "--short", "HEAD"], cwd="x")
     assert r["exit_code"] == 1
+
+
+# --- v4.5.2: check_cross_variant / propagate_to_variants use the fallback ---
+
+def _variants(root: pathlib.Path, content: str = "x\n") -> None:
+    for v in ("general", "python"):
+        (root / "templates" / v).mkdir(parents=True, exist_ok=True)
+        (root / "templates" / v / "A.md").write_text(content, encoding="utf-8")
+
+
+def _cross(repo: str) -> dict:
+    return json.loads(asyncio.run(ts.template_check_cross_variant(repo, "general", "A.md")))
+
+
+def _propagate(repo: str, variants: str = '["general"]') -> dict:
+    return json.loads(asyncio.run(ts.template_propagate_to_variants(repo, "A.md", "new\n", variants)))
+
+
+def test_cross_variant_falls_back_with_note(tmp_path, monkeypatch):
+    checkout = _toolkit(tmp_path / "server-checkout")
+    _variants(checkout)
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: checkout)
+    res = _cross(MISSING)
+    assert "error" not in res and "general" in res["variants_identical"]
+    assert "template_repo_note" in res
+
+
+def test_cross_variant_existing_repo_has_no_note(tmp_path, monkeypatch):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: _toolkit(tmp_path / "other"))
+    res = _cross(str(repo))
+    assert "error" not in res and "template_repo_note" not in res
+
+
+def test_propagate_falls_back_with_note(tmp_path, monkeypatch):
+    checkout = _toolkit(tmp_path / "server-checkout")
+    _variants(checkout)
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: checkout)
+    monkeypatch.chdir(tmp_path)
+    res = _propagate(MISSING)
+    assert res["written_to"] == ["general"] and "template_repo_note" in res
+    assert (checkout / "templates" / "general" / "A.md").read_text(encoding="utf-8") == "new\n"
+    # Not `tmp_path / "G:"`: on Windows that join yields the drive G: itself.
+    assert [p.name for p in tmp_path.iterdir()] == ["server-checkout"]
+
+
+def test_propagate_existing_repo_has_no_note(tmp_path, monkeypatch):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: _toolkit(tmp_path / "other"))
+    res = _propagate(str(repo))
+    assert res["written_to"] == ["general"] and "template_repo_note" not in res
+
+
+def test_propagate_nonexistent_repo_no_fallback_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    res = _propagate(MISSING)
+    assert "error" in res
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_repo_note_does_not_leak_into_next_call(tmp_path, monkeypatch):
+    checkout = _toolkit(tmp_path / "server-checkout")
+    _variants(checkout)
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: checkout)
+
+    async def both():
+        first = json.loads(await ts.template_check_cross_variant(MISSING, "general", "A.md"))
+        second = json.loads(await ts.template_check_cross_variant(str(repo), "general", "A.md"))
+        return first, second
+    first, second = asyncio.run(both())
+    assert "template_repo_note" in first
+    assert "template_repo_note" not in second
+
+
+# --- v4.5.2 review: input validation before any write ---
+
+@pytest.mark.parametrize("bad_path", ["/etc/x.md", "\\abs.md", "../A.md", "a/../../A.md", "a\\..\\..\\A.md", "C:\\x.md"])
+def test_propagate_refuses_unsafe_file_path_and_writes_nothing(tmp_path, bad_path):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    res = json.loads(asyncio.run(ts.template_propagate_to_variants(str(repo), bad_path, "new\n", '["general", "python"]')))
+    assert "error" in res and "written_to" not in res
+    assert (repo / "templates" / "general" / "A.md").read_text(encoding="utf-8") == "x\n"
+    assert not (tmp_path / "A.md").exists()
+
+
+@pytest.mark.parametrize("variants", ['["general", "../evil"]', '["nope"]', '["general", 3]', '"general"'])
+def test_propagate_refuses_unknown_variant_before_any_write(tmp_path, variants):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    res = json.loads(asyncio.run(ts.template_propagate_to_variants(str(repo), "A.md", "new\n", variants)))
+    assert "error" in res and "written_to" not in res
+    assert (repo / "templates" / "general" / "A.md").read_text(encoding="utf-8") == "x\n"
+    assert not (repo / "templates" / "evil").exists() and not (repo / "evil").exists()
+
+
+@pytest.mark.parametrize("bad_path", ["/etc/passwd", "../A.md", "a\\..\\A.md"])
+def test_cross_variant_refuses_unsafe_file_path(tmp_path, bad_path):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    res = json.loads(asyncio.run(ts.template_check_cross_variant(str(repo), "general", bad_path)))
+    assert "error" in res and "is_shared" not in res
