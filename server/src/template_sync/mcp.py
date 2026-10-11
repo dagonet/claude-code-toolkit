@@ -2135,6 +2135,7 @@ async def template_reverse_placeholders(
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_check_cross_variant(
     template_repo: str,
     variant: str,
@@ -2151,8 +2152,10 @@ async def template_check_cross_variant(
     Returns:
         JSON with which variants are identical, which differ, and whether propagation is safe
     """
-    repo = pathlib.Path(template_repo).resolve()
+    repo = _effective_template_repo(template_repo)
     templates_dir = repo / "templates"
+    if not templates_dir.is_dir():
+        return json.dumps({"error": f"templates directory not found in {repo}"}, ensure_ascii=False)
 
     current_content = _read_file(templates_dir / variant / file_path)
     if current_content is None:
@@ -2184,6 +2187,7 @@ async def template_check_cross_variant(
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_propagate_to_variants(
     template_repo: str,
     file_path: str,
@@ -2202,8 +2206,10 @@ async def template_propagate_to_variants(
     Returns:
         JSON with which variants were written, skipped, or errored
     """
-    repo = pathlib.Path(template_repo).resolve()
+    repo = _effective_template_repo(template_repo)
     templates_dir = repo / "templates"
+    if not templates_dir.is_dir():
+        return json.dumps({"error": f"templates directory not found in {repo}"}, ensure_ascii=False)
 
     try:
         variants = json.loads(target_variants)

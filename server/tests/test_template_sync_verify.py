@@ -362,7 +362,8 @@ def test_pass_fixture_is_all_green(tmp_path):
     # template copies of project.md are byte-identical, PROJECT_MD_CONTENT).
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
                         "project_md_seed_differs",
-                        "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
+                        "legacy_gate_dir", "once_notes_changed", "retired_rule_names",
+                        "project_md_scoped_consistent"}
 
     n_pass = len(verify.LINES) - len(skip_ids) - len(info_ids) - len(fail_ids)
     assert res["summary"] == f"{n_pass} PASS, 0 FAIL, {len(skip_ids)} SKIP, {len(info_ids)} INFO"
@@ -375,7 +376,7 @@ def test_lines_count_is_31():
     counts -- never derived from anything, so it is a red flag by itself if a
     later edit changes LINES without touching this number. 30 -> 31 in
     v4.1.1 (spec §2.1): project_md_seed_differs."""
-    assert len(verify.LINES) == 31
+    assert len(verify.LINES) == 32
 
 
 def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
@@ -398,7 +399,8 @@ def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
     # project and template copies of project.md are byte-identical).
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
                         "project_md_seed_differs",
-                        "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
+                        "legacy_gate_dir", "once_notes_changed", "retired_rule_names",
+                        "project_md_scoped_consistent"}
     by_id = _by_id(res)
     assert by_id["claude_md_identical"]["status"] == "PASS"
     assert by_id["import_line_present"]["status"] == "PASS"
@@ -673,7 +675,7 @@ def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypa
     _recommit(proj)
 
     res = verify.run(str(proj), str(repo), "post_commit")
-    assert len(res["lines"]) == len(verify.LINES) == 31
+    assert len(res["lines"]) == len(verify.LINES) == 32
     by_id = _by_id(res)
     for id_ in ("no_errors", "status_clean", "classes_and_hashes"):
         line = by_id[id_]
@@ -698,7 +700,8 @@ def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
     # and the template's copy are byte-identical, PROJECT_MD_CONTENT).
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
                         "project_md_seed_differs",
-                        "legacy_gate_dir", "once_notes_changed", "project_md_scoped_consistent"}
+                        "legacy_gate_dir", "once_notes_changed", "retired_rule_names",
+                        "project_md_scoped_consistent"}
     line = _by_id(res)["status_clean"]
     assert "CLAUDE.md" in line["measured"]
     assert line["remedy"] == v3.MIGRATION_REQUIRED_REMEDY
@@ -1617,7 +1620,7 @@ def test_lines_count_is_31_and_every_situation_table_lists_the_new_line(
         v4_consumer, v3_legacy_consumer, v3_window_consumer):
     for c in (v4_consumer, v3_legacy_consumer, v3_window_consumer):
         lines = template_verify_lines(c)
-        assert len(lines) == 31 and "project_md_seed_differs" in lines
+        assert len(lines) == 32 and "project_md_seed_differs" in lines
 
 
 def _notes_changed_fixture(tmp_path):
@@ -1759,3 +1762,30 @@ def test_finalize_keeps_pending_once_notes_when_status_fails(tmp_path, monkeypat
     assert _read_manifest(proj)["pending_once_notes"] == kept
     assert res["pending_once_notes"] == kept
     assert any("pending_once_notes not recomputed: boom" in w for w in res["warnings"])
+
+
+# --- v4.5.2: retired_rule_names (INFO) ---------------------------------------
+
+def test_retired_rule_names_reported_in_once_class_file(v4_consumer):
+    v4_consumer.write(".claude/rules/project.md",
+                      PROJECT_MD_CONTENT + "\nSee the Spawn-Prompt Binding Table and require-skills-block.\n")
+    v4_consumer.write(".claude/project-instructions.md", "Every coder gets a Required Skills block.\n")
+    line = template_verify_lines(v4_consumer)["retired_rule_names"]
+    assert line["status"] == "INFO"
+    assert ".claude/rules/project.md: require-skills-block, Spawn-Prompt Binding Table" in line["measured"]
+    assert ".claude/project-instructions.md: Required Skills" in line["measured"]
+
+
+def test_retired_rule_names_absent_when_none(v4_consumer):
+    line = template_verify_lines(v4_consumer)["retired_rule_names"]
+    assert line["status"] == "INFO"
+    assert "no retired rule names" in line["measured"]
+
+
+def test_retired_rule_names_ignores_template_class_files(v4_consumer):
+    # CLAUDE.md-style template-class files are sync-owned; only once-class files are the project's own
+    template_paths = [p for p, e in v4_consumer.manifest["files"].items() if e.get("ownership") == "template"]
+    assert template_paths
+    v4_consumer.write(template_paths[0], "Required Skills\n")
+    line = template_verify_lines(v4_consumer)["retired_rule_names"]
+    assert "no retired rule names" in line["measured"]

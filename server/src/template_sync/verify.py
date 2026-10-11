@@ -80,12 +80,17 @@ LINES = (
     ("project_md_seed_differs", INFO_LINE),
     ("legacy_gate_dir", INFO_LINE),
     ("once_notes_changed", INFO_LINE),
+    # v4.5.2: once-class files the project owns may still name rules v4.5.0 retired.
+    ("retired_rule_names", INFO_LINE),
     ("project_md_scoped_consistent", INFO_LINE),
     ("tree_clean", FAIL_LINE),
 )
 
 # v4.3.1 S2: the only modes run() understands; anything else is refused by its callers.
 MODES = ("pre_commit", "post_commit")
+
+# v4.5.2: rule names retired in v4.5.0; once-class files seeded earlier can still carry them.
+RETIRED_RULE_NAMES = ("require-skills-block", "Spawn-Prompt Binding Table", "Required Skills")
 
 _IDS = tuple(i for i, _ in LINES)
 
@@ -1148,6 +1153,24 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         else:
             emit(_line("once_notes_changed", "INFO", "no once-class file has changed template notes",
                        "n/a (informational)"))
+
+    # --- retired_rule_names (INFO) ------------------------------------------
+    # Reads the manifest's once-class files (the project owns them; the sync never
+    # rewrites them), so a retired name there is the project's to remove by hand.
+    hits = []
+    for path, entry in manifest.get("files", {}).items():
+        if entry.get("ownership") != "once":
+            continue
+        text = core._read_file(pp / path)
+        found = [n for n in RETIRED_RULE_NAMES if text and n in text]
+        if found:
+            hits.append(f"{path}: {', '.join(found)}")
+    if hits:
+        emit(_line("retired_rule_names", "INFO", "; ".join(hits), "n/a (informational)",
+                   "hand-edit the named once-class file(s): the sync never writes them"))
+    else:
+        emit(_line("retired_rule_names", "INFO", "no retired rule names in once-class files",
+                   "n/a (informational)"))
 
     emit(_check_manifest_bytes(pp))
     emit(_check_tree_clean(pp, mode))
