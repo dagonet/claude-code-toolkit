@@ -1764,7 +1764,7 @@ git -C "$a6pc_repo" config --get'
 A6FORMS=$(grep -vE '^[[:space:]]*#' "$ROOT/hooks/gate-before-merge.sh" \
   | grep -vE '^[[:space:]]*(echo|printf)[[:space:]]' \
   | grep -vE '_WHY=' \
-  | grep -oE '\bgit( -C "[^"]*")? [a-z][a-z-]*( --?[a-z][a-z-]*)*' | sort -u)
+  | grep -oE '\bgit( -C "[^"]*")? [a-z][a-z-]*( --?[a-z][a-z-]*)*' | LC_ALL=C sort -u)
 if [ "$A6FORMS" = "$A6ALLOW" ]; then
   printf 'PASS  %-42s (%s shapes)\n' "(A6.11) census: git shapes match the allowlist" "$(printf '%s\n' "$A6FORMS" | wc -l | tr -d ' ')"; pass=$((pass + 1))
 else
@@ -4610,11 +4610,17 @@ expect "brief truncates a 500-char entry" 1 \
 # holds on Windows (where /c/x is C:\x) and on POSIX alike.
 POSIXHOME="/c/tmp/claude-retro-fixture"
 rm -rf "$POSIXHOME"
-mkstop "$PROJCWD" coder agent-posix "$TRANSCRIPT" \
-  | HOME="$POSIXHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
-expect "POSIX-style HOME resolves correctly" 1 \
-  "$( [ -f "$POSIXHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
-rm -rf "$POSIXHOME"
+if mkdir -p "$POSIXHOME" 2>/dev/null; then
+  rm -rf "$POSIXHOME"
+  mkstop "$PROJCWD" coder agent-posix "$TRANSCRIPT" \
+    | HOME="$POSIXHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  expect "POSIX-style HOME resolves correctly" 1 \
+    "$( [ -f "$POSIXHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
+  rm -rf "$POSIXHOME"
+else
+  # /c/... needs root on a POSIX host (v4.5.1): the fixture cannot be created, so SKIP, not fail.
+  skip_host "POSIX-style HOME resolves correctly" "cannot create /c here (non-root POSIX host)"
+fi
 
 # CLAUDE_MEMORY_HOME overrides HOME for both hooks (the shared base-dir helper).
 OVERHOME="$TMPROOT/retrohome-override"
@@ -10165,7 +10171,7 @@ expect "C2a: R-1 control: a one-line function with a trailing comment does not m
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret3.sh" | wc -l | tr -d ' ')"
 expect "C2a: R-2 the EXIT-trap hooks are exactly the five (run-gate.sh is not a registered hook; v4.5.0 retired require-skills-block)" \
   "deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh" \
-  "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | sort | tr '\n' ' ' | sed 's/ $//')"
+  "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 for c2a_h in $C2AHOOKS; do
   expect "C2a: R-2 $c2a_h has exactly one EXIT/0 trap" 1 "$(grep -ciE "$C2ATRAPRE" "$ROOT/hooks/$c2a_h.sh")"
 done
@@ -10175,7 +10181,7 @@ cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-trap2.sh"; printf "trap 'x' exit;
 expect "C2a: R-2 control: the per-hook count goes to 2 on a copy with a second EXIT trap" 2 "$(grep -ciE "$C2ATRAPRE" "$TMPROOT/c2a-trap2.sh")"
 expect "C2a: R-1 the set -u hooks are exactly the four non-sourced ones" \
   "agent-budget-warn.sh post-edit-build.sh retro-brief.sh retro-ledger.sh" \
-  "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh | xargs -n1 basename | sort | tr '\n' ' ' | sed 's/ $//')"
+  "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh | xargs -n1 basename | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v4.4.0 C2a
 
 # ---- v4.4.0 C3: json_fields -- any field list, ONE parser run; json_payload is built on it ----

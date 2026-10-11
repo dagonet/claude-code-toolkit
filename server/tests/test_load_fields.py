@@ -192,13 +192,22 @@ def test_server_in_template_repo_true_for_an_existing_posix_path(tmp_path, monke
     assert ts._server_in_template_repo(str(repo)) is True
 
 
-def test_server_in_template_repo_false_for_the_old_server(monkeypatch):
+def test_server_in_template_repo_false_for_the_old_server(tmp_path, monkeypatch):
+    # v4.5.1 round 2: a declared repo that is missing now resolves through the
+    # fallback (True when the server sits in a toolkit checkout), so the old
+    # server is pinned two ways: no fallback root -> False; an EXISTING declared
+    # repo the server is not inside -> False.
     monkeypatch.setattr(ts, "SERVER_SOURCE_DIR", "G:\\git\\mcp-dev-servers\\src\\mcp_dev_servers")
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: None)
     assert ts._server_in_template_repo("/g/git/claude-code-toolkit") is False
+    other = tmp_path / "other-toolkit"
+    other.mkdir()
+    assert ts._server_in_template_repo(str(other)) is False
 
 
 def test_server_in_template_repo_false_when_unresolvable(monkeypatch):
     monkeypatch.setattr(ts, "SERVER_SOURCE_DIR", "G:\\git\\claude-code-toolkit\\server\\src\\template_sync")
+    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: None)
     assert ts._server_in_template_repo("") is False
     assert ts._server_in_template_repo("not-a-path-that-exists-anywhere") is False
 

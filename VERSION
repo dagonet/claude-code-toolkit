@@ -1,2 +1,2 @@
-4.5.0
-Less bureaucracy: skills open on demand, a short coder report, a lean handbook, byte caps on every always-loaded file, the goal re-shown after compaction, and a process-vs-progress measurement -- template agent, settings, hook and check changes, plus the sync-feedback server fixes.
+4.5.1
+Patch: the hook suite no longer depends on locale or root, the template-sync server falls back to its own toolkit checkout when a manifest names a path from another machine, and the restart wording is corrected; a Linux user-level install script is added.

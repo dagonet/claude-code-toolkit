@@ -1665,7 +1665,7 @@ printf '{ "command": "%s" }\n' "$AT_PH" > "$JSONFIX/at/user-level-reference/othe
 mkdir -p "$JSONFIX/at2/user-level-reference"
 printf '%s\n' "{ \"a\": \"$AT_PH $(printf '@%s@' HOOKS)\"," "  \"c\": \"$(printf '@%s@' FOO)\"," "  \"d\": \"$JSON_PH\" }" > "$JSONFIX/at2/user-level-reference/settings.json"
 json_ref_hits=$( (cd "$JSONFIX/at2" && json_census user-level-reference) | grep -c . )
-json_at_hits=$( (cd "$JSONFIX/at" && json_census templates user-level-reference) | cut -d: -f1 | sort | tr '\n' ' ')
+json_at_hits=$( (cd "$JSONFIX/at" && json_census templates user-level-reference) | cut -d: -f1 | LC_ALL=C sort | tr '\n' ' ')
 if [ "$json_pos" -eq 1 ] && [ "$json_neg_scope" -eq 0 ] && [ "$json_neg_ext" -eq 0 ] && [ "$json_at_hits" = "templates/x/s.json user-level-reference/other.json " ] && [ "$json_ref_hits" -eq 2 ]; then
   ok "JSON placeholder census: detector verified live (in-scope value hit / out-of-scope ignored / *.json.template ignored / @X@ hit except @BASH@/@HOOKS@ in the single exempted user-level-reference/settings.json, where {{X}} / @FOO@ still hit)"
   json_hits=$(json_census templates user-level-reference | grep -c .)

@@ -10,6 +10,8 @@ Tools for synchronizing project files with claude-code-toolkit templates:
 - Cross-variant propagation
 """
 
+import contextvars
+import functools
 import hashlib
 import json
 import os
@@ -221,6 +223,80 @@ def _resolve_path(p: str) -> pathlib.Path:
     return pathlib.Path(p).resolve()
 
 
+# --- v4.5.1: templateRepo fallback --------------------------------------------
+# A committed manifest stores templateRepo as the absolute path on the machine
+# that wrote it ("G:/git/claude-code-toolkit"). On any other host that is not a
+# directory, and every manifest-based call used to fail. ONE helper resolves it:
+# the declared repo when it is an existing directory, else the toolkit checkout
+# this server itself runs from (accepted only with user-level-reference/ and
+# templates/). The fallback is never written back into the manifest; the note is
+# recorded here and surfaced by _surfaces_repo_note on the tool's JSON output.
+_REPO_NOTE: contextvars.ContextVar = contextvars.ContextVar("template_repo_note", default=None)
+
+
+def _server_toolkit_root() -> pathlib.Path | None:
+    """The toolkit checkout the running server lives in, or None.
+
+    Derived from the package's own location (SERVER_SOURCE_DIR); module-level so
+    tests can replace it.
+    """
+    try:
+        here = pathlib.Path(SERVER_SOURCE_DIR).resolve()
+    except (OSError, ValueError):
+        return None
+    for cand in (here, *here.parents):
+        if (cand / "user-level-reference").is_dir() and (cand / "templates").is_dir():
+            return cand
+    return None
+
+
+def _effective_template_repo(declared: str) -> pathlib.Path:
+    """Resolve a manifest's templateRepo, falling back to the server's own checkout."""
+    path = _resolve_path(declared)
+    if path.is_dir():
+        return path
+    root = _server_toolkit_root()
+    if root is None:
+        return path
+    _REPO_NOTE.set(f"templateRepo {declared} not found on this machine; "
+                   f"using the server's own checkout {root}")
+    return root
+
+
+def _effective_template_repo_str(declared: str) -> str:
+    """The string form of the effective repo, for the load response.
+
+    The declared `templateRepo` VERBATIM whenever it is used (it exists, or there
+    is no fallback root); the fallback root as `root.as_posix()` otherwise. Never
+    `str(Path)`: on Windows that would respell a declared `G:/x` as `G:\\x`.
+    """
+    if not declared:
+        return declared
+    path = _effective_template_repo(declared)
+    if path == _resolve_path(declared):
+        return declared
+    return path.as_posix()
+
+
+def _surfaces_repo_note(fn):
+    """Add `template_repo_note` to a tool's JSON-object output when the fallback was used."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        _REPO_NOTE.set(None)
+        out = await fn(*args, **kwargs)
+        note = _REPO_NOTE.get()
+        if note and isinstance(out, str):
+            try:
+                obj = json.loads(out)
+            except ValueError:
+                return out
+            if isinstance(obj, dict):
+                obj["template_repo_note"] = note
+                return json.dumps(obj, ensure_ascii=False)
+        return out
+    return wrapper
+
+
 def _reject_msys_path(p: str) -> str | None:
     """Refuse a bash-shaped MSYS path on a WRITE tool (v4.0.1, item 9).
 
@@ -325,7 +401,9 @@ def _run_git(args: list[str], cwd: str, timeout_s: int = 10) -> dict:
             creationflags=_SUBPROCESS_FLAGS,
         )
         return {"exit_code": p.returncode, "stdout": p.stdout, "stderr": p.stderr}
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # OSError, not FileNotFoundError: a missing cwd raises FileNotFoundError on
+        # Linux but NotADirectoryError (WinError 267) on Windows.
         return {"exit_code": 1, "stdout": "", "stderr": str(e)}
 
 
@@ -382,7 +460,7 @@ def _load_manifest(project_path: pathlib.Path) -> tuple[dict | None, list[str]]:
 
 def _template_repo_resolved(manifest: dict) -> str:
     """Get the resolved templateRepo path as a string (handles MSYS paths on Windows)."""
-    return str(_resolve_path(manifest["templateRepo"]))
+    return str(_effective_template_repo(manifest["templateRepo"]))
 
 
 def _server_in_template_repo(template_repo: str) -> bool:
@@ -397,7 +475,12 @@ def _server_in_template_repo(template_repo: str) -> bool:
     if not template_repo:
         return False
     try:
-        repo = pathlib.Path(_resolve_path(template_repo)).resolve()   # _resolve_path, NOT _normalize_path
+        # Resolved through _effective_template_repo: when the declared repo is missing
+        # on this host the fallback root is, by construction, the checkout the server
+        # runs from, so True is correct there (the skill must not tell the user to
+        # re-register a server they already run correctly). With no fallback root the
+        # declared path stays missing and the answer is False.
+        repo = _effective_template_repo(template_repo).resolve()
         src = pathlib.Path(SERVER_SOURCE_DIR).resolve()
     except (OSError, ValueError):
         return False
@@ -412,7 +495,7 @@ def _server_in_template_repo(template_repo: str) -> bool:
 
 def _get_template_dir(manifest: dict) -> pathlib.Path:
     """Get the template variant directory from manifest."""
-    repo = _resolve_path(manifest["templateRepo"])
+    repo = _effective_template_repo(manifest["templateRepo"])
     return repo / "templates" / manifest["variant"]
 
 
@@ -484,7 +567,7 @@ def _template_file_path(manifest: dict, rel_path: str) -> pathlib.Path:
     """
     mapped = template_path_for(rel_path, manifest)
     if _is_root_tracked(mapped):
-        return _resolve_path(manifest["templateRepo"]) / _normalize_path(mapped)
+        return _effective_template_repo(manifest["templateRepo"]) / _normalize_path(mapped)
     return _get_template_dir(manifest) / mapped
 
 
@@ -890,6 +973,7 @@ def _manifest_migration_to(rules, from_version):
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_load_manifest(project_path: str) -> str:
     """
     Load and validate the template manifest from a project.
@@ -918,6 +1002,7 @@ async def template_load_manifest(project_path: str) -> str:
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": None,
+                           "effective_template_repo": None,
                            "capabilities": list(v3.CAPABILITIES),
                            "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
@@ -926,6 +1011,7 @@ async def template_load_manifest(project_path: str) -> str:
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
+                           "effective_template_repo": _effective_template_repo_str(manifest.get("templateRepo", "")),
                            "capabilities": list(v3.CAPABILITIES),
                            "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
@@ -959,6 +1045,7 @@ async def template_load_manifest(project_path: str) -> str:
             "server_commit": SERVER_COMMIT,
             "server_source": _server_source(),
             "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
+            "effective_template_repo": _effective_template_repo_str(manifest.get("templateRepo", "")),
             "capabilities": list(v3.CAPABILITIES),
             "registered_tools": _registered_tool_names(),
             "migration_required": False,
@@ -1017,6 +1104,7 @@ async def template_load_manifest(project_path: str) -> str:
         "server_commit": SERVER_COMMIT,
         "server_source": _server_source(),
         "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
+        "effective_template_repo": _effective_template_repo_str(manifest.get("templateRepo", "")),
         "capabilities": list(v3.CAPABILITIES),
         "registered_tools": _registered_tool_names(),
         "migration_required": migration_required,
@@ -1032,6 +1120,7 @@ async def template_load_manifest(project_path: str) -> str:
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_compute_status(
     project_path: str,
     template_repo: str = "",
@@ -1259,7 +1348,7 @@ async def template_compute_status(
 
     # Detect new template files not in manifest
     all_template_files = _scan_template_files(
-        template_dir, _resolve_path(manifest["templateRepo"])
+        template_dir, _effective_template_repo(manifest["templateRepo"])
     )
     tracked = set(manifest.get("files", {}).keys())
     new_files = [f for f in all_template_files if f not in tracked and f not in ALWAYS_PROJECT_SPECIFIC]
@@ -1287,6 +1376,7 @@ async def template_compute_status(
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_get_diff(
     project_path: str,
     file_path: str,
@@ -1472,6 +1562,7 @@ async def template_get_diff(
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_apply_file(
     project_path: str,
     file_path: str,
@@ -1633,6 +1724,7 @@ async def template_apply_file(
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_finalize_sync(
     project_path: str,
     applied_files: str = "[]",
@@ -1870,6 +1962,7 @@ async def template_finalize_sync(
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_migrate_manifest(
     project_path: str,
     backup_dir: str = "",
@@ -1997,6 +2090,7 @@ async def template_migrate_manifest(
 
 
 @mcp.tool()
+@_surfaces_repo_note
 async def template_reverse_placeholders(
     project_path: str,
     file_path: str,
