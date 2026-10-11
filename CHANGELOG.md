@@ -1,5 +1,31 @@
 # Changelog
 
+## v4.6.0 — 2026-10-11
+
+Minor. `template_load_manifest` gains a new refusal: it stops a sync when the running template-sync server is older than the toolkit checkout it reads, which is what a `git pull` without a session restart produces. The sync-template skill now states its real server minimum (4.3.1, from an audit) and checks it at step 1. Origin: consumer MM-Agent, 2026-10-05, where a 4.3.0 server served a v4.3.1 checkout without any warning.
+
+**Floor reviewed: unchanged — the skill's own stated server minimum rose (4.1.0 → 4.3.1, which every live consumer already exceeds), but neither `requires_skill` (`>=v4.1.0` in `templates/ownership.json`) nor the `requires_server` floors the server writes into manifests (`MIN_SERVER_FOR_V3` 0.3.2, `MIN_SERVER_FOR_V4` 4.1.0) need to rise: those floors name the oldest server that can read or splice a manifest safely, which is unchanged, a skill at either version still works against either server, and the skill's 4.3.1 minimum is enforced by its own new step-1 check against `server_version`, not by a manifest field; raising `MIN_SERVER_FOR_V4` would only affect manifests written from now on while buying nothing the step-1 check does not already give.**
+
+### Added
+- **Stale-server refusal at `template_load_manifest` (`server/src/template_sync/mcp.py`, `_version_skew`).** When the server's `__version__` (read at import) is OLDER than the first line of the effective template repo's `VERSION` (read as utf-8-sig), the load returns `valid: false` with an error through the same path as an unmet `requires_server`, for v1 to v4 manifests. The message names both versions and the checkout path; the remedy is to reconnect (`/mcp`) or restart, and if it persists the registered server is a different checkout: run `bash server/install.sh` there, point `template-sync-tools` in `~/.claude.json` at the exe it prints, reconnect. A NEWER server only adds `version_skew_note` to the response. A missing or unparseable `VERSION`, or an empty `templateRepo`, is no finding. This warns and refuses on the version mismatch; it does not change how the template version label is derived. **One-release lag:** the protection works only once the running server already carries this code (v4.6.0+), so the pull that first brings it is itself unguarded.
+- **`server/tests/test_version_skew.py`.** Older server refused (a v2 manifest too), newer server noted, equal silent, a BOM in `VERSION` still read, the `templateRepo` fallback checkout is the one compared, missing and unparseable `VERSION` no finding, an unmet `requires_server` still refuses.
+
+### Changed
+- **sync-template skill: stated server minimum 4.3.1 (was 4.1.0).** Audit of the features the skill uses without a fallback: the untracked-file write guard (`overwrite_existing` / `present_on_disk`), `files_created` and `pending_once_notes`, all first in v4.3.1; an older server silently overwrites an untracked file the guard would have refused. Step 1 compares `server_version` numerically against it and stops if lower (re-registration steps when `server_in_template_repo` is false). The obsolete 0.3.2 / 0.1.0 server-version paragraphs are removed. Skill marker v4.6.0.
+- **`verify` `server_skew` FAIL remedy** now reads the same as the load refusal (reconnect or restart; re-register from that checkout if it persists).
+- `docs/template-sync.md` documents the refusal.
+
+### Downstream migration
+0. Server code and the sync-template skill body changed: a FULL session restart is needed (skills load at session start; `/mcp` reconnect alone is not enough). No dependency changed, so no reinstall.
+1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/` — or re-run the installer (`bash scripts/install-user-level-linux.sh` on Linux).
+2. From now on, a toolkit pull without a restart makes `/sync-template` stop at `template_load_manifest` with the restart message. That is expected, not a fault: reconnect or restart, then run it again.
+
+Counts, never carried forward:
+- **Consistency:** **441** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.5.2: 441; no new check this release).
+- **Hook suite:** TBD-gate passed, TBD-gate failed, TBD-gate skipped (v4.5.2: 4139 passed, 0 failed, 6 skipped). Parser matrix: TBD-gate (v4.5.2: node 4139 / 0 / 6; python3-only 3872 / 0 / 260; jq-only 3792 / 0 / 340).
+- **Server suite:** 555 passed, 10 skipped on Linux (v4.5.2: 544 passed, 10 skipped).
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.5.2's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
+
 ## v4.5.2 — 2026-10-11
 
 Patch. The template-sync server's `template_check_cross_variant` and `template_propagate_to_variants` now follow the same `templateRepo` fallback as the rest of the server and refuse input they used to act on (propagate wrote a junk relative `G:/...` tree on Linux). `bash-output-guard.sh` stops sharing one world-readable log directory between local users. The parser matrix can no longer print PASSED when a whole configuration was skipped. The sync-template and contribute-upstream skills get wording fixes, and the user decision that the sync commit stays sync-only is recorded.
