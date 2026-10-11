@@ -340,7 +340,8 @@ def test_propagate_falls_back_with_note(tmp_path, monkeypatch):
     res = _propagate(MISSING)
     assert res["written_to"] == ["general"] and "template_repo_note" in res
     assert (checkout / "templates" / "general" / "A.md").read_text(encoding="utf-8") == "new\n"
-    assert not (tmp_path / "G:").exists()
+    # Not `tmp_path / "G:"`: on Windows that join yields the drive G: itself.
+    assert [p.name for p in tmp_path.iterdir()] == ["server-checkout"]
 
 
 def test_propagate_existing_repo_has_no_note(tmp_path, monkeypatch):
