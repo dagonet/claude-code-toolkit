@@ -88,8 +88,10 @@ Contributed to template ({variant}):
 Skipped (project-specific):
   - .claude/agents/architect.md
 
-Changes written to {templateRepo}. Review and commit when ready.
+Changes written to {effective location}. Review and commit when ready.
 ```
+
+`{effective location}` is the `template_repo_note` from the `template_propagate_to_variants` response when present (under the v4.5.1 fallback the writes went into the server's own checkout, not the declared `templateRepo`), otherwise `templateRepo`.
 
 ## Rules
 
