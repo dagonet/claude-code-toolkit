@@ -1,6 +1,6 @@
 # Changelog
 
-## v4.5.1 — 2026-10-10
+## v4.5.1 — 2026-10-11
 
 Patch. The hook suite no longer fails on a Linux host for reasons that are the host's, not the hooks': a locale-dependent sort in the A6.11 census and a fixture that needs root. The template-sync server stops failing on a manifest whose `templateRepo` is another machine's path (server tools and, since the second pass, the sync-template skill, which reads the new `effective_template_repo` for its git commands). The restart wording is corrected. A Linux user-level install script, from PR #201, is added.
 
@@ -24,8 +24,8 @@ Patch. The hook suite no longer fails on a Linux host for reasons that are the h
 
 Counts, never carried forward:
 - **Consistency:** **441** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.5.0: 440). Measured on Linux: the bootstrap fixtures run 25 assertions and skip 24 (host-tagged), and check 50 skips (no `MCP_DEV_SERVERS_DIR`).
-- **Hook suite:** 4135 passed, 0 failed, 6 skipped (4141 assertions; Linux, node parser, run as root, so the POSIX-HOME fixture ran; as a non-root user that one assertion is a `[host]` skip and the total is unchanged). The parser matrix was not re-run (no `hooks/lib/json.sh` change).
-- **Server suite:** 532 tests: 522 passed, 0 failed, 10 skipped (Linux; v4.5.0: 505 passed, 10 skipped; the new `templateRepo` fallback and `effective_template_repo` cases account for the difference).
+- **Hook suite:** 4135 passed, 0 failed, 6 skipped (4141 assertions; Linux, node parser, run as root, so the POSIX-HOME fixture ran; as a non-root user that one assertion is a `[host]` skip and the total is unchanged). Parser matrix (Linux, at ce35584; no hook file changed after it): python3-only 3873 passed, 0 failed, 255 skipped (EXP 255); jq-only 3793 passed, 0 failed, 335 skipped (EXP 335), run through a shadow PATH because the matrix's own jq configuration printed MATRIX SKIP on that container. As a non-root user with LANG=en_US.UTF-8 (the agent-host-1 conditions, private TMPDIR): 4136 passed, 0 failed, 5 skipped. On agent-host-1 itself (non-root): GATE PASS at ce35584, 4135 passed, 0 failed, 6 skipped.
+- **Server suite:** 532 tests: 522 passed, 0 failed, 10 skipped (Linux; v4.5.0: 505 passed, 10 skipped; the new `templateRepo` fallback and `effective_template_repo` cases account for the difference). Windows (release machine) at da94e2a: 531 passed, 0 failed, 1 skipped; at ce35584 it was 529 passed, 1 failed, which is the `_run_git` fix above.
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.5.0's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
 
 ## v4.5.0 — 2026-10-10
