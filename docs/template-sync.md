@@ -122,6 +122,7 @@ v1 manifests (missing `version`, `templateRawHash`, `localHash`) are auto-migrat
 Every response shape carries three kinds of fact about the running process, resolved together at ONE moment — server import — not read independently:
 
 - **Identity**: `server_version`, `server_commit`, `server_source`, `server_in_template_repo`. Which build this process is.
+- **Resolved repo**: `effective_template_repo` is the toolkit checkout the server actually reads: the manifest's `templateRepo` verbatim when that directory exists on this machine, else (a committed `G:/git/...` path on another host) the checkout the server itself runs from as a POSIX path, with `template_repo_note` saying so; `null` when no manifest loaded. `server_in_template_repo` resolves through the same helper, so it is `True` on that fallback host. The sync-template skill runs its git commands on `effective_template_repo`; an old server omits the key and the skill uses the declared `templateRepo`. The fallback is never written into the manifest.
 - **Registry**: `registered_tools` — the sorted names this process can DISPATCH, read from the FastMCP tool manager. Fixed at import, same as identity.
 - **Capabilities**: `capabilities` — what the loaded module tree (`v3.py`, `verify.py`) supports.
 

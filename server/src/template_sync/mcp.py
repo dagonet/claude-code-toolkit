@@ -263,6 +263,21 @@ def _effective_template_repo(declared: str) -> pathlib.Path:
     return root
 
 
+def _effective_template_repo_str(declared: str) -> str:
+    """The string form of the effective repo, for the load response.
+
+    The declared `templateRepo` VERBATIM whenever it is used (it exists, or there
+    is no fallback root); the fallback root as `root.as_posix()` otherwise. Never
+    `str(Path)`: on Windows that would respell a declared `G:/x` as `G:\\x`.
+    """
+    if not declared:
+        return declared
+    path = _effective_template_repo(declared)
+    if path == _resolve_path(declared):
+        return declared
+    return path.as_posix()
+
+
 def _surfaces_repo_note(fn):
     """Add `template_repo_note` to a tool's JSON-object output when the fallback was used."""
     @functools.wraps(fn)
@@ -458,10 +473,12 @@ def _server_in_template_repo(template_repo: str) -> bool:
     if not template_repo:
         return False
     try:
-        # Deliberately the DECLARED repo, not _effective_template_repo: this answers
-        # "is the server inside the repo the manifest names", and a missing declared
-        # repo is False -- the fallback is reported by template_repo_note instead.
-        repo = pathlib.Path(_resolve_path(template_repo)).resolve()   # _resolve_path, NOT _normalize_path
+        # Resolved through _effective_template_repo: when the declared repo is missing
+        # on this host the fallback root is, by construction, the checkout the server
+        # runs from, so True is correct there (the skill must not tell the user to
+        # re-register a server they already run correctly). With no fallback root the
+        # declared path stays missing and the answer is False.
+        repo = _effective_template_repo(template_repo).resolve()
         src = pathlib.Path(SERVER_SOURCE_DIR).resolve()
     except (OSError, ValueError):
         return False
@@ -983,6 +1000,7 @@ async def template_load_manifest(project_path: str) -> str:
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": None,
+                           "effective_template_repo": None,
                            "capabilities": list(v3.CAPABILITIES),
                            "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
@@ -991,6 +1009,7 @@ async def template_load_manifest(project_path: str) -> str:
                            "server_commit": SERVER_COMMIT,
                            "server_source": _server_source(),
                            "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
+                           "effective_template_repo": _effective_template_repo_str(manifest.get("templateRepo", "")),
                            "capabilities": list(v3.CAPABILITIES),
                            "registered_tools": _registered_tool_names()}, ensure_ascii=False)
 
@@ -1024,6 +1043,7 @@ async def template_load_manifest(project_path: str) -> str:
             "server_commit": SERVER_COMMIT,
             "server_source": _server_source(),
             "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
+            "effective_template_repo": _effective_template_repo_str(manifest.get("templateRepo", "")),
             "capabilities": list(v3.CAPABILITIES),
             "registered_tools": _registered_tool_names(),
             "migration_required": False,
@@ -1082,6 +1102,7 @@ async def template_load_manifest(project_path: str) -> str:
         "server_commit": SERVER_COMMIT,
         "server_source": _server_source(),
         "server_in_template_repo": _server_in_template_repo(manifest.get("templateRepo", "")),
+        "effective_template_repo": _effective_template_repo_str(manifest.get("templateRepo", "")),
         "capabilities": list(v3.CAPABILITIES),
         "registered_tools": _registered_tool_names(),
         "migration_required": migration_required,
