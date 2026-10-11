@@ -22,7 +22,7 @@ Minor. `template_load_manifest` gains a new refusal: it stops a sync when the ru
 
 Counts, never carried forward:
 - **Consistency:** **441** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.5.2: 441; no new check this release).
-- **Hook suite:** TBD-gate passed, TBD-gate failed, TBD-gate skipped (v4.5.2: 4139 passed, 0 failed, 6 skipped). Parser matrix: TBD-gate (v4.5.2: node 4139 / 0 / 6; python3-only 3872 / 0 / 260; jq-only 3792 / 0 / 340).
+- **Hook suite:** 4139 passed, 0 failed, 6 skipped (4145 assertions) on agent-host-1, non-root, `GATE PASS` at 6b657a4 (v4.5.2: 4139 passed, 0 failed, 6 skipped). Parser matrix: not re-run — no hook, `hooks/lib/` or test-suite change since v4.5.2 (v4.5.2: node 4139 / 0 / 6; python3-only 3872 / 0 / 260; jq-only 3792 / 0 / 340).
 - **Server suite:** 555 passed, 10 skipped on Linux (v4.5.2: 544 passed, 10 skipped).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.5.2's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
 
