@@ -168,6 +168,40 @@ def test_effective_key_present_on_invalid_manifest_returns(tmp_path, monkeypatch
     assert res["effective_template_repo"] == checkout.as_posix()
 
 
+def test_effective_key_on_a_v3_manifest_where_real_consumers_land(tmp_path, monkeypatch):
+    """The manifest_supported (v3/v4) return branch, not the v2 one."""
+    checkout = _toolkit(tmp_path / "server-checkout")
+    (checkout / "templates" / "ownership.json").write_text(json.dumps(_v3_ownership()), encoding="utf-8")
+    declared_repo = _toolkit(tmp_path / "declared")
+    (declared_repo / "templates" / "ownership.json").write_text(json.dumps(_v3_ownership()), encoding="utf-8")
+    _server_inside(checkout, monkeypatch)
+
+    def mk(name: str, repo: str) -> tuple[pathlib.Path, bytes]:
+        pp = tmp_path / name
+        (pp / ".claude").mkdir(parents=True)
+        mf = pp / ".claude" / "template-manifest.json"
+        mf.write_text(json.dumps({
+            "manifest_version": 3, "template_version": "3.1.0", "template_commit": "0000000",
+            "variant": "general", "templateRepo": repo, "placeholders": {},
+            "requires_server": ">=0.3.0", "files": {}}), encoding="utf-8")
+        return pp, mf.read_bytes()
+
+    pp, before = mk("p-fallback", MISSING)
+    res = _load(pp)
+    assert res["manifest_version"] == 3 and "unknown_keys" in res      # really the v3/v4 branch
+    assert res["effective_template_repo"] == checkout.as_posix()
+    assert res["template_repo_note"] and res["server_in_template_repo"] is True
+    assert (pp / ".claude" / "template-manifest.json").read_bytes() == before
+
+    declared = str(declared_repo) + "/"
+    pp, before = mk("p-declared", declared)
+    res = _load(pp)
+    assert res["manifest_version"] == 3 and "unknown_keys" in res
+    assert res["effective_template_repo"] == declared
+    assert "template_repo_note" not in res
+    assert (pp / ".claude" / "template-manifest.json").read_bytes() == before
+
+
 def test_server_in_template_repo_true_on_fallback_false_without_root(tmp_path, monkeypatch):
     checkout = _toolkit(tmp_path / "server-checkout")
     _server_inside(checkout, monkeypatch)
