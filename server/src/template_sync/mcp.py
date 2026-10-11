@@ -296,17 +296,21 @@ def _version_skew(declared: str) -> tuple[str | None, str | None]:
     served by stale code. Server older -> refusal; newer -> note; equal, or a VERSION
     that is missing/unreadable/unparseable -> neither (never a refusal on doubt).
     """
+    if not declared:
+        return None, None
     repo = _effective_template_repo(declared)
     try:
-        checkout = (repo / "VERSION").read_text(encoding="utf-8").splitlines()[0].strip()
+        checkout = (repo / "VERSION").read_text(encoding="utf-8-sig").splitlines()[0].strip()
         have, want = v3.parse_version(__version__), v3.parse_version(checkout)
     except (OSError, IndexError, ValueError):
         return None, None
     where = f"the server is {__version__}, the template checkout {repo.as_posix()} is {checkout}"
     if have < want:
-        return (f"stale server: {where}. Restart the session (the server loads its code "
-                "at session start); if it persists, reinstall the server from that "
-                "checkout (`bash server/install.sh`)."), None
+        return (f"stale server: {where}. Reconnect the server (`/mcp`) or restart the session "
+                "(the server loads its code when it starts). If it persists, the registered "
+                f"server is a different checkout: run `bash server/install.sh` in {repo.as_posix()}, "
+                "point `template-sync-tools` in `~/.claude.json` at the exe it prints, "
+                "then reconnect."), None
     if have > want:
         return None, f"{where} -- the server is newer than the checkout."
     return None, None
@@ -1057,14 +1061,15 @@ async def template_load_manifest(project_path: str) -> str:
             f"Update templateRepo in .claude/template-manifest.json."
         )
 
+    skew_refusal, skew_note = _version_skew(manifest.get("templateRepo", ""))
+    if skew_refusal:
+        errors.append(skew_refusal)
+
     if v3.manifest_supported(manifest):
         ok, reason = v3.requires_server_satisfied(
             v3.effective_requires_server_spec(manifest), __version__)
         if not ok:
             errors.append(reason)
-        skew_refusal, skew_note = _version_skew(manifest.get("templateRepo", ""))
-        if skew_refusal:
-            errors.append(skew_refusal)
         rules = v3.load_ownership(manifest["templateRepo"]) if not errors else None
         if not errors and rules is None:
             errors.append(
@@ -1249,9 +1254,6 @@ async def template_compute_status(
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
         result = v3.compute_status_v3(pp, manifest, rules)
-        skew_refusal, skew_note = _version_skew(manifest.get("templateRepo", ""))
-        if skew_refusal or skew_note:  # note only: template_load_manifest already refused
-            result["version_skew_note"] = skew_refusal or skew_note
         return json.dumps(result, ensure_ascii=False)
 
     placeholders = manifest.get("placeholders", {})
