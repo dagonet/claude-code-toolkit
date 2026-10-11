@@ -289,6 +289,29 @@ def _effective_template_repo_str(declared: str) -> str:
     return path.as_posix()
 
 
+def _version_skew(declared: str) -> tuple[str | None, str | None]:
+    """(refusal, note) comparing this server's version with the template repo's VERSION.
+
+    The server loads its code once per session, so a checkout pulled mid-session is
+    served by stale code. Server older -> refusal; newer -> note; equal, or a VERSION
+    that is missing/unreadable/unparseable -> neither (never a refusal on doubt).
+    """
+    repo = _effective_template_repo(declared)
+    try:
+        checkout = (repo / "VERSION").read_text(encoding="utf-8").splitlines()[0].strip()
+        have, want = v3.parse_version(__version__), v3.parse_version(checkout)
+    except (OSError, IndexError, ValueError):
+        return None, None
+    where = f"the server is {__version__}, the template checkout {repo.as_posix()} is {checkout}"
+    if have < want:
+        return (f"stale server: {where}. Restart the session (the server loads its code "
+                "at session start); if it persists, reinstall the server from that "
+                "checkout (`bash server/install.sh`)."), None
+    if have > want:
+        return None, f"{where} -- the server is newer than the checkout."
+    return None, None
+
+
 def _surfaces_repo_note(fn):
     """Add `template_repo_note` to a tool's JSON-object output when the fallback was used."""
     @functools.wraps(fn)
@@ -1039,6 +1062,9 @@ async def template_load_manifest(project_path: str) -> str:
             v3.effective_requires_server_spec(manifest), __version__)
         if not ok:
             errors.append(reason)
+        skew_refusal, skew_note = _version_skew(manifest.get("templateRepo", ""))
+        if skew_refusal:
+            errors.append(skew_refusal)
         rules = v3.load_ownership(manifest["templateRepo"]) if not errors else None
         if not errors and rules is None:
             errors.append(
@@ -1071,6 +1097,7 @@ async def template_load_manifest(project_path: str) -> str:
             "unknown_keys": v3.unknown_top_level_keys(manifest),
             "errors": errors,
             "warnings": warnings,
+            **({"version_skew_note": skew_note} if skew_note else {}),
         }, ensure_ascii=False)
 
     version = manifest.get("version", 1)
@@ -1221,7 +1248,11 @@ async def template_compute_status(
         rules = v3.load_ownership(manifest["templateRepo"])
         if rules is None:
             return json.dumps({"error": f"manifest v3 needs {v3.OWNERSHIP_FILE} in the template repo"}, ensure_ascii=False)
-        return json.dumps(v3.compute_status_v3(pp, manifest, rules), ensure_ascii=False)
+        result = v3.compute_status_v3(pp, manifest, rules)
+        skew_refusal, skew_note = _version_skew(manifest.get("templateRepo", ""))
+        if skew_refusal or skew_note:  # note only: template_load_manifest already refused
+            result["version_skew_note"] = skew_refusal or skew_note
+        return json.dumps(result, ensure_ascii=False)
 
     placeholders = manifest.get("placeholders", {})
     template_dir = _get_template_dir(manifest)
