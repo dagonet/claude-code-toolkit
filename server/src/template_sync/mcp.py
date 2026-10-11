@@ -215,6 +215,17 @@ def _normalize_path(p: str) -> str:
     return p.replace("\\", "/")
 
 
+def _unsafe_variant_file_path(p: str) -> bool:
+    """True when p is absolute (POSIX or Windows, drive letters included) or has a '..' segment."""
+    n = _normalize_path(p)
+    return (
+        not n
+        or n.startswith("/")
+        or pathlib.PureWindowsPath(n).drive != ""
+        or ".." in n.split("/")
+    )
+
+
 def _resolve_path(p: str) -> pathlib.Path:
     """Resolve a path, converting MSYS /x/... to X:\\ on Windows."""
     import re
@@ -2152,6 +2163,8 @@ async def template_check_cross_variant(
     Returns:
         JSON with which variants are identical, which differ, and whether propagation is safe
     """
+    if _unsafe_variant_file_path(file_path):
+        return json.dumps({"error": f"file_path must be relative with no '..' segment: {file_path!r}"}, ensure_ascii=False)
     repo = _effective_template_repo(template_repo)
     templates_dir = repo / "templates"
     if not templates_dir.is_dir():
@@ -2206,6 +2219,8 @@ async def template_propagate_to_variants(
     Returns:
         JSON with which variants were written, skipped, or errored
     """
+    if _unsafe_variant_file_path(file_path):
+        return json.dumps({"error": f"file_path must be relative with no '..' segment: {file_path!r}"}, ensure_ascii=False)
     repo = _effective_template_repo(template_repo)
     templates_dir = repo / "templates"
     if not templates_dir.is_dir():
@@ -2215,6 +2230,8 @@ async def template_propagate_to_variants(
         variants = json.loads(target_variants)
     except json.JSONDecodeError as e:
         return json.dumps({"error": f"Invalid target_variants JSON: {e}"}, ensure_ascii=False)
+    if not isinstance(variants, list) or any(v not in KNOWN_VARIANTS for v in variants):
+        return json.dumps({"error": f"target_variants must be a JSON array of known variants {KNOWN_VARIANTS}"}, ensure_ascii=False)
 
     written = []
     errors_list = []

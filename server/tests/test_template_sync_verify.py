@@ -371,7 +371,7 @@ def test_pass_fixture_is_all_green(tmp_path):
     assert res["mode"] == "post_commit"
 
 
-def test_lines_count_is_31():
+def test_lines_count_is_32():
     """Constraint 5: stated by hand, moves in the SAME commit as the ids it
     counts -- never derived from anything, so it is a red flag by itself if a
     later edit changes LINES without touching this number. 30 -> 31 in
@@ -1408,7 +1408,7 @@ class _Task2Consumer:
 
 @pytest.fixture
 def v3_consumer(tmp_path):
-    # A distinct subdirectory per fixture (test_lines_count_is_31_and_every_
+    # A distinct subdirectory per fixture (test_lines_count_is_32_and_every_
     # situation_table_lists_the_new_line requests v4_consumer,
     # v3_legacy_consumer AND v3_window_consumer in ONE test -- tmp_path is
     # shared across all fixtures a single test requests, and each builder
@@ -1616,7 +1616,7 @@ def test_seed_differs_matches_when_consumer_appended_rules_after_the_seed(v4_con
     assert "remedy" not in line or line["remedy"] in ("", "n/a (informational)")
 
 
-def test_lines_count_is_31_and_every_situation_table_lists_the_new_line(
+def test_lines_count_is_32_and_every_situation_table_lists_the_new_line(
         v4_consumer, v3_legacy_consumer, v3_window_consumer):
     for c in (v4_consumer, v3_legacy_consumer, v3_window_consumer):
         lines = template_verify_lines(c)

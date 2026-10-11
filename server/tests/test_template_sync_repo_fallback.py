@@ -373,3 +373,33 @@ def test_repo_note_does_not_leak_into_next_call(tmp_path, monkeypatch):
     first, second = asyncio.run(both())
     assert "template_repo_note" in first
     assert "template_repo_note" not in second
+
+
+# --- v4.5.2 review: input validation before any write ---
+
+@pytest.mark.parametrize("bad_path", ["/etc/x.md", "\\abs.md", "../A.md", "a/../../A.md", "a\\..\\..\\A.md", "C:\\x.md"])
+def test_propagate_refuses_unsafe_file_path_and_writes_nothing(tmp_path, bad_path):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    res = json.loads(asyncio.run(ts.template_propagate_to_variants(str(repo), bad_path, "new\n", '["general", "python"]')))
+    assert "error" in res and "written_to" not in res
+    assert (repo / "templates" / "general" / "A.md").read_text(encoding="utf-8") == "x\n"
+    assert not (tmp_path / "A.md").exists()
+
+
+@pytest.mark.parametrize("variants", ['["general", "../evil"]', '["nope"]', '["general", 3]', '"general"'])
+def test_propagate_refuses_unknown_variant_before_any_write(tmp_path, variants):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    res = json.loads(asyncio.run(ts.template_propagate_to_variants(str(repo), "A.md", "new\n", variants)))
+    assert "error" in res and "written_to" not in res
+    assert (repo / "templates" / "general" / "A.md").read_text(encoding="utf-8") == "x\n"
+    assert not (repo / "templates" / "evil").exists() and not (repo / "evil").exists()
+
+
+@pytest.mark.parametrize("bad_path", ["/etc/passwd", "../A.md", "a\\..\\A.md"])
+def test_cross_variant_refuses_unsafe_file_path(tmp_path, bad_path):
+    repo = _toolkit(tmp_path / "declared")
+    _variants(repo)
+    res = json.loads(asyncio.run(ts.template_check_cross_variant(str(repo), "general", bad_path)))
+    assert "error" in res and "is_shared" not in res

@@ -1161,7 +1161,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     for path, entry in manifest.get("files", {}).items():
         if entry.get("ownership") != "once":
             continue
-        text = core._read_file(pp / path)
+        text = core._read_file(pp / core._normalize_path(path))
         found = [n for n in RETIRED_RULE_NAMES if text and n in text]
         if found:
             hits.append(f"{path}: {', '.join(found)}")
