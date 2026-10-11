@@ -401,7 +401,9 @@ def _run_git(args: list[str], cwd: str, timeout_s: int = 10) -> dict:
             creationflags=_SUBPROCESS_FLAGS,
         )
         return {"exit_code": p.returncode, "stdout": p.stdout, "stderr": p.stderr}
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # OSError, not FileNotFoundError: a missing cwd raises FileNotFoundError on
+        # Linux but NotADirectoryError (WinError 267) on Windows.
         return {"exit_code": 1, "stdout": "", "stderr": str(e)}
 
 

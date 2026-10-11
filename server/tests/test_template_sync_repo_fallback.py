@@ -286,3 +286,14 @@ def test_verify_agent_grants_census_resolves_script_in_the_fallback_checkout(tmp
     monkeypatch.setattr(ts, "_server_toolkit_root", lambda: None)
     line = verify._check_agent_grants_resolvable(pp, {"templateRepo": MISSING})
     assert "exit 1" not in line["measured"], line         # negative control
+
+
+def test_run_git_treats_any_oserror_as_a_failed_call(monkeypatch):
+    # A missing cwd is FileNotFoundError on Linux but NotADirectoryError
+    # (WinError 267) on Windows; both must come back as a failed git call.
+    def boom(*a, **k):
+        raise NotADirectoryError(267, "The directory name is invalid")
+
+    monkeypatch.setattr(ts.subprocess, "run", boom)
+    r = ts._run_git(["rev-parse", "--short", "HEAD"], cwd="x")
+    assert r["exit_code"] == 1
