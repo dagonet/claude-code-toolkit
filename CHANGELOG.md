@@ -14,10 +14,14 @@ Minor. `template_load_manifest` gains a new refusal: it stops a sync when the ru
 - **sync-template skill: stated server minimum 4.3.1 (was 4.1.0).** Audit of the features the skill uses without a fallback: the untracked-file write guard (`overwrite_existing` / `present_on_disk`), `files_created` and `pending_once_notes`, all first in v4.3.1; an older server silently overwrites an untracked file the guard would have refused. Step 1 compares `server_version` numerically against it and stops if lower (re-registration steps when `server_in_template_repo` is false). The obsolete 0.3.2 / 0.1.0 server-version paragraphs are removed. Skill marker v4.6.0.
 - **`verify` `server_skew` FAIL remedy** now reads the same as the load refusal (reconnect or restart; re-register from that checkout if it persists).
 - `docs/template-sync.md` documents the refusal.
+- **Linux user-level platform block (`scripts/linux/CLAUDE-platform-linux.md`)** no longer claims the agent host has no Docker and no MCP_DOCKER or searxng: both servers are registered there now. It names only what is really absent (no browser, no Ollama: chrome-devtools, ollama-tools) and keeps `claude mcp list` as the source of truth. Reported by the linux-server-setup session, 2026-10-11.
+
+### Fixed (tests)
+- **`guard: symlinked output dir passes through` failed on Windows (v4.5.2's hook suite on the PC, the suite's only FAIL).** The fixture made its link with a bare `ln -s`, which Git Bash turns into a COPY unless native symlinks are requested, so the guard rightly treated a real directory it owns as its own and logged into it. The fixture now uses the suite's `tln` helper (a native link on Windows) and checks `[ -L ]` first; a host that cannot make a symlink skips the one assertion `[host]`, the same as the V1 and C1 (j) symlink fixtures. The guard itself is unchanged.
 
 ### Downstream migration
 0. Server code and the sync-template skill body changed: a FULL session restart is needed (skills load at session start; `/mcp` reconnect alone is not enough). No dependency changed, so no reinstall.
-1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/` — or re-run the installer (`bash scripts/install-user-level-linux.sh` on Linux).
+1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/` — or re-run the installer (`bash scripts/install-user-level-linux.sh` on Linux, which also rewrites the platform block in `~/.claude/CLAUDE.md`).
 2. From now on, a toolkit pull without a restart makes `/sync-template` stop at `template_load_manifest` with the restart message. That is expected, not a fault: reconnect or restart, then run it again.
 
 Counts, never carried forward:
