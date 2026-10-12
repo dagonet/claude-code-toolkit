@@ -1424,7 +1424,7 @@ gc_sha256() {
 # prints nothing -- callers must NOT treat that as an empty-string
 # fingerprint (two "cannot compute" states would then spuriously "match").
 gc_gate_env() {
-  local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe pyvenv_pfx pp_exe pp_out pp_h dist_out
+  local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe pyvenv_pfx pp_exe pp_out pp_h
   [ -n "$top" ] || return 1
   # v4.6.1: two venv candidates, in order -- server/.venv (this repo, consumers
   # with a server/), then <repo>/.venv (`uv run` consumers). Only the presence
@@ -1486,12 +1486,10 @@ gc_gate_env() {
     # /usr/lib/python3.N/dist-packages even when absent; os.listdir on it killed
     # the run and the EMPTY output was hashed, so dist never moved), and a run
     # that fails is `absent` (void), never the hash of empty output.
-    if dist_out=$("$py_exe" -c 'import site,os
-print("\n".join(sorted(n for p in site.getsitepackages() if os.path.isdir(p) for n in os.listdir(p) if n.endswith(".dist-info"))))' 2>/dev/null); then
-      dist_h=$(printf '%s\n' "$dist_out" | gc_sha256) || dist_h=""
-    else
-      dist_h=""
-    fi
+    # pipefail in the subshell: the hash is of the interpreter's raw output exactly
+    # as before (existing artifacts stay valid), but a failing run fails the pipeline.
+    dist_h=$(set -o pipefail; "$py_exe" -c 'import site,os
+print("\n".join(sorted(n for p in site.getsitepackages() if os.path.isdir(p) for n in os.listdir(p) if n.endswith(".dist-info"))))' 2>/dev/null | gc_sha256) || dist_h=""
     [ -n "$dist_h" ] || dist_h=absent
     pyver=$("$py_exe" --version 2>&1)
     [ -n "$pyver" ] || pyver=absent
