@@ -4301,10 +4301,13 @@ expect "guard: own read-only output dir is repaired and gets the log" 1 \
   "$(find "$GUARDBAD" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')"
 GUARDLINK="$TMPROOT/guardlink"
 mkdir -p "$GUARDLINK/target"
-ln -s "$GUARDLINK/target" "$GUARDLINK/claude-bash-out-$UID"
-GLOUT=$(printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLINK" bash "$ROOT/$GUARD" 2>/dev/null)
-GLLOGS=$(find "$GUARDLINK/target" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')
-expect "guard: symlinked output dir passes through, no log in the target" "|0" "$GLOUT|$GLLOGS"
+if tln "$GUARDLINK/target" "$GUARDLINK/claude-bash-out-$UID" && [ -L "$GUARDLINK/claude-bash-out-$UID" ]; then
+  GLOUT=$(printf '%s' "$(mkpost 20000)" | TMPDIR="$GUARDLINK" bash "$ROOT/$GUARD" 2>/dev/null)
+  GLLOGS=$(find "$GUARDLINK/target" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')
+  expect "guard: symlinked output dir passes through, no log in the target" "|0" "$GLOUT|$GLLOGS"
+else
+  skip_host "guard: symlinked output dir passes through" "this host cannot create a symlink" 1
+fi
 GUARDLOOSE="$TMPROOT/guardloose"
 mkdir -p "$GUARDLOOSE/claude-bash-out-$UID"
 chmod 777 "$GUARDLOOSE/claude-bash-out-$UID"

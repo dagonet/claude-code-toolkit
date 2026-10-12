@@ -798,7 +798,10 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
             emit(_line("server_skew", "FAIL",
                        f"server/ differs from the imported commit {server_commit} "
                        f"(committed diff dirty={dirty_diff}, working tree dirty={dirty_status})",
-                       "server/ matches the running server's imported commit", "restart the session"))
+                       "server/ matches the running server's imported commit",
+                       "reconnect the server (/mcp) or restart the session; if it persists, the registered "
+                       "server is a different checkout: run `bash server/install.sh` in the template repo, "
+                       "point `template-sync-tools` in `~/.claude.json` at the exe it prints, then reconnect"))
         elif head_sha is not None and head_sha != server_commit:
             emit(_line("server_skew", "INFO",
                        f"template repo HEAD {head_sha} advanced past imported server_commit {server_commit} "
