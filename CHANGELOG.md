@@ -15,7 +15,7 @@ Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux a
 - **The fingerprint's `dist` line never moved on Debian/Ubuntu system Python (older than this release; found in review).** `site.getsitepackages()` names a directory that does not exist there (e.g. `/usr/lib/python3.14/dist-packages`), so `os.listdir` failed. The empty output was then hashed to `e3b0c442…`, the hash of nothing, instead of reading `absent`. So for repos without a venv on these hosts, a package change never voided the 24 h extension.
   - Directories that do not exist are now skipped, and a failing interpreter run gives `dist=absent`.
   - **Downstream: artifacts of no-venv repos on Debian/Ubuntu hosts void once.**
-- **Tests for both:** the v4.6.1 venv block at the end of `scripts/test-hooks.sh` has 28 assertions. The new ones failed on the code before their fix:
+- **Tests for both:** the v4.6.1 venv block at the end of `scripts/test-hooks.sh` has 22 assertions. The new ones failed on the code before their fix:
   - the root `.venv` cases;
   - a PATH-python version change, a PATH-python package change, and no PATH python, which must give `pathpy=absent`;
   - no venv giving the hash of nothing, and a failing interpreter giving `dist=absent`.
@@ -57,11 +57,11 @@ Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux a
 2. **Correction to v4.5.0's step 2**, which said to add the `## Now` block to `PROJECT_STATE.md` "after its title". It belongs as the **first `##` section, after the title and any preamble paragraph**. `now-brief.sh` prints from `## Now` to the next heading, so a block placed above a preamble prints the preamble too (penumbra, measured). Move it if yours sits above a preamble.
 
 Counts, never carried forward:
-- **Consistency:** **441** PASS lines from one full `bash scripts/verify-template-consistency.sh` run at 27dce9c, ALL CHECKS PASSED (v4.6.0: 441; no new check this release).
-- **Hook suite:** 4156 passed, 0 failed, 6 skipped (4162 assertions) on agent-host-1, non-root, with `GATE PASS` at 27dce9c (v4.6.0: 4139 / 0 / 6). The +17 are the venv block (11) and the drift block (6).
-  - The first gate run failed in the server suite, on stale install metadata. That was the editable install built before the VERSION bump: `test_hatch_reads_the_same_version_file` asked for `bash server/install.sh` to be run again, and the re-run gate was green. It was not a code fault.
+- **Consistency:** **441** PASS lines from one full `bash scripts/verify-template-consistency.sh` run at 1e24350, ALL CHECKS PASSED (v4.6.0: 441; no new check this release).
+- **Hook suite:** 4179 passed, 0 failed, 6 skipped (4185 assertions) on agent-host-1, non-root, with `GATE PASS` at 1e24350 (v4.6.0: 4139 / 0 / 6). The +40 are the two new v4.6.1 blocks: venv 22, drift 18 (counted from the gate log).
+  - The first gate run, at 27dce9c before the review fixes, failed in the server suite on stale install metadata. That was the editable install built before the VERSION bump: `test_hatch_reads_the_same_version_file` asked for `bash server/install.sh` to be run again, and the re-run gate was green. It was not a code fault.
   - Windows (the PC): **not run yet**; it waits for the user's go.
-  - Parser matrix at 27dce9c: node 4156 / 0 / 6, python3-only 3889 / 0 / 260, jq-only 3809 / 0 / 340, PARSER MATRIX PASSED (v4.6.0: 4139 / 0 / 6, 3872 / 0 / 260, 3792 / 0 / 340).
+  - Parser matrix at 1e24350: node 4179 / 0 / 6, python3-only 3912 / 0 / 260, jq-only 3832 / 0 / 340, PARSER MATRIX PASSED (v4.6.0: 4139 / 0 / 6, 3872 / 0 / 260, 3792 / 0 / 340).
 - **Server suite:** 555 passed, 10 skipped on Linux (v4.6.0: the same; the new remedy assertion sits inside an existing test). Windows: not run yet.
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.6.0's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
 
