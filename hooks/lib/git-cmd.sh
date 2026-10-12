@@ -1379,14 +1379,15 @@ gc_sha256() {
 # the tree+env TTL extension in gate-before-merge.sh keys on. Concatenates
 # labelled contributors the server test suite's outcome can depend on, one
 # per line:
-#   pyvenv=<sha256 of server/.venv/pyvenv.cfg when a venv is present; else
+#   pyvenv=<sha256 of pyvenv.cfg of server/.venv, else of <repo>/.venv (v4.6.1;
+#           first present wins); with neither,
 #           sys:<sha256 of the resolved interpreter's sys.prefix>; "absent"
 #           only when no interpreter resolves>
 #   dist=<sha256 of the SORTED, newline-joined *.dist-info directory NAMES
 #         (basenames only) reported by `site.getsitepackages()` under the
 #         INTERPRETER THE GATE RUNS, or "absent" -- v4.1.1 (#15): the venv's
-#         own python when server/.venv is present (a present-but-broken venv
-#         does not fall back), else python3/python on PATH when it is not.
+#         own python when a venv (server/.venv or .venv) is present (a
+#         present-but-broken venv does not fall back), else python3/python on PATH when it is not.
 #         Was site-packages under the venv ONLY, which read "absent" on any
 #         consumer with system Python and no in-repo venv -- the one
 #         contributor that moves on a dependency change was blind on exactly
@@ -1421,7 +1422,13 @@ gc_sha256() {
 gc_gate_env() {
   local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe pyvenv_pfx
   [ -n "$top" ] || return 1
+  # v4.6.1: two venv candidates, in order -- server/.venv (this repo, consumers
+  # with a server/), then <repo>/.venv (`uv run` consumers: pyproject + uv.lock).
+  # The FIRST one with a pyvenv.cfg wins and is treated exactly as server/.venv
+  # always was; with neither, venv stays at the first candidate (no pyvenv.cfg
+  # there) and the PATH-python `sys:` fallback below applies unchanged.
   venv="$top/server/.venv"
+  [ -f "$venv/pyvenv.cfg" ] || { [ -f "$top/.venv/pyvenv.cfg" ] && venv="$top/.venv"; }
 
   # v4.1.1 (#15). `dist` and `py` now come from the SAME interpreter, chosen
   # once: the venv's own python when the venv is PRESENT (pyvenv.cfg exists --
