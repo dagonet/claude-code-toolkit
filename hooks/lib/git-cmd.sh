@@ -1395,6 +1395,10 @@ gc_sha256() {
 #         install, upgrade or removal, so `pip install -U mcp` changes it>
 #   py=<--version of that SAME interpreter, or "absent">
 #   node=<node --version if node is on PATH, or "absent">
+#   pathpy=<v4.6.1; ONLY when the chosen venv is the repo-root .venv: one sha256
+#           of the PATH python3/python's sys.prefix, sys.version and *.dist-info
+#           names, or "absent". The Gate runs PATH python, so an unused .venv
+#           must not hide a PATH-python change. No line for any other repo>
 # Default output: the sha256 hex of that text (this is what "env" in the
 # gate artifact stores). With a second argument "-v": the labelled lines
 # themselves, for a human or run-gate.sh's own per-contributor storage --
@@ -1420,10 +1424,11 @@ gc_sha256() {
 # prints nothing -- callers must NOT treat that as an empty-string
 # fingerprint (two "cannot compute" states would then spuriously "match").
 gc_gate_env() {
-  local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe pyvenv_pfx
+  local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe pyvenv_pfx pp_exe pp_out pp_h
   [ -n "$top" ] || return 1
   # v4.6.1: two venv candidates, in order -- server/.venv (this repo, consumers
-  # with a server/), then <repo>/.venv (`uv run` consumers: pyproject + uv.lock).
+  # with a server/), then <repo>/.venv (`uv run` consumers). Only the presence
+  # of pyvenv.cfg is checked -- no pyproject or uv.lock is read.
   # The FIRST one with a pyvenv.cfg wins and is treated exactly as server/.venv
   # always was; with neither, venv stays at the first candidate (no pyvenv.cfg
   # there) and the PATH-python `sys:` fallback below applies unchanged.
@@ -1490,7 +1495,27 @@ print("\n".join(sorted(n for p in site.getsitepackages() for n in os.listdir(p) 
   nodever=absent
   command -v node >/dev/null 2>&1 && nodever=$(node --version 2>&1)
 
+  # v4.6.1: the root .venv was chosen, but the Gate may run PATH python, not that
+  # venv (a stray or old .venv). Then ALSO fingerprint the PATH interpreter, one
+  # combined hash of its prefix, version and dist-info names, so a PATH-python
+  # upgrade or package change still moves the fingerprint. `absent` when none
+  # resolves or the run fails -- the void rule then fires. Emitted ONLY in this
+  # case: every other repo's output is unchanged.
+  pp_h=""
+  if [ "$venv" = "$top/.venv" ] && [ -f "$venv/pyvenv.cfg" ]; then
+    pp_h=absent
+    pp_exe=$(command -v python3 2>/dev/null)
+    [ -n "$pp_exe" ] || pp_exe=$(command -v python 2>/dev/null)
+    if [ -n "$pp_exe" ] && pp_out=$("$pp_exe" -c 'import sys,site,os
+print(sys.prefix); print(sys.version)
+print("\n".join(sorted(n for p in site.getsitepackages() if os.path.isdir(p) for n in os.listdir(p) if n.endswith(".dist-info"))))' 2>/dev/null) && [ -n "$pp_out" ]; then
+      pp_h=$(printf '%s\n' "$pp_out" | gc_sha256) || pp_h=""
+      [ -n "$pp_h" ] || pp_h=absent
+    fi
+  fi
+
   out=$(printf 'pyvenv=%s\ndist=%s\npy=%s\nnode=%s\n' "$pyvenv_h" "$dist_h" "$pyver" "$nodever")
+  [ -z "$pp_h" ] || out=$(printf '%s\npathpy=%s' "$out" "$pp_h")
 
   if [ "$verbose" = "-v" ]; then
     printf '%s' "$out"

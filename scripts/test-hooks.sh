@@ -11670,6 +11670,36 @@ V461_C1=$(v461_new "$V461C")
 expect "V461 broken root .venv: pyvenv = hash of its pyvenv.cfg" "pyvenv=$(v461_sha "$V461C/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_C1")"
 expect "V461 broken root .venv: dist=absent" "dist=absent" "$(v461_line dist "$V461_C1")"
 expect "V461 broken root .venv: py=absent" "py=absent" "$(v461_line py "$V461_C1")"
+
+# (5) root .venv chosen, but the Gate runs PATH python: a PATH-python version or
+# package change must move the fingerprint (the unused .venv alone would not).
+V461D=$(mkrepo v461d main)
+v461_venv "$V461D" .venv 'home = /usr
+version = 3.11.0' 3.11.0
+V461PP="$TMPROOT/v461pp"; mkdir -p "$V461PP"
+v461_pathpy() { # <version> <dist-info name> -> fake PATH python3
+  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python %s"; exit 0 ;;\n  -c) echo "%s"; echo "%s"; exit 0 ;;\nesac\nexit 1\n' "$1" "$1" "$2" > "$V461PP/python3"
+  chmod +x "$V461PP/python3"
+}
+v461_new_pp() { ( PATH="$V461PP:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
+v461_pathpy 3.14.0 'a-1.0.dist-info'
+V461_D1=$(v461_new_pp "$V461D")
+expect "V461 root .venv: pathpy line present, not absent" yes \
+  "$(v461_line pathpy "$V461_D1" | grep -q '^pathpy=[0-9a-f]\{64\}$' && echo yes || echo no)"
+v461_pathpy 3.14.1 'a-1.0.dist-info'
+expect "V461 root .venv: a PATH-python version change moves the fingerprint" yes \
+  "$([ "$(v461_new_pp "$V461D")" != "$V461_D1" ] && echo yes || echo no)"
+v461_pathpy 3.14.0 'a-2.0.dist-info'
+expect "V461 root .venv: a PATH-python package change moves the fingerprint" yes \
+  "$([ "$(v461_new_pp "$V461D")" != "$V461_D1" ] && echo yes || echo no)"
+# no python on PATH at all -> pathpy=absent (cannot determine; the void rule then fires)
+V461NP="$TMPROOT/v461np"; mkdir -p "$V461NP"
+for v461_t in sha256sum awk; do ln -s "$(command -v "$v461_t")" "$V461NP/$v461_t"; done
+expect "V461 root .venv, no PATH python: pathpy=absent" "pathpy=absent" \
+  "$(v461_line pathpy "$( ( PATH="$V461NP"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$V461D" -v 2>/dev/null ) )")"
+# the extra line exists ONLY when the root .venv was chosen
+expect "V461 no venv: no pathpy line" "" "$(v461_line pathpy "$(v461_new "$V461N")")"
+expect "V461 server/.venv chosen: no pathpy line" "" "$(v461_line pathpy "$V461_B1")"
 rm -rf "$V461OLD"
 # ---- end v4.6.1
 
