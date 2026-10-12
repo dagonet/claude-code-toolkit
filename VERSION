@@ -1,2 +1,2 @@
-4.6.0
-Minor: template_load_manifest refuses when the running template-sync server is older than the template checkout it reads (a pull without a session restart); the sync-template skill states and checks its real server minimum (4.3.1) at step 1.
+4.6.1
+Patch: the gate fingerprints a repo-root .venv (uv projects); the drift check compares the Linux-rendered user level on Linux; sync-template wording fixes from the first Linux syncs.

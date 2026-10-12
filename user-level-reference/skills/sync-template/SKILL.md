@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /sync-t
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.6.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.6.1 -->
 
 **This skill takes no arguments.** Invoke it as `/sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -53,7 +53,7 @@ Then call `template_load_manifest(project_path=".")`.
 
 > **Which server is answering — read `server_in_template_repo`, never compare paths yourself.** Since toolkit v4.0 the sync server ships from the toolkit checkout, and the load response carries **`server_in_template_repo: bool`**, computed by the server where its path resolver lives. Read it with `.get("server_in_template_repo")`: **absent means a pre-4.0 server** (the field did not exist), and absent → falsy → "not re-registered" is the correct reading by construction — but write `.get`, because `result["server_in_template_repo"]` turns "old server" into a `KeyError` in the first paragraph of the sync, which is a poor way to learn which server you are on. `null` means no manifest was loaded (there is no `templateRepo` to be in) — not a re-registration verdict. `False` on a 4.0+ server means the consumer has not re-registered (since v4.5.1 a declared `templateRepo` that does not exist on this machine resolves to the server's own checkout and reads `True` there, so a fallback is never a re-registration verdict): say *"you are still running the mcp-dev-servers copy; run `bash server/install.sh` in the toolkit checkout, point `template-sync-tools` in `~/.claude.json` at the exe it prints, then restart the MCP server"* — three steps, and never "reinstall". Do **not** test `server_source` for a substring or compare it with `templateRepo`: on this platform one is `/g/git/…` and the other `G:\git\…`, and a string comparison reports "not re-registered" to a consumer who correctly did.
 
-> **Which checkout `<templateRepo>` means (v4.5.1).** Everywhere this skill says `<templateRepo>` it means the load response's `.get("effective_template_repo")`, or the manifest's `templateRepo` when that key is absent (a pre-4.5.1 server). The two differ only when the declared path does not exist on this machine, which the response signals with `template_repo_note` (show that note to the user once). Detect the fallback ONLY by the note's presence, never by comparing the two strings (the rule against comparing paths above applies), and never write the effective path into the manifest.
+> **Which checkout `<templateRepo>` means (v4.5.1).** Everywhere this skill says `<templateRepo>` it means the load response's `.get("effective_template_repo")`, or the manifest's `templateRepo` when that key is absent (a pre-4.5.1 server). The two differ only when the declared path does not exist on this machine, which the response signals with `template_repo_note` (show that note to the user once). Detect the fallback ONLY by the note's presence, never by comparing the two strings (the rule against comparing paths above applies), and never write the effective path into the manifest. **The note is expected on every sync of a clone whose manifest was written on another OS**, for example a manifest naming `G:/git/...` synced on a Linux host. It is not a fault and needs no fix.
 >
 > **Skew: `server_commit` vs the checkout.** A 4.0+ response also carries `server_commit`, the toolkit commit this server process imported at spawn — read it with `.get("server_commit")` the same way you read `server_in_template_repo`: **absent means a pre-4.0 server**, and there is no skew check to run. When it is present, it can still be `null` — the server was not imported from a git checkout (an installed wheel, a copied tree) — and `null` means "cannot tell", not "differs"; say so once and do not warn, because a restart cannot turn a non-checkout into one. Only when the key is present, non-null, **and** differs from `git -C <templateRepo> rev-parse HEAD` has the toolkit been pulled after the server started: templates on disk are newer than the server code running. Say so and tell the user to restart the MCP server before syncing — the one tag makes this skew easy to miss, and this field is the only place it shows.
 
@@ -294,7 +294,7 @@ If everything is up-to-date and no new files, report "Already in sync" and final
 
 **`redundant_project_file` — offer deletion ONLY when the server can prove byte-identity from a hash it already holds.** A project file the server reports as duplicating shipped template content is a candidate for cleanup, but the proof has to come from the server's own held hash comparison, never from a visual/textual "looks the same" read. For a **diverged** copy (content that once matched but has since changed): report it **once**, naming which sections now duplicate template-owned content, and **never** offer deletion — the file is gitignored, so there is no diff, no history, and no undo if the wrong half is kept.
 
-**Model-bump surfacing:** tell the user BEFORE applying anything — "This bump changes the operating model — review the CHANGELOG's Downstream-migration notes in the template repo (`<templateRepo>`) first" — when ANY of these appear in the auto-update or conflict set:
+**Model-bump surfacing:** tell the user BEFORE applying anything — "This bump changes the operating model — review the CHANGELOG's Downstream-migration notes in the template repo (`<templateRepo>`) first" — when ANY of these appear in the auto-update or conflict set. **This is a hard pause:** show the message and wait for the user's go before any write. With no user in the loop, stop after the report; do not proceed on your own reading of the notes. The triggers:
 
 - `CLAUDE.md`, `CLAUDE.local.md`, or `AGENT_TEAM.md` (an operating-model change can live in the MCP rules file, not just CLAUDE.md);
 - `.claude/settings.json` whose hook list differs from the project's (a hook added, removed, or re-matched IS the enforcement layer changing);
@@ -314,7 +314,7 @@ Derive the set rather than assuming it is only that one — a project may gitign
 
 ```
 # Method 1 — one process, NUL-separated BYTES. `-z` is not optional.
-git check-ignore -z --stdin        # stdin: b"\0".join(paths); every hit is unrecoverable
+git check-ignore -z --stdin        # stdin: b"".join(p + b"\0" for p in paths); every hit is unrecoverable
 
 # Method 2 — one process per path, works everywhere, instant for a few dozen paths.
 git check-ignore -v -- <path>      # a hit prints `.gitignore:<line>:<pattern>\t<path>`
@@ -332,8 +332,10 @@ git check-ignore -v -- <path>      # a hit prints `.gitignore:<line>:<pattern>\t
 **The same `\r` hazard applies to how you OBTAIN the path list, one layer earlier than the table above** (v2.2.4, consumer feedback): write it with `sys.stdout.buffer`, or assert the list is CR-free before using it. **Method 2 is the MORE exposed of the two**, despite being presented as the works-everywhere alternative, because its path source is left to the implementer — Method 1 escapes only because it builds bytes inside Python (`b"\0".join`) and never round-trips through text mode. A consumer's `python3 -c 'print(...)' | mapfile -t` produced `CLAUDE.local.md\r` for all 36 paths, and `check-ignore -q` then returned 1 for every one of them. Their cross-check is what caught it. The guard, verbatim:
 
 ```
-for p in "${PATHS[@]}"; do case "$p" in *$'\r') echo "FATAL: CR in path [$p]"; exit 1;; esac; done
+cr=$(printf '\r'); for p in "${PATHS[@]}"; do case "$p" in *"$cr") echo "FATAL: CR in path [$p]"; exit 1;; esac; done
 ```
+
+The CR comes from `printf`, not from `$'\r'` quoting: the shipped git gates refuse `$'...'` in a script that also contains a git command (open-brain, v4.6.0). **Terminate EVERY path with NUL, the last one included** (Method 1 above): `b"\0".join(paths)` leaves the last path unterminated, and a bash `while IFS= read -r -d ''` loop over that list silently drops it. Both cross-check methods can then miss the same path and still "agree" (open-brain, v4.6.0).
 
 **Two assertions, both required before the result is trusted:**
 
@@ -863,7 +865,7 @@ on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the confi
 
 **Assert `referenced >= on_disk`, and LIST every on-disk hook that appears in neither file.** The two numbers come from different places — one from configuration text, one from the directory — so a truncating regex moves only the first. The observed failure prints `5 referenced, 12 on disk, 7 unreferenced: [...]`, which cannot be read as clean.
 
-`referenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. `hooks/git-pre-push.sh` is the expected unreferenced file: it is a git hook, installed per clone by `--install`, and never in `settings.json`. What is NOT acceptable is a bare count that nobody compared to anything.
+`referenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. Two files are expected to be unreferenced. `hooks/git-pre-push.sh` is a git hook, installed per clone by `--install`, and never in `settings.json`. `hooks/require-skills-block.sh` has been a deregistered no-op stub since v4.5.0 and stays on disk until it is deleted. What is NOT acceptable is a bare count that nobody compared to anything.
 
 > **Verify this cross-check by DELETING the guard it protects.** Re-anchor the step-1 grep on `"command": "[^"]*` and re-run: `referenced` must collapse and the unreferenced list must fill up. A cross-check that stays green with the anchor restored is testing the surrounding machinery, not the collector.
 
@@ -1283,6 +1285,8 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 
 > **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
 
+**First sync on a new machine or a fresh clone: set up the project's build environment BEFORE committing.** The commit hook runs the project's own tests or Gate, and those fail on missing dependencies, not on the sync. Two examples from the first Linux syncs, v4.6.0: `Cannot find package 'next/server'`, and `npx tsc` fetching the wrong `tsc` package. Install them first, for example `npm ci` in EVERY directory that has its own lockfile (a `web/` with its own `package-lock.json` and no root workspace is not covered by a root `npm ci`). Then commit. A failure that names a missing package or module is an environment problem; do not debug the sync's diff for it.
+
 **The full sequence under v2.1.3+ hooks — the order is load-bearing:**
 
 ```sh
@@ -1292,7 +1296,10 @@ git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/temp
 # write the message to a FILE first (Write tool), then:
 git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** present this
                                                    # runs the tests only and writes NO artifact
-# --> now delegate ONE `bash hooks/run-gate.sh` run to `ops` (the PO cannot run the gate)
+# --> with **Test** present: now delegate ONE `bash hooks/run-gate.sh` run to `ops` (the PO cannot run the gate)
+#     Gate-only repo (no **Test**): the commit hook already ran run-gate.sh and minted
+#     last-pass.tree-<HEAD^{tree}>.json for the committed tree -- skip the extra run when
+#     that file exists with "status": "pass" (penumbra, v4.6.0)
 git push -u origin <branch>
 gh pr create --fill
 gh pr merge --squash --delete-branch               # `gh` only: it has a --delete-branch flag.

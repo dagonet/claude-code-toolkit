@@ -1,5 +1,28 @@
 # Changelog
 
+## v4.6.1 — 2026-10-13
+
+Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux agent host. Five consumers reported them: open-brain, WebSiteVerifier, Yutraffic-Challenge, panoscribe and penumbra.
+
+**Floor reviewed: unchanged.** The skill's server minimum stays 4.3.1. `requires_skill` and the `requires_server` floors are not touched: no change here alters what a server must be able to read or splice.
+
+### Changed (wording)
+- **sync-template skill** (marker v4.6.1):
+  - **Step 2b CR guard.** It now builds the CR with `printf`, not `$'\r'`, which the shipped git gates refuse in a script that also contains a git command (open-brain).
+  - **Step 2b NUL list.** Every path is NUL-terminated, the last one too: an unterminated last path is dropped by a bash `read -d ''` loop, and both cross-check methods could then miss it together (open-brain; measured both ways).
+  - **Step 6b.** It names `hooks/require-skills-block.sh` (the v4.5.0 stub) as the second expected unreferenced hook, next to `hooks/git-pre-push.sh`.
+  - **`template_repo_note`.** It is now stated as expected on every sync of a clone whose manifest was written on another OS.
+  - **Model-bump surfacing.** It is stated as a hard pause; with no user in the loop, the sync stops after the report.
+  - **Step 9, a new paragraph.** On a new machine or a fresh clone, set up the project's build environment before the first commit, in every directory with its own lockfile. A missing package is an environment problem, not a fault in the sync.
+  - **Step 9, Gate-only repos.** They skip the extra `run-gate.sh` run when the commit already minted `last-pass.tree-<HEAD^{tree}>.json` with status pass (penumbra).
+- **Linux user-level platform block.** Sessions on the agent host have no Grep or Glob tool; the block now says to use `grep -n`/`find` in Bash, or an Explore subagent (WebSiteVerifier).
+- **`template_verify` `retired_rule_names` (INFO).** The remedy now says a mention in a dated history record can stay. It used to say "hand-edit the named once-class file(s)", which told two consumers to rewrite their sync history (panoscribe, penumbra). The test pins the new text and fails on v4.6.0's.
+
+### Downstream migration
+0. The skill body and server code changed: a FULL session restart is needed. Dependencies are unchanged.
+1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/`. On Linux, re-run `bash scripts/install-user-level-linux.sh` instead; it also rewrites the platform block.
+2. **Correction to v4.5.0's step 2**, which said to add the `## Now` block to `PROJECT_STATE.md` "after its title". It belongs as the **first `##` section, after the title and any preamble paragraph**. `now-brief.sh` prints from `## Now` to the next heading, so a block placed above a preamble prints the preamble too (penumbra, measured). Move it if yours sits above a preamble.
+
 ## v4.6.0 — 2026-10-11
 
 Minor. `template_load_manifest` gains a new refusal: it stops a sync when the running template-sync server is older than the toolkit checkout it reads, which is what a `git pull` without a session restart produces. The sync-template skill now states its real server minimum (4.3.1, from an audit) and checks it at step 1. Origin: consumer MM-Agent, 2026-10-05, where a 4.3.0 server served a v4.3.1 checkout without any warning.
