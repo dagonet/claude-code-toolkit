@@ -27,8 +27,8 @@ Minor. `template_load_manifest` gains a new refusal: it stops a sync when the ru
 
 Counts, never carried forward:
 - **Consistency:** **441** PASS lines, one full `bash scripts/verify-template-consistency.sh` run on the final tree with this section in place, result ALL CHECKS PASSED (v4.5.2: 441; no new check this release).
-- **Hook suite:** 4139 passed, 0 failed, 6 skipped (4145 assertions) on agent-host-1, non-root, `GATE PASS` at 83c6ba4 (v4.5.2: 4139 passed, 0 failed, 6 skipped; unchanged because the fixed symlink fixture still runs on Linux). Parser matrix, re-run at 83c6ba4 for the suite change: node 4139 / 0 / 6, python3-only 3872 / 0 / 260, jq-only 3792 / 0 / 340, PARSER MATRIX PASSED (v4.5.2: the same).
-- **Server suite:** 555 passed, 10 skipped on Linux (v4.5.2: 544 passed, 10 skipped).
+- **Hook suite:** 4139 passed, 0 failed, 6 skipped (4145 assertions) on agent-host-1, non-root, `GATE PASS` at 83c6ba4 and again at 8c4cfe2 after the J-PY test fix (v4.5.2: 4139 passed, 0 failed, 6 skipped; unchanged because the fixed symlink fixture still runs on Linux). Windows (the PC): v4.5.2's run at 18ab050 gave 4137 / 2 / 5, the two FAILs being the two `Fixed (tests)` entries above; the v4.6.0 Windows run is still to come. Parser matrix, re-run at 83c6ba4 for the suite change (8c4cfe2 changes only a Jev test file, which runs the same in every configuration): node 4139 / 0 / 6, python3-only 3872 / 0 / 260, jq-only 3792 / 0 / 340, PARSER MATRIX PASSED (v4.5.2: the same).
+- **Server suite:** 555 passed, 10 skipped on Linux; 564 passed, 1 skipped on Windows at 83c6ba4 (server code is the same at the tip) (v4.5.2: Linux 544 / 10, Windows 553 / 1).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.5.2's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
 
 ## v4.5.2 — 2026-10-11
