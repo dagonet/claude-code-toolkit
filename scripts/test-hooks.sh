@@ -11650,7 +11650,21 @@ expect "V461 root .venv only: a changed pyvenv.cfg changes the fingerprint" yes 
 
 # (2) neither venv: identical to the v4.6.0 function (whatever the host resolves)
 V461N=$(mkrepo v461n main)
-expect "V461 no venv: fingerprint identical to v4.6.0's" "$(v461_old "$V461N")" "$(v461_new "$V461N")"
+# dist is excluded from the comparison: v4.6.1 fixes it for Debian/Ubuntu system python
+# (a non-existent site dir made the old code hash the empty string), so it
+# legitimately differs from v4.6.0's on such hosts. pyvenv, py and node are untouched.
+v461_untouched() { grep -E '^(pyvenv|py|node)='; }
+expect "V461 no venv: pyvenv/py/node identical to v4.6.0's" "$(v461_old "$V461N" | v461_untouched)" "$(v461_new "$V461N" | v461_untouched)"
+# (2b) dist for a no-venv repo is a real hash, never sha256 of empty input
+V461_EMPTY=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+expect "V461 no venv: dist is not the empty-input hash" yes \
+  "$([ "$(v461_line dist "$(v461_new "$V461N")")" != "dist=$V461_EMPTY" ] && echo yes || echo no)"
+# a fake interpreter whose every -c run fails: dist must read absent (void), not the empty hash
+V461FX="$TMPROOT/v461fx"; mkdir -p "$V461FX"
+printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python 3.9.9"; exit 0 ;;\nesac\nexit 1\n' > "$V461FX/python3"
+chmod +x "$V461FX/python3"
+expect "V461 no venv, failing interpreter: dist=absent" "dist=absent" \
+  "$(v461_line dist "$( ( PATH="$V461FX:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$V461N" -v 2>/dev/null ) )")"
 
 # (3) both venvs: server/.venv wins
 V461B=$(mkrepo v461b main)
