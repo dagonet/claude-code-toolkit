@@ -6,6 +6,13 @@ Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux a
 
 **Floor reviewed: unchanged.** The skill's server minimum stays 4.3.1. `requires_skill` and the `requires_server` floors are not touched: no change here alters what a server must be able to read or splice.
 
+### Fixed
+- **The gate environment fingerprint ignored a repo-root `.venv`.** `gc_gate_env` looked for a venv only at `server/.venv`. It lives in `hooks/lib/git-cmd.sh` and, identically, in `hooks/run-gate.sh`, plus their `user-level-reference/` mirrors.
+  - **The effect:** a consumer that runs its gate with `uv run` keeps its venv at `<repo>/.venv`, so the fingerprint described the global PATH interpreter (`pyvenv=sys:<hash>`), not the interpreter the gate runs. The 24 h tree+env TTL extension was then keyed on the wrong environment (penumbra).
+  - **Now:** the function tries `server/.venv`, then `<repo>/.venv`. The first with a `pyvenv.cfg` wins and is used exactly as `server/.venv` was: its `pyvenv.cfg` hash and its own python for `dist`/`py`, with a present-but-broken venv still `dist=absent|py=absent`. With neither, the PATH-python `sys:` fallback is unchanged.
+  - **Tests:** a new block at the end of `scripts/test-hooks.sh` (11 assertions). Against v4.6.0's code, 6 of them fail. The no-venv case is compared byte-for-byte with v4.6.0's function.
+  - **Downstream: existing gate artifacts of repos with a root `.venv` void once**, because their fingerprint changes. The first merge after the update re-runs the gate.
+
 ### Changed (wording)
 - **sync-template skill** (marker v4.6.1):
   - **Step 2b CR guard.** It now builds the CR with `printf`, not `$'\r'`, which the shipped git gates refuse in a script that also contains a git command (open-brain).
