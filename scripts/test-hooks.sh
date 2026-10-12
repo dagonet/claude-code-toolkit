@@ -11673,6 +11673,39 @@ expect "V461 broken root .venv: py=absent" "py=absent" "$(v461_line py "$V461_C1
 rm -rf "$V461OLD"
 # ---- end v4.6.1
 
+# ---- v4.6.1: verify-user-level-drift.sh compares the LINUX rendering on Linux
+# The installer rewrites the CLAUDE.md platform block and G:/git in autoMode.environment on purpose,
+# so a correct Linux install must read 0 drift for those two; every other difference must stay red.
+# Runs --worktree against a temp HOME: nothing under the real ~/.claude is read or written.
+if [ "$(uname -s)" = "Linux" ]; then
+  DL_H="$TMPROOT/dl-home"; mkdir -p "$DL_H/.claude"
+  DL_REF="$ROOT/user-level-reference"; DL_PLAT="$ROOT/scripts/linux/CLAUDE-platform-linux.md"
+  dl_run() { HOME="$DL_H" bash "$ROOT/scripts/verify-user-level-drift.sh" --worktree 2>&1; }
+  dl_claude_drift() { printf '%s\n' "$1" | grep -c "DRIFT: $DL_H/.claude/CLAUDE.md differs"; }
+  dl_env_drift() { printf '%s\n' "$1" | grep -c "DRIFT: permissions.autoMode.environment"; }
+  dl_set_env() { # <sed expression applied to the reference settings.json>
+    sed "$1" "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"; }
+  # shellcheck disable=SC1091
+  ( . "$ROOT/scripts/linux/linux-render.sh"; linux_render_claude_md "$DL_REF/CLAUDE.md" "$DL_PLAT" ) > "$DL_H/.claude/CLAUDE.md"
+  dl_set_env 's#G:/git#~/git#g'
+  DL_OUT=$(dl_run)
+  expect "DL1 rendered CLAUDE.md: no drift"          0 "$(dl_claude_drift "$DL_OUT")"
+  expect "DL1 rewritten environment: no drift"       0 "$(dl_env_drift "$DL_OUT")"
+  expect "DL1 says which form it compared"           1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: compared')"
+  # 2: one extra line inside the Linux platform block
+  sed -i '/^## Platform: Linux/a an extra line nobody installed' "$DL_H/.claude/CLAUDE.md"
+  expect "DL2 changed Linux block: CLAUDE.md drift"  1 "$(dl_claude_drift "$(dl_run)")"
+  # 3: environment still reading G:/git (not rewritten)
+  cp "$DL_REF/settings.json" "$DL_H/.claude/settings.json"
+  expect "DL3 unrewritten G:/git: environment drift" 1 "$(dl_env_drift "$(dl_run)")"
+  # 4: live CLAUDE.md is the RAW (Windows) reference
+  cp "$DL_REF/CLAUDE.md" "$DL_H/.claude/CLAUDE.md"
+  expect "DL4 raw Windows CLAUDE.md: drift"          1 "$(dl_claude_drift "$(dl_run)")"
+else
+  skip_host "DL1-4 drift script compares the Linux rendering" "not a Linux host" 6
+fi
+# ---- end v4.6.1 drift
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

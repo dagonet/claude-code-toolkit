@@ -12,6 +12,12 @@ Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux a
   - **Now:** the function tries `server/.venv`, then `<repo>/.venv`. The first with a `pyvenv.cfg` wins and is used exactly as `server/.venv` was: its `pyvenv.cfg` hash and its own python for `dist`/`py`, with a present-but-broken venv still `dist=absent|py=absent`. With neither, the PATH-python `sys:` fallback is unchanged.
   - **Tests:** a new block at the end of `scripts/test-hooks.sh` (11 assertions). Against v4.6.0's code, 6 of them fail. The no-venv case is compared byte-for-byte with v4.6.0's function.
   - **Downstream: existing gate artifacts of repos with a root `.venv` void once**, because their fingerprint changes. The first merge after the update re-runs the gate.
+- **`verify-user-level-drift.sh` could never report 0 drift on a Linux host.** `scripts/install-user-level-linux.sh` rewrites two things on purpose: the CLAUDE.md `Platform` section, and `G:/git` to `~/git` in `permissions.autoMode.environment`. The drift script compared the live files byte for byte against the raw reference, so a correct Linux install always showed those two as drift. That made the release rule "a release is not done until 0 drift" unreachable on Linux.
+  - **One shared source:** both rewrites now live in one sourced file, `scripts/linux/linux-render.sh`. The installer uses it, and its output is byte-identical to before (checked with `cmp`, both ways). The drift script uses it too.
+  - **On Linux:** when `uname -s` is Linux, the drift script expects the Linux rendering. It reads the helper and `scripts/linux/CLAUDE-platform-linux.md` at the same reference as everything else, and prints one `LINUX RENDERING:` line saying so.
+  - **Older refs:** a reference without them (an older tag such as v4.6.0) falls back to the raw comparison and says so. **So the first 0-drift result on Linux comes from the v4.6.1 tag onward.**
+  - Any other difference is still drift. On every other host the script behaves as before.
+  - **Tests:** fixtures `DL1`–`DL4` at the end of `scripts/test-hooks.sh`, 6 assertions. They cover the clean case and three red cases: a changed Linux block, an unrewritten path, and a raw Windows `CLAUDE.md`. 5 of the 6 fail against v4.6.0's drift script. Off Linux they skip `[host]`.
 
 ### Changed (wording)
 - **sync-template skill** (marker v4.6.1):
