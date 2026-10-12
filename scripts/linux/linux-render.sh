@@ -17,3 +17,17 @@ linux_render_claude_md() {
     skip && /^## / { skip = 0 }
     !skip { print }' "$1" | linux_rewrite_paths
 }
+
+# linux_check_rendered <rendered CLAUDE.md>: the two post-checks of a Linux rendering, shared by the
+# installer (checks what it is about to write) and the drift script (self-checks its own expectation).
+# Silent and 0 when clean; otherwise prints the offending lines and a final message line, returns 1.
+linux_check_rendered() {
+  local bad=0
+  if ! grep -q '^## Platform: Linux' "$1"; then
+    echo "platform section not replaced (reference heading changed?)"; bad=1
+  fi
+  if grep -n 'G:/\|PowerShell 5.1\|Git Bash' "$1"; then
+    echo "Windows-only text left in CLAUDE.md (lines above)"; bad=1
+  fi
+  return $bad
+}

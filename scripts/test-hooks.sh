@@ -11748,6 +11748,24 @@ if [ "$(uname -s)" = "Linux" ]; then
   expect "DL1 rendered CLAUDE.md: no drift"          0 "$(dl_claude_drift "$DL_OUT")"
   expect "DL1 rewritten environment: no drift"       0 "$(dl_env_drift "$DL_OUT")"
   expect "DL1 says which form it compared"           1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: compared')"
+  # the rendered file's headings, derived from the reference and NOT from the render function
+  expect "DL1 rendered headings = reference's, Platform swapped" \
+    "$(grep '^## ' "$DL_REF/CLAUDE.md" | sed 's/^## Platform: Windows + Git Bash$/## Platform: Linux + bash/')" \
+    "$(grep '^## ' "$DL_H/.claude/CLAUDE.md")"
+  # 5: a git ref instead of --worktree: HEAD carries linux-render.sh, so the rendering is compared
+  dl_run_ref() { HOME="$DL_H" bash "$ROOT/scripts/verify-user-level-drift.sh" "$1" 2>&1; }
+  DL_OUT=$(dl_run_ref HEAD)
+  expect "DL5 ref HEAD: says it compared the rendering" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: compared')"
+  expect "DL5 ref HEAD: rendered CLAUDE.md, no drift"   0 "$(dl_claude_drift "$DL_OUT")"
+  expect "DL5 ref HEAD: rewritten environment, no drift" 0 "$(dl_env_drift "$DL_OUT")"
+  # 6: an older tag without linux-render.sh falls back to the raw comparison, and says so
+  if git -C "$ROOT" rev-parse --verify -q 'v4.6.0^{commit}' >/dev/null && ! git -C "$ROOT" cat-file -e 'v4.6.0:scripts/linux/linux-render.sh' 2>/dev/null; then
+    DL_OUT=$(dl_run_ref v4.6.0)
+    expect "DL6 older tag: says the rendering is not available" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: not available.*raw reference')"
+    expect "DL6 older tag: rendered CLAUDE.md reads as drift"   1 "$(dl_claude_drift "$DL_OUT")"
+  else
+    skip_host "DL6 older tag falls back to the raw comparison" "tag v4.6.0 absent or already carries linux-render.sh" 2
+  fi
   # 2: one extra line inside the Linux platform block
   sed -i '/^## Platform: Linux/a an extra line nobody installed' "$DL_H/.claude/CLAUDE.md"
   expect "DL2 changed Linux block: CLAUDE.md drift"  1 "$(dl_claude_drift "$(dl_run)")"
@@ -11757,8 +11775,32 @@ if [ "$(uname -s)" = "Linux" ]; then
   # 4: live CLAUDE.md is the RAW (Windows) reference
   cp "$DL_REF/CLAUDE.md" "$DL_H/.claude/CLAUDE.md"
   expect "DL4 raw Windows CLAUDE.md: drift"          1 "$(dl_claude_drift "$(dl_run)")"
+  # 7: linux_check_rendered, the installer's two post-checks (one function, shared)
+  dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
+  printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
+  printf '## Other\nclean\n' > "$TMPROOT/dl-nohead.md"
+  printf '## Platform: Linux + bash\nsee G:/git\n' > "$TMPROOT/dl-g.md"
+  printf '## Platform: Linux + bash\nuse Git Bash\n' > "$TMPROOT/dl-gb.md"
+  expect "DL7 check: clean rendering passes"            0 "$(dl_chk "$TMPROOT/dl-ok.md")"
+  expect "DL7 check: missing Linux heading fails"       1 "$(dl_chk "$TMPROOT/dl-nohead.md")"
+  expect "DL7 check: G:/ left over fails"               1 "$(dl_chk "$TMPROOT/dl-g.md")"
+  expect "DL7 check: Git Bash left over fails"          1 "$(dl_chk "$TMPROOT/dl-gb.md")"
+  # 8/9: a copy of the scripts, so the helper and platform file can be doctored (worktree mode needs no git)
+  DLX="$TMPROOT/dlx"; mkdir -p "$DLX/scripts/linux" "$DLX/user-level-reference"
+  cp "$ROOT/scripts/verify-user-level-drift.sh" "$DLX/scripts/"
+  cp "$ROOT/scripts/linux/linux-render.sh" "$ROOT/scripts/linux/CLAUDE-platform-linux.md" "$DLX/scripts/linux/"
+  cp "$DL_REF/CLAUDE.md" "$DL_REF/settings.json" "$DLX/user-level-reference/"
+  dlx_run() { HOME="$DL_H" bash "$DLX/scripts/verify-user-level-drift.sh" --worktree 2>&1; }
+  # 8: the sourced helper cannot overwrite the script's own variables
+  printf '\ndrift=4242424\n' >> "$DLX/scripts/linux/linux-render.sh"
+  DL_OUT=$(dlx_run)
+  expect "DL8 helper is sourced in a subshell: drift counter intact" 0 "$(printf '%s\n' "$DL_OUT" | grep -c 42424)"
+  # 9: a rendering that fails its own self-check is loud drift, never silent
+  cp "$ROOT/scripts/linux/linux-render.sh" "$DLX/scripts/linux/linux-render.sh"
+  printf '## Not a platform heading\n' > "$DLX/scripts/linux/CLAUDE-platform-linux.md"
+  expect "DL9 rendering fails its self-check: reported as drift" 1 "$(dlx_run | grep -c 'LINUX RENDERING SELF-CHECK FAILED')"
 else
-  skip_host "DL1-4 drift script compares the Linux rendering" "not a Linux host" 6
+  skip_host "DL1-9 drift script compares the Linux rendering" "not a Linux host" 18
 fi
 # ---- end v4.6.1 drift
 
