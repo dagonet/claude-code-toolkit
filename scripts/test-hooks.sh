@@ -11621,20 +11621,21 @@ expect "E1 wrapper, script missing: silent"  0 "$(wc -c < "$TMPROOT/e1.out" | tr
 # v4.6.0 function itself, read from the commit (sibling json.sh needed: git-cmd.sh
 # fails closed at source time without it).
 V461OLD=$(mktemp -d)
-git -C "$ROOT" show '6aabbdd^{commit}:hooks/lib/git-cmd.sh' > "$V461OLD/git-cmd.sh"
-git -C "$ROOT" show '6aabbdd^{commit}:hooks/lib/json.sh' > "$V461OLD/json.sh"
+git -C "$ROOT" show 'v4.6.0^{commit}:hooks/lib/git-cmd.sh' > "$V461OLD/git-cmd.sh"
+git -C "$ROOT" show 'v4.6.0^{commit}:hooks/lib/json.sh' > "$V461OLD/json.sh"
 v461_new() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
 v461_old() { ( . "$V461OLD/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
 v461_sha() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_sha256 < "$1" ); }
+v461_shastr() { ( . "$ROOT/hooks/lib/git-cmd.sh"; printf '%s\n' "$1" | gc_sha256 ); }
 v461_line() { printf '%s\n' "$2" | grep "^$1=" ; }
-v461_venv() { # <repo> <venv-subdir> <cfg-text> <python-version> -> venv with a fake interpreter
+v461_venv() { # <repo> <venv-subdir> <cfg-text> <python-version> [dist-info name] -> venv with a fake interpreter
   mkdir -p "$1/$2/bin"
   printf '%s\n' "$3" > "$1/$2/pyvenv.cfg"
-  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python %s"; exit 0 ;;\n  -c) echo "x-1.0.dist-info"; exit 0 ;;\nesac\nexit 1\n' "$4" > "$1/$2/bin/python"
+  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python %s"; exit 0 ;;\n  -c) echo "%s"; exit 0 ;;\nesac\nexit 1\n' "$4" "${5:-x-1.0.dist-info}" > "$1/$2/bin/python"
   chmod +x "$1/$2/bin/python"
 }
 expect "V461 precondition: v4.6.0 commit present" yes \
-  "$([ -s "$V461OLD/git-cmd.sh" ] && [ -s "$V461OLD/json.sh" ] && echo yes || echo 'no - 6aabbdd missing - run git fetch')"
+  "$([ -s "$V461OLD/git-cmd.sh" ] && [ -s "$V461OLD/json.sh" ] && echo yes || echo 'no - tag v4.6.0 missing - run git fetch --tags')"
 
 # (1) root .venv only: pyvenv is the hash of THAT pyvenv.cfg, not sys:; py/dist from its python
 V461A=$(mkrepo v461a main)
@@ -11643,10 +11644,14 @@ version = 3.11.0' 3.11.0
 V461_A1=$(v461_new "$V461A")
 expect "V461 root .venv only: pyvenv = hash of its pyvenv.cfg" "pyvenv=$(v461_sha "$V461A/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_A1")"
 expect "V461 root .venv only: py from the venv's python" "py=Python 3.11.0" "$(v461_line py "$V461_A1")"
-expect "V461 root .venv only: dist not absent" yes "$(v461_line dist "$V461_A1" | grep -qv 'absent' && echo yes || echo no)"
+# dist is the sha256 of the FAKE interpreter's own -c output: proves it comes from the venv's python
+expect "V461 root .venv only: dist = hash of the venv python's output" "dist=$(v461_shastr 'x-1.0.dist-info')" "$(v461_line dist "$V461_A1")"
 printf 'home = /usr\nversion = 3.12.1\n' > "$V461A/.venv/pyvenv.cfg"
 expect "V461 root .venv only: a changed pyvenv.cfg changes the fingerprint" yes \
   "$([ "$(v461_new "$V461A")" != "$V461_A1" ] && echo yes || echo no)"
+v461_venv "$V461A" .venv 'home = /usr
+version = 3.11.0' 3.11.0 'y-2.0.dist-info'
+expect "V461 root .venv only: what the venv python prints moves dist" "dist=$(v461_shastr 'y-2.0.dist-info')" "$(v461_line dist "$(v461_new "$V461A")")"
 
 # (2) neither venv: identical to the v4.6.0 function (whatever the host resolves)
 V461N=$(mkrepo v461n main)
@@ -11665,6 +11670,13 @@ printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python 3.9.9"; exit 0 ;;\nes
 chmod +x "$V461FX/python3"
 expect "V461 no venv, failing interpreter: dist=absent" "dist=absent" \
   "$(v461_line dist "$( ( PATH="$V461FX:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$V461N" -v 2>/dev/null ) )")"
+
+# (2c) a root .venv directory WITHOUT pyvenv.cfg is no venv: v4.6.0's result on the untouched lines
+V461E=$(mkrepo v461e main)
+v461_venv "$V461E" .venv 'x' 3.11.0
+rm "$V461E/.venv/pyvenv.cfg"
+expect "V461 .venv without pyvenv.cfg: pyvenv/py/node as v4.6.0 (no venv)" "$(v461_old "$V461E" | v461_untouched)" "$(v461_new "$V461E" | v461_untouched)"
+expect "V461 .venv without pyvenv.cfg: no pathpy line" "" "$(v461_line pathpy "$(v461_new "$V461E")")"
 
 # (3) both venvs: server/.venv wins
 V461B=$(mkrepo v461b main)
