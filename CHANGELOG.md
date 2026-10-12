@@ -10,21 +10,41 @@ Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux a
 - **The gate environment fingerprint ignored a repo-root `.venv`.** `gc_gate_env` looked for a venv only at `server/.venv`. It lives in `hooks/lib/git-cmd.sh` and, identically, in `hooks/run-gate.sh`, plus their `user-level-reference/` mirrors.
   - **The effect:** a consumer that runs its gate with `uv run` keeps its venv at `<repo>/.venv`, so the fingerprint described the global PATH interpreter (`pyvenv=sys:<hash>`), not the interpreter the gate runs. The 24 h tree+env TTL extension was then keyed on the wrong environment (penumbra).
   - **Now:** the function tries `server/.venv`, then `<repo>/.venv`. The first with a `pyvenv.cfg` wins and is used exactly as `server/.venv` was: its `pyvenv.cfg` hash and its own python for `dist`/`py`, with a present-but-broken venv still `dist=absent|py=absent`. With neither, the PATH-python `sys:` fallback is unchanged.
-  - **Tests:** a new block at the end of `scripts/test-hooks.sh` (11 assertions). Against v4.6.0's code, 6 of them fail. The no-venv case is compared byte-for-byte with v4.6.0's function.
+  - **The PATH interpreter is fingerprinted too (found in review).** A root `.venv` is taken on `pyvenv.cfg` alone, so it may be a stale one that the Gate does not use. Fingerprinting only that venv would have hidden a change to the PATH python the Gate really runs, and an old artifact would have been accepted. So when the root `.venv` is the chosen venv, an extra `pathpy=` line also fingerprints the PATH python3/python: its `sys.prefix`, `sys.version` and `*.dist-info` names, or `absent` when none runs, which voids the extension. A change in either interpreter now voids it.
   - **Downstream: existing gate artifacts of repos with a root `.venv` void once**, because their fingerprint changes. The first merge after the update re-runs the gate.
+- **The fingerprint's `dist` line never moved on Debian/Ubuntu system Python (older than this release; found in review).** `site.getsitepackages()` names a directory that does not exist there (e.g. `/usr/lib/python3.14/dist-packages`), so `os.listdir` failed. The empty output was then hashed to `e3b0c442…`, the hash of nothing, instead of reading `absent`. So for repos without a venv on these hosts, a package change never voided the 24 h extension.
+  - Directories that do not exist are now skipped, and a failing interpreter run gives `dist=absent`.
+  - **Downstream: artifacts of no-venv repos on Debian/Ubuntu hosts void once.**
+- **Tests for both:** the v4.6.1 venv block at the end of `scripts/test-hooks.sh` has 28 assertions. The new ones failed on the code before their fix:
+  - the root `.venv` cases;
+  - a PATH-python version change, a PATH-python package change, and no PATH python, which must give `pathpy=absent`;
+  - no venv giving the hash of nothing, and a failing interpreter giving `dist=absent`.
+  - Two more check that `dist` comes from the venv's own python: it must equal the hash of what the fake interpreter prints, and it must move when that output changes.
+  - A `.venv` directory without `pyvenv.cfg` must count as no venv.
+  - The `pyvenv`, `py` and `node` lines of a no-venv repo are compared byte-for-byte with v4.6.0's function.
 - **`verify-user-level-drift.sh` could never report 0 drift on a Linux host.** `scripts/install-user-level-linux.sh` rewrites two things on purpose: the CLAUDE.md `Platform` section, and `G:/git` to `~/git` in `permissions.autoMode.environment`. The drift script compared the live files byte for byte against the raw reference, so a correct Linux install always showed those two as drift. That made the release rule "a release is not done until 0 drift" unreachable on Linux.
   - **One shared source:** both rewrites now live in one sourced file, `scripts/linux/linux-render.sh`. The installer uses it, and its output is byte-identical to before (checked with `cmp`, both ways). The drift script uses it too.
   - **On Linux:** when `uname -s` is Linux, the drift script expects the Linux rendering. It reads the helper and `scripts/linux/CLAUDE-platform-linux.md` at the same reference as everything else, and prints one `LINUX RENDERING:` line saying so.
   - **Older refs:** a reference without them (an older tag such as v4.6.0) falls back to the raw comparison and says so. **So the first 0-drift result on Linux comes from the v4.6.1 tag onward.**
   - Any other difference is still drift. On every other host the script behaves as before.
-  - **Tests:** fixtures `DL1`–`DL4` at the end of `scripts/test-hooks.sh`, 6 assertions. They cover the clean case and three red cases: a changed Linux block, an unrewritten path, and a raw Windows `CLAUDE.md`. 5 of the 6 fail against v4.6.0's drift script. Off Linux they skip `[host]`.
+  - **Found in review, also fixed:**
+    - The helper read from the reference is sourced in a subshell, so it cannot overwrite the drift script's own variables. A fixture proves this; it failed before the change.
+    - The installer's two post-checks (Linux heading present, no Windows text left) are now one shared function, `linux_check_rendered`. The drift script runs it on its own expectation and reports `LINUX RENDERING SELF-CHECK FAILED` as drift, so a render bug can no longer be installed and expected identically.
+    - The "verbatim install" comment and printed line now name CLAUDE.md as the one processed file on Linux.
+  - **Tests:** fixtures `DL1`–`DL9` at the end of `scripts/test-hooks.sh`, 18 assertions:
+    - the clean case, with an independent heading check;
+    - three red cases: a changed Linux block, an unrewritten path, and a raw Windows `CLAUDE.md`;
+    - the ref mode at `HEAD`, and the fallback at `v4.6.0`;
+    - the shared post-check;
+    - the subshell isolation.
+    The DL1–DL4 cases fail against v4.6.0's drift script, and DL7–DL9 failed before their fix. Off Linux they skip `[host]`.
 
 ### Changed (wording)
 - **sync-template skill** (marker v4.6.1):
   - **Step 2b CR guard.** It now builds the CR with `printf`, not `$'\r'`, which the shipped git gates refuse in a script that also contains a git command (open-brain).
   - **Step 2b NUL list.** Every path is NUL-terminated, the last one too: an unterminated last path is dropped by a bash `read -d ''` loop, and both cross-check methods could then miss it together (open-brain; measured both ways).
   - **Step 6b.** It names `hooks/require-skills-block.sh` (the v4.5.0 stub) as the second expected unreferenced hook, next to `hooks/git-pre-push.sh`.
-  - **`template_repo_note`.** It is now stated as expected on every sync of a clone whose manifest was written on another OS.
+  - **`template_repo_note`.** It is now stated as expected whenever the manifest was written on another machine and its `templateRepo` path does not exist on this one.
   - **Model-bump surfacing.** It is stated as a hard pause; with no user in the loop, the sync stops after the report.
   - **Step 9, a new paragraph.** On a new machine or a fresh clone, set up the project's build environment before the first commit, in every directory with its own lockfile. A missing package is an environment problem, not a fault in the sync.
   - **Step 9, Gate-only repos.** They skip the extra `run-gate.sh` run when the commit already minted `last-pass.tree-<HEAD^{tree}>.json` with status pass (penumbra).

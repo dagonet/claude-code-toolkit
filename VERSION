@@ -1,2 +1,2 @@
 4.6.1
-Patch: the gate fingerprints a repo-root .venv (uv projects); the drift check compares the Linux-rendered user level on Linux; sync-template wording fixes from the first Linux syncs.
+Patch: the gate fingerprints a repo-root .venv (and the PATH python beside it) and sees package changes on Debian/Ubuntu system Python; the drift check compares the Linux-rendered user level on Linux; sync-template wording fixes from the first Linux syncs.
