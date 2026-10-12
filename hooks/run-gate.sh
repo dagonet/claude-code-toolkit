@@ -166,7 +166,13 @@ gc_sha256() {
 gc_gate_env() {
   local top="$1" verbose="${2:-}" venv pyver nodever pyvenv_h dist_h out py_exe pyvenv_pfx
   [ -n "$top" ] || return 1
+  # v4.6.1: two venv candidates, in order -- server/.venv (this repo, consumers
+  # with a server/), then <repo>/.venv (`uv run` consumers: pyproject + uv.lock).
+  # The FIRST one with a pyvenv.cfg wins and is treated exactly as server/.venv
+  # always was; with neither, venv stays at the first candidate (no pyvenv.cfg
+  # there) and the PATH-python `sys:` fallback below applies unchanged.
   venv="$top/server/.venv"
+  [ -f "$venv/pyvenv.cfg" ] || { [ -f "$top/.venv/pyvenv.cfg" ] && venv="$top/.venv"; }
 
   # v4.1.1 (#15). `dist` and `py` now come from the SAME interpreter, chosen
   # once: the venv's own python when the venv is PRESENT (pyvenv.cfg exists --

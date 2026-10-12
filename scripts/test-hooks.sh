@@ -11615,6 +11615,64 @@ expect "E1 wrapper, script missing: exit 0"  0 "$?"
 expect "E1 wrapper, script missing: silent"  0 "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
 # ---- end v4.5.0 E1
 
+# ---- v4.6.1: gc_gate_env also fingerprints a repo-root .venv (uv consumers)
+# Candidates in order: server/.venv, then .venv; the first with a pyvenv.cfg
+# wins. With neither, the v4.6.0 behaviour is unchanged -- proven against the
+# v4.6.0 function itself, read from the commit (sibling json.sh needed: git-cmd.sh
+# fails closed at source time without it).
+V461OLD=$(mktemp -d)
+git -C "$ROOT" show '6aabbdd^{commit}:hooks/lib/git-cmd.sh' > "$V461OLD/git-cmd.sh"
+git -C "$ROOT" show '6aabbdd^{commit}:hooks/lib/json.sh' > "$V461OLD/json.sh"
+v461_new() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
+v461_old() { ( . "$V461OLD/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
+v461_sha() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_sha256 < "$1" ); }
+v461_line() { printf '%s\n' "$2" | grep "^$1=" ; }
+v461_venv() { # <repo> <venv-subdir> <cfg-text> <python-version> -> venv with a fake interpreter
+  mkdir -p "$1/$2/bin"
+  printf '%s\n' "$3" > "$1/$2/pyvenv.cfg"
+  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python %s"; exit 0 ;;\n  -c) echo "x-1.0.dist-info"; exit 0 ;;\nesac\nexit 1\n' "$4" > "$1/$2/bin/python"
+  chmod +x "$1/$2/bin/python"
+}
+expect "V461 precondition: v4.6.0 commit present" yes \
+  "$([ -s "$V461OLD/git-cmd.sh" ] && [ -s "$V461OLD/json.sh" ] && echo yes || echo 'no - 6aabbdd missing - run git fetch')"
+
+# (1) root .venv only: pyvenv is the hash of THAT pyvenv.cfg, not sys:; py/dist from its python
+V461A=$(mkrepo v461a main)
+v461_venv "$V461A" .venv 'home = /usr
+version = 3.11.0' 3.11.0
+V461_A1=$(v461_new "$V461A")
+expect "V461 root .venv only: pyvenv = hash of its pyvenv.cfg" "pyvenv=$(v461_sha "$V461A/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_A1")"
+expect "V461 root .venv only: py from the venv's python" "py=Python 3.11.0" "$(v461_line py "$V461_A1")"
+expect "V461 root .venv only: dist not absent" yes "$(v461_line dist "$V461_A1" | grep -qv 'absent' && echo yes || echo no)"
+printf 'home = /usr\nversion = 3.12.1\n' > "$V461A/.venv/pyvenv.cfg"
+expect "V461 root .venv only: a changed pyvenv.cfg changes the fingerprint" yes \
+  "$([ "$(v461_new "$V461A")" != "$V461_A1" ] && echo yes || echo no)"
+
+# (2) neither venv: identical to the v4.6.0 function (whatever the host resolves)
+V461N=$(mkrepo v461n main)
+expect "V461 no venv: fingerprint identical to v4.6.0's" "$(v461_old "$V461N")" "$(v461_new "$V461N")"
+
+# (3) both venvs: server/.venv wins
+V461B=$(mkrepo v461b main)
+v461_venv "$V461B" server/.venv 'home = /usr
+version = 3.10.0' 3.10.0
+v461_venv "$V461B" .venv 'home = /usr
+version = 3.11.0' 3.11.0
+V461_B1=$(v461_new "$V461B")
+expect "V461 both venvs: pyvenv = server/.venv's hash" "pyvenv=$(v461_sha "$V461B/server/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_B1")"
+expect "V461 both venvs: py from server/.venv's python" "py=Python 3.10.0" "$(v461_line py "$V461_B1")"
+
+# (4) broken root venv: pyvenv.cfg present, no interpreter -> hash|absent|absent, no PATH fallback
+V461C=$(mkrepo v461c main)
+mkdir -p "$V461C/.venv"
+printf 'home = /usr\nversion = 3.12.0\n' > "$V461C/.venv/pyvenv.cfg"
+V461_C1=$(v461_new "$V461C")
+expect "V461 broken root .venv: pyvenv = hash of its pyvenv.cfg" "pyvenv=$(v461_sha "$V461C/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_C1")"
+expect "V461 broken root .venv: dist=absent" "dist=absent" "$(v461_line dist "$V461_C1")"
+expect "V461 broken root .venv: py=absent" "py=absent" "$(v461_line py "$V461_C1")"
+rm -rf "$V461OLD"
+# ---- end v4.6.1
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
