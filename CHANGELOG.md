@@ -36,6 +36,15 @@ Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux a
 1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/`. On Linux, re-run `bash scripts/install-user-level-linux.sh` instead; it also rewrites the platform block.
 2. **Correction to v4.5.0's step 2**, which said to add the `## Now` block to `PROJECT_STATE.md` "after its title". It belongs as the **first `##` section, after the title and any preamble paragraph**. `now-brief.sh` prints from `## Now` to the next heading, so a block placed above a preamble prints the preamble too (penumbra, measured). Move it if yours sits above a preamble.
 
+Counts, never carried forward:
+- **Consistency:** **441** PASS lines from one full `bash scripts/verify-template-consistency.sh` run at 27dce9c, ALL CHECKS PASSED (v4.6.0: 441; no new check this release).
+- **Hook suite:** 4156 passed, 0 failed, 6 skipped (4162 assertions) on agent-host-1, non-root, with `GATE PASS` at 27dce9c (v4.6.0: 4139 / 0 / 6). The +17 are the venv block (11) and the drift block (6).
+  - The first gate run failed in the server suite, on stale install metadata. That was the editable install built before the VERSION bump: `test_hatch_reads_the_same_version_file` asked for `bash server/install.sh` to be run again, and the re-run gate was green. It was not a code fault.
+  - Windows (the PC): **not run yet**; it waits for the user's go.
+  - Parser matrix at 27dce9c: node 4156 / 0 / 6, python3-only 3889 / 0 / 260, jq-only 3809 / 0 / 340, PARSER MATRIX PASSED (v4.6.0: 4139 / 0 / 6, 3872 / 0 / 260, 3792 / 0 / 340).
+- **Server suite:** 555 passed, 10 skipped on Linux (v4.6.0: the same; the new remedy assertion sits inside an existing test). Windows: not run yet.
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.6.0's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
+
 ## v4.6.0 — 2026-10-11
 
 Minor. `template_load_manifest` gains a new refusal: it stops a sync when the running template-sync server is older than the toolkit checkout it reads, which is what a `git pull` without a session restart produces. The sync-template skill now states its real server minimum (4.3.1, from an audit) and checks it at step 1. Origin: consumer MM-Agent, 2026-10-05, where a 4.3.0 server served a v4.3.1 checkout without any warning.
