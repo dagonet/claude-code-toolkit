@@ -128,8 +128,8 @@ ref_copy() { # <repo-relative path>
   fi
 }
 
-check_file() { # <repo-relative ref path> <live_path>
-  src=$(ref_copy "$1")
+check_file() { # <repo-relative ref path> <live_path> [expected file, instead of the reference copy]
+  src=${3:-$(ref_copy "$1")}
   if [ -z "$src" ]; then
     # Present on this branch, absent from the released reference.
     unreleased=$((unreleased + 1))
@@ -153,7 +153,30 @@ check_file() { # <repo-relative ref path> <live_path>
   fi
 }
 
-check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md"
+# ON LINUX the installer (scripts/install-user-level-linux.sh) rewrites two things on purpose: the
+# CLAUDE.md "Platform" section and the G:/git path in autoMode.environment. A correct Linux install
+# therefore never matches the raw reference, and "0 drift" was unreachable there. The rewrites live
+# in scripts/linux/linux-render.sh, shared with the installer; this host expects THEIR output. The
+# helper and the platform file are read at the SAME reference as everything else. An older ref that
+# lacks them falls back to the raw comparison, and says so. Other hosts: unchanged.
+LINUX_RENDER=""
+claude_expected=""
+if [ "$(uname -s)" = "Linux" ]; then
+  lr_helper=$(ref_copy "scripts/linux/linux-render.sh")
+  lr_plat=$(ref_copy "scripts/linux/CLAUDE-platform-linux.md")
+  lr_claude=$(ref_copy "user-level-reference/CLAUDE.md")
+  if [ -n "$lr_helper" ] && [ -n "$lr_plat" ] && [ -n "$lr_claude" ]; then
+    . "$lr_helper"
+    claude_expected="$TMPD/CLAUDE.linux.md"
+    linux_render_claude_md "$lr_claude" "$lr_plat" > "$claude_expected"
+    LINUX_RENDER=1
+    echo "LINUX RENDERING: compared the Linux-rendered CLAUDE.md and autoMode.environment (the installer's rewrites), not the raw reference"
+  else
+    echo "LINUX RENDERING: not available at ${REF:-the working tree} (linux-render.sh or the platform file is absent there); comparing the raw reference"
+  fi
+fi
+
+check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md" "$claude_expected"
 
 # The file SET comes from the reference too, not from the working tree: a file
 # added on a branch must not enlarge a released-tree comparison.
@@ -235,6 +258,7 @@ elif [ ! -f "$LIVE_SETTINGS" ]; then
   MISSING live: $LIVE_SETTINGS (autoMode.environment not comparable)"
 else
   am_ref=$(automode_entries "$am_ref_src")
+  [ -z "$LINUX_RENDER" ] || am_ref=$(printf '%s\n' "$am_ref" | linux_rewrite_paths)
   am_live=$(automode_entries "$LIVE_SETTINGS")
   if [ -z "$am_ref" ]; then
     # In-band control for the extractor itself: the reference always carries
