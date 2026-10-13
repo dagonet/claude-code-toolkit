@@ -5117,6 +5117,28 @@ fi
 rm -f "$c68_tmp"
 
 # ---------------------------------------------------------------------------
+# Check 72 (v5.0): plugin.json version equals VERSION (F5: a machine updates only on a version change)
+# ---------------------------------------------------------------------------
+c72_want=$(head -1 VERSION | tr -d '\r')
+c72_got=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").version||""))' 2>/dev/null)
+c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
+if [ -n "$c72_want" ] && [ "$c72_got" = "$c72_want" ] && [ "$c72_name" = "cct" ]; then
+  ok "72: .claude-plugin/plugin.json is cct at version $c72_want (= VERSION)"
+else
+  ko "72: .claude-plugin/plugin.json must name cct at version '$c72_want' (VERSION); got name '$c72_name' version '$c72_got'"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 73 (v5.0): marketplace.json parses, is named dagonet, lists cct with source ./
+# ---------------------------------------------------------------------------
+c73=$(node -e 'const m=require("./.claude-plugin/marketplace.json");const p=(m.plugins||[]).filter(x=>x.name==="cct");process.stdout.write(m.name+"|"+p.length+"|"+(p[0]&&p[0].source))' 2>/dev/null)
+if [ "$c73" = "dagonet|1|./" ]; then
+  ok "73: .claude-plugin/marketplace.json is marketplace dagonet listing cct at ./"
+else
+  ko "73: .claude-plugin/marketplace.json must be {name: dagonet, plugins: [{name: cct, source: ./}]}; got '$c73'"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$skip_count" -gt 0 ]; then
   echo "$skip_count check(s) skipped"
