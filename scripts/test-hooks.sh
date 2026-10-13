@@ -11721,8 +11721,18 @@ expect "V461 root .venv: a PATH-python package change moves the fingerprint" yes
 # no python on PATH at all -> pathpy=absent (cannot determine; the void rule then fires)
 V461NP="$TMPROOT/v461np"; mkdir -p "$V461NP"
 for v461_t in sha256sum awk; do ln -s "$(command -v "$v461_t")" "$V461NP/$v461_t"; done
-expect "V461 root .venv, no PATH python: pathpy=absent" "pathpy=absent" \
-  "$(v461_line pathpy "$( ( PATH="$V461NP"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$V461D" -v 2>/dev/null ) )")"
+# On MSYS a linked tool outside /usr/bin cannot load msys-2.0.dll (sha256sum exits 127 and gc_gate_env
+# fails closed before the pathpy branch), so the PATH is /usr/bin itself, as in C2b (e); skip if a python lives there.
+if [ "$T_MSYS" = 1 ]; then
+  V461NP=/usr/bin
+  [ -z "$(PATH=/usr/bin; command -v python3 python 2>/dev/null)" ] || V461NP=
+fi
+if [ -z "$V461NP" ]; then
+  skip_host "V461 root .venv, no PATH python: pathpy=absent" "a python sits in /usr/bin on this host" 1
+else
+  expect "V461 root .venv, no PATH python: pathpy=absent" "pathpy=absent" \
+    "$(v461_line pathpy "$( ( PATH="$V461NP"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$V461D" -v 2>/dev/null ) )")"
+fi
 # the extra line exists ONLY when the root .venv was chosen
 expect "V461 no venv: no pathpy line" "" "$(v461_line pathpy "$(v461_new "$V461N")")"
 expect "V461 server/.venv chosen: no pathpy line" "" "$(v461_line pathpy "$V461_B1")"

@@ -39,6 +39,9 @@ Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux a
     - the subshell isolation.
     The DL1–DL4 cases fail against v4.6.0's drift script, and DL7–DL9 failed before their fix. Off Linux they skip `[host]`.
 
+### Fixed (tests)
+- **`V461 root .venv, no PATH python: pathpy=absent` failed on Windows (the PC's run at ad62a14, the suite's only FAIL; `got` was empty).** The fixture's PATH held only links to `sha256sum` and `awk`. On Git Bash those programs cannot load `msys-2.0.dll` and its siblings from outside `/usr/bin`, so `sha256sum` exits 127 (a DLL load failure, with no "command not found"). `gc_gate_env` then took its designed fail-closed exit before reaching the `pathpy` branch the case targets. With `/usr/bin` on PATH, the product path gives `pathpy=absent` on Windows (probed on the PC). On MSYS the case now uses `/usr/bin` itself as its PATH, the same as C2b (e), and skips `[host]` if a python sits there. The hook is unchanged.
+
 ### Changed (wording)
 - **sync-template skill** (marker v4.6.1):
   - **Step 2b CR guard.** It now builds the CR with `printf`, not `$'\r'`, which the shipped git gates refuse in a script that also contains a git command (open-brain).
@@ -60,9 +63,9 @@ Counts, never carried forward:
 - **Consistency:** **441** PASS lines from one full `bash scripts/verify-template-consistency.sh` run at 1e24350, ALL CHECKS PASSED (v4.6.0: 441; no new check this release).
 - **Hook suite:** 4179 passed, 0 failed, 6 skipped (4185 assertions) on agent-host-1, non-root, with `GATE PASS` at 1e24350 (v4.6.0: 4139 / 0 / 6). The +40 are the two new v4.6.1 blocks: venv 22, drift 18 (counted from the gate log).
   - The first gate run, at 27dce9c before the review fixes, failed in the server suite on stale install metadata. That was the editable install built before the VERSION bump: `test_hatch_reads_the_same_version_file` asked for `bash server/install.sh` to be run again, and the re-run gate was green. It was not a code fault.
-  - Windows (the PC): **not run yet**; it waits for the user's go.
+  - Windows (the PC) at ad62a14: 4160 passed, 1 failed, 23 skipped (4184 assertions) in 1 h 32 min. The one FAIL is the fixture in `Fixed (tests)` above. All 23 skipped assertions are tagged `[host]`, on four SKIP lines: v4.6.0's three (5) plus DL1–9 (18, not a Linux host). The 4184 against Linux's 4185 is the same one-assertion host difference as v4.6.0 (4144 against 4145).
   - Parser matrix at 1e24350: node 4179 / 0 / 6, python3-only 3912 / 0 / 260, jq-only 3832 / 0 / 340, PARSER MATRIX PASSED (v4.6.0: 4139 / 0 / 6, 3872 / 0 / 260, 3792 / 0 / 340).
-- **Server suite:** 555 passed, 10 skipped on Linux (v4.6.0: the same; the new remedy assertion sits inside an existing test). Windows: not run yet.
+- **Server suite:** 555 passed, 10 skipped on Linux (v4.6.0: the same; the new remedy assertion sits inside an existing test). Windows at ad62a14: 564 passed, 1 skipped (v4.6.0: the same).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.6.0's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
 
 ## v4.6.0 — 2026-10-11
