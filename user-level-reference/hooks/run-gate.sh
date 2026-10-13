@@ -142,6 +142,13 @@ gc_gate_dir() {
   printf '%s/.gate\n' "$top"
 }
 
+# v5.0: the gate command to print in block messages -- cct-gate from the plugin, else the in-repo script.
+# hooks/run-gate.sh repeats this function (same standalone reason as gc_gate_dir above);
+# scripts/verify-template-consistency.sh asserts the two copies agree.
+gc_gate_cmd() {
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then printf 'cct-gate'; else printf 'bash hooks/run-gate.sh'; fi
+}
+
 # GC_GATE_PRUNE_S (v4.0.3, R4) -- same standalone-copy reason as GC_GATE_TTL_S
 # and gc_gate_dir above. The definition and the reason live in
 # hooks/lib/git-cmd.sh; scripts/verify-template-consistency.sh asserts the

@@ -1012,7 +1012,7 @@ This is **reporting, not searching**: it adds no greps, so it does not widen the
 The five forms above are scoped to the **project tree**. `~/.claude/` is not in that scope, and **nothing else covers it either**:
 
 - `verify-user-level-drift.sh` compares user-level files against the **released tag**. A user-level file naming a retired agent reports **0 drift**, because the released tag names it too. The probe is working; it is answering a different question.
-- The toolkit repo-side censuses scope to `templates/**` and `user-level-reference/**` and do not look for retired names at all.
+- The toolkit repo-side censuses scope to `templates/**`, `user-level-reference/**`, `skills/**` and `output-styles/**` and do not look for retired names at all.
 
 **Measured, in this skill.** v3.0.0 retired `test-writer` and shipped step 9 still naming it in the list of worktree-isolating agent types — **6d form 3, in the file that defines 6d.** Harmless in effect (an over-broad do-not-spawn list), but it survived a release *because it was outside every sweep, census and drift check at once*. So: **on any release that retires a name, run the same five forms over `~/.claude/` and over `<templateRepo>`'s own `user-level-reference/`, `skills/` and `docs/`**, and report that pass separately.
 

@@ -36,6 +36,7 @@ set -u
 # exactly 78.
 unset RUN_GATE_ACTIVE
 unset RUN_GATE_TERMINAL
+unset CLAUDE_PLUGIN_ROOT
 
 pass=0
 fail=0
@@ -11827,7 +11828,9 @@ if git -C "$ROOT" rev-parse --verify -q 'v4.6.1^{commit}' >/dev/null && ! git -C
   DR_OUT=$(HOME="$DR_H" bash "$DR_S/scripts/verify-user-level-drift.sh" v4.6.1 2>&1)
   expect "DR1 pre-v5.0 tag: released skill file is not PROCESSED" 0 "$(printf '%s\n' "$DR_OUT" | grep -c 'PROCESSED')"
   expect "DR1 pre-v5.0 tag: released skill file is not UNRELEASED" 0 "$(printf '%s\n' "$DR_OUT" | grep -c 'UNRELEASED.*skills/')"
-  expect "DR1 pre-v5.0 tag: skill files compared, none drifted"    0 "$(printf '%s\n' "$DR_OUT" | grep -c 'DRIFT: .*/skills/')"
+  # positive: the summary's in-sync count must cover every skill file the tag released (a vacuous "no DRIFT line" passes on an empty compare)
+  DR_N=$(git -C "$ROOT" ls-tree -r --name-only v4.6.1 -- user-level-reference/skills | grep -c .)
+  expect "DR1 pre-v5.0 tag: every released skill file compared and in sync" 1 "$(printf '%s\n' "$DR_OUT" | grep -c " $DR_N in sync")"
 else
   skip_host "DR1 pre-v5.0 tag skill resolution" "tag v4.6.1 absent or already carries skills/ at the root" 3
 fi
@@ -11917,6 +11920,34 @@ else
   skip "v5 agents: enforce-agent-contract cct: cases" "no node on this host" 7
 fi
 # ---- end v5.0 agents
+# ---- v5.0 cct-gate: same artifact as run-gate.sh; gc_gate_cmd names the right command (spec §3.4, §5)
+V5G=$(mkrepo v5gate main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$V5G/PROJECT_CONTEXT.md"
+git -C "$V5G" add -A >/dev/null 2>&1; git -C "$V5G" commit -q -m ctx >/dev/null 2>&1
+V5GSHA=$(git -C "$V5G" rev-parse HEAD)
+( cd "$V5G" && unset RUN_GATE_ACTIVE && bash "$ROOT/bin/cct-gate" >/dev/null 2>&1 ); v5g_rc=$?
+expect "v5 cct-gate: exit 0 on a green gate" 0 "$v5g_rc"
+expect "v5 cct-gate: wrote the sha artifact" yes "$(grep -q '"status":"pass"' "$(gatepassfile "$V5G" "$V5GSHA")" 2>/dev/null && echo yes || echo no)"
+# a symlink to bin/cct-gate and a plugin path with a space both still find hooks/run-gate.sh
+mkdir -p "$TMPROOT/v5 plug/bin" "$TMPROOT/v5 plug/hooks"
+cp "$ROOT/bin/cct-gate" "$TMPROOT/v5 plug/bin/" 2>/dev/null; cp -r "$ROOT/hooks/." "$TMPROOT/v5 plug/hooks/"
+mkdir -p "$TMPROOT/v5lnk"; ln -sf "$TMPROOT/v5 plug/bin/cct-gate" "$TMPROOT/v5lnk/cct-gate"
+rm -f "$(gatepassfile "$V5G" "$V5GSHA")"
+( cd "$V5G" && unset RUN_GATE_ACTIVE && bash "$TMPROOT/v5lnk/cct-gate" >/dev/null 2>&1 ); v5g_rc=$?
+expect "v5 cct-gate: via a symlink into a path with a space, exit 0" 0 "$v5g_rc"
+expect "v5 cct-gate: via a symlink into a path with a space, artifact written" yes "$([ -f "$(gatepassfile "$V5G" "$V5GSHA")" ] && echo yes || echo no)"
+v5gc() { bash -c '. "$1"; . "$2"; gc_gate_cmd' _ "$ROOT/hooks/lib/json.sh" "$ROOT/hooks/lib/git-cmd.sh"; }
+expect "v5 gc_gate_cmd: CLAUDE_PLUGIN_ROOT set -> cct-gate" "cct-gate" "$(CLAUDE_PLUGIN_ROOT=/x v5gc)"
+expect "v5 gc_gate_cmd: CLAUDE_PLUGIN_ROOT unset -> the in-repo script" "bash hooks/run-gate.sh" "$(env -u CLAUDE_PLUGIN_ROOT bash -c '. "$1"; . "$2"; gc_gate_cmd' _ "$ROOT/hooks/lib/json.sh" "$ROOT/hooks/lib/git-cmd.sh")"
+expect "v5 gc_gate_cmd: CLAUDE_PLUGIN_ROOT empty -> the in-repo script" "bash hooks/run-gate.sh" "$(CLAUDE_PLUGIN_ROOT= v5gc)"
+V5M=$(mkrepo v5msg feat)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$V5M/PROJECT_CONTEXT.md"
+git -C "$V5M" add -A >/dev/null 2>&1; git -C "$V5M" commit -q -m ctx >/dev/null 2>&1
+check_msg "v5 block message: no plugin root -> bash hooks/run-gate.sh" "$ROOT/hooks/gate-before-merge.sh" 2 \
+  "$(mkjson Bash 'gh pr merge 3 --squash' "$V5M")" "Run 'bash hooks/run-gate.sh' on the PR branch head"
+CLAUDE_PLUGIN_ROOT=/x check_msg "v5 block message: plugin root set -> cct-gate" "$ROOT/hooks/gate-before-merge.sh" 2 \
+  "$(mkjson Bash 'gh pr merge 3 --squash' "$V5M")" "Run 'cct-gate' on the PR branch head"
+# ---- end v5.0 cct-gate
 
 
 echo "----------------------------------------------------------------"

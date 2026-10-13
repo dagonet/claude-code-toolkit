@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# cct plugin: gate the project in the current directory (v5.0 spec §3.4). On PATH via the plugin's bin/ (F6).
+# CLAUDE_PLUGIN_ROOT is empty in the Bash tool (F6), so locate run-gate.sh relative to this file.
+self="$0"; command -v readlink >/dev/null 2>&1 && self=$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")
+exec bash "$(cd "$(dirname "$self")/.." && pwd)/hooks/run-gate.sh" "$@"

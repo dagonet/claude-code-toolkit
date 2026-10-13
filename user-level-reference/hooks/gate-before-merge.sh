@@ -1379,7 +1379,7 @@ if gc_on_main "$CWD"; then
     case "$A6_KIND" in
       merge)
         echo "ALLOWED without a gate run: to CATCH THIS BRANCH UP to its upstream (${A6_UP:-none configured}), use 'git pull --ff-only' — not 'git merge --ff-only origin/main'. The pull FETCHES FIRST, so it re-reads the tracking ref from the remote instead of trusting whatever is in .git/refs; that is the whole difference, and it is why the merge form is no longer exempt. Also always allowed: 'git merge --abort', '--continue', '--quit'."
-        echo "Otherwise: gate the content that is actually being merged — check out the merge target (the PR branch head), run 'bash hooks/run-gate.sh' there, and merge from that checkout."
+        echo "Otherwise: gate the content that is actually being merged — check out the merge target (the PR branch head), run '$(gc_gate_cmd)' there, and merge from that checkout."
         ;;
       pull)
         echo "ALLOWED without a gate run: 'git pull --ff-only' with no remote and no refspec, when this branch's own config names itself (branch.$A6_BRANCH.remote set, branch.$A6_BRANCH.merge = refs/heads/$A6_BRANCH); or 'git pull --ff-only <remote> $A6_BRANCH', which names the same thing explicitly. Either way git itself refuses if the result would not be a fast-forward."
@@ -1392,7 +1392,7 @@ if gc_on_main "$CWD"; then
         ;;
       *)
         echo "ALLOWED without a gate run: nothing on this path — a merge run from a protected branch lands the OTHER side's content, not this checkout's HEAD, so comparing the gate artifact to HEAD verifies nothing and re-gating here would only bless content that is already merged."
-        echo "Do this instead: check out the merge target (the PR branch head), run 'bash hooks/run-gate.sh' there, and merge from that checkout — or gate on the branch before opening the PR."
+        echo "Do this instead: check out the merge target (the PR branch head), run '$(gc_gate_cmd)' there, and merge from that checkout — or gate on the branch before opening the PR."
         ;;
     esac
     echo "(Last resort, and an admission of this guard's limits rather than a remedy: create '.claude/git-guard-off' under this cwd, make the one operation, then delete it.)"
@@ -1462,12 +1462,12 @@ fi
 
 # 3. Legacy pre-4.0.1 location, one release only.
 if [ -z "$ARTIFACT" ] && [ -f "$REPO_TOP/.gate/last-pass.json" ]; then
-  echo "NOTE: legacy artifact path $REPO_TOP/.gate (pre-4.0.1); re-run hooks/run-gate.sh to migrate" >&2
+  echo "NOTE: legacy artifact path $REPO_TOP/.gate (pre-4.0.1); re-run $(gc_gate_cmd) to migrate" >&2
   ARTIFACT="$REPO_TOP/.gate/last-pass.json"
 fi
 
 if [ -z "$ARTIFACT" ]; then
-  echo "BLOCKED: No gate artifact found. Run 'bash hooks/run-gate.sh' on the PR branch head (green gate writes <common git dir>/gate/last-pass.<sha>.json, or last-pass.tree-<tree>.json when run before the commit), then merge." >&2
+  echo "BLOCKED: No gate artifact found. Run '$(gc_gate_cmd)' on the PR branch head (green gate writes <common git dir>/gate/last-pass.<sha>.json, or last-pass.tree-<tree>.json when run before the commit), then merge." >&2
   exit 2
 fi
 
@@ -1523,7 +1523,7 @@ if [ -z "$ARTIFACT_SHA" ] || { [ "$ARTIFACT_SHA" != "$HEAD_SHA" ] && { [ -z "$AR
     fi
     echo "  artifact sha:  ${ARTIFACT_SHA:-none}    HEAD:          $HEAD_SHA"
     echo "  artifact tree: ${ARTIFACT_TREE:-none}    HEAD^{tree}:   $HEAD_TREE"
-    echo "Run 'bash hooks/run-gate.sh' on the head that is actually being MERGED — the PR branch tip, from a checkout of that branch — then merge from there. Gating some other head produces a fresh artifact that verifies nothing."
+    echo "Run '$(gc_gate_cmd)' on the head that is actually being MERGED — the PR branch tip, from a checkout of that branch — then merge from there. Gating some other head produces a fresh artifact that verifies nothing."
   } >&2
   exit 2
 fi
@@ -1637,7 +1637,7 @@ if [ "$ARTIFACT_EPOCH" -eq 0 ] || [ "$AGE" -gt "$GC_GATE_TTL_S" ]; then
     if [ -n "$A13_LABEL" ]; then
       echo "BLOCKED: Gate artifact expired (${AGE}s old, max ${GC_GATE_TTL_S}s); tree unchanged, environment changed: $A13_LABEL" >&2
     else
-      echo "BLOCKED: Gate artifact expired (${AGE}s old, max ${GC_GATE_TTL_S}s). Re-run 'bash hooks/run-gate.sh', then merge." >&2
+      echo "BLOCKED: Gate artifact expired (${AGE}s old, max ${GC_GATE_TTL_S}s). Re-run '$(gc_gate_cmd)', then merge." >&2
     fi
     exit 2
   fi

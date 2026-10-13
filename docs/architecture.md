@@ -233,6 +233,8 @@ claude-code-toolkit/
 │   ├── rust-tauri/                        # + rust-coder, rules/rust.md + frontend.md, rustfmt.toml, .prettierrc
 │   ├── java/                              # + java-coder, rules/java.md, .editorconfig
 │   └── python/                            # + python-coder, rules/python.md, .editorconfig
+├── agents/                                # 10 agents at the plugin root since v5.0 (installed as cct:<name>)
+├── bin/                                   # cct-gate: runs the plugin's hooks/run-gate.sh in the current project (on PATH from the plugin)
 ├── skills/                                # 9 skills at the plugin root since v5.0 (installed as /cct:<name>)
 ├── output-styles/                         # pm-report output style (default via settings.json outputStyle)
 ├── mcp-servers/

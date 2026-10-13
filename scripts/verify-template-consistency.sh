@@ -969,6 +969,15 @@ else
   ko "gc_gate_dir definition drifted or missing between git-cmd.sh and run-gate.sh"
 fi
 
+# v5.0 (Task 6): gc_gate_cmd (the gate command named in block messages) is repeated in the standalone run-gate.sh
+ggc_lib=$(awk '/^gc_gate_cmd\(\) \{/,/^}/' hooks/lib/git-cmd.sh)
+ggc_run=$(awk '/^gc_gate_cmd\(\) \{/,/^}/' hooks/run-gate.sh)
+if [ -n "$ggc_lib" ] && [ "$ggc_lib" = "$ggc_run" ]; then
+  ok "gc_gate_cmd defined identically in git-cmd.sh and the standalone run-gate.sh"
+else
+  ko "gc_gate_cmd definition drifted or missing between git-cmd.sh and run-gate.sh"
+fi
+
 # v4.0.3 item 13 -- GC_GATE_PRUNE_S, gc_sha256 and gc_gate_env grew the same
 # standalone-copy problem GC_GATE_TTL_S/gc_gate_dir already have (run-gate.sh
 # cannot source git-cmd.sh). Same census shapes: a one-line constant compared

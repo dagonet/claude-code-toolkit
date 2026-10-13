@@ -1354,6 +1354,13 @@ gc_gate_dir() {
   printf '%s/.gate\n' "$top"
 }
 
+# v5.0: the gate command to print in block messages -- cct-gate from the plugin, else the in-repo script.
+# hooks/run-gate.sh repeats this function (same standalone reason as gc_gate_dir above);
+# scripts/verify-template-consistency.sh asserts the two copies agree.
+gc_gate_cmd() {
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then printf 'cct-gate'; else printf 'bash hooks/run-gate.sh'; fi
+}
+
 # gc_sha256 <stdin -> lowercase hex sha256>. Never `sha256sum <path>` -- that
 # prints the PATH into the digest input, which would make a fingerprint
 # depend on the absolute path of the file being hashed (see gc_gate_env
