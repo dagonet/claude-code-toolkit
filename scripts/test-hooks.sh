@@ -11833,7 +11833,7 @@ if git -C "$ROOT" rev-parse --verify -q 'v4.6.1^{commit}' >/dev/null && ! git -C
   expect "DR1 pre-v5.0 tag: released skill file count is non-zero" yes "$([ "$DR_N" -gt 0 ] && echo yes || echo no)"
   expect "DR1 pre-v5.0 tag: every released skill file compared and in sync" 1 "$(printf '%s\n' "$DR_OUT" | grep -c " $DR_N in sync")"
 else
-  skip_host "DR1 pre-v5.0 tag skill resolution" "tag v4.6.1 absent or already carries skills/ at the root" 3
+  skip_host "DR1 pre-v5.0 tag skill resolution" "tag v4.6.1 absent or already carries skills/ at the root" 4
 fi
 # ---- end v5.0 fix round
 # ---- v5.0 run-hook: class, signal, step-aside, polarity (spec §3.1, §3.2, §3.5)
@@ -11949,8 +11949,9 @@ check_msg "v5 block message: no plugin root -> bash hooks/run-gate.sh" "$ROOT/ho
 CLAUDE_PLUGIN_ROOT=/x check_msg "v5 block message: plugin root set -> cct-gate" "$ROOT/hooks/gate-before-merge.sh" 2 \
   "$(mkjson Bash 'gh pr merge 3 --squash' "$V5M")" "Run 'cct-gate' on the PR branch head"
 # bare name via PATH: pins the shebang and the exec bit
-( cd "$V5G" && unset RUN_GATE_ACTIVE && PATH="$ROOT/bin:$PATH" cct-gate >/dev/null 2>&1 ); v5g_rc=$?
+( cd "$V5G" && unset RUN_GATE_ACTIVE && PATH="$ROOT/bin:/usr/bin:/bin" cct-gate >/dev/null 2>&1 ); v5g_rc=$?
 expect "v5 cct-gate: run by bare name via PATH, exit 0" 0 "$v5g_rc"
+expect "v5 cct-gate: index mode 100755" yes "$(git -C "$ROOT" ls-files -s bin/cct-gate | grep -q '^100755' && echo yes || echo no)"
 # two-sided: a red gate names cct-gate through cct-gate, the in-repo command when run directly (CLAUDE_PLUGIN_ROOT unset in the caller)
 V5R=$(mkrepo v5red main)
 printf '# ctx\n\n- **Gate**: `false`\n' > "$V5R/PROJECT_CONTEXT.md"
