@@ -11809,10 +11809,13 @@ v462_warns() { # <cwd> <script> -> count of WARN lines; rc must stay 0
   local out rc
   out=$(cd "$1" && bash "$2" 2>&1); rc=$?
   [ "$rc" -eq 0 ] || echo "rc=$rc"
-  printf '%s\n' "$out" | grep -c '^WARN: run-gate.sh is from '
+  printf '%s\n' "$out" | grep -c '^WARN: run-gate.sh '
 }
+# git's own spelling of each toplevel (C:/... on Git Bash, /private/... on macOS), as the warning prints it
+V462_A_TOP=$(git -C "$V462_A" rev-parse --show-toplevel); V462_B_TOP=$(git -C "$V462_B" rev-parse --show-toplevel)
 expect "V462 script in repo A, run from repo B: warns once"          1 "$(v462_warns "$V462_B" "$V462_A/hooks/run-gate.sh")"
-expect "V462 warning names both checkouts" 1 "$(cd "$V462_B" && bash "$V462_A/hooks/run-gate.sh" 2>&1 | grep -c "from $V462_A but gates.*$V462_B")"
+expect "V462 warning names both checkouts" 1 "$(cd "$V462_B" && bash "$V462_A/hooks/run-gate.sh" 2>&1 | grep -cF "run-gate.sh from $V462_A_TOP is gating $V462_B_TOP (the current directory's repository); to gate $V462_A_TOP, run it from inside $V462_A_TOP.")"
+expect "V462 same repo with GIT_DIR exported: no warning"             0 "$(GIT_DIR="$V462_A/.git" v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
 expect "V462 script in repo A, run from repo A: no warning"           0 "$(v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
 expect "V462 script outside any git work tree, run from a repo: no warning" 0 "$(v462_warns "$V462_B" "$V462_NOGIT/run-gate.sh")"
 # ---- end v4.6.2 run-gate cwd warning

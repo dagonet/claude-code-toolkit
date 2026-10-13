@@ -51,7 +51,7 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 
 ## Context Budget
 
-Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant; the version columns are historical `wc -c` figures, the last column is `wc -c` at v4.5.2):
+Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant; the version columns are historical `wc -c` figures, the last column is `wc -c` at v4.6.2):
 
 | | Baseline (v1.3) | v1.5 | v2.0 | v2.1 | v3.1 (v3.1.0) | v4.0.3 | v4.1.0 | v4.1.1 | v4.1.2 | v4.2.0 | v4.3.0 | v4.3.1 | v4.4.0 | v4.4.1 | v4.4.2 | v4.5.0 | v4.5.1 | v4.5.2 | v4.6.0 | v4.6.1 | **v4.6.2** | Loaded |
 | --- | --- | --|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---| --- | --- |-- | --- |
