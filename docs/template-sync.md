@@ -12,7 +12,7 @@ After initial setup, keep projects in sync with template changes using two skill
 - **Reconnect or reinstall?** After pulling a toolkit change under `server/`: `/mcp` reconnect when only code or `server/src/template_sync/VERSION` changed (the package reads VERSION at import, and an editable install reads the checkout); `bash server/install.sh` (or `server\install.ps1`) when `server/pyproject.toml` — the dependencies — changed. Either way, until the process restarts it runs what it imported at spawn, and `template_verify` FAILs `server_skew`. `/mcp` reconnect reloads the server only: skills load at session start, so when the sync-template skill body changed (re-copy it to `~/.claude/skills/sync-template/`) a full session restart is needed, and `/mcp` reconnect suffices only for a server-code-only change.
 - **Stale-server refusal (v4.6.0).** `template_load_manifest` returns `valid: false` (same path as an unmet `requires_server`) when the running server's version is OLDER than the first line of the effective template repo's `VERSION` — typically a checkout pulled mid-session. The error names both versions and the checkout path; the remedy is `/mcp` reconnect or a session restart, and if it persists the registered server is a different checkout (run `bash server/install.sh` in the template repo, point `template-sync-tools` in `~/.claude.json` at the exe it prints, reconnect). A NEWER server only adds `version_skew_note`; a missing or unparseable `VERSION`, or an empty `templateRepo`, is no finding. It warns and refuses on the mismatch only; it does not change how the template version label is derived. It protects only once the running server already carries this code (v4.6.0+), so the first pull that brings it is unguarded. The sync-template skill's own server minimum is 4.3.1 (the manifest `requires_server` floor stays `>=4.1.0`) and step 1 stops below it.
 
-## `/sync-template` (downstream: template -> project)
+## `/cct:sync-template` (downstream: template -> project)
 
 Pull template updates into your project. The skill calls MCP tools to classify each file:
 
@@ -27,7 +27,7 @@ Pull template updates into your project. The skill calls MCP tools to classify e
 
 For conflicts, the MCP server reconstructs the common ancestor via `git show` and produces a three-way merge. If the merge is clean, it's offered for approval. If it has conflict markers, you resolve manually.
 
-## `/contribute-upstream` (upstream: project -> template)
+## `/cct:contribute-upstream` (upstream: project -> template)
 
 Push project improvements back to the template. The skill:
 
@@ -37,12 +37,12 @@ Push project improvements back to the template. The skill:
 4. Checks cross-variant file identity and propagates to matching variants
 5. Stages changes in the template repo (does not commit — you review first)
 
-## `/commit` Integration
+## `/cct:commit` Integration
 
 When committing, if `.claude/template-manifest.json` exists, the commit workflow calls `template_compute_status` to detect drift:
 
-- **Locally modified files**: Prints a reminder to run `/contribute-upstream`
-- **Template updates available**: Prints a reminder to run `/sync-template`
+- **Locally modified files**: Prints a reminder to run `/cct:contribute-upstream`
+- **Template updates available**: Prints a reminder to run `/cct:sync-template`
 
 This is informational only — it never blocks a commit.
 
@@ -116,7 +116,7 @@ Impossible under the old reading; ordinary under the correct one — a file can 
 
 **The two version fields are additive labels, and absent means *unknown*, never *stale*.** They exist because `lastSynced` alone is an opaque hex string: answering "which toolkit version is this repo on?" otherwise requires the toolkit checkout to be present with its tags fetched. Nothing classifies, gates or migrates on either field, and a sync never fails because one would not resolve. `lastSyncedVersion` is written by the skill from `git -C <templateRepo> describe --tags [--exact-match] <lastSynced>` and is therefore reproducible but *not* server-authoritative; `templateSyncToolsVersion` is deliberately left for the server, since the client has no honest way to observe the running server's version.
 
-v1 manifests (missing `version`, `templateRawHash`, `localHash`) are auto-migrated to v2 by the `template_load_manifest` MCP tool; v2 → v3 is the explicit `template_migrate_manifest` call (dry-run first, `backup_dir` required — `/sync-template` step 1c in `user-level-reference/skills/sync-template/SKILL.md` walks it), and the per-file shape becomes the two-key `ownership`/`hash` entry of the v3 table above.
+v1 manifests (missing `version`, `templateRawHash`, `localHash`) are auto-migrated to v2 by the `template_load_manifest` MCP tool; v2 → v3 is the explicit `template_migrate_manifest` call (dry-run first, `backup_dir` required — `/cct:sync-template` step 1c in `skills/sync-template/SKILL.md` walks it), and the per-file shape becomes the two-key `ownership`/`hash` entry of the v3 table above.
 
 ### `template_load_manifest` response: identity, registry, capabilities (v4.0.2, item 5)
 
@@ -200,14 +200,14 @@ Variants do **NOT** ship a `hooks/` directory. All hook scripts live once at the
 
 - `setup-project.{sh,ps1}` copy `hooks/*.sh` from the toolkit root into new projects and register them in the manifest with a `hooks/` prefix.
 - The sync server routes manifest paths starting with `hooks/` to the toolkit root (`_ROOT_TRACKED_PREFIXES` in `template_sync_mcp.py`) for status, diff, and apply.
-- `/sync-template` step 6b materializes a missing hook via `template_apply_file(file_path="hooks/<name>.sh", source="template")` — never by copying from `templates/<variant>/hooks/`, which does not exist.
+- `/cct:sync-template` step 6b materializes a missing hook via `template_apply_file(file_path="hooks/<name>.sh", source="template")` — never by copying from `templates/<variant>/hooks/`, which does not exist.
 - `scripts/verify-template-consistency.sh` §13 asserts every hook referenced by any variant's `settings.json` or agent frontmatter exists non-empty at the root.
 
 If a downstream sync reports a hook as missing from a variant: that is expected — the variant never carries it; the root does.
 
 ## Rollout: a Template Is a Source, Not a Shipment
 
-Merging a hook into `templates/` changes nothing in any existing project. Enforcement needs **two** things in the consuming repo, and `/sync-template` installs both:
+Merging a hook into `templates/` changes nothing in any existing project. Enforcement needs **two** things in the consuming repo, and `/cct:sync-template` installs both:
 
 1. the script at `<project>/hooks/<name>.sh`, and
 2. its binding in `<project>/.claude/settings.json`.
@@ -245,7 +245,7 @@ Every template `CLAUDE.md` ends with:
 
 > **⚠ THAT IS THE CURRENT AND ONLY SHIPPED MARKER TEXT — do not copy the wording from any older document.** The `BEGIN` marker carries an em-dash and the trailing prose *"sync-template preserves everything between these markers"*. Earlier records in `docs/` quote a superseded wording (*"never edits below this line"*) that **no shipped file carries**, and they are dated historical records, correct as of their date and deliberately not rewritten.
 >
-> **Do not hand-roll a matcher against either string.** v3.0.0 shipped `user-level-reference/skills/sync-template/region.sh` precisely because **two consumers implemented the marker check from prose and both got it wrong** — one matched `PROJECT-CUSTOM:BEGIN\s*-->`, which the em-dash and trailing prose defeat, and got *"zero regions"* on a repo with eleven. The reassuring answer is the one a wrong matcher returns. Use `region.sh`.
+> **Do not hand-roll a matcher against either string.** v3.0.0 shipped `skills/sync-template/region.sh` precisely because **two consumers implemented the marker check from prose and both got it wrong** — one matched `PROJECT-CUSTOM:BEGIN\s*-->`, which the em-dash and trailing prose defeat, and got *"zero regions"* on a repo with eleven. The reassuring answer is the one a wrong matcher returns. Use `region.sh`.
 
 Project-owned content goes INSIDE the markers. When both the template and the project file carry the markers, the sync server treats the region as project-owned: region-only edits keep the file `UP_TO_DATE`, `template_apply_file(source="template")` splices the project's region into the applied template, and three-way merges exclude/reattach it. Content appended OUTSIDE the region conflicts on every template bump — move it inside.
 

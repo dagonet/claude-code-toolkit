@@ -280,7 +280,7 @@ SKILL_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # The below-floor arm needs no population split: a caller that passed a
 # tag-shaped value IS the skill, or is impersonating one on purpose.
 _SKILL_REMEDY = (
-    "copy user-level-reference/skills/sync-template/SKILL.md from toolkit tag {tag} or "
+    "copy skills/sync-template/SKILL.md from toolkit tag {tag} or "
     "later into ~/.claude/skills/sync-template/SKILL.md, then START A FRESH SESSION and run "
     "the sync again. Re-copying without restarting changes nothing for this session. "
     "Pass dry_run=True to inspect without migrating."
@@ -335,7 +335,7 @@ def skill_floor_satisfied(spec: str, claimed: str) -> tuple[bool, str, str, bool
             f"-- IF YOU ARE THE sync-template SKILL: the body this session loaded predates "
             f"{floor} and has no instruction to identify itself. A running session keeps the "
             f"body it read at startup, so the file on disk may already be current while this "
-            f"session is not. Copy user-level-reference/skills/sync-template/SKILL.md from "
+            f"session is not. Copy skills/sync-template/SKILL.md from "
             f"toolkit tag {floor} or later into ~/.claude/skills/sync-template/SKILL.md if it "
             f"is not already there, then START A FRESH SESSION. Re-copying without restarting "
             f"changes nothing for this session. "

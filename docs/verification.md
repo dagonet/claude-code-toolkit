@@ -14,7 +14,7 @@ After applying a template, walk through this checklist to confirm everything is 
 
 4. **Verify project-level agents override user-level** — check that `.claude/agents/` in the project takes precedence over `~/.claude/agents/`
 
-5. **Run `/challenge`** (or any bundled skill) to confirm skills load and run
+5. **Run `/cct:challenge`** (or any bundled skill) to confirm skills load and run
 
 6. **Test `mcp__github-tools__gh_repo_from_origin`** to confirm MCP tools are connected
 
@@ -133,12 +133,12 @@ They are split by what each can *reach*, not by preference:
   `VERSION`-vs-latest-tag comparison. Silent when everything passes; on failure it opens
   or retitles a single GitHub issue `nightly-check: <date>`. A routine sees only the
   clone and its connectors — never `~/.claude`, never uncommitted files.
-- **the `retro-review` skill** (`/retro-review [project-dir]`) — the local counterpart,
+- **the `retro-review` skill** (`/cct:retro-review [project-dir]`) — the local counterpart,
   covering exactly what a routine cannot see: the per-project retro ledger under
   `~/.claude/projects/<slug>/memory/`, `verify-user-level-drift.sh` against the live
   `~/.claude/`, and sibling checkouts whose `.claude/template-manifest.json` is behind
   this repo's `VERSION`. Run it headless with
-  `claude -p "/retro-review" --permission-mode auto` from Task Scheduler or cron.
+  `claude -p "/cct:retro-review" --permission-mode auto` from Task Scheduler or cron.
 
 ## Terminal conditions in a `**Gate**` command
 

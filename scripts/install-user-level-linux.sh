@@ -42,9 +42,9 @@ mv "$L/CLAUDE.md.new" "$L/CLAUDE.md"
 
 echo "2. agents, skills, hooks, output styles"
 cp "$REF"/agents/*.md "$L/agents/"
-cp -R "$REF"/skills/. "$L/skills/"
+cp -R "$ROOT"/skills/. "$L/skills/"
 cp -R "$REF"/hooks/. "$L/hooks/"
-cp "$REF"/output-styles/*.md "$L/output-styles/"
+cp "$ROOT"/output-styles/*.md "$L/output-styles/"
 chmod +x "$L"/hooks/*.sh
 
 echo "3. settings.json (reference minus Windows-only entries; hooks rendered)"

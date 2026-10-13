@@ -137,12 +137,12 @@ The setup script generates `.claude/template-manifest.json` in each target proje
 - **`template_version`** / **`template_commit`**: the toolkit tag and commit the tracked tree matches at setup/sync
 - **`requires_server`**: the template-sync server floor (`>=4.1.0`), enforced on every later sync
 - **`instructions_file`** / **`agent_grants`**: the fixed paths `.claude/project-instructions.md` and `.claude/agent-grants.json` (v4 declaration keys)
-- **`placeholders`**: the concrete values used during setup (for reverse-mapping by `/contribute-upstream`)
+- **`placeholders`**: the concrete values used during setup (for reverse-mapping by `/cct:contribute-upstream`)
 - **`files`**: one entry per tracked path — `{"ownership": "template", "hash": "sha256:<hex>"}` for files the template owns (the hash is of the rendered content the server wrote, so a later diff is measurable), `{"ownership": "once"}` for files seeded once and then yours; files the ownership table does not name are yours and have no entry
 
 The full field reference, key order and the historical v2 shape are in [`template-sync.md`](template-sync.md#manifest-v3--v4-claudetemplate-manifestjson).
 
-The manifest is consumed by the **template-sync-tools** MCP server, which powers the `/sync-template` and `/contribute-upstream` skills. See [`template-sync.md`](template-sync.md) for the full workflow.
+The manifest is consumed by the **template-sync-tools** MCP server, which powers the `/cct:sync-template` and `/cct:contribute-upstream` skills. See [`template-sync.md`](template-sync.md) for the full workflow.
 
 ## Next Steps
 

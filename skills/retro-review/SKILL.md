@@ -1,6 +1,6 @@
 ---
 name: retro-review
-description: Review the local subagent-failure retro ledger, user-level config drift, and which consumer repos are behind the toolkit version. Triggers on /retro-review.
+description: Review the local subagent-failure retro ledger, user-level config drift, and which consumer repos are behind the toolkit version. Triggers on /cct:retro-review.
 disable-model-invocation: true
 argument-hint: "[project-dir]"
 ---
@@ -37,7 +37,7 @@ Target project: `$ARGUMENTS`, or the current working directory if empty.
 ## Running it unattended
 
 ```bash
-claude -p "/retro-review" --permission-mode auto      # from the project directory
+claude -p "/cct:retro-review" --permission-mode auto      # from the project directory
 ```
 
 Schedule that with Windows Task Scheduler or cron. It is a **local** headless session,

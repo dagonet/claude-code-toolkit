@@ -1,6 +1,6 @@
 ---
 name: sprint
-description: Run a sprint backlog as parallel subagent workstreams with rebase-before-merge and gate enforcement. Triggers on /sprint.
+description: Run a sprint backlog as parallel subagent workstreams with rebase-before-merge and gate enforcement. Triggers on /cct:sprint.
 disable-model-invocation: true
 argument-hint: "[sprint plan file or backlog description]"
 ---

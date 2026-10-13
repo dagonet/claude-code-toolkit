@@ -66,7 +66,7 @@ For repeatable non-interactive work across repos or variants, use `claude -p`:
 
 ```bash
 # Single-variant template sync
-claude -p "Run /sync-template, resolve merge conflicts, commit and push"
+claude -p "Run /cct:sync-template, resolve merge conflicts, commit and push"
 
 # Multi-variant propagation
 for variant in general dotnet dotnet-maui rust-tauri java python; do

@@ -616,7 +616,7 @@ done
 #     number and no bullet's literal text is baked into the assertion.
 # ---------------------------------------------------------------------------
 echo
-KG=user-level-reference/skills/karpathy-guidelines/SKILL.md
+KG=skills/karpathy-guidelines/SKILL.md
 WP_HEADING='## Toolkit working preferences'
 WP_MIN=11
 if [ ! -s "$KG" ]; then
@@ -1043,7 +1043,7 @@ fi
 #      on GNU grep 3.0 and reproduced independently by a consumer. This is the
 #      only part of that fix with any executable surface in this repo, so the
 #      ordering is pinned here — prose alone would drift back.
-sweepf="user-level-reference/skills/sync-template/SKILL.md"
+sweepf="skills/sync-template/SKILL.md"
 if [ ! -f "$sweepf" ]; then
   ko "sweep ordering: $sweepf is missing"
 else
@@ -1244,7 +1244,7 @@ C71_TABLE=$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[
 #      LEAST one reference per F+W+O+U entry of templates/general (the frozen table
 #      of check 71), and a copy with the paths blanked must fall below that floor.
 #      Re-anchoring the skill turns this red.
-skf="user-level-reference/skills/sync-template/SKILL.md"
+skf="skills/sync-template/SKILL.md"
 sksettings="templates/general/.claude/settings.json"
 if [ ! -f "$skf" ] || [ ! -f "$sksettings" ]; then
   ko "6b collector control: $skf or $sksettings missing"
@@ -1431,7 +1431,7 @@ fi
 #         that on the NEXT invocation and lets a session state which body it is
 #         running. A marker that silently stops tracking VERSION is worse than
 #         none: it would assert equality between two stale strings.
-SKILL_MD="user-level-reference/skills/sync-template/SKILL.md"
+SKILL_MD="skills/sync-template/SKILL.md"
 want_marker="v$(head -1 VERSION 2>/dev/null | tr -d '\r')"
 got_marker=$(grep -m1 -o 'SYNC-TEMPLATE-SKILL-VERSION: [^ ]*' "$SKILL_MD" 2>/dev/null | sed 's/.*: //')
 if [ "$got_marker" = "$want_marker" ]; then
@@ -1457,7 +1457,7 @@ fi
 #        added in round 7 is deliberately NOT counted here — it has neither a
 #        `^` anchor nor a comment filter, which are the only two things a BOM
 #        breaks, so BOM tolerance is not a property it can have or lose.
-SWEEP_SKILL="user-level-reference/skills/sync-template/SKILL.md"
+SWEEP_SKILL="skills/sync-template/SKILL.md"
 sweep_arms=$(grep -c '{{\[A-Z_\]\\{2,\\}}}' "$SWEEP_SKILL" 2>/dev/null)
 sweep_bom=$(grep -c 'BOM}\\)\\?' "$SWEEP_SKILL" 2>/dev/null)
 if [ ! -f "$SWEEP_SKILL" ]; then
@@ -2129,7 +2129,7 @@ fi
 #     proves nothing, because the guard cannot fail there.
 # ---------------------------------------------------------------------------
 echo
-REGION_SH="user-level-reference/skills/sync-template/region.sh"
+REGION_SH="skills/sync-template/region.sh"
 if [ ! -f "$REGION_SH" ]; then
   ko "$REGION_SH missing — step 4's disqualifier and step 6's precondition have no extractor, and prose is what both consumers got wrong"
 elif ! bash -n "$REGION_SH" 2>/dev/null; then
@@ -2373,7 +2373,7 @@ else
 
   # Arm 6: the extractor must be WIRED INTO the instructions. An extractor no
   # step names is prose with extra steps — the failure A1 exists to prevent.
-  if grep -q 'region\.sh' user-level-reference/skills/sync-template/SKILL.md; then
+  if grep -q 'region\.sh' skills/sync-template/SKILL.md; then
     ok "sync-template SKILL.md: references region.sh"
   else
     ko "sync-template SKILL.md: never names region.sh — the extractor ships but no step uses it"
@@ -2625,7 +2625,7 @@ rm -rf "$b1_tmp"
 #     independently of check 52's plain grep on the same fact.
 # ---------------------------------------------------------------------------
 echo
-B1_REGION_SH="user-level-reference/skills/sync-template/region.sh"
+B1_REGION_SH="skills/sync-template/region.sh"
 B1_PLANT="scripts/fixtures/project-custom-regions/plant.sh"
 if [ ! -f "$B1_REGION_SH" ] || [ ! -f "$B1_PLANT" ]; then
   ko "check 31: $B1_REGION_SH or $B1_PLANT missing — region preservation is unexercised"
@@ -3021,7 +3021,7 @@ c35_ctx_budget() { # <variant>
   esac
 }
 c33_pairs=("CLAUDE.md:$BUDGET_CLAUDE_MD" "AGENT_TEAM.md:$BUDGET_AGENT_TEAM_MD" ".claude/rules/project.md:$BUDGET_RULES_PROJECT_MD" ".claude/project-instructions.md:$BUDGET_PROJECT_INSTRUCTIONS_MD" "PROJECT_CONTEXT.md:per-variant")
-c35_single=("user-level-reference/CLAUDE.md:$BUDGET_USER_CLAUDE_MD" "user-level-reference/output-styles/pm-report.md:$BUDGET_PM_REPORT_MD")
+c35_single=("user-level-reference/CLAUDE.md:$BUDGET_USER_CLAUDE_MD" "output-styles/pm-report.md:$BUDGET_PM_REPORT_MD")
 c33_fail=0
 c33_rows=0
 c35_row() { # <file> <budget>
@@ -3592,7 +3592,7 @@ fi
 # ---------------------------------------------------------------------------
 echo
 note "Check 58: SKILL.md's stated LINES count == len(verify.LINES)"
-c58_doc=$(grep -o 'LINES = [0-9][0-9]*' user-level-reference/skills/sync-template/SKILL.md | head -1 | sed 's/LINES = //')
+c58_doc=$(grep -o 'LINES = [0-9][0-9]*' skills/sync-template/SKILL.md | head -1 | sed 's/LINES = //')
 c58_stats=$(awk '/^LINES = \(/{f=1;next} f&&/^\)/{exit} f&&/^[[:space:]]*\("/{n++; line=$0; cnt=gsub(/\("/,"&",line); if(cnt>1){multi=1}} END{print (n+0)" "(multi+0)}' server/src/template_sync/verify.py)
 # Split "N M" without `set --` -- this script takes no CLI args itself, but
 # functions called later in the file with no explicit args would otherwise
@@ -3620,7 +3620,7 @@ fi
 # ---------------------------------------------------------------------------
 echo
 note "Check 59: output style pm-report.md keeps 'keep-coding-instructions: true'"
-c59_f=user-level-reference/output-styles/pm-report.md
+c59_f=output-styles/pm-report.md
 c59_fm=""
 c59_rc=1
 if [ -f "$c59_f" ]; then
@@ -3655,7 +3655,7 @@ fi
 echo
 note "Check 60: user-level-reference/settings.json outputStyle names a shipped style"
 c60_name=$(grep -o '"outputStyle": *"[^"]*"' user-level-reference/settings.json | head -1 | sed 's/^"outputStyle": *"//; s/"$//')
-c60_f="user-level-reference/output-styles/$c60_name.md"
+c60_f="output-styles/$c60_name.md"
 c60_fm=""
 c60_rc=1
 if [ -n "$c60_name" ] && [ -f "$c60_f" ]; then
@@ -3905,17 +3905,17 @@ c65_bad=""
 for c65_f in templates/*/.claude/settings.json .claude/settings.json user-level-reference/settings.json; do
   [ -n "$(c65_scan_settings "$c65_f")" ] && c65_bad="$c65_bad $c65_f(registers jev_route.py)"
 done
-c65_skill=user-level-reference/skills/jev/SKILL.md
+c65_skill=skills/jev/SKILL.md
 grep -qx 'disable-model-invocation: true' "$c65_skill" 2>/dev/null || c65_bad="$c65_bad $c65_skill(no 'disable-model-invocation: true' line)"
 c65_marker=$(sed -n "s/^AM_JEV_MARKER='\(.*\)'\$/\1/p" hooks/lib/agent-model.sh | head -1)
-c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" user-level-reference/skills/jev/jev_ctl.py | head -1)
+c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" skills/jev/jev_ctl.py | head -1)
 [ -n "$c65_marker" ] || c65_bad="$c65_bad agent-model.sh(no AM_JEV_MARKER line)"
 [ "$c65_reg" = "$C65_SPEC_REG" ] || c65_bad="$c65_bad jev_ctl.py(REG_COMMAND is not the spec literal: '${c65_reg:-<none>}')"
 case "$c65_reg" in *"$c65_marker"*) ;; *) c65_bad="$c65_bad REG_COMMAND does not contain AM_JEV_MARKER '$c65_marker'" ;; esac
 # U-1: the orchestrator is told to omit `model` while on -- the rule's exception
 # and the session-start notice must both exist, or Jev routes nothing.
 grep -qF 'unless Jev routing is on in this repo' user-level-reference/CLAUDE.md || c65_bad="$c65_bad user-level-reference/CLAUDE.md(no U-1 exception)"
-grep -qE "^SESSION_COMMAND = '.*omit model on Agent spawns.*'\$" user-level-reference/skills/jev/jev_ctl.py || c65_bad="$c65_bad jev_ctl.py(no SESSION_COMMAND telling the orchestrator to omit model)"
+grep -qE "^SESSION_COMMAND = '.*omit model on Agent spawns.*'\$" skills/jev/jev_ctl.py || c65_bad="$c65_bad jev_ctl.py(no SESSION_COMMAND telling the orchestrator to omit model)"
 if [ -z "$c65_bad" ]; then
   ok "check 65: no template, root or user-level settings registers jev_route.py; /jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
 else
@@ -4132,7 +4132,7 @@ EOF
 }
 
 note "Check 47: skill bodies carry no positional tokens (\$0-\$9/\${N} always; \$ARGUMENTS inside a fence, or anywhere without argument-hint)"
-c47_hits=$(c47_scan "user-level-reference/skills")
+c47_hits=$(c47_scan "skills")
 if [ -n "$c47_hits" ]; then
   ko "check 47: positional token(s) in a skill body -- any argument corrupts the shell snippets: $(printf '%s' "$c47_hits" | head -5 | tr '\n' ';')"
 else
@@ -5170,8 +5170,8 @@ else ko "75: frontmatter hooks: in $c75"; fi
 c76_bad=""; c76_n=0
 for n in $(grep -rhoE 'cct:[A-Za-z][A-Za-z-]*' templates user-level-reference skills agents README.md AGENTS.md 2>/dev/null | sort -u); do
   c76_n=$((c76_n + 1))
-  # skill names (cct:<skill>); derive this from ls skills/ once Task 5 moves them in
-  case $n in cct:sync-template|cct:commit|cct:sprint|cct:challenge|cct:jev|cct:retro-review|cct:contribute-upstream|cct:karpathy-guidelines|cct:mcp-usage) continue ;; esac
+  # skill names (cct:<skill>) are the directories under skills/
+  [ -d "skills/${n#cct:}" ] && continue
   [ -f "agents/${n#cct:}.md" ] || c76_bad="$c76_bad $n"
 done
 [ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen)" || ko "76: unknown agents:$c76_bad"

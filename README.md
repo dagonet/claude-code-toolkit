@@ -3,7 +3,7 @@
 
 # Claude Code Toolkit
 
-> **Bootstrap a project with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workflow in one command.** Six template variants drop in an opinionated agent team, skills, MCP permissions, and workflow-enforcement hooks — so `/commit`, `/sprint`, and the `bash hooks/run-gate.sh` build/test gate work the moment you're done.
+> **Bootstrap a project with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workflow in one command.** Six template variants drop in an opinionated agent team, skills, MCP permissions, and workflow-enforcement hooks — so `/cct:commit`, `/cct:sprint`, and the `bash hooks/run-gate.sh` build/test gate work the moment you're done.
 
 ```bash
 ./setup-project.sh --variant python --project-name MyApp --target-path ../my-app
@@ -18,9 +18,9 @@
 
 - **6 template variants** (`general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`) with language-specific build hooks, format gates, and conventions baked in.
 - **6–7 agents per variant** — Explore, architect, code-reviewer, coder, ops, tester, plus a language-specific `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder` where it helps. Each one declares its own `model:` and `effort:`, so exploration runs on haiku and review on opus without the caller thinking about it.
-- **9 user-level skills**, no slash-command directory: `/challenge`, `/commit`, `/sprint`, `/sync-template`, `/contribute-upstream`, `/retro-review`, `/jev`, plus `mcp-usage` and `karpathy-guidelines` which auto-trigger. Anthropic merged custom commands into skills, so the toolkit ships one artifact type; the `Gate:` mechanism (`hooks/run-gate.sh`) replaced the old `/build` and `/test` commands, and the official `skill-creator` plugin replaced `/skill-eval` + `/skill-improve`.
+- **9 user-level skills**, no slash-command directory: `/cct:challenge`, `/cct:commit`, `/cct:sprint`, `/cct:sync-template`, `/cct:contribute-upstream`, `/cct:retro-review`, `/cct:jev`, plus `mcp-usage` and `karpathy-guidelines` which auto-trigger. Anthropic merged custom commands into skills, so the toolkit ships one artifact type; the `Gate:` mechanism (`hooks/run-gate.sh`) replaced the old `/build` and `/test` commands, and the official `skill-creator` plugin replaced `/skill-eval` + `/skill-improve`.
 - **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
-- **File ownership you can point at** (v3.1): every template file carries a class — `template` (the toolkit's, overwritten on sync), `once` (seeded, then yours forever), and project-by-absence (a file the table does not name is yours). `setup-project` records it per file in a manifest with a `sha256:` hash, so `/sync-template` stops guessing which of your edits it is allowed to discard. Your own instructions live in `.claude/project-instructions.md` (a `once` file that `CLAUDE.md`'s last line imports; since v4.1.0 `CLAUDE.md` itself is template-owned and carries no `PROJECT-CUSTOM` region).
+- **File ownership you can point at** (v3.1): every template file carries a class — `template` (the toolkit's, overwritten on sync), `once` (seeded, then yours forever), and project-by-absence (a file the table does not name is yours). `setup-project` records it per file in a manifest with a `sha256:` hash, so `/cct:sync-template` stops guessing which of your edits it is allowed to discard. Your own instructions live in `.claude/project-instructions.md` (a `once` file that `CLAUDE.md`'s last line imports; since v4.1.0 `CLAUDE.md` itself is template-owned and carries no `PROJECT-CUSTOM` region).
 - **Workflow enforcement hooks**: the git/`gh` CLI is allowed and *gated* — the hooks parse the command and stop a red-gate commit, a push to main, and an ungated merge; plus delegation enforcement (the orchestrator never edits code or runs builds), a `Read` size gate, an agent tool-call budget, and a retro ledger that records subagent failures and replays them at the next session start.
 
 ### Model & effort policy
@@ -103,7 +103,7 @@ If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE
 
    See [`docs/setup.md`](docs/setup.md) for per-variant flags and full examples.
 4. **(Optional) Install MCP servers** for tool-accelerated workflows: [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
-5. **Open your project in Claude Code** and try `/sprint` or `bash hooks/run-gate.sh`.
+5. **Open your project in Claude Code** and try `/cct:sprint` or `bash hooks/run-gate.sh`.
 
 > Prefer to walk Claude / Cursor / Copilot through the wizard interactively? See [`AGENTS.md`](AGENTS.md).
 

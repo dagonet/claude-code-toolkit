@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # verify-user-level-drift.sh [--worktree | <git-ref>]
 #
-# Diff user-level-reference/{CLAUDE.md,hooks/**,skills/**,agents/**,output-styles/**} against
+# Diff {user-level-reference/{CLAUDE.md,hooks/**,agents/**},skills/**,output-styles/**} against
 # the live ~/.claude/ tree.
 #
 # Direction of truth: **the reference leads, the live copy follows.** The repo
@@ -131,6 +131,19 @@ ref_copy() { # <repo-relative path>
   fi
 }
 
+# Since v5.0 skills/ and output-styles/ live at the plugin root; hooks/ and agents/
+# stay under user-level-reference/ until Task 13. A released tag older than v5.0
+# carries all four under user-level-reference/, so the tag listing falls back.
+sub_roots() { # <sub> -> candidate repo dirs, new location first
+  case "$1" in
+    skills|output-styles) printf '%s\n' "$1" "user-level-reference/$1" ;;
+    *) printf '%s\n' "user-level-reference/$1" ;;
+  esac
+}
+live_rel() { # <repo path of a file under a sub> -> its path relative to ~/.claude
+  case "$1" in user-level-reference/*) printf '%s' "${1#user-level-reference/}" ;; *) printf '%s' "$1" ;; esac
+}
+
 check_file() { # <repo-relative ref path> <live_path> [expected file, instead of the reference copy]
   src=${3:-$(ref_copy "$1")}
   if [ -z "$src" ]; then
@@ -198,17 +211,20 @@ check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md" "$claude_expe
 # The file SET comes from the reference too, not from the working tree: a file
 # added on a branch must not enlarge a released-tree comparison.
 for sub in hooks skills agents output-styles; do
-  if [ "$MODE" = "worktree" ]; then
-    [ -d "user-level-reference/$sub" ] || continue
-    files=$(find "user-level-reference/$sub" -type f)
-  else
-    files=$(git ls-tree -r --name-only "$REF" -- "user-level-reference/$sub" 2>/dev/null)
-  fi
+  files=""
+  for d in $(sub_roots "$sub"); do
+    if [ "$MODE" = "worktree" ]; then
+      [ -d "$d" ] || continue
+      files=$(find "$d" -type f)
+    else
+      files=$(git ls-tree -r --name-only "$REF" -- "$d" 2>/dev/null)
+    fi
+    [ -n "$files" ] && break
+  done
   [ -n "$files" ] || continue
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    rel="${f#user-level-reference/}"
-    check_file "$f" "$LIVE_ROOT/$rel"
+    check_file "$f" "$LIVE_ROOT/$(live_rel "$f")"
   done <<EOF
 $files
 EOF
@@ -218,13 +234,17 @@ done
 # an in-flight addition is visible rather than invisible; never a failure.
 if [ "$MODE" = "tag" ]; then
   for sub in hooks skills agents output-styles; do
-    [ -d "user-level-reference/$sub" ] || continue
-    while IFS= read -r f; do
-      git cat-file -e "$REF:$f" 2>/dev/null && continue
-      unreleased=$((unreleased + 1))
-      unreleased_list="$unreleased_list
+    for d in $(sub_roots "$sub"); do
+      [ -d "$d" ] || continue
+      while IFS= read -r f; do
+        git cat-file -e "$REF:$f" 2>/dev/null && continue
+        # a file the tag carries at the pre-v5.0 location is moved, not new
+        git cat-file -e "$REF:user-level-reference/${f#user-level-reference/}" 2>/dev/null && continue
+        unreleased=$((unreleased + 1))
+        unreleased_list="$unreleased_list
   UNRELEASED (not in $REF, not compared): $f"
-    done < <(find "user-level-reference/$sub" -type f)
+      done < <(find "$d" -type f)
+    done
   done
 fi
 
@@ -441,9 +461,9 @@ processed=0
 processed_list=""
 scanned=0
 scanned_rel=0
-for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks user-level-reference/skills user-level-reference/agents user-level-reference/output-styles -type f 2>/dev/null); do
+for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks skills user-level-reference/agents output-styles -type f 2>/dev/null); do
   [ -f "$f" ] || continue
-  rel="${f#user-level-reference/}"
+  rel=$(live_rel "$f")
   live="$LIVE_ROOT/$rel"
   [ -f "$live" ] || continue
   # THE BASELINE MUST BE THE SAME REFERENCE check_file USES. Counting against the

@@ -212,7 +212,7 @@ def _key_source(env, registry):
 
 def cmd_on(top, gd, env, out, key_src):
     if not os.path.isfile(os.path.join(_home(env), ".claude", "skills", "jev", "jev_route.py")):
-        raise CtlError("~/.claude/skills/jev/jev_route.py is not installed -- copy user-level-reference/skills/jev/ "
+        raise CtlError("~/.claude/skills/jev/jev_route.py is not installed -- copy skills/jev/ "
                        "to ~/.claude/skills/jev/ first; nothing was changed")
     if not resolver_lib(env, top):
         raise CtlError("no hooks/lib/agent-model.sh in this project or in ~/.claude/hooks/lib/ -- the router reuses "

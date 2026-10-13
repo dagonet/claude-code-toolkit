@@ -1,6 +1,6 @@
 """Tests for the Jev redactor (Phase 0's 15, trim tightened to the exact cap, + 1).
 
-Run: python3 -B -m unittest discover -s user-level-reference/skills/jev/tests -v
+Run: python3 -B -m unittest discover -s skills/jev/tests -v
 Fake secrets are assembled at runtime so no token-shaped literal is committed.
 """
 import getpass

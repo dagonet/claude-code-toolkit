@@ -2,7 +2,7 @@
 
 # Getting Started
 
-The toolkit is a template repository: `setup-project` copies a Claude Code configuration (agents, skills, hooks, rules, MCP permissions) into your project and records what it copied in a manifest so `/sync-template` can update it later. It ships no application code. This guide covers everything you need before running the setup script — prerequisites, optional dependencies, and adoption tiers — so you can decide how much of the setup to use.
+The toolkit is a template repository: `setup-project` copies a Claude Code configuration (agents, skills, hooks, rules, MCP permissions) into your project and records what it copied in a manifest so `/cct:sync-template` can update it later. It ships no application code. This guide covers everything you need before running the setup script — prerequisites, optional dependencies, and adoption tiers — so you can decide how much of the setup to use.
 
 ## Core Prerequisites (All Templates)
 

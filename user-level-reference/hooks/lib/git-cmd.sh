@@ -81,7 +81,7 @@
 # exists to catch. The distinction is the direction of the call: 127 arriving
 # FROM the harness means our script was not launched; 127 arriving from a child
 # we launched ourselves is that child's answer. See the verdict table in
-# user-level-reference/skills/sync-template/SKILL.md step 4.
+# skills/sync-template/SKILL.md step 4.
 #
 # WHY 78 EXISTS (v2.2.5, consumer report). `run-gate.sh`'s RUN_GATE_ACTIVE guard
 # fires correctly when a project's **Gate** value is `bash hooks/run-gate.sh`,

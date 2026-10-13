@@ -2,7 +2,7 @@
 
 [Back to README](../README.md)
 
-The toolkit is a template repository: it ships a Claude Code configuration (agents, skills, hooks, rules, MCP permissions) that `setup-project` copies into a project and `/sync-template` keeps current, and no application code. This document describes how those pieces fit together — the configuration layers, the agent team, the hooks, and the repository layout.
+The toolkit is a template repository: it ships a Claude Code configuration (agents, skills, hooks, rules, MCP permissions) that `setup-project` copies into a project and `/cct:sync-template` keeps current, and no application code. This document describes how those pieces fit together — the configuration layers, the agent team, the hooks, and the repository layout.
 
 ## Layered Configuration
 
