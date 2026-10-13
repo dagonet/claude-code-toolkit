@@ -117,6 +117,16 @@ if [ -z "$REPO_TOP" ]; then
   exit "$GC_TERMINAL_RC"
 fi
 
+# v4.6.2: this script gates the CWD's repository, not the checkout it lives in.
+# Run as `bash <worktree>/hooks/run-gate.sh` from another checkout, it gates that
+# other checkout -- easy to misread as gating the worktree. Warn only; never
+# change behaviour. Silent when the script's directory is not inside a git work
+# tree (the user-level copy in ~/.claude/hooks, a plugin cache copy).
+RG_SELF_TOP=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$RG_SELF_TOP" ] && [ "$RG_SELF_TOP" != "$REPO_TOP" ]; then
+  echo "WARN: run-gate.sh is from $RG_SELF_TOP but gates the current directory's repository $REPO_TOP; cd to the checkout you mean to gate." >&2
+fi
+
 # GC_KEY_PRE, defined locally: this script is deliberately standalone (it must
 # run with no JSON parser on PATH, which sourcing hooks/lib/git-cmd.sh would
 # forbid), so it repeats the constant rather than importing it. The definition

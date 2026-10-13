@@ -735,8 +735,7 @@ fi
 #      team (enforce-delegation.sh has no delegation surface to enforce),
 #      no project-team deliverable contract (enforce-agent-contract.sh has
 #      nothing to bind to), no per-task tool-call budget (agent-budget-warn.sh
-#      has nothing to warn about), no project-team skills convention
-#      (the retired require-skills-block.sh stub). The mirrored
+#      has nothing to warn about). The mirrored
 #      hooks are exactly the ones whose subject is the developer's MACHINE
 #      (git gates, secrets, output/read size, the retro ledger and its brief
 #      — both keyed on cwd -> project slug under the user's own
@@ -759,8 +758,6 @@ HOOKS_NO_MIRROR=(
   # agent-budget-warn.sh: warns against THIS repo's per-task tool-call budget
   # convention; a personal ~/.claude install has no such budget to warn about.
   "agent-budget-warn.sh"
-  # require-skills-block.sh: retired in v4.5.0 -- an unregistered no-op stub that ships for one release so a stale registration cannot fail closed; delete this entry together with the stub.
-  "require-skills-block.sh"
   # deny-claude-md-writes.sh (v4.1, spec §6): project scope only -- a
   # user-level deny would refuse CLAUDE.md writes in every non-consumer repo
   # on the machine, including this toolkit's own checkout and every project
