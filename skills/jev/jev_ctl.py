@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""jev_ctl.py -- `/jev on | off | status | report` (toolkit v4.4.0, Jev Phase 1a).
+"""jev_ctl.py -- `/cct:jev on | off | status | report` (toolkit v4.4.0, Jev Phase 1a; v5.0 plugin form).
 
-The switch is per CLONE: <git common dir>/jev/config.json. The router is
-registered per CHECKOUT: ONE PreToolUse(Agent) entry in this checkout's
-.claude/settings.local.json. model-floor.sh steps aside only when both are in
-place and the router is installed (hooks/lib/agent-model.sh am_jev_routing,
-ruling R-2), so a half-on state floors instead of inheriting the orchestrator's
-model. `off` writes "route": false FIRST, then restores settings.local.json
-byte for byte when nobody edited it since `on`, else removes only the Jev
-entry. Never prints the API key.
+The switch is per CLONE: <git common dir>/jev/config.json. Since v5.0 the cct
+plugin registers the router itself (hooks/jev-route.sh, jev-notice.sh), active
+only while that file says "route": true, so `on` writes the file and nothing
+else. model-floor.sh steps aside only when the router will run
+(hooks/lib/agent-model.sh am_jev_routing, ruling R-2). A v4 `/jev on` left ONE
+PreToolUse(Agent) entry and a SessionStart notice in the checkout's
+.claude/settings.local.json: `on` and `off` remove it. `off` writes
+"route": false FIRST, then restores that file byte for byte when nobody edited
+it since the v4 `on`, else removes only the Jev entries. Never prints the API key.
 """
 import sys
 
@@ -29,12 +30,12 @@ import jev_route  # noqa: E402
 REG_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0'
 # U-1: SessionStart stdout reaches the new session's context -- the only way a
 # new session learns the switch is on. No backticks: they would substitute in bash.
-SESSION_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && echo "Jev routing is ON in this repo (/jev on): omit model on Agent spawns -- Jev picks one per launch (user ruling U-1; an explicit model is never changed). /jev off restores naming it."; exit 0'
-MARKER = "skills/jev/jev_route.py"  # in both commands: has/remove find both entries
+SESSION_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && echo "Jev routing is ON in this repo (/cct:jev on): omit model on Agent spawns -- Jev picks one per launch (user ruling U-1; an explicit model is never changed). /cct:jev off restores naming it."; exit 0'
+MARKER = "skills/jev/jev_route.py"  # in both v4 commands: has/remove find both entries
+HERE = os.path.dirname(os.path.abspath(__file__))  # the router and (in the plugin) the resolver live next to / above this file
 CONFIG_ON = {"model": "jev-1.13.0", "threshold": 0.8, "route": True, "legs": False}
-EXCLUDE_LINE = ".claude/settings.local.json"
 LEDGER_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \| ([^|]+?) \| ")
-USAGE = "usage: /jev on | off | status | report   (Phase 1b `on legs` is not in this release)\n"
+USAGE = "usage: /cct:jev on | off | status | report   (Phase 1b `on legs` is not in this release)\n"
 
 
 class CtlError(Exception):
@@ -55,7 +56,7 @@ def locate(cwd, env=None):
     top = _git(cwd, env, "rev-parse", "--show-toplevel")
     gd = _git(cwd, env, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if not top or not gd:
-        raise CtlError("not inside a git checkout -- /jev is switched per clone")
+        raise CtlError("not inside a git checkout -- /cct:jev is switched per clone")
     return top, gd
 
 
@@ -82,7 +83,8 @@ def _dumps(obj):
 
 
 def resolver_lib(env, top):
-    for cand in (os.path.join(top, "hooks", "lib", "agent-model.sh"),
+    for cand in (os.path.join(HERE, "..", "..", "hooks", "lib", "agent-model.sh"),
+                 os.path.join(top, "hooks", "lib", "agent-model.sh"),
                  os.path.join(_home(env), ".claude", "hooks", "lib", "agent-model.sh")):
         if os.path.isfile(cand):
             return cand
@@ -124,23 +126,9 @@ def _groups(obj, event):
 
 
 def has_entry(obj):
-    """The ROUTER is registered (PreToolUse)."""
+    """The v4 ROUTER registration is present (PreToolUse)."""
     return any(isinstance(g, dict) and isinstance(g.get("hooks"), list) and any(_is_jev(h) for h in g["hooks"])
                for g in _groups(obj, "PreToolUse"))
-
-
-def add_entry(obj):
-    """Add the router (PreToolUse, matcher Agent) and the U-1 SessionStart notice."""
-    new = json.loads(json.dumps(obj))
-    hooks = new.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise CtlError('.claude/settings.local.json: "hooks" is not an object -- nothing was changed')
-    for event in JEV_EVENTS:
-        if not isinstance(hooks.setdefault(event, []), list):
-            raise CtlError('.claude/settings.local.json: "hooks.{}" is not a list -- nothing was changed'.format(event))
-    hooks["PreToolUse"].append({"matcher": "Agent", "hooks": [{"type": "command", "command": REG_COMMAND, "timeout": 5}]})
-    hooks["SessionStart"].append({"hooks": [{"type": "command", "command": SESSION_COMMAND, "timeout": 5}]})
-    return new
 
 
 def remove_entry(obj):
@@ -185,23 +173,6 @@ def _read_config(gd):
     return cfg if isinstance(cfg, dict) else None
 
 
-def _ensure_excluded(top, gd, env):
-    """Spec step 3: exclude settings.local.json unless git already ignores it."""
-    try:
-        if subprocess.run(["git", "-C", top, "check-ignore", "-q", EXCLUDE_LINE],
-                          capture_output=True, timeout=10, env=env).returncode == 0:
-            return False
-    except (OSError, subprocess.SubprocessError):
-        pass
-    path = os.path.join(gd, "info", "exclude")
-    data = _read(path) or b""
-    if EXCLUDE_LINE in data.decode("utf-8", "replace").splitlines():
-        return False
-    sep = b"" if not data or data.endswith(b"\n") else b"\n"
-    _write(path, data + sep + EXCLUDE_LINE.encode("utf-8") + b"\n")
-    return True
-
-
 def _key_source(env, registry):
     if (env.get("TYPESAFE_API_KEY") or "").strip():
         return "environment"
@@ -210,50 +181,9 @@ def _key_source(env, registry):
     return None
 
 
-def cmd_on(top, gd, env, out, key_src):
-    if not os.path.isfile(os.path.join(_home(env), ".claude", "skills", "jev", "jev_route.py")):
-        raise CtlError("~/.claude/skills/jev/jev_route.py is not installed -- copy skills/jev/ "
-                       "to ~/.claude/skills/jev/ first; nothing was changed")
-    if not resolver_lib(env, top):
-        raise CtlError("no hooks/lib/agent-model.sh in this project or in ~/.claude/hooks/lib/ -- the router reuses "
-                       "model-floor's resolution and cannot run without it; nothing was changed")
-    mf = _active_model_floor(env, top)
-    if mf and b"agent-model.sh" not in (_read(mf) or b""):
-        raise CtlError("{} predates v4.4.0 (it steps aside on the switch alone, so a sibling worktree would lose "
-                       "the floor) -- update it first (/sync-template, or the v4.4.0 hooks in ~/.claude/hooks/); "
-                       "nothing was changed".format(mf))
-    path = os.path.join(top, ".claude", "settings.local.json")
-    before = _read(path)
-    obj = parse_settings(before)
-    if has_entry(obj):
-        out.write("jev: the router is already registered in .claude/settings.local.json\n")
-    else:
-        new = add_entry(obj)
-        snap = {"existed": before is not None,
-                "before_b64": base64.b64encode(before or b"").decode("ascii"), "after": new}
-        _write(_snapshot_path(gd, top), _dumps(snap))
-        _write(path, _dumps(new))
-        out.write("jev: registered the router (PreToolUse, matcher Agent) and a session-start notice in "
-                  ".claude/settings.local.json\n")
-    _write(_config_path(gd), _dumps(CONFIG_ON))
-    if _ensure_excluded(top, gd, env):
-        out.write("jev: added .claude/settings.local.json to .git/info/exclude\n")
-    out.write("jev: ON for this clone -- spawns that pass no `model` are routed (one step at most from the "
-              "agent's default; review/architect types never below sonnet); other checkouts of this clone "
-              "need their own /jev on\n")
-    # U-1: the orchestrator must stop naming a model, or Jev routes nothing.
-    out.write("jev: ORCHESTRATOR -- from now on in this repo, omit `model` on Agent spawns: Jev picks one per "
-              "launch (user ruling U-1; an explicit model is never changed). New sessions are told by the "
-              "session-start notice.\n")
-    if not key_src:
-        out.write("jev: note -- no TYPESAFE_API_KEY: spawns get the project floor until one is set\n")
-    return 0
-
-
-def cmd_off(top, gd, env, out, key_src):
-    cfg = _read_config(gd) or dict(CONFIG_ON)
-    cfg["route"] = False
-    _write(_config_path(gd), _dumps(cfg))  # FIRST: model-floor floors again whatever happens below
+def _drop_v4_registration(top, gd, out):
+    """Remove what a v4 `/jev on` left in this checkout's settings.local.json: restore the bytes from before it
+    when nobody edited the file since, else remove only the Jev entries. Nothing there -> nothing happens."""
     path = os.path.join(top, ".claude", "settings.local.json")
     snap_path = _snapshot_path(gd, top)
     snap = None
@@ -271,13 +201,47 @@ def cmd_off(top, gd, env, out, key_src):
                 _write(path, base64.b64decode(snap.get("before_b64", "")))
             else:
                 os.remove(path)
-            out.write("jev: .claude/settings.local.json restored to its state before /jev on\n")
+            out.write("jev: .claude/settings.local.json restored to its state before the v4 /jev on\n")
         elif remove_entry(obj) != obj:
             _write(path, _dumps(remove_entry(obj)))
-            out.write("jev: .claude/settings.local.json changed since /jev on -- removed only the Jev entry "
+            out.write("jev: .claude/settings.local.json held a v4 Jev registration -- removed only the Jev entry "
                       "(the file was re-serialised)\n")
     if os.path.exists(snap_path):
         os.remove(snap_path)
+
+
+def cmd_on(top, gd, env, out, key_src):
+    if not os.path.isfile(os.path.join(HERE, "jev_route.py")):
+        raise CtlError("jev_route.py is not installed next to jev_ctl.py ({}) -- reinstall the cct plugin; "
+                       "nothing was changed".format(HERE))
+    if not resolver_lib(env, top):
+        raise CtlError("no hooks/lib/agent-model.sh in the cct plugin, this project or ~/.claude/hooks/lib/ -- the "
+                       "router reuses model-floor's resolution and cannot run without it; nothing was changed")
+    mf = _active_model_floor(env, top)
+    if mf and b"agent-model.sh" not in (_read(mf) or b""):
+        raise CtlError("{} predates v4.4.0 (it steps aside on the switch alone, so a sibling worktree would lose "
+                       "the floor) -- update it first (/sync-template, or the v4.4.0 hooks in ~/.claude/hooks/); "
+                       "nothing was changed".format(mf))
+    parse_settings(_read(os.path.join(top, ".claude", "settings.local.json")))  # unreadable -> refuse before any write
+    _write(_config_path(gd), _dumps(CONFIG_ON))
+    _drop_v4_registration(top, gd, out)
+    out.write("jev: ON for this clone -- spawns that pass no `model` are routed (one step at most from the "
+              "agent's default; review/architect types never below sonnet); the cct plugin registers the router, "
+              "other checkouts of this clone need no /cct:jev on; /cct:jev off switches it off\n")
+    # U-1: the orchestrator must stop naming a model, or Jev routes nothing.
+    out.write("jev: ORCHESTRATOR -- from now on in this repo, omit `model` on Agent spawns: Jev picks one per "
+              "launch (user ruling U-1; an explicit model is never changed). New sessions are told by the "
+              "session-start notice.\n")
+    if not key_src:
+        out.write("jev: note -- no TYPESAFE_API_KEY: spawns get the project floor until one is set\n")
+    return 0
+
+
+def cmd_off(top, gd, env, out, key_src):
+    cfg = _read_config(gd) or dict(CONFIG_ON)
+    cfg["route"] = False
+    _write(_config_path(gd), _dumps(cfg))  # FIRST: model-floor floors again whatever happens below
+    _drop_v4_registration(top, gd, out)
     out.write("jev: OFF for this clone -- model-floor applies the project default again; events stay in "
               "<git common dir>/jev/events/\n")
     out.write("jev: ORCHESTRATOR -- name `model` on every Agent spawn again (the user-level rule; U-1 "
@@ -308,11 +272,11 @@ def cmd_status(top, gd, env, out, key_src):
         registered = has_entry(parse_settings(_read(os.path.join(top, ".claude", "settings.local.json"))))
     except CtlError:
         registered = False
-    installed = os.path.isfile(os.path.join(_home(env), ".claude", "skills", "jev", "jev_route.py"))
+    installed = os.path.isfile(os.path.join(HERE, "jev_route.py"))
     lib = resolver_lib(env, top)
     src = key_src
-    out.write("jev: router registered in this checkout: {}\n".format("yes" if registered else "no"))
-    out.write("jev: router installed (~/.claude/skills/jev/jev_route.py): {}\n".format("yes" if installed else "no"))
+    out.write("jev: v4 registration left in this checkout (run /cct:jev off): {}\n".format("yes" if registered else "no"))
+    out.write("jev: router installed (next to jev_ctl.py): {}\n".format("yes" if installed else "no"))
     out.write("jev: resolver: {}\n".format(lib or "MISSING"))
     out.write("jev: TYPESAFE_API_KEY: {}\n".format("set ({})".format(src) if src else "not set"))
     evs = _events(gd)

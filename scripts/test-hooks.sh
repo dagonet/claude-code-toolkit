@@ -9663,7 +9663,7 @@ rm -rf "$JMGD/jev"
 # skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
 # Skipped by name (4) only where python3 is absent: the jq-only matrix config.
 echo "=== skills/jev (v4.4.0 J-PY) ==="
-JPY_WANT=92
+JPY_WANT=97
 JPY_DIR="$ROOT/skills/jev"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
   JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
@@ -11961,6 +11961,42 @@ v5r_direct=$(cd "$V5R" && unset RUN_GATE_ACTIVE CLAUDE_PLUGIN_ROOT && bash "$ROO
 expect "v5 red gate via cct-gate names cct-gate" yes "$(printf '%s' "$v5r_via" | grep -q "re-run 'cct-gate'" && echo yes || echo no)"
 expect "v5 red gate via run-gate.sh names the in-repo command" yes "$(printf '%s' "$v5r_direct" | grep -q "re-run 'bash hooks/run-gate.sh'" && echo yes || echo no)"
 # ---- end v5.0 cct-gate
+# ---- v5.0 jev: the plugin registers Jev, gated on <git common dir>/jev/config.json (Task 7)
+# Needs python3 (am_jev_routing probes it and the router is python): skipped by name in the jq-only configuration.
+if python3 -c '' >/dev/null 2>&1; then
+  V5J="$TMPROOT/v5jev plug"; mkdir -p "$V5J/hooks/lib" "$V5J/skills/jev" "$V5J/.claude-plugin"   # a space in the path on purpose
+  cp "$ROOT/hooks/run-hook.sh" "$ROOT/hooks/jev-route.sh" "$ROOT/hooks/jev-notice.sh" "$V5J/hooks/" 2>/dev/null
+  cp "$ROOT"/hooks/lib/*.sh "$V5J/hooks/lib/"
+  printf '{"name":"cct"}\n' > "$V5J/.claude-plugin/plugin.json"
+  printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5J/skills/jev/jev_route.py"   # a fake router: proves it was exec'd with stdin
+  V5JR=$(mkrepo v5jevrepo main); V5JH="$TMPROOT/v5jevhome"; mkdir -p "$V5JH" "$V5JR/.claude"
+  V5JGD=$(git -C "$V5JR" rev-parse --path-format=absolute --git-common-dir)
+  v5jev() { # <hook name> -> its stdout, then rc
+    ( export HOME="$V5JH" CLAUDE_PLUGIN_ROOT="$V5J" CLAUDE_PROJECT_DIR="$V5JR"; printf '{"tool_name":"Agent"}' | bash "$V5J/hooks/run-hook.sh" "$1" 2>/dev/null; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//'
+  }
+  rm -rf "$V5JGD/jev"
+  expect "v5 jev: no config -> jev-route silent" "rc=0" "$(v5jev jev-route)"
+  expect "v5 jev: no config -> jev-notice silent" "rc=0" "$(v5jev jev-notice)"
+  mkdir -p "$V5JGD/jev"; printf '{"route": false}\n' > "$V5JGD/jev/config.json"
+  expect "v5 jev: route false -> jev-route silent" "rc=0" "$(v5jev jev-route)"
+  printf '{"route": true}\n' > "$V5JGD/jev/config.json"
+  expect "v5 jev: route true -> the router runs, with stdin" "ROUTED rc=0" "$(v5jev jev-route)"
+  expect "v5 jev: route true -> jev-notice prints the notice" "yes rc=0" "$(v5jev jev-notice | grep -q 'omit model on Agent spawns' && echo yes) rc=0"
+  expect "v5 jev: the notice names the plugin command" "yes" "$(v5jev jev-notice | grep -q '/cct:jev off' && echo yes)"
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","command":"f=\\"$HOME/.claude/skills/jev/jev_route.py\\"; [ -f \\"$f\\" ] && python3 \\"$f\\"; exit 0"}]}]}}\n' > "$V5JR/.claude/settings.local.json"
+  expect "v5 jev: route true + v4 settings.local.json entry -> jev-route steps aside" "rc=0" "$(v5jev jev-route)"
+  expect "v5 jev: route true + v4 entry -> jev-notice steps aside" "rc=0" "$(v5jev jev-notice)"
+  rm -f "$V5JR/.claude/settings.local.json"
+  # am_jev_routing sees the plugin's router (so model-floor steps aside) without any settings.local.json
+  v5jam() ( export HOME="$V5JH" CLAUDE_PLUGIN_ROOT="$V5J"; . "$V5J/hooks/lib/agent-model.sh"; am_jev_routing "$V5JR" && echo on || echo off )
+  expect "v5 jev: route true, plugin router, no settings.local.json -> routing on" "on" "$(v5jam)"
+  rm "$V5J/skills/jev/jev_route.py"
+  expect "v5 jev: plugin router missing -> routing off (the floor applies)" "off" "$(v5jam)"
+  rm -rf "$V5JGD/jev"
+else
+  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 10
+fi
+# ---- end v5.0 jev
 
 
 echo "----------------------------------------------------------------"

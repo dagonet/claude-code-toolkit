@@ -9,15 +9,15 @@ argument-hint: on | off | status | report
 
 Run exactly one command, using the word the user typed after `/cct:jev` (no word means `status`), and relay its output verbatim:
 
-    python3 ~/.claude/skills/jev/jev_ctl.py status
+    python3 "${CLAUDE_SKILL_DIR}/jev_ctl.py" status
 
-(`on`, `off` or `report` in place of `status`.) Never edit `.claude/settings.local.json` or `<git common dir>/jev/config.json` yourself: `jev_ctl.py` writes both, and `off` restores the settings file byte for byte when nobody edited it since `on`.
+(`on`, `off` or `report` in place of `status`.) Never edit `.claude/settings.local.json` or `<git common dir>/jev/config.json` yourself: `jev_ctl.py` writes the config, and `on`/`off` also clear a v4 registration left in the settings file (`off` restores that file byte for byte when nobody edited it since the v4 `/jev on`).
 
 ## What it does
 
-- **On** (per clone): writes `{"model": "jev-1.13.0", "threshold": 0.8, "route": true, "legs": false}` to `<git common dir>/jev/config.json`, registers ONE `PreToolUse` entry (matcher `Agent`) and ONE `SessionStart` notice in this checkout's `.claude/settings.local.json`, and excludes that file from git. Another checkout (a worktree) of the same clone needs its own `/cct:jev on`; until then `hooks/model-floor.sh` keeps flooring there.
+- **On** (per clone): writes `{"model": "jev-1.13.0", "threshold": 0.8, "route": true, "legs": false}` to `<git common dir>/jev/config.json`. Nothing else is written: the cct plugin registers the router (`hooks/jev-route.sh`, `PreToolUse` `Agent`) and the session notice (`hooks/jev-notice.sh`) itself, and both act only while that file says `"route": true`. Every checkout of the clone, worktrees included, is covered by the one switch. A v4 `/jev on` left an entry in this checkout's `.claude/settings.local.json`; `on` and `off` remove it (until then the plugin steps aside for it, so routing never runs twice).
 - **Per spawn** that passes no `model`: TypeSafe's Jev picks a model in ~0.3 s. It applies only at confidence ≥ 0.8, at most one step from the default (the agent file's model, the project floor, or `CLAUDE_CODE_SUBAGENT_MODEL` where that applies), on haiku < sonnet < opus < fable, and never below sonnet for `review`/`architect` types. A spawn with no model of its own always leaves with one: Jev's choice, or the project floor when Jev is unsure, slow (2 s), unreachable or keyless. Effort is logged, never applied.
-- **Off**: the switch goes off first, so `hooks/model-floor.sh` floors again at once. Then the registration and the notice are removed. Events stay for `/cct:jev report`.
+- **Off**: the switch goes off first, so `hooks/model-floor.sh` floors again at once. Then any v4 registration and notice in `.claude/settings.local.json` are removed. Events stay for `/cct:jev report`.
 
 ## While on: omit `model` (user ruling U-1, 2026-10-02)
 

@@ -1,4 +1,5 @@
 """/jev on | off | status | report (v4.4.0 Task 8)."""
+import base64
 import datetime
 import io
 import json
@@ -39,46 +40,77 @@ class CtlTests(unittest.TestCase):
     def exclude_lines(self):
         return self.read(self.t.gd + "/info/exclude").decode("utf-8").splitlines()
 
-    def test_on_writes_config_registration_and_exclude(self):
+    def legacy_on(self, original=None):
+        """What a v4 `/jev on` left behind: the registration, a snapshot of the bytes before it, a config."""
+        before = original
+        obj = jc.parse_settings(before)
+        hooks = obj.setdefault("hooks", {})
+        hooks.setdefault("PreToolUse", []).append({"matcher": "Agent", "hooks": [
+            {"type": "command", "command": jc.REG_COMMAND, "timeout": 5}]})
+        hooks.setdefault("SessionStart", []).append({"hooks": [
+            {"type": "command", "command": jc.SESSION_COMMAND, "timeout": 5}]})
+        snap = {"existed": before is not None, "before_b64": base64.b64encode(before or b"").decode("ascii"), "after": obj}
+        top, gd = jc.locate(self.t.repo, self.t.env())
+        jc._write(jc._snapshot_path(gd, top), jc._dumps(snap))
+        jc._write(self.t.settings, jc._dumps(obj))
+        jc._write(self.t.config, jc._dumps(jc.CONFIG_ON))
+
+    def test_on_writes_config_and_nothing_else(self):
         rc, text = self.ctl("on")
         self.assertEqual(rc, 0, text)
         self.assertEqual(json.loads(self.read(self.t.config)), jc.CONFIG_ON)
-        obj = json.loads(self.read(self.t.settings))
-        self.assertEqual(obj["hooks"]["PreToolUse"], [{"matcher": "Agent", "hooks": [
-            {"type": "command", "command": jc.REG_COMMAND, "timeout": 5}]}])
-        # U-1: a new session must learn that Jev is on, and to omit `model`
-        self.assertEqual(obj["hooks"]["SessionStart"], [{"hooks": [
-            {"type": "command", "command": jc.SESSION_COMMAND, "timeout": 5}]}])
-        self.assertIn(".claude/settings.local.json", self.exclude_lines())
+        self.assertFalse(os.path.exists(self.t.settings))  # v5: the plugin registers Jev, not this checkout
+        self.assertFalse(os.path.exists(self.t.gd + "/info/exclude")
+                         and b"settings.local.json" in self.read(self.t.gd + "/info/exclude"))
         self.assertIn("omit `model`", text)
+        self.assertIn("/cct:jev off", text)
+        self.assertNotIn(" /jev ", text)
 
     def test_on_twice_is_idempotent(self):
         self.ctl("on")
-        first = self.read(self.t.settings)
+        first = self.read(self.t.config)
+        rc, _ = self.ctl("on")
+        self.assertEqual((rc, self.read(self.t.config)), (0, first))
+        self.assertFalse(os.path.exists(self.t.settings))
+
+    def test_on_leaves_an_unrelated_settings_file_alone(self):
+        mine = b'{"permissions": {"allow": ["Bash(ls)"]}}'
+        self.write(self.t.settings, mine)
+        rc, _ = self.ctl("on")
+        self.assertEqual((rc, self.read(self.t.settings)), (0, mine))
+
+    def test_on_drops_a_v4_registration(self):
+        original = b'{"permissions": {"allow": ["Bash(ls)"]}}\n'
+        self.write(self.t.settings, original)
+        self.legacy_on(original)
         rc, text = self.ctl("on")
-        self.assertEqual((rc, self.read(self.t.settings)), (0, first))
-        self.assertEqual(self.exclude_lines().count(".claude/settings.local.json"), 1)
-        self.assertIn("already registered", text)
+        self.assertEqual((rc, self.read(self.t.settings)), (0, original), text)
+        self.assertEqual(json.loads(self.read(self.t.config)), jc.CONFIG_ON)
 
     def test_round_trip_restores_existing_bytes(self):
         original = ('\ufeff{\r\n  "permissions": {"allow": ["Bash(ls)"]},\r\n  "hooks": {"PreToolUse": '
                     '[{"matcher": "Agent", "hooks": [{"type": "command", "command": "echo mine"}]}]}\r\n}\r\n').encode("utf-8")
         self.write(self.t.settings, original)
-        self.ctl("on")
+        self.legacy_on(original)
         self.assertNotEqual(self.read(self.t.settings), original)
         rc, text = self.ctl("off")
         self.assertEqual((rc, self.read(self.t.settings)), (0, original), text)
 
-    def test_round_trip_deletes_a_file_on_created(self):
-        self.assertFalse(os.path.exists(self.t.settings))
-        self.ctl("on")
+    def test_round_trip_deletes_a_file_the_v4_on_created(self):
+        self.legacy_on(None)
         self.assertTrue(os.path.exists(self.t.settings))
         _, text = self.ctl("off")
         self.assertFalse(os.path.exists(self.t.settings))
         self.assertIn("name `model` on every Agent spawn again", text)  # U-1: the rule returns
 
-    def test_off_after_user_edit_removes_only_the_jev_entry(self):
+    def test_off_without_a_v4_registration_touches_no_settings(self):
         self.ctl("on")
+        rc, _ = self.ctl("off")
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(self.t.settings))
+
+    def test_off_after_user_edit_removes_only_the_jev_entry(self):
+        self.legacy_on(None)
         obj = json.loads(self.read(self.t.settings))
         obj["permissions"] = {"allow": ["Bash(git status)"]}
         self.write(self.t.settings, json.dumps(obj).encode("utf-8"))
@@ -87,6 +119,18 @@ class CtlTests(unittest.TestCase):
         self.assertEqual(json.loads(self.read(self.t.settings)), {"permissions": {"allow": ["Bash(git status)"]}})
         self.assertIn("removed only the Jev entry", text)
 
+    def test_off_writes_route_false_before_touching_settings(self):
+        self.legacy_on(None)
+        self.write(self.t.settings, b"[1, 2]")  # off cannot parse this: the switch must already be false
+        rc, _ = self.ctl("off")
+        self.assertEqual(rc, 1)
+        self.assertIs(json.loads(self.read(self.t.config))["route"], False)
+
+    def test_usage_names_the_plugin_command(self):
+        rc, text = self.ctl("bogus")
+        self.assertEqual(rc, 2)
+        self.assertIn("/cct:jev on | off | status | report", text)
+
     def test_off_sets_route_false_and_the_floor_returns(self):
         self.ctl("on")
         self.assertEqual(self.t.lib_cli("general-purpose").split()[2], "1")
@@ -94,7 +138,17 @@ class CtlTests(unittest.TestCase):
         self.assertIs(json.loads(self.read(self.t.config))["route"], False)
         self.assertEqual(self.t.lib_cli("general-purpose").split()[2], "0")
 
+    def elsewhere(self, router):
+        """Point jev_ctl at a copy of itself outside the plugin: no resolver above it, a router only if asked."""
+        d = os.path.join(os.path.dirname(self.t.repo), "ctlcopy", "skills", "jev")
+        os.makedirs(d)
+        if router:
+            open(os.path.join(d, "jev_route.py"), "w").close()
+        real, jc.HERE = jc.HERE, d
+        self.addCleanup(setattr, jc, "HERE", real)
+
     def test_on_refuses_without_resolver(self):
+        self.elsewhere(router=True)
         os.remove(self.t.home_lib)
         rc, text = self.ctl("on")
         self.assertEqual(rc, 1)
@@ -102,7 +156,7 @@ class CtlTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.t.settings) or os.path.exists(self.t.config))
 
     def test_on_refuses_without_installed_router(self):
-        os.remove(self.t.skill_file)
+        self.elsewhere(router=False)
         rc, text = self.ctl("on")
         self.assertEqual(rc, 1)
         self.assertIn("not installed", text)
@@ -118,7 +172,7 @@ class CtlTests(unittest.TestCase):
 
     def test_on_refuses_a_non_object_settings_file(self):
         self.write(self.t.settings, b"[1, 2]")
-        rc, _ = self.ctl("on")
+        rc, _ = self.ctl("on")  # on looks for a v4 registration, so it must read the file
         self.assertEqual((rc, self.read(self.t.settings)), (1, b"[1, 2]"))
         self.assertFalse(os.path.exists(self.t.config))
 

@@ -11,6 +11,7 @@ here="$(cd "$(dirname "$0")" && pwd)" || exit 2
 case "$name" in
   no-push-main|deny-secret-reads)                              cls=machine; pol=closed ;;
   deny-hang-shapes|model-floor|bash-output-guard|verify-hooks) cls=machine; pol=open ;;
+  jev-route|jev-notice)                                        cls=machine; pol=open ;;
   pre-commit-test|gate-before-merge|deny-claude-md-writes)     cls=project; pol=closed ;;
   read-size-gate|enforce-delegation|agent-budget-warn)         cls=project; pol=warn ;;
   post-edit-build|enforce-agent-contract|retro-ledger|retro-brief|now-brief) cls=project; pol=open ;;

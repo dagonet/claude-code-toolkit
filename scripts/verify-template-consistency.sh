@@ -779,6 +779,10 @@ HOOKS_NO_MIRROR=(
   "run-hook.sh"
   "cct-session.sh"
   "hooks.json"
+  # jev-route.sh / jev-notice.sh (v5.0, Task 7): the plugin registers Jev (gated on <git common dir>/jev/config.json);
+  # a user-level copy would route a second time beside the plugin's.
+  "jev-route.sh"
+  "jev-notice.sh"
   # now-brief.sh (v4.5.0): reads PROJECT_STATE.md, a template-shipped project file; a bare user-level install has no "## Now" to print.
   "now-brief.sh"
 )

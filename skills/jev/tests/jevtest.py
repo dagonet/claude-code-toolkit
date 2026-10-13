@@ -17,7 +17,7 @@ import time
 sys.dont_write_bytecode = True
 
 SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPO_ROOT = os.environ.get("JEV_REPO_ROOT") or os.path.abspath(os.path.join(SKILL, "..", "..", ".."))
+REPO_ROOT = os.environ.get("JEV_REPO_ROOT") or os.path.abspath(os.path.join(SKILL, "..", ".."))
 LIB = os.path.join(REPO_ROOT, "hooks", "lib", "agent-model.sh")
 ROUTE = os.path.join(SKILL, "jev_route.py")
 KEY = "fake-key-0123456789"
@@ -69,7 +69,7 @@ class Sandbox:
 
     def env(self, endpoint="http://127.0.0.1:9/v1/systemone", key=KEY, extra=None):
         drop = {"TYPESAFE_API_KEY", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_SUBAGENT_MODEL",
-                "CLAUDE_CODE_SUBAGENT_MODEL_FORCE", "JEV_ENDPOINT", "XDG_CONFIG_HOME"}  # J-6: no user git config
+                "CLAUDE_CODE_SUBAGENT_MODEL_FORCE", "CLAUDE_PLUGIN_ROOT", "JEV_ENDPOINT", "XDG_CONFIG_HOME"}  # J-6: no user git config
         env = {k: v for k, v in os.environ.items() if k not in drop}
         env.update({"HOME": self.home, "JEV_TEST_MODE": "1", "JEV_TEST_SLACK": "15", "JEV_ENDPOINT": endpoint,
                     "PYTHONDONTWRITEBYTECODE": "1"})
