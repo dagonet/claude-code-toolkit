@@ -8,7 +8,7 @@
 #   - the user-level Jev router (~/.claude/skills/jev/jev_route.py) RUNS it:
 #       bash agent-model.sh <subagent_type> <cwd>
 #     and reads ONE line: "<kind> <model|-> <jev 0|1> <effort|-> <git common dir|->".
-#     Arguments are data: a type outside [A-Za-z0-9_.-] resolves to `none`.
+#     Arguments are data: a type outside [A-Za-z0-9_.-] (bar one `cct:` prefix) resolves to `none`.
 # kind: own   -- the agent file sets a model (an alias or a full id): its choice
 #       floor -- no model of its own (`inherit`, none, or a known inheriting
 #                built-in with no file): **Subagent default model**, else sonnet
@@ -16,7 +16,8 @@
 #                spawn (S-23/S-30); AM_MODEL is its value. model-floor steps
 #                aside (the native default wins); the Jev router routes from
 #                that value (user ruling U-1)
-#       none  -- a self-modelled built-in, a type no visible file defines, or an
+#       none  -- a self-modelled built-in, a type no visible file defines (cct:<n> is
+#                looked up in the plugin's agents/ only), another plugin's x:y, or an
 #                unsafe name: change nothing
 # Agent identity (S-22): the frontmatter `name:`, .claude/agents/ scanned
 # recursively, project before user level, filename as the fallback.
@@ -50,7 +51,9 @@ am_find() {
   done | head -1
 }
 
-# am_plugin_root -- the plugin checkout: CLAUDE_PLUGIN_ROOT, else two levels above this file.
+# am_plugin_root -- CLAUDE_PLUGIN_ROOT, else two levels above this file. The fallback is
+# right only when this library sits inside the plugin; the user-level copy points it at
+# ~/.claude, which Tasks 7/13 retire.
 am_plugin_root() { printf '%s' "${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"; }
 
 # am_resolve <type> <cwd> -- sets AM_KIND, AM_MODEL, AM_EFFORT, AM_ROOT.
@@ -64,10 +67,11 @@ am_resolve() {
   # Another plugin's agent (x:y) is not a toolkit agent: not ours, change nothing.
   am_plug=""
   case "$am_t" in
-    cct:*) am_t=${am_t#cct:}; am_plug=1 ;;
+    cct:*) am_t=${am_t#cct:}; am_plug=1
+           case "$am_t" in *..*) return 0 ;; esac ;;
     *:*)   return 0 ;;
   esac
-  case "$am_t" in *[!A-Za-z0-9_.-]*|.*|*..*) return 0 ;; esac
+  case "$am_t" in *[!A-Za-z0-9_.-]*|.*) return 0 ;; esac
   # Types that carry a model of their own (statusline-setup: sonnet,
   # claude-code-guide: haiku) or ignore a model override (fork).
   case "$am_t" in statusline-setup|claude-code-guide|fork) return 0 ;; esac
@@ -96,7 +100,7 @@ am_resolve() {
     case "$AM_MODEL" in ""|inherit) AM_MODEL="" ;; *) AM_KIND=own; return 0 ;; esac
   else
     # No file: only the known inheriting built-ins. Anything else may be defined
-    # where this cannot look (--agents, managed settings, a plugin): do nothing.
+    # where this cannot look (--agents, managed settings, another plugin): do nothing.
     case "$am_t" in general-purpose|Plan|Explore|claude) ;; *) return 0 ;; esac
   fi
   AM_MODEL=$(grep -E "${GC_KEY_PRE}\*\*Subagent default model\*\*:" "$AM_ROOT/PROJECT_CONTEXT.md" 2>/dev/null | head -1 | sed -E 's/.*\*\*Subagent default model\*\*:[[:space:]]*//; s/[`[:space:]]//g')

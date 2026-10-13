@@ -11859,27 +11859,43 @@ V5A="$TMPROOT/v5plug"; mkdir -p "$V5A/agents" "$V5A/hooks/lib" "$TMPROOT/v5nopro
 cp "$ROOT/hooks/lib/agent-model.sh" "$ROOT/hooks/lib/json.sh" "$V5A/hooks/lib/"
 printf -- '---\nname: coder\nmodel: sonnet\npipeline: true\n---\nx\n' > "$V5A/agents/coder.md"
 # am_resolve <type> <cwd> is what model-floor.sh calls; AM_MODEL is its answer
-v5am() ( . "$V5A/hooks/lib/agent-model.sh"; export CLAUDE_PLUGIN_ROOT="$V5A"; am_resolve "$1" "$TMPROOT/v5noproj"; printf '%s' "$AM_MODEL" )
+# HOME is private so the real ~/.claude/agents cannot answer a bare name.
+mkdir -p "$TMPROOT/v5home" "$TMPROOT/v5proj/.claude/agents"
+printf -- '---\nname: coder\nmodel: opus\n---\nx\n' > "$TMPROOT/v5proj/.claude/agents/coder.md"
+printf -- '---\nname: code-reviewer\nmodel: sonnet\npipeline: true\n---\nx\n' > "$V5A/agents/code-reviewer.md"
+v5am() ( export HOME="$TMPROOT/v5home" CLAUDE_PLUGIN_ROOT="$V5A"; . "$V5A/hooks/lib/agent-model.sh"; am_resolve "$1" "${2:-$TMPROOT/v5noproj}"; printf '%s' "$AM_MODEL" )
+v5am_noroot() ( export HOME="$TMPROOT/v5home"; unset CLAUDE_PLUGIN_ROOT; . "$V5A/hooks/lib/agent-model.sh"; am_resolve "$1" "$TMPROOT/v5noproj"; printf '%s' "$AM_MODEL" )
 expect "v5 agents: cct:coder resolves from the plugin" "sonnet" "$(v5am cct:coder)"
 expect "v5 agents: other plugin's agent is not ours" "" "$(v5am other:coder)"
 expect "v5 agents: unknown cct: name -> empty" "" "$(v5am cct:nobody)"
 expect "v5 agents: cct: name with a path -> empty" "" "$(v5am 'cct:../coder')"
-expect "v5 agents: bare name still resolves as in v4.6.1" "" "$(v5am coder)"
+expect "v5 agents: bare name resolves from the project, not the plugin" "opus" "$(v5am coder "$TMPROOT/v5proj")"
+expect "v5 agents: bare name with no project agent -> empty" "" "$(v5am coder)"
+expect "v5 agents: cct: name ignores the project's same-named agent" "sonnet" "$(v5am cct:coder "$TMPROOT/v5proj")"
+expect "v5 agents: CLAUDE_PLUGIN_ROOT unset falls back to the library's plugin root" "sonnet" "$(v5am_noroot cct:coder)"
 if [ -n "$HAVE_NODE" ]; then
-  v5ctr() { # <agent_type> <transcript> -> exit code of the contract hook
-    printf '%s' "$(mkstop "$PROJCWD" "$1" v5-agent-id "$2")" \
-      | TMPDIR="$TMPROOT/v5ct" CLAUDE_PLUGIN_ROOT="$V5A" CLAUDE_PROJECT_DIR="$TMPROOT/v5noproj" \
-        bash "$ROOT/hooks/enforce-agent-contract.sh" >/dev/null 2>&1
+  v5ctr() { # <agent_type> <transcript> [hook copy: run with CLAUDE_PLUGIN_ROOT unset] -> exit code of the contract hook
+    local hook="${3:-$ROOT/hooks/enforce-agent-contract.sh}" pr="$V5A"
+    [ -n "${3:-}" ] && pr=""
+    # a fresh agent id per call: the hook blocks only the FIRST violation of an id (loop guard)
+    printf '%s' "$(mkstop "$PROJCWD" "$1" "v5-agent-$RANDOM$RANDOM" "$2")" \
+      | env -u CLAUDE_PLUGIN_ROOT TMPDIR="$TMPROOT/v5ct" ${pr:+CLAUDE_PLUGIN_ROOT="$pr"} CLAUDE_PROJECT_DIR="$TMPROOT/v5noproj" \
+        bash "$hook" >/dev/null 2>&1
     echo "rc=$?"
   }
   mkdir -p "$TMPROOT/v5ct"
   V5BAD="$TMPROOT/v5bad.jsonl"; trow_str 'Looks fine to me.' > "$V5BAD"
+  V5CLEAN="$TMPROOT/v5clean.jsonl"; trow_str 'clean' > "$V5CLEAN"
+  cp "$ROOT/hooks/enforce-agent-contract.sh" "$V5A/hooks/"
   expect "v5 agents: cct:coder bad report -> contract blocks" "rc=2" "$(v5ctr cct:coder "$V5BAD")"
+  expect "v5 agents: cct:code-reviewer clean -> passes" "rc=0" "$(v5ctr cct:code-reviewer "$V5CLEAN")"
+  expect "v5 agents: cct:code-reviewer bad report -> blocks" "rc=2" "$(v5ctr cct:code-reviewer "$V5BAD")"
+  expect "v5 agents: cct:coder, CLAUDE_PLUGIN_ROOT unset, found by the hook's own path" "rc=2" "$(v5ctr cct:coder "$V5BAD" "$V5A/hooks/enforce-agent-contract.sh")"
   expect "v5 agents: other:x passes" "rc=0" "$(v5ctr other:x "$V5BAD")"
   expect "v5 agents: unknown cct: name passes" "rc=0" "$(v5ctr cct:nobody "$V5BAD")"
   expect "v5 agents: cct: path name passes" "rc=0" "$(v5ctr 'cct:../coder' "$V5BAD")"
 else
-  skip "v5 agents: enforce-agent-contract cct: cases" "no node on this host" 4
+  skip "v5 agents: enforce-agent-contract cct: cases" "no node on this host" 7
 fi
 # ---- end v5.0 agents
 
