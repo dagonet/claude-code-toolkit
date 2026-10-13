@@ -96,7 +96,7 @@ Anthropic's [context-engineering guidance for Claude 5 generation models](https:
 - The `process share` row has no new measurement this release.
 
 **v4.6.2's column is unchanged from v4.6.1's, byte for byte. It was re-measured with `wc -c` at this release's own tip, not carried forward.**
-- **What the release changed:** `hooks/run-gate.sh` and its user-level mirror (one stderr warning), the deletion of `hooks/require-skills-block.sh`, `verify-user-level-drift.sh`, the sync-template `SKILL.md` (step 6b.1c and the marker), the tests, docs, `VERSION` and the CHANGELOG. The root `CLAUDE.md` changed, but it is this repo's own file and is not a column of this table.
+- **What the release changed:** `hooks/run-gate.sh` and its user-level mirror (one stderr warning), and a comment correction in `hooks/lib/git-cmd.sh` and `hooks/run-gate.sh` (plus both mirrors), the deletion of `hooks/require-skills-block.sh`, `verify-user-level-drift.sh`, the sync-template `SKILL.md` (step 6b.1c and the marker), the tests, docs, `VERSION` and the CHANGELOG. The root `CLAUDE.md` changed, but it is this repo's own file and is not a column of this table.
 - **What did not move:** no template `CLAUDE.md`, `.claude/rules/project.md`, seed, `pm-report` style, user-level `CLAUDE.md`, `PROJECT_CONTEXT.md`, `AGENT_TEAM.md` or skill count.
 - **Per-variant figures:** harness-injected general 17,808, java 17,800, dotnet-maui 17,804, python 17,804, dotnet 17,805, rust-tauri 17,806. End of bootstrap general 23,066, java 23,225, dotnet 23,242, python 23,195, rust-tauri 23,414, dotnet-maui 23,593.
 - The `process share` row has no new measurement this release.

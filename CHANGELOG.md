@@ -25,12 +25,12 @@ Patch. Three small items left over from v4.6.1.
 
 ### Downstream migration
 0. The skill body and the server's VERSION changed: a FULL session restart is needed. Dependencies are unchanged.
-1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/` and `user-level-reference/hooks/run-gate.sh` to `~/.claude/hooks/`. On Linux, re-run `bash scripts/install-user-level-linux.sh` instead.
+1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/` and `user-level-reference/hooks/run-gate.sh` to `~/.claude/hooks/`, and `user-level-reference/hooks/lib/git-cmd.sh` (comment only) to `~/.claude/hooks/lib/`. On Linux, re-run `bash scripts/install-user-level-linux.sh` instead.
 2. Consumers get `hooks/require-skills-block.sh` as `TEMPLATE_DELETED` on their next `/sync-template`. A `settings.json` that still registered it (the v4.4 form) would now fail closed through its 127 wrapper; v4.5.0 already unregistered it, and a consumer that kept the old registration (LOCAL_EDITED) should remove that entry before accepting the deletion; otherwise every Agent spawn is refused with HOOK SCRIPT MISSING. /sync-template reports such a hook as still referenced and does not delete it unattended.
 
 Counts, never carried forward:
 - **Consistency:** **439** PASS lines from one full `bash scripts/verify-template-consistency.sh` run inside the gate at the pre-commit tree, ALL CHECKS PASSED (v4.6.1: 441; the two fewer are the per-hook `parses` and `reverse-mirror ... on HOOKS_NO_MIRROR` assertions for the deleted file; no check was added or removed).
-- **Hook suite:** 4179 passed, 0 failed, 6 skipped (4185 assertions) on agent-host-1, non-root, `GATE PASS` (v4.6.1: 4179 / 0 / 6). The net -1 is the 8 assertions of the deleted A5 block against the 8 new ones (run-gate warning 5, drift reference 3; counted from the gate log).
+- **Hook suite:** 4179 passed, 0 failed, 6 skipped (4185 assertions) on agent-host-1, non-root, `GATE PASS` (v4.6.1: 4179 / 0 / 6). Unchanged from v4.6.1: the 8 assertions of the deleted A5 block are replaced by 8 new ones (run-gate warning 5, drift reference 3; counted from the gate log).
 - **Server suite:** 555 passed, 10 skipped on Linux (v4.6.1: the same; no server code changed).
 - **Not re-run this release:** the Windows suite and the parser matrix. The run-gate warning is one `git rev-parse` pair and a `[ ]` test; the matrix is for `hooks/lib/json.sh` changes.
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.6.1's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
