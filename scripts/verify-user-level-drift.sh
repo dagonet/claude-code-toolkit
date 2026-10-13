@@ -144,8 +144,22 @@ live_rel() { # <repo path of a file under a sub> -> its path relative to ~/.clau
   case "$1" in user-level-reference/*) printf '%s' "${1#user-level-reference/}" ;; *) printf '%s' "$1" ;; esac
 }
 
+# The path under which the reference carries <repo path>: itself, else (a tag older than v5.0)
+# its user-level-reference/ twin; nothing when neither exists. ONE resolver for every site.
+released_path() { # <repo-relative path>
+  if [ "$MODE" = "worktree" ]; then
+    [ -f "$1" ] && printf '%s' "$1"
+    return
+  fi
+  if git cat-file -e "$REF:$1" 2>/dev/null; then printf '%s' "$1"; return; fi
+  if git cat-file -e "$REF:user-level-reference/${1#user-level-reference/}" 2>/dev/null; then
+    printf '%s' "user-level-reference/${1#user-level-reference/}"
+  fi
+}
+
 check_file() { # <repo-relative ref path> <live_path> [expected file, instead of the reference copy]
-  src=${3:-$(ref_copy "$1")}
+  rp=$(released_path "$1")
+  src=${3:-${rp:+$(ref_copy "$rp")}}
   if [ -z "$src" ]; then
     # Present on this branch, absent from the released reference.
     unreleased=$((unreleased + 1))
@@ -237,9 +251,8 @@ if [ "$MODE" = "tag" ]; then
     for d in $(sub_roots "$sub"); do
       [ -d "$d" ] || continue
       while IFS= read -r f; do
-        git cat-file -e "$REF:$f" 2>/dev/null && continue
-        # a file the tag carries at the pre-v5.0 location is moved, not new
-        git cat-file -e "$REF:user-level-reference/${f#user-level-reference/}" 2>/dev/null && continue
+        # a file the tag carries at either location (pre-v5.0 included) is moved, not new
+        [ -n "$(released_path "$f")" ] && continue
         unreleased=$((unreleased + 1))
         unreleased_list="$unreleased_list
   UNRELEASED (not in $REF, not compared): $f"
@@ -474,7 +487,8 @@ for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks skills
   # baseline, not processing — the consumer's own lesson, arriving from inside.
   # The working tree is used only when the file is absent from the reference,
   # which is the UNRELEASED case this check exists to reach.
-  srcf=$(ref_copy "$f")
+  rp=$(released_path "$f")
+  srcf=${rp:+$(ref_copy "$rp")}
   if [ -n "$srcf" ]; then
     # RELEASED file: check_file already compared it BYTE-WISE against the same
     # reference. Counting placeholders here adds nothing and can only be wrong

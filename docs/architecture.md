@@ -233,13 +233,13 @@ claude-code-toolkit/
 │   ├── rust-tauri/                        # + rust-coder, rules/rust.md + frontend.md, rustfmt.toml, .prettierrc
 │   ├── java/                              # + java-coder, rules/java.md, .editorconfig
 │   └── python/                            # + python-coder, rules/python.md, .editorconfig
+├── skills/                                # 9 skills at the plugin root since v5.0 (installed as /cct:<name>)
+├── output-styles/                         # pm-report output style (default via settings.json outputStyle)
 ├── mcp-servers/
 │   └── HOWTO.md                           # MCP server installation guide
 └── user-level-reference/                  # ~/.claude/ reference for new machines
     ├── CLAUDE.md · settings.json          # user-level instructions and settings
     ├── agents/                            # 6 generic agent definitions (incl. Explore)
-    ├── skills/                            # 9 skills (commands were merged into skills)
-    ├── output-styles/                     # pm-report output style (default via settings.json outputStyle)
     ├── hooks/                             # byte-identical mirror of the root hooks/ subset used at user level (13 of 19)
     ├── .mcp.json.template                 # MCP server config template
     └── settings-reference.md              # Annotated settings reference

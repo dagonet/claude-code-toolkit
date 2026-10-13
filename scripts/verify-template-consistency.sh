@@ -1510,13 +1510,13 @@ fi
 #         either self-test fails, the 0 below means the detector is inert and is
 #         reported as such rather than as a pass.
 ULR_BOM=$(printf '\357\273\277')
-ulr_sweep_sh() {   # <dir> -> executable-position placeholder hits in *.sh
-  grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' "$1" 2>/dev/null \
+ulr_sweep_sh() {   # <dir>... -> executable-position placeholder hits in *.sh
+  grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' "$@" 2>/dev/null \
     | grep -v ":[0-9]*:\(${ULR_BOM}\)\?[[:space:]]*#"
 }
-ulr_sweep_md() {   # <dir> -> placeholders on a `- **Key**: value` config line
+ulr_sweep_md() {   # <dir>... -> placeholders on a `- **Key**: value` config line
   grep -rn --include='*.md' -- \
-    "^\(${ULR_BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" "$1" 2>/dev/null
+    "^\(${ULR_BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" "$@" 2>/dev/null
 }
 ULRFIX=$(mktemp -d)
 # The planted placeholder is ASSEMBLED, never spelled literally in an executable
@@ -1533,11 +1533,11 @@ ulr_pos_md=$(ulr_sweep_md "$ULRFIX" | grep -c 'value\.md')
 ulr_neg_md=$(ulr_sweep_md "$ULRFIX" | grep -c 'prose\.md')
 if [ "$ulr_pos_sh" -eq 1 ] && [ "$ulr_neg_sh" -eq 0 ] && [ "$ulr_pos_md" -eq 1 ] && [ "$ulr_neg_md" -eq 0 ]; then
   ok "executable-position sweep: detector verified live (shell value hit / BOM'd comment ignored, md value hit / prose ignored)"
-  ulr_hits=$( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | grep -c . )
+  ulr_hits=$( { ulr_sweep_sh user-level-reference skills output-styles; ulr_sweep_md user-level-reference skills output-styles; } | grep -c . )
   if [ "$ulr_hits" -eq 0 ]; then
-    ok "user-level-reference/ (*.sh + *.md only): 0 placeholders in an EXECUTABLE position (a hook would run a literal {{...}})"
+    ok "user-level-reference/ + skills/ + output-styles/ (*.sh + *.md only): 0 placeholders in an EXECUTABLE position (a hook would run a literal {{...}})"
   else
-    ko "user-level-reference/ (*.sh + *.md only): $ulr_hits placeholder(s) in an EXECUTABLE position — the user-level install substitutes NOTHING, so a shipped hook will run the literal {{...}}: $( { ulr_sweep_sh user-level-reference; ulr_sweep_md user-level-reference; } | head -3 | tr '\n' ' ')"
+    ko "user-level-reference/ + skills/ + output-styles/ (*.sh + *.md only): $ulr_hits placeholder(s) in an EXECUTABLE position — the user-level install substitutes NOTHING, so a shipped hook will run the literal {{...}}: $( { ulr_sweep_sh user-level-reference skills output-styles; ulr_sweep_md user-level-reference skills output-styles; } | head -3 | tr '\n' ' ')"
   fi
 else
   ko "executable-position sweep is INERT — its own self-test failed (shell hit=$ulr_pos_sh want 1, shell comment=$ulr_neg_sh want 0, md hit=$ulr_pos_md want 1, md prose=$ulr_neg_md want 0). A detector that matches nothing also reports 0; do NOT read the count below as a pass."
@@ -2487,7 +2487,7 @@ fi
 echo
 b1_files=$( { ls ./*.md 2>/dev/null
               ls docs/*.md 2>/dev/null
-              find templates user-level-reference -name '*.md' 2>/dev/null
+              find templates user-level-reference skills output-styles -name '*.md' 2>/dev/null
               ls hooks/*.sh 2>/dev/null
             } | sed 's@^\./@@' | grep -v '^CHANGELOG\.md$' | sort -u )
 
@@ -2832,7 +2832,7 @@ while IFS= read -r b3_f; do
       b3_bad=$((b3_bad + 1))
     fi
   done < <(b3_extract "$b3_f")
-done < <(git ls-files -- 'docs/*.md' 'docs/*/*.md' 'user-level-reference/*.md' 'user-level-reference/*/*.md' 'user-level-reference/*/*/*.md' 2>/dev/null)
+done < <(git ls-files -- 'docs/*.md' 'docs/*/*.md' 'user-level-reference/*.md' 'user-level-reference/*/*.md' 'user-level-reference/*/*/*.md' 'skills/*.md' 'output-styles/*.md' 2>/dev/null)
 
 # Arm A — the assertion itself.
 if [ "$b3_bad" -eq 0 ]; then

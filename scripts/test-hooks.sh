@@ -11813,6 +11813,25 @@ else
   skip_host "DL1-9 drift script compares the Linux rendering" "not a Linux host" 18
 fi
 # ---- end v4.6.1 drift
+# ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
+# One resolver (released_path) serves the compare, the unreleased list and the verbatim loop. Scratch clone,
+# temp HOME holding the v4.6.1 skill files: nothing under the real HOME is read.
+if git -C "$ROOT" rev-parse --verify -q 'v4.6.1^{commit}' >/dev/null && ! git -C "$ROOT" cat-file -e 'v4.6.1:skills/sync-template/SKILL.md' 2>/dev/null; then
+  DR_S="$TMPROOT/dr-scratch"; DR_H="$TMPROOT/dr-home"
+  git clone -q --no-hardlinks "$ROOT" "$DR_S" 2>/dev/null
+  cp "$ROOT/scripts/verify-user-level-drift.sh" "$DR_S/scripts/"
+  mkdir -p "$DR_H/.claude"
+  git -C "$ROOT" archive v4.6.1 user-level-reference/skills | tar -x -C "$TMPROOT" --one-top-level=dr-arch
+  cp -r "$TMPROOT/dr-arch/user-level-reference/skills" "$DR_H/.claude/skills"
+  printf '\n{{%s}}\n' PLANTED_EXTRA >> "$DR_S/skills/sync-template/SKILL.md"
+  DR_OUT=$(HOME="$DR_H" bash "$DR_S/scripts/verify-user-level-drift.sh" v4.6.1 2>&1)
+  expect "DR1 pre-v5.0 tag: released skill file is not PROCESSED" 0 "$(printf '%s\n' "$DR_OUT" | grep -c 'PROCESSED')"
+  expect "DR1 pre-v5.0 tag: released skill file is not UNRELEASED" 0 "$(printf '%s\n' "$DR_OUT" | grep -c 'UNRELEASED.*skills/')"
+  expect "DR1 pre-v5.0 tag: skill files compared, none drifted"    0 "$(printf '%s\n' "$DR_OUT" | grep -c 'DRIFT: .*/skills/')"
+else
+  skip_host "DR1 pre-v5.0 tag skill resolution" "tag v4.6.1 absent or already carries skills/ at the root" 3
+fi
+# ---- end v5.0 fix round
 # ---- v5.0 run-hook: class, signal, step-aside, polarity (spec §3.1, §3.2, §3.5)
 V5H="$TMPROOT/v5 hooks dir"; mkdir -p "$V5H/lib"            # a space in the path on purpose (Review Focus 2)
 cp "$ROOT/hooks/run-hook.sh" "$V5H/" 2>/dev/null
