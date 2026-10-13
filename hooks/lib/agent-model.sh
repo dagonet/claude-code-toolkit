@@ -50,6 +50,9 @@ am_find() {
   done | head -1
 }
 
+# am_plugin_root -- the plugin checkout: CLAUDE_PLUGIN_ROOT, else two levels above this file.
+am_plugin_root() { printf '%s' "${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"; }
+
 # am_resolve <type> <cwd> -- sets AM_KIND, AM_MODEL, AM_EFFORT, AM_ROOT.
 # AM_ROOT stays empty on the early `env`/`none` answers (no git call needed).
 am_resolve() {
@@ -57,17 +60,30 @@ am_resolve() {
   am_t=${1:-general-purpose}
   am_env_forced && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
   [ -n "$AM_ENV_REAL" ] && [ "$am_t" = general-purpose ] && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
-  case "$am_t" in *[!A-Za-z0-9_.-]*|.*) return 0 ;; esac
+  # v5.0: plugin agents are named cct:<name> and live in the plugin's agents/ (spec §2).
+  # Another plugin's agent (x:y) is not a toolkit agent: not ours, change nothing.
+  am_plug=""
+  case "$am_t" in
+    cct:*) am_t=${am_t#cct:}; am_plug=1 ;;
+    *:*)   return 0 ;;
+  esac
+  case "$am_t" in *[!A-Za-z0-9_.-]*|.*|*..*) return 0 ;; esac
   # Types that carry a model of their own (statusline-setup: sonnet,
   # claude-code-guide: haiku) or ignore a model override (fork).
   case "$am_t" in statusline-setup|claude-code-guide|fork) return 0 ;; esac
   AM_ROOT=$(git -C "${2:-.}" rev-parse --show-toplevel 2>/dev/null) || AM_ROOT=${2:-.}
   am_file=""
-  for am_d in "$AM_ROOT/.claude/agents" "$HOME/.claude/agents"; do
-    am_file=$(am_find "$am_d" "$am_t")
-    [ -n "$am_file" ] && break
-  done
-  if [ -z "$am_file" ]; then
+  if [ -n "$am_plug" ]; then
+    # exactly the plugin's file: no project/user lookup, and no built-in fallback below
+    am_file="$(am_plugin_root)/agents/$am_t.md"
+    [ -f "$am_file" ] || return 0
+  else
+    for am_d in "$AM_ROOT/.claude/agents" "$HOME/.claude/agents"; do
+      am_file=$(am_find "$am_d" "$am_t")
+      [ -n "$am_file" ] && break
+    done
+  fi
+  if [ -z "$am_file" ] && [ -z "$am_plug" ]; then
     for am_f in "$AM_ROOT/.claude/agents/$am_t.md" "$HOME/.claude/agents/$am_t.md"; do
       [ -f "$am_f" ] && { am_file=$am_f; break; }
     done

@@ -74,7 +74,14 @@ AGENT_TYPE=$(json_get "$INPUT" agent_type)
 case "$AGENT_TYPE" in
   *"/"*|*"\\"*|*".."*) exit 0 ;;
 esac
-def="${CLAUDE_PROJECT_DIR:-.}/.claude/agents/${AGENT_TYPE}.md"
+# v5.0: cct:<name> is a plugin agent, read from the plugin's agents/ (spec §2);
+# another plugin's x:y is not a toolkit agent. The verdict below keys on the bare name.
+case "$AGENT_TYPE" in
+  cct:*) AGENT_TYPE=${AGENT_TYPE#cct:}
+         def="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/agents/${AGENT_TYPE}.md" ;;
+  *:*)   exit 0 ;;
+  *)     def="${CLAUDE_PROJECT_DIR:-.}/.claude/agents/${AGENT_TYPE}.md" ;;
+esac
 if [ -f "$def" ]; then
   # Confine the match to the frontmatter block (between the first two `---`
   # lines) so a `pipeline:` line appearing only in the agent's body text does

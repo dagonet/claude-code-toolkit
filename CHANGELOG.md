@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- v5.0 in progress on feat/v5.0: M1 (plugin manifests, run-hook wrapper, session marker, hooks.json; no behaviour change for any project yet).
+
 ## v4.6.1 — 2026-10-13
 
 Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux agent host. Five consumers reported them: open-brain, WebSiteVerifier, Yutraffic-Challenge, panoscribe and penumbra.

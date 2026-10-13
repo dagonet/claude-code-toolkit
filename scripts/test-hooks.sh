@@ -11854,6 +11854,35 @@ expect "v5 session: unsafe id writes nothing" "rc=0 0" "$(v5sess '{"session_id":
 expect "v5 session: no id writes nothing" "rc=0 1" "$(v5sess '{}') $(ls "$V5T/cct-$(id -u)" | wc -l | tr -d ' ')"
 # ---- end v5.0 run-hook
 
+# ---- v5.0 agents: cct:<name> resolves from the plugin's agents/ (spec §2)
+V5A="$TMPROOT/v5plug"; mkdir -p "$V5A/agents" "$V5A/hooks/lib" "$TMPROOT/v5noproj"
+cp "$ROOT/hooks/lib/agent-model.sh" "$ROOT/hooks/lib/json.sh" "$V5A/hooks/lib/"
+printf -- '---\nname: coder\nmodel: sonnet\npipeline: true\n---\nx\n' > "$V5A/agents/coder.md"
+# am_resolve <type> <cwd> is what model-floor.sh calls; AM_MODEL is its answer
+v5am() ( . "$V5A/hooks/lib/agent-model.sh"; export CLAUDE_PLUGIN_ROOT="$V5A"; am_resolve "$1" "$TMPROOT/v5noproj"; printf '%s' "$AM_MODEL" )
+expect "v5 agents: cct:coder resolves from the plugin" "sonnet" "$(v5am cct:coder)"
+expect "v5 agents: other plugin's agent is not ours" "" "$(v5am other:coder)"
+expect "v5 agents: unknown cct: name -> empty" "" "$(v5am cct:nobody)"
+expect "v5 agents: cct: name with a path -> empty" "" "$(v5am 'cct:../coder')"
+expect "v5 agents: bare name still resolves as in v4.6.1" "" "$(v5am coder)"
+if [ -n "$HAVE_NODE" ]; then
+  v5ctr() { # <agent_type> <transcript> -> exit code of the contract hook
+    printf '%s' "$(mkstop "$PROJCWD" "$1" v5-agent-id "$2")" \
+      | TMPDIR="$TMPROOT/v5ct" CLAUDE_PLUGIN_ROOT="$V5A" CLAUDE_PROJECT_DIR="$TMPROOT/v5noproj" \
+        bash "$ROOT/hooks/enforce-agent-contract.sh" >/dev/null 2>&1
+    echo "rc=$?"
+  }
+  mkdir -p "$TMPROOT/v5ct"
+  V5BAD="$TMPROOT/v5bad.jsonl"; trow_str 'Looks fine to me.' > "$V5BAD"
+  expect "v5 agents: cct:coder bad report -> contract blocks" "rc=2" "$(v5ctr cct:coder "$V5BAD")"
+  expect "v5 agents: other:x passes" "rc=0" "$(v5ctr other:x "$V5BAD")"
+  expect "v5 agents: unknown cct: name passes" "rc=0" "$(v5ctr cct:nobody "$V5BAD")"
+  expect "v5 agents: cct: path name passes" "rc=0" "$(v5ctr 'cct:../coder' "$V5BAD")"
+else
+  skip "v5 agents: enforce-agent-contract cct: cases" "no node on this host" 4
+fi
+# ---- end v5.0 agents
+
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

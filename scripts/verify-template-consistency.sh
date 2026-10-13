@@ -5153,7 +5153,25 @@ c74_bad=""
 for n in $c74_names; do [ -f "hooks/$n.sh" ] || c74_bad="$c74_bad missing:$n"; done
 [ "$c74_names" = "$c74_classed" ] || c74_bad="$c74_bad hooks.json-vs-run-hook.sh-class-table-differ"
 grep -q 'cct-session.sh' hooks/hooks.json || c74_bad="$c74_bad no-session-marker-hook"
+[ -f hooks/cct-session.sh ] || c74_bad="$c74_bad missing:cct-session"
 if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) hooks, all present and classed"; else ko "74: hooks.json/run-hook.sh:$c74_bad"; fi
+
+# ---------------------------------------------------------------------------
+# Check 75 (v5.0, spec §5): no plugin agent carries frontmatter hooks: (F4: silently ignored)
+# ---------------------------------------------------------------------------
+c75=$(for f in agents/*.md; do awk 'NR==1&&/^---$/{fm=1;next} fm&&/^---$/{exit} fm&&/^hooks:/{print FILENAME}' "$f"; done)
+[ -z "$c75" ] && ok "75: no agents/*.md carries frontmatter hooks:" || ko "75: frontmatter hooks: in $c75"
+
+# ---------------------------------------------------------------------------
+# Check 76 (v5.0, spec §2): every cct:<agent> the docs mention exists in agents/
+# ---------------------------------------------------------------------------
+c76_bad=""
+for n in $(grep -rhoE 'cct:[A-Za-z][A-Za-z-]*' templates user-level-reference skills agents README.md AGENTS.md 2>/dev/null | sort -u); do
+  # skill names (cct:<skill>); derive this from ls skills/ once Task 5 moves them in
+  case $n in cct:sync-template|cct:commit|cct:sprint|cct:challenge|cct:jev|cct:retro-review|cct:contribute-upstream|cct:karpathy-guidelines|cct:mcp-usage) continue ;; esac
+  [ -f "agents/${n#cct:}.md" ] || c76_bad="$c76_bad $n"
+done
+[ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/" || ko "76: unknown agents:$c76_bad"
 
 # ---------------------------------------------------------------------------
 echo
