@@ -19,6 +19,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REF=$ROOT/user-level-reference
 PLAT=$ROOT/scripts/linux/CLAUDE-platform-linux.md
+. "$ROOT/scripts/linux/linux-render.sh"   # the Linux rewrites, shared with verify-user-level-drift.sh
 L=$HOME/.claude
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 PLUGINS="superpowers skill-creator frontend-design"
@@ -35,12 +36,8 @@ mkdir -p "$L/agents" "$L/skills" "$L/hooks" "$L/output-styles"
 
 echo "1. CLAUDE.md (Linux platform section)"
 backup "$L/CLAUDE.md"
-awk -v plat="$PLAT" '
-  /^## Platform: Windows \+ Git Bash/ { while ((getline line < plat) > 0) print line; skip = 1; next }
-  skip && /^## / { skip = 0 }
-  !skip { print }' "$REF/CLAUDE.md" | sed 's#G:/git/#~/git/#g' > "$L/CLAUDE.md.new"
-grep -q '^## Platform: Linux' "$L/CLAUDE.md.new" || die "platform section not replaced (reference heading changed?)"
-! grep -n 'G:/\|PowerShell 5.1\|Git Bash' "$L/CLAUDE.md.new" || die "Windows-only text left in CLAUDE.md (lines above)"
+linux_render_claude_md "$REF/CLAUDE.md" "$PLAT" > "$L/CLAUDE.md.new"
+chk=$(linux_check_rendered "$L/CLAUDE.md.new") || die "$chk"
 mv "$L/CLAUDE.md.new" "$L/CLAUDE.md"
 
 echo "2. agents, skills, hooks, output styles"
@@ -54,12 +51,12 @@ echo "3. settings.json (reference minus Windows-only entries; hooks rendered)"
 [ -s "$L/settings.json" ] || echo '{}' > "$L/settings.json"
 backup "$L/settings.json"
 plugins_json=$(for p in $PLUGINS; do printf '"%s@%s":true\n' "$p" "$MARKET"; done | paste -sd, -)
-jq -s --argjson ep "{$plugins_json}" '
+jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plugins_json}" '
   .[0] * (.[1]
     | del(.hooks)
     | del(.env.CLAUDE_CODE_SHELL, .env.CLAUDE_CODE_USE_POWERSHELL_TOOL)
     | .permissions.allow |= map(select(test("windows-mcp") | not))
-    | .autoMode.environment |= map(gsub("G:/git"; "~/git"))
+    | .autoMode.environment |= map(gsub($pf; $pt))
     | .enabledPlugins = $ep)' "$L/settings.json" "$REF/settings.json" > "$L/settings.json.new"
 mv "$L/settings.json.new" "$L/settings.json"
 bash "$ROOT/scripts/render-user-hooks.sh" --write
@@ -71,4 +68,4 @@ if [ -n "$DO_PLUGINS" ]; then
   for p in $PLUGINS; do claude plugin install "$p@$MARKET"; done
 fi
 
-echo "done. Check: bash $ROOT/scripts/verify-user-level-drift.sh (CLAUDE.md drifts by design: Linux platform section)"
+echo "done. Check: bash $ROOT/scripts/verify-user-level-drift.sh (on Linux it compares the Linux-rendered CLAUDE.md and autoMode.environment)"

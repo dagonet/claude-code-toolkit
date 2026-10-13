@@ -35,7 +35,10 @@
 # hooks/pre-commit-test.sh 1, skills/sync-template/SKILL.md 3) — but because
 # **the user-level install is VERBATIM**: there is no substitution step at user
 # level, unlike the project bootstrap. The files match precisely BECAUSE nobody
-# processes them. That is the narrow property, and the VERBATIM INSTALL section
+# processes them. ON LINUX ONE FILE IS PROCESSED: the installer rewrites CLAUDE.md
+# (platform section, G:/git), so there it is compared with its Linux rendering
+# (see the LINUX RENDERING block); every other file is still verbatim.
+# That is the narrow property, and the VERBATIM INSTALL section
 # below STATES it — derived from the drift result for released files (v2.2.6),
 # and genuinely measured for unreleased ones, which no other line here can see.
 #
@@ -128,8 +131,8 @@ ref_copy() { # <repo-relative path>
   fi
 }
 
-check_file() { # <repo-relative ref path> <live_path>
-  src=$(ref_copy "$1")
+check_file() { # <repo-relative ref path> <live_path> [expected file, instead of the reference copy]
+  src=${3:-$(ref_copy "$1")}
   if [ -z "$src" ]; then
     # Present on this branch, absent from the released reference.
     unreleased=$((unreleased + 1))
@@ -153,7 +156,44 @@ check_file() { # <repo-relative ref path> <live_path>
   fi
 }
 
-check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md"
+# ON LINUX the installer (scripts/install-user-level-linux.sh) rewrites two things on purpose: the
+# CLAUDE.md "Platform" section and the G:/git path in autoMode.environment. A correct Linux install
+# therefore never matches the raw reference, and "0 drift" was unreachable there. The rewrites live
+# in scripts/linux/linux-render.sh, shared with the installer; this host expects THEIR output. The
+# helper and the platform file are read at the SAME reference as everything else. An older ref that
+# lacks them falls back to the raw comparison, and says so. Other hosts: unchanged.
+LINUX_RENDER=""
+claude_expected=""
+if [ "$(uname -s)" = "Linux" ]; then
+  lr_helper=$(ref_copy "scripts/linux/linux-render.sh")
+  lr_plat=$(ref_copy "scripts/linux/CLAUDE-platform-linux.md")
+  lr_claude=$(ref_copy "user-level-reference/CLAUDE.md")
+  if [ -n "$lr_helper" ] && [ -n "$lr_plat" ] && [ -n "$lr_claude" ]; then
+    # The helper comes from the REF, so it is sourced in a SUBSHELL every time: it cannot
+    # overwrite this script's variables or functions.
+    claude_expected="$TMPD/CLAUDE.linux.md"
+    if ! ( . "$lr_helper"; linux_render_claude_md "$lr_claude" "$lr_plat" ) > "$claude_expected"; then
+      drift=$((drift + 1))
+      drift_list="$drift_list
+  LINUX RENDERING FAILED: could not render CLAUDE.md with ${REF:-the working tree}'s linux-render.sh"
+    fi
+    # Self-check of our own expectation (the installer runs the same function on what it writes).
+    # A failing or missing check is drift, never silence.
+    lr_chk=$( . "$lr_helper"; linux_check_rendered "$claude_expected" 2>&1 )
+    lr_rc=$?
+    if [ "$lr_rc" -ne 0 ]; then
+      drift=$((drift + 1))
+      drift_list="$drift_list
+  LINUX RENDERING SELF-CHECK FAILED (rc=$lr_rc) for the expected CLAUDE.md: $(printf '%s' "$lr_chk" | tr '\n' ' ')"
+    fi
+    LINUX_RENDER=1
+    echo "LINUX RENDERING: compared the Linux-rendered CLAUDE.md and autoMode.environment (the installer's rewrites), not the raw reference"
+  else
+    echo "LINUX RENDERING: not available at ${REF:-the working tree} (linux-render.sh or the platform file is absent there); comparing the raw reference"
+  fi
+fi
+
+check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md" "$claude_expected"
 
 # The file SET comes from the reference too, not from the working tree: a file
 # added on a branch must not enlarge a released-tree comparison.
@@ -235,6 +275,7 @@ elif [ ! -f "$LIVE_SETTINGS" ]; then
   MISSING live: $LIVE_SETTINGS (autoMode.environment not comparable)"
 else
   am_ref=$(automode_entries "$am_ref_src")
+  [ -z "$LINUX_RENDER" ] || am_ref=$(printf '%s\n' "$am_ref" | ( . "$lr_helper"; linux_rewrite_paths ))
   am_live=$(automode_entries "$LIVE_SETTINGS")
   if [ -z "$am_ref" ]; then
     # In-band control for the extractor itself: the reference always carries
@@ -436,7 +477,9 @@ for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks user-l
 done
 
 if [ "$verbatim_ok" -eq 1 ]; then
-  if [ "$drift" -eq 0 ]; then
+  if [ "$drift" -eq 0 ] && [ -n "$LINUX_RENDER" ]; then
+    echo "VERBATIM INSTALL: implied by $in_sync/$checked in sync — byte-identical to the reference, except CLAUDE.md, the one processed file (identical to its Linux rendering); byte-identical is strictly stronger than same-placeholder-count ($scanned_rel released placeholder-bearing file(s))."
+  elif [ "$drift" -eq 0 ]; then
     echo "VERBATIM INSTALL: implied by $in_sync/$checked in sync — byte-identical is strictly stronger than same-placeholder-count ($scanned_rel released placeholder-bearing file(s))."
   else
     echo "VERBATIM INSTALL: not evaluated — $drift file(s) drifted. Staleness and substitution are both live hypotheses and a placeholder count cannot distinguish them; re-check after propagation."

@@ -11615,6 +11615,205 @@ expect "E1 wrapper, script missing: exit 0"  0 "$?"
 expect "E1 wrapper, script missing: silent"  0 "$(wc -c < "$TMPROOT/e1.out" | tr -d ' ')"
 # ---- end v4.5.0 E1
 
+# ---- v4.6.1: gc_gate_env also fingerprints a repo-root .venv (uv consumers)
+# Candidates in order: server/.venv, then .venv; the first with a pyvenv.cfg
+# wins. With neither, the v4.6.0 behaviour is unchanged -- proven against the
+# v4.6.0 function itself, read from the commit (sibling json.sh needed: git-cmd.sh
+# fails closed at source time without it).
+V461OLD=$(mktemp -d)
+git -C "$ROOT" show 'v4.6.0^{commit}:hooks/lib/git-cmd.sh' > "$V461OLD/git-cmd.sh"
+git -C "$ROOT" show 'v4.6.0^{commit}:hooks/lib/json.sh' > "$V461OLD/json.sh"
+v461_new() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
+v461_old() { ( . "$V461OLD/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
+v461_sha() { ( . "$ROOT/hooks/lib/git-cmd.sh"; gc_sha256 < "$1" ); }
+v461_shastr() { ( . "$ROOT/hooks/lib/git-cmd.sh"; printf '%s\n' "$1" | gc_sha256 ); }
+v461_line() { printf '%s\n' "$2" | grep "^$1=" ; }
+v461_venv() { # <repo> <venv-subdir> <cfg-text> <python-version> [dist-info name] -> venv with a fake interpreter
+  mkdir -p "$1/$2/bin"
+  printf '%s\n' "$3" > "$1/$2/pyvenv.cfg"
+  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python %s"; exit 0 ;;\n  -c) echo "%s"; exit 0 ;;\nesac\nexit 1\n' "$4" "${5:-x-1.0.dist-info}" > "$1/$2/bin/python"
+  chmod +x "$1/$2/bin/python"
+}
+expect "V461 precondition: v4.6.0 commit present" yes \
+  "$([ -s "$V461OLD/git-cmd.sh" ] && [ -s "$V461OLD/json.sh" ] && echo yes || echo 'no - tag v4.6.0 missing - run git fetch --tags')"
+
+# (1) root .venv only: pyvenv is the hash of THAT pyvenv.cfg, not sys:; py/dist from its python
+V461A=$(mkrepo v461a main)
+v461_venv "$V461A" .venv 'home = /usr
+version = 3.11.0' 3.11.0
+V461_A1=$(v461_new "$V461A")
+expect "V461 root .venv only: pyvenv = hash of its pyvenv.cfg" "pyvenv=$(v461_sha "$V461A/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_A1")"
+expect "V461 root .venv only: py from the venv's python" "py=Python 3.11.0" "$(v461_line py "$V461_A1")"
+# dist is the sha256 of the FAKE interpreter's own -c output: proves it comes from the venv's python
+expect "V461 root .venv only: dist = hash of the venv python's output" "dist=$(v461_shastr 'x-1.0.dist-info')" "$(v461_line dist "$V461_A1")"
+printf 'home = /usr\nversion = 3.12.1\n' > "$V461A/.venv/pyvenv.cfg"
+expect "V461 root .venv only: a changed pyvenv.cfg changes the fingerprint" yes \
+  "$([ "$(v461_new "$V461A")" != "$V461_A1" ] && echo yes || echo no)"
+v461_venv "$V461A" .venv 'home = /usr
+version = 3.11.0' 3.11.0 'y-2.0.dist-info'
+expect "V461 root .venv only: what the venv python prints moves dist" "dist=$(v461_shastr 'y-2.0.dist-info')" "$(v461_line dist "$(v461_new "$V461A")")"
+
+# (2) neither venv: identical to the v4.6.0 function (whatever the host resolves)
+V461N=$(mkrepo v461n main)
+# dist is excluded from the comparison: v4.6.1 fixes it for Debian/Ubuntu system python
+# (a non-existent site dir made the old code hash the empty string), so it
+# legitimately differs from v4.6.0's on such hosts. pyvenv, py and node are untouched.
+v461_untouched() { grep -E '^(pyvenv|py|node)='; }
+expect "V461 no venv: pyvenv/py/node identical to v4.6.0's" "$(v461_old "$V461N" | v461_untouched)" "$(v461_new "$V461N" | v461_untouched)"
+# (2b) dist for a no-venv repo is a real hash, never sha256 of empty input
+V461_EMPTY=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+expect "V461 no venv: dist is not the empty-input hash" yes \
+  "$([ "$(v461_line dist "$(v461_new "$V461N")")" != "dist=$V461_EMPTY" ] && echo yes || echo no)"
+# a fake interpreter whose every -c run fails: dist must read absent (void), not the empty hash
+V461FX="$TMPROOT/v461fx"; mkdir -p "$V461FX"
+printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python 3.9.9"; exit 0 ;;\nesac\nexit 1\n' > "$V461FX/python3"
+chmod +x "$V461FX/python3"
+expect "V461 no venv, failing interpreter: dist=absent" "dist=absent" \
+  "$(v461_line dist "$( ( PATH="$V461FX:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$V461N" -v 2>/dev/null ) )")"
+
+# (2c) a root .venv directory WITHOUT pyvenv.cfg is no venv: v4.6.0's result on the untouched lines
+V461E=$(mkrepo v461e main)
+v461_venv "$V461E" .venv 'x' 3.11.0
+rm "$V461E/.venv/pyvenv.cfg"
+expect "V461 .venv without pyvenv.cfg: pyvenv/py/node as v4.6.0 (no venv)" "$(v461_old "$V461E" | v461_untouched)" "$(v461_new "$V461E" | v461_untouched)"
+expect "V461 .venv without pyvenv.cfg: no pathpy line" "" "$(v461_line pathpy "$(v461_new "$V461E")")"
+
+# (3) both venvs: server/.venv wins
+V461B=$(mkrepo v461b main)
+v461_venv "$V461B" server/.venv 'home = /usr
+version = 3.10.0' 3.10.0
+v461_venv "$V461B" .venv 'home = /usr
+version = 3.11.0' 3.11.0
+V461_B1=$(v461_new "$V461B")
+expect "V461 both venvs: pyvenv = server/.venv's hash" "pyvenv=$(v461_sha "$V461B/server/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_B1")"
+expect "V461 both venvs: py from server/.venv's python" "py=Python 3.10.0" "$(v461_line py "$V461_B1")"
+
+# (4) broken root venv: pyvenv.cfg present, no interpreter -> hash|absent|absent, no PATH fallback
+V461C=$(mkrepo v461c main)
+mkdir -p "$V461C/.venv"
+printf 'home = /usr\nversion = 3.12.0\n' > "$V461C/.venv/pyvenv.cfg"
+V461_C1=$(v461_new "$V461C")
+expect "V461 broken root .venv: pyvenv = hash of its pyvenv.cfg" "pyvenv=$(v461_sha "$V461C/.venv/pyvenv.cfg")" "$(v461_line pyvenv "$V461_C1")"
+expect "V461 broken root .venv: dist=absent" "dist=absent" "$(v461_line dist "$V461_C1")"
+expect "V461 broken root .venv: py=absent" "py=absent" "$(v461_line py "$V461_C1")"
+
+# (5) root .venv chosen, but the Gate runs PATH python: a PATH-python version or
+# package change must move the fingerprint (the unused .venv alone would not).
+V461D=$(mkrepo v461d main)
+v461_venv "$V461D" .venv 'home = /usr
+version = 3.11.0' 3.11.0
+V461PP="$TMPROOT/v461pp"; mkdir -p "$V461PP"
+v461_pathpy() { # <version> <dist-info name> -> fake PATH python3
+  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Python %s"; exit 0 ;;\n  -c) echo "%s"; echo "%s"; exit 0 ;;\nesac\nexit 1\n' "$1" "$1" "$2" > "$V461PP/python3"
+  chmod +x "$V461PP/python3"
+}
+v461_new_pp() { ( PATH="$V461PP:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$1" -v 2>/dev/null ); }
+v461_pathpy 3.14.0 'a-1.0.dist-info'
+V461_D1=$(v461_new_pp "$V461D")
+expect "V461 root .venv: pathpy line present, not absent" yes \
+  "$(v461_line pathpy "$V461_D1" | grep -q '^pathpy=[0-9a-f]\{64\}$' && echo yes || echo no)"
+v461_pathpy 3.14.1 'a-1.0.dist-info'
+expect "V461 root .venv: a PATH-python version change moves the fingerprint" yes \
+  "$([ "$(v461_new_pp "$V461D")" != "$V461_D1" ] && echo yes || echo no)"
+v461_pathpy 3.14.0 'a-2.0.dist-info'
+expect "V461 root .venv: a PATH-python package change moves the fingerprint" yes \
+  "$([ "$(v461_new_pp "$V461D")" != "$V461_D1" ] && echo yes || echo no)"
+# no python on PATH at all -> pathpy=absent (cannot determine; the void rule then fires)
+V461NP="$TMPROOT/v461np"; mkdir -p "$V461NP"
+for v461_t in sha256sum awk; do ln -s "$(command -v "$v461_t")" "$V461NP/$v461_t"; done
+# On MSYS a linked tool outside /usr/bin cannot load msys-2.0.dll (sha256sum exits 127 and gc_gate_env
+# fails closed before the pathpy branch), so the PATH is /usr/bin itself, as in C2b (e); skip if a python lives there.
+if [ "$T_MSYS" = 1 ]; then
+  V461NP=/usr/bin
+  [ -z "$(PATH=/usr/bin; command -v python3 python 2>/dev/null)" ] || V461NP=
+fi
+if [ -z "$V461NP" ]; then
+  skip_host "V461 root .venv, no PATH python: pathpy=absent" "a python sits in /usr/bin on this host" 1
+else
+  expect "V461 root .venv, no PATH python: pathpy=absent" "pathpy=absent" \
+    "$(v461_line pathpy "$( ( PATH="$V461NP"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_gate_env "$V461D" -v 2>/dev/null ) )")"
+fi
+# the extra line exists ONLY when the root .venv was chosen
+expect "V461 no venv: no pathpy line" "" "$(v461_line pathpy "$(v461_new "$V461N")")"
+expect "V461 server/.venv chosen: no pathpy line" "" "$(v461_line pathpy "$V461_B1")"
+rm -rf "$V461OLD"
+# ---- end v4.6.1
+
+# ---- v4.6.1: verify-user-level-drift.sh compares the LINUX rendering on Linux
+# The installer rewrites the CLAUDE.md platform block and G:/git in autoMode.environment on purpose,
+# so a correct Linux install must read 0 drift for those two; every other difference must stay red.
+# Runs --worktree against a temp HOME: nothing under the real ~/.claude is read or written.
+if [ "$(uname -s)" = "Linux" ]; then
+  DL_H="$TMPROOT/dl-home"; mkdir -p "$DL_H/.claude"
+  DL_REF="$ROOT/user-level-reference"; DL_PLAT="$ROOT/scripts/linux/CLAUDE-platform-linux.md"
+  dl_run() { HOME="$DL_H" bash "$ROOT/scripts/verify-user-level-drift.sh" --worktree 2>&1; }
+  dl_claude_drift() { printf '%s\n' "$1" | grep -c "DRIFT: $DL_H/.claude/CLAUDE.md differs"; }
+  dl_env_drift() { printf '%s\n' "$1" | grep -c "DRIFT: permissions.autoMode.environment"; }
+  dl_set_env() { # <sed expression applied to the reference settings.json>
+    sed "$1" "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"; }
+  # shellcheck disable=SC1091
+  ( . "$ROOT/scripts/linux/linux-render.sh"; linux_render_claude_md "$DL_REF/CLAUDE.md" "$DL_PLAT" ) > "$DL_H/.claude/CLAUDE.md"
+  dl_set_env 's#G:/git#~/git#g'
+  DL_OUT=$(dl_run)
+  expect "DL1 rendered CLAUDE.md: no drift"          0 "$(dl_claude_drift "$DL_OUT")"
+  expect "DL1 rewritten environment: no drift"       0 "$(dl_env_drift "$DL_OUT")"
+  expect "DL1 says which form it compared"           1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: compared')"
+  # the rendered file's headings, derived from the reference and NOT from the render function
+  expect "DL1 rendered headings = reference's, Platform swapped" \
+    "$(grep '^## ' "$DL_REF/CLAUDE.md" | sed 's/^## Platform: Windows + Git Bash$/## Platform: Linux + bash/')" \
+    "$(grep '^## ' "$DL_H/.claude/CLAUDE.md")"
+  # 5: a git ref instead of --worktree: HEAD carries linux-render.sh, so the rendering is compared
+  dl_run_ref() { HOME="$DL_H" bash "$ROOT/scripts/verify-user-level-drift.sh" "$1" 2>&1; }
+  DL_OUT=$(dl_run_ref HEAD)
+  expect "DL5 ref HEAD: says it compared the rendering" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: compared')"
+  expect "DL5 ref HEAD: rendered CLAUDE.md, no drift"   0 "$(dl_claude_drift "$DL_OUT")"
+  expect "DL5 ref HEAD: rewritten environment, no drift" 0 "$(dl_env_drift "$DL_OUT")"
+  # 6: an older tag without linux-render.sh falls back to the raw comparison, and says so
+  if git -C "$ROOT" rev-parse --verify -q 'v4.6.0^{commit}' >/dev/null && ! git -C "$ROOT" cat-file -e 'v4.6.0:scripts/linux/linux-render.sh' 2>/dev/null; then
+    DL_OUT=$(dl_run_ref v4.6.0)
+    expect "DL6 older tag: says the rendering is not available" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: not available.*raw reference')"
+    expect "DL6 older tag: rendered CLAUDE.md reads as drift"   1 "$(dl_claude_drift "$DL_OUT")"
+  else
+    skip_host "DL6 older tag falls back to the raw comparison" "tag v4.6.0 absent or already carries linux-render.sh" 2
+  fi
+  # 2: one extra line inside the Linux platform block
+  sed -i '/^## Platform: Linux/a an extra line nobody installed' "$DL_H/.claude/CLAUDE.md"
+  expect "DL2 changed Linux block: CLAUDE.md drift"  1 "$(dl_claude_drift "$(dl_run)")"
+  # 3: environment still reading G:/git (not rewritten)
+  cp "$DL_REF/settings.json" "$DL_H/.claude/settings.json"
+  expect "DL3 unrewritten G:/git: environment drift" 1 "$(dl_env_drift "$(dl_run)")"
+  # 4: live CLAUDE.md is the RAW (Windows) reference
+  cp "$DL_REF/CLAUDE.md" "$DL_H/.claude/CLAUDE.md"
+  expect "DL4 raw Windows CLAUDE.md: drift"          1 "$(dl_claude_drift "$(dl_run)")"
+  # 7: linux_check_rendered, the installer's two post-checks (one function, shared)
+  dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
+  printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
+  printf '## Other\nclean\n' > "$TMPROOT/dl-nohead.md"
+  printf '## Platform: Linux + bash\nsee G:/git\n' > "$TMPROOT/dl-g.md"
+  printf '## Platform: Linux + bash\nuse Git Bash\n' > "$TMPROOT/dl-gb.md"
+  expect "DL7 check: clean rendering passes"            0 "$(dl_chk "$TMPROOT/dl-ok.md")"
+  expect "DL7 check: missing Linux heading fails"       1 "$(dl_chk "$TMPROOT/dl-nohead.md")"
+  expect "DL7 check: G:/ left over fails"               1 "$(dl_chk "$TMPROOT/dl-g.md")"
+  expect "DL7 check: Git Bash left over fails"          1 "$(dl_chk "$TMPROOT/dl-gb.md")"
+  # 8/9: a copy of the scripts, so the helper and platform file can be doctored (worktree mode needs no git)
+  DLX="$TMPROOT/dlx"; mkdir -p "$DLX/scripts/linux" "$DLX/user-level-reference"
+  cp "$ROOT/scripts/verify-user-level-drift.sh" "$DLX/scripts/"
+  cp "$ROOT/scripts/linux/linux-render.sh" "$ROOT/scripts/linux/CLAUDE-platform-linux.md" "$DLX/scripts/linux/"
+  cp "$DL_REF/CLAUDE.md" "$DL_REF/settings.json" "$DLX/user-level-reference/"
+  dlx_run() { HOME="$DL_H" bash "$DLX/scripts/verify-user-level-drift.sh" --worktree 2>&1; }
+  # 8: the sourced helper cannot overwrite the script's own variables
+  printf '\ndrift=4242424\n' >> "$DLX/scripts/linux/linux-render.sh"
+  DL_OUT=$(dlx_run)
+  expect "DL8 helper is sourced in a subshell: drift counter intact" 0 "$(printf '%s\n' "$DL_OUT" | grep -c 42424)"
+  # 9: a rendering that fails its own self-check is loud drift, never silent
+  cp "$ROOT/scripts/linux/linux-render.sh" "$DLX/scripts/linux/linux-render.sh"
+  printf '## Not a platform heading\n' > "$DLX/scripts/linux/CLAUDE-platform-linux.md"
+  expect "DL9 rendering fails its self-check: reported as drift" 1 "$(dlx_run | grep -c 'LINUX RENDERING SELF-CHECK FAILED')"
+else
+  skip_host "DL1-9 drift script compares the Linux rendering" "not a Linux host" 18
+fi
+# ---- end v4.6.1 drift
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

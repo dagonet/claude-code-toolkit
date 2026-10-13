@@ -1774,6 +1774,8 @@ def test_retired_rule_names_reported_in_once_class_file(v4_consumer):
     assert line["status"] == "INFO"
     assert ".claude/rules/project.md: require-skills-block, Spawn-Prompt Binding Table" in line["measured"]
     assert ".claude/project-instructions.md: Required Skills" in line["measured"]
+    # v4.6.1 (panoscribe, penumbra): the remedy must not tell a consumer to rewrite dated history
+    assert "history record can stay" in line["remedy"]
 
 
 def test_retired_rule_names_absent_when_none(v4_consumer):

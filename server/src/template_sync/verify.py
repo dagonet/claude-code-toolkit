@@ -1170,7 +1170,8 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
             hits.append(f"{path}: {', '.join(found)}")
     if hits:
         emit(_line("retired_rule_names", "INFO", "; ".join(hits), "n/a (informational)",
-                   "hand-edit the named once-class file(s): the sync never writes them"))
+                   "hand-edit a live rule that still uses a retired name (the sync never "
+                   "writes these files); a mention in a dated history record can stay"))
     else:
         emit(_line("retired_rule_names", "INFO", "no retired rule names in once-class files",
                    "n/a (informational)"))
