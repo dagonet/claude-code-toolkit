@@ -773,6 +773,12 @@ HOOKS_NO_MIRROR=(
   # settings.json -- a bare ~/.claude install has no repository to install it
   # into and no harness that would run it.
   "git-pre-push.sh"
+  # run-hook.sh / cct-session.sh (v5.0, spec §3): the cct plugin's wrapper and
+  # SessionStart marker -- plugin-only, registered by hooks/hooks.json, never
+  # mirrored into a user-level ~/.claude.
+  "run-hook.sh"
+  "cct-session.sh"
+  "hooks.json"
   # now-brief.sh (v4.5.0): reads PROJECT_STATE.md, a template-shipped project file; a bare user-level install has no "## Now" to print.
   "now-brief.sh"
 )
@@ -5137,6 +5143,17 @@ if [ "$c73" = "dagonet|1|./" ]; then
 else
   ko "73: .claude-plugin/marketplace.json must be {name: dagonet, plugins: [{name: cct, source: ./}]}; got '$c73'"
 fi
+
+# ---------------------------------------------------------------------------
+# Check 74 (v5.0): every hook hooks.json names exists in hooks/ and is classed in run-hook.sh, and vice versa
+# ---------------------------------------------------------------------------
+c74_names=$(grep -o 'run-hook.sh\\" [a-z-]*' hooks/hooks.json | awk '{print $2}' | sort -u)
+c74_classed=$(sed -n '/^case "\$name" in/,/^esac/p' hooks/run-hook.sh | grep -o '^  [a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
+c74_bad=""
+for n in $c74_names; do [ -f "hooks/$n.sh" ] || c74_bad="$c74_bad missing:$n"; done
+[ "$c74_names" = "$c74_classed" ] || c74_bad="$c74_bad hooks.json-vs-run-hook.sh-class-table-differ"
+grep -q 'cct-session.sh' hooks/hooks.json || c74_bad="$c74_bad no-session-marker-hook"
+if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) hooks, all present and classed"; else ko "74: hooks.json/run-hook.sh:$c74_bad"; fi
 
 # ---------------------------------------------------------------------------
 echo

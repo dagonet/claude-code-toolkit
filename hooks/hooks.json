@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/cct-session.sh\"" },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" retro-brief" },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" verify-hooks" }
+      ] },
+      { "matcher": "compact", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" now-brief", "timeout": 10 }
+      ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash|PowerShell", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" pre-commit-test", "timeout": 3360 },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" no-push-main" },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" gate-before-merge" }
+      ] },
+      { "matcher": "Read|Bash", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads" }
+      ] },
+      { "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-claude-md-writes" }
+      ] },
+      { "matcher": "Read", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" read-size-gate" }
+      ] },
+      { "matcher": "mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" gate-before-merge" }
+      ] },
+      { "matcher": "Agent", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" model-floor" }
+      ] },
+      { "matcher": "Edit|Write|NotebookEdit", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" enforce-delegation" }
+      ] },
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" enforce-delegation" },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-hang-shapes" }
+      ] },
+      { "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" agent-budget-warn" }
+      ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash|PowerShell", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" bash-output-guard" }
+      ] },
+      { "matcher": "Edit|Write", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" post-edit-build" }
+      ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" enforce-agent-contract" },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" retro-ledger" }
+      ] }
+    ]
+  }
+}

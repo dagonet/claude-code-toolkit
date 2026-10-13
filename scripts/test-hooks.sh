@@ -11813,6 +11813,47 @@ else
   skip_host "DL1-9 drift script compares the Linux rendering" "not a Linux host" 18
 fi
 # ---- end v4.6.1 drift
+# ---- v5.0 run-hook: class, signal, step-aside, polarity (spec §3.1, §3.2, §3.5)
+V5H="$TMPROOT/v5 hooks dir"; mkdir -p "$V5H/lib"            # a space in the path on purpose (Review Focus 2)
+cp "$ROOT/hooks/run-hook.sh" "$V5H/" 2>/dev/null
+printf '#!/usr/bin/env bash\necho ran-$(basename "$0" .sh); exit 7\n' > "$V5H/pre-commit-test.sh"
+printf '#!/usr/bin/env bash\necho ran-$(basename "$0" .sh); exit 0\n' > "$V5H/no-push-main.sh"
+V5P="$TMPROOT/v5proj"; mkdir -p "$V5P/.claude"
+V5HOME="$TMPROOT/v5home"; mkdir -p "$V5HOME/.claude"
+v5run() { ( export HOME="$V5HOME" CLAUDE_PROJECT_DIR="$V5P"; printf '{}' | bash "$V5H/run-hook.sh" "$1"; echo "rc=$?" ); }
+# signal absent: a project-only hook steps aside; a machine-wide hook runs
+expect "v5 run-hook: project-only hook, no manifest -> skipped" "rc=0" "$(v5run pre-commit-test)"
+expect "v5 run-hook: machine-wide hook, no manifest -> runs" "ran-no-push-main rc=0" "$(v5run no-push-main | tr '\n' ' ' | sed 's/ $//')"
+# signal present: the project-only hook runs and its exit status passes through
+printf '{}' > "$V5P/.claude/template-manifest.json"
+expect "v5 run-hook: project-only hook, manifest -> runs, status passes" "ran-pre-commit-test rc=7" "$(v5run pre-commit-test | tr '\n' ' ' | sed 's/ $//')"
+# step-aside via the project settings: the literal v4.6.1 template file (Review Focus 3)
+cp "$ROOT/scripts/fixtures/v461-template-settings.json" "$V5P/.claude/settings.json"
+expect "v5 run-hook: v4.6.1 project registers pre-commit-test -> plugin steps aside" "rc=0" "$(v5run pre-commit-test)"
+expect "v5 run-hook: v4.6.1 project registers no-push-main -> plugin steps aside" "rc=0" "$(v5run no-push-main)"
+rm "$V5P/.claude/settings.json"
+# step-aside via the user settings: the v4.6.1 user-level form, rendered (args path)
+printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/bash","args":["-c",". \\"$0\\"","%s/.claude/hooks/no-push-main.sh"]}]}]}}\n' "$V5HOME" > "$V5HOME/.claude/settings.json"
+expect "v5 run-hook: user settings register no-push-main -> plugin steps aside" "rc=0" "$(v5run no-push-main)"
+expect "v5 run-hook: user settings do not register pre-commit-test -> runs" "ran-pre-commit-test rc=7" "$(v5run pre-commit-test | tr '\n' ' ' | sed 's/ $//')"
+rm "$V5HOME/.claude/settings.json"
+# polarity when the script is missing
+rm "$V5H/pre-commit-test.sh"
+expect "v5 run-hook: closed hook, script missing -> exit 2" "rc=2" "$(v5run pre-commit-test 2>/dev/null)"
+expect "v5 run-hook: open hook, script missing -> exit 0" "rc=0" "$(v5run now-brief 2>/dev/null)"
+expect "v5 run-hook: warn hook, script missing -> exit 0 + WARN" "WARN rc=0" "$(v5run read-size-gate 2>&1 | grep -o '^WARN\|rc=0' | tr '\n' ' ' | sed 's/ $//')"
+expect "v5 run-hook: unknown name -> exit 2" "rc=2" "$(v5run no-such-hook 2>/dev/null)"
+# stdin reaches the hook untouched
+printf '#!/usr/bin/env bash\ncat\n' > "$V5H/deny-secret-reads.sh"
+expect "v5 run-hook: payload reaches the hook" '{"x":1}' "$( ( export HOME="$V5HOME" CLAUDE_PROJECT_DIR="$V5P"; printf '{"x":1}' | bash "$V5H/run-hook.sh" deny-secret-reads ) )"
+# cct-session.sh: writes the marker; refuses unsafe ids (Review Focus 1)
+V5T="$TMPROOT/v5tmp"; mkdir -p "$V5T"
+v5sess() { printf '%s' "$1" | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh"; echo "rc=$?"; }
+expect "v5 session: writes marker" "rc=0 yes" "$(v5sess '{"session_id":"ab-12","hook_event_name":"SessionStart"}') $( [ -f "$V5T/cct-$(id -u)/ab-12" ] && echo yes || echo no)"
+expect "v5 session: unsafe id writes nothing" "rc=0 0" "$(v5sess '{"session_id":"../evil"}') $(find "$V5T" -name evil | wc -l | tr -d ' ')"
+expect "v5 session: no id writes nothing" "rc=0 1" "$(v5sess '{}') $(ls "$V5T/cct-$(id -u)" | wc -l | tr -d ' ')"
+# ---- end v5.0 run-hook
+
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
