@@ -30,9 +30,10 @@ Patch. Three small items left over from v4.6.1.
 
 Counts, never carried forward:
 - **Consistency:** **439** PASS lines from one full `bash scripts/verify-template-consistency.sh` run inside the gate at the pre-commit tree, ALL CHECKS PASSED (v4.6.1: 441; the two fewer are the per-hook `parses` and `reverse-mirror ... on HOOKS_NO_MIRROR` assertions for the deleted file; no check was added or removed).
-- **Hook suite:** 4179 passed, 0 failed, 6 skipped (4185 assertions) on agent-host-1, non-root, `GATE PASS` (v4.6.1: 4179 / 0 / 6). Unchanged from v4.6.1: the 8 assertions of the deleted A5 block are replaced by 8 new ones (run-gate warning 5, drift reference 3; counted from the gate log).
-- **Server suite:** 555 passed, 10 skipped on Linux (v4.6.1: the same; no server code changed).
-- **Not re-run this release:** the Windows suite and the parser matrix. The run-gate warning is one `git rev-parse` pair and a `[ ]` test; the matrix is for `hooks/lib/json.sh` changes.
+- **Hook suite:** 4179 passed, 0 failed, 6 skipped (4185 assertions) on agent-host-1, non-root, `GATE PASS` at 7057f9d (v4.6.1: 4179 / 0 / 6). Unchanged from v4.6.1: the 8 assertions of the deleted A5 block are replaced by 8 new ones (run-gate warning 5, drift reference 3; counted from the gate log).
+  - Windows (the PC) at 7057f9d: 4161 passed, 0 failed, 23 skipped (4184 assertions), ALL HOOK FIXTURES PASSED, in 1 h 58 min. The +1 pass against v4.6.1's 4160 is the fixed no-PATH-python fixture. All 23 skips are `[host]`, on the same four SKIP lines as v4.6.1. Both new blocks passed on Git Bash; the drift block ran raw there. 4184 against Linux's 4185 is the usual one-assertion host difference.
+  - Parser matrix at 57cb918 (7057f9d changes only CHANGELOG.md and docs/architecture.md): node 4179 / 0 / 6, python3-only 3912 / 0 / 260, jq-only 3832 / 0 / 340, PARSER MATRIX PASSED (v4.6.1: the same).
+- **Server suite:** 555 passed, 10 skipped on Linux; 564 passed, 1 skipped on Windows at 7057f9d (v4.6.1: the same; no server code changed).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.6.1's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
 
 ## v4.6.1 — 2026-10-13
