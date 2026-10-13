@@ -11830,6 +11830,7 @@ if git -C "$ROOT" rev-parse --verify -q 'v4.6.1^{commit}' >/dev/null && ! git -C
   expect "DR1 pre-v5.0 tag: released skill file is not UNRELEASED" 0 "$(printf '%s\n' "$DR_OUT" | grep -c 'UNRELEASED.*skills/')"
   # positive: the summary's in-sync count must cover every skill file the tag released (a vacuous "no DRIFT line" passes on an empty compare)
   DR_N=$(git -C "$ROOT" ls-tree -r --name-only v4.6.1 -- user-level-reference/skills | grep -c .)
+  expect "DR1 pre-v5.0 tag: released skill file count is non-zero" yes "$([ "$DR_N" -gt 0 ] && echo yes || echo no)"
   expect "DR1 pre-v5.0 tag: every released skill file compared and in sync" 1 "$(printf '%s\n' "$DR_OUT" | grep -c " $DR_N in sync")"
 else
   skip_host "DR1 pre-v5.0 tag skill resolution" "tag v4.6.1 absent or already carries skills/ at the root" 3
@@ -11947,6 +11948,17 @@ check_msg "v5 block message: no plugin root -> bash hooks/run-gate.sh" "$ROOT/ho
   "$(mkjson Bash 'gh pr merge 3 --squash' "$V5M")" "Run 'bash hooks/run-gate.sh' on the PR branch head"
 CLAUDE_PLUGIN_ROOT=/x check_msg "v5 block message: plugin root set -> cct-gate" "$ROOT/hooks/gate-before-merge.sh" 2 \
   "$(mkjson Bash 'gh pr merge 3 --squash' "$V5M")" "Run 'cct-gate' on the PR branch head"
+# bare name via PATH: pins the shebang and the exec bit
+( cd "$V5G" && unset RUN_GATE_ACTIVE && PATH="$ROOT/bin:$PATH" cct-gate >/dev/null 2>&1 ); v5g_rc=$?
+expect "v5 cct-gate: run by bare name via PATH, exit 0" 0 "$v5g_rc"
+# two-sided: a red gate names cct-gate through cct-gate, the in-repo command when run directly (CLAUDE_PLUGIN_ROOT unset in the caller)
+V5R=$(mkrepo v5red main)
+printf '# ctx\n\n- **Gate**: `false`\n' > "$V5R/PROJECT_CONTEXT.md"
+git -C "$V5R" add -A >/dev/null 2>&1; git -C "$V5R" commit -q -m ctx >/dev/null 2>&1
+v5r_via=$(cd "$V5R" && unset RUN_GATE_ACTIVE CLAUDE_PLUGIN_ROOT && bash "$ROOT/bin/cct-gate" 2>&1 >/dev/null)
+v5r_direct=$(cd "$V5R" && unset RUN_GATE_ACTIVE CLAUDE_PLUGIN_ROOT && bash "$ROOT/hooks/run-gate.sh" 2>&1 >/dev/null)
+expect "v5 red gate via cct-gate names cct-gate" yes "$(printf '%s' "$v5r_via" | grep -q "re-run 'cct-gate'" && echo yes || echo no)"
+expect "v5 red gate via run-gate.sh names the in-repo command" yes "$(printf '%s' "$v5r_direct" | grep -q "re-run 'bash hooks/run-gate.sh'" && echo yes || echo no)"
 # ---- end v5.0 cct-gate
 
 

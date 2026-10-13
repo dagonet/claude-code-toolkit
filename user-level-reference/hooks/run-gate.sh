@@ -74,6 +74,14 @@
 # definitions stay in step.
 GC_TERMINAL_RC=78
 
+# gc_gate_cmd, defined locally for the same standalone reason as GC_KEY_PRE below
+# (v5.0): the gate command named in messages -- cct-gate from the plugin (bin/cct-gate
+# exports CLAUDE_PLUGIN_ROOT), else the in-repo script. The definition lives in
+# hooks/lib/git-cmd.sh; scripts/verify-template-consistency.sh asserts the two stay in step.
+gc_gate_cmd() {
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then printf 'cct-gate'; else printf 'bash hooks/run-gate.sh'; fi
+}
+
 if [ "${RUN_GATE_ACTIVE:-}" = "1" ]; then
   echo "BLOCKED: **Gate** must not invoke run-gate.sh itself" >&2
   echo "Edit '**Gate**:' in PROJECT_CONTEXT.md to your real build/test commands — run-gate.sh RUNS that value, so it cannot BE that value." >&2
@@ -90,7 +98,7 @@ if [ "${RUN_GATE_ACTIVE:-}" = "1" ]; then
 fi
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  echo "Usage: bash hooks/run-gate.sh"
+  echo "Usage: $(gc_gate_cmd)"
   echo ""
   echo "Runs the Gate command from PROJECT_CONTEXT.md (**Gate**: <command>)."
   echo "Green: writes <common git dir>/gate/last-pass.<sha>.json, or last-pass.tree-<tree>.json when run before the commit (checked by gate-before-merge.sh) and prints GATE PASS <sha>."
@@ -113,7 +121,7 @@ if [ -z "$REPO_TOP" ]; then
   # is TERMINAL, not "configuration": this one is an ENVIRONMENT error and 78
   # covers both (see the exit-code conventions in hooks/lib/git-cmd.sh).
   echo "GATE ERROR: not inside a git repository" >&2
-  echo "Run 'bash hooks/run-gate.sh' from inside the checkout — cd to the repository and re-run it there." >&2
+  echo "Run '$(gc_gate_cmd)' from inside the checkout — cd to the repository and re-run it there." >&2
   exit "$GC_TERMINAL_RC"
 fi
 
@@ -140,13 +148,6 @@ gc_gate_dir() {
   if [ -n "$common" ]; then printf '%s/gate\n' "$common"; return 0; fi
   echo "WARN: git < 2.31: gate artifacts stay at <toplevel>/.gate (per-worktree)" >&2
   printf '%s/.gate\n' "$top"
-}
-
-# v5.0: the gate command to print in block messages -- cct-gate from the plugin, else the in-repo script.
-# hooks/run-gate.sh repeats this function (same standalone reason as gc_gate_dir above);
-# scripts/verify-template-consistency.sh asserts the two copies agree.
-gc_gate_cmd() {
-  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then printf 'cct-gate'; else printf 'bash hooks/run-gate.sh'; fi
 }
 
 # GC_GATE_PRUNE_S (v4.0.3, R4) -- same standalone-copy reason as GC_GATE_TTL_S
@@ -760,7 +761,7 @@ if [ "$GATE_RC" -eq 0 ]; then
   if [ "$HEAD_SHA_AFTER" != "$HEAD_SHA" ]; then
     rm -f "$ARTIFACT" "$ARTIFACT_DIR/last-pass.$HEAD_SHA.json" "$ARTIFACT_DIR/last-pass.tree-$TREE_HASH.json"
     echo "GATE ERROR: the checkout moved while the gate was running (HEAD was ${HEAD_SHA:-unknown} at start, is ${HEAD_SHA_AFTER:-unknown} now)." >&2
-    echo "The run does not describe any single state, so no artifact was written. Settle the checkout and re-run 'bash hooks/run-gate.sh'." >&2
+    echo "The run does not describe any single state, so no artifact was written. Settle the checkout and re-run '$(gc_gate_cmd)'." >&2
     exit 1
   fi
   mkdir -p "$ARTIFACT_DIR"
@@ -838,6 +839,6 @@ elif [ "$GATE_RC" -eq "$GC_TERMINAL_RC" ]; then
   exit "$GC_TERMINAL_RC"
 else
   rm -f "$ARTIFACT" "$ARTIFACT_DIR/last-pass.$HEAD_SHA.json" "$ARTIFACT_DIR/last-pass.tree-$TREE_HASH.json"
-  echo "GATE FAILED: '$GATE_CMD' exited nonzero. Fix the failures and re-run 'bash hooks/run-gate.sh'." >&2
+  echo "GATE FAILED: '$GATE_CMD' exited nonzero. Fix the failures and re-run '$(gc_gate_cmd)'." >&2
   exit 1
 fi
