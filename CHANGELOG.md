@@ -41,10 +41,10 @@ The tally prints the threshold mix (events carry a `threshold` field: the one us
 3. Re-run `/cct:jev on` in every clone where Jev is on. Until then that clone's `config.json` keeps threshold 0.8.
 
 ### Measured at the final code commit (host agent-host-1)
-- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 341 PASS lines, 1 skipped (check 42 arm 2: the v5.0.0 tag is not present locally until v5.0 is tagged).
+- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 342 PASS lines, 1 skipped (check 42 arm 2: the v5.0.0 tag is not present locally until v5.0 is tagged).
 - `bash scripts/test-hooks.sh`: 4160 passed, 0 failed, 6 skipped (4166 assertions).
 - `bash scripts/test-server.sh`: 522 passed, 9 skipped.
-- J-PY (Jev Python tests inside the hook suite): 134 tests, `JPY_WANT` unchanged (the two test minors add assertions, not test methods).
+- J-PY (Jev Python tests inside the hook suite): 140 tests, `JPY_WANT=140` (134 before the final-review round; +6 for the threshold field, report buckets and effort-reason count, and the empty-floor-model case). Hook suite, consistency and server counts above were re-measured after that round at c0cdfe8 on agent-host-1.
 - Parser matrix: measured by the controller before the tag
 
 ## v5.0.0 — 2026-10-14
