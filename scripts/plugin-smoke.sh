@@ -110,12 +110,13 @@ check_gate_on_path() {
 check_explore_spawn() {
   local out led n
   rm -rf "$WORK/mem"; mkdir -p "$WORK/mem"
+  # wc may print an absolute path (subagents often use one after deny-hang-shapes refuses a cd), hence [^"]* before the name.
   n=$(( RANDOM % 9000 + 1000 )); head -c "$n" /dev/zero | tr '\0' x > "$SC/out.rand"
   out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  wc -c out.rand  in your starting directory. Then reply with the byte count.' Then report what the agent returned.")
   led=$(find "$WORK/mem" -name retro.md 2>/dev/null | head -1)
   if [ -z "$led" ]; then fail "5 cct:Explore spawn" "no retro ledger written"
   elif ! grep -q 'cct:Explore' "$led"; then fail "5 cct:Explore spawn" "ledger has no cct:Explore row: $(head -c 200 "$led")"
-  elif ! printf '%s\n' "$out" | grep '"tool_result"' | grep '"parent_tool_use_id":"' | grep -Eq "(^|[^0-9])$n out\.rand"; then fail "5 cct:Explore spawn" "no subagent tool_result carries the byte count of out.rand"
+  elif ! printf '%s\n' "$out" | grep '"tool_result"' | grep '"parent_tool_use_id":"' | grep -Eq "(^|[^0-9])$n [^\"]*out\.rand"; then fail "5 cct:Explore spawn" "no subagent tool_result carries the byte count of out.rand"
   elif printf '%s' "$out" | grep -q 'the cct plugin is not active'; then fail "5 cct:Explore spawn" "the plugin-off guard refused the subagent"
   else echo "INFO 5 ledger row: $(grep 'cct:Explore' "$led" | head -1)"; pass "5 cct:Explore spawn"; fi
 }
