@@ -37,9 +37,6 @@ class CtlTests(unittest.TestCase):
         with open(path, "wb") as fh:
             fh.write(data)
 
-    def exclude_lines(self):
-        return self.read(self.t.gd + "/info/exclude").decode("utf-8").splitlines()
-
     def legacy_on(self, original=None):
         """What a v4 `/jev on` left behind: the registration, a snapshot of the bytes before it, a config."""
         before = original
@@ -146,6 +143,9 @@ class CtlTests(unittest.TestCase):
             open(os.path.join(d, "jev_route.py"), "w").close()
         real, jc.HERE = jc.HERE, d
         self.addCleanup(setattr, jc, "HERE", real)
+        real_file = jc.jev_route.__file__  # resolver_candidates looks for the plugin's own lib next to the router
+        jc.jev_route.__file__ = os.path.join(d, "jev_route.py")
+        self.addCleanup(setattr, jc.jev_route, "__file__", real_file)
 
     def test_on_refuses_without_resolver(self):
         self.elsewhere(router=True)

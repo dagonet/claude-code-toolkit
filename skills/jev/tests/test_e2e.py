@@ -73,6 +73,8 @@ class ResolverAndTransportTests(unittest.TestCase):
 
     def test_resolver_without_lib_is_none(self):
         sb = jt.Sandbox(self, lib_in_home=False)
+        real, jr.__file__ = jr.__file__, sb.home + "/elsewhere/skills/jev/jev_route.py"  # a router outside any plugin
+        self.addCleanup(setattr, jr, "__file__", real)
         self.assertIsNone(jr.run_resolver("general-purpose", sb.repo, sb.env()))
 
     def test_post_sends_bearer_and_returns_body(self):
@@ -153,7 +155,8 @@ class HookTests(unittest.TestCase):
     def test_hook_unregistered_checkout_is_off(self):
         sb = jt.Sandbox(self, register=False)
         stub = jt.Stub(self, "ok", jt.ok_answer())
-        cp, _ = jt.run_hook(sb, jt.agent_payload(sb), stub.url)
+        # the v4 path: CLAUDE_PLUGIN_ROOT names no plugin, so the repo's own plugin router cannot answer for it
+        cp, _ = jt.run_hook(sb, jt.agent_payload(sb), stub.url, extra={"CLAUDE_PLUGIN_ROOT": sb.home + "/no-plugin"})
         self.assertEqual((cp.stdout, stub.requests, sb.events()), (b"", [], []))
 
     def test_hook_explicit_model_sends_nothing(self):
@@ -172,6 +175,13 @@ class HookTests(unittest.TestCase):
         self.assertEqual((model_of(cp), len(stub.requests)), ("opus", 1))
         ev = json.loads(last_event(sb))
         self.assertEqual((ev["kind"], ev["default"], ev["reason"]), ("env", "sonnet", "applied"))
+
+    def test_floor_holds_in_a_v5_consumer_with_no_resolver_outside_the_plugin(self):
+        # C1: no project hooks/lib, an empty HOME (Task 13 removes ~/.claude/hooks), no API key.
+        # The router must find the plugin's own agent-model.sh, or the spawn inherits the orchestrator's model.
+        sb = jt.Sandbox(self, lib_in_home=False)
+        cp, _ = jt.run_hook(sb, jt.agent_payload(sb), "http://127.0.0.1:9/v1/systemone", key=None)
+        self.assertEqual((cp.returncode, model_of(cp)), (0, "sonnet"))
 
     def test_hook_garbage_stdin_exits_zero_silently(self):
         sb = jt.Sandbox(self)

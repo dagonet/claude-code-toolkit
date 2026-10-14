@@ -9665,7 +9665,7 @@ rm -rf "$JMGD/jev"
 # skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
 # Skipped by name (4) only where python3 is absent: the jq-only matrix config.
 echo "=== skills/jev (v4.4.0 J-PY) ==="
-JPY_WANT=97
+JPY_WANT=98
 JPY_DIR="$ROOT/skills/jev"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
   JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
@@ -11995,8 +11995,36 @@ if python3 -c '' >/dev/null 2>&1; then
   rm "$V5J/skills/jev/jev_route.py"
   expect "v5 jev: plugin router missing -> routing off (the floor applies)" "off" "$(v5jam)"
   rm -rf "$V5JGD/jev"
+  # I2: a plugin-SHAPED checkout (this toolkit repo: plugin.json + skills/jev/jev_route.py at its root, project model-floor
+  # registered) steps model-floor aside only while the plugin is LOADED in the session (the cct-session marker); exactly ONE emitter.
+  V5T=$(mkrepo v5tk main); V5TH="$TMPROOT/v5tkhome"; V5TT="$TMPROOT/v5tktmp"; V5TSID="v5tk-sid-1"
+  mkdir -p "$V5T/hooks/lib" "$V5T/skills/jev" "$V5T/.claude-plugin" "$V5TH" "$V5TT/cct-$(id -u)"
+  cp "$ROOT/hooks/model-floor.sh" "$ROOT/hooks/jev-route.sh" "$V5T/hooks/"; cp "$ROOT"/hooks/lib/*.sh "$V5T/hooks/lib/"
+  printf '{"name":"cct"}\n' > "$V5T/.claude-plugin/plugin.json"
+  printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5T/skills/jev/jev_route.py"   # stub router
+  V5TGD=$(git -C "$V5T" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$V5TGD/jev"
+  v5t_payload() { printf '{"session_id":"%s","tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"p"},"cwd":"%s"}' "$1" "$(jesc "$(natpath "$V5T")")"; }
+  v5t_mf() { # <session id> -> the model the PROJECT model-floor emits ("silent" when it steps aside); no plugin env: the lib falls back to the repo root
+    v5t_payload "$1" | env -u CLAUDE_PLUGIN_ROOT HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PROJECT_DIR="$V5T" bash "$V5T/hooks/model-floor.sh" >"$TMPROOT/v5t.out" 2>/dev/null
+    if [ -s "$TMPROOT/v5t.out" ]; then jfield "$(<"$TMPROOT/v5t.out")" hookSpecificOutput.updatedInput.model; else echo silent; fi
+  }
+  v5t_jr() { # the plugin's jev-route (only runs when the plugin is loaded): "ROUTED" or "silent"
+    local o; o=$(v5t_payload "$1" | env HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PLUGIN_ROOT="$V5T" CLAUDE_PROJECT_DIR="$V5T" bash "$V5T/hooks/jev-route.sh" 2>/dev/null)
+    [ -n "$o" ] && echo "$o" || echo silent
+  }
+  printf '{"route": true}\n' > "$V5TGD/jev/config.json"
+  : > "$V5TT/cct-$(id -u)/$V5TSID"
+  expect "v5 jev (a) toolkit repo, plugin loaded, route true: project model-floor steps aside" silent "$(v5t_mf "$V5TSID")"
+  expect "v5 jev (a) ... and jev-route emits (one emitter)" ROUTED "$(v5t_jr "$V5TSID")"
+  expect "v5 jev (b) toolkit repo, plugin NOT loaded (no marker): project model-floor floors" sonnet "$(v5t_mf "v5tk-sid-unmarked")"
+  expect "v5 jev (b) ... no session_id in the payload -> floors" sonnet "$(v5t_mf "")"
+  : > "$V5TT/cct-$(id -u)/a.b"
+  expect "v5 jev (b) ... an unsafe session id (a dot) is treated as not loaded, even with a file of that name" sonnet "$(v5t_mf "a.b")"
+  printf '{"route": false}\n' > "$V5TGD/jev/config.json"
+  expect "v5 jev (d) route false, plugin loaded: model-floor floors" sonnet "$(v5t_mf "$V5TSID")"
+  expect "v5 jev (d) ... and jev-route is silent (one emitter)" silent "$(v5t_jr "$V5TSID")"
 else
-  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 10
+  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 17
 fi
 # ---- end v5.0 jev
 

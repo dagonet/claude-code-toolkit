@@ -109,9 +109,15 @@ am_resolve() {
 }
 
 # AM_JEV_MARKER -- the path every /jev registration names. Check 65 asserts the
-# registration jev_ctl.py writes (REG_COMMAND) contains it.
+# v4 registration literal (REG_COMMAND in jev_ctl.py, now only what legacy removal matches) contains it.
 AM_JEV_MARKER='skills/jev/jev_route.py'
-# am_jev_routing <root> -- exit 0 iff the Jev router WILL run for a spawn in this
+# am_plugin_loaded <session_id> -- exit 0 iff hooks/cct-session.sh marked this session (the cct plugin
+# is loaded in it). The id is sanitized as cct-session.sh does: only [A-Za-z0-9-], else "not loaded".
+am_plugin_loaded() {
+  case ${1:-} in ''|*[!A-Za-z0-9-]*) return 1 ;; esac
+  [ -f "${TMPDIR:-/tmp}/cct-$(id -u)/$1" ]
+}
+# am_jev_routing <root> [<session_id>] -- exit 0 iff the Jev router WILL run for a spawn in this
 # checkout, so model-floor may step aside (v4.4.0 R-2). All four must hold:
 #   1. <git common dir>/jev/config.json says "route": true      (/jev on, per clone)
 #   2. a router exists to run it                                 (a deleted skill is silent):
@@ -120,6 +126,10 @@ AM_JEV_MARKER='skills/jev/jev_route.py'
 #   3. python3 runs                                              (the registration runs it)
 #   4. a v4 registration in <root>/.claude/settings.local.json runs ~/.claude/skills/jev/jev_route.py
 #      (per CHECKOUT: a sibling worktree of the same clone has its own settings.local.json)
+#      The plugin branch (2) also requires, WHEN a session id is passed (model-floor always passes one,
+#      possibly empty), that the plugin is loaded in this session (am_plugin_loaded): a plugin-SHAPED
+#      checkout without the plugin loaded has no router registered, so the floor must apply.
+#      jev-route.sh / jev-notice.sh pass none: they only run inside the loaded plugin.
 # Any one missing -> model-floor floors, so a spawn never has neither emitter.
 # Sets AM_GD (the absolute git common dir) whenever git answers.
 am_jev_routing() {
@@ -130,6 +140,7 @@ am_jev_routing() {
   if grep -qF "$AM_JEV_MARKER" "$1/.claude/settings.local.json" 2>/dev/null; then
     [ -f "$HOME/.claude/skills/jev/jev_route.py" ]   # v4 entry: it routes (jev-route.sh steps aside), if its file is there
   else
+    [ $# -ge 2 ] && { am_plugin_loaded "$2" || return 1; }
     local am_pr; am_pr=$(am_plugin_root)
     [ -f "$am_pr/.claude-plugin/plugin.json" ] && [ -f "$am_pr/skills/jev/jev_route.py" ]
   fi

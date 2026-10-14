@@ -3928,7 +3928,7 @@ case "$c65_reg" in *"$c65_marker"*) ;; *) c65_bad="$c65_bad REG_COMMAND does not
 # U-1: the orchestrator is told to omit `model` while on -- the rule's exception
 # and the session-start notice must both exist, or Jev routes nothing.
 grep -qF 'unless Jev routing is on in this repo' user-level-reference/CLAUDE.md || c65_bad="$c65_bad user-level-reference/CLAUDE.md(no U-1 exception)"
-grep -qE "^SESSION_COMMAND = '.*omit model on Agent spawns.*'\$" skills/jev/jev_ctl.py || c65_bad="$c65_bad jev_ctl.py(no SESSION_COMMAND telling the orchestrator to omit model)"
+grep -q 'omit model on Agent spawns' hooks/jev-notice.sh 2>/dev/null || c65_bad="$c65_bad hooks/jev-notice.sh(no session notice telling the orchestrator to omit model)"
 if [ -z "$c65_bad" ]; then
   ok "check 65: no template, root or user-level settings registers jev_route.py; /jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
 else

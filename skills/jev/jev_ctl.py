@@ -83,9 +83,8 @@ def _dumps(obj):
 
 
 def resolver_lib(env, top):
-    for cand in (os.path.join(HERE, "..", "..", "hooks", "lib", "agent-model.sh"),
-                 os.path.join(top, "hooks", "lib", "agent-model.sh"),
-                 os.path.join(_home(env), ".claude", "hooks", "lib", "agent-model.sh")):
+    """The resolver the router would run: jev_route's own candidate list, so status and routing agree."""
+    for cand in jev_route.resolver_candidates(top, _home(env)):
         if os.path.isfile(cand):
             return cand
     return None

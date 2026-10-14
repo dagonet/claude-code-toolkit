@@ -394,15 +394,22 @@ def _test_slack(env):
     return slack if env.get("JEV_TEST_MODE") == "1" and 0 <= slack <= 30 else 0.0
 
 
-def run_resolver(subagent_type, cwd, env):
-    """Run model-floor's own resolution (hooks/lib/agent-model.sh) -- the project's
-    copy when CLAUDE_PROJECT_DIR has one (the S-24 precedence), else the user-level
-    one. Arguments go in argv, never into program text. None when unavailable."""
+def resolver_candidates(project_dir, home):
+    """Where model-floor's resolver may live, in precedence order: the project's copy
+    (the S-24 precedence), the plugin's own (a v5 consumer has no other), the user-level one."""
     cands = []
-    if env.get("CLAUDE_PROJECT_DIR"):
-        cands.append(os.path.join(env["CLAUDE_PROJECT_DIR"], "hooks", "lib", "agent-model.sh"))
-    home = env.get("HOME") or os.path.expanduser("~")
+    if project_dir:
+        cands.append(os.path.join(project_dir, "hooks", "lib", "agent-model.sh"))
+    cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "lib", "agent-model.sh"))
     cands.append(os.path.join(home, ".claude", "hooks", "lib", "agent-model.sh"))
+    return cands
+
+
+def run_resolver(subagent_type, cwd, env):
+    """Run model-floor's own resolution (hooks/lib/agent-model.sh), the first of
+    resolver_candidates. Arguments go in argv, never into program text. None when unavailable."""
+    home = env.get("HOME") or os.path.expanduser("~")
+    cands = resolver_candidates(env.get("CLAUDE_PROJECT_DIR"), home)
     lib = next((c for c in cands if os.path.isfile(c)), None)
     bash = shutil.which("bash", path=env.get("PATH"))
     if not lib or not bash:
