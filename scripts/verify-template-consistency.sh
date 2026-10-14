@@ -174,17 +174,17 @@ else
   ko "Subagent reporting mandate present in only $mandate_count/$report_agents non-coder agent files"
 fi
 
-# Liveness & Scope block: every template + user-level-reference agent file.
+# Liveness & Scope block: every agents/*.md file.
 # Guards the final-message reporting contract and the scope-abort clause.
-all_agents=$(ls agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
-liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+all_agents=$(ls agents/*.md 2>/dev/null | wc -l)
+liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" agents/*.md 2>/dev/null | wc -l)
 if [ "$liveness_count" = "$all_agents" ]; then
   ok "Liveness & Scope block present in all $all_agents agent files"
 else
   ko "Liveness & Scope block present in only $liveness_count/$all_agents agent files"
 fi
 
-scope_abort=$(grep -lF "Scope abort:" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+scope_abort=$(grep -lF "Scope abort:" agents/*.md 2>/dev/null | wc -l)
 if [ "$scope_abort" = "$all_agents" ]; then
   ok "Scope-abort clause present in all $all_agents agent files"
 else
@@ -194,12 +194,12 @@ fi
 # v2.0: subagents report in their FINAL MESSAGE. SendMessage was the named-teammate
 # channel and must not creep back into an agent definition — a partial sweep of the
 # 61 files would otherwise pass every assertion above.
-sendmsg=$(grep -lF "SendMessage" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+sendmsg=$(grep -lF "SendMessage" agents/*.md 2>/dev/null | wc -l)
 if [ "$sendmsg" = "0" ]; then
   ok "No agent definition instructs SendMessage reporting (agent teams retired)"
 else
   ko "SendMessage reporting survives in $sendmsg agent files:"
-  grep -lF "SendMessage" agents/*.md user-level-reference/agents/*.md 2>/dev/null
+  grep -lF "SendMessage" agents/*.md 2>/dev/null
 fi
 
 banned='fixes code directly|PO only|PO fixes directly|PO reviews directly|PO verifies directly|may be committed directly'
@@ -307,27 +307,6 @@ else
   ko "scripts/check-activation.sh missing — no one-command activation answer"
 fi
 
-# ---------------------------------------------------------------------------
-# 15. User-level agents must not carry project-only hooks.
-#     A user-level agent applies in EVERY repo and its frontmatter `hooks:`
-#     fire unconditionally, so referencing a project-only script fails closed
-#     (127 -> exit 2). Measured: 11 of 20 local repos fall back to user-level
-#     agents and 10 of those have no hooks/ dir -- the template coder's
-#     gate-before-merge hooks would have made PR merges impossible there.
-#     Body PROSE may reference hooks/ (it is conditional; the agent skips when
-#     the script is absent), so this checks the frontmatter block only.
-# ---------------------------------------------------------------------------
-echo
-ul_fail=0
-for f in user-level-reference/agents/*.md; do
-  [ -f "$f" ] || continue
-  fm=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$f")
-  if printf '%s\n' "$fm" | grep -q 'hooks/[a-z-]*\.sh'; then
-    ko "user-level agent $(basename "$f") references a project-only script in its frontmatter (fails closed in repos without hooks/)"
-    ul_fail=1
-  fi
-done
-[ "$ul_fail" -eq 0 ] && ok "user-level agents carry no project-only frontmatter hooks"
 
 # ---------------------------------------------------------------------------
 # 15b. A copyable user-level settings.json ships, and carries no machine paths.
@@ -400,7 +379,7 @@ done
 # ---------------------------------------------------------------------------
 echo
 allow_fail=0
-for f in agents/*.md user-level-reference/agents/*.md; do
+for f in agents/*.md; do
   [ -f "$f" ] || continue
   tools_line=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb&&/^tools:/{print}' "$f")
   [ -z "$tools_line" ] && continue
@@ -423,26 +402,24 @@ done
 #     inherits the session model (219 exploration spawns at Opus cost).
 # ---------------------------------------------------------------------------
 echo
-explore_files=$(ls agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
-if [ "$explore_files" = "2" ]; then
-  ok "custom Explore agent present in the plugin agents/ + user-level"
+if [ -f agents/Explore.md ]; then
+  ok "custom Explore agent present in the plugin agents/"
 else
-  ko "custom Explore agent present in only $explore_files/2 locations (agents/, user-level-reference/agents/) (built-in Explore inherits the session model)"
+  ko "custom Explore agent missing from agents/ (built-in Explore inherits the session model)"
 fi
 
-explore_haiku=$(grep -l "^model: haiku$" agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
-if [ "$explore_haiku" = "2" ]; then
-  ok "Explore pinned to haiku in both copies"
+if grep -q "^model: haiku$" agents/Explore.md 2>/dev/null; then
+  ok "Explore pinned to haiku"
 else
-  ko "Explore pinned to haiku in only $explore_haiku/2 copies"
+  ko "Explore not pinned to haiku (agents/Explore.md)"
 fi
 
-pinned_ids=$(grep -l "^model: claude-" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+pinned_ids=$(grep -l "^model: claude-" agents/*.md 2>/dev/null | wc -l)
 if [ "$pinned_ids" = "0" ]; then
   ok "no agent pins a full claude-* model id (aliases only — a proxy may reroute them)"
 else
   ko "$pinned_ids agent files pin a full claude-* model id instead of an alias"
-  grep -l "^model: claude-" agents/*.md user-level-reference/agents/*.md 2>/dev/null
+  grep -l "^model: claude-" agents/*.md 2>/dev/null
 fi
 
 # The CLI does not validate `effort:`/`model:` — a v2.1 PR8 probe ran an agent
@@ -450,27 +427,27 @@ fi
 # So a typo ships silently unless something here pins the documented value lists.
 # Count the raw lines first: with no `effort:` anywhere, "0 offenders" is a
 # vacuous pass and the whole check silently stops meaning anything.
-all_effort=$(grep -h "^effort: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -c .)
+all_effort=$(grep -h "^effort: " agents/*.md 2>/dev/null | grep -c .)
 [ "$all_effort" -gt 0 ] || ko "no agent file carries an 'effort:' line — the level-list check would pass vacuously"
-bad_effort=$(grep -h "^effort: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
+bad_effort=$(grep -h "^effort: " agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
 if [ "$bad_effort" = "0" ]; then
   ok "every agent 'effort:' value is one of low/medium/high/xhigh"
 else
   ko "$bad_effort agent 'effort:' values are outside low/medium/high/xhigh (the CLI does not validate this field)"
-  grep -n "^effort: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
+  grep -n "^effort: " agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
 fi
 
-all_model=$(grep -h "^model: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -c .)
+all_model=$(grep -h "^model: " agents/*.md 2>/dev/null | grep -c .)
 [ "$all_model" -gt 0 ] || ko "no agent file carries a 'model:' line — the alias-list check would pass vacuously"
-bad_model=$(grep -h "^model: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
+bad_model=$(grep -h "^model: " agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
 if [ "$bad_model" = "0" ]; then
   ok "every agent 'model:' value is one of sonnet/opus/haiku/fable/inherit"
 else
   ko "$bad_model agent 'model:' values are outside the alias list (the CLI does not validate this field)"
-  grep -n "^model: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
+  grep -n "^model: " agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
 fi
 
-mode_field=$(grep -l "^mode: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+mode_field=$(grep -l "^mode: " agents/*.md 2>/dev/null | wc -l)
 if [ "$mode_field" = "0" ]; then
   ok "no agent carries the undocumented 'mode:' frontmatter field"
 else
@@ -481,7 +458,7 @@ fi
 # tools: omits it cannot open the skills its `## Skills` table names.
 # Counted over the SAME file list, so adding Skill to one of the excluded
 # agents later is a passing change, not a spurious count mismatch.
-skill_list=$(ls agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
+skill_list=$(ls agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
 skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
 skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
 if [ "$skill_tool" = "$skill_users" ]; then
@@ -496,7 +473,7 @@ fi
 # exactly the up-front cost v4.5.0 removed. Each agent opens skills on demand
 # from its own `## Skills` table; the coders carry the karpathy preferences as
 # the `## Working rules` digest (check 67).
-skill_preload=$(grep -lE '^skills:' agents/*.md user-level-reference/agents/*.md 2>/dev/null)
+skill_preload=$(grep -lE '^skills:' agents/*.md 2>/dev/null)
 if [ -z "$skill_preload" ]; then
   ok "no agent file preloads a skill via skills: frontmatter"
 else
@@ -505,11 +482,12 @@ fi
 
 # A coder that cannot create a file is not a coder: 44 Write calls died on the
 # tool allowlist in the mined sessions.
-coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" agents/coder.md agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null | wc -l)
-if [ "$coder_write" = "6" ]; then
-  ok "Write tool present in all 6 coder files (agents/ + user-level)"
+coder_files=$(ls agents/coder.md agents/*-coder.md 2>/dev/null | wc -l)
+coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" agents/coder.md agents/*-coder.md 2>/dev/null | wc -l)
+if [ "$coder_files" -gt 0 ] && [ "$coder_write" = "$coder_files" ]; then
+  ok "Write tool present in all $coder_files coder files (agents/coder.md, agents/*-coder.md)"
 else
-  ko "Write tool present in only $coder_write/6 coder files"
+  ko "Write tool present in only $coder_write/$coder_files coder files"
 fi
 
 # ---------------------------------------------------------------------------
@@ -628,179 +606,13 @@ for v in $VARIANTS; do
 done
 
 # ---------------------------------------------------------------------------
-# 21. user-level hook mirror is byte-identical to the repo-root originals.
+# 21b. hooks/lib/json.sh must EXIST (v2.2.0; v5.0: the user-level mirror is gone).
 #
-#     `user-level-reference/hooks/` is a copy source for `~/.claude/hooks/`, so
-#     every file under it must be the same bytes as `hooks/<same relative path>`.
-#     A drifted copy is worse than a missing one: the user-level gate would
-#     silently enforce an older contract than the project-level gate.
-#
-#     Glob-derived, not a hard-coded list — mirroring one more hook needs no
-#     edit here, and deleting a root hook while leaving its mirror fails.
-#     `lib/` is included, which is why the walk is `find`-based and compares
-#     relative paths rather than basenames.
-#
-#     Direction, deliberately: this walks the MIRROR, not the root. It cannot
-#     catch a *new* root hook that nobody mirrored — that is not a drift, it is
-#     a judgement call about which hooks belong at user level. run-gate.sh IS
-#     mirrored (v2.1.3): the user-level pre-commit-test.sh shells into it, same
-#     as the project-level one. retro-ledger.sh mirrors too (v2.1.4), so the
-#     budget=<n> field lands the same way at user level; retro-brief.sh and
-#     enforce-delegation.sh still deliberately do not mirror. What this check
-#     guarantees is that nothing already in the mirror is stale or orphaned.
-# ---------------------------------------------------------------------------
-echo
-ULH=user-level-reference/hooks
-if [ ! -d "$ULH" ]; then
-  ko "hook mirror: $ULH missing — the user-level copy step in the README has nothing to copy"
-else
-  mirror_count=0
-  while IFS= read -r -d '' mf; do
-    mirror_count=$((mirror_count + 1))
-    rel="${mf#"$ULH"/}"
-    root="hooks/$rel"
-    if [ ! -f "$root" ]; then
-      ko "hook mirror: $mf has no root original at $root — a mirror of a deleted hook"
-    elif cmp -s "$root" "$mf"; then
-      ok "hook mirror: $rel is byte-identical to $root"
-    else
-      ko "hook mirror: $rel differs from $root — run: cp $root $mf"
-    fi
-  done < <(find "$ULH" -type f -print0 | sort -z)
-  [ "$mirror_count" -eq 0 ] && ko "hook mirror: $ULH is empty"
-fi
-
-# 21a. REVERSE walk: every hooks/** file must have a SAME-NAMED mirror,
-#      except an explicit allowlist (v3.0.4).
-#
-#      The walk above starts from the mirror, so a root hook that was NEVER
-#      mirrored is invisible to it — that was a deliberate gap (see the
-#      "Direction, deliberately" note above), but an invisible gap is also
-#      where a hook meant to be mirrored quietly never gets there. This walk
-#      starts from hooks/** instead: every file must resolve to a mirror,
-#      unless it is named here with a reason.
-#
-#      NAME-PRESENCE ONLY, deliberately NOT byte comparison, and this is the
-#      opposite of check 21's polarity above. Two reasons, both measured:
-#      (a) this script is copied into consumer repos by the sync-template
-#      skill and is not proven to run ONLY inside this toolkit checkout, so
-#      it must not assume `hooks/run-gate.sh` in a consumer's tree is a copy
-#      of THIS repo's — a consumer may run a project-owned "keep-mine"
-#      `run-gate.sh` (a real example: a 6-step gate) that legitimately
-#      DIFFERS from the user-level copy on purpose; (b) byte-comparing this
-#      direction would make every such keep-mine consumer permanently red,
-#      and the fix for that false positive is exactly the hole this check
-#      exists to close: weakening enforcement to make the false positive go
-#      away. So this direction only asks "does a same-named file exist in
-#      the mirror" — the EXISTING byte-identity assertion already lives in
-#      check 21's mirror-walk above, for the direction where it is safe
-#      (there, `$ULH` is this repo's own tracked copy, not a consumer's).
-#      This direction also never flags a mirror-only EXTRA — a consumer's
-#      own additional user-level hooks are its business, not this repo's.
-#      (Checked at v3.0.4: `scripts/` — and so this file itself — is not
-#      copied by setup-project.sh/.ps1 to a bootstrapped consumer repo,
-#      only referenced in a comment; it IS distributed via the
-#      sync-template skill flow described above, which is why the defensive
-#      posture stands regardless.)
-#
-#      THE PRINCIPLE, not a fixed list: membership on this allowlist is a
-#      claim about USEFULNESS at user level, never a claim about what the
-#      hook reads or how it is implemented. A root hook must have a mirror
-#      UNLESS a bare `~/.claude` checkout has no audience for it: no agent
-#      team (enforce-delegation.sh has no delegation surface to enforce),
-#      no project-team deliverable contract (enforce-agent-contract.sh has
-#      nothing to bind to), no per-task tool-call budget (agent-budget-warn.sh
-#      has nothing to warn about). The mirrored
-#      hooks are exactly the ones whose subject is the developer's MACHINE
-#      (git gates, secrets, output/read size, the retro ledger and its brief
-#      — both keyed on cwd -> project slug under the user's own
-#      `~/.claude/projects/`, so both work in any repo on the machine).
-#      Adding an entry requires stating, in one line, why a bare user-level
-#      install has no USE for the hook — not just that it currently lacks a
-#      mirror, and never merely that it happens to read project-only state.
-#      Populated from the diff between `hooks` and `user-level-reference/hooks`
-#      at v3.0.4 (verified by:
-#      diff <(cd hooks && find . -type f | sort) <(cd user-level-reference/hooks && find . -type f | sort)):
-HOOKS_NO_MIRROR=(
-  # enforce-delegation.sh: named in the check-21 comment above as
-  # deliberately project-only (v2.0-round4) — enforces the PO/team
-  # delegation contract, which has no user-level analogue.
-  "enforce-delegation.sh"
-  # enforce-agent-contract.sh: reads this repo's SubagentStop deliverable
-  # contract (## Gate Results / ## Spec Compliance) — a project-team
-  # convention, not something a bare ~/.claude checkout enforces.
-  "enforce-agent-contract.sh"
-  # agent-budget-warn.sh: warns against THIS repo's per-task tool-call budget
-  # convention; a personal ~/.claude install has no such budget to warn about.
-  "agent-budget-warn.sh"
-  # deny-claude-md-writes.sh (v4.1, spec §6): project scope only -- a
-  # user-level deny would refuse CLAUDE.md writes in every non-consumer repo
-  # on the machine, including this toolkit's own checkout and every project
-  # that has never run /sync-template at all. It denies only when
-  # <root>/.claude/template-manifest.json exists with manifest_version 4, a
-  # condition a bare ~/.claude install has no way to meet for itself.
-  "deny-claude-md-writes.sh"
-  # git-pre-push.sh (v4.3.2, design P3): a NATIVE git hook installed per clone
-  # as a shim in <git common dir>/hooks/pre-push, never registered in any
-  # settings.json -- a bare ~/.claude install has no repository to install it
-  # into and no harness that would run it.
-  "git-pre-push.sh"
-  # run-hook.sh / cct-session.sh (v5.0, spec §3): the cct plugin's wrapper and
-  # SessionStart marker -- plugin-only, registered by hooks/hooks.json, never
-  # mirrored into a user-level ~/.claude.
-  "run-hook.sh"
-  "cct-session.sh"
-  "hooks.json"
-  # jev-route.sh / jev-notice.sh (v5.0, Task 7): the plugin registers Jev (gated on <git common dir>/jev/config.json);
-  # a user-level copy would route a second time beside the plugin's.
-  "jev-route.sh"
-  "jev-notice.sh"
-  # now-brief.sh (v4.5.0): reads PROJECT_STATE.md, a template-shipped project file; a bare user-level install has no "## Now" to print.
-  "now-brief.sh"
-)
-# FINDING (v3.0.4, A6): retro-brief.sh (SessionStart, reads the ledger) and
-# retro-ledger.sh (SubagentStop, writes it) both key off cwd -> project slug
-# under the developer's OWN `~/.claude/projects/<slug>/memory/retro.md` — a
-# per-USER, per-machine path, not a per-project file checked into any repo.
-# That makes retro-brief.sh MACHINE-scoped exactly like retro-ledger.sh
-# (already mirrored), and its prior absence from the mirror looked accidental
-# rather than designed — `user-level-reference/settings-reference.md` even
-# already documents SessionStart as "Bound in v2.0 to hooks/retro-brief.sh".
-# Mirrored below rather than allowlisted; neither hook is registered in
-# `user-level-reference/settings.json` today, so no settings.json edit was
-# needed to match an existing binding.
-hnm_is_allowlisted() {
-  local needle="$1" x
-  for x in "${HOOKS_NO_MIRROR[@]}"; do
-    [ "$x" = "$needle" ] && return 0
-  done
-  return 1
-}
-if [ -d "$ULH" ]; then
-  reverse_count=0
-  while IFS= read -r -d '' rf; do
-    reverse_count=$((reverse_count + 1))
-    rrel="${rf#hooks/}"
-    mirror="$ULH/$rrel"
-    if hnm_is_allowlisted "$rrel"; then
-      ok "hook reverse-mirror: $rrel is on HOOKS_NO_MIRROR (root-only by design)"
-    elif [ -f "$mirror" ]; then
-      ok "hook reverse-mirror: $rrel has a same-named mirror at $mirror (byte-identity is check 21's job, above)"
-    else
-      ko "hook reverse-mirror: $rf has NO mirror at $mirror — either cp $rf $mirror or add \"$rrel\" to HOOKS_NO_MIRROR with a reason"
-    fi
-  done < <(find hooks -type f -print0 | sort -z)
-  [ "$reverse_count" -eq 0 ] && ko "hook reverse-mirror: hooks/ is empty"
-fi
-
-# 21b. hooks/lib/json.sh must EXIST on both sides (v2.2.0).
-#
-#      The walk above starts from the mirror, so a lib file missing from BOTH
-#      trees is invisible to it. Every git gate refuses to run without
+#      Every git gate refuses to run without
 #      hooks/lib/json.sh (fail closed), and the fail-open hooks disable
 #      themselves — so its absence is a silent enforcement outage, not a
 #      cosmetic drift.
-for f in hooks/lib/json.sh "$ULH/lib/json.sh"; do
+for f in hooks/lib/json.sh; do
   if [ -f "$f" ]; then
     ok "$f present (the shared node/python3/jq reader)"
   else
@@ -846,25 +658,6 @@ fi
 #   - Neither kind subsumes the other. Do not delete a census because its
 #     behavioural partner is green, or the reverse.
 # ===========================================================================
-
-# 21c. EVERY hooks/lib/* must be mirrored (v2.2.1).
-#
-#      Check 21 walks the MIRROR, so it cannot see a root file nobody mirrored.
-#      For top-level hooks that is deliberate — whether a hook belongs at user
-#      level is a judgement call. For `lib/` it is not: the mirrored gates
-#      SOURCE these files and fail closed without them, so a new root lib with
-#      no mirror is a user-level enforcement outage the moment a mirrored gate
-#      starts requiring it. This is the direction check 21 leaves open, closed
-#      for the one subtree where it is never a judgement call.
-for lf in hooks/lib/*; do
-  [ -f "$lf" ] || continue
-  lrel="${lf#hooks/}"
-  if [ -f "$ULH/$lrel" ]; then
-    ok "hook mirror: $lf is mirrored at $ULH/$lrel"
-  else
-    ko "hook mirror: $lf has NO mirror — run: cp $lf $ULH/$lrel (the mirrored gates source it and fail closed)"
-  fi
-done
 
 # 21c-2. Every PROJECT_CONTEXT.md field anchor is BOM-tolerant (v2.2.4).
 #
@@ -1706,7 +1499,7 @@ fi
 #      whole hook stops working. `bash -n` catches it in one pass; nothing else
 #      in this suite would, and on a node-less host the fixtures that noticed it
 #      are skipped. Parser-free, so it runs everywhere.
-for sf in hooks/*.sh hooks/lib/*.sh "$ULH"/*.sh "$ULH"/lib/*.sh scripts/*.sh; do
+for sf in hooks/*.sh hooks/lib/*.sh scripts/*.sh; do
   [ -f "$sf" ] || continue
   if bash -n "$sf" 2>/dev/null; then
     ok "$sf parses"
@@ -1823,14 +1616,8 @@ for s in $(for v in $VARIANTS; do echo "templates/$v/.claude/settings.json"; don
   else
     ok "$s: no Read(...) deny rule of any spelling"
   fi
-  # v5.0: a variant registers it through the plugin (hooks/hooks.json, asserted below),
-  # so only the user-level reference is read for the registration here.
-  case "$s" in templates/*) continue ;; esac
-  if grep -qF 'hooks/deny-secret-reads.sh' "$s"; then
-    ok "$s: registers hooks/deny-secret-reads.sh (the protection that replaced the rules)"
-  else
-    ko "$s: hooks/deny-secret-reads.sh NOT registered — the .env files are unprotected, not merely un-prompted"
-  fi
+  # v5.0: neither a variant nor the user-level reference registers it; the plugin
+  # does, machine-wide (hooks/hooks.json, asserted below).
 done
 if grep -qF 'run-hook.sh\" deny-secret-reads"' hooks/hooks.json; then
   ok "hooks/hooks.json: registers deny-secret-reads (the protection every variant gets from the plugin)"
@@ -2379,7 +2166,7 @@ fi
 # legitimately unflagged with no gate failure in their repo.
 # ---------------------------------------------------------------------------
 echo
-a5_names=$( { ls agents/*.md user-level-reference/agents/*.md 2>/dev/null; } \
+a5_names=$( { ls agents/*.md 2>/dev/null; } \
   | sed 's@.*/@@;s@\.md$@@' | sort -u )
 a5_true_names=$(
   for a5f in agents/*.md; do
@@ -3644,8 +3431,12 @@ fi
 # otherwise print to EOF), AND its frontmatter `name:` must equal the setting.
 # ---------------------------------------------------------------------------
 echo
-note "Check 60: user-level-reference/settings.json outputStyle names a shipped style"
-c60_name=$(grep -o '"outputStyle": *"[^"]*"' user-level-reference/settings.json | head -1 | sed 's/^"outputStyle": *"//; s/"$//')
+note "Check 60: user-level-reference/settings.json outputStyle names a shipped style, as cct:<name>"
+c60_sel=$(grep -o '"outputStyle": *"[^"]*"' user-level-reference/settings.json | head -1 | sed 's/^"outputStyle": *"//; s/"$//')
+# v5.0: the style ships in the cct plugin, and a plugin style loads only under the plugin
+# prefix (probed 2026-10-13), so the setting is cct:<name> and <name> is the file's name:.
+c60_name=""
+case "$c60_sel" in cct:?*) c60_name=${c60_sel#cct:} ;; esac
 c60_f="output-styles/$c60_name.md"
 c60_fm=""
 c60_rc=1
@@ -3654,7 +3445,7 @@ if [ -n "$c60_name" ] && [ -f "$c60_f" ]; then
   c60_rc=$?
 fi
 if [ -z "$c60_name" ]; then
-  ko "check 60: user-level-reference/settings.json sets no outputStyle"
+  ko "check 60: user-level-reference/settings.json sets no outputStyle of the form cct:<name> (found '$c60_sel'; a bare plugin style name does not load)"
 elif [ ! -f "$c60_f" ]; then
   ko "check 60: outputStyle is '$c60_name' but $c60_f does not exist"
 elif [ "$c60_rc" -ne 0 ]; then
@@ -4473,7 +4264,7 @@ else
   # excludes a wildcard grant (`mcp__<alias>__*`) on its own -- nothing to
   # go stale about a name
   # that isn't there.
-  c50_agent_tokens=$(grep -h '^tools:' agents/*.md user-level-reference/agents/*.md 2>/dev/null \
+  c50_agent_tokens=$(grep -h '^tools:' agents/*.md 2>/dev/null \
     | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+')
   c50_settings_parsed=$(c50_parse_settings templates/*/.claude/settings.json user-level-reference/settings.json)
   c50_settings_grant_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="ALLOW"||$1=="MATCHER"{print $2}' | sed '/^$/d' | sort -u)
@@ -4742,7 +4533,7 @@ c53_classify() {
 c53_agents=0
 c53_one_line=0
 c53_bad=""
-for f in agents/*.md user-level-reference/agents/*.md; do
+for f in agents/*.md; do
   [ -f "$f" ] || continue
   c53_agents=$((c53_agents + 1))
   c53_r=$(c53_classify "$f")
@@ -4825,14 +4616,11 @@ fi
 # registration names a program that can be spawned.
 #
 # Scope: the six variant .claude/settings.json, the root .claude/settings.json,
-# every agents/*.md frontmatter, and the user-level
-# reference rendered with the LOCAL bash and @HOOKS@ -> user-level-reference/hooks.
-# The settings files are read by hooks/verify-hooks.sh --report itself, in a
-# fixture project holding a copy of hooks/ (the reader the user runs at every
-# session start is the reader this check exercises). The user-level reference is
-# rendered by scripts/render-user-hooks.sh, so the exec-form program test (an
-# unspawnable program is a NON-blocking error: every check behind it would pass)
-# covers the string a user will actually run.
+# every agents/*.md frontmatter. The settings files are read by hooks/verify-hooks.sh
+# --report itself, in a fixture project holding a copy of hooks/ (the reader the user
+# runs at every session start is the reader this check exercises). v5.0: the user-level
+# reference registers no hook script (only the inline date hook), so its rendered arm
+# is retired; control 2 keeps the exec-form program test.
 #
 # TWO-SIDED: a control deletes one registered hook from a scratch project and
 # expects the report to list it and exit 1, and a second names a nonexistent exec
@@ -4840,7 +4628,7 @@ fi
 # would make this check green by construction.
 # ---------------------------------------------------------------------------
 echo
-note "Check 70: every registered hook script exists and passes bash -n; every exec-form program is spawnable (settings, rendered user reference)"
+note "Check 70: every registered hook script exists and passes bash -n; every exec-form program is spawnable"
 c70_tmp=$(mktemp -d)
 c70_h0="$c70_tmp/home0"; mkdir -p "$c70_h0"
 c70_proj="$c70_tmp/proj"; mkdir -p "$c70_proj/.claude"; cp -R hooks "$c70_proj/hooks"
@@ -4855,18 +4643,8 @@ for c70_f in $(for v in $VARIANTS; do printf 'templates/%s/.claude/settings.json
 done
 # v5.0: the agent-frontmatter scan is retired -- templates ship no agents, and no
 # agents/*.md carries frontmatter hooks: (check 75), so there is nothing left to scan.
-# the user-level reference, rendered with the local bash
-c70_uh="$c70_tmp/uhome"; mkdir -p "$c70_uh/.claude"; cp -R user-level-reference/hooks "$c70_uh/.claude/hooks"
-if c70_ro=$(HOME="$c70_uh" bash scripts/render-user-hooks.sh --write 2>&1); then
-  c70_out=$(env -u CLAUDE_PROJECT_DIR HOME="$c70_uh" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
-  if [ "$c70_rc" -ne 0 ] || [ -n "$c70_out" ]; then c70_bad="$c70_bad [user-level reference rendered: rc=$c70_rc $(printf '%s' "$c70_out" | tr '\n' ' ')]"; fi
-  c70_nx=$(grep -c '"args"' "$c70_uh/.claude/settings.json")
-  [ "$c70_nx" -gt 0 ] || c70_bad="$c70_bad [the rendered user-level settings carry no exec-form entry: the program test is inert]"
-else
-  c70_bad="$c70_bad [render-user-hooks.sh --write failed: $(printf '%s' "$c70_ro" | tr '\n' ' ')]"
-fi
 if [ -z "$c70_bad" ]; then
-  ok "check 70: $c70_scanned settings files and the rendered user-level reference: every script exists, passes bash -n, and every exec-form program is spawnable"
+  ok "check 70: $c70_scanned settings files: every script exists and passes bash -n"
 else
   ko "check 70: $c70_bad"
 fi
@@ -4901,8 +4679,8 @@ rm -rf "$c70_tmp"
 # consumer: the table makes a removal, an addition or a changed form red.
 # Also: (2) the F/UF hooks carry the in-hook 127->2 trap and no other registered
 # hook (nor any lib) traps EXIT; (3) no allow-capable hook is F/UF; (4) the stop
-# gate is U; (5) a C5 hook's template matcher covers its user-level matcher (else
-# stepping aside drops a tool); (6) the sourced hooks have no top-level return;
+# gate is U; (5) retired in v5.0 with the user-level registrations it compared;
+# (6) the sourced hooks have no top-level return;
 # (7) controls: a mutated copy (one F turned W; a dropped group) must go red.
 # (v5.0) hooks/hooks.json arm: one (event, matcher, script) row per entry, both command
 # shapes anchored, anything else OTHER, compared with the frozen general rows plus the
@@ -4946,12 +4724,11 @@ else
   # (1) the frozen set
   c71_cmp "$C71_GENERAL" "$(c71_x "$C71_GENERAL" general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
   c71_cmp ".claude/settings.json" "$(c71_x .claude/settings.json root)" "$(printf '%s\n' "$C71_TABLE" | grep '^root;')"
-  c71_cmp "user-level-reference/settings.json" "$(c71_x user-level-reference/settings.json user)" "$(printf '%s\n' "$C71_TABLE" | grep '^user;')"
   # (1b) the plugin's hooks/hooks.json: its (event, matcher, script) set equals the frozen `general` rows
   # (form dropped: polarity lives in run-hook.sh's class table) plus the plugin-only allowlist.
   c71_want_p=$(printf '%s\n%s\n' "$(printf '%s\n' "$C71_TABLE" | grep '^general;' | awk -F';' '{print $2";"$3";"$4}')" "$C71_PLUGIN_ONLY" | LC_ALL=C sort)
   c71_cmp "hooks/hooks.json" "$(c71_px hooks/hooks.json | LC_ALL=C sort)" "$c71_want_p"
-  c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -v '^agent:' | grep -c .)  # v5.0: the agent: rows are no longer compared
+  c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -v '^agent:' | grep -v '^user;' | grep -c .)  # v5.0: the agent: and user; rows are no longer compared
   c71_nsc=$(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u | grep -c .)
 
   # (2) the trap audit. Definitions come from test-hooks.sh block C2a: one each.
@@ -4985,34 +4762,6 @@ else
   # (4) the stop gate is U everywhere it is registered
   c71_sg=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$4=="enforce-agent-contract"{print $5}')
   [ -n "$c71_sg" ] && [ "$(printf '%s\n' "$c71_sg" | sort -u)" = "U" ] || c71_bad="$c71_bad [enforce-agent-contract is not registered U (the stop gate is never wrapped): $(printf '%s' "$c71_sg" | tr '\n' ' ')]"
-  # (5) matcher superset for each C5 hook: the template's alternatives cover the user-level matcher's
-  c71_cover() { # <template matcher> <user matcher> -> 0 when every user alternative is a template alternative (an empty template matcher covers all)
-    [ -z "$1" ] && return 0
-    [ -z "$2" ] && return 1
-    for c71_alt in $(printf '%s' "$2" | tr '|' ' '); do
-      case "|$1|" in *"|$c71_alt|"*) ;; *) return 1 ;; esac
-    done
-    return 0
-  }
-  c71_nsa=0
-  while IFS=';' read -r c71_l c71_e c71_m c71_s c71_f; do
-    [ "$c71_l" = user ] || continue
-    grep -qF "*'}/hooks/$c71_s.sh" user-level-reference/settings.json || continue
-    c71_nsa=$((c71_nsa + 1))
-    c71_ok=0
-    while IFS=';' read -r c71_tl c71_te c71_tm c71_ts c71_tf; do
-      [ "$c71_tl" = general ] && [ "$c71_te" = "$c71_e" ] && [ "$c71_ts" = "$c71_s" ] || continue
-      c71_cover "$c71_tm" "$c71_m" && c71_ok=1
-    done <<EOF
-$C71_TABLE
-EOF
-    [ "$c71_ok" = 1 ] || c71_bad="$c71_bad [C5 hook $c71_s: no template registration under $c71_e covers the user-level matcher '$c71_m' -- stepping aside would drop a tool]"
-  done <<EOF
-$C71_TABLE
-EOF
-  [ "$c71_nsa" -ge 5 ] || c71_bad="$c71_bad [only $c71_nsa step-aside hooks found in the user-level reference, expected at least 5: the audit is inert]"
-  c71_cover 'Bash|PowerShell' 'Bash|PowerShell|Read' && c71_bad="$c71_bad [the matcher-superset CONTROL failed: a wider user matcher was judged covered]"
-  c71_cover 'Bash|PowerShell' 'PowerShell' || c71_bad="$c71_bad [the matcher-superset CONTROL failed: a narrower user matcher was judged uncovered]"
   # (6) no top-level return in a sourced (UF/UO/UU) hook or any lib
   c71_rf=""
   for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '$5 ~ /^U[FOU]$/ {print $4}' | sort -u); do c71_rf="$c71_rf hooks/$c71_s.sh"; done
@@ -5023,7 +4772,7 @@ EOF
   [ "$(awk "$C2AAWK" "$c71_tmp/r1.sh" | wc -l | tr -d ' ')" = 1 ] || c71_bad="$c71_bad [the return-audit CONTROL failed: a top-level return was not reported]"
 
   if [ -z "$c71_bad" ]; then
-    ok "check 71: $c71_nrows registrations over $c71_nsc scripts equal the frozen table (the v4.6.1 template, root, user-level); hooks/hooks.json's $(printf '%s\n' "$c71_want_p" | grep -c .) entries equal the frozen general rows plus the plugin-only allowlist; $c71_ntrap F/UF hooks trap 127->2, no allow-capable hook is F/UF, the stop gate is U, $c71_nsa C5 matchers covered, no top-level return"
+    ok "check 71: $c71_nrows registrations equal the frozen table (the v4.6.1 template, root); hooks/hooks.json's $(printf '%s\n' "$c71_want_p" | grep -c .) entries equal the frozen general rows plus the plugin-only allowlist; $c71_ntrap F/UF hooks over $c71_nsc frozen scripts trap 127->2, no allow-capable hook is F/UF, the stop gate is U, no top-level return"
   else
     ko "check 71: $c71_bad"
   fi
@@ -5072,15 +4821,15 @@ fi
 # ---------------------------------------------------------------------------
 # Check 67 -- the coder's `## Working rules`, `## Skills (...)` and `## Report
 # (HARD REQUIREMENT)` sections are byte-identical in every coder file
-# (v4.5.0 A1/A2/B1; v5.0: the plugin's agents/coder.md and agents/*-coder.md plus the
-# user-level coder, reference agents/coder.md -- the template copies are gone). The digest replaced the karpathy-guidelines preload and
+# (v4.5.0 A1/A2/B1; v5.0: the plugin's agents/coder.md and agents/*-coder.md, reference
+# agents/coder.md -- the template and user-level copies are gone). The digest replaced the karpathy-guidelines preload and
 # the Report is what hooks/enforce-agent-contract.sh checks, so one drifted
 # copy silently changes one coder. Each section runs from its heading to the
 # next `## `. Control: a section that extracts 0 B from the reference copy is
 # a failure, never a pass.
 # ---------------------------------------------------------------------------
-note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across agents/coder.md, agents/*-coder.md and the user-level coder"
-c67_files=$(ls agents/coder.md agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null)
+note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across agents/coder.md and agents/*-coder.md"
+c67_files=$(ls agents/coder.md agents/*-coder.md 2>/dev/null)
 c67_count=$(printf '%s\n' "$c67_files" | grep -c .)
 c67_sec() { # <file> <heading line> -> the section, heading included
   awk -v h="$2" 'index($0, h) == 1 { f = 1; print; next } f && /^## / { exit } f { print }' "$1"
@@ -5095,9 +4844,9 @@ for c67_h in '## Working rules' '## Skills (open one only when its trigger fires
   for c67_f in $c67_files; do
     [ "$(c67_sec "$c67_f" "$c67_h")" = "$c67_ref" ] || c67_bad="$c67_bad $c67_f"
   done
-  c67_want=$(( $(ls agents/*-coder.md 2>/dev/null | wc -l) + 2 ))
+  c67_want=$(( $(ls agents/*-coder.md 2>/dev/null | wc -l) + 1 ))
   if [ "$c67_count" -lt 2 ] || [ "$c67_count" -ne "$c67_want" ]; then
-    ko "check 67: found $c67_count coder files, expected $c67_want (agents/coder.md, agents/*-coder.md, user-level coder)"
+    ko "check 67: found $c67_count coder files, expected $c67_want (agents/coder.md, agents/*-coder.md)"
   elif [ -n "$c67_bad" ]; then
     ko "check 67: '$c67_h' differs from agents/coder.md's copy in:$c67_bad"
   else
@@ -5119,7 +4868,7 @@ note "Check 68: no workflow file carries '## Required Skills', require-skills-bl
 C68_LITERALS='## Required Skills|require-skills-block|\.gate/last-pass'
 c68_n=0
 c68_bad=""
-for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json"; done) agents/*.md user-level-reference/agents/*.md; do
+for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json"; done) agents/*.md; do
   [ -f "$c68_f" ] || { ko "check 68: $c68_f missing"; continue; }
   c68_n=$((c68_n + 1))
   if grep -qE "$C68_LITERALS" "$c68_f"; then
@@ -5197,6 +4946,8 @@ for n in $(grep -rhoE 'cct:[A-Za-z][A-Za-z-]*' templates user-level-reference sk
   c76_n=$((c76_n + 1))
   # skill names (cct:<skill>) are the directories under skills/
   [ -d "skills/${n#cct:}" ] && continue
+  # and output styles (outputStyle "cct:<style>") are the files under output-styles/
+  [ -f "output-styles/${n#cct:}.md" ] && continue
   [ -f "agents/${n#cct:}.md" ] || c76_bad="$c76_bad $n"
 done
 [ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen)" || ko "76: unknown agents:$c76_bad"

@@ -4,7 +4,7 @@ This document explains each section and setting in the user-level Claude Code se
 
 ## Full Settings JSON
 
-Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Personal additions are deliberately excluded: no `statusLine`, no third-party marketplaces or their plugins, no project-specific permission entries.
+Verbatim copy of `user-level-reference/settings.json` in this repo (v5.0). Personal additions are deliberately excluded: no `statusLine`, no third-party marketplaces or their plugins, no project-specific permission entries.
 
 ```json
 {
@@ -37,16 +37,15 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
       "mcp__godot-tools__*",
       "mcp__plugin_context7_context7__*",
       "mcp__plugin_playwright_playwright__*",
-      "mcp__plugin_context-mode_context-mode__*"
+      "mcp__plugin_context-mode_context-mode__*",
+      "mcp__git-tools__*"
     ],
     "deny": [
       "mcp__git-tools__git_push",
       "mcp__git-tools__git_commit",
       "mcp__git-tools__git_revert",
-      "mcp__git-tools__git_merge",
       "mcp__git-tools__git_rebase",
-      "mcp__git-tools__git_reset",
-      "mcp__git-tools__git_push_tags"
+      "mcp__git-tools__git_reset"
     ],
     "ask": [
       "Bash(npm publish*)"
@@ -62,42 +61,8 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v2.0). Perso
     ]
   },
   "enableAllProjectMcpServers": true,
-  "outputStyle": "pm-report",
+  "outputStyle": "cct:pm-report",
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/no-push-main.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/no-push-main.sh\\\"'*) exit 0 ;; esac; fi; unset p s; { [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- enforcement offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/no-push-main.sh"]}
-        ]
-      },
-      {
-        "matcher": "Read|Bash",
-        "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-secret-reads.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-secret-reads.sh\\\"'*) exit 0 ;; esac; fi; unset p s; { [ -f \"$0\" ] && [ -r \"$0\" ]; } || { echo \"HOOK SCRIPT MISSING: $0 -- secrets protection offline.\" >&2; exit 2; }; . \"$0\"", "@HOOKS@/deny-secret-reads.sh"]}
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/deny-hang-shapes.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/deny-hang-shapes.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/deny-hang-shapes.sh"]}
-        ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/model-floor.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/model-floor.sh\\\"'*) exit 0 ;; esac; fi; unset p s; [ -f \"$0\" ] && [ -r \"$0\" ] || exit 0; . \"$0\"", "@HOOKS@/model-floor.sh"]}
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {"type": "command", "command": "@BASH@", "args": ["-c", "export PATH=/usr/bin:/bin:$PATH; p=${CLAUDE_PROJECT_DIR:-.}; if [ -f \"$p/hooks/bash-output-guard.sh\" ] && [ -f \"$p/.claude/settings.json\" ] && [ -r \"$p/.claude/settings.json\" ]; then IFS= read -r -d '' s < \"$p/.claude/settings.json\"; case $s in *'}/hooks/bash-output-guard.sh\\\"'*) exit 0 ;; esac; fi; unset p s; . \"$0\"", "@HOOKS@/bash-output-guard.sh"]}
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -254,10 +219,10 @@ Automatically enables all MCP servers defined in project-level `.mcp.json` files
 ### `outputStyle`
 
 ```json
-"outputStyle": "pm-report"
+"outputStyle": "cct:pm-report"
 ```
 
-Names the default output style, by its frontmatter `name:`, for every new session (v4.2.0). `pm-report` (`output-styles/pm-report.md`) reports to the user as a product manager reads — plain language, a `[HH:MM]` timestamp, updates only on state change. `/output-style default` switches a session back to Claude Code's own technical style at any time; the setting only picks what a *new* session starts with. Claude Code falls back silently when the named style cannot be found, which is why consistency check 60 pins the file existing with a matching `name:`.
+Names the default output style for every new session (v4.2.0). Since v5.0 the style ships in the cct plugin, and a plugin style loads only under the plugin prefix (probed 2026-10-13), so the value is `cct:` + the style's frontmatter `name:`. `pm-report` (`output-styles/pm-report.md`) reports to the user as a product manager reads — plain language, a `[HH:MM]` timestamp, updates only on state change. `/output-style default` switches a session back to Claude Code's own technical style at any time; the setting only picks what a *new* session starts with. Claude Code falls back silently when the named style cannot be found, which is why consistency check 60 pins the `cct:` prefix and the file existing with a matching `name:`.
 
 ### `contextCompactionThreshold`
 
@@ -279,29 +244,13 @@ Controls **when** auto-compact triggers — expressed as a percentage of the cur
 
 Hooks are shell commands that execute in response to Claude Code events. They enforce workflow rules mechanistically rather than relying on prompt instructions alone.
 
-**Do not copy the `hooks` block by hand: run `bash scripts/render-user-hooks.sh --write` from the toolkit root.** The user-level hooks are registered in **exec form** (v4.4.0): `"command"` is the bash program and `"args"` is `["-c", "<one-line script>", "<hooks dir>/<hook>.sh"]`, so Claude Code starts one bash process per hook with no shell around it. Exec form does not expand `~` or `$HOME`, and resolves a bare `bash` through PATH (on Windows that can reach `System32\bash.exe`, the WSL launcher, which fails open for every protection). The reference therefore spells the program and the directory as `@BASH@` and `@HOOKS@`, and the render script writes the absolute Git Bash `usr/bin/bash.exe` (or `command -v bash` elsewhere) and `$HOME/.claude/hooks`. A hand-copied block would spawn a program named `@BASH@`, a non-blocking error, so every user protection would fail open; the consistency script's placeholder census allows `@[A-Z]+@` in this one file only.
+**Since v5.0 the user level registers one hook: the inline `UserPromptSubmit` time hook** (below). The toolkit hooks are registered machine-wide by the cct plugin (`hooks/hooks.json`, each entry `bash "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh" <name>`), so `~/.claude/hooks/` and the user-level registrations are gone.
 
-`render-user-hooks.sh --print` shows the rendered block; `--write` backs the live file up to `settings.json.bak-<UTC timestamp>` (restore it to back out), replaces only the top-level `hooks` key, keeps hooks it does not own (merged by event and matcher, except a live group holding no toolkit-owned hook, which stays its own group; appended after the toolkit's, each reported as `kept foreign hook: <command>`), refuses a live file that does not parse, re-reads the result to check that every script path exists, and is idempotent. It never touches the `UserPromptSubmit` date hook's text (check 62 pins it).
-
-Each entry's script is `export PATH=/usr/bin:/bin:$PATH; ` (v4.4.1: exec form runs bash with the parent's PATH, and a session started from PowerShell has no Git `usr/bin` on it, so `dirname` and `sed` would otherwise be "command not found") + `<step-aside>` + `<tail>`. The tail runs the hook **in the same bash process** (`. "$0"`, a builtin), so a hook's `exit N` is the process exit code. The step-aside (C5) makes the global copy exit 0 when the project registers its own copy of the same hook: the project has `hooks/<name>.sh` **and** its `.claude/settings.json` registers it (the text `}/hooks/<name>.sh"` is present, which a permissions entry or a `.sh.disabled` path does not match). A project that ships the script without registering it keeps the global check.
-
-**The v2.0 user-level hook set** (see the *Full Settings JSON* block for exact registration):
-
-| Hook | Event / matcher | Polarity | What it does |
-|---|---|---|---|
-| `no-push-main.sh` | `PreToolUse` on `Bash\|PowerShell` | `UF`: fail-**closed** (missing script → `HOOK SCRIPT MISSING`, exit 2; the hook's own exit 127 → 2 through its in-hook trap) | Blocks a push to `main`/`master`, resolving the implicit branch when none is named. v2.0 PR1 moved it onto the Bash matcher because native `git push` is now the supported path. |
-| `deny-secret-reads.sh` | `PreToolUse` on `Read\|Bash` | `UF`: fail-**closed** (exit 2 when missing) | Refuses reads of secret files (`.env` and friends). |
-| `deny-hang-shapes.sh` | `PreToolUse` on `Bash` | `UO`: fail-open, silent (exit 0 when missing) | Refuses command shapes that hang the harness (heredoc into a file, wait loops, a `cd` chain). |
-| `model-floor.sh` | `PreToolUse` on `Agent` | `UO`: fail-open, silent | Gives a model-less spawn the project default model. With Jev routing on in that clone (`/cct:jev on`) it deliberately exits silently (`hooks/lib/agent-model.sh` `am_jev_routing`), so expect no model-floor output there and check Jev with `/cct:jev report` instead. |
-| `bash-output-guard.sh` | `PostToolUse` on `Bash\|PowerShell` | `UU`: unwrapped (cannot block; a missing script is a non-blocking error) | Truncates oversized stdout/stderr into a temp log and returns a head/tail excerpt. |
-| `verify-hooks.sh` | `SessionStart` | `UU`: unwrapped, always exits 0 | Reports registered hook scripts that are missing or broken, and exec-form programs that cannot be spawned; silent when all is well. Registered in `settings.json` but not shown in the *Full Settings JSON* block above. |
-| `read-size-gate.sh` | `PreToolUse` on `Read` | fail-**open** | Caps an unbounded `Read` at 500 lines and tells the model the next offset. Recommended user-level install — see below. |
+**Retired in v5.0: the six v4.x exec-form user-level entries** — `no-push-main.sh` (`PreToolUse` `Bash|PowerShell`), `deny-secret-reads.sh` (`PreToolUse` `Read|Bash`), `deny-hang-shapes.sh` (`PreToolUse` `Bash`), `model-floor.sh` (`PreToolUse` `Agent`), `bash-output-guard.sh` (`PostToolUse` `Bash|PowerShell`) and `verify-hooks.sh` (`SessionStart`), each naming `<home>/.claude/hooks/<name>.sh`. Left registered after the plugin is installed, each would run beside the plugin's copy. On Linux `scripts/install-user-level-linux.sh` drops every entry naming `/.claude/hooks/<toolkit hook>.sh` (the names come from `scripts/lib/v4-user-leftovers.txt`) and keeps every other hook; on Windows follow `docs/plugin-migration-windows.md`.
 
 **Retired in v2.1:** `tier-before-coder.sh`. The plan gate is gone — plans are optional artifacts and every spawn carries its task brief instead. Delete the script from `~/.claude/hooks/` and its `Agent` matcher entry from `~/.claude/settings.json`; left registered, it fails closed on a missing script and blocks every coder spawn.
 
 **Retired at user level in v2.0, deleted in v2.1:** the blanket Bash-git block. PR1 replaced "ban the git CLI" with "gate it" — `no-push-main.sh` and the project-level `gate-before-merge.sh` stop the dangerous operations, and everything else runs natively. If you still have the old blanket-block registered, remove it; it now blocks the supported workflow.
-
-Copy every referenced script into `~/.claude/hooks/` before installing this `settings.json` — the canonical source is the toolkit root `hooks/` directory. The exec-form entries in `settings.json` (the first five rows above, plus the SessionStart `verify-hooks.sh`) carry a step-aside for the project's own registration (C5), so the global and project copies never both run.
 
 #### Hook Events
 
@@ -357,7 +306,7 @@ Hooks fire even when agents use `mode: bypassPermissions` — they enforce polic
 
 #### User-Level vs Project-Level Hooks
 
-- **User-level** (`~/.claude/settings.json`): Apply to all projects. Good for personal workflow enforcement that is true everywhere (never push to main, cap oversized reads).
+- **User-level** (`~/.claude/settings.json`): Apply to all projects. Since v5.0 the toolkit's machine-wide hooks come from the cct plugin instead; the user level keeps only the time hook.
 - **Project-level** (`.claude/settings.json`): Apply to one project. Good for language-specific gates (e.g., pre-commit format checks) and for anything that references a repo-relative path such as `hooks/run-gate.sh`.
 
 A user-level hook may only reference scripts and paths that exist in *every* repo — a fail-closed hook pointing at a repo-scoped script turns every unrelated project into a paralysed session. Do NOT use the inline `if: "Bash(git *)"` glob style at user level: its matcher is conservative on complex multi-line commands and fail-closes on false positives (observed blocking legitimate non-git commands). Prefer a script that parses the command itself.
@@ -388,7 +337,7 @@ Templates include the following workflow enforcement hooks (via external scripts
 
 All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and are copied to target projects by the setup script. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
 
-### Read Size Gate (PreToolUse, User-Level Recommended)
+### Read Size Gate (PreToolUse, registered by the cct plugin)
 
 **Read size gate** (`hooks/read-size-gate.sh`):
 - Matcher: `Read`
@@ -401,37 +350,11 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
 - Parses JSON through `hooks/lib/json.sh` (node, python3 or jq). Style-matches `no-push-main.sh`.
 
-**Recommended install scope: user-level** (`~/.claude/settings.json`). The 22% Read-tool share is paid in target-project sessions, not in `claude-code-toolkit` self-maintenance. Installing at user level covers every project the user opens.
-
-**Install steps:**
-
-1. Copy script to `~/.claude/hooks/read-size-gate.sh` (create the directory if needed) and `chmod +x` it. The canonical source is `hooks/read-size-gate.sh` in this repo; the `user-level-reference/hooks/read-size-gate.sh` mirror is the "paste from here" copy.
-2. Merge the stanza below into `~/.claude/settings.json`. If a `hooks.PreToolUse` array already exists, append this matcher group to it; do **not** replace the whole `hooks` block.
-3. Start a new Claude Code session — settings reload is session-scoped.
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/read-size-gate.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**Rollback:** comment out or remove the matcher group from `~/.claude/settings.json` and start a new session.
+**Install scope (v5.0): the cct plugin registers it machine-wide** (`hooks/hooks.json`); there is no user-level copy to install. The 22% Read-tool share is paid in target-project sessions, which the plugin covers.
 
 **Threshold tuning:** the script hard-codes `THRESHOLD=500` near the top. Edit the value directly. The log at `~/.claude/state/read-size-gate.log` provides per-decision data for post-sprint histogramming if you want to calibrate the threshold from real use rather than a gut number.
 
-### Bash Output Guard (PostToolUse, User-Level Recommended)
+### Bash Output Guard (PostToolUse, registered by the cct plugin)
 
 **Hook** (`hooks/bash-output-guard.sh`), matcher `Bash|PowerShell`:
 - Reads `tool_response` from stdin. Observed shape (2.1.250): `{stdout, stderr, interrupted, isImage, noOutputExpected}`.
@@ -449,7 +372,7 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 "command": "LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'"
 ```
 
-It runs before every user message is processed and prints one line — `Current local time: HH:MM (YYYY-MM-DD Www)` — which Claude Code injects into that turn's context; the `pm-report` output style's rule 1 reads it for its `[HH:MM]` timestamp instead of estimating the time. `LC_ALL=C` forces the `%a` weekday abbreviation to English regardless of the machine's own locale, so the line's shape never depends on where it runs. Inline on purpose: a script file would be one more path for consistency check 21's mirror walk to track and one more thing that can go missing at `127`; a one-line `date` command has neither problem.
+It runs before every user message is processed and prints one line — `Current local time: HH:MM (YYYY-MM-DD Www)` — which Claude Code injects into that turn's context; the `pm-report` output style's rule 1 reads it for its `[HH:MM]` timestamp instead of estimating the time. `LC_ALL=C` forces the `%a` weekday abbreviation to English regardless of the machine's own locale, so the line's shape never depends on where it runs. Inline on purpose: a script file would be one more thing that can go missing at `127`; a one-line `date` command cannot. Since v5.0 it is the only hook the user level registers.
 
 ### Model & Effort (session settings)
 

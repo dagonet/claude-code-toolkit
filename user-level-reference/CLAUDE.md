@@ -63,6 +63,10 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 
 Auto-memory `MEMORY.md` loads only its first 200 lines / 25 KB — keep it an index; move detail into topic files.
 
+## cct plugin
+
+Agents, skills, the report style and the toolkit hooks come from the `cct@dagonet` plugin. The style is selected as `"outputStyle": "cct:pm-report"` (a plugin style loads only under its prefix).
+
 ## New Project Setup
 
 After creating a CLI tool or installable package, always include setup/install instructions in the output and README before considering the task complete.

@@ -1,76 +1,29 @@
 #!/usr/bin/env bash
 # verify-user-level-drift.sh [--worktree | <git-ref>]
 #
-# Diff {user-level-reference/{CLAUDE.md,hooks/**,agents/**},skills/**,output-styles/**} against
-# the live ~/.claude/ tree.
+# The delivery probe: does this machine's ~/.claude match a released user level?
 #
-# Direction of truth: **the reference leads, the live copy follows.** The repo
-# files are edited first; ~/.claude/ is updated by the reader per the
-# CHANGELOG's "Downstream migration" section. So a DRIFT result in the same
-# session that changed the reference is expected, not a regression — it means
-# the migration step has not been run on this machine yet.
+# SINCE v5.0 the agents, skills, output style and hooks come from the cct plugin, and the
+# user level is only CLAUDE.md and settings.json. A machine is 0 drift against a v5.0+ REF when
+#   (a) ~/.claude/CLAUDE.md equals the reference CLAUDE.md (on Linux: its Linux rendering);
+#   (b) ~/.claude/plugins/installed_plugins.json records cct@dagonet at user scope at the first
+#       line of REF's VERSION (a missing or unreadable file, or another version, is drift);
+#   (c) no path from REF's scripts/lib/v4-user-leftovers.txt exists under ~/.claude;
+# and permissions.autoMode.environment in settings.json matches the reference (below).
+# A REF older than v5.0 (no leftovers list) is compared the pre-v5.0 way: CLAUDE.md plus every
+# hooks/, skills/, agents/ and output-styles/ file that REF shipped, byte for byte.
 #
-# THE REFERENCE IS A RELEASED TAG, NOT THE WORKING TREE (v2.2.5 round 4).
-# Measured: a live ~/.claude/ copy byte-identical to an UNMERGED branch made this
-# script report 0 drift — so the delivery probe certified that an unreviewed,
-# ship-blocked revision had reached a user's machine. Green meant the opposite of
-# what the check exists to establish. Comparing against the last released tag
-# makes "0 drift" mean "the live tree matches something that shipped", which is
-# the only claim worth making. In-flight reference edits on a branch then read as
-# UNRELEASED and are listed, not silently blessed.
+# Direction of truth: **the reference leads, the live copy follows.** The repo files are edited
+# first; ~/.claude/ is updated per the CHANGELOG's "Downstream migration" section. A DRIFT result
+# in the same session that changed the reference means the migration has not run here yet.
 #
-# `--worktree` restores the old behaviour for pre-release inspection. It prints a
-# banner and is never a release check.
+# THE REFERENCE IS A RELEASED TAG, NOT THE WORKING TREE (v2.2.5 round 4): a live copy matching
+# an unmerged branch once read as 0 drift, certifying an unreviewed revision. `--worktree`
+# compares against the working tree for pre-release inspection; it prints a banner and is never
+# a release check.
 #
-# WHY BLOB-VERSUS-TAG IS A LEGITIMATE BASELINE AT ALL (v2.2.5 round 5).
-# For a PROCESSED tree it would not be: the released reference of a
-# placeholder-bearing file is the manifest's PROCESSED hash, not the tag's raw
-# blob, and a consumer hit exactly that — their pre-commit-test.sh read as drift
-# against the tag's blob (templateRawHash 07de572b…) while matching the processed
-# template exactly (templateHash cd29e1b1…). Wrong baseline, not drift. A check
-# that noisy is disabled within a week, which is how a real check dies.
-#
-# This script is safe from that NOT because the tree is placeholder-free — it is
-# not; three in-scope files carry placeholders (hooks/lib/git-cmd.sh 2,
-# hooks/pre-commit-test.sh 1, skills/sync-template/SKILL.md 3) — but because
-# **the user-level install is VERBATIM**: there is no substitution step at user
-# level, unlike the project bootstrap. The files match precisely BECAUSE nobody
-# processes them. ON LINUX ONE FILE IS PROCESSED: the installer rewrites CLAUDE.md
-# (platform section, G:/git), so there it is compared with its Linux rendering
-# (see the LINUX RENDERING block); every other file is still verbatim.
-# That is the narrow property, and the VERBATIM INSTALL section
-# below STATES it — derived from the drift result for released files (v2.2.6),
-# and genuinely measured for unreleased ones, which no other line here can see.
-#
-# EXTENDING THIS SCRIPT TO ANY PROCESSED TREE (the project bootstrap path)
-# REQUIRES THE MANIFEST'S PROCESSED HASH INSTEAD — a blob comparison there
-# reports every placeholder-bearing file as drift, forever.
-#
-# Verbatim-install is only half of what matters, and it is NOT the half that
-# catches breakage: a placeholder added in a shell VALUE position keeps verbatim
-# install true, keeps this comparison green, and makes the shipped hook execute a
-# literal `{{...}}`. That second property — no placeholder in an EXECUTABLE
-# position — is asserted in scripts/verify-template-consistency.sh (search:
-# executable-position sweep), because it needs no live tree and belongs in the
-# gate. Do not read a green run here as evidence about it.
-#
-# SCOPE, AND WHAT IS DELIBERATELY NOT COMPARED.
-# The loop below covers CLAUDE.md + hooks/ + skills/ + agents/ + output-styles/.
-# `user-level-reference/settings.json` is EXCLUDED ON PURPOSE: it is reference
-# material a reader merges by hand, not a file this project installs. A user's
-# own ~/.claude/settings.json legitimately carries their personal permissions,
-# env and MCP entries, so force-matching it would report every user as drifting
-# from a file they were never meant to copy verbatim. Same class as
-# `.mcp.json.template`, `README.md` and `settings-reference.md` — reference
-# files, never installed. DO NOT ADD ANY OF THEM TO THE `for sub in` LOOP.
-#
-# ONE NARROW EXCEPTION, ADDED v3.0.3 AND NOT A WEAKENING OF THE ABOVE:
-# `permissions.autoMode.environment` inside settings.json IS compared, as a
-# KEY-SCOPED comparison, not a byte one, and settings.json stays out of the loop.
-# The reasoning that excludes the file is about the user's OWN entries; that key
-# is not one of them — it is the trust boundary this repo's reference defines,
-# at USER scope, and drift in it was invisible for two releases. See the
-# autoMode.environment section below for the measurement.
+# settings.json is NOT byte-compared: a user's own permissions, env and MCP entries are theirs.
+# Only the key-scoped autoMode.environment comparison reads it.
 #
 # Run ad-hoc; not wired into any hook. Works from any cwd (cd's to repo root).
 set -u
@@ -116,9 +69,7 @@ fi
 checked=0
 in_sync=0
 drift=0
-unreleased=0
 drift_list=""
-unreleased_list=""
 
 TMPD=$(mktemp -d)
 trap 'rm -rf "$TMPD"' EXIT
@@ -136,9 +87,8 @@ ref_copy() { # <repo-relative path>
   fi
 }
 
-# Since v5.0 skills/ and output-styles/ live at the plugin root; hooks/ and agents/
-# stay under user-level-reference/ until Task 13. A released tag older than v5.0
-# carries all four under user-level-reference/, so the tag listing falls back.
+# Pre-v5.0 refs: skills/ and output-styles/ lived under user-level-reference/ before v5.0 moved
+# them to the plugin root. The listing tries the new location first, then the old one.
 sub_roots() { # <sub> -> candidate repo dirs, new location first
   case "$1" in
     skills|output-styles) printf '%s\n' "$1" "user-level-reference/$1" ;;
@@ -165,14 +115,13 @@ released_path() { # <repo-relative path>
 check_file() { # <repo-relative ref path> <live_path> [expected file, instead of the reference copy]
   rp=$(released_path "$1")
   src=${3:-${rp:+$(ref_copy "$rp")}}
+  checked=$((checked + 1))
   if [ -z "$src" ]; then
-    # Present on this branch, absent from the released reference.
-    unreleased=$((unreleased + 1))
-    unreleased_list="$unreleased_list
-  UNRELEASED (not in $REF, not compared): $1"
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  CANNOT COMPARE: $1 is not in ${REF:-the working tree}"
     return
   fi
-  checked=$((checked + 1))
   if [ ! -f "$2" ]; then
     drift=$((drift + 1))
     drift_list="$drift_list
@@ -225,44 +174,99 @@ if [ "$(uname -s)" = "Linux" ]; then
   fi
 fi
 
+# (a) CLAUDE.md
 check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md" "$claude_expected"
 
-# The file SET comes from the reference too, not from the working tree: a file
-# added on a branch must not enlarge a released-tree comparison.
-for sub in hooks skills agents output-styles; do
-  files=""
-  for d in $(sub_roots "$sub"); do
-    if [ "$MODE" = "worktree" ]; then
-      [ -d "$d" ] || continue
-      files=$(find "$d" -type f)
+LEFT_SRC=$(ref_copy "scripts/lib/v4-user-leftovers.txt")
+if [ -n "$LEFT_SRC" ]; then
+  # (b) cct@dagonet at REF's VERSION, read from installed_plugins.json. Observed shape (Claude Code
+  # 2.1.x): {"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"4.6.2",...}]}}.
+  # Prints one "<scope> <version>" line per install record; nothing when the file cannot be read.
+  plugin_records() { # <installed_plugins.json>
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' 2>/dev/null; then
+      python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+    for r in d.get("plugins", {}).get("cct@dagonet", []):
+        print("%s %s" % (r.get("scope"), r.get("version")))
+except Exception:
+    pass' "$1"
+    elif command -v node >/dev/null 2>&1; then
+      node -e '
+try {
+  var d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^\uFEFF/, ""));
+  ((d.plugins || {})["cct@dagonet"] || []).forEach(function (r) { console.log(r.scope + " " + r.version); });
+} catch (e) {}' "$1"
+    elif command -v jq >/dev/null 2>&1; then
+      jq -r '(.plugins["cct@dagonet"] // [])[] | "\(.scope) \(.version)"' "$1" 2>/dev/null
     else
-      files=$(git ls-tree -r --name-only "$REF" -- "$d" 2>/dev/null)
+      echo "NO-PARSER"
     fi
-    [ -n "$files" ] && break
-  done
-  [ -n "$files" ] || continue
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    check_file "$f" "$LIVE_ROOT/$(live_rel "$f")"
-  done <<EOF
+  }
+  ver_src=$(ref_copy "VERSION")
+  want_ver=$([ -n "$ver_src" ] && head -1 "$ver_src" | tr -d '\r')
+  ip="$LIVE_ROOT/plugins/installed_plugins.json"
+  if [ -z "$want_ver" ]; then
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  CANNOT COMPARE the cct plugin: VERSION is not in ${REF:-the working tree}"
+  elif [ ! -f "$ip" ]; then
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  PLUGIN MISSING: $ip not found (cct@dagonet is not installed; want $want_ver)"
+  else
+    recs=$(plugin_records "$ip")
+    if [ "$recs" = "NO-PARSER" ]; then
+      drift=$((drift + 1))
+      drift_list="$drift_list
+  CANNOT READ $ip: no python3, node or jq"
+    elif printf '%s\n' "$recs" | grep -qxF "user $want_ver"; then
+      echo "PLUGIN: cct@dagonet $want_ver (user scope)"
+    else
+      drift=$((drift + 1))
+      drift_list="$drift_list
+  PLUGIN DRIFT: cct@dagonet at user scope is not $want_ver in $ip (found: $(printf '%s' "${recs:-none}" | tr '\n' ',' ))"
+    fi
+  fi
+
+  # (c) no v4.x user-level leftover
+  n_left=0
+  while IFS= read -r rel; do
+    rel=${rel%$'\r'}
+    [ -n "$rel" ] || continue
+    n_left=$((n_left + 1))
+    if [ -e "$LIVE_ROOT/$rel" ]; then
+      drift=$((drift + 1))
+      drift_list="$drift_list
+  LEFTOVER: $LIVE_ROOT/$rel (a v4.x user-level copy; the plugin ships it now: remove it)"
+    fi
+  done < "$LEFT_SRC"
+  if [ "$n_left" -eq 0 ]; then
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  LEFTOVER LIST IS EMPTY at ${REF:-the working tree}: cannot check for v4.x copies"
+  fi
+else
+  # Pre-v5.0 ref: the file SET comes from the reference, not from the working tree.
+  for sub in hooks skills agents output-styles; do
+    files=""
+    for d in $(sub_roots "$sub"); do
+      if [ "$MODE" = "worktree" ]; then
+        [ -d "$d" ] || continue
+        files=$(find "$d" -type f)
+      else
+        files=$(git ls-tree -r --name-only "$REF" -- "$d" 2>/dev/null)
+      fi
+      [ -n "$files" ] && break
+    done
+    [ -n "$files" ] || continue
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      check_file "$f" "$LIVE_ROOT/$(live_rel "$f")"
+    done <<EOF
 $files
 EOF
-done
-
-# Files on this branch that the released reference does not carry. Reported so
-# an in-flight addition is visible rather than invisible; never a failure.
-if [ "$MODE" = "tag" ]; then
-  for sub in hooks skills agents output-styles; do
-    for d in $(sub_roots "$sub"); do
-      [ -d "$d" ] || continue
-      while IFS= read -r f; do
-        # a file the tag carries at either location (pre-v5.0 included) is moved, not new
-        [ -n "$(released_path "$f")" ] && continue
-        unreleased=$((unreleased + 1))
-        unreleased_list="$unreleased_list
-  UNRELEASED (not in $REF, not compared): $f"
-      done < <(find "$d" -type f)
-    done
   done
 fi
 
@@ -336,226 +340,19 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# Registered hooks (v4.4.0 C2) -- the SECOND key-scoped comparison inside
-# settings.json; the file is still not byte-compared and not in the loop above.
-# Two parts, both against the LIVE tree, because a reference that ships exec-form
-# registrations proves nothing about the settings file a machine actually runs:
-#   (1) `verify-hooks.sh --report` (the live copy) reads the live settings with
-#       CLAUDE_PROJECT_DIR unset; every problem it lists is ONE drift: a missing
-#       or broken registered script, an unrendered @NAME@ placeholder, an exec-form
-#       program that cannot be spawned (a non-blocking error: every check behind
-#       it would pass, silently).
-#   (2) the live `hooks` object must equal what scripts/render-user-hooks.sh
-#       writes, foreign entries kept: --write runs on a COPY of the live file and
-#       a difference is one drift. This is how "0 drift" covers the registrations.
-# Nothing is written to the live tree; HOME and the settings path are the same
-# ones the rest of this script uses (DRIFT_LIVE_SETTINGS for a doctored copy).
-# ---------------------------------------------------------------------------
-if [ -f "$LIVE_SETTINGS" ]; then
-  hk_tmp=$(mktemp -d "$TMPD/hk.XXXXXX")
-  hk_vh="$LIVE_ROOT/hooks/verify-hooks.sh"
-  if [ ! -f "$hk_vh" ]; then
-    drift=$((drift + 1))
-    drift_list="$drift_list
-  MISSING live: $hk_vh (registered hooks cannot be verified)"
-  else
-    # A temp HOME holds the settings copy; its .claude/hooks is a symlink to the live
-    # hooks dir, so an old-form `~/.claude/hooks/x.sh` or `$HOME/.claude/hooks/x.sh`
-    # entry resolves to the LIVE tree being checked (not to the empty temp HOME).
-    mkdir -p "$hk_tmp/home/.claude"; cp "$LIVE_SETTINGS" "$hk_tmp/home/.claude/settings.json"
-    ln -s "$LIVE_ROOT/hooks" "$hk_tmp/home/.claude/hooks" 2>/dev/null
-    env -u CLAUDE_PROJECT_DIR HOME="$hk_tmp/home" bash "$hk_vh" --report </dev/null > "$hk_tmp/vh.out" 2>&1
-    hk_rc=$?
-    hk_out=$(sed -e "s#$hk_tmp/home/.claude/settings.json#$LIVE_SETTINGS#g" -e "s#$hk_tmp/home/.claude/hooks#$LIVE_ROOT/hooks#g" "$hk_tmp/vh.out")
-    if [ "$hk_rc" -ne 0 ] || [ -n "$hk_out" ]; then
-      [ -n "$hk_out" ] || hk_out="verify-hooks.sh --report exited $hk_rc with no output"
-      while IFS= read -r hk_l; do
-        [ -n "$hk_l" ] || continue
-        drift=$((drift + 1))
-        drift_list="$drift_list
-  DRIFT: registered hooks in $LIVE_SETTINGS: $hk_l"
-      done <<EOF
-$hk_out
-EOF
-    fi
-  fi
-  if [ -f scripts/render-user-hooks.sh ]; then
-    cp "$LIVE_SETTINGS" "$hk_tmp/rendered.json"
-    if bash scripts/render-user-hooks.sh --write --settings "$hk_tmp/rendered.json" >/dev/null 2>"$hk_tmp/render.err"; then
-      if ! cmp -s "$LIVE_SETTINGS" "$hk_tmp/rendered.json"; then
-        drift=$((drift + 1))
-        drift_list="$drift_list
-  DRIFT: the hooks block of $LIVE_SETTINGS differs from scripts/render-user-hooks.sh (foreign entries kept); run it with --write. First differences:
-$(diff "$LIVE_SETTINGS" "$hk_tmp/rendered.json" | head -8 | sed 's/^/    /')"
-      fi
-    else
-      drift=$((drift + 1))
-      drift_list="$drift_list
-  CANNOT RENDER the hooks block against $LIVE_SETTINGS: $(tr '\n' ' ' < "$hk_tmp/render.err")"
-    fi
-  fi
-  rm -rf "$hk_tmp"
-fi
-
-# ---------------------------------------------------------------------------
-# VERBATIM INSTALL — the property that makes the comparison above VALID.
-#
-# Observable form of "nobody processes these files": the placeholder COUNT in
-# each reference file equals the count in its live copy. A substitution step
-# appearing at user level drops the live count and this reports PROCESSED,
-# naming the manifest's processed hash as the required baseline.
-#
-# SCOPE NARROWED IN v2.2.6 — IT NOW SCANS ONLY THE UNRELEASED FILES, AND THE
-# RELEASED LINE IS DERIVED FROM THE DRIFT RESULT. The argument is the reporter's
-# own delete-the-guard on their own proposal: over the RELEASED set the arm never
-# contributes information alone, because there are only two states and it is
-# redundant in one and unevaluable in the other.
-#
-#   drift == 0  -> the live copy is BYTE-IDENTICAL to the reference, which is
-#                  STRICTLY STRONGER than same-placeholder-count. The arm can
-#                  only restate what the drift line already said.
-#   drift != 0  -> staleness and substitution are both live hypotheses and a
-#                  placeholder count CANNOT distinguish them. Observed live
-#                  during the v2.2.5 release, pre-propagation: "VERBATIM INSTALL
-#                  VIOLATED ... live has 4, reference@v2.2.5 has 12" — caused by
-#                  STALENESS, not substitution, printed beside a correct "4
-#                  drift". A wrong causal claim stacked on top of correct
-#                  information, aimed at someone mid-migration. It would print
-#                  that on EVERY release before propagation: the
-#                  disabled-within-a-week shape, in a check we had just added.
-#
-# Softening the wording was rejected — that preserves the false alarm and makes
-# it vaguer. Coupling it to the adjacent drift line was rejected too: adjacent
-# output is not a condition the check evaluated, and relying on a human to read
-# two lines together defends against an attentive reader and nothing else.
-#
-# WHAT SURVIVES, AND WHY IT IS NOT DELETED: the UNRELEASED file. check_file skips
-# those entirely, so a processed live copy of a reference file not yet in the tag
-# is invisible to every other line in this script. That arm still measures, still
-# folds into the exit code, and is still scanned from the WORKING TREE — because
-# no released baseline exists for it, which is exactly the case that makes it
-# informative. The released line is now documentation with a computed value in
-# it: it STATES THE PREMISE the drift result establishes, so nobody re-derives
-# why blob-versus-tag is legitimate. Worth having; it is not a check.
-#
-# SOMETHING ELSE DEPENDS ON THIS PROPERTY — DO NOT DROP THE LINE AS OVERLAPPING
-# (round 7, still true after the v2.2.6 narrowing). verify-template-consistency
-# .sh's 21c-3c censuses shipped *.json for executable-position placeholders
-# REPO-SIDE ONLY, and never touches the live ~/.claude tree. That census is
-# SUFFICIENT for user level solely because of the property named here: reference
-# clean + verbatim install => live copy clean. The two look like independent
-# checks and are one argument with two halves. What changed in v2.2.6 is only
-# WHERE the premise comes from — `drift == 0` now establishes it for released
-# files, more strongly than a placeholder count ever did. So the line must keep
-# STATING it; it just stops pretending to test it.
-#
-# ITS CONTROL RUNS IN BAND, on a planted pair, because a counter that always
-# returns 0 would also report "verbatim" forever. Nothing is written under
-# $HOME.
-ph_count() { # <file> -> number of {{PLACEHOLDER}} occurrences
-  [ -f "$1" ] || { printf '0'; return; }
-  grep -o '{{[A-Z_]\{2,\}}}' "$1" 2>/dev/null | grep -c . | tr -d ' '
-}
-
-VFIX=$(mktemp -d)
-VPH=$(printf '{{%s}}' TEST_COMMAND)
-printf 'TEST_CMD="%s"\n' "$VPH" > "$VFIX/ref.sh"
-cp "$VFIX/ref.sh" "$VFIX/verbatim.sh"
-printf 'TEST_CMD="npm test"\n'  > "$VFIX/processed.sh"
-vc_ref=$(ph_count "$VFIX/ref.sh")
-vc_verb=$(ph_count "$VFIX/verbatim.sh")
-vc_proc=$(ph_count "$VFIX/processed.sh")
-rm -rf "$VFIX"
-
-verbatim_ok=1
-if [ "$vc_ref" -ne 1 ] || [ "$vc_verb" -ne "$vc_ref" ] || [ "$vc_proc" -eq "$vc_ref" ]; then
-  verbatim_ok=0
-  echo "VERBATIM-INSTALL CHECK IS INERT — its own control failed (ref=$vc_ref want 1, verbatim copy=$vc_verb want 1, processed copy=$vc_proc want 0)."
-  echo "  Treat the verbatim result below as UNKNOWN, not as a pass."
-fi
-
-processed=0
-processed_list=""
-scanned=0
-scanned_rel=0
-for f in user-level-reference/CLAUDE.md $(find user-level-reference/hooks skills user-level-reference/agents output-styles -type f 2>/dev/null); do
-  [ -f "$f" ] || continue
-  rel=$(live_rel "$f")
-  live="$LIVE_ROOT/$rel"
-  [ -f "$live" ] || continue
-  # THE BASELINE MUST BE THE SAME REFERENCE check_file USES. Counting against the
-  # WORKING TREE was tried first and immediately reproduced the exact false
-  # positive this round exists to prevent: on this branch sync-template/SKILL.md
-  # had 11 placeholders in prose against the live copy's 4, so a live tree that
-  # was byte-identical to the released tag was reported as PROCESSED. Wrong
-  # baseline, not processing — the consumer's own lesson, arriving from inside.
-  # The working tree is used only when the file is absent from the reference,
-  # which is the UNRELEASED case this check exists to reach.
-  rp=$(released_path "$f")
-  srcf=${rp:+$(ref_copy "$rp")}
-  if [ -n "$srcf" ]; then
-    # RELEASED file: check_file already compared it BYTE-WISE against the same
-    # reference. Counting placeholders here adds nothing and can only be wrong
-    # (v2.2.6) — see the header note. Count it for the derived line and move on.
-    n_ref=$(ph_count "$srcf")
-    [ "$n_ref" -gt 0 ] && scanned_rel=$((scanned_rel + 1))
-    continue
-  fi
-  # UNRELEASED file: check_file SKIPPED it, so nothing else in this script can
-  # see a processed live copy of it. This is the arm that carries information.
-  n_ref=$(ph_count "$f")
-  [ "$n_ref" -gt 0 ] || continue
-  scanned=$((scanned + 1))
-  n_live=$(ph_count "$live")
-  if [ "$n_ref" -ne "$n_live" ]; then
-    processed=$((processed + 1))
-    processed_list="$processed_list
-  PROCESSED: $live has $n_live placeholder(s), $f@worktree has $n_ref"
-  fi
-done
-
-if [ "$verbatim_ok" -eq 1 ]; then
-  if [ "$drift" -eq 0 ] && [ -n "$LINUX_RENDER" ]; then
-    echo "VERBATIM INSTALL: implied by $in_sync/$checked in sync — byte-identical to the reference, except CLAUDE.md, the one processed file (identical to its Linux rendering); byte-identical is strictly stronger than same-placeholder-count ($scanned_rel released placeholder-bearing file(s))."
-  elif [ "$drift" -eq 0 ]; then
-    echo "VERBATIM INSTALL: implied by $in_sync/$checked in sync — byte-identical is strictly stronger than same-placeholder-count ($scanned_rel released placeholder-bearing file(s))."
-  else
-    echo "VERBATIM INSTALL: not evaluated — $drift file(s) drifted. Staleness and substitution are both live hypotheses and a placeholder count cannot distinguish them; re-check after propagation."
-  fi
-  if [ "$scanned" -gt 0 ]; then
-    if [ "$processed" -eq 0 ]; then
-      echo "  UNRELEASED arm: $scanned placeholder-bearing file(s) compared directly (no released baseline exists for them) — clean."
-    else
-      echo "  UNRELEASED arm: something SUBSTITUTES placeholders at user level."
-      echo "  Blob-versus-tag will not be a legitimate baseline for these files once released:"
-      echo "  compare the manifest's PROCESSED hash instead, or they report drift forever."
-      printf '%s\n' "$processed_list"
-    fi
-  fi
-fi
 
 if [ "$drift" -gt 0 ]; then
   echo "DRIFT DETECTED. The reference leads. Apply CHANGELOG.md -> latest 'Downstream migration' to resync."
   printf '%s\n' "$drift_list"
 fi
-if [ "$unreleased" -gt 0 ]; then
-  echo "UNRELEASED reference files (expected on a feature branch; they ship with the release):"
-  printf '%s\n' "$unreleased_list"
-fi
 
-# Not every drift is a file: the settings.json checks (autoMode, hooks block) add to $drift too.
 file_drift=$((checked - in_sync))
 other_drift=$((drift - file_drift))
 if [ "$other_drift" -gt 0 ]; then
-  echo "$checked files checked against ${REF:-working tree}, $in_sync in sync, $file_drift file drift, $unreleased unreleased; $other_drift other drift (settings.json checks)"
+  echo "$checked files checked against ${REF:-working tree}, $in_sync in sync, $file_drift file drift; $other_drift other drift (plugin, leftovers, settings.json)"
 else
-  echo "$checked files checked against ${REF:-working tree}, $in_sync in sync, $drift drift, $unreleased unreleased"
+  echo "$checked files checked against ${REF:-working tree}, $in_sync in sync, $drift drift"
 fi
 
-# A violated verbatim install fails the run on its own: for an UNRELEASED file no
-# DRIFT line exists to carry it, so folding it into $drift is what makes the
-# assertion load-bearing rather than advisory. An INERT control fails too —
-# cannot-determine refuses.
-[ "$drift" -eq 0 ] && [ "$processed" -eq 0 ] && [ "$verbatim_ok" -eq 1 ] && exit 0
+[ "$drift" -eq 0 ] && exit 0
 exit 1
