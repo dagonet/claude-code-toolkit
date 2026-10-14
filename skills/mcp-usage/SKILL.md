@@ -62,15 +62,15 @@ For unfamiliar library APIs: `resolve-library-id`, then `query-docs`, then verif
 
 ## Headless mode for batch operations
 
-For repeatable non-interactive work across repos or variants, use `claude -p`:
+For repeatable non-interactive work across repos or variants, use `claude -p`. Start it with `env -u CLAUDE_CODE_SESSION_ID`: a nested `claude` inherits the parent's session id, and its SessionEnd would delete the parent's cct marker (the parent's next tool call in a synced project is then refused).
 
 ```bash
 # Single-variant template sync
-claude -p "Run /cct:sync-template, resolve merge conflicts, commit and push"
+env -u CLAUDE_CODE_SESSION_ID claude -p "Run /cct:sync-template, resolve merge conflicts, commit and push"
 
 # Multi-variant propagation
 for variant in general dotnet dotnet-maui rust-tauri java python; do
-  claude -p "Apply the same change to templates/$variant/ — implement, verify, commit, push"
+  env -u CLAUDE_CODE_SESSION_ID claude -p "Apply the same change to templates/$variant/ — implement, verify, commit, push"
 done
 ```
 

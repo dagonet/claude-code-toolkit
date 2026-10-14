@@ -37,8 +37,10 @@ Target project: `$ARGUMENTS`, or the current working directory if empty.
 ## Running it unattended
 
 ```bash
-claude -p "/cct:retro-review" --permission-mode auto      # from the project directory
+env -u CLAUDE_CODE_SESSION_ID claude -p "/cct:retro-review" --permission-mode auto      # from the project directory
 ```
+
+(`env -u CLAUDE_CODE_SESSION_ID` keeps a nested run from deleting an enclosing session's cct marker when it ends.)
 
 Schedule that with Windows Task Scheduler or cron. It is a **local** headless session,
 not a cloud routine: it needs this machine's `~/.claude` and its sibling checkouts, so

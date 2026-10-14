@@ -138,7 +138,8 @@ They are split by what each can *reach*, not by preference:
   `~/.claude/projects/<slug>/memory/`, `verify-user-level-drift.sh` against the live
   `~/.claude/`, and sibling checkouts whose `.claude/template-manifest.json` is behind
   this repo's `VERSION`. Run it headless with
-  `claude -p "/cct:retro-review" --permission-mode auto` from Task Scheduler or cron.
+  `env -u CLAUDE_CODE_SESSION_ID claude -p "/cct:retro-review" --permission-mode auto` from Task Scheduler or cron
+  (from inside a session, the `env -u` stops the nested run deleting that session's cct marker).
 
 ## Terminal conditions in a `**Gate**` command
 

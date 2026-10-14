@@ -31,7 +31,7 @@ The toolkit's user level is the Claude Code plugin `cct@dagonet` (this repo is t
   claude plugin marketplace add dagonet/claude-code-toolkit#v5.0.0 && claude plugin install cct@dagonet
   ```
 
-A synced project refuses every tool call while the plugin is not active in the session (`BLOCKED: the cct plugin is not active in this session. ...`); `/plugin` slash commands still work there. Every toolkit release then needs the plugin moved to the new tag and a session restart before the next `/cct:sync-template`. A `#tag`-pinned marketplace never advances on `claude plugin update` or `claude plugin marketplace update`; run `claude plugin marketplace remove dagonet && claude plugin marketplace add dagonet/claude-code-toolkit#<new tag> && claude plugin install cct@dagonet`.
+A synced project refuses every tool call while the plugin is not active in the session (`BLOCKED: the cct plugin is not active in this session. ...`); `/plugin` slash commands still work there. Every toolkit release then needs the plugin moved to the new tag and a session restart before the next `/cct:sync-template`. A `#tag`-pinned marketplace never advances on `claude plugin update` or `claude plugin marketplace update`; run `claude plugin marketplace remove dagonet && claude plugin marketplace add dagonet/claude-code-toolkit#<new tag> && claude plugin install cct@dagonet`. The unpinned form above (`/plugin marketplace add dagonet/claude-code-toolkit`) tracks the default branch, and `claude plugin update cct@dagonet` advances it; only the pinned form needs the remove/add/install recipe.
 
 ## What you get
 
