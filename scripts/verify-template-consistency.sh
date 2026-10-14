@@ -3180,8 +3180,8 @@ fi
 # directories actually on disk. Check 37's glob (above) absorbs an undeclared
 # directory silently; this check is what turns that silence red. The
 # declaration at :17 STAYS -- it is a statement of intent this check verifies
-# reality against (a declared list checked against the disk, as here). Compared as SETS: the declaration is not sorted and must not be
-# reordered to satisfy the comparator.
+# reality against. Compared as SETS: the declaration is not sorted and must
+# not be reordered to satisfy the comparator.
 # ---------------------------------------------------------------------------
 note "Check 55: the declared VARIANTS list equals the set of templates/*/ directories on disk"
 c55_declared=$(printf '%s\n' $VARIANTS | LC_ALL=C sort)

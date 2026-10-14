@@ -367,36 +367,46 @@ def skill_floor_satisfied(spec: str, claimed: str) -> tuple[bool, str, str, bool
     return True, "", "", False
 
 
-_SKILL_MARKER_RE = re.compile(r"SYNC-TEMPLATE-SKILL-VERSION:\s*(v\d+\.\d+\.\d+)")
+_SKILL_MARKER_RE = re.compile(r"SYNC-TEMPLATE-SKILL-VERSION:\s*(\S+)")
 
 
-def skill_marker(template_repo: str) -> str:
-    """The SYNC-TEMPLATE-SKILL-VERSION tag of the template checkout's own
-    skills/sync-template/SKILL.md; "" when the file or the marker is absent."""
+def skill_marker(template_repo: str) -> tuple[str, str]:
+    """(marker, warning): the SYNC-TEMPLATE-SKILL-VERSION tag of the template
+    checkout's own skills/sync-template/SKILL.md. marker is "" when the file or
+    marker is absent, or when the value is not tag-shaped (then warning says so)."""
     raw = core._read_file(core._effective_template_repo(template_repo)
                           / "skills" / "sync-template" / "SKILL.md")
     m = _SKILL_MARKER_RE.search(raw) if raw else None
-    return m.group(1) if m else ""
+    if not m:
+        return "", ""
+    if not SKILL_TAG_RE.match(m.group(1)):
+        return "", (f"skill_marker_unparseable: {m.group(1)!r} in the checkout's sync-template "
+                    "SKILL.md is not a vX.Y.Z tag -- checkout-marker check not enforced")
+    return m.group(1), ""
 
 
-def load_skill_refusal(spec: str, claimed: str, marker: str) -> str:
-    """The template_load_manifest skill gate: "" when the caller may proceed,
-    else the refusal text. Refuses a missing or non-tag skill_version, one below
-    the requires_skill floor (via skill_floor_satisfied), and one below the
-    checkout's own marker. The bypass sentinel passes, as everywhere else."""
+def load_skill_refusal(spec: str, claimed: str, marker: str) -> tuple[str, list[str], bool]:
+    """The template_load_manifest skill gate: (refusal, warnings, bypassed).
+    refusal is "" when the caller may proceed. Refuses a missing or non-tag
+    skill_version, one below the requires_skill floor (via skill_floor_satisfied),
+    and one below the checkout's own marker. The exact bypass sentinel passes."""
     claimed = (claimed or "").strip()
-    ok, _, _, bypassed = skill_floor_satisfied(spec, claimed)
+    ok, refusal, warning, bypassed = skill_floor_satisfied(spec, claimed)
+    warnings = [warning] if warning else []
     if bypassed:
-        return ""
+        return "", warnings, True
     if not ok:
+        if claimed and not SKILL_TAG_RE.match(claimed):    # the helper's "not tag-shaped" text
+            return refusal.replace("template_migrate_manifest", "template_load_manifest", 1), warnings, False
         return (f"template_load_manifest refused: skill_version {claimed or '(missing)'} does not "
                 f"meet templates/ownership.json requires_skill {spec!r}: run /cct:sync-template "
-                "(install/update the cct plugin).")
+                "(install/update the cct plugin)."), warnings, False
     if marker and SKILL_TAG_RE.match(claimed) and _tag_tuple(claimed) < _tag_tuple(marker):
         return (f"template_load_manifest refused: the loaded sync-template skill ({claimed}) is "
                 f"older than the toolkit checkout ({marker}): update the cct plugin "
-                "(claude plugin update cct@dagonet) or re-copy the skill, then restart.")
-    return ""
+                "(claude plugin update cct@dagonet) or re-copy the skill, then restart.",
+                warnings, False)
+    return "", warnings, False
 
 
 def _tag_tuple(tag: str) -> tuple[int, int, int]:

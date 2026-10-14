@@ -135,6 +135,40 @@ def test_load_manifest_refuses_skill_below_floor(tmp_path):
     assert any("requires_skill" in e and "/cct:sync-template" in e for e in r["errors"])
 
 
+def _as_v2(proj):
+    mp = proj / ".claude" / "template-manifest.json"
+    m = json.loads(mp.read_text(encoding="utf-8"))
+    mp.write_text(json.dumps({"version": 2, "variant": m["variant"], "templateRepo": m["templateRepo"],
+                              "placeholders": {}, "files": {}}), encoding="utf-8")
+    return proj
+
+
+def test_load_manifest_v2_path_refuses_missing_skill_version(tmp_path):
+    proj = _as_v2(_consumer(tmp_path, {}))
+    r = _load(proj)
+    assert r["manifest_version"] == 2 and r["valid"] is False
+    assert any("/cct:sync-template" in e for e in r["errors"])
+    assert _load(proj, skill_version=MARKER)["valid"] is True
+
+
+def test_load_manifest_sentinel_bypasses_and_near_miss_is_refused(tmp_path):
+    proj = _consumer(tmp_path, {})
+    ok = _load(proj, skill_version="not-a-skill")
+    assert ok["valid"] is True and ok["skill_version_bypassed"] is True
+    bad = _load(proj, skill_version="Not-A-Skill")
+    assert bad["valid"] is False and "tag-shaped" in " ".join(bad["errors"])
+    assert "skill_version_bypassed" not in bad
+
+
+def test_load_manifest_unparseable_checkout_marker_warns(tmp_path):
+    proj = _consumer(tmp_path, {})
+    (tmp_path / "toolkit" / "skills" / "sync-template" / "SKILL.md").write_text(
+        "<!-- SYNC-TEMPLATE-SKILL-VERSION: banana -->\n", encoding="utf-8")
+    r = _load(proj, skill_version="v4.1.0")
+    assert r["skill_marker"] == "" and r["valid"] is True
+    assert any("skill_marker_unparseable" in w for w in r["warnings"])
+
+
 def test_load_manifest_accepts_skill_equal_to_marker(tmp_path):
     r = _load(_consumer(tmp_path, {}), skill_version=MARKER)
     assert r["valid"] is True and r["errors"] == []
