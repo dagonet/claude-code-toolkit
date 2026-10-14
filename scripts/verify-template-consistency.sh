@@ -4918,6 +4918,18 @@ c71_cmp() { # <label> <got> <want>
   if [ -z "$2" ]; then c71_bad="$c71_bad [$1: the extraction found NO registration]"
   elif [ "$2" != "$3" ]; then c71_bad="$c71_bad [$1 differs from the frozen table: $(printf '%s\n' "$2" | LC_ALL=C sort > "$c71_tmp/got"; printf '%s\n' "$3" | LC_ALL=C sort > "$c71_tmp/want"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"; fi
 }
+# Plugin registrations (v5.0): event;matcher;script from hooks/hooks.json. `run-hook.sh" <name>` maps to
+# <name>; a direct `hooks/<name>.sh` maps to <name>. The plugin-only rows have no frozen-table counterpart.
+C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
+for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){
+const c=String(h.command);const r=/run-hook\.sh"\s+([A-Za-z0-9_-]+)/.exec(c)||/hooks\/([A-Za-z0-9_-]+)\.sh/.exec(c);
+if(r)out.push([ev,g.matcher||"",r[1]].join(";"));}
+if(out.length)console.log(out.join("\n"))'
+c71_px() { node -e "$C71_PJS" "$1"; }
+C71_PLUGIN_ONLY='SessionStart;;cct-session
+SessionEnd;;cct-session
+SessionStart;;jev-notice
+PreToolUse;Agent;jev-route'
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
@@ -4928,6 +4940,10 @@ else
   c71_cmp "$C71_GENERAL" "$(c71_x "$C71_GENERAL" general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
   c71_cmp ".claude/settings.json" "$(c71_x .claude/settings.json root)" "$(printf '%s\n' "$C71_TABLE" | grep '^root;')"
   c71_cmp "user-level-reference/settings.json" "$(c71_x user-level-reference/settings.json user)" "$(printf '%s\n' "$C71_TABLE" | grep '^user;')"
+  # (1b) the plugin's hooks/hooks.json: its (event, matcher, script) set equals the frozen `general` rows
+  # (form dropped: polarity lives in run-hook.sh's class table) plus the plugin-only allowlist.
+  c71_want_p=$(printf '%s\n%s\n' "$(printf '%s\n' "$C71_TABLE" | grep '^general;' | awk -F';' '{print $2";"$3";"$4}')" "$C71_PLUGIN_ONLY" | LC_ALL=C sort)
+  c71_cmp "hooks/hooks.json" "$(c71_px hooks/hooks.json | LC_ALL=C sort)" "$c71_want_p"
   c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -v '^agent:' | grep -c .)  # v5.0: the agent: rows are no longer compared
   c71_nsc=$(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u | grep -c .)
 
@@ -5015,6 +5031,17 @@ EOF
       ok "check 71 control ($c71_mode): the extraction on a mutated copy differs from the frozen table"
     else
       ko "check 71 control ($c71_mode): a mutated copy was NOT detected -- the frozen-set comparison is vacuous"
+    fi
+  done
+  # (8) control: hooks/hooks.json with one matcher narrowed, or one group dropped, must differ from the expected set
+  c71_pmut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="narrow"){for(const x of g)if(x.matcher==="Read|Bash")x.matcher="Bash";}else{for(let i=0;i<g.length;i++)if(/^mcp__MCP_DOCKER__merge_pull_request/.test(g[i].matcher||"")){g.splice(i,1);break;}}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
+  for c71_mode in narrow dropgroup; do
+    node -e "$c71_pmut" hooks/hooks.json "$c71_tmp/pmut-$c71_mode.json" "$c71_mode" 2>/dev/null
+    c71_got=$(c71_px "$c71_tmp/pmut-$c71_mode.json" 2>/dev/null | LC_ALL=C sort)
+    if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_want_p" ]; then
+      ok "check 71 control (hooks.json $c71_mode): the extraction on a mutated hooks.json differs from the expected set"
+    else
+      ko "check 71 control (hooks.json $c71_mode): a mutated hooks.json was NOT detected -- the plugin comparison is vacuous"
     fi
   done
 fi

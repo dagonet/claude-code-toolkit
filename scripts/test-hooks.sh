@@ -12096,17 +12096,23 @@ V5GC=$(v5guard_cmd "$ROOT/templates/general/.claude/settings.json")
 expect "v5 guard: the template has exactly one empty-matcher command, naming cct-\$(id -u)" "1 yes" "$(printf '%s\n' "$V5GC" | grep -c . ) $(case $V5GC in *'cct-$(id -u)'*) echo yes ;; *) echo no ;; esac)"
 V5GT="$TMPROOT/v5guard"; V5GD="$V5GT/cct-$(id -u)"; mkdir -p "$V5GD"; chmod 700 "$V5GD"; : > "$V5GD/sid-ok"
 V5GMSG='BLOCKED: the cct plugin is not active in this session. Install it with /plugin marketplace add dagonet/claude-code-toolkit and /plugin install cct@dagonet, then restart the session.'
-v5guard() { printf '%s' "$1" | TMPDIR="$V5GT" bash -c "$V5GC" 2>"$TMPROOT/v5guard.err"; echo "rc=$?"; }
-expect "v5 guard: marker present -> allowed" "rc=0" "$(v5guard '{"session_id":"sid-ok","tool_name":"Bash"}')"
-expect "v5 guard: marker missing -> refused" "rc=2" "$(v5guard '{"session_id":"sid-other","tool_name":"Bash"}')"
-expect "v5 guard: the refusal is the exact install message" "$V5GMSG" "$(cat "$TMPROOT/v5guard.err")"
-expect "v5 guard: no session_id -> refused" "rc=2" "$(v5guard '{"tool_name":"Bash"}')"
-expect "v5 guard: empty session_id -> refused" "rc=2" "$(v5guard '{"session_id":""}')"
-expect "v5 guard: malformed stdin -> refused" "rc=2" "$(v5guard 'not json')"
-expect "v5 guard: empty stdin -> refused" "rc=2" "$(v5guard '')"
-expect "v5 guard: traversal id -> refused" "rc=2" "$(v5guard '{"session_id":"../cct-'"$(id -u)"'/sid-ok"}')"
-expect "v5 guard: a dot id -> refused (even with a file of that name)" "rc=2" "$(: > "$V5GD/a.b"; v5guard '{"session_id":"a.b"}')"
-expect "v5 guard: git-guard-off does not open it" "rc=2" "$( mkdir -p "$TMPROOT/v5gg/.claude" && : > "$TMPROOT/v5gg/.claude/git-guard-off" && cd "$TMPROOT/v5gg" && CLAUDE_PROJECT_DIR="$TMPROOT/v5gg" v5guard '{"session_id":"nope"}')"
+v5guard() { printf '%s' "$1" | TMPDIR="$V5GT" "$V5SH" -c "$V5GC" 2>"$TMPROOT/v5guard.err"; echo "rc=$?"; }
+v5guard_rows() { # <shell>: the guard runs under bash and under POSIX sh (dash here), same rows
+  V5SH=$1
+  expect "v5 guard [$V5SH]: marker present -> allowed" "rc=0" "$(v5guard '{"session_id":"sid-ok","tool_name":"Bash"}')"
+  expect "v5 guard [$V5SH]: marker missing -> refused" "rc=2" "$(v5guard '{"session_id":"sid-other","tool_name":"Bash"}')"
+  expect "v5 guard [$V5SH]: the refusal is the exact install message" "$V5GMSG" "$(cat "$TMPROOT/v5guard.err")"
+  expect "v5 guard [$V5SH]: no session_id -> refused" "rc=2" "$(v5guard '{"tool_name":"Bash"}')"
+  expect "v5 guard [$V5SH]: empty session_id -> refused" "rc=2" "$(v5guard '{"session_id":""}')"
+  expect "v5 guard [$V5SH]: malformed stdin -> refused" "rc=2" "$(v5guard 'not json')"
+  expect "v5 guard [$V5SH]: empty stdin -> refused" "rc=2" "$(v5guard '')"
+  expect "v5 guard [$V5SH]: traversal id -> refused" "rc=2" "$(v5guard '{"session_id":"../cct-'"$(id -u)"'/sid-ok"}')"
+  expect "v5 guard [$V5SH]: a dot id -> refused (even with a file of that name)" "rc=2" "$(: > "$V5GD/a.b"; v5guard '{"session_id":"a.b"}')"
+  expect "v5 guard [$V5SH]: git-guard-off does not open it" "rc=2" "$( mkdir -p "$TMPROOT/v5gg/.claude" && : > "$TMPROOT/v5gg/.claude/git-guard-off" && cd "$TMPROOT/v5gg" && CLAUDE_PROJECT_DIR="$TMPROOT/v5gg" v5guard '{"session_id":"nope"}')"
+}
+v5guard_rows bash
+v5guard_rows sh
+V5SH=bash
 # writer -> reader: the marker the plugin's SessionStart hook writes is the one the guard reads; SessionEnd closes it again
 V5GW="$TMPROOT/v5guardw"; mkdir -p "$V5GW"
 v5guardw() { printf '%s' "$1" | TMPDIR="$V5GW" bash -c "$V5GC" 2>/dev/null; echo "rc=$?"; }
@@ -12123,15 +12129,17 @@ case "$(uname -s 2>/dev/null)" in
   *)
     V5GF="$TMPROOT/v5guardf"; V5GFD="$V5GF/cct-$(id -u)"; mkdir -p "$V5GF"
     if [ "$(id -u)" = 0 ]; then
-      mkdir -p "$V5GFD"; : > "$V5GFD/fo-1"; chown 65534 "$V5GFD"; V5GFS=fo-1   # root: hand the dir to nobody
+      mkdir -p "$V5GFD"; : > "$V5GFD/fo-1"; chown 65534 "$V5GFD"; V5GFS=fo-1; V5GFW=fo-2   # root: hand the dir to nobody
     else
-      ln -s /etc "$V5GFD"; V5GFS=passwd                                           # not root: a dir root owns, with a file named like an id
+      V5GFS="fo-g-$$-$RANDOM"; V5GFW="fo-w-$$-$RANDOM"                            # not root: /var/tmp (root-owned, world-writable) holds a file named like an id
+      ln -s /var/tmp "$V5GFD"; : > "/var/tmp/$V5GFS"
     fi
     expect "v5 guard: foreign-owned marker dir -> refused" "rc=2" "$(printf '{"session_id":"%s"}' "$V5GFS" | TMPDIR="$V5GF" bash -c "$V5GC" 2>/dev/null; echo "rc=$?")"
     expect "v5 guard: ... the same file in an owned dir -> allowed (control)" "rc=0" "$(mkdir -p "$TMPROOT/v5guardo/cct-$(id -u)"; : > "$TMPROOT/v5guardo/cct-$(id -u)/$V5GFS"; printf '{"session_id":"%s"}' "$V5GFS" | TMPDIR="$TMPROOT/v5guardo" bash -c "$V5GC" 2>/dev/null; echo "rc=$?")"
-    printf '{"session_id":"fo-2","hook_event_name":"SessionStart"}' | TMPDIR="$V5GF" bash "$ROOT/hooks/cct-session.sh" 2>/dev/null
-    expect "v5 session: foreign-owned marker dir -> writes nothing" "no" "$([ -e "$V5GFD/fo-2" ] && echo yes || echo no)"
+    printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$V5GFW" | TMPDIR="$V5GF" bash "$ROOT/hooks/cct-session.sh" 2>/dev/null
+    expect "v5 session: foreign-owned marker dir -> writes nothing" "no" "$([ -e "$V5GFD/$V5GFW" ] && echo yes || echo no)"
     expect "v5 am_plugin_loaded: foreign-owned marker dir -> not loaded" "no" "$( ( . "$ROOT/hooks/lib/agent-model.sh"; TMPDIR="$V5GF"; am_plugin_loaded "$V5GFS" && echo yes || echo no ) )"
+    [ -L "$V5GFD" ] && rm -f "/var/tmp/$V5GFS" "/var/tmp/$V5GFW"
     ;;
 esac
 V5GS="$TMPROOT/v5sweep"; mkdir -p "$V5GS/cct-$(id -u)"
