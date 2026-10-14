@@ -1,9 +1,9 @@
 """manifest v4: constants, acceptance predicate, and the requires_server floor
 (v4.1 plan Task 1 commit 1 -- spec §5 header, Decision 2).
 
-A v4 manifest gains two new REQUIRED top-level keys (instructions_file,
-agent_grants -- declarations only, the server reads the files at these fixed
-paths) on top of everything v3 requires. Acceptance sites (mcp.py's
+A v4 manifest gains the REQUIRED top-level key instructions_file (a
+declaration only) on top of everything v3 requires; v4.x manifests also carried
+agent_grants, which v5.0 accepts but no longer requires. Acceptance sites (mcp.py's
 _load_manifest / template_load_manifest / template_compute_status /
 template_apply_file / template_finalize_sync) accept manifest_version 3 OR 4;
 sites that mean the v3 SHAPE (the region splice) are untouched by this commit.
@@ -149,13 +149,12 @@ def test_v4_manifest_missing_declaration_keys_is_invalid(tmp_path, monkeypatch):
     (proj / ".claude").mkdir(parents=True)
     m = _v4_manifest(str(repo))
     del m["instructions_file"]
-    del m["agent_grants"]
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps(m), encoding="utf-8")
     r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
     assert r["valid"] is False, r
     assert "errors" in r
     joined = " ".join(r["errors"])
-    assert "instructions_file" in joined and "agent_grants" in joined
+    assert "instructions_file" in joined and "agent_grants" not in joined
 
 
 def test_known_top_level_keys_include_v4_declarations():

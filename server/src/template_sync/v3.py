@@ -66,7 +66,6 @@ CAPABILITIES = (
     "template_verify",
     "deleted_acknowledged",
     "registered_tools",
-    "agent_grants",
 )
 # CAPABILITIES mixes three kinds of name -- a FIELD a response carries
 # (local_diff_kind), a BEHAVIOUR (region_splice), and a TOOL that must be
@@ -178,7 +177,7 @@ def load_ownership(template_repo: str) -> OwnershipRules | None:
 
     tracked = data.get("tracked_paths")
     if not isinstance(tracked, list) or not all(isinstance(t, str) for t in tracked):
-        tracked = ["templates"] + [p.rstrip("/") for p in core._ROOT_TRACKED_PREFIXES]
+        tracked = ["templates", "hooks"]
         warnings.append(
             "ownership.json has no tracked_paths -- template_version derivation "
             f"falls back to {tracked}"
@@ -213,6 +212,7 @@ KNOWN_TOP_LEVEL_V3 = {
     # v4 declarations (spec §5 header, Decision 2): the paths are fixed today;
     # the keys exist so a v3 server refuses a v4 manifest by shape and a
     # future release can move them without a new top-level key.
+    # agent_grants: written by v4.x manifests; accepted, never required, read by nothing (v5.0)
     "instructions_file", "agent_grants",
 }
 
@@ -972,166 +972,11 @@ def _git_commit_exists(repo: str, ref: str) -> bool:
     return core._run_git(["cat-file", "-e", f"{ref}^{{commit}}"], cwd=repo)["exit_code"] == 0
 
 
-# -------------------------
-# v4 agent grants splice (spec §4, §5)
-# -------------------------
-
-class GrantsError(Exception):
-    """.claude/agent-grants.json is malformed, or a token is not a valid
-    mcp__<alias>__<tool> name, or a token names an UNGRANTABLE tool.
-    Refuse-not-guess (ruling R-C): every agent path -- apply and status
-    alike -- errors out rather than silently ignoring the defect."""
-
-
-class GrantRefused(Exception):
-    """A grant names an agent whose frontmatter carries no `tools:` line --
-    that agent already inherits every tool including MCP, so a grant for it
-    has nothing to extend. Never synthesises an allowlist."""
-
-    def __init__(self, agent_name: str):
-        self.agent_name = agent_name
-        super().__init__(
-            f"{agent_name} ships no `tools:` line and already inherits every tool -- "
-            "remove the grant"
-        )
-
-
+# v5.0: no code reads or writes this file. The name survives only as the v4 marker
+# rule in ownership.json (mcp._manifest_migration_to), which keeps classifying a
+# v4.x consumer's existing agent-grants.json.
 AGENT_GRANTS_FILE = ".claude/agent-grants.json"
 INSTRUCTIONS_FILE_DEFAULT = ".claude/project-instructions.md"
-AGENTS_DIR_PREFIX = ".claude/agents/"
-
-# mcp__<alias>__<tool>. Anything else is a malformed token (GrantsError).
-# R-O (fix round 1): the alias segment admits UPPERCASE -- exactly check 50's
-# own TOKEN_RE in scripts/verify-template-consistency.sh
-# (`^mcp__[A-Za-z0-9_-]+__[a-z0-9_]+$`), so a real alias like MCP_DOCKER is
-# expressible as a grant token at all (previously the shape check itself
-# refused every MCP_DOCKER-family UNGRANTABLE_TOOLS entry before the
-# UNGRANTABLE_TOOLS membership check was ever reached).
-_GRANT_TOKEN_RE = re.compile(r"^mcp__[A-Za-z0-9_-]+__[a-z0-9_]+$")
-
-# UNGRANTABLE_TOOLS is a HAND-WRITTEN literal (spec §4 decision), never
-# derived from the withheld sets of shipped agents -- deriving it from the
-# data it is meant to be a floor under would make the data equal itself and
-# defeat the point of the check (reviewer). Three families: Agent itself
-# (no coder spawns subagents), every registered template_* sync tool (a
-# coder must never sync/verify/migrate the template that governs it), and
-# the merge/PR tools the template withholds from coders (only reviewers and
-# the PO merge). tests/test_template_sync_v4_grants.py asserts
-# union(withheld sets of every shipped agent) subseteq UNGRANTABLE_TOOLS.
-UNGRANTABLE_TOOLS = frozenset({
-    "Agent",
-    "mcp__template-sync-tools__template_load_manifest",
-    "mcp__template-sync-tools__template_compute_status",
-    "mcp__template-sync-tools__template_get_diff",
-    "mcp__template-sync-tools__template_apply_file",
-    "mcp__template-sync-tools__template_reverse_placeholders",
-    "mcp__template-sync-tools__template_finalize_sync",
-    "mcp__template-sync-tools__template_migrate_manifest",
-    "mcp__template-sync-tools__template_check_cross_variant",
-    "mcp__template-sync-tools__template_propagate_to_variants",
-    "mcp__template-sync-tools__template_verify",
-    "mcp__MCP_DOCKER__merge_pull_request",
-    "mcp__github-tools__github_pr_auto_merge",
-    "mcp__MCP_DOCKER__create_pull_request",
-    "mcp__MCP_DOCKER__update_pull_request",
-})
-
-
-def load_grants(pp: pathlib.Path) -> dict[str, list[str]]:
-    """Read .claude/agent-grants.json: {agent name: [mcp__alias__tool, ...]}.
-
-    Absent file -> {} (no grants -- the splice is a no-op everywhere).
-    Malformed (not JSON, wrong schema, `grants` not an object, a value not a
-    list of validly-shaped tokens, or a token naming an UNGRANTABLE tool) ->
-    GrantsError naming the defect (R-C: refuse, never guess).
-    """
-    raw = core._read_file(pp / AGENT_GRANTS_FILE)
-    if raw is None:
-        return {}
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise GrantsError(f"{AGENT_GRANTS_FILE} is not valid JSON: {e}")
-    if not isinstance(data, dict):
-        raise GrantsError(f"{AGENT_GRANTS_FILE}: top level must be a JSON object")
-    if data.get("schema") != 1:
-        raise GrantsError(f"{AGENT_GRANTS_FILE}: \"schema\" must be 1, got {data.get('schema')!r}")
-    grants = data.get("grants")
-    if not isinstance(grants, dict):
-        raise GrantsError(f"{AGENT_GRANTS_FILE}: \"grants\" must be a JSON object")
-    out: dict[str, list[str]] = {}
-    for agent_name, tokens in grants.items():
-        if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
-            raise GrantsError(
-                f"{AGENT_GRANTS_FILE}: grants[{agent_name!r}] must be a list of strings")
-        for tok in tokens:
-            if not _GRANT_TOKEN_RE.match(tok):
-                raise GrantsError(
-                    f"{AGENT_GRANTS_FILE}: grants[{agent_name!r}] has a malformed token "
-                    f"{tok!r} -- expected mcp__<alias>__<tool>")
-            if tok in UNGRANTABLE_TOOLS:
-                raise GrantsError(
-                    f"{AGENT_GRANTS_FILE}: grants[{agent_name!r}] grants ungrantable tool {tok!r}")
-        out[agent_name] = list(tokens)
-    return out
-
-
-def _frontmatter_body(text: str) -> str | None:
-    """The text between an agent file's leading `---` markers, or None when
-    the file does not open with a frontmatter block."""
-    if not text.startswith("---\n"):
-        return None
-    end = text.find("\n---", 4)
-    if end == -1:
-        return None
-    return text[4:end]
-
-
-_NAME_FIELD_RE = re.compile(r"^name:\s*(.*)$", re.M)
-_TOOLS_LINE_RE = re.compile(r"^tools:[ \t]*(.*)$", re.M)
-
-
-def agent_name_of(text: str) -> str | None:
-    """The `name:` frontmatter field of an agent file's rendered content."""
-    body = _frontmatter_body(text)
-    if body is None:
-        return None
-    m = _NAME_FIELD_RE.search(body)
-    return m.group(1).strip() or None if m else None
-
-
-def splice_tools(agent_text: str, grants_for_agent: list[str]) -> str:
-    """Append `grants_for_agent` to the agent's frontmatter `tools:` line,
-    deduplicated, original order then grant order (spec §5).
-
-    The `tools:` line must sit on ONE line inside the leading `---` block; a
-    list form (nothing after the colon -- a YAML sequence follows on later
-    lines) or a bare `*` wildcard -> GrantsError("unsupported tools: shape").
-    An agent with NO `tools:` line already inherits every tool including MCP
-    -- a grant for it has nothing to extend -> GrantRefused(agent_name),
-    never a synthesised allowlist.
-    """
-    if not grants_for_agent:
-        return agent_text
-    body = _frontmatter_body(agent_text)
-    agent_name = agent_name_of(agent_text) or "<unnamed agent>"
-    if body is None:
-        raise GrantRefused(agent_name)
-    m = _TOOLS_LINE_RE.search(body)
-    if m is None:
-        raise GrantRefused(agent_name)
-    value = m.group(1).strip()
-    if value == "" or value == "*":
-        raise GrantsError(f"{agent_name}: unsupported tools: shape ({m.group(0)!r})")
-    original = [t.strip() for t in value.split(",") if t.strip()]
-    merged = list(original)
-    for tok in grants_for_agent:
-        if tok not in merged:
-            merged.append(tok)
-    new_line = "tools: " + ", ".join(merged)
-    abs_start = 4 + m.start()
-    abs_end = 4 + m.end()
-    return agent_text[:abs_start] + new_line + agent_text[abs_end:]
 
 
 def template_content(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
@@ -1143,34 +988,12 @@ def template_content(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     `rules` is accepted for signature uniformity with the callers (which
     always have manifest+rules together) and for callers that resolve
     `proj_rel` from a template-relative path via `rules.project_path_for` --
-    it is not otherwise consulted here: the agents-directory test below is a
-    plain path-prefix check, true regardless of ownership class.
-
-    Splices per-agent tool grants into a `.claude/agents/*` file under a v4
-    manifest whose agent-grants.json carries a non-empty entry for that
-    agent's `name:` field. NO-OPS (placeholders only) for every other path,
-    and for every manifest carrying no grants at all -- v2, v3, and a v4
-    manifest whose grants file is empty or absent -- so the existing v2/v3
-    regression suites are the witness that nothing else moved.
+    it is not otherwise consulted here.
     """
     del rules  # see docstring
     if tpl_raw is None:
         return None
-    placeholders = manifest.get("placeholders", {})
-    rendered = core._apply_placeholders(tpl_raw, placeholders)
-    if not is_v4_manifest(manifest):
-        return rendered
-    norm = core._normalize_path(proj_rel)
-    if not norm.startswith(AGENTS_DIR_PREFIX):
-        return rendered
-    grants = load_grants(pp)
-    if not grants:
-        return rendered
-    agent_name = agent_name_of(rendered)
-    agent_grants = grants.get(agent_name) if agent_name else None
-    if not agent_grants:
-        return rendered
-    return splice_tools(rendered, agent_grants)
+    return core._apply_placeholders(tpl_raw, manifest.get("placeholders", {}))
 
 
 def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
@@ -1183,8 +1006,7 @@ def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     (a tpl_rel); threaded to template_content via
     `rules.project_path_for(rel_path)` deliberately (H1) -- for an agent file
     the two happen to be equal today, but the base provider must not rely on
-    that coincidence: a moved template-relative name would otherwise read
-    the wrong grants entry, or none, silently.
+    that coincidence.
     """
     repo = core._template_repo_resolved(manifest)
     git_path = core._template_git_path(manifest, rel_path)
@@ -1261,13 +1083,7 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
             summary["migration_required"] += 1
             continue
 
-        try:
-            tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
-        except (GrantsError, GrantRefused) as e:
-            # Refuse-not-guess (R-C): an apply/status ERROR for every agent
-            # path -- abort the whole status computation rather than report
-            # a partial or silently-degraded result for the other files.
-            return {"error": str(e)}
+        tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
         proj_content, proj_flags = read_with_flags(pp / proj_rel)
         info: dict = {"ownership": ownership, "template_path": tpl_rel,
                       "project_file_missing": proj_content is None,
@@ -1409,11 +1225,7 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
         # The v3-manifest window (R-J): nothing is written, the region body
         # on disk is byte-identical before and after this call.
         return {"error": f"CLAUDE.md: {MIGRATION_REQUIRED_REMEDY}"}
-    try:
-        tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
-    except (GrantsError, GrantRefused) as e:
-        # Refuse-not-guess (R-C): nothing is written; the manifest is untouched.
-        return {"error": str(e)}
+    tpl_replaced = template_content(pp, manifest, rules, proj_rel, tpl_raw)
     if source == "template" and tpl_replaced is None:
         return {"error": f"Template file not found: {tpl_rel}"}
     target = pp / proj_rel
@@ -2044,47 +1856,17 @@ def migrate_v2_to_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
 # v3 -> v4 migration (spec §7 step 1c, §9)
 # -------------------------
 
-def _tools_line_diff(tpl_text: str, proj_text: str) -> tuple[list[str], list[str]] | None:
-    """(original_tools, added_tools) when `proj_text` differs from
-    `tpl_text` ONLY by additional, order-preserving entries appended to the
-    `tools:` frontmatter line -- None when the diff touches anything else,
-    either side lacks a `tools:` line, or the project's list is not exactly
-    the template's list plus a suffix (step 6b: a grants entry replaces the
-    rename route for exactly this shape)."""
-    tpl_m = _TOOLS_LINE_RE.search(tpl_text)
-    proj_m = _TOOLS_LINE_RE.search(proj_text)
-    if tpl_m is None or proj_m is None:
-        return None
-    tpl_rest = tpl_text[:tpl_m.start()] + tpl_text[tpl_m.end():]
-    proj_rest = proj_text[:proj_m.start()] + proj_text[proj_m.end():]
-    if tpl_rest != proj_rest:
-        return None
-    tpl_tools = [t.strip() for t in tpl_m.group(1).split(",") if t.strip()]
-    proj_tools = [t.strip() for t in proj_m.group(1).split(",") if t.strip()]
-    if len(proj_tools) <= len(tpl_tools) or proj_tools[:len(tpl_tools)] != tpl_tools:
-        return None
-    return tpl_tools, proj_tools[len(tpl_tools):]
-
-
-def _v4_entry_for(fp: str, entry: dict, *, pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
-                  grant_agent_paths: dict[str, str], grants_plan: dict[str, list[str]],
-                  new_claude: str) -> tuple[dict | None, list[str], str | None]:
+def _v4_entry_for(fp: str, entry: dict, *, new_claude: str) -> tuple[dict, list[str]]:
     """The ONE per-entry v4-manifest decision (spec 1.1, review #17 x3):
     used by BOTH the dry-run preview loop and the write-path re-hash, so
     there is exactly one producer of a v4 manifest entry (H2 shape) -- the
     invariant `check_baseline_invariant` checks is then true by
     construction, not by two code paths happening to agree.
 
-    Returns (new_entry, carried_keys, unavailable_agent). `new_entry` is
-    None only when `fp` is a grants-plan agent whose HELD base could not be
-    rendered -- the caller collects `unavailable_agent` across every entry
-    and refuses the WHOLE migration (grants are all-or-nothing: a silently
-    un-spliced baseline is worse than a loud refusal, spec 1.1).
+    Returns (new_entry, carried_keys).
 
     Every entry the migration does not write (everything except CLAUDE.md,
-    which is written fresh, and grants-plan agents, whose manifest hash
-    must reflect the grant even though their FILE is not written to disk)
-    carries `entry["hash"]` forward UNCHANGED -- no render, no
+    which is written fresh) carries `entry["hash"]` forward UNCHANGED -- no render, no
     `template_content()` call at all -- so a stale or deliberately corrupt
     stored hash is PRESERVED, never silently repaired (spec 1.1's
     discriminating fixture), and a template file the template no longer
@@ -2104,39 +1886,28 @@ def _v4_entry_for(fp: str, entry: dict, *, pp: pathlib.Path, manifest: dict, rul
             # annotation on this entry still is.
             new_entry, carried = carry_unknown_file_keys(
                 entry, {"hash": format_hash(core._sha256(new_claude)), "ownership": "template"})
-            return new_entry, carried, None
-        agent_name = grant_agent_paths.get(fp)
-        if agent_name is not None:
-            tpl_rel_e = rules.template_path_for(fp)
-            held_rendered, _base_label, _warn = resolve_base(pp, manifest, rules, tpl_rel_e)
-            if held_rendered is None:
-                return None, [], agent_name
-            spliced = splice_tools(held_rendered, grants_plan[agent_name])
-            new_entry, carried = carry_unknown_file_keys(
-                entry, {"hash": format_hash(core._sha256(spliced)), "ownership": "template"})
-            return new_entry, carried, None
+            return new_entry, carried
         # Not written by the migration -- carry the stored hash forward
         # unchanged. This IS the fix for #17's three symptoms.
         new_entry, carried = carry_unknown_file_keys(
             entry, {"hash": entry.get("hash", ""), "ownership": "template"})
-        return new_entry, carried, None
+        return new_entry, carried
     if ownership == "once":
         new_entry, carried = carry_unknown_file_keys(entry, {"ownership": "once"})
-        return new_entry, carried, None
+        return new_entry, carried
     # Defensive: neither known ownership -- preserve verbatim rather than guess.
-    return dict(entry), [], None
+    return dict(entry), []
 
 
 def _v4_seed_entry(prior: dict | None) -> tuple[dict, list[str]]:
     """The v4 manifest entry for a fixed once-class seed path the migration
-    creates (`.claude/project-instructions.md`, `.claude/agent-grants.json`)
-    (spec 1.1 fix round 1): carries any consumer annotation on a
+    creates (`.claude/project-instructions.md`) (spec 1.1 fix round 1): carries any consumer annotation on a
     PRE-EXISTING entry for that path forward, exactly like every other
     entry -- but PINS ownership to `"once"` and drops any `hash`
     unconditionally, whatever an old v3 manifest claimed for it. A v3
     manifest that happened to list this path `"ownership": "template"` must
     NOT ship a v4 entry the next sync could then treat as template-owned
-    and silently overwrite -- that would clobber a consumer's own grants or
+    and silently overwrite -- that would clobber a consumer's own
     instructions file, a worse defect than losing the annotation. `hash` is
     dropped for free: it is a KNOWN_FILE_KEYS_V3 key, so
     `carry_unknown_file_keys` never carries it."""
@@ -2147,9 +1918,7 @@ def check_baseline_invariant(old_manifest: dict, new_manifest: dict, will_write)
     """Pure invariant (spec 1.1): every v4 entry NOT in `will_write` must
     carry its OLD hash forward unchanged. `will_write` is the set of paths
     whose hash the migration is ALLOWED to change -- CLAUDE.md (written
-    fresh), the two new once-class files it creates, and every grants-plan
-    agent path (re-hashed via the held base even though the migration never
-    writes that agent's bytes to disk).
+    fresh) and the new once-class file it creates.
 
     A violation means `_v4_entry_for` regressed to reconstructing an entry
     instead of deriving it -- report it, never accept it silently. It
@@ -2186,11 +1955,9 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     silent "keep the existing file" would strand the region body in a
     CLAUDE.md about to lose it -- never a silent once-class skip.
 
-    An agent whose LOCAL_EDITED diff is CONFINED to additions on its
-    `tools:` line (R-D: only an agent that SHIPS one) becomes a grants.json
-    entry instead (step 6b); an agent that gained a `tools:` line the
-    template ships NONE for is an (c)-class refusal, never a synthesised
-    grant.
+    v5.0: the agent-grants mechanism is gone, so a locally extended agent
+    `tools:` line is no longer lifted into a grants file; the agent is
+    template-deleted by the next sync anyway.
     """
     warnings = list(rules.warnings)
 
@@ -2217,55 +1984,6 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
             if region_was_seed:
                 region_body = None
 
-    # (b) grant-shaped agent diffs.
-    placeholders = manifest.get("placeholders", {})
-    grants_plan: dict[str, list[str]] = {}
-    grant_agent_paths: dict[str, str] = {}
-    no_tools_line_refusals: list[str] = []
-    for proj_rel, entry in manifest.get("files", {}).items():
-        proj_rel = core._normalize_path(proj_rel)
-        if entry.get("ownership") != "template" or not proj_rel.startswith(AGENTS_DIR_PREFIX):
-            continue
-        tpl_rel_agent = rules.template_path_for(proj_rel)
-        agent_tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel_agent))
-        agent_proj = core._read_file(pp / proj_rel)
-        if agent_tpl_raw is None or agent_proj is None:
-            continue
-        # `manifest` here is still the OLD v3 manifest (is_v4_manifest is
-        # False), so template_content() is a placeholder-only no-op --
-        # exactly the plain rendering this detection step needs.
-        agent_tpl_rendered = template_content(pp, manifest, rules, proj_rel, agent_tpl_raw)
-        if agent_tpl_rendered is None or agent_tpl_rendered == agent_proj:
-            continue
-        # Route through the region split BEFORE the tools-only diff (spec
-        # 1.2, #31): without this, an agent carrying a tools: addition AND
-        # region content classifies as `mixed` on the WHOLE text and is
-        # skipped here, so grants_plan stays empty for it -- exactly the
-        # risk grants exist to close (MM-Agent's 16 + 22 project tools got
-        # no durable home). Same split `region_status` (`:932`) already
-        # uses -- no second stripper.
-        #
-        # Residual (stated per the brief): this compares against the
-        # CURRENT template (HEAD)'s non-region part, so a template edit to
-        # the agent's tools: line between the held commit and HEAD still
-        # reads as not-tools-only here -- the held-base comparison is v4.2.
-        tpl_nonregion, _tpl_region = core._split_custom_region(agent_tpl_rendered)
-        proj_nonregion, _proj_region = core._split_custom_region(agent_proj)
-        diff = _tools_line_diff(tpl_nonregion, proj_nonregion)
-        if diff is not None:
-            agent_name = agent_name_of(agent_tpl_rendered)
-            if agent_name:
-                grants_plan[agent_name] = diff[1]
-                grant_agent_paths[proj_rel] = agent_name
-        elif _TOOLS_LINE_RE.search(tpl_nonregion) is None and _TOOLS_LINE_RE.search(proj_nonregion):
-            no_tools_line_refusals.append(proj_rel)
-
-    if no_tools_line_refusals:
-        return {
-            "error": f"agent(s) gained a tools: line the template does not ship: "
-                     f"{sorted(no_tools_line_refusals)} -- resolve by hand before migrating",
-            "out_of_region_diff": out_of_region_diff,
-        }
     if out_of_region_diff.strip():
         return {
             "error": "CLAUDE.md diverges from the held template outside the PROJECT-CUSTOM region -- "
@@ -2291,8 +2009,6 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
         instructions_content = seed_header.rstrip("\n") + "\n\n" + region_body.rstrip("\n") + "\n"
     else:
         instructions_content = seed_header
-    agent_grants_content = json.dumps(
-        {"schema": 1, "grants": dict(sorted(grants_plan.items()))}, indent=2, ensure_ascii=False) + "\n"
 
     repo = core._template_repo_resolved(manifest)
     commit = core._git_head(repo) or manifest_commit(manifest)
@@ -2308,7 +2024,6 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     new_manifest["template_commit"] = commit
     new_manifest["requires_server"] = f">={MIN_SERVER_FOR_V4}"
     new_manifest["instructions_file"] = INSTRUCTIONS_FILE_DEFAULT
-    new_manifest["agent_grants"] = AGENT_GRANTS_FILE
 
     # Hash PREVIEW: derive, never construct (spec 1.1). Every entry the
     # migration does not write carries its stored hash forward UNCHANGED --
@@ -2317,33 +2032,20 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     # pairs, so the two can never disagree (H2 shape).
     files: dict[str, dict] = {}
     carried_file_keys: dict[str, list[str]] = {}
-    unavailable_agents: list[str] = []
     for fp, entry in manifest.get("files", {}).items():
         fp = core._normalize_path(fp)
-        new_entry, carried, unavailable_agent = _v4_entry_for(
-            fp, entry, pp=pp, manifest=manifest, rules=rules,
-            grant_agent_paths=grant_agent_paths, grants_plan=grants_plan, new_claude=new_claude)
-        if new_entry is None:
-            unavailable_agents.append(unavailable_agent)
-            continue
+        new_entry, carried = _v4_entry_for(fp, entry, new_claude=new_claude)
         files[fp] = new_entry
         if carried:
             carried_file_keys[fp] = carried
-    if unavailable_agents:
-        return {
-            "error": "migration_base unavailable; grant agents "
-                     f"{sorted(set(unavailable_agents))} cannot be re-hashed -- "
-                     "fetch the held template commit and retry",
-        }
-    for seed_fp in (INSTRUCTIONS_FILE_DEFAULT, AGENT_GRANTS_FILE):
-        seed_entry, seed_carried = _v4_seed_entry(files.get(seed_fp))
-        files[seed_fp] = seed_entry
-        if seed_carried:
-            carried_file_keys[seed_fp] = seed_carried
+    seed_entry, seed_carried = _v4_seed_entry(files.get(INSTRUCTIONS_FILE_DEFAULT))
+    files[INSTRUCTIONS_FILE_DEFAULT] = seed_entry
+    if seed_carried:
+        carried_file_keys[INSTRUCTIONS_FILE_DEFAULT] = seed_carried
     new_manifest["files"] = dict(sorted(files.items()))
     superseded_dropped = drop_superseded(new_manifest)
 
-    will_write = sorted({"CLAUDE.md", INSTRUCTIONS_FILE_DEFAULT, AGENT_GRANTS_FILE} | set(grant_agent_paths))
+    will_write = sorted({"CLAUDE.md", INSTRUCTIONS_FILE_DEFAULT})
     baseline_invariant = check_baseline_invariant(manifest, new_manifest, set(will_write))
 
     return {
@@ -2353,13 +2055,10 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
         "region_bytes": region_bytes_raw(proj_claude),
         "out_of_region_diff": out_of_region_diff,
         "migration_base": base_label,
-        "grants_plan": grants_plan,
-        "grant_agent_paths": grant_agent_paths,
         "will_write": will_write,
         "carried_file_keys": carried_file_keys,
         "baseline_invariant": baseline_invariant,
         "instructions_content": instructions_content,
-        "agent_grants_content": agent_grants_content,
         "claude_md_content": new_claude,
         "superseded_keys_dropped": superseded_dropped,
         "unknown_keys": unknown_top_level_keys(new_manifest),
@@ -2423,13 +2122,6 @@ def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_
     core._write_file_atomic(claude_bak, core._read_file(pp / "CLAUDE.md") or "")
     core._write_file_atomic(manifest_bak, core._read_file(pp / ".claude" / "template-manifest.json") or "")
 
-    # Write order matters (H2): agent-grants.json FIRST, so every hash below
-    # -- computed through template_content(), never _apply_placeholders
-    # directly -- reads the SAME grants the next apply/status call will.
-    grants_target = pp / AGENT_GRANTS_FILE
-    grants_target.parent.mkdir(parents=True, exist_ok=True)
-    core._write_file_atomic(grants_target, plan["agent_grants_content"])
-
     instructions_target = pp / INSTRUCTIONS_FILE_DEFAULT
     instructions_target.parent.mkdir(parents=True, exist_ok=True)
     core._write_file_atomic(instructions_target, plan["instructions_content"])
@@ -2441,41 +2133,20 @@ def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_
     # preview above, via the SAME `_v4_entry_for` helper on the SAME (fp,
     # entry) pairs from the OLD v3 manifest -- so this loop cannot diverge
     # from the preview's `plan["manifest"]["files"]` (H2 shape: exactly one
-    # producer). `unavailable_agent` is unreachable here in practice:
-    # migrate_v3_to_v4() already refused, before any write, when a
-    # grants-plan base was unavailable, and this loop is fed identical
-    # inputs -- so a hit here is the same defect the baseline-invariant
-    # tripwire above already guards against, not a new failure mode. Unlike
-    # that pre-write refusal, grants.json/project-instructions.md/CLAUDE.md
-    # are ALREADY on disk by this point -- the message says so rather than
-    # repeating "nothing was written", which would be false here.
+    # producer).
     final_manifest = dict(plan["manifest"])
     final_files: dict[str, dict] = {}
     carried_file_keys: dict[str, list[str]] = {}
     for fp, entry in manifest.get("files", {}).items():
         fp = core._normalize_path(fp)
-        new_entry, carried, unavailable_agent = _v4_entry_for(
-            fp, entry, pp=pp, manifest=manifest, rules=rules,
-            grant_agent_paths=plan["grant_agent_paths"], grants_plan=plan["grants_plan"],
-            new_claude=plan["claude_md_content"])
-        if new_entry is None:
-            return {
-                "error": "migration_base unavailable; grant agents "
-                         f"['{unavailable_agent}'] cannot be re-hashed -- this is unreachable given "
-                         "migrate_v3_to_v4()'s pre-write refusal with identical inputs; report it as a "
-                         "server defect. CLAUDE.md, .claude/project-instructions.md and "
-                         ".claude/agent-grants.json were already written; the manifest was not"
-                         f"; pre-migration copies are in {bdir} (CLAUDE.md.pre-migration, "
-                         "template-manifest.json.pre-migration)",
-            }
+        new_entry, carried = _v4_entry_for(fp, entry, new_claude=plan["claude_md_content"])
         final_files[fp] = new_entry
         if carried:
             carried_file_keys[fp] = carried
-    for seed_fp in (INSTRUCTIONS_FILE_DEFAULT, AGENT_GRANTS_FILE):
-        seed_entry, seed_carried = _v4_seed_entry(final_files.get(seed_fp))
-        final_files[seed_fp] = seed_entry
-        if seed_carried:
-            carried_file_keys[seed_fp] = seed_carried
+    seed_entry, seed_carried = _v4_seed_entry(final_files.get(INSTRUCTIONS_FILE_DEFAULT))
+    final_files[INSTRUCTIONS_FILE_DEFAULT] = seed_entry
+    if seed_carried:
+        carried_file_keys[INSTRUCTIONS_FILE_DEFAULT] = seed_carried
     final_manifest["files"] = dict(sorted(final_files.items()))
     # Reconcile with the preview: same helper, same inputs, so this is
     # provably identical to plan["carried_file_keys"] today -- overwriting
@@ -2490,7 +2161,7 @@ def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_
     report = {
         "migrated": True, "from": "v3", "to": "v4",
         "region_was_seed": plan["region_was_seed"], "region_bytes": plan["region_bytes"],
-        "grants_plan": plan["grants_plan"], "warnings": plan["warnings"],
+        "warnings": plan["warnings"],
     }
     report_path = bdir / "migration-report.json"
     core._write_file_atomic(report_path, json.dumps(report, indent=2, ensure_ascii=False) + "\n")
@@ -2498,8 +2169,7 @@ def _migrate_v3_manifest(pp: pathlib.Path, manifest: dict, backup_dir: str, dry_
     plan["manifest"] = final_manifest
     plan["migrated"] = True
     plan["backup"] = {"claude_md": str(claude_bak), "manifest": str(manifest_bak)}
-    plan["written"] = [AGENT_GRANTS_FILE, INSTRUCTIONS_FILE_DEFAULT, "CLAUDE.md",
-                       ".claude/template-manifest.json"]
+    plan["written"] = [INSTRUCTIONS_FILE_DEFAULT, "CLAUDE.md", ".claude/template-manifest.json"]
     plan["report_path"] = str(report_path)
     return plan
 

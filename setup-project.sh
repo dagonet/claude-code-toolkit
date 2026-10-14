@@ -1260,8 +1260,8 @@ done
     echo "  \"template_version\": $template_version_json,"
     echo "  \"template_commit\": \"$template_commit\","
     # >=4.1.0 (MIN_SERVER_FOR_V4, server/src/template_sync/v3.py): a v3-era
-    # server has no region-less CLAUDE.md handling, no instructions_file/
-    # agent_grants declarations, and no agent-grants splice -- refusing it
+    # server has no region-less CLAUDE.md handling and no instructions_file
+    # declaration -- refusing it
     # loudly on a v4 manifest is the documented v4.1 decision (spec sect 8,
     # "Decisions taken" item 2), the mirror of the old >=0.3.2 floor this
     # replaces (which guarded the v3 region splice, now retired for CLAUDE.md).
@@ -1287,14 +1287,14 @@ done
         echo "    }$comma"
     done
     echo "  },"
-    # v4 declaration keys (spec sect 5 header; server/src/template_sync/mcp.py
-    # _load_manifest requires both when manifest_version == 4). Literal
-    # constants, not derived from FILE_RELS: they name the FIXED paths the
-    # server reads for the CLAUDE.md `@` import and the agent-grants splice,
-    # not a per-project setting -- INSTRUCTIONS_FILE_DEFAULT/AGENT_GRANTS_FILE
-    # in server/src/template_sync/v3.py are the same two literals.
-    echo "  \"instructions_file\": \".claude/project-instructions.md\","
-    echo "  \"agent_grants\": \".claude/agent-grants.json\""
+    # v4 declaration key (spec sect 5 header; server/src/template_sync/mcp.py
+    # _load_manifest requires it when manifest_version == 4). A literal
+    # constant, not derived from FILE_RELS: it names the FIXED path the server
+    # reads for the CLAUDE.md `@` import, not a per-project setting --
+    # INSTRUCTIONS_FILE_DEFAULT in server/src/template_sync/v3.py is the same
+    # literal. v5.0 no longer writes `agent_grants` (the mechanism is removed;
+    # the server still accepts it in v4.x manifests).
+    echo "  \"instructions_file\": \".claude/project-instructions.md\""
     echo "}"
 } > "$manifest_path"
 

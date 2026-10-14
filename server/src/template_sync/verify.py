@@ -60,14 +60,9 @@ LINES = (
     # import_line_present / instructions_file_present run under v4 only and
     # SKIP under v3 (legacy: "manifest v3: no import yet"; window: "manifest
     # v3: migrate first (owned by status_clean)" -- R-K, ONE fact ONE FAIL).
-    # The agent_grants_* three run under every manifest version this server
-    # dispatches on (v3 and v4 alike).
     ("claude_md_identical", FAIL_LINE),
     ("import_line_present", FAIL_LINE),
     ("instructions_file_present", FAIL_LINE),
-    ("agent_grants_resolvable", FAIL_LINE),
-    ("agent_grants_names_known", FAIL_LINE),
-    ("agent_grants_extendable", FAIL_LINE),
     ("manifest_bytes", FAIL_LINE),
     ("declared_keys", FAIL_LINE),
     ("encoding_drift", INFO_LINE),
@@ -269,14 +264,7 @@ def _claude_md_window_reason(manifest: dict, rules) -> str:
 def _check_claude_md_identical(pp: pathlib.Path, manifest: dict, rules) -> dict:
     tpl_rel = rules.template_path_for("CLAUDE.md")
     tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
-    try:
-        tpl_content = v3.template_content(pp, manifest, rules, "CLAUDE.md", tpl_raw)
-    except (v3.GrantsError, v3.GrantRefused) as e:
-        # v4.1 commit-3 concern 3, narrowed: this line is now defended;
-        # status_clean/classes_and_hashes (which read compute_status_v3
-        # directly) remain the ones still exposed to a malformed grants file.
-        return _line("claude_md_identical", "FAIL", str(e), "byte-identical to template_content()",
-                     "fix .claude/agent-grants.json")
+    tpl_content = v3.template_content(pp, manifest, rules, "CLAUDE.md", tpl_raw)
     proj_claude = core._read_file(pp / "CLAUDE.md")
     if tpl_content is None:
         return _line("claude_md_identical", "FAIL", "template CLAUDE.md not found",
@@ -321,301 +309,6 @@ def _check_instructions_file_present(pp: pathlib.Path, manifest: dict) -> dict:
         return _line("instructions_file_present", "PASS", f"{inst_path} exists", f"{inst_path} exists")
     return _line("instructions_file_present", "FAIL", f"{inst_path} not found", f"{inst_path} exists",
                  "the once-class file was deleted by hand -- restore it (an ordinary sync never re-seeds it)")
-
-
-# --- v4.1: agent_grants_resolvable / agent_grants_names_known /
-# --- agent_grants_extendable (spec §4) -- run under every manifest version.
-
-
-def _shipped_agent_names(manifest: dict) -> set[str]:
-    agents_dir = core._get_template_dir(manifest) / ".claude" / "agents"
-    names: set[str] = set()
-    if agents_dir.is_dir():
-        for p in sorted(agents_dir.glob("*.md")):
-            text = core._read_file(p)
-            if text is not None:
-                name = v3.agent_name_of(text)
-                if name:
-                    names.add(name)
-    return names
-
-
-def _agent_template_path_by_name(manifest: dict, agent_name: str) -> pathlib.Path | None:
-    agents_dir = core._get_template_dir(manifest) / ".claude" / "agents"
-    if not agents_dir.is_dir():
-        return None
-    for p in sorted(agents_dir.glob("*.md")):
-        text = core._read_file(p)
-        if text is not None and v3.agent_name_of(text) == agent_name:
-            return p
-    return None
-
-
-# R-N (fix round 1): the "mcp-dev-servers family" -- aliases whose source
-# tree and census route check 50 (scripts/verify-template-consistency.sh)
-# already knows how to find, via a REGISTERED alias's venv path in
-# ~/.claude.json. Kept as the SAME six names check 50 uses (C50_FAMILY),
-# never re-derived, so the two lists cannot silently disagree about which
-# aliases have a real census route.
-MCP_DEV_SERVERS_FAMILY = ("git-tools", "github-tools", "dotnet-tools", "ollama-tools",
-                          "rust-tools", "python-tools")
-
-# Ceiling on ONE alias's census subprocess (scripts/lib/list-mcp-tools.py).
-# Named so the "why 30" sits beside the value it bounds; kept as a FLOOR
-# inside AGENT_GRANTS_CENSUS_BUDGET_S below (fix round 2, J2) -- an alias
-# census already STARTED is never truncated early just because the
-# remaining total budget is smaller than this ceiling; it is simply never
-# STARTED once the total budget is already spent.
-AGENT_GRANTS_CENSUS_PER_ALIAS_TIMEOUT_S = 30.0
-
-# J2 (fix round 2): a TOTAL budget for the WHOLE agent_grants_resolvable
-# computation in one template_verify call, not a per-alias ceiling alone --
-# worst case before this existed was ~7 aliases x 30s = 3.5 minutes of
-# apparent hang if every venv were broken, and a verify that hangs is a
-# verify people stop running. The accepted trade: one hanging/broken
-# server's census must not blind the rest of the line -- bounded and
-# honest (some aliases SKIP, named, with a reason) beats unbounded and
-# complete (a report nobody waits for). Consumed across aliases, iterated
-# in SORTED order so which alias lands on which side of the cutoff depends
-# on the data, never on dict/set iteration order; every alias the budget
-# does not reach SKIPs naming itself and "census budget exhausted before it
-# was reached" -- NEVER PASSes on that account. Per-call cache is kept
-# alongside this budget (cross-call caching would go stale when a server is
-# re-registered).
-AGENT_GRANTS_CENSUS_BUDGET_S = 30.0
-
-
-def _mcp_registration_path() -> pathlib.Path:
-    override = os.environ.get("MCP_TOOLS_REGISTRATION")
-    return pathlib.Path(override) if override else pathlib.Path.home() / ".claude.json"
-
-
-def _derive_mcp_dev_servers_source_dir(registration_path: pathlib.Path, alias: str) -> str | None:
-    """Exactly check 50's own derivation: `mcpServers.<alias>.command`,
-    normalized to forward slashes, everything before the FIRST
-    `/.venv/Scripts/` or `/.venv/bin/` segment. None when the registration
-    file is unreadable, the alias is not registered, or its command carries
-    neither marker."""
-    try:
-        data = json.loads(registration_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    cmd = (data.get("mcpServers", {}).get(alias) or {}).get("command", "")
-    if not cmd:
-        return None
-    norm = cmd.replace("\\", "/")
-    for marker in ("/.venv/Scripts/", "/.venv/bin/"):
-        idx = norm.find(marker)
-        if idx != -1:
-            return norm[:idx]
-    return None
-
-
-def _census_mcp_dev_servers_alias(template_repo: str, source_dir: str, registration_path: pathlib.Path,
-                                  alias: str) -> tuple[list[str] | None, str | None]:
-    """(names, skip_reason) via scripts/lib/list-mcp-tools.py (system
-    python, resolved from the manifest's OWN templateRepo -- the toolkit
-    checkout the consumer already points at), run exactly as check 50 runs
-    it. The STATIC census is the membership set check 50 itself checks
-    tokens against (the import census there is used only for drift
-    detection, never as the primary "does this exist" source), so a
-    registered alias with no live venv still resolves via the static
-    scan -- consistent with check 50's own tolerant fallback."""
-    lib = pathlib.Path(template_repo) / "scripts" / "lib" / "list-mcp-tools.py"
-    if not lib.is_file():
-        return None, f"{lib} not found"
-    py = shutil.which("python") or shutil.which("python3")
-    if py is None:
-        return None, "no system python on PATH"
-    try:
-        proc = subprocess.run(
-            [py, str(lib), "--source-dir", source_dir, "--registration", str(registration_path),
-             "--alias", alias],
-            capture_output=True, text=True, timeout=AGENT_GRANTS_CENSUS_PER_ALIAS_TIMEOUT_S,
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return None, f"list-mcp-tools.py failed: {e}"
-    if proc.returncode != 0:
-        return None, f"list-mcp-tools.py exit {proc.returncode}: {(proc.stderr or proc.stdout).strip()[:200]}"
-    out = proc.stdout.strip()
-    if not out:
-        return None, "list-mcp-tools.py produced no output"
-    try:
-        data = json.loads(out.splitlines()[-1])
-    except ValueError:
-        return None, "list-mcp-tools.py: unparseable output"
-    static = data.get("static")
-    if not static:
-        return None, data.get("skip_reason") or f'no FastMCP("{alias}") module found under {source_dir}'
-    return static, None
-
-
-def _check_agent_grants_resolvable(pp: pathlib.Path, manifest: dict) -> dict:
-    """Every granted token must exist in its server's exports -- a typo must
-    never silently grant nothing, and this line must never PASS a token it
-    could not actually resolve (R-N). Two real census routes:
-    `template-sync-tools` (this process's own live registry, via
-    `_registered_tool_names()`) and the mcp-dev-servers family (source dir
-    derived from a REGISTERED alias's venv path exactly as check 50 derives
-    it, censused via `scripts/lib/list-mcp-tools.py`'s import route,
-    resolved against the manifest's own `templateRepo`). PASS/FAIL by token
-    where a route exists; SKIP naming the alias ("alias X: no census
-    route") for every other alias, or when the family alias has no
-    registration/venv to derive a source dir from -- SKIP is the honest
-    cannot-determine answer for a read-only reporting line, and it is not
-    fail-open, since the shape/policy refusal already happened in
-    `load_grants` at apply time."""
-    try:
-        grants = v3.load_grants(pp)
-    except (v3.GrantsError, v3.GrantRefused) as e:
-        return _line("agent_grants_resolvable", "FAIL", str(e),
-                     "every granted token exists in its server's exports",
-                     "fix .claude/agent-grants.json")
-    if not (pp / v3.AGENT_GRANTS_FILE).is_file():
-        return _line("agent_grants_resolvable", "PASS", "no grants file", "n/a (informational)")
-    tokens = sorted({t for toks in grants.values() for t in toks})
-    if not tokens:
-        return _line("agent_grants_resolvable", "PASS", "grants=0", "n/a (informational)")
-
-    registered = set(core._registered_tool_names())
-    registration_path = _mcp_registration_path()
-    template_repo = manifest.get("templateRepo", "")
-    if template_repo:
-        template_repo = str(core._effective_template_repo(template_repo))
-    census_cache: dict[str, tuple[list[str] | None, str | None]] = {}
-    not_exported: list[str] = []
-    skip_aliases: dict[str, str] = {}
-    resolved = 0
-
-    # Group by alias and iterate ALIASES in SORTED order (fix round 2,
-    # controller addendum (a)): the census budget is consumed per ALIAS
-    # (one subprocess per alias, cached), so which alias lands on which
-    # side of the budget cutoff must depend on the data (alphabetical),
-    # never on dict/set iteration order.
-    alias_tokens: dict[str, list[tuple[str, str]]] = {}
-    for tok in tokens:
-        alias, _sep, name = tok[len("mcp__"):].partition("__")
-        alias_tokens.setdefault(alias, []).append((tok, name))
-
-    budget_start = time.monotonic()
-    for alias in sorted(alias_tokens):
-        toks_for_alias = alias_tokens[alias]
-        if alias == "template-sync-tools":
-            for tok, name in toks_for_alias:
-                if name in registered:
-                    resolved += 1
-                else:
-                    not_exported.append(tok)
-            continue
-        if alias in MCP_DEV_SERVERS_FAMILY:
-            if alias not in census_cache:
-                if time.monotonic() - budget_start >= AGENT_GRANTS_CENSUS_BUDGET_S:
-                    census_cache[alias] = (
-                        None, f"alias {alias}: census budget exhausted before it was reached")
-                else:
-                    source_dir = _derive_mcp_dev_servers_source_dir(registration_path, alias)
-                    if source_dir is None:
-                        census_cache[alias] = (None, f"alias {alias}: no census route (not registered)")
-                    elif not pathlib.Path(source_dir).is_dir():
-                        census_cache[alias] = (None, f"alias {alias}: no census route (source dir not found)")
-                    elif not template_repo:
-                        census_cache[alias] = (None, f"alias {alias}: no census route (templateRepo unknown)")
-                    else:
-                        names_c, reason_c = _census_mcp_dev_servers_alias(
-                            template_repo, source_dir, registration_path, alias)
-                        # J1 (fix round 2): prefix the alias HERE, at the one
-                        # place `_census_mcp_dev_servers_alias`'s own reason
-                        # (list-mcp-tools.py exit code, unparseable output,
-                        # etc.) enters the cache -- that function does not
-                        # name the alias itself, and a SKIP with a generic or
-                        # alias-less reason is a silent hole the consumer
-                        # cannot act on. Every other branch above already
-                        # constructs its reason pre-prefixed.
-                        census_cache[alias] = (
-                            names_c, f"alias {alias}: {reason_c}" if reason_c else None)
-            names, skip_reason = census_cache[alias]
-            for tok, name in toks_for_alias:
-                if names is not None:
-                    if name in names:
-                        resolved += 1
-                    else:
-                        not_exported.append(tok)
-                else:
-                    skip_aliases[alias] = skip_reason or f"alias {alias}: no census route"
-            continue
-        skip_aliases.setdefault(alias, f"alias {alias}: no census route")
-
-    if not_exported:
-        return _line("agent_grants_resolvable", "FAIL", f"not exported: {not_exported}",
-                     "every granted token exists in its server's exports",
-                     "fix the token name in .claude/agent-grants.json (or remove it if the tool was "
-                     "renamed/removed)")
-    if skip_aliases:
-        return _skip("agent_grants_resolvable", "; ".join(sorted(skip_aliases.values())))
-    return _line("agent_grants_resolvable", "PASS", f"resolved={resolved}", "n/a (informational)")
-
-
-def _check_agent_grants_names_known(pp: pathlib.Path, manifest: dict) -> dict:
-    try:
-        grants = v3.load_grants(pp)
-    except (v3.GrantsError, v3.GrantRefused) as e:
-        return _line("agent_grants_names_known", "FAIL", str(e),
-                     "every grant key names a shipped agent", "fix .claude/agent-grants.json")
-    if not grants:
-        return _line("agent_grants_names_known", "PASS", "grants=0",
-                     "every grant key names a shipped agent")
-    shipped = _shipped_agent_names(manifest)
-    unknown = sorted(k for k in grants if k not in shipped)
-    if unknown:
-        return _line("agent_grants_names_known", "FAIL", f"unknown agent name(s): {unknown}",
-                     f"every grant key in {sorted(shipped)}",
-                     "fix the agent name in .claude/agent-grants.json")
-    return _line("agent_grants_names_known", "PASS",
-                 f"{len(grants)} grant key(s), all shipped agents",
-                 "every grant key names a shipped agent")
-
-
-def _check_agent_grants_extendable(pp: pathlib.Path, manifest: dict) -> dict:
-    try:
-        grants = v3.load_grants(pp)
-    except (v3.GrantsError, v3.GrantRefused) as e:
-        return _line("agent_grants_extendable", "FAIL", str(e),
-                     "every grant key names an agent with a one-line tools:",
-                     "fix .claude/agent-grants.json")
-    if not grants:
-        return _line("agent_grants_extendable", "PASS", "grants=0",
-                     "every grant key names an agent with a one-line tools:")
-    bad: list[str] = []
-    # Force template_content()'s placeholder-only path (F1-c2 fix): this
-    # loop needs the UN-spliced rendering to test splice_tools() itself --
-    # calling template_content() with the REAL (v4) manifest would already
-    # splice this exact agent's own grants (it is iterating grants.items()),
-    # double-splicing when splice_tools() runs again below. A shallow copy
-    # with manifest_version forced to 3 is inert for this purpose (rules is
-    # never consulted by template_content -- see its docstring).
-    plain_manifest = dict(manifest, manifest_version=3)
-    for agent_name, agent_grants in grants.items():
-        path = _agent_template_path_by_name(manifest, agent_name)
-        if path is None:
-            continue  # unknown name -- owned by agent_grants_names_known, not duplicated here
-        raw = core._read_file(path)
-        rendered = v3.template_content(pp, plain_manifest, None, f"{v3.AGENTS_DIR_PREFIX}{path.name}", raw)
-        if rendered is None:
-            continue
-        try:
-            v3.splice_tools(rendered, agent_grants)
-        except v3.GrantRefused:
-            bad.append(agent_name)
-        except v3.GrantsError:
-            continue  # a shape defect (list-form/*), not "no tools: line" -- a different check's business
-    if bad:
-        return _line("agent_grants_extendable", "FAIL",
-                     f"agent(s) with no tools: line: {sorted(bad)}",
-                     "every grant key names an agent with a one-line tools:",
-                     "remove the grant, or give the agent a tools: line")
-    return _line("agent_grants_extendable", "PASS",
-                 f"{len(grants)} grant key(s), all extendable",
-                 "every grant key names an agent with a one-line tools:")
 
 
 def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -> dict:
@@ -679,24 +372,10 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                    "upgrade template-sync-tools (bash server/install.sh in the toolkit checkout) and restart"))
 
     template_dir = core._get_template_dir(manifest)
-    # R-C (original brief): a malformed .claude/agent-grants.json is an
-    # apply/status ERROR for every agent path, reported through THIS
-    # existing FAIL line -- no new line. Checked here (before `rules` is
-    # even loaded) so a shape defect is visible even when the rest of the
-    # v3-dependent chain below never runs.
-    grants_shape_error = None
-    try:
-        v3.load_grants(pp)
-    except v3.GrantsError as e:
-        grants_shape_error = str(e)
     if not template_dir.is_dir():
         emit(_line("no_errors", "FAIL", f"template directory not found: {template_dir}",
                    "template variant directory exists",
                    "fix templateRepo/variant in .claude/template-manifest.json"))
-    elif grants_shape_error:
-        emit(_line("no_errors", "FAIL", grants_shape_error,
-                   "template variant directory exists; .claude/agent-grants.json is well-formed",
-                   "fix .claude/agent-grants.json"))
     else:
         emit(_line("no_errors", "PASS", f"template directory found: {template_dir}",
                    "template variant directory exists"))
@@ -813,10 +492,10 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     # --- status_clean / gate_self_reference_empty / unclassified_empty / ----
     # --- new_template_files_empty / classes_and_hashes / region_markers -----
     status = v3.compute_status_v3(pp, manifest, rules)
-    # R-P (fix round 1): compute_status_v3 returns {"error": ...} on a
-    # malformed grants file (R-C) rather than raising -- every line below
-    # that reads status[...] must report FAIL with that message instead of
-    # crashing with a KeyError (never a null-case green either). Grepped
+    # R-P (fix round 1): compute_status_v3 may return {"error": ...} rather
+    # than raising -- every line below that reads status[...] must report
+    # FAIL with that message instead of crashing with a KeyError (never a
+    # null-case green either). Grepped
     # (constraint 11) -- every `status[` / status-dict read in this module:
     # status["summary"], status["files"] (x6, including the entry_status
     # lookup for classes_and_hashes and the key_audit/encoding_drift/
@@ -984,11 +663,6 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         emit(_skip("claude_md_identical", reason))
         emit(_skip("import_line_present", reason))
         emit(_skip("instructions_file_present", reason))
-
-    # --- agent_grants_resolvable / agent_grants_names_known / agent_grants_extendable
-    emit(_check_agent_grants_resolvable(pp, manifest))
-    emit(_check_agent_grants_names_known(pp, manifest))
-    emit(_check_agent_grants_extendable(pp, manifest))
 
     # --- declared_keys ----------------------------------------------------
     if status_error:

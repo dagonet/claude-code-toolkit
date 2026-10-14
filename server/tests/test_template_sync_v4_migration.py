@@ -24,9 +24,6 @@ OWNERSHIP = {
     ],
 }
 
-FOO_TPL = "---\nname: foo\ntools: Read, Write\n---\nbody\n"
-
-
 def _git(repo, *args):
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
                    cwd=str(repo), check=True, capture_output=True)
@@ -150,9 +147,9 @@ def test_real_run_writes_region_verbatim_claude_md_matches_template_manifest_v4(
     written_manifest = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
     assert written_manifest["manifest_version"] == 4
     assert written_manifest["instructions_file"] == ".claude/project-instructions.md"
-    assert written_manifest["agent_grants"] == ".claude/agent-grants.json"
+    assert "agent_grants" not in written_manifest
     assert written_manifest["requires_server"] == ">=4.1.0"
-    assert (proj / ".claude" / "agent-grants.json").is_file()
+    assert not (proj / ".claude" / "agent-grants.json").exists()
 
     assert res["report_path"] is not None
     report = json.loads((tmp_path / "backup" / "migration-report.json").read_text(encoding="utf-8"))
@@ -198,41 +195,6 @@ def test_pre_existing_instructions_file_refuses_by_path_nothing_written(tmp_path
     assert after == before, "every file's bytes must be unchanged"
 
 
-# --- (b) grant-shaped agent diff -------------------------------------------
-
-
-def test_grant_shaped_agent_diff_becomes_a_grants_entry_agent_reads_identical_after_apply(tmp_path):
-    repo, proj, commit = _mk_v3(tmp_path, proj_region="MY RULE", agents={"foo.md": FOO_TPL})
-    # The consumer manually appended a tool to foo's tools: line (the
-    # pre-v4.1 workaround this migration step replaces).
-    edited = FOO_TPL.replace("tools: Read, Write\n", "tools: Read, Write, mcp__glider__symbol_lookup\n")
-    assert edited != FOO_TPL
-    (proj / ".claude" / "agents" / "foo.md").write_text(edited, encoding="utf-8", newline="")
-
-    res = _migrate(proj, backup_dir=str(tmp_path / "backup"))
-    assert "error" not in res, res
-    grants = json.loads((proj / ".claude" / "agent-grants.json").read_text(encoding="utf-8"))
-    assert grants["grants"] == {"foo": ["mcp__glider__symbol_lookup"]}
-
-    written_manifest = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
-    rules = v3.load_ownership(str(repo))
-    status = v3.compute_status_v3(proj, written_manifest, rules)
-    info = status["files"][".claude/agents/foo.md"]
-    assert info["status"] == "IDENTICAL", info
-
-
-def test_agent_gaining_tools_line_the_template_ships_none_for_is_refused(tmp_path):
-    bare_tpl = "---\nname: bare-agent\ndescription: x\n---\nbody\n"
-    repo, proj, commit = _mk_v3(tmp_path, proj_region="MY RULE", agents={"bare-agent.md": bare_tpl})
-    edited = bare_tpl.replace("description: x\n", "description: x\ntools: Read\n")
-    (proj / ".claude" / "agents" / "bare-agent.md").write_text(edited, encoding="utf-8", newline="")
-    before = _all_bytes(proj)
-    res = _migrate(proj, backup_dir=str(tmp_path / "backup"))
-    assert "error" in res, res
-    assert "bare-agent.md" in res["error"]
-    assert _all_bytes(proj) == before
-
-
 # --- idempotent: v4 manifest is a no-op -------------------------------------
 
 
@@ -246,8 +208,7 @@ def test_v4_manifest_is_idempotent_no_op(tmp_path):
 
 
 # =============================================================================
-# v4.1.1 spec 1.1/1.2 (Task 1): migrate_v3_to_v4 derives, does not construct;
-# the grants detector routes through the region split.
+# v4.1.1 spec 1.1 (Task 1): migrate_v3_to_v4 derives, does not construct.
 #
 # NOTE ON FIXTURES: the brief for this task claimed a `v3_consumer` fixture
 # object and wrapper functions (migrate_v3_to_v4_write/_dry_run,
@@ -303,30 +264,6 @@ class V3Consumer:
         acked = sorted(set(self.old_manifest.get("deletedAcknowledged", [])) | {proj_rel})
         self.old_manifest["deletedAcknowledged"] = acked
         self.write_manifest()
-
-    def add_tools_to_agent(self, proj_rel: str, tools: list[str]):
-        """Simulates the pre-v4.1 workaround: hand-appending tool names to
-        an agent's on-disk `tools:` frontmatter line."""
-        p = self.proj / proj_rel
-        text = p.read_text(encoding="utf-8")
-
-        def _append(m: re.Match) -> str:
-            existing = m.group(1).rstrip()
-            return "tools: " + existing + "".join(f", {t}" for t in tools)
-
-        new_text, n = re.subn(r"^tools:[ \t]*(.*)$", _append, text, count=1, flags=re.M)
-        assert n == 1, f"no tools: line found in {proj_rel}"
-        p.write_text(new_text, encoding="utf-8", newline="")
-
-    def add_region_content(self, proj_rel: str, text: str):
-        """Fill the (empty, template-shipped) PROJECT-CUSTOM region of an
-        on-disk project file with `text`."""
-        p = self.proj / proj_rel
-        content = p.read_text(encoding="utf-8")
-        _part, region = ts._split_custom_region(content)
-        assert region is not None, f"{proj_rel} has no PROJECT-CUSTOM markers to fill"
-        new_region = "<!-- PROJECT-CUSTOM:BEGIN -->\n" + text.rstrip("\n") + "\n<!-- PROJECT-CUSTOM:END -->"
-        p.write_text(content.replace(region, new_region, 1), encoding="utf-8", newline="")
 
     def snapshot_tree(self) -> dict:
         return _all_bytes(self.proj)
@@ -461,57 +398,10 @@ def test_baseline_invariant_red_against_a_rewritten_preview(v3_consumer):
     assert result == {"ok": False, "violations": ["AGENT_TEAM.md"]}
 
 
-def test_grant_agent_rehashed_on_held_base_reads_identical(v3_consumer):
-    v3_consumer.add_tools_to_agent(".claude/agents/coder.md", ["mcp__glider__find_references"])
-    report = migrate_v3_to_v4_write(v3_consumer)
-    assert "error" not in report, report
-    assert report["grants_plan"] == {"coder": ["mcp__glider__find_references"]}
-    assert compute_status(v3_consumer)["files"][".claude/agents/coder.md"]["status"] == "IDENTICAL"
-
-
-def test_grant_agent_with_unavailable_base_refuses_and_writes_nothing(v3_consumer):
-    v3_consumer.add_tools_to_agent(".claude/agents/coder.md", ["mcp__glider__find_references"])
-    v3_consumer.old_manifest["template_commit"] = "0" * 40   # unresolvable
-    v3_consumer.old_manifest["template_version"] = None
-    v3_consumer.write_manifest()
-    before = v3_consumer.snapshot_tree()
-    report = migrate_v3_to_v4_write(v3_consumer)
-    assert "error" in report and "migration_base unavailable" in report["error"], report
-    assert v3_consumer.snapshot_tree() == before
-
-
-def test_mixed_agent_tools_plus_region_yields_a_grant(v3_consumer):
-    # MM-Agent's case: tools addition AND region content in the same agent.
-    # NOTE (brief inconsistency, reported in task-1-report.md): the brief's
-    # own pseudocode called add_tools_to_agent with
-    # ["find_references", "decompile"] but asserted
-    # {"coder": ["decompile", "find_references"]} -- the reverse of what
-    # `_tools_line_diff`'s documented, order-preserving contract produces
-    # (and what `splice_tools` promises: "original order then grant
-    # order"). The assertion below matches the call order, not the brief's
-    # (self-contradictory) literal text.
-    v3_consumer.add_tools_to_agent(
-        ".claude/agents/coder.md", ["mcp__glider__find_references", "mcp__glider__decompile"])
-    v3_consumer.add_region_content(".claude/agents/coder.md", "Project rule: never filter find_references by kind.\n")
-    preview = migrate_v3_to_v4_dry_run(v3_consumer)
-    assert "error" not in preview, preview
-    assert preview["grants_plan"] == {"coder": ["mcp__glider__find_references", "mcp__glider__decompile"]}
-
-
-def test_mixed_agent_reapplied_from_template_reads_identical(v3_consumer):
-    v3_consumer.add_tools_to_agent(".claude/agents/coder.md", ["mcp__glider__find_references"])
-    v3_consumer.add_region_content(".claude/agents/coder.md", "Project rule.\n")
-    report = migrate_v3_to_v4_write(v3_consumer)
-    assert "error" not in report, report
-    res = apply_file(v3_consumer, ".claude/agents/coder.md", source="template")
-    assert "error" not in res, res
-    assert compute_status(v3_consumer)["files"][".claude/agents/coder.md"]["status"] == "IDENTICAL"
-
-
 # =============================================================================
 # v4.1.1 Task 1, fix round 1: every v4 entry carries its annotations,
-# CLAUDE.md included; the two seed entries (project-instructions.md,
-# agent-grants.json) never ship a clobberable stale ownership/hash.
+# CLAUDE.md included; the seed entry (project-instructions.md) never ships a
+# clobberable stale ownership/hash.
 # =============================================================================
 
 
@@ -533,16 +423,6 @@ def test_plain_template_entry_reason_is_carried(v3_consumer):
     assert report["carried_file_keys"]["AGENT_TEAM.md"] == ["reason"]
 
 
-def test_grant_agent_reason_is_carried(v3_consumer):
-    v3_consumer.add_tools_to_agent(".claude/agents/coder.md", ["mcp__glider__find_references"])
-    v3_consumer.old_manifest["files"][".claude/agents/coder.md"]["reason"] = "kept"
-    v3_consumer.write_manifest()
-    report = migrate_v3_to_v4_write(v3_consumer)
-    assert "error" not in report, report
-    assert report["manifest"]["files"][".claude/agents/coder.md"]["reason"] == "kept"
-    assert report["carried_file_keys"][".claude/agents/coder.md"] == ["reason"]
-
-
 def test_instructions_seed_entry_ownership_forced_to_once_reason_carried(v3_consumer):
     # A v3 manifest that already (mis-)lists the seed path as template-class
     # with a hash: migration must not let a v4 manifest ship it that way --
@@ -559,13 +439,3 @@ def test_instructions_seed_entry_ownership_forced_to_once_reason_carried(v3_cons
     assert "hash" not in entry
 
 
-def test_agent_grants_seed_entry_ownership_forced_to_once_reason_carried(v3_consumer):
-    v3_consumer.old_manifest["files"][".claude/agent-grants.json"] = {
-        "ownership": "template", "hash": "sha256:" + "a" * 64, "reason": "kept"}
-    v3_consumer.write_manifest()
-    report = migrate_v3_to_v4_write(v3_consumer)
-    assert "error" not in report, report
-    entry = report["manifest"]["files"][".claude/agent-grants.json"]
-    assert entry["ownership"] == "once"
-    assert entry["reason"] == "kept"
-    assert "hash" not in entry

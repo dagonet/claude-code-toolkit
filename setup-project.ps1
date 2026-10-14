@@ -1263,8 +1263,8 @@ $manifest = [ordered]@{
     template_version   = $templateVersion
     template_commit    = $templateCommit
     # >=4.1.0 (MIN_SERVER_FOR_V4, server/src/template_sync/v3.py): a v3-era
-    # server has no region-less CLAUDE.md handling, no instructions_file/
-    # agent_grants declarations, and no agent-grants splice -- refusing it
+    # server has no region-less CLAUDE.md handling and no instructions_file
+    # declaration -- refusing it
     # loudly on a v4 manifest is the documented v4.1 decision (spec sect 8,
     # "Decisions taken" item 2). See setup-project.sh for the full note; this
     # replaces the old >=0.3.2 floor, which guarded the v3 region splice, now
@@ -1272,12 +1272,11 @@ $manifest = [ordered]@{
     requires_server    = ">=4.1.0"
     placeholders       = $placeholderMap
     files              = $orderedFiles
-    # v4 declaration keys (spec sect 5 header; server/src/template_sync/mcp.py
-    # _load_manifest requires both when manifest_version == 4). Literal
-    # constants, the same two paths as INSTRUCTIONS_FILE_DEFAULT/
-    # AGENT_GRANTS_FILE in server/src/template_sync/v3.py.
+    # v4 declaration key (spec sect 5 header; server/src/template_sync/mcp.py
+    # _load_manifest requires it when manifest_version == 4). A literal
+    # constant, the same path as INSTRUCTIONS_FILE_DEFAULT in
+    # server/src/template_sync/v3.py. v5.0 no longer writes `agent_grants`.
     instructions_file  = ".claude/project-instructions.md"
-    agent_grants       = ".claude/agent-grants.json"
 }
 if ($script:classifierFallback) { $manifest.classifier = "powershell-fallback" }
 

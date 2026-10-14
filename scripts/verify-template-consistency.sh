@@ -3064,9 +3064,10 @@ ok "check 35 (info): the harness-injected surface is capped at $((BUDGET_CLAUDE_
 # entry when Task 3.2 lands.
 # ---------------------------------------------------------------------------
 note "Check 36: templates/ownership.json covers every template file, and no rule is dead"
-# v5.0: the templates no longer ship .claude/agents/*.md or .claude/agent-grants.json,
-# but the sync server still classifies a consumer's existing copies by those two rules
-# until the v5 sync migration (spec §4) rewrites ownership.json; allowlisted until then.
+# v5.0: PERMANENT legacy-classification rows. The templates ship no .claude/agents/*.md
+# and no .claude/agent-grants.json, but those two rules stay in ownership.json so a v4.x
+# consumer's existing copies classify (TEMPLATE_DELETED / a defined status), never as
+# "unknown" (design §4, Task 10 ruling 1). They match no template file by design.
 C36_PENDING_RULES=".claude/rules/project.md .claude/agents/*.md .claude/agent-grants.json"
 c36_fail=0
 # Two parallel lists, same line count and order: the display path (what a
