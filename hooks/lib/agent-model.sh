@@ -108,7 +108,7 @@ am_resolve() {
   AM_KIND=floor
 }
 
-# AM_JEV_MARKER -- the path every /cct:jev registration names. Check 65 asserts the
+# AM_JEV_MARKER -- the path every v4 /jev registration names. Check 65 asserts the
 # v4 registration literal (REG_COMMAND in jev_ctl.py, now only what legacy removal matches) contains it.
 AM_JEV_MARKER='skills/jev/jev_route.py'
 # am_plugin_loaded <session_id> -- exit 0 iff hooks/cct-session.sh marked this session (the cct plugin

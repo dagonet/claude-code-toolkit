@@ -402,7 +402,7 @@ def load_skill_refusal(spec: str, claimed: str, marker: str) -> tuple[str, list[
     if marker and SKILL_TAG_RE.match(claimed) and _tag_tuple(claimed) < _tag_tuple(marker):
         return (f"template_load_manifest refused: the loaded sync-template skill ({claimed}) is "
                 f"older than the toolkit checkout ({marker}): update the cct plugin "
-                "(claude plugin update cct@dagonet) or re-copy the skill, then restart.",
+                "(claude plugin update cct@dagonet), then restart.",
                 warnings, False)
     return "", warnings, False
 

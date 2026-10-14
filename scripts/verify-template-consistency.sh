@@ -3658,7 +3658,8 @@ fi
 # ---------------------------------------------------------------------------
 # Check 65 -- Jev is opt-in per clone and ships no registration (v4.4.0, spec
 # D1 "zero footprint when off"). (a) No shipped settings file registers the
-# router -- only `/cct:jev on` writes it, into one checkout's settings.local.json.
+# router -- only the v4 `/jev on` wrote it, into one checkout's settings.local.json
+# (v5 `/cct:jev on` writes only <git common dir>/jev/config.json).
 # (b) /cct:jev can never be model-invoked (the model must not switch egress on).
 # (c) The registration jev_ctl.py writes is the spec's literal and contains
 # the marker agent-model.sh's am_jev_routing greps for: if those two drift

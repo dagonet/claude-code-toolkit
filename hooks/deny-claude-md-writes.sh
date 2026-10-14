@@ -55,9 +55,9 @@
 # written" — only that the editing tools refuse it and say where to write
 # instead.
 #
-# REGISTRATION SCOPE: project-level. Registered in every template's
-# `.claude/settings.json` and in the cct plugin's hooks/hooks.json through
-# hooks/run-hook.sh, which classes it `project` and exits 0 unless the repo has
+# REGISTRATION SCOPE: project-level. Registered by the cct plugin's hooks/hooks.json
+# through hooks/run-hook.sh (a template's .claude/settings.json registers only the
+# plugin-off guard since v5.0), which classes it `project` and exits 0 unless the repo has
 # `.claude/template-manifest.json` -- that check keeps it from refusing CLAUDE.md
 # writes in a non-consumer repo (this toolkit's own checkout, any project that
 # has never run `/cct:sync-template`). NEVER registered in `~/.claude/settings.json`:

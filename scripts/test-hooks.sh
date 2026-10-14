@@ -10708,7 +10708,7 @@ expect "C2b: ... a deleted user hook is listed with its whole spaced path" "1:1"
 C2HP="$TMPROOT/c2b-homeph"; rm -rf "$C2HP"; mkdir -p "$C2HP/.claude"
 c2b_exec_settings "$C2HP/.claude/settings.json" "$(printf '@%s@' BASH)" "$(printf '@%s@' HOOKS)/x.sh"
 c2b_run "$C2HP" - --report
-expect "C2b: an unrendered @BASH@ settings file -> reported, --report exits 1" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c 'unrendered @')"
+expect "C2b: an unrendered @BASH@ settings file -> reported, --report exits 1" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -cF 'unrendered @...@ -- a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md')"
 c2b_run "$C2HP" -
 expect "C2b: ... and in SessionStart mode: exit 0 with the block" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED')"
 
@@ -10735,7 +10735,7 @@ c2b_run "$C2HX" - --report
 expect "C2b (D2): a program spelled without .exe resolves to an executable .exe -> silent" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
 printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"","args":["-c",". \\"$0\\"","%s"]}]}]}}\n' "$C2HX/.claude/hooks/x.sh" > "$C2HX/.claude/settings.json"
 c2b_run "$C2HX" - --report
-expect "C2b (D2): an exec-form entry with an empty command -> MISSING PROGRAM, --report exits 1" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: ')"
+expect "C2b (D2): an exec-form entry with an empty command -> MISSING PROGRAM, --report exits 1" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -cF 'MISSING PROGRAM: (empty command) (exec-form hook command cannot be spawned -- every check it runs is OFF; a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md)')"
 c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/a@b/bash" "$C2HX/.claude/hooks/x.sh"
 c2b_run "$C2HX" - --report
 expect "C2b (D2): a program path containing a plain @ is checked (reported), not skipped" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*a@b/bash')"
