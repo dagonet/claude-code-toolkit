@@ -14,13 +14,19 @@ set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 command -v claude >/dev/null 2>&1 || { echo "FAIL claude CLI not on PATH"; exit 1; }
 WORK=$(mktemp -d)
+TOKEN=${WORK##*/tmp.}   # random part of mktemp's name: identical in the POSIX and the Windows form of the path
+[ -n "$TOKEN" ] && [ "$TOKEN" != "$WORK" ] || { echo "FAIL cannot derive the mktemp token from $WORK"; exit 1; }
 # claude keeps a ~/.claude/projects/<slug> dir for every cwd it ran in, whatever the flags. Remove ONLY the
-# ones for this script's own scratch repos (slug = path with every : \ / . _ turned into -, as claude names it).
+# ones for this script's own scratch repos (slug = path with every : \ / . _ turned into -, as claude names it; on
+# Windows it names them after the Windows form of the cwd). A slug is removed only if it contains the run's token.
 cleanup() {
-  local d slug
+  local d p slug
   for d in "$WORK/scratch" "$WORK/scratch-off"; do
-    slug=$(printf '%s' "$d" | sed 's/[:\\/._]/-/g')
-    case $slug in -tmp-*) rm -rf "${HOME:?}/.claude/projects/$slug" ;; esac
+    for p in "$d" "$(cygpath -w "$d" 2>/dev/null)"; do
+      [ -n "$p" ] || continue
+      slug=$(printf '%s' "$p" | sed 's/[:\\/._]/-/g')
+      case $slug in *"$TOKEN"*) rm -rf "${HOME:?}/.claude/projects/$slug" ;; esac
+    done
   done
   rm -rf "$WORK"
 }
@@ -95,19 +101,21 @@ check_gate_on_path() {
 }
 
 # 5. A cct:Explore spawn returns, and its stop is recorded in the retro ledger under cct:Explore. The ledger only
-#    records failures, so the subagent first runs a command shape that a hook refuses (a leading cd before several
-#    commands). A push to main would also do, but the auto-mode classifier denies the spawn itself then. Which hook
-#    is named in the row is not asserted. The subagent then runs
-#    `touch out.sub`: the file existing proves its tool call was not refused by the plugin-off guard (it carries the
-#    parent's session_id).
+#    records failures (retro-ledger.sh writes a row only on a block or error), so the subagent first runs a command
+#    shape that a hook refuses (a leading cd before several commands). A push to main would also do, but the auto-mode
+#    classifier denies the spawn itself then. Which hook is named in the row is not asserted. The subagent then runs
+#    `wc -c out.rand` (read-only, as its role allows) on a file of a random size N. N in a subagent tool_result of the
+#    stream proves its Bash ran, so was not refused by the plugin-off guard (which carries the parent's session_id);
+#    the parent cannot know N otherwise.
 check_explore_spawn() {
-  local out led
-  rm -rf "$WORK/mem"; mkdir -p "$WORK/mem"; rm -f "$SC/out.sub"
-  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  touch $SC/out.sub  Then reply with the word done.' Then report what the agent returned.")
+  local out led n
+  rm -rf "$WORK/mem"; mkdir -p "$WORK/mem"
+  n=$(( RANDOM % 9000 + 1000 )); head -c "$n" /dev/zero | tr '\0' x > "$SC/out.rand"
+  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  wc -c out.rand  in your starting directory. Then reply with the byte count.' Then report what the agent returned.")
   led=$(find "$WORK/mem" -name retro.md 2>/dev/null | head -1)
   if [ -z "$led" ]; then fail "5 cct:Explore spawn" "no retro ledger written"
   elif ! grep -q 'cct:Explore' "$led"; then fail "5 cct:Explore spawn" "ledger has no cct:Explore row: $(head -c 200 "$led")"
-  elif [ ! -e "$SC/out.sub" ]; then fail "5 cct:Explore spawn" "the subagent's touch out.sub did not run"
+  elif ! printf '%s\n' "$out" | grep '"tool_result"' | grep '"parent_tool_use_id":"' | grep -Eq "(^|[^0-9])$n out\.rand"; then fail "5 cct:Explore spawn" "no subagent tool_result carries the byte count of out.rand"
   elif printf '%s' "$out" | grep -q 'the cct plugin is not active'; then fail "5 cct:Explore spawn" "the plugin-off guard refused the subagent"
   else echo "INFO 5 ledger row: $(grep 'cct:Explore' "$led" | head -1)"; pass "5 cct:Explore spawn"; fi
 }
@@ -156,12 +164,13 @@ check_shared_sid() {
 }
 
 # 10. A scratch project must leave no trace in the live user state: neither ~/.claude/plugins/installed_plugins.json
-#     nor ~/.claude/settings.json may contain this run's unique scratch root. Quiet grep, contents never printed
+#     nor ~/.claude/settings.json may contain this run's mktemp token (the random part of the
+#     scratch root; claude may record the root in its Windows form, the token is the same in every form). Quiet grep, contents never printed
 #     (other sessions legitimately write these files, so a whole-file hash would flake).
 check_live_state_untouched() {
   local f bad=""
   for f in "$HOME/.claude/plugins/installed_plugins.json" "$HOME/.claude/settings.json"; do
-    [ -e "$f" ] && grep -qF -- "$WORK" "$f" && bad="$bad $(basename "$f")"
+    [ -e "$f" ] && grep -qF -- "$TOKEN" "$f" && bad="$bad $(basename "$f")"
   done
   if [ -z "$bad" ]; then pass "10 live installed_plugins.json and settings.json carry no scratch path"
   else fail "10 live installed_plugins.json and settings.json carry no scratch path" "scratch root found in:$bad"; fi
