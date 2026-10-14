@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /cct:sy
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.6.1 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.6.2 -->
 
 **This skill takes no arguments.** Invoke it as `/cct:sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -865,7 +865,7 @@ on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the confi
 
 **Assert `referenced >= on_disk`, and LIST every on-disk hook that appears in neither file.** The two numbers come from different places — one from configuration text, one from the directory — so a truncating regex moves only the first. The observed failure prints `5 referenced, 12 on disk, 7 unreferenced: [...]`, which cannot be read as clean.
 
-`referenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. Two files are expected to be unreferenced. `hooks/git-pre-push.sh` is a git hook, installed per clone by `--install`, and never in `settings.json`. `hooks/require-skills-block.sh` has been a deregistered no-op stub since v4.5.0 and stays on disk until it is deleted. What is NOT acceptable is a bare count that nobody compared to anything.
+`referenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. One file is expected to be unreferenced: `hooks/git-pre-push.sh` is a git hook, installed per clone by `--install`, and never in `settings.json`. A consumer's old `hooks/require-skills-block.sh` (a no-op stub since v4.5.0, deleted from the toolkit in v4.6.2) arrives as `TEMPLATE_DELETED` and is deleted with the normal flow. What is NOT acceptable is a bare count that nobody compared to anything.
 
 > **Verify this cross-check by DELETING the guard it protects.** Re-anchor the step-1 grep on `"command": "[^"]*` and re-run: `referenced` must collapse and the unreferenced list must fill up. A cross-check that stays green with the anchor restored is testing the surrounding machinery, not the collector.
 
