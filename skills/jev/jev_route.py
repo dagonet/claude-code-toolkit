@@ -195,11 +195,11 @@ def emit(tool_input, model, effort=None):
 REASONS = frozenset({
     "explicit", "none", "pinned", "egress-refused", "no-key", "no-endpoint",
     "deadline", "timeout", "http-error", "bad-response", "low-confidence",
-    "out-of-bounds", "role-floor", "kept", "applied", "error",
+    "role-floor", "kept", "applied", "error",
 })
 EVENT_FIELDS = ("ts", "subagent_type", "kind", "default", "agent_effort", "choice", "confidence",
                 "probabilities", "effort_choice", "effort_confidence", "applied", "reason",
-                "emitted", "latency_s", "effort_emitted", "effort_reason")
+                "emitted", "latency_s", "effort_emitted", "effort_reason", "threshold")
 
 
 class Resolution(NamedTuple):
@@ -287,7 +287,8 @@ def _new_event(stype, res):
             "subagent_type": stype or "general-purpose", "kind": res.kind, "default": res.model,
             "agent_effort": res.effort, "choice": None, "confidence": None, "probabilities": {},
             "effort_choice": None, "effort_confidence": None, "applied": False, "reason": "error",
-            "emitted": None, "latency_s": None, "effort_emitted": None, "effort_reason": None}
+            "emitted": None, "latency_s": None, "effort_emitted": None, "effort_reason": None,
+            "threshold": None}
 
 
 def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
@@ -305,6 +306,7 @@ def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
     if not url:
         return fallback, "no-endpoint", False, None
     jev_model, threshold = read_config(res.gd)
+    ev["threshold"] = threshold
     budget = min(HTTP_TIMEOUT, DEADLINE + _test_slack(env) - (clock() - t0))
     if budget <= 0.05:
         return fallback, "deadline", False, None
@@ -361,7 +363,7 @@ def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.mo
                 ti, stype, res, env, post or post_with_deadline, registry, clock, t0, ev)
     except Exception:  # noqa: BLE001 -- the router must never fail a spawn
         model, ev["reason"], ev["applied"], effort = fallback, "error", False, None
-    out = emit(ti, model, effort)
+    out = emit(ti, model or None, effort)
     ev["emitted"] = model if out else None
     ev["effort_emitted"] = effort if out else None
     ev["latency_s"] = round(clock() - t0, 3)
@@ -475,7 +477,7 @@ def main():
     if out and ev is not None:
         eff = " effort {} ({})".format(ev["effort_emitted"], ev["effort_reason"]) if ev["effort_emitted"] else ""
         sys.stderr.write("jev: {} {} -> {} ({}){}\n".format(
-            ev["subagent_type"], ev["default"] or "-", ev["emitted"], ev["reason"], eff))
+            ev["subagent_type"], ev["default"] or "-", ev["emitted"] or "unchanged", ev["reason"], eff))
     return 0
 
 

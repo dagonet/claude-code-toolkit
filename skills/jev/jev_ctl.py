@@ -223,8 +223,8 @@ def cmd_on(top, gd, env, out, key_src):
     parse_settings(_read(os.path.join(top, ".claude", "settings.local.json")))  # unreadable -> refuse before any write
     _write(_config_path(gd), _dumps(CONFIG_ON))
     _drop_v4_registration(top, gd, out)
-    out.write("jev: ON for this clone -- spawns that pass no `model` are routed (any model, at confidence >= the "
-              "threshold; review/architect types never below sonnet, effort never lowered; effort too); the cct plugin registers the router, "
+    out.write("jev: ON for this clone -- spawns that pass no `model` are routed (any model and effort at confidence >= the "
+              "threshold; review/architect types never below sonnet and never a lower effort); the cct plugin registers the router, "
               "other checkouts of this clone need no /cct:jev on; /cct:jev off switches it off\n")
     # U-1: the orchestrator must stop naming a model, or Jev routes nothing.
     out.write("jev: ORCHESTRATOR -- from now on in this repo, omit `model` on Agent spawns: Jev picks one per "
@@ -336,9 +336,11 @@ def cmd_report(top, gd, env, out, key_src):
     out.write("  not applied: {}\n".format(", ".join("{} {}".format(r, n) for r, n in sorted(reasons.items())) or "none"))
     confs = [e["confidence"] for e in evs
              if isinstance(e.get("confidence"), (int, float)) and not isinstance(e.get("confidence"), bool)]
-    out.write("  model confidence: <0.5: {}, 0.5-0.8: {}, >=0.8: {}\n".format(
-        sum(c < 0.5 for c in confs), sum(0.5 <= c < 0.8 for c in confs), sum(c >= 0.8 for c in confs)))
-    out.write("  effort applied: {} of {}\n".format(sum(1 for e in evs if e.get("effort_emitted")), len(evs)))
+    thr = jev_route.read_config(gd)[1]
+    out.write("  model confidence: <0.5: {}, 0.5-{}: {}, >={}: {}\n".format(
+        sum(c < 0.5 for c in confs), thr, sum(0.5 <= c < thr for c in confs), thr, sum(c >= thr for c in confs)))
+    eff_evs = [e for e in evs if "effort_emitted" in e]
+    out.write("  effort applied: {} of {}\n".format(sum(1 for e in eff_evs if e.get("effort_emitted")), len(eff_evs)))
     eff = [e for e in evs if e.get("agent_effort") and e.get("effort_choice")]
     out.write("  effort recommendation differs from the agent file's effort: {} of {}\n".format(
         sum(e["agent_effort"] != e["effort_choice"] for e in eff), len(eff)))

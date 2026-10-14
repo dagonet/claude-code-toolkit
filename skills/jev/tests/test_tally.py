@@ -87,6 +87,26 @@ class TallyTests(unittest.TestCase):
         r = self.t.tally([self.root], None)
         self.assertEqual((r["events"], r["skipped_files"]), (1, 3))
 
+    def test_threshold_mix_counts_each_value_and_none(self):
+        self.ev("a", "1.json", threshold=0.65)
+        self.ev("a", "2.json", threshold=0.65)
+        self.ev("a", "3.json", threshold=0.8)
+        self.ev("a", "4.json", threshold=None)
+        self.ev("a", "5.json")  # an event from before the field existed
+        r = self.t.tally([self.root], None)
+        self.assertEqual(r["threshold"], {0.65: 2, 0.8: 1, None: 2})
+        self.assertIn("threshold: {0.65: 2, 0.8: 1, None: 2}", self.t.report(r, 0.65))
+
+    def test_effort_reasons_counted_over_events_that_carry_one(self):
+        self.ev("a", "1.json", effort_reason="applied")
+        self.ev("a", "2.json", effort_reason="applied")
+        self.ev("a", "3.json", effort_reason="low-confidence")
+        self.ev("a", "4.json", effort_reason=None)
+        self.ev("a", "5.json")
+        r = self.t.tally([self.root], None)
+        self.assertEqual(r["effort_reasons"], {"applied": 2, "low-confidence": 1})
+        self.assertIn("effort reasons: {'applied': 2, 'low-confidence': 1}", self.t.report(r, 0.65))
+
     def test_since_rejects_loose_dates(self):
         for bad in ("2026-10-9", "2026/10/13"):
             with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):

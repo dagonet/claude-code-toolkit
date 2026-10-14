@@ -264,6 +264,25 @@ class RunTests(unittest.TestCase):
         self.assertEqual(json.loads(post.calls[0]["body"].decode("utf-8"))["model"], "jev-1.14.0")
         self.assertEqual((self.model_of(out), ev["reason"]), ("sonnet", "low-confidence"))
 
+    def test_event_records_the_threshold_actually_used(self):
+        _, ev, _ = self.go(payload(), post=Recorder(answer("opus", 0.9)))
+        self.assertEqual(ev["threshold"], jr.THRESHOLD_DEFAULT)
+        os.makedirs(os.path.join(self.gd, "jev"))
+        with open(os.path.join(self.gd, "jev", "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"threshold": 0.8, "route": True}, fh)
+        _, ev, _ = self.go(payload(), post=Recorder(answer("opus", 0.9)))
+        self.assertEqual(ev["threshold"], 0.8)
+
+    def test_event_threshold_is_none_when_no_api_call_was_made(self):
+        post = Recorder(answer("opus", 0.9))
+        _, ev, _ = self.go(payload(model="haiku"), post=post)
+        self.assertEqual((ev["reason"], ev["threshold"], len(post.calls)), ("explicit", None, 0))
+
+    def test_empty_floor_model_never_emits_an_empty_model(self):
+        out, ev, _ = self.go(payload(), resolver=self.res(kind="floor", model=""))
+        self.assertEqual(out, b"")
+        self.assertIsNone(ev["emitted"])
+
     def test_bad_config_uses_defaults(self):
         os.makedirs(os.path.join(self.gd, "jev"))
         with open(os.path.join(self.gd, "jev", "config.json"), "w", encoding="utf-8") as fh:

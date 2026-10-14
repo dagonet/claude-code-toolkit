@@ -227,10 +227,19 @@ class CtlTests(unittest.TestCase):
         self.assertEqual(rc, 0, text)
         for line in ("jev report: 4 spawns seen", "applied: 2 (up 1, down 1)",
                      "not applied: explicit 1, low-confidence 1",
-                     "model confidence: <0.5: 0, 0.5-0.8: 1, >=0.8: 2",
+                     "model confidence: <0.5: 0, 0.5-0.65: 1, >=0.65: 2",
                      "differs from the agent file's effort: 1 of 1",
-                     "effort applied: 1 of 4"):
+                     "effort applied: 1 of 1"):
             self.assertIn(line, text)
+
+    def test_report_splits_confidence_at_the_configured_threshold_and_counts_effort_events_only(self):
+        jc._write(self.t.config, jc._dumps(dict(jc.CONFIG_ON, threshold=0.8)))
+        evs = [dict(EV, confidence=c, effort_emitted=None) for c in (0.4, 0.7, 0.85)]
+        evs += [dict(EV, effort_emitted="high"), dict(EV)]  # EV itself carries no effort_emitted
+        self._events(evs)
+        _, text = self.ctl("report")
+        self.assertIn("model confidence: <0.5: 1, 0.5-0.8: 1, >=0.8: 1", text)  # the clone's 0.8, not 0.65
+        self.assertIn("effort applied: 1 of 4", text)
 
     def test_report_joins_retro_ledger_rows(self):
         self._events([dict(EV, subagent_type="coder", kind="own", default="opus", choice="sonnet",

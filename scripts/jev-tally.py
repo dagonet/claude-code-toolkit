@@ -82,6 +82,10 @@ def tally(roots, since, threshold=0.65):
                        "median": _median(confs)},
         "effort_applied": sum(1 for e in events if e.get("effort_emitted")),
         "effort_events": sum(1 for e in events if "effort_emitted" in e),
+        "effort_reasons": dict(Counter(e["effort_reason"] for e in events
+                                       if e.get("effort_reason") is not None).most_common()),
+        "threshold": dict(sorted(Counter(e.get("threshold") for e in events).items(),
+                                 key=lambda kv: (kv[0] is None, kv[0] or 0))),
         "latency": {"median": _median(lat),
                     "p95": round(lat[int(0.95 * (len(lat) - 1))], 2) if lat else None,
                     "max": round(lat[-1], 2) if lat else None},
@@ -100,6 +104,8 @@ def report(r, threshold):
     out.append("confidence <0.5: %d, 0.5-%s: %d, >=%s: %d, median %s"
                % (c["lt05"], threshold, c["05_t"], threshold, c["ge_t"], c["median"]))
     out.append("effort applied %d (of %d events carrying the field)" % (r["effort_applied"], r["effort_events"]))
+    out.append("effort reasons: %s" % r["effort_reasons"])
+    out.append("threshold: %s" % r["threshold"])
     lt = r["latency"]
     out.append("latency_s median %s, p95 %s, max %s" % (lt["median"], lt["p95"], lt["max"]))
     out.append("skipped files %d" % r["skipped_files"])
