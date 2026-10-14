@@ -39,9 +39,9 @@ Compare the result against the baseline above (applied rate, effort applied, egr
 3. Re-run `/cct:jev on` in every clone where Jev is on. Until then that clone's `config.json` keeps threshold 0.8.
 
 ### Measured at the final code commit (host agent-host-1)
-- Consistency script: COUNTS_PENDING
-- `bash scripts/test-hooks.sh`: COUNTS_PENDING
-- `bash scripts/test-server.sh`: COUNTS_PENDING
+- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 341 PASS lines, 1 skipped (check 42 arm 2: the v5.0.0 tag is not present locally until v5.0 is tagged).
+- `bash scripts/test-hooks.sh`: 4160 passed, 0 failed, 6 skipped (4166 assertions).
+- `bash scripts/test-server.sh`: 522 passed, 9 skipped.
 - J-PY (Jev Python tests inside the hook suite): 134 tests, `JPY_WANT` unchanged (the two test minors add assertions, not test methods).
 - Parser matrix: measured by the controller before the tag
 
