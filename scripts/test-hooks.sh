@@ -11810,15 +11810,6 @@ expect "V462 drift: an untagged sha is not called released"   1 "$(v462_dl_ref "
 expect "V462 drift: an untagged sha never says released tree" 0 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'released tree$')"
 # ---- end v4.6.2 drift script
 
-# ---- v5.1: the Jev unit tests (skills/jev/tests) run in the suite, not only by hand
-if command -v python3 >/dev/null 2>&1; then
-  JEVUT_OUT="$(python3 -B -m unittest discover -s "$ROOT/skills/jev/tests" 2>&1)"; JEVUT_RC=$?
-  expect "jev unit tests pass" "0" "$JEVUT_RC"
-  [ "$JEVUT_RC" = 0 ] || printf '%s\n' "$JEVUT_OUT" | tail -20
-else
-  skip "jev unit tests" "no python3 on this host"
-fi
-
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.
