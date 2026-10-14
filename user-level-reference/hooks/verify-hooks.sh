@@ -10,7 +10,8 @@
 # So once per session, look at every registration this machine will use and say so.
 #
 # Reads: $HOME/.claude/settings.json, and $CLAUDE_PROJECT_DIR/.claude/settings.json
-# and settings.local.json (project files only when CLAUDE_PROJECT_DIR is set).
+# and settings.local.json (project files only when CLAUDE_PROJECT_DIR is set), and
+# $CLAUDE_PLUGIN_ROOT/hooks/hooks.json (only when CLAUDE_PLUGIN_ROOT is set and non-empty).
 # Reports:
 #   MISSING: <script>            registered script absent or unreadable
 #   BROKEN: <script>             `bash -n` fails on it
@@ -215,7 +216,22 @@ vh_init_parser() {
   fi
 }
 
+# vh_plugin <root>: the plugin's hooks/hooks.json registers `run-hook.sh" <name>` (raw JSON, escaped quote) and
+# direct ${CLAUDE_PLUGIN_ROOT}/hooks/<x>.sh scripts; each must exist under the plugin root
+vh_plugin() {
+  vh_pf=$1/hooks/hooks.json
+  [ -f "$vh_pf" ] && [ -r "$vh_pf" ] || return 0
+  vh_paths=$(grep -oE 'run-hook\.sh\\" [A-Za-z0-9_-]+' "$vh_pf" 2>/dev/null | sed 's/^.* /hooks\//; s/$/.sh/')
+  vh_paths="$vh_paths
+$(grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[A-Za-z0-9_.-]+\.sh' "$vh_pf" 2>/dev/null | sed 's/^.*}\///')"
+  while IFS= read -r vh_x; do [ -n "$vh_x" ] && vh_script "$1/$vh_x"; done <<EOF
+$vh_paths
+EOF
+  return 0
+}
+
 [ -n "$VH_HOME" ] && vh_file "$VH_HOME/.claude/settings.json"
+[ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && vh_plugin "$CLAUDE_PLUGIN_ROOT"
 if [ -n "$VH_PROJ" ]; then
   vh_file "$VH_PROJ/.claude/settings.json"
   vh_file "$VH_PROJ/.claude/settings.local.json"

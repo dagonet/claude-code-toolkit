@@ -11887,6 +11887,25 @@ expect "v5 session: an unknown argument neither creates nor removes a marker" "n
 expect "v5 session end: start then end then start leaves a marker" "yes" "$(v5sess '{"session_id":"cd-34"}' >/dev/null; v5send '{"session_id":"cd-34"}' >/dev/null; v5sess '{"session_id":"cd-34"}' >/dev/null; [ -f "$V5T/cct-$(id -u)/cd-34" ] && echo yes || echo no)"
 # ---- end v5.0 run-hook
 
+# ---- v5.0 verify-hooks: also reads the plugin's hooks/hooks.json (spec §3.5)
+V5V="$TMPROOT/v5vh plugin"; mkdir -p "$V5V/hooks"
+V5VH="$TMPROOT/v5vh home"; mkdir -p "$V5VH"
+printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[' \
+  '{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/cct-session.sh\""},' \
+  '{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" no-push-main"}' \
+  ']}]}}' > "$V5V/hooks/hooks.json"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/run-hook.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/cct-session.sh"
+v5vh_run() { env -u CLAUDE_PROJECT_DIR HOME="$V5VH" "$@" bash "$ROOT/hooks/verify-hooks.sh" --report </dev/null 2>/dev/null; }
+expect "v5 verify-hooks: plugin hook script missing -> reported" "MISSING: $V5V/hooks/no-push-main.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
+expect "v5 verify-hooks: plugin root unset -> old behaviour (nothing scanned)" "" "$(v5vh_run)"
+expect "v5 verify-hooks: plugin root empty -> old behaviour (nothing scanned)" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT=)"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/no-push-main.sh"
+expect "v5 verify-hooks: all plugin scripts present -> silent" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
+rm "$V5V/hooks/cct-session.sh"
+expect "v5 verify-hooks: direct cct-session.sh entry missing -> reported" "MISSING: $V5V/hooks/cct-session.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
+# ---- end v5.0 verify-hooks
+
 # ---- v5.0 agents: cct:<name> resolves from the plugin's agents/ (spec §2)
 V5A="$TMPROOT/v5plug"; mkdir -p "$V5A/agents" "$V5A/hooks/lib" "$TMPROOT/v5noproj"
 cp "$ROOT/hooks/lib/agent-model.sh" "$ROOT/hooks/lib/json.sh" "$V5A/hooks/lib/"
