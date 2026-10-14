@@ -1,5 +1,41 @@
 # Changelog
 
+## v4.6.2 — 2026-10-13
+
+Patch. Three small items left over from v4.6.1.
+
+**Floor reviewed: unchanged.** The skill's server minimum stays 4.3.1. `requires_skill` and the `requires_server` floors are not touched: no change here alters what a server must be able to read or splice.
+
+### Fixed
+- **`run-gate.sh` run from another checkout gated that other checkout, silently.** It gates the repository of the current directory, so `bash <worktree>/hooks/run-gate.sh` from a different checkout gates the checkout you are standing in, which is easy to read as having gated the worktree.
+  - **Now:** one stderr line, `WARN: run-gate.sh from <A> is gating <B> (the current directory's repository); to gate <A>, run it from inside <A>.`, when the script's own directory is inside a git work tree whose toplevel (<A>) differs from the current directory's (<B>). It states the facts and gives no instruction, because on the `pre-commit-test.sh` path the hook did gate the intended repository. Warning only: the exit status and everything else are unchanged.
+  - **The script's own toplevel is computed with `GIT_DIR` and `GIT_WORK_TREE` unset** for that one call (found in review). With an exported `GIT_DIR`, `git -C <script dir>` resolves the script directory itself as the toplevel, which warned spuriously about the same repository.
+  - **Silent** when the two are the same repository, and when the script's directory is not inside a git work tree (the user-level copy in `~/.claude/hooks`, a plugin cache copy).
+  - `user-level-reference/hooks/run-gate.sh` is the byte-identical mirror.
+  - **Tests:** block `v4.6.2 run-gate cwd warning` at the end of `scripts/test-hooks.sh`: mismatch warns once and names both checkouts; the same repo is silent, also with `GIT_DIR` exported; a copy of the script in a non-git directory, run from a repo, is silent. The mismatch cases failed against v4.6.1's `run-gate.sh`, and the `GIT_DIR` case failed before the unset. The expected paths come from `git rev-parse --show-toplevel`, so the check holds on Git Bash (`C:/...`) and macOS (`/private/...`).
+- **`verify-user-level-drift.sh` called any reference "released tree".** An untagged pre-release sha printed `REFERENCE: <sha> (...) — released tree`. It now says `released tree` only when the reference is a tag (`refs/tags/<ref>` resolves), and `tree at <ref>, not a release tag` otherwise. Two-sided fixtures follow the run-gate block; the untagged-sha cases failed against v4.6.1's script.
+
+### Removed
+- **`hooks/require-skills-block.sh`**, the no-op stub v4.5.0 kept for one release. It is out of `HOOKS_NO_MIRROR` in the consistency script and its test-hooks block (A5) is gone, since its subject is gone. Check 68 still asserts that no workflow file names it, and `RETIRED_RULE_NAMES` in `verify.py` keeps the name (history).
+- The root `CLAUDE.md`, `docs/template-sync.md`, `docs/templates.md`, `docs/architecture.md` and `user-level-reference/README.md` now say six unmirrored project-level hooks (and 19 scripts in `hooks/`), not seven (and 20).
+
+### Changed (wording)
+- **sync-template skill** (marker v4.6.2), step 6b.1c: only `hooks/git-pre-push.sh` is an expected unreferenced hook now. A consumer's old `hooks/require-skills-block.sh` arrives as `TEMPLATE_DELETED` and is deleted with the normal flow.
+- **`gc_gate_env` comment** (`hooks/lib/git-cmd.sh`, `hooks/run-gate.sh` and both mirrors). It said the `dist` hash is "exactly as before (existing artifacts stay valid)". That is wrong on Debian/Ubuntu, where the old run hashed empty output, so those artifacts void once, as the v4.6.1 entry already says (open-brain). The comment now says so. Comment only; no behaviour change.
+
+### Downstream migration
+0. The skill body and the server's VERSION changed: a FULL session restart is needed. Dependencies are unchanged.
+1. User level: re-copy `user-level-reference/skills/sync-template/SKILL.md` to `~/.claude/skills/sync-template/` and `user-level-reference/hooks/run-gate.sh` to `~/.claude/hooks/`, and `user-level-reference/hooks/lib/git-cmd.sh` (comment only) to `~/.claude/hooks/lib/`. On Linux, re-run `bash scripts/install-user-level-linux.sh` instead.
+2. Consumers get `hooks/require-skills-block.sh` as `TEMPLATE_DELETED` on their next `/sync-template`. A `settings.json` that still registered it (the v4.4 form) would now fail closed through its 127 wrapper; v4.5.0 already unregistered it, and a consumer that kept the old registration (LOCAL_EDITED) should remove that entry before accepting the deletion; otherwise every Agent spawn is refused with HOOK SCRIPT MISSING. /sync-template reports such a hook as still referenced and does not delete it unattended.
+
+Counts, never carried forward:
+- **Consistency:** **439** PASS lines from one full `bash scripts/verify-template-consistency.sh` run inside the gate at the pre-commit tree, ALL CHECKS PASSED (v4.6.1: 441; the two fewer are the per-hook `parses` and `reverse-mirror ... on HOOKS_NO_MIRROR` assertions for the deleted file; no check was added or removed).
+- **Hook suite:** 4179 passed, 0 failed, 6 skipped (4185 assertions) on agent-host-1, non-root, `GATE PASS` at 7057f9d (v4.6.1: 4179 / 0 / 6). Unchanged from v4.6.1: the 8 assertions of the deleted A5 block are replaced by 8 new ones (run-gate warning 5, drift reference 3; counted from the gate log).
+  - Windows (the PC) at 7057f9d: 4161 passed, 0 failed, 23 skipped (4184 assertions), ALL HOOK FIXTURES PASSED, in 1 h 58 min. The +1 pass against v4.6.1's 4160 is the fixed no-PATH-python fixture. All 23 skips are `[host]`, on the same four SKIP lines as v4.6.1. Both new blocks passed on Git Bash; the drift block ran raw there. 4184 against Linux's 4185 is the usual one-assertion host difference.
+  - Parser matrix at 57cb918 (7057f9d changes only CHANGELOG.md and docs/architecture.md): node 4179 / 0 / 6, python3-only 3912 / 0 / 260, jq-only 3832 / 0 / 340, PARSER MATRIX PASSED (v4.6.1: the same).
+- **Server suite:** 555 passed, 10 skipped on Linux; 564 passed, 1 skipped on Windows at 7057f9d (v4.6.1: the same; no server code changed).
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 17,808, end of bootstrap 23,066 (both equal v4.6.1's; no always-loaded file moved). Per-variant figures are in `docs/architecture.md`.
+
 ## v4.6.1 — 2026-10-13
 
 Patch. Fixes reported by the first syncs to v4.6.0, on the PC and on the Linux agent host. Five consumers reported them: open-brain, WebSiteVerifier, Yutraffic-Challenge, panoscribe and penumbra.

@@ -11549,22 +11549,6 @@ skip "v4.5.0 B2 short-form contract" "no node on this host" 17
 fi
 # ---- end v4.5.0 B2
 
-# ---- v4.5.0 A5: the require-skills-block.sh stub reads stdin and exits 0, silently ----
-A5S="$ROOT/hooks/require-skills-block.sh"
-for a5p in '{"tool_name":"Agent","tool_input":{"subagent_type":"coder","prompt":"no block"}}' 'not json' ''; do
-  printf '%s' "$a5p" | bash "$A5S" >/dev/null 2>"$TMPROOT/a5.err"
-  expect "A5 stub: exit 0 for '${a5p:0:20}'" 0 "$?"
-  expect "A5 stub: no stderr for '${a5p:0:20}'" 0 "$(wc -c < "$TMPROOT/a5.err" | tr -d ' ')"
-done
-# R5: a consumer settings.json that still carries the v4.4 registration (LOCAL_EDITED,
-# keep-mine) runs the stub through the fail-closed 127 wrapper: the spawn must pass.
-A5W='bash "${CLAUDE_PROJECT_DIR:-.}/hooks/require-skills-block.sh"; c=$?; if [ "$c" = "127" ]; then echo '"'"'HOOK SCRIPT MISSING: ${CLAUDE_PROJECT_DIR:-.}/hooks/require-skills-block.sh -- enforcement offline. Check that hooks/ exists at the project root.'"'"' >&2; exit 2; fi; exit $c'
-printf '%s' '{"tool_name":"Agent","tool_input":{"subagent_type":"coder","prompt":"no block"}}' \
-  | CLAUDE_PROJECT_DIR="$ROOT" bash -c "$A5W" >/dev/null 2>"$TMPROOT/a5.err"
-expect "A5 old registration over the stub: spawn passes" 0 "$?"
-expect "A5 old registration over the stub: silent" 0 "$(wc -c < "$TMPROOT/a5.err" | tr -d ' ')"
-# ---- end v4.5.0 A5
-
 # ---- v4.5.0 E1: now-brief.sh re-shows PROJECT_STATE.md ## Now after a compaction ----
 E1H="$ROOT/hooks/now-brief.sh"
 E1C='{"session_id":"t","hook_event_name":"SessionStart","source":"compact","cwd":"."}'
@@ -11813,6 +11797,41 @@ else
   skip_host "DL1-9 drift script compares the Linux rendering" "not a Linux host" 18
 fi
 # ---- end v4.6.1 drift
+
+# ---- v4.6.2 run-gate cwd warning: a run-gate.sh that lives in one checkout but is run from
+# another gates the CWD's repository; say so on stderr, change nothing else. Silent when the
+# script's own directory is not inside a git work tree (user-level / plugin-cache copies).
+V462_A=$(mkrepo v462a main); V462_B=$(mkrepo v462b main)
+printf -- '- **Gate**: true\n' > "$V462_A/PROJECT_CONTEXT.md"; printf -- '- **Gate**: true\n' > "$V462_B/PROJECT_CONTEXT.md"
+mkdir -p "$V462_A/hooks"; cp "$ROOT/hooks/run-gate.sh" "$V462_A/hooks/run-gate.sh"
+V462_NOGIT="$TMPROOT/v462-nogit"; mkdir -p "$V462_NOGIT"; cp "$ROOT/hooks/run-gate.sh" "$V462_NOGIT/run-gate.sh"
+v462_warns() { # <cwd> <script> -> count of WARN lines; rc must stay 0
+  local out rc
+  out=$(cd "$1" && bash "$2" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] || echo "rc=$rc"
+  printf '%s\n' "$out" | grep -c '^WARN: run-gate.sh '
+}
+# git's own spelling of each toplevel (C:/... on Git Bash, /private/... on macOS), as the warning prints it
+V462_A_TOP=$(git -C "$V462_A" rev-parse --show-toplevel); V462_B_TOP=$(git -C "$V462_B" rev-parse --show-toplevel)
+expect "V462 script in repo A, run from repo B: warns once"          1 "$(v462_warns "$V462_B" "$V462_A/hooks/run-gate.sh")"
+expect "V462 warning names both checkouts" 1 "$(cd "$V462_B" && bash "$V462_A/hooks/run-gate.sh" 2>&1 | grep -cF "run-gate.sh from $V462_A_TOP is gating $V462_B_TOP (the current directory's repository); to gate $V462_A_TOP, run it from inside $V462_A_TOP.")"
+expect "V462 same repo with GIT_DIR exported: no warning"             0 "$(GIT_DIR="$V462_A/.git" v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
+expect "V462 script in repo A, run from repo A: no warning"           0 "$(v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
+expect "V462 script outside any git work tree, run from a repo: no warning" 0 "$(v462_warns "$V462_B" "$V462_NOGIT/run-gate.sh")"
+# ---- end v4.6.2 run-gate cwd warning
+
+# ---- v4.6.2 drift script: "released tree" only for a real tag
+V462_DL_H="$TMPROOT/v462-dl-home"; mkdir -p "$V462_DL_H/.claude"
+v462_dl_ref() { ( cd "$ROOT" && HOME="$V462_DL_H" bash scripts/verify-user-level-drift.sh "$1" 2>&1 | grep -m1 '^REFERENCE:' ); }
+V462_TAG=$(git -C "$ROOT" tag -l 'v*' | head -1)
+if [ -n "$V462_TAG" ]; then
+  expect "V462 drift: a release tag says released tree"       1 "$(v462_dl_ref "$V462_TAG" | grep -c 'released tree$')"
+else
+  skip_host "V462 drift: a release tag says released tree" "no v* tag in this checkout" 1
+fi
+expect "V462 drift: an untagged sha is not called released"   1 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'not a release tag$')"
+expect "V462 drift: an untagged sha never says released tree" 0 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'released tree$')"
+# ---- end v4.6.2 drift script
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

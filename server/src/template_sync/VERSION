@@ -1,2 +1,2 @@
-4.6.1
-Patch: the gate fingerprints a repo-root .venv (and the PATH python beside it) and sees package changes on Debian/Ubuntu system Python; the drift check compares the Linux-rendered user level on Linux; sync-template wording fixes from the first Linux syncs.
+4.6.2
+Patch: run-gate.sh warns when it gates a repository other than the one it lives in; the retired require-skills-block.sh stub is deleted; the drift check no longer calls an untagged sha a released tree.

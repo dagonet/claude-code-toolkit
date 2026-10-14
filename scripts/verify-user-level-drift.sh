@@ -102,7 +102,12 @@ if [ "$MODE" = "tag" ]; then
     echo "  Pass an explicit <git-ref>, or --worktree to compare against the working tree (NOT a release check)."
     exit 2
   fi
-  echo "REFERENCE: $REF ($(git rev-parse --short "$REF^{commit}")) — released tree"
+  if git rev-parse -q --verify "refs/tags/$REF" >/dev/null 2>&1; then
+    REF_KIND="released tree"
+  else
+    REF_KIND="tree at $REF, not a release tag"
+  fi
+  echo "REFERENCE: $REF ($(git rev-parse --short "$REF^{commit}")) — $REF_KIND"
 else
   echo "REFERENCE: WORKING TREE — this is NOT a release check. A live copy matching"
   echo "  an unshipped branch will report 0 drift, which certifies nothing."
