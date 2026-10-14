@@ -96,7 +96,7 @@ fi
 #     v5.0: the registrations moved from every variant settings.json into the plugin's
 #     hooks/hooks.json (the templates register only the plugin-off guard).
 for h in gate-before-merge enforce-agent-contract; do
-  grep -qF "run-hook.sh\\\" $h\"" hooks/hooks.json \
+  grep -qE '(run-hook\.sh|\$f)\\" '"$h"'"' hooks/hooks.json \
     && ok "hooks/hooks.json: $h registered" \
     || ko "hooks/hooks.json: $h NOT registered"
 done
@@ -1601,7 +1601,7 @@ for s in $(for v in $VARIANTS; do echo "templates/$v/.claude/settings.json"; don
   # v5.0: neither a variant nor the user-level reference registers it; the plugin
   # does, machine-wide (hooks/hooks.json, asserted below).
 done
-if grep -qF 'run-hook.sh\" deny-secret-reads"' hooks/hooks.json; then
+if grep -qE '(run-hook\.sh|\$f)\\" deny-secret-reads"' hooks/hooks.json; then
   ok "hooks/hooks.json: registers deny-secret-reads (the protection every variant gets from the plugin)"
 else
   ko "hooks/hooks.json: deny-secret-reads NOT registered — the .env files of every v5 project are unprotected"
@@ -3630,8 +3630,8 @@ else
   # repo-root .claude/settings.json (self-hosting, the v4 form); the controls mutate each.
   c64_want=$((c64_max + 60))
   c64_json() { # <hooks.json> <want> -> prints a finding when a pre-commit-test registration lacks the timeout, or none exists
-    c64_regs=$(grep -c 'run-hook\.sh\\" pre-commit-test"' "$1" 2>/dev/null)
-    c64_ok=$(grep 'run-hook\.sh\\" pre-commit-test"' "$1" 2>/dev/null | grep -cE "\"timeout\": $2[[:space:]]*}")
+    c64_regs=$(grep -cE '(run-hook\.sh|\$f)\\" pre-commit-test"' "$1" 2>/dev/null)
+    c64_ok=$(grep -E '(run-hook\.sh|\$f)\\" pre-commit-test"' "$1" 2>/dev/null | grep -cE "\"timeout\": $2[[:space:]]*}")
     if [ "${c64_regs:-0}" -eq 0 ] || [ "${c64_ok:-0}" -ne "${c64_regs:-0}" ]; then
       printf '%s: %s registration(s), %s with "timeout": %s\n' "$1" "${c64_regs:-0}" "${c64_ok:-0}" "$2"
     fi
@@ -4669,6 +4669,8 @@ rm -rf "$c70_tmp"
 # shapes anchored, anything else OTHER, compared with the frozen general rows plus the
 # plugin-only allowlist; (8) controls: a narrowed matcher, a dropped group and an
 # inline extra group on a scratch copy must each go red.
+# (v5.0 fix round) run-hook.sh's class table must equal the frozen general forms name for name (1c), and a
+# closed-class entry must carry the inline plugin-missing check while the others stay bare (1d, two-sided).
 # ---------------------------------------------------------------------------
 echo
 note "Check 71: registration polarity -- the frozen (event, matcher, script, form) set; trap, allow, stop-gate, matcher-superset and return audits"
@@ -4691,7 +4693,8 @@ c71_cmp() { # <label> <got> <want>
 # The plugin-only rows have no frozen-table counterpart.
 C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
 const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session)\.sh"( end)?$/;
-for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const r=RH.exec(c)||CS.exec(c);out.push([ev,g.matcher||"",r?r[1]:"OTHER"].join(";"));}
+const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";
+for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const gm=c.startsWith(GP)&&/^[a-z-]+$/.test(c.slice(GP.length))?c.slice(GP.length):null;const r=gm?null:(RH.exec(c)||CS.exec(c));out.push([ev,g.matcher||"",gm||(r?r[1]:"OTHER"),gm?"G":"B"].join(";"));}
 if(out.length)console.log(out.join("\n"))'
 c71_px() { node -e "$C71_PJS" "$1"; }
 C71_PLUGIN_ONLY='SessionStart;;cct-session
@@ -4710,7 +4713,18 @@ else
   # (1b) the plugin's hooks/hooks.json: its (event, matcher, script) set equals the frozen `general` rows
   # (form dropped: polarity lives in run-hook.sh's class table) plus the plugin-only allowlist.
   c71_want_p=$(printf '%s\n%s\n' "$(printf '%s\n' "$C71_TABLE" | grep '^general;' | awk -F';' '{print $2";"$3";"$4}')" "$C71_PLUGIN_ONLY" | LC_ALL=C sort)
-  c71_cmp "hooks/hooks.json" "$(c71_px hooks/hooks.json | LC_ALL=C sort)" "$c71_want_p"
+  c71_cmp "hooks/hooks.json" "$(c71_px hooks/hooks.json | cut -d';' -f1-3 | LC_ALL=C sort)" "$c71_want_p"
+  # (1c) polarity (v5.0 fix round M4): run-hook.sh's class table must equal the frozen general forms (F closed,
+  # W warn, O/U open; the two plugin-only jev hooks open), name for name; flipping no-push-main to open goes red.
+  c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
+  c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
+  c71_rh=$(c71_rhtab hooks/run-hook.sh)
+  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\n')
+  c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
+  [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/run-hook.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
+  # (1d) two-sided registration shape: a closed-class hook carries the inline existence check (G), every other one stays bare (B)
+  c71_shape=$(c71_shapes hooks/hooks.json "$c71_rh")
+  [ -z "$c71_shape" ] || c71_bad="$c71_bad [hooks/hooks.json registration shape wrong (closed needs the inline plugin-missing check G, others bare B): $c71_shape]"
   c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -v '^agent:' | grep -v '^user;' | grep -c .)  # v5.0: the agent: and user; rows are no longer compared
   c71_nsc=$(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u | grep -c .)
 
@@ -4783,6 +4797,20 @@ else
       ko "check 71 control (hooks.json $c71_mode): a mutated hooks.json was NOT detected -- the plugin comparison is vacuous"
     fi
   done
+  # (8b) controls for (1c)/(1d): no-push-main flipped to open in a run-hook.sh copy; a closed hook registered bare
+  sed 's/^\(  no-push-main|deny-secret-reads).*pol=\)closed/\1open/' hooks/run-hook.sh > "$c71_tmp/rh-flip.sh"
+  c71_got=$(c71_rhtab "$c71_tmp/rh-flip.sh")
+  if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
+    ok "check 71 control (run-hook.sh polarity flip): no-push-main turned open differs from the frozen forms"
+  else
+    ko "check 71 control (run-hook.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
+  fi
+  node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"no-push-main"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" no-push-main";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
+  if [ -n "$(c71_shapes "$c71_tmp/bare-closed.json" "$c71_rh")" ]; then
+    ok "check 71 control (closed hook registered bare): the shape comparison flags no-push-main"
+  else
+    ko "check 71 control (closed hook registered bare): NOT detected -- the shape comparison is vacuous"
+  fi
 fi
 rm -rf "$c71_tmp"
 
@@ -4894,7 +4922,7 @@ fi
 # ---------------------------------------------------------------------------
 # Check 74 (v5.0): every hook hooks.json names exists in hooks/ and is classed in run-hook.sh, and vice versa
 # ---------------------------------------------------------------------------
-c74_names=$(grep -o 'run-hook.sh\\" [a-z-]*' hooks/hooks.json | awk '{print $2}' | sort -u)
+c74_names=$(grep -oE '(run-hook\.sh|\$f)\\" [a-z-]+' hooks/hooks.json | awk '{print $2}' | sort -u)
 c74_classed=$(sed -n '/^case "\$name" in/,/^esac/p' hooks/run-hook.sh | grep -o '^  [a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
 c74_bad=""
 for n in $c74_names; do [ -f "hooks/$n.sh" ] || c74_bad="$c74_bad missing:$n"; done

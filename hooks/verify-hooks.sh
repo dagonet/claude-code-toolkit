@@ -221,7 +221,8 @@ vh_init_parser() {
 vh_plugin() {
   vh_pf=$1/hooks/hooks.json
   [ -f "$vh_pf" ] && [ -r "$vh_pf" ] || return 0
-  vh_paths=$(grep -oE 'run-hook\.sh\\" [A-Za-z0-9_-]+' "$vh_pf" 2>/dev/null | sed 's/^.* /hooks\//; s/$/.sh/')
+  # bare `run-hook.sh" <name>` and the closed-class inline-guard form `exec bash "$f" <name>`
+  vh_paths=$(grep -oE '(run-hook\.sh|\$f)\\" [A-Za-z0-9_-]+' "$vh_pf" 2>/dev/null | sed 's/^.* /hooks\//; s/$/.sh/')
   vh_paths="$vh_paths
 $(grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[A-Za-z0-9_.-]+\.sh' "$vh_pf" 2>/dev/null | sed 's/^.*}\///')"
   while IFS= read -r vh_x; do [ -n "$vh_x" ] && vh_script "$1/$vh_x"; done <<EOF
