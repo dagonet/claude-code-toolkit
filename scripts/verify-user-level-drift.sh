@@ -7,8 +7,10 @@
 # user level is only CLAUDE.md and settings.json. A machine is 0 drift against a v5.0+ REF when
 #   (a) ~/.claude/CLAUDE.md equals the reference CLAUDE.md (on Linux: its Linux rendering);
 #   (b) ~/.claude/plugins/installed_plugins.json records cct@dagonet at user scope at the first
-#       line of REF's VERSION (a missing or unreadable file, or another version, is drift);
+#       line of REF's VERSION (a missing or unreadable file, or another version, is drift) AND
+#       settings.json has enabledPlugins["cct@dagonet"] == true;
 #   (c) no path from REF's scripts/lib/v4-user-leftovers.txt exists under ~/.claude;
+#   (d) REF's hooks/verify-hooks.sh --report finds no stale hook registration in the live HOME;
 # and permissions.autoMode.environment in settings.json matches the reference (below).
 # A REF older than v5.0 (no leftovers list) is compared the pre-v5.0 way: CLAUDE.md plus every
 # hooks/, skills/, agents/ and output-styles/ file that REF shipped, byte for byte.
@@ -23,7 +25,8 @@
 # a release check.
 #
 # settings.json is NOT byte-compared: a user's own permissions, env and MCP entries are theirs.
-# Only the key-scoped autoMode.environment comparison reads it.
+# It is read for three things only: enabledPlugins["cct@dagonet"] (b), the registered hooks (d,
+# through verify-hooks.sh) and the key-scoped autoMode.environment comparison.
 #
 # Run ad-hoc; not wired into any hook. Works from any cwd (cd's to repo root).
 set -u
@@ -222,7 +225,7 @@ except Exception:
     elif command -v node >/dev/null 2>&1; then
       node -e '
 try {
-  var d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^﻿/, ""));
+  var d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^\uFEFF/, ""));
   if ((d.enabledPlugins || {})["cct@dagonet"] === true) console.log("true");
 } catch (e) {}' "$1"
     elif command -v jq >/dev/null 2>&1; then

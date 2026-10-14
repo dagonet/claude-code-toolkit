@@ -11235,7 +11235,11 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   printf '%s\n' '#!/bin/sh' \
     'case "$IU_MODE:$1 $2 $3" in' \
     '  fail:"plugin marketplace add /nonexistent") echo "Path does not exist: /nonexistent" >&2; exit 1 ;;' \
-    '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
+    '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
+    '  oldver:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0.0.0\"}]\n"; exit 0 ;;' \
+    '  disabled:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":false,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
+    '  *:"plugin install "*) f="$HOME/.claude/settings.json"; [ -s "$f" ] || echo "{}" > "$f"; jq --arg i "$3" ".enabledPlugins[\$i]=true" "$f" > "$f.t" && mv "$f.t" "$f"; exit 0 ;;' \
+    '  *:"plugin update "*) : > "$HOME/update.marker"; exit 0 ;;' \
     '  *:"plugin list "*) exit 0 ;;' \
     'esac' \
     'exit 0' > "$IU_BIN/claude"
@@ -11248,14 +11252,16 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
       case "$iu_p" in skills/*) mkdir -p "$iu_h/.claude/$iu_p"; printf 'x\n' > "$iu_h/.claude/$iu_p/SKILL.md" ;;
         *) mkdir -p "$(dirname "$iu_h/.claude/$iu_p")"; printf 'x\n' > "$iu_h/.claude/$iu_p" ;; esac
     done < "$IU_LEFT"
-    printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/bash","args":["-c",". \\"$0\\"","%s/.claude/hooks/no-push-main.sh"]}]}]}}\n' "$iu_h" > "$iu_h/.claude/settings.json"
+    printf '{"enabledPlugins":{"superpowers@claude-plugins-official":false},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/bash","args":["-c",". \\"$0\\"","%s/.claude/hooks/no-push-main.sh"]}]}]}}\n' "$iu_h" > "$iu_h/.claude/settings.json"
     cp "$iu_h/.claude/settings.json" "$iu_h/settings.before"
     printf '%s' "$iu_h"
   }
   iu_present() { iu_c=0; while IFS= read -r iu_p; do [ -e "$1/.claude/$iu_p" ] && iu_c=$((iu_c + 1)); done < "$IU_LEFT"; echo "$iu_c"; }
-  for iu_m in fail nolist; do
+  # nolist/oldver/disabled fail AFTER the stub's `plugin install` switched superpowers on in settings.json:
+  # byte-unchanged proves the installer restores its pre-step-1 backup (W1)
+  for iu_m in fail nolist oldver disabled; do
     iu_h=$(iu_home "$iu_m")
-    ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE="$iu_m" CCT_MARKETPLACE=/nonexistent \
+    ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE="$iu_m" IU_VER="$(head -1 "$ROOT/VERSION")" CCT_MARKETPLACE=/nonexistent \
         bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); iu_rc=$?
     expect "IU ($iu_m): the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
     expect "IU ($iu_m): every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
@@ -11276,6 +11282,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_q() { jq -r "$1" "$iu_h/.claude/settings.json" 2>&1; }
   iu_run; iu_rc=$?
   expect "IU (ok): the installer exits 0" 0 "$iu_rc"
+  expect "IU (ok): plugin update ran after install" yes "$([ -f "$iu_h/update.marker" ] && echo yes || echo no)"
   expect "IU (ok): the toolkit's v4 hook registration is gone" 0 "$(iu_q '[.. | strings | select(test("hooks/no-push-main.sh"))] | length')"
   expect "IU (ok): the foreign user hook is kept" 1 "$(iu_q '[.. | strings | select(. == "/opt/foreign.sh")] | length')"
   expect "IU (ok): the date hook appears once" 1 "$(iu_q '[.hooks.UserPromptSubmit[].hooks[].command | select(test("Current local time"))] | length')"
@@ -11299,7 +11306,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_run
   expect "IU (ok): a re-run leaves settings.json identical" 0 "$(cmp -s "$iu_h/settings.run1" "$iu_h/.claude/settings.json"; echo $?)"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries" "not a Linux host, or no jq" 23
+  skip_host "IU installer stops before any removal; merge keeps the user's entries" "not a Linux host, or no jq" 32
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
