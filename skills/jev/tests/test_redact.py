@@ -251,6 +251,23 @@ class ResidualTests(unittest.TestCase):
     def test_flags_leftover_private_key_marker(self):
         self.assertTrue(residual_findings("-----BEGIN OPENSSH " + "PRIVATE KEY-----"))
 
+    def test_session_url_is_masked_and_not_a_finding(self):
+        text = "Co-Authored-By: x\nClaude-Session: https://claude.ai/code/session_01Uyuqwi1m6nTGEtwYst4gxg\n- Push"
+        out = redact(text)[0]
+        self.assertNotIn("session_01Uyuqwi1m6nTGEtwYst4gxg", out)
+        self.assertIn("claude.ai/code/[REDACTED:session]", out)
+        self.assertEqual(residual_findings(out), [])
+
+    def test_session_mask_does_not_hide_a_neighbouring_secret(self):
+        key = "sk-" + "A1b2C3d4E5f6G7h8J9k0"
+        out = redact("https://claude.ai/code/session_01Uyuqwi1m6nTGEtwYst4gxg " + key)[0]
+        self.assertNotIn(key, out)
+        self.assertIn("[REDACTED:api_key]", out)
+
+    def test_other_mixed_case_tokens_still_found(self):
+        # the mask is anchored to the literal prefix; a bare random token still trips the residual check
+        self.assertNotEqual(residual_findings("token aB3dE5gH7jK9mN1pQ3rS5tU7"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

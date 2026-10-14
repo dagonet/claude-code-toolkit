@@ -51,6 +51,8 @@ _PATTERNS = [
     ("basic", r"(?i)(\bBasic\s+)[A-Za-z0-9+/=]{8,}", r"\1[REDACTED:basic]"),
     # Azure storage connection string: the value runs to the ';' and keeps its '=' padding.
     ("azure_key", r"(?i)((?<![\w.-])AccountKey=)[^;\s\"']+", r"\1[REDACTED:azure_key]"),
+    # Claude Code's commit-trailer session link: an identifier, not a credential (v5.1: 106/109 MM egress refusals)
+    ("claude_session", r"(?<![\w-])claude\.ai/code/session_[A-Za-z0-9]{20,}", "claude.ai/code/[REDACTED:session]"),
     # `auth` only as a whole name (auth, basic_auth, http.auth), so author/authority/OAuth stay.
     ("key_value",
      r"(?i)((?<![\w.-])(?:[\w.-]{0,64}?(?:password|passwd|secret|token|api[_-]?key|private[_-]?key"

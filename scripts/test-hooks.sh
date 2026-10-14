@@ -9627,7 +9627,7 @@ rm -rf "$JMGD/jev"
 # skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
 # Skipped by name (4) only where python3 is absent: the jq-only matrix config.
 echo "=== skills/jev (v4.4.0 J-PY) ==="
-JPY_WANT=98
+JPY_WANT=101
 JPY_DIR="$ROOT/skills/jev"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
   JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
@@ -11809,6 +11809,15 @@ fi
 expect "V462 drift: an untagged sha is not called released"   1 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'not a release tag$')"
 expect "V462 drift: an untagged sha never says released tree" 0 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'released tree$')"
 # ---- end v4.6.2 drift script
+
+# ---- v5.1: the Jev unit tests (skills/jev/tests) run in the suite, not only by hand
+if command -v python3 >/dev/null 2>&1; then
+  JEVUT_OUT="$(python3 -B -m unittest discover -s "$ROOT/skills/jev/tests" 2>&1)"; JEVUT_RC=$?
+  expect "jev unit tests pass" "0" "$JEVUT_RC"
+  [ "$JEVUT_RC" = 0 ] || printf '%s\n' "$JEVUT_OUT" | tail -20
+else
+  skip "jev unit tests" "no python3 on this host"
+fi
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
