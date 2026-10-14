@@ -88,6 +88,16 @@ class DecideEffortTests(unittest.TestCase):
     def test_reviewer_effort_never_lowered(self):
         self.assertEqual(jr.decide_effort("code-reviewer", "high", None, ans("medium", 0.9), 0.65), (None, "role-floor"))
 
+    def test_reviewer_unknown_agent_effort_is_kept_not_an_error(self):
+        for unknown in ("max", "High"):
+            self.assertEqual(jr.decide_effort("code-reviewer", unknown, None, ans("high", 0.9), 0.65), (None, "role-floor"))
+
+    def test_non_role_unknown_agent_effort_does_not_raise(self):
+        self.assertEqual(jr.decide_effort("coder", "max", None, ans("high", 0.9), 0.65), ("high", "applied"))
+
+    def test_reviewer_same_effort_is_kept(self):
+        self.assertEqual(jr.decide_effort("code-reviewer", "high", None, ans("high", 0.9), 0.65), (None, "kept"))
+
     def test_reviewer_effort_may_be_raised(self):
         self.assertEqual(jr.decide_effort("code-reviewer", "medium", None, ans("xhigh", 0.9), 0.65), ("xhigh", "applied"))
 

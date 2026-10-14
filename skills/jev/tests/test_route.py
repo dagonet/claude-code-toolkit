@@ -168,6 +168,13 @@ class RunTests(unittest.TestCase):
                              post=Recorder(answer("opus", 0.95, effort="medium")))
         self.assertEqual((out, ev["effort_reason"], ev["effort_emitted"]), (b"", "role-floor", None))
 
+    def test_reviewer_unknown_agent_effort_still_gets_model_move(self):
+        out, ev, _ = self.go(payload("code-reviewer"), resolver=self.res(kind="own", model="sonnet", effort="max"),
+                             post=Recorder(answer("opus", 0.95, effort="high")))
+        ui = json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual((ui["model"], "effort" in ui, ev["reason"], ev["effort_reason"]),
+                         ("opus", False, "applied", "role-floor"))
+
     def test_effort_same_as_agent_not_emitted(self):
         out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="opus", effort="high"),
                              post=Recorder(answer("opus", 0.95, effort="high")))

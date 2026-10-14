@@ -126,7 +126,8 @@ def decide_effort(subagent_type, agent_effort, explicit_effort, answer, threshol
     if answer["choice"] == agent_effort:
         return None, "kept"
     if ROLE_FLOOR_RE.search(subagent_type or "") and (
-            not agent_effort or EFFORTS.index(answer["choice"]) < EFFORTS.index(agent_effort)):
+            agent_effort not in EFFORTS  # unset or unknown (e.g. `max`): keep it, never guess
+            or EFFORTS.index(answer["choice"]) < EFFORTS.index(agent_effort)):
         return None, "role-floor"
     return answer["choice"], "applied"
 
