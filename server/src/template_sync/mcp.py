@@ -1001,9 +1001,18 @@ def _manifest_migration_to(rules, from_version):
     return ceiling
 
 
+def _skill_gate(manifest, rules, skill_version):
+    """(floor, marker, refusal) for template_load_manifest's skill gate. The
+    floor is the template's requires_skill; the marker is the checkout's own
+    sync-template skill tag. refusal is "" or the text to append to errors."""
+    floor = rules.requires_skill if rules is not None else ""
+    marker = v3.skill_marker(manifest.get("templateRepo", ""))
+    return floor, marker, v3.load_skill_refusal(floor, skill_version, marker)
+
+
 @mcp.tool()
 @_surfaces_repo_note
-async def template_load_manifest(project_path: str) -> str:
+async def template_load_manifest(project_path: str, skill_version: str = "") -> str:
     """
     Load and validate the template manifest from a project.
     Auto-migrates v1 manifests to v2 format by computing missing hashes.
@@ -1018,8 +1027,16 @@ async def template_load_manifest(project_path: str) -> str:
     version: {"from": <this manifest's version>, "to": <the template's
     ceiling>, "required": bool}.
 
+    Skill gate (v5.0): the response carries requires_skill (the template's
+    floor) and skill_marker (the checkout's own sync-template skill tag), and
+    valid is false with an error when skill_version is missing, below the floor
+    or below the marker. The sentinel "not-a-skill" bypasses it (non-skill
+    callers, as for template_migrate_manifest).
+
     Args:
         project_path: Path to the project root directory
+        skill_version: The caller's sync-template skill tag (vX.Y.Z), from the
+            SYNC-TEMPLATE-SKILL-VERSION marker of the skill body it executes.
 
     Returns:
         JSON with manifest data, validation status, errors, and warnings
@@ -1069,6 +1086,9 @@ async def template_load_manifest(project_path: str) -> str:
             )
         if rules is not None:
             warnings.extend(rules.warnings)
+        skill_floor, skill_mark, skill_refusal = _skill_gate(manifest, rules, skill_version)
+        if skill_refusal:
+            errors.append(skill_refusal)
         mv_from = manifest.get("manifest_version")
         mv_to = _manifest_migration_to(rules, mv_from)
         return json.dumps({
@@ -1088,6 +1108,8 @@ async def template_load_manifest(project_path: str) -> str:
             "template_commit": v3.manifest_commit(manifest),
             "template_version": manifest.get("template_version"),
             "requires_server": manifest.get("requires_server", ""),
+            "requires_skill": skill_floor,
+            "skill_marker": skill_mark,
             "placeholders": manifest.get("placeholders", {}),
             "files": manifest.get("files", {}),
             "unknown_keys": v3.unknown_top_level_keys(manifest),
@@ -1129,6 +1151,9 @@ async def template_load_manifest(project_path: str) -> str:
     migration_required = rules_v2 is not None
     mv2_from = manifest.get("version", 1)
     mv2_to = _manifest_migration_to(rules_v2, mv2_from)
+    skill_floor, skill_mark, skill_refusal = _skill_gate(manifest, rules_v2, skill_version)
+    if skill_refusal:
+        errors.append(skill_refusal)
 
     return json.dumps({
         "valid": len(errors) == 0,
@@ -1146,6 +1171,8 @@ async def template_load_manifest(project_path: str) -> str:
         "variant": manifest.get("variant", ""),
         "templateRepo": manifest.get("templateRepo", ""),
         "lastSynced": manifest.get("lastSynced", ""),
+        "requires_skill": skill_floor,
+        "skill_marker": skill_mark,
         "placeholders": manifest.get("placeholders", {}),
         "files": manifest.get("files", {}),
         "errors": errors,

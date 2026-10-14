@@ -147,7 +147,7 @@ def test_real_run_writes_region_verbatim_claude_md_matches_template_manifest_v4(
     written_manifest = json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))
     assert written_manifest["manifest_version"] == 4
     assert written_manifest["instructions_file"] == ".claude/project-instructions.md"
-    assert "agent_grants" not in written_manifest
+    assert written_manifest["agent_grants"] == ".claude/agent-grants.json"   # 4.1-4.6 servers require it
     assert written_manifest["requires_server"] == ">=4.1.0"
     assert not (proj / ".claude" / "agent-grants.json").exists()
 

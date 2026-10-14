@@ -490,14 +490,13 @@ function checkShape(m, label) {
   if (!/^[0-9a-f]{40}$/.test(m.template_commit) && m.template_commit !== "unknown") {
     errs.push(`template_commit not a 40-hex sha or "unknown" (${m.template_commit})`);
   }
-  // v4 declaration key (spec sect 5 header) -- a literal path, the one the
-  // server's INSTRUCTIONS_FILE_DEFAULT constant names. v5.0: agent_grants is
-  // no longer written.
+  // v4 declaration keys (spec sect 5 header) -- literal paths. agent_grants
+  // is still written in v5.0 (4.1-4.6 servers require it; v5.0 ignores it).
   if (m.instructions_file !== ".claude/project-instructions.md") {
     errs.push(`instructions_file !== ".claude/project-instructions.md" (${m.instructions_file})`);
   }
-  if ("agent_grants" in m) {
-    errs.push(`agent_grants is still written (${m.agent_grants})`);
+  if (m.agent_grants !== ".claude/agent-grants.json") {
+    errs.push(`agent_grants !== ".claude/agent-grants.json" (${m.agent_grants})`);
   }
   console.log(`ROW1_${label}: ${errs.length ? "FAIL " + errs.join("; ") : "PASS"}`);
 }

@@ -38,7 +38,7 @@ def _project(tmp_path: pathlib.Path, template_repo: str) -> tuple[pathlib.Path, 
 
 
 def _load(pp: pathlib.Path) -> dict:
-    return json.loads(asyncio.run(ts.template_load_manifest(str(pp))))
+    return json.loads(asyncio.run(ts.template_load_manifest(str(pp), skill_version="v99.0.0")))
 
 
 def test_existing_template_repo_is_used_unchanged(tmp_path, monkeypatch):

@@ -57,7 +57,7 @@ EXPECTED = {
 
 
 def _load(project_path):
-    return json.loads(asyncio.run(ts.template_load_manifest(str(project_path))))
+    return json.loads(asyncio.run(ts.template_load_manifest(str(project_path), skill_version="v99.0.0")))
 
 
 def test_capability_set_is_exact():

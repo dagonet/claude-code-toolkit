@@ -367,6 +367,42 @@ def skill_floor_satisfied(spec: str, claimed: str) -> tuple[bool, str, str, bool
     return True, "", "", False
 
 
+_SKILL_MARKER_RE = re.compile(r"SYNC-TEMPLATE-SKILL-VERSION:\s*(v\d+\.\d+\.\d+)")
+
+
+def skill_marker(template_repo: str) -> str:
+    """The SYNC-TEMPLATE-SKILL-VERSION tag of the template checkout's own
+    skills/sync-template/SKILL.md; "" when the file or the marker is absent."""
+    raw = core._read_file(core._effective_template_repo(template_repo)
+                          / "skills" / "sync-template" / "SKILL.md")
+    m = _SKILL_MARKER_RE.search(raw) if raw else None
+    return m.group(1) if m else ""
+
+
+def load_skill_refusal(spec: str, claimed: str, marker: str) -> str:
+    """The template_load_manifest skill gate: "" when the caller may proceed,
+    else the refusal text. Refuses a missing or non-tag skill_version, one below
+    the requires_skill floor (via skill_floor_satisfied), and one below the
+    checkout's own marker. The bypass sentinel passes, as everywhere else."""
+    claimed = (claimed or "").strip()
+    ok, _, _, bypassed = skill_floor_satisfied(spec, claimed)
+    if bypassed:
+        return ""
+    if not ok:
+        return (f"template_load_manifest refused: skill_version {claimed or '(missing)'} does not "
+                f"meet templates/ownership.json requires_skill {spec!r}: run /cct:sync-template "
+                "(install/update the cct plugin).")
+    if marker and SKILL_TAG_RE.match(claimed) and _tag_tuple(claimed) < _tag_tuple(marker):
+        return (f"template_load_manifest refused: the loaded sync-template skill ({claimed}) is "
+                f"older than the toolkit checkout ({marker}): update the cct plugin "
+                "(claude plugin update cct@dagonet) or re-copy the skill, then restart.")
+    return ""
+
+
+def _tag_tuple(tag: str) -> tuple[int, int, int]:
+    return tuple(int(g) for g in SKILL_TAG_RE.match(tag).groups())  # type: ignore[return-value]
+
+
 def effective_requires_server_spec(manifest: dict) -> str:
     """The floor actually enforced for `manifest`, fed to requires_server_satisfied.
 
@@ -2024,6 +2060,8 @@ def migrate_v3_to_v4(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) ->
     new_manifest["template_commit"] = commit
     new_manifest["requires_server"] = f">={MIN_SERVER_FOR_V4}"
     new_manifest["instructions_file"] = INSTRUCTIONS_FILE_DEFAULT
+    # Kept although v5.0 removed grants: 4.1-4.6 servers require the key on a v4 manifest.
+    new_manifest["agent_grants"] = AGENT_GRANTS_FILE
 
     # Hash PREVIEW: derive, never construct (spec 1.1). Every entry the
     # migration does not write carries its stored hash forward UNCHANGED --

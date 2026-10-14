@@ -410,6 +410,19 @@ def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
     assert res["ok"] is True
 
 
+def test_v4_manifest_without_agent_grants_key_has_no_fail(tmp_path, monkeypatch):
+    """The key is optional since v5.0 (still written by 4.x tooling, read by nothing)."""
+    monkeypatch.setattr(ts, "__version__", "4.1.0")
+    repo, proj, commit = _good_fixture_v4(tmp_path)
+    m = _read_manifest(proj)
+    del m["agent_grants"]
+    _write_manifest(proj, m)
+    _recommit(proj)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    assert [l["id"] for l in res["lines"] if l["status"] == "FAIL"] == [], _by_id(res)
+    assert res["ok"] is True
+
+
 def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
     repo, proj, commit = _window_fixture(tmp_path)
     res = verify.run(str(proj), str(repo), "post_commit")
@@ -1155,11 +1168,11 @@ def v3_legacy_consumer(tmp_path):
 def v4_consumer(tmp_path):
     # consumer_template_paths (v3.py) resolves a project-relative path to a
     # repo-root git path via core._template_git_path: "hooks/git-pre-push.sh" is
-    # already root-tracked (core._ROOT_TRACKED_PREFIXES, UNMODIFIED here)
+    # already root-tracked (core.ROOT_TRACKED_FILES, UNMODIFIED here)
     # and "CLAUDE.md" / ".claude/agents/foo.md" get the
     # "templates/<variant>/" prefix -- all production-real, no test-only
     # widening of that constant. Fix round 1 dropped an earlier version of
-    # this fixture that widened _ROOT_TRACKED_PREFIXES via monkeypatch so a
+    # this fixture that widened the root-tracked list via monkeypatch so a
     # single synthetic path (user-level-reference/README.md) could serve as
     # BOTH the #9 case-2 ("does not track") and case-3 ("tracks it")
     # witnesses -- the reviewer measured that with the real constant
@@ -1216,13 +1229,13 @@ def template_repo(v4_consumer):
 
 
 def test_manifest_migration_reports_v3_to_v4(v3_consumer):
-    out = json.loads(asyncio.run(ts.template_load_manifest(str(v3_consumer.root))))
+    out = json.loads(asyncio.run(ts.template_load_manifest(str(v3_consumer.root), skill_version="v99.0.0")))
     assert out["manifest_migration"] == {"from": 3, "to": 4, "required": True}
     assert out["migration_required"] is False          # unchanged: the v2->v3 answer
 
 
 def test_manifest_migration_false_on_v4(v4_consumer):
-    out = json.loads(asyncio.run(ts.template_load_manifest(str(v4_consumer.root))))
+    out = json.loads(asyncio.run(ts.template_load_manifest(str(v4_consumer.root), skill_version="v99.0.0")))
     assert out["manifest_migration"] == {"from": 4, "to": 4, "required": False}
 
 
@@ -1260,7 +1273,7 @@ def test_case3_when_this_consumer_tracks_the_touched_path(template_repo, v4_cons
     # test_case2's hooks/lib/json.sh above; the difference between the two
     # tests is purely "does this consumer's manifest hold this path",
     # which is exactly what #9 (spec §1.4) is about. This is also the
-    # discriminating witness: emptying core._ROOT_TRACKED_PREFIXES makes
+    # discriminating witness: emptying core.ROOT_TRACKED_FILES makes
     # this test fail (see the report's fix-round-1 section) -- it is not
     # accidentally green.
     template_repo.tag("v9.9.9")

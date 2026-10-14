@@ -42,7 +42,7 @@ Compare that to the marker at the top of *this text as you loaded it*, and **sta
 
 > **The manifest's `requires_server` floor is enforced ONLY at `template_load_manifest` (measured against the real 0.3.1 reader, not a design doc).** `template_compute_status` and `template_apply_file` do **not** re-check it. A skill that skips straight to status against a manifest declaring a newer server than the one installed gets a normal-looking status answer instead of a refusal — a **silent** failure, not a loud one. There is exactly one gate for this floor and it is this call; anything read from a later call about server compatibility is not a substitute for it.
 
-Then call `template_load_manifest(project_path=".")`.
+Then call `template_load_manifest(project_path=".", skill_version=<the marker above>)`. A v5.0 server refuses (`valid:false`) a missing `skill_version`, one below the toolkit's `requires_skill` floor, or one older than the checkout's own skill (`skill_marker` in the response); STOP and show the error.
 
 - **No manifest at all** (`.claude/template-manifest.json` absent) = not a toolkit project: bootstrap via `AGENTS.md` / `setup-project`, not sync.
 - If `valid` is false, **stop** and show the errors to the user — this is the only place a `requires_server` mismatch surfaces, so a false here is not recoverable by continuing.

@@ -1275,8 +1275,11 @@ $manifest = [ordered]@{
     # v4 declaration key (spec sect 5 header; server/src/template_sync/mcp.py
     # _load_manifest requires it when manifest_version == 4). A literal
     # constant, the same path as INSTRUCTIONS_FILE_DEFAULT in
-    # server/src/template_sync/v3.py. v5.0 no longer writes `agent_grants`.
+    # server/src/template_sync/v3.py. `agent_grants` is still written although
+    # v5.0 removed the mechanism: 4.1-4.6 servers require it when they load a
+    # v4 manifest, and a v5.0 server accepts it and ignores it.
     instructions_file  = ".claude/project-instructions.md"
+    agent_grants       = ".claude/agent-grants.json"
 }
 if ($script:classifierFallback) { $manifest.classifier = "powershell-fallback" }
 

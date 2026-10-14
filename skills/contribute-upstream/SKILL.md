@@ -14,7 +14,7 @@ Push improvements from the current project back to the claude-code-toolkit templ
 
 ### 1. Load Manifest and Find Candidates
 
-Call `template_load_manifest(project_path=".")`. If errors, stop.
+Call `template_load_manifest(project_path=".", skill_version="not-a-skill")` (this is not the sync-template skill, so it passes the bypass sentinel). If errors, stop.
 
 Call `template_compute_status(project_path=".")`.
 

@@ -106,7 +106,7 @@ def test_v4_manifest_loads(tmp_path, monkeypatch):
     (proj / ".claude").mkdir(parents=True)
     (proj / ".claude" / "template-manifest.json").write_text(
         json.dumps(_v4_manifest(str(repo))), encoding="utf-8")
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert r["valid"] is True, r
     assert r["manifest_version"] == 4
 
@@ -122,7 +122,7 @@ def test_v2_manifest_still_reports_migration_required(tmp_path):
         "placeholders": {}, "files": {}, "lastSynced": "abc1234",
     }
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert r["valid"] is True, r
     assert r["migration_required"] is True
 
@@ -137,7 +137,7 @@ def test_v4_manifest_on_old_server_refused_by_name(tmp_path, monkeypatch):
     (proj / ".claude").mkdir(parents=True)
     (proj / ".claude" / "template-manifest.json").write_text(
         json.dumps(_v4_manifest(str(repo))), encoding="utf-8")
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert r["valid"] is False, r
     assert any("requires server >=4.1.0" in e and "4.0.3" in e for e in r["errors"]), r["errors"]
 
@@ -150,7 +150,7 @@ def test_v4_manifest_missing_declaration_keys_is_invalid(tmp_path, monkeypatch):
     m = _v4_manifest(str(repo))
     del m["instructions_file"]
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps(m), encoding="utf-8")
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert r["valid"] is False, r
     assert "errors" in r
     joined = " ".join(r["errors"])

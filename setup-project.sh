@@ -1292,9 +1292,11 @@ done
     # constant, not derived from FILE_RELS: it names the FIXED path the server
     # reads for the CLAUDE.md `@` import, not a per-project setting --
     # INSTRUCTIONS_FILE_DEFAULT in server/src/template_sync/v3.py is the same
-    # literal. v5.0 no longer writes `agent_grants` (the mechanism is removed;
-    # the server still accepts it in v4.x manifests).
-    echo "  \"instructions_file\": \".claude/project-instructions.md\""
+    # literal. `agent_grants` is still written although v5.0 removed the
+    # mechanism: 4.1-4.6 servers require it ("Missing required field") when
+    # they load a v4 manifest, and a v5.0 server accepts it and ignores it.
+    echo "  \"instructions_file\": \".claude/project-instructions.md\","
+    echo "  \"agent_grants\": \".claude/agent-grants.json\""
     echo "}"
 } > "$manifest_path"
 
