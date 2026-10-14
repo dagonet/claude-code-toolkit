@@ -11492,6 +11492,9 @@ expect "v5 session end: start then end then start leaves a marker" "yes" "$(v5se
 V5G="$TMPROOT/v5guard gone"; mkdir -p "$V5G"
 V5GC="$(awk '/pol=closed/ { sub(/\).*/, ""); gsub(/\|/, " "); printf "%s ", $0 }' "$ROOT/hooks/run-hook.sh")"
 V5GN=0
+# parser-free (the matrix hides node, python3 and jq): hooks.json has one `"command": "<escaped>"` entry per line;
+# V5RAW keeps the JSON-escaped value of every run-hook command, the loop unescapes it
+V5RAW="$(sed -n 's/.*"command": "\(.*[^\\]\)"\(, "timeout": [0-9]*\)\{0,1\} }.*/\1/p' "$ROOT/hooks/hooks.json" | grep 'run-hook\.sh')"
 while IFS= read -r v5g_cmd; do
   [ -n "$v5g_cmd" ] || continue
   v5g_name="${v5g_cmd##* }"; V5GN=$((V5GN + 1))
@@ -11500,7 +11503,7 @@ while IFS= read -r v5g_cmd; do
     *" $v5g_name "*) expect "v5 plugin gone: closed $v5g_name -> exit 2 + restart message" "BLOCKED: cct plugin files are missing rc=2" "$(printf '%s' "$v5g_out" | grep -o 'BLOCKED: cct plugin files are missing\|rc=[0-9]*' | tr '\n' ' ' | sed 's/ $//')" ;;
     *) expect "v5 plugin gone: non-closed $v5g_name -> not exit 2" "no" "$(case $v5g_out in *rc=2) echo yes ;; *) echo no ;; esac)" ;;
   esac
-done < <(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const e of Object.keys(d.hooks))for(const g of d.hooks[e])for(const h of g.hooks)if(/run-hook\.sh/.test(h.command))console.log(h.command)' "$ROOT/hooks/hooks.json")
+done < <(printf '%s\n' "$V5RAW" | sed 's/\\"/"/g')
 expect "v5 plugin gone: the hooks.json commands were enumerated" "yes" "$([ "$V5GN" -ge 17 ] && echo yes || echo no)"
 # ---- end v5.0 fix round I1
 
@@ -11516,7 +11519,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/cct-session.sh"
 v5vh_run() { env -u CLAUDE_PROJECT_DIR HOME="$V5VH" "$@" bash "$ROOT/hooks/verify-hooks.sh" --report </dev/null 2>/dev/null; }
 expect "v5 verify-hooks: plugin hook script missing -> reported" "MISSING: $V5V/hooks/no-push-main.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
 V5VG="$TMPROOT/v5vh guarded"; mkdir -p "$V5VG/hooks"; cp "$V5V/hooks/run-hook.sh" "$V5V/hooks/cct-session.sh" "$V5VG/hooks/"
-node -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const g=d.hooks.PreToolUse[0].hooks[0].command;fs.writeFileSync(process.argv[2],JSON.stringify({hooks:{SessionStart:[{hooks:[{type:"command",command:g}]}]}}))' "$ROOT/hooks/hooks.json" "$V5VG/hooks/hooks.json"
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec bash .*"\$f.* pre-commit-test$' | head -1)" > "$V5VG/hooks/hooks.json"
 expect "v5 verify-hooks: closed-class inline-guard registration -> script missing reported" "MISSING: $V5VG/hooks/pre-commit-test.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5VG")"
 expect "v5 verify-hooks: plugin root unset -> old behaviour (nothing scanned)" "" "$(v5vh_run)"
 expect "v5 verify-hooks: plugin root empty -> old behaviour (nothing scanned)" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT=)"
