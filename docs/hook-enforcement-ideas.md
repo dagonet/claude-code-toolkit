@@ -1,5 +1,7 @@
 # Hook Enforcement Ideas for AGENT_TEAM.md Workflows
 
+> Describes the pre-v5 layout (project-level agents and hook registrations); since v5.0 the `cct` plugin carries them.
+
 Claude Code hooks can intercept tool calls (`PreToolUse`) and block them with a message.
 This document analyzes which AGENT_TEAM.md workflow conventions could be technically enforced
 via hooks, versus which are better left as convention.

@@ -2,7 +2,7 @@
 
 # Setup Walkthrough
 
-Detailed instructions for running `setup-project.{sh,ps1}` against a target project, plus a manual fallback. For prerequisites and adoption tiers see [`getting-started.md`](getting-started.md). For per-variant flag details see [`templates.md`](templates.md). For MCP server installation see [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
+Detailed instructions for running `setup-project.{sh,ps1}` against a target project. For prerequisites and adoption tiers see [`getting-started.md`](getting-started.md). For per-variant flag details see [`templates.md`](templates.md). For MCP server installation see [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
 
 ## Quick Start
 
@@ -166,28 +166,7 @@ chmod +x ~/repos/claude-code-toolkit/setup-project.sh
 
 ## Manual Setup
 
-If you prefer to set things up by hand:
-
-1. **Copy template files** from `templates/<variant>/` to your project root. This includes `CLAUDE.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, and the `.claude/` directory (agents + `settings.json`). (`CLAUDE.local.md` was retired in v4.0.1 -- the template no longer offers one; if your project already has one, it stays and is never touched by a sync.)
-
-   ```bash
-   # Bash
-   cp -r ~/repos/claude-code-toolkit/templates/general/CLAUDE.md .
-   cp -r ~/repos/claude-code-toolkit/templates/general/AGENT_TEAM.md .
-   cp -r ~/repos/claude-code-toolkit/templates/general/PROJECT_CONTEXT.md .
-   cp -r ~/repos/claude-code-toolkit/templates/general/PROJECT_STATE.md .
-   cp -r ~/repos/claude-code-toolkit/templates/general/.claude/ .claude/
-   ```
-
-2. **Copy `gitignore` as `.gitignore`** in your project root. If you already have a `.gitignore`, append the entries from the template file instead of overwriting.
-
-3. **Copy style files** if present in the template (`.editorconfig` for `dotnet` / `dotnet-maui` / `java` / `python`, `rustfmt.toml` + `.prettierrc` for `rust-tauri`).
-
-4. **Fill in `PROJECT_CONTEXT.md`** with your project's tech stack, build/test commands, paths, and task source mode.
-
-5. **Replace remaining `{{PLACEHOLDERS}}`** with actual values throughout the copied files. See [`templates.md`](templates.md#placeholder-reference) for the full reference.
-
-6. *(Optional)* Configure project-level MCP servers in `.mcp.json` if needed.
+Manual setup is unsupported since v5.0. The project-enforcement hooks stay inert until `.claude/template-manifest.json` exists, and only `setup-project.sh` / `setup-project.ps1` write it. Use the setup script.
 
 ## Platform Notes
 
@@ -195,7 +174,7 @@ If you prefer to set things up by hand:
 
 - **PowerShell 5.1+** is pre-installed on Windows 10 and 11. The setup script is compatible with both Windows PowerShell 5.1 and PowerShell 7+.
 - **Path separators**: MCP server configurations (`~\.claude\.mcp.json`) typically use backslashes for Windows paths. Most other contexts (Git, Claude Code, Bash) accept forward slashes on Windows without issues.
-- **Windows-MCP** is auto-configured for `dotnet-maui` and `rust-tauri` variants via `uvx windows-mcp` (project-level). Used by the `tester` agent for desktop UI smoke tests.
+- **Windows-MCP** is auto-configured for `dotnet-maui` and `rust-tauri` variants via `uvx windows-mcp` (project-level). Used by the `cct:tester` agent for desktop UI smoke tests.
 
 ### Linux / macOS
 
@@ -225,4 +204,4 @@ See [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md) for full registration c
 
 ## Post-setup
 
-After running the script or completing manual setup, verify everything works. See [`verification.md`](verification.md) for the full checklist.
+After running the script, verify everything works. See [`verification.md`](verification.md) for the full checklist.

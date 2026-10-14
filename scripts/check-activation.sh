@@ -31,48 +31,12 @@ if [ ! -d "$PROJ" ]; then
   exit 1
 fi
 
-# --- 1. settings.json bindings ---------------------------------------------
-printf 'settings.json bindings\n'
-if [ ! -f "$SETTINGS" ]; then
-  no_ ".claude/settings.json missing — no hooks are bound. Run /cct:sync-template."
-else
-  if command -v node >/dev/null 2>&1; then
-    EVENTS=$(node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(Object.keys(j.hooks||{}).join(" "))}catch(e){console.log("PARSE-ERROR")}' "$SETTINGS" 2>/dev/null)
-    case "$EVENTS" in
-      PARSE-ERROR|"") no_ "settings.json is not valid JSON — every hook is offline" ;;
-      *)              yes_ "valid JSON; hook events: $EVENTS" ;;
-    esac
-  fi
-  for pair in \
-    "agent-budget-warn.sh:tool-call budget" \
-    "enforce-delegation.sh:delegation guard" \
-    "enforce-agent-contract.sh:agent contract stop-gate" \
-    "pre-commit-test.sh:pre-commit test gate" \
-    "no-push-main.sh:push-to-main guard" \
-    "read-size-gate.sh:Read size gate" \
-    "gate-before-merge.sh:merge gate" \
-    "retro-ledger.sh:subagent-failure ledger" \
-    "retro-brief.sh:session-start retro brief"
-  do
-    key=${pair%%:*}; label=${pair#*:}
-    if grep -q -- "$key" "$SETTINGS" 2>/dev/null; then yes_ "$label ($key)"
-    else no_ "$label ($key) NOT bound"; fi
-  done
-fi
-
-# --- 2. hook scripts on disk ------------------------------------------------
-printf '\nhook scripts present\n'
-MISSING=0
-for h in agent-budget-warn.sh enforce-delegation.sh \
-         enforce-agent-contract.sh no-push-main.sh read-size-gate.sh \
-         run-gate.sh \
-         gate-before-merge.sh pre-commit-test.sh \
-         retro-ledger.sh retro-brief.sh now-brief.sh
-do
-  if [ -s "$PROJ/hooks/$h" ]; then yes_ "hooks/$h"
-  else no_ "hooks/$h missing or empty"; MISSING=$((MISSING+1)); fi
-done
-[ "$MISSING" -gt 0 ] && warn_ "$MISSING script(s) missing — run /cct:sync-template in this project"
+# --- 1. project enforcement switch ------------------------------------------
+# v5.0: the plugin registers every hook; a project-class hook exits 0 unless
+# .claude/template-manifest.json exists (hooks/run-hook.sh).
+printf 'project enforcement (v5)\n'
+if [ -f "$PROJ/.claude/template-manifest.json" ]; then yes_ ".claude/template-manifest.json present (project-class hooks are ON)"
+else no_ ".claude/template-manifest.json missing (project-class hooks are inert; run setup-project.sh / .ps1)"; fi
 
 # --- 3. kill switches -------------------------------------------------------
 printf '\nkill switches\n'
@@ -136,6 +100,3 @@ for base in "${TMPDIR:-}" /tmp; do
   done
 done
 [ "$found" = "0" ] && printf '    none found — the hooks have never executed on this machine\n'
-
-printf '\nIf anything above says NO: run /cct:sync-template in this project, which\n'
-printf 'installs both the hooks/ scripts and the .claude/settings.json bindings.\n'

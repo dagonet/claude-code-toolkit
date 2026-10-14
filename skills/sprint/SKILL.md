@@ -37,7 +37,7 @@ You are the Product Owner for this sprint. Execute the sprint backlog using para
 For each workstream:
 
 1. The coder subagent implements the feature/fix in a worktree
-2. It runs the gate (`bash hooks/run-gate.sh`, or the configured Build/Test/Format/Lint commands if `Gate:` is unset) — must pass
+2. It runs the gate (`cct-gate`, or the configured Build/Test/Format/Lint commands if `Gate:` is unset) — must pass
 3. It opens a PR when green
 4. A code-reviewer subagent reviews the PR
 5. The coder fixes review findings, re-runs the gate, and reports

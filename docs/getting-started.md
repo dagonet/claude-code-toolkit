@@ -65,7 +65,7 @@ Since v4.0.0 this server lives in `server/` in **this** repo — it is not part 
 |---|---|---|---|
 | **template-sync-tools** | 10 (manifest load/migrate, status, diff, apply, finalize, verify, placeholders, cross-variant) | `bash server/install.sh` (Linux/macOS) or `server\install.ps1` (Windows), run from a `claude-code-toolkit` checkout | Python 3.11+, Git |
 
-The install script creates `server/.venv` and prints the console-script exe path. `setup-project.{sh,ps1}` registers that path under `template-sync-tools` in `~/.claude.json` automatically for new projects; to register or re-register by hand, point `template-sync-tools` at the printed path yourself. See [`mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md) → *Template Sync Tools* for the full install / re-register / restart migration, including moving off an older `mcp-dev-servers`-hosted registration.
+The install script creates `server/.venv` and prints the console-script exe path. `setup-project.{sh,ps1}` prints a `template-sync-tools` snippet for `~/.claude.json` and does not write it; add the entry to `~/.claude.json` yourself, pointing it at the printed path. See [`mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md) → *Template Sync Tools* for the full install / re-register / restart migration, including moving off an older `mcp-dev-servers`-hosted registration.
 
 #### Official / third-party user-level servers
 
@@ -98,7 +98,7 @@ See [MCP Server Installation Guide](../mcp-servers/HOWTO.md) for detailed setup 
 
 ## Superpowers Skills (Plugin Dependency)
 
-The repo references ~20 `superpowers:*` skills (brainstorming, TDD, debugging, etc.). These are a **separate Claude Code plugin** installed at user-level. New users must either install the superpowers plugin or remove `superpowers:` skill references from agents and CLAUDE.md files.
+The repo references 7 `superpowers:*` skills (brainstorming, TDD, debugging, etc.). These are a **separate Claude Code plugin** installed at user-level. New users must either install the superpowers plugin or remove `superpowers:` skill references from agents and CLAUDE.md files.
 
 ## Adoption Tiers
 

@@ -221,7 +221,7 @@ Merging a hook into the toolkit changes nothing on any machine until it arrives 
 bash scripts/check-activation.sh /path/to/project
 ```
 
-It reports the v4.x layout — the project `settings.json` bindings and which hook scripts are in the project's `hooks/` — so against a v5-synced project those rows read `NOT bound` / `missing` by design (the plugin registers and carries them; a v5 rewrite of the script is open). The rest still applies: whether a kill switch (`.claude/liveness-off`, `.claude/delegation-off`) is disabling enforcement, the contents of `<common git dir>/cct/liveness.log`, and the ledger directories under `TMPDIR` that prove whether the hooks have ever actually executed.
+It reports whether `.claude/template-manifest.json` is present (the switch that turns the plugin's project-class hooks on), whether a kill switch (`.claude/liveness-off`, `.claude/delegation-off`) is disabling enforcement, the contents of `<common git dir>/cct/liveness.log`, and the ledger directories under `TMPDIR` that prove whether the hooks have ever actually executed. It does not check that the plugin itself is installed; `scripts/verify-user-level-drift.sh` does.
 
 Two things that look like failure but are not:
 

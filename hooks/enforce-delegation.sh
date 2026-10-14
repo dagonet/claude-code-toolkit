@@ -24,7 +24,7 @@
 # none.
 #
 # Main-thread Bash: build/test runners (npm test, dotnet build, pytest,
-# cargo test, playwright, mvn, gradle, go test) and hooks/run-gate.sh are
+# cargo test, playwright, mvn, gradle, go test) and hooks/run-gate.sh or cct-gate are
 # denied — the coder runs the gate, the tester verifies, ops handles env
 # work. The PO verifies via the <common git dir>/gate/last-pass.<sha>.json
 # artifact (v4.0.1, item 17), never by
@@ -80,7 +80,7 @@ Usage: registered as a Claude Code PreToolUse hook (settings.json).
   CLAUDE.local.md, AGENT_TEAM.md, paths outside the repo, plus any
   prefixes named by PROJECT_CONTEXT.md's **PO write surface** key).
   Matcher "Bash": denies main-thread build/test-runner commands and
-  hooks/run-gate.sh.
+  hooks/run-gate.sh or cct-gate.
 Subagent calls (stdin contains agent_id) always pass. Disable by creating
 .claude/delegation-off at the repo root.
 EOF
@@ -199,7 +199,10 @@ process.stdin.on("end", () => {
         // pretty-printed JSON line whose first token merely ENDS in the path
         // (a quote, a brace, a colon before it) still matched, which is the
         // hole this anchor was closing.
-        /^(bash\s+|sh\s+)?[\w./\\-]*hooks\/run-gate\.sh\b/.test(s)
+        /^(bash\s+|sh\s+)?[\w./\\-]*hooks\/run-gate\.sh\b/.test(s) ||
+        // v5.0: the consumer gate command (bin/cct-gate on PATH), with or
+        // without a path prefix, at command position only.
+        /^(bash\s+|sh\s+)?[\w./\\-]*cct-gate(\s|$)/.test(s)
       );
     };
 

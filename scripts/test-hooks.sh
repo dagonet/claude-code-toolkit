@@ -5214,6 +5214,19 @@ check_delegation "git add list, one line (regression)"  pass 'git add -- hooks/l
 check_delegation "git add list, continued (the fix)"    pass "$(printf 'git add -- hooks/lib/git-cmd.sh \\\n  hooks/gate-before-merge.sh \\\n  hooks/run-gate.sh')"
 check_delegation "bash \\<LF>hooks/run-gate.sh still denied" deny "$(printf 'bash \\\nhooks/run-gate.sh')"
 
+# v5.0 (fix round 1): `cct-gate` is the consumer gate command, so the PO is
+# denied it like hooks/run-gate.sh; a subagent runs it; a non-command-position
+# mention passes.
+check_delegation "PO: cct-gate denied"                   deny 'cct-gate'
+check_delegation "PO: bin/cct-gate (relative) denied"    deny 'bin/cct-gate'
+check_delegation "PO: absolute-path cct-gate denied"     deny '/opt/cct/bin/cct-gate'
+check_delegation "PO: echo cct-gate (not command) passes" pass 'echo cct-gate'
+check_delegation "PO: git add bin/cct-gate passes"       pass 'git add bin/cct-gate'
+subgate=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cct-gate"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
+  | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+expect "subagent cct-gate passes" "0" \
+  "$(printf '%s' "$subgate" | grep -c '"deny"')"
+
 # subagent calls always pass, exemption or not
 subout=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)

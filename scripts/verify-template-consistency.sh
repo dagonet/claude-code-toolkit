@@ -4936,6 +4936,21 @@ done
 [ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen)" || ko "76: unknown agents:$c76_bad"
 
 # ---------------------------------------------------------------------------
+# Check 77 (v5.0 fix round 1): every `claude-code-toolkit#vX.Y.Z` pin literal in the user-facing docs
+# equals v + VERSION line 1 (a stale pin installs the previous release). docs/plans and CHANGELOG are
+# history and are not scanned. A mutated pin must be detected (control), else the scan is vacuous.
+# ---------------------------------------------------------------------------
+c77_want="v$(head -1 VERSION | tr -d '\r')"
+c77_pins=$(grep -rhoE 'claude-code-toolkit#v[0-9][0-9A-Za-z.+-]*' README.md docs/*.md user-level-reference/README.md scripts/install-user-level-linux.sh 2>/dev/null)
+c77_n=$(printf '%s\n' "$c77_pins" | grep -c .)
+c77_bad=$(printf '%s\n' "$c77_pins" | grep . | sort -u | grep -vxF "claude-code-toolkit#$c77_want")
+c77_ctl=$(printf '%s\n' "claude-code-toolkit#v0.0.0" | grep -vxF "claude-code-toolkit#$c77_want")
+if [ "$c77_n" -lt 1 ]; then ko "77: no claude-code-toolkit#v pin literal found in README.md/docs (the check would pass vacuously)"
+elif [ -z "$c77_ctl" ]; then ko "77 control: a mutated pin was NOT detected -- the comparison is vacuous"
+elif [ -n "$c77_bad" ]; then ko "77: pin literal(s) not equal to $c77_want: $(printf '%s' "$c77_bad" | tr '\n' ' ')"
+else ok "77: all $c77_n pin literal(s) in README.md/docs equal $c77_want (= VERSION); control fires"; fi
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$skip_count" -gt 0 ]; then
   echo "$skip_count check(s) skipped"

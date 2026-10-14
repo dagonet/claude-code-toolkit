@@ -1,5 +1,7 @@
 # Design rationale — why the template files say what they say
 
+> Describes the pre-v5 layout (project-level agents and hook registrations); since v5.0 the `cct` plugin carries them.
+
 This is the reasoning record for the toolkit's template files (the toolkit itself is a template repository that bootstraps a Claude Code configuration into a project; see the README). The operative files (`CLAUDE.md`, `AGENT_TEAM.md`) carry
 **facts and instructions only**. Every "why" lives here, keyed by file and
 section, so an instruction can be short and its reasoning can still be found.
