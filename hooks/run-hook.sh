@@ -21,7 +21,9 @@ proj="${CLAUDE_PROJECT_DIR:-.}"
 if [ "$cls" = project ] && [ ! -f "$proj/.claude/template-manifest.json" ]; then exit 0; fi
 # step-aside (spec §3.2): the same literal substring tests as v4's user-level registrations.
 s=""; [ -r "$proj/.claude/settings.json" ] && IFS= read -r -d '' s < "$proj/.claude/settings.json"
-case $s in *'}/hooks/'"$name"'.sh\"'*) exit 0 ;; esac
+# Like v4's wrappers, step aside only when the project's own copy is there to run: a registration
+# whose script is missing would otherwise leave NO hook running.
+case $s in *'}/hooks/'"$name"'.sh\"'*) [ -f "$proj/hooks/$name.sh" ] && exit 0 ;; esac
 u=""; [ -r "$HOME/.claude/settings.json" ] && IFS= read -r -d '' u < "$HOME/.claude/settings.json"
 case $u in *'/hooks/'"$name"'.sh"'*) exit 0 ;; esac
 f="$here/$name.sh"

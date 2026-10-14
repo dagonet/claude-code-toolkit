@@ -76,6 +76,7 @@
     "ralph-loop@claude-plugins-official": false,
     "claude-code-setup@claude-plugins-official": false,
     "skill-creator@claude-plugins-official": true,
+    "cct@dagonet": true,
     "chrome-devtools-mcp@claude-plugins-official": false
   },
   "alwaysThinkingEnabled": true,

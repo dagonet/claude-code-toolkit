@@ -7,17 +7,23 @@
 # Every file it overwrites is backed up first as <file>.bak-<UTC>. Re-running it is safe.
 #
 # The order is safety-critical: the plugin is installed and checked BEFORE anything is removed,
-# so a failed install (network, a bad tag) leaves the old user-level copies in place and the
-# machine never has no hooks, agents or skills.
+# so a failed install (network, a bad tag) leaves the old user-level copies in place and a NEW
+# session never has no hooks, agents or skills. Sessions already running lose the toolkit hooks
+# when step 3 rewrites settings.json (settings hot-reload, plugins load at session start): restart
+# them.
 #
 #   1. CLAUDE.md      the reference, with its Windows "Platform" section replaced by
 #                     scripts/linux/CLAUDE-platform-linux.md and G:/git/ paths written as ~/git/
 #   2. plugins        cct@dagonet (marketplace: $CCT_MARKETPLACE, default this release's tag on
 #                     GitHub), then superpowers, skill-creator, frontend-design from
-#                     claude-plugins-official. Stops non-zero unless `claude plugin list` shows
-#                     cct@dagonet.
-#   3. settings.json  the reference merged over the existing file, minus the Windows-only entries
-#                     (CLAUDE_CODE_SHELL, CLAUDE_CODE_USE_POWERSHELL_TOOL, windows-mcp); hook entries
+#                     claude-plugins-official. Runs `plugin update` after `plugin install` (install
+#                     does not upgrade). Stops non-zero unless `claude plugin list --json` shows
+#                     cct@dagonet enabled at this checkout's VERSION.
+#   3. settings.json  the existing file with the reference merged in, minus the Windows-only entries
+#                     (CLAUDE_CODE_SHELL, CLAUDE_CODE_USE_POWERSHELL_TOOL, windows-mcp).
+#                     permissions.allow/deny/ask: the union of both. Every other key keeps the user's
+#                     value; the reference only adds missing keys. The toolkit owns outputStyle,
+#                     enabledPlugins["cct@dagonet"], autoMode.environment and the hooks: hook entries
 #                     naming /.claude/hooks/<toolkit hook>.sh (v4.x registrations) are dropped,
 #                     every other hook is kept, the reference's hooks are added once
 #   4. leftovers      every path in scripts/lib/v4-user-leftovers.txt that exists is moved to
@@ -53,35 +59,55 @@ linux_render_claude_md "$REF/CLAUDE.md" "$PLAT" > "$L/CLAUDE.md.new"
 chk=$(linux_check_rendered "$L/CLAUDE.md.new") || die "$chk"
 mv "$L/CLAUDE.md.new" "$L/CLAUDE.md"
 
+# `claude plugin install` switches a plugin on in settings.json even when the user had it off:
+# remember the user's enabledPlugins now and put them back in step 3
+pre_ep='{}'
+[ -s "$L/settings.json" ] && pre_ep=$(jq -c '.enabledPlugins // {}' "$L/settings.json")
+
 echo "2. plugins (cct@dagonet from $CCT_SRC; $PLUGINS)"
 claude plugin marketplace add "$CCT_SRC" || die "cannot add the cct marketplace $CCT_SRC: nothing was removed"
 claude plugin install cct@dagonet || die "cannot install cct@dagonet: nothing was removed"
+# install does not upgrade an installed plugin; update is rc 0 when it is already the latest
+claude plugin update cct@dagonet || die "cannot update cct@dagonet: nothing was removed"
 claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official
 for p in $PLUGINS; do claude plugin install "$p@$MARKET"; done
-claude plugin list 2>/dev/null | grep -q 'cct@dagonet' \
-  || die "claude plugin list does not show cct@dagonet: nothing was removed, the v4 user-level copies stay"
+want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')
+claude plugin list --json 2>/dev/null | jq -e --arg v "$want_ver" 'any(.[]; .id == "cct@dagonet" and .enabled == true and .version == $v)' >/dev/null \
+  || die "claude plugin list does not show cct@dagonet enabled at $want_ver: nothing was removed, the v4 user-level copies stay"
 
 echo "3. settings.json (reference minus Windows-only entries; v4 toolkit hook entries dropped)"
 [ -s "$L/settings.json" ] || echo '{}' > "$L/settings.json"
 backup "$L/settings.json"
 plugins_json=$(for p in $PLUGINS; do printf '"%s@%s":true\n' "$p" "$MARKET"; done | paste -sd, -)
 # the toolkit hook names: the leftovers' hooks/<name>.sh lines outside lib/
-own_re="/\\.claude/hooks/($(sed -n 's#^hooks/\([A-Za-z0-9_-]*\)\.sh$#\1#p' "$LEFTOVERS" | paste -sd'|' -))\\.sh([^A-Za-z0-9_.-]|\$)"
-jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plugins_json}" --arg own "$own_re" '
+own_re="(/\\.claude/hooks|@HOOKS@)/($(sed -n 's#^hooks/\([A-Za-z0-9_-]*\)\.sh$#\1#p' "$LEFTOVERS" | paste -sd'|' -))\\.sh([^A-Za-z0-9_.-]|\$)"
+# Merge rules (the user's file is theirs): permissions.allow/deny/ask = union of live and reference;
+# every other key keeps the LIVE value and the reference only adds missing keys; the toolkit owns
+# outputStyle, enabledPlugins["cct@dagonet"], autoMode.environment and the hooks (its entries replaced,
+# every other entry kept).
+jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plugins_json}" --argjson pre "$pre_ep" --arg own "$own_re" '
   def disp: ([(.command // "") | tostring] + ((.args // []) | map(tostring)) | join(" "));
+  def union($a; $b): reduce (($a // []) + ($b // []))[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
   (.[1].hooks // {}) as $rh
-  | (.[0].hooks // {}) as $lh
+  | .[0] as $l
+  | ($l.hooks // {}) as $lh
   | ($lh | with_entries(.key as $ev | [($rh[$ev] // [])[].hooks[] | disp] as $rd
       | .value |= (map(.hooks |= map(disp as $d | select((($d | test($own)) or any($rd[]; . == $d)) | not)))
                    | map(select(.hooks | length > 0))))) as $kept
   | (reduce ($rh | keys_unsorted[]) as $ev ($kept; .[$ev] = $rh[$ev] + (.[$ev] // []))
      | with_entries(select(.value | length > 0))) as $hooks
-  | .[0] * (.[1]
+  | (.[1]
     | del(.hooks)
     | del(.env.CLAUDE_CODE_SHELL, .env.CLAUDE_CODE_USE_POWERSHELL_TOOL)
     | .permissions.allow |= map(select(test("windows-mcp") | not))
     | .autoMode.environment |= map(gsub($pf; $pt))
-    | .enabledPlugins = $ep)
+    | .enabledPlugins = $ep) as $r
+  | ($r * $l)
+  | reduce ("allow", "deny", "ask") as $k (.; .permissions[$k] = union($l.permissions[$k]; $r.permissions[$k]))
+  | if $r.outputStyle then .outputStyle = $r.outputStyle else . end
+  | .enabledPlugins += $pre
+  | .enabledPlugins["cct@dagonet"] = true
+  | .autoMode.environment = $r.autoMode.environment
   | .hooks = $hooks' "$L/settings.json" "$REF/settings.json" > "$L/settings.json.new"
 mv "$L/settings.json.new" "$L/settings.json"
 
@@ -94,4 +120,6 @@ while IFS= read -r rel; do
 done < "$LEFTOVERS"
 rmdir "$L/hooks/lib" "$L/hooks" 2>/dev/null || true
 
-echo "done. Check: bash $ROOT/scripts/verify-user-level-drift.sh --worktree (0 drift = rendered CLAUDE.md, cct@dagonet at VERSION, no leftover)"
+echo "done. Restart every running Claude session (they lost the toolkit hooks; plugins load at session start)."
+echo "In each checkout where Jev is on, run /cct:jev off, then /cct:jev on."
+echo "Check: bash $ROOT/scripts/verify-user-level-drift.sh --worktree (0 drift = rendered CLAUDE.md, cct@dagonet at VERSION, no leftover)"

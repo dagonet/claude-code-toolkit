@@ -177,6 +177,8 @@ fi
 # (a) CLAUDE.md
 check_file "user-level-reference/CLAUDE.md" "$LIVE_ROOT/CLAUDE.md" "$claude_expected"
 
+LIVE_SETTINGS="${DRIFT_LIVE_SETTINGS:-$LIVE_ROOT/settings.json}"
+
 LEFT_SRC=$(ref_copy "scripts/lib/v4-user-leftovers.txt")
 if [ -n "$LEFT_SRC" ]; then
   # (b) cct@dagonet at REF's VERSION, read from installed_plugins.json. Observed shape (Claude Code
@@ -204,6 +206,29 @@ try {
       echo "NO-PARSER"
     fi
   }
+  # Prints "true" when settings.json has enabledPlugins["cct@dagonet"] == true; nothing otherwise
+  # (a missing or unreadable file, false, absent). Same parser chain as plugin_records.
+  plugin_enabled() { # <settings.json>
+    [ -f "$1" ] || return 0
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' 2>/dev/null; then
+      python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+    if d.get("enabledPlugins", {}).get("cct@dagonet") is True:
+        print("true")
+except Exception:
+    pass' "$1"
+    elif command -v node >/dev/null 2>&1; then
+      node -e '
+try {
+  var d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^﻿/, ""));
+  if ((d.enabledPlugins || {})["cct@dagonet"] === true) console.log("true");
+} catch (e) {}' "$1"
+    elif command -v jq >/dev/null 2>&1; then
+      jq -r 'select(.enabledPlugins["cct@dagonet"] == true) | "true"' "$1" 2>/dev/null
+    fi
+  }
   ver_src=$(ref_copy "VERSION")
   want_ver=$([ -n "$ver_src" ] && head -1 "$ver_src" | tr -d '\r')
   ip="$LIVE_ROOT/plugins/installed_plugins.json"
@@ -222,7 +247,13 @@ try {
       drift_list="$drift_list
   CANNOT READ $ip: no python3, node or jq"
     elif printf '%s\n' "$recs" | grep -qxF "user $want_ver"; then
-      echo "PLUGIN: cct@dagonet $want_ver (user scope)"
+      if [ "$(plugin_enabled "$LIVE_SETTINGS")" = true ]; then
+        echo "PLUGIN: cct@dagonet $want_ver (user scope, enabled)"
+      else
+        drift=$((drift + 1))
+        drift_list="$drift_list
+  PLUGIN DISABLED: cct@dagonet is installed but enabledPlugins[\"cct@dagonet\"] is not true in $LIVE_SETTINGS (no toolkit agent, skill or hook loads)"
+      fi
     else
       drift=$((drift + 1))
       drift_list="$drift_list
@@ -246,6 +277,30 @@ try {
     drift=$((drift + 1))
     drift_list="$drift_list
   LEFTOVER LIST IS EMPTY at ${REF:-the working tree}: cannot check for v4.x copies"
+  fi
+
+  # (d) no stale hook registration in the live HOME: REF's own hooks/verify-hooks.sh --report reads
+  # ~/.claude/settings.json (a v4 registration whose script the installer moved away is MISSING there
+  # and silently offline, e.g. the model-floor entry). Run it from the same reference as everything else;
+  # it sources its lib/json.sh relative to itself, so the two files go to a scratch dir together.
+  if [ "$MODE" = "worktree" ]; then
+    vh_dir="$PWD/hooks"
+  else
+    vh_dir="$TMPD/vh/hooks"; mkdir -p "$TMPD/vh"
+    git archive "$REF" hooks/verify-hooks.sh hooks/lib/json.sh 2>/dev/null | tar -x -C "$TMPD/vh" 2>/dev/null
+  fi
+  if [ ! -f "$vh_dir/verify-hooks.sh" ]; then
+    drift=$((drift + 1))
+    drift_list="$drift_list
+  CANNOT RUN hooks/verify-hooks.sh --report: it is not in ${REF:-the working tree}"
+  else
+    vh_out=$(env -u CLAUDE_PROJECT_DIR -u CLAUDE_PLUGIN_ROOT HOME="$HOME" bash "$vh_dir/verify-hooks.sh" --report 2>&1)
+    vh_rc=$?
+    if [ "$vh_rc" -ne 0 ]; then
+      drift=$((drift + 1))
+      drift_list="$drift_list
+  STALE HOOK REGISTRATION (verify-hooks.sh --report exit $vh_rc): $(printf '%s' "$vh_out" | tr '\n' ';')"
+    fi
   fi
 else
   # Pre-v5.0 ref: the file SET comes from the reference, not from the working tree.
@@ -295,8 +350,6 @@ fi
 # DRIFT_LIVE_SETTINGS overrides the live path. It exists so the control can be
 # run against a DOCTORED COPY — never doctor the live file to test this.
 # ---------------------------------------------------------------------------
-LIVE_SETTINGS="${DRIFT_LIVE_SETTINGS:-$LIVE_ROOT/settings.json}"
-
 automode_entries() { # <settings.json> -> permissions.autoMode.environment, one entry per line
   [ -f "$1" ] || return 0
   awk '/"environment"[[:space:]]*:[[:space:]]*\[/ { inarr = 1; next }

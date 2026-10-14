@@ -11121,7 +11121,7 @@ if [ "$(uname -s)" = "Linux" ]; then
   expect "DL1 clean: rendered CLAUDE.md, no drift"    0 "$(dl_claude_drift "$DL_OUT")"
   expect "DL1 clean: rewritten environment, no drift" 0 "$(dl_env_drift "$DL_OUT")"
   expect "DL1 clean: says which form it compared"     1 "$(printf '%s\n' "$DL_OUT" | grep -c '^LINUX RENDERING: compared')"
-  expect "DL1 clean: names the plugin at VERSION"     1 "$(printf '%s\n' "$DL_OUT" | grep -cxF "PLUGIN: cct@dagonet $DL_VER (user scope)")"
+  expect "DL1 clean: names the plugin at VERSION"     1 "$(printf '%s\n' "$DL_OUT" | grep -cxF "PLUGIN: cct@dagonet $DL_VER (user scope, enabled)")"
   expect "DL1 rendered headings = reference's, Platform swapped" \
     "$(grep '^## ' "$DL_REF/CLAUDE.md" | sed 's/^## Platform: Windows + Git Bash$/## Platform: Linux + bash/')" \
     "$(grep '^## ' "$DL_H/.claude/CLAUDE.md")"
@@ -11161,6 +11161,20 @@ if [ "$(uname -s)" = "Linux" ]; then
   expect "DL6 unrewritten G:/git: environment drift"  1 "$(dl_env_drift "$(dl_run)")"
   sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
   expect "DL6 rewritten again: exit 0"                0 "$(dl_rc)"
+  # DL11 plugin installed but DISABLED in settings.json -> drift; enabled again -> clean
+  sed 's#G:/git#~/git#g; s#"cct@dagonet": true#"cct@dagonet": false#' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
+  DL_OUT=$(dl_run)
+  expect "DL11 cct@dagonet disabled: exit 1"          1 "$(dl_rc)"
+  expect "DL11 ... names the disabled plugin"         1 "$(printf '%s\n' "$DL_OUT" | grep -c '^  PLUGIN DISABLED: cct@dagonet')"
+  sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
+  expect "DL11 enabled again: exit 0"                 0 "$(dl_rc)"
+  # DL12 a v4 hook registration whose script is gone (the installer moved it away) -> drift via verify-hooks.sh --report
+  sed 's#G:/git#~/git#g; s#^  "hooks": {$#  "hooks": {\n    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/bin/bash", "args": ["-c", ". \\"$0\\"", "'"$DL_H"'/.claude/hooks/model-floor.sh"]}]}],#' \
+    "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
+  expect "DL12 stale v4 hook registration: exit 1"    1 "$(dl_rc)"
+  expect "DL12 ... names it"                          1 "$(dl_run | grep -c '^  STALE HOOK REGISTRATION .*model-floor.sh')"
+  sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
+  expect "DL12 registration removed: exit 0"          0 "$(dl_rc)"
   # DL7 linux_check_rendered, the installer's two post-checks (one function, shared)
   dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
   printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
@@ -11176,6 +11190,7 @@ if [ "$(uname -s)" = "Linux" ]; then
   cp "$ROOT/scripts/verify-user-level-drift.sh" "$DLX/scripts/"
   cp "$ROOT/scripts/linux/linux-render.sh" "$ROOT/scripts/linux/CLAUDE-platform-linux.md" "$DLX/scripts/linux/"
   cp "$ROOT/scripts/lib/v4-user-leftovers.txt" "$DLX/scripts/lib/"; cp "$ROOT/VERSION" "$DLX/"
+  mkdir -p "$DLX/hooks/lib"; cp "$ROOT/hooks/verify-hooks.sh" "$DLX/hooks/"; cp "$ROOT/hooks/lib/json.sh" "$DLX/hooks/lib/"
   cp "$DL_REF/CLAUDE.md" "$DL_REF/settings.json" "$DLX/user-level-reference/"
   dlx_run() { HOME="$DL_H" bash "$DLX/scripts/verify-user-level-drift.sh" --worktree 2>&1; }
   expect "DL8 the script copy reads the clean HOME as 0 drift" 1 "$(dlx_run | grep -c ' in sync, 0 drift$')"
@@ -11207,7 +11222,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     skip_host "DL10 older tag falls back to the raw comparison" "tag v4.6.0 absent or already carries linux-render.sh" 2
   fi
 else
-  skip_host "DL1-10 drift script (Linux rendering, plugin, leftovers)" "not a Linux host" 34
+  skip_host "DL1-12 drift script (Linux rendering, plugin, leftovers, stale registration)" "not a Linux host" 40
 fi
 # ---- end v5.0 drift
 # ---- v5.0: install-user-level-linux.sh never removes anything before cct@dagonet is installed
@@ -11220,6 +11235,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   printf '%s\n' '#!/bin/sh' \
     'case "$IU_MODE:$1 $2 $3" in' \
     '  fail:"plugin marketplace add /nonexistent") echo "Path does not exist: /nonexistent" >&2; exit 1 ;;' \
+    '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  *:"plugin list "*) exit 0 ;;' \
     'esac' \
     'exit 0' > "$IU_BIN/claude"
@@ -11246,8 +11262,44 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
     expect "IU ($iu_m): settings.json is byte-unchanged" 0 "$(cmp -s "$iu_h/settings.before" "$iu_h/.claude/settings.json"; echo $?)"
     expect "IU ($iu_m): it says nothing was removed" 1 "$(grep -c 'nothing was removed' "$iu_h/out")"
   done
+  # IU success path (fix round 1, I3/I5): a v4-shaped settings.json with the user's own entries; the merge
+  # keeps them (permissions = union, live wins elsewhere), drops only the toolkit's v4 hook registrations,
+  # and a second run changes nothing.
+  iu_h=$(iu_home ok)
+  printf '%s\n' '{"env":{"PLAYWRIGHT_HOST_PLATFORM_OVERRIDE":"ubuntu24.04-x64","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"500000"},' \
+    ' "permissions":{"allow":["Bash(custom:*)","Read"],"deny":["Bash(rm -rf*)"],"ask":["Bash(foo*)"],"defaultMode":"default"},' \
+    ' "outputStyle":"default","enabledPlugins":{"foreign@x":true,"superpowers@claude-plugins-official":false},' \
+    ' "hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/bash","args":["-c",". \"$0\"","'"$iu_h"'/.claude/hooks/no-push-main.sh"]},{"type":"command","command":"/opt/foreign.sh"}]}],' \
+    '  "UserPromptSubmit":[{"hooks":[{"type":"command","command":"LC_ALL=C date '"'"'+Current local time: %H:%M (%Y-%m-%d %a)'"'"'"}]}]}}' > "$iu_h/.claude/settings.json"
+  iu_run() { ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE=ok IU_VER="$(head -1 "$ROOT/VERSION")" CCT_MARKETPLACE=/ok \
+      bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); }
+  iu_q() { jq -r "$1" "$iu_h/.claude/settings.json" 2>&1; }
+  iu_run; iu_rc=$?
+  expect "IU (ok): the installer exits 0" 0 "$iu_rc"
+  expect "IU (ok): the toolkit's v4 hook registration is gone" 0 "$(iu_q '[.. | strings | select(test("hooks/no-push-main.sh"))] | length')"
+  expect "IU (ok): the foreign user hook is kept" 1 "$(iu_q '[.. | strings | select(. == "/opt/foreign.sh")] | length')"
+  expect "IU (ok): the date hook appears once" 1 "$(iu_q '[.hooks.UserPromptSubmit[].hooks[].command | select(test("Current local time"))] | length')"
+  expect "IU (ok): permissions.allow = user's entries + reference's, no duplicate" "true:1" \
+    "$(iu_q '(.permissions.allow | index("Bash(custom:*)") != null and index("Bash(bash hooks/run-gate.sh*)") != null) as $a | "\($a):\([.permissions.allow[] | select(. == "Read")] | length)"')"
+  expect "IU (ok): permissions.deny = user's + reference's" true \
+    "$(iu_q '.permissions.deny | (index("Bash(rm -rf*)") != null and index("mcp__git-tools__git_push") != null)')"
+  expect "IU (ok): permissions.ask = user's + reference's" true \
+    "$(iu_q '.permissions.ask | (index("Bash(foo*)") != null and index("Bash(npm publish*)") != null)')"
+  expect "IU (ok): the user's defaultMode wins" default "$(iu_q '.permissions.defaultMode')"
+  expect "IU (ok): the user's extra env key survives" ubuntu24.04-x64 "$(iu_q '.env.PLAYWRIGHT_HOST_PLATFORM_OVERRIDE')"
+  expect "IU (ok): the user's changed env value wins" 500000 "$(iu_q '.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW')"
+  expect "IU (ok): a missing env key is added, Windows-only ones are not" "1:null" \
+    "$(iu_q '"\(.env.ENABLE_PROMPT_CACHING_1H):\(.env.CLAUDE_CODE_SHELL)"')"
+  expect "IU (ok): foreign plugin kept, user-disabled official plugin stays off, cct on, missing official added" "true:false:true:true" \
+    "$(iu_q '.enabledPlugins | "\(.["foreign@x"]):\(.["superpowers@claude-plugins-official"]):\(.["cct@dagonet"]):\(.["skill-creator@claude-plugins-official"])"')"
+  expect "IU (ok): outputStyle is the toolkit's" cct:pm-report "$(iu_q '.outputStyle')"
+  expect "IU (ok): autoMode.environment is the reference's, Linux paths" "0:1" \
+    "$(iu_q '.autoMode.environment | "\([.[] | select(test("G:/git"))] | length):\([.[] | select(test("~/git"))] | length)"')"
+  cp "$iu_h/.claude/settings.json" "$iu_h/settings.run1"
+  iu_run
+  expect "IU (ok): a re-run leaves settings.json identical" 0 "$(cmp -s "$iu_h/settings.run1" "$iu_h/.claude/settings.json"; echo $?)"
 else
-  skip_host "IU installer stops before any removal" "not a Linux host, or no jq" 8
+  skip_host "IU installer stops before any removal; merge keeps the user's entries" "not a Linux host, or no jq" 23
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
@@ -11288,8 +11340,16 @@ printf '{}' > "$V5P/.claude/template-manifest.json"
 expect "v5 run-hook: project-only hook, manifest -> runs, status passes" "ran-pre-commit-test rc=7" "$(v5run pre-commit-test | tr '\n' ' ' | sed 's/ $//')"
 # step-aside via the project settings: the literal v4.6.1 template file (Review Focus 3)
 cp "$ROOT/scripts/fixtures/v461-template-settings.json" "$V5P/.claude/settings.json"
+# G1: the registration alone is not enough; the project's own hooks/<name>.sh must exist (v4's wrappers tested it too)
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMPROOT/v5-stub.sh"
+expect "v5 run-hook: v4.6.1 registration but hooks/pre-commit-test.sh missing -> plugin hook runs" "ran-pre-commit-test rc=7" "$(v5run pre-commit-test | tr '\n' ' ' | sed 's/ $//')"
+printf '#!/usr/bin/env bash\necho ran-$(basename "$0" .sh); exit 0\n' > "$V5H/model-floor.sh"
+expect "v5 run-hook: v4.6.1 registration but hooks/model-floor.sh missing -> plugin hook runs" "ran-model-floor rc=0" "$(v5run model-floor | tr '\n' ' ' | sed 's/ $//')"
+mkdir -p "$V5P/hooks"; cp "$TMPROOT/v5-stub.sh" "$V5P/hooks/pre-commit-test.sh"; cp "$TMPROOT/v5-stub.sh" "$V5P/hooks/no-push-main.sh"; cp "$TMPROOT/v5-stub.sh" "$V5P/hooks/model-floor.sh"
 expect "v5 run-hook: v4.6.1 project registers pre-commit-test -> plugin steps aside" "rc=0" "$(v5run pre-commit-test)"
 expect "v5 run-hook: v4.6.1 project registers no-push-main -> plugin steps aside" "rc=0" "$(v5run no-push-main)"
+expect "v5 run-hook: v4.6.1 project registers model-floor, script present -> plugin steps aside" "rc=0" "$(v5run model-floor)"
+rm -rf "$V5P/hooks" "$V5H/model-floor.sh"
 rm "$V5P/.claude/settings.json"
 # step-aside via the user settings: the v4.6.1 user-level form, rendered (args path)
 printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/bash","args":["-c",". \\"$0\\"","%s/.claude/hooks/no-push-main.sh"]}]}]}}\n' "$V5HOME" > "$V5HOME/.claude/settings.json"

@@ -4,6 +4,7 @@ agents/code-reviewer.md
 agents/coder.md
 agents/ops.md
 agents/tester.md
+skills/backlog-board
 skills/challenge
 skills/commit
 skills/contribute-upstream
