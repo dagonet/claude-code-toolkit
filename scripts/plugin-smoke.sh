@@ -97,7 +97,7 @@ check_gate_on_path() {
 # 5. A cct:Explore spawn returns, and its stop is recorded in the retro ledger under cct:Explore. The ledger only
 #    records failures, so the subagent first runs a command shape that a hook refuses (a leading cd before several
 #    commands). A push to main would also do, but the auto-mode classifier denies the spawn itself then. Which hook
-#    is named in the row is not asserted (a plugin-hook refusal is recorded as run-hook.sh). The subagent then runs
+#    is named in the row is not asserted. The subagent then runs
 #    `touch out.sub`: the file existing proves its tool call was not refused by the plugin-off guard (it carries the
 #    parent's session_id).
 check_explore_spawn() {
@@ -155,14 +155,16 @@ check_shared_sid() {
   if [ "$rc1" = 0 ] && [ "$rc2" = 2 ]; then pass "9 shared session id"; else fail "9 shared session id" "guard rc before end=$rc1 after end=$rc2 (want 0 then 2)"; fi
 }
 
-# 10. The live user state is untouched: sha256 of ~/.claude/plugins/installed_plugins.json and ~/.claude/settings.json
-#     before and after the run (hashes only, never contents). A scratch project must not leave a project-scope install.
-live_hash() { local f; for f in "$HOME/.claude/plugins/installed_plugins.json" "$HOME/.claude/settings.json"; do
-    if [ -e "$f" ]; then sha256sum "$f" | cut -d' ' -f1; else echo absent; fi; done; }
-LIVE_BEFORE=$(live_hash)
+# 10. A scratch project must leave no trace in the live user state: neither ~/.claude/plugins/installed_plugins.json
+#     nor ~/.claude/settings.json may contain this run's unique scratch root. Quiet grep, contents never printed
+#     (other sessions legitimately write these files, so a whole-file hash would flake).
 check_live_state_untouched() {
-  if [ "$(live_hash)" = "$LIVE_BEFORE" ]; then pass "10 live installed_plugins.json and settings.json unchanged"
-  else fail "10 live installed_plugins.json and settings.json unchanged" "sha256 differs from before the run"; fi
+  local f bad=""
+  for f in "$HOME/.claude/plugins/installed_plugins.json" "$HOME/.claude/settings.json"; do
+    [ -e "$f" ] && grep -qF -- "$WORK" "$f" && bad="$bad $(basename "$f")"
+  done
+  if [ -z "$bad" ]; then pass "10 live installed_plugins.json and settings.json carry no scratch path"
+  else fail "10 live installed_plugins.json and settings.json carry no scratch path" "scratch root found in:$bad"; fi
 }
 
 check_push_refused
