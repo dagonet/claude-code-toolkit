@@ -108,7 +108,7 @@ am_resolve() {
   AM_KIND=floor
 }
 
-# AM_JEV_MARKER -- the path every /jev registration names. Check 65 asserts the
+# AM_JEV_MARKER -- the path every /cct:jev registration names. Check 65 asserts the
 # v4 registration literal (REG_COMMAND in jev_ctl.py, now only what legacy removal matches) contains it.
 AM_JEV_MARKER='skills/jev/jev_route.py'
 # am_plugin_loaded <session_id> -- exit 0 iff hooks/cct-session.sh marked this session (the cct plugin
@@ -122,7 +122,7 @@ am_plugin_loaded() {
 }
 # am_jev_routing <root> [<session_id>] -- exit 0 iff the Jev router WILL run for a spawn in this
 # checkout, so model-floor may step aside (v4.4.0 R-2). All four must hold:
-#   1. <git common dir>/jev/config.json says "route": true      (/jev on, per clone)
+#   1. <git common dir>/jev/config.json says "route": true      (/cct:jev on, per clone)
 #   2. a router exists to run it                                 (a deleted skill is silent):
 #        the plugin's skills/jev/jev_route.py, registered by hooks/hooks.json, unless
 #        this checkout still has a v4 registration (4 below), which the plugin steps aside for

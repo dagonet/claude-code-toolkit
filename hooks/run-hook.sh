@@ -29,8 +29,8 @@ case $u in *'/hooks/'"$name"'.sh"'*) exit 0 ;; esac
 f="$here/$name.sh"
 if [ ! -r "$f" ]; then
   case $pol in
-    closed) echo "HOOK SCRIPT MISSING: $f -- enforcement offline. Reinstall the cct plugin (/plugin install cct@dagonet)." >&2; exit 2 ;;
-    warn)   echo "WARN: $f missing -- $name offline. Reinstall the cct plugin." >&2; exit 0 ;;
+    closed) echo "HOOK SCRIPT MISSING: $f -- enforcement offline. Reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet)." >&2; exit 2 ;;
+    warn)   echo "WARN: $f missing -- $name offline. Reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet)." >&2; exit 0 ;;
     *)      exit 0 ;;
   esac
 fi

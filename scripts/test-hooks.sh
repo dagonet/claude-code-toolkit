@@ -2563,7 +2563,7 @@ check_nomsg "(A6.13) -C chain to a missing dir: no verdict" "$ROOT/$H" 0 "$(mkjs
 # These are CORRECTNESS rows, not the early exit's own rows: delete the early
 # exit and all of them still pass. That is the point — the exit must change
 # only latency. The guard for this item is therefore the TIMING (see
-# scripts/time-hook.sh and its control arm), not a fixture flip count, and a
+# the former scripts/time-hook.sh, deleted in v5.0; see git history), not a fixture flip count, and a
 # zero flip count here is the expected result rather than a defect.
 #
 # The FIRST row is the one that matters most. An early exit that pattern-matched
@@ -10671,7 +10671,7 @@ c2b_run "$C2H0" "$c2b_p"
 expect "C2b: a deleted script -> still exit 0" 0 "$C2RC"
 expect "C2b: ... the block carries the exact header" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED -- [0-9][0-9]* registered hook script(s) missing or broken:$')"
 expect "C2b: ... names the deleted script" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^MISSING: .*hooks/no-push-main\.sh$')"
-expect "C2b: ... ends with the exact footer" 1 "$(printf '%s\n' "$C2OUT" | grep -cF 'Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /cct:sync-template (project files), reinstall the cct plugin (/plugin install cct@dagonet) (plugin hook scripts), or bash scripts/install-user-level-linux.sh on Linux / docs/plugin-migration-windows.md on the PC (user-level leftovers).')"
+expect "C2b: ... ends with the exact footer" 1 "$(printf '%s\n' "$C2OUT" | grep -cF 'Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /cct:sync-template (project files), reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet) (plugin hook scripts), or bash scripts/install-user-level-linux.sh on Linux / docs/plugin-migration-windows.md on the PC (user-level leftovers).')"
 c2b_run "$C2H0" "$c2b_p" --report
 expect "C2b: --report on it exits 1 and lists the script" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c 'MISSING: .*hooks/no-push-main\.sh')"
 expect "C2b: --report prints no header or footer" 0 "$(printf '%s\n' "$C2OUT" | grep -c 'HOOK CHECK FAILED\|Tell the user')"
@@ -10721,7 +10721,7 @@ c2b_run "$C2HX" - --report
 expect "C2b (D2): a good program path -> silent, exit 0" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
 c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/nowhere/bash" "$C2HX/.claude/hooks/x.sh"
 c2b_run "$C2HX" -
-expect "C2b (D2): a nonexistent program -> MISSING PROGRAM block, exit 0" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*nowhere/bash (exec-form hook command cannot be spawned -- every check it runs is OFF; reinstall the cct plugin (/plugin install cct@dagonet))$')"
+expect "C2b (D2): a nonexistent program -> MISSING PROGRAM block, exit 0" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*nowhere/bash (exec-form hook command cannot be spawned -- every check it runs is OFF; a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md)$')"
 expect "C2b (D2): ... inside the HOOK CHECK FAILED block" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED -- 1 ')"
 c2b_run "$C2HX" - --report
 expect "C2b (D2): ... --report exits 1" 1 "$C2RC"

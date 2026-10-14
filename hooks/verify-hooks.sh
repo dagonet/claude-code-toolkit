@@ -82,7 +82,7 @@ vh_program() {
   vh_c=$1
   if [ -z "$vh_c" ]; then
     VH_PROGFAIL=1
-    vh_problem "MISSING PROGRAM: (empty command) (exec-form hook command cannot be spawned -- every check it runs is OFF; reinstall the cct plugin (/plugin install cct@dagonet))"
+    vh_problem "MISSING PROGRAM: (empty command) (exec-form hook command cannot be spawned -- every check it runs is OFF; a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md)"
     return 0
   fi
   case $vh_c in
@@ -92,7 +92,7 @@ vh_program() {
   if [ -f "$vh_c" ] && [ -x "$vh_c" ]; then return 0; fi
   case $vh_c in *.exe|*.EXE) ;; *) if [ -f "$vh_c.exe" ] && [ -x "$vh_c.exe" ]; then return 0; fi ;; esac
   VH_PROGFAIL=1
-  vh_problem "MISSING PROGRAM: $1 (exec-form hook command cannot be spawned -- every check it runs is OFF; reinstall the cct plugin (/plugin install cct@dagonet))"
+  vh_problem "MISSING PROGRAM: $1 (exec-form hook command cannot be spawned -- every check it runs is OFF; a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md)"
   return 0
 }
 
@@ -163,7 +163,7 @@ sys.stdout.buffer.write(("".join(l + "\n" for l in out)).encode("utf-8"))
 vh_file() {
   [ -f "$1" ] && [ -r "$1" ] || return 0
   if grep -Eq '@[A-Z]+@' "$1" 2>/dev/null; then
-    vh_problem "MISSING (unrendered @...@ -- run /cct:sync-template): $1"
+    vh_problem "MISSING (unrendered @...@ -- a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md): $1"
   fi
   if ! grep -q '"args"' "$1" 2>/dev/null; then
     # shell-form only: over-collect hook paths by name, like sync-template rule 1b
@@ -244,7 +244,7 @@ if [ "$VH_N" -gt 0 ]; then
   fi
   echo "HOOK CHECK FAILED -- $VH_N registered hook script(s) missing or broken:"
   printf '%s' "$VH_PROBS"
-  echo "Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /cct:sync-template (project files), reinstall the cct plugin (/plugin install cct@dagonet) (plugin hook scripts), or bash scripts/install-user-level-linux.sh on Linux / docs/plugin-migration-windows.md on the PC (user-level leftovers)."
+  echo "Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /cct:sync-template (project files), reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet) (plugin hook scripts), or bash scripts/install-user-level-linux.sh on Linux / docs/plugin-migration-windows.md on the PC (user-level leftovers)."
   if [ -n "$VH_PROGFAIL" ] && [ -n "$VH_NOPARSER" ]; then
     echo "A MISSING PROGRAM entry fails OPEN, and NO PARSER means exec-form entries are unchecked: every check behind them may be off until fixed."
   elif [ -n "$VH_PROGFAIL" ]; then

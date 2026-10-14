@@ -280,10 +280,9 @@ SKILL_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # The below-floor arm needs no population split: a caller that passed a
 # tag-shaped value IS the skill, or is impersonating one on purpose.
 _SKILL_REMEDY = (
-    "copy skills/sync-template/SKILL.md (user-level-reference/skills/sync-template/SKILL.md "
-    "before v5.0) from toolkit tag {tag} or "
-    "later into ~/.claude/skills/sync-template/SKILL.md, then START A FRESH SESSION and run "
-    "the sync again. Re-copying without restarting changes nothing for this session. "
+    "install or update the cct plugin to toolkit tag {tag} or later (/plugin install "
+    "cct@dagonet, or claude plugin update cct@dagonet), then START A FRESH SESSION and run "
+    "the sync again. Updating without restarting changes nothing for this session. "
     "Pass dry_run=True to inspect without migrating."
 )
 
@@ -336,10 +335,9 @@ def skill_floor_satisfied(spec: str, claimed: str) -> tuple[bool, str, str, bool
             f"-- IF YOU ARE THE sync-template SKILL: the body this session loaded predates "
             f"{floor} and has no instruction to identify itself. A running session keeps the "
             f"body it read at startup, so the file on disk may already be current while this "
-            f"session is not. Copy skills/sync-template/SKILL.md "
-            f"(user-level-reference/skills/sync-template/SKILL.md before v5.0) from "
-            f"toolkit tag {floor} or later into ~/.claude/skills/sync-template/SKILL.md if it "
-            f"is not already there, then START A FRESH SESSION. Re-copying without restarting "
+            f"session is not. Install or update the cct plugin to toolkit tag {floor} or "
+            f"later (/plugin install cct@dagonet, or claude plugin update cct@dagonet) if it "
+            f"is not already there, then START A FRESH SESSION. Updating without restarting "
             f"changes nothing for this session. "
             f"-- IF YOU ARE NOT THE SKILL (a harness, a direct tool call, a human): pass "
             f"skill_version=\"{SKILL_BYPASS_SENTINEL}\" exactly. Case-sensitive; near-misses "

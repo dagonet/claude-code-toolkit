@@ -3,8 +3,9 @@
 
 Spec: docs/plans/2026-09-28-jev-phase1-design.md (Phase 1a); plan:
 docs/plans/2026-10-02-jev-phase1-implementation.md (rulings R-1..R-9).
-Registered only by `/jev on`, as ONE entry in one checkout's
-.claude/settings.local.json:
+v5: the cct plugin's hooks/jev-route.sh (registered in hooks/hooks.json) runs this script when
+`/cct:jev on` has set "route": true in <git common dir>/jev/config.json. A v4 clone still has
+ONE entry in its .claude/settings.local.json, which the plugin steps aside for:
     f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0
 
 Contract:

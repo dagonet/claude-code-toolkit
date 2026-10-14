@@ -98,7 +98,15 @@ log_event() {
   [ -n "$ROOT" ] || return 0
   _le_c=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || _le_c=""
   if [ -n "$_le_c" ]; then _le_d="$_le_c/cct"; else _le_d="${TMPDIR:-/tmp}/cct-$(id -u 2>/dev/null || echo 0)"; fi
-  mkdir -p "$_le_d" 2>/dev/null || return 0
+  if [ -z "$_le_c" ]; then
+    # fallback dir: same safety rules as hooks/cct-session.sh; if it cannot be made safe, skip the log (fail open for a log only)
+    [ -L "$_le_d" ] && return 0
+    mkdir -p "$_le_d" 2>/dev/null || return 0
+    case $(uname -s) in MINGW*|MSYS*|CYGWIN*) ;; *) [ -O "$_le_d" ] || return 0 ;; esac
+    chmod 700 "$_le_d" 2>/dev/null
+  else
+    mkdir -p "$_le_d" 2>/dev/null || return 0
+  fi
   printf '%s agent-budget-warn agent=%s calls=%s action=%s\n' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown-time)" \
     "$AGENT_ID" "$N" "$1" >> "$_le_d/liveness.log" 2>/dev/null || true

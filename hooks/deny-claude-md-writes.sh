@@ -55,12 +55,13 @@
 # written" — only that the editing tools refuse it and say where to write
 # instead.
 #
-# REGISTRATION SCOPE: project-level only. Registered in every template's
-# `.claude/settings.json`; NEVER registered in the cct plugin's hooks/hooks.json
-# nor in `~/.claude/settings.json` -- a user-level or plugin registration
-# would refuse CLAUDE.md writes in every non-consumer repo on the
-# machine, including this toolkit's own checkout and every project that has
-# never run `/cct:sync-template` at all.
+# REGISTRATION SCOPE: project-level. Registered in every template's
+# `.claude/settings.json` and in the cct plugin's hooks/hooks.json through
+# hooks/run-hook.sh, which classes it `project` and exits 0 unless the repo has
+# `.claude/template-manifest.json` -- that check keeps it from refusing CLAUDE.md
+# writes in a non-consumer repo (this toolkit's own checkout, any project that
+# has never run `/cct:sync-template`). NEVER registered in `~/.claude/settings.json`:
+# a user-level entry has no such check.
 #
 # PATH NORMALISATION. hooks/lib/git-cmd.sh has no public repo-root helper (its
 # gccc_norm is an internal two-letter-prefixed helper local to the -C

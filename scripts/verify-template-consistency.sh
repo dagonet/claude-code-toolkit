@@ -3658,14 +3658,14 @@ fi
 # ---------------------------------------------------------------------------
 # Check 65 -- Jev is opt-in per clone and ships no registration (v4.4.0, spec
 # D1 "zero footprint when off"). (a) No shipped settings file registers the
-# router -- only `/jev on` writes it, into one checkout's settings.local.json.
-# (b) /jev can never be model-invoked (the model must not switch egress on).
+# router -- only `/cct:jev on` writes it, into one checkout's settings.local.json.
+# (b) /cct:jev can never be model-invoked (the model must not switch egress on).
 # (c) The registration jev_ctl.py writes is the spec's literal and contains
 # the marker agent-model.sh's am_jev_routing greps for: if those two drift
 # apart, model-floor never steps aside for a live router (two emitters) or
 # steps aside for a dead one (none).
 # ---------------------------------------------------------------------------
-note "Check 65: no shipped settings registers the Jev router; /jev is user-invoked only; the registration and the step-aside marker agree"
+note "Check 65: no shipped settings registers the Jev router; /cct:jev is user-invoked only; the registration and the step-aside marker agree"
 C65_SPEC_REG='f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0'
 c65_scan_settings() { # <settings file> -> prints the file when it registers the router
   grep -lF 'jev_route.py' "$1" 2>/dev/null
@@ -3686,7 +3686,7 @@ case "$c65_reg" in *"$c65_marker"*) ;; *) c65_bad="$c65_bad REG_COMMAND does not
 grep -qF 'unless Jev routing is on in this repo' user-level-reference/CLAUDE.md || c65_bad="$c65_bad user-level-reference/CLAUDE.md(no U-1 exception)"
 grep -q 'omit model on Agent spawns' hooks/jev-notice.sh 2>/dev/null || c65_bad="$c65_bad hooks/jev-notice.sh(no session notice telling the orchestrator to omit model)"
 if [ -z "$c65_bad" ]; then
-  ok "check 65: no template, root or user-level settings registers jev_route.py; /jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
+  ok "check 65: no template, root or user-level settings registers jev_route.py; /cct:jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
 else
   ko "check 65:$c65_bad"
 fi

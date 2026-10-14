@@ -224,14 +224,14 @@ It reports the `settings.json` bindings, which hook scripts are on disk, whether
 
 Two things that look like failure but are not:
 
-- **No hook output in the session transcript.** `PreToolUse` and `SubagentStop` hook stderr is delivered to the *subagent*, not to the lead's transcript. Grepping the transcript for a hook's own message will find nothing even when the hook is firing correctly. Use the ledger directories or `.claude/liveness.log` instead.
+- **No hook output in the session transcript.** `PreToolUse` and `SubagentStop` hook stderr is delivered to the *subagent*, not to the lead's transcript. Grepping the transcript for a hook's own message will find nothing even when the hook is firing correctly. Use the ledger directories or `<common git dir>/cct/liveness.log` instead.
 - **An empty `<common git dir>/cct/liveness.log`** (outside a git repo: `${TMPDIR:-/tmp}/cct-<uid>/liveness.log`). It records threshold events only. A hook that has run thousands of times without crossing a threshold writes nothing there; its counter files still prove execution.
 
 **Verify a hook enforces, not just that it exits — the enforcing-vs-inert pair.** Probing only the new shape-witness arms (no `tool_input.prompt` → exit 2) yields 2s on every probe and proves nothing about whether the hook still enforces its actual rule. For `deny-hang-shapes.sh`, the real check is a multi-line `cd` followed by two commands (must exit 2) paired with a heredoc look-alike that writes no file (must exit 0) — the 0/2 pair is the enforcing-vs-inert arm.
 
 These hooks are deliberately **not** registered at user level (`~/.claude/settings.json`): their commands run `hooks/…` through the project-form `exec bash "$f"`, resolved relative to the project root, and would break in any repo that has not been synced.
 
-**Six project-level hooks are not plugin-registered, by design.** `enforce-delegation.sh`, `enforce-agent-contract.sh`, `agent-budget-warn.sh`, `deny-claude-md-writes.sh`, `git-pre-push.sh` and `now-brief.sh` are project-only — Registering one of them in the plugin's `hooks/hooks.json` would arm it in every repo the plugin is active in, including non-consumers.
+**Project-only hooks are plugin-registered but inert outside a toolkit project.** `hooks/hooks.json` registers `deny-claude-md-writes`, `enforce-delegation`, `enforce-agent-contract`, `agent-budget-warn` and `now-brief` through `hooks/run-hook.sh`, which classes them `project` and exits 0 unless the repo has `.claude/template-manifest.json` — that check keeps them out of non-consumer repos. Only `git-pre-push.sh` is not registered anywhere: it is a native git hook installed per clone.
 
 ## PROJECT-CUSTOM Region
 
