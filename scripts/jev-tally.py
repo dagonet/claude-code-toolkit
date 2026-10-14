@@ -8,6 +8,7 @@ passes G:/git). Read-only; events hold decisions and confidences, never prompt
 text or env values, so the report prints none.
 """
 import argparse
+import datetime
 import glob
 import json
 import os
@@ -39,10 +40,10 @@ def _load_events(roots, since):
             try:
                 with open(path, encoding="utf-8") as fh:
                     e = json.load(fh)
-                ts = e["ts"]
-                if not isinstance(e, dict) or not isinstance(ts, str):
+                if not isinstance(e, dict) or not isinstance(e.get("ts"), str):
                     raise ValueError("not an event")
-            except (OSError, ValueError, KeyError, TypeError):
+                ts = e["ts"]
+            except (OSError, ValueError):
                 skipped += 1
                 continue
             if since and ts[:10] < since:
@@ -109,7 +110,8 @@ def report(r, threshold):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Cross-machine Jev trial tally")
     ap.add_argument("roots", nargs="*", default=["~/git"], help="clone roots (default ~/git)")
-    ap.add_argument("--since", help="only events on or after YYYY-MM-DD")
+    ap.add_argument("--since", type=lambda s: datetime.date.fromisoformat(s).isoformat(),
+                    help="only events on or after YYYY-MM-DD")
     ap.add_argument("--threshold", type=float, default=0.65, help="confidence threshold (default 0.65)")
     a = ap.parse_args(argv)
     print(report(tally(a.roots, a.since, a.threshold), a.threshold))
