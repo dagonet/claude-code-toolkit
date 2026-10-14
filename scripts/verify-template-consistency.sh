@@ -1433,7 +1433,7 @@ fi
 # step 1 no longer greps it; it states the marker and passes it to template_load_manifest
 # as skill_version=, and the server's refusal is the stale-body check.
 if [ "$(grep -c 'SYNC-TEMPLATE-SKILL-VERSION' "$SKILL_MD" 2>/dev/null)" -ge 2 ] \
-   && grep -q 'skill_version=' "$SKILL_MD" 2>/dev/null; then
+   && grep -qF 'template_load_manifest(project_path=".", skill_version=' "$SKILL_MD" 2>/dev/null; then
   ok "sync-template SKILL.md step 1 states the marker and passes it to the server as skill_version"
 else
   ko "sync-template SKILL.md defines the version marker but nothing reads it — step 1 must state it and pass skill_version= to template_load_manifest"
