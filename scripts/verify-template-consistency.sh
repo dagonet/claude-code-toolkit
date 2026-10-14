@@ -4903,6 +4903,10 @@ rm -rf "$c70_tmp"
 # gate is U; (5) a C5 hook's template matcher covers its user-level matcher (else
 # stepping aside drops a tool); (6) the sourced hooks have no top-level return;
 # (7) controls: a mutated copy (one F turned W; a dropped group) must go red.
+# (v5.0) hooks/hooks.json arm: one (event, matcher, script) row per entry, both command
+# shapes anchored, anything else OTHER, compared with the frozen general rows plus the
+# plugin-only allowlist; (8) controls: a narrowed matcher, a dropped group and an
+# inline extra group on a scratch copy must each go red.
 # ---------------------------------------------------------------------------
 echo
 note "Check 71: registration polarity -- the frozen (event, matcher, script, form) set; trap, allow, stop-gate, matcher-superset and return audits"
@@ -4918,12 +4922,14 @@ c71_cmp() { # <label> <got> <want>
   if [ -z "$2" ]; then c71_bad="$c71_bad [$1: the extraction found NO registration]"
   elif [ "$2" != "$3" ]; then c71_bad="$c71_bad [$1 differs from the frozen table: $(printf '%s\n' "$2" | LC_ALL=C sort > "$c71_tmp/got"; printf '%s\n' "$3" | LC_ALL=C sort > "$c71_tmp/want"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"; fi
 }
-# Plugin registrations (v5.0): event;matcher;script from hooks/hooks.json. `run-hook.sh" <name>` maps to
-# <name>; a direct `hooks/<name>.sh` maps to <name>. The plugin-only rows have no frozen-table counterpart.
+# Plugin registrations (v5.0): ONE event;matcher;script row per hooks/hooks.json entry. Both accepted shapes are
+# anchored: `bash "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh" <name>` maps to <name>, and the cct-session fallback
+# (optionally with ` end`; check 74 pins its argument) maps to cct-session. Anything else (an appended `; exit 0`,
+# a direct hooks/<name>.sh call, an inline command, a non-command type) maps to OTHER and so never matches the set.
+# The plugin-only rows have no frozen-table counterpart.
 C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
-for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){
-const c=String(h.command);const r=/run-hook\.sh"\s+([A-Za-z0-9_-]+)/.exec(c)||/hooks\/([A-Za-z0-9_-]+)\.sh/.exec(c);
-if(r)out.push([ev,g.matcher||"",r[1]].join(";"));}
+const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session)\.sh"( end)?$/;
+for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const r=RH.exec(c)||CS.exec(c);out.push([ev,g.matcher||"",r?r[1]:"OTHER"].join(";"));}
 if(out.length)console.log(out.join("\n"))'
 c71_px() { node -e "$C71_PJS" "$1"; }
 C71_PLUGIN_ONLY='SessionStart;;cct-session
@@ -5016,7 +5022,7 @@ EOF
   [ "$(awk "$C2AAWK" "$c71_tmp/r1.sh" | wc -l | tr -d ' ')" = 1 ] || c71_bad="$c71_bad [the return-audit CONTROL failed: a top-level return was not reported]"
 
   if [ -z "$c71_bad" ]; then
-    ok "check 71: $c71_nrows registrations over $c71_nsc scripts equal the frozen table (the v4.6.1 template, root, user-level); $c71_ntrap F/UF hooks trap 127->2, no allow-capable hook is F/UF, the stop gate is U, $c71_nsa C5 matchers covered, no top-level return"
+    ok "check 71: $c71_nrows registrations over $c71_nsc scripts equal the frozen table (the v4.6.1 template, root, user-level); hooks/hooks.json's $(printf '%s\n' "$c71_want_p" | grep -c .) entries equal the frozen general rows plus the plugin-only allowlist; $c71_ntrap F/UF hooks trap 127->2, no allow-capable hook is F/UF, the stop gate is U, $c71_nsa C5 matchers covered, no top-level return"
   else
     ko "check 71: $c71_bad"
   fi
@@ -5033,9 +5039,9 @@ EOF
       ko "check 71 control ($c71_mode): a mutated copy was NOT detected -- the frozen-set comparison is vacuous"
     fi
   done
-  # (8) control: hooks/hooks.json with one matcher narrowed, or one group dropped, must differ from the expected set
-  c71_pmut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="narrow"){for(const x of g)if(x.matcher==="Read|Bash")x.matcher="Bash";}else{for(let i=0;i<g.length;i++)if(/^mcp__MCP_DOCKER__merge_pull_request/.test(g[i].matcher||"")){g.splice(i,1);break;}}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
-  for c71_mode in narrow dropgroup; do
+  # (8) control: hooks/hooks.json with one matcher narrowed, one group dropped, or an inline group added, must differ from the expected set
+  c71_pmut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="narrow"){for(const x of g)if(x.matcher==="Read|Bash")x.matcher="Bash";}else if(a[2]==="inline"){g.push({hooks:[{type:"command",command:"true"}]});}else{for(let i=0;i<g.length;i++)if(/^mcp__MCP_DOCKER__merge_pull_request/.test(g[i].matcher||"")){g.splice(i,1);break;}}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
+  for c71_mode in narrow dropgroup inline; do
     node -e "$c71_pmut" hooks/hooks.json "$c71_tmp/pmut-$c71_mode.json" "$c71_mode" 2>/dev/null
     c71_got=$(c71_px "$c71_tmp/pmut-$c71_mode.json" 2>/dev/null | LC_ALL=C sort)
     if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_want_p" ]; then
