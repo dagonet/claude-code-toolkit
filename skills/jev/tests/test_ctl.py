@@ -15,6 +15,9 @@ sys.path.insert(0, HERE)
 import jev_ctl as jc  # noqa: E402
 import jevtest as jt  # noqa: E402
 
+# What a v4 `/jev on` wrote as its SessionStart entry (the plugin's hooks/jev-notice.sh prints the notice now).
+V4_SESSION_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && echo "Jev routing is ON in this repo (/jev on): omit model on Agent spawns -- Jev picks one per launch (user ruling U-1; an explicit model is never changed). /jev off restores naming it."; exit 0'
+
 EV = {"ts": "2026-10-02T10:00:30.000Z", "subagent_type": "general-purpose", "kind": "floor", "default": "sonnet",
       "agent_effort": "", "choice": None, "confidence": None, "probabilities": {}, "effort_choice": None,
       "effort_confidence": None, "applied": False, "reason": "kept", "emitted": None, "latency_s": 0.3}
@@ -45,7 +48,7 @@ class CtlTests(unittest.TestCase):
         hooks.setdefault("PreToolUse", []).append({"matcher": "Agent", "hooks": [
             {"type": "command", "command": jc.REG_COMMAND, "timeout": 5}]})
         hooks.setdefault("SessionStart", []).append({"hooks": [
-            {"type": "command", "command": jc.SESSION_COMMAND, "timeout": 5}]})
+            {"type": "command", "command": V4_SESSION_COMMAND, "timeout": 5}]})
         snap = {"existed": before is not None, "before_b64": base64.b64encode(before or b"").decode("ascii"), "after": obj}
         top, gd = jc.locate(self.t.repo, self.t.env())
         jc._write(jc._snapshot_path(gd, top), jc._dumps(snap))

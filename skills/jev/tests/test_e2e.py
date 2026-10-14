@@ -179,7 +179,7 @@ class HookTests(unittest.TestCase):
     def test_floor_holds_in_a_v5_consumer_with_no_resolver_outside_the_plugin(self):
         # C1: no project hooks/lib, an empty HOME (Task 13 removes ~/.claude/hooks), no API key.
         # The router must find the plugin's own agent-model.sh, or the spawn inherits the orchestrator's model.
-        sb = jt.Sandbox(self, lib_in_home=False)
+        sb = jt.Sandbox(self, register=False, skill=False, lib_in_home=False)  # the v5 shape: nothing user-level
         cp, _ = jt.run_hook(sb, jt.agent_payload(sb), "http://127.0.0.1:9/v1/systemone", key=None)
         self.assertEqual((cp.returncode, model_of(cp)), (0, "sonnet"))
 

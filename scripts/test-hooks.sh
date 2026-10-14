@@ -11877,6 +11877,12 @@ v5sess() { printf '%s' "$1" | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh"; e
 expect "v5 session: writes marker" "rc=0 yes" "$(v5sess '{"session_id":"ab-12","hook_event_name":"SessionStart"}') $( [ -f "$V5T/cct-$(id -u)/ab-12" ] && echo yes || echo no)"
 expect "v5 session: unsafe id writes nothing" "rc=0 0" "$(v5sess '{"session_id":"../evil"}') $(find "$V5T" -name evil | wc -l | tr -d ' ')"
 expect "v5 session: no id writes nothing" "rc=0 1" "$(v5sess '{}') $(ls "$V5T/cct-$(id -u)" | wc -l | tr -d ' ')"
+# SessionEnd ("end"): removes this session's marker (a --resume without the plugin must not find a stale one)
+v5send() { printf '%s' "$1" | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" end; echo "rc=$?"; }
+: > "$V5T/evil"   # outside the marker dir: a traversing id must not reach it
+expect "v5 session end: removes the marker" "rc=0 gone" "$(v5send '{"session_id":"ab-12","hook_event_name":"SessionEnd"}') $( [ -f "$V5T/cct-$(id -u)/ab-12" ] && echo present || echo gone)"
+expect "v5 session end: an unsafe id removes nothing outside the dir" "rc=0 present" "$(v5send '{"session_id":"../evil"}') $( [ -f "$V5T/evil" ] && echo present || echo gone)"
+expect "v5 session end: start then end then start leaves a marker" "yes" "$(v5sess '{"session_id":"cd-34"}' >/dev/null; v5send '{"session_id":"cd-34"}' >/dev/null; v5sess '{"session_id":"cd-34"}' >/dev/null; [ -f "$V5T/cct-$(id -u)/cd-34" ] && echo yes || echo no)"
 # ---- end v5.0 run-hook
 
 # ---- v5.0 agents: cct:<name> resolves from the plugin's agents/ (spec §2)
@@ -12003,7 +12009,11 @@ if python3 -c '' >/dev/null 2>&1; then
   printf '{"name":"cct"}\n' > "$V5T/.claude-plugin/plugin.json"
   printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5T/skills/jev/jev_route.py"   # stub router
   V5TGD=$(git -C "$V5T" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$V5TGD/jev"
-  v5t_payload() { printf '{"session_id":"%s","tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"p"},"cwd":"%s"}' "$1" "$(jesc "$(natpath "$V5T")")"; }
+  v5t_payload() { # <session id, or empty to omit the key> [cwd]
+    local sj=""; [ -n "$1" ] && sj="\"session_id\":\"$1\","
+    printf '{%s"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"p"},"cwd":"%s"}' "$sj" "$(jesc "$(natpath "${2:-$V5T}")")"
+  }
+  v5t_mark() { printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh"; }   # the real writer
   v5t_mf() { # <session id> -> the model the PROJECT model-floor emits ("silent" when it steps aside); no plugin env: the lib falls back to the repo root
     v5t_payload "$1" | env -u CLAUDE_PLUGIN_ROOT HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PROJECT_DIR="$V5T" bash "$V5T/hooks/model-floor.sh" >"$TMPROOT/v5t.out" 2>/dev/null
     if [ -s "$TMPROOT/v5t.out" ]; then jfield "$(<"$TMPROOT/v5t.out")" hookSpecificOutput.updatedInput.model; else echo silent; fi
@@ -12013,7 +12023,7 @@ if python3 -c '' >/dev/null 2>&1; then
     [ -n "$o" ] && echo "$o" || echo silent
   }
   printf '{"route": true}\n' > "$V5TGD/jev/config.json"
-  : > "$V5TT/cct-$(id -u)/$V5TSID"
+  v5t_mark "$V5TSID"
   expect "v5 jev (a) toolkit repo, plugin loaded, route true: project model-floor steps aside" silent "$(v5t_mf "$V5TSID")"
   expect "v5 jev (a) ... and jev-route emits (one emitter)" ROUTED "$(v5t_jr "$V5TSID")"
   expect "v5 jev (b) toolkit repo, plugin NOT loaded (no marker): project model-floor floors" sonnet "$(v5t_mf "v5tk-sid-unmarked")"
@@ -12023,8 +12033,25 @@ if python3 -c '' >/dev/null 2>&1; then
   printf '{"route": false}\n' > "$V5TGD/jev/config.json"
   expect "v5 jev (d) route false, plugin loaded: model-floor floors" sonnet "$(v5t_mf "$V5TSID")"
   expect "v5 jev (d) ... and jev-route is silent (one emitter)" silent "$(v5t_jr "$V5TSID")"
+  # SessionEnd removes the marker: a resumed session without the plugin floors again
+  printf '{"route": true}\n' > "$V5TGD/jev/config.json"
+  printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$V5TSID" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh" end
+  expect "v5 jev (a') after SessionEnd the marker is gone: project model-floor floors again" sonnet "$(v5t_mf "$V5TSID")"
+  # (c) a v5 CONSUMER: manifest present, no project model-floor registration; the plugin's own model-floor, through run-hook
+  V5C=$(mkrepo v5cons main); mkdir -p "$V5C/.claude"; printf '{}\n' > "$V5C/.claude/template-manifest.json"
+  cp "$ROOT/hooks/model-floor.sh" "$V5J/hooks/"
+  printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5J/skills/jev/jev_route.py"
+  V5CGD=$(git -C "$V5C" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$V5CGD/jev"; printf '{"route": true}\n' > "$V5CGD/jev/config.json"
+  v5c_run() { # <hook name> <session id> -> the plugin hook's stdout, via run-hook.sh
+    v5t_payload "$2" "$V5C" | env HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PLUGIN_ROOT="$V5J" CLAUDE_PROJECT_DIR="$V5C" bash "$V5J/hooks/run-hook.sh" "$1" 2>/dev/null
+  }
+  v5c_model() { local o; o=$(v5c_run model-floor "$1"); if [ -n "$o" ]; then jfield "$o" hookSpecificOutput.updatedInput.model; else echo silent; fi; }
+  v5t_mark "v5c-sid-1"
+  expect "v5 jev (c) consumer, plugin loaded, route true: the plugin's model-floor steps aside" silent "$(v5c_model v5c-sid-1)"
+  expect "v5 jev (c) ... and jev-route emits (one emitter)" ROUTED "$(v5c_run jev-route v5c-sid-1)"
+  expect "v5 jev (c) ... no marker for the session: the plugin's model-floor floors" sonnet "$(v5c_model v5c-sid-unmarked)"
 else
-  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 17
+  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 21
 fi
 # ---- end v5.0 jev
 

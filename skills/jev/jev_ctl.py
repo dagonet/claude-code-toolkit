@@ -28,9 +28,6 @@ from collections import Counter  # noqa: E402
 import jev_route  # noqa: E402
 
 REG_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0'
-# U-1: SessionStart stdout reaches the new session's context -- the only way a
-# new session learns the switch is on. No backticks: they would substitute in bash.
-SESSION_COMMAND = 'f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && echo "Jev routing is ON in this repo (/cct:jev on): omit model on Agent spawns -- Jev picks one per launch (user ruling U-1; an explicit model is never changed). /cct:jev off restores naming it."; exit 0'
 MARKER = "skills/jev/jev_route.py"  # in both v4 commands: has/remove find both entries
 HERE = os.path.dirname(os.path.abspath(__file__))  # the router and (in the plugin) the resolver live next to / above this file
 CONFIG_ON = {"model": "jev-1.13.0", "threshold": 0.8, "route": True, "legs": False}
