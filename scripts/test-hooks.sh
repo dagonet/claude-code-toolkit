@@ -11882,6 +11882,8 @@ v5send() { printf '%s' "$1" | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" en
 : > "$V5T/evil"   # outside the marker dir: a traversing id must not reach it
 expect "v5 session end: removes the marker" "rc=0 gone" "$(v5send '{"session_id":"ab-12","hook_event_name":"SessionEnd"}') $( [ -f "$V5T/cct-$(id -u)/ab-12" ] && echo present || echo gone)"
 expect "v5 session end: an unsafe id removes nothing outside the dir" "rc=0 present" "$(v5send '{"session_id":"../evil"}') $( [ -f "$V5T/evil" ] && echo present || echo gone)"
+: > "$V5T/cct-$(id -u)/ef-56"
+expect "v5 session: an unknown argument neither creates nor removes a marker" "no yes" "$(printf '{"session_id":"gh-78"}' | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" ed; printf '{"session_id":"ef-56"}' | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" ed; [ -f "$V5T/cct-$(id -u)/gh-78" ] && echo -n "yes " || echo -n "no "; [ -f "$V5T/cct-$(id -u)/ef-56" ] && echo yes || echo no)"
 expect "v5 session end: start then end then start leaves a marker" "yes" "$(v5sess '{"session_id":"cd-34"}' >/dev/null; v5send '{"session_id":"cd-34"}' >/dev/null; v5sess '{"session_id":"cd-34"}' >/dev/null; [ -f "$V5T/cct-$(id -u)/cd-34" ] && echo yes || echo no)"
 # ---- end v5.0 run-hook
 

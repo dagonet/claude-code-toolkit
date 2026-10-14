@@ -5,6 +5,7 @@
 #     (same session id) does not find a stale marker and make model-floor step aside for a router that is not there.
 # The project's inline PreToolUse guard refuses every tool when the marker is missing.
 # SessionStart runs on every source (startup, resume, clear, compact). Never blocks: always exits 0.
+case "${1:-}" in ''|end) ;; *) exit 0 ;; esac   # any other argument does nothing: a typo can never re-create the marker at SessionEnd (check 74 pins the registrations)
 sid=$(cat | grep -o '"session_id" *: *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
 case $sid in ''|*[!A-Za-z0-9-]*) exit 0 ;; esac
 d="${TMPDIR:-/tmp}/cct-$(id -u)"

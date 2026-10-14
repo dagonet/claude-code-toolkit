@@ -5165,7 +5165,17 @@ c74_classed=$(sed -n '/^case "\$name" in/,/^esac/p' hooks/run-hook.sh | grep -o 
 c74_bad=""
 for n in $c74_names; do [ -f "hooks/$n.sh" ] || c74_bad="$c74_bad missing:$n"; done
 [ "$c74_names" = "$c74_classed" ] || c74_bad="$c74_bad hooks.json-vs-run-hook.sh-class-table-differ"
-grep -q 'cct-session.sh' hooks/hooks.json || c74_bad="$c74_bad no-session-marker-hook"
+# The marker pair, pinned by EVENT: SessionStart writes (no argument), SessionEnd removes (`end`). A dropped or typo'd
+# `end` must go red: the writer would re-create the marker at SessionEnd and a resumed session would find it stale.
+c74_sess=$(node -e '
+const h=require(require("path").resolve(process.argv[1])).hooks||{};
+const cmds=e=>[].concat(...(h[e]||[]).map(g=>(g.hooks||[]).map(x=>x.command||""))).filter(c=>c.includes("cct-session.sh"));
+const all=Object.keys(h).reduce((n,e)=>n+cmds(e).length,0);
+const s=cmds("SessionStart"), d=cmds("SessionEnd");
+const w="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/cct-session.sh\"";
+process.stdout.write(s.length===1&&s[0]===w&&d.length===1&&d[0]===w+" end"&&all===2?"ok":"bad");
+' "${C74_HOOKS_JSON:-hooks/hooks.json}" 2>/dev/null)
+[ "$c74_sess" = ok ] || c74_bad="$c74_bad cct-session.sh-not-registered-as-SessionStart(no-arg)+SessionEnd(end)"
 [ -f hooks/cct-session.sh ] || c74_bad="$c74_bad missing:cct-session"
 if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) hooks, all present and classed"; else ko "74: hooks.json/run-hook.sh:$c74_bad"; fi
 
