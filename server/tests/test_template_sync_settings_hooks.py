@@ -95,18 +95,27 @@ def test_three_way_merge_keeps_local_line_and_every_new_string(tmp_path):
     assert OLD_WRAPPER not in merged
 
 
-def test_result_matcher_groups_equal_the_frozen_table(tmp_path):
-    frozen = _frozen_general()
-    assert len(frozen) >= 19
-    # the template itself, and the file after a wholesale apply, register exactly the frozen set
-    assert _registrations(NEW) == frozen
+def _guards(text: str):
+    """The empty-matcher PreToolUse commands (v5.0: the inline plugin-off guard)."""
+    return [h["command"] for g in json.loads(text)["hooks"].get("PreToolUse", [])
+            if not g.get("matcher") for h in g["hooks"]]
+
+
+def test_result_registers_no_project_hook_and_the_guard_once(tmp_path):
+    # v5.0: the frozen set moved into the cct plugin's hooks/hooks.json. The template registers
+    # only the inline plugin-off guard, so a wholesale apply and a merge both leave exactly that
+    # guard and no hooks/<name>.sh registration (the project no longer ships those scripts).
+    guard = _guards(NEW)
+    assert len(guard) == 1 and "cct-$(id -u)" in guard[0], guard
+    assert _registrations(NEW) == []
     repo, proj = _mk(tmp_path, OLD)
     _apply(proj, file_path=REL)
-    assert _registrations((proj / REL).read_text(encoding="utf-8")) == frozen
-    # a three-way merge result also neither duplicates nor drops a group
+    applied = (proj / REL).read_text(encoding="utf-8")
+    assert _registrations(applied) == [] and _guards(applied) == guard
     merged = ts._three_way_merge(OLD, NEW, _local_edited(OLD), file_path=REL)["auto_merged"]
-    assert _registrations(merged) == frozen
-    # control: a dropped group would be detected
-    d = json.loads(NEW)
-    d["hooks"]["PreToolUse"].pop(0)
-    assert _registrations(json.dumps(d)) != frozen
+    assert _registrations(merged) == [] and _guards(merged) == guard
+    # control: the reader is not vacuous -- the frozen v4.6.1 template registers the frozen set
+    frozen = _frozen_general()
+    assert len(frozen) >= 19
+    v461 = (REPO / "scripts" / "fixtures" / "v461-template-settings.json").read_text(encoding="utf-8")
+    assert _registrations(v461) == frozen

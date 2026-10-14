@@ -845,19 +845,18 @@ if [[ -d "$TEMPLATE_DIR/.claude" ]]; then
     done < <(find "$TEMPLATE_DIR/.claude" -type f -print0 | sort -z)
 fi
 
-# Shared hook scripts (from repo root, not template-specific).
-# EVERY file, recursively: the gates source hooks/lib/*.sh via $(dirname "$0")/lib/…
-# and fail CLOSED (exit 2) when the lib is missing, so a filtered copy would leave a
-# bootstrapped project unable to commit, push, or merge.
-if [[ -d "$SCRIPT_DIR/hooks" ]]; then
-    while IFS= read -r -d '' file; do
-        rel="${file#"$SCRIPT_DIR/"}"
-        FILE_SOURCES+=("$file")
+# Shared hook scripts (from repo root, not template-specific). v5.0 (spec §3.4): every
+# other hook runs from the cct plugin; the project keeps only the native pre-push hook
+# and the two libs it sources (git-cmd.sh sources json.sh), because git runs it outside
+# Claude Code and needs a stable path in the clone.
+for rel in hooks/git-pre-push.sh hooks/lib/git-cmd.sh hooks/lib/json.sh; do
+    if [[ -f "$SCRIPT_DIR/$rel" ]]; then
+        FILE_SOURCES+=("$SCRIPT_DIR/$rel")
         FILE_RELS+=("$rel")
         FILE_IS_GITIGNORE+=(false)
         FILE_CLASSIFY_NAMES+=("$rel")
-    done < <(find "$SCRIPT_DIR/hooks" -type f -print0 | sort -z)
-fi
+    fi
+done
 
 # --- Classify every collected file against templates/ownership.json --------
 # One batched node invocation (node is already required by the hooks) rather
@@ -1339,7 +1338,10 @@ echo ""
 print_template_sync_snippet
 
 echo ""
-echo "Next step (user-level hooks, once per machine): bash \"$SCRIPT_DIR/scripts/render-user-hooks.sh\" --write"
+echo "Next step (the cct plugin, once per machine): in Claude Code run"
+echo "  /plugin marketplace add dagonet/claude-code-toolkit"
+echo "  /plugin install cct@dagonet"
+echo "then restart the session. Without it, this project's guard refuses every tool."
 
 # --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
 #

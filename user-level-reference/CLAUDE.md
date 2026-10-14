@@ -54,9 +54,9 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 |------|------|
 | Find where X is defined/used (needle search) | Grep tool |
 | Read a file you will Edit/Write | Read |
-| Analyze/summarize one file (no edit) | Read with `limit`/`offset`, or an Explore subagent if the file is large |
-| Multi-file research/gathering | Explore subagent (haiku, `effort: low`) — returns ranked `path:line` findings, not file contents |
-| Open-ended codebase exploration | Explore subagent |
+| Analyze/summarize one file (no edit) | Read with `limit`/`offset`, or a `cct:Explore` subagent if the file is large |
+| Multi-file research/gathering | `cct:Explore` subagent (haiku, `effort: low`) — returns ranked `path:line` findings, not file contents |
+| Open-ended codebase exploration | `cct:Explore` subagent |
 | Browse directory contents | Glob |
 
 ## Auto-Memory

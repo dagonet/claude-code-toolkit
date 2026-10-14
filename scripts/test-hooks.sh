@@ -8479,7 +8479,7 @@ if [ -n "$C1_HAVE_NODE" ]; then
       process.stdout.write(o.join("\n"));' "$(natpath "$1")"
   }
   for c1v in general dotnet dotnet-maui rust-tauri java python; do
-    expect "C1 registered on Agent: templates/$c1v" "$C1_TPL" "$(c1_cmd "$ROOT/templates/$c1v/.claude/settings.json")"
+    expect "C1 v5: templates/$c1v registers no model-floor (the plugin does)" "" "$(c1_cmd "$ROOT/templates/$c1v/.claude/settings.json")"
   done
   expect "C1 registered on Agent: root .claude/settings.json" "$C1_TPL" "$(c1_cmd "$ROOT/.claude/settings.json")"
   expect "C1 registered on Agent: user-level-reference"       "$C1_USR" "$(c1_cmd "$ROOT/user-level-reference/settings.json")"
@@ -10898,8 +10898,9 @@ while IFS=$'\t' read -r c1_ev c1_m c1_cmd c1_a1 c1_a2 c1_a3 c1_rest; do
   c1_ran=0; { [ "$C1RC" != 0 ] || [ -n "$C1OUT" ]; } && c1_ran=1
   expect "C1 (f): $c1_x, no project hooks at all: global copy runs" 1 "$c1_ran"
 done < "$TMPROOT/c1-list.tsv"
-# the real general template's own registration (today's form) also makes the two it carries step aside
-C1TG="$ROOT/templates/general/.claude/settings.json"
+# the v4.6.1 general template's own registration (the form a v4 consumer still carries; v5 templates
+# register none) also makes the two it carries step aside
+C1TG="$ROOT/scripts/fixtures/v461-template-settings.json"
 for c1_x in no-push-main deny-secret-reads; do
   c1_pd="$TMPROOT/c1proj-real-$c1_x"; rm -rf "$c1_pd"; mkdir -p "$c1_pd/hooks" "$c1_pd/.claude"
   printf '#!/bin/sh\nexit 0\n' > "$c1_pd/hooks/$c1_x.sh"; cp "$C1TG" "$c1_pd/.claude/settings.json"
@@ -10909,7 +10910,7 @@ $c1_line
 EOF
   c1_exec "$C1H" "$c1_pd" "$(c1_pl "$c1_x" deny)" "$c1_cmd" "$c1_a1" "$c1_a2" "$c1_a3"
   c1_ran=0; { [ "$C1RC" != 0 ] || [ -n "$C1OUT" ]; } && c1_ran=1
-  expect "C1 (f): $c1_x steps aside for templates/general's own registration" 0 "$c1_ran"
+  expect "C1 (f): $c1_x steps aside for the v4.6.1 general template's own registration" 0 "$c1_ran"
 done
 # ---- v4.4.0 C1 fix round 1 (review of Task 8) ----
 c1_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
@@ -11070,9 +11071,9 @@ c2b_exec() { # <home> <proj> <payload> <command> <arg>... : runs the argv exactl
   c2e_h=$1; c2e_p=$2; c2e_in=$3; shift 3
   C2EOUT=$(printf '%s' "$c2e_in" | env HOME="$c2e_h" CLAUDE_PROJECT_DIR="$c2e_p" "$@" 2>/dev/null); C2ERC=$?
 }
-c2b_proj() { # <name> -> a project holding every repo hook and the general template settings; echoes its path
+c2b_proj() { # <name> -> a project holding every repo hook and the v4.6.1 general template settings; echoes its path
   c2p_d="$TMPROOT/c2b-$1"; rm -rf "$c2p_d"; mkdir -p "$c2p_d/.claude"
-  cp -R "$ROOT/hooks" "$c2p_d/hooks"; cp "$ROOT/templates/general/.claude/settings.json" "$c2p_d/.claude/settings.json"
+  cp -R "$ROOT/hooks" "$c2p_d/hooks"; cp "$ROOT/scripts/fixtures/v461-template-settings.json" "$c2p_d/.claude/settings.json"
   printf '%s' "$c2p_d"
 }
 c2b_run() { # <home> <proj, or - for unset> [verify-hooks args] ; runs the project's copy; sets C2RC, C2OUT
@@ -11189,7 +11190,7 @@ fi
 
 # registrations
 for c2b_v in general dotnet dotnet-maui rust-tauri java python; do
-  expect "C2b: $c2b_v template registers verify-hooks (SessionStart, unwrapped U form) once" 1 "$(grep -cF '"command": "exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/verify-hooks.sh\""' "$ROOT/templates/$c2b_v/.claude/settings.json")"
+  expect "C2b v5: $c2b_v template registers no verify-hooks (the plugin does)" 0 "$(grep -c 'hooks/verify-hooks\.sh' "$ROOT/templates/$c2b_v/.claude/settings.json")"
 done
 expect "C2b: the six variant settings.json are byte-identical" 1 "$(md5sum "$ROOT"/templates/*/.claude/settings.json | cut -d' ' -f1 | sort -u | wc -l | tr -d ' ')"
 expect "C2b: verify-hooks.sh is byte-identical to its user-level mirror" 0 "$(cmp -s "$ROOT/hooks/verify-hooks.sh" "$ROOT/user-level-reference/hooks/verify-hooks.sh"; echo $?)"
@@ -11210,7 +11211,7 @@ expect "C2b: the project registers its copy (template settings) -> the user-leve
 printf '{}\n' > "$c2b_p/.claude/settings.json"
 c2b_stepchk
 expect "C2b: the project does not register its copy -> the user-level entry runs" 1 "$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
-cp "$ROOT/templates/general/.claude/settings.json" "$c2b_p/.claude/settings.json"; rm -f "$c2b_p/hooks/verify-hooks.sh"
+cp "$ROOT/scripts/fixtures/v461-template-settings.json" "$c2b_p/.claude/settings.json"; rm -f "$c2b_p/hooks/verify-hooks.sh"
 c2b_stepchk
 expect "C2b: registered but the project's file is missing -> the user-level entry runs and reports" 1 "$(printf '%s' "$C2EOUT" | grep -c 'GLOBAL-RAN')"
 rm -rf "$c2b_p/hooks"
@@ -11300,7 +11301,7 @@ done
 # ---- v4.4.0 C5: project hooks run in one bash; the global copy steps aside only for a REGISTERED project copy; missing-script polarity per form ----
 echo "=== v4.4.0 C5: project registrations (F/W/O/U) and the user-level step-aside ==="
 C5RUH="$ROOT/scripts/render-user-hooks.sh"
-C5TPL="$ROOT/templates/general/.claude/settings.json"
+C5TPL="$ROOT/scripts/fixtures/v461-template-settings.json"   # v5 templates register only the guard; the v4 forms live on in this frozen copy
 C5R=$(mkrepo c5repo main)
 C5CNT="$TMPROOT/c5-runs"
 # a HOME holding the RENDERED user-level hooks; the global no-push-main appends 'g' to the run counter when it starts
@@ -11610,7 +11611,7 @@ expect "E1 non-ASCII section: cut at a line end" yes "$(sed '$d' "$TMPROOT/e1.ou
 printf '# P\r\n\r\n## Now \r\n\r\n- **Goal:** crlf goal\r\n\r\n## Next\r\n' > "$E1P/PROJECT_STATE.md"
 e1_run "$E1P" "$E1C"
 expect "E1 CRLF file: section printed, no CR" "- **Goal:** crlf goal" "$(sed -n 2p "$TMPROOT/e1.out")"
-# The registration's wrapper, verbatim from templates/*/.claude/settings.json, with no script.
+# The registration's wrapper, verbatim from the v4.6.1 templates/*/.claude/settings.json, with no script.
 E1W='f="${CLAUDE_PROJECT_DIR:-.}/hooks/now-brief.sh"; [ -r "$f" ] || exit 0; exec bash "$f"'
 E1E="$TMPROOT/e1empty"; mkdir -p "$E1E"
 printf '%s' "$E1C" | CLAUDE_PROJECT_DIR="$E1E" bash -c "$E1W" > "$TMPROOT/e1.out" 2>&1
@@ -12075,6 +12076,72 @@ else
   skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 21
 fi
 # ---- end v5.0 jev
+
+# ---- v5.0 guard: fail closed without the plugin's session marker (spec §3.3)
+# The command is EXTRACTED from the template (the only PreToolUse group without a matcher), never copied,
+# by whichever parser this host has: json.sh's dotted reader does not index arrays.
+v5guard_cmd() { # <settings.json> -> the empty-matcher PreToolUse command(s), one per line
+  if [ -n "$HAVE_NODE" ]; then
+    node -e 'const s=require(process.argv[1]);for(const g of (s.hooks||{}).PreToolUse||[]){if(!g.matcher){for(const h of g.hooks)console.log(h.command)}}' "$(natpath "$1")"
+  elif [ -n "$HAVE_PY" ]; then
+    python3 -c 'import json,sys
+for g in json.load(open(sys.argv[1])).get("hooks",{}).get("PreToolUse",[]):
+    if not g.get("matcher"):
+        for h in g["hooks"]: print(h["command"])' "$1"
+  else
+    jq -r '(.hooks.PreToolUse // [])[] | select((.matcher // "") == "") | .hooks[].command' "$1"
+  fi
+}
+V5GC=$(v5guard_cmd "$ROOT/templates/general/.claude/settings.json")
+expect "v5 guard: the template has exactly one empty-matcher command, naming cct-\$(id -u)" "1 yes" "$(printf '%s\n' "$V5GC" | grep -c . ) $(case $V5GC in *'cct-$(id -u)'*) echo yes ;; *) echo no ;; esac)"
+V5GT="$TMPROOT/v5guard"; V5GD="$V5GT/cct-$(id -u)"; mkdir -p "$V5GD"; chmod 700 "$V5GD"; : > "$V5GD/sid-ok"
+V5GMSG='BLOCKED: the cct plugin is not active in this session. Install it with /plugin marketplace add dagonet/claude-code-toolkit and /plugin install cct@dagonet, then restart the session.'
+v5guard() { printf '%s' "$1" | TMPDIR="$V5GT" bash -c "$V5GC" 2>"$TMPROOT/v5guard.err"; echo "rc=$?"; }
+expect "v5 guard: marker present -> allowed" "rc=0" "$(v5guard '{"session_id":"sid-ok","tool_name":"Bash"}')"
+expect "v5 guard: marker missing -> refused" "rc=2" "$(v5guard '{"session_id":"sid-other","tool_name":"Bash"}')"
+expect "v5 guard: the refusal is the exact install message" "$V5GMSG" "$(cat "$TMPROOT/v5guard.err")"
+expect "v5 guard: no session_id -> refused" "rc=2" "$(v5guard '{"tool_name":"Bash"}')"
+expect "v5 guard: empty session_id -> refused" "rc=2" "$(v5guard '{"session_id":""}')"
+expect "v5 guard: malformed stdin -> refused" "rc=2" "$(v5guard 'not json')"
+expect "v5 guard: empty stdin -> refused" "rc=2" "$(v5guard '')"
+expect "v5 guard: traversal id -> refused" "rc=2" "$(v5guard '{"session_id":"../cct-'"$(id -u)"'/sid-ok"}')"
+expect "v5 guard: a dot id -> refused (even with a file of that name)" "rc=2" "$(: > "$V5GD/a.b"; v5guard '{"session_id":"a.b"}')"
+expect "v5 guard: git-guard-off does not open it" "rc=2" "$( mkdir -p "$TMPROOT/v5gg/.claude" && : > "$TMPROOT/v5gg/.claude/git-guard-off" && cd "$TMPROOT/v5gg" && CLAUDE_PROJECT_DIR="$TMPROOT/v5gg" v5guard '{"session_id":"nope"}')"
+# writer -> reader: the marker the plugin's SessionStart hook writes is the one the guard reads; SessionEnd closes it again
+V5GW="$TMPROOT/v5guardw"; mkdir -p "$V5GW"
+v5guardw() { printf '%s' "$1" | TMPDIR="$V5GW" bash -c "$V5GC" 2>/dev/null; echo "rc=$?"; }
+expect "v5 guard: before SessionStart -> refused" "rc=2" "$(v5guardw '{"session_id":"wr-1","tool_name":"Edit"}')"
+printf '{"session_id":"wr-1","hook_event_name":"SessionStart","source":"startup"}' | TMPDIR="$V5GW" bash "$ROOT/hooks/cct-session.sh"
+expect "v5 guard: after cct-session.sh SessionStart -> allowed" "rc=0" "$(v5guardw '{"session_id":"wr-1","tool_name":"Edit"}')"
+expect "v5 guard: ... another session id is still refused" "rc=2" "$(v5guardw '{"session_id":"wr-2","tool_name":"Edit"}')"
+printf '{"session_id":"wr-1","hook_event_name":"SessionEnd"}' | TMPDIR="$V5GW" bash "$ROOT/hooks/cct-session.sh" end
+expect "v5 guard: after cct-session.sh SessionEnd -> refused" "rc=2" "$(v5guardw '{"session_id":"wr-1","tool_name":"Edit"}')"
+# ownership (controller ruling 2): a cct-<uid> dir this user does not own is no marker dir, for the guard, the
+# writer and am_plugin_loaded alike. Git Bash/Cygwin skip the -O test (per-user /tmp; its -O risks a lockout).
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) skip_host "v5 guard: a foreign-owned marker dir is refused (guard, writer, am_plugin_loaded)" "the -O test is skipped on Git Bash/Cygwin by design" 4 ;;
+  *)
+    V5GF="$TMPROOT/v5guardf"; V5GFD="$V5GF/cct-$(id -u)"; mkdir -p "$V5GF"
+    if [ "$(id -u)" = 0 ]; then
+      mkdir -p "$V5GFD"; : > "$V5GFD/fo-1"; chown 65534 "$V5GFD"; V5GFS=fo-1   # root: hand the dir to nobody
+    else
+      ln -s /etc "$V5GFD"; V5GFS=passwd                                           # not root: a dir root owns, with a file named like an id
+    fi
+    expect "v5 guard: foreign-owned marker dir -> refused" "rc=2" "$(printf '{"session_id":"%s"}' "$V5GFS" | TMPDIR="$V5GF" bash -c "$V5GC" 2>/dev/null; echo "rc=$?")"
+    expect "v5 guard: ... the same file in an owned dir -> allowed (control)" "rc=0" "$(mkdir -p "$TMPROOT/v5guardo/cct-$(id -u)"; : > "$TMPROOT/v5guardo/cct-$(id -u)/$V5GFS"; printf '{"session_id":"%s"}' "$V5GFS" | TMPDIR="$TMPROOT/v5guardo" bash -c "$V5GC" 2>/dev/null; echo "rc=$?")"
+    printf '{"session_id":"fo-2","hook_event_name":"SessionStart"}' | TMPDIR="$V5GF" bash "$ROOT/hooks/cct-session.sh" 2>/dev/null
+    expect "v5 session: foreign-owned marker dir -> writes nothing" "no" "$([ -e "$V5GFD/fo-2" ] && echo yes || echo no)"
+    expect "v5 am_plugin_loaded: foreign-owned marker dir -> not loaded" "no" "$( ( . "$ROOT/hooks/lib/agent-model.sh"; TMPDIR="$V5GF"; am_plugin_loaded "$V5GFS" && echo yes || echo no ) )"
+    ;;
+esac
+V5GS="$TMPROOT/v5sweep"; mkdir -p "$V5GS/cct-$(id -u)"
+if touch -d '29 days ago' "$V5GS/cct-$(id -u)/old-29" 2>/dev/null && touch -d '31 days ago' "$V5GS/cct-$(id -u)/old-31" 2>/dev/null; then
+  printf '{"session_id":"new-1"}' | TMPDIR="$V5GS" bash "$ROOT/hooks/cct-session.sh"
+  expect "v5 session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "yes no" "$([ -f "$V5GS/cct-$(id -u)/old-29" ] && echo yes || echo no) $([ -f "$V5GS/cct-$(id -u)/old-31" ] && echo yes || echo no)"
+else
+  skip_host "v5 session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "no GNU touch -d on this host" 1
+fi
+# ---- end v5.0 guard
 
 
 echo "----------------------------------------------------------------"

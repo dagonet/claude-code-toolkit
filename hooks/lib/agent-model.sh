@@ -113,9 +113,12 @@ am_resolve() {
 AM_JEV_MARKER='skills/jev/jev_route.py'
 # am_plugin_loaded <session_id> -- exit 0 iff hooks/cct-session.sh marked this session (the cct plugin
 # is loaded in it). The id is sanitized as cct-session.sh does: only [A-Za-z0-9-], else "not loaded".
+# A marker dir this user does not own is no marker dir (as for the guard), except on Git Bash/Cygwin.
 am_plugin_loaded() {
   case ${1:-} in ''|*[!A-Za-z0-9-]*) return 1 ;; esac
-  [ -f "${TMPDIR:-/tmp}/cct-$(id -u)/$1" ]
+  local am_d="${TMPDIR:-/tmp}/cct-$(id -u)"
+  case $(uname -s) in MINGW*|MSYS*|CYGWIN*) ;; *) [ -O "$am_d" ] || return 1 ;; esac
+  [ -f "$am_d/$1" ]
 }
 # am_jev_routing <root> [<session_id>] -- exit 0 iff the Jev router WILL run for a spawn in this
 # checkout, so model-floor may step aside (v4.4.0 R-2). All four must hold:

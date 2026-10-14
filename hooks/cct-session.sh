@@ -10,7 +10,11 @@ sid=$(cat | grep -o '"session_id" *: *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$
 case $sid in ''|*[!A-Za-z0-9-]*) exit 0 ;; esac
 d="${TMPDIR:-/tmp}/cct-$(id -u)"
 if [ "${1:-}" = end ]; then rm -f "$d/$sid" 2>/dev/null; exit 0; fi
-mkdir -p "$d" 2>/dev/null && chmod 700 "$d" 2>/dev/null
+mkdir -p "$d" 2>/dev/null
+# A dir this user does not own is not a marker dir (the guard and am_plugin_loaded refuse it too): write nothing.
+# Git Bash/Cygwin skip the -O test: their /tmp is per-user, and -O there risks a Windows-wide lockout.
+case $(uname -s) in MINGW*|MSYS*|CYGWIN*) ;; *) [ -O "$d" ] || exit 0 ;; esac
+chmod 700 "$d" 2>/dev/null
 : > "$d/$sid" 2>/dev/null
-find "$d" -type f -mtime +7 -delete 2>/dev/null
+find "$d" -type f -mtime +30 -delete 2>/dev/null
 exit 0

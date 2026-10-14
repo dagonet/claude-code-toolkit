@@ -964,6 +964,51 @@ else
   skip "setup-project.ps1 pre-push install" "no PowerShell on this host" 3
 fi
 
+# --- v5.0 (spec §3.3, §3.4): the project ships the plugin layout ------------------
+# No agents, only the pre-push hook set under hooks/, the inline plugin-off guard in
+# settings.json, and the plugin install lines printed. HOME is a temp dir: nothing here
+# may depend on the real one.
+V5HOME="$TMPROOT/v5-home"; mkdir -p "$V5HOME"
+v5_layout() { # <label prefix> <project dir> <setup output file>
+  expect "$1: no .claude/agents/"                        no "$([ -e "$2/.claude/agents" ] && echo yes || echo no)"
+  expect "$1: no .claude/agent-grants.json"              no "$([ -e "$2/.claude/agent-grants.json" ] && echo yes || echo no)"
+  expect "$1: hooks/ holds exactly the pre-push set" \
+    "hooks/git-pre-push.sh hooks/lib/git-cmd.sh hooks/lib/json.sh" \
+    "$( (cd "$2" && find hooks -type f | sort | tr '\n' ' ' | sed 's/ $//') )"
+  expect "$1: the empty-matcher PreToolUse guard reads cct-\$(id -u)" yes \
+    "$(node -e 'const s=require(process.argv[1]);const g=(s.hooks.PreToolUse||[]).filter(g=>!g.matcher);process.stdout.write(g.length===1&&g[0].hooks.length===1&&g[0].hooks[0].command.includes("cct-$(id -u)")?"yes":"no")' "$2/.claude/settings.json" 2>/dev/null || echo no)"
+  expect "$1: the guard is the only hook registration"  1 \
+    "$(node -e 'const s=require(process.argv[1]);let n=0;for(const e of Object.values(s.hooks||{}))for(const g of e)n+=g.hooks.length;process.stdout.write(String(n))' "$2/.claude/settings.json" 2>/dev/null || echo err)"
+  expect "$1: the pre-push shim is installed"           1 "$(grep -c 'claude-code-toolkit pre-push shim' "$2/.git/hooks/pre-push" 2>/dev/null || echo 0)"
+  expect "$1: prints the plugin marketplace line"       1 "$(grep -c '/plugin marketplace add dagonet/claude-code-toolkit' "$3")"
+  expect "$1: prints the plugin install line"           1 "$(grep -c '/plugin install cct@dagonet' "$3")"
+  expect "$1: no longer prints the user-level hook snippet" 0 "$(grep -c 'render-user-hooks' "$3")"
+}
+V5P="$TMPROOT/v5-layout"; mkdir -p "$V5P"; git -C "$V5P" init -q
+HOME="$V5HOME" GIT_CONFIG_GLOBAL=/dev/null bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
+  --target-path "$V5P" --default-branch main > "$TMPROOT/v5-layout.out" 2>&1
+expect "sh: v5 bootstrap exits 0"                       0 "$?"
+v5_layout "sh v5" "$V5P" "$TMPROOT/v5-layout.out"
+# Two-sided: with only those three files, git itself refuses a push to main and allows feat/x.
+# git-pre-push.sh -> git-cmd.sh -> json.sh must call nothing the project no longer ships.
+V5R="$TMPROOT/v5-remote.git"; git init -q --bare "$V5R"
+v5git() { HOME="$V5HOME" GIT_CONFIG_GLOBAL=/dev/null git -C "$V5P" -c user.email=t@t.t -c user.name=t -c commit.gpgsign=false "$@"; }
+v5git add -A >/dev/null 2>&1; v5git commit -q -m seed >/dev/null 2>&1; v5git remote add origin "$V5R"
+v5git push -q origin HEAD:refs/heads/main > "$TMPROOT/v5-push-main.out" 2>&1; V5RC=$?
+expect "sh v5: pre-push refuses a push to main"         "refused absent" "$([ "$V5RC" -ne 0 ] && echo refused || echo pushed) $(git -C "$V5R" rev-parse -q --verify refs/heads/main >/dev/null && echo present || echo absent)"
+expect "sh v5: ... and says why"                        1 "$(grep -c 'BLOCKED' "$TMPROOT/v5-push-main.out")"
+v5git push -q origin HEAD:refs/heads/feat/x > "$TMPROOT/v5-push-feat.out" 2>&1; V5RC=$?
+expect "sh v5: pre-push allows a push to feat/x"        "pushed present" "$([ "$V5RC" -eq 0 ] && echo pushed || echo refused) $(git -C "$V5R" rev-parse -q --verify refs/heads/feat/x >/dev/null && echo present || echo absent)"
+if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
+  V5PS="$TMPROOT/v5-layout-ps"; mkdir -p "$V5PS"; git -C "$V5PS" init -q
+  HOME="$V5HOME" GIT_CONFIG_GLOBAL=/dev/null "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+    -Variant general -ProjectName SetupFixture -TargetPath "$V5PS" -DefaultBranch main > "$TMPROOT/v5-layout-ps.out" 2>&1
+  expect "ps1: v5 bootstrap exits 0"                    0 "$?"
+  v5_layout "ps1 v5" "$V5PS" "$TMPROOT/v5-layout-ps.out"
+else
+  skip "setup-project.ps1 v5 plugin layout" "no PowerShell on this host" 10
+fi
+
 echo "----------------------------------------------------------------"
 echo "test-setup-project.sh: $pass passed, $fail failed, $skipped skipped ($((pass + fail + skipped)) assertions)"
 [ "$fail" -eq 0 ] || exit 1

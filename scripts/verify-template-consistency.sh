@@ -93,14 +93,12 @@ fi
 # ---------------------------------------------------------------------------
 # 11. Gate + contract lock-in (PR #38 / session-mining round 2)
 # ---------------------------------------------------------------------------
-for v in $VARIANTS; do
-  s="templates/$v/.claude/settings.json"
-  grep -q "gate-before-merge" "$s" \
-    && ok "$s: gate-before-merge registered" \
-    || ko "$s: gate-before-merge NOT registered"
-  grep -q "enforce-agent-contract" "$s" \
-    && ok "$s: enforce-agent-contract (SubagentStop) registered" \
-    || ko "$s: enforce-agent-contract NOT registered"
+#     v5.0: the registrations moved from every variant settings.json into the plugin's
+#     hooks/hooks.json (the templates register only the plugin-off guard).
+for h in gate-before-merge enforce-agent-contract; do
+  grep -qF "run-hook.sh\\\" $h\"" hooks/hooks.json \
+    && ok "hooks/hooks.json: $h registered" \
+    || ko "hooks/hooks.json: $h NOT registered"
 done
 
 settings_hashes=$(md5sum templates/*/.claude/settings.json | awk '{print $1}' | sort -u | wc -l)
@@ -111,46 +109,41 @@ else
   md5sum templates/*/.claude/settings.json
 fi
 
-coder_contract=$(grep -lF "## Report (HARD REQUIREMENT)" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md 2>/dev/null | wc -l)
-if [ "$coder_contract" = "11" ]; then
-  ok "Report section present in all 11 template coder files"
+# v5.0: the shipped agents are the plugin's agents/ (templates ship none); the coder
+# count is computed by glob, and an empty glob is a failure, not a vacuous pass.
+plugin_coders=$(ls agents/coder.md agents/*-coder.md 2>/dev/null)
+plugin_coder_n=$(printf '%s\n' "$plugin_coders" | grep -c .)
+coder_contract=$(grep -lF "## Report (HARD REQUIREMENT)" $plugin_coders /dev/null 2>/dev/null | wc -l)
+if [ "$plugin_coder_n" -gt 0 ] && [ "$coder_contract" = "$plugin_coder_n" ]; then
+  ok "Report section present in all $plugin_coder_n plugin coder files"
 else
-  ko "Report section present in only $coder_contract/11 template coder files"
+  ko "Report section present in only $coder_contract/$plugin_coder_n plugin coder files"
 fi
 
-coder_update_pr=$(grep -l "mcp__MCP_DOCKER__update_pull_request" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md 2>/dev/null | wc -l)
-if [ "$coder_update_pr" = "11" ]; then
-  ok "update_pull_request tool present in all 11 template coder files"
+coder_update_pr=$(grep -l "mcp__MCP_DOCKER__update_pull_request" $plugin_coders /dev/null 2>/dev/null | wc -l)
+if [ "$plugin_coder_n" -gt 0 ] && [ "$coder_update_pr" = "$plugin_coder_n" ]; then
+  ok "update_pull_request tool present in all $plugin_coder_n plugin coder files"
 else
-  ko "update_pull_request tool present in only $coder_update_pr/11 template coder files"
+  ko "update_pull_request tool present in only $coder_update_pr/$plugin_coder_n plugin coder files"
 fi
 
-reviewer_opus=$(grep -l "^model: opus$" templates/*/.claude/agents/code-reviewer.md 2>/dev/null | wc -l)
-if [ "$reviewer_opus" = "6" ]; then
-  ok "code-reviewer pinned to opus in all 6 variants"
+if grep -q "^model: opus$" agents/code-reviewer.md 2>/dev/null; then
+  ok "agents/code-reviewer.md pinned to opus"
 else
-  ko "code-reviewer opus pin present in only $reviewer_opus/6 variants"
+  ko "agents/code-reviewer.md opus pin missing"
 fi
 
 # ---------------------------------------------------------------------------
 # 12. Delegate-everything lock-in (round 4)
 # ---------------------------------------------------------------------------
-for v in $VARIANTS; do
-  s="templates/$v/.claude/settings.json"
-  grep -q "enforce-delegation" "$s" \
-    && ok "$s: enforce-delegation registered" \
-    || ko "$s: enforce-delegation NOT registered"
-  [ -f "templates/$v/.claude/agents/ops.md" ] \
-    && ok "templates/$v: ops.md present" \
-    || ko "templates/$v: ops.md MISSING"
-done
-
-ops_hashes=$(md5sum templates/*/.claude/agents/ops.md 2>/dev/null | awk '{print $1}' | sort -u | wc -l)
-if [ "$ops_hashes" = "1" ]; then
-  ok "ops.md byte-identical across all 6 variants"
-else
-  ko "ops.md drift detected — variants are NOT byte-identical"
-fi
+#     v5.0: registration read from hooks/hooks.json; one plugin ops.md replaces the six
+#     template copies, so their byte-identity assertion is retired with them.
+grep -qF 'run-hook.sh\" enforce-delegation"' hooks/hooks.json \
+  && ok "hooks/hooks.json: enforce-delegation registered" \
+  || ko "hooks/hooks.json: enforce-delegation NOT registered"
+[ -f agents/ops.md ] \
+  && ok "agents/ops.md present" \
+  || ko "agents/ops.md MISSING"
 
 # ---------------------------------------------------------------------------
 # 12b. Task 3 addendum item D / ruling R8: .claude/rules/project.md is seeded
@@ -173,8 +166,8 @@ fi
 # does not silently invalidate the assertion.
 #   report agents = every template agent file EXCEPT the coders (coder.md and the
 #   language variants); the coders carry the Report section instead.
-report_agents=$(ls templates/*/.claude/agents/*.md 2>/dev/null | grep -vE 'coder\.md$' | wc -l)
-mandate_count=$(grep -l "Subagent reporting" templates/*/.claude/agents/*.md 2>/dev/null | wc -l)
+report_agents=$(ls agents/*.md 2>/dev/null | grep -vE 'coder\.md$' | wc -l)
+mandate_count=$(grep -l "Subagent reporting" agents/*.md 2>/dev/null | wc -l)
 if [ "$mandate_count" = "$report_agents" ]; then
   ok "Subagent reporting mandate present in all $report_agents non-coder agent files"
 else
@@ -183,15 +176,15 @@ fi
 
 # Liveness & Scope block: every template + user-level-reference agent file.
 # Guards the final-message reporting contract and the scope-abort clause.
-all_agents=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
-liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+all_agents=$(ls agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
 if [ "$liveness_count" = "$all_agents" ]; then
   ok "Liveness & Scope block present in all $all_agents agent files"
 else
   ko "Liveness & Scope block present in only $liveness_count/$all_agents agent files"
 fi
 
-scope_abort=$(grep -lF "Scope abort:" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+scope_abort=$(grep -lF "Scope abort:" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
 if [ "$scope_abort" = "$all_agents" ]; then
   ok "Scope-abort clause present in all $all_agents agent files"
 else
@@ -201,12 +194,12 @@ fi
 # v2.0: subagents report in their FINAL MESSAGE. SendMessage was the named-teammate
 # channel and must not creep back into an agent definition — a partial sweep of the
 # 61 files would otherwise pass every assertion above.
-sendmsg=$(grep -lF "SendMessage" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+sendmsg=$(grep -lF "SendMessage" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
 if [ "$sendmsg" = "0" ]; then
   ok "No agent definition instructs SendMessage reporting (agent teams retired)"
 else
   ko "SendMessage reporting survives in $sendmsg agent files:"
-  grep -lF "SendMessage" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null
+  grep -lF "SendMessage" agents/*.md user-level-reference/agents/*.md 2>/dev/null
 fi
 
 banned='fixes code directly|PO only|PO fixes directly|PO reviews directly|PO verifies directly|may be committed directly'
@@ -225,35 +218,25 @@ fi
 #     non-empty at the toolkit ROOT hooks/ (root-tracked design — variants do
 #     NOT ship hooks/). Prose mentions are excluded (execution refs only).
 # ---------------------------------------------------------------------------
-#     v2.1.2: hook commands now invoke "${CLAUDE_PROJECT_DIR:-.}/hooks/<name>.sh",
-#     so the extraction anchors on the command: line and pulls the hooks/ path
-#     out of it — that accepts both the old cwd-relative and the new absolute
-#     form, and still excludes the permissions allow pattern (no `command:`).
-extracted=$(
-  {
-    grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
-    # frontmatter command: lines only (execution refs), not prose
-    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
-  } | grep -o 'hooks/[A-Za-z0-9_-]*\.sh' | sort -u
-)
-# The vacuity check runs on the EXTRACTION only. run-gate.sh is added afterwards,
-# so a broken grep can never be masked by the unconditional entry.
-if [ -z "$extracted" ]; then
-  ko "hook-ref invariant: extraction returned NO references (extraction broken?)"
+#     v5.0: rewritten. The templates register only the inline plugin-off guard and
+#     projects ship only the pre-push set, so a variant settings.json command naming
+#     ANY hooks/<name>.sh would run a file the project no longer has. The registered
+#     hooks moved to hooks/hooks.json; check 74 asserts each of those exists in hooks/.
+c13_refs=$(grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null | grep -o 'hooks/[A-Za-z0-9_-]*\.sh' | sort -u)
+c13_cmds=$(grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null | grep -c .)
+if [ "$c13_cmds" -eq 0 ]; then
+  ko "hook-ref invariant: no \"command\": line in any variant settings.json (the guard is missing, or the extraction is broken)"
+elif [ -n "$c13_refs" ]; then
+  ko "hook-ref invariant: a variant settings.json command names a hook projects no longer ship: $(printf '%s ' $c13_refs)"
+else
+  ok "hook-ref invariant: no variant settings.json command names a hooks/<name>.sh ($c13_cmds command line(s) read)"
 fi
-# run-gate.sh is named only by the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS
-# pattern and by prose, never by a `command:` line, so the anchored extraction
-# above cannot see it. It is the most load-bearing script in the repo (the Gate
-# mechanism, gate-before-merge.sh's dependency, every coder's deliverable
-# contract), so assert it explicitly rather than let it fall out of coverage.
-hook_refs=$(printf '%s\nhooks/run-gate.sh\n' "$extracted" | grep -v '^$' | sort -u)
-for h in $hook_refs; do
-  if [ -s "$h" ]; then
-    ok "hook-ref: $h exists and is non-empty at repo root"
-  else
-    ko "hook-ref: $h referenced by a variant but MISSING/empty at repo root (fails open downstream)"
-  fi
-done
+# run-gate.sh is the gate the plugin's bin/cct-gate runs; assert it explicitly.
+if [ -s hooks/run-gate.sh ]; then
+  ok "hook-ref: hooks/run-gate.sh exists and is non-empty at repo root"
+else
+  ko "hook-ref: hooks/run-gate.sh MISSING/empty at repo root (cct-gate has nothing to run)"
+fi
 
 # ---------------------------------------------------------------------------
 # 14. v1.2 liveness sizing invariants.
@@ -399,17 +382,9 @@ for v in general dotnet dotnet-maui rust-tauri java python; do
   fi
 done
 
-# The template copies MUST keep the merge gate -- this is the other half of the
-# same invariant: the rule is scope-dependent, not a blanket removal.
-for v in general dotnet dotnet-maui rust-tauri java python; do
-  c="templates/$v/.claude/agents/coder.md"
-  [ -f "$c" ] || continue
-  if awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb{print}' "$c" | grep -q 'gate-before-merge'; then
-    ok "templates/$v coder keeps the merge gate in frontmatter"
-  else
-    ko "templates/$v coder LOST its gate-before-merge frontmatter hook"
-  fi
-done
+# v5.0: the "template coders keep the merge gate in frontmatter" half is retired --
+# templates ship no agents, and the plugin registers gate-before-merge plugin-wide
+# (hooks/hooks.json; check 11 asserts it, check 75 that no agents/*.md carries hooks:).
 
 # ---------------------------------------------------------------------------
 # 17. Tool-allowlist invariant (v2.0 PR3).
@@ -425,7 +400,7 @@ done
 # ---------------------------------------------------------------------------
 echo
 allow_fail=0
-for f in templates/*/.claude/agents/*.md user-level-reference/agents/*.md; do
+for f in agents/*.md user-level-reference/agents/*.md; do
   [ -f "$f" ] || continue
   tools_line=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb&&/^tools:/{print}' "$f")
   [ -z "$tools_line" ] && continue
@@ -448,26 +423,26 @@ done
 #     inherits the session model (219 exploration spawns at Opus cost).
 # ---------------------------------------------------------------------------
 echo
-explore_files=$(ls templates/*/.claude/agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
-if [ "$explore_files" = "7" ]; then
-  ok "custom Explore agent present in all 6 variants + user-level"
+explore_files=$(ls agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
+if [ "$explore_files" = "2" ]; then
+  ok "custom Explore agent present in the plugin agents/ + user-level"
 else
-  ko "custom Explore agent present in only $explore_files/7 locations (built-in Explore inherits the session model)"
+  ko "custom Explore agent present in only $explore_files/2 locations (agents/, user-level-reference/agents/) (built-in Explore inherits the session model)"
 fi
 
-explore_haiku=$(grep -l "^model: haiku$" templates/*/.claude/agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
-if [ "$explore_haiku" = "7" ]; then
-  ok "Explore pinned to haiku in all 7 copies"
+explore_haiku=$(grep -l "^model: haiku$" agents/Explore.md user-level-reference/agents/Explore.md 2>/dev/null | wc -l)
+if [ "$explore_haiku" = "2" ]; then
+  ok "Explore pinned to haiku in both copies"
 else
-  ko "Explore pinned to haiku in only $explore_haiku/7 copies"
+  ko "Explore pinned to haiku in only $explore_haiku/2 copies"
 fi
 
-pinned_ids=$(grep -l "^model: claude-" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+pinned_ids=$(grep -l "^model: claude-" agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
 if [ "$pinned_ids" = "0" ]; then
   ok "no agent pins a full claude-* model id (aliases only — a proxy may reroute them)"
 else
   ko "$pinned_ids agent files pin a full claude-* model id instead of an alias"
-  grep -l "^model: claude-" templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null
+  grep -l "^model: claude-" agents/*.md user-level-reference/agents/*.md 2>/dev/null
 fi
 
 # The CLI does not validate `effort:`/`model:` — a v2.1 PR8 probe ran an agent
@@ -475,27 +450,27 @@ fi
 # So a typo ships silently unless something here pins the documented value lists.
 # Count the raw lines first: with no `effort:` anywhere, "0 offenders" is a
 # vacuous pass and the whole check silently stops meaning anything.
-all_effort=$(grep -h "^effort: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -c .)
+all_effort=$(grep -h "^effort: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -c .)
 [ "$all_effort" -gt 0 ] || ko "no agent file carries an 'effort:' line — the level-list check would pass vacuously"
-bad_effort=$(grep -h "^effort: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
+bad_effort=$(grep -h "^effort: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
 if [ "$bad_effort" = "0" ]; then
   ok "every agent 'effort:' value is one of low/medium/high/xhigh"
 else
   ko "$bad_effort agent 'effort:' values are outside low/medium/high/xhigh (the CLI does not validate this field)"
-  grep -n "^effort: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
+  grep -n "^effort: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
 fi
 
-all_model=$(grep -h "^model: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -c .)
+all_model=$(grep -h "^model: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -c .)
 [ "$all_model" -gt 0 ] || ko "no agent file carries a 'model:' line — the alias-list check would pass vacuously"
-bad_model=$(grep -h "^model: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
+bad_model=$(grep -h "^model: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
 if [ "$bad_model" = "0" ]; then
   ok "every agent 'model:' value is one of sonnet/opus/haiku/fable/inherit"
 else
   ko "$bad_model agent 'model:' values are outside the alias list (the CLI does not validate this field)"
-  grep -n "^model: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
+  grep -n "^model: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
 fi
 
-mode_field=$(grep -l "^mode: " templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
+mode_field=$(grep -l "^mode: " agents/*.md user-level-reference/agents/*.md 2>/dev/null | wc -l)
 if [ "$mode_field" = "0" ]; then
   ok "no agent carries the undocumented 'mode:' frontmatter field"
 else
@@ -506,7 +481,7 @@ fi
 # tools: omits it cannot open the skills its `## Skills` table names.
 # Counted over the SAME file list, so adding Skill to one of the excluded
 # agents later is a passing change, not a spurious count mismatch.
-skill_list=$(ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
+skill_list=$(ls agents/*.md user-level-reference/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
 skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
 skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
 if [ "$skill_tool" = "$skill_users" ]; then
@@ -521,7 +496,7 @@ fi
 # exactly the up-front cost v4.5.0 removed. Each agent opens skills on demand
 # from its own `## Skills` table; the coders carry the karpathy preferences as
 # the `## Working rules` digest (check 67).
-skill_preload=$(grep -lE '^skills:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null)
+skill_preload=$(grep -lE '^skills:' agents/*.md user-level-reference/agents/*.md 2>/dev/null)
 if [ -z "$skill_preload" ]; then
   ok "no agent file preloads a skill via skills: frontmatter"
 else
@@ -530,11 +505,11 @@ fi
 
 # A coder that cannot create a file is not a coder: 44 Write calls died on the
 # tool allowlist in the mined sessions.
-coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null | wc -l)
-if [ "$coder_write" = "12" ]; then
-  ok "Write tool present in all 12 coder files"
+coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" agents/coder.md agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null | wc -l)
+if [ "$coder_write" = "6" ]; then
+  ok "Write tool present in all 6 coder files (agents/ + user-level)"
 else
-  ko "Write tool present in only $coder_write/12 coder files"
+  ko "Write tool present in only $coder_write/6 coder files"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1257,8 +1232,12 @@ C71_TABLE=$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[
 #      LEAST one reference per F+W+O+U entry of templates/general (the frozen table
 #      of check 71), and a copy with the paths blanked must fall below that floor.
 #      Re-anchoring the skill turns this red.
+#      v5.0: the templates register no hooks/ script any more (only the inline
+#      plugin-off guard), so the control reads the frozen v4.6.1 template settings
+#      (scripts/fixtures/v461-template-settings.json): the shape a v4 consumer still
+#      carries when step 6b runs against it.
 skf="skills/sync-template/SKILL.md"
-sksettings="templates/general/.claude/settings.json"
+sksettings="scripts/fixtures/v461-template-settings.json"
 if [ ! -f "$skf" ] || [ ! -f "$sksettings" ]; then
   ko "6b collector control: $skf or $sksettings missing"
 else
@@ -1788,10 +1767,11 @@ for v in $VARIANTS; do
   else
     ko "$s: mcp__git-tools__* missing from allow — the read ops were banned too"
   fi
-  if grep -qF '"Bash(bash hooks/run-gate.sh*)"' "$s"; then
-    ok "$s: Bash(bash hooks/run-gate.sh*) survives in allow"
+  # v5.0: projects run the gate as the plugin's cct-gate (spec §3.4).
+  if grep -qF '"Bash(cct-gate*)"' "$s"; then
+    ok "$s: Bash(cct-gate*) survives in allow"
   else
-    ko "$s: Bash(bash hooks/run-gate.sh*) dropped from allow — the gate needs a prompt"
+    ko "$s: Bash(cct-gate*) dropped from allow — the gate needs a prompt"
   fi
 done
 missing=""
@@ -1842,12 +1822,20 @@ for s in $(for v in $VARIANTS; do echo "templates/$v/.claude/settings.json"; don
   else
     ok "$s: no Read(...) deny rule of any spelling"
   fi
+  # v5.0: a variant registers it through the plugin (hooks/hooks.json, asserted below),
+  # so only the user-level reference is read for the registration here.
+  case "$s" in templates/*) continue ;; esac
   if grep -qF 'hooks/deny-secret-reads.sh' "$s"; then
     ok "$s: registers hooks/deny-secret-reads.sh (the protection that replaced the rules)"
   else
     ko "$s: hooks/deny-secret-reads.sh NOT registered — the .env files are unprotected, not merely un-prompted"
   fi
 done
+if grep -qF 'run-hook.sh\" deny-secret-reads"' hooks/hooks.json; then
+  ok "hooks/hooks.json: registers deny-secret-reads (the protection every variant gets from the plugin)"
+else
+  ko "hooks/hooks.json: deny-secret-reads NOT registered — the .env files of every v5 project are unprotected"
+fi
 if [ -s hooks/deny-secret-reads.sh ]; then
   ok "hooks/deny-secret-reads.sh exists at the repo root"
 else
@@ -1906,7 +1894,7 @@ echo
 relhook=$(
   {
     grep -h '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
-    grep -h 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
+    grep -h 'command: "bash hooks/' agents/*.md 2>/dev/null
   } | grep -c .
 )
 if [ "$relhook" -eq 0 ]; then
@@ -1914,29 +1902,14 @@ if [ "$relhook" -eq 0 ]; then
 else
   ko "$relhook hook command(s) still cwd-relative ('bash hooks/...') — they 127 after any cd"
   grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
-  grep -n 'command: "bash hooks/' templates/*/.claude/agents/*.md 2>/dev/null
+  grep -n 'command: "bash hooks/' agents/*.md 2>/dev/null
 fi
-#     v4.4.0: the registration forms are F/W/O (a `f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"`
-#     path assignment) and U (`exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/X.sh\"`).
-ABS_FORM_V='f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/'
-ABS_FORM_U='exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/'
-abshook=$(
-  {
-    grep -hF -e "$ABS_FORM_V" -e "$ABS_FORM_U" templates/*/.claude/settings.json 2>/dev/null
-    grep -hF -e "$ABS_FORM_V" -e "$ABS_FORM_U" templates/*/.claude/agents/*.md 2>/dev/null
-  } | grep -c .
-)
-#     `abshook > 0` alone is a coverage hole: a subset reverted to the
-#     intermediate no-fallback form `bash "$CLAUDE_PROJECT_DIR/hooks/` is neither
-#     cwd-relative nor fallback-safe, so relhook and abshook would both still be
-#     happy. Reject that form by name, and require abshook to equal the TOTAL
-#     number of hook command lines that name a hooks/ script — derived from the
-#     same two greps check 13 uses, so the two cannot drift apart.
+#     The intermediate no-fallback form `bash "$CLAUDE_PROJECT_DIR/hooks/` is rejected by name.
 NOFALLBACK_FORM='bash \"$CLAUDE_PROJECT_DIR/hooks/'
 nofallback=$(
   {
     grep -hF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
-    grep -hF "$NOFALLBACK_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+    grep -hF "$NOFALLBACK_FORM" agents/*.md 2>/dev/null
   } | grep -c .
 )
 if [ "$nofallback" -eq 0 ]; then
@@ -1944,21 +1917,13 @@ if [ "$nofallback" -eq 0 ]; then
 else
   ko "$nofallback hook command(s) use \$CLAUDE_PROJECT_DIR without the :-. default — they hard-block if the host does not export it"
   grep -nF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
-  grep -nF "$NOFALLBACK_FORM" templates/*/.claude/agents/*.md 2>/dev/null
+  grep -nF "$NOFALLBACK_FORM" agents/*.md 2>/dev/null
 fi
-hookcmd_total=$(
-  {
-    grep -h '"command":' templates/*/.claude/settings.json 2>/dev/null
-    grep -h 'command:' templates/*/.claude/agents/*.md 2>/dev/null
-  } | grep -c 'hooks/'
-)
-if [ "$hookcmd_total" -eq 0 ]; then
-  ko "hook command census matched NO lines (glob or grep broken?) — passing vacuously"
-elif [ "$abshook" -eq "$hookcmd_total" ]; then
-  ok "all $hookcmd_total hook command(s) use the \${CLAUDE_PROJECT_DIR:-.} form"
-else
-  ko "only $abshook of $hookcmd_total hook command(s) use \${CLAUDE_PROJECT_DIR:-.} — $((hookcmd_total - abshook)) in some other form"
-fi
+#     v5.0: the ${CLAUDE_PROJECT_DIR:-.} census (every hook command line naming a hooks/
+#     script uses the fallback form) is retired: the templates and agents/ carry no hook
+#     command naming a hooks/ script any more (check 13 asserts it for the templates,
+#     check 75 for agents/), and the plugin's hooks/hooks.json runs its scripts from
+#     ${CLAUDE_PLUGIN_ROOT}. The two rejections above still stop either old form returning.
 
 # ---------------------------------------------------------------------------
 # 25. PROJECT-CUSTOM region in agent definitions and AGENT_TEAM.md (v2.1.2,
@@ -1968,7 +1933,9 @@ fi
 #     shipping the marker pair is the whole fix.
 # ---------------------------------------------------------------------------
 echo
-region_files=$(ls templates/*/.claude/agents/*.md templates/*/AGENT_TEAM.md 2>/dev/null)
+# v5.0: the agents moved into the plugin (agents/), which no sync writes into a project,
+# so only the synced AGENT_TEAM.md copies still need the region.
+region_files=$(ls templates/*/AGENT_TEAM.md 2>/dev/null)
 region_total=$(printf '%s\n' "$region_files" | grep -c .)
 region_missing=""
 for f in $region_files; do
@@ -1982,7 +1949,7 @@ done
 if [ "$region_total" -eq 0 ]; then
   ko "PROJECT-CUSTOM region check matched NO files (glob broken?) — passing vacuously"
 elif [ -z "$region_missing" ]; then
-  ok "all $region_total template agent files + AGENT_TEAM.md end with a PROJECT-CUSTOM region"
+  ok "all $region_total AGENT_TEAM.md files end with a PROJECT-CUSTOM region"
 else
   ko "PROJECT-CUSTOM region missing/not-last in:$region_missing"
 fi
@@ -2222,13 +2189,9 @@ else
   # Arm 5: the SHIPPED files. Every agent file in templates/general carries a
   # region (check 25 asserts that separately); the extractor must SEE all of
   # them through the dot-directory, which is the exact walk that returned zero.
-  r28_agents=$(ls templates/general/.claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
-  r28_seen=$(bash "$REGION_SH" --scan templates/general/.claude/agents 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$r28_agents" = "$r28_seen" ] && [ "$r28_agents" != "0" ]; then
-    ok "region extractor: all $r28_agents shipped agent regions are enumerated"
-  else
-    ko "region extractor: $r28_seen of $r28_agents shipped agent regions enumerated — the 'zero regions across eleven' reading"
-  fi
+  # v5.0: retired -- the templates ship no agents (they moved to the plugin's agents/,
+  # which carry no region), so there are no shipped agent regions to enumerate. The
+  # dot-directory walk stays covered by arm 1 and by arm 5b's v4-consumer-shaped tree.
 
   # Arm 6: MATCH THE MARKER'S SHAPE, NOT ITS NAME — six rows, asserted BY
   # CLASSIFICATION STRING (v3.0.0).
@@ -2353,6 +2316,15 @@ else
   else
     r28p=$(mktemp -d)
     cp -r templates/general/. "$r28p/" 2>/dev/null
+    # v5.0: templates ship no agents, but a v4 consumer still carries
+    # .claude/agents/coder.md with the placeholder region (the TEMPLATE_DELETED x
+    # region-bearing case a v5 sync meets). Rebuild that shape: the plugin coder (and
+    # tester, whose region stays unplanted) plus the placeholder block AGENT_TEAM.md
+    # ships (check 25: it ends the file).
+    mkdir -p "$r28p/.claude/agents"
+    for r28a in coder tester; do
+      { cat "agents/$r28a.md"; printf '\n'; sed -n '/^<!-- PROJECT-CUSTOM:BEGIN/,$p' templates/general/AGENT_TEAM.md; } > "$r28p/.claude/agents/$r28a.md"
+    done
     if bash "$r28f/plant.sh" "$r28p" >/dev/null 2>&1; then
       r28pscan=$(bash "$REGION_SH" --scan "$r28p" 2>/dev/null)
       r28pc=$(printf '%s\n' "$r28pscan" | grep -c '^CONTENT	')
@@ -2406,10 +2378,10 @@ fi
 # legitimately unflagged with no gate failure in their repo.
 # ---------------------------------------------------------------------------
 echo
-a5_names=$( { ls templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null; } \
+a5_names=$( { ls agents/*.md user-level-reference/agents/*.md 2>/dev/null; } \
   | sed 's@.*/@@;s@\.md$@@' | sort -u )
 a5_true_names=$(
-  for a5f in templates/*/.claude/agents/*.md; do
+  for a5f in agents/*.md; do
     [ -f "$a5f" ] || continue
     awk '/^---$/{n++; next} n==1' "$a5f" \
       | grep -qE '^pipeline:[[:space:]]*true[[:space:]]*$' \
@@ -2417,7 +2389,7 @@ a5_true_names=$(
   done | sort -u
 )
 if [ -z "$a5_true_names" ]; then
-  ko "check 29: no agent file under templates/*/.claude/agents/ carries pipeline: true"
+  ko "check 29: no agent file under agents/ carries pipeline: true"
 else
   # Coverage: every shipped coder-shaped name carries the flag (a new
   # <lang>-coder is covered without editing this list).
@@ -2661,7 +2633,9 @@ else
   b2_tmp=$(mktemp -d)
   mkdir -p "$b2_tmp/consumer/.claude/agents"
   cp templates/general/AGENT_TEAM.md "$b2_tmp/consumer/"
-  cp templates/general/.claude/agents/coder.md "$b2_tmp/consumer/.claude/agents/"
+  # v5.0: templates ship no agents; rebuild the v4 consumer's coder.md shape (the plugin
+  # coder plus the placeholder block AGENT_TEAM.md ships), as check 28 arm 5b does.
+  { cat agents/coder.md; printf '\n'; sed -n '/^<!-- PROJECT-CUSTOM:BEGIN/,$p' templates/general/AGENT_TEAM.md; } > "$b2_tmp/consumer/.claude/agents/coder.md"
 
   # BOTH-ARMS PRECONDITION (was arm A pre-v4.1): before planting, the two
   # remaining shipped region-bearing files (AGENT_TEAM.md, coder.md -- CLAUDE.md
@@ -3090,7 +3064,10 @@ ok "check 35 (info): the harness-injected surface is capped at $((BUDGET_CLAUDE_
 # entry when Task 3.2 lands.
 # ---------------------------------------------------------------------------
 note "Check 36: templates/ownership.json covers every template file, and no rule is dead"
-C36_PENDING_RULES=".claude/rules/project.md"
+# v5.0: the templates no longer ship .claude/agents/*.md or .claude/agent-grants.json,
+# but the sync server still classifies a consumer's existing copies by those two rules
+# until the v5 sync migration (spec §4) rewrites ownership.json; allowlisted until then.
+C36_PENDING_RULES=".claude/rules/project.md .claude/agents/*.md .claude/agent-grants.json"
 c36_fail=0
 # Two parallel lists, same line count and order: the display path (what a
 # human sees in a failure message) and the classify path (relative to the
@@ -3151,7 +3128,7 @@ if [ "$c36_files" -lt 60 ]; then ko "check 36: CONTROL FAILED — only $c36_file
 [ -z "$c36_unclassified" ] || ko "check 36: unclassified template files:$c36_unclassified"
 [ -z "$c36_dead" ] || { ko "check 36: rule patterns matching no template file:$c36_dead"; c36_fail=1; }
 rm -f "$c36_full_file" "$c36_rel_file" "$c36_class_file" "${c36_class_file}.joined"
-[ "$c36_fail" -eq 0 ] && ok "check 36: $c36_files template files classified; every rule live; no bare root wildcard; $c36_pending_hit pending rule allowed"
+[ "$c36_fail" -eq 0 ] && ok "check 36: $c36_files template files classified; every rule live; no bare root wildcard; $c36_pending_hit pending rule(s) allowed"
 
 # ---------------------------------------------------------------------------
 # Check 37 — CONTEXT-MODE SENTINEL (v3.1, spec §5; measured 2026-09-05;
@@ -3874,31 +3851,36 @@ c64_scan() { # <settings.json> <want> -> prints "<file>: <regs> registration(s),
 if [ -z "$c64_max" ]; then
   ko "check 64: cannot read PCT_TIMEOUT_MAX from hooks/pre-commit-test.sh -- re-point this check before trusting it"
 else
+  # v5.0: the templates register no pre-commit-test.sh (projects get it from the plugin),
+  # so the scan reads the plugin's hooks/hooks.json (one line per registration) and the
+  # repo-root .claude/settings.json (self-hosting, the v4 form); the controls mutate each.
   c64_want=$((c64_max + 60))
+  c64_json() { # <hooks.json> <want> -> prints a finding when a pre-commit-test registration lacks the timeout, or none exists
+    c64_regs=$(grep -c 'run-hook\.sh\\" pre-commit-test"' "$1" 2>/dev/null)
+    c64_ok=$(grep 'run-hook\.sh\\" pre-commit-test"' "$1" 2>/dev/null | grep -cE "\"timeout\": $2[[:space:]]*}")
+    if [ "${c64_regs:-0}" -eq 0 ] || [ "${c64_ok:-0}" -ne "${c64_regs:-0}" ]; then
+      printf '%s: %s registration(s), %s with "timeout": %s\n' "$1" "${c64_regs:-0}" "${c64_ok:-0}" "$2"
+    fi
+  }
   c64_bad=""
-  c64_n=0
-  for c64_f in $(for v in $VARIANTS; do printf 'templates/%s/.claude/settings.json\n' "$v"; done) .claude/settings.json; do
-    c64_n=$((c64_n + 1))
-    c64_hit=$(c64_scan "$c64_f" "$c64_want")
-    [ -n "$c64_hit" ] && c64_bad="$c64_bad [$c64_hit]"
-  done
-  c64_expected=$(( $(printf '%s\n' "$VARIANTS" | wc -w) + 1 ))
+  c64_hit=$(c64_json hooks/hooks.json "$c64_want"); [ -n "$c64_hit" ] && c64_bad="$c64_bad [$c64_hit]"
+  c64_hit=$(c64_scan .claude/settings.json "$c64_want"); [ -n "$c64_hit" ] && c64_bad="$c64_bad [$c64_hit]"
   C64_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t c64)
-  grep -v '"timeout": ' templates/general/.claude/settings.json > "$C64_TMP/nofield.json"
+  grep -v '"timeout": ' .claude/settings.json > "$C64_TMP/nofield.json"
+  sed 's/, "timeout": [0-9]*//' hooks/hooks.json > "$C64_TMP/nofield-hooks.json"
   c64_ctrl=$(c64_scan "$C64_TMP/nofield.json" "$c64_want")
-  c64_ctrl2=$(c64_scan templates/general/.claude/settings.json "$((c64_want - 1))")
+  c64_ctrl2=$(c64_scan .claude/settings.json "$((c64_want - 1))")
+  c64_ctrl3=$(c64_json "$C64_TMP/nofield-hooks.json" "$c64_want")
+  c64_ctrl4=$(c64_json hooks/hooks.json "$((c64_want - 1))")
   rm -rf "$C64_TMP"
-  if [ -z "$c64_ctrl" ] || [ -z "$c64_ctrl2" ]; then
+  if [ -z "$c64_ctrl" ] || [ -z "$c64_ctrl2" ] || [ -z "$c64_ctrl3" ] || [ -z "$c64_ctrl4" ]; then
     ko "check 64: CONTROL FAILED -- a copy without the field or a wrong value was not flagged; the check is vacuous"
-  elif [ "$c64_n" -ne "$c64_expected" ]; then
-    ko "check 64: scanned $c64_n settings files, expected $c64_expected (six variants + root)"
   elif [ -n "$c64_bad" ]; then
     ko "check 64: a pre-commit-test.sh registration lacks \"timeout\": $c64_want -- the harness would kill the hook at its default (600 s) and let the commit through:$c64_bad"
   else
-    ok "check 64: $c64_n settings files register pre-commit-test.sh with \"timeout\": $c64_want (PCT_TIMEOUT_MAX $c64_max + 60); control fires"
+    ok "check 64: hooks/hooks.json and .claude/settings.json register pre-commit-test.sh with \"timeout\": $c64_want (PCT_TIMEOUT_MAX $c64_max + 60); controls fire"
   fi
 fi
-
 # ---------------------------------------------------------------------------
 # Check 65 -- Jev is opt-in per clone and ships no registration (v4.4.0, spec
 # D1 "zero footprint when off"). (a) No shipped settings file registers the
@@ -4490,7 +4472,7 @@ else
   # excludes a wildcard grant (`mcp__<alias>__*`) on its own -- nothing to
   # go stale about a name
   # that isn't there.
-  c50_agent_tokens=$(grep -h '^tools:' templates/*/.claude/agents/*.md user-level-reference/agents/*.md 2>/dev/null \
+  c50_agent_tokens=$(grep -h '^tools:' agents/*.md user-level-reference/agents/*.md 2>/dev/null \
     | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+')
   c50_settings_parsed=$(c50_parse_settings templates/*/.claude/settings.json user-level-reference/settings.json)
   c50_settings_grant_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="ALLOW"||$1=="MATCHER"{print $2}' | sed '/^$/d' | sort -u)
@@ -4759,7 +4741,7 @@ c53_classify() {
 c53_agents=0
 c53_one_line=0
 c53_bad=""
-for f in templates/*/.claude/agents/*.md user-level-reference/agents/*.md; do
+for f in agents/*.md user-level-reference/agents/*.md; do
   [ -f "$f" ] || continue
   c53_agents=$((c53_agents + 1))
   c53_r=$(c53_classify "$f")
@@ -4778,7 +4760,7 @@ fi
 # Acceptance arm (appendix C): four flips on a SCRATCH COPY of one shipped
 # agent, never on the shipped file itself (constraint 12).
 c53_scratch=$(mktemp -d)
-cp templates/general/.claude/agents/coder.md "$c53_scratch/coder.md"
+cp agents/coder.md "$c53_scratch/coder.md"
 
 sed '/^tools:/d' "$c53_scratch/coder.md" > "$c53_scratch/no-tools.md"
 c53_f1=$(c53_classify "$c53_scratch/no-tools.md")
@@ -4815,31 +4797,25 @@ fi
 rm -rf "$c53_scratch"
 
 # ---------------------------------------------------------------------------
-# 54. THE TWO SEEDS ARE BYTE-IDENTICAL ACROSS VARIANTS; agent-grants.json IS
-#     EXACTLY THE SPEC'D BYTES (v4.1, spec sect 3/4, Task 3).
+# 54. THE project-instructions.md SEED IS BYTE-IDENTICAL ACROSS VARIANTS (v4.1,
+#     spec sect 3/4, Task 3). v5.0: the agent-grants.json half is retired -- the
+#     templates no longer ship that seed (the server's grants mechanism is removed
+#     with the template agents, v5.0 spec §2).
 # ---------------------------------------------------------------------------
 echo
-note "Check 54: the two seed files are byte-identical across all six variants; agent-grants.json is exactly {\"schema\":1,\"grants\":{}} + LF"
+note "Check 54: the project-instructions.md seed is byte-identical across all six variants"
 c54_bad=""
 c54_pi_hashes=""
-c54_ag_hashes=""
 for v in $VARIANTS; do
   c54_pi="templates/$v/.claude/project-instructions.md"
-  c54_ag="templates/$v/.claude/agent-grants.json"
   if [ ! -f "$c54_pi" ]; then c54_bad="$c54_bad $c54_pi(missing)"; continue; fi
-  if [ ! -f "$c54_ag" ]; then c54_bad="$c54_bad $c54_ag(missing)"; continue; fi
   c54_pi_hashes="$c54_pi_hashes $(sha256sum "$c54_pi" | cut -d' ' -f1)"
-  c54_ag_hashes="$c54_ag_hashes $(sha256sum "$c54_ag" | cut -d' ' -f1)"
 done
 c54_pi_uniq=$(printf '%s\n' $c54_pi_hashes | sort -u | wc -l | tr -d ' ')
-c54_ag_uniq=$(printf '%s\n' $c54_ag_hashes | sort -u | wc -l | tr -d ' ')
-c54_expected_ag_hash=$(printf '{"schema":1,"grants":{}}\n' | sha256sum | cut -d' ' -f1)
-c54_actual_ag_hash=$(printf '%s\n' $c54_ag_hashes | head -1)
-if [ -z "$c54_bad" ] && [ "$c54_pi_uniq" = "1" ] && [ "$c54_ag_uniq" = "1" ] \
-   && [ "$c54_actual_ag_hash" = "$c54_expected_ag_hash" ]; then
-  ok "check 54: both seeds byte-identical across all six variants; agent-grants.json == {\"schema\":1,\"grants\":{}} + LF"
+if [ -z "$c54_bad" ] && [ "$c54_pi_uniq" = "1" ]; then
+  ok "check 54: project-instructions.md byte-identical across all six variants"
 else
-  ko "check 54: bad:[$c54_bad] project-instructions.md uniques=$c54_pi_uniq (want 1) agent-grants.json uniques=$c54_ag_uniq (want 1) agent-grants.json matches spec bytes: $([ "$c54_actual_ag_hash" = "$c54_expected_ag_hash" ] && echo yes || echo no)"
+  ko "check 54: bad:[$c54_bad] project-instructions.md uniques=$c54_pi_uniq (want 1)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -4848,7 +4824,7 @@ fi
 # registration names a program that can be spawned.
 #
 # Scope: the six variant .claude/settings.json, the root .claude/settings.json,
-# every templates/*/.claude/agents/*.md frontmatter, and the user-level
+# every agents/*.md frontmatter, and the user-level
 # reference rendered with the LOCAL bash and @HOOKS@ -> user-level-reference/hooks.
 # The settings files are read by hooks/verify-hooks.sh --report itself, in a
 # fixture project holding a copy of hooks/ (the reader the user runs at every
@@ -4863,7 +4839,7 @@ fi
 # would make this check green by construction.
 # ---------------------------------------------------------------------------
 echo
-note "Check 70: every registered hook script exists and passes bash -n; every exec-form program is spawnable (settings, agent frontmatter, rendered user reference)"
+note "Check 70: every registered hook script exists and passes bash -n; every exec-form program is spawnable (settings, rendered user reference)"
 c70_tmp=$(mktemp -d)
 c70_h0="$c70_tmp/home0"; mkdir -p "$c70_h0"
 c70_proj="$c70_tmp/proj"; mkdir -p "$c70_proj/.claude"; cp -R hooks "$c70_proj/hooks"
@@ -4876,17 +4852,8 @@ for c70_f in $(for v in $VARIANTS; do printf 'templates/%s/.claude/settings.json
   c70_scanned=$((c70_scanned + 1))
   if [ "$c70_rc" -ne 0 ] || [ -n "$c70_out" ]; then c70_bad="$c70_bad [$c70_f: rc=$c70_rc $(printf '%s' "$c70_out" | tr '\n' ' ')]"; fi
 done
-# agent frontmatter registrations
-c70_ag=0
-for c70_a in templates/*/.claude/agents/*.md; do
-  [ -f "$c70_a" ] || continue
-  for c70_s in $(grep -oE 'hooks/[A-Za-z0-9_.-]+\.sh' "$c70_a" | sort -u); do
-    c70_ag=$((c70_ag + 1))
-    if [ ! -f "$c70_s" ]; then c70_bad="$c70_bad [$c70_a: $c70_s missing]"
-    elif ! bash -n "$c70_s" 2>/dev/null; then c70_bad="$c70_bad [$c70_a: $c70_s fails bash -n]"; fi
-  done
-done
-[ "$c70_ag" -gt 0 ] || c70_bad="$c70_bad [no agent frontmatter registration found: the scan is inert]"
+# v5.0: the agent-frontmatter scan is retired -- templates ship no agents, and no
+# agents/*.md carries frontmatter hooks: (check 75), so there is nothing left to scan.
 # the user-level reference, rendered with the local bash
 c70_uh="$c70_tmp/uhome"; mkdir -p "$c70_uh/.claude"; cp -R user-level-reference/hooks "$c70_uh/.claude/hooks"
 if c70_ro=$(HOME="$c70_uh" bash scripts/render-user-hooks.sh --write 2>&1); then
@@ -4898,12 +4865,13 @@ else
   c70_bad="$c70_bad [render-user-hooks.sh --write failed: $(printf '%s' "$c70_ro" | tr '\n' ' ')]"
 fi
 if [ -z "$c70_bad" ]; then
-  ok "check 70: $c70_scanned settings files, $c70_ag agent-frontmatter registrations and the rendered user-level reference: every script exists, passes bash -n, and every exec-form program is spawnable"
+  ok "check 70: $c70_scanned settings files and the rendered user-level reference: every script exists, passes bash -n, and every exec-form program is spawnable"
 else
   ko "check 70: $c70_bad"
 fi
-# control 1: a deleted registered hook is listed, exit 1
-cp templates/general/.claude/settings.json "$c70_proj/.claude/settings.json"
+# control 1: a deleted registered hook is listed, exit 1 (v5.0: on the frozen v4.6.1 template
+# settings -- the v5 templates register only the inline guard, which names no hook script)
+cp scripts/fixtures/v461-template-settings.json "$c70_proj/.claude/settings.json"
 rm -f "$c70_proj/hooks/no-push-main.sh"
 c70_out=$(env HOME="$c70_h0" CLAUDE_PROJECT_DIR="$c70_proj" bash hooks/verify-hooks.sh --report </dev/null 2>&1); c70_rc=$?
 if [ "$c70_rc" -eq 1 ] && printf '%s\n' "$c70_out" | grep -q 'MISSING: .*hooks/no-push-main\.sh'; then
@@ -4939,10 +4907,13 @@ rm -rf "$c70_tmp"
 echo
 note "Check 71: registration polarity -- the frozen (event, matcher, script, form) set; trap, allow, stop-gate, matcher-superset and return audits"
 c71_bad=""
-c71_agents() { for c71_a in templates/*/.claude/agents/*.md; do
-    c71_lab=$(printf '%s' "$c71_a" | sed 's|^templates/||; s|/\.claude/agents/|/|')
-    c71_x "$c71_a" "agent:$c71_lab"
-  done | LC_ALL=C sort; }
+# v5.0: the v5 templates register only the inline plugin-off guard (no hooks/ script) and
+# no agents/*.md carries frontmatter hooks: (check 75), so the `general` rows are read from
+# the frozen v4.6.1 template settings (the polarity the plugin's run-hook.sh classes copy,
+# and the shape a v4 consumer still carries); the agent-frontmatter comparison and the
+# per-variant set comparison are retired (no registrations left; check 11 keeps the
+# settings.json byte-identity).
+C71_GENERAL="scripts/fixtures/v461-template-settings.json"
 c71_cmp() { # <label> <got> <want>
   if [ -z "$2" ]; then c71_bad="$c71_bad [$1: the extraction found NO registration]"
   elif [ "$2" != "$3" ]; then c71_bad="$c71_bad [$1 differs from the frozen table: $(printf '%s\n' "$2" | LC_ALL=C sort > "$c71_tmp/got"; printf '%s\n' "$3" | LC_ALL=C sort > "$c71_tmp/want"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"; fi
@@ -4954,15 +4925,10 @@ elif [ -z "$C71_TABLE" ]; then
   ko "check 71: the frozen table fixture $C71_FIXTURE is missing, unreadable or empty -- fail closed"
 else
   # (1) the frozen set
-  c71_cmp "templates/general" "$(c71_x templates/general/.claude/settings.json general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
+  c71_cmp "$C71_GENERAL" "$(c71_x "$C71_GENERAL" general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
   c71_cmp ".claude/settings.json" "$(c71_x .claude/settings.json root)" "$(printf '%s\n' "$C71_TABLE" | grep '^root;')"
   c71_cmp "user-level-reference/settings.json" "$(c71_x user-level-reference/settings.json user)" "$(printf '%s\n' "$C71_TABLE" | grep '^user;')"
-  c71_cmp "agent frontmatter" "$(c71_agents)" "$(printf '%s\n' "$C71_TABLE" | grep '^agent:' | LC_ALL=C sort)"
-  c71_gen=$(c71_x templates/general/.claude/settings.json general)
-  for c71_v in $VARIANTS; do
-    [ "$(c71_x "templates/$c71_v/.claude/settings.json" general)" = "$c71_gen" ] || c71_bad="$c71_bad [templates/$c71_v/.claude/settings.json registers a different set than templates/general]"
-  done
-  c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -c .)
+  c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -v '^agent:' | grep -c .)  # v5.0: the agent: rows are no longer compared
   c71_nsc=$(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u | grep -c .)
 
   # (2) the trap audit. Definitions come from test-hooks.sh block C2a: one each.
@@ -5034,7 +5000,7 @@ EOF
   [ "$(awk "$C2AAWK" "$c71_tmp/r1.sh" | wc -l | tr -d ' ')" = 1 ] || c71_bad="$c71_bad [the return-audit CONTROL failed: a top-level return was not reported]"
 
   if [ -z "$c71_bad" ]; then
-    ok "check 71: $c71_nrows registrations over $c71_nsc scripts equal the frozen table (six variants, root, user-level, agent frontmatter); $c71_ntrap F/UF hooks trap 127->2, no allow-capable hook is F/UF, the stop gate is U, $c71_nsa C5 matchers covered, no top-level return"
+    ok "check 71: $c71_nrows registrations over $c71_nsc scripts equal the frozen table (the v4.6.1 template, root, user-level); $c71_ntrap F/UF hooks trap 127->2, no allow-capable hook is F/UF, the stop gate is U, $c71_nsa C5 matchers covered, no top-level return"
   else
     ko "check 71: $c71_bad"
   fi
@@ -5043,7 +5009,7 @@ EOF
   c71_mut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="f2w"){for(const x of g)for(const h of x.hooks)if(/deny-secret-reads/.test(h.command))h.command=h.command.replace("HOOK SCRIPT MISSING: $f -- ","WARN: $f missing -- ").replace(/exit 2; \}; command -v bash .*cannot run" >&2; exit 2; \}; /,"exit 0; }; ");}else{for(let i=0;i<g.length;i++)if(g[i].hooks.some(h=>/deny-secret-reads/.test(h.command))){g.splice(i,1);break;}}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
   c71_want=$(printf '%s\n' "$C71_TABLE" | grep '^general;')
   for c71_mode in f2w dropgroup; do
-    node -e "$c71_mut" templates/general/.claude/settings.json "$c71_tmp/mut-$c71_mode.json" "$c71_mode" 2>/dev/null
+    node -e "$c71_mut" "$C71_GENERAL" "$c71_tmp/mut-$c71_mode.json" "$c71_mode" 2>/dev/null
     c71_got=$(c71_x "$c71_tmp/mut-$c71_mode.json" general 2>/dev/null)
     if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_want" ]; then
       ok "check 71 control ($c71_mode): the extraction on a mutated copy differs from the frozen table"
@@ -5071,33 +5037,35 @@ fi
 
 # ---------------------------------------------------------------------------
 # Check 67 -- the coder's `## Working rules`, `## Skills (...)` and `## Report
-# (HARD REQUIREMENT)` sections are byte-identical in all 12 coder files
-# (v4.5.0 A1/A2/B1). The digest replaced the karpathy-guidelines preload and
+# (HARD REQUIREMENT)` sections are byte-identical in every coder file
+# (v4.5.0 A1/A2/B1; v5.0: the plugin's agents/coder.md and agents/*-coder.md plus the
+# user-level coder, reference agents/coder.md -- the template copies are gone). The digest replaced the karpathy-guidelines preload and
 # the Report is what hooks/enforce-agent-contract.sh checks, so one drifted
 # copy silently changes one coder. Each section runs from its heading to the
 # next `## `. Control: a section that extracts 0 B from the reference copy is
 # a failure, never a pass.
 # ---------------------------------------------------------------------------
-note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across the 12 coder files"
-c67_files=$(ls templates/*/.claude/agents/coder.md templates/*/.claude/agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null)
+note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across agents/coder.md, agents/*-coder.md and the user-level coder"
+c67_files=$(ls agents/coder.md agents/*-coder.md user-level-reference/agents/coder.md 2>/dev/null)
 c67_count=$(printf '%s\n' "$c67_files" | grep -c .)
 c67_sec() { # <file> <heading line> -> the section, heading included
   awk -v h="$2" 'index($0, h) == 1 { f = 1; print; next } f && /^## / { exit } f { print }' "$1"
 }
 for c67_h in '## Working rules' '## Skills (open one only when its trigger fires)' '## Report (HARD REQUIREMENT)'; do
-  c67_ref=$(c67_sec templates/general/.claude/agents/coder.md "$c67_h")
+  c67_ref=$(c67_sec agents/coder.md "$c67_h")
   if [ -z "$c67_ref" ]; then
-    ko "check 67: '$c67_h' extracts 0 B from templates/general/.claude/agents/coder.md -- the section is missing or the extractor is broken"
+    ko "check 67: '$c67_h' extracts 0 B from agents/coder.md -- the section is missing or the extractor is broken"
     continue
   fi
   c67_bad=""
   for c67_f in $c67_files; do
     [ "$(c67_sec "$c67_f" "$c67_h")" = "$c67_ref" ] || c67_bad="$c67_bad $c67_f"
   done
-  if [ "$c67_count" -ne 12 ]; then
-    ko "check 67: found $c67_count coder files, expected 12"
+  c67_want=$(( $(ls agents/*-coder.md 2>/dev/null | wc -l) + 2 ))
+  if [ "$c67_count" -lt 2 ] || [ "$c67_count" -ne "$c67_want" ]; then
+    ko "check 67: found $c67_count coder files, expected $c67_want (agents/coder.md, agents/*-coder.md, user-level coder)"
   elif [ -n "$c67_bad" ]; then
-    ko "check 67: '$c67_h' differs from templates/general's copy in:$c67_bad"
+    ko "check 67: '$c67_h' differs from agents/coder.md's copy in:$c67_bad"
   else
     ok "check 67: '$c67_h' byte-identical in all $c67_count coder files ($(printf '%s\n' "$c67_ref" | wc -c | tr -d ' ') B)"
   fi
@@ -5117,7 +5085,7 @@ note "Check 68: no workflow file carries '## Required Skills', require-skills-bl
 C68_LITERALS='## Required Skills|require-skills-block|\.gate/last-pass'
 c68_n=0
 c68_bad=""
-for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json" templates/$v/.claude/agents/*.md; done) user-level-reference/agents/*.md; do
+for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json"; done) agents/*.md user-level-reference/agents/*.md; do
   [ -f "$c68_f" ] || { ko "check 68: $c68_f missing"; continue; }
   c68_n=$((c68_n + 1))
   if grep -qE "$C68_LITERALS" "$c68_f"; then

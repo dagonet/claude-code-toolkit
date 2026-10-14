@@ -546,15 +546,14 @@ function Get-TemplateFiles {
         }
     }
 
-    # Shared hook scripts (from repo root, not template-specific).
-    # EVERY file, RECURSIVELY: the gates source hooks/lib/*.sh via $(dirname "$0")/lib/...
-    # and fail CLOSED (exit 2) when the lib is missing, so the old non-recursive
-    # *.sh copy left a Windows-bootstrapped project unable to commit, push, or merge.
-    $hooksDir = Join-Path $PSScriptRoot "hooks"
-    if (Test-Path $hooksDir) {
-        Get-ChildItem -Path $hooksDir -Recurse -File | ForEach-Object {
-            $relPath = "hooks/" + $_.FullName.Substring($hooksDir.Length).TrimStart('\', '/').Replace('\', '/')
-            $files += @{ Source = $_.FullName; RelPath = $relPath; IsGitignore = $false }
+    # Shared hook scripts (from repo root, not template-specific). v5.0 (spec section 3.4):
+    # every other hook runs from the cct plugin; the project keeps only the native pre-push
+    # hook and the two libs it sources (git-cmd.sh sources json.sh), because git runs it
+    # outside Claude Code and needs a stable path in the clone.
+    foreach ($relPath in @("hooks/git-pre-push.sh", "hooks/lib/git-cmd.sh", "hooks/lib/json.sh")) {
+        $hookFile = Join-Path $PSScriptRoot $relPath
+        if (Test-Path -LiteralPath $hookFile -PathType Leaf) {
+            $files += @{ Source = (Get-Item -LiteralPath $hookFile).FullName; RelPath = $relPath; IsGitignore = $false }
         }
     }
 
@@ -1338,7 +1337,10 @@ Write-Host ""
 Write-TemplateSyncSnippet
 
 Write-Host ""
-Write-Host ("Next step (user-level hooks, once per machine): bash `"{0}/scripts/render-user-hooks.sh`" --write" -f ($PSScriptRoot -replace "\\", "/"))
+Write-Host "Next step (the cct plugin, once per machine): in Claude Code run"
+Write-Host "  /plugin marketplace add dagonet/claude-code-toolkit"
+Write-Host "  /plugin install cct@dagonet"
+Write-Host "then restart the session. Without it, this project's guard refuses every tool."
 
 # --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
 # $tsExe/$tsRegister are resolved above, once, before the DryRun/real-run
