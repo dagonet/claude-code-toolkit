@@ -19,10 +19,11 @@ Major. The user level ships as the Claude Code plugin `cct@dagonet`.
 - **Jev in the plugin**: `hooks/jev-route.sh` and `hooks/jev-notice.sh`, registered by the plugin and gated on `<git common dir>/jev/config.json`.
 - **`scripts/lib/v4-user-leftovers.txt`**: the one list of v4.x user-level files, read by the Linux installer, the drift probe and the Windows doc.
 - **`docs/plugin-migration-windows.md`**: the PC's documented steps.
-- Consistency checks 72–76 (`plugin.json` version == `VERSION`; `marketplace.json`; `hooks.json` and `run-hook.sh` agree; no plugin agent carries `hooks:`; every `cct:<agent>` the docs name exists); server test `test_release_floor_is_v5_and_refuses_every_v4_skill`.
+- Consistency checks 72–77 (`plugin.json` version == `VERSION`; `marketplace.json`; `hooks.json` and `run-hook.sh` agree; no plugin agent carries `hooks:`; every `cct:<agent>` the docs name exists; every `claude-code-toolkit#v` pin literal in the user-facing docs equals `v` + `VERSION`); server test `test_release_floor_is_v5_and_refuses_every_v4_skill`.
 
 ### Changed
 - **Templates ship no `.claude/agents/` and no hook registrations.** A template's `settings.json` carries the permissions, `enabledPlugins` (`cct@dagonet`) and the plugin-off guard only. Every variant's `CLAUDE.md` and `AGENT_TEAM.md` name the `cct:` agents, and `CLAUDE.md`, `AGENT_TEAM.md` and `PROJECT_CONTEXT.md` name `cct-gate`.
+- **The PO is denied `cct-gate`** like `hooks/run-gate.sh` (`hooks/enforce-delegation.sh`, command position only, with or without a path prefix); a subagent runs it. The plugin agents and `/cct:sprint` name `cct-gate`, not `bash hooks/run-gate.sh`, which consumers do not have. `scripts/check-activation.sh` drops the v4 binding and hook-script rows and reports whether `.claude/template-manifest.json` exists. `docs/setup.md` no longer offers manual setup: it never wrote the manifest, so every project-class hook would have been inert.
 - **Setup copies only `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh`** (the sync server's `ROOT_TRACKED_FILES`). A v4.x consumer's other hook and agent files resolve `TEMPLATE_DELETED`.
 - **sync-template skill** (marker v5.0.0): step 2c, the one-time v5 migration (delete the project's agent and hook files except the pre-push set, remove the hook registrations, add the guard and `Bash(cct-gate*)`). `template_load_manifest` takes `skill_version` and refuses one below `requires_skill` or below the checkout's marker.
 - **`hooks/lib/agent-model.sh`, `enforce-agent-contract.sh`, `model-floor.sh`**: a `cct:<name>` spawn resolves to the plugin's `agents/<name>.md`. **`verify-hooks.sh`** also reads the plugin's `hooks/hooks.json`.
@@ -76,10 +77,10 @@ claude plugin marketplace add dagonet/claude-code-toolkit#v5.0.0 && claude plugi
 ```
 
 Counts, never carried forward:
-- **Consistency:** **338** PASS lines, 0 SKIP, ALL CHECKS PASSED, from one full `bash scripts/verify-template-consistency.sh` run at the release tree (v4.6.2: 439; v5.0 retired the checks over template agents, template hook registrations, user-level mirrors and grants, and added checks 72–76).
-- **Hook suite:** 4107 passed, 0 failed, 6 skipped (4113 assertions), ALL HOOK FIXTURES PASSED, on Linux (cloud host, root) at 58cc555 (v4.6.2: 4179 / 0 / 6; the user-level mirror, agent-frontmatter and template-registration fixtures went with their subjects). Windows not run for this release.
-- **Parser matrix:** at 4fdcf5a (58cc555 changes only docs, `AGENT_TEAM.md` and the CHANGELOG; the node row equals the suite at 58cc555): node 4107 / 0 / 6, python3-only 3858 / 0 / 242 (band ~255 ±20), jq-only 3762 / 0 / 338 (band ~335 ±20), PARSER MATRIX PASSED (3 configurations).
-- **Server suite:** 521 passed, 10 skipped on Linux (v4.6.2: 555 / 10; the grants tests went with the mechanism; +1 `test_release_floor_is_v5_and_refuses_every_v4_skill`).
+- **Consistency:** **339** PASS lines, ALL CHECKS PASSED, from one full `bash scripts/verify-template-consistency.sh` run at 794236e, measured on agent-host-1, which has no system `python`: check 50 prints `PASS ... SKIP` there and counts as 1 SKIP in the 339, so a host with `python` reports 0 SKIP (v4.6.2: 439; v5.0 retired the checks over template agents, template hook registrations, user-level mirrors and grants, and added checks 72–77).
+- **Hook suite:** 4113 passed, 0 failed, 6 skipped (4119 assertions), ALL HOOK FIXTURES PASSED, on Linux (agent-host-1) at 794236e (v4.6.2: 4179 / 0 / 6; the user-level mirror, agent-frontmatter and template-registration fixtures went with their subjects; +6 `cct-gate` delegation fixtures). Windows not run for this release.
+- **Parser matrix:** measured at 4fdcf5a, not re-run at the release tip: node 4107 / 0 / 6, python3-only 3858 / 0 / 242 (band ~255 ±20), jq-only 3762 / 0 / 338 (band ~335 ±20), PARSER MATRIX PASSED (3 configurations). Later commits changed `hooks/enforce-delegation.sh` (one pattern) and added 6 fixtures to the suite, so the matrix is due before the tag (`bash scripts/test-hooks-parser-matrix.sh`).
+- **Server suite:** 521 passed, 10 skipped on Linux (agent-host-1) at 794236e (v4.6.2: 555 / 10; the grants tests went with the mechanism; +1 `test_release_floor_is_v5_and_refuses_every_v4_skill`).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 18,028, end of bootstrap 23,272 (v4.6.2: 17,808 / 23,066). Per-variant figures are in `docs/architecture.md`.
 
 ## v4.6.2 — 2026-10-13
