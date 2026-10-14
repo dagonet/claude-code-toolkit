@@ -59,6 +59,9 @@ class CtlTests(unittest.TestCase):
         rc, text = self.ctl("on")
         self.assertEqual(rc, 0, text)
         self.assertEqual(json.loads(self.read(self.t.config)), jc.CONFIG_ON)
+        self.assertEqual(json.loads(self.read(self.t.config))["threshold"], 0.65)
+        self.assertIn("any model", text)
+        self.assertNotIn("one step", text)
         self.assertFalse(os.path.exists(self.t.settings))  # v5: the plugin registers Jev, not this checkout
         self.assertFalse(os.path.exists(self.t.gd + "/info/exclude")
                          and b"settings.local.json" in self.read(self.t.gd + "/info/exclude"))
@@ -218,14 +221,15 @@ class CtlTests(unittest.TestCase):
                  applied=True, reason="applied", emitted="sonnet"),
             dict(EV, reason="explicit"),
             dict(EV, choice="haiku", confidence=0.6, reason="low-confidence", emitted="sonnet",
-                 agent_effort="high", effort_choice="medium"),
+                 agent_effort="high", effort_choice="medium", effort_emitted="medium", effort_reason="applied"),
         ])
         rc, text = self.ctl("report")
         self.assertEqual(rc, 0, text)
         for line in ("jev report: 4 spawns seen", "applied: 2 (up 1, down 1)",
                      "not applied: explicit 1, low-confidence 1",
                      "model confidence: <0.5: 0, 0.5-0.8: 1, >=0.8: 2",
-                     "differs from the agent file's effort: 1 of 1"):
+                     "differs from the agent file's effort: 1 of 1",
+                     "effort applied: 1 of 4"):
             self.assertIn(line, text)
 
     def test_report_joins_retro_ledger_rows(self):

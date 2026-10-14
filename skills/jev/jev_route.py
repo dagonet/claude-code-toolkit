@@ -12,8 +12,9 @@ Contract:
 - STDOUT is exactly one {"hookSpecificOutput": {"hookEventName": "PreToolUse",
   "updatedInput": {...}}} object, or nothing. Never a permissionDecision: a
   router must never auto-approve a spawn (ruling S-19).
-- An explicit `model` in the call is never changed. A typed agent moves at most
-  one step from its own model; review/architect types never below sonnet.
+- An explicit `model` in the call is never changed. Jev may pick any model (any
+  step); review/architect types never below sonnet. A confident effort (same
+  threshold) is applied; an explicit `effort` is never changed.
 - A floor-class spawn (built-in, `model: inherit`, no model) ALWAYS leaves with
   a model -- Jev's choice when every check passes, else the project floor --
   because model-floor.sh has stepped aside for this checkout (R-1).
@@ -40,7 +41,7 @@ from typing import NamedTuple  # noqa: E402
 from redact import redact, residual_findings, trim  # noqa: E402
 
 JEV_MODEL_DEFAULT = "jev-1.13.0"
-THRESHOLD_DEFAULT = 0.8
+THRESHOLD_DEFAULT = 0.65
 ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 STATE_CAP = 4000
 HTTP_TIMEOUT = 2.0
@@ -91,7 +92,8 @@ def decide(kind, default, subagent_type, answer, threshold):
     """Bound Jev's answer (spec step 6). -> (model to emit or None, applied, reason).
 
     A floor spawn always gets a model (R-1): the floor itself when Jev's choice
-    is not applied. A typed spawn gets one only for an applied move.
+    is not applied. A typed spawn gets one only for an applied move. v5.1: any
+    step on haiku < sonnet < opus < fable; review/architect never below sonnet.
     """
     fallback = default if kind == "floor" else None
     fam = family(default)
@@ -102,13 +104,24 @@ def decide(kind, default, subagent_type, answer, threshold):
     choice, conf = answer["choice"], answer["confidence"]
     if conf < threshold:
         return fallback, False, "low-confidence"
-    if abs(ORDER.index(choice) - ORDER.index(fam)) > 1:
-        return fallback, False, "out-of-bounds"
     if choice == fam:
         return fallback, False, "kept"
     if ROLE_FLOOR_RE.search(subagent_type or "") and ORDER.index(choice) < ORDER.index("sonnet"):
         return fallback, False, "role-floor"
     return choice, True, "applied"
+
+
+def decide_effort(agent_effort, explicit_effort, answer, threshold):
+    """v5.1: Jev's effort, only when confident and different. -> (effort to emit or None, reason)."""
+    if explicit_effort:
+        return None, "explicit"
+    if not answer:
+        return None, "bad-response"
+    if answer["confidence"] < threshold:
+        return None, "low-confidence"
+    if answer["choice"] == agent_effort:
+        return None, "kept"
+    return answer["choice"], "applied"
 
 
 def _answer(answers, key, choices):
@@ -153,12 +166,17 @@ def build_request(state, jev_model):
                       ensure_ascii=True).encode("utf-8")
 
 
-def emit(tool_input, model):
-    """The hook's stdout: the WHOLE original tool_input with only `model` set
-    (updatedInput REPLACES it). b"" when it cannot be written as strict JSON."""
+def emit(tool_input, model, effort=None):
+    """The hook's stdout: the WHOLE original tool_input with `model` and/or `effort` set
+    (updatedInput REPLACES it). b"" when there is nothing to set or it cannot be strict JSON."""
+    if model is None and effort is None:
+        return b""
     try:
         ti = dict(tool_input)
-        ti["model"] = model
+        if model is not None:
+            ti["model"] = model
+        if effort is not None:
+            ti["effort"] = effort
         out = json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": ti}},
                          ensure_ascii=True, allow_nan=False)  # ASCII escapes: a lone surrogate must not break encode()
     except (TypeError, ValueError):
@@ -173,7 +191,7 @@ REASONS = frozenset({
 })
 EVENT_FIELDS = ("ts", "subagent_type", "kind", "default", "agent_effort", "choice", "confidence",
                 "probabilities", "effort_choice", "effort_confidence", "applied", "reason",
-                "emitted", "latency_s")
+                "emitted", "latency_s", "effort_emitted", "effort_reason")
 
 
 class Resolution(NamedTuple):
@@ -261,33 +279,33 @@ def _new_event(stype, res):
             "subagent_type": stype or "general-purpose", "kind": res.kind, "default": res.model,
             "agent_effort": res.effort, "choice": None, "confidence": None, "probabilities": {},
             "effort_choice": None, "effort_confidence": None, "applied": False, "reason": "error",
-            "emitted": None, "latency_s": None}
+            "emitted": None, "latency_s": None, "effort_emitted": None, "effort_reason": None}
 
 
 def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
-    """Ask Jev and bound the answer. -> (model to emit or None, reason, applied)."""
+    """Ask Jev and bound the answer. -> (model to emit or None, reason, applied, effort to emit or None)."""
     fallback = res.model if res.kind == "floor" else None
     if family(res.model) is None:
-        return fallback, "pinned", False
+        return fallback, "pinned", False, None
     state, findings = build_state(ti)
     if findings:
-        return fallback, "egress-refused", False
+        return fallback, "egress-refused", False, None
     key = load_key(env, registry)
     if not key:
-        return fallback, "no-key", False
+        return fallback, "no-key", False, None
     url = pick_endpoint(env)
     if not url:
-        return fallback, "no-endpoint", False
+        return fallback, "no-endpoint", False, None
     jev_model, threshold = read_config(res.gd)
     budget = min(HTTP_TIMEOUT, DEADLINE + _test_slack(env) - (clock() - t0))
     if budget <= 0.05:
-        return fallback, "deadline", False
+        return fallback, "deadline", False, None
     try:
         raw = post(url, build_request(state, jev_model), key, budget, env)
     except JevTimeout:
-        return fallback, "timeout", False
+        return fallback, "timeout", False, None
     except (HttpError, OSError):
-        return fallback, "http-error", False
+        return fallback, "http-error", False, None
     model_ans, effort_ans = parse_answers(raw)
     if effort_ans:
         ev["effort_choice"], ev["effort_confidence"] = effort_ans["choice"], effort_ans["confidence"]
@@ -295,7 +313,8 @@ def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
         ev["choice"], ev["confidence"] = model_ans["choice"], model_ans["confidence"]
         ev["probabilities"] = model_ans["probabilities"]
     model, applied, reason = decide(res.kind, res.model, stype, model_ans, threshold)
-    return model, reason, applied
+    effort, ev["effort_reason"] = decide_effort(res.effort, ti.get("effort"), effort_ans, threshold)
+    return model, reason, applied, effort
 
 
 def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.monotonic):
@@ -322,18 +341,21 @@ def run(stdin_bytes, env, resolver=None, post=None, registry=None, clock=time.mo
         return b"", None, ""
     ev = _new_event(stype, res)
     fallback = res.model if res.kind == "floor" else None
+    effort = None
     try:
         if ti.get("model"):
             model, ev["reason"] = None, "explicit"
+            ev["effort_reason"] = "explicit" if ti.get("effort") else None
         elif res.kind not in ("own", "floor", "env"):  # U-1: env routes like own
             model, ev["reason"] = None, "none"
         else:
-            model, ev["reason"], ev["applied"] = _ask(
+            model, ev["reason"], ev["applied"], effort = _ask(
                 ti, stype, res, env, post or post_with_deadline, registry, clock, t0, ev)
     except Exception:  # noqa: BLE001 -- the router must never fail a spawn
-        model, ev["reason"], ev["applied"] = fallback, "error", False
-    out = emit(ti, model) if model else b""
+        model, ev["reason"], ev["applied"], effort = fallback, "error", False, None
+    out = emit(ti, model, effort)
     ev["emitted"] = model if out else None
+    ev["effort_emitted"] = effort if out else None
     ev["latency_s"] = round(clock() - t0, 3)
     return out, ev, res.gd
 
