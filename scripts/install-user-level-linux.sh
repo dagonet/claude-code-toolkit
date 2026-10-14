@@ -5,7 +5,8 @@
 #
 # Never touches ~/.claude.json (MCP servers are registered separately with `claude mcp add`).
 # Every file it overwrites is backed up first as <file>.bak-<UTC>. Re-running it is safe.
-# A failure in steps 1-3 restores settings.json byte for byte (the plugin CLI edits it).
+# A failure in steps 2-3 restores settings.json byte for byte to its state after step 1. A failure inside step 1
+# restores nothing: the plugin CLI owns its keys there, and putting an older settings.json back would undo them.
 #
 # The order is safety-critical: the plugin is installed and checked BEFORE anything is removed,
 # so a failed install (network, a bad tag) leaves the old user-level copies in place and a NEW
@@ -45,15 +46,21 @@ TS=$(date -u +%Y%m%dT%H%M%SZ)
 PLUGINS="superpowers skill-creator frontend-design"
 MARKET=claude-plugins-official
 
-plugins_started=""   # set when step 1 starts: the CLI then edits settings.json, so a failure restores the backup
-removed=""           # set once the old dagonet marketplace entry is removed: a later die prints the recovery commands
+plugins_started=""   # set when step 1 is done: from then on this script edits settings.json, so a failure restores the backup.
+                     # During step 1 the plugin CLI owns its own keys (extraKnownMarketplaces): a die there never restores.
+removed=""           # set once the old dagonet marketplace entry is removed, cleared when add + install succeeded
+old_src=""           # the source the old dagonet entry had, for the rollback text
 NR="nothing was removed"
 die() {
   echo "install-user-level-linux: $*" >&2
   if [ -n "$removed" ]; then
-    echo "install-user-level-linux: the dagonet marketplace was removed and not re-added; until it is, the plugin is off and every synced project refuses every tool. Run:" >&2
-    echo "install-user-level-linux:   claude plugin marketplace add $CCT_SRC" >&2
-    echo "install-user-level-linux:   claude plugin install cct@dagonet" >&2
+    echo "install-user-level-linux: the dagonet marketplace was removed and cct@dagonet is not installed; until it is, the plugin is off and every synced project refuses every tool. Either" >&2
+    echo "install-user-level-linux:   (a) retry the new source:  claude plugin marketplace add $CCT_SRC  then  claude plugin install cct@dagonet" >&2
+    if [ -n "$old_src" ]; then
+      echo "install-user-level-linux:   (b) roll back to the old one:  claude plugin marketplace add $old_src  then  claude plugin install cct@dagonet" >&2
+    else
+      echo "install-user-level-linux:   (b) the old source could not be read; only (a) is available" >&2
+    fi
   fi
   if [ -n "$plugins_started" ]; then
     if [ -e "$L/settings.json.bak-$TS" ]; then cp -p "$L/settings.json.bak-$TS" "$L/settings.json"; else rm -f "$L/settings.json"; fi
@@ -67,7 +74,7 @@ for t in bash git jq claude; do command -v "$t" >/dev/null 2>&1 || die "missing 
   || die "run from a claude-code-toolkit checkout"
 CCT_SRC=${CCT_MARKETPLACE:-dagonet/claude-code-toolkit#v$(head -1 "$ROOT/VERSION")}
 # The default source is a release tag. Check it exists BEFORE anything is removed (an upgrade removes the old
-# marketplace entry). A CCT_MARKETPLACE override (a path, a fork) is not checked: `marketplace add` is its check.
+# marketplace entry). A CCT_MARKETPLACE override (a path, a fork) is not checked here.
 if [ -z "${CCT_MARKETPLACE:-}" ]; then
   tag_ref=$(git ls-remote --tags https://github.com/dagonet/claude-code-toolkit "refs/tags/v$(head -1 "$ROOT/VERSION" | tr -d '\r')" 2>/dev/null || true)
   [ -n "$tag_ref" ] || die "tag v$(head -1 "$ROOT/VERSION" | tr -d '\r') is not reachable on github.com/dagonet/claude-code-toolkit (not pushed yet, or no network): $NR"
@@ -77,28 +84,35 @@ backup() { [ -e "$1" ] && cp -p "$1" "$1.bak-$TS" && echo "  backup: $1.bak-$TS"
 mkdir -p "$L"
 
 # `claude plugin install` switches a plugin on in settings.json even when the user had it off:
-# back settings.json up and remember its enabledPlugins BEFORE the CLI touches it (step 3 puts them
-# back; a failure in step 1 restores the backup byte for byte)
-backup "$L/settings.json"
+# remember its enabledPlugins BEFORE the CLI touches it (step 3 puts them back)
 pre_ep='{}'
 [ -s "$L/settings.json" ] && pre_ep=$(jq -c '.enabledPlugins // {}' "$L/settings.json")
-plugins_started=1
 
 echo "1. plugins (cct@dagonet from $CCT_SRC; $PLUGINS)"
 # An upgrade: a #tag-pinned marketplace never advances on `plugin update` / `marketplace update` and `marketplace add`
 # over an existing entry is refused (measured, claude 2.1.299), so remove the old entry (this uninstalls the plugin),
 # then add the new source and install. From here a failure leaves the plugin off: die prints the recovery commands.
-if claude plugin marketplace list 2>/dev/null | grep -q dagonet; then
+mp_json=$(claude plugin marketplace list --json 2>/dev/null || true)
+if printf '%s' "$mp_json" | jq -e 'any(.[]; .name == "dagonet")' >/dev/null 2>&1; then
+  # capture the old source first: a die after the remove offers it as the rollback
+  old_src=$(printf '%s' "$mp_json" | jq -r '.[] | select(.name == "dagonet")
+    | (if .source == "git" then .url elif .source == "github" then .repo elif .source == "directory" then .path else (.url // .repo // .path // "") end) as $s
+    | if (.ref // "") != "" and (.source == "git" or .source == "github") then "\($s)#\(.ref)" else $s end' 2>/dev/null | head -1 || true)
   claude plugin marketplace remove dagonet || die "cannot remove the old dagonet marketplace: $NR"
   removed=1; NR="the old dagonet marketplace entry WAS removed"
 fi
 claude plugin marketplace add "$CCT_SRC" || die "cannot add the cct marketplace $CCT_SRC: $NR"
 claude plugin install cct@dagonet || die "cannot install cct@dagonet: $NR"
+removed=""; NR="nothing was removed"
 claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
 for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
 want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')
 claude plugin list --json 2>/dev/null | jq -e --arg v "$want_ver" 'any(.[]; .id == "cct@dagonet" and .scope == "user" and .enabled == true and .version == $v)' >/dev/null \
   || die "claude plugin list does not show cct@dagonet (user scope) enabled at $want_ver: $NR; the v4 user-level copies stay"
+# step 1 is done: the CLI has written its keys. The backup is taken NOW, so a later die restores to the state the
+# CLI left, never to one that predates its marketplace entry (that restore made the recovery `marketplace add` refuse).
+backup "$L/settings.json"
+plugins_started=1
 
 echo "2. CLAUDE.md (Linux platform section)"
 backup "$L/CLAUDE.md"

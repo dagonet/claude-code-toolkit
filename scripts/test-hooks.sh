@@ -11253,17 +11253,22 @@ else
 fi
 # ---- end v5.0 drift
 # ---- v5.0: install-user-level-linux.sh never removes anything before cct@dagonet is installed
-# A stub `claude` on PATH (no network, no real plugin store): (a) the marketplace add fails, as
-# CCT_MARKETPLACE=/nonexistent does with the real CLI; (b) every command succeeds but `plugin list`
-# does not show cct@dagonet. Both must exit non-zero with every v4 leftover present and settings.json
-# byte-unchanged. A temp HOME seeded with every leftover path: nothing under the real ~/.claude is touched.
+# A stub `claude` on PATH (no network, no real plugin store; it writes/removes the marketplace key in settings.json
+# like the real CLI and refuses an add whose source differs from that key): every command succeeds but `plugin list`
+# does not show cct@dagonet. Such a die must exit non-zero with every v4 leftover present and the CLI's keys kept. A temp HOME seeded with every leftover path: nothing under the real ~/.claude is touched.
 if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   IU_BIN="$TMPROOT/iu-bin"; rm -rf "$IU_BIN"; mkdir -p "$IU_BIN"
   printf '%s\n' '#!/bin/sh' \
     '[ -n "$IU_LOG" ] && echo "$*" >> "$IU_LOG"' \
+    '[ "$IU_MODE:$2:$3" = addfail:marketplace:add ] && { echo "refused: addfail" >&2; exit 1; }' \
+    'f="$HOME/.claude/settings.json"' \
     'case "$IU_MODE:$1 $2 $3" in' \
-    '  *:"plugin marketplace list") [ "$IU_HAS" = 1 ] && echo "  > dagonet"; exit 0 ;;' \
-    '  fail:"plugin marketplace add /nonexistent") echo "Path does not exist: /nonexistent" >&2; exit 1 ;;' \
+    '  *:"plugin marketplace list") [ "$IU_HAS" = 1 ] && printf "[{\"name\":\"dagonet\",\"source\":\"git\",\"url\":\"https://old.example/x.git\",\"ref\":\"v5.0.0\"}]\n"; exit 0 ;;' \
+    '  *:"plugin marketplace remove") [ -s "$f" ] && { jq "del(.extraKnownMarketplaces.dagonet)" "$f" > "$f.t" && mv "$f.t" "$f"; }; exit 0 ;;' \
+    '  *:"plugin marketplace add") case "$4" in *official*) exit 0 ;; esac' \
+    '     [ -s "$f" ] || echo "{}" > "$f"' \
+    '     o=$(jq -r ".extraKnownMarketplaces.dagonet // empty" "$f"); [ -n "$o" ] && [ "$o" != "$4" ] && { echo "source does not match its extraKnownMarketplaces entry" >&2; exit 1; }' \
+    '     jq --arg s "$4" ".extraKnownMarketplaces.dagonet=\$s" "$f" > "$f.t" && mv "$f.t" "$f"; exit 0 ;;' \
     '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  oldver:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0.0.0\"}]\n"; exit 0 ;;' \
     '  disabled:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":false,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
@@ -11286,15 +11291,15 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
     printf '%s' "$iu_h"
   }
   iu_present() { iu_c=0; while IFS= read -r iu_p; do [ -e "$1/.claude/$iu_p" ] && iu_c=$((iu_c + 1)); done < "$IU_LEFT"; echo "$iu_c"; }
-  # nolist/oldver/disabled fail AFTER the stub's `plugin install` switched superpowers on in settings.json:
-  # byte-unchanged proves the installer restores its pre-step-1 backup (W1)
+  # nolist/oldver/disabled die inside step 1, after the stub CLI wrote its marketplace key: settings.json keeps
+  # that key (a die inside step 1 restores nothing; restoring an older file is what broke the recovery `add`)
   for iu_m in fail nolist oldver disabled; do
     iu_h=$(iu_home "$iu_m")
     ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE="$iu_m" IU_VER="$(head -1 "$ROOT/VERSION")" CCT_MARKETPLACE=/nonexistent \
         bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); iu_rc=$?
     expect "IU ($iu_m): the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
     expect "IU ($iu_m): every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
-    expect "IU ($iu_m): settings.json is byte-unchanged" 0 "$(cmp -s "$iu_h/settings.before" "$iu_h/.claude/settings.json"; echo $?)"
+    expect "IU ($iu_m): settings.json keeps the CLI's marketplace key (no restore in step 1)" /nonexistent "$(jq -r '.extraKnownMarketplaces.dagonet' "$iu_h/.claude/settings.json" 2>&1)"
     expect "IU ($iu_m): it says nothing was removed" 1 "$(grep -c 'nothing was removed' "$iu_h/out")"
   done
   # IU success path (fix round 1, I3/I5): a v4-shaped settings.json with the user's own entries; the merge
@@ -11344,6 +11349,8 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   chmod +x "$IU_GBIN/git"
   iu_up() { # <name> <has 0|1> <mode> <tag ok|missing> <marketplace or empty>; sets iu_h and iu_rc
     iu_h=$(iu_home "$1"); : > "$iu_h/calls"
+    # an existing install: the CLI's own marketplace key, which a later `marketplace add` of another source refuses
+    [ "$2" = 1 ] && { jq '.extraKnownMarketplaces.dagonet="https://old.example/x.git#v5.0.0"' "$iu_h/.claude/settings.json" > "$iu_h/s.t" && mv "$iu_h/s.t" "$iu_h/.claude/settings.json"; }
     ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_GBIN:$IU_BIN:$PATH" IU_MODE="$3" IU_HAS="$2" IU_TAG="$4" IU_LOG="$iu_h/calls" \
         IU_VER="$(head -1 "$ROOT/VERSION")" ${5:+CCT_MARKETPLACE=$5} bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); iu_rc=$?
   }
@@ -11360,11 +11367,21 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   expect "IU unreachable tag: nothing is removed (no remove, no add, no install)" 0 "$(grep -cE 'marketplace (remove|add)|plugin install' "$iu_h/calls")"
   expect "IU unreachable tag: every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
   expect "IU unreachable tag: it says nothing was removed" 1 "$(grep -c 'nothing was removed' "$iu_h/out")"
-  iu_up afterrm 1 nolist ok /ok
+  # a die AFTER the remove (the add is refused): settings.json stays as the CLI left it (the old marketplace key gone,
+  # NOT restored from a backup), both recovery options are printed, and running the retry really works
+  iu_up afterrm 1 addfail ok /ok
   expect "IU die after the remove: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
-  expect "IU die after the remove: prints the exact recovery commands" 2 "$(grep -cxE 'install-user-level-linux: +(claude plugin marketplace add /ok|claude plugin install cct@dagonet)' "$iu_h/out")"
+  expect "IU die after the remove: no restore (the CLI's removal of the old marketplace key stands)" null "$(jq -r '.extraKnownMarketplaces.dagonet // "null"' "$iu_h/.claude/settings.json")"
+  expect "IU die after the remove: (a) retry the new source, exact" 1 "$(grep -cF '(a) retry the new source:  claude plugin marketplace add /ok  then  claude plugin install cct@dagonet' "$iu_h/out")"
+  expect "IU die after the remove: (b) roll back to the old source, exact" 1 "$(grep -cF '(b) roll back to the old one:  claude plugin marketplace add https://old.example/x.git#v5.0.0  then  claude plugin install cct@dagonet' "$iu_h/out")"
+  ( env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE=ok claude plugin marketplace add /ok >/dev/null 2>&1 ); iu_rc=$?
+  expect "IU die after the remove: the printed retry is not refused" 0 "$iu_rc"
+  # a die after add + install succeeded (the version check): the removed text must NOT be printed
+  iu_up afterinst 1 nolist ok /ok
+  expect "IU die after a successful install: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
+  expect "IU die after a successful install: no 'removed' recovery text" 0 "$(grep -c 'was removed and cct@dagonet is not installed' "$iu_h/out")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 43
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 48
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED

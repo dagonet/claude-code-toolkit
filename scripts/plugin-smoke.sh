@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of the cct plugin (v5.0 spec section 5). Run before each release; NOT part of the gate.
-# Runs nested `claude -p --plugin-dir <checkout>` in a scratch git repo. Writes nothing under ~/.claude itself (claude's
-# own per-cwd projects dirs for the scratch repos are removed at the end):
+# Runs nested `claude -p --plugin-dir <checkout>` in a scratch git repo. The script writes nothing under ~/.claude
+# itself, but claude does, whatever the flags: shell-snapshots, session-env, ~/.claude.json and a projects/<slug> dir per
+# cwd (only the last, for the scratch repos, is removed at the end). The scratch settings carry "cct@dagonet": false,
+# so an installed live cct cannot make a --plugin-dir row pass; only --plugin-dir can write the session marker.
 # every call gets a private TMPDIR (session markers) and CLAUDE_MEMORY_HOME (retro ledger), the session id of
 # the outer session is unset, and the model is haiku. Real model calls: it costs a little and takes minutes.
 # The scratch workspace is untrusted, so claude ignores its permissions.allow: rows depend on auto mode allowing the
@@ -36,7 +38,7 @@ mkscratch() {
   git init -q -b main "$1" && git -C "$1" config user.email smoke@example.invalid && git -C "$1" config user.name smoke
   git init -q --bare "$WORK/origin-$(basename "$1").git"
   git -C "$1" remote add origin "$WORK/origin-$(basename "$1").git"
-  printf '%s\n' '.claude/' 'out.*' > "$1/.gitignore"
+  printf '%s\n' 'out.*' > "$1/.gitignore"   # only the side-effect files are ignored: anything written under .claude/ shows up in row 8
   echo smoke > "$1/README.md"
   git -C "$1" add -A && git -C "$1" commit -q -m init
 }
@@ -55,14 +57,14 @@ cl() {
 }
 
 mkdir -p "$WORK/tmp" "$WORK/mem"
-SC="$WORK/scratch"; mkscratch "$SC" true
+SC="$WORK/scratch"; mkscratch "$SC" false
 OFFSC="$WORK/scratch-off"; mkscratch "$OFFSC" false
 
 # 1. A push to main is refused and its side effect never happens.
 check_push_refused() {
   local out; out=$(cl "$SC" "$ROOT" "Run exactly this one Bash command and report the result: git push origin main; touch $SC/out.pushed")
   if [ -e "$SC/out.pushed" ]; then fail "1 push to main refused" "side-effect file exists"
-  elif ! printf '%s' "$out" | grep -q 'BLOCKED'; then fail "1 push to main refused" "no BLOCKED tool result in the stream"
+  elif ! printf '%s' "$out" | grep -q 'pushing to a protected branch'; then fail "1 push to main refused" "no-push-main's own message not in the stream"
   elif git -C "$WORK/origin-scratch.git" rev-parse -q --verify main >/dev/null 2>&1; then fail "1 push to main refused" "origin has main"
   else pass "1 push to main refused"; fi
 }
@@ -99,8 +101,10 @@ check_explore_spawn() {
   out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run this Bash command once: cd /tmp && ls && pwd (it may be refused; that is fine, do not retry). Then reply with the word done.' Then report what the agent returned.")
   led=$(find "$WORK/mem" -name retro.md 2>/dev/null | head -1)
   if [ -z "$led" ]; then fail "5 cct:Explore spawn" "no retro ledger written"
-  elif grep -q 'cct:Explore' "$led"; then pass "5 cct:Explore spawn"
-  else fail "5 cct:Explore spawn" "ledger has no cct:Explore row: $(head -c 200 "$led")"; fi
+  elif ! grep -q 'cct:Explore' "$led"; then fail "5 cct:Explore spawn" "ledger has no cct:Explore row: $(head -c 200 "$led")"
+  elif ! grep 'cct:Explore' "$led" | grep -q 'blocks=\[deny-hang-shapes.sh\]'; then fail "5 cct:Explore spawn" "the refusal was not deny-hang-shapes: $(head -c 200 "$led")"
+  elif printf '%s' "$out" | grep -q 'the cct plugin is not active'; then fail "5 cct:Explore spawn" "the plugin-off guard refused the subagent"
+  else pass "5 cct:Explore spawn"; fi
 }
 
 # 6. Hook cost: median of 15 sequential `true` calls with and without the plugin. Informational.
@@ -126,7 +130,7 @@ check_space_path() {
   check_true_runs "$SC" "$sp" "7 path with a space"
 }
 
-# 8. After the run the scratch repo shows nothing the plugin wrote (the side-effect files are ignored via .gitignore).
+# 8. After the run the scratch repo shows nothing the plugin wrote (.claude/ is committed, only the out.* side-effect files are ignored).
 check_scratch_clean() {
   local st; st=$(git -C "$SC" status --porcelain)
   if [ -z "$st" ]; then pass "8 scratch repo clean"; else fail "8 scratch repo clean" "$(printf '%s' "$st" | head -3 | tr '\n' ';')"; fi
