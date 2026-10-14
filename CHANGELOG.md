@@ -76,10 +76,10 @@ claude plugin marketplace add dagonet/claude-code-toolkit#v5.0.0 && claude plugi
 ```
 
 Counts, never carried forward:
-- **Consistency:** @@CONS@@
-- **Hook suite:** @@HOOKS@@
-- **Parser matrix:** @@MATRIX@@
-- **Server suite:** @@SERVER@@
+- **Consistency:** **338** PASS lines, 0 SKIP, ALL CHECKS PASSED, from one full `bash scripts/verify-template-consistency.sh` run at the release tree (v4.6.2: 439; v5.0 retired the checks over template agents, template hook registrations, user-level mirrors and grants, and added checks 72–76).
+- **Hook suite:** 4107 passed, 0 failed, 6 skipped (4113 assertions), ALL HOOK FIXTURES PASSED, on Linux (cloud host, root) at 58cc555 (v4.6.2: 4179 / 0 / 6; the user-level mirror, agent-frontmatter and template-registration fixtures went with their subjects). Windows not run for this release.
+- **Parser matrix:** at 4fdcf5a (58cc555 changes only docs, `AGENT_TEAM.md` and the CHANGELOG; the node row equals the suite at 58cc555): node 4107 / 0 / 6, python3-only 3858 / 0 / 242 (band ~255 ±20), jq-only 3762 / 0 / 338 (band ~335 ±20), PARSER MATRIX PASSED (3 configurations).
+- **Server suite:** 521 passed, 10 skipped on Linux (v4.6.2: 555 / 10; the grants tests went with the mechanism; +1 `test_release_floor_is_v5_and_refuses_every_v4_skill`).
 - **Context tables** (`wc -c` at this release's tip, general): harness-injected 18,028, end of bootstrap 23,272 (v4.6.2: 17,808 / 23,066). The three-file core (variant `CLAUDE.md` + `project.md` + user-level `CLAUDE.md`) is 14,524, with `PROJECT_CONTEXT.md` 19,768. Per-variant figures are in `docs/architecture.md`.
 
 ## v4.6.2 — 2026-10-13
