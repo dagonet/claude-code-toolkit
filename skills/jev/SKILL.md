@@ -19,6 +19,8 @@ Run exactly one command, using the word the user typed after `/cct:jev` (no word
 - **Per spawn** that passes no `model`: TypeSafe's Jev picks a model in ~0.3 s. It applies only at confidence ≥ 0.65 (the `threshold` in the config; a one-week trial value), and may pick any model on haiku < sonnet < opus < fable, never below sonnet for `review`/`architect` types, whose effort is also never lowered below the agent file's (with no agent effort they keep the session's). A spawn with no model of its own always leaves with one: Jev's choice, or the project floor when Jev is unsure, slow (2 s), unreachable or keyless. Jev's effort is applied at the same threshold when it differs from the agent file's `effort:` (an agent file without one counts as different); an `effort` you pass on the spawn is never changed. A typed agent whose model stays the same gets the effort only, never a pinned model.
 - **Off**: the switch goes off first, so `hooks/model-floor.sh` floors again at once. Then any v4 registration and notice in `.claude/settings.local.json` are removed. Events stay for `/cct:jev report`.
 
+`/cct:jev report` stays per clone. For the cross-machine trial tally over every clone under a root, run `python3 <toolkit>/scripts/jev-tally.py [--since DATE] [ROOT...]` (default root `~/git`; the PC passes `G:/git`). It is read-only and prints counts only.
+
 ## While on: omit `model` (user ruling U-1, 2026-10-02)
 
 "Jev decides, I don't." While Jev routing is on in this repo, do NOT pass `model` on Agent spawns. Jev picks one per launch. This is the exception to the user-level rule "every Agent spawn names its `model`". After `/cct:jev off`, name `model` again. A `model` you do pass is never changed, so passing one opts that spawn out of routing.
