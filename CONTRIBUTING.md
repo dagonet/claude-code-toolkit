@@ -21,7 +21,10 @@ Thanks for your interest in contributing! Here's how to get started.
 | `templates/{variant}/` | Template files for each variant (6 variants) |
 | `docs/` | User-facing documentation (hub-and-spoke) |
 | `mcp-servers/` | MCP server installation guide |
-| `user-level-reference/` | Reference copy of `~/.claude/` config (agents, commands, skills) |
+| `agents/`, `skills/`, `output-styles/`, `hooks/`, `bin/`, `.claude-plugin/` | The cct plugin (`cct@dagonet`; this repo is the marketplace `dagonet`) |
+| `server/` | The template-sync MCP server |
+| `scripts/` | Gate, verification and install tooling |
+| `user-level-reference/` | Reference copy of the user level: `CLAUDE.md`, `settings.json`, the settings reference, routine prompts, the MCP template |
 | `setup-project.ps1` | Automated setup script (Windows) |
 | `setup-project.sh` | Automated setup script (Linux/macOS) |
 
@@ -43,7 +46,7 @@ Thanks for your interest in contributing! Here's how to get started.
 ## Types of Contributions
 
 - **New template variant**: Add `templates/<name>/` with full file set (see existing variants)
-- **Agent improvements**: Edit agent definitions in `templates/*/.claude/agents/` and the plugin's `agents/`
+- **Agent improvements**: Edit agent definitions in the plugin's `agents/` (templates ship no agents since v5.0)
 - **New skills**: Add a skill directory under `skills/<name>/SKILL.md` (commands were merged into skills)
 - **Documentation**: Improve docs in `docs/` or template READMEs
 - **Setup script improvements**: Enhance `setup-project.ps1` / `setup-project.sh`
@@ -59,10 +62,10 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ## Versioning
 
-The toolkit is versioned `MAJOR.MINOR` in a tracked `VERSION` file at the repo root, mirrored by an annotated git tag.
+The toolkit is versioned `MAJOR.MINOR.PATCH` in a tracked `VERSION` file at the repo root, mirrored by an annotated git tag. The same number is the plugin version in `.claude-plugin/plugin.json`, `server/src/template_sync/VERSION` and the sync-template skill marker.
 
 - **`VERSION`** holds two lines: the number, then a one-line description of what that version is. Greppable by tooling and by downstream projects checking which toolkit they were bootstrapped from.
-- **Annotated tag** `vMAJOR.MINOR` at the merge commit carries the full description — the scope of the version, or the changes since the previous one. This is what GitHub surfaces.
+- **Annotated tag** `vMAJOR.MINOR.PATCH` at the merge commit carries the full description — the scope of the version, or the changes since the previous one. This is what GitHub surfaces.
 - **Bump MINOR** for a body of work that changes the operating model, hooks, agent contracts, or template content. **Bump MAJOR** for a change that breaks downstream `/cct:sync-template` compatibility.
 - Bump `VERSION` on the feature branch as part of the PR, then tag after merge so the tag lands on the merge commit.
 - Version bumps do not replace the `CHANGELOG.md` entry — the CHANGELOG stays date-based and carries the detail plus the "Downstream migration" subsection; the tag description summarizes.

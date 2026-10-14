@@ -15,6 +15,7 @@ Before starting, confirm the following are on PATH:
   - Linux / macOS / Git Bash on Windows → `bash`
   - Native Windows → `pwsh` (PowerShell 7+) **or** Windows PowerShell 5.1
 - The target directory for the new project exists (or can be created) and is writable.
+- The **cct plugin** is installed on the machine that will open the project (`/plugin marketplace add dagonet/claude-code-toolkit`, then `/plugin install cct@dagonet`). Without it the bootstrapped project refuses every tool call (the plugin-off guard). Setup itself does not need it.
 
 If any prerequisite is missing, stop and tell the user what to install — do not attempt to install tools on the user's behalf.
 
@@ -48,12 +49,13 @@ Ask the user which variant to use. If they don't know, summarize the choices wit
 | `java` | Java (Maven or Gradle, Spring Boot assumed as default) |
 | `python` | Python 3.11+ (pip, Poetry, or uv) |
 
-### What lands in the target project (v2.0)
+### What lands in the target project (v5.0)
 
-- **6 agents** in `general` — `Explore` (haiku), `architect`, `code-reviewer`, `coder`, `ops`, `tester` — **7** in every other variant, which add a language coder (`dotnet-coder` / `rust-coder` / `java-coder` / `python-coder`). Each agent declares its own `model:` and `effort:`; do not pass `model:` in an Agent call, it silently overrides the file.
-- **`.claude/rules/*.md`** — path-scoped language conventions with a `paths:` frontmatter glob list, loaded only when Claude touches a matching file. Every variant except `general` ships at least one; `general` has no language of its own. `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` inside them are substituted by the script like any other template file.
-- **`hooks/`** — the top-level enforcement scripts (`hooks/*.sh`; the count lives in `CHANGELOG.md`) **plus `hooks/lib/`**, copied whole from the toolkit root (variants do not carry their own copies). The copy is recursive on purpose: the gates `source` `hooks/lib/*.sh` and fail **closed** (exit 2) if the lib is missing, which would leave the project unable to commit, push, or merge.
-- **No `commands/` directory.** Slash commands are skills now; the 9 skills live at user level (`~/.claude/skills/`), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
+- **No agents.** All 10 agents — `cct:Explore` (haiku), `cct:architect`, `cct:code-reviewer`, `cct:coder`, `cct:ops`, `cct:tester` and the language coders `cct:dotnet-coder` / `cct:rust-coder` / `cct:java-coder` / `cct:python-coder` — come from the cct plugin; the variant's `CLAUDE.md` names which coder to spawn. Each agent declares its own `model:` and `effort:`; do not pass `model:` in an Agent call, it silently overrides the file.
+- **`.claude/settings.json`** — permissions, `enabledPlugins` (`cct@dagonet`) and the inline plugin-off guard; no other hook registration.
+- **`.claude/rules/*.md`** — `project.md` (unscoped, once-class, yours) in every variant, plus path-scoped language conventions with a `paths:` frontmatter glob list, loaded only when Claude touches a matching file. Every variant except `general` ships at least one of those; `general` has no language of its own. `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` inside them are substituted by the script like any other template file.
+- **`hooks/`** — only `hooks/git-pre-push.sh` and the two libraries it sources, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh`, copied from the toolkit root; setup installs the native pre-push hook from them. Every other enforcement hook runs from the cct plugin.
+- **No `commands/` directory.** Slash commands are skills now; the 9 skills ship in the cct plugin (`/cct:<skill>`), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
 
 ---
 
@@ -94,7 +96,7 @@ Collect answers before running the script. Ask only questions relevant to the ch
 - **Test command** → `--test-cmd`
 - **Format command** → `--format-cmd`
 - **Lint command** → `--lint-cmd`
-- **Gate command** (build + test + format-check + lint in one line; `hooks/run-gate.sh` runs it) → `--gate-cmd`
+- **Gate command** (build + test + format-check + lint in one line; `cct-gate` runs it) → `--gate-cmd`
 
 **`rust-tauri`:** no additional questions.
 
@@ -147,7 +149,7 @@ After the script exits 0:
 
 1. **Manifest written.** Confirm `.claude/template-manifest.json` exists in the target directory.
 2. **No unfilled placeholders.** Run `grep -r '{{' <target-dir>` — expect no matches in `.claude/`, `CLAUDE.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`. Stray `{{` inside code or 3rd-party docs is fine.
-3. **Discoverability sanity.** `ls -la <target-dir>/.claude/` shows `settings.json` and `agents/`, plus `rules/` on every variant except `general`.
+3. **Discoverability sanity.** `ls -la <target-dir>/.claude/` shows `settings.json`, `project-instructions.md`, `template-manifest.json` and `rules/` (no `agents/` since v5.0), and `<target-dir>/hooks/` holds `git-pre-push.sh` plus `lib/git-cmd.sh` and `lib/json.sh`.
 4. **Surface the `autoMode.environment` snippet.** The script prints one at the end of both the dry run and the real run. `permissions.autoMode` is **User/managed scope only** — a project cannot ship one, which is deliberate: a repo must not be able to widen its own trust. Show the user the line and tell them to paste it into `permissions.autoMode.environment` in `~/.claude/settings.json`. Do not write it into the project.
 5. **Suggest next step.** Recommend the user runs the project's build command once to confirm the toolchain works — but do not run it yourself unless asked.
 

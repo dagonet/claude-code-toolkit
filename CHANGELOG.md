@@ -4,7 +4,83 @@
 
 Major. The user level ships as the Claude Code plugin `cct@dagonet`.
 
-**Floor reviewed: raised to >=v5.0.0.** `requires_skill` in `templates/ownership.json` rises from `>=v4.1.0` to `>=v5.0.0` (spec §4 step 1), so a v4.x sync skill refuses to sync a project to v5.0 and cannot add the plugin-off guard to a machine without the plugin.
+**Floor reviewed: raised to >=v5.0.0.** `requires_skill` in `templates/ownership.json` rises from `>=v4.1.0` to `>=v5.0.0` (spec §4 step 1), so a v4.x sync skill refuses to sync a project to v5.0 and cannot add the plugin-off guard to a machine without the plugin. The skill's own server minimum rises to 5.0.0 (`template_load_manifest` takes `skill_version` only from v5.0). The manifest `requires_server` floor stays `>=4.1.0`.
+
+**Every toolkit release now needs `claude plugin update cct@dagonet` (and a session restart) before `/cct:sync-template`**, because the server refuses a skill marker below the template floor and below the checkout's own marker.
+
+### Added
+- **The `cct` plugin.** `.claude-plugin/plugin.json` (name `cct`, version == `VERSION` line 1) and `.claude-plugin/marketplace.json` (marketplace `dagonet`, source `./`). Install id `cct@dagonet`.
+- **`hooks/hooks.json`**: every toolkit hook, one registration each, run in parallel, all in the form `bash "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh" <name>` (no dispatcher).
+- **`hooks/run-hook.sh`**: the one wrapper. It classes each hook `machine` or `project` (a project-class hook exits 0 unless `$CLAUDE_PROJECT_DIR/.claude/template-manifest.json` exists), steps aside when the project's `.claude/settings.json` or `~/.claude/settings.json` still registers the same `hooks/<name>.sh`, applies the v4.6.1 polarity on a missing script, then execs the hook.
+- **`hooks/cct-session.sh`**: SessionStart writes the marker `${TMPDIR:-/tmp}/cct-<uid>/<session_id>`; SessionEnd removes it; markers older than 30 days are swept.
+- **The plugin-off guard**: an inline PreToolUse entry with an empty matcher in every template `.claude/settings.json`. It refuses every tool call (exit 2) unless the session's marker exists: `BLOCKED: the cct plugin is not active in this session. Install it with /plugin marketplace add dagonet/claude-code-toolkit and /plugin install cct@dagonet, then restart the session.` It does not honour `.claude/git-guard-off`.
+- **`bin/cct-gate`**: runs the plugin's `hooks/run-gate.sh` for the project in the cwd; projects allow `Bash(cct-gate*)`. Block messages name `cct-gate` under the plugin (`gc_gate_cmd`). The toolkit repo itself keeps `bash hooks/run-gate.sh`.
+- **`agents/`** (10 agents, named `cct:<name>`), **`skills/`** (9, `/cct:<skill>`) and **`output-styles/pm-report.md`** (`cct:pm-report`) at the plugin root.
+- **Jev in the plugin**: `hooks/jev-route.sh` and `hooks/jev-notice.sh`, registered by the plugin and gated on `<git common dir>/jev/config.json`.
+- **`scripts/lib/v4-user-leftovers.txt`**: the one list of v4.x user-level files, read by the Linux installer, the drift probe and the Windows doc.
+- **`docs/plugin-migration-windows.md`**: the PC's documented steps.
+- Consistency checks 72–76 (`plugin.json` version == `VERSION`; `marketplace.json`; `hooks.json` and `run-hook.sh` agree; no plugin agent carries `hooks:`; every `cct:<agent>` the docs name exists); server test `test_release_floor_is_v5_and_refuses_every_v4_skill`.
+
+### Changed
+- **Templates ship no `.claude/agents/` and no hook registrations.** A template's `settings.json` carries the permissions, `enabledPlugins` (`cct@dagonet`) and the plugin-off guard only. Every variant's `CLAUDE.md`, `AGENT_TEAM.md` and `PROJECT_CONTEXT.md` name the `cct:` agents and `cct-gate`.
+- **Setup copies only `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh`** (the sync server's `ROOT_TRACKED_FILES`). A v4.x consumer's other hook and agent files resolve `TEMPLATE_DELETED`.
+- **sync-template skill** (marker v5.0.0): step 2c, the one-time v5 migration (delete the project's agent and hook files except the pre-push set, remove the hook registrations, add the guard and `Bash(cct-gate*)`). `template_load_manifest` takes `skill_version` and refuses one below `requires_skill` or below the checkout's marker.
+- **`hooks/lib/agent-model.sh`, `enforce-agent-contract.sh`, `model-floor.sh`**: a `cct:<name>` spawn resolves to the plugin's `agents/<name>.md`. **`verify-hooks.sh`** also reads the plugin's `hooks/hooks.json`.
+- **User level shrinks to `CLAUDE.md` + `settings.json`.** `scripts/install-user-level-linux.sh` installs the plugin first (pinned to `dagonet/claude-code-toolkit#v<VERSION>`, overridable with `$CCT_MARKETPLACE`), then writes `CLAUDE.md`, merges `settings.json` (drops the v4.x toolkit hook entries) and moves the leftovers to `~/.claude/v4-leftovers.bak-<UTC>/`; a failed install restores `settings.json`. `scripts/verify-user-level-drift.sh`: 0 drift = `CLAUDE.md` matches, `cct@dagonet` installed and enabled at `VERSION`, no leftover, no stale registration.
+- **Docs**: one whole-document audit against the tree of `README.md` (new *Install* section), `AGENTS.md`, `CONTRIBUTING.md`, `docs/architecture.md`, `docs/templates.md`, `docs/template-sync.md`, `docs/verification.md`, `docs/getting-started.md`, `user-level-reference/README.md`, `user-level-reference/settings-reference.md` and `AGENT_TEAM.md`. Among the corrections: a project's own agent sits beside `cct:<name>` and never overrides it; projects get 3 hook files, not every script; no agent file carries the merge gate inline; the dotnet-maui Click/Type hook and FlaUI tester no longer ship; `agent_grants` is not required; the verify line count is 29. The spec's §3.5 sentence now says `run-hook.sh` execs the hook (it never sourced it).
+
+### Removed
+- `templates/*/.claude/agents/` and `templates/*/.claude/agent-grants.json`; the agent-grants splice and the three `agent_grants_*` verify lines (the manifest key is accepted, never required).
+- `user-level-reference/agents/`, `hooks/`, `skills/`, `output-styles/` (now at the plugin root) and the six v4.x exec-form user-level hook registrations.
+- Frontmatter `hooks:` in every agent (check 75): the plugin registers `gate-before-merge` once, for every caller.
+
+### Known limits
+- **A nested `claude` inherits the session id** (Review Focus 4): a child `claude -p` without the plugin passes the guard on its parent's marker. Every test that asserts "refused without the plugin" runs with a private `TMPDIR`.
+- **A crash without SessionEnd leaves a stale marker.** It is swept after 30 days. Safe direction: the marker only says the plugin was loaded for that id.
+- **Two live processes sharing a session id** (resuming a session that is still running): one's SessionEnd removes the other's marker, and the survivor's next tool call is refused until it restarts.
+- **The project pre-push copy and the plugin can differ in version** (spec §3.4). Both read the protected set through `gc_protected_branches`; only a change to that function's meaning could make them disagree, and such a change must be called out under a release's downstream migration.
+- **`cct-gate` from the PowerShell tool on Windows is untested**; run it from the Bash tool.
+- `enforce-delegation.sh` denies a PO's `hooks/run-gate.sh`, not a PO's `cct-gate` (it matches the path). `scripts/check-activation.sh` still reports the v4.x layout (project bindings and `hooks/` scripts), so it reads `NOT bound` on a v5-synced project.
+
+### Downstream migration
+0. The skill body, the server's `VERSION` and every hook moved: a FULL session restart is needed after each step below.
+1. **Release v5.0.** `requires_skill` in `templates/ownership.json` rises to `>=v5.0.0`, so a v4.x sync skill refuses to sync a project to v5.0. Otherwise a v4.x skill could add the guard to a machine without the plugin.
+2. **Install the plugin on the machine.** Projects that are not synced yet still register their own hooks, so the plugin steps aside there (§3.2). The old user-level copies also make the plugin step aside, so nothing fires twice.
+3. **Remove the old user-level copies:**
+   - Linux: the shrunk installer;
+   - PC: the documented list.
+   - From now on the plugin's machine-wide hooks act.
+4. **Sync each project with `/cct:sync-template`.** That skill exists only when the plugin is loaded, so a project can only reach v5.0 from a session that has the plugin. The sync:
+   - deletes the project's agent and hook files, except §3.4's set;
+   - removes the hook registrations from `.claude/settings.json`;
+   - adds the guard (§3.3) and `Bash(cct-gate*)`.
+   - From the next session on, the plugin's project-only hooks act there.
+5. **Other machines with the same project:** after a `git pull`, the guard refuses until that machine has the plugin. That is the intended fail-closed path, and its message says what to do.
+
+Rollout order:
+1. agent-host-1 (Linux), first on a scratch project, then on this repo;
+2. one consumer: penumbra, the smallest;
+3. the PC, once the Windows checks in §5 pass;
+4. the remaining consumers.
+
+**Rollback:** revert the project's sync commit. The project's own registrations come back and the plugin steps aside again. Uninstalling the plugin is not a rollback; it leaves the guard refusing, by design.
+
+**Reinstall remedy** (a hook's `HOOK SCRIPT MISSING` / `WARN: ... missing`): `claude plugin uninstall cct@dagonet`, then `claude plugin install cct@dagonet`. Measured: `install` alone on an installed plugin does not restore a deleted file.
+
+**Jev:** after the plugin is installed, run `/cct:jev off` then `/cct:jev on` once per checkout where Jev is on, to drop the old `settings.local.json` entry. Until then the plugin steps aside and the old entry keeps routing, as long as the old user-level skill copy exists. The leftover removal (step 3) removes that copy, so do this before it. While the v4.6.x user-level `model-floor` is still registered, Jev-on spawns get two emitters (safe; the floor may override Jev's pick) until the installer removes it.
+
+**Cloud environments** (claude.ai/code, routines) load neither a repo's `enabledPlugins` nor your local plugins. Each cloud environment used with a synced project needs this in its setup script:
+
+```bash
+claude plugin marketplace add dagonet/claude-code-toolkit#v5.0.0 && claude plugin install cct@dagonet
+```
+
+Counts, never carried forward:
+- **Consistency:** @@CONS@@
+- **Hook suite:** @@HOOKS@@
+- **Parser matrix:** @@MATRIX@@
+- **Server suite:** @@SERVER@@
+- **Context tables** (`wc -c` at this release's tip, general): harness-injected 18,028, end of bootstrap 23,272 (v4.6.2: 17,808 / 23,066). The three-file core (variant `CLAUDE.md` + `project.md` + user-level `CLAUDE.md`) is 14,524, with `PROJECT_CONTEXT.md` 19,768. Per-variant figures are in `docs/architecture.md`.
 
 ## v4.6.2 — 2026-10-13
 

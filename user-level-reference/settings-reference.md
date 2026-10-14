@@ -85,6 +85,7 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v5.0). Perso
     "ralph-loop@claude-plugins-official": false,
     "claude-code-setup@claude-plugins-official": false,
     "skill-creator@claude-plugins-official": true,
+    "cct@dagonet": true,
     "chrome-devtools-mcp@claude-plugins-official": false
   },
   "alwaysThinkingEnabled": true,
@@ -106,7 +107,7 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v5.0). Perso
 |----------|-------|---------|
 | `CLAUDE_CODE_SHELL` | Path to bash.exe | Overrides the default shell used by Claude Code's Bash tool. Points to Git Bash so Unix-style commands work on Windows. |
 | `ENABLE_PROMPT_CACHING_1H` | `"1"` | Extends prompt-cache TTL to one hour — worth it for long orchestrator sessions that re-send a large stable prefix. |
-| `CLAUDE_CODE_USE_POWERSHELL_TOOL` | `"1"` | Exposes the dedicated `PowerShell` tool alongside `Bash` on Windows. Hook matchers in this file use `Bash\|PowerShell` so both are covered. |
+| `CLAUDE_CODE_USE_POWERSHELL_TOOL` | `"1"` | Exposes the dedicated `PowerShell` tool alongside `Bash` on Windows. The cct plugin's git-gate and output-guard matchers use `Bash\|PowerShell` so both are covered. |
 | `CLAUDE_CODE_DISABLE_1M_CONTEXT` | `"false"` | Enables the 1M token context window on Opus 4.6/4.7 (claude.ai MAX plan). Must be a **string** (`"false"`), not JSON boolean. On Sonnet this has no effect — Sonnet caps at 200k on MAX. |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `"1000000"` | Sets the **context window size** (not the compaction trigger). Must match the model's max context, otherwise it clamps `/context` to this value. For Opus 4.7 with 1M context, keep at `"1000000"`. Setting it lower (e.g. `"700000"`) collapses `/context` back to 200k — a misleading symptom. Use `contextCompactionThreshold` to control *when* compaction triggers. |
 
@@ -139,9 +140,8 @@ See the *Full Settings JSON* block above for the current list. Three entries wer
   // that static check. The MCP entries below have no such problem: a tool name
   // is exact, so nothing has to be proven about a path.
   "mcp__git-tools__git_push", "mcp__git-tools__git_commit",
-  "mcp__git-tools__git_revert", "mcp__git-tools__git_merge",
-  "mcp__git-tools__git_rebase", "mcp__git-tools__git_reset",
-  "mcp__git-tools__git_push_tags"
+  "mcp__git-tools__git_revert", "mcp__git-tools__git_rebase",
+  "mcp__git-tools__git_reset"
 ]
 ```
 
@@ -187,10 +187,11 @@ Three things about `autoMode` that are easy to get wrong:
 
 ### `enabledPlugins` -- Active Plugins
 
-See the *Full Settings JSON* block above for the shipped values. Only four are on; every plugin costs context at session start whether or not it is used, so the default is `false`.
+See the *Full Settings JSON* block above for the shipped values. Five are on; every plugin costs context at session start whether or not it is used, so the default is `false`.
 
 | Plugin | Shipped | Purpose |
 |--------|---------|---------|
+| `cct` (`cct@dagonet`, this repo) | on | **v5.0.** The toolkit itself: the agents (`cct:<name>`), skills (`/cct:<skill>`), the `pm-report` style and the enforcement hooks. Install it with `/plugin marketplace add dagonet/claude-code-toolkit` and `/plugin install cct@dagonet`; a synced project refuses every tool call while it is not active. |
 | `superpowers` | on | The skill set the toolkit actually binds — `brainstorming`, `systematic-debugging`, `verification-before-completion`, `writing-plans`, `test-driven-development`, `requesting`/`receiving-code-review`. All 493 measured skill invocations were these plus `karpathy-guidelines`. |
 | `code-review` | on | Provides `/code-review`, the replacement for the toolkit's deleted `code-review` and `security-audit` skills. |
 | `context7` | on | Up-to-date library documentation lookup. |
@@ -268,11 +269,11 @@ Events used by this toolkit:
 | Event | When It Fires | Can Block? | Why it matters |
 |-------|--------------|-----------|----------------|
 | `Stop` | Main thread finishes its response | Yes | The only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
-| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`, and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; stdout is injected into the session context. |
+| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`, and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; since v5.0 the cct plugin also binds `cct-session.sh` (the session marker), `verify-hooks.sh` and `jev-notice.sh` here. stdout is injected into the session context. |
 | `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
-The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptExpansion`, `SessionEnd`, `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`.
+The authoritative list is the settings schema, not the docs — a bad event name fails validation and prints the full enum. Other available events: `PostToolUseFailure`, `PostToolBatch`, `Notification`, `UserPromptExpansion`, `SessionEnd` (bound since v5.0 by the cct plugin: `cct-session.sh end` removes the session marker), `StopFailure`, `PostCompact`, `PermissionRequest`, `PermissionDenied`, `Setup`, `Elicitation`, `ElicitationResult`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `DirectoryAdded`, `MessageDisplay`.
 
 > **Hook config hot-reloads.** Editing a `hooks` block takes effect without restarting the session — verified by binding a new hook mid-session and seeing it fire on the next event.
 
@@ -307,27 +308,28 @@ Hooks fire even when agents use `mode: bypassPermissions` — they enforce polic
 #### User-Level vs Project-Level Hooks
 
 - **User-level** (`~/.claude/settings.json`): Apply to all projects. Since v5.0 the toolkit's machine-wide hooks come from the cct plugin instead; the user level keeps only the time hook.
-- **Project-level** (`.claude/settings.json`): Apply to one project. Good for language-specific gates (e.g., pre-commit format checks) and for anything that references a repo-relative path such as `hooks/run-gate.sh`.
+- **Project-level** (`.claude/settings.json`): Apply to one project. Since v5.0 a toolkit template registers exactly one hook there, the inline plugin-off guard; a project may add its own.
+- **Plugin** (`hooks/hooks.json` in the cct plugin): Apply wherever the plugin is enabled. Each entry runs `hooks/run-hook.sh <name>`, which makes the project-class hooks exit 0 outside a toolkit project (no `.claude/template-manifest.json`).
 
 A user-level hook may only reference scripts and paths that exist in *every* repo — a fail-closed hook pointing at a repo-scoped script turns every unrelated project into a paralysed session. Do NOT use the inline `if: "Bash(git *)"` glob style at user level: its matcher is conservative on complex multi-line commands and fail-closes on false positives (observed blocking legitimate non-git commands). Prefer a script that parses the command itself.
 
-**Exit-code semantics (important):** a hook command exiting with anything other than 0 or 2 — including **127 when the script file is missing** — is FAIL-OPEN: the tool call proceeds and only a non-blocking error is logged. That is why the `UF` tail tests `[ -r "$0" ]` first and exits 2 with a `HOOK SCRIPT MISSING` diagnostic, and why the fail-closed hooks carry an `EXIT` trap that maps their own exit 127 to 2 (an exec/source form cannot wrap the script's exit the way the old `bash x.sh; c=$?` shell form did). The one deliberate exception: the SubagentStop contract enforcer is NOT wrapped — a missing stop-gate must fail open, or a broken installation would block agents from ever stopping.
+**Exit-code semantics (important):** a hook command exiting with anything other than 0 or 2 — including **127 when the script file is missing** — is FAIL-OPEN: the tool call proceeds and only a non-blocking error is logged. That is why, since v5.0, `hooks/run-hook.sh` tests the script first and, for the fail-closed hooks, exits 2 with a `HOOK SCRIPT MISSING` diagnostic, and why the fail-closed hooks carry an `EXIT` trap that maps their own exit 127 to 2. The deliberate exceptions get the silent-0 or WARN polarity instead — among them the SubagentStop contract enforcer: a missing stop-gate must fail open, or a broken installation would block agents from ever stopping.
 
-Project-level templates add additional hooks for format gates, build checks, pipeline tracking, and compaction snapshots. See `docs/templates.md` for per-template hook details.
+The cct plugin registers the toolkit's project hooks (gates, post-edit build, pipeline tracking, compaction brief); the template registers none of them. See `docs/architecture.md` → *Hooks* for the full table.
 
-#### Workflow Enforcement Hooks (Project-Level)
+#### Workflow Enforcement Hooks (project class, registered by the cct plugin)
 
-Templates include the following workflow enforcement hooks (via external scripts in `hooks/`):
+The cct plugin registers the following workflow enforcement hooks (scripts in the plugin's `hooks/`); they act only in a toolkit project:
 
 **Gate before merge** (`hooks/gate-before-merge.sh`):
 - Matcher: `mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge`
 - Hard-blocks PR merges (and enabling auto-merge) unless a fresh gate artifact exists: since v4.0.1 (item 17), the artifact lives at `<common git dir>/gate/last-pass.<sha>.json` (or, for a gate run before the commit whose tree differs from `HEAD^{tree}`, `last-pass.tree-<tree>.json`, found by an exact-name tier 1b since v4.3.1) — inside `.git`, shared by every worktree of the repo (worktree-aware — developer agents self-merge from worktrees), never a per-checkout `.gate/` directory — and the file must be younger than `GC_GATE_TTL_S` (`hooks/lib/git-cmd.sh`; 3600s = 60 minutes). Accepted if either its `sha` equals the current HEAD, or its `tree` equals `HEAD^{tree}` (the commit-time `run-gate.sh` chain: the gate ran against the index just before the commit, so its `sha` is the parent commit but its `tree` is already the new commit's) — a scan of every `last-pass.*.json` in the directory, newest first, covers the tree match when no file is named for the exact sha. A legacy `<repo toplevel>/.gate/last-pass.json` is still read as a fallback, with a deprecation NOTE on stderr.
 - No-op when PROJECT_CONTEXT.md has no `**Gate**:` / `**Gate Command**:` value or the value is still a `{{...}}` placeholder — same graceful degradation as `pre-commit-test.sh`.
-- Also registered inline in the frontmatter of all merge-owning agents (`coder` + variant coders) as belt-and-suspenders, since subagent hook inheritance from `settings.json` is undocumented.
-- Block message: "Run 'bash hooks/run-gate.sh' on the PR branch head."
+- Since v5.0 no agent file carries it inline: the plugin's one registration (also on `Bash|PowerShell`, for `gh pr merge`) covers every caller.
+- Block message: names `cct-gate` when run from the plugin, `bash hooks/run-gate.sh` otherwise (`gc_gate_cmd`).
 
 **Run gate** (`hooks/run-gate.sh`) — companion runner, NOT registered as a hook:
-- Invoked by developers/PO as `bash hooks/run-gate.sh`.
+- Invoked as `cct-gate` in a project (the plugin's `bin/cct-gate` runs the plugin's `hooks/run-gate.sh`; permission `Bash(cct-gate*)`), and as `bash hooks/run-gate.sh` in this repo itself.
 - Reads the Gate command from PROJECT_CONTEXT.md (tolerates `- ` list markers, the `**Gate Command**:` label style, and backtick-wrapped commands), runs it, and on success writes `<common git dir>/gate/last-pass.<sha>.json` (or `last-pass.tree-<tree>.json`) (`{"sha","tree","branch","ts","status":"pass"}`, atomically via a `.tmp` file + `mv`) and prints `GATE PASS <sha>`. `tree` is the hash of the tracked working tree at gate time (a temporary copy of the index refreshed with `add -u`); a run whose tree differs from `HEAD^{tree}` is written as `last-pass.tree-<tree>.json` (v4.3.1). On failure it deletes this run's artifact under both names (sha and tree) and exits nonzero. On every successful run it also prunes `last-pass.*.json` files older than 24h from the shared directory. Refuses to run (exit 2) if `RUN_GATE_ACTIVE=1` is already set — guards against a `**Gate**` command that shells back into `run-gate.sh` itself.
 - The legacy `<repo toplevel>/.gate/` is still gitignored by all templates, for the one-release fallback path.
 
@@ -335,7 +337,7 @@ Templates include the following workflow enforcement hooks (via external scripts
 - Matcher: `Bash|PowerShell` (the native `git push` path; the old `mcp__git-tools__git_push` matcher is gone)
 - Blocks pushes to a protected branch (`main`/`master` by default), resolving the implicit branch when none is named. A native `hooks/git-pre-push.sh` shim (installed per clone) backs it up at the git level.
 
-All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and are copied to target projects by the setup script. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
+All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and run from the installed plugin; since v5.0 setup copies only `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh` into a project. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
 
 ### Read Size Gate (PreToolUse, registered by the cct plugin)
 
@@ -346,7 +348,7 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 - Silent pass when: `limit` is already set, the file is short, the path is missing/unreadable, or the extension is `png|jpg|jpeg|gif|pdf|ipynb` (not line-addressable).
 - Over 10 MB the cap is decided from `stat` alone (`File is N MB; capped at 500 lines…`): no offset can bring the remainder under the cap, and counting lines would mean scanning every byte on a hook that fires on every Read. One node process per call, payload on stdin.
 - Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
-- Never exits non-zero, so it is registered fail-open: a missing script prints `WARN: <path> missing -- <MSG>. Check that hooks/ exists at the project root.` and exits 0 (the hook's own exit 127 is a non-blocking hook error, Known limit (e) in the v4.4.0 CHANGELOG section).
+- Never exits non-zero, so it is registered fail-open: on a missing script `run-hook.sh` prints `WARN: <path> missing -- read-size-gate offline. Reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet).` and exits 0.
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
 - Parses JSON through `hooks/lib/json.sh` (node, python3 or jq). Style-matches `no-push-main.sh`.
 
@@ -361,8 +363,8 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 - `stdout` and `stderr` are checked independently. A stream over 12,000 chars is written to `$TMPDIR/claude-bash-out-$UID/<session_id>-<epoch>[-stderr].log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output|stderr: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
 - The payload is piped to `node` on stdin, not passed in argv: a 200 KB build log exceeds the platform argument limits, and an exec failure here would silently pass the untruncated output through.
 - Both streams short, a missing `tool_response`, or an unparseable payload → no output at all, the result passes through untouched.
-- Always exits 0 and is registered **unwrapped**: it cannot block, so a 127 wrapper would only invent a failure mode.
-- Rollback: remove the matcher group. Old log files are never pruned — clear `$TMPDIR/claude-bash-out-$UID/` yourself if it grows.
+- Always exits 0; `run-hook.sh` gives it the silent-0 polarity: it cannot block, so a fail-closed form would only invent a failure mode.
+- Rollback: there is no per-hook switch in the plugin; disable the plugin, or override with a project registration of your own copy (the plugin then steps aside). Old log files are never pruned — clear `$TMPDIR/claude-bash-out-$UID/` yourself if it grows.
 
 ### Time hook (UserPromptSubmit, User-Level)
 
@@ -384,12 +386,12 @@ Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `c
 
 > The plan-mode allow hook for context-mode tools (`hooks/allow-ctx-plan.sh`) was removed in v2.0 PR3 along with the mandatory context-mode routing. The plugin is not recommended since v3.1.5 (`mcp-servers/HOWTO.md` has the measurements); if you still run it and want the plan-mode prompts suppressed, re-add an `allow` PreToolUse hook for the `ctx_*` matchers — the mechanism (PreToolUse runs before the permission system, so `permissionDecision: "allow"` pierces plan mode) is unchanged.
 
-### Delegation Enforcement (PreToolUse, Project-Level — templates)
+### Delegation Enforcement (PreToolUse, project class — registered by the cct plugin)
 
-**`hooks/enforce-delegation.sh`** — the PO (main thread) never does hands-on work; sub-agents do all coding/building/testing. Registered in every template `settings.json` under TWO PreToolUse matcher groups: `Edit|Write|NotebookEdit` and `Bash`.
+**`hooks/enforce-delegation.sh`** — the PO (main thread) never does hands-on work; sub-agents do all coding/building/testing. Registered by the plugin's `hooks/hooks.json` under TWO PreToolUse matcher groups: `Edit|Write|NotebookEdit` and `Bash`.
 
 - **Discriminator:** the hook stdin contains `agent_id` ONLY when the call originates inside a subagent — subagent calls always pass; main-thread calls are checked.
 - **Main-thread edits** are allowed only on the PO write surface (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md` (pre-v4 manifests only; under manifest v4 write `.claude/project-instructions.md` — `deny-claude-md-writes.sh` enforces it), `CLAUDE.local.md`, `AGENT_TEAM.md`, paths outside the repo). Everything else denies with a model-visible DELEGATE message naming the right agent. Handles `notebook_path` (NotebookEdit) and backslash Windows paths.
-- **Main-thread Bash** denies build/test-runner commands (`npm test`, `npm run test|build|e2e|coverage`, `npx vitest|jest|playwright`, `pytest`, `cargo test|build|run`, `dotnet build|test|run`, `mvn`, `gradlew`, `go test`) AND `hooks/run-gate.sh` — the PO verifies via the `<common git dir>/gate/last-pass.<sha>.json` artifact, never by running the suite.
+- **Main-thread Bash** denies build/test-runner commands (`npm test`, `npm run test|build|e2e|coverage`, `npx vitest|jest|playwright`, `pytest`, `cargo test|build|run`, `dotnet build|test|run`, `mvn`, `gradlew`, `go test`) AND `hooks/run-gate.sh` — the PO verifies via the `<common git dir>/gate/last-pass.<sha>.json` artifact, never by running the suite. (It matches the `hooks/run-gate.sh` path, not the `cct-gate` command: a PO's `cct-gate` is not denied, a known gap since v5.0.)
 - **Kill-switch:** create `.claude/delegation-off` at the repo root to disable (also the recovery if a pre-`agent_id` CLI ever denies subagent calls).
-- **Failure polarity — deliberately fail-OPEN:** never apply the exit-2 127-wrapper (a missing script would block ALL edits including subagents' — total paralysis, same class as the SubagentStop stop-gate). Registration uses a **fail-open WARN form** instead: a missing script prints `WARN: <path> missing -- <MSG>. Check that hooks/ exists at the project root.` to stderr and exits 0 (the hook's own exit 127 is a non-blocking hook error, Known limit (e)) — visible, never blocking. Internal parse failures pass through. Note: main-thread Bash-git stays guarded regardless — the three git gates (fail-closed) fire on the same Bash matcher.
+- **Failure polarity — deliberately fail-OPEN:** never apply the exit-2 127-wrapper (a missing script would block ALL edits including subagents' — total paralysis, same class as the SubagentStop stop-gate). `run-hook.sh` uses a **fail-open WARN form** instead: a missing script prints `WARN: <path> missing -- enforce-delegation offline. Reinstall the cct plugin (...)` to stderr and exits 0 — visible, never blocking. Internal parse failures pass through. Note: main-thread Bash-git stays guarded regardless — the three git gates (fail-closed) fire on the same Bash matcher.

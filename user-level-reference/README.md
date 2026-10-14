@@ -74,11 +74,11 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 | Was | Use instead |
 |---|---|
-| `/build`, `/test` | `bash hooks/run-gate.sh` (the `Gate:` mechanism) |
+| `/build`, `/test` | `cct-gate` (the `Gate:` mechanism; `bash hooks/run-gate.sh` in this repo itself) |
 | `/skill-eval`, `/skill-improve`, plus the toolkit's `evals/evals.json` convention | the official `skill-creator@claude-plugins-official` plugin, which ships eval authoring, grading, and benchmarking |
 | `fix-errors` | `superpowers:systematic-debugging` |
 | `code-review` | the bundled `/code-review` plugin, or `superpowers:requesting-code-review` / `receiving-code-review` |
-| `arch-analyze`, `impact-analysis`, `explaining-code`, `orient` | the `Explore` subagent (haiku) plus `superpowers:brainstorming` / `writing-plans` |
+| `arch-analyze`, `impact-analysis`, `explaining-code`, `orient` | the `cct:Explore` subagent (haiku) plus `superpowers:brainstorming` / `writing-plans` |
 | `security-audit` | `/code-review`'s security pass |
 | `refactor` | `karpathy-guidelines` + `superpowers:test-driven-development` |
 | `/new-feature`, `/user-story`, `/spec-to-issues`, `/traceability`, `/arch-doc`, `/api-design`, `/tech-debt`, `/coverage-report`, `/dependency-audit`, `/dotnet-analyze`, `/ef-check`, `/nuget-audit`, `/pre-release`, `/godot-run`, `/issue-create`, `/add-tests` | deleted — near-zero measured use; the agent roster (`architect`, `tester`, `coder`, `ops`) covers the same ground. *(The roster named here was `requirements-engineer` / `test-writer` when these commands were deleted; both were retired by absorption in v3.0.0 — into `architect` and `tester` respectively.)* |
