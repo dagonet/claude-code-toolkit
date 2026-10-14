@@ -6,7 +6,7 @@ Major. The user level ships as the Claude Code plugin `cct@dagonet`.
 
 **Floor reviewed: raised to >=v5.0.0.** `requires_skill` in `templates/ownership.json` rises from `>=v4.1.0` to `>=v5.0.0` (spec §4 step 1), so a v4.x sync skill refuses to sync a project to v5.0 and cannot add the plugin-off guard to a machine without the plugin. The skill's own server minimum rises to 5.0.0 (`template_load_manifest` takes `skill_version` only from v5.0). The manifest `requires_server` floor stays `>=4.1.0`.
 
-**Every toolkit release now needs `claude plugin update cct@dagonet` (and a session restart) before `/cct:sync-template`**, because the server refuses a skill marker below the template floor and below the checkout's own marker.
+**Every toolkit release now needs the plugin moved to it (and a session restart) before `/cct:sync-template`**, because the server refuses a skill marker below the template floor and below the checkout's own marker. For a `#tag`-pinned marketplace (the install line in the README) that is `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#<new tag>`, then `claude plugin install cct@dagonet` (the remove also uninstalls the plugin). Measured with `claude` 2.1.299 against a local two-tag marketplace: `claude plugin update cct@dagonet` and `claude plugin marketplace update` both answer "already at the latest version" and never advance a pinned install, and `marketplace add` over the existing entry is refused.
 
 ### Added
 - **The `cct` plugin.** `.claude-plugin/plugin.json` (name `cct`, version == `VERSION` line 1) and `.claude-plugin/marketplace.json` (marketplace `dagonet`, source `./`). Install id `cct@dagonet`.

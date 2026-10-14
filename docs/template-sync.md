@@ -210,7 +210,7 @@ If a downstream sync reports a hook as missing from a variant: that is expected 
 
 Merging a hook into the toolkit changes nothing on any machine until it arrives there. Since v5.0 enforcement in a project needs **two** things:
 
-1. the cct plugin installed and enabled on the machine, at the release that carries the hook (`claude plugin update cct@dagonet`, then a session restart), and
+1. the cct plugin installed and enabled on the machine, at the release that carries the hook (for a `#tag`-pinned marketplace: `claude plugin marketplace remove dagonet`, `marketplace add dagonet/claude-code-toolkit#<tag>`, `claude plugin install cct@dagonet`, then a session restart), and
 2. the project marked as a toolkit project: `<project>/.claude/template-manifest.json` exists (`setup-project` writes it), or the plugin's project-class hooks exit 0 there.
 
 (Through v4.x it was the script at `<project>/hooks/<name>.sh` plus its binding in `<project>/.claude/settings.json`.) This is not theoretical. The v1.1 agent-liveness hooks were merged to `templates/` and, days later, were present in **one of 15** projects — the other 14 had no such hook entry and mostly no `hooks/` directory, so for them the feature did not exist. Determining that took a multi-hour transcript investigation.
