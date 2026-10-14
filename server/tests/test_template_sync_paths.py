@@ -151,13 +151,18 @@ def test_git_path_root_tracked_vs_variant():
 
 
 def test_real_toolkit_hooks_not_deleted():
-    """If the toolkit checkout is present, every shipped hook must resolve."""
-    repo = pathlib.Path("G:/git/claude-code-toolkit")
+    """Against the checkout under test: the v5 root-tracked set resolves to
+    repo-root files, and any other hook resolves to its variant path (not the
+    repo-root file), so consumers never receive plugin hooks."""
+    repo = pathlib.Path(__file__).resolve().parents[2]
     if not (repo / "hooks").is_dir():
         import pytest
 
         pytest.skip("toolkit checkout not present")
     m = _manifest(str(repo))
-    for hook in (repo / "hooks").glob("*.sh"):
-        rel = f"hooks/{hook.name}"
+    for rel in ts.ROOT_TRACKED_FILES:
         assert ts._read_file(ts._template_file_path(m, rel)) is not None, rel
+    other = "hooks/no-push-main.sh"
+    assert other not in ts.ROOT_TRACKED_FILES
+    assert ts._template_file_path(m, other) == repo / "templates" / "rust-tauri" / other
+    assert ts._template_file_path(m, other) != repo / other
