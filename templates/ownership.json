@@ -1,6 +1,6 @@
 {
   "tracked_paths": ["hooks", "scripts", "templates", "user-level-reference"],
-  "requires_skill": ">=v4.1.0",
+  "requires_skill": ">=v5.0.0",
   "rules": [
     { "pattern": "CLAUDE.md",                 "ownership": "template" },
     { "pattern": "AGENT_TEAM.md",             "ownership": "template" },

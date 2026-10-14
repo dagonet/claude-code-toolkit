@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## v5.0.0 — 2026-10-14
 
-- v5.0 in progress on feat/v5.0: M1 (plugin manifests, run-hook wrapper, session marker, hooks.json; no behaviour change for any project yet).
+Major. The user level ships as the Claude Code plugin `cct@dagonet`.
+
+**Floor reviewed: raised to >=v5.0.0.** `requires_skill` in `templates/ownership.json` rises from `>=v4.1.0` to `>=v5.0.0` (spec §4 step 1), so a v4.x sync skill refuses to sync a project to v5.0 and cannot add the plugin-off guard to a machine without the plugin.
 
 ## v4.6.2 — 2026-10-13
 

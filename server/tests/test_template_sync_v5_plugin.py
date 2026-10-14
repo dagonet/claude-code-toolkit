@@ -14,7 +14,7 @@ from template_sync import v3
 
 PRE_PUSH_SET = {"hooks/git-pre-push.sh", "hooks/lib/git-cmd.sh", "hooks/lib/json.sh"}
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-MARKER = "v4.7.0"   # the fixture checkout's own sync-template skill tag
+MARKER = "v5.1.0"   # the fixture checkout's own sync-template skill tag (above the real floor)
 
 
 def test_scan_ships_only_the_pre_push_hook_set(tmp_path):
@@ -135,6 +135,19 @@ def test_load_manifest_refuses_skill_below_floor(tmp_path):
     assert any("requires_skill" in e and "/cct:sync-template" in e for e in r["errors"])
 
 
+def test_release_floor_is_v5_and_refuses_every_v4_skill(tmp_path):
+    """Spec §4 step 1: the v5.0 release raises the floor so a v4.x sync skill
+    cannot add the plugin-off guard to a machine without the plugin."""
+    own = json.loads((REPO_ROOT / "templates" / "ownership.json").read_text(encoding="utf-8"))
+    assert own["requires_skill"] == ">=v5.0.0"
+    proj = _consumer(tmp_path, {})
+    for below in ("v4.6.2", "v4.99.99"):
+        r = _load(proj, skill_version=below)
+        assert r["valid"] is False, below
+        assert any("requires_skill '>=v5.0.0'" in e for e in r["errors"]), below
+    assert _load(proj, skill_version=MARKER)["valid"] is True
+
+
 def _as_v2(proj):
     mp = proj / ".claude" / "template-manifest.json"
     m = json.loads(mp.read_text(encoding="utf-8"))
@@ -164,7 +177,7 @@ def test_load_manifest_unparseable_checkout_marker_warns(tmp_path):
     proj = _consumer(tmp_path, {})
     (tmp_path / "toolkit" / "skills" / "sync-template" / "SKILL.md").write_text(
         "<!-- SYNC-TEMPLATE-SKILL-VERSION: banana -->\n", encoding="utf-8")
-    r = _load(proj, skill_version="v4.1.0")
+    r = _load(proj, skill_version="v5.0.0")
     assert r["skill_marker"] == "" and r["valid"] is True
     assert any("skill_marker_unparseable" in w for w in r["warnings"])
 
@@ -175,7 +188,7 @@ def test_load_manifest_accepts_skill_equal_to_marker(tmp_path):
 
 
 def test_load_manifest_refuses_skill_below_marker_but_above_floor(tmp_path):
-    r = _load(_consumer(tmp_path, {}), skill_version="v4.6.1")
+    r = _load(_consumer(tmp_path, {}), skill_version="v5.0.0")
     assert r["valid"] is False
     assert any("claude plugin update cct@dagonet" in e for e in r["errors"])
 

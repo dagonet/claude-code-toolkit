@@ -1,2 +1,2 @@
-4.6.2
-Patch: run-gate.sh warns when it gates a repository other than the one it lives in; the retired require-skills-block.sh stub is deleted; the drift check no longer calls an untagged sha a released tree.
+5.0.0
+Major: the user level ships as the Claude Code plugin cct@dagonet (agents, skills, report style, hooks, cct-gate); templates ship no agents or hook registrations, only the plugin-off guard.

@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /cct:sy
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v4.6.2 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v5.0.0 -->
 
 **This skill takes no arguments.** Invoke it as `/cct:sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
