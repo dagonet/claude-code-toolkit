@@ -11260,7 +11260,9 @@ fi
 if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   IU_BIN="$TMPROOT/iu-bin"; rm -rf "$IU_BIN"; mkdir -p "$IU_BIN"
   printf '%s\n' '#!/bin/sh' \
+    '[ -n "$IU_LOG" ] && echo "$*" >> "$IU_LOG"' \
     'case "$IU_MODE:$1 $2 $3" in' \
+    '  *:"plugin marketplace list") [ "$IU_HAS" = 1 ] && echo "  > dagonet"; exit 0 ;;' \
     '  fail:"plugin marketplace add /nonexistent") echo "Path does not exist: /nonexistent" >&2; exit 1 ;;' \
     '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  oldver:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0.0.0\"}]\n"; exit 0 ;;' \
@@ -11309,7 +11311,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_q() { jq -r "$1" "$iu_h/.claude/settings.json" 2>&1; }
   iu_run; iu_rc=$?
   expect "IU (ok): the installer exits 0" 0 "$iu_rc"
-  expect "IU (ok): plugin update ran after install" yes "$([ -f "$iu_h/update.marker" ] && echo yes || echo no)"
+  expect "IU (ok): no plugin update after add + install (a fresh install has nothing to update)" no "$([ -f "$iu_h/update.marker" ] && echo yes || echo no)"
   expect "IU (ok): the toolkit's v4 hook registration is gone" 0 "$(iu_q '[.. | strings | select(test("hooks/no-push-main.sh"))] | length')"
   expect "IU (ok): the foreign user hook is kept" 1 "$(iu_q '[.. | strings | select(. == "/opt/foreign.sh")] | length')"
   expect "IU (ok): the date hook appears once" 1 "$(iu_q '[.hooks.UserPromptSubmit[].hooks[].command | select(test("Current local time"))] | length')"
@@ -11332,8 +11334,37 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   cp "$iu_h/.claude/settings.json" "$iu_h/settings.run1"
   iu_run
   expect "IU (ok): a re-run leaves settings.json identical" 0 "$(cmp -s "$iu_h/settings.run1" "$iu_h/.claude/settings.json"; echo $?)"
+  # IU upgrade (v5.0 fix round): a #tag-pinned dagonet marketplace never advances on `plugin update`, and `marketplace add`
+  # over an existing entry is refused (measured), so an upgrade is remove -> add -> install. Calls are logged by the stub.
+  # git is stubbed for the tag-reachability check (default source only; a CCT_MARKETPLACE override is not checked).
+  IU_GBIN="$TMPROOT/iu-gbin"; rm -rf "$IU_GBIN"; mkdir -p "$IU_GBIN"
+  printf '%s\n' '#!/bin/sh' \
+    'if [ "$1" = ls-remote ]; then [ "$IU_TAG" = missing ] && exit 2; echo "abc	refs/tags/v0"; exit 0; fi' \
+    'exec '"$(command -v git)"' "$@"' > "$IU_GBIN/git"
+  chmod +x "$IU_GBIN/git"
+  iu_up() { # <name> <has 0|1> <mode> <tag ok|missing> <marketplace or empty>; sets iu_h and iu_rc
+    iu_h=$(iu_home "$1"); : > "$iu_h/calls"
+    ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_GBIN:$IU_BIN:$PATH" IU_MODE="$3" IU_HAS="$2" IU_TAG="$4" IU_LOG="$iu_h/calls" \
+        IU_VER="$(head -1 "$ROOT/VERSION")" ${5:+CCT_MARKETPLACE=$5} bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); iu_rc=$?
+  }
+  iu_seq() { grep -E '^plugin (marketplace (remove|add) (dagonet|/ok)|install cct@dagonet)$' "$iu_h/calls" | paste -sd, -; }
+  iu_up upgrade 1 ok ok /ok
+  expect "IU upgrade: an existing dagonet entry -> exit 0" 0 "$iu_rc"
+  expect "IU upgrade: remove, then add, then install" "plugin marketplace remove dagonet,plugin marketplace add /ok,plugin install cct@dagonet" "$(iu_seq)"
+  expect "IU upgrade: no plugin update call" 0 "$(grep -c '^plugin update' "$iu_h/calls")"
+  iu_up fresh 0 ok ok /ok
+  expect "IU fresh: no dagonet entry -> exit 0" 0 "$iu_rc"
+  expect "IU fresh: no marketplace remove is called" 0 "$(grep -c 'marketplace remove' "$iu_h/calls")"
+  iu_up notag 1 ok missing ""
+  expect "IU unreachable tag: the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
+  expect "IU unreachable tag: nothing is removed (no remove, no add, no install)" 0 "$(grep -cE 'marketplace (remove|add)|plugin install' "$iu_h/calls")"
+  expect "IU unreachable tag: every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
+  expect "IU unreachable tag: it says nothing was removed" 1 "$(grep -c 'nothing was removed' "$iu_h/out")"
+  iu_up afterrm 1 nolist ok /ok
+  expect "IU die after the remove: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
+  expect "IU die after the remove: prints the exact recovery commands" 2 "$(grep -cxE 'install-user-level-linux: +(claude plugin marketplace add /ok|claude plugin install cct@dagonet)' "$iu_h/out")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries" "not a Linux host, or no jq" 32
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 43
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED

@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of the cct plugin (v5.0 spec section 5). Run before each release; NOT part of the gate.
-# Runs nested `claude -p --plugin-dir <checkout>` in a scratch git repo. Touches nothing under ~/.claude:
+# Runs nested `claude -p --plugin-dir <checkout>` in a scratch git repo. Writes nothing under ~/.claude itself (claude's
+# own per-cwd projects dirs for the scratch repos are removed at the end):
 # every call gets a private TMPDIR (session markers) and CLAUDE_MEMORY_HOME (retro ledger), the session id of
 # the outer session is unset, and the model is haiku. Real model calls: it costs a little and takes minutes.
+# The scratch workspace is untrusted, so claude ignores its permissions.allow: rows depend on auto mode allowing the
+# prompts. Row 5 runs WITHOUT --no-session-persistence: with it no subagent transcript exists and retro-ledger.sh
+# (which reads agent_transcript_path) never writes its row.
 # Output: one `PASS <label>` or `FAIL <label>` line per check; exit 1 on any FAIL.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 command -v claude >/dev/null 2>&1 || { echo "FAIL claude CLI not on PATH"; exit 1; }
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+# claude keeps a ~/.claude/projects/<slug> dir for every cwd it ran in, whatever the flags. Remove ONLY the
+# ones for this script's own scratch repos (slug = path with every : \ / . _ turned into -, as claude names it).
+cleanup() {
+  local d slug
+  for d in "$WORK/scratch" "$WORK/scratch-off"; do
+    slug=$(printf '%s' "$d" | sed 's/[:\\/._]/-/g')
+    case $slug in -tmp-*) rm -rf "${HOME:?}/.claude/projects/$slug" ;; esac
+  done
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
 FAILS=0
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1${2:+ -- $2}"; FAILS=$((FAILS + 1)); }

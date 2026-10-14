@@ -31,4 +31,6 @@ On Linux `scripts/install-user-level-linux.sh` does steps 1-3 in this order. On 
    ```
    It must report 0 drift: `CLAUDE.md` equal to the reference, `cct@dagonet` installed at `5.0.0`, and no path from the leftovers list present.
 
+**Later releases (v5.0.x and up):** the marketplace is pinned to a tag, so `/plugin update` and `claude plugin marketplace update` never advance it, and adding the marketplace over the existing entry is refused. Move to the new tag with `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#<new tag>`, then `claude plugin install cct@dagonet`, then restart every session. (The remove uninstalls the plugin: until the install succeeds, synced projects refuse every tool.) Check the tag exists first: `git ls-remote --tags https://github.com/dagonet/claude-code-toolkit refs/tags/<new tag>`.
+
 **Rollback:** move the backed-up paths back, restore `settings.json.bak-<date>`, and restart. Uninstalling the plugin alone is not a rollback once a project is synced to v5.0: its guard then refuses, by design.
