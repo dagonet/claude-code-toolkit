@@ -4,9 +4,12 @@
 # plugin; the user level is only CLAUDE.md and settings.json.
 #
 # Never touches ~/.claude.json (MCP servers are registered separately with `claude mcp add`).
-# Every file it overwrites is backed up first as <file>.bak-<UTC>. Re-running it is safe.
+# CLAUDE.md is backed up before it is overwritten, as <file>.bak-<UTC>; settings.json is backed up AFTER step 1 (the
+# plugin CLI writes its own keys during step 1). Re-running it is safe.
 # A failure in steps 2-3 restores settings.json byte for byte to its state after step 1. A failure inside step 1
 # restores nothing: the plugin CLI owns its keys there, and putting an older settings.json back would undo them.
+# Any failure once step 1 has begun puts back the enabledPlugins entries the user had at false (the CLI switches
+# plugins on); it touches no other key.
 #
 # The order is safety-critical: the plugin is installed and checked BEFORE anything is removed,
 # so a failed install (network, a bad tag) leaves the old user-level copies in place and a NEW
@@ -48,23 +51,27 @@ MARKET=claude-plugins-official
 
 plugins_started=""   # set when step 1 is done: from then on this script edits settings.json, so a failure restores the backup.
                      # During step 1 the plugin CLI owns its own keys (extraKnownMarketplaces): a die there never restores.
-removed=""           # set once the old dagonet marketplace entry is removed, cleared when add + install succeeded
-old_src=""           # the source the old dagonet entry had, for the rollback text
-NR="nothing was removed"
+removed=""           # set by the marketplace remove, cleared once add + install succeeded
+old_src=""           # the source the old dagonet entry had, for the second recovery recipe
+step1=""             # set when step 1 begins: the CLI may then flip enabledPlugins entries the user had at false
+pre_ep='{}'          # enabledPlugins as they were before step 1
+NR="this run removed no v4 user-level copy"
 die() {
   echo "install-user-level-linux: $*" >&2
   if [ -n "$removed" ]; then
-    echo "install-user-level-linux: the dagonet marketplace was removed and cct@dagonet is not installed; until it is, the plugin is off and every synced project refuses every tool. Either" >&2
-    echo "install-user-level-linux:   (a) retry the new source:  claude plugin marketplace add $CCT_SRC  then  claude plugin install cct@dagonet" >&2
-    if [ -n "$old_src" ]; then
-      echo "install-user-level-linux:   (b) roll back to the old one:  claude plugin marketplace add $old_src  then  claude plugin install cct@dagonet" >&2
-    else
-      echo "install-user-level-linux:   (b) the old source could not be read; only (a) is available" >&2
-    fi
+    echo "install-user-level-linux: the dagonet marketplace was removed and cct@dagonet is not installed; until it is, the plugin is off and every synced project refuses every tool. Recover with one recipe (the remove may say not found; that is harmless):" >&2
+    echo "install-user-level-linux:   with the new source:  claude plugin marketplace remove dagonet; claude plugin marketplace add $CCT_SRC && claude plugin install cct@dagonet" >&2
+    [ -z "$old_src" ] || echo "install-user-level-linux:   with the old source:  claude plugin marketplace remove dagonet; claude plugin marketplace add $old_src && claude plugin install cct@dagonet" >&2
   fi
   if [ -n "$plugins_started" ]; then
     if [ -e "$L/settings.json.bak-$TS" ]; then cp -p "$L/settings.json.bak-$TS" "$L/settings.json"; else rm -f "$L/settings.json"; fi
-    echo "install-user-level-linux: settings.json restored to its state before this run" >&2
+    echo "install-user-level-linux: settings.json restored to its state after step 1" >&2
+  fi
+  # a die once step 1 has begun: the CLI may have switched on plugins the user had off, and the next run would snapshot
+  # that. Put back only the entries that were false; never touch the CLI's other keys (extraKnownMarketplaces)
+  if [ -n "$step1" ] && [ -s "$L/settings.json" ]; then
+    jq --argjson pre "$pre_ep" '.enabledPlugins = ((.enabledPlugins // {}) + ($pre | with_entries(select(.value == false))))' "$L/settings.json" > "$L/settings.json.t" 2>/dev/null \
+      && mv "$L/settings.json.t" "$L/settings.json" || rm -f "$L/settings.json.t"
   fi
   exit 1
 }
@@ -85,8 +92,8 @@ mkdir -p "$L"
 
 # `claude plugin install` switches a plugin on in settings.json even when the user had it off:
 # remember its enabledPlugins BEFORE the CLI touches it (step 3 puts them back)
-pre_ep='{}'
 [ -s "$L/settings.json" ] && pre_ep=$(jq -c '.enabledPlugins // {}' "$L/settings.json")
+step1=1
 
 echo "1. plugins (cct@dagonet from $CCT_SRC; $PLUGINS)"
 # An upgrade: a #tag-pinned marketplace never advances on `plugin update` / `marketplace update` and `marketplace add`
@@ -99,11 +106,11 @@ if printf '%s' "$mp_json" | jq -e 'any(.[]; .name == "dagonet")' >/dev/null 2>&1
     | (if .source == "git" then .url elif .source == "github" then .repo elif .source == "directory" then .path else (.url // .repo // .path // "") end) as $s
     | if (.ref // "") != "" and (.source == "git" or .source == "github") then "\($s)#\(.ref)" else $s end' 2>/dev/null | head -1 || true)
   claude plugin marketplace remove dagonet || die "cannot remove the old dagonet marketplace: $NR"
-  removed=1; NR="the old dagonet marketplace entry WAS removed"
+  removed=1
 fi
 claude plugin marketplace add "$CCT_SRC" || die "cannot add the cct marketplace $CCT_SRC: $NR"
 claude plugin install cct@dagonet || die "cannot install cct@dagonet: $NR"
-removed=""; NR="nothing was removed"
+removed=""
 claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
 for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
 want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')

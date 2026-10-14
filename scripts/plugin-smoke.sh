@@ -33,7 +33,10 @@ fail() { echo "FAIL $1${2:+ -- $2}"; FAILS=$((FAILS + 1)); }
 # $1 = dir, $2 = true|false (enabledPlugins value for cct@dagonet)
 mkscratch() {
   mkdir -p "$1/.claude"
-  sed "s/\"cct@dagonet\": true/\"cct@dagonet\": $2/" "$ROOT/templates/general/.claude/settings.json" > "$1/.claude/settings.json"
+  # enabledPlugins keeps ONLY cct@dagonet: the template's superpowers/code-review would make claude record a
+  # project-scope install for the scratch path in the live ~/.claude/plugins/installed_plugins.json
+  python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["enabledPlugins"]={"cct@dagonet": sys.argv[3]=="true"}; json.dump(d,open(sys.argv[2],"w"),indent=2)' \
+    "$ROOT/templates/general/.claude/settings.json" "$1/.claude/settings.json" "$2"
   echo '{}' > "$1/.claude/template-manifest.json"
   git init -q -b main "$1" && git -C "$1" config user.email smoke@example.invalid && git -C "$1" config user.name smoke
   git init -q --bare "$WORK/origin-$(basename "$1").git"
@@ -92,19 +95,21 @@ check_gate_on_path() {
 }
 
 # 5. A cct:Explore spawn returns, and its stop is recorded in the retro ledger under cct:Explore. The ledger only
-#    records failures, so the subagent runs a command shape that deny-hang-shapes refuses (a leading cd before
-#    several commands). A push to main would also do, but the auto-mode classifier denies the spawn itself then.
-#    A subagent's tool calls are not refused by the guard: it carries the parent's session_id.
+#    records failures, so the subagent first runs a command shape that a hook refuses (a leading cd before several
+#    commands). A push to main would also do, but the auto-mode classifier denies the spawn itself then. Which hook
+#    is named in the row is not asserted (a plugin-hook refusal is recorded as run-hook.sh). The subagent then runs
+#    `touch out.sub`: the file existing proves its tool call was not refused by the plugin-off guard (it carries the
+#    parent's session_id).
 check_explore_spawn() {
   local out led
-  rm -rf "$WORK/mem"; mkdir -p "$WORK/mem"
-  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run this Bash command once: cd /tmp && ls && pwd (it may be refused; that is fine, do not retry). Then reply with the word done.' Then report what the agent returned.")
+  rm -rf "$WORK/mem"; mkdir -p "$WORK/mem"; rm -f "$SC/out.sub"
+  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  touch $SC/out.sub  Then reply with the word done.' Then report what the agent returned.")
   led=$(find "$WORK/mem" -name retro.md 2>/dev/null | head -1)
   if [ -z "$led" ]; then fail "5 cct:Explore spawn" "no retro ledger written"
   elif ! grep -q 'cct:Explore' "$led"; then fail "5 cct:Explore spawn" "ledger has no cct:Explore row: $(head -c 200 "$led")"
-  elif ! grep 'cct:Explore' "$led" | grep -q 'blocks=\[deny-hang-shapes.sh\]'; then fail "5 cct:Explore spawn" "the refusal was not deny-hang-shapes: $(head -c 200 "$led")"
+  elif [ ! -e "$SC/out.sub" ]; then fail "5 cct:Explore spawn" "the subagent's touch out.sub did not run"
   elif printf '%s' "$out" | grep -q 'the cct plugin is not active'; then fail "5 cct:Explore spawn" "the plugin-off guard refused the subagent"
-  else pass "5 cct:Explore spawn"; fi
+  else echo "INFO 5 ledger row: $(grep 'cct:Explore' "$led" | head -1)"; pass "5 cct:Explore spawn"; fi
 }
 
 # 6. Hook cost: median of 15 sequential `true` calls with and without the plugin. Informational.
@@ -150,6 +155,16 @@ check_shared_sid() {
   if [ "$rc1" = 0 ] && [ "$rc2" = 2 ]; then pass "9 shared session id"; else fail "9 shared session id" "guard rc before end=$rc1 after end=$rc2 (want 0 then 2)"; fi
 }
 
+# 10. The live user state is untouched: sha256 of ~/.claude/plugins/installed_plugins.json and ~/.claude/settings.json
+#     before and after the run (hashes only, never contents). A scratch project must not leave a project-scope install.
+live_hash() { local f; for f in "$HOME/.claude/plugins/installed_plugins.json" "$HOME/.claude/settings.json"; do
+    if [ -e "$f" ]; then sha256sum "$f" | cut -d' ' -f1; else echo absent; fi; done; }
+LIVE_BEFORE=$(live_hash)
+check_live_state_untouched() {
+  if [ "$(live_hash)" = "$LIVE_BEFORE" ]; then pass "10 live installed_plugins.json and settings.json unchanged"
+  else fail "10 live installed_plugins.json and settings.json unchanged" "sha256 differs from before the run"; fi
+}
+
 check_push_refused
 check_true_runs "$SC" "$ROOT" "2 true runs"
 check_plugin_off
@@ -159,6 +174,7 @@ check_hook_cost
 check_space_path
 check_scratch_clean
 check_shared_sid
+check_live_state_untouched
 
 [ "$FAILS" = 0 ] && echo "SMOKE PASS" || echo "SMOKE FAIL ($FAILS)"
 [ "$FAILS" = 0 ]

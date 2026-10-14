@@ -11269,6 +11269,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
     '     [ -s "$f" ] || echo "{}" > "$f"' \
     '     o=$(jq -r ".extraKnownMarketplaces.dagonet // empty" "$f"); [ -n "$o" ] && [ "$o" != "$4" ] && { echo "source does not match its extraKnownMarketplaces entry" >&2; exit 1; }' \
     '     jq --arg s "$4" ".extraKnownMarketplaces.dagonet=\$s" "$f" > "$f.t" && mv "$f.t" "$f"; exit 0 ;;' \
+    '  installfail:"plugin install cct@dagonet") echo "install failed" >&2; exit 1 ;;' \
     '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  oldver:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0.0.0\"}]\n"; exit 0 ;;' \
     '  disabled:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":false,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
@@ -11293,15 +11294,17 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_present() { iu_c=0; while IFS= read -r iu_p; do [ -e "$1/.claude/$iu_p" ] && iu_c=$((iu_c + 1)); done < "$IU_LEFT"; echo "$iu_c"; }
   # nolist/oldver/disabled die inside step 1, after the stub CLI wrote its marketplace key: settings.json keeps
   # that key (a die inside step 1 restores nothing; restoring an older file is what broke the recovery `add`)
-  for iu_m in fail nolist oldver disabled; do
+  for iu_m in nolist oldver disabled; do
     iu_h=$(iu_home "$iu_m")
     ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE="$iu_m" IU_VER="$(head -1 "$ROOT/VERSION")" CCT_MARKETPLACE=/nonexistent \
         bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); iu_rc=$?
     expect "IU ($iu_m): the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
     expect "IU ($iu_m): every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
     expect "IU ($iu_m): settings.json keeps the CLI's marketplace key (no restore in step 1)" /nonexistent "$(jq -r '.extraKnownMarketplaces.dagonet' "$iu_h/.claude/settings.json" 2>&1)"
-    expect "IU ($iu_m): it says nothing was removed" 1 "$(grep -c 'nothing was removed' "$iu_h/out")"
+    expect "IU ($iu_m): it says this run removed no v4 copy" 1 "$(grep -c 'this run removed no v4 user-level copy' "$iu_h/out")"
   done
+  # the CLI's `plugin install` switched superpowers on; a die in step 1 puts back the user's false (and only that)
+  expect "IU (nolist): a die in step 1 puts back the user's enabledPlugins false" false "$(jq -r '.enabledPlugins["superpowers@claude-plugins-official"]' "$TMPROOT/iu-nolist/.claude/settings.json" 2>&1)"
   # IU success path (fix round 1, I3/I5): a v4-shaped settings.json with the user's own entries; the merge
   # keeps them (permissions = union, live wins elsewhere), drops only the toolkit's v4 hook registrations,
   # and a second run changes nothing.
@@ -11366,22 +11369,41 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   expect "IU unreachable tag: the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
   expect "IU unreachable tag: nothing is removed (no remove, no add, no install)" 0 "$(grep -cE 'marketplace (remove|add)|plugin install' "$iu_h/calls")"
   expect "IU unreachable tag: every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
-  expect "IU unreachable tag: it says nothing was removed" 1 "$(grep -c 'nothing was removed' "$iu_h/out")"
-  # a die AFTER the remove (the add is refused): settings.json stays as the CLI left it (the old marketplace key gone,
-  # NOT restored from a backup), both recovery options are printed, and running the retry really works
+  expect "IU unreachable tag: it says this run removed no v4 copy" 1 "$(grep -c 'this run removed no v4 user-level copy' "$iu_h/out")"
+  # a fresh install (no dagonet entry) whose add fails: nothing was removed, so no recovery recipe is printed
+  iu_up freshadd 0 addfail ok /ok
+  expect "IU fresh add failure: the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
+  expect "IU fresh add failure: no marketplace remove is called" 0 "$(grep -c 'marketplace remove' "$iu_h/calls")"
+  expect "IU fresh add failure: every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
+  expect "IU fresh add failure: it says this run removed no v4 copy" 1 "$(grep -c 'this run removed no v4 user-level copy' "$iu_h/out")"
+  expect "IU fresh add failure: no recovery recipe (nothing was removed)" 0 "$(grep -c 'Recover with one recipe' "$iu_h/out")"
+  # a die AFTER the remove: settings.json stays as the CLI left it (never restored from an older backup) and ONE recipe
+  # is printed with the new and with the old source. The recipe is run verbatim against the stub and must recover.
+  # Two ways to die: the add is refused (addfail), or the add works and the install fails (installfail, "die D": the
+  # new marketplace key then no longer matches the old source, so a bare `add <old>` would be refused).
+  iu_rec() { sed -n "s/^install-user-level-linux:   with the $1 source:  //p" "$iu_h/out"; }
+  iu_recover() { iu_r=$(iu_rec "$1"); [ -n "$iu_r" ] || return 1; ( env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE=ok bash -c "$iu_r" >/dev/null 2>&1 ); }
   iu_up afterrm 1 addfail ok /ok
   expect "IU die after the remove: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
   expect "IU die after the remove: no restore (the CLI's removal of the old marketplace key stands)" null "$(jq -r '.extraKnownMarketplaces.dagonet // "null"' "$iu_h/.claude/settings.json")"
-  expect "IU die after the remove: (a) retry the new source, exact" 1 "$(grep -cF '(a) retry the new source:  claude plugin marketplace add /ok  then  claude plugin install cct@dagonet' "$iu_h/out")"
-  expect "IU die after the remove: (b) roll back to the old source, exact" 1 "$(grep -cF '(b) roll back to the old one:  claude plugin marketplace add https://old.example/x.git#v5.0.0  then  claude plugin install cct@dagonet' "$iu_h/out")"
-  ( env HOME="$iu_h" PATH="$IU_BIN:$PATH" IU_MODE=ok claude plugin marketplace add /ok >/dev/null 2>&1 ); iu_rc=$?
-  expect "IU die after the remove: the printed retry is not refused" 0 "$iu_rc"
+  expect "IU die after the remove: the recipe with the new source, exact" "claude plugin marketplace remove dagonet; claude plugin marketplace add /ok && claude plugin install cct@dagonet" "$(iu_rec new)"
+  expect "IU die after the remove: the recipe with the old source, exact" "claude plugin marketplace remove dagonet; claude plugin marketplace add https://old.example/x.git#v5.0.0 && claude plugin install cct@dagonet" "$(iu_rec old)"
+  iu_recover new; iu_rc=$?
+  expect "IU die after the remove: the printed recipe (new source) recovers" 0 "$iu_rc"
+  iu_up dieD 1 installfail ok /ok
+  expect "IU die D (add ok, install fails): exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
+  expect "IU die D: the recipe with the new source, exact" "claude plugin marketplace remove dagonet; claude plugin marketplace add /ok && claude plugin install cct@dagonet" "$(iu_rec new)"
+  expect "IU die D: the recipe with the old source, exact" "claude plugin marketplace remove dagonet; claude plugin marketplace add https://old.example/x.git#v5.0.0 && claude plugin install cct@dagonet" "$(iu_rec old)"
+  iu_recover old; iu_rc=$?
+  expect "IU die D: the printed recipe with the OLD source recovers (a bare add would be refused)" 0 "$iu_rc"
+  iu_recover new; iu_rc=$?
+  expect "IU die D: the printed recipe with the new source recovers" 0 "$iu_rc"
   # a die after add + install succeeded (the version check): the removed text must NOT be printed
   iu_up afterinst 1 nolist ok /ok
   expect "IU die after a successful install: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
   expect "IU die after a successful install: no 'removed' recovery text" 0 "$(grep -c 'was removed and cct@dagonet is not installed' "$iu_h/out")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 48
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 55
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
