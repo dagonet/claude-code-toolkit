@@ -98,7 +98,7 @@ See [MCP Server Installation Guide](../mcp-servers/HOWTO.md) for detailed setup 
 
 ## Superpowers Skills (Plugin Dependency)
 
-The repo references 7 `superpowers:*` skills (brainstorming, TDD, debugging, etc.). These are a **separate Claude Code plugin** installed at user-level. New users must either install the superpowers plugin or remove `superpowers:` skill references from agents and CLAUDE.md files.
+The repo references the `superpowers:*` skills (brainstorming, TDD, debugging, etc.). These are a **separate Claude Code plugin** installed at user-level. New users must either install the superpowers plugin or remove `superpowers:` skill references from agents and CLAUDE.md files.
 
 ## Adoption Tiers
 

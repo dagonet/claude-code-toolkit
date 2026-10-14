@@ -5222,6 +5222,7 @@ check_delegation "PO: bin/cct-gate (relative) denied"    deny 'bin/cct-gate'
 check_delegation "PO: absolute-path cct-gate denied"     deny '/opt/cct/bin/cct-gate'
 check_delegation "PO: echo cct-gate (not command) passes" pass 'echo cct-gate'
 check_delegation "PO: git add bin/cct-gate passes"       pass 'git add bin/cct-gate'
+check_delegation "PO: my-cct-gate --x (other command) passes" pass 'my-cct-gate --x'
 subgate=$(printf '{"session_id":"t","agent_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cct-gate"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
   | bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
 expect "subagent cct-gate passes" "0" \

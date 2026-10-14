@@ -13,7 +13,6 @@ set -u
 
 PROJ="${1:-$(pwd)}"
 PROJ=$(printf '%s' "$PROJ" | tr '\\' '/')
-SETTINGS="$PROJ/.claude/settings.json"
 # v5.0: agent-budget-warn.sh logs under <git common dir>/cct/, else ${TMPDIR:-/tmp}/cct-<uid>/
 LOGDIR=$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && LOGDIR="$LOGDIR/cct" || LOGDIR="${TMPDIR:-/tmp}/cct-$(id -u)"
 LOG="$LOGDIR/liveness.log"

@@ -202,7 +202,7 @@ process.stdin.on("end", () => {
         /^(bash\s+|sh\s+)?[\w./\\-]*hooks\/run-gate\.sh\b/.test(s) ||
         // v5.0: the consumer gate command (bin/cct-gate on PATH), with or
         // without a path prefix, at command position only.
-        /^(bash\s+|sh\s+)?[\w./\\-]*cct-gate(\s|$)/.test(s)
+        /^(bash\s+|sh\s+)?([\w.\\-]*\/)*cct-gate(\s|$)/.test(s)
       );
     };
 

@@ -166,7 +166,7 @@ chmod +x ~/repos/claude-code-toolkit/setup-project.sh
 
 ## Manual Setup
 
-Manual setup is unsupported since v5.0. The project-enforcement hooks stay inert until `.claude/template-manifest.json` exists, and only `setup-project.sh` / `setup-project.ps1` write it. Use the setup script.
+Manual setup is unsupported since v5.0. The project-enforcement hooks stay inert until `.claude/template-manifest.json` exists, and only `setup-project.sh` / `setup-project.ps1` and a `/cct:sync-template` finalize write it. Use the setup script.
 
 ## Platform Notes
 
