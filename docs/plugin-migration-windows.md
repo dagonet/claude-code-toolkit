@@ -4,7 +4,7 @@ On Linux `scripts/install-user-level-linux.sh` does steps 1-3 in this order. On 
 
 1. **Install the plugin.** In a Claude Code session:
    ```
-   /plugin marketplace add dagonet/claude-code-toolkit#v5.0.0
+   /plugin marketplace add dagonet/claude-code-toolkit#v5.1.0
    /plugin install cct@dagonet
    ```
    Check that `claude plugin list` shows `cct@dagonet` at version `5.0.0`. Until step 2 the old user-level copies are still registered; the plugin steps aside for them, so nothing fires twice.

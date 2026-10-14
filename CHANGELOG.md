@@ -1,5 +1,50 @@
 # Changelog
 
+## v5.1.0 — 2026-10-15
+
+Minor. The optional Jev spawn router becomes a one-week trial: it may pick any model, applies a confident effort, runs at threshold 0.65, no longer trips the egress filter on the Claude-Session URL, and a new script tallies the trial across machines. v5.1 builds on v5.0.0 (the `cct` plugin).
+
+**Floor reviewed: unchanged at >=v5.0.0.** No template changed, so `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. The sync-template `SKILL.md` marker moves to v5.1.0 because consistency check 21c-2g requires it to equal `VERSION`.
+
+**Baseline** (measured 2026-10-14 on both machines, before v5.1): 582 Jev events, 4 applied (0.7%); not applied: low-confidence 40%, egress-refused 33%, kept 26%.
+
+### Added
+- **`claude_session` masking pattern** in `skills/jev/redact.py`: `claude.ai/code/session_<id>` is masked before a spawn brief leaves the machine, with a `(?![\w-])` guard so a secret glued to the id is not cut. It caused 106 of 109 egress refusals in MM (measured); a replay over 121 refused events clears 115.
+- **`scripts/jev-tally.py [--since YYYY-MM-DD] [--threshold T] [ROOT ...]`**: reads every `<repo>/.git/jev/events/*.json` under each ROOT (default `~/git`; the PC passes `G:/git`) and prints events, applied, up/down model moves, not-applied reasons, effort applied, latency, per-repo and per-day counts and confidence buckets. Unreadable or non-event files are skipped and counted.
+- Event fields `effort_emitted` and `effort_reason`; `/cct:jev report` gains an "effort applied" line.
+
+### Changed
+- **Jev may emit any model** (`skills/jev/jev_route.py`). A review or architect type never gets a model below sonnet.
+- **A confident effort is applied**: confidence at or above the threshold, different from the agent file's `effort:`, and no explicit `effort` in the call.
+- **Reviewers and architects never get a LOWER effort** (user decision). A role type whose agent effort is unset or unknown (for example `max`) gets none.
+- **Threshold 0.65**: `THRESHOLD_DEFAULT` and the config written by `/cct:jev on` (`jev_ctl.py`) both use 0.65.
+- The sync-template skill marker is v5.1.0.
+- `skills/jev/tests/test_tally.py`: the bucket test also asserts the buckets at threshold 0.8, and the non-event test includes a `{"ts": null}` file.
+
+### Trial
+The 0.65 threshold is a ONE-WEEK trial. The week starts on the day v5.1 reaches each machine. After it, on agent-host-1 (`~/git`) and on the PC (`G:/git`):
+
+    python3 scripts/jev-tally.py --since <rollout date>
+
+Compare the result against the baseline above (applied rate, effort applied, egress-refused share). Expect a higher cost: nearly every disagreement is an upgrade.
+
+### Known limits
+- **`CLAUDE_CODE_EFFORT_LEVEL` set**: Claude Code then drops `effort` from the Agent schema and strips the router's effort. The spawn still runs, but `effort_emitted` over-counts.
+- **Agents with no `effort:` in their file** (built-ins, `general-purpose`) get Jev's effort whenever it is confident, so expect a cost increase. The trial measures it.
+- **The tally's confidence buckets use `--threshold`**, not each clone's `config.json`.
+
+### Downstream migration
+1. Update the plugin with the v5.0.0 recipe: `claude plugin marketplace remove dagonet`, `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.0`, `claude plugin install cct@dagonet`.
+2. Restart the session.
+3. Re-run `/cct:jev on` in every clone where Jev is on. Until then that clone's `config.json` keeps threshold 0.8.
+
+### Measured at the final code commit (host agent-host-1)
+- Consistency script: COUNTS_PENDING
+- `bash scripts/test-hooks.sh`: COUNTS_PENDING
+- `bash scripts/test-server.sh`: COUNTS_PENDING
+- J-PY (Jev Python tests inside the hook suite): 134 tests, `JPY_WANT` unchanged (the two test minors add assertions, not test methods).
+- Parser matrix: measured by the controller before the tag
+
 ## v5.0.0 — 2026-10-14
 
 Major. The user level ships as the Claude Code plugin `cct@dagonet`.

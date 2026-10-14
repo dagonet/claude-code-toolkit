@@ -67,6 +67,8 @@ class TallyTests(unittest.TestCase):
                     drop=("effort_emitted",) if i == 0 else ())
         r = self.t.tally([self.root], None, 0.65)
         self.assertEqual(r["confidence"], {"lt05": 1, "05_t": 2, "ge_t": 2, "median": 0.64})
+        r8 = self.t.tally([self.root], None, 0.8)
+        self.assertEqual(r8["confidence"], {"lt05": 1, "05_t": 3, "ge_t": 1, "median": 0.64})
         self.assertEqual(r["latency"], {"median": 0.3, "p95": 0.4, "max": 1.0})
         self.assertEqual(r["per_repo"], {"x": 3, "y": 2})
         self.assertEqual((r["first"], r["last"]), ("2026-10-11T08:00:00.000Z", "2026-10-14T08:00:00.000Z"))
@@ -80,8 +82,10 @@ class TallyTests(unittest.TestCase):
             fh.write("[1, 2]")
         with open(os.path.join(d, "nots.json"), "w") as fh:
             fh.write('{"applied": true}')
+        with open(os.path.join(d, "nullts.json"), "w") as fh:
+            fh.write('{"ts": null}')
         r = self.t.tally([self.root], None)
-        self.assertEqual((r["events"], r["skipped_files"]), (1, 2))
+        self.assertEqual((r["events"], r["skipped_files"]), (1, 3))
 
     def test_since_rejects_loose_dates(self):
         for bad in ("2026-10-9", "2026/10/13"):

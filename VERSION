@@ -1,2 +1,2 @@
-5.0.0
-Major: the user level ships as the Claude Code plugin cct@dagonet (agents, skills, report style, hooks, cct-gate); templates ship no agents or hook registrations, only the plugin-off guard.
+5.1.0
+Minor: the optional Jev spawn router may pick any model and applies a confident effort (reviewers and architects never lower), threshold 0.65, the Claude-Session URL is masked in Jev egress, and scripts/jev-tally.py tallies a trial across machines.
