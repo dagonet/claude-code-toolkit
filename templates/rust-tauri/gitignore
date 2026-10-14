@@ -1,3 +1,20 @@
+# Tauri
+src-tauri/target/
+src-tauri/WixTools/
+src-tauri/Cargo.lock
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Test
+coverage/
+
 # Claude Code - machine-specific files (not committed)
 # .claude/settings.json IS committed (shared with team); agents come from the cct plugin
 CLAUDE.local.md
