@@ -9614,6 +9614,8 @@ expect "J-LIB mirror is byte-identical"            same "$(cmp -s "$ROOT/hooks/l
 # so a sibling worktree, a deleted skill or a missing python3 left a spawn with
 # NO emitter -- it inherited the orchestrator's model. Now all four must hold.
 echo "=== model-floor step-aside (v4.4.0 J-MF) ==="
+# These rows pin the v4 path (user-level router + settings.local.json); CLAUDE_PLUGIN_ROOT names no plugin, so the
+# repo's own plugin router (the v5.0 jev block) cannot answer for them.
 . "$ROOT/hooks/lib/json.sh"
 unset CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE
 JMR=$(mkrepo jmrepo main)
@@ -9625,7 +9627,7 @@ JMREG='{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","co
 JM_ON=silent; python3 -c '' >/dev/null 2>&1 || JM_ON=sonnet
 jm_model() { # <cwd> -> the model model-floor emits for a general-purpose spawn, or "silent"
   printf '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"p"},"cwd":"%s"}' "$(jesc "$(natpath "$1")")" \
-    | HOME="$JMH" bash "$ROOT/hooks/model-floor.sh" >"$TMPROOT/jm.out" 2>/dev/null
+    | HOME="$JMH" CLAUDE_PLUGIN_ROOT="$TMPROOT/jm-no-plugin" bash "$ROOT/hooks/model-floor.sh" >"$TMPROOT/jm.out" 2>/dev/null
   if [ -s "$TMPROOT/jm.out" ]; then jfield "$(<"$TMPROOT/jm.out")" hookSpecificOutput.updatedInput.model; else echo silent; fi
 }
 jm_state() { # <route true|false|absent> <router file yes|no> <registered yes|no|other>
@@ -9652,8 +9654,8 @@ expect "J-MF worktree shares the common dir"           "$JMGD" "$(git -C "$JMWT"
 expect "J-MF sibling worktree, unregistered -> floor"  sonnet  "$(jm_model "$JMWT")"
 expect "J-MF main checkout, registered -> on"          "$JM_ON" "$(jm_model "$JMR")"
 JM_CLI_ON=1; [ "$JM_ON" = silent ] || JM_CLI_ON=0
-expect "J-MF lib CLI jev field, registered checkout"   "$JM_CLI_ON" "$(HOME="$JMH" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$(natpath "$JMR")" | cut -d' ' -f3)"
-expect "J-MF lib CLI jev field, sibling worktree"      0 "$(HOME="$JMH" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$(natpath "$JMWT")" | cut -d' ' -f3)"
+expect "J-MF lib CLI jev field, registered checkout"   "$JM_CLI_ON" "$(HOME="$JMH" CLAUDE_PLUGIN_ROOT="$TMPROOT/jm-no-plugin" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$(natpath "$JMR")" | cut -d' ' -f3)"
+expect "J-MF lib CLI jev field, sibling worktree"      0 "$(HOME="$JMH" CLAUDE_PLUGIN_ROOT="$TMPROOT/jm-no-plugin" bash "$ROOT/hooks/lib/agent-model.sh" general-purpose "$(natpath "$JMWT")" | cut -d' ' -f3)"
 rm -rf "$JMGD/jev"
 # ---- end v4.4.0 J-MF
 
