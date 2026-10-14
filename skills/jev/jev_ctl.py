@@ -224,7 +224,7 @@ def cmd_on(top, gd, env, out, key_src):
     _write(_config_path(gd), _dumps(CONFIG_ON))
     _drop_v4_registration(top, gd, out)
     out.write("jev: ON for this clone -- spawns that pass no `model` are routed (any model, at confidence >= the "
-              "threshold; review/architect types never below sonnet; effort too); the cct plugin registers the router, "
+              "threshold; review/architect types never below sonnet, effort never lowered; effort too); the cct plugin registers the router, "
               "other checkouts of this clone need no /cct:jev on; /cct:jev off switches it off\n")
     # U-1: the orchestrator must stop naming a model, or Jev routes nothing.
     out.write("jev: ORCHESTRATOR -- from now on in this repo, omit `model` on Agent spawns: Jev picks one per "

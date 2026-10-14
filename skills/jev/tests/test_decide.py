@@ -74,19 +74,31 @@ class DecideTests(unittest.TestCase):
 
 class DecideEffortTests(unittest.TestCase):
     def test_effort_applied_when_agent_has_none(self):
-        self.assertEqual(jr.decide_effort("", None, ans("high", 0.7), 0.65), ("high", "applied"))
+        self.assertEqual(jr.decide_effort("coder", "", None, ans("high", 0.7), 0.65), ("high", "applied"))
 
     def test_effort_same_as_agent_not_emitted(self):
-        self.assertEqual(jr.decide_effort("high", None, ans("high", 0.9), 0.65), (None, "kept"))
+        self.assertEqual(jr.decide_effort("coder", "high", None, ans("high", 0.9), 0.65), (None, "kept"))
 
     def test_effort_below_threshold_not_emitted(self):
-        self.assertEqual(jr.decide_effort("medium", None, ans("high", 0.64), 0.65), (None, "low-confidence"))
+        self.assertEqual(jr.decide_effort("coder", "medium", None, ans("high", 0.64), 0.65), (None, "low-confidence"))
 
     def test_explicit_effort_never_changed(self):
-        self.assertEqual(jr.decide_effort("", "low", ans("xhigh", 0.99), 0.65), (None, "explicit"))
+        self.assertEqual(jr.decide_effort("coder", "", "low", ans("xhigh", 0.99), 0.65), (None, "explicit"))
+
+    def test_reviewer_effort_never_lowered(self):
+        self.assertEqual(jr.decide_effort("code-reviewer", "high", None, ans("medium", 0.9), 0.65), (None, "role-floor"))
+
+    def test_reviewer_effort_may_be_raised(self):
+        self.assertEqual(jr.decide_effort("code-reviewer", "medium", None, ans("xhigh", 0.9), 0.65), ("xhigh", "applied"))
+
+    def test_architect_without_agent_effort_gets_none(self):
+        self.assertEqual(jr.decide_effort("architect", "", None, ans("high", 0.9), 0.65), (None, "role-floor"))
+
+    def test_coder_effort_may_be_lowered(self):
+        self.assertEqual(jr.decide_effort("coder", "high", None, ans("medium", 0.9), 0.65), ("medium", "applied"))
 
     def test_no_effort_answer(self):
-        self.assertEqual(jr.decide_effort("", None, None, 0.65), (None, "bad-response"))
+        self.assertEqual(jr.decide_effort("coder", "", None, None, 0.65), (None, "bad-response"))
 
 
 class PayloadTests(unittest.TestCase):

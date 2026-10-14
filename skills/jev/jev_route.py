@@ -14,7 +14,8 @@ Contract:
   router must never auto-approve a spawn (ruling S-19).
 - An explicit `model` in the call is never changed. Jev may pick any model (any
   step); review/architect types never below sonnet. A confident effort (same
-  threshold) is applied; an explicit `effort` is never changed.
+  threshold) is applied; an explicit `effort` is never changed; reviewers/architects:
+  effort never lowered.
 - A floor-class spawn (built-in, `model: inherit`, no model) ALWAYS leaves with
   a model -- Jev's choice when every check passes, else the project floor --
   because model-floor.sh has stepped aside for this checkout (R-1).
@@ -111,8 +112,11 @@ def decide(kind, default, subagent_type, answer, threshold):
     return choice, True, "applied"
 
 
-def decide_effort(agent_effort, explicit_effort, answer, threshold):
-    """v5.1: Jev's effort, only when confident and different. -> (effort to emit or None, reason)."""
+def decide_effort(subagent_type, agent_effort, explicit_effort, answer, threshold):
+    """v5.1: Jev's effort, only when confident and different. -> (effort to emit or None, reason).
+
+    Reviewers/architects (ROLE_FLOOR_RE): effort may be raised, never lowered below the
+    agent file's; with no agent effort they keep the inherited session effort."""
     if explicit_effort:
         return None, "explicit"
     if not answer:
@@ -121,6 +125,9 @@ def decide_effort(agent_effort, explicit_effort, answer, threshold):
         return None, "low-confidence"
     if answer["choice"] == agent_effort:
         return None, "kept"
+    if ROLE_FLOOR_RE.search(subagent_type or "") and (
+            not agent_effort or EFFORTS.index(answer["choice"]) < EFFORTS.index(agent_effort)):
+        return None, "role-floor"
     return answer["choice"], "applied"
 
 
@@ -313,7 +320,7 @@ def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
         ev["choice"], ev["confidence"] = model_ans["choice"], model_ans["confidence"]
         ev["probabilities"] = model_ans["probabilities"]
     model, applied, reason = decide(res.kind, res.model, stype, model_ans, threshold)
-    effort, ev["effort_reason"] = decide_effort(res.effort, ti.get("effort"), effort_ans, threshold)
+    effort, ev["effort_reason"] = decide_effort(stype, res.effort, ti.get("effort"), effort_ans, threshold)
     return model, reason, applied, effort
 
 
