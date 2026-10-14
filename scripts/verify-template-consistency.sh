@@ -1428,11 +1428,15 @@ if [ "$got_marker" = "$want_marker" ]; then
 else
   ko "sync-template SKILL.md marker '${got_marker:-<none>}' does not match VERSION '$want_marker' — a stale session could not be detected"
 fi
-# ...and step 1 must actually CHECK it. A marker nothing reads is decoration.
-if [ "$(grep -c 'SYNC-TEMPLATE-SKILL-VERSION' "$SKILL_MD" 2>/dev/null)" -ge 2 ]; then
-  ok "sync-template SKILL.md step 1 asserts the marker against the installed file"
+# ...and step 1 must actually USE it. A marker nothing reads is decoration.
+# v5.0: under the plugin ~/.claude/skills/sync-template is missing or a stale v4 copy, so
+# step 1 no longer greps it; it states the marker and passes it to template_load_manifest
+# as skill_version=, and the server's refusal is the stale-body check.
+if [ "$(grep -c 'SYNC-TEMPLATE-SKILL-VERSION' "$SKILL_MD" 2>/dev/null)" -ge 2 ] \
+   && grep -q 'skill_version=' "$SKILL_MD" 2>/dev/null; then
+  ok "sync-template SKILL.md step 1 states the marker and passes it to the server as skill_version"
 else
-  ko "sync-template SKILL.md defines the version marker but nothing reads it — step 1 must grep the installed file and compare"
+  ko "sync-template SKILL.md defines the version marker but nothing reads it — step 1 must state it and pass skill_version= to template_load_manifest"
 fi
 
 # 21c-3. The sync-template placeholder sweep is BOM-tolerant too (v2.2.4).
