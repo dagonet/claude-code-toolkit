@@ -221,6 +221,12 @@ class RunTests(unittest.TestCase):
     def test_unexpected_exception_still_floors(self):
         out, ev, _ = self.go(payload(), post=Recorder(exc=RuntimeError("bug")))
         self.assertEqual((self.model_of(out), ev["reason"]), ("sonnet", "error"))
+        self.assertEqual((ev["effort_reason"], ev["effort_emitted"]), (None, None))
+
+    def test_pinned_default_emits_nothing_even_with_confident_effort(self):
+        post = Recorder(answer("opus", 0.99, effort="high"))
+        out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="gpt-5"), post=post)
+        self.assertEqual((out, ev["reason"], ev["effort_emitted"], post.calls), (b"", "pinned", None, []))
 
     def test_deadline_spent_means_no_call(self):
         ticks = itertools.chain([0.0, 3.49], itertools.repeat(3.6))

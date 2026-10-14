@@ -65,7 +65,7 @@ class Sandbox:
         if route is not None:
             os.makedirs(self.gd + "/jev", exist_ok=True)
             with open(self.config, "w", encoding="utf-8", newline="\n") as fh:
-                json.dump({"model": "jev-1.13.0", "threshold": 0.8, "route": route, "legs": False}, fh)
+                json.dump({"model": "jev-1.13.0", "threshold": 0.65, "route": route, "legs": False}, fh)
 
     def env(self, endpoint="http://127.0.0.1:9/v1/systemone", key=KEY, extra=None):
         drop = {"TYPESAFE_API_KEY", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_SUBAGENT_MODEL",

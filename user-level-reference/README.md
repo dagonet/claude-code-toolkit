@@ -68,7 +68,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 | `retro-review` | `/cct:retro-review [project-dir]` only | Local maintenance sweep: the subagent-failure retro ledger, `verify-user-level-drift.sh`, and consumer repos behind the toolkit `VERSION` → a ≤ 30-line summary in auto-memory. The local counterpart to the `toolkit-nightly-check` routine |
 | `karpathy-guidelines` | auto | Writing any new code (main thread); the coders carry a digest as `## Working rules`. Carries the *Toolkit working preferences (developer agents)* section |
 | `mcp-usage` | auto | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
-| `jev` | `/cct:jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- one step at most from the agent's default, reviewers never below sonnet, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |
+| `jev` | `/cct:jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- any model at confidence >= the threshold (0.65), review/architect types never below sonnet, a confident effort applied unless the call passes one, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |
 
 **What replaced the culled artifacts**
 

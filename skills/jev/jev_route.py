@@ -465,8 +465,9 @@ def main():
         except OSError:
             pass
     if out and ev is not None:
-        sys.stderr.write("jev: {} {} -> {} ({})\n".format(
-            ev["subagent_type"], ev["default"] or "-", ev["emitted"], ev["reason"]))
+        eff = " effort {} ({})".format(ev["effort_emitted"], ev["effort_reason"]) if ev["effort_emitted"] else ""
+        sys.stderr.write("jev: {} {} -> {} ({}){}\n".format(
+            ev["subagent_type"], ev["default"] or "-", ev["emitted"], ev["reason"], eff))
     return 0
 
 
