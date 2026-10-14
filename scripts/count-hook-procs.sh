@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# RETIRED (v5.0): compared v4.x user-level hook sets (user-level-reference/hooks + scripts/render-user-hooks.sh), both deleted when the user level became the cct plugin. Not ported: not in the gate; git history keeps the v4.x version.
+echo "count-hook-procs: retired in v5.0 (it measured the v4.x user-level hook sets, which the cct plugin replaced) -- see the header" >&2
+exit 0
 # scripts/count-hook-procs.sh -- processes per Bash call, old vs new (v4.4.0 C-verify, cost criteria 1-2).
 #
 # Runs ONE simulated Bash call (PreToolUse + PostToolUse, for `git status` and `ls -la`)

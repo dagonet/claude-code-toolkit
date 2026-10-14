@@ -43,7 +43,7 @@ Thanks for your interest in contributing! Here's how to get started.
 ## Types of Contributions
 
 - **New template variant**: Add `templates/<name>/` with full file set (see existing variants)
-- **Agent improvements**: Edit agent definitions in `templates/*/. claude/agents/` and `user-level-reference/agents/`
+- **Agent improvements**: Edit agent definitions in `templates/*/.claude/agents/` and the plugin's `agents/`
 - **New skills**: Add a skill directory under `skills/<name>/SKILL.md` (commands were merged into skills)
 - **Documentation**: Improve docs in `docs/` or template READMEs
 - **Setup script improvements**: Enhance `setup-project.ps1` / `setup-project.sh`

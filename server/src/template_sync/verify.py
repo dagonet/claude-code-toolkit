@@ -267,14 +267,14 @@ def _check_claude_md_identical(pp: pathlib.Path, manifest: dict, rules) -> dict:
                      "the toolkit no longer ships CLAUDE.md for this variant")
     if proj_claude is None:
         return _line("claude_md_identical", "FAIL", "CLAUDE.md not found in the project",
-                     "byte-identical to template_content()", "run /sync-template")
+                     "byte-identical to template_content()", "run /cct:sync-template")
     if proj_claude == tpl_content:
         return _line("claude_md_identical", "PASS", "byte-identical to template_content()",
                      "byte-identical to template_content()")
     diff = v3._unified(tpl_content, proj_claude, "template", "project")
     return _line("claude_md_identical", "FAIL", f"diverges from template_content():\n{diff}",
                  "byte-identical to template_content()",
-                 "run /sync-template -- CLAUDE.md is template-owned under v4; move project text into "
+                 "run /cct:sync-template -- CLAUDE.md is template-owned under v4; move project text into "
                  ".claude/project-instructions.md")
 
 
@@ -288,7 +288,7 @@ def _check_import_line_present(pp: pathlib.Path) -> dict:
     proj_claude = core._read_file(pp / "CLAUDE.md")
     if proj_claude is None:
         return _line("import_line_present", "FAIL", "CLAUDE.md not found in the project",
-                     "last line is @.claude/project-instructions.md", "run /sync-template")
+                     "last line is @.claude/project-instructions.md", "run /cct:sync-template")
     last_line = proj_claude.splitlines()[-1] if proj_claude.strip() else ""
     if last_line == "@.claude/project-instructions.md":
         return _line("import_line_present", "PASS", "last line is the @ import line",
@@ -320,7 +320,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     if manifest is None:
         emit(_line("manifest_valid", "FAIL", load_errors[0] if load_errors else "manifest missing",
                    "manifest loads with no errors",
-                   "run /sync-template, or setup-project.sh/.ps1, to create "
+                   "run /cct:sync-template, or setup-project.sh/.ps1, to create "
                    ".claude/template-manifest.json"))
         _cascade_skip(results, done, "no manifest at .claude/template-manifest.json")
         emit(_check_manifest_bytes(pp))
@@ -396,7 +396,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     commit = v3.manifest_commit(manifest)
     if not commit:
         emit(_line("template_commit_known", "FAIL", "no template_commit/lastSynced in manifest",
-                   "manifest names a known commit", "run a full /sync-template to record template_commit"))
+                   "manifest names a known commit", "run a full /cct:sync-template to record template_commit"))
         emit(_line("template_behind_head", "INFO", "template_commit unknown -- cannot compare to HEAD",
                    "n/a (informational)"))
     else:
@@ -449,7 +449,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     superseded = [k for k in v3.SUPERSEDED_KEYS if k in manifest]
     if superseded:
         emit(_line("superseded_absent", "FAIL", f"still present: {superseded}", "[]",
-                   "run /sync-template on toolkit >= 4.0.1; finalize drops these keys unconditionally"))
+                   "run /cct:sync-template on toolkit >= 4.0.1; finalize drops these keys unconditionally"))
     else:
         emit(_line("superseded_absent", "PASS", "none of lastSynced/lastSyncedVersion/lastSyncedVersionOf present",
                    "[]"))
@@ -527,7 +527,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                      if i.get("status") == "LOCAL_EDITED" and i.get("local_diff") == ""]
             measured = (f"template_updated={updated}, local_edited={edited}, missing={missing}, "
                         f"CONFLICT={len(conflicts)}")
-            remedy = "run /sync-template to bring the project back up to date"
+            remedy = "run /cct:sync-template to bring the project back up to date"
             if stale:
                 measured += f"; stale stored hash (LOCAL_EDITED, empty local_diff): {stale}"
                 remedy += ("; for a stale stored hash pass the path in "
@@ -629,7 +629,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
             if invalid_entries:
                 measured += f"; invalid entries: {invalid_entries}"
             emit(_line("classes_and_hashes", "FAIL", measured, expected,
-                       "run /sync-template to bring template-class files up to date; fix any malformed manifest entry"))
+                       "run /cct:sync-template to bring template-class files up to date; fix any malformed manifest entry"))
         else:
             emit(_line("classes_and_hashes", "PASS", partition_text, expected))
 
@@ -674,7 +674,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
                 missing_all.append({"path": path, **item})
         if missing_all:
             emit(_line("declared_keys", "FAIL", f"{missing_all}", "[]",
-                       "declare the missing keys, or run /sync-template to re-derive template_default"))
+                       "declare the missing keys, or run /cct:sync-template to re-derive template_default"))
         else:
             emit(_line("declared_keys", "PASS", f"0 missing across {audited_count} audited file(s)", "[]"))
 

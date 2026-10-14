@@ -118,9 +118,10 @@ This gives you the full agent team, workflow, and session bootstrap -- just with
 > (`advisorModel`, `autoCompact*`, `contextCompactionThreshold`, `statusLine`, your model
 > pins). Copy in only the `permissions.deny` entries, keeping everything else. Use the
 > v2.1 migration pattern: a short Python script that loads both files as JSON, unions
-> `permissions.deny` and writes your file back. Then run `bash scripts/render-user-hooks.sh --write`
-> from the toolkit root for the `hooks` block (do not copy it by hand: it carries `@BASH@`
-> placeholders that must be rendered per machine).
+> `permissions.deny` and writes your file back. The hooks, agents and skills are not copied by hand any
+> more: install the cct plugin (`/plugin marketplace add dagonet/claude-code-toolkit`, then
+> `/plugin install cct@dagonet`), or run `bash scripts/install-user-level-linux.sh` on Linux
+> (the PC: `docs/plugin-migration-windows.md`).
 
 ### Tier 2 -- Recommended
 

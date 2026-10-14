@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# RETIRED (v5.0): compared v4.x user-level hook sets (user-level-reference/hooks + scripts/render-user-hooks.sh), both deleted when the user level became the cct plugin. Not ported: not in the gate; git history keeps the v4.x version.
+echo "hook-equivalence: retired in v5.0 (it measured the v4.x user-level hook sets, which the cct plugin replaced) -- see the header" >&2
+exit 0
 # scripts/hook-equivalence.sh -- old-vs-new hook equivalence harness (v4.4.0 C-verify).
 #
 # Runs every payload of scripts/fixtures/hook-equivalence/corpus.tsv through TWO

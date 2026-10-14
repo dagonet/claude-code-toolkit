@@ -286,8 +286,8 @@ else
 fi
 
 for f in hooks/agent-budget-warn.sh; do
-  if grep -q 'liveness.log' "$f" 2>/dev/null; then
-    ok "audit trail: $f writes .claude/liveness.log"
+  if grep -q 'liveness.log' "$f" 2>/dev/null && ! grep -q '\$ROOT/\.claude/liveness\.log' "$f" 2>/dev/null; then
+    ok "audit trail: $f writes liveness.log under the common git dir (not the working tree)"
   else
     ko "audit trail: $f does not log — activation becomes unverifiable"
   fi
@@ -1386,12 +1386,10 @@ rm -rf "$ULRFIX"
 #         copies. Do not let a cleanup drop either one as overlapping with the
 #         other.
 #
-#         v4.4.0 C1 AMENDS THE VERBATIM HALF FOR ONE FILE: the `hooks` block of
-#         user-level-reference/settings.json is rendered, not copied (`@BASH@`,
-#         `@HOOKS@` -> absolute paths, scripts/render-user-hooks.sh). That file is
-#         the census's single allowlisted path; the render script, the README and
-#         settings-reference.md all say "never copy the hooks block by hand", and
-#         verify-hooks (Task 9) reports a leftover `@X@` in a live settings file.
+#         v5.0: the `hooks` block of user-level-reference/settings.json is plain
+#         (the render script is retired; the plugin's hooks.json registers the
+#         toolkit hooks), so the census has no allowlisted path any more, and
+#         verify-hooks reports a leftover `@X@` in a live settings file.
 
 #         AND FOR THE PROJECT TREE THIS CENSUS IS NECESSARY BUT NOT SUFFICIENT,
 #         WHICH CUTS THE OPPOSITE WAY. The project install is NOT verbatim: it

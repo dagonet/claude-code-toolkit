@@ -22,7 +22,7 @@
 # Agent identity (S-22): the frontmatter `name:`, .claude/agents/ scanned
 # recursively, project before user level, filename as the fallback.
 # No JSON parser needed: it reads frontmatter and PROJECT_CONTEXT.md only.
-# Mirrored byte-identically at user-level-reference/hooks/lib/ (check 21c).
+# Shipped by the cct plugin (hooks/lib/) and by sync-template into projects; no user-level copy since v5.0.
 
 # S-23/S-30: CLAUDE_CODE_SUBAGENT_MODEL is a native default only when it holds a
 # REAL model (an alias or a full claude-* id); `inherit` or empty means unset.

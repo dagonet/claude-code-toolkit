@@ -154,7 +154,7 @@ case "$gc_json_lib" in
   *) gc_json_lib="./json.sh" ;;
 esac
 if [ ! -f "$gc_json_lib" ]; then
-  echo "BLOCKED: $gc_json_lib missing — run /sync-template step 6b (hooks/lib/json.sh)" >&2
+  echo "BLOCKED: $gc_json_lib missing — run /cct:sync-template step 6b (hooks/lib/json.sh)" >&2
   exit 2
 fi
 . "$gc_json_lib"

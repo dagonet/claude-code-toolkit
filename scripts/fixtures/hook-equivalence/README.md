@@ -1,5 +1,7 @@
 # Hook equivalence corpus
 
+> **Retired in v5.0:** `scripts/hook-equivalence.sh` (and `time-hook.sh`, `count-hook-procs.sh`) compared v4.x user-level hook sets and are now no-ops; this corpus is kept as history.
+
 `corpus.tsv` is the input of `scripts/hook-equivalence.sh`, the safety net of the
 hook-slimming Phase C (v4.4.0): every payload runs through the hook set at
 `PHASEC_BASE` (old, `git archive`) and through the working tree (new), as Claude

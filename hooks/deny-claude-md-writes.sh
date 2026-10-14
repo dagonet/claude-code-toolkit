@@ -56,12 +56,11 @@
 # instead.
 #
 # REGISTRATION SCOPE: project-level only. Registered in every template's
-# `.claude/settings.json`; NOT mirrored into `user-level-reference/hooks/`
-# and NEVER registered in `~/.claude/settings.json` (HOOKS_NO_MIRROR in
-# scripts/verify-template-consistency.sh carries the reason) — a user-level
-# copy would refuse CLAUDE.md writes in every non-consumer repo on the
+# `.claude/settings.json`; NEVER registered in the cct plugin's hooks/hooks.json
+# nor in `~/.claude/settings.json` -- a user-level or plugin registration
+# would refuse CLAUDE.md writes in every non-consumer repo on the
 # machine, including this toolkit's own checkout and every project that has
-# never run `/sync-template` at all.
+# never run `/cct:sync-template` at all.
 #
 # PATH NORMALISATION. hooks/lib/git-cmd.sh has no public repo-root helper (its
 # gccc_norm is an internal two-letter-prefixed helper local to the -C
@@ -99,7 +98,7 @@
 trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
 
 lib="$(dirname "$0")/lib/json.sh"
-[ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
+[ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
 # shellcheck source=lib/json.sh
 . "$lib"
 

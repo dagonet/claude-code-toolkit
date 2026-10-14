@@ -25,7 +25,7 @@ trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper
 # MCP tool name) runs exactly as before. The early exit needs rc 0, tool Bash or
 # PowerShell and a non-empty command, so it cannot reach any of them.
 jlib="$(dirname "$0")/lib/json.sh"
-[ -f "$jlib" ] || { echo "BLOCKED: $jlib missing — run /sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
+[ -f "$jlib" ] || { echo "BLOCKED: $jlib missing — run /cct:sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
 . "$jlib"
 GC_PRE_JSON=$(cat)
 json_payload "$GC_PRE_JSON"; GC_PREPARSED=$?
@@ -63,7 +63,7 @@ fi
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_CMD stays empty, and this gate would exit 0 on every push.
 lib="$(dirname "$0")/lib/git-cmd.sh"
-[ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
+[ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 _np_jp=$JSON_PARSER   # git-cmd.sh re-sources json.sh, which resets the parser memo
 . "$lib"
 JSON_PARSER=$_np_jp
@@ -77,7 +77,7 @@ gc_guard_off && exit 0
 # would find nothing to parse and allow the push.
 case "$GC_TOOL" in
   mcp__git-tools__git_push|mcp__git-tools__git_commit)
-    echo "BLOCKED: settings.json predates this hook (MCP matcher) — restart the session after /sync-template" >&2
+    echo "BLOCKED: settings.json predates this hook (MCP matcher) — restart the session after /cct:sync-template" >&2
     exit 2 ;;
 esac
 

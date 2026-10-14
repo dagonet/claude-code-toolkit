@@ -211,12 +211,12 @@ def cmd_on(top, gd, env, out, key_src):
         raise CtlError("jev_route.py is not installed next to jev_ctl.py ({}) -- reinstall the cct plugin; "
                        "nothing was changed".format(HERE))
     if not resolver_lib(env, top):
-        raise CtlError("no hooks/lib/agent-model.sh in the cct plugin, this project or ~/.claude/hooks/lib/ -- the "
+        raise CtlError("no hooks/lib/agent-model.sh in the cct plugin, this project or a v4 leftover ~/.claude/hooks/lib/ -- the "
                        "router reuses model-floor's resolution and cannot run without it; nothing was changed")
     mf = _active_model_floor(env, top)
     if mf and b"agent-model.sh" not in (_read(mf) or b""):
         raise CtlError("{} predates v4.4.0 (it steps aside on the switch alone, so a sibling worktree would lose "
-                       "the floor) -- update it first (/sync-template, or the v4.4.0 hooks in ~/.claude/hooks/); "
+                       "the floor) -- update it first (/cct:sync-template, or reinstall the cct plugin); "
                        "nothing was changed".format(mf))
     parse_settings(_read(os.path.join(top, ".claude", "settings.local.json")))  # unreadable -> refuse before any write
     _write(_config_path(gd), _dumps(CONFIG_ON))

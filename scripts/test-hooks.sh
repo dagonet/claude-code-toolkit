@@ -4093,7 +4093,7 @@ NOLIB="$TMPROOT/nolib"
 mkdir -p "$NOLIB"
 cp "$ROOT/hooks/no-push-main.sh" "$ROOT/hooks/pre-commit-test.sh" \
    "$ROOT/hooks/gate-before-merge.sh" "$NOLIB/"
-LIBNEEDLE='run /sync-template step 6b'
+LIBNEEDLE='run /cct:sync-template step 6b'
 
 check_msg "no-push-main without lib/"     "$NOLIB/no-push-main.sh"     2 \
   "$(mkjson Bash 'git push origin main' "$MAINREPO")"      "$LIBNEEDLE"
@@ -7977,13 +7977,26 @@ a3_run "A3 call 11 commit passes, no budget text" "$a3_t" "$(a3_cmd Bash "git co
   || expect "A3 call 11 commit: stderr silent" "silent" "$(head -1 "$a3_err")"
 
 # The audit line names the action, so a post-mortem can tell an allowed commit
-# from a block. log_event needs $CWD/.claude to exist (it does: A3CWD above).
-rm -f "$A3CWD/.claude/liveness.log"
+# from a block. v5.0: the log is not in the working tree -- outside a git repo it is
+# ${TMPDIR}/cct-<uid>/liveness.log; inside one, <common git dir>/cct/liveness.log.
 a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
 mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
 a3_run "A3 audit: commit at 120 passes" "$a3_t" "$(a3_cmd Bash "git commit -m x" a3-agent)" 0
-expect "A3 audit line records action=commit-allowed" "yes" \
-  "$(grep -q 'agent=a3-agent calls=120 action=commit-allowed' "$A3CWD/.claude/liveness.log" 2>/dev/null && echo yes || echo no)"
+expect "A3 audit line records action=commit-allowed (no git repo: under TMPDIR/cct-uid)" "yes" \
+  "$(grep -q 'agent=a3-agent calls=120 action=commit-allowed' "$a3_t/cct-$(id -u)/liveness.log" 2>/dev/null && echo yes || echo no)"
+expect "A3 audit: nothing written under the cwd's .claude" "no" "$([ -e "$A3CWD/.claude/liveness.log" ] && echo yes || echo no)"
+
+# v5.0 working-tree fixture: in a git repo the hook leaves `git status --porcelain` empty and
+# writes <common git dir>/cct/liveness.log instead.
+A3GR="$TMPROOT/a3gitrepo"
+mkdir -p "$A3GR/.claude" && git -C "$A3GR" init -q 2>/dev/null
+a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
+mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
+printf '{"session_id":"a3sess","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s","agent_id":"a3-agent"}\n' "$(jesc "$A3GR")" \
+  | TMPDIR="$a3_t" bash "$ROOT/hooks/agent-budget-warn.sh" >/dev/null 2>&1
+expect "A3 tree-clean: git status --porcelain shows nothing after the hook logs" "" "$(git -C "$A3GR" status --porcelain 2>/dev/null)"
+expect "A3 tree-clean: the log is under <common git dir>/cct/" "yes" \
+  "$(grep -q 'calls=120 action=commit-allowed' "$A3GR/.git/cct/liveness.log" 2>/dev/null && echo yes || echo no)"
 
 # --- fix round 1 (S-14 b): wider commit detection -------------------------------
 # An option's argument may be an escaped-quoted string (a path or a value with a
@@ -10658,7 +10671,7 @@ c2b_run "$C2H0" "$c2b_p"
 expect "C2b: a deleted script -> still exit 0" 0 "$C2RC"
 expect "C2b: ... the block carries the exact header" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED -- [0-9][0-9]* registered hook script(s) missing or broken:$')"
 expect "C2b: ... names the deleted script" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^MISSING: .*hooks/no-push-main\.sh$')"
-expect "C2b: ... ends with the exact footer" 1 "$(printf '%s\n' "$C2OUT" | grep -cF 'Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /sync-template or re-run scripts/render-user-hooks.sh --write.')"
+expect "C2b: ... ends with the exact footer" 1 "$(printf '%s\n' "$C2OUT" | grep -cF 'Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /cct:sync-template (project files), reinstall the cct plugin (/plugin install cct@dagonet) (plugin hook scripts), or bash scripts/install-user-level-linux.sh on Linux / docs/plugin-migration-windows.md on the PC (user-level leftovers).')"
 c2b_run "$C2H0" "$c2b_p" --report
 expect "C2b: --report on it exits 1 and lists the script" "1:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c 'MISSING: .*hooks/no-push-main\.sh')"
 expect "C2b: --report prints no header or footer" 0 "$(printf '%s\n' "$C2OUT" | grep -c 'HOOK CHECK FAILED\|Tell the user')"
@@ -10708,7 +10721,7 @@ c2b_run "$C2HX" - --report
 expect "C2b (D2): a good program path -> silent, exit 0" "0:0" "$C2RC:$(printf '%s' "$C2OUT" | wc -c | tr -d ' ')"
 c2b_exec_settings "$C2HX/.claude/settings.json" "$C2HX/nowhere/bash" "$C2HX/.claude/hooks/x.sh"
 c2b_run "$C2HX" -
-expect "C2b (D2): a nonexistent program -> MISSING PROGRAM block, exit 0" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*nowhere/bash (exec-form hook command cannot be spawned -- every check it runs is OFF; re-run scripts/render-user-hooks.sh --write)$')"
+expect "C2b (D2): a nonexistent program -> MISSING PROGRAM block, exit 0" "0:1" "$C2RC:$(printf '%s\n' "$C2OUT" | grep -c '^MISSING PROGRAM: .*nowhere/bash (exec-form hook command cannot be spawned -- every check it runs is OFF; reinstall the cct plugin (/plugin install cct@dagonet))$')"
 expect "C2b (D2): ... inside the HOOK CHECK FAILED block" 1 "$(printf '%s\n' "$C2OUT" | grep -c '^HOOK CHECK FAILED -- 1 ')"
 c2b_run "$C2HX" - --report
 expect "C2b (D2): ... --report exits 1" 1 "$C2RC"

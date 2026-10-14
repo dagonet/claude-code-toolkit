@@ -65,7 +65,7 @@
 #     would then block ALL Edit/Write INCLUDING subagents' — total paralysis
 #     (same class as the SubagentStop stop-gate rule).
 #   * Registration uses a WARN-wrapper instead: on 127 it prints a stderr
-#     diagnostic ("delegation enforcement offline — run /sync-template") and
+#     diagnostic ("delegation enforcement offline — run /cct:sync-template") and
 #     exits 0, so absence is visible but never blocking.
 #   * Internal parse failures exit 0 (pass-through) — never block a subagent
 #     on malformed stdin.
@@ -187,7 +187,7 @@ process.stdin.on("end", () => {
         /^go\s+test\b/.test(s) ||
         // v2.2.1: anchored like every sibling above. Unanchored, this matched
         // the STRING "hooks/run-gate.sh" anywhere in the command -- including
-        // inside the applied_files JSON that /sync-template step 7 assembles,
+        // inside the applied_files JSON that /cct:sync-template step 7 assembles,
         // which necessarily names that very file. The more faithfully the skill
         // was followed, the more certainly the sync command itself was denied.
         // (No apostrophes in this block: the whole program is a single-quoted
