@@ -11584,11 +11584,15 @@ expect "v5 cct-gate: wrote the sha artifact" yes "$(grep -q '"status":"pass"' "$
 # a symlink to bin/cct-gate and a plugin path with a space both still find hooks/run-gate.sh
 mkdir -p "$TMPROOT/v5 plug/bin" "$TMPROOT/v5 plug/hooks"
 cp "$ROOT/bin/cct-gate" "$TMPROOT/v5 plug/bin/" 2>/dev/null; cp -r "$ROOT/hooks/." "$TMPROOT/v5 plug/hooks/"
-mkdir -p "$TMPROOT/v5lnk"; ln -sf "$TMPROOT/v5 plug/bin/cct-gate" "$TMPROOT/v5lnk/cct-gate"
-rm -f "$(gatepassfile "$V5G" "$V5GSHA")"
-( cd "$V5G" && unset RUN_GATE_ACTIVE && bash "$TMPROOT/v5lnk/cct-gate" >/dev/null 2>&1 ); v5g_rc=$?
-expect "v5 cct-gate: via a symlink into a path with a space, exit 0" 0 "$v5g_rc"
-expect "v5 cct-gate: via a symlink into a path with a space, artifact written" yes "$([ -f "$(gatepassfile "$V5G" "$V5GSHA")" ] && echo yes || echo no)"
+mkdir -p "$TMPROOT/v5lnk"
+if tln "$TMPROOT/v5 plug/bin/cct-gate" "$TMPROOT/v5lnk/cct-gate" && [ -L "$TMPROOT/v5lnk/cct-gate" ]; then
+  rm -f "$(gatepassfile "$V5G" "$V5GSHA")"
+  ( cd "$V5G" && unset RUN_GATE_ACTIVE && bash "$TMPROOT/v5lnk/cct-gate" >/dev/null 2>&1 ); v5g_rc=$?
+  expect "v5 cct-gate: via a symlink into a path with a space, exit 0" 0 "$v5g_rc"
+  expect "v5 cct-gate: via a symlink into a path with a space, artifact written" yes "$([ -f "$(gatepassfile "$V5G" "$V5GSHA")" ] && echo yes || echo no)"
+else
+  skip_host "v5 cct-gate: via a symlink into a path with a space" "this host cannot create a symlink" 2
+fi
 v5gc() { bash -c '. "$1"; . "$2"; gc_gate_cmd' _ "$ROOT/hooks/lib/json.sh" "$ROOT/hooks/lib/git-cmd.sh"; }
 expect "v5 gc_gate_cmd: CLAUDE_PLUGIN_ROOT set -> cct-gate" "cct-gate" "$(CLAUDE_PLUGIN_ROOT=/x v5gc)"
 expect "v5 gc_gate_cmd: CLAUDE_PLUGIN_ROOT unset -> the in-repo script" "bash hooks/run-gate.sh" "$(env -u CLAUDE_PLUGIN_ROOT bash -c '. "$1"; . "$2"; gc_gate_cmd' _ "$ROOT/hooks/lib/json.sh" "$ROOT/hooks/lib/git-cmd.sh")"
@@ -11600,8 +11604,9 @@ check_msg "v5 block message: no plugin root -> bash hooks/run-gate.sh" "$ROOT/ho
   "$(mkjson Bash 'gh pr merge 3 --squash' "$V5M")" "Run 'bash hooks/run-gate.sh' on the PR branch head"
 CLAUDE_PLUGIN_ROOT=/x check_msg "v5 block message: plugin root set -> cct-gate" "$ROOT/hooks/gate-before-merge.sh" 2 \
   "$(mkjson Bash 'gh pr merge 3 --squash' "$V5M")" "Run 'cct-gate' on the PR branch head"
-# bare name via PATH: pins the shebang and the exec bit
-( cd "$V5G" && unset RUN_GATE_ACTIVE && PATH="$ROOT/bin:/usr/bin:/bin" cct-gate >/dev/null 2>&1 ); v5g_rc=$?
+# bare name via PATH: pins the shebang and the exec bit. PATH stays narrow (an installed cct-gate further
+# along must not answer for this one); git's own dir is added because Git for Windows keeps none in /usr/bin.
+( cd "$V5G" && unset RUN_GATE_ACTIVE && PATH="$ROOT/bin:$(dirname "$(command -v git)"):/usr/bin:/bin" cct-gate >/dev/null 2>&1 ); v5g_rc=$?
 expect "v5 cct-gate: run by bare name via PATH, exit 0" 0 "$v5g_rc"
 expect "v5 cct-gate: index mode 100755" yes "$(git -C "$ROOT" ls-files -s bin/cct-gate | grep -q '^100755' && echo yes || echo no)"
 # two-sided: a red gate names cct-gate through cct-gate, the in-repo command when run directly (CLAUDE_PLUGIN_ROOT unset in the caller)
@@ -11624,7 +11629,7 @@ if python3 -c '' >/dev/null 2>&1; then
   V5JR=$(mkrepo v5jevrepo main); V5JH="$TMPROOT/v5jevhome"; mkdir -p "$V5JH" "$V5JR/.claude"
   V5JGD=$(git -C "$V5JR" rev-parse --path-format=absolute --git-common-dir)
   v5jev() { # <hook name> -> its stdout, then rc
-    ( export HOME="$V5JH" CLAUDE_PLUGIN_ROOT="$V5J" CLAUDE_PROJECT_DIR="$V5JR"; printf '{"tool_name":"Agent"}' | bash "$V5J/hooks/run-hook.sh" "$1" 2>/dev/null; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//'
+    ( export HOME="$V5JH" CLAUDE_PLUGIN_ROOT="$V5J" CLAUDE_PROJECT_DIR="$V5JR"; printf '{"tool_name":"Agent"}' | bash "$V5J/hooks/run-hook.sh" "$1" 2>/dev/null; echo "rc=$?" ) | tr -d '\r' | tr '\n' ' ' | sed 's/ $//'   # Windows python3 prints CRLF
   }
   rm -rf "$V5JGD/jev"
   expect "v5 jev: no config -> jev-route silent" "rc=0" "$(v5jev jev-route)"
