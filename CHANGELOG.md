@@ -46,6 +46,7 @@ The tally prints the threshold mix (events carry a `threshold` field: the one us
 - `bash scripts/test-server.sh`: 522 passed, 9 skipped.
 - J-PY (Jev Python tests inside the hook suite): 140 tests, `JPY_WANT=140` (134 before the final-review round; +6 for the threshold field, report buckets and effort-reason count, and the empty-floor-model case). The hook suite and server counts above were re-measured by the gate after main (v5.0.0) was merged in.
 - Parser matrix (`bash scripts/test-hooks-parser-matrix.sh`, agent-host-1, at 7e89d97): PARSER MATRIX PASSED. node 4160 / 0 / 6 (4166); python3-only 3905 / 0 / 241 (4146, in band ~255 ±20); jq-only 3809 / 0 / 337 (4146, in band ~335 ±20). The closing commit after it moves one line in `skills/jev/jev_route.py`: the `threshold` field is set only once a call is made, not on a `deadline` event. No parser path is touched.
+- Windows (the PC, Python 3.14.2, Git Bash) at ae9a35e: the Jev unit tests ran 140, OK. v5.1 changes no hook script, so the full Windows hook suite was not re-run; v5.0's Windows rows stand.
 
 ## v5.0.0 — 2026-10-14
 
