@@ -845,19 +845,18 @@ if [[ -d "$TEMPLATE_DIR/.claude" ]]; then
     done < <(find "$TEMPLATE_DIR/.claude" -type f -print0 | sort -z)
 fi
 
-# Shared hook scripts (from repo root, not template-specific).
-# EVERY file, recursively: the gates source hooks/lib/*.sh via $(dirname "$0")/lib/…
-# and fail CLOSED (exit 2) when the lib is missing, so a filtered copy would leave a
-# bootstrapped project unable to commit, push, or merge.
-if [[ -d "$SCRIPT_DIR/hooks" ]]; then
-    while IFS= read -r -d '' file; do
-        rel="${file#"$SCRIPT_DIR/"}"
-        FILE_SOURCES+=("$file")
+# Shared hook scripts (from repo root, not template-specific). v5.0 (spec §3.4): every
+# other hook runs from the cct plugin; the project keeps only the native pre-push hook
+# and the two libs it sources (git-cmd.sh sources json.sh), because git runs it outside
+# Claude Code and needs a stable path in the clone.
+for rel in hooks/git-pre-push.sh hooks/lib/git-cmd.sh hooks/lib/json.sh; do
+    if [[ -f "$SCRIPT_DIR/$rel" ]]; then
+        FILE_SOURCES+=("$SCRIPT_DIR/$rel")
         FILE_RELS+=("$rel")
         FILE_IS_GITIGNORE+=(false)
         FILE_CLASSIFY_NAMES+=("$rel")
-    done < <(find "$SCRIPT_DIR/hooks" -type f -print0 | sort -z)
-fi
+    fi
+done
 
 # --- Classify every collected file against templates/ownership.json --------
 # One batched node invocation (node is already required by the hooks) rather
@@ -1261,8 +1260,8 @@ done
     echo "  \"template_version\": $template_version_json,"
     echo "  \"template_commit\": \"$template_commit\","
     # >=4.1.0 (MIN_SERVER_FOR_V4, server/src/template_sync/v3.py): a v3-era
-    # server has no region-less CLAUDE.md handling, no instructions_file/
-    # agent_grants declarations, and no agent-grants splice -- refusing it
+    # server has no region-less CLAUDE.md handling and no instructions_file
+    # declaration -- refusing it
     # loudly on a v4 manifest is the documented v4.1 decision (spec sect 8,
     # "Decisions taken" item 2), the mirror of the old >=0.3.2 floor this
     # replaces (which guarded the v3 region splice, now retired for CLAUDE.md).
@@ -1288,12 +1287,14 @@ done
         echo "    }$comma"
     done
     echo "  },"
-    # v4 declaration keys (spec sect 5 header; server/src/template_sync/mcp.py
-    # _load_manifest requires both when manifest_version == 4). Literal
-    # constants, not derived from FILE_RELS: they name the FIXED paths the
-    # server reads for the CLAUDE.md `@` import and the agent-grants splice,
-    # not a per-project setting -- INSTRUCTIONS_FILE_DEFAULT/AGENT_GRANTS_FILE
-    # in server/src/template_sync/v3.py are the same two literals.
+    # v4 declaration key (spec sect 5 header; server/src/template_sync/mcp.py
+    # _load_manifest requires it when manifest_version == 4). A literal
+    # constant, not derived from FILE_RELS: it names the FIXED path the server
+    # reads for the CLAUDE.md `@` import, not a per-project setting --
+    # INSTRUCTIONS_FILE_DEFAULT in server/src/template_sync/v3.py is the same
+    # literal. `agent_grants` is still written although v5.0 removed the
+    # mechanism: 4.1-4.6 servers require it ("Missing required field") when
+    # they load a v4 manifest, and a v5.0 server accepts it and ignores it.
     echo "  \"instructions_file\": \".claude/project-instructions.md\","
     echo "  \"agent_grants\": \".claude/agent-grants.json\""
     echo "}"
@@ -1339,7 +1340,10 @@ echo ""
 print_template_sync_snippet
 
 echo ""
-echo "Next step (user-level hooks, once per machine): bash \"$SCRIPT_DIR/scripts/render-user-hooks.sh\" --write"
+echo "Next step (the cct plugin, once per machine): in Claude Code run"
+echo "  /plugin marketplace add dagonet/claude-code-toolkit"
+echo "  /plugin install cct@dagonet"
+echo "then restart the session. Without it, this project's guard refuses every tool."
 
 # --- v4.0.1 item 22: verify the freshly-bootstrapped project (last step) ---
 #

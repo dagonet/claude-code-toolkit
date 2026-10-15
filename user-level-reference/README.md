@@ -1,6 +1,6 @@
 # User-Level Claude Code Configuration Reference
 
-This directory contains reference copies of the user-level (`~/.claude/`) configuration for Claude Code. These files document the full setup of agents, skills, output styles, hooks, MCP server configuration, and settings used across all projects on this machine.
+This directory contains the reference copies of the user-level (`~/.claude/`) configuration for Claude Code: `CLAUDE.md`, `settings.json`, the MCP server template and the settings documentation. **Since v5.0 the agents, skills, the `pm-report` output style and the toolkit hooks ship in the `cct` plugin** (this repo is the plugin; install it as `cct@dagonet`), so nothing here is copied into `~/.claude/agents/`, `skills/`, `output-styles/` or `hooks/` any more.
 
 > **Commands were merged into skills.** Anthropic made `.claude/commands/<n>.md` equivalent to `.claude/skills/<n>/SKILL.md`; slash commands still work, but a skill is the forward-compatible artifact. This directory no longer ships a `commands/` directory — delete `~/.claude/commands/` when you sync.
 
@@ -8,7 +8,9 @@ This directory contains reference copies of the user-level (`~/.claude/`) config
 
 ## New Machine Setup
 
-> **Linux host (agent server):** from a checkout of this repo, `bash scripts/install-user-level-linux.sh` does steps 2-7 below: the reference with a Linux "Platform" section (`scripts/linux/CLAUDE-platform-linux.md`), settings without the Windows-only entries, the rendered hooks, and the plugins superpowers, skill-creator and frontend-design. It never touches `~/.claude.json`, so register MCP servers separately with `claude mcp add --scope user`. It is a stopgap until the v5.0 plugin release replaces it. Afterwards `verify-user-level-drift.sh` reports `CLAUDE.md` and `autoMode.environment` as drift by design.
+> **Linux host (agent server):** from a checkout of this repo, `bash scripts/install-user-level-linux.sh` does steps 2, 3 and 5 below, in a safe order: `CLAUDE.md` with a Linux "Platform" section (`scripts/linux/CLAUDE-platform-linux.md`); the plugins (`cct@dagonet` from `$CCT_MARKETPLACE`, default `dagonet/claude-code-toolkit#v<VERSION>`, then superpowers, skill-creator and frontend-design), stopping non-zero before anything is removed unless `claude plugin list` shows `cct@dagonet`; `settings.json` without the Windows-only entries and without the v4.x toolkit hook entries; then every v4.x leftover in `scripts/lib/v4-user-leftovers.txt` moved to `~/.claude/v4-leftovers.bak-<UTC>/`. It never touches `~/.claude.json`, so register MCP servers separately with `claude mcp add --scope user`. Afterwards `bash scripts/verify-user-level-drift.sh` reports 0 drift: the rendered `CLAUDE.md`, `cct@dagonet` at `VERSION`, no leftover.
+>
+> **Windows PC moving from v4.x:** follow [`../docs/plugin-migration-windows.md`](../docs/plugin-migration-windows.md).
 
 Follow these steps to configure Claude Code on a fresh machine:
 
@@ -20,37 +22,24 @@ Follow these steps to configure Claude Code on a fresh machine:
 2. **Copy CLAUDE.md to `~/.claude/CLAUDE.md`**
    Copy `CLAUDE.md` from this directory to `~/.claude/CLAUDE.md`. This defines user-level rules (platform, sub-agent discipline, setup guidance) that apply across all projects.
 
-3. **Copy agents to `~/.claude/agents/`**
-   Copy all `.md` files from `agents/` in this directory to `~/.claude/agents/`. These define specialized AI personas that can be invoked for different tasks.
-
-4. **Copy skills to `~/.claude/skills/`**
-   Copy the skill directories from `skills/` in this directory to `~/.claude/skills/`, preserving the folder structure (each skill lives in its own subdirectory with a `SKILL.md` file). Then **delete `~/.claude/commands/`** — every surviving command now lives as a skill, and a leftover command file shadows its skill.
-
-5. **Copy hooks to `~/.claude/hooks/`**
-   ```bash
-   cp -r user-level-reference/hooks/. ~/.claude/hooks/
+3. **Install the cct plugin**
    ```
+   /plugin marketplace add dagonet/claude-code-toolkit#v<VERSION>
+   /plugin install cct@dagonet
+   ```
+   It brings every agent (`cct:<name>`), every skill (`/cct:<skill>`), the `pm-report` output style and the toolkit hooks, machine-wide. Delete `~/.claude/commands/` if it still exists — a leftover command file shadows its skill.
 
-   One recursive copy is enough — since v2.0 this directory **mirrors** the fail-closed hooks from the toolkit root, so nothing has to be fetched from a second place. `settings.json` binds `no-push-main.sh` fail-closed (a missing script exits 2 with `HOOK SCRIPT MISSING`), so a missing copy blocks every Bash call; copy the hooks before the settings file. `read-size-gate.sh` and `bash-output-guard.sh` cannot block and degrade quietly. `gate-before-merge.sh` and `pre-commit-test.sh` ship here as files only — they are not bound at user level, because their project-level bindings run `bash hooks/…` relative to a project root. `lib/git-cmd.sh` is sourced by the gates via `$(dirname "$0")/lib/…` and must keep its subdirectory — **use `cp -r`, not `cp *.sh`**, which does not recurse. Confirm with `ls ~/.claude/hooks/lib/git-cmd.sh`; without it the gates load nothing and, because the hook file itself exists, the missing-script check (`HOOK SCRIPT MISSING`, exit 2) never fires.
-
-   The mirror is asserted byte-identical to the toolkit root by `scripts/verify-template-consistency.sh` — edit `hooks/<name>.sh` at the root and re-copy; never edit the mirror.
-
-6. **Configure MCP servers**
+4. **Configure MCP servers**
    `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
 
-7. **Copy output styles to `~/.claude/output-styles/`**
-   Copy `output-styles/pm-report.md` from this directory to `~/.claude/output-styles/`. It is the default report style referenced by `outputStyle` in `settings.json` (next step); `/output-style default` switches a session back to the technical style.
-
-8. **Configure settings.json**
-   Copy **`settings.json`** from this directory to `~/.claude/settings.json`. **Do not copy the `hooks` block by hand: run `bash scripts/render-user-hooks.sh --write` from the toolkit root.** Since v4.4.0 the user-level hooks are registered in exec form (`command` + `args`, no shell in between), where `~` and `$HOME` are not expanded and a bare `bash` is resolved through PATH (on Windows that can reach the WSL launcher and fail open). The reference therefore carries the placeholders `@BASH@` and `@HOOKS@` in executable positions; a hand-copied block would spawn a program literally named `@BASH@` and every user protection would fail open. Since v4.4.1 every `-c` string begins with `export PATH=/usr/bin:/bin:$PATH; `, so a session started from PowerShell (no Git `usr/bin` on PATH) still finds `dirname` and `sed`. The script writes the absolute Git Bash path and hooks directory, backs your file up to `settings.json.bak-<UTC timestamp>`, replaces only the top-level `hooks` key, and keeps hooks it does not own (printing `kept foreign hook: <command>`). Copying the whole file brings the placeholders along, so run the script immediately after the copy (or after the merge described below). `--print` shows the rendered block without writing.
+5. **Configure settings.json**
+   Copy **`settings.json`** from this directory to `~/.claude/settings.json`. Its only hook is the inline `UserPromptSubmit` time hook, and `outputStyle` is `cct:pm-report` (a plugin style loads only under the plugin prefix).
 
    **If you already have a `~/.claude/settings.json`, merge — do not overwrite.** Your file
    carries personal keys this reference does not (`advisorModel`, `autoCompact*`,
    `contextCompactionThreshold`, `statusLine`, model pins); overwriting drops them silently.
    Take the `permissions.deny` entries only, per the v2.1 migration pattern: a short Python
    script that loads both files as JSON, unions `permissions.deny` and writes your file back.
-   Then run `bash scripts/render-user-hooks.sh --write` for the `hooks` block (it replaces
-   only that key, rendered for this machine, and backs your file up first).
 
    Three things to decide before copying, because this file is a starting point, not a policy:
    - `permissions.defaultMode` is **`auto`**, and `permissions.autoMode.environment` describes this machine's trust boundary in prose. Rewrite those sentences for your own environment — they are what the classifier reasons over. `autoMode` is User/managed scope only; a project cannot ship it.
@@ -61,20 +50,9 @@ Follow these steps to configure Claude Code on a fresh machine:
 
 ## What's Included
 
-### Agents (6)
+### Agents
 
-Models and effort below are the values in each `agents/*.md` frontmatter — keep this table in step with the files. Aliases only: a model proxy reroutes them, a pinned `claude-*` id bypasses it. The **session** effort level is left unset (the model's own default); the orchestrator model is picked per session with `/model` — `fable` for T3/T4 work, `opus` for T1/T2.
-
-| Agent | Model | Effort | Description |
-|-------|-------|--------|-------------|
-| `Explore` | haiku | low | Read-only codebase search. Overrides the built-in `Explore`, which otherwise inherits the session model. Returns ranked `path:line` findings, never whole files. |
-| `architect` | opus | xhigh | Reviews architecture, provides implementation guidance, maintains ADRs and docs. Does not write application code. |
-| `code-reviewer` | opus | xhigh | Reviews code for quality, style, structure, and test coverage. Posts categorized findings. Does not write code. |
-| `coder` | sonnet | medium | General-purpose software engineer for implementing changes with high-quality engineering standards. Runs with `isolation: worktree`. |
-| `ops` | sonnet | medium | Non-code execution: environment setup, installs, binary/file operations, one-off diagnostics, log collection, re-running the project gate. Keeps the orchestrator out of hands-on work. |
-| `tester` | sonnet | medium | QA tester that verifies features via UI automation (FlaUI), database inspection, and log analysis. Runs with `isolation: worktree`. |
-
-> **User-level agents are not template agents.** A user-level agent applies in *every* repo and its frontmatter `hooks:` travel with it, so it may only reference scripts and paths that exist everywhere. The copies here deliberately omit the `hooks/gate-before-merge.sh` PreToolUse hooks that `templates/*/.claude/agents/coder.md` carries — those fail closed (missing script → exit 2) in any repo without a `hooks/` directory, which would make PR merges impossible. `scripts/verify-template-consistency.sh` asserts both halves of this rule. Body prose may still mention `hooks/run-gate.sh`, because that is conditional on the project's `Gate` field and the agent simply skips it when absent.
+The agents ship in the cct plugin (`agents/` at the repo root) and are named `cct:<name>`; their models and effort are the values in each file's frontmatter. Plugin agents carry no frontmatter `hooks:` (consistency check 75): the plugin registers `gate-before-merge` once, for every caller.
 
 ### Skills (9)
 
@@ -82,25 +60,25 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 | Skill | Invocation | Purpose |
 |-------|-----------|---------|
-| `challenge` | `/challenge [target]` only | Two structured passes over a plan or design: scope/necessity, then correctness/completeness. Explicit-only because it may spawn the architect. |
-| `commit` | `/commit` only | Stage and commit with native git, after showing the user the staged diff; includes the verification checklist |
-| `sprint` | `/sprint [plan]` only | Run a backlog as parallel **subagent** workstreams — rebase before merge, gate before merge, final-message reporting |
-| `sync-template` | `/sync-template` only | Pull template updates from claude-code-toolkit into the current project |
-| `contribute-upstream` | `/contribute-upstream` only | Push generalizable project improvements back to the template |
-| `retro-review` | `/retro-review [project-dir]` only | Local maintenance sweep: the subagent-failure retro ledger, `verify-user-level-drift.sh`, and consumer repos behind the toolkit `VERSION` → a ≤ 30-line summary in auto-memory. The local counterpart to the `toolkit-nightly-check` routine |
+| `challenge` | `/cct:challenge [target]` only | Two structured passes over a plan or design: scope/necessity, then correctness/completeness. Explicit-only because it may spawn the architect. |
+| `commit` | `/cct:commit` only | Stage and commit with native git, after showing the user the staged diff; includes the verification checklist |
+| `sprint` | `/cct:sprint [plan]` only | Run a backlog as parallel **subagent** workstreams — rebase before merge, gate before merge, final-message reporting |
+| `sync-template` | `/cct:sync-template` only | Pull template updates from claude-code-toolkit into the current project |
+| `contribute-upstream` | `/cct:contribute-upstream` only | Push generalizable project improvements back to the template |
+| `retro-review` | `/cct:retro-review [project-dir]` only | Local maintenance sweep: the subagent-failure retro ledger, `verify-user-level-drift.sh`, and consumer repos behind the toolkit `VERSION` → a ≤ 30-line summary in auto-memory. The local counterpart to the `toolkit-nightly-check` routine |
 | `karpathy-guidelines` | auto | Writing any new code (main thread); the coders carry a digest as `## Working rules`. Carries the *Toolkit working preferences (developer agents)* section |
 | `mcp-usage` | auto | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
-| `jev` | `/jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- one step at most from the agent's default, reviewers never below sonnet, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |
+| `jev` | `/cct:jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- one step at most from the agent's default, reviewers never below sonnet, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |
 
 **What replaced the culled artifacts**
 
 | Was | Use instead |
 |---|---|
-| `/build`, `/test` | `bash hooks/run-gate.sh` (the `Gate:` mechanism) |
+| `/build`, `/test` | `cct-gate` (the `Gate:` mechanism; `bash hooks/run-gate.sh` in this repo itself) |
 | `/skill-eval`, `/skill-improve`, plus the toolkit's `evals/evals.json` convention | the official `skill-creator@claude-plugins-official` plugin, which ships eval authoring, grading, and benchmarking |
 | `fix-errors` | `superpowers:systematic-debugging` |
 | `code-review` | the bundled `/code-review` plugin, or `superpowers:requesting-code-review` / `receiving-code-review` |
-| `arch-analyze`, `impact-analysis`, `explaining-code`, `orient` | the `Explore` subagent (haiku) plus `superpowers:brainstorming` / `writing-plans` |
+| `arch-analyze`, `impact-analysis`, `explaining-code`, `orient` | the `cct:Explore` subagent (haiku) plus `superpowers:brainstorming` / `writing-plans` |
 | `security-audit` | `/code-review`'s security pass |
 | `refactor` | `karpathy-guidelines` + `superpowers:test-driven-development` |
 | `/new-feature`, `/user-story`, `/spec-to-issues`, `/traceability`, `/arch-doc`, `/api-design`, `/tech-debt`, `/coverage-report`, `/dependency-audit`, `/dotnet-analyze`, `/ef-check`, `/nuget-audit`, `/pre-release`, `/godot-run`, `/issue-create`, `/add-tests` | deleted — near-zero measured use; the agent roster (`architect`, `tester`, `coder`, `ops`) covers the same ground. *(The roster named here was `requirements-engineer` / `test-writer` when these commands were deleted; both were retired by absorption in v3.0.0 — into `architect` and `tester` respectively.)* |
@@ -113,7 +91,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 ### Hooks
 
-`hooks/` mirrors, byte for byte, the subset of the toolkit-root `hooks/` directory that is useful at user level — thirteen scripts plus `lib/`: the exec-form entries `settings.json` binds (the fail-closed `no-push-main.sh` and `deny-secret-reads.sh`, the fail-open `deny-hang-shapes.sh`, `model-floor.sh` and `bash-output-guard.sh`, and the SessionStart `verify-hooks.sh`), the fail-open `read-size-gate.sh` (installable by hand, see `settings-reference.md`), the git gates `pre-commit-test.sh` and `gate-before-merge.sh` with `run-gate.sh` (files only — not bound at user level), `post-edit-build.sh`, the retro pair `retro-brief.sh` / `retro-ledger.sh`, and `lib/` (`git-cmd.sh`, which the gates source, plus `json.sh` and `agent-model.sh`). Six project-level hooks are deliberately NOT mirrored (`HOOKS_NO_MIRROR` in the consistency script): `enforce-delegation.sh`, `enforce-agent-contract.sh` and `agent-budget-warn.sh`, because they read project-level agent files and would fail closed in a repo without a `hooks/` directory; `now-brief.sh`, because it reads a template-shipped `PROJECT_STATE.md`; `deny-claude-md-writes.sh`, because a user-level deny would refuse `CLAUDE.md` writes in every repo on the machine, including ones that have never run `/sync-template`; and `git-pre-push.sh`, a native git hook installed per clone and registered in no `settings.json`. The toolkit root remains the canonical source; `scripts/verify-template-consistency.sh` asserts every file here is identical to `hooks/<same relative path>`, so a drifted mirror is a red build rather than a silently older contract. A hook script missing at runtime is caught by the registration form in `settings.json` (`HOOK SCRIPT MISSING`, exit 2) and, for a hook's own exit 127, by an in-hook trap, so enforcement fails closed rather than silently off.
+None at user level since v5.0, except the inline `UserPromptSubmit` time hook in `settings.json`. The toolkit hooks run from the cct plugin (`hooks/hooks.json` at the repo root). A v4.x machine still carries `~/.claude/hooks/` and six exec-form registrations in `~/.claude/settings.json`; `scripts/lib/v4-user-leftovers.txt` lists every leftover path, the Linux installer removes them, and `docs/plugin-migration-windows.md` is the Windows procedure.
 
 ### Routines
 
@@ -154,6 +132,6 @@ prompt body into the routine when you create it; nothing here is loaded automati
 - Environment variables (shell override, 1M context, tool search)
 - Permission rules (allow, deny, ask, `defaultMode`, `autoMode.environment`)
 - `outputStyle`
-- The v2.0 hook set, plus the `UserPromptSubmit` time hook
+- The `UserPromptSubmit` time hook (the toolkit hooks come from the cct plugin since v5.0)
 - Enabled plugins with descriptions
 - Extended thinking, MCP auto-enable, and context compaction settings

@@ -38,7 +38,7 @@ def _project(tmp_path: pathlib.Path, template_repo: str) -> tuple[pathlib.Path, 
 
 
 def _load(pp: pathlib.Path) -> dict:
-    return json.loads(asyncio.run(ts.template_load_manifest(str(pp))))
+    return json.loads(asyncio.run(ts.template_load_manifest(str(pp), skill_version="v99.0.0")))
 
 
 def test_existing_template_repo_is_used_unchanged(tmp_path, monkeypatch):
@@ -73,7 +73,7 @@ def test_every_resolution_site_uses_the_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(v3.core, "_read_file", lambda p: seen.setdefault("p", pathlib.Path(p)) and real(p))
     v3.load_ownership(MISSING)
     assert seen["p"] == checkout / "templates" / "ownership.json"
-    assert ts._template_file_path({"templateRepo": MISSING, "variant": "general"}, "hooks/x.sh") == checkout / "hooks" / "x.sh"
+    assert ts._template_file_path({"templateRepo": MISSING, "variant": "general"}, "hooks/git-pre-push.sh") == checkout / "hooks" / "git-pre-push.sh"
 
 
 def test_missing_repo_and_server_outside_a_checkout_keeps_todays_error(tmp_path, monkeypatch):
@@ -233,12 +233,12 @@ def test_compute_status_scan_sites_use_the_fallback(tmp_path, monkeypatch):
     a root-tracked hooks/ file exists ONLY in the fallback checkout."""
     checkout = _toolkit(tmp_path / "server-checkout")
     (checkout / "hooks").mkdir()
-    (checkout / "hooks" / "only-in-fallback.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (checkout / "hooks" / "git-pre-push.sh").write_text("#!/bin/sh\n", encoding="utf-8")
     _server_inside(checkout, monkeypatch)
 
     pp, mf, before = _project(tmp_path, MISSING)                       # v2 manifest, no ownership.json
     res = json.loads(asyncio.run(ts.template_compute_status(str(pp))))
-    assert "hooks/only-in-fallback.sh" in res["new_template_files"], res
+    assert "hooks/git-pre-push.sh" in res["new_template_files"], res
     assert mf.read_bytes() == before
 
     (checkout / "templates" / "ownership.json").write_text(json.dumps(_v3_ownership()), encoding="utf-8")
@@ -251,41 +251,13 @@ def test_compute_status_scan_sites_use_the_fallback(tmp_path, monkeypatch):
         "requires_server": ">=0.3.0", "files": {}}), encoding="utf-8")
     before3 = mf3.read_bytes()
     res3 = json.loads(asyncio.run(ts.template_compute_status(str(pp3))))
-    assert "hooks/only-in-fallback.sh" in res3["new_template_files"], res3
+    assert "hooks/git-pre-push.sh" in res3["new_template_files"], res3
     assert mf3.read_bytes() == before3
 
     # negative control: with no fallback root the same call does not see the file
     monkeypatch.setattr(ts, "_server_toolkit_root", lambda: None)
     res_none = json.loads(asyncio.run(ts.template_compute_status(str(pp))))
-    assert "hooks/only-in-fallback.sh" not in json.dumps(res_none)
-
-
-def test_verify_agent_grants_census_resolves_script_in_the_fallback_checkout(tmp_path, monkeypatch):
-    """verify.py _check_agent_grants_resolvable: list-mcp-tools.py is looked up
-    under the EFFECTIVE repo; it exists only in the fallback checkout."""
-    from template_sync import verify
-    checkout = _toolkit(tmp_path / "server-checkout")
-    lib = checkout / "scripts" / "lib"
-    lib.mkdir(parents=True)
-    (lib / "list-mcp-tools.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8", newline="")
-    _server_inside(checkout, monkeypatch)
-    alias = "git-tools"
-    mds = tmp_path / "mds"
-    (mds / "src" / "mcp_dev_servers").mkdir(parents=True)
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".claude.json").write_text(json.dumps({"mcpServers": {alias: {
-        "command": str(mds / ".venv" / "Scripts" / f"mcp-{alias}.exe")}}}), encoding="utf-8")
-    monkeypatch.setattr(pathlib.Path, "home", lambda: home)
-    pp = tmp_path / "proj"
-    (pp / ".claude").mkdir(parents=True)
-    (pp / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {"foo": [f"mcp__{alias}__some_tool"]}}), encoding="utf-8")
-    line = verify._check_agent_grants_resolvable(pp, {"templateRepo": MISSING})
-    assert "exit 1" in line["measured"], line            # the script ran => found in the fallback
-    monkeypatch.setattr(ts, "_server_toolkit_root", lambda: None)
-    line = verify._check_agent_grants_resolvable(pp, {"templateRepo": MISSING})
-    assert "exit 1" not in line["measured"], line         # negative control
+    assert "hooks/git-pre-push.sh" not in json.dumps(res_none)
 
 
 def test_run_git_treats_any_oserror_as_a_failed_call(monkeypatch):

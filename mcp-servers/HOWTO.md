@@ -257,7 +257,7 @@ Create a fine-grained Personal Access Token at https://github.com/settings/perso
 
 ## Template Sync Tools (10 tools)
 
-Deterministic template syncing: manifest management and migration, file status computation, three-way merge, placeholder replacement/reversal, cross-variant propagation, and the consumer-side consistency check. Used by the `/sync-template` and `/contribute-upstream` skills and by `scripts/verify-consumers.sh`.
+Deterministic template syncing: manifest management and migration, file status computation, three-way merge, placeholder replacement/reversal, cross-variant propagation, and the consumer-side consistency check. Used by the `/cct:sync-template` and `/cct:contribute-upstream` skills and by `scripts/verify-consumers.sh`.
 
 **Tools:** `template_load_manifest`, `template_migrate_manifest`, `template_compute_status`, `template_get_diff`, `template_apply_file`, `template_finalize_sync`, `template_verify`, `template_reverse_placeholders`, `template_check_cross_variant`, `template_propagate_to_variants` (the registered set is `grep -c '@mcp.tool' server/src/template_sync/mcp.py`)
 

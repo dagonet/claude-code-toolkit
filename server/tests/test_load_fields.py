@@ -69,7 +69,7 @@ def test_load_response_carries_server_commit_unconditionally(tmp_path):
     v2_project = _write_v2_project(tmp_path)
     # template_load_manifest is async; the moved suite's own helper awaits it
     # via asyncio.run rather than calling it bare (test_template_sync_v3_gate.py).
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(v2_project))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(v2_project), skill_version="v99.0.0")))
     assert "server_commit" in r
     assert r["server_commit"] == ts.SERVER_COMMIT
 
@@ -80,7 +80,7 @@ def test_load_response_carries_server_commit_with_no_manifest_at_all(tmp_path):
     # "valid": False / no-manifest path so a caller diagnosing which build is
     # live never needs a valid project to ask. server_commit is the same
     # diagnostic and must be unconditional in the same sense.
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"), skill_version="v99.0.0")))
     assert r["valid"] is False
     assert r["server_commit"] == ts.SERVER_COMMIT
 
@@ -88,14 +88,14 @@ def test_load_response_carries_server_commit_with_no_manifest_at_all(tmp_path):
 def test_server_in_template_repo_is_null_when_no_manifest_is_loaded(tmp_path):
     # A non-consumer (no manifest) has no templateRepo to be "in": false would
     # tell it to reinstall the server, so the answer is null.
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"), skill_version="v99.0.0")))
     assert r["valid"] is False
     assert r["server_in_template_repo"] is None
 
 
 def test_server_in_template_repo_stays_boolean_with_a_manifest(tmp_path):
     proj = _write_manifest_missing_a_required_field(tmp_path)
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert isinstance(r["server_in_template_repo"], bool)
 
 
@@ -111,7 +111,7 @@ def test_load_response_carries_server_commit_on_the_v3_path(tmp_path):
         "templateRepo": str(repo),
     }
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert r["valid"] is True
     assert r["manifest_version"] == 3
     assert r["server_commit"] == ts.SERVER_COMMIT
@@ -130,7 +130,7 @@ def test_load_response_carries_server_commit_on_the_v3_path(tmp_path):
 
 
 def test_load_response_carries_registered_tools_with_no_manifest_at_all(tmp_path):
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(tmp_path / "nonexistent"), skill_version="v99.0.0")))
     assert r["valid"] is False
     assert r["registered_tools"] == ts._registered_tool_names()
     assert r["registered_tools"] == sorted(r["registered_tools"])
@@ -139,7 +139,7 @@ def test_load_response_carries_registered_tools_with_no_manifest_at_all(tmp_path
 
 def test_load_response_carries_registered_tools_on_the_errors_shape(tmp_path):
     proj = _write_manifest_missing_a_required_field(tmp_path)
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert r["valid"] is False
     assert r["errors"] == ["Missing required field: files"]
     assert r["registered_tools"] == ts._registered_tool_names()
@@ -158,7 +158,7 @@ def test_load_response_carries_registered_tools_on_the_v3_path(tmp_path):
         "templateRepo": str(repo),
     }
     (proj / ".claude" / "template-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(proj), skill_version="v99.0.0")))
     assert r["valid"] is True
     assert r["registered_tools"] == ts._registered_tool_names()
     assert "template_verify" in r["registered_tools"]
@@ -166,7 +166,7 @@ def test_load_response_carries_registered_tools_on_the_v3_path(tmp_path):
 
 def test_load_response_carries_registered_tools_on_the_legacy_v2_path(tmp_path):
     v2_project = _write_v2_project(tmp_path)
-    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(v2_project))))
+    r = json.loads(asyncio.run(ts.template_load_manifest(project_path=str(v2_project), skill_version="v99.0.0")))
     assert r["registered_tools"] == ts._registered_tool_names()
     assert "template_verify" in r["registered_tools"]
 

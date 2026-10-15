@@ -16,8 +16,10 @@ def _manifest(repo: str, variant: str = "rust-tauri") -> dict:
 
 
 def test_is_root_tracked_only_for_hooks():
-    assert ts._is_root_tracked("hooks/no-push-main.sh")
-    assert ts._is_root_tracked("hooks/nested/x.sh")
+    assert ts._is_root_tracked("hooks/git-pre-push.sh")
+    assert ts._is_root_tracked("hooks/lib/json.sh")
+    # v5.0: every other hook ships in the cct plugin, not through the sync.
+    assert not ts._is_root_tracked("hooks/pre-commit-test.sh")
     assert not ts._is_root_tracked("CLAUDE.md")
     assert not ts._is_root_tracked(".claude/agents/coder.md")
     # A variant-local path that merely contains "hooks" later must not match.
@@ -27,13 +29,13 @@ def test_is_root_tracked_only_for_hooks():
 def test_hook_path_resolves_to_repo_root(tmp_path):
     repo = tmp_path
     (repo / "hooks").mkdir()
-    (repo / "hooks" / "no-push-main.sh").write_text("#!/usr/bin/env bash\n")
+    (repo / "hooks" / "git-pre-push.sh").write_text("#!/usr/bin/env bash\n")
     (repo / "templates" / "rust-tauri").mkdir(parents=True)
 
     m = _manifest(str(repo))
-    resolved = ts._template_file_path(m, "hooks/no-push-main.sh")
+    resolved = ts._template_file_path(m, "hooks/git-pre-push.sh")
 
-    assert resolved == (repo / "hooks" / "no-push-main.sh").resolve()
+    assert resolved == (repo / "hooks" / "git-pre-push.sh").resolve()
     assert ts._read_file(resolved) is not None  # not seen as deleted
 
 
@@ -50,13 +52,13 @@ def test_scan_discovers_new_root_tracked_hooks(tmp_path):
     vdir.mkdir(parents=True)
     (vdir / "CLAUDE.md").write_text("# hi\n")
     (repo / "hooks" / "lib").mkdir(parents=True)
-    (repo / "hooks" / "retro-ledger.sh").write_text("#!/usr/bin/env bash\n")
+    (repo / "hooks" / "git-pre-push.sh").write_text("#!/usr/bin/env bash\n")
     (repo / "hooks" / "lib" / "git-cmd.sh").write_text("#!/usr/bin/env bash\n")
 
     found = ts._scan_template_files(vdir, repo)
 
     assert "CLAUDE.md" in found
-    assert "hooks/retro-ledger.sh" in found
+    assert "hooks/git-pre-push.sh" in found
     assert "hooks/lib/git-cmd.sh" in found
     assert found == sorted(set(found))
 
@@ -75,7 +77,7 @@ def test_compute_status_lists_new_root_hooks(tmp_path):
     vdir.mkdir(parents=True)
     (vdir / "CLAUDE.md").write_text("# hi\n", encoding="utf-8", newline="")
     (repo / "hooks" / "lib").mkdir(parents=True)
-    (repo / "hooks" / "retro-ledger.sh").write_text(
+    (repo / "hooks" / "git-pre-push.sh").write_text(
         "#!/usr/bin/env bash\n", encoding="utf-8", newline=""
     )
     (repo / "hooks" / "lib" / "git-cmd.sh").write_text(
@@ -100,7 +102,7 @@ def test_compute_status_lists_new_root_hooks(tmp_path):
 
     res = json.loads(asyncio.run(ts.template_compute_status(str(proj))))
 
-    assert "hooks/retro-ledger.sh" in res["new_template_files"]
+    assert "hooks/git-pre-push.sh" in res["new_template_files"]
     assert "hooks/lib/git-cmd.sh" in res["new_template_files"]
     assert "CLAUDE.md" in res["new_template_files"]
 
@@ -111,7 +113,7 @@ def test_scan_without_repo_root_stays_variant_only(tmp_path):
     vdir.mkdir(parents=True)
     (vdir / "CLAUDE.md").write_text("# hi\n")
     (repo / "hooks").mkdir()
-    (repo / "hooks" / "retro-ledger.sh").write_text("#!/usr/bin/env bash\n")
+    (repo / "hooks" / "git-pre-push.sh").write_text("#!/usr/bin/env bash\n")
 
     assert ts._scan_template_files(vdir) == ["CLAUDE.md"]
 
@@ -144,18 +146,23 @@ def test_variant_file_resolves_to_variant_dir(tmp_path):
 
 def test_git_path_root_tracked_vs_variant():
     m = _manifest("/whatever", variant="java")
-    assert ts._template_git_path(m, "hooks/no-push-main.sh") == "hooks/no-push-main.sh"
+    assert ts._template_git_path(m, "hooks/git-pre-push.sh") == "hooks/git-pre-push.sh"
     assert ts._template_git_path(m, "CLAUDE.md") == "templates/java/CLAUDE.md"
 
 
 def test_real_toolkit_hooks_not_deleted():
-    """If the toolkit checkout is present, every shipped hook must resolve."""
-    repo = pathlib.Path("G:/git/claude-code-toolkit")
+    """Against the checkout under test: the v5 root-tracked set resolves to
+    repo-root files, and any other hook resolves to its variant path (not the
+    repo-root file), so consumers never receive plugin hooks."""
+    repo = pathlib.Path(__file__).resolve().parents[2]
     if not (repo / "hooks").is_dir():
         import pytest
 
         pytest.skip("toolkit checkout not present")
     m = _manifest(str(repo))
-    for hook in (repo / "hooks").glob("*.sh"):
-        rel = f"hooks/{hook.name}"
+    for rel in ts.ROOT_TRACKED_FILES:
         assert ts._read_file(ts._template_file_path(m, rel)) is not None, rel
+    other = "hooks/no-push-main.sh"
+    assert other not in ts.ROOT_TRACKED_FILES
+    assert ts._template_file_path(m, other) == repo / "templates" / "rust-tauri" / other
+    assert ts._template_file_path(m, other) != repo / other

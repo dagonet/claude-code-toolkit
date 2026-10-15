@@ -1,5 +1,7 @@
 # Hook Enforcement Ideas for AGENT_TEAM.md Workflows
 
+> Describes the pre-v5 layout (project-level agents and hook registrations); since v5.0 the `cct` plugin carries them.
+
 Claude Code hooks can intercept tool calls (`PreToolUse`) and block them with a message.
 This document analyzes which AGENT_TEAM.md workflow conventions could be technically enforced
 via hooks, versus which are better left as convention.
@@ -209,6 +211,6 @@ These remain convention-only, enforced by AGENT_TEAM.md instructions.
 The following enforcement ideas were evaluated and deferred. They require conversation-level state tracking that hooks cannot provide without additional infrastructure:
 
 - **Workflow state tracking**: A persistent state file (e.g., `.claude/workflow-state.json`) maintained at key milestones (tier assignment, challenge completion, fix cycles). Challenge: convention-maintained state has a bootstrap problem — the AI that skips conventions also skips state updates. Needs a dedicated design pass for who writes state and how it's validated.
-- **Commit-time workflow verification**: The `/commit` skill could read workflow state and warn if challenges were skipped or fix cycles exceeded. Depends on reliable state tracking above.
+- **Commit-time workflow verification**: The `/cct:commit` skill could read workflow state and warn if challenges were skipped or fix cycles exceeded. Depends on reliable state tracking above.
 - **Sprint retrospective**: A `/retrospective` skill that reviews workflow compliance after each sprint and surfaces recurring violations. Would drive the self-improvement loop below.
 - **Self-improving enforcement**: Auto-promote repeated convention violations to hook candidates. Pattern: retrospective identifies recurring skip → new hook proposed → implemented → convention becomes enforcement. Requires retrospective infrastructure first.

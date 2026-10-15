@@ -1,0 +1,7 @@
+{
+  "name": "dagonet",
+  "owner": { "name": "dagonet" },
+  "plugins": [
+    { "name": "cct", "source": "./", "description": "claude-code-toolkit as a plugin" }
+  ]
+}

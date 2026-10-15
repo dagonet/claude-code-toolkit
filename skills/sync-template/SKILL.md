@@ -1,0 +1,1417 @@
+---
+name: sync-template
+description: Pull template updates into the current project. Triggers on /cct:sync-template.
+disable-model-invocation: true
+---
+
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v5.0.0 -->
+
+**This skill takes no arguments.** Invoke it as `/cct:sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
+
+# Sync Template (Downstream)
+
+Pull updates from the claude-code-toolkit template repo into the current project.
+
+**The line above is the version of the body YOU LOADED, and you must be able to state it.** A running session obeys the skill body it read at session start, not the file on disk — measured live: an installed `SKILL.md` byte-identical to the current release while sessions started earlier were still executing the previous version's steps. So *"re-copy `SKILL.md`"* and *"the drift check reports 0"* can both pass while every live session runs the old workflow. Step 1 passes this marker to the server, which refuses a body older than the checkout's own.
+
+**Requires:** `template-sync-tools` MCP server registered and running, **version >= 5.0.0** — read from the `template_load_manifest` response, not from `pip show` or the checkout. Two different floors, do not conflate them: a v4 manifest enforces `">=4.1.0"` at load (`MIN_SERVER_FOR_V4`), the oldest server that can read a v4 manifest without applying a region-less `CLAUDE.md` over a consumer whose project content still lives in the region; THIS skill's floor is 5.0.0 (`template_load_manifest` takes `skill_version` only from v5.0; the body also relies without any fallback on the 4.3.1 behaviour) — the untracked-file write guard (`present_on_disk`, `overwrite_existing`), `files_created`, and `pending_once_notes`. An older server silently overwrites an untracked file the guard would have refused. `manifest_version` below 4 — v2 **or** v3 — means the project has not reached the current model yet: v2 still migrates first to v3 (unchanged from prior releases), and v3 now migrates on to v4 (step 1c below covers both hops). A skimmer who reads only the header number and stops still gets the number that protects them, same as before.
+
+**Linux/macOS: skip the Windows path notes** (the platform notes, `cygpath`, MSYS and `/tmp` drive-relative passages); they apply only under Git Bash on Windows.
+
+> **Platform note, general form: two mechanisms, two symptoms.** An unset shell variable in bash (`"$UNSET/x.txt"` → `/x.txt`) resolves under the MSYS root (`C:\Program Files\Git\`) and fails LOUDLY with `Permission denied` — which can make `region.sh --scan` look non-zero. A `/`-rooted path handed to a native Windows program (python's `os.path.abspath('/tmp/x')` → `G:\tmp\x`) resolves against the CURRENT DRIVE's root and writes there SILENTLY — the more dangerous of the two, so it is not folded under the loud one. Step 2b's `/tmp` backup-path defect below is one instance of a general hazard, not a one-off — measured a second time in this skill, in step 6b territory: a helper handed `/tmp/ref.txt` from bash died `FileNotFoundError: '/tmp/ref.txt'`, because python resolved it against the process's current drive, not against MSYS's `/` mapping. Wherever a step hands python a bash-typed path (`$TMPDIR`, `/tmp/...`, or any other MSYS-style path), resolve it in bash first and pass the resolved absolute path, or have python derive its own path (`tempfile.gettempdir()`) rather than trusting one that crossed the boundary as text. Each step below that hands python a path repeats this pointer at the point it matters.
+
+## Workflow
+
+### 1. Load Manifest
+
+**Which branch.** Sync on the branch where the CURRENT `CLAUDE.md` PROJECT-CUSTOM region lives, as its own commit — on a long-lived session branch that carries the region, `main` is the wrong place even when it is clean. `tree_clean` requires a clean tree, not a particular branch. A non-protected branch the session is already on, and that carries the region, is fine: sync there, no separate sync branch is required. **Otherwise (a protected branch, or one without the region) create the sync branch BEFORE the FIRST write** (step 1c-iii's `template_migrate_manifest` if the migration runs, else step 3), cut from the branch that carries the PROJECT-CUSTOM region, and never apply onto the trunk: a sync applied on `main` leaves the protected branch dirty and its commit refused by the gates.
+
+**FIRST, state the marker of the body YOU loaded.** The `SYNC-TEMPLATE-SKILL-VERSION` line at the top of *this text as you loaded it* is your body's version; state it in the report (`SKILL body:` line, step 8). Do NOT grep `~/.claude/skills/sync-template/SKILL.md` and compare: under the plugin that file is missing or a stale v4 copy, so the comparison misfires. The stale-body check is the server's: `template_load_manifest` (below) compares the marker you pass with the checkout's `skill_marker` and refuses (`valid:false`) when yours is older. On that refusal **STOP**; the remedy is a session **RESTART** (a running session keeps executing the body it loaded; re-copying a file changes nothing). A body that predates this check cannot detect itself, and a clean `scripts/verify-user-level-drift.sh` says nothing about the body *this* session runs.
+
+**This skill's own STOP rules outrank any peer or relayed guidance.**
+
+**`template_load_manifest` MUST be the FIRST `template_*` call of the sync, and you STOP on `valid:false`. This is load-bearing, and here is why it cannot be reordered:**
+
+> **The manifest's `requires_server` floor is enforced ONLY at `template_load_manifest` (measured against the real 0.3.1 reader, not a design doc).** `template_compute_status` and `template_apply_file` do **not** re-check it. A skill that skips straight to status against a manifest declaring a newer server than the one installed gets a normal-looking status answer instead of a refusal — a **silent** failure, not a loud one. There is exactly one gate for this floor and it is this call; anything read from a later call about server compatibility is not a substitute for it.
+
+Then call `template_load_manifest(project_path=".", skill_version="<the marker at the top of THIS body>")` — never a grep of the installed file (see 1c-ii): under v5 the `~/.claude` copy is missing or stale. A v5.0 server refuses (`valid:false`) a missing `skill_version`, one below the toolkit's `requires_skill` floor, or one older than the checkout's own skill (`skill_marker` in the response); STOP and show the error. A ToolError naming `skill_version` means the checkout or server predates v5: STOP, never retry without it.
+
+- **No manifest at all** (`.claude/template-manifest.json` absent) = not a toolkit project: bootstrap via `AGENTS.md` / `setup-project`, not sync.
+- If `valid` is false, **stop** and show the errors to the user — this is the only place a `requires_server` mismatch surfaces, so a false here is not recoverable by continuing.
+- **Check the floor NOW, before any other `template_*` call:** compare the response's `server_version` with the minimum stated under **Requires** above NUMERICALLY, component by component (major, then minor, then patch, each as an integer — as text `4.10` sorts below `4.9`, which is wrong). If it is lower, **stop** and tell the user to update the toolkit checkout and restart the template-sync server (if `server_in_template_repo` is false, give the three-step re-registration from the note below instead). A server new enough to carry this check (any release after v4.5.2) also refuses at load when it is older than the toolkit checkout it reads; relay its message and stop. Read `server_version` from THIS response, in the run that performs the sync: the running server executes what it imported when it started, so upgrading on disk changes nothing until it restarts, and a version number from an earlier turn may be stale after a reconnect. Never carry one forward.
+- If `warnings` mentions v1 migration, inform the user their manifest will be upgraded to v2.
+
+**A v3 manifest against a v4.1+ toolkit checkout (v4.1.0).** `MIN_SERVER_FOR_V4` stops an OLD server from reading a NEW (v4) manifest, but it does nothing about the opposite mismatch — a NEW server reading an OLD (v3) manifest whose project content still lives in the `CLAUDE.md` region. Nothing in `template_load_manifest` refuses that combination (a v3 manifest's own `requires_server` floor, `>=0.3.2`, is trivially satisfied by 4.1.0), so the refusal lives one call later, in `template_apply_file` itself: **while the manifest is v3, the server refuses to apply `CLAUDE.md` — sync everything else, migrate, then `CLAUDE.md` applies under v4.** `template_compute_status` reports this as a new template-class status, `MIGRATION_REQUIRED`, on the `CLAUDE.md` path alone; step 2 below shows it as the sole `status_clean` FAIL. You will only ever see it if the toolkit checkout you are syncing from is itself on v4.1+ *and* your manifest has not yet been migrated past v3 — a v3 manifest synced against an older (v4.0.x) toolkit checkout behaves exactly as before, with no window and no `MIGRATION_REQUIRED` anywhere (R-J). Do not try to work around the refusal by hand-adding the `@` import line or hand-creating `.claude/project-instructions.md`: the first is an out-of-region diff that makes the real migration refuse (step 1c's case (c)), and the second makes it refuse on a different ground (case (d)) — either one strands the region body it was trying to preserve.
+
+> **Which server is answering — read `server_in_template_repo`, never compare paths yourself.** Since toolkit v4.0 the sync server ships from the toolkit checkout, and the load response carries **`server_in_template_repo: bool`**, computed by the server where its path resolver lives. Read it with `.get("server_in_template_repo")`: **absent means a pre-4.0 server** (the field did not exist), and absent → falsy → "not re-registered" is the correct reading by construction — but write `.get`, because `result["server_in_template_repo"]` turns "old server" into a `KeyError` in the first paragraph of the sync, which is a poor way to learn which server you are on. `null` means no manifest was loaded (there is no `templateRepo` to be in) — not a re-registration verdict. `False` on a 4.0+ server means the consumer has not re-registered (since v4.5.1 a declared `templateRepo` that does not exist on this machine resolves to the server's own checkout and reads `True` there, so a fallback is never a re-registration verdict): say *"you are still running the mcp-dev-servers copy; run `bash server/install.sh` in the toolkit checkout, point `template-sync-tools` in `~/.claude.json` at the exe it prints, then restart the MCP server"* — three steps, and never "reinstall". Do **not** test `server_source` for a substring or compare it with `templateRepo`: on this platform one is `/g/git/…` and the other `G:\git\…`, and a string comparison reports "not re-registered" to a consumer who correctly did.
+
+> **Which checkout `<templateRepo>` means (v4.5.1).** Everywhere this skill says `<templateRepo>` it means the load response's `.get("effective_template_repo")`, or the manifest's `templateRepo` when that key is absent (a pre-4.5.1 server). The two differ only when the declared path does not exist on this machine, which the response signals with `template_repo_note` (show that note to the user once). Detect the fallback ONLY by the note's presence, never by comparing the two strings (the rule against comparing paths above applies), and never write the effective path into the manifest. **The note is expected whenever the manifest was written on another machine and its `templateRepo` path does not exist on this one**, for example a manifest naming `G:/git/...` synced on a Linux host. It is not a fault and needs no fix.
+>
+> **Skew: `server_commit` vs the checkout.** A 4.0+ response also carries `server_commit`, the toolkit commit this server process imported at spawn — read it with `.get("server_commit")` the same way you read `server_in_template_repo`: **absent means a pre-4.0 server**, and there is no skew check to run. When it is present, it can still be `null` — the server was not imported from a git checkout (an installed wheel, a copied tree) — and `null` means "cannot tell", not "differs"; say so once and do not warn, because a restart cannot turn a non-checkout into one. Only when the key is present, non-null, **and** differs from `git -C <templateRepo> rev-parse HEAD` has the toolkit been pulled after the server started: templates on disk are newer than the server code running. Say so and tell the user to restart the MCP server before syncing — the one tag makes this skew easy to miss, and this field is the only place it shows.
+
+> **A `server/` diff that touches only `server/src/template_sync/VERSION` still needs the `/mcp` reconnect (v4.3.1, panoscribe).** The running process holds the VERSION it read at import, so until `template-sync-tools` reconnects, `template_verify` FAILs `server_skew` although no server code changed. Reconnect for ANY change under `server/`; reinstall (`bash server/install.sh`) only when `server/pyproject.toml` — the dependencies — changed. The `/mcp` reconnect alone delivers new server parameters (they live in the server process); no session restart is needed for them, and the version-marker check at the top of this file concerns the skill body only. A changed skill body is the opposite case: skills load at session start, so it needs a full session restart (not `/mcp`); `/mcp` reconnect suffices only for a server-code-only change.
+
+**The currency question has exactly one right-hand side: `git -C <templateRepo> rev-parse HEAD`, never `git rev-parse <tag>`.** An ANNOTATED tag resolves to the TAG OBJECT's own sha (a real, different, commit-shaped-looking string), not the commit it points at — comparing `server_commit` against a tag name is comparing against the wrong kind of git object, and reads as skew when there is none or as agreement when there is skew. Wherever a tag genuinely is the right-hand side for some other comparison, dereference it first: `<tag>^{commit}`.
+
+A 4.0.2+ response also carries `registered_tools` — the names this process can DISPATCH, fixed at spawn. Read it with `.get("registered_tools")`: absent means a pre-4.0.2 server; present, it is the answer to "is `template_verify` callable here" — the `capabilities` list says what the loaded modules support, never what the registry holds (a pre-release server advertised `template_verify` with a nine-tool registry).
+>
+> **Why this says "restart the MCP server" while a pre-4.0 server's own refusal text says "start a fresh session" — two different staleness sources, not a wording inconsistency to harmonise.** The SKILL BODY is read once, at session start: fixing a stale body (the marker check at the top of this file) needs a session restart, because a running session keeps executing the text it already loaded. The MCP SERVER is a separate process, loaded once at spawn: fixing stale server code (this skew paragraph and the one above it) needs only restarting that server — a session restart also does it, but is not required for it. A future edit that collapses these two remedies into one sentence would ask a consumer with only server skew to also restart their session, or a consumer with only a stale body to merely restart a server that was never the problem. Keep them named separately.
+
+### 1a. Manifest shape (v3 and v4)
+
+The manifest is **`manifest_version: 3`** or, since v4.1.0, **`manifest_version: 4`**. Expect and preserve the v3 shape below on either version — do not strip anything you do not recognise:
+
+**The v4 shape adds one REQUIRED top-level key, a declaration, and carries one legacy declaration:**
+
+- `instructions_file` — today always `".claude/project-instructions.md"`. The server reads project content from the path named HERE, not from a hardcoded string; `instructions_file_present` (step 8) FAILs if the named file is missing.
+- `agent_grants` — legacy: `".claude/agent-grants.json"`, written by v4.x manifests and the v3→v4 hop, read by nothing since v5.0 (grants were removed in v5.0; step 2c handles a leftover `.claude/agent-grants.json`). Preserve it; never require it.
+
+A v4 manifest missing `instructions_file` is invalid (`manifest_valid` refuses it); a v3 manifest carries neither. Everything else below — `templateRepo`, `placeholders`, `template_version`, `template_commit`, `requires_server`, `unknown_keys`/`unknown_file_keys` — is unchanged in shape and behaviour across v3 and v4.
+
+- `variant` — the template variant this project bootstrapped from.
+- `templateRepo` is the **only** camelCase top-level key; every other key is snake_case. Do not "normalise" one style onto the other. (`lastSynced` was the other one, in the v2 shape; v4.0.1 drops it, along with `lastSyncedVersion`/`lastSyncedVersionOf`, at every migrate and finalize — see "Version labels are server-authoritative" below.)
+- `placeholders` — the substitution map.
+- `template_version` — **v-prefixed** (`"v3.1.0"`, never `"3.1.0"`).
+- `template_commit` — a 40-hex sha, a short sha, **or the literal string `"unknown"`**, which is treated as **absent** for base resolution (a three-way diff cannot pick a base off `"unknown"`; fall back the same way you would for a missing key).
+- `requires_server` — appears **only** in the `">=X.Y.Z"` form. Any other spec string (a caret range, a bare version, an `<`/`~` operator) is a **named error** to report to the user, not a spec to interpret and not a silent pass.
+- `unknown_keys` / `unknown_file_keys` — the manifest's own record of fields it did not recognise. **These survive round-trip.** Do not strip them when you re-serialize anything; a future manifest version's fields ride through this skill's writes unharmed only because nothing here deletes what it does not understand. **The one exception (v4.0.1, item 8):** `lastSynced`, `lastSyncedVersion` and `lastSyncedVersionOf` are dropped unconditionally by both `template_migrate_manifest` and `template_finalize_sync`, never listed in `unknown_keys`, and reported instead in `superseded_keys_dropped`. They duplicate the server-written `template_version`/`template_commit` above, so a client-derived copy can only drift — this is the only top-level key family this skill does not need to preserve.
+
+### 1b. Ownership classes
+
+Every manifest-tracked path falls into exactly one class:
+
+- **`template`** — carries `hash: "sha256:<64 lowercase hex>"`. This is the ordinary auto-update/conflict machinery already described below. `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` is sha256 of the EMPTY string: a comparison that 'differs' with that value on one side means the path resolved to nothing, not that the content differs (v4.0.3, item 5).
+- **`once`** — carries **no `hash` key at all**, ever. A `once` file that is **absent** is created. A `once` file that is **present** is **kept**: `bytes_written: 0`, byte-for-byte preserved, and it is **never** a three-way merge candidate — there is no template content to merge it against, by definition of the class. `project.md` under `.claude/rules/` (see step 3's note below) is the shipped example.
+- **project files** — absent from the manifest entirely. Never read, written, or reported by any `template_*` call except as informational orphans (the same untracked-file population step 2b's set (c) and step 6d already discuss).
+- **`unclassified_template_files`** — a path that exists in the template tree and matches **no** ownership rule. **This is NOT defaulted to `template`.** It is reported separately and is **never applied**. Treat a non-empty `unclassified_template_files` list as something to tell the user about, not something to silently adopt one way or the other.
+
+### 1b. Assert the Toolkit Checkout Is On a Release Tag
+
+Before calling `template_compute_status` (next step) — which resolves against the checkout's HEAD, not against any tag — assert the template checkout `<templateRepo>` is on a release tag:
+
+```
+git -C <templateRepo> describe --exact-match --tags 2>/dev/null
+```
+
+**Mechanism (MM-Agent, 2026-09-05):** `template_compute_status` resolves against the checkout's HEAD, not the tag. A toolkit checkout left on a docs branch at `v3.0.3-1-g847da93` still had every `AUTO_UPDATE` hash matching the tagged build — the diffs came out identical — while the manifest would have recorded that untagged commit as `template_commit`: a sha with no version any human can name from the manifest alone.
+
+**Two consumers hit the moving-HEAD case independently (MM-Agent, penumbra), and the rule that makes the recorded label actually answer "which release am I on" needs four outcomes, not one:**
+
+**Obtaining "that tag" / "the nearest tag" used in cases 2 and 3 below (penumbra):** `git -C <templateRepo> describe --tags --abbrev=0 HEAD` — this returns the nearest ANCESTOR tag, not the latest tag ever created, so a checkout that has moved past a newer tag on an unrelated branch still resolves to the tag it actually descends from. Do not diff HEAD against the repo's latest tag by name, or a checkout on an older release line gets misclassified.
+
+**Since v4.0.1 (item 8) this whole resolution is SERVER-SIDE and automatic — `template_finalize_sync`'s `derive_template_version` walks the reachable tags at finalize time and records `template_commit`/`template_version` itself; nothing here needs the skill to stamp a label after the fact (the old step 7b is gone). The four cases below describe what that server-side derivation produces, for reading the result, not a client-side procedure to run.**
+
+1. **HEAD IS the tag** (`describe --exact-match` prints a label) → `template_commit` = HEAD, `template_version` = the tag.
+2. **HEAD is a DESCENDANT of a tag AND the manifest-tracked template tree at HEAD equals the tree at that tag** — verified with `git -C <templateRepo> diff --quiet <tag> HEAD -- hooks scripts templates user-level-reference ':(exclude)user-level-reference/*.md'` reporting clean (the exclude keeps docs-only commits under `user-level-reference/` from reading dirty; in a default pathspec `*` crosses `/`, so this covers nested `.md` files — `**/*.md` does NOT match top-level ones) → the checkout has moved on docs-only commits since the tag, and every file this sync would actually apply is byte-identical to the release. `derive_template_version` finds this tag itself (it walks tags merged into HEAD and picks the nearest one whose tracked tree matches), so `template_commit`/`template_version` land as the release identity — not a `-N-gSHA` suffix that reads as "synced to an unreleased commit" when the truth is "synced to the release, from a drifted checkout." Worked example: tag `v3.0.3` at `86561fe`, checkout at `5ce2d14` (two docs-only commits past the tag, identical tracked tree) → finalize records `template_commit` `5ce2d14` (where you synced from) and `template_version` `v3.0.3` (the nearest tag whose tracked tree is identical). The commit says where you synced from; the version names the release whose tree you have. Never re-derive either client-side; `template_verify`'s `template_commit_known` line agrees with this contract. **The instrument is conservative, not exact (penumbra):** the `git diff --quiet <tag> HEAD -- hooks scripts templates user-level-reference ':(exclude)user-level-reference/*.md'` path list is a fixed superset of any single manifest — `templates` alone spans every variant — so a change confined to a variant this project doesn't even use still marks the diff dirty and lands the consumer in case 3 (the `-N-gSHA` suffix) even though its own manifest-tracked tree at HEAD is identical to the tag. A false-dirty result lands in case 3; it never produces a false-clean in case 2. A consumer seeing an unexpected suffix here should check which variant moved before suspecting the rule itself.
+3. **The template tree at HEAD actually DIFFERS from the nearest tag under the manifest's tracked paths** → `template_commit` = HEAD, `template_version` = `null` (`derive_template_version` finds no matching tag and warns `untagged_template_tree`) — the untagged state is the signal, not noise; that reading is scoped to THIS case, where the extra commits carry real content past the tag, never to case 2, where they do not.
+4. **Anything else** — not a descendant of any tag, or `describe` finds no tag at all → **STOP** and tell the user: "the toolkit checkout is on `<branch>@<sha>` (`git describe` = `<label>`), not a release tag — sync would record that untagged commit as `template_commit`; ask the release owner to put the checkout on the tag, or confirm you mean to sync an untagged tree."
+
+### 1c. Migrate the Manifest to v4
+
+**A manifest below v4 migrates in TWO hops, never one:** v2 → v3 (below, unchanged since v3.1.3), then v3 → v4 (1c-vii onward, new in v4.1.0). Both are dry-run first, always. A v2 manifest that has never seen v3 goes through both in the same sitting; a v3 manifest that already made the first hop only needs the second. Neither hop is optional, and skipping either is silent and permanent (below).
+
+#### The first hop: v2 to v3 (v3.1.3 — the step this file had been GATING without describing)
+
+**Until v3.1.3 `template_migrate_manifest` appeared nowhere in this file.** Step 1 told you to STOP below `server_version` 0.3.2 when `migration_required` is true, and said nothing about what to do once you clear that gate — so the consumer improvised at the one moment the region is at stake. Everything below is **measured** (a consumer's full rehearsal on a real v2 manifest) and **confirmed against the source by the server's own session**. Where the tool's docstring disagrees with the artifact, this section follows the artifact and says so.
+
+**Nothing performs this for you.** `template_load_manifest` only *reports* `migration_required` and returns (`template_sync_mcp.py:776`); it does not act on it. The v1→v2 upgrade is NOT the same shape — that happens in memory inside load and persists at the next finalize, which is why assuming symmetry here is wrong.
+
+**And skipping it is silent and permanent.** `template_finalize_sync` dispatches on `is_v3(manifest)` (`:1376`); handed a v2 manifest it takes the v2 path and writes v2 back out. No error, nothing lost, and `migration_required: true` again on every future sync forever. **The migration is not something the flow falls into. It is something this skill does on purpose, or never.**
+
+**`migration_required: true` is not an instruction.** It is computed as `v3.load_ownership(manifest["templateRepo"]) is not None` — it says the TEMPLATE CHECKOUT ships `ownership.json`, which is true for every consumer. It does not say this project needs migrating, and it does not say migration can succeed: a `gate_self_reference` hit refuses in write mode, and a missing `backup_dir` is a hard error. Read as an imperative it produces a forced step that can dead-end.
+
+**Do not migrate silently. STOP and show the user first** — migration changes the ownership model of every file at once, and after it a file the ownership table does not name is project-owned *by definition*.
+
+#### 1c-i. BEFORE migrating: take your own census (works on every server version)
+
+```
+grep -n '"resolution"\|"reason"' .claude/template-manifest.json
+```
+
+This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
+
+Write the paths down. These are deliberate deviations recorded in the v2 manifest, and **v3 has no equivalent, so migration drops them.** This census costs nothing, needs no field, and is the ONLY thing that works on a server too old to report the loss. It is also the census that makes an empty report meaningful — see 1c-iv.
+
+#### 1c-ii. Dry run FIRST, always
+
+```
+template_migrate_manifest(project_path=".", dry_run=True, skill_version="<the marker at the top of THIS body>")
+```
+
+**Pass `skill_version` on EVERY `template_migrate_manifest` call.** Take it from the marker at the top of THIS body (step 1), never from a file on disk.
+
+**THE MIGRATION CANNOT BE RUN FROM A SESSION THAT PREDATES THE SKILL BODY, AND THERE ARE TWO RESTARTS, NOT ONE.** Restarting the **MCP server** fixes the server half — the process runs whatever it imported at spawn. Only a **fresh Claude session** fixes the skill half, and that one has no in-session remedy: a session running an older body has no instruction in it to identify itself, so it passes nothing and is refused. Two different restarts, and the second is the one people skip because the first felt like the fix. Measured on two consumer sessions at once — one executing a body three releases behind its own disk, another five.
+
+**Which servers enforce this — read the capability, never the version.** `requires_skill` (declared `">=v3.1.3"` in `templates/ownership.json` since v3.1.3) is enforced by a server whose `template_load_manifest` response lists **`skill_version_floor` in `capabilities`** — shipped in mcp-dev-servers 0.3.7. **0.3.5 and 0.3.6 do not enforce it**, whatever a version comparison suggests: a version is a proxy, the capability is the instrument. **Measured, not argued:** a consumer's running server reported `server_version: "0.3.5"` while listing `skill_version_floor` and refusing them — an editable install had imported a working tree between two tags, matching no released version. There the version gate was not lagging, it was *wrong*: it named a release with no guard while the guard was actively refusing. Capability agreed with behaviour; version did not. A version string is a claim about provenance; a capability list is a claim about the artifact; only the second survives an editable install off a moving checkout. An enforcing server **refuses a write-mode migration when `skill_version` is absent** — a body too old to carry this instruction sends nothing at all, so absence, not a low number, is what identifies a stale skill. **The refusal happens before any write** (verified on a throwaway clone: manifest untouched, no `project.md`, no backup directory, `git status` empty), so a refused session has nothing to clean up. `dry_run` is never refused, and on an enforcing server the preview **names the refusal a write would have produced**, so a stale session finds out before it writes anything.
+
+**Passing the argument to a non-enforcing server is safe — and silent, which is why the capability is the only honest signal.** Measured: the MCP layer accepts an undeclared argument and drops it without error, on 0.3.4 through 0.3.6. So a successful migration response looks *identical* whether the server checked your skill version or threw the field away; nothing in the result tells you which. Only `"skill_version_floor" in capabilities` does. v3.1.5 of this skill said *"servers from 0.3.5 refuse"* — a promise the wire silently agreed with by doing nothing. That sentence is retired.
+
+**Non-skill callers** — a harness calling the library in-process, a human driving the tool by hand — pass **`skill_version="not-a-skill"`**, exactly. Case-sensitive, no near-miss accepted: `not_a_skill`, `Not-A-Skill` and `notaskill` all land in the mismatch arm and **refuse**, by design — a mistyped sentinel that *bypassed* would be the guard quietly not existing. The response then carries `skill_version_bypassed` (presence-keyed: emitted only when the bypass was used) so a report shows it. The threat model is staleness, not deceit; a stale body cannot produce the sentinel by accident.
+
+Inspect before writing anything:
+
+- **`gate_self_reference`** — non-empty **REFUSES in write mode**. Fix it now, not mid-sync.
+- **`gate_unverified: true`** — a `**Gate**` is declared and this tool did not run it. Surface it; do not pass it through silently.
+- **`region_was_seed`** — **TRI-STATE**: `true` / `false` / **`null` = the comparison could not be made** (no region, or no base). `null` is not `false`.
+- **`migration_base`** — **never null.** When the held revision cannot be found it is the literal string `"unavailable"` plus a `migration_base_unavailable` warning. It is *truthy*, so `if not migration_base` silently proceeds as though the base resolved. **Test the warning, not falsiness.**
+- **`project_md_existing`** — an existing `.claude/rules/project.md` is NEVER overwritten (`project_md` comes back `null`).
+
+#### 1c-iii. Then migrate for real
+
+```
+template_migrate_manifest(project_path=".", backup_dir="<dir>", skill_version="<the marker at the top of THIS body>")
+```
+
+**`backup_dir` is REQUIRED unless `dry_run`** — the call is refused without it, and a step that omits it fails at the worst possible moment. It returns `backup: {claude_md, manifest}` as absolute `.pre-migration` paths.
+
+**That backup is the ONLY one covering this step's at-risk set, and step 2b does not help.** 2b backs up the *gitignored* tracked files; a consumer measured all three of their deviating paths as **non-gitignored**, so 2b covers exactly zero of them. Do not reason "2b already backed things up" here — it backed up a different set.
+
+**Migrate and apply are ONE UNIT.** Migrate does not touch `CLAUDE.md` at all — it copies it to the backup and writes only `.claude/rules/project.md` and the manifest. So between migrate and apply the repo is in a **half-state**: the manifest is v3 and already records the TEMPLATE hash for `CLAUDE.md`, while `CLAUDE.md` still holds the project's content. A consumer who stops there — context runs out, session ends — is left with a manifest that disagrees with the file on disk. Do not break between them.
+
+The order is forced, not stylistic: **migrate before apply** (migrate reads the v2 entries to compute `migration_base`), **apply before finalize** (finalize consumes the apply results). `compute_status` is *not* a precondition of migrate.
+
+#### 1c-iv. Read `dropped_resolutions` — FOUR tests, in this order
+
+There are four response shapes, and the key is absent from two of them. **Answer the questions in this order or you will answer the wrong one:**
+
+| # | Test | What it settles |
+|---|---|---|
+| 1 | `error` in the response | The call was REFUSED. Say nothing about versions or drops. |
+| 2 | `migrated: false` with a `reason` | Already v3. Nothing migrated, no fields. Not a loss report. |
+| 3 | `server_version` from the **load** response | The VERSION question — **use the version field, not key presence** |
+| 4 | key present **AND its value is a list** | The CONTENT question — then, and only then, its length |
+
+**Key presence is NOT a version oracle.** `in` answers a version question only when the key's absence has exactly one cause; here it has three (server predates 0.3.4, no migration ran, the call errored). And a `null` value passes `in` while failing truthiness, landing a consumer in "nothing was dropped" — confidently, from a null. Check the type.
+
+Then report:
+
+- **Non-empty list → DO NOT WARN ON THE LIST. JOIN IT AGAINST THE INCOMING CLASS FIRST.** This is the single most important line in the step, and two consumer sessions arrived at it independently against their own real manifests. A dropped `resolution` is a **loss only when the class replacing it is WEAKER than `keep-mine` was**:
+
+  | `manifest.files[path].ownership` in the RETURNED manifest | Verdict |
+  |---|---|
+  | `"template"` | **REAL.** The next apply overwrites. Re-apply or upstream. |
+  | `"once"` | **SAFE — and STRICTLY STRONGER than `keep-mine` was.** Apply returns `kept`, 0 bytes written. |
+  | path absent from `files{}` | **Untracked.** The server never writes it at all. |
+
+  **On 0.3.5+ the join is done for you:** each `dropped_resolutions` row is `{path, resolution, ownership}`, so read `row["ownership"]` directly — warn only on `"template"`; `"once"`, `"project"` and `null` need no warning. On 0.3.4 the row has no `ownership` key, so join against `manifest.files[path].ownership` as above. **Both paths yield the same verdict**; the row field is a convenience, not a different rule, and a row lacking the key tells you which server you are on.
+
+  **Why the asymmetry, and why the join is the discriminator rather than the count:** `keep-mine` meant *preserved at this sync*. `once` means *never overwritten again* — so for those paths the class change is an **upgrade**, and only the move to `template` is a downgrade. Everything you need is in the one response: the list, and `manifest.files[path].ownership` beside it. **Warning on the bare list produces false alarms on the first consumer who runs this** — one measured tree yields four dropped resolutions and *zero* real hazards; another yields three, of which two move to the stronger class. Four false alarms teach a consumer to skim the step, and then the one real case gets skimmed too.
+
+  For a `"template"` hit, say it precisely: **the file on disk is UNCHANGED** — only the manifest moved, to the template's hash. The deviation is still sitting in the file and is simply no longer protected. **Diff it against the template now, then upstream it or re-apply it after the apply overwrites it.** Without that sentence a consumer reads "dropped" and assumes the file already changed. And a `template` hit whose only deviation is inside the `PROJECT-CUSTOM` region is *still* not a loss — the region mechanism preserves that independently of class.
+- **Empty list, reconciled against your 1c-i census** → nothing was dropped. **An empty list on its own is unfalsifiable** — it looks identical whether the tool looked and found nothing or never looked. Compare it against the census; on a mismatch, report the census and refuse to call the migration clean.
+- **Absent on a server below 0.3.4** → say *"I cannot see whether any `keep-mine` records were dropped"*, **never** *"nothing was dropped"*. Records are still being dropped; this server cannot name them. Fall back to the 1c-i census, and offer upgrade-and-restart.
+
+**`dropped_resolutions` keys on the literal `resolution` and nothing else** (`template_sync_v3.py:1165`) — not `reason`, not `locallyModified`. The check sits *before* the class dispatch, which is why a path can appear in the list and then also be dropped as project-class. Three things follow, and the third is a real gap rather than a caveat:
+
+- A v2 manifest written by an older sync can carry **`reason`** on an entry instead. For entries that SURVIVE migration those keys are carried and reported in **`unknown_file_keys`** — read that list too.
+- For an entry **dropped** as project-class: **on 0.3.5+ its unknown keys are reported in `dropped_file_keys`**, which partitions with `unknown_file_keys` (an entry's keys land in exactly one of the two), and the values survive in the pre-migration manifest under `backup_dir`. **On 0.3.4 and below they are neither carried nor reported** — `dropped_entries` gives you the path and nothing else, and intent recorded in an unknown key on a dropped entry vanishes with no report anywhere. Same defect class as the one 0.3.4 fixed, in the branch nobody had looked at; closed in 0.3.5.
+- This is why the 1c-i census greps for **both** `resolution` and `reason`: it is taken from the v2 manifest before any of this, so it sees what no post-migration list can.
+
+#### 1c-v. Also report, because each is a change the consumer did not ask for
+
+- **`dropped_entries`** — project-class entries removed from tracking. One rehearsal silently stopped tracking `CLAUDE.local.md`; correct under v3, but say it.
+- **`redundant_project_file`** — byte-identical copies. **A SUGGESTION ONLY; nothing is ever deleted.**
+- **`unknown_keys` / `unknown_file_keys`** — preserved, not dropped, with ONE exception (v4.0.1, item 8): the `lastSynced`/`lastSyncedVersion`/`lastSyncedVersionOf` trio is dropped unconditionally and reported separately in `superseded_keys_dropped`, never in `unknown_keys`. `unknown_file_keys` is where a `reason` deviation appears on an entry that *survives*.
+- **`dropped_file_keys`** (0.3.5+) — the same annotations on entries the migration *drops*. Absent on 0.3.4: that is the version signal, not "none"; the 1c-i census is your only view of them there.
+- **`superseded_keys_dropped`** (v4.0.1) — the `lastSynced`/`lastSyncedVersion`/`lastSyncedVersionOf` keys migration actually removed, if the v2 manifest carried any. Report it when non-empty; these are gone for good, by design (item 8), not a loss to warn about.
+- **`region_left_in_place: true` and `region_bytes`** — **the region stays in `CLAUDE.md`; it is never copied into `project.md`.** `project.md` gets the v4.0.1 seed header ONLY (v4.0.1, item 14) — measured at a fixed byte count regardless of `hunk_count`, so a non-zero `hunk_count` does NOT mean the diff is in the file. The **out-of-region** hunks, when there are any, are written instead to `<backup_dir>/CLAUDE.md.out-of-region.diff` (`project_md_record` in the migrate response names the path, or is `null` when there were none, or on a `dry_run`) — **never into `project.md` itself**. This is the opposite reason from 0.3.5's: `project.md` has **no `paths:` key**, so it is loaded at **every session start**, same priority as `CLAUDE.md` — an unscoped rules file is delivered to EVERY session, not to nobody (measured with this repo's own `zz-load-probe.md`), which is exactly why a migration diff must not live there. Before 0.3.5 the tool's docstring claimed the region itself was written verbatim; 0.3.5 fixed the docstring. v4.0.1 corrects the delivery claim that justified the placement in the first place — see the "Delivery reality" paragraph in step 3.
+- **`region_bytes` counts the region BODY**, not the block: one measured file reports 2695 where the block including its marker lines is 2814. Two correct numbers with different boundaries — do not diff them and report a discrepancy.
+
+**A consumer cross-checking `region_bytes` against `bash "${CLAUDE_SKILL_DIR}/region.sh" --body <path>`'s own byte count may see them differ by exactly ±1, in either direction, content-dependent — not data loss, and never "one byte more" as a persistent direction to correct for.** Measured on two consumers: MM-Agent read `region_bytes` one byte ABOVE `--body`'s count (68,818 vs 68,817); panoscribe read the opposite (1693 vs `region.sh` reporting 1692). The sign flips with the file's own content, so there is nothing consistent to chase down — report the byte and move on.
+
+#### 1c-vi. Name what `once` will silently never deliver
+
+`once` protects a file from being clobbered — and by the same mechanism the file is **never re-diffed, so template-side ADDITIONS never arrive.** That is not a bug, but it is invisible, and the consumer has no path to noticing it.
+
+After migration, tell the user which **declared `PROJECT_CONTEXT.md` keys their file lacks**, because a `once` class means nothing will ever prompt them again. As of v3.1: `**Gate-checked branches**`, `**PO write surface**`, `**Post-edit build**`. Compare their file against the shipped template's key list and name the gaps.
+
+This is not hypothetical. One consumer traced their own earlier probe being *vacuous* to a missing `**Gate-checked branches**` — the hook path never iterated, the check could not fail, and nothing in any sync would ever have told them.
+
+**`key_audit.missing_declared_keys`** (v4.0.1, item 2; capability `missing_declared_keys`) collapses three sources into one actionable list: a required key truly absent, one held only under a deprecated spelling, and one whose value is still an unfilled `{{...}}` token. Report **one line per entry**, naming the `reason` and the `template_default`:
+
+```
+- Gate: absent (template default: `{{GATE_COMMAND}}`)
+- Gate: deprecated_spelling -- held as "Gate Command"; rename to "Gate"
+- Test: unfilled -- still reads "{{TEST_COMMAND}}"
+```
+
+An optional key that is simply absent does **not** appear here — it is `optional_absent` only (below, and step 8). Do not re-derive this list from `missing_required`/`placeholder_keys`/`deprecated_keys` yourself; the server has already applied the ownership rule that keeps the two lists disjoint.
+
+**Calling migrate on an already-v3 manifest is harmless.** It returns the no-op before loading ownership and writes nothing — but on a v4.1.0-or-later server, "harmless no-op" is no longer the last word: a v3 manifest is not idempotent through `template_migrate_manifest` any more, because the second hop below now exists to take it further. `template_migrate_manifest` on an already-v4 manifest, in turn, IS the idempotent no-op — that terminal state moved from v3 to v4.
+
+#### 1c-vii. The second hop: v3 to v4 (new in v4.1.0)
+
+**Read `manifest_migration.required` for this hop, never `migration_required` and never bare presence of `template_migrate_manifest` in `registered_tools`.** `migration_required` (step 1) answers the v2→v3 question ONLY, on every server version — it is silent about whether a v3 manifest needs THIS hop, and reading it as covering both is the exact ambiguity that produced a `false` sitting beside `template_verify`'s own `status_clean FAIL MIGRATION_REQUIRED` in one real call. `registered_tools` containing `template_migrate_manifest` is necessary but not sufficient: v4.0.x servers already registered that tool, for the v2→v3 hop alone, so its presence tells you the CALL exists, not that a v3→v4 hop is what it would perform. The field that actually answers "does THIS manifest need to move, and to what" is `manifest_migration` — `{"from": <n>, "to": <m>, "required": bool}`, read from `template_load_manifest`'s response, computed against the CURRENT template's manifest version: a v3 manifest against a v4-capable template reads `required: true, from: 3, to: 4`; a v4 manifest reads `required: false`. `migration_required` itself stays present for this one release with its meaning narrowed in its own docstring ("v2→v3 only"); it is removed in v4.2 — do not build new logic on it.
+
+**Follow the v3-window sentence in step 1 literally: sync everything else FIRST, migrate SECOND, and only then does `CLAUDE.md` apply under v4 — this is not a convenience ordering, and it has a reason.** In v4.1.0 (before this release), `migrate_v3_to_v4` RE-RENDERED every entry it did not write from whatever template the checkout CURRENTLY held, so an unwritten entry's stored hash silently followed the checkout instead of the file actually on disk, regardless of when you migrated relative to the other updates (§1.1's #17/#20). **v4.1.1 carries each unwritten entry's held hash forward unchanged instead** — the correct fix, and it also gives the dry-run preview its own tripwire: `baseline_invariant`, `{"ok": bool, "violations": [...]}`, computed over every entry the migration will NOT write, comparing the previewed hash against the currently stored one. **Read `baseline_invariant.ok` on the dry-run before running the real migration — it must read `true`.** A `false` (with a `violations` entry naming the path) means that file's stored baseline is already inconsistent with what a carry-forward migration would produce; migrating anyway preserves the inconsistency instead of surfacing it.
+
+**Already migrated under v4.1.0, before this fix? Repair, do not re-migrate — `template_migrate_manifest` on an already-v4 manifest is the idempotent no-op (1c-vi above) and will not undo the old bug for you.** Check `classes_and_hashes` for any `deletedAcknowledged` entry whose hash reads BLANKED (the old `""`-on-missing-template bug, #17 symptom (b)) and restore the correct hash by hand from `<backup_dir>/template-manifest.json.pre-migration` — the pre-migration copy `template_migrate_manifest` wrote before touching anything. Check every carried-forward entry against that same pre-migration manifest for a dropped `reason` key (#20's symptom) and re-add any that vanished, by hand; the migration cannot be re-run to fix this retroactively, it is a one-time transform already applied. **The once-class seed needs a SEPARATE, manual repoint regardless of when you migrated — this fix does not touch it, because it is `once`-class and no sync ever writes it:** check `.claude/rules/project.md`'s header for either of two drift arms — the pre-v4.0.2 wording (R-G's original target, step 8 below) and the newer wording that still names the retired region by its marker, `PROJECT-CUSTOM` (§2.1's new harm-keyed arm, step 8) — and hand-edit whichever is present. `classes_and_hashes` PASSes with a hand-restored annotation on a `once` entry — the repair does not trade one red for another (measured on three consumers, each of which had lost exactly one `reason` key on `PROJECT_CONTEXT.md`); round-trip the manifest through your serializer BEFORE editing so the hand-edit adds one key and reformats nothing.
+
+**Same discipline as the first hop: dry run FIRST, always, and STOP to show the user before writing anything.** `template_migrate_manifest(project_path=".", dry_run=True, skill_version="<the marker at the top of THIS body>")` on a v3 manifest now previews the v3→v4 hop instead of reporting a no-op. Same `skill_version` rule as 1c-ii: take it from the marker at the top of THIS body, never from a `grep` of the installed file.
+
+**The dry-run preview answers four questions, and (c) and (d) are both REFUSALS — say both, and why each exists:**
+
+- **(a) The region body.** Whatever is currently inside `CLAUDE.md`'s `PROJECT-CUSTOM` region is what will move, verbatim, into `.claude/project-instructions.md`'s body (below the seed header). An empty region previews an empty body; this is the ordinary case for a project that never used the region.
+- **(b) Agent `tools:` additions.** Removed in v5.0: a locally extended agent `tools:` line is no longer lifted into a grants file (grants no longer exist); step 2c handles the agent file.
+- **(c) REFUSAL — an out-of-region `CLAUDE.md` diff.** Any other diff against the template — content sitting OUTSIDE the region — is a refusal, with the diff shown, and nothing is written. **Resolve it by moving the text into the region BEFORE migrating** (spec §9.2): the region is the one place this migration KNOWS is project content, so staging text there is how you tell it what to move. The migration will not guess placement, and a refusal with the diff in hand is cheaper than a wrong guess.
+- **(d) REFUSAL — a pre-existing `.claude/project-instructions.md`.** If that path already exists, the migration refuses and names it, before writing anything. This is deliberate, not the once-class "keep the existing file" behaviour you would expect elsewhere: the migration is the thing that WRITES this file from the region body, and a once-class "leave it as is" here would strand the region body inside a `CLAUDE.md` that is about to lose it. Move or rename whatever is at that path first if you need to keep it, then re-run the dry run.
+
+**Then migrate for real**, same shape as the first hop: `template_migrate_manifest(project_path=".", backup_dir="<dir>", skill_version="<the marker at the top of THIS body>")`. `backup_dir` is REQUIRED here exactly as it is for the v2→v3 hop — the call is refused without it. **The migration report is written under `backup_dir`, not into the repo** (v4.0.1 item 14's rule, carried forward unchanged): this hop follows the same convention, not a new one.
+
+**What gets written, in order:** `.claude/project-instructions.md` (seed header + the region body from (a), verbatim), then `CLAUDE.md` (the template, byte-identical), then the manifest itself — `manifest_version: 4`, both new declaration keys, `requires_server` raised to `>=4.1.0`. **Migrate and apply are the same unit here too** (as for the v2→v3 hop) — do not stop between the writes above and the next `template_compute_status` call; a session that ends mid-way leaves the repo in a state nothing in this skill has a name for.
+
+**`.claude/rules/project.md`'s seed header still names the OLD region on any consumer who has not re-synced that once-class file** (R-G) — it is `once`-class, so the migration does not touch it, and `project_md_seed_current` (step 8) reports it INFO, not FAIL: an un-migrated consumer's seed header naming a region that no longer exists in the template is the EXPECTED reading after this release, not a defect to chase.
+
+**Restart the session after migrating, before trusting the new instructions** (spec §9, step 4) — same session-start-delivery rule as everywhere else in this file: `.claude/project-instructions.md` is read at session start, and a session that migrated mid-run is still executing on what it read before the migration wrote anything.
+
+### 2. Compute Status
+
+Call `template_compute_status(project_path=".")`.
+
+Show the summary to the user:
+```
+Sync Status: {variant} @ {template_commit} (last synced: {last_synced_commit})
+
+  Auto-update:  {summary.auto_update} files (template changed, project unchanged)
+  Conflicts:    {summary.conflict} files (both changed — needs review)
+  Up to date:   {summary.up_to_date} files
+  Project-only: {summary.project_custom} files
+  New files:    {len(new_template_files)} available
+  Deleted:      {summary.template_deleted} warnings
+```
+
+If everything is up-to-date and no new files, report "Already in sync" and finalize.
+
+**`local_diff_kind` — key the context-mode remedy on `insertion`, and ONLY `insertion`; `mixed` is NOT a signal.** An appended context-mode routing block reports `LOCAL_EDITED` + `insertion`, and for that specific case the honest remedy is *"move these lines into the PROJECT-CUSTOM region"*. **Do not extend that remedy to `mixed`.** All four measured consumers report `mixed` for entirely ordinary reasons — a populated PROJECT-CUSTOM region replacing the shipped placeholder is a removal plus an addition, plus whatever drift already existed outside the region — so a message keyed on `mixed` fires on every one of them and blames the context-mode plugin in four places where the plugin is not involved. If you cannot tell which measured kind produced a given diff, ask before naming a cause. When the template side is unchanged (`LOCAL_EDITED` only because of an out-of-region insertion), move the lines into the PROJECT-CUSTOM region, then `template_apply_file(source="template", backup_dir=<dir>)` restores the template hash with `region_preserved`.
+
+**`redundant_project_file` — offer deletion ONLY when the server can prove byte-identity from a hash it already holds.** A project file the server reports as duplicating shipped template content is a candidate for cleanup, but the proof has to come from the server's own held hash comparison, never from a visual/textual "looks the same" read. For a **diverged** copy (content that once matched but has since changed): report it **once**, naming which sections now duplicate template-owned content, and **never** offer deletion — the file is gitignored, so there is no diff, no history, and no undo if the wrong half is kept.
+
+**Model-bump surfacing:** tell the user BEFORE applying anything — "This bump changes the operating model — review the CHANGELOG's Downstream-migration notes in the template repo (`<templateRepo>`) first" — when ANY of these appear in the auto-update or conflict set. **This is a hard pause:** show the message and wait for the user's go before any write. With no user in the loop, stop after the report; do not proceed on your own reading of the notes. The triggers:
+
+- `CLAUDE.md`, `CLAUDE.local.md`, or `AGENT_TEAM.md` (an operating-model change can live in the MCP rules file, not just CLAUDE.md);
+- `.claude/settings.json` whose hook list differs from the project's (a hook added, removed, or re-matched IS the enforcement layer changing);
+- any `TEMPLATE_DELETED` file under `hooks/` — a deleted hook is always an enforcement change. (For the v5.0 migration, step 2c's single confirmation is that pause for its files.)
+
+### 2b. Back Up the GITIGNORED Tracked Files (MANDATORY, before any write)
+
+**Every path you hand to a `template_*` WRITE tool is Win32 (`G:\…`) or repo-relative — never an MSYS path (`/g/…`).** This session runs in Git Bash, where the project root reads as `/g/git/...`; passed straight through to a server WRITE call, that MSYS spelling is taken as a literal relative segment and the server writes a stray `G:\g\...` tree instead of touching the real project files. Convert with `cygpath -w` (or build the Win32 path directly) before every `template_apply_file` / `template_finalize_sync` / `template_migrate_manifest` call. (The server itself also rejects a leading `/<letter>/` on write — a later fix — but this step does not rely on that backstop.)
+
+**Every other file this sync touches is recoverable; these are not.** A wrong `template_apply_file` on a tracked file is a `git checkout --` away, and it shows up in the PR diff before anyone merges it. A file that is BOTH manifest-tracked AND gitignored has no history, no diff, and no undo — an erroneous overwrite is simply gone.
+
+`CLAUDE.local.md` is the file this describes for a project bootstrapped before v4.0.1: gitignored by the shipped `.gitignore`, tracked by the manifest, and deviating **by design** in any project that customised its MCP rules. The template no longer ships this file (retired v4.0.1) — a v4.0.1-or-later bootstrap has no file matching this description, and that is expected, not a defect. Back it up first and by name wherever one exists.
+
+Derive the set rather than assuming it is only that one — a project may gitignore more. **Use exactly this invocation; the "obvious" implementation of the previous wording backed up nothing and reported success on two different repos.**
+
+**Keep the script you build from this step ASCII-ONLY, or set `PYTHONIOENCODING=utf-8` before running it.** Windows Python's default stdout is cp1252: one non-ASCII character in a `print` — a set-intersection sign copied out of this page, an em dash in a status line — raises `UnicodeEncodeError` **before the copy runs**, and the step then reports nothing at all. A crash before the backup is precisely the failure this step exists to prevent. Measured on a consumer sync: U+2229 in a progress print, backup not written on the first attempt.
+
+```
+# Method 1 — one process, NUL-separated BYTES. `-z` is not optional.
+git check-ignore -z --stdin        # stdin: b"".join(p + b"\0" for p in paths); every hit is unrecoverable
+
+# Method 2 — one process per path, works everywhere, instant for a few dozen paths.
+git check-ignore -v -- <path>      # a hit prints `.gitignore:<line>:<pattern>\t<path>`
+```
+
+**Why `-z`, stated so it is not re-derived wrongly.** Written from Python in text mode on Windows, `"CLAUDE.local.md\n"` reaches git as `CLAUDE.local.md\r`. Without `-z`, `check-ignore --stdin` splits on `\n`, so it tests a path ending in `\r`, which matches no rule. It then exits **1 — meaning "none of these paths are ignored", which is indistinguishable from a genuine clean result — and prints nothing to stderr.** The same pipe typed in Git Bash works, because the shell writes bare `\n`; it fails specifically under the script-driven invocation this step actually uses. Measured:
+
+| written as | result |
+|---|---|
+| text mode, `'CLAUDE.local.md\n'` | rc=1, empty — **silently "nothing ignored"** |
+| bytes, `b'CLAUDE.local.md\n'` | rc=0, HIT |
+| bytes, `b'CLAUDE.local.md\r\n'` | rc=1, empty — the `\r` is the cause |
+| bytes, `-z`, `b'CLAUDE.local.md\0'` | rc=0, HIT |
+
+**The same `\r` hazard applies to how you OBTAIN the path list, one layer earlier than the table above** (v2.2.4, consumer feedback): write it with `sys.stdout.buffer`, or assert the list is CR-free before using it. **Method 2 is the MORE exposed of the two**, despite being presented as the works-everywhere alternative, because its path source is left to the implementer — Method 1 escapes only because it builds bytes inside Python (`b"".join(p + b"\0" for p in paths)`) and never round-trips through text mode. A consumer's `python3 -c 'print(...)' | mapfile -t` produced `CLAUDE.local.md\r` for all 36 paths, and `check-ignore -q` then returned 1 for every one of them. Their cross-check is what caught it. The guard, verbatim:
+
+```
+cr=$(printf '\r'); for p in "${PATHS[@]}"; do case "$p" in *"$cr") echo "FATAL: CR in path [$p]"; exit 1;; esac; done
+```
+
+The CR comes from `printf`, not from `$'\r'` quoting: the shipped git gates refuse `$'...'` in a script that also contains a git command (open-brain, v4.6.0). **Terminate EVERY path with NUL, the last one included** (Method 1 above): `b"\0".join(paths)` leaves the last path unterminated, and a bash `while IFS= read -r -d ''` loop over that list silently drops it. Both cross-check methods can then miss the same path and still "agree" (open-brain, v4.6.0).
+
+**Two assertions, both required before the result is trusted:**
+
+1. **Cross-check the methods.** Run both and, BEFORE comparing, assert each method RAN: exit code in {0,1} and a non-empty input list; a method that did not run is a hard stop naming the method — never an empty set (open-brain: Method 1 died on an MSYS `/tmp` path handed to python, returned 0 hits, and `both methods agree` printed on a crash). Only then assert they return the same set and print `both methods agree`. `git status --porcelain --ignored` (which lists `!! <path>`) is a third, independent confirmation if they disagree. Worked example: hand python `"$(cygpath -w "$DIR")"`, never `/tmp/...` or `/g/...`.
+
+   **Before that comparison, assert the control payload itself is non-empty:** `[ -s "$paths0" ] || { echo "control payload empty -- a method crashed before producing paths"; exit 1; }` — an empty payload is not a verdict, it is the method never having run. And when a method returns `rc=1` against what should be a non-empty hit set, **read stderr before believing "nothing ignored"**: a crashed method leaves empty stdin, and `check-ignore` returns `rc=1` for that case too — indistinguishable from a genuine clean result at the exit code alone, and it falls inside the "allowed" set `{0,1}` above, so this check does not catch it; only reading stderr does. **Pass paths via argv, never interpolate a Windows path into Python source** — a path like `C:\Users\...` spliced into a Python string literal reads its `\U` as a Unicode escape, not a path separator (the third instance of this defect class in this step, after the `\r`-in-`check-ignore` hazard above and the `/tmp` drive-relativity hazard below).
+2. **Assert non-empty when the manifest tracks `CLAUDE.local.md`** — a consumer bootstrapped before v4.0.1 has it tracked by the manifest and ignored by the shipped `.gitignore`, so an empty set there is impossible for THAT consumer and means the check failed, not that there is nothing to protect. On a v4.0.1-or-later bootstrap the manifest never tracks the file at all, so this assertion legitimately does not apply and an empty set is correct — condition the assertion on the manifest actually tracking the key, not on the variant. **This assertion is the one that does not depend on getting the invocation right**, which is why it exists: it catches the whole class, including the next variant of it. An empty set with `CLAUDE.local.md` in the manifest stops the sync; it does not proceed with `Backup: <dir> []`.
+
+**What each of those two can and cannot tell you (v2.2.5, and it matters when one of them fires).** The cross-check is what actually caught the `\r` defect above: one method disagreed with two others, and the disagreement *localised* the fault to path hygiene. The non-empty assertion is the opposite instrument — it would have fired on the same defect and told the consumer only that the set was empty, sending them hunting a manifest bug that did not exist. **It tells you SOMETHING is wrong, not WHAT.** Keep both: assertion 1 diagnoses, assertion 2 is the last line and survives the case assertion 1 cannot reach — both arms of the cross-check call `git check-ignore`, so they share an implementation and can be wrong *together*. Four syncs and assertion 2 has never fired; that is what an invariant is supposed to do, not evidence it is dead weight.
+
+**Prefer a NON-MUTATING control first: an existing known-ignored path and a known-not-ignored path, run through both methods — zero writes to `.gitignore`.** Most repos already have both shapes on disk: a build artifact or a `.venv` entry for the ignored side, any tracked source file for the not-ignored side. This exercises the identical cross-check with no risk to the file being modified in the first place, and it is the control to reach for whenever the repo already has both shapes. Fall back to plant-and-restore, below, only when it does not.
+
+**The fallback control, when no non-mutating pair exists on disk: plant and restore.** An untested last line is indistinguishable from an absent one, so before trusting the result, plant a temp path that is definitely gitignored — **append it with a LEADING newline, `printf '\n%s\n' "$CTRL" >> .gitignore`, never a bare `printf '%s\n' "$CTRL" >> .gitignore`** — and a temp path that is definitely NOT, run the same derivation over both, and assert the ignored one comes back and the plain one does not. After restoring `.gitignore`, **assert the last pre-existing rule is byte-unchanged** (`tail -1` or a diff, before vs. after).
+
+**Why the leading newline, stated so it is not re-derived wrongly (panoscribe).** A `.gitignore` with no trailing newline — common, and not itself a defect; editors that trim a final newline on save make it routine — turns a bare `printf '%s\n' "$CTRL" >> .gitignore` into a CONCATENATION onto the LAST REAL RULE (measured: `!tests/fixtures/e2e/*.wavzz-control-…`), corrupting it for the duration of the check. The control then reports "planted path not ignored" — which reads as a broken derivation, the REASSURING direction for this specific check — while silently mangling a real rule the whole time it runs. A leading newline on the append is unconditionally safe whether or not the file already ends in one, so there is no cost to always writing it that way.
+
+**Both arms are required**: a positive-only control passes just as happily against a derivation that returns *every* path, which is a live failure mode here (a superset fallback is explicitly allowed further down this step), not a hypothetical one. Remove the two temp paths afterwards, and confirm the pre-existing last line is intact before moving on. One temp file each, deterministic, and it converts "this assertion has never fired" into "this assertion still works".
+
+**Back up a SECOND set as well: `new_template_files` INTERSECT exists-on-disk (v2.2.5).** The set above is manifest-scoped, and invariant I1's data-loss class is defined by *not* being in the manifest — so the first set structurally cannot cover it, and a gitignored member of it has no history, no diff and no undo. Adding it here is the only mechanism on the table that reaches that case.
+
+> **Do NOT reorder this step to make that work.** `new_template_files` is already in hand: this step runs AFTER step 2 (Compute Status), despite what its label suggests — "2b" reads as belonging to step 2's *inputs* when it is sequenced after step 2's *output*. Moving a step whose entire contract is *before any write* is exactly how the next data-loss bug gets introduced, and here it would buy nothing.
+
+**ADOPTION INTO AN EXISTING REPOSITORY is the worst case, and it is not a corner (corrected in v2.2.6 — the previous wording named `bootstrap`, which is the one population NOT exposed).** Adoption is a hand-written or minimal manifest pointed at a tree that is already full of pre-existing files: **every one of them is simultaneously present-on-disk and absent-from-manifest** — the whole destructive intersection at once, on the path where the manifest-scoped backup protects nothing whatsoever. It runs `/cct:sync-template`, so this step executes, and it is very likely where the 156-line project gate in invariant I1 was actually lost: an existing repo with content, not a fresh tree. The second set above is the only thing standing between adoption and the work already in the tree.
+
+> **Why the old wording had to go, stated so it is not re-imported.** It said *"a fresh bootstrap has an empty manifest, so every hand-written file is simultaneously present-on-disk and absent-from-manifest"*. Both halves are false, verified on **both** bootstrap paths: `setup-project.sh` generates the manifest itself and writes a populated `files{}` entry per copied file, and `setup-project.ps1` mirrors it (`templateHash` / `templateRawHash`). So (1) bootstrap does not produce an empty manifest — tree and manifest are consistent the moment it finishes, on Windows as well as POSIX; and (2) bootstrap does not run this skill at all, it is a separate script, so this step never executes on that path. That holds for a toolkit that is a git checkout. A toolkit extracted without `.git` (a ZIP download) leaves a project that LOOKS complete — 30 of 31 files — but has no `.claude/template-manifest.json` and cannot sync: `setup-project.ps1` terminates at its unguarded `git rev-parse` (`:861`, under `$ErrorActionPreference = "Stop"`) before the manifest is written, which is the adoption worst case above produced by the bootstrap itself; `setup-project.sh` is unaffected. Recorded as a v3.1 defect (open-brain). A reader reasoned *"bootstrap means `setup-project.sh`, which I am not running, therefore this paragraph is not about me"* — **and they were right. The warning named the one population that is not exposed**, which is how it got dismissed by exactly the people who need it. Same guard, same second backup set, correct audience.
+
+**`new_template_files` being empty is STRUCTURAL for a mature repo, not a sampling accident** — it means *absent from the MANIFEST*, and a repo that has synced before has every template file tracked. It is non-empty in exactly two situations: the template ADDS a file, or the manifest does not yet describe the tree (adoption, above). Four consecutive consumer syncs reported it empty, so **an empty second set is the expected reading, not evidence that this step ran.** Say which it was in the report. When `new_template_files` is non-empty, set (b) is reported as `N new, 0 on disk` (or `N new, M on disk`) and never collapses to the empty-list wording.
+
+**Back up a THIRD set: everything ON DISK in every directory a destructive operation TOUCHES (v2.4.0, item A3).**
+
+Concretely: for every `TEMPLATE_DELETED` path, back up **every file in that path's directory that exists on disk** — not just the deleted path, and **not only the manifest-tracked ones**. Deletion is the only irreversible-by-design operation in this skill, and a region-bearing agent file is in **neither** of the two sets above: it is not gitignored-and-tracked, and it is not a new template file. Git recovers a tracked one, so that alone is not catastrophic — but it also changes the step-6 prompt qualitatively: *"safe to delete (backed up at `<path>`)"* is a materially different question from *"safe to delete"*.
+
+> **⚠ SCOPE THIS BY WHAT IS ON DISK IN THE TOUCHED DIRECTORY, NOT BY MANIFEST MEMBERSHIP** — and the reason reads as over-caution until you know what it protects.
+>
+> A consumer has `.claude/agents/game-tester.md`: **project-owned, not manifest-tracked** (ten agent files tracked, that one not). So it is **not `TEMPLATE_DELETED`, not `new_template_files`, and not covered by this step's manifest-scoped sets on any path.** A consolidation that rewrites `.claude/agents/` wholesale meets it **with no backup anywhere.** That is invariant I1's class one directory over.
+>
+> Git settles what that file actually is: hand-authored through its own PR, extended in a second, still in use three months later, `tools:` listing 18 project-specific MCP tools that exist only in that repo's own harness, and a description encoding a domain policy of theirs. **Toolkit files matching `*game-tester*` across all branches and all history: zero.**
+>
+> **Every other file in that `.claude/agents/` can be restored from the template. That one exists only there.**
+>
+> **Manifest membership tracks TEMPLATE PROVENANCE, not importance** — and a consolidation naturally runs on the opposite intuition, that the untracked file is the leftover. It is the inverse: **the untracked file is the only one nobody can regenerate.** Scoping by what is on disk in the touched directory is what makes provenance stop deciding survival.
+
+**Consumers customise in two styles, and only one is visible to a manifest-scoped guard.** *Editing* a tracked file surfaces as `CONFLICT`, is covered by the manifest-scoped backup, and is recoverable from git besides. *Adding* an untracked file is invisible to classification **by construction**. Editing is safe because the manifest knows the path; adding is unsafe because nothing does.
+
+**A census of who currently holds orphans measures which style is popular, not how bad the failure is** — and the failure is unrecoverable file loss, no backup on any path, no prompt, in a directory a consolidation rewrites wholesale. A second consumer measured **zero** orphans (25 files on disk across `.claude/agents/`, `.claude/rules/` and `hooks/`, all 25 manifest-tracked, both directions clean across the whole 34-entry manifest). **Do not read that as "one of two, therefore marginal."** On a repo that only ever edits tracked files the manifest is bidirectionally consistent and *is* a trustworthy authority — nine syncs with no drift in either direction. **That is a property of that repo, not of manifests**, and it is not the case this set is written for. On such a repo the guard copies nothing extra and costs nothing, which is what a clean repo should look like.
+
+Copy each hit from ALL THREE sets to a `template-sync-backup-<timestamp>/` directory under the temp root, preserving relative paths, and **report the ABSOLUTE, RESOLVED path** so the user can find it without asking. Do not delete it at the end of the sync — step 5's post-apply guard reads it.
+
+> **⚠ `/tmp` IS DRIVE-RELATIVE ON WINDOWS, AND THIS STEP RUNS FROM PYTHON.** `${TMPDIR:-/tmp}` is a *shell* idiom; one layer over, in Python with `TMPDIR` unset, `os.path.abspath('/tmp/template-sync-backup-…')` resolves against the **current drive** and yields `G:\tmp\…`, which is not MSYS `/tmp`. **The copy succeeds — only the reported path is wrong**, which is the worst shape it could take: a consumer ran their own `diff` against the path they were given and it failed.
+>
+> This step's entire contract is *"name the backup directory so the user can find it without asking"*, on the one step whose job is protecting **unrecoverable** files. A user told `/tmp/...`, who looks there and finds nothing, concludes **the backup did not happen**.
+>
+> **So: derive the temp root explicitly, and print the resolved absolute path.**
+>
+> ```python
+> import os, tempfile
+> root = os.environ.get("TMPDIR") or tempfile.gettempdir()   # never a bare "/tmp"
+> backup = os.path.realpath(os.path.join(root, f"template-sync-backup-{stamp}"))
+> ```
+>
+> `os.path.realpath`, not `abspath` — it resolves symlinks and the `/tmp` → real-directory mapping as well as making the path absolute. Print `backup` verbatim in the report; do **not** re-print the `${TMPDIR:-/tmp}` expression you wrote in the source.
+>
+> **Same class as the `\r`-in-`check-ignore` defect above and the `which`-resolved `bash -n` in step 4: a shell idiom means something different one layer over.** All three fail without an error, and all three are caught by printing the thing that was actually used rather than the expression that produced it.
+
+> **Report the third set separately from the first two**, and name the directories it was derived from. A count folded into the others hides whether it ran at all — and unlike `new_template_files`, an empty third set is *not* the expected reading: it means no `TEMPLATE_DELETED` path had a directory, which on a sync that deletes anything is a derivation failure, not a clean result.
+
+**Fast path:** if all three sets are empty (and `TEMPLATE_DELETED` is empty, so the third is legitimately empty), say so in the report and move on.
+
+**If Bash commands starting with `git` are BLOCKED in this project, both methods above are unexecutable** (pre-v2.1 configs shipped a `block-bash-vcs.sh`; this toolkit removed it in v2.1, so this reaches only consumers still on such a config). The step anticipates a false clean, not a hard block. Two git-free routes, in preference order: use the server's `template_list_gitignored` when the installed `template-sync-tools` has it — the real fix, and the same one this step already names; otherwise parse `.gitignore` yourself and, where that is ambiguous, **back up the manifest's whole path list as a superset**. A superset backup is cheap and always correct — over-copying costs disk, under-copying costs the file. What is NOT acceptable is skipping 2b because the check would not run: that is a 127 being read as a verdict.
+
+> The server is the only layer that can see both facts at once (it holds the manifest and can read `.gitignore`), so a server-side refusal is the real fix and is filed upstream. This step is the client-side guard until it lands.
+
+### 2c. v5.0 migration (once: the manifest's `template_version` is below v5.0.0)
+
+This sync moves the project's agents and hooks into the `cct` plugin. You are running it from the plugin (`/cct:sync-template`), so the plugin is loaded in this session. Items 1-5 (listing, review, the ONE confirmation) run after step 2b's backup and before any write. Item 6's `git rm` of the agent files may run at once; the `git rm` of the `hooks/` files happens in step 6 under its Ordering rule (keyed on the settings write plus step 6b's re-grep against the new `settings.json`), because the project's live v4 settings still register those hooks and removing them first makes every tool call fail closed mid-sync.
+
+0. **Precondition, before the first write:** the plugin being loaded does not guarantee this session's marker exists (a nested `claude` that inherited the session id may have deleted it). Run `s="$CLAUDE_CODE_SESSION_ID"; case $s in ''|*[!A-Za-z0-9-]*) s= ;; esac; [ -n "$s" ] && [ -f "${TMPDIR:-/tmp}/cct-$(id -u)/$s" ] && echo marker-present || echo marker-missing` (the same sanitising the guard uses). On `marker-missing`, STOP and tell the user to restart the session: once the sync commit lands, the guard would refuse every further tool call in this session.
+1. Collect every file the status reports as `TEMPLATE_DELETED` under `.claude/agents/` and `hooks/`. `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh` are never in that list; they stay.
+2. For each agent file in the list, show what deleting it would lose. Take the commit from the status response's `last_synced_commit` (= the manifest's `template_commit`; the status response's own `template_commit` is the checkout HEAD, where the agent is already deleted). Write the template blob to a temp file: `git -C <templateRepo> show <last_synced_commit>:templates/<variant>/.claude/agents/<name>.md > <template-tmp>`; a non-zero rc is a hard STOP. Then `git diff --no-index --ignore-cr-at-eol <template-tmp> <on-disk>` (TEMPLATE FIRST, so `+` lines are what the deletion would lose). rc 0 = nothing lost; rc 1 with output = show it; any other rc, or rc 1 with no output, is a hard STOP. For BOM detection, diff a copy of each file with a leading EF BB BF stripped; if only the originals differ, say "BOM-only" rather than showing a diff. This one view covers the `PROJECT-CUSTOM` region and any hand edit outside it. Ask the user, once for all of them: keep each file that differs as the project's own agent (acknowledged-kept; it then stays a project agent beside `cct:<name>`), or delete it. A kept agent still carries a frontmatter `hooks:` block wiring `hooks/gate-before-merge.sh` / `hooks/enforce-agent-contract.sh` fail-closed, and 2c deletes those scripts: remove that `hooks:` block from every kept agent (v5 registers those hooks plugin-wide) and show the edit in the same confirmation.
+3. (Folded into item 2: the diff view replaces the former sha256 comparison.)
+4. If `.claude/agent-grants.json` exists and grants anything, print it. Grants no longer exist (removed in v5.0): the user turns them into the project's own agent files (for example an `Explore` with the extra tools). Ask whether to keep the file for that hand-edit or delete it.
+5. Show the whole deletion list and ask for ONE confirmation. It is an enforcement change: after the sync commit, every hook comes from the plugin, and the guard in `.claude/settings.json` refuses all tools in any session without the plugin. This step replaces the per-file pause of step 6 and the per-agent sweep of step 6d for these files.
+6. Apply: `git rm` the confirmed agent files at any point; `.claude/settings.json` arrives through the normal template merge (hook registrations removed; guard, `Bash(cct-gate*)` and `enabledPlugins` added) in step 3 (it is template class: if it arrives as a CONFLICT, resolve it in step 4), and `git rm` the confirmed `hooks/` files in step 6 under its Ordering rule. Pass every acknowledged-kept agent to `template_finalize_sync(acknowledged_deleted=[...])`.
+7. Tell the user: restart the session after the sync commit. On every other machine that has this project, the plugin must be installed before the next session there, or the guard refuses with its install message (intended).
+
+### Apply-time invariants — these OUTRANK the step numbering (v2.2.5)
+
+The steps below are numbered for reading order, not for precedence. Three rules apply to **every** write in steps 3, 4, 5 and 6b, whichever list the path arrived in. All three exist because the numbering was followed literally and destroyed work, or hid it.
+
+Two general rules govern how they, and every guard in this file, are written. Neither is decoration — each was earned by a specific failure in this release:
+
+> **A guard must be keyed on the DECISION that was made, not on the list the file arrived in.** A list describes *provenance*; a guard enforces *intent*. Enforcing intent off a provenance list is what miscategorises the legitimate case, and the fix for that false positive is always to weaken the guard.
+
+> **A guard that cannot be observed firing is indistinguishable from one that was deleted — so every guard against an invisible failure ships with a CONTROL that makes it visible.** A comment defends a guard against a reader; it does not defend it against a refactor, a merge, or a tidy-up six months out. A control converts *"this looks redundant"* into *"deleting this turns something red"*. Verify each control **by deleting its guard**: if the control still passes, it is decorative and tests the surrounding machinery instead. And a control SET needs both arms — positives alone cannot distinguish a working guard from one that fires on everything.
+
+**I1 — a file that EXISTS in the project is never written from the template without an explicit conflict resolution, whatever list it appeared in.** `new_template_files` means *absent from the MANIFEST*, not *absent from the PROJECT*: `template_compute_status` decides that list by manifest membership alone; the disk is reported only as the separate `present_on_disk` field on each `new_template_files_detail` entry. A path that is present on disk, untracked in the manifest, and also shipped by the template therefore appears in `new_template_files` while step 6b rule 4 registers it the register-or-apply way (v4.0.1: the server refuses `source="skip"` for every ownership class, so the path is then resolved by the user — keep mine registers via `finalize_sync(new_files=[...])`, adopt template or merge needs `overwrite_existing: true` — see step 6b's own text). Step 5 runs first, so following the numbering lets the destructive reading win. It has: a consumer lost a 156-line project-specific gate this way, and **step 2b cannot cover it**, because 2b backs up *manifest-tracked* paths and this file's defining property is that it is not one. The reporter recovered only because the file happened to be git-tracked; a gitignored one would simply be gone. The user cannot save themselves either — they are asked "add this new file?" about a file that already exists with their content in it, and "yes" is the reasonable answer to the question as posed.
+
+**I2 — `.claude/settings.json` is written only after every script it references exists on disk**, regardless of which step introduced those scripts. **State this as a PRECONDITION, not as an ordering rule, and check it where the write happens:** immediately before writing `settings.json`, verify every `hooks/` path it references exists and is non-empty; refuse the write otherwise. When this runs before the settings write, the paths to verify are those referenced by the INCOMING (template) `settings.json` (`<templateRepo>/templates/<variant>/.claude/settings.json`), not the on-disk one. An ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose — while a precondition checked at the point of the write does not. Step 3's order (libs → hooks → agents → rules → settings.json → everything else) is the same order for the conflict resolutions in step 4 and the new files in step 5 — and new files arrive *later in the numbering* than the settings.json write, which is the trap: on one reported sync **9 of 11 new files were hooks/libs that the auto-updated `settings.json` wires**, so the literal step order would have installed a `settings.json` naming nine scripts that did not yet exist (every matching tool call exits 127 and fails closed). Adopt new libs and hooks BEFORE writing `settings.json`, then agents, then `settings.json`, then docs — regardless of step number.
+
+**I3 — when the `TEMPLATE_DELETED` set is NON-EMPTY, no write in steps 3, 4, 5 or 6b happens until the step-6d BASELINE sweep has been captured for every deleted agent name.** 6d reports a **delta** (`5 -> 0`), and a delta needs a *before*. There is only one moment a before can be taken: while the tree still holds the references the sync is about to rewrite.
+
+> **Why this is an invariant and not a new step, nor a two-phase 6d.**
+>
+> - **A two-phase 6d cannot work.** A reader reaches 6d only *after* step 3, so a "before" phase written inside 6d executes after the change it is meant to precede. **You cannot baseline from a step that runs later than the thing it baselines.**
+> - **A new step rots**, in I2's own words: *"an ordering rule silently degrades the next time a step is inserted or renumbered — which is precisely how this bug arose."* 6d is already a victim of exactly that renumbering.
+>
+> So it is **checked at the point of the first write, like I2**, not asserted as an ordering rule: before the first write of the sync, if `TEMPLATE_DELETED` contains an agent file, refuse until the baseline exists. It is **gated on a non-empty `TEMPLATE_DELETED`**, so it costs an ordinary sync nothing at all. Agent files handled by step 2c (the v5.0 migration) are exempt: its single confirmation replaces the 6d sweep for them.
+
+### 3. Auto-Update Files
+
+**`CLAUDE.md` under manifest v4 has no keep-mine route at all — see step 4 for the CONFLICT case.** When it shows up here as a clean `AUTO_UPDATE`, apply it exactly like any other template-class file: `template_apply_file(source="template")`. There is no region left to preserve and no splice to compose; the whole file is template-owned. Same session-start-delivery rule as `.claude/project-instructions.md` (step 5): the new content is only **picked up at the next session start**, not the moment it is written.
+
+**Same path rule as step 2b: every `file_path` passed to `template_apply_file` here is Win32 or repo-relative, never the MSYS `/g/…` spelling this shell shows you.**
+
+> **⚠ NO HOOK-FILE WRITES WHILE A LIVE RUN IS IN FLIGHT (v3.0.4, MM-Agent).** `template_apply_file`'s write is an atomic rename onto the target path. `gate-before-merge.sh` is registered on the broad `Bash|PowerShell` matcher, so a process that fires that matcher on a loop — a polling game, a watch script, any long-running dev loop — keeps the file lock-held on nearly every call, and the rename onto it fails `WinError 5` (access denied) mid-sync. Measured live: three consecutive `hooks/gate-before-merge.sh` writes failed this way while the other hook writes in the same sync landed fine. **The discriminating fact: only the hook wired to the broad `Bash|PowerShell` matcher is lock-held near-continuously — git-verb-only hooks write fine mid-run — so a consumer seeing four writes succeed and one fail may read the failure as transient. It is not transient; it tracks which matcher the failing hook is wired to.** **Before this step, check for anything issuing Bash/PowerShell calls on a loop and pause or finish it before writing `hooks/`.** The partial state left behind is inert only if the interrupted run issued no git verbs during the window it was running unprotected — say which in the report; do not assume it and move on. Same family as the pre-sync verification section's "verification → restart → sync → live re-run" ordering below: a live process and a sync touching the same enforcement layer do not interleave safely.
+
+For each file with status `AUTO_UPDATE`:
+
+Call `template_apply_file(project_path=".", file_path=F, source="template")`.
+
+**Apply in this order — it is not cosmetic.** `settings.json` takes effect in memory the moment it is written (hooks hot-reload), so writing it before the scripts it names leaves the new matchers pointing at the old scripts: a consumer that applied the v2 `settings.json` first got the v2 `Bash|PowerShell` matcher running the v1 `gate-before-merge.sh` on *every* Bash call and was fail-closed on `ls` for the rest of the session.
+
+1. `hooks/lib/**` — sourced libs first; a script whose lib is missing defines no helpers.
+2. `hooks/*.sh` — the scripts themselves.
+3. `.claude/agents/*` — agent frontmatter `hooks:` can reference the scripts.
+4. `.claude/rules/*`
+5. `.claude/settings.json` — last of the enforcement wiring, so every script it names already exists in its new form.
+6. everything else (`CLAUDE.md`, `AGENT_TEAM.md`, docs, …).
+
+> **Delivery reality for `.claude/rules/*.md`, corrected (v4.0.1, item 14 — measured with this repo's own `zz-load-probe.md`), because it changes what advice this skill may give.** A **scoped** rules file (one carrying a `paths:` frontmatter key) is delivered to a session **only** when a tool call touches a file its `paths:` key matches; it is **never** present at session or subagent start. An **unscoped** rules file — **no `paths:` key at all** — is the opposite: it loads at **EVERY session start**, at the same priority as `CLAUDE.md`. The earlier claim here — "no `paths:` key is delivered to nobody" — was wrong; it drove the v3.1 decision to keep always-on content in `CLAUDE.md`'s PROJECT-CUSTOM region rather than `project.md`. That decision stays the toolkit's convention under v4.0.1, but for the DIFFERENT reason a rule written in both places exists twice and drifts, never because an unscoped `.claude/rules/*.md` file fails to deliver — it does not. `project.md` (the `once`-class file introduced in step 1b, re-seeded under v4.0.1 with a header that says exactly this) exists for `paths:`-scoped PROJECT CONVENTIONS by convention, not because the delivery mechanism forces it; steady state is to KEEP the file and replace its body, never delete it (a deleted `once`-class file returns via `new_template_files` on the next sync — see step 5).
+
+The same order applies to the CONFLICT resolutions in step 4 and the new files in step 5: never write `settings.json` before the hooks it wires. If `hooks/` is missing or partial at the project root, run step 6b's restore BEFORE writing `.claude/settings.json` — the order above is useless if the scripts it protects were never materialised.
+
+**Smoke test immediately after the `.claude/settings.json` write — probe BOTH WAYS, from a script file.** A harmless `Bash(true)` was the old test here; it proves only that the session is not fail-CLOSED, and a completely inert enforcement layer passes it too. That is the failure mode that actually follows a `settings.json` write, and pre-v2.2.0 on a node-less box this probe would have printed all-zeros and named the silent-gate bug in one line.
+
+**Any hook probe must live in a script file run via `bash <path>`, never inline — and its PAYLOAD STRINGS must live in separate DATA FILES, never typed or assembled inside that script (reopened for v4.1.1: never shipped in v4.1.0, though its PR claimed it).** The gates scan the whole command STRING by design, not just what a git subcommand would actually do — an inline compound command that merely *mentions* `git push origin main` (in a comment, an echo, a string literal) trips the gate it is trying to test. Since v4.0.3 (item #11, the wrapper gap this release closes) that scan also reads the LEADING RUN of any script file executed via `bash <path>`, looking past wrapper tokens for `bash`/`sh`/`source`/`.` — so a probe script that builds its own test payload inline (`for CMD in "git push origin main" ...`) puts the literal string `git push origin main` inside the very file the gate is asked to run, and the gate now reads that script's own body while deciding whether to let `bash <path>` through: the probe becomes a self-test the gate blocks before it ever executes. The result is then uninterpretable: a block does not tell you whether the gate works or whether your own probe was the violation it caught.
+
+Put each payload JSON string in its own file, written with the **file tool**, under the session scratchpad (`${TMPDIR:-/tmp}` only as the fallback, see the scratch-file rule below) — never inside the repo, where the gate could read it as tracked content: `"${TMPDIR:-/tmp}/probe-<repo>-push-main.json"`, `"${TMPDIR:-/tmp}/probe-<repo>-ls.json"`, `"${TMPDIR:-/tmp}/probe-<repo>-true.json"` (`<repo>` = the repository's directory name). The probe SCRIPT then only `cat`s these files into the hook's stdin and carries no git verb anywhere in its own text. **Assembling the verb from string fragments (`"git" " push" " origin" " main"` concatenated at runtime) is evasion, not a workaround, and it is not what this step teaches** — it does not test the gate, it defeats it, and a probe built that way tells you nothing about whether the real hook still catches the real case.
+
+**A heredoc body is part of the command string too** — `bash <<'EOF' … EOF` is not an escape from the previous paragraph, it is the same string with a different delimiter. Three sessions in two days hit exactly this. Write probe scripts with the **file tool** and run `bash <path>` — and payloads live in their own data files outside the repo, never typed or heredoc'd into the probe script itself; the script carries no gate verb.
+
+**And check every payload PARSES (`jq .`) before believing a 2.** An unescaped `"` in a JSON payload makes the hook fail closed — at exit 2, which reads as "gated" and is not. A malformed probe and a working gate are indistinguishable by exit code alone.
+
+Write the three DATA FILES first, with the **file tool** (never Bash, never inline in the probe script), each holding one JSON payload with `cwd` set to your repo (forward slashes, see the note below):
+
+- `"${TMPDIR:-/tmp}/probe-<repo>-push-main.json"` — `{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"<repo>"}`
+- `"${TMPDIR:-/tmp}/probe-<repo>-ls.json"` — `{"tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"<repo>"}`
+- `"${TMPDIR:-/tmp}/probe-<repo>-true.json"` — `{"tool_name":"Bash","tool_input":{"command":"true"},"cwd":"<repo>"}`
+
+**Scratch-file rule, for these probe files and every other scratch file in this skill:** write them under the session's scratchpad directory, and use `$TMPDIR` / `${TMPDIR:-/tmp}` (read either spelling in the paths of this skill as that directory) only as a fallback when no scratchpad exists. `${TMPDIR:-/tmp}` is shared by every session on the machine (on Git Bash `TMPDIR` is often unset, so it is plain `/tmp`), and two syncs running at once overwrite each other's payloads (panoscribe, open-brain). Name the files per repo either way.
+
+Then write the probe SCRIPT — which never types a git verb, only reads the files above — to `"${TMPDIR:-/tmp}/gate-probe.sh"` (or somewhere under `.claude/`) and run it with `bash "$TMPDIR/gate-probe.sh"`. **Do not** write either the script or the data files to a repo-relative path like `probe.sh` — `enforce-delegation.sh` denies main-thread writes outside the PO write surface, so the probe never gets created, and a repo-relative data file is itself tracked content the gate could read.
+
+**Probe a hook only from inside a script file whose leading run is clean — never `bash hooks/<x>.sh < payload.json` typed in the session.** `gate-before-merge.sh` reads the invoked script's body (the v4.1.1 prefix-gap close), and a hook's own comments name `checkout main` and `push`; typed directly, the probe is refused for a command that contains neither (measured twice: the toolkit on `enforce-delegation.sh`, MM-Agent on `no-push-main.sh`). A scratch script that redirects the payload file is not followed into the hook it invokes. (v4.1.2 strips whole-line `#` comments from scanned bodies, which closes this for comment-only mentions; a hook that also carries the verb on a code line is still read — correctly.)
+
+```sh
+H="${CLAUDE_PROJECT_DIR:-.}/hooks"
+T="${TMPDIR:-/tmp}"
+REPO_DIR=$(pwd -W 2>/dev/null || pwd)
+REPO_NAME=$(basename "$REPO_DIR")
+
+# a. every shipped script must PARSE. One apostrophe inside a `node -e '…'`
+#    body ends the shell string early and silently disables that whole hook.
+for f in "$H"/*.sh "$H"/lib/*.sh; do
+  bash -n "$f" 2>/dev/null || echo "SYNTAX FAIL $f"
+done
+
+# b. no-push-main, the one gate that needs no config and touches nothing.
+# PAYLOAD is a DATA FILE written BEFORE this script ran (above) -- this
+# script only cats it and carries no command string of its own the gate
+# would recognise. HOOK_NAME and PAYLOAD are named explicitly on each
+# iteration below, never read as shell positional parameters -- a
+# positional reference here would also be the token the Skill tool
+# substitutes when this skill is invoked with an argument, corrupting
+# the probe.
+probe_hook() {
+  grep -qF "\"cwd\":\"$REPO_DIR\"" "$PAYLOAD" || { echo "$HOOK_NAME [$PAYLOAD] NOT RUN: its cwd is not $REPO_DIR"; return; }
+  cat "$PAYLOAD" | bash "$H/$HOOK_NAME.sh" >/dev/null 2>&1
+  echo "$HOOK_NAME [$PAYLOAD] exit=$?"
+}
+HOOK_NAME="no-push-main"
+for PAYLOAD in "$T/probe-$REPO_NAME-push-main.json" "$T/probe-$REPO_NAME-ls.json" "$T/probe-$REPO_NAME-true.json"; do
+  probe_hook
+done
+```
+
+Expect **2**, **0**, **0**. That is the whole routine check: deterministic on every install, no configuration required, and it reads nothing but `PROJECT_CONTEXT.md` and `git branch --show-current`.
+
+**Why only this gate is in the routine probe.** The other two cannot be exercised without doing real work, and their answers are not deterministic:
+
+| gate | its command | returns 2 when |
+|---|---|---|
+| `no-push-main` | `git push origin main` | always, on a protected branch — needs no config |
+| `pre-commit-test` | `git commit -m x` | **only if the suite FAILS.** It *runs* `**Test**`, or `run-gate.sh`, to find out |
+| `gate-before-merge` | `git merge feature/x` | only on a protected branch with no fresh artifact |
+
+Measured, and neither case is a corner case: in a `**Test**`-configured repo with a green suite the commit row exits **0**; in a Gate-only repo `pre-commit-test` shells into `run-gate.sh`, which on green **writes `last-pass.<sha>.json`** under `<common git dir>/gate/` (v4.0.1, item 17) — after which `gate-before-merge` finds a fresh artifact and also exits 0. Feeding all three a shared push-to-main payload is wrong for a different reason again: `pre-commit-test` returns 0 for a push (it gates *commits*) and `no-push-main` returns 0 for a commit or a merge.
+
+> **The two rows below are NOT read-only. They run your full test suite — field-measured at 616 seconds, ~10 minutes, on a real three-project repo — and they can mint a gate artifact.** `pre-commit-test.sh` executes `**Test**`, or `run-gate.sh` when there is no `**Test**` field, and a green `run-gate.sh` writes `<common git dir>/gate/last-pass.<sha>.json` (v4.0.1, item 17 — shared by every worktree of the repo) keyed to the current HEAD/tree. That artifact is exactly what `gate-before-merge.sh` looks for, so a probe run can leave a *real* merge un-gated until it expires (`GC_GATE_TTL_S`, 3600s = 60 minutes). Run these deliberately, on a repo you are already building in, and delete the minted `last-pass.<sha>.json` from `<common git dir>/gate/` afterwards. Never as part of a routine sync.
+>
+> ```sh
+> probe pre-commit-test   "git commit -m x"      # 2 only if the suite FAILS
+> probe gate-before-merge "git merge feature/x"  # 2 only on a protected branch,
+> ```                                            #   with no fresh artifact
+>
+> A 0 from either proves nothing on its own — check its condition in the table above before drawing a conclusion. If `pre-commit-test` returns in about a second, it did **not** run your suite; the hook prints `passed. (<n>s)` precisely so the two are distinguishable, since a green run deletes its captured output.
+
+**Both halves are the test, and `2 0 0` is the only healthy answer.** `2 2 2` means the session is fail-CLOSED — every Bash call is about to be blocked; take the recovery note below. **`0 0 0` means enforcement is GONE** — the scripts are missing, empty, unparseable, or not wired — and the sync is running unprotected: apply `hooks/lib/git-cmd.sh` and the three gate scripts via `template_apply_file`, then re-run the probe before continuing. The old `Bash(true)` test could not tell that second failure from success at all, which is why it is gone.
+
+**Capture `rc=$?` on its OWN line, then print it.** Any `$(...)` in the same `echo` — `echo "... [$(basename "$PAYLOAD")] exit=$?"` — runs during that argument's expansion and overwrites `$?` before it is read, so every arm reports the substitution's exit, always 0: the exact `0 0 0` signature this step names as "enforcement is GONE", from a hook that returned 2. Two consumers hit it independently by prettifying the shipped snippet, which is immune only because it uses a plain `[$PAYLOAD]`.
+
+**Say precisely what `2 0 0` proves, because we said it wrong for two releases.** This probe feeds payloads to the scripts directly, so the harness is never in the loop: `2 0 0` proves **the scripts parse a payload and behave correctly on it**. It does **not** prove the hook FIRES. Whether the harness invokes them is a separate question needing a separate instrument, and **timing a `git commit` from inside the command is not that instrument**: a PreToolUse hook completes *before* the Bash tool runs the command, so a timer started inside it can never observe the hook, and a fast command is not evidence the hook did not fire. What does answer it is a side effect that outlives the interval — assert a marker file as the **FIRST** statement of your own command; PRESENT proves the hook ran and completed ahead of it — or a clock read from outside, across two consecutive tool calls.
+
+One thing this probe deliberately does not tell you: whether the branch you are on is the one you meant to protect. It fires on `main` because `main` is in the default set. If your trunk is `develop`, `2 0 0` here says the hook works — not that `develop` is covered. Check `**Protected branches**:` for that; the block message names the set it resolved.
+
+> `enforce-delegation.sh` is deliberately NOT in that loop. It signals a deny by printing a `permissionDecision` on **stdout** and always exits 0, so an exit-code probe reads every case as PASS and proves nothing about it. Probe it by grepping its stdout for `"permissionDecision":"deny"` instead.
+
+Use **forward slashes** in the JSON `cwd` (`C:/git/foo`, not `C:\git\foo`): a Windows backslash is a JSON escape and the payload will not parse. Since v2.2.1 the gates BLOCK an unparseable payload rather than passing it, so this now shows up as a spurious all-2 rather than a false green — still a wrong answer, just a louder one.
+
+> **Recovery — if every Bash call is blocked mid-sync:** apply `hooks/lib/git-cmd.sh` and then the three gate scripts (`pre-commit-test.sh`, `no-push-main.sh`, `gate-before-merge.sh`) via `template_apply_file`, which needs no shell. Do **not** restart the session first — the half-applied state persists on disk, and a restart only re-reads the same broken combination. Once Bash works again, finish the sync in the order above and restart per the final report.
+
+> **If Bash is refused (e.g. by a resource-pressure guard) after the hook writes but before the `settings.json` write or before the post-settings probe, the half-state is safe:** wait, then resume at the I2 precondition or at the probe. Never write `settings.json` until the I2 precondition holds, and never write anything after it until the probe has run.
+
+Collect all results. Report the list of auto-updated files.
+
+### 4. Resolve Conflicts
+
+**`CLAUDE.md` under manifest v4 is the one CONFLICT with no splice route at all.** Every other template-class file keeps a `PROJECT-CUSTOM` region to fall back on (below); `CLAUDE.md` does not — the whole file is template content, and the only content boundary left is the `@.claude/project-instructions.md` import line at the end. So a `CLAUDE.md` `CONFLICT` under v4 means the consumer's file diverges from the template SOMEWHERE OUTSIDE that import line. **The resolution is always the same, and it is never "keep the consumer's `CLAUDE.md`":** show the diff, move the out-of-import-line content into `.claude/project-instructions.md`, then apply the template version outright (`template_apply_file(source="template")`). There is nothing to splice `CLAUDE.md` itself with — the destination for anything worth keeping is the once-class instructions file, not this one.
+
+**`deny-claude-md-writes.sh` (v4.1.0) is version-gated and exits 0 on a v3 manifest — a consumer probing it before migrating reads a harmless exit as "inert," not as evidence the hook is broken.** It refuses a write only once the manifest reads `manifest_version: 4`, where `CLAUDE.md` really is template-owned outright as this section describes; on v3 the file still legitimately carries project content, so the hook has nothing to refuse yet and correctly stays out of the way. Separately: the harness validates an `Edit` call's `old_string` BEFORE any `PreToolUse` hook runs, so an `Edit` whose `old_string` does not occur in the target file returns "String to replace not found" with no hook error at all — **only an edit that would otherwise SUCCEED ever reaches the hook and tests it.** A near-miss `old_string` reads as "the deny hook let it through" to anyone who has not read this paragraph; in fact it never ran.
+
+**A `LOCAL_EDITED` agent whose diff is a `tools:` addition is not a rename candidate.** Grants were removed in v5.0 and the agent files move into the plugin; step 2c handles the file (keep it as the project's own agent, or delete it). Never hand-edit an agent's `tools:` line from here, and never rename the file to preserve a local addition.
+
+**`has_changes: null` is not "no changes" (v4.3.1, open-brain, MM-Agent).** `template_changes` and `local_changes` diff against the template at the manifest's `template_commit`; when that base cannot be reconstructed they return `has_changes: null` with `base_unavailable_reason` — read `diff_type="full"` instead, and never treat the file as unchanged. A server older than v4.3.1 answered `has_changes: false` with `fallback_to_two_way: true` in that case: on such a server, `fallback_to_two_way: true` means the same thing.
+
+For each file with status `CONFLICT`:
+
+1. Call `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`
+2. **Disqualify the unsafe options BEFORE offering anything.** Both of these are checks on the diff you just fetched:
+   - *Accept merged* is off the table unless `auto_merged` survives inspection: diff it against BOTH `template_content` and `project_content` for lines present in base AND project; if any are missing, do not offer it — a clean merge is not a correct merge. For `hooks/*.sh`, also `bash -n` the merged body (and `node --check` any embedded `node -e` block); a syntax error is a conflict, not a clean merge.
+
+     > **A second failure mode wears the SAME clean signature — MISPLACEMENT.** `has_conflicts:false, dropped_lines:[]` is not sufficient: a merge can be clean by that measure and still splice the template's new content into the wrong place in the file. Measured on a real `PROJECT_CONTEXT.md` three-way sync (yutraffic, v3.0.3): the base→template diff added exactly one line, `merged.md` minus that added block reproduced `project.md` byte-for-byte (nothing lost), `has_conflicts` was `false` and `dropped_lines` was `[]` — every existing step-4 check passed — yet the added block landed under `## Signal Plans` when the template put it under `## Commands`, 23 lines from where it belonged. Correctness is placement AND presence, not presence alone.
+     >
+     > **Locating the anchor is the actual problem; the metric is fine once you have one.** An exact-line anchor lookup fails on the case that matters most: the template's anchor line (`- **Gate**: {{GATE_COMMAND}}`) differs textually from the project's own splice (`- **Gate**: npm run gate`), so it finds nothing to anchor on. **Heading FIRST, distance-within-section SECOND**: for each block the template ADDS, find the `#`/`##` heading it sits under **in the template** — that heading is byte-identical across base, template and project, so it is locatable where the content anchor is not — then assert the merged output places the block under a same-named heading. Distance-within-section is a useful second signal once the section is found, but heading match alone is enough to catch this case.
+     >
+     > **The check must be shown red on the failing case and green on a correct one — a check that flags every added block passes the red arm and looks right for the wrong reason.** Worked example, from yutraffic's real `PROJECT_CONTEXT.md` three-way sync (v3.0.3): the base→template diff added exactly one line, under `## Commands` in the template. `auto_merged`'s actual output placed that added line under `## Signal Plans` instead — enclosing-heading mismatch, delta 23 lines from where `## Commands` actually is → **RED**. The hand-spliced file that shipped placed it under `## Commands` — delta 1 line → **GREEN**. Both readings came from the same `has_conflicts:false, dropped_lines:[]` merge, which is the whole point: neither existing signal distinguishes them, only the enclosing heading does. Run the heading check against both a known-misplaced and a known-correct example before trusting it on a real merge — the fixture itself is session-scoped and not committed here; ask the controller whether to land it as a durable test fixture.
+     >
+     > **Residual, stated rather than hidden:** this only works for files that carry headings. For a heading-less file, fall back to "nearest surviving context line within N lines" and report `placement not checked` — never let that fallback read as the stronger check having run.
+     >
+     > **This is a v3.0.4 human-in-the-loop check, not a fix.** Teaching the server to place a spliced block correctly is a v3.1 (server) item; say so rather than implying this closes it.
+     > **Run `bash -n` through a `which`-RESOLVED absolute path, never a bare name and never a hardcoded one (v2.2.5).** Driven from a scripting language on Windows, the bare name `bash` does not resolve to the shell you meant: `shutil.which('bash')` reports `C:\Program Files\Git\usr\bin\bash.EXE`, while `subprocess.run(['bash', …])` executes **WSL** bash, which cannot see a Windows path. Python's own two mechanisms disagree about the same **NAME** — and that is the entire root cause. They cannot disagree about an absolute path. So the fix is one host-agnostic line with no platform knowledge in it:
+     >
+     > ```python
+     > exe = shutil.which("bash")     # resolve ONCE, by name, here
+     > if exe is None:
+     >     ...                        # could not check — name the interpreter and stop
+     > subprocess.run([exe, "-n", script], ...)   # then only ever exec the absolute path
+     > ```
+     >
+     > Measured on the reporting Windows host (Git for Windows + WSL both installed), all four verdict columns, every candidate interpreter:
+     >
+     > ```
+     > interpreter                             valid  broken  missing  directory
+     > bare name 'bash'                          127     127      127        127   <- indistinguishable
+     > shutil.which('bash')  (Git\usr\bin)         0       2      127        126
+     > C:\Program Files\Git\bin\bash.exe           0       2      127        126
+     > C:\Program Files\Git\usr\bin\bash.exe       0       2      127        126   <- IDENTICAL to bin
+     > ```
+     >
+     > **This resolve-by-name hazard generalises beyond `bash -n` — any probe that execs an interpreter by bare NAME measures whatever PATH resolved it, not the one the author meant, and the tell is not always an error exit code.** Step 3's gate probe (a `subprocess.run(['bash', …])`-shaped call, or a shell script's own bare `bash`) is the same mechanism: on a Windows host with WSL installed, driving that probe through the bare name resolved to WSL bash, which reads the repo through a different filesystem view — and it returned the SAME result for arms the probe expects to differ (`git push origin main` and `ls -la` both read as allowed), rather than raising an error. **A UNIFORM result across arms that are supposed to differ is the tell, not any single exit code** — a probe that measured nothing still produces output that looks like a verdict. Resolve to an absolute path first, exactly as this step already does for `bash -n`, before trusting any probe's result.
+     >
+     > **An earlier revision of this step told you to hardcode `C:\Program Files\Git\bin\bash.exe` and warned against the `usr\bin` path `shutil.which` reports. Both halves are withdrawn.** The last two rows are the comparison that warning was written without: `bash -n` parses without executing, needs no path translation, and the two binaries behave identically. And the hardcoded path **does not exist on Linux, WSL or macOS**, so shipping it makes the check unrunnable everywhere else — while any fallback to the bare name restores the Windows bug it was meant to fix. An unmeasured warning is worse than no warning: it makes the next reader distrust the correct binary.
+     >
+     > **Then read the result by this table. `rc=127` is a HARD ERROR, not "the check did not run":**
+     >
+     > ```
+     > FileNotFoundError  -> could not check; name the interpreter. THIS is "the check
+     >                       did not run" — it is an EXCEPTION, raised before any exit
+     >                       code exists, not a return code. Verified: an interpreter
+     >                       that is absent raises; it never yields an rc.
+     > rc 0               -> pass
+     > rc 2               -> syntax error — the ONLY fail verdict
+     > rc 126             -> could not READ it: permissions, or a DIRECTORY passed where
+     >                       a script was expected. ERROR; print the path
+     > rc 127             -> bash could not find THE FILE. ERROR; print the path
+     > anything else      -> unknown. ERROR
+     > ```
+     >
+     > **Why 127 is an error rather than a shrug, and why the previous wording was a fail-open.** `rc=127` is bash's own verdict about the file it was handed — *"No such file or directory"*. It is not "the interpreter failed to launch". Treating it as did-not-run waves through `bash -n hooks/deleted-thing.sh` on a manifest that still references a script no longer on disk — and **a missing hook script is exactly the condition this toolkit's 127-wrapper exists to catch** (a hook whose script is gone exits 127 and the tool call proceeds). Recording it as "unknown, carry on" would reinstall that fail-open one layer up, inside the checker. The all-127 row above was bash correctly reporting that none of the three paths was visible to the bash that actually ran — a fact about the *invocation*, which the `shutil.which` line is what fixes. The same table applies to `node --check` and to any other checker invoked by name. (This is the `command -v python3` App-Installer stub class again: the name resolves, the program is not the one you meant.)
+
+   - *Accept template* is off the table when it would silently drop project content: an EMPTY `PROJECT-CUSTOM` region while headings the template does not carry sit outside it (list those headings), or — for `.claude/settings.json` — a `matcher` string naming agents the template version no longer mentions, e.g. a project-added `cpp-coder` (list those agent names; accept-template reverts their hook wiring). In either case route to the splice path (`source="provided"`) instead.
+3. **Under manifest v3, a TRACKED template-class file (LOCAL_EDITED/CONFLICT) has no keep-mine resolution; splice is the route.** `apply_file_v3` refuses `source="skip"` for EVERY ownership class, template included — there is no server-side "leave it as mine" for a file the template also ships. The refusal, verbatim: `source='skip' is refused under manifest v3 for {ownership}-class files: there is no keep-mine class -- fix the template or declare a key`. So for a `CONFLICT` file, present only the resolutions the server can actually execute:
+   - If `has_conflicts` is **false** and `auto_merged` passed step 2: show it and offer to apply.
+   - Otherwise show the conflict markers and the `unified_diff`, and ask the user how to resolve, offering only the options step 2 did not disqualify:
+     - **Accept merged** (if they edit the merged content)
+     - **Accept template** (discard local changes)
+     - **Splice** (`source="provided"` with hand-merged content) — this is how "keep mine" is expressed: move the project-specific content INTO the file's `PROJECT-CUSTOM` region (or hand-merge it alongside the template's new lines) and apply that as the splice content. There is no other way to keep it; a bare "leave it alone" is not a resolution the server accepts.
+
+     > **⚠ A `hooks/*.sh` SPLICE MUST NOT BE APPLIED WITH THE `Edit` TOOL.** `enforce-delegation.sh` denies main-thread `Edit`/`Write`/`NotebookEdit` outside the PO write surface, and `hooks/` is not on that surface — a hook script is enforcement code, and the PO hand-editing it is exactly what the rule exists to prevent. **That deny is correct and long-standing; do not work around it and do not reach for `.claude/delegation-off`.** The sanctioned route is `template_apply_file(source="provided", content=...)`, composing the merged content in a script rather than by hand — that single call both writes the file and registers the result in the manifest; there is no follow-up `source="skip"` call (the server refuses `skip` under manifest v3 for every ownership class, so an earlier revision's two-call sequence cannot work as written). This is the modal conflict for any consumer carrying a gate deviation, so the route has to be named here rather than discovered: a consumer who got through did so by using `template_apply_file` plus a script for unrelated reasons — luck, not design.
+
+4. Apply the user's choice:
+   - Accept merged/template: `template_apply_file(source="provided", content=...)` or `template_apply_file(source="template")`
+   - Keep mine: NOT `template_apply_file(source="skip")` — the server refuses it. Move the content to keep into the `PROJECT-CUSTOM` region (or hand-merge it into the template's new content) and apply it as `template_apply_file(source="provided", content=...)`.
+
+> **PROJECT-CUSTOM region:** the server preserves content between `<!-- PROJECT-CUSTOM:BEGIN -->` and `<!-- PROJECT-CUSTOM:END -->` mechanically (when both template and project carry the markers). If the consumer's `template-sync-tools` server predates region support, preserve the project's region verbatim in any manual `CLAUDE.md` merge — never let accept-template clobber it.
+>
+> Since v2.1.2 the markers also ship at the end of every `.claude/agents/*.md` and of `AGENT_TEAM.md` — the region split is file-agnostic, so those files now merge exactly like `CLAUDE.md`. On the first sync that brings the markers in, **move the project's existing custom agent lines into the region once**; anything left above the BEGIN marker is template territory and the next accept-template will overwrite it.
+>
+> "EMPTY region" in the accept-template disqualifier above means *no content other than the shipped `<!-- Project-specific rules, routing blocks, and extensions go here. -->` placeholder* — the placeholder alone does not make a region non-empty.
+>
+> ### ⚠ DO NOT IMPLEMENT THAT CHECK. RUN THE SHIPPED ONE (v2.4.0).
+>
+> ```
+> bash "${CLAUDE_SKILL_DIR}/region.sh" --scan .        # classify every region-bearing file
+> bash "${CLAUDE_SKILL_DIR}/region.sh" --body <path>   # the region body, verbatim
+> ```
+>
+> **The rule above is outcome-shaped, not code-shaped: check the exit code before trusting the output.** An empty `--scan` result is a valid "no regions" ONLY when the command exited 0. ANY non-zero exit — 127 (region.sh missing), 126 (not executable), a missing `bash`, or anything else — is a hard error naming `${CLAUDE_SKILL_DIR}/region.sh`, and STOPS the sync; it is never read as "no regions". A failed scan and a clean scan otherwise print the same empty output, and treating the failure as "no regions" clears the accept-template disqualifier above on a file that actually has PROJECT-CUSTOM content. Run it this way, capturing the exit code alongside the output and branching on the code FIRST:
+> ```
+> out=$(bash "${CLAUDE_SKILL_DIR}/region.sh" --scan .); rc=$?
+> # rc != 0  -> hard error naming ${CLAUDE_SKILL_DIR}/region.sh; stop the sync
+> # rc == 0 and out empty -> no regions, proceed
+> # rc == 0 and out non-empty -> classify each listed file
+> ```
+>
+> Count classified files from STDOUT only: `region.sh` prints its `region.sh: scanned N files under <dir>` footer on STDERR, and a `2>&1 | wc -l` counts that footer as one more file (penumbra).
+>
+> `region.sh` ships next to this file (`${CLAUDE_SKILL_DIR}/region.sh`). **Two independent consumers implemented "is the region empty?" from the paragraph above and both got the REASSURING answer wrongly**, which is why it is now code:
+>
+> - `PROJECT-CUSTOM:BEGIN\s*-->` matches **nothing** — the shipped marker carries trailing prose: `<!-- PROJECT-CUSTOM:BEGIN — sync-template preserves everything between these markers -->`
+> - `glob('**/*.md', recursive=True)` does **not** descend into dot-directories, so it skips all of `.claude/` — every agent file.
+>
+> One consumer measured **"zero regions" across a repo with eleven.** A consumer who implements this by hand concludes *"empty"*, clears the disqualifier, and accept-template destroys the region. The specification `region.sh` implements, so you can read it without reading the script:
+>
+> ```
+> regex : PROJECT-CUSTOM:BEGIN.*?-->(.*?)<!--\s*PROJECT-CUSTOM:END      (DOTALL)
+> scope : enumeration MUST include dot-directories (.claude/ especially)
+> empty : body is whitespace or the shipped placeholder comment only
+> ```
+>
+> **`--scan` is the ONLY enumeration this skill documents.** Two documented ways to enumerate is how the naive glob came back; take the file list from `--scan`'s output rather than writing a second walker.
+>
+> **AND THE COROLLARY REACHES BACKWARDS: every consumer who has ever reported *"no PROJECT-CUSTOM content here"* may have been reporting their EXTRACTOR, not their repo.** Re-check with the shipped one before trusting any earlier all-clear — including your own from a previous sync.
+>
+> The defect lives in the unspecified implementation, the same class as `--include` after paths, the `which`-resolved `bash -n`, and the `command:`-anchored collector. **The population bitten is the consumers who follow us most literally.**
+
+> **`PROJECT_CONTEXT.md`: SPLICE, never accept-template.** It conflicts for every consumer who has filled in real values, and accept-template replaces a working `- **Gate**: npm run gate` with `{{GATE_COMMAND}}` — which silently disables `pre-commit-test.sh` and `run-gate.sh` on the next commit, worst on a Gate-only repo where nothing else notices. Your `**Gate**:` / `**Test**:` / `**Build**:` values live in this file; they are a legitimate, permanent deviation, not drift to clean up. Take the template's *new lines* by hand and keep your own values.
+>
+> **TWO FIELD-NAME STYLES SHIP, and until v2.2.6 this skill named only the short one (consumer report).** Grepping your own `PROJECT_CONTEXT.md` for `**Test**:` returns nothing on a python or java project and reads as *"the gate is unconfigured"* — a false clean one layer up, in prose rather than in a regex. Measured across all six variants:
+>
+> ```
+> general / dotnet / dotnet-maui    **Build**          **Gate**          **Test**
+> python / java                     **Build Command**  **Gate Command**  **Test Command**
+> rust-tauri                        **Build**          **Gate**          (no Test — deliberate)
+> ```
+>
+> **The HOOKS are fine** — `pre-commit-test.sh` greps `\*\*Test( Command)?\*\*:` explicitly, and the other field greps tolerate the long form the same way. Only the documentation was narrow. So whenever you grep for one of these fields, match both: `grep -E '^[-*[:space:]]*\*\*Test( Command)?\*\*:'`.
+>
+> `key_audit` may report the long `Test Command` (python/java) under a deprecated spelling; renaming it to `**Test**` is optional and changes no behaviour.
+>
+> **rust-tauri's absent `**Test**` is NOT a defect.** No Test ⇒ `pre-commit-test.sh` falls back to Gate ⇒ it runs `run-gate.sh`, which also mints the artifact. That is the deliberate v2.1.1/v2.1.3 Gate-only shape. The consequence worth knowing: a rust-tauri consumer runs the **full Gate on every commit** and never gets v2.2.5's Test/Gate split. Adding a fast `**Test**` line is a local choice, not a sync fix.
+>
+> **`**Protected branches**:` is the one line the git gates read** — the `- **Branch strategy**:` prose above it is for humans and is parsed by nothing. Cheapest proof the config path works: attempt a push to trunk and read the block message, which names the set it actually resolved — `BLOCKED: pushing to a protected branch (main master)` vs `(develop release)`. Absent, empty, or still a `{{...}}` all resolve to `main master`; `none` is the one deliberate way to protect nothing (branch rules only — a PR merge stays gated whatever the branch).
+
+### 5. Handle New Files
+
+**The v4.1.0 seed `.claude/project-instructions.md` arrives here as an ordinary NEW `once`-class file on a consumer bootstrapped before that release and not going through the 1c-vii migration** (a project already on manifest v4 that simply never had the path tracked). Handle it exactly like any other `once`-class new file below: present on disk → register only; absent → apply then register. **A consumer who keeps a `CLAUDE.local.md` is unaffected by any of this — it is not shipped, it is not manifest-tracked, and it keeps loading at session start exactly as before** (spec §3 adjacency): the migration and the seeds do not fold it into `project-instructions.md`, and no precedence between the two files is claimed, because none exists to claim.
+
+`new_template_files` means **absent from the manifest**, NOT absent from the project (invariant I1 above). **First branch on OWNERSHIP CLASS (v4.0.1, item 4) — read each path's class off `<templateRepo>/templates/ownership.json`'s rules (the same rules `template_load_manifest` used; `once`-class carries no `hash` key at all, ever — step 1b), because the two classes are handled by DIFFERENT tool calls, not by the same one with a different argument:**
+
+**`once`-class — never `source="skip"`, it is refused under v3 for every ownership (no keep-mine class exists any more):**
+
+- **Present on disk → REGISTER ONLY, do not call `template_apply_file` at all.** Add the path to `new_files` at step 7's `template_finalize_sync(new_files=[…])` — it lands `{"ownership": "once"}`, **zero bytes written**, the file on disk untouched. This is the route the v2-era "keep mine" default (below, for `template`-class) was trying and failing to reach for a `once`-class file: calling `template_apply_file(source="skip")` here is refused outright ("source='skip' is refused under manifest v3 for once-class files: there is no keep-mine class").
+- **Absent → apply, THEN register.** `template_apply_file(project_path=".", file_path=F, source="template")` creates it (`created_from_template`); its result then joins `applied_files` at step 7, exactly like a `template`-class new file below. **This arm is UNMEASURED by any consumer** — no `once`-class file has ever been added by a template revision until now — so verify it against the fixture rather than assuming the present-case logic covers it too.
+
+**`template`-class — unchanged from before v4.0.1:**
+
+1. **The path already exists in the project (`present_on_disk: true` in `new_template_files_detail`) → this is a CONFLICT, not a new file, and not a silent skip. List every such path as NEEDING THE USER'S DECISION and write none of them until they decide.** Both sides have content, which is the definition of a conflict. Fetch `template_get_diff(project_path=".", file_path=F, diff_type="three_way")`, **show the diff**, and ask: **keep mine / adopt template / merge**. `source="skip"` is refused unconditionally for every ownership class (v4.0.1, item 4 + step 3b; "source='skip' is refused under manifest v3 for {ownership}-class files: there is no keep-mine class -- fix the template or declare a key"), and since v4.3.1 the server also refuses any write to such a file without `overwrite_existing: true`:
+   - **Keep mine** → register only: add F to step 7's `template_finalize_sync(new_files=[…])`, **zero bytes written**; the file then reads `LOCAL_EDITED` against the template, which is the honest state. Do NOT call `template_apply_file`.
+   - **Merge** (`source="provided"`, plus `overwrite_existing: true`) — move the project's existing content into the file's `PROJECT-CUSTOM` region (or hand-merge it with the template's version) and apply the merged result. See step 4 for the full account of this route.
+   - **Adopt template** (apply the template with `overwrite_existing: true`) → only on an explicit choice made against the diff; this overwrites their file (the pre-image is backed up to `backup_dir`).
+
+   Do not reduce this to a silent skip — the server refuses it besides. Skipping is safe but it *hides* that the template ships a different version of a file the project already has — the consumer who lost a file this way would have been told nothing, and would never have learned the template's `run-gate.sh` existed and differed. That comparison is what produced the whole of item K.
+2. **The path does not exist** → ask the user whether to add it, EXCEPT a file the incoming `settings.json` or hooks depend on (v4.4.0: `hooks/verify-hooks.sh`, needed by I2; `hooks/lib/agent-model.sh`, needed by the model-floor hook): that one is not optional, so do not offer to skip it. For the others, if yes: `template_apply_file(project_path=".", file_path=F, source="template")`.
+
+**`source="template"` appears in this step ONLY inside case 2, and that is deliberate.** An earlier revision presented it as the default with a condition that might override it; a reader executing literally reached the destructive call and the condition lost, even though a rule of exactly the same shape (6b rule 4) was already written down and had been read. **The imperative at the point of action beats the rule stated elsewhere**, so the branch — not the invariant — is what has to make the wrong call unreachable. Invariant I1 above is the backstop, not the fix.
+
+**List every path you took through case 1, individually.** Report them under `Skipped:` (or `Conflicts:` where the user chose otherwise) as *present on disk — resolved `<resolution>`*, one line per path, never as a count. A count is how a consumer fails to notice that the one file they cared about was in the set.
+
+**Post-apply guard — verify the keep-mine files were not written, and make the guard's own failure visible (v2.2.5).** After the last write in this step:
+
+- **Check set: every keep-mine path that step 2b's SPECIFICATION covers** — `keep-mine ∩ (set a ∪ set b)`, where 2b's two backup sets are **(a)** gitignored ∩ manifest-tracked and **(b)** `new_template_files` ∩ exists-on-disk. Byte-compare each against its backup copy; any difference is a data-loss event, and at that moment it is still recoverable *from the backup*. `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` is sha256 of the EMPTY string: a comparison that 'differs' with that value on one side means the path resolved to nothing, not that the content differs (v4.0.3, item 5).
+- **Set (a) is EXPECTED to be empty for a v4.0.1-or-later consumer (v4.0.3, item 7).** `CLAUDE.local.md` was its only member and is no longer template-shipped — a copy still on disk is a plain gitignored project file that no sync guard covers. An empty (a) is the steady state, not a failed derivation (the two-method assertion still runs).
+- **DERIVE THE SET FROM 2b's RULES, NEVER FROM THE BACKUP DIRECTORY'S CONTENTS (v2.2.5 round 4).** "Keep-mine paths present in the backup" makes the coverage assertion below **vacuous by construction**: a 2b derivation failure then silently shrinks the check set until the guard passes — a guard failing by reporting success, guarding a bug whose entire signature is failing by reporting success. Derive from the rules, assert each member has a backup entry, then compare.
+- **Scope it by the RESOLUTION, never by the path list.** A file the user explicitly resolved **accept-template** is *supposed* to differ and is exempt; keying the guard on `new_template_files` instead would fire on a correct, user-approved outcome, and the fix for that false positive is to weaken the guard, which reopens the hole. This is the same shape as the bug the step itself fixes: **a guard must be keyed on the decision that was made, not on the list the file arrived in.** The discriminator already exists and is populated — `source="skip"` records `"resolution": "keep-mine"` on the manifest entry; template and provided applies omit the key.
+- **NO STEP ATTRIBUTION ANYWHERE (v2.2.5 round 4, and this replaces the blanket step-4 exclusion).** The earlier wording excluded *step-4 keep-mine files as a category* — keyed on **which step produced the resolution**, when the property that matters is **whether 2b's specification covers the path**. Those diverge, and in the direction that loses coverage: **a step-4 keep-mine file that is gitignored is in set (a)**, so it *is* backed up, the comparison *would* work, and the blanket exclusion drops it anyway — manifest-tracked, gitignored, resolved keep-mine: no history, no diff, no undo, exactly the class 2b exists for. **`CLAUDE.local.md` resolved keep-mine in step 4 is the routine instance, not a corner case.** With the set defined by 2b's rules, step-4 non-gitignored files fall out on their own (2b does not cover them) and the special case disappears. This is the provenance error one layer down from the one the release keeps closing: *keyed on who decided, when what matters is what the spec covers.*
+- **Assert the backup COVERS each path before comparing it — a missing backup entry is a HARD ERROR, never a clean pass.** Say why, or the next reader deletes it as a redundant existence check in front of a comparison: a byte-comparison against a backup that does not contain the path finds nothing to compare and **reports success**. That is a guard failing by reporting success, guarding a bug whose entire signature is failing by reporting success. `no backup entry for <path>` stops the sync.
+- **Control, both arms.** Deliberately drop one check-set path from the backup and confirm you get the hard error, not a clean run; then restore it and confirm the run is clean. A coverage assertion is the easiest thing in this file to write in a way that passes whether or not it exists — verify it by removing it and watching the first arm go green, which is the only test that tells you the truth.
+
+Apply new libs and hooks BEFORE `.claude/settings.json` is written, even though this step is numbered after step 3 (invariant I2).
+
+> **Server guard (v4.3.1, issue #173):** `template_compute_status` carries `present_on_disk` on every `new_template_files_detail` entry, and `template_apply_file` REFUSES to write a template-class file that exists on disk but is untracked unless the call passes `overwrite_existing: true`. Read `present_on_disk` instead of re-deriving it; the refusal is the backstop if you miss one. Pass `overwrite_existing: true` only for a file the user explicitly resolved *adopt template* or *merge* — never as a retry to get past the refusal.
+
+**Duplicate-load warning:** for a new `.claude/rules/*.md`, grep `CLAUDE.md` for each of its headings. A heading present in both means the project pasted that section into `CLAUDE.md` before the template extracted it into a path-scoped rule — it would now load twice. List the duplicated headings and offer to delete the `CLAUDE.md` copy.
+
+### 6. Handle Template-Deleted Files
+
+Files handled by step 2c are skipped here (its single confirmation replaces the per-file pause), but the Ordering rule below still applies to its `hooks/` files: delete them only under that rule (after the new `.claude/settings.json` is applied and step 6b's re-grep shows them unreferenced).
+
+### ⚠ 6a. A FILE WHOSE PROJECT-CUSTOM REGION IS NON-EMPTY CANNOT BE DELETED (v2.4.0, item A2)
+
+**This step applies to the files that still carry a `PROJECT-CUSTOM` region in the v5 layout (the plugin owns the agents; step 2c handles those files) — never to `CLAUDE.md` (R-H).** The region was removed from the template `CLAUDE.md` in v4.1.0; `CLAUDE.md` is never itself `TEMPLATE_DELETED` (the template always ships it), so this step's own precondition never fires for it, but say so explicitly rather than leaving a reader to wonder whether "every `TEMPLATE_DELETED` path" below still means what it used to. The other regions, and every instrument that measures them (`region.sh`, `region_bytes`, `region_markers`, `is_empty()`), are completely unchanged by this release — retiring them is a later, separate decision (spec Non-goals).
+
+**Run this BEFORE anything else in this step, on every `TEMPLATE_DELETED` path:**
+
+```
+bash "${CLAUDE_SKILL_DIR}/region.sh" <every TEMPLATE_DELETED path>
+```
+
+Same outcome-shaped rule as step 4: check the exit code before trusting the classification. A non-zero exit from `region.sh` here is a hard error naming `${CLAUDE_SKILL_DIR}/region.sh`, never read as "no content" — treating a failed extraction as `EMPTY` is exactly how a region with content gets deleted.
+
+`CONTENT` (or `UNCLOSED`) on any path ⇒ **deletion is NOT OFFERED for that path.** Not defaulted away from, not behind a second confirmation — **absent from the option list.** The only available actions are **relocate the region** to a named survivor, and **defer**. Once the region is empty, the ordinary flow below applies.
+
+**Why a precondition and not an acknowledgement.** Step 6 has until now asked exactly one question — *is it still referenced* — and **never inspected the region**. A consumer with custom routing in `coder.md` is told *"preserved and unreferenced — safe to delete"*, accepts, and `git rm` takes it. **The prompt that asked for consent never showed the thing being destroyed.** A second acknowledgement does not fix that: a prompt loses to fatigue, and someone who has cleared four prompts clears the fifth. Step 5 was not fixed by making `source="template"` the non-default; it was fixed by making it **unreachable** outside the not-present arm. This is the same shape.
+
+So the user cannot choose *"delete with content"*; they can only *"empty, then delete"* — and emptying is the act that moves the content somewhere it survives. **The irreversible step becomes reachable only once the content is provably elsewhere.**
+
+**This is the MODAL case in a consolidation release, not an edge case.** Under v5 the agents leave through step 2c, so only `AGENT_TEAM.md` still carries a PROJECT-CUSTOM region and is manifest-tracked: `TEMPLATE_DELETED × region-bearing` is now the rare case.
+
+Required, in order:
+
+1. **Extract with `region.sh`** — the shipped extractor, never a hand-written check. A2 is unsound without it: the hand-written version returns the *reassuring* answer (see step 4's note), a region with content reads as empty, deletion is offered, and the content is gone.
+2. **`CONTENT` ⇒ print the region VERBATIM** (`bash "${CLAUDE_SKILL_DIR}/region.sh" --body <path>`) and **withhold the delete option entirely**. Show the user what is at stake in the same breath as the question.
+3. **Offer relocate (to a named survivor) or defer.** After a relocate, **BYTE-COMPARE the moved region against the original before deletion becomes reachable**:
+
+   ```
+   bash "${CLAUDE_SKILL_DIR}/region.sh" --body <original>  > "$TMPDIR/region-orig"
+   bash "${CLAUDE_SKILL_DIR}/region.sh" --body <survivor>  > "$TMPDIR/region-moved"
+
+   # NON-EMPTY *AND* EQUAL. Both conditions, in this order.
+   [ -s "$TMPDIR/region-moved" ] || FAIL "the survivor's region is EMPTY — the relocate did not happen"
+   cmp "$TMPDIR/region-orig" "$TMPDIR/region-moved" || FAIL "the moved region differs from the original"
+   ```
+
+   **⚠ EQUALITY ALONE IS SATISFIED BY TWO NOTHINGS, and that was measured on real fixtures, not imagined (v3.0.0):**
+
+   ```
+   two files whose regions are both empty (the relocation never happened)
+     --body rc: orig=0  moved=0        bytes: orig=0  moved=0
+     cmp: IDENTICAL  ->  the relocation gate PASSES
+   ```
+
+   `cmp` on two zero-byte bodies succeeds, so a `cmp`-only check **certifies a relocation that never occurred** and then unlocks the irreversible step. The non-empty test is what makes the proof carry content. This is the same shape as a control that cannot fail in the environment it runs in — a check whose success state is indistinguishable from its no-op state.
+
+   **Make "provably" MECHANICAL, not asserted** — a positive check carrying content, the same discipline as a planted-marker control, rather than the user's word that they handled it.
+
+> **Step 2b's backup is a good floor, but recoverable is not the same as noticed.** A consumer who does not realise they lost something never goes looking in the backup. That is why this is a precondition and not merely a backup.
+
+### ⚠ A2 AND SET (c) COVER **DISJOINT** POPULATIONS — do not read A2 as "my customisations are protected"
+
+Measured on a consumer's live synthetic `TEMPLATE_DELETED` run, and it is the single most likely misreading of this section:
+
+```
+set (c), disk-scoped   : 11 files
+manifest-scoped        : 10 files
+delta                  : .claude/agents/game-tester.md   <- exactly the irreplaceable file
+                         verdict: NOMARKERS
+```
+
+**A2 protects REGION-BEARING files. The irreplaceable file is not one.** A hand-authored, project-owned agent has no PROJECT-CUSTOM region at all, so it classifies `NOMARKERS`, and `NOMARKERS` is reached by the **ordinary** flow — 6a offers it for deletion and withholds nothing. That behaviour is *correct*: there genuinely is no region to protect. But it means the natural reading — *"A2 protects my customisations"* — **is false for precisely the file nobody can regenerate.**
+
+The orphan's only defences are elsewhere, and both must hold:
+
+1. **Step 2b's set (c)**, scoped to what the destructive operation TOUCHES rather than what the manifest KNOWS — which is the whole reason A3 was rescoped;
+2. **Step 6's rule that a project-owned file the template never shipped is never deleted.**
+
+Two guards, two disjoint populations, and **a reader will assume they overlap.** That assumption is what gets the file deleted, so it is written down here rather than left to be inferred.
+
+**Also confirmed by the same run, so it is not in doubt:** 6a discriminates correctly in a single pass — a planted `CONTENT` region withheld deletion while an untouched placeholder-only file classified `EMPTY` and was offered. The discrimination works. It was the *inputs* that were unsound before v3.0.0's marker-shape fix.
+
+> ***"Unreferenced" answers whether enforcement breaks; it says nothing about whether the user loses work.***
+
+### 6 (continued). The ordinary TEMPLATE_DELETED flow
+
+Reached only for paths 6a classified `EMPTY` or `NOMARKERS`. For each such file:
+
+1. Determine whether anything still references it: run the same reference grep as step 6b (`.claude/settings.json` plus the `hooks:` frontmatter of every `.claude/agents/*.md`), **and the agent-NAME sweep in 6d below**.
+2. Report the state precisely:
+   - "preserved **and unreferenced — safe to delete**" — the new `settings.json` and agents no longer mention it;
+   - "preserved **and still referenced by `<file>`**" — deleting it would take enforcement offline.
+3. ASK the user. Recommend accepting the deletion in the unreferenced case; delete with `git rm <file>` so the removal is in the diff. Passing the path as `deleted_files` to `template_finalize_sync` is optional: finalize drops any entry the template no longer ships once the file is gone. Never delete on your own initiative, and never delete a project-owned file the template never shipped. (`git rm` here, and `git add`/`git commit` in step 9, are the PO's documented git-I/O role for this skill per `AGENT_TEAM.md` — not hands-on coding.)
+
+   > **UNATTENDED (no user in the loop) — the default, stated so it is not improvised.** Delete ONLY a path that is all three of: classified `EMPTY`, shipped by the template, and unreferenced by the step-6b grep and the 6d name sweep. **DEFER everything else** — `CONTENT` and **`NOMARKERS` included**: keep the file on disk, keep its manifest entry, and report it. `NOMARKERS` is exactly what a hand-authored, project-owned agent classifies as (set (c), the game-tester case), so an autonomous branch that treated NOMARKERS as deletable would delete the one file nobody can regenerate. **The rule "never delete a project-owned file the template never shipped" applies in the autonomous branch explicitly** — an unattended run is where an implied rule dies.
+
+   > **Acknowledging a kept file so it stops re-reporting: the MANIFEST, beside `files`.** A `TEMPLATE_DELETED` path the project decided to KEEP re-reports on every future sync. The acknowledgement is a `"deletedAcknowledged": ["<path>", ...]` list in `.claude/template-manifest.json`; `compute_status` then reports those paths as `ACKNOWLEDGED_KEPT` instead of `TEMPLATE_DELETED`. This is **distinct from `deleted_files`**, which drops the entry entirely. The surface is `template_finalize_sync(acknowledged_deleted=["<path>", ...])` on a server whose `capabilities` lists `deleted_acknowledged` (v4.0.2); it merges into the key, refuses a path that is not currently `TEMPLATE_DELETED`/`ACKNOWLEDGED_KEPT` (a typo must not register), and refuses a path that is also in `deleted_files`. Without the capability, add the key by hand: LF endings, existing key order preserved, the same relative paths `files` uses. The entry stays in `files` either way — if the template ships the file again, tracking resumes as `TEMPLATE_UPDATED`/`LOCAL_EDITED`. It is the manifest and not `PROJECT_CONTEXT.md` deliberately: that file is keep-mine project content, and a sync-owned key there would be a key the tool writes into a file it otherwise never touches.
+   - **Ordering:** delete a template-removed hook only AFTER the new `.claude/settings.json` has been applied (step 3's order) AND the step-6b reference grep — re-run against that new `settings.json` — shows it unreferenced. Deleting it while the in-memory settings still wire it makes every matching tool call exit 127 and fail closed for the rest of the session.
+4. **For ANY deleted file, cross-reference its user-level twin — this is not a hooks-only rule.** The dangerous twin lives under `~/.claude/` (`hooks/<name>.sh`, `agents/<name>.md`, `skills/<name>/SKILL.md`), which **no project sync touches**. Tell the user to remove it there too (see the downstream-migration notes in `<templateRepo>/CHANGELOG.md`).
+
+   > **Why it was written hooks-only, and why that was wrong.** The original wording said *"for a deleted **hook**"*, on the reasoning that a stale hook fails closed. **v3.0.0 deleted AGENTS**, and the reasoning transfers exactly: a retired agent surviving at `~/.claude/agents/<name>.md` stays **spawnable** after the project file is gone — the retirement is undone at user level, silently, for every repo on the machine. A consumer checked `~/.claude/agents/` anyway, because they generalised it themselves. Do not make the next one do that. **The scope is the DELETION, not the artefact type.**
+
+   > **Verifying the retirement of the old `Read(.env*)` deny rules trips the hook that replaced them.** `deny-secret-reads.sh` judges the command TEXT, so `grep -c 'Read(\.env' settings.json` is itself BLOCKED — the grep's own command string contains the pattern it is searching for (open-brain, yutraffic). **The remedy is not a script file.** A `bash script.sh` wrapper hides the string from a hook that scans the command it is handed, which is exactly the class of bypass this hook exists to prevent — do not recommend it here even though `settings.json` is not itself a secret. Read `settings.json` with the **Read tool** instead: it is not a secrets file, and the Read-tool path is not scanned by this Bash-scoped hook.
+   >
+   > **Confirm the order is stated, not assumed: sync → verify the new hook is present AND wired → measure that it fires → only then consider removing the old `Read(.env*)` deny rules.** A consumer who removes the old rules first has a window with neither the old protection nor the new one in force.
+
+### 6b. Verify Hook Scripts (MANDATORY)
+
+Hooks fail OPEN when their script is missing (exit 127 → the tool call proceeds with only a non-blocking error). A synced project with a populated `.claude/settings.json` but an empty `hooks/` directory runs with its entire enforcement layer silently absent — this happened in production.
+
+> Read the toolkit working tree (`<templateRepo>`) with Read/Grep, never through the context-mode sandbox: `git -C` fails silently on its `/tmp` paths and `grep -c` comes back 0, so every verification below would report a false clean.
+
+1. Collect every `hooks/<name>.sh` reference in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. When this runs before the settings write, collect from the INCOMING (template) `settings.json` (`<templateRepo>/templates/<variant>/.claude/settings.json`) instead of the on-disk one: in the command below, replace `.claude/settings.json` with that path. **Collect the PATH; do NOT anchor on the `command:` value:**
+
+```
+grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u
+```
+
+This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
+
+> **Anchoring on `command:` is the v2.2.5 defect, and it recovered ZERO (v2.2.6, consumer measurement).** Until v2.2.6 this step said "on a `command:` line", justified as keeping the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS pattern (v5 settings carry `Bash(cct-gate*)` instead) out of the set. But the hook path sits **after an escaped quote** inside the command value, so the obvious implementation truncates at the escape:
+>
+> ```
+> grep -o '"command": "[^"]*'            ->  "command": "bash \        <- truncates AT the escape
+> grep -o 'hooks/[A-Za-z0-9_.-]*\.sh'    ->  12
+> ```
+>
+> A consumer collected **5 of 12** and printed `Hooks verified: 5 referenced, 5 present` — a clean-looking verify with **seven hooks unchecked**, in the one step that exists because a populated `settings.json` over an empty `hooks/` runs with enforcement silently absent. All five came from this step's two *unanchored* collectors (3 from agent frontmatter, 2 from the lib grep in 1b); the single anchored collector contributed nothing. **The step already succeeded everywhere it did not anchor.**
+>
+> **Why it survived a release is the durable half:** a **zero** would have looked broken; a **partial** read as plausible. The anchor bought protection against a harmless false positive at the cost of a silent false clean.
+>
+> Over-collection is the correct trade here, exactly as rule 1b already blesses it for libs. The one false positive (`hooks/run-gate.sh`, from the permissions pattern) is a real, tracked file: it costs one existence check and nothing else. And matching the PATH matches every invocation form at once — the legacy cwd-relative `bash hooks/<name>.sh`, the v2.1.2 `bash "$CLAUDE_PROJECT_DIR/hooks/<name>.sh"`, and whatever form is invented next (v5 settings register no project hooks; this serves a v4 `settings.json` still on disk).
+1b. Collect the **libs** too — a hook that cannot reach its lib defines no helpers, reads an empty command, and exits 0 on everything. In every hook script present at the project root, grep for **any** `lib/<file>.sh` mention, in any form:
+
+```
+grep -oE 'lib/[A-Za-z0-9_.-]+\.sh' hooks/*.sh | sort -u
+```
+
+Add each hit as `hooks/lib/<file>`. They are checked and restored exactly like the scripts in steps 2–4 (`source="template"` when missing — the server resolves the `hooks/lib/` subdirectory against the toolkit root).
+
+> **Match the FORM, not one form.** Until v2.2.1 this step named a single pattern — the `dirname`-of-this-script **source** form (a hook script sourcing its lib by resolving its own directory at runtime), plus a literal `lib/git-cmd.sh`. Every node-program hook references its lib as an **assignment** instead (a `jlib=` variable set from the same dirname-of-this-script expression, pointing at `lib/json.sh`, in `bash-output-guard`, `enforce-agent-contract`, `enforce-delegation`, `read-size-gate`, `require-skills-block`, `retro-brief`, `retro-ledger`), so an agent following this step *literally* never collected `hooks/lib/json.sh`, never noticed it missing, and those seven hooks disabled themselves while the sync report said clean. The three git gates were unaffected — they source `lib/git-cmd.sh` behind a hard `[ -f … ] || exit 2` and fail CLOSED. Over-collecting is harmless: a lib already present is a no-op, and a lib named only in a comment still resolves to a real file.
+1c. **Cross-check the collected count against an INDEPENDENT source before trusting it (v2.2.6).** The defect above did not announce itself: it produced a number, and every file behind that number really was present, so `5 referenced, 5 present` read as a clean verify. **A collector returning a partial result reads as success** — the fixture-that-passes-vacuously class, one layer out. The counts alone cannot tell you the collector worked; a second, differently-sourced count can.
+
+```
+referenced=$(grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u | wc -l)
+on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the config text
+```
+
+**Assert `referenced + expected_unreferenced >= on_disk`** (`expected_unreferenced` is 1 when `hooks/git-pre-push.sh` is on disk, else 0), **and LIST every on-disk hook that appears in neither file.** The two numbers come from different places — one from configuration text, one from the directory — so a truncating regex moves only the first. The observed failure prints `5 referenced, 12 on disk, 7 unreferenced: [...]`, which cannot be read as clean.
+
+`referenced + expected_unreferenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. One file is expected to be unreferenced: `hooks/git-pre-push.sh` is a git hook, installed per clone by `--install`, and never in `settings.json`. A consumer's old `hooks/require-skills-block.sh` (a no-op stub since v4.5.0, deleted from the toolkit in v4.6.2) arrives as `TEMPLATE_DELETED` and is deleted with the normal flow. What is NOT acceptable is a bare count that nobody compared to anything.
+
+> **Verify this cross-check by DELETING the guard it protects.** Re-anchor the step-1 grep on `"command": "[^"]*` and re-run: `referenced` must collapse and the unreferenced list must fill up. A cross-check that stays green with the anchor restored is testing the surrounding machinery, not the collector.
+
+2. For each referenced script: verify `hooks/<name>.sh` exists at the project repo root and is non-empty.
+3. For any MISSING script: call `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="template")` — the server resolves root-tracked `hooks/` paths against the toolkit ROOT (variants do NOT ship `hooks/` — never look in `templates/<variant>/hooks/`, it does not exist) and both materializes the file AND returns its manifest entry in one call. Never hand-copy. Add each result to the collected `applied_files`.
+4. For every referenced hook script PRESENT at the project root, NOT tracked in the manifest, AND NOT already applied by any earlier step of this sync (the two sets are disjoint): **this is the SAME register-or-apply route steps 4 and 5 use for a template-class file, because `hooks/*.sh` is template-class, and since v4.3.1 the server also refuses any write to an untracked file that is present on disk unless `overwrite_existing: true` is passed.** `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="skip")` is refused, measured verbatim: `source='skip' is refused under manifest v3 for template-class files: there is no keep-mine class -- fix the template or declare a key`. Do this instead:
+   - Call `template_get_diff(project_path=".", file_path="hooks/<name>.sh", diff_type="three_way")` against the template's current version. **`diff_type="three_way"` has no `has_changes` key** (its keys are `base_content`, `diff_type`, `fallback_to_two_way`, `file_path`, `merge_result`, `project_content`, `template_content`, `unified_diff` — `has_changes` exists only on `diff_type="full"`); the working signal is `unified_diff`: **empty → identical, non-empty → differs.** (Using `diff_type="full"` and reading its `has_changes` is the other valid route; either way, name the signal you are actually reading.)
+   - **Identical to the template (`unified_diff` empty)** → register it, writing nothing: `template_finalize_sync(new_files=["hooks/<name>.sh"])`. This is the same call step 5 uses to register a present `once`-class file, applied here to a template-class one that happens to already match.
+   - **Differs from the template (`unified_diff` non-empty)** → NEVER a silent default; this is a USER decision, the same three-way choice as step 5 case 1. Show the diff and ask: **keep mine / adopt template / merge**. List the path as NEEDING THE USER'S DECISION and write nothing until they answer.
+     - **Keep mine** → register only: add the path to `template_finalize_sync(new_files=["hooks/<name>.sh"])`, **zero bytes written**; the file then reads `LOCAL_EDITED` against the template, which is the honest state. Do NOT call `template_apply_file`.
+     - **Adopt template** → `template_apply_file(project_path=".", file_path="hooks/<name>.sh", source="template", backup_dir=<dir>, overwrite_existing=true)` (`action: "written_from_template"`), saving the project's pre-image and diff under `<backup_dir>/hooks/` first. Without `overwrite_existing` the server refuses an untracked present file, measured verbatim: `hooks/<name>.sh already exists in the project but is not tracked in the manifest; refusing to overwrite it -- ask the user (keep mine / adopt template / merge), then pass overwrite_existing=true to adopt the template or provided content` — that refusal IS the contract: it means the user has not yet chosen, not an error to work around by adding the flag. `<dir>` here may be the same physical directory step 2b already created, but that is directory reuse only, not a coverage claim: 1c-iii's note that "2b backs up a *different set* (gitignored tracked files) and does not cover this" still holds; this call's own `backup_dir` argument is what protects THIS file.
+     - **Merge** → `source="provided"` with hand-merged content, plus `overwrite_existing=true` (and `backup_dir`), composed in a script (see the `Edit`-tool warning in step 4).
+   - `source="skip"` is never used for this case. Add each result to the collected `applied_files`. Once registered or applied, future `template_compute_status` runs track hook drift like any other file.
+   - **Optional extra choice, only if the user picks it explicitly: keep mine under another name (v4.0.2). This does not define keep mine (that is register-only, above).** A hook has no PROJECT-CUSTOM region, and `hooks/<name>.sh` is template-owned under that name. To keep the project's version under a different name: move it to a name the template does not ship (`hooks/local-<name>.sh` or any non-template name), repoint the `settings.json` command at the new path (the same reference grep step 1 of this sub-step runs), then apply the template's `hooks/<name>.sh` as the adopt-template bullet above. The renamed file is project-owned: it is not unclassified and not a hash entry (the walks are template-side), and no consistency check enumerates project-side hook paths. This rename is CONSUMER-side only — a `hooks/local-*.sh` inside the toolkit repo itself fails the consistency script's mirror rule.
+
+     > **Do not carry this rename pattern over to `.claude/agents/*.md`.** A hook has nowhere else to put a kept addition, so renaming it is the whole mechanism. Agent files leave the project through step 2c (a kept one is the project's own agent, not a renamed template file).
+
+   > **Compare against the manifest PLUS this sync's own applied set — never the on-disk manifest alone (yutraffic).** `template_finalize_sync` is the only tool that WRITES the manifest, so mid-sync the manifest on disk still reflects the START of the sync. A hook this sync itself materialized (measured: `hooks/deny-secret-reads.sh`, applied in step 5's `new_template_files`, not step 3) reads back as PRESENT-BUT-UNTRACKED if tracked-ness is re-derived from the on-disk manifest alone. Computing it that way gets a false positive on a file already correctly registered `source="template"` and re-registers it here with `source="skip"` — the wrong resolution for a file the sync just applied fresh, as opposed to one the project modified. Union the manifest with the `applied_files` collected so far in THIS sync before testing tracked-ness; that is what "NOT already applied by any earlier step of this sync" above means in practice (penumbra: the measured applying step was 5, not 3, so the rule line is worded against the sync as a whole rather than a specific step number).
+5. Report the verified list, **including the independent count from 1c** — the cross-check is worth nothing if its second number never reaches the report:
+
+```
+Hooks verified: N referenced, N present (M restored, K registered in manifest); D on disk, U unreferenced: [list]
+```
+
+### 6d. Sweep for agent NAMES, not just `hooks/` paths (MANDATORY when an agent file is TEMPLATE_DELETED — v2.4.0, item A4)
+
+Files handled by step 2c are skipped here.
+
+**A consolidation deletes agent FILES. It does not touch REFERENCES TO THEIR NAMES**, and step 6's reference grep looks for `hooks/` paths only. Measured on a live consumer: a **keep-mine `CLAUDE.md`** carries an agent-selection table naming `python-coder` and `coder` as `subagent_type` values, with an explicit instruction not to substitute one for the other. `AGENT_TEAM.md` and `settings.json` are template-owned, so the template updates them — **`CLAUDE.md` is keep-mine and is therefore NEVER updated.** The sync completes clean, step 6 reports the deleted agents unreferenced (*truthfully, for `hooks/` paths*), and the next spawn of a consolidated-away agent fails at runtime against instructions the project still carries.
+
+> This is *removals fail closed* **one layer out**: the removal does not break the hook layer, it breaks **a project-authored instruction that no longer resolves.**
+
+#### ⚠ KEY ON THE REFERENCE FORM, NOT THE NAME — a bare name grep is 28:1 noise and dies on first use
+
+Measured on a live consumer, `.claude/agents/` excluded:
+
+```
+name hits in project prose:  coder 74 | tester 32 | architect 27 | code-reviewer 16
+                             Explore 13 | ops 12 | doc-generator 10 | req-eng 7 | test-writer 4
+                             ------------------------------------------------- total 195
+lines actually referencing subagent_type:                                             7
+```
+
+`coder` alone is **74 hits**, essentially all of it prose discussing the role. **A consumer runs that once, sees 195 hits, and never runs it again** — the exact *noisy enough to be ignored* failure, and the same one already rejected for the placeholder sweep. **Match the reference SHAPE**, exactly as the sweep's markdown arm requires a `- **Key**: value` line rather than any occurrence of the key. **195 → 7 on that repo.** *Scope is the right axis; the name set is not.*
+
+#### The five binding forms — ONE PASS PER PATTERN LANGUAGE, NOT ONE PASS PER NAME
+
+A consumer enumerated every place an agent name is bound. **Only one of the five is a spawn call, and two of them fail OPEN and SILENT.**
+
+| # | Form | Failure mode when the name retires |
+|---|---|---|
+| 1 | Hook `case` arms — `coder\|*-coder)`, `tester)`, `architect)` | **FAIL OPEN, SILENT** — falls to the default arm; the spawn proceeds with **no skills requirement**, no error, no log line |
+| 2 | `settings.json` matcher regexes — `^([a-z0-9]+-)?coder$\|^tester$` | **FAIL OPEN, SILENT** — the hook is **never invoked at all**. Not a block, not a warning |
+| 3 | `CLAUDE.md` routing prose — *Rust/Tauri → rust-coder, do not substitute* | dangling mandate, permanent in a keep-mine file |
+| 4 | Agent frontmatter cross-refs — every agent file names others | dangling reference |
+| 5 | **Hook user-facing output strings** — `enforce-delegation.sh`'s DENY text names `coder`, `ops`, `tester` | not enforcement, but a live instruction telling a blocked user to spawn something that no longer exists |
+
+> **This inverts the comfort premise that a retired name "fails loudly at spawn".** It fails **loudly when spawned** and **silently in every hook that keyed on it** — opposite polarities in the same release, and the loud one is the one that got measured. Loudness protects the *caller*; it does not protect the *enforcement layer*.
+
+**Forms 1 and 2 are the same intent in two different pattern languages** — shell glob `coder|*-coder)` and regex `^([a-z0-9]+-)?coder$` — both generalising over the whole `<lang>-coder` family. **Consolidating or renaming `coder` breaks `rust-coder`, `cpp-coder` and every future variant in both places at once, and a fix applied to one will not be applied to the other by any grep keyed on a single syntax.**
+
+#### The sweep
+
+Run this for every `TEMPLATE_DELETED` agent name `<N>`:
+
+```sh
+# forms 3 + the spawn call: the reference SHAPE, in project-owned prose.
+# On the USER-LEVEL pass this arm also matches this skill's own example lines —
+# see "Sweep the USER-LEVEL tree too" below for the exclusion and the hand-check
+# that replaces it. In the PROJECT tree there is nothing to exclude.
+grep -rnE "subagent_type[\"']?[[:space:]]*[:=][[:space:]]*[\"']?<N>\b" . \
+     --include='*.md' --include='*.json' --include='*.yaml' --include='*.yml'
+
+# form 1: shell case arms, in every hook on disk.
+grep -nE "^[[:space:]]*[A-Za-z0-9_|*?.-]*<N>[A-Za-z0-9_|*?.-]*\)" hooks/*.sh
+
+# form 2: settings.json matcher regexes that MATCH the name. Evaluate the
+# regex; do NOT string-compare it to the name — `rust-coder` appears as no
+# literal in `^([a-z0-9]+-)?coder$` and is covered only by the generalisation.
+grep -o '"matcher": "[^"]*"' .claude/settings.json | sed 's/.*"matcher": "//;s/"$//' \
+  | while IFS= read -r m; do printf '%s\n' "<N>" | grep -qE "$m" && echo "matcher: $m"; done
+
+# form 4: agent frontmatter cross-references. EXCLUDE THE AGENT'S OWN FILE —
+# `.claude/agents/<N>.md` matches its own `name: <N>` frontmatter, so the file
+# being deleted always reports itself as a reference to itself.
+grep -rn "\b<N>\b" .claude/agents/*.md | grep -v "^.claude/agents/<N>.md:"
+
+# form 5: hook OUTPUT strings — a live instruction inside a DENY message.
+grep -nE "(echo|printf)[^|]*\b<N>\b" hooks/*.sh
+```
+
+**`--include` goes BEFORE the paths** — after them it is parsed as another path and the filter silently does nothing. (Same defect class as the placeholder sweep's.)
+
+#### ⚠ FORM 4 SELF-MATCHES, AND THE POLARITY IS THE OPPOSITE OF EVERYTHING ELSE HERE
+
+`grep -l <N> .claude/agents/*.md` includes the file under test, which matches its own `name:` frontmatter. **Every retired agent therefore reports as "still referenced", every time**, and the deletion the sweep exists to authorise is blocked by the sweep itself.
+
+Everything else in this skill fails toward *proceeding*; this one fails toward **refusal — which reads as the safe answer.** A consumer sees the sweep catch something, stops, and concludes it caught something real. It caught the file it was asked about.
+
+> **Uniformity across independent subjects is evidence about the INSTRUMENT, not the subjects.** A consumer's first pass reported **all three** retired agents as still referenced and they looked twice for exactly that reason — *"too tidy; one would have looked plausible."* Three independent agents with independent reference sets do not agree by coincidence. When a sweep answers the same way for every subject, suspect the sweep. `reported-by: penumbra / v3.0.0`
+
+#### The 6d report — PER-FORM, with a probe count from a different source
+
+Report **one line per form per name plus a total**, not a single number:
+
+```
+6d name sweep: 5 -> 0 sites across 5 forms x 3 names (15 probes)
+
+  form 1  case arms in hooks         3 -> 0
+  form 2  settings.json matchers     0 -> 0
+  form 3  subagent_type in prose     0 -> 0
+  form 4  agent frontmatter          1 -> 0
+  form 5  hook output strings        1 -> 0
+```
+
+**`0 -> 0` beats `0 hits`, and is still not enough on its own:** neither distinguishes *ran and found nothing* from *did not run*. The **probe count** is the second number, and it comes from a different source — it is derived from the INPUTS (forms × names), so it cannot go quiet when the search does. Same shape as 6b.1c.
+
+**Per-form is not close to good enough, and the reason is form 3.** A total of 5 proves *a* sweep ran; it does not prove forms 2 and 3 ran, because forms 1, 4 and 5 account for all five hits by themselves. **Form 3 is the form 6d exists for** — the keep-mine `CLAUDE.md` agent-selection table that motivated this whole step is form 3 and nothing else — **and it is the only form carrying `--include` flags**, the defect class that has already landed twice here. A silent form 3 under a nonzero total is a false clean on the exact failure mode.
+
+This is **reporting, not searching**: it adds no greps, so it does not widen the closed set of five forms below. It makes that closed set *visible* instead of an unverifiable claim in prose.
+
+**Report the residual separately — never folded into the delta.** **Weight keep-mine files specially: the sync will not fix those, so a hit there is permanent until a human edits it.**
+
+```
+6d name sweep: 5 -> 2 sites across 5 forms x 3 names (15 probes)
+  residual, in keep-mine files — PERMANENT until a human edits:
+    CLAUDE.md:41   subagent_type: doc-generator     (form 3)
+```
+
+**A non-zero residual is the EXPECTED outcome for a consumer with agent routing in keep-mine prose**, not a failed sync. Say so in the report, or the next reader treats a correct result as a red one.
+
+**Acceptance criterion, per pattern language:** enumerate every place a name is bound — case arms, matcher regexes, routing prose, frontmatter, hook output — and **assert the set is unchanged across the consolidation, per pattern language.** A rename then becomes a diff to look at rather than a silence to notice.
+
+#### ⚠ THE FIVE FORMS ARE EXHAUSTIVE BY DESIGN. A SIXTH ARM IS A REGRESSION, NOT EXTRA SAFETY
+
+**Do not add a bare-name grep "just to be sure".** The set of five is closed on purpose: each arm is keyed on a REFERENCE SHAPE, and that keying is the whole mechanism — it is what took 195 hits down to 7 on a real repo. A sixth arm matching the bare name re-imports the 28:1 noise the design exists to eliminate, and the noise does not stay contained: it makes the other five unreadable alongside it, which is how the sweep gets abandoned.
+
+**This is not a hypothetical.** A consumer added a bare-name grep **having just read the 28:1 warning three paragraphs above**, and got 9 benign hits for their trouble. Their own framing is the reason this warning has to be here in its own right:
+
+> *"I was not being careless, I was being thorough."*
+
+**Thoroughness is precisely what the shape-keyed design defends against.** The instinct that adds an arm is the same instinct that produced the 195-hit sweep, and it does not feel like a mistake while you are having it. If you believe a sixth binding form exists, **that is a finding to report, not an arm to add** — a new form changes the table above and belongs in the skill, where the next consumer inherits it.
+
+#### Sweep the USER-LEVEL tree too, on any release that retires a name
+
+The five forms above are scoped to the **project tree**. `~/.claude/` is not in that scope, and **nothing else covers it either**:
+
+- `verify-user-level-drift.sh` compares user-level files against the **released tag**. A user-level file naming a retired agent reports **0 drift**, because the released tag names it too. The probe is working; it is answering a different question.
+- The toolkit repo-side censuses scope to `templates/**`, `user-level-reference/**`, `skills/**` and `output-styles/**` and do not look for retired names at all.
+
+**Measured, in this skill.** v3.0.0 retired `test-writer` and shipped step 9 still naming it in the list of worktree-isolating agent types — **6d form 3, in the file that defines 6d.** Harmless in effect (an over-broad do-not-spawn list), but it survived a release *because it was outside every sweep, census and drift check at once*. So: **on any release that retires a name, run the same five forms over `~/.claude/` and over `<templateRepo>`'s own `user-level-reference/`, `skills/` and `docs/`**, and report that pass separately.
+
+**The sweep's own example lines are not sites — and the exclusion has a catch.** Run over `~/.claude`, form 3 matches the example lines in `skills/sync-template/SKILL.md` itself: one phantom site on every run, measured by a consumer. Add `--exclude-dir=sync-template` to the form-3 arm for the user-level pass **and then read this file by hand for the retired name** — because the one real user-level hit anybody has measured (`test-writer`, above) was *in this file*. A blanket exclusion alone would have hidden exactly the defect that motivated the section. Excluded-then-hand-checked, never excluded-and-forgotten; say which of the two you did in the report.
+
+> **CONSTRAINT THIS PUTS ON ANY CONSOLIDATION: ABSORB, DO NOT RENAME.** Both the matcher regex and the skills case arm already generalise over the variant family, so superset-under-an-existing-name is compatible **only while the surviving name is `coder`**. If a consolidation renames rather than absorbs, all three binding sites break silently at the same moment. With an existing name, a stale reference in a consumer's keep-mine prose fails loudly at spawn, which is recoverable; with a new name, every consumer's prose is stale at once.
+
+### 7. Finalize
+
+Call `template_finalize_sync(project_path=".", applied_files_path=<json-path>)`, where `<json-path>` is the JSON file of all `template_apply_file` results written as described below.
+
+**Re-check the toolkit HEAD at finalize.** Finalize records the toolkit's HEAD *at that moment* as `template_commit`; if the toolkit was pulled or committed to since step 1, the recorded commit (and the case-2 superset check above) describes a different tree than the one you applied. Re-run `git -C <templateRepo> rev-parse HEAD` just before this call and compare with the commit you started from; if it moved, re-run status before finalizing.
+
+`new_files` REGISTERS an untracked path and never touches an existing entry; a tracked file you updated outside `template_apply_file` keeps its stale hash (`LOCAL_EDITED` with an empty `local_diff`) until you pass it in `applied_files`, which REFRESHES the hash; the post-finalize `compute_status` self-check is the control.
+
+**`files_created` (v4.3.1)** counts files the apply CREATED from the template; `files_updated` the ones it rewrote; `files_added` only `new_files` registrations not already tracked — a sync that created new hooks reads `files_created: N, files_added: 0`, which is correct.
+
+**Re-register keep-mine files LAST** — every keep-mine registration (step 6b's register-or-apply route for a present-but-untracked hook via `template_finalize_sync(new_files=[...])`, or step 4/5's `source="provided"` splice under v3) is the last action before finalize, after every edit including the sync's own write-up into `PROJECT_STATE.md`. A hash recorded before a later edit describes nothing, and on a file with a live PROJECT-CUSTOM region those stale part hashes are exactly what the next sync's classification reads.
+
+**Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's keep-mine registration set (step 4's `source="provided"` splice under v3, not `source="skip"`) — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it. **If no entry carries a hint, there is nothing to do here** — this clause exists for manifests that predate the part-hash fields, and a recently-synced repo has already re-registered everything (measured: `hint: ""` on all 36 entries of one consumer). An empty hint set is the healthy state, not a missing step.
+
+Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
+
+**Shape this as two short commands, not one long one.** Write the `applied_files` JSON — and any validator — to the scratchpad with the Write tool, then run `python3 <validator-path> <json-path>`. The payload can contain hook paths, and a long command line carrying them is the shape that has repeatedly tripped a guard: it is also the standing "move logic into a script file" rule, arriving from a third direction. (`<json-path>` here is a path the Write tool just produced, not one typed from bash — see the bash→python platform note in the intro before shortcutting this to a `$TMPDIR`-derived string.) Pass that same file to the server as `applied_files_path=<json-path>` instead of hand-typing `applied_files` into the call.
+
+**Do NOT gate finalize on a client-side re-hash** (removed in v2.2.4, consumer feedback). Earlier versions of this step required recomputing each entry's hash from disk and asserting it matched `localHash`. That is not implementable from the skill text as written, and the file it reddens first is `PROJECT_CONTEXT.md` — the one file this skill's own conflict guidance says every consumer must splice. Both honest responses to that red are bad: finalize anyway (and learn to ignore a guard), or stop a clean sync. The original hand-typed-hash incident is already covered server-side — `template_finalize_sync` rejects malformed hashes — and by the "build `applied_files` programmatically" rule above.
+
+*Optional diagnostic, never a gate.* If you do want to compare a hash by hand, `localHash` is sha256 over the file read as Python text (`path.read_text(encoding="utf-8")`, i.e. **universal newlines**: CRLF and CR both become LF) with a **leading BOM stripped**, re-encoded UTF-8 with the BOM stripped again. A raw sha256 of the bytes on disk disagrees with it on any CRLF file and on any file carrying a BOM — a consumer ruled out raw sha256, newline normalisation, whitespace stripping and placeholder reversal in all six permutations before the BOM turned out to be the difference. A mismatch here is evidence about *your* reimplementation first, not about the manifest.
+
+**Post-finalize self-check:** re-run `template_compute_status(project_path=".")`. A clean sync shows `auto_update: 0, conflict: 0`. Anything else means the manifest was corrupted during finalize — report it to the user instead of finishing.
+
+**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report.
+
+**Run the three arms below verbatim; do not invent a broader regex.** The placeholder shape this toolkit ships is `{{[A-Z_]{2,}}}` and nothing else. A consumer widened it to `__[A-Z_]{3,}__` and got 38 false hits in one sweep — that shape is every MCP tool name (`mcp__MCP_DOCKER__…`), not a placeholder. A sweep that cries wolf 38 times is a sweep the next person skips.
+
+```
+# The markdown and shell arms are BOM-tolerant: a UTF-8 BOM sits at byte 0,
+# INSIDE line 1, so an unprefixed `^` stops matching a key at the top of the
+# file. See below. The JSON arm needs no BOM handling — it has neither a `^`
+# anchor nor a comment filter, which are the only two things a BOM breaks.
+BOM=$(printf '\357\273\277')
+# markdown: only a config-VALUE line, which is where a placeholder is load-bearing
+grep -rn -- "^\(${BOM}\)\?[-*[:space:]]*\*\*[^*]\+\*\*:.*{{[A-Z_]\{2,\}}}" .claude *.md
+# shell: skip comment lines — prose ABOUT a placeholder is not a placeholder.
+# OPTIONS BEFORE PATHS: `--include` after the paths is parsed as another PATH.
+# NO `2>/dev/null` on ANY arm — the sweep's stderr is deliberately
+# unsuppressed; it is the only thing that reports a malformed invocation.
+# PIPEFAIL: without it `$?` is the LAST grep's status and the first one's 2
+# (a malformed invocation) is invisible to anything testing the exit code.
+# SCOPED TO A SUBSHELL, deliberately — see the exit contract below.
+( set -o pipefail
+grep -rn --include='*.sh' -- '{{[A-Z_]\{2,\}}}' .claude hooks | grep -v ":[0-9]*:\(${BOM}\)\?[[:space:]]*#"
+)
+sweep_rc=$?
+# json: TRACKED files only, never a filesystem walk. `.claude/settings.json` is
+# template-tracked, substituted at apply time, and composed almost entirely of
+# hook `command` strings — an EXECUTABLE position, so a literal {{...}} there is
+# a path that does not resolve, i.e. 127, i.e. fail-open.
+# NO exclusions and NO shape requirement, deliberately: JSON has no comments, so
+# any {{...}} in a .json file is in a VALUE by construction. Do not add a
+# comment filter by analogy with the shell arm; there is nothing to filter.
+# `git grep`, NOT `git ls-files … | xargs grep`: xargs maps ANY grep exit in
+# 1..125 to its own 123, collapsing "clean" and "malformed" — the very
+# distinction pipefail was added to expose (measured: xargs 123 both ways).
+# git grep needs no pipeline, cannot wander into .venv or build output, and
+# handles spaces in paths.
+git grep -n -e '{{[A-Z_]\{2,\}}}' -- '*.json'
+json_rc=$?     # 0 = hits (a PROBLEM), 1 = clean, 128 = malformed (NOT grep's 2)
+```
+
+**THE SWEEP'S EXIT CONTRACT — SUCCESS IS 1 AND FAILURE IS 0 (v2.2.5 round 4).** `pipefail` is correct and does its job, but the resulting contract is inverted relative to every instinct, and nothing said so:
+
+```
+exit 0  ->  hits found              a PROBLEM: unfilled placeholders, report them
+exit 1  ->  clean, no hits          SUCCESS — this is grep's no-match, not an error
+exit 2  ->  malformed invocation    the defect pipefail was added to expose
+```
+
+**The JSON arm keeps 0-and-1 and reports malformed as 128, not 2** — that is `git grep`'s convention, not `grep`'s, and it is the reason the arm is `git grep` rather than a `git ls-files | xargs grep` pipeline: xargs would return **123** for both the clean case and the malformed one. So the testable form is *"0 means hits, 1 means clean, anything else means broken"*, which holds for all three arms; only the literal `2` is grep-specific.
+
+**Check for a non-{0,1} code; non-zero alone is not an error.** Two consequences follow directly, and both have already been written by someone reading this file:
+
+- `if ! sweep; then fail` marks **every clean tree** as broken.
+- This skill mandates putting logic in a **script file**, and `set -o pipefail` is typed as `set -euo pipefail` from muscle memory — under `set -e` a **clean sweep aborts the script**, turning the correct outcome into a hard stop with no message.
+
+**And scope `pipefail`.** As a bare `set -o pipefail` it leaks into the rest of the hosting script and changes the exit semantics of every later pipeline there. The subshell above contains it; `( set -o pipefail; … )` or an explicit save/restore both work, and the subshell is one character cheaper to get right.
+
+**THE JSON ARM IS NOT REDUNDANT WITH THE TOOLKIT'S OWN SHIPPING CENSUS — DO NOT DELETE IT AS OVERLAPPING (v2.2.5 round 7).** `scripts/verify-template-consistency.sh` runs a repo-side JSON census over `templates/**` and `user-level-reference/**`, so it is tempting to read this arm as the same check one tree over. It is not, and the asymmetry cuts the OPPOSITE way to the usual one:
+
+| tree | repo-side census | consumer-side arm (here) |
+|---|---|---|
+| user level | **sufficient**, because the user-level install is *verbatim* — nothing substitutes there | not needed, and this arm deliberately never touches `$HOME` |
+| project | **necessary, NOT sufficient** — the project install is *not* verbatim | **the only detector for the install-introduced class** |
+
+The project bootstrap substitutes, and substitution is exactly where a placeholder survives: per the rule below, `template_apply_file` substitutes only placeholders present in **the project's** manifest, so a key the manifest predates lands as a literal in the consumer's file while the template it came from is perfectly clean. **That is v2.2.0's chain verbatim — template correct → substitution incomplete → the consumer carries `- **Protected branches**: {{DEFAULT_BRANCH}}` → trunk silently unprotected — with a template-side census green throughout.** It was an *install* defect, not a shipping defect, and only a consumer-side check can see it. Today the JSON exposure is latent (no `*.json` under `templates/` carries a placeholder, so substitution is a no-op for JSON); it appears the first time someone adds one, in a file full of executable command strings, with the shipping census still green.
+
+**`git grep` reads the WORKING TREE for tracked files, which is the moment this sweep runs in** — verified: a tracked `settings.json` edited but neither staged nor committed is still found (rc 0). It has to be, because the sweep runs immediately after `template_apply_file` and before anything is committed. **Named residual, from the same property:** a file the sync *creates* for the first time and that nobody has `git add`-ed yet is untracked, so this arm cannot see it. That is the same scoping that keeps the arm out of `.venv` and out of another tool's backups, and it is the right trade — but in a brand-new project with nothing committed, run the sweep again after the first `git add`.
+
+**Scope by OWNERSHIP, never by key name, and expect the two ends to look different.** This arm scopes with `git ls-files` (tracked files); the repo-side census cannot use git for its user-level half and scopes by directory instead. **They are asymmetric in construction though symmetric in intent** — do not "harmonise" them into one filesystem walk. A walk over `~/.claude` was measured at 3430 JSON files with one hit, in a dated backup carrying *another tool's* placeholder keys: red on day one for a benign reason, which is how a guard gets disabled by someone whose reasoning looks sound. And do **not** narrow either end by filtering on known toolkit key names: that rots the first time a key is added, and it would hide a genuine unfilled placeholder under the new one. Scope is the right axis; the key set is not.
+
+**Why the `${BOM}` in the markdown and shell arms (v2.2.4).** PowerShell 5.1's `>` and `Out-File` write UTF-8 **with** a BOM, and a consumer's `PROJECT_CONTEXT.md` was found carrying one — this is a live Windows shape, not a hypothetical. The two arms fail in opposite directions and both are wrong: arm 1's `^` no longer abuts the key, so **a placeholder on line 1 behind a BOM is a FALSE CLEAN** — the sweep's whole job, missed silently, on the case a consumer reordering their file most plausibly creates. Arm 2's exclusion filter is the mirror: the BOM lands between the `:` and the `#`, so a BOM'd comment stops being recognised as a comment and comes back as a **false positive**. Measured on a fixture, before → after: arm 1 line 1 `0 → 1`, line 2 `1 → 1`, no-BOM control `1 → 1`; arm 2 BOM'd comment `1 → 0` false positives. Same class as the hook extractors' `GC_KEY_PRE` — the server strips the BOM for hashing and a `^`-anchored grep does not, so the same file is two different files depending on which one is looking.
+
+**Why the option ordering is load-bearing, and why the stderr stays visible (v2.2.5).** Until this release arm 2 read `grep -rn -- '…' .claude hooks --include='*.sh'`, with the option AFTER the paths — where `grep` parses it as another **path**, not an option. So the `*.sh` restriction never applied at all: arm 2 recursed every file under `.claude` and `hooks`, and its comment filter — correct for shell, wrong for markdown — then **silently ate a genuine markdown placeholder**, because `# {{FOO}}` reads as a comment line. Measured on GNU grep 3.0 (Git Bash / Windows), planted fixture of `conf.json`, `doc.md` (line 1 `# {{FOO_BAR}}`) and `s.sh`, and reproduced independently by a consumer:
+
+```
+SHIPPED (options after paths):   conf.json, doc.md, s.sh   filter inert, every type matched
+                     stderr:     grep: --include=*.sh: No such file or directory
+CORRECTED (options first):       s.sh                      correct
+SHIPPED + comment filter:        conf.json, s.sh           <- doc.md's "# {{FOO_BAR}}" DROPPED
+CORRECTED + comment filter:      s.sh                      correct
+```
+
+That third row is the sweep failing at its entire job, quietly — the same shape as the BOM false-clean the v2.2.4 arms were written to prevent. Options before paths is unambiguous everywhere; `scripts/verify-template-consistency.sh` pins the ordering so it cannot drift back.
+
+**Keeping stderr visible is necessary but NOT sufficient — the exit code hides too (v2.2.5).** A malformed `grep` invocation exits **2**, but arm 2 is a pipeline, so a bare `$?` is the *last* grep's status: the 2 never surfaces and anyone wrapping the sweep in a script that tests its result gets a clean-looking answer even with stderr unsuppressed. `set -o pipefail` (above) or an explicit `${PIPESTATUS[0]}` check is what makes the failure testable; without one the defect recurs the moment someone automates the sweep. Stderr caught it for a human; the exit code is what catches it for a script.
+
+**Placeholders inside FENCED CODE BLOCKS are OUT OF SCOPE — decided, not omitted (v2.2.5).** A reviewer scanning unfiltered found a consumer's `CLAUDE.md` carrying `{{BUILD_COMMAND}}`, `{{TEST_COMMAND}}` and `{{FORMAT_COMMAND}}` unfilled inside its Quick Start fenced block. No arm sees them: the markdown arm requires a `- **Key**: value` line, the shell arm requires `*.sh`, the JSON arm requires `*.json`. **That is deliberate and stays.** Two reasons. First, the same one that narrowed arm 1 in the first place — a pattern broad enough to reach fenced blocks flags the toolkit's own *documentation* of placeholder handling, including the sweep's own source above and every template's Quick Start, and the better the handling is documented the noisier its own detector becomes. Second, the failure this sweep exists for is a config value that reads as data to a *tool*: v2.2.0's `- **Protected branches**: {{DEFAULT_BRANCH}}` silently unprotected trunk. A fenced snippet telling a human what to type is read by a human, who has the surrounding sentence — in the reported case, the file's own "Replace placeholders above with your project's actual commands." **Named residual gap:** an unfilled placeholder in a fenced block is not reported, so a project that never followed that instruction will not hear about it here. The fact that would flip this decision is a fenced-block placeholder that some *tool* parses; there is not one today.
+
+**Do NOT add `2>/dev/null` to any arm.** The `No such file or directory` above is the *only* signal a malformed invocation gives, and it is the one a consumer running the line literally would have seen — this defect went unnoticed for a release because the reporting consumer had wrapped the shipped line in `2>/dev/null` in their own script. After the ordering fix that particular error is gone anyway; the principle is for whatever the next mistake is. A guard whose diagnostic is suppressed is not a guard.
+
+**Why not the plain `grep -rn '{{[A-Z_]\{2,\}}}' .claude hooks *.md`:** it flags the toolkit's own documentation of placeholder handling — `hooks/lib/git-cmd.sh`'s comments explaining the `{{DEFAULT_BRANCH}}` arms, and `hooks/pre-commit-test.sh`'s comment naming `{{TEST_COMMAND}}`. Every consumer hits those three lines and has to reason them out, and the better the handling is documented the noisier its own detector becomes. Reported independently by two consumers. **Do not fix it by excluding `hooks/lib/` by name** — that rots on the first rename and would hide a genuine unfilled placeholder in a hook script. Excluding *comment lines* and requiring markdown hits on a `- **Key**: value` line kills all three false positives and keeps every real one. Verify the refinement the same way it was verified upstream: the sweep must report zero on a clean tree, and must still catch a placeholder planted in a `- **Key**:` line — **on line 1 behind a BOM as well as further down**, which is the pair the v2.2.4 arms above exist for.
+
+Any hit is a file the template wrote with an unfilled placeholder — `template_apply_file` substitutes only placeholders present in the project's manifest, so a key the manifest predates (`DEFAULT_BRANCH`, `GATE_COMMAND`, `WORKTREE_BASE`, `LOG_PATH`) lands as a literal on **both** accept-template and accept-merged. Fill it or delete the line; list every hit under `Warnings:` either way. This one grep is what stands between a consumer and a config value that reads as data — v2.2.0 shipped `- **Protected branches**: {{DEFAULT_BRANCH}}`, and until v2.2.1's resolver fix that literal silently unprotected trunk.
+
+Version labels are server-authoritative under v3 (`template_version` / `template_commit`). The client no longer stamps them; `lastSyncedVersion` / `lastSyncedVersionOf` are dropped by migrate and finalize and reported as `superseded_keys_dropped`.
+
+### 8. Report
+
+**Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
+
+**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key).
+
+**Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
+
+#### 8a. Expected lines, per mode AND per manifest situation (`LINES` is now 29 — v4.1.0 raised it from 24 to 30; v4.1.1 adds `project_md_seed_differs`, directly after `project_md_seed_current`; v4.5.2 adds `retired_rule_names`, directly after `once_notes_changed`; v5.0 removes the three `agent_grants_*` lines with the grants mechanism)
+
+**Read `manifest_version_supported` by name — this is a renamed id, not a new one (R-A).** Its predecessor named only the version-3 case, which became a lie the moment a v4 manifest could PASS it too; the count and the closed set are otherwise unchanged. A fleet script or notice still grepping for the old, version-scoped spelling finds nothing after this release and needs updating on its own side, not this skill's.
+
+**There are three situations, not two, and each has its own exact SKIP/FAIL/INFO sets — pick the row that matches YOUR manifest and the toolkit checkout you synced from, never assume "v3" means one thing:**
+
+| Situation | What it means | `skip_ids` (`post_commit`) | `fail_ids` | `info_ids` |
+|---|---|---|---|---|
+| **v4** | manifest already migrated | `{server_skew}` | `{}` | `{template_behind_head, encoding_drift, project_md_seed_current, project_md_seed_differs, legacy_gate_dir, once_notes_changed, retired_rule_names, project_md_scoped_consistent}` |
+| **v3 legacy** | manifest v3, synced from a v4.0.x toolkit checkout (still region-bearing) — no window, behaves exactly as before this release | `{server_skew, claude_md_identical, import_line_present, instructions_file_present}` | `{}` | same eight as above |
+| **v3 window** | manifest v3, synced from a v4.1+ toolkit checkout — migrate first | `{server_skew, claude_md_identical, import_line_present, instructions_file_present}` | `{status_clean}` **alone** (R-K) | same eight as above |
+
+`pre_commit` mode: identical to the table above with `tree_clean` ADDED to every row's `skip_ids` (its own pre-existing, mode-only SKIP — unrelated to this release). A v4 consumer's `pre_commit` summary therefore reads `19 PASS, 0 FAIL, 1 SKIP, 9 INFO` in the third healthy shape below (`server_skew` INFO — only `tree_clean` SKIPs), against `post_commit`'s `20 PASS, 0 FAIL, 0 SKIP, 9 INFO`. With `server_skew` PASS instead, `pre_commit` reads `20 PASS, 0 FAIL, 1 SKIP (tree_clean), 8 INFO` (`23 PASS, 0 FAIL, 1 SKIP (tree_clean), 8 INFO` on an older server that reports 32 lines). None of the three CLAUDE.md-import lines is mode-dependent; they read the same in `pre_commit` and `post_commit`.
+
+**In the v3 window, `status_clean` FAILing ALONE is the correct, complete answer — do not go looking for a second FAIL.** R-K is deliberate: three FAILs for one fact (`claude_md_identical`, `import_line_present`, `instructions_file_present` all also failing) would invite hand-fixing one of them, and every hand-fix available makes the real migration refuse — a hand-added `@` line is an out-of-region diff (case (c)), a hand-created `project-instructions.md` is case (d). Those three SKIP instead, with the reason **"manifest v3: migrate first (owned by `status_clean`)"**. In v3 legacy (no window), the same three SKIP with a different reason, **"manifest v3: no import yet"** — read the reason string, not just the status, to tell the two v3 situations apart.
+
+**The three CLAUDE.md-import lines' own behaviour, v4 only** (in v3 legacy/window they SKIP, reason above):
+
+| id | v4 PASS | v4 FAIL |
+|---|---|---|
+| `claude_md_identical` | consumer `CLAUDE.md` byte-identical to `template_content()` | any divergence (diff shown) |
+| `import_line_present` | last line is exactly `@.claude/project-instructions.md` | last line differs — the template-regression case: a variant template that loses the `@` line, synced from a branch or fork where the toolkit's own consistency check never ran, reads byte-identical and `claude_md_identical` PASSes; this is the only line that can still catch it |
+| `instructions_file_present` | `manifest["instructions_file"]` exists on disk | hand-deleted |
+
+
+**`project_md_seed_current` reads INFO, naming the seed as older, on every un-migrated (v2 or v3) consumer — expected, not a defect (R-G).** The `.claude/rules/project.md` seed's header text changed in this release to point at `.claude/project-instructions.md` instead of the retired region; a consumer who has not re-synced that once-class file still carries the old wording, and this line says so without failing — `once`-class files are never overwritten, so the only way to clear the INFO is a deliberate hand-edit, never a sync.
+
+**`project_md_seed_current` gains a THIRD arm in v4.1.1: a header that still names the retired region by its marker, `PROJECT-CUSTOM`, reads INFO too, with its own remedy.** The R-G reword above only catches the pre-v4.0.2 wording; four consumers were measured still pointing at the retired region under wording R-G never touched (the v4.1.0 CHANGELOG's claim that this line "reads INFO older" on that seed was false as shipped — it did not fire on this shape at all until now). Exact strings, quoted from the check: `status: "INFO"`, `measured: ".claude/rules/project.md header references PROJECT-CUSTOM, a region v4.1.0 removed"`, `remedy: "hand-edit .claude/rules/project.md (once-class: the sync never writes it): repoint the sentence at .claude/project-instructions.md"`.
+
+**`project_md_seed_differs` (new in v4.1.1, always INFO, index 26 of 31 — directly after `project_md_seed_current`) reports whether the seed matches the shipped one as a FACT, never a remedy to act on.** It is deliberately **not a byte-compare** — a byte-compare would tell a consumer who deliberately edited a file they own to discard the edit, and cannot produce a surgical remedy either way. Four shapes, exact strings quoted from the check:
+- not present: `measured: ".claude/rules/project.md not present"`, no remedy.
+- shipped seed unreadable: `measured: "shipped seed not found at {shipped_seed_path} -- cannot compare"`, no remedy.
+- prefix holds (the consumer's file starts with the shipped seed text — own rules, if any, appended after it): `measured: "seed matches the shipped seed (rules appended after it)"`, no remedy.
+- prefix fails (the consumer edited the seed text itself): `measured: "seed text differs from the shipped seed at this template"`, `remedy: "shipped seed: templates/<variant>/.claude/rules/project.md; this file is once-class and no sync writes it"` — the `<variant>` token is literal in the remedy string, never substituted with this manifest's actual variant.
+
+**Report `key_audit.optional_absent_detail`** (v4.0.1, item 18; capability `optional_absent_detail`) for every key it lists, one line each, in this exact shape:
+
+```
+absent — effect: <effect_when_absent>; declare only if you want the other behaviour
+```
+
+**Never** phrase it as "declare it or accept the default" — for most of these keys (`**Test**` above all: absent means pre-commit falls back to the Gate, which mints the artifact, so commit and merge are one run; declaring it adds a second run per commit) absent is the BETTER state for most consumers, and "accept the default" reads as a passive fallback rather than the actively-preferred outcome it usually is. `none_meaning` is available on the same entry if the user asks what a literal `none` on that key does — do not volunteer it unprompted; it disagrees per key by design (see `docs/template-sync.md`).
+
+Then run `bash <templateRepo>/scripts/verify-user-level-drift.sh` and fold its result into the report as one line. **It compares against the last RELEASED tag, not the working tree** (v2.2.5 round 4): a live `~/.claude/` matching an unshipped branch used to report 0 drift, so the delivery probe certified that an unreviewed revision had reached a user. Reference files that exist only on a branch are listed as `UNRELEASED`, never counted as in-sync.
+
+**If it exits 2 with `cannot resolve a released reference`, fold that into the report as `User-level: drift not checked (no released reference)` and CARRY ON.** A shallow clone or a fetch without tags is a measured consumer state, and this step is a probe, not a gate — the same rule as version derivation elsewhere in this skill: an unresolvable version is a missing label, never a reason to fail or roll back a sync. **Do not silently retry with `--worktree`**: that reinstates the comparison that reports 0 drift against an unshipped branch, which is the failure the released-tag default exists to close. Say it was not checked.
+
+**DEFINITION OF DONE FOR A USER-LEVEL FILE IS RESTART-REQUIRED, NOT RE-COPY (v2.2.5 round 4).** Installing or updating the `cct` plugin (or copying `SKILL.md` into `~/.claude/skills/`) changes nothing for any session already running — including this one. The report has told users *"Restart before relying on changed agent definitions or skills"* for several versions; **the skill knew this about agents and not about itself.** So when this sync changed a user-level skill or agent, the delivery step is not complete until the session is restarted, and the report says so with the file named. Anyone mid-session while a copy is installed is running the previous version's steps against the new manifest.
+
+Re-run the step-3 **positive control** here as well (the same temp script, `bash <path>`) and fold its result in: the sync rewrote `hooks/` and `settings.json` since the first probe, so this is the run that tells you the *post-sync* enforcement layer is live. `exit=2` + `BLOCKED` → report `Gates: live (scripts behave correctly on a fed payload)`. `exit=0` → report `Gates: INERT` and the recovery note, not a clean sync. Keep the parenthetical: the probe feeds the payload itself, so `live` here means the scripts work, never that the harness fires them.
+
+**Name the parser AND its consequence on the `Gates:` line.** The hooks pick the first WORKING backend of node → python3 → jq, and six of them (`read-size-gate`, `bash-output-guard`, `enforce-delegation`, `retro-ledger`, `retro-brief`, `enforce-agent-contract`'s transcript scan) are embedded node programs that stay inactive without node specifically. "Live" alone hides that. Field-validated shape, use it verbatim:
+
+```
+Gates:        live (parser: node — all 12 hooks enforcing)
+Gates:        live (parser: python3 — 6 node-only hooks inactive)
+```
+
+**Probing the MERGE gate from inside a guarded session blocks itself — and that block IS the positive result.** A probe command that builds a payload containing the literal `git merge` is matched by the real PreToolUse hook on the echo that constructs it, not on any merge. That is the unanchored matcher doing its documented job (these gates are fail-CLOSED; false positives are the accepted price of not being fooled by `bash -c "…"` wrapper forms). So: do not treat a self-block as a broken probe, and do not synthesise a payload to "really" test it — a real command, really blocked, with real shas in the message is the better proof. Where a synthetic probe genuinely is needed, drive the script from **outside** the session, never inline in a command string.
+
+The FIRST line of the report is this sentence, verbatim:
+
+```
+Gates are live immediately (settings.json hot-reloads). Restart before relying on changed agent definitions or skills.
+
+Sync complete: {variant} @ {new_commit}
+
+  Auto-updated: [list]
+  Merged:       [list]
+  Spliced:      [list — files where template and local content were combined by hand]
+  Skipped:      [list]
+  New files:    [list]
+  Warnings:     [list — every placeholder-sweep hit belongs here]
+  User-level:   [one-line verify-user-level-drift.sh summary]
+  Gates:        live (parser: {backend} — {consequence})
+  Toolkit:      {template_version} ({template_commit})
+  Superseded:   [superseded_keys_dropped — omit the line entirely when empty]
+  SKILL body:   {the version marker at the top of this file, as LOADED}
+  Sync server:  {server_version, from template_load_manifest}
+  Backup:       {step-2b directory, ABSOLUTE and RESOLVED} [{gitignored tracked files copied}]
+```
+
+`Backup:` prints `os.path.realpath(...)` of the directory that was actually written — never `/tmp/...` and never the `${TMPDIR:-/tmp}` expression. On Windows the two differ and the reported one does not exist (step 2b).
+
+**`Toolkit:` and `Sync server:` exist so a human sees both versions without opening the manifest. Since v4.0.1 (item 8) both are SERVER-reported, not client-stamped** — `template_finalize_sync`'s response already carries `template_commit`/`template_version` (see step 1b above) and `template_load_manifest`'s response carries `server_version`; this step only prints what an earlier call already returned, nothing here is computed by the skill. Print the honest shape when the server could not resolve a version:
+
+```
+Toolkit:      v4.0.1 (d67b507)
+Toolkit:      null (abc1234) — untagged commit; no reachable tag has an identical tracked tree
+Sync server:  0.4.2
+```
+
+**`Superseded:` reports `superseded_keys_dropped` from the finalize response** — the `lastSynced`/`lastSyncedVersion`/`lastSyncedVersionOf` trio this sync's `template_finalize_sync` call actually removed, if any. Omit the line when the list is empty; do not print `Superseded: []`.
+
+`Spliced:` is its own category on purpose: the conflict guidance now recommends splicing over accept-template for files that carry project values, and a spliced file is neither auto-updated nor merged by the server. Reporting it as "Skipped" hides work that was actually done.
+
+### 9. Commit the Sync
+
+Commit the synced tree yourself, from the main thread — `git add`/`git commit` here are the PO's documented git-I/O role for this skill, not hands-on coding (`AGENT_TEAM.md`: agents without a usable tree return work; the PO commits). **Never spawn a worktree-isolated agent to commit a sync.** `coder`, `*-coder` and `tester` all set `isolation: worktree`; the harness creates that worktree from `main`, whose `hooks/` predate the sync, while the session's hot-reloaded `settings.json` already fires the v2 gates on every Bash call — the result is every Bash call in that worktree blocked ("BLOCKED: Tests failed…" even for `ls`). If you must delegate this step, use `ops` or `general-purpose` (neither sets `isolation: worktree`).
+
+Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appended `# context-mode — MANDATORY routing rules` block. The context-mode plugin re-appends this block after `PROJECT-CUSTOM:END` on every session start, so a CLAUDE.md cleaned earlier in the sync is dirty again by the time you commit. Remove the re-appended block (or disable the plugin) before staging, otherwise the commit silently reintroduces it.
+
+Match the plugin's **heading**, not the phrase: `grep -c '^# context-mode' CLAUDE.md` must be `0`. The template's own text mentions "context-mode" by design (the sentinel section under `## context-mode plugin`), so a substring grep reports a false positive on a perfectly clean file; only a line *starting* `# context-mode` is the re-appended plugin block.
+
+Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, a legacy pre-4.0.1 `.gate/` directory if one is still present, stray output files) that were never part of the sync. (Since v4.0.1 the gate artifact itself lives under `<common git dir>/gate/`, inside `.git`, so it is no longer a working-tree object `add -A` could sweep in at all — this caution now covers everything else.)
+
+**Write the commit MESSAGE to a file and use `git commit -F <path>` — never a heredoc, and never a long `-m` (v2.2.5).** The gates scan the whole command STRING, so a message body that merely *describes* what this sync changed ("adopts the new merge gate", "gh pr merge is now blocked without a fresh artifact") is matched by `gate-before-merge.sh` on the commit that carries it. A sync commit describes gate changes by its nature, which makes this step the most likely place in the whole skill to hit it — and the block is uninterpretable, because it does not tell you whether the gate works or whether your own message was the violation. Same reasoning as the "probes must live in a script file" rule in step 3, arriving from a third direction. Write the message with the **Write tool** (not a Bash heredoc — the heredoc body is part of the command string too) to `"${TMPDIR:-/tmp}/sync-msg.txt"`, then `git commit -F` that path. The short `-m` this step used to prescribe dodged the gate by luck, not design.
+
+**Edit in one tool call; `git add <files>` + `git commit -F <file OUTSIDE the repo>` in the NEXT call (v3.0.3).** Never batch the edit with the commit. The commit hook is `PreToolUse`: it hashes the working tree BEFORE the call runs, so a mutation made in the same call is gated in its *pre-mutation* state — the artifact then describes the parent's tree, and the merge gate reads it as stale. "Commit exactly what was gated" reads as satisfied at the moment you type the batched call, which is why this has to be stated as a SHAPE and not as an intention. Two consumers hit it in one evening. `last-precommit.<tree>.json` (under `<common git dir>/gate/` — v4.0.1, item 17) now carries a `tree` field for exactly this: an artifact tree equal to `HEAD^{tree}` means the mutation was batched with the commit; equal to neither that nor the working tree means an untracked file was swept in by `add -A`.
+
+> **Two artifacts exist, and they carry different fields (v4.0.1, item 15).** `last-precommit.json`, written by `pre-commit-test.sh` on the Test path, carries `tree` only — no `sha`. `last-pass.json`, written by `run-gate.sh` (including the Gate-fallback path `pre-commit-test.sh` takes on a Gate-only repo), carries both `sha` and `tree`. **`tree` is the matching key; `sha` is advisory.** When `last-pass.json` is minted by the Gate fallback DURING a commit (Test absent or `none`, so `pre-commit-test.sh` runs the Gate itself), its `sha` is HEAD *at hook time* — that is the commit's PARENT, not the commit being made, because the hook runs before the commit object exists. Read `sha` in that artifact as "the tree was gated at this parent", never as "this exact commit was gated" — `tree` is what `gate-before-merge.sh` actually compares.
+>
+> **Reopened for v4.1.1 (never shipped in v4.1.0, though its PR claimed it) — verify the augmented text actually reached the gate, don't just trust the exit code.** `pre-commit-test.sh` widens `GC_CMD` via `gc_augmented_cmd` (the typed invocation, one newline, then the first 16 KB of any script segment's body it names — `gc_script_body` in `hooks/lib/git-cmd.sh`) BEFORE it writes its diagnostic record, and that record's `cmd_len` field is `${#GC_CMD}` measured AFTER the widening — the augmented length, never the typed one. `cmd_len` is a diagnostic field, not a gate: it proves what the hook SAW, never that the hook blocked. To confirm the widening reached a given script, print the three numbers a prober can compute independently and compare them against the artifact's own `cmd_len`:
+>
+> ```bash
+> # Predict cmd_len the way the hook computes it -- never re-derive the cap,
+> # the comment strip or the continuation join by hand (three transforms that
+> # each moved once already; a copy drifts on the next rule change).
+> pred=
+> x=$( . hooks/lib/json.sh; . hooks/lib/git-cmd.sh
+>      command -v cmd_join_continuations >/dev/null 2>&1 || { echo "this project's hooks predate v4.1.2 (no cmd_join_continuations) -- run /cct:sync-template first, then re-probe" >&2; exit 2; }
+>      GC_CMD=$(printf '%s' "$INVOCATION" | cmd_join_continuations)
+>      gc_augmented_cmd "$PWD" ) && pred=$(printf '%s' "$x" | wc -c | tr -d ' ')
+> # then compare $pred with the cmd_len in last-precommit-noop.*.json
+> ```
+>
+> **This recipe itself is skew-sensitive (v4.1.2): it sources the CURRENT PROJECT's own `hooks/lib/`, not the toolkit checkout's.** The skill body and a project's hooks update on different cadences — the skill by the plugin release, the hooks by that project's own `/cct:sync-template` — so a session that has the v4.1.2 skill loaded but is probing a project still synced to v4.1.1 hooks would source a `json.sh` with no `cmd_join_continuations` and get a `command not found` folded into an empty `x`, read as `pred=0`: a misleading result, not a loud one. The `command -v` guard above turns that into a named, loud refusal instead of a silent wrong number — **and the `&&` before `pred=` is load-bearing, not decoration**: the guard's `exit 2` only ends the `x=$(...)` subshell, so a bare `pred=$(printf '%s' "$x" | ...)` on its own line would still run right after, on the now-empty `$x`, printing the same misleading 0 the guard exists to prevent (measured). Chaining with `&&` means `pred` is never COMPUTED when the subshell exited non-zero — but a `&&` chain alone still leaves whatever `pred` already HELD from an earlier probe in the same shell session, untouched and unflagged. `pred=` on its own line, before `x=$(...)`, is cleared first, so a guard exit can never leave a previous probe's figure sitting there looking like this probe's answer.
+>
+> The three-term formula `len(invocation) + 1 + len(body)` is retained as the EXPLANATION of what the pipeline does (invocation, one separator newline, the capped/stripped/joined body), never as the number to compute. **`cmd_len` is BYTES** (v4.1.2: the hook records `wc -c`, not `${#GC_CMD}`, so the figure no longer depends on the locale the harness happens to carry — under a UTF-8 locale the old character count read two short per `ö`); the recipe's `wc -c` is the same ruler.
+
+**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool), or `--fill` to reuse the commit message. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
+
+> **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
+
+**First sync on a new machine or a fresh clone: set up the project's build environment BEFORE committing.** The commit hook runs the project's own tests or Gate, and those fail on missing dependencies, not on the sync. Two examples from the first Linux syncs, v4.6.0: `Cannot find package 'next/server'`, and `npx tsc` fetching the wrong `tsc` package. Install them first, for example `npm ci` in EVERY directory that has its own lockfile (a `web/` with its own `package-lock.json` and no root workspace is not covered by a root `npm ci`). Then commit. A failure that names a missing package or module is an environment problem; do not debug the sync's diff for it.
+
+**The full sequence under v2.1.3+ hooks — the order is load-bearing:**
+
+```sh
+git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/template-manifest.json
+# the sync commit is sync-only: the project's own docs (PROJECT_STATE.md, plans, ...) never go in it;
+# commit them separately, on the same branch if wanted
+# write the message to a FILE first (Write tool), then:
+git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** present this
+                                                   # runs the tests only and writes NO artifact
+# --> with **Test** present: now delegate ONE `cct-gate` run to `cct:ops` (the PO cannot run the gate)
+#     Gate-only repo (no **Test**): the commit hook already ran the gate and minted
+#     <common git dir>/gate/last-pass.tree-<HEAD^{tree}>.json for the committed tree --
+#     skip the extra run when that file exists and carries "status":"pass" (penumbra, v4.6.0)
+git push -u origin <branch>
+gh pr create --fill
+gh pr merge --squash --delete-branch               # `gh` only: it has a --delete-branch flag.
+# The MCP merge tool has NO --delete-branch equivalent. Using it: merge with
+# the MCP tool, then delete the remote branch as its OWN, separate tool call:
+git push origin --delete <branch>
+git checkout main                                  # local main still carries the PRE-sync hooks
+                                                   # until it fast-forwards
+git pull --ff-only                                 # allowed by BOTH hook versions; if a refusal
+                                                   # surprises you HERE, sha256 the hook before
+                                                   # concluding anything about the release
+git fetch -p                                       # drops the phantom remote-tracking ref
+```
+
+**The MCP merge tool is gated by the same hook `gh pr merge` is — on the session cwd's HEAD and the gate artifact, never on a parsed command segment.** `gate-before-merge.sh` fires from the harness's own registration of the merge call, not from scanning a git command string the way the Bash-routed gates do; it reads the SAME `<common git dir>/gate/last-pass.<sha>.json` artifact against the SAME cwd's HEAD regardless of which tool performed the merge. Preferring `gh` above is about its `--delete-branch` convenience and about refusals you can actually SEE (a `gh` refusal prints straight into the tool output you are already reading) — never about the MCP tool being an unprotected route around the gate. A stale or missing artifact refuses either way.
+
+**Merge from the PR-branch checkout, never from `main`** (`gate-before-merge.sh` refuses a merge on `main`). **When the agent's `gh pr merge` is refused by the permission classifier,** hand the user the exact command to run themselves, `! gh pr merge <n> --squash`, and stop: never promise that a posted review unblocks it, and never retry the merge from another thread.
+
+**A "Merge Without Review"-shaped refusal has been observed in exactly one session and not reproduced in two others (tally 1/3) — no discriminator for when it fires is claimed here.** Do not chase a root cause that has not been pinned down. If you hit it, the legitimate routes are: hand the user `! gh pr merge <n> --squash` (the paragraph above), get the user's explicit approval, or have the user add a permission rule themselves — never route around it by reaching for the MCP merge tool instead of `gh`, which (per the paragraph above) is gated by the identical mechanism and will not merge unreviewed work either.
+
+**`git push origin --delete <branch>` MUST be its own tool call, never chained onto anything else (v4.0.1, item 20).** The obvious-looking shortcut — `git branch -d <branch> ; git push origin --delete <branch>`, or chaining the delete onto the merge — is refused by the git-command guard. Quoted verbatim from a measured refusal:
+
+> `clause class: mover (not inert, not tracked) — flag '-d' is not on the read-only allowlist for 'git branch', so this clause is not provably inert … run the two as SEPARATE calls`
+
+So: delete the LOCAL branch (if at all) and the REMOTE branch as two separate calls, never one compound command, and never assume the MCP merge tool did the remote delete for you — it has no `--delete-branch` option.
+
+**When a harness worktree holds the PR branch, merge WITHOUT `--delete-branch`** — git refuses to delete a branch checked out in a worktree, so `gh pr merge --squash --delete-branch` fails after the merge has landed and reads like a failed merge. Merge, then delete the remote branch, then (after the worktree is removed) the local one, each as its own call (yutraffic).
+
+**Write the last two as two commands, not as `git checkout main && git pull --ff-only`.** Stated truthfully, because the reason changed under this procedure's feet: the chained form **blocked on v3.0.2** and is **allowed from v3.0.3**, because a bare `--ff-only` pull fetches first and can only fast-forward to the upstream, so its verdict does not depend on which branch the mover lands on — and refusing it would be a denied legitimate command. The mover rule is unchanged for the case it exists for: `git checkout <protected> && git merge <x>` is still refused, because there the landing is real and the branch decides. Keep the two-call form anyway — it is the shape that reads the same under both hook versions, and a consumer on a v3.0.2 checkout still hits the block. The two lines are IN the block on purpose: the reader who needs them is the one who was surprised by a refusal on `main` and is primed to read it as a broken release, and that reader copies from the block, not from the prose under it.
+
+**A fast commit with no visible output is the harness dropping non-blocking hook stderr, not the hook skipping.** `pre-commit-test.sh` does not path-filter and has no "no source files" branch — it runs the Test Command (or `run-gate.sh`) on every commit, unconditionally. The `passed. (Ns)` marker is printed and you do not see it. **The elapsed seconds are the evidence**; a fast commit means a fast Test suite.
+
+**Read the gate's verdict from `GATE PASS` or `last-pass.<sha>.json` / `last-pass.tree-<tree>.json` (a gate run before the commit, v4.3.1) (under `<common git dir>/gate/` — v4.0.1, item 17) — NEVER from the exit code of a pipeline (v2.2.6).** `cct-gate | tail -100` is an entirely natural thing to do with a multi-minute chatty command, and it reports **`tail`'s** exit code, not the gate's. A consumer's delegated `ops` agent hit this and reported honestly that it could not supply the rc; a less careful one gets `0` from `tail` on a red gate. Two rules, both cheap:
+
+- **Do not pipe the gate if you need its rc.** If you must pipe for volume, set `set -o pipefail` first — the same hazard the placeholder sweep already warns about, one command over.
+- **The authoritative sources are the `GATE PASS <sha>` line and the artifact** (`last-pass.*.json` — `"status":"pass"` with sha/tree matching HEAD). The gate is LUCKIER than the sweep precisely because it writes an artifact; use it. Quote the `GATE PASS` line in the report rather than asserting "exit 0".
+
+Gate **after** the commit, never before: the artifact must match the PR head by sha or tree. A gate run before the commit reports "artifact stale" at merge time unless the tree is byte-identical either side of the commit.
+
+**The artifact expires (v4.0.1, item 19).** `gate-before-merge.sh` enforces a 60-minute TTL (3600s) on `last-pass.*.json`: if the merge is attempted more than 60 minutes after the artifact was written, the gate refuses it as stale even though sha/tree still match. Re-run `cct-gate` (delegated to `cct:ops`, as above) before retrying the merge if the gap between gating and merging crossed that window — a sync that gates, then waits on user review, then merges, is the routine way to hit it.
+
+**When checking whether a fresh gate artifact already exists, glob `last-pass.*.json` specifically — never "the newest file in the gate directory" (reopened for v4.1.1, same reason as the check above: never shipped in v4.1.0 despite its PR).** The same directory also holds `last-precommit.<tree>.json` and `last-precommit-noop.<tree>.json` — `pre-commit-test.sh`'s own diagnostics, written on every commit whether or not a real gate run happened — and either can be newer than the last genuine `run-gate.sh` pass: measured on yutraffic, `last-precommit-noop.unknown.json` was the newest file in the directory 24 seconds after a commit that triggered no gate run at all. `ls -t | head -1` over the whole directory answers "what file landed most recently," a different question from "is there a fresh GATE." Restrict the glob to `last-pass.*.json`, take the newest among THOSE, then check its `sha`/`tree` against HEAD as above.
+
+**Since v4.0.3 an expired artifact is still accepted within 24 h when the tree AND the environment fingerprint (`env`) match (item 13).** The allow line reads verbatim `NOTE: gate artifact accepted on tree identity: <AGE>s exceeds the <TTL>s TTL, tree and environment unchanged`. A review-gated sync re-gates only if the tree changed, the environment changed — the block names the differing contributor (`pyvenv`, `dist`, `py`, or `node`): `BLOCKED: Gate artifact expired (<AGE>s old, max <TTL>s); tree unchanged, environment changed: <contributor>` — or more than 24 h (`GC_GATE_PRUNE_S` = `GC_GATE_TTL_S` × 24) passed, in which case the ordinary `BLOCKED: Gate artifact expired (<AGE>s old, max <TTL>s). Re-run '<cct-gate | bash hooks/run-gate.sh>', then merge.` fires.
+
+**The commit gate keys on the working tree's TRACKED files at gate time, not the whole working tree — commit exactly what was gated, and `git add` is its own tool call, before `git commit`, always.** `cct-gate` hashes a temporary index built with `git add -u` (tracked files only; untracked files have been excluded from the hash since v3.1), so a commit that introduces NEW files in the SAME call as their `git add` mismatches its own artifact: measured on panoscribe, a commit adding three new (`A`) files recorded parent `557d72c`, artifact tree `2a1e5353`, and the actual committed tree `948dbcb` — three different trees, none matching — while a control run where those files were already tracked before the gate ran (`add` and `commit` as two separate calls) matched cleanly. **A chained `git add … && git commit` is not fine for this reason, and neither is `git commit -a`: both can commit a tree the gate never saw, specifically whenever new files are involved.** A *partial* add after the gate ran mismatches for the same underlying reason — the committed tree is not what was gated — and the merge gate will correctly demand a fresh run either way.
+
+CI fires on `pull_request` and on push-to-main; a bare branch push produces **no** run. Open the PR first, then look up the run id — an empty workflow list right after `git push` is not a CI failure.
+
+### 9b. Verify After the Commit
+
+Call `template_verify(project_path=<project>, mode="post_commit")` (v4.0.1, item 22) right after the commit lands. This is the SAME check as step 8's, run again with `mode="post_commit"` now that the manifest and every applied file are committed — `tree_clean` FAILs this time if anything is still uncommitted (step 8's pre-commit call SKIPped it on purpose). Any `FAIL` line here means the commit did not actually finish the sync; fix it and commit again before opening the PR.
+
+**Quote the summary line (`"N PASS, M FAIL, K SKIP, J INFO"`) in the PR body.** It is the one-line, machine-checkable proof that the committed state — not just the pre-commit report — is clean; a reviewer reads it instead of re-deriving every check by hand. `post_commit` drops `tree_clean` from every row's `skip_ids` relative to step 8a's `pre_commit` row (it PASSes instead of SKIPping); nothing else in that row changes. `LINES` is 29 as of v5.0 (32 in v4.5.2, minus the three `agent_grants_*` lines), and the eight INFO ids (step 8a) always report INFO in the green fixtures, so `PASS = 29 - skip - fail - 8` for each situation: a v4 consumer's clean `post_commit` line is `20 PASS, 0 FAIL, 1 SKIP, 8 INFO` (the one SKIP is `server_skew`, expected); a v3-legacy consumer's is `17 PASS, 0 FAIL, 4 SKIP, 8 INFO` (`server_skew` plus the three `CLAUDE.md` lines, "no import yet"); a v3-window consumer's is `16 PASS, 1 FAIL, 4 SKIP, 8 INFO` (the same four SKIPs, plus `status_clean` as the one FAIL, R-K) — until migrated. Read the row that matches your situation off step 8a's table rather than trusting a single number stated once; `server_skew` can independently SKIP or PASS on its own account in any of the three, so one SKIP fewer or more than these baselines is not by itself a defect.
+
+**A v4 consumer's clean line legitimately reads any of three ways — all are the healthy state, none a variant of another:** `20 PASS, 0 FAIL, 1 SKIP, 8 INFO` (`server_skew` SKIPs — the sync server was not installed from this template repo, the ordinary case), `21 PASS, 0 FAIL, 0 SKIP, 8 INFO` (`server_skew` PASSes on its own account, when the sync server IS installed from this template repo and its imported commit is current — four consumers were measured hitting this second row), or `20 PASS, 0 FAIL, 0 SKIP, 9 INFO` (`server_skew` reports INFO: *"template repo HEAD … advanced past imported server_commit … (server/ itself unchanged)"* — the toolkit moved on after the server process imported its commit, but `server/` itself did not change; `pre_commit` reads `19 PASS, 0 FAIL, 1 SKIP, 9 INFO`). That INFO is healthy, not a defect and not a reason to restart. Read whichever `server_skew`'s own line actually reports; no shape is a defect in the other's presence.
+
+**Every baseline above is valid from the v5.0 tip onward — `LINES = 29`.** A sync server built from an older checkout reports `LINES = 32` and three more PASSes — read `PASS = 32 - skip - fail - info` there instead, and do not paste these numbers verbatim without first checking which `LINES` your own `template_verify` response actually reports.
+
+## Pre-sync verification
+
+**When a release changes refusal behaviour on commands people type by hand, nobody syncs until this comes back.** The risk is not a missed bypass — it is a regression that blocks routine work and gets the guard switched off. Verify **read-only against the TAG**: extract the hooks from the tag into a throwaway repo; do not install, do not sync, do not touch your tree.
+
+### The three rules every row must follow
+
+1. **Every want-0 row is paired with a want-2 row in the SAME fixture repo.** A `PROJECT_CONTEXT.md` with no `**Gate**:` field makes the hook exit 0 *before it decides anything*, so every want-0 in that repo passes vacuously. An unpaired want-0 is **VOID, not passing** — say "void" in the report; a void row counted as green is worse than a missing row, because it is claimed coverage.
+2. **Assert the fixture carries the property before measuring it.** A probe that cannot fail looks exactly like one that passed.
+3. **`set -o pipefail`, and check the payload parses (`jq .`) before you believe a verdict.** An unescaped `"` makes the hook fail closed at **exit 2, which reads as "gated" and is not.** In one night three sessions hit the pipe-exit-code error and two hit the quote one.
+
+Write probe scripts with your file-writing tool and run `bash <path>`. A heredoc containing git clauses is refused by the gates' own whole-string scan — the heredoc body IS the command string. **Payloads live in data files outside the repo, never typed or assembled inside the probe script — the script itself carries no gate verb** (step 3's data-file rule above; a script that builds its own payload inline puts the literal git text in the very file the gate reads when deciding whether to let it run).
+
+### The four named traps, each hit by a different session
+
+- A fixture `PROJECT_CONTEXT.md` with **no Gate field** — the hook exits 0 before deciding, and every row reads as allowed.
+- **No remote after `git init`** — `pull --ff-only` is then correctly BLOCKED for a reason that has nothing to do with the rule under test, and it reads as a regression.
+- **Fixture pushed without `-u` (penumbra, v3.0.4).** A fixture repo whose first push omits `-u` has no `branch.<name>.remote` set, so a bare `git pull --ff-only` is refused with "no upstream" regardless of the ff-only rule under test — the row then measures the missing upstream, not the rule, the same false-regression shape as the missing-remote trap above. Push `-u` on the first push of any fixture that will later be `pull`ed.
+- **Testing a gated-clause rule on a branch where nothing is gated** — on a feature branch the answer is 0 whatever the rule does.
+
+### Commit the predicted table BEFORE running anything
+
+Write down every row with its predicted verdict **and the reason**, and commit that file first. Then run. A matching result cannot be post-hoc rationalised, a mismatch is unmissable, and the git order is the proof. This costs one commit and is the only thing that distinguishes a prediction from a description.
+
+### Delete-the-guard bookkeeping
+
+For each new arm: delete the arm, re-run the suite, count the rows that flip. **An arm whose deletion flips zero rows is untested**, however green the suite looks. **Rows that flip because they share an INSTRUMENT are one piece of evidence, not many** — two probe rows that flip under both arm 1 and arm 2 are arm-agnostic and do not count toward the zero-flip rule. Report the deduplicated numbers (3 / 6 / 12, not 5 / 8 / 12) and say which rows were deduplicated.
+
+### The order
+
+**Verification → restart → sync → live re-run.** Verification runs against the tag before anything is installed. **Restart** the session after user-level files are copied — a running session keeps the previous skill and agent definitions, including this one. Only then sync, and re-run the probes **live**, on the installed hooks: the tag run proves what the release contains, the live run proves what the machine now enforces, and only the second one is delivery.
+
+## Rules
+
+- NEVER auto-update a `CONFLICT` file without user confirmation
+- NEVER delete a project-owned file the template never shipped. A `TEMPLATE_DELETED` file is different: ask, and delete it with `git rm` when the user accepts (step 6)
+- NEVER apply an `auto_merged` body without checking it for dropped lines — and, for a hook, without a `bash -n`
+- NEVER finalize without the hook-script verification (step 6b), sourced libs included — a missing script or lib fails open and silently disables enforcement
+- NEVER register a PRESENT-but-untracked hook with `source="skip"` in step 6b — v3 refuses it for template-class files; diff it against the template first: identical registers via `finalize_sync(new_files=[...])` (writes nothing), differing is a three-way USER decision per step 6b rule 4 (keep mine = register via `finalize_sync(new_files=[...])` / adopt template / merge, with `overwrite_existing: true` only on the last two) and never a silent default. `source="template"` unconditionally (no diff needed) is for scripts MISSING from disk (step 3)
+- NEVER write a path from the template that already EXISTS in the project without an explicit conflict resolution (invariant I1) — a `new_template_files` entry that is present on disk is presented as a CONFLICT (once-class: register via `finalize_sync(new_files=…)`; template-class: keep-mine via `source="provided"` splice, never `source="skip"` — v3 refuses it), never added with `source="template"` on the strength of a "yes" to "add this new file?"
+- NEVER write `.claude/settings.json` before every script it references exists on disk (invariant I2), whichever step introduced those scripts
+- NEVER record `rc=127` or `rc=126` from `bash -n` (or any checker) as a PASS — 0 and 2 are the only verdicts, 126/127 are hard ERRORS naming the path, and "the check did not run" is a raised `FileNotFoundError`, not a return code (step 4)
+- NEVER exec a checker by bare name, and never by a hardcoded platform path — resolve it once with `shutil.which` (or the shell equivalent) and exec the absolute path it returns (step 4)
+- NEVER hand-assemble or re-type `applied_files` entries — collect the tool results verbatim
+- ALWAYS re-run `template_compute_status` after finalize and report anything other than a clean result
+- ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `template_commit`/`template_version`)
+- NEVER fail or roll back a sync because `template_version` comes back `null` (no reachable tag matches) — that is a real, honest answer, not a resolution failure
+- All hashing, diffing, and placeholder replacement is handled by the MCP tools — do NOT compute hashes or apply placeholders manually

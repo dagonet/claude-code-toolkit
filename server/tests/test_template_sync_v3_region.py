@@ -453,7 +453,7 @@ def test_region_bytes_raw_matches_region_sh_under_a_utf8_locale_with_an_em_dash(
     f.write_text(content, encoding="utf-8", newline="")
     server_bytes = v3.region_bytes_raw(content)
     assert server_bytes > 0
-    region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
+    region_sh = pathlib.Path(__file__).resolve().parents[2] / "skills" / "sync-template" / "region.sh"
     bash = _resolve_bash()
     if not bash:
         pytest.skip("bash not found on PATH or in any known install location -- "
@@ -485,7 +485,7 @@ def test_region_bytes_raw_matches_region_sh_with_trailing_text_on_the_begin_line
     f.write_text(content, encoding="utf-8", newline="")
     server_bytes = v3.region_bytes_raw(content)
     assert server_bytes > 0
-    region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
+    region_sh = pathlib.Path(__file__).resolve().parents[2] / "skills" / "sync-template" / "region.sh"
     bash = _resolve_bash()
     if not bash:
         pytest.skip("bash not found on PATH or in any known install location -- "
@@ -511,7 +511,7 @@ def test_region_bytes_raw_matches_region_sh_with_indented_end_marker(tmp_path):
     f.write_text(content, encoding="utf-8", newline="")
     server_bytes = v3.region_bytes_raw(content)
     assert server_bytes > 0
-    region_sh = pathlib.Path(__file__).resolve().parents[2] / "user-level-reference" / "skills" / "sync-template" / "region.sh"
+    region_sh = pathlib.Path(__file__).resolve().parents[2] / "skills" / "sync-template" / "region.sh"
     bash = _resolve_bash()
     if not bash:
         pytest.skip("bash not found on PATH or in any known install location -- "

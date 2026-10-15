@@ -85,41 +85,13 @@ def test_template_content_v2_manifest_is_placeholder_only(tmp_path):
     assert out == "---\nname: foo\ntools: Read\n---\nbody\n"
 
 
-def test_template_content_v3_manifest_agent_path_is_placeholder_only_noop(tmp_path):
-    """A v3 manifest never splices, even for an agents/ path with a grants
-    file present -- the splice is v4-only."""
-    (tmp_path / ".claude").mkdir()
-    (tmp_path / ".claude" / "agent-grants.json").write_text(
-        '{"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}', encoding="utf-8")
-    out = v3_mod.template_content(
-        tmp_path, {"manifest_version": 3, "placeholders": {}}, None,
-        ".claude/agents/foo.md", "---\nname: foo\ntools: Read\n---\nbody\n")
-    assert out == "---\nname: foo\ntools: Read\n---\nbody\n"
-
-
-def test_template_content_v4_manifest_no_grants_file_is_noop(tmp_path):
-    (tmp_path / ".claude").mkdir()
-    out = v3_mod.template_content(
-        tmp_path, {"manifest_version": 4, "placeholders": {}}, None,
-        ".claude/agents/foo.md", "---\nname: foo\ntools: Read\n---\nbody\n")
-    assert out == "---\nname: foo\ntools: Read\n---\nbody\n"
-
-
-def test_template_content_v4_manifest_empty_grants_file_is_noop(tmp_path):
-    (tmp_path / ".claude").mkdir()
-    (tmp_path / ".claude" / "agent-grants.json").write_text(
-        '{"schema": 1, "grants": {}}', encoding="utf-8")
-    out = v3_mod.template_content(
-        tmp_path, {"manifest_version": 4, "placeholders": {}}, None,
-        ".claude/agents/foo.md", "---\nname: foo\ntools: Read\n---\nbody\n")
-    assert out == "---\nname: foo\ntools: Read\n---\nbody\n"
-
-
-def test_template_content_v4_manifest_non_agent_path_is_noop_even_with_grants(tmp_path):
+def test_template_content_v4_agent_path_with_grants_file_is_placeholder_only(tmp_path):
+    """Grants are gone (v5.0): a v4 manifest, an agent path and a non-empty
+    grants file still give the template content unchanged -- no tools splice."""
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / "agent-grants.json").write_text(
         '{"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}', encoding="utf-8")
     out = v3_mod.template_content(
         tmp_path, {"manifest_version": 4, "placeholders": {}}, None,
-        "CLAUDE.md", "# hello\n")
-    assert out == "# hello\n"
+        ".claude/agents/foo.md", "---\nname: foo\ntools: Read\n---\nbody\n")
+    assert out == "---\nname: foo\ntools: Read\n---\nbody\n"

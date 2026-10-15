@@ -11,7 +11,7 @@
 # right after this release ships is expected to print FAILs for every
 # not-yet-synced consumer; that is the release's own "who still needs to
 # sync" report, not a defect in this script. Re-run after each consumer's
-# `/sync-template` to watch the fleet turn green one row at a time.
+# `/cct:sync-template` to watch the fleet turn green one row at a time.
 #
 # R28: paths handed to a Windows executable are bare/relative or converted
 # with `cygpath -w` -- never handed an MSYS path directly. This script `cd`s

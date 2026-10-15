@@ -1,71 +1,178 @@
 #!/usr/bin/env bash
 # scripts/install-user-level-linux.sh -- install the user-level setup (~/.claude) on a Linux host
-# from this checkout. A STOPGAP until the v5.0 plugin release, which replaces it.
+# from this checkout. Since v5.0 the agents, skills, output style and hooks come from the cct
+# plugin; the user level is only CLAUDE.md and settings.json.
 #
-# Writes: ~/.claude/{CLAUDE.md, agents/, skills/, hooks/, output-styles/, settings.json}.
 # Never touches ~/.claude.json (MCP servers are registered separately with `claude mcp add`).
-# Every file it overwrites is backed up first as <file>.bak-<UTC>. Re-running it is safe.
+# CLAUDE.md is backed up before it is overwritten, as <file>.bak-<UTC>; settings.json is backed up AFTER step 1 (the
+# plugin CLI writes its own keys during step 1). Re-running it is safe.
+# A failure in steps 2-3 restores settings.json byte for byte to its state after step 1. A failure inside step 1
+# restores nothing: the plugin CLI owns its keys there, and putting an older settings.json back would undo them.
+# Any failure once step 1 has begun puts back the enabledPlugins entries the user had at false (the CLI switches
+# plugins on); it touches no other key.
 #
-#   CLAUDE.md      the reference, with its Windows "Platform" section replaced by
-#                  scripts/linux/CLAUDE-platform-linux.md and G:/git/ paths written as ~/git/
-#   settings.json  the reference merged over the existing file, minus the Windows-only entries
-#                  (CLAUDE_CODE_SHELL, CLAUDE_CODE_USE_POWERSHELL_TOOL, windows-mcp); its hooks
-#                  block is rendered by scripts/render-user-hooks.sh --write
-#   plugins        superpowers, skill-creator, frontend-design from claude-plugins-official
+# The order is safety-critical: the plugin is installed and checked BEFORE anything is removed,
+# so a failed install (network, a bad tag) leaves the old user-level copies in place and a NEW
+# session never has no hooks, agents or skills. Sessions already running lose the toolkit hooks
+# when step 3 rewrites settings.json (settings hot-reload, plugins load at session start): restart
+# them.
 #
-# Usage: bash scripts/install-user-level-linux.sh [--no-plugins]
+#   1. plugins        cct@dagonet (marketplace: $CCT_MARKETPLACE, default this release's tag on
+#                     GitHub), then superpowers, skill-creator, frontend-design from
+#                     claude-plugins-official. An existing dagonet marketplace is removed first
+#                     (a pinned one never advances on `plugin update`); the tag is checked reachable
+#                     before that. Stops non-zero unless `claude plugin list --json` shows
+#                     cct@dagonet enabled at this checkout's VERSION.
+#   2. CLAUDE.md      the reference, with its Windows "Platform" section replaced by
+#                     scripts/linux/CLAUDE-platform-linux.md and G:/git/ paths written as ~/git/
+#   3. settings.json  the existing file with the reference merged in, minus the Windows-only entries
+#                     (CLAUDE_CODE_SHELL, CLAUDE_CODE_USE_POWERSHELL_TOOL, windows-mcp).
+#                     permissions.allow/deny/ask: the union of both. Every other key keeps the user's
+#                     value; the reference only adds missing keys. The toolkit owns outputStyle,
+#                     enabledPlugins["cct@dagonet"], autoMode.environment and the hooks: hook entries
+#                     naming /.claude/hooks/<toolkit hook>.sh (v4.x registrations) are dropped,
+#                     every other hook is kept, the reference's hooks are added once
+#   4. leftovers      every path in scripts/lib/v4-user-leftovers.txt that exists is moved to
+#                     ~/.claude/v4-leftovers.bak-<UTC>/ (outside agents/ and skills/, where a
+#                     backup copy would still load)
+#
+# Usage: bash scripts/install-user-level-linux.sh
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REF=$ROOT/user-level-reference
 PLAT=$ROOT/scripts/linux/CLAUDE-platform-linux.md
+LEFTOVERS=$ROOT/scripts/lib/v4-user-leftovers.txt
 . "$ROOT/scripts/linux/linux-render.sh"   # the Linux rewrites, shared with verify-user-level-drift.sh
 L=$HOME/.claude
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 PLUGINS="superpowers skill-creator frontend-design"
 MARKET=claude-plugins-official
-DO_PLUGINS=1; [ "${1:-}" = "--no-plugins" ] && DO_PLUGINS=""
 
-die() { echo "install-user-level-linux: $*" >&2; exit 1; }
-[ "$(uname -s)" = Linux ] || die "Linux only (on Windows the user level is installed by hand, see user-level-reference/README.md)"
-for t in bash git jq node; do command -v "$t" >/dev/null 2>&1 || die "missing tool: $t"; done
-[ -f "$REF/CLAUDE.md" ] && [ -f "$REF/settings.json" ] && [ -f "$PLAT" ] || die "run from a claude-code-toolkit checkout"
+plugins_started=""   # set when step 1 is done: from then on this script edits settings.json, so a failure restores the backup.
+                     # During step 1 the plugin CLI owns its own keys (extraKnownMarketplaces): a die there never restores.
+removed=""           # set by the marketplace remove, cleared once add + install succeeded
+old_src=""           # the source the old dagonet entry had, for the second recovery recipe
+step1=""             # set when step 1 begins: the CLI may then flip enabledPlugins entries the user had at false
+pre_ep='{}'          # enabledPlugins as they were before step 1
+NR="this run removed no v4 user-level copy"
+die() {
+  echo "install-user-level-linux: $*" >&2
+  if [ -n "$removed" ]; then
+    echo "install-user-level-linux: the dagonet marketplace was removed and cct@dagonet is not installed; until it is, the plugin is off and every synced project refuses every tool. Recover with one recipe (the remove may say not found; that is harmless):" >&2
+    echo "install-user-level-linux:   with the new source:  claude plugin marketplace remove dagonet; claude plugin marketplace add $CCT_SRC && claude plugin install cct@dagonet" >&2
+    [ -z "$old_src" ] || echo "install-user-level-linux:   with the old source:  claude plugin marketplace remove dagonet; claude plugin marketplace add $old_src && claude plugin install cct@dagonet" >&2
+  fi
+  if [ -n "$plugins_started" ]; then
+    if [ -e "$L/settings.json.bak-$TS" ]; then cp -p "$L/settings.json.bak-$TS" "$L/settings.json"; else rm -f "$L/settings.json"; fi
+    echo "install-user-level-linux: settings.json restored to its state after step 1" >&2
+  fi
+  # a die once step 1 has begun: the CLI may have switched on plugins the user had off, and the next run would snapshot
+  # that. Put back only the entries that were false; never touch the CLI's other keys (extraKnownMarketplaces)
+  if [ -n "$step1" ] && [ -s "$L/settings.json" ]; then
+    jq --argjson pre "$pre_ep" '.enabledPlugins = ((.enabledPlugins // {}) + ($pre | with_entries(select(.value == false))))' "$L/settings.json" > "$L/settings.json.t" 2>/dev/null \
+      && mv "$L/settings.json.t" "$L/settings.json" || rm -f "$L/settings.json.t"
+  fi
+  exit 1
+}
+[ "$(uname -s)" = Linux ] || die "Linux only (on Windows follow docs/plugin-migration-windows.md)"
+for t in bash git jq claude; do command -v "$t" >/dev/null 2>&1 || die "missing tool: $t (claude: log in with a login shell, bash -lc)"; done
+[ -f "$REF/CLAUDE.md" ] && [ -f "$REF/settings.json" ] && [ -f "$PLAT" ] && [ -f "$LEFTOVERS" ] && [ -f "$ROOT/VERSION" ] \
+  || die "run from a claude-code-toolkit checkout"
+CCT_SRC=${CCT_MARKETPLACE:-dagonet/claude-code-toolkit#v$(head -1 "$ROOT/VERSION")}
+# The default source is a release tag. Check it exists BEFORE anything is removed (an upgrade removes the old
+# marketplace entry). A CCT_MARKETPLACE override (a path, a fork) is not checked here.
+if [ -z "${CCT_MARKETPLACE:-}" ]; then
+  tag_ref=$(git ls-remote --tags https://github.com/dagonet/claude-code-toolkit "refs/tags/v$(head -1 "$ROOT/VERSION" | tr -d '\r')" 2>/dev/null || true)
+  [ -n "$tag_ref" ] || die "tag v$(head -1 "$ROOT/VERSION" | tr -d '\r') is not reachable on github.com/dagonet/claude-code-toolkit (not pushed yet, or no network): $NR"
+fi
 backup() { [ -e "$1" ] && cp -p "$1" "$1.bak-$TS" && echo "  backup: $1.bak-$TS" || true; }
 
-mkdir -p "$L/agents" "$L/skills" "$L/hooks" "$L/output-styles"
+mkdir -p "$L"
 
-echo "1. CLAUDE.md (Linux platform section)"
+# `claude plugin install` switches a plugin on in settings.json even when the user had it off:
+# remember its enabledPlugins BEFORE the CLI touches it (step 3 puts them back)
+[ -s "$L/settings.json" ] && pre_ep=$(jq -c '.enabledPlugins // {}' "$L/settings.json")
+step1=1
+
+echo "1. plugins (cct@dagonet from $CCT_SRC; $PLUGINS)"
+# An upgrade: a #tag-pinned marketplace never advances on `plugin update` / `marketplace update` and `marketplace add`
+# over an existing entry is refused (measured, claude 2.1.299), so remove the old entry (this uninstalls the plugin),
+# then add the new source and install. From here a failure leaves the plugin off: die prints the recovery commands.
+mp_json=$(claude plugin marketplace list --json 2>/dev/null || true)
+if printf '%s' "$mp_json" | jq -e 'any(.[]; .name == "dagonet")' >/dev/null 2>&1; then
+  # capture the old source first: a die after the remove offers it as the rollback
+  old_src=$(printf '%s' "$mp_json" | jq -r '.[] | select(.name == "dagonet")
+    | (if .source == "git" then .url elif .source == "github" then .repo elif .source == "directory" then .path else (.url // .repo // .path // "") end) as $s
+    | if (.ref // "") != "" and (.source == "git" or .source == "github") then "\($s)#\(.ref)" else $s end' 2>/dev/null | head -1 || true)
+  claude plugin marketplace remove dagonet || die "cannot remove the old dagonet marketplace: $NR"
+  removed=1
+fi
+claude plugin marketplace add "$CCT_SRC" || die "cannot add the cct marketplace $CCT_SRC: $NR"
+claude plugin install cct@dagonet || die "cannot install cct@dagonet: $NR"
+removed=""
+claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
+for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
+want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')
+claude plugin list --json 2>/dev/null | jq -e --arg v "$want_ver" 'any(.[]; .id == "cct@dagonet" and .scope == "user" and .enabled == true and .version == $v)' >/dev/null \
+  || die "claude plugin list does not show cct@dagonet (user scope) enabled at $want_ver: $NR; the v4 user-level copies stay"
+# step 1 is done: the CLI has written its keys. The backup is taken NOW, so a later die restores to the state the
+# CLI left, never to one that predates its marketplace entry (that restore made the recovery `marketplace add` refuse).
+backup "$L/settings.json"
+plugins_started=1
+
+echo "2. CLAUDE.md (Linux platform section)"
 backup "$L/CLAUDE.md"
 linux_render_claude_md "$REF/CLAUDE.md" "$PLAT" > "$L/CLAUDE.md.new"
-chk=$(linux_check_rendered "$L/CLAUDE.md.new") || die "$chk"
+chk=$(linux_check_rendered "$L/CLAUDE.md.new") || { rm -f "$L/CLAUDE.md.new"; die "$chk"; }
 mv "$L/CLAUDE.md.new" "$L/CLAUDE.md"
 
-echo "2. agents, skills, hooks, output styles"
-cp "$REF"/agents/*.md "$L/agents/"
-cp -R "$REF"/skills/. "$L/skills/"
-cp -R "$REF"/hooks/. "$L/hooks/"
-cp "$REF"/output-styles/*.md "$L/output-styles/"
-chmod +x "$L"/hooks/*.sh
-
-echo "3. settings.json (reference minus Windows-only entries; hooks rendered)"
+echo "3. settings.json (reference minus Windows-only entries; v4 toolkit hook entries dropped)"
 [ -s "$L/settings.json" ] || echo '{}' > "$L/settings.json"
-backup "$L/settings.json"
 plugins_json=$(for p in $PLUGINS; do printf '"%s@%s":true\n' "$p" "$MARKET"; done | paste -sd, -)
-jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plugins_json}" '
-  .[0] * (.[1]
+# the toolkit hook names: the leftovers' hooks/<name>.sh lines outside lib/
+own_re="(/\\.claude/hooks|@HOOKS@)/($(sed -n 's#^hooks/\([A-Za-z0-9_-]*\)\.sh$#\1#p' "$LEFTOVERS" | paste -sd'|' -))\\.sh([^A-Za-z0-9_.-]|\$)"
+# Merge rules (the user's file is theirs): permissions.allow/deny/ask = union of live and reference;
+# every other key keeps the LIVE value and the reference only adds missing keys; the toolkit owns
+# outputStyle, enabledPlugins["cct@dagonet"], autoMode.environment and the hooks (its entries replaced,
+# every other entry kept).
+jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plugins_json}" --argjson pre "$pre_ep" --arg own "$own_re" '
+  def disp: ([(.command // "") | tostring] + ((.args // []) | map(tostring)) | join(" "));
+  def union($a; $b): reduce (($a // []) + ($b // []))[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
+  (.[1].hooks // {}) as $rh
+  | .[0] as $l
+  | ($l.hooks // {}) as $lh
+  | ($lh | with_entries(.key as $ev | [($rh[$ev] // [])[].hooks[] | disp] as $rd
+      | .value |= (map(.hooks |= map(disp as $d | select((($d | test($own)) or any($rd[]; . == $d)) | not)))
+                   | map(select(.hooks | length > 0))))) as $kept
+  | (reduce ($rh | keys_unsorted[]) as $ev ($kept; .[$ev] = $rh[$ev] + (.[$ev] // []))
+     | with_entries(select(.value | length > 0))) as $hooks
+  | (.[1]
     | del(.hooks)
     | del(.env.CLAUDE_CODE_SHELL, .env.CLAUDE_CODE_USE_POWERSHELL_TOOL)
     | .permissions.allow |= map(select(test("windows-mcp") | not))
     | .autoMode.environment |= map(gsub($pf; $pt))
-    | .enabledPlugins = $ep)' "$L/settings.json" "$REF/settings.json" > "$L/settings.json.new"
+    | .enabledPlugins = $ep) as $r
+  | ($r * $l)
+  | reduce ("allow", "deny", "ask") as $k (.; .permissions[$k] = union($l.permissions[$k]; $r.permissions[$k]))
+  | if $r.outputStyle then .outputStyle = $r.outputStyle else . end
+  | .enabledPlugins += $pre
+  | .enabledPlugins["cct@dagonet"] = true
+  | .autoMode.environment = $r.autoMode.environment
+  | .hooks = $hooks' "$L/settings.json" "$REF/settings.json" > "$L/settings.json.new" \
+  || { rm -f "$L/settings.json.new"; die "the settings.json merge failed"; }
 mv "$L/settings.json.new" "$L/settings.json"
-bash "$ROOT/scripts/render-user-hooks.sh" --write
+plugins_started=""
 
-if [ -n "$DO_PLUGINS" ]; then
-  echo "4. plugins ($PLUGINS)"
-  command -v claude >/dev/null 2>&1 || die "claude CLI not on PATH (log in with a login shell: bash -lc)"
-  claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official
-  for p in $PLUGINS; do claude plugin install "$p@$MARKET"; done
-fi
+echo "4. v4 user-level leftovers (moved to $L/v4-leftovers.bak-$TS/)"
+while IFS= read -r rel; do
+  [ -n "$rel" ] && [ -e "$L/$rel" ] || continue
+  mkdir -p "$(dirname "$L/v4-leftovers.bak-$TS/$rel")"
+  mv "$L/$rel" "$L/v4-leftovers.bak-$TS/$rel"
+  echo "  moved: $rel"
+done < "$LEFTOVERS"
+rmdir "$L/hooks/lib" "$L/hooks" 2>/dev/null || true
 
-echo "done. Check: bash $ROOT/scripts/verify-user-level-drift.sh (on Linux it compares the Linux-rendered CLAUDE.md and autoMode.environment)"
+echo "done. Restart every running Claude session (they lost the toolkit hooks; plugins load at session start)."
+echo "In each checkout where Jev is on, run /cct:jev off, then /cct:jev on."
+echo "Check: bash $ROOT/scripts/verify-user-level-drift.sh --worktree (0 drift = rendered CLAUDE.md, cct@dagonet at VERSION and enabled, no leftover, no stale hook registration, autoMode.environment as the reference)"

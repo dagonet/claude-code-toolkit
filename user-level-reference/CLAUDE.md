@@ -34,7 +34,7 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 
 ## Sub-Agent Model Choice
 
-- **Every Agent spawn names its `model` explicitly — unless Jev routing is on in this repo (`/jev on`; a session-start line announces it), then omit `model` and Jev picks one per launch.** A type without its own model (`general-purpose`, other built-ins, `model: inherit`) otherwise inherits the orchestrator's — the most expensive one (measured: 31 such spawns ran on Opus/Fable).
+- **Every Agent spawn names its `model` explicitly — unless Jev routing is on in this repo (`/cct:jev on`; a session-start line announces it), then omit `model` and Jev picks one per launch.** A type without its own model (`general-purpose`, other built-ins, `model: inherit`) otherwise inherits the orchestrator's — the most expensive one (measured: 31 such spawns ran on Opus/Fable).
 - **The orchestrator picks per task:** reading, searching, summarising, extracting → `haiku`; implementing, testing, fixing from a clear brief → `sonnet`; reviewing safety-critical code, architecture, debugging an unclear cause → `opus`; `fable` only when `opus` is not enough. Raise `effort` for many-step work or verification that is easy to skip; lower it for lookups.
 - A typed agent's own `model:` is the default when the task fits it; a decider model (Jev) may later route within these bounds.
 
@@ -54,14 +54,18 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 |------|------|
 | Find where X is defined/used (needle search) | Grep tool |
 | Read a file you will Edit/Write | Read |
-| Analyze/summarize one file (no edit) | Read with `limit`/`offset`, or an Explore subagent if the file is large |
-| Multi-file research/gathering | Explore subagent (haiku, `effort: low`) — returns ranked `path:line` findings, not file contents |
-| Open-ended codebase exploration | Explore subagent |
+| Analyze/summarize one file (no edit) | Read with `limit`/`offset`, or a `cct:Explore` subagent if the file is large |
+| Multi-file research/gathering | `cct:Explore` subagent (haiku, `effort: low`) — returns ranked `path:line` findings, not file contents |
+| Open-ended codebase exploration | `cct:Explore` subagent |
 | Browse directory contents | Glob |
 
 ## Auto-Memory
 
 Auto-memory `MEMORY.md` loads only its first 200 lines / 25 KB — keep it an index; move detail into topic files.
+
+## cct plugin
+
+Agents, skills, the report style and the toolkit hooks come from the `cct@dagonet` plugin. The style is selected as `"outputStyle": "cct:pm-report"` (a plugin style loads only under its prefix).
 
 ## New Project Setup
 

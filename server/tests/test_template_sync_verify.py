@@ -131,7 +131,7 @@ def _good_fixture(tmp_path, ownership: dict | None = None):
     (repo / "templates" / "ownership.json").write_text(
         json.dumps(ownership if ownership is not None else OWNERSHIP), encoding="utf-8")
     m = {"templateRepo": str(repo), "variant": "general"}
-    for rel, content in {"CLAUDE.md": CLAUDE_CONTENT, "hooks/g.sh": HOOK_CONTENT,
+    for rel, content in {"CLAUDE.md": CLAUDE_CONTENT, "hooks/git-pre-push.sh": HOOK_CONTENT,
                          "PROJECT_CONTEXT.md": CONTEXT_CONTENT,
                          ".claude/rules/project.md": PROJECT_MD_CONTENT}.items():
         p = ts._template_file_path(m, rel)
@@ -144,13 +144,13 @@ def _good_fixture(tmp_path, ownership: dict | None = None):
     (proj / ".claude" / "rules").mkdir(parents=True)
     (proj / "hooks").mkdir(parents=True)
     (proj / "CLAUDE.md").write_text(CLAUDE_CONTENT, encoding="utf-8", newline="")
-    (proj / "hooks" / "g.sh").write_text(HOOK_CONTENT, encoding="utf-8", newline="")
+    (proj / "hooks" / "git-pre-push.sh").write_text(HOOK_CONTENT, encoding="utf-8", newline="")
     (proj / ".claude" / "rules" / "project.md").write_text(PROJECT_MD_CONTENT, encoding="utf-8", newline="")
     (proj / "PROJECT_CONTEXT.md").write_text(CONTEXT_CONTENT, encoding="utf-8", newline="")
 
     entries = {
         "CLAUDE.md": {"hash": "sha256:" + ts._sha256(CLAUDE_CONTENT), "ownership": "template"},
-        "hooks/g.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
+        "hooks/git-pre-push.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
         ".claude/rules/project.md": {"ownership": "once"},
         "PROJECT_CONTEXT.md": {"ownership": "once"},
     }
@@ -207,7 +207,7 @@ def _good_fixture_v4(tmp_path):
     (repo / "templates" / "ownership.json").write_text(json.dumps(OWNERSHIP_V4), encoding="utf-8")
     m = {"templateRepo": str(repo), "variant": "general"}
     template_files = {
-        "CLAUDE.md": CLAUDE_CONTENT_V4, "hooks/g.sh": HOOK_CONTENT,
+        "CLAUDE.md": CLAUDE_CONTENT_V4, "hooks/git-pre-push.sh": HOOK_CONTENT,
         "PROJECT_CONTEXT.md": CONTEXT_CONTENT, ".claude/rules/project.md": PROJECT_MD_CONTENT,
         ".claude/agents/foo.md": AGENT_CONTENT_V4,
         ".claude/project-instructions.md": INSTRUCTIONS_CONTENT_V4,
@@ -229,7 +229,7 @@ def _good_fixture_v4(tmp_path):
 
     entries = {
         "CLAUDE.md": {"hash": "sha256:" + ts._sha256(CLAUDE_CONTENT_V4), "ownership": "template"},
-        "hooks/g.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
+        "hooks/git-pre-push.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
         ".claude/agents/foo.md": {"hash": "sha256:" + ts._sha256(AGENT_CONTENT_V4), "ownership": "template"},
         ".claude/rules/project.md": {"ownership": "once"},
         "PROJECT_CONTEXT.md": {"ownership": "once"},
@@ -262,7 +262,7 @@ def _window_fixture(tmp_path):
     (repo / "templates" / "ownership.json").write_text(json.dumps(OWNERSHIP), encoding="utf-8")
     window_claude = "# T\nrule one\n@.claude/project-instructions.md\n"  # no markers -- v4.1+ shape
     m = {"templateRepo": str(repo), "variant": "general"}
-    for rel, content in {"CLAUDE.md": window_claude, "hooks/g.sh": HOOK_CONTENT,
+    for rel, content in {"CLAUDE.md": window_claude, "hooks/git-pre-push.sh": HOOK_CONTENT,
                          "PROJECT_CONTEXT.md": CONTEXT_CONTENT,
                          ".claude/rules/project.md": PROJECT_MD_CONTENT}.items():
         p = ts._template_file_path(m, rel)
@@ -276,13 +276,13 @@ def _window_fixture(tmp_path):
     # The project's HELD CLAUDE.md always carries the region (R-J: a v3
     # consumer's own committed copy always has it).
     (proj / "CLAUDE.md").write_text(CLAUDE_CONTENT, encoding="utf-8", newline="")
-    (proj / "hooks" / "g.sh").write_text(HOOK_CONTENT, encoding="utf-8", newline="")
+    (proj / "hooks" / "git-pre-push.sh").write_text(HOOK_CONTENT, encoding="utf-8", newline="")
     (proj / ".claude" / "rules" / "project.md").write_text(PROJECT_MD_CONTENT, encoding="utf-8", newline="")
     (proj / "PROJECT_CONTEXT.md").write_text(CONTEXT_CONTENT, encoding="utf-8", newline="")
 
     entries = {
         "CLAUDE.md": {"hash": "sha256:" + ts._sha256(CLAUDE_CONTENT), "ownership": "template"},
-        "hooks/g.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
+        "hooks/git-pre-push.sh": {"hash": "sha256:" + ts._sha256(HOOK_CONTENT), "ownership": "template"},
         ".claude/rules/project.md": {"ownership": "once"},
         "PROJECT_CONTEXT.md": {"ownership": "once"},
     }
@@ -313,11 +313,11 @@ def _acknowledged_fixture(tmp_path):
     """MM-Agent's shape: a template-class file the template no longer ships,
     kept by the project and acknowledged by hand (SKILL.md step 6)."""
     repo, proj, commit = _good_fixture(tmp_path)
-    tpl_hook = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "hooks/g.sh")
+    tpl_hook = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "hooks/git-pre-push.sh")
     tpl_hook.unlink()
-    _recommit(repo, "template drops hooks/g.sh")
+    _recommit(repo, "template drops hooks/git-pre-push.sh")
     m = _read_manifest(proj)
-    m["deletedAcknowledged"] = ["hooks/g.sh"]
+    m["deletedAcknowledged"] = ["hooks/git-pre-push.sh"]
     _write_manifest(proj, m)
     _recommit(proj, "acknowledge kept hook")
     return repo, proj
@@ -371,12 +371,13 @@ def test_pass_fixture_is_all_green(tmp_path):
     assert res["mode"] == "post_commit"
 
 
-def test_lines_count_is_32():
+def test_lines_count_is_29():
     """Constraint 5: stated by hand, moves in the SAME commit as the ids it
     counts -- never derived from anything, so it is a red flag by itself if a
     later edit changes LINES without touching this number. 30 -> 31 in
-    v4.1.1 (spec §2.1): project_md_seed_differs."""
-    assert len(verify.LINES) == 32
+    v4.1.1 (spec §2.1): project_md_seed_differs; 32 -> 29 in v5.0 (the three
+    agent_grants_* lines are removed)."""
+    assert len(verify.LINES) == 29
 
 
 def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
@@ -405,283 +406,21 @@ def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
     assert by_id["claude_md_identical"]["status"] == "PASS"
     assert by_id["import_line_present"]["status"] == "PASS"
     assert by_id["instructions_file_present"]["status"] == "PASS"
-    assert by_id["agent_grants_resolvable"]["status"] == "PASS"
-    assert "no grants file" not in by_id["agent_grants_resolvable"]["measured"]  # the file IS present
-    assert "grants=0" in by_id["agent_grants_resolvable"]["measured"]
-    assert by_id["agent_grants_names_known"]["status"] == "PASS"
-    assert by_id["agent_grants_extendable"]["status"] == "PASS"
+    assert not [i for i in by_id if i.startswith("agent_grants")]   # v5.0: the three checks are gone
     assert res["ok"] is True
 
 
-def test_agent_grants_resolvable_fails_on_nonexistent_template_sync_tool(tmp_path, monkeypatch):
-    """The one alias `agent_grants_resolvable` can resolve FOR REAL: a
-    `template-sync-tools` token naming a tool that is not in the live
-    registry FAILs. (Every REAL template_* tool is itself in
-    UNGRANTABLE_TOOLS, so a fake name is the only way to exercise this
-    alias's resolution path at all without tripping the earlier
-    ungrantable-token refusal in load_grants -- noted in the report.)"""
+def test_v4_manifest_without_agent_grants_key_has_no_fail(tmp_path, monkeypatch):
+    """The key is optional since v5.0 (still written by 4.x tooling, read by nothing)."""
     monkeypatch.setattr(ts, "__version__", "4.1.0")
     repo, proj, commit = _good_fixture_v4(tmp_path)
-    (proj / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {"foo": ["mcp__template-sync-tools__template_nonexistent"]}}),
-        encoding="utf-8", newline="")
+    m = _read_manifest(proj)
+    del m["agent_grants"]
+    _write_manifest(proj, m)
     _recommit(proj)
     res = verify.run(str(proj), str(repo), "post_commit")
-    line = _by_id(res)["agent_grants_resolvable"]
-    assert line["status"] == "FAIL", line
-    assert "template_nonexistent" in line["measured"]
-
-
-def test_agent_grants_resolvable_skips_without_registration_for_third_party_alias(tmp_path, monkeypatch):
-    """R-N (fix round 1): "glider" is neither `template-sync-tools` nor a
-    mcp-dev-servers-family alias -- there is no census route for it at all,
-    so this SKIPs naming the alias, regardless of ~/.claude.json."""
-    monkeypatch.setattr(ts, "__version__", "4.1.0")
-    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "no-such-home")
-    repo, proj, commit = _good_fixture_v4(tmp_path)
-    (proj / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}),
-        encoding="utf-8", newline="")
-    _recommit(proj)
-    res = verify.run(str(proj), str(repo), "post_commit")
-    line = _by_id(res)["agent_grants_resolvable"]
-    assert line["status"] == "SKIP", line
-    assert "alias glider: no census route" in line["measured"]
-
-
-def test_agent_grants_resolvable_never_passes_an_unresolved_alias_even_with_registration(tmp_path, monkeypatch):
-    """R-N, INVERTING the c5b witness this replaces
-    (`test_agent_grants_resolvable_counts_unresolved_by_name_when_registration_readable`,
-    fix round 1 task-1-fix1-brief.md): that test asserted PASS-by-name for a
-    third-party alias merely because ~/.claude.json was READABLE -- R-N
-    rules that a FALSE GREEN (the alias still has no real census route: it
-    is not registered in THIS fake ~/.claude.json, and "glider" is not in
-    the mcp-dev-servers family regardless). The corrected behaviour is
-    SKIP, naming the alias, whether or not the registration file exists."""
-    monkeypatch.setattr(ts, "__version__", "4.1.0")
-    fake_home = tmp_path / "fake-home"
-    fake_home.mkdir()
-    (fake_home / ".claude.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
-    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
-    repo, proj, commit = _good_fixture_v4(tmp_path)
-    (proj / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {"foo": ["mcp__glider__symbol_lookup"]}}),
-        encoding="utf-8", newline="")
-    _recommit(proj)
-    res = verify.run(str(proj), str(repo), "post_commit")
-    line = _by_id(res)["agent_grants_resolvable"]
-    assert line["status"] == "SKIP", line
-    assert "alias glider: no census route" in line["measured"]
-
-
-def _mk_mcp_dev_servers_family_registration(tmp_path, alias: str, tool_names: list[str]):
-    """A REAL census route for `alias` (R-N): a fake ~/.claude.json
-    registering it with a `.venv/Scripts/...` command path (check 50's own
-    derivation marker), a fake mcp-dev-servers source tree at the derived
-    directory shipping a module with `FastMCP("<alias>")` and one
-    `@mcp.tool()`-decorated function per name in `tool_names` (the STATIC
-    census route -- no real venv/import needed, matching how check 50
-    itself falls back when a registered alias has no live venv). Returns
-    (fake_home, mcp_dev_servers_dir)."""
-    fake_home = tmp_path / "fake-home"
-    fake_home.mkdir()
-    mcp_dev_servers_dir = tmp_path / "mcp-dev-servers"
-    pkg_dir = mcp_dev_servers_dir / "src" / "mcp_dev_servers"
-    pkg_dir.mkdir(parents=True)
-    body = "\n".join(f"@mcp.tool()\ndef {name}(x):\n    return x\n" for name in tool_names)
-    (pkg_dir / f"{alias.replace('-', '_')}.py").write_text(
-        f'FastMCP("{alias}")\n\n{body}', encoding="utf-8", newline="")
-    fake_venv_command = str(mcp_dev_servers_dir / ".venv" / "Scripts" / f"mcp-{alias}.exe")
-    (fake_home / ".claude.json").write_text(
-        json.dumps({"mcpServers": {alias: {"command": fake_venv_command}}}), encoding="utf-8")
-    return fake_home, mcp_dev_servers_dir
-
-
-def _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path):
-    """A _good_fixture_v4 toolkit repo that also ships a REAL copy of
-    scripts/lib/list-mcp-tools.py at the SAME repo-relative path -- R-N's
-    census subprocess resolves the script from the manifest's own
-    templateRepo, so the fixture toolkit repo needs it too."""
-    repo, proj, commit = _good_fixture_v4(tmp_path)
-    lib_dir = repo / "scripts" / "lib"
-    lib_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(TOOLKIT_ROOT / "scripts" / "lib" / "list-mcp-tools.py", lib_dir / "list-mcp-tools.py")
-    return repo, proj, commit
-
-
-def test_agent_grants_resolvable_real_census_fails_on_a_nonexistent_family_tool(tmp_path, monkeypatch):
-    """R-N: a REAL census route (the mcp-dev-servers family) resolves for
-    real -- a token naming a tool absent from the (statically-censused)
-    module FAILs by name, proving actual resolution happened rather than a
-    generic SKIP."""
-    monkeypatch.setattr(ts, "__version__", "4.1.0")
-    fake_home, _mds_dir = _mk_mcp_dev_servers_family_registration(tmp_path, "git-tools", ["git_status"])
-    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
-    repo, proj, commit = _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path)
-    (proj / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {
-            "foo": ["mcp__git-tools__git_status", "mcp__git-tools__git_nonexistent"]}}),
-        encoding="utf-8", newline="")
-    _recommit(proj)
-    res = verify.run(str(proj), str(repo), "post_commit")
-    line = _by_id(res)["agent_grants_resolvable"]
-    assert line["status"] == "FAIL", line
-    assert "mcp__git-tools__git_nonexistent" in line["measured"]
-    assert "mcp__git-tools__git_status" not in line["measured"], \
-        "the real token must not be named alongside the missing one"
-
-
-def test_agent_grants_resolvable_real_census_passes_when_every_token_resolves(tmp_path, monkeypatch):
-    monkeypatch.setattr(ts, "__version__", "4.1.0")
-    fake_home, _mds_dir = _mk_mcp_dev_servers_family_registration(
-        tmp_path, "git-tools", ["git_status", "git_commit"])
-    monkeypatch.setattr(pathlib.Path, "home", lambda: fake_home)
-    repo, proj, commit = _mk_v4_toolkit_repo_with_list_mcp_tools(tmp_path)
-    (proj / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {"foo": ["mcp__git-tools__git_status"]}}),
-        encoding="utf-8", newline="")
-    _recommit(proj)
-    res = verify.run(str(proj), str(repo), "post_commit")
-    line = _by_id(res)["agent_grants_resolvable"]
-    assert line["status"] == "PASS", line
-    assert "resolved=1" in line["measured"]
-
-
-def test_census_budget_two_sided_within_budget_resolves_exhausted_skips(tmp_path, monkeypatch):
-    """J2 (fix round 2): a TOTAL census budget across the whole
-    agent_grants_resolvable computation, not just a per-alias ceiling.
-    Two-sided with a FAKE census that sleeps: "git-tools" fits inside the
-    (tiny, monkeypatched) budget and resolves for real; "github-tools" --
-    alphabetically AFTER "git-tools", so the sorted-iteration ruling
-    (controller addendum (a)) puts it on the exhausted side deterministically
-    -- is never even attempted (the fake census's own call count proves the
-    cutoff, not just the message) and SKIPs naming itself and the budget
-    reason."""
-    monkeypatch.setattr(ts, "__version__", "4.1.0")
-    monkeypatch.setattr(verify, "AGENT_GRANTS_CENSUS_BUDGET_S", 0.03)
-    calls: list[str] = []
-
-    def fake_derive(registration_path, alias):
-        return str(tmp_path)  # any real directory -- only is_dir() is checked
-
-    def fake_census(template_repo, source_dir, registration_path, alias):
-        calls.append(alias)
-        time.sleep(0.05)  # exceeds the 0.03s budget after this ONE call
-        return (["real_tool"], None)
-
-    monkeypatch.setattr(verify, "_derive_mcp_dev_servers_source_dir", fake_derive)
-    monkeypatch.setattr(verify, "_census_mcp_dev_servers_alias", fake_census)
-
-    repo, proj, commit = _good_fixture_v4(tmp_path)
-    (proj / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {
-            "foo": ["mcp__git-tools__real_tool", "mcp__github-tools__real_tool"]}}),
-        encoding="utf-8", newline="")
-    _recommit(proj)
-
-    res = verify.run(str(proj), str(repo), "post_commit")
-    line = _by_id(res)["agent_grants_resolvable"]
-    # Side A (within budget): exactly one census call was attempted, and it
-    # was for "git-tools" (sorted-first) -- the fake census really ran.
-    assert calls == ["git-tools"], calls
-    # Side B (budget exhausted): "github-tools" SKIPs, naming itself and the
-    # budget cause, WITHOUT a census call ever being attempted for it.
-    assert line["status"] == "SKIP", line
-    assert line["measured"] == "alias github-tools: census budget exhausted before it was reached"
-
-
-def _mk_registered_family_alias(fake_home: pathlib.Path, alias: str, mds_dir: pathlib.Path) -> None:
-    """Register `alias` in a fake ~/.claude.json pointing its command at a
-    `.venv/Scripts/...` path under `mds_dir` -- `mds_dir` itself is not
-    required to exist unless the test wants "source dir not found" to be
-    FALSE."""
-    fake_home.mkdir(parents=True, exist_ok=True)
-    (fake_home / ".claude.json").write_text(
-        json.dumps({"mcpServers": {alias: {"command": str(mds_dir / ".venv" / "Scripts" / f"mcp-{alias}.exe")}}}),
-        encoding="utf-8")
-
-
-@pytest.mark.parametrize("cause", [
-    "source_dir_missing", "template_repo_unknown", "list_mcp_tools_fails", "budget_exhausted",
-])
-def test_agent_grants_resolvable_degraded_arms_name_alias_and_cause(cause, tmp_path, monkeypatch):
-    """J1 (fix round 2): R-N's requirement is SKIP naming the alias AND the
-    cause -- a degraded arm that SKIPs with a generic or empty `measured` is
-    a silent hole the consumer cannot act on. One parametrized test over
-    every degrade cause, unit-level (`_check_agent_grants_resolvable`
-    called directly -- "templateRepo unknown" cannot be reached through a
-    full `verify.run()`, since a manifest with no templateRepo fails much
-    earlier in the cascade for unrelated reasons)."""
-    monkeypatch.setattr(ts, "__version__", "4.1.0")
-    alias = "git-tools"
-    pp = tmp_path / "proj"
-    (pp / ".claude").mkdir(parents=True)
-    (pp / ".claude" / "agent-grants.json").write_text(
-        json.dumps({"schema": 1, "grants": {"foo": [f"mcp__{alias}__some_tool"]}}),
-        encoding="utf-8", newline="")
-    manifest = {"templateRepo": str(tmp_path / "toolkit")}
-
-    if cause == "source_dir_missing":
-        _mk_registered_family_alias(tmp_path / "home1", alias, tmp_path / "nonexistent-mds")
-        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home1")
-        expected_cause = "source dir not found"
-
-    elif cause == "template_repo_unknown":
-        manifest["templateRepo"] = ""
-        mds_dir = tmp_path / "mds-tru"
-        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
-        _mk_registered_family_alias(tmp_path / "home2", alias, mds_dir)
-        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home2")
-        expected_cause = "templateRepo unknown"
-
-    elif cause == "list_mcp_tools_fails":
-        mds_dir = tmp_path / "mds-fail"
-        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
-        _mk_registered_family_alias(tmp_path / "home3", alias, mds_dir)
-        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home3")
-        lib_dir = pathlib.Path(manifest["templateRepo"]) / "scripts" / "lib"
-        lib_dir.mkdir(parents=True)
-        (lib_dir / "list-mcp-tools.py").write_text("import sys\nsys.exit(1)\n", encoding="utf-8", newline="")
-        expected_cause = "list-mcp-tools.py exit 1"
-
-    elif cause == "budget_exhausted":
-        monkeypatch.setattr(verify, "AGENT_GRANTS_CENSUS_BUDGET_S", 0.0)
-        mds_dir = tmp_path / "mds-budget"
-        (mds_dir / "src" / "mcp_dev_servers").mkdir(parents=True)
-        _mk_registered_family_alias(tmp_path / "home4", alias, mds_dir)
-        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path / "home4")
-        expected_cause = "census budget exhausted before it was reached"
-
-    else:
-        pytest.fail(f"unhandled cause {cause!r}")
-
-    line = verify._check_agent_grants_resolvable(pp, manifest)
-    assert line["status"] == "SKIP", line
-    assert alias in line["measured"], line
-    assert expected_cause in line["measured"], line
-
-
-def test_malformed_grants_file_fails_gracefully_never_crashes(tmp_path, monkeypatch):
-    """R-P (fix round 1): compute_status_v3 returns {"error": ...} on a
-    malformed .claude/agent-grants.json (R-C) rather than raising --
-    verify.run must not KeyError in status_clean/classes_and_hashes (or any
-    other status-dependent line); every one of them reports FAIL with the
-    error message instead, and no_errors (the ORIGINAL R-C route) FAILs
-    with it too. len(lines) == len(verify.LINES) still holds -- no line is
-    silently dropped by the error path."""
-    monkeypatch.setattr(ts, "__version__", "4.1.0")
-    repo, proj, commit = _good_fixture_v4(tmp_path)
-    (proj / ".claude" / "agent-grants.json").write_text("not json", encoding="utf-8", newline="")
-    _recommit(proj)
-
-    res = verify.run(str(proj), str(repo), "post_commit")
-    assert len(res["lines"]) == len(verify.LINES) == 32
-    by_id = _by_id(res)
-    for id_ in ("no_errors", "status_clean", "classes_and_hashes"):
-        line = by_id[id_]
-        assert line["status"] == "FAIL", (id_, line)
-        assert "not valid JSON" in line["measured"], (id_, line)
-    assert res["ok"] is False
+    assert [l["id"] for l in res["lines"] if l["status"] == "FAIL"] == [], _by_id(res)
+    assert res["ok"] is True
 
 
 def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
@@ -942,7 +681,8 @@ def test_unclassified_empty_fails_alone(tmp_path):
 
 def test_new_template_files_empty_fails_alone(tmp_path):
     repo, proj, commit = _good_fixture(tmp_path)
-    (repo / "hooks" / "extra.sh").write_text("echo extra\n", encoding="utf-8", newline="")
+    (repo / "hooks" / "lib").mkdir()
+    (repo / "hooks" / "lib" / "git-cmd.sh").write_text("echo extra\n", encoding="utf-8", newline="")
     res = verify.run(str(proj), str(repo), "post_commit")
     assert res["ok"] is False
     assert _only_fail(res) == ["new_template_files_empty"]
@@ -971,7 +711,7 @@ def test_local_edited_pair_shape_pass_status_fail(tmp_path):
     with status_clean alone."""
     repo, proj, commit = _good_fixture(tmp_path)
     (proj / "CLAUDE.md").write_text("# T\nrule one, edited\n", encoding="utf-8", newline="")
-    (proj / "hooks" / "g.sh").write_text("echo g, edited\n", encoding="utf-8", newline="")
+    (proj / "hooks" / "git-pre-push.sh").write_text("echo g, edited\n", encoding="utf-8", newline="")
     _recommit(proj)
     res = verify.run(str(proj), str(repo), "post_commit")
     by = _by_id(res)
@@ -1182,7 +922,7 @@ def test_once_notes_changed_null_case(tmp_path):
 
 def test_status_clean_names_stale_hash_remedy(tmp_path):
     repo, proj, _ = _good_fixture(tmp_path)
-    m = _read_manifest(proj); m["files"]["hooks/g.sh"]["hash"] = "sha256:" + "0" * 64
+    m = _read_manifest(proj); m["files"]["hooks/git-pre-push.sh"]["hash"] = "sha256:" + "0" * 64
     _write_manifest(proj, m); _recommit(proj)
     line = _by_id(verify.run(str(proj), str(repo), "post_commit"))["status_clean"]
     assert line["status"] == "FAIL" and "stale stored hash" in line["measured"]
@@ -1313,7 +1053,7 @@ def test_template_behind_head_unchanged_on_untracked_commit(tmp_path):
 
 def test_template_behind_head_differs_on_tracked_commit(tmp_path):
     repo, proj, commit = _good_fixture(tmp_path)
-    (repo / "hooks" / "g.sh").write_text("echo changed\n", encoding="utf-8", newline="")
+    (repo / "hooks" / "git-pre-push.sh").write_text("echo changed\n", encoding="utf-8", newline="")
     _recommit(repo, "change a hook")
     res = verify.run(str(proj), str(repo), "post_commit")
     by_id = _by_id(res)
@@ -1427,12 +1167,12 @@ def v3_legacy_consumer(tmp_path):
 @pytest.fixture
 def v4_consumer(tmp_path):
     # consumer_template_paths (v3.py) resolves a project-relative path to a
-    # repo-root git path via core._template_git_path: "hooks/g.sh" is
-    # already root-tracked (core._ROOT_TRACKED_PREFIXES, UNMODIFIED here)
+    # repo-root git path via core._template_git_path: "hooks/git-pre-push.sh" is
+    # already root-tracked (core.ROOT_TRACKED_FILES, UNMODIFIED here)
     # and "CLAUDE.md" / ".claude/agents/foo.md" get the
     # "templates/<variant>/" prefix -- all production-real, no test-only
     # widening of that constant. Fix round 1 dropped an earlier version of
-    # this fixture that widened _ROOT_TRACKED_PREFIXES via monkeypatch so a
+    # this fixture that widened the root-tracked list via monkeypatch so a
     # single synthetic path (user-level-reference/README.md) could serve as
     # BOTH the #9 case-2 ("does not track") and case-3 ("tracks it")
     # witnesses -- the reviewer measured that with the real constant
@@ -1440,8 +1180,8 @@ def v4_consumer(tmp_path):
     # supplied its own prefix (11 OTHER tests went red on the same change),
     # i.e. redundancy lost, not protection. The two witnesses below (in the
     # case2/case3 tests, not this fixture) now stand on two DIFFERENT
-    # real, root-tracked hooks/ paths: hooks/g.sh (this fixture's own
-    # already-template-owned entry, for "tracks it") and hooks/other.sh (a
+    # real, root-tracked hooks/ paths: hooks/git-pre-push.sh (this fixture's own
+    # already-template-owned entry, for "tracks it") and hooks/lib/json.sh (a
     # path this fixture's manifest does NOT hold, for "does not track") --
     # both resolve under the SAME unmodified "hooks/" prefix, so the
     # discriminator is genuinely "tracked or not", not "resolved correctly
@@ -1489,13 +1229,13 @@ def template_repo(v4_consumer):
 
 
 def test_manifest_migration_reports_v3_to_v4(v3_consumer):
-    out = json.loads(asyncio.run(ts.template_load_manifest(str(v3_consumer.root))))
+    out = json.loads(asyncio.run(ts.template_load_manifest(str(v3_consumer.root), skill_version="v99.0.0")))
     assert out["manifest_migration"] == {"from": 3, "to": 4, "required": True}
     assert out["migration_required"] is False          # unchanged: the v2->v3 answer
 
 
 def test_manifest_migration_false_on_v4(v4_consumer):
-    out = json.loads(asyncio.run(ts.template_load_manifest(str(v4_consumer.root))))
+    out = json.loads(asyncio.run(ts.template_load_manifest(str(v4_consumer.root), skill_version="v99.0.0")))
     assert out["manifest_migration"] == {"from": 4, "to": 4, "required": False}
 
 
@@ -1503,13 +1243,13 @@ def test_manifest_migration_false_on_v4(v4_consumer):
 
 
 def test_case2_survives_commit_to_path_this_consumer_does_not_track(template_repo, v4_consumer):
-    # hooks/other.sh is root-tracked under the SAME unmodified "hooks/"
-    # prefix as v4_consumer's own hooks/g.sh entry -- it resolves correctly
+    # hooks/lib/json.sh is root-tracked under the SAME unmodified "hooks/"
+    # prefix as v4_consumer's own hooks/git-pre-push.sh entry -- it resolves correctly
     # (no templates/<variant>/ misprefix to hide behind); it is green
     # because this consumer's manifest simply does not hold it, not because
     # it resolved somewhere consumer_template_paths never looks.
     template_repo.tag("v9.9.9")
-    template_repo.commit_edit("hooks/other.sh", "echo other\n")
+    template_repo.commit_edit("hooks/lib/json.sh", "echo other\n")
     version, warn = v3.derive_template_version(
         str(template_repo.path), template_repo.head,
         v3.consumer_template_paths(v4_consumer.manifest, v4_consumer.rules))
@@ -1526,18 +1266,18 @@ def test_case3_on_commit_to_tracked_path(template_repo, v4_consumer):
 
 
 def test_case3_when_this_consumer_tracks_the_touched_path(template_repo, v4_consumer):
-    # per-consumer set, not a global exclusion: hooks/g.sh is a
+    # per-consumer set, not a global exclusion: hooks/git-pre-push.sh is a
     # template-owned entry v4_consumer ALREADY holds (_good_fixture_v4's
     # template_files dict) -- no synthetic .track() needed. It resolves
     # under the SAME unmodified "hooks/" root-tracked prefix as
-    # test_case2's hooks/other.sh above; the difference between the two
+    # test_case2's hooks/lib/json.sh above; the difference between the two
     # tests is purely "does this consumer's manifest hold this path",
     # which is exactly what #9 (spec §1.4) is about. This is also the
-    # discriminating witness: emptying core._ROOT_TRACKED_PREFIXES makes
+    # discriminating witness: emptying core.ROOT_TRACKED_FILES makes
     # this test fail (see the report's fix-round-1 section) -- it is not
     # accidentally green.
     template_repo.tag("v9.9.9")
-    template_repo.commit_edit("hooks/g.sh", "echo changed\n")
+    template_repo.commit_edit("hooks/git-pre-push.sh", "echo changed\n")
     version, warn = v3.derive_template_version(
         str(template_repo.path), template_repo.head,
         v3.consumer_template_paths(v4_consumer.manifest, v4_consumer.rules))
@@ -1616,11 +1356,11 @@ def test_seed_differs_matches_when_consumer_appended_rules_after_the_seed(v4_con
     assert "remedy" not in line or line["remedy"] in ("", "n/a (informational)")
 
 
-def test_lines_count_is_32_and_every_situation_table_lists_the_new_line(
+def test_lines_count_is_29_and_every_situation_table_lists_the_new_line(
         v4_consumer, v3_legacy_consumer, v3_window_consumer):
     for c in (v4_consumer, v3_legacy_consumer, v3_window_consumer):
         lines = template_verify_lines(c)
-        assert len(lines) == 32 and "project_md_seed_differs" in lines
+        assert len(lines) == 29 and "project_md_seed_differs" in lines
 
 
 def _notes_changed_fixture(tmp_path):
@@ -1682,7 +1422,7 @@ def _pending_with_optional_key_fixture(tmp_path, extra_tpl=""):
 
 def test_finalize_carries_pending_note_forward_when_template_notes_unchanged(tmp_path):
     repo, proj, tpl, kept = _pending_with_optional_key_fixture(tmp_path)
-    hook = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "hooks/g.sh")
+    hook = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "hooks/git-pre-push.sh")
     hook.write_text(HOOK_CONTENT + "# touched\n", encoding="utf-8", newline="")
     _recommit(repo, "unrelated template change")
     res = json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))

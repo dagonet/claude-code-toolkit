@@ -469,8 +469,9 @@ def _load_manifest(project_path: pathlib.Path) -> tuple[dict | None, list[str]]:
 
     v3/v4 manifests (manifest_version in (3, 4)) require template_commit and
     requires_server on top of the v2 fields; lastSynced is accepted as an
-    alias of template_commit. v4 manifests additionally require the two
-    declaration keys instructions_file and agent_grants (spec §5 header).
+    alias of template_commit. v4 manifests additionally require the
+    declaration key instructions_file (spec §5 header). `agent_grants` (v4.6.x
+    manifests) is still accepted but no longer required (v5.0).
     """
     manifest_path = project_path / ".claude" / "template-manifest.json"
     content = _read_file(manifest_path)
@@ -489,7 +490,7 @@ def _load_manifest(project_path: pathlib.Path) -> tuple[dict | None, list[str]]:
         if not (manifest.get("template_commit") or manifest.get("lastSynced")):
             errors.append("Missing required field: template_commit")
     if mv == 4:
-        required += ["instructions_file", "agent_grants"]
+        required += ["instructions_file"]
     for field in required:
         if field not in manifest:
             errors.append(f"Missing required field: {field}")
@@ -537,18 +538,15 @@ def _get_template_dir(manifest: dict) -> pathlib.Path:
     return repo / "templates" / manifest["variant"]
 
 
-# Manifest paths copied from the toolkit repo root rather than from
-# templates/<variant>/. Shared hook scripts live at <repo>/hooks/ and are
-# copied by the setup script from there, so they must be resolved against the
-# repo root -- otherwise sync looks under templates/<variant>/hooks/, finds
-# nothing, and falsely reports them TEMPLATE_DELETED.
-_ROOT_TRACKED_PREFIXES = ("hooks/",)
+# v5.0: projects receive only the native pre-push hook and the libraries it
+# sources; every other hook ships in the cct plugin (spec §3.4). These paths are
+# resolved against the toolkit repo root, not templates/<variant>/.
+ROOT_TRACKED_FILES = ("hooks/git-pre-push.sh", "hooks/lib/git-cmd.sh", "hooks/lib/json.sh")
 
 
 def _is_root_tracked(rel_path: str) -> bool:
     """True if rel_path is tracked from the repo root, not the variant dir."""
-    norm = _normalize_path(rel_path)
-    return any(norm.startswith(prefix) for prefix in _ROOT_TRACKED_PREFIXES)
+    return _normalize_path(rel_path) in ROOT_TRACKED_FILES
 
 
 # Project-relative dotfile name -> template-relative name. `.gitignore` is the
@@ -624,10 +622,7 @@ def _scan_template_files(
     """Scan for every template-owned file, return sorted relative paths.
 
     Walks templates/<variant>/ and -- when repo_root is given -- the
-    root-tracked trees (<repo>/hooks/**, recursively, including lib/).
-    Without the second walk a newly added shared hook never surfaces in
-    `new_template_files`, so a consumer applies a settings.json that
-    references scripts it does not have and the git gates fail open.
+    ROOT_TRACKED_FILES (the pre-push hook set) that exist under it.
     """
     files = set()
     if template_dir.is_dir():
@@ -643,13 +638,9 @@ def _scan_template_files(
                     continue
                 files.add(rel)
     if repo_root is not None:
-        for prefix in _ROOT_TRACKED_PREFIXES:
-            root = repo_root / prefix.rstrip("/")
-            if not root.is_dir():
-                continue
-            for p in root.rglob("*"):
-                if p.is_file():
-                    files.add(_normalize_path(str(p.relative_to(repo_root))))
+        for rel in ROOT_TRACKED_FILES:
+            if (repo_root / rel).is_file():
+                files.add(rel)
     return sorted(files)
 
 
@@ -1010,9 +1001,22 @@ def _manifest_migration_to(rules, from_version):
     return ceiling
 
 
+def _skill_gate(manifest, rules, skill_version):
+    """Skill gate for template_load_manifest: a dict with the template's floor
+    (requires_skill), the checkout's marker, the refusal ("" or the error text),
+    warnings and whether the bypass sentinel was used."""
+    floor = rules.requires_skill if rules is not None else ""
+    marker, marker_warning = v3.skill_marker(manifest.get("templateRepo", ""))
+    refusal, warnings, bypassed = v3.load_skill_refusal(floor, skill_version, marker)
+    if marker_warning:
+        warnings.append(marker_warning)
+    return {"floor": floor, "marker": marker, "refusal": refusal,
+            "warnings": warnings, "bypassed": bypassed}
+
+
 @mcp.tool()
 @_surfaces_repo_note
-async def template_load_manifest(project_path: str) -> str:
+async def template_load_manifest(project_path: str, skill_version: str = "") -> str:
     """
     Load and validate the template manifest from a project.
     Auto-migrates v1 manifests to v2 format by computing missing hashes.
@@ -1027,8 +1031,16 @@ async def template_load_manifest(project_path: str) -> str:
     version: {"from": <this manifest's version>, "to": <the template's
     ceiling>, "required": bool}.
 
+    Skill gate (v5.0): the response carries requires_skill (the template's
+    floor) and skill_marker (the checkout's own sync-template skill tag), and
+    valid is false with an error when skill_version is missing, below the floor
+    or below the marker. The sentinel "not-a-skill" bypasses it (non-skill
+    callers, as for template_migrate_manifest).
+
     Args:
         project_path: Path to the project root directory
+        skill_version: The caller's sync-template skill tag (vX.Y.Z), from the
+            SYNC-TEMPLATE-SKILL-VERSION marker of the skill body it executes.
 
     Returns:
         JSON with manifest data, validation status, errors, and warnings
@@ -1078,6 +1090,10 @@ async def template_load_manifest(project_path: str) -> str:
             )
         if rules is not None:
             warnings.extend(rules.warnings)
+        gate = _skill_gate(manifest, rules, skill_version)
+        if gate["refusal"]:
+            errors.append(gate["refusal"])
+        warnings.extend(gate["warnings"])
         mv_from = manifest.get("manifest_version")
         mv_to = _manifest_migration_to(rules, mv_from)
         return json.dumps({
@@ -1097,6 +1113,9 @@ async def template_load_manifest(project_path: str) -> str:
             "template_commit": v3.manifest_commit(manifest),
             "template_version": manifest.get("template_version"),
             "requires_server": manifest.get("requires_server", ""),
+            "requires_skill": gate["floor"],
+            "skill_marker": gate["marker"],
+            **({"skill_version_bypassed": True} if gate["bypassed"] else {}),
             "placeholders": manifest.get("placeholders", {}),
             "files": manifest.get("files", {}),
             "unknown_keys": v3.unknown_top_level_keys(manifest),
@@ -1138,6 +1157,10 @@ async def template_load_manifest(project_path: str) -> str:
     migration_required = rules_v2 is not None
     mv2_from = manifest.get("version", 1)
     mv2_to = _manifest_migration_to(rules_v2, mv2_from)
+    gate = _skill_gate(manifest, rules_v2, skill_version)
+    if gate["refusal"]:
+        errors.append(gate["refusal"])
+    warnings.extend(gate["warnings"])
 
     return json.dumps({
         "valid": len(errors) == 0,
@@ -1155,6 +1178,9 @@ async def template_load_manifest(project_path: str) -> str:
         "variant": manifest.get("variant", ""),
         "templateRepo": manifest.get("templateRepo", ""),
         "lastSynced": manifest.get("lastSynced", ""),
+        "requires_skill": gate["floor"],
+        "skill_marker": gate["marker"],
+        **({"skill_version_bypassed": True} if gate["bypassed"] else {}),
         "placeholders": manifest.get("placeholders", {}),
         "files": manifest.get("files", {}),
         "errors": errors,
@@ -1274,7 +1300,7 @@ async def template_compute_status(
             continue
 
         # Current template hash (after placeholder replacement). v2 has no
-        # OwnershipRules and no grants -- template_content(rules=None) is a
+        # OwnershipRules -- template_content(rules=None) is a
         # placeholder-only no-op here (R-B: routed through the one helper
         # anyway, so a producer added later cannot bypass it unnoticed).
         tpl_replaced = v3.template_content(pp, manifest, None, rel_path, tpl_content)
@@ -1465,10 +1491,7 @@ async def template_get_diff(
     tpl_raw = _read_file(_template_file_path(manifest, file_path))
     if tpl_raw is None:
         return json.dumps({"error": f"Template file not found: {file_path}"}, ensure_ascii=False)
-    try:
-        tpl_current = v3.template_content(pp, manifest, None, file_path, tpl_raw)
-    except (v3.GrantsError, v3.GrantRefused) as e:
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    tpl_current = v3.template_content(pp, manifest, None, file_path, tpl_raw)
 
     # Read current project content
     proj_current = _read_file(pp / file_path)
@@ -1491,11 +1514,8 @@ async def template_get_diff(
         if rules is None:
             base_reason = f"base unavailable: manifest v3/v4 needs {v3.OWNERSHIP_FILE} in the template repo"
         else:
-            try:
-                base_content, base_label, _warn = v3.resolve_base(
-                    pp, manifest, rules, rules.template_path_for(_normalize_path(file_path)))
-            except (v3.GrantsError, v3.GrantRefused) as e:
-                return json.dumps({"error": str(e)}, ensure_ascii=False)
+            base_content, base_label, _warn = v3.resolve_base(
+                pp, manifest, rules, rules.template_path_for(_normalize_path(file_path)))
             if base_content is None:
                 base_reason = (
                     "base unavailable: neither template_commit "
@@ -1506,10 +1526,7 @@ async def template_get_diff(
             git_path = _template_git_path(manifest, file_path)
             base_raw = _git_show_file(_template_repo_resolved(manifest), last_synced, git_path)
             if base_raw is not None:
-                try:
-                    base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
-                except (v3.GrantsError, v3.GrantRefused) as e:
-                    return json.dumps({"error": str(e)}, ensure_ascii=False)
+                base_content = v3.template_content(pp, manifest, None, file_path, base_raw)
                 base_label = last_synced
         if base_content is None:
             base_reason = f"base unavailable: lastSynced {last_synced or '(none)'} is not readable in the template repo"
@@ -2056,11 +2073,10 @@ async def template_migrate_manifest(
     manifest is idempotent, reported as `already_v4`). Dry-run lists (a) the
     PROJECT-CUSTOM region body that will move to
     `.claude/project-instructions.md` verbatim (an EMPTY region moves a
-    header-only seed with no body); (b) every LOCAL_EDITED agent whose diff
-    is CONFINED to additions on its `tools:` line becomes a
-    `.claude/agent-grants.json` entry instead (only an agent that SHIPS a
-    `tools:` line qualifies -- one that gained a `tools:` line the template
-    ships none for is refused, never a synthesised grant); (c) ANY OTHER
+    header-only seed with no body); (b) since v5.0 an agent's locally
+    extended `tools:` line is NOT lifted into a grants file -- the
+    agent-grants mechanism is removed and the agent is template-deleted by
+    the next sync; (c) ANY OTHER
     CLAUDE.md diff outside the region, measured against the HELD (last-
     synced) template -- REFUSED with the diff in `out_of_region_diff`, NO
     WRITES: move the text into the region BEFORE migrating (refuse-not-
@@ -2069,13 +2085,10 @@ async def template_migrate_manifest(
     NO WRITES: the migration writes that file FROM the region body, so a
     silent "keep the existing file" would strand it. A real run requires
     `backup_dir` (same as v2 -> v3) and writes, in order,
-    `.claude/agent-grants.json`, `.claude/project-instructions.md`,
-    `CLAUDE.md` (= the variant template, placeholder-rendered and, for an
-    agent file, grant-spliced), and the v4 manifest (`instructions_file`,
-    `agent_grants` declarations, `requires_server ">=4.1.0"`, every
-    template-class hash re-derived AFTER the writes above, so a
-    grants-carrying agent's stored hash is the SPLICED hash the very next
-    status call reads back as IDENTICAL); the report goes to
+    `.claude/project-instructions.md`, `CLAUDE.md` (= the variant template,
+    placeholder-rendered), and the v4 manifest (`instructions_file`
+    declaration, `requires_server ">=4.1.0"`, every other entry's stored
+    hash carried forward unchanged); the report goes to
     `<backup_dir>/migration-report.json`, never in-repo (v4.0.1 item 14's
     rule extended to this step).
 

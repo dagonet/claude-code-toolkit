@@ -39,9 +39,23 @@ SECONDS=0
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_CMD stays empty, and this gate would exit 0 on every commit.
 lib="$(dirname "$0")/lib/git-cmd.sh"
-[ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
+[ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 . "$lib"
 command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: $lib is present but corrupt (gc_current_branch undefined) — this gate cannot evaluate the command, refusing" >&2; exit 2; }
+
+# pct_out_file <repo> -- sets OUT to a fresh capture file. mktemp first; if it fails, fall back to
+# <common git dir>/cct/ (same safety rules as hooks/cct-session.sh: no symlink, owned, 0700).
+# NEVER the working tree. Returns 1 when no safe place exists; the caller refuses with exit 2.
+pct_out_file() {
+  OUT=$(mktemp 2>/dev/null) && return 0
+  _po_c=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  _po_d="$_po_c/cct"
+  [ -L "$_po_d" ] && return 1
+  mkdir -p "$_po_d" 2>/dev/null || return 1
+  case $(uname -s) in MINGW*|MSYS*|CYGWIN*) ;; *) [ -O "$_po_d" ] || return 1 ;; esac
+  chmod 700 "$_po_d" 2>/dev/null
+  OUT=$(mktemp "$_po_d/pre-commit-test.XXXXXX" 2>/dev/null) || return 1
+}
 
 # v2.1.3 fix round 2: absolutize RUN_GATE HERE, before any `cd`. $0 is a
 # relative path when the harness invokes `bash hooks/pre-commit-test.sh`, and
@@ -502,7 +516,7 @@ gc_guard_off && exit 0
 # would find nothing to parse and allow the commit.
 case "$GC_TOOL" in
   mcp__git-tools__git_push|mcp__git-tools__git_commit)
-    echo "BLOCKED: settings.json predates this hook (MCP matcher) — restart the session after /sync-template" >&2
+    echo "BLOCKED: settings.json predates this hook (MCP matcher) — restart the session after /cct:sync-template" >&2
     exit 2 ;;
 esac
 
@@ -965,7 +979,7 @@ if [ -z "$TEST_CMD" ]; then
       # not a settled condition, so "re-run it" is honest advice. And 78 is an
       # internal signal that is never a hook's own exit status.
       cd "$REPO_PATH" || { pct_note gate -1; echo "BLOCKED: pre-commit-test: cannot enter the repository at '$REPO_PATH' — re-run the commit once the path is reachable." >&2; exit 2; }
-      OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
+      pct_out_file "$REPO_PATH" || { pct_note gate -1; echo "BLOCKED: pre-commit-test: no safe place for the gate output (mktemp failed and <git common dir>/cct is unusable) -- fix TMPDIR or the permissions on the git dir, then re-run the commit." >&2; exit 2; }
       pct_capture_tree
       PCT_BUDGET=$(pct_budget "$REPO_PATH")
       pct_run_bounded "$PCT_BUDGET" "$OUT" bash "$RUN_GATE"
@@ -1035,7 +1049,7 @@ cd "$REPO_PATH" || { pct_note test -1; echo "BLOCKED: pre-commit-test: cannot en
 # Capture rather than discard: with the Gate fallback $TEST_CMD may be a whole
 # gate, and "it failed" with no output leaves nothing to act on. Bounded to the
 # last 20 lines so a chatty gate cannot flood the transcript.
-OUT=$(mktemp 2>/dev/null || echo "$REPO_PATH/.pre-commit-test.out")
+pct_out_file "$REPO_PATH" || { pct_note test -1; echo "BLOCKED: pre-commit-test: no safe place for the test output (mktemp failed and <git common dir>/cct is unusable) -- fix TMPDIR or the permissions on the git dir, then re-run the commit." >&2; exit 2; }
 PCT_T0=$(date +%s 2>/dev/null || echo 0)
 # THE SUBSHELL IS LOAD-BEARING (v2.2.5 round 5, independent QA at 9baa446;
 # pre-existing since v2.1.x, not a regression of this branch).

@@ -32,7 +32,7 @@ for each, PASS or FAIL plus the verbatim tail of its real output:
    `N passed, M failed` line.
 3. Stale references to artifacts removed in v2.0/v2.1, in the **shipped config only**.
    Run exactly this, and treat any hit as FAIL:
-   `grep -rn -E 'tier-before-coder|block-bash-vcs|require-teammate-report|effortLevel|Plan Challenge Protocol' templates user-level-reference/skills user-level-reference/agents user-level-reference/settings.json`
+   `grep -rn -E 'tier-before-coder|block-bash-vcs|require-teammate-report|effortLevel|Plan Challenge Protocol' templates skills agents user-level-reference/settings.json`
    The paths are a whitelist on purpose. `CHANGELOG.md`, `README.md`, `docs/`, `scripts/`
    and this file all name those dead artifacts deliberately — as history, as a
    removal note, or as this very pattern — so a repo-wide grep would fail every night.

@@ -90,7 +90,7 @@ def _init_repo(repo):
 
 
 def test_derive_template_version_tree_identical_reachable_tag(tmp_path):
-    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n", "hooks/g.sh": "g\n"}, project={}, entries={})
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n", "hooks/git-pre-push.sh": "g\n"}, project={}, entries={})
     c1 = _init_repo(repo)
     _git(repo, "tag", "v3.1.0")
     # A commit that touches only an untracked path keeps the tracked tree identical.
@@ -100,8 +100,8 @@ def test_derive_template_version_tree_identical_reachable_tag(tmp_path):
     c2 = _git_out(repo, "rev-parse", "HEAD")
     assert v3.derive_template_version(str(repo), c2, ["templates", "hooks"]) == ("v3.1.0", None)
     # A commit that changes a tracked path is untagged.
-    (repo / "hooks" / "g.sh").write_text("g2\n", encoding="utf-8")
-    _git(repo, "add", "hooks/g.sh")
+    (repo / "hooks" / "git-pre-push.sh").write_text("g2\n", encoding="utf-8")
+    _git(repo, "add", "hooks/git-pre-push.sh")
     _git(repo, "commit", "-q", "-m", "hook")
     c3 = _git_out(repo, "rev-parse", "HEAD")
     assert v3.derive_template_version(str(repo), c3, ["templates", "hooks"]) == (None, "untagged_template_tree")

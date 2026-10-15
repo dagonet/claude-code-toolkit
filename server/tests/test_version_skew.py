@@ -28,7 +28,7 @@ def _project(tmp_path, manifest=V3, checkout_version=None, declared=None):
 
 
 def _load(proj):
-    return json.loads(asyncio.run(ts.template_load_manifest(str(proj))))
+    return json.loads(asyncio.run(ts.template_load_manifest(str(proj), skill_version="v99.0.0")))
 
 
 def _bump(version: str) -> str:

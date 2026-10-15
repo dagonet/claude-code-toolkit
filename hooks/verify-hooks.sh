@@ -10,7 +10,8 @@
 # So once per session, look at every registration this machine will use and say so.
 #
 # Reads: $HOME/.claude/settings.json, and $CLAUDE_PROJECT_DIR/.claude/settings.json
-# and settings.local.json (project files only when CLAUDE_PROJECT_DIR is set).
+# and settings.local.json (project files only when CLAUDE_PROJECT_DIR is set), and
+# $CLAUDE_PLUGIN_ROOT/hooks/hooks.json (only when CLAUDE_PLUGIN_ROOT is set and non-empty).
 # Reports:
 #   MISSING: <script>            registered script absent or unreadable
 #   BROKEN: <script>             `bash -n` fails on it
@@ -81,7 +82,7 @@ vh_program() {
   vh_c=$1
   if [ -z "$vh_c" ]; then
     VH_PROGFAIL=1
-    vh_problem "MISSING PROGRAM: (empty command) (exec-form hook command cannot be spawned -- every check it runs is OFF; re-run scripts/render-user-hooks.sh --write)"
+    vh_problem "MISSING PROGRAM: (empty command) (exec-form hook command cannot be spawned -- every check it runs is OFF; a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md)"
     return 0
   fi
   case $vh_c in
@@ -91,7 +92,7 @@ vh_program() {
   if [ -f "$vh_c" ] && [ -x "$vh_c" ]; then return 0; fi
   case $vh_c in *.exe|*.EXE) ;; *) if [ -f "$vh_c.exe" ] && [ -x "$vh_c.exe" ]; then return 0; fi ;; esac
   VH_PROGFAIL=1
-  vh_problem "MISSING PROGRAM: $1 (exec-form hook command cannot be spawned -- every check it runs is OFF; re-run scripts/render-user-hooks.sh --write)"
+  vh_problem "MISSING PROGRAM: $1 (exec-form hook command cannot be spawned -- every check it runs is OFF; a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md)"
   return 0
 }
 
@@ -162,7 +163,7 @@ sys.stdout.buffer.write(("".join(l + "\n" for l in out)).encode("utf-8"))
 vh_file() {
   [ -f "$1" ] && [ -r "$1" ] || return 0
   if grep -Eq '@[A-Z]+@' "$1" 2>/dev/null; then
-    vh_problem "MISSING (unrendered @...@ -- run scripts/render-user-hooks.sh --write): $1"
+    vh_problem "MISSING (unrendered @...@ -- a v4 user-level leftover in ~/.claude/settings.json: on Linux run bash scripts/install-user-level-linux.sh, on the PC see docs/plugin-migration-windows.md): $1"
   fi
   if ! grep -q '"args"' "$1" 2>/dev/null; then
     # shell-form only: over-collect hook paths by name, like sync-template rule 1b
@@ -215,7 +216,23 @@ vh_init_parser() {
   fi
 }
 
+# vh_plugin <root>: the plugin's hooks/hooks.json registers `run-hook.sh" <name>` (raw JSON, escaped quote) and
+# direct ${CLAUDE_PLUGIN_ROOT}/hooks/<x>.sh scripts; each must exist under the plugin root
+vh_plugin() {
+  vh_pf=$1/hooks/hooks.json
+  [ -f "$vh_pf" ] && [ -r "$vh_pf" ] || return 0
+  # bare `run-hook.sh" <name>` and the closed-class inline-guard form `exec bash "$f" <name>`
+  vh_paths=$(grep -oE '(run-hook\.sh|\$f)\\" [A-Za-z0-9_-]+' "$vh_pf" 2>/dev/null | sed 's/^.* /hooks\//; s/$/.sh/')
+  vh_paths="$vh_paths
+$(grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[A-Za-z0-9_.-]+\.sh' "$vh_pf" 2>/dev/null | sed 's/^.*}\///')"
+  while IFS= read -r vh_x; do [ -n "$vh_x" ] && vh_script "$1/$vh_x"; done <<EOF
+$vh_paths
+EOF
+  return 0
+}
+
 [ -n "$VH_HOME" ] && vh_file "$VH_HOME/.claude/settings.json"
+[ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && vh_plugin "$CLAUDE_PLUGIN_ROOT"
 if [ -n "$VH_PROJ" ]; then
   vh_file "$VH_PROJ/.claude/settings.json"
   vh_file "$VH_PROJ/.claude/settings.local.json"
@@ -228,7 +245,7 @@ if [ "$VH_N" -gt 0 ]; then
   fi
   echo "HOOK CHECK FAILED -- $VH_N registered hook script(s) missing or broken:"
   printf '%s' "$VH_PROBS"
-  echo "Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /sync-template or re-run scripts/render-user-hooks.sh --write."
+  echo "Tell the user this in your first reply, before anything else. Protections stay fail-closed (a missing protection blocks its tool calls); fix with /cct:sync-template (project files), reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet) (plugin hook scripts), or bash scripts/install-user-level-linux.sh on Linux / docs/plugin-migration-windows.md on the PC (user-level leftovers)."
   if [ -n "$VH_PROGFAIL" ] && [ -n "$VH_NOPARSER" ]; then
     echo "A MISSING PROGRAM entry fails OPEN, and NO PARSER means exec-form entries are unchecked: every check behind them may be off until fixed."
   elif [ -n "$VH_PROGFAIL" ]; then
