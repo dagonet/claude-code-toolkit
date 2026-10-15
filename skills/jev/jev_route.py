@@ -306,10 +306,10 @@ def _ask(ti, stype, res, env, post, registry, clock, t0, ev):
     if not url:
         return fallback, "no-endpoint", False, None
     jev_model, threshold = read_config(res.gd)
-    ev["threshold"] = threshold
     budget = min(HTTP_TIMEOUT, DEADLINE + _test_slack(env) - (clock() - t0))
     if budget <= 0.05:
         return fallback, "deadline", False, None
+    ev["threshold"] = threshold  # only once a call is made (a deadline event made none)
     try:
         raw = post(url, build_request(state, jev_model), key, budget, env)
     except JevTimeout:
