@@ -27,7 +27,7 @@ Patch. Fixes from the v5.1.0 rollout to the first projects, template and sync-sk
   - the first-sync paragraph adds that the same build-environment setup applies after any dependency-bump PR merged since the last install;
   - "gates are live immediately" holds for the checkout the session runs from, so a sync done in a separate worktree takes effect there.
 - **The template-sync refusal messages** (`server/src/template_sync/v3.py`) give the measured remedy for a tag-pinned plugin (remove, add, install, restart) in place of `claude plugin update cct@dagonet`, which does not move a pinned install. Message text only; no server logic changed.
-- **`docs/plugin-migration-windows.md`:** step 3 moves only the toolkit's listed files and deletes `hooks/` only if it is empty; step 4 says Jev routes in a v4 clone only after its v5 sync. (d0ca3a3, 1457737)
+- **`docs/plugin-migration-windows.md`:** step 3 moves only the toolkit's listed files and deletes `hooks/` only if it is empty; step 4 says Jev routes in a v4 clone only after its v5 sync. Its "Later releases" paragraph was rewritten to the same measured upgrade story (remove, add, install; pull the checkout to the same tag; restart before the next sync). (d0ca3a3, 1457737)
 
 ### Docs
 - **The README is rewritten as a plugin-era product page** (what the plugin gives you, install, start a project, upgrade). `AGENTS.md` now points to the README's Install section instead of carrying its own unpinned command.
@@ -46,7 +46,10 @@ Measured on 2026-10-16 in a temp HOME with claude 2.1.301: `claude plugin market
 ### Measured at the final code commit (host agent-host-1)
 - Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 342 PASS lines at the release tree, and the bootstrap-fixture block inside it ran 38 passed, 0 failed, 34 skipped (72 assertions). The 34 skips are the PowerShell cases (no PowerShell on this host). An earlier run of this tree showed 37 skips: the extra 3 were cases needing `server/.venv`, which the worktree did not have at that time; the venv now exists. Check 50 always skips on this host (no `python`, only `python3`) and prints as a PASS line; it skipped the same way at v5.1.0, so it is not new.
 - `bash scripts/test-hooks.sh`: 4167 passed, 0 failed, 6 skipped (4173 assertions; the final-review round added the Bash-branch deny-text fixture). The J-PY pin `JPY_WANT` rose from 140 to 145: the five tests added in `skills/jev/tests/test_ctl.py` for the v4-clone message had not been counted, and the first full run of this tree failed on it. (v5.1.0 measured 4160 passed, 6 skipped.) `bash scripts/test-server.sh`: 522 passed, 9 skipped (the final-review round changed refusal-message text in `server/src/template_sync/v3.py` and the one test that pins it; no server logic changed).
-- Windows (the PC, Git Bash) at 1a2be66, 2026-10-16 16:57: the Jev unit tests ran 145, OK; the typed `bash scripts/verify-user-level-drift.sh v5.1.0` was not refused and reported 0 drift; `bash -n` passed on both changed scripts.
+- Windows (the PC, Python 3.14.2, Git Bash):
+  - At 1a2be66: the Jev unit suite ran 145, OK; the typed `bash scripts/verify-user-level-drift.sh v5.1.0` was not refused and reported 0 drift; `bash -n` was clean on the drift script and `hooks/enforce-delegation.sh`.
+  - At 764f60a: the Jev unit suite ran 145, OK (30 s); `bash -n` was clean on `scripts/verify-user-level-drift.sh`, `hooks/enforce-delegation.sh` and `scripts/test-hooks.sh`.
+  - Not run on Windows for this release: the full hook suite. This is a patch release whose code changes were proven above, so the 3-6 h Windows run was skipped by decision.
 
 ## v5.1.0 — 2026-10-15
 

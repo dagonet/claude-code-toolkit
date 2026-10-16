@@ -73,7 +73,7 @@ It is switched on per clone and needs a TypeSafe API key; the `cct:jev` skill ex
 
 First, `git`, Claude Code and a JSON reader for the hooks: `node`, `python3` or `jq`.
 Without any of the three, every shell command and file read is refused, in every repo.
-`node` gives the full set; with only `python3` or `jq`, six hooks do nothing, among them delegation, read-size, the agent-report check and the RETRO brief (see [`docs/getting-started.md`](docs/getting-started.md)).
+Without `node`, six hooks do nothing: delegation, read-size capping, the Bash-output guard, the agent-report check, the RETRO ledger and brief (see [`docs/getting-started.md`](docs/getting-started.md)).
 
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 
