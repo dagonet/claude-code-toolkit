@@ -1680,6 +1680,8 @@ async def template_apply_file(
         same for the template) -- template_compute_status needs the latter to
         tell a preserved region apart from real drift. Both fall back to
         full-file hashes when only one side carries the markers.
+        Written results also carry `unresolved_placeholders`: the sorted
+        `{{NAME}}` names still literal in what landed on disk (`[]` if none).
     """
     for _msys_p in (project_path, backup_dir):
         _msys_err = _reject_msys_path(_msys_p)

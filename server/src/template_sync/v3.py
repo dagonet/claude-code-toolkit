@@ -1276,6 +1276,11 @@ def write_backup(backup_dir: pathlib.Path, proj_rel: str, pre_image: str, diff: 
     return {"pre_sync": str(pre), "diff": str(dif)}
 
 
+def unresolved_placeholders(content: str) -> list[str]:
+    """Sorted unique `{{NAME}}` names still literal in content (no braces)."""
+    return sorted(set(re.findall(r"\{\{([A-Z_]{2,})\}\}", content)))
+
+
 def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_path: str,
                   source: str, content: str, backup_dir: str, overwrite_existing: bool = False) -> dict:
     proj_rel = core._normalize_path(file_path)
@@ -1324,6 +1329,7 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
             "manifest_entry": {"ownership": "once"},
             "bytes_written": len(write_content.encode("utf-8")),
             "backup": None, "local_edit_overwritten": False,
+            "unresolved_placeholders": unresolved_placeholders(write_content),
         }
 
     # template class
@@ -1377,6 +1383,7 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
         "backup": backup,
         "local_edit_overwritten": local_edit,
         "region_preserved": region_preserved,
+        "unresolved_placeholders": unresolved_placeholders(write_content),
     }
     if orphaned:
         # Present only in the hazardous case, so callers key on presence.

@@ -193,3 +193,38 @@ def test_v2_manifest_path_unchanged(tmp_path):
     res = _apply(proj, file_path="CLAUDE.md", source="skip")
     assert res["action"] == "skipped"
     assert res["manifest_entry"]["resolution"] == "keep-mine"
+
+
+# #210 part 2: apply reports placeholders that stayed literal on disk.
+def test_apply_reports_unresolved_placeholder_when_manifest_lacks_key(tmp_path):
+    tpl = "a {{LINT_COMMAND}} b {{FORMAT_COMMAND}}\n"
+    repo, proj = _mk_v3(tmp_path, template={"hooks/gate.sh": tpl}, project={"hooks/gate.sh": "old\n"},
+                        entries={"hooks/gate.sh": _tpl_entry("old\n")},
+                        placeholders={"FORMAT_COMMAND": "ruff format ."})
+    res = _apply(proj, file_path="hooks/gate.sh", backup_dir=str(tmp_path / "bk"))
+    assert res["unresolved_placeholders"] == ["LINT_COMMAND"]
+
+
+def test_apply_reports_no_unresolved_placeholders_when_all_filled(tmp_path):
+    repo, proj = _mk_v3(tmp_path, template={"hooks/gate.sh": "a {{FORMAT_COMMAND}}\n"},
+                        project={"hooks/gate.sh": "old\n"},
+                        entries={"hooks/gate.sh": _tpl_entry("old\n")},
+                        placeholders={"FORMAT_COMMAND": "ruff format ."})
+    res = _apply(proj, file_path="hooks/gate.sh", backup_dir=str(tmp_path / "bk"))
+    assert res["unresolved_placeholders"] == []
+
+
+def test_apply_reports_placeholders_in_provided_content(tmp_path):
+    repo, proj = _mk_v3(tmp_path, template={"hooks/gate.sh": "t\n"}, project={"hooks/gate.sh": "old\n"},
+                        entries={"hooks/gate.sh": _tpl_entry("old\n")})
+    res = _apply(proj, file_path="hooks/gate.sh", source="provided",
+                 content="x {{DEFAULT_BRANCH}} {{DEFAULT_BRANCH}}\n", backup_dir=str(tmp_path / "bk"))
+    assert res["unresolved_placeholders"] == ["DEFAULT_BRANCH"]
+
+
+def test_once_created_reports_unresolved_placeholders(tmp_path):
+    repo, proj = _mk_v3(tmp_path, template={"gitignore": "build: {{BUILD_COMMAND}}\n"}, project={},
+                        entries={})
+    res = _apply(proj, file_path=".gitignore")
+    assert res["action"] == "created_from_template"
+    assert res["unresolved_placeholders"] == ["BUILD_COMMAND"]
