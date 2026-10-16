@@ -51,6 +51,7 @@ Measured on 2026-10-16 in a temp HOME with claude 2.1.301: `claude plugin market
   - At 1a2be66: the Jev unit suite ran 145, OK; the typed `bash scripts/verify-user-level-drift.sh v5.1.0` was not refused and reported 0 drift; `bash -n` was clean on the drift script and `hooks/enforce-delegation.sh`.
   - At 764f60a: the Jev unit suite ran 145, OK (30 s); `bash -n` was clean on `scripts/verify-user-level-drift.sh`, `hooks/enforce-delegation.sh` and `scripts/test-hooks.sh`.
   - At 343df64: an excerpt of `scripts/test-hooks.sh` (the delegation deny-text rows and the typed-script rows) ran 9 passed, 0 failed. `bash scripts/verify-template-consistency.sh` failed only check 27 (bootstrap fixtures 107 passed, 4 failed, 5 skipped: the four stale rows in Fixed).
+  - At 775faa9 (the fix above): `bash scripts/test-setup-project.sh` ran 107 passed, 0 failed, 5 skipped (112 assertions), rc 0. The other consistency checks were green at 343df64, and nothing outside that file and this CHANGELOG changed since.
   - Not run on Windows for this release: the full hook suite. This is a patch release whose code changes were proven above, so the 3-6 h Windows run was skipped by decision.
 
 ## v5.1.0 — 2026-10-15
