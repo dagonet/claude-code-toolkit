@@ -1,6 +1,6 @@
 # History
 
-Moved out of the user-facing docs in v5.1.1. Content verbatim, except relative link paths, which are adjusted to the new location. Where a moved passage held a literal install pin, it is written as plain text (the v5.0.0 tag) so the docs pin check stays meaningful. The per-release measured table below is a FROZEN copy that stops at v5.1.0; the live one is `architecture.md` (*Context Budget*).
+Moved out of the user-facing docs in v5.1.1. Content verbatim, except relative link paths, which are adjusted to the new location. The per-release measured table below is a FROZEN copy that stops at v5.1.0; the live one is `architecture.md` (*Context Budget*).
 
 ## From README.md
 
@@ -67,6 +67,10 @@ A second round routed two more sections by **audience** rather than by topic. *O
 Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (the check and assertion counts live in `CHANGELOG.md`, nowhere else), so none of the cuts could silently break enforcement — including the exact Superpowers header, the `superpowers:` token the checks require, and (new in PR4) that every rules file is genuinely path-scoped and that the relocated developer preferences survive in the skill that now carries them.
 
 If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
+
+### Related projects
+
+- [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) — six custom MCP servers (87 tools, static census at `0a20b97`) for git, GitHub, .NET, Rust, Ollama and Python. Used by every variant. `template-sync-tools` moved out at 0.4.0 and now ships from this repo's own `server/` (v4.0.0+) — see [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
 
 ## From docs/getting-started.md
 

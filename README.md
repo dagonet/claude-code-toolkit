@@ -26,13 +26,19 @@ Claude hands work to specialists instead of doing everything itself. Call them a
 
 ### Guard rails
 
-Hooks are small scripts that Claude Code runs around its actions. The plugin ships them. In a project set up from the templates they:
+Hooks are small scripts that Claude Code runs around its actions. The plugin ships them.
+In every repo, once the plugin is installed, they:
 
-- stop a push to `main` and a merge until the build and tests pass (`cct-gate`, your own gate command);
-- stop a commit while the tests are red;
+- refuse a push straight to `main` (work goes through a branch and a PR);
 - refuse reads of secret files such as `.env`;
+- stop shell habits that stall a session.
+
+In a project set up from the templates, they also:
+
+- hold a merge until `cct-gate`, the project's Gate command, has passed on that commit;
+- stop a commit while the tests are red;
 - keep the lead session delegating: it plans and reviews, the agents edit code and run builds;
-- guard against oversized file reads, runaway agents and shell habits that stall a session.
+- warn about oversized file reads and runaway agents.
 
 ### A plain report style
 
@@ -40,8 +46,6 @@ Hooks are small scripts that Claude Code runs around its actions. The plugin shi
 Select it with `"outputStyle": "cct:pm-report"` in `~/.claude/settings.json`. `/output-style default` switches back.
 
 ### Skills
-
-Slash commands you can run in any session.
 
 | Skill | What it does |
 |---|---|
@@ -53,18 +57,21 @@ Slash commands you can run in any session.
 | `/cct:retro-review` | Reviews agent failures, config drift and which projects are behind |
 | `/cct:jev` | Switches the optional model routing on or off (below) |
 
-Two more start by themselves when they fit: `mcp-usage` (steps for large inputs and MCP servers) and `karpathy-guidelines` (habits that avoid common coding mistakes).
+Two more start by themselves when they fit: `cct:mcp-usage` (steps for large inputs and MCP servers) and `cct:karpathy-guidelines` (habits that avoid common coding mistakes).
 
 ### Project templates
 
-Six variants give a project its instructions, workflow, tool permissions and build gate: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java` and `python`.
-Which one fits, and what each adds: [`docs/templates.md`](docs/templates.md).
+Six variants give a project its instructions, workflow, tool permissions and build gate: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`. Compared in [`docs/templates.md`](docs/templates.md).
 
 ### Optional: model routing with Jev
 
-Off by default. `/cct:jev on` lets the Jev service pick the model and effort for each agent launch. The `jev` skill explains what is sent.
+Off by default. `/cct:jev on` lets the Jev service pick the model and effort for each agent launch.
+It is switched on per clone and needs a TypeSafe API key; the `cct:jev` skill explains what is sent.
 
 ## Install
+
+First, `git`, Claude Code and a JSON reader for the hooks: `node`, `python3` or `jq`. Without one, the git and secret-read guards refuse in every repo.
+`node` gives the full set; with only `python3` or `jq` the delegation and read-size hooks do nothing.
 
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 
@@ -74,6 +81,7 @@ In Claude Code, once per machine (the same on Windows, macOS and Linux), then re
 ```
 
 Optional: copy [`user-level-reference/CLAUDE.md`](user-level-reference/CLAUDE.md) to `~/.claude/CLAUDE.md` for the user-level rules.
+Its Platform section assumes Windows with Git Bash, so adapt it on macOS and Linux (the Linux installer below does).
 Its `settings.json` needs merging, not copying: see [`user-level-reference/README.md`](user-level-reference/README.md).
 
 - **Upgrading from v4.x?** Windows PC: [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
@@ -82,42 +90,33 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
   `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.0 && claude plugin install cct@dagonet`
 - **Moving to a new release:** a pinned install does not advance by itself. Run `claude plugin marketplace remove dagonet`,
   add the new `#tag` the same way, run `claude plugin install cct@dagonet`, restart, then run `/cct:sync-template`.
-  Without the `#tag`, the add tracks the default branch and `claude plugin update cct@dagonet` advances it.
 - A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.
 
 ## Start a project
 
-You need `git`, Claude Code, and one JSON reader for the hooks (`node`, `python3` or `jq`).
-
 ```bash
 git clone https://github.com/dagonet/claude-code-toolkit && cd claude-code-toolkit
-./setup-project.sh --variant python --project-name MyApp --target-path ../my-app
+bash setup-project.sh --variant python --project-name MyApp --target-path ../my-app
 # Windows: .\setup-project.ps1 -Variant python -ProjectName MyApp -TargetPath ..\my-app
 ```
 
-Add `--dry-run` to preview. Open the new project in Claude Code and try `/cct:sprint` or `cct-gate`.
+Add `--dry-run` to preview. Open the new project in Claude Code and ask Claude to run `cct-gate` (it is on the PATH inside Claude Code only).
 Prefer a guided walk-through? Ask Claude, Cursor or Copilot to follow [`AGENTS.md`](AGENTS.md).
 
 **Keep it current:** run `/cct:sync-template` in the project. It brings in newer template files and leaves the files you own alone.
 
 ## Learn more
 
-- [`docs/getting-started.md`](docs/getting-started.md): prerequisites and how much of the setup to adopt
-- [`docs/setup.md`](docs/setup.md): setup flags and examples for every platform
+- [`docs/getting-started.md`](docs/getting-started.md) and [`docs/setup.md`](docs/setup.md): prerequisites, adoption tiers, setup flags
 - [`docs/templates.md`](docs/templates.md): the six variants, placeholders and the manifest
 - [`docs/architecture.md`](docs/architecture.md): how the layers, hooks, model policy and context budget fit together
 - [`docs/template-sync.md`](docs/template-sync.md): how template updates reach your project
-- [`docs/verification.md`](docs/verification.md): check that your setup works
-- [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md): optional MCP servers
+- [`docs/verification.md`](docs/verification.md) and [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md): check your setup; optional MCP servers
 - [`docs/history.md`](docs/history.md) and [`CHANGELOG.md`](CHANGELOG.md): how it got here and what changed in each release
 
 Related: [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) (MCP servers for git, GitHub, .NET, Rust, Ollama, Python)
 and [**open-brain**](https://github.com/dagonet/open-brain) (memory across sessions).
 
-## Contributing
+## Contributing and license
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Security issues: [`SECURITY.md`](SECURITY.md).
-
-## License
-
-MIT, see [`LICENSE`](LICENSE).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) and [`SECURITY.md`](SECURITY.md). MIT licensed, see [`LICENSE`](LICENSE).
