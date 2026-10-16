@@ -5253,6 +5253,16 @@ out=$(printf '%s' "$(mkjson_edit src/x.py "$DELEGREPO")" \
 case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
 expect "PO write surface: outside extra prefix still denied" "deny" "$got"
 
+# v5.1.1 (#12): the deny names the agent types that exist (the plugin's cct:
+# ones) and names the sibling hook, not a file the consumer does not have.
+case "$out" in
+  *'Spawn cct:coder (code and docs), cct:ops (env/files), cct:tester (verification).'*) got=named ;;
+  *) got=bare ;;
+esac
+expect "Edit deny names cct:coder, cct:ops, cct:tester" "named" "$got"
+case "$out" in *'deny-claude-md-writes.sh'*) got=file ;; *'the deny-claude-md-writes hook'*) got=hook ;; *) got=none ;; esac
+expect "Edit deny names the deny-claude-md-writes hook, not a .sh file" "hook" "$got"
+
 printf -- '- **PO write surface**: none\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
 out=$(printf '%s' "$(mkjson_edit notes/x.md "$DELEGREPO")" \
   | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
