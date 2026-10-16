@@ -1052,7 +1052,7 @@ Call `template_finalize_sync(project_path=".", applied_files_path=<json-path>)`,
 
 **Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's keep-mine registration set (step 4's `source="provided"` splice under v3, not `source="skip"`) — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it. **If no entry carries a hint, there is nothing to do here** — this clause exists for manifests that predate the part-hash fields, and a recently-synced repo has already re-registered everything (measured: `hint: ""` on all 36 entries of one consumer). An empty hint set is the healthy state, not a missing step.
 
-Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
+Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type paths or actions. Since v5.1.2 the JSON holds one `{"file_path": ..., "action": ...}` object per applied file, copied from that file's apply result, with no hashes: finalize derives each entry's hash and ownership from the template itself. The full apply results are still accepted. A derivation the server cannot do refuses the whole finalize and writes nothing.
 
 **Shape this as two short commands, not one long one.** Write the `applied_files` JSON — and any validator — to the scratchpad with the Write tool, then run `python3 <validator-path> <json-path>`. The payload can contain hook paths, and a long command line carrying them is the shape that has repeatedly tripped a guard: it is also the standing "move logic into a script file" rule, arriving from a third direction. (`<json-path>` here is a path the Write tool just produced, not one typed from bash — see the bash→python platform note in the intro before shortcutting this to a `$TMPDIR`-derived string.) Pass that same file to the server as `applied_files_path=<json-path>` instead of hand-typing `applied_files` into the call.
 
@@ -1062,7 +1062,7 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 
 **Post-finalize self-check:** re-run `template_compute_status(project_path=".")`. A clean sync shows `auto_update: 0, conflict: 0`. Anything else means the manifest was corrupted during finalize — report it to the user instead of finishing.
 
-**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report.
+**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report. Since v5.1.2 the server also reports leftover `{{NAME}}` placeholders per applied file (`unresolved_placeholders` in each apply result); the sweep stays, because it also covers files this sync did not apply.
 
 **Run the three arms below verbatim; do not invent a broader regex.** The placeholder shape this toolkit ships is `{{[A-Z_]{2,}}}` and nothing else. A consumer widened it to `__[A-Z_]{3,}__` and got 38 false hits in one sweep — that shape is every MCP tool name (`mcp__MCP_DOCKER__…`), not a placeholder. A sweep that cries wolf 38 times is a sweep the next person skips.
 
@@ -1239,7 +1239,7 @@ Sync complete: {variant} @ {new_commit}
   Spliced:      [list — files where template and local content were combined by hand]
   Skipped:      [list]
   New files:    [list]
-  Warnings:     [list — every placeholder-sweep hit belongs here]
+  Warnings:     [list — every placeholder-sweep hit belongs here, and every non-empty unresolved_placeholders from the apply results as <file>: NAME, ...]
   User-level:   [one-line verify-user-level-drift.sh summary]
   Gates:        live (parser: {backend} — {consequence})
   Toolkit:      {template_version} ({template_commit})
