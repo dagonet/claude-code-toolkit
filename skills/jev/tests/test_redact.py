@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from redact import redact, residual_findings, trim  # noqa: E402
 
 USER = getpass.getuser()
+SESSION_ID = "session_01Uyuqwi1m6n" + "TGEtwYst4gxg"  # runtime-assembled, like the other fakes
+SESSION_URL = "claude.ai/code/" + SESSION_ID
 
 # Fake secrets, assembled at runtime so no token-shaped literal is committed.
 AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYEXAMPLEKEY"
@@ -250,6 +252,28 @@ class ResidualTests(unittest.TestCase):
 
     def test_flags_leftover_private_key_marker(self):
         self.assertTrue(residual_findings("-----BEGIN OPENSSH " + "PRIVATE KEY-----"))
+
+    def test_session_url_is_masked_and_not_a_finding(self):
+        text = "Co-Authored-By: x\nClaude-Session: https://" + SESSION_URL + "\n- Push"
+        out = redact(text)[0]
+        self.assertNotIn(SESSION_ID, out)
+        self.assertIn("claude.ai/code/[REDACTED:session]", out)
+        self.assertEqual(residual_findings(out), [])
+        for end in (".", ")", "?", "#", " x"):
+            self.assertIn("[REDACTED:session]", redact("see " + SESSION_URL + end)[0], end)
+
+    def test_session_mask_does_not_hide_a_neighbouring_secret(self):
+        key = "sk-" + "A1b2C3d4E5f6G7h8J9k0"
+        out = redact("https://" + SESSION_URL + " " + key)[0]
+        self.assertNotIn(key, out)
+        self.assertIn("[REDACTED:api_key]", out)
+
+    def test_secret_glued_to_a_session_url_is_still_refused(self):
+        # the mask must not cut the run: a key stuck to the id has to stay one finding, not be sent
+        body = "A1b2C3d4E5f6G7h8J9k0"
+        for glue in ("sk-", "-"):
+            out = redact("https://" + SESSION_URL + glue + body)[0]
+            self.assertNotEqual(residual_findings(out), [], glue)
 
 
 if __name__ == "__main__":

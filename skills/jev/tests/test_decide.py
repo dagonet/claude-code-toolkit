@@ -34,9 +34,17 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(jr.decide("floor", "sonnet", "Plan", ans("haiku", 0.79), 0.8), ("sonnet", False, "low-confidence"))
         self.assertEqual(jr.decide("own", "opus", "coder", ans("sonnet", 0.79), 0.8), (None, False, "low-confidence"))
 
-    def test_two_step_move_refused(self):
-        self.assertEqual(jr.decide("floor", "haiku", "Explore", ans("opus", 0.99), 0.8), ("haiku", False, "out-of-bounds"))
-        self.assertEqual(jr.decide("own", "fable", "architect", ans("sonnet", 0.99), 0.8), (None, False, "out-of-bounds"))
+    def test_any_step_move_applies(self):
+        self.assertEqual(jr.decide("floor", "haiku", "Explore", ans("opus", 0.99), 0.65), ("opus", True, "applied"))
+        self.assertEqual(jr.decide("own", "fable", "architect", ans("sonnet", 0.99), 0.65), ("sonnet", True, "applied"))
+        self.assertEqual(jr.decide("floor", "sonnet", "general-purpose", ans("fable", 0.7), 0.65), ("fable", True, "applied"))
+
+    def test_role_floor_still_holds_on_a_long_move(self):
+        self.assertEqual(jr.decide("own", "fable", "code-reviewer", ans("haiku", 0.99), 0.65), (None, False, "role-floor"))
+
+    def test_default_threshold_is_065(self):
+        self.assertEqual(jr.THRESHOLD_DEFAULT, 0.65)
+        self.assertEqual(jr.decide("floor", "sonnet", "Plan", ans("haiku", 0.65), 0.65), ("haiku", True, "applied"))
 
     def test_reviewer_never_below_sonnet(self):
         self.assertEqual(jr.decide("own", "sonnet", "code-reviewer", ans("haiku", 0.99), 0.8), (None, False, "role-floor"))
@@ -62,6 +70,45 @@ class DecideTests(unittest.TestCase):
     def test_no_answer_is_bad_response(self):
         self.assertEqual(jr.decide("floor", "sonnet", "Plan", None, 0.8), ("sonnet", False, "bad-response"))
         self.assertEqual(jr.decide("own", "opus", "coder", None, 0.8), (None, False, "bad-response"))
+
+
+class DecideEffortTests(unittest.TestCase):
+    def test_effort_applied_when_agent_has_none(self):
+        self.assertEqual(jr.decide_effort("coder", "", None, ans("high", 0.7), 0.65), ("high", "applied"))
+
+    def test_effort_same_as_agent_not_emitted(self):
+        self.assertEqual(jr.decide_effort("coder", "high", None, ans("high", 0.9), 0.65), (None, "kept"))
+
+    def test_effort_below_threshold_not_emitted(self):
+        self.assertEqual(jr.decide_effort("coder", "medium", None, ans("high", 0.64), 0.65), (None, "low-confidence"))
+
+    def test_explicit_effort_never_changed(self):
+        self.assertEqual(jr.decide_effort("coder", "", "low", ans("xhigh", 0.99), 0.65), (None, "explicit"))
+
+    def test_reviewer_effort_never_lowered(self):
+        self.assertEqual(jr.decide_effort("code-reviewer", "high", None, ans("medium", 0.9), 0.65), (None, "role-floor"))
+
+    def test_reviewer_unknown_agent_effort_is_kept_not_an_error(self):
+        for unknown in ("max", "High"):
+            self.assertEqual(jr.decide_effort("code-reviewer", unknown, None, ans("high", 0.9), 0.65), (None, "role-floor"))
+
+    def test_non_role_unknown_agent_effort_does_not_raise(self):
+        self.assertEqual(jr.decide_effort("coder", "max", None, ans("high", 0.9), 0.65), ("high", "applied"))
+
+    def test_reviewer_same_effort_is_kept(self):
+        self.assertEqual(jr.decide_effort("code-reviewer", "high", None, ans("high", 0.9), 0.65), (None, "kept"))
+
+    def test_reviewer_effort_may_be_raised(self):
+        self.assertEqual(jr.decide_effort("code-reviewer", "medium", None, ans("xhigh", 0.9), 0.65), ("xhigh", "applied"))
+
+    def test_architect_without_agent_effort_gets_none(self):
+        self.assertEqual(jr.decide_effort("architect", "", None, ans("high", 0.9), 0.65), (None, "role-floor"))
+
+    def test_coder_effort_may_be_lowered(self):
+        self.assertEqual(jr.decide_effort("coder", "high", None, ans("medium", 0.9), 0.65), ("medium", "applied"))
+
+    def test_no_effort_answer(self):
+        self.assertEqual(jr.decide_effort("coder", "", None, None, 0.65), (None, "bad-response"))
 
 
 class PayloadTests(unittest.TestCase):
@@ -129,6 +176,13 @@ class PayloadTests(unittest.TestCase):
         ui = dict(hso["updatedInput"])
         self.assertEqual(ui.pop("model"), "opus")
         self.assertEqual(ui, C1TI)
+
+    def test_emit_effort_only_and_nothing(self):
+        ui = json.loads(jr.emit(dict(C1TI), None, "high").decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual((ui["effort"], "model" in ui), ("high", False))
+        both = json.loads(jr.emit(dict(C1TI), "opus", "low").decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual((both["model"], both["effort"]), ("opus", "low"))
+        self.assertEqual(jr.emit(dict(C1TI), None, None), b"")
 
     def test_emit_refuses_non_json_numbers(self):
         self.assertEqual(jr.emit({"prompt": "p", "n": float("inf")}, "sonnet"), b"")

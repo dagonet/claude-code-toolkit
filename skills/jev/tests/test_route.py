@@ -117,16 +117,84 @@ class RunTests(unittest.TestCase):
                             post=Recorder(answer("sonnet", 0.9)))
         ui = json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
         self.assertEqual((ui["model"], ui["subagent_type"], ui["zz"], ui["description"]), ("sonnet", "coder", 1, "d"))
+        self.assertEqual(ui["effort"], "medium")  # the shared answer() effort (0.7) clears 0.65 and the agent has none
         self.assertTrue(ui["prompt"].endswith(MARK))  # the ORIGINAL prompt, not the redacted state
 
-    def test_typed_spawn_low_confidence_silent(self):
+    def test_typed_spawn_low_confidence_model_unpinned(self):
+        # Model confidence 0.5 -> no model key; the confident effort (0.7) is still applied.
         out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="opus"),
                              post=Recorder(answer("sonnet", 0.5)))
-        self.assertEqual((out, ev["reason"], ev["applied"]), (b"", "low-confidence", False))
+        ui = json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual(("model" in ui, ui["effort"]), (False, "medium"))
+        self.assertEqual((ev["reason"], ev["applied"], ev["emitted"], ev["effort_emitted"]),
+                         ("low-confidence", False, None, "medium"))
+
+    def test_typed_spawn_nothing_confident_silent(self):
+        body = json.dumps({"answers": {"model": {"choice": "sonnet", "confidence": 0.5, "probabilities": {}},
+                                       "effort": {"choice": "high", "confidence": 0.5, "probabilities": {}}}}).encode()
+        out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="opus"), post=Recorder(body))
+        self.assertEqual((out, ev["reason"], ev["effort_reason"], ev["effort_emitted"]),
+                         (b"", "low-confidence", "low-confidence", None))
 
     def test_floor_spawn_low_confidence_gets_floor(self):
         out, ev, _ = self.go(payload("Plan"), post=Recorder(answer("haiku", 0.5)))
         self.assertEqual((self.model_of(out), ev["reason"]), ("sonnet", "low-confidence"))
+
+    def test_floor_low_conf_model_confident_effort(self):
+        body = json.dumps({"answers": {"model": {"choice": "opus", "confidence": 0.5, "probabilities": {}},
+                                       "effort": {"choice": "high", "confidence": 0.9, "probabilities": {}}}}).encode()
+        out, ev, _ = self.go(payload("Plan"), post=Recorder(body))
+        ui = json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual((ui["model"], ui["effort"], ev["reason"], ev["effort_emitted"]),
+                         ("sonnet", "high", "low-confidence", "high"))
+
+    def test_typed_effort_only_emits_no_model(self):
+        body = json.dumps({"answers": {"model": {"choice": "opus", "confidence": 0.95, "probabilities": {}},
+                                       "effort": {"choice": "xhigh", "confidence": 0.9, "probabilities": {}}}}).encode()
+        out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="opus", effort="high"),
+                             post=Recorder(body))
+        ui = json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertNotIn("model", ui)
+        self.assertEqual((ui["effort"], ev["reason"], ev["effort_reason"]), ("xhigh", "kept", "applied"))
+
+    def test_effort_applied_when_agent_has_none(self):
+        out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="opus", effort=""),
+                             post=Recorder(answer("opus", 0.95, effort="high")))
+        ui = json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual((ui["effort"], ev["effort_reason"]), ("high", "applied"))
+
+    def test_reviewer_lower_effort_not_emitted(self):
+        out, ev, _ = self.go(payload("code-reviewer"), resolver=self.res(kind="own", model="opus", effort="high"),
+                             post=Recorder(answer("opus", 0.95, effort="medium")))
+        self.assertEqual((out, ev["effort_reason"], ev["effort_emitted"]), (b"", "role-floor", None))
+
+    def test_reviewer_unknown_agent_effort_still_gets_model_move(self):
+        out, ev, _ = self.go(payload("code-reviewer"), resolver=self.res(kind="own", model="sonnet", effort="max"),
+                             post=Recorder(answer("opus", 0.95, effort="high")))
+        ui = json.loads(out.decode("utf-8"))["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual((ui["model"], "effort" in ui, ev["reason"], ev["effort_reason"]),
+                         ("opus", False, "applied", "role-floor"))
+
+    def test_effort_same_as_agent_not_emitted(self):
+        out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="opus", effort="high"),
+                             post=Recorder(answer("opus", 0.95, effort="high")))
+        self.assertEqual((out, ev["effort_reason"], ev["effort_emitted"]), (b"", "kept", None))
+
+    def test_explicit_effort_in_call_untouched(self):
+        out, ev, _ = self.go(payload("coder", extra={"effort": "low"}), resolver=self.res(kind="own", model="opus"),
+                             post=Recorder(answer("opus", 0.95)))
+        self.assertEqual((out, ev["effort_reason"]), (b"", "explicit"))
+
+    def test_explicit_model_effort_reason(self):
+        post = Recorder(answer("haiku", 0.99))
+        _, ev, _ = self.go(payload(model="opus", extra={"effort": "low"}), post=post)
+        self.assertEqual((ev["effort_reason"], post.calls), ("explicit", []))
+        _, ev, _ = self.go(payload(model="opus"), post=post)
+        self.assertEqual((ev["effort_reason"], ev["effort_emitted"]), (None, None))
+
+    def test_none_kind_has_no_effort_reason(self):
+        out, ev, _ = self.go(payload(), resolver=self.res(kind="none", model=""), post=Recorder(answer("haiku", 0.99)))
+        self.assertEqual((out, ev["effort_reason"]), (b"", None))
 
     def test_no_key_floor_gets_floor_without_a_call(self):
         env = dict(ENV)
@@ -165,6 +233,12 @@ class RunTests(unittest.TestCase):
     def test_unexpected_exception_still_floors(self):
         out, ev, _ = self.go(payload(), post=Recorder(exc=RuntimeError("bug")))
         self.assertEqual((self.model_of(out), ev["reason"]), ("sonnet", "error"))
+        self.assertEqual((ev["effort_reason"], ev["effort_emitted"]), (None, None))
+
+    def test_pinned_default_emits_nothing_even_with_confident_effort(self):
+        post = Recorder(answer("opus", 0.99, effort="high"))
+        out, ev, _ = self.go(payload("coder"), resolver=self.res(kind="own", model="gpt-5"), post=post)
+        self.assertEqual((out, ev["reason"], ev["effort_emitted"], post.calls), (b"", "pinned", None, []))
 
     def test_deadline_spent_means_no_call(self):
         ticks = itertools.chain([0.0, 3.49], itertools.repeat(3.6))
@@ -189,6 +263,25 @@ class RunTests(unittest.TestCase):
         out, ev, _ = self.go(payload(), post=post)
         self.assertEqual(json.loads(post.calls[0]["body"].decode("utf-8"))["model"], "jev-1.14.0")
         self.assertEqual((self.model_of(out), ev["reason"]), ("sonnet", "low-confidence"))
+
+    def test_event_records_the_threshold_actually_used(self):
+        _, ev, _ = self.go(payload(), post=Recorder(answer("opus", 0.9)))
+        self.assertEqual(ev["threshold"], jr.THRESHOLD_DEFAULT)
+        os.makedirs(os.path.join(self.gd, "jev"))
+        with open(os.path.join(self.gd, "jev", "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"threshold": 0.8, "route": True}, fh)
+        _, ev, _ = self.go(payload(), post=Recorder(answer("opus", 0.9)))
+        self.assertEqual(ev["threshold"], 0.8)
+
+    def test_event_threshold_is_none_when_no_api_call_was_made(self):
+        post = Recorder(answer("opus", 0.9))
+        _, ev, _ = self.go(payload(model="haiku"), post=post)
+        self.assertEqual((ev["reason"], ev["threshold"], len(post.calls)), ("explicit", None, 0))
+
+    def test_empty_floor_model_never_emits_an_empty_model(self):
+        out, ev, _ = self.go(payload(), resolver=self.res(kind="floor", model=""))
+        self.assertEqual(out, b"")
+        self.assertIsNone(ev["emitted"])
 
     def test_bad_config_uses_defaults(self):
         os.makedirs(os.path.join(self.gd, "jev"))
