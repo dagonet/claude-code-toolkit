@@ -21,9 +21,9 @@ On Linux `scripts/install-user-level-linux.sh` does steps 1-3 in this order. On 
 
    Keep the `UserPromptSubmit` time hook and every hook you added yourself. Set `"outputStyle": "cct:pm-report"` (a plugin style loads only under the plugin prefix).
 
-3. **Move every path in `scripts/lib/v4-user-leftovers.txt` to a dated backup folder.** Each line is relative to `~/.claude/`: six agents, ten skill directories, the `pm-report` output style and every file under `hooks/`. Move them to a folder outside `agents/`, `skills/`, `output-styles/` and `hooks/` (for example `~/.claude/v4-leftovers.bak-<date>/`, keeping the relative paths): a backup copy left inside `skills/` would still load as a second skill. Then delete the empty `~/.claude/hooks/lib/` and `~/.claude/hooks/`.
+3. **Move every path in `scripts/lib/v4-user-leftovers.txt` to a dated backup folder.** Each line is relative to `~/.claude/`: six agents, ten skill directories, the `pm-report` output style and the toolkit's files under `hooks/`, as the file lists them. Move them to a folder outside `agents/`, `skills/`, `output-styles/` and `hooks/` (for example `~/.claude/v4-leftovers.bak-<date>/`, keeping the relative paths): a backup copy left inside `skills/` would still load as a second skill. Then delete `~/.claude/hooks/lib/` and `~/.claude/hooks/` only if they are empty: other tools' hooks (agent-dashboard's, for example) stay, with their registrations.
 
-4. **Re-arm Jev where it is on.** In each checkout where Jev routing is on, run `/cct:jev off` and then `/cct:jev on`. Both remove the v4.x Jev registration from that checkout's `.claude/settings.local.json` (it runs `~/.claude/skills/jev/jev_route.py`, moved away in step 3); the switch then lives in `<git common dir>/jev/config.json`, which the plugin's Jev hooks read.
+4. **Re-arm Jev where it is on.** In each checkout where Jev routing is on, run `/cct:jev off` and then `/cct:jev on`. Both remove the v4.x Jev registration from that checkout's `.claude/settings.local.json` (it runs `~/.claude/skills/jev/jev_route.py`, moved away in step 3); the switch then lives in `<git common dir>/jev/config.json`, which the plugin's Jev hooks read. In a clone still on v4.x, Jev routes once that clone is synced to v5.
 
 5. **Restart all sessions.** A running session keeps the hooks and agents it started with.
 

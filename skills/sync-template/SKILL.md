@@ -125,10 +125,10 @@ git -C <templateRepo> describe --exact-match --tags 2>/dev/null
 #### 1c-i. BEFORE migrating: take your own census (works on every server version)
 
 ```
-grep -n '"resolution"\|"reason"' .claude/template-manifest.json
+grep -n '"resolution"\|"reason"' <project>/.claude/template-manifest.json
 ```
 
-This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
+`<project>` is the project root's absolute path. Do not write `cd <dir> && <snippet>`: deny-hang-shapes refuses it. Use absolute paths, or run a script via `bash <script>`.
 
 Write the paths down. These are deliberate deviations recorded in the v2 manifest, and **v3 has no equivalent, so migration drops them.** This census costs nothing, needs no field, and is the ONLY thing that works on a server too old to report the loss. It is also the census that makes an empty report meaningful — see 1c-iv.
 
@@ -286,11 +286,11 @@ If everything is up-to-date and no new files, report "Already in sync" and final
 
 **`redundant_project_file` — offer deletion ONLY when the server can prove byte-identity from a hash it already holds.** A project file the server reports as duplicating shipped template content is a candidate for cleanup, but the proof has to come from the server's own held hash comparison, never from a visual/textual "looks the same" read. For a **diverged** copy (content that once matched but has since changed): report it **once**, naming which sections now duplicate template-owned content, and **never** offer deletion — the file is gitignored, so there is no diff, no history, and no undo if the wrong half is kept.
 
-**Model-bump surfacing:** tell the user BEFORE applying anything — "This bump changes the operating model — review the CHANGELOG's Downstream-migration notes in the template repo (`<templateRepo>`) first" — when ANY of these appear in the auto-update or conflict set. **This is a hard pause:** show the message and wait for the user's go before any write. With no user in the loop, stop after the report; do not proceed on your own reading of the notes. The triggers:
+**Model-bump surfacing:** tell the user BEFORE applying anything — "This bump changes the operating model — review the CHANGELOG's Downstream-migration notes in the template repo (`<templateRepo>`) first" — when ANY of these appear in the auto-update or conflict set. **This is a hard pause:** show the message and wait for the user's go before any write. When step 2c also runs, one user confirmation covers both this pause and 2c's. With no user in the loop, stop after the report; do not proceed on your own reading of the notes. The triggers:
 
 - `CLAUDE.md`, `CLAUDE.local.md`, or `AGENT_TEAM.md` (an operating-model change can live in the MCP rules file, not just CLAUDE.md);
 - `.claude/settings.json` whose hook list differs from the project's (a hook added, removed, or re-matched IS the enforcement layer changing);
-- any `TEMPLATE_DELETED` file under `hooks/` — a deleted hook is always an enforcement change. (For the v5.0 migration, step 2c's single confirmation is that pause for its files.)
+- any `TEMPLATE_DELETED` file under `hooks/` — a deleted hook is always an enforcement change. (For the v5.0 migration, step 2c's single confirmation is that pause for its files; one confirmation covers this pause and 2c.)
 
 ### 2b. Back Up the GITIGNORED Tracked Files (MANDATORY, before any write)
 
@@ -358,7 +358,7 @@ The CR comes from `printf`, not from `$'\r'` quoting: the shipped git gates refu
 
 **Back up a THIRD set: everything ON DISK in every directory a destructive operation TOUCHES (v2.4.0, item A3).**
 
-Concretely: for every `TEMPLATE_DELETED` path, back up **every file in that path's directory that exists on disk** — not just the deleted path, and **not only the manifest-tracked ones**. Deletion is the only irreversible-by-design operation in this skill, and a region-bearing agent file is in **neither** of the two sets above: it is not gitignored-and-tracked, and it is not a new template file. Git recovers a tracked one, so that alone is not catastrophic — but it also changes the step-6 prompt qualitatively: *"safe to delete (backed up at `<path>`)"* is a materially different question from *"safe to delete"*.
+Concretely: for every `TEMPLATE_DELETED` path, back up **every file in that path's directory that exists on disk** — not just the deleted path, and **not only the manifest-tracked ones**. Deletion is the only irreversible-by-design operation in this skill, and a region-bearing agent file is in **neither** of the two sets above: it is not gitignored-and-tracked, and it is not a new template file. Git recovers a tracked one, so that alone is not catastrophic — but it also changes the step-6 prompt qualitatively: *"safe to delete (backed up at `<path>`)"* is a materially different question from *"safe to delete"*. For `.claude/agent-grants.json` the directory is `.claude/`. Untracked runtime files there (for example `liveness.log`) are listed and left alone.
 
 > **⚠ SCOPE THIS BY WHAT IS ON DISK IN THE TOUCHED DIRECTORY, NOT BY MANIFEST MEMBERSHIP** — and the reason reads as over-caution until you know what it protects.
 >
@@ -406,10 +406,10 @@ This sync moves the project's agents and hooks into the `cct` plugin. You are ru
 
 0. **Precondition, before the first write:** the plugin being loaded does not guarantee this session's marker exists (a nested `claude` that inherited the session id may have deleted it). Run `s="$CLAUDE_CODE_SESSION_ID"; case $s in ''|*[!A-Za-z0-9-]*) s= ;; esac; [ -n "$s" ] && [ -f "${TMPDIR:-/tmp}/cct-$(id -u)/$s" ] && echo marker-present || echo marker-missing` (the same sanitising the guard uses). On `marker-missing`, STOP and tell the user to restart the session: once the sync commit lands, the guard would refuse every further tool call in this session.
 1. Collect every file the status reports as `TEMPLATE_DELETED` under `.claude/agents/` and `hooks/`. `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh` are never in that list; they stay.
-2. For each agent file in the list, show what deleting it would lose. Take the commit from the status response's `last_synced_commit` (= the manifest's `template_commit`; the status response's own `template_commit` is the checkout HEAD, where the agent is already deleted). Write the template blob to a temp file: `git -C <templateRepo> show <last_synced_commit>:templates/<variant>/.claude/agents/<name>.md > <template-tmp>`; a non-zero rc is a hard STOP. Then `git diff --no-index --ignore-cr-at-eol <template-tmp> <on-disk>` (TEMPLATE FIRST, so `+` lines are what the deletion would lose). rc 0 = nothing lost; rc 1 with output = show it; any other rc, or rc 1 with no output, is a hard STOP. For BOM detection, diff a copy of each file with a leading EF BB BF stripped; if only the originals differ, say "BOM-only" rather than showing a diff. This one view covers the `PROJECT-CUSTOM` region and any hand edit outside it. Ask the user, once for all of them: keep each file that differs as the project's own agent (acknowledged-kept; it then stays a project agent beside `cct:<name>`), or delete it. A kept agent still carries a frontmatter `hooks:` block wiring `hooks/gate-before-merge.sh` / `hooks/enforce-agent-contract.sh` fail-closed, and 2c deletes those scripts: remove that `hooks:` block from every kept agent (v5 registers those hooks plugin-wide) and show the edit in the same confirmation.
+2. For each agent file in the list, show what deleting it would lose. Take the commit from the status response's `last_synced_commit` (= the manifest's `template_commit`; the status response's own `template_commit` is the checkout HEAD, where the agent is already deleted). Write the template blob to a temp file: `git -C <templateRepo> show <last_synced_commit>:templates/<variant>/.claude/agents/<name>.md > <template-tmp>`; a non-zero rc is a hard STOP. Render the blob's `{{PLACEHOLDERS}}` with the project's values before diffing, or every placeholder line shows as a false loss. Then `git diff --no-index --ignore-cr-at-eol <template-tmp> <on-disk>` (TEMPLATE FIRST, so `+` lines are what the deletion would lose). rc 0 = nothing lost; rc 1 with output = show it; any other rc, or rc 1 with no output, is a hard STOP. For BOM detection, diff a copy of each file with a leading EF BB BF stripped; if only the originals differ, say "BOM-only" rather than showing a diff. This one view covers the `PROJECT-CUSTOM` region and any hand edit outside it. Ask the user, once for all of them: keep each file that differs as the project's own agent (acknowledged-kept; it then stays a project agent beside `cct:<name>`), or delete it. A kept agent still carries a frontmatter `hooks:` block wiring `hooks/gate-before-merge.sh` / `hooks/enforce-agent-contract.sh` fail-closed, and 2c deletes those scripts: remove that `hooks:` block from every kept agent (v5 registers those hooks plugin-wide) and show the edit in the same confirmation.
 3. (Folded into item 2: the diff view replaces the former sha256 comparison.)
 4. If `.claude/agent-grants.json` exists and grants anything, print it. Grants no longer exist (removed in v5.0): the user turns them into the project's own agent files (for example an `Explore` with the extra tools). Ask whether to keep the file for that hand-edit or delete it.
-5. Show the whole deletion list and ask for ONE confirmation. It is an enforcement change: after the sync commit, every hook comes from the plugin, and the guard in `.claude/settings.json` refuses all tools in any session without the plugin. This step replaces the per-file pause of step 6 and the per-agent sweep of step 6d for these files.
+5. Before that confirmation, list every `hooks/<deleted name>.sh` mention in the kept project agents, `.claude/project-instructions.md` and the AGENT_TEAM.md PROJECT-CUSTOM region, each with its v5 replacement (`bash hooks/run-gate.sh` → `cct-gate`; a deleted hook with no replacement is named as plain removal). Also give the user a one-line grep for the files this skill does not read, README.md and CLAUDE.local.md: `grep -n 'hooks/[A-Za-z0-9_.-]*\.sh' README.md CLAUDE.local.md`. Then show the whole deletion list and ask for ONE confirmation. It is an enforcement change: after the sync commit, every hook comes from the plugin, and the guard in `.claude/settings.json` refuses all tools in any session without the plugin. This step replaces the per-file pause of step 6 and the per-agent sweep of step 6d for these files.
 6. Apply: `git rm` the confirmed agent files at any point; `.claude/settings.json` arrives through the normal template merge (hook registrations removed; guard, `Bash(cct-gate*)` and `enabledPlugins` added) in step 3 (it is template class: if it arrives as a CONFLICT, resolve it in step 4), and `git rm` the confirmed `hooks/` files in step 6 under its Ordering rule. Pass every acknowledged-kept agent to `template_finalize_sync(acknowledged_deleted=[...])`.
 7. Tell the user: restart the session after the sync commit. On every other machine that has this project, the plugin must be installed before the next session there, or the guard refuses with its install message (intended).
 
@@ -483,11 +483,15 @@ Then write the probe SCRIPT — which never types a git verb, only reads the fil
 
 **Probe a hook only from inside a script file whose leading run is clean — never `bash hooks/<x>.sh < payload.json` typed in the session.** `gate-before-merge.sh` reads the invoked script's body (the v4.1.1 prefix-gap close), and a hook's own comments name `checkout main` and `push`; typed directly, the probe is refused for a command that contains neither (measured twice: the toolkit on `enforce-delegation.sh`, MM-Agent on `no-push-main.sh`). A scratch script that redirects the payload file is not followed into the hook it invokes. (v4.1.2 strips whole-line `#` comments from scanned bodies, which closes this for comment-only mentions; a hook that also carries the verb on a code line is still read — correctly.)
 
+**Probe the hook that will actually run.** That is the project's `hooks/no-push-main.sh` only if the project still has it (pre-v5). Otherwise it is the plugin's copy under `~/.claude/plugins/cache/dagonet/cct/<installed version>/hooks/`, with `CLAUDE_PROJECT_DIR` set to the project. The snippet below does both; if the cache holds several versions, check that `H` names the installed one.
+
 ```sh
 H="${CLAUDE_PROJECT_DIR:-.}/hooks"
 T="${TMPDIR:-/tmp}"
 REPO_DIR=$(pwd -W 2>/dev/null || pwd)
 REPO_NAME=$(basename "$REPO_DIR")
+export CLAUDE_PROJECT_DIR="$REPO_DIR"
+[ -f "$H/no-push-main.sh" ] || H=$(ls -d "$HOME"/.claude/plugins/cache/dagonet/cct/*/hooks | sort -V | tail -n 1)
 
 # a. every shipped script must PARSE. One apostrophe inside a `node -e '…'`
 #    body ends the shell string early and silently disables that whole hook.
@@ -841,11 +845,10 @@ Hooks fail OPEN when their script is missing (exit 127 → the tool call proceed
 1. Collect every `hooks/<name>.sh` reference in `.claude/settings.json` AND in the `hooks:` frontmatter of every file in `.claude/agents/`. When this runs before the settings write, collect from the INCOMING (template) `settings.json` (`<templateRepo>/templates/<variant>/.claude/settings.json`) instead of the on-disk one: in the command below, replace `.claude/settings.json` with that path. **Collect the PATH; do NOT anchor on the `command:` value:**
 
 ```
-grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' .claude/settings.json .claude/agents/*.md | sed 's/^.*://' | sort -u
+grep -o 'hooks/[A-Za-z0-9_.-]*\.sh' <project>/.claude/settings.json <project>/.claude/agents/*.md | sed 's/^.*://' | sort -u
 ```
 
-This snippet is cwd-relative: run it from the project root, or as `cd <dir> && <snippet>`; chaining more commands after the `cd` is refused by deny-hang-shapes — use absolute paths or run a script via `bash <script>`.
-
+`<project>` is the project root's absolute path. Do not write `cd <dir> && <snippet>`: deny-hang-shapes refuses it. Use absolute paths, or run a script via `bash <script>`.
 > **Anchoring on `command:` is the v2.2.5 defect, and it recovered ZERO (v2.2.6, consumer measurement).** Until v2.2.6 this step said "on a `command:` line", justified as keeping the `Bash(bash hooks/run-gate.sh*)` PERMISSIONS pattern (v5 settings carry `Bash(cct-gate*)` instead) out of the set. But the hook path sits **after an escaped quote** inside the command value, so the obvious implementation truncates at the escape:
 >
 > ```
@@ -877,6 +880,8 @@ on_disk=$(ls hooks/*.sh 2>/dev/null | wc -l)     # the FILESYSTEM, not the confi
 **Assert `referenced + expected_unreferenced >= on_disk`** (`expected_unreferenced` is 1 when `hooks/git-pre-push.sh` is on disk, else 0), **and LIST every on-disk hook that appears in neither file.** The two numbers come from different places — one from configuration text, one from the directory — so a truncating regex moves only the first. The observed failure prints `5 referenced, 12 on disk, 7 unreferenced: [...]`, which cannot be read as clean.
 
 `referenced + expected_unreferenced < on_disk` is not automatically a defect: a project may legitimately carry a hook nothing registers. It is a **stop-and-name-them** condition, not a stop-the-sync condition — every unreferenced hook is listed in the report with the reason it is unreferenced. One file is expected to be unreferenced: `hooks/git-pre-push.sh` is a git hook, installed per clone by `--install`, and never in `settings.json`. A consumer's old `hooks/require-skills-block.sh` (a no-op stub since v4.5.0, deleted from the toolkit in v4.6.2) arrives as `TEMPLATE_DELETED` and is deleted with the normal flow. What is NOT acceptable is a bare count that nobody compared to anything.
+
+**After a v5 sync, "0 referenced" is the expected reading** (v5 `settings.json` registers no project hooks), and only `hooks/git-pre-push.sh` and `hooks/lib/` stay on disk. Report that as expected; do not treat the empty set as a failed collector. The cross-check applies in full to a project still on v4.
 
 > **Verify this cross-check by DELETING the guard it protects.** Re-anchor the step-1 grep on `"command": "[^"]*` and re-run: `referenced` must collapse and the unreferenced list must fill up. A cross-check that stays green with the anchor restored is testing the surrounding machinery, not the collector.
 
@@ -1156,7 +1161,7 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
 
-**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key).
+**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key). A comment-only once-note (it introduced no key) is informational: after you adopt it by hand, it clears on the next finalize.
 
 **Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
 
@@ -1219,6 +1224,8 @@ Gates:        live (parser: python3 — 6 node-only hooks inactive)
 ```
 
 **Probing the MERGE gate from inside a guarded session blocks itself — and that block IS the positive result.** A probe command that builds a payload containing the literal `git merge` is matched by the real PreToolUse hook on the echo that constructs it, not on any merge. That is the unanchored matcher doing its documented job (these gates are fail-CLOSED; false positives are the accepted price of not being fooled by `bash -c "…"` wrapper forms). So: do not treat a self-block as a broken probe, and do not synthesise a payload to "really" test it — a real command, really blocked, with real shas in the message is the better proof. Where a synthetic probe genuinely is needed, drive the script from **outside** the session, never inline in a command string.
+
+"Gates are live immediately" holds for the checkout this session runs from. A sync done in a separate worktree takes effect there; add that to the report when it applies.
 
 The FIRST line of the report is this sentence, verbatim:
 
@@ -1294,7 +1301,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 
 > **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
 
-**First sync on a new machine or a fresh clone: set up the project's build environment BEFORE committing.** The commit hook runs the project's own tests or Gate, and those fail on missing dependencies, not on the sync. Two examples from the first Linux syncs, v4.6.0: `Cannot find package 'next/server'`, and `npx tsc` fetching the wrong `tsc` package. Install them first, for example `npm ci` in EVERY directory that has its own lockfile (a `web/` with its own `package-lock.json` and no root workspace is not covered by a root `npm ci`). Then commit. A failure that names a missing package or module is an environment problem; do not debug the sync's diff for it.
+**First sync on a new machine or a fresh clone: set up the project's build environment BEFORE committing.** The same applies after any dependency-bump PR merged since the last install. The commit hook runs the project's own tests or Gate, and those fail on missing dependencies, not on the sync. Two examples from the first Linux syncs, v4.6.0: `Cannot find package 'next/server'`, and `npx tsc` fetching the wrong `tsc` package. Install them first, for example `npm ci` in EVERY directory that has its own lockfile (a `web/` with its own `package-lock.json` and no root workspace is not covered by a root `npm ci`). Then commit. A failure that names a missing package or module is an environment problem; do not debug the sync's diff for it.
 
 **The full sequence under v2.1.3+ hooks — the order is load-bearing:**
 
@@ -1323,9 +1330,13 @@ git pull --ff-only                                 # allowed by BOTH hook versio
 git fetch -p                                       # drops the phantom remote-tracking ref
 ```
 
+**The first Bash call after the post-merge pull may be refused with `HOOK SCRIPT MISSING` while the settings hot-reload.** Retry it once.
+
 **The MCP merge tool is gated by the same hook `gh pr merge` is — on the session cwd's HEAD and the gate artifact, never on a parsed command segment.** `gate-before-merge.sh` fires from the harness's own registration of the merge call, not from scanning a git command string the way the Bash-routed gates do; it reads the SAME `<common git dir>/gate/last-pass.<sha>.json` artifact against the SAME cwd's HEAD regardless of which tool performed the merge. Preferring `gh` above is about its `--delete-branch` convenience and about refusals you can actually SEE (a `gh` refusal prints straight into the tool output you are already reading) — never about the MCP tool being an unprotected route around the gate. A stale or missing artifact refuses either way.
 
 **Merge from the PR-branch checkout, never from `main`** (`gate-before-merge.sh` refuses a merge on `main`). **When the agent's `gh pr merge` is refused by the permission classifier,** hand the user the exact command to run themselves, `! gh pr merge <n> --squash`, and stop: never promise that a posted review unblocks it, and never retry the merge from another thread.
+
+**Claude Code's auto-mode classifier may refuse the agent's merge of the sync PR as self-modification,** because the PR rewrites the session's own settings, hooks and CLAUDE.md. That is expected: hand the merge to the user, and never work around the refusal.
 
 **A "Merge Without Review"-shaped refusal has been observed in exactly one session and not reproduced in two others (tally 1/3) — no discriminator for when it fires is claimed here.** Do not chase a root cause that has not been pinned down. If you hit it, the legitimate routes are: hand the user `! gh pr merge <n> --squash` (the paragraph above), get the user's explicit approval, or have the user add a permission rule themselves — never route around it by reaching for the MCP merge tool instead of `gh`, which (per the paragraph above) is gated by the identical mechanism and will not merge unreviewed work either.
 
