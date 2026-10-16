@@ -78,7 +78,7 @@ Without any of the three, every shell command and file read is refused, in every
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 
 ```
-/plugin marketplace add dagonet/claude-code-toolkit#v5.1.0
+/plugin marketplace add dagonet/claude-code-toolkit#v5.1.1
 /plugin install cct@dagonet
 ```
 
@@ -87,12 +87,14 @@ Its Platform section assumes Windows with Git Bash, so adapt it on macOS and Lin
 Its `settings.json` needs merging, not copying: see [`user-level-reference/README.md`](user-level-reference/README.md).
 
 - **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup.
-- **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md). The CHANGELOG has the migration notes.
+- **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
 - **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
-  `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.0 && claude plugin install cct@dagonet`
+  `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.1 && claude plugin install cct@dagonet`
 - **Moving to a new release:** a pinned install does not advance by itself. Run `claude plugin marketplace remove dagonet`,
   add the new `#tag` the same way, run `claude plugin install cct@dagonet`, restart, then run `/cct:sync-template`.
 - A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.
+
+The CHANGELOG has the migration notes for every release, on Linux and Windows alike.
 
 ## Start a project
 

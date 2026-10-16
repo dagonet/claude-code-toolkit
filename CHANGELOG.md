@@ -1,5 +1,45 @@
 # Changelog
 
+## v5.1.1 — 2026-10-16
+
+Patch. Fixes from the v5.1.0 rollout to the first projects, template and sync-skill wording, and a README rewritten as a plugin-era product page.
+
+**Floor reviewed: unchanged at >=v5.0.0.** The templates changed only wording and the sync skill needs no new server behaviour, so `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. The sync-template `SKILL.md` marker moves to v5.1.1 because consistency check 21c-2g requires it to equal `VERSION`.
+
+### Fixed
+- **`scripts/verify-user-level-drift.sh` was refused by the toolkit's own pre-commit-test when typed as `bash …/verify-user-level-drift.sh`.** Cause: a `$'\r'` added in v5.0, plus git words, inside the first 16 KB the gate scans. Every consumer sync reported "User-level: drift not checked". The script now builds the CR with `printf`. New `scripts/test-hooks.sh` rows pin that the user-typed scripts pass and that a dollar-quote plus a git word is still refused. (e3a30e1)
+- **`hooks/enforce-delegation.sh` deny text** names `cct:coder`, `cct:ops` and `cct:tester` and "the deny-claude-md-writes hook" in place of the bare v4 names. (c65d9e7)
+- **`/cct:jev status` and `/cct:jev on` say why routing is off in a clone still on the v4 layout:** "this checkout still runs its own v4 hooks/lib/agent-model.sh; Jev routes here once the project is synced to v5 (/cct:sync-template)". (1a2be66)
+
+### Changed
+- **The six template `CLAUDE.md` files:** the RETRO line no longer names `hooks/retro-brief.sh`, a file a v5 project does not have; two superpowers 7.0.0 lines: specs and plans go in `docs/plans/`, and writing-plans takes Subagent-driven, not Native. +176 B in every variant.
+- **The sync-template skill:**
+  - the step-3 probe tests the hook that really runs;
+  - step 2c lists mentions of deleted hooks in kept agents, `project-instructions.md` and the `AGENT_TEAM.md` region;
+  - placeholders are rendered before the diffs are shown;
+  - one confirmation covers the model-bump pause;
+  - the auto-mode classifier may refuse the agent's merge of the sync PR, so the user merges it;
+  - a transient `HOOK SCRIPT MISSING` right after the post-merge pull is explained;
+  - snippets use absolute paths.
+- **`docs/plugin-migration-windows.md`:** step 3 moves only the toolkit's listed files and deletes `hooks/` only if it is empty; step 4 says Jev routes in a v4 clone only after its v5 sync. (d0ca3a3, 1457737)
+
+### Docs
+- **The README is rewritten as a plugin-era product page** (what the plugin gives you, install, start a project, upgrade).
+- **`docs/history.md` is new.** The README's release history moved there verbatim (relative links adjusted), and the README's per-release measured table is frozen there at v5.1.0. The live per-release column is now `docs/architecture.md` *Context Budget* only; the root `CLAUDE.md` invariant says so.
+- Stale instructions fixed: `docs/setup.md` names the MCP config `~/.claude.json` and uses the `cct:` names and `cct-gate`. (1feb27c, b223141, dd3a109)
+- **Correction to the v5.0 notes:** v5.0's migration step 4 said the plugin's project-only hooks act "from the next session on". Measured on 2026-10-16, they act at once, on settings hot-reload, mid-sync. Harmless.
+
+### Downstream migration
+Measured on 2026-10-16 in a temp HOME with claude 2.1.301: `claude plugin marketplace update` and `claude plugin update` do NOT move a tag-pinned install, and `claude plugin marketplace remove` also uninstalls `cct`.
+1. Run `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.1`, then `claude plugin install cct@dagonet`, back to back. Then restart every session.
+2. **Order matters:** update the plugin and restart BEFORE pulling the toolkit checkout that runs the template-sync server. A v5.1.1 server refuses a session still running the v5.1.0 skill body, because the `SKILL.md` marker moves to v5.1.1.
+3. Projects pick up the template `CLAUDE.md` lines at their next `/cct:sync-template`. This is not urgent.
+
+### Measured at the final code commit (host agent-host-1)
+- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 342 PASS lines at the release tree. Check 50 reported SKIP on this host (no system `python` on PATH; 0 assertions), and the bootstrap-fixture block inside it ran 35 passed, 0 failed, 37 skipped (72 assertions).
+- `bash scripts/test-hooks.sh`: 4166 passed, 0 failed, 6 skipped (4172 assertions). The J-PY pin `JPY_WANT` rose from 140 to 145: the five tests added in `skills/jev/tests/test_ctl.py` for the v4-clone message had not been counted, and the first full run of this tree failed on it. (v5.1.0 measured 4160 passed, 6 skipped.) `bash scripts/test-server.sh` was not re-run for this entry: no server code changed (only the `VERSION` mirror).
+- Windows (the PC, Git Bash) at 1a2be66, 2026-10-16 16:57: the Jev unit tests ran 145, OK; the typed `bash scripts/verify-user-level-drift.sh v5.1.0` was not refused and reported 0 drift; `bash -n` passed on both changed scripts.
+
 ## v5.1.0 — 2026-10-15
 
 Minor. The optional Jev spawn router becomes a one-week trial: it may pick any model, applies a confident effort, runs at threshold 0.65, no longer trips the egress filter on the Claude-Session URL, and a new script tallies the trial across machines. v5.1 builds on v5.0.0 (the `cct` plugin).

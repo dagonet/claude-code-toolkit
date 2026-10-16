@@ -1,2 +1,2 @@
-5.1.0
-Minor: the optional Jev spawn router may pick any model and applies a confident effort (reviewers and architects never lower), threshold 0.65, the Claude-Session URL is masked in Jev egress, and scripts/jev-tally.py tallies a trial across machines.
+5.1.1
+Patch: the drift script passes the commit gate when typed, the delegation deny and /cct:jev status name the cct: agents and the v4-clone wait, template and sync-skill wording from the v5.1.0 rollout, and the README is a plugin-era page (history in docs/history.md).
