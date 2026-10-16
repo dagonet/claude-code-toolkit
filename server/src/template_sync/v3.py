@@ -1048,18 +1048,27 @@ def derive_manifest_entry(pp: pathlib.Path, manifest: dict, rules: OwnershipRule
                           proj_rel: str) -> tuple[dict | None, str | None]:
     """The manifest entry for `proj_rel`, derived from the path alone (#210).
 
-    Returns (entry, None) or (None, error). once-class -> {"ownership":"once"};
-    template-class -> the sha256 of the placeholder-rendered TEMPLATE content,
-    which is what template_apply_file records whatever its `source` was.
+    Returns (entry, None) or (None, error). Ownership is decided as
+    apply_file_v3 decides it: the STORED manifest entry wins, else the rules.
+    once -> {"ownership":"once"}; template -> the sha256 of the
+    placeholder-rendered TEMPLATE content, which is what apply records for a
+    template it can render. Where apply would refuse (project class, the
+    CLAUDE.md v3 window) or would hash provided content instead (template
+    missing), the helper returns an error.
     """
     tpl_rel = rules.template_path_for(proj_rel)
-    cls = rules.class_of(tpl_rel)
+    stored = manifest.get("files", {}).get(proj_rel)
+    cls = (stored.get("ownership") if stored else None) or rules.class_of(tpl_rel)
+    if cls == "project":
+        return None, "ownership is 'project'; the server never writes it"
     if cls == "once":
         return {"ownership": "once"}, None
     if cls == "template":
         tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
         if tpl_raw is None:
             return None, f"template file {tpl_rel} not found"
+        if claude_md_window_active(manifest, tpl_rel, tpl_raw):
+            return None, f"CLAUDE.md: {MIGRATION_REQUIRED_REMEDY}"
         return {"hash": format_hash(core._sha256(template_content(pp, manifest, rules, proj_rel, tpl_raw))),
                 "ownership": "template"}, None
     return None, "no template/once rule"

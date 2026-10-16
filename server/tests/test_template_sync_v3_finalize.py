@@ -597,3 +597,38 @@ def test_finalize_path_only_rejects_dotdot_and_non_object(tmp_path):
     assert "manifest NOT written" in res["error"]
     assert "invalid file_path: '../x'" in res["invalid_entries"]
     assert "applied item must be an object or a path string: 42" in res["invalid_entries"]
+
+
+@pytest.mark.parametrize("path, stored, tpl_content, project_content", [
+    # stored template, rules say once
+    (".claude/rules/project.md", "template", "p\n", "p\n"),
+    # stored once, rules say template
+    ("hooks/g.sh", "once", "g\n", "g\n"),
+])
+def test_finalize_path_only_honours_stored_ownership_like_apply(
+        tmp_path, path, stored, tpl_content, project_content):
+    """The stored manifest entry wins over the rules, in apply and so in the derived entry."""
+    entry = _tpl_entry(tpl_content) if stored == "template" else {"ownership": "once"}
+    repo, proj = _mk_v3(tmp_path, template={path: tpl_content}, project={path: project_content},
+                        entries={path: entry})
+    _init_repo(repo)
+    applied = _run(ts.template_apply_file(str(proj), path, source="template"))
+    assert applied["manifest_entry"]["ownership"] == stored
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([{"file_path": path}])))
+    assert "error" not in res
+    assert _manifest_files(proj)[path] == applied["manifest_entry"]
+
+
+def test_finalize_path_only_claude_md_window_refuses_whole_finalize(tmp_path):
+    """Apply refuses CLAUDE.md under the v3 window; so must a path-only finalize."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n", "hooks/ok.sh": "o\n"},
+                        project={"CLAUDE.md": "v1\n"}, entries={})
+    _init_repo(repo)
+    apply_res = _run(ts.template_apply_file(str(proj), "CLAUDE.md", source="template"))
+    assert apply_res["error"] == f"CLAUDE.md: {v3.MIGRATION_REQUIRED_REMEDY}"
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps(["hooks/ok.sh", "CLAUDE.md"])))
+    assert "manifest NOT written" in res["error"]
+    assert res["invalid_entries"] == [f"CLAUDE.md: CLAUDE.md: {v3.MIGRATION_REQUIRED_REMEDY}"]
+    assert manifest_path.read_bytes() == before
