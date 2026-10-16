@@ -78,7 +78,7 @@ Without `node`, six hooks do nothing: delegation, read-size capping, the Bash-ou
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 
 ```
-/plugin marketplace add dagonet/claude-code-toolkit#v5.1.1
+/plugin marketplace add dagonet/claude-code-toolkit#v5.1.2
 /plugin install cct@dagonet
 ```
 
@@ -89,7 +89,7 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
 - **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup.
 - **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
 - **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
-  `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.1 && claude plugin install cct@dagonet`
+  `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.2 && claude plugin install cct@dagonet`
 - **Moving to a new release:** a pinned install does not advance by itself: `claude plugin marketplace update` and `claude plugin update cct@dagonet` leave it where it is.
   Run `claude plugin marketplace remove dagonet` (this uninstalls `cct` too), add the new `#tag` the same way, run `claude plugin install cct@dagonet`
   (on Linux: pull the checkout, then run the installer). Pull your toolkit checkout to the same tag, then restart every session before the next `/cct:sync-template`.
