@@ -9429,6 +9429,24 @@ for v4h in pre-commit-test no-push-main gate-before-merge; do
 done
 # ==== V4 end
 
+# ---- v5.1.1 (#14): the scripts a user types must pass our own gate ----
+# gc_dir_rule refuses a typed `bash <script>` whose first 16 KB holds a real
+# $'...' / $"..." word next to a git/gh word. v5.0 put `${rel%$'\r'}` in
+# verify-user-level-drift.sh, so typing it was refused (rc 2). The three scripts
+# a user types are pinned; the negative row proves the rule did not get weaker.
+V511D=$(mkrepo v511typed main)
+for v511s in scripts/verify-user-level-drift.sh scripts/install-user-level-linux.sh setup-project.sh; do
+  check "v5.1.1 typed $v511s passes pre-commit-test" "hooks/pre-commit-test.sh" 0 \
+    "$(mkjson Bash "bash $ROOT/$v511s" "$V511D")"
+done
+cat > "$V511D/dq.sh" <<'V511DQ'
+rel=${rel%$'\r'}
+git status
+V511DQ
+check_msg "v5.1.1 typed dollar-quote + git script is still refused" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash "bash dq.sh" "$V511D")" "use plain quotes"
+# ---- end v5.1.1 (#14)
+
 # ---- v4.4.0 J-DIFF: with Jev off, model-floor answers exactly as the base release ----
 # Spec D1: "zero footprint when off". From v4.4.0 model-floor.sh sources its
 # resolution from lib/agent-model.sh (shared with the Jev router). With no Jev
