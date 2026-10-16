@@ -10,6 +10,7 @@ Patch. Fixes from the v5.1.0 rollout to the first projects, template and sync-sk
 - **`scripts/verify-user-level-drift.sh` was refused by the toolkit's own pre-commit-test when typed as `bash …/verify-user-level-drift.sh`.** Cause: a `$'\r'` added in v5.0, plus git words, inside the first 16 KB the gate scans. Every consumer sync reported "User-level: drift not checked". The script now builds the CR with `printf`. New `scripts/test-hooks.sh` rows pin that the user-typed scripts pass and that a dollar-quote plus a git word is still refused. (e3a30e1)
 - **`hooks/enforce-delegation.sh` deny text** (the Edit/Write branch and the Bash branch) names `cct:coder`, `cct:ops` and `cct:tester`, and the Edit/Write branch names "the deny-claude-md-writes hook", in place of the bare v4 names. (c65d9e7, plus the final review)
 - **`/cct:jev status` and `/cct:jev on` say why routing is off in a clone still on the v4 layout:** "this checkout still runs its own v4 hooks/lib/agent-model.sh; Jev routes here once the project is synced to v5 (/cct:sync-template)". (1a2be66)
+- **`scripts/test-setup-project.sh`: four stale bootstrap rows.** They compared `.claude/agent-grants.json` with `templates/general/.claude/agent-grants.json`, which v5.0 removed, so consistency check 27 has failed on every host with PowerShell since v5.0 (found on the PC at 343df64). The rows are removed; the v5 layout rows already assert the file is absent. Linux never ran them: they sit inside the PowerShell-present block.
 
 ### Changed
 - **The six template `CLAUDE.md` files:** the RETRO line no longer names `hooks/retro-brief.sh`, a file a v5 project does not have; two superpowers 7.0.0 lines: specs and plans go in `docs/plans/`, and writing-plans takes Subagent-driven, not Native. +176 B in every variant.
@@ -49,6 +50,7 @@ Measured on 2026-10-16 in a temp HOME with claude 2.1.301: `claude plugin market
 - Windows (the PC, Python 3.14.2, Git Bash):
   - At 1a2be66: the Jev unit suite ran 145, OK; the typed `bash scripts/verify-user-level-drift.sh v5.1.0` was not refused and reported 0 drift; `bash -n` was clean on the drift script and `hooks/enforce-delegation.sh`.
   - At 764f60a: the Jev unit suite ran 145, OK (30 s); `bash -n` was clean on `scripts/verify-user-level-drift.sh`, `hooks/enforce-delegation.sh` and `scripts/test-hooks.sh`.
+  - At 343df64: an excerpt of `scripts/test-hooks.sh` (the delegation deny-text rows and the typed-script rows) ran 9 passed, 0 failed. `bash scripts/verify-template-consistency.sh` failed only check 27 (bootstrap fixtures 107 passed, 4 failed, 5 skipped: the four stale rows in Fixed).
   - Not run on Windows for this release: the full hook suite. This is a patch release whose code changes were proven above, so the 3-6 h Windows run was skipped by decision.
 
 ## v5.1.0 — 2026-10-15
