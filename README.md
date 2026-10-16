@@ -73,7 +73,7 @@ It is switched on per clone and needs a TypeSafe API key; the `cct:jev` skill ex
 
 First, `git`, Claude Code and a JSON reader for the hooks: `node`, `python3` or `jq`.
 Without any of the three, every shell command and file read is refused, in every repo.
-`node` gives the full set; with only `python3` or `jq` the delegation and read-size hooks do nothing.
+`node` gives the full set; with only `python3` or `jq`, six hooks do nothing, among them delegation, read-size, the agent-report check and the RETRO brief (see [`docs/getting-started.md`](docs/getting-started.md)).
 
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 
@@ -90,8 +90,10 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
 - **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
 - **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
   `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.1 && claude plugin install cct@dagonet`
-- **Moving to a new release:** a pinned install does not advance by itself. Run `claude plugin marketplace remove dagonet`,
-  add the new `#tag` the same way, run `claude plugin install cct@dagonet`, restart, then run `/cct:sync-template`.
+- **Moving to a new release:** a pinned install does not advance by itself: `claude plugin marketplace update` and `claude plugin update cct@dagonet` leave it where it is.
+  Run `claude plugin marketplace remove dagonet` (this uninstalls `cct` too), add the new `#tag` the same way, run `claude plugin install cct@dagonet`
+  (on Linux: pull the checkout, then run the installer). Pull your toolkit checkout to the same tag, then restart every session before the next `/cct:sync-template`.
+  A session that syncs after the pull but before its restart is refused; restart it.
 - A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.
 
 The CHANGELOG has the migration notes for every release, on Linux and Windows alike.
@@ -108,6 +110,7 @@ Add `--dry-run` to preview. Open the new project in Claude Code and ask Claude t
 Prefer a guided walk-through? Ask Claude, Cursor or Copilot to follow [`AGENTS.md`](AGENTS.md).
 
 **Keep it current:** run `/cct:sync-template` in the project. It brings in newer template files and leaves the files you own alone.
+It needs the template-sync-tools MCP server from your toolkit checkout, registered once in `~/.claude.json` (see [`docs/template-sync.md`](docs/template-sync.md)); setup prints the snippet but does not write it.
 
 ## Learn more
 

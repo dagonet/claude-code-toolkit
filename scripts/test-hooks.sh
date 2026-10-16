@@ -5263,6 +5263,16 @@ expect "Edit deny names cct:coder, cct:ops, cct:tester" "named" "$got"
 case "$out" in *'deny-claude-md-writes.sh'*) got=file ;; *'the deny-claude-md-writes hook'*) got=hook ;; *) got=none ;; esac
 expect "Edit deny names the deny-claude-md-writes hook, not a .sh file" "hook" "$got"
 
+# The Bash-branch deny (main-thread build/test runner) names the same cct: types.
+bashdeny=$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$bashdeny" in
+  *'cct:coder runs the gate, cct:tester verifies, cct:ops handles env/tool work.'*) got=named ;;
+  *'coder runs the gate, tester verifies, ops handles'*) got=bare ;;
+  *) got=none ;;
+esac
+expect "Bash deny names cct:coder, cct:tester, cct:ops" "named" "$got"
+
 printf -- '- **PO write surface**: none\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
 out=$(printf '%s' "$(mkjson_edit notes/x.md "$DELEGREPO")" \
   | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)

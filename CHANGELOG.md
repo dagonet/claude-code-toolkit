@@ -8,7 +8,7 @@ Patch. Fixes from the v5.1.0 rollout to the first projects, template and sync-sk
 
 ### Fixed
 - **`scripts/verify-user-level-drift.sh` was refused by the toolkit's own pre-commit-test when typed as `bash …/verify-user-level-drift.sh`.** Cause: a `$'\r'` added in v5.0, plus git words, inside the first 16 KB the gate scans. Every consumer sync reported "User-level: drift not checked". The script now builds the CR with `printf`. New `scripts/test-hooks.sh` rows pin that the user-typed scripts pass and that a dollar-quote plus a git word is still refused. (e3a30e1)
-- **`hooks/enforce-delegation.sh` deny text** names `cct:coder`, `cct:ops` and `cct:tester` and "the deny-claude-md-writes hook" in place of the bare v4 names. (c65d9e7)
+- **`hooks/enforce-delegation.sh` deny text** (the Edit/Write branch and the Bash branch) names `cct:coder`, `cct:ops` and `cct:tester`, and the Edit/Write branch names "the deny-claude-md-writes hook", in place of the bare v4 names. (c65d9e7, plus the final review)
 - **`/cct:jev status` and `/cct:jev on` say why routing is off in a clone still on the v4 layout:** "this checkout still runs its own v4 hooks/lib/agent-model.sh; Jev routes here once the project is synced to v5 (/cct:sync-template)". (1a2be66)
 
 ### Changed
@@ -20,24 +20,32 @@ Patch. Fixes from the v5.1.0 rollout to the first projects, template and sync-sk
   - one confirmation covers the model-bump pause;
   - the auto-mode classifier may refuse the agent's merge of the sync PR, so the user merges it;
   - a transient `HOOK SCRIPT MISSING` right after the post-merge pull is explained;
-  - snippets use absolute paths.
+  - snippets use absolute paths;
+  - "0 referenced" is named as the expected reading after a v5 sync (steps 6b and 1c);
+  - a comment-only once-note clears on the next finalize on its own, so adopting it is optional;
+  - the agent-grants backup scope: for `.claude/agent-grants.json` the directory is `.claude/`, and untracked runtime files there (for example `liveness.log`) are backed up and never deleted;
+  - the first-sync paragraph adds that the same build-environment setup applies after any dependency-bump PR merged since the last install;
+  - "gates are live immediately" holds for the checkout the session runs from, so a sync done in a separate worktree takes effect there.
+- **The template-sync refusal messages** (`server/src/template_sync/v3.py`) give the measured remedy for a tag-pinned plugin (remove, add, install, restart) in place of `claude plugin update cct@dagonet`, which does not move a pinned install. Message text only; no server logic changed.
 - **`docs/plugin-migration-windows.md`:** step 3 moves only the toolkit's listed files and deletes `hooks/` only if it is empty; step 4 says Jev routes in a v4 clone only after its v5 sync. (d0ca3a3, 1457737)
 
 ### Docs
-- **The README is rewritten as a plugin-era product page** (what the plugin gives you, install, start a project, upgrade).
+- **The README is rewritten as a plugin-era product page** (what the plugin gives you, install, start a project, upgrade). `AGENTS.md` now points to the README's Install section instead of carrying its own unpinned command.
 - **`docs/history.md` is new.** The README's release history moved there verbatim (relative links adjusted), and the README's per-release measured table is frozen there at v5.1.0. The live per-release column is now `docs/architecture.md` *Context Budget* only; the root `CLAUDE.md` invariant says so.
-- Stale instructions fixed: `docs/setup.md` names the MCP config `~/.claude.json` and uses the `cct:` names and `cct-gate`. (1feb27c, b223141, dd3a109)
+- **The `docs/architecture.md` model/effort and principles tables moved in from the README,** and its *Context Budget* gains the v5.1.1 measured column.
+- Stale instructions fixed in `docs/getting-started.md`, `docs/setup.md` (names the MCP config `~/.claude.json` and uses the `cct:` names and `cct-gate`), `docs/templates.md`, `docs/verification.md`, `docs/design-rationale.md` and `docs/template-sync-migration-contract.md`. `docs/template-sync.md` gives the same upgrade story as the README. (1feb27c, b223141, dd3a109)
 - **Correction to the v5.0 notes:** v5.0's migration step 4 said the plugin's project-only hooks act "from the next session on". Measured on 2026-10-16, they act at once, on settings hot-reload, mid-sync. Harmless.
 
 ### Downstream migration
 Measured on 2026-10-16 in a temp HOME with claude 2.1.301: `claude plugin marketplace update` and `claude plugin update` do NOT move a tag-pinned install, and `claude plugin marketplace remove` also uninstalls `cct`.
-1. Run `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.1`, then `claude plugin install cct@dagonet`, back to back. Then restart every session.
-2. **Order matters:** update the plugin and restart BEFORE pulling the toolkit checkout that runs the template-sync server. A v5.1.1 server refuses a session still running the v5.1.0 skill body, because the `SKILL.md` marker moves to v5.1.1.
+1. Run `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.1`, then `claude plugin install cct@dagonet`, back to back.
+   On Linux, pull the checkout first and run `bash scripts/install-user-level-linux.sh` instead; it installs the checkout's own tag.
+2. Pull your toolkit checkout (the one that runs the template-sync server) to the same tag, and restart every session before the next `/cct:sync-template`. A session that syncs after the pull but before its restart is refused: the v5.1.1 server will not sync a session still running the v5.1.0 skill body, because the `SKILL.md` marker moves to v5.1.1. Restart it.
 3. Projects pick up the template `CLAUDE.md` lines at their next `/cct:sync-template`. This is not urgent.
 
 ### Measured at the final code commit (host agent-host-1)
-- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 342 PASS lines at the release tree. Check 50 reported SKIP on this host (no system `python` on PATH; 0 assertions), and the bootstrap-fixture block inside it ran 35 passed, 0 failed, 37 skipped (72 assertions).
-- `bash scripts/test-hooks.sh`: 4166 passed, 0 failed, 6 skipped (4172 assertions). The J-PY pin `JPY_WANT` rose from 140 to 145: the five tests added in `skills/jev/tests/test_ctl.py` for the v4-clone message had not been counted, and the first full run of this tree failed on it. (v5.1.0 measured 4160 passed, 6 skipped.) `bash scripts/test-server.sh` was not re-run for this entry: no server code changed (only the `VERSION` mirror).
+- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 342 PASS lines at the release tree, and the bootstrap-fixture block inside it ran 38 passed, 0 failed, 34 skipped (72 assertions). The 34 skips are the PowerShell cases (no PowerShell on this host). An earlier run of this tree showed 37 skips: the extra 3 were cases needing `server/.venv`, which the worktree did not have at that time; the venv now exists. Check 50 always skips on this host (no `python`, only `python3`) and prints as a PASS line; it skipped the same way at v5.1.0, so it is not new.
+- `bash scripts/test-hooks.sh`: 4167 passed, 0 failed, 6 skipped (4173 assertions; the final-review round added the Bash-branch deny-text fixture). The J-PY pin `JPY_WANT` rose from 140 to 145: the five tests added in `skills/jev/tests/test_ctl.py` for the v4-clone message had not been counted, and the first full run of this tree failed on it. (v5.1.0 measured 4160 passed, 6 skipped.) `bash scripts/test-server.sh`: 522 passed, 9 skipped (the final-review round changed refusal-message text in `server/src/template_sync/v3.py` and the one test that pins it; no server logic changed).
 - Windows (the PC, Git Bash) at 1a2be66, 2026-10-16 16:57: the Jev unit tests ran 145, OK; the typed `bash scripts/verify-user-level-drift.sh v5.1.0` was not refused and reported 0 drift; `bash -n` passed on both changed scripts.
 
 ## v5.1.0 — 2026-10-15

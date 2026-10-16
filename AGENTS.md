@@ -15,7 +15,7 @@ Before starting, confirm the following are on PATH:
   - Linux / macOS / Git Bash on Windows → `bash`
   - Native Windows → `pwsh` (PowerShell 7+) **or** Windows PowerShell 5.1
 - The target directory for the new project exists (or can be created) and is writable.
-- The **cct plugin** is installed on the machine that will open the project (`/plugin marketplace add dagonet/claude-code-toolkit`, then `/plugin install cct@dagonet`). Without it the bootstrapped project refuses every tool call (the plugin-off guard). Setup itself does not need it.
+- The **cct plugin** is installed on the machine that will open the project (install it as [README → Install](README.md#install) says, pinned to a release tag). Without it the bootstrapped project refuses every tool call (the plugin-off guard). Setup itself does not need it.
 
 If any prerequisite is missing, stop and tell the user what to install — do not attempt to install tools on the user's behalf.
 

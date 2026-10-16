@@ -308,7 +308,7 @@ fi
 
 if [ -z "$FILE_PATH" ]; then
   # Bash deny path
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"DELEGATE: builds/tests run inside agents — coder runs the gate, tester verifies, ops handles env/tool work. The PO verifies via the shared gate artifact (<common git dir>/gate/last-pass.<sha>.json). Escape hatch: create .claude/delegation-off."}}\n'
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"DELEGATE: builds/tests run inside agents — cct:coder runs the gate, cct:tester verifies, cct:ops handles env/tool work. The PO verifies via the shared gate artifact (<common git dir>/gate/last-pass.<sha>.json). Escape hatch: create .claude/delegation-off."}}\n'
   exit 0
 fi
 
