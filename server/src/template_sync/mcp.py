@@ -1805,7 +1805,11 @@ async def template_finalize_sync(
     Args:
         project_path: Path to the project root directory
         applied_files: JSON array of template_apply_file results
-            (each must have file_path and manifest_entry)
+            (each must have file_path and manifest_entry). Under v3 an item
+            may instead be just a path (a bare string, or an object with
+            file_path and optionally action): finalize then derives the
+            entry itself -- the template content's hash, or once -- and
+            refuses the whole finalize if it cannot.
         new_files: JSON array of new file paths added from template (optional).
             Entries not already applied get real hashes computed from the
             template and the project file on disk -- never empty placeholders,

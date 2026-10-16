@@ -1044,6 +1044,27 @@ def template_content(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     return core._apply_placeholders(tpl_raw, manifest.get("placeholders", {}))
 
 
+def derive_manifest_entry(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
+                          proj_rel: str) -> tuple[dict | None, str | None]:
+    """The manifest entry for `proj_rel`, derived from the path alone (#210).
+
+    Returns (entry, None) or (None, error). once-class -> {"ownership":"once"};
+    template-class -> the sha256 of the placeholder-rendered TEMPLATE content,
+    which is what template_apply_file records whatever its `source` was.
+    """
+    tpl_rel = rules.template_path_for(proj_rel)
+    cls = rules.class_of(tpl_rel)
+    if cls == "once":
+        return {"ownership": "once"}, None
+    if cls == "template":
+        tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
+        if tpl_raw is None:
+            return None, f"template file {tpl_rel} not found"
+        return {"hash": format_hash(core._sha256(template_content(pp, manifest, rules, proj_rel, tpl_raw))),
+                "ownership": "template"}, None
+    return None, "no template/once rule"
+
+
 def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
                  rel_path: str) -> tuple[str | None, str, str | None]:
     """template_content() of `rel_path` at the held revision.
@@ -1459,13 +1480,30 @@ def _pending_note_open(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
 def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
                 applied: list, new: list, deleted: list, acknowledged: list) -> dict:
     invalid: list[str] = []
-    for item in applied:
+    items: list[dict] = []
+    for raw in applied:
+        # #210: an item may be a bare path, or a dict without manifest_entry;
+        # the entry is then derived from the path (fail closed, here, before
+        # anything is written).
+        if isinstance(raw, str):
+            raw = {"file_path": raw}
+        if not isinstance(raw, dict):
+            invalid.append(f"applied item must be an object or a path string: {raw!r}")
+            continue
+        item = dict(raw)
+        items.append(item)
         fp = item.get("file_path", "")
-        entry = item.get("manifest_entry", {})
         norm = core._normalize_path(fp)
         if not fp or not norm.strip("/") or ".." in norm.split("/"):
             invalid.append(f"invalid file_path: {fp!r}")
             continue
+        if "manifest_entry" not in item:
+            derived, error = derive_manifest_entry(pp, manifest, rules, norm)
+            if error:
+                invalid.append(f"{fp}: {error}")
+                continue
+            item["manifest_entry"] = derived
+        entry = item["manifest_entry"]
         if entry.get("ownership") not in ("template", "once"):
             invalid.append(f"{fp}: ownership must be 'template' or 'once'")
         if entry.get("ownership") == "template" and not HASH_RE.match(entry.get("hash", "") or ""):
@@ -1479,7 +1517,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     updated = 0
     created = 0
     unknown_files: list[dict] = []
-    for item in applied:
+    for item in items:
         fp = core._normalize_path(item["file_path"])
         entry = item["manifest_entry"]
         if entry["ownership"] == "template":
@@ -1499,7 +1537,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
             updated += 1
     consumed = sorted(
         ({"path": core._normalize_path(i["file_path"]),
-          "hash": files[core._normalize_path(i["file_path"])].get("hash")} for i in applied),
+          "hash": files[core._normalize_path(i["file_path"])].get("hash")} for i in items),
         key=lambda d: d["path"],
     )
 
@@ -1508,21 +1546,11 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         fp = core._normalize_path(fp)
         if fp in files:
             continue
-        tpl_rel = rules.template_path_for(fp)
-        cls = rules.class_of(tpl_rel)
-        if cls == "once":
-            files[fp] = {"ownership": "once"}
-        elif cls == "template":
-            tpl_raw = core._read_file(core._template_file_path(manifest, tpl_rel))
-            if tpl_raw is None:
-                warnings.append(f"new file {fp}: template file {tpl_rel} not found -- skipped")
-                continue
-            files[fp] = {"hash": format_hash(core._sha256(
-                             template_content(pp, manifest, rules, fp, tpl_raw))),
-                         "ownership": "template"}
-        else:
-            warnings.append(f"new file {fp}: no template/once rule -- skipped")
+        derived, error = derive_manifest_entry(pp, manifest, rules, fp)
+        if error:
+            warnings.append(f"new file {fp}: {error} -- skipped")
             continue
+        files[fp] = derived
         added += 1
 
     explicit = {core._normalize_path(p) for p in deleted if isinstance(p, str) and p}
