@@ -32,10 +32,10 @@ Each template variant provides the following files:
 | File | Purpose |
 |------|---------|
 | `CLAUDE.md` | Session bootstrap, workflow TL;DR, verification/debugging/commit rules. **Facts only** — anything that applies to a subset of files belongs in `.claude/rules/` |
-| `.claude/rules/` | Path-scoped language conventions (v2.0 PR4). Each `*.md` carries a `paths:` frontmatter glob list and loads **only** when Claude reads or edits a matching file. **Corrected in v3.1, on measurement, then corrected again in v4.0.1 (item 14):** a **scoped** rule (`paths:` present) is absent from context at spawn, subagents included, and arrives only attached to a matching tool call. An **unscoped** rule (no `paths:` key) is the opposite, not a third state: it loads at **every session start**, at `CLAUDE.md` priority — v3.1's "delivered to nobody" was itself wrong, not just the earlier "loaded at launch at CLAUDE.md cost" it replaced. `project.md`, seeded by v3.1 as a project-owned `once` file, ships unscoped ON PURPOSE for exactly that reason: it is where a consumer's own always-on conventions belong, and its own header says so; add a `paths:` key only to scope it down. `general` ships none (no language of its own); `dotnet` → `csharp.md`, `dotnet-maui` → `csharp.md` + `xaml.md`, `rust-tauri` → `rust.md` + `frontend.md`, `java` → `java.md`, `python` → `python.md` |
-| `CLAUDE.local.md` | **Retired in v4.0.1**: the template no longer ships this file. It held MCP usage rules (gitignored, machine-specific paths); a project that already has one keeps it, and it is never touched by a sync |
-| `.claude/rules/project.md` | **New in v3.1**, class `once`: seeded by `setup-project` and never overwritten by a sync. It ships unscoped, so it loads at every session start; its header says how to scope it with `paths:` and that always-on project rules belong in `.claude/project-instructions.md` instead |
-| `.claude/project-instructions.md` | **New in v4.1.0**, class `once`: imported by `CLAUDE.md`'s last line; where the project's own rules live |
+| `.claude/rules/` | Path-scoped language conventions. Each `*.md` carries a `paths:` frontmatter glob list and loads **only** when Claude reads or edits a matching file. A **scoped** rule (`paths:` present) is absent from context at spawn, subagents included, and arrives only attached to a matching tool call. An **unscoped** rule (no `paths:` key) is the opposite, not a third state: it loads at **every session start**, at `CLAUDE.md` priority. `project.md`, a project-owned `once` file seeded by setup, ships unscoped ON PURPOSE for exactly that reason: it is where a consumer's own always-on conventions belong, and its own header says so; add a `paths:` key only to scope it down. `general` ships none (no language of its own); `dotnet` → `csharp.md`, `dotnet-maui` → `csharp.md` + `xaml.md`, `rust-tauri` → `rust.md` + `frontend.md`, `java` → `java.md`, `python` → `python.md` |
+| `CLAUDE.local.md` | Not shipped. A project that already has one keeps it, and a sync never touches it |
+| `.claude/rules/project.md` | Class `once`: seeded by `setup-project` and never overwritten by a sync. It ships unscoped, so it loads at every session start; its header says how to scope it with `paths:` and that always-on project rules belong in `.claude/project-instructions.md` instead |
+| `.claude/project-instructions.md` | Class `once`: imported by `CLAUDE.md`'s last line; where the project's own rules live |
 | `AGENT_TEAM.md` | v2.0 dual-mode workflow (identical across all variants) |
 | `PROJECT_CONTEXT.md` | Per-project config: tech stack, build/test commands, task source mode |
 | `PROJECT_STATE.md` | Sprint state tracking |
@@ -64,7 +64,7 @@ Extends the general template for C#/.NET projects. Its `CLAUDE.md` routes .NET w
 
 ### Dotnet-MAUI
 
-Extends the dotnet template for .NET MAUI desktop applications. Adds MAUI-specific conventions in `.claude/rules/xaml.md` (CommunityToolkit.Maui references, XAML namespace checks), scoped to `**/*.xaml` and `**/*.xaml.cs`, alongside the shared `csharp.md`. Setup generates a project-level `windows-mcp` entry. (Through v4.x the template tester agent was specialised for FlaUI and a settings hook blocked Windows-MCP `Click`/`Type`; neither ships since v5.0 — the plugin has one `cct:tester` and the template registers only the plugin-off guard.) SQLite MCP support is optional and configured through `PROJECT_CONTEXT.md` placeholders. Database-related fields (`{{DB_DIRECTORY}}`, `{{DB_FILENAME}}`, `{{DB_PATH}}`) can be left empty if the project does not use SQLite.
+Extends the dotnet template for .NET MAUI desktop applications. Adds MAUI-specific conventions in `.claude/rules/xaml.md` (CommunityToolkit.Maui references, XAML namespace checks), scoped to `**/*.xaml` and `**/*.xaml.cs`, alongside the shared `csharp.md`. Setup generates a project-level `windows-mcp` entry. SQLite MCP support is optional and configured through `PROJECT_CONTEXT.md` placeholders. Database-related fields (`{{DB_DIRECTORY}}`, `{{DB_FILENAME}}`, `{{DB_PATH}}`) can be left empty if the project does not use SQLite.
 
 ### Java
 
@@ -76,7 +76,7 @@ Its `CLAUDE.md` routes Python work to `cct:python-coder` (pytest/ruff discipline
 
 ### Rust-Tauri
 
-Its `CLAUDE.md` routes Rust/Tauri work to `cct:rust-coder` (cargo/clippy/fmt discipline). Ships `rustfmt.toml` and `.prettierrc` for Rust and TypeScript formatting. `.claude/rules/rust.md` (scoped to `**/*.rs`, `rustfmt.toml`, `Cargo.toml`) and `.claude/rules/frontend.md` (scoped to `src/**/*.ts`, `src/**/*.tsx`, `**/*.css`, `.prettierrc`) carry the "Code Style (MANDATORY)" blocks plus the backend/frontend conventions. Setup generates a project-level `windows-mcp` entry for desktop UI testing. (Rule 12 -- prefer `cargo_build`/`cargo_test`/`cargo_clippy` MCP tools over Bash -- lived in `CLAUDE.local.md`, retired in v4.0.1; the template no longer ships it.) Setup derives `**Test**` (`cargo test --manifest-path src-tauri/Cargo.toml`) and writes `**Post-edit build**: none`; the `**Gate**` is yours to set with `--gate-cmd` (e.g. `cargo fmt --check` + `npm run format --check` + the tests).
+Its `CLAUDE.md` routes Rust/Tauri work to `cct:rust-coder` (cargo/clippy/fmt discipline). Ships `rustfmt.toml` and `.prettierrc` for Rust and TypeScript formatting. `.claude/rules/rust.md` (scoped to `**/*.rs`, `rustfmt.toml`, `Cargo.toml`) and `.claude/rules/frontend.md` (scoped to `src/**/*.ts`, `src/**/*.tsx`, `**/*.css`, `.prettierrc`) carry the "Code Style (MANDATORY)" blocks plus the backend/frontend conventions. Setup generates a project-level `windows-mcp` entry for desktop UI testing. Setup derives `**Test**` (`cargo test --manifest-path src-tauri/Cargo.toml`) and writes `**Post-edit build**: none`; the `**Gate**` is yours to set with `--gate-cmd` (e.g. `cargo fmt --check` + `npm run format --check` + the tests).
 
 ## Project-Level MCP Matrix
 
@@ -114,9 +114,9 @@ See `docs/architecture.md` → *MCP Layering* and `mcp-servers/HOWTO.md` → *Pr
 | `{{FORMAT_COMMAND}}` | Format command | dotnet format |
 | `{{LINT_COMMAND}}` | Lint command | dotnet format --verify-no-changes |
 | `{{GATE_COMMAND}}` | Gate command (`cct-gate`, the plugin's `hooks/run-gate.sh`, runs it). Chaining is supported — `bash preflight.sh && <real gate>` — and a chained preflight can declare a **terminal** failure (one re-running cannot fix) by printing its remedy to stderr, touching `$RUN_GATE_TERMINAL` and exiting 78. Worked example: [`verification.md`](verification.md#terminal-conditions-in-a-gate-command) | dotnet format --verify-no-changes && dotnet test |
-| `{{DEFAULT_BRANCH}}` | **No template file uses it** since v2.2.3 — nothing fills it on a sync, so a permanent unresolved-placeholder warning was the only thing it earned. Both setup scripts still substitute it and record it in the manifest, so a reintroduced placeholder resolves for a bootstrapped repo. `--default-branch` itself is live: it rewrites `**Protected branches**:`. | main |
+| `{{DEFAULT_BRANCH}}` | **No template file uses it** — nothing fills it on a sync, so a permanent unresolved-placeholder warning was the only thing it earned. Both setup scripts still substitute it and record it in the manifest, so a reintroduced placeholder resolves for a bootstrapped repo. `--default-branch` itself is live: it rewrites `**Protected branches**:`. | main |
 | `{{DB_DIRECTORY}}` | Database directory (MAUI) | c:\Users\...\Data |
-| `{{DB_FILENAME}}` | Database filename (MAUI) — **not used by any current template** since `CLAUDE.local.md` was retired (v4.0.1); `setup-project.ps1` still accepts `-DbFilename` and warns when it is absent, which is a bootstrap defect logged for v4.0.4 | myproject.db |
+| `{{DB_FILENAME}}` | Database filename (MAUI) — **not used by any current template**; `setup-project.ps1` still accepts `-DbFilename` and warns when it is absent, which can be ignored | myproject.db |
 | `{{DB_PATH}}` | Full database path (MAUI) | c:\Users\...\Data\myproject.db |
 | `{{JAVA_VERSION}}` | Java version (Java) | 21 |
 | `{{PYTHON_VERSION}}` | Python version (Python) | 3.12 |
@@ -130,14 +130,14 @@ See `docs/architecture.md` → *MCP Layering* and `mcp-servers/HOWTO.md` → *Pr
 
 ## Template Manifest (v4)
 
-The setup script generates `.claude/template-manifest.json` in each target project (`manifest_version: 4` since v4.1.0; older v2 and v3 manifests are migrated by `template_migrate_manifest`). It records:
+The setup script generates `.claude/template-manifest.json` in each target project (`manifest_version: 4`; older v2 and v3 manifests are migrated by `template_migrate_manifest`). It records:
 
 - **`manifest_version`**: schema version (`4`)
 - **`variant`**: which template was applied (general, dotnet, dotnet-maui, rust-tauri, java, python)
 - **`templateRepo`**: absolute path to the claude-code-toolkit repo on disk
 - **`template_version`** / **`template_commit`**: the toolkit tag and commit the tracked tree matches at setup/sync
 - **`requires_server`**: the template-sync server floor (`>=4.1.0`), enforced on every later sync
-- **`instructions_file`**: the fixed path `.claude/project-instructions.md` (v4 declaration key). **`agent_grants`** (`.claude/agent-grants.json`) is still written by the v3→v4 migration for older servers, but since v5.0 it is accepted, never required and read by nothing
+- **`instructions_file`**: the fixed path `.claude/project-instructions.md` (v4 declaration key). **`agent_grants`** (`.claude/agent-grants.json`) is still written by the v3→v4 migration for older servers, but it is accepted, never required and read by nothing
 - **`placeholders`**: the concrete values used during setup (for reverse-mapping by `/cct:contribute-upstream`)
 - **`files`**: one entry per tracked path — `{"ownership": "template", "hash": "sha256:<hex>"}` for files the template owns (the hash is of the rendered content the server wrote, so a later diff is measurable), `{"ownership": "once"}` for files seeded once and then yours; files the ownership table does not name are yours and have no entry
 

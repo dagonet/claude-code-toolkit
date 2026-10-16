@@ -45,13 +45,34 @@ The **Mode Behavior Table** in AGENT_TEAM.md maps 12 workflow actions (task defi
 | T3 Standard | Multi-file, < 200 lines | coder + reviewer + tester | TDD required |
 | T4 Complex | Architectural, > 200 lines | architect + coder(s) + reviewer + tester | Full BDD/TDD |
 
-**Model & effort policy:** the orchestrator model is a per-session `/model` choice — `fable` for T3/T4 (multi-file or architectural) sessions, `opus` for T1/T2. Fable 5 needs fewer prompts and steers and sustains longer, higher-autonomy sessions, at roughly 2× Opus price. Session effort ships **unset** (the model's own default); effort is raised per role in the agent frontmatter — `architect` and `code-reviewer` at `xhigh`, workers at `medium`, `Explore` at `low`. Full rule set: `AGENT_TEAM.md` → *Model & Effort Policy*.
+**Model & effort policy:** the orchestrator model is a per-session `/model` choice — `fable` for T3/T4 (multi-file or architectural) sessions, `opus` for T1/T2. Fable 5 needs fewer prompts and steers and sustains longer, higher-autonomy sessions. Session effort ships **unset** (the model's own default); effort is raised per role in the agent frontmatter — `architect` and `code-reviewer` at `xhigh`, workers at `medium`, `Explore` at `low`. Full rule set: `AGENT_TEAM.md` → *Model & Effort Policy*.
+
+Every agent file declares its own `model:` and `effort:`, so cost follows the job instead of the session:
+
+| Agents | `model:` | `effort:` | Notes |
+|---|---|---|---|
+| `Explore` | `haiku` | `low` | Spawned as `cct:Explore`; the built-in `Explore` would otherwise inherit the session model |
+| `coder`, `*-coder`, `tester` | `sonnet` | `medium` | The coders run with `isolation: worktree`; `tester` does not |
+| `ops` | `sonnet` | `medium` | |
+| `architect`, `code-reviewer` | `opus` | `xhigh` | Judgement work, not throughput work |
+
+**Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`) — a pinned `claude-*` id bypasses a model proxy, and the verify script rejects one. **Do not pass `model:` in an Agent call**: it silently overrides the agent file. The diagnostic rule, stated once in `AGENT_TEAM.md` → *Model & Effort Policy*: wrong despite full context → bigger model; skipped files or tests not run → raise effort.
 
 **Delegate-everything model:** the PO never does hands-on work at any tier — coding, reviewing, testing, builds, env setup (`ops` agent), and exploration (`Explore` agent) are all sub-agent work, enforced by `hooks/enforce-delegation.sh` (registered by the plugin). The PO's write surface is limited to orchestration files — enumerated once, in the `enforce-delegation.sh` row of the hook table below.
 
 ## Context Budget
 
-Anthropic's [context-engineering guidance for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) favours progressive disclosure and mechanical enforcement over long prescriptive prompts. Measured state of this repo (general variant; the version columns are historical `wc -c` figures, the last column is `wc -c` at v5.1.0):
+Anthropic's [*The new rules of context engineering for Claude 5 generation models*](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) (2026-07-24) argues that newer models are hurt, not helped, by large prescriptive system prompts — Anthropic removed over 80% of Claude Code's own system prompt with no measurable loss on their coding evals. The guidance: unhobble the model, delete conflicting directives, disclose procedures progressively, and put tool instructions in tool descriptions rather than the prompt. The toolkit applies it like this:
+
+| Blog principle | How the toolkit applies it |
+|---|---|
+| **Progressive disclosure** | `AGENT_TEAM.md` is **not** read at session start — the bootstrap loads it only when spawning a sprint, writing a spawn brief, or answering merge/escalation questions. `VERIFICATION_PLAYBOOK.md` and all skills load on trigger, not up front. Language conventions live in path-scoped `.claude/rules/*.md` files that arrive only when Claude touches a matching file; the unscoped `project.md` each variant also ships is an always-loaded row in the table below. |
+| **Mechanism over mandate** | **Hook scripts** (registered by the cct plugin) enforce the rules that prose used to repeat — tests before a commit, no push to main, merge gate, delegation, subagent budget, a per-project post-edit build, a project-scope deny on editing-tool writes to a synced project's `CLAUDE.md`, a retro ledger of subagent failures replayed at session start, and two advisory time-sink hooks: `deny-hang-shapes` refuses heredoc-into-file writes, sleep/until/while polling loops and a leading `cd` before two or more commands, and `model-floor` gives a spawn that names no model the project's default instead of the orchestrator's. Consistency assertions and hook fixtures keep them from drifting; **the counts live in `CHANGELOG.md` and nowhere else**, so there is one place for them to drift out of. Where a hook enforces a rule, the prose does not need to shout it. |
+| **Declared keys over remembered rules** | A project states its facts once in `PROJECT_CONTEXT.md` and a hook reads them: `**Gate**`, `**Test**`, `**Protected branches**`, `**Gate-checked branches**`, `**Post-edit build**`, `**PO write surface**`, and, all opt-in, `**Test paths**`, `**Gate extra**`, `**Subagent default model**` and `**Test timeout**` (which also bounds the Gate fallback when there is no `**Test**`). An unfilled `{{placeholder}}` is *reported*, never silently treated as absent. The rule lives where it is enforced, not where someone has to remember it. |
+| **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; the project's own MCP notes say *when* to prefer a server, not what its parameters are. |
+| **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
+
+Measured state of this repo (general variant; the version columns are historical `wc -c` figures, the last column is `wc -c` at v5.1.0):
 
 | | Baseline (v1.3) | v1.5 | v2.0 | v2.1 | v3.1 (v3.1.0) | v4.0.3 | v4.1.0 | v4.1.1 | v4.1.2 | v4.2.0 | v4.3.0 | v4.3.1 | v4.4.0 | v4.4.1 | v4.4.2 | v4.5.0 | v4.5.1 | v4.5.2 | v4.6.0 | v4.6.1 | v4.6.2 | v5.0.0 | **v5.1.0** | Loaded |
 | --- | --- | --|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---| --- | --- |-- | --- | --- | --- |

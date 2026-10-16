@@ -26,7 +26,7 @@ After applying a template, walk through this checklist to confirm everything is 
 
 10. **For Python**: verify `pytest` runs and `ruff check` passes
 
-11. **Run one T1 task end to end** to verify the `AGENT_TEAM.md` workflow — the PO plans, spawns a single `coder` subagent with the Agent tool, and reads its final message. Agent teams and named teammates were retired in v2.0; parallelism comes from spawning several Agent calls, not from a team.
+11. **Run one T1 task end to end** to verify the `AGENT_TEAM.md` workflow — the PO plans, spawns a single `cct:coder` subagent with the Agent tool, and reads its final message. Agent teams and named teammates were retired in v2.0; parallelism comes from spawning several Agent calls, not from a team.
 
 ### When a control turns out to be invalid
 

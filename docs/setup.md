@@ -151,7 +151,7 @@ Bash flags use `--kebab-case`; PowerShell uses `-PascalCase`. Both scripts accep
 | `--dry-run` | `-DryRun` | Preview which files would be copied, which placeholders would be replaced, and — computed over the rendered content, so identical to the real run — which placeholders would remain unfilled. Writes nothing. |
 | `--build-cmd` / `--test-cmd` / `--format-cmd` / `--lint-cmd` / `--gate-cmd` | `-BuildCmd` / `-TestCmd` / `-FormatCmd` / `-LintCmd` / `-GateCmd` | Fill the command placeholders on **any** variant. An explicit flag always wins over the value a variant derives from `--build-tool` / `--package-manager` / `--solution-file`. `general` derives nothing, so these are the only way to fill them. |
 | `--default-branch <name>` | `-DefaultBranch <name>` | The repo's trunk. Rewrites the `**Protected branches**:` line in `PROJECT_CONTEXT.md` when `main master` would not cover it. Must be a plain ref name. Defaults to the target repo's current branch, else `main`. |
-| `--wrap-existing-claude-md` | `-WrapExistingClaudeMd` | When the target already has a `CLAUDE.md`, write the template and move the existing file's full content into `.claude/project-instructions.md` instead of skipping (v4.1: `CLAUDE.md` has no `PROJECT-CUSTOM` region). An existing `.claude/project-instructions.md` is never overwritten or merged into; in that case nothing is moved and the old `CLAUDE.md` is overwritten by the template. |
+| `--wrap-existing-claude-md` | `-WrapExistingClaudeMd` | When the target already has a `CLAUDE.md`, write the template and move the existing file's full content into `.claude/project-instructions.md` instead of skipping (`CLAUDE.md` has no `PROJECT-CUSTOM` region). An existing `.claude/project-instructions.md` is never overwritten or merged into; in that case nothing is moved and the old `CLAUDE.md` is overwritten by the template. |
 | `--force` | `-Force` | Overwrite existing files in the target directory (default: skip existing). |
 | `--mcp-dev-servers-path <path>` | `-McpDevServersPath <path>` | Path to a local clone of [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers). Required for `dotnet`, `dotnet-maui`, `rust-tauri` variants to generate project-level `dotnet-tools` / `rust-tools`. |
 | `--sqlite-db-path <path>` | `-SqliteDbPath <path>` | Optional; generates a project-level `sqlite` MCP entry for any variant. |
@@ -166,14 +166,14 @@ chmod +x ~/repos/claude-code-toolkit/setup-project.sh
 
 ## Manual Setup
 
-Manual setup is unsupported since v5.0. The project-enforcement hooks stay inert until `.claude/template-manifest.json` exists, and only `setup-project.sh` / `setup-project.ps1` and a `/cct:sync-template` finalize write it. Use the setup script.
+Manual setup is unsupported. The project-enforcement hooks stay inert until `.claude/template-manifest.json` exists, and only `setup-project.sh` / `setup-project.ps1` and a `/cct:sync-template` finalize write it. Use the setup script.
 
 ## Platform Notes
 
 ### Windows
 
 - **PowerShell 5.1+** is pre-installed on Windows 10 and 11. The setup script is compatible with both Windows PowerShell 5.1 and PowerShell 7+.
-- **Path separators**: MCP server configurations (`~\.claude\.mcp.json`) typically use backslashes for Windows paths. Most other contexts (Git, Claude Code, Bash) accept forward slashes on Windows without issues.
+- **Path separators**: MCP server configurations (`~\.claude.json` for user scope, `<project>\.mcp.json` for project scope) typically use backslashes for Windows paths. Most other contexts (Git, Claude Code, Bash) accept forward slashes on Windows without issues.
 - **Windows-MCP** is auto-configured for `dotnet-maui` and `rust-tauri` variants via `uvx windows-mcp` (project-level). Used by the `cct:tester` agent for desktop UI smoke tests.
 
 ### Linux / macOS

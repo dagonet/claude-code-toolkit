@@ -278,7 +278,7 @@ Four things about it are load-bearing, and each is pinned by a test:
 - **Absence is the signal, not a low version.** A body too old to carry the instruction sends
   nothing at all, so `skill_version` missing is what identifies a stale skill.
 - **The value comes from the CALLER, never from reading the installed
-  `~/.claude/skills/sync-template/SKILL.md`.** That file reports the *disk*; the failure being
+  installed sync-template `SKILL.md` (the plugin's `skills/sync-template/SKILL.md`).** That file reports the *disk*; the failure being
   gated is a session running a body it read at startup, so a disk read returns a confident
   green in exactly the stale case. It works because the threat is staleness, not deceit.
 - **`dry_run` is never refused.** Inspection stays open, because previewing is what surfaces a

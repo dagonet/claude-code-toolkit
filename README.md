@@ -3,166 +3,116 @@
 
 # Claude Code Toolkit
 
-> **Bootstrap a project with a production-ready [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workflow in one command.** The `cct` plugin brings an opinionated agent team, skills and workflow-enforcement hooks to every session; six template variants drop the project side (instructions, workflow, MCP permissions, the plugin-off guard) into your repo — so `/cct:commit`, `/cct:sprint`, and the `cct-gate` build/test gate work the moment you're done.
+**Install one plugin and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) gets a team of specialist agents, safety guard rails and handy commands.**
+
+The `cct` plugin is for people who run Claude Code on real projects. You want it to work in a team and stay inside the lines, without building the setup by hand.
+Optional project templates then put a working setup into your repo. Windows, macOS and Linux; any language, with ready-made setups for .NET, Java, Python and Rust.
+
+## What you get
+
+### A team of agents
+
+Claude hands work to specialists instead of doing everything itself. Call them as `cct:<name>`. Each one has its own model and effort, so search is cheap and review is thorough.
+
+| Agent | What it does |
+|---|---|
+| `cct:coder` | Implements a change in its own git worktree, so your working copy stays clean |
+| `cct:dotnet-coder`, `cct:java-coder`, `cct:python-coder`, `cct:rust-coder` | The same, with the habits of that language |
+| `cct:tester` | Checks a feature against its acceptance criteria with tests and logs |
+| `cct:code-reviewer` | Reviews code and posts sorted findings. Never edits |
+| `cct:architect` | Reviews design and keeps the architecture notes. Never writes application code |
+| `cct:ops` | Setup, installs, one-off tool runs, diagnostics and log collection |
+| `cct:Explore` | Read-only search. Returns file and line pointers, never whole files |
+
+### Guard rails
+
+Hooks are small scripts that Claude Code runs around its actions. The plugin ships them. In a project set up from the templates they:
+
+- stop a push to `main` and a merge until the build and tests pass (`cct-gate`, your own gate command);
+- stop a commit while the tests are red;
+- refuse reads of secret files such as `.env`;
+- keep the lead session delegating: it plans and reviews, the agents edit code and run builds;
+- guard against oversized file reads, runaway agents and shell habits that stall a session.
+
+### A plain report style
+
+`cct:pm-report` makes Claude report like a status update for a product manager: what changed and why, not a wall of technical detail.
+Select it with `"outputStyle": "cct:pm-report"` in `~/.claude/settings.json`. `/output-style default` switches back.
+
+### Skills
+
+Slash commands you can run in any session.
+
+| Skill | What it does |
+|---|---|
+| `/cct:commit` | Shows you exactly what will be committed, then commits |
+| `/cct:sprint` | Runs a backlog as parallel agent workstreams, with a rebase and the gate before each merge |
+| `/cct:challenge` | Questions a plan in two passes (is it needed, is it right) before you run it |
+| `/cct:sync-template` | Pulls template updates into your project and keeps your own edits |
+| `/cct:contribute-upstream` | Sends an improvement from your project back to the toolkit templates |
+| `/cct:retro-review` | Reviews agent failures, config drift and which projects are behind |
+| `/cct:jev` | Switches the optional model routing on or off (below) |
+
+Two more start by themselves when they fit: `mcp-usage` (steps for large inputs and MCP servers) and `karpathy-guidelines` (habits that avoid common coding mistakes).
+
+### Project templates
+
+Six variants give a project its instructions, workflow, tool permissions and build gate: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java` and `python`.
+Which one fits, and what each adds: [`docs/templates.md`](docs/templates.md).
+
+### Optional: model routing with Jev
+
+Off by default. `/cct:jev on` lets the Jev service pick the model and effort for each agent launch. The `jev` skill explains what is sent.
+
+## Install
+
+In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
+
+```
+/plugin marketplace add dagonet/claude-code-toolkit#v5.1.0
+/plugin install cct@dagonet
+```
+
+Optional: copy [`user-level-reference/CLAUDE.md`](user-level-reference/CLAUDE.md) to `~/.claude/CLAUDE.md` for the user-level rules.
+Its `settings.json` needs merging, not copying: see [`user-level-reference/README.md`](user-level-reference/README.md).
+
+- **Upgrading from v4.x?** Windows PC: [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
+  Linux: `bash scripts/install-user-level-linux.sh` from a checkout. The CHANGELOG has the migration notes.
+- **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
+  `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.0 && claude plugin install cct@dagonet`
+- **Moving to a new release:** a pinned install does not advance by itself. Run `claude plugin marketplace remove dagonet`,
+  add the new `#tag` the same way, run `claude plugin install cct@dagonet`, restart, then run `/cct:sync-template`.
+  Without the `#tag`, the add tracks the default branch and `claude plugin update cct@dagonet` advances it.
+- A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.
+
+## Start a project
+
+You need `git`, Claude Code, and one JSON reader for the hooks (`node`, `python3` or `jq`).
 
 ```bash
+git clone https://github.com/dagonet/claude-code-toolkit && cd claude-code-toolkit
 ./setup-project.sh --variant python --project-name MyApp --target-path ../my-app
 # Windows: .\setup-project.ps1 -Variant python -ProjectName MyApp -TargetPath ..\my-app
 ```
 
-✅ **For:** Claude Code users on Windows / macOS / Linux working in .NET, Java, Python, Rust+Tauri, .NET MAUI — or any other language (`general`).
+Add `--dry-run` to preview. Open the new project in Claude Code and try `/cct:sprint` or `cct-gate`.
+Prefer a guided walk-through? Ask Claude, Cursor or Copilot to follow [`AGENTS.md`](AGENTS.md).
 
----
+**Keep it current:** run `/cct:sync-template` in the project. It brings in newer template files and leaves the files you own alone.
 
-## Install
+## Learn more
 
-The toolkit's user level is the Claude Code plugin `cct@dagonet` (this repo is the marketplace `dagonet`). Install it once per machine, then restart the session:
+- [`docs/getting-started.md`](docs/getting-started.md): prerequisites and how much of the setup to adopt
+- [`docs/setup.md`](docs/setup.md): setup flags and examples for every platform
+- [`docs/templates.md`](docs/templates.md): the six variants, placeholders and the manifest
+- [`docs/architecture.md`](docs/architecture.md): how the layers, hooks, model policy and context budget fit together
+- [`docs/template-sync.md`](docs/template-sync.md): how template updates reach your project
+- [`docs/verification.md`](docs/verification.md): check that your setup works
+- [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md): optional MCP servers
+- [`docs/history.md`](docs/history.md) and [`CHANGELOG.md`](CHANGELOG.md): how it got here and what changed in each release
 
-```
-/plugin marketplace add dagonet/claude-code-toolkit
-/plugin install cct@dagonet
-```
-
-- **Linux host:** `bash scripts/install-user-level-linux.sh` from a checkout installs the plugin (pinned to this checkout's release tag), writes `~/.claude/CLAUDE.md` and merges `settings.json`, and moves any v4.x user-level leftovers aside. `bash scripts/verify-user-level-drift.sh` then reports 0 drift.
-- **Windows PC moving from v4.x:** follow [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
-- **Cloud environments** (claude.ai/code, routines): a cloud session loads neither a repo's `enabledPlugins` nor your local plugins, so add this to the environment's setup script:
-
-  ```bash
-  claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.0 && claude plugin install cct@dagonet
-  ```
-
-A synced project refuses every tool call while the plugin is not active in the session (`BLOCKED: the cct plugin is not active in this session. ...`); `/plugin` slash commands still work there. Every toolkit release then needs the plugin moved to the new tag and a session restart before the next `/cct:sync-template`. A `#tag`-pinned marketplace never advances on `claude plugin update` or `claude plugin marketplace update`; run `claude plugin marketplace remove dagonet && claude plugin marketplace add dagonet/claude-code-toolkit#<new tag> && claude plugin install cct@dagonet`. The unpinned form above (`/plugin marketplace add dagonet/claude-code-toolkit`) tracks the default branch, and `claude plugin update cct@dagonet` advances it; only the pinned form needs the remove/add/install recipe.
-
-## What you get
-
-- **6 template variants** (`general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`) with language-specific build hooks, format gates, and conventions baked in.
-- **10 agents from the plugin** (`cct:<name>`) — Explore, architect, code-reviewer, coder, ops, tester, plus the language coders `dotnet-coder` / `rust-coder` / `java-coder` / `python-coder`; each variant's `CLAUDE.md` names the one to spawn. Each one declares its own `model:` and `effort:`, so exploration runs on haiku and review on opus without the caller thinking about it.
-- **9 plugin skills**, no slash-command directory: `/cct:challenge`, `/cct:commit`, `/cct:sprint`, `/cct:sync-template`, `/cct:contribute-upstream`, `/cct:retro-review`, `/cct:jev`, plus `mcp-usage` and `karpathy-guidelines` which auto-trigger. Anthropic merged custom commands into skills, so the toolkit ships one artifact type; the `Gate:` mechanism (`cct-gate`) replaced the old `/build` and `/test` commands, and the official `skill-creator` plugin replaced `/skill-eval` + `/skill-improve`.
-- **Pre-wired MCP permissions** for git, github, dotnet, rust, ollama, sqlite, windows-mcp, searxng, open-brain, and more — registered once per scope, not per project.
-- **File ownership you can point at** (v3.1): every template file carries a class — `template` (the toolkit's, overwritten on sync), `once` (seeded, then yours forever), and project-by-absence (a file the table does not name is yours). `setup-project` records it per file in a manifest with a `sha256:` hash, so `/cct:sync-template` stops guessing which of your edits it is allowed to discard. Your own instructions live in `.claude/project-instructions.md` (a `once` file that `CLAUDE.md`'s last line imports; since v4.1.0 `CLAUDE.md` itself is template-owned and carries no `PROJECT-CUSTOM` region).
-- **Workflow enforcement hooks**: the git/`gh` CLI is allowed and *gated* — the hooks parse the command and stop a red-gate commit, a push to main, and an ungated merge; plus delegation enforcement (the orchestrator never edits code or runs builds), a `Read` size gate, an agent tool-call budget, and a retro ledger that records subagent failures and replays them at the next session start.
-
-### Model & effort policy
-
-Every agent file declares its own `model:` and `effort:`, so cost follows the job instead of the session. The **session** effort level ships unset — Opus 5 / Fable 5 pick their own default per step; raise it per role with the agent's `effort:`, or `/effort` for one session. The orchestrator model is a `/model` choice at session start: `fable` for T3/T4 (multi-file or architectural) work, `opus` for T1/T2.
-
-| Agents | `model:` | `effort:` | Notes |
-|---|---|---|---|
-| `Explore` | `haiku` | `low` | Spawned as `cct:Explore`; the built-in `Explore` would otherwise inherit the session model |
-| `coder`, `*-coder`, `tester` | `sonnet` | `medium` | The coders run with `isolation: worktree`; `tester` does not |
-| `ops` | `sonnet` | `medium` | |
-| `architect`, `code-reviewer` | `opus` | `xhigh` | Judgement work, not throughput work |
-
-**Aliases only** (`sonnet` / `opus` / `haiku` / `fable` / `inherit`) — a pinned `claude-*` id bypasses a model proxy, and the verify script rejects one. **Do not pass `model:` in an Agent call**: it silently overrides the agent file. The diagnostic rule, stated once in `AGENT_TEAM.md` → *Model & Effort Policy*: wrong despite full context → bigger model; skipped files or tests not run → raise effort.
-
-## Context engineering for Claude 5 generation models
-
-Anthropic's [*The new rules of context engineering for Claude 5 generation models*](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models) (2026-07-24) argues that newer models are hurt, not helped, by large prescriptive system prompts — Anthropic removed **over 80% of Claude Code's own system prompt** with no measurable loss on their coding evals. The guidance: unhobble the model, delete conflicting directives, disclose procedures progressively, and put tool instructions in tool descriptions rather than the prompt.
-
-This toolkit is designed around the same idea, and the numbers are measured rather than asserted:
-
-| Blog principle | How the toolkit applies it |
-|---|---|
-| **Progressive disclosure** | `AGENT_TEAM.md` is **17,941 B and is *not* read at session start** — the bootstrap loads it only when spawning a sprint, writing a spawn brief, or answering merge/escalation questions. (The *Context Budget* table's older v4.1.0/v4.1.1 cells used to read 20,467 B, a pre-existing 13 B discrepancy against those tags' own `wc -c` (20,454 B); **corrected 2026-09-26 (post-release)** — see `docs/architecture.md`.) `VERIFICATION_PLAYBOOK.md` and all **9 skills** load on trigger, not up front. Language conventions live in path-scoped `.claude/rules/*.md` files that arrive only when Claude touches a matching file (7 files, 12,661 B across the five language variants; the unscoped `project.md` each variant also ships is an always-loaded row below). |
-| **Mechanism over mandate** | **Hook scripts** (registered by the cct plugin) enforce the rules that prose used to repeat — tests before a commit, no push to main, merge gate, delegation, subagent budget, a per-project post-edit build, a project-scope deny on editing-tool writes to a manifest-v4 consumer's `CLAUDE.md` (v4.1.0), a retro ledger of subagent failures replayed at session start, and (v4.3.0) two advisory time-sink hooks: `deny-hang-shapes` refuses heredoc-into-file writes, sleep/until/while polling loops and a leading `cd` before two or more commands, and `model-floor` gives a spawn that names no model the project's default instead of the orchestrator's. Consistency assertions and hook fixtures keep them from drifting; **the counts live in `CHANGELOG.md` and nowhere else**, deliberately, so there is one place for them to drift out of rather than three. Where a hook enforces a rule, the prose does not need to shout it. |
-| **Declared keys over remembered rules** (v3.1) | A project states its facts once in `PROJECT_CONTEXT.md` and a hook reads them: `**Gate**`, `**Test**`, `**Protected branches**`, `**Gate-checked branches**`, `**Post-edit build**`, `**PO write surface**`, and (v4.3.0, all opt-in) `**Test paths**`, `**Gate extra**`, `**Subagent default model**`, and (v4.3.1) `**Test timeout**` (which also bounds the Gate fallback when there is no `**Test**`). An unfilled `{{placeholder}}` is *reported*, never silently treated as absent. The same move as putting tool instructions in tool descriptions — the rule lives where it is enforced, not where someone has to remember it. |
-| **Tool instructions live with the tools** | MCP usage rules point at the tool catalog instead of duplicating schemas; the project's own MCP notes say *when* to prefer a server, not what its parameters are. |
-| **Let the model use judgement** | Tier tables are **caps, not targets** — "pick the lowest defensible tier and justify escalation, not restraint." Question-shaped turns spawn at most one agent. |
-
-**The trim pass, measured.** The surface loaded by the end of bootstrap went **41,167 B → 15,725 B (−62%)** on the `general` variant (the harness-injected part 40,221 → 12,303 B), across v1.4, v1.5, v2.0, v2.1, the v3.1 diet and the v4.0.1 retirement of `CLAUDE.local.md`. Every column is `wc -c` on the shipped files at that release, and **every release adds its own column** (v5.1.0: general 18,028 harness-injected, 23,272 at the end of bootstrap, both unchanged from v5.0.0) (the same table, with per-variant totals, is in [`docs/architecture.md`](docs/architecture.md)):
-
-| File | Baseline (v1.3) | v1.5 | v2.0 | v2.1 | v3.1 (v3.1.0) | v4.0.3 | v4.1.0 | v4.1.1 | v4.1.2 | v4.2.0 | v4.3.0 | v4.3.1 | v4.4.0 | v4.4.1 | v4.4.2 | v4.5.0 | v4.5.1 | v4.5.2 | v4.6.0 | v4.6.1 | v4.6.2 | v5.0.0 | **v5.1.0** |
-| --|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-- | --- | --- | --- | --- | --- | --- | --- |
-| `CLAUDE.md` | 17,871 | 13,735 | 10,362 | 10,560 | 6,143 | 6,143 | 6,114 | 6,114 | 6,114 | 6,114 | 6,114 | 6,114 | 6,114 | 6,114 | 6,114 | 5,977 | 5,977 | 5,977 | 5,977 | 5,977 | 5,977 | 5,965 | **5,965** |
-| `CLAUDE.local.md` | 13,845 | 9,352 | 9,417 | 9,417 | 8,655 | — (retired v4.0.1) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| user-level `CLAUDE.md` | 8,505 | 8,505 | 5,089 | 5,076 | 5,076 | 5,453 | 5,453 | 5,453 | 6,622 | 6,622 | 7,448 | 7,448 | 7,585 | 7,585 | 7,585 | 7,585 | 7,585 | 7,585 | 7,585 | 7,585 | 7,585 | 7,817 | **7,817** |
-| output style `pm-report` (user level through v4.6.2, the cct plugin's `cct:pm-report` since v5.0; default on; `/output-style default` removes it) | — | — | — | — | — | — | — | — | — | 2,736 | 2,736 | 2,736 | 2,736 | 2,736 | 2,736 | 2,681 | 2,681 | 2,681 | 2,681 | 2,681 | 2,681 | 2,681 | **2,681** |
-| `.claude/rules/project.md` (unscoped) | — | — | — | — | 634 | 707 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | 742 | **742** |
-| `.claude/project-instructions.md` (once, seed only — a consumer's own content is added at bootstrap/migration and is theirs, never counted here) | — | — | — | — | — | — | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | 823 | **823** |
-| **harness-injected at session start** | **40,221** | 31,592 | 24,868 | 25,053 | 19,874 | 12,303 | 13,132 | 13,132 | 14,301 | 17,037 | 17,863 | 17,863 | 18,000 | 18,000 | 18,000 | 17,808 | 17,808 | 17,808 | 17,808 | 17,808 | 17,808 | 18,028 | **18,028** |
-| `PROJECT_CONTEXT.md` (read at bootstrap step 3, not injected) | 946 | 946 | 946 | 946 | 3,170 | 3,422 | 3,422 | 3,422 | 3,569 | 3,569 | 4,709 | 5,128 | 5,258 | 5,258 | 5,258 | 5,258 | 5,258 | 5,258 | 5,258 | 5,258 | 5,258 | 5,244 | **5,244** |
-| **at the end of bootstrap** | **41,167** | 32,538 | 25,814 | 25,999 | 23,044 | 15,725 | 16,554 | 16,554 | 17,870 | 20,606 | 22,572 | 22,991 | 23,258 | 23,258 | 23,258 | 23,066 | 23,066 | 23,066 | 23,066 | 23,066 | 23,066 | 23,272 | **23,272** |
-| process share (subagents, by context load / by wall-clock; `scripts/measure-process.py`) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | before: pending (local baseline, `docs/plans/measurements/process-v4.3.0.md`) · after: pending | — | — | — | — | — | — | — |
-
-Column file sets, so every historical figure is reproducible from its release tag: Baseline through v3.1 injected = `CLAUDE.md` + `CLAUDE.local.md` + user-level `CLAUDE.md` (v3.1 also shipped the unscoped `project.md`, not yet counted); v4.0.3 injected = `CLAUDE.md` + `project.md` + user-level `CLAUDE.md`; **v4.1.0 injected = `CLAUDE.md` + `project.md` + user-level `CLAUDE.md` + the `.claude/project-instructions.md` seed** (v4.1.0 makes it an always-imported file, `CLAUDE.md`'s last line); "end of bootstrap" adds `PROJECT_CONTEXT.md` in every column. Two subtotals, because they are two quantities (reviewer, #145): the harness injects `CLAUDE.md`, the user-level `CLAUDE.md` and the unscoped rules file unconditionally at session start; `PROJECT_CONTEXT.md` arrives as a tool result because bootstrap step 3 tells the model to read it — a different lever, a different certainty, and 22% of the headline. `PROJECT_CONTEXT.md` grew on purpose: it is where the declared keys live, and every byte added there removes prose a hook would otherwise have to trust an agent to remember. `project.md` joins the table at v4.0.3 because v4.0.1 measured that an unscoped rules file loads at every session start (it was already shipping at v3.1; the v3.1 total did not count it). **v4.1.0 is the first release where these totals GROW, not shrink** — general's injected/bootstrap subtotals go 12,303→13,132 and 15,725→16,554, +829 B either way: the new 823 B `.claude/project-instructions.md` seed becoming always-imported outweighs the −29 B `CLAUDE.md` trim and the +35 B `project.md` reword (R-G) that land in the same release. The seed's row reports only its OWN bytes — a real consumer's file grows as project content moves in, and that growth is never counted here, because it belongs to the consumer, not the template. **v4.1.1's column is identical to v4.1.0's, file set and byte counts both** — the v4.1.1 file set is the same five injected files plus `PROJECT_CONTEXT.md`, and none of them changed that release: the patch touched the server, hooks, the consistency script, and the sync-template skill, never a `CLAUDE.md`, `project.md`, `project-instructions.md` seed, the user-level `CLAUDE.md`, or a `PROJECT_CONTEXT.md`, in any variant. **v4.1.2 grows both subtotals again, general's injected/bootstrap going 13,132→14,301 and 16,554→17,870, +1,169 B and +1,316 B**: this release adds a "Git Worktrees — declared location" section to the reference user-level `CLAUDE.md` (+1,169 B, one file, machine-wide) and one byte-identical clause to every variant's `PROJECT_CONTEXT.md` naming `EnterWorktree`'s fixed, unconfigurable location (+147 B, all six variants) — the two files behind this table's growth; the third file that moves this release, the on-demand `AGENT_TEAM.md` (net **−12 B** per variant after a trim absorbs a new orphan-job paragraph), is not one of the always-loaded rows here and is called out in `docs/architecture.md`'s copy of this table instead. `CLAUDE.md` and `.claude/rules/project.md` are untouched this release. Re-measured with `wc -c`, not carried forward. **v4.2.0 grows both subtotals by exactly one new file's bytes, general going 14,301→17,037 and 17,870→20,606, +2,736 B each**: the `pm-report` output style is injected into the system prompt at every session start, so it is the sole addition to this table this release; the inline `UserPromptSubmit` time hook prints one line into the context on every user message — `Current local time: HH:MM (YYYY-MM-DD Www)` plus its trailing newline, 43 B measured with `wc -c` on that printed line, not on the `LC_ALL=C date '+Current local time: %H:%M (%Y-%m-%d %a)'` command that produces it — a per-turn cost outside this table's per-file, per-session-start counts; the `backlog-board` skill's frontmatter `description:` line (key, value and trailing newline, measured with `wc -c` on the line itself; the value alone is 210 B) adds 224 B to the skill listing; and no template file's own bytes moved — every `templates/*/CLAUDE.md`, `PROJECT_CONTEXT.md` and `.claude/rules/project.md` figure is unchanged from v4.1.2. **v4.3.0 grows both subtotals again, general's injected/bootstrap going 17,037→17,863 and 20,606→22,572, +826 B and +1,966 B (= 826 + 1,140)**: the reference user-level `CLAUDE.md` gains a Write-tool note and a new `## Sub-Agent Model Choice` section (6,622→7,448, +826 B), and every variant's `PROJECT_CONTEXT.md` gains the commented `**Test paths**`, `**Gate extra**` and `**Subagent default model**` examples (general 3,569→4,709, +1,140 B; the same +1,140 B in dotnet, dotnet-maui, python and rust-tauri, +1,149 B in java, whose example path is longer). `CLAUDE.md`, `.claude/rules/project.md`, the `project-instructions.md` seed and the `pm-report` style are untouched; the on-demand `AGENT_TEAM.md`, not an always-loaded row here, moves 20,442→20,476 B (+34 B, 4 B under its 20,480 B cap). Every figure is `wc -c` at this release's own tip, not carried forward; the per-variant sums are in `docs/architecture.md`. **v4.3.1 leaves the harness-injected subtotal where v4.3.0 left it and grows the end-of-bootstrap one by one commented line, general going 22,572→22,991, +419 B (17,863 injected, unchanged)**: every variant's `PROJECT_CONTEXT.md` gains the commented `**Test timeout**` example (general 4,709→5,128 B, +419 B; the same +419 B in all six variants), and the on-demand `AGENT_TEAM.md` moves 20,476→20,462 B (−14 B) when its stale `.gate/last-pass.json` references become the artifact wording. `CLAUDE.md`, `.claude/rules/project.md`, the `project-instructions.md` seed, the user-level `CLAUDE.md` and the `pm-report` style did not change. Every figure is `wc -c` at this release's own tip, not carried forward. **v4.4.0 grows both subtotals, general going 17,863→18,000 (+137 B) and 22,991→23,258 (+267 B)**: the reference user-level `CLAUDE.md` gains the U-1 exception to "every Agent spawn names its `model`" (7,448→7,585 B, +137 B, both subtotals), and every variant's `PROJECT_CONTEXT.md` gains the Gate-fallback clause in its commented `**Test timeout**` example (+130 B each; general 5,128→5,258) — nothing else in this table moved: every variant's `CLAUDE.md`, `.claude/rules/project.md`, the seed and the `pm-report` style repeat their v4.3.1 bytes, and the on-demand `AGENT_TEAM.md` stays at 20,462 B. The rest of the release (the user-invoked `jev` skill, `hooks/lib/agent-model.sh`, checks and fixtures) is not always-loaded. In a repo where Jev is on, its `SessionStart` notice prints one 181 B line (`wc -c` on the echoed text) into each new session: a conditional per-session cost outside this table. Whether the `disable-model-invocation` skill adds bytes to the skill listing is not measured. Every figure is `wc -c` at this release's own tip, not carried forward. **v4.5.0 moves both subtotals down, general going 18,000→17,808 and 23,258→23,066, −192 B each**: every variant's `CLAUDE.md` drops the skills mandate and the binding-table pointers (general 6,114→5,977 B, −137 B), and the `pm-report` style's rule 9 becomes generic, a status board if one is set up (2,736→2,681 B, −55 B); the on-demand `AGENT_TEAM.md` drops its copy-paste snippets and binding table (20,462→17,741 B, −2,721 B), and the `backlog-board` skill is retired (skills 10→9). `.claude/rules/project.md`, the `project-instructions.md` seed, the user-level `CLAUDE.md` and every `PROJECT_CONTEXT.md` repeat their v4.4.2 bytes. **From v4.5.0 every always-loaded file is capped by check 35** (caps in the CHANGELOG's v4.5.0 section). The new `process share` row is a measurement, not a loaded file: its v4.5.0 cell holds a pending baseline and a pending after-figure from `scripts/measure-process.py`. Every figure is `wc -c` at this release's own tip, not carried forward. **v4.5.1's column is unchanged from v4.5.0's, byte for byte (general injected 17,808, end of bootstrap 23,066), re-measured with `wc -c` at this release's own tip, not carried forward.** The patch changed the test suite, the template-sync server, the Linux install script, the sync-template SKILL.md (marker and one sentence), one doc sentence and the release files, never an always-loaded file.
-
-**v5.0.0 grows both subtotals, general going 17,808→18,028 (+220 B) and 23,066→23,272 (+206 B)**, re-measured with `wc -c` at this release's tip: the reference user-level `CLAUDE.md` gains its `## cct plugin` section (7,585→7,817, +232 B), every variant's `CLAUDE.md` names the `cct:` agents and `cct-gate` (general 5,977→5,965, −12 B) and every `PROJECT_CONTEXT.md` names `cct-gate` (general 5,258→5,244, −14 B). The `pm-report` style now ships in the plugin (`cct:pm-report`) and still loads at every session start, at 2,681 B; `project.md` and the seed did not move. Per-variant figures are in `docs/architecture.md`.
-
-**v5.1.0 moves neither subtotal**: general stays 18,028 and 23,272, re-measured with `wc -c` at this release's tip (not carried forward). The release changes the Jev router, `scripts/jev-tally.py` and the sync-template marker; none of the five injected files or `PROJECT_CONTEXT.md` changed.
-
-**v3.1 made the budget a ratchet rather than a intention.** Consistency check 35 caps `CLAUDE.md` at 6,144 B and `AGENT_TEAM.md` at 20,480 B per variant, measured against what the files are now — so a file cannot grow back without the check going red and someone deciding that it should. At v3.1 all six variants sat within a few bytes of the cap (`general` at 6,143 of 6,144; at v4.5.0, 5,977 of 6,144), which is what a ratchet looks like when it is working. **From v4.5.0 the ratchet covers every always-loaded template file**, not just these two: `rules/project.md`, `project-instructions.md`, `PROJECT_CONTEXT.md` (per variant), the user-level `CLAUDE.md` and the `pm-report` style carry caps too, each set at the file's size plus a 128 B or 256 B margin.
-
-v2.1 spent 185 B rather than saving them: the *Pick the session model* bootstrap step and the `use a workflow` line are both decisions the PO takes before any file is open, which is the one place always-loaded text earns its cost. No cut was invented elsewhere to keep the −37% headline round.
-
-Every v2.0 figure is `wc -c` on the shipped file, not an arithmetic carry-forward. The **pre-PR4** column exists because PR1–PR3 moved two of these files for reasons unrelated to the trim: `CLAUDE.md` drifted 13,735 → 13,892 and `CLAUDE.local.md` 9,352 → 9,413, which is why the v2.0-pr4 CHANGELOG entry starts its cut at 13,892 rather than at the v1.5 number. The user-level row's drop is PR5 deleting the context-mode routing block (8,637 → 5,089 B).
-
-**v1.4 relocated rather than deleted.** Ten MCP procedures (Ollama warm-up, digesting large inputs, structured extraction, orientation, quality/security sweeps, Context7, headless batch, performance, default workflow) moved into a new **`mcp-usage` skill**; the per-agent Open Brain tables moved into `AGENT_TEAM.md`, which is already on-demand; the Superpowers block keeps its hard triggers and points at the user-level copy for the rest. The on-demand side grew accordingly — `AGENT_TEAM.md` 47,968 → 49,724 B, skills 11 → 12.
-
-**v1.5 deleted, because a mechanism already covers it.** *Working Preferences* went from 18 bullets to 11 (3,939 → 2,393 B). Seven were dropped: five that a hook or the harness already enforces — reading before editing, running tests before commit, never pushing to main, `Read` size limits, keeping the PO out of hands-on work — and two with no behavioural content. In their place, one line naming where the enforcement lives, so the omission reads as deliberate rather than as an oversight. This is the unhobbling move: state that a mechanism exists instead of repeating the rule it enforces. The `"22% of total context"` statistic also collapsed from **7 files to 1**.
-
-**v2.0-pr4 scoped, because the rule only applies to some files.** Every variant's *Code Style (MANDATORY)*, *Enforcement Notes*, and *Project Conventions* sections moved verbatim into `.claude/rules/*.md` with a `paths:` frontmatter glob list — a C# style rule now enters context when Claude opens a `.cs` file and not before. **Corrected in v3.1, on measurement:** this section used to claim that a rule *without* `paths:` "loads at launch at CLAUDE.md cost". **Corrected again in v4.0.1, on re-measurement (item 14, this repo's own `zz-load-probe.md`): the v3.1 correction went too far the other way.** A rule file WITH a `paths:` key does arrive only attached to a tool call touching a file it matches, and is absent from a subagent's context at spawn even when scoped — that part of the v3.1 correction holds. But a rule file with **no `paths:` key at all** loads at **every session start**, at the same priority as `CLAUDE.md` — it is not "delivered to nobody"; unscoped is the opposite of scoped, not a third, undelivered state. So anything that must be true *before* work begins — safety rules, prohibitions, which tool to reach for — belongs in `CLAUDE.md`'s PROJECT-CUSTOM region or an unscoped rules file, never assumed absent from session start. The toolkit ships scoped rules only for language conventions, for the reason it always gave: those apply to a subset of files, and scoping keeps them out of context otherwise. The duplicated Spawn-Prompt Binding Table (already in `AGENT_TEAM.md` and enforced by a hook) went with it.
-
-A second round routed two more sections by **audience** rather than by topic. *Open Brain Context for Agents* duplicated `AGENT_TEAM.md` §Open Brain Context for Agents, which is on-demand and more detailed — CLAUDE.md keeps a pointer. *Working Preferences* binds developer agents, not the PO, and every coder preloaded `karpathy-guidelines` via `skills:` at the time — so its 11 bullets moved into that skill and reached the agents that act on them at spawn time, costing nothing on turns that spawn no one (since v4.5.0 each coder carries a digest of them as its `## Working rules` instead of preloading the skill). Only the hook-enforcement line stayed, because it is PO-relevant. `general` variant CLAUDE.md: 13,892 → **10,362 B**; `rust-tauri`, now the largest, 16,749 → **11,296 B**.
-
-**v2.1 unhobbled three more places, and each one removed a rule rather than adding one.** The plan gate is gone — a coder spawn no longer needs a `docs/plans/` file carrying `Tier:` and challenge evidence, because Boris Cherny's *"I don't use plan mode anymore … it just doesn't need it"* describes the models this toolkit targets; what replaces it is the task brief in the spawn prompt, which is prose, not a second mechanism. The session-level `effortLevel: medium` is gone too: `xhigh` is the documented default for Opus 4.7 and later, so pinning a level capped the model below its own default on every turn — effort is now raised only on `architect` and `code-reviewer`, where judgement happens, and model choice is a written policy (`/model fable` for T3/T4) rather than a setting. And the tier table gained an exit: work too big for one pass is answered with **"use a workflow"**, letting Claude script its own fan-out instead of the PO hand-decomposing it. Two rules deleted, one judgement call added — the direction the blog argues for.
-
-Every literal a hook greps is pinned by `scripts/verify-template-consistency.sh` (the check and assertion counts live in `CHANGELOG.md`, nowhere else), so none of the cuts could silently break enforcement — including the exact Superpowers header, the `superpowers:` token the checks require, and (new in PR4) that every rules file is genuinely path-scoped and that the relocated developer preferences survive in the skill that now carries them.
-
-If you are adopting the toolkit and want Anthropic's own verdict on your `CLAUDE.md` and skills, run `/doctor`.
-
-## 5-minute quickstart
-
-1. **Install prerequisites:** `git`, one JSON parser for the hooks (`node`, `python3` or `jq` — native Claude Code installs ship no `node`), Claude Code CLI (`npm install -g @anthropic-ai/claude-code`) and the cct plugin (see [Install](#install)). Variant-specific extras (.NET SDK, Rust, JDK, Python) are listed in [`docs/getting-started.md`](docs/getting-started.md).
-2. **Clone:**
-   ```bash
-   git clone https://github.com/dagonet/claude-code-toolkit
-   cd claude-code-toolkit
-   ```
-3. **Run the setup script** against your project directory:
-   ```bash
-   ./setup-project.sh --variant <variant> --project-name <name> --target-path <path>
-   ```
-   Every variant accepts `--build-cmd`, `--test-cmd`, `--format-cmd`, `--lint-cmd`, `--gate-cmd`, `--worktree-base`, `--log-path`, and `--default-branch`; an explicit flag always wins over the value a variant would derive. Add `--wrap-existing-claude-md` to keep an existing `CLAUDE.md` — its full content moves into `.claude/project-instructions.md` instead of the file being skipped. Run with `--dry-run` first: it now prints the same "Remaining placeholders to fill manually" report as the real run.
-
-   See [`docs/setup.md`](docs/setup.md) for per-variant flags and full examples.
-4. **(Optional) Install MCP servers** for tool-accelerated workflows: [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
-5. **Open your project in Claude Code** and try `/cct:sprint` or `cct-gate`.
-
-> Prefer to walk Claude / Cursor / Copilot through the wizard interactively? See [`AGENTS.md`](AGENTS.md).
-
-## Variants at a glance
-
-| Variant | Use when | Extras vs. `general` |
-|---|---|---|
-| `general` | Any language, no special tooling | — |
-| `dotnet` | C#/.NET 8+ | `cct:dotnet-coder`, `dotnet build` post-edit build, `dotnet format` in the Gate |
-| `dotnet-maui` | .NET MAUI desktop | as `dotnet`, + Windows-MCP, optional SQLite |
-| `rust-tauri` | Rust + Tauri v2 desktop | `cct:rust-coder`, derived `cargo test`, Windows-MCP |
-| `java` | Java + Maven/Gradle (Spring Boot default) | `cct:java-coder`, Spotless in the Gate |
-| `python` | Python 3.11+ (pip / Poetry / uv) | `cct:python-coder`, `ruff format` + `ruff check` in the Gate |
-
-Full comparison + project-level MCP matrix: [`docs/templates.md`](docs/templates.md).
-
-## Documentation
-
-| What you want to do | Where to look |
-|---|---|
-| Walk Claude / Cursor / Copilot through setup | [`AGENTS.md`](AGENTS.md) |
-| Detailed setup walkthrough (Windows + Linux/macOS) | [`docs/setup.md`](docs/setup.md) |
-| Prerequisites + adoption tiers (start small, grow into it) | [`docs/getting-started.md`](docs/getting-started.md) |
-| Compare variants, see placeholders + manifest format | [`docs/templates.md`](docs/templates.md) |
-| Install MCP servers | [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md) |
-| Architecture: layered config, hooks, AGENT_TEAM v2.0 | [`docs/architecture.md`](docs/architecture.md) |
-| Where MCP servers actually live (`~/.claude.json`, `<root>/.mcp.json`) | [`docs/architecture.md` → MCP Layering](docs/architecture.md) |
-| Verify your setup works | [`docs/verification.md`](docs/verification.md) |
-| Keep projects in sync with the templates | [`docs/template-sync.md`](docs/template-sync.md) |
-| Reference for `~/.claude/` (`CLAUDE.md`, settings; the plugin's agents and skills) | [`user-level-reference/README.md`](user-level-reference/README.md) |
-| Move a Windows PC from v4.x to the plugin | [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md) |
-
-## Related projects
-
-- [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) — six custom MCP servers (87 tools, static census at `0a20b97`) for git, GitHub, .NET, Rust, Ollama and Python. Used by every variant. `template-sync-tools` moved out at 0.4.0 and now ships from this repo's own `server/` (v4.0.0+) — see [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md).
-- [**open-brain**](https://github.com/dagonet/open-brain) — persistent memory MCP server for storing decisions, insights, and context across sessions.
+Related: [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) (MCP servers for git, GitHub, .NET, Rust, Ollama, Python)
+and [**open-brain**](https://github.com/dagonet/open-brain) (memory across sessions).
 
 ## Contributing
 
@@ -170,4 +120,4 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_COND
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT, see [`LICENSE`](LICENSE).
