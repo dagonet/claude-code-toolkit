@@ -35,10 +35,10 @@ In every repo, once the plugin is installed, they:
 
 In a project set up from the templates, they also:
 
-- hold a merge until `cct-gate`, the project's Gate command, has passed on that commit;
+- hold a merge until the project's Gate command (run it with `cct-gate`) has passed on that commit; with no Gate command set, merges are not held;
 - stop a commit while the tests are red;
 - keep the lead session delegating: it plans and reviews, the agents edit code and run builds;
-- warn about oversized file reads and runaway agents.
+- cap oversized file reads and stop runaway agents.
 
 ### A plain report style
 
@@ -61,7 +61,8 @@ Two more start by themselves when they fit: `cct:mcp-usage` (steps for large inp
 
 ### Project templates
 
-Six variants give a project its instructions, workflow, tool permissions and build gate: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`. Compared in [`docs/templates.md`](docs/templates.md).
+Six variants give a project its instructions, workflow, tool permissions and build gate: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`.
+Compared in [`docs/templates.md`](docs/templates.md).
 
 ### Optional: model routing with Jev
 
@@ -70,7 +71,8 @@ It is switched on per clone and needs a TypeSafe API key; the `cct:jev` skill ex
 
 ## Install
 
-First, `git`, Claude Code and a JSON reader for the hooks: `node`, `python3` or `jq`. Without one, the git and secret-read guards refuse in every repo.
+First, `git`, Claude Code and a JSON reader for the hooks: `node`, `python3` or `jq`.
+Without any of the three, every shell command and file read is refused, in every repo.
 `node` gives the full set; with only `python3` or `jq` the delegation and read-size hooks do nothing.
 
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
@@ -84,8 +86,8 @@ Optional: copy [`user-level-reference/CLAUDE.md`](user-level-reference/CLAUDE.md
 Its Platform section assumes Windows with Git Bash, so adapt it on macOS and Linux (the Linux installer below does).
 Its `settings.json` needs merging, not copying: see [`user-level-reference/README.md`](user-level-reference/README.md).
 
-- **Upgrading from v4.x?** Windows PC: [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
-  Linux: `bash scripts/install-user-level-linux.sh` from a checkout. The CHANGELOG has the migration notes.
+- **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup.
+- **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md). The CHANGELOG has the migration notes.
 - **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
   `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.0 && claude plugin install cct@dagonet`
 - **Moving to a new release:** a pinned install does not advance by itself. Run `claude plugin marketplace remove dagonet`,
