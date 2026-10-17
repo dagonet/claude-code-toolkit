@@ -1,2 +1,2 @@
-5.1.1
-Patch: the drift script passes the commit gate when typed, the delegation deny and /cct:jev status name the cct: agents and the v4-clone wait, template and sync-skill wording from the v5.1.0 rollout, and the README is a plugin-era page (history in docs/history.md).
+5.1.2
+v5.1.2: finalize derives applied-file hashes; apply reports unresolved placeholders (#210)

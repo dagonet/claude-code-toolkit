@@ -4,10 +4,10 @@ On Linux `scripts/install-user-level-linux.sh` does steps 1-3 in this order. On 
 
 1. **Install the plugin.** In a Claude Code session:
    ```
-   /plugin marketplace add dagonet/claude-code-toolkit#v5.1.1
+   /plugin marketplace add dagonet/claude-code-toolkit#v5.1.2
    /plugin install cct@dagonet
    ```
-   Check that `claude plugin list` shows `cct@dagonet` at version `5.1.1`. Until step 2 the old user-level copies are still registered; the plugin steps aside for them, so nothing fires twice.
+   Check that `claude plugin list` shows `cct@dagonet` at version `5.1.2`. Until step 2 the old user-level copies are still registered; the plugin steps aside for them, so nothing fires twice.
 
 1b. **Copy the v5 `user-level-reference/CLAUDE.md` to `~/.claude/CLAUDE.md`** (the Linux installer's step 2; kept as "1b" so the step numbers below stay stable). Back up the existing `~/.claude/CLAUDE.md` to `CLAUDE.md.bak-<date>` first, and carry over any lines of your own. The reference carries the Windows platform section as it is. Step 6's drift check compares this file with the reference and reports drift until it is in place.
 
@@ -29,9 +29,9 @@ On Linux `scripts/install-user-level-linux.sh` does steps 1-3 in this order. On 
 
 6. **Check.** From the toolkit checkout:
    ```
-   bash scripts/verify-user-level-drift.sh v5.1.1
+   bash scripts/verify-user-level-drift.sh v5.1.2
    ```
-   It must report 0 drift: `CLAUDE.md` equal to the reference, `cct@dagonet` installed at `5.1.1`, and no path from the leftovers list present.
+   It must report 0 drift: `CLAUDE.md` equal to the reference, `cct@dagonet` installed at `5.1.2`, and no path from the leftovers list present.
 
 **Later releases (v5.0.x and up):** the marketplace is pinned to a tag, so `claude plugin update cct@dagonet` and `claude plugin marketplace update` (measured, claude 2.1.301) never advance it, and adding the marketplace over the existing entry is refused. Move to the new tag with `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#<new tag>`, then `claude plugin install cct@dagonet`. (The remove uninstalls the plugin: until the install succeeds, synced projects refuse every tool.) Pull your toolkit checkout to the same tag, then restart every session before the next `/cct:sync-template`. A session that syncs after the pull but before its restart is refused; restart it. Check the tag exists first: `git ls-remote --tags https://github.com/dagonet/claude-code-toolkit refs/tags/<new tag>`.
 

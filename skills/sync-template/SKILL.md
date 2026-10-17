@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /cct:sy
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v5.1.1 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v5.1.2 -->
 
 **This skill takes no arguments.** Invoke it as `/cct:sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -14,7 +14,7 @@ Pull updates from the claude-code-toolkit template repo into the current project
 
 **The line above is the version of the body YOU LOADED, and you must be able to state it.** A running session obeys the skill body it read at session start, not the file on disk — measured live: an installed `SKILL.md` byte-identical to the current release while sessions started earlier were still executing the previous version's steps. So *"re-copy `SKILL.md`"* and *"the drift check reports 0"* can both pass while every live session runs the old workflow. Step 1 passes this marker to the server, which refuses a body older than the checkout's own.
 
-**Requires:** `template-sync-tools` MCP server registered and running, **version >= 5.0.0** — read from the `template_load_manifest` response, not from `pip show` or the checkout. Two different floors, do not conflate them: a v4 manifest enforces `">=4.1.0"` at load (`MIN_SERVER_FOR_V4`), the oldest server that can read a v4 manifest without applying a region-less `CLAUDE.md` over a consumer whose project content still lives in the region; THIS skill's floor is 5.0.0 (`template_load_manifest` takes `skill_version` only from v5.0; the body also relies without any fallback on the 4.3.1 behaviour) — the untracked-file write guard (`present_on_disk`, `overwrite_existing`), `files_created`, and `pending_once_notes`. An older server silently overwrites an untracked file the guard would have refused. `manifest_version` below 4 — v2 **or** v3 — means the project has not reached the current model yet: v2 still migrates first to v3 (unchanged from prior releases), and v3 now migrates on to v4 (step 1c below covers both hops). A skimmer who reads only the header number and stops still gets the number that protects them, same as before.
+**Requires:** `template-sync-tools` MCP server registered and running, **version >= 5.1.2** — read from the `template_load_manifest` response, not from `pip show` or the checkout. Two different floors, do not conflate them: a v4 manifest enforces `">=4.1.0"` at load (`MIN_SERVER_FOR_V4`), the oldest server that can read a v4 manifest without applying a region-less `CLAUDE.md` over a consumer whose project content still lives in the region; THIS skill's floor is 5.1.2 (step 7 sends path-only applied items with no fallback, and only a 5.1.2 server derives them; `template_load_manifest` takes `skill_version` only from v5.0; the body also relies without any fallback on the 4.3.1 behaviour) — the untracked-file write guard (`present_on_disk`, `overwrite_existing`), `files_created`, and `pending_once_notes`. An older server silently overwrites an untracked file the guard would have refused. `manifest_version` below 4 — v2 **or** v3 — means the project has not reached the current model yet: v2 still migrates first to v3 (unchanged from prior releases), and v3 now migrates on to v4 (step 1c below covers both hops). A skimmer who reads only the header number and stops still gets the number that protects them, same as before.
 
 **Linux/macOS: skip the Windows path notes** (the platform notes, `cygpath`, MSYS and `/tmp` drive-relative passages); they apply only under Git Bash on Windows.
 
@@ -1040,9 +1040,9 @@ The five forms above are scoped to the **project tree**. `~/.claude/` is not in 
 
 ### 7. Finalize
 
-Call `template_finalize_sync(project_path=".", applied_files_path=<json-path>)`, where `<json-path>` is the JSON file of all `template_apply_file` results written as described below.
+Call `template_finalize_sync(project_path=".", applied_files_path=<json-path>)`, where `<json-path>` is the JSON file written as described below: one object per apply result that carries `file_path` (written or kept), never the path of a refused call.
 
-**Re-check the toolkit HEAD at finalize.** Finalize records the toolkit's HEAD *at that moment* as `template_commit`; if the toolkit was pulled or committed to since step 1, the recorded commit (and the case-2 superset check above) describes a different tree than the one you applied. Re-run `git -C <templateRepo> rev-parse HEAD` just before this call and compare with the commit you started from; if it moved, re-run status before finalizing.
+**Re-check the toolkit HEAD at finalize.** Finalize records the toolkit's HEAD *at that moment* as `template_commit`; if the toolkit was pulled or committed to since step 1, the recorded commit (and the case-2 superset check above) describes a different tree than the one you applied. Re-run `git -C <templateRepo> rev-parse HEAD` just before this call and compare with the commit you started from; if it moved, do not finalize path-only: go back to step 2 (status) and re-apply against the new tree before finalizing, because path-only entries are hashed from the template as it is at finalize. A HEAD compare cannot see uncommitted edits under the checkout's `templates/`, so do not edit the toolkit checkout during a sync.
 
 `new_files` REGISTERS an untracked path and never touches an existing entry; a tracked file you updated outside `template_apply_file` keeps its stale hash (`LOCAL_EDITED` with an empty `local_diff`) until you pass it in `applied_files`, which REFRESHES the hash; the post-finalize `compute_status` self-check is the control.
 
@@ -1052,7 +1052,7 @@ Call `template_finalize_sync(project_path=".", applied_files_path=<json-path>)`,
 
 **Act on the predates-part-hash hint (v2.2.4, consumer feedback).** When `template_compute_status` marks a file with the hint that its manifest entry predates part hashes ("re-register to get region-aware classification"), that file goes in this sync's keep-mine registration set (step 4's `source="provided"` splice under v3, not `source="skip"`) — re-registered last, with the keep-mine files above. Until it is, the server cannot tell region content from real deviation and has to report the file as deviating. Measured on a consumer repo: after re-registration `CLAUDE.md` came back with `localPartHash == templatePartHashAtSync`, reclassified `region_only: true, deviates_from_template: false`, and the deviating count dropped 4 → 3 — the honest number, because that file does not deviate from the template, it only carries region content. Do not leave the hint for the next sync; it is emitted precisely because this sync can clear it. **If no entry carries a hint, there is nothing to do here** — this clause exists for manifests that predate the part-hash fields, and a recently-synced repo has already re-registered everything (measured: `hint: ""` on all 36 entries of one consumer). An empty hint set is the healthy state, not a missing step.
 
-Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type entries (hand-typed hashes have silently corrupted a manifest; the server now rejects malformed hashes, but the discipline stands).
+Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` results only — never hand-assemble or re-type paths or actions. Since v5.1.2 the JSON holds one `{"file_path": ..., "action": ...}` object per applied file, copied from that file's apply result, with no hashes: finalize derives each entry from the path: ownership from the manifest or the ownership rules, the hash from the rendered template. The full apply results are still accepted. A derivation the server cannot do refuses the whole finalize and writes nothing.
 
 **Shape this as two short commands, not one long one.** Write the `applied_files` JSON — and any validator — to the scratchpad with the Write tool, then run `python3 <validator-path> <json-path>`. The payload can contain hook paths, and a long command line carrying them is the shape that has repeatedly tripped a guard: it is also the standing "move logic into a script file" rule, arriving from a third direction. (`<json-path>` here is a path the Write tool just produced, not one typed from bash — see the bash→python platform note in the intro before shortcutting this to a `$TMPDIR`-derived string.) Pass that same file to the server as `applied_files_path=<json-path>` instead of hand-typing `applied_files` into the call.
 
@@ -1062,7 +1062,7 @@ Build `applied_files` PROGRAMMATICALLY from the collected `template_apply_file` 
 
 **Post-finalize self-check:** re-run `template_compute_status(project_path=".")`. A clean sync shows `auto_update: 0, conflict: 0`. Anything else means the manifest was corrupted during finalize — report it to the user instead of finishing.
 
-**Post-apply placeholder sweep (MANDATORY).** One grep over the applied set, before the report.
+**Post-apply placeholder sweep (MANDATORY).** One grep over the project's config files (`.claude`, `hooks`, `*.md`, tracked `*.json`), before the report. Since v5.1.2 the server also reports leftover `{{NAME}}` placeholders per applied file (`unresolved_placeholders` in each written apply result); the sweep stays, because it also covers files this sync did not apply.
 
 **Run the three arms below verbatim; do not invent a broader regex.** The placeholder shape this toolkit ships is `{{[A-Z_]{2,}}}` and nothing else. A consumer widened it to `__[A-Z_]{3,}__` and got 38 false hits in one sweep — that shape is every MCP tool name (`mcp__MCP_DOCKER__…`), not a placeholder. A sweep that cries wolf 38 times is a sweep the next person skips.
 
@@ -1239,7 +1239,7 @@ Sync complete: {variant} @ {new_commit}
   Spliced:      [list — files where template and local content were combined by hand]
   Skipped:      [list]
   New files:    [list]
-  Warnings:     [list — every placeholder-sweep hit belongs here]
+  Warnings:     [list — every placeholder-sweep hit belongs here, and every non-empty unresolved_placeholders from the apply results as <file>: NAME, ...]
   User-level:   [one-line verify-user-level-drift.sh summary]
   Gates:        live (parser: {backend} — {consequence})
   Toolkit:      {template_version} ({template_commit})
@@ -1421,7 +1421,7 @@ For each new arm: delete the arm, re-run the suite, count the rows that flip. **
 - NEVER write `.claude/settings.json` before every script it references exists on disk (invariant I2), whichever step introduced those scripts
 - NEVER record `rc=127` or `rc=126` from `bash -n` (or any checker) as a PASS — 0 and 2 are the only verdicts, 126/127 are hard ERRORS naming the path, and "the check did not run" is a raised `FileNotFoundError`, not a return code (step 4)
 - NEVER exec a checker by bare name, and never by a hardcoded platform path — resolve it once with `shutil.which` (or the shell equivalent) and exec the absolute path it returns (step 4)
-- NEVER hand-assemble or re-type `applied_files` entries — collect the tool results verbatim
+- NEVER hand-assemble or re-type paths or actions in `applied_files`; copy them from the tool results (step 7)
 - ALWAYS re-run `template_compute_status` after finalize and report anything other than a clean result
 - ALWAYS call `template_finalize_sync` at the end, even if no files changed (updates `template_commit`/`template_version`)
 - NEVER fail or roll back a sync because `template_version` comes back `null` (no reachable tag matches) — that is a real, honest answer, not a resolution failure

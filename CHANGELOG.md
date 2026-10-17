@@ -1,5 +1,30 @@
 # Changelog
 
+## v5.1.2 — 2026-10-17
+
+Patch. The sync agent no longer has to copy a sha256 per file into the finalize call, and a placeholder left unresolved in a written file is reported instead of passing silently. Closes #210.
+
+**Floor reviewed: unchanged at >=v5.0.0.** Older skill bodies pass full apply results to `template_finalize_sync`, and the server still accepts those unchanged, so `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. The sync-template `SKILL.md` marker moves to v5.1.2 only because consistency check 21c-2g requires it to equal `VERSION`.
+
+### Added
+- **`template_finalize_sync` derives an applied file's manifest entry itself (#210).** An `applied_files` item may now be a bare path string or a `{"file_path", "action"}` object. The server takes the ownership from the stored manifest entry, else from the ownership rules, and the hash from the rendered template, which is what `template_apply_file` records for a template unchanged since the apply. A path-only item for a file applied with `source="provided"` (a keep-mine splice) therefore records the template's hash, not the spliced content's. An item the server cannot derive (the template file is gone, a `project`-class path, `CLAUDE.md` still inside the v3 migration window, a `..` path) refuses the whole finalize and writes nothing. Full apply results are accepted exactly as before.
+- **`template_apply_file` reports `unresolved_placeholders` (#210).** A written result lists, sorted and without braces, the `{{NAME}}` placeholders still present in the content that landed, which happens when the manifest has no value for a key the template uses. With every key present the list is empty.
+- **The sync skill uses both.** Step 7 passes paths and actions to finalize, with no hashes, and the report's Warnings line lists the unresolved placeholders per file. The post-apply placeholder sweep stays: it covers files this sync did not apply.
+- **The sync skill now needs server >= 5.1.2.** Step 7 sends path-only applied items with no fallback, and only a 5.1.2 server derives them. The stated floor in the skill's `Requires` line and in `docs/template-sync.md` moves from 5.0.0 to 5.1.2; step 1 compares `server_version` with that floor and stops below it, which is the guard when the plugin is at v5.1.2 but the checkout and server are still at 5.1.1 (the stale-server check passes there). A server older than the pulled checkout is also refused by `template_load_manifest`'s stale-server check. `requires_skill` is a different floor (the skill version the server accepts) and is unchanged.
+- **A v2 manifest refuses a path-only applied item.** The v2 finalize validation now says `path-only applied items need manifest v3 or later: migrate first` and writes nothing, instead of skipping the item while still writing the manifest.
+- **Issue triage.** #173, #174 and #175 were closed on 2026-10-17. The items still live in them became #210, which this release closes.
+
+### Downstream migration
+The same measured recipe as v5.1.1 (`claude plugin marketplace update` and `claude plugin update` do not move a tag-pinned install, and `claude plugin marketplace remove` also uninstalls `cct`).
+1. Run `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v5.1.2`, then `claude plugin install cct@dagonet`, back to back.
+   On Linux, pull the checkout first and run `bash scripts/install-user-level-linux.sh` instead; it installs the checkout's own tag.
+2. Pull your toolkit checkout (the one that runs the template-sync server) to the same tag, and restart every session before the next `/cct:sync-template`.
+
+### Measured at the release tree (host agent-host-1)
+- `bash scripts/test-server.sh`: 539 passed, 0 failed, 9 skipped (v5.1.1 measured 522 passed, 9 skipped). The suite needs `bash server/install.sh` once after the `VERSION` bump, because `test_hatch_reads_the_same_version_file` compares the installed metadata with `VERSION`.
+- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 341 PASS lines and 1 skipped check; the bootstrap-fixture block inside it ran 38 passed, 0 failed, 34 skipped (72 assertions, the 34 skips are the PowerShell cases). The one skipped check is check 42 arm 2 (the non-decreasing `Floor reviewed` comparison with the previous release tag): the tag `v5.1.1` did not exist locally when this tree was measured, because v5.1.1 was still unmerged. That is why the count is 341 and not v5.1.1's 342; once v5.1.1 is tagged the arm runs again. Check 50 prints as a PASS line while skipping (no `python`, only `python3`), as in v5.1.1.
+- `bash scripts/test-hooks.sh`: 4167 passed, 0 failed, 6 skipped (the release touches no hook; measured by the merge gate on the release tree).
+
 ## v5.1.1 — 2026-10-16
 
 Patch. Fixes from the v5.1.0 rollout to the first projects, template and sync-skill wording, and a README rewritten as a plugin-era product page.

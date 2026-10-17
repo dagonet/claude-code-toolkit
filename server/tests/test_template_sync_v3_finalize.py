@@ -521,3 +521,166 @@ def test_finalize_v3_preserves_per_file_unknown_keys(tmp_path):
         "hash": "sha256:" + ts._sha256("v1\n"), "ownership": "template",
         "reason": "Project-specific config", "note": "x",
     }
+
+
+def _manifest_files(proj) -> dict:
+    return json.loads((proj / ".claude" / "template-manifest.json").read_text(encoding="utf-8"))["files"]
+
+
+def test_finalize_derives_path_only_entry_equal_to_apply_result(tmp_path):
+    """#210 part 1: a path-only applied item gets the hash the apply result carried."""
+    repo, proj = _mk_v3(tmp_path, template={"hooks/new.sh": "n\n"}, project={}, entries={})
+    _init_repo(repo)
+    created = _run(ts.template_apply_file(str(proj), "hooks/new.sh", source="template"))
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([{"file_path": "hooks/new.sh"}])))
+    assert "error" not in res
+    assert _manifest_files(proj)["hooks/new.sh"] == created["manifest_entry"]
+
+
+def test_finalize_derives_template_hash_for_provided_apply(tmp_path):
+    """The derived hash is the template's, not the hash of source='provided' content."""
+    repo, proj = _mk_v3(tmp_path, template={"hooks/new.sh": "n\n"}, project={}, entries={})
+    _init_repo(repo)
+    created = _run(ts.template_apply_file(str(proj), "hooks/new.sh", source="provided", content="mine\n"))
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([{"file_path": "hooks/new.sh"}])))
+    assert "error" not in res
+    derived = _manifest_files(proj)["hooks/new.sh"]["hash"]
+    assert derived == created["manifest_entry"]["hash"]
+    assert derived != "sha256:" + ts._sha256("mine\n")
+
+
+def test_finalize_derives_once_class_from_bare_string(tmp_path):
+    repo, proj = _mk_v3(tmp_path, template={".claude/rules/project.md": "p\n"},
+                        project={".claude/rules/project.md": "p\n"}, entries={})
+    _init_repo(repo)
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([".claude/rules/project.md"])))
+    assert "error" not in res
+    assert _manifest_files(proj)[".claude/rules/project.md"] == {"ownership": "once"}
+
+
+def test_finalize_path_only_missing_template_refuses_whole_finalize(tmp_path):
+    repo, proj = _mk_v3(tmp_path, template={"hooks/new.sh": "n\n", "hooks/ok.sh": "o\n"},
+                        project={}, entries={})
+    _init_repo(repo)
+    ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "hooks/new.sh").unlink()
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps(["hooks/ok.sh", "hooks/new.sh"])))
+    assert "manifest NOT written" in res["error"]
+    assert res["invalid_entries"] == ["hooks/new.sh: template file hooks/new.sh not found"]
+    assert manifest_path.read_bytes() == before
+
+
+def test_finalize_mixed_applied_forms_and_created_count(tmp_path):
+    repo, proj = _mk_v3(tmp_path,
+                        template={"hooks/g.sh": "g1\n", "hooks/a.sh": "a\n", "hooks/b.sh": "b\n"},
+                        project={"hooks/g.sh": "g0\n"}, entries={"hooks/g.sh": _tpl_entry("g0\n")})
+    _init_repo(repo)
+    full = _run(ts.template_apply_file(str(proj), "hooks/g.sh", source="template"))
+    _run(ts.template_apply_file(str(proj), "hooks/a.sh", source="template"))
+    _run(ts.template_apply_file(str(proj), "hooks/b.sh", source="template"))
+    applied = [full, {"file_path": "hooks/a.sh", "action": "created_from_template"}, "hooks/b.sh"]
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps(applied)))
+    assert "error" not in res
+    files = _manifest_files(proj)
+    assert {"hooks/g.sh", "hooks/a.sh", "hooks/b.sh"} <= set(files)
+    assert files["hooks/a.sh"] == _tpl_entry("a\n")
+    assert files["hooks/b.sh"] == _tpl_entry("b\n")
+    assert res["files_created"] == 1
+    assert res["files_updated"] == 2
+
+
+def test_finalize_path_only_rejects_dotdot_and_non_object(tmp_path):
+    repo, proj = _mk_v3(tmp_path, template={"hooks/g.sh": "g\n"}, project={}, entries={})
+    _init_repo(repo)
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps(["../x", 42])))
+    assert "manifest NOT written" in res["error"]
+    assert "invalid file_path: '../x'" in res["invalid_entries"]
+    assert "applied item must be an object or a path string: 42" in res["invalid_entries"]
+
+
+@pytest.mark.parametrize("path, stored, tpl_content, project_content", [
+    # stored template, rules say once
+    (".claude/rules/project.md", "template", "p\n", "p\n"),
+    # stored once, rules say template
+    ("hooks/g.sh", "once", "g\n", "g\n"),
+])
+def test_finalize_path_only_honours_stored_ownership_like_apply(
+        tmp_path, path, stored, tpl_content, project_content):
+    """The stored manifest entry wins over the rules, in apply and so in the derived entry."""
+    entry = _tpl_entry(tpl_content) if stored == "template" else {"ownership": "once"}
+    repo, proj = _mk_v3(tmp_path, template={path: tpl_content}, project={path: project_content},
+                        entries={path: entry})
+    _init_repo(repo)
+    applied = _run(ts.template_apply_file(str(proj), path, source="template"))
+    assert applied["manifest_entry"]["ownership"] == stored
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([{"file_path": path}])))
+    assert "error" not in res
+    assert _manifest_files(proj)[path] == applied["manifest_entry"]
+
+
+def test_finalize_path_only_claude_md_window_refuses_whole_finalize(tmp_path):
+    """Apply refuses CLAUDE.md under the v3 window; so must a path-only finalize."""
+    repo, proj = _mk_v3(tmp_path, template={"CLAUDE.md": "v1\n", "hooks/ok.sh": "o\n"},
+                        project={"CLAUDE.md": "v1\n"}, entries={})
+    _init_repo(repo)
+    apply_res = _run(ts.template_apply_file(str(proj), "CLAUDE.md", source="template"))
+    assert apply_res["error"] == f"CLAUDE.md: {v3.MIGRATION_REQUIRED_REMEDY}"
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps(["hooks/ok.sh", "CLAUDE.md"])))
+    assert "manifest NOT written" in res["error"]
+    assert res["invalid_entries"] == [f"CLAUDE.md: {v3.MIGRATION_REQUIRED_REMEDY}"]
+    assert manifest_path.read_bytes() == before
+
+
+def test_finalize_path_only_project_class_refuses_whole_finalize(tmp_path):
+    """A project-class path is never written by the server, so it cannot be derived."""
+    repo, proj = _mk_v3(tmp_path,
+                        template={"hooks/ok.sh": "o\n", ".claude/agents/local-x.md": "x\n"},
+                        project={".claude/agents/local-x.md": "x\n"}, entries={})
+    _init_repo(repo)
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(
+        str(proj), json.dumps(["hooks/ok.sh", ".claude/agents/local-x.md"])))
+    assert "manifest NOT written" in res["error"]
+    assert res["invalid_entries"] == [
+        ".claude/agents/local-x.md: ownership is 'project'; the server never writes it"]
+    assert manifest_path.read_bytes() == before
+
+
+def test_finalize_inline_applied_files_object_is_refused(tmp_path):
+    """A JSON object inline must not be iterated by its keys into path-only items."""
+    repo, proj = _mk_v3(tmp_path, template={"hooks/ok.sh": "o\n"}, project={}, entries={})
+    _init_repo(repo)
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps({"hooks/ok.sh": 1})))
+    assert "applied_files" in res["error"]
+    assert manifest_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("item", [
+    {"file_path": "CLAUDE.md"},
+    "CLAUDE.md",
+])
+def test_finalize_v2_refuses_path_only_items(tmp_path, item):
+    """A v2 manifest has no derivation: a path-only item is refused, not silently dropped."""
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "general" / "CLAUDE.md").write_text("v1\n", encoding="utf-8", newline="")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / "CLAUDE.md").write_text("v1\n", encoding="utf-8", newline="")
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    manifest_path.write_text(json.dumps({
+        "version": 2, "templateRepo": str(repo), "variant": "general", "placeholders": {},
+        "lastSynced": "", "files": {},
+    }), encoding="utf-8")
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([item])))
+    assert "manifest NOT written" in res["error"]
+    assert res["invalid_entries"] == [
+        "CLAUDE.md: path-only applied items need manifest v3 or later: migrate first"]
+    assert manifest_path.read_bytes() == before
