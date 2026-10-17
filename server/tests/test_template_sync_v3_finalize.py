@@ -650,6 +650,17 @@ def test_finalize_path_only_project_class_refuses_whole_finalize(tmp_path):
     assert manifest_path.read_bytes() == before
 
 
+def test_finalize_inline_applied_files_object_is_refused(tmp_path):
+    """A JSON object inline must not be iterated by its keys into path-only items."""
+    repo, proj = _mk_v3(tmp_path, template={"hooks/ok.sh": "o\n"}, project={}, entries={})
+    _init_repo(repo)
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps({"hooks/ok.sh": 1})))
+    assert "applied_files" in res["error"]
+    assert manifest_path.read_bytes() == before
+
+
 @pytest.mark.parametrize("item", [
     {"file_path": "CLAUDE.md"},
     "CLAUDE.md",

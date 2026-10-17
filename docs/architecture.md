@@ -141,7 +141,7 @@ Measured state of this repo (general variant; the version columns are historical
 - The `process share` row has no new measurement this release.
 
 **v5.1.2's column is unchanged from v5.1.1's, byte for byte. It was re-measured with `wc -c` at this release's tip, not carried forward.**
-- **What the release changed:** the template-sync server (`template_finalize_sync` and `template_apply_file`), its tests, the sync-template `SKILL.md` (step 7 and the report's Warnings line, plus the version marker), the pins in the docs, `VERSION` and the CHANGELOG; none of them is a column of this table.
+- **What the release changed:** the template-sync server (`template_finalize_sync` and `template_apply_file`), its tests, the sync-template `SKILL.md` (step 7 and the report's Warnings line, plus the version marker and the server floor under Requires (5.1.2)), the pins in the docs, `VERSION` and the CHANGELOG; none of them is a column of this table.
 - **What did not move:** no `CLAUDE.md`, `.claude/rules/project.md`, seed, `pm-report` style, user-level `CLAUDE.md`, `PROJECT_CONTEXT.md`, `AGENT_TEAM.md`, `VERIFICATION_PLAYBOOK.md` or skill and agent count.
 - **Per-variant figures** (the 5-file harness-injected set check 35 budgets: variant `CLAUDE.md` + `project.md` + user-level `CLAUDE.md` + seed + `pm-report`): general 6,141 + 742 + 7,817 + 823 + 2,681 = **18,204**, java 18,200, dotnet-maui 18,204, python 18,204, dotnet 18,205, rust-tauri 18,206. End of bootstrap (+ the variant's own `PROJECT_CONTEXT.md`: general 5,244, java 5,411, dotnet-maui 5,775, python 5,377, dotnet 5,423, rust-tauri 5,594): general **23,448**, java 23,611, dotnet-maui 23,979, python 23,581, dotnet 23,628, rust-tauri 23,800.
 - The `process share` row has no new measurement this release.

@@ -1888,6 +1888,8 @@ async def template_finalize_sync(
             applied = json.loads(applied_files)
         except json.JSONDecodeError as e:
             return json.dumps({"error": f"Invalid applied_files JSON: {e}"}, ensure_ascii=False)
+        if not isinstance(applied, list):
+            return json.dumps({"error": "applied_files must be a JSON array of apply results"}, ensure_ascii=False)
 
     try:
         new = json.loads(new_files)
