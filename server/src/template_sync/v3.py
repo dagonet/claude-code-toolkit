@@ -643,8 +643,9 @@ def audit_keys(proj_text: str, tpl_text: str, tpl_at_sync_text: str | None, rule
             _required(key)
         elif not find_key(proj, key, rule) and not any(
                 old in proj for old, new in deprecated_map.items() if new == key):
-            # Held under a deprecated spelling counts as present: that key is
-            # reported once, in deprecated_keys, not also as absent.
+            # The old spelling counts as present because the hooks read it
+            # (pre-commit-test greps `Test( Command)?`): the key is reported
+            # once, in deprecated_keys, not also as absent.
             optional_absent.append(key)
 
     # Required keys the template itself lacks are still required.

@@ -50,11 +50,22 @@ def test_deprecated_spelling_reports_canonical_key():
 
 
 def test_deprecated_spelling_on_an_OPTIONAL_key_is_listed_in_deprecated_keys_only():
-    """`Test` is optional and held only as `**Test Command**:`. It is reported
-    once, in deprecated_keys: not in optional_absent, not in
+    """`Test` is optional and held only as `**Test Command**:` (the hook greps
+    `Test( Command)?`, so the key is present). It is reported once, in
+    deprecated_keys: not in optional_absent (nor its detail), not in
     missing_declared_keys (whose deprecated_spelling reason is for required
     keys)."""
     proj = "- **Protected branches**: main master\n- **Gate**: g\n- **Test Command**: pytest\n"
+    res = v3.audit_keys(proj, PY_TPL_TEXT, None, RULE)
+    assert {"key": "Test Command", "replacement": "Test"} in res["deprecated_keys"]
+    assert "Test" not in res["optional_absent"]
+    assert all(d["key"] != "Test" for d in res["optional_absent_detail"])
+    assert "Test" not in _mdk_by_key(res)
+
+
+def test_optional_key_held_under_both_spellings_is_not_missing_declared():
+    proj = ("- **Protected branches**: main master\n- **Gate**: g\n"
+            "- **Test**: pytest\n- **Test Command**: pytest -q\n")
     res = v3.audit_keys(proj, PY_TPL_TEXT, None, RULE)
     assert {"key": "Test Command", "replacement": "Test"} in res["deprecated_keys"]
     assert "Test" not in res["optional_absent"]
@@ -87,17 +98,6 @@ def test_optional_absent_key_is_detailed_and_never_missing_declared():
     assert detail["template_default"] == PY_TPL_KEYS.get("Test")
     assert detail["effect_when_absent"] == rule_detail["effect_when_absent"]
     assert detail["none_meaning"] == rule_detail["none_meaning"]
-
-
-def test_optional_key_held_under_deprecated_spelling_is_not_reported_absent():
-    """The hook greps `Test( Command)?`, so a consumer holding only
-    `**Test Command**:` has the key: it is in deprecated_keys only, with no
-    optional_absent entry and no optional_absent_detail."""
-    proj = "- **Protected branches**: main master\n- **Gate**: g\n- **Test Command**: pytest\n"
-    res = v3.audit_keys(proj, PY_TPL_TEXT, None, RULE)
-    assert {"key": "Test Command", "replacement": "Test"} in res["deprecated_keys"]
-    assert "Test" not in res["optional_absent"]
-    assert all(d["key"] != "Test" for d in res["optional_absent_detail"])
 
 
 def test_optional_absent_effect_unchanged_when_neither_spelling_is_held():

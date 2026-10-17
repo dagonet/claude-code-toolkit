@@ -21,11 +21,11 @@
       "optional_keys": {
         "Test": {
           "effect_when_absent": "pre-commit falls back to the Gate, which mints the artifact -- commit and merge are one run, but that Gate run is bounded by the **Test timeout** budget (default 540 s), so a slow Gate-only repo is refused; declaring Test adds a second run per commit",
-          "none_meaning": "not declared -- hooks/pre-commit-test.sh treats the literal value `none` (case-insensitive, trimmed) as absent and falls through to the Gate (fixed since v3.0.3; before that it was eval'd as a command and blocked every commit)"
+          "none_meaning": "not declared -- the plugin's pre-commit-test hook treats the literal value `none` (case-insensitive, trimmed) as absent and falls through to the Gate (fixed since v3.0.3; before that it was eval'd as a command and blocked every commit)"
         },
         "Gate-checked branches": {
           "effect_when_absent": "no branch gets the artifact-freshness-only merge lane; every branch is either protected or fully ungated",
-          "none_meaning": "no branch is gate-checked -- hooks/lib/git-cmd.sh's gc_gate_checked_branches reads it as an empty branch list, same as absent; DO NOT read `none` here as widening access"
+          "none_meaning": "no branch is gate-checked -- the plugin's gc_gate_checked_branches (hooks/lib/git-cmd.sh) reads it as an empty branch list, same as absent; DO NOT read `none` here as widening access"
         },
         "Post-edit build": {
           "effect_when_absent": "the plugin's post-edit-build hook is inert -- no build runs after Edit/Write",
