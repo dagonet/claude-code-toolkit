@@ -155,7 +155,7 @@ End with this short report. A SubagentStop hook checks it. Do not paste test or 
 
 One line per numbered item of the brief, in order; an item you did not do is `fail`, never omitted.
 
-**Merging:** run `cct-gate` (on PATH from the plugin; in the toolkit checkout itself `bash hooks/run-gate.sh`) immediately before the merge call (the artifact must match the rebased HEAD; it expires after 60 min) and commit exactly what was gated.
+**Merging:** run `cct-gate` (on PATH from the plugin; in the toolkit checkout itself `bash hooks/run-gate.sh`; it gates the current directory, or the work tree given as its one argument, `cct-gate <absolute worktree path>`, so no wrapper script is needed) immediately before the merge call (the artifact must match the rebased HEAD; it expires after 60 min) and commit exactly what was gated.
 
 ## Liveness & Scope (HARD REQUIREMENT)
 

@@ -140,7 +140,7 @@ Task #{n}: issue #{issue}. Worktree: {path}, branch: feature/issue-{issue}.
 - {file} — {what to change}   (out of scope: {paths})
 
 ## Definition of done
-{tests to pass} + `cct-gate` green, then PR.
+{tests to pass} + `cct-gate` green (it gates the current directory, or the work tree given as its one argument: `cct-gate <absolute worktree path>`), then PR.
 
 Context: the GitHub issue (reference only). Workflow: implement -> gate -> commit -> push -> create PR -> report the PR URL.
 ```
@@ -194,7 +194,8 @@ After review and testing pass, the developer executes the merge — git/GitHub M
    message the PO to (a) guide, (b) defer, or (c) re-spawn architect.
 3. Verify CI via gh_workflow_list after push (open the PR first — a bare branch
    push produces no run); fix before merging if it fails.
-4. Run the gate on the rebased head: `cct-gate` writes
+4. Run the gate on the rebased head: `cct-gate` (or `cct-gate <absolute worktree path>`
+   from any directory, so no wrapper script is needed) writes
    the gate artifact for the current HEAD — the ONLY accepted green;
    commit exactly what was gated. The plugin's `gate-before-merge` hook blocks
    merge tools without a fresh, matching artifact (< 60 min) unless

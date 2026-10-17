@@ -98,9 +98,12 @@ if [ "${RUN_GATE_ACTIVE:-}" = "1" ]; then
 fi
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  echo "Usage: $(gc_gate_cmd)"
+  echo "Usage: $(gc_gate_cmd) [<work tree directory>]"
   echo ""
-  echo "Runs the Gate command from PROJECT_CONTEXT.md (**Gate**: <command>)."
+  echo "Runs the Gate command from PROJECT_CONTEXT.md (**Gate**: <command>) for the repository"
+  echo "in the current directory, or for the work tree given as the one optional argument"
+  echo "(an absolute path, e.g. a git worktree). A missing or non-work-tree argument is refused"
+  echo "with exit 2; it never falls back to the current directory."
   echo "Green: writes <common git dir>/gate/last-pass.<sha>.json, or last-pass.tree-<tree>.json when run before the commit (checked by gate-before-merge.sh) and prints GATE PASS <sha>."
   echo "Red:   deletes the artifact and exits 1 (78 when the failure is terminal — see hooks/lib/git-cmd.sh)."
   echo "No Gate configured: prints GATE SKIP and exits 0."
@@ -109,6 +112,22 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   echo "to stderr, touch \$RUN_GATE_TERMINAL, and exit with the terminal code."
   echo "Worked example: docs/verification.md."
   exit 0
+fi
+
+# v5.2: one optional argument, the work tree to gate, so an agent whose shell may
+# not start with `cd X && ...` needs no wrapper script. Fails closed: anything
+# that is not a directory inside a git work tree is refused (exit 2), never
+# replaced by the current directory. The existing flow below runs unchanged.
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -gt 1 ]; then
+    echo "cct-gate: refused: expected at most one argument (a work tree directory). Usage: $(gc_gate_cmd) [<work tree directory>]" >&2
+    exit 2
+  fi
+  if [ ! -d "$1" ] || ! git -C "$1" rev-parse --show-toplevel >/dev/null 2>&1; then
+    echo "cct-gate: refused: '$1' is not a directory inside a git work tree. Pass an existing work tree path, or no argument to gate the current directory." >&2
+    exit 2
+  fi
+  cd "$1" || { echo "cct-gate: refused: cannot change into '$1'" >&2; exit 2; }
 fi
 
 CWD=$(pwd)

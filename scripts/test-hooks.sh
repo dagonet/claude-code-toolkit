@@ -3838,6 +3838,66 @@ expect "(R5d) not a git repository: exit 78 (terminal, was 1)" "78" "$?"
 expect "(R5d) not a git repository: remedy names the fix" "1" \
   "$(tail -1 "$nonrepoerr" | grep -c 'from inside the checkout')"
 
+# --- R5i: run-gate.sh / cct-gate takes an optional work-tree argument (v5.2) --
+# An agent whose shell may not start with `cd X && ...` passes the work tree
+# instead of writing a wrapper script. FAIL CLOSED: a bad argument is refused
+# with exit 2 and never falls back to the current directory (arms b-d); the
+# no-argument path is the existing behaviour (arm e, and R5d above).
+echo
+echo "=== R5i: run-gate.sh <dir> argument (cct-gate <work tree>) ==="
+argrepo=$(mkrepo gatearg main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$argrepo/PROJECT_CONTEXT.md"
+git -C "$argrepo" add -A >/dev/null 2>&1
+git -C "$argrepo" commit -q -m ctx >/dev/null 2>&1
+argsha=$(git -C "$argrepo" rev-parse HEAD)
+argart=$(gatepassfile "$argrepo" "$argsha")
+argerr="$TMPROOT/gatearg.err"
+argplain="$TMPROOT/gatearg-plain"
+mkdir -p "$argplain"
+
+# (a) from an unrelated cwd (a directory that is not a repository), the argument
+#     selects the repository: the artifact lands for that repository's HEAD.
+rm -f "$argart"
+( cd "$argplain" && bash "$ROOT/hooks/run-gate.sh" "$argrepo" >/dev/null 2>"$argerr" )
+expect "(R5i-a) <work tree> argument from an unrelated cwd: exit 0" "0" "$?"
+expect "(R5i-a) <work tree> argument: artifact written for that repo's HEAD" "1" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (b) a missing directory is refused, names the path, and does not gate the cwd.
+rm -f "$argart"
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "$TMPROOT/does/not/exist" >/dev/null 2>"$argerr" )
+expect "(R5i-b) nonexistent directory: exit 2" "2" "$?"
+expect "(R5i-b) nonexistent directory: message names the path" "1" \
+  "$(grep -c "cct-gate: refused: .*$TMPROOT/does/not/exist" "$argerr")"
+expect "(R5i-b) nonexistent directory: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (c) an existing directory that is not a git work tree is refused.
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "$argplain" >/dev/null 2>"$argerr" )
+expect "(R5i-c) plain directory (not a work tree): exit 2" "2" "$?"
+expect "(R5i-c) plain directory: message names the path" "1" \
+  "$(grep -c "cct-gate: refused: .*$argplain" "$argerr")"
+expect "(R5i-c) plain directory: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (d) two arguments are refused with a usage line.
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "$argrepo" "$argrepo" >/dev/null 2>"$argerr" )
+expect "(R5i-d) two arguments: exit 2" "2" "$?"
+expect "(R5i-d) two arguments: usage line" "1" \
+  "$(grep -c 'cct-gate: refused: .*Usage' "$argerr")"
+expect "(R5i-d) two arguments: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (e) no argument: gates the cwd's repository exactly as before.
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$argerr" )
+expect "(R5i-e) no argument: exit 0" "0" "$?"
+expect "(R5i-e) no argument: artifact written for the cwd repo's HEAD" "1" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (f) --help names the argument.
+expect "(R5i-f) --help documents the work-tree argument" "1" \
+  "$(bash "$ROOT/hooks/run-gate.sh" --help 2>&1 | grep -c '^Usage: .*\[<work tree directory>\]')"
+
 # --- R5e: THE MARKER NESTS THROUGH A WRAPPER (v2.2.5 round 4) ---------------
 # R5b arm 1 is single-level: **Gate** invokes run-gate.sh directly. A marker
 # written to a SELF-CREATED temp dir would pass that test and fail here, because
