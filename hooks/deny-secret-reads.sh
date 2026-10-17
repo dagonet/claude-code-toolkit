@@ -28,9 +28,13 @@
 #   anything else                                                  -> exit 0
 #
 # Secret shape: `(^|/)\.env(\.<suffix>)?$`, except a basename of exactly
-# `.env.example` — that file is the documented placeholder list most repos
-# track, and denying it was v2.2.0's BUG 6 (check 22b in
-# verify-template-consistency.sh has guarded it ever since).
+# `.env.example`, or one matching `^\.env\.[A-Za-z0-9_-]+\.example$` (compared
+# lowercased; v5.2.0) — those are the documented placeholder lists most repos
+# track, and denying `.env.example` was v2.2.0's BUG 6. The exemptions are
+# pinned by the `(DSR)` rows in scripts/test-hooks.sh, per word: an example name
+# next to a real secret (`cat .env.local.example .env`) is still denied. The
+# per-name exemption holds on a shell command only for a word with no expansion
+# character ($, backtick, \, {, }, *, ?, [, and the PowerShell comma); on a Read file_path it always holds.
 #
 # WHY THE BASH ARM NEEDS A READER VERB, stated because the two obvious rules
 # disagree: "any argv token that looks like a .env path" makes `echo .env` a
@@ -134,6 +138,19 @@ dsr_is_secret() { # <path> -> 0 when it is a secret-bearing .env name
   # EXPLICIT exemption, not an artifact of the anchoring: an exact `.env.example`
   # basename. `.env.examples` and `.env.sample` are NOT it, and are denied.
   [ "$dsr_lb" = ".env.example" ] && return 1
+  # v5.2.0: and the per-name template `.env.<name>.example` (`.env.local.example`).
+  # One dot-free name segment only, so `.env.example.bak`, `.env.local.example.txt`
+  # and `.env.a.b.example` stay denied. Judged per word, like everything here.
+  # On the shell path ($2 = shell) only a word free of shell expansion characters
+  # gets it: `.env$IFS/.env.local.example` is not that file once the shell has
+  # expanded it. A Read file_path is never expanded, so no guard there. Not a
+  # model of expansion, just a refusal.
+  if [[ "$dsr_lb" =~ ^\.env\.[a-z0-9_-]+\.example$ ]]; then
+    case "${2:-}:$1" in
+      shell:*'$'*|shell:*'`'*|shell:*'\'*|shell:*'{'*|shell:*'}'*|shell:*'*'*|shell:*'?'*|shell:*'['*|shell:*','*) ;;
+      *) return 1 ;;
+    esac
+  fi
   printf '%s' "$1" | grep -qiE "$DSR_SECRET_RE" && return 0
   # The glob heuristic — see the header. `.e`-prefixed AND carrying a glob
   # metacharacter. `.environment` has no metacharacter and stays allowed.
@@ -164,7 +181,7 @@ dsr_deny() { # <path> <location-desc> [extra-clause]
     echo "BLOCKED: '$1' — secrets files are not read by agents. (matched: \"$1\" in $2)"
     echo "  Could not determine: this hook sees the command's arguments, not what an interpreter opens; 'python -c open(...)' and 'git show HEAD:.env' are judged by the auto-mode classifier, not here."
     [ -n "${3:-}" ] && printf '%s\n' "$3" | sed 's/^/  /'
-    echo "  If you need a variable's NAME, read '.env.example' — it is allowed on purpose."
+    echo "  If you need a variable's NAME, read '.env.example' or '.env.<name>.example' (written as a literal path) — both are allowed on purpose."
     echo "  Inspecting a config file that merely mentions one? Read it with the Read tool."
   } >&2
   exit 2
@@ -233,7 +250,7 @@ DSR_TOK
       DSR_ARGN=$((DSR_ARGN + 1))
       while IFS= read -r dsr_p; do
         [ -n "$dsr_p" ] || continue
-        if dsr_is_secret "$dsr_p"; then
+        if dsr_is_secret "$dsr_p" shell; then
           dsr_deny "$dsr_p" "argument $DSR_ARGN" "Matched a reader verb and a secrets filename in the same command, though not necessarily in the same clause: a mention in an echo or a comment counts, and so does a reader that never touches the file. Whole-command matching is deliberate, so that a wrapper such as \`bash -c \"...\"\` cannot hide the read."
         fi
       done <<DSR_PATHS

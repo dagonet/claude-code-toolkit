@@ -641,7 +641,11 @@ def audit_keys(proj_text: str, tpl_text: str, tpl_at_sync_text: str | None, rule
     for key in tpl:
         if key in required:
             _required(key)
-        elif not find_key(proj, key, rule):
+        elif not find_key(proj, key, rule) and not any(
+                old in proj for old, new in deprecated_map.items() if new == key):
+            # The old spelling counts as present because the hooks read it
+            # (pre-commit-test greps `Test( Command)?`): the key is reported
+            # once, in deprecated_keys, not also as absent.
             optional_absent.append(key)
 
     # Required keys the template itself lacks are still required.
@@ -676,19 +680,16 @@ def audit_keys(proj_text: str, tpl_text: str, tpl_at_sync_text: str | None, rule
     # unfilled `{{...}}` token (reason "unfilled").
     # Ownership rule (penumbra): an OPTIONAL key that is simply absent is
     # reported once, in optional_absent(+detail) only -- never duplicated
-    # here. The exclusion is not vacuous for "deprecated_spelling": an
-    # optional key held only under a deprecated spelling has no exact/loose
-    # match under its canonical name either, so it lands in BOTH
-    # optional_absent (find_key does not know the old spelling) and this
-    # loop unless excluded -- required/absent and unfilled cannot collide
-    # with optional_absent by construction (missing_required only holds
-    # required keys; placeholder_keys only holds keys the consumer DOES
-    # have), but this one can and is exercised by a test.
+    # here. An OPTIONAL key held only under a deprecated spelling is reported
+    # once, in deprecated_keys (it is not in optional_absent either), so the
+    # "deprecated_spelling" reason here is for REQUIRED keys only. Unfilled
+    # cannot collide with optional_absent by construction (placeholder_keys
+    # only holds keys the consumer DOES have), but the guard below is kept.
     missing_declared_keys: list[dict] = []
     for key in missing_required:
         missing_declared_keys.append({"key": key, "reason": "absent", "template_default": tpl.get(key)})
     for old, new in deprecated_map.items():
-        if old in proj and new not in optional_absent:
+        if old in proj and new in required:
             missing_declared_keys.append(
                 {"key": new, "reason": "deprecated_spelling", "template_default": tpl.get(new)})
     for key in placeholder_keys:
@@ -705,19 +706,12 @@ def audit_keys(proj_text: str, tpl_text: str, tpl_at_sync_text: str | None, rule
     # falls back to the generic pair below.
     optional_rule_keys = rule.get("optional_keys") or {}
 
-    def _effect(key: str) -> str:
-        # The hooks honour the deprecated spelling (`Test( Command)?`), so a
-        # key held that way is not "absent" in effect -- say so.
-        old = next((o for o, n in deprecated_map.items() if n == key and o in proj), None)
-        if old:
-            return f"held under the deprecated spelling `**{old}**`, still honoured"
-        return (optional_rule_keys.get(key) or {}).get("effect_when_absent", "feature off")
-
     optional_absent_detail = [
         {
             "key": key,
             "template_default": tpl.get(key),
-            "effect_when_absent": _effect(key),
+            "effect_when_absent": (optional_rule_keys.get(key) or {}).get(
+                "effect_when_absent", "feature off"),
             "none_meaning": (optional_rule_keys.get(key) or {}).get(
                 "none_meaning", "not defined for this key"),
         }

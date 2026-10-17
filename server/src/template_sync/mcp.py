@@ -197,6 +197,10 @@ def _split_custom_region(content: str) -> tuple[str, str | None]:
     """Split content into (template_part, region_block).
 
     region_block spans from the BEGIN marker through the END marker inclusive.
+    When only `#`/blank characters precede the BEGIN marker on its line (a
+    `# <!-- PROJECT-CUSTOM:BEGIN -->` comment line, as .gitattributes ships it),
+    the block starts at that line's start, so the `# ` travels with the region
+    exactly as it does on the END line. Markers at column 0 are unaffected.
     Requires BEGIN before END; absent or malformed markers return
     (content, None) — legacy full-file behavior.
     """
@@ -207,6 +211,10 @@ def _split_custom_region(content: str) -> tuple[str, str | None]:
     if end == -1:
         return content, None
     end += len(CUSTOM_REGION_END)
+    line_start = content.rfind("\n", 0, begin) + 1
+    prefix = content[line_start:begin]
+    if "#" in prefix and prefix.strip(" \t#") == "":
+        begin = line_start
     return content[:begin] + content[end:], content[begin:end]
 
 
@@ -1262,7 +1270,7 @@ async def template_compute_status(
         naming. It is NOT commit state and does not mean "the gate is
         currently failing" or "the gate has not run since the last commit" --
         it means only "a Gate is declared here", which a consumer should read
-        as a standing reminder to actually run `bash hooks/run-gate.sh`
+        as a standing reminder to actually run `cct-gate`
         themselves, not as a verdict this call produced.
     """
     pp = pathlib.Path(project_path).resolve()
@@ -1601,7 +1609,18 @@ async def template_get_diff(
             merged_text = merge["auto_merged"]
             if merged_text and not merged_text.endswith("\n"):
                 merged_text += "\n"
-            merge["auto_merged"] = merged_text + reattach_region + "\n"
+            # The text that followed the END marker stays at the end of the merged
+            # part (the split joined head and tail), so put the region back in front
+            # of it; appending after it would add a blank line above BEGIN.
+            tail = proj_current[proj_current.find(reattach_region) + len(reattach_region):]
+            head = merged_text[:-len(tail)] if tail else ""
+            # Only on a clean merge at a line boundary: after a conflict hunk the
+            # tail is the hunk's own newline and the marker would glue onto it.
+            if (tail and not merge["has_conflicts"] and merged_text.endswith(tail)
+                    and (not head or head.endswith("\n"))):
+                merge["auto_merged"] = head + reattach_region + tail
+            else:
+                merge["auto_merged"] = merged_text + reattach_region + "\n"
             merge["region_reattached"] = True
         result["base_content"] = base_content
         result["template_content"] = tpl_current

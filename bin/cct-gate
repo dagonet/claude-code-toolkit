@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cct plugin: gate the project in the current directory (v5.0 spec §3.4). On PATH via the plugin's bin/ (F6).
+# cct plugin: gate the project in the current directory, or the one work tree given as the optional argument (v5.0 spec §3.4). On PATH via the plugin's bin/ (F6).
 # CLAUDE_PLUGIN_ROOT is empty in the Bash tool (F6), so locate run-gate.sh relative to this file,
 # and export the root so run-gate.sh names 'cct-gate' in its messages.
 # Invocation through a symlink needs readlink -f (used below); the plugin puts its real bin/ on PATH.

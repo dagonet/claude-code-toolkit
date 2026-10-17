@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Gate runner (invoked by developers/PO, not registered as a hook):
-#   bash hooks/run-gate.sh
+#   bash hooks/run-gate.sh [<work tree directory>]
+#
+# Gates the repository in the current directory, or the one work tree given as the
+# optional argument (v5.2; refused with exit 2 when it is not a work tree).
 #
 # Reads the Gate command from PROJECT_CONTEXT.md ("**Gate**: <command>",
 # with or without a leading list marker) and runs it. On success, writes
@@ -98,9 +101,12 @@ if [ "${RUN_GATE_ACTIVE:-}" = "1" ]; then
 fi
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  echo "Usage: $(gc_gate_cmd)"
+  echo "Usage: $(gc_gate_cmd) [<work tree directory>]"
   echo ""
-  echo "Runs the Gate command from PROJECT_CONTEXT.md (**Gate**: <command>)."
+  echo "Runs the Gate command from PROJECT_CONTEXT.md (**Gate**: <command>) for the repository"
+  echo "in the current directory, or for the work tree given as the one optional argument"
+  echo "(an absolute path, e.g. a git worktree). A missing or non-work-tree argument is refused"
+  echo "with exit 2; it never falls back to the current directory."
   echo "Green: writes <common git dir>/gate/last-pass.<sha>.json, or last-pass.tree-<tree>.json when run before the commit (checked by gate-before-merge.sh) and prints GATE PASS <sha>."
   echo "Red:   deletes the artifact and exits 1 (78 when the failure is terminal — see hooks/lib/git-cmd.sh)."
   echo "No Gate configured: prints GATE SKIP and exits 0."
@@ -109,6 +115,36 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   echo "to stderr, touch \$RUN_GATE_TERMINAL, and exit with the terminal code."
   echo "Worked example: docs/verification.md."
   exit 0
+fi
+
+# v5.2: one optional argument, the work tree to gate, so an agent whose shell may
+# not start with `cd X && ...` needs no wrapper script. Fails closed: anything
+# that is not a directory inside a git work tree is refused (exit 2), never
+# replaced by the current directory. The existing flow below runs unchanged.
+if [ "$#" -gt 0 ]; then
+  # An exported GIT_DIR would override the toplevel lookup below (and the later
+  # git -C calls), gating the wrong tree after the cd.
+  unset GIT_DIR GIT_WORK_TREE
+  if [ "$#" -gt 1 ]; then
+    echo "cct-gate: refused: expected at most one argument (a work tree directory). Usage: $(gc_gate_cmd) [<work tree directory>]" >&2
+    exit 2
+  fi
+  # An empty argument (`cct-gate "$WT"` with WT unset) must not reach git: `git -C ""`
+  # keeps the cwd, which would be gated silently.
+  if [ -z "$1" ]; then
+    echo "cct-gate: refused: empty work-tree argument. Pass an existing work tree path, or no argument to gate the current directory." >&2
+    exit 2
+  fi
+  # git -C fails on a missing path, a file or a non-work-tree. cd into the ABSOLUTE
+  # toplevel git resolved, not into "$1": the builtin consults an exported CDPATH
+  # for a relative argument (and prints the directory), which would gate a
+  # different tree than the one just validated.
+  RG_ARG_TOP=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$RG_ARG_TOP" ]; then
+    echo "cct-gate: refused: '$1' is not a directory inside a git work tree. Pass an existing work tree path, or no argument to gate the current directory." >&2
+    exit 2
+  fi
+  cd "$RG_ARG_TOP" || { echo "cct-gate: refused: cannot change into '$RG_ARG_TOP'" >&2; exit 2; }
 fi
 
 CWD=$(pwd)
@@ -121,7 +157,7 @@ if [ -z "$REPO_TOP" ]; then
   # is TERMINAL, not "configuration": this one is an ENVIRONMENT error and 78
   # covers both (see the exit-code conventions in hooks/lib/git-cmd.sh).
   echo "GATE ERROR: not inside a git repository" >&2
-  echo "Run '$(gc_gate_cmd)' from inside the checkout — cd to the repository and re-run it there." >&2
+  echo "Run '$(gc_gate_cmd)' from inside the checkout — cd to the repository and re-run it there, or pass its path: $(gc_gate_cmd) <dir>." >&2
   exit "$GC_TERMINAL_RC"
 fi
 
@@ -132,11 +168,13 @@ fi
 # tree (the user-level copy in ~/.claude/hooks, a plugin cache copy).
 # Also silent in plugin mode (CLAUDE_PLUGIN_ROOT set): there, gating the cwd is by
 # design, and `--plugin-dir` from a toolkit checkout would otherwise warn wrongly.
+# Also silent when a work tree was named as the argument: the caller chose the
+# target, and BASH_SOURCE (possibly relative) would resolve after the cd (v5.2).
 # GIT_DIR/GIT_WORK_TREE are unset for this one call: an exported GIT_DIR would
 # make the script's own directory resolve to the cwd's repository.
 RG_SELF_TOP=$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)
-if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -n "$RG_SELF_TOP" ] && [ "$RG_SELF_TOP" != "$REPO_TOP" ]; then
-  echo "WARN: run-gate.sh from $RG_SELF_TOP is gating $REPO_TOP (the current directory's repository); to gate $RG_SELF_TOP, run it from inside $RG_SELF_TOP." >&2
+if [ "$#" -eq 0 ] && [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -n "$RG_SELF_TOP" ] && [ "$RG_SELF_TOP" != "$REPO_TOP" ]; then
+  echo "WARN: run-gate.sh from $RG_SELF_TOP is gating $REPO_TOP (the current directory's repository); to gate $RG_SELF_TOP, run it from inside $RG_SELF_TOP or pass its path: $(gc_gate_cmd) $RG_SELF_TOP." >&2
 fi
 
 # GC_KEY_PRE, defined locally: this script is deliberately standalone (it must

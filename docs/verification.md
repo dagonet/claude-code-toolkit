@@ -143,7 +143,7 @@ They are split by what each can *reach*, not by preference:
 
 ## Terminal conditions in a `**Gate**` command
 
-`hooks/run-gate.sh` (in a project: `cct-gate`, which runs the plugin's copy) runs the `**Gate**:` command from `PROJECT_CONTEXT.md` and reports
+`hooks/run-gate.sh` (in a project: `cct-gate`, which runs the plugin's copy) runs the `**Gate**:` command from `PROJECT_CONTEXT.md` for the current directory's repository, or for the work tree given as its one argument (`cct-gate <absolute worktree path>`; a missing or non-work-tree path is refused with exit 2, never replaced by the current directory), and reports
 two kinds of failure. An **ordinary red gate** exits 1 and every layer above it says
 "fix the failures and re-run". A **terminal** failure is one that re-running cannot
 change — a missing toolchain, an unfilled config, a lockfile that has to be regenerated —

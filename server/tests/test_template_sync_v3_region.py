@@ -23,6 +23,7 @@ END = "<!-- PROJECT-CUSTOM:END -->"
 OWNERSHIP = {"tracked_paths": ["templates"], "rules": [
     {"pattern": "CLAUDE.md", "ownership": "template"},
     {"pattern": "AGENT_TEAM.md", "ownership": "template"},
+    {"pattern": ".gitattributes", "ownership": "template"},
 ]}
 
 
@@ -188,6 +189,188 @@ def test_apply_without_markers_on_either_side_is_unchanged(tmp_path):
     res = _run(ts.template_apply_file(str(proj), "AGENT_TEAM.md"))
     assert res["region_preserved"] is False
     assert (proj / "AGENT_TEAM.md").read_text(encoding="utf-8") == "# Toolkit\n\nrule one\n"
+
+
+# --- .gitattributes: the region as `#` comment lines (v5.2) ---------------------
+#
+# The region markers in .gitattributes are `# <!-- PROJECT-CUSTOM:... -->` lines
+# (git ignores `#` lines). The splitter matches the marker text as a substring and,
+# when only `#`/blanks precede BEGIN on its line, starts the region at that line's
+# start; these rows pin both, plus the first-sync shape of a consumer with a local
+# line outside any region.
+
+GA_BEGIN = "# <!-- PROJECT-CUSTOM:BEGIN -->"
+GA_END = "# <!-- PROJECT-CUSTOM:END -->"
+GA_LOCAL = "docs/game-data/** -text"
+
+
+def ga(body: str, region: str = "") -> str:
+    inner = f"{region}\n" if region else ""
+    return f"{body}\n{GA_BEGIN}\n{inner}{GA_END}\n"
+
+
+def test_gitattributes_region_only_difference_is_not_drift(tmp_path):
+    base = ga("* text=auto eol=lf")
+    _, proj = mk(tmp_path, template_now=base, project=ga("* text=auto eol=lf", GA_LOCAL),
+                 rel=".gitattributes")
+    info = status_of(proj, rel=".gitattributes")
+    assert info["status"] == "IDENTICAL"
+    assert "local_diff" not in info
+
+
+def test_gitattributes_region_only_difference_with_moved_template_is_template_updated(tmp_path):
+    _, proj = mk(
+        tmp_path,
+        template_at_sync=ga("* text=auto eol=lf"),
+        template_now=ga("* text=auto eol=lf\n*.png binary"),
+        project=ga("* text=auto eol=lf", GA_LOCAL),
+        rel=".gitattributes",
+    )
+    assert status_of(proj, rel=".gitattributes")["status"] == "TEMPLATE_UPDATED"
+
+
+def test_gitattributes_line_outside_the_region_is_still_local_edited(tmp_path):
+    base = ga("* text=auto eol=lf")
+    _, proj = mk(tmp_path, template_now=base,
+                 project=ga("* text=auto eol=lf\n" + GA_LOCAL),
+                 rel=".gitattributes")
+    info = status_of(proj, rel=".gitattributes")
+    assert info["status"] == "LOCAL_EDITED"
+    assert GA_LOCAL in info["local_diff"]
+
+
+def test_gitattributes_apply_preserves_the_region(tmp_path):
+    _, proj = mk(
+        tmp_path,
+        template_at_sync=ga("* text=auto eol=lf"),
+        template_now=ga("* text=auto eol=lf\n*.png binary"),
+        project=ga("* text=auto eol=lf", GA_LOCAL),
+        rel=".gitattributes",
+    )
+    res = _run(ts.template_apply_file(str(proj), ".gitattributes", backup_dir=str(tmp_path / "bak")))
+    after = (proj / ".gitattributes").read_text(encoding="utf-8")
+    assert res["region_preserved"] is True
+    assert after == ga("* text=auto eol=lf\n*.png binary", GA_LOCAL)
+
+
+def test_shipped_gitattributes_template_carries_a_region_that_preserves_a_local_line(tmp_path):
+    shipped = (pathlib.Path(__file__).resolve().parents[2] / "templates" / "general"
+               / ".gitattributes").read_text(encoding="utf-8")
+    part, region = ts._split_custom_region(shipped)
+    assert region is not None, "templates/general/.gitattributes has no PROJECT-CUSTOM region"
+    mine = shipped.replace(GA_END, GA_LOCAL + "\n" + GA_END)
+    assert mine != shipped, "the shipped END marker text drifted from GA_END"
+    _, proj = mk(tmp_path, template_now=shipped, project=mine, rel=".gitattributes")
+    assert status_of(proj, rel=".gitattributes")["status"] == "IDENTICAL"
+
+
+def test_split_keeps_the_hash_prefix_with_the_region():
+    """The `# ` before BEGIN travels with the region, as the END line's does, so a
+    reassembled file never holds a lone `# ` over a bare marker."""
+    part, region = ts._split_custom_region(ga("* text=auto eol=lf", GA_LOCAL))
+    assert region == f"{GA_BEGIN}\n{GA_LOCAL}\n{GA_END}"
+    assert part == "* text=auto eol=lf\n\n"
+
+
+def test_gitattributes_three_way_reattaches_a_valid_hash_prefixed_region(tmp_path):
+    _, proj = mk(
+        tmp_path,
+        template_at_sync=ga("* text=auto eol=lf"),
+        template_now=ga("* text=auto eol=lf\n*.png binary"),
+        project=ga("*.psd binary\n* text=auto eol=lf", GA_LOCAL),
+        rel=".gitattributes",
+    )
+    assert status_of(proj, rel=".gitattributes")["status"] == "LOCAL_EDITED"
+    merge = _run(ts.template_get_diff(str(proj), ".gitattributes", diff_type="three_way"))["merge_result"]
+    assert merge["has_conflicts"] is False and merge["region_reattached"] is True
+    merged = merge["auto_merged"]
+    assert merged.endswith(f"{GA_BEGIN}\n{GA_LOCAL}\n{GA_END}\n")
+    assert "*.psd binary" in merged and "*.png binary" in merged
+    for line in merged.splitlines():
+        if "PROJECT-CUSTOM" in line:
+            assert line.startswith("# <!-- PROJECT-CUSTOM:"), line
+
+
+def test_gitattributes_three_way_then_moving_the_line_into_the_region_ends_the_local_edit(tmp_path):
+    """The auto_merged text keeps the template's own shape (no extra blank line above
+    BEGIN), so moving the outside line into the region and finalizing reads clean."""
+    now = ga("* text=auto eol=lf\n*.png binary")
+    _, proj = mk(tmp_path, template_at_sync=ga("* text=auto eol=lf"), template_now=now,
+                 project=ga(GA_LOCAL + "\n* text=auto eol=lf"), rel=".gitattributes")
+    assert status_of(proj, rel=".gitattributes")["status"] == "LOCAL_EDITED"
+    merge = _run(ts.template_get_diff(str(proj), ".gitattributes", diff_type="three_way"))["merge_result"]
+    merged = merge["auto_merged"]
+    assert merge["has_conflicts"] is False and merge["region_reattached"] is True
+    assert GA_LOCAL in merged and "*.png binary" in merged
+    moved = merged.replace(GA_LOCAL + "\n", "", 1).replace(GA_END, GA_LOCAL + "\n" + GA_END)
+    assert ts._split_custom_region(moved)[0] == ts._split_custom_region(now)[0]
+    res = _run(ts.template_apply_file(str(proj), ".gitattributes", source="provided",
+                                      content=moved, backup_dir=str(tmp_path / "bak")))
+    assert "error" not in res, res
+    _run(ts.template_finalize_sync(str(proj), applied_files=json.dumps([".gitattributes"])))
+    assert status_of(proj, rel=".gitattributes")["status"] == "IDENTICAL"
+
+
+@pytest.mark.parametrize("flag_conflict", [True, False])
+@pytest.mark.parametrize("shape", ["gitattributes", "agent_team"])
+def test_three_way_after_a_conflict_hunk_never_glues_a_marker_onto_it(tmp_path, monkeypatch, shape, flag_conflict):
+    """The safety net appends a conflict hunk whose last newline equals the usual tail
+    after END; the region must then be appended on its own line, not inserted in front
+    of that newline (which put BEGIN on the `>>>>>>> TEMPLATE` line)."""
+    if shape == "gitattributes":
+        rel, prefix = ".gitattributes", "# <!--"
+        kw = dict(template_at_sync=ga("* text=auto eol=lf"), template_now=ga("* text=auto eol=lf\n*.png binary"),
+                  project=ga(GA_LOCAL + "\n* text=auto eol=lf", "mine"))
+    else:
+        rel, prefix = "AGENT_TEAM.md", "<!--"
+        kw = dict(template_at_sync=tpl("rule one"), template_now=tpl("rule one\nrule two"),
+                  project=tpl("local\nrule one", MINE))
+    _, proj = mk(tmp_path, rel=rel, **kw)
+    real = ts._three_way_merge
+
+    def with_hunk(*a, **k):
+        m = dict(real(*a, **k))
+        m["auto_merged"] = m["auto_merged"] + ts._conflict_hunk("dropped by merge", ["lost line"])
+        m["has_conflicts"] = flag_conflict
+        return m
+
+    monkeypatch.setattr(ts, "_three_way_merge", with_hunk)
+    merge = _run(ts.template_get_diff(str(proj), rel, diff_type="three_way"))["merge_result"]
+    merged = merge["auto_merged"]
+    assert ">>>>>>> TEMPLATE\n" in merged and merge["region_reattached"] is True
+    marker_lines = [ln for ln in merged.splitlines() if "PROJECT-CUSTOM" in ln]
+    assert len(marker_lines) == 2
+    for line in marker_lines:
+        assert line.startswith(prefix), line
+
+
+GA_OLD = "* text=auto eol=lf\n*.png binary\n"  # a pre-v5.2 file: no markers
+
+
+def test_gitattributes_first_sync_with_a_local_line_outside_is_never_silently_overwritten(tmp_path):
+    """The mm-agent shape: the project file has NO markers and one local line; the
+    template gained the region since the last sync."""
+    project = GA_OLD + GA_LOCAL + "\n"
+    _, proj = mk(tmp_path, template_at_sync=GA_OLD, template_now=ga(GA_OLD.rstrip("\n")),
+                 project=project, rel=".gitattributes")
+    info = status_of(proj, rel=".gitattributes")
+    assert info["status"] == "LOCAL_EDITED"
+    assert GA_LOCAL in info["local_diff"]
+    res = _run(ts.template_apply_file(str(proj), ".gitattributes"))
+    assert "error" in res
+    assert (proj / ".gitattributes").read_text(encoding="utf-8") == project
+
+
+def test_gitattributes_moving_the_local_line_into_the_region_ends_the_local_edit(tmp_path):
+    _, proj = mk(tmp_path, template_at_sync=GA_OLD, template_now=ga(GA_OLD.rstrip("\n")),
+                 project=GA_OLD + GA_LOCAL + "\n", rel=".gitattributes")
+    moved = ga(GA_OLD.rstrip("\n"), GA_LOCAL)
+    res = _run(ts.template_apply_file(str(proj), ".gitattributes", source="provided",
+                                      content=moved, backup_dir=str(tmp_path / "bak")))
+    assert "error" not in res, res
+    _run(ts.template_finalize_sync(str(proj), applied_files=json.dumps([".gitattributes"])))
+    assert (proj / ".gitattributes").read_text(encoding="utf-8") == moved
+    assert status_of(proj, rel=".gitattributes")["status"] == "IDENTICAL"
 
 
 # --- orphaned region: template has no markers ---------------------------------

@@ -118,7 +118,7 @@ END_RE='<!--[[:space:]]*PROJECT-CUSTOM:END'
 # asserts its own marker, while `region.sh` is invoked by a step that simply
 # assumes the copy on disk is current. Printing it in `--help` means the answer
 # is one command away rather than a hash lookup.
-REGION_SH_VERSION="3.0.1"
+REGION_SH_VERSION="3.0.2"
 
 usage() {
   echo "region.sh $REGION_SH_VERSION" >&2
@@ -156,7 +156,10 @@ body() {
     }
     state == 1 {
       if (match($0, ere)) {
-        if (RSTART > 1) printf "%s", substr($0, 1, RSTART - 1)
+        # A comment-prefixed END line (`# <!-- PROJECT-CUSTOM:END -->`, as the shipped
+        # .gitattributes has it): the `# ` belongs to the marker line, not the body.
+        pre = substr($0, 1, RSTART - 1)
+        if (RSTART > 1 && pre !~ /^[ \t]*#[ \t]*$/) printf "%s", pre
         exit
       }
       printf "%s\n", $0
@@ -220,10 +223,12 @@ has_end()   { grep -qE "$END_RE" "$1"; }
 # The placeholder alone does NOT make a region non-empty (this is the rule the
 # skill's step-4 note already states in prose).  Any OTHER comment does: a
 # consumer who wrote their notes in a comment wrote content, and this guard
-# must not decide otherwise on their behalf.
+# must not decide otherwise on their behalf.  A line that is only `#` (a bare
+# comment prefix, as in the shipped .gitattributes region) holds nothing either.
 is_empty() {
   printf '%s' "$1" \
-    | sed -E 's@^[[:space:]]*<!--[^>]*(Project-specific rules|extensions go here)[^>]*-->[[:space:]]*$@@' \
+    | sed -E -e 's@^[[:space:]]*<!--[^>]*(Project-specific rules|extensions go here)[^>]*-->[[:space:]]*$@@' \
+             -e 's@^[[:space:]]*#[[:space:]]*$@@' \
     | tr -d '[:space:]' \
     | grep -q . && return 1
   return 0

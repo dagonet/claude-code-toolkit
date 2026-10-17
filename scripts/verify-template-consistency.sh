@@ -2012,6 +2012,12 @@ else
   # neither is a marker at all — and this row is what stops a future
   # order-based rewrite from regressing it silently.
   printf 'Status notes.\n\nThe `PROJECT-CUSTOM:END` marker closes what `PROJECT-CUSTOM:BEGIN` opens.\n' > "$r28b/r7.md"
+  # Rows 8-10 (v5.2): the `#`-prefixed marker lines the shipped .gitattributes carries.
+  # The `# ` before the END marker must neither make an empty region CONTENT (row 8, and
+  # row 9 with CRLF line ends) nor hide a real line (row 10).
+  printf '# <!-- PROJECT-CUSTOM:BEGIN -->\n# <!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r8.md"
+  printf '# <!-- PROJECT-CUSTOM:BEGIN -->\r\n# <!-- PROJECT-CUSTOM:END -->\r\n' > "$r28b/r9.md"
+  printf '# <!-- PROJECT-CUSTOM:BEGIN -->\ndocs/game-data/** -text\n# <!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r10.md"
   r28b_bad=""
   r28b_row() { # <file> <expected>
     r28br=$(bash "$REGION_SH" "$r28b/$1" 2>/dev/null | cut -f1)
@@ -2024,8 +2030,11 @@ else
   r28b_row r5.md UNCLOSED
   r28b_row r6.md NOMARKERS
   r28b_row r7.md NOMARKERS
+  r28b_row r8.md EMPTY
+  r28b_row r9.md EMPTY
+  r28b_row r10.md CONTENT
   if [ -z "$r28b_bad" ]; then
-    ok "region extractor: all seven marker-shape rows classify correctly (prose about the markers is NOMARKERS — in either order — not EMPTY and not UNCLOSED)"
+    ok "region extractor: all ten marker-shape rows classify correctly (prose about the markers is NOMARKERS — in either order — not EMPTY and not UNCLOSED; a \`#\`-prefixed empty region is EMPTY, with one line CONTENT)"
   else
     ko "region extractor: marker-shape row(s) misclassified —$r28b_bad. EMPTY on prose UNLOCKS the delete path; UNCLOSED on prose DEADLOCKS step 6a with no region to relocate."
   fi
@@ -2034,8 +2043,10 @@ else
   # scan path and the body path came to disagree with the spec in DIFFERENT
   # ways, and 6a's byte-compare rides on --body.
   if [ -z "$(bash "$REGION_SH" --body "$r28b/r2.md" 2>/dev/null)" ] &&
-     [ "$(bash "$REGION_SH" --body "$r28b/r3.md" 2>/dev/null)" = "real content" ]; then
-    ok "region extractor: --body and the classifier share one matcher (prose yields nothing, a real region yields its body)"
+     [ "$(bash "$REGION_SH" --body "$r28b/r3.md" 2>/dev/null)" = "real content" ] &&
+     [ -z "$(bash "$REGION_SH" --body "$r28b/r8.md" 2>/dev/null)" ] &&
+     [ "$(bash "$REGION_SH" --body "$r28b/r10.md" 2>/dev/null)" = "docs/game-data/** -text" ]; then
+    ok "region extractor: --body and the classifier share one matcher (prose yields nothing, a real region yields its body, a \`#\`-prefixed END line adds no stray \`# \`)"
   else
     ko "region extractor: --body disagrees with the classifier — 6a's post-relocate byte-compare inherits the disagreement"
   fi
@@ -2408,14 +2419,15 @@ else
   { cat agents/coder.md; printf '\n'; sed -n '/^<!-- PROJECT-CUSTOM:BEGIN/,$p' templates/general/AGENT_TEAM.md; } > "$b2_tmp/consumer/.claude/agents/coder.md"
 
   # BOTH-ARMS PRECONDITION (was arm A pre-v4.1): before planting, the two
-  # remaining shipped region-bearing files (AGENT_TEAM.md, coder.md -- CLAUDE.md
-  # is no longer one of them) must classify EMPTY. If they did not, the CONTENT
+  # remaining shipped region-bearing files here (AGENT_TEAM.md and the rebuilt v4
+  # coder.md; CLAUDE.md is no longer one, and .gitattributes has its own rows in
+  # check 28) must classify EMPTY. If they did not, the CONTENT
   # result below would prove nothing about the planting.
   b2_pre=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
     "$b2_tmp/consumer/.claude/agents/coder.md" \
     2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
   if [ "$b2_pre" = "EMPTY " ]; then
-    ok "check 31 (precondition): the two shipped region-bearing files classify EMPTY before planting"
+    ok "check 31 (precondition): AGENT_TEAM.md and the rebuilt v4 coder.md classify EMPTY before planting"
   else
     ko "check 31 (precondition): expected both shipped files to classify EMPTY before planting, got: $b2_pre"
   fi
@@ -4975,6 +4987,26 @@ c77_bad=$(printf '%s\n' "$c77_pins" | grep . | sort -u | grep -vxF "claude-code-
 if [ "$c77_n" -lt 1 ]; then ko "77: no claude-code-toolkit#v pin literal found in README.md/docs (the check would pass vacuously)"
 elif [ -n "$c77_bad" ]; then ko "77: pin literal(s) not equal to $c77_want: $(printf '%s' "$c77_bad" | tr '\n' ' ')"
 else ok "77: all $c77_n pin literal(s) in README.md/docs equal $c77_want (= VERSION)"; fi
+
+# ---------------------------------------------------------------------------
+# Check 78 (v5.2): every variant's .gitattributes ends with the PROJECT-CUSTOM region as the
+# last two lines (`# <!-- PROJECT-CUSTOM:BEGIN -->`, `# <!-- PROJECT-CUSTOM:END -->`, nothing
+# between), and the six files are byte-identical. Check 25 covers AGENT_TEAM.md only.
+# ---------------------------------------------------------------------------
+c78_files=$(ls templates/*/.gitattributes 2>/dev/null)
+c78_n=$(printf '%s\n' "$c78_files" | grep -c .)
+c78_bad=""
+for f in $c78_files; do
+  if [ "$(tail -n 2 "$f" | head -n 1)" != "# <!-- PROJECT-CUSTOM:BEGIN -->" ] \
+     || [ "$(tail -n 1 "$f")" != "# <!-- PROJECT-CUSTOM:END -->" ]; then
+    c78_bad="$c78_bad $f"
+  fi
+done
+c78_uniq=$(for f in $c78_files; do cksum < "$f"; done | sort -u | grep -c .)
+if [ "$c78_n" -ne 6 ]; then ko "78: expected 6 variant .gitattributes, found $c78_n"
+elif [ -n "$c78_bad" ]; then ko "78: .gitattributes does not end with the BEGIN/END marker pair in:$c78_bad"
+elif [ "$c78_uniq" -ne 1 ]; then ko "78: the six variant .gitattributes are not byte-identical"
+else ok "78: all 6 variant .gitattributes end with the PROJECT-CUSTOM marker pair and are byte-identical"; fi
 
 # ---------------------------------------------------------------------------
 echo

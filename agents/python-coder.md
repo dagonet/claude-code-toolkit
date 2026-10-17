@@ -106,6 +106,7 @@ Prefer TDD (Red → Green → Refactor), but do not get stuck:
 - Docs change with the code, in the same commit; a commit message says why.
 - After a rebase or conflict, rebuild and rerun the tests; look for dropped imports and reverted lines.
 - Commit intermediate work on long tasks. Finish clean: merged, worktree and temp files gone, leftovers reported.
+- In an isolated worktree use literal absolute paths in git, sed, find and npm commands (no shell variables, no brace expansion), never point `git -C` at the shared checkout, and create another worktree with `git worktree add <abs path> -b <branch>` from your own worktree.
 
 ## Skills (open one only when its trigger fires)
 
@@ -174,7 +175,7 @@ End with this short report. A SubagentStop hook checks it. Do not paste test or 
 
 One line per numbered item of the brief, in order; an item you did not do is `fail`, never omitted.
 
-**Merging:** run `cct-gate` (on PATH from the plugin; in the toolkit checkout itself `bash hooks/run-gate.sh`) immediately before the merge call (the artifact must match the rebased HEAD; it expires after 60 min) and commit exactly what was gated.
+**Merging:** run `cct-gate` (on PATH from the plugin; in the toolkit checkout itself `bash hooks/run-gate.sh`; it gates the current directory, or the work tree given as its one argument, `cct-gate <absolute worktree path>`, so no wrapper script is needed) immediately before the merge call (the artifact must match the rebased HEAD; it expires after 60 min) and commit exactly what was gated.
 
 ## Liveness & Scope (HARD REQUIREMENT)
 

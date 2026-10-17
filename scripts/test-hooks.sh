@@ -3838,6 +3838,118 @@ expect "(R5d) not a git repository: exit 78 (terminal, was 1)" "78" "$?"
 expect "(R5d) not a git repository: remedy names the fix" "1" \
   "$(tail -1 "$nonrepoerr" | grep -c 'from inside the checkout')"
 
+# --- R5i: run-gate.sh / cct-gate takes an optional work-tree argument (v5.2) --
+# An agent whose shell may not start with `cd X && ...` passes the work tree
+# instead of writing a wrapper script. FAIL CLOSED: a bad argument is refused
+# with exit 2 and never falls back to the current directory (arms b-d); the
+# no-argument path is the existing behaviour (arm e, and R5d above).
+echo
+echo "=== R5i: run-gate.sh <dir> argument (cct-gate <work tree>) ==="
+argrepo=$(mkrepo gatearg main)
+printf '# ctx\n\n- **Gate**: `true`\n' > "$argrepo/PROJECT_CONTEXT.md"
+git -C "$argrepo" add -A >/dev/null 2>&1
+git -C "$argrepo" commit -q -m ctx >/dev/null 2>&1
+argsha=$(git -C "$argrepo" rev-parse HEAD)
+argart=$(gatepassfile "$argrepo" "$argsha")
+argerr="$TMPROOT/gatearg.err"
+argplain="$TMPROOT/gatearg-plain"
+mkdir -p "$argplain"
+
+# (a) from an unrelated cwd (a directory that is not a repository), the argument
+#     selects the repository: the artifact lands for that repository's HEAD.
+rm -f "$argart"
+( cd "$argplain" && bash "$ROOT/hooks/run-gate.sh" "$argrepo" >/dev/null 2>"$argerr" )
+expect "(R5i-a) <work tree> argument from an unrelated cwd: exit 0" "0" "$?"
+expect "(R5i-a) <work tree> argument: artifact written for that repo's HEAD" "1" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (b) a missing directory is refused, names the path, and does not gate the cwd.
+rm -f "$argart"
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "$TMPROOT/does/not/exist" >/dev/null 2>"$argerr" )
+expect "(R5i-b) nonexistent directory: exit 2" "2" "$?"
+expect "(R5i-b) nonexistent directory: message names the path" "1" \
+  "$(grep -c "cct-gate: refused: .*$TMPROOT/does/not/exist" "$argerr")"
+expect "(R5i-b) nonexistent directory: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (c) an existing directory that is not a git work tree is refused.
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "$argplain" >/dev/null 2>"$argerr" )
+expect "(R5i-c) plain directory (not a work tree): exit 2" "2" "$?"
+expect "(R5i-c) plain directory: message names the path" "1" \
+  "$(grep -c "cct-gate: refused: .*$argplain" "$argerr")"
+expect "(R5i-c) plain directory: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (d) two arguments are refused with a usage line.
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "$argrepo" "$argrepo" >/dev/null 2>"$argerr" )
+expect "(R5i-d) two arguments: exit 2" "2" "$?"
+expect "(R5i-d) two arguments: usage line" "1" \
+  "$(grep -c 'cct-gate: refused: .*Usage' "$argerr")"
+expect "(R5i-d) two arguments: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (e) no argument: gates the cwd's repository exactly as before.
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" >/dev/null 2>"$argerr" )
+expect "(R5i-e) no argument: exit 0" "0" "$?"
+expect "(R5i-e) no argument: artifact written for the cwd repo's HEAD" "1" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (g) CDPATH must not redirect a relative argument: the tree that is validated is
+#     the tree that is gated. `rel` resolves to cdpbase/rel from the cwd; CDPATH
+#     offers a decoy cdpalt/rel, and the builtin cd would pick it (printing it).
+cdpbase=$(mkrepo cdpbase/rel main)
+cdpalt=$(mkrepo cdpalt/rel main)
+for d in "$cdpbase" "$cdpalt"; do
+  printf '# ctx\n\n- **Gate**: `true`\n' > "$d/PROJECT_CONTEXT.md"
+  git -C "$d" add -A >/dev/null 2>&1
+  git -C "$d" commit -q -m ctx >/dev/null 2>&1
+done
+cdpout="$TMPROOT/gatearg-cdpath.out"
+( cd "$TMPROOT/cdpbase" && CDPATH="$TMPROOT/cdpalt" bash "$ROOT/hooks/run-gate.sh" rel >"$cdpout" 2>"$argerr" )
+expect "(R5i-g) CDPATH + relative argument: exit 0" "0" "$?"
+expect "(R5i-g) CDPATH: the validated tree is gated (artifact for its HEAD)" "1" \
+  "$([ -f "$(gatepassfile "$cdpbase" "$(git -C "$cdpbase" rev-parse HEAD)")" ] && echo 1 || echo 0)"
+expect "(R5i-g) CDPATH: the decoy tree is NOT gated" "0" \
+  "$([ -f "$(gatepassfile "$cdpalt" "$(git -C "$cdpalt" rev-parse HEAD)")" ] && echo 1 || echo 0)"
+expect "(R5i-g) CDPATH: nothing from the cd reaches stdout" "0" \
+  "$(grep -cF "$TMPROOT/cdpalt" "$cdpout")"
+
+# (h) an empty argument (e.g. `cct-gate "$WT"` with WT unset) is refused: `git -C ""`
+#     would keep the cwd and silently gate it.
+rm -f "$argart"
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "" >/dev/null 2>"$argerr" )
+expect "(R5i-h) empty argument: exit 2" "2" "$?"
+expect "(R5i-h) empty argument: message says so" "1" \
+  "$(grep -c 'cct-gate: refused: empty work-tree argument' "$argerr")"
+expect "(R5i-h) empty argument: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (i) an exported GIT_DIR must not turn a plain directory into a work tree: git -C
+#     would resolve the GIT_DIR repository for it, so the argument is validated
+#     with GIT_DIR/GIT_WORK_TREE unset and the plain directory is still refused.
+rm -f "$argart" "$(gatedir "$argrepo")"/last-pass.*
+( cd "$argplain" && GIT_DIR="$argrepo/.git" bash "$ROOT/hooks/run-gate.sh" "$argplain" >/dev/null 2>"$argerr" )
+expect "(R5i-i) GIT_DIR exported + plain directory: exit 2" "2" "$?"
+expect "(R5i-i) GIT_DIR exported + plain directory: no artifact at all in the gate dir" "0" \
+  "$(find "$(gatedir "$argrepo")" -name 'last-pass.*' 2>/dev/null | wc -l | tr -d ' ')"
+
+# (j) a file is not a work tree: refused, cwd not gated.
+( cd "$argplain" && bash "$ROOT/hooks/run-gate.sh" "$argrepo/PROJECT_CONTEXT.md" >/dev/null 2>"$argerr" )
+expect "(R5i-j) file argument: exit 2" "2" "$?"
+expect "(R5i-j) file argument: no artifact" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (k) a subdirectory of a work tree gates the work tree's toplevel.
+mkdir -p "$argrepo/subdir"
+( cd "$argplain" && bash "$ROOT/hooks/run-gate.sh" "$argrepo/subdir" >/dev/null 2>"$argerr" )
+expect "(R5i-k) subdirectory argument: exit 0" "0" "$?"
+expect "(R5i-k) subdirectory argument: artifact written for the toplevel's HEAD" "1" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (f) --help names the argument.
+expect "(R5i-f) --help documents the work-tree argument" "1" \
+  "$(bash "$ROOT/hooks/run-gate.sh" --help 2>&1 | grep -c '^Usage: .*\[<work tree directory>\]')"
+
 # --- R5e: THE MARKER NESTS THROUGH A WRAPPER (v2.2.5 round 4) ---------------
 # R5b arm 1 is single-level: **Gate** invokes run-gate.sh directly. A marker
 # written to a SELF-CREATED temp dir would pass that test and fail here, because
@@ -6188,9 +6300,10 @@ DSRCWD="$TMPROOT"
 for p in '.env' '/p/.env.local' '/p/.env.production' '/x/.env.staging'; do
   check "(DSR) Read $p denied"                "$DSR" 2 "$(mkjson_read "$p" "$DSRCWD")"
 done
-for p in '/p/.envrc' '/p/environment.ts' 'src/.env.example'; do
+for p in '/p/.envrc' '/p/environment.ts' 'src/.env.example' 'web/.env.local.example'; do
   check "(DSR) Read $p allowed"               "$DSR" 0 "$(mkjson_read "$p" "$DSRCWD")"
 done
+check "(DSR) Read .env.local denied"          "$DSR" 2 "$(mkjson_read '.env.local' "$DSRCWD")"
 check_msg "(DSR) the denial NAMES the path"   "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "/p/.env.local"
 check_msg "(DSR) the denial names its blind spot" "$ROOT/$DSR" 2 "$(mkjson_read '.env' "$DSRCWD")" "judged by the auto-mode classifier"
 # v3.0.4 item A1 — the matched TOKEN and its LOCATION, not a workaround that
@@ -6300,6 +6413,34 @@ check "(DSR) xmit: wget --post-file=.env denied" "$DSR" 2 "$(mkjson Bash 'wget -
 check "(DSR) .env.example is exempt"          "$DSR" 0 "$(mkjson Bash 'cat .env.example' "$DSRCWD")"
 check "(DSR) .env.examples is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.examples' "$DSRCWD")"
 check "(DSR) .env.sample is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.sample' "$DSRCWD")"
+# v5.2.0: `.env.<name>.example` templates are exempt too, judged PER WORD. The
+# pattern is `^\.env\.[A-Za-z0-9_-]+\.example$` on the lowercased basename.
+check "(DSR) .env.local.example is exempt"        "$DSR" 0 "$(mkjson Bash 'cat .env.local.example' "$DSRCWD")"
+check "(DSR) config/.env.production.example is exempt" "$DSR" 0 "$(mkjson Bash 'cat config/.env.production.example' "$DSRCWD")"
+check "(DSR) git show HEAD:web/.env.local.example | cut allowed" "$DSR" 0 "$(mkjson Bash 'git show HEAD:web/.env.local.example | cut -d= -f1' "$DSRCWD")"
+check "(DSR) head -1 web/.env.local.example allowed" "$DSR" 0 "$(mkjson Bash 'head -1 web/.env.local.example' "$DSRCWD")"
+check "(DSR) .env.a.b.example is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.a.b.example' "$DSRCWD")"
+check "(DSR) directory component: cat .env.local.example/.env denied" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example/.env' "$DSRCWD")"
+check "(DSR) exemption compares lowercased: .ENV.LOCAL.EXAMPLE" "$DSR" 0 "$(mkjson Bash 'cat .ENV.LOCAL.EXAMPLE' "$DSRCWD")"
+# On a shell command an expansion character anywhere in the word withdraws the
+# NEW per-name exemption only: the shell turns `.env$IFS/.env.local.example`
+# into `.env` plus a path. The exact `.env.example` keeps its pre-v5.2 behaviour
+# (allowed with `$PWD/`), and a Read file_path is never shell-expanded.
+check "(DSR) expansion in the word: cat .env\$IFS/.env.local.example denied" "$DSR" 2 "$(mkjson Bash 'cat .env$IFS/.env.local.example' "$DSRCWD")"
+check "(DSR) cat \"\$PWD/.env.local.example\" denied (guard)" "$DSR" 2 "$(mkjson Bash 'cat "$PWD/.env.local.example"' "$DSRCWD")"
+check "(DSR) PowerShell comma word: pwsh -c cat .env,x/.env.local.example denied" "$DSR" 2 "$(mkjson Bash 'pwsh -c "cat .env,x/.env.local.example"' "$DSRCWD")"
+check "(DSR) cat web/.env.local.example still allowed (no expansion char)" "$DSR" 0 "$(mkjson Bash 'cat web/.env.local.example' "$DSRCWD")"
+check "(DSR) cat \"\$PWD/.env.example\" allowed (as before v5.2)" "$DSR" 0 "$(mkjson Bash 'cat "$PWD/.env.example"' "$DSRCWD")"
+check "(DSR) Read /repo/app/[locale]/.env.example allowed" "$DSR" 0 "$(mkjson_read '/repo/app/[locale]/.env.example' "$DSRCWD")"
+check "(DSR) Read /repo/app/[locale]/.env.local.example allowed" "$DSR" 0 "$(mkjson_read '/repo/app/[locale]/.env.local.example' "$DSRCWD")"
+check "(DSR) per word: cat .env.local.example .env denied" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example .env' "$DSRCWD")"
+check "(DSR) .env.example.bak is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.example.bak' "$DSRCWD")"
+# `.env..example` is outside the secret shape itself (a suffix cannot start with
+# a dot), so it was allowed before v5.2.0 and stays so: the exemption neither
+# causes nor widens that. Pinned as 0 so a regex change shows up here.
+check "(DSR) .env..example: outside the secret shape, unchanged" "$DSR" 0 "$(mkjson Bash 'cat .env..example' "$DSRCWD")"
+check "(DSR) .env.local stays denied"             "$DSR" 2 "$(mkjson Bash 'cat .env.local' "$DSRCWD")"
+check "(DSR) .env.local.example.txt is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example.txt' "$DSRCWD")"
 # WRITES AND EXCLUSIONS STAY ALLOWED — the rejected any-token rule, asserted.
 check "(DSR) WRITE: cp .env.example .env allowed" "$DSR" 0 "$(mkjson Bash 'cp .env.example .env' "$DSRCWD")"
 check "(DSR) WRITE: cp .env /tmp/backup allowed"  "$DSR" 0 "$(mkjson Bash 'cp .env /tmp/backup' "$DSRCWD")"
@@ -11833,7 +11974,7 @@ v462_warns() { # <cwd> <script> -> count of WARN lines; rc must stay 0
 # git's own spelling of each toplevel (C:/... on Git Bash, /private/... on macOS), as the warning prints it
 V462_A_TOP=$(git -C "$V462_A" rev-parse --show-toplevel); V462_B_TOP=$(git -C "$V462_B" rev-parse --show-toplevel)
 expect "V462 script in repo A, run from repo B: warns once"          1 "$(v462_warns "$V462_B" "$V462_A/hooks/run-gate.sh")"
-expect "V462 warning names both checkouts" 1 "$(cd "$V462_B" && bash "$V462_A/hooks/run-gate.sh" 2>&1 | grep -cF "run-gate.sh from $V462_A_TOP is gating $V462_B_TOP (the current directory's repository); to gate $V462_A_TOP, run it from inside $V462_A_TOP.")"
+expect "V462 warning names both checkouts" 1 "$(cd "$V462_B" && bash "$V462_A/hooks/run-gate.sh" 2>&1 | grep -cF "run-gate.sh from $V462_A_TOP is gating $V462_B_TOP (the current directory's repository); to gate $V462_A_TOP, run it from inside $V462_A_TOP or pass its path: ")"
 expect "V462 same repo with GIT_DIR exported: no warning"             0 "$(GIT_DIR="$V462_A/.git" v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
 expect "V462 script in repo A, run from repo A: no warning"           0 "$(v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
 expect "V462 script outside any git work tree, run from a repo: no warning" 0 "$(v462_warns "$V462_B" "$V462_NOGIT/run-gate.sh")"

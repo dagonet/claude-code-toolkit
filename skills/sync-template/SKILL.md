@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /cct:sy
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v5.1.2 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v5.2.0 -->
 
 **This skill takes no arguments.** Invoke it as `/cct:sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -14,7 +14,7 @@ Pull updates from the claude-code-toolkit template repo into the current project
 
 **The line above is the version of the body YOU LOADED, and you must be able to state it.** A running session obeys the skill body it read at session start, not the file on disk — measured live: an installed `SKILL.md` byte-identical to the current release while sessions started earlier were still executing the previous version's steps. So *"re-copy `SKILL.md`"* and *"the drift check reports 0"* can both pass while every live session runs the old workflow. Step 1 passes this marker to the server, which refuses a body older than the checkout's own.
 
-**Requires:** `template-sync-tools` MCP server registered and running, **version >= 5.1.2** — read from the `template_load_manifest` response, not from `pip show` or the checkout. Two different floors, do not conflate them: a v4 manifest enforces `">=4.1.0"` at load (`MIN_SERVER_FOR_V4`), the oldest server that can read a v4 manifest without applying a region-less `CLAUDE.md` over a consumer whose project content still lives in the region; THIS skill's floor is 5.1.2 (step 7 sends path-only applied items with no fallback, and only a 5.1.2 server derives them; `template_load_manifest` takes `skill_version` only from v5.0; the body also relies without any fallback on the 4.3.1 behaviour) — the untracked-file write guard (`present_on_disk`, `overwrite_existing`), `files_created`, and `pending_once_notes`. An older server silently overwrites an untracked file the guard would have refused. `manifest_version` below 4 — v2 **or** v3 — means the project has not reached the current model yet: v2 still migrates first to v3 (unchanged from prior releases), and v3 now migrates on to v4 (step 1c below covers both hops). A skimmer who reads only the header number and stops still gets the number that protects them, same as before.
+**Requires:** `template-sync-tools` MCP server registered and running, **version >= 5.2.0** — read from the `template_load_manifest` response, not from `pip show` or the checkout. Two different floors, do not conflate them: a v4 manifest enforces `">=4.1.0"` at load (`MIN_SERVER_FOR_V4`), the oldest server that can read a v4 manifest without applying a region-less `CLAUDE.md` over a consumer whose project content still lives in the region; THIS skill's floor is 5.2.0 (step 7 sends path-only applied items with no fallback, and only a 5.1.2 or later server derives them; the `.gitattributes` region merge needs the 5.2.0 line-start split; `template_load_manifest` takes `skill_version` only from v5.0; the body also relies without any fallback on the 4.3.1 behaviour) — the untracked-file write guard (`present_on_disk`, `overwrite_existing`), `files_created`, and `pending_once_notes`. An older server silently overwrites an untracked file the guard would have refused. `manifest_version` below 4 — v2 **or** v3 — means the project has not reached the current model yet: v2 still migrates first to v3 (unchanged from prior releases), and v3 now migrates on to v4 (step 1c below covers both hops). A skimmer who reads only the header number and stops still gets the number that protects them, same as before.
 
 **Linux/macOS: skip the Windows path notes** (the platform notes, `cygpath`, MSYS and `/tmp` drive-relative passages); they apply only under Git Bash on Windows.
 
@@ -637,7 +637,9 @@ For each file with status `CONFLICT`:
 
 > **PROJECT-CUSTOM region:** the server preserves content between `<!-- PROJECT-CUSTOM:BEGIN -->` and `<!-- PROJECT-CUSTOM:END -->` mechanically (when both template and project carry the markers). If the consumer's `template-sync-tools` server predates region support, preserve the project's region verbatim in any manual `CLAUDE.md` merge — never let accept-template clobber it.
 >
-> Since v2.1.2 the markers also ship at the end of every `.claude/agents/*.md` and of `AGENT_TEAM.md` — the region split is file-agnostic, so those files now merge exactly like `CLAUDE.md`. On the first sync that brings the markers in, **move the project's existing custom agent lines into the region once**; anything left above the BEGIN marker is template territory and the next accept-template will overwrite it.
+> Since v2.1.2 the markers ship at the end of `AGENT_TEAM.md` (and, until v5.0, of every `.claude/agents/*.md`; the agents now live in the plugin and are not synced) — the region split is file-agnostic, so those files merge by the same rules. On the first sync that brings the markers in, **move the project's existing custom lines into the region once**; anything left above the BEGIN marker is template territory and the next accept-template will overwrite it.
+>
+> Since v5.2.0 `.gitattributes` carries a region too, as the last two lines: `# <!-- PROJECT-CUSTOM:BEGIN -->` and `# <!-- PROJECT-CUSTOM:END -->` (`#` lines, which git ignores; the server treats a `#`-only prefix as part of the marker line, so the `# ` travels with the region, which needs server 5.2.0 or later). A project's own attribute lines (for example `docs/game-data/** -text`) go **between** them. A consumer whose local `.gitattributes` lines sit **outside** any region keeps seeing `LOCAL_EDITED` on that file until it moves them: on the first sync that brings the markers in, **move those lines between the markers once** (hand-merge, then `template_apply_file(source="provided", content=...)`); after that the status is clean and later template changes to the file apply around the region.
 >
 > "EMPTY region" in the accept-template disqualifier above means *no content other than the shipped `<!-- Project-specific rules, routing blocks, and extensions go here. -->` placeholder* — the placeholder alone does not make a region non-empty.
 >
@@ -758,7 +760,7 @@ Same outcome-shaped rule as step 4: check the exit code before trusting the clas
 
 So the user cannot choose *"delete with content"*; they can only *"empty, then delete"* — and emptying is the act that moves the content somewhere it survives. **The irreversible step becomes reachable only once the content is provably elsewhere.**
 
-**This is the MODAL case in a consolidation release, not an edge case.** Under v5 the agents leave through step 2c, so only `AGENT_TEAM.md` still carries a PROJECT-CUSTOM region and is manifest-tracked: `TEMPLATE_DELETED × region-bearing` is now the rare case.
+**This is the MODAL case in a consolidation release, not an edge case.** Under v5 the agents leave through step 2c, so only `AGENT_TEAM.md` and `.gitattributes` (since v5.2.0) still carry a PROJECT-CUSTOM region and are manifest-tracked, and neither is a deletion candidate: `TEMPLATE_DELETED × region-bearing` is now the rare case.
 
 Required, in order:
 
