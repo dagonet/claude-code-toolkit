@@ -2012,6 +2012,12 @@ else
   # neither is a marker at all — and this row is what stops a future
   # order-based rewrite from regressing it silently.
   printf 'Status notes.\n\nThe `PROJECT-CUSTOM:END` marker closes what `PROJECT-CUSTOM:BEGIN` opens.\n' > "$r28b/r7.md"
+  # Rows 8-10 (v5.2): the `#`-prefixed marker lines the shipped .gitattributes carries.
+  # The `# ` before the END marker must neither make an empty region CONTENT (row 8, and
+  # row 9 with CRLF line ends) nor hide a real line (row 10).
+  printf '# <!-- PROJECT-CUSTOM:BEGIN -->\n# <!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r8.md"
+  printf '# <!-- PROJECT-CUSTOM:BEGIN -->\r\n# <!-- PROJECT-CUSTOM:END -->\r\n' > "$r28b/r9.md"
+  printf '# <!-- PROJECT-CUSTOM:BEGIN -->\ndocs/game-data/** -text\n# <!-- PROJECT-CUSTOM:END -->\n' > "$r28b/r10.md"
   r28b_bad=""
   r28b_row() { # <file> <expected>
     r28br=$(bash "$REGION_SH" "$r28b/$1" 2>/dev/null | cut -f1)
@@ -2024,8 +2030,11 @@ else
   r28b_row r5.md UNCLOSED
   r28b_row r6.md NOMARKERS
   r28b_row r7.md NOMARKERS
+  r28b_row r8.md EMPTY
+  r28b_row r9.md EMPTY
+  r28b_row r10.md CONTENT
   if [ -z "$r28b_bad" ]; then
-    ok "region extractor: all seven marker-shape rows classify correctly (prose about the markers is NOMARKERS — in either order — not EMPTY and not UNCLOSED)"
+    ok "region extractor: all ten marker-shape rows classify correctly (prose about the markers is NOMARKERS — in either order — not EMPTY and not UNCLOSED; a \`#\`-prefixed empty region is EMPTY, with one line CONTENT)"
   else
     ko "region extractor: marker-shape row(s) misclassified —$r28b_bad. EMPTY on prose UNLOCKS the delete path; UNCLOSED on prose DEADLOCKS step 6a with no region to relocate."
   fi
@@ -2034,8 +2043,10 @@ else
   # scan path and the body path came to disagree with the spec in DIFFERENT
   # ways, and 6a's byte-compare rides on --body.
   if [ -z "$(bash "$REGION_SH" --body "$r28b/r2.md" 2>/dev/null)" ] &&
-     [ "$(bash "$REGION_SH" --body "$r28b/r3.md" 2>/dev/null)" = "real content" ]; then
-    ok "region extractor: --body and the classifier share one matcher (prose yields nothing, a real region yields its body)"
+     [ "$(bash "$REGION_SH" --body "$r28b/r3.md" 2>/dev/null)" = "real content" ] &&
+     [ -z "$(bash "$REGION_SH" --body "$r28b/r8.md" 2>/dev/null)" ] &&
+     [ "$(bash "$REGION_SH" --body "$r28b/r10.md" 2>/dev/null)" = "docs/game-data/** -text" ]; then
+    ok "region extractor: --body and the classifier share one matcher (prose yields nothing, a real region yields its body, a \`#\`-prefixed END line adds no stray \`# \`)"
   else
     ko "region extractor: --body disagrees with the classifier — 6a's post-relocate byte-compare inherits the disagreement"
   fi
@@ -2086,10 +2097,6 @@ else
   else
     r28p=$(mktemp -d)
     cp -r templates/general/. "$r28p/" 2>/dev/null
-    # v5.2: the shipped .gitattributes carries an EMPTY region that region.sh scans as CONTENT
-    # (the `# ` before its END marker falls inside the span), which would read as a third
-    # planted region. This fixture counts the planted AGENT_TEAM.md / coder.md regions only.
-    rm -f "$r28p/.gitattributes"
     # v5.0: templates ship no agents, but a v4 consumer still carries
     # .claude/agents/coder.md with the placeholder region (the TEMPLATE_DELETED x
     # region-bearing case a v5 sync meets). Rebuild that shape: the plugin coder (and

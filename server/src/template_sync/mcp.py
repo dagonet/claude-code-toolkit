@@ -197,6 +197,10 @@ def _split_custom_region(content: str) -> tuple[str, str | None]:
     """Split content into (template_part, region_block).
 
     region_block spans from the BEGIN marker through the END marker inclusive.
+    When only `#`/blank characters precede the BEGIN marker on its line (a
+    `# <!-- PROJECT-CUSTOM:BEGIN -->` comment line, as .gitattributes ships it),
+    the block starts at that line's start, so the `# ` travels with the region
+    exactly as it does on the END line. Markers at column 0 are unaffected.
     Requires BEGIN before END; absent or malformed markers return
     (content, None) — legacy full-file behavior.
     """
@@ -207,6 +211,10 @@ def _split_custom_region(content: str) -> tuple[str, str | None]:
     if end == -1:
         return content, None
     end += len(CUSTOM_REGION_END)
+    line_start = content.rfind("\n", 0, begin) + 1
+    prefix = content[line_start:begin]
+    if "#" in prefix and prefix.strip(" \t#") == "":
+        begin = line_start
     return content[:begin] + content[end:], content[begin:end]
 
 
