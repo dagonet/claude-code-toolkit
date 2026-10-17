@@ -6306,7 +6306,13 @@ check "(DSR) .env.sample is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env
 check "(DSR) .env.local.example is exempt"        "$DSR" 0 "$(mkjson Bash 'cat .env.local.example' "$DSRCWD")"
 check "(DSR) config/.env.production.example is exempt" "$DSR" 0 "$(mkjson Bash 'cat config/.env.production.example' "$DSRCWD")"
 check "(DSR) git show HEAD:web/.env.local.example | cut allowed" "$DSR" 0 "$(mkjson Bash 'git show HEAD:web/.env.local.example | cut -d= -f1' "$DSRCWD")"
-check "(DSR) ls web/.env.local.example allowed"   "$DSR" 0 "$(mkjson Bash 'ls web/.env.local.example' "$DSRCWD")"
+check "(DSR) head -1 web/.env.local.example allowed" "$DSR" 0 "$(mkjson Bash 'head -1 web/.env.local.example' "$DSRCWD")"
+check "(DSR) .env.a.b.example is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.a.b.example' "$DSRCWD")"
+check "(DSR) directory component: cat .env.local.example/.env denied" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example/.env' "$DSRCWD")"
+check "(DSR) exemption compares lowercased: .ENV.LOCAL.EXAMPLE" "$DSR" 0 "$(mkjson Bash 'cat .ENV.LOCAL.EXAMPLE' "$DSRCWD")"
+# An expansion character anywhere in the word withdraws the exemption: the
+# shell turns `.env$IFS/.env.local.example` into `.env` plus a path.
+check "(DSR) expansion in the word: cat .env\$IFS/.env.local.example denied" "$DSR" 2 "$(mkjson Bash 'cat .env$IFS/.env.local.example' "$DSRCWD")"
 check "(DSR) per word: cat .env.local.example .env denied" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example .env' "$DSRCWD")"
 check "(DSR) .env.example.bak is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.example.bak' "$DSRCWD")"
 # `.env..example` is outside the secret shape itself (a suffix cannot start with

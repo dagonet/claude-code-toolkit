@@ -135,11 +135,18 @@ dsr_is_secret() { # <path> -> 0 when it is a secret-bearing .env name
   dsr_lb=$(printf '%s' "$dsr_b" | tr 'A-Z' 'a-z')
   # EXPLICIT exemption, not an artifact of the anchoring: an exact `.env.example`
   # basename. `.env.examples` and `.env.sample` are NOT it, and are denied.
-  [ "$dsr_lb" = ".env.example" ] && return 1
-  # v5.2.0: and the per-name template `.env.<name>.example` (`.env.local.example`).
-  # One dot-free name segment only, so `.env.example.bak`, `.env.local.example.txt`
-  # and `.env.a.b.example` stay denied. Judged per word, like everything here.
-  [[ "$dsr_lb" =~ ^\.env\.[a-z0-9_-]+\.example$ ]] && return 1
+  # Both exemptions below apply only when the WHOLE word is free of shell
+  # expansion characters: `.env$IFS/.env.example` is not the example file's path
+  # after the shell has expanded it. Not a model of expansion, just a refusal.
+  case "$1" in
+    *'$'*|*'`'*|*'\'*|*'{'*|*'}'*|*'*'*|*'?'*|*'['*) ;;
+    *)
+      [ "$dsr_lb" = ".env.example" ] && return 1
+      # v5.2.0: and the per-name template `.env.<name>.example` (`.env.local.example`).
+      # One dot-free name segment only, so `.env.example.bak`, `.env.local.example.txt`
+      # and `.env.a.b.example` stay denied. Judged per word, like everything here.
+      [[ "$dsr_lb" =~ ^\.env\.[a-z0-9_-]+\.example$ ]] && return 1 ;;
+  esac
   printf '%s' "$1" | grep -qiE "$DSR_SECRET_RE" && return 0
   # The glob heuristic — see the header. `.e`-prefixed AND carrying a glob
   # metacharacter. `.environment` has no metacharacter and stays allowed.
