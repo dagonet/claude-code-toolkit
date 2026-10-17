@@ -3894,6 +3894,26 @@ expect "(R5i-e) no argument: exit 0" "0" "$?"
 expect "(R5i-e) no argument: artifact written for the cwd repo's HEAD" "1" \
   "$([ -f "$argart" ] && echo 1 || echo 0)"
 
+# (g) CDPATH must not redirect a relative argument: the tree that is validated is
+#     the tree that is gated. `rel` resolves to cdpbase/rel from the cwd; CDPATH
+#     offers a decoy cdpalt/rel, and the builtin cd would pick it (printing it).
+cdpbase=$(mkrepo cdpbase/rel main)
+cdpalt=$(mkrepo cdpalt/rel main)
+for d in "$cdpbase" "$cdpalt"; do
+  printf '# ctx\n\n- **Gate**: `true`\n' > "$d/PROJECT_CONTEXT.md"
+  git -C "$d" add -A >/dev/null 2>&1
+  git -C "$d" commit -q -m ctx >/dev/null 2>&1
+done
+cdpout="$TMPROOT/gatearg-cdpath.out"
+( cd "$TMPROOT/cdpbase" && CDPATH="$TMPROOT/cdpalt" bash "$ROOT/hooks/run-gate.sh" rel >"$cdpout" 2>"$argerr" )
+expect "(R5i-g) CDPATH + relative argument: exit 0" "0" "$?"
+expect "(R5i-g) CDPATH: the validated tree is gated (artifact for its HEAD)" "1" \
+  "$([ -f "$(gatepassfile "$cdpbase" "$(git -C "$cdpbase" rev-parse HEAD)")" ] && echo 1 || echo 0)"
+expect "(R5i-g) CDPATH: the decoy tree is NOT gated" "0" \
+  "$([ -f "$(gatepassfile "$cdpalt" "$(git -C "$cdpalt" rev-parse HEAD)")" ] && echo 1 || echo 0)"
+expect "(R5i-g) CDPATH: nothing from the cd reaches stdout" "0" \
+  "$(grep -cF "$TMPROOT/cdpalt" "$cdpout")"
+
 # (f) --help names the argument.
 expect "(R5i-f) --help documents the work-tree argument" "1" \
   "$(bash "$ROOT/hooks/run-gate.sh" --help 2>&1 | grep -c '^Usage: .*\[<work tree directory>\]')"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Gate runner (invoked by developers/PO, not registered as a hook):
-#   bash hooks/run-gate.sh
+#   bash hooks/run-gate.sh [<work tree directory>]
+#
+# Gates the repository in the current directory, or the one work tree given as the
+# optional argument (v5.2; refused with exit 2 when it is not a work tree).
 #
 # Reads the Gate command from PROJECT_CONTEXT.md ("**Gate**: <command>",
 # with or without a leading list marker) and runs it. On success, writes
@@ -123,11 +126,16 @@ if [ "$#" -gt 0 ]; then
     echo "cct-gate: refused: expected at most one argument (a work tree directory). Usage: $(gc_gate_cmd) [<work tree directory>]" >&2
     exit 2
   fi
-  if [ ! -d "$1" ] || ! git -C "$1" rev-parse --show-toplevel >/dev/null 2>&1; then
+  # git -C fails on a missing path, a file or a non-work-tree. cd into the ABSOLUTE
+  # toplevel git resolved, not into "$1": the builtin consults an exported CDPATH
+  # for a relative argument (and prints the directory), which would gate a
+  # different tree than the one just validated.
+  RG_ARG_TOP=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$RG_ARG_TOP" ]; then
     echo "cct-gate: refused: '$1' is not a directory inside a git work tree. Pass an existing work tree path, or no argument to gate the current directory." >&2
     exit 2
   fi
-  cd "$1" || { echo "cct-gate: refused: cannot change into '$1'" >&2; exit 2; }
+  cd "$RG_ARG_TOP" || { echo "cct-gate: refused: cannot change into '$RG_ARG_TOP'" >&2; exit 2; }
 fi
 
 CWD=$(pwd)
@@ -151,10 +159,12 @@ fi
 # tree (the user-level copy in ~/.claude/hooks, a plugin cache copy).
 # Also silent in plugin mode (CLAUDE_PLUGIN_ROOT set): there, gating the cwd is by
 # design, and `--plugin-dir` from a toolkit checkout would otherwise warn wrongly.
+# Also silent when a work tree was named as the argument: the caller chose the
+# target, and BASH_SOURCE (possibly relative) would resolve after the cd (v5.2).
 # GIT_DIR/GIT_WORK_TREE are unset for this one call: an exported GIT_DIR would
 # make the script's own directory resolve to the cwd's repository.
 RG_SELF_TOP=$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)
-if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -n "$RG_SELF_TOP" ] && [ "$RG_SELF_TOP" != "$REPO_TOP" ]; then
+if [ "$#" -eq 0 ] && [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -n "$RG_SELF_TOP" ] && [ "$RG_SELF_TOP" != "$REPO_TOP" ]; then
   echo "WARN: run-gate.sh from $RG_SELF_TOP is gating $REPO_TOP (the current directory's repository); to gate $RG_SELF_TOP, run it from inside $RG_SELF_TOP." >&2
 fi
 
