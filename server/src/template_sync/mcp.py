@@ -1270,7 +1270,7 @@ async def template_compute_status(
         naming. It is NOT commit state and does not mean "the gate is
         currently failing" or "the gate has not run since the last commit" --
         it means only "a Gate is declared here", which a consumer should read
-        as a standing reminder to actually run `bash hooks/run-gate.sh`
+        as a standing reminder to actually run `cct-gate`
         themselves, not as a verdict this call produced.
     """
     pp = pathlib.Path(project_path).resolve()

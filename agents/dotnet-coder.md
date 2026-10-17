@@ -86,6 +86,7 @@ Prefer TDD (Red → Green → Refactor), but do not get stuck:
 - Docs change with the code, in the same commit; a commit message says why.
 - After a rebase or conflict, rebuild and rerun the tests; look for dropped imports and reverted lines.
 - Commit intermediate work on long tasks. Finish clean: merged, worktree and temp files gone, leftovers reported.
+- In an isolated worktree use literal absolute paths in git, sed, find and npm commands (no shell variables, no brace expansion), never `git -C` at the shared checkout, and create another worktree with `git worktree add <abs path> -b <branch>` from your own worktree.
 
 ## Skills (open one only when its trigger fires)
 

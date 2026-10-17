@@ -28,8 +28,8 @@
           "none_meaning": "no branch is gate-checked -- hooks/lib/git-cmd.sh's gc_gate_checked_branches reads it as an empty branch list, same as absent; DO NOT read `none` here as widening access"
         },
         "Post-edit build": {
-          "effect_when_absent": "hooks/post-edit-build.sh is inert -- no build runs after Edit/Write",
-          "none_meaning": "no-op -- hooks/post-edit-build.sh treats `none` exactly like absent"
+          "effect_when_absent": "the plugin's post-edit-build hook is inert -- no build runs after Edit/Write",
+          "none_meaning": "no-op -- the plugin's post-edit-build hook treats `none` exactly like absent"
         },
         "PO write surface": {
           "effect_when_absent": "the PO's write surface stays at the template default (docs/plans, PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/, AGENT_TEAM.md)",

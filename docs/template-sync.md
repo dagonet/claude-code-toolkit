@@ -276,7 +276,7 @@ A consumer who keeps a `CLAUDE.local.md` (not shipped since v4.0.1) is unaffecte
 |---|---|---|
 | `**Test**` | pre-commit falls back to the Gate, which mints the artifact — commit and merge are one run | not declared (fixed since v3.0.3: `hooks/pre-commit-test.sh` treats a trimmed, case-insensitive `none` as absent and falls through to the Gate; before that it was eval'd as a shell command and blocked every commit) |
 | `**Gate-checked branches**` | no branch gets the artifact-freshness-only merge lane | no branch is gate-checked — `hooks/lib/git-cmd.sh`'s `gc_gate_checked_branches` reads it as an empty branch list, the SAME as absent. Do not read `none` here as widening access, and do not "fix" this reader to treat `none` as anything else: penumbra, panoscribe and open-brain all carry the literal `none` today as setup's derived default, and redefining it would silently turn merge gating ON for all three |
-| `**Post-edit build**` | `hooks/post-edit-build.sh` is inert | no-op — treated exactly like absent |
+| `**Post-edit build**` | the plugin's `post-edit-build` hook is inert | no-op — treated exactly like absent |
 | `**PO write surface**` | write surface stays at the template default | the template default — no extra prefixes added |
 | `**Test (frontend)**` | no separate frontend test step runs | no-op |
 
