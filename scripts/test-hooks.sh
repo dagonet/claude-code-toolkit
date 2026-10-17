@@ -3914,6 +3914,16 @@ expect "(R5i-g) CDPATH: the decoy tree is NOT gated" "0" \
 expect "(R5i-g) CDPATH: nothing from the cd reaches stdout" "0" \
   "$(grep -cF "$TMPROOT/cdpalt" "$cdpout")"
 
+# (h) an empty argument (e.g. `cct-gate "$WT"` with WT unset) is refused: `git -C ""`
+#     would keep the cwd and silently gate it.
+rm -f "$argart"
+( cd "$argrepo" && bash "$ROOT/hooks/run-gate.sh" "" >/dev/null 2>"$argerr" )
+expect "(R5i-h) empty argument: exit 2" "2" "$?"
+expect "(R5i-h) empty argument: message says so" "1" \
+  "$(grep -c 'cct-gate: refused: empty work-tree argument' "$argerr")"
+expect "(R5i-h) empty argument: cwd NOT gated (no artifact)" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
 # (f) --help names the argument.
 expect "(R5i-f) --help documents the work-tree argument" "1" \
   "$(bash "$ROOT/hooks/run-gate.sh" --help 2>&1 | grep -c '^Usage: .*\[<work tree directory>\]')"

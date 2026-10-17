@@ -126,6 +126,12 @@ if [ "$#" -gt 0 ]; then
     echo "cct-gate: refused: expected at most one argument (a work tree directory). Usage: $(gc_gate_cmd) [<work tree directory>]" >&2
     exit 2
   fi
+  # An empty argument (`cct-gate "$WT"` with WT unset) must not reach git: `git -C ""`
+  # keeps the cwd, which would be gated silently.
+  if [ -z "$1" ]; then
+    echo "cct-gate: refused: empty work-tree argument. Pass an existing work tree path, or no argument to gate the current directory." >&2
+    exit 2
+  fi
   # git -C fails on a missing path, a file or a non-work-tree. cd into the ABSOLUTE
   # toplevel git resolved, not into "$1": the builtin consults an exported CDPATH
   # for a relative argument (and prints the directory), which would gate a
