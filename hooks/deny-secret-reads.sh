@@ -28,9 +28,11 @@
 #   anything else                                                  -> exit 0
 #
 # Secret shape: `(^|/)\.env(\.<suffix>)?$`, except a basename of exactly
-# `.env.example` — that file is the documented placeholder list most repos
-# track, and denying it was v2.2.0's BUG 6 (check 22b in
-# verify-template-consistency.sh has guarded it ever since).
+# `.env.example`, or one matching `^\.env\.[A-Za-z0-9_-]+\.example$` (compared
+# lowercased; v5.2.0) — those are the documented placeholder lists most repos
+# track, and denying `.env.example` was v2.2.0's BUG 6. The exemptions are
+# pinned by the `(DSR)` rows in scripts/test-hooks.sh, per word: an example name
+# next to a real secret (`cat .env.local.example .env`) is still denied.
 #
 # WHY THE BASH ARM NEEDS A READER VERB, stated because the two obvious rules
 # disagree: "any argv token that looks like a .env path" makes `echo .env` a
@@ -134,6 +136,10 @@ dsr_is_secret() { # <path> -> 0 when it is a secret-bearing .env name
   # EXPLICIT exemption, not an artifact of the anchoring: an exact `.env.example`
   # basename. `.env.examples` and `.env.sample` are NOT it, and are denied.
   [ "$dsr_lb" = ".env.example" ] && return 1
+  # v5.2.0: and the per-name template `.env.<name>.example` (`.env.local.example`).
+  # One dot-free name segment only, so `.env.example.bak`, `.env.local.example.txt`
+  # and `.env.a.b.example` stay denied. Judged per word, like everything here.
+  [[ "$dsr_lb" =~ ^\.env\.[a-z0-9_-]+\.example$ ]] && return 1
   printf '%s' "$1" | grep -qiE "$DSR_SECRET_RE" && return 0
   # The glob heuristic — see the header. `.e`-prefixed AND carrying a glob
   # metacharacter. `.environment` has no metacharacter and stays allowed.

@@ -6188,9 +6188,10 @@ DSRCWD="$TMPROOT"
 for p in '.env' '/p/.env.local' '/p/.env.production' '/x/.env.staging'; do
   check "(DSR) Read $p denied"                "$DSR" 2 "$(mkjson_read "$p" "$DSRCWD")"
 done
-for p in '/p/.envrc' '/p/environment.ts' 'src/.env.example'; do
+for p in '/p/.envrc' '/p/environment.ts' 'src/.env.example' 'web/.env.local.example'; do
   check "(DSR) Read $p allowed"               "$DSR" 0 "$(mkjson_read "$p" "$DSRCWD")"
 done
+check "(DSR) Read .env.local denied"          "$DSR" 2 "$(mkjson_read '.env.local' "$DSRCWD")"
 check_msg "(DSR) the denial NAMES the path"   "$ROOT/$DSR" 2 "$(mkjson_read '/p/.env.local' "$DSRCWD")" "/p/.env.local"
 check_msg "(DSR) the denial names its blind spot" "$ROOT/$DSR" 2 "$(mkjson_read '.env' "$DSRCWD")" "judged by the auto-mode classifier"
 # v3.0.4 item A1 — the matched TOKEN and its LOCATION, not a workaround that
@@ -6300,6 +6301,20 @@ check "(DSR) xmit: wget --post-file=.env denied" "$DSR" 2 "$(mkjson Bash 'wget -
 check "(DSR) .env.example is exempt"          "$DSR" 0 "$(mkjson Bash 'cat .env.example' "$DSRCWD")"
 check "(DSR) .env.examples is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.examples' "$DSRCWD")"
 check "(DSR) .env.sample is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.sample' "$DSRCWD")"
+# v5.2.0: `.env.<name>.example` templates are exempt too, judged PER WORD. The
+# pattern is `^\.env\.[A-Za-z0-9_-]+\.example$` on the lowercased basename.
+check "(DSR) .env.local.example is exempt"        "$DSR" 0 "$(mkjson Bash 'cat .env.local.example' "$DSRCWD")"
+check "(DSR) config/.env.production.example is exempt" "$DSR" 0 "$(mkjson Bash 'cat config/.env.production.example' "$DSRCWD")"
+check "(DSR) git show HEAD:web/.env.local.example | cut allowed" "$DSR" 0 "$(mkjson Bash 'git show HEAD:web/.env.local.example | cut -d= -f1' "$DSRCWD")"
+check "(DSR) ls web/.env.local.example allowed"   "$DSR" 0 "$(mkjson Bash 'ls web/.env.local.example' "$DSRCWD")"
+check "(DSR) per word: cat .env.local.example .env denied" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example .env' "$DSRCWD")"
+check "(DSR) .env.example.bak is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.example.bak' "$DSRCWD")"
+# `.env..example` is outside the secret shape itself (a suffix cannot start with
+# a dot), so it was allowed before v5.2.0 and stays so: the exemption neither
+# causes nor widens that. Pinned as 0 so a regex change shows up here.
+check "(DSR) .env..example: outside the secret shape, unchanged" "$DSR" 0 "$(mkjson Bash 'cat .env..example' "$DSRCWD")"
+check "(DSR) .env.local stays denied"             "$DSR" 2 "$(mkjson Bash 'cat .env.local' "$DSRCWD")"
+check "(DSR) .env.local.example.txt is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example.txt' "$DSRCWD")"
 # WRITES AND EXCLUSIONS STAY ALLOWED — the rejected any-token rule, asserted.
 check "(DSR) WRITE: cp .env.example .env allowed" "$DSR" 0 "$(mkjson Bash 'cp .env.example .env' "$DSRCWD")"
 check "(DSR) WRITE: cp .env /tmp/backup allowed"  "$DSR" 0 "$(mkjson Bash 'cp .env /tmp/backup' "$DSRCWD")"
