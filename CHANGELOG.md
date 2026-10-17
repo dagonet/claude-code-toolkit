@@ -39,7 +39,7 @@ The same measured recipe as v5.1.2 (`claude plugin marketplace update` and `clau
 ### Measured at the release tree (host agent-host-1)
 - `bash scripts/test-server.sh`: 553 passed, 0 failed, 9 skipped (v5.1.2 measured 539 passed, 9 skipped), after the `VERSION` bump and `bash server/install.sh` in the worktree.
 - Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 343 PASS lines (v5.1.2 measured 341) and one skipped check; the bootstrap-fixture block inside it ran 38 passed, 0 failed, 34 skipped (72 assertions, the 34 skips are the PowerShell cases). The skipped check is check 50, which prints as a PASS line while skipping (no `python`, only `python3`), as in v5.1.2. Check 42 arm 2 ran this time, because the tag `v5.1.2` exists.
-- `bash scripts/test-hooks.sh`: measured by the merge gate on the release tree: <TBD by the controller>
+- `bash scripts/test-hooks.sh`: 4215 passed, 0 failed, 6 skipped (4221 assertions; v5.1.2 measured 4167/0/6), measured by the merge gate on the release tree.
 
 ## v5.1.2 — 2026-10-17
 
