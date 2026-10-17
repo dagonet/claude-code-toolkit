@@ -1680,7 +1680,7 @@ async def template_apply_file(
         same for the template) -- template_compute_status needs the latter to
         tell a preserved region apart from real drift. Both fall back to
         full-file hashes when only one side carries the markers.
-        Written results also carry `unresolved_placeholders`: the sorted
+        Manifest v3+: written results also carry `unresolved_placeholders`: the sorted
         `{{NAME}}` names still literal in what landed on disk (`[]` if none).
     """
     for _msys_p in (project_path, backup_dir):
@@ -1807,11 +1807,12 @@ async def template_finalize_sync(
     Args:
         project_path: Path to the project root directory
         applied_files: JSON array of template_apply_file results
-            (each must have file_path and manifest_entry). Under v3 an item
-            may instead be just a path (a bare string, or an object with
-            file_path and optionally action): finalize then derives the
-            entry itself -- the template content's hash, or once -- and
-            refuses the whole finalize if it cannot.
+            (each must have file_path and manifest_entry). Under manifest v3/v4
+            an item may instead be just a path (a bare string, or an object
+            with file_path and optionally action): finalize then derives the
+            entry itself -- the template content's hash as the template is
+            at finalize, or once -- and refuses the whole finalize if it
+            cannot.
         new_files: JSON array of new file paths added from template (optional).
             Entries not already applied get real hashes computed from the
             template and the project file on disk -- never empty placeholders,
@@ -1916,6 +1917,10 @@ async def template_finalize_sync(
     hex64 = _re.compile(r"^[0-9a-f]{64}$")
     invalid: list[str] = []
     for item in applied:
+        if not isinstance(item, dict) or "manifest_entry" not in item:
+            label = item.get("file_path", "") if isinstance(item, dict) else item
+            invalid.append(f"{label}: path-only applied items need manifest v3 or later: migrate first")
+            continue
         fp = item.get("file_path", "")
         entry = item.get("manifest_entry", {})
         norm = _normalize_path(fp)

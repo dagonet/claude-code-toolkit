@@ -630,5 +630,46 @@ def test_finalize_path_only_claude_md_window_refuses_whole_finalize(tmp_path):
     before = manifest_path.read_bytes()
     res = _run(ts.template_finalize_sync(str(proj), json.dumps(["hooks/ok.sh", "CLAUDE.md"])))
     assert "manifest NOT written" in res["error"]
-    assert res["invalid_entries"] == [f"CLAUDE.md: CLAUDE.md: {v3.MIGRATION_REQUIRED_REMEDY}"]
+    assert res["invalid_entries"] == [f"CLAUDE.md: {v3.MIGRATION_REQUIRED_REMEDY}"]
+    assert manifest_path.read_bytes() == before
+
+
+def test_finalize_path_only_project_class_refuses_whole_finalize(tmp_path):
+    """A project-class path is never written by the server, so it cannot be derived."""
+    repo, proj = _mk_v3(tmp_path,
+                        template={"hooks/ok.sh": "o\n", ".claude/agents/local-x.md": "x\n"},
+                        project={".claude/agents/local-x.md": "x\n"}, entries={})
+    _init_repo(repo)
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(
+        str(proj), json.dumps(["hooks/ok.sh", ".claude/agents/local-x.md"])))
+    assert "manifest NOT written" in res["error"]
+    assert res["invalid_entries"] == [
+        ".claude/agents/local-x.md: ownership is 'project'; the server never writes it"]
+    assert manifest_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("item", [
+    {"file_path": "CLAUDE.md"},
+    "CLAUDE.md",
+])
+def test_finalize_v2_refuses_path_only_items(tmp_path, item):
+    """A v2 manifest has no derivation: a path-only item is refused, not silently dropped."""
+    repo = tmp_path / "toolkit"
+    (repo / "templates" / "general").mkdir(parents=True)
+    (repo / "templates" / "general" / "CLAUDE.md").write_text("v1\n", encoding="utf-8", newline="")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / "CLAUDE.md").write_text("v1\n", encoding="utf-8", newline="")
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    manifest_path.write_text(json.dumps({
+        "version": 2, "templateRepo": str(repo), "variant": "general", "placeholders": {},
+        "lastSynced": "", "files": {},
+    }), encoding="utf-8")
+    before = manifest_path.read_bytes()
+    res = _run(ts.template_finalize_sync(str(proj), json.dumps([item])))
+    assert "manifest NOT written" in res["error"]
+    assert res["invalid_entries"] == [
+        "CLAUDE.md: path-only applied items need manifest v3 or later: migrate first"]
     assert manifest_path.read_bytes() == before

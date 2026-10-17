@@ -1068,7 +1068,7 @@ def derive_manifest_entry(pp: pathlib.Path, manifest: dict, rules: OwnershipRule
         if tpl_raw is None:
             return None, f"template file {tpl_rel} not found"
         if claude_md_window_active(manifest, tpl_rel, tpl_raw):
-            return None, f"CLAUDE.md: {MIGRATION_REQUIRED_REMEDY}"
+            return None, MIGRATION_REQUIRED_REMEDY
         return {"hash": format_hash(core._sha256(template_content(pp, manifest, rules, proj_rel, tpl_raw))),
                 "ownership": "template"}, None
     return None, "no template/once rule"
