@@ -2086,6 +2086,10 @@ else
   else
     r28p=$(mktemp -d)
     cp -r templates/general/. "$r28p/" 2>/dev/null
+    # v5.2: the shipped .gitattributes carries an EMPTY region that region.sh scans as CONTENT
+    # (the `# ` before its END marker falls inside the span), which would read as a third
+    # planted region. This fixture counts the planted AGENT_TEAM.md / coder.md regions only.
+    rm -f "$r28p/.gitattributes"
     # v5.0: templates ship no agents, but a v4 consumer still carries
     # .claude/agents/coder.md with the placeholder region (the TEMPLATE_DELETED x
     # region-bearing case a v5 sync meets). Rebuild that shape: the plugin coder (and
@@ -4975,6 +4979,26 @@ c77_bad=$(printf '%s\n' "$c77_pins" | grep . | sort -u | grep -vxF "claude-code-
 if [ "$c77_n" -lt 1 ]; then ko "77: no claude-code-toolkit#v pin literal found in README.md/docs (the check would pass vacuously)"
 elif [ -n "$c77_bad" ]; then ko "77: pin literal(s) not equal to $c77_want: $(printf '%s' "$c77_bad" | tr '\n' ' ')"
 else ok "77: all $c77_n pin literal(s) in README.md/docs equal $c77_want (= VERSION)"; fi
+
+# ---------------------------------------------------------------------------
+# Check 78 (v5.2): every variant's .gitattributes ends with the PROJECT-CUSTOM region as the
+# last two lines (`# <!-- PROJECT-CUSTOM:BEGIN -->`, `# <!-- PROJECT-CUSTOM:END -->`, nothing
+# between), and the six files are byte-identical. Check 25 covers AGENT_TEAM.md only.
+# ---------------------------------------------------------------------------
+c78_files=$(ls templates/*/.gitattributes 2>/dev/null)
+c78_n=$(printf '%s\n' "$c78_files" | grep -c .)
+c78_bad=""
+for f in $c78_files; do
+  if [ "$(tail -n 2 "$f" | head -n 1)" != "# <!-- PROJECT-CUSTOM:BEGIN -->" ] \
+     || [ "$(tail -n 1 "$f")" != "# <!-- PROJECT-CUSTOM:END -->" ]; then
+    c78_bad="$c78_bad $f"
+  fi
+done
+c78_uniq=$(for f in $c78_files; do cksum < "$f"; done | sort -u | grep -c .)
+if [ "$c78_n" -ne 6 ]; then ko "78: expected 6 variant .gitattributes, found $c78_n"
+elif [ -n "$c78_bad" ]; then ko "78: .gitattributes does not end with the BEGIN/END marker pair in:$c78_bad"
+elif [ "$c78_uniq" -ne 1 ]; then ko "78: the six variant .gitattributes are not byte-identical"
+else ok "78: all 6 variant .gitattributes end with the PROJECT-CUSTOM marker pair and are byte-identical"; fi
 
 # ---------------------------------------------------------------------------
 echo

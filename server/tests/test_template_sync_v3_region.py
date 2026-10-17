@@ -23,6 +23,7 @@ END = "<!-- PROJECT-CUSTOM:END -->"
 OWNERSHIP = {"tracked_paths": ["templates"], "rules": [
     {"pattern": "CLAUDE.md", "ownership": "template"},
     {"pattern": "AGENT_TEAM.md", "ownership": "template"},
+    {"pattern": ".gitattributes", "ownership": "template"},
 ]}
 
 
@@ -188,6 +189,76 @@ def test_apply_without_markers_on_either_side_is_unchanged(tmp_path):
     res = _run(ts.template_apply_file(str(proj), "AGENT_TEAM.md"))
     assert res["region_preserved"] is False
     assert (proj / "AGENT_TEAM.md").read_text(encoding="utf-8") == "# Toolkit\n\nrule one\n"
+
+
+# --- .gitattributes: the region as `#` comment lines (v5.2) ---------------------
+#
+# The region markers in .gitattributes are `# <!-- PROJECT-CUSTOM:... -->` lines
+# (git ignores `#` lines). The splitter matches the marker text as a substring,
+# so the leading `# ` must not matter; these rows pin that, with no server change.
+
+GA_BEGIN = "# <!-- PROJECT-CUSTOM:BEGIN -->"
+GA_END = "# <!-- PROJECT-CUSTOM:END -->"
+GA_LOCAL = "docs/game-data/** -text"
+
+
+def ga(body: str, region: str = "") -> str:
+    inner = f"{region}\n" if region else ""
+    return f"{body}\n{GA_BEGIN}\n{inner}{GA_END}\n"
+
+
+def test_gitattributes_region_only_difference_is_not_drift(tmp_path):
+    base = ga("* text=auto eol=lf")
+    _, proj = mk(tmp_path, template_now=base, project=ga("* text=auto eol=lf", GA_LOCAL),
+                 rel=".gitattributes")
+    info = status_of(proj, rel=".gitattributes")
+    assert info["status"] == "IDENTICAL"
+    assert "local_diff" not in info
+
+
+def test_gitattributes_region_only_difference_with_moved_template_is_template_updated(tmp_path):
+    _, proj = mk(
+        tmp_path,
+        template_at_sync=ga("* text=auto eol=lf"),
+        template_now=ga("* text=auto eol=lf\n*.png binary"),
+        project=ga("* text=auto eol=lf", GA_LOCAL),
+        rel=".gitattributes",
+    )
+    assert status_of(proj, rel=".gitattributes")["status"] == "TEMPLATE_UPDATED"
+
+
+def test_gitattributes_line_outside_the_region_is_still_local_edited(tmp_path):
+    base = ga("* text=auto eol=lf")
+    _, proj = mk(tmp_path, template_now=base,
+                 project=ga("* text=auto eol=lf\n" + GA_LOCAL),
+                 rel=".gitattributes")
+    info = status_of(proj, rel=".gitattributes")
+    assert info["status"] == "LOCAL_EDITED"
+    assert GA_LOCAL in info["local_diff"]
+
+
+def test_gitattributes_apply_preserves_the_region(tmp_path):
+    _, proj = mk(
+        tmp_path,
+        template_at_sync=ga("* text=auto eol=lf"),
+        template_now=ga("* text=auto eol=lf\n*.png binary"),
+        project=ga("* text=auto eol=lf", GA_LOCAL),
+        rel=".gitattributes",
+    )
+    res = _run(ts.template_apply_file(str(proj), ".gitattributes", backup_dir=str(tmp_path / "bak")))
+    after = (proj / ".gitattributes").read_text(encoding="utf-8")
+    assert res["region_preserved"] is True
+    assert GA_LOCAL in after and "*.png binary" in after
+
+
+def test_shipped_gitattributes_template_carries_a_region_that_preserves_a_local_line(tmp_path):
+    shipped = (pathlib.Path(__file__).resolve().parents[2] / "templates" / "general"
+               / ".gitattributes").read_text(encoding="utf-8")
+    part, region = ts._split_custom_region(shipped)
+    assert region is not None, "templates/general/.gitattributes has no PROJECT-CUSTOM region"
+    mine = shipped.replace(GA_END, GA_LOCAL + "\n" + GA_END)
+    _, proj = mk(tmp_path, template_now=shipped, project=mine, rel=".gitattributes")
+    assert status_of(proj, rel=".gitattributes")["status"] == "IDENTICAL"
 
 
 # --- orphaned region: template has no markers ---------------------------------
