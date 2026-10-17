@@ -34,7 +34,7 @@
 # pinned by the `(DSR)` rows in scripts/test-hooks.sh, per word: an example name
 # next to a real secret (`cat .env.local.example .env`) is still denied. The
 # per-name exemption holds on a shell command only for a word with no expansion
-# character ($, backtick, \, {, }, *, ?, [); on a Read file_path it always holds.
+# character ($, backtick, \, {, }, *, ?, [, and the PowerShell comma); on a Read file_path it always holds.
 #
 # WHY THE BASH ARM NEEDS A READER VERB, stated because the two obvious rules
 # disagree: "any argv token that looks like a .env path" makes `echo .env` a
@@ -147,7 +147,7 @@ dsr_is_secret() { # <path> -> 0 when it is a secret-bearing .env name
   # model of expansion, just a refusal.
   if [[ "$dsr_lb" =~ ^\.env\.[a-z0-9_-]+\.example$ ]]; then
     case "${2:-}:$1" in
-      shell:*'$'*|shell:*'`'*|shell:*'\'*|shell:*'{'*|shell:*'}'*|shell:*'*'*|shell:*'?'*|shell:*'['*) ;;
+      shell:*'$'*|shell:*'`'*|shell:*'\'*|shell:*'{'*|shell:*'}'*|shell:*'*'*|shell:*'?'*|shell:*'['*|shell:*','*) ;;
       *) return 1 ;;
     esac
   fi

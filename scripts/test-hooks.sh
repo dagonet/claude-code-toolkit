@@ -6316,6 +6316,8 @@ check "(DSR) exemption compares lowercased: .ENV.LOCAL.EXAMPLE" "$DSR" 0 "$(mkjs
 # (allowed with `$PWD/`), and a Read file_path is never shell-expanded.
 check "(DSR) expansion in the word: cat .env\$IFS/.env.local.example denied" "$DSR" 2 "$(mkjson Bash 'cat .env$IFS/.env.local.example' "$DSRCWD")"
 check "(DSR) cat \"\$PWD/.env.local.example\" denied (guard)" "$DSR" 2 "$(mkjson Bash 'cat "$PWD/.env.local.example"' "$DSRCWD")"
+check "(DSR) PowerShell comma word: pwsh -c cat .env,x/.env.local.example denied" "$DSR" 2 "$(mkjson Bash 'pwsh -c "cat .env,x/.env.local.example"' "$DSRCWD")"
+check "(DSR) cat web/.env.local.example still allowed (no expansion char)" "$DSR" 0 "$(mkjson Bash 'cat web/.env.local.example' "$DSRCWD")"
 check "(DSR) cat \"\$PWD/.env.example\" allowed (as before v5.2)" "$DSR" 0 "$(mkjson Bash 'cat "$PWD/.env.example"' "$DSRCWD")"
 check "(DSR) Read /repo/app/[locale]/.env.example allowed" "$DSR" 0 "$(mkjson_read '/repo/app/[locale]/.env.example' "$DSRCWD")"
 check "(DSR) Read /repo/app/[locale]/.env.local.example allowed" "$DSR" 0 "$(mkjson_read '/repo/app/[locale]/.env.local.example' "$DSRCWD")"
