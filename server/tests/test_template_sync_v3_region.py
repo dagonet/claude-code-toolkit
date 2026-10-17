@@ -291,6 +291,26 @@ def test_gitattributes_three_way_reattaches_a_valid_hash_prefixed_region(tmp_pat
             assert line.startswith("# <!-- PROJECT-CUSTOM:"), line
 
 
+def test_gitattributes_three_way_then_moving_the_line_into_the_region_ends_the_local_edit(tmp_path):
+    """The auto_merged text keeps the template's own shape (no extra blank line above
+    BEGIN), so moving the outside line into the region and finalizing reads clean."""
+    now = ga("* text=auto eol=lf\n*.png binary")
+    _, proj = mk(tmp_path, template_at_sync=ga("* text=auto eol=lf"), template_now=now,
+                 project=ga(GA_LOCAL + "\n* text=auto eol=lf"), rel=".gitattributes")
+    assert status_of(proj, rel=".gitattributes")["status"] == "LOCAL_EDITED"
+    merge = _run(ts.template_get_diff(str(proj), ".gitattributes", diff_type="three_way"))["merge_result"]
+    merged = merge["auto_merged"]
+    assert merge["has_conflicts"] is False and merge["region_reattached"] is True
+    assert GA_LOCAL in merged and "*.png binary" in merged
+    moved = merged.replace(GA_LOCAL + "\n", "", 1).replace(GA_END, GA_LOCAL + "\n" + GA_END)
+    assert ts._split_custom_region(moved)[0] == ts._split_custom_region(now)[0]
+    res = _run(ts.template_apply_file(str(proj), ".gitattributes", source="provided",
+                                      content=moved, backup_dir=str(tmp_path / "bak")))
+    assert "error" not in res, res
+    _run(ts.template_finalize_sync(str(proj), applied_files=json.dumps([".gitattributes"])))
+    assert status_of(proj, rel=".gitattributes")["status"] == "IDENTICAL"
+
+
 GA_OLD = "* text=auto eol=lf\n*.png binary\n"  # a pre-v5.2 file: no markers
 
 

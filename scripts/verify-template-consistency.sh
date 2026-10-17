@@ -2419,14 +2419,15 @@ else
   { cat agents/coder.md; printf '\n'; sed -n '/^<!-- PROJECT-CUSTOM:BEGIN/,$p' templates/general/AGENT_TEAM.md; } > "$b2_tmp/consumer/.claude/agents/coder.md"
 
   # BOTH-ARMS PRECONDITION (was arm A pre-v4.1): before planting, the two
-  # remaining shipped region-bearing files (AGENT_TEAM.md, coder.md -- CLAUDE.md
-  # is no longer one of them) must classify EMPTY. If they did not, the CONTENT
+  # remaining shipped region-bearing files here (AGENT_TEAM.md and the rebuilt v4
+  # coder.md; CLAUDE.md is no longer one, and .gitattributes has its own rows in
+  # check 28) must classify EMPTY. If they did not, the CONTENT
   # result below would prove nothing about the planting.
   b2_pre=$(bash "$B1_REGION_SH" "$b2_tmp/consumer/AGENT_TEAM.md" \
     "$b2_tmp/consumer/.claude/agents/coder.md" \
     2>/dev/null | cut -f1 | sort -u | tr '\n' ' ')
   if [ "$b2_pre" = "EMPTY " ]; then
-    ok "check 31 (precondition): the two shipped region-bearing files classify EMPTY before planting"
+    ok "check 31 (precondition): AGENT_TEAM.md and the rebuilt v4 coder.md classify EMPTY before planting"
   else
     ko "check 31 (precondition): expected both shipped files to classify EMPTY before planting, got: $b2_pre"
   fi

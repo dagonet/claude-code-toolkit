@@ -201,7 +201,7 @@ After review and testing pass, the developer executes the merge — git/GitHub M
    push produces no run); fix before merging if it fails.
 4. Run the gate on the rebased head: `cct-gate` (or `cct-gate <absolute worktree path>`
    from any directory, so no wrapper script is needed) writes
-   the gate artifact for the current HEAD — the ONLY accepted green;
+   the gate artifact for the work tree's HEAD (the current directory, or the one given) — the ONLY accepted green;
    commit exactly what was gated. The plugin's `gate-before-merge` hook blocks
    merge tools without a fresh, matching artifact (< 60 min) unless
    PROJECT_CONTEXT.md's **Gate** field is unset.

@@ -1609,7 +1609,14 @@ async def template_get_diff(
             merged_text = merge["auto_merged"]
             if merged_text and not merged_text.endswith("\n"):
                 merged_text += "\n"
-            merge["auto_merged"] = merged_text + reattach_region + "\n"
+            # The text that followed the END marker stays at the end of the merged
+            # part (the split joined head and tail), so put the region back in front
+            # of it; appending after it would add a blank line above BEGIN.
+            tail = proj_current[proj_current.find(reattach_region) + len(reattach_region):]
+            if tail and merged_text.endswith(tail):
+                merge["auto_merged"] = merged_text[:-len(tail)] + reattach_region + tail
+            else:
+                merge["auto_merged"] = merged_text + reattach_region + "\n"
             merge["region_reattached"] = True
         result["base_content"] = base_content
         result["template_content"] = tpl_current

@@ -3924,6 +3924,28 @@ expect "(R5i-h) empty argument: message says so" "1" \
 expect "(R5i-h) empty argument: cwd NOT gated (no artifact)" "0" \
   "$([ -f "$argart" ] && echo 1 || echo 0)"
 
+# (i) an exported GIT_DIR must not turn a plain directory into a work tree: git -C
+#     would resolve the GIT_DIR repository for it, so the argument is validated
+#     with GIT_DIR/GIT_WORK_TREE unset and the plain directory is still refused.
+rm -f "$argart"
+( cd "$argplain" && GIT_DIR="$argrepo/.git" bash "$ROOT/hooks/run-gate.sh" "$argplain" >/dev/null 2>"$argerr" )
+expect "(R5i-i) GIT_DIR exported + plain directory: exit 2" "2" "$?"
+expect "(R5i-i) GIT_DIR exported + plain directory: no artifact" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (j) a file is not a work tree: refused, cwd not gated.
+( cd "$argplain" && bash "$ROOT/hooks/run-gate.sh" "$argrepo/PROJECT_CONTEXT.md" >/dev/null 2>"$argerr" )
+expect "(R5i-j) file argument: exit 2" "2" "$?"
+expect "(R5i-j) file argument: no artifact" "0" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
+# (k) a subdirectory of a work tree gates the work tree's toplevel.
+mkdir -p "$argrepo/subdir"
+( cd "$argplain" && bash "$ROOT/hooks/run-gate.sh" "$argrepo/subdir" >/dev/null 2>"$argerr" )
+expect "(R5i-k) subdirectory argument: exit 0" "0" "$?"
+expect "(R5i-k) subdirectory argument: artifact written for the toplevel's HEAD" "1" \
+  "$([ -f "$argart" ] && echo 1 || echo 0)"
+
 # (f) --help names the argument.
 expect "(R5i-f) --help documents the work-tree argument" "1" \
   "$(bash "$ROOT/hooks/run-gate.sh" --help 2>&1 | grep -c '^Usage: .*\[<work tree directory>\]')"
@@ -11952,7 +11974,7 @@ v462_warns() { # <cwd> <script> -> count of WARN lines; rc must stay 0
 # git's own spelling of each toplevel (C:/... on Git Bash, /private/... on macOS), as the warning prints it
 V462_A_TOP=$(git -C "$V462_A" rev-parse --show-toplevel); V462_B_TOP=$(git -C "$V462_B" rev-parse --show-toplevel)
 expect "V462 script in repo A, run from repo B: warns once"          1 "$(v462_warns "$V462_B" "$V462_A/hooks/run-gate.sh")"
-expect "V462 warning names both checkouts" 1 "$(cd "$V462_B" && bash "$V462_A/hooks/run-gate.sh" 2>&1 | grep -cF "run-gate.sh from $V462_A_TOP is gating $V462_B_TOP (the current directory's repository); to gate $V462_A_TOP, run it from inside $V462_A_TOP.")"
+expect "V462 warning names both checkouts" 1 "$(cd "$V462_B" && bash "$V462_A/hooks/run-gate.sh" 2>&1 | grep -cF "run-gate.sh from $V462_A_TOP is gating $V462_B_TOP (the current directory's repository); to gate $V462_A_TOP, run it from inside $V462_A_TOP or pass its path: ")"
 expect "V462 same repo with GIT_DIR exported: no warning"             0 "$(GIT_DIR="$V462_A/.git" v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
 expect "V462 script in repo A, run from repo A: no warning"           0 "$(v462_warns "$V462_A" "$V462_A/hooks/run-gate.sh")"
 expect "V462 script outside any git work tree, run from a repo: no warning" 0 "$(v462_warns "$V462_B" "$V462_NOGIT/run-gate.sh")"

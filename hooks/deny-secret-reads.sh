@@ -181,7 +181,7 @@ dsr_deny() { # <path> <location-desc> [extra-clause]
     echo "BLOCKED: '$1' — secrets files are not read by agents. (matched: \"$1\" in $2)"
     echo "  Could not determine: this hook sees the command's arguments, not what an interpreter opens; 'python -c open(...)' and 'git show HEAD:.env' are judged by the auto-mode classifier, not here."
     [ -n "${3:-}" ] && printf '%s\n' "$3" | sed 's/^/  /'
-    echo "  If you need a variable's NAME, read '.env.example' — it is allowed on purpose."
+    echo "  If you need a variable's NAME, read '.env.example' or '.env.<name>.example' (written as a literal path) — both are allowed on purpose."
     echo "  Inspecting a config file that merely mentions one? Read it with the Read tool."
   } >&2
   exit 2

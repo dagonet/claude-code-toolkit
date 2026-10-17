@@ -122,6 +122,9 @@ fi
 # that is not a directory inside a git work tree is refused (exit 2), never
 # replaced by the current directory. The existing flow below runs unchanged.
 if [ "$#" -gt 0 ]; then
+  # An exported GIT_DIR would override the toplevel lookup below (and the later
+  # git -C calls), gating the wrong tree after the cd.
+  unset GIT_DIR GIT_WORK_TREE
   if [ "$#" -gt 1 ]; then
     echo "cct-gate: refused: expected at most one argument (a work tree directory). Usage: $(gc_gate_cmd) [<work tree directory>]" >&2
     exit 2
@@ -154,7 +157,7 @@ if [ -z "$REPO_TOP" ]; then
   # is TERMINAL, not "configuration": this one is an ENVIRONMENT error and 78
   # covers both (see the exit-code conventions in hooks/lib/git-cmd.sh).
   echo "GATE ERROR: not inside a git repository" >&2
-  echo "Run '$(gc_gate_cmd)' from inside the checkout — cd to the repository and re-run it there." >&2
+  echo "Run '$(gc_gate_cmd)' from inside the checkout — cd to the repository and re-run it there, or pass its path: $(gc_gate_cmd) <dir>." >&2
   exit "$GC_TERMINAL_RC"
 fi
 
@@ -171,7 +174,7 @@ fi
 # make the script's own directory resolve to the cwd's repository.
 RG_SELF_TOP=$(unset GIT_DIR GIT_WORK_TREE; git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)
 if [ "$#" -eq 0 ] && [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -n "$RG_SELF_TOP" ] && [ "$RG_SELF_TOP" != "$REPO_TOP" ]; then
-  echo "WARN: run-gate.sh from $RG_SELF_TOP is gating $REPO_TOP (the current directory's repository); to gate $RG_SELF_TOP, run it from inside $RG_SELF_TOP." >&2
+  echo "WARN: run-gate.sh from $RG_SELF_TOP is gating $REPO_TOP (the current directory's repository); to gate $RG_SELF_TOP, run it from inside $RG_SELF_TOP or pass its path: $(gc_gate_cmd) $RG_SELF_TOP." >&2
 fi
 
 # GC_KEY_PRE, defined locally: this script is deliberately standalone (it must
