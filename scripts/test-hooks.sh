@@ -6310,9 +6310,15 @@ check "(DSR) head -1 web/.env.local.example allowed" "$DSR" 0 "$(mkjson Bash 'he
 check "(DSR) .env.a.b.example is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.a.b.example' "$DSRCWD")"
 check "(DSR) directory component: cat .env.local.example/.env denied" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example/.env' "$DSRCWD")"
 check "(DSR) exemption compares lowercased: .ENV.LOCAL.EXAMPLE" "$DSR" 0 "$(mkjson Bash 'cat .ENV.LOCAL.EXAMPLE' "$DSRCWD")"
-# An expansion character anywhere in the word withdraws the exemption: the
-# shell turns `.env$IFS/.env.local.example` into `.env` plus a path.
+# On a shell command an expansion character anywhere in the word withdraws the
+# NEW per-name exemption only: the shell turns `.env$IFS/.env.local.example`
+# into `.env` plus a path. The exact `.env.example` keeps its pre-v5.2 behaviour
+# (allowed with `$PWD/`), and a Read file_path is never shell-expanded.
 check "(DSR) expansion in the word: cat .env\$IFS/.env.local.example denied" "$DSR" 2 "$(mkjson Bash 'cat .env$IFS/.env.local.example' "$DSRCWD")"
+check "(DSR) cat \"\$PWD/.env.local.example\" denied (guard)" "$DSR" 2 "$(mkjson Bash 'cat "$PWD/.env.local.example"' "$DSRCWD")"
+check "(DSR) cat \"\$PWD/.env.example\" allowed (as before v5.2)" "$DSR" 0 "$(mkjson Bash 'cat "$PWD/.env.example"' "$DSRCWD")"
+check "(DSR) Read /repo/app/[locale]/.env.example allowed" "$DSR" 0 "$(mkjson_read '/repo/app/[locale]/.env.example' "$DSRCWD")"
+check "(DSR) Read /repo/app/[locale]/.env.local.example allowed" "$DSR" 0 "$(mkjson_read '/repo/app/[locale]/.env.local.example' "$DSRCWD")"
 check "(DSR) per word: cat .env.local.example .env denied" "$DSR" 2 "$(mkjson Bash 'cat .env.local.example .env' "$DSRCWD")"
 check "(DSR) .env.example.bak is NOT the exemption" "$DSR" 2 "$(mkjson Bash 'cat .env.example.bak' "$DSRCWD")"
 # `.env..example` is outside the secret shape itself (a suffix cannot start with
