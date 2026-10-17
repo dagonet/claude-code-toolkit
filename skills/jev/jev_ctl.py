@@ -232,6 +232,9 @@ def cmd_on(top, gd, env, out, key_src):
               "session-start notice.\n")
     if not key_src:
         out.write("jev: note -- no TYPESAFE_API_KEY: spawns get the project floor until one is set\n")
+    reason = _v4_resolver_reason(env, top, resolver_lib(env, top))
+    if reason:
+        out.write("jev: note: {}\n".format(reason))
     return 0
 
 
@@ -283,7 +286,9 @@ def cmd_status(top, gd, env, out, key_src):
         out.write("jev: last event: {} {} {} applied={}\n".format(e.get("ts"), e.get("subagent_type"), e.get("reason"), e.get("applied")))
     else:
         out.write("jev: last event: none\n")
-    out.write("jev: routing spawns in this checkout: {}\n".format("yes" if _routing_live(env, top, lib) else "no"))
+    live = _routing_live(env, top, lib)
+    reason = "" if live or not route else _v4_resolver_reason(env, top, lib)
+    out.write("jev: routing spawns in this checkout: {}{}\n".format("yes" if live else "no", " ({})".format(reason) if reason else ""))
     return 0
 
 
@@ -299,6 +304,18 @@ def _routing_live(env, top, lib):
         return False
     fields = cp.stdout.decode("utf-8", "replace").split()
     return len(fields) >= 3 and fields[2] == "1"
+
+
+def _v4_resolver_reason(env, top, lib, plugin_lib=None):
+    """Why routing is off in a clone still on the v4 layout, or "". Callers ask only when the switch is on:
+    the project's own resolver answers field 3 = 0 while the plugin's own would answer 1 for this checkout."""
+    if not lib or os.path.abspath(lib) != os.path.abspath(os.path.join(top, "hooks", "lib", "agent-model.sh")):
+        return ""
+    plugin_lib = plugin_lib or jev_route.resolver_candidates(top, _home(env))[1]
+    if _routing_live(env, top, lib) or not _routing_live(env, top, plugin_lib):
+        return ""
+    return ("this checkout still runs its own v4 hooks/lib/agent-model.sh; Jev routes here once the project is "
+            "synced to v5 (/cct:sync-template)")
 
 
 def ledger_slug(top):

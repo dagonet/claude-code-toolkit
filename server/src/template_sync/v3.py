@@ -280,8 +280,9 @@ SKILL_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # The below-floor arm needs no population split: a caller that passed a
 # tag-shaped value IS the skill, or is impersonating one on purpose.
 _SKILL_REMEDY = (
-    "install or update the cct plugin to toolkit tag {tag} or later (/plugin install "
-    "cct@dagonet, or claude plugin update cct@dagonet), then START A FRESH SESSION and run "
+    "move the cct plugin to toolkit tag {tag} or later (claude plugin marketplace remove "
+    "dagonet; claude plugin marketplace add dagonet/claude-code-toolkit#<the checkout's release tag>; claude plugin "
+    "install cct@dagonet), then START A FRESH SESSION and run "
     "the sync again. Updating without restarting changes nothing for this session. "
     "Pass dry_run=True to inspect without migrating."
 )
@@ -335,8 +336,9 @@ def skill_floor_satisfied(spec: str, claimed: str) -> tuple[bool, str, str, bool
             f"-- IF YOU ARE THE sync-template SKILL: the body this session loaded predates "
             f"{floor} and has no instruction to identify itself. A running session keeps the "
             f"body it read at startup, so the file on disk may already be current while this "
-            f"session is not. Install or update the cct plugin to toolkit tag {floor} or "
-            f"later (/plugin install cct@dagonet, or claude plugin update cct@dagonet) if it "
+            f"session is not. Move the cct plugin to toolkit tag {floor} or later "
+            f"(claude plugin marketplace remove dagonet; claude plugin marketplace add "
+            f"dagonet/claude-code-toolkit#<the checkout's release tag>; claude plugin install cct@dagonet) if it "
             f"is not already there, then START A FRESH SESSION. Updating without restarting "
             f"changes nothing for this session. "
             f"-- IF YOU ARE NOT THE SKILL (a harness, a direct tool call, a human): pass "
@@ -401,8 +403,10 @@ def load_skill_refusal(spec: str, claimed: str, marker: str) -> tuple[str, list[
                 "(install/update the cct plugin)."), warnings, False
     if marker and SKILL_TAG_RE.match(claimed) and _tag_tuple(claimed) < _tag_tuple(marker):
         return (f"template_load_manifest refused: the loaded sync-template skill ({claimed}) is "
-                f"older than the toolkit checkout ({marker}): update the cct plugin "
-                "(claude plugin update cct@dagonet), then restart.",
+                f"older than the toolkit checkout ({marker}): move the cct plugin to {marker} "
+                "(claude plugin marketplace remove dagonet; claude plugin marketplace add "
+                f"dagonet/claude-code-toolkit#{marker}; claude plugin install cct@dagonet), "
+                "then restart.",
                 warnings, False)
     return "", warnings, False
 

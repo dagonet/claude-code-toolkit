@@ -629,12 +629,13 @@ NODE_EOF
   # longer carries a PROJECT-CUSTOM region (spec sect 1-2, rulings R-F/R-H)
   # and must be byte-identical to the variant template after placeholder
   # substitution (templates/general/CLAUDE.md has none today, so this reduces
-  # to a direct byte compare), ending in the `@` import line; the two
-  # once-class seeds (`.claude/project-instructions.md`,
-  # `.claude/agent-grants.json`, spec sect 3-4) must exist with their exact
-  # seeded bytes. A second, plain rerun over the SAME target must change
-  # NONE of the three: CLAUDE.md is template-class but already matches, and
-  # the seeds are once-class and never regenerated.
+  # to a direct byte compare), ending in the `@` import line; the once-class
+  # seed (`.claude/project-instructions.md`, spec sect 3-4) must exist with
+  # its exact seeded bytes. A second, plain rerun over the SAME target must
+  # change NONE of the two (CLAUDE.md and that seed): CLAUDE.md is
+  # template-class but already matches, and the seed is once-class and never
+  # regenerated. v5.0 retired `.claude/agent-grants.json`; the v5 layout rows
+  # below assert it is absent.
   RERUN_SH="$TMPROOT/rerun-sh"
   RERUN_PS="$TMPROOT/rerun-ps"
   mkdir -p "$RERUN_SH" "$RERUN_PS"
@@ -648,8 +649,8 @@ NODE_EOF
 
   # After the first run: CLAUDE.md matches the shipped template byte-for-byte
   # (no placeholders live in CLAUDE.md today, so a direct cmp is the honest
-  # form of "after placeholders"), its last line is the `@` import, and both
-  # seeds exist with exactly the seeded bytes.
+  # form of "after placeholders"), its last line is the `@` import, and the
+  # seed exists with exactly the seeded bytes.
   expect "sh: CLAUDE.md is byte-identical to templates/general/CLAUDE.md" 0 \
     "$(cmp -s "$RERUN_SH/CLAUDE.md" "$ROOT/templates/general/CLAUDE.md"; echo $?)"
   expect "ps1: CLAUDE.md is byte-identical to templates/general/CLAUDE.md" 0 \
@@ -660,10 +661,6 @@ NODE_EOF
     "$(cmp -s "$RERUN_SH/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
   expect "ps1: .claude/project-instructions.md seeded" 0 \
     "$(cmp -s "$RERUN_PS/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
-  expect "sh: .claude/agent-grants.json seeded (exact bytes)" 0 \
-    "$(cmp -s "$RERUN_SH/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
-  expect "ps1: .claude/agent-grants.json seeded (exact bytes)" 0 \
-    "$(cmp -s "$RERUN_PS/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
 
   # A plain second run, no flags: nothing above may change.
   bash "$ROOT/setup-project.sh" --variant general --project-name SetupFixture \
@@ -718,16 +715,12 @@ NODE_EOF
   expect "ps1 rerun: every entry is unchanged (row 2)" "ROW2: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW2)"
   expect "ps1 rerun: CLAUDE.md's hash did not change (row 3)" "ROW3: PASS" "$(rerun_row "$RERUN_PS_RESULTS" ROW3)"
 
-  # The two seeds, specifically, are untouched bytes on disk too (once-class:
+  # The seed, specifically, is untouched bytes on disk too (once-class:
   # the manifest rows above prove the metadata; this proves the file itself).
   expect "sh: .claude/project-instructions.md untouched by the rerun" 0 \
     "$(cmp -s "$RERUN_SH/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
   expect "ps1: .claude/project-instructions.md untouched by the rerun" 0 \
     "$(cmp -s "$RERUN_PS/.claude/project-instructions.md" "$ROOT/templates/general/.claude/project-instructions.md"; echo $?)"
-  expect "sh: .claude/agent-grants.json untouched by the rerun" 0 \
-    "$(cmp -s "$RERUN_SH/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
-  expect "ps1: .claude/agent-grants.json untouched by the rerun" 0 \
-    "$(cmp -s "$RERUN_PS/.claude/agent-grants.json" "$ROOT/templates/general/.claude/agent-grants.json"; echo $?)"
 
   # --- v3.1 Phase 3: .claude/rules/project.md is seeded once, then left alone ---
   #

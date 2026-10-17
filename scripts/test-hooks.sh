@@ -5253,6 +5253,26 @@ out=$(printf '%s' "$(mkjson_edit src/x.py "$DELEGREPO")" \
 case "$out" in *'"permissionDecision":"deny"'*) got=deny ;; *) got=pass ;; esac
 expect "PO write surface: outside extra prefix still denied" "deny" "$got"
 
+# v5.1.1 (#12): the deny names the agent types that exist (the plugin's cct:
+# ones) and names the sibling hook, not a file the consumer does not have.
+case "$out" in
+  *'Spawn cct:coder (code and docs), cct:ops (env/files), cct:tester (verification).'*) got=named ;;
+  *) got=bare ;;
+esac
+expect "Edit deny names cct:coder, cct:ops, cct:tester" "named" "$got"
+case "$out" in *'deny-claude-md-writes.sh'*) got=file ;; *'the deny-claude-md-writes hook'*) got=hook ;; *) got=none ;; esac
+expect "Edit deny names the deny-claude-md-writes hook, not a .sh file" "hook" "$got"
+
+# The Bash-branch deny (main-thread build/test runner) names the same cct: types.
+bashdeny=$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"%s"}' "$(jesc "$DELEGREPO")" \
+  | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
+case "$bashdeny" in
+  *'cct:coder runs the gate, cct:tester verifies, cct:ops handles env/tool work.'*) got=named ;;
+  *'coder runs the gate, tester verifies, ops handles'*) got=bare ;;
+  *) got=none ;;
+esac
+expect "Bash deny names cct:coder, cct:tester, cct:ops" "named" "$got"
+
 printf -- '- **PO write surface**: none\n' > "$DELEGREPO/PROJECT_CONTEXT.md"
 out=$(printf '%s' "$(mkjson_edit notes/x.md "$DELEGREPO")" \
   | CLAUDE_PROJECT_DIR="$DELEGREPO" bash "$ROOT/hooks/enforce-delegation.sh" 2>/dev/null)
@@ -9429,6 +9449,24 @@ for v4h in pre-commit-test no-push-main gate-before-merge; do
 done
 # ==== V4 end
 
+# ---- v5.1.1 (#14): the scripts a user types must pass our own gate ----
+# gc_dir_rule refuses a typed `bash <script>` whose first 16 KB holds a real
+# $'...' / $"..." word next to a git/gh word. v5.0 put `${rel%$'\r'}` in
+# verify-user-level-drift.sh, so typing it was refused (rc 2). The three scripts
+# a user types are pinned; the negative row proves the rule did not get weaker.
+V511D=$(mkrepo v511typed main)
+for v511s in scripts/verify-user-level-drift.sh scripts/install-user-level-linux.sh setup-project.sh; do
+  check "v5.1.1 typed $v511s passes pre-commit-test" "hooks/pre-commit-test.sh" 0 \
+    "$(mkjson Bash "bash $ROOT/$v511s" "$V511D")"
+done
+cat > "$V511D/dq.sh" <<'V511DQ'
+rel=${rel%$'\r'}
+git status
+V511DQ
+check_msg "v5.1.1 typed dollar-quote + git script is still refused" "$ROOT/hooks/pre-commit-test.sh" 2 \
+  "$(mkjson Bash "bash dq.sh" "$V511D")" "use plain quotes"
+# ---- end v5.1.1 (#14)
+
 # ---- v4.4.0 J-DIFF: with Jev off, model-floor answers exactly as the base release ----
 # Spec D1: "zero footprint when off". From v4.4.0 model-floor.sh sources its
 # resolution from lib/agent-model.sh (shared with the Jev router). With no Jev
@@ -9627,7 +9665,7 @@ rm -rf "$JMGD/jev"
 # skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
 # Skipped by name (4) only where python3 is absent: the jq-only matrix config.
 echo "=== skills/jev (v4.4.0 J-PY) ==="
-JPY_WANT=140
+JPY_WANT=145
 JPY_DIR="$ROOT/skills/jev"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
   JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?

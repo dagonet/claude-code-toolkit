@@ -13,7 +13,7 @@
 # PO write surface (main-thread Edit/Write allowed): docs/plans/,
 # PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/, CLAUDE.md (pre-v4 manifests
 # only; under manifest v4 write .claude/project-instructions.md --
-# deny-claude-md-writes.sh enforces it), CLAUDE.local.md, AGENT_TEAM.md, and
+# the deny-claude-md-writes hook enforces it), CLAUDE.local.md, AGENT_TEAM.md, and
 # any path OUTSIDE the repo root (scratchpad, ~/.claude memory). Everything
 # else (source code, tests, docs content) is agent work.
 #
@@ -76,7 +76,7 @@ Usage: registered as a Claude Code PreToolUse hook (settings.json).
   Matcher "Edit|Write|NotebookEdit": denies main-thread edits outside the PO
   write surface (docs/plans/, PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/,
   CLAUDE.md (pre-v4 manifests only; under manifest v4 write
-  .claude/project-instructions.md -- deny-claude-md-writes.sh enforces it),
+  .claude/project-instructions.md -- the deny-claude-md-writes hook enforces it),
   CLAUDE.local.md, AGENT_TEAM.md, paths outside the repo, plus any
   prefixes named by PROJECT_CONTEXT.md's **PO write surface** key).
   Matcher "Bash": denies main-thread build/test-runner commands and
@@ -308,7 +308,7 @@ fi
 
 if [ -z "$FILE_PATH" ]; then
   # Bash deny path
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"DELEGATE: builds/tests run inside agents — coder runs the gate, tester verifies, ops handles env/tool work. The PO verifies via the shared gate artifact (<common git dir>/gate/last-pass.<sha>.json). Escape hatch: create .claude/delegation-off."}}\n'
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"DELEGATE: builds/tests run inside agents — cct:coder runs the gate, cct:tester verifies, cct:ops handles env/tool work. The PO verifies via the shared gate artifact (<common git dir>/gate/last-pass.<sha>.json). Escape hatch: create .claude/delegation-off."}}\n'
   exit 0
 fi
 
@@ -324,5 +324,5 @@ case "$FILE_PATH" in
     ;;
 esac
 
-printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"DELEGATE: PO never edits code. Spawn coder (code and docs), ops (env/files), tester (verification). PO write surface: docs/plans/, PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/, CLAUDE.md (pre-v4 manifests only; under manifest v4 write .claude/project-instructions.md -- deny-claude-md-writes.sh enforces it), AGENT_TEAM.md. Escape hatch: create .claude/delegation-off."}}\n'
+printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"DELEGATE: PO never edits code. Spawn cct:coder (code and docs), cct:ops (env/files), cct:tester (verification). PO write surface: docs/plans/, PROJECT_STATE.md, PROJECT_CONTEXT.md, .claude/, CLAUDE.md (pre-v4 manifests only; under manifest v4 write .claude/project-instructions.md -- the deny-claude-md-writes hook enforces it), AGENT_TEAM.md. Escape hatch: create .claude/delegation-off."}}\n'
 exit 0

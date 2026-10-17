@@ -266,8 +266,11 @@ try {
 
   # (c) no v4.x user-level leftover
   n_left=0
+  # A dollar-quoted CR here is refused by the gates when this script is typed
+  # (v5.1.1 #14), so the CR comes from printf.
+  cr=$(printf '\r')
   while IFS= read -r rel; do
-    rel=${rel%$'\r'}
+    rel=${rel%"$cr"}
     [ -n "$rel" ] || continue
     n_left=$((n_left + 1))
     if [ -e "$LIVE_ROOT/$rel" ]; then

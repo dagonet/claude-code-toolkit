@@ -190,7 +190,10 @@ def test_load_manifest_accepts_skill_equal_to_marker(tmp_path):
 def test_load_manifest_refuses_skill_below_marker_but_above_floor(tmp_path):
     r = _load(_consumer(tmp_path, {}), skill_version="v5.0.0")
     assert r["valid"] is False
-    assert any("claude plugin update cct@dagonet" in e for e in r["errors"])
+    errs = " ".join(r["errors"])
+    assert "claude plugin marketplace remove dagonet" in errs
+    assert "claude plugin install cct@dagonet" in errs
+    assert "plugin update" not in errs    # a measured no-op for a tag-pinned install
 
 
 def test_grants_code_is_gone():

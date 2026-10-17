@@ -208,6 +208,59 @@ class CtlTests(unittest.TestCase):
         self.assertNotIn("hkcu-secret-8910", text)
         self.assertIn("TYPESAFE_API_KEY: set (HKCU\\Environment)", text)
 
+    V4_REASON = ("this checkout still runs its own v4 hooks/lib/agent-model.sh; Jev routes here once the project "
+                 "is synced to v5 (/cct:sync-template)")
+
+    def project_resolver(self, field3):
+        """A project's own hooks/lib/agent-model.sh answering `kind model <field3> effort gd`."""
+        path = self.t.repo + "/hooks/lib/agent-model.sh"
+        os.makedirs(os.path.dirname(path))
+        self.write(path, ('#!/usr/bin/env bash\necho "general-purpose - %s - -"\n' % field3).encode("utf-8"))
+        return path
+
+    def routing_line(self, text):
+        return next(ln for ln in text.splitlines() if ln.startswith("jev: routing spawns in this checkout:"))
+
+    def test_status_names_v4_resolver_reason(self):
+        self.project_resolver(0)
+        os.makedirs(os.path.dirname(self.t.config), exist_ok=True)
+        self.write(self.t.config, jc._dumps(jc.CONFIG_ON))
+        _, text = self.ctl("status")
+        self.assertEqual(self.routing_line(text), "jev: routing spawns in this checkout: no (" + self.V4_REASON + ")")
+
+    def test_status_plugin_resolver_unchanged(self):
+        _, text = self.ctl("status")
+        self.assertEqual(self.routing_line(text), "jev: routing spawns in this checkout: no")
+        self.ctl("on")
+        _, text = self.ctl("status")
+        self.assertEqual(self.routing_line(text), "jev: routing spawns in this checkout: yes")
+
+    def test_status_switch_off_no_reason(self):
+        self.project_resolver(0)
+        _, text = self.ctl("status")
+        self.assertEqual(self.routing_line(text), "jev: routing spawns in this checkout: no")
+
+    def test_status_v5_project_resolver_no_reason(self):
+        mine = self.project_resolver(0)
+        plugin = self.project_resolver_copy("0")
+        top, _ = jc.locate(self.t.repo, self.t.env())
+        self.assertEqual(jc._v4_resolver_reason(self.t.env(), top, mine, plugin_lib=plugin), "")
+        self.assertEqual(jc._v4_resolver_reason(self.t.env(), top, mine, plugin_lib=mine), "")
+
+    def project_resolver_copy(self, field3):
+        path = os.path.join(os.path.dirname(self.t.repo), "plugin-lib", "agent-model.sh")
+        os.makedirs(os.path.dirname(path))
+        self.write(path, ('#!/usr/bin/env bash\necho "general-purpose - %s - -"\n' % field3).encode("utf-8"))
+        return path
+
+    def test_on_warns_when_v4_resolver(self):
+        self.project_resolver(0)
+        rc, text = self.ctl("on")
+        self.assertEqual(rc, 0, text)
+        self.assertEqual(json.loads(self.read(self.t.config)), jc.CONFIG_ON)
+        self.assertEqual([ln for ln in text.splitlines() if ln.startswith("jev: note: ")],
+                         ["jev: note: " + self.V4_REASON])
+
     def _events(self, evs):
         d = self.t.gd + "/jev/events"
         os.makedirs(d, exist_ok=True)

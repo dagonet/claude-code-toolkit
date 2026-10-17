@@ -94,7 +94,7 @@ a session needs to re-derive every turn.
 ### Quick Start
 
 The section now carries exactly one placeholder-free command
-(`bash hooks/run-gate.sh`) plus a pointer to `PROJECT_CONTEXT.md` for the
+(`cct-gate`) plus a pointer to `PROJECT_CONTEXT.md` for the
 underlying build/test/format/lint commands, and to `.claude/rules/*.md` for
 language conventions. Every `{{BUILD_COMMAND}}`/`{{TEST_COMMAND}}`/
 `{{FORMAT_COMMAND}}`/`{{LINT_COMMAND}}` placeholder — previously present in
@@ -222,7 +222,7 @@ itself cannot go stale the way a restated capability matrix can.
 
 The role's bullets stay (write surface, delegation targets, spawn-prompt skill
 injection, read discipline) because each one gates a specific PO behavior a
-hook enforces (`hooks/enforce-delegation.sh`, `hooks/require-skills-block.sh`).
+hook enforces (`hooks/enforce-delegation.sh`; `hooks/require-skills-block.sh`, retired in v4.5.0).
 Cut: the connective "why" prose between bullets — e.g. why the PO never reviews
 code inline is that a `code-reviewer` is spawned from T2 up, which is now
 stated once as the fact rather than argued.
