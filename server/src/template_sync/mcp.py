@@ -1613,8 +1613,12 @@ async def template_get_diff(
             # part (the split joined head and tail), so put the region back in front
             # of it; appending after it would add a blank line above BEGIN.
             tail = proj_current[proj_current.find(reattach_region) + len(reattach_region):]
-            if tail and merged_text.endswith(tail):
-                merge["auto_merged"] = merged_text[:-len(tail)] + reattach_region + tail
+            head = merged_text[:-len(tail)] if tail else ""
+            # Only on a clean merge at a line boundary: after a conflict hunk the
+            # tail is the hunk's own newline and the marker would glue onto it.
+            if (tail and not merge["has_conflicts"] and merged_text.endswith(tail)
+                    and (not head or head.endswith("\n"))):
+                merge["auto_merged"] = head + reattach_region + tail
             else:
                 merge["auto_merged"] = merged_text + reattach_region + "\n"
             merge["region_reattached"] = True

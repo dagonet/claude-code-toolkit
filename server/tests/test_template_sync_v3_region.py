@@ -311,6 +311,39 @@ def test_gitattributes_three_way_then_moving_the_line_into_the_region_ends_the_l
     assert status_of(proj, rel=".gitattributes")["status"] == "IDENTICAL"
 
 
+@pytest.mark.parametrize("flag_conflict", [True, False])
+@pytest.mark.parametrize("shape", ["gitattributes", "agent_team"])
+def test_three_way_after_a_conflict_hunk_never_glues_a_marker_onto_it(tmp_path, monkeypatch, shape, flag_conflict):
+    """The safety net appends a conflict hunk whose last newline equals the usual tail
+    after END; the region must then be appended on its own line, not inserted in front
+    of that newline (which put BEGIN on the `>>>>>>> TEMPLATE` line)."""
+    if shape == "gitattributes":
+        rel, prefix = ".gitattributes", "# <!--"
+        kw = dict(template_at_sync=ga("* text=auto eol=lf"), template_now=ga("* text=auto eol=lf\n*.png binary"),
+                  project=ga(GA_LOCAL + "\n* text=auto eol=lf", "mine"))
+    else:
+        rel, prefix = "AGENT_TEAM.md", "<!--"
+        kw = dict(template_at_sync=tpl("rule one"), template_now=tpl("rule one\nrule two"),
+                  project=tpl("local\nrule one", MINE))
+    _, proj = mk(tmp_path, rel=rel, **kw)
+    real = ts._three_way_merge
+
+    def with_hunk(*a, **k):
+        m = dict(real(*a, **k))
+        m["auto_merged"] = m["auto_merged"] + ts._conflict_hunk("dropped by merge", ["lost line"])
+        m["has_conflicts"] = flag_conflict
+        return m
+
+    monkeypatch.setattr(ts, "_three_way_merge", with_hunk)
+    merge = _run(ts.template_get_diff(str(proj), rel, diff_type="three_way"))["merge_result"]
+    merged = merge["auto_merged"]
+    assert ">>>>>>> TEMPLATE\n" in merged and merge["region_reattached"] is True
+    marker_lines = [ln for ln in merged.splitlines() if "PROJECT-CUSTOM" in ln]
+    assert len(marker_lines) == 2
+    for line in marker_lines:
+        assert line.startswith(prefix), line
+
+
 GA_OLD = "* text=auto eol=lf\n*.png binary\n"  # a pre-v5.2 file: no markers
 
 

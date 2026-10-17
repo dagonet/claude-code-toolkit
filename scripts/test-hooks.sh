@@ -3927,11 +3927,11 @@ expect "(R5i-h) empty argument: cwd NOT gated (no artifact)" "0" \
 # (i) an exported GIT_DIR must not turn a plain directory into a work tree: git -C
 #     would resolve the GIT_DIR repository for it, so the argument is validated
 #     with GIT_DIR/GIT_WORK_TREE unset and the plain directory is still refused.
-rm -f "$argart"
+rm -f "$argart" "$(gatedir "$argrepo")"/last-pass.*
 ( cd "$argplain" && GIT_DIR="$argrepo/.git" bash "$ROOT/hooks/run-gate.sh" "$argplain" >/dev/null 2>"$argerr" )
 expect "(R5i-i) GIT_DIR exported + plain directory: exit 2" "2" "$?"
-expect "(R5i-i) GIT_DIR exported + plain directory: no artifact" "0" \
-  "$([ -f "$argart" ] && echo 1 || echo 0)"
+expect "(R5i-i) GIT_DIR exported + plain directory: no artifact at all in the gate dir" "0" \
+  "$(find "$(gatedir "$argrepo")" -name 'last-pass.*' 2>/dev/null | wc -l | tr -d ' ')"
 
 # (j) a file is not a work tree: refused, cwd not gated.
 ( cd "$argplain" && bash "$ROOT/hooks/run-gate.sh" "$argrepo/PROJECT_CONTEXT.md" >/dev/null 2>"$argerr" )
