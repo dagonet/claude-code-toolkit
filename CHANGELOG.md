@@ -1,5 +1,28 @@
 # Changelog
 
+## v5.2.1 — 2026-10-27
+
+Patch. The merge gate can reuse a passing commit-time **Test** run when **Test** has several commands. Reported by mm-linux (Motorsport-Manager-AI-Agent).
+
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. Nothing a sync reads changed. The sync-template `SKILL.md` marker moves to v5.2.1 only because consistency check 21c-2g requires it to equal `VERSION`; its `Requires` floor stays at server >= 5.2.0, because the server did not change.
+
+### Fixed
+- **`**Gate extra**` reuse with a multi-command `**Test**` (`hooks/run-gate.sh`).**
+  - **The bug:** run-gate checked the whole **Test** text as one leg with the state-free allow-list. `&` is outside that allow-list, so any **Test** of the form `a && b` was refused. The run printed `WARN **Test** or a **Gate extra** leg is not an allow-listed state-free simple command` and ran the full **Gate**, so the reuse never engaged.
+  - **The fix:** **Test** is now split on `&&` exactly like the **Gate extra** legs, and every part is checked. A leading or trailing `&&` on **Test** refuses, like on **Gate extra**; an empty middle part already did.
+  - **Still refused:** a part that changes shell state (`cd sub && bash t.sh` as **Test**), because that state would carry into the extra legs in the full Gate.
+  - **Workaround for older versions:** a single-command **Test** (a script).
+  - **Tests:** new rows in `scripts/test-hooks.sh` (`v5.2.1 ...`): a two-command Test reuses and records its leg; a Test with a `cd` part, and a Test with a leading, trailing or doubled `&&`, all refuse.
+
+### Downstream migration
+The same measured recipe as v5.2.0. Run it from outside your project folders:
+1. `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v5.2.1`, then `claude plugin install cct@dagonet`. On Linux, update the checkout first and run `bash scripts/install-user-level-linux.sh` instead.
+2. Update your toolkit checkout to the same tag, and restart every session.
+No `/cct:sync-template` is needed: `run-gate.sh` ships in the plugin.
+
+### Measured at the release tree (host agent-host-1)
+- MEASURED-PLACEHOLDER
+
 ## v5.2.0 — 2026-10-17
 
 Minor. Removes the agent friction open-brain measured on 2026-10-17: `.env.<name>.example` templates are readable, `cct-gate` can gate a work tree it is not standing in, and `.gitattributes` gets a project section. Adds the plugin-scope upgrade note to the migration docs.

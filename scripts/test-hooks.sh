@@ -7839,6 +7839,42 @@ expect "FR1 assignment-prefixed leg: no split (no 'reused from' message)" "no" "
 expect "FR1 assignment-prefixed leg: artifact legs:[] (fell back to full Gate)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
 expect "FR1 assignment-prefixed leg: run-gate exit 0 (full Gate still passes)" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
 
+# v5.2.1 (backlog #27, reported by mm-linux): a multi-command **Test**
+# (`a && b`) is split on `&&` and each part checked, like the **Gate extra**
+# legs. Before the fix the whole Test was checked as ONE leg, `&` is outside
+# the character allow-list, and the reuse never engaged for such a Test.
+v521_repo() { # <name> <test-text> <gate-text> -> repo; t.sh, u.sh, x.sh pass; sub/u.sh fails
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho V521-T-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho V521-U-RAN\nexit 0\n' > "$r/u.sh"
+  printf '#!/usr/bin/env bash\necho V521-X-RAN\nexit 0\n' > "$r/x.sh"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho V521-SUB-U-RAN\nexit 1\n' > "$r/sub/u.sh"
+  printf '# ctx\n\n- **Test**: `%s`\n- **Gate**: `%s`\n- **Gate extra**: `bash x.sh`\n' "$2" "$3" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(v521_repo v521multi 'bash t.sh && bash u.sh' 'bash t.sh && bash u.sh && bash x.sh'); a2_commit "$R"; a2_rungate "$R"
+expect "v5.2.1 multi-command Test: no state-free WARN" "no" "$(a2_has "$R/.a2_gate_out" 'not an allow-listed state-free')"
+expect "v5.2.1 multi-command Test: Gate extra honoured (one leg recorded)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+expect "v5.2.1 multi-command Test: extra leg ran" "yes" "$(a2_has "$R/.a2_gate_out" V521-X-RAN)"
+expect "v5.2.1 multi-command Test: test re-run iff env fingerprint unusable" "$A2_R1_TESTRUN" "$(a2_has "$R/.a2_gate_out" V521-U-RAN)"
+expect "v5.2.1 multi-command Test: run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+# A stateful part inside the Test still refuses the whole split: `cd sub`
+# would carry into `bash u.sh` (sub/u.sh fails) in the full Gate.
+R=$(v521_repo v521cd 'bash t.sh && cd sub && bash u.sh' 'bash t.sh && cd sub && bash u.sh && bash x.sh'); a2_commit "$R"; a2_rungate "$R"
+expect "v5.2.1 Test with a cd part: WARN, Gate extra ignored" "yes" "$(a2_has "$R/.a2_gate_out" 'not an allow-listed state-free')"
+expect "v5.2.1 Test with a cd part: sub/u.sh ran in the full Gate" "yes" "$(a2_has "$R/.a2_gate_out" V521-SUB-U-RAN)"
+expect "v5.2.1 Test with a cd part: run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+# An empty Test part (leading, trailing or doubled `&&`) refuses.
+v521_n=0
+for v521_t in '&& bash t.sh' 'bash t.sh &&' 'bash t.sh && && bash u.sh'; do
+  v521_n=$((v521_n + 1))
+  R=$(v521_repo "v521empty$v521_n" "$v521_t" "$v521_t && bash x.sh"); a2_commit "$R"; a2_rungate "$R"
+  expect "v5.2.1 Test with an empty part ($v521_t): WARN, Gate extra ignored" "yes" "$(a2_has "$R/.a2_gate_out" 'not an allow-listed state-free')"
+  expect "v5.2.1 Test with an empty part ($v521_t): no leg recorded" "no" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+done
+
 # FR1 row 6 (racy same-second same-size edit, I2): not independently
 # fixtured -- a deterministic same-second/same-size stat-cache collision is
 # not reproducible portably or quickly in this suite. Covered by `cp -p`
