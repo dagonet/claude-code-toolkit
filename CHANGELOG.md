@@ -21,7 +21,9 @@ The same measured recipe as v5.2.0. Run it from outside your project folders:
 No `/cct:sync-template` is needed: `run-gate.sh` ships in the plugin.
 
 ### Measured at the release tree (host agent-host-1)
-- MEASURED-PLACEHOLDER
+- `bash scripts/test-server.sh`: 553 passed, 0 failed, 9 skipped (unchanged from v5.2.0; the server did not change).
+- Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 343 PASS lines (as v5.2.0) and one skipped check. The skipped check is check 50, which prints as a PASS line while skipping (no `python`, only `python3`). The bootstrap-fixture block inside it ran 38 passed, 0 failed, 34 skipped (the PowerShell cases).
+- `bash scripts/test-hooks.sh`: 4229 passed, 0 failed, 6 skipped (4235 assertions; v5.2.0 measured 4215/0/6, +14 for the new `v5.2.1` rows). Measured by the merge gate on the fix commit; the tree differs from the release tree only in this CHANGELOG section.
 
 ## v5.2.0 — 2026-10-17
 
