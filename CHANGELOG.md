@@ -28,7 +28,7 @@ No `/cct:sync-template` is needed: `run-gate.sh`, `cct-session.sh` and `hooks.js
 ### Measured at the release tree (host agent-host-1)
 - `bash scripts/test-server.sh`: 553 passed, 0 failed, 9 skipped (unchanged from v5.2.0; the server did not change).
 - Consistency script (`scripts/verify-template-consistency.sh`): ALL CHECKS PASSED, 343 PASS lines (as v5.2.0) and one skipped check. The skipped check is check 50, which prints as a PASS line while skipping (no `python`, only `python3`). The bootstrap-fixture block inside it ran 38 passed, 0 failed, 34 skipped (the PowerShell cases).
-- `bash scripts/test-hooks.sh`: 4231 passed, 0 failed, 6 skipped (4237 assertions; v5.2.0 measured 4215/0/6, +16 for the new `v5.2.1` rows). Measured by the parser matrix's node configuration on the fix commit; the tree differs from the release tree only in this CHANGELOG section. The matrix passed: python3-only 3973/0/241, jq-only 3877/0/337, both skip counts in band.
+- `bash scripts/test-hooks.sh`: 4231 passed, 0 failed, 6 skipped (4237 assertions; v5.2.0 measured 4215/0/6, +16 for the new `v5.2.1` rows). Measured by the parser matrix's node configuration on the fix commit; the release tree differs from it only in this CHANGELOG section and in how one new test row builds its stand-in `rm` (a wrapper script instead of a link, so it also runs under Git Bash). The merge gate's run on the release tree is recorded in the pull request. The matrix passed: python3-only 3973/0/241, jq-only 3877/0/337, both skip counts in band.
 
 ## v5.2.0 — 2026-10-17
 
