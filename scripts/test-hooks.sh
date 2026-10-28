@@ -11698,6 +11698,12 @@ expect "v5 session end: an unsafe id removes nothing outside the dir" "rc=0 pres
 : > "$V5T/cct-$(id -u)/ef-56"
 expect "v5 session: an unknown argument neither creates nor removes a marker" "no yes" "$(printf '{"session_id":"gh-78"}' | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" ed; printf '{"session_id":"ef-56"}' | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" ed; [ -f "$V5T/cct-$(id -u)/gh-78" ] && echo -n "yes " || echo -n "no "; [ -f "$V5T/cct-$(id -u)/ef-56" ] && echo yes || echo no)"
 expect "v5 session end: start then end then start leaves a marker" "yes" "$(v5sess '{"session_id":"cd-34"}' >/dev/null; v5send '{"session_id":"cd-34"}' >/dev/null; v5sess '{"session_id":"cd-34"}' >/dev/null; [ -f "$V5T/cct-$(id -u)/cd-34" ] && echo yes || echo no)"
+# v5.2.1: SessionEnd hooks share a 1.5 s budget, so the end path starts no program but rm: with only rm on PATH it
+# still removes the marker (cat/grep/sed/id there would leave sid empty and the marker in place)
+V5RM="$TMPROOT/v5rmonly"; mkdir -p "$V5RM"; ln -s "$(command -v rm)" "$V5RM/rm"
+: > "$V5T/cct-$(id -u)/ij-90"
+expect "v5.2.1 session end: only rm on PATH -> marker removed" "rc=0 gone" "$(printf '{"session_id":"ij-90"}' | PATH="$V5RM" TMPDIR="$V5T" "$BASH" "$ROOT/hooks/cct-session.sh" end; echo "rc=$? $( [ -f "$V5T/cct-$(id -u)/ij-90" ] && echo present || echo gone)")"
+expect "v5.2.1 session end: first session_id wins" "gone present" "$(: > "$V5T/cct-$(id -u)/kl-11"; : > "$V5T/cct-$(id -u)/mn-22"; v5send '{"session_id":"kl-11","x":{"session_id":"mn-22"}}' >/dev/null; [ -f "$V5T/cct-$(id -u)/kl-11" ] && echo -n "present " || echo -n "gone "; [ -f "$V5T/cct-$(id -u)/mn-22" ] && echo present || echo gone)"
 # ---- end v5.0 run-hook
 
 # ---- v5.0 fix round I1: a closed-class registration must refuse (exit 2) when the plugin dir is gone

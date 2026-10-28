@@ -4947,9 +4947,13 @@ const cmds=e=>[].concat(...(h[e]||[]).map(g=>(g.hooks||[]).map(x=>x.command||"")
 const all=Object.keys(h).reduce((n,e)=>n+cmds(e).length,0);
 const s=cmds("SessionStart"), d=cmds("SessionEnd");
 const w="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/cct-session.sh\"";
-process.stdout.write(s.length===1&&s[0]===w&&d.length===1&&d[0]===w+" end"&&all===2?"ok":"bad");
+const t=[].concat(...(h.SessionEnd||[]).map(g=>g.hooks||[])).filter(x=>(x.command||"").includes("cct-session.sh"));
+process.stdout.write((s.length===1&&s[0]===w&&d.length===1&&d[0]===w+" end"&&all===2?"ok":"bad")+" "+(t.length===1&&t[0].timeout>=2&&t[0].timeout<=60?"ok":"bad"));
 ' "${C74_HOOKS_JSON:-hooks/hooks.json}" 2>/dev/null)
-[ "$c74_sess" = ok ] || c74_bad="$c74_bad cct-session.sh-not-registered-as-SessionStart(no-arg)+SessionEnd(end)"
+case "$c74_sess" in "ok "*) ;; *) c74_bad="$c74_bad cct-session.sh-not-registered-as-SessionStart(no-arg)+SessionEnd(end)" ;; esac
+# v5.2.1: SessionEnd hooks get 1.5 s in total unless one declares a `timeout` (Claude Code caps it at 60 s); without
+# it a loaded machine cancels the marker removal ("Hook cancelled" on exit).
+case "$c74_sess" in *" ok") ;; *) c74_bad="$c74_bad cct-session.sh-SessionEnd-timeout-missing-or-outside-2..60s" ;; esac
 [ -f hooks/cct-session.sh ] || c74_bad="$c74_bad missing:cct-session"
 if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) hooks, all present and classed"; else ko "74: hooks.json/run-hook.sh:$c74_bad"; fi
 

@@ -1,8 +1,8 @@
 # Changelog
 
-## v5.2.1 — 2026-10-27
+## v5.2.1 — 2026-10-28
 
-Patch. The merge gate can reuse a passing commit-time **Test** run when **Test** has several commands. Reported by mm-linux (Motorsport-Manager-AI-Agent).
+Patch. The merge gate can reuse a passing commit-time **Test** run when **Test** has several commands. Reported by mm-linux (Motorsport-Manager-AI-Agent). Also, the plugin's SessionEnd step no longer gets cancelled on a busy machine, which showed as `Hook cancelled` on exit (reported by the user).
 
 **Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. Nothing a sync reads changed. The sync-template `SKILL.md` marker moves to v5.2.1 only because consistency check 21c-2g requires it to equal `VERSION`; its `Requires` floor stays at server >= 5.2.0, because the server did not change.
 
@@ -13,12 +13,17 @@ Patch. The merge gate can reuse a passing commit-time **Test** run when **Test**
   - **Still refused:** a part that changes shell state (`cd sub && bash t.sh` as **Test**), because that state would carry into the extra legs in the full Gate.
   - **Workaround for older versions:** a single-command **Test** (a script).
   - **Tests:** new rows in `scripts/test-hooks.sh` (`v5.2.1 ...`): a two-command Test reuses and records its leg; a Test with a `cd` part, and a Test with a leading, trailing or doubled `&&`, all refuse.
+- **`SessionEnd hook [bash "${CLAUDE_PLUGIN_ROOT}/hooks/cct-session.sh" end] failed: Hook cancelled` on exit (`hooks/hooks.json`, `hooks/cct-session.sh`).**
+  - **The cause:** Claude Code gives all SessionEnd hooks together 1.5 s, unless one of them declares a `timeout`; then the budget is the largest declared one, capped at 60 s (read from Claude Code 2.1.312; `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` overrides it). The marker removal declared none and started seven programs (`bash`, `cat`, `grep`, `head`, `sed`, `id`, `rm`): about 11 ms on an idle host, but a loaded host slows every process start to seconds, and the step was cancelled.
+  - **The effect:** this session's marker file stayed behind. It matters only to a `--resume` of the same session without the plugin; markers older than 30 days are deleted anyway.
+  - **The fix:** the registration declares `"timeout": 5`, and the script reads its input with bash builtins, so the end path starts only `bash` and `rm` (5 ms against 13 ms, measured on agent-host-1). Check 74 now also requires that `timeout` to be between 2 and 60 s.
+  - **Tests:** new rows in `scripts/test-hooks.sh` (`v5.2.1 session end ...`): with only `rm` on `PATH` the marker is still removed; the first `session_id` in the input wins.
 
 ### Downstream migration
 The same measured recipe as v5.2.0. Run it from outside your project folders:
 1. `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v5.2.1`, then `claude plugin install cct@dagonet`. On Linux, update the checkout first and run `bash scripts/install-user-level-linux.sh` instead.
 2. Update your toolkit checkout to the same tag, and restart every session.
-No `/cct:sync-template` is needed: `run-gate.sh` ships in the plugin.
+No `/cct:sync-template` is needed: `run-gate.sh`, `cct-session.sh` and `hooks.json` all ship in the plugin.
 
 ### Measured at the release tree (host agent-host-1)
 - `bash scripts/test-server.sh`: 553 passed, 0 failed, 9 skipped (unchanged from v5.2.0; the server did not change).

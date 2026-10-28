@@ -6,9 +6,12 @@
 # The project's inline PreToolUse guard refuses every tool when the marker is missing.
 # SessionStart runs on every source (startup, resume, clear, compact). Never blocks: always exits 0.
 case "${1:-}" in ''|end) ;; *) exit 0 ;; esac   # any other argument does nothing: a typo can never re-create the marker at SessionEnd (check 74 pins the registrations)
-sid=$(cat | grep -o '"session_id" *: *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+# v5.2.1: bash builtins only up to the rm: SessionEnd hooks share a 1.5 s budget (raised by the 5 s `timeout` in
+# hooks.json), and every program started here costs a spawn, seconds each on a loaded machine. $UID == `id -u`.
+IFS= read -r -d '' j || :
+sid=; re='"session_id" *: *"([^"]*)"'; [[ $j =~ $re ]] && sid=${BASH_REMATCH[1]}
 case $sid in ''|*[!A-Za-z0-9-]*) exit 0 ;; esac
-d="${TMPDIR:-/tmp}/cct-$(id -u)"
+d="${TMPDIR:-/tmp}/cct-$UID"
 if [ "${1:-}" = end ]; then rm -f "$d/$sid" 2>/dev/null; exit 0; fi
 mkdir -p "$d" 2>/dev/null
 # A dir this user does not own is not a marker dir (the guard and am_plugin_loaded refuse it too): write nothing.
