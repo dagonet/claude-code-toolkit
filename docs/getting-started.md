@@ -9,7 +9,7 @@ The toolkit is a template repository and the Claude Code plugin `cct@dagonet`: t
 | Dependency | Min Version | Purpose |
 |---|---|---|
 | **Claude Code CLI** | Latest | `npm install -g @anthropic-ai/claude-code` |
-| **The cct plugin** | this release | `/plugin marketplace add dagonet/claude-code-toolkit#v5.2.0`, then `/plugin install cct@dagonet`, then restart the session. **Required:** a synced project refuses every tool call until the plugin is active. Upgrading from v4.x: see [Install in the README](../README.md#install) |
+| **The cct plugin** | this release | `/plugin marketplace add dagonet/claude-code-toolkit#v5.2.1`, then `/plugin install cct@dagonet`, then restart the session. **Required:** a synced project refuses every tool call until the plugin is active. Upgrading from v4.x: see [Install in the README](../README.md#install) |
 | **A JSON parser for the hooks** | `node` 18+, `python3` 3.8+ or `jq` 1.6+ | The enforcement hooks parse their stdin payload with the first one they find. Native Claude Code installs do **not** ship `node`, so on those boxes make sure `python3` or `jq` is on PATH — with none of the three the git gates fail closed (exit 2) and the rest warn that enforcement is inactive. `node` unlocks the full set: `read-size-gate`, `bash-output-guard`, `enforce-delegation`, `enforce-agent-contract` and the retro hooks are node-only. |
 | **Git** | Any recent | Version control |
 | **GitHub CLI (`gh`)** | Latest | GitHub integration (must be authenticated via `gh auth login`) |
@@ -107,7 +107,7 @@ You do not need everything installed to get value. Pick the tier that matches yo
 ### Tier 1 -- Bare Minimum
 
 1. Install Claude Code CLI, Git, and one JSON parser for the hooks (`node`, `python3` or `jq` — `node` covers all of them)
-2. Install the cct plugin (`/plugin marketplace add dagonet/claude-code-toolkit#v5.2.0`, then `/plugin install cct@dagonet`) and restart the session
+2. Install the cct plugin (`/plugin marketplace add dagonet/claude-code-toolkit#v5.2.1`, then `/plugin install cct@dagonet`) and restart the session
 3. Clone this repo and run the setup script targeting your project:
    - **Windows**: `setup-project.ps1`
    - **Linux/macOS**: `setup-project.sh`

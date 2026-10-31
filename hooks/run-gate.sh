@@ -474,10 +474,21 @@ if [ -n "$GATE_EXTRA" ]; then
   # `bash x.sh &&` and `&& bash x.sh` both split rc 0 pre-fix where the
   # plain Gate is a bash syntax error (rc 1).
   RG_EXTRA_TRIMMED=$(printf '%s' "$GATE_EXTRA" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  RG_TEST_TRIMMED=$(printf '%s' "$RG_TEST" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
   case "$RG_EXTRA_TRIMMED" in
     '&&'*|*'&&') RG_UNSAFE=1 ;;
   esac
-  rg_stateless "$RG_TEST" || RG_UNSAFE=1
+  case "$RG_TEST_TRIMMED" in
+    '&&'*|*'&&') RG_UNSAFE=1 ;;
+  esac
+  # v5.2.1 (#27): **Test** is split on `&&` like the legs and every part is
+  # checked. Checking it whole refused any multi-command Test (`&` is outside
+  # the allow-list), so the reuse never engaged for one.
+  while IFS= read -r rg_chk_part; do
+    rg_stateless "$rg_chk_part" || RG_UNSAFE=1
+  done <<RG_TEST_CHECK
+$(printf '%s' "$RG_TEST" | awk '{gsub(/[[:space:]]*&&[[:space:]]*/,"\n")}1')
+RG_TEST_CHECK
   # v4.3.0 fix round 3: NO `continue` on an empty/whitespace-only leg -- it
   # must be REFUSED, not silently skipped. `rg_stateless` already refuses an
   # empty trimmed string on its own (`[ -n "$rgst_trim" ] || return 1`), so

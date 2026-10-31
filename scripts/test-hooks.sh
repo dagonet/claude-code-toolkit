@@ -7839,6 +7839,42 @@ expect "FR1 assignment-prefixed leg: no split (no 'reused from' message)" "no" "
 expect "FR1 assignment-prefixed leg: artifact legs:[] (fell back to full Gate)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[]')"
 expect "FR1 assignment-prefixed leg: run-gate exit 0 (full Gate still passes)" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
 
+# v5.2.1 (backlog #27, reported by mm-linux): a multi-command **Test**
+# (`a && b`) is split on `&&` and each part checked, like the **Gate extra**
+# legs. Before the fix the whole Test was checked as ONE leg, `&` is outside
+# the character allow-list, and the reuse never engaged for such a Test.
+v521_repo() { # <name> <test-text> <gate-text> -> repo; t.sh, u.sh, x.sh pass; sub/u.sh fails
+  r=$(mkrepo "$1" main)
+  printf '#!/usr/bin/env bash\necho V521-T-RAN\nexit 0\n' > "$r/t.sh"
+  printf '#!/usr/bin/env bash\necho V521-U-RAN\nexit 0\n' > "$r/u.sh"
+  printf '#!/usr/bin/env bash\necho V521-X-RAN\nexit 0\n' > "$r/x.sh"
+  mkdir -p "$r/sub"
+  printf '#!/usr/bin/env bash\necho V521-SUB-U-RAN\nexit 1\n' > "$r/sub/u.sh"
+  printf '# ctx\n\n- **Test**: `%s`\n- **Gate**: `%s`\n- **Gate extra**: `bash x.sh`\n' "$2" "$3" > "$r/PROJECT_CONTEXT.md"
+  printf '%s\n' "$r"
+}
+R=$(v521_repo v521multi 'bash t.sh && bash u.sh' 'bash t.sh && bash u.sh && bash x.sh'); a2_commit "$R"; a2_rungate "$R"
+expect "v5.2.1 multi-command Test: no state-free WARN" "no" "$(a2_has "$R/.a2_gate_out" 'not an allow-listed state-free')"
+expect "v5.2.1 multi-command Test: Gate extra honoured (one leg recorded)" "yes" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+expect "v5.2.1 multi-command Test: extra leg ran" "yes" "$(a2_has "$R/.a2_gate_out" V521-X-RAN)"
+expect "v5.2.1 multi-command Test: test re-run iff env fingerprint unusable" "$A2_R1_TESTRUN" "$(a2_has "$R/.a2_gate_out" V521-U-RAN)"
+expect "v5.2.1 multi-command Test: run-gate exit 0" "0" "$(cat "$R/.a2_gate_rc" 2>/dev/null)"
+# A stateful part inside the Test still refuses the whole split: `cd sub`
+# would carry into `bash u.sh` (sub/u.sh fails) in the full Gate.
+R=$(v521_repo v521cd 'bash t.sh && cd sub && bash u.sh' 'bash t.sh && cd sub && bash u.sh && bash x.sh'); a2_commit "$R"; a2_rungate "$R"
+expect "v5.2.1 Test with a cd part: WARN, Gate extra ignored" "yes" "$(a2_has "$R/.a2_gate_out" 'not an allow-listed state-free')"
+expect "v5.2.1 Test with a cd part: sub/u.sh ran in the full Gate" "yes" "$(a2_has "$R/.a2_gate_out" V521-SUB-U-RAN)"
+expect "v5.2.1 Test with a cd part: run-gate exits non-zero" "yes" \
+  "$([ "$(cat "$R/.a2_gate_rc" 2>/dev/null)" != 0 ] && echo yes || echo no)"
+# An empty Test part (leading, trailing or doubled `&&`) refuses.
+v521_n=0
+for v521_t in '&& bash t.sh' 'bash t.sh &&' 'bash t.sh && && bash u.sh'; do
+  v521_n=$((v521_n + 1))
+  R=$(v521_repo "v521empty$v521_n" "$v521_t" "$v521_t && bash x.sh"); a2_commit "$R"; a2_rungate "$R"
+  expect "v5.2.1 Test with an empty part ($v521_t): WARN, Gate extra ignored" "yes" "$(a2_has "$R/.a2_gate_out" 'not an allow-listed state-free')"
+  expect "v5.2.1 Test with an empty part ($v521_t): no leg recorded" "no" "$(a2_has "$(a2_artifact "$R")" '"legs":[{')"
+done
+
 # FR1 row 6 (racy same-second same-size edit, I2): not independently
 # fixtured -- a deterministic same-second/same-size stat-cache collision is
 # not reproducible portably or quickly in this suite. Covered by `cp -p`
@@ -11662,6 +11698,13 @@ expect "v5 session end: an unsafe id removes nothing outside the dir" "rc=0 pres
 : > "$V5T/cct-$(id -u)/ef-56"
 expect "v5 session: an unknown argument neither creates nor removes a marker" "no yes" "$(printf '{"session_id":"gh-78"}' | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" ed; printf '{"session_id":"ef-56"}' | TMPDIR="$V5T" bash "$ROOT/hooks/cct-session.sh" ed; [ -f "$V5T/cct-$(id -u)/gh-78" ] && echo -n "yes " || echo -n "no "; [ -f "$V5T/cct-$(id -u)/ef-56" ] && echo yes || echo no)"
 expect "v5 session end: start then end then start leaves a marker" "yes" "$(v5sess '{"session_id":"cd-34"}' >/dev/null; v5send '{"session_id":"cd-34"}' >/dev/null; v5sess '{"session_id":"cd-34"}' >/dev/null; [ -f "$V5T/cct-$(id -u)/cd-34" ] && echo yes || echo no)"
+# v5.2.1: SessionEnd hooks share a 1.5 s budget, so the end path starts no program but rm: with only rm on PATH it
+# still removes the marker (cat/grep/sed/id there would leave sid empty and the marker in place)
+# (rm is a wrapper that execs the real one by absolute path: a copied/linked MSYS rm.exe would miss its DLL there)
+V5RM="$TMPROOT/v5rmonly"; mkdir -p "$V5RM"; printf '#!%s\nexec "%s" "$@"\n' "$BASH" "$(command -v rm)" > "$V5RM/rm"; chmod +x "$V5RM/rm"
+: > "$V5T/cct-$(id -u)/ij-90"
+expect "v5.2.1 session end: only rm on PATH -> marker removed" "rc=0 gone" "$(printf '{"session_id":"ij-90"}' | PATH="$V5RM" TMPDIR="$V5T" "$BASH" "$ROOT/hooks/cct-session.sh" end; echo "rc=$? $( [ -f "$V5T/cct-$(id -u)/ij-90" ] && echo present || echo gone)")"
+expect "v5.2.1 session end: first session_id wins" "gone present" "$(: > "$V5T/cct-$(id -u)/kl-11"; : > "$V5T/cct-$(id -u)/mn-22"; v5send '{"session_id":"kl-11","x":{"session_id":"mn-22"}}' >/dev/null; [ -f "$V5T/cct-$(id -u)/kl-11" ] && echo -n "present " || echo -n "gone "; [ -f "$V5T/cct-$(id -u)/mn-22" ] && echo present || echo gone)"
 # ---- end v5.0 run-hook
 
 # ---- v5.0 fix round I1: a closed-class registration must refuse (exit 2) when the plugin dir is gone
