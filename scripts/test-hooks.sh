@@ -10488,7 +10488,9 @@ else
   expect "v6 memo: (e) a BOM-prefixed payload stored, queried without the BOM"  "0:/work/a" "$(v6m_stub_get "$JSON_BOM$V6M_P" "$V6M_P" cwd)"
   expect "v6 memo: (e) stored without the BOM, queried with it"                 "0:/work/a" "$(v6m_stub_get "$V6M_P" "$JSON_BOM$V6M_P" cwd)"
   expect "v6 memo: (e) memo index 1 holds the BOM-free payload"                 "$V6M_P"    "$( json_memo_set "$JSON_BOM$V6M_P" cwd >/dev/null; printf '%s' "${CCTD_MEMO[1]}" )"
-  expect "v6 memo: (f) an exported scalar CCTD_MEMO never hits (rc 2)" "2:" "$(CCTD_MEMO="$V6M_P" PATH="$V6M_STUB" "$BASH" -c ". '$ROOT/hooks/lib/json.sh'; json_fields '$V6M_P' cwd; printf '%s:%s' \"\$?\" \"\${JF[0]-}\"" 2>/dev/null)"
+  # JSON_PARSER=none proves the parser loop ran and failed; a (wrong) hit never touches it, and a
+  # bare rc 2 is not enough: `return "<payload>"` is also rc 2.
+  expect "v6 memo: (f) an exported scalar CCTD_MEMO never hits (rc 2, parser loop ran)" "2::none" "$(CCTD_MEMO="$V6M_P" PATH="$V6M_STUB" "$BASH" -c ". '$ROOT/hooks/lib/json.sh'; json_fields '$V6M_P' cwd; printf '%s:%s:%s' \"\$?\" \"\${JF[0]-}\" \"\$JSON_PARSER\"" 2>/dev/null)"
   expect "v6 memo: (g) re-sourcing json.sh after json_memo_set keeps the hit"   "0:/work/a" "$( json_memo_set "$V6M_P" tool_name cwd >/dev/null; . "$ROOT/hooks/lib/json.sh"; PATH="$V6M_STUB"; json_fields "$V6M_P" cwd; printf '%s:%s' "$?" "${JF[0]-}" )"
 fi
 # ---- end v6.0 Task 2
