@@ -11826,6 +11826,249 @@ else
 fi
 # ---- end v6.0 guard edits
 
+# ---- v6.0 Task 4: hooks/dispatch.sh runs a tool's guards in one process (design D2/D4, rulings R-1/R-2/R-3/R-7)
+# Every dispatcher run is isolated: CLAUDE_PROJECT_DIR is the scratch project and HOME an empty dir, so neither the
+# toolkit's own settings nor the real ~/.claude/settings.json can make a guard step aside. A "scratch tree" is a copy of
+# hooks/ (so a stand-in guard can replace a real one) next to a project dir; the manifest makes the project a toolkit
+# project (the project-class guards run). Marker stand-ins append their own name to <tree>/ran.
+if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
+  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 52
+else
+  V6D="$TMPROOT/v6d"; mkdir -p "$V6D/home"
+  v6d_mk() { # <tree> [m] -- a scratch tree; m = the project carries a template manifest
+    local t="$V6D/$1"
+    mkdir -p "$t/proj/.claude"
+    cp -R "$ROOT/hooks" "$t/hooks"
+    if [ "${2-}" = m ]; then printf '{}' > "$t/proj/.claude/template-manifest.json"; fi
+  }
+  v6d_put() { # <tree> <guard> <body> -- replace a scratch guard with a stand-in script
+    printf '%s\n' '#!/usr/bin/env bash' "$3" > "$V6D/$1/hooks/$2.sh"
+  }
+  v6d_marker() { # <tree> <guard> -- a stand-in that only records that it ran
+    v6d_put "$1" "$2" "echo $2 >> '$V6D/$1/ran'"
+  }
+  v6d_run() { # <tree> <table> <payload> -- sets V6D_RC, V6D_OUT (stdout), V6D_ERR (stderr); clears <tree>/ran
+    local t="$V6D/$1"
+    rm -f "$t/ran"
+    V6D_OUT=$(printf '%s' "$3" | env CLAUDE_PROJECT_DIR="$t/proj" HOME="${V6D_HOME:-$V6D/home}" bash "$t/hooks/dispatch.sh" "$2" 2>"$V6D/err")
+    V6D_RC=$?
+    V6D_ERR=$(cat "$V6D/err")
+  }
+  v6d_has() { case $1 in *"$2"*) echo yes ;; *) echo no ;; esac; } # <text> <needle>
+  v6d_ans() { if [ -n "$1" ]; then printf '%s\nrc=%s' "$1" "$2"; else printf 'rc=%s' "$2"; fi; } # <stdout> <rc> -> the hook's whole answer
+  v6d_ran() { if [ -f "$V6D/$1/ran" ]; then tr '\n' ' ' < "$V6D/$1/ran" | sed 's/ $//'; else echo none; fi; } # <tree>
+
+  V6D_MAIN=$(mkrepo v6dmain main)
+  V6D_FEAT=$(mkrepo v6dfeat feature/z)
+  V6D_BAD=$(mkrepo v6dbad feature/z)
+  V6D_OK=$(mkrepo v6dok feature/z)
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V6D_FEAT/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Test**: `false`\n' > "$V6D_BAD/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Test**: `echo hello`\n' > "$V6D_OK/PROJECT_CONTEXT.md"
+  V6D_LS=$(mkjson Bash 'ls' "$V6D_FEAT")
+  V6D_PUSH=$(mkjson Bash 'git push origin main' "$V6D_MAIN")
+  V6D_ENV=$(mkjson Bash 'cat .env' "$V6D_FEAT")
+  V6D_MERGE=$(mkjson Bash 'gh pr merge 5 --squash' "$V6D_FEAT")
+  V6D_PUSH_NEEDLE='pushing to a protected branch'
+  V6D_ENV_NEEDLE='secrets files are not read'
+
+  # (a)-(c), (k), (r): the real guards, no manifest (the machine-class guards run)
+  v6d_mk base
+  v6d_run base bash "$V6D_PUSH"
+  expect "v6 dispatch: (a) bash table: a push to main is refused by the guard's own text" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run base powershell "$V6D_PUSH"
+  expect "v6 dispatch: (a) powershell table: a push to main is refused by the guard's own text" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run base bash "$V6D_ENV"
+  expect "v6 dispatch: (b) bash table: cat .env is refused by deny-secret-reads" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_run base powershell "$V6D_ENV"
+  expect "v6 dispatch: (b) powershell table has no deny-secret-reads: cat .env passes" "rc=0 needle=no" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_run base bash "$V6D_LS"
+  expect "v6 dispatch: (c) ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+  v6d_run base nosuch "$V6D_LS"
+  expect "v6 dispatch: (k) an unknown table: rc 2 + 'unknown table'" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "unknown table 'nosuch'")"
+  v6d_run base '' "$V6D_LS"
+  expect "v6 dispatch: (k) no table argument: rc 2 + 'unknown table'" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "unknown table")"
+  v6d_run base bash ''
+  expect "v6 dispatch: (r) an empty payload is refused by the closed guards (rc 2)" "rc=2" "rc=$V6D_RC"
+  v6d_q_err=$(printf '%s\0%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/"}' '{"x":1}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" bash "$V6D/base/hooks/dispatch.sh" bash 2>&1 >/dev/null; echo "rc=$?")
+  expect "v6 dispatch: (q) a payload with a NUL byte is refused (rc 2, never truncated)" "rc=2 needle=yes" "$(printf '%s' "$v6d_q_err" | tail -n 1) needle=$(v6d_has "$v6d_q_err" 'NUL')"
+
+  # (l) Review Focus 1: a 300 KB command. The baseline first: the guard alone, then through the dispatcher.
+  # The 300 KB sits in a quoted string on purpose: an UNQUOTED 300 KB token costs no-push-main minutes today
+  # (its scan is quadratic: 100 KB = 14 s, measured 2026-11-01), which is the guard's cost, not the dispatcher's.
+  V6D_BIG=$(mkjson Bash "git push origin main; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
+  V6D_BIGLS=$(mkjson Bash "ls; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
+  v6d_big_direct=$(printf '%s' "$V6D_BIG" | bash "$ROOT/hooks/no-push-main.sh" 2>&1 >/dev/null; echo "rc=$?")
+  expect "v6 dispatch: (l) baseline: no-push-main alone refuses the 300 KB push" "rc=2 needle=yes" "$(printf '%s' "$v6d_big_direct" | tail -n 1) needle=$(v6d_has "$v6d_big_direct" "$V6D_PUSH_NEEDLE")"
+  v6d_run base bash "$V6D_BIG"
+  expect "v6 dispatch: (l) a 300 KB push to main is refused through the dispatcher" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run base bash "$V6D_BIGLS"
+  expect "v6 dispatch: (l) control: a 300 KB harmless command passes" "rc=0" "rc=$V6D_RC"
+
+  # (d) a crash (any rc but 2) does not skip a later closed guard
+  v6d_mk d m
+  v6d_put d deny-secret-reads 'exit 1'
+  v6d_run d bash "$V6D_PUSH"
+  expect "v6 dispatch: (d) deny-secret-reads crashes (rc 1): a push to main is still refused" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run d bash "$V6D_MERGE"
+  expect "v6 dispatch: (d) the crash comes BEFORE gate-before-merge: its refusal still lands" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'No gate artifact found')"
+  v6d_mk d2
+  v6d_put d2 no-push-main 'exit 1'
+  v6d_run d2 bash "$V6D_ENV"
+  expect "v6 dispatch: (d) no-push-main crashes first: deny-secret-reads still refuses cat .env" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_run d2 bash "$V6D_LS"
+  expect "v6 dispatch: (d) control: the crash alone (rc 1) does not deny" "rc=0" "rc=$V6D_RC"
+
+  # (e) a syntax error in a guard denies and stops the run (bash x.sh would exit 2 too)
+  v6d_mk e m; v6d_put e no-push-main 'if then fi ('; v6d_marker e gate-before-merge
+  v6d_run e bash "$V6D_LS"
+  expect "v6 dispatch: (e) a syntax error in no-push-main: rc 2 and the later gate-before-merge did not run" "rc=2 ran=none" "rc=$V6D_RC ran=$(v6d_ran e)"
+  v6d_mk ec m; v6d_marker ec gate-before-merge
+  v6d_run ec bash "$V6D_LS"
+  expect "v6 dispatch: (e) control: with no-push-main intact the later gate-before-merge runs" "rc=0 ran=gate-before-merge" "rc=$V6D_RC ran=$(v6d_ran ec)"
+
+  # (f) stdout: one answer is printed, two are refused, a deny drops them, a non-zero guard is not an answer
+  v6d_mk f
+  v6d_put f deny-hang-shapes "echo '{\"x\":1}'"
+  v6d_run f bash "$V6D_LS"
+  expect "v6 dispatch: (f) one guard's stdout is printed and the run exits 0" "rc=0 out={\"x\":1}" "rc=$V6D_RC out=$V6D_OUT"
+  v6d_put f no-push-main "echo '{\"y\":2}'"
+  v6d_run f bash "$V6D_LS"
+  expect "v6 dispatch: (f) two guards on stdout: rc 2, empty stdout, 'two guards answered'" "rc=2 out= needle=yes" "rc=$V6D_RC out=$V6D_OUT needle=$(v6d_has "$V6D_ERR" 'two guards answered')"
+  v6d_run f bash "$V6D_ENV"
+  expect "v6 dispatch: (f) a printing guard and a later deny: rc 2 and empty stdout" "rc=2 out= needle=yes" "rc=$V6D_RC out=$V6D_OUT needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_put f no-push-main "echo '{\"y\":2}'; exit 1"
+  v6d_run f bash "$V6D_LS"
+  expect "v6 dispatch: (f) a guard that prints and exits 1 is not an answer (the other one is printed)" "rc=0 out={\"x\":1}" "rc=$V6D_RC out=$V6D_OUT"
+
+  # (g) the 127 -> 2 trap of the guards still fires inside the dispatcher's subshell
+  v6d_mk g
+  v6d_put g deny-hang-shapes "trap '[ \"\$?\" = 127 ] && exit 2' EXIT; nonexistent_cmd_xyz"
+  v6d_run g bash "$V6D_LS"
+  expect "v6 dispatch: (g) a stand-in with the EXIT trap and an unknown command: rc 2" "rc=2" "rc=$V6D_RC"
+  v6d_put g deny-hang-shapes "nonexistent_cmd_xyz"
+  v6d_run g bash "$V6D_LS"
+  expect "v6 dispatch: (g) control: the same without the trap: rc 127 is not a deny, rc 0" "rc=0" "rc=$V6D_RC"
+
+  # (h) a missing script: closed = rc 2 + the run-hook.sh text, open = silent rc 0, warn = WARN + rc 0
+  v6d_mk h; rm "$V6D/h/hooks/deny-hang-shapes.sh"
+  v6d_run h bash "$V6D_LS"
+  expect "v6 dispatch: (h) a missing open guard (deny-hang-shapes): rc 0, silent" "rc=0 err=" "rc=$V6D_RC err=$V6D_ERR"
+  v6d_mk h2; rm "$V6D/h2/hooks/no-push-main.sh"
+  v6d_run h2 bash "$V6D_LS"
+  expect "v6 dispatch: (h) a missing closed guard (no-push-main): rc 2 + HOOK SCRIPT MISSING" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "HOOK SCRIPT MISSING: $V6D/h2/hooks/no-push-main.sh -- enforcement offline")"
+  v6d_mk h3 m; rm "$V6D/h3/hooks/enforce-delegation.sh"
+  v6d_run h3 bash "$V6D_LS"
+  expect "v6 dispatch: (h) a missing warn guard (enforce-delegation): rc 0 + WARN" "rc=0 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "WARN: $V6D/h3/hooks/enforce-delegation.sh missing -- enforce-delegation offline")"
+
+  # (i) step-aside: the project registers its own no-push-main (file present) -> the plugin's copy does not run
+  V6D_PS='{"hooks":{"PreToolUse":[{"hooks":[{"command":"bash \"${CLAUDE_PROJECT_DIR}/hooks/no-push-main.sh\""}]}]}}'
+  v6d_mk i; v6d_marker i no-push-main
+  mkdir -p "$V6D/i/proj/hooks"; : > "$V6D/i/proj/hooks/no-push-main.sh"
+  v6d_run i bash "$V6D_ENV"
+  expect "v6 dispatch: (i) control: without the project registration the plugin's no-push-main runs" "rc=2 ran=no-push-main" "rc=$V6D_RC ran=$(v6d_ran i)"
+  printf '%s' "$V6D_PS" > "$V6D/i/proj/.claude/settings.json"
+  v6d_run i bash "$V6D_ENV"
+  expect "v6 dispatch: (i) the project registers its own no-push-main: it is skipped, deny-secret-reads still denies" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran i) needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  mkdir -p "$V6D/ihome/.claude"
+  printf '%s' '{"args":["-c",". \"$0\"","/home/u/.claude/hooks/no-push-main.sh"]}' > "$V6D/ihome/.claude/settings.json"
+  rm "$V6D/i/proj/.claude/settings.json"
+  V6D_HOME="$V6D/ihome" v6d_run i bash "$V6D_ENV"
+  expect "v6 dispatch: (i) the USER settings register no-push-main: it is skipped as well" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran i) needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+
+  # (j) no dispatcher argument reaches a guard; (p) a guard that reads stdin gets /dev/null, not the dispatcher's pipe
+  v6d_mk j
+  v6d_put j deny-hang-shapes "echo \"\$#:\${1-}\" > '$V6D/j/args'; { [ -p /dev/stdin ] && echo pipe || echo notpipe; x=\$(cat); echo \"len=\${#x}\"; } > '$V6D/j/stdin'"
+  v6d_run j bash "$V6D_LS"
+  expect "v6 dispatch: (j) a guard sees no argument (\$# is 0, \$1 empty)" "rc=0 args=0:" "rc=$V6D_RC args=$(cat "$V6D/j/args" 2>/dev/null)"
+  expect "v6 dispatch: (p) a guard reading stdin gets /dev/null: not a pipe, empty payload" "notpipe len=0" "$(tr '\n' ' ' < "$V6D/j/stdin" 2>/dev/null | sed 's/ $//')"
+
+  # (v) parse once (D6): the dispatcher's single parse feeds the guards. A guard with NO parser on its PATH still reads the fields.
+  v6d_mk v
+  v6d_put v deny-hang-shapes ". '$V6D/v/hooks/lib/json.sh'; PATH=/nonexistent; json_fields \"\${CCTD_MEMO[1]}\" tool_name cwd tool_input.command tool_input.file_path; echo \"\$?:\${JF[0]}:\${JF[1]}:\${JF[2]}:\${JF[3]}\" > '$V6D/v/fields'"
+  v6d_run v bash "$V6D_LS"
+  expect "v6 dispatch: (v) parse once: a guard with no parser on PATH still reads the four fields from the memo" "rc=0 fields=0:Bash:$V6D_FEAT:ls:" "rc=$V6D_RC fields=$(cat "$V6D/v/fields" 2>/dev/null)"
+
+  # (m) Review Focus 3 / R-3: with the toolkit's REAL settings the dispatcher runs exactly the guards run-hook.sh runs.
+  # Both sides use the same stand-ins; the project carries the real .claude/settings.json and a hooks/<name>.sh per guard.
+  v6d_guards='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation'
+  for v6d_man in none m; do
+    v6d_t="m$v6d_man"
+    v6d_mk "$v6d_t" "$([ "$v6d_man" = m ] && echo m)"
+    cp "$ROOT/.claude/settings.json" "$V6D/$v6d_t/proj/.claude/settings.json"
+    mkdir -p "$V6D/$v6d_t/proj/hooks"
+    for g in $v6d_guards; do v6d_marker "$v6d_t" "$g"; : > "$V6D/$v6d_t/proj/hooks/$g.sh"; done
+    v6d_run "$v6d_t" bash "$V6D_LS"
+    v6d_d_set=$(v6d_ran "$v6d_t")
+    v6d_r_set=""
+    for g in $v6d_guards; do
+      rm -f "$V6D/$v6d_t/ran"
+      printf '%s' "$V6D_LS" | env CLAUDE_PROJECT_DIR="$V6D/$v6d_t/proj" HOME="$V6D/home" bash "$V6D/$v6d_t/hooks/run-hook.sh" "$g" >/dev/null 2>&1
+      if [ -f "$V6D/$v6d_t/ran" ]; then v6d_r_set="${v6d_r_set:+$v6d_r_set }$g"; fi
+    done
+    [ -n "$v6d_r_set" ] || v6d_r_set=none
+    expect "v6 dispatch: (m) the toolkit's real settings, manifest=$v6d_man: the dispatcher runs what run-hook.sh runs" "$v6d_r_set" "$v6d_d_set"
+    expect "v6 dispatch: (m) manifest=$v6d_man: the comparison is not vacuous (a guard ran, a guard stepped aside)" "yes" "$(case $v6d_d_set in none|'no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation') echo no ;; *) echo yes ;; esac)"
+  done
+
+  # (n) Review Focus 4: a Test that prints to stdout. The dispatcher's answer equals pre-commit-test's own, run alone.
+  v6d_mk n m
+  V6D_COMMIT=$(mkjson Bash 'git commit -m "x"' "$V6D_OK")
+  v6d_n_out=$(printf '%s' "$V6D_COMMIT" | env CLAUDE_PROJECT_DIR="$V6D/n/proj" HOME="$V6D/home" bash "$V6D/n/hooks/pre-commit-test.sh" 2>/dev/null); v6d_n_rc=$?
+  v6d_run n powershell "$V6D_COMMIT"
+  expect "v6 dispatch: (n) a commit whose Test prints hello: same stdout and rc as pre-commit-test alone" "$(v6d_ans "$v6d_n_out" "$v6d_n_rc")" "$(v6d_ans "$V6D_OUT" "$V6D_RC")"
+  expect "v6 dispatch: (n) the Test really ran inside the dispatcher ('passed. (' on stderr)" "yes" "$(v6d_has "$V6D_ERR" 'passed. (')"
+  v6d_run n powershell "$(mkjson Bash 'git commit -m "x"' "$V6D_BAD")"
+  expect "v6 dispatch: (n) control: a failing Test is refused through the dispatcher" "rc=2" "rc=$V6D_RC"
+
+  # (o) Review Focus 5: exit from inside a function / a trap is the guard's verdict and never ends the dispatcher
+  v6d_mk o m; v6d_marker o no-push-main; v6d_marker o enforce-delegation
+  v6d_put o deny-hang-shapes 'f() { exit 2; }; f'
+  v6d_run o bash "$V6D_LS"
+  expect "v6 dispatch: (o) exit 2 from a function: rc 2, empty stdout, the later guard did not run" "rc=2 out= ran=no-push-main" "rc=$V6D_RC out=$V6D_OUT ran=$(v6d_ran o)"
+  v6d_put o deny-hang-shapes 'f() { exit 2; }; trap f EXIT'
+  v6d_run o bash "$V6D_LS"
+  expect "v6 dispatch: (o) exit 2 from a function run by an EXIT trap: rc 2, the later guard did not run" "rc=2 out= ran=no-push-main" "rc=$V6D_RC out=$V6D_OUT ran=$(v6d_ran o)"
+  v6d_put o deny-hang-shapes 'f() { exit 1; }; trap f EXIT'
+  v6d_run o bash "$V6D_LS"
+  expect "v6 dispatch: (o) exit 1 from that trap function is only that guard's verdict: the run goes on" "rc=0 out= ran=no-push-main enforce-delegation" "rc=$V6D_RC out=$V6D_OUT ran=$(v6d_ran o)"
+
+  # (s) R-7: enforce-delegation denies the MAIN thread on stdout with rc 0; the dispatcher passes that answer on
+  if [ -z "$HAVE_NODE" ]; then
+    skip "v6 dispatch: (s) enforce-delegation answer" "enforce-delegation needs node" 2
+  else
+    v6d_mk s m
+    V6D_PYTEST=$(mkjson Bash 'pytest' "$V6D_FEAT")
+    v6d_s_out=$(printf '%s' "$V6D_PYTEST" | env CLAUDE_PROJECT_DIR="$V6D/s/proj" HOME="$V6D/home" bash "$V6D/s/hooks/enforce-delegation.sh" 2>/dev/null); v6d_s_rc=$?
+    v6d_run s bash "$V6D_PYTEST"
+    expect "v6 dispatch: (s) a main-thread pytest: the dispatcher prints enforce-delegation's own answer, rc 0" "$(v6d_ans "$v6d_s_out" "$v6d_s_rc")" "$(v6d_ans "$V6D_OUT" "$V6D_RC")"
+    expect "v6 dispatch: (s) that answer is a permissionDecision deny (so the row compares something)" "yes" "$(v6d_has "$V6D_OUT" '"permissionDecision":"deny"')"
+  fi
+
+  # (t) R-1 and the fail-closed rules: a missing or corrupt lib, a stale class after an unknown name
+  v6d_mk t m; v6d_marker t no-push-main; rm "$V6D/t/hooks/lib/hook-class.sh"
+  v6d_run t bash "$V6D_LS"
+  expect "v6 dispatch: (t) hooks/lib/hook-class.sh missing: rc 2, no guard ran" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran t) needle=$(v6d_has "$V6D_ERR" 'HOOK BLOCKED: dispatch.sh: hooks/lib/json.sh or hooks/lib/hook-class.sh missing or corrupt')"
+  v6d_mk t2 m; v6d_marker t2 no-push-main; rm "$V6D/t2/hooks/lib/json.sh"
+  v6d_run t2 bash "$V6D_LS"
+  expect "v6 dispatch: (t) hooks/lib/json.sh missing: rc 2, no guard ran" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran t2) needle=$(v6d_has "$V6D_ERR" 'HOOK BLOCKED: dispatch.sh: hooks/lib/json.sh or hooks/lib/hook-class.sh missing or corrupt')"
+  v6d_mk t3 m; v6d_marker t3 no-push-main; printf 'hc_class() {\n' > "$V6D/t3/hooks/lib/hook-class.sh"
+  v6d_run t3 bash "$V6D_LS"
+  expect "v6 dispatch: (t) a corrupt hook-class.sh: rc 2, no guard ran" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran t3) needle=$(v6d_has "$V6D_ERR" 'HOOK BLOCKED: dispatch.sh: hooks/lib/json.sh or hooks/lib/hook-class.sh missing or corrupt')"
+  # sourced (Task 6's replay): the functions run no guard when a lib is gone
+  v6d_t_src=$(printf '%s' "$V6D_LS" | env CLAUDE_PROJECT_DIR="$V6D/t/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_source_guard no-push-main; echo "rc=$?"' _ "$V6D/t/hooks/dispatch.sh" 2>&1 | tail -n 1)
+  expect "v6 dispatch: (t) sourced with a lib missing: cctd_source_guard returns 2 and runs no guard" "rc=2 ran=none" "$v6d_t_src ran=$(v6d_ran t)"
+  # sourced with the libs present: nothing runs on source; prepare + source_guard is the replay pair
+  v6d_mk u; v6d_marker u deny-hang-shapes
+  v6d_u_src=$(env CLAUDE_PROJECT_DIR="$V6D/u/proj" HOME="$V6D/home" bash -c 'cd /; . "$1"; echo "sourced pwd=$PWD"' _ "$V6D/u/hooks/dispatch.sh" </dev/null 2>&1)
+  expect "v6 dispatch: (u) sourcing dispatch.sh runs no guard and does not change the directory" "sourced pwd=/" "$v6d_u_src"
+  v6d_u_rep=$(printf '%s' "$V6D_ENV" | env CLAUDE_PROJECT_DIR="$V6D/u/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_source_guard deny-secret-reads; echo "rc=$?"' _ "$V6D/u/hooks/dispatch.sh" 2>&1)
+  expect "v6 dispatch: (u) the replay pair (cctd_prepare, cctd_source_guard) runs one guard without selection" "rc=2 needle=yes" "$(printf '%s' "$v6d_u_rep" | tail -n 1) needle=$(v6d_has "$v6d_u_rep" "$V6D_ENV_NEEDLE")"
+  v6d_u_stale=$(printf '%s' "$V6D_LS" | env CLAUDE_PROJECT_DIR="$V6D/u/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_run_guard deny-hang-shapes; cctd_run_guard no-such-guard; echo "rc=$?"' _ "$V6D/u/hooks/dispatch.sh" 2>&1)
+  expect "v6 dispatch: (u) an unknown guard name after an open guard is an error (rc 2), not that guard's stale class" "rc=2 needle=yes" "$(printf '%s' "$v6d_u_stale" | tail -n 1) needle=$(v6d_has "$v6d_u_stale" "unknown guard 'no-such-guard'")"
+fi
+# ---- end v6.0 dispatch
+
 # ---- v5.0 fix round I1: a closed-class registration must refuse (exit 2) when the plugin dir is gone
 # Run every hooks.json run-hook command with CLAUDE_PLUGIN_ROOT pointing at a dir with no hooks/run-hook.sh.
 # Closed (per hooks/lib/hook-class.sh's table) -> rc=2 + the restart message; any other class -> never 2 (a bare
