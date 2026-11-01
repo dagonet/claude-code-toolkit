@@ -11761,7 +11761,7 @@ expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 
 
 # ---- v6.0 Task 3: the guards take the dispatcher payload (CCTD_MEMO[1]) and find their libs without dirname
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
-  skip "v6 guards: payload-source rows" "no working node, python3 or jq on this host" 15
+  skip "v6 guards: payload-source rows" "no working node, python3 or jq on this host" 16
 else
   V6GR="$TMPROOT/v6g"; mkdir -p "$V6GR"
   V6G_MAIN=$(mkrepo v6gmain main)
@@ -11819,6 +11819,9 @@ else
     "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny pre-commit-test)" | bash pre-commit-test.sh >/dev/null 2>&1; echo $? )"
   expect "v6 guards: (c) deny-secret-reads run from inside hooks/ finds its libs" "2" \
     "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny deny-secret-reads)" | bash deny-secret-reads.sh >/dev/null 2>&1; echo $? )"
+  # (d) sourced under set -u with CCTD_MEMO unset: stdin is still read and the normal verdict comes back
+  expect "v6 guards: (d) no-push-main sourced under set -u, CCTD_MEMO unset, reads stdin (rc 2)" "rc=2" \
+    "$(printf '%s' "$(v6g_deny no-push-main)" | env -u CCTD_MEMO "$BASH" -c 'set -u; ( . "$1" ) >/dev/null 2>&1; echo "rc=$?"' _ "$ROOT/hooks/no-push-main.sh")"
 fi
 # ---- end v6.0 guard edits
 

@@ -88,7 +88,7 @@ EOF
 fi
 
 case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
-if [ "${#CCTD_MEMO[@]}" -ge 2 ]; then INPUT=${CCTD_MEMO[1]}; else INPUT=$(cat); fi
+if [ "${CCTD_MEMO[1]+set}" = set ]; then INPUT=${CCTD_MEMO[1]}; else INPUT=$(cat); fi
 
 # v2.2.0: the classifier below is an embedded node program, so this hook needs
 # node specifically. Without it it stays fail-open, but says so once.

@@ -9,7 +9,7 @@ lib="$cctg_dir/lib/json.sh"
 [ -f "$lib" ] || exit 0
 # shellcheck source=lib/json.sh
 . "$lib"
-if [ "${#CCTD_MEMO[@]}" -ge 2 ]; then DH_JSON=${CCTD_MEMO[1]}; else DH_JSON=$(cat); fi
+if [ "${CCTD_MEMO[1]+set}" = set ]; then DH_JSON=${CCTD_MEMO[1]}; else DH_JSON=$(cat); fi
 json_fields "$DH_JSON" cwd tool_input.command; DH_RC=$?   # v4.4.0 C3: one parser run
 [ "$DH_RC" = 2 ] && exit 0
 if [ "$DH_RC" = 0 ]; then DH_CWD=${JF[0]}; DH_CMD=${JF[1]}

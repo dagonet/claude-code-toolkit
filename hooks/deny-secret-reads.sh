@@ -112,7 +112,7 @@ lib="$cctg_dir/lib/json.sh"
 # shellcheck source=lib/json.sh
 . "$lib"
 
-if [ "${#CCTD_MEMO[@]}" -ge 2 ]; then DSR_JSON=${CCTD_MEMO[1]}; else DSR_JSON=$(cat); fi
+if [ "${CCTD_MEMO[1]+set}" = set ]; then DSR_JSON=${CCTD_MEMO[1]}; else DSR_JSON=$(cat); fi
 
 # v4.4.0 C3: one parser run for the verdict and all three fields (rc 2 = no parser, 1 = invalid).
 json_fields "$DSR_JSON" tool_name tool_input.file_path tool_input.command
