@@ -6,26 +6,16 @@
 # stdin is never read here; the hook receives the payload untouched.
 name="${1:-}"
 here="$(cd "$(dirname "$0")" && pwd)" || exit 2
-# class: machine = acts in every project (spec §3.1); project = only in a toolkit project.
-# polarity on a missing script, copied from the v4.6.1 template wrappers: closed=exit 2, warn=stderr+0, open=0.
-case "$name" in
-  no-push-main|deny-secret-reads)                              cls=machine; pol=closed ;;
-  deny-hang-shapes|model-floor|bash-output-guard|verify-hooks) cls=machine; pol=open ;;
-  jev-route|jev-notice)                                        cls=machine; pol=open ;;
-  pre-commit-test|gate-before-merge|deny-claude-md-writes)     cls=project; pol=closed ;;
-  read-size-gate|enforce-delegation|agent-budget-warn)         cls=project; pol=warn ;;
-  post-edit-build|enforce-agent-contract|retro-ledger|retro-brief|now-brief) cls=project; pol=open ;;
-  *) echo "HOOK BLOCKED: run-hook.sh: unknown hook name '$name' -- the plugin's hooks.json and run-hook.sh disagree" >&2; exit 2 ;;
-esac
+# The class/polarity table and the step-aside decision live in lib/hook-class.sh (shared with the v6 dispatcher).
+lib="$here/lib/hook-class.sh"
+[ -r "$lib" ] || { echo "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the cct plugin" >&2; exit 2; }
+. "$lib"
+hc_class "$name" || { echo "HOOK BLOCKED: run-hook.sh: unknown hook name '$name' -- the plugin's hooks.json and run-hook.sh disagree" >&2; exit 2; }
+pol=$HC_POL
 proj="${CLAUDE_PROJECT_DIR:-.}"
-if [ "$cls" = project ] && [ ! -f "$proj/.claude/template-manifest.json" ]; then exit 0; fi
-# step-aside (spec §3.2): the same literal substring tests as v4's user-level registrations.
 s=""; [ -r "$proj/.claude/settings.json" ] && IFS= read -r -d '' s < "$proj/.claude/settings.json"
-# Like v4's wrappers, step aside only when the project's own copy is there to run: a registration
-# whose script is missing would otherwise leave NO hook running.
-case $s in *'}/hooks/'"$name"'.sh\"'*) [ -f "$proj/hooks/$name.sh" ] && exit 0 ;; esac
 u=""; [ -r "$HOME/.claude/settings.json" ] && IFS= read -r -d '' u < "$HOME/.claude/settings.json"
-case $u in *'/hooks/'"$name"'.sh"'*) exit 0 ;; esac
+hc_skip "$name" "$proj" "$s" "$u" && exit 0
 f="$here/$name.sh"
 if [ ! -r "$f" ]; then
   case $pol in

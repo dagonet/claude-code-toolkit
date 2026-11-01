@@ -11646,6 +11646,7 @@ fi
 # ---- v5.0 run-hook: class, signal, step-aside, polarity (spec §3.1, §3.2, §3.5)
 V5H="$TMPROOT/v5 hooks dir"; mkdir -p "$V5H/lib"            # a space in the path on purpose (Review Focus 2)
 cp "$ROOT/hooks/run-hook.sh" "$V5H/" 2>/dev/null
+cp "$ROOT/hooks/lib/hook-class.sh" "$V5H/lib/"     # v6.0: run-hook.sh sources its class table and step-aside from here
 printf '#!/usr/bin/env bash\necho ran-$(basename "$0" .sh); exit 7\n' > "$V5H/pre-commit-test.sh"
 printf '#!/usr/bin/env bash\necho ran-$(basename "$0" .sh); exit 0\n' > "$V5H/no-push-main.sh"
 V5P="$TMPROOT/v5proj"; mkdir -p "$V5P/.claude"
@@ -11707,12 +11708,36 @@ expect "v5.2.1 session end: only rm on PATH -> marker removed" "rc=0 gone" "$(pr
 expect "v5.2.1 session end: first session_id wins" "gone present" "$(: > "$V5T/cct-$(id -u)/kl-11"; : > "$V5T/cct-$(id -u)/mn-22"; v5send '{"session_id":"kl-11","x":{"session_id":"mn-22"}}' >/dev/null; [ -f "$V5T/cct-$(id -u)/kl-11" ] && echo -n "present " || echo -n "gone "; [ -f "$V5T/cct-$(id -u)/mn-22" ] && echo present || echo gone)"
 # ---- end v5.0 run-hook
 
+# ---- v6.0 hook-class lib: the class, polarity and step-aside decision (hooks/lib/hook-class.sh), sourced like run-hook.sh does
+V6HC="$ROOT/hooks/lib/hook-class.sh"
+V6P="$TMPROOT/v6hc proj"; mkdir -p "$V6P/.claude" "$V6P/hooks"      # a space in the path on purpose
+V6S='{"command":"bash \"${CLAUDE_PROJECT_DIR}/hooks/pre-commit-test.sh\""}'   # the literal v4.6.1 registration shape
+V6U='{"args":["-c",". \"$0\"","/home/u/.claude/hooks/no-push-main.sh"]}'    # the v4.6.1 user-level form (args path)
+v6hc() { env -i PATH="$PATH" bash -c '. "$1"; shift; eval "$1"; echo "rc=$?"' _ "$V6HC" "$1" 2>&1 | tr '\n' ' ' | sed 's/ $//'; }
+expect "v6 hook-class: no-push-main is machine/closed" "machine closed rc=0" "$(v6hc 'hc_class no-push-main && echo "$HC_CLS $HC_POL"')"
+expect "v6 hook-class: read-size-gate is project/warn" "project warn rc=0" "$(v6hc 'hc_class read-size-gate && echo "$HC_CLS $HC_POL"')"
+expect "v6 hook-class: an unknown name returns 1" "rc=1" "$(v6hc 'hc_class no-such-hook')"
+expect "v6 hook-class: project-only hook, no manifest -> skip (0)" "rc=0" "$(v6hc "hc_skip pre-commit-test '$V6P' '' ''")"
+expect "v6 hook-class: machine hook, no manifest, no registration -> run (1)" "rc=1" "$(v6hc "hc_skip no-push-main '$V6P' '' ''")"
+printf '{}' > "$V6P/.claude/template-manifest.json"
+expect "v6 hook-class: project-only hook, manifest, no registration -> run (1)" "rc=1" "$(v6hc "hc_skip pre-commit-test '$V6P' '' ''")"
+expect "v6 hook-class: project registers it but hooks/<name>.sh missing -> run (1)" "rc=1" "$(v6hc "hc_skip pre-commit-test '$V6P' '$V6S' ''")"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$V6P/hooks/pre-commit-test.sh"
+expect "v6 hook-class: project registers it and hooks/<name>.sh present -> skip (0)" "rc=0" "$(v6hc "hc_skip pre-commit-test '$V6P' '$V6S' ''")"
+expect "v6 hook-class: user settings register no-push-main -> skip (0)" "rc=0" "$(v6hc "hc_skip no-push-main '$V6P' '' '$V6U'")"
+expect "v6 hook-class: user settings register another hook -> run (1)" "rc=1" "$(v6hc "hc_skip deny-secret-reads '$V6P' '' '$V6U'")"
+expect "v6 hook-class: hc_skip on an unknown name returns 1" "rc=1" "$(v6hc "hc_skip no-such-hook '$V6P' '$V6S' '$V6U'")"
+# run-hook.sh without its lib refuses closed: the decision code is gone, so nothing may run
+V6RH="$TMPROOT/v6hc nolib"; mkdir -p "$V6RH"; cp "$ROOT/hooks/run-hook.sh" "$V6RH/"
+expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 2 + message" "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the cct plugin rc=2" "$( ( export CLAUDE_PROJECT_DIR="$V6P"; printf '{}' | bash "$V6RH/run-hook.sh" no-push-main 2>&1; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//')"
+# ---- end v6.0 hook-class lib
+
 # ---- v5.0 fix round I1: a closed-class registration must refuse (exit 2) when the plugin dir is gone
 # Run every hooks.json run-hook command with CLAUDE_PLUGIN_ROOT pointing at a dir with no hooks/run-hook.sh.
-# Closed (per run-hook.sh's table) -> rc=2 + the restart message; any other class -> never 2 (a bare
+# Closed (per hooks/lib/hook-class.sh's table) -> rc=2 + the restart message; any other class -> never 2 (a bare
 # `bash <missing>` is bash's 127, which Claude Code treats as non-blocking: open by design).
 V5G="$TMPROOT/v5guard gone"; mkdir -p "$V5G"
-V5GC="$(awk '/pol=closed/ { sub(/\).*/, ""); gsub(/\|/, " "); printf "%s ", $0 }' "$ROOT/hooks/run-hook.sh")"
+V5GC="$(awk '/pol=closed/ { sub(/\).*/, ""); gsub(/\|/, " "); printf "%s ", $0 }' "$ROOT/hooks/lib/hook-class.sh")"
 V5GN=0
 # parser-free (the matrix hides node, python3 and jq): hooks.json has one `"command": "<escaped>"` entry per line;
 # V5RAW keeps the JSON-escaped value of every run-hook command, the loop unescapes it

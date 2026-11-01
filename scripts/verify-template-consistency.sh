@@ -4723,17 +4723,17 @@ else
   c71_cmp "$C71_GENERAL" "$(c71_x "$C71_GENERAL" general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
   c71_cmp ".claude/settings.json" "$(c71_x .claude/settings.json root)" "$(printf '%s\n' "$C71_TABLE" | grep '^root;')"
   # (1b) the plugin's hooks/hooks.json: its (event, matcher, script) set equals the frozen `general` rows
-  # (form dropped: polarity lives in run-hook.sh's class table) plus the plugin-only allowlist.
+  # (form dropped: polarity lives in hooks/lib/hook-class.sh's class table) plus the plugin-only allowlist.
   c71_want_p=$(printf '%s\n%s\n' "$(printf '%s\n' "$C71_TABLE" | grep '^general;' | awk -F';' '{print $2";"$3";"$4}')" "$C71_PLUGIN_ONLY" | LC_ALL=C sort)
   c71_cmp "hooks/hooks.json" "$(c71_px hooks/hooks.json | cut -d';' -f1-3 | LC_ALL=C sort)" "$c71_want_p"
-  # (1c) polarity (v5.0 fix round M4): run-hook.sh's class table must equal the frozen general forms (F closed,
+  # (1c) polarity (v5.0 fix round M4): hooks/lib/hook-class.sh's class table must equal the frozen general forms (F closed,
   # W warn, O/U open; the two plugin-only jev hooks open), name for name; flipping no-push-main to open goes red.
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
   c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
-  c71_rh=$(c71_rhtab hooks/run-hook.sh)
+  c71_rh=$(c71_rhtab hooks/lib/hook-class.sh)
   c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\n')
   c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
-  [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/run-hook.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
+  [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/lib/hook-class.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
   # (1d) two-sided registration shape: a closed-class hook carries the inline existence check (G), every other one stays bare (B)
   c71_shape=$(c71_shapes hooks/hooks.json "$c71_rh")
   [ -z "$c71_shape" ] || c71_bad="$c71_bad [hooks/hooks.json registration shape wrong (closed needs the inline plugin-missing check G, others bare B): $c71_shape]"
@@ -4809,13 +4809,13 @@ else
       ko "check 71 control (hooks.json $c71_mode): a mutated hooks.json was NOT detected -- the plugin comparison is vacuous"
     fi
   done
-  # (8b) controls for (1c)/(1d): no-push-main flipped to open in a run-hook.sh copy; a closed hook registered bare
-  sed 's/^\(  no-push-main|deny-secret-reads).*pol=\)closed/\1open/' hooks/run-hook.sh > "$c71_tmp/rh-flip.sh"
+  # (8b) controls for (1c)/(1d): no-push-main flipped to open in a hook-class.sh copy; a closed hook registered bare
+  sed 's/^\( *no-push-main|deny-secret-reads).*pol=\)closed/\1open/' hooks/lib/hook-class.sh > "$c71_tmp/rh-flip.sh"
   c71_got=$(c71_rhtab "$c71_tmp/rh-flip.sh")
   if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
-    ok "check 71 control (run-hook.sh polarity flip): no-push-main turned open differs from the frozen forms"
+    ok "check 71 control (hook-class.sh polarity flip): no-push-main turned open differs from the frozen forms"
   else
-    ko "check 71 control (run-hook.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
+    ko "check 71 control (hook-class.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
   fi
   node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"no-push-main"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" no-push-main";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
   if [ -n "$(c71_shapes "$c71_tmp/bare-closed.json" "$c71_rh")" ]; then
@@ -4932,13 +4932,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 74 (v5.0): every hook hooks.json names exists in hooks/ and is classed in run-hook.sh, and vice versa
+# Check 74 (v5.0): every hook hooks.json names exists in hooks/ and is classed in hooks/lib/hook-class.sh, and vice versa
 # ---------------------------------------------------------------------------
 c74_names=$(grep -oE '(run-hook\.sh|\$f)\\" [a-z-]+' hooks/hooks.json | awk '{print $2}' | sort -u)
-c74_classed=$(sed -n '/^case "\$name" in/,/^esac/p' hooks/run-hook.sh | grep -o '^  [a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
+c74_classed=$(sed -n '/^ *case "\$1" in/,/^ *esac/p' hooks/lib/hook-class.sh | grep -o '^ *[a-z|-][a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
 c74_bad=""
 for n in $c74_names; do [ -f "hooks/$n.sh" ] || c74_bad="$c74_bad missing:$n"; done
-[ "$c74_names" = "$c74_classed" ] || c74_bad="$c74_bad hooks.json-vs-run-hook.sh-class-table-differ"
+[ "$c74_names" = "$c74_classed" ] || c74_bad="$c74_bad hooks.json-vs-hook-class.sh-class-table-differ"
 # The marker pair, pinned by EVENT: SessionStart writes (no argument), SessionEnd removes (`end`). A dropped or typo'd
 # `end` must go red: the writer would re-create the marker at SessionEnd and a resumed session would find it stale.
 c74_sess=$(node -e '
