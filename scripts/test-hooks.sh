@@ -11813,12 +11813,13 @@ else
     expect "v6 guards: (b) $g: an exported scalar CCTD_MEMO is ignored" "rc=0:no" "$(printf '%s' "$v6g_out" | tail -n 1):$(case "$v6g_out" in *'"deny"'*|*BLOCKED*) echo yes ;; *) echo no ;; esac)"
   done
   # (c) the lib path from inside hooks/ (a relative $0 with no slash)
-  expect "v6 guards: (c) no-push-main run from inside hooks/ finds its libs" "2" \
-    "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny no-push-main)" | bash no-push-main.sh >/dev/null 2>&1; echo $? )"
-  expect "v6 guards: (c) pre-commit-test run from inside hooks/ finds its libs" "2" \
-    "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny pre-commit-test)" | bash pre-commit-test.sh >/dev/null 2>&1; echo $? )"
-  expect "v6 guards: (c) deny-secret-reads run from inside hooks/ finds its libs" "2" \
-    "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny deny-secret-reads)" | bash deny-secret-reads.sh >/dev/null 2>&1; echo $? )"
+  # The guard's OWN refusal text is asserted (as in (a)): a missing lib also exits 2 ("BLOCKED: ./lib/json.sh missing").
+  for g in no-push-main pre-commit-test deny-secret-reads; do
+    v6g_out="$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny "$g")" | bash "$g.sh" 2>&1; echo "rc=$?" )"
+    v6g_w="$(v6g_want "$g")"
+    case "$v6g_out" in *"${v6g_w#*:}"*) v6g_n=has ;; *) v6g_n=missing ;; esac
+    expect "v6 guards: (c) $g run from inside hooks/ finds its libs" "${v6g_w%%:*}:has" "$(printf '%s' "$v6g_out" | tail -n 1 | sed 's/^rc=//'):$v6g_n"
+  done
   # (d) sourced under set -u with CCTD_MEMO unset: stdin is still read and the normal verdict comes back
   expect "v6 guards: (d) no-push-main sourced under set -u, CCTD_MEMO unset, reads stdin (rc 2)" "rc=2" \
     "$(printf '%s' "$(v6g_deny no-push-main)" | env -u CCTD_MEMO "$BASH" -c 'set -u; ( . "$1" ) >/dev/null 2>&1; echo "rc=$?"' _ "$ROOT/hooks/no-push-main.sh")"
