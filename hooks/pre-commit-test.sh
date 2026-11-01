@@ -38,7 +38,8 @@ SECONDS=0
 
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_CMD stays empty, and this gate would exit 0 on every commit.
-lib="$(dirname "$0")/lib/git-cmd.sh"
+case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
+lib="$cctg_dir/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 . "$lib"
 command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: $lib is present but corrupt (gc_current_branch undefined) — this gate cannot evaluate the command, refusing" >&2; exit 2; }
@@ -65,7 +66,7 @@ pct_out_file() {
 # would resolve against the WRONG repo: silently missing there (masking an
 # intended run-gate.sh as the legacy eval path), or worse, hitting that other
 # repo's own hooks/run-gate.sh instead of this toolkit's.
-RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
+RUN_GATE="$(cd "$cctg_dir" && pwd)/run-gate.sh"
 
 # v3.0.3 — THE SIDE EFFECT THAT OUTLIVES THE HOOK (last-precommit.json under
 # <common git dir>/gate/, v4.0.1 item 17 — see gc_gate_dir's header note in

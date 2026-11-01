@@ -24,10 +24,11 @@ trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper
 # refusal branch below (no parser, unparseable, unreadable command, guard-off,
 # MCP tool name) runs exactly as before. The early exit needs rc 0, tool Bash or
 # PowerShell and a non-empty command, so it cannot reach any of them.
-jlib="$(dirname "$0")/lib/json.sh"
+case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
+jlib="$cctg_dir/lib/json.sh"
 [ -f "$jlib" ] || { echo "BLOCKED: $jlib missing — run /cct:sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
 . "$jlib"
-GC_PRE_JSON=$(cat)
+if [ "${#CCTD_MEMO[@]}" -ge 2 ]; then GC_PRE_JSON=${CCTD_MEMO[1]}; else GC_PRE_JSON=$(cat); fi
 json_payload "$GC_PRE_JSON"; GC_PREPARSED=$?
 if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
   case "$JP_TOOL" in
@@ -62,7 +63,7 @@ fi
 
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_CMD stays empty, and this gate would exit 0 on every push.
-lib="$(dirname "$0")/lib/git-cmd.sh"
+lib="$cctg_dir/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 _np_jp=$JSON_PARSER   # git-cmd.sh re-sources json.sh, which resets the parser memo
 . "$lib"

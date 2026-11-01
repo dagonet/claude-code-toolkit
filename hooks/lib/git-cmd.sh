@@ -349,7 +349,7 @@ gc_read_stdin() {
     GC_JSON=$GC_PRE_JSON
     gc_rc=$GC_PREPARSED
   else
-    GC_JSON=$(cat)
+    if [ "${CCTD_MEMO[1]+set}" = set ]; then GC_JSON=${CCTD_MEMO[1]}; else GC_JSON=$(cat); fi
     json_payload "$GC_JSON"
     gc_rc=$?
   fi

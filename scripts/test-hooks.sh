@@ -11759,6 +11759,69 @@ V6RH="$TMPROOT/v6hc nolib"; mkdir -p "$V6RH"; cp "$ROOT/hooks/run-hook.sh" "$V6R
 expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 2 + message" "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the cct plugin rc=2" "$( ( export CLAUDE_PROJECT_DIR="$V6P"; printf '{}' | bash "$V6RH/run-hook.sh" no-push-main 2>&1; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v6.0 hook-class lib
 
+# ---- v6.0 Task 3: the guards take the dispatcher payload (CCTD_MEMO[1]) and find their libs without dirname
+if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
+  skip "v6 guards: payload-source rows" "no working node, python3 or jq on this host" 15
+else
+  V6GR="$TMPROOT/v6g"; mkdir -p "$V6GR"
+  V6G_MAIN=$(mkrepo v6gmain main)
+  V6G_FEAT=$(mkrepo v6gfeat feature/z)
+  V6G_BAD=$(mkrepo v6gbad main)
+  printf '# ctx\n\n- **Test**: `false`\n' > "$V6G_BAD/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V6G_FEAT/PROJECT_CONTEXT.md"
+  V6G_BENIGN="$(mkjson Bash 'ls' "$V6GR")"
+  V6G_NL=$'\n'
+  # <guard> -> <deny payload>; <guard> -> <needle>. enforce-delegation denies the MAIN THREAD (no agent_id):
+  # it answers rc 0 plus a permissionDecision deny on stdout, not rc 2.
+  v6g_deny() {
+    case "$1" in
+      no-push-main)       mkjson Bash 'git push origin main' "$V6G_MAIN" ;;
+      gate-before-merge)  mkjson Bash 'gh pr merge 5 --squash' "$V6G_FEAT" ;;
+      pre-commit-test)    mkjson Bash 'git commit -m "x"' "$V6G_BAD" ;;
+      deny-hang-shapes)   mkjson Bash "cat > f.txt <<'EOF'${V6G_NL}body${V6G_NL}EOF" "$V6GR" ;;
+      deny-secret-reads)  mkjson_read '.env' "$V6GR" ;;
+      enforce-delegation) mkjson Bash 'pytest' "$V6GR" ;;
+    esac
+  }
+  # rc:needle. The needle is the guard's OWN refusal text: a bare BLOCKED would also match "lib missing",
+  # which is what a sourced guard prints when its lib path is wrong.
+  v6g_want() {
+    case "$1" in
+      no-push-main)       echo '2:pushing to a protected branch' ;;
+      deny-secret-reads)  echo '2:secrets files are not read' ;;
+      gate-before-merge)  echo '2:No gate artifact found' ;;
+      pre-commit-test)    echo '2:failed' ;;
+      deny-hang-shapes)   echo '2:a heredoc written into a file' ;;
+      enforce-delegation) echo '0:"permissionDecision":"deny"' ;;
+    esac
+  }
+  # (a) the memo payload wins over stdin: sourced in a subshell, the array set, a benign stdin
+  v6g_a() { # <guard>
+    printf '%s' "$V6G_BENIGN" | "$BASH" -c 'CCTD_MEMO=(0 "$1"); ( . "$2" ) 2>&1; echo "rc=$?"' _ "$(v6g_deny "$1")" "$ROOT/hooks/$1.sh"
+  }
+  for g in no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation; do
+    if [ "$g" = enforce-delegation ] && [ -z "$HAVE_NODE" ]; then skip "v6 guards: (a) $g" "enforce-delegation needs node" 1; continue; fi
+    v6g_out="$(v6g_a "$g")"; v6g_w="$(v6g_want "$g")"
+    v6g_got="$(printf '%s' "$v6g_out" | tail -n 1 | sed 's/^rc=//')"
+    case "$v6g_out" in *"${v6g_w#*:}"*) v6g_n=has ;; *) v6g_n=missing ;; esac
+    expect "v6 guards: (a) $g: the memo payload wins over a benign stdin" "${v6g_w%%:*}:has" "$v6g_got:$v6g_n"
+  done
+  # (b) an exported scalar CCTD_MEMO is ignored: the benign stdin is read, the guard allows
+  for g in no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation; do
+    if [ "$g" = enforce-delegation ] && [ -z "$HAVE_NODE" ]; then skip "v6 guards: (b) $g" "enforce-delegation needs node" 1; continue; fi
+    v6g_out="$(printf '%s' "$V6G_BENIGN" | env CCTD_MEMO="$(v6g_deny "$g")" bash "$ROOT/hooks/$g.sh" 2>&1; echo "rc=$?")"
+    expect "v6 guards: (b) $g: an exported scalar CCTD_MEMO is ignored" "rc=0:no" "$(printf '%s' "$v6g_out" | tail -n 1):$(case "$v6g_out" in *'"deny"'*|*BLOCKED*) echo yes ;; *) echo no ;; esac)"
+  done
+  # (c) the lib path from inside hooks/ (a relative $0 with no slash)
+  expect "v6 guards: (c) no-push-main run from inside hooks/ finds its libs" "2" \
+    "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny no-push-main)" | bash no-push-main.sh >/dev/null 2>&1; echo $? )"
+  expect "v6 guards: (c) pre-commit-test run from inside hooks/ finds its libs" "2" \
+    "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny pre-commit-test)" | bash pre-commit-test.sh >/dev/null 2>&1; echo $? )"
+  expect "v6 guards: (c) deny-secret-reads run from inside hooks/ finds its libs" "2" \
+    "$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny deny-secret-reads)" | bash deny-secret-reads.sh >/dev/null 2>&1; echo $? )"
+fi
+# ---- end v6.0 guard edits
+
 # ---- v5.0 fix round I1: a closed-class registration must refuse (exit 2) when the plugin dir is gone
 # Run every hooks.json run-hook command with CLAUDE_PLUGIN_ROOT pointing at a dir with no hooks/run-hook.sh.
 # Closed (per hooks/lib/hook-class.sh's table) -> rc=2 + the restart message; any other class -> never 2 (a bare
