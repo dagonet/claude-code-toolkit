@@ -288,6 +288,23 @@ json_fields() {
     [ "$JSON_PARSER" = none ] && return 2
     return 1
   fi
+  # v6.0 D6: answer from the dispatcher's memo (json_memo_set) when it holds this exact
+  # payload and every requested field. Index 1 must equal the input: an exported scalar
+  # CCTD_MEMO only fills index 0 (bash imports no arrays), so the environment cannot fill it.
+  if [ "${CCTD_MEMO[1]-}" = "$_jf_in" ]; then
+    if [ "${CCTD_MEMO[0]}" != 0 ]; then return "${CCTD_MEMO[0]}"; fi
+    _jf_t=(); _jf_ok=1
+    for _jf_c in "$@"; do
+      _jf_i=2; _jf_ok=0
+      while [ "$_jf_i" -lt "${#CCTD_MEMO[@]}" ]; do
+        if [ "${CCTD_MEMO[_jf_i]}" = "$_jf_c" ]; then _jf_t[${#_jf_t[@]}]=${CCTD_MEMO[_jf_i+1]}; _jf_ok=1; break; fi
+        _jf_i=$((_jf_i + 2))
+      done
+      [ "$_jf_ok" = 1 ] || break
+    done
+    if [ "$_jf_ok" = 1 ]; then JF=("${_jf_t[@]}"); return 0; fi
+    _jf_t=()
+  fi
   for _jf_b in ${JSON_PARSER:-node python3 jq}; do
     [ "$_jf_b" = none ] && return 2
     command -v "$_jf_b" >/dev/null 2>&1 || continue
@@ -320,6 +337,28 @@ json_fields() {
   done
   JSON_PARSER=none
   return 2
+}
+
+# json_memo_set <json> <field>... -- v6.0 D6: parse once for the dispatcher. Runs json_fields
+# (canary + node -> python3 -> jq, unchanged) and records CCTD_MEMO=( rc json-without-BOM
+# field1 value1 ... ); later json_fields calls on the same payload answer from it. Returns
+# json_fields' rc.
+json_memo_set() {
+  local _jm_in=$1 _jm_rc _jm_f _jm_i=0
+  shift
+  case "$_jm_in" in "$JSON_BOM"*) _jm_in=${_jm_in#"$JSON_BOM"} ;; esac
+  CCTD_MEMO=()
+  json_fields "$_jm_in" "$@"
+  _jm_rc=$?
+  CCTD_MEMO=("$_jm_rc" "$_jm_in")
+  if [ "$_jm_rc" = 0 ]; then
+    for _jm_f in "$@"; do
+      CCTD_MEMO[${#CCTD_MEMO[@]}]=$_jm_f
+      CCTD_MEMO[${#CCTD_MEMO[@]}]=${JF[_jm_i]}
+      _jm_i=$((_jm_i + 1))
+    done
+  fi
+  return "$_jm_rc"
 }
 
 # json_payload <json> -- v4.3.1 S6b: gc_read_stdin's whole parse, one interpreter

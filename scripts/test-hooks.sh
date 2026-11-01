@@ -10467,6 +10467,31 @@ for c3_b in node python3 jq; do
   expect "C3: $c3_b json_fields on an invalid payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" 'garbage' fields)"
   expect "C3: $c3_b json_payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" "${C3P[0]}" payload)"
 done
+# ---- v6.0 Task 2: json_memo_set / the CCTD_MEMO branch of json_fields (parse once, D6) ----
+# The stub PATH holds no node, python3 or jq: a memo hit still answers, a miss reaches "no parser" (rc 2).
+if [ -z "$HAVE_NODE$HAVE_PY$HAVE_JQ" ]; then
+  skip "v6 memo: json_memo_set rows" "no working node, python3 or jq on this host" 12
+else
+  V6M_STUB="$TMPROOT/v6m-stub"; mkdir -p "$V6M_STUB"
+  V6M_P='{"tool_name":"Bash","cwd":"/work/a","tool_input":{"command":"ls"}}'
+  V6M_Q='{"tool_name":"Bash","cwd":"/work/b","tool_input":{"command":"ls"}}'
+  v6m_stub_get() { # <memo-payload> <query-payload> <field> -- set the memo on the real PATH, query on the stub PATH
+    ( json_memo_set "$1" tool_name cwd >/dev/null; PATH="$V6M_STUB"; json_fields "$2" "$3"; printf '%s:%s' "$?" "${JF[0]-}" )
+  }
+  expect "v6 memo: (a) a stored field is answered with no parser on PATH"      "0:/work/a" "$(v6m_stub_get "$V6M_P" "$V6M_P" cwd)"
+  expect "v6 memo: (a) the second stored field is answered too"                 "0:Bash"    "$(v6m_stub_get "$V6M_P" "$V6M_P" tool_name)"
+  expect "v6 memo: (b) a different payload does not hit (no parser: rc 2)"      "2:"        "$(v6m_stub_get "$V6M_P" "$V6M_Q" cwd)"
+  expect "v6 memo: (c) a field outside the memo falls through to a parse (rc 2)" "2:"       "$(v6m_stub_get "$V6M_P" "$V6M_P" tool_input.file_path)"
+  expect "v6 memo: (c) the same field parses for real on the real PATH"         "0:Bash"    "$( json_memo_set "$V6M_P" cwd >/dev/null; json_fields "$V6M_P" tool_name; printf '%s:%s' "$?" "${JF[0]-}" )"
+  expect "v6 memo: (d) an invalid payload memoises rc 1"                        "1"         "$( json_memo_set 'garbage' cwd >/dev/null; printf '%s' "${CCTD_MEMO[0]}" )"
+  expect "v6 memo: (d) the later call returns 1 without a parser"               "1:"        "$(v6m_stub_get 'garbage' 'garbage' cwd)"
+  expect "v6 memo: (e) a BOM-prefixed payload stored, queried without the BOM"  "0:/work/a" "$(v6m_stub_get "$JSON_BOM$V6M_P" "$V6M_P" cwd)"
+  expect "v6 memo: (e) stored without the BOM, queried with it"                 "0:/work/a" "$(v6m_stub_get "$V6M_P" "$JSON_BOM$V6M_P" cwd)"
+  expect "v6 memo: (e) memo index 1 holds the BOM-free payload"                 "$V6M_P"    "$( json_memo_set "$JSON_BOM$V6M_P" cwd >/dev/null; printf '%s' "${CCTD_MEMO[1]}" )"
+  expect "v6 memo: (f) an exported scalar CCTD_MEMO never hits (rc 2)" "2:" "$(CCTD_MEMO="$V6M_P" PATH="$V6M_STUB" "$BASH" -c ". '$ROOT/hooks/lib/json.sh'; json_fields '$V6M_P' cwd; printf '%s:%s' \"\$?\" \"\${JF[0]-}\"" 2>/dev/null)"
+  expect "v6 memo: (g) re-sourcing json.sh after json_memo_set keeps the hit"   "0:/work/a" "$( json_memo_set "$V6M_P" tool_name cwd >/dev/null; . "$ROOT/hooks/lib/json.sh"; PATH="$V6M_STUB"; json_fields "$V6M_P" cwd; printf '%s:%s' "$?" "${JF[0]-}" )"
+fi
+# ---- end v6.0 Task 2
 # Task 4: the five multi-call hooks parse their payload ONCE. Each hook runs as a fresh
 # process on a PATH holding only the basic tools plus one COUNTING shim for the backend under
 # test (node, python3 or jq), so every interpreter start is one logged line. The payloads are
