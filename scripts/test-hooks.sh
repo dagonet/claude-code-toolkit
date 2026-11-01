@@ -11832,7 +11832,7 @@ fi
 # hooks/ (so a stand-in guard can replace a real one) next to a project dir; the manifest makes the project a toolkit
 # project (the project-class guards run). Marker stand-ins append their own name to <tree>/ran.
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
-  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 54
+  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 61
 else
   V6D="$TMPROOT/v6d"; mkdir -p "$V6D/home"
   v6d_mk() { # <tree> [m] -- a scratch tree; m = the project carries a template manifest
@@ -11884,6 +11884,10 @@ else
   expect "v6 dispatch: (b) powershell table has no deny-secret-reads: cat .env passes" "rc=0 needle=no" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
   v6d_run base bash "$V6D_LS"
   expect "v6 dispatch: (c) ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+  # the same in a toolkit project, where all six guards run (design D4.4: none of them writes stdout on a plain call)
+  v6d_mk basem m
+  v6d_run basem bash "$V6D_LS"
+  expect "v6 dispatch: (c) a toolkit project, all six guards run: ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
   v6d_run base nosuch "$V6D_LS"
   expect "v6 dispatch: (k) an unknown table: rc 2 + 'unknown table'" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "unknown table 'nosuch'")"
   v6d_run base '' "$V6D_LS"
@@ -11985,32 +11989,39 @@ else
 
   # (w) R-8: a TERM to the dispatcher alone (it dies at once, a trap cannot run while it waits in $( )) must still take
   # pre-commit-test's Test down: the guard's poll loop sees that $$ (the dispatcher) is gone within one tick.
-  # v6d_term_test <tree> prints gone|alive|never-started: is the Test's process still there 5 s after the TERM. It always
-  # kills the Test's process group itself, so a red row leaves no stray process behind.
+  # v6d_term_test <tree> prints gone|alive|never-started: is the Test's process still there 5 s after the TERM.
+  # Cleanup: slow.sh writes its own pid FIRST (before it backgrounds anything), the helper records that pid's process
+  # group at once, and a Test that is still alive at the end is killed through that group, so a red row leaves no
+  # tracked process behind. Only a Test that has not even started within the 30 s wait is untracked (its dispatcher is
+  # killed, and slow.sh ends by itself after its `sleep 30`).
   V6D_SLOW=$(mkrepo v6dslow feature/z)
-  printf '%s\n' 'sleep 300 &' 'echo $! > "$V6D_SPID"' 'wait' > "$V6D/slow.sh"
+  printf '%s\n' 'echo $$ > "$V6D_SPID"' 'sleep 30 &' 'wait' > "$V6D/slow.sh"
   printf '# ctx\n\n- **Test**: `bash %s/slow.sh`\n' "$V6D" > "$V6D_SLOW/PROJECT_CONTEXT.md"
   mkjson PowerShell 'git commit -m "x"' "$V6D_SLOW" > "$V6D/slow.payload"
   v6d_term_test() {
-    local t="$V6D/$1" dpid spid pg i
+    local t="$V6D/$1" dpid spid pg i verdict=never-started
     rm -f "$t/spid"
     ( exec env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" V6D_SPID="$t/spid" bash "$t/hooks/dispatch.sh" powershell < "$V6D/slow.payload" > /dev/null 2>&1 ) &
     dpid=$!
     i=0; while [ ! -s "$t/spid" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i + 1)); done
     spid=$(cat "$t/spid" 2>/dev/null)
-    if [ -z "$spid" ]; then kill -KILL "$dpid" 2>/dev/null; echo never-started; return 0; fi
-    kill -TERM "$dpid"
-    i=0; while kill -0 "$spid" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
-    if kill -0 "$spid" 2>/dev/null; then
-      echo alive
+    if [ -n "$spid" ]; then
       pg=$(ps -o pgid= -p "$spid" 2>/dev/null | tr -d ' ')
-      if [ -n "$pg" ]; then kill -KILL -- "-$pg" 2>/dev/null; fi
-      kill -KILL "$spid" 2>/dev/null
+      kill -TERM "$dpid"
+      i=0; while kill -0 "$spid" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
+      if kill -0 "$spid" 2>/dev/null; then
+        verdict=alive
+        if [ -n "$pg" ]; then kill -KILL -- "-$pg" 2>/dev/null; fi
+        kill -KILL "$spid" 2>/dev/null
+      else
+        verdict=gone
+      fi
     else
-      echo gone
+      kill -KILL "$dpid" 2>/dev/null
     fi
     wait "$dpid" 2>/dev/null
     sleep 1
+    echo "$verdict"
   }
   if ! ps -o pgid= -p $$ >/dev/null 2>&1; then
     skip_host "v6 dispatch: (w) a killed dispatcher takes the Test down" "no ps -o pgid= on this host" 2
@@ -12026,6 +12037,36 @@ else
   v6d_put v deny-hang-shapes ". '$V6D/v/hooks/lib/json.sh'; PATH=/nonexistent; json_fields \"\${CCTD_MEMO[1]}\" tool_name cwd tool_input.command tool_input.file_path; echo \"\$?:\${JF[0]}:\${JF[1]}:\${JF[2]}:\${JF[3]}\" > '$V6D/v/fields'"
   v6d_run v bash "$V6D_LS"
   expect "v6 dispatch: (v) parse once: a guard with no parser on PATH still reads the four fields from the memo" "rc=0 fields=0:Bash:$V6D_FEAT:ls:" "rc=$V6D_RC fields=$(cat "$V6D/v/fields" 2>/dev/null)"
+
+  # (y) a guard runs on </dev/null; when that cannot be opened (provoked with an fd limit of 3 after sourcing) the `.` never
+  # runs and every guard would be skipped with rc 1, so cctd_prepare refuses (without its check this prints rc=0).
+  v6d_y=$(printf '{}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASH" -c '. "$1"; ulimit -n 3; cctd_prepare; echo "rc=$?"' _ "$V6D/base/hooks/dispatch.sh" 2>/dev/null | tail -n 1)
+  expect "v6 dispatch: (y) /dev/null cannot be opened: cctd_prepare refuses (rc 2) instead of skipping every guard" "rc=2" "$v6d_y"
+
+  # (x) R-10: the parser json_memo_set settled on travels in the memo as the pair `@parser <backend>`, so a guard (whose
+  # json.sh starts with JSON_PARSER="") does not probe again. x1 counts node starts of one dispatcher run with a counting
+  # stub first on PATH; x2/x3 pin that only a real array in the memo can set the parser, and only to a known name.
+  v6d_node_starts() { # <tree> -> how many times node was started by one `dispatch.sh bash` run on an ls payload
+    local t="$V6D/$1"
+    mkdir -p "$t/stub"; rm -f "$t/nodes"
+    printf '%s\n' '#!/usr/bin/env bash' "echo . >> '$t/nodes'" "exec '$(command -v node)' \"\$@\"" > "$t/stub/node"
+    chmod +x "$t/stub/node"
+    printf '%s' "$V6D_LS" | env PATH="$t/stub:$PATH" CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" bash "$t/hooks/dispatch.sh" bash >/dev/null 2>&1
+    if [ -f "$t/nodes" ]; then wc -l < "$t/nodes" | tr -d ' '; else echo 0; fi
+  }
+  if [ -z "$HAVE_NODE" ]; then
+    skip "v6 dispatch: (x1) node starts of one dispatcher run" "enforce-delegation needs node" 2
+  else
+    v6d_mk x m; v6d_mk x0 m
+    sed -i '/node|python3|jq|none) JSON_PARSER=/d' "$V6D/x0/hooks/lib/json.sh"
+    expect "v6 dispatch: (x1) one run on ls starts node twice: the parse and enforce-delegation's own program, no re-probe" "2" "$(v6d_node_starts x)"
+    expect "v6 dispatch: (x1) control: without the adoption (mutant copy, exactly 1 line less) it starts node 3 times" "3 lines=1" "$(v6d_node_starts x0) lines=$(diff "$ROOT/hooks/lib/json.sh" "$V6D/x0/hooks/lib/json.sh" | grep -c '^<')"
+  fi
+  # <memo setup> <env assignments...> -> JSON_PARSER after json_parser_init in a fresh shell that sourced json.sh
+  v6d_x_parser() { local s=$1; shift; env "$@" "$BASH" -c ". '$ROOT/hooks/lib/json.sh'; $s; json_parser_init; printf '%s' \"\$JSON_PARSER\""; }
+  expect "v6 dispatch: (x2) a real array in the memo with @parser python3 is adopted (nothing on PATH to probe)" "python3" "$(v6d_x_parser "CCTD_MEMO=(0 '{}' tool_name Bash @parser python3)" PATH=/nonexistent)"
+  expect "v6 dispatch: (x2) an exported scalar CCTD_MEMO (and an exported JSON_PARSER) sets nothing: the probe is in charge (none)" "none" "$(v6d_x_parser ':' PATH=/nonexistent 'CCTD_MEMO=0 {} @parser python3' JSON_PARSER=python3)"
+  expect "v6 dispatch: (x3) a bogus @parser value is ignored: the probe runs and finds what a clean shell finds" "$(v6d_x_parser ':' PATH="$PATH")" "$(v6d_x_parser "CCTD_MEMO=(0 '{}' tool_name Bash @parser evil)" PATH="$PATH")"
 
   # (m) Review Focus 3 / R-3: with the toolkit's REAL settings the dispatcher runs exactly the guards run-hook.sh runs.
   # Both sides use the same stand-ins; the project carries the real .claude/settings.json and a hooks/<name>.sh per guard.

@@ -36,6 +36,8 @@ cctd_libs_ok() {
 # A NUL byte makes `read -d ''` stop early, which would hand the guards a truncated payload: refuse that.
 cctd_prepare() {
   cctd_libs_ok || return 2
+  # every guard runs on </dev/null; if that cannot be opened the `.` never runs (rc 1) and every guard would be skipped
+  : </dev/null 2>/dev/null || { echo "BLOCKED: dispatch.sh: /dev/null unreadable -- cannot determine" >&2; return 2; }
   unset CCTD_MEMO
   cctd_outs=()
   cctd_payload=
