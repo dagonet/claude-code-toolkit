@@ -95,6 +95,19 @@ if [ "${CCTD_MEMO[1]+set}" = set ]; then INPUT=${CCTD_MEMO[1]}; else INPUT=$(cat
 jlib="$cctg_dir/lib/json.sh"
 if [ -f "$jlib" ]; then
   . "$jlib"
+  # v6.0 E2: dispatched (the memo is set), a Bash or PowerShell command with no backslash and none of these ten
+  # substrings cannot match any runner pattern below, so the program would only print PASS: skip it. The backslash
+  # is there because the program joins backslash-newline first (py\<newline>test); `test` is a substring, not
+  # `go test`, because the JS \s is wider than a bash pattern's whitespace. Not dispatched: nothing changes.
+  if [ "${CCTD_MEMO[1]+set}" = set ] && json_fields "$INPUT" tool_name tool_input.command; then
+    case ${JF[0]} in
+      Bash|PowerShell)
+        case ${JF[1]} in
+          *\\*|*npm*|*npx*|*pytest*|*cargo*|*dotnet*|*mvn*|*gradle*|*run-gate*|*cct-gate*|*test*) ;;
+          *) exit 0 ;;
+        esac ;;
+    esac
+  fi
   json_require_node enforce-delegation "$(json_session "$INPUT")" || exit 0
 fi
 command -v node >/dev/null 2>&1 || exit 0

@@ -1073,11 +1073,12 @@ expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s
 # which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
 # cat, awk or sed. The control command holds a backslash that only joins into `-C`, so it must
 # still exec the join (cat + awk) and the protection (sed): that keeps the first row from
-# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs.
+# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` cuts the long
+# `bash -c <probe>` line (which holds both names) off before them, so only the real markers open and close the range.
 E1_SPAWN_PROBE='. "$1/hooks/lib/json.sh"; . "$1/hooks/lib/git-cmd.sh"; json_memo_set "$2" tool_name cwd tool_input.command; "$BASH" -c : E1_BEGIN; gc_read_stdin </dev/null; "$BASH" -c : E1_END'
 e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (sorted, space-terminated)
   local st="$TMPROOT/e1_strace.txt"
-  strace -f -e trace=execve -o "$st" "$BASH" -c "$E1_SPAWN_PROBE" probe "$ROOT" "$(mkjson Bash "$1" "$TMPROOT")" >/dev/null 2>&1
+  strace -f -s 32 -e trace=execve -o "$st" "$BASH" -c "$E1_SPAWN_PROBE" probe "$ROOT" "$(mkjson Bash "$1" "$TMPROOT")" >/dev/null 2>&1
   sed -n '/E1_BEGIN/,/E1_END/p' "$st" | grep -oE 'execve\("[^"]*/(cat|awk|sed)"' | grep -oE '(cat|awk|sed)"$' | tr -d '"' | sort -u | tr '\n' ' '
 }
 if command -v strace >/dev/null 2>&1 && strace -f -e trace=execve -o /dev/null "$BASH" -c : >/dev/null 2>&1; then
@@ -11915,7 +11916,7 @@ fi
 # hooks/ (so a stand-in guard can replace a real one) next to a project dir; the manifest makes the project a toolkit
 # project (the project-class guards run). Marker stand-ins append their own name to <tree>/ran.
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
-  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 61
+  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 88
 else
   V6D="$TMPROOT/v6d"; mkdir -p "$V6D/home"
   v6d_mk() { # <tree> [m] -- a scratch tree; m = the project carries a template manifest
@@ -12129,12 +12130,16 @@ else
   # (x) R-10: the parser json_memo_set settled on travels in the memo as the pair `@parser <backend>`, so a guard (whose
   # json.sh starts with JSON_PARSER="") does not probe again. x1 counts node starts of one dispatcher run with a counting
   # stub first on PATH; x2/x3 pin that only a real array in the memo can set the parser, and only to a known name.
-  v6d_node_starts() { # <tree> -> how many times node was started by one `dispatch.sh bash` run on an ls payload
-    local t="$V6D/$1"
+  v6d_node_starts() { # <tree> [payload] [guard] -> how many times node was started by one `dispatch.sh bash` run (payload: ls by default), or by <guard>.sh run alone
+    local t="$V6D/$1" p="${2-$V6D_LS}"
     mkdir -p "$t/stub"; rm -f "$t/nodes"
     printf '%s\n' '#!/usr/bin/env bash' "echo . >> '$t/nodes'" "exec '$(command -v node)' \"\$@\"" > "$t/stub/node"
     chmod +x "$t/stub/node"
-    printf '%s' "$V6D_LS" | env PATH="$t/stub:$PATH" CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" bash "$t/hooks/dispatch.sh" bash >/dev/null 2>&1
+    if [ -n "${3-}" ]; then
+      printf '%s' "$p" | env PATH="$t/stub:$PATH" CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" bash "$t/hooks/$3.sh" >/dev/null 2>&1
+    else
+      printf '%s' "$p" | env PATH="$t/stub:$PATH" CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" bash "$t/hooks/dispatch.sh" bash >/dev/null 2>&1
+    fi
     if [ -f "$t/nodes" ]; then wc -l < "$t/nodes" | tr -d ' '; else echo 0; fi
   }
   if [ -z "$HAVE_NODE" ]; then
@@ -12142,8 +12147,10 @@ else
   else
     v6d_mk x m; v6d_mk x0 m
     sed -i '/node|python3|jq|none) JSON_PARSER=/d' "$V6D/x0/hooks/lib/json.sh"
-    expect "v6 dispatch: (x1) one run on ls starts node twice: the parse and enforce-delegation's own program, no re-probe" "2" "$(v6d_node_starts x)"
-    expect "v6 dispatch: (x1) control: without the adoption (mutant copy, exactly 1 line less) it starts node 3 times" "3 lines=1" "$(v6d_node_starts x0) lines=$(diff "$ROOT/hooks/lib/json.sh" "$V6D/x0/hooks/lib/json.sh" | grep -c '^<')"
+    # the payload holds `test`, so enforce-delegation's E2 fast exit does not take it and its own node program runs
+    V6D_ECHOTEST=$(mkjson Bash 'echo test' "$V6D_FEAT")
+    expect "v6 dispatch: (x1) one run on a command that reaches enforce-delegation's program starts node twice: the parse and that program, no re-probe" "2" "$(v6d_node_starts x "$V6D_ECHOTEST")"
+    expect "v6 dispatch: (x1) control: without the adoption (mutant copy, exactly 1 line less) it starts node 3 times" "3 lines=1" "$(v6d_node_starts x0 "$V6D_ECHOTEST") lines=$(diff "$ROOT/hooks/lib/json.sh" "$V6D/x0/hooks/lib/json.sh" | grep -c '^<')"
   fi
   # <memo setup> <env assignments...> -> JSON_PARSER after json_parser_init in a fresh shell that sourced json.sh
   v6d_x_parser() { local s=$1; shift; env "$@" "$BASH" -c ". '$ROOT/hooks/lib/json.sh'; $s; json_parser_init; printf '%s' \"\$JSON_PARSER\""; }
@@ -12205,6 +12212,55 @@ else
     v6d_run s bash "$V6D_PYTEST"
     expect "v6 dispatch: (s) a main-thread pytest: the dispatcher prints enforce-delegation's own answer, rc 0" "$(v6d_ans "$v6d_s_out" "$v6d_s_rc")" "$(v6d_ans "$V6D_OUT" "$V6D_RC")"
     expect "v6 dispatch: (s) that answer is a permissionDecision deny (so the row compares something)" "yes" "$(v6d_has "$V6D_OUT" '"permissionDecision":"deny"')"
+  fi
+
+  # (E2) design 12 E2: with the dispatcher's memo present, enforce-delegation answers PASS without starting its node program
+  # for a Bash or PowerShell command that holds no backslash and none of ten substrings (npm npx pytest cargo dotnet mvn
+  # gradle run-gate cct-gate test). A strict superset: it may only skip runs that would have printed PASS. Node starts are
+  # counted with the stub of (x1): one start is the dispatcher's own parse, a second would be the guard's program.
+  if [ -z "$HAVE_NODE" ]; then
+    skip "v6 dispatch: (E2) enforce-delegation fast exit" "enforce-delegation needs node" 27
+  else
+    v6d_mk e2 m
+    V6D_E2_NEEDLE='DELEGATE: builds/tests run inside agents'
+    v6d_e2_alone() { printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$V6D/e2/proj" HOME="$V6D/home" bash "$V6D/e2/hooks/enforce-delegation.sh" 2>/dev/null; } # <payload> -> the guard run alone (no memo)
+    v6d_e2_replay() { # <payload> -> the guard's rc and stdout when run as the dispatcher runs it (memo set); the table has no Edit or PowerShell entry, so the replay pair stands in
+      printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$V6D/e2/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_source_guard enforce-delegation; cctd_r=$?; printf "rc=%s out=%s" "$cctd_r" "${cctd_outs[0]-}"' _ "$V6D/e2/hooks/dispatch.sh" 2>/dev/null
+    }
+    # superset: every runner the node check denies is still denied through the dispatcher, with the standalone answer.
+    # Thirteen commands from the design; the next three are the runners whose ONE trigger is npx, cargo or gradle (every row
+    # before them also holds `test`, so dropping those triggers would go unseen); the last two join into `pytest` only
+    # across a backslash-newline (LF, then CRLF), and neither holds `test` before the join: only the backslash rule sees them.
+    v6d_e2_super() { # <label> <payload>
+      local alone; alone=$(v6d_e2_alone "$2")
+      v6d_run e2 bash "$2"
+      expect "v6 dispatch: (E2) superset: $1 is denied through the dispatcher, as standalone" "rc=0 delegate=yes same=yes" \
+        "rc=$V6D_RC delegate=$(v6d_has "$V6D_OUT" "$V6D_E2_NEEDLE") same=$([ "$V6D_OUT" = "$alone" ] && echo yes || echo no)"
+    }
+    for v6d_c in 'pytest -q' 'npm test' 'npx vitest' 'cargo test' 'dotnet build' 'mvn -q package' './gradlew test' 'go test ./...' \
+        'bash hooks/run-gate.sh' 'cct-gate' 'CI=1 pytest' 'cd x && npm run build' $'py\\\ntest' 'npx jest' 'cargo build' './gradlew build' $'pyt\\\nest'; do
+      v6d_e2_super "${v6d_c//$'\n'/\\n}" "$(mkjson Bash "$v6d_c" "$V6D_FEAT")"
+    done
+    # jesc leaves a CR alone, so the CRLF payload is spelled by hand (the JSON escapes \\ \r \n)
+    v6d_e2_super 'pyt\\r\nest' "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'pyt\\\r\nest' "$(jesc "$V6D_FEAT")")"
+    # exit: nothing to deny, and no second node start
+    for v6d_c in 'ls -la' 'git status'; do
+      v6d_p=$(mkjson Bash "$v6d_c" "$V6D_FEAT")
+      v6d_run e2 bash "$v6d_p"
+      expect "v6 dispatch: (E2) exit: $v6d_c passes through the dispatcher (rc 0, empty stdout)" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+      expect "v6 dispatch: (E2) exit: $v6d_c starts node once (the parse), not again for enforce-delegation's program" "1" "$(v6d_node_starts e2 "$v6d_p")"
+    done
+    # unchanged: a subagent passes, and without the memo the guard still runs its program
+    v6d_p=$(mkjson Bash 'pytest' "$V6D_FEAT")
+    v6d_run e2 bash "$(printf '%s' "$v6d_p" | sed 's/^{/{"agent_id":"a1",/')"
+    expect "v6 dispatch: (E2) a subagent's pytest passes through the dispatcher" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+    expect "v6 dispatch: (E2) standalone (no memo): pytest is still denied" "yes" "$(v6d_has "$(v6d_e2_alone "$v6d_p")" "$V6D_E2_NEEDLE")"
+    v6d_e2_ls=$(v6d_node_starts e2 "$V6D_LS" enforce-delegation); v6d_e2_tt=$(v6d_node_starts e2 "$V6D_ECHOTEST" enforce-delegation)
+    expect "v6 dispatch: (E2) standalone (no memo): ls starts node as often as a command that reaches the program (the exit is memo-only)" "same" "$([ "$v6d_e2_ls" = "$v6d_e2_tt" ] && echo same || echo "ls=$v6d_e2_ls echo-test=$v6d_e2_tt")"
+    # the tool check: Edit carries no command, so only the tool name keeps it off the exit; PowerShell is judged like Bash
+    v6d_p=$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"src/app.py"},"cwd":"%s"}\n' "$(jesc "$V6D_FEAT")")
+    expect "v6 dispatch: (E2) with the memo set, an Edit of src/app.py is still denied (the exit is for Bash and PowerShell only)" "yes" "$(v6d_has "$(v6d_e2_replay "$v6d_p")" 'DELEGATE: PO never edits code')"
+    expect "v6 dispatch: (E2) with the memo set, a PowerShell pytest is still denied" "yes" "$(v6d_has "$(v6d_e2_replay "$(mkjson PowerShell 'pytest' "$V6D_FEAT")")" "$V6D_E2_NEEDLE")"
   fi
 
   # (t) R-1 and the fail-closed rules: a missing or corrupt lib, a stale class after an unknown name
