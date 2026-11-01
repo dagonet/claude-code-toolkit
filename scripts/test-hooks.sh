@@ -1004,6 +1004,89 @@ printf '%s' "$(mkjson Bash "$NOAWK_RAW" "$BADREPO")" > "$TMPROOT/noawk_payload.j
 NOAWK_GC_CMD=$( . "$ROOT/hooks/lib/json.sh"; . "$ROOT/hooks/lib/git-cmd.sh"; cmd_join_continuations() { :; }; gc_read_stdin < "$TMPROOT/noawk_payload.json"; printf '%s' "$GC_CMD" )
 expect "join fallback: awk absent -- GC_CMD stays the raw text, not empty" "$NOAWK_RAW" "$NOAWK_GC_CMD"
 
+# v6.0 Task 5a (design 12 E1) -- gc_read_stdin ran two text rewrites on EVERY Bash call: the
+# continuation join (cat + awk, via cmd_join_continuations) and gc_protect_c_paths (sed). Each
+# now runs only when the text can change: a backslash for the join, `-C` for the protection.
+# DIFFERENTIAL rows: GC_CMD must stay byte-identical to the old composition (e1_old) for each
+# input, in two modes. "payload" is the real flow, but json_fields has already stripped every
+# trailing LF and CR from the command there, so the trailing-newline trap cannot show.
+# "preparsed" (gc_read_stdin --preparsed, the gates' own entry point) hands the raw text to the
+# rewrites: the only route where a missing newline strip, or one that also strips CR, moves a
+# byte. Both modes compare with variables inside ONE subshell, never through $(...): a capture
+# would strip the very newline these rows are about. Written, and passed, against the unchanged
+# lib first.
+E1_IN=(
+  'ls'
+  $'ls\n'
+  $'ls\n\n'
+  $'\n\n'
+  $'a\r\nb'
+  'ls \'
+  $'ls \\\n-la'
+  'git -C "a b" status'
+  "git -C 'a b' status"
+  'git -C"x" status'
+  'echo -C'
+  $'ls\r'
+  $'ls\r\n'
+  $'ls \\\n'
+  $'git -\\\nC "a b" status\n'
+  $'git -C "a b" status\n\n'
+)
+e1_old() { # <command> -> E1_WANT: the two rewrites exactly as gc_read_stdin ran them before E1
+  E1_WANT=$1
+  if [ -n "$E1_WANT" ]; then
+    E1_J=$(printf '%s' "$E1_WANT" | cmd_join_continuations) && [ -n "$E1_J" ] && E1_WANT=$E1_J
+  fi
+  E1_WANT=$(gc_protect_c_paths "$E1_WANT")
+}
+e1_payload() { # <command> -> a Bash payload; CR escaped, because jesc leaves it raw and no parser accepts that
+  local j bs='\'
+  j=$(mkjson Bash "$1" "$TMPROOT")
+  printf '%s' "${j//$'\r'/${bs}r}"
+}
+e1_row() { # <mode> <input> <want> <got> -> one TSV line: mode, input as %q, verdict
+  local v=same
+  [ "$3" = "$4" ] || v="want=$(printf '%s' "$3" | od -An -c | tr -s ' ' | tr -d '\n') got=$(printf '%s' "$4" | od -An -c | tr -s ' ' | tr -d '\n')"
+  printf '%s\t%s\t%s\n' "$1" "$(printf '%q' "$2")" "$v"
+}
+E1_OUT=$(
+  . "$ROOT/hooks/lib/json.sh"; . "$ROOT/hooks/lib/git-cmd.sh"
+  for c in "${E1_IN[@]}"; do
+    e1_payload "$c" > "$TMPROOT/e1_payload.json"
+    gc_read_stdin < "$TMPROOT/e1_payload.json"
+    e1_old "$JP_CMD"
+    e1_row payload "$c" "$E1_WANT" "$GC_CMD"
+    GC_PRE_JSON='{}'; GC_PREPARSED=0; JP_TOOL=Bash; JP_CWD=$TMPROOT; JP_CMD=$c
+    gc_read_stdin --preparsed
+    e1_old "$c"
+    e1_row preparsed "$c" "$E1_WANT" "$GC_CMD"
+  done
+)
+while IFS=$'\t' read -r e1_mode e1_lbl e1_verdict; do
+  [ -n "$e1_mode" ] || continue
+  expect "E1 $e1_mode: GC_CMD == old rewrites for $e1_lbl" same "$e1_verdict"
+done <<< "$E1_OUT"
+expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s\n' "$E1_OUT" | grep -c .)"
+
+# SPAWN rows: under strace, a Bash `ls` payload through gc_read_stdin (the dispatcher's memo path,
+# which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
+# cat, awk or sed. The control command holds a backslash that only joins into `-C`, so it must
+# still exec the join (cat + awk) and the protection (sed): that keeps the first row from
+# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs.
+E1_SPAWN_PROBE='. "$1/hooks/lib/json.sh"; . "$1/hooks/lib/git-cmd.sh"; json_memo_set "$2" tool_name cwd tool_input.command; "$BASH" -c : E1_BEGIN; gc_read_stdin </dev/null; "$BASH" -c : E1_END'
+e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (sorted, space-terminated)
+  local st="$TMPROOT/e1_strace.txt"
+  strace -f -e trace=execve -o "$st" "$BASH" -c "$E1_SPAWN_PROBE" probe "$ROOT" "$(mkjson Bash "$1" "$TMPROOT")" >/dev/null 2>&1
+  sed -n '/E1_BEGIN/,/E1_END/p' "$st" | grep -oE 'execve\("[^"]*/(cat|awk|sed)"' | grep -oE '(cat|awk|sed)"$' | tr -d '"' | sort -u | tr '\n' ' '
+}
+if command -v strace >/dev/null 2>&1 && strace -f -e trace=execve -o /dev/null "$BASH" -c : >/dev/null 2>&1; then
+  expect "E1 spawn: an ls payload through gc_read_stdin execs none of cat/awk/sed" "" "$(e1_spawned ls)"
+  expect "E1 spawn control: a joined -C command still execs the join and the protection" "awk cat sed " "$(e1_spawned $'git -\\\nC "a b" status')"
+else
+  skip_host "E1 spawn rows" "strace unavailable or ptrace denied on this host" 2
+fi
+
 # v4.1.2 T1<->T5 INTERFACE: the skill's cmd_len recipe must equal what the
 # hook records. Recipe = call the hook's own pipeline (cmd_join_continuations
 # + gc_augmented_cmd), never re-derive cap/strip/join by hand.

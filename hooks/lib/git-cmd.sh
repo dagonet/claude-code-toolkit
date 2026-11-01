@@ -400,15 +400,25 @@ gc_read_stdin() {
       # A FAILED join falls back to the RAW text (reviewer, plan round 1): an
       # empty assignment would hit the guards' `[ -n ]` fast exits and allow
       # everything -- v4.1.1's behaviour is the floor, never allow-all.
-      if [ -n "$GC_CMD" ]; then
-        _gc_j=$(printf '%s' "$GC_CMD" | cmd_join_continuations) && [ -n "$_gc_j" ] && GC_CMD="$_gc_j"
-      fi
+      # v6.0 E1: the join only acts at a backslash, so it runs (cat + awk) only when the
+      # text holds one; the empty text holds none, so the old `[ -n ]` guard is subsumed.
+      case "$GC_CMD" in
+        *\\*) _gc_j=$(printf '%s' "$GC_CMD" | cmd_join_continuations) && [ -n "$_gc_j" ] && GC_CMD="$_gc_j" ;;
+      esac
       ;;
     *)
       GC_CMD=""
       ;;
   esac
-  GC_CMD=$(gc_protect_c_paths "$GC_CMD")
+  # v6.0 E1: gc_protect_c_paths only acts after `-C` (case-sensitive, like its sed), so it
+  # runs (sed) only when the text holds one. Both rewrites ran inside $(...), which strips
+  # EVERY trailing newline (and only newlines: a CR stays), so the skipped path strips them
+  # itself, builtin: GC_CMD stays byte-identical to the old composition. That also covers a
+  # skipped join and the join's raw-text fallback, which keeps the raw trailing newlines.
+  case "$GC_CMD" in
+    *-C*) GC_CMD=$(gc_protect_c_paths "$GC_CMD") ;;
+    *) while :; do case "$GC_CMD" in *$'\n') GC_CMD=${GC_CMD%?} ;; *) break ;; esac; done ;;
+  esac
   # v4.4.0: gc_dollar_quote exits 0 only at a `$` directly followed by ' or ",
   # so the awk is skipped (builtin case) when the text holds neither.
   case "$GC_CMD" in
