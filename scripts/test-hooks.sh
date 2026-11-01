@@ -11832,7 +11832,7 @@ fi
 # hooks/ (so a stand-in guard can replace a real one) next to a project dir; the manifest makes the project a toolkit
 # project (the project-class guards run). Marker stand-ins append their own name to <tree>/ran.
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
-  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 52
+  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 54
 else
   V6D="$TMPROOT/v6d"; mkdir -p "$V6D/home"
   v6d_mk() { # <tree> [m] -- a scratch tree; m = the project carries a template manifest
@@ -11982,6 +11982,44 @@ else
   v6d_run j bash "$V6D_LS"
   expect "v6 dispatch: (j) a guard sees no argument (\$# is 0, \$1 empty)" "rc=0 args=0:" "rc=$V6D_RC args=$(cat "$V6D/j/args" 2>/dev/null)"
   expect "v6 dispatch: (p) a guard reading stdin gets /dev/null: not a pipe, empty payload" "notpipe len=0" "$(tr '\n' ' ' < "$V6D/j/stdin" 2>/dev/null | sed 's/ $//')"
+
+  # (w) R-8: a TERM to the dispatcher alone (it dies at once, a trap cannot run while it waits in $( )) must still take
+  # pre-commit-test's Test down: the guard's poll loop sees that $$ (the dispatcher) is gone within one tick.
+  # v6d_term_test <tree> prints gone|alive|never-started: is the Test's process still there 5 s after the TERM. It always
+  # kills the Test's process group itself, so a red row leaves no stray process behind.
+  V6D_SLOW=$(mkrepo v6dslow feature/z)
+  printf '%s\n' 'sleep 300 &' 'echo $! > "$V6D_SPID"' 'wait' > "$V6D/slow.sh"
+  printf '# ctx\n\n- **Test**: `bash %s/slow.sh`\n' "$V6D" > "$V6D_SLOW/PROJECT_CONTEXT.md"
+  mkjson PowerShell 'git commit -m "x"' "$V6D_SLOW" > "$V6D/slow.payload"
+  v6d_term_test() {
+    local t="$V6D/$1" dpid spid pg i
+    rm -f "$t/spid"
+    ( exec env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" V6D_SPID="$t/spid" bash "$t/hooks/dispatch.sh" powershell < "$V6D/slow.payload" > /dev/null 2>&1 ) &
+    dpid=$!
+    i=0; while [ ! -s "$t/spid" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i + 1)); done
+    spid=$(cat "$t/spid" 2>/dev/null)
+    if [ -z "$spid" ]; then kill -KILL "$dpid" 2>/dev/null; echo never-started; return 0; fi
+    kill -TERM "$dpid"
+    i=0; while kill -0 "$spid" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
+    if kill -0 "$spid" 2>/dev/null; then
+      echo alive
+      pg=$(ps -o pgid= -p "$spid" 2>/dev/null | tr -d ' ')
+      if [ -n "$pg" ]; then kill -KILL -- "-$pg" 2>/dev/null; fi
+      kill -KILL "$spid" 2>/dev/null
+    else
+      echo gone
+    fi
+    wait "$dpid" 2>/dev/null
+    sleep 1
+  }
+  if ! ps -o pgid= -p $$ >/dev/null 2>&1; then
+    skip_host "v6 dispatch: (w) a killed dispatcher takes the Test down" "no ps -o pgid= on this host" 2
+  else
+    v6d_mk w m; v6d_mk w0 m
+    sed -i '/kill -0 "\$\$"/d' "$V6D/w0/hooks/pre-commit-test.sh"
+    expect "v6 dispatch: (w) a TERM to the dispatcher alone: the Test process is gone within 5 s" "gone" "$(v6d_term_test w)"
+    expect "v6 dispatch: (w) control: without the \$\$ poll line (mutant copy, exactly 1 line less) the Test outlives the dispatcher" "alive lines=1" "$(v6d_term_test w0) lines=$(diff "$ROOT/hooks/pre-commit-test.sh" "$V6D/w0/hooks/pre-commit-test.sh" | grep -c '^<')"
+  fi
 
   # (v) parse once (D6): the dispatcher's single parse feeds the guards. A guard with NO parser on its PATH still reads the fields.
   v6d_mk v

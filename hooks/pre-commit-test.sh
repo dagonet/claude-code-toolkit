@@ -460,12 +460,16 @@ pct_run_bounded() {
   # Its own process group no longer dies with this hook: if the hook itself is
   # signalled (a cancel, or a harness timeout on a registration without the
   # field), take the group down first. An uncatchable kill (SIGKILL,
-  # TerminateProcess) still orphans it -- a stated Known limit.
+  # TerminateProcess) still orphans it -- a stated Known limit. Run by the v6
+  # dispatcher this code is a subshell of it, and a bash blocked in $( ) dies on
+  # a TERM before any trap can run, so a killed dispatcher is noticed by the poll
+  # loop below within one tick ($$ is the dispatcher's pid there).
   trap 'pct_kill_group "$_rb_pid"; exit 2' TERM INT HUP
   _rb_t0=$SECONDS
   _rb_ceil=$(pct_ceiling)
   PCT_CEIL_HIT=0
   while kill -0 "$_rb_pid" 2>/dev/null; do
+    if ! kill -0 "$$" 2>/dev/null; then pct_kill_group "$_rb_pid"; exit 2; fi
     # Either limit stops the run: the per-run budget (counted from the fork) or
     # the hook-wide ceiling (bash $SECONDS counts from hook start).
     if [ "$SECONDS" -ge "$_rb_ceil" ] && [ $((SECONDS - _rb_t0)) -lt "$_rb_budget" ]; then
