@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse hook: block push to main/master
-# Matcher: Bash|PowerShell
+# Matcher: the Bash and PowerShell dispatcher tables (hooks/dispatch.sh; v6.0), no registration of its own
 #
 # Prevents direct pushes to main/master branches. Forces feature branch + PR.
 #

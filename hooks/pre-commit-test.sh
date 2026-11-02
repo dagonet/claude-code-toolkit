@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse hook: require passing tests before git commit
-# Matcher: Bash|PowerShell
+# Matcher: the Bash and PowerShell dispatcher tables (hooks/dispatch.sh; v6.0), no registration of its own
 #
 # Runs the project's test command before allowing a commit.
 # Blocks the commit if tests fail.
@@ -34,8 +34,8 @@
 trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
 
 # v4.3.1 T1-5: bash imports SECONDS from the environment; reset it so the hook-wide ceiling counts from THIS hook's start.
-# v6.0: under the dispatcher the hook starts when the DISPATCHER does (cctd_prepare resets SECONDS; three guards run before
-# this one), so reset only when run standalone -- the same memo-presence test as the early exit below.
+# v6.0: under the dispatcher the hook starts when the DISPATCHER does (cctd_prepare resets SECONDS; the guards ahead of it in its table run first),
+# so reset only when run standalone -- the memo-presence test json_adopt_parser in hooks/lib/json.sh uses.
 [ -n "${CCTD_MEMO[1]+set}" ] || SECONDS=0
 
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is

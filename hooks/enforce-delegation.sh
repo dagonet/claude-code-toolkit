@@ -2,9 +2,9 @@
 # enforce-delegation.sh — PreToolUse hook: the PO (main thread) never does
 # hands-on work; sub-agents do all coding/building/testing.
 #
-# Matchers (two groups in settings.json):
-#   Edit|Write|NotebookEdit  — deny main-thread edits outside the PO write surface
-#   Bash                     — deny main-thread build/test-runner commands
+# Registration (the cct plugin's hooks/hooks.json):
+#   Edit|Write|NotebookEdit  — its own entry: deny main-thread edits outside the PO write surface
+#   Bash                     — the dispatcher table (hooks/dispatch.sh bash; v6.0): deny main-thread build/test-runner commands
 #
 # Discriminator: the hook stdin JSON contains `agent_id` ONLY when the call
 # originates inside a subagent. agent_id present -> allow (subagents do the

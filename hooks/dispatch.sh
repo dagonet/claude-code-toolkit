@@ -35,7 +35,7 @@ cctd_libs_ok() {
 # json_memo_set's own rc is not acted on: the memo carries it to each guard, which decides as it does today.
 # A NUL byte makes `read -d ''` stop early, which would hand the guards a truncated payload: refuse that.
 cctd_prepare() {
-  SECONDS=0   # the dispatcher's start IS the hook start: pre-commit-test's hook-wide ceiling counts from here (it runs after three other guards)
+  SECONDS=0   # the dispatcher's start IS the hook start: pre-commit-test's hook-wide ceiling counts from here (it runs after the guards ahead of it in its table)
   cctd_libs_ok || return 2
   # every guard runs on </dev/null; if that cannot be opened the `.` never runs (rc 1) and every guard would be skipped
   : </dev/null 2>/dev/null || { echo "BLOCKED: dispatch.sh: /dev/null unreadable -- cannot determine" >&2; return 2; }

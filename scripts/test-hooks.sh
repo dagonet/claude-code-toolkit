@@ -12234,30 +12234,42 @@ else
   v6d_run n powershell "$(mkjson Bash 'git commit -m "x"' "$V6D_BAD")"
   expect "v6 dispatch: (n) control: a failing Test is refused through the dispatcher" "rc=2" "rc=$V6D_RC"
 
-  # (t) pre-commit-test's hook-wide ceiling counts from the DISPATCHER's start (it runs after other guards). A stand-in
-  # guard ahead of it sleeps 4 s; the ceiling is 6 s and the Test sleeps 4 s: counted from the dispatcher's start the
-  # ceiling is reached 2 s into the Test (refused), counted from pre-commit-test's own start the Test ends first (passes).
+  # (z) pre-commit-test's hook-wide ceiling counts from the DISPATCHER's start (it runs after other guards). Trees sc1-sc5
+  # and the label (z) are used by these rows only. A stand-in guard ahead of it sleeps 4 s, the ceiling is 4 s and the
+  # Test sleeps 2 s: counted from the dispatcher's start the ceiling is already reached at pre-commit-test's first poll
+  # (refused); counted from its own start the Test ends 2 s before the ceiling (passes).
   V6D_SLOW=$(mkrepo v6dslow feature/z)
-  printf '# ctx\n\n- **Test**: `sleep 4`\n' > "$V6D_SLOW/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Test**: `sleep 2`\n' > "$V6D_SLOW/PROJECT_CONTEXT.md"
   V6D_SLOWC=$(mkjson Bash 'git commit -m "x"' "$V6D_SLOW")
-  v6d_t_run() { # <tree> -> "rc=<rc> ceiling=<yes|no>"; the tree's gate-before-merge is a 4 s stand-in
-    local t="$V6D/$1" o r
-    v6d_put "$1" gate-before-merge 'sleep 4'
-    o=$(printf '%s' "$V6D_SLOWC" | env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" PCT_TEST_CEILING_TESTONLY_S=6 bash "$t/hooks/dispatch.sh" powershell 2>&1 >/dev/null); r=$?
+  v6d_z_run() { # <tree> <payload> [VAR=value ...] -> "rc=<rc> ceiling=<yes|no>": the powershell table on that tree
+    local t="$V6D/$1" p=$2 o r
+    shift 2
+    o=$(printf '%s' "$p" | env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" "$@" bash "$t/hooks/dispatch.sh" powershell 2>&1 >/dev/null); r=$?
     echo "rc=$r ceiling=$(v6d_has "$o" 'hook-wide ceiling')"
   }
-  v6d_mk t m
-  expect "v6 dispatch: (t) a slow guard ahead of pre-commit-test: its ceiling counts from the dispatcher's start (refused)" "rc=2 ceiling=yes" "$(v6d_t_run t)"
+  v6d_z_reverted() { # <file> <count of lines the revert must leave> <pattern> -- proves the sed below really changed the copy
+    [ "$(grep -c "$3" "$1")" = "$2" ] && echo reverted || echo NOT-REVERTED
+  }
+  v6d_mk sc1 m; v6d_put sc1 gate-before-merge 'sleep 4'
+  expect "v6 dispatch: (z) a slow guard ahead of pre-commit-test: its ceiling counts from the dispatcher's start (refused)" "rc=2 ceiling=yes" "$(v6d_z_run sc1 "$V6D_SLOWC" PCT_TEST_CEILING_TESTONLY_S=4)"
   # two-sided: with the standalone-only reset reverted (pre-commit-test resets SECONDS unconditionally) the same run passes
-  v6d_mk t2 m
-  sed -i 's/^\[ -n "\${CCTD_MEMO\[1\]+set}" \] || SECONDS=0$/SECONDS=0/' "$V6D/t2/hooks/pre-commit-test.sh"
-  expect "v6 dispatch: (t) control: the reset made unconditional (a scratch copy) lets the same run through" "unconditional rc=0 ceiling=no" "$([ "$(grep -c '^SECONDS=0$' "$V6D/t2/hooks/pre-commit-test.sh")" = 1 ] && echo unconditional || echo NOT-REVERTED) $(v6d_t_run t2)"
+  v6d_mk sc2 m; v6d_put sc2 gate-before-merge 'sleep 4'
+  sed -i 's/^\[ -n "\${CCTD_MEMO\[1\]+set}" \] || SECONDS=0$/SECONDS=0/' "$V6D/sc2/hooks/pre-commit-test.sh"
+  expect "v6 dispatch: (z) control: pre-commit-test's reset made unconditional (a scratch copy) lets the same run through" "reverted rc=0 ceiling=no" "$(v6d_z_reverted "$V6D/sc2/hooks/pre-commit-test.sh" 1 '^SECONDS=0$') $(v6d_z_run sc2 "$V6D_SLOWC" PCT_TEST_CEILING_TESTONLY_S=4)"
 
-  # (u) an empty table is an error, never an empty run that passes everything
-  v6d_mk u0
-  sed -i "s/^\( *bash) *cctd_tab=\)'[^']*'/\1''/" "$V6D/u0/hooks/dispatch.sh"
-  v6d_run u0 bash "$V6D_PUSH"
-  expect "v6 dispatch: (u) a table with no guards: rc 2 + 'empty table' (a push to main is not waved through)" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "empty table 'bash'")"
+  # (z) the dispatcher's own reset: SECONDS is imported from the environment, so a huge inherited value would make the
+  # ceiling "already reached" for a Test that passes. cctd_prepare resets it; with that line deleted the run is refused.
+  v6d_mk sc3 m
+  expect "v6 dispatch: (z) an inherited SECONDS=99999 does not trip pre-commit-test's ceiling (cctd_prepare resets it)" "rc=0 ceiling=no" "$(v6d_z_run sc3 "$V6D_SLOWC" SECONDS=99999)"
+  v6d_mk sc4 m
+  sed -i '/^  SECONDS=0 /d' "$V6D/sc4/hooks/dispatch.sh"
+  expect "v6 dispatch: (z) control: cctd_prepare's reset deleted (a scratch copy), the same inherited SECONDS is refused at once" "reverted rc=2 ceiling=yes" "$(v6d_z_reverted "$V6D/sc4/hooks/dispatch.sh" 0 '^  SECONDS=0 ') $(v6d_z_run sc4 "$V6D_SLOWC" SECONDS=99999)"
+
+  # (z) an empty table is an error, never an empty run that passes everything
+  v6d_mk sc5
+  sed -i "s/^\( *bash) *cctd_tab=\)'[^']*'/\1''/" "$V6D/sc5/hooks/dispatch.sh"
+  v6d_run sc5 bash "$V6D_PUSH"
+  expect "v6 dispatch: (z) a table with no guards: rc 2 + 'empty table' (a push to main is not waved through)" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "empty table 'bash'")"
 
   # (o) Review Focus 5: exit from inside a function / a trap is the guard's verdict and never ends the dispatcher
   v6d_mk o m; v6d_marker o no-push-main; v6d_marker o enforce-delegation
