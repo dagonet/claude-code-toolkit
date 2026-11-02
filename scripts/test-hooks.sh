@@ -251,17 +251,39 @@ trow_tool() { # -> an assistant tool_use-only row
 
 # --- assertion --------------------------------------------------------------
 
+# v6.0: a row on one of the six dispatched guards asserts a second time, through the dispatcher's runner, under
+# "<label> [dispatch]". It uses cctd_source_guard, not cctd_run_guard: the direct rows have no class gate and no
+# step-aside, so the replay has none either (the selection is covered by the v6 dispatch rows). Copies under
+# $TMPROOT and the other hooks are not replayed.
+hk_modes() { # <hook_abs_path> -> HK_MODES ("direct", or "direct dispatch") and HK_G (the guard's name)
+  HK_MODES=direct; HK_G=${1##*/}; HK_G=${HK_G%.sh}
+  case "$1" in
+    "$ROOT"/hooks/no-push-main.sh|"$ROOT"/hooks/deny-secret-reads.sh|"$ROOT"/hooks/gate-before-merge.sh|"$ROOT"/hooks/pre-commit-test.sh|"$ROOT"/hooks/deny-hang-shapes.sh|"$ROOT"/hooks/enforce-delegation.sh) HK_MODES="direct dispatch" ;;
+  esac
+}
+hk_exec() { # <mode> <hook_abs_path> <json> -- payload on stdin; the caller's redirections and TMPDIR apply
+  if [ "$1" = dispatch ]; then
+    printf '%s' "$3" | bash -c '. "$1"; cctd_prepare; cctd_source_guard "$2"; exit $?' _ "$ROOT/hooks/dispatch.sh" "$HK_G"
+  else
+    printf '%s' "$3" | bash "$2"
+  fi
+}
+
 check() { # <label> <hook> <expected_exit> <json>
   label="$1"; hook="$2"; want="$3"; json="$4"
-  printf '%s' "$json" | bash "$ROOT/$hook" >/dev/null 2>&1
-  got=$?
-  if [ "$got" = "$want" ]; then
-    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
-    pass=$((pass + 1))
-  else
-    printf 'FAIL  %-42s (want %s, got %s)\n' "$label" "$want" "$got"
-    fail=$((fail + 1))
-  fi
+  hk_modes "$ROOT/$hook"
+  for hk_mode in $HK_MODES; do
+    hk_lab=$label; if [ "$hk_mode" = dispatch ]; then hk_lab="$label [dispatch]"; fi
+    hk_exec "$hk_mode" "$ROOT/$hook" "$json" >/dev/null 2>&1
+    got=$?
+    if [ "$got" = "$want" ]; then
+      printf 'PASS  %-42s (exit %s)\n' "$hk_lab" "$got"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  %-42s (want %s, got %s)\n' "$hk_lab" "$want" "$got"
+      fail=$((fail + 1))
+    fi
+  done
 }
 
 # Message assertion: exit code AND an ASCII substring of the hook's stderr.
@@ -269,21 +291,25 @@ check() { # <label> <hook> <expected_exit> <json>
 check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
   label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
   errf="$TMPROOT/check_msg.err"
-  # Fresh TMPDIR per case. json_warn_once stays silent while its marker exists,
-  # and a SESSION-keyed marker never expires — a shared TMPDIR would make any
-  # WARN assertion pass on the first run of the suite and fail on every later
-  # one, on the same machine, for no reason visible in the diff.
-  cmtmp="$TMPROOT/check_msg.tmp"; rm -rf "$cmtmp"; mkdir -p "$cmtmp"
-  printf '%s' "$json" | TMPDIR="$cmtmp" bash "$hookp" >/dev/null 2>"$errf"
-  got=$?
-  if [ "$got" = "$want" ] && grep -qF "$needle" "$errf"; then
-    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
-    pass=$((pass + 1))
-  else
-    printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' \
-      "$label" "$want" "$needle" "$got" "$(head -1 "$errf")"
-    fail=$((fail + 1))
-  fi
+  hk_modes "$hookp"
+  for hk_mode in $HK_MODES; do
+    hk_lab=$label; if [ "$hk_mode" = dispatch ]; then hk_lab="$label [dispatch]"; fi
+    # Fresh TMPDIR per case. json_warn_once stays silent while its marker exists,
+    # and a SESSION-keyed marker never expires — a shared TMPDIR would make any
+    # WARN assertion pass on the first run of the suite and fail on every later
+    # one, on the same machine, for no reason visible in the diff.
+    cmtmp="$TMPROOT/check_msg.tmp"; rm -rf "$cmtmp"; mkdir -p "$cmtmp"
+    TMPDIR="$cmtmp" hk_exec "$hk_mode" "$hookp" "$json" >/dev/null 2>"$errf"
+    got=$?
+    if [ "$got" = "$want" ] && grep -qF "$needle" "$errf"; then
+      printf 'PASS  %-42s (exit %s)\n' "$hk_lab" "$got"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' \
+        "$hk_lab" "$want" "$needle" "$got" "$(head -1 "$errf")"
+      fail=$((fail + 1))
+    fi
+  done
 }
 
 # The negative of check_msg: exit code AND the ABSENCE of a stderr substring.
@@ -293,17 +319,21 @@ check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
 check_nomsg() { # <label> <hook_abs_path> <expected_exit> <json> <forbidden-needle>
   label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
   errf="$TMPROOT/check_nomsg.err"
-  cntmp="$TMPROOT/check_nomsg.tmp"; rm -rf "$cntmp"; mkdir -p "$cntmp"
-  printf '%s' "$json" | TMPDIR="$cntmp" bash "$hookp" >/dev/null 2>"$errf"
-  got=$?
-  if [ "$got" = "$want" ] && ! grep -qF "$needle" "$errf"; then
-    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
-    pass=$((pass + 1))
-  else
-    printf 'FAIL  %-42s (want %s WITHOUT "%s", got %s: %s)\n' \
-      "$label" "$want" "$needle" "$got" "$(head -1 "$errf")"
-    fail=$((fail + 1))
-  fi
+  hk_modes "$hookp"
+  for hk_mode in $HK_MODES; do
+    hk_lab=$label; if [ "$hk_mode" = dispatch ]; then hk_lab="$label [dispatch]"; fi
+    cntmp="$TMPROOT/check_nomsg.tmp"; rm -rf "$cntmp"; mkdir -p "$cntmp"
+    TMPDIR="$cntmp" hk_exec "$hk_mode" "$hookp" "$json" >/dev/null 2>"$errf"
+    got=$?
+    if [ "$got" = "$want" ] && ! grep -qF "$needle" "$errf"; then
+      printf 'PASS  %-42s (exit %s)\n' "$hk_lab" "$got"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  %-42s (want %s WITHOUT "%s", got %s: %s)\n' \
+        "$hk_lab" "$want" "$needle" "$got" "$(head -1 "$errf")"
+      fail=$((fail + 1))
+    fi
+  done
 }
 
 # Value assertion, for hooks whose contract is their STDOUT (updatedInput /
@@ -9216,7 +9246,8 @@ printf '# ctx\n\n- **Test**: `echo x >> %s/g6c.count; exit 0`\n' "$TMPROOT" > "$
 rm -f "$TMPROOT/g6c.count"
 check_msg "G6 T3-3: two commits in the same repository -> allowed" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash "git commit -m a && git -C $G6C/sub commit -m b" "$G6C")" "passed."
-expect "G6 T3-3: ... and the Test ran exactly once" 1 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
+# check_msg ran the hook twice (direct, then [dispatch]); each run must have run the Test once: 2 lines in all
+expect "G6 T3-3: ... and the Test ran exactly once per run (direct + [dispatch])" 2 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
 check_msg "G6 S-3c: cd sub; cd -; git commit -> refused (a second cd)" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'cd sub; cd -; git commit -m x' "$G6OK")" "a directory change in a command with commit"
 # the top-level's Test wins over a failing sub/PROJECT_CONTEXT.md
