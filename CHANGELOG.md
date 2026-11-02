@@ -70,6 +70,7 @@ Hook cost per Bash call (an `ls` call in penumbra, harness `hookwall.sh`, N=10).
 - **Process starts for an `ls` call (Linux, strace):** 4 execs and 29 forks under v6, against 41 execs and 113 forks for the six v5 guards.
 - **`bash scripts/test-hooks.sh`:** 6515 passed, 0 failed, 6 skipped, at 6a5fded (v5.2.1 measured 4231/0/6). About 2100 of the rows are the guard rows replayed through the dispatcher's runner. **The suite now takes about 23 minutes on Linux instead of about 13, so every gate and the parser matrix get longer.**
 - **Consistency script (`scripts/verify-template-consistency.sh`):** ALL CHECKS PASSED, 350 PASS lines (v5.2.0 measured 343) and one skipped check, check 50, which prints as a PASS line while skipping (no system `python`, only `python3`). The bootstrap-fixture block inside it ran 35 passed, 0 failed, 37 skipped (72 assertions). Measured on agent-host-1 at the release commit's tree.
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at b17d800 on agent-host-1:** 0 failed in all three configurations: node 6515/0/6, python3-only 6222/0/274, jq-only 6124/0/370. Both restricted skip counts rose by exactly 33 from v5.2.1 (241 and 337): the new v6 rows that need node (enforce-delegation) skip without it. That run failed the band check for jq (370 against the old 335 +/-20), so `EXP_PY_SKIP` and `EXP_JQ_SKIP` each rose by those 33, to 288 and 368.
 
 ## v5.2.1 — 2026-10-28
 
