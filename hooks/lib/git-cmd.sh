@@ -400,8 +400,9 @@ gc_read_stdin() {
       # A FAILED join falls back to the RAW text (reviewer, plan round 1): an
       # empty assignment would hit the guards' `[ -n ]` fast exits and allow
       # everything -- v4.1.1's behaviour is the floor, never allow-all.
-      # v6.0 E1: the join only acts at a backslash, so it runs (cat + awk) only when the
-      # text holds one; the empty text holds none, so the old `[ -n ]` guard is subsumed.
+      # v6.0 E1: the join only acts at a backslash (for valid UTF-8; the parsers normalise invalid bytes),
+      # so it runs (cat + awk) only when the text holds one; the empty text holds none, so the old
+      # `[ -n ]` guard is subsumed.
       case "$GC_CMD" in
         *\\*) _gc_j=$(printf '%s' "$GC_CMD" | cmd_join_continuations) && [ -n "$_gc_j" ] && GC_CMD="$_gc_j" ;;
       esac

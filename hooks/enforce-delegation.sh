@@ -98,7 +98,9 @@ if [ -f "$jlib" ]; then
   # v6.0 E2: dispatched (the memo is set), a Bash or PowerShell command with no backslash and none of these ten
   # substrings cannot match any runner pattern below, so the program would only print PASS: skip it. The backslash
   # is there because the program joins backslash-newline first (py\<newline>test); `test` is a substring, not
-  # `go test`, because the JS \s is wider than a bash pattern's whitespace. Not dispatched: nothing changes.
+  # `go test`, because the JS \s is wider than a bash pattern's whitespace. The superset is over the tool names
+  # the harness produces ('Bash' / 'PowerShell'); a tool_name such as 'Bash\n' is not produced.
+  # Not dispatched: nothing changes.
   if [ "${CCTD_MEMO[1]+set}" = set ] && json_fields "$INPUT" tool_name tool_input.command; then
     case ${JF[0]} in
       Bash|PowerShell)

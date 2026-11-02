@@ -486,7 +486,9 @@ CONT=$(printf 'git push \\\norigin main')
 [ "$(printf '%s' "$CONT" | od -An -c | tr -d ' \n')" = 'gitpush\\noriginmain' ] || echo "FAIL  continuation fixture bytes are wrong: $(printf '%s' "$CONT" | od -An -c | tr -d '\n')"
 check "continued push, feature branch (§1 twin)"  "$H" 2 "$(mkjson Bash "$CONT" "$FEATREPO")"
 check "continued push origin feature"            "$H" 0 "$(mkjson Bash "$(printf 'git push \\\norigin feature')" "$FEATREPO")"
-check "continued push, CRLF"                     "$H" 2 "$(mkjson Bash "$(printf 'git push \\\r\norigin main')" "$FEATREPO")"
+# jesc leaves a CR alone and a raw CR inside a JSON string does not parse (the row would pass on the unparsed payload),
+# so the payload is spelled by hand with the CR as \r: the command is `git push \` CR LF `origin main`.
+check "continued push, CRLF"                     "$H" 2 "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'git push \\\r\norigin main' "$(jesc "$FEATREPO")")"
 check "continuation at END of command"           "$H" 2 "$(mkjson Bash "$(printf 'git push origin main \\\n')" "$FEATREPO")"
 check "mid-word join: git pu\\<LF>sh"            "$H" 2 "$(mkjson Bash "$(printf 'git pu\\\nsh origin main')" "$FEATREPO")"
 check "even backslashes: NOT joined (2nd seg)"   "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\ngit push origin main')" "$FEATREPO")"
@@ -1103,8 +1105,9 @@ expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s
 # which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
 # cat, awk or sed. The control command holds a backslash that only joins into `-C`, so it must
 # still exec the join (cat + awk) and the protection (sed): that keeps the first row from
-# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` cuts the long
-# `bash -c <probe>` line (which holds both names) off before them, so only the real markers open and close the range.
+# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` pins strace's default
+# 32-character string truncation, which the probe relies on: it cuts the long `bash -c <probe>` line (which holds
+# both names) off before them, so only the real markers open and close the range.
 E1_SPAWN_PROBE='. "$1/hooks/lib/json.sh"; . "$1/hooks/lib/git-cmd.sh"; json_memo_set "$2" tool_name cwd tool_input.command; "$BASH" -c : E1_BEGIN; gc_read_stdin </dev/null; "$BASH" -c : E1_END'
 e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (sorted, space-terminated)
   local st="$TMPROOT/e1_strace.txt"
@@ -12114,7 +12117,7 @@ else
   printf '# ctx\n\n- **Test**: `bash %s/slow.sh`\n' "$V6D" > "$V6D_SLOW/PROJECT_CONTEXT.md"
   mkjson PowerShell 'git commit -m "x"' "$V6D_SLOW" > "$V6D/slow.payload"
   v6d_term_test() {
-    local t="$V6D/$1" dpid spid pg i verdict=never-started
+    local t="$V6D/$1" dpid spid pg tgt i verdict=never-started
     rm -f "$t/spid"
     ( exec env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" V6D_SPID="$t/spid" bash "$t/hooks/dispatch.sh" powershell < "$V6D/slow.payload" > /dev/null 2>&1 ) &
     dpid=$!
@@ -12123,11 +12126,12 @@ else
     if [ -n "$spid" ]; then
       pg=$(ps -o pgid= -p "$spid" 2>/dev/null | tr -d ' ')
       kill -TERM "$dpid"
-      i=0; while kill -0 "$spid" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
-      if kill -0 "$spid" 2>/dev/null; then
+      # the Test is a process group of its own (pre-commit-test's set -m): poll the group, not slow.sh's pid alone
+      if [ -n "$pg" ]; then tgt="-$pg"; else tgt=$spid; fi
+      i=0; while kill -0 -- "$tgt" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
+      if kill -0 -- "$tgt" 2>/dev/null; then
         verdict=alive
-        if [ -n "$pg" ]; then kill -KILL -- "-$pg" 2>/dev/null; fi
-        kill -KILL "$spid" 2>/dev/null
+        kill -KILL -- "$tgt" 2>/dev/null
       else
         verdict=gone
       fi
@@ -12155,8 +12159,13 @@ else
 
   # (y) a guard runs on </dev/null; when that cannot be opened (provoked with an fd limit of 3 after sourcing) the `.` never
   # runs and every guard would be skipped with rc 1, so cctd_prepare refuses (without its check this prints rc=0).
-  v6d_y=$(printf '{}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASH" -c '. "$1"; ulimit -n 3; cctd_prepare; echo "rc=$?"' _ "$V6D/base/hooks/dispatch.sh" 2>/dev/null | tail -n 1)
-  expect "v6 dispatch: (y) /dev/null cannot be opened: cctd_prepare refuses (rc 2) instead of skipping every guard" "rc=2" "$v6d_y"
+  # Host self-check: Cygwin/MSYS may not limit open(); where `( ulimit -n 3; : </dev/null )` still succeeds the row cannot run.
+  if ( ulimit -n 3; : </dev/null ) 2>/dev/null; then
+    skip_host "v6 dispatch: (y) /dev/null cannot be opened" "this host does not limit open() with ulimit -n"
+  else
+    v6d_y=$(printf '{}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASH" -c '. "$1"; ulimit -n 3; cctd_prepare; echo "rc=$?"' _ "$V6D/base/hooks/dispatch.sh" 2>/dev/null | tail -n 1)
+    expect "v6 dispatch: (y) /dev/null cannot be opened: cctd_prepare refuses (rc 2) instead of skipping every guard" "rc=2" "$v6d_y"
+  fi
 
   # (x) R-10: the parser json_memo_set settled on travels in the memo as the pair `@parser <backend>`, so a guard (whose
   # json.sh starts with JSON_PARSER="") does not probe again. x1 counts node starts of one dispatcher run with a counting
@@ -12173,13 +12182,13 @@ else
     fi
     if [ -f "$t/nodes" ]; then wc -l < "$t/nodes" | tr -d ' '; else echo 0; fi
   }
+  # used by (x1) and (E2): the payload holds `test`, so enforce-delegation's E2 fast exit does not take it and its own node program runs
+  V6D_ECHOTEST=$(mkjson Bash 'echo test' "$V6D_FEAT")
   if [ -z "$HAVE_NODE" ]; then
     skip "v6 dispatch: (x1) node starts of one dispatcher run" "enforce-delegation needs node" 2
   else
     v6d_mk x m; v6d_mk x0 m
     sed -i '/node|python3|jq|none) JSON_PARSER=/d' "$V6D/x0/hooks/lib/json.sh"
-    # the payload holds `test`, so enforce-delegation's E2 fast exit does not take it and its own node program runs
-    V6D_ECHOTEST=$(mkjson Bash 'echo test' "$V6D_FEAT")
     expect "v6 dispatch: (x1) one run on a command that reaches enforce-delegation's program starts node twice: the parse and that program, no re-probe" "2" "$(v6d_node_starts x "$V6D_ECHOTEST")"
     expect "v6 dispatch: (x1) control: without the adoption (mutant copy, exactly 1 line less) it starts node 3 times" "3 lines=1" "$(v6d_node_starts x0 "$V6D_ECHOTEST") lines=$(diff "$ROOT/hooks/lib/json.sh" "$V6D/x0/hooks/lib/json.sh" | grep -c '^<')"
   fi
