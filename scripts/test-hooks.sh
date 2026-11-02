@@ -12234,6 +12234,31 @@ else
   v6d_run n powershell "$(mkjson Bash 'git commit -m "x"' "$V6D_BAD")"
   expect "v6 dispatch: (n) control: a failing Test is refused through the dispatcher" "rc=2" "rc=$V6D_RC"
 
+  # (t) pre-commit-test's hook-wide ceiling counts from the DISPATCHER's start (it runs after other guards). A stand-in
+  # guard ahead of it sleeps 4 s; the ceiling is 6 s and the Test sleeps 4 s: counted from the dispatcher's start the
+  # ceiling is reached 2 s into the Test (refused), counted from pre-commit-test's own start the Test ends first (passes).
+  V6D_SLOW=$(mkrepo v6dslow feature/z)
+  printf '# ctx\n\n- **Test**: `sleep 4`\n' > "$V6D_SLOW/PROJECT_CONTEXT.md"
+  V6D_SLOWC=$(mkjson Bash 'git commit -m "x"' "$V6D_SLOW")
+  v6d_t_run() { # <tree> -> "rc=<rc> ceiling=<yes|no>"; the tree's gate-before-merge is a 4 s stand-in
+    local t="$V6D/$1" o r
+    v6d_put "$1" gate-before-merge 'sleep 4'
+    o=$(printf '%s' "$V6D_SLOWC" | env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" PCT_TEST_CEILING_TESTONLY_S=6 bash "$t/hooks/dispatch.sh" powershell 2>&1 >/dev/null); r=$?
+    echo "rc=$r ceiling=$(v6d_has "$o" 'hook-wide ceiling')"
+  }
+  v6d_mk t m
+  expect "v6 dispatch: (t) a slow guard ahead of pre-commit-test: its ceiling counts from the dispatcher's start (refused)" "rc=2 ceiling=yes" "$(v6d_t_run t)"
+  # two-sided: with the standalone-only reset reverted (pre-commit-test resets SECONDS unconditionally) the same run passes
+  v6d_mk t2 m
+  sed -i 's/^\[ -n "\${CCTD_MEMO\[1\]+set}" \] || SECONDS=0$/SECONDS=0/' "$V6D/t2/hooks/pre-commit-test.sh"
+  expect "v6 dispatch: (t) control: the reset made unconditional (a scratch copy) lets the same run through" "unconditional rc=0 ceiling=no" "$([ "$(grep -c '^SECONDS=0$' "$V6D/t2/hooks/pre-commit-test.sh")" = 1 ] && echo unconditional || echo NOT-REVERTED) $(v6d_t_run t2)"
+
+  # (u) an empty table is an error, never an empty run that passes everything
+  v6d_mk u0
+  sed -i "s/^\( *bash) *cctd_tab=\)'[^']*'/\1''/" "$V6D/u0/hooks/dispatch.sh"
+  v6d_run u0 bash "$V6D_PUSH"
+  expect "v6 dispatch: (u) a table with no guards: rc 2 + 'empty table' (a push to main is not waved through)" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "empty table 'bash'")"
+
   # (o) Review Focus 5: exit from inside a function / a trap is the guard's verdict and never ends the dispatcher
   v6d_mk o m; v6d_marker o no-push-main; v6d_marker o enforce-delegation
   v6d_put o deny-hang-shapes 'f() { exit 2; }; f'

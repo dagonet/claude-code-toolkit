@@ -5013,6 +5013,19 @@ case "$c74_sess" in *" ok") ;; *) c74_bad="$c74_bad cct-session.sh-SessionEnd-ti
 if grep -q 'hooks/dispatch\.sh' hooks/hooks.json; then
   [ -f hooks/dispatch.sh ] || c74_bad="$c74_bad missing:dispatch"
   [ "$(c71_dtab hooks/dispatch.sh | awk '{print $1}' | sort -u | tr '\n' ' ')" = "bash powershell " ] || c74_bad="$c74_bad dispatch.sh-lacks-the-bash-and-powershell-tables"
+  # v6.0 D2: the ORDER of the tables is pinned (the closed git gates run first, so an open guard can never keep one from running).
+  # The lists below are the expectation the tables are held to, not a second source: the tables are still read from dispatch.sh.
+  c74_d2_bash='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation'
+  c74_d2_ps='no-push-main gate-before-merge pre-commit-test'
+  c74_tab() { c71_dtab "$1" | awk -v t="$2" '$1==t { printf "%s%s", (n++ ? " " : ""), $2 }'; } # <dispatch.sh> <table>
+  c74_d2_ok() { [ "$(c74_tab "$1" bash)" = "$c74_d2_bash" ] && [ "$(c74_tab "$1" powershell)" = "$c74_d2_ps" ]; }
+  c74_d2_ok hooks/dispatch.sh || c74_bad="$c74_bad dispatch.sh-tables-differ-from-D2(bash:$(c74_tab hooks/dispatch.sh bash);powershell:$(c74_tab hooks/dispatch.sh powershell))"
+  c74_tmp=$(mktemp -d)
+  sed "s/cctd_tab='no-push-main deny-secret-reads /cctd_tab='deny-secret-reads no-push-main /" hooks/dispatch.sh > "$c74_tmp/swapped.sh"
+  if cmp -s hooks/dispatch.sh "$c74_tmp/swapped.sh" || c74_d2_ok "$c74_tmp/swapped.sh"; then
+    c74_bad="$c74_bad D2-order-CONTROL-failed(two-guards-swapped-in-a-copy-were-not-flagged)"
+  fi
+  rm -rf "$c74_tmp"
 fi
 if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) hooks, all present and classed"; else ko "74: hooks.json/run-hook.sh:$c74_bad"; fi
 

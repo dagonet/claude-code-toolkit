@@ -35,6 +35,7 @@ cctd_libs_ok() {
 # json_memo_set's own rc is not acted on: the memo carries it to each guard, which decides as it does today.
 # A NUL byte makes `read -d ''` stop early, which would hand the guards a truncated payload: refuse that.
 cctd_prepare() {
+  SECONDS=0   # the dispatcher's start IS the hook start: pre-commit-test's hook-wide ceiling counts from here (it runs after three other guards)
   cctd_libs_ok || return 2
   # every guard runs on </dev/null; if that cannot be opened the `.` never runs (rc 1) and every guard would be skipped
   : </dev/null 2>/dev/null || { echo "BLOCKED: dispatch.sh: /dev/null unreadable -- cannot determine" >&2; return 2; }
@@ -92,6 +93,7 @@ cctd_main() {
     powershell) cctd_tab='no-push-main gate-before-merge pre-commit-test' ;;
     *) echo "HOOK BLOCKED: dispatch.sh: unknown table '${1-}' -- the plugin's hooks.json and dispatch.sh disagree" >&2; return 2 ;;
   esac
+  [ -n "$cctd_tab" ] || { echo "HOOK BLOCKED: dispatch.sh: empty table '${1-}'" >&2; return 2; }
   cctd_prepare || return 2
   for cctd_g in $cctd_tab; do
     cctd_run_guard "$cctd_g"

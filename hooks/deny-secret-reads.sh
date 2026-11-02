@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse hook: refuse to read a secret-bearing .env file.
 #
-# Matcher: Read|Bash
+# Matcher: Read (its own registration), plus the Bash dispatcher table (hooks/dispatch.sh bash; v6.0)
 #
 # v4.1.2: this hook now calls cmd_join_continuations (hooks/lib/json.sh,
 # already sourced below) on the Bash arm, so `awk` joins this hook's minimum
