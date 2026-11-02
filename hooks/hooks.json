@@ -12,12 +12,13 @@
       ] }
     ],
     "PreToolUse": [
-      { "matcher": "Bash|PowerShell", "hooks": [
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" pre-commit-test", "timeout": 3360 },
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" no-push-main" },
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" gate-before-merge" }
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" bash", "timeout": 3360 }
       ] },
-      { "matcher": "Read|Bash", "hooks": [
+      { "matcher": "PowerShell", "hooks": [
+        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" powershell", "timeout": 3360 }
+      ] },
+      { "matcher": "Read", "hooks": [
         { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" deny-secret-reads" }
       ] },
       { "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
@@ -35,10 +36,6 @@
       ] },
       { "matcher": "Edit|Write|NotebookEdit", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" enforce-delegation" }
-      ] },
-      { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" enforce-delegation" },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-hang-shapes" }
       ] },
       { "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" agent-budget-warn" }

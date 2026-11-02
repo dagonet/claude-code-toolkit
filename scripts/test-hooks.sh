@@ -489,7 +489,7 @@ check "continued push, feature branch (§1 twin)"  "$H" 2 "$(mkjson Bash "$CONT"
 check "continued push origin feature"            "$H" 0 "$(mkjson Bash "$(printf 'git push \\\norigin feature')" "$FEATREPO")"
 # jesc leaves a CR alone and a raw CR inside a JSON string does not parse (the row would pass on the unparsed payload),
 # so the payload is spelled by hand with the CR as \r: the command is `git push \` CR LF `origin main`.
-check_msg "continued push, CRLF"                 "$ROOT/$H" 2 "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'git push \\\r\norigin main' "$(jesc "$FEATREPO")")" "protected branch"
+check_msg "continued push, CRLF"                 "$ROOT/$H" 2 "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'git push \\\r\norigin main' "$(jesc "$FEATREPO")")" "pushing to a protected branch"
 check "continuation at END of command"           "$H" 2 "$(mkjson Bash "$(printf 'git push origin main \\\n')" "$FEATREPO")"
 check "mid-word join: git pu\\<LF>sh"            "$H" 2 "$(mkjson Bash "$(printf 'git pu\\\nsh origin main')" "$FEATREPO")"
 check "even backslashes: NOT joined (2nd seg)"   "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\ngit push origin main')" "$FEATREPO")"
@@ -9252,7 +9252,7 @@ check_msg "G6 T3-3: two commits in the same repository -> allowed" "$ROOT/hooks/
   "$(mkjson Bash "git commit -m a && git -C $G6C/sub commit -m b" "$G6C")" "passed."
 # check_msg ran the hook twice ([dispatch], then direct). Each run's `passed.` needle is read from its own stderr (errf is
 # truncated per run), so each run ran the Test at least once; 2 lines in all therefore means exactly 1 + 1.
-expect "G6 T3-3: ... and the Test ran exactly once per run (direct + [dispatch])" 2 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
+expect "G6 T3-3: ... and the Test ran exactly once per run ([dispatch] + direct)" 2 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
 check_msg "G6 S-3c: cd sub; cd -; git commit -> refused (a second cd)" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'cd sub; cd -; git commit -m x' "$G6OK")" "a directory change in a command with commit"
 # the top-level's Test wins over a failing sub/PROJECT_CONTEXT.md
@@ -12350,7 +12350,19 @@ while IFS= read -r v5g_cmd; do
     *) expect "v5 plugin gone: non-closed $v5g_name -> not exit 2" "no" "$(case $v5g_out in *rc=2) echo yes ;; *) echo no ;; esac)" ;;
   esac
 done < <(printf '%s\n' "$V5RAW" | sed 's/\\"/"/g')
-expect "v5 plugin gone: the hooks.json commands were enumerated" "yes" "$([ "$V5GN" -ge 17 ] && echo yes || echo no)"
+# v6.0: the Bash and PowerShell guards moved into two dispatcher registrations (hooks/dispatch.sh <table>, no run-hook.sh),
+# so the run-hook.sh commands are 16 now (21 before the dispatchers took five of them) and the dispatcher commands are
+# counted and run on their own: a closed registration, so a missing plugin must give exit 2 + the restart message.
+expect "v5 plugin gone: the hooks.json commands were enumerated" "yes" "$([ "$V5GN" -ge 16 ] && echo yes || echo no)"
+V6RGRAW="$(sed -n 's/.*"command": "\(.*[^\\]\)"\(, "timeout": [0-9]*\)\{0,1\} }.*/\1/p' "$ROOT/hooks/hooks.json" | grep 'hooks/dispatch\.sh')"
+V6RGN=0; V6RGT=""
+while IFS= read -r v6rg_cmd; do
+  [ -n "$v6rg_cmd" ] || continue
+  v6rg_tbl="${v6rg_cmd##* }"; V6RGN=$((V6RGN + 1)); V6RGT="$V6RGT$v6rg_tbl "
+  v6rg_out="$(CLAUDE_PLUGIN_ROOT="$V5G" bash -c "$v6rg_cmd" </dev/null 2>&1; echo "rc=$?")"
+  expect "v6 plugin gone: dispatcher ($v6rg_tbl) -> exit 2 + restart message" "BLOCKED: cct plugin files are missing rc=2" "$(printf '%s' "$v6rg_out" | grep -o 'BLOCKED: cct plugin files are missing\|rc=[0-9]*' | tr '\n' ' ' | sed 's/ $//')"
+done < <(printf '%s\n' "$V6RGRAW" | sed 's/\\"/"/g')
+expect "v6 plugin gone: exactly two dispatcher registrations, one per table (bash, powershell)" "2 bash powershell" "$V6RGN $(printf '%s\n' $V6RGT | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v5.0 fix round I1
 
 # ---- v5.0 verify-hooks: also reads the plugin's hooks/hooks.json (spec §3.5)
@@ -12365,8 +12377,8 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/cct-session.sh"
 v5vh_run() { env -u CLAUDE_PROJECT_DIR HOME="$V5VH" "$@" bash "$ROOT/hooks/verify-hooks.sh" --report </dev/null 2>/dev/null; }
 expect "v5 verify-hooks: plugin hook script missing -> reported" "MISSING: $V5V/hooks/no-push-main.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
 V5VG="$TMPROOT/v5vh guarded"; mkdir -p "$V5VG/hooks"; cp "$V5V/hooks/run-hook.sh" "$V5V/hooks/cct-session.sh" "$V5VG/hooks/"
-printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec bash .*"\$f.* pre-commit-test$' | head -1)" > "$V5VG/hooks/hooks.json"
-expect "v5 verify-hooks: closed-class inline-guard registration -> script missing reported" "MISSING: $V5VG/hooks/pre-commit-test.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5VG")"
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec bash .*"\$f.* deny-secret-reads$' | head -1)" > "$V5VG/hooks/hooks.json"
+expect "v5 verify-hooks: closed-class inline-guard registration -> script missing reported" "MISSING: $V5VG/hooks/deny-secret-reads.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5VG")"
 expect "v5 verify-hooks: plugin root unset -> old behaviour (nothing scanned)" "" "$(v5vh_run)"
 expect "v5 verify-hooks: plugin root empty -> old behaviour (nothing scanned)" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT=)"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/no-push-main.sh"
@@ -12374,6 +12386,21 @@ expect "v5 verify-hooks: all plugin scripts present -> silent" "" "$(v5vh_run CL
 rm "$V5V/hooks/cct-session.sh"
 expect "v5 verify-hooks: direct cct-session.sh entry missing -> reported" "MISSING: $V5V/hooks/cct-session.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
 # ---- end v5.0 verify-hooks
+
+# ---- v6.0 verify-hooks: a dispatcher registration checks hooks/dispatch.sh and every guard in ITS tables.
+# The scratch plugin root is a copy of this checkout's hooks/ (the real hooks.json, the real dispatch.sh); the temp HOME
+# of v5vh_run keeps the machine's own settings out of it.
+V6VP="$TMPROOT/v6vh plugin"; mkdir -p "$V6VP"; cp -r "$ROOT/hooks" "$V6VP/hooks"
+expect "v6 verify-hooks: the real registrations over a complete plugin copy -> silent" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+rm "$V6VP/hooks/dispatch.sh"
+expect "v6 verify-hooks: hooks/dispatch.sh deleted -> MISSING" "MISSING: $V6VP/hooks/dispatch.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+cp "$ROOT/hooks/dispatch.sh" "$V6VP/hooks/dispatch.sh"
+rm "$V6VP/hooks/pre-commit-test.sh"
+expect "v6 verify-hooks: a guard only the dispatcher tables list (pre-commit-test) deleted -> MISSING" "MISSING: $V6VP/hooks/pre-commit-test.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+cp "$ROOT/hooks/pre-commit-test.sh" "$V6VP/hooks/pre-commit-test.sh"
+sed -i "s/cctd_tab='no-push-main /cctd_tab='no-such-guard no-push-main /" "$V6VP/hooks/dispatch.sh"
+expect "v6 verify-hooks: the tables come from the plugin root's own dispatch.sh (a guard named there with no script) -> MISSING" "MISSING: $V6VP/hooks/no-such-guard.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+# ---- end v6.0 verify-hooks
 
 # ---- v5.0 agents: cct:<name> resolves from the plugin's agents/ (spec §2)
 V5A="$TMPROOT/v5plug"; mkdir -p "$V5A/agents" "$V5A/hooks/lib" "$TMPROOT/v5noproj"

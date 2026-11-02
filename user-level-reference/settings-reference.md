@@ -388,7 +388,7 @@ Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `c
 
 ### Delegation Enforcement (PreToolUse, project class — registered by the cct plugin)
 
-**`hooks/enforce-delegation.sh`** — the PO (main thread) never does hands-on work; sub-agents do all coding/building/testing. Registered by the plugin's `hooks/hooks.json` under TWO PreToolUse matcher groups: `Edit|Write|NotebookEdit` and `Bash`.
+**`hooks/enforce-delegation.sh`** — the PO (main thread) never does hands-on work; sub-agents do all coding/building/testing. Registered by the plugin's `hooks/hooks.json` in TWO places: its own PreToolUse entry for `Edit|Write|NotebookEdit`, and (v6.0) the `bash` table of the `Bash` dispatcher registration (`hooks/dispatch.sh bash`).
 
 - **Discriminator:** the hook stdin contains `agent_id` ONLY when the call originates inside a subagent — subagent calls always pass; main-thread calls are checked.
 - **Main-thread edits** are allowed only on the PO write surface (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md` (pre-v4 manifests only; under manifest v4 write `.claude/project-instructions.md` — `deny-claude-md-writes.sh` enforces it), `CLAUDE.local.md`, `AGENT_TEAM.md`, paths outside the repo). Everything else denies with a model-visible DELEGATE message naming the right agent. Handles `notebook_path` (NotebookEdit) and backslash Windows paths.
