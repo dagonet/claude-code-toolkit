@@ -254,11 +254,12 @@ trow_tool() { # -> an assistant tool_use-only row
 # v6.0: a row on one of the six dispatched guards asserts a second time, through the dispatcher's runner, under
 # "<label> [dispatch]". It uses cctd_source_guard, not cctd_run_guard: the direct rows have no class gate and no
 # step-aside, so the replay has none either (the selection is covered by the v6 dispatch rows). Copies under
-# $TMPROOT and the other hooks are not replayed.
-hk_modes() { # <hook_abs_path> -> HK_MODES ("direct", or "direct dispatch") and HK_G (the guard's name)
+# $TMPROOT and the other hooks are not replayed. The replay runs FIRST and the direct run LAST: both write the same
+# files under <gitdir>/gate/, so a row that reads such a file afterwards must see what the standalone hook wrote.
+hk_modes() { # <hook_abs_path> -> HK_MODES ("direct", or "dispatch direct") and HK_G (the guard's name)
   HK_MODES=direct; HK_G=${1##*/}; HK_G=${HK_G%.sh}
   case "$1" in
-    "$ROOT"/hooks/no-push-main.sh|"$ROOT"/hooks/deny-secret-reads.sh|"$ROOT"/hooks/gate-before-merge.sh|"$ROOT"/hooks/pre-commit-test.sh|"$ROOT"/hooks/deny-hang-shapes.sh|"$ROOT"/hooks/enforce-delegation.sh) HK_MODES="direct dispatch" ;;
+    "$ROOT"/hooks/no-push-main.sh|"$ROOT"/hooks/deny-secret-reads.sh|"$ROOT"/hooks/gate-before-merge.sh|"$ROOT"/hooks/pre-commit-test.sh|"$ROOT"/hooks/deny-hang-shapes.sh|"$ROOT"/hooks/enforce-delegation.sh) HK_MODES="dispatch direct" ;;
   esac
 }
 hk_exec() { # <mode> <hook_abs_path> <json> -- payload on stdin; the caller's redirections and TMPDIR apply
@@ -488,7 +489,7 @@ check "continued push, feature branch (§1 twin)"  "$H" 2 "$(mkjson Bash "$CONT"
 check "continued push origin feature"            "$H" 0 "$(mkjson Bash "$(printf 'git push \\\norigin feature')" "$FEATREPO")"
 # jesc leaves a CR alone and a raw CR inside a JSON string does not parse (the row would pass on the unparsed payload),
 # so the payload is spelled by hand with the CR as \r: the command is `git push \` CR LF `origin main`.
-check "continued push, CRLF"                     "$H" 2 "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'git push \\\r\norigin main' "$(jesc "$FEATREPO")")"
+check_msg "continued push, CRLF"                 "$ROOT/$H" 2 "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'git push \\\r\norigin main' "$(jesc "$FEATREPO")")" "protected branch"
 check "continuation at END of command"           "$H" 2 "$(mkjson Bash "$(printf 'git push origin main \\\n')" "$FEATREPO")"
 check "mid-word join: git pu\\<LF>sh"            "$H" 2 "$(mkjson Bash "$(printf 'git pu\\\nsh origin main')" "$FEATREPO")"
 check "even backslashes: NOT joined (2nd seg)"   "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\ngit push origin main')" "$FEATREPO")"
@@ -9249,7 +9250,8 @@ printf '# ctx\n\n- **Test**: `echo x >> %s/g6c.count; exit 0`\n' "$TMPROOT" > "$
 rm -f "$TMPROOT/g6c.count"
 check_msg "G6 T3-3: two commits in the same repository -> allowed" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash "git commit -m a && git -C $G6C/sub commit -m b" "$G6C")" "passed."
-# check_msg ran the hook twice (direct, then [dispatch]); each run must have run the Test once: 2 lines in all
+# check_msg ran the hook twice ([dispatch], then direct). Each run's `passed.` needle is read from its own stderr (errf is
+# truncated per run), so each run ran the Test at least once; 2 lines in all therefore means exactly 1 + 1.
 expect "G6 T3-3: ... and the Test ran exactly once per run (direct + [dispatch])" 2 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
 check_msg "G6 S-3c: cd sub; cd -; git commit -> refused (a second cd)" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'cd sub; cd -; git commit -m x' "$G6OK")" "a directory change in a command with commit"
@@ -12125,6 +12127,8 @@ else
     spid=$(cat "$t/spid" 2>/dev/null)
     if [ -n "$spid" ]; then
       pg=$(ps -o pgid= -p "$spid" 2>/dev/null | tr -d ' ')
+      # the suite's own group is no Test group: were set -m ever lost, kill -KILL -- -$pg would kill the suite itself
+      if [ "$pg" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ]; then pg=; fi
       kill -TERM "$dpid"
       # the Test is a process group of its own (pre-commit-test's set -m): poll the group, not slow.sh's pid alone
       if [ -n "$pg" ]; then tgt="-$pg"; else tgt=$spid; fi
