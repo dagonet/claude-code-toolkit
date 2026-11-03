@@ -107,7 +107,7 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v5.0). Perso
 |----------|-------|---------|
 | `CLAUDE_CODE_SHELL` | Path to bash.exe | Overrides the default shell used by Claude Code's Bash tool. Points to Git Bash so Unix-style commands work on Windows. |
 | `ENABLE_PROMPT_CACHING_1H` | `"1"` | Extends prompt-cache TTL to one hour — worth it for long orchestrator sessions that re-send a large stable prefix. |
-| `CLAUDE_CODE_USE_POWERSHELL_TOOL` | `"1"` | Exposes the dedicated `PowerShell` tool alongside `Bash` on Windows. The cct plugin's git-gate and output-guard matchers use `Bash\|PowerShell` so both are covered. |
+| `CLAUDE_CODE_USE_POWERSHELL_TOOL` | `"1"` | Exposes the dedicated `PowerShell` tool alongside `Bash` on Windows. The cct plugin covers both: the git gates run in the `Bash` and `PowerShell` dispatcher tables (v6.0), and the output guard's matcher is `Bash\|PowerShell`. |
 | `CLAUDE_CODE_DISABLE_1M_CONTEXT` | `"false"` | Enables the 1M token context window on Opus 4.6/4.7 (claude.ai MAX plan). Must be a **string** (`"false"`), not JSON boolean. On Sonnet this has no effect — Sonnet caps at 200k on MAX. |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `"1000000"` | Sets the **context window size** (not the compaction trigger). Must match the model's max context, otherwise it clamps `/context` to this value. For Opus 4.7 with 1M context, keep at `"1000000"`. Setting it lower (e.g. `"700000"`) collapses `/context` back to 200k — a misleading symptom. Use `contextCompactionThreshold` to control *when* compaction triggers. |
 
@@ -325,7 +325,7 @@ The cct plugin registers the following workflow enforcement hooks (scripts in th
 - Matcher: `mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge`
 - Hard-blocks PR merges (and enabling auto-merge) unless a fresh gate artifact exists: since v4.0.1 (item 17), the artifact lives at `<common git dir>/gate/last-pass.<sha>.json` (or, for a gate run before the commit whose tree differs from `HEAD^{tree}`, `last-pass.tree-<tree>.json`, found by an exact-name tier 1b since v4.3.1) — inside `.git`, shared by every worktree of the repo (worktree-aware — developer agents self-merge from worktrees), never a per-checkout `.gate/` directory — and the file must be younger than `GC_GATE_TTL_S` (`hooks/lib/git-cmd.sh`; 3600s = 60 minutes). Accepted if either its `sha` equals the current HEAD, or its `tree` equals `HEAD^{tree}` (the commit-time `run-gate.sh` chain: the gate ran against the index just before the commit, so its `sha` is the parent commit but its `tree` is already the new commit's) — a scan of every `last-pass.*.json` in the directory, newest first, covers the tree match when no file is named for the exact sha. A legacy `<repo toplevel>/.gate/last-pass.json` is still read as a fallback, with a deprecation NOTE on stderr.
 - No-op when PROJECT_CONTEXT.md has no `**Gate**:` / `**Gate Command**:` value or the value is still a `{{...}}` placeholder — same graceful degradation as `pre-commit-test.sh`.
-- Since v5.0 no agent file carries it inline: the plugin's one registration (also on `Bash|PowerShell`, for `gh pr merge`) covers every caller.
+- Since v5.0 no agent file carries it inline: the plugin's registrations (the merge-tool matcher, and since v6.0 the `bash` and `powershell` dispatcher tables for `gh pr merge`) cover every caller.
 - Block message: names `cct-gate` when run from the plugin, `bash hooks/run-gate.sh` otherwise (`gc_gate_cmd`).
 
 **Run gate** (`hooks/run-gate.sh`) — companion runner, NOT registered as a hook:
@@ -334,7 +334,7 @@ The cct plugin registers the following workflow enforcement hooks (scripts in th
 - The legacy `<repo toplevel>/.gate/` is still gitignored by all templates, for the one-release fallback path.
 
 **No push to main** (`hooks/no-push-main.sh`):
-- Matcher: `Bash|PowerShell` (the native `git push` path; the old `mcp__git-tools__git_push` matcher is gone)
+- Runs in the `bash` and `powershell` dispatcher tables (v6.0; before that, matcher `Bash|PowerShell`) (the native `git push` path; the old `mcp__git-tools__git_push` matcher is gone)
 - Blocks pushes to a protected branch (`main`/`master` by default), resolving the implicit branch when none is named. A native `hooks/git-pre-push.sh` shim (installed per clone) backs it up at the git level.
 
 All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and run from the installed plugin; since v5.0 setup copies only `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh` into a project. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
@@ -388,7 +388,7 @@ Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `c
 
 ### Delegation Enforcement (PreToolUse, project class — registered by the cct plugin)
 
-**`hooks/enforce-delegation.sh`** — the PO (main thread) never does hands-on work; sub-agents do all coding/building/testing. Registered by the plugin's `hooks/hooks.json` under TWO PreToolUse matcher groups: `Edit|Write|NotebookEdit` and `Bash`.
+**`hooks/enforce-delegation.sh`** — the PO (main thread) never does hands-on work; sub-agents do all coding/building/testing. Registered by the plugin's `hooks/hooks.json` in TWO places: its own PreToolUse entry for `Edit|Write|NotebookEdit`, and (v6.0) the `bash` table of the `Bash` dispatcher registration (`hooks/dispatch.sh bash`).
 
 - **Discriminator:** the hook stdin contains `agent_id` ONLY when the call originates inside a subagent — subagent calls always pass; main-thread calls are checked.
 - **Main-thread edits** are allowed only on the PO write surface (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md` (pre-v4 manifests only; under manifest v4 write `.claude/project-instructions.md` — `deny-claude-md-writes.sh` enforces it), `CLAUDE.local.md`, `AGENT_TEAM.md`, paths outside the repo). Everything else denies with a model-visible DELEGATE message naming the right agent. Handles `notebook_path` (NotebookEdit) and backslash Windows paths.

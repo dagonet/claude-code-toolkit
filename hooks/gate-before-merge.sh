@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse hook: block PR merge/auto-merge without a fresh gate artifact
-# Matcher: Bash|PowerShell|mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge
+# Matcher: the Bash and PowerShell dispatcher tables (hooks/dispatch.sh; v6.0), plus its own registration for mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge
 #
 # v2.0: `gh pr merge`, a `git merge` while on main/master, and a push that
 # targets main/master (fast-forward merge by push) are gated too, because the
@@ -177,10 +177,11 @@ trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper
 # MCP tool name) runs exactly as before. The early exit needs rc 0, tool Bash or
 # PowerShell and a non-empty command, so it cannot reach any of them (the MCP
 # merge tools are gated unconditionally and never take it).
-jlib="$(dirname "$0")/lib/json.sh"
+case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
+jlib="$cctg_dir/lib/json.sh"
 [ -f "$jlib" ] || { echo "BLOCKED: $jlib missing — run /cct:sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
 . "$jlib"
-GC_PRE_JSON=$(cat)
+if [ "${CCTD_MEMO[1]+set}" = set ]; then GC_PRE_JSON=${CCTD_MEMO[1]}; else GC_PRE_JSON=$(cat); fi
 json_payload "$GC_PRE_JSON"; GC_PREPARSED=$?
 if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
   case "$JP_TOOL" in
@@ -216,7 +217,7 @@ fi
 
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_TOOL stays empty, and this gate would exit 0 on every merge.
-lib="$(dirname "$0")/lib/git-cmd.sh"
+lib="$cctg_dir/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 _np_jp=$JSON_PARSER   # git-cmd.sh re-sources json.sh, which resets the parser memo
 . "$lib"

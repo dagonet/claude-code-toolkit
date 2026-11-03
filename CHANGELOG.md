@@ -1,5 +1,80 @@
 # Changelog
 
+## v6.0.0 — 2026-11-02
+
+Major. A Bash or PowerShell call used to start one hook process per guard, each with its own `bash`, `dirname`, `cat` and `node`. It now starts one dispatcher per tool that runs the guards in one process. Measured on `ls` in penumbra: the sequential sum of the hooks of one Bash call falls from 1767 to 494 ms on Windows (Git Bash) and from 697 to 123 ms on Linux (figures below). Design and plan: `docs/plans/2026-11-01-v6.0-hook-dispatcher-design.md` and `docs/plans/2026-11-01-v6.0-hook-dispatcher-plan.md`.
+
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. This release changes no template and no server code (`user-level-reference/settings-reference.md` gets new wording only). Two changed files, `hooks/lib/json.sh` and `hooks/lib/git-cmd.sh`, are also delivered to every project by sync, for the native pre-push hook. The next `/cct:sync-template` in a project shows them as template updates; that is expected, not drift. The sync-template `SKILL.md` marker and `server/src/template_sync/VERSION` move to v6.0.0 only because consistency checks 21c-2g and 44 require them to equal `VERSION`; the skill's own `Requires` floor stays at server >= 5.2.0, because the server did not change.
+
+### Changed
+- **One dispatcher per tool (`hooks/hooks.json`, new `hooks/dispatch.sh`, new `hooks/lib/hook-class.sh`).**
+  - **Registrations:** matcher `Bash` runs `hooks/dispatch.sh bash`, and matcher `PowerShell` runs `hooks/dispatch.sh powershell`. Both go through the closed plugin-missing preamble (the call is refused when the plugin files are gone) and carry `"timeout": 3360`, pre-commit-test's. The `Bash|PowerShell` group and the `Bash` group are gone, and `Read|Bash` is now `Read`.
+  - **Tables, in this order:** `bash` runs no-push-main, deny-secret-reads, gate-before-merge, pre-commit-test, deny-hang-shapes, enforce-delegation. `powershell` runs no-push-main, gate-before-merge, pre-commit-test. All closed guards come first, with pre-commit-test last among them, so a hang or crash in an open or warn guard can never keep a closed guard from running.
+  - **How a guard runs:** `out=$( set --; . guard.sh </dev/null )`, one subshell fork with no exec. The class, polarity and step-aside decision is the function `run-hook.sh` used, moved into `hooks/lib/hook-class.sh` and sourced by both, so there is one copy. A guard run directly (`bash hooks/x.sh`, the repo's own registrations, the native pre-push hook) behaves exactly as before.
+  - **Exit codes:** rc 2 stops the run. Any other non-zero rc continues with the next guard, as Claude Code treats it today. Stdout comes out only on a final exit 0; two guards writing stdout give exit 2. Only enforce-delegation writes stdout today (its main-thread deny, with rc 0), and it is last in the `bash` table.
+  - **Parse once (`hooks/lib/json.sh`):** `json_fields` remembers the parsed values of a payload for a later call with a subset of the same fields. The first call still runs the canary and the node, python3, jq fallback, so the parser matrix means what it meant.
+  - **The guard edits:** the six guards and `gc_read_stdin` take the lib path from `${BASH_SOURCE[0]%/*}` instead of `$(dirname "$0")`, and read the payload from index 1 of the array `CCTD_MEMO` when the dispatcher filled it, and from stdin otherwise. Bash cannot import an array from the environment, so an injected variable can never replace the real payload of a guard run directly. Test rows check both reads from both sides.
+- **Fast exits that change no verdict (the "E1" and "E2" rounds, `hooks/lib/git-cmd.sh`, `hooks/enforce-delegation.sh`).** The first PC measurement missed the approved targets, so two exits that skip work were added.
+  - **E1:** `gc_read_stdin` skips its two text rewrites when they cannot change the text: the continuation join runs only when the command contains a backslash, and the `-C` path protection only when it contains `-C`. `GC_CMD` stays byte-identical for every input; trailing newlines are stripped by a builtin loop when the rewrites are skipped. All three git guards gain, in the dispatcher and standalone.
+  - **E2:** inside the dispatcher, enforce-delegation passes early on a `Bash` or `PowerShell` command that has no backslash and none of `npm`, `npx`, `pytest`, `cargo`, `dotnet`, `mvn`, `gradle`, `run-gate`, `cct-gate` or `test`. It is a strict superset of what its node check would let through. The node-missing note now fires on the first command that does not take this exit, not on the first command overall.
+- **`hooks/run-hook.sh`, `hooks/verify-hooks.sh`:** `run-hook.sh` sources the class lib; `verify-hooks.sh` reads the new registration shape.
+
+### Behaviour changes
+All of them, as the design lists them (§5), plus the notes found in review:
+1. The guards run one after another, not in parallel. After a deny, the later guards do not run, and their side effects do not happen either (log lines, the **Test** run).
+2. A deny message carries the denying guard's text, plus any warnings from guards that ran before it.
+3. Every guard on Bash and PowerShell now has pre-commit-test's 3360 s timeout, the closed guards (no-push-main, deny-secret-reads, gate-before-merge) included; before, all of them except pre-commit-test had the harness default of 600 s. A guard that hangs now holds the call for up to 56 minutes instead of 10, and the guards after it in its table do not run meanwhile.
+4. When the plugin files are missing, the open guards fail closed too. On Bash this already held through the closed registrations.
+5. pre-commit-test's hook-wide ceiling now counts from the dispatcher's start: `cctd_prepare` resets `SECONDS`, and pre-commit-test resets it only when it runs standalone.
+6. An empty dispatcher table is refused (rc 2).
+7. On a host without `sed`, a command without `-C` now keeps its text for the git gates. Before, it became empty and was allowed.
+8. A guard that still reads stdin inside the dispatcher sees an empty payload (`/dev/null`); a closed guard then refuses.
+9. A payload holding a NUL byte is refused (rc 2). Before, `$(cat)` dropped the NUL and the guards parsed the rest.
+10. A guard that crashes (rc 1, or 127) no longer shows as a non-blocking hook error: the dispatcher continues with the next guard and ends with exit 0. The verdict is the same as before; only that notice is gone.
+11. A payload starting with a UTF-8 byte-order mark reaches enforce-delegation with the mark removed, so its check now judges such a payload; before, the parse failed and the call went through.
+
+### Added
+- **Consistency checks** (`scripts/verify-template-consistency.sh`):
+  - Check 71 compares the registrations per tool against the fixture `server/tests/fixtures/hook-registrations-v4.4.0.json` plus the plugin-only allowlist (the set 5.2.1 was held to), with each dispatcher registration expanded to the guards in its table. It refuses a PreToolUse registration of its own for `Bash` or `PowerShell` in the plugin's `hooks.json`: only the two dispatchers may be there, because such a guard would run in a second process and could run twice.
+  - Check 74 reads the guard names from the dispatcher's tables, requires `bash` and `powershell` tables, and pins their order (a two-guard swap in a copy must turn it red).
+  - Check 64 requires the dispatcher registrations to carry pre-commit-test's 3360 s timeout.
+- **Tests** (`scripts/test-hooks.sh`): every `check`, `check_msg` and `check_nomsg` row for one of the six guards is also run through the dispatcher's runner, and each must give the same exit code and deny text; about 2100 of the rows are those replays. The rows that call a guard directly are not replayed: enforce-delegation's stdout rows (its dispatcher path is covered by rows (s) and (E2)) and 23 rows of pre-commit-test, no-push-main and gate-before-merge. New rows cover the payload array from both sides, a crash not skipping a later guard, a syntax error denying, rc 2 stopping the run, stdout only on a final exit 0, the EXIT trap, a missing guard following its polarity, step-aside per guard, stdin as `/dev/null`, empty positional parameters, the ceiling and the empty table.
+
+### Docs
+- `docs/architecture.md`: the hook-wiring paragraph, the hook table rows and the delegation section describe the dispatcher; *Context Budget* gains the measured v6.0.0 column (see below).
+- `docs/templates.md` and `user-level-reference/settings-reference.md`: wording for the new registration shape (the `CLAUDE_CODE_USE_POWERSHELL_TOOL` row, and the merge-gate, no-push-main and delegation paragraphs).
+- The pins `claude-code-toolkit#v6.0.0` in `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md` (check 77), and the 6.0.0 installed-version and drift-probe lines there.
+- `docs/architecture.md` *Context Budget*: every always-loaded figure equals v5.2.1's, re-measured with `wc -c` at the release tree (general 18,204 injected, 23,448 at the end of bootstrap). Hooks are not part of that table: their bytes never reach the model; the saving is process starts and wall time.
+
+### Deliberately not changed
+- **`agent-budget-warn`** stays its own registration with no matcher: a matcher cannot exclude Bash, and it counts every call, including calls another guard denies.
+- **Read and Edit** do not go through the dispatcher in this release; that is a separate decision after these figures.
+- **The template's inline "is the plugin active" guard** runs on every tool call and starts six programs; moving it to bash builtins is v6.1, after the shell Claude Code runs hook strings with has been measured.
+- **No guard's decision logic changed.** Every guard still sees every Bash call; there is no prefilter that skips one.
+
+### Downstream migration
+A plugin update only; no `/cct:sync-template` is needed, because the guards run from the plugin's own files. The project copies of `hooks/lib/json.sh` and `hooks/lib/git-cmd.sh` serve only the native pre-push hook and take the update at the next regular sync. The same recipe as v5.2.1, run from outside your project folders:
+1. `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v6.0.0`, then `claude plugin install cct@dagonet`. On Linux, update the checkout first and run `bash scripts/install-user-level-linux.sh` instead.
+2. Update your toolkit checkout to the same tag, and restart every session. A running session keeps the hook registrations it loaded; one that is still on the 5.2.1 registrations runs the old per-guard processes.
+
+### Measured
+Hook cost per Bash call (an `ls` call in penumbra, harness `hookwall.sh`, N=10). Wall is the median with the hooks running concurrently, as Claude Code runs them; sum is the same hooks run one after another.
+
+| | Wall median | Sequential sum |
+|---|---|---|
+| **PC (Windows, Git Bash, penumbra), v6 at 284ed01, 2026-11-02 15:19 after a reboot** | **347 ms** | **494 ms** |
+| the installed 5.2.1, same sitting | 498 ms | 1767 ms |
+| the approved targets | at most 452 ms | at most 792 ms |
+| before the two fast exits (2026-11-01 18:51): v6 | 731 ms | 903 ms |
+| before the two fast exits (2026-11-01 18:51): v5 | 683 ms | 1865 ms |
+| **Linux (agent-host-1, penumbra, load about 1.5), v6 at 284ed01** | **111 ms** | **123 ms** |
+| the installed 5.2.1, same host | 204 ms | 697 ms |
+
+- **Process starts for an `ls` call (Linux, strace):** 4 execs and 29 forks under v6, against 41 execs and 113 forks for the v5 registration shape (six separate guard registrations) measured on this branch after the guards had dropped `dirname`; the installed 5.2.1 starts more.
+- **`bash scripts/test-hooks.sh`:** 6515 passed, 0 failed, 6 skipped, at 6a5fded (v5.2.1 measured 4231/0/6). About 2100 of the rows are the guard rows replayed through the dispatcher's runner. **The suite now takes about 23 minutes on Linux instead of about 13, so every gate and the parser matrix get longer.**
+- **Consistency script (`scripts/verify-template-consistency.sh`):** ALL CHECKS PASSED, 350 PASS lines (v5.2.0 measured 343) and one skipped check, check 50, which prints as a PASS line while skipping (no system `python`, only `python3`). The bootstrap-fixture block inside it ran 35 passed, 0 failed, 37 skipped (72 assertions). Measured on agent-host-1 at the release commit's tree.
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at b17d800 on agent-host-1:** 0 failed in all three configurations: node 6515/0/6, python3-only 6222/0/274, jq-only 6124/0/370. Both restricted skip counts rose by exactly 33 from v5.2.1 (241 and 337): the new v6 rows that need node (enforce-delegation) skip without it. That run failed the band check for jq (370 against the old 335 +/-20), so `EXP_JQ_SKIP` rose by those 33 to 368, and `EXP_PY_SKIP` is set to the measured 274 (adding 33 to the old 255 gave 288, off-centre, because 255 was already 14 above what v5.2.1 skipped). Re-run at e1eec9f (with 288): PARSER MATRIX PASSED, the same three counts.
+
 ## v5.2.1 — 2026-10-28
 
 Patch. The merge gate can reuse a passing commit-time **Test** run when **Test** has several commands. Reported by mm-linux (Motorsport-Manager-AI-Agent). Also, the plugin's SessionEnd step no longer gets cancelled on a busy machine, which showed as `Hook cancelled` on exit (reported by the user).

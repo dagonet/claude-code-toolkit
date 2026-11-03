@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse hook: refuse to read a secret-bearing .env file.
 #
-# Matcher: Read|Bash
+# Matcher: Read (its own registration), plus the Bash dispatcher table (hooks/dispatch.sh bash; v6.0)
 #
 # v4.1.2: this hook now calls cmd_join_continuations (hooks/lib/json.sh,
 # already sourced below) on the Bash arm, so `awk` joins this hook's minimum
@@ -106,12 +106,13 @@
 
 trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
 
-lib="$(dirname "$0")/lib/json.sh"
+case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
+lib="$cctg_dir/lib/json.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/json.sh)" >&2; exit 2; }
 # shellcheck source=lib/json.sh
 . "$lib"
 
-DSR_JSON=$(cat)
+if [ "${CCTD_MEMO[1]+set}" = set ]; then DSR_JSON=${CCTD_MEMO[1]}; else DSR_JSON=$(cat); fi
 
 # v4.4.0 C3: one parser run for the verdict and all three fields (rc 2 = no parser, 1 = invalid).
 json_fields "$DSR_JSON" tool_name tool_input.file_path tool_input.command

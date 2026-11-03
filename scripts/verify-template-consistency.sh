@@ -95,8 +95,17 @@ fi
 # ---------------------------------------------------------------------------
 #     v5.0: the registrations moved from every variant settings.json into the plugin's
 #     hooks/hooks.json (the templates register only the plugin-off guard).
+#     v6.0: the Bash and PowerShell guards run inside one dispatcher (hooks/dispatch.sh <table>), whose
+#     tables are the `cctd_tab='...'` case lines in cctd_main -- the ONE place they are written. c71_dtab
+#     prints them as `<table> <guard>` lines; hk_reg accepts a guard registered under run-hook.sh or listed
+#     in a table (check 71 pins the exact set, check 74 that every table guard exists and is classed).
+c71_dtab() { awk -v q="'" '/^[[:space:]]*(bash|powershell)\)[[:space:]]+cctd_tab=/ { t=$1; sub(/\).*/, "", t); l=substr($0, index($0, q) + 1); l=substr(l, 1, index(l, q) - 1); n=split(l, a, " "); for (i=1; i<=n; i++) print t, a[i] }' "$1"; }
+hk_reg() { # <guard>
+  grep -qE '(run-hook\.sh|\$f)\\" '"$1"'"' hooks/hooks.json && return 0
+  grep -q 'hooks/dispatch\.sh' hooks/hooks.json && c71_dtab hooks/dispatch.sh | grep -qx "[a-z]* $1"
+}
 for h in gate-before-merge enforce-agent-contract; do
-  grep -qE '(run-hook\.sh|\$f)\\" '"$h"'"' hooks/hooks.json \
+  hk_reg "$h" \
     && ok "hooks/hooks.json: $h registered" \
     || ko "hooks/hooks.json: $h NOT registered"
 done
@@ -138,7 +147,7 @@ fi
 # ---------------------------------------------------------------------------
 #     v5.0: registration read from hooks/hooks.json; one plugin ops.md replaces the six
 #     template copies, so their byte-identity assertion is retired with them.
-grep -qF 'run-hook.sh\" enforce-delegation"' hooks/hooks.json \
+hk_reg enforce-delegation \
   && ok "hooks/hooks.json: enforce-delegation registered" \
   || ko "hooks/hooks.json: enforce-delegation NOT registered"
 [ -f agents/ops.md ] \
@@ -1601,7 +1610,7 @@ for s in $(for v in $VARIANTS; do echo "templates/$v/.claude/settings.json"; don
   # v5.0: neither a variant nor the user-level reference registers it; the plugin
   # does, machine-wide (hooks/hooks.json, asserted below).
 done
-if grep -qE '(run-hook\.sh|\$f)\\" deny-secret-reads"' hooks/hooks.json; then
+if hk_reg deny-secret-reads; then
   ok "hooks/hooks.json: registers deny-secret-reads (the protection every variant gets from the plugin)"
 else
   ko "hooks/hooks.json: deny-secret-reads NOT registered — the .env files of every v5 project are unprotected"
@@ -3641,9 +3650,13 @@ else
   # so the scan reads the plugin's hooks/hooks.json (one line per registration) and the
   # repo-root .claude/settings.json (self-hosting, the v4 form); the controls mutate each.
   c64_want=$((c64_max + 60))
+  # v6.0: pre-commit-test runs inside the two dispatcher registrations (hooks/dispatch.sh bash / powershell), so
+  # THOSE lines carry the timeout; a registration of its own (run-hook.sh) would need it too. Check 71 pins that
+  # the dispatcher is registered exactly twice, with the exact closed preamble.
+  C64_PAT='(run-hook\.sh|\$f)\\" pre-commit-test"|hooks/dispatch\.sh'
   c64_json() { # <hooks.json> <want> -> prints a finding when a pre-commit-test registration lacks the timeout, or none exists
-    c64_regs=$(grep -cE '(run-hook\.sh|\$f)\\" pre-commit-test"' "$1" 2>/dev/null)
-    c64_ok=$(grep -E '(run-hook\.sh|\$f)\\" pre-commit-test"' "$1" 2>/dev/null | grep -cE "\"timeout\": $2[[:space:]]*}")
+    c64_regs=$(grep -cE "$C64_PAT" "$1" 2>/dev/null)
+    c64_ok=$(grep -E "$C64_PAT" "$1" 2>/dev/null | grep -cE "\"timeout\": $2[[:space:]]*}")
     if [ "${c64_regs:-0}" -eq 0 ] || [ "${c64_ok:-0}" -ne "${c64_regs:-0}" ]; then
       printf '%s: %s registration(s), %s with "timeout": %s\n' "$1" "${c64_regs:-0}" "${c64_ok:-0}" "$2"
     fi
@@ -3658,13 +3671,16 @@ else
   c64_ctrl2=$(c64_scan .claude/settings.json "$((c64_want - 1))")
   c64_ctrl3=$(c64_json "$C64_TMP/nofield-hooks.json" "$c64_want")
   c64_ctrl4=$(c64_json hooks/hooks.json "$((c64_want - 1))")
+  # (c) a dispatcher registration at the harness's default-ish 600 s (the control must change a dispatcher line AND be flagged)
+  sed '/hooks\/dispatch\.sh/ s/"timeout": [0-9]*/"timeout": 600/' hooks/hooks.json > "$C64_TMP/short-hooks.json"
+  c64_ctrl5=""; cmp -s hooks/hooks.json "$C64_TMP/short-hooks.json" || c64_ctrl5=$(c64_json "$C64_TMP/short-hooks.json" "$c64_want")
   rm -rf "$C64_TMP"
-  if [ -z "$c64_ctrl" ] || [ -z "$c64_ctrl2" ] || [ -z "$c64_ctrl3" ] || [ -z "$c64_ctrl4" ]; then
+  if [ -z "$c64_ctrl" ] || [ -z "$c64_ctrl2" ] || [ -z "$c64_ctrl3" ] || [ -z "$c64_ctrl4" ] || [ -z "$c64_ctrl5" ]; then
     ko "check 64: CONTROL FAILED -- a copy without the field or a wrong value was not flagged; the check is vacuous"
   elif [ -n "$c64_bad" ]; then
     ko "check 64: a pre-commit-test.sh registration lacks \"timeout\": $c64_want -- the harness would kill the hook at its default (600 s) and let the commit through:$c64_bad"
   else
-    ok "check 64: hooks/hooks.json and .claude/settings.json register pre-commit-test.sh with \"timeout\": $c64_want (PCT_TIMEOUT_MAX $c64_max + 60); controls fire"
+    ok "check 64: hooks/hooks.json (both dispatcher registrations) and .claude/settings.json register pre-commit-test.sh with \"timeout\": $c64_want (PCT_TIMEOUT_MAX $c64_max + 60); controls fire"
   fi
 fi
 # ---------------------------------------------------------------------------
@@ -4706,9 +4722,20 @@ c71_cmp() { # <label> <got> <want>
 C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
 const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session)\.sh"( end)?$/;
 const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";
-for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const gm=c.startsWith(GP)&&/^[a-z-]+$/.test(c.slice(GP.length))?c.slice(GP.length):null;const r=gm?null:(RH.exec(c)||CS.exec(c));out.push([ev,g.matcher||"",gm||(r?r[1]:"OTHER"),gm?"G":"B"].join(";"));}
+const DP=GP.replace("run-hook.sh","dispatch.sh");
+for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const dm=c.startsWith(DP)&&/^(bash|powershell)$/.test(c.slice(DP.length))?"dispatch:"+c.slice(DP.length):null;const gm=dm||(c.startsWith(GP)&&/^[a-z-]+$/.test(c.slice(GP.length))?c.slice(GP.length):null);const r=gm?null:(RH.exec(c)||CS.exec(c));out.push([ev,g.matcher||"",gm||(r?r[1]:"OTHER"),gm?"G":"B"].join(";"));}
 if(out.length)console.log(out.join("\n"))'
 c71_px() { node -e "$C71_PJS" "$1"; }
+# v6.0: a dispatcher registration (the closed preamble, then `bash` or `powershell` as the table argument -- any other
+# spelling is OTHER) maps to `dispatch:<table>`. Both sides are compared PER TOOL: c71_flat <dispatch.sh> splits a
+# matcher on `|` and expands a dispatch:<table> row into one row per guard in that table (read by c71_dtab from the
+# dispatcher itself, so there is no second copy of the tables); an unknown or empty table yields a row nothing expects.
+c71_flat() { awk -F';' -v dt="$(c71_dtab "$1" | tr '\n' '|')" 'BEGIN { n=split(dt, L, "|"); for (i=1; i<=n; i++) { split(L[i], a, " "); if (a[1] != "") T[a[1]]=T[a[1]] " " a[2] } }
+  { m=($2 == "") ? 0 : split($2, M, "|"); if (m == 0) { M[1]=""; m=1 }
+    if ($3 ~ /^dispatch:/) { t=substr($3, 10); g=split(T[t], G, " "); if (g == 0) { print $1 ";" $2 ";EMPTY-TABLE:" t; next }
+      for (j=1; j<=m; j++) for (i=1; i<=g; i++) print $1 ";" M[j] ";" G[i] }
+    else for (j=1; j<=m; j++) print $1 ";" M[j] ";" $3 }'; }
+c71_rows() { c71_px "$1" | cut -d';' -f1-3 | c71_flat "${2:-hooks/dispatch.sh}" | LC_ALL=C sort; } # <hooks.json> [dispatch.sh]
 C71_PLUGIN_ONLY='SessionStart;;cct-session
 SessionEnd;;cct-session
 SessionStart;;jev-notice
@@ -4723,17 +4750,26 @@ else
   c71_cmp "$C71_GENERAL" "$(c71_x "$C71_GENERAL" general)" "$(printf '%s\n' "$C71_TABLE" | grep '^general;')"
   c71_cmp ".claude/settings.json" "$(c71_x .claude/settings.json root)" "$(printf '%s\n' "$C71_TABLE" | grep '^root;')"
   # (1b) the plugin's hooks/hooks.json: its (event, matcher, script) set equals the frozen `general` rows
-  # (form dropped: polarity lives in run-hook.sh's class table) plus the plugin-only allowlist.
-  c71_want_p=$(printf '%s\n%s\n' "$(printf '%s\n' "$C71_TABLE" | grep '^general;' | awk -F';' '{print $2";"$3";"$4}')" "$C71_PLUGIN_ONLY" | LC_ALL=C sort)
-  c71_cmp "hooks/hooks.json" "$(c71_px hooks/hooks.json | cut -d';' -f1-3 | LC_ALL=C sort)" "$c71_want_p"
-  # (1c) polarity (v5.0 fix round M4): run-hook.sh's class table must equal the frozen general forms (F closed,
+  # (form dropped: polarity lives in hooks/lib/hook-class.sh's class table) plus the plugin-only allowlist.
+  # v6.0: compared PER TOOL (matchers split on `|`, a dispatcher registration expanded to one row per table guard).
+  c71_want_p=$(printf '%s\n%s\n' "$(printf '%s\n' "$C71_TABLE" | grep '^general;' | awk -F';' '{print $2";"$3";"$4}')" "$C71_PLUGIN_ONLY" | c71_flat hooks/dispatch.sh | LC_ALL=C sort)
+  c71_real_p=$(c71_rows hooks/hooks.json)
+  c71_cmp "hooks/hooks.json" "$c71_real_p" "$c71_want_p"
+  # (1a) the dispatcher shape is MANDATORY: the per-tool comparison above is blind to HOW a guard is registered, so a
+  # PreToolUse registration of its own whose matcher names Bash or PowerShell (any guard, any spelling) is refused --
+  # such a guard would run outside the dispatcher (a second process, and it could run twice). agent-budget-warn has
+  # no matcher and the Read, Edit and Agent groups name neither tool, so they stay.
+  c71_loose() { c71_px "$1" | awk -F';' '$1=="PreToolUse" && $3 !~ /^dispatch:/ { n=split($2, M, "|"); for (i=1; i<=n; i++) if (M[i]=="Bash" || M[i]=="PowerShell") printf "%s(%s) ", $3, $2 }'; }
+  c71_loose_real=$(c71_loose hooks/hooks.json)
+  [ -z "$c71_loose_real" ] || c71_bad="$c71_bad [hooks/hooks.json registers a Bash/PowerShell guard outside the dispatcher: $c71_loose_real]"
+  # (1c) polarity (v5.0 fix round M4): hooks/lib/hook-class.sh's class table must equal the frozen general forms (F closed,
   # W warn, O/U open; the two plugin-only jev hooks open), name for name; flipping no-push-main to open goes red.
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
-  c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
-  c71_rh=$(c71_rhtab hooks/run-hook.sh)
+  c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
+  c71_rh=$(c71_rhtab hooks/lib/hook-class.sh)
   c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\n')
   c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
-  [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/run-hook.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
+  [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/lib/hook-class.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
   # (1d) two-sided registration shape: a closed-class hook carries the inline existence check (G), every other one stays bare (B)
   c71_shape=$(c71_shapes hooks/hooks.json "$c71_rh")
   [ -z "$c71_shape" ] || c71_bad="$c71_bad [hooks/hooks.json registration shape wrong (closed needs the inline plugin-missing check G, others bare B): $c71_shape]"
@@ -4781,7 +4817,7 @@ else
   [ "$(awk "$C2AAWK" "$c71_tmp/r1.sh" | wc -l | tr -d ' ')" = 1 ] || c71_bad="$c71_bad [the return-audit CONTROL failed: a top-level return was not reported]"
 
   if [ -z "$c71_bad" ]; then
-    ok "check 71: $c71_nrows registrations equal the frozen table (the v4.6.1 template, root); hooks/hooks.json's $(printf '%s\n' "$c71_want_p" | grep -c .) entries equal the frozen general rows plus the plugin-only allowlist; $c71_ntrap F/UF hooks over $c71_nsc frozen scripts trap 127->2, no allow-capable hook is F/UF, the stop gate is U, no top-level return"
+    ok "check 71: $c71_nrows registrations equal the frozen table (the v4.6.1 template, root); hooks/hooks.json's $(printf '%s\n' "$c71_want_p" | grep -c .) per-tool rows (the two dispatcher registrations expanded from the tables in hooks/dispatch.sh) equal the frozen general rows plus the plugin-only allowlist; $c71_ntrap F/UF hooks over $c71_nsc frozen scripts trap 127->2, no allow-capable hook is F/UF, the stop gate is U, no top-level return"
   else
     ko "check 71: $c71_bad"
   fi
@@ -4799,27 +4835,43 @@ else
     fi
   done
   # (8) control: hooks/hooks.json with one matcher narrowed, one group dropped, or an inline group added, must differ from the expected set
-  c71_pmut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="narrow"){for(const x of g)if(x.matcher==="Read|Bash")x.matcher="Bash";}else if(a[2]==="inline"){g.push({hooks:[{type:"command",command:"true"}]});}else{for(let i=0;i<g.length;i++)if(/^mcp__MCP_DOCKER__merge_pull_request/.test(g[i].matcher||"")){g.splice(i,1);break;}}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
-  for c71_mode in narrow dropgroup inline; do
-    node -e "$c71_pmut" hooks/hooks.json "$c71_tmp/pmut-$c71_mode.json" "$c71_mode" 2>/dev/null
-    c71_got=$(c71_px "$c71_tmp/pmut-$c71_mode.json" 2>/dev/null | LC_ALL=C sort)
-    if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_want_p" ]; then
-      ok "check 71 control (hooks.json $c71_mode): the extraction on a mutated hooks.json differs from the expected set"
+  c71_pmut='const fs=require("fs");const a=process.argv.slice(-3);const d=JSON.parse(fs.readFileSync(a[0],"utf8"));const g=d.hooks.PreToolUse;if(a[2]==="narrow"){const t=g.find(x=>x.matcher==="Edit|Write|MultiEdit|NotebookEdit");if(!t)process.exit(1);t.matcher="Edit|Write|NotebookEdit";}else if(a[2]==="inline"){g.push({hooks:[{type:"command",command:"true"}]});}else if(a[2]==="dropgroup"){let n=0;for(let i=0;i<g.length;i++)if(/^mcp__MCP_DOCKER__merge_pull_request/.test(g[i].matcher||"")){g.splice(i,1);n++;break;}if(!n)process.exit(1);}else{const D=g.find(x=>x.matcher==="Bash"&&x.hooks.some(h=>/hooks\/dispatch\.sh/.test(h.command)));if(!D)process.exit(1);const h=D.hooks[0];if(a[2]==="nopreamble")h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh\" bash";else if(a[2]==="badarg")h.command=h.command.replace(/ bash$/," zsh");else if(a[2]==="twice")g.push({matcher:"Bash",hooks:[{type:"command",command:"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-hang-shapes"}]});else process.exit(1);}fs.writeFileSync(a[1],JSON.stringify(d,null,2));'
+  # A control is honest only when its mutation APPLIED (the mutator exits 1 when its target is not in the file, so a
+  # file without the dispatcher shape cannot pass vacuously) and the mutated rows differ from the real rows AND from the expected set.
+  c71_ctl() { # <label> <mutated rows>
+    if [ -n "$2" ] && [ "$2" != "$c71_real_p" ] && [ "$2" != "$c71_want_p" ]; then
+      ok "check 71 control ($1): the extraction on a mutated copy differs from the expected set"
     else
-      ko "check 71 control (hooks.json $c71_mode): a mutated hooks.json was NOT detected -- the plugin comparison is vacuous"
+      ko "check 71 control ($1): the mutation was NOT applied or NOT detected -- the plugin comparison is vacuous"
     fi
+  }
+  # narrow: a matcher loses a tool; dropgroup: a registration group is gone; inline: an unknown group is added;
+  # nopreamble (b): the Bash dispatcher without the closed preamble; badarg (e): a table argument other than bash/powershell;
+  # twice (d): deny-hang-shapes also registered on its own under Bash (it would run twice)
+  for c71_mode in narrow dropgroup inline nopreamble badarg twice; do
+    rm -f "$c71_tmp/pmut-$c71_mode.json"
+    node -e "$c71_pmut" hooks/hooks.json "$c71_tmp/pmut-$c71_mode.json" "$c71_mode" 2>/dev/null
+    c71_got=""; [ -s "$c71_tmp/pmut-$c71_mode.json" ] && c71_got=$(c71_rows "$c71_tmp/pmut-$c71_mode.json" 2>/dev/null)
+    c71_ctl "hooks.json $c71_mode" "$c71_got"
   done
-  # (8b) controls for (1c)/(1d): no-push-main flipped to open in a run-hook.sh copy; a closed hook registered bare
-  sed 's/^\(  no-push-main|deny-secret-reads).*pol=\)closed/\1open/' hooks/run-hook.sh > "$c71_tmp/rh-flip.sh"
+  # (1a) control: the `twice` copy (deny-hang-shapes also registered on its own under Bash) must be refused by the shape rule
+  [ -n "$(c71_loose "$c71_tmp/pmut-twice.json" 2>/dev/null)" ] \
+    && ok "check 71 control (guard outside the dispatcher): a Bash registration of its own is refused" \
+    || ko "check 71 control (guard outside the dispatcher): NOT refused -- the dispatcher-shape rule is vacuous"
+  # (a) a dispatcher table missing pre-commit-test: a scratch copy of dispatch.sh (the tables are read from there)
+  sed 's/ pre-commit-test / /' hooks/dispatch.sh > "$c71_tmp/dispatch-notab.sh"
+  c71_ctl "dispatch.sh table without pre-commit-test" "$(c71_rows hooks/hooks.json "$c71_tmp/dispatch-notab.sh" 2>/dev/null)"
+  # (8b) controls for (1c)/(1d): no-push-main flipped to open in a hook-class.sh copy; a closed hook registered bare
+  sed 's/^\( *no-push-main|deny-secret-reads).*pol=\)closed/\1open/' hooks/lib/hook-class.sh > "$c71_tmp/rh-flip.sh"
   c71_got=$(c71_rhtab "$c71_tmp/rh-flip.sh")
   if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
-    ok "check 71 control (run-hook.sh polarity flip): no-push-main turned open differs from the frozen forms"
+    ok "check 71 control (hook-class.sh polarity flip): no-push-main turned open differs from the frozen forms"
   else
-    ko "check 71 control (run-hook.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
+    ko "check 71 control (hook-class.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
   fi
-  node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"no-push-main"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" no-push-main";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
+  node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"deny-secret-reads"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
   if [ -n "$(c71_shapes "$c71_tmp/bare-closed.json" "$c71_rh")" ]; then
-    ok "check 71 control (closed hook registered bare): the shape comparison flags no-push-main"
+    ok "check 71 control (closed hook registered bare): the shape comparison flags deny-secret-reads (a run-hook registration; the dispatcher's preamble is pinned by the row comparison)"
   else
     ko "check 71 control (closed hook registered bare): NOT detected -- the shape comparison is vacuous"
   fi
@@ -4932,13 +4984,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 74 (v5.0): every hook hooks.json names exists in hooks/ and is classed in run-hook.sh, and vice versa
+# Check 74 (v5.0): every hook hooks.json names exists in hooks/ and is classed in hooks/lib/hook-class.sh, and vice versa
 # ---------------------------------------------------------------------------
-c74_names=$(grep -oE '(run-hook\.sh|\$f)\\" [a-z-]+' hooks/hooks.json | awk '{print $2}' | sort -u)
-c74_classed=$(sed -n '/^case "\$name" in/,/^esac/p' hooks/run-hook.sh | grep -o '^  [a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
+# v6.0: a dispatcher registration (hooks/dispatch.sh <table>) names no guard itself -- its `$f\" bash` argument is a
+# table -- so those lines are skipped and the guards come from the tables in hooks/dispatch.sh instead; the union
+# must equal the class table, every table guard must exist (below), and dispatch.sh itself must exist.
+c74_names=$({ grep -v 'hooks/dispatch\.sh' hooks/hooks.json | grep -oE '(run-hook\.sh|\$f)\\" [a-z-]+' | awk '{print $2}'; c71_dtab hooks/dispatch.sh | awk '{print $2}'; } | sort -u)
+c74_classed=$(sed -n '/^ *case "\$1" in/,/^ *esac/p' hooks/lib/hook-class.sh | grep -o '^ *[a-z|-][a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
 c74_bad=""
 for n in $c74_names; do [ -f "hooks/$n.sh" ] || c74_bad="$c74_bad missing:$n"; done
-[ "$c74_names" = "$c74_classed" ] || c74_bad="$c74_bad hooks.json-vs-run-hook.sh-class-table-differ"
+[ "$c74_names" = "$c74_classed" ] || c74_bad="$c74_bad hooks.json-vs-hook-class.sh-class-table-differ"
 # The marker pair, pinned by EVENT: SessionStart writes (no argument), SessionEnd removes (`end`). A dropped or typo'd
 # `end` must go red: the writer would re-create the marker at SessionEnd and a resumed session would find it stale.
 c74_sess=$(node -e '
@@ -4955,6 +5010,23 @@ case "$c74_sess" in "ok "*) ;; *) c74_bad="$c74_bad cct-session.sh-not-registere
 # it a loaded machine cancels the marker removal ("Hook cancelled" on exit).
 case "$c74_sess" in *" ok") ;; *) c74_bad="$c74_bad cct-session.sh-SessionEnd-timeout-missing-or-outside-2..60s" ;; esac
 [ -f hooks/cct-session.sh ] || c74_bad="$c74_bad missing:cct-session"
+if grep -q 'hooks/dispatch\.sh' hooks/hooks.json; then
+  [ -f hooks/dispatch.sh ] || c74_bad="$c74_bad missing:dispatch"
+  [ "$(c71_dtab hooks/dispatch.sh | awk '{print $1}' | sort -u | tr '\n' ' ')" = "bash powershell " ] || c74_bad="$c74_bad dispatch.sh-lacks-the-bash-and-powershell-tables"
+  # v6.0 D2: the ORDER of the tables is pinned (the closed git gates run first, so an open guard can never keep one from running).
+  # The lists below are the expectation the tables are held to, not a second source: the tables are still read from dispatch.sh.
+  c74_d2_bash='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation'
+  c74_d2_ps='no-push-main gate-before-merge pre-commit-test'
+  c74_tab() { c71_dtab "$1" | awk -v t="$2" '$1==t { printf "%s%s", (n++ ? " " : ""), $2 }'; } # <dispatch.sh> <table>
+  c74_d2_ok() { [ "$(c74_tab "$1" bash)" = "$c74_d2_bash" ] && [ "$(c74_tab "$1" powershell)" = "$c74_d2_ps" ]; }
+  c74_d2_ok hooks/dispatch.sh || c74_bad="$c74_bad dispatch.sh-tables-differ-from-D2(bash:$(c74_tab hooks/dispatch.sh bash);powershell:$(c74_tab hooks/dispatch.sh powershell))"
+  c74_tmp=$(mktemp -d)
+  sed "s/cctd_tab='no-push-main deny-secret-reads /cctd_tab='deny-secret-reads no-push-main /" hooks/dispatch.sh > "$c74_tmp/swapped.sh"
+  if cmp -s hooks/dispatch.sh "$c74_tmp/swapped.sh" || c74_d2_ok "$c74_tmp/swapped.sh"; then
+    c74_bad="$c74_bad D2-order-CONTROL-failed(two-guards-swapped-in-a-copy-were-not-flagged)"
+  fi
+  rm -rf "$c74_tmp"
+fi
 if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) hooks, all present and classed"; else ko "74: hooks.json/run-hook.sh:$c74_bad"; fi
 
 # ---------------------------------------------------------------------------

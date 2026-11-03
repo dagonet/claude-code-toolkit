@@ -2,9 +2,9 @@
 # enforce-delegation.sh — PreToolUse hook: the PO (main thread) never does
 # hands-on work; sub-agents do all coding/building/testing.
 #
-# Matchers (two groups in settings.json):
-#   Edit|Write|NotebookEdit  — deny main-thread edits outside the PO write surface
-#   Bash                     — deny main-thread build/test-runner commands
+# Registration (the cct plugin's hooks/hooks.json):
+#   Edit|Write|NotebookEdit  — its own entry: deny main-thread edits outside the PO write surface
+#   Bash                     — the dispatcher table (hooks/dispatch.sh bash; v6.0): deny main-thread build/test-runner commands
 #
 # Discriminator: the hook stdin JSON contains `agent_id` ONLY when the call
 # originates inside a subagent. agent_id present -> allow (subagents do the
@@ -87,13 +87,29 @@ EOF
   exit 0
 fi
 
-INPUT=$(cat)
+case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
+if [ "${CCTD_MEMO[1]+set}" = set ]; then INPUT=${CCTD_MEMO[1]}; else INPUT=$(cat); fi
 
 # v2.2.0: the classifier below is an embedded node program, so this hook needs
 # node specifically. Without it it stays fail-open, but says so once.
-jlib="$(dirname "$0")/lib/json.sh"
+jlib="$cctg_dir/lib/json.sh"
 if [ -f "$jlib" ]; then
   . "$jlib"
+  # v6.0 E2: dispatched (the memo is set), a Bash or PowerShell command with no backslash and none of these ten
+  # substrings cannot match any runner pattern below, so the program would only print PASS: skip it. The backslash
+  # is there because the program joins backslash-newline first (py\<newline>test); `test` is a substring, not
+  # `go test`, because the JS \s is wider than a bash pattern's whitespace. The superset is over the tool names
+  # the harness produces ('Bash' / 'PowerShell'); a tool_name such as 'Bash\n' is not produced.
+  # Not dispatched: nothing changes.
+  if [ "${CCTD_MEMO[1]+set}" = set ] && json_fields "$INPUT" tool_name tool_input.command; then
+    case ${JF[0]} in
+      Bash|PowerShell)
+        case ${JF[1]} in
+          *\\*|*npm*|*npx*|*pytest*|*cargo*|*dotnet*|*mvn*|*gradle*|*run-gate*|*cct-gate*|*test*) ;;
+          *) exit 0 ;;
+        esac ;;
+    esac
+  fi
   json_require_node enforce-delegation "$(json_session "$INPUT")" || exit 0
 fi
 command -v node >/dev/null 2>&1 || exit 0

@@ -95,8 +95,12 @@ EXP_NODE_SKIP=0
 # v4.5.0: +17 each -- block B2 needs node (the contract hook's transcript scan) and skips its 17 assertions without it.
 # v4.5.0 measured on the Linux cloud host at the release tip: python3 250, jq 325 (a Windows host skips 3-4 fewer in python3; the +/-20 band covers both).
 # v4.5.0 after merging feat/sync-feedback (its new test-hooks rows add skips in the restricted configs): remeasured python3 255, jq 335.
-EXP_PY_SKIP=255
-EXP_JQ_SKIP=335
+# v6.0.0: +33 each -- the v6 rows that need node (enforce-delegation): guards (a) 1 + (b) 1, dispatch (x1) 2 + (s) 2 + (E2) 27.
+#   Measured at b17d800 on agent-host-1: python3 274 (v5.2.1: 241), jq 370 (v5.2.1: 337), +33 in both.
+#   EXP_PY_SKIP is the measured 274, not 255+33: 255 sat 14 above v5.2.1's 241, which left a Windows host
+#   (3-4 fewer python3 skips) about 2 inside the band.
+EXP_PY_SKIP=274
+EXP_JQ_SKIP=368
 BAND=20
 
 matrix_fail=0

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse hook: require passing tests before git commit
-# Matcher: Bash|PowerShell
+# Matcher: the Bash and PowerShell dispatcher tables (hooks/dispatch.sh; v6.0), no registration of its own
 #
 # Runs the project's test command before allowing a commit.
 # Blocks the commit if tests fail.
@@ -34,11 +34,14 @@
 trap '[ "$?" = 127 ] && exit 2' EXIT   # v4.4.0 C2: the old registration wrapper's 127->2, now in-hook (exec/source forms cannot wrap)
 
 # v4.3.1 T1-5: bash imports SECONDS from the environment; reset it so the hook-wide ceiling counts from THIS hook's start.
-SECONDS=0
+# v6.0: under the dispatcher the hook starts when the DISPATCHER does (cctd_prepare resets SECONDS; the guards ahead of it in its table run first),
+# so reset only when run standalone -- the memo-presence test json_adopt_parser in hooks/lib/json.sh uses.
+[ -n "${CCTD_MEMO[1]+set}" ] || SECONDS=0
 
 # Fail CLOSED when the sourced lib is missing: without it every gc_* helper is
 # undefined, GC_CMD stays empty, and this gate would exit 0 on every commit.
-lib="$(dirname "$0")/lib/git-cmd.sh"
+case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
+lib="$cctg_dir/lib/git-cmd.sh"
 [ -f "$lib" ] || { echo "BLOCKED: $lib missing — run /cct:sync-template step 6b (hooks/lib/git-cmd.sh)" >&2; exit 2; }
 . "$lib"
 command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: $lib is present but corrupt (gc_current_branch undefined) — this gate cannot evaluate the command, refusing" >&2; exit 2; }
@@ -65,7 +68,7 @@ pct_out_file() {
 # would resolve against the WRONG repo: silently missing there (masking an
 # intended run-gate.sh as the legacy eval path), or worse, hitting that other
 # repo's own hooks/run-gate.sh instead of this toolkit's.
-RUN_GATE="$(cd "$(dirname "$0")" && pwd)/run-gate.sh"
+RUN_GATE="$(cd "$cctg_dir" && pwd)/run-gate.sh"
 
 # v3.0.3 — THE SIDE EFFECT THAT OUTLIVES THE HOOK (last-precommit.json under
 # <common git dir>/gate/, v4.0.1 item 17 — see gc_gate_dir's header note in
@@ -459,12 +462,16 @@ pct_run_bounded() {
   # Its own process group no longer dies with this hook: if the hook itself is
   # signalled (a cancel, or a harness timeout on a registration without the
   # field), take the group down first. An uncatchable kill (SIGKILL,
-  # TerminateProcess) still orphans it -- a stated Known limit.
+  # TerminateProcess) still orphans it -- a stated Known limit. Run by the v6
+  # dispatcher this code is a subshell of it, and a bash blocked in $( ) dies on
+  # a TERM before any trap can run, so a killed dispatcher is noticed by the poll
+  # loop below within one tick ($$ is the dispatcher's pid there).
   trap 'pct_kill_group "$_rb_pid"; exit 2' TERM INT HUP
   _rb_t0=$SECONDS
   _rb_ceil=$(pct_ceiling)
   PCT_CEIL_HIT=0
   while kill -0 "$_rb_pid" 2>/dev/null; do
+    if ! kill -0 "$$" 2>/dev/null; then pct_kill_group "$_rb_pid"; exit 2; fi
     # Either limit stops the run: the per-run budget (counted from the fork) or
     # the hook-wide ceiling (bash $SECONDS counts from hook start).
     if [ "$SECONDS" -ge "$_rb_ceil" ] && [ $((SECONDS - _rb_t0)) -lt "$_rb_budget" ]; then

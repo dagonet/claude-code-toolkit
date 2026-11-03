@@ -221,10 +221,21 @@ vh_init_parser() {
 vh_plugin() {
   vh_pf=$1/hooks/hooks.json
   [ -f "$vh_pf" ] && [ -r "$vh_pf" ] || return 0
-  # bare `run-hook.sh" <name>` and the closed-class inline-guard form `exec bash "$f" <name>`
-  vh_paths=$(grep -oE '(run-hook\.sh|\$f)\\" [A-Za-z0-9_-]+' "$vh_pf" 2>/dev/null | sed 's/^.* /hooks\//; s/$/.sh/')
+  # bare `run-hook.sh" <name>` and the closed-class inline-guard form `exec bash "$f" <name>`; a dispatcher registration
+  # (hooks/dispatch.sh) ends in a TABLE name (`bash`, `powershell`), not a guard, so its lines are left out here: the
+  # direct-script grep below finds hooks/dispatch.sh itself, and the guards come from its `cctd_tab='...'` table lines.
+  vh_paths=$(grep -v 'hooks/dispatch\.sh' "$vh_pf" 2>/dev/null | grep -oE '(run-hook\.sh|\$f)\\" [A-Za-z0-9_-]+' | sed 's/^.* /hooks\//; s/$/.sh/')
   vh_paths="$vh_paths
 $(grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[A-Za-z0-9_.-]+\.sh' "$vh_pf" 2>/dev/null | sed 's/^.*}\///')"
+  if [ -r "$1/hooks/dispatch.sh" ] && grep -q 'hooks/dispatch\.sh' "$vh_pf" 2>/dev/null; then
+    while IFS= read -r vh_l; do
+      case $vh_l in
+        *"cctd_tab='"*) vh_l=${vh_l#*cctd_tab=\'}; vh_l=${vh_l%%\'*}
+          for vh_g in $vh_l; do vh_paths="$vh_paths
+hooks/$vh_g.sh"; done ;;
+      esac
+    done < "$1/hooks/dispatch.sh"
+  fi
   while IFS= read -r vh_x; do [ -n "$vh_x" ] && vh_script "$1/$vh_x"; done <<EOF
 $vh_paths
 EOF

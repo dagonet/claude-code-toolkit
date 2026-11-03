@@ -4,11 +4,12 @@
 # a sleep wait loop, and a leading `cd` followed by two or more commands (R-B).
 # ADVISORY: a missing lib, no JSON parser, an unreadable payload or any doubt
 # lets the call through (exit 0). Honours .claude/git-guard-off.
-lib="$(dirname "$0")/lib/json.sh"
+case ${BASH_SOURCE[0]} in */*) cctg_dir=${BASH_SOURCE[0]%/*} ;; *) cctg_dir=. ;; esac
+lib="$cctg_dir/lib/json.sh"
 [ -f "$lib" ] || exit 0
 # shellcheck source=lib/json.sh
 . "$lib"
-DH_JSON=$(cat)
+if [ "${CCTD_MEMO[1]+set}" = set ]; then DH_JSON=${CCTD_MEMO[1]}; else DH_JSON=$(cat); fi
 json_fields "$DH_JSON" cwd tool_input.command; DH_RC=$?   # v4.4.0 C3: one parser run
 [ "$DH_RC" = 2 ] && exit 0
 if [ "$DH_RC" = 0 ]; then DH_CWD=${JF[0]}; DH_CMD=${JF[1]}

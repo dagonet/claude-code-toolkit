@@ -251,17 +251,40 @@ trow_tool() { # -> an assistant tool_use-only row
 
 # --- assertion --------------------------------------------------------------
 
+# v6.0: a row on one of the six dispatched guards asserts a second time, through the dispatcher's runner, under
+# "<label> [dispatch]". It uses cctd_source_guard, not cctd_run_guard: the direct rows have no class gate and no
+# step-aside, so the replay has none either (the selection is covered by the v6 dispatch rows). Copies under
+# $TMPROOT and the other hooks are not replayed. The replay runs FIRST and the direct run LAST: both write the same
+# files under <gitdir>/gate/, so a row that reads such a file afterwards must see what the standalone hook wrote.
+hk_modes() { # <hook_abs_path> -> HK_MODES ("direct", or "dispatch direct") and HK_G (the guard's name)
+  HK_MODES=direct; HK_G=${1##*/}; HK_G=${HK_G%.sh}
+  case "$1" in
+    "$ROOT"/hooks/no-push-main.sh|"$ROOT"/hooks/deny-secret-reads.sh|"$ROOT"/hooks/gate-before-merge.sh|"$ROOT"/hooks/pre-commit-test.sh|"$ROOT"/hooks/deny-hang-shapes.sh|"$ROOT"/hooks/enforce-delegation.sh) HK_MODES="dispatch direct" ;;
+  esac
+}
+hk_exec() { # <mode> <hook_abs_path> <json> -- payload on stdin; the caller's redirections and TMPDIR apply
+  if [ "$1" = dispatch ]; then
+    printf '%s' "$3" | bash -c '. "$1"; cctd_prepare; cctd_source_guard "$2"; exit $?' _ "$ROOT/hooks/dispatch.sh" "$HK_G"
+  else
+    printf '%s' "$3" | bash "$2"
+  fi
+}
+
 check() { # <label> <hook> <expected_exit> <json>
   label="$1"; hook="$2"; want="$3"; json="$4"
-  printf '%s' "$json" | bash "$ROOT/$hook" >/dev/null 2>&1
-  got=$?
-  if [ "$got" = "$want" ]; then
-    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
-    pass=$((pass + 1))
-  else
-    printf 'FAIL  %-42s (want %s, got %s)\n' "$label" "$want" "$got"
-    fail=$((fail + 1))
-  fi
+  hk_modes "$ROOT/$hook"
+  for hk_mode in $HK_MODES; do
+    hk_lab=$label; if [ "$hk_mode" = dispatch ]; then hk_lab="$label [dispatch]"; fi
+    hk_exec "$hk_mode" "$ROOT/$hook" "$json" >/dev/null 2>&1
+    got=$?
+    if [ "$got" = "$want" ]; then
+      printf 'PASS  %-42s (exit %s)\n' "$hk_lab" "$got"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  %-42s (want %s, got %s)\n' "$hk_lab" "$want" "$got"
+      fail=$((fail + 1))
+    fi
+  done
 }
 
 # Message assertion: exit code AND an ASCII substring of the hook's stderr.
@@ -269,21 +292,25 @@ check() { # <label> <hook> <expected_exit> <json>
 check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
   label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
   errf="$TMPROOT/check_msg.err"
-  # Fresh TMPDIR per case. json_warn_once stays silent while its marker exists,
-  # and a SESSION-keyed marker never expires — a shared TMPDIR would make any
-  # WARN assertion pass on the first run of the suite and fail on every later
-  # one, on the same machine, for no reason visible in the diff.
-  cmtmp="$TMPROOT/check_msg.tmp"; rm -rf "$cmtmp"; mkdir -p "$cmtmp"
-  printf '%s' "$json" | TMPDIR="$cmtmp" bash "$hookp" >/dev/null 2>"$errf"
-  got=$?
-  if [ "$got" = "$want" ] && grep -qF "$needle" "$errf"; then
-    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
-    pass=$((pass + 1))
-  else
-    printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' \
-      "$label" "$want" "$needle" "$got" "$(head -1 "$errf")"
-    fail=$((fail + 1))
-  fi
+  hk_modes "$hookp"
+  for hk_mode in $HK_MODES; do
+    hk_lab=$label; if [ "$hk_mode" = dispatch ]; then hk_lab="$label [dispatch]"; fi
+    # Fresh TMPDIR per case. json_warn_once stays silent while its marker exists,
+    # and a SESSION-keyed marker never expires — a shared TMPDIR would make any
+    # WARN assertion pass on the first run of the suite and fail on every later
+    # one, on the same machine, for no reason visible in the diff.
+    cmtmp="$TMPROOT/check_msg.tmp"; rm -rf "$cmtmp"; mkdir -p "$cmtmp"
+    TMPDIR="$cmtmp" hk_exec "$hk_mode" "$hookp" "$json" >/dev/null 2>"$errf"
+    got=$?
+    if [ "$got" = "$want" ] && grep -qF "$needle" "$errf"; then
+      printf 'PASS  %-42s (exit %s)\n' "$hk_lab" "$got"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  %-42s (want %s + "%s", got %s: %s)\n' \
+        "$hk_lab" "$want" "$needle" "$got" "$(head -1 "$errf")"
+      fail=$((fail + 1))
+    fi
+  done
 }
 
 # The negative of check_msg: exit code AND the ABSENCE of a stderr substring.
@@ -293,17 +320,21 @@ check_msg() { # <label> <hook_abs_path> <expected_exit> <json> <needle>
 check_nomsg() { # <label> <hook_abs_path> <expected_exit> <json> <forbidden-needle>
   label="$1"; hookp="$2"; want="$3"; json="$4"; needle="$5"
   errf="$TMPROOT/check_nomsg.err"
-  cntmp="$TMPROOT/check_nomsg.tmp"; rm -rf "$cntmp"; mkdir -p "$cntmp"
-  printf '%s' "$json" | TMPDIR="$cntmp" bash "$hookp" >/dev/null 2>"$errf"
-  got=$?
-  if [ "$got" = "$want" ] && ! grep -qF "$needle" "$errf"; then
-    printf 'PASS  %-42s (exit %s)\n' "$label" "$got"
-    pass=$((pass + 1))
-  else
-    printf 'FAIL  %-42s (want %s WITHOUT "%s", got %s: %s)\n' \
-      "$label" "$want" "$needle" "$got" "$(head -1 "$errf")"
-    fail=$((fail + 1))
-  fi
+  hk_modes "$hookp"
+  for hk_mode in $HK_MODES; do
+    hk_lab=$label; if [ "$hk_mode" = dispatch ]; then hk_lab="$label [dispatch]"; fi
+    cntmp="$TMPROOT/check_nomsg.tmp"; rm -rf "$cntmp"; mkdir -p "$cntmp"
+    TMPDIR="$cntmp" hk_exec "$hk_mode" "$hookp" "$json" >/dev/null 2>"$errf"
+    got=$?
+    if [ "$got" = "$want" ] && ! grep -qF "$needle" "$errf"; then
+      printf 'PASS  %-42s (exit %s)\n' "$hk_lab" "$got"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  %-42s (want %s WITHOUT "%s", got %s: %s)\n' \
+        "$hk_lab" "$want" "$needle" "$got" "$(head -1 "$errf")"
+      fail=$((fail + 1))
+    fi
+  done
 }
 
 # Value assertion, for hooks whose contract is their STDOUT (updatedInput /
@@ -456,7 +487,9 @@ CONT=$(printf 'git push \\\norigin main')
 [ "$(printf '%s' "$CONT" | od -An -c | tr -d ' \n')" = 'gitpush\\noriginmain' ] || echo "FAIL  continuation fixture bytes are wrong: $(printf '%s' "$CONT" | od -An -c | tr -d '\n')"
 check "continued push, feature branch (§1 twin)"  "$H" 2 "$(mkjson Bash "$CONT" "$FEATREPO")"
 check "continued push origin feature"            "$H" 0 "$(mkjson Bash "$(printf 'git push \\\norigin feature')" "$FEATREPO")"
-check "continued push, CRLF"                     "$H" 2 "$(mkjson Bash "$(printf 'git push \\\r\norigin main')" "$FEATREPO")"
+# jesc leaves a CR alone and a raw CR inside a JSON string does not parse (the row would pass on the unparsed payload),
+# so the payload is spelled by hand with the CR as \r: the command is `git push \` CR LF `origin main`.
+check_msg "continued push, CRLF"                 "$ROOT/$H" 2 "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'git push \\\r\norigin main' "$(jesc "$FEATREPO")")" "pushing to a protected branch"
 check "continuation at END of command"           "$H" 2 "$(mkjson Bash "$(printf 'git push origin main \\\n')" "$FEATREPO")"
 check "mid-word join: git pu\\<LF>sh"            "$H" 2 "$(mkjson Bash "$(printf 'git pu\\\nsh origin main')" "$FEATREPO")"
 check "even backslashes: NOT joined (2nd seg)"   "$H" 2 "$(mkjson Bash "$(printf 'printf a\\\\\ngit push origin main')" "$FEATREPO")"
@@ -1003,6 +1036,91 @@ NOAWK_RAW=$(printf 'git \\\ncommit -m x')
 printf '%s' "$(mkjson Bash "$NOAWK_RAW" "$BADREPO")" > "$TMPROOT/noawk_payload.json"
 NOAWK_GC_CMD=$( . "$ROOT/hooks/lib/json.sh"; . "$ROOT/hooks/lib/git-cmd.sh"; cmd_join_continuations() { :; }; gc_read_stdin < "$TMPROOT/noawk_payload.json"; printf '%s' "$GC_CMD" )
 expect "join fallback: awk absent -- GC_CMD stays the raw text, not empty" "$NOAWK_RAW" "$NOAWK_GC_CMD"
+
+# v6.0 Task 5a (design 12 E1) -- gc_read_stdin ran two text rewrites on EVERY Bash call: the
+# continuation join (cat + awk, via cmd_join_continuations) and gc_protect_c_paths (sed). Each
+# now runs only when the text can change: a backslash for the join, `-C` for the protection.
+# DIFFERENTIAL rows: GC_CMD must stay byte-identical to the old composition (e1_old) for each
+# input, in two modes. "payload" is the real flow, but json_fields has already stripped every
+# trailing LF and CR from the command there, so the trailing-newline trap cannot show.
+# "preparsed" (gc_read_stdin --preparsed, the gates' own entry point) hands the raw text to the
+# rewrites: the only route where a missing newline strip, or one that also strips CR, moves a
+# byte. Both modes compare with variables inside ONE subshell, never through $(...): a capture
+# would strip the very newline these rows are about. Written, and passed, against the unchanged
+# lib first.
+E1_IN=(
+  'ls'
+  $'ls\n'
+  $'ls\n\n'
+  $'\n\n'
+  $'a\r\nb'
+  'ls \'
+  $'ls \\\n-la'
+  'git -C "a b" status'
+  "git -C 'a b' status"
+  'git -C"x" status'
+  'echo -C'
+  $'ls\r'
+  $'ls\r\n'
+  $'ls \\\n'
+  $'git -\\\nC "a b" status\n'
+  $'git -C "a b" status\n\n'
+)
+e1_old() { # <command> -> E1_WANT: the two rewrites exactly as gc_read_stdin ran them before E1
+  E1_WANT=$1
+  if [ -n "$E1_WANT" ]; then
+    E1_J=$(printf '%s' "$E1_WANT" | cmd_join_continuations) && [ -n "$E1_J" ] && E1_WANT=$E1_J
+  fi
+  E1_WANT=$(gc_protect_c_paths "$E1_WANT")
+}
+e1_payload() { # <command> -> a Bash payload; CR escaped, because jesc leaves it raw and no parser accepts that
+  local j bs='\'
+  j=$(mkjson Bash "$1" "$TMPROOT")
+  printf '%s' "${j//$'\r'/${bs}r}"
+}
+e1_row() { # <mode> <input> <want> <got> -> one TSV line: mode, input as %q, verdict
+  local v=same
+  [ "$3" = "$4" ] || v="want=$(printf '%s' "$3" | od -An -c | tr -s ' ' | tr -d '\n') got=$(printf '%s' "$4" | od -An -c | tr -s ' ' | tr -d '\n')"
+  printf '%s\t%s\t%s\n' "$1" "$(printf '%q' "$2")" "$v"
+}
+E1_OUT=$(
+  . "$ROOT/hooks/lib/json.sh"; . "$ROOT/hooks/lib/git-cmd.sh"
+  for c in "${E1_IN[@]}"; do
+    e1_payload "$c" > "$TMPROOT/e1_payload.json"
+    gc_read_stdin < "$TMPROOT/e1_payload.json"
+    e1_old "$JP_CMD"
+    e1_row payload "$c" "$E1_WANT" "$GC_CMD"
+    GC_PRE_JSON='{}'; GC_PREPARSED=0; JP_TOOL=Bash; JP_CWD=$TMPROOT; JP_CMD=$c
+    gc_read_stdin --preparsed
+    e1_old "$c"
+    e1_row preparsed "$c" "$E1_WANT" "$GC_CMD"
+  done
+)
+while IFS=$'\t' read -r e1_mode e1_lbl e1_verdict; do
+  [ -n "$e1_mode" ] || continue
+  expect "E1 $e1_mode: GC_CMD == old rewrites for $e1_lbl" same "$e1_verdict"
+done <<< "$E1_OUT"
+expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s\n' "$E1_OUT" | grep -c .)"
+
+# SPAWN rows: under strace, a Bash `ls` payload through gc_read_stdin (the dispatcher's memo path,
+# which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
+# cat, awk or sed. The control command holds a backslash that only joins into `-C`, so it must
+# still exec the join (cat + awk) and the protection (sed): that keeps the first row from
+# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` pins strace's default
+# 32-character string truncation, which the probe relies on: it cuts the long `bash -c <probe>` line (which holds
+# both names) off before them, so only the real markers open and close the range.
+E1_SPAWN_PROBE='. "$1/hooks/lib/json.sh"; . "$1/hooks/lib/git-cmd.sh"; json_memo_set "$2" tool_name cwd tool_input.command; "$BASH" -c : E1_BEGIN; gc_read_stdin </dev/null; "$BASH" -c : E1_END'
+e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (sorted, space-terminated)
+  local st="$TMPROOT/e1_strace.txt"
+  strace -f -s 32 -e trace=execve -o "$st" "$BASH" -c "$E1_SPAWN_PROBE" probe "$ROOT" "$(mkjson Bash "$1" "$TMPROOT")" >/dev/null 2>&1
+  sed -n '/E1_BEGIN/,/E1_END/p' "$st" | grep -oE 'execve\("[^"]*/(cat|awk|sed)"' | grep -oE '(cat|awk|sed)"$' | tr -d '"' | sort -u | tr '\n' ' '
+}
+if command -v strace >/dev/null 2>&1 && strace -f -e trace=execve -o /dev/null "$BASH" -c : >/dev/null 2>&1; then
+  expect "E1 spawn: an ls payload through gc_read_stdin execs none of cat/awk/sed" "" "$(e1_spawned ls)"
+  expect "E1 spawn control: a joined -C command still execs the join and the protection" "awk cat sed " "$(e1_spawned $'git -\\\nC "a b" status')"
+else
+  skip_host "E1 spawn rows" "strace unavailable or ptrace denied on this host" 2
+fi
 
 # v4.1.2 T1<->T5 INTERFACE: the skill's cmd_len recipe must equal what the
 # hook records. Recipe = call the hook's own pipeline (cmd_join_continuations
@@ -9132,7 +9250,9 @@ printf '# ctx\n\n- **Test**: `echo x >> %s/g6c.count; exit 0`\n' "$TMPROOT" > "$
 rm -f "$TMPROOT/g6c.count"
 check_msg "G6 T3-3: two commits in the same repository -> allowed" "$ROOT/hooks/pre-commit-test.sh" 0 \
   "$(mkjson Bash "git commit -m a && git -C $G6C/sub commit -m b" "$G6C")" "passed."
-expect "G6 T3-3: ... and the Test ran exactly once" 1 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
+# check_msg ran the hook twice ([dispatch], then direct). Each run's `passed.` needle is read from its own stderr (errf is
+# truncated per run), so each run ran the Test at least once; 2 lines in all therefore means exactly 1 + 1.
+expect "G6 T3-3: ... and the Test ran exactly once per run ([dispatch] + direct)" 2 "$(wc -l < "$TMPROOT/g6c.count" 2>/dev/null | tr -d ' ')"
 check_msg "G6 S-3c: cd sub; cd -; git commit -> refused (a second cd)" "$ROOT/hooks/pre-commit-test.sh" 2 \
   "$(mkjson Bash 'cd sub; cd -; git commit -m x' "$G6OK")" "a directory change in a command with commit"
 # the top-level's Test wins over a failing sub/PROJECT_CONTEXT.md
@@ -10467,6 +10587,33 @@ for c3_b in node python3 jq; do
   expect "C3: $c3_b json_fields on an invalid payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" 'garbage' fields)"
   expect "C3: $c3_b json_payload spawns one parser process" 1 "$(c3_shim_n "$c3_b" "${C3P[0]}" payload)"
 done
+# ---- v6.0 Task 2: json_memo_set / the CCTD_MEMO branch of json_fields (parse once, D6) ----
+# The stub PATH holds no node, python3 or jq: a memo hit still answers, a miss reaches "no parser" (rc 2).
+if [ -z "$HAVE_NODE$HAVE_PY$HAVE_JQ" ]; then
+  skip "v6 memo: json_memo_set rows" "no working node, python3 or jq on this host" 12
+else
+  V6M_STUB="$TMPROOT/v6m-stub"; mkdir -p "$V6M_STUB"
+  V6M_P='{"tool_name":"Bash","cwd":"/work/a","tool_input":{"command":"ls"}}'
+  V6M_Q='{"tool_name":"Bash","cwd":"/work/b","tool_input":{"command":"ls"}}'
+  v6m_stub_get() { # <memo-payload> <query-payload> <field> -- set the memo on the real PATH, query on the stub PATH
+    ( json_memo_set "$1" tool_name cwd >/dev/null; PATH="$V6M_STUB"; json_fields "$2" "$3"; printf '%s:%s' "$?" "${JF[0]-}" )
+  }
+  expect "v6 memo: (a) a stored field is answered with no parser on PATH"      "0:/work/a" "$(v6m_stub_get "$V6M_P" "$V6M_P" cwd)"
+  expect "v6 memo: (a) the second stored field is answered too"                 "0:Bash"    "$(v6m_stub_get "$V6M_P" "$V6M_P" tool_name)"
+  expect "v6 memo: (b) a different payload does not hit (no parser: rc 2)"      "2:"        "$(v6m_stub_get "$V6M_P" "$V6M_Q" cwd)"
+  expect "v6 memo: (c) a field outside the memo falls through to a parse (rc 2)" "2:"       "$(v6m_stub_get "$V6M_P" "$V6M_P" tool_input.file_path)"
+  expect "v6 memo: (c) the same field parses for real on the real PATH"         "0:Bash"    "$( json_memo_set "$V6M_P" cwd >/dev/null; json_fields "$V6M_P" tool_name; printf '%s:%s' "$?" "${JF[0]-}" )"
+  expect "v6 memo: (d) an invalid payload memoises rc 1"                        "1"         "$( json_memo_set 'garbage' cwd >/dev/null; printf '%s' "${CCTD_MEMO[0]}" )"
+  expect "v6 memo: (d) the later call returns 1 without a parser"               "1:"        "$(v6m_stub_get 'garbage' 'garbage' cwd)"
+  expect "v6 memo: (e) a BOM-prefixed payload stored, queried without the BOM"  "0:/work/a" "$(v6m_stub_get "$JSON_BOM$V6M_P" "$V6M_P" cwd)"
+  expect "v6 memo: (e) stored without the BOM, queried with it"                 "0:/work/a" "$(v6m_stub_get "$V6M_P" "$JSON_BOM$V6M_P" cwd)"
+  expect "v6 memo: (e) memo index 1 holds the BOM-free payload"                 "$V6M_P"    "$( json_memo_set "$JSON_BOM$V6M_P" cwd >/dev/null; printf '%s' "${CCTD_MEMO[1]}" )"
+  # JSON_PARSER=none proves the parser loop ran and failed; a (wrong) hit never touches it, and a
+  # bare rc 2 is not enough: `return "<payload>"` is also rc 2.
+  expect "v6 memo: (f) an exported scalar CCTD_MEMO never hits (rc 2, parser loop ran)" "2::none" "$(CCTD_MEMO="$V6M_P" PATH="$V6M_STUB" "$BASH" -c ". '$ROOT/hooks/lib/json.sh'; json_fields '$V6M_P' cwd; printf '%s:%s:%s' \"\$?\" \"\${JF[0]-}\" \"\$JSON_PARSER\"" 2>/dev/null)"
+  expect "v6 memo: (g) re-sourcing json.sh after json_memo_set keeps the hit"   "0:/work/a" "$( json_memo_set "$V6M_P" tool_name cwd >/dev/null; . "$ROOT/hooks/lib/json.sh"; PATH="$V6M_STUB"; json_fields "$V6M_P" cwd; printf '%s:%s' "$?" "${JF[0]-}" )"
+fi
+# ---- end v6.0 Task 2
 # Task 4: the five multi-call hooks parse their payload ONCE. Each hook runs as a fresh
 # process on a PATH holding only the basic tools plus one COUNTING shim for the backend under
 # test (node, python3 or jq), so every interpreter start is one logged line. The payloads are
@@ -11646,6 +11793,7 @@ fi
 # ---- v5.0 run-hook: class, signal, step-aside, polarity (spec §3.1, §3.2, §3.5)
 V5H="$TMPROOT/v5 hooks dir"; mkdir -p "$V5H/lib"            # a space in the path on purpose (Review Focus 2)
 cp "$ROOT/hooks/run-hook.sh" "$V5H/" 2>/dev/null
+cp "$ROOT/hooks/lib/hook-class.sh" "$V5H/lib/"     # v6.0: run-hook.sh sources its class table and step-aside from here
 printf '#!/usr/bin/env bash\necho ran-$(basename "$0" .sh); exit 7\n' > "$V5H/pre-commit-test.sh"
 printf '#!/usr/bin/env bash\necho ran-$(basename "$0" .sh); exit 0\n' > "$V5H/no-push-main.sh"
 V5P="$TMPROOT/v5proj"; mkdir -p "$V5P/.claude"
@@ -11707,12 +11855,525 @@ expect "v5.2.1 session end: only rm on PATH -> marker removed" "rc=0 gone" "$(pr
 expect "v5.2.1 session end: first session_id wins" "gone present" "$(: > "$V5T/cct-$(id -u)/kl-11"; : > "$V5T/cct-$(id -u)/mn-22"; v5send '{"session_id":"kl-11","x":{"session_id":"mn-22"}}' >/dev/null; [ -f "$V5T/cct-$(id -u)/kl-11" ] && echo -n "present " || echo -n "gone "; [ -f "$V5T/cct-$(id -u)/mn-22" ] && echo present || echo gone)"
 # ---- end v5.0 run-hook
 
+# ---- v6.0 hook-class lib: the class, polarity and step-aside decision (hooks/lib/hook-class.sh), sourced like run-hook.sh does
+V6HC="$ROOT/hooks/lib/hook-class.sh"
+V6P="$TMPROOT/v6hc proj"; mkdir -p "$V6P/.claude" "$V6P/hooks"      # a space in the path on purpose
+V6S='{"command":"bash \"${CLAUDE_PROJECT_DIR}/hooks/pre-commit-test.sh\""}'   # the literal v4.6.1 registration shape
+V6U='{"args":["-c",". \"$0\"","/home/u/.claude/hooks/no-push-main.sh"]}'    # the v4.6.1 user-level form (args path)
+v6hc() { env -i PATH="$PATH" bash -c '. "$1"; shift; eval "$1"; echo "rc=$?"' _ "$V6HC" "$1" 2>&1 | tr '\n' ' ' | sed 's/ $//'; }
+expect "v6 hook-class: no-push-main is machine/closed" "machine closed rc=0" "$(v6hc 'hc_class no-push-main && echo "$HC_CLS $HC_POL"')"
+expect "v6 hook-class: read-size-gate is project/warn" "project warn rc=0" "$(v6hc 'hc_class read-size-gate && echo "$HC_CLS $HC_POL"')"
+expect "v6 hook-class: an unknown name returns 1" "rc=1" "$(v6hc 'hc_class no-such-hook')"
+expect "v6 hook-class: project-only hook, no manifest -> skip (0)" "rc=0" "$(v6hc "hc_skip pre-commit-test '$V6P' '' ''")"
+expect "v6 hook-class: machine hook, no manifest, no registration -> run (1)" "rc=1" "$(v6hc "hc_skip no-push-main '$V6P' '' ''")"
+printf '{}' > "$V6P/.claude/template-manifest.json"
+expect "v6 hook-class: project-only hook, manifest, no registration -> run (1)" "rc=1" "$(v6hc "hc_skip pre-commit-test '$V6P' '' ''")"
+expect "v6 hook-class: project registers it but hooks/<name>.sh missing -> run (1)" "rc=1" "$(v6hc "hc_skip pre-commit-test '$V6P' '$V6S' ''")"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$V6P/hooks/pre-commit-test.sh"
+expect "v6 hook-class: project registers it and hooks/<name>.sh present -> skip (0)" "rc=0" "$(v6hc "hc_skip pre-commit-test '$V6P' '$V6S' ''")"
+expect "v6 hook-class: user settings register no-push-main -> skip (0)" "rc=0" "$(v6hc "hc_skip no-push-main '$V6P' '' '$V6U'")"
+expect "v6 hook-class: user settings register another hook -> run (1)" "rc=1" "$(v6hc "hc_skip deny-secret-reads '$V6P' '' '$V6U'")"
+expect "v6 hook-class: hc_skip on an unknown name returns 1" "rc=1" "$(v6hc "hc_skip no-such-hook '$V6P' '$V6S' '$V6U'")"
+# run-hook.sh without its lib refuses closed: the decision code is gone, so nothing may run
+V6RH="$TMPROOT/v6hc nolib"; mkdir -p "$V6RH"; cp "$ROOT/hooks/run-hook.sh" "$V6RH/"
+expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 2 + message" "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the cct plugin rc=2" "$( ( export CLAUDE_PROJECT_DIR="$V6P"; printf '{}' | bash "$V6RH/run-hook.sh" no-push-main 2>&1; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//')"
+# ---- end v6.0 hook-class lib
+
+# ---- v6.0 Task 3: the guards take the dispatcher payload (CCTD_MEMO[1]) and find their libs without dirname
+if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
+  skip "v6 guards: payload-source rows" "no working node, python3 or jq on this host" 16
+else
+  V6GR="$TMPROOT/v6g"; mkdir -p "$V6GR"
+  V6G_MAIN=$(mkrepo v6gmain main)
+  V6G_FEAT=$(mkrepo v6gfeat feature/z)
+  V6G_BAD=$(mkrepo v6gbad main)
+  printf '# ctx\n\n- **Test**: `false`\n' > "$V6G_BAD/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V6G_FEAT/PROJECT_CONTEXT.md"
+  V6G_BENIGN="$(mkjson Bash 'ls' "$V6GR")"
+  V6G_NL=$'\n'
+  # <guard> -> <deny payload>; <guard> -> <needle>. enforce-delegation denies the MAIN THREAD (no agent_id):
+  # it answers rc 0 plus a permissionDecision deny on stdout, not rc 2.
+  v6g_deny() {
+    case "$1" in
+      no-push-main)       mkjson Bash 'git push origin main' "$V6G_MAIN" ;;
+      gate-before-merge)  mkjson Bash 'gh pr merge 5 --squash' "$V6G_FEAT" ;;
+      pre-commit-test)    mkjson Bash 'git commit -m "x"' "$V6G_BAD" ;;
+      deny-hang-shapes)   mkjson Bash "cat > f.txt <<'EOF'${V6G_NL}body${V6G_NL}EOF" "$V6GR" ;;
+      deny-secret-reads)  mkjson_read '.env' "$V6GR" ;;
+      enforce-delegation) mkjson Bash 'pytest' "$V6GR" ;;
+    esac
+  }
+  # rc:needle. The needle is the guard's OWN refusal text: a bare BLOCKED would also match "lib missing",
+  # which is what a sourced guard prints when its lib path is wrong.
+  v6g_want() {
+    case "$1" in
+      no-push-main)       echo '2:pushing to a protected branch' ;;
+      deny-secret-reads)  echo '2:secrets files are not read' ;;
+      gate-before-merge)  echo '2:No gate artifact found' ;;
+      pre-commit-test)    echo '2:failed' ;;
+      deny-hang-shapes)   echo '2:a heredoc written into a file' ;;
+      enforce-delegation) echo '0:"permissionDecision":"deny"' ;;
+    esac
+  }
+  # (a) the memo payload wins over stdin: sourced in a subshell, the array set, a benign stdin
+  v6g_a() { # <guard>
+    printf '%s' "$V6G_BENIGN" | "$BASH" -c 'CCTD_MEMO=(0 "$1"); ( . "$2" ) 2>&1; echo "rc=$?"' _ "$(v6g_deny "$1")" "$ROOT/hooks/$1.sh"
+  }
+  for g in no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation; do
+    if [ "$g" = enforce-delegation ] && [ -z "$HAVE_NODE" ]; then skip "v6 guards: (a) $g" "enforce-delegation needs node" 1; continue; fi
+    v6g_out="$(v6g_a "$g")"; v6g_w="$(v6g_want "$g")"
+    v6g_got="$(printf '%s' "$v6g_out" | tail -n 1 | sed 's/^rc=//')"
+    case "$v6g_out" in *"${v6g_w#*:}"*) v6g_n=has ;; *) v6g_n=missing ;; esac
+    expect "v6 guards: (a) $g: the memo payload wins over a benign stdin" "${v6g_w%%:*}:has" "$v6g_got:$v6g_n"
+  done
+  # (b) an exported scalar CCTD_MEMO is ignored: the benign stdin is read, the guard allows
+  for g in no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation; do
+    if [ "$g" = enforce-delegation ] && [ -z "$HAVE_NODE" ]; then skip "v6 guards: (b) $g" "enforce-delegation needs node" 1; continue; fi
+    v6g_out="$(printf '%s' "$V6G_BENIGN" | env CCTD_MEMO="$(v6g_deny "$g")" bash "$ROOT/hooks/$g.sh" 2>&1; echo "rc=$?")"
+    expect "v6 guards: (b) $g: an exported scalar CCTD_MEMO is ignored" "rc=0:no" "$(printf '%s' "$v6g_out" | tail -n 1):$(case "$v6g_out" in *'"deny"'*|*BLOCKED*) echo yes ;; *) echo no ;; esac)"
+  done
+  # (c) the lib path from inside hooks/ (a relative $0 with no slash)
+  # The guard's OWN refusal text is asserted (as in (a)): a missing lib also exits 2 ("BLOCKED: ./lib/json.sh missing").
+  for g in no-push-main pre-commit-test deny-secret-reads; do
+    v6g_out="$( cd "$ROOT/hooks" && printf '%s' "$(v6g_deny "$g")" | bash "$g.sh" 2>&1; echo "rc=$?" )"
+    v6g_w="$(v6g_want "$g")"
+    case "$v6g_out" in *"${v6g_w#*:}"*) v6g_n=has ;; *) v6g_n=missing ;; esac
+    expect "v6 guards: (c) $g run from inside hooks/ finds its libs" "${v6g_w%%:*}:has" "$(printf '%s' "$v6g_out" | tail -n 1 | sed 's/^rc=//'):$v6g_n"
+  done
+  # (d) sourced under set -u with CCTD_MEMO unset: stdin is still read and the normal verdict comes back
+  expect "v6 guards: (d) no-push-main sourced under set -u, CCTD_MEMO unset, reads stdin (rc 2)" "rc=2" \
+    "$(printf '%s' "$(v6g_deny no-push-main)" | env -u CCTD_MEMO "$BASH" -c 'set -u; ( . "$1" ) >/dev/null 2>&1; echo "rc=$?"' _ "$ROOT/hooks/no-push-main.sh")"
+fi
+# ---- end v6.0 guard edits
+
+# ---- v6.0 Task 4: hooks/dispatch.sh runs a tool's guards in one process (design D2/D4, rulings R-1/R-2/R-3/R-7)
+# Every dispatcher run is isolated: CLAUDE_PROJECT_DIR is the scratch project and HOME an empty dir, so neither the
+# toolkit's own settings nor the real ~/.claude/settings.json can make a guard step aside. A "scratch tree" is a copy of
+# hooks/ (so a stand-in guard can replace a real one) next to a project dir; the manifest makes the project a toolkit
+# project (the project-class guards run). Marker stand-ins append their own name to <tree>/ran.
+if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
+  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 88
+else
+  V6D="$TMPROOT/v6d"; mkdir -p "$V6D/home"
+  v6d_mk() { # <tree> [m] -- a scratch tree; m = the project carries a template manifest
+    local t="$V6D/$1"
+    mkdir -p "$t/proj/.claude"
+    cp -R "$ROOT/hooks" "$t/hooks"
+    if [ "${2-}" = m ]; then printf '{}' > "$t/proj/.claude/template-manifest.json"; fi
+  }
+  v6d_put() { # <tree> <guard> <body> -- replace a scratch guard with a stand-in script
+    printf '%s\n' '#!/usr/bin/env bash' "$3" > "$V6D/$1/hooks/$2.sh"
+  }
+  v6d_marker() { # <tree> <guard> -- a stand-in that only records that it ran
+    v6d_put "$1" "$2" "echo $2 >> '$V6D/$1/ran'"
+  }
+  v6d_run() { # <tree> <table> <payload> -- sets V6D_RC, V6D_OUT (stdout), V6D_ERR (stderr); clears <tree>/ran
+    local t="$V6D/$1"
+    rm -f "$t/ran"
+    V6D_OUT=$(printf '%s' "$3" | env CLAUDE_PROJECT_DIR="$t/proj" HOME="${V6D_HOME:-$V6D/home}" bash "$t/hooks/dispatch.sh" "$2" 2>"$V6D/err")
+    V6D_RC=$?
+    V6D_ERR=$(cat "$V6D/err")
+  }
+  v6d_has() { case $1 in *"$2"*) echo yes ;; *) echo no ;; esac; } # <text> <needle>
+  v6d_ans() { if [ -n "$1" ]; then printf '%s\nrc=%s' "$1" "$2"; else printf 'rc=%s' "$2"; fi; } # <stdout> <rc> -> the hook's whole answer
+  v6d_ran() { if [ -f "$V6D/$1/ran" ]; then tr '\n' ' ' < "$V6D/$1/ran" | sed 's/ $//'; else echo none; fi; } # <tree>
+
+  V6D_MAIN=$(mkrepo v6dmain main)
+  V6D_FEAT=$(mkrepo v6dfeat feature/z)
+  V6D_BAD=$(mkrepo v6dbad feature/z)
+  V6D_OK=$(mkrepo v6dok feature/z)
+  printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V6D_FEAT/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Test**: `false`\n' > "$V6D_BAD/PROJECT_CONTEXT.md"
+  printf '# ctx\n\n- **Test**: `echo hello`\n' > "$V6D_OK/PROJECT_CONTEXT.md"
+  V6D_LS=$(mkjson Bash 'ls' "$V6D_FEAT")
+  V6D_PUSH=$(mkjson Bash 'git push origin main' "$V6D_MAIN")
+  V6D_ENV=$(mkjson Bash 'cat .env' "$V6D_FEAT")
+  V6D_MERGE=$(mkjson Bash 'gh pr merge 5 --squash' "$V6D_FEAT")
+  V6D_PUSH_NEEDLE='pushing to a protected branch'
+  V6D_ENV_NEEDLE='secrets files are not read'
+
+  # (a)-(c), (k), (r): the real guards, no manifest (the machine-class guards run)
+  v6d_mk base
+  v6d_run base bash "$V6D_PUSH"
+  expect "v6 dispatch: (a) bash table: a push to main is refused by the guard's own text" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run base powershell "$V6D_PUSH"
+  expect "v6 dispatch: (a) powershell table: a push to main is refused by the guard's own text" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run base bash "$V6D_ENV"
+  expect "v6 dispatch: (b) bash table: cat .env is refused by deny-secret-reads" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_run base powershell "$V6D_ENV"
+  expect "v6 dispatch: (b) powershell table has no deny-secret-reads: cat .env passes" "rc=0 needle=no" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_run base bash "$V6D_LS"
+  expect "v6 dispatch: (c) ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+  # the same in a toolkit project, where all six guards run (design D4.4: none of them writes stdout on a plain call)
+  v6d_mk basem m
+  v6d_run basem bash "$V6D_LS"
+  expect "v6 dispatch: (c) a toolkit project, all six guards run: ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+  v6d_run base nosuch "$V6D_LS"
+  expect "v6 dispatch: (k) an unknown table: rc 2 + 'unknown table'" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "unknown table 'nosuch'")"
+  v6d_run base '' "$V6D_LS"
+  expect "v6 dispatch: (k) no table argument: rc 2 + 'unknown table'" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "unknown table")"
+  v6d_run base bash ''
+  expect "v6 dispatch: (r) an empty payload is refused by the closed guards (rc 2)" "rc=2" "rc=$V6D_RC"
+  v6d_q_err=$(printf '%s\0%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/"}' '{"x":1}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" bash "$V6D/base/hooks/dispatch.sh" bash 2>&1 >/dev/null; echo "rc=$?")
+  expect "v6 dispatch: (q) a payload with a NUL byte is refused (rc 2, never truncated)" "rc=2 needle=yes" "$(printf '%s' "$v6d_q_err" | tail -n 1) needle=$(v6d_has "$v6d_q_err" 'NUL')"
+
+  # (l) Review Focus 1: a 300 KB command. The baseline first: the guard alone, then through the dispatcher.
+  # The 300 KB sits in a quoted string on purpose: an UNQUOTED 300 KB token costs no-push-main minutes today
+  # (its scan is quadratic: 100 KB = 14 s, measured 2026-11-01), which is the guard's cost, not the dispatcher's.
+  V6D_BIG=$(mkjson Bash "git push origin main; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
+  V6D_BIGLS=$(mkjson Bash "ls; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
+  v6d_big_direct=$(printf '%s' "$V6D_BIG" | bash "$ROOT/hooks/no-push-main.sh" 2>&1 >/dev/null; echo "rc=$?")
+  expect "v6 dispatch: (l) baseline: no-push-main alone refuses the 300 KB push" "rc=2 needle=yes" "$(printf '%s' "$v6d_big_direct" | tail -n 1) needle=$(v6d_has "$v6d_big_direct" "$V6D_PUSH_NEEDLE")"
+  v6d_run base bash "$V6D_BIG"
+  expect "v6 dispatch: (l) a 300 KB push to main is refused through the dispatcher" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run base bash "$V6D_BIGLS"
+  expect "v6 dispatch: (l) control: a 300 KB harmless command passes" "rc=0" "rc=$V6D_RC"
+
+  # (d) a crash (any rc but 2) does not skip a later closed guard
+  v6d_mk d m
+  v6d_put d deny-secret-reads 'exit 1'
+  v6d_run d bash "$V6D_PUSH"
+  expect "v6 dispatch: (d) deny-secret-reads crashes (rc 1): a push to main is still refused" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  v6d_run d bash "$V6D_MERGE"
+  expect "v6 dispatch: (d) the crash comes BEFORE gate-before-merge: its refusal still lands" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'No gate artifact found')"
+  v6d_mk d2
+  v6d_put d2 no-push-main 'exit 1'
+  v6d_run d2 bash "$V6D_ENV"
+  expect "v6 dispatch: (d) no-push-main crashes first: deny-secret-reads still refuses cat .env" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_run d2 bash "$V6D_LS"
+  expect "v6 dispatch: (d) control: the crash alone (rc 1) does not deny" "rc=0" "rc=$V6D_RC"
+
+  # (e) a syntax error in a guard denies and stops the run (bash x.sh would exit 2 too)
+  v6d_mk e m; v6d_put e no-push-main 'if then fi ('; v6d_marker e gate-before-merge
+  v6d_run e bash "$V6D_LS"
+  expect "v6 dispatch: (e) a syntax error in no-push-main: rc 2 and the later gate-before-merge did not run" "rc=2 ran=none" "rc=$V6D_RC ran=$(v6d_ran e)"
+  v6d_mk ec m; v6d_marker ec gate-before-merge
+  v6d_run ec bash "$V6D_LS"
+  expect "v6 dispatch: (e) control: with no-push-main intact the later gate-before-merge runs" "rc=0 ran=gate-before-merge" "rc=$V6D_RC ran=$(v6d_ran ec)"
+
+  # (f) stdout: one answer is printed, two are refused, a deny drops them, a non-zero guard is not an answer
+  v6d_mk f
+  v6d_put f deny-hang-shapes "echo '{\"x\":1}'"
+  v6d_run f bash "$V6D_LS"
+  expect "v6 dispatch: (f) one guard's stdout is printed and the run exits 0" "rc=0 out={\"x\":1}" "rc=$V6D_RC out=$V6D_OUT"
+  v6d_put f no-push-main "echo '{\"y\":2}'"
+  v6d_run f bash "$V6D_LS"
+  expect "v6 dispatch: (f) two guards on stdout: rc 2, empty stdout, 'two guards answered'" "rc=2 out= needle=yes" "rc=$V6D_RC out=$V6D_OUT needle=$(v6d_has "$V6D_ERR" 'two guards answered')"
+  v6d_run f bash "$V6D_ENV"
+  expect "v6 dispatch: (f) a printing guard and a later deny: rc 2 and empty stdout" "rc=2 out= needle=yes" "rc=$V6D_RC out=$V6D_OUT needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  v6d_put f no-push-main "echo '{\"y\":2}'; exit 1"
+  v6d_run f bash "$V6D_LS"
+  expect "v6 dispatch: (f) a guard that prints and exits 1 is not an answer (the other one is printed)" "rc=0 out={\"x\":1}" "rc=$V6D_RC out=$V6D_OUT"
+
+  # (g) the 127 -> 2 trap of the guards still fires inside the dispatcher's subshell
+  v6d_mk g
+  v6d_put g deny-hang-shapes "trap '[ \"\$?\" = 127 ] && exit 2' EXIT; nonexistent_cmd_xyz"
+  v6d_run g bash "$V6D_LS"
+  expect "v6 dispatch: (g) a stand-in with the EXIT trap and an unknown command: rc 2" "rc=2" "rc=$V6D_RC"
+  v6d_put g deny-hang-shapes "nonexistent_cmd_xyz"
+  v6d_run g bash "$V6D_LS"
+  expect "v6 dispatch: (g) control: the same without the trap: rc 127 is not a deny, rc 0" "rc=0" "rc=$V6D_RC"
+
+  # (h) a missing script: closed = rc 2 + the run-hook.sh text, open = silent rc 0, warn = WARN + rc 0
+  v6d_mk h; rm "$V6D/h/hooks/deny-hang-shapes.sh"
+  v6d_run h bash "$V6D_LS"
+  expect "v6 dispatch: (h) a missing open guard (deny-hang-shapes): rc 0, silent" "rc=0 err=" "rc=$V6D_RC err=$V6D_ERR"
+  v6d_mk h2; rm "$V6D/h2/hooks/no-push-main.sh"
+  v6d_run h2 bash "$V6D_LS"
+  expect "v6 dispatch: (h) a missing closed guard (no-push-main): rc 2 + HOOK SCRIPT MISSING" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "HOOK SCRIPT MISSING: $V6D/h2/hooks/no-push-main.sh -- enforcement offline")"
+  v6d_mk h3 m; rm "$V6D/h3/hooks/enforce-delegation.sh"
+  v6d_run h3 bash "$V6D_LS"
+  expect "v6 dispatch: (h) a missing warn guard (enforce-delegation): rc 0 + WARN" "rc=0 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "WARN: $V6D/h3/hooks/enforce-delegation.sh missing -- enforce-delegation offline")"
+
+  # (i) step-aside: the project registers its own no-push-main (file present) -> the plugin's copy does not run
+  V6D_PS='{"hooks":{"PreToolUse":[{"hooks":[{"command":"bash \"${CLAUDE_PROJECT_DIR}/hooks/no-push-main.sh\""}]}]}}'
+  v6d_mk i; v6d_marker i no-push-main
+  mkdir -p "$V6D/i/proj/hooks"; : > "$V6D/i/proj/hooks/no-push-main.sh"
+  v6d_run i bash "$V6D_ENV"
+  expect "v6 dispatch: (i) control: without the project registration the plugin's no-push-main runs" "rc=2 ran=no-push-main" "rc=$V6D_RC ran=$(v6d_ran i)"
+  printf '%s' "$V6D_PS" > "$V6D/i/proj/.claude/settings.json"
+  v6d_run i bash "$V6D_ENV"
+  expect "v6 dispatch: (i) the project registers its own no-push-main: it is skipped, deny-secret-reads still denies" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran i) needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+  mkdir -p "$V6D/ihome/.claude"
+  printf '%s' '{"args":["-c",". \"$0\"","/home/u/.claude/hooks/no-push-main.sh"]}' > "$V6D/ihome/.claude/settings.json"
+  rm "$V6D/i/proj/.claude/settings.json"
+  V6D_HOME="$V6D/ihome" v6d_run i bash "$V6D_ENV"
+  expect "v6 dispatch: (i) the USER settings register no-push-main: it is skipped as well" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran i) needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
+
+  # (j) no dispatcher argument reaches a guard; (p) a guard that reads stdin gets /dev/null, not the dispatcher's pipe
+  v6d_mk j
+  v6d_put j deny-hang-shapes "echo \"\$#:\${1-}\" > '$V6D/j/args'; { [ -p /dev/stdin ] && echo pipe || echo notpipe; x=\$(cat); echo \"len=\${#x}\"; } > '$V6D/j/stdin'"
+  v6d_run j bash "$V6D_LS"
+  expect "v6 dispatch: (j) a guard sees no argument (\$# is 0, \$1 empty)" "rc=0 args=0:" "rc=$V6D_RC args=$(cat "$V6D/j/args" 2>/dev/null)"
+  expect "v6 dispatch: (p) a guard reading stdin gets /dev/null: not a pipe, empty payload" "notpipe len=0" "$(tr '\n' ' ' < "$V6D/j/stdin" 2>/dev/null | sed 's/ $//')"
+
+  # (w) R-8: a TERM to the dispatcher alone (it dies at once, a trap cannot run while it waits in $( )) must still take
+  # pre-commit-test's Test down: the guard's poll loop sees that $$ (the dispatcher) is gone within one tick.
+  # v6d_term_test <tree> prints gone|alive|never-started: is the Test's process still there 5 s after the TERM.
+  # Cleanup: slow.sh writes its own pid FIRST (before it backgrounds anything), the helper records that pid's process
+  # group at once, and a Test that is still alive at the end is killed through that group, so a red row leaves no
+  # tracked process behind. Only a Test that has not even started within the 30 s wait is untracked (its dispatcher is
+  # killed, and slow.sh ends by itself after its `sleep 30`).
+  V6D_SLOW=$(mkrepo v6dslow feature/z)
+  printf '%s\n' 'echo $$ > "$V6D_SPID"' 'sleep 30 &' 'wait' > "$V6D/slow.sh"
+  printf '# ctx\n\n- **Test**: `bash %s/slow.sh`\n' "$V6D" > "$V6D_SLOW/PROJECT_CONTEXT.md"
+  mkjson PowerShell 'git commit -m "x"' "$V6D_SLOW" > "$V6D/slow.payload"
+  v6d_term_test() {
+    local t="$V6D/$1" dpid spid pg tgt i verdict=never-started
+    rm -f "$t/spid"
+    ( exec env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" V6D_SPID="$t/spid" bash "$t/hooks/dispatch.sh" powershell < "$V6D/slow.payload" > /dev/null 2>&1 ) &
+    dpid=$!
+    i=0; while [ ! -s "$t/spid" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i + 1)); done
+    spid=$(cat "$t/spid" 2>/dev/null)
+    if [ -n "$spid" ]; then
+      pg=$(ps -o pgid= -p "$spid" 2>/dev/null | tr -d ' ')
+      # the suite's own group is no Test group: were set -m ever lost, kill -KILL -- -$pg would kill the suite itself
+      if [ "$pg" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ]; then pg=; fi
+      kill -TERM "$dpid"
+      # the Test is a process group of its own (pre-commit-test's set -m): poll the group, not slow.sh's pid alone
+      if [ -n "$pg" ]; then tgt="-$pg"; else tgt=$spid; fi
+      i=0; while kill -0 -- "$tgt" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
+      if kill -0 -- "$tgt" 2>/dev/null; then
+        verdict=alive
+        kill -KILL -- "$tgt" 2>/dev/null
+      else
+        verdict=gone
+      fi
+    else
+      kill -KILL "$dpid" 2>/dev/null
+    fi
+    wait "$dpid" 2>/dev/null
+    sleep 1
+    echo "$verdict"
+  }
+  if ! ps -o pgid= -p $$ >/dev/null 2>&1; then
+    skip_host "v6 dispatch: (w) a killed dispatcher takes the Test down" "no ps -o pgid= on this host" 2
+  else
+    v6d_mk w m; v6d_mk w0 m
+    sed -i '/kill -0 "\$\$"/d' "$V6D/w0/hooks/pre-commit-test.sh"
+    expect "v6 dispatch: (w) a TERM to the dispatcher alone: the Test process is gone within 5 s" "gone" "$(v6d_term_test w)"
+    expect "v6 dispatch: (w) control: without the \$\$ poll line (mutant copy, exactly 1 line less) the Test outlives the dispatcher" "alive lines=1" "$(v6d_term_test w0) lines=$(diff "$ROOT/hooks/pre-commit-test.sh" "$V6D/w0/hooks/pre-commit-test.sh" | grep -c '^<')"
+  fi
+
+  # (v) parse once (D6): the dispatcher's single parse feeds the guards. A guard with NO parser on its PATH still reads the fields.
+  v6d_mk v
+  v6d_put v deny-hang-shapes ". '$V6D/v/hooks/lib/json.sh'; PATH=/nonexistent; json_fields \"\${CCTD_MEMO[1]}\" tool_name cwd tool_input.command tool_input.file_path; echo \"\$?:\${JF[0]}:\${JF[1]}:\${JF[2]}:\${JF[3]}\" > '$V6D/v/fields'"
+  v6d_run v bash "$V6D_LS"
+  expect "v6 dispatch: (v) parse once: a guard with no parser on PATH still reads the four fields from the memo" "rc=0 fields=0:Bash:$V6D_FEAT:ls:" "rc=$V6D_RC fields=$(cat "$V6D/v/fields" 2>/dev/null)"
+
+  # (y) a guard runs on </dev/null; when that cannot be opened (provoked with an fd limit of 3 after sourcing) the `.` never
+  # runs and every guard would be skipped with rc 1, so cctd_prepare refuses (without its check this prints rc=0).
+  # Host self-check: Cygwin/MSYS may not limit open(); where `( ulimit -n 3; : </dev/null )` still succeeds the row cannot run.
+  if ( ulimit -n 3; : </dev/null ) 2>/dev/null; then
+    skip_host "v6 dispatch: (y) /dev/null cannot be opened" "this host does not limit open() with ulimit -n"
+  else
+    v6d_y=$(printf '{}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASH" -c '. "$1"; ulimit -n 3; cctd_prepare; echo "rc=$?"' _ "$V6D/base/hooks/dispatch.sh" 2>/dev/null | tail -n 1)
+    expect "v6 dispatch: (y) /dev/null cannot be opened: cctd_prepare refuses (rc 2) instead of skipping every guard" "rc=2" "$v6d_y"
+  fi
+
+  # (x) R-10: the parser json_memo_set settled on travels in the memo as the pair `@parser <backend>`, so a guard (whose
+  # json.sh starts with JSON_PARSER="") does not probe again. x1 counts node starts of one dispatcher run with a counting
+  # stub first on PATH; x2/x3 pin that only a real array in the memo can set the parser, and only to a known name.
+  v6d_node_starts() { # <tree> [payload] [guard] -> how many times node was started by one `dispatch.sh bash` run (payload: ls by default), or by <guard>.sh run alone
+    local t="$V6D/$1" p="${2-$V6D_LS}"
+    mkdir -p "$t/stub"; rm -f "$t/nodes"
+    printf '%s\n' '#!/usr/bin/env bash' "echo . >> '$t/nodes'" "exec '$(command -v node)' \"\$@\"" > "$t/stub/node"
+    chmod +x "$t/stub/node"
+    if [ -n "${3-}" ]; then
+      printf '%s' "$p" | env PATH="$t/stub:$PATH" CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" bash "$t/hooks/$3.sh" >/dev/null 2>&1
+    else
+      printf '%s' "$p" | env PATH="$t/stub:$PATH" CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" bash "$t/hooks/dispatch.sh" bash >/dev/null 2>&1
+    fi
+    if [ -f "$t/nodes" ]; then wc -l < "$t/nodes" | tr -d ' '; else echo 0; fi
+  }
+  # used by (x1) and (E2): the payload holds `test`, so enforce-delegation's E2 fast exit does not take it and its own node program runs
+  V6D_ECHOTEST=$(mkjson Bash 'echo test' "$V6D_FEAT")
+  if [ -z "$HAVE_NODE" ]; then
+    skip "v6 dispatch: (x1) node starts of one dispatcher run" "enforce-delegation needs node" 2
+  else
+    v6d_mk x m; v6d_mk x0 m
+    sed -i '/node|python3|jq|none) JSON_PARSER=/d' "$V6D/x0/hooks/lib/json.sh"
+    expect "v6 dispatch: (x1) one run on a command that reaches enforce-delegation's program starts node twice: the parse and that program, no re-probe" "2" "$(v6d_node_starts x "$V6D_ECHOTEST")"
+    expect "v6 dispatch: (x1) control: without the adoption (mutant copy, exactly 1 line less) it starts node 3 times" "3 lines=1" "$(v6d_node_starts x0 "$V6D_ECHOTEST") lines=$(diff "$ROOT/hooks/lib/json.sh" "$V6D/x0/hooks/lib/json.sh" | grep -c '^<')"
+  fi
+  # <memo setup> <env assignments...> -> JSON_PARSER after json_parser_init in a fresh shell that sourced json.sh
+  v6d_x_parser() { local s=$1; shift; env "$@" "$BASH" -c ". '$ROOT/hooks/lib/json.sh'; $s; json_parser_init; printf '%s' \"\$JSON_PARSER\""; }
+  expect "v6 dispatch: (x2) a real array in the memo with @parser python3 is adopted (nothing on PATH to probe)" "python3" "$(v6d_x_parser "CCTD_MEMO=(0 '{}' tool_name Bash @parser python3)" PATH=/nonexistent)"
+  expect "v6 dispatch: (x2) an exported scalar CCTD_MEMO (and an exported JSON_PARSER) sets nothing: the probe is in charge (none)" "none" "$(v6d_x_parser ':' PATH=/nonexistent 'CCTD_MEMO=0 {} @parser python3' JSON_PARSER=python3)"
+  expect "v6 dispatch: (x3) a bogus @parser value is ignored: the probe runs and finds what a clean shell finds" "$(v6d_x_parser ':' PATH="$PATH")" "$(v6d_x_parser "CCTD_MEMO=(0 '{}' tool_name Bash @parser evil)" PATH="$PATH")"
+
+  # (m) Review Focus 3 / R-3: with the toolkit's REAL settings the dispatcher runs exactly the guards run-hook.sh runs.
+  # Both sides use the same stand-ins; the project carries the real .claude/settings.json and a hooks/<name>.sh per guard.
+  v6d_guards='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation'
+  for v6d_man in none m; do
+    v6d_t="m$v6d_man"
+    v6d_mk "$v6d_t" "$([ "$v6d_man" = m ] && echo m)"
+    cp "$ROOT/.claude/settings.json" "$V6D/$v6d_t/proj/.claude/settings.json"
+    mkdir -p "$V6D/$v6d_t/proj/hooks"
+    for g in $v6d_guards; do v6d_marker "$v6d_t" "$g"; : > "$V6D/$v6d_t/proj/hooks/$g.sh"; done
+    v6d_run "$v6d_t" bash "$V6D_LS"
+    v6d_d_set=$(v6d_ran "$v6d_t")
+    v6d_r_set=""
+    for g in $v6d_guards; do
+      rm -f "$V6D/$v6d_t/ran"
+      printf '%s' "$V6D_LS" | env CLAUDE_PROJECT_DIR="$V6D/$v6d_t/proj" HOME="$V6D/home" bash "$V6D/$v6d_t/hooks/run-hook.sh" "$g" >/dev/null 2>&1
+      if [ -f "$V6D/$v6d_t/ran" ]; then v6d_r_set="${v6d_r_set:+$v6d_r_set }$g"; fi
+    done
+    [ -n "$v6d_r_set" ] || v6d_r_set=none
+    expect "v6 dispatch: (m) the toolkit's real settings, manifest=$v6d_man: the dispatcher runs what run-hook.sh runs" "$v6d_r_set" "$v6d_d_set"
+    expect "v6 dispatch: (m) manifest=$v6d_man: the comparison is not vacuous (a guard ran, a guard stepped aside)" "yes" "$(case $v6d_d_set in none|'no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation') echo no ;; *) echo yes ;; esac)"
+  done
+
+  # (n) Review Focus 4: a Test that prints to stdout. The dispatcher's answer equals pre-commit-test's own, run alone.
+  v6d_mk n m
+  V6D_COMMIT=$(mkjson Bash 'git commit -m "x"' "$V6D_OK")
+  v6d_n_out=$(printf '%s' "$V6D_COMMIT" | env CLAUDE_PROJECT_DIR="$V6D/n/proj" HOME="$V6D/home" bash "$V6D/n/hooks/pre-commit-test.sh" 2>/dev/null); v6d_n_rc=$?
+  v6d_run n powershell "$V6D_COMMIT"
+  expect "v6 dispatch: (n) a commit whose Test prints hello: same stdout and rc as pre-commit-test alone" "$(v6d_ans "$v6d_n_out" "$v6d_n_rc")" "$(v6d_ans "$V6D_OUT" "$V6D_RC")"
+  expect "v6 dispatch: (n) the Test really ran inside the dispatcher ('passed. (' on stderr)" "yes" "$(v6d_has "$V6D_ERR" 'passed. (')"
+  v6d_run n powershell "$(mkjson Bash 'git commit -m "x"' "$V6D_BAD")"
+  expect "v6 dispatch: (n) control: a failing Test is refused through the dispatcher" "rc=2" "rc=$V6D_RC"
+
+  # (z) pre-commit-test's hook-wide ceiling counts from the DISPATCHER's start (it runs after other guards). Trees sc1-sc5
+  # and the label (z) are used by these rows only. A stand-in guard ahead of it sleeps 4 s, the ceiling is 4 s and the
+  # Test sleeps 2 s: counted from the dispatcher's start the ceiling is already reached at pre-commit-test's first poll
+  # (refused); counted from its own start the Test ends 2 s before the ceiling (passes).
+  V6D_SLOW=$(mkrepo v6dslow feature/z)
+  printf '# ctx\n\n- **Test**: `sleep 2`\n' > "$V6D_SLOW/PROJECT_CONTEXT.md"
+  V6D_SLOWC=$(mkjson Bash 'git commit -m "x"' "$V6D_SLOW")
+  v6d_z_run() { # <tree> <payload> [VAR=value ...] -> "rc=<rc> ceiling=<yes|no>": the powershell table on that tree
+    local t="$V6D/$1" p=$2 o r
+    shift 2
+    o=$(printf '%s' "$p" | env CLAUDE_PROJECT_DIR="$t/proj" HOME="$V6D/home" "$@" bash "$t/hooks/dispatch.sh" powershell 2>&1 >/dev/null); r=$?
+    echo "rc=$r ceiling=$(v6d_has "$o" 'hook-wide ceiling')"
+  }
+  v6d_z_reverted() { # <file> <count of lines the revert must leave> <pattern> -- proves the sed below really changed the copy
+    [ "$(grep -c "$3" "$1")" = "$2" ] && echo reverted || echo NOT-REVERTED
+  }
+  v6d_mk sc1 m; v6d_put sc1 gate-before-merge 'sleep 4'
+  expect "v6 dispatch: (z) a slow guard ahead of pre-commit-test: its ceiling counts from the dispatcher's start (refused)" "rc=2 ceiling=yes" "$(v6d_z_run sc1 "$V6D_SLOWC" PCT_TEST_CEILING_TESTONLY_S=4)"
+  # two-sided: with the standalone-only reset reverted (pre-commit-test resets SECONDS unconditionally) the same run passes
+  v6d_mk sc2 m; v6d_put sc2 gate-before-merge 'sleep 4'
+  sed -i 's/^\[ -n "\${CCTD_MEMO\[1\]+set}" \] || SECONDS=0$/SECONDS=0/' "$V6D/sc2/hooks/pre-commit-test.sh"
+  expect "v6 dispatch: (z) control: pre-commit-test's reset made unconditional (a scratch copy) lets the same run through" "reverted rc=0 ceiling=no" "$(v6d_z_reverted "$V6D/sc2/hooks/pre-commit-test.sh" 1 '^SECONDS=0$') $(v6d_z_run sc2 "$V6D_SLOWC" PCT_TEST_CEILING_TESTONLY_S=4)"
+
+  # (z) the dispatcher's own reset: SECONDS is imported from the environment, so a huge inherited value would make the
+  # ceiling "already reached" for a Test that passes. cctd_prepare resets it; with that line deleted the run is refused.
+  v6d_mk sc3 m
+  expect "v6 dispatch: (z) an inherited SECONDS=99999 does not trip pre-commit-test's ceiling (cctd_prepare resets it)" "rc=0 ceiling=no" "$(v6d_z_run sc3 "$V6D_SLOWC" SECONDS=99999)"
+  v6d_mk sc4 m
+  sed -i '/^  SECONDS=0 /d' "$V6D/sc4/hooks/dispatch.sh"
+  expect "v6 dispatch: (z) control: cctd_prepare's reset deleted (a scratch copy), the same inherited SECONDS is refused at once" "reverted rc=2 ceiling=yes" "$(v6d_z_reverted "$V6D/sc4/hooks/dispatch.sh" 0 '^  SECONDS=0 ') $(v6d_z_run sc4 "$V6D_SLOWC" SECONDS=99999)"
+
+  # (z) an empty table is an error, never an empty run that passes everything
+  v6d_mk sc5
+  sed -i "s/^\( *bash) *cctd_tab=\)'[^']*'/\1''/" "$V6D/sc5/hooks/dispatch.sh"
+  v6d_run sc5 bash "$V6D_PUSH"
+  expect "v6 dispatch: (z) a table with no guards: rc 2 + 'empty table' (a push to main is not waved through)" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "empty table 'bash'")"
+
+  # (o) Review Focus 5: exit from inside a function / a trap is the guard's verdict and never ends the dispatcher
+  v6d_mk o m; v6d_marker o no-push-main; v6d_marker o enforce-delegation
+  v6d_put o deny-hang-shapes 'f() { exit 2; }; f'
+  v6d_run o bash "$V6D_LS"
+  expect "v6 dispatch: (o) exit 2 from a function: rc 2, empty stdout, the later guard did not run" "rc=2 out= ran=no-push-main" "rc=$V6D_RC out=$V6D_OUT ran=$(v6d_ran o)"
+  v6d_put o deny-hang-shapes 'f() { exit 2; }; trap f EXIT'
+  v6d_run o bash "$V6D_LS"
+  expect "v6 dispatch: (o) exit 2 from a function run by an EXIT trap: rc 2, the later guard did not run" "rc=2 out= ran=no-push-main" "rc=$V6D_RC out=$V6D_OUT ran=$(v6d_ran o)"
+  v6d_put o deny-hang-shapes 'f() { exit 1; }; trap f EXIT'
+  v6d_run o bash "$V6D_LS"
+  expect "v6 dispatch: (o) exit 1 from that trap function is only that guard's verdict: the run goes on" "rc=0 out= ran=no-push-main enforce-delegation" "rc=$V6D_RC out=$V6D_OUT ran=$(v6d_ran o)"
+
+  # (s) R-7: enforce-delegation denies the MAIN thread on stdout with rc 0; the dispatcher passes that answer on
+  if [ -z "$HAVE_NODE" ]; then
+    skip "v6 dispatch: (s) enforce-delegation answer" "enforce-delegation needs node" 2
+  else
+    v6d_mk s m
+    V6D_PYTEST=$(mkjson Bash 'pytest' "$V6D_FEAT")
+    v6d_s_out=$(printf '%s' "$V6D_PYTEST" | env CLAUDE_PROJECT_DIR="$V6D/s/proj" HOME="$V6D/home" bash "$V6D/s/hooks/enforce-delegation.sh" 2>/dev/null); v6d_s_rc=$?
+    v6d_run s bash "$V6D_PYTEST"
+    expect "v6 dispatch: (s) a main-thread pytest: the dispatcher prints enforce-delegation's own answer, rc 0" "$(v6d_ans "$v6d_s_out" "$v6d_s_rc")" "$(v6d_ans "$V6D_OUT" "$V6D_RC")"
+    expect "v6 dispatch: (s) that answer is a permissionDecision deny (so the row compares something)" "yes" "$(v6d_has "$V6D_OUT" '"permissionDecision":"deny"')"
+  fi
+
+  # (E2) design 12 E2: with the dispatcher's memo present, enforce-delegation answers PASS without starting its node program
+  # for a Bash or PowerShell command that holds no backslash and none of ten substrings (npm npx pytest cargo dotnet mvn
+  # gradle run-gate cct-gate test). A strict superset: it may only skip runs that would have printed PASS. Node starts are
+  # counted with the stub of (x1): one start is the dispatcher's own parse, a second would be the guard's program.
+  if [ -z "$HAVE_NODE" ]; then
+    skip "v6 dispatch: (E2) enforce-delegation fast exit" "enforce-delegation needs node" 27
+  else
+    v6d_mk e2 m
+    V6D_E2_NEEDLE='DELEGATE: builds/tests run inside agents'
+    v6d_e2_alone() { printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$V6D/e2/proj" HOME="$V6D/home" bash "$V6D/e2/hooks/enforce-delegation.sh" 2>/dev/null; } # <payload> -> the guard run alone (no memo)
+    v6d_e2_replay() { # <payload> -> the guard's rc and stdout when run as the dispatcher runs it (memo set); the table has no Edit or PowerShell entry, so the replay pair stands in
+      printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$V6D/e2/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_source_guard enforce-delegation; cctd_r=$?; printf "rc=%s out=%s" "$cctd_r" "${cctd_outs[0]-}"' _ "$V6D/e2/hooks/dispatch.sh" 2>/dev/null
+    }
+    # superset: every runner the node check denies is still denied through the dispatcher, with the standalone answer.
+    # Thirteen commands from the design; the next three are the runners whose ONE trigger is npx, cargo or gradle (every row
+    # before them also holds `test`, so dropping those triggers would go unseen); the last two join into `pytest` only
+    # across a backslash-newline (LF, then CRLF), and neither holds `test` before the join: only the backslash rule sees them.
+    v6d_e2_super() { # <label> <payload>
+      local alone; alone=$(v6d_e2_alone "$2")
+      v6d_run e2 bash "$2"
+      expect "v6 dispatch: (E2) superset: $1 is denied through the dispatcher, as standalone" "rc=0 delegate=yes same=yes" \
+        "rc=$V6D_RC delegate=$(v6d_has "$V6D_OUT" "$V6D_E2_NEEDLE") same=$([ "$V6D_OUT" = "$alone" ] && echo yes || echo no)"
+    }
+    for v6d_c in 'pytest -q' 'npm test' 'npx vitest' 'cargo test' 'dotnet build' 'mvn -q package' './gradlew test' 'go test ./...' \
+        'bash hooks/run-gate.sh' 'cct-gate' 'CI=1 pytest' 'cd x && npm run build' $'py\\\ntest' 'npx jest' 'cargo build' './gradlew build' $'pyt\\\nest'; do
+      v6d_e2_super "${v6d_c//$'\n'/\\n}" "$(mkjson Bash "$v6d_c" "$V6D_FEAT")"
+    done
+    # jesc leaves a CR alone, so the CRLF payload is spelled by hand (the JSON escapes \\ \r \n)
+    v6d_e2_super 'pyt\\r\nest' "$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}\n' 'pyt\\\r\nest' "$(jesc "$V6D_FEAT")")"
+    # exit: nothing to deny, and no second node start
+    for v6d_c in 'ls -la' 'git status'; do
+      v6d_p=$(mkjson Bash "$v6d_c" "$V6D_FEAT")
+      v6d_run e2 bash "$v6d_p"
+      expect "v6 dispatch: (E2) exit: $v6d_c passes through the dispatcher (rc 0, empty stdout)" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+      expect "v6 dispatch: (E2) exit: $v6d_c starts node once (the parse), not again for enforce-delegation's program" "1" "$(v6d_node_starts e2 "$v6d_p")"
+    done
+    # unchanged: a subagent passes, and without the memo the guard still runs its program
+    v6d_p=$(mkjson Bash 'pytest' "$V6D_FEAT")
+    v6d_run e2 bash "$(printf '%s' "$v6d_p" | sed 's/^{/{"agent_id":"a1",/')"
+    expect "v6 dispatch: (E2) a subagent's pytest passes through the dispatcher" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+    expect "v6 dispatch: (E2) standalone (no memo): pytest is still denied" "yes" "$(v6d_has "$(v6d_e2_alone "$v6d_p")" "$V6D_E2_NEEDLE")"
+    v6d_e2_ls=$(v6d_node_starts e2 "$V6D_LS" enforce-delegation); v6d_e2_tt=$(v6d_node_starts e2 "$V6D_ECHOTEST" enforce-delegation)
+    expect "v6 dispatch: (E2) standalone (no memo): ls starts node as often as a command that reaches the program (the exit is memo-only)" "same" "$([ "$v6d_e2_ls" = "$v6d_e2_tt" ] && echo same || echo "ls=$v6d_e2_ls echo-test=$v6d_e2_tt")"
+    # the tool check: Edit carries no command, so only the tool name keeps it off the exit; PowerShell is judged like Bash
+    v6d_p=$(printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"src/app.py"},"cwd":"%s"}\n' "$(jesc "$V6D_FEAT")")
+    expect "v6 dispatch: (E2) with the memo set, an Edit of src/app.py is still denied (the exit is for Bash and PowerShell only)" "yes" "$(v6d_has "$(v6d_e2_replay "$v6d_p")" 'DELEGATE: PO never edits code')"
+    expect "v6 dispatch: (E2) with the memo set, a PowerShell pytest is still denied" "yes" "$(v6d_has "$(v6d_e2_replay "$(mkjson PowerShell 'pytest' "$V6D_FEAT")")" "$V6D_E2_NEEDLE")"
+  fi
+
+  # (t) R-1 and the fail-closed rules: a missing or corrupt lib, a stale class after an unknown name
+  v6d_mk t m; v6d_marker t no-push-main; rm "$V6D/t/hooks/lib/hook-class.sh"
+  v6d_run t bash "$V6D_LS"
+  expect "v6 dispatch: (t) hooks/lib/hook-class.sh missing: rc 2, no guard ran" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran t) needle=$(v6d_has "$V6D_ERR" 'HOOK BLOCKED: dispatch.sh: hooks/lib/json.sh or hooks/lib/hook-class.sh missing or corrupt')"
+  v6d_mk t2 m; v6d_marker t2 no-push-main; rm "$V6D/t2/hooks/lib/json.sh"
+  v6d_run t2 bash "$V6D_LS"
+  expect "v6 dispatch: (t) hooks/lib/json.sh missing: rc 2, no guard ran" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran t2) needle=$(v6d_has "$V6D_ERR" 'HOOK BLOCKED: dispatch.sh: hooks/lib/json.sh or hooks/lib/hook-class.sh missing or corrupt')"
+  v6d_mk t3 m; v6d_marker t3 no-push-main; printf 'hc_class() {\n' > "$V6D/t3/hooks/lib/hook-class.sh"
+  v6d_run t3 bash "$V6D_LS"
+  expect "v6 dispatch: (t) a corrupt hook-class.sh: rc 2, no guard ran" "rc=2 ran=none needle=yes" "rc=$V6D_RC ran=$(v6d_ran t3) needle=$(v6d_has "$V6D_ERR" 'HOOK BLOCKED: dispatch.sh: hooks/lib/json.sh or hooks/lib/hook-class.sh missing or corrupt')"
+  # sourced (Task 6's replay): the functions run no guard when a lib is gone
+  v6d_t_src=$(printf '%s' "$V6D_LS" | env CLAUDE_PROJECT_DIR="$V6D/t/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_source_guard no-push-main; echo "rc=$?"' _ "$V6D/t/hooks/dispatch.sh" 2>&1 | tail -n 1)
+  expect "v6 dispatch: (t) sourced with a lib missing: cctd_source_guard returns 2 and runs no guard" "rc=2 ran=none" "$v6d_t_src ran=$(v6d_ran t)"
+  # sourced with the libs present: nothing runs on source; prepare + source_guard is the replay pair
+  v6d_mk u; v6d_marker u deny-hang-shapes
+  v6d_u_src=$(env CLAUDE_PROJECT_DIR="$V6D/u/proj" HOME="$V6D/home" bash -c 'cd /; . "$1"; echo "sourced pwd=$PWD"' _ "$V6D/u/hooks/dispatch.sh" </dev/null 2>&1)
+  expect "v6 dispatch: (u) sourcing dispatch.sh runs no guard and does not change the directory" "sourced pwd=/" "$v6d_u_src"
+  v6d_u_rep=$(printf '%s' "$V6D_ENV" | env CLAUDE_PROJECT_DIR="$V6D/u/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_source_guard deny-secret-reads; echo "rc=$?"' _ "$V6D/u/hooks/dispatch.sh" 2>&1)
+  expect "v6 dispatch: (u) the replay pair (cctd_prepare, cctd_source_guard) runs one guard without selection" "rc=2 needle=yes" "$(printf '%s' "$v6d_u_rep" | tail -n 1) needle=$(v6d_has "$v6d_u_rep" "$V6D_ENV_NEEDLE")"
+  v6d_u_stale=$(printf '%s' "$V6D_LS" | env CLAUDE_PROJECT_DIR="$V6D/u/proj" HOME="$V6D/home" bash -c '. "$1"; cctd_prepare; cctd_run_guard deny-hang-shapes; cctd_run_guard no-such-guard; echo "rc=$?"' _ "$V6D/u/hooks/dispatch.sh" 2>&1)
+  expect "v6 dispatch: (u) an unknown guard name after an open guard is an error (rc 2), not that guard's stale class" "rc=2 needle=yes" "$(printf '%s' "$v6d_u_stale" | tail -n 1) needle=$(v6d_has "$v6d_u_stale" "unknown guard 'no-such-guard'")"
+fi
+# ---- end v6.0 dispatch
+
 # ---- v5.0 fix round I1: a closed-class registration must refuse (exit 2) when the plugin dir is gone
 # Run every hooks.json run-hook command with CLAUDE_PLUGIN_ROOT pointing at a dir with no hooks/run-hook.sh.
-# Closed (per run-hook.sh's table) -> rc=2 + the restart message; any other class -> never 2 (a bare
+# Closed (per hooks/lib/hook-class.sh's table) -> rc=2 + the restart message; any other class -> never 2 (a bare
 # `bash <missing>` is bash's 127, which Claude Code treats as non-blocking: open by design).
 V5G="$TMPROOT/v5guard gone"; mkdir -p "$V5G"
-V5GC="$(awk '/pol=closed/ { sub(/\).*/, ""); gsub(/\|/, " "); printf "%s ", $0 }' "$ROOT/hooks/run-hook.sh")"
+V5GC="$(awk '/pol=closed/ { sub(/\).*/, ""); gsub(/\|/, " "); printf "%s ", $0 }' "$ROOT/hooks/lib/hook-class.sh")"
 V5GN=0
 # parser-free (the matrix hides node, python3 and jq): hooks.json has one `"command": "<escaped>"` entry per line;
 # V5RAW keeps the JSON-escaped value of every run-hook command, the loop unescapes it
@@ -11726,7 +12387,19 @@ while IFS= read -r v5g_cmd; do
     *) expect "v5 plugin gone: non-closed $v5g_name -> not exit 2" "no" "$(case $v5g_out in *rc=2) echo yes ;; *) echo no ;; esac)" ;;
   esac
 done < <(printf '%s\n' "$V5RAW" | sed 's/\\"/"/g')
-expect "v5 plugin gone: the hooks.json commands were enumerated" "yes" "$([ "$V5GN" -ge 17 ] && echo yes || echo no)"
+# v6.0: the Bash and PowerShell guards moved into two dispatcher registrations (hooks/dispatch.sh <table>, no run-hook.sh),
+# so the run-hook.sh commands are 16 now (21 before the dispatchers took five of them) and the dispatcher commands are
+# counted and run on their own: a closed registration, so a missing plugin must give exit 2 + the restart message.
+expect "v5 plugin gone: the hooks.json commands were enumerated" "yes" "$([ "$V5GN" -ge 16 ] && echo yes || echo no)"
+V6RGRAW="$(sed -n 's/.*"command": "\(.*[^\\]\)"\(, "timeout": [0-9]*\)\{0,1\} }.*/\1/p' "$ROOT/hooks/hooks.json" | grep 'hooks/dispatch\.sh')"
+V6RGN=0; V6RGT=""
+while IFS= read -r v6rg_cmd; do
+  [ -n "$v6rg_cmd" ] || continue
+  v6rg_tbl="${v6rg_cmd##* }"; V6RGN=$((V6RGN + 1)); V6RGT="$V6RGT$v6rg_tbl "
+  v6rg_out="$(CLAUDE_PLUGIN_ROOT="$V5G" bash -c "$v6rg_cmd" </dev/null 2>&1; echo "rc=$?")"
+  expect "v6 plugin gone: dispatcher ($v6rg_tbl) -> exit 2 + restart message" "BLOCKED: cct plugin files are missing rc=2" "$(printf '%s' "$v6rg_out" | grep -o 'BLOCKED: cct plugin files are missing\|rc=[0-9]*' | tr '\n' ' ' | sed 's/ $//')"
+done < <(printf '%s\n' "$V6RGRAW" | sed 's/\\"/"/g')
+expect "v6 plugin gone: exactly two dispatcher registrations, one per table (bash, powershell)" "2 bash powershell" "$V6RGN $(printf '%s\n' $V6RGT | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v5.0 fix round I1
 
 # ---- v5.0 verify-hooks: also reads the plugin's hooks/hooks.json (spec §3.5)
@@ -11741,8 +12414,8 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/cct-session.sh"
 v5vh_run() { env -u CLAUDE_PROJECT_DIR HOME="$V5VH" "$@" bash "$ROOT/hooks/verify-hooks.sh" --report </dev/null 2>/dev/null; }
 expect "v5 verify-hooks: plugin hook script missing -> reported" "MISSING: $V5V/hooks/no-push-main.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
 V5VG="$TMPROOT/v5vh guarded"; mkdir -p "$V5VG/hooks"; cp "$V5V/hooks/run-hook.sh" "$V5V/hooks/cct-session.sh" "$V5VG/hooks/"
-printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec bash .*"\$f.* pre-commit-test$' | head -1)" > "$V5VG/hooks/hooks.json"
-expect "v5 verify-hooks: closed-class inline-guard registration -> script missing reported" "MISSING: $V5VG/hooks/pre-commit-test.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5VG")"
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec bash .*"\$f.* deny-secret-reads$' | head -1)" > "$V5VG/hooks/hooks.json"
+expect "v5 verify-hooks: closed-class inline-guard registration -> script missing reported" "MISSING: $V5VG/hooks/deny-secret-reads.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5VG")"
 expect "v5 verify-hooks: plugin root unset -> old behaviour (nothing scanned)" "" "$(v5vh_run)"
 expect "v5 verify-hooks: plugin root empty -> old behaviour (nothing scanned)" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT=)"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/no-push-main.sh"
@@ -11750,6 +12423,21 @@ expect "v5 verify-hooks: all plugin scripts present -> silent" "" "$(v5vh_run CL
 rm "$V5V/hooks/cct-session.sh"
 expect "v5 verify-hooks: direct cct-session.sh entry missing -> reported" "MISSING: $V5V/hooks/cct-session.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
 # ---- end v5.0 verify-hooks
+
+# ---- v6.0 verify-hooks: a dispatcher registration checks hooks/dispatch.sh and every guard in ITS tables.
+# The scratch plugin root is a copy of this checkout's hooks/ (the real hooks.json, the real dispatch.sh); the temp HOME
+# of v5vh_run keeps the machine's own settings out of it.
+V6VP="$TMPROOT/v6vh plugin"; mkdir -p "$V6VP"; cp -r "$ROOT/hooks" "$V6VP/hooks"
+expect "v6 verify-hooks: the real registrations over a complete plugin copy -> silent" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+rm "$V6VP/hooks/dispatch.sh"
+expect "v6 verify-hooks: hooks/dispatch.sh deleted -> MISSING" "MISSING: $V6VP/hooks/dispatch.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+cp "$ROOT/hooks/dispatch.sh" "$V6VP/hooks/dispatch.sh"
+rm "$V6VP/hooks/pre-commit-test.sh"
+expect "v6 verify-hooks: a guard only the dispatcher tables list (pre-commit-test) deleted -> MISSING" "MISSING: $V6VP/hooks/pre-commit-test.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+cp "$ROOT/hooks/pre-commit-test.sh" "$V6VP/hooks/pre-commit-test.sh"
+sed -i "s/cctd_tab='no-push-main /cctd_tab='no-such-guard no-push-main /" "$V6VP/hooks/dispatch.sh"
+expect "v6 verify-hooks: the tables come from the plugin root's own dispatch.sh (a guard named there with no script) -> MISSING" "MISSING: $V6VP/hooks/no-such-guard.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V6VP")"
+# ---- end v6.0 verify-hooks
 
 # ---- v5.0 agents: cct:<name> resolves from the plugin's agents/ (spec §2)
 V5A="$TMPROOT/v5plug"; mkdir -p "$V5A/agents" "$V5A/hooks/lib" "$TMPROOT/v5noproj"
