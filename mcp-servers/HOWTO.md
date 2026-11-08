@@ -326,31 +326,34 @@ claude mcp add --scope user --transport stdio searxng \
 
 ## Open Brain (Persistent Memory)
 
-Open Brain is a persistent memory MCP server that provides a "second brain" for Claude — storing decisions, insights, and context across sessions.
+Open Brain is a persistent memory MCP server that provides a "second brain" for Claude — storing decisions, insights, and context across sessions in your own Supabase project, with semantic search over them.
 
-- **Project:** https://github.com/dagonet/open-brain (check for latest installation instructions)
-- **Tools (14 total):**
-  - **Thoughts:** `thoughts_capture`, `thoughts_search`, `thoughts_topics`, `thoughts_people`, `thoughts_recent`, `thoughts_review`, `thoughts_delete`, `system_status`
-  - **Wiki:** `wiki_get`, `wiki_list`, `wiki_refresh`
-  - **Contradictions:** `contradictions_list`, `contradictions_resolve`, `contradictions_audit`
+- **Project:** https://github.com/dagonet/open-brain
+- **Install, keys and the tool list:** [open-brain `docs/mcp.md`](https://github.com/dagonet/open-brain/blob/main/docs/mcp.md). The tool list is deliberately not copied here: it grows with every Open Brain release, and a copy goes stale.
 
-**Windows (PowerShell):**
+The server is built from a clone of that repository (`npm ci` and `npm run build` in `mcp-server/`) and run with `node <clone>/mcp-server/dist/index.js`; it is not installed with `npx`. Register it at user level as that doc describes, with its keys in the server's `env` block.
 
-```powershell
-claude mcp add --scope user --transport stdio open-brain `
-  -- npx -y open-brain-mcp
+**Per-repo settings.** A project's `.mcp.json` (at the repo root) can carry its own `open-brain` entry. That entry replaces the user-level one of the same name in that project, so it needs the keys too. `.mcp.json` is usually committed, so reference the keys as `${VAR}` (Claude Code expands them from your environment) and never write them in literally:
+
+```json
+{
+  "mcpServers": {
+    "open-brain": {
+      "command": "node",
+      "args": ["/absolute/path/to/open-brain/mcp-server/dist/index.js"],
+      "env": {
+        "SUPABASE_URL": "${SUPABASE_URL}",
+        "SUPABASE_SERVICE_ROLE_KEY": "${SUPABASE_SERVICE_ROLE_KEY}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "OPEN_BRAIN_DEFAULT_PROJECT": "my-repo-name"
+      }
+    }
+  }
+}
 ```
 
-**Linux / macOS:**
-
-```bash
-claude mcp add --scope user --transport stdio open-brain \
-  -- npx -y open-brain-mcp
-```
-
-**Note:** Check the project repository for the latest installation method — the command and package name may vary. Open Brain stores data locally and provides semantic search over captured thoughts.
-
-**Per-repo opt-out (v0.3.0+):** if a particular project shouldn't see the wiki and contradictions tool families, add `"OPEN_BRAIN_TOOLS_DISABLED": "wiki,contradictions"` to the open-brain server's `env` block in that project's `.mcp.json`. The MCP server filters those families from `tools/list`; the `thoughts_*` tools and `system_status` remain available.
+- `OPEN_BRAIN_DEFAULT_PROJECT` is the project scope used when a call omits `project`, so sessions in this repo see only its own memories.
+- `OPEN_BRAIN_TOOLS_DISABLED` (comma-separated: `wiki`, `contradictions`, `tasks`, `entities`) hides those tool families in this project, for example in a sensitive client repo. The `thoughts_*` tools and `system_status` stay available.
 
 ## Context Mode Plugin — not recommended
 
