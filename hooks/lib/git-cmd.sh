@@ -552,7 +552,7 @@ gc_cmd_unreadable() {
 GC_SOH=$(printf '\001')
 gc_protect_c_paths() {
   [ -n "$1" ] || { printf '%s' ""; return 0; }
-  # A failing awk must not read as an empty command (the gates would allow it): hand back the input.
+  # A failing awk must not read as an empty command (an empty command is refused as unreadable; the fallback restores the floor verdict): hand back the input.
   gcn=$(printf '%s' "$1" | awk -v sq="'" '{
     line = $0; out = ""
     while ((i = index(line, "-C")) > 0) {

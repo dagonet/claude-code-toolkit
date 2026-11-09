@@ -61,7 +61,11 @@ cctd_prepare() {
   fi
   # grep, tr and wc only (no awk: an awk-less PATH must not lock out every command). If the count cannot be
   # determined, refuse only a command that holds a git or gh word; everything else cannot cost the git guards time.
-  cctd_n=$(printf '%s' "$cctd_cmd" | tr '\n' ' ' | LC_ALL=C grep -oE '(^|[[:space:];&|($`])(git|gh)[[:space:]]' 2>/dev/null | wc -l 2>/dev/null)
+  # A missing grep would make wc print 0 and the cap fail open: with no grep the count is undetermined.
+  cctd_n=
+  if command -v grep >/dev/null 2>&1; then
+    cctd_n=$(printf '%s' "$cctd_cmd" | tr '\n' ' ' | LC_ALL=C grep -oE '(^|[[:space:];&|($`])(git|gh)[[:space:]]' 2>/dev/null | wc -l 2>/dev/null)
+  fi
   cctd_n=${cctd_n//[[:space:]]/}
   case $cctd_n in
     ''|*[!0-9]*)

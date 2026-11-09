@@ -1103,7 +1103,8 @@ done <<< "$E1_OUT"
 expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s\n' "$E1_OUT" | grep -c .)"
 
 # v6.1 S2 -- a tool that fails (fork failure, missing binary) used to leave gc_protect_c_paths
-# printing nothing, so the gates saw an empty command and allowed it. The stub dir holds an `awk`
+# printing nothing, so the gates saw an empty command (an empty command is refused as unreadable;
+# the fallback restores the floor verdict). The stub dir holds an `awk`
 # (since S4 the rewrite is awk, no longer sed) that exits 1; the output must equal the input byte
 # for byte. Runs in the default pass.
 S2_STUB="$TMPROOT/s2-stub"; mkdir -p "$S2_STUB"
@@ -12247,6 +12248,18 @@ else
   expect "S4 no awk: ls passes (rc 0)" "rc=0" "rc=$V6D_RC"
   s4_run_noawk "$(v6d_s4_calls 129)"
   expect "S4 no awk: 129 git calls refuse (exit 2, exact message)" "rc=2 BLOCKED: too many git/gh calls in one command for the safety checks (129, limit 128): split it into several commands" "rc=$V6D_RC $V6D_ERR"
+
+  # S4, grep absent: the count is undetermined, so a command holding a git word is refused and ls passes
+  S4_NOGREP=$(mkpathdir s4nogrep); rm -f "$S4_NOGREP/grep"
+  for s4_t in node python3 jq awk; do s4_r=$(command -v "$s4_t" 2>/dev/null) && printf '#!/bin/sh\nexec "%s" "$@"\n' "$s4_r" > "$S4_NOGREP/$s4_t" && chmod +x "$S4_NOGREP/$s4_t"; done
+  s4_run_nogrep() { # <payload> -- sets V6D_RC, V6D_ERR
+    V6D_OUT=$(printf '%s' "$1" | env PATH="$S4_NOGREP" CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASHABS" "$V6D/base/hooks/dispatch.sh" bash 2>"$V6D/err")
+    V6D_RC=$?; V6D_ERR=$(cat "$V6D/err")
+  }
+  s4_run_nogrep "$V6D_LS"
+  expect "S4 no grep: ls passes (rc 0)" "rc=0" "rc=$V6D_RC"
+  s4_run_nogrep "$(v6d_s4_calls 129)"
+  expect "S4 no grep: 129 git calls are refused (exit 2)" "rc=2" "rc=$V6D_RC"
 
   # (d) a crash (any rc but 2) does not skip a later closed guard
   v6d_mk d m

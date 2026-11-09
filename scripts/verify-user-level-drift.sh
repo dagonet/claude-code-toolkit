@@ -287,7 +287,7 @@ except Exception:
     elif command -v node >/dev/null 2>&1; then
       node -e '
 try {
-  var d = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8").replace(/^﻿/, ""));
+  var d = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8").replace(/^\uFEFF/, ""));
   if (process.argv[1] === "subs") {
     Object.keys(d.plugins || {}).forEach(function (i) {
       if (/@dagonet$/.test(i) && i !== "cct@dagonet") d.plugins[i].forEach(function (r) { console.log(i + " " + r.scope + " " + r.version); });

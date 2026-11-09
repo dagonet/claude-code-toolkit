@@ -221,7 +221,7 @@ vh_init_parser() {
 vh_plugin() {
   vh_pf=$1/hooks/hooks.json
   [ -f "$vh_pf" ] && [ -r "$vh_pf" ] || return 0
-  # bare `run-hook.sh" <name>` and the closed-class inline-guard form `exec bash "$f" <name>`; a dispatcher registration
+  # bare `run-hook.sh" <name>` and the closed-class inline-guard form `exec "${BASH:-bash}" "$f" <name>`; a dispatcher registration
   # (hooks/dispatch.sh) ends in a TABLE name (`bash`, `powershell`), not a guard, so its lines are left out here: the
   # direct-script grep below finds hooks/dispatch.sh itself, and the guards come from its `cctd_tab='...'` table lines.
   vh_paths=$(grep -v 'hooks/dispatch\.sh' "$vh_pf" 2>/dev/null | grep -oE '(run-hook\.sh|\$f)\\" [A-Za-z0-9_-]+' | sed 's/^.* /hooks\//; s/$/.sh/')

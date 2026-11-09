@@ -5106,7 +5106,7 @@ elif [ "$c78_uniq" -ne 1 ]; then ko "78: the six variant .gitattributes are not 
 else ok "78: all 6 variant .gitattributes end with the PROJECT-CUSTOM marker pair and are byte-identical"; fi
 
 # ---------------------------------------------------------------------------
-# Check 79 (v6.1 S3; the plan names it 76, taken since v5.0): no hooks.json registration starts a bare
+# Check 79 (v6.1 S3): no hooks.json registration starts a bare
 # 'exec bash ' (it must be exec "${BASH:-bash}": the bash that is running the hook, not a PATH lookup).
 # Two-sided: a copy of hooks.json with one bare 'exec bash' must be flagged; the real file must not be.
 # ---------------------------------------------------------------------------
@@ -5201,17 +5201,23 @@ process.stdout.write(out.join("\n"));' "$1" 2>/dev/null
 c81_real=$(c81_eval .)
 c81_tmp=$(mktemp -d)
 c81_ctl_ok=1
-for c81_mut in allow deny matcher tools; do
+for c81_mut in none allow deny matcher tools; do
   rm -rf "$c81_tmp/t"; mkdir -p "$c81_tmp/t/.claude" "$c81_tmp/t/hooks" "$c81_tmp/t/agents"
   cp .claude/settings.json "$c81_tmp/t/.claude/"; cp hooks/hooks.json "$c81_tmp/t/hooks/"; cp agents/coder.md "$c81_tmp/t/agents/"
+  mkdir -p "$c81_tmp/t/user-level-reference"; cp user-level-reference/settings.json "$c81_tmp/t/user-level-reference/"
   mkdir -p "$c81_tmp/t/templates/general/.claude"; cp templates/general/.claude/settings.json "$c81_tmp/t/templates/general/.claude/"
   case $c81_mut in
-    allow)   sed -i '/"mcp__plugin_git-tools_git-tools__\*"/d' "$c81_tmp/t/templates/general/.claude/settings.json" ;;
+    allow)   sed -i '/"mcp__plugin_github-tools_github-tools__\*"/d' "$c81_tmp/t/user-level-reference/settings.json" ;;
     deny)    sed -i '/"mcp__plugin_git-tools_git-tools__git_push"/d' "$c81_tmp/t/templates/general/.claude/settings.json" ;;
     matcher) sed -i 's/|mcp__plugin_github-tools_github-tools__github_pr_auto_merge//' "$c81_tmp/t/hooks/hooks.json" ;;
     tools)   sed -i '/^tools:/s/, mcp__plugin_github-tools_github-tools__gh_repo_from_origin//' "$c81_tmp/t/agents/coder.md" ;;
   esac
-  [ -n "$(c81_eval "$c81_tmp/t")" ] || { c81_ctl_ok=0; echo "  81: control '$c81_mut' was not flagged" >&2; }
+  c81_out=$(c81_eval "$c81_tmp/t")
+  if [ "$c81_mut" = none ]; then
+    [ -z "$c81_out" ] || { c81_ctl_ok=0; echo "  81: the unmutated fixture reported: $c81_out" >&2; }
+  else
+    case $c81_out in *"lacks its"*) ;; *) c81_ctl_ok=0; echo "  81: control '$c81_mut' was not flagged for the right reason: $c81_out" >&2 ;; esac
+  fi
 done
 rm -rf "$c81_tmp"
 if [ "$c81_ctl_ok" -ne 1 ]; then ko "81: CONTROL failed (an allow-only, deny-only, matcher or tools: mutation was not flagged)"
