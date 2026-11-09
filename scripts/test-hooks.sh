@@ -12786,7 +12786,9 @@ expect "V462 drift: an untagged sha never says released tree" 0 "$(v462_dl_ref "
 S3_BASH=$(command -v bash)
 S3_ROOT="$TMPROOT/s3plugin"; mkdir -p "$S3_ROOT/hooks"
 printf '#!/bin/sh\necho S3-REACHED-DISPATCH "$1"\n' > "$S3_ROOT/hooks/dispatch.sh"
-S3_CMD=$(node -e 'var h=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).hooks.PreToolUse;process.stdout.write(h.filter(function(g){return g.matcher==="Bash"})[0].hooks[0].command)' "$(natpath "$ROOT/hooks/hooks.json")" 2>/dev/null)
+# Parsed with awk/sed, not node: the parser matrix runs this suite with node off PATH. The command string
+# sits on the line after the Bash matcher; it holds only \" escapes (undone below).
+S3_CMD=$(awk 'f{print;exit} /"matcher": *"Bash"/{f=1}' "$ROOT/hooks/hooks.json" | sed -e 's/^.*"command": *"//' -e 's/", *"timeout".*$//' -e 's/\\"/"/g')
 S3_EMPTY="$TMPROOT/s3empty"; mkdir -p "$S3_EMPTY"
 if [ -z "$S3_CMD" ]; then
   expect "S3 the Bash registration is readable from hooks.json" "a command" "none"
