@@ -12139,6 +12139,18 @@ else
   v6d_run base bash "$(v6d_s4_calls 129)"
   expect "S4 git calls: 129 refuses (exit 2, exact message)" "rc=2 BLOCKED: too many git/gh calls in one command for the safety checks (129, limit 128): split it into several commands" "rc=$V6D_RC $V6D_ERR"
 
+  # S4, awk absent: the cap counts with grep/tr/wc, so ls passes and 129 calls still refuse (3e8be09 passed ls; 6713c7b refused it)
+  S4_NOAWK=$(mkpathdir s4noawk); rm -f "$S4_NOAWK/awk"
+  for s4_t in node python3 jq; do s4_r=$(command -v "$s4_t" 2>/dev/null) && printf '#!/bin/sh\nexec "%s" "$@"\n' "$s4_r" > "$S4_NOAWK/$s4_t" && chmod +x "$S4_NOAWK/$s4_t"; done
+  s4_run_noawk() { # <payload> -- sets V6D_RC, V6D_ERR
+    V6D_OUT=$(printf '%s' "$1" | env PATH="$S4_NOAWK" CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASHABS" "$V6D/base/hooks/dispatch.sh" bash 2>"$V6D/err")
+    V6D_RC=$?; V6D_ERR=$(cat "$V6D/err")
+  }
+  s4_run_noawk "$V6D_LS"
+  expect "S4 no awk: ls passes (rc 0)" "rc=0" "rc=$V6D_RC"
+  s4_run_noawk "$(v6d_s4_calls 129)"
+  expect "S4 no awk: 129 git calls refuse (exit 2, exact message)" "rc=2 BLOCKED: too many git/gh calls in one command for the safety checks (129, limit 128): split it into several commands" "rc=$V6D_RC $V6D_ERR"
+
   # (d) a crash (any rc but 2) does not skip a later closed guard
   v6d_mk d m
   v6d_put d deny-secret-reads 'exit 1'

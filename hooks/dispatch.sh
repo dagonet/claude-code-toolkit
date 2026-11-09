@@ -59,9 +59,16 @@ cctd_prepare() {
     echo "BLOCKED: command too large for the safety checks ($cctd_n bytes, limit $CCTD_MAX_PAYLOAD): put it in a script file and run bash <path>" >&2
     return 2
   fi
-  cctd_n=$(printf '%s' "$cctd_cmd" | tr '\n' ' ' | awk '{ n += gsub(/(^|[[:space:];&|($`])(git|gh)[[:space:]]/, "&") } END { print n + 0 }')
+  # grep, tr and wc only (no awk: an awk-less PATH must not lock out every command). If the count cannot be
+  # determined, refuse only a command that holds a git or gh word; everything else cannot cost the git guards time.
+  cctd_n=$(printf '%s' "$cctd_cmd" | tr '\n' ' ' | LC_ALL=C grep -oE '(^|[[:space:];&|($`])(git|gh)[[:space:]]' 2>/dev/null | wc -l 2>/dev/null)
+  cctd_n=${cctd_n//[[:space:]]/}
   case $cctd_n in
-    ''|*[!0-9]*) echo "BLOCKED: dispatch.sh: cannot count the git/gh calls -- cannot determine" >&2; return 2 ;;
+    ''|*[!0-9]*)
+      case $cctd_cmd in
+        *git*|*gh*) echo "BLOCKED: dispatch.sh: cannot count the git/gh calls -- cannot determine" >&2; return 2 ;;
+      esac
+      cctd_n=0 ;;
   esac
   if [ "$cctd_n" -gt "$CCTD_MAX_GIT_CALLS" ]; then
     echo "BLOCKED: too many git/gh calls in one command for the safety checks ($cctd_n, limit $CCTD_MAX_GIT_CALLS): split it into several commands" >&2
