@@ -110,7 +110,7 @@ You need [`uv`](https://docs.astral.sh/uv/) on your PATH (the servers start with
 | `claude plugin install git-tools@dagonet` | `git` |
 | `claude plugin install github-tools@dagonet` | `gh`, installed and logged in |
 | `claude plugin install dotnet-tools@dagonet` | the .NET SDK |
-| `claude plugin install ollama-tools@dagonet` | a running [Ollama](https://ollama.com) (URL and models are asked at install) |
+| `claude plugin install ollama-tools@dagonet` | a running [Ollama](https://ollama.com) (URL and models have defaults; set them with `claude plugin configure ollama-tools@dagonet` or `--config KEY=VALUE` at install) |
 | `claude plugin install rust-tools@dagonet` | `cargo` (rustup) |
 | `claude plugin install python-tools@dagonet` | `uv`, `pytest`, `ruff`, `coverage` in the project environment; Python 3.11+ |
 

@@ -4,8 +4,8 @@
 
 MCP servers in this toolkit are split into two tiers:
 
-- **User-level servers** are registered once in `~/.claude.json` and loaded in every project. These are tools you need universally — git, github, ollama, open-brain, etc.
-- **Project-level servers** live in a repo's `.mcp.json` (repo root) and only load in that project. These are language/framework-specific tools — dotnet, rust, sqlite, windows-mcp — that would bloat the context window if loaded globally.
+- **User-level servers** load in every project. The mcp-dev-servers (git, github, ollama, dotnet, rust, python) are plugins now; other user-level servers like open-brain are still registered once with `claude mcp add --scope user` in `~/.claude.json`.
+- **Project-level servers** live in a repo's `.mcp.json` (repo root) and only load in that project (sqlite, windows-mcp, godot). dotnet and rust are no longer per-clone `.mcp.json` servers; they are plugins you can enable per project.
 
 This guide is split accordingly. For the **why**, see `docs/architecture.md` → *MCP Layering*.
 
@@ -47,7 +47,7 @@ The custom Python MCP servers live in a separate repository, https://github.com/
 
 # User-Level Servers
 
-Register these **once** with `claude mcp add --scope user`. They load in every project.
+The mcp-dev-servers below are plugins now (see above); other user-level servers (open-brain, searxng, template-sync-tools) are registered once with `claude mcp add --scope user`. They load in every project.
 
 ## Ollama Tools (6 tools)
 
@@ -57,7 +57,7 @@ Local LLM preprocessing: health check, model management, text compression, JSON 
 
 **Install:** `claude plugin install ollama-tools@dagonet` (needs `uv`; see *MCP server plugins* above).
 
-**Options** (asked once at install, kept by Claude Code; change them by reinstalling the plugin):
+**Options** (each has a default, so an unset option just uses it; set or change them with `claude plugin configure ollama-tools@dagonet`, interactive or `--values-stdin` with a JSON object, or at install with `claude plugin install ollama-tools@dagonet --config KEY=VALUE`; `claude plugin marketplace remove dagonet` deletes saved options — the Linux installer saves and restores them, on Windows re-enter them after the remove/add/install recipe):
 
 | Option | Default | Meaning |
 |---|---|---|
