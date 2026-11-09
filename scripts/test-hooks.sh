@@ -11901,7 +11901,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   # puts back exactly the sub-plugins that were installed, with their enabled state and saved values, and no other.
   # The official-marketplace calls are answered by a wrapper (no network); every other call reaches the real CLI.
   IU_REAL=$(command -v claude 2>/dev/null || true)
-  if [ -n "$IU_REAL" ] && "$IU_REAL" plugin configure --help 2>/dev/null | grep -q -- '--values-stdin'; then
+  if [ -n "$IU_REAL" ] && env -u CLAUDE_CONFIG_DIR HOME="$TMPROOT/iu-probe-home" "$IU_REAL" plugin configure --help 2>/dev/null | grep -q -- '--values-stdin'; then
     IU_RBIN="$TMPROOT/iu-rbin"; rm -rf "$IU_RBIN"; mkdir -p "$IU_RBIN"
     printf '%s\n' '#!/bin/sh' 'case "$*" in *claude-plugins-official*) exit 0 ;; esac' "exec $IU_REAL \"\$@\"" > "$IU_RBIN/claude"
     chmod +x "$IU_RBIN/claude"
@@ -11937,8 +11937,30 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   else
     skip_host "IU subs: sub-plugins kept across the pinned reinstall (real claude CLI)" "no claude CLI with configure --values-stdin" 6
   fi
+  # IU subs, failed reinstall: a stub CLI records two sub-plugins (one with a saved value), the reinstall of the first
+  # fails. The die names EVERY recorded id (the trap deletes the saved values), says to re-enter the options, and no
+  # saved value reaches stdout or stderr (the stub hands it out only through configure --json).
+  IU_FBIN="$TMPROOT/iu-fbin"; rm -rf "$IU_FBIN"; mkdir -p "$IU_FBIN"
+  IU_FSEC="iu-fail-sentinel-$$-value"
+  printf '%s\n' '#!/bin/sh' \
+    'case "$1 $2 $3" in' \
+    '  "plugin marketplace list") printf "[{\"name\":\"dagonet\",\"source\":\"directory\",\"path\":\"/old\"}]\n"; exit 0 ;;' \
+    '  "plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0\"},{\"id\":\"github-tools@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0\"},{\"id\":\"dotnet-tools@dagonet\",\"scope\":\"user\",\"enabled\":false,\"version\":\"0\"}]\n"; exit 0 ;;' \
+    '  "plugin install github-tools@dagonet") echo "install failed" >&2; exit 1 ;;' \
+    'esac' \
+    'case "$*" in "plugin configure"*"--json") printf "{\"inputs\":{\"api_host\":\"%s\"}}\n" "'"$IU_FSEC"'"; exit 0 ;; esac' \
+    'exit 0' > "$IU_FBIN/claude"
+  chmod +x "$IU_FBIN/claude"
+  iu_h=$(iu_home subfail)
+  ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_FBIN:$PATH" CCT_MARKETPLACE=/ok bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>"$iu_h/err" ); iu_rc=$?
+  expect "IU subs fail: the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
+  expect "IU subs fail: the recovery names the failing sub-plugin's install command" 1 "$(grep -c 'claude plugin install github-tools@dagonet' "$iu_h/err")"
+  expect "IU subs fail: ... and the other recorded sub-plugin (install, then disable: it was off)" "1:1" \
+    "$(grep -c 'claude plugin install dotnet-tools@dagonet' "$iu_h/err"):$(grep -c 'claude plugin disable dotnet-tools@dagonet' "$iu_h/err")"
+  expect "IU subs fail: it says saved options must be re-entered with claude plugin configure <id>" 1 "$(grep -c 'claude plugin configure' "$iu_h/err")"
+  expect "IU subs fail: no saved value on stdout or stderr" 0 "$(cat "$iu_h/out" "$iu_h/err" | grep -c -- "$IU_FSEC")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 55
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 60
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED

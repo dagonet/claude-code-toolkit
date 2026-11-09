@@ -57,6 +57,7 @@ MARKET=claude-plugins-official
 plugins_started=""   # set when step 1 is done: from then on this script edits settings.json, so a failure restores the backup.
                      # During step 1 the plugin CLI owns its own keys (extraKnownMarketplaces): a die there never restores.
 removed=""           # set by the marketplace remove, cleared once add + install succeeded
+subs_pending=""      # set by the marketplace remove (it uninstalls every sub-plugin), cleared once all were put back
 old_src=""           # the source the old dagonet entry had, for the second recovery recipe
 step1=""             # set when step 1 begins: the CLI may then flip enabledPlugins entries the user had at false
 pre_ep='{}'          # enabledPlugins as they were before step 1
@@ -67,6 +68,16 @@ die() {
     echo "install-user-level-linux: the dagonet marketplace was removed and cct@dagonet is not installed; until it is, the plugin is off and every synced project refuses every tool. Recover with one recipe (the remove may say not found; that is harmless):" >&2
     echo "install-user-level-linux:   with the new source:  claude plugin marketplace remove dagonet; claude plugin marketplace add $CCT_SRC && claude plugin install cct@dagonet" >&2
     [ -z "$old_src" ] || echo "install-user-level-linux:   with the old source:  claude plugin marketplace remove dagonet; claude plugin marketplace add $old_src && claude plugin install cct@dagonet" >&2
+  fi
+  if [ -n "$subs_pending" ] && [ -n "${SUBS:-}" ]; then
+    # the EXIT trap deletes the saved values: name every recorded sub-plugin (ids only, never a value)
+    echo "install-user-level-linux: the marketplace remove uninstalled these sub-plugins; put each back (the saved options are gone and must be re-entered with: claude plugin configure <id>):" >&2
+    while read -r d_id d_on; do
+      [ -n "$d_id" ] || continue
+      echo "install-user-level-linux:   claude plugin install $d_id$([ "$d_on" = false ] && echo "; claude plugin disable $d_id")" >&2
+    done <<EOF2
+$SUBS
+EOF2
   fi
   if [ -n "$plugins_started" ]; then
     if [ -e "$L/settings.json.bak-$TS" ]; then cp -p "$L/settings.json.bak-$TS" "$L/settings.json"; else rm -f "$L/settings.json"; fi
@@ -116,7 +127,7 @@ if [ -n "$SUBS" ]; then
   trap 'rm -rf "$SUBDIR"' EXIT
   while read -r sp_id sp_on; do
     [ -n "$sp_id" ] || continue
-    ( umask 077; claude plugin configure "$sp_id" --json 2>/dev/null | jq -c '.inputs // {} | with_entries(select(.value != ""))' > "$SUBDIR/$sp_id.json" ) || true
+    ( umask 077; claude plugin configure "$sp_id" --json </dev/null 2>/dev/null | jq -c '.inputs // {} | with_entries(select(.value != ""))' 2>/dev/null > "$SUBDIR/$sp_id.json" ) || true
   done <<EOF
 $SUBS
 EOF
@@ -128,6 +139,7 @@ if printf '%s' "$mp_json" | jq -e 'any(.[]; .name == "dagonet")' >/dev/null 2>&1
     | if (.ref // "") != "" and (.source == "git" or .source == "github") then "\($s)#\(.ref)" else $s end' 2>/dev/null | head -1 || true)
   claude plugin marketplace remove dagonet || die "cannot remove the old dagonet marketplace: $NR"
   removed=1
+  subs_pending=1
 fi
 claude plugin marketplace add "$CCT_SRC" || die "cannot add the cct marketplace $CCT_SRC: $NR"
 claude plugin install cct@dagonet || die "cannot install cct@dagonet: $NR"
@@ -137,15 +149,16 @@ removed=""
 if [ -n "$SUBS" ]; then
   while read -r sp_id sp_on; do
     [ -n "$sp_id" ] || continue
-    claude plugin install "$sp_id" || die "cannot reinstall $sp_id (it was installed before this run; reinstall it with: claude plugin install $sp_id): $NR"
+    claude plugin install "$sp_id" </dev/null || die "cannot reinstall $sp_id (it was installed before this run): $NR"
     if [ -s "$SUBDIR/$sp_id.json" ] && [ "$(cat "$SUBDIR/$sp_id.json")" != "{}" ]; then
-      claude plugin configure "$sp_id" --values-stdin < "$SUBDIR/$sp_id.json" >/dev/null || die "cannot restore the saved options of $sp_id (re-enter them with: claude plugin configure $sp_id): $NR"
+      claude plugin configure "$sp_id" --values-stdin < "$SUBDIR/$sp_id.json" >/dev/null 2>&1 || die "cannot restore the saved options of $sp_id (re-enter them with: claude plugin configure $sp_id): $NR"
     fi
-    if [ "$sp_on" = false ]; then claude plugin disable "$sp_id" || die "cannot disable $sp_id again: $NR"; fi
+    if [ "$sp_on" = false ]; then claude plugin disable "$sp_id" </dev/null || die "cannot disable $sp_id again: $NR"; fi
   done <<EOF
 $SUBS
 EOF
 fi
+subs_pending=""
 claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
 for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
 want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')
