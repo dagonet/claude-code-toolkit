@@ -1,6 +1,6 @@
 {
   "name": "github-tools",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "description": "MCP server for GitHub pull requests, issues and CI runs; started with uv (uvx) and drives the gh CLI",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/mcp-dev-servers",

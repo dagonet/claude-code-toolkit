@@ -1,2 +1,2 @@
-6.0.0
-v6.0.0: One dispatcher per tool runs the Bash and PowerShell guards in one process
+6.1.0
+v6.1.0: the mcp-dev-servers as six opt-in plugins; four hook security fixes

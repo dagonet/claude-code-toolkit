@@ -1,6 +1,6 @@
 {
   "name": "python-tools",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "description": "MCP server for Python test, lint and type-check runs with compact output; started with uv (uvx) and drives uv/python",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/mcp-dev-servers",

@@ -24,110 +24,24 @@ This guide is split accordingly. For the **why**, see `docs/architecture.md` →
 | Project (optional) | **Docker Desktop** running | `sqlite` |
 | Project (dotnet-maui / rust-tauri) | **uv/uvx** in PATH | `windows-mcp` |
 
-## Python MCP Servers Source
+## MCP server plugins (mcp-dev-servers)
 
-The custom Python MCP servers live in a separate repository:
+The custom Python MCP servers live in a separate repository, https://github.com/dagonet/mcp-dev-servers (see its README for the full tool reference). Since toolkit v6.1 they install as six plugins from this repo's `dagonet` marketplace, pinned to mcp-dev-servers v0.4.0. There is no clone, no venv and no `claude mcp add`.
+`template-sync-tools` is not one of them: it lives in this repo's own `server/` (see the Template Sync Tools section below).
 
-- **Repository:** https://github.com/dagonet/mcp-dev-servers
-- **95 tools** across 7 servers as of 0.3.8. `template-sync-tools` moved into this repo's own `server/` as of toolkit v4.0.0 — see the Template Sync Tools section below — and mcp-dev-servers 0.4.0 removes it from that count.
-- See that repo's README for full tool reference
+**Once per machine:**
 
-## Python Virtual Environment Setup
+1. Install [uv](https://docs.astral.sh/uv/) so `uvx` is on PATH.
+2. Add the marketplace if you have not (`/plugin marketplace add dagonet/claude-code-toolkit#<tag>`, see the README).
+3. Install the plugins you want: `claude plugin install <name>@dagonet` for `git-tools`, `github-tools`, `dotnet-tools`, `ollama-tools`, `rust-tools`, `python-tools`. Each works alone; none is enabled for you.
+4. Warm the `uvx` cache once so the first session does not wait on the download (a Windows cold start took about 10 s, near the MCP connect timeout):
+   `uvx --from "mcp-dev-servers @ git+https://github.com/dagonet/mcp-dev-servers@0a20b97dd42733c629e369e16f4e79af81f93d47" mcp-git-tools </dev/null`
 
-All custom Python MCP servers (user-level and project-level alike) run from a shared Python virtual environment. `pip install -e ".[ollama]"` installs `mcp-dev-servers` in editable mode and exposes 7 console scripts (`mcp-git-tools`, `mcp-github-tools`, `mcp-dotnet-tools`, `mcp-ollama-tools`, `mcp-rust-tools`, `mcp-template-sync-tools`, `mcp-python-tools`) inside the venv. The `[ollama]` extra pulls `httpx`; drop it if you don't run Ollama. **Do not register `mcp-template-sync-tools` from this venv** — as of toolkit v4.0.0 that server ships from this repo's own `server/` instead; see the Template Sync Tools section below.
+**Where a server is on.** The install enables the plugin in every project (user scope). To have it in some projects only, run `claude plugin disable <name>@dagonet`, then in each clone `claude plugin enable <name>@dagonet --scope local` (writes the gitignored `.claude/settings.local.json`). Each enabled server costs about 15-27 MB of memory per session. macOS: expected to work, untested.
 
-> **Invariant:** the venv MUST live at `<mcp-dev-servers>/.venv/` (the literal directory name `.venv` inside the repo root). Both `setup-project.{ps1,sh}` and the user-level `.mcp.json.template` hardcode this relative path. Naming the venv `env/`, placing it outside the repo, or installing via `pipx` will break project-level MCP registration silently.
+**Tool names.** A plugin server's tools are named `mcp__plugin_<name>_<name>__<tool>` (for example `mcp__plugin_github-tools_github-tools__github_pr_auto_merge`), not `mcp__<name>__<tool>`. The toolkit's allow lists, deny lists, merge-gate matcher and agent `tools:` lists name both forms.
 
-**Windows (PowerShell):**
-
-```powershell
-git clone https://github.com/dagonet/mcp-dev-servers.git <your-path>\mcp-dev-servers
-cd <your-path>\mcp-dev-servers
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[ollama]"
-```
-
-**Linux / macOS:**
-
-```bash
-git clone https://github.com/dagonet/mcp-dev-servers.git ~/repos/mcp-dev-servers
-cd ~/repos/mcp-dev-servers
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[ollama]"
-```
-
----
-
-## Migrating from pre-packaging install
-
-If you set up `mcp-dev-servers` **before 2026-04-21** (when it became a packaged Python project), module paths have changed and the install command is different. Update your local clone:
-
-```bash
-cd <your-mcp-dev-servers-path>
-git pull
-# activate the venv first
-#   Windows: .\.venv\Scripts\Activate.ps1
-#   Linux:   source .venv/bin/activate
-pip install -e ".[ollama]"
-```
-
-Then:
-
-- **Project-level `.mcp.json`** files: re-run `setup-project.{sh,ps1}` against each project to regenerate them with the new console-script paths.
-- **User-level registrations**: for each server you added with `claude mcp add`, run `claude mcp remove <name> -s user` and re-add it using the `mcp-<name>-tools(.exe)` console-script path shown in the install snippets below.
-
-Old paths like `<path>/src/git_mcp.py` no longer exist — Claude Code will report each affected server as `Failed to connect` until re-registered.
-
----
-
-## Ollama Setup
-
-### Installation
-
-1. Download and install from https://ollama.com/
-2. Verify: `ollama --version`
-3. Check loaded models: `ollama list`
-
-### Recommended Models
-
-```bash
-# Default model
-ollama pull llama3.2:latest
-
-# Optimized models (recommended)
-ollama pull qwen2.5:7b-instruct-q4_K_M    # JSON extraction
-ollama pull mistral:7b-instruct-q4_K_M     # Text compression
-ollama pull phi3:mini                       # Fast inference
-
-# Vision model (for screenshot analysis)
-ollama pull llava:7b
-```
-
-### Environment Variables
-
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `OLLAMA_KEEP_ALIVE` | `1h` (or `-1` for always loaded) | How long models stay in VRAM |
-| `OLLAMA_MAX_LOADED_MODELS` | `3` | Max concurrent models in VRAM |
-| `OLLAMA_NUM_PARALLEL` | `1` | Parallel request handling |
-
-**Windows:** Set as User environment variables via System Properties > Environment Variables, or:
-
-```powershell
-[System.Environment]::SetEnvironmentVariable('OLLAMA_KEEP_ALIVE', '1h', 'User')
-[System.Environment]::SetEnvironmentVariable('OLLAMA_MAX_LOADED_MODELS', '3', 'User')
-[System.Environment]::SetEnvironmentVariable('OLLAMA_NUM_PARALLEL', '1', 'User')
-```
-
-**Linux / macOS:** Add to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.):
-
-```bash
-export OLLAMA_KEEP_ALIVE="1h"
-export OLLAMA_MAX_LOADED_MODELS="3"
-export OLLAMA_NUM_PARALLEL="1"
-```
+> **Upgrading from a manual install:** after installing the plugin, remove your `claude mcp add` registration (`claude mcp remove --scope user <name>`) and any per-project `.mcp.json` entry for it, or the server runs twice. The old venv under `mcp-dev-servers/.venv` is no longer used and can be deleted.
 
 ---
 
@@ -141,25 +55,15 @@ Local LLM preprocessing: health check, model management, text compression, JSON 
 
 **Tools:** `ollama_health`, `ollama_list_models`, `warm_models`, `local_first_pass`, `extract_json`, `map_project_structure`
 
-**Windows (PowerShell):**
+**Install:** `claude plugin install ollama-tools@dagonet` (needs `uv`; see *MCP server plugins* above).
 
-```powershell
-claude mcp add --scope user --transport stdio ollama-tools `
-  -e OLLAMA_URL=http://127.0.0.1:11434 `
-  -e OLLAMA_MODEL_FIRST_PASS=mistral:7b-instruct-q4_K_M `
-  -e OLLAMA_MODEL_EXTRACT_JSON=qwen2.5:7b-instruct-q4_K_M `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-ollama-tools.exe"
-```
+**Options** (asked once at install, kept by Claude Code; change them by reinstalling the plugin):
 
-**Linux / macOS:**
-
-```bash
-claude mcp add --scope user --transport stdio ollama-tools \
-  -e OLLAMA_URL=http://127.0.0.1:11434 \
-  -e OLLAMA_MODEL_FIRST_PASS=mistral:7b-instruct-q4_K_M \
-  -e OLLAMA_MODEL_EXTRACT_JSON=qwen2.5:7b-instruct-q4_K_M \
-  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-ollama-tools
-```
+| Option | Default | Meaning |
+|---|---|---|
+| Ollama URL | `http://127.0.0.1:11434` | Base URL of the running Ollama server |
+| First-pass model | `mistral:7b-instruct-q4_K_M` | Model for `local_first_pass` |
+| JSON extraction model | `qwen2.5:7b-instruct-q4_K_M` | Model for `extract_json` |
 
 ## Git Tools (34 tools) — optional since v2.0
 
@@ -169,19 +73,7 @@ Git operations via MCP: status, diff, log, add, commit, tag, branch, checkout, p
 
 **Key tools:** `git_status`, `git_add`, `git_rm`, `git_commit`, `git_diff`, `git_diff_summary`, `git_log`, `git_branch_list`, `git_branch_create`, `git_branch_delete`, `git_checkout`, `git_pull`, `git_push` (with `--tags` support), `git_fetch`, `git_reset`, `git_rebase` (non-interactive only), `git_stash`, `git_remote_list`, `git_tag_list`, `git_tag_create`, `git_tag_delete`, `git_describe`, `git_revert`, `git_archive`, `git_config_get`, `git_config_set`, `git_restore`, `git_clean_dry_run`, `git_reflog`, `git_show`, `git_worktree_list`, `git_worktree_add`, `git_worktree_remove`, `git_env_info`
 
-**Windows (PowerShell):**
-
-```powershell
-claude mcp add --scope user --transport stdio git-tools `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-git-tools.exe"
-```
-
-**Linux / macOS:**
-
-```bash
-claude mcp add --scope user --transport stdio git-tools \
-  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-git-tools
-```
+**Install:** `claude plugin install git-tools@dagonet` (needs `uv`; see *MCP server plugins* above).
 
 ## GitHub Tools (17 tools)
 
@@ -191,21 +83,7 @@ Custom GitHub utilities not covered by the official plugin — release managemen
 
 **Requires:** GitHub CLI (`gh`) installed and authenticated
 
-**Windows (PowerShell):**
-
-```powershell
-claude mcp add --scope user --transport stdio github-tools `
-  -e GH_PROMPT_DISABLED=1 `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-github-tools.exe"
-```
-
-**Linux / macOS:**
-
-```bash
-claude mcp add --scope user --transport stdio github-tools \
-  -e GH_PROMPT_DISABLED=1 \
-  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-github-tools
-```
+**Install:** `claude plugin install github-tools@dagonet` (needs `uv`; see *MCP server plugins* above).
 
 ## Python Tools (7 tools)
 
@@ -215,19 +93,7 @@ Python development workflows: wheel and sdist inspection, smoke install (throwaw
 
 **Requires:** `uv`, `pytest`, `ruff`, `coverage` in the project environment; Python 3.11+
 
-**Windows (PowerShell):**
-
-```powershell
-claude mcp add --scope user --transport stdio python-tools `
-  -- "<your-path>\mcp-dev-servers\.venv\Scripts\mcp-python-tools.exe"
-```
-
-**Linux / macOS:**
-
-```bash
-claude mcp add --scope user --transport stdio python-tools \
-  -- ~/repos/mcp-dev-servers/.venv/bin/mcp-python-tools
-```
+**Install:** `claude plugin install python-tools@dagonet` (needs `uv`; see *MCP server plugins* above).
 
 ## Official GitHub Plugin (40+ tools)
 
@@ -441,19 +307,9 @@ Read-only database inspection via Docker.
 
 **Tools:** `build_and_extract_errors`, `run_tests_summary`, `analyze_namespace_conflicts`, `nuget_list_outdated`, `nuget_check_vulnerabilities`, `nuget_dependency_tree`, `parse_csproj`, `analyze_project_references`, `check_framework_compatibility`, `ef_migrations_status`, `ef_pending_migrations`, `ef_dbcontext_info`, `analyze_method_complexity`, `find_large_files`, `find_god_classes`, `parse_stack_trace`, `parse_coverage_report`, `run_coverage`, `map_dotnet_structure`
 
-**`.mcp.json` entry:**
+**Install:** `claude plugin install dotnet-tools@dagonet` (needs `uv`; see *MCP server plugins* above).
 
-```json
-{
-  "mcpServers": {
-    "dotnet-tools": {
-      "command": "<mcp-dev-servers-path>/.venv/bin/mcp-dotnet-tools"
-    }
-  }
-}
-```
-
-Replace `<mcp-dev-servers-path>` with the absolute path to your local `mcp-dev-servers` repo. On Windows use `<path>\.venv\Scripts\mcp-dotnet-tools.exe`.
+To have it in .NET projects only, enable it per clone (`claude plugin enable dotnet-tools@dagonet --scope local`); `setup-project` does this for the `dotnet` and `dotnet-maui` variants when the plugin is installed.
 
 ## Rust Tools (4 tools) — rust-tauri variant
 
@@ -461,17 +317,9 @@ Cargo build, test, and clippy with structured diagnostics. Requires Rust toolcha
 
 **Tools:** `cargo_env_info`, `cargo_build`, `cargo_test`, `cargo_clippy`
 
-**`.mcp.json` entry:**
+**Install:** `claude plugin install rust-tools@dagonet` (needs `uv`; see *MCP server plugins* above).
 
-```json
-{
-  "mcpServers": {
-    "rust-tools": {
-      "command": "<mcp-dev-servers-path>/.venv/bin/mcp-rust-tools"
-    }
-  }
-}
-```
+To have it in Rust projects only, enable it per clone (`claude plugin enable rust-tools@dagonet --scope local`); `setup-project` does this for the `rust-tauri` variant when the plugin is installed.
 
 ## Windows-MCP — dotnet-maui / rust-tauri variants
 
@@ -545,7 +393,7 @@ Project-level servers are removed by editing or deleting the project's `.mcp.jso
 
 ### Common Issues
 
-1. **MCP server fails to start:** Verify the Python virtual environment path is correct and the `.venv` has `mcp[cli]` and `httpx` installed.
+1. **MCP server fails to start:** For an mcp-dev-servers plugin: check that `uv` is on PATH, run the warm-up command from *MCP server plugins* once to see the error, and look at `/mcp`. For a venv-based server (template-sync-tools): verify the venv path and that it has `mcp[cli]` and `httpx` installed.
 2. **Ollama tools timeout:** Ensure Ollama is running (`ollama --version`) and accessible at `http://127.0.0.1:11434`.
 3. **GitHub Tools fail:** Run `gh auth status` to verify GitHub CLI authentication.
 4. **Official GitHub plugin shows no tools:** `GITHUB_PERSONAL_ACCESS_TOKEN` is unset, expired, or lacks the required scopes. Set it and restart Claude Code.
