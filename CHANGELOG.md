@@ -44,6 +44,15 @@ A plugin update plus, for a project that wants the twins, a sync. The recipe is 
 5. **Cloud sessions:** append `&& claude plugin install <name>@dagonet` per server to the setup script (after `uv` is available; it is in cloud sessions).
 6. Run `/cct:sync-template` in each project to take the plugin-form names in `.claude/settings.json`.
 
+### Measured
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at 012e8ec on agent-host-1 (3405 s):** 0 failed in all three configurations.
+  - node: 6557/0/6.
+  - python3-only: 6262/0/276, in band (~274 +/-20).
+  - jq-only: 6162/0/374, in band (~368 +/-20).
+  - Against v6.0.0 (6515/0/6, 6222/0/274, 6124/0/370), the suite gained 42 rows, and the restricted skip counts rose by 2 and 4 (new rows that need node).
+- **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (1 skipped: check 42 arm 2 needs the previous tag fetched).
+- **The S4 measurements** behind the caps are in `docs/plans/measurements/v6.1-size-cap.md`; the S3 hook-shell measurements are in `docs/plans/measurements/v6.1-hook-shell.md`.
+
 ## v6.0.0 — 2026-11-02
 
 Major. A Bash or PowerShell call used to start one hook process per guard, each with its own `bash`, `dirname`, `cat` and `node`. It now starts one dispatcher per tool that runs the guards in one process. Measured on `ls` in penumbra: the sequential sum of the hooks of one Bash call falls from 1767 to 494 ms on Windows (Git Bash) and from 697 to 123 ms on Linux (figures below). Design and plan: `docs/plans/2026-11-01-v6.0-hook-dispatcher-design.md` and `docs/plans/2026-11-01-v6.0-hook-dispatcher-plan.md`.
