@@ -13,22 +13,22 @@
     ],
     "PreToolUse": [
       { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" bash", "timeout": 3360 }
+        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" bash", "timeout": 3360 }
       ] },
       { "matcher": "PowerShell", "hooks": [
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" powershell", "timeout": 3360 }
+        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" powershell", "timeout": 3360 }
       ] },
       { "matcher": "Read", "hooks": [
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" deny-secret-reads" }
+        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" deny-secret-reads" }
       ] },
       { "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" deny-claude-md-writes" }
+        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" deny-claude-md-writes" }
       ] },
       { "matcher": "Read", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" read-size-gate" }
       ] },
       { "matcher": "mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge", "hooks": [
-        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" gate-before-merge" }
+        { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" gate-before-merge" }
       ] },
       { "matcher": "Agent", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" model-floor" },

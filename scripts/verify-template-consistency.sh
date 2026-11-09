@@ -4721,7 +4721,7 @@ c71_cmp() { # <label> <got> <want>
 # The plugin-only rows have no frozen-table counterpart.
 C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
 const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session)\.sh"( end)?$/;
-const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";
+const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";
 const DP=GP.replace("run-hook.sh","dispatch.sh");
 for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const dm=c.startsWith(DP)&&/^(bash|powershell)$/.test(c.slice(DP.length))?"dispatch:"+c.slice(DP.length):null;const gm=dm||(c.startsWith(GP)&&/^[a-z-]+$/.test(c.slice(GP.length))?c.slice(GP.length):null);const r=gm?null:(RH.exec(c)||CS.exec(c));out.push([ev,g.matcher||"",gm||(r?r[1]:"OTHER"),gm?"G":"B"].join(";"));}
 if(out.length)console.log(out.join("\n"))'
@@ -4869,7 +4869,7 @@ else
   else
     ko "check 71 control (hook-class.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
   fi
-  node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"deny-secret-reads"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
+  node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"deny-secret-reads"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
   if [ -n "$(c71_shapes "$c71_tmp/bare-closed.json" "$c71_rh")" ]; then
     ok "check 71 control (closed hook registered bare): the shape comparison flags deny-secret-reads (a run-hook registration; the dispatcher's preamble is pinned by the row comparison)"
   else
@@ -5083,6 +5083,20 @@ if [ "$c78_n" -ne 6 ]; then ko "78: expected 6 variant .gitattributes, found $c7
 elif [ -n "$c78_bad" ]; then ko "78: .gitattributes does not end with the BEGIN/END marker pair in:$c78_bad"
 elif [ "$c78_uniq" -ne 1 ]; then ko "78: the six variant .gitattributes are not byte-identical"
 else ok "78: all 6 variant .gitattributes end with the PROJECT-CUSTOM marker pair and are byte-identical"; fi
+
+# ---------------------------------------------------------------------------
+# Check 79 (v6.1 S3; the plan names it 76, taken since v5.0): no hooks.json registration starts a bare
+# 'exec bash ' (it must be exec "${BASH:-bash}": the bash that is running the hook, not a PATH lookup).
+# Two-sided: a copy of hooks.json with one bare 'exec bash' must be flagged; the real file must not be.
+# ---------------------------------------------------------------------------
+c79_tmp=$(mktemp -d)
+{ cat hooks/hooks.json; echo '"command": "f=x; exec bash \"$f\" y"'; } > "$c79_tmp/hooks.json"
+c79_ctl=$(grep -c 'exec bash ' "$c79_tmp/hooks.json")
+c79_real=$(grep -c 'exec bash ' hooks/hooks.json)
+rm -rf "$c79_tmp"
+if [ "$c79_ctl" -lt 1 ]; then ko "79: CONTROL failed (a copy with a bare 'exec bash' was not flagged)"
+elif [ "$c79_real" -ne 0 ]; then ko "79: $c79_real hooks.json registration(s) start a bare 'exec bash '"
+else ok "79: no hooks.json registration starts a bare 'exec bash '"; fi
 
 # ---------------------------------------------------------------------------
 echo

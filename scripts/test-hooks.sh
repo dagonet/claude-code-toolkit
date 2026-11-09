@@ -12468,7 +12468,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/cct-session.sh"
 v5vh_run() { env -u CLAUDE_PROJECT_DIR HOME="$V5VH" "$@" bash "$ROOT/hooks/verify-hooks.sh" --report </dev/null 2>/dev/null; }
 expect "v5 verify-hooks: plugin hook script missing -> reported" "MISSING: $V5V/hooks/no-push-main.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
 V5VG="$TMPROOT/v5vh guarded"; mkdir -p "$V5VG/hooks"; cp "$V5V/hooks/run-hook.sh" "$V5V/hooks/cct-session.sh" "$V5VG/hooks/"
-printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec bash .*"\$f.* deny-secret-reads$' | head -1)" > "$V5VG/hooks/hooks.json"
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec .*BASH:-bash.*"\$f.* deny-secret-reads$' | head -1)" > "$V5VG/hooks/hooks.json"
 expect "v5 verify-hooks: closed-class inline-guard registration -> script missing reported" "MISSING: $V5VG/hooks/deny-secret-reads.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5VG")"
 expect "v5 verify-hooks: plugin root unset -> old behaviour (nothing scanned)" "" "$(v5vh_run)"
 expect "v5 verify-hooks: plugin root empty -> old behaviour (nothing scanned)" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT=)"
@@ -12778,6 +12778,25 @@ fi
 expect "V462 drift: an untagged sha is not called released"   1 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'not a release tag$')"
 expect "V462 drift: an untagged sha never says released tree" 0 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'released tree$')"
 # ---- end v4.6.2 drift script
+
+# ---- v6.1 S3: the plugin registrations start the running bash, not whatever bash PATH finds first.
+# The REAL PreToolUse/Bash registration string from hooks/hooks.json runs against a scratch plugin root
+# whose dispatch.sh is a stub that prints a marker. (a) `sh -c`, BASH unset (dash: falls back to `bash`);
+# (b) the absolute bash with -c, BASH set to it, and a PATH holding no bash (a bare `exec bash` exits 127).
+S3_BASH=$(command -v bash)
+S3_ROOT="$TMPROOT/s3plugin"; mkdir -p "$S3_ROOT/hooks"
+printf '#!/bin/sh\necho S3-REACHED-DISPATCH "$1"\n' > "$S3_ROOT/hooks/dispatch.sh"
+S3_CMD=$(node -e 'var h=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).hooks.PreToolUse;process.stdout.write(h.filter(function(g){return g.matcher==="Bash"})[0].hooks[0].command)' "$(natpath "$ROOT/hooks/hooks.json")" 2>/dev/null)
+S3_EMPTY="$TMPROOT/s3empty"; mkdir -p "$S3_EMPTY"
+if [ -z "$S3_CMD" ]; then
+  expect "S3 the Bash registration is readable from hooks.json" "a command" "none"
+else
+  expect "S3 (a) sh -c, BASH unset: the registration reaches dispatch.sh" "S3-REACHED-DISPATCH bash:rc=0" \
+    "$(env -u BASH CLAUDE_PLUGIN_ROOT="$S3_ROOT" sh -c "$S3_CMD" </dev/null 2>&1):rc=$?"
+  S3_OUT=$(env CLAUDE_PLUGIN_ROOT="$S3_ROOT" BASH="$S3_BASH" PATH="$S3_EMPTY" "$S3_BASH" -c "$S3_CMD" </dev/null 2>&1); S3_RC=$?
+  expect "S3 (b) bash -c, BASH set, PATH without bash: the registration reaches dispatch.sh" "S3-REACHED-DISPATCH bash:rc=0" "$S3_OUT:rc=$S3_RC"
+fi
+# ---- end v6.1 S3
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
