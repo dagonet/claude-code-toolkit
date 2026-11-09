@@ -1102,14 +1102,58 @@ while IFS=$'\t' read -r e1_mode e1_lbl e1_verdict; do
 done <<< "$E1_OUT"
 expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s\n' "$E1_OUT" | grep -c .)"
 
-# v6.1 S2 -- a sed that fails (fork failure, missing binary) used to leave gc_protect_c_paths
-# printing nothing, so the gates saw an empty command and allowed it. The stub dir holds a `sed`
-# that exits 1; the output must equal the input byte for byte. Runs in the default pass.
+# v6.1 S2 -- a tool that fails (fork failure, missing binary) used to leave gc_protect_c_paths
+# printing nothing, so the gates saw an empty command and allowed it. The stub dir holds an `awk`
+# (since S4 the rewrite is awk, no longer sed) that exits 1; the output must equal the input byte
+# for byte. Runs in the default pass.
 S2_STUB="$TMPROOT/s2-stub"; mkdir -p "$S2_STUB"
-printf '#!/bin/sh\nexit 1\n' > "$S2_STUB/sed"; chmod +x "$S2_STUB/sed"
+printf '#!/bin/sh\nexit 1\n' > "$S2_STUB/awk"; chmod +x "$S2_STUB/awk"
 S2_IN='git -C "/a b" push origin main'
 S2_OUT=$( PATH="$S2_STUB:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_protect_c_paths "$S2_IN" )
-expect "S2 gc_protect_c_paths: failing sed returns the input" "$S2_IN" "$S2_OUT"
+expect "S2 gc_protect_c_paths: failing awk returns the input" "$S2_IN" "$S2_OUT"
+
+# v6.1 S4 -- the old sed loop was quadratic (one sed spawn + full rescan per blank in a quoted -C
+# argument: 4 KB 3.75 s, 16 KB 36.8 s). The awk rewrite is one linear pass with the same output.
+s4_old() { # <text> -- the pre-S4 sed loop, verbatim, as the reference
+  local s=$1 n soh
+  soh=$(printf '\001')
+  while :; do
+    n=$(printf '%s' "$s" | sed \
+      -e "s/\(-C[[:space:]]\{1,\}\"[^\"]*\)[[:space:]]\([^\"]*\"\)/\1${soh}\2/" \
+      -e "s/\(-C[[:space:]]\{1,\}'[^']*\)[[:space:]]\([^']*'\)/\1${soh}\2/")
+    [ "$n" = "$s" ] && break
+    s=$n
+  done
+  printf '%s' "$s"
+}
+S4_TAB=$(printf 'git -C "a\tb c" status')
+S4_IN=(
+  'git -C "a b c" push origin main'
+  "git -C 'a b' -C \"c d e\" status"
+  "git -C 'a b c' commit -m 'x y'"
+  'git -C "a b status'
+  "git -C 'a b status"
+  'git -C x "a b" status'
+  'git -C   "a b"   status "c d"'
+  "$S4_TAB"
+  'echo -C "a b" -C'
+  'git -C "a b" push; git -C "c d" push'
+)
+S4_BAD=0; S4_DET=
+for s4_c in "${S4_IN[@]}"; do
+  s4_w=$(s4_old "$s4_c"); s4_g=$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_protect_c_paths "$s4_c" )
+  if [ "$s4_w" != "$s4_g" ]; then S4_BAD=$((S4_BAD + 1)); S4_DET="$S4_DET [$s4_c]"; fi
+done
+expect "S4 -C: awk output equals the old sed loop on ${#S4_IN[@]} inputs$S4_DET" "0" "$S4_BAD"
+S4_WORDS=$(nchars 5462 x | sed 's/x/ab /g')   # 16 KB of "ab " words
+S4_BIGIN="git -C \"$S4_WORDS\" status"
+S4_BIGWANT="git -C \"${S4_WORDS// /$(printf '\001')}\" status"
+S4_T0=$(date +%s%N)
+S4_BIGOUT=$( . "$ROOT/hooks/lib/git-cmd.sh"; timeout 60 bash -c '. "$1"; gc_protect_c_paths "$2"' _ "$ROOT/hooks/lib/git-cmd.sh" "$S4_BIGIN" )
+S4_MS=$(( ($(date +%s%N) - S4_T0) / 1000000 ))
+expect "S4 -C: 16 KB quoted path is protected correctly" "$S4_BIGWANT" "$S4_BIGOUT"
+if [ "$S4_MS" -lt 2000 ]; then S4_FAST=fast; else S4_FAST="slow(${S4_MS}ms)"; fi
+expect "S4 -C: 16 KB quoted path is protected in under 2 s" fast "$S4_FAST"
 
 # SPAWN rows: under strace, a Bash `ls` payload through gc_read_stdin (the dispatcher's memo path,
 # which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
@@ -12071,17 +12115,29 @@ else
   v6d_q_err=$(printf '%s\0%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/"}' '{"x":1}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" bash "$V6D/base/hooks/dispatch.sh" bash 2>&1 >/dev/null; echo "rc=$?")
   expect "v6 dispatch: (q) a payload with a NUL byte is refused (rc 2, never truncated)" "rc=2 needle=yes" "$(printf '%s' "$v6d_q_err" | tail -n 1) needle=$(v6d_has "$v6d_q_err" 'NUL')"
 
-  # (l) Review Focus 1: a 300 KB command. The baseline first: the guard alone, then through the dispatcher.
+  # (l) Review Focus 1: a 250 KB command (S4: under the 256 KiB cap; the cap rows follow). The baseline first: the guard alone, then through the dispatcher.
   # The 300 KB sits in a quoted string on purpose: an UNQUOTED 300 KB token costs no-push-main minutes today
   # (its scan is quadratic: 100 KB = 14 s, measured 2026-11-01), which is the guard's cost, not the dispatcher's.
-  V6D_BIG=$(mkjson Bash "git push origin main; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
-  V6D_BIGLS=$(mkjson Bash "ls; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
+  V6D_BIG=$(mkjson Bash "git push origin main; echo \"$(nchars 250000 A)\"" "$V6D_MAIN")
+  V6D_BIGLS=$(mkjson Bash "ls; echo \"$(nchars 250000 A)\"" "$V6D_MAIN")
   v6d_big_direct=$(printf '%s' "$V6D_BIG" | bash "$ROOT/hooks/no-push-main.sh" 2>&1 >/dev/null; echo "rc=$?")
-  expect "v6 dispatch: (l) baseline: no-push-main alone refuses the 300 KB push" "rc=2 needle=yes" "$(printf '%s' "$v6d_big_direct" | tail -n 1) needle=$(v6d_has "$v6d_big_direct" "$V6D_PUSH_NEEDLE")"
+  expect "v6 dispatch: (l) baseline: no-push-main alone refuses the 250 KB push" "rc=2 needle=yes" "$(printf '%s' "$v6d_big_direct" | tail -n 1) needle=$(v6d_has "$v6d_big_direct" "$V6D_PUSH_NEEDLE")"
   v6d_run base bash "$V6D_BIG"
-  expect "v6 dispatch: (l) a 300 KB push to main is refused through the dispatcher" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  expect "v6 dispatch: (l) a 250 KB push to main is refused through the dispatcher" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
   v6d_run base bash "$V6D_BIGLS"
-  expect "v6 dispatch: (l) control: a 300 KB harmless command passes" "rc=0" "rc=$V6D_RC"
+  expect "v6 dispatch: (l) control: a 250 KB harmless command passes" "rc=0" "rc=$V6D_RC"
+
+  # v6.1 S4: the size cap (bytes of the command, 262144) and the git/gh-call cap (128), exact refusal texts
+  v6d_s4_big() { mkjson Bash "echo \"$(nchars "$1" A)\"" "$V6D_FEAT"; } # <A count> -> payload (command = count + 7 bytes)
+  v6d_s4_calls() { local c='git status' i; for ((i = 1; i < $1; i++)); do c="$c; git status"; done; mkjson Bash "$c" "$V6D_FEAT"; } # <n> -> payload with n git calls
+  v6d_run base bash "$(v6d_s4_big 262137)"
+  expect "S4 cap: 262144 bytes routes" "rc=0" "rc=$V6D_RC"
+  v6d_run base bash "$(v6d_s4_big 262138)"
+  expect "S4 cap: 262145 bytes refuses (exit 2, exact message)" "rc=2 BLOCKED: command too large for the safety checks (262145 bytes, limit 262144): put it in a script file and run bash <path>" "rc=$V6D_RC $V6D_ERR"
+  v6d_run base bash "$(v6d_s4_calls 128)"
+  expect "S4 git calls: 128 routes" "rc=0" "rc=$V6D_RC"
+  v6d_run base bash "$(v6d_s4_calls 129)"
+  expect "S4 git calls: 129 refuses (exit 2, exact message)" "rc=2 BLOCKED: too many git/gh calls in one command for the safety checks (129, limit 128): split it into several commands" "rc=$V6D_RC $V6D_ERR"
 
   # (d) a crash (any rc but 2) does not skip a later closed guard
   v6d_mk d m

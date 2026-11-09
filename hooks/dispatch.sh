@@ -25,6 +25,10 @@ if [ -n "$cctd_dir" ] && [ -r "$cctd_dir/lib/json.sh" ] && [ -r "$cctd_dir/lib/h
   if declare -F json_memo_set json_fields hc_class hc_skip >/dev/null 2>&1; then cctd_ok=1; fi
 fi
 
+# v6.1 S4 caps (see cctd_prepare): bytes of the command, and git/gh calls in it.
+CCTD_MAX_PAYLOAD=262144
+CCTD_MAX_GIT_CALLS=128
+
 cctd_libs_ok() {
   [ "$cctd_ok" = 1 ] && return 0
   echo "HOOK BLOCKED: dispatch.sh: hooks/lib/json.sh or hooks/lib/hook-class.sh missing or corrupt -- reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet)" >&2
@@ -47,6 +51,22 @@ cctd_prepare() {
     return 2
   fi
   json_memo_set "$cctd_payload" tool_name cwd tool_input.command tool_input.file_path
+  # v6.1 S4: bound the guards' time. Measured: the cost grows with the command's size and with its git/gh calls
+  # (about 70 ms per git push segment on cloud), so both are capped. Real commands: max 11365 bytes, 21 calls.
+  cctd_cmd=; if [ "${CCTD_MEMO[0]-1}" = 0 ]; then cctd_cmd=${JF[2]}; fi   # json_fields filled JF; a bad payload has no command here
+  cctd_n=$(LC_ALL=C; echo "${#cctd_cmd}")
+  if [ "$cctd_n" -gt "$CCTD_MAX_PAYLOAD" ]; then
+    echo "BLOCKED: command too large for the safety checks ($cctd_n bytes, limit $CCTD_MAX_PAYLOAD): put it in a script file and run bash <path>" >&2
+    return 2
+  fi
+  cctd_n=$(printf '%s' "$cctd_cmd" | tr '\n' ' ' | awk '{ n += gsub(/(^|[[:space:];&|($`])(git|gh)[[:space:]]/, "&") } END { print n + 0 }')
+  case $cctd_n in
+    ''|*[!0-9]*) echo "BLOCKED: dispatch.sh: cannot count the git/gh calls -- cannot determine" >&2; return 2 ;;
+  esac
+  if [ "$cctd_n" -gt "$CCTD_MAX_GIT_CALLS" ]; then
+    echo "BLOCKED: too many git/gh calls in one command for the safety checks ($cctd_n, limit $CCTD_MAX_GIT_CALLS): split it into several commands" >&2
+    return 2
+  fi
   cctd_proj=${CLAUDE_PROJECT_DIR:-.}
   cctd_s=; [ -r "$cctd_proj/.claude/settings.json" ] && IFS= read -r -d '' cctd_s < "$cctd_proj/.claude/settings.json"
   cctd_u=; [ -r "$HOME/.claude/settings.json" ] && IFS= read -r -d '' cctd_u < "$HOME/.claude/settings.json"
