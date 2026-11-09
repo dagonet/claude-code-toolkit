@@ -193,15 +193,8 @@ resolve_caller_path() {
 [[ -n "$MCP_DEV_SERVERS_PATH" ]] && MCP_DEV_SERVERS_PATH="$(resolve_caller_path "$MCP_DEV_SERVERS_PATH")"
 [[ -n "$SQLITE_DB_PATH" ]]       && SQLITE_DB_PATH="$(resolve_caller_path "$SQLITE_DB_PATH")"
 
-# Warn if a variant needs --mcp-dev-servers-path but it's missing
-case "$VARIANT" in
-    dotnet|dotnet-maui)
-        [[ -z "$MCP_DEV_SERVERS_PATH" ]] && warnings+=("--mcp-dev-servers-path not set - project-level dotnet-tools MCP entry will be skipped")
-        ;;
-    rust-tauri)
-        [[ -z "$MCP_DEV_SERVERS_PATH" ]] && warnings+=("--mcp-dev-servers-path not set - project-level rust-tools MCP entry will be skipped")
-        ;;
-esac
+# v6.1: the .NET and Rust servers are plugins now; the old flag is accepted and ignored.
+[[ -n "$MCP_DEV_SERVERS_PATH" ]] && warnings+=("--mcp-dev-servers-path is ignored since v6.1: the .NET and Rust servers are plugins now")
 
 # --- v4.0: resolve the toolkit's OWN template-sync exe (ruling R2) ----------
 # The template-sync server ships from THIS checkout, so unlike dotnet-tools /
@@ -745,14 +738,6 @@ build_project_mcp_json() {
     declare -a entries=()
 
     case "$VARIANT" in
-        dotnet|dotnet-maui)
-            [[ -n "$MCP_DEV_SERVERS_PATH" ]] && entries+=("dotnet-tools")
-            ;;
-        rust-tauri)
-            [[ -n "$MCP_DEV_SERVERS_PATH" ]] && entries+=("rust-tools")
-            ;;
-    esac
-    case "$VARIANT" in
         dotnet-maui|rust-tauri) entries+=("windows-mcp") ;;
     esac
     [[ -n "$SQLITE_DB_PATH" ]] && entries+=("sqlite")
@@ -769,16 +754,6 @@ build_project_mcp_json() {
         local comma=","
         [[ $idx -eq $last ]] && comma=""
         case "$entry" in
-            dotnet-tools)
-                out+='    "dotnet-tools": {'$'\n'
-                out+='      "command": "'"$(json_escape "$MCP_DEV_SERVERS_PATH/.venv/bin/mcp-dotnet-tools")"'"'$'\n'
-                out+='    }'"$comma"$'\n'
-                ;;
-            rust-tools)
-                out+='    "rust-tools": {'$'\n'
-                out+='      "command": "'"$(json_escape "$MCP_DEV_SERVERS_PATH/.venv/bin/mcp-rust-tools")"'"'$'\n'
-                out+='    }'"$comma"$'\n'
-                ;;
             windows-mcp)
                 out+='    "windows-mcp": {'$'\n'
                 out+='      "command": "uvx",'$'\n'
@@ -1325,6 +1300,24 @@ if [[ -n "$mcp_json_content" ]]; then
     else
         printf '%s' "$mcp_json_content" > "$mcp_json_path"
         echo "  [+] .mcp.json (generated at repo root)"
+    fi
+fi
+
+# --- v6.1: enable the .NET / Rust server plugin for THIS clone, only when installed ---
+# Detection fails toward the tip, never toward enabling. Local scope writes the
+# gitignored .claude/settings.local.json.
+case "$VARIANT" in
+    dotnet|dotnet-maui) srv_plugin="dotnet-tools"; srv_what=".NET build/test tools" ;;
+    rust-tauri)         srv_plugin="rust-tools";   srv_what="Rust build/test tools" ;;
+    *)                  srv_plugin="" ;;
+esac
+if [[ -n "$srv_plugin" ]]; then
+    if command -v claude >/dev/null 2>&1 \
+       && claude plugin list 2>/dev/null | grep -qF "$srv_plugin@dagonet" \
+       && (cd "$TARGET_DIR" && claude plugin enable "$srv_plugin@dagonet" --scope local >/dev/null 2>&1); then
+        echo "  [+] $srv_plugin@dagonet enabled for this clone (local scope)"
+    else
+        echo "Tip: claude plugin install $srv_plugin@dagonet adds $srv_what (needs uv)."
     fi
 fi
 

@@ -1002,6 +1002,50 @@ else
   skip "setup-project.ps1 v5 plugin layout" "no PowerShell on this host" 10
 fi
 
+# --- v6.1: dotnet-tools / rust-tools are plugins, enabled per clone when installed ---
+# A `claude` stub on PATH logs its argv and answers `plugin list`; the real CLI
+# is never called. STUB_LIST is the text `plugin list` prints.
+STUBDIR="$TMPROOT/claude-stub"; mkdir -p "$STUBDIR"
+cat > "$STUBDIR/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_LOG"
+if [ "${1:-}" = plugin ] && [ "${2:-}" = list ]; then printf '%s\n' "${STUB_LIST:-}"; fi
+exit 0
+STUB
+chmod +x "$STUBDIR/claude"
+mcp_fixture() { # <label> <variant> <plugin> <installed:yes|no>
+  local t="$TMPROOT/mcp-$1"; mkdir -p "$t"
+  : > "$TMPROOT/mcp-$1.log"
+  local list=""; [ "$4" = yes ] && list="  > $3@dagonet
+    Version: 0.4.0
+    Scope: user
+    Status: enabled"
+  PATH="$STUBDIR:$PATH" STUB_LOG="$TMPROOT/mcp-$1.log" STUB_LIST="$list" \
+    bash "$ROOT/setup-project.sh" --variant "$2" --project-name SetupFixture \
+    --target-path "$t" --default-branch main > "$TMPROOT/mcp-$1.out" 2>&1
+  expect "sh $1: bootstrap exits 0" 0 "$?"
+  local tip="Tip: claude plugin install $3@dagonet"
+  if [ "$4" = yes ]; then
+    expect "sh $1: enable argv logged"       1 "$(grep -c "^plugin enable $3@dagonet --scope local\$" "$TMPROOT/mcp-$1.log")"
+    expect "sh $1: no tip when installed"    0 "$(grep -c "$tip" "$TMPROOT/mcp-$1.out")"
+  else
+    expect "sh $1: tip printed"              1 "$(grep -c "^$tip adds .* tools (needs uv)\.\$" "$TMPROOT/mcp-$1.out")"
+    expect "sh $1: no enable call"           0 "$(grep -c '^plugin enable' "$TMPROOT/mcp-$1.log")"
+  fi
+  expect "sh $1: .mcp.json has no $3 key"    0 "$(cat "$t/.mcp.json" 2>/dev/null | grep -c "\"$3\"")"
+}
+mcp_fixture dotnet-in   dotnet      dotnet-tools yes
+mcp_fixture dotnet-out  dotnet      dotnet-tools no
+mcp_fixture maui-in     dotnet-maui dotnet-tools yes
+mcp_fixture rust-in     rust-tauri  rust-tools   yes
+mcp_fixture rust-out    rust-tauri  rust-tools   no
+FLAGT="$TMPROOT/mcp-flag"; mkdir -p "$FLAGT"; : > "$TMPROOT/mcp-flag.log"
+PATH="$STUBDIR:$PATH" STUB_LOG="$TMPROOT/mcp-flag.log" bash "$ROOT/setup-project.sh" --variant dotnet --project-name SetupFixture \
+  --target-path "$FLAGT" --default-branch main --mcp-dev-servers-path "$TMPROOT/nowhere" > "$TMPROOT/mcp-flag.out" 2>&1
+expect "sh: old flag accepted (exit 0)" 0 "$?"
+expect "sh: old flag warns" 1 "$(grep -c -F -- '--mcp-dev-servers-path is ignored since v6.1: the .NET and Rust servers are plugins now' "$TMPROOT/mcp-flag.out")"
+expect "sh: old flag writes no dotnet-tools entry" 0 "$(cat "$FLAGT/.mcp.json" 2>/dev/null | grep -c '"dotnet-tools"')"
+
 echo "----------------------------------------------------------------"
 echo "test-setup-project.sh: $pass passed, $fail failed, $skipped skipped ($((pass + fail + skipped)) assertions)"
 [ "$fail" -eq 0 ] || exit 1
