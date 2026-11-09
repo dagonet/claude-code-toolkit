@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "github-tools": {
+      "command": "uvx",
+      "args": ["--from", "mcp-dev-servers @ git+https://github.com/dagonet/mcp-dev-servers@0a20b97dd42733c629e369e16f4e79af81f93d47", "mcp-github-tools"],
+      "env": { "GH_PROMPT_DISABLED": "1" }
+    }
+  }
+}

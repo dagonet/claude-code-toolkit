@@ -2,6 +2,12 @@
   "name": "dagonet",
   "owner": { "name": "dagonet" },
   "plugins": [
-    { "name": "cct", "source": "./", "description": "claude-code-toolkit as a plugin" }
+    { "name": "cct", "source": "./", "description": "claude-code-toolkit as a plugin" },
+    { "name": "git-tools", "source": "./plugins/git-tools", "description": "Opt-in MCP server: structured git operations (uvx, mcp-dev-servers v0.4.0)" },
+    { "name": "github-tools", "source": "./plugins/github-tools", "description": "Opt-in MCP server: GitHub PRs, issues and CI via gh (uvx, mcp-dev-servers v0.4.0)" },
+    { "name": "dotnet-tools", "source": "./plugins/dotnet-tools", "description": "Opt-in MCP server: .NET build and test (uvx, mcp-dev-servers v0.4.0)" },
+    { "name": "ollama-tools", "source": "./plugins/ollama-tools", "description": "Opt-in MCP server: local-model drafting and JSON extraction via Ollama (uvx, mcp-dev-servers v0.4.0)" },
+    { "name": "rust-tools", "source": "./plugins/rust-tools", "description": "Opt-in MCP server: cargo build, test and clippy (uvx, mcp-dev-servers v0.4.0)" },
+    { "name": "python-tools", "source": "./plugins/python-tools", "description": "Opt-in MCP server: Python test, lint and type checks (uvx, mcp-dev-servers v0.4.0)" }
   ]
 }

@@ -4965,12 +4965,32 @@ rm -f "$c68_tmp"
 # Check 72 (v5.0): plugin.json version equals VERSION (F5: a machine updates only on a version change)
 # ---------------------------------------------------------------------------
 c72_want=$(head -1 VERSION | tr -d '\r')
-c72_got=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").version||""))' 2>/dev/null)
+# prints "<manifest count>|<count whose version is wrong>" for the tree rooted at $1
+c72_eval() {
+  node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1],want=process.argv[2];
+const files=[path.join(r,".claude-plugin/plugin.json")];
+const pd=path.join(r,"plugins");
+if(fs.existsSync(pd))for(const d of fs.readdirSync(pd).sort()){const f=path.join(pd,d,".claude-plugin/plugin.json");if(fs.existsSync(f))files.push(f);}
+let bad=0;
+for(const f of files){try{const j=JSON.parse(fs.readFileSync(f,"utf8"));if(j.version!==want)bad++;}catch(e){bad++;}}
+process.stdout.write(files.length+"|"+bad);' "$1" "$c72_want" 2>/dev/null
+}
+c72_tmp=$(mktemp -d)
+mkdir -p "$c72_tmp/.claude-plugin"
+cp .claude-plugin/plugin.json "$c72_tmp/.claude-plugin/"
+[ -d plugins ] && cp -r plugins "$c72_tmp/"
+c72_first=$(ls "$c72_tmp"/plugins/*/.claude-plugin/plugin.json 2>/dev/null | head -1)
+[ -n "$c72_first" ] && sed -i 's/"version": *"[^"]*"/"version": "0.0.0-fixture"/' "$c72_first"
+c72_ctl=$(c72_eval "$c72_tmp")
+rm -rf "$c72_tmp"
+c72_real=$(c72_eval .)
 c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
-if [ -n "$c72_want" ] && [ "$c72_got" = "$c72_want" ] && [ "$c72_name" = "cct" ]; then
-  ok "72: .claude-plugin/plugin.json is cct at version $c72_want (= VERSION)"
+if [ -z "$c72_first" ] || [ "${c72_ctl#*|}" = "0" ]; then
+  ko "72: CONTROL failed (one sub-plugin at a version other than VERSION was not flagged; fixture '$c72_ctl')"
+elif [ -n "$c72_want" ] && [ "$c72_real" = "7|0" ] && [ "$c72_name" = "cct" ]; then
+  ok "72: cct plus 6 sub-plugin plugin.json files all carry version $c72_want (= VERSION); control fires"
 else
-  ko "72: .claude-plugin/plugin.json must name cct at version '$c72_want' (VERSION); got name '$c72_name' version '$c72_got'"
+  ko "72: expected 7 plugin.json (cct + 6 sub-plugins) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5097,6 +5117,57 @@ rm -rf "$c79_tmp"
 if [ "$c79_ctl" -lt 1 ]; then ko "79: CONTROL failed (a copy with a bare 'exec bash' was not flagged)"
 elif [ "$c79_real" -ne 0 ]; then ko "79: $c79_real hooks.json registration(s) start a bare 'exec bash '"
 else ok "79: no hooks.json registration starts a bare 'exec bash '"; fi
+
+# ---------------------------------------------------------------------------
+# Check 80 (v6.1): every plugins/*/.mcp.json pins ONE tagged mcp-dev-servers commit (v0.4.0), runs it with uvx,
+# names its own script, is listed in the marketplace at ./plugins/<dir>, and its plugin.json description names uv.
+# Two-sided: fixtures with a wrong SHA, a wrong script name and a description without uv must each be flagged.
+# ---------------------------------------------------------------------------
+C80_SHA=0a20b97dd42733c629e369e16f4e79af81f93d47
+# prints the plugin count, then one line per problem, for the tree rooted at $1
+c80_eval() {
+  node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1],sha=process.argv[2];
+const pd=path.join(r,"plugins");const dirs=fs.existsSync(pd)?fs.readdirSync(pd).sort():[];
+let mk={plugins:[]};try{mk=JSON.parse(fs.readFileSync(path.join(r,".claude-plugin/marketplace.json"),"utf8"));}catch(e){}
+const out=[];
+for(const d of dirs){
+  try{
+    const m=JSON.parse(fs.readFileSync(path.join(pd,d,".mcp.json"),"utf8")).mcpServers[d];
+    if(!m||m.command!=="uvx")out.push(d+": command is not uvx");
+    else{const a=m.args||[];
+      if(!String(a[1]||"").endsWith("@"+sha))out.push(d+": args[1] does not end @"+sha);
+      if(a[2]!=="mcp-"+d)out.push(d+": args[2] is not mcp-"+d);}
+    const desc=JSON.parse(fs.readFileSync(path.join(pd,d,".claude-plugin/plugin.json"),"utf8")).description||"";
+    if(!/\buv\b/.test(desc))out.push(d+": plugin.json description does not name uv");
+  }catch(e){out.push(d+": unreadable ("+e.message+")");}
+  const e=(mk.plugins||[]).filter(x=>x.name===d&&x.source==="./plugins/"+d);
+  if(e.length!==1)out.push(d+": marketplace lacks source ./plugins/"+d);
+}
+process.stdout.write(dirs.length+"\n"+out.join("\n"));' "$1" "$C80_SHA" 2>/dev/null
+}
+c80_real=$(c80_eval .)
+c80_n=$(printf '%s\n' "$c80_real" | head -1)
+c80_probs=$(printf '%s\n' "$c80_real" | tail -n +2)
+c80_tmp=$(mktemp -d)
+c80_ctl_ok=1
+c80_first=$(ls plugins 2>/dev/null | head -1)
+if [ -z "$c80_first" ]; then c80_ctl_ok=0; else
+  for c80_mut in sha name desc; do
+    rm -rf "$c80_tmp/t"; mkdir -p "$c80_tmp/t/.claude-plugin"
+    cp .claude-plugin/marketplace.json "$c80_tmp/t/.claude-plugin/"; cp -r plugins "$c80_tmp/t/"
+    case $c80_mut in
+      sha)  sed -i "s/$C80_SHA/ffffffffffffffffffffffffffffffffffffffff/" "$c80_tmp/t/plugins/$c80_first/.mcp.json" ;;
+      name) sed -i "s/\"mcp-$c80_first\"/\"mcp-wrong\"/" "$c80_tmp/t/plugins/$c80_first/.mcp.json" ;;
+      desc) sed -i 's/"description": *"[^"]*"/"description": "no package runner named here"/' "$c80_tmp/t/plugins/$c80_first/.claude-plugin/plugin.json" ;;
+    esac
+    [ -n "$(c80_eval "$c80_tmp/t" | tail -n +2)" ] || c80_ctl_ok=0
+  done
+fi
+rm -rf "$c80_tmp"
+if [ "$c80_ctl_ok" -ne 1 ]; then ko "80: CONTROL failed (a wrong SHA, a wrong script name or a description without uv was not flagged, or no plugins exist)"
+elif [ "$c80_n" -ne 6 ]; then ko "80: expected 6 plugins/*, found $c80_n"
+elif [ -n "$c80_probs" ]; then ko "80: sub-plugin pin problems: $(printf '%s' "$c80_probs" | tr '\n' ';')"
+else ok "80: all 6 sub-plugins run uvx pinned to mcp-dev-servers@${C80_SHA:0:7}, own script, listed in the marketplace, description names uv; controls fire"; fi
 
 # ---------------------------------------------------------------------------
 echo
