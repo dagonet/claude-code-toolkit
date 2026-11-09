@@ -5786,6 +5786,51 @@ else
 skip "jq git-gate cases" "no jq on this host" 3
 fi
 
+# --- v6.1 S1: a lone surrogate in the command must not empty the command ----
+# The payload carries the six literal characters \udcff (a lone low surrogate).
+# node and jq turn it into U+FFFD; the python3 reader used to raise
+# UnicodeEncodeError on the way out and return an empty command, so the push
+# gate saw nothing and the dispatcher stayed open. The refusal is asserted
+# through the REGISTRATION path (`dispatch.sh bash`), not no-push-main.sh alone.
+S1_PAYLOAD=$(printf '{"tool_name":"Bash","tool_input":{"command":"git push origin main; echo \\udcff"},"cwd":"%s"}' "$MAINREPO")
+S1_HOME="$TMPROOT/s1-home"; mkdir -p "$S1_HOME"
+# The gate also refuses (exit 2) when it cannot read the command at all, so the
+# exit code alone cannot tell "read it and refused the push" from "read nothing";
+# the second field says whether the "could not read" refusal fired.
+s1_dispatch() { # <pathdir> -> "rc=<exit> unreadable=<yes|no>" for S1_PAYLOAD under that PATH
+  local rc err
+  err=$(printf '%s' "$S1_PAYLOAD" | env PATH="$1" CLAUDE_PROJECT_DIR="$MAINREPO" HOME="$S1_HOME" "$BASHABS" "$ROOT/hooks/dispatch.sh" bash 2>&1 >/dev/null)
+  rc=$?
+  case $err in *"could not read"*) echo "rc=$rc unreadable=yes" ;; *) echo "rc=$rc unreadable=no" ;; esac
+}
+s1_readers() { # <backend> <pathdir> -> yes when json_read and json_read_payload both keep the command
+  local a b
+  a=$(PATH="$2" "$BASHABS" -c '. "$1"; json_read "$2" "$3" tool_input.command' _ "$ROOT/hooks/lib/json.sh" "$1" "$S1_PAYLOAD" 2>/dev/null)
+  b=$(PATH="$2" "$BASHABS" -c '. "$1"; json_read_payload "$2" "$3" tool_input.command | tr "\0" "\n"' _ "$ROOT/hooks/lib/json.sh" "$1" "$S1_PAYLOAD" 2>/dev/null)
+  case $a in *"git push origin main"*) ;; *) echo "no(json_read)"; return ;; esac
+  case $b in *"git push origin main"*) echo yes ;; *) echo "no(json_read_payload)" ;; esac
+}
+S1_NODEONLY=""
+if [ -n "$HAVE_NODE" ]; then S1_NODEONLY=$(mkpathdir s1node node); fi
+if [ -n "$HAVE_NODE" ]; then
+  expect "S1 lone surrogate: the dispatcher refuses (node)"    "rc=2 unreadable=no" "$(s1_dispatch "$S1_NODEONLY")"
+  expect "S1 lone surrogate: readers keep the command (node)"  yes "$(s1_readers node "$S1_NODEONLY")"
+else
+  skip "S1 lone surrogate: node rows" "no node on this host" 2
+fi
+if [ -n "$HAVE_PY" ]; then
+  expect "S1 lone surrogate: the dispatcher refuses (python3)"   "rc=2 unreadable=no" "$(s1_dispatch "$PYONLY")"
+  expect "S1 lone surrogate: readers keep the command (python3)" yes "$(s1_readers python3 "$PYONLY")"
+else
+  skip "S1 lone surrogate: python3 rows" "no python3 on this host" 2
+fi
+if [ -n "$HAVE_JQ" ]; then
+  expect "S1 lone surrogate: the dispatcher refuses (jq)"   "rc=2 unreadable=no" "$(s1_dispatch "$JQONLY")"
+  expect "S1 lone surrogate: readers keep the command (jq)" yes "$(s1_readers jq "$JQONLY")"
+else
+  skip "S1 lone surrogate: jq rows" "no jq on this host" 2
+fi
+
 # deny-hang-shapes is the BLOCKING hook (it took require-skills-block's place
 # here in v4.5.0, when that hook was retired) whose verdict depends on the
 # NEWLINES of tool_input.command surviving the JSON reader: a multi-line leading
