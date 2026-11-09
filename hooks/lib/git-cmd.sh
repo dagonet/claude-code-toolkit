@@ -550,9 +550,10 @@ gc_protect_c_paths() {
   [ -n "$1" ] || { printf '%s' ""; return 0; }
   gcs=$1
   while :; do
+    # A failing sed must not read as an empty command (the gates would allow it): hand back the input.
     gcn=$(printf '%s' "$gcs" | sed \
       -e "s/\(-C[[:space:]]\{1,\}\"[^\"]*\)[[:space:]]\([^\"]*\"\)/\1${GC_SOH}\2/" \
-      -e "s/\(-C[[:space:]]\{1,\}'[^']*\)[[:space:]]\([^']*'\)/\1${GC_SOH}\2/")
+      -e "s/\(-C[[:space:]]\{1,\}'[^']*\)[[:space:]]\([^']*'\)/\1${GC_SOH}\2/") || { printf '%s' "$1"; return 0; }
     [ "$gcn" = "$gcs" ] && break
     gcs=$gcn
   done

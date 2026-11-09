@@ -1102,6 +1102,15 @@ while IFS=$'\t' read -r e1_mode e1_lbl e1_verdict; do
 done <<< "$E1_OUT"
 expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s\n' "$E1_OUT" | grep -c .)"
 
+# v6.1 S2 -- a sed that fails (fork failure, missing binary) used to leave gc_protect_c_paths
+# printing nothing, so the gates saw an empty command and allowed it. The stub dir holds a `sed`
+# that exits 1; the output must equal the input byte for byte. Runs in the default pass.
+S2_STUB="$TMPROOT/s2-stub"; mkdir -p "$S2_STUB"
+printf '#!/bin/sh\nexit 1\n' > "$S2_STUB/sed"; chmod +x "$S2_STUB/sed"
+S2_IN='git -C "/a b" push origin main'
+S2_OUT=$( PATH="$S2_STUB:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_protect_c_paths "$S2_IN" )
+expect "S2 gc_protect_c_paths: failing sed returns the input" "$S2_IN" "$S2_OUT"
+
 # SPAWN rows: under strace, a Bash `ls` payload through gc_read_stdin (the dispatcher's memo path,
 # which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
 # cat, awk or sed. The control command holds a backslash that only joins into `-C`, so it must
