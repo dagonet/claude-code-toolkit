@@ -1158,19 +1158,20 @@ expect "S4 -C: 16 KB quoted path is protected in under 2 s" fast "$S4_FAST"
 # SPAWN rows: under strace, a Bash `ls` payload through gc_read_stdin (the dispatcher's memo path,
 # which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
 # cat, awk or sed. The control command holds a backslash that only joins into `-C`, so it must
-# still exec the join (cat + awk) and the protection (sed): that keeps the first row from
-# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` pins strace's default
+# still exec the join (cat + awk) and the protection (awk since the v6.1 S4 rewrite): programs are listed
+# per exec, not deduplicated, so the control wants TWO awk -- one per stage -- and a lone awk (a join with no
+# protection, or the reverse) fails it; that also keeps the first row from passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` pins strace's default
 # 32-character string truncation, which the probe relies on: it cuts the long `bash -c <probe>` line (which holds
 # both names) off before them, so only the real markers open and close the range.
 E1_SPAWN_PROBE='. "$1/hooks/lib/json.sh"; . "$1/hooks/lib/git-cmd.sh"; json_memo_set "$2" tool_name cwd tool_input.command; "$BASH" -c : E1_BEGIN; gc_read_stdin </dev/null; "$BASH" -c : E1_END'
-e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (sorted, space-terminated)
+e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (one entry per exec, sorted, space-terminated)
   local st="$TMPROOT/e1_strace.txt"
   strace -f -s 32 -e trace=execve -o "$st" "$BASH" -c "$E1_SPAWN_PROBE" probe "$ROOT" "$(mkjson Bash "$1" "$TMPROOT")" >/dev/null 2>&1
-  sed -n '/E1_BEGIN/,/E1_END/p' "$st" | grep -oE 'execve\("[^"]*/(cat|awk|sed)"' | grep -oE '(cat|awk|sed)"$' | tr -d '"' | sort -u | tr '\n' ' '
+  sed -n '/E1_BEGIN/,/E1_END/p' "$st" | grep -oE 'execve\("[^"]*/(cat|awk|sed)"' | grep -oE '(cat|awk|sed)"$' | tr -d '"' | sort | tr '\n' ' '
 }
 if command -v strace >/dev/null 2>&1 && strace -f -e trace=execve -o /dev/null "$BASH" -c : >/dev/null 2>&1; then
   expect "E1 spawn: an ls payload through gc_read_stdin execs none of cat/awk/sed" "" "$(e1_spawned ls)"
-  expect "E1 spawn control: a joined -C command still execs the join and the protection" "awk cat sed " "$(e1_spawned $'git -\\\nC "a b" status')"
+  expect "E1 spawn control: a joined -C command still execs the join and the protection" "awk awk cat " "$(e1_spawned $'git -\\\nC "a b" status')"
 else
   skip_host "E1 spawn rows" "strace unavailable or ptrace denied on this host" 2
 fi
