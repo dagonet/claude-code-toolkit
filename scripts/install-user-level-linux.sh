@@ -22,7 +22,12 @@
 #                     claude-plugins-official. An existing dagonet marketplace is removed first
 #                     (a pinned one never advances on `plugin update`); the tag is checked reachable
 #                     before that. Stops non-zero unless `claude plugin list --json` shows
-#                     cct@dagonet enabled at this checkout's VERSION.
+#                     cct@dagonet enabled at this checkout's VERSION. The remove also uninstalls the
+#                     other dagonet plugins and deletes their saved options, so the installed
+#                     sub-plugins (git-tools, ...) are recorded first with their enabled state and saved
+#                     values (a mode-600 temp file, deleted on exit, never printed) and put back after
+#                     the cct install: install, restore values, disable if they were off. Never one that
+#                     was not installed.
 #   2. CLAUDE.md      the reference, with its Windows "Platform" section replaced by
 #                     scripts/linux/CLAUDE-platform-linux.md and G:/git/ paths written as ~/git/
 #   3. settings.json  the existing file with the reference merged in, minus the Windows-only entries
@@ -100,6 +105,22 @@ echo "1. plugins (cct@dagonet from $CCT_SRC; $PLUGINS)"
 # over an existing entry is refused (measured, claude 2.1.299), so remove the old entry (this uninstalls the plugin),
 # then add the new source and install. From here a failure leaves the plugin off: die prints the recovery commands.
 mp_json=$(claude plugin marketplace list --json 2>/dev/null || true)
+# The remove also uninstalls every other dagonet plugin and deletes its saved userConfig (measured). Record the
+# sub-plugins installed at user scope (cct excepted) with their enabled state, and each one's saved values, into a
+# mode-600 file in a mode-700 directory that every exit path deletes. The values are never printed.
+SUBS=$(claude plugin list --json 2>/dev/null | jq -r '.[] | select((.id | endswith("@dagonet")) and .id != "cct@dagonet" and .scope == "user") | "\(.id) \(.enabled)"' 2>/dev/null || true)
+SUBDIR=""
+if [ -n "$SUBS" ]; then
+  SUBDIR=$(mktemp -d "${TMPDIR:-/tmp}/cct-subcfg.XXXXXX") || die "cannot create a temp directory for the sub-plugin settings: $NR"
+  chmod 700 "$SUBDIR"
+  trap 'rm -rf "$SUBDIR"' EXIT
+  while read -r sp_id sp_on; do
+    [ -n "$sp_id" ] || continue
+    ( umask 077; claude plugin configure "$sp_id" --json 2>/dev/null | jq -c '.inputs // {} | with_entries(select(.value != ""))' > "$SUBDIR/$sp_id.json" ) || true
+  done <<EOF
+$SUBS
+EOF
+fi
 if printf '%s' "$mp_json" | jq -e 'any(.[]; .name == "dagonet")' >/dev/null 2>&1; then
   # capture the old source first: a die after the remove offers it as the rollback
   old_src=$(printf '%s' "$mp_json" | jq -r '.[] | select(.name == "dagonet")
@@ -111,6 +132,20 @@ fi
 claude plugin marketplace add "$CCT_SRC" || die "cannot add the cct marketplace $CCT_SRC: $NR"
 claude plugin install cct@dagonet || die "cannot install cct@dagonet: $NR"
 removed=""
+# put back exactly the recorded sub-plugins (never one that was not listed): install, restore the saved values, then
+# disable the ones that were disabled
+if [ -n "$SUBS" ]; then
+  while read -r sp_id sp_on; do
+    [ -n "$sp_id" ] || continue
+    claude plugin install "$sp_id" || die "cannot reinstall $sp_id (it was installed before this run; reinstall it with: claude plugin install $sp_id): $NR"
+    if [ -s "$SUBDIR/$sp_id.json" ] && [ "$(cat "$SUBDIR/$sp_id.json")" != "{}" ]; then
+      claude plugin configure "$sp_id" --values-stdin < "$SUBDIR/$sp_id.json" >/dev/null || die "cannot restore the saved options of $sp_id (re-enter them with: claude plugin configure $sp_id): $NR"
+    fi
+    if [ "$sp_on" = false ]; then claude plugin disable "$sp_id" || die "cannot disable $sp_id again: $NR"; fi
+  done <<EOF
+$SUBS
+EOF
+fi
 claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
 for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
 want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')

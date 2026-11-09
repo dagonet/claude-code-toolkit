@@ -11675,6 +11675,27 @@ if [ "$(uname -s)" = "Linux" ]; then
   expect "DL12 ... names it"                          1 "$(dl_run | grep -c '^  STALE HOOK REGISTRATION .*model-floor.sh')"
   sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
   expect "DL12 registration removed: exit 0"          0 "$(dl_rc)"
+  # DL13 (v6.1): the dagonet sub-plugins. A stale one is drift; a user-scope claude.json mcpServers key equal to an
+  # installed sub-plugin's name is a double registration; an absent sub-plugin is no line.
+  dl_subs() { # <sub-plugin id> <version> : cct at VERSION plus one sub-plugin record
+    printf '{"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"%s"}],"%s":[{"scope":"user","version":"%s"}]}}\n' \
+      "$DL_VER" "$1" "$2" > "$DL_H/.claude/plugins/installed_plugins.json"; }
+  dl_subs "github-tools@dagonet" "0.0.1"
+  DL_OUT=$(dl_run)
+  expect "DL13 a stale sub-plugin: exit 1" 1 "$(dl_rc)"
+  expect "DL13 ... names it" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^  SUBPLUGIN DRIFT: github-tools@dagonet ')"
+  dl_subs "github-tools@dagonet" "$DL_VER"
+  expect "DL13 the sub-plugin at VERSION: exit 0" 0 "$(dl_rc)"
+  printf '{"mcpServers":{"github-tools":{"command":"uvx"},"mine":{"command":"x"}}}\n' > "$DL_H/.claude.json"
+  DL_OUT=$(dl_run)
+  expect "DL13 a claude mcp key shadowing the installed sub-plugin: exit 1" 1 "$(dl_rc)"
+  expect "DL13 ... names it" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^  DRIFT: github-tools registered twice (claude mcp and plugin)$')"
+  expect "DL13 ... and only it" 1 "$(printf '%s\n' "$DL_OUT" | grep -c 'registered twice')"
+  printf '{"mcpServers":{"git-tools":{"command":"uvx"}}}\n' > "$DL_H/.claude.json"
+  expect "DL13 a key for a sub-plugin that is not installed: exit 0" 0 "$(dl_rc)"
+  rm -f "$DL_H/.claude.json"
+  dl_plugins "$DL_VER"
+  expect "DL13 no sub-plugin installed: exit 0" 0 "$(dl_rc)"
   # DL7 linux_check_rendered, the installer's two post-checks (one function, shared)
   dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
   printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
@@ -11875,6 +11896,47 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_up afterinst 1 nolist ok /ok
   expect "IU die after a successful install: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
   expect "IU die after a successful install: no 'removed' recovery text" 0 "$(grep -c 'was removed and cct@dagonet is not installed' "$iu_h/out")"
+  # IU sub-plugins (v6.1): the real `claude` CLI, a scratch HOME and two local directory marketplaces (old and new
+  # version). The remove uninstalls every dagonet plugin and deletes its saved userConfig (measured), so the installer
+  # puts back exactly the sub-plugins that were installed, with their enabled state and saved values, and no other.
+  # The official-marketplace calls are answered by a wrapper (no network); every other call reaches the real CLI.
+  IU_REAL=$(command -v claude 2>/dev/null || true)
+  if [ -n "$IU_REAL" ] && "$IU_REAL" plugin configure --help 2>/dev/null | grep -q -- '--values-stdin'; then
+    IU_RBIN="$TMPROOT/iu-rbin"; rm -rf "$IU_RBIN"; mkdir -p "$IU_RBIN"
+    printf '%s\n' '#!/bin/sh' 'case "$*" in *claude-plugins-official*) exit 0 ;; esac' "exec $IU_REAL \"\$@\"" > "$IU_RBIN/claude"
+    chmod +x "$IU_RBIN/claude"
+    iu_mk() { # <dir> <version> : a marketplace dagonet with cct + three sub-plugins (github-tools declares one option)
+      rm -rf "$1"; mkdir -p "$1/.claude-plugin"
+      printf '{"name":"dagonet","owner":{"name":"t"},"plugins":[{"name":"cct","source":"./p/cct"},{"name":"github-tools","source":"./p/github-tools"},{"name":"dotnet-tools","source":"./p/dotnet-tools"},{"name":"ollama-tools","source":"./p/ollama-tools"}]}\n' > "$1/.claude-plugin/marketplace.json"
+      for iu_n in cct github-tools dotnet-tools ollama-tools; do
+        mkdir -p "$1/p/$iu_n/.claude-plugin"
+        iu_uc=""; [ "$iu_n" = github-tools ] && iu_uc=',"userConfig":{"api_host":{"type":"string","title":"Host","description":"Host"}}'
+        printf '{"name":"%s","version":"%s","description":"t"%s}\n' "$iu_n" "$2" "$iu_uc" > "$1/p/$iu_n/.claude-plugin/plugin.json"
+      done
+    }
+    IU_NEWV=$(head -1 "$ROOT/VERSION" | tr -d '\r')
+    iu_mk "$TMPROOT/iu-mk-old" 0.0.1; iu_mk "$TMPROOT/iu-mk-new" "$IU_NEWV"
+    iu_h=$(iu_home subs); IU_SECRET="iu-sentinel-$$-value"
+    iu_cli() { ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_RBIN:$PATH" claude "$@" ); }
+    iu_cli plugin marketplace add "$TMPROOT/iu-mk-old" >/dev/null 2>&1
+    for iu_n in cct github-tools dotnet-tools; do iu_cli plugin install "$iu_n@dagonet" >/dev/null 2>&1; done
+    printf '{"api_host":"%s"}' "$IU_SECRET" | iu_cli plugin configure github-tools@dagonet --values-stdin >/dev/null 2>&1
+    iu_cli plugin disable dotnet-tools@dagonet >/dev/null 2>&1
+    iu_state() { iu_cli plugin list --json 2>/dev/null | jq -r '[.[] | select(.id | endswith("@dagonet")) | "\(.id):\(.version):\(.enabled)"] | sort | join(",")'; }
+    expect "IU subs: before = cct + github-tools (on) + dotnet-tools (off), old version" \
+      "cct@dagonet:0.0.1:true,dotnet-tools@dagonet:0.0.1:false,github-tools@dagonet:0.0.1:true" "$(iu_state)"
+    ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_RBIN:$PATH" CCT_MARKETPLACE="$TMPROOT/iu-mk-new" \
+        bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); iu_rc=$?
+    expect "IU subs: the installer exits 0" 0 "$iu_rc"
+    expect "IU subs: after = the same three at the new version, same enabled states, ollama-tools not installed" \
+      "cct@dagonet:$IU_NEWV:true,dotnet-tools@dagonet:$IU_NEWV:false,github-tools@dagonet:$IU_NEWV:true" "$(iu_state)"
+    expect "IU subs: the saved userConfig value survived the cycle" "$IU_SECRET" \
+      "$(iu_cli plugin configure github-tools@dagonet --json 2>/dev/null | jq -r '.inputs.api_host')"
+    expect "IU subs: the value is never printed" 0 "$(grep -c -- "$IU_SECRET" "$iu_h/out")"
+    expect "IU subs: no temp file with the values is left behind" 0 "$(find "$TMPDIR" "$TMPROOT" /tmp -maxdepth 2 -name 'cct-subcfg.*' 2>/dev/null | wc -l | tr -d ' ')"
+  else
+    skip_host "IU subs: sub-plugins kept across the pinned reinstall (real claude CLI)" "no claude CLI with configure --values-stdin" 6
+  fi
 else
   skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 55
 fi
