@@ -23,7 +23,7 @@
     "root;PreToolUse;Bash|PowerShell;pre-commit-test;F",
     "root;PreToolUse;Bash|PowerShell;no-push-main;F",
     "root;PreToolUse;Bash|PowerShell;gate-before-merge;F",
-    "root;PreToolUse;mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge;gate-before-merge;F",
+    "root;PreToolUse;mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge|mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge;F",
     "root;PreToolUse;Bash;deny-hang-shapes;O",
     "root;PreToolUse;Agent;model-floor;O",
     "root;PostToolUse;Edit|Write;post-edit-build;U",

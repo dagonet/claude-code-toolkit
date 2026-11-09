@@ -4739,7 +4739,8 @@ c71_rows() { c71_px "$1" | cut -d';' -f1-3 | c71_flat "${2:-hooks/dispatch.sh}" 
 C71_PLUGIN_ONLY='SessionStart;;cct-session
 SessionEnd;;cct-session
 SessionStart;;jev-notice
-PreToolUse;Agent;jev-route'
+PreToolUse;Agent;jev-route
+PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge'
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
@@ -5168,6 +5169,54 @@ if [ "$c80_ctl_ok" -ne 1 ]; then ko "80: CONTROL failed (a wrong SHA, a wrong sc
 elif [ "$c80_n" -ne 6 ]; then ko "80: expected 6 plugins/*, found $c80_n"
 elif [ -n "$c80_probs" ]; then ko "80: sub-plugin pin problems: $(printf '%s' "$c80_probs" | tr '\n' ';')"
 else ok "80: all 6 sub-plugins run uvx pinned to mcp-dev-servers@${C80_SHA:0:7}, own script, listed in the marketplace, description names uv; controls fire"; fi
+
+# ---------------------------------------------------------------------------
+# 81: every mcp-dev-servers tool rule has its plugin-form twin. The six servers also ship as plugins
+# whose tools are named mcp__plugin_<n>_<n>__X; a rule that names only one form silently misses the other.
+# Unit = one matcher string | one permissions list (allow, deny separately) | one agent `tools:` line.
+# In each unit the old-form and plugin-form names occur together, or neither does.
+# Two-sided: an allow-only twin, a deny-only twin, a matcher and a tools: line without the twin must each be flagged.
+# ---------------------------------------------------------------------------
+c81_eval() {
+  node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1];const out=[];
+const N="(git|github|dotnet|ollama|rust|python)";
+const oldRe=new RegExp("^mcp__"+N+"-tools__(.+)$"),newRe=new RegExp("^mcp__plugin_"+N+"-tools_"+N+"-tools__(.+)$");
+function unit(label,items){const o=new Set(),n=new Set();
+  for(const raw of items){const s=String(raw).trim();let m=s.match(oldRe);if(m)o.add(m[1]+"/"+m[2]);
+    m=s.match(newRe);if(m&&m[1]===m[2])n.add(m[1]+"/"+m[3]);}
+  for(const k of o)if(!n.has(k))out.push(label+": "+k+" lacks its plugin-form twin");
+  for(const k of n)if(!o.has(k))out.push(label+": "+k+" lacks its old-form twin");}
+function rd(f){try{return JSON.parse(fs.readFileSync(path.join(r,f),"utf8"));}catch(e){out.push(f+": unreadable");return null;}}
+function settings(f){const j=rd(f);if(!j)return;
+  for(const k of ["allow","deny"])if(j.permissions&&j.permissions[k])unit(f+" "+k,j.permissions[k]);
+  for(const ev of Object.values(j.hooks||{}))for(const e of ev)if(e.matcher)unit(f+" matcher",e.matcher.split("|"));}
+settings(".claude/settings.json");settings("user-level-reference/settings.json");
+const td=path.join(r,"templates");if(fs.existsSync(td))for(const v of fs.readdirSync(td).sort())if(fs.existsSync(path.join(td,v,".claude/settings.json")))settings("templates/"+v+"/.claude/settings.json");
+const hj=rd("hooks/hooks.json");
+if(hj)for(const ev of Object.values(hj.hooks||{}))for(const e of ev)if(e.matcher)unit("hooks/hooks.json matcher",e.matcher.split("|"));
+const ad=path.join(r,"agents");if(fs.existsSync(ad))for(const f of fs.readdirSync(ad).sort()){
+  const m=fs.readFileSync(path.join(ad,f),"utf8").match(/^tools:(.*)$/m);if(m)unit("agents/"+f+" tools",m[1].split(","));}
+process.stdout.write(out.join("\n"));' "$1" 2>/dev/null
+}
+c81_real=$(c81_eval .)
+c81_tmp=$(mktemp -d)
+c81_ctl_ok=1
+for c81_mut in allow deny matcher tools; do
+  rm -rf "$c81_tmp/t"; mkdir -p "$c81_tmp/t/.claude" "$c81_tmp/t/hooks" "$c81_tmp/t/agents"
+  cp .claude/settings.json "$c81_tmp/t/.claude/"; cp hooks/hooks.json "$c81_tmp/t/hooks/"; cp agents/coder.md "$c81_tmp/t/agents/"
+  mkdir -p "$c81_tmp/t/templates/general/.claude"; cp templates/general/.claude/settings.json "$c81_tmp/t/templates/general/.claude/"
+  case $c81_mut in
+    allow)   sed -i '/"mcp__plugin_git-tools_git-tools__\*"/d' "$c81_tmp/t/templates/general/.claude/settings.json" ;;
+    deny)    sed -i '/"mcp__plugin_git-tools_git-tools__git_push"/d' "$c81_tmp/t/templates/general/.claude/settings.json" ;;
+    matcher) sed -i 's/|mcp__plugin_github-tools_github-tools__github_pr_auto_merge//' "$c81_tmp/t/hooks/hooks.json" ;;
+    tools)   sed -i '/^tools:/s/, mcp__plugin_github-tools_github-tools__gh_repo_from_origin//' "$c81_tmp/t/agents/coder.md" ;;
+  esac
+  [ -n "$(c81_eval "$c81_tmp/t")" ] || { c81_ctl_ok=0; echo "  81: control '$c81_mut' was not flagged" >&2; }
+done
+rm -rf "$c81_tmp"
+if [ "$c81_ctl_ok" -ne 1 ]; then ko "81: CONTROL failed (an allow-only, deny-only, matcher or tools: mutation was not flagged)"
+elif [ -n "$c81_real" ]; then ko "81: rules without their twin: $(printf '%s' "$c81_real" | tr '\n' ';')"
+else ok "81: every mcp-dev-servers tool rule has its plugin-form twin; controls fire"; fi
 
 # ---------------------------------------------------------------------------
 echo

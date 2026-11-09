@@ -6,7 +6,7 @@ pipeline: true
 model: sonnet
 effort: medium
 isolation: worktree
-tools: Read, Write, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha, Skill
+tools: Read, Write, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__plugin_github-tools_github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__plugin_github-tools_github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha, mcp__plugin_github-tools_github-tools__github_check_runs_for_sha, Skill
 color: green
 # The merge gate is registered plugin-wide (hooks/hooks.json), not per agent (v5.0 spec §2).
 ---

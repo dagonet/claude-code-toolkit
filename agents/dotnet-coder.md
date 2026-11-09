@@ -21,7 +21,7 @@ pipeline: true
 model: sonnet
 effort: medium
 isolation: worktree
-tools: Read, Write, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha, mcp__dotnet-tools__build_and_extract_errors, mcp__dotnet-tools__run_tests_summary, Skill
+tools: Read, Write, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__create_pull_request, mcp__MCP_DOCKER__merge_pull_request, mcp__MCP_DOCKER__update_pull_request, mcp__MCP_DOCKER__list_pull_requests, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__github-tools__gh_repo_from_origin, mcp__plugin_github-tools_github-tools__gh_repo_from_origin, mcp__github-tools__gh_workflow_list, mcp__plugin_github-tools_github-tools__gh_workflow_list, mcp__github-tools__github_check_runs_for_sha, mcp__plugin_github-tools_github-tools__github_check_runs_for_sha, mcp__dotnet-tools__build_and_extract_errors, mcp__plugin_dotnet-tools_dotnet-tools__build_and_extract_errors, mcp__dotnet-tools__run_tests_summary, mcp__plugin_dotnet-tools_dotnet-tools__run_tests_summary, Skill
 color: green
 # The merge gate is registered plugin-wide (hooks/hooks.json), not per agent (v5.0 spec §2).
 ---
@@ -41,8 +41,8 @@ When you are driven by a task file (e.g., `./tasks/.../*.md`):
 ## .NET Build & Test Discipline (Hard Requirements)
 
 **Prefer MCP dotnet-tools** over Bash dotnet commands (structured diagnostics):
-1) `mcp__dotnet-tools__build_and_extract_errors(project_or_sln)` — structured error/warning extraction
-2) `mcp__dotnet-tools__run_tests_summary(project_or_sln)` — structured test results with TRX parsing
+1) `mcp__dotnet-tools__build_and_extract_errors(project_or_sln)` (plugin form: `mcp__plugin_dotnet-tools_dotnet-tools__build_and_extract_errors`) — structured error/warning extraction
+2) `mcp__dotnet-tools__run_tests_summary(project_or_sln)` (plugin form: `mcp__plugin_dotnet-tools_dotnet-tools__run_tests_summary`) — structured test results with TRX parsing
 
 **Fallback** to Bash `dotnet` only when MCP is unavailable or for commands not in MCP (e.g., `dotnet restore`, `dotnet format`).
 

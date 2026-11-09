@@ -1254,6 +1254,18 @@ check "MCP merge_pull_request, no art."  "$H" 2 "$(mkjson_mcp mcp__MCP_DOCKER__m
 check "MCP merge_pull_request, fresh"    "$H" 0 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$GATEFEAT")"
 check "MCP github_pr_auto_merge, no art" "$H" 2 "$(mkjson_mcp mcp__github-tools__github_pr_auto_merge "$GATEREPO")"
 
+# --- v6.1 S5: the plugin-form name is gated through the hooks.json registration itself
+S5_PF=mcp__plugin_github-tools_github-tools__github_pr_auto_merge
+S5_EMPTY="$TMPROOT/s5empty"; mkdir -p "$S5_EMPTY/.claude"; printf "{}\n" > "$S5_EMPTY/.claude/template-manifest.json"  # a toolkit project (gate-before-merge is project-class) with no settings of its own: the plugin registration neither skips nor steps aside
+S5_MATCH=$(grep -m1 'mcp__MCP_DOCKER__merge_pull_request' "$ROOT/hooks/hooks.json" | sed -e 's/^.*"matcher": *"//' -e 's/".*$//')
+S5_CMD=$(awk 'f{print;exit} /mcp__MCP_DOCKER__merge_pull_request/{f=1}' "$ROOT/hooks/hooks.json" | sed -e 's/^.*"command": *"//' -e 's/", *"timeout".*$//' -e 's/" *}.*$//' -e 's/\\"/"/g')
+if printf '%s' "$S5_PF" | grep -Eq "^($S5_MATCH)\$"; then S5_M=match; else S5_M=nomatch; fi
+expect "S5 hooks.json merge matcher matches the plugin-form name" "match" "$S5_M"
+S5_RC=$(printf '%s' "$(mkjson_mcp "$S5_PF" "$GATEREPO")" | env CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$S5_EMPTY" HOME="$S5_EMPTY" bash -c "$S5_CMD" >/dev/null 2>&1; echo $?)
+expect "S5 plugin-form auto_merge, no artifact: registration exits 2" "2" "$S5_RC"
+S5_RC=$(printf '%s' "$(mkjson_mcp "$S5_PF" "$GATEFEAT")" | env CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$S5_EMPTY" HOME="$S5_EMPTY" bash -c "$S5_CMD" >/dev/null 2>&1; echo $?)
+expect "S5 plugin-form auto_merge, fresh artifact: registration exits 0" "0" "$S5_RC"
+
 # --- graceful degradation + kill switch
 check "no Gate command configured"       "$H" 0 "$(mkjson Bash 'gh pr merge 5 --squash' "$NOGATE")"
 mkdir -p "$GATEREPO/.claude" && : > "$GATEREPO/.claude/git-guard-off"

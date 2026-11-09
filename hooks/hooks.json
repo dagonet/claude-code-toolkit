@@ -27,7 +27,7 @@
       { "matcher": "Read", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" read-size-gate" }
       ] },
-      { "matcher": "mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge", "hooks": [
+      { "matcher": "mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge|mcp__plugin_github-tools_github-tools__github_pr_auto_merge", "hooks": [
         { "type": "command", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" gate-before-merge" }
       ] },
       { "matcher": "Agent", "hooks": [
