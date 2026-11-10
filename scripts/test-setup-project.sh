@@ -1045,6 +1045,52 @@ PATH="$STUBDIR:$PATH" STUB_LOG="$TMPROOT/mcp-flag.log" bash "$ROOT/setup-project
 expect "sh: old flag accepted (exit 0)" 0 "$?"
 expect "sh: old flag warns" 1 "$(grep -c -F -- '--mcp-dev-servers-path is ignored since v6.1: the .NET and Rust servers are plugins now' "$TMPROOT/mcp-flag.out")"
 expect "sh: old flag writes no dotnet-tools entry" 0 "$(cat "$FLAGT/.mcp.json" 2>/dev/null | grep -c '"dotnet-tools"')"
+# ps1 twin of the rows above. PowerShell's `Get-Command claude` / `& claude` never run
+# the extensionless bash stub, so a claude.ps1 stub in its own dir logs argv (LF, no BOM)
+# and answers `plugin list`; the -in rows' enable line proves this stub is the one called.
+if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
+  PSSTUBDIR="$TMPROOT/claude-stub-ps"; mkdir -p "$PSSTUBDIR"
+  cat > "$PSSTUBDIR/claude.ps1" <<'STUB'
+[IO.File]::AppendAllText($env:STUB_LOG, ($args -join ' ') + "`n")
+if ($args.Count -ge 2 -and $args[0] -eq 'plugin' -and $args[1] -eq 'list') { $env:STUB_LIST }
+exit 0
+STUB
+  ps_mcp_fixture() { # <label> <variant> <plugin> <installed:yes|no>
+    local t="$TMPROOT/ps-mcp-$1" log="$TMPROOT/ps-mcp-$1.log"; mkdir -p "$t"; : > "$log"
+    local list=""; [ "$4" = yes ] && list="  > $3@dagonet
+    Version: 0.4.0
+    Scope: user
+    Status: enabled"
+    PATH="$PSSTUBDIR:$PATH" STUB_LOG="$(cygpath -w "$log" 2>/dev/null || printf '%s' "$log")" STUB_LIST="$list" \
+      "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" \
+      -Variant "$2" -ProjectName SetupFixture -TargetPath "$t" -DefaultBranch main > "$TMPROOT/ps-mcp-$1.out" 2>&1
+    expect "ps1 $1: bootstrap exits 0" 0 "$?"
+    local tip="Tip: claude plugin install $3@dagonet"
+    if [ "$4" = yes ]; then
+      expect "ps1 $1: enable argv logged"       1 "$(grep -c "^plugin enable $3@dagonet --scope local\$" "$log")"
+      expect "ps1 $1: no tip when installed"    0 "$(grep -c "$tip" "$TMPROOT/ps-mcp-$1.out")"
+    else
+      expect "ps1 $1: tip printed"              1 "$(grep -c "^$tip adds .* tools (needs uv)\.\$" "$TMPROOT/ps-mcp-$1.out")"
+      expect "ps1 $1: no enable call"           0 "$(grep -c '^plugin enable' "$log")"
+    fi
+    expect "ps1 $1: .mcp.json has no $3 key"    0 "$(cat "$t/.mcp.json" 2>/dev/null | grep -c "\"$3\"")"
+  }
+  ps_mcp_fixture dotnet-in   dotnet      dotnet-tools yes
+  ps_mcp_fixture dotnet-out  dotnet      dotnet-tools no
+  ps_mcp_fixture maui-in     dotnet-maui dotnet-tools yes
+  ps_mcp_fixture rust-in     rust-tauri  rust-tools   yes
+  ps_mcp_fixture rust-out    rust-tauri  rust-tools   no
+  # The old flag points at a path that does not exist: Resolve-CallerPath is Join-Path only.
+  PSFLAGT="$TMPROOT/ps-mcp-flag"; mkdir -p "$PSFLAGT"; : > "$TMPROOT/ps-mcp-flag.log"
+  PATH="$PSSTUBDIR:$PATH" STUB_LOG="$(cygpath -w "$TMPROOT/ps-mcp-flag.log" 2>/dev/null || printf '%s' "$TMPROOT/ps-mcp-flag.log")" \
+    "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" -Variant dotnet -ProjectName SetupFixture \
+    -TargetPath "$PSFLAGT" -DefaultBranch main -McpDevServersPath "$TMPROOT/nowhere" > "$TMPROOT/ps-mcp-flag.out" 2>&1
+  expect "ps1: old flag accepted (exit 0)" 0 "$?"
+  expect "ps1: old flag warns" 1 "$(grep -c -F -- '--mcp-dev-servers-path is ignored since v6.1: the .NET and Rust servers are plugins now' "$TMPROOT/ps-mcp-flag.out")"
+  expect "ps1: old flag writes no dotnet-tools entry" 0 "$(cat "$PSFLAGT/.mcp.json" 2>/dev/null | grep -c '"dotnet-tools"')"
+else
+  skip "setup-project.ps1 v6.1 server plugins" "no PowerShell on this host" 23
+fi
 
 echo "----------------------------------------------------------------"
 echo "test-setup-project.sh: $pass passed, $fail failed, $skipped skipped ($((pass + fail + skipped)) assertions)"
