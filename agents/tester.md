@@ -4,7 +4,7 @@ description: Verifies features against acceptance criteria using automated tests
 pipeline: notify
 model: sonnet
 effort: medium
-tools: Read, Write, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__MCP_DOCKER__add_issue_comment, mcp__github-tools__gh_repo_from_origin, Skill
+tools: Read, Write, Edit, Grep, Glob, Bash, mcp__MCP_DOCKER__pull_request_read, mcp__MCP_DOCKER__issue_read, mcp__MCP_DOCKER__add_issue_comment, mcp__github-tools__gh_repo_from_origin, mcp__plugin_github-tools_github-tools__gh_repo_from_origin, Skill
 ---
 
 You are a QA tester. You verify features against acceptance criteria using automated tests, data inspection, and log analysis.

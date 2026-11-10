@@ -24,28 +24,38 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v5.0). Perso
       "NotebookEdit",
       "WebSearch",
       "mcp__github-tools__*",
+      "mcp__plugin_github-tools_github-tools__*",
       "mcp__github__*",
       "mcp__MCP_DOCKER__*",
       "mcp__ollama-tools__*",
+      "mcp__plugin_ollama-tools_ollama-tools__*",
       "mcp__open-brain__*",
       "mcp__template-sync-tools__*",
       "mcp__searxng__*",
       "mcp__dotnet-tools__*",
+      "mcp__plugin_dotnet-tools_dotnet-tools__*",
       "mcp__rust-tools__*",
+      "mcp__plugin_rust-tools_rust-tools__*",
       "mcp__sqlite__*",
       "mcp__windows-mcp__*",
       "mcp__godot-tools__*",
       "mcp__plugin_context7_context7__*",
       "mcp__plugin_playwright_playwright__*",
       "mcp__plugin_context-mode_context-mode__*",
-      "mcp__git-tools__*"
+      "mcp__git-tools__*",
+      "mcp__plugin_git-tools_git-tools__*"
     ],
     "deny": [
       "mcp__git-tools__git_push",
+      "mcp__plugin_git-tools_git-tools__git_push",
       "mcp__git-tools__git_commit",
+      "mcp__plugin_git-tools_git-tools__git_commit",
       "mcp__git-tools__git_revert",
+      "mcp__plugin_git-tools_git-tools__git_revert",
       "mcp__git-tools__git_rebase",
-      "mcp__git-tools__git_reset"
+      "mcp__plugin_git-tools_git-tools__git_rebase",
+      "mcp__git-tools__git_reset",
+      "mcp__plugin_git-tools_git-tools__git_reset"
     ],
     "ask": [
       "Bash(npm publish*)"
@@ -141,7 +151,10 @@ See the *Full Settings JSON* block above for the current list. Three entries wer
   // is exact, so nothing has to be proven about a path.
   "mcp__git-tools__git_push", "mcp__git-tools__git_commit",
   "mcp__git-tools__git_revert", "mcp__git-tools__git_rebase",
-  "mcp__git-tools__git_reset"
+  "mcp__git-tools__git_reset",
+  "mcp__plugin_git-tools_git-tools__git_push", "mcp__plugin_git-tools_git-tools__git_commit",
+  "mcp__plugin_git-tools_git-tools__git_revert", "mcp__plugin_git-tools_git-tools__git_rebase",
+  "mcp__plugin_git-tools_git-tools__git_reset"
 ]
 ```
 
@@ -322,7 +335,7 @@ The cct plugin registers the toolkit's project hooks (gates, post-edit build, pi
 The cct plugin registers the following workflow enforcement hooks (scripts in the plugin's `hooks/`); they act only in a toolkit project:
 
 **Gate before merge** (`hooks/gate-before-merge.sh`):
-- Matcher: `mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge`
+- Matcher: `mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge|mcp__plugin_github-tools_github-tools__github_pr_auto_merge`
 - Hard-blocks PR merges (and enabling auto-merge) unless a fresh gate artifact exists: since v4.0.1 (item 17), the artifact lives at `<common git dir>/gate/last-pass.<sha>.json` (or, for a gate run before the commit whose tree differs from `HEAD^{tree}`, `last-pass.tree-<tree>.json`, found by an exact-name tier 1b since v4.3.1) — inside `.git`, shared by every worktree of the repo (worktree-aware — developer agents self-merge from worktrees), never a per-checkout `.gate/` directory — and the file must be younger than `GC_GATE_TTL_S` (`hooks/lib/git-cmd.sh`; 3600s = 60 minutes). Accepted if either its `sha` equals the current HEAD, or its `tree` equals `HEAD^{tree}` (the commit-time `run-gate.sh` chain: the gate ran against the index just before the commit, so its `sha` is the parent commit but its `tree` is already the new commit's) — a scan of every `last-pass.*.json` in the directory, newest first, covers the tree match when no file is named for the exact sha. A legacy `<repo toplevel>/.gate/last-pass.json` is still read as a fallback, with a deprecation NOTE on stderr.
 - No-op when PROJECT_CONTEXT.md has no `**Gate**:` / `**Gate Command**:` value or the value is still a `{{...}}` placeholder — same graceful degradation as `pre-commit-test.sh`.
 - Since v5.0 no agent file carries it inline: the plugin's registrations (the merge-tool matcher, and since v6.0 the `bash` and `powershell` dispatcher tables for `gh pr merge`) cover every caller.

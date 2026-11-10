@@ -1102,22 +1102,77 @@ while IFS=$'\t' read -r e1_mode e1_lbl e1_verdict; do
 done <<< "$E1_OUT"
 expect "E1: every input ran in both modes" "$((${#E1_IN[@]} * 2))" "$(printf '%s\n' "$E1_OUT" | grep -c .)"
 
+# v6.1 S2 -- a tool that fails (fork failure, missing binary) used to leave gc_protect_c_paths
+# printing nothing, so the gates saw an empty command (an empty command is refused as unreadable;
+# the fallback restores the floor verdict). The stub dir holds an `awk`
+# (since S4 the rewrite is awk, no longer sed) that exits 1; the output must equal the input byte
+# for byte. Runs in the default pass.
+S2_STUB="$TMPROOT/s2-stub"; mkdir -p "$S2_STUB"
+printf '#!/bin/sh\nexit 1\n' > "$S2_STUB/awk"; chmod +x "$S2_STUB/awk"
+S2_IN='git -C "/a b" push origin main'
+S2_OUT=$( PATH="$S2_STUB:$PATH"; . "$ROOT/hooks/lib/git-cmd.sh"; gc_protect_c_paths "$S2_IN" )
+expect "S2 gc_protect_c_paths: failing awk returns the input" "$S2_IN" "$S2_OUT"
+
+# v6.1 S4 -- the old sed loop was quadratic (one sed spawn + full rescan per blank in a quoted -C
+# argument: 4 KB 3.75 s, 16 KB 36.8 s). The awk rewrite is one linear pass with the same output.
+s4_old() { # <text> -- the pre-S4 sed loop, verbatim, as the reference
+  local s=$1 n soh
+  soh=$(printf '\001')
+  while :; do
+    n=$(printf '%s' "$s" | sed \
+      -e "s/\(-C[[:space:]]\{1,\}\"[^\"]*\)[[:space:]]\([^\"]*\"\)/\1${soh}\2/" \
+      -e "s/\(-C[[:space:]]\{1,\}'[^']*\)[[:space:]]\([^']*'\)/\1${soh}\2/")
+    [ "$n" = "$s" ] && break
+    s=$n
+  done
+  printf '%s' "$s"
+}
+S4_TAB=$(printf 'git -C "a\tb c" status')
+S4_IN=(
+  'git -C "a b c" push origin main'
+  "git -C 'a b' -C \"c d e\" status"
+  "git -C 'a b c' commit -m 'x y'"
+  'git -C "a b status'
+  "git -C 'a b status"
+  'git -C x "a b" status'
+  'git -C   "a b"   status "c d"'
+  "$S4_TAB"
+  'echo -C "a b" -C'
+  'git -C "a b" push; git -C "c d" push'
+)
+S4_BAD=0; S4_DET=
+for s4_c in "${S4_IN[@]}"; do
+  s4_w=$(s4_old "$s4_c"); s4_g=$( . "$ROOT/hooks/lib/git-cmd.sh"; gc_protect_c_paths "$s4_c" )
+  if [ "$s4_w" != "$s4_g" ]; then S4_BAD=$((S4_BAD + 1)); S4_DET="$S4_DET [$s4_c]"; fi
+done
+expect "S4 -C: awk output equals the old sed loop on ${#S4_IN[@]} inputs$S4_DET" "0" "$S4_BAD"
+S4_WORDS=$(nchars 5462 x | sed 's/x/ab /g')   # 16 KB of "ab " words
+S4_BIGIN="git -C \"$S4_WORDS\" status"
+S4_BIGWANT="git -C \"${S4_WORDS// /$(printf '\001')}\" status"
+S4_T0=$(date +%s%N)
+S4_BIGOUT=$( . "$ROOT/hooks/lib/git-cmd.sh"; timeout 60 bash -c '. "$1"; gc_protect_c_paths "$2"' _ "$ROOT/hooks/lib/git-cmd.sh" "$S4_BIGIN" )
+S4_MS=$(( ($(date +%s%N) - S4_T0) / 1000000 ))
+expect "S4 -C: 16 KB quoted path is protected correctly" "$S4_BIGWANT" "$S4_BIGOUT"
+if [ "$S4_MS" -lt 2000 ]; then S4_FAST=fast; else S4_FAST="slow(${S4_MS}ms)"; fi
+expect "S4 -C: 16 KB quoted path is protected in under 2 s" fast "$S4_FAST"
+
 # SPAWN rows: under strace, a Bash `ls` payload through gc_read_stdin (the dispatcher's memo path,
 # which reads no stdin -- the plain path always starts `cat` for the payload itself) execs none of
 # cat, awk or sed. The control command holds a backslash that only joins into `-C`, so it must
-# still exec the join (cat + awk) and the protection (sed): that keeps the first row from
-# passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` pins strace's default
+# still exec the join (cat + awk) and the protection (awk since the v6.1 S4 rewrite): programs are listed
+# per exec, not deduplicated, so the control wants TWO awk -- one per stage -- and a lone awk (a join with no
+# protection, or the reverse) fails it; that also keeps the first row from passing on an strace that recorded nothing. Markers are `bash -c : <name>` execs; `-s 32` pins strace's default
 # 32-character string truncation, which the probe relies on: it cuts the long `bash -c <probe>` line (which holds
 # both names) off before them, so only the real markers open and close the range.
 E1_SPAWN_PROBE='. "$1/hooks/lib/json.sh"; . "$1/hooks/lib/git-cmd.sh"; json_memo_set "$2" tool_name cwd tool_input.command; "$BASH" -c : E1_BEGIN; gc_read_stdin </dev/null; "$BASH" -c : E1_END'
-e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (sorted, space-terminated)
+e1_spawned() { # <command> -> the cat/awk/sed programs gc_read_stdin execs (one entry per exec, sorted, space-terminated)
   local st="$TMPROOT/e1_strace.txt"
   strace -f -s 32 -e trace=execve -o "$st" "$BASH" -c "$E1_SPAWN_PROBE" probe "$ROOT" "$(mkjson Bash "$1" "$TMPROOT")" >/dev/null 2>&1
-  sed -n '/E1_BEGIN/,/E1_END/p' "$st" | grep -oE 'execve\("[^"]*/(cat|awk|sed)"' | grep -oE '(cat|awk|sed)"$' | tr -d '"' | sort -u | tr '\n' ' '
+  sed -n '/E1_BEGIN/,/E1_END/p' "$st" | grep -oE 'execve\("[^"]*/(cat|awk|sed)"' | grep -oE '(cat|awk|sed)"$' | tr -d '"' | sort | tr '\n' ' '
 }
 if command -v strace >/dev/null 2>&1 && strace -f -e trace=execve -o /dev/null "$BASH" -c : >/dev/null 2>&1; then
   expect "E1 spawn: an ls payload through gc_read_stdin execs none of cat/awk/sed" "" "$(e1_spawned ls)"
-  expect "E1 spawn control: a joined -C command still execs the join and the protection" "awk cat sed " "$(e1_spawned $'git -\\\nC "a b" status')"
+  expect "E1 spawn control: a joined -C command still execs the join and the protection" "awk awk cat " "$(e1_spawned $'git -\\\nC "a b" status')"
 else
   skip_host "E1 spawn rows" "strace unavailable or ptrace denied on this host" 2
 fi
@@ -1200,6 +1255,18 @@ writeartifact "$GATEFEAT" "$FEATSHA"
 check "MCP merge_pull_request, no art."  "$H" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$GATEREPO")"
 check "MCP merge_pull_request, fresh"    "$H" 0 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$GATEFEAT")"
 check "MCP github_pr_auto_merge, no art" "$H" 2 "$(mkjson_mcp mcp__github-tools__github_pr_auto_merge "$GATEREPO")"
+
+# --- v6.1 S5: the plugin-form name is gated through the hooks.json registration itself
+S5_PF=mcp__plugin_github-tools_github-tools__github_pr_auto_merge
+S5_EMPTY="$TMPROOT/s5empty"; mkdir -p "$S5_EMPTY/.claude"; printf "{}\n" > "$S5_EMPTY/.claude/template-manifest.json"  # a toolkit project (gate-before-merge is project-class) with no settings of its own: the plugin registration neither skips nor steps aside
+S5_MATCH=$(grep -m1 'mcp__MCP_DOCKER__merge_pull_request' "$ROOT/hooks/hooks.json" | sed -e 's/^.*"matcher": *"//' -e 's/".*$//')
+S5_CMD=$(awk 'f{print;exit} /mcp__MCP_DOCKER__merge_pull_request/{f=1}' "$ROOT/hooks/hooks.json" | sed -e 's/^.*"command": *"//' -e 's/", *"timeout".*$//' -e 's/" *}.*$//' -e 's/\\"/"/g')
+if printf '%s' "$S5_PF" | grep -Eq "^($S5_MATCH)\$"; then S5_M=match; else S5_M=nomatch; fi
+expect "S5 hooks.json merge matcher matches the plugin-form name" "match" "$S5_M"
+S5_RC=$(printf '%s' "$(mkjson_mcp "$S5_PF" "$GATEREPO")" | env CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$S5_EMPTY" HOME="$S5_EMPTY" bash -c "$S5_CMD" >/dev/null 2>&1; echo $?)
+expect "S5 plugin-form auto_merge, no artifact: registration exits 2" "2" "$S5_RC"
+S5_RC=$(printf '%s' "$(mkjson_mcp "$S5_PF" "$GATEFEAT")" | env CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$S5_EMPTY" HOME="$S5_EMPTY" bash -c "$S5_CMD" >/dev/null 2>&1; echo $?)
+expect "S5 plugin-form auto_merge, fresh artifact: registration exits 0" "0" "$S5_RC"
 
 # --- graceful degradation + kill switch
 check "no Gate command configured"       "$H" 0 "$(mkjson Bash 'gh pr merge 5 --squash' "$NOGATE")"
@@ -5784,6 +5851,51 @@ check_env "jq: quoted -C space repo"           "$JQONLY" hooks/no-push-main.sh 2
   "$(mkjson Bash "git -C \"$SPACEREPO\" push" "$FEATREPO")"
 else
 skip "jq git-gate cases" "no jq on this host" 3
+fi
+
+# --- v6.1 S1: a lone surrogate in the command must not empty the command ----
+# The payload carries the six literal characters \udcff (a lone low surrogate).
+# node and jq turn it into U+FFFD; the python3 reader used to raise
+# UnicodeEncodeError on the way out and return an empty command, so the push
+# gate saw nothing and the dispatcher stayed open. The refusal is asserted
+# through the REGISTRATION path (`dispatch.sh bash`), not no-push-main.sh alone.
+S1_PAYLOAD=$(printf '{"tool_name":"Bash","tool_input":{"command":"git push origin main; echo \\udcff"},"cwd":"%s"}' "$MAINREPO")
+S1_HOME="$TMPROOT/s1-home"; mkdir -p "$S1_HOME"
+# The gate also refuses (exit 2) when it cannot read the command at all, so the
+# exit code alone cannot tell "read it and refused the push" from "read nothing";
+# the second field says whether the "could not read" refusal fired.
+s1_dispatch() { # <pathdir> -> "rc=<exit> unreadable=<yes|no>" for S1_PAYLOAD under that PATH
+  local rc err
+  err=$(printf '%s' "$S1_PAYLOAD" | env PATH="$1" CLAUDE_PROJECT_DIR="$MAINREPO" HOME="$S1_HOME" "$BASHABS" "$ROOT/hooks/dispatch.sh" bash 2>&1 >/dev/null)
+  rc=$?
+  case $err in *"could not read"*) echo "rc=$rc unreadable=yes" ;; *) echo "rc=$rc unreadable=no" ;; esac
+}
+s1_readers() { # <backend> <pathdir> -> yes when json_read and json_read_payload both keep the command
+  local a b
+  a=$(PATH="$2" "$BASHABS" -c '. "$1"; json_read "$2" "$3" tool_input.command' _ "$ROOT/hooks/lib/json.sh" "$1" "$S1_PAYLOAD" 2>/dev/null)
+  b=$(PATH="$2" "$BASHABS" -c '. "$1"; json_read_payload "$2" "$3" tool_input.command | tr "\0" "\n"' _ "$ROOT/hooks/lib/json.sh" "$1" "$S1_PAYLOAD" 2>/dev/null)
+  case $a in *"git push origin main"*) ;; *) echo "no(json_read)"; return ;; esac
+  case $b in *"git push origin main"*) echo yes ;; *) echo "no(json_read_payload)" ;; esac
+}
+S1_NODEONLY=""
+if [ -n "$HAVE_NODE" ]; then S1_NODEONLY=$(mkpathdir s1node node); fi
+if [ -n "$HAVE_NODE" ]; then
+  expect "S1 lone surrogate: the dispatcher refuses (node)"    "rc=2 unreadable=no" "$(s1_dispatch "$S1_NODEONLY")"
+  expect "S1 lone surrogate: readers keep the command (node)"  yes "$(s1_readers node "$S1_NODEONLY")"
+else
+  skip "S1 lone surrogate: node rows" "no node on this host" 2
+fi
+if [ -n "$HAVE_PY" ]; then
+  expect "S1 lone surrogate: the dispatcher refuses (python3)"   "rc=2 unreadable=no" "$(s1_dispatch "$PYONLY")"
+  expect "S1 lone surrogate: readers keep the command (python3)" yes "$(s1_readers python3 "$PYONLY")"
+else
+  skip "S1 lone surrogate: python3 rows" "no python3 on this host" 2
+fi
+if [ -n "$HAVE_JQ" ]; then
+  expect "S1 lone surrogate: the dispatcher refuses (jq)"   "rc=2 unreadable=no" "$(s1_dispatch "$JQONLY")"
+  expect "S1 lone surrogate: readers keep the command (jq)" yes "$(s1_readers jq "$JQONLY")"
+else
+  skip "S1 lone surrogate: jq rows" "no jq on this host" 2
 fi
 
 # deny-hang-shapes is the BLOCKING hook (it took require-skills-block's place
@@ -11564,6 +11676,27 @@ if [ "$(uname -s)" = "Linux" ]; then
   expect "DL12 ... names it"                          1 "$(dl_run | grep -c '^  STALE HOOK REGISTRATION .*model-floor.sh')"
   sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
   expect "DL12 registration removed: exit 0"          0 "$(dl_rc)"
+  # DL13 (v6.1): the dagonet sub-plugins. A stale one is drift; a user-scope claude.json mcpServers key equal to an
+  # installed sub-plugin's name is a double registration; an absent sub-plugin is no line.
+  dl_subs() { # <sub-plugin id> <version> : cct at VERSION plus one sub-plugin record
+    printf '{"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"%s"}],"%s":[{"scope":"user","version":"%s"}]}}\n' \
+      "$DL_VER" "$1" "$2" > "$DL_H/.claude/plugins/installed_plugins.json"; }
+  dl_subs "github-tools@dagonet" "0.0.1"
+  DL_OUT=$(dl_run)
+  expect "DL13 a stale sub-plugin: exit 1" 1 "$(dl_rc)"
+  expect "DL13 ... names it" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^  SUBPLUGIN DRIFT: github-tools@dagonet ')"
+  dl_subs "github-tools@dagonet" "$DL_VER"
+  expect "DL13 the sub-plugin at VERSION: exit 0" 0 "$(dl_rc)"
+  printf '{"mcpServers":{"github-tools":{"command":"uvx"},"mine":{"command":"x"}}}\n' > "$DL_H/.claude.json"
+  DL_OUT=$(dl_run)
+  expect "DL13 a claude mcp key shadowing the installed sub-plugin: exit 1" 1 "$(dl_rc)"
+  expect "DL13 ... names it" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^  DRIFT: github-tools registered twice (claude mcp and plugin)$')"
+  expect "DL13 ... and only it" 1 "$(printf '%s\n' "$DL_OUT" | grep -c 'registered twice')"
+  printf '{"mcpServers":{"git-tools":{"command":"uvx"}}}\n' > "$DL_H/.claude.json"
+  expect "DL13 a key for a sub-plugin that is not installed: exit 0" 0 "$(dl_rc)"
+  rm -f "$DL_H/.claude.json"
+  dl_plugins "$DL_VER"
+  expect "DL13 no sub-plugin installed: exit 0" 0 "$(dl_rc)"
   # DL7 linux_check_rendered, the installer's two post-checks (one function, shared)
   dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
   printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
@@ -11764,8 +11897,71 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_up afterinst 1 nolist ok /ok
   expect "IU die after a successful install: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
   expect "IU die after a successful install: no 'removed' recovery text" 0 "$(grep -c 'was removed and cct@dagonet is not installed' "$iu_h/out")"
+  # IU sub-plugins (v6.1): the real `claude` CLI, a scratch HOME and two local directory marketplaces (old and new
+  # version). The remove uninstalls every dagonet plugin and deletes its saved userConfig (measured), so the installer
+  # puts back exactly the sub-plugins that were installed, with their enabled state and saved values, and no other.
+  # The official-marketplace calls are answered by a wrapper (no network); every other call reaches the real CLI.
+  IU_REAL=$(command -v claude 2>/dev/null || true)
+  if [ -n "$IU_REAL" ] && env -u CLAUDE_CONFIG_DIR HOME="$TMPROOT/iu-probe-home" "$IU_REAL" plugin configure --help 2>/dev/null | grep -q -- '--values-stdin'; then
+    IU_RBIN="$TMPROOT/iu-rbin"; rm -rf "$IU_RBIN"; mkdir -p "$IU_RBIN"
+    printf '%s\n' '#!/bin/sh' 'case "$*" in *claude-plugins-official*) exit 0 ;; esac' "exec $IU_REAL \"\$@\"" > "$IU_RBIN/claude"
+    chmod +x "$IU_RBIN/claude"
+    iu_mk() { # <dir> <version> : a marketplace dagonet with cct + three sub-plugins (github-tools declares one option)
+      rm -rf "$1"; mkdir -p "$1/.claude-plugin"
+      printf '{"name":"dagonet","owner":{"name":"t"},"plugins":[{"name":"cct","source":"./p/cct"},{"name":"github-tools","source":"./p/github-tools"},{"name":"dotnet-tools","source":"./p/dotnet-tools"},{"name":"ollama-tools","source":"./p/ollama-tools"}]}\n' > "$1/.claude-plugin/marketplace.json"
+      for iu_n in cct github-tools dotnet-tools ollama-tools; do
+        mkdir -p "$1/p/$iu_n/.claude-plugin"
+        iu_uc=""; [ "$iu_n" = github-tools ] && iu_uc=',"userConfig":{"api_host":{"type":"string","title":"Host","description":"Host"}}'
+        printf '{"name":"%s","version":"%s","description":"t"%s}\n' "$iu_n" "$2" "$iu_uc" > "$1/p/$iu_n/.claude-plugin/plugin.json"
+      done
+    }
+    IU_NEWV=$(head -1 "$ROOT/VERSION" | tr -d '\r')
+    iu_mk "$TMPROOT/iu-mk-old" 0.0.1; iu_mk "$TMPROOT/iu-mk-new" "$IU_NEWV"
+    iu_h=$(iu_home subs); IU_SECRET="iu-sentinel-$$-value"
+    iu_cli() { ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_RBIN:$PATH" claude "$@" ); }
+    iu_cli plugin marketplace add "$TMPROOT/iu-mk-old" >/dev/null 2>&1
+    for iu_n in cct github-tools dotnet-tools; do iu_cli plugin install "$iu_n@dagonet" >/dev/null 2>&1; done
+    printf '{"api_host":"%s"}' "$IU_SECRET" | iu_cli plugin configure github-tools@dagonet --values-stdin >/dev/null 2>&1
+    iu_cli plugin disable dotnet-tools@dagonet >/dev/null 2>&1
+    iu_state() { iu_cli plugin list --json 2>/dev/null | jq -r '[.[] | select(.id | endswith("@dagonet")) | "\(.id):\(.version):\(.enabled)"] | sort | join(",")'; }
+    expect "IU subs: before = cct + github-tools (on) + dotnet-tools (off), old version" \
+      "cct@dagonet:0.0.1:true,dotnet-tools@dagonet:0.0.1:false,github-tools@dagonet:0.0.1:true" "$(iu_state)"
+    ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_RBIN:$PATH" CCT_MARKETPLACE="$TMPROOT/iu-mk-new" \
+        bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>&1 ); iu_rc=$?
+    expect "IU subs: the installer exits 0" 0 "$iu_rc"
+    expect "IU subs: after = the same three at the new version, same enabled states, ollama-tools not installed" \
+      "cct@dagonet:$IU_NEWV:true,dotnet-tools@dagonet:$IU_NEWV:false,github-tools@dagonet:$IU_NEWV:true" "$(iu_state)"
+    expect "IU subs: the saved userConfig value survived the cycle" "$IU_SECRET" \
+      "$(iu_cli plugin configure github-tools@dagonet --json 2>/dev/null | jq -r '.inputs.api_host')"
+    expect "IU subs: the value is never printed" 0 "$(grep -c -- "$IU_SECRET" "$iu_h/out")"
+    expect "IU subs: no temp file with the values is left behind" 0 "$(find "$TMPDIR" "$TMPROOT" /tmp -maxdepth 2 -name 'cct-subcfg.*' 2>/dev/null | wc -l | tr -d ' ')"
+  else
+    skip_host "IU subs: sub-plugins kept across the pinned reinstall (real claude CLI)" "no claude CLI with configure --values-stdin" 6
+  fi
+  # IU subs, failed reinstall: a stub CLI records two sub-plugins (one with a saved value), the reinstall of the first
+  # fails. The die names EVERY recorded id (the trap deletes the saved values), says to re-enter the options, and no
+  # saved value reaches stdout or stderr (the stub hands it out only through configure --json).
+  IU_FBIN="$TMPROOT/iu-fbin"; rm -rf "$IU_FBIN"; mkdir -p "$IU_FBIN"
+  IU_FSEC="iu-fail-sentinel-$$-value"
+  printf '%s\n' '#!/bin/sh' \
+    'case "$1 $2 $3" in' \
+    '  "plugin marketplace list") printf "[{\"name\":\"dagonet\",\"source\":\"directory\",\"path\":\"/old\"}]\n"; exit 0 ;;' \
+    '  "plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0\"},{\"id\":\"github-tools@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0\"},{\"id\":\"dotnet-tools@dagonet\",\"scope\":\"user\",\"enabled\":false,\"version\":\"0\"}]\n"; exit 0 ;;' \
+    '  "plugin install github-tools@dagonet") echo "install failed" >&2; exit 1 ;;' \
+    'esac' \
+    'case "$*" in "plugin configure"*"--json") printf "{\"inputs\":{\"api_host\":\"%s\"}}\n" "'"$IU_FSEC"'"; exit 0 ;; esac' \
+    'exit 0' > "$IU_FBIN/claude"
+  chmod +x "$IU_FBIN/claude"
+  iu_h=$(iu_home subfail)
+  ( cd "$TMPROOT" && env HOME="$iu_h" PATH="$IU_FBIN:$PATH" CCT_MARKETPLACE=/ok bash "$ROOT/scripts/install-user-level-linux.sh" >"$iu_h/out" 2>"$iu_h/err" ); iu_rc=$?
+  expect "IU subs fail: the installer exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
+  expect "IU subs fail: the recovery names the failing sub-plugin's install command" 1 "$(grep -c 'claude plugin install github-tools@dagonet' "$iu_h/err")"
+  expect "IU subs fail: ... and the other recorded sub-plugin (install, then disable: it was off)" "1:1" \
+    "$(grep -c 'claude plugin install dotnet-tools@dagonet' "$iu_h/err"):$(grep -c 'claude plugin disable dotnet-tools@dagonet' "$iu_h/err")"
+  expect "IU subs fail: it says saved options must be re-entered with claude plugin configure <id>" 1 "$(grep -c 'claude plugin configure' "$iu_h/err")"
+  expect "IU subs fail: no saved value on stdout or stderr" 0 "$(cat "$iu_h/out" "$iu_h/err" | grep -c -- "$IU_FSEC")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 55
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 60
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
@@ -12017,17 +12213,53 @@ else
   v6d_q_err=$(printf '%s\0%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/"}' '{"x":1}' | env CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" bash "$V6D/base/hooks/dispatch.sh" bash 2>&1 >/dev/null; echo "rc=$?")
   expect "v6 dispatch: (q) a payload with a NUL byte is refused (rc 2, never truncated)" "rc=2 needle=yes" "$(printf '%s' "$v6d_q_err" | tail -n 1) needle=$(v6d_has "$v6d_q_err" 'NUL')"
 
-  # (l) Review Focus 1: a 300 KB command. The baseline first: the guard alone, then through the dispatcher.
+  # (l) Review Focus 1: a 250 KB command (S4: under the 256 KiB cap; the cap rows follow). The baseline first: the guard alone, then through the dispatcher.
   # The 300 KB sits in a quoted string on purpose: an UNQUOTED 300 KB token costs no-push-main minutes today
   # (its scan is quadratic: 100 KB = 14 s, measured 2026-11-01), which is the guard's cost, not the dispatcher's.
-  V6D_BIG=$(mkjson Bash "git push origin main; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
-  V6D_BIGLS=$(mkjson Bash "ls; echo \"$(nchars 300000 A)\"" "$V6D_MAIN")
+  V6D_BIG=$(mkjson Bash "git push origin main; echo \"$(nchars 250000 A)\"" "$V6D_MAIN")
+  V6D_BIGLS=$(mkjson Bash "ls; echo \"$(nchars 250000 A)\"" "$V6D_MAIN")
   v6d_big_direct=$(printf '%s' "$V6D_BIG" | bash "$ROOT/hooks/no-push-main.sh" 2>&1 >/dev/null; echo "rc=$?")
-  expect "v6 dispatch: (l) baseline: no-push-main alone refuses the 300 KB push" "rc=2 needle=yes" "$(printf '%s' "$v6d_big_direct" | tail -n 1) needle=$(v6d_has "$v6d_big_direct" "$V6D_PUSH_NEEDLE")"
+  expect "v6 dispatch: (l) baseline: no-push-main alone refuses the 250 KB push" "rc=2 needle=yes" "$(printf '%s' "$v6d_big_direct" | tail -n 1) needle=$(v6d_has "$v6d_big_direct" "$V6D_PUSH_NEEDLE")"
   v6d_run base bash "$V6D_BIG"
-  expect "v6 dispatch: (l) a 300 KB push to main is refused through the dispatcher" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
+  expect "v6 dispatch: (l) a 250 KB push to main is refused through the dispatcher" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_PUSH_NEEDLE")"
   v6d_run base bash "$V6D_BIGLS"
-  expect "v6 dispatch: (l) control: a 300 KB harmless command passes" "rc=0" "rc=$V6D_RC"
+  expect "v6 dispatch: (l) control: a 250 KB harmless command passes" "rc=0" "rc=$V6D_RC"
+
+  # v6.1 S4: the size cap (bytes of the command, 262144) and the git/gh-call cap (128), exact refusal texts
+  v6d_s4_big() { mkjson Bash "echo \"$(nchars "$1" A)\"" "$V6D_FEAT"; } # <A count> -> payload (command = count + 7 bytes)
+  v6d_s4_calls() { local c='git status' i; for ((i = 1; i < $1; i++)); do c="$c; git status"; done; mkjson Bash "$c" "$V6D_FEAT"; } # <n> -> payload with n git calls
+  v6d_run base bash "$(v6d_s4_big 262137)"
+  expect "S4 cap: 262144 bytes routes" "rc=0" "rc=$V6D_RC"
+  v6d_run base bash "$(v6d_s4_big 262138)"
+  expect "S4 cap: 262145 bytes refuses (exit 2, exact message)" "rc=2 BLOCKED: command too large for the safety checks (262145 bytes, limit 262144): put it in a script file and run bash <path>" "rc=$V6D_RC $V6D_ERR"
+  v6d_run base bash "$(v6d_s4_calls 128)"
+  expect "S4 git calls: 128 routes" "rc=0" "rc=$V6D_RC"
+  v6d_run base bash "$(v6d_s4_calls 129)"
+  expect "S4 git calls: 129 refuses (exit 2, exact message)" "rc=2 BLOCKED: too many git/gh calls in one command for the safety checks (129, limit 128): split it into several commands" "rc=$V6D_RC $V6D_ERR"
+
+  # S4, awk absent: the cap counts with grep/tr/wc, so ls passes and 129 calls still refuse (3e8be09 passed ls; 6713c7b refused it)
+  S4_NOAWK=$(mkpathdir s4noawk); rm -f "$S4_NOAWK/awk"
+  for s4_t in node python3 jq; do s4_r=$(command -v "$s4_t" 2>/dev/null) && printf '#!/bin/sh\nexec "%s" "$@"\n' "$s4_r" > "$S4_NOAWK/$s4_t" && chmod +x "$S4_NOAWK/$s4_t"; done
+  s4_run_noawk() { # <payload> -- sets V6D_RC, V6D_ERR
+    V6D_OUT=$(printf '%s' "$1" | env PATH="$S4_NOAWK" CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASHABS" "$V6D/base/hooks/dispatch.sh" bash 2>"$V6D/err")
+    V6D_RC=$?; V6D_ERR=$(cat "$V6D/err")
+  }
+  s4_run_noawk "$V6D_LS"
+  expect "S4 no awk: ls passes (rc 0)" "rc=0" "rc=$V6D_RC"
+  s4_run_noawk "$(v6d_s4_calls 129)"
+  expect "S4 no awk: 129 git calls refuse (exit 2, exact message)" "rc=2 BLOCKED: too many git/gh calls in one command for the safety checks (129, limit 128): split it into several commands" "rc=$V6D_RC $V6D_ERR"
+
+  # S4, grep absent: the count is undetermined, so a command holding a git word is refused and ls passes
+  S4_NOGREP=$(mkpathdir s4nogrep); rm -f "$S4_NOGREP/grep"
+  for s4_t in node python3 jq awk; do s4_r=$(command -v "$s4_t" 2>/dev/null) && printf '#!/bin/sh\nexec "%s" "$@"\n' "$s4_r" > "$S4_NOGREP/$s4_t" && chmod +x "$S4_NOGREP/$s4_t"; done
+  s4_run_nogrep() { # <payload> -- sets V6D_RC, V6D_ERR
+    V6D_OUT=$(printf '%s' "$1" | env PATH="$S4_NOGREP" CLAUDE_PROJECT_DIR="$V6D/base/proj" HOME="$V6D/home" "$BASHABS" "$V6D/base/hooks/dispatch.sh" bash 2>"$V6D/err")
+    V6D_RC=$?; V6D_ERR=$(cat "$V6D/err")
+  }
+  s4_run_nogrep "$V6D_LS"
+  expect "S4 no grep: ls passes (rc 0)" "rc=0" "rc=$V6D_RC"
+  s4_run_nogrep "$(v6d_s4_calls 129)"
+  expect "S4 no grep: 129 git calls are refused (exit 2)" "rc=2" "rc=$V6D_RC"
 
   # (d) a crash (any rc but 2) does not skip a later closed guard
   v6d_mk d m
@@ -12414,7 +12646,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$V5V/hooks/cct-session.sh"
 v5vh_run() { env -u CLAUDE_PROJECT_DIR HOME="$V5VH" "$@" bash "$ROOT/hooks/verify-hooks.sh" --report </dev/null 2>/dev/null; }
 expect "v5 verify-hooks: plugin hook script missing -> reported" "MISSING: $V5V/hooks/no-push-main.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5V")"
 V5VG="$TMPROOT/v5vh guarded"; mkdir -p "$V5VG/hooks"; cp "$V5V/hooks/run-hook.sh" "$V5V/hooks/cct-session.sh" "$V5VG/hooks/"
-printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec bash .*"\$f.* deny-secret-reads$' | head -1)" > "$V5VG/hooks/hooks.json"
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$(printf '%s\n' "$V5RAW" | grep 'exec .*BASH:-bash.*"\$f.* deny-secret-reads$' | head -1)" > "$V5VG/hooks/hooks.json"
 expect "v5 verify-hooks: closed-class inline-guard registration -> script missing reported" "MISSING: $V5VG/hooks/deny-secret-reads.sh" "$(v5vh_run CLAUDE_PLUGIN_ROOT="$V5VG")"
 expect "v5 verify-hooks: plugin root unset -> old behaviour (nothing scanned)" "" "$(v5vh_run)"
 expect "v5 verify-hooks: plugin root empty -> old behaviour (nothing scanned)" "" "$(v5vh_run CLAUDE_PLUGIN_ROOT=)"
@@ -12724,6 +12956,27 @@ fi
 expect "V462 drift: an untagged sha is not called released"   1 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'not a release tag$')"
 expect "V462 drift: an untagged sha never says released tree" 0 "$(v462_dl_ref "$(git -C "$ROOT" rev-parse HEAD)" | grep -c 'released tree$')"
 # ---- end v4.6.2 drift script
+
+# ---- v6.1 S3: the plugin registrations start the running bash, not whatever bash PATH finds first.
+# The REAL PreToolUse/Bash registration string from hooks/hooks.json runs against a scratch plugin root
+# whose dispatch.sh is a stub that prints a marker. (a) `sh -c`, BASH unset (dash: falls back to `bash`);
+# (b) the absolute bash with -c, BASH set to it, and a PATH holding no bash (a bare `exec bash` exits 127).
+S3_BASH=$(command -v bash)
+S3_ROOT="$TMPROOT/s3plugin"; mkdir -p "$S3_ROOT/hooks"
+printf '#!/bin/sh\necho S3-REACHED-DISPATCH "$1"\n' > "$S3_ROOT/hooks/dispatch.sh"
+# Parsed with awk/sed, not node: the parser matrix runs this suite with node off PATH. The command string
+# sits on the line after the Bash matcher; it holds only \" escapes (undone below).
+S3_CMD=$(awk 'f{print;exit} /"matcher": *"Bash"/{f=1}' "$ROOT/hooks/hooks.json" | sed -e 's/^.*"command": *"//' -e 's/", *"timeout".*$//' -e 's/\\"/"/g')
+S3_EMPTY="$TMPROOT/s3empty"; mkdir -p "$S3_EMPTY"
+if [ -z "$S3_CMD" ]; then
+  expect "S3 the Bash registration is readable from hooks.json" "a command" "none"
+else
+  expect "S3 (a) sh -c, BASH unset: the registration reaches dispatch.sh" "S3-REACHED-DISPATCH bash:rc=0" \
+    "$(env -u BASH CLAUDE_PLUGIN_ROOT="$S3_ROOT" sh -c "$S3_CMD" </dev/null 2>&1):rc=$?"
+  S3_OUT=$(env CLAUDE_PLUGIN_ROOT="$S3_ROOT" BASH="$S3_BASH" PATH="$S3_EMPTY" "$S3_BASH" -c "$S3_CMD" </dev/null 2>&1); S3_RC=$?
+  expect "S3 (b) bash -c, BASH set, PATH without bash: the registration reaches dispatch.sh" "S3-REACHED-DISPATCH bash:rc=0" "$S3_OUT:rc=$S3_RC"
+fi
+# ---- end v6.1 S3
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

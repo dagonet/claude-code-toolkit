@@ -1,0 +1,8 @@
+{
+  "name": "git-tools",
+  "version": "6.1.0",
+  "description": "MCP server for structured git status, diff, log and branch operations; started with uv (uvx) and drives the git CLI",
+  "author": { "name": "dagonet" },
+  "repository": "https://github.com/dagonet/mcp-dev-servers",
+  "license": "MIT"
+}

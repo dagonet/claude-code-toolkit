@@ -264,6 +264,63 @@ try {
     fi
   fi
 
+  # (b2) the dagonet sub-plugins (git-tools, github-tools, ...): optional, so one that is not installed is no
+  # line; one installed at a version other than VERSION is drift; one whose name is also a user-scope `claude mcp`
+  # server in ~/.claude.json is registered twice. Same parser chain as above; prints "<id> <scope> <version>"
+  # lines (installed_plugins.json) or "KEY <name>" lines (~/.claude.json mcpServers).
+  sub_query() { # subs|keys <file>
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' 2>/dev/null; then
+      python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[2], encoding="utf-8-sig"))
+    if sys.argv[1] == "subs":
+        for i, rs in d.get("plugins", {}).items():
+            if i.endswith("@dagonet") and i != "cct@dagonet":
+                for r in rs:
+                    print("%s %s %s" % (i, r.get("scope"), r.get("version")))
+    else:
+        for k in d.get("mcpServers", {}):
+            print("KEY " + k)
+except Exception:
+    pass' "$1" "$2"
+    elif command -v node >/dev/null 2>&1; then
+      node -e '
+try {
+  var d = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8").replace(/^\uFEFF/, ""));
+  if (process.argv[1] === "subs") {
+    Object.keys(d.plugins || {}).forEach(function (i) {
+      if (/@dagonet$/.test(i) && i !== "cct@dagonet") d.plugins[i].forEach(function (r) { console.log(i + " " + r.scope + " " + r.version); });
+    });
+  } else Object.keys(d.mcpServers || {}).forEach(function (k) { console.log("KEY " + k); });
+} catch (e) {}' "$1" "$2"
+    elif command -v jq >/dev/null 2>&1; then
+      if [ "$1" = subs ]; then
+        jq -r '.plugins | to_entries[] | select((.key | endswith("@dagonet")) and .key != "cct@dagonet") | .key as $i | .value[] | "\($i) \(.scope) \(.version)"' "$2" 2>/dev/null
+      else
+        jq -r '(.mcpServers // {}) | keys[] | "KEY " + .' "$2" 2>/dev/null
+      fi
+    fi
+  }
+  if [ -n "$want_ver" ] && [ -f "$ip" ]; then
+    sub_recs=$(sub_query subs "$ip")
+    while read -r sp_id sp_scope sp_ver; do
+      [ -n "$sp_id" ] || continue
+      if [ "$sp_ver" != "$want_ver" ]; then
+        drift=$((drift + 1))
+        drift_list="$drift_list
+  SUBPLUGIN DRIFT: $sp_id at $sp_scope scope is $sp_ver, not $want_ver (reinstall it: claude plugin install $sp_id)"
+      fi
+      if [ -f "$HOME/.claude.json" ] && sub_query keys "$HOME/.claude.json" | grep -qxF "KEY ${sp_id%@dagonet}"; then
+        drift=$((drift + 1))
+        drift_list="$drift_list
+  DRIFT: ${sp_id%@dagonet} registered twice (claude mcp and plugin)"
+      fi
+    done <<EOF
+$sub_recs
+EOF
+  fi
+
   # (c) no v4.x user-level leftover
   n_left=0
   # A dollar-quoted CR here is refused by the gates when this script is typed

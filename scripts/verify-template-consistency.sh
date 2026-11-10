@@ -4721,7 +4721,7 @@ c71_cmp() { # <label> <got> <want>
 # The plugin-only rows have no frozen-table counterpart.
 C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
 const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session)\.sh"( end)?$/;
-const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";
+const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";
 const DP=GP.replace("run-hook.sh","dispatch.sh");
 for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const dm=c.startsWith(DP)&&/^(bash|powershell)$/.test(c.slice(DP.length))?"dispatch:"+c.slice(DP.length):null;const gm=dm||(c.startsWith(GP)&&/^[a-z-]+$/.test(c.slice(GP.length))?c.slice(GP.length):null);const r=gm?null:(RH.exec(c)||CS.exec(c));out.push([ev,g.matcher||"",gm||(r?r[1]:"OTHER"),gm?"G":"B"].join(";"));}
 if(out.length)console.log(out.join("\n"))'
@@ -4739,7 +4739,8 @@ c71_rows() { c71_px "$1" | cut -d';' -f1-3 | c71_flat "${2:-hooks/dispatch.sh}" 
 C71_PLUGIN_ONLY='SessionStart;;cct-session
 SessionEnd;;cct-session
 SessionStart;;jev-notice
-PreToolUse;Agent;jev-route'
+PreToolUse;Agent;jev-route
+PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge'
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
@@ -4869,7 +4870,7 @@ else
   else
     ko "check 71 control (hook-class.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
   fi
-  node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec bash \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"deny-secret-reads"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
+  node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"deny-secret-reads"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
   if [ -n "$(c71_shapes "$c71_tmp/bare-closed.json" "$c71_rh")" ]; then
     ok "check 71 control (closed hook registered bare): the shape comparison flags deny-secret-reads (a run-hook registration; the dispatcher's preamble is pinned by the row comparison)"
   else
@@ -4965,12 +4966,32 @@ rm -f "$c68_tmp"
 # Check 72 (v5.0): plugin.json version equals VERSION (F5: a machine updates only on a version change)
 # ---------------------------------------------------------------------------
 c72_want=$(head -1 VERSION | tr -d '\r')
-c72_got=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").version||""))' 2>/dev/null)
+# prints "<manifest count>|<count whose version is wrong>" for the tree rooted at $1
+c72_eval() {
+  node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1],want=process.argv[2];
+const files=[path.join(r,".claude-plugin/plugin.json")];
+const pd=path.join(r,"plugins");
+if(fs.existsSync(pd))for(const d of fs.readdirSync(pd).sort()){const f=path.join(pd,d,".claude-plugin/plugin.json");if(fs.existsSync(f))files.push(f);}
+let bad=0;
+for(const f of files){try{const j=JSON.parse(fs.readFileSync(f,"utf8"));if(j.version!==want)bad++;}catch(e){bad++;}}
+process.stdout.write(files.length+"|"+bad);' "$1" "$c72_want" 2>/dev/null
+}
+c72_tmp=$(mktemp -d)
+mkdir -p "$c72_tmp/.claude-plugin"
+cp .claude-plugin/plugin.json "$c72_tmp/.claude-plugin/"
+[ -d plugins ] && cp -r plugins "$c72_tmp/"
+c72_first=$(ls "$c72_tmp"/plugins/*/.claude-plugin/plugin.json 2>/dev/null | head -1)
+[ -n "$c72_first" ] && sed -i 's/"version": *"[^"]*"/"version": "0.0.0-fixture"/' "$c72_first"
+c72_ctl=$(c72_eval "$c72_tmp")
+rm -rf "$c72_tmp"
+c72_real=$(c72_eval .)
 c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
-if [ -n "$c72_want" ] && [ "$c72_got" = "$c72_want" ] && [ "$c72_name" = "cct" ]; then
-  ok "72: .claude-plugin/plugin.json is cct at version $c72_want (= VERSION)"
+if [ -z "$c72_first" ] || [ "${c72_ctl#*|}" = "0" ]; then
+  ko "72: CONTROL failed (one sub-plugin at a version other than VERSION was not flagged; fixture '$c72_ctl')"
+elif [ -n "$c72_want" ] && [ "$c72_real" = "7|0" ] && [ "$c72_name" = "cct" ]; then
+  ok "72: cct plus 6 sub-plugin plugin.json files all carry version $c72_want (= VERSION); control fires"
 else
-  ko "72: .claude-plugin/plugin.json must name cct at version '$c72_want' (VERSION); got name '$c72_name' version '$c72_got'"
+  ko "72: expected 7 plugin.json (cct + 6 sub-plugins) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5083,6 +5104,125 @@ if [ "$c78_n" -ne 6 ]; then ko "78: expected 6 variant .gitattributes, found $c7
 elif [ -n "$c78_bad" ]; then ko "78: .gitattributes does not end with the BEGIN/END marker pair in:$c78_bad"
 elif [ "$c78_uniq" -ne 1 ]; then ko "78: the six variant .gitattributes are not byte-identical"
 else ok "78: all 6 variant .gitattributes end with the PROJECT-CUSTOM marker pair and are byte-identical"; fi
+
+# ---------------------------------------------------------------------------
+# Check 79 (v6.1 S3): no hooks.json registration starts a bare
+# 'exec bash ' (it must be exec "${BASH:-bash}": the bash that is running the hook, not a PATH lookup).
+# Two-sided: a copy of hooks.json with one bare 'exec bash' must be flagged; the real file must not be.
+# ---------------------------------------------------------------------------
+c79_tmp=$(mktemp -d)
+{ cat hooks/hooks.json; echo '"command": "f=x; exec bash \"$f\" y"'; } > "$c79_tmp/hooks.json"
+c79_ctl=$(grep -c 'exec bash ' "$c79_tmp/hooks.json")
+c79_real=$(grep -c 'exec bash ' hooks/hooks.json)
+rm -rf "$c79_tmp"
+if [ "$c79_ctl" -lt 1 ]; then ko "79: CONTROL failed (a copy with a bare 'exec bash' was not flagged)"
+elif [ "$c79_real" -ne 0 ]; then ko "79: $c79_real hooks.json registration(s) start a bare 'exec bash '"
+else ok "79: no hooks.json registration starts a bare 'exec bash '"; fi
+
+# ---------------------------------------------------------------------------
+# Check 80 (v6.1): every plugins/*/.mcp.json pins ONE tagged mcp-dev-servers commit (v0.4.0), runs it with uvx,
+# names its own script, is listed in the marketplace at ./plugins/<dir>, and its plugin.json description names uv.
+# Two-sided: fixtures with a wrong SHA, a wrong script name and a description without uv must each be flagged.
+# ---------------------------------------------------------------------------
+C80_SHA=0a20b97dd42733c629e369e16f4e79af81f93d47
+# prints the plugin count, then one line per problem, for the tree rooted at $1
+c80_eval() {
+  node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1],sha=process.argv[2];
+const pd=path.join(r,"plugins");const dirs=fs.existsSync(pd)?fs.readdirSync(pd).sort():[];
+let mk={plugins:[]};try{mk=JSON.parse(fs.readFileSync(path.join(r,".claude-plugin/marketplace.json"),"utf8"));}catch(e){}
+const out=[];
+for(const d of dirs){
+  try{
+    const m=JSON.parse(fs.readFileSync(path.join(pd,d,".mcp.json"),"utf8")).mcpServers[d];
+    if(!m||m.command!=="uvx")out.push(d+": command is not uvx");
+    else{const a=m.args||[];
+      if(!String(a[1]||"").endsWith("@"+sha))out.push(d+": args[1] does not end @"+sha);
+      if(a[2]!=="mcp-"+d)out.push(d+": args[2] is not mcp-"+d);}
+    const desc=JSON.parse(fs.readFileSync(path.join(pd,d,".claude-plugin/plugin.json"),"utf8")).description||"";
+    if(!/\buv\b/.test(desc))out.push(d+": plugin.json description does not name uv");
+  }catch(e){out.push(d+": unreadable ("+e.message+")");}
+  const e=(mk.plugins||[]).filter(x=>x.name===d&&x.source==="./plugins/"+d);
+  if(e.length!==1)out.push(d+": marketplace lacks source ./plugins/"+d);
+}
+process.stdout.write(dirs.length+"\n"+out.join("\n"));' "$1" "$C80_SHA" 2>/dev/null
+}
+c80_real=$(c80_eval .)
+c80_n=$(printf '%s\n' "$c80_real" | head -1)
+c80_probs=$(printf '%s\n' "$c80_real" | tail -n +2)
+c80_tmp=$(mktemp -d)
+c80_ctl_ok=1
+c80_first=$(ls plugins 2>/dev/null | head -1)
+if [ -z "$c80_first" ]; then c80_ctl_ok=0; else
+  for c80_mut in sha name desc; do
+    rm -rf "$c80_tmp/t"; mkdir -p "$c80_tmp/t/.claude-plugin"
+    cp .claude-plugin/marketplace.json "$c80_tmp/t/.claude-plugin/"; cp -r plugins "$c80_tmp/t/"
+    case $c80_mut in
+      sha)  sed -i "s/$C80_SHA/ffffffffffffffffffffffffffffffffffffffff/" "$c80_tmp/t/plugins/$c80_first/.mcp.json" ;;
+      name) sed -i "s/\"mcp-$c80_first\"/\"mcp-wrong\"/" "$c80_tmp/t/plugins/$c80_first/.mcp.json" ;;
+      desc) sed -i 's/"description": *"[^"]*"/"description": "no package runner named here"/' "$c80_tmp/t/plugins/$c80_first/.claude-plugin/plugin.json" ;;
+    esac
+    [ -n "$(c80_eval "$c80_tmp/t" | tail -n +2)" ] || c80_ctl_ok=0
+  done
+fi
+rm -rf "$c80_tmp"
+if [ "$c80_ctl_ok" -ne 1 ]; then ko "80: CONTROL failed (a wrong SHA, a wrong script name or a description without uv was not flagged, or no plugins exist)"
+elif [ "$c80_n" -ne 6 ]; then ko "80: expected 6 plugins/*, found $c80_n"
+elif [ -n "$c80_probs" ]; then ko "80: sub-plugin pin problems: $(printf '%s' "$c80_probs" | tr '\n' ';')"
+else ok "80: all 6 sub-plugins run uvx pinned to mcp-dev-servers@${C80_SHA:0:7}, own script, listed in the marketplace, description names uv; controls fire"; fi
+
+# ---------------------------------------------------------------------------
+# 81: every mcp-dev-servers tool rule has its plugin-form twin. The six servers also ship as plugins
+# whose tools are named mcp__plugin_<n>_<n>__X; a rule that names only one form silently misses the other.
+# Unit = one matcher string | one permissions list (allow, deny separately) | one agent `tools:` line.
+# In each unit the old-form and plugin-form names occur together, or neither does.
+# Two-sided: an allow-only twin, a deny-only twin, a matcher and a tools: line without the twin must each be flagged.
+# ---------------------------------------------------------------------------
+c81_eval() {
+  node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1];const out=[];
+const N="(git|github|dotnet|ollama|rust|python)";
+const oldRe=new RegExp("^mcp__"+N+"-tools__(.+)$"),newRe=new RegExp("^mcp__plugin_"+N+"-tools_"+N+"-tools__(.+)$");
+function unit(label,items){const o=new Set(),n=new Set();
+  for(const raw of items){const s=String(raw).trim();let m=s.match(oldRe);if(m)o.add(m[1]+"/"+m[2]);
+    m=s.match(newRe);if(m&&m[1]===m[2])n.add(m[1]+"/"+m[3]);}
+  for(const k of o)if(!n.has(k))out.push(label+": "+k+" lacks its plugin-form twin");
+  for(const k of n)if(!o.has(k))out.push(label+": "+k+" lacks its old-form twin");}
+function rd(f){try{return JSON.parse(fs.readFileSync(path.join(r,f),"utf8"));}catch(e){out.push(f+": unreadable");return null;}}
+function settings(f){const j=rd(f);if(!j)return;
+  for(const k of ["allow","deny"])if(j.permissions&&j.permissions[k])unit(f+" "+k,j.permissions[k]);
+  for(const ev of Object.values(j.hooks||{}))for(const e of ev)if(e.matcher)unit(f+" matcher",e.matcher.split("|"));}
+settings(".claude/settings.json");settings("user-level-reference/settings.json");
+const td=path.join(r,"templates");if(fs.existsSync(td))for(const v of fs.readdirSync(td).sort())if(fs.existsSync(path.join(td,v,".claude/settings.json")))settings("templates/"+v+"/.claude/settings.json");
+const hj=rd("hooks/hooks.json");
+if(hj)for(const ev of Object.values(hj.hooks||{}))for(const e of ev)if(e.matcher)unit("hooks/hooks.json matcher",e.matcher.split("|"));
+const ad=path.join(r,"agents");if(fs.existsSync(ad))for(const f of fs.readdirSync(ad).sort()){
+  const m=fs.readFileSync(path.join(ad,f),"utf8").match(/^tools:(.*)$/m);if(m)unit("agents/"+f+" tools",m[1].split(","));}
+process.stdout.write(out.join("\n"));' "$1" 2>/dev/null
+}
+c81_real=$(c81_eval .)
+c81_tmp=$(mktemp -d)
+c81_ctl_ok=1
+for c81_mut in none allow deny matcher tools; do
+  rm -rf "$c81_tmp/t"; mkdir -p "$c81_tmp/t/.claude" "$c81_tmp/t/hooks" "$c81_tmp/t/agents"
+  cp .claude/settings.json "$c81_tmp/t/.claude/"; cp hooks/hooks.json "$c81_tmp/t/hooks/"; cp agents/coder.md "$c81_tmp/t/agents/"
+  mkdir -p "$c81_tmp/t/user-level-reference"; cp user-level-reference/settings.json "$c81_tmp/t/user-level-reference/"
+  mkdir -p "$c81_tmp/t/templates/general/.claude"; cp templates/general/.claude/settings.json "$c81_tmp/t/templates/general/.claude/"
+  case $c81_mut in
+    allow)   sed -i '/"mcp__plugin_github-tools_github-tools__\*"/d' "$c81_tmp/t/user-level-reference/settings.json" ;;
+    deny)    sed -i '/"mcp__plugin_git-tools_git-tools__git_push"/d' "$c81_tmp/t/templates/general/.claude/settings.json" ;;
+    matcher) sed -i 's/|mcp__plugin_github-tools_github-tools__github_pr_auto_merge//' "$c81_tmp/t/hooks/hooks.json" ;;
+    tools)   sed -i '/^tools:/s/, mcp__plugin_github-tools_github-tools__gh_repo_from_origin//' "$c81_tmp/t/agents/coder.md" ;;
+  esac
+  c81_out=$(c81_eval "$c81_tmp/t")
+  if [ "$c81_mut" = none ]; then
+    [ -z "$c81_out" ] || { c81_ctl_ok=0; echo "  81: the unmutated fixture reported: $c81_out" >&2; }
+  else
+    case $c81_out in *"lacks its"*) ;; *) c81_ctl_ok=0; echo "  81: control '$c81_mut' was not flagged for the right reason: $c81_out" >&2 ;; esac
+  fi
+done
+rm -rf "$c81_tmp"
+if [ "$c81_ctl_ok" -ne 1 ]; then ko "81: CONTROL failed (an allow-only, deny-only, matcher or tools: mutation was not flagged)"
+elif [ -n "$c81_real" ]; then ko "81: rules without their twin: $(printf '%s' "$c81_real" | tr '\n' ';')"
+else ok "81: every mcp-dev-servers tool rule has its plugin-form twin; controls fire"; fi
 
 # ---------------------------------------------------------------------------
 echo

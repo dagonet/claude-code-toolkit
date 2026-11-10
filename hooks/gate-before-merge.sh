@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse hook: block PR merge/auto-merge without a fresh gate artifact
-# Matcher: the Bash and PowerShell dispatcher tables (hooks/dispatch.sh; v6.0), plus its own registration for mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge
+# Matcher: the Bash and PowerShell dispatcher tables (hooks/dispatch.sh; v6.0), plus its own registration for mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge|mcp__plugin_github-tools_github-tools__github_pr_auto_merge
 #
 # v2.0: `gh pr merge`, a `git merge` while on main/master, and a push that
 # targets main/master (fast-forward merge by push) are gated too, because the

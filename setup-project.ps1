@@ -206,12 +206,9 @@ function Resolve-CallerPath {
 if ($McpDevServersPath) { $McpDevServersPath = Resolve-CallerPath $McpDevServersPath }
 if ($SqliteDbPath)      { $SqliteDbPath      = Resolve-CallerPath $SqliteDbPath }
 
-# Warn if a variant needs -McpDevServersPath but it's missing
-if ($Variant -in @("dotnet", "dotnet-maui") -and -not $McpDevServersPath) {
-    $warnings += "-McpDevServersPath not set - project-level dotnet-tools MCP entry will be skipped"
-}
-if ($Variant -eq "rust-tauri" -and -not $McpDevServersPath) {
-    $warnings += "-McpDevServersPath not set - project-level rust-tools MCP entry will be skipped"
+# v6.1: the .NET and Rust servers are plugins now; the old flag is accepted and ignored.
+if ($McpDevServersPath) {
+    $warnings += "--mcp-dev-servers-path is ignored since v6.1: the .NET and Rust servers are plugins now"
 }
 
 # --- v4.0: resolve the toolkit's OWN template-sync exe (ruling R2) ---------
@@ -481,16 +478,6 @@ function Get-ContentHash {
 function Build-ProjectMcpJson {
     $mcpServers = [ordered]@{}
 
-    if ($Variant -in @("dotnet", "dotnet-maui") -and $McpDevServersPath) {
-        $mcpServers['dotnet-tools'] = [ordered]@{
-            command = ($McpDevServersPath.TrimEnd('\','/') + "/.venv/Scripts/mcp-dotnet-tools.exe")
-        }
-    }
-    if ($Variant -eq "rust-tauri" -and $McpDevServersPath) {
-        $mcpServers['rust-tools'] = [ordered]@{
-            command = ($McpDevServersPath.TrimEnd('\','/') + "/.venv/Scripts/mcp-rust-tools.exe")
-        }
-    }
     if ($Variant -in @("dotnet-maui", "rust-tauri")) {
         $mcpServers['windows-mcp'] = [ordered]@{
             command = "uvx"
@@ -1324,6 +1311,32 @@ if ($mcpJsonContent) {
     else {
         Write-Utf8NoBom -Path $mcpJsonPath -Content $mcpJsonContent
         Write-Host "  [+] .mcp.json (generated at repo root)" -ForegroundColor Green
+    }
+}
+
+# --- v6.1: enable the .NET / Rust server plugin for THIS clone, only when installed ---
+# Detection fails toward the tip, never toward enabling. Local scope writes the
+# gitignored .claude/settings.local.json.
+$srvPlugin = $null; $srvWhat = $null
+if ($Variant -in @("dotnet", "dotnet-maui")) { $srvPlugin = "dotnet-tools"; $srvWhat = ".NET build/test tools" }
+elseif ($Variant -eq "rust-tauri")           { $srvPlugin = "rust-tools";   $srvWhat = "Rust build/test tools" }
+if ($srvPlugin) {
+    $srvEnabled = $false
+    if (Get-Command claude -ErrorAction SilentlyContinue) {
+        try {
+            $srvList = (& claude plugin list 2>$null) -join "`n"
+            if ($srvList -like "*$srvPlugin@dagonet*") {
+                Push-Location $TargetDir
+                try { & claude plugin enable "$srvPlugin@dagonet" --scope local *> $null; $srvEnabled = ($LASTEXITCODE -eq 0) }
+                finally { Pop-Location }
+            }
+        } catch { $srvEnabled = $false }
+    }
+    if ($srvEnabled) {
+        Write-Host "  [+] $srvPlugin@dagonet enabled for this clone (local scope)" -ForegroundColor Green
+    }
+    else {
+        Write-Host "Tip: claude plugin install $srvPlugin@dagonet adds $srvWhat (needs uv)."
     }
 }
 

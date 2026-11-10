@@ -78,7 +78,7 @@ Without `node`, six hooks do nothing: delegation, read-size capping, the Bash-ou
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 
 ```
-/plugin marketplace add dagonet/claude-code-toolkit#v6.0.0
+/plugin marketplace add dagonet/claude-code-toolkit#v6.1.0
 /plugin install cct@dagonet
 ```
 
@@ -89,7 +89,8 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
 - **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup.
 - **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
 - **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
-  `claude plugin marketplace add dagonet/claude-code-toolkit#v6.0.0 && claude plugin install cct@dagonet`
+  `claude plugin marketplace add dagonet/claude-code-toolkit#v6.1.0 && claude plugin install cct@dagonet`
+  To add MCP server plugins (next section), install `uv` first and append `&& claude plugin install <name>@dagonet` for each. `uv` is present in cloud sessions, and PyPI and GitHub are reachable from them.
 - **Moving to a new release:** a pinned install does not advance by itself: `claude plugin marketplace update` and `claude plugin update cct@dagonet` leave it where it is.
   Run `claude plugin marketplace remove dagonet` (this uninstalls `cct` too), add the new `#tag` the same way, run `claude plugin install cct@dagonet`
   (on Linux: pull the checkout, then run the installer). Pull your toolkit checkout to the same tag, then restart every session before the next `/cct:sync-template`.
@@ -97,6 +98,31 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
 - A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.
 
 The CHANGELOG has the migration notes for every release, on Linux and Windows alike.
+
+## MCP server plugins
+
+Since v6.1 the [mcp-dev-servers](https://github.com/dagonet/mcp-dev-servers) ship in the same marketplace as six separate plugins.
+Each is optional and works alone, without `cct`. Nothing is installed or enabled by default.
+You need [`uv`](https://docs.astral.sh/uv/) on your PATH (the servers start with `uvx`) and the CLI the server drives:
+
+| Install | Needs |
+|---|---|
+| `claude plugin install git-tools@dagonet` | `git` |
+| `claude plugin install github-tools@dagonet` | `gh`, installed and logged in |
+| `claude plugin install dotnet-tools@dagonet` | the .NET SDK |
+| `claude plugin install ollama-tools@dagonet` | a running [Ollama](https://ollama.com) (URL and models have defaults; set them with `claude plugin configure ollama-tools@dagonet` or `--config KEY=VALUE` at install) |
+| `claude plugin install rust-tools@dagonet` | `cargo` (rustup) |
+| `claude plugin install python-tools@dagonet` | `uv`, `pytest`, `ruff`, `coverage` in the project environment; Python 3.11+ |
+
+Once, after installing, warm the `uvx` cache so the first session does not wait on the download (a cold start on Windows took about 10 s, close to the MCP connect timeout):
+`uvx --from "mcp-dev-servers @ git+https://github.com/dagonet/mcp-dev-servers@0a20b97dd42733c629e369e16f4e79af81f93d47" mcp-git-tools </dev/null`
+
+**Where a server is on.** `claude plugin install` enables the plugin for you in every project (user scope). To have a server in some projects only, install it, switch it off at user scope (`claude plugin disable <name>@dagonet`), and enable it per clone with `claude plugin enable <name>@dagonet --scope local`. That writes the gitignored `.claude/settings.local.json`, so it stays personal. For the `dotnet` and `rust-tauri` templates, `setup-project` does the local enable for you when the plugin is installed.
+
+**Cost.** An enabled server starts with every session and holds about 15-27 MB of memory.
+
+**Platforms.** Linux and Windows are measured. macOS: expected to work, untested.
+Upgrading from a manual install (`claude mcp add`, or a `.mcp.json` entry): see [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md), or the server runs twice.
 
 ## Start a project
 
