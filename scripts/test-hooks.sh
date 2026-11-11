@@ -11697,6 +11697,26 @@ if [ "$(uname -s)" = "Linux" ]; then
   rm -f "$DL_H/.claude.json"
   dl_plugins "$DL_VER"
   expect "DL13 no sub-plugin installed: exit 0" 0 "$(dl_rc)"
+  # DL14 (v6.1 fix): Windows python3 writes CRLF. A shim that appends CR to python3's output stands in for it:
+  # every record but the last kept its CR, so cct and the sub-plugins read as drift although current, and the
+  # "registered twice" grep never matched (fail-open). The user-scope cct record sits first on purpose.
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' 2>/dev/null; then
+    DL_CR="$TMPROOT/dl-crlf"; mkdir -p "$DL_CR"
+    printf '#!/usr/bin/env bash\n"%s" "$@" | sed "s/\\$/\\r/"\n' "$(command -v python3)" > "$DL_CR/python3"; chmod +x "$DL_CR/python3"
+    dl_cr_run() { PATH="$DL_CR:$PATH" HOME="$DL_H" bash "$ROOT/scripts/verify-user-level-drift.sh" --worktree 2>&1; }
+    dl_cr_rc() { PATH="$DL_CR:$PATH" HOME="$DL_H" bash "$ROOT/scripts/verify-user-level-drift.sh" --worktree >/dev/null 2>&1; echo $?; }
+    expect "DL14 the shim's python3 writes CR" 1 "$(PATH="$DL_CR:$PATH" python3 -c 'print(1)' | grep -c "$(printf '\r')")"
+    printf '{"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"%s"},{"scope":"project","version":"%s","projectPath":"/x"}],"github-tools@dagonet":[{"scope":"user","version":"%s"}],"ollama-tools@dagonet":[{"scope":"user","version":"%s"}]}}\n' \
+      "$DL_VER" "$DL_VER" "$DL_VER" "$DL_VER" > "$DL_H/.claude/plugins/installed_plugins.json"
+    expect "DL14 CRLF python3, all current: exit 0" 0 "$(dl_cr_rc)"
+    printf '{"mcpServers":{"github-tools":{"command":"uvx"},"mine":{"command":"x"}}}\n' > "$DL_H/.claude.json"
+    expect "DL14 CRLF python3, a shadowing key: exit 1" 1 "$(dl_cr_rc)"
+    expect "DL14 ... names it" 1 "$(dl_cr_run | grep -c '^  DRIFT: github-tools registered twice (claude mcp and plugin)$')"
+    rm -f "$DL_H/.claude.json"
+    dl_plugins "$DL_VER"
+  else
+    skip "DL14 CRLF python3 output (drift probe parsers)" "needs python3" 4
+  fi
   # DL7 linux_check_rendered, the installer's two post-checks (one function, shared)
   dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
   printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
@@ -11744,7 +11764,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     skip_host "DL10 older tag falls back to the raw comparison" "tag v4.6.0 absent or already carries linux-render.sh" 2
   fi
 else
-  skip_host "DL1-12 drift script (Linux rendering, plugin, leftovers, stale registration)" "not a Linux host" 40
+  skip_host "DL1-14 drift script (Linux rendering, plugin, sub-plugins, leftovers, stale registration, CRLF)" "not a Linux host" 52
 fi
 # ---- end v5.0 drift
 # ---- v5.0: install-user-level-linux.sh never removes anything before cct@dagonet is installed

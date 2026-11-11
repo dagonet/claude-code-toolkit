@@ -244,13 +244,15 @@ try {
     drift_list="$drift_list
   PLUGIN MISSING: $ip not found (cct@dagonet is not installed; want $want_ver)"
   else
-    recs=$(plugin_records "$ip")
+    # Windows python3 writes CRLF: every read of a parser's output strips CR (the records would never equal
+    # "user <VERSION>", and the "registered twice" grep below would never match).
+    recs=$(plugin_records "$ip" | tr -d '\r')
     if [ "$recs" = "NO-PARSER" ]; then
       drift=$((drift + 1))
       drift_list="$drift_list
   CANNOT READ $ip: no python3, node or jq"
     elif printf '%s\n' "$recs" | grep -qxF "user $want_ver"; then
-      if [ "$(plugin_enabled "$LIVE_SETTINGS")" = true ]; then
+      if [ "$(plugin_enabled "$LIVE_SETTINGS" | tr -d '\r')" = true ]; then
         echo "PLUGIN: cct@dagonet $want_ver (user scope, enabled)"
       else
         drift=$((drift + 1))
@@ -303,7 +305,7 @@ try {
     fi
   }
   if [ -n "$want_ver" ] && [ -f "$ip" ]; then
-    sub_recs=$(sub_query subs "$ip")
+    sub_recs=$(sub_query subs "$ip" | tr -d '\r')
     while read -r sp_id sp_scope sp_ver; do
       [ -n "$sp_id" ] || continue
       if [ "$sp_ver" != "$want_ver" ]; then
@@ -311,7 +313,7 @@ try {
         drift_list="$drift_list
   SUBPLUGIN DRIFT: $sp_id at $sp_scope scope is $sp_ver, not $want_ver (reinstall it: claude plugin install $sp_id)"
       fi
-      if [ -f "$HOME/.claude.json" ] && sub_query keys "$HOME/.claude.json" | grep -qxF "KEY ${sp_id%@dagonet}"; then
+      if [ -f "$HOME/.claude.json" ] && sub_query keys "$HOME/.claude.json" | tr -d '\r' | grep -qxF "KEY ${sp_id%@dagonet}"; then
         drift=$((drift + 1))
         drift_list="$drift_list
   DRIFT: ${sp_id%@dagonet} registered twice (claude mcp and plugin)"
