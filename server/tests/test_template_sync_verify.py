@@ -1418,6 +1418,16 @@ def test_project_hooks_info_line_none(tmp_path):
     assert line["expected"] == "n/a (informational)"
 
 
+def test_project_hooks_info_line_status_error(tmp_path, monkeypatch):
+    repo, proj = _settings_fixture(tmp_path, None)
+    monkeypatch.setattr(v3, "compute_status_v3", lambda *a, **k: {"error": "boom"})
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["project_hooks"]
+    assert line["status"] == "INFO"
+    assert line["measured"] == "cannot compute -- boom"
+    assert "project_hooks" not in _only_fail(res)   # an INFO line never contributes to ok
+
+
 def _notes_changed_fixture(tmp_path):
     repo, proj, old_commit = _good_fixture(tmp_path)
     tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
