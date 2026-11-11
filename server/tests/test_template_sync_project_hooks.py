@@ -1,0 +1,258 @@
+"""Project-owned hook handlers in a template-owned .claude/settings.json (#30).
+
+A settings.json that is "the template plus the project's own hook handlers"
+must not read LOCAL_EDITED; every near miss must.
+"""
+
+import copy
+import json
+import subprocess
+
+import pytest
+
+from template_sync import mcp as ts
+from test_template_sync_v3_status import _REGION, _mk_v3, _status, _tpl_entry
+
+SETTINGS = ".claude/settings.json"
+TOOLKIT_HANDLER = {"type": "command", "command": "bash hooks/no-push-main.sh"}
+TPL = {
+    "permissions": {"allow": ["Read"]},
+    "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [copy.deepcopy(TOOLKIT_HANDLER)]}]},
+}
+H = {"type": "command", "command": "bash hooks/seal-grep-guard.sh"}
+
+
+def dumps(obj) -> str:
+    return json.dumps(obj, indent=2) + "\n"
+
+
+def with_handler(handler=H, event="PreToolUse", base=TPL):
+    """`base` with `handler` appended to the first group of `event`."""
+    obj = copy.deepcopy(base)
+    obj["hooks"][event][0]["hooks"].append(copy.deepcopy(handler))
+    return obj
+
+
+def mk(tmp_path, project_obj, *, toolkit_scripts=("no-push-main.sh",),
+       project_scripts=("seal-grep-guard.sh",), tpl_obj=TPL, project_text=None):
+    repo, proj = _mk_v3(
+        tmp_path,
+        template={SETTINGS: dumps(tpl_obj)},
+        project={SETTINGS: project_text if project_text is not None else dumps(project_obj)},
+        entries={SETTINGS: _tpl_entry(dumps(tpl_obj))},
+    )
+    for name in toolkit_scripts:
+        (repo / "hooks").mkdir(exist_ok=True)
+        (repo / "hooks" / name).write_text("#!/bin/bash\n", encoding="utf-8")
+    for name in project_scripts:
+        (proj / "hooks").mkdir(exist_ok=True)
+        (proj / "hooks" / name).write_text("#!/bin/bash\n", encoding="utf-8")
+    return repo, proj
+
+
+def info_of(proj) -> dict:
+    return _status(proj)["files"][SETTINGS]
+
+
+def assert_local_edited(info: dict) -> None:
+    assert info["status"] == "LOCAL_EDITED"
+    assert "project_hooks" not in info
+    assert "local_diff_kind" in info
+
+
+def test_project_handler_reads_identical(tmp_path):
+    _, proj = mk(tmp_path, with_handler())
+    result = _status(proj)
+    info = result["files"][SETTINGS]
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+    assert "local_diff" not in info
+    assert "local_diff_kind" not in info
+    assert result["summary"]["local_edited"] == 0
+
+
+def test_project_handler_new_group_reads_identical(tmp_path):
+    obj = copy.deepcopy(TPL)
+    obj["hooks"]["PreToolUse"].append({"matcher": "Edit", "hooks": [copy.deepcopy(H)]})
+    _, proj = mk(tmp_path, obj)
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == ["PreToolUse Edit bash hooks/seal-grep-guard.sh"]
+
+
+def test_template_moved_reads_template_updated(tmp_path):
+    old_tpl = TPL
+    new_tpl = copy.deepcopy(TPL)
+    new_tpl["permissions"]["allow"].append("Grep")
+    repo, proj = mk(tmp_path, with_handler(base=old_tpl), tpl_obj=old_tpl)
+    # the repo gets a commit holding the template at sync, then the template moves on
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q"], cwd=str(repo), check=True, capture_output=True)
+    subprocess.run([*git, "add", "-A"], cwd=str(repo), check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-q", "-m", "at sync"], cwd=str(repo), check=True, capture_output=True)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), check=True,
+                          capture_output=True, text=True).stdout.strip()
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["template_commit"] = head
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    tpl_file = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, SETTINGS)
+    tpl_file.write_text(dumps(new_tpl), encoding="utf-8")
+    info = info_of(proj)
+    assert info["status"] == "TEMPLATE_UPDATED"
+    assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+    assert "local_diff" not in info
+
+
+@pytest.mark.parametrize("command", [
+    "bash  hooks/seal-grep-guard.sh",
+    "bash hooks/seal-grep-guard.sh arg",
+    "bash hooks/seal-grep-guard.sh; rm -rf x",
+    "bash hooks/seal-grep-guard.sh && true",
+    "bash hooks/seal-grep-guard.sh | cat",
+    "bash hooks/../hooks/seal-grep-guard.sh",
+    "bash hooks/../seal-grep-guard.sh",
+    'bash "$HOME/hooks/seal-grep-guard.sh"',
+    "bash $HOME/hooks/seal-grep-guard.sh",
+    "bash /abs/hooks/seal-grep-guard.sh",
+    'bash "$CLAUDE_PROJECT_DIR/hooks/seal-grep-guard.sh',
+    'bash $CLAUDE_PROJECT_DIR/hooks/seal-grep-guard.sh',
+    'bash "$CLAUDE_PROJECT_DIR"/hooks/seal-grep-guard.sh',
+    '"$CLAUDE_PROJECT_DIR/hooks/seal-grep-guard.sh"',
+    "bash hooks/seal-grep-guard.sh\n",
+    "bash hooks/seal-grep-guard.SH",
+    "sh hooks/seal-grep-guard.sh",
+])
+def test_grammar_rejects_near_misses(tmp_path, command):
+    _, proj = mk(tmp_path, with_handler({"type": "command", "command": command}))
+    assert_local_edited(info_of(proj))
+
+
+def test_handler_with_args_stays_local_edited(tmp_path):
+    handler = {"type": "command", "command": "bash hooks/seal-grep-guard.sh", "args": ["x"]}
+    _, proj = mk(tmp_path, with_handler(handler))
+    assert_local_edited(info_of(proj))
+
+
+def test_non_command_type_stays_local_edited(tmp_path):
+    handler = {"type": "prompt", "command": "bash hooks/seal-grep-guard.sh"}
+    _, proj = mk(tmp_path, with_handler(handler))
+    assert_local_edited(info_of(proj))
+
+
+@pytest.mark.parametrize("command", [
+    "bash hooks/seal-grep-guard.sh",
+    'bash "$CLAUDE_PROJECT_DIR/hooks/seal-grep-guard.sh"',
+    '"$CLAUDE_PROJECT_DIR"/hooks/seal-grep-guard.sh',
+])
+def test_all_three_shapes_are_project_owned(tmp_path, command):
+    _, proj = mk(tmp_path, with_handler({"type": "command", "command": command}))
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == [f"PreToolUse Bash {command}"]
+
+
+def test_missing_script_stays_local_edited(tmp_path):
+    _, proj = mk(tmp_path, with_handler(), project_scripts=())
+    assert_local_edited(info_of(proj))
+
+
+def test_directory_in_place_of_script_stays_local_edited(tmp_path):
+    _, proj = mk(tmp_path, with_handler(), project_scripts=())
+    (proj / "hooks" / "seal-grep-guard.sh").mkdir(parents=True)
+    assert_local_edited(info_of(proj))
+
+
+def test_symlink_script_is_not_project_owned(tmp_path):
+    _, proj = mk(tmp_path, with_handler(), project_scripts=())
+    (proj / "hooks").mkdir(exist_ok=True)
+    (proj / "hooks" / "real.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    (proj / "hooks" / "seal-grep-guard.sh").symlink_to(proj / "hooks" / "real.sh")
+    assert_local_edited(info_of(proj))
+
+
+def test_toolkit_name_collision_stays_local_edited(tmp_path):
+    handler = {"type": "command", "command": "bash hooks/no-push-main.sh --x"}
+    _, proj = mk(tmp_path, with_handler(handler), project_scripts=("no-push-main.sh",))
+    assert_local_edited(info_of(proj))
+
+
+def test_toolkit_name_case_insensitive(tmp_path):
+    handler = {"type": "command", "command": "bash hooks/No-Push-Main.sh"}
+    _, proj = mk(tmp_path, with_handler(handler), project_scripts=("No-Push-Main.sh",))
+    assert_local_edited(info_of(proj))
+
+
+def test_template_handler_changed_stays_local_edited(tmp_path):
+    obj = copy.deepcopy(TPL)
+    obj["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = "bash hooks/no-push-main.sh --x"
+    _, proj = mk(tmp_path, obj)
+    assert_local_edited(info_of(proj))
+
+
+def test_permission_added_stays_local_edited(tmp_path):
+    obj = with_handler()
+    obj["permissions"]["allow"].append("Bash(ls)")
+    _, proj = mk(tmp_path, obj)
+    assert_local_edited(info_of(proj))
+
+
+def test_unreadable_toolkit_hooks_dir_fails_closed(tmp_path):
+    _, proj = mk(tmp_path, with_handler(), toolkit_scripts=())
+    assert_local_edited(info_of(proj))
+
+
+def test_not_json_stays_local_edited(tmp_path):
+    _, proj = mk(tmp_path, None, project_text="{ not json\n")
+    assert_local_edited(info_of(proj))
+
+
+def test_json_array_stays_local_edited(tmp_path):
+    _, proj = mk(tmp_path, None, project_text="[]\n")
+    assert_local_edited(info_of(proj))
+
+
+def test_two_events_listed_twice(tmp_path):
+    obj = with_handler()
+    obj["hooks"]["PostToolUse"] = [{"matcher": "Bash", "hooks": [copy.deepcopy(H)]}]
+    _, proj = mk(tmp_path, obj)
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == [
+        "PreToolUse Bash bash hooks/seal-grep-guard.sh",
+        "PostToolUse Bash bash hooks/seal-grep-guard.sh",
+    ]
+
+
+def test_matcherless_group_label_uses_none(tmp_path):
+    obj = copy.deepcopy(TPL)
+    obj["hooks"]["Stop"] = [{"hooks": [copy.deepcopy(H)]}]
+    _, proj = mk(tmp_path, obj)
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == ["Stop None bash hooks/seal-grep-guard.sh"]
+
+
+@pytest.mark.parametrize("bom", [False, True])
+def test_crlf_and_bom_project_file(tmp_path, bom):
+    text = dumps(with_handler()).replace("\n", "\r\n")
+    if bom:
+        text = "﻿" + text
+    _, proj = mk(tmp_path, None, project_text=text)
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+
+
+def test_other_paths_untouched(tmp_path):
+    body = "# Toolkit\n" + _REGION
+    _, proj = _mk_v3(
+        tmp_path,
+        template={"CLAUDE.md": body},
+        project={"CLAUDE.md": "# Toolkit\nextra line\n" + _REGION},
+        entries={"CLAUDE.md": _tpl_entry(body)},
+    )
+    info = _status(proj)["files"]["CLAUDE.md"]
+    assert info["status"] == "LOCAL_EDITED"
+    assert "local_diff_kind" in info
+    assert "project_hooks" not in info

@@ -16,6 +16,7 @@ import pathlib
 import re
 
 from . import mcp as core
+from . import project_hooks
 
 # MIN_SERVER_FOR_V3 names the OLDEST server whose region splice is safe. It is
 # NOT the current version and must not track VERSION. In a 4.x codebase this
@@ -1188,6 +1189,15 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
                 if corrected is not None:
                     status, local_diff = corrected, None
                     info["region_only"] = True
+            if status == "LOCAL_EDITED" and proj_rel == project_hooks.SETTINGS_PATH:
+                hooked = project_hooks.project_hooks_status(
+                    entry_hash, tpl_replaced, proj_content, pp,
+                    project_hooks.toolkit_hook_names(repo_root),
+                    lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
+                )
+                if hooked is not None:
+                    status, local_diff = hooked[0], None
+                    info["project_hooks"] = project_hooks.labels(hooked[1])
             if local_diff is not None:
                 info["local_diff"] = local_diff
                 info["local_diff_kind"] = diff_kind(local_diff)
