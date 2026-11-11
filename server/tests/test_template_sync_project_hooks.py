@@ -34,12 +34,12 @@ def with_handler(handler=H, event="PreToolUse", base=TPL):
 
 
 def mk(tmp_path, project_obj, *, toolkit_scripts=("no-push-main.sh",),
-       project_scripts=("seal-grep-guard.sh",), tpl_obj=TPL, project_text=None):
+       project_scripts=("seal-grep-guard.sh",), tpl_obj=TPL, project_text=None, entry_obj=None):
     repo, proj = _mk_v3(
         tmp_path,
         template={SETTINGS: dumps(tpl_obj)},
         project={SETTINGS: project_text if project_text is not None else dumps(project_obj)},
-        entries={SETTINGS: _tpl_entry(dumps(tpl_obj))},
+        entries={SETTINGS: _tpl_entry(dumps(entry_obj if entry_obj is not None else tpl_obj))},
     )
     for name in toolkit_scripts:
         (repo / "hooks").mkdir(exist_ok=True)
@@ -122,6 +122,10 @@ def test_template_moved_reads_template_updated(tmp_path):
     "bash hooks/seal-grep-guard.sh\n",
     "bash hooks/seal-grep-guard.SH",
     "sh hooks/seal-grep-guard.sh",
+    "bash\thooks/seal-grep-guard.sh",
+    'bash "${CLAUDE_PROJECT_DIR}/hooks/seal-grep-guard.sh"',
+    "bash ${CLAUDE_PROJECT_DIR}/hooks/seal-grep-guard.sh",
+    '"${CLAUDE_PROJECT_DIR}"/hooks/seal-grep-guard.sh',
 ])
 def test_grammar_rejects_near_misses(tmp_path, command):
     _, proj = mk(tmp_path, with_handler({"type": "command", "command": command}))
@@ -172,8 +176,10 @@ def test_symlink_script_is_not_project_owned(tmp_path):
 
 
 def test_toolkit_name_collision_stays_local_edited(tmp_path):
-    handler = {"type": "command", "command": "bash hooks/no-push-main.sh --x"}
-    _, proj = mk(tmp_path, with_handler(handler), project_scripts=("no-push-main.sh",))
+    # Under an event the template lacks, so only the name check can refuse it.
+    obj = copy.deepcopy(TPL)
+    obj["hooks"]["Stop"] = [{"hooks": [{"type": "command", "command": "bash hooks/no-push-main.sh"}]}]
+    _, proj = mk(tmp_path, obj, project_scripts=("no-push-main.sh",))
     assert_local_edited(info_of(proj))
 
 
@@ -237,7 +243,7 @@ def test_matcherless_group_label_uses_none(tmp_path):
 def test_crlf_and_bom_project_file(tmp_path, bom):
     text = dumps(with_handler()).replace("\n", "\r\n")
     if bom:
-        text = "﻿" + text
+        text = "\ufeff" + text
     _, proj = mk(tmp_path, None, project_text=text)
     info = info_of(proj)
     assert info["status"] == "IDENTICAL"
@@ -256,3 +262,75 @@ def test_other_paths_untouched(tmp_path):
     assert info["status"] == "LOCAL_EDITED"
     assert "local_diff_kind" in info
     assert "project_hooks" not in info
+
+
+# --- fix round 1 -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("constant", [float("nan"), float("inf"), float("-inf")])
+def test_non_json_constant_in_a_handler_stays_local_edited(tmp_path, constant):
+    handler = {**H, "timeout": constant}
+    text = dumps(with_handler(handler))  # json.dumps writes NaN / Infinity / -Infinity
+    assert any(token in text for token in ("NaN", "Infinity"))
+    _, proj = mk(tmp_path, None, project_text=text)
+    assert_local_edited(info_of(proj))
+
+
+def test_true_is_not_one_in_the_remainder(tmp_path):
+    tpl = {**copy.deepcopy(TPL), "enable": True}
+    obj = with_handler(base=tpl)
+    obj["enable"] = 1
+    _, proj = mk(tmp_path, obj, tpl_obj=tpl)
+    assert_local_edited(info_of(proj))
+
+
+def test_five_is_not_five_point_zero_in_template_handler_identity(tmp_path):
+    t_handler = {**H, "timeout": 5}
+    tpl = with_handler(t_handler)
+    obj = with_handler({**H, "timeout": 5.0}, base=tpl)
+    _, proj = mk(tmp_path, obj, tpl_obj=tpl)
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+
+
+def test_symlinked_hooks_dir_pointing_outside_is_not_project_owned(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "seal-grep-guard.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    _, proj = mk(tmp_path, with_handler(), project_scripts=())
+    (proj / "hooks").symlink_to(outside, target_is_directory=True)
+    assert_local_edited(info_of(proj))
+
+
+def test_deeply_nested_json_fails_closed(tmp_path):
+    deep: list = []
+    for _ in range(500):
+        deep = [deep]
+    obj = with_handler()
+    obj["deep"] = deep
+    _, proj = mk(tmp_path, obj)
+    assert_local_edited(info_of(proj))
+
+
+def test_unresolvable_base_fails_closed(tmp_path):
+    old_tpl = TPL
+    new_tpl = copy.deepcopy(TPL)
+    new_tpl["permissions"]["allow"].append("Grep")
+    # the toolkit repo is not a git repository, so the base cannot be resolved
+    _, proj = mk(tmp_path, with_handler(base=old_tpl), tpl_obj=new_tpl, entry_obj=old_tpl)
+    assert_local_edited(info_of(proj))
+
+
+def test_cyrillic_lookalike_name_stays_local_edited(tmp_path):
+    name = "seal-grep-guіd.sh"  # Cyrillic i
+    handler = {"type": "command", "command": f"bash hooks/{name}"}
+    _, proj = mk(tmp_path, with_handler(handler), project_scripts=(name,))
+    assert_local_edited(info_of(proj))
+
+
+def test_subdirectory_script_stays_local_edited(tmp_path):
+    _, proj = mk(tmp_path, with_handler({"type": "command", "command": "bash hooks/sub/x.sh"}))
+    (proj / "hooks" / "sub").mkdir()
+    (proj / "hooks" / "sub" / "x.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    assert_local_edited(info_of(proj))

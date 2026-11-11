@@ -45,7 +45,14 @@ def _is_project_owned(handler: object, pp: pathlib.Path, names: frozenset[str]) 
     if match is None or match.group("name").lower() in names:
         return False
     script = pp / "hooks" / match.group("name")
-    return script.is_file() and not script.is_symlink()
+    # resolve() catches a symlinked hooks/ directory (or a junction) leading outside the project
+    return (script.is_file() and not script.is_symlink()
+            and script.resolve().is_relative_to(pp.resolve()))
+
+
+def _canon(value: object) -> str:
+    """Type-strict identity for parsed JSON: unlike `==`, 1 differs from True and 5 from 5.0."""
+    return json.dumps(value, sort_keys=True)
 
 
 def strip_project_hooks(proj: dict, tpl: dict, pp: pathlib.Path,
@@ -65,8 +72,8 @@ def strip_project_hooks(proj: dict, tpl: dict, pp: pathlib.Path,
         groups = events[event]
         if not isinstance(groups, list):
             continue
-        template_handlers = [h for g in tpl_events.get(event, []) if isinstance(g, dict)
-                             for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])]
+        template_handlers = {_canon(h) for g in tpl_events.get(event, []) if isinstance(g, dict)
+                             for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])}
         kept_groups = []
         for group in groups:
             handlers = group.get("hooks") if isinstance(group, dict) else None
@@ -75,7 +82,7 @@ def strip_project_hooks(proj: dict, tpl: dict, pp: pathlib.Path,
                 continue
             kept = []
             for handler in handlers:
-                if handler not in template_handlers and _is_project_owned(handler, pp, names):
+                if _canon(handler) not in template_handlers and _is_project_owned(handler, pp, names):
                     removed.append((event, group.get("matcher"), handler))
                 else:
                     kept.append(handler)
@@ -93,11 +100,15 @@ def labels(removed: Removed) -> list[str]:
     return [f"{event} {matcher!s} {handler['command']}" for event, matcher, handler in removed]
 
 
+def _reject_constant(name: str) -> None:
+    raise ValueError(f"{name} is not JSON")
+
+
 def _parse_object(text: str | None) -> dict | None:
     if text is None:
         return None
     try:
-        obj = json.loads(text.removeprefix("﻿"))
+        obj = json.loads(text.removeprefix("\ufeff"), parse_constant=_reject_constant)
     except ValueError:
         return None
     return obj if isinstance(obj, dict) else None
@@ -112,15 +123,18 @@ def project_hooks_status(entry_hash_hex: str, tpl_replaced: str | None, proj_con
     Returns (status, removed), or None to leave the verdict alone. `base_provider`
     is called only when the stripped project differs from the current template.
     """
-    tpl, proj = _parse_object(tpl_replaced), _parse_object(proj_content)
-    if tpl is None or proj is None or names is None:
-        return None
-    stripped, removed = strip_project_hooks(proj, tpl, pp, names)
-    if not removed:
-        return None
-    if stripped != tpl:
-        base = _parse_object(base_provider())
-        if base is None or stripped != base:
+    try:
+        tpl, proj = _parse_object(tpl_replaced), _parse_object(proj_content)
+        if tpl is None or proj is None or names is None:
             return None
-    status = "TEMPLATE_UPDATED" if core._sha256(tpl_replaced) != entry_hash_hex else "IDENTICAL"
-    return status, removed
+        stripped, removed = strip_project_hooks(proj, tpl, pp, names)
+        if not removed:
+            return None
+        if _canon(stripped) != _canon(tpl):
+            base = _parse_object(base_provider())
+            if base is None or _canon(stripped) != _canon(base):
+                return None
+        status = "TEMPLATE_UPDATED" if core._sha256(tpl_replaced) != entry_hash_hex else "IDENTICAL"
+        return status, removed
+    except Exception:  # noqa: BLE001 -- cannot decide (RecursionError, OSError, ...): leave the verdict alone
+        return None
