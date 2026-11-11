@@ -52,28 +52,35 @@ def _is_project_owned(handler: object, pp: pathlib.Path, names: frozenset[str]) 
 
 def _canon(value: object) -> str:
     """Type-strict identity for parsed JSON: unlike `==`, 1 differs from True and 5 from 5.0."""
-    return json.dumps(value, sort_keys=True)
+    # allow_nan=False: an overflowing literal such as 1e400 parses to inf and must raise, not compare
+    return json.dumps(value, sort_keys=True, allow_nan=False)
 
 
-def strip_project_hooks(proj: dict, tpl: dict, pp: pathlib.Path,
-                        names: frozenset[str]) -> tuple[dict, Removed]:
+def _event_handlers(template: dict | None, event: str) -> set[str]:
+    events = template.get("hooks") if isinstance(template, dict) else None
+    groups = events.get(event, []) if isinstance(events, dict) else []
+    return {_canon(h) for g in groups if isinstance(g, dict)
+            for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])}
+
+
+def strip_project_hooks(proj: dict, tpl: dict, pp: pathlib.Path, names: frozenset[str],
+                        base: dict | None = None) -> tuple[dict, Removed]:
     """A deep copy of `proj` without the project's handlers (emptied groups and
     events dropped), plus the removed (event, matcher, handler) triples in file order.
 
     A handler the template carries under the same event (any matcher group) is
-    the template's, never the project's."""
+    the template's, never the project's; so is one the base template (the one held
+    at the last sync) carries, which the current template may since have dropped."""
     out = copy.deepcopy(proj)
     removed: Removed = []
     events = out.get("hooks")
     if not isinstance(events, dict):
         return out, removed
-    tpl_events = tpl.get("hooks") if isinstance(tpl.get("hooks"), dict) else {}
     for event in list(events):
         groups = events[event]
         if not isinstance(groups, list):
             continue
-        template_handlers = {_canon(h) for g in tpl_events.get(event, []) if isinstance(g, dict)
-                             for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])}
+        template_handlers = _event_handlers(tpl, event) | _event_handlers(base, event)
         kept_groups = []
         for group in groups:
             handlers = group.get("hooks") if isinstance(group, dict) else None
@@ -123,7 +130,7 @@ def _reject_constant(name: str) -> None:
     raise ValueError(f"{name} is not JSON")
 
 
-def _parse_object(text: str | None) -> dict | None:
+def parse_object(text: str | None) -> dict | None:
     if text is None:
         return None
     try:
@@ -140,20 +147,26 @@ def project_hooks_status(entry_hash_hex: str, tpl_replaced: str | None, proj_con
     minus its own handlers equals the current template, or the one held at sync.
 
     Returns (status, removed), or None to leave the verdict alone. `base_provider`
-    is called only when the stripped project differs from the current template.
+    is called only when some handler would be taken out as the project's.
     """
     try:
-        tpl, proj = _parse_object(tpl_replaced), _parse_object(proj_content)
+        tpl, proj = parse_object(tpl_replaced), parse_object(proj_content)
         if tpl is None or proj is None or names is None:
             return None
         stripped, removed = strip_project_hooks(proj, tpl, pp, names)
         if not removed:
             return None
-        if _canon(stripped) != _canon(tpl):
-            base = _parse_object(base_provider())
-            if base is None or _canon(stripped) != _canon(base):
+        base = parse_object(base_provider())
+        if base is not None:
+            stripped, removed = strip_project_hooks(proj, tpl, pp, names, base)
+            if not removed:
                 return None
-        status = "TEMPLATE_UPDATED" if core._sha256(tpl_replaced) != entry_hash_hex else "IDENTICAL"
-        return status, removed
+        via_current = _canon(stripped) == _canon(tpl)
+        if not via_current and (base is None or _canon(stripped) != _canon(base)):
+            return None
+        behind = core._sha256(tpl_replaced) != entry_hash_hex
+        if not behind and not via_current:
+            return None  # matches only the older base while the manifest holds the current template: behind it
+        return ("TEMPLATE_UPDATED" if behind else "IDENTICAL"), removed
     except Exception:  # noqa: BLE001 -- cannot decide (RecursionError, OSError, ...): leave the verdict alone
         return None

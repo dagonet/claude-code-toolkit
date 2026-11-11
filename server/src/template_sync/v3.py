@@ -1125,6 +1125,17 @@ def claude_md_window_active(manifest: dict, tpl_rel: str, tpl_raw: str | None) -
     return core.CUSTOM_REGION_BEGIN not in tpl_raw and core.CUSTOM_REGION_END not in tpl_raw
 
 
+def _project_hooks_verdict(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, tpl_rel: str,
+                           entry_hash: str, tpl_replaced: str | None, proj_content: str | None):
+    """(status, removed handlers) when settings.json is the template plus the project's own
+    hook handlers, else None. The one call both status and apply make."""
+    return project_hooks.project_hooks_status(
+        entry_hash, tpl_replaced, proj_content, pp,
+        project_hooks.toolkit_hook_names(core._effective_template_repo(manifest["templateRepo"])),
+        lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
+    )
+
+
 def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
     placeholders = manifest.get("placeholders", {})
     repo_root = core._effective_template_repo(manifest["templateRepo"])
@@ -1190,11 +1201,8 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
                     status, local_diff = corrected, None
                     info["region_only"] = True
             if status == "LOCAL_EDITED" and proj_rel == project_hooks.SETTINGS_PATH:
-                hooked = project_hooks.project_hooks_status(
-                    entry_hash, tpl_replaced, proj_content, pp,
-                    project_hooks.toolkit_hook_names(repo_root),
-                    lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
-                )
+                hooked = _project_hooks_verdict(
+                    pp, manifest, rules, tpl_rel, entry_hash, tpl_replaced, proj_content)
                 if hooked is not None:
                     status, local_diff = hooked[0], None
                     info["project_hooks"] = project_hooks.labels(hooked[1])
@@ -1362,16 +1370,13 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
                 if corrected is not None:
                     status, local_diff = corrected, None
             if status == "LOCAL_EDITED" and source == "template" and proj_rel == project_hooks.SETTINGS_PATH:
-                hooked = project_hooks.project_hooks_status(
-                    baseline, tpl_replaced, proj_existing, pp,
-                    project_hooks.toolkit_hook_names(core._effective_template_repo(manifest["templateRepo"])),
-                    lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
-                )
+                hooked = _project_hooks_verdict(
+                    pp, manifest, rules, tpl_rel, baseline, tpl_replaced, proj_existing)
                 if hooked is not None:
                     try:
                         carried_content = json.dumps(
-                            project_hooks.readd(project_hooks._parse_object(tpl_replaced), hooked[1]),
-                            indent=2, ensure_ascii=False) + "\n"
+                            project_hooks.readd(project_hooks.parse_object(tpl_replaced), hooked[1]),
+                            indent=2, ensure_ascii=False, allow_nan=False) + "\n"
                     except Exception:  # noqa: BLE001 -- cannot re-add: keep the LOCAL_EDITED path
                         carried_content = None
                     if carried_content is not None:

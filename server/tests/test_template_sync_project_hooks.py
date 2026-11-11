@@ -448,3 +448,115 @@ def test_readd_does_not_mutate_and_omits_absent_matcher():
     assert tpl == before
     assert out["hooks"]["Stop"] == [{"hooks": [H]}]
     assert out["hooks"]["PreToolUse"][0]["hooks"] == [TOOLKIT_HANDLER, H]
+
+
+# --- final review fixes ------------------------------------------------------
+
+
+def _set_entry(proj, obj) -> None:
+    """Record `obj` as the template version the manifest says was synced."""
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"][SETTINGS] = {"hash": "sha256:" + ts._sha256(dumps(obj)), "ownership": "template"}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _overflow_text(literal: str) -> str:
+    text = dumps(with_handler()).replace(
+        '"command": "bash hooks/seal-grep-guard.sh"',
+        f'"command": "bash hooks/seal-grep-guard.sh", "timeout": {literal}')
+    assert literal in text
+    return text
+
+
+@pytest.mark.parametrize("literal", ["1e400", "-1e400"])
+def test_overflowing_number_in_a_handler_stays_local_edited(tmp_path, literal):
+    _, proj = mk(tmp_path, None, project_text=_overflow_text(literal))
+    assert_local_edited(info_of(proj))
+
+
+def test_apply_overflowing_number_is_refused_and_file_untouched(tmp_path):
+    repo, proj = mk(tmp_path, None, project_text=_overflow_text("1e400"))
+    move_template(repo, proj, moved())
+    before = (proj / SETTINGS).read_bytes()
+    res = apply_settings(proj, source="template")
+    assert "LOCAL_EDITED" in res["error"]
+    assert (proj / SETTINGS).read_bytes() == before
+
+
+def test_apply_falls_back_when_readd_raises(tmp_path, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("cannot re-add")
+    monkeypatch.setattr("template_sync.project_hooks.readd", boom)
+    repo, proj = mk(tmp_path, with_handler(), tpl_obj=TPL)
+    move_template(repo, proj, moved())
+    before = (proj / SETTINGS).read_bytes()
+    res = apply_settings(proj, source="template")
+    assert "LOCAL_EDITED" in res["error"]
+    assert (proj / SETTINGS).read_bytes() == before
+    res = apply_settings(proj, source="template", backup_dir=str(tmp_path / "backups"))
+    assert res["local_edit_overwritten"] is True
+    assert "project_hooks" not in res
+
+
+def test_apply_never_writes_a_non_json_number(tmp_path, monkeypatch):
+    # Backstop: even if re-adding produced an infinity, apply must not write `Infinity`.
+    monkeypatch.setattr("template_sync.project_hooks.readd",
+                        lambda tpl, removed: {**tpl, "timeout": float("inf")})
+    repo, proj = mk(tmp_path, with_handler(), tpl_obj=TPL)
+    move_template(repo, proj, moved())
+    res = apply_settings(proj, source="template", backup_dir=str(tmp_path / "backups"))
+    assert "Infinity" not in (proj / SETTINGS).read_text(encoding="utf-8")
+    assert "project_hooks" not in res
+
+
+def test_file_behind_the_template_is_not_green_via_the_base(tmp_path):
+    # The manifest already holds the CURRENT template's hash, but the file is the old
+    # template plus a handler: it is missing what the current template added.
+    new_tpl = copy.deepcopy(TPL)
+    new_tpl["permissions"]["deny"] = ["Bash(rm -rf *)"]
+    repo, proj = mk(tmp_path, with_handler(), tpl_obj=TPL)
+    move_template(repo, proj, new_tpl)
+    _set_entry(proj, new_tpl)
+    assert_local_edited(info_of(proj))
+
+
+OLD_GUARD = {"type": "command", "command": "bash hooks/old-guard.sh"}
+
+
+def test_handler_the_template_dropped_is_not_the_projects(tmp_path):
+    base = with_handler(OLD_GUARD)
+    repo, proj = mk(tmp_path, with_handler(base=base), tpl_obj=base,
+                    toolkit_scripts=("no-push-main.sh", "old-guard.sh"),
+                    project_scripts=("old-guard.sh", "seal-grep-guard.sh"))
+    move_template(repo, proj, TPL)
+    (repo / "hooks" / "old-guard.sh").unlink()
+    # old-guard is the template's (the base held it), so it is never listed as the project's;
+    # the file is the old template plus H, and the template has since dropped old-guard.
+    info = info_of(proj)
+    assert info["status"] == "TEMPLATE_UPDATED"
+    assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+    res = apply_settings(proj, source="template")
+    assert res["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+    assert "old-guard" not in (proj / SETTINGS).read_text(encoding="utf-8")
+
+
+def test_handler_the_template_dropped_and_a_local_edit_stays_local_edited(tmp_path):
+    base = with_handler(OLD_GUARD)
+    obj = with_handler(base=base)
+    obj["permissions"]["allow"].append("Bash(ls)")
+    repo, proj = mk(tmp_path, obj, tpl_obj=base,
+                    toolkit_scripts=("no-push-main.sh", "old-guard.sh"),
+                    project_scripts=("old-guard.sh", "seal-grep-guard.sh"))
+    move_template(repo, proj, TPL)
+    (repo / "hooks" / "old-guard.sh").unlink()
+    assert_local_edited(info_of(proj))
+
+
+def test_unresolvable_base_adds_no_new_refusal(tmp_path):
+    # The toolkit repo is not a git repository: the base is None, so nothing extra is
+    # treated as the template's and the project handler is listed as before.
+    _, proj = mk(tmp_path, with_handler(), tpl_obj=TPL)
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
