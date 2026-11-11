@@ -100,6 +100,25 @@ def labels(removed: Removed) -> list[str]:
     return [f"{event} {matcher!s} {handler['command']}" for event, matcher, handler in removed]
 
 
+def readd(tpl_obj: dict, removed: Removed) -> dict:
+    """A deep copy of `tpl_obj` with each removed handler put back: appended to the
+    first group under its event with an equal matcher, else to a new group at the
+    end of the event (the `matcher` key omitted when it was absent)."""
+    out = copy.deepcopy(tpl_obj)
+    events = out.setdefault("hooks", {})
+    for event, matcher, handler in removed:
+        groups = events.setdefault(event, [])
+        for group in groups:
+            if (isinstance(group, dict) and isinstance(group.get("hooks"), list)
+                    and _canon(group.get("matcher")) == _canon(matcher)):
+                group["hooks"].append(copy.deepcopy(handler))
+                break
+        else:
+            groups.append({"matcher": matcher, "hooks": [copy.deepcopy(handler)]}
+                          if matcher is not None else {"hooks": [copy.deepcopy(handler)]})
+    return out
+
+
 def _reject_constant(name: str) -> None:
     raise ValueError(f"{name} is not JSON")
 

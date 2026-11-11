@@ -6,12 +6,14 @@ must not read LOCAL_EDITED; every near miss must.
 
 import copy
 import json
+import pathlib
 import subprocess
 
 import pytest
 
 from template_sync import mcp as ts
-from test_template_sync_v3_status import _REGION, _mk_v3, _status, _tpl_entry
+from template_sync.project_hooks import readd
+from test_template_sync_v3_status import _REGION, _mk_v3, _run, _status, _tpl_entry
 
 SETTINGS = ".claude/settings.json"
 TOOLKIT_HANDLER = {"type": "command", "command": "bash hooks/no-push-main.sh"}
@@ -80,12 +82,8 @@ def test_project_handler_new_group_reads_identical(tmp_path):
     assert info["project_hooks"] == ["PreToolUse Edit bash hooks/seal-grep-guard.sh"]
 
 
-def test_template_moved_reads_template_updated(tmp_path):
-    old_tpl = TPL
-    new_tpl = copy.deepcopy(TPL)
-    new_tpl["permissions"]["allow"].append("Grep")
-    repo, proj = mk(tmp_path, with_handler(base=old_tpl), tpl_obj=old_tpl)
-    # the repo gets a commit holding the template at sync, then the template moves on
+def move_template(repo, proj, new_tpl) -> None:
+    """Commit the template as synced, record that commit in the manifest, then move the template on."""
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
     subprocess.run([*git, "init", "-q"], cwd=str(repo), check=True, capture_output=True)
     subprocess.run([*git, "add", "-A"], cwd=str(repo), check=True, capture_output=True)
@@ -98,6 +96,14 @@ def test_template_moved_reads_template_updated(tmp_path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     tpl_file = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, SETTINGS)
     tpl_file.write_text(dumps(new_tpl), encoding="utf-8")
+
+
+def test_template_moved_reads_template_updated(tmp_path):
+    old_tpl = TPL
+    new_tpl = copy.deepcopy(TPL)
+    new_tpl["permissions"]["allow"].append("Grep")
+    repo, proj = mk(tmp_path, with_handler(base=old_tpl), tpl_obj=old_tpl)
+    move_template(repo, proj, new_tpl)
     info = info_of(proj)
     assert info["status"] == "TEMPLATE_UPDATED"
     assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
@@ -334,3 +340,111 @@ def test_subdirectory_script_stays_local_edited(tmp_path):
     (proj / "hooks" / "sub").mkdir()
     (proj / "hooks" / "sub" / "x.sh").write_text("#!/bin/bash\n", encoding="utf-8")
     assert_local_edited(info_of(proj))
+
+
+# --- apply carries the handlers across ---------------------------------------
+
+
+def apply_settings(proj, **kw) -> dict:
+    return _run(ts.template_apply_file(str(proj), file_path=SETTINGS, **kw))
+
+
+def moved(permission="Grep"):
+    new_tpl = copy.deepcopy(TPL)
+    new_tpl["permissions"]["allow"].append(permission)
+    return new_tpl
+
+
+def test_apply_keeps_project_handler(tmp_path):
+    new_tpl = moved()
+    repo, proj = mk(tmp_path, with_handler(), tpl_obj=TPL)
+    move_template(repo, proj, new_tpl)
+    res = apply_settings(proj, source="template")
+    assert "error" not in res
+    assert res["backup"] is None
+    assert res["local_edit_overwritten"] is False
+    assert res["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+    assert res["manifest_entry"] == {"hash": "sha256:" + ts._sha256(dumps(new_tpl)), "ownership": "template"}
+    written = (proj / SETTINGS).read_text(encoding="utf-8")
+    assert json.loads(written) == with_handler(base=new_tpl)
+    assert written == dumps(with_handler(base=new_tpl))
+    # finalize records the entry; a fresh status then reads the carried file as clean
+    manifest_path = proj / ".claude" / "template-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"][SETTINGS] = res["manifest_entry"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    info = info_of(proj)
+    assert info["status"] == "IDENTICAL"
+    assert info["project_hooks"] == ["PreToolUse Bash bash hooks/seal-grep-guard.sh"]
+
+
+def test_apply_matcher_gone_appends_group(tmp_path):
+    new_tpl = copy.deepcopy(TPL)
+    new_tpl["hooks"]["PreToolUse"][0]["matcher"] = "Edit"
+    repo, proj = mk(tmp_path, with_handler(), tpl_obj=TPL)
+    move_template(repo, proj, new_tpl)
+    res = apply_settings(proj, source="template")
+    assert res["local_edit_overwritten"] is False
+    written = json.loads((proj / SETTINGS).read_text(encoding="utf-8"))
+    assert written["hooks"]["PreToolUse"] == [
+        {"matcher": "Edit", "hooks": [TOOLKIT_HANDLER]},
+        {"matcher": "Bash", "hooks": [H]},
+    ]
+
+
+def test_apply_mixed_edit_keeps_old_path(tmp_path):
+    obj = with_handler()
+    obj["permissions"]["allow"].append("Bash(ls)")
+    repo, proj = mk(tmp_path, obj, tpl_obj=TPL)
+    move_template(repo, proj, moved())
+    before = (proj / SETTINGS).read_text(encoding="utf-8")
+    res = apply_settings(proj, source="template")
+    assert "LOCAL_EDITED" in res["error"]
+    assert (proj / SETTINGS).read_text(encoding="utf-8") == before
+    backups = tmp_path / "backups"
+    res = apply_settings(proj, source="template", backup_dir=str(backups))
+    assert res["local_edit_overwritten"] is True
+    assert "project_hooks" not in res
+    assert (proj / SETTINGS).read_text(encoding="utf-8") == dumps(moved())
+    assert "seal-grep-guard.sh" in pathlib.Path(res["backup"]["pre_sync"]).read_text(encoding="utf-8")
+
+
+def test_apply_without_project_handlers_unchanged(tmp_path):
+    new_tpl = moved()
+    repo, proj = mk(tmp_path, TPL, tpl_obj=TPL)
+    move_template(repo, proj, new_tpl)
+    res = apply_settings(proj, source="template")
+    assert res["backup"] is None
+    assert res["local_edit_overwritten"] is False
+    assert "project_hooks" not in res
+    assert (proj / SETTINGS).read_bytes() == dumps(new_tpl).encode("utf-8")
+
+
+def test_apply_provided_content_is_not_rewritten(tmp_path):
+    repo, proj = mk(tmp_path, with_handler(), tpl_obj=TPL)
+    move_template(repo, proj, moved())
+    res = apply_settings(proj, source="provided", content='{"permissions": {}}\n',
+                         backup_dir=str(tmp_path / "backups"))
+    assert "project_hooks" not in res
+    assert (proj / SETTINGS).read_text(encoding="utf-8") == '{"permissions": {}}\n'
+
+
+def test_apply_extra_group_key_is_not_carried(tmp_path):
+    # Pins the KISS ruling: a project-only group's keys other than matcher/hooks are not tracked.
+    obj = copy.deepcopy(TPL)
+    obj["hooks"]["PreToolUse"].append({"matcher": "Edit", "note": "mine", "hooks": [copy.deepcopy(H)]})
+    repo, proj = mk(tmp_path, obj, tpl_obj=TPL)
+    move_template(repo, proj, moved())
+    res = apply_settings(proj, source="template")
+    assert res["local_edit_overwritten"] is False
+    written = json.loads((proj / SETTINGS).read_text(encoding="utf-8"))
+    assert written["hooks"]["PreToolUse"][-1] == {"matcher": "Edit", "hooks": [H]}
+
+
+def test_readd_does_not_mutate_and_omits_absent_matcher():
+    tpl = copy.deepcopy(TPL)
+    before = copy.deepcopy(tpl)
+    out = readd(tpl, [("Stop", None, H), ("PreToolUse", "Bash", H)])
+    assert tpl == before
+    assert out["hooks"]["Stop"] == [{"hooks": [H]}]
+    assert out["hooks"]["PreToolUse"][0]["hooks"] == [TOOLKIT_HANDLER, H]

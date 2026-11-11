@@ -1347,6 +1347,7 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
     backup = None
     local_edit = False
     region_preserved = False
+    carried_labels = None
     if source == "template" and tpl_replaced is not None:
         write_content, region_preserved = splice_region(tpl_replaced, proj_existing)
     if proj_existing is not None:
@@ -1360,6 +1361,22 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
                 )
                 if corrected is not None:
                     status, local_diff = corrected, None
+            if status == "LOCAL_EDITED" and source == "template" and proj_rel == project_hooks.SETTINGS_PATH:
+                hooked = project_hooks.project_hooks_status(
+                    baseline, tpl_replaced, proj_existing, pp,
+                    project_hooks.toolkit_hook_names(core._effective_template_repo(manifest["templateRepo"])),
+                    lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
+                )
+                if hooked is not None:
+                    try:
+                        carried_content = json.dumps(
+                            project_hooks.readd(project_hooks._parse_object(tpl_replaced), hooked[1]),
+                            indent=2, ensure_ascii=False) + "\n"
+                    except Exception:  # noqa: BLE001 -- cannot re-add: keep the LOCAL_EDITED path
+                        carried_content = None
+                    if carried_content is not None:
+                        write_content, status = carried_content, hooked[0]
+                        carried_labels = project_hooks.labels(hooked[1])
             local_edit = status == "LOCAL_EDITED"
         else:
             # No baseline (new file the project already has): any difference
@@ -1395,6 +1412,8 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
     broken = malformed_side(tpl_replaced, proj_existing)
     if broken is not None:
         result["region_markers_malformed"] = broken
+    if carried_labels is not None:
+        result["project_hooks"] = carried_labels
     return result
 
 
