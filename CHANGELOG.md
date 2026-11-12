@@ -29,7 +29,13 @@ A plugin update; no template file changed, so a sync is only needed for a projec
 3. **A project with its own hook handler in `.claude/settings.json`:** write its `command` in one of the three shapes above, then run `/cct:sync-template`. A handler in any other shape keeps the file LOCAL_EDITED.
 
 ### Measured
-- MEASURE-PENDING
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at 2beec5c on agent-host-1 (3714 s):** 0 failed in all three configurations.
+  - node: 6561/0/6.
+  - python3-only: 6266/0/276, in band (~274 +/-20).
+  - jq-only: 6162/0/378, in band (~368 +/-20).
+  - Against v6.1.0 (6557/0/6, 6262/0/276, 6162/0/374), the suite gained the four DL14 rows: they pass under node and python3 and skip under jq-only (their shim needs python3).
+- **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (check 42 arm 2 ran against v6.1.0; check 50 has no system `python` on this host).
+- **`bash scripts/test-server.sh`:** 628 passed, 9 skipped.
 
 ## v6.1.0 — 2026-11-09
 
