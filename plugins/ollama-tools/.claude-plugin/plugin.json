@@ -1,6 +1,6 @@
 {
   "name": "ollama-tools",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "MCP server that offloads first-pass drafting and JSON extraction to local models; started with uv (uvx) and talks to a running Ollama",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/mcp-dev-servers",

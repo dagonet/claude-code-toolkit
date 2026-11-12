@@ -1,5 +1,36 @@
 # Changelog
 
+## v6.2.0 — 2026-11-12
+
+Minor. A project can keep its own hook handlers in the template-owned `.claude/settings.json` and still sync clean; the same review closed one older loophole in how PROJECT-CUSTOM regions are checked; the Windows drift probe stops reporting false drift. Design and plan: `docs/plans/2026-11-11-project-hooks-in-settings-design.md` and `docs/plans/2026-11-11-project-hooks-in-settings-plan.md`.
+
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. No template file changed. A v5.0-v6.1 skill against this server sees one more INFO line (`LINES = 30`; its own note already says to read `LINES` from the response) and does not know to leave project handlers out of the model-bump hook-list comparison, so the pause fires on them: the safe direction.
+
+### Added: project-owned hook handlers in `settings.json` (backlog #30)
+- **The case.** Motorsport-Manager-AI-Agent registers its own PreToolUse guard (`hooks/seal-grep-guard.sh`) in `.claude/settings.json`. That file is template-owned and JSON, so it has no PROJECT-CUSTOM region: status read LOCAL_EDITED and `template_verify` failed `status_clean` on every sync, and accepting the template would have dropped the guard.
+- **The rule** (`server/src/template_sync/project_hooks.py`). A handler counts as the project's only when all of these hold: it is not the template's (current or base, compared type-strict); its `type` is `command` with no `args`; its `command` is exactly `bash hooks/<name>.sh`, `bash "$CLAUDE_PROJECT_DIR/hooks/<name>.sh"` or `"$CLAUDE_PROJECT_DIR"/hooks/<name>.sh` (`<name>` = `[A-Za-z0-9._-]+`); the script is a regular, non-symlink file inside the project; and the name is not one of the toolkit's own `hooks/*.sh`. With those handlers removed, the file must equal the current template (or the base, while the template has moved past the manifest hash). Anything else stays LOCAL_EDITED, exactly as before. Any error leaves the verdict alone (fail closed).
+- **Status** gives the template's own status (IDENTICAL or TEMPLATE_UPDATED) plus `project_hooks: ["<event> <matcher> <command>", ...]`. **Apply** writes the new template and re-adds each project handler after the template's (same event and matcher, else a new group). **Verify** gains the INFO line `project_hooks`, directly before `tree_clean`: `LINES` is now 30.
+- **The skill** (`skills/sync-template/SKILL.md`) leaves listed project handlers out of the model-bump hook-list comparison, explains the INFO line, and its healthy-line baselines move to 30 lines.
+- **Loopholes closed during review**, each with a test: `1e400` overflowing to infinity, NaN, `1` vs `true` (type-loose equality), a symlinked `hooks/` directory, deep nesting, a file behind the template matching only the base, and a handler the template has since dropped.
+- **Limit:** the grammar limits where a project hook's script lives, not what it decides. A project hook can still approve tool calls; the INFO line is the signal that one is registered.
+
+### Fixed
+- **A PROJECT-CUSTOM region file behind the template read IDENTICAL (backlog #31).** `region_status` accepted a file whose text outside the region matched only the base template (the one held at sync) even when the manifest already held the current template's hash. Such a file lacks what the current template added, and no sync offered the update. A base-only match now counts only while the template has moved past the manifest hash (TEMPLATE_UPDATED); otherwise the file stays LOCAL_EDITED. Status and apply share the function. Tests: `test_file_behind_the_template_is_not_green_via_the_base` (red before the fix) and `test_current_template_plus_region_with_current_hash_is_identical`.
+- **The drift probe reported false drift on Windows (#217).** Windows python3 writes CRLF; `scripts/verify-user-level-drift.sh` kept the CR, so it reported false sub-plugin and cct plugin drift, and its "registered twice" check failed open. The four parser reads now strip CR. Tests: four DL14 rows in `scripts/test-hooks.sh` with a CR-appending python3 shim.
+
+### Docs
+- `docs/template-sync.md`: the `project_hooks` row and the 30-line count.
+- `docs/architecture.md`: the Context Budget table gains a `wc -c` column for v6.2.0. Every figure equals v6.1.0's: the release changes no always-loaded file.
+
+### Downstream migration
+A plugin update; no template file changed, so a sync is only needed for a project with its own hook handlers.
+1. The v6.1.0 recipe with `#v6.2.0`: `claude plugin marketplace remove dagonet`, `claude plugin marketplace add dagonet/claude-code-toolkit#v6.2.0`, `claude plugin install cct@dagonet` (on Linux, `bash scripts/install-user-level-linux.sh` after updating the checkout; on Windows, `docs/plugin-migration-windows.md`, reinstalling the other dagonet plugins by hand).
+2. Update your toolkit checkout to the same tag (the sync server runs from it), and restart every session.
+3. **A project with its own hook handler in `.claude/settings.json`:** write its `command` in one of the three shapes above, then run `/cct:sync-template`. A handler in any other shape keeps the file LOCAL_EDITED.
+
+### Measured
+- MEASURE-PENDING
+
 ## v6.1.0 — 2026-11-09
 
 Minor. The six mcp-dev-servers install as opt-in plugins from the `dagonet` marketplace, and four hook security fixes land with them (S1-S4), plus the guard rules the plugin rename would have broken (S5). Design and plan: `docs/plans/2026-11-09-v6.1-mcp-plugins-and-security-design.md` and `docs/plans/2026-11-09-v6.1-implementation-plan.md`.
