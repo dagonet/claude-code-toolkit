@@ -16,6 +16,7 @@ import pathlib
 import re
 
 from . import mcp as core
+from . import project_hooks
 
 # MIN_SERVER_FOR_V3 names the OLDEST server whose region splice is safe. It is
 # NOT the current version and must not track VERSION. In a 4.x codebase this
@@ -1124,6 +1125,17 @@ def claude_md_window_active(manifest: dict, tpl_rel: str, tpl_raw: str | None) -
     return core.CUSTOM_REGION_BEGIN not in tpl_raw and core.CUSTOM_REGION_END not in tpl_raw
 
 
+def _project_hooks_verdict(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, tpl_rel: str,
+                           entry_hash: str, tpl_replaced: str | None, proj_content: str | None):
+    """(status, removed handlers) when settings.json is the template plus the project's own
+    hook handlers, else None. The one call both status and apply make."""
+    return project_hooks.project_hooks_status(
+        entry_hash, tpl_replaced, proj_content, pp,
+        project_hooks.toolkit_hook_names(core._effective_template_repo(manifest["templateRepo"])),
+        lambda: resolve_base(pp, manifest, rules, tpl_rel)[0],
+    )
+
+
 def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -> dict:
     placeholders = manifest.get("placeholders", {})
     repo_root = core._effective_template_repo(manifest["templateRepo"])
@@ -1188,6 +1200,12 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
                 if corrected is not None:
                     status, local_diff = corrected, None
                     info["region_only"] = True
+            if status == "LOCAL_EDITED" and proj_rel == project_hooks.SETTINGS_PATH:
+                hooked = _project_hooks_verdict(
+                    pp, manifest, rules, tpl_rel, entry_hash, tpl_replaced, proj_content)
+                if hooked is not None:
+                    status, local_diff = hooked[0], None
+                    info["project_hooks"] = project_hooks.labels(hooked[1])
             if local_diff is not None:
                 info["local_diff"] = local_diff
                 info["local_diff_kind"] = diff_kind(local_diff)
@@ -1337,6 +1355,7 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
     backup = None
     local_edit = False
     region_preserved = False
+    carried_labels = None
     if source == "template" and tpl_replaced is not None:
         write_content, region_preserved = splice_region(tpl_replaced, proj_existing)
     if proj_existing is not None:
@@ -1350,6 +1369,19 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
                 )
                 if corrected is not None:
                     status, local_diff = corrected, None
+            if status == "LOCAL_EDITED" and source == "template" and proj_rel == project_hooks.SETTINGS_PATH:
+                hooked = _project_hooks_verdict(
+                    pp, manifest, rules, tpl_rel, baseline, tpl_replaced, proj_existing)
+                if hooked is not None:
+                    try:
+                        carried_content = json.dumps(
+                            project_hooks.readd(project_hooks.parse_object(tpl_replaced), hooked[1]),
+                            indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+                    except Exception:  # noqa: BLE001 -- cannot re-add: keep the LOCAL_EDITED path
+                        carried_content = None
+                    if carried_content is not None:
+                        write_content, status = carried_content, hooked[0]
+                        carried_labels = project_hooks.labels(hooked[1])
             local_edit = status == "LOCAL_EDITED"
         else:
             # No baseline (new file the project already has): any difference
@@ -1385,6 +1417,8 @@ def apply_file_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, file_
     broken = malformed_side(tpl_replaced, proj_existing)
     if broken is not None:
         result["region_markers_malformed"] = broken
+    if carried_labels is not None:
+        result["project_hooks"] = carried_labels
     return result
 
 

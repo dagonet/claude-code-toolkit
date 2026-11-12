@@ -363,7 +363,7 @@ def test_pass_fixture_is_all_green(tmp_path):
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
                         "project_md_seed_differs",
                         "legacy_gate_dir", "once_notes_changed", "retired_rule_names",
-                        "project_md_scoped_consistent"}
+                        "project_md_scoped_consistent", "project_hooks"}
 
     n_pass = len(verify.LINES) - len(skip_ids) - len(info_ids) - len(fail_ids)
     assert res["summary"] == f"{n_pass} PASS, 0 FAIL, {len(skip_ids)} SKIP, {len(info_ids)} INFO"
@@ -371,13 +371,13 @@ def test_pass_fixture_is_all_green(tmp_path):
     assert res["mode"] == "post_commit"
 
 
-def test_lines_count_is_29():
+def test_lines_count_is_30():
     """Constraint 5: stated by hand, moves in the SAME commit as the ids it
     counts -- never derived from anything, so it is a red flag by itself if a
     later edit changes LINES without touching this number. 30 -> 31 in
     v4.1.1 (spec §2.1): project_md_seed_differs; 32 -> 29 in v5.0 (the three
-    agent_grants_* lines are removed)."""
-    assert len(verify.LINES) == 29
+    agent_grants_* lines are removed); 29 -> 30 (#30): project_hooks."""
+    assert len(verify.LINES) == 30
 
 
 def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
@@ -401,7 +401,7 @@ def test_v4_fixture_is_all_green(tmp_path, monkeypatch):
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
                         "project_md_seed_differs",
                         "legacy_gate_dir", "once_notes_changed", "retired_rule_names",
-                        "project_md_scoped_consistent"}
+                        "project_md_scoped_consistent", "project_hooks"}
     by_id = _by_id(res)
     assert by_id["claude_md_identical"]["status"] == "PASS"
     assert by_id["import_line_present"]["status"] == "PASS"
@@ -440,7 +440,7 @@ def test_window_fixture_status_clean_is_the_one_fail(tmp_path):
     assert info_ids == {"template_behind_head", "encoding_drift", "project_md_seed_current",
                         "project_md_seed_differs",
                         "legacy_gate_dir", "once_notes_changed", "retired_rule_names",
-                        "project_md_scoped_consistent"}
+                        "project_md_scoped_consistent", "project_hooks"}
     line = _by_id(res)["status_clean"]
     assert "CLAUDE.md" in line["measured"]
     assert line["remedy"] == v3.MIGRATION_REQUIRED_REMEDY
@@ -1356,11 +1356,76 @@ def test_seed_differs_matches_when_consumer_appended_rules_after_the_seed(v4_con
     assert "remedy" not in line or line["remedy"] in ("", "n/a (informational)")
 
 
-def test_lines_count_is_29_and_every_situation_table_lists_the_new_line(
+def test_lines_count_is_30_and_every_situation_table_lists_the_new_line(
         v4_consumer, v3_legacy_consumer, v3_window_consumer):
     for c in (v4_consumer, v3_legacy_consumer, v3_window_consumer):
         lines = template_verify_lines(c)
-        assert len(lines) == 29 and "project_md_seed_differs" in lines
+        assert len(lines) == 30 and "project_md_seed_differs" in lines and "project_hooks" in lines
+
+
+# --- project_hooks (INFO, #30): project-owned handlers in settings.json -------
+
+SETTINGS_REL = ".claude/settings.json"
+SETTINGS_TPL = {
+    "permissions": {"allow": ["Read"]},
+    "hooks": {"PreToolUse": [{"matcher": "Bash",
+                              "hooks": [{"type": "command", "command": "bash hooks/git-pre-push.sh"}]}]},
+}
+PROJECT_HANDLER = {"type": "command", "command": "bash hooks/seal-grep-guard.sh"}
+
+
+def _settings_fixture(tmp_path, project_handler: dict | None):
+    """_good_fixture plus a template-class .claude/settings.json: the project's
+    copy is the template, plus `project_handler` (when given) appended to the
+    first PreToolUse group, with its script present in the project."""
+    ownership = {**OWNERSHIP, "rules": [*OWNERSHIP["rules"],
+                                        {"pattern": SETTINGS_REL, "ownership": "template"}]}
+    repo, proj, _commit = _good_fixture(tmp_path, ownership)
+    tpl_text = json.dumps(SETTINGS_TPL, indent=2) + "\n"
+    ts._template_file_path({"templateRepo": str(repo), "variant": "general"},
+                           SETTINGS_REL).write_text(tpl_text, encoding="utf-8", newline="")
+    _recommit(repo, "template ships settings.json")
+    proj_obj = json.loads(tpl_text)
+    if project_handler is not None:
+        proj_obj["hooks"]["PreToolUse"][0]["hooks"].append(project_handler)
+        (proj / "hooks" / "seal-grep-guard.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    (proj / SETTINGS_REL).write_text(json.dumps(proj_obj, indent=2) + "\n", encoding="utf-8", newline="")
+    m = _read_manifest(proj)
+    m["files"][SETTINGS_REL] = {"hash": "sha256:" + ts._sha256(tpl_text), "ownership": "template"}
+    _write_manifest(proj, m)
+    _recommit(proj, "settings.json with a project handler")
+    return repo, proj
+
+
+def test_project_hooks_info_line(tmp_path):
+    repo, proj = _settings_fixture(tmp_path, PROJECT_HANDLER)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    by = _by_id(res)
+    assert by["status_clean"]["status"] == "PASS", by["status_clean"]
+    line = by["project_hooks"]
+    assert line["status"] == "INFO"
+    assert ".claude/settings.json: PreToolUse Bash bash hooks/seal-grep-guard.sh" in line["measured"]
+    assert line["expected"] == "n/a (informational)"
+    assert res["ok"] is True
+
+
+def test_project_hooks_info_line_none(tmp_path):
+    repo, proj = _settings_fixture(tmp_path, None)
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["project_hooks"]
+    assert line["status"] == "INFO"
+    assert line["measured"] == "no project-owned hook handlers"
+    assert line["expected"] == "n/a (informational)"
+
+
+def test_project_hooks_info_line_status_error(tmp_path, monkeypatch):
+    repo, proj = _settings_fixture(tmp_path, None)
+    monkeypatch.setattr(v3, "compute_status_v3", lambda *a, **k: {"error": "boom"})
+    res = verify.run(str(proj), str(repo), "post_commit")
+    line = _by_id(res)["project_hooks"]
+    assert line["status"] == "INFO"
+    assert line["measured"] == "cannot compute -- boom"
+    assert "project_hooks" not in _only_fail(res)   # an INFO line never contributes to ok
 
 
 def _notes_changed_fixture(tmp_path):

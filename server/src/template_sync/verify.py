@@ -73,6 +73,8 @@ LINES = (
     # v4.5.2: once-class files the project owns may still name rules v4.5.0 retired.
     ("retired_rule_names", INFO_LINE),
     ("project_md_scoped_consistent", INFO_LINE),
+    # #30: handlers in .claude/settings.json the sync treats as the project's own.
+    ("project_hooks", INFO_LINE),
     ("tree_clean", FAIL_LINE),
 )
 
@@ -789,6 +791,18 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
         else:
             emit(_line("project_md_scoped_consistent", "INFO", "scoped, no unscoped sentence",
                        "n/a (informational)"))
+
+    # --- project_hooks (INFO) -----------------------------------------------
+    # Names the hook handlers in .claude/settings.json that status treats as
+    # the project's own (v3.compute_status_v3 records them as info["project_hooks"]).
+    # INFO_LINE kind, like encoding_drift: an error is reported, never a FAIL.
+    if status_error:
+        emit(_line("project_hooks", "INFO", f"cannot compute -- {status_error}", "n/a (informational)"))
+    else:
+        owned = "; ".join(f"{p}: {label}" for p, info in status["files"].items()
+                          for label in info.get("project_hooks", []))
+        emit(_line("project_hooks", "INFO", owned or "no project-owned hook handlers",
+                   "n/a (informational)"))
 
     # --- legacy_gate_dir (INFO) ---------------------------------------------
     emit(_check_legacy_gate_dir(pp))
