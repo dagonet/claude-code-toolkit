@@ -1,6 +1,6 @@
 {
   "name": "rust-tools",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "MCP server for Rust build, test, clippy and check runs with compact output; started with uv (uvx) and drives cargo",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/mcp-dev-servers",

@@ -117,6 +117,35 @@ def test_region_only_difference_with_moved_template_is_template_updated(tmp_path
     assert "local_diff" not in info
 
 
+def test_file_behind_the_template_is_not_green_via_the_base(tmp_path):
+    # Backlog #31 (the region twin of #30's P4): the manifest already holds the
+    # CURRENT template's hash, but the file is the OLD template plus a region. It is
+    # missing what the current template added, so it must not read IDENTICAL.
+    now = tpl("rule one\nrule two CHANGED\nrule three")
+    _, proj = mk(
+        tmp_path,
+        template_at_sync=tpl("rule one\nrule two"),
+        template_now=now,
+        project=tpl("rule one\nrule two", MINE),
+        entry_hash_of=now,
+    )
+    assert status_of(proj)["status"] == "LOCAL_EDITED"
+
+
+def test_current_template_plus_region_with_current_hash_is_identical(tmp_path):
+    # The other side of #31: the same manifest state, the file already on the
+    # current template -- the region still counts as the project's.
+    now = tpl("rule one\nrule two CHANGED\nrule three")
+    _, proj = mk(
+        tmp_path,
+        template_at_sync=tpl("rule one\nrule two"),
+        template_now=now,
+        project=tpl("rule one\nrule two CHANGED\nrule three", MINE),
+        entry_hash_of=now,
+    )
+    assert status_of(proj)["status"] == "IDENTICAL"
+
+
 def test_edit_outside_the_region_is_still_local_edited(tmp_path):
     base = tpl("rule one\nrule two")
     _, proj = mk(tmp_path, template_now=base,

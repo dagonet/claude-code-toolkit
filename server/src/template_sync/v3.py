@@ -992,7 +992,9 @@ def region_status(entry_hash_hex: str, tpl_replaced: str | None, proj_content: s
     Returns the corrected status, or None to leave the verdict alone. The
     project part may match either the current template or the one held at
     sync -- the latter is what keeps a consumer whose template moved on from
-    reading as drift. `base_provider` is called only when the cheap comparison
+    reading as drift, and counts only while the manifest still holds an older
+    hash than the current template's (otherwise the file is behind it, backlog
+    #31). `base_provider` is called only when the cheap comparison
     is inconclusive, so the git lookup stays rare.
     """
     if proj_content is None or tpl_replaced is None:
@@ -1001,14 +1003,17 @@ def region_status(entry_hash_hex: str, tpl_replaced: str | None, proj_content: s
     proj_part, proj_region = core._split_custom_region(proj_content)
     if tpl_region is None or proj_region is None:
         return None
+    moved = core._sha256(tpl_replaced) != entry_hash_hex
     if proj_part != tpl_part:
+        if not moved:
+            return None  # matches at most the older base while the manifest holds the current template: behind it
         base = base_provider()
         if base is None:
             return None
         base_part, base_region = core._split_custom_region(base)
         if base_region is None or proj_part != base_part:
             return None
-    return "TEMPLATE_UPDATED" if core._sha256(tpl_replaced) != entry_hash_hex else "IDENTICAL"
+    return "TEMPLATE_UPDATED" if moved else "IDENTICAL"
 
 
 def _git_commit_exists(repo: str, ref: str) -> bool:

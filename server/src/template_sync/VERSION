@@ -1,2 +1,2 @@
-6.1.0
-v6.1.0: the mcp-dev-servers as six opt-in plugins; four hook security fixes
+6.2.0
+v6.2.0: project-owned hook handlers in settings.json; two sync-status loopholes closed; Windows drift-probe fix
