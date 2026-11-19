@@ -783,7 +783,7 @@ def main(argv):
     write_json(local_out, local)
     print('wrote %s and %s' % (out, local_out))
     print('Next: in a Claude session on this machine, ask it to group the "corrections" in %s into '
-          'generic agent-behaviour kinds, no project, path or person names, and add '
+          'generic agent-behaviour kinds, no project, path or person names, no quoted words, and add '
           '"correction_kinds": [{"kind": ..., "count": ...}] to %s; then copy %s into ~/.cache/cct-self-review/ '
           'on the machine that runs /self-review.' % (local_out, out, out))
     return 0

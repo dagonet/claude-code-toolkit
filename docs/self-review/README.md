@@ -12,11 +12,11 @@ In a toolkit checkout, run `/self-review` in Claude Code. It runs the counter, g
 
 On each other machine, in a toolkit checkout:
 
-1. Run `python3 scripts/self-review-count.py --since <date>` (`python` on Windows), with the same `--since` as the machine that runs `/self-review`.
-2. Follow the `Next:` line it prints: group the corrections into generic behaviour kinds and add `correction_kinds` to the shared JSON.
+1. Run `python3 scripts/self-review-count.py --since <date>` (`python` on Windows), with the same `--since` as the machine that runs `/self-review`. Keep the default machine label; never use a hostname or user name.
+2. Follow the `Next:` line it prints: group the corrections into generic behaviour kinds (no project, repo, path or person names, no quoted words) and add `correction_kinds` to the shared JSON.
 3. Copy the shared JSON into `~/.cache/cct-self-review/` on the machine that runs `/self-review`. That one directory holds every machine's file; the counter writes there by default.
 
-Then run `/self-review` there. It merges the directory; for a repeated machine label the newest run wins and the merge names the file it skipped. Afterwards it moves the merged files into `merged-<date>/` there, so a machine you do not re-run shows as "not included this time".
+Then run `/self-review` there. It merges the directory; for a repeated machine label the newest run wins and the merge names the file it skipped. Afterwards it moves exactly the files it listed before merging (and their `.local.json`) into `merged-<date>/` there, never overwriting an earlier archive; a file that arrived in between stays put and is flagged. A machine you do not re-run then shows as "not included this time".
 
 ## The counter
 
@@ -29,7 +29,7 @@ Then run `/self-review` there. It merges the directory; for a repeated machine l
 | `--root DIR` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--clone-root DIR` (repeatable) | the parent of the toolkit checkout |
 | `--toolkit DIR` | the checkout the script lives in |
-| `--machine LABEL` | `<os>-<6 hex of a hostname hash>` |
+| `--machine LABEL` | `<os>-<6 hex of a hostname hash>`; keep the default, and never use a hostname or user name |
 | `--out FILE` | `~/.cache/cct-self-review/<machine>-<today>.json` (the local file is the same name ending `.local.json`) |
 | `--merge DIR` | merge every `*.json` in DIR except `*.local.json`; needs no session records |
 | `--self-test` | run the built-in tests |

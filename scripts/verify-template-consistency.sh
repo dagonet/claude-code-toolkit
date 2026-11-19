@@ -5255,7 +5255,7 @@ c82_tmp=$(mktemp -d)
 # (b)
 printf -- '---\nname: self-review\n---\n' > "$c82_tmp/SKILL.md"
 if c82_untracked "$c82_skill"; then
-  ko "check 82 (b): $c82_skill is not tracked (is the !/.claude/skills/ re-include in .gitignore?)"
+  ko "check 82 (b): $c82_skill is not tracked (is the three-line re-include in .gitignore: !/.claude/skills/, /.claude/skills/*, !/.claude/skills/self-review/?)"
 elif c82_flag_missing "$c82_skill"; then
   ko "check 82 (b): $c82_skill lacks 'disable-model-invocation: true'"
 elif ! c82_flag_missing "$c82_tmp/SKILL.md" || ! c82_untracked .claude/skills/self-review/NO-SUCH-FILE.md; then
