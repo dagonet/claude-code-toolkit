@@ -15,7 +15,7 @@ Stage 2, designed later, is a per-project improvement loop. Its first step only 
 - **Goals:**
   - A report at every release, and on demand when a new model or Claude Code version ships.
   - At most 10 ranked suggestions. Each has evidence (numbers), the proposed change, its expected effect on cost or quality, and its risk.
-  - Uses the data of both machines.
+  - **Works for any toolkit user, not only the maintainer's setup** (the repo is public; user, 2026-11-19 17:52). It covers every session of every project on every machine the user includes, one machine or many, Linux, Windows or macOS. Nothing names a machine, a path or a peer session of the maintainer's.
   - Repeatable: the counting is a script, so two runs over the same window give the same numbers.
 - **Non-goals:**
   - Applying any change.
@@ -32,7 +32,8 @@ Stage 2, designed later, is a per-project improvement loop. Its first step only 
 
 - KISS (standing user rule).
 - Read-only on transcripts; stdlib Python only, like `scripts/measure-process.py`.
-- Runs on Linux and Windows (Git Bash, `python` or `python3`).
+- Runs on Linux, macOS and Windows (Git Bash, `python` or `python3`).
+- **Scope of "all sessions":** every project folder under the machine's Claude Code data directory, main sessions and subagents alike. Sessions whose records are not on any included machine (for example cloud-hosted sessions) are out of scope, and the report says so in one line.
 - No subagent is needed for the counting; the main toolkit session writes the ranking.
 - Per the gate rule, the counter is light, but it reads up to several GB: run it on an idle machine, never beside a gate or the parser matrix.
 
@@ -49,11 +50,14 @@ Stage 2, designed later, is a per-project improvement loop. Its first step only 
 Read-only, stdlib only, never shipped to consumers. It reuses `measure-process.py`'s transcript reading (import or shared helper, builder's choice).
 
 ```
-python3 scripts/self-review-count.py [--since YYYY-MM-DD] [--root DIR] --out FILE
+python3 scripts/self-review-count.py [--since YYYY-MM-DD] [--root DIR] [--clone-root DIR ...] [--machine LABEL] [--out FILE]
 ```
 
 - **Window:** `--since`, default 30 days ago, matched on each row's timestamp (a session that spans the window start counts only its rows inside it). Jev events by their own timestamp.
-- **Input:** `~/.claude/projects/**` (main and subagent transcripts), the Jev events under the clones (`jev-tally.py`'s source), and any project notes files (§6) under the clone root (`~/git` here, `G:/git` on the PC).
+- **Input:** all main and subagent transcripts under `--root`, plus the Jev events and project notes files (§6) under each `--clone-root`.
+  - `--root` defaults to `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`.
+  - `--clone-root` may be repeated. It defaults to the parent directory of the toolkit checkout, the common layout of repositories side by side.
+- **Machine label:** `--machine`, default `<os>-<first 6 hex of sha256(hostname)>`. Two machines never collide, and the hostname itself never appears.
 - **Output:** one JSON file with only counts. It contains no conversation text, no paths below the clone root, no env values. Per-project detail and the correction candidates go to a second, local-only file (`<out>.local.json`). **My call:** both files live in `~/.cache/cct-self-review/`, outside every repo, so neither can be committed by accident.
 
 Measures (each across the window, per machine):
@@ -64,7 +68,7 @@ Measures (each across the window, per machine):
 4. **Subagent token share:** main vs subagent tokens (input, cache read, output), as in `measure-process.py`.
 5. **Repeated corrections:** user turns that correct the agent.
    - The counter picks candidates with a fixed pattern list and writes their text only to the local-only file. The JSON gets the candidate count.
-   - Then the Claude session on that same machine reads the local file and groups the candidates into behaviour kinds, for example "ran a long job without asking" or "asked a question it could answer itself". That session is the toolkit session on Linux and the PC helper on the PC.
+   - Then a Claude session on that same machine reads the local file and groups the candidates into behaviour kinds, for example "ran a long job without asking" or "asked a question it could answer itself". On the machine running `/self-review` this is that session. On another machine it is any Claude session there, via the counter's printed instruction (§5.2).
    - The session adds `"correction_kinds": [{"kind": "...", "count": N}]` to the JSON before it is used or sent.
    - A kind describes agent behaviour, never project content.
 
@@ -72,12 +76,17 @@ The always-loaded context size is not counted here: the ranking pass reads it fr
 
 ### 5.2 The command: `/self-review`, local to the toolkit repo
 
-- **Where:** `.claude/skills/self-review/SKILL.md` in this repo, re-included in `.gitignore` the way `.claude/settings.json` is. **My call:** not in the cct plugin. A plugin skill's description loads in every session of every project, and only the toolkit session needs this one. `disable-model-invocation: true`: the user, or the release step, starts it.
+- **Where:** `.claude/skills/self-review/SKILL.md` in this repo, re-included in `.gitignore` the way `.claude/settings.json` is. **My call:** not in the cct plugin. A plugin skill's description loads in every session of every project, and only a session in a toolkit checkout needs this one. Anyone who clones the toolkit gets it. `disable-model-invocation: true`: the user, or the release step, starts it.
 - **Steps:**
-  1. Run the counter on this machine.
-  2. Ask the PC helper (cc-toolkit-windows) to run it on the PC, add its correction kinds, and send back the finished JSON. **My call:** a cross-session message, since it carries counts and kinds only. No file is committed or copied between machines. If the helper is offline, the report says so and covers this machine only, rather than waiting.
-  3. Read the Claude Code changelog and what's-new pages since the version named in the previous report: new settings, skill frontmatter fields, hook events and built-ins (for example a built-in usage view) that make one of our rules redundant or newly possible.
-  4. Write the ranked report to `docs/self-review/YYYY-MM-DD.md`.
+  1. Run the counter on this machine and add its correction kinds.
+  2. **Other machines, generically.** Every finished shared JSON in `~/.cache/cct-self-review/inbox/` on this machine is a machine's contribution. The user gets one there from each other machine in either of two ways. **My call:** no transport is built, and none is assumed.
+     - **Manual:** run the counter on that machine (it prints the one-line grouping instruction to give any Claude session there), then copy the finished JSON over by any means.
+     - **Peer session:** where Claude sessions can message each other, ask a session on that machine to do the same and send back the JSON text. It carries counts and kinds only.
+     - The command asks once which other machines to include, then proceeds with what is in the inbox and never waits. A machine that appeared in the previous report but is missing now is named in the header.
+  3. **Merge:** `self-review-count.py --merge DIR` turns every shared JSON in the directory into the key-numbers table, one column per machine label plus a total. It is deterministic, so the table does not depend on the model.
+  4. Read the Claude Code changelog and what's-new pages since the version named in the previous report: new settings, skill frontmatter fields, hook events and built-ins (for example a built-in usage view) that make one of our rules redundant or newly possible.
+  5. Write the ranked report to `docs/self-review/YYYY-MM-DD.md` in the user's own checkout. The maintainer commits theirs in the release PR. Another user may keep theirs local, or offer findings upstream through the existing `contribute-upstream` route; that is optional and nothing new is built for it.
+- **Docs:** a short "Self-review" section in `docs/` explains the steps for one machine and for several, so a public user can run it without the maintainer's setup.
 - **Report header:** the date, the window, the Claude Code version and models seen, which machines contributed, and the previous report it compares with ("first report" when there is none).
 - **Key numbers:** one small table with one column per machine and a total. It holds the figures of measures 1-5, aggregated, with no project names. The next report compares against this table, so the counter itself stores no history.
 - **Body:** at most 10 items, ranked by expected cost saved or quality gained. Each item names the evidence, the change, the effect, the risk, and the files it would touch. A short "since last report" line follows on whether earlier approved items moved their numbers.
