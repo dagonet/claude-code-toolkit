@@ -145,7 +145,7 @@ def block_hook(text, is_error):
     if is_error is not True or not text.startswith('PreToolUse:') or 'hook error:' not in text[:200]:
         return None
     head, sep, tail = text.partition(']: ')
-    hit = HOOK_PATH_RE.search(head)
+    hit = HOOK_PATH_RE.search(head) if sep else None
     if hit:
         return hit.group(1)
     hit = BLOCKED_RE.search(tail)
