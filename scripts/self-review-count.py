@@ -8,6 +8,7 @@ Per-project detail goes to a sibling <out>.local.json that stays on the machine.
 
   python3 scripts/self-review-count.py [--since YYYY-MM-DD] [--until YYYY-MM-DD]
          [--root DIR] [--clone-root DIR ...] [--toolkit DIR] [--machine LABEL] [--out FILE]
+  python3 scripts/self-review-count.py --merge DIR     # one table from every shared JSON in DIR
   python3 scripts/self-review-count.py --self-test
 """
 import argparse
@@ -444,6 +445,132 @@ def leak_probes(shared, local):
     return bad
 
 
+def inbox_paths(directory):
+    """The shared JSON files in a directory: every *.json that is not a *.local.json, sorted."""
+    return sorted(p for p in glob.glob(os.path.join(directory, '*.json')) if not p.endswith('.local.json'))
+
+
+def _dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def measures(data):
+    """One machine's shared JSON -> {row label: number}, one row per measure leaf. A key a machine
+    lacks is simply not there (the table reads it as 0). `sub_share` is a ratio, the rest are counts."""
+    rows = {}
+    for kind, by_model in _dict(data.get('spawns')).items():
+        for model, n in _dict(by_model).items():
+            rows['spawns %s %s' % (kind, model)] = num(n)
+    for model, by_field in _dict(data.get('tokens_by_model')).items():
+        for field, n in _dict(by_field).items():
+            rows['tokens %s %s' % (model, field)] = num(n)
+    share = _dict(data.get('token_share')).get('sub_share')
+    rows['sub_share'] = float(share) if not isinstance(share, bool) and isinstance(share, (int, float)) \
+        and math.isfinite(share) else 0.0
+    for word, key in (('skill', 'skills'), ('agent', 'agents')):
+        for name, n in _dict(_dict(data.get('toolkit_use')).get(key)).items():
+            rows['%s %s' % (word, name)] = num(n)
+    for key in ('hook_blocks', 'jev'):
+        for name, n in _dict(data.get(key)).items():
+            rows['%s %s' % (key, name)] = num(n)
+    for key in ('correction_candidates', 'notes_malformed', 'unreadable_files'):
+        rows[key] = num(data.get(key))
+    kinds = data.get('correction_kinds')
+    for item in kinds if isinstance(kinds, list) else []:
+        if isinstance(item, dict) and isinstance(item.get('kind'), str):
+            label = 'correction_kind %s' % item['kind']
+            rows[label] = rows.get(label, 0) + num(item.get('count'))
+    for kind, by_surface in _dict(data.get('notes')).items():
+        for surface, slot in _dict(by_surface).items():
+            rows['notes %s %s count' % (kind, surface)] = num(_dict(slot).get('count'))
+            rows['notes %s %s projects (sum over machines)' % (kind, surface)] = num(_dict(slot).get('projects'))
+    return rows
+
+
+def version_key(version):
+    """Sort 2.1.9 before 2.1.10: digit runs compare as numbers."""
+    return [(0, int(p), '') if p.isdigit() else (1, 0, p) for p in re.split(r'(\d+)', version) if p]
+
+
+def cell(text):
+    return re.sub(r'[|\r\n]', ' ', str(text))
+
+
+def merge(paths):
+    """Merge the shared JSONs at `paths` into one Markdown table: a row per measure, a column per
+    machine label (sorted) and a `total` column; `sub_share`'s total is recomputed from the summed
+    main/sub tokens. A file that does not parse, is not schema 1, or repeats an earlier file's
+    machine label is listed after the table as `skipped: <file name>`."""
+    machines, skipped = {}, []
+    for path in paths:
+        try:
+            with open(path, encoding='utf-8') as fh:
+                data = json.load(fh)
+            label, since, until = data.get('machine'), data.get('since'), data.get('until')
+            if isinstance(data.get('schema'), bool) or data.get('schema') != SCHEMA or label in machines \
+                    or not isinstance(label, str) or not label or not isinstance(since, str) \
+                    or not (until is None or isinstance(until, str)):
+                raise ValueError(path)
+            share = _dict(data.get('token_share'))
+            machines[label] = {'data': data, 'rows': measures(data),
+                               'main': sum(num(_dict(share.get('main')).get(f)) for f, _ in TOKEN_FIELDS),
+                               'sub': sum(num(_dict(share.get('sub')).get(f)) for f, _ in TOKEN_FIELDS)}
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+            skipped.append(os.path.basename(path))
+    labels = sorted(machines)
+    versions = {v for m in machines.values() for v in _dict(m['data'].get('claude_code_versions'))}
+    untils = [m['data'].get('until') for m in machines.values()]
+    window = '-'
+    if machines:
+        window = '%s .. %s' % (min(m['data']['since'] for m in machines.values()),
+                               'open' if None in untils else max(untils))
+    out = ['claude_code_versions: %s' % (', '.join(sorted(versions, key=version_key)) or '-'),
+           'window: %s' % window, '',
+           '| %s |' % ' | '.join(['measure'] + [cell(x) for x in labels] + ['total']),
+           '| %s |' % ' | '.join(['---'] + ['---:'] * (len(labels) + 1))]
+    main_sum, sub_sum = sum(m['main'] for m in machines.values()), sum(m['sub'] for m in machines.values())
+    for row in sorted({r for m in machines.values() for r in m['rows']}):
+        values = [machines[x]['rows'].get(row, 0) for x in labels]
+        if row == 'sub_share':
+            cells = ['%.4f' % v for v in values]
+            cells.append('%.4f' % (round(sub_sum / (main_sum + sub_sum), 4) if main_sum + sub_sum else 0.0))
+        else:
+            cells = [str(v) for v in values] + [str(sum(values))]
+        out.append('| %s |' % ' | '.join([cell(row)] + cells))
+    if skipped:
+        out.append('')
+        out += ['skipped: %s' % cell(name) for name in skipped]
+    return '\n'.join(out) + '\n'
+
+
+def merge_checks():
+    """Lines for every merge() self-test that fails."""
+    inbox = os.path.join(FIXTURES, 'inbox')
+    with open(os.path.join(FIXTURES, 'expected-merge.md'), encoding='utf-8') as fh:
+        want = fh.read()
+    bad = []
+    try:
+        got = merge(inbox_paths(inbox))
+        if got != want:
+            bad.append('/merge: the fixture inbox does not give expected-merge.md')
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = os.path.join(tmp, 'inbox')
+            shutil.copytree(inbox, copy)
+            for name, text in (('broken.json', '{not json'), ('old.json', '{"schema": 2, "machine": "old"}'),
+                               ('linux-aaaaaa.local.json', '{"per_project": {}}')):
+                with open(os.path.join(copy, name), 'w', encoding='utf-8', newline='\n') as fh:
+                    fh.write(text)
+            got = merge(inbox_paths(copy))
+            if got != want + '\nskipped: broken.json\nskipped: old.json\n':
+                bad.append('/merge: a malformed or schema 2 file is not listed as skipped, or a .local.json is read')
+        one = merge([os.path.join(inbox, 'linux-aaaaaa.json')])
+        if '| measure | linux-aaaaaa | total |' not in one or '| sub_share | 0.3571 | 0.3571 |' not in one:
+            bad.append('/merge: one machine has no total column')
+    except Exception as exc:  # a crash must read as a failed test, not a traceback
+        bad.append('/merge: exception %s: %s' % (type(exc).__name__, exc))
+    return bad
+
+
 def self_test():
     with open(os.path.join(FIXTURES, 'expected.json'), encoding='utf-8') as fh:
         expected = json.load(fh)
@@ -537,6 +664,7 @@ def self_test():
         bad.append('/default_machine: label contains the hostname')
     if label == default_machine('host-b', 'Linux'):
         bad.append('/default_machine: two hostnames gave one label')
+    bad += merge_checks()
     for line in bad:
         print('SELF-TEST FAIL ' + line)
     if bad:
@@ -564,10 +692,18 @@ def main(argv):
     ap.add_argument('--toolkit', default=os.path.dirname(HERE), help='toolkit checkout; default this script\'s repository')
     ap.add_argument('--machine', help='label for this machine; default <os>-<6 hex of sha256(hostname)>')
     ap.add_argument('--out', help='shared JSON; default ~/.cache/cct-self-review/<machine>-<today>.json')
+    ap.add_argument('--merge', metavar='DIR', help='merge the shared JSONs in DIR (not *.local.json) into one '
+                    'table on stdout; needs no transcripts')
     ap.add_argument('--self-test', action='store_true')
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
+    if a.merge:
+        if not os.path.isdir(a.merge):
+            print('self-review-count: no directory at %s' % a.merge, file=sys.stderr)
+            return 2
+        sys.stdout.write(merge(inbox_paths(a.merge)))
+        return 0
     since = a.since or (date.today() - timedelta(days=30)).isoformat()
     for flag, value in (('--since', since), ('--until', a.until)):
         if value is not None and not DATE_RE.match(value):
