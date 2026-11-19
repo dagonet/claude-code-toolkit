@@ -38,7 +38,10 @@ BUILTIN_AGENTS = {'general-purpose', 'Explore', 'Plan', 'statusline-setup', 'cla
 SYNTHETIC = '<synthetic>'
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MODEL_RE = re.compile(r'claude-[a-z0-9.-]+')
-BLOCK_RE = re.compile(r'BLOCKED: ([a-z0-9][a-z0-9-]*)')
+HOOK_PATH_RE = re.compile(r'hooks[/\\]([A-Za-z0-9._-]+?)\.sh')
+BLOCKED_RE = re.compile(r'BLOCKED: (\S+)')
+UNATTRIBUTED = '<unattributed>'
+MAX_COUNT = 10 ** 15  # a usage field above this is garbage and counts as 0
 CORRECTION_RE = re.compile(
     r"^(no\b|nope\b|don['’]?t\b|do not\b|stop\b|wrong\b|that['’]?s (not|wrong)\b|not what\b|i said\b"
     r"|i told you\b|why did you\b|you (forgot|missed|didn['’]?t)\b)", re.IGNORECASE)
@@ -75,9 +78,12 @@ def toolkit_name(called, names):
 
 
 def num(value):
-    """A usage field as an int; anything non-numeric (or NaN or infinite) counts as 0."""
-    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-    return int(value) if ok else 0
+    """A usage field as an int; anything non-numeric, NaN, infinite or above MAX_COUNT counts as 0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if isinstance(value, float) and not math.isfinite(value):
+        return 0
+    return int(value) if abs(value) <= MAX_COUNT else 0
 
 
 def norm_model(model):
@@ -108,8 +114,8 @@ def toolkit_names(toolkit_root):
 
 
 def user_parts(msg):
-    """-> (typed text or None, [tool result texts]) of a user message. A message holding any tool
-    result is not typed by the user."""
+    """-> (typed text or None, [(is_error, tool result text)]) of a user message. A message holding
+    any tool result is not typed by the user."""
     content = msg.get('content')
     if isinstance(content, str):
         return content, []
@@ -121,11 +127,34 @@ def user_parts(msg):
         inner = b.get('content')
         if isinstance(inner, list):
             inner = '\n'.join(x['text'] for x in inner if isinstance(x, dict) and isinstance(x.get('text'), str))
-        results.append(inner if isinstance(inner, str) else '')
+        results.append((b.get('is_error') is True, inner if isinstance(inner, str) else ''))
     if results:
         return None, results
     texts = [b['text'] for b in blocks if b.get('type') == 'text' and isinstance(b.get('text'), str)]
     return ('\n'.join(texts) if texts else None), []
+
+
+def block_hook(text, is_error):
+    """The hook behind a real hook denial, else None.
+
+    A denial is an error tool result that starts `PreToolUse:` and has `hook error:` in its first 200
+    characters; a result that only quotes `BLOCKED:` is not one. The hook is the first `hooks/<name>.sh`
+    in the bracketed command, else the token after the first `BLOCKED: ` that follows it (lower-cased,
+    without a trailing `:` or `.sh`), else `<unattributed>`.
+    """
+    if is_error is not True or not text.startswith('PreToolUse:') or 'hook error:' not in text[:200]:
+        return None
+    head, sep, tail = text.partition(']: ')
+    hit = HOOK_PATH_RE.search(head)
+    if hit:
+        return hit.group(1)
+    hit = BLOCKED_RE.search(tail)
+    if not hit:
+        return UNATTRIBUTED
+    name = hit.group(1).lower()
+    name = name[:-1] if name.endswith(':') else name
+    name = name[:-len('.sh')] if name.endswith('.sh') else name
+    return name or UNATTRIBUTED
 
 
 def correction_text(typed):
@@ -140,7 +169,7 @@ def scan(rows, since, until):
     -> dict: first_day (of the first timestamped row, in or out of the window), first_model (first
     non-synthetic model in the whole transcript) or None, and, for in-window rows only:
     versions {v: n}, usage {message id: (model, {field: n})}, calls [(tool name, input)],
-    blocks [hook name of each tool result that holds `BLOCKED: <hook>`],
+    blocks [attributed hook name of each real hook denial, see block_hook],
     corrections [(timestamp, text) of each typed user turn that reads as a correction].
     A message split over several rows repeats its usage, so usage is kept once per message id.
     """
@@ -172,10 +201,10 @@ def scan(rows, since, until):
             out['versions'][version] = out['versions'].get(version, 0) + 1
         if isinstance(msg, dict) and row.get('type') == 'user':
             typed, results = user_parts(msg)
-            for text in results:
-                hit = BLOCK_RE.search(text)
-                if hit:
-                    out['blocks'].append(hit.group(1))
+            for is_error, text in results:
+                hook = block_hook(text, is_error)
+                if hook:
+                    out['blocks'].append(hook)
             text = None if row.get('isMeta') else correction_text(typed)
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
@@ -246,6 +275,10 @@ def parse_note(line, known=()):
     day, surface, n = note.get('date'), note.get('surface'), note.get('count', 1)
     if not isinstance(day, str) or not DATE_RE.match(day):
         return None
+    try:
+        date.fromisoformat(day)  # DATE_RE has the shape; this rejects 2026-13-45
+    except ValueError:
+        return None
     if not isinstance(surface, str) or not (surface in known or SURFACE_RE.fullmatch(surface)):
         return None
     if isinstance(n, bool) or not isinstance(n, int) or n < 0:
@@ -291,15 +324,16 @@ def read_notes(clone_roots, known, since, until):
 
 
 def jev_counts(clone_roots, since, until):
-    """Jev router events in the window across the clone roots -> {events, applied, up, down}.
+    """Jev router events in the window across the clone roots -> {events, applied, up, down, skipped_files}.
     up/down count applied events whose emitted model ranks above/below the default, as jev-tally does."""
-    events, _ = _JT._load_events(clone_roots, since)
+    events, skipped = _JT._load_events(clone_roots, since)
     events = [e for e in events if not until or e['ts'][:10] <= until]
     applied = [e for e in events if e.get('applied') is True]
     rank = _JT._rank
     return {'events': len(events), 'applied': len(applied),
             'up': sum(rank(e.get('emitted')) > rank(e.get('default')) for e in applied),
-            'down': sum(rank(e.get('emitted')) < rank(e.get('default')) for e in applied)}
+            'down': sum(rank(e.get('emitted')) < rank(e.get('default')) for e in applied),
+            'skipped_files': skipped}
 
 
 def count(projects_root, clone_roots, toolkit_root, since, until, machine):
@@ -443,14 +477,30 @@ def self_test():
         bad.append('/local/notes: got %s' % notes)
     if len(cut_text('x' * 400)) != 300:
         bad.append('/cut_text: not cut to 300 chars')
-    for value in (float('nan'), float('inf'), float('-inf'), True, '7', None):
+    for value in (float('nan'), float('inf'), float('-inf'), True, '7', None, 10 ** 400, -10 ** 400, 1e300):
         if num(value) != 0:
             bad.append('/num(%r): want 0, got %s' % (value, num(value)))
     if num(7) != 7 or num(7.9) != 7:
         bad.append('/num: a finite number must pass through')
-    if sorted(local.get('hook_blocks', {}).items()) != [('deny-hang-shapes', 1), ('gate-before-merge', 2),
-                                                        ('seal-guard', 1)]:
+    if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('deny-hang-shapes', 1),
+                                                        ('gate-before-merge', 2), ('no', 1), ('seal-guard', 1)]:
         bad.append('/local/hook_blocks: got %s' % local.get('hook_blocks'))
+    pre = 'PreToolUse:Bash hook error: '
+    for text, is_error, want in (
+            (pre + '[f="${X:-.}/hooks/deny-hang-shapes.sh"; [ -f "$f" ] && bash "$f"]: BLOCKED: use', True,
+             'deny-hang-shapes'),
+            (pre + '[command hook 3]: BLOCKED: gate-before-merge refuses', True, 'gate-before-merge'),
+            (pre + '[command hook 3]: BLOCKED: Deny-Hang-Shapes: use', True, 'deny-hang-shapes'),
+            (pre + '[command hook 3]: BLOCKED: seal-guard.sh: no', True, 'seal-guard'),
+            (pre + '[command hook 4]: BLOCKED: No gate artifact found.', True, 'no'),
+            (pre + '[inline]: refused', True, '<unattributed>'),
+            (pre + '[command hook 3]: BLOCKED: gate-before-merge refuses', False, None),
+            (pre + '[command hook 3]: BLOCKED: gate-before-merge refuses', None, None),
+            ('Error: BLOCKED: gate-before-merge refuses', True, None),
+            ('PreToolUse:Bash ' + 'x' * 200 + ' hook error: [c]: BLOCKED: gate-before-merge', True, None),
+            ('PreToolUse:Bash [c]: BLOCKED: gate-before-merge', True, None)):
+        if block_hook(text, is_error) != want:
+            bad.append('/block_hook(%r, %s): want %s, got %s' % (text[:60], is_error, want, block_hook(text, is_error)))
     known = {'.claude/rules/project.md'}
     for line, ok in (('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook", "count": 2}', True),
                      ('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook"}', True),
@@ -458,6 +508,7 @@ def self_test():
                      ('{"date": "2026-11-15", "kind": "helped", "surface": "rules/private.md", "count": 1}', False),
                      ('{"date": "2026-11-15", "kind": "helped", "surface": ".hidden", "count": 1}', False),
                      ('{"kind": "helped", "surface": "x-hook", "count": 1}', False),
+                     ('{"date": "2026-13-45", "kind": "helped", "surface": "x-hook", "count": 1}', False),
                      ('{"date": "2026-1-5", "kind": "helped", "surface": "x-hook", "count": 1}', False),
                      ('{"date": 20261115, "kind": "helped", "surface": "x-hook", "count": 1}', False),
                      ('{"date": "2026-11-15", "kind": "helped", "surface": "x", "count": true}', False),

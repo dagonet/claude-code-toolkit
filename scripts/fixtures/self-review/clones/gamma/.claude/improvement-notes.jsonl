@@ -2,3 +2,4 @@
 {"date": "2026-10-01", "kind": "recurring_failure", "surface": "gate-before-merge", "summary": "before the window", "count": 50}
 {"date": "2026-11-18", "kind": "rule_unused", "surface": "zz-other-surface", "summary": "another project-specific rule", "count": 1}
 {"kind": "helped", "surface": "commit", "summary": "no date, so malformed", "count": 1}
+{"date": "2026-13-45", "kind": "helped", "surface": "commit", "count": 1}

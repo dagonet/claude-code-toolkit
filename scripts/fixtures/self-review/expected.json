@@ -24,14 +24,14 @@
     "skills": {"commit": 1, "sprint": 0},
     "agents": {"coder": 1, "Explore": 0}
   },
-  "hook_blocks": {"gate-before-merge": 2, "deny-hang-shapes": 1, "other": 1},
+  "hook_blocks": {"gate-before-merge": 2, "deny-hang-shapes": 1, "other": 3},
   "correction_candidates": 2,
   "notes": {
     "recurring_failure": {"gate-before-merge": {"count": 5, "projects": 2}},
     "helped": {"commit": {"count": 2, "projects": 1}, ".claude/rules/project.md": {"count": 1, "projects": 1}},
     "rule_unused": {"other": {"count": 5, "projects": 2}}
   },
-  "notes_malformed": 2,
-  "jev": {"events": 2, "applied": 1, "up": 1, "down": 0},
+  "notes_malformed": 3,
+  "jev": {"events": 2, "applied": 1, "up": 1, "down": 0, "skipped_files": 1},
   "unreadable_files": 1
 }
