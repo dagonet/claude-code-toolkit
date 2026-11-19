@@ -400,14 +400,15 @@ def self_test():
     if local['per_project'] != want_local:
         bad.append('/per_project: got %s' % local['per_project'])
     bad += leak_probes(shared, local)
-    texts = [c['text'] for c in local['corrections']]
+    corrections, notes = local.get('corrections', []), local.get('notes', {})
+    texts = [c.get('text') for c in corrections]
     if sorted(texts) != sorted(["no, don't run the gate without asking ZZ-PRIVATE-MARKER-7f3a",
                                 "that's not what I asked"]):
         bad.append('/local/corrections: got %s' % texts)
-    if any(set(c) != {'project', 'ts', 'text'} or c['project'] != '-home-u-git-alpha' for c in local['corrections']):
-        bad.append('/local/corrections: wrong shape %s' % local['corrections'])
-    if sorted(local['notes']) != ['beta', 'gamma'] or [len(v) for _, v in sorted(local['notes'].items())] != [2, 1]:
-        bad.append('/local/notes: got %s' % local['notes'])
+    if any(set(c) != {'project', 'ts', 'text'} or c['project'] != '-home-u-git-alpha' for c in corrections):
+        bad.append('/local/corrections: wrong shape %s' % corrections)
+    if {k: len(v) for k, v in notes.items()} != {'beta': 2, 'gamma': 1}:
+        bad.append('/local/notes: got %s' % notes)
     if len(cut_text('x' * 400)) != 300:
         bad.append('/cut_text: not cut to 300 chars')
     for value in (float('nan'), float('inf'), float('-inf'), True, '7', None):
