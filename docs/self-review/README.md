@@ -12,11 +12,11 @@ In a toolkit checkout, run `/self-review` in Claude Code. It runs the counter, g
 
 On each other machine, in a toolkit checkout:
 
-1. Run `python3 scripts/self-review-count.py` (`python` on Windows).
-2. Follow the `Next:` line it prints: group the corrections into behaviour kinds and add `correction_kinds` to the shared JSON.
-3. Copy the shared JSON into the inbox of the machine that runs `/self-review`: `~/.cache/cct-self-review/inbox/`.
+1. Run `python3 scripts/self-review-count.py --since <date>` (`python` on Windows), with the same `--since` as the machine that runs `/self-review`.
+2. Follow the `Next:` line it prints: group the corrections into generic behaviour kinds and add `correction_kinds` to the shared JSON.
+3. Copy the shared JSON into `~/.cache/cct-self-review/` on the machine that runs `/self-review`. That one directory holds every machine's file; the counter writes there by default.
 
-Then run `/self-review` there. It merges everything in the inbox; for a repeated machine label the newest run wins and the merge names the file it skipped.
+Then run `/self-review` there. It merges the directory; for a repeated machine label the newest run wins and the merge names the file it skipped. Afterwards it moves the merged files into `merged-<date>/` there, so a machine you do not re-run shows as "not included this time".
 
 ## The counter
 
@@ -34,4 +34,4 @@ Then run `/self-review` there. It merges everything in the inbox; for a repeated
 | `--merge DIR` | merge every `*.json` in DIR except `*.local.json`; needs no session records |
 | `--self-test` | run the built-in tests |
 
-Sessions whose records are on no included machine (for example cloud-hosted ones) are not counted. Keep the report in your own checkout, or offer findings upstream with `contribute-upstream`.
+Sessions whose records are on no included machine (for example cloud-hosted ones) are not counted. Keep the report in your own checkout, or offer findings upstream with `/cct:contribute-upstream`.

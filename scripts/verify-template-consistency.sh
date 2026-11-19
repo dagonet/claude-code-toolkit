@@ -5258,8 +5258,8 @@ if c82_untracked "$c82_skill"; then
   ko "check 82 (b): $c82_skill is not tracked (is the !/.claude/skills/ re-include in .gitignore?)"
 elif c82_flag_missing "$c82_skill"; then
   ko "check 82 (b): $c82_skill lacks 'disable-model-invocation: true'"
-elif ! c82_flag_missing "$c82_tmp/SKILL.md" || ! c82_untracked "$c82_tmp/SKILL.md"; then
-  ko "check 82 (b) control: a SKILL.md without the flag, or an untracked path, was NOT reported -- the predicate is vacuous"
+elif ! c82_flag_missing "$c82_tmp/SKILL.md" || ! c82_untracked .claude/skills/self-review/NO-SUCH-FILE.md; then
+  ko "check 82 (b) control: a SKILL.md without the flag, or an untracked path inside the repo, was NOT reported -- the predicate is vacuous"
 else
   ok "check 82 (b): the command is tracked and not model-invocable; control fires"
 fi
@@ -5273,14 +5273,25 @@ else
   ok "check 82 (c): skills/self-review does not exist; control fires"
 fi
 # (d)
-mkdir -p "$c82_tmp/d"; printf 'see %s/git\n' "/home/darknite" > "$c82_tmp/d/x.md"
-c82_hits=$(c82_banned "$c82_skill" docs/self-review/README.md scripts/fixtures/self-review scripts/self-review-count.py)
-if [ -n "$c82_hits" ]; then
-  ko "check 82 (d): a real machine or path is named in: $(printf '%s' "$c82_hits" | tr '\n' ' ')"
-elif [ -z "$(c82_banned "$c82_tmp/d")" ]; then
-  ko "check 82 (d) control: a file naming a banned path was NOT reported -- the predicate is vacuous"
+c82_targets="$c82_skill docs/self-review/README.md scripts/fixtures/self-review scripts/self-review-count.py"
+mkdir -p "$c82_tmp/d"; c82_n=0
+for c82_s in 'G:/' '/home/darknite' 'agent-host' 'cc-toolkit-windows'; do
+  c82_n=$((c82_n + 1)); printf 'see %s here\n' "$c82_s" > "$c82_tmp/d/f$c82_n.md"
+done
+c82_missing=""
+for c82_t in $c82_targets; do [ -e "$c82_t" ] || c82_missing="$c82_missing $c82_t"; done
+if [ -n "$c82_missing" ]; then
+  ko "check 82 (d): scan target(s) missing, nothing was scanned:$c82_missing"
 else
-  ok "check 82 (d): the command, its docs and fixtures name no real machine or path; control fires"
+  # shellcheck disable=SC2086
+  c82_hits=$(c82_banned $c82_targets)
+  if [ -n "$c82_hits" ]; then
+    ko "check 82 (d): a real machine or path is named in: $(printf '%s' "$c82_hits" | tr '\n' ' ')"
+  elif [ "$(c82_banned "$c82_tmp/d" | wc -l | tr -d ' ')" -ne 4 ]; then
+    ko "check 82 (d) control: the four planted banned strings (one file each) were NOT all reported -- a pattern is vacuous"
+  else
+    ok "check 82 (d): the command, its docs and fixtures name no real machine or path; control fires on all four patterns"
+  fi
 fi
 rm -rf "${c82_tmp:?}"
 

@@ -756,21 +756,23 @@ def main(argv):
     if a.self_test:
         return self_test()
     if a.merge is not None:
-        if not os.path.isdir(a.merge):
-            print('self-review-count: no directory at %s' % a.merge, file=sys.stderr)
+        merge_dir = os.path.expanduser(a.merge)
+        if not os.path.isdir(merge_dir):
+            print('self-review-count: no directory at %s' % merge_dir, file=sys.stderr)
             return 2
-        sys.stdout.write(merge(inbox_paths(a.merge)))
+        sys.stdout.write(merge(inbox_paths(merge_dir)))
         return 0
     since = a.since or (date.today() - timedelta(days=30)).isoformat()
     for flag, value in (('--since', since), ('--until', a.until)):
         if value is not None and not DATE_RE.match(value):
             ap.error('%s wants YYYY-MM-DD' % flag)
     config = os.environ.get('CLAUDE_CONFIG_DIR')
-    root = a.root or os.path.join(config or os.path.join(os.path.expanduser('~'), '.claude'), 'projects')
+    root = os.path.expanduser(a.root) if a.root else os.path.join(
+        config or os.path.join(os.path.expanduser('~'), '.claude'), 'projects')
     toolkit = os.path.abspath(a.toolkit)
-    clone_roots = a.clone_root or [os.path.dirname(toolkit)]
+    clone_roots = [os.path.expanduser(r) for r in a.clone_root] if a.clone_root else [os.path.dirname(toolkit)]
     machine = a.machine or default_machine(socket.gethostname(), platform.system())
-    out = a.out or os.path.join(os.path.expanduser('~'), '.cache', 'cct-self-review',
+    out = os.path.expanduser(a.out) if a.out else os.path.join(os.path.expanduser('~'), '.cache', 'cct-self-review',
                                 '%s-%s.json' % (machine, date.today().isoformat()))
     if not os.path.isdir(root):
         print('self-review-count: no transcript directory at %s' % root, file=sys.stderr)
@@ -781,8 +783,9 @@ def main(argv):
     write_json(local_out, local)
     print('wrote %s and %s' % (out, local_out))
     print('Next: in a Claude session on this machine, ask it to group the "corrections" in %s into '
-          'agent-behaviour kinds and add "correction_kinds": [{"kind": ..., "count": ...}] to %s; then copy %s '
-          'to the inbox of the machine that runs /self-review.' % (local_out, out, out))
+          'generic agent-behaviour kinds, no project, path or person names, and add '
+          '"correction_kinds": [{"kind": ..., "count": ...}] to %s; then copy %s into ~/.cache/cct-self-review/ '
+          'on the machine that runs /self-review.' % (local_out, out, out))
     return 0
 
 

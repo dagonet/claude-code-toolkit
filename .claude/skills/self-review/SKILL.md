@@ -8,26 +8,29 @@ disable-model-invocation: true
 
 Writes `docs/self-review/<YYYY-MM-DD>.md` from counts taken from Claude Code session records on one or more machines, plus the Claude Code changelog. Run it in a toolkit checkout. It never ships to consumers and applies nothing by itself.
 
+All counter commands below are `python3 scripts/self-review-count.py ...`; on Windows use `python` if `python3` is absent. Every machine uses one exchange directory, `~/.cache/cct-self-review/`: the counter writes there by default, and the files from other machines are copied into the same directory.
+
 ## Steps
 
-1. Count this machine. Run `python3 scripts/self-review-count.py --since <date of the previous docs/self-review report, else 30 days back> --out ~/.cache/cct-self-review/inbox/<label>.json` (on Windows, `python` if `python3` is absent). `<label>` is any short name for this machine. The counter also writes `<label>.local.json` next to it; the merge step ignores that file.
-2. Group the corrections. Read the `corrections` in the `.local.json` and group them into behaviour kinds: agent behaviour only, never project content. Add `"correction_kinds": [{"kind": "...", "count": N}]` to the shared JSON (`<label>.json`). Never copy candidate text anywhere else.
-3. Ask the user once which other machines to include. For each one, give the two ways in, then continue with whatever is in the inbox, without waiting:
-   - **(a) Manual:** run the same counter there, follow its printed "Next:" line, and copy the shared JSON into this machine's `~/.cache/cct-self-review/inbox/`.
-   - **(b) Peer session:** if a Claude session on that machine can be messaged, ask it to do (a) and reply with the shared JSON text only. Write that text to the inbox.
-   - A machine label that appears in the previous report's table but not in the inbox is named in the header as "not included this time".
-4. Merge. Run `python3 scripts/self-review-count.py --merge ~/.cache/cct-self-review/inbox/` and paste its table unchanged. For a repeated machine label the newest run is kept and the merge lists the others as `skipped: ...`; keep those lines.
-5. Read the Claude Code changelog (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) from the version named in the previous report's header, looking for features that make a toolkit rule redundant or newly possible.
-6. Write `docs/self-review/<YYYY-MM-DD>.md` with the template below.
-7. Before saving, check the report for project or repo names from the `.local.json` files and remove any that appear.
+1. Count this machine. Run the counter with `--since <date of the previous docs/self-review report, else 30 days back>` and the default `--out`. Keep the counter's default machine label; never ask for one or invent one. If the user insists on choosing a label, it must not identify the machine or its user: never a hostname or a user name. The counter writes `<label>-<date>.json` and `<label>-<date>.local.json` into the exchange directory; the merge step ignores the `.local.json`.
+2. Group the corrections. Read the `corrections` in the `.local.json` and group them into behaviour kinds: agent behaviour only, never project content. A kind is a short, generic phrase about what the agent did. It may not name a project, repo, path or person, and may not quote words from the candidates. Add `"correction_kinds": [{"kind": "...", "count": N}]` to the shared JSON. Never copy candidate text anywhere else.
+3. Ask the user once which other machines to include. Every machine must count the same window, so pass this machine's `--since` along. For each machine, give the two ways in, then continue with whatever is in the exchange directory, without waiting:
+   - **(a) Manual:** run the same counter there with this machine's `--since` and the default `--out`, follow its printed "Next:" line, and copy the shared JSON into this machine's `~/.cache/cct-self-review/`.
+   - **(b) Peer session:** if a Claude session on that machine can be messaged, ask it to do (a) with this machine's `--since`, to keep the kinds generic (no project, path or person names), and to reply with the shared JSON text only. Write that text into `~/.cache/cct-self-review/` as `<machine field of the JSON>-<date>.json`.
+   - A machine column that appears in the previous report's table but not in this merge is named in the header as "not included this time".
+4. Merge. Run the counter with `--merge ~/.cache/cct-self-review/`. It reads every `*.json` there except `*.local.json`, and does not read subdirectories. For a repeated machine label the newest run is kept and the others are listed as `skipped: ...`; keep those lines. Paste the table unchanged, subject to step 6.
+5. Read the Claude Code changelog (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) from the newest version named in the previous report's header (a first report covers the last 30 days of changelog entries), looking for features that make a toolkit rule redundant or newly possible.
+6. Privacy check, before the report file is written. Look through the whole report, the pasted table included, for project or repo names from the `.local.json` files and for any row label (a correction kind, for instance) that names a project, repo, path or person or quotes candidate text. Remove or rewrite generically anything that does. This overrides "paste unchanged" for that purpose only.
+7. Write `docs/self-review/<YYYY-MM-DD>.md` with the template below.
+8. Archive. Move every shared JSON in `~/.cache/cct-self-review/` and its `.local.json` into `~/.cache/cct-self-review/merged-<YYYY-MM-DD>/`. The next merge does not read subdirectories, so a machine that is not re-run is reported as "not included this time" rather than with stale numbers.
 
 ## Report template
 
 - **Header:** date, window, Claude Code versions and models seen, machine labels, the previous report or "first report", and one line that sessions whose records are on no included machine (for example cloud-hosted ones) are not counted.
-- **Key numbers:** the merged table, then the Context Budget figures from the last column of the table in `docs/architecture.md` (*Context Budget*).
+- **Key numbers:** the merged table, then the Context Budget figures (harness-injected at session start, and at the end of bootstrap) from the bold newest-version column of the Context Budget table in `docs/architecture.md`.
 - **At most 10 items**, ranked by cost saved or quality gained. Each gives the evidence, the change, the effect, the risk, and the files touched.
 - **Since last report:** one line.
 
 ## Rule
 
-Nothing is applied; each item waits for the user's approval of that item. The maintainer commits the report in the release PR. Anyone else keeps theirs in their own checkout, and may offer findings upstream via `contribute-upstream`.
+Nothing is applied; each item waits for the user's approval of that item. The maintainer commits the report in the release PR. Anyone else keeps theirs in their own checkout, and may offer findings upstream via `/cct:contribute-upstream`.
