@@ -145,6 +145,7 @@ It needs the template-sync-tools MCP server from your toolkit checkout, register
 - [`docs/architecture.md`](docs/architecture.md): how the layers, hooks, model policy and context budget fit together
 - [`docs/template-sync.md`](docs/template-sync.md): how template updates reach your project
 - [`docs/verification.md`](docs/verification.md) and [`mcp-servers/HOWTO.md`](mcp-servers/HOWTO.md): check your setup; optional MCP servers
+- [`docs/self-review/README.md`](docs/self-review/README.md): the `/self-review` report, which turns your session records into proposed toolkit changes
 - [`docs/history.md`](docs/history.md) and [`CHANGELOG.md`](CHANGELOG.md): how it got here and what changed in each release
 
 Related: [**mcp-dev-servers**](https://github.com/dagonet/mcp-dev-servers) (MCP servers for git, GitHub, .NET, Rust, Ollama, Python)

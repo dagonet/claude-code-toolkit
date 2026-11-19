@@ -9,6 +9,8 @@
 # (PROJECT_CONTEXT.md) without the wiring that makes them RUN.
 /.claude/*
 !/.claude/settings.json
+# The repo-local /self-review command (never shipped: the plugin's skills live in /skills/).
+!/.claude/skills/
 
 # Gate artifact written by hooks/run-gate.sh. Must be ignored: as of v2.1.5 the
 # artifact is keyed on a temp-index `add -A` of the working tree, so an untracked

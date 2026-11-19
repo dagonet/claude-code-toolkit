@@ -5225,6 +5225,66 @@ elif [ -n "$c81_real" ]; then ko "81: rules without their twin: $(printf '%s' "$
 else ok "81: every mcp-dev-servers tool rule has its plugin-form twin; controls fire"; fi
 
 # ---------------------------------------------------------------------------
+# Check 82 -- the repo-local /self-review command (design 2026-11-19):
+#   (a) scripts/self-review-count.py --self-test passes (a missing python3 is a
+#       failure, never a skip -- check 66's posture);
+#   (b) .claude/skills/self-review/SKILL.md is TRACKED (the .gitignore
+#       re-include is what lets it be) and carries `disable-model-invocation: true`;
+#   (c) skills/self-review does not exist -- the command must never ship in the
+#       plugin;
+#   (d) the command's SKILL.md, its docs and the counter's fixtures name no real
+#       machine or path (the public-repo rule).
+# Each predicate is a small function the real run and its control both call;
+# the control builds a violating copy in a temp dir and requires the predicate
+# to report it, so a predicate that matches nothing goes red instead of green.
+# ---------------------------------------------------------------------------
+note "Check 82: /self-review command (self-test, tracked + not model-invocable, not shipped, generic)"
+c82_untracked()    { [ -z "$(git ls-files "$1" 2>/dev/null)" ]; }                   # 0 = violation
+c82_flag_missing() { ! grep -qx 'disable-model-invocation: true' "$1" 2>/dev/null; } # 0 = violation
+c82_ships()        { [ -e "$1/skills/self-review" ]; }                               # 0 = violation
+c82_banned()       { grep -rIlF -e 'G:/' -e '/home/darknite' -e 'agent-host' -e 'cc-toolkit-windows' "$@" 2>/dev/null; }  # prints violators
+c82_skill=.claude/skills/self-review/SKILL.md
+if ! python3 -c 'import sys' >/dev/null 2>&1; then
+  ko "check 82 (a): python3 is not usable here -- the self-review counter's self-test cannot run (python3 is a toolkit prerequisite, see server/install.sh)"
+elif c82_out=$(python3 scripts/self-review-count.py --self-test 2>&1); then
+  ok "check 82 (a): $(printf '%s' "$c82_out" | tail -1)"
+else
+  ko "check 82 (a): scripts/self-review-count.py --self-test failed: $(printf '%s' "$c82_out" | head -3 | tr '\n' ' ')"
+fi
+c82_tmp=$(mktemp -d)
+# (b)
+printf -- '---\nname: self-review\n---\n' > "$c82_tmp/SKILL.md"
+if c82_untracked "$c82_skill"; then
+  ko "check 82 (b): $c82_skill is not tracked (is the !/.claude/skills/ re-include in .gitignore?)"
+elif c82_flag_missing "$c82_skill"; then
+  ko "check 82 (b): $c82_skill lacks 'disable-model-invocation: true'"
+elif ! c82_flag_missing "$c82_tmp/SKILL.md" || ! c82_untracked "$c82_tmp/SKILL.md"; then
+  ko "check 82 (b) control: a SKILL.md without the flag, or an untracked path, was NOT reported -- the predicate is vacuous"
+else
+  ok "check 82 (b): the command is tracked and not model-invocable; control fires"
+fi
+# (c)
+mkdir -p "$c82_tmp/c/skills/self-review"
+if c82_ships .; then
+  ko "check 82 (c): skills/self-review exists -- the repo-local command must not ship in the plugin"
+elif ! c82_ships "$c82_tmp/c"; then
+  ko "check 82 (c) control: a skills/self-review directory was NOT reported -- the predicate is vacuous"
+else
+  ok "check 82 (c): skills/self-review does not exist; control fires"
+fi
+# (d)
+mkdir -p "$c82_tmp/d"; printf 'see %s/git\n' "/home/darknite" > "$c82_tmp/d/x.md"
+c82_hits=$(c82_banned "$c82_skill" docs/self-review/README.md scripts/fixtures/self-review scripts/self-review-count.py)
+if [ -n "$c82_hits" ]; then
+  ko "check 82 (d): a real machine or path is named in: $(printf '%s' "$c82_hits" | tr '\n' ' ')"
+elif [ -z "$(c82_banned "$c82_tmp/d")" ]; then
+  ko "check 82 (d) control: a file naming a banned path was NOT reported -- the predicate is vacuous"
+else
+  ok "check 82 (d): the command, its docs and fixtures name no real machine or path; control fires"
+fi
+rm -rf "${c82_tmp:?}"
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$skip_count" -gt 0 ]; then
   echo "$skip_count check(s) skipped"
