@@ -30,6 +30,8 @@ SCHEMA = 1
 TOKEN_FIELDS = (('input', 'input_tokens'), ('cache_read', 'cache_read_input_tokens'),
                 ('output', 'output_tokens'))
 AGENT_TOOLS = {'Agent', 'Task'}
+PLUGIN_PREFIX = 'cct:'
+BUILTIN_AGENTS = {'general-purpose', 'Explore', 'Plan', 'statusline-setup', 'claude-code-guide'}
 SYNTHETIC = '<synthetic>'
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
@@ -50,14 +52,28 @@ def default_machine(hostname, system):
     return '%s-%s' % (system.lower(), hashlib.sha256(hostname.encode('utf-8')).hexdigest()[:6])
 
 
-def strip_prefix(name):
-    return name[len('cct:'):] if name.startswith('cct:') else name
+def toolkit_name(called, names):
+    """The bare toolkit name behind a call, or None. Only `cct:<name>` is the toolkit's: a bare name
+    may be a Claude Code built-in (Explore) or another plugin's."""
+    if isinstance(called, str) and called.startswith(PLUGIN_PREFIX) and called[len(PLUGIN_PREFIX):] in names:
+        return called[len(PLUGIN_PREFIX):]
+    return None
+
+
+def num(value):
+    """A usage field as an int; anything non-numeric counts as 0."""
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def in_window(day, since, until):
+    return since <= day and (not until or day <= until)
 
 
 def toolkit_names(toolkit_root):
     """-> (skill names, agent names) the toolkit ships, from its skills/ dirs and agents/*.md."""
     skills_dir, agents_dir = os.path.join(toolkit_root, 'skills'), os.path.join(toolkit_root, 'agents')
-    skills = agents = []
+    skills = []
+    agents = []
     if os.path.isdir(skills_dir):
         skills = [n for n in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, n))]
     if os.path.isdir(agents_dir):
@@ -68,37 +84,41 @@ def toolkit_names(toolkit_root):
 def scan(rows, since, until):
     """Reduce one transcript to what counts inside the window.
 
-    -> dict: rows (in window), versions {v: n}, usage {message id: (model, {field: n})},
-    calls [(tool name, input)], first_model (first non-synthetic model) or None.
+    -> dict: first_day (of the first timestamped row, in or out of the window), first_model (first
+    non-synthetic model in the whole transcript) or None, and, for in-window rows only:
+    versions {v: n}, usage {message id: (model, {field: n})}, calls [(tool name, input)].
     A message split over several rows repeats its usage, so usage is kept once per message id.
     """
-    out = {'rows': 0, 'versions': {}, 'usage': {}, 'calls': [], 'first_model': None}
+    out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': []}
     for i, row in enumerate(rows):
+        msg = row.get('message')
+        model = None
+        if isinstance(msg, dict) and row.get('type') == 'assistant':
+            model = msg.get('model') if isinstance(msg.get('model'), str) else None
+            if model == SYNTHETIC:
+                model = None
+            if model and out['first_model'] is None:
+                out['first_model'] = model
         t = parse_ts(row)
         if t is None:
             continue
         if t.tzinfo is not None:
             t = t.astimezone(timezone.utc)
         day = t.date().isoformat()
-        if day < since or (until and day > until):
+        if out['first_day'] is None:
+            out['first_day'] = day
+        if not in_window(day, since, until):
             continue
-        out['rows'] += 1
         version = row.get('version')
         if isinstance(version, str):
             out['versions'][version] = out['versions'].get(version, 0) + 1
-        msg = row.get('message')
         if not isinstance(msg, dict) or row.get('type') != 'assistant':
             continue
-        model = msg.get('model') if isinstance(msg.get('model'), str) else None
-        if model == SYNTHETIC:
-            model = None
-        if model and out['first_model'] is None:
-            out['first_model'] = model
         usage = msg.get('usage')
         if isinstance(usage, dict):
             mid = msg.get('id') or 'row%d' % i
             old_model, old = out['usage'].get(mid, (None, {}))
-            merged = {f: max(old.get(f, 0), int(usage.get(src) or 0)) for f, src in TOKEN_FIELDS}
+            merged = {f: max(old.get(f, 0), num(usage.get(src))) for f, src in TOKEN_FIELDS}
             out['usage'][mid] = (old_model or model, merged)
         content = msg.get('content')
         for block in content if isinstance(content, list) else []:
@@ -107,14 +127,23 @@ def scan(rows, since, until):
     return out
 
 
-def agent_type_of(sub_path):
-    """The subagent's type from its .meta.json, cct: prefix stripped; 'unknown' when absent or unreadable."""
+def agent_type_of(sub_path, agent_names):
+    """-> (shared key, verbatim type) for a subagent, from its .meta.json agentType.
+
+    The shared key never carries a project-specific name: `cct:<toolkit agent>` and the Claude Code
+    built-ins pass through, a missing or unreadable meta or no agentType is 'unknown', the rest 'other'.
+    The verbatim type is for the local-only file.
+    """
     try:
         with open(sub_path[:-len('.jsonl')] + '.meta.json', encoding='utf-8') as fh:
             name = json.load(fh).get('agentType')
     except (OSError, ValueError, AttributeError):
-        return 'unknown'
-    return strip_prefix(name) if isinstance(name, str) and name else 'unknown'
+        return 'unknown', 'unknown'
+    if not isinstance(name, str) or not name:
+        return 'unknown', 'unknown'
+    if name in BUILTIN_AGENTS or toolkit_name(name, agent_names):
+        return name, name
+    return 'other', name
 
 
 def _zero():
@@ -136,7 +165,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
         pdir = os.path.join(projects_root, slug)
         if not os.path.isdir(pdir):
             continue
-        local = per_project[slug] = {'spawns': 0, 'tokens': 0}
+        local = per_project[slug] = {'spawns': {}, 'tokens': 0}
         files = [(p, False) for p in glob.glob(os.path.join(pdir, '*.jsonl'))]
         files += [(p, True) for p in glob.glob(os.path.join(pdir, '*', 'subagents', 'agent-*.jsonl'))]
         for path, is_sub in sorted(files):
@@ -161,13 +190,15 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                     called, names = inp.get('subagent_type'), use['agents']
                 else:
                     continue
-                if isinstance(called, str) and strip_prefix(called) in names:
-                    names[strip_prefix(called)] += 1
-            if is_sub and s['rows']:
+                key = toolkit_name(called, names)
+                if key:
+                    names[key] += 1
+            if is_sub and s['first_day'] and in_window(s['first_day'], since, until):
                 model = s['first_model'] or 'unknown'
-                by_type = spawns.setdefault(agent_type_of(path), {})
+                key, verbatim = agent_type_of(path, agent_names)
+                by_type = spawns.setdefault(key, {})
                 by_type[model] = by_type.get(model, 0) + 1
-                local['spawns'] += 1
+                local['spawns'][verbatim] = local['spawns'].get(verbatim, 0) + 1
     main_total, sub_total = sum(share['main'].values()), sum(share['sub'].values())
     share['sub_share'] = round(sub_total / (main_total + sub_total), 4) if main_total + sub_total else 0.0
     shared = {'schema': SCHEMA, 'machine': machine, 'since': since, 'until': until,
@@ -176,22 +207,38 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     return shared, {'per_project': per_project}
 
 
+def key_diffs(got, want, path):
+    """Lines for every dict in `want` whose key set differs from the matching dict in `got`."""
+    if not isinstance(want, dict):
+        return []
+    if not isinstance(got, dict) or sorted(got) != sorted(want):
+        return ['%s: keys want %s, got %s' % (path, sorted(want), sorted(got) if isinstance(got, dict) else got)]
+    return [line for k in want for line in key_diffs(got[k], want[k], path + '/' + k)]
+
+
 def self_test():
     with open(os.path.join(FIXTURES, 'expected.json'), encoding='utf-8') as fh:
         expected = json.load(fh)
-    shared, local = count(os.path.join(FIXTURES, 'projects'), [], os.path.join(FIXTURES, 'toolkit'),
-                          expected['since'], expected['until'], expected['machine'])
+    try:
+        shared, local = count(os.path.join(FIXTURES, 'projects'), [], os.path.join(FIXTURES, 'toolkit'),
+                              expected['since'], expected['until'], expected['machine'])
+    except Exception as exc:  # a crash must read as a failed test, not a traceback
+        print('SELF-TEST FAIL exception: %s: %s' % (type(exc).__name__, exc))
+        return 1
     bad = compare(shared, expected)
-    # compare() ignores keys the expectation lacks; these maps must hold exactly the expected keys.
-    for path in (('claude_code_versions',), ('spawns',), ('tokens_by_model',),
-                 ('toolkit_use', 'skills'), ('toolkit_use', 'agents')):
-        got, want = shared, expected
-        for k in path:
-            got, want = got[k], want[k]
-        if sorted(got) != sorted(want):
-            bad.append('/%s: keys want %s, got %s' % ('/'.join(path), sorted(want), sorted(got)))
-    if local['per_project'] != {'-home-u-git-alpha': {'spawns': 2, 'tokens': 8769}}:
+    # compare() ignores keys the expectation lacks; these maps must hold exactly the expected keys,
+    # all the way down (so "one model per spawn" is pinned too).
+    for key in ('claude_code_versions', 'spawns', 'tokens_by_model', 'toolkit_use'):
+        bad += key_diffs(shared[key], expected[key], '/' + key)
+    want_local = {'-home-u-git-alpha': {'spawns': {'cct:coder': 1, 'Explore': 1, 'alpha-db-expert': 1, 'unknown': 2},
+                                        'tokens': 8935}}
+    if local['per_project'] != want_local:
         bad.append('/per_project: got %s' % local['per_project'])
+    # Project-specific agent types stay in the local file; the control proves the probe can see them.
+    if 'alpha-db-expert' in json.dumps(shared):
+        bad.append('/shared: a project-specific agent type leaked')
+    if 'alpha-db-expert' not in json.dumps(local):
+        bad.append('CONTROL FAILED: the project-specific agent type is not in the local file')
     # Control: a deliberately wrong expected share must be reported, or the comparison is vacuous.
     wrong = json.loads(json.dumps(expected))
     wrong['token_share']['sub_share'] = round(wrong['token_share']['sub_share'] - 0.05, 4)
