@@ -1,6 +1,7 @@
 {"type":"user","timestamp":"2026-11-14T10:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t10","content":"BLOCKED: gate-before-merge refuses: no gate artifact for this HEAD"}]}}
 {"type":"user","timestamp":"2026-11-14T10:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t11","content":[{"type":"text","text":"BLOCKED: gate-before-merge refuses: artifact expired"}]}]}}
 {"type":"user","timestamp":"2026-11-14T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t12","content":"BLOCKED: deny-hang-shapes: use absolute paths"}]}}
+{"type":"user","timestamp":"2026-11-14T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t14","content":"BLOCKED: seal-guard: protected path"}]}}
 {"type":"user","timestamp":"2026-11-14T10:00:03Z","message":{"role":"user","content":"I saw BLOCKED: typed-only in the log"}}
 {"type":"user","timestamp":"2026-11-14T10:01:00Z","message":{"role":"user","content":"no, don't run the gate without asking ZZ-PRIVATE-MARKER-7f3a"}}
 {"type":"user","timestamp":"2026-11-14T10:01:01Z","message":{"role":"user","content":"that's not what I asked"}}

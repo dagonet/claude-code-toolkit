@@ -43,6 +43,7 @@ CORRECTION_RE = re.compile(
     r"^(no\b|nope\b|don['’]?t\b|do not\b|stop\b|wrong\b|that['’]?s (not|wrong)\b|not what\b|i said\b"
     r"|i told you\b|why did you\b|you (forgot|missed|didn['’]?t)\b)", re.IGNORECASE)
 CORRECTION_CHARS = 300
+OTHER = 'other'
 NOTE_KINDS = ('helped', 'recurring_failure', 'rule_unused')
 SURFACE_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:+-]{0,63}')  # a name, never a path
 
@@ -216,29 +217,49 @@ def _zero():
     return {f: 0 for f, _ in TOKEN_FIELDS}
 
 
-def parse_note(line):
+def toolkit_hooks(toolkit_root):
+    """The names (file name without .sh) of the hooks the toolkit ships in hooks/*.sh."""
+    return sorted(os.path.basename(p)[:-len('.sh')] for p in glob.glob(os.path.join(toolkit_root, 'hooks', '*.sh')))
+
+
+def toolkit_surfaces(toolkit_root, skill_names, agent_names, hook_names):
+    """Every name a note's surface may carry into the shared file: the toolkit's skills, agents and
+    hooks, and each path (with `/`) that exists under templates/general/."""
+    surfaces = set(skill_names) | set(agent_names) | set(hook_names)
+    base = os.path.join(toolkit_root, 'templates', 'general')
+    for cur, dirs, files in os.walk(base):
+        for name in dirs + files:
+            surfaces.add(os.path.relpath(os.path.join(cur, name), base).replace(os.sep, '/'))
+    return surfaces
+
+
+def parse_note(line, known=()):
     """One improvement-notes line -> the note dict, or None when it is not a valid note: a JSON
-    object with a known kind, a surface that is a plain name (not a path) and a count that is a
-    whole number >= 0 (default 1)."""
+    object with a known kind, a YYYY-MM-DD date, a surface that is a toolkit surface (`known`) or a
+    plain name (not a path) and a count that is a whole number >= 0 (default 1)."""
     try:
         note = json.loads(line)
     except ValueError:
         return None
     if not isinstance(note, dict) or note.get('kind') not in NOTE_KINDS:
         return None
-    surface, n = note.get('surface'), note.get('count', 1)
-    if not isinstance(surface, str) or not SURFACE_RE.fullmatch(surface):
+    day, surface, n = note.get('date'), note.get('surface'), note.get('count', 1)
+    if not isinstance(day, str) or not DATE_RE.match(day):
+        return None
+    if not isinstance(surface, str) or not (surface in known or SURFACE_RE.fullmatch(surface)):
         return None
     if isinstance(n, bool) or not isinstance(n, int) or n < 0:
         return None
     return note
 
 
-def read_notes(clone_roots):
-    """Read <root>/*/.claude/improvement-notes.jsonl under every clone root.
+def read_notes(clone_roots, known, since, until):
+    """Read <root>/*/.claude/improvement-notes.jsonl under every clone root; keep the notes dated in
+    [since, until].
 
     -> (shared notes {kind: {surface: {count, projects}}}, local notes {project: [note]}, malformed
-    lines, unreadable files). `projects` is how many distinct projects hold the surface; none is named.
+    lines, unreadable files). A surface outside `known` is counted under `other` in the shared notes.
+    `projects` is how many distinct projects hold the surface; none is named.
     """
     seen, malformed, unreadable = {}, 0, 0
     local = {}
@@ -253,12 +274,15 @@ def read_notes(clone_roots):
                 unreadable += 1
                 continue
             for ln in lines:
-                note = parse_note(ln)
+                note = parse_note(ln, known)
                 if note is None:
                     malformed += 1
                     continue
+                if not in_window(note['date'], since, until):
+                    continue
                 local.setdefault(os.path.basename(project_dir), []).append(note)
-                slot = seen.setdefault(note['kind'], {}).setdefault(note['surface'], {'count': 0, 'projects': set()})
+                key = note['surface'] if note['surface'] in known else OTHER
+                slot = seen.setdefault(note['kind'], {}).setdefault(key, {'count': 0, 'projects': set()})
                 slot['count'] += note.get('count', 1)
                 slot['projects'].add(project_dir)
     shared = {kind: {s: {'count': v['count'], 'projects': len(v['projects'])} for s, v in by_surface.items()}
@@ -285,7 +309,8 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     use = {'skills': {n: 0 for n in skill_names}, 'agents': {n: 0 for n in agent_names}}
     versions, spawns, by_model, per_project = {}, {}, {}, {}
     share = {'main': _zero(), 'sub': _zero()}
-    hook_blocks, corrections = {}, []
+    hook_names = toolkit_hooks(toolkit_root)
+    hook_blocks, local_hooks, corrections = {}, {}, []
     unreadable = 0
     clone_roots = list(dict.fromkeys(os.path.realpath(os.path.expanduser(r)) for r in clone_roots))
     for slug in sorted(os.listdir(projects_root)):
@@ -311,7 +336,9 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                     if model:
                         by_model.setdefault(model, _zero())[f] += tok[f]
             for hook in s['blocks']:
-                hook_blocks[hook] = hook_blocks.get(hook, 0) + 1
+                key = hook if hook in hook_names else OTHER  # a project's own hook name stays local
+                hook_blocks[key] = hook_blocks.get(key, 0) + 1
+                local_hooks[hook] = local_hooks.get(hook, 0) + 1
             if not is_sub:  # a subagent's user rows are its parent's prompts, not the user's words
                 corrections += [{'project': slug, 'ts': ts, 'text': cut_text(text)} for ts, text in s['corrections']]
             for name, inp in s['calls']:
@@ -332,13 +359,15 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                 local['spawns'][verbatim] = local['spawns'].get(verbatim, 0) + 1
     main_total, sub_total = sum(share['main'].values()), sum(share['sub'].values())
     share['sub_share'] = round(sub_total / (main_total + sub_total), 4) if main_total + sub_total else 0.0
-    notes, local_notes, notes_malformed, notes_unreadable = read_notes(clone_roots)
+    known = toolkit_surfaces(toolkit_root, skill_names, agent_names, hook_names)
+    notes, local_notes, notes_malformed, notes_unreadable = read_notes(clone_roots, known, since, until)
     shared = {'schema': SCHEMA, 'machine': machine, 'since': since, 'until': until,
               'claude_code_versions': versions, 'spawns': spawns, 'tokens_by_model': by_model,
               'token_share': share, 'toolkit_use': use, 'hook_blocks': hook_blocks,
               'correction_candidates': len(corrections), 'notes': notes, 'notes_malformed': notes_malformed,
               'jev': jev_counts(clone_roots, since, until), 'unreadable_files': unreadable + notes_unreadable}
-    return shared, {'per_project': per_project, 'corrections': corrections, 'notes': local_notes}
+    return shared, {'per_project': per_project, 'corrections': corrections, 'notes': local_notes,
+                    'hook_blocks': local_hooks}
 
 
 def key_diffs(got, want, path):
@@ -367,6 +396,9 @@ def leak_probes(shared, local):
             ('alpha-db-expert', 'a project-specific agent type', True),
             ('ZZ-PRIVATE-MARKER-7f3a', 'conversation text', True),
             ('ZZ-NOTE-MARKER-2c9d', 'a note summary', True),
+            ('seal-guard', 'a project hook name', True),
+            ('zz-private-surface', 'a project-specific note surface', True),
+            ('zz-other-surface', 'a project-specific note surface', True),
             ('alpha', 'the project name', True),
             ('beta', 'a clone (project) name', True),
             ('gamma', 'a clone (project) name', True),
@@ -407,7 +439,7 @@ def self_test():
         bad.append('/local/corrections: got %s' % texts)
     if any(set(c) != {'project', 'ts', 'text'} or c['project'] != '-home-u-git-alpha' for c in corrections):
         bad.append('/local/corrections: wrong shape %s' % corrections)
-    if {k: len(v) for k, v in notes.items()} != {'beta': 2, 'gamma': 1}:
+    if {k: len(v) for k, v in notes.items()} != {'beta': 4, 'gamma': 2}:
         bad.append('/local/notes: got %s' % notes)
     if len(cut_text('x' * 400)) != 300:
         bad.append('/cut_text: not cut to 300 chars')
@@ -416,14 +448,23 @@ def self_test():
             bad.append('/num(%r): want 0, got %s' % (value, num(value)))
     if num(7) != 7 or num(7.9) != 7:
         bad.append('/num: a finite number must pass through')
-    for line, ok in (('{"kind": "helped", "surface": "x-hook", "count": 2}', True),
-                     ('{"kind": "helped", "surface": "x-hook"}', True),
-                     ('{"kind": "helped", "surface": "rules/private.md", "count": 1}', False),
-                     ('{"kind": "helped", "surface": "x", "count": true}', False),
-                     ('{"kind": "helped", "surface": "x", "count": -1}', False),
-                     ('{"kind": "surprise", "surface": "x", "count": 1}', False),
+    if sorted(local.get('hook_blocks', {}).items()) != [('deny-hang-shapes', 1), ('gate-before-merge', 2),
+                                                        ('seal-guard', 1)]:
+        bad.append('/local/hook_blocks: got %s' % local.get('hook_blocks'))
+    known = {'.claude/rules/project.md'}
+    for line, ok in (('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook", "count": 2}', True),
+                     ('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook"}', True),
+                     ('{"date": "2026-11-15", "kind": "helped", "surface": ".claude/rules/project.md"}', True),
+                     ('{"date": "2026-11-15", "kind": "helped", "surface": "rules/private.md", "count": 1}', False),
+                     ('{"date": "2026-11-15", "kind": "helped", "surface": ".hidden", "count": 1}', False),
+                     ('{"kind": "helped", "surface": "x-hook", "count": 1}', False),
+                     ('{"date": "2026-1-5", "kind": "helped", "surface": "x-hook", "count": 1}', False),
+                     ('{"date": 20261115, "kind": "helped", "surface": "x-hook", "count": 1}', False),
+                     ('{"date": "2026-11-15", "kind": "helped", "surface": "x", "count": true}', False),
+                     ('{"date": "2026-11-15", "kind": "helped", "surface": "x", "count": -1}', False),
+                     ('{"date": "2026-11-15", "kind": "surprise", "surface": "x", "count": 1}', False),
                      ('[1, 2]', False), ('not json', False)):
-        if (parse_note(line) is not None) != ok:
+        if (parse_note(line, known) is not None) != ok:
             bad.append('/parse_note(%s): want %s' % (line, 'accepted' if ok else 'rejected'))
     for model, want in (('claude-sonnet-5-5', 'claude-sonnet-5-5'),
                         ('us.anthropic.claude-opus-5-5-v1:0', 'claude-opus-5-5'),
