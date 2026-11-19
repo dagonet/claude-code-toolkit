@@ -49,6 +49,11 @@ CORRECTION_RE = re.compile(
 CORRECTION_CHARS = 300
 OTHER = 'other'
 NOTE_KINDS = ('helped', 'recurring_failure', 'rule_unused')
+# The shared JSON keys merge() handles: the header ones are not table rows. The self-test fails when
+# count() writes a key outside these, so a new measure cannot silently miss the merged table.
+HEADER_KEYS = {'schema', 'machine', 'since', 'until', 'claude_code_versions'}
+MEASURE_KEYS = {'spawns', 'tokens_by_model', 'token_share', 'toolkit_use', 'hook_blocks', 'correction_candidates',
+                'correction_kinds', 'notes', 'notes_malformed', 'jev', 'unreadable_files'}
 SURFACE_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:+-]{0,63}')  # a name, never a path
 
 
@@ -447,7 +452,7 @@ def leak_probes(shared, local):
 
 def inbox_paths(directory):
     """The shared JSON files in a directory: every *.json that is not a *.local.json, sorted."""
-    return sorted(p for p in glob.glob(os.path.join(directory, '*.json')) if not p.endswith('.local.json'))
+    return sorted(p for p in glob.glob(os.path.join(glob.escape(directory), '*.json')) if not p.endswith('.local.json'))
 
 
 def _dict(value):
@@ -455,8 +460,8 @@ def _dict(value):
 
 
 def measures(data):
-    """One machine's shared JSON -> {row label: number}, one row per measure leaf. A key a machine
-    lacks is simply not there (the table reads it as 0). `sub_share` is a ratio, the rest are counts."""
+    """One machine's shared JSON -> {row label: count}, one row per measure leaf. A key a machine
+    lacks is simply not there (the table reads it as 0). `sub_share` is computed in merge()."""
     rows = {}
     for kind, by_model in _dict(data.get('spawns')).items():
         for model, n in _dict(by_model).items():
@@ -464,9 +469,6 @@ def measures(data):
     for model, by_field in _dict(data.get('tokens_by_model')).items():
         for field, n in _dict(by_field).items():
             rows['tokens %s %s' % (model, field)] = num(n)
-    share = _dict(data.get('token_share')).get('sub_share')
-    rows['sub_share'] = float(share) if not isinstance(share, bool) and isinstance(share, (int, float)) \
-        and math.isfinite(share) else 0.0
     for word, key in (('skill', 'skills'), ('agent', 'agents')):
         for name, n in _dict(_dict(data.get('toolkit_use')).get(key)).items():
             rows['%s %s' % (word, name)] = num(n)
@@ -488,8 +490,14 @@ def measures(data):
 
 
 def version_key(version):
-    """Sort 2.1.9 before 2.1.10: digit runs compare as numbers."""
-    return [(0, int(p), '') if p.isdigit() else (1, 0, p) for p in re.split(r'(\d+)', version) if p]
+    """Sort 2.1.9 before 2.1.10: a run of digits compares by length, then text (never int(), which
+    refuses a very long run)."""
+    return [(0, len(p.lstrip('0')), p.lstrip('0')) if p.isdecimal() else (1, 0, p)
+            for p in re.split(r'([0-9]+)', version) if p]
+
+
+def sub_share(main, sub):
+    return '%.4f' % (round(sub / (main + sub), 4) if main + sub else 0.0)
 
 
 def cell(text):
@@ -499,24 +507,38 @@ def cell(text):
 def merge(paths):
     """Merge the shared JSONs at `paths` into one Markdown table: a row per measure, a column per
     machine label (sorted) and a `total` column; `sub_share`'s total is recomputed from the summed
-    main/sub tokens. A file that does not parse, is not schema 1, or repeats an earlier file's
-    machine label is listed after the table as `skipped: <file name>`."""
-    machines, skipped = {}, []
+    main/sub tokens, as is each machine's own. A file that does not parse, is not schema 1 or has no
+    valid machine label or dates is listed after the table as `skipped: <file name>`. When several
+    files carry one machine label the one with the latest `since` is kept (a tie: the later file
+    name); each other is listed as `skipped: <file> (machine <label> also in <kept file>)`."""
+    machines, skipped, dropped = {}, [], []
     for path in paths:
+        name = os.path.basename(path)
         try:
             with open(path, encoding='utf-8') as fh:
                 data = json.load(fh)
             label, since, until = data.get('machine'), data.get('since'), data.get('until')
-            if isinstance(data.get('schema'), bool) or data.get('schema') != SCHEMA or label in machines \
-                    or not isinstance(label, str) or not label or not isinstance(since, str) \
-                    or not (until is None or isinstance(until, str)):
+            if isinstance(data.get('schema'), bool) or data.get('schema') != SCHEMA \
+                    or not isinstance(label, str) or not label \
+                    or not isinstance(since, str) or not DATE_RE.fullmatch(since) \
+                    or not (until is None or isinstance(until, str) and DATE_RE.fullmatch(until)):
                 raise ValueError(path)
             share = _dict(data.get('token_share'))
-            machines[label] = {'data': data, 'rows': measures(data),
-                               'main': sum(num(_dict(share.get('main')).get(f)) for f, _ in TOKEN_FIELDS),
-                               'sub': sum(num(_dict(share.get('sub')).get(f)) for f, _ in TOKEN_FIELDS)}
+            entry = {'name': name, 'data': data, 'rows': measures(data),
+                     'main': sum(num(_dict(share.get('main')).get(f)) for f, _ in TOKEN_FIELDS),
+                     'sub': sum(num(_dict(share.get('sub')).get(f)) for f, _ in TOKEN_FIELDS)}
         except (OSError, ValueError, TypeError, AttributeError, RecursionError):
-            skipped.append(os.path.basename(path))
+            skipped.append('skipped: %s' % cell(name))
+            continue
+        old = machines.get(label)
+        if old and (old['data']['since'], old['name']) > (since, name):
+            dropped.append((name, label))
+            continue
+        if old:
+            dropped.append((old['name'], label))
+        machines[label] = entry
+    skipped += ['skipped: %s (machine %s also in %s)' % (cell(n), cell(x), cell(machines[x]['name']))
+                for n, x in dropped]
     labels = sorted(machines)
     versions = {v for m in machines.values() for v in _dict(m['data'].get('claude_code_versions'))}
     untils = [m['data'].get('until') for m in machines.values()]
@@ -524,22 +546,21 @@ def merge(paths):
     if machines:
         window = '%s .. %s' % (min(m['data']['since'] for m in machines.values()),
                                'open' if None in untils else max(untils))
-    out = ['claude_code_versions: %s' % (', '.join(sorted(versions, key=version_key)) or '-'),
+    out = ['claude_code_versions: %s' % (', '.join(sorted(versions, key=lambda v: (version_key(v), v))) or '-'),
            'window: %s' % window, '',
            '| %s |' % ' | '.join(['measure'] + [cell(x) for x in labels] + ['total']),
            '| %s |' % ' | '.join(['---'] + ['---:'] * (len(labels) + 1))]
     main_sum, sub_sum = sum(m['main'] for m in machines.values()), sum(m['sub'] for m in machines.values())
-    for row in sorted({r for m in machines.values() for r in m['rows']}):
-        values = [machines[x]['rows'].get(row, 0) for x in labels]
+    for row in sorted({r for m in machines.values() for r in m['rows']} | ({'sub_share'} if machines else set())):
         if row == 'sub_share':
-            cells = ['%.4f' % v for v in values]
-            cells.append('%.4f' % (round(sub_sum / (main_sum + sub_sum), 4) if main_sum + sub_sum else 0.0))
+            cells = [sub_share(machines[x]['main'], machines[x]['sub']) for x in labels] + [sub_share(main_sum, sub_sum)]
         else:
+            values = [machines[x]['rows'].get(row, 0) for x in labels]
             cells = [str(v) for v in values] + [str(sum(values))]
         out.append('| %s |' % ' | '.join([cell(row)] + cells))
     if skipped:
         out.append('')
-        out += ['skipped: %s' % cell(name) for name in skipped]
+        out += sorted(skipped)
     return '\n'.join(out) + '\n'
 
 
@@ -548,24 +569,56 @@ def merge_checks():
     inbox = os.path.join(FIXTURES, 'inbox')
     with open(os.path.join(FIXTURES, 'expected-merge.md'), encoding='utf-8') as fh:
         want = fh.read()
+
+    def fixture(name, **changes):
+        with open(os.path.join(inbox, name), encoding='utf-8') as fh:
+            data = json.load(fh)
+        data.update(changes)
+        return data
+
     bad = []
     try:
-        got = merge(inbox_paths(inbox))
-        if got != want:
+        if merge(inbox_paths(inbox)) != want:
             bad.append('/merge: the fixture inbox does not give expected-merge.md')
         with tempfile.TemporaryDirectory() as tmp:
             copy = os.path.join(tmp, 'inbox')
             shutil.copytree(inbox, copy)
-            for name, text in (('broken.json', '{not json'), ('old.json', '{"schema": 2, "machine": "old"}'),
-                               ('linux-aaaaaa.local.json', '{"per_project": {}}')):
+            # old.json is a full, valid file but for its schema: only the schema check may skip it
+            write_json(os.path.join(copy, 'old.json'), fixture('windows-bbbbbb.json', schema=2, machine='linux-cccccc'))
+            for name, text in (('broken.json', '{not json'), ('linux-aaaaaa.local.json', '{"per_project": {}}')):
                 with open(os.path.join(copy, name), 'w', encoding='utf-8', newline='\n') as fh:
                     fh.write(text)
-            got = merge(inbox_paths(copy))
-            if got != want + '\nskipped: broken.json\nskipped: old.json\n':
+            if merge(inbox_paths(copy)) != want + '\nskipped: broken.json\nskipped: old.json\n':
                 bad.append('/merge: a malformed or schema 2 file is not listed as skipped, or a .local.json is read')
         one = merge([os.path.join(inbox, 'linux-aaaaaa.json')])
         if '| measure | linux-aaaaaa | total |' not in one or '| sub_share | 0.3571 | 0.3571 |' not in one:
             bad.append('/merge: one machine has no total column')
+        with tempfile.TemporaryDirectory() as tmp:  # one label in four files: the latest since wins, a tie the later name
+            for name, since, n in (('a-old.json', '2026-11-01', 11), ('b-new.json', '2026-11-15', 99),
+                                   ('c-tie.json', '2026-11-15', 55), ('z-stale.json', '2026-10-02', 7)):
+                write_json(os.path.join(tmp, name), fixture('linux-aaaaaa.json', since=since, correction_candidates=n))
+            got = merge(inbox_paths(tmp))
+            lost = ''.join('skipped: %s (machine linux-aaaaaa also in c-tie.json)\n' % n
+                           for n in ('a-old.json', 'b-new.json', 'z-stale.json'))
+            if not got.endswith('\n\n' + lost) or '| correction_candidates | 55 | 55 |' not in got \
+                    or 'window: 2026-11-15 .. 2026-11-30\n' not in got or '| measure | linux-aaaaaa | total |' not in got:
+                bad.append('/merge: a repeated machine label is not won by the newest run, or the reason is wrong')
+        with tempfile.TemporaryDirectory() as tmp:  # an open-ended window
+            write_json(os.path.join(tmp, 'a.json'), fixture('linux-aaaaaa.json'))
+            write_json(os.path.join(tmp, 'b.json'), fixture('windows-bbbbbb.json', until=None))
+            if 'window: 2026-11-01 .. open\n' not in merge(inbox_paths(tmp)):
+                bad.append('/merge: a machine without an until does not give an open window')
+        with tempfile.TemporaryDirectory() as tmp:  # a bad schema-1 file must not crash the merge
+            write_json(os.path.join(tmp, 'a.json'), fixture('linux-aaaaaa.json'))
+            odd = fixture('windows-bbbbbb.json', machine='windows-eeeeee')
+            odd['token_share']['sub_share'] = 10 ** 400
+            odd['claude_code_versions'] = {'2\u00b2': 1, '9' * 5000: 1}
+            write_json(os.path.join(tmp, 'b.json'), odd)
+            write_json(os.path.join(tmp, 'c-bad-date.json'), fixture('windows-bbbbbb.json', since='11/08/2026'))
+            got = merge(inbox_paths(tmp))
+            if not got.endswith('\nskipped: c-bad-date.json\n') or '| measure | linux-aaaaaa | windows-eeeeee | total |' not in got \
+                    or '2\u00b2' not in got.split('\n')[0]:
+                bad.append('/merge: a huge sub_share, an odd version key or a bad date is not handled')
     except Exception as exc:  # a crash must read as a failed test, not a traceback
         bad.append('/merge: exception %s: %s' % (type(exc).__name__, exc))
     return bad
@@ -584,6 +637,10 @@ def self_test():
         print('SELF-TEST FAIL exception: %s: %s' % (type(exc).__name__, exc))
         return 1
     bad = compare(shared, expected)
+    if not set(shared) <= HEADER_KEYS | MEASURE_KEYS:
+        bad.append('/merge: count() writes keys merge() does not handle: %s' % sorted(set(shared) - HEADER_KEYS - MEASURE_KEYS))
+    if not set(shared['toolkit_use']) <= {'skills', 'agents'}:
+        bad.append('/merge: toolkit_use has keys merge() does not handle: %s' % sorted(set(shared['toolkit_use'])))
     # compare() ignores keys the expectation lacks; these maps must hold exactly the expected keys,
     # all the way down (so "one model per spawn" is pinned too).
     for key in ('claude_code_versions', 'spawns', 'tokens_by_model', 'toolkit_use', 'hook_blocks', 'notes', 'jev'):
@@ -698,7 +755,7 @@ def main(argv):
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
-    if a.merge:
+    if a.merge is not None:
         if not os.path.isdir(a.merge):
             print('self-review-count: no directory at %s' % a.merge, file=sys.stderr)
             return 2
