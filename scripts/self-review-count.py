@@ -38,9 +38,10 @@ BUILTIN_AGENTS = {'general-purpose', 'Explore', 'Plan', 'statusline-setup', 'cla
 SYNTHETIC = '<synthetic>'
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MODEL_RE = re.compile(r'claude-[a-z0-9.-]+')
-# Only a family and digit groups may follow `claude-`: no dots, no words, so no host or project names.
-MODEL_ALLOWED_RE = re.compile(r'claude-(?:(?:opus|sonnet|haiku|fable|instant)(?:-[0-9]+)*'
-                              r'|[0-9]+(?:-[0-9]+)*-(?:opus|sonnet|haiku|instant)(?:-[0-9]+)*)')
+# Only a family and short digit groups may follow `claude-`: no dots, no words, no long numbers (an
+# account id), so no host or project names.
+MODEL_ALLOWED_RE = re.compile(r'claude-(?:(?:opus|sonnet|haiku|fable|instant)(?:-[0-9]{1,8})*'
+                              r'|[0-9]{1,8}(?:-[0-9]{1,8})*-(?:opus|sonnet|haiku|instant)(?:-[0-9]{1,8})*)')
 HOOK_PATH_RE = re.compile(r'hooks[/\\]([A-Za-z0-9._-]+?)\.sh')
 HOOK_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
 WRAPPER_HOOKS = {'dispatch', 'run-hook'}  # the plugin's launchers: the hook they run is not in their path
@@ -506,12 +507,19 @@ def measures(data):
     """One machine's shared JSON -> {row label: count}, one row per measure leaf. A key a machine
     lacks is simply not there (the table reads it as 0). `sub_share` is computed in merge()."""
     rows = {}
+
+    def add(label, n):
+        rows[label] = rows.get(label, 0) + num(n)
+
+    def safe_model(model):  # a file may come from an older or hand-made run: never trust its model keys
+        return model if model == 'unknown' else norm_model(model)
+
     for kind, by_model in _dict(data.get('spawns')).items():
         for model, n in _dict(by_model).items():
-            rows['spawns %s %s' % (kind, model)] = num(n)
+            add('spawns %s %s' % (kind, safe_model(model)), n)
     for model, by_field in _dict(data.get('tokens_by_model')).items():
         for field, n in _dict(by_field).items():
-            rows['tokens %s %s' % (model, field)] = num(n)
+            add('tokens %s %s' % (safe_model(model), field), n)
     for word, key in (('skill', 'skills'), ('agent', 'agents')):
         for name, n in _dict(_dict(data.get('toolkit_use')).get(key)).items():
             rows['%s %s' % (word, name)] = num(n)
@@ -682,6 +690,19 @@ def merge_checks():
                 bad.append('/merge: a huge sub_share, an odd version key or a bad date is not handled')
             if 'v 1 2' not in got.split('\n')[0] or not got.split('\n')[1].startswith('window: '):
                 bad.append('/merge: a version with a pipe or a newline breaks the header line')
+        with tempfile.TemporaryDirectory() as tmp:  # a model key from an older or hand-made file is normalised
+            leaky = fixture('windows-bbbbbb.json')
+            leaky['tokens_by_model'] = {'other-model': {'input': 1, 'cache_read': 0, 'output': 0},
+                                        'claude-gateway.corp.example.com': {'input': 2, 'cache_read': 0, 'output': 0},
+                                        'claude-opus-5-5[1m]': {'input': 4, 'cache_read': 0, 'output': 0}}
+            leaky['spawns'] = {'cct:coder': {'claude-gateway.corp.example.com': 3, 'other-model': 1, 'unknown': 5}}
+            write_json(os.path.join(tmp, 'a.json'), leaky)
+            got = merge(inbox_paths(tmp))
+            if 'corp.example' in got or '| tokens other-model input | 3 | 3 |' not in got \
+                    or '| tokens claude-opus-5-5 input | 4 | 4 |' not in got \
+                    or '| spawns cct:coder other-model | 4 | 4 |' not in got \
+                    or '| spawns cct:coder unknown | 5 | 5 |' not in got:
+                bad.append('/merge: a model key is not normalised and summed, or a host name reaches the table')
     except Exception as exc:  # a crash must read as a failed test, not a traceback
         bad.append('/merge: exception %s: %s' % (type(exc).__name__, exc))
     return bad
@@ -826,6 +847,9 @@ def self_test():
                         ('claude-3-5-haiku-internal', 'other-model'),
                         ('claude-3-5-fable', 'other-model'),
                         ('claude-3-5', 'other-model'),
+                        ('claude-opus-123456789012', 'other-model'),
+                        ('claude-3-5-sonnet-123456789', 'other-model'),
+                        ('claude-opus-12345678', 'claude-opus-12345678'),
                         ('claude-', 'other-model'),
                         ('gpt-x', 'other-model')):
         if norm_model(model) != want:

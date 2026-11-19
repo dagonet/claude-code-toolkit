@@ -74,7 +74,7 @@
   - A `broken.jsonl/` directory containing `.gitkeep`.
   - A fake toolkit root in the fixture (`toolkit/skills/commit/`, `toolkit/skills/sprint/`, `toolkit/agents/coder.md`), so the expected counts do not move when the real toolkit gains a skill.
   - `expected.json` holds the exact `shared` dict for `--since 2026-11-01 --until 2026-11-30 --machine fixture`. It includes `toolkit_use.skills` = {commit: 2, sprint: 0}, `toolkit_use.agents` = {coder: 1}, `unreadable_files` = 1, and spawns {`cct:coder`→coder model: 1, `unknown`: {...}: 1}.
-- [ ] **Step 2: Implement `--self-test`.** It runs `count()` on the fixtures and compares with `expected.json` via `compare`. It has a control: a deliberately wrong `sub_share` must be reported. It also asserts that `default_machine('host-a', 'Linux')` matches `^linux-[0-9a-f]{6}$`, does not contain `host-a`, and differs from `default_machine('host-b', 'Linux')`. It prints `SELF-TEST PASS` or `SELF-TEST FAIL <path>` lines and returns 0 or 1.
+- [ ] **Step 2: Implement `--self-test`.** It runs `count()` on the fixtures and compares with `expected.json` via `compare`. It has a control: a deliberately wrong `sub_share` must be reported. It also runs `machine_checks()` on an id file in a temp dir: `default_machine('Linux', id_file)` matches `^linux-[0-9a-f]{6}$` and creates the file; a second call gives the same label; another os name reuses the stored id; a garbled file is replaced by a new stored id; an unwritable path still gives a label. It prints `SELF-TEST PASS` or `SELF-TEST FAIL <path>` lines and returns 0 or 1.
   - Run: `python3 scripts/self-review-count.py --self-test`. Expected: FAIL (`count` is not yet implemented).
 - [ ] **Step 3: Implement `count()` and `main()`.**
   - Window: per row, via `parse_ts`; rows without a timestamp are skipped.
@@ -175,13 +175,13 @@
   - Frontmatter: `name: self-review`, a one-line `description`, `disable-model-invocation: true`.
   - No machine name, path, hostname or peer-session name of anyone's setup appears anywhere in the file.
   - Body, in order:
-    1. Run `python3 scripts/self-review-count.py --since <date of the previous docs/self-review report, else 30 days back> --out ~/.cache/cct-self-review/inbox/<label>.json` (on Windows, `python` if `python3` is absent).
+    1. Run `python3 scripts/self-review-count.py --since <date of the previous docs/self-review report, else 30 days back> --out ~/.cache/cct-self-review/<label>.json` (on Windows, `python` if `python3` is absent).
     2. Read the `.local.json` corrections and group them into behaviour kinds (agent behaviour only, never project content). Add `"correction_kinds": [{"kind","count"}]` to the shared JSON. Never copy candidate text anywhere.
     3. Ask the user once which other machines to include. For each one, give the two ways in, then continue with whatever is in the inbox, without waiting:
-       - **(a) Manual:** run the same counter there, follow its printed "Next:" line, and copy the shared JSON into this machine's `~/.cache/cct-self-review/inbox/`.
+       - **(a) Manual:** run the same counter there, follow its printed "Next:" line, and copy the shared JSON into this machine's `~/.cache/cct-self-review/`.
        - **(b) Peer session:** if a Claude session on that machine can be messaged, ask it to do (a) and reply with the shared JSON text only. Write that text to the inbox.
        - A machine label that appears in the previous report's table but not in the inbox is named in the header as "not included this time".
-    4. Run `python3 scripts/self-review-count.py --merge ~/.cache/cct-self-review/inbox/` and paste its table unchanged.
+    4. Run `python3 scripts/self-review-count.py --merge ~/.cache/cct-self-review/` and paste its table unchanged.
     5. Read the Claude Code changelog (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) from the version named in the previous report's header, looking for features that make a toolkit rule redundant or newly possible.
     6. Write `docs/self-review/<YYYY-MM-DD>.md`.
     7. Before saving, check the report for project or repo names from the `.local.json` files and remove any that appear.
