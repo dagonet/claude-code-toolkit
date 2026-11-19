@@ -11,17 +11,26 @@
     "unknown": {"claude-sonnet-5-5": 1, "claude-opus-5-5": 1}
   },
   "tokens_by_model": {
-    "claude-opus-5-5": {"input": 505, "cache_read": 5050, "output": 50},
-    "claude-sonnet-5-5": {"input": 300, "cache_read": 3000, "output": 30}
+    "claude-opus-5-5": {"input": 512, "cache_read": 5120, "output": 57},
+    "claude-sonnet-5-5": {"input": 300, "cache_read": 3000, "output": 30},
+    "other-model": {"input": 3, "cache_read": 30, "output": 3}
   },
   "token_share": {
-    "main": {"input": 350, "cache_read": 3500, "output": 35},
+    "main": {"input": 360, "cache_read": 3600, "output": 45},
     "sub": {"input": 455, "cache_read": 4550, "output": 45},
-    "sub_share": 0.5652
+    "sub_share": 0.5577
   },
   "toolkit_use": {
     "skills": {"commit": 1, "sprint": 0},
     "agents": {"coder": 1, "Explore": 0}
   },
+  "hook_blocks": {"gate-before-merge": 2, "deny-hang-shapes": 1},
+  "correction_candidates": 2,
+  "notes": {
+    "recurring_failure": {"gate-before-merge": {"count": 5, "projects": 2}},
+    "helped": {"pre-commit-test": {"count": 2, "projects": 1}}
+  },
+  "notes_malformed": 1,
+  "jev": {"events": 2, "applied": 1, "up": 1, "down": 0},
   "unreadable_files": 1
 }

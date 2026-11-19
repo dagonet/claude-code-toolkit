@@ -1,0 +1,18 @@
+{"type":"user","timestamp":"2026-11-14T10:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t10","content":"BLOCKED: gate-before-merge refuses: no gate artifact for this HEAD"}]}}
+{"type":"user","timestamp":"2026-11-14T10:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t11","content":[{"type":"text","text":"BLOCKED: gate-before-merge refuses: artifact expired"}]}]}}
+{"type":"user","timestamp":"2026-11-14T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t12","content":"BLOCKED: deny-hang-shapes: use absolute paths"}]}}
+{"type":"user","timestamp":"2026-11-14T10:00:03Z","message":{"role":"user","content":"I saw BLOCKED: typed-only in the log"}}
+{"type":"user","timestamp":"2026-11-14T10:01:00Z","message":{"role":"user","content":"no, don't run the gate without asking ZZ-PRIVATE-MARKER-7f3a"}}
+{"type":"user","timestamp":"2026-11-14T10:01:01Z","message":{"role":"user","content":"that's not what I asked"}}
+{"type":"user","timestamp":"2026-11-14T10:01:02Z","message":{"role":"user","content":"thanks, looks good"}}
+{"type":"user","timestamp":"2026-11-14T10:02:00Z","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
+{"type":"user","timestamp":"2026-11-14T10:02:01Z","message":{"role":"user","content":"<local-command-stdout>no output</local-command-stdout>"}}
+{"type":"user","timestamp":"2026-11-14T10:02:02Z","message":{"role":"user","content":"<system-reminder>no changes</system-reminder>"}}
+{"type":"user","timestamp":"2026-11-14T10:02:03Z","message":{"role":"user","content":"<cross-session-message from=\"x\">stop</cross-session-message>"}}
+{"type":"user","timestamp":"2026-11-14T10:02:04Z","message":{"role":"user","content":"<agent-message>wrong</agent-message>"}}
+{"type":"user","timestamp":"2026-11-14T10:02:05Z","message":{"role":"user","content":"<task-notification>no more tasks</task-notification>"}}
+{"type":"user","timestamp":"2026-11-14T10:02:06Z","isMeta":true,"message":{"role":"user","content":"no, this row is meta"}}
+{"type":"user","timestamp":"2026-11-14T10:02:07Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t13","content":"No files found"}]}}
+{"type":"user","timestamp":"2026-12-05T10:00:00Z","message":{"role":"user","content":"stop, this one is after the window"}}
+{"type":"assistant","timestamp":"2026-11-14T10:03:00Z","message":{"id":"m5","role":"assistant","model":"us.anthropic.claude-opus-5-5-v1:0","content":"cloud provider model id","usage":{"input_tokens":7,"cache_read_input_tokens":70,"output_tokens":7}}}
+{"type":"assistant","timestamp":"2026-11-14T10:03:01Z","message":{"id":"m6","role":"assistant","model":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc","content":"account id in the model string","usage":{"input_tokens":3,"cache_read_input_tokens":30,"output_tokens":3}}}

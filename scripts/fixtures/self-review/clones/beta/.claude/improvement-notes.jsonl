@@ -1,0 +1,3 @@
+{"date": "2026-11-15", "kind": "recurring_failure", "surface": "gate-before-merge", "summary": "agents forget the gate artifact ZZ-NOTE-MARKER-2c9d", "count": 3}
+{"date": "2026-11-16", "kind": "helped", "surface": "pre-commit-test", "summary": "caught a red consistency run", "count": 2}
+this note line is not json
