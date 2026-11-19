@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "machine": "fixture",
+  "since": "2026-11-01",
+  "until": "2026-11-30",
+  "claude_code_versions": {"2.1.328": 6},
+  "spawns": {
+    "coder": {"claude-opus-5-5": 1},
+    "unknown": {"claude-sonnet-5-5": 1}
+  },
+  "tokens_by_model": {
+    "claude-opus-5-5": {"input": 500, "cache_read": 5000, "output": 50},
+    "claude-sonnet-5-5": {"input": 290, "cache_read": 2900, "output": 29}
+  },
+  "token_share": {
+    "main": {"input": 350, "cache_read": 3500, "output": 35},
+    "sub": {"input": 440, "cache_read": 4400, "output": 44},
+    "sub_share": 0.557
+  },
+  "toolkit_use": {
+    "skills": {"commit": 2, "sprint": 0},
+    "agents": {"coder": 1}
+  },
+  "unreadable_files": 1
+}
