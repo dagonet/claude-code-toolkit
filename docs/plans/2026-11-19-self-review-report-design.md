@@ -57,7 +57,7 @@ python3 scripts/self-review-count.py [--since YYYY-MM-DD] [--root DIR] [--clone-
 - **Input:** all main and subagent transcripts under `--root`, plus the Jev events and project notes files (§6) under each `--clone-root`.
   - `--root` defaults to `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`.
   - `--clone-root` may be repeated. It defaults to the parent directory of the toolkit checkout, the common layout of repositories side by side.
-- **Machine label:** `--machine`, default `<os>-<first 6 hex of sha256(hostname)>`. Two machines never collide, and the hostname itself never appears.
+- **Machine label:** `--machine`, default `<os>-<6 random hex>`. The hex is generated once (`secrets.token_hex(3)`) and kept in `~/.cache/cct-self-review/machine-id`, then reused. Nothing about the host feeds it, so the label cannot be derived from the hostname (a hash of a guessable hostname can be brute-forced), and two machines do not collide in practice.
 - **Output:** one JSON file with only counts. It contains no conversation text, no paths below the clone root, no env values. Per-project detail and the correction candidates go to a second, local-only file (`<out>.local.json`). **My call:** both files live in `~/.cache/cct-self-review/`, outside every repo, so neither can be committed by accident.
 
 Measures (each across the window, per machine):

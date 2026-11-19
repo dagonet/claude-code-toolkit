@@ -1,5 +1,6 @@
 claude_code_versions: 2.1.9, 2.1.10, 2.2.0
 window: 2026-11-01 .. 2026-12-06
+windows differ: linux-aaaaaa 2026-11-01..2026-11-30; windows-bbbbbb 2026-11-08..2026-12-06
 
 | measure | linux-aaaaaa | windows-bbbbbb | total |
 | --- | ---: | ---: | ---: |

@@ -25,7 +25,7 @@
 - **Generic, public-repo rule (user, 2026-11-19 17:52):** no code, skill text, fixture or doc names the maintainer's machines, paths (`~/git`, `G:/git`), hostnames or peer sessions. Every default is derived:
   - `--root`: `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`.
   - `--clone-root` (repeatable): the parent directory of the toolkit checkout.
-  - `--machine`: `<platform.system().lower()>-<first 6 hex of sha256(socket.gethostname())>`.
+  - `--machine`: `<platform.system().lower()>-<6 random hex>`, made once with `secrets.token_hex(3)` and kept in `~/.cache/cct-self-review/machine-id` (R16: a hostname hash is guessable, so nothing about the host feeds the label).
 - Never shipped to consumers: nothing in `templates/`, nothing in the plugin's `skills/` or `agents/`.
 - Agents never print environment variable values. Run every command with `env -u TYPESAFE_API_KEY`.
 - No heredocs in Bash calls. Multi-step shell goes in a script file that is run with `bash <path>`.
@@ -37,7 +37,7 @@
 3. **A subagent transcript without `.meta.json`** counts its spawn under agent type `unknown`, without crashing. Pinned by fixture `sub-nometa` (Task 1).
 4. **Skill and agent names with or without the `cct:` prefix** count once, under the bare name. Names that are not the toolkit's are not listed. Pinned by fixtures `Skill cct:commit`, `Skill commit` and `Skill other-plugin:x` (Task 1).
 5. **An unreadable transcript** (a directory named `*.jsonl`) is counted in `unreadable_files` and is not fatal. Pinned by fixture `broken.jsonl/` (Task 1).
-6. **The default machine label** must not contain the hostname, and two different hostnames must give two different labels. Pinned in Task 1's self-test.
+6. **The default machine label** is not derived from the hostname: it is random, made once and stored, so one id file gives one label and a missing file gets a new id. Pinned in Task 1's self-test (a temp dir for the id file).
 
 ---
 
@@ -62,7 +62,7 @@
     - `unreadable_files`.
   - `local` keys from this task: `per_project` {slug: {spawns, tokens}}.
   - CLI: `--since`, `--until`, `--root`, `--clone-root` (repeatable), `--toolkit` (default: the repo containing the script), `--machine`, `--out` (default `~/.cache/cct-self-review/<machine>-<today>.json`), `--self-test`. The `--root`, `--clone-root` and `--machine` defaults are as in Global Constraints.
-  - `default_machine(hostname: str, system: str) -> str`, a pure function so the self-test can call it with fixed inputs.
+  - `default_machine(system: str, id_path: str) -> str`: the label from the stored id at `id_path`, creating the id when the file is missing or garbled, so the self-test can run it against a temp dir.
 
 - [ ] **Step 1: Write the fixtures and `expected.json`.**
   - Two main transcripts. One has rows inside the window and one row dated before `--since`, which must not count.

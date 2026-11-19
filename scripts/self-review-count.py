@@ -13,15 +13,14 @@ Per-project detail goes to a sibling <out>.local.json that stays on the machine.
 """
 import argparse
 import glob
-import hashlib
 import importlib.util
 import json
 import math
 import os
 import platform
 import re
+import secrets
 import shutil
-import socket
 import sys
 import tempfile
 from datetime import date, timedelta, timezone
@@ -39,7 +38,10 @@ BUILTIN_AGENTS = {'general-purpose', 'Explore', 'Plan', 'statusline-setup', 'cla
 SYNTHETIC = '<synthetic>'
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MODEL_RE = re.compile(r'claude-[a-z0-9.-]+')
+MODEL_ALLOWED_RE = re.compile(r'claude-(?:opus|sonnet|haiku|fable|instant|[0-9])[a-z0-9-]*')  # no dots: no host names
 HOOK_PATH_RE = re.compile(r'hooks[/\\]([A-Za-z0-9._-]+?)\.sh')
+HOOK_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
+WRAPPER_HOOKS = {'dispatch', 'run-hook'}  # the plugin's launchers: the hook they run is not in their path
 BLOCKED_RE = re.compile(r'BLOCKED: (\S+)')
 UNATTRIBUTED = '<unattributed>'
 MAX_COUNT = 10 ** 15  # a usage field above this is garbage and counts as 0
@@ -70,9 +72,24 @@ load_rows, parse_ts, compare = _MP.load_rows, _MP.parse_ts, _MP.compare
 _JT = _load_script('jev-tally.py')
 
 
-def default_machine(hostname, system):
-    """A label that tells machines apart without naming the host."""
-    return '%s-%s' % (system.lower(), hashlib.sha256(hostname.encode('utf-8')).hexdigest()[:6])
+def default_machine(system, id_path):
+    """A label that tells machines apart without being derived from anything about the host:
+    `<os>-<6 hex>`, the hex random, made once and kept in `id_path` for the next run. A missing or
+    garbled file gets a new id; if it cannot be written the label is still returned, unstored."""
+    try:
+        with open(id_path, encoding='utf-8') as fh:
+            token = fh.read().strip()
+    except OSError:
+        token = ''
+    if not re.fullmatch(r'[0-9a-f]{6}', token):
+        token = secrets.token_hex(3)
+        try:
+            os.makedirs(os.path.dirname(id_path), exist_ok=True)
+            with open(id_path, 'w', encoding='utf-8', newline='\n') as fh:
+                fh.write(token + '\n')
+        except OSError:
+            pass
+    return '%s-%s' % (system.lower(), token)
 
 
 def toolkit_name(called, names):
@@ -93,10 +110,12 @@ def num(value):
 
 
 def norm_model(model):
-    """A model string that is safe to share: the `claude-...` name without a `-v<n>` suffix, else
-    'other-model'. A cloud provider's model id can be an ARN that carries an account id."""
+    """A model string that is safe to share: the `claude-...` name (after any provider prefix, without a
+    `-v<n>`, `:<n>` or `@...` suffix) when it is a known model family, else 'other-model'. A gateway or
+    cloud provider's model id can carry a host name, a project name or an account id (an ARN)."""
     hit = MODEL_RE.search(model)
-    return re.sub(r'-v\d+$', '', hit.group()) if hit else 'other-model'
+    name = re.sub(r'-v\d+$', '', hit.group()) if hit else ''
+    return name if MODEL_ALLOWED_RE.fullmatch(name) else 'other-model'
 
 
 def cut_text(text):
@@ -146,14 +165,20 @@ def block_hook(text, is_error):
     A denial is an error tool result that starts `PreToolUse:` and has `hook error:` in its first 200
     characters; a result that only quotes `BLOCKED:` is not one. The hook is the first `hooks/<name>.sh`
     in the bracketed command, else the token after the first `BLOCKED: ` that follows it (lower-cased,
-    without a trailing `:` or `.sh`), else `<unattributed>`.
+    without a trailing `:` or `.sh`), else `<unattributed>`. The plugin's launchers `dispatch.sh` and
+    `run-hook.sh` are not the hook: for `run-hook.sh <name>` the hook is the command's last word, else
+    (and for `dispatch.sh`) the `BLOCKED:` token decides.
     """
     if is_error is not True or not text.startswith('PreToolUse:') or 'hook error:' not in text[:200]:
         return None
     head, sep, tail = text.partition(']: ')
     hit = HOOK_PATH_RE.search(head) if sep else None
-    if hit:
+    if hit and hit.group(1) not in WRAPPER_HOOKS:
         return hit.group(1)
+    if hit and hit.group(1) == 'run-hook':
+        last = head.split()[-1]
+        if HOOK_NAME_RE.fullmatch(last):
+            return last.lower()[:-len('.sh')] if last.lower().endswith('.sh') else last.lower()
     hit = BLOCKED_RE.search(tail)
     if not hit:
         return UNATTRIBUTED
@@ -342,6 +367,18 @@ def jev_counts(clone_roots, since, until):
             'skipped_files': skipped}
 
 
+def inputs_line(clone_roots):
+    """What the clone roots held, so a run from the wrong place does not pass for a quiet one:
+    'clone roots: N, notes files: N, Jev event files: N' (the files count() looks for, windowed or not)."""
+    roots = list(dict.fromkeys(os.path.realpath(os.path.expanduser(r)) for r in clone_roots))
+
+    def found(*parts):
+        return sum(len(glob.glob(os.path.join(r, '*', *parts))) for r in roots)
+
+    return 'clone roots: %d, notes files: %d, Jev event files: %d' % (
+        len(roots), found('.claude', 'improvement-notes.jsonl'), found('.git', 'jev', 'events', '*.json'))
+
+
 def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     """Count one machine's transcripts in [since, until], plus the notes and Jev events under the
     clone roots. -> (shared, local)."""
@@ -442,7 +479,9 @@ def leak_probes(shared, local):
             ('alpha', 'the project name', True),
             ('beta', 'a clone (project) name', True),
             ('gamma', 'a clone (project) name', True),
-            ('123456789012', 'an account id from a model string', False)):
+            ('123456789012', 'an account id from a model string', False),
+            ('corp.example', 'a gateway host name in a model string', False),
+            ('secretproject', 'a project name in a model string', False)):
         if needle in flat_shared:
             bad.append('/shared: %s leaked (%r)' % (what, needle))
         if in_local and needle not in flat_local:
@@ -546,10 +585,15 @@ def merge(paths):
     if machines:
         window = '%s .. %s' % (min(m['data']['since'] for m in machines.values()),
                                'open' if None in untils else max(untils))
-    out = ['claude_code_versions: %s' % (', '.join(sorted(versions, key=lambda v: (version_key(v), v))) or '-'),
-           'window: %s' % window, '',
-           '| %s |' % ' | '.join(['measure'] + [cell(x) for x in labels] + ['total']),
-           '| %s |' % ' | '.join(['---'] + ['---:'] * (len(labels) + 1))]
+    out = ['claude_code_versions: %s' % (', '.join(cell(v) for v in sorted(versions, key=lambda v: (version_key(v), v)))
+                                         or '-'),
+           'window: %s' % window]
+    if len({(m['data']['since'], m['data'].get('until')) for m in machines.values()}) > 1:
+        out.append('windows differ: %s' % '; '.join(
+            '%s %s..%s' % (cell(x), machines[x]['data']['since'], machines[x]['data'].get('until') or 'open')
+            for x in labels))
+    out += ['', '| %s |' % ' | '.join(['measure'] + [cell(x) for x in labels] + ['total']),
+            '| %s |' % ' | '.join(['---'] + ['---:'] * (len(labels) + 1))]
     main_sum, sub_sum = sum(m['main'] for m in machines.values()), sum(m['sub'] for m in machines.values())
     for row in sorted({r for m in machines.values() for r in m['rows']} | ({'sub_share'} if machines else set())):
         if row == 'sub_share':
@@ -593,6 +637,16 @@ def merge_checks():
         one = merge([os.path.join(inbox, 'linux-aaaaaa.json')])
         if '| measure | linux-aaaaaa | total |' not in one or '| sub_share | 0.3571 | 0.3571 |' not in one:
             bad.append('/merge: one machine has no total column')
+        if 'windows differ' in one:
+            bad.append('/merge: one machine reports differing windows')
+        if '\nwindow: 2026-11-01 .. 2026-12-06\nwindows differ: linux-aaaaaa 2026-11-01..2026-11-30; ' \
+                'windows-bbbbbb 2026-11-08..2026-12-06\n\n' not in want:
+            bad.append('/merge: the fixture inbox differs in window but expected-merge.md has no windows-differ line')
+        with tempfile.TemporaryDirectory() as tmp:  # one window on two machines: no windows-differ line
+            write_json(os.path.join(tmp, 'a.json'), fixture('linux-aaaaaa.json'))
+            write_json(os.path.join(tmp, 'b.json'), fixture('windows-bbbbbb.json', since='2026-11-01', until='2026-11-30'))
+            if 'windows differ' in merge(inbox_paths(tmp)):
+                bad.append('/merge: two machines with one window report differing windows')
         with tempfile.TemporaryDirectory() as tmp:  # one label in four files: the latest since wins, a tie the later name
             for name, since, n in (('a-old.json', '2026-11-01', 11), ('b-new.json', '2026-11-15', 99),
                                    ('c-tie.json', '2026-11-15', 55), ('z-stale.json', '2026-10-02', 7)):
@@ -606,21 +660,54 @@ def merge_checks():
         with tempfile.TemporaryDirectory() as tmp:  # an open-ended window
             write_json(os.path.join(tmp, 'a.json'), fixture('linux-aaaaaa.json'))
             write_json(os.path.join(tmp, 'b.json'), fixture('windows-bbbbbb.json', until=None))
-            if 'window: 2026-11-01 .. open\n' not in merge(inbox_paths(tmp)):
+            got = merge(inbox_paths(tmp))
+            if 'window: 2026-11-01 .. open\n' not in got:
                 bad.append('/merge: a machine without an until does not give an open window')
+            if 'windows differ: linux-aaaaaa 2026-11-01..2026-11-30; windows-bbbbbb 2026-11-08..open\n' not in got:
+                bad.append('/merge: an open window is not named in the windows-differ line')
         with tempfile.TemporaryDirectory() as tmp:  # a bad schema-1 file must not crash the merge
             write_json(os.path.join(tmp, 'a.json'), fixture('linux-aaaaaa.json'))
             odd = fixture('windows-bbbbbb.json', machine='windows-eeeeee')
             odd['token_share']['sub_share'] = 10 ** 400
-            odd['claude_code_versions'] = {'2\u00b2': 1, '9' * 5000: 1}
+            odd['claude_code_versions'] = {'2\u00b2': 1, '9' * 5000: 1, 'v|1\n2': 1}
             write_json(os.path.join(tmp, 'b.json'), odd)
             write_json(os.path.join(tmp, 'c-bad-date.json'), fixture('windows-bbbbbb.json', since='11/08/2026'))
             got = merge(inbox_paths(tmp))
             if not got.endswith('\nskipped: c-bad-date.json\n') or '| measure | linux-aaaaaa | windows-eeeeee | total |' not in got \
                     or '2\u00b2' not in got.split('\n')[0]:
                 bad.append('/merge: a huge sub_share, an odd version key or a bad date is not handled')
+            if 'v 1 2' not in got.split('\n')[0] or not got.split('\n')[1].startswith('window: '):
+                bad.append('/merge: a version with a pipe or a newline breaks the header line')
     except Exception as exc:  # a crash must read as a failed test, not a traceback
         bad.append('/merge: exception %s: %s' % (type(exc).__name__, exc))
+    return bad
+
+
+def machine_checks():
+    """Lines for every default_machine() self-test that fails. The id file is always in a temp dir."""
+    bad = []
+    with tempfile.TemporaryDirectory() as tmp:
+        id_file = os.path.join(tmp, 'sub', 'machine-id')
+        label = default_machine('Linux', id_file)
+        if not re.fullmatch(r'linux-[0-9a-f]{6}', label):
+            bad.append('/default_machine: %r does not match linux-<6 hex>' % label)
+        if not os.path.isfile(id_file):
+            bad.append('/default_machine: a missing id file was not created')
+        elif default_machine('Linux', id_file) != label:
+            bad.append('/default_machine: one id file gave two labels')
+        if default_machine('Windows', id_file) != 'windows-' + label[len('linux-'):]:
+            bad.append('/default_machine: the stored id is not reused under another os name')
+        os.makedirs(os.path.dirname(id_file), exist_ok=True)
+        with open(id_file, 'w', encoding='utf-8') as fh:
+            fh.write('not an id')
+        fresh = default_machine('Linux', id_file)
+        if not re.fullmatch(r'linux-[0-9a-f]{6}', fresh) or default_machine('Linux', id_file) != fresh:
+            bad.append('/default_machine: a garbled id file is not replaced by a stored id')
+        bad_dir = os.path.join(tmp, 'blocker')
+        with open(bad_dir, 'w', encoding='utf-8') as fh:  # a file where the directory should be: still a label
+            fh.write('x')
+        if not re.fullmatch(r'linux-[0-9a-f]{6}', default_machine('Linux', os.path.join(bad_dir, 'machine-id'))):
+            bad.append('/default_machine: an id file that cannot be written gave no label')
     return bad
 
 
@@ -633,6 +720,8 @@ def self_test():
             copy_fixture_clones(clones)
             shared, local = count(os.path.join(FIXTURES, 'projects'), [clones], os.path.join(FIXTURES, 'toolkit'),
                                   expected['since'], expected['until'], expected['machine'])
+            inputs = inputs_line([clones, clones])
+            empty = inputs_line([os.path.join(tmp, 'no-such-dir')])
     except Exception as exc:  # a crash must read as a failed test, not a traceback
         print('SELF-TEST FAIL exception: %s: %s' % (type(exc).__name__, exc))
         return 1
@@ -646,10 +735,15 @@ def self_test():
     for key in ('claude_code_versions', 'spawns', 'tokens_by_model', 'toolkit_use', 'hook_blocks', 'notes', 'jev'):
         bad += key_diffs(shared.get(key), expected[key], '/' + key)
     want_local = {'-home-u-git-alpha': {'spawns': {'cct:coder': 1, 'Explore': 1, 'alpha-db-expert': 1, 'unknown': 2},
-                                        'tokens': 9055}}
+                                        'tokens': 9079}}
     if local['per_project'] != want_local:
         bad.append('/per_project: got %s' % local['per_project'])
     bad += leak_probes(shared, local)
+    with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-3.jsonl'), encoding='utf-8') as fh:
+        raw = fh.read()
+    for needle in ('corp.example', 'secretproject'):  # control: the rows the two probes are about are in the input,
+        if needle not in raw:                          # and expected.json's other-model tokens count them
+            bad.append('CONTROL FAILED: the fixture has no model string with %r' % needle)
     corrections, notes = local.get('corrections', []), local.get('notes', {})
     texts = [c.get('text') for c in corrections]
     if sorted(texts) != sorted(["no, don't run the gate without asking ZZ-PRIVATE-MARKER-7f3a",
@@ -666,7 +760,7 @@ def self_test():
             bad.append('/num(%r): want 0, got %s' % (value, num(value)))
     if num(7) != 7 or num(7.9) != 7:
         bad.append('/num: a finite number must pass through')
-    if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('deny-hang-shapes', 1),
+    if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('deny-hang-shapes', 2),
                                                         ('gate-before-merge', 2), ('no', 1), ('seal-guard', 1)]:
         bad.append('/local/hook_blocks: got %s' % local.get('hook_blocks'))
     pre = 'PreToolUse:Bash hook error: '
@@ -678,6 +772,14 @@ def self_test():
             (pre + '[command hook 3]: BLOCKED: seal-guard.sh: no', True, 'seal-guard'),
             (pre + '[command hook 4]: BLOCKED: No gate artifact found.', True, 'no'),
             (pre + '[inline]: refused', True, '<unattributed>'),
+            (pre + '[f="${P}/hooks/run-hook.sh"; [ -r "$f" ] || exit 2; exec "$f" deny-hang-shapes]: BLOCKED: use', True,
+             'deny-hang-shapes'),
+            (pre + '[bash "${P}/hooks/run-hook.sh" Gate-Before-Merge.sh]: BLOCKED: gate-before-merge refuses', True,
+             'gate-before-merge'),
+            (pre + '[bash "${P}/hooks/run-hook.sh"]: BLOCKED: seal-guard: no', True, 'seal-guard'),
+            (pre + '[f="${P}/hooks/dispatch.sh"; exec "$f" bash]: BLOCKED: gate-before-merge refuses', True,
+             'gate-before-merge'),
+            (pre + '[f="${P}/hooks/dispatch.sh"; exec "$f" bash]: refused', True, '<unattributed>'),
             (pre + '[command hook 3]: BLOCKED: gate-before-merge refuses', False, None),
             (pre + '[command hook 3]: BLOCKED: gate-before-merge refuses', None, None),
             ('Error: BLOCKED: gate-before-merge refuses', True, None),
@@ -706,6 +808,12 @@ def self_test():
                         ('claude-opus-4-1@20250805', 'claude-opus-4-1'),
                         ('claude-3-5-sonnet-20241022-v2:0', 'claude-3-5-sonnet-20241022'),
                         ('arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc', 'other-model'),
+                        ('anthropic.claude-haiku-5-5-v2:1', 'claude-haiku-5-5'),
+                        ('claude-fable-5', 'claude-fable-5'),
+                        ('claude-gateway.corp.example.com', 'other-model'),
+                        ('claude-acme-secretproject', 'other-model'),
+                        ('claude-opus-5.5', 'other-model'),
+                        ('claude-', 'other-model'),
                         ('gpt-x', 'other-model')):
         if norm_model(model) != want:
             bad.append('/norm_model(%r): want %s, got %s' % (model, want, norm_model(model)))
@@ -714,13 +822,11 @@ def self_test():
     wrong['token_share']['sub_share'] = round(wrong['token_share']['sub_share'] - 0.05, 4)
     if not compare(shared, wrong):
         bad.append('CONTROL FAILED: a wrong expected sub_share compared equal')
-    label = default_machine('host-a', 'Linux')
-    if not re.match(r'^linux-[0-9a-f]{6}$', label):
-        bad.append('/default_machine: %r does not match linux-<6 hex>' % label)
-    if 'host-a' in label:
-        bad.append('/default_machine: label contains the hostname')
-    if label == default_machine('host-b', 'Linux'):
-        bad.append('/default_machine: two hostnames gave one label')
+    if inputs != 'clone roots: 1, notes files: 2, Jev event files: 4':
+        bad.append('/inputs_line: got %r' % inputs)
+    if empty != 'clone roots: 1, notes files: 0, Jev event files: 0':  # the silent-zero case reads as zeros
+        bad.append('/inputs_line: a root with no clones: got %r' % empty)
+    bad += machine_checks()
     bad += merge_checks()
     for line in bad:
         print('SELF-TEST FAIL ' + line)
@@ -745,9 +851,11 @@ def main(argv):
     ap.add_argument('--until', help='YYYY-MM-DD, inclusive; default no upper bound')
     ap.add_argument('--root', help='transcript directory; default $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects')
     ap.add_argument('--clone-root', action='append', help='directory of repository clones; repeatable; '
-                    'default the parent directory of the toolkit checkout')
+                    'default the parent directory of the toolkit checkout; if this checkout is a git worktree, '
+                    'pass the directory that holds your clones')
     ap.add_argument('--toolkit', default=os.path.dirname(HERE), help='toolkit checkout; default this script\'s repository')
-    ap.add_argument('--machine', help='label for this machine; default <os>-<6 hex of sha256(hostname)>')
+    ap.add_argument('--machine', help='label for this machine; default <os>-<6 random hex>, made once and kept '
+                    'in ~/.cache/cct-self-review/machine-id')
     ap.add_argument('--out', help='shared JSON; default ~/.cache/cct-self-review/<machine>-<today>.json')
     ap.add_argument('--merge', metavar='DIR', help='merge the shared JSONs in DIR (not *.local.json) into one '
                     'table on stdout; needs no transcripts')
@@ -771,9 +879,9 @@ def main(argv):
         config or os.path.join(os.path.expanduser('~'), '.claude'), 'projects')
     toolkit = os.path.abspath(a.toolkit)
     clone_roots = [os.path.expanduser(r) for r in a.clone_root] if a.clone_root else [os.path.dirname(toolkit)]
-    machine = a.machine or default_machine(socket.gethostname(), platform.system())
-    out = os.path.expanduser(a.out) if a.out else os.path.join(os.path.expanduser('~'), '.cache', 'cct-self-review',
-                                '%s-%s.json' % (machine, date.today().isoformat()))
+    exchange = os.path.join(os.path.expanduser('~'), '.cache', 'cct-self-review')
+    machine = a.machine or default_machine(platform.system(), os.path.join(exchange, 'machine-id'))
+    out = os.path.expanduser(a.out) if a.out else os.path.join(exchange, '%s-%s.json' % (machine, date.today().isoformat()))
     if not os.path.isdir(root):
         print('self-review-count: no transcript directory at %s' % root, file=sys.stderr)
         return 2
@@ -782,8 +890,9 @@ def main(argv):
     write_json(out, shared)
     write_json(local_out, local)
     print('wrote %s and %s' % (out, local_out))
+    print(inputs_line(clone_roots))
     print('Next: in a Claude session on this machine, ask it to group the "corrections" in %s into '
-          'generic agent-behaviour kinds, no project, path or person names, no quoted words, and add '
+          'generic agent-behaviour kinds, no project, repo, path or person names, no quoted words, and add '
           '"correction_kinds": [{"kind": ..., "count": ...}] to %s; then copy %s into ~/.cache/cct-self-review/ '
           'on the machine that runs /self-review.' % (local_out, out, out))
     return 0

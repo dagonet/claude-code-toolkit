@@ -27,11 +27,13 @@ Then run `/self-review` there. It merges the directory; for a repeated machine l
 | `--since YYYY-MM-DD` | 30 days ago |
 | `--until YYYY-MM-DD` | no upper bound |
 | `--root DIR` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
-| `--clone-root DIR` (repeatable) | the parent of the toolkit checkout |
+| `--clone-root DIR` (repeatable) | the parent of the toolkit checkout; if this checkout is a git worktree, pass the directory that holds your clones |
 | `--toolkit DIR` | the checkout the script lives in |
-| `--machine LABEL` | `<os>-<6 hex of a hostname hash>`; keep the default, and never use a hostname or user name |
+| `--machine LABEL` | `<os>-<6 random hex>`, made once and kept in `~/.cache/cct-self-review/machine-id`; keep the default, and never use a hostname or user name |
 | `--out FILE` | `~/.cache/cct-self-review/<machine>-<today>.json` (the local file is the same name ending `.local.json`) |
 | `--merge DIR` | merge every `*.json` in DIR except `*.local.json`; needs no session records |
 | `--self-test` | run the built-in tests |
+
+Toolkit skill, agent and hook names come from the checkout you run it in, so keep that checkout on the same release as your installed plugin.
 
 Sessions whose records are on no included machine (for example cloud-hosted ones) are not counted. Keep the report in your own checkout, or offer findings upstream with `/cct:contribute-upstream`.
