@@ -38,7 +38,9 @@ BUILTIN_AGENTS = {'general-purpose', 'Explore', 'Plan', 'statusline-setup', 'cla
 SYNTHETIC = '<synthetic>'
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MODEL_RE = re.compile(r'claude-[a-z0-9.-]+')
-MODEL_ALLOWED_RE = re.compile(r'claude-(?:opus|sonnet|haiku|fable|instant|[0-9])[a-z0-9-]*')  # no dots: no host names
+# Only a family and digit groups may follow `claude-`: no dots, no words, so no host or project names.
+MODEL_ALLOWED_RE = re.compile(r'claude-(?:(?:opus|sonnet|haiku|fable|instant)(?:-[0-9]+)*'
+                              r'|[0-9]+(?:-[0-9]+)*-(?:opus|sonnet|haiku|instant)(?:-[0-9]+)*)')
 HOOK_PATH_RE = re.compile(r'hooks[/\\]([A-Za-z0-9._-]+?)\.sh')
 HOOK_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
 WRAPPER_HOOKS = {'dispatch', 'run-hook'}  # the plugin's launchers: the hook they run is not in their path
@@ -481,7 +483,9 @@ def leak_probes(shared, local):
             ('gamma', 'a clone (project) name', True),
             ('123456789012', 'an account id from a model string', False),
             ('corp.example', 'a gateway host name in a model string', False),
-            ('secretproject', 'a project name in a model string', False)):
+            ('secretproject', 'a project name in a model string', False),
+            ('acme', 'a project name after a model family', False),
+            ('internal', 'a word after a model name', False)):
         if needle in flat_shared:
             bad.append('/shared: %s leaked (%r)' % (what, needle))
         if in_local and needle not in flat_local:
@@ -735,13 +739,13 @@ def self_test():
     for key in ('claude_code_versions', 'spawns', 'tokens_by_model', 'toolkit_use', 'hook_blocks', 'notes', 'jev'):
         bad += key_diffs(shared.get(key), expected[key], '/' + key)
     want_local = {'-home-u-git-alpha': {'spawns': {'cct:coder': 1, 'Explore': 1, 'alpha-db-expert': 1, 'unknown': 2},
-                                        'tokens': 9079}}
+                                        'tokens': 9127}}
     if local['per_project'] != want_local:
         bad.append('/per_project: got %s' % local['per_project'])
     bad += leak_probes(shared, local)
     with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-3.jsonl'), encoding='utf-8') as fh:
         raw = fh.read()
-    for needle in ('corp.example', 'secretproject'):  # control: the rows the two probes are about are in the input,
+    for needle in ('corp.example', 'secretproject', 'acme', 'internal'):  # control: the rows the two probes are about are in the input,
         if needle not in raw:                          # and expected.json's other-model tokens count them
             bad.append('CONTROL FAILED: the fixture has no model string with %r' % needle)
     corrections, notes = local.get('corrections', []), local.get('notes', {})
@@ -813,6 +817,15 @@ def self_test():
                         ('claude-gateway.corp.example.com', 'other-model'),
                         ('claude-acme-secretproject', 'other-model'),
                         ('claude-opus-5.5', 'other-model'),
+                        ('claude-sonnet-acme-project', 'other-model'),
+                        ('claude-opus-5-5-internal', 'other-model'),
+                        ('claude-opus-5-5[1m]', 'claude-opus-5-5'),
+                        ('claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20241022'),
+                        ('claude-sonnet-4-5-20250929', 'claude-sonnet-4-5-20250929'),
+                        ('claude-instant-1', 'claude-instant-1'),
+                        ('claude-3-5-haiku-internal', 'other-model'),
+                        ('claude-3-5-fable', 'other-model'),
+                        ('claude-3-5', 'other-model'),
                         ('claude-', 'other-model'),
                         ('gpt-x', 'other-model')):
         if norm_model(model) != want:
