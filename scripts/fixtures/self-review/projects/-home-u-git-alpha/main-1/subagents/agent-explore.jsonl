@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-11-30T23:59:59Z","message":{"role":"user","content":"Look."}}
+{"type":"assistant","timestamp":"2026-12-01T00:00:01Z","message":{"id":"e1","role":"assistant","model":"claude-haiku-5-5","content":"first real model, after the window","usage":{"input_tokens":9999,"cache_read_input_tokens":9999,"output_tokens":9999}}}

@@ -1,0 +1,5 @@
+{"type":"assistant","timestamp":"2026-10-15T09:00:00Z","version":"2.1.100","message":{"id":"o1","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"u1","name":"Skill","input":{"skill":"cct:sprint"}}],"usage":{"input_tokens":9999,"cache_read_input_tokens":9999,"output_tokens":9999}}}
+this line is not json and is skipped
+{"type":"assistant","version":"2.1.100","message":{"id":"o2","role":"assistant","model":"claude-opus-5-5","content":"no timestamp, skipped","usage":{"input_tokens":9999,"cache_read_input_tokens":9999,"output_tokens":9999}}}
+{"type":"user","timestamp":"2026-11-12T08:00:00Z","version":"2.1.328","message":{"role":"user","content":"hello"}}
+{"type":"assistant","timestamp":"2026-12-02T08:00:00Z","version":"2.1.328","message":{"id":"o3","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"u2","name":"Skill","input":{"skill":"cct:sprint"}}],"usage":{"input_tokens":9999,"cache_read_input_tokens":9999,"output_tokens":9999}}}

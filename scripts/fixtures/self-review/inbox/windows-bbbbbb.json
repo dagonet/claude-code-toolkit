@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "machine": "windows-bbbbbb",
+  "since": "2026-11-08",
+  "until": "2026-12-06",
+  "claude_code_versions": {"2.1.10": 5, "2.2.0": 1},
+  "spawns": {
+    "cct:coder": {"claude-opus-5-5": 1},
+    "Explore": {"claude-haiku-5-5": 2},
+    "other": {"claude-sonnet-5-5": 2}
+  },
+  "tokens_by_model": {
+    "claude-opus-5-5": {"input": 200, "cache_read": 3000, "output": 100},
+    "claude-haiku-5-5": {"input": 100, "cache_read": 1000, "output": 50},
+    "other-model": {"input": 3, "cache_read": 30, "output": 3}
+  },
+  "token_share": {
+    "main": {"input": 250, "cache_read": 3500, "output": 120},
+    "sub": {"input": 53, "cache_read": 530, "output": 33},
+    "sub_share": 0.1373
+  },
+  "toolkit_use": {
+    "skills": {"commit": 2, "sprint": 1},
+    "agents": {"coder": 1, "Explore": 2}
+  },
+  "hook_blocks": {"gate-before-merge": 1, "deny-hang-shapes": 2, "other": 3},
+  "correction_candidates": 4,
+  "correction_kinds": [{"kind": "ignored-instruction", "count": 3}, {"kind": "scope-creep", "count": 1}],
+  "notes": {
+    "helped": {"commit": {"count": 1, "projects": 1}, ".claude/rules/project.md": {"count": 2, "projects": 1}},
+    "recurring_failure": {"gate-before-merge": {"count": 3, "projects": 2}},
+    "rule_unused": {"other": {"count": 4, "projects": 2}}
+  },
+  "notes_malformed": 2,
+  "jev": {"events": 3, "applied": 1, "up": 0, "down": 1, "skipped_files": 2},
+  "unreadable_files": 2
+}

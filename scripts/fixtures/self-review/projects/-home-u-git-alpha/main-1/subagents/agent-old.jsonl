@@ -1,0 +1,1 @@
+{"type":"assistant","timestamp":"2026-10-20T09:00:00Z","message":{"id":"x1","role":"assistant","model":"claude-opus-5-5","content":"all rows before the window: not a spawn","usage":{"input_tokens":9999,"cache_read_input_tokens":9999,"output_tokens":9999}}}

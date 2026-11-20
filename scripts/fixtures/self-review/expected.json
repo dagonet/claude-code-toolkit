@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "machine": "fixture",
+  "since": "2026-11-01",
+  "until": "2026-11-30",
+  "claude_code_versions": {"2.1.328": 6},
+  "spawns": {
+    "cct:coder": {"claude-opus-5-5": 1},
+    "Explore": {"claude-haiku-5-5": 1},
+    "other": {"claude-sonnet-5-5": 1},
+    "unknown": {"claude-sonnet-5-5": 1, "claude-opus-5-5": 1}
+  },
+  "tokens_by_model": {
+    "claude-opus-5-5": {"input": 513, "cache_read": 5130, "output": 58},
+    "claude-sonnet-5-5": {"input": 300, "cache_read": 3000, "output": 30},
+    "other-model": {"input": 7, "cache_read": 70, "output": 7},
+    "claude-3-5-sonnet-20241022": {"input": 1, "cache_read": 10, "output": 1}
+  },
+  "token_share": {
+    "main": {"input": 366, "cache_read": 3660, "output": 51},
+    "sub": {"input": 455, "cache_read": 4550, "output": 45},
+    "sub_share": 0.5533
+  },
+  "toolkit_use": {
+    "skills": {"commit": 1, "sprint": 0},
+    "agents": {"coder": 1, "Explore": 0}
+  },
+  "hook_blocks": {"gate-before-merge": 2, "deny-hang-shapes": 2, "other": 3},
+  "correction_candidates": 2,
+  "notes": {
+    "recurring_failure": {"gate-before-merge": {"count": 5, "projects": 2}},
+    "helped": {"commit": {"count": 2, "projects": 1}, ".claude/rules/project.md": {"count": 1, "projects": 1}},
+    "rule_unused": {"other": {"count": 5, "projects": 2}}
+  },
+  "notes_malformed": 3,
+  "jev": {"events": 2, "applied": 1, "up": 1, "down": 0, "skipped_files": 1},
+  "unreadable_files": 1
+}

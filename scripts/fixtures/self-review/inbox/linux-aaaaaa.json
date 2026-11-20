@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "machine": "linux-aaaaaa",
+  "since": "2026-11-01",
+  "until": "2026-11-30",
+  "claude_code_versions": {"2.1.9": 4, "2.1.10": 2},
+  "spawns": {
+    "cct:coder": {"claude-opus-5-5": 3, "claude-sonnet-5-5": 2},
+    "Explore": {"claude-haiku-5-5": 4},
+    "unknown": {"claude-sonnet-5-5": 1}
+  },
+  "tokens_by_model": {
+    "claude-opus-5-5": {"input": 1000, "cache_read": 20000, "output": 500},
+    "claude-sonnet-5-5": {"input": 400, "cache_read": 8000, "output": 200}
+  },
+  "token_share": {
+    "main": {"input": 900, "cache_read": 18000, "output": 450},
+    "sub": {"input": 500, "cache_read": 10000, "output": 250},
+    "sub_share": 0.3571
+  },
+  "toolkit_use": {
+    "skills": {"commit": 5, "sprint": 0},
+    "agents": {"coder": 3, "Explore": 0}
+  },
+  "hook_blocks": {"gate-before-merge": 4, "other": 1},
+  "correction_candidates": 6,
+  "notes": {
+    "helped": {"commit": {"count": 3, "projects": 2}},
+    "recurring_failure": {"gate-before-merge": {"count": 2, "projects": 1}}
+  },
+  "notes_malformed": 1,
+  "jev": {"events": 10, "applied": 4, "up": 2, "down": 1, "skipped_files": 0},
+  "unreadable_files": 0
+}

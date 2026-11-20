@@ -1,0 +1,5 @@
+{"date": "2026-11-15", "kind": "recurring_failure", "surface": "gate-before-merge", "summary": "agents forget the gate artifact ZZ-NOTE-MARKER-2c9d", "count": 3}
+{"date": "2026-11-16", "kind": "helped", "surface": "commit", "summary": "kept the commit message short", "count": 2}
+this note line is not json
+{"date": "2026-11-18", "kind": "helped", "surface": ".claude/rules/project.md", "summary": "a template path is a toolkit surface", "count": 1}
+{"date": "2026-11-18", "kind": "rule_unused", "surface": "zz-private-surface", "summary": "a project-specific rule", "count": 4}
