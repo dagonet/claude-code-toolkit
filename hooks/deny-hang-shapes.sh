@@ -112,36 +112,37 @@ esac
 # inside the working directory qualifies. Anything else, and any doubt, keeps the refusal.
 # dh_safe_cd_chain <command> <cwd>: 0 only for that exact subset, 1 otherwise.
 dh_safe_cd_chain() {
-  local raw=$1 cwd=$2 target rest norm seg w
-  local re_cd='^cd[[:space:]]+([^][:space:];&|"'"'"'\\$~*?<>(){}`!#]+)(.*)$'
+  local raw=$1 cwd=$2 target rest seg w LC_ALL=C
+  # The cd target is one plain absolute word. Everything after the cd must be a
+  # whitelist: letters, digits, space, tab and  - . / _ , : = + @ % | ; &  once
+  # every single-quoted string is collapsed to Q (a quoted string may hold anything
+  # but may not start with `-`). Double quotes, `$`, backtick, backslash, braces,
+  # brackets, globs, `~`, redirects, `(`, `!`, `#` and newlines are all refused.
+  local re_cd=$'^cd[[:space:]]+(/[A-Za-z0-9._/,:=+@%-]*)(.*)$'
+  local re_ok=$'^[A-Za-z0-9 \t._/,:=+@%|;&-]*$'
   # a bare range is digits only: `$` is allowed single-quoted ('$p', 'N,$p'), never bare
   local re_bare='([0-9]+|[0-9]+,[0-9]+)' re_rng='([0-9]+|\$|[0-9]+,[0-9]+|[0-9]+,\$)'
   local re_find='(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)([[:space:]]|$)'
   local re_glue='Q[^[:space:]]|[^[:space:]]Q' re_follow='(^|[[:space:]])-[a-zA-Z0-9]*[fF]'
   while [ "${cwd%/}" != "$cwd" ]; do cwd=${cwd%/}; done
   [ -n "$cwd" ] || return 1
-  # A heredoc body is a newline; a quote directly before `-` may hide an option word
-  # from the checks below (`"-delete"`, `""-i`), so both refuse outright.
-  case "$raw" in *$'\n'*|*'>'*|*'$('*|*'`'*|*'||'*|*'"-'*|*"'-"*) return 1 ;; esac
+  # A heredoc body is a newline; a quote directly before `-` may hide an option word.
+  case "$raw" in *$'\n'*|*'||'*|*"'-"*) return 1 ;; esac
   [[ $raw =~ $re_cd ]] || return 1
   target=${BASH_REMATCH[1]} rest=${BASH_REMATCH[2]}
-  case $target in /*) ;; *) return 1 ;; esac
   case "$target/" in */../*) return 1 ;; esac
   while [ "${target%/}" != "$target" ]; do target=${target%/}; done
   [ "$target" = "$cwd" ] || case $target in "$cwd"/*) ;; *) return 1 ;; esac
   rest=${rest#"${rest%%[![:space:]]*}"}
   case $rest in '&&'*|';'*) ;; *) return 1 ;; esac
   # `sed -n '<range>p'` becomes the word SEDN; any other sed is then off the list.
-  # A literal Q becomes \003 first, so the quote marker Q dh_norm leaves is unambiguous.
-  rest=$(printf '%s' "$rest" | tr Q '\003' | sed -E \
-    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_bare}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g")
-  norm=$(printf '%s' "$rest" | dh_norm)
-  # What is left after the quote collapse must be plain words: no stray quote, backslash,
-  # `<`, and no unquoted `$`, `{` or `}` (expansion could build an option word).
-  case "$norm" in *"'"*|*'"'*|*'\'*|*'<'*|*'$'*|*'{'*|*'}'*) return 1 ;; esac
-  norm=${norm//&&/;}
-  case "$norm" in *'&'*) return 1 ;; esac
-  norm=${norm//|/;}
+  # A literal Q becomes q first (classification only), so the marker Q is unambiguous.
+  rest=$(printf '%s' "$rest" | tr Q q | sed -E \
+    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_bare}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g; s/${DH_Q}[^${DH_Q}]*${DH_Q}/Q/g")
+  [[ $rest =~ $re_ok ]] || return 1
+  rest=${rest//&&/;}
+  case "$rest" in *'&'*) return 1 ;; esac
+  rest=${rest//|/;}
   while IFS= read -r seg; do
     seg=${seg#"${seg%%[![:space:]]*}"}; seg=${seg%"${seg##*[![:space:]]}"}
     [ -n "$seg" ] || continue
@@ -156,7 +157,7 @@ dh_safe_cd_chain() {
       find) [[ $seg =~ $re_find ]] && return 1 ;;
       *) return 1 ;;
     esac
-  done <<<"${norm//;/$'\n'}"
+  done <<<"${rest//;/$'\n'}"
   return 0
 }
 

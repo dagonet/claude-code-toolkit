@@ -8675,7 +8675,24 @@ b1c "ref: rg \"--pre\""                     2 "cd /w/proj && rg \"--pre\" sh x &
 b1c "ref: rg '--pre=sh'"                   2 "cd /w/proj && rg '--pre=sh' x && ls"
 b1c "ref: tail '-f'"                       2 "cd /w/proj && tail '-f' log && ls"
 b1c "ref: tail \"\"-f"                      2 "cd /w/proj && tail \"\"-f log && ls"
-b1c "ref: empty cwd"                      2 "cd /w/proj && grep -n x a.txt && sed -n 10,40p b.txt" ""
+# fix round 2: a double-quoted expansion builds an option word the checks cannot see; the rest
+# of the command is a character whitelist, so double quotes, $, globs and brackets all refuse
+b1c "ref: find . \"\${x:--delete}\""         2 "cd /w/proj && ls && find . \"\${x:--delete}\""
+b1c "ref: sed -n 1p \"\${x:--i}\""          2 "cd /w/proj && ls && sed -n 1p \"\${x:--i}\" f"
+b1c "ref: tail \"\${x:--f}\""               2 "cd /w/proj && ls && tail \"\${x:--f}\" log"
+b1c "ref: rg \"\${x:---pre=sh}\""           2 "cd /w/proj && ls && rg \"\${x:---pre=sh}\" x"
+b1c "ref: find . \"\$_\""                   2 "cd /w/proj && ls && ls -d -- -delete ; find . \"\$_\""
+b1c "ref: find . \"\$x\""                   2 "cd /w/proj && ls && find . \"\$x\""
+b1c "ref: find -dele[t]e (glob)"           2 "cd /w/proj && ls && find . -dele[t]e"
+b1c "ref: find -delet? (glob)"             2 "cd /w/proj && ls && find . -delet?"
+b1c "ref: double-quoted pattern"           2 "cd /w/proj && ls && grep \"x\" f"
+b1c "ref: bare \$VAR"                      2 "cd /w/proj && ls && cat \$f"
+b1c "ref: bare * glob"                     2 "cd /w/proj && ls && cat *.md"
+b1c "ref: backslash"                       2 "cd /w/proj && ls && cat a\\ b"
+b1c "ref: single-quoted -pattern"          2 "cd /w/proj && ls && grep '-v' f"
+b1c "ref: unbalanced single quote"         2 "cd /w/proj && ls && grep it's f"
+b1c "ok: single-quoted pattern with \$ and >" 0 "cd /w/proj && ls && grep -rn 'x\$|a>b' src"
+b1c "ref: empty cwd"                     2 "cd /w/proj && grep -n x a.txt && sed -n 10,40p b.txt" ""
 # ---- end v4.3.0 B1
 
 # ---- v4.3.0 C1: model-floor gives a model-less spawn the project default ----
