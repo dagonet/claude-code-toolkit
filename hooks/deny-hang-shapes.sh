@@ -106,6 +106,56 @@ esac
 # ONE compound command (for/while/until..done, if..fi, case..esac, { }, ( )) is a
 # single command however many `;` it holds. The awk tracks compound nesting: a
 # segment that starts while a compound is still open belongs to it.
+# Self-review item 1 (user decision #47, "safe middle way"): a cd into the session
+# cwd (or below it) followed only by read-only commands is let through -- Claude Code
+# documents a compound command as prompt-free when every part qualifies, and a cd
+# inside the working directory qualifies. Anything else, and any doubt, keeps the refusal.
+# dh_safe_cd_chain <command> <cwd>: 0 only for that exact subset, 1 otherwise.
+dh_safe_cd_chain() {
+  local raw=$1 cwd=$2 target rest norm seg w
+  local re_cd='^cd[[:space:]]+([^][:space:];&|"'"'"'\\$~*?<>(){}`!#]+)(.*)$'
+  local re_rng='([0-9]+|\$|[0-9]+,[0-9]+|[0-9]+,\$)'
+  local re_find='(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)([[:space:]]|$)'
+  local re_glue='Q[^[:space:]]|[^[:space:]]Q' re_follow='(^|[[:space:]])-[a-zA-Z0-9]*[fF]'
+  while [ "${cwd%/}" != "$cwd" ]; do cwd=${cwd%/}; done
+  [ -n "$cwd" ] || return 1
+  case "$raw" in *$'\n'*|*'>'*|*'$('*|*'`'*|*'||'*) return 1 ;; esac
+  [[ $raw =~ $re_cd ]] || return 1
+  target=${BASH_REMATCH[1]} rest=${BASH_REMATCH[2]}
+  case $target in /*) ;; *) return 1 ;; esac
+  case "$target/" in */../*) return 1 ;; esac
+  while [ "${target%/}" != "$target" ]; do target=${target%/}; done
+  [ "$target" = "$cwd" ] || case $target in "$cwd"/*) ;; *) return 1 ;; esac
+  rest=${rest#"${rest%%[![:space:]]*}"}
+  case $rest in '&&'*|';'*) ;; *) return 1 ;; esac
+  # `sed -n '<range>p'` becomes the word SEDN; any other sed is then off the list.
+  # A literal Q becomes \003 first, so the quote marker Q dh_norm leaves is unambiguous.
+  rest=$(printf '%s' "$rest" | tr Q '\003' | sed -E \
+    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_rng}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g")
+  norm=$(printf '%s' "$rest" | dh_norm)
+  case "$norm" in *"'"*|*'"'*|*'\'*|*'<'*) return 1 ;; esac
+  norm=${norm//&&/;}
+  case "$norm" in *'&'*) return 1 ;; esac
+  norm=${norm//|/;}
+  while IFS= read -r seg; do
+    seg=${seg#"${seg%%[![:space:]]*}"}; seg=${seg%"${seg##*[![:space:]]}"}
+    [ -n "$seg" ] || continue
+    w=${seg%%[[:space:]]*}
+    case $w in
+      grep|egrep|fgrep|wc|ls|cat|head) ;;
+      rg) [[ $seg == *--pre* || $seg == *--hostname-bin* ]] && return 1
+          [[ $seg =~ $re_glue ]] && return 1 ;;
+      tail) [[ $seg == *--follow* ]] && return 1
+            [[ $seg =~ $re_follow ]] && return 1 ;;
+      SEDN) [[ $seg =~ [[:space:]]- ]] && return 1 ;;
+      find) [[ $seg =~ $re_find ]] && return 1
+            [[ $seg =~ $re_glue ]] && return 1 ;;
+      *) return 1 ;;
+    esac
+  done <<<"${norm//;/$'\n'}"
+  return 0
+}
+
 DH_TRIM="${DH_HEAD#"${DH_HEAD%%[![:space:]]*}"}"
 case "$DH_TRIM" in
   cd[[:space:]]*)
@@ -144,7 +194,7 @@ case "$DH_TRIM" in
           }
         }
         END { print n + 0 }')
-    if [ "${DH_N:-0}" -ge 3 ]; then
+    if [ "${DH_N:-0}" -ge 3 ] && ! dh_safe_cd_chain "$DH_TRIM" "$DH_CWD"; then
       dh_refuse "use absolute paths or git -C <dir>, or put the steps in a script file and run bash <path>, instead of a leading cd before several commands."
     fi
     ;;
