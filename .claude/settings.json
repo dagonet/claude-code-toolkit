@@ -8,15 +8,18 @@
           {
             "type": "command",
             "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/pre-commit-test.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
-            "timeout": 3360
+            "timeout": 3360,
+            "onFailure": "block"
           },
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/no-push-main.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/no-push-main.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
+            "onFailure": "block"
           },
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
+            "onFailure": "block"
           }
         ]
       },
@@ -25,7 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
+            "onFailure": "block"
           }
         ]
       },

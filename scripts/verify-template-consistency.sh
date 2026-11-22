@@ -5296,6 +5296,72 @@ fi
 rm -rf "${c82_tmp:?}"
 
 # ---------------------------------------------------------------------------
+# Check 83 -- onFailure on the fail-closed guard registrations (self-review item 2;
+# Claude Code 2.1.295 / 2.1.329): a hook that fails to start, exits other than 0
+# or 2, or times out lets the action go ahead unless the handler says
+# "onFailure": "block". Polarity is per hook: the fail-closed guards must carry
+# it, every other handler (advisory, fail-open by design, SessionStart,
+# PostToolUse, Stop, SubagentStop) must not. The guard set is keyed by the name
+# found in the command string; the expected counts stop a removed handler from
+# passing vacuously. Controls: a copy with the key removed from gate-before-merge,
+# and a copy with it added to deny-hang-shapes, must each be flagged.
+# ---------------------------------------------------------------------------
+note "Check 83: onFailure block on the fail-closed guard registrations (and only those)"
+C83_JS='const fs = require("fs");
+const [mode, file, out, target, op] = process.argv.slice(1);
+const d = JSON.parse(fs.readFileSync(file, "utf8"));
+const G = /(dispatch\.sh|deny-secret-reads|deny-claude-md-writes|gate-before-merge|pre-commit-test|no-push-main)/;
+let guards = 0; const bad = [];
+for (const ev of Object.keys(d.hooks || {}))
+  for (const g of d.hooks[ev])
+    for (const h of g.hooks) {
+      const cmd = String(h.command || "");
+      if (mode === "mutate") {
+        if (cmd.includes(target)) { if (op === "add") h.onFailure = "block"; else delete h.onFailure; }
+        continue;
+      }
+      const isG = G.test(cmd);
+      if (isG) guards++;
+      if (isG && ev !== "PreToolUse") bad.push(ev + ": guard outside PreToolUse: " + cmd.slice(0, 60));
+      else if (isG && h.onFailure !== "block") bad.push(ev + "/" + (g.matcher || "") + ": guard without onFailure block: " + G.exec(cmd)[1]);
+      else if (!isG && h.onFailure !== undefined) bad.push(ev + "/" + (g.matcher || "") + ": non-guard handler carries onFailure: " + cmd.slice(0, 60));
+    }
+if (mode === "mutate") { fs.writeFileSync(out, JSON.stringify(d, null, 2)); }
+else { console.log(guards); for (const b of bad) console.log(b); }'
+c83_scan() { node -e "$C83_JS" scan "$1"; }                    # line 1 = guard count, then one line per violation
+c83_mut()  { node -e "$C83_JS" mutate "$1" "$2" "$3" "$4"; }   # file out target add|del
+c83_tmp=$(mktemp -d)
+if ! command -v node >/dev/null 2>&1; then
+  ko "check 83: node is not available -- the onFailure scan cannot run"
+else
+  c83_fail=0
+  for c83_pair in "hooks/hooks.json 5" ".claude/settings.json 4"; do
+    c83_f=${c83_pair% *}; c83_want=${c83_pair#* }
+    c83_res=$(c83_scan "$c83_f" 2>&1)
+    c83_n=$(printf '%s\n' "$c83_res" | head -1)
+    c83_v=$(printf '%s\n' "$c83_res" | tail -n +2)
+    if [ "$c83_n" != "$c83_want" ]; then
+      ko "check 83: $c83_f has $c83_n fail-closed guard handlers, expected $c83_want (a guard was added, removed or renamed)"; c83_fail=1
+    elif [ -n "$c83_v" ]; then
+      ko "check 83: $c83_f: $(printf '%s' "$c83_v" | tr '\n' ' ')"; c83_fail=1
+    fi
+  done
+  c83_mut .claude/settings.json "$c83_tmp/a.json" gate-before-merge del
+  c83_mut .claude/settings.json "$c83_tmp/b.json" deny-hang-shapes add
+  if ! c83_scan "$c83_tmp/a.json" | tail -n +2 | grep -q 'gate-before-merge'; then
+    ko "check 83 control: a copy without onFailure on gate-before-merge was NOT flagged -- the predicate is vacuous"; c83_fail=1
+  fi
+  if ! c83_scan "$c83_tmp/b.json" | tail -n +2 | grep -q 'non-guard handler'; then
+    ko "check 83 control: a copy with onFailure on deny-hang-shapes was NOT flagged -- the predicate is vacuous"; c83_fail=1
+  fi
+  if [ "$c83_fail" -eq 0 ]; then
+    ok "check 83: the 5 plugin and 4 repo fail-closed guard handlers carry onFailure block, no other handler does; both controls fire"
+  fi
+fi
+rm -rf "${c83_tmp:?}"
+
+
+# ---------------------------------------------------------------------------
 echo
 if [ "$skip_count" -gt 0 ]; then
   echo "$skip_count check(s) skipped"
