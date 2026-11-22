@@ -13069,6 +13069,62 @@ else
 fi
 # ---- end v6.1 S3
 
+# ---- v7.0.0 model ladder: hooks/agent-result-notes.sh -- the "Step-up:" note (stdout asserted, every case exits 0).
+# PostToolUse(Agent): the report is tool_response.content (an array of text blocks), the model that ran is
+# tool_response.resolvedModel, else tool_input.model, else the agent file's own (cct:coder is `sonnet`).
+echo "=== hooks/agent-result-notes.sh (model ladder, step-up note) ==="
+ANR_NOTE() { # <type> <model> <reason> <next|top> -> the exact note JSON
+  if [ "$4" = top ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Step-up: %s failed on %s (%s). Report this to the user instead of retrying."}}' "$1" "$2" "$3"
+  else
+    printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Step-up: %s failed on %s (%s). Start the same job again on %s."}}' "$1" "$2" "$3" "$4"
+  fi
+}
+anr_payload() { # <type> <tool_input model|-> <status> <resolvedModel|-> <report (JSON string body)|-> -> PostToolUse(Agent) payload; '-' = key absent
+  local ty="" mo="" rm="" ct=""
+  [ "$1" = "-" ] || ty="\"subagent_type\":\"$1\","
+  [ "$2" = "-" ] || mo="\"model\":\"$2\","
+  [ "$4" = "-" ] || rm=",\"resolvedModel\":\"$4\""
+  [ "$5" = "-" ] || ct=",\"content\":[{\"type\":\"text\",\"text\":\"$5\"}]"
+  printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{%s%s"prompt":"p","description":"d"},"tool_response":{"status":"%s"%s%s},"cwd":"%s"}' \
+    "$ty" "$mo" "$3" "$rm" "$ct" "$(jesc "$(natpath "$ROOT")")"
+}
+anr_run() { # <label> <want stdout> <payload> -> asserts the exact stdout and exit 0
+  local out rc
+  out=$(printf '%s' "$3" | CLAUDE_PLUGIN_ROOT="$ROOT" bash "$ROOT/hooks/agent-result-notes.sh" 2>/dev/null; echo "rc=$?")
+  rc=${out##*rc=}; out=${out%rc=*}
+  expect "ANR $1: exit 0" 0 "$rc"
+  expect "ANR $1: stdout" "$2" "$out"
+}
+ANR_FAIL='- [pass] 1. a\n- [fail] 2. x — y\nCommit: none\nGate: none\nConcerns: none'
+ANR_GATE='- [pass] 1. a\nCommit: abc\nGate: GATE FAILED: tests red\nConcerns: none'
+anr_run "sonnet fails brief item 2"        "$(ANR_NOTE cct:coder sonnet "brief item 2 failed" opus)"  "$(anr_payload cct:coder sonnet completed - "$ANR_FAIL")"
+anr_run "gate failed on sonnet"            "$(ANR_NOTE cct:coder sonnet "gate failed" opus)"          "$(anr_payload cct:coder sonnet completed - "$ANR_GATE")"
+anr_run "haiku steps up to sonnet"         "$(ANR_NOTE cct:coder haiku "brief item 2 failed" sonnet)" "$(anr_payload cct:coder haiku completed - "$ANR_FAIL")"
+anr_run "explicit claude-opus-5-5 -> fable (Review Focus 3)" "$(ANR_NOTE cct:coder opus "brief item 2 failed" fable)" "$(anr_payload cct:coder claude-opus-5-5 completed - "$ANR_FAIL")"
+anr_run "fable is the top rung"            "$(ANR_NOTE cct:coder fable "brief item 2 failed" top)"    "$(anr_payload cct:coder fable completed - "$ANR_FAIL")"
+anr_run "resolvedModel wins over tool_input.model" "$(ANR_NOTE cct:coder opus "brief item 2 failed" fable)" "$(anr_payload cct:coder sonnet completed claude-opus-5-5 "$ANR_FAIL")"
+anr_run "no model in the payload: the agent file's own (sonnet)" "$(ANR_NOTE cct:coder sonnet "brief item 2 failed" opus)" "$(anr_payload cct:coder - completed - "$ANR_FAIL")"
+anr_run "a fail line in the second text block" "$(ANR_NOTE cct:coder sonnet "brief item 3 failed" opus)" \
+  "$(anr_payload cct:coder sonnet completed - 'first' | sed 's/}\]}/},{"type":"text","text":"- [fail] 3. z"}]}/')"
+anr_run "plain-string tool_response"       "$(ANR_NOTE cct:coder sonnet "brief item 2 failed" opus)" \
+  "{\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"cct:coder\",\"model\":\"sonnet\"},\"tool_response\":\"$ANR_FAIL\",\"cwd\":\"$(jesc "$(natpath "$ROOT")")\"}"
+anr_run "clean report: no output"          "" "$(anr_payload cct:coder sonnet completed - '- [pass] 1. a\n- [pass] 2. b\nCommit: abc\nGate: GATE PASS abc\nConcerns: none')"
+anr_run "prose [fail] marker: no output (Review Focus 2)" "" "$(anr_payload cct:coder sonnet completed - 'Done. I checked the [fail] marker handling and the - [fail] 2. form in prose.\nCommit: abc\nGate: GATE PASS abc')"
+anr_run "short hand-back note: no output"  "" "$(anr_payload cct:coder sonnet completed - 'Report sent via SubagentHandback.')"
+anr_run "reviewer severity critical: no output" "" "$(anr_payload cct:code-reviewer sonnet completed - 'Severity: critical\n- [fail] 1. x')"
+anr_run "tester fail line: no output"      "" "$(anr_payload cct:tester sonnet completed - "$ANR_FAIL")"
+anr_run "general-purpose fail line: no output" "" "$(anr_payload general-purpose sonnet completed - "$ANR_FAIL")"
+anr_run "untyped spawn: no output"         "" "$(anr_payload - sonnet completed - "$ANR_FAIL")"
+anr_run "background spawn (async_launched): no output (Review Focus 1)" "" "$(anr_payload cct:coder sonnet async_launched sonnet -)"
+anr_run "status completed without content: no output" "" "$(anr_payload cct:coder sonnet completed - -)"
+anr_run "unknown model foo: no output"     "" "$(anr_payload cct:coder foo completed - "$ANR_FAIL")"
+anr_run "unknown agent type: no output"    "" "$(anr_payload cct:no-such-agent sonnet completed - "$ANR_FAIL")"
+anr_run "another tool_name: no output"     "" "$(anr_payload cct:coder sonnet completed - "$ANR_FAIL" | sed 's/"tool_name":"Agent"/"tool_name":"Task"/')"
+anr_run "unreadable payload: no output"    "" 'this is not json'
+anr_run "empty payload: no output"         "" ''
+# ---- end v7.0.0 agent-result-notes
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

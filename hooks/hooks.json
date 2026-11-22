@@ -47,6 +47,9 @@
       ] },
       { "matcher": "Edit|Write", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" post-edit-build" }
+      ] },
+      { "matcher": "Agent", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" agent-result-notes" }
       ] }
     ],
     "SessionEnd": [

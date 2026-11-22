@@ -4740,7 +4740,8 @@ C71_PLUGIN_ONLY='SessionStart;;cct-session
 SessionEnd;;cct-session
 SessionStart;;jev-notice
 PreToolUse;Agent;jev-route
-PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge'
+PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge
+PostToolUse;Agent;agent-result-notes'
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
@@ -4768,7 +4769,7 @@ else
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
   c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
   c71_rh=$(c71_rhtab hooks/lib/hook-class.sh)
-  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\n')
+  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\n')
   c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
   [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/lib/hook-class.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
   # (1d) two-sided registration shape: a closed-class hook carries the inline existence check (G), every other one stays bare (B)
@@ -5359,6 +5360,45 @@ else
   fi
 fi
 rm -rf "${c83_tmp:?}"
+
+# ---------------------------------------------------------------------------
+# Check 84 (v7.0.0, model ladder): hooks/agent-result-notes.sh -- the step-up note -- is registered exactly once, as
+# PostToolUse with matcher Agent, through run-hook.sh, and carries NO onFailure. It is advisory (class project,
+# polarity open): a hook that failed to start must let the spawn's result through, and onFailure block would turn a
+# broken note into a blocked Agent result. Check 83 flags a non-guard onFailure too; this one also pins WHERE the
+# hook is registered, which no other check does (check 71 pins the name, not the event). Control: a copy with
+# "onFailure": "block" added to that handler is flagged.
+# ---------------------------------------------------------------------------
+note "Check 84: agent-result-notes is registered as PostToolUse Agent, once, without onFailure"
+C84_JS='const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const R = /^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" agent-result-notes$/;
+let n = 0; const bad = [];
+for (const ev of Object.keys(d.hooks || {}))
+  for (const g of d.hooks[ev])
+    for (const h of g.hooks) {
+      if (!R.test(String(h.command || ""))) continue;
+      n++;
+      if (ev !== "PostToolUse" || g.matcher !== "Agent") bad.push("registered under " + ev + "/" + (g.matcher || "") + ", not PostToolUse/Agent");
+      if (h.onFailure !== undefined) bad.push("carries onFailure " + JSON.stringify(h.onFailure));
+    }
+if (n !== 1) bad.push("registered " + n + " times, expected 1");
+console.log(bad.join("; "));'
+c84_tmp=$(mktemp -d)
+if ! command -v node >/dev/null 2>&1; then
+  ko "check 84: node is not available -- the registration scan cannot run"
+else
+  c84_v=$(node -e "$C84_JS" hooks/hooks.json 2>&1)
+  c83_mut hooks/hooks.json "$c84_tmp/a.json" agent-result-notes add
+  c84_ctl=$(node -e "$C84_JS" "$c84_tmp/a.json" 2>&1)
+  if [ -n "$c84_v" ]; then
+    ko "check 84: hooks/hooks.json: $c84_v"
+  elif ! printf '%s' "$c84_ctl" | grep -q 'carries onFailure'; then
+    ko "check 84 control: a copy with onFailure block added to agent-result-notes was NOT flagged -- the predicate is vacuous"
+  else
+    ok "check 84: agent-result-notes is registered once as PostToolUse Agent with no onFailure; the control (onFailure block added) is flagged"
+  fi
+fi
+rm -rf "${c84_tmp:?}"
 
 
 # ---------------------------------------------------------------------------
