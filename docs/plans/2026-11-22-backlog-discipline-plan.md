@@ -18,8 +18,8 @@
 
 ## Global Constraints
 
-- **Branch:** `feat/backlog-discipline`, cut from `origin/main` at build time, in worktree `~/git/.worktrees/claude-code-toolkit/backlog-discipline`. It ships after v6.3.0 and the model-ladder release.
-- **Version:** the next minor after whatever has shipped; Task 7 sets it.
+- **Branch:** `feat/v6.3`, worktree `~/git/.worktrees/claude-code-toolkit/v6.3`. It ships inside v6.3.0 (user ruling 2026-11-22 20:09), built after the model-ladder plan.
+- **Version:** v6.3.0; Task 7 folds into the v6.3 items plan's release task.
 - **Item ids:** `B-[0-9]+`. File-mode subsections are exactly `### Untriaged`, `### Ranked` and `### Done` under `## Backlog`.
 - **Mode:** `Task source` in the repo root's `PROJECT_CONTEXT.md`, with backticks and spaces trimmed.
   - Exactly `plan-files` means file mode; exactly `github-issues` means issue mode.
@@ -232,11 +232,9 @@
 ### Task 5: Follow-ups note
 
 **Files:**
-- Create: `hooks/agent-result-notes.sh` (class `project`, polarity `open`).
+- Extend: `hooks/agent-result-notes.sh`, created by the model-ladder plan (Task 2), with a second rule `anr_followups` beside `anr_step_up`; its class and registration already exist.
 - Modify:
-  - `hooks/hooks.json` (PostToolUse, matcher `Agent`);
-  - `hooks/lib/hook-class.sh`;
-  - check 71 lists;
+  - `hooks/hooks.json`, `hooks/lib/hook-class.sh` and check 71 lists: already done by the model-ladder plan; no change unless its registration differs;
   - `agents/code-reviewer.md` and `agents/tester.md` (the optional block in their report contract);
   - `hooks/enforce-agent-contract.sh` (reviewer verdict only, ~`:142-147`);
   - `scripts/test-hooks.sh`.
@@ -246,11 +244,11 @@
 - **Reviewer verdict:** it also accepts a message whose first line is `clean` and whose remaining lines are exactly one `Follow-ups:` block.
 - **Output:** for `tool_input.subagent_type` in `cct:code-reviewer|code-reviewer|cct:tester|tester` whose result holds the block with at least one `- ` line, the hook prints `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Add these follow-ups to the backlog as untriaged items."}}`. Otherwise it prints nothing.
 - **Result text:** read from `tool_response`.
-  - **Step 0 first:** capture one live PostToolUse `Agent` payload's shape, keys only, with no values printed, in a temp HOME session, and record it in `user-level-reference/settings-reference.md` next to the Bash shape.
+  - **Step 0 first:** use the payload shape the model-ladder plan (Task 1) recorded in `user-level-reference/settings-reference.md`.
   - Check whether a `run_in_background` spawn's payload carries the report. If it does not, document that the note covers foreground spawns only.
-- **Later:** the model-ladder step-up note joins this script as a second rule.
+- **Shared script:** the step-up rule (model-ladder plan) is already in this script; `anr_followups` is the second rule.
 
-- [ ] **Step 0: Capture the payload shape** (keys only) and record it.
+- [ ] **Step 0: Read the payload shape** that the model-ladder plan (Task 1) recorded in `user-level-reference/settings-reference.md`, and use it.
 - [ ] **Step 1: Failing rows.**
   - A reviewer result `clean` plus a block gives the note, and `enforce-agent-contract` on that final message gives 0.
   - `clean` alone gives no note.
