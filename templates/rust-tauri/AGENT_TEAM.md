@@ -57,6 +57,7 @@ Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Sessio
 - Orchestrator = session model via `/model`: `fable` for T3/T4, `opus` for T1/T2. Workers run `sonnet`; `cct:architect`/`cct:code-reviewer` run `opus` at `effort: xhigh`; `cct:Explore` runs `haiku` at `effort: low`.
 - Session effort is deliberately **unset**; raise it per role via the agent file's `effort:`, or `/effort` for one session. Typed agents own their `model`; a type without one (general-purpose, built-ins) gets the project default via the plugin's `model-floor` hook unless you pass one.
 - Aliases only, never a pinned `claude-*` id.
+- Model choice follows the user-level ladder: cheap first, one step up on failure; reviewers and the architect never below `opus`.
 - Wrong answer despite full context -> bigger model. Skipped files/steps -> raise `effort`.
 
 ## Workstream Model

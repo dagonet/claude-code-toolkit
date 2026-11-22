@@ -3710,9 +3710,13 @@ c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" skills/jev/jev_ctl.py | head
 [ -n "$c65_marker" ] || c65_bad="$c65_bad agent-model.sh(no AM_JEV_MARKER line)"
 [ "$c65_reg" = "$C65_SPEC_REG" ] || c65_bad="$c65_bad jev_ctl.py(REG_COMMAND is not the spec literal: '${c65_reg:-<none>}')"
 case "$c65_reg" in *"$c65_marker"*) ;; *) c65_bad="$c65_bad REG_COMMAND does not contain AM_JEV_MARKER '$c65_marker'" ;; esac
-# U-1: the orchestrator is told to omit `model` while on -- the rule's exception
-# and the session-start notice must both exist, or Jev routes nothing.
-grep -qF 'unless Jev routing is on in this repo' user-level-reference/CLAUDE.md || c65_bad="$c65_bad user-level-reference/CLAUDE.md(no U-1 exception)"
+# U-1: the orchestrator is told to omit `model` while on. Since the cheap-first
+# ladder (v7.0.0) the exception lives in skills/jev/SKILL.md ONLY; the user-level
+# rule no longer carries it. The session-start notice must still exist, or Jev
+# routes nothing.
+c65_has_exception() { grep -qF 'unless Jev routing is on in this repo' "$1" 2>/dev/null; }
+c65_has_exception user-level-reference/CLAUDE.md && c65_bad="$c65_bad user-level-reference/CLAUDE.md(still carries the U-1 exception)"
+grep -qF 'While Jev routing is on in this repo, do NOT pass `model`' skills/jev/SKILL.md 2>/dev/null || c65_bad="$c65_bad skills/jev/SKILL.md(lost the omit-model-while-on rule)"
 grep -q 'omit model on Agent spawns' hooks/jev-notice.sh 2>/dev/null || c65_bad="$c65_bad hooks/jev-notice.sh(no session notice telling the orchestrator to omit model)"
 if [ -z "$c65_bad" ]; then
   ok "check 65: no template, root or user-level settings registers jev_route.py; /cct:jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
@@ -3728,6 +3732,12 @@ if [ -n "$(c65_scan_settings "$C65C_TMP/planted.json")" ] && [ -z "$(c65_scan_se
   ok "check 65c: control -- a planted router registration is flagged; the real template is not"
 else
   ko "check 65c: control failed -- check 65's settings scan is vacuous or over-strict"
+fi
+printf '%s\n' '- Every Agent spawn names its model -- unless Jev routing is on in this repo, then omit it.' > "$C65C_TMP/planted.md"
+if c65_has_exception "$C65C_TMP/planted.md" && ! c65_has_exception user-level-reference/CLAUDE.md; then
+  ok "check 65d: control -- a planted U-1 exception sentence is flagged; the real user-level file is clean"
+else
+  ko "check 65d: control failed -- the U-1 absence probe is vacuous"
 fi
 rm -rf "$C65C_TMP"
 

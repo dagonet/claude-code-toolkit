@@ -23,7 +23,7 @@ Run exactly one command, using the word the user typed after `/cct:jev` (no word
 
 ## While on: omit `model` (user ruling U-1, 2026-10-02)
 
-"Jev decides, I don't." While Jev routing is on in this repo, do NOT pass `model` on Agent spawns. Jev picks one per launch. This is the exception to the user-level rule "every Agent spawn names its `model`". After `/cct:jev off`, name `model` again. A `model` you do pass is never changed, so passing one opts that spawn out of routing.
+"Jev decides, I don't." Jev is optional and off by default. The user-level model rule (the cheap-first ladder) no longer carries an exception for it; the exception lives here only. While Jev routing is on in this repo, do NOT pass `model` on Agent spawns; Jev picks one per launch. After `/cct:jev off`, name `model` again, per the ladder. A `model` you do pass is never changed, so passing one opts that spawn out of routing.
 
 AGENT_TEAM.md's "Typed agents own their `model`; a type without one (general-purpose, built-ins) gets the project default via `hooks/model-floor.sh` unless you pass one" is overridden for spawns Jev routes, within the bounds above: Jev may move a typed agent to any model and set its effort.
 
