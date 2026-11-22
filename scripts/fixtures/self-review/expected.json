@@ -22,11 +22,11 @@
     "sub_share": 0.5533
   },
   "toolkit_use": {
-    "skills": {"commit": 1, "sprint": 0},
+    "skills": {"commit": 1, "jev": 1, "sprint": 0},
     "agents": {"coder": 1, "Explore": 0}
   },
-  "hook_blocks": {"gate-before-merge": 2, "deny-hang-shapes": 2, "other": 3},
-  "correction_candidates": 2,
+  "hook_blocks": {"gate-before-merge": 3, "deny-hang-shapes": 2, "other": 3},
+  "correction_candidates": 3,
   "notes": {
     "recurring_failure": {"gate-before-merge": {"count": 5, "projects": 2}},
     "helped": {"commit": {"count": 2, "projects": 1}, ".claude/rules/project.md": {"count": 1, "projects": 1}},

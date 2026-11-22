@@ -46,6 +46,11 @@ HOOK_PATH_RE = re.compile(r'hooks[/\\]([A-Za-z0-9._-]+?)\.sh')
 HOOK_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
 WRAPPER_HOOKS = {'dispatch', 'run-hook'}  # the plugin's launchers: the hook they run is not in their path
 BLOCKED_RE = re.compile(r'BLOCKED: (\S+)')
+BLOCKED_TEXT_RE = re.compile(r'BLOCKED: ([^"\'$`\\(\r\n]+)')  # the literal start of a refusal text in a hook
+COMMAND_RE = re.compile(r'<command-name>/cct:([A-Za-z0-9._-]+)</command-name>')
+MIN_PREFIX = 12  # a shorter prefix would match too much
+# Texts the plugin's launcher prints when it cannot start a hook; they are not in a hooks/*.sh file.
+DISPATCH_REFUSALS = ('cct plugin files are missing', 'bash not found on PATH')
 UNATTRIBUTED = '<unattributed>'
 MAX_COUNT = 10 ** 15  # a usage field above this is garbage and counts as 0
 CORRECTION_RE = re.compile(
@@ -162,15 +167,48 @@ def user_parts(msg):
     return ('\n'.join(texts) if texts else None), []
 
 
-def block_hook(text, is_error):
+def hook_token(token):
+    """A `BLOCKED:` token as a hook name: lower-cased, without a trailing `:` or `.sh`."""
+    name = token.lower()
+    name = name[:-1] if name.endswith(':') else name
+    return name[:-len('.sh')] if name.endswith('.sh') else name
+
+
+def refusal_table(toolkit_root, hook_names):
+    """-> [(prefix, hook)], longest prefix first: the toolkit's own refusal texts that do not start with
+    a hook name, from the `BLOCKED: ` strings in hooks/*.sh (the hook is the file) and hooks/hooks.json
+    (the hook is `dispatch`), plus DISPATCH_REFUSALS. The prefix is the literal text after `BLOCKED: `
+    up to the first quote, `$`, backtick, backslash or `(`, and up to the end of its first sentence.
+    A prefix found in two hooks maps to `other`."""
+    found = {p: {'dispatch'} for p in DISPATCH_REFUSALS}
+    paths = [(p, os.path.basename(p)[:-len('.sh')]) for p in glob.glob(os.path.join(toolkit_root, 'hooks', '*.sh'))]
+    paths.append((os.path.join(toolkit_root, 'hooks', 'hooks.json'), 'dispatch'))
+    for path, hook in paths:
+        try:
+            with open(path, encoding='utf-8', errors='replace') as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        for hit in BLOCKED_TEXT_RE.finditer(text):
+            prefix = hit.group(1).strip()
+            sentence = re.match(r'(.*?\.)(?:\s|$)', prefix)  # the first sentence, when it ends inside
+            prefix = sentence.group(1) if sentence else prefix
+            if len(prefix) >= MIN_PREFIX and hook_token(prefix.split()[0]) not in hook_names:
+                found.setdefault(prefix, set()).add(hook)
+    table = [(p, next(iter(h)) if len(h) == 1 else OTHER) for p, h in found.items()]
+    return sorted(table, key=lambda e: (-len(e[0]), e[0]))
+
+
+def block_hook(text, is_error, refusals=()):
     """The hook behind a real hook denial, else None.
 
     A denial is an error tool result that starts `PreToolUse:` and has `hook error:` in its first 200
     characters; a result that only quotes `BLOCKED:` is not one. The hook is the first `hooks/<name>.sh`
-    in the bracketed command, else the token after the first `BLOCKED: ` that follows it (lower-cased,
-    without a trailing `:` or `.sh`), else `<unattributed>`. The plugin's launchers `dispatch.sh` and
+    in the bracketed command, else the hook of the first `refusals` prefix (see refusal_table) the text
+    after the first `BLOCKED: ` starts with, else its first token (lower-cased, without a trailing `:`
+    or `.sh`), else `<unattributed>`. The plugin's launchers `dispatch.sh` and
     `run-hook.sh` are not the hook: for `run-hook.sh <name>` the hook is the command's last word, else
-    (and for `dispatch.sh`) the `BLOCKED:` token decides.
+    (and for `dispatch.sh`) the `BLOCKED:` text decides.
     """
     if is_error is not True or not text.startswith('PreToolUse:') or 'hook error:' not in text[:200]:
         return None
@@ -185,10 +223,11 @@ def block_hook(text, is_error):
     hit = BLOCKED_RE.search(tail)
     if not hit:
         return UNATTRIBUTED
-    name = hit.group(1).lower()
-    name = name[:-1] if name.endswith(':') else name
-    name = name[:-len('.sh')] if name.endswith('.sh') else name
-    return name or UNATTRIBUTED
+    rest = tail[hit.start() + len('BLOCKED: '):]
+    for prefix, hook in refusals:
+        if rest.startswith(prefix):
+            return hook
+    return hook_token(hit.group(1)) or UNATTRIBUTED
 
 
 def correction_text(typed):
@@ -197,22 +236,37 @@ def correction_text(typed):
     return text if text and not text.startswith('<') and CORRECTION_RE.match(text) else None
 
 
-def scan(rows, since, until):
+def assistant_text(msg):
+    """The text blocks of an assistant message, joined (a plain string content is the text), or ''."""
+    content = msg.get('content')
+    if isinstance(content, str):
+        return content
+    return '\n'.join(b['text'] for b in content if isinstance(b, dict) and b.get('type') == 'text'
+                     and isinstance(b.get('text'), str)) if isinstance(content, list) else ''
+
+
+def scan(rows, since, until, refusals=()):
     """Reduce one transcript to what counts inside the window.
 
     -> dict: first_day (of the first timestamped row, in or out of the window), first_model (first
     non-synthetic model in the whole transcript) or None, and, for in-window rows only:
     versions {v: n}, usage {message id: (model, {field: n})}, calls [(tool name, input)],
+    commands [skill name of each `/cct:<skill>` command row, once per row],
     blocks [attributed hook name of each real hook denial, see block_hook],
-    corrections [(timestamp, text) of each typed user turn that reads as a correction].
+    corrections [(timestamp, text) of each typed user turn that reads as a correction and does not
+    answer a question: the latest assistant text before it does not end in `?`].
     A message split over several rows repeats its usage, so usage is kept once per message id.
     """
     out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': [],
-           'blocks': [], 'corrections': []}
+           'commands': [], 'blocks': [], 'corrections': []}
+    asked = False  # the latest assistant text, in or out of the window, ends in a question mark
     for i, row in enumerate(rows):
         msg = row.get('message')
         model = None
         if isinstance(msg, dict) and row.get('type') == 'assistant':
+            said = assistant_text(msg).rstrip()
+            if said:
+                asked = said.endswith('?')
             model = msg.get('model') if isinstance(msg.get('model'), str) else None
             if model == SYNTHETIC:
                 model = None
@@ -236,10 +290,13 @@ def scan(rows, since, until):
         if isinstance(msg, dict) and row.get('type') == 'user':
             typed, results = user_parts(msg)
             for is_error, text in results:
-                hook = block_hook(text, is_error)
+                hook = block_hook(text, is_error, refusals)
                 if hook:
                     out['blocks'].append(hook)
-            text = None if row.get('isMeta') else correction_text(typed)
+            command = COMMAND_RE.search(typed) if typed else None
+            if command:
+                out['commands'].append(command.group(1))
+            text = None if row.get('isMeta') or asked else correction_text(typed)
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
         if not isinstance(msg, dict) or row.get('type') != 'assistant':
@@ -390,6 +447,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     versions, spawns, by_model, per_project = {}, {}, {}, {}
     share = {'main': _zero(), 'sub': _zero()}
     hook_names = toolkit_hooks(toolkit_root)
+    refusals = refusal_table(toolkit_root, hook_names)
     hook_blocks, local_hooks, corrections = {}, {}, []
     unreadable = 0
     clone_roots = list(dict.fromkeys(os.path.realpath(os.path.expanduser(r)) for r in clone_roots))
@@ -406,7 +464,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
             except OSError:
                 unreadable += 1
                 continue
-            s = scan(rows, since, until)
+            s = scan(rows, since, until, refusals)
             for v, n in s['versions'].items():
                 versions[v] = versions.get(v, 0) + n
             for model, tok in s['usage'].values():
@@ -421,6 +479,10 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                 local_hooks[hook] = local_hooks.get(hook, 0) + 1
             if not is_sub:  # a subagent's user rows are its parent's prompts, not the user's words
                 corrections += [{'project': slug, 'ts': ts, 'text': cut_text(text)} for ts, text in s['corrections']]
+            for skill in [] if is_sub else s['commands']:  # a `/cct:<skill>` row starts the skill like a Skill call
+                key = toolkit_name(PLUGIN_PREFIX + skill, use['skills'])
+                if key:
+                    use['skills'][key] += 1
             for name, inp in s['calls']:
                 if name == 'Skill':
                     called, names = inp.get('skill'), use['skills']
@@ -772,7 +834,7 @@ def self_test():
     corrections, notes = local.get('corrections', []), local.get('notes', {})
     texts = [c.get('text') for c in corrections]
     if sorted(texts) != sorted(["no, don't run the gate without asking ZZ-PRIVATE-MARKER-7f3a",
-                                "that's not what I asked"]):
+                                "that's not what I asked", "no, wrong file"]):
         bad.append('/local/corrections: got %s' % texts)
     if any(set(c) != {'project', 'ts', 'text'} or c['project'] != '-home-u-git-alpha' for c in corrections):
         bad.append('/local/corrections: wrong shape %s' % corrections)
@@ -786,9 +848,28 @@ def self_test():
     if num(7) != 7 or num(7.9) != 7:
         bad.append('/num: a finite number must pass through')
     if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('deny-hang-shapes', 2),
-                                                        ('gate-before-merge', 2), ('no', 1), ('seal-guard', 1)]:
+                                                        ('gate-before-merge', 3), ('other', 1), ('seal-guard', 1)]:
         bad.append('/local/hook_blocks: got %s' % local.get('hook_blocks'))
     pre = 'PreToolUse:Bash hook error: '
+    fixture_hooks = os.path.join(FIXTURES, 'toolkit')
+    table = refusal_table(fixture_hooks, toolkit_hooks(fixture_hooks))
+    # the fixture hooks hold: a text of a hook-name token (not in the table), one no-name text of
+    # gate-before-merge, and one text found in two hooks; the dispatch texts are always there
+    if sorted(table) != sorted([('No gate artifact found.', 'gate-before-merge'),
+                                ('Shared state file unreadable here.', OTHER),
+                                ('cct plugin files are missing', 'dispatch'),
+                                ('bash not found on PATH', 'dispatch')]):
+        bad.append('/refusal_table: got %s' % table)
+    for text, want in (
+            (pre + '[command hook 4]: BLOCKED: No gate artifact found. Run the gate.', 'gate-before-merge'),
+            (pre + '[command hook 4]: BLOCKED: Shared state file unreadable here.', OTHER),
+            (pre + '[command hook 4]: BLOCKED: cct plugin files are missing (the plugin was upgraded).', 'dispatch'),
+            (pre + '[command hook 4]: BLOCKED: bash not found on PATH', 'dispatch'),
+            (pre + '[command hook 4]: BLOCKED: gate-before-merge refuses: x', 'gate-before-merge'),
+            (pre + '[command hook 4]: BLOCKED: Unknown refusal text', 'unknown'),
+            (pre + '[f="${P}/hooks/deny-hang-shapes.sh"; bash "$f"]: BLOCKED: No gate artifact found.', 'deny-hang-shapes')):
+        if block_hook(text, True, table) != want:
+            bad.append('/block_hook table (%r): want %s, got %s' % (text[-50:], want, block_hook(text, True, table)))
     for text, is_error, want in (
             (pre + '[f="${X:-.}/hooks/deny-hang-shapes.sh"; [ -f "$f" ] && bash "$f"]: BLOCKED: use', True,
              'deny-hang-shapes'),
