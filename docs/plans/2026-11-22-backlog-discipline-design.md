@@ -157,6 +157,25 @@ All are counts only, under the existing privacy rules.
     - **Version:** the release takes the next minor after whatever has shipped by then.
 11. **This repo is in scope.** The toolkit gates itself and is in file mode, but has no root `PROJECT_STATE.md`. The change adds one, with the three backlog subsections, so this repo's own PRs pass.
 
+### 10a. Changes after the plan challenge (user-approved 2026-11-22 20:04)
+
+These supersede the matching items above where they differ.
+
+- **A. PR bodies.** `gh pr create` bodies are read **only** from `--body-file`/`-F`. A `--body` literal is refused with "use --body-file". Reason: the existing command parser strips quotes and splits inside them, so a literal cannot be read safely.
+- **B. Base.**
+  - **Where it comes from:** the tool input's base, `--base`/`-B`, else the local `refs/remotes/origin/HEAD`. If that is missing, the check refuses with "pass --base". `main` is never assumed.
+  - **Merge shapes:** the merge second line covers only `gh pr merge` and the MCP merge tools. `git merge` on a protected branch is dropped there, because HEAD is the trunk itself and `no-push-main` already blocks the push.
+- **C. Pushed state.** HEAD must equal the local `origin/<head>`, else the check refuses with "push first". No network is used.
+- **D. Session-start line.** A separate small advisory hook, `backlog-brief.sh`, runs on every session start. `now-brief.sh` and its fixtures stay untouched.
+- **E. Grooming lands first.**
+  - **Order:** ranking and new items reach the trunk before helpers start, so the item ids exist in base.
+  - **Exempt PRs:** a PR whose change touches only `PROJECT_STATE.md` needs no item.
+  - **First PR after the update:** the base has no subsections yet, so the PR that adds them is accepted through `Item: none`. The refusal text says so.
+  - **Sync PRs:** they carry `Item: none` (commit trailer plus a body line). `skills/sync-template` is updated to do that and to use `--body-file`.
+- **F. Reviewer follow-ups.** The reviewer's strict `clean` stays, with an optional `Follow-ups:` block after it. The tester is `pipeline: notify`, so only the reviewer verdict changes.
+- **This repo.** Project-class plugin hooks skip a repo without `.claude/template-manifest.json`, and the toolkit root has none. So `backlog-item-check` is also registered in the root `.claude/settings.json`, the same way the root registers its other gates.
+- **Counter.** `Item: none` is counted from PR-create inputs **and** commit messages, in main and subagent transcripts. Follow-ups are counted from reviewer/tester result text, not from the note.
+
 ## 11. Left to the builder
 
 - Exact regexes for the closing keyword and the `B-<n>` move, and how "moved into Done" is read from the diff.

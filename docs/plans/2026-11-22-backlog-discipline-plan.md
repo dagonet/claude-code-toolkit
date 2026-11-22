@@ -2,248 +2,294 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Every change names its backlog item and closes it on merge, grooming comes before picking work, and the backlog debt is shown at every session start.
+**Goal:** Every change names its backlog item and closes it on merge, grooming lands before work is picked, and backlog debt is shown at every session start.
 
 **Architecture:**
-- One new fail-closed project hook, `hooks/backlog-item-check.sh`, runs at PR creation (MCP tool plus `gh pr create` via the dispatcher) and again at merge. It reads the mode from `PROJECT_CONTEXT.md`, and either a diff of `PROJECT_STATE.md` (file mode) or the PR body (issue mode).
-- Three advisory pieces sit around it:
-  - `now-brief.sh` widened to every session start;
+- One new fail-closed project hook, `hooks/backlog-item-check.sh`, runs at PR creation (the MCP tool, and `gh pr create` via the dispatcher) and again at `gh pr merge` / MCP merge. It reads the mode from `PROJECT_CONTEXT.md`, then either a diff of `PROJECT_STATE.md` against the base (file mode) or the PR body (issue mode).
+- Advisory pieces:
+  - a new `hooks/backlog-brief.sh` (SessionStart, every source);
   - `hooks/agent-result-notes.sh` (PostToolUse `Agent`) for reviewer/tester follow-ups;
   - counter keys.
-- Templates gain the backlog shape and the grooming rule.
+- Templates and the sprint and sync skills gain the backlog shape and order.
 
-**Tech Stack:** bash hooks with `hooks/lib/json.sh` and `hooks/lib/git-cmd.sh`, markdown templates, Python 3 (`scripts/self-review-count.py`), and the existing test scripts.
+**Tech Stack:** bash hooks on `hooks/lib/json.sh` and `hooks/lib/git-cmd.sh`, markdown templates, Python 3 (`scripts/self-review-count.py`), and the existing test scripts.
 
-**Spec:** `docs/plans/2026-11-22-backlog-discipline-design.md` (approved by the user 2026-11-22 19:24). Section 10 there holds the builder-check calls; they are binding.
+**Spec:** `docs/plans/2026-11-22-backlog-discipline-design.md`, approved 2026-11-22 19:24. §10 and §10a are binding; §10a (the challenge round, approved 20:04) wins where they differ.
 
 ## Global Constraints
 
-- **Base and ship order:**
-  - build on a fresh branch `feat/backlog-discipline` cut from `origin/main` at build time;
-  - worktree `~/git/.worktrees/claude-code-toolkit/backlog-discipline`;
-  - ships after v6.3.0 and the model-ladder release.
-- **Release version:** the next minor after whatever has shipped by release time; Task 7 sets it.
-- **Item ids:** `B-<n>` matching `B-[0-9]+`, numbered upwards and never reused.
-- **File-mode subsections:** exactly `### Untriaged`, `### Ranked` and `### Done` under `## Backlog` in `PROJECT_STATE.md`.
-- **Mode values:**
-  - `Task source` in the repo root's `PROJECT_CONTEXT.md`, with backticks and spaces trimmed;
-  - exactly `plan-files` means file mode, exactly `github-issues` means issue mode;
-  - anything else, or missing, means refuse.
-- **Closing keywords** (issue mode, case-insensitive): `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves` or `resolved`, then whitespace, then `#<n>`. A cross-repo `owner/repo#n` does not count.
+- **Branch:** `feat/backlog-discipline`, cut from `origin/main` at build time, in worktree `~/git/.worktrees/claude-code-toolkit/backlog-discipline`. It ships after v6.3.0 and the model-ladder release.
+- **Version:** the next minor after whatever has shipped; Task 7 sets it.
+- **Item ids:** `B-[0-9]+`. File-mode subsections are exactly `### Untriaged`, `### Ranked` and `### Done` under `## Backlog`.
+- **Mode:** `Task source` in the repo root's `PROJECT_CONTEXT.md`, with backticks and spaces trimmed.
+  - Exactly `plan-files` means file mode; exactly `github-issues` means issue mode.
+  - Anything else, or missing, means refuse.
+- **Closing keywords** (issue mode, case-insensitive): `close(s|d)?`, `fix(es|ed)?` or `resolve(s|d)?`, then whitespace, then `#<n>`. A cross-repo `owner/repo#n` does not count.
 - **`Item: none`:**
-  - issue mode: a PR-body line that is exactly `Item: none` after trimming;
-  - file mode: a commit trailer `Item: none` on any commit in `origin/<base>..HEAD`;
+  - issue mode: a body line that is exactly `Item: none`;
+  - file mode: a commit trailer `Item: none` on any commit in `<base>..HEAD`;
   - accepted from any PR.
+- **Exempt:** a PR whose `<base>..HEAD` diff touches only `PROJECT_STATE.md` (grooming).
+- **Base:** the MCP `tool_input.base`, `gh` `--base`/`-B`, else the local `refs/remotes/origin/HEAD`. If none, refuse with "pass --base".
+  - The compared ref is `refs/remotes/origin/<base>`. If it is missing, refuse with "fetch first".
+  - `main` is never assumed.
+- **Head:** MCP `tool_input.head` (strip an `owner:` prefix), `gh` `--head`/`-H`, else the cwd's current branch.
+  - If the cwd's current branch is not the head, refuse with "run from the PR's own checkout".
+  - If HEAD is not equal to `refs/remotes/origin/<head>`, refuse with "push first".
+- **`gh pr create` bodies:** read only from `--body-file`/`-F` (the hook reads the file). Any other body form, or none, means refuse with "use --body-file".
+- **Merge second line:** only `gh pr merge` and `mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge|mcp__plugin_github-tools_github-tools__github_pr_auto_merge`, file mode only. Issue mode merges pass, and this is documented.
 - **Every refusal:**
   - exits 2;
-  - its stderr starts `BLOCKED: backlog-item-check:` and names the exact fix;
+  - stderr starts `BLOCKED: backlog-item-check:` and names the exact fix;
   - cannot-determine always means refuse.
-- **Placement:** the hook is class `project`, polarity `closed`. It must not depend on `**Gate**:` being configured.
-- **Kill switch:** `<cwd>/.claude/git-guard-off` via `gc_guard_off` (`hooks/lib/git-cmd.sh`).
+- **The fix texts include:**
+  - missing subsections: "add the three headings in this PR and commit with trailer `Item: none`";
+  - no item: "move the item into `### Done` in this PR, or commit with trailer `Item: none` (T1 only)".
+- **Hook class:**
+  - `backlog-item-check`: class `project`, polarity `closed`, independent of `**Gate**:`;
+  - `backlog-brief` and `agent-result-notes`: class `project`, polarity `open`, always exit 0.
+- **Kill switch:** `gc_guard_off` (`<cwd>/.claude/git-guard-off`).
 - **No network** in `backlog-item-check.sh`.
-- **Advisory hooks:** `now-brief.sh` and `agent-result-notes.sh` always exit 0.
-- **Files:** every file is LF. `AGENT_TEAM.md` and `.claude/settings.json` stay byte-identical across the six variants (edit `templates/general/` first, then `cp`).
-- **Privacy:** new counter keys are counts only (R4/R5/R18 unchanged).
+- **Every Bash call** runs the guard, so it copies `gate-before-merge.sh`'s cheap early exit before sourcing `git-cmd.sh` (`gate-before-merge.sh:186-216`) and its 127→2 trap (`:171`), with no top-level `return`.
+- **Files:** LF only. `AGENT_TEAM.md` and `.claude/settings.json` stay byte-identical across the six variants (edit `templates/general/`, then `cp`).
+- **Privacy:** counts only (R4/R5/R18).
 - **KISS:** no state files, no new kill switch, no fetch.
+- **Registration lists to extend** (else the per-commit Test blocks the commit):
+  - `scripts/verify-template-consistency.sh:4739` `C71_PLUGIN_ONLY` (append-only);
+  - `:4771` `c71_rh_want` (closed-class entries use the inline plugin-missing form, `:4769-4776`);
+  - `:4752` root rows;
+  - `:5039-5040` `c74_d2_bash`/`c74_d2_ps` (the guard goes before `pre-commit-test`, matching `dispatch.sh`);
+  - `scripts/test-hooks.sh:262` (`hk_modes`), `:12138`, `:12146`, `:12459`, `:12463`, `:12476`.
+
+  Line numbers are as of `4576485`, so re-locate them by content.
 
 ## Review Focus
 
-1. **A PR made from a checkout whose branch is not the PR's head** (e.g. the PO's main checkout) must refuse with "run from the PR's own checkout", not compare the wrong tree. Test in Task 2.
-2. **A new item added straight into `### Done`** in the same PR (an id absent from base's Untriaged/Ranked) must not count as a move, or the block is bypassed by inventing items. Test in Task 2.
-3. **A body given through `$(...)`, a heredoc or `--fill`** on `gh pr create` must refuse with "use --body-file". Test in Task 3.
-4. **A project with no `**Gate**:` configured** must still refuse a PR with no item. Test in Task 3 (the merge second line), and run through the dispatcher.
-5. **A reviewer whose final message is `clean` plus a follow-ups block** must still pass `enforce-agent-contract` and must produce the note. Test in Task 5.
+1. **The first PR after the update:** the base has no subsections; the PR adds them with an `Item: none` trailer, giving 0; without the trailer, 2. Task 2.
+2. **A new id appearing only in HEAD's `### Done`** (absent from the base's Untriaged/Ranked) does not count as a move, giving 2. Task 2.
+3. **A PR from the PO's main checkout** (cwd branch is not the head), giving 2 with "own checkout". Task 2.
+4. **`gh pr create --body "Fixes #4"`, `--fill` or `--body "$(cat x)"`** each give 2 with "--body-file". Task 3.
+5. **The sync PR** (`/sync-template` flow: commit trailer `Item: none` plus `--body-file` with an `Item: none` line) passes in both modes. Task 3.
 
 ---
 
-### Task 1: Backlog shape and grooming rule in the templates and this repo
+### Task 1: Backlog shape, order and briefs in templates, skills and this repo
 
 **Files:**
 - Modify:
-  - `templates/<all six>/PROJECT_STATE.md` (`## Backlog` → three subsections, each with `_none_`);
-  - `templates/general/AGENT_TEAM.md`, then `cp` to the other five;
+  - `templates/<six>/PROJECT_STATE.md`: `## Backlog` gets the three subsections, each `_none_`;
+  - `templates/general/AGENT_TEAM.md`, then `cp` to the five others;
   - `skills/sprint/SKILL.md`;
+  - `skills/sync-template/SKILL.md`, around `:1304-1324`: the sync commit carries the trailer `Item: none`, and the PR is created with `--body-file` containing an `Item: none` line, replacing `--fill`;
   - `scripts/verify-template-consistency.sh`.
-- Create: root `PROJECT_STATE.md`. It has `## Now`, plus `## Backlog` with the three subsections, holding the toolkit's open items as `B-1..`: the v6.3 items, the model ladder, this work and plugin split part 2.
+- Create: root `PROJECT_STATE.md` with `## Now` and `## Backlog` (three subsections). It holds the toolkit's open items as `B-1..`: v6.3, the model ladder, this work, and plugin split part 2.
 
 **Interfaces:**
-- Produces:
-  - the exact subsection headings;
-  - the `B-<n>` line form `- B-<n> [in progress] <title>`, where the state tag is optional and its absence means open;
-  - the `AGENT_TEAM.md` heading `## Backlog`, which Tasks 2-4 cite in messages.
+- Produces the headings and the line form `- B-<n> [in progress] <title>` (the tag is optional; absent means open).
+- The `AGENT_TEAM.md` heading `## Backlog` is cited by later messages.
 
-- [ ] **Step 1: Add the failing consistency check.** It is named `backlog shape`, numbered as the next free check number.
-  - **(a)** All six `PROJECT_STATE.md` carry the three headings in order under `## Backlog`.
-  - **(b)** `templates/general/AGENT_TEAM.md` contains `## Backlog`, the line `Before picking the next task, groom the backlog`, and `One item = one pull request`.
+- [ ] **Step 1: Add the failing consistency check** `backlog shape` (the next free number).
+  - **(a)** The six `PROJECT_STATE.md` carry the three headings in order under `## Backlog`.
+  - **(b)** `templates/general/AGENT_TEAM.md` contains:
+    - `## Backlog`;
+    - `Before picking the next task, groom the backlog`;
+    - `One item = one pull request`;
+    - `Grooming lands on the trunk before any helper starts`.
   - **(c)** The root `PROJECT_STATE.md` passes (a).
-  - **(d) Control:** a temp copy with `### Ranked` removed is reported.
-- [ ] **Step 2: Run** `bash scripts/verify-template-consistency.sh`. Expected: FAIL on the new check only.
-- [ ] **Step 3: Edit the templates.** The `AGENT_TEAM.md` `## Backlog` block holds:
+  - **(d)** `skills/sync-template/SKILL.md` no longer contains `gh pr create --fill`.
+  - **(e) Control:** a temp copy without `### Ranked` is reported.
+- [ ] **Step 2: Run** `bash scripts/verify-template-consistency.sh`. Expected: only the new check fails.
+- [ ] **Step 3: Edit.** The `AGENT_TEAM.md` `## Backlog` block holds:
   - the shape (spec §4);
-  - the grooming rule, verbatim lead sentence: "Before picking the next task, groom the backlog: close finished items, rank every untriaged item, re-check the top three.";
+  - "Before picking the next task, groom the backlog: close finished items, rank every untriaged item, re-check the top three.";
+  - "Grooming lands on the trunk before any helper starts: a PR that touches only `PROJECT_STATE.md` needs no item.";
   - "One item = one pull request: an item that needs several PRs is split into several items when ranked.";
-  - the PR rule: "Every PR names its item (issue mode: `Closes #N`; file mode: the PR moves the item into `### Done`), or carries `Item: none` (T1 only; counted)".
+  - "Every PR names its item (issue mode: `Closes #N` in the body; file mode: the PR moves the item into `### Done`), or carries `Item: none` (T1 and template sync only; counted).";
+  - "Parallel PRs touching `PROJECT_STATE.md` rebase before merge, as every PR does."
 
   Other edits:
   - **Mode Behavior Table:** the rows "Close task", "Tech debt tracking" and "Sprint state" point at the backlog instead of MEMORY.md.
-  - **PO role line** "maintains/prioritizes the backlog" links to `## Backlog`.
-  - **`skills/sprint/SKILL.md`:** a new step 1 "Groom the backlog (AGENT_TEAM.md § Backlog)" before any spawn.
-- [ ] **Step 4: Copy** `AGENT_TEAM.md` to the five variants. Run the consistency script. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(templates): backlog shape, grooming rule, one item per PR`.
+  - **PO role line:** links "maintains/prioritizes the backlog" to `## Backlog`.
+  - **Coder brief templates** (both modes, `AGENT_TEAM.md` ~`:125-150`): add the line `Item: {B-<n> | #N | none}`, and in plan-files mode the workflow step "move the item into `### Done` in `PROJECT_STATE.md`" before commit.
+  - **`skills/sprint/SKILL.md`:**
+    - new step 1 "Groom the backlog (AGENT_TEAM.md § Backlog) and land it before any spawn";
+    - its old "record in the plan file" step (~`:25`) now records in the backlog.
+- [ ] **Step 4: Copy** `AGENT_TEAM.md` to the five variants. Run the consistency script. Expected: PASS. Then run `bash scripts/test-setup-project.sh`. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(templates): backlog shape, grooming first, one item per PR, sync PRs carry Item: none`.
 
-### Task 2: `backlog-item-check.sh` for MCP PR creation
+### Task 2: `backlog-item-check.sh` for MCP PR creation, with the root registration
 
 **Files:**
 - Create: `hooks/backlog-item-check.sh`.
 - Modify:
-  - `hooks/lib/hook-class.sh` (`backlog-item-check` → `cls=project; pol=closed`);
-  - `hooks/hooks.json` (new PreToolUse entry with matcher `mcp__MCP_DOCKER__create_pull_request`, wrapped like the merge entry; the merge matcher entry gains a second hook `backlog-item-check`);
+  - `hooks/lib/hook-class.sh`: add `backlog-item-check` to the `cls=project; pol=closed` line;
+  - `hooks/hooks.json`:
+    - a new PreToolUse entry with matcher `mcp__MCP_DOCKER__create_pull_request`, in the inline plugin-missing form the merge entry uses;
+    - the merge matcher entry gains `backlog-item-check` after `gate-before-merge`;
+  - root `.claude/settings.json`: the same two matchers point at `${CLAUDE_PROJECT_DIR}/hooks/backlog-item-check.sh`, because project-class plugin hooks skip this repo (`hook-class.sh:28`);
+  - check 71 lists (Global Constraints);
   - `scripts/test-hooks.sh`.
 
 **Interfaces:**
-- Consumes: Task 1's headings and line form.
-- Produces, as shell functions inside the hook:
-  - `bic_mode` prints `file`, `issue` or nothing;
-  - `bic_file_ok <base_ref>` returns 0 when an id moved into Done, or when an `Item: none` trailer is present;
-  - `bic_body_ok <body>` returns 0 on a closing keyword or `Item: none`.
-- Task 3 calls these for the `gh` shapes.
+- MCP payload fields are `tool_input.head`, `tool_input.base` and `tool_input.body` (verified against the tool schema). Read them with `json_fields "$GC_JSON" tool_input.head tool_input.base tool_input.body` (`json.sh:297`; handles multi-line values).
+- Produces, in the hook (Task 3 reuses them):
+  - `bic_mode`: prints `file`, `issue` or nothing;
+  - `bic_refs <base> <head>`: sets `BIC_BASE_REF`, or refuses;
+  - `bic_file_ok`: returns 0 on a move, an exempt diff or an `Item: none` trailer;
+  - `bic_body_ok <body>`: returns 0 on a closing keyword or `Item: none`.
+- **File-mode order** (Review Focus 1):
+  1. exempt diff;
+  2. `Item: none` trailer;
+  3. base subsections present, else refuse with the "add the three headings…" text;
+  4. a move;
+  5. otherwise refuse with the no-item text.
 
-- [ ] **Step 1: Write the failing test rows** in `scripts/test-hooks.sh`, using `mkrepo` and an MCP payload whose `tool_input` has `head`, `base` and `body`. Use `check_msg` with needle `backlog-item-check` on refusals.
-  - **File mode, allow:** B-3 under `### Ranked` on `origin/main` and under `### Done` on HEAD gives exit 0.
-  - **File mode, allow:** no move plus a commit with trailer `Item: none` gives exit 0.
-  - **File mode, refuse:** no move and no trailer gives exit 2, needle `### Done`.
-  - **File mode, refuse:** B-9 appearing only in HEAD's Done (absent from base) gives exit 2. (Review Focus 2)
-  - **File mode, refuse:** base without the three subsections gives exit 2, needle `### Untriaged`.
-  - **File mode, refuse:** the cwd branch is not `tool_input.head` gives exit 2, needle `own checkout`. (Review Focus 1)
-  - **File mode, refuse:** `origin/<base>` missing gives exit 2, needle `fetch`.
-  - **Issue mode, allow:** body `Fixes #12` gives exit 0, and body with the line `Item: none` gives exit 0.
-  - **Issue mode, refuse:** body `see #12` gives exit 2. Body `Closes other/repo#12` gives exit 2.
-  - **Mode:** `Task source` missing or `jira` gives exit 2, needle `Task source`.
-  - **Kill switch:** `.claude/git-guard-off` present gives exit 0.
-- [ ] **Step 2: Run** `bash scripts/test-hooks.sh 2>&1 | grep -E 'backlog|^(PASS|FAIL) .*bic'`. Expected: the new rows FAIL.
-- [ ] **Step 3: Implement the hook.**
-  - **Input:** read stdin through `gc_read_stdin`, set `GC_CWD` from the payload `cwd`, and honour `gc_guard_off` first.
-  - **File mode:**
-    - parse `## Backlog` subsections with awk from `git show origin/<base>:PROJECT_STATE.md` and from the working tree's HEAD (`git show HEAD:PROJECT_STATE.md`);
-    - a move is an id under Untriaged or Ranked in base, and under Done in HEAD;
-    - trailers come from `git log --format='%(trailers:key=Item,valueonly)' origin/<base>..HEAD`.
-  - **Registrations:** both hooks.json registrations described above.
-- [ ] **Step 4: Run** the suite filter again. Expected: all new rows PASS. Then run `bash scripts/verify-template-consistency.sh`. Expected: PASS (check 74's class table covers the new hook).
+- [ ] **Step 1: Failing rows** (`mkrepo` plus a pushed `origin/<head>` ref; `check_msg` needle `backlog-item-check` plus the listed fragment).
+  - **File mode, allow (exit 0):**
+    - B-3 is Ranked in base and in Done in HEAD;
+    - an `Item: none` trailer;
+    - a diff that touches only `PROJECT_STATE.md`;
+    - base without subsections plus a trailer.
+  - **File mode, refuse (exit 2):**
+    - base without subsections and no trailer (`three headings`);
+    - no move and no trailer (`### Done`);
+    - B-9 only in HEAD's Done (`### Done`, Review Focus 2);
+    - the cwd branch is not the head (`own checkout`, Review Focus 3);
+    - HEAD is ahead of `origin/<head>` (`push first`);
+    - `origin/<base>` is missing (`fetch first`);
+    - no base given and no `origin/HEAD` (`pass --base`).
+  - **Issue mode:** `Fixes #12` gives 0; `Item: none` gives 0; `see #12` gives 2; `Closes other/repo#12` gives 2.
+  - **Mode:** `Task source` missing gives 2, and `jira` gives 2 (`Task source`).
+  - **Kill switch:** gives 0.
+  - **No `**Gate**:` line:** a no-item PR still gives 2.
+- [ ] **Step 2: Run** `bash scripts/test-hooks.sh 2>&1 | grep -E '(PASS|FAIL) .*backlog'`. Expected: the new rows FAIL.
+- [ ] **Step 3: Implement.**
+  - **Section parsing:** awk over `git show <ref>:PROJECT_STATE.md` for the base and HEAD.
+  - **Trailers:** `git log --format='%(trailers:key=Item,valueonly)' <base>..HEAD`.
+  - **Exempt:** `git diff --name-only <base>...HEAD` is exactly `PROJECT_STATE.md`.
+- [ ] **Step 4: Run** the filtered rows (PASS), then `bash scripts/verify-template-consistency.sh` (PASS: checks 71 and 74 updated).
 - [ ] **Step 5: Commit** `feat(hooks): backlog-item-check refuses a PR that names no backlog item`.
 
-### Task 3: `gh pr create` and the merge second line via the dispatcher
+### Task 3: `gh pr create` and `gh pr merge` via the dispatcher
 
 **Files:**
 - Modify:
-  - `hooks/dispatch.sh` (add `backlog-item-check` to the `bash` and `powershell` tables, line 123-124);
+  - `hooks/dispatch.sh` (bash and powershell tables: `backlog-item-check` before `pre-commit-test`);
   - `hooks/backlog-item-check.sh`;
-  - `scripts/test-hooks.sh` (`hk_modes` dispatched list gains the hook);
-  - `scripts/verify-template-consistency.sh`.
+  - root `.claude/settings.json` (Bash|PowerShell matcher);
+  - check 74 lists and check 71 root rows;
+  - `scripts/test-hooks.sh` (`hk_modes` dispatched list; v6 dispatch (m) rows).
 
 **Interfaces:**
-- Consumes: Task 2's `bic_mode`, `bic_file_ok` and `bic_body_ok`.
-- Produces: shape detection on `gh pr create` and on the merge shapes `gate-before-merge.sh` gates (`gh pr merge`, `git merge` on a protected branch, the MCP merge tools).
+- Consumes Task 2's functions.
+- Segment detection uses `gc_segments`, only to find a `gh pr create`/`gh pr merge` segment and its flags (`--base/-B`, `--head/-H`, `--body-file/-F`). Body text never comes from the command line.
 
-- [ ] **Step 1: Failing rows** (each also runs `[dispatch]` automatically).
-  - **`gh pr create`, file mode:**
-    - with the Task 2 allow repo gives exit 0;
-    - with no move gives exit 2.
+- [ ] **Step 1: Failing rows** (each also runs `[dispatch]`).
+  - **`gh pr create`, file mode:** the Task 2 move repo gives 0; no move gives 2.
   - **`gh pr create`, issue mode:**
-    - `--body "Fixes #4"` gives 0;
-    - `-b "Fixes #4"` gives 0;
-    - `--body-file <file containing Closes #4>` gives 0;
-    - `--fill` gives 2, needle `--body-file`;
-    - `--body "$(cat x)"` gives 2, needle `--body-file`. (Review Focus 3)
-  - **Merge second line, file mode:**
-    - `gh pr merge 5` from a checkout with no move and **no `**Gate**:` line** in `PROJECT_CONTEXT.md` gives 2 (Review Focus 4);
-    - the same with a move gives 0.
-  - **Merge second line, issue mode:** `gh pr merge 5` gives 0 (no local body; documented).
-  - **Not a PR command:** `git status` gives 0.
-- [ ] **Step 2: Run** the filtered suite. Expected: the new rows FAIL.
-- [ ] **Step 3: Implement.**
-  - **Segment detection:** use the existing `gc_segments`/`gc_seg_quoted` helpers.
-  - **Body source:** for `gh pr create`, read only `--body`/`-b` literal values and `--body-file`/`-F` paths, which the hook reads. Anything else refuses.
-  - **Base:** for `gh pr create`, `--base`/`-B`, else `main`.
-  - **Consistency check:** assert `backlog-item-check` appears in both dispatcher tables **and** in both hooks.json matchers, two-sided with a control that removes one.
-- [ ] **Step 4: Run** `bash scripts/test-hooks.sh` (full). Expected: 0 FAIL. Run the consistency script. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(hooks): backlog check on gh pr create and as the merge second line`.
+    - `--body-file <file with Closes #4>` gives 0;
+    - `-F <same>` gives 0;
+    - `--body "Fixes #4"` gives 2;
+    - `--fill` gives 2;
+    - `--body "$(cat x)"` gives 2, all with `--body-file` (Review Focus 4).
+  - **Sync flow:** a commit with trailer `Item: none` plus `--body-file` with an `Item: none` line gives 0 in both modes (Review Focus 5).
+  - **`gh pr merge 5`, file mode:** from a move checkout with no `**Gate**:` gives 0; from a no-move checkout gives 2.
+  - **`gh pr merge 5`, issue mode:** gives 0.
+  - **Other commands:** `git status` and `git merge feature` on main each give 0 (not this hook's shape).
+- [ ] **Step 2: Run.** Expected: the new rows FAIL.
+- [ ] **Step 3: Implement**, with the early exit (no `gh pr` text present means exit 0 before sourcing `git-cmd.sh`) and the 127→2 trap.
+- [ ] **Step 4: Run** `bash scripts/test-hooks.sh` (full, foreground, timeout 600000). Expected: 0 FAIL. Then the consistency script. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(hooks): backlog check on gh pr create and gh pr merge`.
 
-### Task 4: Session-start backlog line
+### Task 4: `backlog-brief.sh` at every session start
 
 **Files:**
+- Create: `hooks/backlog-brief.sh` (class `project`, polarity `open`).
 - Modify:
-  - `hooks/now-brief.sh`;
-  - `hooks/hooks.json` (the `now-brief` entry moves from matcher `compact` to the unmatched SessionStart group, timeout 10);
+  - `hooks/hooks.json` (the unmatched SessionStart group, timeout 10);
+  - `hooks/lib/hook-class.sh`;
+  - check 71 lists;
   - `scripts/test-hooks.sh`.
+- `now-brief.sh` is **not** touched.
 
 **Interfaces:**
-- Consumes: Task 1's subsections.
-- Produces stdout:
-  - file mode: `backlog: <u> untriaged, <p> in progress, top: B-<n> <title>`, where `top` is the first `### Ranked` line, or `top: none`;
-  - issue mode: `backlog: <u> untriaged, <o> open` from `gh issue list --state open --json labels --limit 200`, run under `timeout 3` (untriaged = no `priority:` label).
+- **Mode:** read with the same rule as `bic_mode`. It is copied into the brief as a 6-line function; a consistency row asserts the two copies are byte-identical.
+- **Output:**
+  - file mode: `backlog: <u> untriaged, <p> in progress, top: B-<n> <title>`, or `top: none`;
+  - subsections missing: `backlog: PROJECT_STATE.md has no ### Untriaged/### Ranked/### Done -- see AGENT_TEAM.md § Backlog`;
+  - issue mode: `backlog: <u> untriaged, <o> open`, from `gh issue list --state open --json labels --limit 200` under `timeout 3`. If `timeout` or `gh` is missing, or the call fails, there is no line.
 
 - [ ] **Step 1: Failing rows.**
-  - **`source: startup`, file mode:** a fixture with 2 untriaged, 1 in progress and top B-4 gives stdout containing `backlog: 2 untriaged, 1 in progress, top: B-4`, and does **not** contain `Re-shown after compaction`.
-  - **`source: compact`:** gives both the `## Now` block and the backlog line.
-  - **Issue mode** with `gh` absent from PATH gives exit 0 and no backlog line.
-  - **No `PROJECT_STATE.md`:** exit 0.
+  - A fixture with 2 untriaged, 1 in progress and top B-4 gives exactly that line, for `source` `startup` and `compact` alike.
+  - Missing subsections give the hint line.
+  - Issue mode without `gh` on PATH gives exit 0 and no output.
+  - No `PROJECT_STATE.md` gives exit 0 and no output.
 - [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.** Keep the `## Now` block compact-only, and append the backlog line for every source.
-- [ ] **Step 4: Run** the suite and the consistency script. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(hooks): now-brief shows the backlog debt at every session start`.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the suite filter and the consistency script. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(hooks): backlog-brief shows backlog debt at every session start`.
 
 ### Task 5: Follow-ups note
 
 **Files:**
 - Create: `hooks/agent-result-notes.sh` (class `project`, polarity `open`).
 - Modify:
-  - `hooks/hooks.json` (PostToolUse matcher `Agent`);
+  - `hooks/hooks.json` (PostToolUse, matcher `Agent`);
   - `hooks/lib/hook-class.sh`;
-  - `agents/code-reviewer.md` and `agents/tester.md` (report contract);
-  - `hooks/enforce-agent-contract.sh` (reviewer `clean` rule);
+  - check 71 lists;
+  - `agents/code-reviewer.md` and `agents/tester.md` (the optional block in their report contract);
+  - `hooks/enforce-agent-contract.sh` (reviewer verdict only, ~`:142-147`);
   - `scripts/test-hooks.sh`.
 
 **Interfaces:**
-- **Contract line:** a block starting with a line exactly `Follow-ups:`, followed by `- <item>` lines. It is optional: absent means none.
-- **Reviewer rule** (ruling, it deviates from spec §6's "Follow-ups: none"): the strict `clean` rule stays, so a reviewer with nothing to follow up still ends with exactly `clean`. `enforce-agent-contract` also accepts a first line `clean` followed only by a `Follow-ups:` block.
-- **Note:** for `tool_input.subagent_type` in `cct:code-reviewer|code-reviewer|cct:tester|tester` whose result text holds `Follow-ups:` with at least one `- ` line, print JSON `hookSpecificOutput.additionalContext` = `Add these follow-ups to the backlog as untriaged items.` Otherwise print nothing.
+- **Block:** a line exactly `Follow-ups:`, then `- <item>` lines. It is optional; absent means none.
+- **Reviewer verdict:** it also accepts a message whose first line is `clean` and whose remaining lines are exactly one `Follow-ups:` block.
+- **Output:** for `tool_input.subagent_type` in `cct:code-reviewer|code-reviewer|cct:tester|tester` whose result holds the block with at least one `- ` line, the hook prints `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Add these follow-ups to the backlog as untriaged items."}}`. Otherwise it prints nothing.
+- **Result text:** read from `tool_response`.
+  - **Step 0 first:** capture one live PostToolUse `Agent` payload's shape, keys only, with no values printed, in a temp HOME session, and record it in `user-level-reference/settings-reference.md` next to the Bash shape.
+  - Check whether a `run_in_background` spawn's payload carries the report. If it does not, document that the note covers foreground spawns only.
 - **Later:** the model-ladder step-up note joins this script as a second rule.
 
+- [ ] **Step 0: Capture the payload shape** (keys only) and record it.
 - [ ] **Step 1: Failing rows.**
-  - A reviewer result with `clean\nFollow-ups:\n- B: retry export` gives the note. `enforce-agent-contract` on the same text as the last message gives exit 0. (Review Focus 5)
-  - A reviewer `clean` alone gives no note.
-  - A coder result with `Follow-ups:` gives no note.
-  - An unreadable payload gives exit 0 and no output.
+  - A reviewer result `clean` plus a block gives the note, and `enforce-agent-contract` on that final message gives 0.
+  - `clean` alone gives no note.
+  - A coder result with a block gives no note.
+  - An unreadable payload gives 0 and no output.
 - [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement**, and update both agent contracts with the optional block.
-- [ ] **Step 4: Run** the suite and the consistency script. Expected: PASS.
+- [ ] **Step 3: Implement**, and add the optional block to both agent contracts.
+- [ ] **Step 4: Run** the suite filter and the consistency script. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(hooks): reviewer/tester follow-ups prompt a backlog entry`.
 
 ### Task 6: Counter keys and docs
 
 **Files:**
 - Modify:
-  - `scripts/self-review-count.py` and `scripts/fixtures/self-review/**`;
-  - `docs/architecture.md` (hooks table rows for `backlog-item-check` and `agent-result-notes`, and the widened `now-brief`);
+  - `scripts/self-review-count.py`: `MEASURE_KEYS` (~`:60`) and merge (~`:754`);
+  - `scripts/fixtures/self-review/**`;
+  - `docs/architecture.md` (hooks table rows for the three new hooks);
   - `docs/verification.md`;
-  - `CHANGELOG.md` (unreleased section with a downstream-migration note: add the three subsections or the `priority:1..3` labels once, or the first PR is refused).
+  - `CHANGELOG.md`: the unreleased section's downstream-migration note says:
+    - the first PR adds the three subsections or the `priority:1..3` labels with `Item: none`;
+    - sync PRs carry `Item: none`;
+    - grooming PRs are exempt.
 
 **Interfaces:**
-- **Shared JSON keys:**
-  - `backlog_item_none`: int, `Item: none` occurrences in PR-create tool inputs in main transcripts;
-  - `backlog_refusals`: `{"<mode>/<reason>": int}`, with reason in `no-item`, `body-unreadable`, `no-subsections`, `wrong-checkout`, `no-base`, `mode`, keyed from the `BLOCKED: backlog-item-check:` messages;
-  - `followup_notes`: int.
+- **Shared keys, counted in main and subagent transcripts:**
+  - `backlog_item_none`: an int, from PR-create tool inputs plus commit messages and `-m` texts carrying the trailer `Item: none`;
+  - `backlog_refusals`: `{"<mode>/<reason>": int}`. The reasons are `no-item`, `body-unreadable`, `no-subsections`, `wrong-checkout`, `not-pushed`, `no-base` and `mode`, mapped from fixed substrings of `BLOCKED: backlog-item-check:` messages;
+  - `followups`: an int, counted from reviewer/tester result texts holding a non-empty `Follow-ups:` block.
 
-- [ ] **Step 1: Add failing fixture rows** with one of each, and exact expected counts.
+- [ ] **Step 1: Failing fixture rows** with exact counts for each key.
 - [ ] **Step 2: Run** the counter's fixture test (as check 82 runs it). Expected: FAIL.
-- [ ] **Step 3: Implement**; message reasons map by fixed substrings.
-- [ ] **Step 4: Run** the full gate: `bash hooks/run-gate.sh` (foreground, timeout 600000). Expected: GATE PASS.
-- [ ] **Step 5: Commit** `feat(self-review): count backlog refusals, Item: none and follow-up notes` and the docs commit.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run the full gate** `bash hooks/run-gate.sh` (foreground, timeout 600000). Expected: GATE PASS.
+- [ ] **Step 5: Commit** `feat(self-review): count backlog refusals, Item: none and follow-ups`, plus the docs commit.
 
 ### Task 7: Release (on the user's go)
 
-- [ ] **Version:** bump `VERSION` and `.claude-plugin/plugin.json` to the next minor. Finish the CHANGELOG with the counts.
-- [ ] **Measurements:** take the Context Budget column (`docs/architecture.md`) with `wc -c`.
-- [ ] **Self-review:** run `/self-review` and ship its report.
-- [ ] **Parser matrix:** run `scripts/test-hooks-parser-matrix.sh` (announced; machine-wide), then the gate.
+- [ ] **Version:** bump `VERSION` and `.claude-plugin/plugin.json`, and finish the CHANGELOG.
+- [ ] **Measurements:** take the Context Budget column with `wc -c`.
+- [ ] **Self-review:** run `/self-review`.
+- [ ] **Parser matrix:** run it (announced; machine-wide), then the gate.
 - [ ] **PR:** the user merges. Tag, release notes via MCP, live update on the user's go, drift 0 on both machines.
