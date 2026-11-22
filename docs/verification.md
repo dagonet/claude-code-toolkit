@@ -208,6 +208,8 @@ exit — is expressible with the variable that was already there.
 
 If the checkout does drift onto a docs-only descendant of the tag, the skill's pre-step now recovers the correct label for the consumer by rewriting `lastSynced` to the tag commit when the tracked tree is unchanged — **do not rely on that as a substitute for keeping the checkout on the tag.** It only recovers a tree-identical drift; a checkout that has moved onto a commit carrying real template changes past the tag has no such rescue, and stays on the honest-but-unlabeled path.
 
+**After a live update, open a fresh session and run `/status`.** It must list no broken agent, skill, command or output-style file and no never-matching hook matcher (Claude Code 2.1.327); if it lists one, the update is not done.
+
 ## Troubleshooting
 
 **CLAUDE.md not loaded**
