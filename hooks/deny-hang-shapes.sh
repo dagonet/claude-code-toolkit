@@ -114,12 +114,15 @@ esac
 dh_safe_cd_chain() {
   local raw=$1 cwd=$2 target rest norm seg w
   local re_cd='^cd[[:space:]]+([^][:space:];&|"'"'"'\\$~*?<>(){}`!#]+)(.*)$'
-  local re_rng='([0-9]+|\$|[0-9]+,[0-9]+|[0-9]+,\$)'
+  # a bare range is digits only: `$` is allowed single-quoted ('$p', 'N,$p'), never bare
+  local re_bare='([0-9]+|[0-9]+,[0-9]+)' re_rng='([0-9]+|\$|[0-9]+,[0-9]+|[0-9]+,\$)'
   local re_find='(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)([[:space:]]|$)'
   local re_glue='Q[^[:space:]]|[^[:space:]]Q' re_follow='(^|[[:space:]])-[a-zA-Z0-9]*[fF]'
   while [ "${cwd%/}" != "$cwd" ]; do cwd=${cwd%/}; done
   [ -n "$cwd" ] || return 1
-  case "$raw" in *$'\n'*|*'>'*|*'$('*|*'`'*|*'||'*) return 1 ;; esac
+  # A heredoc body is a newline; a quote directly before `-` may hide an option word
+  # from the checks below (`"-delete"`, `""-i`), so both refuse outright.
+  case "$raw" in *$'\n'*|*'>'*|*'$('*|*'`'*|*'||'*|*'"-'*|*"'-"*) return 1 ;; esac
   [[ $raw =~ $re_cd ]] || return 1
   target=${BASH_REMATCH[1]} rest=${BASH_REMATCH[2]}
   case $target in /*) ;; *) return 1 ;; esac
@@ -131,25 +134,26 @@ dh_safe_cd_chain() {
   # `sed -n '<range>p'` becomes the word SEDN; any other sed is then off the list.
   # A literal Q becomes \003 first, so the quote marker Q dh_norm leaves is unambiguous.
   rest=$(printf '%s' "$rest" | tr Q '\003' | sed -E \
-    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_rng}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g")
+    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_bare}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g")
   norm=$(printf '%s' "$rest" | dh_norm)
-  case "$norm" in *"'"*|*'"'*|*'\'*|*'<'*) return 1 ;; esac
+  # What is left after the quote collapse must be plain words: no stray quote, backslash,
+  # `<`, and no unquoted `$`, `{` or `}` (expansion could build an option word).
+  case "$norm" in *"'"*|*'"'*|*'\'*|*'<'*|*'$'*|*'{'*|*'}'*) return 1 ;; esac
   norm=${norm//&&/;}
   case "$norm" in *'&'*) return 1 ;; esac
   norm=${norm//|/;}
   while IFS= read -r seg; do
     seg=${seg#"${seg%%[![:space:]]*}"}; seg=${seg%"${seg##*[![:space:]]}"}
     [ -n "$seg" ] || continue
+    [[ $seg =~ $re_glue ]] && return 1
     w=${seg%%[[:space:]]*}
     case $w in
       grep|egrep|fgrep|wc|ls|cat|head) ;;
-      rg) [[ $seg == *--pre* || $seg == *--hostname-bin* ]] && return 1
-          [[ $seg =~ $re_glue ]] && return 1 ;;
+      rg) [[ $seg == *--pre* || $seg == *--hostname-bin* ]] && return 1 ;;
       tail) [[ $seg == *--follow* ]] && return 1
             [[ $seg =~ $re_follow ]] && return 1 ;;
       SEDN) [[ $seg =~ [[:space:]]- ]] && return 1 ;;
-      find) [[ $seg =~ $re_find ]] && return 1
-            [[ $seg =~ $re_glue ]] && return 1 ;;
+      find) [[ $seg =~ $re_find ]] && return 1 ;;
       *) return 1 ;;
     esac
   done <<<"${norm//;/$'\n'}"
@@ -194,7 +198,7 @@ case "$DH_TRIM" in
           }
         }
         END { print n + 0 }')
-    if [ "${DH_N:-0}" -ge 3 ] && ! dh_safe_cd_chain "$DH_TRIM" "$DH_CWD"; then
+    if [ "${DH_N:-0}" -ge 3 ] && ! dh_safe_cd_chain "${DH_CMD#"${DH_CMD%%[![:space:]]*}"}" "$DH_CWD"; then
       dh_refuse "use absolute paths or git -C <dir>, or put the steps in a script file and run bash <path>, instead of a leading cd before several commands."
     fi
     ;;

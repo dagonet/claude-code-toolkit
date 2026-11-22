@@ -8657,7 +8657,25 @@ b1c "ref: input redirect"                  2 "cd /w/proj && wc -l < f && ls"
 b1c "ref: rg --pre runs a program"         2 "cd /w/proj && rg --pre sh x && ls"
 b1c "ref: tail -f never returns"           2 "cd /w/proj && tail -f log && ls"
 b1c "ref: second cd in the chain"          2 "cd /w/proj && cd / && ls"
-b1c "ref: empty cwd"                       2 "cd /w/proj && grep -n x a.txt && sed -n 10,40p b.txt" ""
+# fix round 1: text after a heredoc is not hidden from the subset, and an option word
+# hidden by quotes, braces or ${...} is refused (blanket rules, no parsing)
+b1c "ref: heredoc, then a command"         2 "cd /w/proj && ls && cat <<EOF${b1nl}hi${b1nl}EOF${b1nl}rm -rf foo"
+b1c "ref: heredoc with a redirect"         2 "cd /w/proj && ls && grep x <<EOF > out${b1nl}hi${b1nl}EOF"
+b1c "ref: heredoc with a >| redirect"      2 "cd /w/proj && ls && wc -l <<'EOF' >| out${b1nl}hi${b1nl}EOF"
+b1c "ref: find \"-delete\""                 2 "cd /w/proj && find . \"-delete\" && ls"
+b1c "ref: find '-exec'"                    2 "cd /w/proj && find . '-exec' rm {} + && ls"
+b1c "ref: find -o '-fprint'"               2 "cd /w/proj && find . -name x -o '-fprint' out && ls"
+b1c "ref: find -{delete,print}"            2 "cd /w/proj && find . -{delete,print} && ls"
+b1c "ref: find -de\${x}lete"                2 "cd /w/proj && find . -de\${x}lete && ls"
+b1c "ref: sed -n 1p \"-i\""                 2 "cd /w/proj && sed -n 1p \"-i\" f && ls"
+b1c "ref: sed -n 1p '--in-place'"          2 "cd /w/proj && sed -n 1p '--in-place' f && ls"
+b1c "ref: sed -n 1p \"\"-i"                 2 "cd /w/proj && sed -n 1p \"\"-i f && ls"
+b1c "ref: sed bare \$ range"               2 "cd /w/proj && sed -n 5,\$p f && ls"
+b1c "ref: rg \"--pre\""                     2 "cd /w/proj && rg \"--pre\" sh x && ls"
+b1c "ref: rg '--pre=sh'"                   2 "cd /w/proj && rg '--pre=sh' x && ls"
+b1c "ref: tail '-f'"                       2 "cd /w/proj && tail '-f' log && ls"
+b1c "ref: tail \"\"-f"                      2 "cd /w/proj && tail \"\"-f log && ls"
+b1c "ref: empty cwd"                      2 "cd /w/proj && grep -n x a.txt && sed -n 10,40p b.txt" ""
 # ---- end v4.3.0 B1
 
 # ---- v4.3.0 C1: model-floor gives a model-less spawn the project default ----
