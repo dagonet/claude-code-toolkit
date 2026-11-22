@@ -379,6 +379,12 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 - Always exits 0; `run-hook.sh` gives it the silent-0 polarity: it cannot block, so a fail-closed form would only invent a failure mode.
 - Rollback: there is no per-hook switch in the plugin; disable the plugin, or override with a project registration of your own copy (the plugin then steps aside). Old log files are never pruned — clear `$TMPDIR/claude-bash-out-$UID/` yourself if it grows.
 
+**PostToolUse `Agent` payload (read from the docs 2026-11-22, no live session):** source <https://code.claude.com/docs/en/hooks> (sections *PostToolUse input*, *Agent*, *Add context for Claude*; raw `hooks.md`).
+- Report text: `tool_response.content`, an **array of text blocks** (`[{"type": "text", "text": "..."}]`), beside `status`, `agentId`, `resolvedModel`, usage fields. Not a bare string. A failed call gives `tool_response` as an error string. A subagent that reports through `SubagentHandback` (auto mode) has only a short hand-back note in `content`; the report is in the `SubagentHandback` call's `tool_input.message`.
+- Background spawns (`run_in_background: true`): the hook fires at launch with `status: "async_launched"`, `agentId`, `description`, `prompt`, `outputFile`, `resolvedModel` and **no `content`**; the final report never reaches PostToolUse. Only a foreground call gives `status: "completed"` with the report.
+- `tool_input` original or rewritten by `updatedInput`: **not documented.** The docs call it "the arguments sent to the tool"; read `resolvedModel` for the model the run used, which "can differ from the `model` value in `tool_input`".
+- Add context: `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "<string>"}}`; the string is wrapped in a system reminder next to the tool result; over 10,000 chars it is written to a file and a 2,000-char preview is passed.
+
 ### Time hook (UserPromptSubmit, User-Level)
 
 `user-level-reference/settings.json` registers one `UserPromptSubmit` hook, inline, no script file:
