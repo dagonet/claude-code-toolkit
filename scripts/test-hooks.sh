@@ -11825,6 +11825,58 @@ if [ "$(uname -s)" = "Linux" ]; then
   else
     skip "DL14 CRLF python3 output (drift probe parsers)" "needs python3" 4
   fi
+  # DL15 (v7.0.0): the machine's own choice is its enabledPlugins. A dagonet plugin besides cct that settings.json
+  # enables (== true) but that is not installed is drift; installed-but-not-enabled, disabled, and absent are not. The
+  # list of installed ones is information (an OPTIONAL PLUGINS line), never a drift line by itself.
+  dl_opt() { # <enabledPlugins entries as a JSON object> <installed ids...> : cct at VERSION plus those, at VERSION
+    dl_eo=$1; shift
+    { printf '{"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"%s"}]' "$DL_VER"
+      for dl_i in "$@"; do printf ',"%s":[{"scope":"user","version":"%s"}]' "$dl_i" "$DL_VER"; done
+      printf '}}\n'; } > "$DL_H/.claude/plugins/installed_plugins.json"
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" | jq --argjson e "$dl_eo" '.enabledPlugins += $e' > "$DL_H/.claude/settings.json"
+  }
+  dl_optl() { printf '%s\n' "$1" | grep '^OPTIONAL PLUGINS'; }
+  if command -v jq >/dev/null 2>&1; then
+    dl_opt '{"cct-guards@dagonet":true}' cct-guards@dagonet
+    DL_OUT=$(dl_run)
+    expect "DL15 an optional plugin enabled and installed at VERSION: exit 0" 0 "$(dl_rc)"
+    expect "DL15 ... the information line lists it as enabled" 1 "$(dl_optl "$DL_OUT" | grep -cF "cct-guards@dagonet $DL_VER (enabled)")"
+    expect "DL15 ... and it is no drift line" 0 "$(printf '%s\n' "$DL_OUT" | grep -c '^  OPTIONAL PLUGIN MISSING')"
+    dl_opt '{"cct-learning@dagonet":true}'
+    DL_OUT=$(dl_run)
+    expect "DL15 an optional plugin enabled but not installed: exit 1" 1 "$(dl_rc)"
+    expect "DL15 ... names it, with the install command" 1 "$(printf '%s\n' "$DL_OUT" | grep -cF '  OPTIONAL PLUGIN MISSING: cct-learning@dagonet is enabled in')"
+    expect "DL15 ... exactly one drift line" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^  [A-Z]')"
+    dl_opt '{"cct-learning@dagonet":false}'
+    expect "DL15 an optional plugin disabled and not installed: exit 0" 0 "$(dl_rc)"
+    dl_opt '{}' cct-helpers@dagonet
+    DL_OUT=$(dl_run)
+    expect "DL15 installed but absent from enabledPlugins: exit 0" 0 "$(dl_rc)"
+    expect "DL15 ... the information line says it is not enabled" 1 "$(dl_optl "$DL_OUT" | grep -cF "cct-helpers@dagonet $DL_VER (not enabled)")"
+    dl_opt '{}'
+    expect "DL15 none installed: the information line says so" 1 "$(dl_optl "$(dl_run)" | grep -cF 'none installed')"
+    expect "DL15 none installed: exit 0" 0 "$(dl_rc)"
+    # a plugin enabled and installed at another version: the sub-plugin arm already reports it; this arm adds no second line
+    printf '{"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"%s"}],"cct-guards@dagonet":[{"scope":"user","version":"0.0.1"}]}}\n' "$DL_VER" > "$DL_H/.claude/plugins/installed_plugins.json"
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" | jq '.enabledPlugins["cct-guards@dagonet"]=true' > "$DL_H/.claude/settings.json"
+    DL_OUT=$(dl_run)
+    expect "DL15 enabled at another version: exit 1, one SUBPLUGIN DRIFT line and no MISSING line" "1:1:0" \
+      "$(dl_rc):$(printf '%s\n' "$DL_OUT" | grep -c '^  SUBPLUGIN DRIFT: cct-guards@dagonet ')":"$(printf '%s\n' "$DL_OUT" | grep -c '^  OPTIONAL PLUGIN MISSING')"
+    dl_plugins "$DL_VER"; sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
+    expect "DL15 the clean HOME of DL1 (cct alone, nothing else enabled): the line reads none installed" 1 "$(dl_optl "$(dl_run)" | grep -cF 'none installed')"
+    # DL15 with CRLF python3 output: one record per line must still be read (the DL14 lesson)
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' 2>/dev/null; then
+      dl_opt '{"cct-guards@dagonet":true}' cct-guards@dagonet
+      expect "DL15 CRLF python3, an enabled installed plugin: exit 0" 0 "$(dl_cr_rc)"
+      dl_opt '{"cct-guards@dagonet":true}'
+      expect "DL15 CRLF python3, an enabled missing plugin: exit 1" 1 "$(dl_cr_rc)"
+    else
+      skip "DL15 CRLF python3 output (optional plugin arm)" "needs python3" 2
+    fi
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"; dl_plugins "$DL_VER"
+  else
+    skip "DL15 optional plugin arm (enabledPlugins)" "needs jq" 15
+  fi
   # DL7 linux_check_rendered, the installer's two post-checks (one function, shared)
   dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
   printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
@@ -11872,7 +11924,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     skip_host "DL10 older tag falls back to the raw comparison" "tag v4.6.0 absent or already carries linux-render.sh" 2
   fi
 else
-  skip_host "DL1-14 drift script (Linux rendering, plugin, sub-plugins, leftovers, stale registration, CRLF)" "not a Linux host" 52
+  skip_host "DL1-15 drift script (Linux rendering, plugin, sub-plugins, optional plugins, leftovers, stale registration, CRLF)" "not a Linux host" 67
 fi
 # ---- end v5.0 drift
 # ---- v5.0: install-user-level-linux.sh never removes anything before cct@dagonet is installed
@@ -12025,6 +12077,48 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_up afterinst 1 nolist ok /ok
   expect "IU die after a successful install: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
   expect "IU die after a successful install: no 'removed' recovery text" 0 "$(grep -c 'was removed and cct@dagonet is not installed' "$iu_h/out")"
+  # IU --with (v7.0.0): the optional plugins are installed only when named. The list is parsed and checked against the
+  # checkout's marketplace.json BEFORE anything is removed; a bad argument leaves the machine as it was. Stub CLI, temp HOME.
+  iu_w() { # <name> <jq filter for the seeded settings.json, or -> <installer args...>: a fresh install; sets iu_h, iu_rc
+    iu_h=$(iu_home "$1"); : > "$iu_h/calls"; iu_wf=$2; shift 2
+    [ "$iu_wf" = - ] || { jq "$iu_wf" "$iu_h/.claude/settings.json" > "$iu_h/s.t" && mv "$iu_h/s.t" "$iu_h/.claude/settings.json"; }
+    ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_GBIN:$IU_BIN:$PATH" IU_MODE=ok IU_HAS=0 IU_TAG=ok IU_LOG="$iu_h/calls" \
+        IU_VER="$(head -1 "$ROOT/VERSION")" CCT_MARKETPLACE=/ok bash "$ROOT/scripts/install-user-level-linux.sh" "$@" >"$iu_h/out" 2>&1 ); iu_rc=$?
+  }
+  iu_inst() { grep -E '^plugin install [^ ]+@dagonet$' "$iu_h/calls" | sed 's/^plugin install //' | paste -sd, -; }
+  iu_nz() { [ "$iu_rc" -ne 0 ] && echo 1 || echo 0; }
+  iu_ncalls() { grep -cE 'marketplace (remove|add)|plugin install' "$iu_h/calls"; }
+  iu_en() { jq -r ".enabledPlugins[\"$1\"]" "$iu_h/.claude/settings.json"; }
+  iu_w with1 - --with cct-guards,cct-helpers
+  expect "IU --with a,b: exit 0" 0 "$iu_rc"
+  expect "IU --with a,b: the dagonet installs are cct, then a, then b" "cct@dagonet,cct-guards@dagonet,cct-helpers@dagonet" "$(iu_inst)"
+  expect "IU --with a,b: both are enabled in settings.json" "true:true" "$(iu_en cct-guards@dagonet):$(iu_en cct-helpers@dagonet)"
+  iu_w with0 -
+  expect "IU no --with: exit 0, and cct is the only dagonet install" "0:cct@dagonet" "$iu_rc:$(iu_inst)"
+  expect "IU no --with: no optional plugin is enabled" 0 "$(jq '[.enabledPlugins | keys[] | select(startswith("cct-"))] | length' "$iu_h/.claude/settings.json")"
+  iu_w withrep - --with cct-guards --with cct-guards,cct-learning
+  expect "IU --with given twice, a name repeated: one install each, in order" "cct@dagonet,cct-guards@dagonet,cct-learning@dagonet" "$(iu_inst)"
+  iu_w withat '.enabledPlugins["cct-guards@dagonet"]=false' --with=cct-guards@dagonet
+  expect "IU --with=name@dagonet: installed" "0:cct@dagonet,cct-guards@dagonet" "$iu_rc:$(iu_inst)"
+  expect "IU --with: a plugin the user had at false is on after the run (the step-3 merge does not turn it back off)" true "$(iu_en cct-guards@dagonet)"
+  expect "IU --with: the user's other false entry stays false" false "$(iu_en superpowers@claude-plugins-official)"
+  iu_w withbad - --with cct-guards,nonesuch
+  expect "IU --with an unknown name: exits non-zero" 1 "$(iu_nz)"
+  expect "IU --with an unknown name: nothing removed, added or installed" 0 "$(iu_ncalls)"
+  expect "IU --with an unknown name: every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
+  expect "IU --with an unknown name: it names the name" 1 "$(grep -c 'unknown optional plugin: nonesuch' "$iu_h/out")"
+  iu_w withcct - --with cct
+  expect "IU --with cct (not optional): exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withbare - --with
+  expect "IU a bare --with: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withempty - --with ""
+  expect "IU --with with an empty list: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withunk - --nonesuch
+  expect "IU an unknown argument: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  expect "IU an unknown argument: it names the argument" 1 "$(grep -c 'unknown argument: --nonesuch' "$iu_h/out")"
+  iu_all=""
+  for iu_p in cct-guards cct-learning cct-helpers cct-jev dotnet-tools python-tools rust-tools java-tools; do iu_w withall - --with "$iu_p"; iu_all="$iu_all$iu_rc"; done
+  expect "IU --with: each of the eight optional plugins in the marketplace is accepted" 00000000 "$iu_all"
   # IU sub-plugins (v6.1): the real `claude` CLI, a scratch HOME and two local directory marketplaces (old and new
   # version). The remove uninstalls every dagonet plugin and deletes its saved userConfig (measured), so the installer
   # puts back exactly the sub-plugins that were installed, with their enabled state and saved values, and no other.
@@ -12089,7 +12183,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   expect "IU subs fail: it says saved options must be re-entered with claude plugin configure <id>" 1 "$(grep -c 'claude plugin configure' "$iu_h/err")"
   expect "IU subs fail: no saved value on stdout or stderr" 0 "$(cat "$iu_h/out" "$iu_h/err" | grep -c -- "$IU_FSEC")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 60
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 79
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
@@ -13975,6 +14069,66 @@ expect "backlog-brief: issue mode, timeout missing: gh was never called" "no" "$
 printf '#!/bin/sh\nexec sleep 30\n' > "$BB_FAKE/gh"
 bb_expect "backlog-brief: issue mode, a gh that hangs is cut off by timeout 3: silent, exit 0" "" "$BB_IS" startup "$BB_FAKE"
 # ---- end v6.3 backlog-brief
+
+# ---- v7.0.0: sync-template's old-name warning (skills/sync-template/old-names.sh). It reports each pre-v7 part name that a
+# kept project file still carries, with the new name, and edits nothing. The expected map below is a SECOND, independent
+# copy of the script's own table, so a wrong or missing entry in the script reads red.
+ON="$ROOT/skills/sync-template/old-names.sh"
+ON_MAP='cct:dotnet-coder dotnet-tools:dotnet-coder
+cct:python-coder python-tools:python-coder
+cct:rust-coder rust-tools:rust-coder
+cct:java-coder java-tools:java-coder
+cct:retro-review cct-learning:retro-review
+cct:commit cct-helpers:commit
+cct:contribute-upstream cct-helpers:contribute-upstream
+cct:karpathy-guidelines cct-helpers:karpathy-guidelines
+cct:mcp-usage cct-helpers:mcp-usage
+cct:jev cct-jev:jev'
+on_sum() { ( cd "$1" && find . -type f | sort | xargs sha256sum ); }
+ON_P="$TMPROOT/on-old"; rm -rf "$ON_P"; mkdir -p "$ON_P/.claude/agents"
+printf 'use cct:dotnet-coder for the backend\n' > "$ON_P/.claude/agents/mine.md"
+printf '# p\nrun /cct:retro-review weekly\nand cct:commit then /cct:jev on\n' > "$ON_P/.claude/project-instructions.md"
+printf 'see cct:mcp-usage, cct:karpathy-guidelines and /cct:contribute-upstream\n' > "$ON_P/README.md"
+printf 'cct:python-coder cct:rust-coder cct:java-coder\n' > "$ON_P/CLAUDE.local.md"
+ON_B=$(on_sum "$ON_P")
+ON_OUT=$(bash "$ON" "$ON_P" 2>&1); ON_RC=$?
+expect "ON1 old names in kept files: exit 0" 0 "$ON_RC"
+expect "ON1 ... one report line per hit (ten names, ten hits)" 10 "$(printf '%s\n' "$ON_OUT" | grep -c .)"
+on_missing=""
+while read -r on_old on_new; do
+  [ "$(printf '%s\n' "$ON_OUT" | grep -cE ": $on_old -> $on_new( |\$)")" = 1 ] || on_missing="$on_missing $on_old"
+done <<EOF
+$ON_MAP
+EOF
+expect "ON1 ... every old name is reported once, with its new name" "" "$on_missing"
+expect "ON1 ... with the file and line it sits on" 1 "$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/project-instructions\.md:2: cct:retro-review -> cct-learning:retro-review')"
+expect "ON1 ... a name that needs a plugin says which" 1 "$(printf '%s\n' "$ON_OUT" | grep -c ': cct:jev -> cct-jev:jev .*cct-jev@dagonet')"
+expect "ON1 ... no file was changed" "$ON_B" "$(on_sum "$ON_P")"
+ON_N="$TMPROOT/on-new"; rm -rf "$ON_N"; mkdir -p "$ON_N/.claude/agents"
+printf 'use dotnet-tools:dotnet-coder, cct:coder and cct:Explore\n' > "$ON_N/.claude/agents/mine.md"
+printf 'run /cct-learning:retro-review, /cct-helpers:commit and /cct-jev:jev; /cct:sync-template\n' > "$ON_N/README.md"
+printf 'cct:commitment cct:commit-message xcct:commit cct:jevons cct:mcp-usages\n' > "$ON_N/CLAUDE.local.md"
+ON_OUT=$(bash "$ON" "$ON_N" 2>&1); ON_RC=$?
+expect "ON2 new names, kept names and look-alikes only: exit 0 and no output" "0:" "$ON_RC:$ON_OUT"
+ON_OUT=$(bash "$ON" "$TMPROOT/on-no-such-dir" 2>&1); ON_RC=$?
+expect "ON3 a directory that does not exist: exit 0 and no output" "0:" "$ON_RC:$ON_OUT"
+on_gone=""
+while read -r on_old on_new; do
+  on_pl=${on_new%%:*}; on_sk=${on_new#*:}
+  [ -d "$ROOT/plugins/$on_pl/skills/$on_sk" ] || [ -f "$ROOT/plugins/$on_pl/agents/$on_sk.md" ] || on_gone="$on_gone $on_new"
+done <<EOF
+$ON_MAP
+EOF
+expect "ON4 every new name in the map is a skill or agent the plugins ship" "" "$on_gone"
+expect "ON5 the sync-template skill runs the script" 1 "$([ "$(grep -c 'old-names\.sh' "$ROOT/skills/sync-template/SKILL.md")" -ge 1 ] && echo 1 || echo 0)"
+on_named=""
+while read -r on_old on_new; do
+  grep -qE "(^|[^A-Za-z0-9_-])$on_old([^A-Za-z0-9_-]|\$)" "$ROOT/skills/sync-template/SKILL.md" && on_named="$on_named $on_old"
+done <<EOF
+$ON_MAP
+EOF
+expect "ON5 ... and names no old part itself (the one exemption from check 76 is the script)" "" "$on_named"
+# ---- end v7.0.0 old-name warning
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

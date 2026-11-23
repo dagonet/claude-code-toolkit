@@ -113,7 +113,7 @@ You do not need everything installed to get value. Pick the tier that matches yo
    - **Linux/macOS**: `setup-project.sh`
 4. Ignore MCP permission warnings in `settings.json`
 
-This gives you the full agent team, workflow, and session bootstrap -- just without MCP tool acceleration.
+This gives you the full agent team, workflow, and session bootstrap -- just without MCP tool acceleration, and without the optional plugins (v7.0.0 and later): the cost guards (`cct-guards`), the learning loop (`cct-learning`), the helper skills (`cct-helpers`) and Jev routing (`cct-jev`), each installed by name, e.g. `/plugin install cct-guards@dagonet`. See the README's *Optional plugins*.
 
 > **Adopting `user-level-reference/settings.json`: merge, do not overwrite.** Your own
 > `~/.claude/settings.json` carries personal keys the reference does not know about
@@ -128,7 +128,7 @@ Everything in Tier 1, plus:
 
 5. Install GitHub CLI and authenticate (`gh auth login`)
 6. Enable the official **github** plugin at user-level and set `GITHUB_PERSONAL_ACCESS_TOKEN`
-7. Install the language SDK for your chosen template (.NET / Rust / Java / Python)
+7. Install the language SDK for your chosen template (.NET / Rust / Java / Python), and the language plugin if you want its coder agent (`/plugin install dotnet-tools@dagonet`; `python-tools`, `rust-tools` and `java-tools` likewise)
 
 This adds GitHub integration and language-specific build/test support.
 

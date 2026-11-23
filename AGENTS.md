@@ -15,7 +15,7 @@ Before starting, confirm the following are on PATH:
   - Linux / macOS / Git Bash on Windows → `bash`
   - Native Windows → `pwsh` (PowerShell 7+) **or** Windows PowerShell 5.1
 - The target directory for the new project exists (or can be created) and is writable.
-- The **cct plugin** is installed on the machine that will open the project (install it as [README → Install](README.md#install) says, pinned to a release tag). Without it the bootstrapped project refuses every tool call (the plugin-off guard). Setup itself does not need it.
+- The **cct plugin** is installed on the machine that will open the project (install it as [README → Install](README.md#install) says, pinned to a release tag). Without it the bootstrapped project refuses every tool call (the plugin-off guard). Setup itself does not need it. The optional plugins ([README → Optional plugins](README.md#optional-plugins): `cct-guards`, `cct-learning`, `cct-helpers`, `cct-jev`, the language plugins) are the user's choice: never install one on their behalf; the project works with `cct` alone.
 
 If any prerequisite is missing, stop and tell the user what to install — do not attempt to install tools on the user's behalf.
 
@@ -54,8 +54,8 @@ Ask the user which variant to use. If they don't know, summarize the choices wit
 - **No agents.** The six core agents — `cct:Explore` (haiku), `cct:architect`, `cct:code-reviewer`, `cct:coder`, `cct:ops`, `cct:tester` — come from the cct plugin. The language coders ship in the language plugins (`dotnet-tools:dotnet-coder`, `rust-tools:rust-coder`, `java-tools:java-coder`, `python-tools:python-coder`), used if that plugin is installed; the variant's `CLAUDE.md` names which coder to spawn. Each agent declares its own `model:` and `effort:`; do not pass `model:` in an Agent call, it silently overrides the file.
 - **`.claude/settings.json`** — permissions, `enabledPlugins` (`cct@dagonet`) and the inline plugin-off guard; no other hook registration.
 - **`.claude/rules/*.md`** — `project.md` (unscoped, once-class, yours) in every variant, plus path-scoped language conventions with a `paths:` frontmatter glob list, loaded only when Claude touches a matching file. Every variant except `general` ships at least one of those; `general` has no language of its own. `{{FORMAT_COMMAND}}` / `{{LINT_COMMAND}}` inside them are substituted by the script like any other template file.
-- **`hooks/`** — only `hooks/git-pre-push.sh` and the two libraries it sources, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh`, copied from the toolkit root; setup installs the native pre-push hook from them. Every other enforcement hook runs from the cct plugin.
-- **No `commands/` directory.** Slash commands are skills now; the 9 skills ship in the cct plugin (`/cct:<skill>`), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
+- **`hooks/`** — only `hooks/git-pre-push.sh` and the two libraries it sources, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh`, copied from the toolkit root; setup installs the native pre-push hook from them. Every other enforcement hook runs from the cct plugin, except the cost and context guards, which come from `cct-guards` if it is installed.
+- **No `commands/` directory.** Slash commands are skills now; the 3 core skills ship in the cct plugin (`/cct:<skill>`) and the others in the optional plugins (`/cct-helpers:<skill>` and so on, if installed), not in the project — see [`user-level-reference/README.md`](user-level-reference/README.md).
 
 ---
 

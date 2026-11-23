@@ -11,6 +11,15 @@ On Linux `scripts/install-user-level-linux.sh` does steps 1-3 in this order. On 
 
 1b. **Copy the v5 `user-level-reference/CLAUDE.md` to `~/.claude/CLAUDE.md`** (the Linux installer's step 2; kept as "1b" so the step numbers below stay stable). Back up the existing `~/.claude/CLAUDE.md` to `CLAUDE.md.bak-<date>` first, and carry over any lines of your own. The reference carries the Windows platform section as it is. Step 6's drift check compares this file with the reference and reports drift until it is in place.
 
+1c. **Install the optional plugins this PC uses (v7.0.0 and later; the Linux installer's `--with`).** The core `cct` no longer carries the cost guards, the learning loop or the helper skills, and a plain update of `cct` does not install them. The user's choice for this PC and the server: `cct-guards`, `cct-learning` and `cct-helpers`; not `cct-jev` (install it only where Jev routing is wanted, step 4); a language plugin only for a language used here. In a Claude Code session:
+   ```
+   /plugin install cct-guards@dagonet
+   /plugin install cct-learning@dagonet
+   /plugin install cct-helpers@dagonet
+   /plugin install dotnet-tools@dagonet
+   ```
+   (the last line only if this PC builds .NET; `python-tools`, `rust-tools` and `java-tools` work the same way). Step 6's drift check lists what is installed and reports drift when `enabledPlugins` enables a plugin that is not installed. The renamed commands and agents are mapped, old name to new, in the CHANGELOG's v7.0.0 section.
+
 2. **Back up `~/.claude/settings.json`, then remove its six toolkit hook entries.** Copy the file to `settings.json.bak-<date>`. Then delete each hook entry whose `args` name `<home>/.claude/hooks/<name>.sh`, for these six names, and any matcher group left empty:
    - `no-push-main.sh` (`PreToolUse`, matcher `Bash|PowerShell`)
    - `deny-secret-reads.sh` (`PreToolUse`, matcher `Read|Bash`)
@@ -31,7 +40,7 @@ On Linux `scripts/install-user-level-linux.sh` does steps 1-3 in this order. On 
    ```
    bash scripts/verify-user-level-drift.sh v6.2.0
    ```
-   It must report 0 drift: `CLAUDE.md` equal to the reference, `cct@dagonet` installed at `6.2.0`, and no path from the leftovers list present.
+   It must report 0 drift: `CLAUDE.md` equal to the reference, `cct@dagonet` installed at `6.2.0`, no path from the leftovers list present, and every dagonet plugin that `enabledPlugins` enables installed (the optional ones are listed on an `OPTIONAL PLUGINS` line).
 
 **Later releases (v5.0.x and up):** the marketplace is pinned to a tag, so `claude plugin update cct@dagonet` and `claude plugin marketplace update` (measured, claude 2.1.301) never advance it, and adding the marketplace over the existing entry is refused. Move to the new tag with `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#<new tag>`, then `claude plugin install cct@dagonet`. (The remove uninstalls the plugin: until the install succeeds, synced projects refuse every tool.) **The remove also uninstalls every other `@dagonet` plugin (the opt-in `git-tools`, `github-tools`, `dotnet-tools`, `ollama-tools`, `rust-tools`, `python-tools`) and deletes their saved options (measured).** So first record them: run `claude plugin list --json` and note each `<name>@dagonet` other than `cct` at user scope with its `enabled` state; for each, run `claude plugin configure <name>@dagonet --json` and note the non-empty entries under `inputs` (keep them out of chat, logs and commits). After the `cct@dagonet` install, for each recorded plugin run `claude plugin install <name>@dagonet`, then restore its saved options with `claude plugin configure <name>@dagonet --values-stdin` (a JSON object of the noted values on stdin), then `claude plugin disable <name>@dagonet` if it was disabled. Do not install a plugin that was not on the list. The Linux installer does exactly this. Pull your toolkit checkout to the same tag, then restart every session before the next `/cct:sync-template`. A session that syncs after the pull but before its restart is refused; restart it. Check the tag exists first: `git ls-remote --tags https://github.com/dagonet/claude-code-toolkit refs/tags/<new tag>`.
 

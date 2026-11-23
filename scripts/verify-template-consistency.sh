@@ -5230,10 +5230,12 @@ else ko "75: frontmatter hooks: in $c75"; fi
 #
 # The files scanned are the shipped ones plus the docs: templates, user-level-reference, skills, agents, plugins, docs,
 # mcp-servers, .claude/skills, README.md and AGENTS.md. History (docs/history.md), reports (docs/self-review/), plans
-# (docs/plans/) and fixtures are excluded: they name parts under the names they had then.
+# (docs/plans/) and fixtures are excluded: they name parts under the names they had then. One more file is exempt, by its
+# exact path: skills/sync-template/old-names.sh, the table of pre-v7 names the sync warns about (its whole job is to name
+# them). SKILL.md and every other file stay scanned; the controls below pin both arms.
 c76_mentions() { # <root> <ERE> -> the distinct matches in the scanned files under <root>
   ( cd "$1" && find templates user-level-reference skills agents plugins docs mcp-servers .claude/skills README.md AGENTS.md -type f -print0 2>/dev/null \
-      | grep -zvE '^(docs/history\.md|docs/self-review/|docs/plans/|scripts/fixtures/|server/tests/fixtures/)' \
+      | grep -zvE '^(docs/history\.md|docs/self-review/|docs/plans/|scripts/fixtures/|server/tests/fixtures/|skills/sync-template/old-names\.sh$)' \
       | xargs -0 -r grep -hoE "$2" 2>/dev/null | sort -u )
 }
 c76_scan() { # <root> -> one line per mention that names nothing under <root>
@@ -5266,13 +5268,13 @@ c76_ctl() { # <relative path> <text> -> c76_scan of a root whose only mention is
 }
 c76_ctl_bad=""
 # stale mentions must be flagged wherever a doc, a repo skill or a plugin can carry them ...
-for c76_p in docs/guide.md mcp-servers/HOWTO.md .claude/skills/x/SKILL.md plugins/cct-helpers/skills/commit/SKILL.md skills/sprint/SKILL.md templates/general/CLAUDE.md; do
+for c76_p in docs/guide.md mcp-servers/HOWTO.md .claude/skills/x/SKILL.md plugins/cct-helpers/skills/commit/SKILL.md skills/sprint/SKILL.md skills/sync-template/SKILL.md templates/general/CLAUDE.md; do
   [ "$(c76_ctl "$c76_p" 'run /cct:commit')" = "cct:commit " ] || c76_ctl_bad="$c76_ctl_bad $c76_p"
 done
 [ "$(c76_ctl docs/guide.md 'run /cct-helpers:ghost')" = "cct-helpers:ghost " ] || c76_ctl_bad="$c76_ctl_bad cct-helpers:ghost"
 [ -z "$(c76_ctl docs/guide.md 'run /cct-helpers:commit')" ] || c76_ctl_bad="$c76_ctl_bad cct-helpers:commit(false positive)"
 # ... and left alone in history, reports, plans and fixtures
-for c76_p in docs/history.md docs/self-review/r.md docs/plans/p.md; do
+for c76_p in docs/history.md docs/self-review/r.md docs/plans/p.md skills/sync-template/old-names.sh; do
   [ -z "$(c76_ctl "$c76_p" 'run /cct:commit')" ] || c76_ctl_bad="$c76_ctl_bad $c76_p(excluded)"
 done
 c76_bad=$(c76_scan . | tr '\n' ' ')
@@ -5282,7 +5284,7 @@ c76_hn=$(c76_mentions . 'cct-helpers:[A-Za-z][A-Za-z-]*' | wc -l)
 [ "$c76_pn" -gt 0 ] || c76_bad="$c76_bad (no <lang>-tools:<lang>-coder mention found: the plugin-name scan is vacuous)"
 [ "$c76_hn" -gt 0 ] || c76_bad="$c76_bad (no cct-helpers:<skill> mention found: the plugin-skill scan is vacuous)"
 if [ -n "$c76_ctl_bad" ]; then
-  ko "76: CONTROL failed (a stale cct:commit must be flagged in a doc, repo skill, plugin or template and ignored in history, reports and plans):$c76_ctl_bad"
+  ko "76: CONTROL failed (a stale cct:commit must be flagged in a doc, repo skill, plugin or template and ignored in history, reports, plans and skills/sync-template/old-names.sh only):$c76_ctl_bad"
 elif [ -z "$c76_bad" ]; then
   ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen), every <lang>-tools:<lang>-coder in plugins/ ($c76_pn), every <plugin>:<skill> in plugins/<plugin>/skills/ ($c76_hn for cct-helpers); docs, mcp-servers, .claude/skills and plugins scanned; control fires"
 else

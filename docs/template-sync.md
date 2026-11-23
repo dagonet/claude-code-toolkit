@@ -28,6 +28,8 @@ Pull template updates into your project. The skill calls MCP tools to classify e
 
 For conflicts, the MCP server reconstructs the common ancestor via `git show` and produces a three-way merge. If the merge is clean, it's offered for approval. If it has conflict markers, you resolve manually.
 
+**Old part names in files you keep (v7.0.0).** v7.0.0 renamed the language coders and the skills that moved into optional plugins. A file the sync never rewrites (your own agents, `.claude/project-instructions.md`, a `PROJECT-CUSTOM` region, README.md, CLAUDE.local.md) may still use an old name. In its report step the skill runs `skills/sync-template/old-names.sh` and prints one `<file>:<line>: <old> -> <new>` warning per hit under `Warnings:`, naming the plugin to install. It edits nothing and prints nothing when no file uses an old name; you change the name yourself. The old-to-new map is in the CHANGELOG's v7.0.0 section.
+
 ## `/cct-helpers:contribute-upstream` (upstream: project -> template; if `cct-helpers` is installed)
 
 Push project improvements back to the template. The skill:

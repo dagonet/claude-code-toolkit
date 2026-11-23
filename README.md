@@ -86,7 +86,7 @@ Optional: copy [`user-level-reference/CLAUDE.md`](user-level-reference/CLAUDE.md
 Its Platform section assumes Windows with Git Bash, so adapt it on macOS and Linux (the Linux installer below does).
 Its `settings.json` needs merging, not copying: see [`user-level-reference/README.md`](user-level-reference/README.md).
 
-- **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup.
+- **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup. Add `--with cct-guards,cct-learning,cct-helpers` to install optional plugins (below) in the same run.
 - **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
 - **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
   `claude plugin marketplace add dagonet/claude-code-toolkit#v6.2.0 && claude plugin install cct@dagonet`
@@ -98,6 +98,20 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
 - A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.
 
 The CHANGELOG has the migration notes for every release, on Linux and Windows alike.
+
+## Optional plugins
+
+Since v7.0.0 the `cct` plugin is the core. The parts that not every machine needs are separate plugins in the same marketplace, and nothing optional is installed by default:
+
+| Install | What it adds |
+|---|---|
+| `claude plugin install cct-guards@dagonet` | Caps oversized file reads and long command output, warns on runaway agents, runs the project's post-edit build |
+| `claude plugin install cct-learning@dagonet` | Records agent failures and shows them at session start; the `/cct-learning:retro-review` skill |
+| `claude plugin install cct-helpers@dagonet` | The `/cct-helpers:commit` and `/cct-helpers:contribute-upstream` skills, plus `karpathy-guidelines` and `mcp-usage` |
+| `claude plugin install cct-jev@dagonet` | Jev model routing (above); sends spawn text to an outside service |
+| `claude plugin install <dotnet\|python\|rust\|java>-tools@dagonet` | The coder agent for that language (the first three also start their MCP server, below) |
+
+A plain `claude plugin update cct@dagonet` does not install any of them, and v7.0.0 took these parts out of `cct`: install each one you use by name. The old-to-new name map is in the CHANGELOG's v7.0.0 section.
 
 ## MCP server plugins
 

@@ -178,8 +178,35 @@ check_live_state_untouched() {
   else fail "10 live installed_plugins.json and settings.json carry no scratch path" "scratch root found in:$bad"; fi
 }
 
+# 11. The core alone (v7.0.0 slim core): cct loaded with no optional plugin. No registered command path names a script
+#     that moved to an optional plugin (cct-guards, cct-learning, cct-jev), and a nested session runs a command with the
+#     core hooks and shows no moved script name. Two-sided: the registrations are read from hooks/hooks.json first and
+#     must name core hooks that exist (an empty read would pass "none moved"), so a green row cannot be vacuous.
+check_core_alone() {
+  local moved='read-size-gate|bash-output-guard|agent-budget-warn|post-edit-build|retro-ledger|retro-brief|jev-route|jev-notice|cct-jev-session'
+  local reg n out missing=""
+  reg=$(python3 -I -c '
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+for groups in d["hooks"].values():
+    for g in groups:
+        for h in g["hooks"]:
+            print(h.get("command", ""))' "$ROOT/hooks/hooks.json" 2>/dev/null)
+  n=$(printf '%s\n' "$reg" | grep -c .)
+  if [ "$n" -lt 5 ]; then fail "11 core alone" "only $n registered commands read from hooks/hooks.json"; return; fi
+  if printf '%s\n' "$reg" | grep -Eq "$moved"; then fail "11 core alone" "a registered command names a moved script: $(printf '%s\n' "$reg" | grep -Eo "$moved" | sort -u | tr '\n' ' ')"; return; fi
+  for s in $(printf '%s\n' "$reg" | grep -Eo 'hooks/[A-Za-z0-9._-]+\.sh' | sort -u); do [ -f "$ROOT/$s" ] || missing="$missing $s"; done
+  if [ -n "$missing" ]; then fail "11 core alone" "a registered script is absent:$missing"; return; fi
+  out=$(cl "$SC" "$ROOT" "Run exactly this one Bash command: touch out.core")
+  if [ ! -e "$SC/out.core" ]; then fail "11 core alone" "the command did not run under cct alone: $(printf '%s' "$out" | grep -o 'BLOCKED[^"]*' | head -1)"
+  elif printf '%s' "$out" | grep -Eq "$moved"; then fail "11 core alone" "the session stream names a moved script: $(printf '%s' "$out" | grep -Eo "$moved" | sort -u | tr '\n' ' ')"
+  else pass "11 core alone ($n registered commands, none names a moved script)"; fi
+  rm -f "$SC/out.core"
+}
+
 check_push_refused
 check_true_runs "$SC" "$ROOT" "2 true runs"
+check_core_alone
 check_plugin_off
 check_gate_on_path
 check_explore_spawn

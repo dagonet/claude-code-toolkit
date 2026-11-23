@@ -13,6 +13,26 @@ Claude Code supports layered configuration: **project-level `.claude/` overrides
 - **Domain-specific coders** (`dotnet-tools:dotnet-coder`, `rust-tools:rust-coder`, `java-tools:java-coder`, `python-tools:python-coder`) ship in their language plugins' `agents/`, used if that plugin is installed; the plugin's own `agents/` holds the six core agents. One agent type table in `hooks/lib/agent-model.sh` gives all ten their model, effort and pipeline flag, so the model floor, the step-up note and the contract gate cover the language coders too (check 87 pins it to the agent files).
 - **Plugin output style** (`output-styles/pm-report.md` in the `cct` plugin, selected with `outputStyle` in the user's `settings.json`): `pm-report` -- no project template overrides it.
 
+## The Core and the Optional Plugins (v7.0.0)
+
+The `cct` plugin is the **core**: the six agents, the three skills `challenge`, `sprint` and `sync-template`, the `pm-report` style, and every hook a project needs to stay safe (the git gates, secret-read and hang-shape denial, delegation, the agent report contract, the plugin-off guard, the backlog hooks). The parts below were split out of it and live under `plugins/<name>/` in the same marketplace. **Nothing optional is installed or enabled by default**: a public install is the core alone, and every mention of a moved part in a rule, template or doc says "if `<plugin>` is installed".
+
+| Plugin | What it carries | Install line |
+|---|---|---|
+| `cct-guards` | `read-size-gate`, `bash-output-guard`, `agent-budget-warn`, `post-edit-build` (each runs on many tool calls) | `claude plugin install cct-guards@dagonet` |
+| `cct-learning` | `retro-ledger`, `retro-brief`, the `retro-review` skill | `claude plugin install cct-learning@dagonet` |
+| `cct-helpers` | the `commit`, `contribute-upstream`, `karpathy-guidelines` and `mcp-usage` skills (no hooks) | `claude plugin install cct-helpers@dagonet` |
+| `cct-jev` | the `jev` skill, `jev-route`, `jev-notice` and a session marker (Jev routing; sends spawn text to an outside service) | `claude plugin install cct-jev@dagonet` |
+| `dotnet-tools`, `python-tools`, `rust-tools` | the build/test MCP server and the language coder agent | `claude plugin install <name>@dagonet` |
+| `java-tools` | the Java coder agent only (no MCP server) | `claude plugin install java-tools@dagonet` |
+
+- **The machine's choice is its `enabledPlugins`.** No separate file records which optional plugins a machine wants. This server and the PC run `cct-guards`, `cct-learning` and `cct-helpers`, not `cct-jev`, and a language plugin only where that language is in use.
+- **Installer.** `bash scripts/install-user-level-linux.sh --with cct-guards,cct-learning,cct-helpers` installs the named plugins next to `cct` (names are checked against `.claude-plugin/marketplace.json` before anything is removed; the flag may repeat; no flag installs none). A re-run without it keeps the optional plugins already installed, as it does for every dagonet sub-plugin.
+- **Delivery check.** `scripts/verify-user-level-drift.sh` prints one `OPTIONAL PLUGINS` line (information) and counts drift only when `enabledPlugins` enables a dagonet plugin that is not installed (`OPTIONAL PLUGIN MISSING`). An installed plugin at another version is the sub-plugin drift it always was.
+- **Static checks, not a per-commit install test.** Consistency checks pin the plugin versions to `VERSION`, the pinned helper copies, "no file under a moved part remains in the `cct` root" and "if installed" wording in the templates. The one real install is `scripts/plugin-smoke.sh` row 11 (`claude -p --plugin-dir` with `cct` alone: no registered command names a moved script), run at release, not per commit.
+- **Agent types.** One table in `hooks/lib/agent-model.sh` gives the six core types and the four language coders (`dotnet-tools:dotnet-coder`, `python-tools:python-coder`, `rust-tools:rust-coder`, `java-tools:java-coder`) their model and pipeline flag, so the model floor and the report contract treat a plugin coder like a core one.
+- **Moving a project.** `/cct:sync-template` carries the template changes. If a file the project keeps still uses a pre-v7 name, step 8 prints a warning with the new name through `skills/sync-template/old-names.sh` and edits nothing. The old-to-new map is in the CHANGELOG's v7.0.0 section.
+
 ## AGENT_TEAM.md v2.0 -- Dual-Mode Workflow
 
 The v2.0 workflow separates **project-specific config** (`PROJECT_CONTEXT.md`) from the **shared workflow definition** (`AGENT_TEAM.md`). AGENT_TEAM.md is identical across all six template variants -- only PROJECT_CONTEXT.md varies.
@@ -325,6 +345,7 @@ claude-code-toolkit/
 ├── agents/                                # the 6 core agents at the plugin root (cct:<name>); the 4 language coders live in plugins/<lang>-tools/agents/
 ├── bin/                                   # cct-gate [<dir>]: runs the plugin's hooks/run-gate.sh in the current project, or in the work tree given (on PATH from the plugin)
 ├── skills/                                # 3 skills at the plugin root (installed as /cct:<name>); the optional plugins carry the rest under plugins/<name>/skills/
+├── plugins/                               # the optional plugins (cct-guards, cct-learning, cct-helpers, cct-jev, the language plugins, the MCP server plugins); nothing is installed by default
 ├── output-styles/                         # pm-report output style (selected as "outputStyle": "cct:pm-report")
 ├── mcp-servers/
 │   └── HOWTO.md                           # MCP server installation guide

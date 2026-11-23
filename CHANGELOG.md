@@ -9,6 +9,37 @@
 - **The first PR after the update adds the backlog shape and carries `Item: none`.** `hooks/backlog-item-check.sh` refuses a PR that names no backlog item. In file mode (`Task source: plan-files`) a base whose `PROJECT_STATE.md` lacks `## Backlog` with `### Untriaged`, `### Ranked` and `### Done` has nowhere to move an item, so the first PR adds the three subsections. In issue mode (`Task source: github-issues`) create the `priority:1..3` labels; the hook does not check them, `backlog-brief` reads them. That first PR carries the commit trailer `Item: none` in the last trailer block (file mode) or a line exactly `Item: none` in the PR body (issue mode).
 - **Sync PRs carry `Item: none`.** The PR that lands a `/cct:sync-template` run changes template files, not a backlog item; put the commit trailer `Item: none` in the last trailer block (file mode) and a line exactly `Item: none` in the PR body (issue mode).
 - **Grooming PRs are exempt.** A PR whose diff touches only `PROJECT_STATE.md` passes without a trailer (file mode).
+- **A plain `claude plugin update cct` (or the marketplace remove-and-add that replaces it for a pinned install) does NOT install the new optional plugins, and `cct` no longer carries their parts.** The commit, learning, guard and Jev parts disappear from the machine until each plugin is installed by name. Read this before updating and install what you use, once per machine, then restart every session:
+  - `claude plugin install cct-guards@dagonet` (read-size-gate, bash-output-guard, agent-budget-warn, post-edit-build);
+  - `claude plugin install cct-learning@dagonet` (retro-ledger, retro-brief, `/cct-learning:retro-review`);
+  - `claude plugin install cct-helpers@dagonet` (`/cct-helpers:commit`, `/cct-helpers:contribute-upstream`, `cct-helpers:karpathy-guidelines`, `cct-helpers:mcp-usage`);
+  - `claude plugin install cct-jev@dagonet` (`/cct-jev:jev`, jev-route, jev-notice); only where Jev routing is wanted;
+  - `claude plugin install dotnet-tools@dagonet`, `python-tools@dagonet`, `rust-tools@dagonet` or `java-tools@dagonet`, for each language you use (the coder agent; `java-tools` is new and has no MCP server).
+  The user's choice for the server and the PC: `cct-guards`, `cct-learning` and `cct-helpers`; not `cct-jev`; a language plugin only where that language is used. On Linux the installer does it in one run: `bash scripts/install-user-level-linux.sh --with cct-guards,cct-learning,cct-helpers`.
+- **Machine's choice = its `enabledPlugins`.** `scripts/verify-user-level-drift.sh` now prints one `OPTIONAL PLUGINS` line and reports `OPTIONAL PLUGIN MISSING` only for a dagonet plugin that `settings.json` enables but that is not installed. Installed but not enabled, disabled, or absent is not drift. After the update, 0 drift needs the plugins you enabled to be installed.
+- **Projects: `/cct:sync-template` warns about old names in files you keep.** The rename below breaks a project agent, a `PROJECT-CUSTOM` region or a README that still uses an old name. The sync's report step prints each hit with its new name and edits nothing.
+
+### Renamed: old name to new name (breaking)
+| Old | New |
+|---|---|
+| `cct:dotnet-coder` | `dotnet-tools:dotnet-coder` |
+| `cct:python-coder` | `python-tools:python-coder` |
+| `cct:rust-coder` | `rust-tools:rust-coder` |
+| `cct:java-coder` | `java-tools:java-coder` (a new plugin, no MCP server) |
+| `/cct:retro-review` | `/cct-learning:retro-review` |
+| `/cct:commit` | `/cct-helpers:commit` |
+| `/cct:contribute-upstream` | `/cct-helpers:contribute-upstream` |
+| `cct:karpathy-guidelines` | `cct-helpers:karpathy-guidelines` |
+| `cct:mcp-usage` | `cct-helpers:mcp-usage` |
+| `/cct:jev` | `/cct-jev:jev` (reinstall hint: `cct-jev@dagonet`) |
+
+The hooks keep their names; only where they come from changed: `read-size-gate`, `bash-output-guard`, `agent-budget-warn` and `post-edit-build` from `cct-guards`, `retro-ledger` and `retro-brief` from `cct-learning`, `jev-route` and `jev-notice` from `cct-jev`. `cct:coder` and the other five core agents are unchanged. A spawn that names an old type no longer resolves; point it at the new name (the plugin installed), or at `cct:coder`.
+
+### Added: optional plugins and their delivery (spec `docs/plans/2026-11-22-slim-core-plugin-split-design.md`, section 10)
+- **`--with <plugin,...>` on `scripts/install-user-level-linux.sh`.** Names are those in `.claude-plugin/marketplace.json` minus `cct`, with or without `@dagonet`; the flag may repeat or be written `--with=<list>`. The list is checked before anything is removed, so an unknown name, an empty list or an unknown argument exits non-zero with the machine unchanged. Each named plugin is installed after `cct` and the restored sub-plugins and ends up enabled, even if you had switched it off. No flag installs none.
+- **Drift reads `enabledPlugins`** (above). New rows pin both directions (enabled and missing, disabled and missing, installed and not enabled, none installed, another version, CRLF python3).
+- **`skills/sync-template/old-names.sh`** is the table of old names behind the sync warning. It prints `<file>:<line>: <old> -> <new>` for the project files a sync keeps, writes nothing and always exits 0. Check 76 exempts that one path (its job is to name old parts); every other file, `SKILL.md` included, stays scanned, and the check's controls pin both arms.
+- **`scripts/plugin-smoke.sh` row 11 (release only):** `claude -p --plugin-dir` with `cct` alone and no optional plugin; no registered command names a script that moved. It reads at least five registrations from `hooks/hooks.json` first, so an empty read cannot pass.
 
 ## v6.2.0 — 2026-11-12
 
