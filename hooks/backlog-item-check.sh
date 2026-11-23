@@ -32,18 +32,29 @@
 # MERGE LIMIT: an MCP merge carries only the PR number, with no network there is no mapping to the PR's branch, so
 #   the merge line checks the cwd checkout's branch; merge from the PR's own checkout.
 #
-# THE gh SHAPES (Bash/PowerShell). Every Bash call runs this guard, so a command with no `gh pr create|merge` text
-#   (quotes, then quotes and backslashes removed) exits 0 before git-cmd.sh is sourced. Otherwise gc_segments finds the
-#   segment, and only these flags are read from it: --base/-B and --head/-H (create), --body-file/-F (create). A
-#   backslash-disguised `g\h pr create` has no segment: refused (cannot determine). No script bodies are scanned, and a
-#   segment is matched wherever the words appear (`echo gh pr create` is refused too: put such text in a file).
+# THE gh SHAPES (Bash/PowerShell). STRICT: a shape this hook cannot judge is refused with a fix text, never parsed.
+#   Every Bash call runs this guard, so it copies gate-before-merge's early exit (no git/gh/sh/source/ps1 word, no
+#   backslash, `$`, backtick, glob or `(` in the quote-stripped text: exit 0 before git-cmd.sh is sourced).
+#   gc_dir_rule (as in gate-before-merge) allows ONE leading `cd <abs dir> &&`, judges in that directory (GC_CWD_E) and
+#   reads script bodies. Each segment (raw, quotes intact) is then classified by bic_classify: the word before a `pr`
+#   word is the command word, the word after `pr` (skipping -R/--repo <v>) the verb. A `$`, backtick or quote in the
+#   command word or the verb, or a backslash in the verb, is refused (cannot determine). Gated: a literal gh with the
+#   verb create, new (gh's alias for create) or merge; other literal verbs (view, list, checks, ...) pass.
+#   LIMITS, all strict: (1) the gated segment must be the ONLY segment of the command (pipes, ;, &&, ||, & and newlines
+#   count; the one leading cd && does not); (2) a script body (bash x.sh, source, ...) holding a gated segment is refused,
+#   not judged; (3) a command substitution, backtick or & inside the gated segment, or a directory change word in it,
+#   is refused; (4) the words are matched wherever they stand as command word and verb, so `echo gh pr create` is
+#   judged too (put such text in a file); (5) flags between gh and pr other than -R/--repo after pr are not modelled.
+#   Residual: gh pr with a global flag before the pr word, an alias set with `gh alias`, and a script run by an
+#   interpreter gate-before-merge does not scan (python x.py, make) are not seen.
+#   Only these flags are read, from the gated segment: --base/-B and --head/-H (create), --body-file/-F (create); a
+#   value flag given twice, or a --title/-t value holding a flag-shaped word, is refused.
 #   BASE: --base/-B, else refs/remotes/origin/HEAD, else refuse. HEAD: --head/-H, else the checkout's branch. A merge
 #   has neither flag: the checkout's branch and origin/HEAD, as for the MCP merge tools.
 #   BODY (create only, BOTH modes): read ONLY from --body-file/-F, by this hook. --body, -b, --fill, --fill-first,
 #   --fill-verbose, --template, --editor, --web, or no body file at all: refused, "use --body-file"; the file must
 #   exist and be readable. The quote-stripping segment split cannot read a literal body safely. The file's CONTENT is
 #   judged in issue mode only; file mode judges the diff.
-#   DIRECTORY: any directory change in the command (cd, pushd, env -C, ...) is refused: run from the PR's own checkout.
 #   Issue-mode `gh pr merge` passes, as the MCP merge does.
 
 trap '[ "$?" = 127 ] && exit 2' EXIT   # the registration wrapper's 127->2, in-hook (same as gate-before-merge.sh)
@@ -56,19 +67,21 @@ jlib="$cctg_dir/lib/json.sh"
 . "$jlib"
 if [ "${CCTD_MEMO[1]+set}" = set ]; then GC_PRE_JSON=${CCTD_MEMO[1]}; else GC_PRE_JSON=$(cat); fi
 json_payload "$GC_PRE_JSON"; GC_PREPARSED=$?
-# The `gh pr create|merge` words, case-folded with explicit classes (not nocasematch): gh or gh.exe, pr, the verb.
-BIC_GH_RE='(^|[^[:alnum:]_-])[Gg][Hh](\.[Ee][Xx][Ee])?[[:space:]]+[Pp][Rr][[:space:]]+([Cc][Rr][Ee][Aa][Tt][Ee]|[Mm][Ee][Rr][Gg][Ee])([^[:alnum:]_-]|$)'
 if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
   case "$JP_TOOL" in
     Bash|PowerShell)
-      # Exit before git-cmd.sh unless the command holds the words with quotes removed, or with quotes and backslashes
-      # removed (the shell removes both: `gh pr "create"`, `g\h pr create`). An unparseable payload, an empty command
-      # and every other tool fall through to the checks below.
-      _bic_q=${JP_CMD//[\"\']/}
-      if [[ $_bic_q =~ $BIC_GH_RE ]]; then :
+      # gate-before-merge's early exit, verbatim in effect (see its comment): a word that could be gh, git or a shell,
+      # or a character that can build one, keeps the call; everything else exits before git-cmd.sh (1800 lines) is
+      # sourced. An unparseable payload, an empty command and every other tool fall through to the checks below.
+      _np_q=${JP_CMD//[\"\']/}
+      _np_dot='\.([[:space:]]|$)'
+      if [[ $_np_q == *[Gg][Ii][Tt]* || $_np_q == *[Gg][Hh]* || $_np_q == *[Ss][Hh]* ||
+            $_np_q == *[Ss][Oo][Uu][Rr][Cc][Ee]* || $_np_q == *[Pp][Ss]1* ||
+            $_np_q == *'\'* || $_np_q == *'$'* || $_np_q == *'`'* || $_np_q == *[*?[]* ||
+            $_np_q == *'('* || $_np_q =~ $_np_dot ]]; then
+        :
       else
-        _bic_q=${_bic_q//\\/}
-        [[ $_bic_q =~ $BIC_GH_RE ]] || exit 0
+        exit 0
       fi ;;
   esac
 fi
@@ -80,16 +93,23 @@ _np_jp=$JSON_PARSER   # git-cmd.sh re-sources json.sh, which resets the parser m
 JSON_PARSER=$_np_jp
 command -v gc_current_branch >/dev/null 2>&1 || { echo "BLOCKED: backlog-item-check: $lib is present but corrupt (gc_current_branch undefined) -- refusing" >&2; exit 2; }
 
-gc_read_stdin --preparsed
-gc_guard_off && exit 0
-
-CWD="$GC_CWD"
-
 # bic_refuse <text>: the one refusal shape. exit 2, stderr starts with the hook name, the text names the fix.
 bic_refuse() {
   printf 'BLOCKED: backlog-item-check: %s\n' "$1" >&2
   exit 2
 }
+
+# A payload that did not parse (or no JSON parser) is refused here, with this hook's own prefix, before gc_read_stdin
+# would refuse it under the generic one. The kill switch is read from the process cwd, as gc_read_stdin does.
+if [ "$GC_PREPARSED" != 0 ]; then
+  GC_CWD=$(pwd)
+  gc_guard_off && exit 0
+  bic_refuse "the hook payload did not parse, or no JSON parser (node, python3 or jq) is on PATH, so this check cannot judge the call: re-run it, or install a parser."
+fi
+gc_read_stdin --preparsed
+gc_guard_off && exit 0
+
+CWD="$GC_CWD"
 
 # bic_mode: prints file, issue or nothing (missing file, missing field or an unknown value). Reads the repo root's
 # PROJECT_CONTEXT.md (BIC_TOP, set by the caller); backticks and surrounding spaces are trimmed.
@@ -219,53 +239,96 @@ bic_judge() {
   bic_file_ok || bic_refuse "$BIC_MSG"
 }
 
-# bic_gh_seg <segment>: one `gh pr create|merge` segment, quotes already removed by gc_segments. Finds the words
-# (tolerating a leading `(`, `{`, `$(`, backtick or a path before gh), then, for a create, reads only --base/-B,
-# --head/-H and --body-file/-F, and notes any other body flag. The body is read here, from the file, in issue mode only.
-bic_gh_seg() {
-  local t op="" base="" head="" bfile="" other=0 body
+# bic_classify <raw segment>: sets BIC_OP (create, merge or empty) and BIC_ARGS (the words after the verb). The segment
+# is raw (quotes intact). The command word is the word before the first `pr` word, the verb the word after it, skipping
+# -R/--repo <v>. A `$`, backtick or quote in the command word or the verb (a backslash too, in the verb) cannot be judged:
+# refused. Gated: gh (a path, gh.exe or `g\h` all count) with the verb create, new (the alias) or merge.
+bic_classify() {
+  local c="" w b b2 b3 v
+  BIC_OP=""; BIC_ARGS=()
   set -f   # word splitting without pathname expansion
   # shellcheck disable=SC2086
   set -- $1
   set +f
   while [ $# -gt 0 ]; do
-    t=${1##*[\(\{\`]}; t=${t##*/}; t=${t##*\\}
-    case $t in
-      [Gg][Hh]|[Gg][Hh].[Ee][Xx][Ee])
-        case ${2-} in [Pp][Rr]) ;; *) shift; continue ;; esac
-        case ${3-} in
-          [Cc][Rr][Ee][Aa][Tt][Ee]) op=create; shift 3; break ;;
-          [Mm][Ee][Rr][Gg][Ee]) op=merge; shift 3; break ;;
-        esac ;;
-    esac
-    shift
+    case $1 in [Pp][Rr]) [ -n "$c" ] && break ;; esac
+    c=$1; shift
   done
-  [ -n "$op" ] || bic_refuse "cannot find the gh pr create or gh pr merge words in a command segment: write them plainly (gh pr create ...), run from the PR's own checkout."
-  if [ "$op" = create ]; then
-    while [ $# -gt 0 ]; do
-      case $1 in
-        --base|-B)             [ -n "${2-}" ] || bic_refuse "$1 has no value: pass --base <branch>."; base=$2; shift ;;
-        --base=*)              base=${1#--base=} ;;
-        -B?*)                  base=${1#-B} ;;
-        --head|-H)             [ -n "${2-}" ] || bic_refuse "$1 has no value: pass --head <branch>."; head=$2; shift ;;
-        --head=*)              head=${1#--head=} ;;
-        -H?*)                  head=${1#-H} ;;
-        --body-file|-F)        bfile=${2-}; shift ;;
-        --body-file=*)         bfile=${1#--body-file=} ;;
-        -F?*)                  bfile=${1#-F} ;;
-        --body|--body=*|-b|-b?*|--fill|-f|--fill-first|--fill-verbose|--template|--template=*|-T|-T?*|--editor|-e|--web|-w) other=1 ;;
-      esac
-      [ $# -gt 0 ] && shift
-    done
-    # The body FORM is checked in both modes (one rule); the CONTENT is judged in issue mode only.
-    [ "$other" = 0 ] && [ -n "$bfile" ] ||
-      bic_refuse "the body of this gh pr create cannot be read from the command (--body, -b, --fill, --fill-first, --fill-verbose, --template, --editor, --web, or no body file): use --body-file <file> (issue mode: with a closing keyword and #<n> in the file, \`Closes #<n>\`, or a line that is exactly \`Item: none\`, T1 only)."
-    case $bfile in *[\$\`\*\?\[]*|\~*) bic_refuse "the body file '$bfile' holds a \$, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use --body-file <plain path>." ;; esac
-    case $bfile in /*|[A-Za-z]:[/\\]*) ;; *) bfile="$CWD/$bfile" ;; esac
-    [ -f "$bfile" ] && [ -r "$bfile" ] || bic_refuse "cannot read the body file '$bfile': write the PR body to a file and pass its path to --body-file."
-    [ "$BIC_MODE" = issue ] && body=$(head -c 65536 "$bfile")
+  [ $# -gt 0 ] || return 0   # no pr word after a command word: not a gh pr
+  case $c in
+    *\$*|*\`*|*\"*|*\'*) bic_refuse "cannot tell which command runs before the word pr ('$c' holds a \$, a backtick or a quote): write gh pr create, gh pr new or gh pr merge plainly, as its own command, with no quoting or variable in the command word or the verb." ;;
+  esac
+  w=${c#\(}; w=${w#\{}
+  b=${w##*/}; b2=${b##*\\}; b3=${w//\\/}; b3=${b3##*/}
+  case $b2 in [Gg][Hh]|[Gg][Hh].[Ee][Xx][Ee]) ;; *)
+    case $b3 in [Gg][Hh]|[Gg][Hh].[Ee][Xx][Ee]) ;; *) return 0 ;; esac ;;
+  esac
+  shift   # the pr word
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -R|--repo) shift; [ $# -gt 0 ] && shift ;;
+      -R?*|--repo=*) shift ;;
+      *) break ;;
+    esac
+  done
+  [ $# -gt 0 ] || return 0
+  v=$1
+  case $v in
+    *\$*|*\`*|*\"*|*\'*|*\\*) bic_refuse "cannot tell which gh pr verb runs ('$v' holds a \$, a backtick, a quote or a backslash): write gh pr create, gh pr new or gh pr merge plainly, as its own command." ;;
+  esac
+  case $v in
+    [Cc][Rr][Ee][Aa][Tt][Ee]|[Nn][Ee][Ww]) BIC_OP=create ;;
+    [Mm][Ee][Rr][Gg][Ee]) BIC_OP=merge ;;
+    *) return 0 ;;
+  esac
+  shift
+  BIC_ARGS=("$@")
+}
+
+# bic_create_args <raw segment>: reads BIC_ARGS of a create. Sets BIC_BASE, BIC_HEAD and BIC_BFILE, or refuses. Only
+# --base/-B, --head/-H, --body-file/-F and --title/-t take a value here; any other body form is refused, and so is a
+# value flag given twice or a --title/-t value that holds a flag-shaped word (it would be read as a flag).
+bic_create_args() {
+  local t fam val other=0 nb=0 nh=0 nf=0 nt=0
+  BIC_BASE=""; BIC_HEAD=""; BIC_BFILE=""
+  # a quoted title with a word that starts with a dash, or an unquoted title that does: flag-shaped
+  if printf '%s\n' "$1" | grep -qE "(^|[[:space:]])(--title|-t)[[:space:]=]+([\"'][^\"']*[[:space:]]-|[\"']?-)"; then
+    bic_refuse "the title holds a flag-shaped word (a word that starts with -): reword the title."
   fi
-  bic_judge "$op" "$base" "$head" "$body"
+  set -- "${BIC_ARGS[@]}"
+  while [ $# -gt 0 ]; do
+    t=${1//[\"\']/}; fam=""; val=""
+    case $t in
+      --base|-B)      fam=base; val=${2-}; shift ;;
+      --base=*)       fam=base; val=${t#--base=} ;;
+      -B?*)           fam=base; val=${t#-B} ;;
+      --head|-H)      fam=head; val=${2-}; shift ;;
+      --head=*)       fam=head; val=${t#--head=} ;;
+      -H?*)           fam=head; val=${t#-H} ;;
+      --body-file|-F) fam=file; val=${2-}; shift ;;
+      --body-file=*)  fam=file; val=${t#--body-file=} ;;
+      -F?*)           fam=file; val=${t#-F} ;;
+      --title|-t)     fam=title; val=${2-}; shift ;;
+      --title=*)      fam=title; val=${t#--title=} ;;
+      -t?*)           fam=title; val=${t#-t} ;;
+      --body|--body=*|-b|-b?*|--fill|-f|--fill-first|--fill-verbose|--template|--template=*|-T|-T?*|--editor|-e|--web|-w) other=1 ;;
+    esac
+    if [ -n "$fam" ]; then
+      val=${val//[\"\']/}
+      [ -n "$val" ] || bic_refuse "$t has no value: pass --base <branch>, --head <branch>, use --body-file <file>, or --title <words>."
+      case $fam in
+        base) nb=$((nb + 1)); BIC_BASE=$val ;;
+        head) nh=$((nh + 1)); BIC_HEAD=$val ;;
+        file) nf=$((nf + 1)); BIC_BFILE=$val ;;
+        title) nt=$((nt + 1)) ;;
+      esac
+    fi
+    [ $# -gt 0 ] && shift
+  done
+  [ "$nb" -le 1 ] && [ "$nh" -le 1 ] && [ "$nf" -le 1 ] && [ "$nt" -le 1 ] ||
+    bic_refuse "a value flag (--base, --head, --body-file, --title) is given more than once, so this check cannot tell which value counts: give each once."
+  [ "$other" = 0 ] && [ -n "$BIC_BFILE" ] ||
+    bic_refuse "the body of this gh pr create cannot be read from the command (--body, -b, --fill, --fill-first, --fill-verbose, --template, --editor, --web, or no body file): use --body-file <file> (issue mode: with a closing keyword and #<n> in the file, \`Closes #<n>\`, or a line that is exactly \`Item: none\`, T1 only). If the words gh pr create sit in another command's text or in a title, move that text into a file."
 }
 
 # ---- the tool shapes -------------------------------------------------------
@@ -283,11 +346,35 @@ esac
 
 if [ "$bic_op" = shell ]; then
   [ -n "$GC_CMD" ] || exit 0   # a payload with no command at all: nothing to inspect
-  bic_segs=$(gc_segments | grep -E "$BIC_GH_RE")
-  [ -n "$bic_segs" ] ||
-    bic_refuse "the command holds the words gh pr create or gh pr merge, but not in a form this check can find (a backslash inside a word?): write them plainly."
-  if gc_dirchange_in "$GC_CMD"; then
-    bic_refuse "the command changes directory (cd, pushd, env -C, ...) and holds a gh pr create or gh pr merge, so this check cannot tell which checkout it acts in: run it alone, with the shell already in the PR's own checkout."
+  bic_typed=$GC_CMD
+  # gate-before-merge's rule: ONE leading `cd <abs dir> &&` is allowed and sets GC_CWD_E; script bodies are read into
+  # GC_CMD (after the typed text); another directory change next to a gated verb is refused there.
+  gc_dir_rule backlog-item-check "$CWD" || exit 2
+  bic_bodies=${GC_CMD#"$bic_typed"}
+  bic_segs=$(printf '%s\n' "$bic_typed" | gc_split_ops | grep -v '^[[:space:]]*$')
+  if [ "$GC_CWD_E" != "$CWD" ]; then bic_segs=$(printf '%s\n' "$bic_segs" | sed 1d); CWD=$GC_CWD_E; fi
+  bic_n=0; bic_gseg=""; bic_gop=""
+  while IFS= read -r bic_seg; do
+    [ -n "$bic_seg" ] || continue
+    bic_n=$((bic_n + 1))
+    bic_classify "$bic_seg"
+    if [ -n "$BIC_OP" ]; then bic_gseg=$bic_seg; bic_gop=$BIC_OP; bic_gargs=("${BIC_ARGS[@]}"); fi
+  done <<< "$bic_segs"
+  # a script body holding a gated segment is refused, not judged (strict); one holding an undeterminable shape is too
+  while IFS= read -r bic_seg; do
+    [ -n "$bic_seg" ] || continue
+    bic_classify "$bic_seg"
+    [ -z "$BIC_OP" ] || bic_refuse "a script this command runs holds a gh pr $BIC_OP, and this check does not judge a script's other lines: run gh pr create, gh pr new or gh pr merge as its own command, not from a script."
+  done <<< "$(printf '%s\n' "$bic_bodies" | gc_split_ops)"
+  [ -n "$bic_gop" ] || exit 0   # no gated segment: not this hook's shape
+  if [ "$bic_n" != 1 ]; then
+    bic_refuse "gh pr $bic_gop shares its command with other commands (chained with && ; || or |, run in the background, or after a directory change other than one leading cd <abs dir> &&), so this check cannot tell which state it runs in: run gh pr create/merge as its own command."
+  fi
+  case $bic_gseg in
+    *'&'*|*'$('*|*\`*|*'<('*|*'>('*) bic_refuse "gh pr $bic_gop holds a background &, a command substitution or a process substitution, so this check cannot tell what runs first: run gh pr create/merge as its own command, and use --body-file <file> for a PR body, not a command substitution." ;;
+  esac
+  if gc_dirchange_in "$bic_gseg"; then
+    bic_refuse "gh pr $bic_gop sits next to a directory change (cd, pushd, env -C, ...), so this check cannot tell which checkout it acts in: run gh pr create/merge as its own command, in the PR's own checkout."
   fi
 fi
 
@@ -301,10 +388,17 @@ case "$BIC_MODE" in
 esac
 
 if [ "$bic_op" = shell ]; then
-  while IFS= read -r bic_seg; do
-    [ -n "$bic_seg" ] || continue
-    bic_gh_seg "$bic_seg"
-  done <<< "$bic_segs"
+  bic_body=""
+  if [ "$bic_gop" = create ]; then
+    BIC_ARGS=("${bic_gargs[@]}")
+    bic_create_args "$bic_gseg"
+    bic_bfile=$BIC_BFILE
+    case $bic_bfile in *[\$\`\*\?\[]*|\~*) bic_refuse "the body file '$bic_bfile' holds a \$, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use --body-file <plain path>." ;; esac
+    case $bic_bfile in /*|[A-Za-z]:[/\\]*) ;; *) bic_bfile="$CWD/$bic_bfile" ;; esac
+    [ -f "$bic_bfile" ] && [ -r "$bic_bfile" ] || bic_refuse "cannot read the body file '$bic_bfile': write the PR body to a file and pass its path to --body-file."
+    [ "$BIC_MODE" = issue ] && bic_body=$(head -c 65536 "$bic_bfile")
+  fi
+  bic_judge "$bic_gop" "$BIC_BASE" "$BIC_HEAD" "$bic_body"
   exit 0
 fi
 

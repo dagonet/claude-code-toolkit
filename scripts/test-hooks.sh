@@ -13331,7 +13331,7 @@ check_msg "backlog-item-check: file mode, --body-file with a \$VAR path: refused
 check_nomsg "backlog-item-check: file mode, -F <file> in a move repo: allowed (the content is not judged in file mode)" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" "gh pr create --base main -F $BIC_BB")" "BLOCKED"
 check_nomsg "backlog-item-check: gh pr create via PowerShell, a move: allowed" "$BIC_HOOK" 0 "$(bic_psb "$BIC_MV" 'gh pr create --base main --title t')" "BLOCKED"
 check_nomsg "backlog-item-check: a gh pr create with a quoted title, a move: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "feat: B-3 done"')" "BLOCKED"
-check_nomsg "backlog-item-check: bash -c wrapping gh pr merge, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'bash -c "gh pr merge 5"')" "BLOCKED"
+check_msg "backlog-item-check: bash -c wrapping gh pr merge: the quote on the command word is refused (strict)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'bash -c "gh pr merge 5"')" "write gh pr"
 check_nomsg "backlog-item-check: gh pr merge 5 --squash, file mode, a move, no Gate line: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr merge 5 --squash')" "BLOCKED"
 check_nomsg "backlog-item-check: gh pr merge via PowerShell, a move: allowed" "$BIC_HOOK" 0 "$(bic_ps "$BIC_MV" 'gh pr merge 5 --squash')" "BLOCKED"
 check_nomsg "backlog-item-check: gh.exe pr create (PowerShell), a move: allowed" "$BIC_HOOK" 0 "$(bic_psb "$BIC_MV" 'gh.exe pr create --base main')" "BLOCKED"
@@ -13357,21 +13357,69 @@ check "backlog-item-check: git merge feature on main exits 0 (not this hook's sh
 check "backlog-item-check: a Bash payload with no command key exits 0" hooks/backlog-item-check.sh 0 "$(mkjson_nocmd Bash "$BIC_NM")"
 check_msg "backlog-item-check: a command key that reads as empty is refused" "$BIC_HOOK" 2 "$(mkjson_emptycmd Bash "$BIC_NM")" "could not read"
 # forms the segment finder must still see
-check_msg "backlog-item-check: gh pr \"create\" (quoted word), no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr "create" --base main')" '### Done'
-check_msg "backlog-item-check: bash -c 'gh pr merge 5', no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'bash -c "gh pr merge 5"')" '### Done'
+check_msg "backlog-item-check: gh pr \"create\" (a quoted verb) is refused, cannot determine" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr "create" --base main')" "write gh pr"
+check_msg "backlog-item-check: bash -c 'gh pr merge 5', no move: refused (the quote is not judged)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'bash -c "gh pr merge 5"')" "write gh pr"
 check_msg "backlog-item-check: env assignment before gh, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'GH_TOKEN=x gh pr create --base main')" '### Done'
-check_msg "backlog-item-check: gh pr create after && in a chain, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'git status && gh pr create --base main')" '### Done'
+check_msg "backlog-item-check: gh pr create after && in a chain: refused, its own command" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'git status && gh pr create --base main')" "own command"
 check_msg "backlog-item-check: gh pr merge in a subshell, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" '(gh pr merge 5)')" '### Done'
 check_msg "backlog-item-check: a continuation line between gh pr and create, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr \
 create --base main')" '### Done'
-check_msg "backlog-item-check: g\\h pr create (backslash inside the word): refused, cannot determine" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'g\h pr create --base main')" "not in a form"
+check_msg "backlog-item-check: g\\h pr create (backslash inside the word) is still recognised: no move, refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'g\h pr create --base main')" '### Done'
 check_msg "backlog-item-check: narration that holds the words is refused too (documented)" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'echo gh pr create')" '### Done'
-check_msg "backlog-item-check: a cd before gh pr create is refused (the checkout cannot be told)" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" "cd $BIC_NM && gh pr create --base main")" "changes directory"
-check_msg "backlog-item-check: a cd after gh pr merge is refused too" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr merge 5; cd $BIC_NM")" "changes directory"
+check_msg "backlog-item-check: a single leading cd <abs> && gh pr create is judged in the cd target (no move there): refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" "cd $BIC_NM && gh pr create --base main")" '### Done'
+check_nomsg "backlog-item-check: a single leading cd <abs> && gh pr create, a move in the cd target, cwd elsewhere: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_NM" "cd $BIC_MV && gh pr create --base main")" "BLOCKED"
+check_nomsg "backlog-item-check: a single leading cd <abs> && gh pr merge 5, a move in the cd target: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" "cd $BIC_MV && gh pr merge 5")" "BLOCKED"
+check_msg "backlog-item-check: cd ; gh pr create (not a leading cd &&) is refused, its own command" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" "cd $BIC_MV; gh pr create --base main")" "own command"
+check_msg "backlog-item-check: a cd after gh pr merge is refused too" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr merge 5; cd $BIC_NM")" "directory change"
 check_msg "backlog-item-check: gh pr create, Task source missing: refused" "$BIC_HOOK" 2 "$(bic_sh "$(bic_mk bic-gms - full originhead)" 'gh pr create --base main')" "Task source"
 mkdir -p "$BIC_NM/.claude"; : > "$BIC_NM/.claude/git-guard-off"
 check "backlog-item-check: kill switch allows a gh pr create via Bash" hooks/backlog-item-check.sh 0 "$(bic_shb "$BIC_NM" 'gh pr create --base main')"
 rm -f "$BIC_NM/.claude/git-guard-off"
+
+# ---- fix round 1: the gh pr new alias, script bodies, other segments, shapes that cannot be judged, flag-shaped titles
+printf '%s\n' 'gh pr create --fill' > "$TMPROOT/bic-script-fill.sh"
+printf '%s\n' 'gh pr view 5' > "$TMPROOT/bic-script-view.sh"
+printf '%s\n' "gh pr create --base main --body-file $BIC_BF" > "$TMPROOT/bic-script-ok.sh"
+# 1. the alias: new is create
+check_msg "backlog-item-check: gh pr new --fill, a move repo: refused like create, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr new --fill')" "use --body-file"
+check_msg "backlog-item-check: gh pr new, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr new --base main')" '### Done'
+check_nomsg "backlog-item-check: gh pr new, a move: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr new --base main')" "BLOCKED"
+check_msg "backlog-item-check: gh pr new --fill via PowerShell: refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" 'gh pr new --fill')" "use --body-file"
+# 2. script bodies are scanned (strict: a script holding gh pr create/new/merge is refused)
+check_msg "backlog-item-check: bash script.sh whose body holds gh pr create --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-fill.sh")" "script"
+check_msg "backlog-item-check: a script holding a clean gh pr create is refused too (strict, not judged)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-ok.sh")" "script"
+check_nomsg "backlog-item-check: a script holding only gh pr view is not this hook's shape" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-view.sh")" "BLOCKED"
+# 3. another segment changes what gh acts on: the gated command must be the only segment
+check_msg "backlog-item-check: git checkout then gh pr create -F: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "git checkout nomv && gh pr create --base main -F $BIC_BF")" "own command"
+check_msg "backlog-item-check: writing the body file then gh pr create -F: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "printf no-item > $TMPROOT/b.md && gh pr create --base main -F $TMPROOT/b.md")" "own command"
+check_msg "backlog-item-check: gh pr merge ; other: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5; ls')" "own command"
+check_msg "backlog-item-check: gh pr merge | tee: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 | tee x')" "own command"
+check_msg "backlog-item-check: gh pr merge || true: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 || true')" "own command"
+check_msg "backlog-item-check: gh pr merge & (background): refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 & ls')" "own command"
+check_msg "backlog-item-check: a command substitution inside gh pr create: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --title "$(git checkout nomv)" -F x')" "own command"
+check_msg "backlog-item-check: a PowerShell chain before gh pr merge: refused, its own command" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" 'git checkout nomv; gh pr merge 5')" "own command"
+# 4. shapes this hook cannot determine are refused; other literal verbs pass
+check_msg "backlog-item-check: gh pr -R o/r create --fill: the -R value is skipped, create is judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -R o/r create --fill')" "use --body-file"
+check_msg "backlog-item-check: gh pr --repo o/r merge 5, no move: judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr --repo o/r merge 5')" '### Done'
+check_msg "backlog-item-check: \$G pr create (variable command word): refused, cannot determine" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" '$G pr create --base main')" "write gh pr"
+check_msg "backlog-item-check: gh pr \$V (variable verb): refused, cannot determine" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr $V')" "write gh pr"
+check_msg "backlog-item-check: PowerShell g\`h pr create (backtick in the word): refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" 'g`h pr create --base main')" "write gh pr"
+check_msg "backlog-item-check: G=gh; \$G pr create: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'G=gh; $G pr create --base main')" "write gh pr"
+check_nomsg "backlog-item-check: gh pr checks 5 passes (a literal verb that is not create, new or merge)" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr checks 5')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr view 5 --json title passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr view 5 --json title')" "BLOCKED"
+check_nomsg "backlog-item-check: a pr word after another command (git log | grep pr) passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'git log --oneline | grep pr')" "BLOCKED"
+# 5. the body-form refusal names the other fix too
+check_msg "backlog-item-check: the body-form refusal names the text-in-another-command fix" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --fill')" "move that text into a file"
+# 6. flag-shaped words in a title, repeated value flags
+check_msg "backlog-item-check: --title \"a --base x\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "a --base x"')" "flag-shaped"
+check_msg "backlog-item-check: --title -F x (unquoted flag-shaped title): refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title -F')" "flag-shaped"
+check_msg "backlog-item-check: -t \"a -b\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main -t "a -b"')" "flag-shaped"
+check_msg "backlog-item-check: --base given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --base other')" "more than once"
+check_msg "backlog-item-check: --body-file given twice: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $BIC_BF -F $BIC_BB")" "more than once"
+check_msg "backlog-item-check: --title given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title a --title b')" "more than once"
+check_nomsg "backlog-item-check: a plain multi-word title is fine" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "feat: move B-3 to done"')" "BLOCKED"
+# 7. a payload that does not parse is refused with this hook's own prefix
+check_msg "backlog-item-check: a truncated payload is refused with the hook's own prefix" "$BIC_HOOK" 2 '{"tool_name":"Bash","tool_input":{"command":"gh pr' "BLOCKED: backlog-item-check:"
 
 # issue mode: the body comes ONLY from --body-file / -F, read by the hook
 BIC_IS=$(bic_mk bic-gis "github-issues" bare originhead)
