@@ -13602,6 +13602,20 @@ bb_run "$TMPROOT/bb-no-such-dir" startup
 expect "backlog-brief: a project dir that does not exist: silent, exit 0" "rc=0 out=" "rc=$BB_RC out=$BB_OUT"
 expect "backlog-brief: file mode needs no gh and no timeout (restricted PATH, the line is the same)" "rc=0 out=$BB_WANT" \
   "$(bb_run "$BB_P1" startup "$BB_NOTO"; printf 'rc=%s out=%s' "$BB_RC" "$BB_OUT")"
+# the root is the guard's: the repo's top level, so a session started in a subdirectory still gets the line
+BB_G=$(bb_proj gitroot '`plan-files`' "$BB_FULL"); mkdir -p "$BB_G/sub/deep"; git -C "$BB_G" init -q >/dev/null 2>&1
+bb_expect "backlog-brief: a session started in a subdirectory of the repo still prints the line" "$BB_WANT" "$BB_G/sub/deep" startup
+bb_expect "backlog-brief: a session started at the repo root prints the same line" "$BB_WANT" "$BB_G" startup
+# the top title goes into the model context at every session start: control characters stripped, capped at 80 characters
+BB_C1=$(bb_proj ctrl '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 red\033[31mtext\007bell\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: control characters (ESC, BEL) in the top title are stripped" "backlog: 0 untriaged, 0 in progress, top: B-4 red[31mtextbell" "$BB_C1" startup
+BB_LONG=$(printf '%05000d' 0 | tr 0 x)
+BB_C2=$(bb_proj longtitle '`plan-files`' "## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 $BB_LONG\n\n### Done\n\n_none_\n")
+bb_expect "backlog-brief: a 5000-character top title is capped at 80 characters ending in ..." \
+  "backlog: 0 untriaged, 0 in progress, top: B-4 $(printf '%077d' 0 | tr 0 x)..." "$BB_C2" startup
+BB_C3=$(bb_proj title80 '`plan-files`' "## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 $(printf '%080d' 0 | tr 0 x)\n\n### Done\n\n_none_\n")
+bb_expect "backlog-brief: a top title of exactly 80 characters is kept whole" \
+  "backlog: 0 untriaged, 0 in progress, top: B-4 $(printf '%080d' 0 | tr 0 x)" "$BB_C3" startup
 # issue mode: fake gh on a private PATH. It logs its arguments and prints the canned JSON.
 BB_FAKE="$TMPROOT/bb-fake"; mkdir -p "$BB_FAKE"
 for bb_t in grep sed awk head tr cat sleep timeout; do

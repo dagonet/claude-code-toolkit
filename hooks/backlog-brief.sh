@@ -5,11 +5,12 @@
 # now-brief.sh is separate and untouched (it re-shows ## Now after a compaction only).
 #
 # MODE is `Task source` in the repo root's PROJECT_CONTEXT.md, read exactly as backlog-item-check.sh reads it (bic_mode
-# below is a byte-for-byte copy; consistency check 86 pins the two together). The root is CLAUDE_PROJECT_DIR, else `.`.
+# below is a byte-for-byte copy; consistency check 86 pins the two together). The root is the repo's top level (as the guard finds it), else CLAUDE_PROJECT_DIR, else `.`.
 #   file mode   (`plan-files`):    PROJECT_STATE.md, under `## Backlog`:
 #       `backlog: <u> untriaged, <p> in progress, top: B-<n> <title>`  (`top: none` when Ranked holds no item)
 #       <u> = B-<n> lines under ### Untriaged; <p> = B-<n> lines tagged `[in progress]` under ### Ranked; the top
-#       item is the first B-<n> line under ### Ranked, shown without its tag. A line is `- B-<n> [in progress] <title>`.
+#       item is the first B-<n> line under ### Ranked, shown without its tag, control characters removed, capped at 80 characters
+#       (ending in `...`) because stdout reaches the model. A line is `- B-<n> [in progress] <title>`.
 #       Any of the three subsections missing: the hint line instead.
 #   issue mode  (`github-issues`): `backlog: <u> untriaged, <o> open` from `gh issue list --state open --json labels
 #       --limit 200` under `timeout 3` (<u> = open issues with no priority:1/2/3 label; the list is capped at 200, so
@@ -35,7 +36,7 @@ bic_mode() {
   return 0
 }
 
-BIC_TOP=${CLAUDE_PROJECT_DIR:-.}
+BIC_TOP=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --show-toplevel 2>/dev/null) || BIC_TOP=${CLAUDE_PROJECT_DIR:-.}
 mode=$(bic_mode)
 
 case "$mode" in
@@ -53,7 +54,9 @@ case "$mode" in
             l = $0; sub(/^[[:space:]]*[-*][[:space:]]+B-/, "", l)
             n = l; sub(/[^0-9].*$/, "", n)
             t = substr(l, length(n) + 1)
+            gsub(/[\001-\037\177]/, "", t)
             sub(/^[[:space:]]+\[in progress\]/, "", t); sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
+            if (length(t) > 80) t = substr(t, 1, 77) "..."
             top = "B-" n (t == "" ? "" : " " t)
           }
         }
