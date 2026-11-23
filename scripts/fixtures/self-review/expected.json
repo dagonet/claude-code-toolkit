@@ -35,7 +35,13 @@
     "skills": {"commit": 1, "jev": 1, "sprint": 0},
     "agents": {"coder": 1, "Explore": 0}
   },
-  "hook_blocks": {"gate-before-merge": 3, "deny-hang-shapes": 2, "other": 3},
+  "hook_blocks": {"gate-before-merge": 4, "deny-hang-shapes": 2, "other": 16},
+  "backlog_item_none": 4,
+  "backlog_refusals": {
+    "file/no-item": 3, "issue/no-item": 1, "file/no-subsections": 1, "other/not-pushed": 1,
+    "other/wrong-checkout": 1, "other/no-base": 2, "other/body-unreadable": 1, "other/mode": 1, "other/other": 2
+  },
+  "followups": 4,
   "correction_candidates": 3,
   "notes": {
     "recurring_failure": {"gate-before-merge": {"count": 5, "projects": 2}},

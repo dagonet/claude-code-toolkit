@@ -68,11 +68,45 @@ LADDER = ('haiku', 'sonnet', 'opus', 'fable')  # the model names the note carrie
 USER = 'user'  # the `<to>` of the top-rung form
 OTHER = 'other'
 NOTE_KINDS = ('helped', 'recurring_failure', 'rule_unused')
+# Backlog discipline (hooks/backlog-item-check.sh). `backlog_refusals` keys are `<mode>/<reason>`, both from
+# these fixed lists, and only the count of each is kept, never the refusal text. The mode is `file` or `issue`
+# only when the refusal text itself is specific to one (it is not named in the text), else `other`. The reason
+# comes from the first fixed substring of the hook's own refusal text that the result holds, else `other`.
+BACKLOG_HOOK = 'backlog-item-check'
+BACKLOG_MODES = ('file', 'issue', OTHER)
+BACKLOG_REASONS = ('no-item', 'body-unreadable', 'no-subsections', 'wrong-checkout', 'not-pushed', 'no-base', 'mode', OTHER)
+BACKLOG_REFUSALS = (  # (substring of the hook's refusal text, mode, reason); the first one found wins
+    ('this PR moves no backlog item', 'file', 'no-item'),
+    ('the PR body names no item', 'issue', 'no-item'),
+    ('with the subsections ### Untriaged', 'file', 'no-subsections'),
+    ('cannot read the body file', OTHER, 'body-unreadable'),
+    ('the body of this gh pr create cannot be read', OTHER, 'body-unreadable'),
+    ('this check cannot tell which file it is', OTHER, 'body-unreadable'),
+    ('is not equal to refs/remotes/origin/', OTHER, 'not-pushed'),
+    ('no base branch given', OTHER, 'no-base'),
+    ('such as ~ or @{}): pass --base', OTHER, 'no-base'),
+    ('does not exist locally: fetch first', OTHER, 'no-base'),
+    ('such as ~ or @{}): run from the PR', OTHER, 'wrong-checkout'),
+    ('this checkout is on', OTHER, 'wrong-checkout'),
+    ('is on a detached HEAD', OTHER, 'wrong-checkout'),
+    ('cannot read the diff of HEAD', OTHER, 'wrong-checkout'),
+    ('cannot read the commits of', OTHER, 'wrong-checkout'),
+    ('is not inside a git checkout', OTHER, 'wrong-checkout'),
+    ('has no usable', OTHER, 'mode'),
+)
+# `Item: none` as a line of its own (a commit message or heredoc, optionally closed by a quote) or as a quoted -m text.
+ITEM_NONE_RE = re.compile(r'(?m)^[ \t]*Item: none[ \t]*["\']?[ \t]*\r?$|["\']Item: none["\']')
+ITEM_NONE_LINE_RE = re.compile(r'(?m)^Item: none\r?$')  # a PR body: the line, as the hook reads it
+GIT_COMMIT_RE = re.compile(r'\bgit\b[^\n]*\bcommit\b')
+SHELL_TOOLS = {'Bash', 'PowerShell'}
+CREATE_PR_TOOL = 'mcp__MCP_DOCKER__create_pull_request'
+FOLLOWUP_TYPES = {'cct:code-reviewer', 'code-reviewer', 'cct:tester', 'tester'}  # the agents whose report may carry a block
 # The shared JSON keys merge() handles: the header ones are not table rows. The self-test fails when
 # count() writes a key outside these, so a new measure cannot silently miss the merged table.
 HEADER_KEYS = {'schema', 'machine', 'since', 'until', 'claude_code_versions'}
 MEASURE_KEYS = {'spawns', 'start_models', 'step_ups', 'tokens_by_model', 'token_share', 'toolkit_use', 'hook_blocks', 'correction_candidates',
-                'correction_kinds', 'notes', 'notes_malformed', 'jev', 'unreadable_files'}
+                'correction_kinds', 'notes', 'notes_malformed', 'jev', 'unreadable_files',
+                'backlog_item_none', 'backlog_refusals', 'followups'}
 SURFACE_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:+-]{0,63}')  # a name, never a path
 
 
@@ -162,8 +196,8 @@ def toolkit_names(toolkit_root):
 
 
 def user_parts(msg):
-    """-> (typed text or None, [(is_error, tool result text)]) of a user message. A message holding
-    any tool result is not typed by the user."""
+    """-> (typed text or None, [(is_error, tool result text, tool_use_id or None)]) of a user message.
+    A message holding any tool result is not typed by the user."""
     content = msg.get('content')
     if isinstance(content, str):
         return content, []
@@ -175,7 +209,9 @@ def user_parts(msg):
         inner = b.get('content')
         if isinstance(inner, list):
             inner = '\n'.join(x['text'] for x in inner if isinstance(x, dict) and isinstance(x.get('text'), str))
-        results.append((b.get('is_error') is True, inner if isinstance(inner, str) else ''))
+        use_id = b.get('tool_use_id')
+        results.append((b.get('is_error') is True, inner if isinstance(inner, str) else '',
+                        use_id if isinstance(use_id, str) else None))
     if results:
         return None, results
     texts = [b['text'] for b in blocks if b.get('type') == 'text' and isinstance(b.get('text'), str)]
@@ -245,6 +281,34 @@ def block_hook(text, is_error, refusals=()):
     return hook_token(hit.group(1)) or UNATTRIBUTED
 
 
+def backlog_refusal(text):
+    """The `<mode>/<reason>` key of a backlog-item-check refusal text (see BACKLOG_REFUSALS), `<mode>/other`
+    when no fixed substring matches. Only the key leaves this function, never the text."""
+    for needle, mode, reason in BACKLOG_REFUSALS:
+        if needle in text:
+            return '%s/%s' % (mode, reason)
+    return '%s/%s' % (OTHER, OTHER)
+
+
+def has_followups(text):
+    """True when the text holds a line exactly `Follow-ups:` followed at once by a line starting `- `
+    (the block hooks/agent-result-notes.sh looks for)."""
+    lines = text.replace('\r', '').split('\n')
+    return any(a == 'Follow-ups:' and b.startswith('- ') for a, b in zip(lines, lines[1:]))
+
+
+def item_none(name, inp):
+    """True when one tool call carries the trailer `Item: none`: a create_pull_request body with the line
+    exactly, or a Bash/PowerShell `git commit` command whose text holds it (a -m text or a heredoc). A commit
+    made with -F <file> and a PR made with --body-file keep their text out of the transcript: not counted."""
+    if name == CREATE_PR_TOOL:
+        body = inp.get('body')
+        return isinstance(body, str) and ITEM_NONE_LINE_RE.search(body) is not None
+    command = inp.get('command')
+    return name in SHELL_TOOLS and isinstance(command, str) and GIT_COMMIT_RE.search(command) is not None \
+        and ITEM_NONE_RE.search(command) is not None
+
+
 def correction_text(typed):
     """The stripped text when a typed user turn reads as a correction, else None."""
     text = (typed or '').strip()
@@ -285,14 +349,24 @@ def scan(rows, since, until, refusals=(), step_ups=False):
     of type HOOK_CONTEXT, where a hook's additional context lands: the same text in a tool result
     (a file read, a command's output), in typed text or in an assistant's words is a quote.
     A message split over several rows repeats its usage, so usage is kept once per message id.
+    backlog [`<mode>/<reason>` of each real denial by hooks/backlog-item-check.sh, see backlog_refusal],
+    followups [the number of Agent results, from a reviewer or tester call, that hold a non-empty
+    `Follow-ups:` block]. Both are counts: no refusal or report text is kept.
     """
     out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': [],
-           'commands': [], 'blocks': [], 'corrections': [], 'step_ups': []}
+           'commands': [], 'blocks': [], 'corrections': [], 'step_ups': [], 'backlog': [], 'followups': 0}
     asked = False  # the latest assistant text, in or out of the window, ends in a question mark
+    spawned = {}  # tool_use id -> subagent_type of each Agent call seen so far, in or out of the window
     for i, row in enumerate(rows):
         msg = row.get('message')
         model = None
+        content = msg.get('content') if isinstance(msg, dict) else None
         if isinstance(msg, dict) and row.get('type') == 'assistant':
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') in AGENT_TOOLS \
+                        and isinstance(block.get('id'), str) and isinstance(block.get('input'), dict) \
+                        and isinstance(block['input'].get('subagent_type'), str):
+                    spawned[block['id']] = block['input']['subagent_type']
             said = assistant_text(msg).rstrip()
             if said:
                 asked = said.endswith('?')
@@ -318,10 +392,14 @@ def scan(rows, since, until, refusals=(), step_ups=False):
             out['versions'][version] = out['versions'].get(version, 0) + 1
         if isinstance(msg, dict) and row.get('type') == 'user':
             typed, results = user_parts(msg)
-            for is_error, text in results:
+            for is_error, text, use_id in results:
                 hook = block_hook(text, is_error, refusals)
                 if hook:
                     out['blocks'].append(hook)
+                if hook == BACKLOG_HOOK:
+                    out['backlog'].append(backlog_refusal(text))
+                if spawned.get(use_id) in FOLLOWUP_TYPES and has_followups(text):
+                    out['followups'] += 1
             command = COMMAND_RE.search(typed) if typed else None
             if command:
                 out['commands'].append(command.group(1))
@@ -485,6 +563,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     hook_names = toolkit_hooks(toolkit_root)
     refusals = refusal_table(toolkit_root, hook_names)
     hook_blocks, local_hooks, corrections = {}, {}, []
+    backlog_refusals, backlog_item_none, followups = {}, 0, 0
     unreadable = 0
     clone_roots = list(dict.fromkeys(os.path.realpath(os.path.expanduser(r)) for r in clone_roots))
     for slug in sorted(os.listdir(projects_root)):
@@ -513,6 +592,10 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                 key = hook if hook in hook_names else OTHER  # a project's own hook name stays local
                 hook_blocks[key] = hook_blocks.get(key, 0) + 1
                 local_hooks[hook] = local_hooks.get(hook, 0) + 1
+            for key in s['backlog']:  # main and subagent transcripts alike: a denial or a trailer is in the one that made it
+                backlog_refusals[key] = backlog_refusals.get(key, 0) + 1
+            followups += s['followups']
+            backlog_item_none += sum(item_none(name, inp) for name, inp in s['calls'])
             if not is_sub:  # a subagent's user rows are its parent's prompts, not the user's words
                 corrections += [{'project': slug, 'ts': ts, 'text': cut_text(text)} for ts, text in s['corrections']]
             for kind, was, then in s['step_ups']:
@@ -547,6 +630,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
               'claude_code_versions': versions, 'spawns': spawns, 'start_models': spawns, 'step_ups': step_ups,
               'tokens_by_model': by_model,
               'token_share': share, 'toolkit_use': use, 'hook_blocks': hook_blocks,
+              'backlog_item_none': backlog_item_none, 'backlog_refusals': backlog_refusals, 'followups': followups,
               'correction_candidates': len(corrections), 'notes': notes, 'notes_malformed': notes_malformed,
               'jev': jev_counts(clone_roots, since, until), 'unreadable_files': unreadable + notes_unreadable}
     return shared, {'per_project': per_project, 'corrections': corrections, 'notes': local_notes,
@@ -589,7 +673,11 @@ def leak_probes(shared, local):
             ('corp.example', 'a gateway host name in a model string', False),
             ('secretproject', 'a project name in a model string', False),
             ('acme', 'a project name after a model family', False),
-            ('internal', 'a word after a model name', False)):
+            ('internal', 'a word after a model name', False),
+            ('ZZ-COMMIT-MARKER-5e1b', 'a commit message', False),
+            ('ZZ-PRBODY-MARKER-9a4e', 'a PR body', False),
+            ('ZZ-FOLLOWUP-MARKER-8d2c', 'a follow-up item', False),
+            ('ZZ-REFUSAL-MARKER-3b7a', 'the tail of a refusal text', False)):
         if needle in flat_shared:
             bad.append('/shared: %s leaked (%r)' % (what, needle))
         if in_local and needle not in flat_local:
@@ -640,8 +728,13 @@ def measures(data):
     for key in ('hook_blocks', 'jev'):
         for name, n in _dict(data.get(key)).items():
             rows['%s %s' % (key, name)] = num(n)
-    for key in ('correction_candidates', 'notes_malformed', 'unreadable_files'):
+    for key in ('correction_candidates', 'notes_malformed', 'unreadable_files', 'backlog_item_none', 'followups'):
         rows[key] = num(data.get(key))
+    for key, n in _dict(data.get('backlog_refusals')).items():  # a hand-made file: only listed modes and reasons
+        sides = key.split('/') if isinstance(key, str) else []
+        mode, reason = sides if len(sides) == 2 else (OTHER, OTHER)
+        add('backlog_refusals %s/%s' % (mode if mode in BACKLOG_MODES else OTHER,
+                                         reason if reason in BACKLOG_REASONS else OTHER), n)
     kinds = data.get('correction_kinds')
     for item in kinds if isinstance(kinds, list) else []:
         if isinstance(item, dict) and isinstance(item.get('kind'), str):
@@ -824,6 +917,16 @@ def merge_checks():
                     or '| step_ups cct:coder sonnet->other-model | 1 | 1 |' not in got \
                     or '| step_ups cct:coder other-model->other-model | 1 | 1 |' not in got:
                 bad.append('/merge: a step-up move is not normalised, or a host name or a free text reaches the table')
+            leaky['backlog_refusals'] = {'file/no-item': 2, 'issue/no-item': 1, 'corp.example/no-item': 1,
+                                         'file/ZZ-free-text': 3, 'plain': 1, 'a/b/c': 2}
+            write_json(os.path.join(tmp, 'a.json'), leaky)
+            got = merge(inbox_paths(tmp))
+            if 'corp.example' in got or 'ZZ-free-text' in got or '| backlog_refusals file/no-item | 2 | 2 |' not in got \
+                    or '| backlog_refusals issue/no-item | 1 | 1 |' not in got \
+                    or '| backlog_refusals other/no-item | 1 | 1 |' not in got \
+                    or '| backlog_refusals file/other | 3 | 3 |' not in got \
+                    or '| backlog_refusals other/other | 3 | 3 |' not in got:
+                bad.append('/merge: a backlog refusal key is not normalised and summed, or a free text reaches the table')
     except Exception as exc:  # a crash must read as a failed test, not a traceback
         bad.append('/merge: exception %s: %s' % (type(exc).__name__, exc))
     return bad
@@ -878,7 +981,8 @@ def self_test():
         bad.append('/merge: toolkit_use has keys merge() does not handle: %s' % sorted(set(shared['toolkit_use'])))
     # compare() ignores keys the expectation lacks; these maps must hold exactly the expected keys,
     # all the way down (so "one model per spawn" is pinned too).
-    for key in ('claude_code_versions', 'spawns', 'start_models', 'step_ups', 'tokens_by_model', 'toolkit_use', 'hook_blocks', 'notes', 'jev'):
+    for key in ('claude_code_versions', 'spawns', 'start_models', 'step_ups', 'tokens_by_model', 'toolkit_use', 'hook_blocks',
+                'backlog_refusals', 'notes', 'jev'):
         bad += key_diffs(shared.get(key), expected[key], '/' + key)
     want_local = {'-home-u-git-alpha': {'spawns': {'cct:coder': 1, 'Explore': 1, 'alpha-db-expert': 1, 'unknown': 2},
                                         'tokens': 9127}}
@@ -890,6 +994,11 @@ def self_test():
     for needle in ('corp.example', 'secretproject', 'acme', 'internal'):  # control: the rows the two probes are about are in the input,
         if needle not in raw:                          # and expected.json's other-model tokens count them
             bad.append('CONTROL FAILED: the fixture has no model string with %r' % needle)
+    with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-6.jsonl'), encoding='utf-8') as fh:
+        raw = fh.read()
+    for needle in ('ZZ-COMMIT-MARKER-5e1b', 'ZZ-PRBODY-MARKER-9a4e', 'ZZ-FOLLOWUP-MARKER-8d2c', 'ZZ-REFUSAL-MARKER-3b7a'):
+        if needle not in raw:  # control: the backlog leak probes can only pass when the marker is in the input
+            bad.append('CONTROL FAILED: the fixture has no backlog marker %r' % needle)
     corrections, notes = local.get('corrections', []), local.get('notes', {})
     texts = [c.get('text') for c in corrections]
     if sorted(texts) != sorted(["no, don't run the gate without asking ZZ-PRIVATE-MARKER-7f3a",
@@ -906,8 +1015,9 @@ def self_test():
             bad.append('/num(%r): want 0, got %s' % (value, num(value)))
     if num(7) != 7 or num(7.9) != 7:
         bad.append('/num: a finite number must pass through')
-    if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('deny-hang-shapes', 2),
-                                                        ('gate-before-merge', 3), ('other', 1), ('seal-guard', 1)]:
+    if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('backlog-item-check', 13),
+                                                        ('deny-hang-shapes', 2), ('gate-before-merge', 4),
+                                                        ('other', 1), ('seal-guard', 1)]:
         bad.append('/local/hook_blocks: got %s' % local.get('hook_blocks'))
     pre = 'PreToolUse:Bash hook error: '
     fixture_hooks = os.path.join(FIXTURES, 'toolkit')
@@ -952,6 +1062,30 @@ def self_test():
             ('PreToolUse:Bash [c]: BLOCKED: gate-before-merge', True, None)):
         if block_hook(text, is_error) != want:
             bad.append('/block_hook(%r, %s): want %s, got %s' % (text[:60], is_error, want, block_hook(text, is_error)))
+    # the hook's own refusal texts the fixture rows do not hold, each as the hook prints it (the unmapped ones go to other/other)
+    for text, want in (
+            ("the checkout is on a detached HEAD and no head branch was given: run from the PR's own checkout.", 'other/wrong-checkout'),
+            ("head 'x' is not a branch name (no revision expressions such as ~ or @{}): run from the PR's own checkout.",
+             'other/wrong-checkout'),
+            ("base 'x' is not a branch name (no revision expressions such as ~ or @{}): pass --base <branch>.", 'other/no-base'),
+            ('cannot read the diff of HEAD against refs/remotes/origin/main: run from the PR\'s own checkout.', 'other/wrong-checkout'),
+            ('cannot read the commits of refs/remotes/origin/main..HEAD: run from the PR\'s own checkout.', 'other/wrong-checkout'),
+            ('/x is not inside a git checkout: run from the PR\'s own checkout.', 'other/wrong-checkout'),
+            ("the body of this gh pr create cannot be read from the command (--body, -b)", 'other/body-unreadable'),
+            ("the body file '/x' holds a $, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use a plain path.",
+             'other/body-unreadable'),
+            ('title holds a flag-shaped word (a word that starts with -): reword the title.', 'other/other'),
+            ('--base has no value: pass --base <branch>.', 'other/other'),
+            ('the hook payload did not parse, or no JSON parser (node, python3 or jq) is on PATH', 'other/other'),
+            ('hooks/lib/git-cmd.sh missing -- run /cct:sync-template step 6b', 'other/other'),
+            ('', 'other/other')):
+        if backlog_refusal(text) != want:
+            bad.append('/backlog_refusal(%r): want %s, got %s' % (text[:50], want, backlog_refusal(text)))
+    for text, want in (('Follow-ups:\n- a', True), ('x\r\nFollow-ups:\r\n- a\r\n', True), ('Follow-ups:\n\n- a', False),
+                       ('Follow-ups:\nnone', False), (' Follow-ups:\n- a', False), ('Follow-ups:', False),
+                       ('Follow-ups:\nFollow-ups:\n- a', True), ('', False)):
+        if has_followups(text) != want:
+            bad.append('/has_followups(%r): want %s' % (text, want))
     known = {'.claude/rules/project.md'}
     for line, ok in (('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook", "count": 2}', True),
                      ('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook"}', True),

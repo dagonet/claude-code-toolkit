@@ -30,6 +30,8 @@
     "agents": {"coder": 1, "Explore": 2}
   },
   "hook_blocks": {"gate-before-merge": 1, "deny-hang-shapes": 2, "other": 3},
+  "backlog_item_none": 1,
+  "backlog_refusals": {"file/no-item": 1, "issue/no-item": 2},
   "correction_candidates": 4,
   "correction_kinds": [{"kind": "ignored-instruction", "count": 3}, {"kind": "scope-creep", "count": 1}],
   "notes": {

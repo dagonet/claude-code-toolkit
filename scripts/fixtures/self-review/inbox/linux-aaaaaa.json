@@ -24,6 +24,9 @@
     "agents": {"coder": 3, "Explore": 0}
   },
   "hook_blocks": {"gate-before-merge": 4, "other": 1},
+  "backlog_item_none": 3,
+  "backlog_refusals": {"file/no-item": 2, "other/not-pushed": 1},
+  "followups": 2,
   "correction_candidates": 6,
   "notes": {
     "helped": {"commit": {"count": 3, "projects": 2}},
