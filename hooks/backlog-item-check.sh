@@ -38,9 +38,10 @@
 #   backslash, `$`, backtick, glob or `(` in the quote-stripped text: exit 0 before git-cmd.sh is sourced).
 #   gc_dir_rule (as in gate-before-merge) allows ONE leading `cd <abs dir> &&`, judges in that directory (GC_CWD_E) and
 #   reads script bodies into the command text.
-#   STEP A, detection: the typed text plus the script bodies, normalized (quotes, backslashes and backticks removed,
-#   newlines to spaces, lowercase). It must hold the word gh, later the word pr, later one of the words create, new
-#   (gh's alias for create) or merge. No match: exit 0, so everyday text ("Fix PR template", `gh pr view`,
+#   STEP A, detection: the typed text plus the script bodies, normalized (quotes removed, newlines to spaces, lowercase;
+#   one text deletes backslashes and backticks, the other turns them into spaces and `$`). It must hold the word gh,
+#   later the word pr, later one of the words create, new (gh's alias for create) or merge; or a `$` word in place of the
+#   verb or of gh (-R/--repo <v> may sit between). No match: exit 0, so everyday text ("Fix PR template", `gh pr view`,
 #   `for pr in $(gh pr list)`) stays free.
 #   STEP B, a match must be the ONE plain shape in the typed command: a single segment (pipes, ;, &&, ||, &, newlines
 #   count; the one leading cd && does not), the literal words `gh pr`, optionally -R/--repo <v>, then create, new or
@@ -49,7 +50,8 @@
 #   KNOWN LIMITS. Accepted: a `git commit -m` or echo whose text holds the words gh, pr and create/new/merge is refused
 #   too (move that text into a file). Unseen: xargs, running ./x.sh directly, PowerShell `& x.ps1`, nested scripts, and
 #   interpreters (python, make); `gh alias`; a command word or verb built so that neither the words gh, pr and a verb
-#   nor a `$` next to pr appear (`$G pr create` with G set elsewhere is caught only because a verb follows a `$` word).
+#   nor a `$` next to pr appear (`$G pr create` with G set elsewhere is caught only because a verb follows a `$` word);
+#   a glob or brace in the verb (`mer?e` matching a file, `m{e,}rge`).
 #   Only these flags are read, from the plain segment: --base/-B and --head/-H (create), --body-file/-F (create); a
 #   value flag given twice, or a --title/-t value holding a flag-shaped word, is refused.
 #   BASE: --base/-B, else refs/remotes/origin/HEAD, else refuse. HEAD: --head/-H, else the checkout's branch. A merge
@@ -331,11 +333,14 @@ case "$GC_TOOL" in
 esac
 
 # Step A (words, lowercase, on normalized text) and the one refusal text of Step B. Three alternatives: the words gh,
-# pr and a verb in order; the word right after `gh pr` holding a `$` (a built verb); a `$` word right before the word
-# `pr` with a verb after it (a built command word).
+# pr and a verb in order; the word after `gh pr` holding a `$` that is not at its end or before ; | & ) < > (a built
+# verb; a closing backtick turned into `$`, as in `gh pr list`;, is not one); a `$` word before the word `pr` with a
+# verb after it (a built command word). In the last two, any number of -R/--repo <v> (BIC_A_RP: `-r v`, `-rv`,
+# `--repo v`, `--repo=v`; the text is lowercase) may sit between the words, as Step B accepts after `gh pr`.
+BIC_A_RP='((-r|--repo)([[:space:]]+|=)?[^[:space:]]+[[:space:]]+)*'
 BIC_A_RE='(^|[^a-z0-9_-])gh(\.exe)?([^a-z0-9_-].*)?[^a-z0-9_-]pr([^a-z0-9_-].*)?[^a-z0-9_-](create|new|merge)([^a-z0-9_-]|$)'
-BIC_A_RE_V='(^|[^a-z0-9_-])gh(\.exe)?[[:space:]]+pr[[:space:]]+[^[:space:]]*\$'
-BIC_A_RE_W='\$[^[:space:]]*[[:space:]]+pr([^a-z0-9_-].*)?[^a-z0-9_-](create|new|merge)([^a-z0-9_-]|$)'
+BIC_A_RE_V='(^|[^a-z0-9_-])gh(\.exe)?[[:space:]]+'"$BIC_A_RP"'pr[[:space:]]+'"$BIC_A_RP"'[^[:space:]]*\$[^[:space:];|&)<>]'
+BIC_A_RE_W='\$[^[:space:]]*[[:space:]]+'"$BIC_A_RP"'pr([^a-z0-9_-].*)?[^a-z0-9_-](create|new|merge)([^a-z0-9_-]|$)'
 BIC_FIX="this command mentions gh pr together with create/new/merge; run gh pr create/merge alone as one plain command (gh pr create --body-file F ...), and split any other part or move text holding these words into a file; use --body-file for the PR body."
 
 if [ "$bic_op" = shell ]; then
@@ -344,15 +349,16 @@ if [ "$bic_op" = shell ]; then
   # gate-before-merge's rule: ONE leading `cd <abs dir> &&` is allowed and sets GC_CWD_E; script bodies are read into
   # GC_CMD (after the typed text); another directory change next to a gated verb is refused there.
   gc_dir_rule backlog-item-check "$CWD" || exit 2
-  # STEP A, detection: the typed text plus the script bodies, normalized (quotes and backticks removed, newlines to
-  # spaces, lowercase; `$` kept). Two texts, any match counts: backslashes deleted (`g\h`) or turned into spaces (a
-  # Windows path `cli\gh.exe`). Each holds the typed text then the bodies, then the bodies then the typed text (a wrapper
-  # script `gh "$@"` run as `bash s.sh pr merge 5`). No match: not this hook's shape, exit 0 (everyday text such as
-  # "Fix PR template" or `gh pr view` never reaches Step B).
+  # STEP A, detection: the typed text plus the script bodies, normalized (quotes removed, newlines to spaces, lowercase;
+  # `$` kept). Two texts, any match counts: backslashes and backticks deleted (`g\h`, PowerShell g`h), or backslashes
+  # turned into spaces (a Windows path `cli\gh.exe`) and backticks into `$` (a built word mer`x`ge). Each holds the typed
+  # text, the bodies, the typed text, the bodies: every split of the three words across a wrapper script and its
+  # arguments is in that order (`gh "$@"` run as `bash s.sh pr merge 5`, `gh "$1" merge` run as `bash s.sh pr`). No
+  # match: not this hook's shape, exit 0 (everyday text such as "Fix PR template" or `gh pr view` never reaches Step B).
   bic_bodies=${GC_CMD#"$bic_typed"}
-  bic_x="$GC_CMD $bic_bodies $bic_typed"   # typed then bodies, then bodies then typed, as one text
+  bic_x="$GC_CMD $bic_typed $bic_bodies"   # typed, bodies, typed, bodies, as one text
   bic_n1=$(printf '%s' "$bic_x" | tr -d "\"'\\\\\`" | LC_ALL=C tr 'A-Z\n' 'a-z ')
-  bic_n2=$(printf '%s' "$bic_x" | tr -d "\"'\`" | LC_ALL=C tr 'A-Z\n\\' 'a-z  ')
+  bic_n2=$(printf '%s' "$bic_x" | tr -d "\"'" | LC_ALL=C tr 'A-Z\n\\`' 'a-z  $')
   printf '%s\n%s\n' "$bic_n1" "$bic_n2" | LC_ALL=C grep -qE -e "$BIC_A_RE" -e "$BIC_A_RE_V" -e "$BIC_A_RE_W" || exit 0
   # STEP B: a match must be the one plain shape, in the typed command. Everything else is refused without analysis.
   bic_segs=$(printf '%s\n' "$bic_typed" | gc_split_ops | grep -v '^[[:space:]]*$')

@@ -13468,6 +13468,27 @@ check_msg "backlog-item-check: gh pr merge 5 2>&1, no move: judged" "$BIC_HOOK" 
 check_nomsg "backlog-item-check: gh pr create ... --body-file F 2>&1, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $BIC_BF 2>&1")" "BLOCKED"
 check_msg "backlog-item-check: gh pr merge 5 2>&1 | tee x: still refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 2>&1 | tee x')" "as one plain command"
 check_msg "backlog-item-check: gh pr merge 5 2>&1 & ls: still refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 2>&1 & ls')" "as one plain command"
+# ---- fix round 4: a built verb or command word next to -R/--repo, backticks, a wrapper's split words
+check_msg "backlog-item-check: gh pr -R o/r \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -R o/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr -Ro/r \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -Ro/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr --repo o/r \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr --repo o/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr --repo=o/r mer\$(true)ge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr --repo=o/r mer$(true)ge 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr -R o/r -R o/r \$V 5 (repeated flag): refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -R o/r -R o/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh -R o/r pr \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh -R o/r pr $V 5')" "as one plain command"
+check_msg "backlog-item-check: \$G -R o/r pr merge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" '$G -R o/r pr merge 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr mer\`true\`ge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr mer`true`ge 5')" "as one plain command"
+check_msg "backlog-item-check: g\`true\`h pr merge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'g`true`h pr merge 5')" "as one plain command"
+printf '%s\n' 'gh "$1" merge "$2"' > "$TMPROOT/bic-script-split.sh"
+check_msg "backlog-item-check: bash s.sh pr 5, s.sh holds gh \"\$1\" merge \"\$2\" (words split across both): refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-split.sh pr 5")" "as one plain command"
+# controls: these stay free, and a plain merge with -R is still judged
+check_nomsg "backlog-item-check: for pr in \$(gh pr list); do :; done passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'for pr in $(gh pr list); do :; done')" "BLOCKED"
+check_nomsg "backlog-item-check: for pr in \`gh pr list\`; do :; done passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'for pr in `gh pr list`; do :; done')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr list --json number | jq . passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr list --json number | jq .')" "BLOCKED"
+check_nomsg "backlog-item-check: echo \`date\` pr passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'echo `date` pr')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr view \`cat n\` passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr view `cat n`')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr -R o/r view \$n passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr -R o/r view $n')" "BLOCKED"
+check_msg "backlog-item-check: gh pr -R o/r merge 5, no move: judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr -R o/r merge 5')" '### Done'
+check_nomsg "backlog-item-check: gh pr -R o/r merge 5, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr -R o/r merge 5')" "BLOCKED"
 # 7. a payload that does not parse is refused with this hook's own prefix
 check_msg "backlog-item-check: a truncated payload is refused with the hook's own prefix" "$BIC_HOOK" 2 '{"tool_name":"Bash","tool_input":{"command":"gh pr' "BLOCKED: backlog-item-check:"
 
