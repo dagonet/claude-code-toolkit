@@ -54,7 +54,7 @@ Follow these steps to configure Claude Code on a fresh machine:
 
 The agents ship in the cct plugin (`agents/` at the repo root) and are named `cct:<name>`; their models and effort are the values in each file's frontmatter. Plugin agents carry no frontmatter `hooks:` (consistency check 75): the plugin registers `gate-before-merge` once, for every caller.
 
-### Skills (9)
+### Skills (4 in `cct`, plus 5 in the optional `cct-helpers` and `cct-learning` plugins)
 
 Explicit workflows carry `disable-model-invocation: true` so they run only when you type the slash command; the rest auto-trigger from their `description`.
 

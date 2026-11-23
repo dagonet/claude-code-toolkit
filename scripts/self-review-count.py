@@ -47,7 +47,7 @@ HOOK_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
 WRAPPER_HOOKS = {'dispatch', 'run-hook'}  # the plugin's launchers: the hook they run is not in their path
 BLOCKED_RE = re.compile(r'BLOCKED: (\S+)')
 BLOCKED_TEXT_RE = re.compile(r'BLOCKED: ([^"\'$`\\(\r\n]+)')  # the literal start of a refusal text in a hook
-COMMAND_RE = re.compile(r'<command-name>/cct:([A-Za-z0-9._-]+)</command-name>')
+COMMAND_RE = re.compile(r'<command-name>/([A-Za-z0-9._-]+:[A-Za-z0-9._-]+)</command-name>')
 MIN_PREFIX = 12  # a shorter prefix would match too much
 # Texts the plugin's launcher prints when it cannot start a hook; they are not in a hooks/*.sh file.
 DISPATCH_REFUSALS = ('cct plugin files are missing', 'bash not found on PATH')
@@ -148,13 +148,21 @@ def default_machine(system, id_path):
 
 def toolkit_name(called, names):
     """The toolkit name behind a call, or None. `cct:<name>` is the toolkit's (the bare name comes back);
-    so is `<plugin>:<name>` when the repo's own plugins/<plugin>/agents/<name>.md holds it (the qualified name
-    comes back, as toolkit_names lists it). A bare name may be a Claude Code built-in (Explore) or another plugin's."""
+    so is `<plugin>:<name>` when the repo's own plugins/<plugin>/agents/<name>.md or
+    plugins/<plugin>/skills/<name>/ holds it (the qualified name comes back, as toolkit_names lists it).
+    A bare name may be a Claude Code built-in (Explore) or another plugin's."""
     if not isinstance(called, str):
         return None
     if called.startswith(PLUGIN_PREFIX):
         return called[len(PLUGIN_PREFIX):] if called[len(PLUGIN_PREFIX):] in names else None
     return called if ':' in called and called in names else None
+
+
+def command_name(typed):
+    """The `<plugin>:<name>` of a `/<plugin>:<name>` command row, or None. Whether it is a toolkit skill is
+    for toolkit_name to say: only names the repo's own files hold count."""
+    hit = COMMAND_RE.search(typed)
+    return hit.group(1) if hit else None
 
 
 def num(value):
@@ -190,8 +198,9 @@ def in_window(day, since, until):
 
 
 def toolkit_names(toolkit_root):
-    """-> (skill names, agent names) the toolkit ships, from its skills/ dirs, agents/*.md (bare names)
-    and plugins/<plugin>/agents/*.md (listed as `<plugin>:<name>`, the plugin being the folder name)."""
+    """-> (skill names, agent names) the toolkit ships, from its skills/ dirs and agents/*.md (bare names),
+    plugins/<plugin>/skills/<name>/ and plugins/<plugin>/agents/*.md (listed as `<plugin>:<name>`, the
+    plugin being the folder name)."""
     skills_dir, agents_dir = os.path.join(toolkit_root, 'skills'), os.path.join(toolkit_root, 'agents')
     skills = []
     agents = []
@@ -199,6 +208,9 @@ def toolkit_names(toolkit_root):
         skills = [n for n in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, n))]
     if os.path.isdir(agents_dir):
         agents = [n[:-len('.md')] for n in os.listdir(agents_dir) if n.endswith('.md')]
+    for path in glob.glob(os.path.join(toolkit_root, 'plugins', '*', 'skills', '*', '')):
+        parts = os.path.normpath(path).split(os.sep)
+        skills.append('%s:%s' % (parts[-3], parts[-1]))
     for path in glob.glob(os.path.join(toolkit_root, 'plugins', '*', 'agents', '*.md')):
         plugin = os.path.basename(os.path.dirname(os.path.dirname(path)))
         agents.append('%s:%s' % (plugin, os.path.basename(path)[:-len('.md')]))
@@ -350,7 +362,7 @@ def scan(rows, since, until, refusals=(), step_ups=False):
     -> dict: first_day (of the first timestamped row, in or out of the window), first_model (first
     non-synthetic model in the whole transcript) or None, and, for in-window rows only:
     versions {v: n}, usage {message id: (model, {field: n})}, calls [(tool name, input)],
-    commands [skill name of each `/cct:<skill>` command row, once per row],
+    commands [`<plugin>:<name>` of each `/<plugin>:<name>` command row, once per row],
     blocks [attributed hook name of each real hook denial, see block_hook],
     corrections [(timestamp, text) of each typed user turn that reads as a correction and does not
     answer a question: the latest assistant text before it does not end in `?`],
@@ -410,9 +422,9 @@ def scan(rows, since, until, refusals=(), step_ups=False):
                     out['backlog'].append(backlog_refusal(text))
                 if spawned.get(use_id) in FOLLOWUP_TYPES and has_followups(text):
                     out['followups'] += 1
-            command = COMMAND_RE.search(typed) if typed else None
+            command = command_name(typed) if typed else None
             if command:
-                out['commands'].append(command.group(1))
+                out['commands'].append(command)
             text = None if row.get('isMeta') or asked else correction_text(typed)
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
@@ -612,8 +624,8 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                 move = '%s->%s' % (ladder_model(was), ladder_model(then or USER, LADDER + (USER,)))
                 by_move = step_ups.setdefault(type_key(kind, agent_names), {})
                 by_move[move] = by_move.get(move, 0) + 1
-            for skill in [] if is_sub else s['commands']:  # a `/cct:<skill>` row starts the skill like a Skill call
-                key = toolkit_name(PLUGIN_PREFIX + skill, use['skills'])
+            for skill in [] if is_sub else s['commands']:  # a `/<plugin>:<skill>` row starts the skill like a Skill call
+                key = toolkit_name(skill, use['skills'])
                 if key:
                     use['skills'][key] += 1
             for name, inp in s['calls']:
@@ -1013,6 +1025,23 @@ def self_test():
             (OTHER, type_key('foo-tools:foo-coder', fixture_agents), 'an unknown plugin agent as a spawn type')):
         if got != want:
             bad.append('/plugin agents: %s: want %r, got %r' % (what, want, got))
+    # v6.3: a skill in an optional plugin counts by `<plugin>:<name>` (the plugin is the folder under plugins/);
+    # a name the repo's own files do not hold stays unknown, and so does the old cct: name of a moved skill.
+    fixture_skills = toolkit_names(os.path.join(FIXTURES, 'toolkit'))[0]
+    for want, got, what in (
+            ('cct-helpers:commit', toolkit_name('cct-helpers:commit', fixture_skills), 'a plugin skill the files hold'),
+            (None, toolkit_name('cct-helpers:ghost', fixture_skills), 'an unknown skill of a known plugin'),
+            (None, toolkit_name('foo-helpers:commit', fixture_skills), 'an unknown plugin'),
+            ('commit', toolkit_name('cct:commit', fixture_skills), 'a core skill'),
+            (None, toolkit_name('cct:ghost', fixture_skills), 'an unknown core skill'),
+            ('cct-helpers:commit', command_name('<command-name>/cct-helpers:commit</command-name>'),
+             'a command row of a plugin skill'),
+            ('cct:jev', command_name('<command-name>/cct:jev</command-name>'), 'a command row of a core skill'),
+            (None, command_name('<command-name>/jev</command-name>'), 'a command row with no plugin')):
+        if got != want:
+            bad.append('/plugin skills: %s: want %r, got %r' % (what, want, got))
+    if 'cct-helpers:commit' not in fixture_skills or 'commit' not in fixture_skills:
+        bad.append('/plugin skills: toolkit_names lists %s' % fixture_skills)
     with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-3.jsonl'), encoding='utf-8') as fh:
         raw = fh.read()
     for needle in ('corp.example', 'secretproject', 'acme', 'internal'):  # control: the rows the two probes are about are in the input,

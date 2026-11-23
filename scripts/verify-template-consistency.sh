@@ -5180,35 +5180,69 @@ elif [ -z "$c75" ]; then ok "75: no agents/*.md or plugins/*/agents/*.md carries
 else ko "75: frontmatter hooks: in $c75"; fi
 
 # ---------------------------------------------------------------------------
-# Check 76 (v5.0, spec §2): every cct:<agent> the docs mention exists in agents/
+# Check 76 (v5.0, spec §2): every cct:<agent>, cct:<skill> and <plugin>:<skill> the docs mention exists
 # ---------------------------------------------------------------------------
-c76_bad=""; c76_n=0
-for n in $(grep -rhoE 'cct:[A-Za-z][A-Za-z-]*' templates user-level-reference skills agents README.md AGENTS.md 2>/dev/null | sort -u); do
-  c76_n=$((c76_n + 1))
-  # skill names (cct:<skill>) are the directories under skills/
-  [ -d "skills/${n#cct:}" ] && continue
-  # and output styles (outputStyle "cct:<style>") are the files under output-styles/
-  [ -f "output-styles/${n#cct:}.md" ] && continue
-  [ -f "agents/${n#cct:}.md" ] || c76_bad="$c76_bad $n"
+#
+# The files scanned are the shipped ones plus the docs: templates, user-level-reference, skills, agents, plugins, docs,
+# mcp-servers, .claude/skills, README.md and AGENTS.md. History (docs/history.md), reports (docs/self-review/), plans
+# (docs/plans/) and fixtures are excluded: they name parts under the names they had then.
+c76_mentions() { # <root> <ERE> -> the distinct matches in the scanned files under <root>
+  ( cd "$1" && find templates user-level-reference skills agents plugins docs mcp-servers .claude/skills README.md AGENTS.md -type f -print0 2>/dev/null \
+      | grep -zvE '^(docs/history\.md|docs/self-review/|docs/plans/|scripts/fixtures/|server/tests/fixtures/)' \
+      | xargs -0 -r grep -hoE "$2" 2>/dev/null | sort -u )
+}
+c76_scan() { # <root> -> one line per mention that names nothing under <root>
+  local r=$1 n p pn
+  for n in $(c76_mentions "$r" 'cct:[A-Za-z][A-Za-z-]*'); do
+    # skill names (cct:<skill>) are the directories under skills/, output styles (outputStyle "cct:<style>") the files
+    # under output-styles/, agents the files under agents/
+    [ -d "$r/skills/${n#cct:}" ] || [ -f "$r/output-styles/${n#cct:}.md" ] || [ -f "$r/agents/${n#cct:}.md" ] || echo "$n"
+  done
+  # v7.0.0: the language coders left agents/. A stale `cct:<lang>-coder` mention is flagged by the loop above (no
+  # agents/<lang>-coder.md); a `<lang>-tools:<lang>-coder` mention must name a file under plugins/<lang>-tools/agents/.
+  for n in $(c76_mentions "$r" '[a-z]+-tools:[a-z]+-coder'); do
+    [ -f "$r/plugins/${n%%:*}/agents/${n#*:}.md" ] || echo "$n"
+  done
+  # v6.3: skills moved to optional plugins (cct-helpers, cct-learning). A stale `cct:<skill>` mention is flagged by the
+  # first loop (no skills/<skill>); a `<plugin>:<skill>` mention must name a directory under plugins/<plugin>/skills/.
+  for p in "$r"/plugins/*/skills; do
+    [ -d "$p" ] || continue
+    pn=$(basename "$(dirname "$p")")
+    for n in $(c76_mentions "$r" "$pn:[A-Za-z][A-Za-z-]*"); do
+      [ -d "$p/${n#*:}" ] || echo "$n"
+    done
+  done
+}
+c76_ctl() { # <relative path> <text> -> c76_scan of a root whose only mention is <text> in <path>
+  local t; t=$(mktemp -d)
+  mkdir -p "$t/skills/sprint" "$t/agents" "$t/output-styles" "$t/plugins/cct-helpers/skills/commit" "$(dirname "$t/$1")"
+  printf '%s\n' "$2" > "$t/$1"
+  c76_scan "$t" | tr '\n' ' '; rm -rf "$t"
+}
+c76_ctl_bad=""
+# stale mentions must be flagged wherever a doc, a repo skill or a plugin can carry them ...
+for c76_p in docs/guide.md mcp-servers/HOWTO.md .claude/skills/x/SKILL.md plugins/cct-helpers/skills/commit/SKILL.md skills/sprint/SKILL.md templates/general/CLAUDE.md; do
+  [ "$(c76_ctl "$c76_p" 'run /cct:commit')" = "cct:commit " ] || c76_ctl_bad="$c76_ctl_bad $c76_p"
 done
-# v7.0.0: the language coders left agents/. A stale `cct:<lang>-coder` mention is flagged by the loop above (no
-# agents/<lang>-coder.md); a `<lang>-tools:<lang>-coder` mention must name a file under plugins/<lang>-tools/agents/.
-c76_pn=0
-for n in $(grep -rhoE '[a-z]+-tools:[a-z]+-coder' templates user-level-reference skills agents plugins README.md AGENTS.md 2>/dev/null | sort -u); do
-  c76_pn=$((c76_pn + 1))
-  [ -f "plugins/${n%%:*}/agents/${n#*:}.md" ] || c76_bad="$c76_bad $n"
+[ "$(c76_ctl docs/guide.md 'run /cct-helpers:ghost')" = "cct-helpers:ghost " ] || c76_ctl_bad="$c76_ctl_bad cct-helpers:ghost"
+[ -z "$(c76_ctl docs/guide.md 'run /cct-helpers:commit')" ] || c76_ctl_bad="$c76_ctl_bad cct-helpers:commit(false positive)"
+# ... and left alone in history, reports, plans and fixtures
+for c76_p in docs/history.md docs/self-review/r.md docs/plans/p.md; do
+  [ -z "$(c76_ctl "$c76_p" 'run /cct:commit')" ] || c76_ctl_bad="$c76_ctl_bad $c76_p(excluded)"
 done
+c76_bad=$(c76_scan . | tr '\n' ' ')
+c76_n=$(c76_mentions . 'cct:[A-Za-z][A-Za-z-]*' | wc -l)
+c76_pn=$(c76_mentions . '[a-z]+-tools:[a-z]+-coder' | wc -l)
+c76_hn=$(c76_mentions . 'cct-helpers:[A-Za-z][A-Za-z-]*' | wc -l)
 [ "$c76_pn" -gt 0 ] || c76_bad="$c76_bad (no <lang>-tools:<lang>-coder mention found: the plugin-name scan is vacuous)"
-# v6.3: commit, contribute-upstream, karpathy-guidelines and mcp-usage moved to the optional cct-helpers plugin. A stale
-# cct:<skill> mention is flagged by the first loop (no skills/<skill>); a cct-helpers:<skill> mention must name a
-# directory under plugins/cct-helpers/skills/.
-c76_hn=0
-for n in $(grep -rhoE 'cct-helpers:[A-Za-z][A-Za-z-]*' templates user-level-reference skills agents plugins/cct-helpers README.md AGENTS.md 2>/dev/null | sort -u); do
-  c76_hn=$((c76_hn + 1))
-  [ -d "plugins/cct-helpers/skills/${n#cct-helpers:}" ] || c76_bad="$c76_bad $n"
-done
-[ "$c76_hn" -gt 0 ] || c76_bad="$c76_bad (no cct-helpers:<skill> mention found: the helper-skill scan is vacuous)"
-[ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen), every <lang>-tools:<lang>-coder in plugins/ ($c76_pn), every cct-helpers:<skill> in plugins/cct-helpers/skills/ ($c76_hn)" || ko "76: unknown agents or skills:$c76_bad"
+[ "$c76_hn" -gt 0 ] || c76_bad="$c76_bad (no cct-helpers:<skill> mention found: the plugin-skill scan is vacuous)"
+if [ -n "$c76_ctl_bad" ]; then
+  ko "76: CONTROL failed (a stale cct:commit must be flagged in a doc, repo skill, plugin or template and ignored in history, reports and plans):$c76_ctl_bad"
+elif [ -z "$c76_bad" ]; then
+  ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen), every <lang>-tools:<lang>-coder in plugins/ ($c76_pn), every <plugin>:<skill> in plugins/<plugin>/skills/ ($c76_hn for cct-helpers); docs, mcp-servers, .claude/skills and plugins scanned; control fires"
+else
+  ko "76: unknown agents or skills: $c76_bad"
+fi
 
 # ---------------------------------------------------------------------------
 # Check 77 (v5.0 fix round 1): every `claude-code-toolkit#vX.Y.Z` pin literal in the user-facing docs
