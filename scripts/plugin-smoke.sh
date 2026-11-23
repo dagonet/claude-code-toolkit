@@ -112,7 +112,8 @@ check_explore_spawn() {
   rm -rf "$WORK/mem"; mkdir -p "$WORK/mem"
   # wc may print an absolute path (subagents often use one after deny-hang-shapes refuses a cd), hence [^"]* before the name.
   n=$(( RANDOM % 9000 + 1000 )); head -c "$n" /dev/zero | tr '\0' x > "$SC/out.rand"
-  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  wc -c out.rand  in your starting directory. Then reply with the byte count.' Then report what the agent returned.")
+  # retro-ledger lives in the optional cct-learning plugin, so row 5 loads it next to cct (cl cds into the scratch repo, hence the absolute path).
+  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  wc -c out.rand  in your starting directory. Then reply with the byte count.' Then report what the agent returned." --plugin-dir "$ROOT/plugins/cct-learning")
   led=$(find "$WORK/mem" -name retro.md 2>/dev/null | head -1)
   if [ -z "$led" ]; then fail "5 cct:Explore spawn" "no retro ledger written"
   elif ! grep -q 'cct:Explore' "$led"; then fail "5 cct:Explore spawn" "ledger has no cct:Explore row: $(head -c 200 "$led")"

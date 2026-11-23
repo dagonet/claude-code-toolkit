@@ -1,0 +1,8 @@
+{
+  "name": "cct-learning",
+  "version": "6.2.0",
+  "description": "Optional: the learning loop of claude-code-toolkit (the retro-ledger and retro-brief hooks and the retro-review skill); records subagent failures and replays them at session start",
+  "author": { "name": "dagonet" },
+  "repository": "https://github.com/dagonet/claude-code-toolkit",
+  "license": "MIT"
+}

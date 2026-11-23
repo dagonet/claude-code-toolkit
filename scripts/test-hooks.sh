@@ -4729,7 +4729,7 @@ mkdir -p "$RETROHOME"
 TRANSCRIPT="$TMPROOT/agent-fixture.jsonl"
 mktranscript "$TRANSCRIPT"
 mkstop "$PROJCWD" coder agent-abc123 "$TRANSCRIPT" \
-  | HOME="$RETROHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$RETROHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "retro-ledger exits 0" 0 $?
 expect "ledger writes to the slug path" 1 "$( [ -f "$SLUGDIR/retro.md" ] && echo 1 || echo 0 )"
 expect "ledger appends exactly one line" 1 "$(wc -l < "$SLUGDIR/retro.md" 2>/dev/null | tr -d ' ')"
@@ -4746,7 +4746,7 @@ expect "ledger records agent type + id" 1 \
 CLEANHOME="$TMPROOT/retrohome-clean"
 mkdir -p "$CLEANHOME"
 mkstop "$PROJCWD" tester agent-none "$TMPROOT/does-not-exist.jsonl" \
-  | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$CLEANHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "missing transcript exits 0" 0 $?
 expect "missing transcript writes nothing" 0 \
   "$(find "$CLEANHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
@@ -4755,13 +4755,13 @@ expect "missing transcript writes nothing" 0 \
 printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"all good"}]}}' \
   > "$TMPROOT/agent-clean.jsonl"
 mkstop "$PROJCWD" coder agent-clean "$TMPROOT/agent-clean.jsonl" \
-  | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$CLEANHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "clean transcript exits 0" 0 $?
 expect "clean transcript writes nothing" 0 \
   "$(find "$CLEANHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
 
 # --- 4. malformed stdin must never break a SubagentStop
-printf '%s' '{not json' | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+printf '%s' '{not json' | HOME="$CLEANHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "malformed payload exits 0" 0 $?
 
 # --- 5. the slug rule is Claude Code's auto-memory rule, measured against
@@ -4770,7 +4770,7 @@ expect "malformed payload exits 0" 0 $?
 BSHOME="$TMPROOT/retrohome-bs"
 mkdir -p "$BSHOME"
 mkstop 'G:\git\retroproj' coder agent-bs "$TRANSCRIPT" \
-  | HOME="$BSHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BSHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "backslash cwd slugs identically" 1 \
   "$( [ -f "$BSHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
 
@@ -4781,7 +4781,7 @@ mkdir -p "$BRIEFDIR"
 : > "$BRIEFDIR/retro.md"
 i=1; while [ "$i" -le 12 ]; do echo "entry-$i" >> "$BRIEFDIR/retro.md"; i=$((i + 1)); done
 BRIEFOUT="$TMPROOT/brief.out"
-mkstart "$PROJCWD" | HOME="$BRIEFHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$BRIEFHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "retro-brief exits 0" 0 $?
 expect "brief prints the RETRO header" 1 "$(grep -c '^RETRO ' "$BRIEFOUT")"
 expect "brief prints 10 entries" 10 "$(grep -c '^entry-' "$BRIEFOUT")"
@@ -4789,7 +4789,7 @@ expect "brief starts at entry-3" 1 "$(grep -c '^entry-3$' "$BRIEFOUT")"
 expect "brief drops entry-2" 0 "$(grep -c '^entry-2$' "$BRIEFOUT")"
 
 # --- 7. no ledger for this project: the brief is silent and still exits 0
-mkstart 'G:/git/no-such-project' | HOME="$BRIEFHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+mkstart 'G:/git/no-such-project' | HOME="$BRIEFHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "brief with no ledger exits 0" 0 $?
 expect "brief with no ledger prints nothing" 0 "$(wc -c < "$BRIEFOUT" | tr -d ' ')"
 
@@ -4806,7 +4806,7 @@ FP_QUOTED="1: echo 'BLOCKED: use the MCP tool'
 FPHOME="$TMPROOT/retrohome-fp"
 mkdir -p "$FPHOME"
 mkstop "$PROJCWD" coder agent-fp "$TMPROOT/agent-falsepos.jsonl" \
-  | HOME="$FPHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$FPHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "successful output is not a failure" 0 \
   "$(find "$FPHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
 
@@ -4819,7 +4819,7 @@ expect "successful output is not a failure" 0 \
 BKHOME="$TMPROOT/retrohome-block"
 mkdir -p "$BKHOME"
 mkstop "$PROJCWD" coder agent-bk "$TMPROOT/agent-block.jsonl" \
-  | HOME="$BKHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BKHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 BKLEDGER="$BKHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "hook block counts without is_error" 1 \
   "$(grep -c 'errors=2' "$BKLEDGER" 2>/dev/null)"
@@ -4836,7 +4836,7 @@ expect "block name comes from the hook command" 1 \
 BUHOME="$TMPROOT/retrohome-budget"
 mkdir -p "$BUHOME"
 mkstop "$PROJCWD" coder agent-bu "$TMPROOT/agent-budget.jsonl" \
-  | HOME="$BUHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BUHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 BULEDGER="$BUHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "budget block tallies as budget=1" 1 \
   "$(grep -c 'budget=1' "$BULEDGER" 2>/dev/null)"
@@ -4864,15 +4864,15 @@ mkdir -p "$BOHOME"
   trow_ok "PreToolUse:Bash hook error: [bash 'hooks/agent-budget-warn.sh']: BUDGET: this spawn has made 240 tool calls (median is 15; 120 is the first ceiling)."
 } > "$TMPROOT/agent-budgetonly.jsonl"
 mkstop "$PROJCWD" coder agent-bo77 "$TMPROOT/agent-budgetonly.jsonl" \
-  | HOME="$BOHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BOHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 BOLEDGER="$BOHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "budget-only spawn STILL writes a ledger row" 1 \
   "$(grep -c 'agent-bo77' "$BOLEDGER" 2>/dev/null)"
 expect "budget-only row is budget=2 | errors=0" 1 \
   "$(grep -c 'budget=2 | errors=0' "$BOLEDGER" 2>/dev/null)"
 mkstop "$PROJCWD" tester agent-real77 "$TMPROOT/agent-block.jsonl" \
-  | HOME="$BOHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
-mkstart "$PROJCWD" | HOME="$BOHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/bo.out" 2>/dev/null
+  | HOME="$BOHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
+mkstart "$PROJCWD" | HOME="$BOHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/bo.out" 2>/dev/null
 expect "brief over a filtered ledger exits 0" 0 $?
 expect "brief HIDES the budget-only agent" 0 "$(grep -c 'agent-bo77' "$TMPROOT/bo.out")"
 expect "brief SHOWS the real-failure agent" 1 "$(grep -c 'agent-real77' "$TMPROOT/bo.out")"
@@ -4887,7 +4887,7 @@ DEADDIR="$DEADHOME/.claude/projects/G--git-retroproj/memory"
 mkdir -p "$DEADDIR"
 printf '%s\n' '2026-09-02 10:00 | coder | agent-dead77 | dead=[Bash,Edit] | blocks=[] | budget=4 | errors=0' \
   > "$DEADDIR/retro.md"
-mkstart "$PROJCWD" | HOME="$DEADHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/dead.out" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$DEADHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/dead.out" 2>/dev/null
 expect "a dead= row survives the brief filter even with budget>0, errors=0" 1 \
   "$(grep -c 'agent-dead77' "$TMPROOT/dead.out")"
 
@@ -4906,7 +4906,7 @@ while [ "$dd_i" -le 11 ]; do
     "$dd_i" >> "$DDDIR/retro.md"
   dd_i=$((dd_i + 1))
 done
-mkstart "$PROJCWD" | HOME="$DDHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/dd.out" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$DDHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/dd.out" 2>/dev/null
 expect "brief keeps exactly one row per agent id" 1 "$(grep -c 'agent-loud77' "$TMPROOT/dd.out")"
 expect "brief keeps that agent's LAST row" 1 "$(grep -c 'errors=11' "$TMPROOT/dd.out")"
 expect "dedupe stops one agent hiding another" 1 "$(grep -c 'agent-quiet77' "$TMPROOT/dd.out")"
@@ -4923,7 +4923,7 @@ expect "dedupe stops one agent hiding another" 1 "$(grep -c 'agent-quiet77' "$TM
 MANYHOME="$TMPROOT/retrohome-many"
 mkdir -p "$MANYHOME"
 mkstop "$PROJCWD" coder agent-many "$TMPROOT/agent-many.jsonl" \
-  | HOME="$MANYHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$MANYHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 MANYLEDGER="$MANYHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "dead list is capped at 5 names" 1 \
   "$(grep -c 'dead=\[mcp__t01__x,mcp__t02__x,mcp__t03__x,mcp__t04__x,mcp__t05__x,+7 more\]' "$MANYLEDGER" 2>/dev/null)"
@@ -4936,7 +4936,7 @@ LONGHOME="$TMPROOT/retrohome-long"
 LONGDIR="$LONGHOME/.claude/projects/G--git-retroproj/memory"
 mkdir -p "$LONGDIR"
 { nchars 500 X; echo; } > "$LONGDIR/retro.md"
-mkstart "$PROJCWD" | HOME="$LONGHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/long.out" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$LONGHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/long.out" 2>/dev/null
 expect "brief truncates a 500-char entry" 1 \
   "$( [ "$(awk 'NR==2{print length($0)}' "$TMPROOT/long.out")" -le 200 ] && echo 1 || echo 0 )"
 
@@ -4950,7 +4950,7 @@ rm -rf "$POSIXHOME"
 if mkdir -p "$POSIXHOME" 2>/dev/null; then
   rm -rf "$POSIXHOME"
   mkstop "$PROJCWD" coder agent-posix "$TRANSCRIPT" \
-    | HOME="$POSIXHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+    | HOME="$POSIXHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
   expect "POSIX-style HOME resolves correctly" 1 \
     "$( [ -f "$POSIXHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
   rm -rf "$POSIXHOME"
@@ -4964,11 +4964,11 @@ OVERHOME="$TMPROOT/retrohome-override"
 mkdir -p "$OVERHOME"
 mkstop "$PROJCWD" coder agent-over "$TRANSCRIPT" \
   | HOME="$TMPROOT/retrohome-ignored" CLAUDE_MEMORY_HOME="$OVERHOME" \
-    bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+    bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "CLAUDE_MEMORY_HOME wins over HOME" 1 \
   "$( [ -f "$OVERHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
 mkstart "$PROJCWD" | HOME="$TMPROOT/retrohome-ignored" CLAUDE_MEMORY_HOME="$OVERHOME" \
-  bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/over.out" 2>/dev/null
+  bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/over.out" 2>/dev/null
 expect "brief honours CLAUDE_MEMORY_HOME too" 1 "$(grep -c 'agent-over' "$TMPROOT/over.out")"
 
 # --- 8. round trip: the two hooks must agree on the slug, or the feature is a
@@ -4976,8 +4976,8 @@ expect "brief honours CLAUDE_MEMORY_HOME too" 1 "$(grep -c 'agent-over' "$TMPROO
 RTHOME="$TMPROOT/retrohome-rt"
 mkdir -p "$RTHOME"
 mkstop "$PROJCWD" code-reviewer agent-rt99 "$TRANSCRIPT" \
-  | HOME="$RTHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
-mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+  | HOME="$RTHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
+mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "round trip: brief replays the entry" 1 "$(grep -c 'agent-rt99' "$BRIEFOUT")"
 else
 skip "retro-ledger + retro-brief cases" "no node on this host" 32
@@ -11239,6 +11239,7 @@ c2b_proj() { # <name> -> a project holding every repo hook and the v4.6.1 genera
   cp -R "$ROOT/hooks" "$c2p_d/hooks"; cp "$ROOT/scripts/fixtures/v461-template-settings.json" "$c2p_d/.claude/settings.json"
   # v7.0.0: the frozen v4.6.1 settings register the four cct-guards hooks under hooks/; they now live in the plugin
   cp "$ROOT"/plugins/cct-guards/hooks/{read-size-gate,bash-output-guard,agent-budget-warn,post-edit-build}.sh "$c2p_d/hooks/"
+  cp "$ROOT"/plugins/cct-learning/hooks/{retro-ledger,retro-brief}.sh "$c2p_d/hooks/"   # v7.0.0: likewise the two cct-learning hooks
   printf '%s' "$c2p_d"
 }
 c2b_run() { # <home> <proj, or - for unset> [verify-hooks args] ; runs the project's copy; sets C2RC, C2OUT
@@ -12280,6 +12281,65 @@ G7MISS=$( ( printf '{}' | env HOME="$G7HOME" CLAUDE_PROJECT_DIR="$G7P" bash "$G7
 expect "g7 run-hook: a missing warn-class script -> WARN, neutral reinstall text, exit 0" "1 1 rc=0" \
   "$(printf '%s' "$G7MISS" | grep -c '^WARN: ') $(printf '%s' "$G7MISS" | grep -c 'Reinstall the plugin that registers this hook') $(printf '%s' "$G7MISS" | grep -o 'rc=[0-9]*')"
 # ---- end v7.0.0 cct-guards
+
+# ---- v7.0.0 cct-learning: the retro ledger pair runs from plugins/cct-learning/hooks/ with the verdicts it had in cct
+echo "=== plugins/cct-learning (run-hook.sh, hook-class.sh, retro-ledger, retro-brief, retro-review) ==="
+L7D="$ROOT/plugins/cct-learning/hooks"
+L7P="$TMPROOT/l7 proj"; mkdir -p "$L7P/.claude"; printf '{}' > "$L7P/.claude/template-manifest.json"   # a toolkit project: the project-class hooks run
+L7NP="$TMPROOT/l7 noproj"; mkdir -p "$L7NP/.claude"                                                      # no manifest: they must stay silent
+L7HOME="$TMPROOT/l7home"; mkdir -p "$L7HOME/.claude"     # a bare HOME: no user-level registration to step aside for
+L7ALL=1
+for l7f in hooks/retro-ledger.sh hooks/retro-brief.sh hooks/run-hook.sh hooks/hooks.json hooks/lib/json.sh hooks/lib/hook-class.sh skills/retro-review/SKILL.md .claude-plugin/plugin.json; do
+  [ -s "$ROOT/plugins/cct-learning/$l7f" ] || { L7ALL=0; echo "  missing: plugins/cct-learning/$l7f"; }
+done
+expect "l7: the plugin ships both retro hooks, run-hook.sh, hooks.json, json.sh, hook-class.sh, the retro-review skill and its manifest" 1 "$L7ALL"
+L7LEFT=0
+for l7h in retro-ledger retro-brief; do
+  [ -e "$ROOT/hooks/$l7h.sh" ] && L7LEFT=$((L7LEFT + 1))
+  grep -q "run-hook.sh\\\\\" $l7h\"" "$ROOT/hooks/hooks.json" && L7LEFT=$((L7LEFT + 1))
+  env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2"' _ "$ROOT/hooks/lib/hook-class.sh" "$l7h" >/dev/null 2>&1 && L7LEFT=$((L7LEFT + 1))
+done
+[ -e "$ROOT/skills/retro-review" ] && L7LEFT=$((L7LEFT + 1))
+expect "l7: nothing of the learning loop is left in cct (no script, registration, class-table line or skill)" 0 "$L7LEFT"
+l7cls() { env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2" && echo "$HC_CLS $HC_POL"' _ "$L7D/lib/hook-class.sh" "$1" 2>&1; }
+expect "l7: retro-ledger is project/open in the plugin's table" "project open" "$(l7cls retro-ledger)"
+expect "l7: retro-brief is project/open in the plugin's table"  "project open" "$(l7cls retro-brief)"
+expect "l7: the plugin's table knows no cct hook (no-push-main -> unknown)" "" "$(l7cls no-push-main)"
+expect "l7: hooks.json registers exactly the two, each through run-hook.sh" "2 2" \
+  "$(grep -c 'run-hook.sh\\" ' "$ROOT/plugins/cct-learning/hooks/hooks.json" | tr -d ' ') $(grep -oE 'run-hook.sh\\" (retro-ledger|retro-brief)' "$ROOT/plugins/cct-learning/hooks/hooks.json" | sort -u | grep -c .)"
+expect "l7: retro-brief is a SessionStart hook and retro-ledger a SubagentStop hook" "1 1" \
+  "$(grep -c 'SessionStart' "$ROOT/plugins/cct-learning/hooks/hooks.json") $(grep -c 'SubagentStop' "$ROOT/plugins/cct-learning/hooks/hooks.json")"
+
+if [ -n "$HAVE_NODE" ]; then
+  # ledger then brief, through the plugin's own run-hook.sh, in a toolkit project
+  L7TR="$TMPROOT/l7-agent.jsonl"
+  {
+    trow_err "<tool_use_error>Error: No such tool available: mcp__x__y. mcp__x__y is disabled for this session, in subagents as well as here.</tool_use_error>"
+    trow_err "PreToolUse:Bash hook error: [bash 'hooks/enforce-delegation.sh']: DELEGATE: the PO does not do hands-on work."
+  } > "$L7TR"
+  L7CWD="G:/git/l7proj"; L7LED="$L7HOME/.claude/projects/G--git-l7proj/memory/retro.md"
+  mkstop "$L7CWD" coder agent-l7a "$L7TR" | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7P" bash "$L7D/run-hook.sh" retro-ledger >/dev/null 2>&1
+  expect "l7 retro-ledger: exits 0 and writes one row with the dead tool and the hook block" "0 1 1 1" \
+    "$? $(wc -l < "$L7LED" 2>/dev/null | tr -d ' ') $(grep -c 'dead=\[mcp__x__y\]' "$L7LED" 2>/dev/null) $(grep -c 'blocks=\[enforce-delegation.sh\]' "$L7LED" 2>/dev/null)"
+  L7BR=$(mkstart "$L7CWD" | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7P" bash "$L7D/run-hook.sh" retro-brief 2>/dev/null)
+  expect "l7 retro-brief: replays the row under the RETRO header" "1 1" \
+    "$(printf '%s' "$L7BR" | grep -c '^RETRO ') $(printf '%s' "$L7BR" | grep -c 'agent-l7a')"
+  # project class: outside a toolkit project both stay silent and write nothing
+  L7HOME2="$TMPROOT/l7home2"; mkdir -p "$L7HOME2/.claude"
+  mkstop "$L7CWD" coder agent-l7b "$L7TR" | env HOME="$L7HOME2" CLAUDE_PROJECT_DIR="$L7NP" bash "$L7D/run-hook.sh" retro-ledger >/dev/null 2>&1
+  expect "l7 retro-ledger: no toolkit project -> no ledger written" 0 "$(find "$L7HOME2" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
+  expect "l7 retro-brief: no toolkit project -> no output" "" "$(mkstart "$L7CWD" | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7NP" bash "$L7D/run-hook.sh" retro-brief 2>/dev/null)"
+  # fail-open: an unusable payload exits 0 through run-hook.sh
+  printf '%s' '{not json' | env HOME="$L7HOME2" CLAUDE_PROJECT_DIR="$L7P" bash "$L7D/run-hook.sh" retro-ledger >/dev/null 2>&1
+  expect "l7 retro-ledger: an unusable payload exits 0 (never blocks a stop)" 0 $?
+else
+  skip "l7 retro rows" "no node on this host" 6
+fi
+# an open-class hook whose script is gone is silent: exit 0, no output
+L7CP="$TMPROOT/l7copy"; mkdir -p "$L7CP"; cp -R "$L7D" "$L7CP/hooks" 2>/dev/null; rm -f "$L7CP/hooks/retro-brief.sh"
+L7MISS=$( ( printf '{}' | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7P" bash "$L7CP/hooks/run-hook.sh" retro-brief 2>&1; echo "rc=$?" ) | tr '\n' ' ')
+expect "l7 run-hook: a missing open-class script -> silent, exit 0" "rc=0 " "$L7MISS"
+# ---- end v7.0.0 cct-learning
 
 # ---- v6.0 Task 3: the guards take the dispatcher payload (CCTD_MEMO[1]) and find their libs without dirname
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then

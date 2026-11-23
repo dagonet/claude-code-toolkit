@@ -275,7 +275,7 @@ An agent that has to go looking for any of the five is under-briefed — a promp
   4. Count it as one strike toward the 3-cycle escalation, re-dispatch with a TIGHTER brief. **Never self-perform the failed agent's work.**
   5. **Dead-coder merge handoff**: a pushed branch with an open PR gets a FRESH coder (PR URL, branch, worktree path) to rebase, re-gate, and merge — the PO never finishes merges by hand.
   6. **Report agents**: their report IS the deliverable — none means a failed run, re-dispatch citing the mandate. The plugin's `enforce-agent-contract` hook catches coder/reviewer cases mechanically.
-  7. Repeated failures of the same shape are recorded by the plugin's `retro-ledger` hook and replayed at next session start — fix the cause, not the symptom.
+  7. If `cct-learning` is installed, its `retro-ledger` hook records repeated failures and replays them at session start — fix the cause, not the symptom.
 
 ---
 

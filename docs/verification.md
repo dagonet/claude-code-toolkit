@@ -133,12 +133,12 @@ They are split by what each can *reach*, not by preference:
   `VERSION`-vs-latest-tag comparison. Silent when everything passes; on failure it opens
   or retitles a single GitHub issue `nightly-check: <date>`. A routine sees only the
   clone and its connectors — never `~/.claude`, never uncommitted files.
-- **the `retro-review` skill** (`/cct:retro-review [project-dir]`) — the local counterpart,
+- **the `retro-review` skill** (`/cct-learning:retro-review [project-dir]`, if `cct-learning` is installed) — the local counterpart,
   covering exactly what a routine cannot see: the per-project retro ledger under
   `~/.claude/projects/<slug>/memory/`, `verify-user-level-drift.sh` against the live
   `~/.claude/`, and sibling checkouts whose `.claude/template-manifest.json` is behind
   this repo's `VERSION`. Run it headless with
-  `env -u CLAUDE_CODE_SESSION_ID claude -p "/cct:retro-review" --permission-mode auto` from Task Scheduler or cron
+  `env -u CLAUDE_CODE_SESSION_ID claude -p "/cct-learning:retro-review" --permission-mode auto` from Task Scheduler or cron
   (from inside a session, the `env -u` stops the nested run deleting that session's cct marker).
 
 ## Terminal conditions in a `**Gate**` command

@@ -54,7 +54,7 @@ Select it with `"outputStyle": "cct:pm-report"` in `~/.claude/settings.json`. `/
 | `/cct:challenge` | Questions a plan in two passes (is it needed, is it right) before you run it |
 | `/cct:sync-template` | Pulls template updates into your project and keeps your own edits |
 | `/cct:contribute-upstream` | Sends an improvement from your project back to the toolkit templates |
-| `/cct:retro-review` | Reviews agent failures, config drift and which projects are behind |
+| `/cct-learning:retro-review` | If `cct-learning` is installed: reviews agent failures, config drift and which projects are behind |
 | `/cct:jev` | Switches the optional model routing on or off (below) |
 
 Two more start by themselves when they fit: `cct:mcp-usage` (steps for large inputs and MCP servers) and `cct:karpathy-guidelines` (habits that avoid common coding mistakes).
@@ -73,7 +73,7 @@ It is switched on per clone and needs a TypeSafe API key; the `cct:jev` skill ex
 
 First, `git`, Claude Code and a JSON reader for the hooks: `node`, `python3` or `jq`.
 Without any of the three, every shell command and file read is refused, in every repo.
-Without `node`, six hooks do nothing: delegation, read-size capping and the Bash-output guard (if `cct-guards` is installed), the agent-report check, the RETRO ledger and brief (see [`docs/getting-started.md`](docs/getting-started.md)).
+Without `node`, six hooks do nothing: delegation, read-size capping and the Bash-output guard (if `cct-guards` is installed), the agent-report check, the RETRO ledger and brief (if `cct-learning` is installed; see [`docs/getting-started.md`](docs/getting-started.md)).
 
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 

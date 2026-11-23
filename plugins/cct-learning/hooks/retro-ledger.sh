@@ -29,7 +29,7 @@
 # v3.0.1: it is not counted in errors=<n> either. Measured on a consumer: 30
 # ledger rows, every one a budget warning, zero real failures -- because the
 # tally ran one line BEFORE the budget split. A budget-only spawn still gets a
-# ROW (the ledger is the RECORD); it is hooks/retro-brief.sh, the VIEW, that
+# ROW (the ledger is the RECORD); it is retro-brief.sh, the VIEW, that
 # filters it out. Do NOT "fix" this by suppressing the row: rows that vanish
 # from retro.md read as "clean" rather than "changed" to anyone grepping an
 # agent id, which is a silent negative. And do NOT filter on errors= or budget=
@@ -134,7 +134,7 @@ process.stdin.on("end", () => {
     }
   }
   // v3.0.1: emit whenever ANYTHING was observed — a budget-only spawn keeps its
-  // row. THE LEDGER IS THE RECORD; the view is hooks/retro-brief.sh, which is
+  // row. THE LEDGER IS THE RECORD; the view is retro-brief.sh, which is
   // where budget-only rows are filtered out. Suppressing the row here would make
   // the rows of an agent DISAPPEAR from retro.md, and disappearing rows read as
   // "clean" rather than "changed" — a silent negative for anyone grepping an
@@ -155,7 +155,7 @@ process.stdin.on("end", () => {
 
   const cwd = p.cwd || process.cwd();
   const slug = cwd.replace(/[:\\\/._]/g, "-");
-  // Base-dir helper — MUST stay identical in hooks/retro-brief.sh.
+  // Base-dir helper — MUST stay identical in retro-brief.sh.
   // Under Git Bash, HOME can arrive as /c/Users/x; Windows node resolves a
   // leading "/" against the CURRENT DRIVE, which would silently write the ledger
   // to G:\Users\x instead of C:\Users\x. Normalise /<letter>/ -> <letter>:/ on

@@ -269,14 +269,14 @@ fi
 
 # The retro ledger pair (v2.0 PR2) must exist and stay fail-open: both are
 # registered UNWRAPPED, so a non-zero exit would break every stop / session start.
-for f in hooks/retro-ledger.sh hooks/retro-brief.sh; do
+for f in plugins/cct-learning/hooks/retro-ledger.sh plugins/cct-learning/hooks/retro-brief.sh; do
   if [ -s "$f" ]; then
     ok "retro: $f present"
   else
     ko "retro: $f MISSING — the subagent-failure ledger is not shipped"
   fi
 done
-if printf '%s' '{not json' | bash hooks/retro-ledger.sh >/dev/null 2>&1; then
+if printf '%s' '{not json' | bash plugins/cct-learning/hooks/retro-ledger.sh >/dev/null 2>&1; then
   ok "retro-ledger.sh exits 0 on an unusable payload"
 else
   ko "retro-ledger.sh exits non-zero on an unusable payload — it would block subagent stops"
@@ -813,7 +813,7 @@ RETRO_HELPER_DEF='const winify = s => (process.platform === "win32" ? s.replace(
     || (process.env.HOME && winify(process.env.HOME))
     || os.homedir();'
 rh_have=0
-for rhf in hooks/retro-ledger.sh hooks/retro-brief.sh; do
+for rhf in plugins/cct-learning/hooks/retro-ledger.sh plugins/cct-learning/hooks/retro-brief.sh; do
   grep -qF "$RETRO_HELPER_DEF" "$rhf" && rh_have=$((rh_have + 1))
 done
 if [ "$rh_have" -eq 2 ]; then
@@ -5056,13 +5056,13 @@ c72_ctl=$(c72_eval "$c72_tmp")
 rm -rf "$c72_tmp"
 c72_real=$(c72_eval .)
 c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
-c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
+c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
 if [ -z "$c72_first" ] || [ "${c72_ctl#*|}" = "0" ]; then
   ko "72: CONTROL failed (one sub-plugin at a version other than VERSION was not flagged; fixture '$c72_ctl')"
-elif [ -n "$c72_want" ] && [ "$c72_real" = "9|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
-  ok "72: cct plus 8 sub-plugin (the six MCP plugins, java-tools and cct-guards) plugin.json files all carry version $c72_want (= VERSION); control fires"
+elif [ -n "$c72_want" ] && [ "$c72_real" = "10|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
+  ok "72: cct plus 9 sub-plugin (the six MCP plugins, java-tools, cct-guards and cct-learning) plugin.json files all carry version $c72_want (= VERSION); control fires"
 else
-  ko "72: expected 9 plugin.json (cct + 8 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
+  ko "72: expected 10 plugin.json (cct + 9 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5704,7 +5704,7 @@ c88_mk; sed -i 's/pol=open ;;/pol=warn ;;/' "$c88_tmp/t/$c88_P/lib/hook-class.sh
 [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -eq 0 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [a changed TABLE line in hook-class.sh was flagged: the table is data]"; }
 rm -rf "$c88_tmp"
 if [ "$c88_ctl_ok" -ne 1 ]; then ko "check 88: CONTROL failed:$c88_ctl_why"
-elif [ "${c88_counts%%|*}" -lt 1 ] || [ "${c88_counts##*|}" -lt 4 ]; then ko "check 88: expected at least 1 plugin with hooks and 4 pinned copies (run-hook.sh + json.sh, git-cmd.sh, hook-class.sh), got plugins|files '$c88_counts'"
+elif [ "${c88_counts%%|*}" -lt 2 ] || [ "${c88_counts##*|}" -lt 7 ]; then ko "check 88: expected at least 2 plugins with hooks (cct-guards, cct-learning) and 7 pinned copies (run-hook.sh, json.sh and hook-class.sh in each, git-cmd.sh in cct-guards), got plugins|files '$c88_counts'"
 elif [ -n "$c88_probs" ]; then ko "check 88: a pinned plugin copy differs from cct's original: $c88_probs"
 else ok "check 88: $c88_counts (plugins|files): every pinned copy equals cct's original (hook-class.sh outside its class table); controls fire on a changed byte, a changed hc_skip line, a changed default arm and a deleted lib, and stay quiet on a changed table line"
 fi

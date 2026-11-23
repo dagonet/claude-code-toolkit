@@ -65,7 +65,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 | `sprint` | `/cct:sprint [plan]` only | Run a backlog as parallel **subagent** workstreams — rebase before merge, gate before merge, final-message reporting |
 | `sync-template` | `/cct:sync-template` only | Pull template updates from claude-code-toolkit into the current project |
 | `contribute-upstream` | `/cct:contribute-upstream` only | Push generalizable project improvements back to the template |
-| `retro-review` | `/cct:retro-review [project-dir]` only | Local maintenance sweep: the subagent-failure retro ledger, `verify-user-level-drift.sh`, and consumer repos behind the toolkit `VERSION` → a ≤ 30-line summary in auto-memory. The local counterpart to the `toolkit-nightly-check` routine |
+| `retro-review` | `/cct-learning:retro-review [project-dir]` only, if `cct-learning` is installed | Local maintenance sweep: the subagent-failure retro ledger, `verify-user-level-drift.sh`, and consumer repos behind the toolkit `VERSION` → a ≤ 30-line summary in auto-memory. The local counterpart to the `toolkit-nightly-check` routine |
 | `karpathy-guidelines` | auto | Writing any new code (main thread); the coders carry a digest as `## Working rules`. Carries the *Toolkit working preferences (developer agents)* section |
 | `mcp-usage` | auto | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
 | `jev` | `/cct:jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- any model at confidence >= the threshold (0.65), review/architect types never below sonnet and never a lower effort, a confident effort applied unless the call passes one, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |
@@ -105,7 +105,7 @@ prompt body into the routine when you create it; nothing here is loaded automati
 - `toolkit-nightly-check.md` — daily consistency + fixtures + stale-reference + version
   check over `claude-code-toolkit`, silent on success, one rolling GitHub issue on
   failure. Its local counterpart, which reads `~/.claude` and sibling checkouts and so
-  cannot be a routine, is the `retro-review` skill.
+  cannot be a routine, is the `retro-review` skill (if `cct-learning` is installed).
 
 ### MCP Config Template
 

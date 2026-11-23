@@ -14,7 +14,7 @@ hc_class() {
     agent-result-notes|backlog-brief)                            cls=project; pol=open ;;
     pre-commit-test|gate-before-merge|deny-claude-md-writes|backlog-item-check) cls=project; pol=closed ;;
     enforce-delegation)                                          cls=project; pol=warn ;;
-    enforce-agent-contract|retro-ledger|retro-brief|now-brief)   cls=project; pol=open ;;
+    enforce-agent-contract|now-brief)                            cls=project; pol=open ;;
     *) return 1 ;;
   esac
   HC_CLS=$cls; HC_POL=$pol

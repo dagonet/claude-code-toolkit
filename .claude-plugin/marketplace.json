@@ -10,6 +10,7 @@
     { "name": "rust-tools", "source": "./plugins/rust-tools", "description": "Opt-in MCP server: cargo build, test and clippy (uvx, mcp-dev-servers v0.4.0), plus the rust-coder agent" },
     { "name": "python-tools", "source": "./plugins/python-tools", "description": "Opt-in MCP server: Python test, lint and type checks (uvx, mcp-dev-servers v0.4.0), plus the python-coder agent" },
     { "name": "java-tools", "source": "./plugins/java-tools", "description": "Optional: the Java (Spring Boot) coder agent, no MCP server" },
-    { "name": "cct-guards", "source": "./plugins/cct-guards", "description": "Optional: the cost and context guards (read-size-gate, bash-output-guard, agent-budget-warn, post-edit-build)" }
+    { "name": "cct-guards", "source": "./plugins/cct-guards", "description": "Optional: the cost and context guards (read-size-gate, bash-output-guard, agent-budget-warn, post-edit-build)" },
+    { "name": "cct-learning", "source": "./plugins/cct-learning", "description": "Optional: the learning loop (retro-ledger and retro-brief hooks, retro-review skill)" }
   ]
 }

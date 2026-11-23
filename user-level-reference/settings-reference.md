@@ -282,7 +282,7 @@ Events used by this toolkit:
 | Event | When It Fires | Can Block? | Why it matters |
 |-------|--------------|-----------|----------------|
 | `Stop` | Main thread finishes its response | Yes | The only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
-| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`, and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; since v5.0 the cct plugin also binds `cct-session.sh` (the session marker), `verify-hooks.sh` and `jev-notice.sh` here. stdout is injected into the session context. |
+| `SessionStart` | A session begins | — | **Bound in v2.0** to `retro-brief` (now in the optional `cct-learning` plugin, if installed), and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; since v5.0 the cct plugin also binds `cct-session.sh` (the session marker), `verify-hooks.sh` and `jev-notice.sh` here. stdout is injected into the session context. |
 | `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
@@ -296,7 +296,7 @@ The authoritative list is the settings schema, not the docs — a bad event name
 |-------|---|
 | `Stop` | `stop_hook_active`, `effort`, `session_crons`, `last_assistant_message` (full final message text), `background_tasks` (`[{id, type, status, description}]`) |
 | `TaskCreated` / `TaskCompleted` | `task_id`, `task_subject`, `task_description`. No task result — cannot inspect a completion's output without reading the transcript. |
-| `SubagentStop` | `agent_id`, `agent_type`, `agent_transcript_path` (the SUBAGENT's own JSONL, not the session's), `last_assistant_message`. This is what `hooks/retro-ledger.sh` reads. |
+| `SubagentStop` | `agent_id`, `agent_type`, `agent_transcript_path` (the SUBAGENT's own JSONL, not the session's), `last_assistant_message`. This is what `retro-ledger` (if `cct-learning` is installed) reads. |
 | `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id`, `effort`, and — inside a subagent — `agent_id` and `agent_type`. Main-thread calls carry neither, which makes `agent_id` a sound main-vs-agent discriminator. |
 
 #### Key Fields

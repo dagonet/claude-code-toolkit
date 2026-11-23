@@ -1,6 +1,6 @@
 ---
 name: retro-review
-description: Review the local subagent-failure retro ledger, user-level config drift, and which consumer repos are behind the toolkit version. Triggers on /cct:retro-review.
+description: Review the local subagent-failure retro ledger, user-level config drift, and which consumer repos are behind the toolkit version. Triggers on /cct-learning:retro-review.
 disable-model-invocation: true
 argument-hint: "[project-dir]"
 ---
@@ -17,7 +17,7 @@ Target project: `$ARGUMENTS`, or the current working directory if empty.
 ## Steps
 
 1. **Read the retro ledger.** Slug the absolute project path exactly as
-   `hooks/retro-ledger.sh` does — replace every `:`, `\`, `/`, `.` and `_` with `-` —
+   the `retro-ledger` hook of `cct-learning` does — replace every `:`, `\`, `/`, `.` and `_` with `-` —
    then read `~/.claude/projects/<slug>/memory/retro.md`. No file means no subagent has
    failed there; say so and continue. Group the entries by cause (a wrong `tools:`
    allowlist, an under-briefed spawn prompt, a hook), not by date.
@@ -37,7 +37,7 @@ Target project: `$ARGUMENTS`, or the current working directory if empty.
 ## Running it unattended
 
 ```bash
-env -u CLAUDE_CODE_SESSION_ID claude -p "/cct:retro-review" --permission-mode auto      # from the project directory
+env -u CLAUDE_CODE_SESSION_ID claude -p "/cct-learning:retro-review" --permission-mode auto      # from the project directory
 ```
 
 (`env -u CLAUDE_CODE_SESSION_ID` keeps a nested run from deleting an enclosing session's cct marker when it ends.)

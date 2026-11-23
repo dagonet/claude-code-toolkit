@@ -319,7 +319,7 @@ def _v4_resolver_reason(env, top, lib, plugin_lib=None):
 
 
 def ledger_slug(top):
-    """Claude Code's auto-memory directory name (hooks/retro-ledger.sh): each of : \\ / . _ -> '-'."""
+    """Claude Code's auto-memory directory name (retro-ledger hook, cct-learning): each of : \\ / . _ -> '-'."""
     return re.sub(r"[:\\/._]", "-", top)
 
 

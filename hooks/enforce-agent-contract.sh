@@ -107,7 +107,7 @@ echo 'PIPELINE: Agent finished. Review workstream status and advance if ready.'
 [ "$PIPELINE_MODE" = "true" ] || exit 0
 
 # v2.2.2: the measured SubagentStop payload lists agent_transcript_path -- this
-# subagent's own JSONL, not the session's -- and retro-ledger.sh, the other
+# subagent's own JSONL, not the session's -- and the retro-ledger hook, the other
 # consumer of this event, reads it. This hook read transcript_path. Prefer the
 # documented field; keep transcript_path as a fallback for a payload lacking it.
 TRANSCRIPT=$(json_get "$INPUT" agent_transcript_path)
