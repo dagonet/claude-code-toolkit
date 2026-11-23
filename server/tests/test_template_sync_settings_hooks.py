@@ -101,6 +101,12 @@ def _guards(text: str):
             if not g.get("matcher") for h in g["hooks"]]
 
 
+def _guard_on_failure(text: str):
+    """The onFailure value of each empty-matcher PreToolUse handler (v7.0.0: "block" on the guard)."""
+    return [h.get("onFailure") for g in json.loads(text)["hooks"].get("PreToolUse", [])
+            if not g.get("matcher") for h in g["hooks"]]
+
+
 def test_result_registers_no_project_hook_and_the_guard_once(tmp_path):
     # v5.0: the frozen set moved into the cct plugin's hooks/hooks.json. The template registers
     # only the inline plugin-off guard, so a wholesale apply and a merge both leave exactly that
@@ -114,6 +120,9 @@ def test_result_registers_no_project_hook_and_the_guard_once(tmp_path):
     assert _registrations(applied) == [] and _guards(applied) == guard
     merged = ts._three_way_merge(OLD, NEW, _local_edited(OLD), file_path=REL)["auto_merged"]
     assert _registrations(merged) == [] and _guards(merged) == guard
+    # v7.0.0: the guard fails closed ("onFailure": "block"), and an apply and a merge both deliver the key
+    assert _guard_on_failure(NEW) == ["block"]
+    assert _guard_on_failure(applied) == ["block"] and _guard_on_failure(merged) == ["block"], (applied, merged)
     # control: the reader is not vacuous -- the frozen v4.6.1 template registers the frozen set
     frozen = _frozen_general()
     assert len(frozen) >= 19

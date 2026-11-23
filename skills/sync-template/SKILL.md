@@ -1303,7 +1303,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 >
 > The three-term formula `len(invocation) + 1 + len(body)` is retained as the EXPLANATION of what the pipeline does (invocation, one separator newline, the capped/stripped/joined body), never as the number to compute. **`cmd_len` is BYTES** (v4.1.2: the hook records `wc -c`, not `${#GC_CMD}`, so the figure no longer depends on the locale the harness happens to carry — under a UTF-8 locale the old character count read two short per `ö`); the recipe's `wc -c` is the same ruler.
 
-**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool; it must contain a line `Item: none`, which the backlog item check reads — a `--fill` body has none, and the check refuses a `--body` literal). One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
+**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Write the body with the Write tool to a file of your own at a plain absolute path (the session scratchpad, for example; not a fixed name in a shared `/tmp`), then pass that literal path: `gh pr create --body-file <body-file>`. The path must hold no `$`, `~`, backtick or glob character: the backlog item check cannot tell which file such a path names, and refuses it (so `"${TMPDIR:-/tmp}/..."` is refused). The file must contain a line `Item: none`, which the backlog item check reads — a `--fill` body has none, and the check refuses a `--body` literal. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
 
 > **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
 
@@ -1323,7 +1323,8 @@ git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** p
 #     <common git dir>/gate/last-pass.tree-<HEAD^{tree}>.json for the committed tree --
 #     skip the extra run when that file exists and carries "status":"pass" (penumbra, v4.6.0)
 git push -u origin <branch>
-gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"   # the file carries a line: Item: none
+gh pr create --body-file <body-file>               # the literal absolute path you wrote with the Write tool
+                                                   # (no $, ~ or glob in it); the file carries a line: Item: none
 gh pr merge --squash --delete-branch               # `gh` only: it has a --delete-branch flag.
 # The MCP merge tool has NO --delete-branch equivalent. Using it: merge with
 # the MCP tool, then delete the remote branch as its OWN, separate tool call:

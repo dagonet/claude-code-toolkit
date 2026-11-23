@@ -8689,6 +8689,10 @@ b1c "ref: single & in the chain"           2 "cd /w/proj && ls & wc -l f && ls"
 b1c "ref: input redirect"                  2 "cd /w/proj && wc -l < f && ls"
 b1c "ref: rg --pre runs a program"         2 "cd /w/proj && rg --pre sh x && ls"
 b1c "ref: tail -f never returns"           2 "cd /w/proj && tail -f log && ls"
+b1c "ref: tail --follow never returns"     2 "cd /w/proj && tail --follow log && ls"
+b1c "ref: tail --f (GNU prefix of --follow)"   2 "cd /w/proj && tail --f log && ls"
+b1c "ref: tail --fo (GNU prefix of --follow)"  2 "cd /w/proj && tail --fo log && ls"
+b1c "ref: tail --fol=name (prefix with a value)" 2 "cd /w/proj && tail --fol=name log && ls"
 b1c "ref: second cd in the chain"          2 "cd /w/proj && cd / && ls"
 # fix round 1: text after a heredoc is not hidden from the subset, and an option word
 # hidden by quotes, braces or ${...} is refused (blanket rules, no parsing)
@@ -11952,6 +11956,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
     '  installfail:"plugin install cct@dagonet") echo "install failed" >&2; exit 1 ;;' \
     '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  oldver:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0.0.0\"}]\n"; exit 0 ;;' \
+    '  sub:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"},{\"id\":\"cct-guards@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER" "$IU_VER"; exit 0 ;;' \
     '  disabled:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":false,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  *:"plugin install "*) f="$HOME/.claude/settings.json"; [ -s "$f" ] || echo "{}" > "$f"; jq --arg i "$3" ".enabledPlugins[\$i]=true" "$f" > "$f.t" && mv "$f.t" "$f"; exit 0 ;;' \
     '  *:"plugin update "*) : > "$HOME/update.marker"; exit 0 ;;' \
@@ -12087,7 +12092,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_w() { # <name> <jq filter for the seeded settings.json, or -> <installer args...>: a fresh install; sets iu_h, iu_rc
     iu_h=$(iu_home "$1"); : > "$iu_h/calls"; iu_wf=$2; shift 2
     [ "$iu_wf" = - ] || { jq "$iu_wf" "$iu_h/.claude/settings.json" > "$iu_h/s.t" && mv "$iu_h/s.t" "$iu_h/.claude/settings.json"; }
-    ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_GBIN:$IU_BIN:$PATH" IU_MODE=ok IU_HAS=0 IU_TAG=ok IU_LOG="$iu_h/calls" \
+    ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_GBIN:$IU_BIN:$PATH" IU_MODE="${IU_WMODE:-ok}" IU_HAS=0 IU_TAG=ok IU_LOG="$iu_h/calls" \
         IU_VER="$(head -1 "$ROOT/VERSION")" CCT_MARKETPLACE=/ok bash "$ROOT/scripts/install-user-level-linux.sh" "$@" >"$iu_h/out" 2>&1 ); iu_rc=$?
   }
   iu_inst() { grep -E '^plugin install [^ ]+@dagonet$' "$iu_h/calls" | sed 's/^plugin install //' | paste -sd, -; }
@@ -12131,6 +12136,9 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_all=""
   for iu_p in cct-guards cct-learning cct-helpers cct-jev dotnet-tools python-tools rust-tools java-tools; do iu_w withall - --with "$iu_p"; iu_all="$iu_all$iu_rc"; done
   expect "IU --with: each of the eight optional plugins in the marketplace is accepted" 00000000 "$iu_all"
+  # a --with plugin that is already installed: the sub-plugin restore installs it, the --with loop does not again
+  IU_WMODE=sub iu_w withsub - --with cct-guards
+  expect "IU --with a plugin already installed: one install (the restore), not two" "0:cct@dagonet,cct-guards@dagonet" "$iu_rc:$(iu_inst)"
   # IU sub-plugins (v6.1): the real `claude` CLI, a scratch HOME and two local directory marketplaces (old and new
   # version). The remove uninstalls every dagonet plugin and deletes its saved userConfig (measured), so the installer
   # puts back exactly the sub-plugins that were installed, with their enabled state and saved values, and no other.
@@ -12195,7 +12203,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   expect "IU subs fail: it says saved options must be re-entered with claude plugin configure <id>" 1 "$(grep -c 'claude plugin configure' "$iu_h/err")"
   expect "IU subs fail: no saved value on stdout or stderr" 0 "$(cat "$iu_h/out" "$iu_h/err" | grep -c -- "$IU_FSEC")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 82
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 83
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
@@ -13335,9 +13343,10 @@ expect "v5 guard: ... another session id is still refused" "rc=2" "$(v5guardw '{
 printf '{"session_id":"wr-1","hook_event_name":"SessionEnd"}' | TMPDIR="$V5GW" bash "$ROOT/hooks/cct-session.sh" end
 expect "v5 guard: after cct-session.sh SessionEnd -> refused" "rc=2" "$(v5guardw '{"session_id":"wr-1","tool_name":"Edit"}')"
 # ownership (controller ruling 2): a cct-<uid> dir this user does not own is no marker dir, for the guard, the
-# writer and am_plugin_loaded alike. Git Bash/Cygwin skip the -O test (per-user /tmp; its -O risks a lockout).
+# writer alike, and a cct-jev-<uid> dir likewise for its writer and am_jev_loaded. Git Bash/Cygwin skip the -O test
+# (per-user /tmp; its -O risks a lockout).
 case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*) skip_host "v5 guard: a foreign-owned marker dir is refused (guard, writer, am_plugin_loaded)" "the -O test is skipped on Git Bash/Cygwin by design" 4 ;;
+  MINGW*|MSYS*|CYGWIN*) skip_host "v5 guard: a foreign-owned marker dir is refused (guard, writers, am_jev_loaded)" "the -O test is skipped on Git Bash/Cygwin by design" 5 ;;
   *)
     V5GF="$TMPROOT/v5guardf"; V5GFD="$V5GF/cct-$(id -u)"; mkdir -p "$V5GF"
     if [ "$(id -u)" = 0 ]; then
@@ -13564,6 +13573,9 @@ anr_run "Follow-ups header, next line prose: no output" "" "$(anr_payload cct:co
 anr_run "Follow-ups: inside a sentence: no output"      "" "$(anr_payload cct:tester sonnet completed - 'PASS. See Follow-ups: below\n- a')"
 anr_run "coder report with a block: no output"          "" "$(anr_payload cct:coder sonnet completed - '- [pass] 1. a\nCommit: abc\nGate: GATE PASS abc\nConcerns: none\nFollow-ups:\n- x')"
 anr_run "architect with a block: no output"             "" "$(anr_payload cct:architect sonnet completed - 'Follow-ups:\n- x')"
+# the tester's report template, copied verbatim, must not fire the note: no line exactly "Follow-ups:" followed by a "- " line
+expect "agents/tester.md: its report template holds no Follow-ups block (a verbatim copy would fire the note)" 0 \
+  "$(awk 'p && /^- /{c++} {p = ($0 == "Follow-ups:")} END{print c+0}' "$ROOT/agents/tester.md")"
 anr_run "background reviewer (async_launched): no output" "" "$(anr_payload cct:code-reviewer sonnet async_launched sonnet -)"
 anr_run "reviewer without content: no output"           "" "$(anr_payload cct:code-reviewer sonnet completed - -)"
 # ---- end v7.0.0 agent-result-notes

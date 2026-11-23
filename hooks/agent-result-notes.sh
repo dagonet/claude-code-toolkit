@@ -11,8 +11,8 @@
 # Failure means, in the report of an agent whose frontmatter carries `pipeline: true`:
 #   - a line `- [fail] <n>.` (a contract line; the text "[fail]" inside a sentence is not one), or
 #   - a line starting `Gate:` that contains `GATE FAILED` (what hooks/run-gate.sh prints).
-# Reviewers, tester and architect also carry `pipeline: true` but get no step-up note (controller
-# ruling); Explore, general-purpose and every agent without the key have no pipeline key at all.
+# The code-reviewer also carries `pipeline: true` but gets no step-up note (controller ruling); tester and
+# architect carry `pipeline: notify`; Explore, general-purpose and every agent without the key have no pipeline key at all.
 #
 # ADVISORY: class project, polarity open, no onFailure, no state file. Any doubt -> exit 0, no output.
 # STDOUT is the whole contract: exactly one

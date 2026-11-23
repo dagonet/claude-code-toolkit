@@ -1,6 +1,6 @@
 ---
 name: challenge
-description: Challenge a plan, design, or approach in two structured passes — scope/necessity, then correctness/completeness. Use before executing any plan.
+description: Challenge a plan, design, or approach in two structured passes — scope/necessity, then correctness/completeness. Use before executing a T3/T4 plan.
 argument-hint: "[what to challenge]"
 ---
 

@@ -151,7 +151,7 @@ dh_safe_cd_chain() {
     case $w in
       grep|egrep|fgrep|wc|ls|cat|head) ;;
       rg) [[ $seg == *--pre* || $seg == *--hostname-bin* ]] && return 1 ;;
-      tail) [[ $seg == *--follow* ]] && return 1
+      tail) [[ $seg == *--f* ]] && return 1   # --follow and every GNU prefix of it (--f, --fo, ...); tail has no other --f option
             [[ $seg =~ $re_follow ]] && return 1 ;;
       SEDN) [[ $seg =~ [[:space:]]- ]] && return 1 ;;
       find) [[ $seg =~ $re_find ]] && return 1 ;;

@@ -16,6 +16,7 @@ You are the Product Owner for this sprint. Execute the sprint backlog using para
 ### 1. Groom the backlog (AGENT_TEAM.md § Backlog) and land it before any spawn
 
 - Close finished items, rank every untriaged item, re-check the top three
+- In `plan-files` mode: read the sprint plan (step 2) first, and record each of its workstreams as an item in `### Ranked` in this same grooming edit. The backlog item check counts a PR only when it moves an item that is open on the trunk, so an item added after the grooming landed gets every workstream PR refused
 - Land the grooming on the trunk first: a PR that touches only `PROJECT_STATE.md` needs no item
 - One item = one pull request: split an item that needs several PRs when you rank it
 
@@ -28,7 +29,7 @@ You are the Product Owner for this sprint. Execute the sprint backlog using para
 ### 3. Create tracking items
 
 - In `github-issues` mode: search for existing issues first to avoid duplicates, then create one issue per work item with clear acceptance criteria
-- In `plan-files` mode: record the workstreams as items in the `PROJECT_STATE.md` backlog (`### Ranked`) instead
+- In `plan-files` mode: nothing to create here; the workstream items were recorded in `### Ranked` and landed in step 1
 
 ### 4. Dispatch parallel subagents
 

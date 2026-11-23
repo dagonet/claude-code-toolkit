@@ -49,7 +49,9 @@
 #   (a chain, env/sudo/bash -c, a quoted or $ word, a script body that matched) is refused without analysis.
 #   KNOWN LIMITS. Accepted: a `git commit -m` or echo whose text holds the words gh, pr and create/new/merge, in any
 #   order, or a backticked or `$` word before pr and a verb after it, is refused too (move that text into a file). Unseen: xargs, running ./x.sh directly, PowerShell `& x.ps1`, nested scripts, and
-#   interpreters (python, make); `gh alias`; a command word or verb built so that neither the words gh, pr and a verb
+#   interpreters (python, make); `gh alias`; `gh api` on the pulls endpoints (create, merge); other GitHub MCP servers'
+#   create and merge tools, such as the official github plugin's (mcp__plugin_github_github__create_pull_request,
+#   mcp__plugin_github_github__merge_pull_request), which the matcher does not name; a command word or verb built so that neither the words gh, pr and a verb
 #   nor a `$` next to pr appear (`$G pr create` with G set elsewhere is caught only because a verb follows a `$` word);
 #   a glob or brace in the verb (`mer?e` matching a file, `m{e,}rge`).
 #   Only these flags are read, from the plain segment: --base/-B and --head/-H (create), --body-file/-F (create); a

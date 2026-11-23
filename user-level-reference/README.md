@@ -60,7 +60,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 
 | Skill | Invocation | Purpose |
 |-------|-----------|---------|
-| `challenge` | `/cct:challenge [target]` only | Two structured passes over a plan or design: scope/necessity, then correctness/completeness. Explicit-only because it may spawn the architect. |
+| `challenge` | `/cct:challenge [target]`, or auto before a T3/T4 plan | Two structured passes over a plan or design: scope/necessity, then correctness/completeness. The required T3/T4 plan step (AGENT_TEAM.md); its description names T3/T4 because it may spawn the architect. |
 | `commit` | `/cct-helpers:commit` only, if `cct-helpers` is installed | Stage and commit with native git, after showing the user the staged diff; includes the verification checklist |
 | `sprint` | `/cct:sprint [plan]` only | Run a backlog as parallel **subagent** workstreams — rebase before merge, gate before merge, final-message reporting |
 | `sync-template` | `/cct:sync-template` only | Pull template updates from claude-code-toolkit into the current project |

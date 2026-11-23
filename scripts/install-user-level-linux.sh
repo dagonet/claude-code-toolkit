@@ -185,8 +185,12 @@ $SUBS
 EOF
 fi
 subs_pending=""
-# the optional plugins named with --with: only those, after cct and the restored sub-plugins
-for w in $WITH_IDS; do claude plugin install "$w" </dev/null || die "cannot install $w: $NR"; done
+# the optional plugins named with --with: only those, after cct and the restored sub-plugins. One already installed
+# was put back by the restore above (and step 3 enables it), so it is not installed a second time.
+for w in $WITH_IDS; do
+  printf '%s\n' "$SUBS" | awk -v w="$w" '$1 == w {f = 1} END {exit !f}' && continue
+  claude plugin install "$w" </dev/null || die "cannot install $w: $NR"
+done
 claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
 for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
 want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')

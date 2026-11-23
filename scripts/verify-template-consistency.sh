@@ -5524,14 +5524,19 @@ rm -rf "${c82_tmp:?}"
 # it, every other handler (advisory, fail-open by design, SessionStart,
 # PostToolUse, Stop, SubagentStop) must not. The guard set is keyed by the name
 # found in the command string; the expected counts stop a removed handler from
-# passing vacuously. Controls: a copy with the key removed from gate-before-merge,
-# and a copy with it added to deny-hang-shapes, must each be flagged.
+# passing vacuously. Scanned: the plugin hooks/hooks.json, the repo
+# .claude/settings.json, and templates/general/.claude/settings.json, whose one
+# guard is the inline plugin-off guard (keyed by its refusal text; the other five
+# variants are byte-identical to it, which another check asserts). Controls: a copy
+# with the key removed from gate-before-merge, a copy with it added to
+# deny-hang-shapes, and a template copy with it removed from the plugin-off guard,
+# must each be flagged.
 # ---------------------------------------------------------------------------
 note "Check 83: onFailure block on the fail-closed guard registrations (and only those)"
 C83_JS='const fs = require("fs");
 const [mode, file, out, target, op] = process.argv.slice(1);
 const d = JSON.parse(fs.readFileSync(file, "utf8"));
-const G = /(dispatch\.sh|deny-secret-reads|deny-claude-md-writes|gate-before-merge|pre-commit-test|no-push-main|backlog-item-check)/;
+const G = /(dispatch\.sh|deny-secret-reads|deny-claude-md-writes|gate-before-merge|pre-commit-test|no-push-main|backlog-item-check|the cct plugin is not active)/;
 let guards = 0; const bad = [];
 for (const ev of Object.keys(d.hooks || {}))
   for (const g of d.hooks[ev])
@@ -5556,7 +5561,7 @@ if ! command -v node >/dev/null 2>&1; then
   ko "check 83: node is not available -- the onFailure scan cannot run"
 else
   c83_fail=0
-  for c83_pair in "hooks/hooks.json 7" ".claude/settings.json 7"; do
+  for c83_pair in "hooks/hooks.json 7" ".claude/settings.json 7" "templates/general/.claude/settings.json 1"; do
     c83_f=${c83_pair% *}; c83_want=${c83_pair#* }
     c83_res=$(c83_scan "$c83_f" 2>&1)
     c83_n=$(printf '%s\n' "$c83_res" | head -1)
@@ -5575,8 +5580,12 @@ else
   if ! c83_scan "$c83_tmp/b.json" | tail -n +2 | grep -q 'non-guard handler'; then
     ko "check 83 control: a copy with onFailure on deny-hang-shapes was NOT flagged -- the predicate is vacuous"; c83_fail=1
   fi
+  c83_mut templates/general/.claude/settings.json "$c83_tmp/c.json" "the cct plugin is not active" del
+  if ! c83_scan "$c83_tmp/c.json" | tail -n +2 | grep -q 'guard without onFailure block: the cct plugin is not active'; then
+    ko "check 83 control: a template copy without onFailure on the plugin-off guard was NOT flagged -- the predicate is vacuous"; c83_fail=1
+  fi
   if [ "$c83_fail" -eq 0 ]; then
-    ok "check 83: the 7 plugin and 7 repo fail-closed guard handlers carry onFailure block, no other handler does; both controls fire"
+    ok "check 83: the 7 plugin, the 7 repo and the template plugin-off fail-closed guard handlers carry onFailure block, no other handler does; all three controls fire"
   fi
 fi
 rm -rf "${c83_tmp:?}"
@@ -5627,10 +5636,16 @@ rm -rf "${c84_tmp:?}"
 #   (b) templates/general/AGENT_TEAM.md carries the "## Backlog" heading and the three rules the item check
 #       (hooks/backlog-item-check.sh, a later task) enforces;
 #   (d) skills/sync-template/SKILL.md does not tell a sync to create its PR with "gh pr create --fill" -- a
-#       generated body has no "Item: none" line, so the item check would refuse every sync PR;
-#   (e) control: a temp copy of a template without "### Ranked" is reported, so (a) cannot pass vacuously.
+#       generated body has no "Item: none" line, so the item check would refuse every sync PR; and its
+#       "gh pr create" lines name at least one --body-file, none of whose arguments holds a $ or a ~ (the item check
+#       refuses a body-file path it cannot resolve, so a "${TMPDIR:-/tmp}/..." path is refused on every sync PR);
+#   (e) controls: a temp copy of a template without "### Ranked" is reported, so (a) cannot pass vacuously; a temp
+#       copy of the skill with a "$TMPDIR" body-file path is reported, so the (d) path test cannot either.
 # ---------------------------------------------------------------------------
-note "Check 85: backlog shape -- PROJECT_STATE.md subsections, AGENT_TEAM.md rules, sync PR without --fill"
+note "Check 85: backlog shape -- PROJECT_STATE.md subsections, AGENT_TEAM.md rules, sync PR without --fill, plain --body-file"
+c85_bfs() { # <file> -> the --body-file arguments on its "gh pr create" lines, one per line
+  grep 'gh pr create' "$1" | grep -o -e '--body-file[= ][^ ]*'
+}
 c85_shape() { # <file> -> prints the ### headings under "## Backlog", joined by "|"
   awk '/^## /{in_b = ($0 == "## Backlog"); next} in_b && /^### /{printf "%s%s", sep, $0; sep="|"}' "$1"
 }
@@ -5651,13 +5666,22 @@ done
 if grep -q 'gh pr create --fill' skills/sync-template/SKILL.md; then
   ko "check 85 (d): skills/sync-template/SKILL.md still creates the sync PR with 'gh pr create --fill' (use --body-file with an 'Item: none' line)"; c85_fail=1
 fi
+if [ -z "$(c85_bfs skills/sync-template/SKILL.md)" ]; then
+  ko "check 85 (d): skills/sync-template/SKILL.md has no 'gh pr create ... --body-file' line"; c85_fail=1
+elif c85_bfs skills/sync-template/SKILL.md | grep -q '[$~]'; then
+  ko "check 85 (d): skills/sync-template/SKILL.md passes --body-file a path holding a \$ or ~ ($(c85_bfs skills/sync-template/SKILL.md | grep '[$~]' | head -1)); the item check refuses it: pass a plain absolute path"; c85_fail=1
+fi
 c85_tmp=$(mktemp -d)
 grep -v '^### Ranked' templates/general/PROJECT_STATE.md > "$c85_tmp/PROJECT_STATE.md"
 if [ "$(c85_shape "$c85_tmp/PROJECT_STATE.md")" = "$c85_want" ]; then
   ko "check 85 control: a copy without '### Ranked' was NOT reported -- the shape predicate is vacuous"; c85_fail=1
 fi
+{ cat skills/sync-template/SKILL.md; printf '%s\n' 'gh pr create --body-file "$TMPDIR/sync-pr-body.md"'; } > "$c85_tmp/SKILL.md"
+if ! c85_bfs "$c85_tmp/SKILL.md" | grep -q '[$~]'; then
+  ko "check 85 control: a skill copy with a \$TMPDIR body-file path was NOT reported -- the (d) path test is vacuous"; c85_fail=1
+fi
 rm -rf "${c85_tmp:?}"
-[ "$c85_fail" -eq 0 ] && ok "check 85: 7 PROJECT_STATE.md carry Untriaged/Ranked/Done in order, AGENT_TEAM.md carries the backlog rules, the sync skill does not use --fill; control fires"
+[ "$c85_fail" -eq 0 ] && ok "check 85: 7 PROJECT_STATE.md carry Untriaged/Ranked/Done in order, AGENT_TEAM.md carries the backlog rules, the sync skill does not use --fill and passes --body-file plain paths; both controls fire"
 
 # ---------------------------------------------------------------------------
 # Check 86 (v6.3, backlog discipline): hooks/backlog-brief.sh (session-start line, advisory) reads `Task source` with

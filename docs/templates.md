@@ -19,7 +19,7 @@
 | Workflow Enforcement | No push to main + gated merge | No push to main + gated merge | No push to main + gated merge | No push to main + gated merge | No push to main + gated merge | No push to main + gated merge |
 | Pipeline Hook | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge | SubagentStop nudge |
 | Delegation Enforcement | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds | PO cannot edit code or run builds |
-| Agent Liveness | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget | Escalating tool-call budget |
+| Agent Liveness | Escalating tool-call budget, if `cct-guards` is installed | same | same | same | same | same |
 | CLAUDE.md Behavior | Session Bootstrap, Debugging, Task Brief — identical across variants; language conventions live in `.claude/rules/` | same | same | same | same | same |
 | Path-scoped rules (`.claude/rules/`) | none | `csharp.md` | `csharp.md`, `xaml.md` | `rust.md`, `frontend.md` | `java.md` | `python.md` |
 | Database Tools | No | No | SQLite MCP (optional) | No | No | SQLite MCP (optional) |
