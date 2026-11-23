@@ -39,9 +39,10 @@
 #   segment is matched wherever the words appear (`echo gh pr create` is refused too: put such text in a file).
 #   BASE: --base/-B, else refs/remotes/origin/HEAD, else refuse. HEAD: --head/-H, else the checkout's branch. A merge
 #   has neither flag: the checkout's branch and origin/HEAD, as for the MCP merge tools.
-#   BODY (issue mode, create only): read ONLY from --body-file/-F, by this hook. --body, -b, --fill, --fill-first,
-#   --fill-verbose, --template, --editor, --web, or no body file at all: refused, "use --body-file". The quote-stripping
-#   segment split cannot read a literal body safely. File mode never reads a body, so its rows need no body flag.
+#   BODY (create only, BOTH modes): read ONLY from --body-file/-F, by this hook. --body, -b, --fill, --fill-first,
+#   --fill-verbose, --template, --editor, --web, or no body file at all: refused, "use --body-file"; the file must
+#   exist and be readable. The quote-stripping segment split cannot read a literal body safely. The file's CONTENT is
+#   judged in issue mode only; file mode judges the diff.
 #   DIRECTORY: any directory change in the command (cd, pushd, env -C, ...) is refused: run from the PR's own checkout.
 #   Issue-mode `gh pr merge` passes, as the MCP merge does.
 
@@ -256,14 +257,13 @@ bic_gh_seg() {
       esac
       [ $# -gt 0 ] && shift
     done
-    if [ "$BIC_MODE" = issue ]; then
-      [ "$other" = 0 ] && [ -n "$bfile" ] ||
-        bic_refuse "the body of this gh pr create cannot be read from the command (--body, -b, --fill, --fill-first, --fill-verbose, --template, --editor, --web, or no body file): use --body-file <file>, with a closing keyword and #<n> in the file (\`Closes #<n>\`), or a line that is exactly \`Item: none\` (T1 only)."
-      case $bfile in *[\$\`\*\?\[]*|\~*) bic_refuse "the body file '$bfile' holds a \$, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use --body-file <plain path>." ;; esac
-      case $bfile in /*|[A-Za-z]:[/\\]*) ;; *) bfile="$CWD/$bfile" ;; esac
-      [ -f "$bfile" ] && [ -r "$bfile" ] || bic_refuse "cannot read the body file '$bfile': write the PR body to a file and pass its path to --body-file."
-      body=$(head -c 65536 "$bfile")
-    fi
+    # The body FORM is checked in both modes (one rule); the CONTENT is judged in issue mode only.
+    [ "$other" = 0 ] && [ -n "$bfile" ] ||
+      bic_refuse "the body of this gh pr create cannot be read from the command (--body, -b, --fill, --fill-first, --fill-verbose, --template, --editor, --web, or no body file): use --body-file <file> (issue mode: with a closing keyword and #<n> in the file, \`Closes #<n>\`, or a line that is exactly \`Item: none\`, T1 only)."
+    case $bfile in *[\$\`\*\?\[]*|\~*) bic_refuse "the body file '$bfile' holds a \$, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use --body-file <plain path>." ;; esac
+    case $bfile in /*|[A-Za-z]:[/\\]*) ;; *) bfile="$CWD/$bfile" ;; esac
+    [ -f "$bfile" ] && [ -r "$bfile" ] || bic_refuse "cannot read the body file '$bfile': write the PR body to a file and pass its path to --body-file."
+    [ "$BIC_MODE" = issue ] && body=$(head -c 65536 "$bfile")
   fi
   bic_judge "$op" "$base" "$head" "$body"
 }

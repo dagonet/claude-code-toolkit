@@ -12176,6 +12176,7 @@ else
   V6G_BAD=$(mkrepo v6gbad main)
   printf '# ctx\n\n- **Test**: `false`\n' > "$V6G_BAD/PROJECT_CONTEXT.md"
   printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V6G_FEAT/PROJECT_CONTEXT.md"
+  printf 'body\n' > "$V6GR/body.md"
   V6G_BIC=$(mkrepo v6gbic feature/z)
   printf '# ctx\n\n- **Task source**: `plan-files`\n' > "$V6G_BIC/PROJECT_CONTEXT.md"
   V6G_BENIGN="$(mkjson Bash 'ls' "$V6GR")"
@@ -12186,7 +12187,7 @@ else
     case "$1" in
       no-push-main)       mkjson Bash 'git push origin main' "$V6G_MAIN" ;;
       gate-before-merge)  mkjson Bash 'gh pr merge 5 --squash' "$V6G_FEAT" ;;
-      backlog-item-check) mkjson Bash 'gh pr create --base main' "$V6G_BIC" ;;
+      backlog-item-check) mkjson Bash "gh pr create --base main --body-file $V6GR/body.md" "$V6G_BIC" ;;
       pre-commit-test)    mkjson Bash 'git commit -m "x"' "$V6G_BAD" ;;
       deny-hang-shapes)   mkjson Bash "cat > f.txt <<'EOF'${V6G_NL}body${V6G_NL}EOF" "$V6GR" ;;
       deny-secret-reads)  mkjson_read '.env' "$V6GR" ;;
@@ -12560,10 +12561,11 @@ else
   expect "v6 dispatch: (m) powershell table order: backlog-item-check runs after gate-before-merge, before pre-commit-test" "no-push-main gate-before-merge backlog-item-check pre-commit-test" "$(v6d_ran psm)"
   V6D_BIC=$(mkrepo v6dbic feature/z)
   printf '# ctx\n\n- **Task source**: `plan-files`\n' > "$V6D_BIC/PROJECT_CONTEXT.md"
-  V6D_GHPR=$(mkjson Bash 'gh pr create --base main --title t' "$V6D_BIC")
+  printf 'body\n' > "$V6D/body.md"
+  V6D_GHPR=$(mkjson Bash "gh pr create --base main --title t --body-file $V6D/body.md" "$V6D_BIC")
   v6d_run basem bash "$V6D_GHPR"
   expect "v6 dispatch: (m) a toolkit project, bash table: a gh pr create naming no item is refused by backlog-item-check" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'BLOCKED: backlog-item-check:')"
-  v6d_run basem powershell "$(mkjson PowerShell 'gh pr create --base main --title t' "$V6D_BIC")"
+  v6d_run basem powershell "$(mkjson PowerShell "gh pr create --base main --title t --body-file $V6D/body.md" "$V6D_BIC")"
   expect "v6 dispatch: (m) a toolkit project, powershell table: the same refusal" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'BLOCKED: backlog-item-check:')"
   v6d_run base bash "$V6D_GHPR"
   expect "v6 dispatch: (m) no manifest (not a toolkit project): backlog-item-check steps aside, the gh pr create passes" "rc=0 needle=no" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'backlog-item-check')"
@@ -13292,12 +13294,14 @@ check "backlog-item-check: kill switch (.claude/git-guard-off) allows" hooks/bac
 rm -f "$BIC_R/.claude/git-guard-off"
 check_msg "backlog-item-check: an unknown tool name is refused" "$BIC_HOOK" 2 "$(mkjson_mcp mcp__x__other "$BIC_R")" "backlog-item-check"
 check "backlog-item-check: a Bash call without the gh pr words exits 0 (early exit, no git-cmd)" hooks/backlog-item-check.sh 0 "$(mkjson Bash 'ls -la' "$BIC_R")"
-check_msg "backlog-item-check: a no-item gh pr create via Bash is refused (was: exit 0 before the gh shapes)" "$BIC_HOOK" 2 "$(mkjson Bash 'gh pr create --base main --title t' "$BIC_R")" '### Done'
+check_msg "backlog-item-check: a no-item gh pr create via Bash is refused (was: exit 0 before the gh shapes)" "$BIC_HOOK" 2 "$(mkjson Bash "gh pr create --base main --title t --body-file $BIC_R/PROJECT_CONTEXT.md" "$BIC_R")" '### Done'
 check_msg "backlog-item-check: gh pr create outside a git checkout is refused" "$BIC_HOOK" 2 "$(mkjson Bash 'gh pr create --base main' "$TMPROOT/tmp")" "not inside a git checkout"
 
 # ---- Task 3: gh pr create and gh pr merge in Bash and PowerShell commands (through the dispatcher too)
 bic_sh() { mkjson Bash "$2" "$1"; }   # <cwd> <command>
 bic_ps() { mkjson PowerShell "$2" "$1"; }
+bic_shb() { mkjson Bash "$2 --body-file $BIC_BF" "$1"; }   # <cwd> <command>: the command plus a body file (file mode reads no content, but the form is checked)
+bic_psb() { mkjson PowerShell "$2 --body-file $BIC_BF" "$1"; }
 # file mode: a move repo (B-3 Ranked in base, Done in HEAD), a no-move repo, a trailer repo, one with no origin/HEAD
 BIC_MV=$(bic_mk bic-gmv "\`plan-files\`" full originhead)
 printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-5 other item\n\n### Done\n- B-3 ranked item\n- B-1 old item\n' > "$BIC_MV/PROJECT_STATE.md"
@@ -13313,28 +13317,34 @@ printf 'sync\nItem: none\n' > "$TMPROOT/bic-body-none.md"
 printf 'see #4\n' > "$TMPROOT/bic-body-bad.md"
 BIC_BF="$TMPROOT/bic-body-ok.md"; BIC_BN="$TMPROOT/bic-body-none.md"; BIC_BB="$TMPROOT/bic-body-bad.md"
 
-check_nomsg "backlog-item-check: gh pr create, file mode, a move, --base main: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr create --base main --title t')" "BLOCKED"
-check_nomsg "backlog-item-check: gh pr create, file mode, a move, no --base (origin/HEAD): allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr create --title t')" "BLOCKED"
-check_nomsg "backlog-item-check: gh pr create -B main -H feat: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr create -B main -H feat --title t')" "BLOCKED"
-check_nomsg "backlog-item-check: gh pr create --base=main --head=feat: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr create --base=main --head=feat')" "BLOCKED"
-check_nomsg "backlog-item-check: gh pr create -Bmain -Hfeat: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr create -Bmain -Hfeat')" "BLOCKED"
-check_nomsg "backlog-item-check: file mode reads no body: --fill is fine in a move repo" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr create --base main --fill')" "BLOCKED"
-check_nomsg "backlog-item-check: gh pr create via PowerShell, a move: allowed" "$BIC_HOOK" 0 "$(bic_ps "$BIC_MV" 'gh pr create --base main --title t')" "BLOCKED"
-check_nomsg "backlog-item-check: a gh pr create with a quoted title, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr create --base main --title "feat: B-3 done"')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create, file mode, a move, --base main: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create, file mode, a move, no --base (origin/HEAD): allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create -B main -H feat: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create -B main -H feat --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create --base=main --head=feat: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base=main --head=feat')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create -Bmain -Hfeat: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create -Bmain -Hfeat')" "BLOCKED"
+check_msg "backlog-item-check: file mode refuses the body forms too: --fill, a move repo" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --fill')" "use --body-file"
+check_msg "backlog-item-check: file mode, --body x, a move repo: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --body x')" "use --body-file"
+check_msg "backlog-item-check: file mode, no body flag at all, a move repo: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --title t')" "use --body-file"
+check_msg "backlog-item-check: file mode, --body-file together with --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --fill --body-file $BIC_BF")" "use --body-file"
+check_msg "backlog-item-check: file mode, a body file that does not exist: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $TMPROOT/no-such-body.md")" "cannot read the body file"
+check_msg "backlog-item-check: file mode, --body-file with a \$VAR path: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --body-file $F')" "cannot tell which file"
+check_nomsg "backlog-item-check: file mode, -F <file> in a move repo: allowed (the content is not judged in file mode)" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" "gh pr create --base main -F $BIC_BB")" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create via PowerShell, a move: allowed" "$BIC_HOOK" 0 "$(bic_psb "$BIC_MV" 'gh pr create --base main --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: a gh pr create with a quoted title, a move: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "feat: B-3 done"')" "BLOCKED"
 check_nomsg "backlog-item-check: bash -c wrapping gh pr merge, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'bash -c "gh pr merge 5"')" "BLOCKED"
 check_nomsg "backlog-item-check: gh pr merge 5 --squash, file mode, a move, no Gate line: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr merge 5 --squash')" "BLOCKED"
 check_nomsg "backlog-item-check: gh pr merge via PowerShell, a move: allowed" "$BIC_HOOK" 0 "$(bic_ps "$BIC_MV" 'gh pr merge 5 --squash')" "BLOCKED"
-check_nomsg "backlog-item-check: gh.exe pr create (PowerShell), a move: allowed" "$BIC_HOOK" 0 "$(bic_ps "$BIC_MV" 'gh.exe pr create --base main')" "BLOCKED"
-check_msg "backlog-item-check: gh pr create, file mode, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr create --base main --title t')" '### Done'
-check_msg "backlog-item-check: that refusal starts BLOCKED: backlog-item-check:" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr create --base main --title t')" 'BLOCKED: backlog-item-check:'
-check_msg "backlog-item-check: gh pr create via PowerShell, no move: refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_NM" 'gh pr create --base main')" '### Done'
+check_nomsg "backlog-item-check: gh.exe pr create (PowerShell), a move: allowed" "$BIC_HOOK" 0 "$(bic_psb "$BIC_MV" 'gh.exe pr create --base main')" "BLOCKED"
+check_msg "backlog-item-check: gh pr create, file mode, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr create --base main --title t')" '### Done'
+check_msg "backlog-item-check: that refusal starts BLOCKED: backlog-item-check:" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr create --base main --title t')" 'BLOCKED: backlog-item-check:'
+check_msg "backlog-item-check: gh pr create via PowerShell, no move: refused" "$BIC_HOOK" 2 "$(bic_psb "$BIC_NM" 'gh pr create --base main')" '### Done'
 check_msg "backlog-item-check: gh pr merge 5, file mode, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr merge 5 --squash')" '### Done'
 check_msg "backlog-item-check: gh pr merge via PowerShell, no move: refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_NM" 'gh pr merge 5')" '### Done'
-check_msg "backlog-item-check: gh pr create --head other: the cwd is not the PR's own checkout" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --head other')" "own checkout"
-check_msg "backlog-item-check: gh pr create, base not given and no origin/HEAD: pass --base" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NO" 'gh pr create --title t')" "pass --base"
-check_nomsg "backlog-item-check: gh pr create --base main needs no origin/HEAD" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NO" 'gh pr create --base main --title t')" "BLOCKED"
+check_msg "backlog-item-check: gh pr create --head other: the cwd is not the PR's own checkout" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --head other')" "own checkout"
+check_msg "backlog-item-check: gh pr create, base not given and no origin/HEAD: pass --base" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NO" 'gh pr create --title t')" "pass --base"
+check_nomsg "backlog-item-check: gh pr create --base main needs no origin/HEAD" "$BIC_HOOK" 0 "$(bic_shb "$BIC_NO" 'gh pr create --base main --title t')" "BLOCKED"
 check_msg "backlog-item-check: gh pr merge with no origin/HEAD: refused, names the fix" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NO" 'gh pr merge 5')" "set-head"
-check_msg "backlog-item-check: gh pr create --base main~1 is not a branch name" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main~1')" "not a branch name"
+check_msg "backlog-item-check: gh pr create --base main~1 is not a branch name" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main~1')" "not a branch name"
 check_msg "backlog-item-check: gh pr create --base with no value is refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base')" "has no value"
 # sync flow: a commit trailer plus --body-file with an Item: none line
 check_nomsg "backlog-item-check: sync flow, file mode: trailer plus --body-file with Item: none" "$BIC_HOOK" 0 "$(bic_sh "$BIC_TR" "gh pr create --base main --title t --body-file $BIC_BN")" "BLOCKED"
@@ -13347,20 +13357,20 @@ check "backlog-item-check: git merge feature on main exits 0 (not this hook's sh
 check "backlog-item-check: a Bash payload with no command key exits 0" hooks/backlog-item-check.sh 0 "$(mkjson_nocmd Bash "$BIC_NM")"
 check_msg "backlog-item-check: a command key that reads as empty is refused" "$BIC_HOOK" 2 "$(mkjson_emptycmd Bash "$BIC_NM")" "could not read"
 # forms the segment finder must still see
-check_msg "backlog-item-check: gh pr \"create\" (quoted word), no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr "create" --base main')" '### Done'
+check_msg "backlog-item-check: gh pr \"create\" (quoted word), no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr "create" --base main')" '### Done'
 check_msg "backlog-item-check: bash -c 'gh pr merge 5', no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'bash -c "gh pr merge 5"')" '### Done'
-check_msg "backlog-item-check: env assignment before gh, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'GH_TOKEN=x gh pr create --base main')" '### Done'
-check_msg "backlog-item-check: gh pr create after && in a chain, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'git status && gh pr create --base main')" '### Done'
+check_msg "backlog-item-check: env assignment before gh, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'GH_TOKEN=x gh pr create --base main')" '### Done'
+check_msg "backlog-item-check: gh pr create after && in a chain, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'git status && gh pr create --base main')" '### Done'
 check_msg "backlog-item-check: gh pr merge in a subshell, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" '(gh pr merge 5)')" '### Done'
-check_msg "backlog-item-check: a continuation line between gh pr and create, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr \
+check_msg "backlog-item-check: a continuation line between gh pr and create, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr \
 create --base main')" '### Done'
 check_msg "backlog-item-check: g\\h pr create (backslash inside the word): refused, cannot determine" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'g\h pr create --base main')" "not in a form"
-check_msg "backlog-item-check: narration that holds the words is refused too (documented)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'echo gh pr create')" '### Done'
-check_msg "backlog-item-check: a cd before gh pr create is refused (the checkout cannot be told)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "cd $BIC_NM && gh pr create --base main")" "changes directory"
+check_msg "backlog-item-check: narration that holds the words is refused too (documented)" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'echo gh pr create')" '### Done'
+check_msg "backlog-item-check: a cd before gh pr create is refused (the checkout cannot be told)" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" "cd $BIC_NM && gh pr create --base main")" "changes directory"
 check_msg "backlog-item-check: a cd after gh pr merge is refused too" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr merge 5; cd $BIC_NM")" "changes directory"
 check_msg "backlog-item-check: gh pr create, Task source missing: refused" "$BIC_HOOK" 2 "$(bic_sh "$(bic_mk bic-gms - full originhead)" 'gh pr create --base main')" "Task source"
 mkdir -p "$BIC_NM/.claude"; : > "$BIC_NM/.claude/git-guard-off"
-check "backlog-item-check: kill switch allows a gh pr create via Bash" hooks/backlog-item-check.sh 0 "$(bic_sh "$BIC_NM" 'gh pr create --base main')"
+check "backlog-item-check: kill switch allows a gh pr create via Bash" hooks/backlog-item-check.sh 0 "$(bic_shb "$BIC_NM" 'gh pr create --base main')"
 rm -f "$BIC_NM/.claude/git-guard-off"
 
 # issue mode: the body comes ONLY from --body-file / -F, read by the hook
