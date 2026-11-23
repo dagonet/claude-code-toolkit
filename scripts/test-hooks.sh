@@ -10638,7 +10638,7 @@ check "V3 control: find . -exec bash {} \\;"          hooks/pre-commit-test.sh 0
 # ---- v4.4.0 C2a: the fail-closed hooks map their own exit 127 to 2 in-hook (the old registration wrapper's job; exec/source forms cannot wrap) ----
 C2AR=$(mkrepo c2a main)
 C2AOK="$(mkjson Bash 'ls -la' "$C2AR")"
-C2AHOOKS="pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes"
+C2AHOOKS="pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes backlog-item-check"
 for c2a_h in $C2AHOOKS; do
   c2a_f="$ROOT/hooks/$c2a_h.sh"
   # (i) the exact trap line, once
@@ -10668,7 +10668,7 @@ C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_
 # A mid-line return (`[ x ] && return 4`, `|| return 0`, `; return`, `then return`) is matched too; the one exemption is an awk program held in a GC_AWK_* string assignment (hooks/lib/git-cmd.sh).
 # Not handled: an indented closing brace ending a column-0 function does not reset the depth flag (a later top-level return in that file would be missed after it; none exists, and the one-line/col-0 resets cover every function here).
 C2ARFILES=""
-for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes; do
+for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes backlog-item-check; do
   C2ARFILES="$C2ARFILES $ROOT/hooks/$c2a_h.sh"
 done
 expect "C2a: R-1 no top-level return in any sourced/wrapped hook or hook lib" "" \
@@ -10687,8 +10687,8 @@ expect "C2a: R-1 control: a mid-line && return is caught (exactly one hit)" 1 \
 printf 'f() { :; } # c\nreturn 5\n' > "$TMPROOT/c2a-ret3.sh"
 expect "C2a: R-1 control: a one-line function with a trailing comment does not mask a later return" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret3.sh" | wc -l | tr -d ' ')"
-expect "C2a: R-2 the EXIT-trap hooks are exactly the five (run-gate.sh is not a registered hook; v4.5.0 retired require-skills-block)" \
-  "deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh" \
+expect "C2a: R-2 the EXIT-trap hooks are exactly the six (run-gate.sh is not a registered hook; v4.5.0 retired require-skills-block; v6.3 added backlog-item-check)" \
+  "backlog-item-check.sh deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh" \
   "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 for c2a_h in $C2AHOOKS; do
   expect "C2a: R-2 $c2a_h has exactly one EXIT/0 trap" 1 "$(grep -ciE "$C2ATRAPRE" "$ROOT/hooks/$c2a_h.sh")"
@@ -13124,6 +13124,137 @@ anr_run "another tool_name: no output"     "" "$(anr_payload cct:coder sonnet co
 anr_run "unreadable payload: no output"    "" 'this is not json'
 anr_run "empty payload: no output"         "" ''
 # ---- end v7.0.0 agent-result-notes
+
+# ---- v6.3 backlog discipline: hooks/backlog-item-check.sh -- an MCP PR creation / merge must name a backlog item.
+# Fixtures are throwaway repos; "pushed" is a local refs/remotes/origin/<branch> ref (the hook uses no network).
+echo "=== hooks/backlog-item-check.sh (backlog discipline, MCP create + merge) ==="
+BIC_HOOK="$ROOT/hooks/backlog-item-check.sh"
+bic_state_full() { printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-1 old item\n'; }
+bic_state_bare() { printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n_none_\n'; }
+bic_mk() { # <name> <Task source line value|-> <full|bare> <originhead|noorigin> -> repo on branch feat, base main, nothing pushed for feat
+  local r; r=$(mkrepo "$1" main)
+  if [ "$2" = "-" ]; then printf '# Ctx\n\n- **Max parallel workstreams**: 5\n' > "$r/PROJECT_CONTEXT.md"
+  else printf '# Ctx\n\n- **Task source**: %s\n' "$2" > "$r/PROJECT_CONTEXT.md"; fi
+  if [ "$3" = full ]; then bic_state_full > "$r/PROJECT_STATE.md"; else bic_state_bare > "$r/PROJECT_STATE.md"; fi
+  git -C "$r" add -A >/dev/null 2>&1; git -C "$r" commit -q -m "base" >/dev/null 2>&1
+  git -C "$r" update-ref refs/remotes/origin/main HEAD
+  if [ "$4" = originhead ]; then git -C "$r" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main; fi
+  git -C "$r" checkout -q -b feat >/dev/null 2>&1
+  printf '%s\n' "$r"
+}
+bic_commit() { # <repo> <message> -- commits the working tree on top (adds work.txt, so the diff is not PROJECT_STATE.md-only)
+  printf 'work\n' >> "$1/work.txt"
+  git -C "$1" add -A >/dev/null 2>&1
+  printf '%b' "$2" > "$TMPROOT/bic-msg.txt"
+  git -C "$1" commit -q -F "$TMPROOT/bic-msg.txt" >/dev/null 2>&1
+}
+bic_push() { git -C "$1" update-ref refs/remotes/origin/feat HEAD; } # <repo>
+bic_create() { # <cwd> <head|-> <base|-> <body|-> -> mcp create_pull_request payload ('-' = key absent)
+  local h="" b="" bo=""
+  [ "$2" = "-" ] || h=",\"head\":\"$(jesc "$2")\""
+  [ "$3" = "-" ] || b=",\"base\":\"$(jesc "$3")\""
+  [ "$4" = "-" ] || bo=",\"body\":\"$(jesc "$4")\""
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"mcp__MCP_DOCKER__create_pull_request","tool_input":{"owner":"o","repo":"r","title":"t"%s%s%s},"cwd":"%s"}\n' "$h" "$b" "$bo" "$(jesc "$1")"
+}
+BIC_TRAILER='feat: work\n\nbody line\n\nItem: none\nCo-Authored-By: T <t@t.t>\n'
+
+# file mode, allow
+BIC_R=$(bic_mk bic-mv "\`plan-files\`" full originhead)
+printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-5 other item\n\n### Done\n- B-3 ranked item\n- B-1 old item\n' > "$BIC_R/PROJECT_STATE.md"
+bic_commit "$BIC_R" 'feat: work B-3\n'; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, B-3 Ranked in base and Done in HEAD: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+check_nomsg "backlog-item-check: head with an owner: prefix and no base (origin/HEAD): allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" o:feat - -)" "BLOCKED"
+BIC_R=$(bic_mk bic-tr "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, Item: none trailer: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+BIC_R=$(bic_mk bic-ex "\`plan-files\`" full originhead)
+printf '\n- grooming note\n' >> "$BIC_R/PROJECT_STATE.md"
+git -C "$BIC_R" add -A >/dev/null 2>&1; git -C "$BIC_R" commit -q -m "groom" >/dev/null 2>&1; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, diff touches only PROJECT_STATE.md: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+BIC_R=$(bic_mk bic-bt "\`plan-files\`" bare originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, base without subsections plus a trailer: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+
+# file mode, refuse
+BIC_R=$(bic_mk bic-bn "\`plan-files\`" bare originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: file mode, base without subsections and no trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "three headings"
+check_msg "backlog-item-check: that refusal names the trailer" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'Item: none'
+check_msg "backlog-item-check: that refusal starts BLOCKED: backlog-item-check:" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'BLOCKED: backlog-item-check:'
+BIC_R=$(bic_mk bic-nm "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: file mode, no move and no trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+check_msg "backlog-item-check: no Gate line in PROJECT_CONTEXT.md: a no-item PR is still refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "backlog-item-check"
+BIC_R=$(bic_mk bic-b9 "\`plan-files\`" full originhead)
+printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-9 brand new\n- B-1 old item\n' > "$BIC_R/PROJECT_STATE.md"
+bic_commit "$BIC_R" 'feat: work B-9\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: file mode, B-9 only in HEAD's Done is not a move: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+BIC_R=$(bic_mk bic-wb "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: the cwd branch is not the PR's head: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" other main -)" "own checkout"
+BIC_R=$(bic_mk bic-ah "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+bic_commit "$BIC_R" "$BIC_TRAILER"
+check_msg "backlog-item-check: HEAD is ahead of origin/<head>: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "push first"
+BIC_R=$(bic_mk bic-np "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"
+check_msg "backlog-item-check: no origin/<head> ref at all: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "push first"
+BIC_R=$(bic_mk bic-nb "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: origin/<base> is missing: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat release -)" "fetch first"
+BIC_R=$(bic_mk bic-nh "\`plan-files\`" full noorigin)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: no base given and no origin/HEAD: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat - -)" "pass --base"
+check_nomsg "backlog-item-check: an explicit base needs no origin/HEAD" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+BIC_R=$(bic_mk bic-nl "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n\nItem: none\n\nSigned-off-by: T <t@t.t>\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: Item: none outside the last paragraph is not a trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+
+# merge second line (file mode only)
+BIC_R=$(bic_mk bic-mg "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+for bic_t in mcp__MCP_DOCKER__merge_pull_request mcp__github-tools__github_pr_auto_merge mcp__plugin_github-tools_github-tools__github_pr_auto_merge; do
+  check_msg "backlog-item-check: file mode merge, no item ($bic_t): refused" "$BIC_HOOK" 2 "$(mkjson_mcp "$bic_t" "$BIC_R")" '### Done'
+done
+BIC_R=$(bic_mk bic-mt "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode merge with an Item: none trailer: allowed" "$BIC_HOOK" 0 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$BIC_R")" "BLOCKED"
+
+# issue mode
+BIC_R=$(bic_mk bic-is "github-issues" bare originhead)
+check_nomsg "backlog-item-check: issue mode, Fixes #12: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'Fixes #12')" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, lowercase closes #5 on a later line: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'summary\n\nthis closes #5.')" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, a line Item: none: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'text
+Item: none
+more')" "BLOCKED"
+check_msg "backlog-item-check: issue mode, see #12: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'see #12')" "backlog-item-check"
+check_msg "backlog-item-check: issue mode, Closes other/repo#12 (cross-repo): refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Closes other/repo#12')" "backlog-item-check"
+check_msg "backlog-item-check: issue mode, Item: none inside a sentence: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'this is Item: none really')" "backlog-item-check"
+check_msg "backlog-item-check: issue mode, no body at all: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "backlog-item-check"
+check_nomsg "backlog-item-check: issue mode merge passes (no local view of the body; documented)" "$BIC_HOOK" 0 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$BIC_R")" "BLOCKED"
+
+# mode
+BIC_R=$(bic_mk bic-ms - full originhead)
+check_msg "backlog-item-check: Task source missing: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "Task source"
+BIC_R=$(bic_mk bic-mj "\`jira\`" full originhead)
+check_msg "backlog-item-check: Task source jira: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "Task source"
+BIC_R=$(bic_mk bic-mx "\`plan-files\` and more" full originhead)
+check_msg "backlog-item-check: Task source with trailing words: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "Task source"
+BIC_R=$(bic_mk bic-mb "github-issues  " bare originhead)
+check_nomsg "backlog-item-check: Task source without backticks, trailing spaces: issue mode" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "BLOCKED"
+
+# kill switch, unknown tool, stray Bash, bad payload
+BIC_R=$(bic_mk bic-ks "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: control, the same no-item PR is refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "backlog-item-check"
+mkdir -p "$BIC_R/.claude"; : > "$BIC_R/.claude/git-guard-off"
+check "backlog-item-check: kill switch (.claude/git-guard-off) allows" hooks/backlog-item-check.sh 0 "$(bic_create "$BIC_R" feat main -)"
+rm -f "$BIC_R/.claude/git-guard-off"
+check_msg "backlog-item-check: an unknown tool name is refused" "$BIC_HOOK" 2 "$(mkjson_mcp mcp__x__other "$BIC_R")" "backlog-item-check"
+check "backlog-item-check: a stray Bash call exits 0 without loading git-cmd" hooks/backlog-item-check.sh 0 "$(mkjson Bash 'gh pr create' "$BIC_R")"
+check_msg "backlog-item-check: an unparseable payload is refused" "$BIC_HOOK" 2 'this is not json' "BLOCKED"
+check_msg "backlog-item-check: a cwd that is not a git checkout is refused" "$BIC_HOOK" 2 "$(bic_create "$TMPROOT/tmp" feat main -)" "backlog-item-check"
+# ---- end v6.3 backlog-item-check
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

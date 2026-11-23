@@ -4751,7 +4751,11 @@ SessionEnd;;cct-session
 SessionStart;;jev-notice
 PreToolUse;Agent;jev-route
 PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge
-PostToolUse;Agent;agent-result-notes'
+PostToolUse;Agent;agent-result-notes
+PreToolUse;mcp__MCP_DOCKER__create_pull_request;backlog-item-check
+PreToolUse;mcp__MCP_DOCKER__merge_pull_request;backlog-item-check
+PreToolUse;mcp__github-tools__github_pr_auto_merge;backlog-item-check
+PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;backlog-item-check'
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
@@ -4779,7 +4783,7 @@ else
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
   c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
   c71_rh=$(c71_rhtab hooks/lib/hook-class.sh)
-  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\n')
+  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\nbacklog-item-check closed\n')
   c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
   [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/lib/hook-class.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
   # (1d) two-sided registration shape: a closed-class hook carries the inline existence check (G), every other one stays bare (B)
@@ -5321,7 +5325,7 @@ note "Check 83: onFailure block on the fail-closed guard registrations (and only
 C83_JS='const fs = require("fs");
 const [mode, file, out, target, op] = process.argv.slice(1);
 const d = JSON.parse(fs.readFileSync(file, "utf8"));
-const G = /(dispatch\.sh|deny-secret-reads|deny-claude-md-writes|gate-before-merge|pre-commit-test|no-push-main)/;
+const G = /(dispatch\.sh|deny-secret-reads|deny-claude-md-writes|gate-before-merge|pre-commit-test|no-push-main|backlog-item-check)/;
 let guards = 0; const bad = [];
 for (const ev of Object.keys(d.hooks || {}))
   for (const g of d.hooks[ev])
@@ -5346,7 +5350,7 @@ if ! command -v node >/dev/null 2>&1; then
   ko "check 83: node is not available -- the onFailure scan cannot run"
 else
   c83_fail=0
-  for c83_pair in "hooks/hooks.json 5" ".claude/settings.json 4"; do
+  for c83_pair in "hooks/hooks.json 7" ".claude/settings.json 6"; do
     c83_f=${c83_pair% *}; c83_want=${c83_pair#* }
     c83_res=$(c83_scan "$c83_f" 2>&1)
     c83_n=$(printf '%s\n' "$c83_res" | head -1)

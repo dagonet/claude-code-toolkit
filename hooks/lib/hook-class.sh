@@ -12,7 +12,7 @@ hc_class() {
     deny-hang-shapes|model-floor|bash-output-guard|verify-hooks) cls=machine; pol=open ;;
     jev-route|jev-notice)                                        cls=machine; pol=open ;;
     agent-result-notes)                                          cls=project; pol=open ;;
-    pre-commit-test|gate-before-merge|deny-claude-md-writes)     cls=project; pol=closed ;;
+    pre-commit-test|gate-before-merge|deny-claude-md-writes|backlog-item-check) cls=project; pol=closed ;;
     read-size-gate|enforce-delegation|agent-budget-warn)         cls=project; pol=warn ;;
     post-edit-build|enforce-agent-contract|retro-ledger|retro-brief|now-brief) cls=project; pol=open ;;
     *) return 1 ;;
