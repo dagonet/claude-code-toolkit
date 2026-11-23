@@ -3691,14 +3691,14 @@ fi
 # Check 65 -- Jev is opt-in per clone and ships no registration (v4.4.0, spec
 # D1 "zero footprint when off"). (a) No shipped settings file registers the
 # router -- only the v4 `/jev on` wrote it, into one checkout's settings.local.json
-# (v5 `/cct:jev on` writes only <git common dir>/jev/config.json).
-# (b) /cct:jev can never be model-invoked (the model must not switch egress on).
+# (v5 `/cct-jev:jev on` writes only <git common dir>/jev/config.json).
+# (b) /cct-jev:jev can never be model-invoked (the model must not switch egress on).
 # (c) The registration jev_ctl.py writes is the spec's literal and contains
 # the marker agent-model.sh's am_jev_routing greps for: if those two drift
 # apart, model-floor never steps aside for a live router (two emitters) or
 # steps aside for a dead one (none).
 # ---------------------------------------------------------------------------
-note "Check 65: no shipped settings registers the Jev router; /cct:jev is user-invoked only; the registration and the step-aside marker agree"
+note "Check 65: no shipped settings registers the Jev router; /cct-jev:jev is user-invoked only; the registration and the step-aside marker agree"
 C65_SPEC_REG='f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0'
 c65_scan_settings() { # <settings file> -> prints the file when it registers the router
   grep -lF 'jev_route.py' "$1" 2>/dev/null
@@ -3707,23 +3707,28 @@ c65_bad=""
 for c65_f in templates/*/.claude/settings.json .claude/settings.json user-level-reference/settings.json; do
   [ -n "$(c65_scan_settings "$c65_f")" ] && c65_bad="$c65_bad $c65_f(registers jev_route.py)"
 done
-c65_skill=skills/jev/SKILL.md
+c65_skill=plugins/cct-jev/skills/jev/SKILL.md   # v7.0.0: Jev lives in the optional cct-jev plugin
 grep -qx 'disable-model-invocation: true' "$c65_skill" 2>/dev/null || c65_bad="$c65_bad $c65_skill(no 'disable-model-invocation: true' line)"
 c65_marker=$(sed -n "s/^AM_JEV_MARKER='\(.*\)'\$/\1/p" hooks/lib/agent-model.sh | head -1)
-c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" skills/jev/jev_ctl.py | head -1)
+c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" plugins/cct-jev/skills/jev/jev_ctl.py | head -1)
 [ -n "$c65_marker" ] || c65_bad="$c65_bad agent-model.sh(no AM_JEV_MARKER line)"
 [ "$c65_reg" = "$C65_SPEC_REG" ] || c65_bad="$c65_bad jev_ctl.py(REG_COMMAND is not the spec literal: '${c65_reg:-<none>}')"
 case "$c65_reg" in *"$c65_marker"*) ;; *) c65_bad="$c65_bad REG_COMMAND does not contain AM_JEV_MARKER '$c65_marker'" ;; esac
 # U-1: the orchestrator is told to omit `model` while on. Since the cheap-first
-# ladder (v7.0.0) the exception lives in skills/jev/SKILL.md ONLY; the user-level
+# ladder (v7.0.0) the exception lives in plugins/cct-jev/skills/jev/SKILL.md ONLY; the user-level
 # rule no longer carries it. The session-start notice must still exist, or Jev
 # routes nothing.
 c65_has_exception() { grep -qF 'unless Jev routing is on in this repo' "$1" 2>/dev/null; }
 c65_has_exception user-level-reference/CLAUDE.md && c65_bad="$c65_bad user-level-reference/CLAUDE.md(still carries the U-1 exception)"
-grep -qF 'While Jev routing is on in this repo, do NOT pass `model`' skills/jev/SKILL.md 2>/dev/null || c65_bad="$c65_bad skills/jev/SKILL.md(lost the omit-model-while-on rule)"
-grep -q 'omit model on Agent spawns' hooks/jev-notice.sh 2>/dev/null || c65_bad="$c65_bad hooks/jev-notice.sh(no session notice telling the orchestrator to omit model)"
+grep -qF 'While Jev routing is on in this repo, do NOT pass `model`' "$c65_skill" 2>/dev/null || c65_bad="$c65_bad $c65_skill(lost the omit-model-while-on rule)"
+grep -q 'omit model on Agent spawns' plugins/cct-jev/hooks/jev-notice.sh 2>/dev/null || c65_bad="$c65_bad plugins/cct-jev/hooks/jev-notice.sh(no session notice telling the orchestrator to omit model)"
+# v7.0.0: nothing of Jev is left in the cct root (the skill, its Python, the two hooks), and cct's registrations name none of it
+for c65_gone in skills/jev hooks/jev-route.sh hooks/jev-notice.sh; do
+  [ -e "$c65_gone" ] && c65_bad="$c65_bad $c65_gone(still in the cct root: Jev moved to plugins/cct-jev)"
+done
+grep -q 'jev-route\|jev-notice' hooks/hooks.json hooks/lib/hook-class.sh 2>/dev/null && c65_bad="$c65_bad cct's hooks.json or hook-class.sh still names a Jev hook"
 if [ -z "$c65_bad" ]; then
-  ok "check 65: no template, root or user-level settings registers jev_route.py; /cct:jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
+  ok "check 65: no template, root or user-level settings registers jev_route.py; /cct-jev:jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER; nothing of Jev is left in the cct root"
 else
   ko "check 65:$c65_bad"
 fi
@@ -4730,12 +4735,12 @@ c71_cmp() { # <label> <got> <want>
   elif [ "$2" != "$3" ]; then c71_bad="$c71_bad [$1 differs from the frozen table: $(printf '%s\n' "$2" | LC_ALL=C sort > "$c71_tmp/got"; printf '%s\n' "$3" | LC_ALL=C sort > "$c71_tmp/want"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"; fi
 }
 # Plugin registrations (v5.0): ONE event;matcher;script row per hooks/hooks.json entry. Both accepted shapes are
-# anchored: `bash "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh" <name>` maps to <name>, and the cct-session fallback
-# (optionally with ` end`; check 74 pins its argument) maps to cct-session. Anything else (an appended `; exit 0`,
+# anchored: `bash "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh" <name>` maps to <name>, and the cct-session fallback and cct-jev's
+# own marker writer cct-jev-session (optionally with ` end`; check 74 pins the argument) map to their own names. Anything else (an appended `; exit 0`,
 # a direct hooks/<name>.sh call, an inline command, a non-command type) maps to OTHER and so never matches the set.
 # The plugin-only rows have no frozen-table counterpart.
 C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
-const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session)\.sh"( end)?$/;
+const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session|cct-jev-session)\.sh"( end)?$/;
 const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";
 const DP=GP.replace("run-hook.sh","dispatch.sh");
 for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const dm=c.startsWith(DP)&&/^(bash|powershell)$/.test(c.slice(DP.length))?"dispatch:"+c.slice(DP.length):null;const gm=dm||(c.startsWith(GP)&&/^[a-z-]+$/.test(c.slice(GP.length))?c.slice(GP.length):null);const r=gm?null:(RH.exec(c)||CS.exec(c));out.push([ev,g.matcher||"",gm||(r?r[1]:"OTHER"),gm?"G":"B"].join(";"));}
@@ -4765,6 +4770,8 @@ c71_script() { # <name> -> the ONE path holding <name>.sh under hooks/ or plugin
 }
 C71_PLUGIN_ONLY='SessionStart;;cct-session
 SessionEnd;;cct-session
+SessionStart;;cct-jev-session
+SessionEnd;;cct-jev-session
 SessionStart;;jev-notice
 PreToolUse;Agent;jev-route
 PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge
@@ -4801,7 +4808,7 @@ else
   # (1c) polarity (v5.0 fix round M4): hooks/lib/hook-class.sh's class table must equal the frozen general forms (F closed,
   # W warn, O/U open; the two plugin-only jev hooks open), name for name; flipping no-push-main to open goes red.
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
-  c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
+  c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3=="cct-jev-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
   c71_rhall() { for c71_hf in $(c71_hcs); do c71_rhtab "$c71_hf"; done | LC_ALL=C sort; } # the union of cct's table and every plugin's; NOT deduped, so a hook listed in two tables stays a duplicate line and goes red against the frozen forms
   c71_rh=$(c71_rhall)
   c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\nbacklog-item-check closed\nbacklog-brief open\n')
@@ -5056,13 +5063,13 @@ c72_ctl=$(c72_eval "$c72_tmp")
 rm -rf "$c72_tmp"
 c72_real=$(c72_eval .)
 c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
-c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
+c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers cct-jev; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
 if [ -z "$c72_first" ] || [ "${c72_ctl#*|}" = "0" ]; then
   ko "72: CONTROL failed (one sub-plugin at a version other than VERSION was not flagged; fixture '$c72_ctl')"
-elif [ -n "$c72_want" ] && [ "$c72_real" = "11|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
-  ok "72: cct plus 10 sub-plugin (the six MCP plugins, java-tools, cct-guards, cct-learning and cct-helpers) plugin.json files all carry version $c72_want (= VERSION); control fires"
+elif [ -n "$c72_want" ] && [ "$c72_real" = "12|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
+  ok "72: cct plus 11 sub-plugin (the six MCP plugins, java-tools, cct-guards, cct-learning, cct-helpers and cct-jev) plugin.json files all carry version $c72_want (= VERSION); control fires"
 else
-  ko "72: expected 11 plugin.json (cct + 10 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
+  ko "72: expected 12 plugin.json (cct + 11 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers cct-jev) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5125,8 +5132,27 @@ if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) h
 # files: each hook its hooks.json names exists next to it, its run-hook.sh and lib/hook-class.sh are there, and the hooks
 # named equal the hooks its own class table lists, both ways. Two-sided: a copy whose table lacks one hook, and a copy missing
 # one script, are flagged.
+# A plugin that writes its own session marker (cct-jev: cct-jev-session.sh) is held to the pin the cct marker has above: SessionStart
+# (no argument) writes, SessionEnd (`end`, with a 2..60 s timeout) removes, and each is registered exactly once.
+c74_sesspin() { # <hooks.json> <script name, e.g. cct-jev-session.sh> -> "ok ok" when the pair and the timeout are right
+  node -e '
+const h=require(require("path").resolve(process.argv[1])).hooks||{}, sc=process.argv[2];
+const cmds=e=>[].concat(...(h[e]||[]).map(g=>(g.hooks||[]).map(x=>x.command||""))).filter(c=>c.includes(sc));
+const all=Object.keys(h).reduce((n,e)=>n+cmds(e).length,0);
+const s=cmds("SessionStart"), d=cmds("SessionEnd");
+const w="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/"+sc+"\"";
+const t=[].concat(...(h.SessionEnd||[]).map(g=>g.hooks||[])).filter(x=>(x.command||"").includes(sc));
+process.stdout.write((s.length===1&&s[0]===w&&d.length===1&&d[0]===w+" end"&&all===2?"ok":"bad")+" "+(t.length===1&&t[0].timeout>=2&&t[0].timeout<=60?"ok":"bad"));
+' "$1" "$2" 2>/dev/null
+}
 c74_plug() { # <plugin root> -> the problems found, nothing when clean
   c74_pb=""
+  if grep -q 'cct-jev-session\.sh' "$1/hooks/hooks.json" 2>/dev/null; then
+    c74_ps=$(c74_sesspin "$1/hooks/hooks.json" cct-jev-session.sh)
+    case "$c74_ps" in "ok "*) ;; *) c74_pb="$c74_pb cct-jev-session.sh-not-registered-as-SessionStart(no-arg)+SessionEnd(end)" ;; esac
+    case "$c74_ps" in *" ok") ;; *) c74_pb="$c74_pb cct-jev-session.sh-SessionEnd-timeout-missing-or-outside-2..60s" ;; esac
+    [ -f "$1/hooks/cct-jev-session.sh" ] || c74_pb="$c74_pb missing:cct-jev-session"
+  fi
   c74_pnm=$(grep -oE 'run-hook\.sh\\" [a-z-]+' "$1/hooks/hooks.json" 2>/dev/null | awk '{print $2}' | sort -u)
   c74_pcl=$(sed -n '/^ *case "\$1" in/,/^ *esac/p' "$1/hooks/lib/hook-class.sh" 2>/dev/null | grep -o '^ *[a-z|-][a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
   [ -n "$c74_pnm" ] || c74_pb="$c74_pb no-hook-named"
@@ -5149,12 +5175,20 @@ if [ -d plugins/cct-guards ]; then
   cp -R plugins/cct-guards "$c74_ptmp/b"; rm -f "$c74_ptmp/b/hooks/post-edit-build.sh"
   cp -R plugins/cct-guards "$c74_ptmp/c"; rm -f "$c74_ptmp/c/hooks/run-hook.sh"
 fi
+# cct-jev's marker pair: a SessionEnd without its `end` argument (the writer would re-create the marker at SessionEnd), a
+# SessionEnd without a timeout, and a deleted writer must each be flagged
+if [ -d plugins/cct-jev ]; then
+  cp -R plugins/cct-jev "$c74_ptmp/d"; sed -i 's#cct-jev-session.sh\\" end#cct-jev-session.sh\\"#' "$c74_ptmp/d/hooks/hooks.json"
+  cp -R plugins/cct-jev "$c74_ptmp/e"; sed -i 's#, "timeout": 5 }$# }#' "$c74_ptmp/e/hooks/hooks.json"
+  cp -R plugins/cct-jev "$c74_ptmp/f"; rm -f "$c74_ptmp/f/hooks/cct-jev-session.sh"
+fi
 c74_ctl_a=$(c74_plug "$c74_ptmp/a"); c74_ctl_b=$(c74_plug "$c74_ptmp/b"); c74_ctl_c=$(c74_plug "$c74_ptmp/c")
+c74_ctl_d=$(c74_plug "$c74_ptmp/d"); c74_ctl_e=$(c74_plug "$c74_ptmp/e"); c74_ctl_f=$(c74_plug "$c74_ptmp/f")
 rm -rf "$c74_ptmp"
 if [ "$c74_pcount" -lt 1 ]; then
   ko "74 (per plugin): no plugins/*/hooks/hooks.json found -- the per-plugin rule is inert"
-elif [ -z "$c74_ctl_a" ] || [ -z "$c74_ctl_b" ] || [ -z "$c74_ctl_c" ]; then
-  ko "74 (per plugin): CONTROL failed (a table missing one hook, a missing script and a missing run-hook.sh must each be flagged; got '$c74_ctl_a' | '$c74_ctl_b' | '$c74_ctl_c')"
+elif [ -z "$c74_ctl_a" ] || [ -z "$c74_ctl_b" ] || [ -z "$c74_ctl_c" ] || [ -z "$c74_ctl_d" ] || [ -z "$c74_ctl_e" ] || [ -z "$c74_ctl_f" ]; then
+  ko "74 (per plugin): CONTROL failed (a table missing one hook, a missing script, a missing run-hook.sh, a SessionEnd without its end argument, a SessionEnd without a timeout and a missing marker writer must each be flagged; got '$c74_ctl_a' | '$c74_ctl_b' | '$c74_ctl_c' | '$c74_ctl_d' | '$c74_ctl_e' | '$c74_ctl_f')"
 elif [ -z "$c74_pbad" ]; then
   ok "74 (per plugin): $c74_pcount plugin(s) with hooks name $c74_pnames hook(s), all present next to their own run-hook.sh and classed in their own table; controls fire"
 else
@@ -5747,7 +5781,7 @@ c88_mk; sed -i 's/pol=open ;;/pol=warn ;;/' "$c88_tmp/t/$c88_P/lib/hook-class.sh
 [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -eq 0 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [a changed TABLE line in hook-class.sh was flagged: the table is data]"; }
 rm -rf "$c88_tmp"
 if [ "$c88_ctl_ok" -ne 1 ]; then ko "check 88: CONTROL failed:$c88_ctl_why"
-elif [ "${c88_counts%%|*}" -lt 2 ] || [ "${c88_counts##*|}" -lt 7 ]; then ko "check 88: expected at least 2 plugins with hooks (cct-guards, cct-learning) and 7 pinned copies (run-hook.sh, json.sh and hook-class.sh in each, git-cmd.sh in cct-guards), got plugins|files '$c88_counts'"
+elif [ "${c88_counts%%|*}" -lt 3 ] || [ "${c88_counts##*|}" -lt 11 ]; then ko "check 88: expected at least 3 plugins with hooks (cct-guards, cct-learning, cct-jev) and 11 pinned copies (run-hook.sh, json.sh and hook-class.sh in each, git-cmd.sh in cct-guards, agent-model.sh in cct-jev), got plugins|files '$c88_counts'"
 elif [ -n "$c88_probs" ]; then ko "check 88: a pinned plugin copy differs from cct's original: $c88_probs"
 else ok "check 88: $c88_counts (plugins|files): every pinned copy equals cct's original (hook-class.sh outside its class table); controls fire on a changed byte, a changed hc_skip line, a changed default arm and a deleted lib, and stay quiet on a changed table line"
 fi

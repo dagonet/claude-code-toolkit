@@ -55,7 +55,7 @@ Select it with `"outputStyle": "cct:pm-report"` in `~/.claude/settings.json`. `/
 | `/cct:sync-template` | Pulls template updates into your project and keeps your own edits |
 | `/cct-helpers:contribute-upstream` | If `cct-helpers` is installed: sends an improvement from your project back to the toolkit templates |
 | `/cct-learning:retro-review` | If `cct-learning` is installed: reviews agent failures, config drift and which projects are behind |
-| `/cct:jev` | Switches the optional model routing on or off (below) |
+| `/cct-jev:jev` | If `cct-jev` is installed: switches the optional model routing on or off (below) |
 
 If `cct-helpers` is installed, two more start by themselves when they fit: `cct-helpers:mcp-usage` (steps for large inputs and MCP servers) and `cct-helpers:karpathy-guidelines` (habits that avoid common coding mistakes).
 
@@ -66,8 +66,8 @@ Compared in [`docs/templates.md`](docs/templates.md).
 
 ### Optional: model routing with Jev
 
-Off by default. `/cct:jev on` lets the Jev service pick the model and effort for each agent launch.
-It is switched on per clone and needs a TypeSafe API key; the `cct:jev` skill explains what is sent.
+Off by default, and it ships in the optional `cct-jev` plugin (`claude plugin install cct-jev@dagonet`). With the plugin installed, `/cct-jev:jev on` lets the Jev service pick the model and effort for each agent launch.
+It is switched on per clone and needs a TypeSafe API key; the `cct-jev:jev` skill explains what is sent. The core model floor steps aside only while the plugin is loaded in the session.
 
 ## Install
 

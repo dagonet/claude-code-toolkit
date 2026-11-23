@@ -10177,11 +10177,11 @@ rm -rf "$JMGD/jev"
 # EXACT so a test file that stops being discovered goes red, and nothing may
 # skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
 # Skipped by name (4) only where python3 is absent: the jq-only matrix config.
-echo "=== skills/jev (v4.4.0 J-PY) ==="
+echo "=== plugins/cct-jev/skills/jev (v4.4.0 J-PY) ==="
 JPY_WANT=145
-JPY_DIR="$ROOT/skills/jev"
+JPY_DIR="$ROOT/plugins/cct-jev/skills/jev"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
-  JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
+  JPY_OUT=$(env -u JEV_REPO_ROOT -u TYPESAFE_API_KEY PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
   [ "$JPY_RC" -eq 0 ] || printf '%s\n' "$JPY_OUT" | tail -40
   expect "J-PY python tests pass"               0 "$JPY_RC"
   expect "J-PY ran exactly $JPY_WANT tests"     "$JPY_WANT" "$(printf '%s\n' "$JPY_OUT" | sed -n 's/^Ran \([0-9]*\) tests\{0,1\} in .*/\1/p')"
@@ -13088,9 +13088,9 @@ expect "v5 red gate via run-gate.sh names the in-repo command" yes "$(printf '%s
 # Needs python3 (am_jev_routing probes it and the router is python): skipped by name in the jq-only configuration.
 if python3 -c '' >/dev/null 2>&1; then
   V5J="$TMPROOT/v5jev plug"; mkdir -p "$V5J/hooks/lib" "$V5J/skills/jev" "$V5J/.claude-plugin"   # a space in the path on purpose
-  cp "$ROOT/hooks/run-hook.sh" "$ROOT/hooks/jev-route.sh" "$ROOT/hooks/jev-notice.sh" "$V5J/hooks/" 2>/dev/null
-  cp "$ROOT"/hooks/lib/*.sh "$V5J/hooks/lib/"
-  printf '{"name":"cct"}\n' > "$V5J/.claude-plugin/plugin.json"
+  cp "$ROOT/plugins/cct-jev/hooks/run-hook.sh" "$ROOT/plugins/cct-jev/hooks/jev-route.sh" "$ROOT/plugins/cct-jev/hooks/jev-notice.sh" "$V5J/hooks/" 2>/dev/null
+  cp "$ROOT"/plugins/cct-jev/hooks/lib/*.sh "$V5J/hooks/lib/"
+  printf '{"name":"cct-jev"}\n' > "$V5J/.claude-plugin/plugin.json"
   printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5J/skills/jev/jev_route.py"   # a fake router: proves it was exec'd with stdin
   V5JR=$(mkrepo v5jevrepo main); V5JH="$TMPROOT/v5jevhome"; mkdir -p "$V5JH" "$V5JR/.claude"
   V5JGD=$(git -C "$V5JR" rev-parse --path-format=absolute --git-common-dir)
@@ -13105,7 +13105,7 @@ if python3 -c '' >/dev/null 2>&1; then
   printf '{"route": true}\n' > "$V5JGD/jev/config.json"
   expect "v5 jev: route true -> the router runs, with stdin" "ROUTED rc=0" "$(v5jev jev-route)"
   expect "v5 jev: route true -> jev-notice prints the notice" "yes rc=0" "$(v5jev jev-notice | grep -q 'omit model on Agent spawns' && echo yes) rc=0"
-  expect "v5 jev: the notice names the plugin command" "yes" "$(v5jev jev-notice | grep -q '/cct:jev off' && echo yes)"
+  expect "v5 jev: the notice names the cct-jev command" "yes" "$(v5jev jev-notice | grep -q '/cct-jev:jev off' && echo yes)"
   printf '{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","command":"f=\\"$HOME/.claude/skills/jev/jev_route.py\\"; [ -f \\"$f\\" ] && python3 \\"$f\\"; exit 0"}]}]}}\n' > "$V5JR/.claude/settings.local.json"
   expect "v5 jev: route true + v4 settings.local.json entry -> jev-route steps aside" "rc=0" "$(v5jev jev-route)"
   expect "v5 jev: route true + v4 entry -> jev-notice steps aside" "rc=0" "$(v5jev jev-notice)"
@@ -13116,11 +13116,12 @@ if python3 -c '' >/dev/null 2>&1; then
   rm "$V5J/skills/jev/jev_route.py"
   expect "v5 jev: plugin router missing -> routing off (the floor applies)" "off" "$(v5jam)"
   rm -rf "$V5JGD/jev"
-  # I2: a plugin-SHAPED checkout (this toolkit repo: plugin.json + skills/jev/jev_route.py at its root, project model-floor
-  # registered) steps model-floor aside only while the plugin is LOADED in the session (the cct-session marker); exactly ONE emitter.
+  # I2: model-floor (the cct plugin's, here registered at the root of a checkout that also holds a router) steps aside only
+  # while the cct-jev plugin is LOADED in the session -- its OWN marker, written by plugins/cct-jev/hooks/cct-jev-session.sh into
+  # cct-jev-<uid>/, never the cct-session marker; exactly ONE emitter. The jev-route copy comes from the plugin.
   V5T=$(mkrepo v5tk main); V5TH="$TMPROOT/v5tkhome"; V5TT="$TMPROOT/v5tktmp"; V5TSID="v5tk-sid-1"
-  mkdir -p "$V5T/hooks/lib" "$V5T/skills/jev" "$V5T/.claude-plugin" "$V5TH" "$V5TT/cct-$(id -u)"
-  cp "$ROOT/hooks/model-floor.sh" "$ROOT/hooks/jev-route.sh" "$V5T/hooks/"; cp "$ROOT"/hooks/lib/*.sh "$V5T/hooks/lib/"
+  mkdir -p "$V5T/hooks/lib" "$V5T/skills/jev" "$V5T/.claude-plugin" "$V5TH" "$V5TT"
+  cp "$ROOT/hooks/model-floor.sh" "$V5T/hooks/"; cp "$ROOT/plugins/cct-jev/hooks/jev-route.sh" "$V5T/hooks/"; cp "$ROOT"/hooks/lib/*.sh "$V5T/hooks/lib/"
   printf '{"name":"cct"}\n' > "$V5T/.claude-plugin/plugin.json"
   printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5T/skills/jev/jev_route.py"   # stub router
   V5TGD=$(git -C "$V5T" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$V5TGD/jev"
@@ -13128,7 +13129,8 @@ if python3 -c '' >/dev/null 2>&1; then
     local sj=""; [ -n "$1" ] && sj="\"session_id\":\"$1\","
     printf '{%s"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"p"},"cwd":"%s"}' "$sj" "$(jesc "$(natpath "${2:-$V5T}")")"
   }
-  v5t_mark() { printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh"; }   # the real writer
+  v5t_mark() { printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" | TMPDIR="$V5TT" bash "$ROOT/plugins/cct-jev/hooks/cct-jev-session.sh"; }   # the real cct-jev writer
+  v5t_cctmark() { printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh"; }   # the real cct writer: the OTHER marker
   v5t_mf() { # <session id> -> the model the PROJECT model-floor emits ("silent" when it steps aside); no plugin env: the lib falls back to the repo root
     v5t_payload "$1" | env -u CLAUDE_PLUGIN_ROOT HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PROJECT_DIR="$V5T" bash "$V5T/hooks/model-floor.sh" >"$TMPROOT/v5t.out" 2>/dev/null
     if [ -s "$TMPROOT/v5t.out" ]; then jfield "$(<"$TMPROOT/v5t.out")" hookSpecificOutput.updatedInput.model; else echo silent; fi
@@ -13143,30 +13145,41 @@ if python3 -c '' >/dev/null 2>&1; then
   expect "v5 jev (a) ... and jev-route emits (one emitter)" ROUTED "$(v5t_jr "$V5TSID")"
   expect "v5 jev (b) toolkit repo, plugin NOT loaded (no marker): project model-floor floors" sonnet "$(v5t_mf "v5tk-sid-unmarked")"
   expect "v5 jev (b) ... no session_id in the payload -> floors" sonnet "$(v5t_mf "")"
-  : > "$V5TT/cct-$(id -u)/a.b"
+  v5t_cctmark "v5tk-sid-cct"
+  expect "v5 jev (b2) route true with ONLY the cct marker (cct-session.sh wrote it, cct-jev did not): model-floor floors" sonnet "$(v5t_mf "v5tk-sid-cct")"
+  v5t_mark "v5tk-sid-cct"
+  expect "v5 jev (b3) ... then the cct-jev marker is written for the same session: it steps aside" silent "$(v5t_mf "v5tk-sid-cct")"
+  mkdir -p "$V5TT/cct-jev-$(id -u)"; : > "$V5TT/cct-jev-$(id -u)/a.b"
   expect "v5 jev (b) ... an unsafe session id (a dot) is treated as not loaded, even with a file of that name" sonnet "$(v5t_mf "a.b")"
   printf '{"route": false}\n' > "$V5TGD/jev/config.json"
   expect "v5 jev (d) route false, plugin loaded: model-floor floors" sonnet "$(v5t_mf "$V5TSID")"
   expect "v5 jev (d) ... and jev-route is silent (one emitter)" silent "$(v5t_jr "$V5TSID")"
   # SessionEnd removes the marker: a resumed session without the plugin floors again
   printf '{"route": true}\n' > "$V5TGD/jev/config.json"
-  printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$V5TSID" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh" end
+  printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$V5TSID" | TMPDIR="$V5TT" bash "$ROOT/plugins/cct-jev/hooks/cct-jev-session.sh" end
   expect "v5 jev (a') after SessionEnd the marker is gone: project model-floor floors again" sonnet "$(v5t_mf "$V5TSID")"
-  # (c) a v5 CONSUMER: manifest present, no project model-floor registration; the plugin's own model-floor, through run-hook
+  # (c) a v5 CONSUMER: manifest present, no project model-floor registration; the cct plugin's own model-floor through ITS
+  # run-hook (a cct-shaped fixture: no skills/jev, so the step-aside cannot lean on a router file in the cct root), and the
+  # cct-jev plugin's jev-route through ITS run-hook (V5J)
   V5C=$(mkrepo v5cons main); mkdir -p "$V5C/.claude"; printf '{}\n' > "$V5C/.claude/template-manifest.json"
-  cp "$ROOT/hooks/model-floor.sh" "$V5J/hooks/"
+  V5CT="$TMPROOT/v5cct plug"; mkdir -p "$V5CT/hooks/lib" "$V5CT/.claude-plugin"
+  cp "$ROOT/hooks/run-hook.sh" "$ROOT/hooks/model-floor.sh" "$V5CT/hooks/"; cp "$ROOT"/hooks/lib/*.sh "$V5CT/hooks/lib/"
+  printf '{"name":"cct"}\n' > "$V5CT/.claude-plugin/plugin.json"
   printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5J/skills/jev/jev_route.py"
   V5CGD=$(git -C "$V5C" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$V5CGD/jev"; printf '{"route": true}\n' > "$V5CGD/jev/config.json"
-  v5c_run() { # <hook name> <session id> -> the plugin hook's stdout, via run-hook.sh
-    v5t_payload "$2" "$V5C" | env HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PLUGIN_ROOT="$V5J" CLAUDE_PROJECT_DIR="$V5C" bash "$V5J/hooks/run-hook.sh" "$1" 2>/dev/null
+  v5c_run() { # <hook name> <session id> -> the hook's stdout, via run-hook.sh of the plugin that owns it (jev-route: cct-jev; model-floor: cct)
+    local pl=$V5CT; [ "$1" = jev-route ] && pl=$V5J
+    v5t_payload "$2" "$V5C" | env HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PLUGIN_ROOT="$pl" CLAUDE_PROJECT_DIR="$V5C" bash "$pl/hooks/run-hook.sh" "$1" 2>/dev/null
   }
   v5c_model() { local o; o=$(v5c_run model-floor "$1"); if [ -n "$o" ]; then jfield "$o" hookSpecificOutput.updatedInput.model; else echo silent; fi; }
   v5t_mark "v5c-sid-1"
-  expect "v5 jev (c) consumer, plugin loaded, route true: the plugin's model-floor steps aside" silent "$(v5c_model v5c-sid-1)"
-  expect "v5 jev (c) ... and jev-route emits (one emitter)" ROUTED "$(v5c_run jev-route v5c-sid-1)"
-  expect "v5 jev (c) ... no marker for the session: the plugin's model-floor floors" sonnet "$(v5c_model v5c-sid-unmarked)"
+  expect "v5 jev (c) consumer, cct-jev marker set, route true: the cct plugin's model-floor steps aside (no router file in the cct root)" silent "$(v5c_model v5c-sid-1)"
+  expect "v5 jev (c) ... and cct-jev's jev-route emits (one emitter)" ROUTED "$(v5c_run jev-route v5c-sid-1)"
+  expect "v5 jev (c) ... no marker for the session: the cct plugin's model-floor floors" sonnet "$(v5c_model v5c-sid-unmarked)"
+  v5t_cctmark "v5c-sid-cctonly"
+  expect "v5 jev (c) ... only the cct marker for the session: the cct plugin's model-floor floors" sonnet "$(v5c_model v5c-sid-cctonly)"
 else
-  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 21
+  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 25
 fi
 # ---- end v5.0 jev
 
@@ -13231,7 +13244,17 @@ case "$(uname -s 2>/dev/null)" in
     expect "v5 guard: ... the same file in an owned dir -> allowed (control)" "rc=0" "$(mkdir -p "$TMPROOT/v5guardo/cct-$(id -u)"; : > "$TMPROOT/v5guardo/cct-$(id -u)/$V5GFS"; printf '{"session_id":"%s"}' "$V5GFS" | TMPDIR="$TMPROOT/v5guardo" bash -c "$V5GC" 2>/dev/null; echo "rc=$?")"
     printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$V5GFW" | TMPDIR="$V5GF" bash "$ROOT/hooks/cct-session.sh" 2>/dev/null
     expect "v5 session: foreign-owned marker dir -> writes nothing" "no" "$([ -e "$V5GFD/$V5GFW" ] && echo yes || echo no)"
-    expect "v5 am_plugin_loaded: foreign-owned marker dir -> not loaded" "no" "$( ( . "$ROOT/hooks/lib/agent-model.sh"; TMPDIR="$V5GF"; am_plugin_loaded "$V5GFS" && echo yes || echo no ) )"
+    # cct-jev's marker dir: the same ownership rule for its writer and for am_jev_loaded (the floor's reader)
+    V5GJD="$V5GF/cct-jev-$(id -u)"
+    if [ "$(id -u)" = 0 ]; then
+      mkdir -p "$V5GJD"; : > "$V5GJD/fo-1"; chown 65534 "$V5GJD"
+    else
+      ln -s /var/tmp "$V5GJD"; : > "/var/tmp/$V5GFS"
+    fi
+    expect "v5 am_jev_loaded: foreign-owned cct-jev marker dir -> not loaded" "no" "$( ( . "$ROOT/hooks/lib/agent-model.sh"; TMPDIR="$V5GF"; am_jev_loaded "$V5GFS" && echo yes || echo no ) )"
+    printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$V5GFW" | TMPDIR="$V5GF" bash "$ROOT/plugins/cct-jev/hooks/cct-jev-session.sh" 2>/dev/null
+    expect "v5 cct-jev session: foreign-owned marker dir -> writes nothing" "no" "$([ -e "$V5GJD/$V5GFW" ] && echo yes || echo no)"
+    [ -L "$V5GJD" ] && rm -f "/var/tmp/$V5GFS" "/var/tmp/$V5GFW"
     [ -L "$V5GFD" ] && rm -f "/var/tmp/$V5GFS" "/var/tmp/$V5GFW"
     ;;
 esac
@@ -13243,6 +13266,61 @@ else
   skip_host "v5 session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "no GNU touch -d on this host" 1
 fi
 # ---- end v5.0 guard
+
+# ---- v7.0.0 cct-jev: its OWN session marker (never the template guard's), the pinned agent-model.sh, the registration
+# Jev moved out of cct into plugins/cct-jev/. The floor (cct's model-floor) steps aside only while the clone's switch says
+# route:true AND this session carries the cct-jev marker, written by the plugin's own SessionStart hook into
+# ${TMPDIR:-/tmp}/cct-jev-<uid>/<session id>. That folder is NOT cct-<uid>/, the one the project's template guard reads, so
+# a cct-jev marker can never satisfy the guard (Review Focus 1), and the cct-session marker can never switch the floor off.
+echo "=== cct-jev plugin: marker, template guard, pinned agent-model.sh (v7.0.0) ==="
+JVP="$ROOT/plugins/cct-jev"
+JVT="$TMPROOT/jvmarker"; JVD="$JVT/cct-jev-$(id -u)"; mkdir -p "$JVT"
+jvw() { printf '%s' "$1" | TMPDIR="$JVT" bash "$JVP/hooks/cct-jev-session.sh" ${2:+"$2"}; echo "rc=$?"; }
+expect "cct-jev session: SessionStart writes the marker into cct-jev-<uid>/, not cct-<uid>/" "rc=0 yes no" "$(jvw '{"session_id":"jv-1","hook_event_name":"SessionStart"}') $([ -f "$JVD/jv-1" ] && echo yes || echo no) $([ -e "$JVT/cct-$(id -u)/jv-1" ] && echo yes || echo no)"
+expect "cct-jev session: no session id writes nothing" "rc=0 1" "$(jvw '{}') $(ls "$JVD" | wc -l | tr -d ' ')"
+expect "cct-jev session: an unsafe id (dot, traversal) writes nothing" "rc=0 rc=0 1" "$(jvw '{"session_id":"a.b"}') $(jvw '{"session_id":"../x"}') $(ls "$JVD" | wc -l | tr -d ' ')"
+expect "cct-jev session: an unknown argument neither creates nor removes a marker" "no yes" "$(printf '{"session_id":"jv-2"}' | TMPDIR="$JVT" bash "$JVP/hooks/cct-jev-session.sh" ed; printf '{"session_id":"jv-1"}' | TMPDIR="$JVT" bash "$JVP/hooks/cct-jev-session.sh" ed; [ -f "$JVD/jv-2" ] && echo yes || echo no) $([ -f "$JVD/jv-1" ] && echo yes || echo no)"
+expect "cct-jev session end: removes the marker" "rc=0 gone" "$(jvw '{"session_id":"jv-1","hook_event_name":"SessionEnd"}' end) $([ -f "$JVD/jv-1" ] && echo present || echo gone)"
+expect "cct-jev session: start, end, start leaves a marker" "yes" "$(jvw '{"session_id":"jv-3"}' >/dev/null; jvw '{"session_id":"jv-3"}' end >/dev/null; jvw '{"session_id":"jv-3"}' >/dev/null; [ -f "$JVD/jv-3" ] && echo yes || echo no)"
+if touch -d '29 days ago' "$JVD/old-29" 2>/dev/null && touch -d '31 days ago' "$JVD/old-31" 2>/dev/null; then
+  jvw '{"session_id":"jv-4"}' >/dev/null
+  expect "cct-jev session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "yes no" "$([ -f "$JVD/old-29" ] && echo yes || echo no) $([ -f "$JVD/old-31" ] && echo yes || echo no)"
+else
+  skip_host "cct-jev session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "no GNU touch -d on this host" 1
+fi
+# Review Focus 1: with ONLY the cct-jev marker (jv-3 above) and no cct marker, the template guard (the project's inline
+# PreToolUse command, extracted from the template as v5guard does) refuses, under bash and POSIX sh; with the cct-session
+# marker for the same id it allows (the control that proves the row can go green).
+jvg() { printf '%s' "$2" | TMPDIR="$JVT" "$1" -c "$V5GC" 2>/dev/null; echo "rc=$?"; }
+for jvsh in bash sh; do
+  expect "cct-jev guard [$jvsh]: ONLY the cct-jev marker, no cct marker -> the template guard refuses" "rc=2" "$(jvg "$jvsh" '{"session_id":"jv-3","tool_name":"Bash"}')"
+done
+printf '{"session_id":"jv-3","hook_event_name":"SessionStart"}' | TMPDIR="$JVT" bash "$ROOT/hooks/cct-session.sh"
+for jvsh in bash sh; do
+  expect "cct-jev guard [$jvsh]: control, the cct-session marker for the same id -> the template guard allows" "rc=0" "$(jvg "$jvsh" '{"session_id":"jv-3","tool_name":"Bash"}')"
+done
+rm -f "$JVT/cct-$(id -u)/jv-3"
+expect "cct-jev guard: the cct-session marker removed again -> refused once more (the cct-jev marker alone never opens it)" "rc=2" "$(jvg bash '{"session_id":"jv-3","tool_name":"Bash"}')"
+# Review Focus 2: cct-jev's pinned copy of agent-model.sh has no agents/ beside it, so cct:coder resolves from the agent
+# type table alone; and the pinned copy is byte-identical to cct's (check 88 holds that per release).
+JVE="$TMPROOT/jvnoproj"; mkdir -p "$JVE" "$TMPROOT/jvhome"
+expect "cct-jev's agent-model.sh: cct:coder resolves to own sonnet (CLAUDE_PLUGIN_ROOT unset)" "own sonnet 0 medium" "$(env -u CLAUDE_PLUGIN_ROOT HOME="$TMPROOT/jvhome" bash "$JVP/hooks/lib/agent-model.sh" cct:coder "$JVE" | cut -d' ' -f1-4)"
+expect "cct-jev's agent-model.sh: cct:coder resolves to own sonnet (CLAUDE_PLUGIN_ROOT = the plugin)" "own sonnet 0 medium" "$(HOME="$TMPROOT/jvhome" CLAUDE_PLUGIN_ROOT="$JVP" bash "$JVP/hooks/lib/agent-model.sh" cct:coder "$JVE" | cut -d' ' -f1-4)"
+expect "cct-jev's agent-model.sh: dotnet-tools:dotnet-coder resolves to own sonnet (the table's plugin rows)" "own sonnet 0 medium" "$(HOME="$TMPROOT/jvhome" CLAUDE_PLUGIN_ROOT="$JVP" bash "$JVP/hooks/lib/agent-model.sh" dotnet-tools:dotnet-coder "$JVE" | cut -d' ' -f1-4)"
+expect "cct-jev's agent-model.sh equals cct's, byte for byte" "same" "$(cmp -s "$JVP/hooks/lib/agent-model.sh" "$ROOT/hooks/lib/agent-model.sh" && echo same || echo differs)"
+# the session-id branch asks only the marker: cct's root holds no router, yet a marked session steps aside; an unmarked one never does.
+# (am_jev_routing also needs python3, the registration's runtime: without it the answer is off either way.)
+JVM="$TMPROOT/jvmf"; mkdir -p "$JVM"; JVR=$(mkrepo jvrepo main); JVGD=$(git -C "$JVR" rev-parse --path-format=absolute --git-common-dir)
+mkdir -p "$JVGD/jev"; printf '{"route": true}\n' > "$JVGD/jev/config.json"
+jvr() { ( export HOME="$TMPROOT/jvhome" CLAUDE_PLUGIN_ROOT="$ROOT" TMPDIR="$JVM"; . "$ROOT/hooks/lib/agent-model.sh"; am_jev_routing "$JVR" "$1" && echo on || echo off ); }
+JVON=on; python3 -c '' >/dev/null 2>&1 || JVON=off
+expect "am_jev_routing with a session id: route true, no cct-jev marker -> off (the floor applies)" "off" "$(jvr jvmf-sid)"
+printf '{"session_id":"jvmf-sid"}' | TMPDIR="$JVM" bash "$JVP/hooks/cct-jev-session.sh"
+expect "am_jev_routing with a session id: route true + the cct-jev marker, no router file in cct's root -> on" "$JVON" "$(jvr jvmf-sid)"
+printf '{"session_id":"jvmf-sid"}' | TMPDIR="$JVM" bash "$JVP/hooks/cct-jev-session.sh" end
+expect "am_jev_routing with a session id: ... after SessionEnd -> off again" "off" "$(jvr jvmf-sid)"
+rm -rf "$JVGD/jev"
+# ---- end v7.0.0 cct-jev
 
 
 # ---- v4.6.2 run-gate cwd warning: a run-gate.sh that lives in one checkout but is run from

@@ -10,7 +10,6 @@ hc_class() {
   case "$1" in
     no-push-main|deny-secret-reads)                              cls=machine; pol=closed ;;
     deny-hang-shapes|model-floor|verify-hooks)                   cls=machine; pol=open ;;
-    jev-route|jev-notice)                                        cls=machine; pol=open ;;
     agent-result-notes|backlog-brief)                            cls=project; pol=open ;;
     pre-commit-test|gate-before-merge|deny-claude-md-writes|backlog-item-check) cls=project; pol=closed ;;
     enforce-delegation)                                          cls=project; pol=warn ;;

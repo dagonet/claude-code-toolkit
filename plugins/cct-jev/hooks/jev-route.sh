@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cct plugin: Jev routing (PreToolUse Agent). Active only when <git common dir>/jev/config.json says route:true.
+# cct-jev plugin: Jev routing (PreToolUse Agent). Active only when <git common dir>/jev/config.json says route:true.
 # Steps aside for a v4 registration still in .claude/settings.local.json, so routing never runs twice.
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/lib/agent-model.sh"

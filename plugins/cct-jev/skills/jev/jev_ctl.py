@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""jev_ctl.py -- `/cct:jev on | off | status | report` (toolkit v4.4.0, Jev Phase 1a; v5.0 plugin form).
+"""jev_ctl.py -- `/cct-jev:jev on | off | status | report` (toolkit v4.4.0, Jev Phase 1a; v5.0 plugin form).
 
 The switch is per CLONE: <git common dir>/jev/config.json. Since v5.0 the cct
 plugin registers the router itself (hooks/jev-route.sh, jev-notice.sh), active
@@ -32,7 +32,7 @@ MARKER = "skills/jev/jev_route.py"  # in both v4 commands: has/remove find both 
 HERE = os.path.dirname(os.path.abspath(__file__))  # the router and (in the plugin) the resolver live next to / above this file
 CONFIG_ON = {"model": "jev-1.13.0", "threshold": 0.65, "route": True, "legs": False}
 LEDGER_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \| ([^|]+?) \| ")
-USAGE = "usage: /cct:jev on | off | status | report   (Phase 1b `on legs` is not in this release)\n"
+USAGE = "usage: /cct-jev:jev on | off | status | report   (Phase 1b `on legs` is not in this release)\n"
 
 
 class CtlError(Exception):
@@ -53,7 +53,7 @@ def locate(cwd, env=None):
     top = _git(cwd, env, "rev-parse", "--show-toplevel")
     gd = _git(cwd, env, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if not top or not gd:
-        raise CtlError("not inside a git checkout -- /cct:jev is switched per clone")
+        raise CtlError("not inside a git checkout -- /cct-jev:jev is switched per clone")
     return top, gd
 
 
@@ -208,11 +208,11 @@ def _drop_v4_registration(top, gd, out):
 
 def cmd_on(top, gd, env, out, key_src):
     if not os.path.isfile(os.path.join(HERE, "jev_route.py")):
-        raise CtlError("jev_route.py is not installed next to jev_ctl.py ({}) -- reinstall the cct plugin "
-                       "(claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet); "
+        raise CtlError("jev_route.py is not installed next to jev_ctl.py ({}) -- reinstall the cct-jev plugin "
+                       "(claude plugin uninstall cct-jev@dagonet, then claude plugin install cct-jev@dagonet); "
                        "nothing was changed".format(HERE))
     if not resolver_lib(env, top):
-        raise CtlError("no hooks/lib/agent-model.sh in the cct plugin, this project or a v4 leftover ~/.claude/hooks/lib/ -- the "
+        raise CtlError("no hooks/lib/agent-model.sh in the cct-jev plugin, this project or a v4 leftover ~/.claude/hooks/lib/ -- the "
                        "router reuses model-floor's resolution and cannot run without it; nothing was changed")
     mf = _active_model_floor(env, top)
     if mf and b"agent-model.sh" not in (_read(mf) or b""):
@@ -224,8 +224,8 @@ def cmd_on(top, gd, env, out, key_src):
     _write(_config_path(gd), _dumps(CONFIG_ON))
     _drop_v4_registration(top, gd, out)
     out.write("jev: ON for this clone -- spawns that pass no `model` are routed (any model and effort at confidence >= the "
-              "threshold; review/architect types never below sonnet and never a lower effort); the cct plugin registers the router, "
-              "other checkouts of this clone need no /cct:jev on; /cct:jev off switches it off\n")
+              "threshold; review/architect types never below sonnet and never a lower effort); the cct-jev plugin registers the router, "
+              "other checkouts of this clone need no /cct-jev:jev on; /cct-jev:jev off switches it off\n")
     # U-1: the orchestrator must stop naming a model, or Jev routes nothing.
     out.write("jev: ORCHESTRATOR -- from now on in this repo, omit `model` on Agent spawns: Jev picks one per "
               "launch (user ruling U-1; an explicit model is never changed). New sessions are told by the "
@@ -276,7 +276,7 @@ def cmd_status(top, gd, env, out, key_src):
     installed = os.path.isfile(os.path.join(HERE, "jev_route.py"))
     lib = resolver_lib(env, top)
     src = key_src
-    out.write("jev: v4 registration left in this checkout (run /cct:jev off): {}\n".format("yes" if registered else "no"))
+    out.write("jev: v4 registration left in this checkout (run /cct-jev:jev off): {}\n".format("yes" if registered else "no"))
     out.write("jev: router installed (next to jev_ctl.py): {}\n".format("yes" if installed else "no"))
     out.write("jev: resolver: {}\n".format(lib or "MISSING"))
     out.write("jev: TYPESAFE_API_KEY: {}\n".format("set ({})".format(src) if src else "not set"))

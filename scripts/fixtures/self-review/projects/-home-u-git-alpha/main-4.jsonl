@@ -1,4 +1,4 @@
-{"type":"user","timestamp":"2026-11-16T09:00:00Z","message":{"role":"user","content":"<command-message>jev</command-message>\n<command-name>/cct:jev</command-name>"}}
+{"type":"user","timestamp":"2026-11-16T09:00:00Z","message":{"role":"user","content":"<command-message>jev</command-message>\n<command-name>/cct-jev:jev</command-name>"}}
 {"type":"user","timestamp":"2026-11-16T09:00:01Z","message":{"role":"user","content":"<command-message>jev</command-message>\n<command-name>/jev</command-name>"}}
 {"type":"user","timestamp":"2026-11-16T09:00:02Z","message":{"role":"user","content":"<command-message>jev</command-message>\n<command-name>/other:jev</command-name>"}}
 {"type":"user","timestamp":"2026-11-16T09:00:03Z","message":{"role":"user","content":"<command-message>commit</command-message>\n<command-name>/cct-helpers:commit</command-name>"}}

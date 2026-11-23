@@ -66,7 +66,7 @@ class CtlTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.t.gd + "/info/exclude")
                          and b"settings.local.json" in self.read(self.t.gd + "/info/exclude"))
         self.assertIn("omit `model`", text)
-        self.assertIn("/cct:jev off", text)
+        self.assertIn("/cct-jev:jev off", text)
         self.assertNotIn(" /jev ", text)
 
     def test_on_twice_is_idempotent(self):
@@ -132,7 +132,7 @@ class CtlTests(unittest.TestCase):
     def test_usage_names_the_plugin_command(self):
         rc, text = self.ctl("bogus")
         self.assertEqual(rc, 2)
-        self.assertIn("/cct:jev on | off | status | report", text)
+        self.assertIn("/cct-jev:jev on | off | status | report", text)
 
     def test_off_sets_route_false_and_the_floor_returns(self):
         self.ctl("on")

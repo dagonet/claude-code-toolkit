@@ -11,7 +11,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.join(HERE, "..", "..", "..", "scripts", "jev-tally.py")
+SCRIPT = os.path.join(HERE, "..", "..", "..", "..", "..", "scripts", "jev-tally.py")
 
 
 def load():

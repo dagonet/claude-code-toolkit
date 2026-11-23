@@ -5,7 +5,7 @@
 # Two callers, one answer (Jev Phase 1 spec, step 2: the router "reuses
 # model-floor's resolution code rather than re-deriving it"):
 #   - hooks/model-floor.sh SOURCES it: am_resolve, then am_jev_routing;
-#   - the user-level Jev router (~/.claude/skills/jev/jev_route.py) RUNS it:
+#   - the Jev router (plugins/cct-jev/skills/jev/jev_route.py) RUNS it:
 #       bash agent-model.sh <subagent_type> <cwd>
 #     and reads ONE line: "<kind> <model|-> <jev 0|1> <effort|-> <git common dir|->".
 #     Arguments are data: a type outside [A-Za-z0-9_.-] (bar one `cct:` prefix) resolves to `none`,
@@ -24,7 +24,7 @@
 # Agent identity (S-22): the frontmatter `name:`, .claude/agents/ scanned
 # recursively, project before user level, filename as the fallback.
 # No JSON parser needed: it reads frontmatter and PROJECT_CONTEXT.md only.
-# Shipped by the cct plugin (hooks/lib/) and by sync-template into projects; no user-level copy since v5.0.
+# Shipped by the cct plugin (hooks/lib/), pinned byte for byte into plugins/cct-jev/hooks/lib/ (check 88), and by sync-template into projects; no user-level copy since v5.0.
 
 # S-23/S-30: CLAUDE_CODE_SUBAGENT_MODEL is a native default only when it holds a
 # REAL model (an alias or a full claude-* id); `inherit` or empty means unset.
@@ -141,28 +141,28 @@ am_resolve() {
 # AM_JEV_MARKER -- the path every v4 /jev registration names. Check 65 asserts the
 # v4 registration literal (REG_COMMAND in jev_ctl.py, now only what legacy removal matches) contains it.
 AM_JEV_MARKER='skills/jev/jev_route.py'
-# am_plugin_loaded <session_id> -- exit 0 iff hooks/cct-session.sh marked this session (the cct plugin
-# is loaded in it). The id is sanitized as cct-session.sh does: only [A-Za-z0-9-], else "not loaded".
-# A marker dir this user does not own is no marker dir (as for the guard), except on Git Bash/Cygwin.
-am_plugin_loaded() {
+# am_jev_loaded <session_id> -- exit 0 iff the cct-jev plugin's SessionStart hook (plugins/cct-jev/hooks/cct-jev-session.sh)
+# marked this session. The marker lives in ${TMPDIR:-/tmp}/cct-jev-<uid>/, NOT in cct-<uid>/ (the folder the project template's
+# guard reads), so it can never satisfy that guard and the cct-session marker can never satisfy this. The id is sanitized as the
+# writer does: only [A-Za-z0-9-], else "not loaded". A marker dir this user does not own is no marker dir, except on Git Bash/Cygwin.
+am_jev_loaded() {
   case ${1:-} in ''|*[!A-Za-z0-9-]*) return 1 ;; esac
-  local am_d="${TMPDIR:-/tmp}/cct-$(id -u)"
+  local am_d="${TMPDIR:-/tmp}/cct-jev-$(id -u)"
   case $(uname -s) in MINGW*|MSYS*|CYGWIN*) ;; *) [ -O "$am_d" ] || return 1 ;; esac
   [ -f "$am_d/$1" ]
 }
 # am_jev_routing <root> [<session_id>] -- exit 0 iff the Jev router WILL run for a spawn in this
-# checkout, so model-floor may step aside (v4.4.0 R-2). All four must hold:
-#   1. <git common dir>/jev/config.json says "route": true      (/cct:jev on, per clone)
-#   2. a router exists to run it                                 (a deleted skill is silent):
-#        the plugin's skills/jev/jev_route.py, registered by hooks/hooks.json, unless
-#        this checkout still has a v4 registration (4 below), which the plugin steps aside for
-#   3. python3 runs                                              (the registration runs it)
-#   4. a v4 registration in <root>/.claude/settings.local.json runs ~/.claude/skills/jev/jev_route.py
-#      (per CHECKOUT: a sibling worktree of the same clone has its own settings.local.json)
-#      The plugin branch (2) also requires, WHEN a session id is passed (model-floor always passes one,
-#      possibly empty), that the plugin is loaded in this session (am_plugin_loaded): a plugin-SHAPED
-#      checkout without the plugin loaded has no router registered, so the floor must apply.
-#      jev-route.sh / jev-notice.sh pass none: they only run inside the loaded plugin.
+# checkout, so model-floor may step aside (v4.4.0 R-2). All of these must hold:
+#   1. <git common dir>/jev/config.json says "route": true      (/cct-jev:jev on, per clone)
+#   2. python3 runs                                              (the registration runs it)
+#   3. a router exists to run it                                 (a deleted skill is silent):
+#      - WITH a session id (model-floor always passes one, possibly empty; v7.0.0): the cct-jev plugin is LOADED in this
+#        session (am_jev_loaded, its own marker). cct holds no router file, so the files are not asked: the marker is the
+#        only evidence that the plugin's hooks.json is registered. Uninstalled plugin = no marker = the floor applies.
+#      - WITHOUT one (jev-route.sh, jev-notice.sh and the executed mode run only inside the loaded plugin): the plugin's own
+#        .claude-plugin/plugin.json and skills/jev/jev_route.py exist (this file is pinned, byte for byte, into cct-jev).
+#   4. a v4 registration in <root>/.claude/settings.local.json runs ~/.claude/skills/jev/jev_route.py takes the place of 3
+#      (per CHECKOUT: a sibling worktree of the same clone has its own settings.local.json); jev-route.sh steps aside for it
 # Any one missing -> model-floor floors, so a spawn never has neither emitter.
 # Sets AM_GD (the absolute git common dir) whenever git answers.
 am_jev_routing() {
@@ -172,8 +172,9 @@ am_jev_routing() {
   python3 -c '' >/dev/null 2>&1 || return 1
   if grep -qF "$AM_JEV_MARKER" "$1/.claude/settings.local.json" 2>/dev/null; then
     [ -f "$HOME/.claude/skills/jev/jev_route.py" ]   # v4 entry: it routes (jev-route.sh steps aside), if its file is there
+  elif [ $# -ge 2 ]; then
+    am_jev_loaded "$2"
   else
-    [ $# -ge 2 ] && { am_plugin_loaded "$2" || return 1; }
     local am_pr; am_pr=$(am_plugin_root)
     [ -f "$am_pr/.claude-plugin/plugin.json" ] && [ -f "$am_pr/skills/jev/jev_route.py" ]
   fi

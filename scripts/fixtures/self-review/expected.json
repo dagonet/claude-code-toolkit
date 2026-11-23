@@ -32,7 +32,7 @@
     "sub_share": 0.5533
   },
   "toolkit_use": {
-    "skills": {"commit": 1, "jev": 1, "sprint": 0, "cct-helpers:commit": 2},
+    "skills": {"commit": 1, "sprint": 0, "cct-helpers:commit": 2, "cct-jev:jev": 1},
     "agents": {"coder": 1, "Explore": 0, "dotnet-tools:dotnet-coder": 0}
   },
   "hook_blocks": {"gate-before-merge": 4, "deny-hang-shapes": 2, "other": 16},

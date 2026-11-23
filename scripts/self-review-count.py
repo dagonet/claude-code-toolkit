@@ -1036,12 +1036,18 @@ def self_test():
             (None, toolkit_name('cct:ghost', fixture_skills), 'an unknown core skill'),
             ('cct-helpers:commit', command_name('<command-name>/cct-helpers:commit</command-name>'),
              'a command row of a plugin skill'),
-            ('cct:jev', command_name('<command-name>/cct:jev</command-name>'), 'a command row of a core skill'),
+            ('cct-jev:jev', command_name('<command-name>/cct-jev:jev</command-name>'), 'a command row of the cct-jev plugin skill'),
+            ('cct-jev:jev', toolkit_name('cct-jev:jev', fixture_skills), 'the cct-jev plugin skill the files hold'),
+            (None, toolkit_name('cct:jev', fixture_skills), 'the old cct: name of the moved jev skill'),
             (None, command_name('<command-name>/jev</command-name>'), 'a command row with no plugin')):
         if got != want:
             bad.append('/plugin skills: %s: want %r, got %r' % (what, want, got))
     if 'cct-helpers:commit' not in fixture_skills or 'commit' not in fixture_skills:
         bad.append('/plugin skills: toolkit_names lists %s' % fixture_skills)
+    # the real repo: cct-jev's skill is counted as `cct-jev:jev`, and no bare `jev` is left in skills/
+    real_skills = toolkit_names(os.path.dirname(HERE))[0]
+    if 'cct-jev:jev' not in real_skills or 'jev' in real_skills:
+        bad.append('/plugin skills: the repo itself lists %s' % real_skills)
     with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-3.jsonl'), encoding='utf-8') as fh:
         raw = fh.read()
     for needle in ('corp.example', 'secretproject', 'acme', 'internal'):  # control: the rows the two probes are about are in the input,

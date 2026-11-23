@@ -222,5 +222,5 @@ done < "$LEFTOVERS"
 rmdir "$L/hooks/lib" "$L/hooks" 2>/dev/null || true
 
 echo "done. Restart every running Claude session (they lost the toolkit hooks; plugins load at session start)."
-echo "In each checkout where Jev is on, run /cct:jev off, then /cct:jev on."
+echo "In each checkout where Jev is on, install the optional cct-jev plugin, then run /cct-jev:jev off and /cct-jev:jev on."
 echo "Check: bash $ROOT/scripts/verify-user-level-drift.sh --worktree (0 drift = rendered CLAUDE.md, cct@dagonet at VERSION and enabled, no leftover, no stale hook registration, autoMode.environment as the reference)"

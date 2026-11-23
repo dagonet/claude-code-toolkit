@@ -52,7 +52,7 @@ fi
 [ -n "$MF_CWD" ] || MF_CWD=.
 am_resolve "$MF_TYPE" "$MF_CWD"
 [ "$AM_KIND" = floor ] || exit 0
-am_jev_routing "$AM_ROOT" "$MF_SID" && exit 0   # the plugin branch needs the plugin LOADED in this session (marker)
+am_jev_routing "$AM_ROOT" "$MF_SID" && exit 0   # steps aside only when this session carries the cct-jev marker (v7.0.0); no plugin, no marker, the floor applies
 MF_DEF=$AM_MODEL
 # Emit with the backend json.sh selected. The payload goes in on stdin and the
 # model as an argument -- never interpolated into program text. tool_input is

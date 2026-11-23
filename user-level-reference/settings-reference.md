@@ -282,7 +282,7 @@ Events used by this toolkit:
 | Event | When It Fires | Can Block? | Why it matters |
 |-------|--------------|-----------|----------------|
 | `Stop` | Main thread finishes its response | Yes | The only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
-| `SessionStart` | A session begins | — | **Bound in v2.0** to `retro-brief` (now in the optional `cct-learning` plugin, if installed), and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; since v5.0 the cct plugin also binds `cct-session.sh` (the session marker), `verify-hooks.sh` and `jev-notice.sh` here. stdout is injected into the session context. |
+| `SessionStart` | A session begins | — | **Bound in v2.0** to `retro-brief` (now in the optional `cct-learning` plugin, if installed), and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; since v5.0 the cct plugin also binds `cct-session.sh` (the session marker) and `verify-hooks.sh` here, and the optional `cct-jev` plugin binds `cct-jev-session.sh` (its own marker) and `jev-notice.sh`. stdout is injected into the session context. |
 | `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
