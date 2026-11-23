@@ -18,13 +18,18 @@
 #   2. a commit in <base>..HEAD carries the trailer `Item: none`: allowed;
 #   3. the base's PROJECT_STATE.md lacks `## Backlog` with ### Untriaged / ### Ranked / ### Done: refuse (first PR
 #      after the update adds the headings and carries the trailer);
-#   4. a B-<n> is in the base's Untriaged or Ranked and in HEAD's Done: allowed (a move);
-#   5. otherwise refuse. An id that appears only in HEAD's Done is not a move.
+#   4. a B-<n> is in the base's Untriaged or Ranked, not in the base's Done, in HEAD's Done and not in HEAD's
+#      Untriaged or Ranked: allowed (a move);
+#   5. otherwise refuse. An id that appears only in HEAD's Done, sits in the base's Done too, or stays open in HEAD
+#      is not a move.
 # BASE is tool_input.base, else the local refs/remotes/origin/HEAD, else refuse "pass --base"; `main` is never
 #   assumed. A missing refs/remotes/origin/<base> refuses "fetch first".
 # HEAD is tool_input.head (an `owner:` prefix stripped), else the checkout's current branch. A checkout on any
 #   other branch refuses "run from the PR's own checkout"; HEAD not equal to refs/remotes/origin/<head> refuses
 #   "push first".
+#   Base and head must be plain branch names (git check-ref-format --branch, no `@{`), else refuse.
+# MERGE LIMIT: an MCP merge carries only the PR number, with no network there is no mapping to the PR's branch, so
+#   the merge line checks the cwd checkout's branch; merge from the PR's own checkout.
 #
 # bic_* functions (mode, refs, file check, body check) are written for reuse by the gh pr create/merge shapes.
 
@@ -76,6 +81,13 @@ bic_mode() {
   return 0
 }
 
+# bic_branch_name <name>: 0 when <name> is a plain branch name. `~1`, `^`, `@{0}` and `@{-1}` would widen what
+# rev-parse resolves, so `@{` is refused outright on top of git check-ref-format --branch.
+bic_branch_name() {
+  case "$1" in *'@{'*) return 1 ;; esac
+  git check-ref-format --branch "$1" >/dev/null 2>&1
+}
+
 # bic_refs <base> <head>: sets BIC_BASE_REF (refs/remotes/origin/<base>) and BIC_HEAD, or refuses. Empty arguments
 # mean "not given": the base falls back to the local origin/HEAD, the head to the checkout's current branch.
 bic_refs() {
@@ -86,6 +98,7 @@ bic_refs() {
     [ -n "$sym" ] && [ "$base" != "$sym" ] && [ -n "$base" ] ||
       bic_refuse "no base branch given and refs/remotes/origin/HEAD is not set: pass --base <branch> (MCP: the base argument), or run \`git remote set-head origin -a\`."
   fi
+  bic_branch_name "$base" || bic_refuse "base '$base' is not a branch name (no revision expressions such as ~ or @{}): pass --base <branch>."
   BIC_BASE_REF="refs/remotes/origin/$base"
   bsha=$(git -C "$CWD" rev-parse --verify -q "$BIC_BASE_REF^{commit}" 2>/dev/null)
   [ -n "$bsha" ] || bic_refuse "$BIC_BASE_REF does not exist locally: fetch first (\`git fetch origin $base\`), this check uses no network."
@@ -95,6 +108,7 @@ bic_refs() {
     [ -n "$cur" ] || bic_refuse "the checkout is on a detached HEAD and no head branch was given: run from the PR's own checkout, on the PR's branch."
     head=$cur
   fi
+  bic_branch_name "$head" || bic_refuse "head '$head' is not a branch name (no revision expressions such as ~ or @{}): run from the PR's own checkout."
   BIC_HEAD=$head
   [ "$cur" = "$head" ] || bic_refuse "this checkout is on '${cur:-detached HEAD}', the PR's head is '$head': run from the PR's own checkout."
   hsha=$(git -C "$CWD" rev-parse --verify -q "HEAD^{commit}" 2>/dev/null)
@@ -128,7 +142,7 @@ bic_has_shape() {
 # bic_file_ok: file mode, after bic_refs. Returns 0 on an exempt diff, an `Item: none` trailer or a move. Otherwise
 # returns 1 and sets BIC_MSG to the refusal text. Order: exempt, trailer, base shape, move, refuse.
 bic_file_ok() {
-  local names trailers moved id
+  local names trailers moved bdone hopen id
   if ! names=$(git -C "$CWD" diff --no-renames --name-only "$BIC_BASE_REF...HEAD" 2>/dev/null); then
     BIC_MSG="cannot read the diff of HEAD against $BIC_BASE_REF: run from the PR's own checkout."; return 1
   fi
@@ -141,11 +155,18 @@ bic_file_ok() {
     BIC_MSG="$BIC_BASE_REF has no \`## Backlog\` with the subsections ### Untriaged, ### Ranked and ### Done in PROJECT_STATE.md: add the three headings in this PR and commit with trailer \`Item: none\`."
     return 1
   fi
+  # A move: open in the base (Untriaged or Ranked, and not already in the base's Done), in HEAD's Done, and no longer
+  # open in HEAD. An id in both lists of the base is stale state, never a move; an id left open in HEAD was copied.
   moved=$(bic_ids "$BIC_BASE_REF" 'Untriaged|Ranked')
+  bdone=$(bic_ids "$BIC_BASE_REF" 'Done')
+  hopen=$(bic_ids HEAD 'Untriaged|Ranked')
   for id in $(bic_ids HEAD 'Done'); do
-    printf '%s\n' "$moved" | grep -qx "$id" && return 0
+    printf '%s\n' "$moved" | grep -qx "$id" || continue
+    printf '%s\n' "$bdone" | grep -qx "$id" && continue
+    printf '%s\n' "$hopen" | grep -qx "$id" && continue
+    return 0
   done
-  BIC_MSG="this PR moves no backlog item into \`### Done\` (an id that appears only in HEAD's Done is not a move): move the item into \`### Done\` in this PR, or commit with trailer \`Item: none\` (T1 only). The trailer must sit in the last paragraph of the commit message."
+  BIC_MSG="this PR moves no backlog item out of Untriaged/Ranked into \`### Done\` (an id only in HEAD's Done, already in the base's Done, or still open in HEAD is not a move): move the item into \`### Done\` in this PR, or commit with trailer \`Item: none\` (T1 only). The trailer must sit in the last paragraph of the commit message."
   return 1
 }
 

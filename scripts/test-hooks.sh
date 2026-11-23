@@ -13129,7 +13129,7 @@ anr_run "empty payload: no output"         "" ''
 # Fixtures are throwaway repos; "pushed" is a local refs/remotes/origin/<branch> ref (the hook uses no network).
 echo "=== hooks/backlog-item-check.sh (backlog discipline, MCP create + merge) ==="
 BIC_HOOK="$ROOT/hooks/backlog-item-check.sh"
-bic_state_full() { printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-1 old item\n'; }
+bic_state_full() { printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-1 old item\n%b' "${BIC_EXTRA_DONE:-}"; }
 bic_state_bare() { printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n_none_\n'; }
 bic_mk() { # <name> <Task source line value|-> <full|bare> <originhead|noorigin> -> repo on branch feat, base main, nothing pushed for feat
   local r; r=$(mkrepo "$1" main)
@@ -13189,6 +13189,23 @@ BIC_R=$(bic_mk bic-b9 "\`plan-files\`" full originhead)
 printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-9 brand new\n- B-1 old item\n' > "$BIC_R/PROJECT_STATE.md"
 bic_commit "$BIC_R" 'feat: work B-9\n'; bic_push "$BIC_R"
 check_msg "backlog-item-check: file mode, B-9 only in HEAD's Done is not a move: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+# fix round 1 (C1): a stale duplicate in the base (B-3 in Ranked AND Done) is not a move for an unrelated PR
+BIC_R=$(BIC_EXTRA_DONE='- B-3 stale copy\n' bic_mk bic-sd "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: unrelated work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: stale duplicate in base (B-3 Ranked and Done), unrelated PR: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+check_msg "backlog-item-check: stale duplicate in base, merge of an unrelated PR: refused" "$BIC_HOOK" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$BIC_R")" '### Done'
+# C1: B-3 added to Done but kept in Ranked creates exactly that stale state: not a move
+BIC_R=$(bic_mk bic-kr "\`plan-files\`" full originhead)
+printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-3 ranked item\n- B-1 old item\n' > "$BIC_R/PROJECT_STATE.md"
+bic_commit "$BIC_R" 'feat: work B-3\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: B-3 added to Done but kept in Ranked: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+# M1: base and head must be branch names
+BIC_R=$(bic_mk bic-bn2 "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: base main~1 is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat 'main~1' -)" "not a branch name"
+check_msg "backlog-item-check: base main@{0} is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat 'main@{0}' -)" "not a branch name"
+check_msg "backlog-item-check: head feat~1 is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" 'feat~1' main -)" "not a branch name"
+check_msg "backlog-item-check: head feat@{0} is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" 'feat@{0}' main -)" "not a branch name"
 BIC_R=$(bic_mk bic-wb "\`plan-files\`" full originhead)
 bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
 check_msg "backlog-item-check: the cwd branch is not the PR's head: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" other main -)" "own checkout"
@@ -13223,7 +13240,9 @@ check_nomsg "backlog-item-check: file mode merge with an Item: none trailer: all
 # issue mode
 BIC_R=$(bic_mk bic-is "github-issues" bare originhead)
 check_nomsg "backlog-item-check: issue mode, Fixes #12: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'Fixes #12')" "BLOCKED"
-check_nomsg "backlog-item-check: issue mode, lowercase closes #5 on a later line: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'summary\n\nthis closes #5.')" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, lowercase closes #5 on a later line: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'summary
+
+this closes #5.')" "BLOCKED"
 check_nomsg "backlog-item-check: issue mode, a line Item: none: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'text
 Item: none
 more')" "BLOCKED"
