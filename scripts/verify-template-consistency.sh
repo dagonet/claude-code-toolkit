@@ -4802,7 +4802,7 @@ else
   # W warn, O/U open; the two plugin-only jev hooks open), name for name; flipping no-push-main to open goes red.
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
   c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
-  c71_rhall() { for c71_hf in $(c71_hcs); do c71_rhtab "$c71_hf"; done | LC_ALL=C sort -u; } # the union of cct's table and every plugin's
+  c71_rhall() { for c71_hf in $(c71_hcs); do c71_rhtab "$c71_hf"; done | LC_ALL=C sort; } # the union of cct's table and every plugin's; NOT deduped, so a hook listed in two tables stays a duplicate line and goes red against the frozen forms
   c71_rh=$(c71_rhall)
   c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\nbacklog-item-check closed\nbacklog-brief open\n')
   c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
@@ -4919,18 +4919,26 @@ else
   # (8b) controls for (1c)/(1d): no-push-main flipped to open in a hook-class.sh copy (cct's table; the union is rebuilt with
   # every plugin's real table); a plugin's table flipped (read-size-gate warn -> open); a closed hook registered bare
   sed 's/^\( *no-push-main|deny-secret-reads).*pol=\)closed/\1open/' hooks/lib/hook-class.sh > "$c71_tmp/rh-flip.sh"
-  c71_got=$({ c71_rhtab "$c71_tmp/rh-flip.sh"; for c71_hf in plugins/*/hooks/lib/hook-class.sh; do c71_rhtab "$c71_hf"; done; } | LC_ALL=C sort -u)
+  c71_got=$({ c71_rhtab "$c71_tmp/rh-flip.sh"; for c71_hf in plugins/*/hooks/lib/hook-class.sh; do c71_rhtab "$c71_hf"; done; } | LC_ALL=C sort)
   if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
     ok "check 71 control (hook-class.sh polarity flip): no-push-main turned open differs from the frozen forms"
   else
     ko "check 71 control (hook-class.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
   fi
   sed 's/^\( *read-size-gate|agent-budget-warn).*pol=\)warn/\1open/' plugins/cct-guards/hooks/lib/hook-class.sh > "$c71_tmp/rh-pflip.sh"
-  c71_got=$({ c71_rhtab hooks/lib/hook-class.sh; c71_rhtab "$c71_tmp/rh-pflip.sh"; } | LC_ALL=C sort -u)
+  c71_got=$({ c71_rhtab hooks/lib/hook-class.sh; c71_rhtab "$c71_tmp/rh-pflip.sh"; } | LC_ALL=C sort)
   if ! cmp -s "$c71_tmp/rh-pflip.sh" plugins/cct-guards/hooks/lib/hook-class.sh && [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
     ok "check 71 control (plugin hook-class.sh polarity flip): read-size-gate turned open differs from the frozen forms"
   else
     ko "check 71 control (plugin hook-class.sh polarity flip): the flip was NOT detected -- the plugin table is not compared"
+  fi
+  # a hook listed in BOTH cct's table and a plugin's (enforce-delegation, same polarity as cct's) must not be absorbed by the union
+  sed 's/^\( *read-size-gate|agent-budget-warn)\)/    enforce-delegation)  cls=project; pol=warn ;;\n\1/' plugins/cct-guards/hooks/lib/hook-class.sh > "$c71_tmp/rh-dup.sh"
+  c71_got=$({ c71_rhtab hooks/lib/hook-class.sh; c71_rhtab "$c71_tmp/rh-dup.sh"; } | LC_ALL=C sort)
+  if ! cmp -s "$c71_tmp/rh-dup.sh" plugins/cct-guards/hooks/lib/hook-class.sh && [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
+    ok "check 71 control (a hook in two class tables): enforce-delegation listed by cct and a plugin differs from the frozen forms"
+  else
+    ko "check 71 control (a hook in two class tables): NOT detected -- the union is deduplicated"
   fi
   node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"deny-secret-reads"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
   if [ -n "$(c71_shapes "$c71_tmp/bare-closed.json" "$c71_rh")" ]; then
@@ -5643,20 +5651,25 @@ else ok "check 87: all 10 agent type table rows equal their agent file's model, 
 # Check 88 (v7.0.0, slim core): pinned plugin copies. A plugin's hooks can only rely on files inside that plugin, so every
 # plugin that ships hooks (plugins/*/hooks/hooks.json) carries its OWN copy of cct's run-hook.sh and of the hooks/lib files its
 # hooks use. Each copy must be byte-identical to the original in hooks/ -- the way the six templates are pinned -- so a fix to
-# the original cannot leave a stale copy behind. The one exception is lib/hook-class.sh, whose `case "$1" in ... esac` class table
-# is DATA (each plugin lists only its own hooks; check 74 pins that table to the plugin's hooks.json): it must be identical
-# everywhere OUTSIDE that table, hc_skip included.
-# TWO-SIDED: a copy with one changed byte, and a hook-class.sh copy with a changed hc_skip line, are flagged; a hook-class.sh
-# copy with a changed TABLE line is not.
+# the original cannot leave a stale copy behind. The one exception is lib/hook-class.sh, whose class-table DATA lines
+# (`name|name)  cls=...; pol=... ;;`; each plugin lists only its own hooks, and check 74 pins that table to the plugin's hooks.json)
+# are left out of the comparison: the rest -- `case`, the `*) return 1 ;;` default arm, `esac`, hc_skip -- must be identical.
+# Every plugin with hooks must also carry, on its own, run-hook.sh, lib/hook-class.sh, lib/json.sh and every lib its scripts name.
+# TWO-SIDED: a copy with one changed byte, a hook-class.sh copy with a changed hc_skip line or a default arm changed to
+# `return 0`, and a plugin without lib/json.sh, are flagged; a hook-class.sh copy with a changed TABLE line is not.
 # ---------------------------------------------------------------------------
 echo
 note "Check 88: pinned plugin copies (run-hook.sh and hooks/lib/*.sh in every plugin with hooks equal cct's; hook-class.sh outside its table)"
-c88_strip() { sed '/^ *case "\$1" in/,/^ *esac/d' "$1" > "$2"; } # <hook-class.sh> <out>: the file without its class table
+c88_strip() { sed '/cls=[a-z]*; pol=[a-z]* ;;$/d' "$1" > "$2"; } # <hook-class.sh> <out>: the file without its class-table DATA lines; `case`, the `*) return 1 ;;` default arm and `esac` stay compared, so a copy that fails open on unknown names is flagged
 c88_eval() { # <tree root> -> one PROBLEM line per copy that differs, then "COUNT <plugins>|<files compared>"
   c88_np=0; c88_nf=0
   for c88_d in "$1"/plugins/*/hooks; do
     [ -f "$c88_d/hooks.json" ] || continue
     c88_np=$((c88_np + 1))
+    # per plugin (not a global floor): run-hook.sh, hook-class.sh and json.sh at least, plus every lib a script of the plugin names
+    for c88_r in run-hook.sh lib/hook-class.sh lib/json.sh $(grep -ohE 'lib/[A-Za-z0-9_-]+\.sh' "$c88_d"/*.sh 2>/dev/null | sort -u); do
+      [ -f "$c88_d/$c88_r" ] || echo "PROBLEM ${c88_d#$1/}/$c88_r is missing (every plugin with hooks carries it)"
+    done
     for c88_f in "$c88_d/run-hook.sh" "$c88_d"/lib/*.sh; do
       [ -f "$c88_f" ] || { echo "PROBLEM ${c88_f#$1/} is missing"; continue; }
       c88_rel=${c88_f#$c88_d/}; c88_nf=$((c88_nf + 1))
@@ -5683,13 +5696,17 @@ c88_mk; printf 'x' >> "$c88_tmp/t/$c88_P/run-hook.sh"
 [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [one changed byte in run-hook.sh]"; }
 c88_mk; sed -i 's/"\$HC_CLS" = project/"$HC_CLS" = machine/' "$c88_tmp/t/$c88_P/lib/hook-class.sh"
 [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [a changed hc_skip line in hook-class.sh]"; }
+c88_mk; sed -i 's/^\( *\*) return \)1 ;;/\10 ;;/' "$c88_tmp/t/$c88_P/lib/hook-class.sh"
+grep -q '\*) return 0 ;;' "$c88_tmp/t/$c88_P/lib/hook-class.sh" && [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [the default arm *) return 1 changed to return 0 in hook-class.sh]"; }
+c88_mk; rm -f "$c88_tmp/t/$c88_P/lib/json.sh"
+[ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [lib/json.sh deleted from a plugin]"; }
 c88_mk; sed -i 's/pol=open ;;/pol=warn ;;/' "$c88_tmp/t/$c88_P/lib/hook-class.sh"
 [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -eq 0 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [a changed TABLE line in hook-class.sh was flagged: the table is data]"; }
 rm -rf "$c88_tmp"
 if [ "$c88_ctl_ok" -ne 1 ]; then ko "check 88: CONTROL failed:$c88_ctl_why"
 elif [ "${c88_counts%%|*}" -lt 1 ] || [ "${c88_counts##*|}" -lt 4 ]; then ko "check 88: expected at least 1 plugin with hooks and 4 pinned copies (run-hook.sh + json.sh, git-cmd.sh, hook-class.sh), got plugins|files '$c88_counts'"
 elif [ -n "$c88_probs" ]; then ko "check 88: a pinned plugin copy differs from cct's original: $c88_probs"
-else ok "check 88: $c88_counts (plugins|files): every pinned copy equals cct's original (hook-class.sh outside its class table); controls fire on a changed byte and a changed hc_skip line and stay quiet on a changed table line"
+else ok "check 88: $c88_counts (plugins|files): every pinned copy equals cct's original (hook-class.sh outside its class table); controls fire on a changed byte, a changed hc_skip line, a changed default arm and a deleted lib, and stay quiet on a changed table line"
 fi
 
 
