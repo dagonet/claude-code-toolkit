@@ -63,6 +63,7 @@ CORRECTION_CHARS = 300
 # Only the type and the two models are read; the reason is never kept.
 STEP_UP_RE = re.compile(r'Step-up: (\S+) failed on (\S+) \(.*?\)\. (?:Start the same job again on ([^\s.]+)\.'
                         r'|Report this to the user instead of retrying\.)')
+HOOK_CONTEXT = 'hook_additional_context'  # the attachment type of a hook's additionalContext row
 LADDER = ('haiku', 'sonnet', 'opus', 'fable')  # the model names the note carries
 USER = 'user'  # the `<to>` of the top-rung form
 OTHER = 'other'
@@ -260,8 +261,7 @@ def assistant_text(msg):
 
 
 def walk_strings(value, depth=0):
-    """Every string inside a parsed JSON value that holds a step-up note (the note lands in a tool
-    result, an attachment or a reminder: the row shape differs, the text does not)."""
+    """Every string inside a parsed JSON value that holds a step-up note."""
     if isinstance(value, str):
         if 'Step-up: ' in value:
             yield value
@@ -281,8 +281,9 @@ def scan(rows, since, until, refusals=(), step_ups=False):
     corrections [(timestamp, text) of each typed user turn that reads as a correction and does not
     answer a question: the latest assistant text before it does not end in `?`],
     step_ups [(type, from model, to model or None) of each step-up note, see STEP_UP_RE], only when
-    `step_ups` is set (a main transcript), found in every in-window row but an assistant's, which may
-    only quote one.
+    `step_ups` is set (a main transcript), and only from the strings of an in-window `attachment` row
+    of type HOOK_CONTEXT, where a hook's additional context lands: the same text in a tool result
+    (a file read, a command's output), in typed text or in an assistant's words is a quote.
     A message split over several rows repeats its usage, so usage is kept once per message id.
     """
     out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': [],
@@ -327,8 +328,9 @@ def scan(rows, since, until, refusals=(), step_ups=False):
             text = None if row.get('isMeta') or asked else correction_text(typed)
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
-        if step_ups and row.get('type') != 'assistant':
-            out['step_ups'] += [hit.groups() for text in walk_strings(row) for hit in STEP_UP_RE.finditer(text)]
+        attached = row.get('attachment') if row.get('type') == 'attachment' else None
+        if step_ups and isinstance(attached, dict) and attached.get('type') == HOOK_CONTEXT:
+            out['step_ups'] += [hit.groups() for text in walk_strings(attached) for hit in STEP_UP_RE.finditer(text)]
         if not isinstance(msg, dict) or row.get('type') != 'assistant':
             continue
         usage = msg.get('usage')
