@@ -20,6 +20,7 @@
     "general;SessionStart;;retro-brief;U",
     "general;SessionStart;;verify-hooks;U",
     "general;SessionStart;compact;now-brief;O",
+    "root;PreToolUse;Bash|PowerShell;backlog-item-check;F",
     "root;PreToolUse;Bash|PowerShell;pre-commit-test;F",
     "root;PreToolUse;Bash|PowerShell;no-push-main;F",
     "root;PreToolUse;Bash|PowerShell;gate-before-merge;F",

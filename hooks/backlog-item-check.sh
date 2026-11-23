@@ -2,7 +2,8 @@
 # PreToolUse hook: refuse a pull request that names no backlog item (v6.3, backlog discipline).
 # Matcher: mcp__MCP_DOCKER__create_pull_request (PR creation) and the three MCP merge tools
 # mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge|mcp__plugin_github-tools_github-tools__github_pr_auto_merge
-# (the merge second line). The `gh pr create` / `gh pr merge` shapes arrive with the dispatcher tables.
+# (the merge second line), and `gh pr create` / `gh pr merge` in a Bash or PowerShell command (the dispatcher's
+# bash and powershell tables, before pre-commit-test; the root .claude/settings.json registers it on Bash|PowerShell).
 #
 # Fail CLOSED, class project, independent of `**Gate**:` (no Gate line still means the check runs).
 # Escape hatch: <cwd>/.claude/git-guard-off, as for every git guard. No network, no state files.
@@ -31,7 +32,18 @@
 # MERGE LIMIT: an MCP merge carries only the PR number, with no network there is no mapping to the PR's branch, so
 #   the merge line checks the cwd checkout's branch; merge from the PR's own checkout.
 #
-# bic_* functions (mode, refs, file check, body check) are written for reuse by the gh pr create/merge shapes.
+# THE gh SHAPES (Bash/PowerShell). Every Bash call runs this guard, so a command with no `gh pr create|merge` text
+#   (quotes, then quotes and backslashes removed) exits 0 before git-cmd.sh is sourced. Otherwise gc_segments finds the
+#   segment, and only these flags are read from it: --base/-B and --head/-H (create), --body-file/-F (create). A
+#   backslash-disguised `g\h pr create` has no segment: refused (cannot determine). No script bodies are scanned, and a
+#   segment is matched wherever the words appear (`echo gh pr create` is refused too: put such text in a file).
+#   BASE: --base/-B, else refs/remotes/origin/HEAD, else refuse. HEAD: --head/-H, else the checkout's branch. A merge
+#   has neither flag: the checkout's branch and origin/HEAD, as for the MCP merge tools.
+#   BODY (issue mode, create only): read ONLY from --body-file/-F, by this hook. --body, -b, --fill, --fill-first,
+#   --fill-verbose, --template, --editor, --web, or no body file at all: refused, "use --body-file". The quote-stripping
+#   segment split cannot read a literal body safely. File mode never reads a body, so its rows need no body flag.
+#   DIRECTORY: any directory change in the command (cd, pushd, env -C, ...) is refused: run from the PR's own checkout.
+#   Issue-mode `gh pr merge` passes, as the MCP merge does.
 
 trap '[ "$?" = 127 ] && exit 2' EXIT   # the registration wrapper's 127->2, in-hook (same as gate-before-merge.sh)
 
@@ -43,10 +55,20 @@ jlib="$cctg_dir/lib/json.sh"
 . "$jlib"
 if [ "${CCTD_MEMO[1]+set}" = set ]; then GC_PRE_JSON=${CCTD_MEMO[1]}; else GC_PRE_JSON=$(cat); fi
 json_payload "$GC_PRE_JSON"; GC_PREPARSED=$?
-if [ "$GC_PREPARSED" = 0 ]; then
+# The `gh pr create|merge` words, case-folded with explicit classes (not nocasematch): gh or gh.exe, pr, the verb.
+BIC_GH_RE='(^|[^[:alnum:]_-])[Gg][Hh](\.[Ee][Xx][Ee])?[[:space:]]+[Pp][Rr][[:space:]]+([Cc][Rr][Ee][Aa][Tt][Ee]|[Mm][Ee][Rr][Gg][Ee])([^[:alnum:]_-]|$)'
+if [ "$GC_PREPARSED" = 0 ] && [ -n "$JP_CMD" ]; then
   case "$JP_TOOL" in
-    # Not this hook's tools: the Bash/PowerShell shapes are not registered here (a stray call never reaches git-cmd.sh).
-    Bash|PowerShell) exit 0 ;;
+    Bash|PowerShell)
+      # Exit before git-cmd.sh unless the command holds the words with quotes removed, or with quotes and backslashes
+      # removed (the shell removes both: `gh pr "create"`, `g\h pr create`). An unparseable payload, an empty command
+      # and every other tool fall through to the checks below.
+      _bic_q=${JP_CMD//[\"\']/}
+      if [[ $_bic_q =~ $BIC_GH_RE ]]; then :
+      else
+        _bic_q=${_bic_q//\\/}
+        [[ $_bic_q =~ $BIC_GH_RE ]] || exit 0
+      fi ;;
   esac
 fi
 
@@ -182,19 +204,95 @@ bic_body_ok() {
   return 1
 }
 
-# ---- the MCP shapes --------------------------------------------------------
+
+# bic_judge <create|merge> <base> <head> <body>: the verdict for one PR operation (BIC_MODE and BIC_TOP are set).
+# Issue mode: a create needs the body to name an item, a merge passes (no local view of the PR body at merge time,
+# documented). File mode: the diff check; <body> is not read.
+bic_judge() {
+  if [ "$BIC_MODE" = issue ]; then
+    [ "$1" = merge ] && return 0
+    bic_body_ok "$4" || bic_refuse "$BIC_MSG"
+    return 0
+  fi
+  bic_refs "$2" "$3"
+  bic_file_ok || bic_refuse "$BIC_MSG"
+}
+
+# bic_gh_seg <segment>: one `gh pr create|merge` segment, quotes already removed by gc_segments. Finds the words
+# (tolerating a leading `(`, `{`, `$(`, backtick or a path before gh), then, for a create, reads only --base/-B,
+# --head/-H and --body-file/-F, and notes any other body flag. The body is read here, from the file, in issue mode only.
+bic_gh_seg() {
+  local t op="" base="" head="" bfile="" other=0 body
+  set -f   # word splitting without pathname expansion
+  # shellcheck disable=SC2086
+  set -- $1
+  set +f
+  while [ $# -gt 0 ]; do
+    t=${1##*[\(\{\`]}; t=${t##*/}; t=${t##*\\}
+    case $t in
+      [Gg][Hh]|[Gg][Hh].[Ee][Xx][Ee])
+        case ${2-} in [Pp][Rr]) ;; *) shift; continue ;; esac
+        case ${3-} in
+          [Cc][Rr][Ee][Aa][Tt][Ee]) op=create; shift 3; break ;;
+          [Mm][Ee][Rr][Gg][Ee]) op=merge; shift 3; break ;;
+        esac ;;
+    esac
+    shift
+  done
+  [ -n "$op" ] || bic_refuse "cannot find the gh pr create or gh pr merge words in a command segment: write them plainly (gh pr create ...), run from the PR's own checkout."
+  if [ "$op" = create ]; then
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --base|-B)             [ -n "${2-}" ] || bic_refuse "$1 has no value: pass --base <branch>."; base=$2; shift ;;
+        --base=*)              base=${1#--base=} ;;
+        -B?*)                  base=${1#-B} ;;
+        --head|-H)             [ -n "${2-}" ] || bic_refuse "$1 has no value: pass --head <branch>."; head=$2; shift ;;
+        --head=*)              head=${1#--head=} ;;
+        -H?*)                  head=${1#-H} ;;
+        --body-file|-F)        bfile=${2-}; shift ;;
+        --body-file=*)         bfile=${1#--body-file=} ;;
+        -F?*)                  bfile=${1#-F} ;;
+        --body|--body=*|-b|-b?*|--fill|-f|--fill-first|--fill-verbose|--template|--template=*|-T|-T?*|--editor|-e|--web|-w) other=1 ;;
+      esac
+      [ $# -gt 0 ] && shift
+    done
+    if [ "$BIC_MODE" = issue ]; then
+      [ "$other" = 0 ] && [ -n "$bfile" ] ||
+        bic_refuse "the body of this gh pr create cannot be read from the command (--body, -b, --fill, --fill-first, --fill-verbose, --template, --editor, --web, or no body file): use --body-file <file>, with a closing keyword and #<n> in the file (\`Closes #<n>\`), or a line that is exactly \`Item: none\` (T1 only)."
+      case $bfile in *[\$\`\*\?\[]*|\~*) bic_refuse "the body file '$bfile' holds a \$, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use --body-file <plain path>." ;; esac
+      case $bfile in /*|[A-Za-z]:[/\\]*) ;; *) bfile="$CWD/$bfile" ;; esac
+      [ -f "$bfile" ] && [ -r "$bfile" ] || bic_refuse "cannot read the body file '$bfile': write the PR body to a file and pass its path to --body-file."
+      body=$(head -c 65536 "$bfile")
+    fi
+  fi
+  bic_judge "$op" "$base" "$head" "$body"
+}
+
+# ---- the tool shapes -------------------------------------------------------
+# THE 14th FAIL-OPEN (as in the other git gates): a command key that is present but unreadable cannot be ruled out.
+if gc_cmd_unreadable; then
+  bic_refuse "the payload carries a command this guard could not read, so it cannot rule out a gh pr create or gh pr merge: re-run the command."
+fi
+
 case "$GC_TOOL" in
+  Bash|PowerShell) bic_op=shell ;;
   mcp__MCP_DOCKER__create_pull_request) bic_op=create ;;
   mcp__MCP_DOCKER__merge_pull_request|mcp__github-tools__github_pr_auto_merge|mcp__plugin_github-tools_github-tools__github_pr_auto_merge) bic_op=merge ;;
-  *) bic_refuse "tool '${GC_TOOL:-<none>}' is not one this guard knows (create_pull_request or an MCP merge): refusing, since it cannot judge the call." ;;
+  *) bic_refuse "tool '${GC_TOOL:-<none>}' is not one this guard knows (a Bash or PowerShell command, create_pull_request or an MCP merge): refusing, since it cannot judge the call." ;;
 esac
+
+if [ "$bic_op" = shell ]; then
+  [ -n "$GC_CMD" ] || exit 0   # a payload with no command at all: nothing to inspect
+  bic_segs=$(gc_segments | grep -E "$BIC_GH_RE")
+  [ -n "$bic_segs" ] ||
+    bic_refuse "the command holds the words gh pr create or gh pr merge, but not in a form this check can find (a backslash inside a word?): write them plainly."
+  if gc_dirchange_in "$GC_CMD"; then
+    bic_refuse "the command changes directory (cd, pushd, env -C, ...) and holds a gh pr create or gh pr merge, so this check cannot tell which checkout it acts in: run it alone, with the shell already in the PR's own checkout."
+  fi
+fi
 
 BIC_TOP=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
 [ -n "$BIC_TOP" ] || bic_refuse "$CWD is not inside a git checkout: run from the PR's own checkout."
-
-json_fields "$GC_JSON" tool_input.head tool_input.base tool_input.body
-[ "$?" = 0 ] || bic_refuse "the tool input did not parse: cannot read the PR's head, base and body."
-bic_in_head=${JF[0]}; bic_in_base=${JF[1]}; bic_in_body=${JF[2]}
 
 BIC_MODE=$(bic_mode)
 case "$BIC_MODE" in
@@ -202,12 +300,15 @@ case "$BIC_MODE" in
   *) bic_refuse "PROJECT_CONTEXT.md has no usable \`Task source\` (needs exactly \`plan-files\` or \`github-issues\`): set \`- **Task source**: \`plan-files\`\` (or github-issues) in $BIC_TOP/PROJECT_CONTEXT.md." ;;
 esac
 
-if [ "$BIC_MODE" = issue ]; then
-  [ "$bic_op" = merge ] && exit 0   # issue mode: no local view of the PR body at merge time (documented)
-  bic_body_ok "$bic_in_body" || bic_refuse "$BIC_MSG"
+if [ "$bic_op" = shell ]; then
+  while IFS= read -r bic_seg; do
+    [ -n "$bic_seg" ] || continue
+    bic_gh_seg "$bic_seg"
+  done <<< "$bic_segs"
   exit 0
 fi
 
-bic_refs "$bic_in_base" "$bic_in_head"
-bic_file_ok || bic_refuse "$BIC_MSG"
+json_fields "$GC_JSON" tool_input.head tool_input.base tool_input.body
+[ "$?" = 0 ] || bic_refuse "the tool input did not parse: cannot read the PR's head, base and body."
+bic_judge "$bic_op" "${JF[1]}" "${JF[0]}" "${JF[2]}"
 exit 0

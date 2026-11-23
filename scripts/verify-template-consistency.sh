@@ -4752,6 +4752,8 @@ SessionStart;;jev-notice
 PreToolUse;Agent;jev-route
 PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge
 PostToolUse;Agent;agent-result-notes
+PreToolUse;Bash;backlog-item-check
+PreToolUse;PowerShell;backlog-item-check
 PreToolUse;mcp__MCP_DOCKER__create_pull_request;backlog-item-check
 PreToolUse;mcp__MCP_DOCKER__merge_pull_request;backlog-item-check
 PreToolUse;mcp__github-tools__github_pr_auto_merge;backlog-item-check
@@ -5051,8 +5053,8 @@ if grep -q 'hooks/dispatch\.sh' hooks/hooks.json; then
   [ "$(c71_dtab hooks/dispatch.sh | awk '{print $1}' | sort -u | tr '\n' ' ')" = "bash powershell " ] || c74_bad="$c74_bad dispatch.sh-lacks-the-bash-and-powershell-tables"
   # v6.0 D2: the ORDER of the tables is pinned (the closed git gates run first, so an open guard can never keep one from running).
   # The lists below are the expectation the tables are held to, not a second source: the tables are still read from dispatch.sh.
-  c74_d2_bash='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation'
-  c74_d2_ps='no-push-main gate-before-merge pre-commit-test'
+  c74_d2_bash='no-push-main deny-secret-reads gate-before-merge backlog-item-check pre-commit-test deny-hang-shapes enforce-delegation'
+  c74_d2_ps='no-push-main gate-before-merge backlog-item-check pre-commit-test'
   c74_tab() { c71_dtab "$1" | awk -v t="$2" '$1==t { printf "%s%s", (n++ ? " " : ""), $2 }'; } # <dispatch.sh> <table>
   c74_d2_ok() { [ "$(c74_tab "$1" bash)" = "$c74_d2_bash" ] && [ "$(c74_tab "$1" powershell)" = "$c74_d2_ps" ]; }
   c74_d2_ok hooks/dispatch.sh || c74_bad="$c74_bad dispatch.sh-tables-differ-from-D2(bash:$(c74_tab hooks/dispatch.sh bash);powershell:$(c74_tab hooks/dispatch.sh powershell))"
@@ -5350,7 +5352,7 @@ if ! command -v node >/dev/null 2>&1; then
   ko "check 83: node is not available -- the onFailure scan cannot run"
 else
   c83_fail=0
-  for c83_pair in "hooks/hooks.json 7" ".claude/settings.json 6"; do
+  for c83_pair in "hooks/hooks.json 7" ".claude/settings.json 7"; do
     c83_f=${c83_pair% *}; c83_want=${c83_pair#* }
     c83_res=$(c83_scan "$c83_f" 2>&1)
     c83_n=$(printf '%s\n' "$c83_res" | head -1)
@@ -5370,7 +5372,7 @@ else
     ko "check 83 control: a copy with onFailure on deny-hang-shapes was NOT flagged -- the predicate is vacuous"; c83_fail=1
   fi
   if [ "$c83_fail" -eq 0 ]; then
-    ok "check 83: the 5 plugin and 4 repo fail-closed guard handlers carry onFailure block, no other handler does; both controls fire"
+    ok "check 83: the 7 plugin and 7 repo fail-closed guard handlers carry onFailure block, no other handler does; both controls fire"
   fi
 fi
 rm -rf "${c83_tmp:?}"

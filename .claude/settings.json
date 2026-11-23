@@ -7,6 +7,11 @@
         "hooks": [
           {
             "type": "command",
+            "onFailure": "block",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/backlog-item-check.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+          },
+          {
+            "type": "command",
             "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/pre-commit-test.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
             "timeout": 3360,
             "onFailure": "block"

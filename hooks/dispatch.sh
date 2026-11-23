@@ -120,8 +120,8 @@ cctd_run_guard() {
 # cctd_main <table> -- the run. The tables are one line each (a consistency check reads them).
 cctd_main() {
   case ${1-} in
-    bash)       cctd_tab='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation' ;;
-    powershell) cctd_tab='no-push-main gate-before-merge pre-commit-test' ;;
+    bash)       cctd_tab='no-push-main deny-secret-reads gate-before-merge backlog-item-check pre-commit-test deny-hang-shapes enforce-delegation' ;;
+    powershell) cctd_tab='no-push-main gate-before-merge backlog-item-check pre-commit-test' ;;
     *) echo "HOOK BLOCKED: dispatch.sh: unknown table '${1-}' -- the plugin's hooks.json and dispatch.sh disagree" >&2; return 2 ;;
   esac
   [ -n "$cctd_tab" ] || { echo "HOOK BLOCKED: dispatch.sh: empty table '${1-}'" >&2; return 2; }
