@@ -54,7 +54,7 @@ case "$mode" in
             l = $0; sub(/^[[:space:]]*[-*][[:space:]]+B-/, "", l)
             n = l; sub(/[^0-9].*$/, "", n)
             t = substr(l, length(n) + 1)
-            gsub(/[\001-\037\177]/, "", t)
+            gsub(/\t/, " ", t); gsub(/[\001-\037\177]/, "", t)
             sub(/^[[:space:]]+\[in progress\]/, "", t); sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
             if (length(t) > 80) t = substr(t, 1, 77) "..."
             top = "B-" n (t == "" ? "" : " " t)

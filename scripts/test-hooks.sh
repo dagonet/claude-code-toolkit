@@ -13609,6 +13609,8 @@ bb_expect "backlog-brief: a session started at the repo root prints the same lin
 # the top title goes into the model context at every session start: control characters stripped, capped at 80 characters
 BB_C1=$(bb_proj ctrl '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 red\033[31mtext\007bell\n\n### Done\n\n_none_\n')
 bb_expect "backlog-brief: control characters (ESC, BEL) in the top title are stripped" "backlog: 0 untriaged, 0 in progress, top: B-4 red[31mtextbell" "$BB_C1" startup
+BB_C4=$(bb_proj tabs '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-1\t[in progress]\ttitle\twith tab\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: tab-separated tag and title: the tag is dropped, the tabs become spaces" "backlog: 0 untriaged, 1 in progress, top: B-1 title with tab" "$BB_C4" startup
 BB_LONG=$(printf '%05000d' 0 | tr 0 x)
 BB_C2=$(bb_proj longtitle '`plan-files`' "## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 $BB_LONG\n\n### Done\n\n_none_\n")
 bb_expect "backlog-brief: a 5000-character top title is capped at 80 characters ending in ..." \
