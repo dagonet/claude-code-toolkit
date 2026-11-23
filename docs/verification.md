@@ -202,6 +202,16 @@ This is also why the proposed `hooks/local/` extension point was **cancelled**: 
 `**Gate**` already does the job, and the one thing it could not express — the terminal
 exit — is expressible with the variable that was already there.
 
+## Backlog discipline (v7.0.0)
+
+Three hooks, one rule: every pull request names a backlog item. See the three rows at the end of the Hooks table in `docs/architecture.md`.
+
+- **`hooks/backlog-item-check.sh`** refuses a PR that names no item, with a message starting `BLOCKED: backlog-item-check:` that names the fix. It reads `**Task source**` in the repo root's `PROJECT_CONTEXT.md` and fails closed on a missing or unknown value. To probe it, feed it a payload on stdin as `scripts/test-hooks.sh` does; never create a real PR to see whether it fires. The exempt shapes are a diff that touches only `PROJECT_STATE.md` (grooming), a commit in `<base>..HEAD` with the trailer `Item: none` (the first PR after the update, sync PRs), and a `B-<n>` moved into `### Done`.
+- **Known limit: merge from the PR's own checkout.** An MCP merge call carries only the PR number and the hook uses no network, so the merge line checks the branch of the checkout it runs in, not the PR's branch. A merge started from another branch's checkout is judged against that branch, and may be refused (or passed) for the wrong diff. In issue mode a merge always passes, because the PR body is not available locally.
+- **`hooks/backlog-brief.sh`** prints one line at every session start (`backlog: <u> untriaged, <p> in progress, top: ...`). It is advisory: if it prints nothing, the repo has no `PROJECT_STATE.md` backlog or no `Task source`, not a broken hook.
+- **The follow-ups note** (`hooks/agent-result-notes.sh`) fires on a reviewer or tester report with a `Follow-ups:` block followed at once by a `- ` line; a blank line between the two breaks the block.
+- **Counters.** `scripts/self-review-count.py` counts `backlog_item_none` (a create_pull_request body, or a `git commit -m` text or heredoc, with the trailer; a commit made with `-F <file>` or a PR made with `--body-file` is not visible in a transcript, so this is a lower bound), `backlog_refusals` (`<mode>/<reason>`: the mode is `file` or `issue` only where the refusal text itself is specific to one, else `other`) and `followups` (reviewer or tester results with a non-empty block). Counts only; no refusal, commit or report text is stored.
+
 ## For the release owner
 
 **Keep the toolkit checkout on the tagged commit for as long as any consumer may be syncing; never switch its branch during a consumer sync.** `template_compute_status` resolves against the checkout's HEAD, not against any tag, so a checkout moved to a docs branch mid-sync makes the manifest record an untagged commit as `lastSynced` even when every file hash still matches the tagged build (`sync-template`'s v3.0.4 pre-step catches this — stops in case 4, rewrites to the tag commit in case 2 — but the safer fix is not to create the condition; penumbra).

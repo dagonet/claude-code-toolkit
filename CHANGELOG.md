@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (v7.0.0)
+
+<!-- Not `## v7.0.0 — unreleased` on purpose: checks 42, 56 and 57 read the newest `## v<n>` heading as this release and compare it with VERSION (6.2.0), so that heading is red until VERSION is bumped. The release task renames this heading to `## v7.0.0 — <date>` and adds the rest of the section. -->
+
+
+### Downstream migration
+- **The first PR after the update adds the backlog shape and carries `Item: none`.** `hooks/backlog-item-check.sh` refuses a PR that names no backlog item, and a base without `## Backlog` holding `### Untriaged`, `### Ranked` and `### Done` in `PROJECT_STATE.md` (`Task source: plan-files`), or without the `priority:1..3` labels (`Task source: github-issues`), has no item to name. That first PR adds the three subsections (or creates the three labels) and has the trailer `Item: none` in the last paragraph of a commit message (file mode) or a line exactly `Item: none` in the PR body (issue mode).
+- **Sync PRs carry `Item: none`.** The PR that lands a `/cct:sync-template` run changes template files, not a backlog item; put the trailer on its commit.
+- **Grooming PRs are exempt.** A PR whose diff touches only `PROJECT_STATE.md` passes without a trailer (file mode).
+
 ## v6.2.0 — 2026-11-12
 
 Minor. A project can keep its own hook handlers in the template-owned `.claude/settings.json` and still sync clean; the same review closed one older loophole in how PROJECT-CUSTOM regions are checked; the Windows drift probe stops reporting false drift. Design and plan: `docs/plans/2026-11-11-project-hooks-in-settings-design.md` and `docs/plans/2026-11-11-project-hooks-in-settings-plan.md`.
