@@ -352,7 +352,7 @@ The cct plugin registers the following workflow enforcement hooks (scripts in th
 
 All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and run from the installed plugin; since v5.0 setup copies only `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh` into a project. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
 
-### Read Size Gate (PreToolUse, registered by the cct plugin)
+### Read Size Gate (PreToolUse, registered by the optional `cct-guards` plugin, if `cct-guards` is installed)
 
 **Read size gate** (`plugins/cct-guards/hooks/read-size-gate.sh`, if `cct-guards` is installed):
 - Matcher: `Read`
@@ -365,11 +365,11 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
 - Parses JSON through `hooks/lib/json.sh` (node, python3 or jq). Style-matches `no-push-main.sh`.
 
-**Install scope (v5.0): the cct plugin registers it machine-wide** (`hooks/hooks.json`); there is no user-level copy to install. The 22% Read-tool share is paid in target-project sessions, which the plugin covers.
+**Install scope (v7.0.0): if `cct-guards` is installed, that plugin registers it machine-wide** (`plugins/cct-guards/hooks/hooks.json`); there is no user-level copy to install. The 22% Read-tool share is paid in target-project sessions, which the plugin covers.
 
 **Threshold tuning:** the script hard-codes `THRESHOLD=500` near the top. Edit the value directly. The log at `~/.claude/state/read-size-gate.log` provides per-decision data for post-sprint histogramming if you want to calibrate the threshold from real use rather than a gut number.
 
-### Bash Output Guard (PostToolUse, registered by the cct plugin)
+### Bash Output Guard (PostToolUse, registered by the optional `cct-guards` plugin, if `cct-guards` is installed)
 
 **Hook** (`plugins/cct-guards/hooks/bash-output-guard.sh`, if `cct-guards` is installed), matcher `Bash|PowerShell`:
 - Reads `tool_response` from stdin. Observed shape (2.1.250): `{stdout, stderr, interrupted, isImage, noOutputExpected}`.

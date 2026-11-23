@@ -2,7 +2,8 @@
 # old-names.sh [<project-dir>] -- v7.0.0: warn about pre-v7 part names in a project's kept files.
 #
 # v7.0.0 moved the language coders and some skills out of the cct plugin into optional plugins, which renamed them.
-# A kept project file (an agent of its own, project-instructions.md, a PROJECT-CUSTOM region, README.md, CLAUDE.local.md)
+# A kept project file (an agent of its own, project-instructions.md, a PROJECT-CUSTOM region, README.md, CLAUDE.local.md,
+# its own skills and commands, settings files)
 # may still use the old name. This script only REPORTS: one line per hit, "<file>:<line>: <old> -> <new> (...)". It writes
 # nothing, never changes a file, prints nothing when there is nothing to report, and always exits 0 (a sync is never
 # failed by it).
@@ -25,9 +26,11 @@ cct:karpathy-guidelines cct-helpers:karpathy-guidelines
 cct:mcp-usage cct-helpers:mcp-usage
 cct:jev cct-jev:jev'
 
-# the kept files a sync never rewrites, plus the two it does not read (README.md, CLAUDE.local.md)
-FILES=$(for f in .claude/agents/*.md .claude/rules/*.md .claude/project-instructions.md CLAUDE.md CLAUDE.local.md \
-                 AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md README.md; do [ -f "$f" ] && printf '%s\n' "$f"; done)
+# the kept files a sync never rewrites, plus the two it does not read (README.md, CLAUDE.local.md), the project's own
+# skills and commands, and the settings files (a Skill(...) permission can name an old skill)
+FILES=$({ for f in .claude/agents/*.md .claude/rules/*.md .claude/project-instructions.md .claude/settings*.json CLAUDE.md CLAUDE.local.md \
+                   AGENT_TEAM.md PROJECT_CONTEXT.md PROJECT_STATE.md README.md; do [ -f "$f" ] && printf '%s\n' "$f"; done
+          find .claude/skills .claude/commands -type f 2>/dev/null | sort; })
 [ -n "$FILES" ] || exit 0
 
 printf '%s\n' "$MAP" | while read -r old new; do

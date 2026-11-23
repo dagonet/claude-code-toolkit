@@ -14,7 +14,9 @@
 #   (e) every dagonet plugin besides cct that settings.json ENABLES (enabledPlugins value true) is installed (the
 #       machine's own choice is its enabledPlugins; v7.0.0, spec section 10 item 3). The dagonet plugins installed
 #       besides cct are listed in one OPTIONAL PLUGINS line, information only: none installed is the public default,
-#       and one installed but not enabled is no drift. A plugin installed at another version is the (b2) sub-plugin drift;
+#       and one installed but not enabled is no drift. A plugin installed at another version is the (b2) sub-plugin drift,
+#       and stays drift even when settings.json has it disabled (an installed stale copy is still a stale copy). Limit:
+#       any install record counts as installed, so a plugin installed at project scope only reads as installed here;
 # and permissions.autoMode.environment in settings.json matches the reference (below).
 # A REF older than v5.0 (no leftovers list) is compared the pre-v5.0 way: CLAUDE.md plus every
 # hooks/, skills/, agents/ and output-styles/ file that REF shipped, byte for byte.

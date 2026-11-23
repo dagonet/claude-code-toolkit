@@ -11862,6 +11862,11 @@ if [ "$(uname -s)" = "Linux" ]; then
     DL_OUT=$(dl_run)
     expect "DL15 enabled at another version: exit 1, one SUBPLUGIN DRIFT line and no MISSING line" "1:1:0" \
       "$(dl_rc):$(printf '%s\n' "$DL_OUT" | grep -c '^  SUBPLUGIN DRIFT: cct-guards@dagonet ')":"$(printf '%s\n' "$DL_OUT" | grep -c '^  OPTIONAL PLUGIN MISSING')"
+    # M2: an installed sub-plugin at the wrong version is drift even when settings.json has it DISABLED (kept direction)
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" | jq '.enabledPlugins["cct-guards@dagonet"]=false' > "$DL_H/.claude/settings.json"
+    DL_OUT=$(dl_run)
+    expect "DL15 disabled but installed at another version: still drift (exit 1, one SUBPLUGIN DRIFT line, no MISSING line)" "1:1:0" \
+      "$(dl_rc):$(printf '%s\n' "$DL_OUT" | grep -c '^  SUBPLUGIN DRIFT: cct-guards@dagonet ')":"$(printf '%s\n' "$DL_OUT" | grep -c '^  OPTIONAL PLUGIN MISSING')"
     dl_plugins "$DL_VER"; sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
     expect "DL15 the clean HOME of DL1 (cct alone, nothing else enabled): the line reads none installed" 1 "$(dl_optl "$(dl_run)" | grep -cF 'none installed')"
     # DL15 with CRLF python3 output: one record per line must still be read (the DL14 lesson)
@@ -11875,7 +11880,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     fi
     sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"; dl_plugins "$DL_VER"
   else
-    skip "DL15 optional plugin arm (enabledPlugins)" "needs jq" 15
+    skip "DL15 optional plugin arm (enabledPlugins)" "needs jq" 16
   fi
   # DL7 linux_check_rendered, the installer's two post-checks (one function, shared)
   dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
@@ -11924,7 +11929,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     skip_host "DL10 older tag falls back to the raw comparison" "tag v4.6.0 absent or already carries linux-render.sh" 2
   fi
 else
-  skip_host "DL1-15 drift script (Linux rendering, plugin, sub-plugins, optional plugins, leftovers, stale registration, CRLF)" "not a Linux host" 67
+  skip_host "DL1-15 drift script (Linux rendering, plugin, sub-plugins, optional plugins, leftovers, stale registration, CRLF)" "not a Linux host" 68
 fi
 # ---- end v5.0 drift
 # ---- v5.0: install-user-level-linux.sh never removes anything before cct@dagonet is installed
@@ -12113,6 +12118,13 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   expect "IU a bare --with: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
   iu_w withempty - --with ""
   expect "IU --with with an empty list: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withcomma - --with ,,
+  expect "IU --with ,, (no name in the list): exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withblank - --with " "
+  expect "IU --with ' ' (a blank list): exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withstar - --with '*'
+  expect "IU --with '*': read as a name, not a glob: exits non-zero, nothing installed, the unknown name is '*'" "1:0:1" \
+    "$(iu_nz):$(iu_ncalls):$(grep -cF 'unknown optional plugin: * (' "$iu_h/out")"
   iu_w withunk - --nonesuch
   expect "IU an unknown argument: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
   expect "IU an unknown argument: it names the argument" 1 "$(grep -c 'unknown argument: --nonesuch' "$iu_h/out")"
@@ -12183,7 +12195,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   expect "IU subs fail: it says saved options must be re-entered with claude plugin configure <id>" 1 "$(grep -c 'claude plugin configure' "$iu_h/err")"
   expect "IU subs fail: no saved value on stdout or stderr" 0 "$(cat "$iu_h/out" "$iu_h/err" | grep -c -- "$IU_FSEC")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 79
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 82
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
@@ -14112,6 +14124,18 @@ ON_OUT=$(bash "$ON" "$ON_N" 2>&1); ON_RC=$?
 expect "ON2 new names, kept names and look-alikes only: exit 0 and no output" "0:" "$ON_RC:$ON_OUT"
 ON_OUT=$(bash "$ON" "$TMPROOT/on-no-such-dir" 2>&1); ON_RC=$?
 expect "ON3 a directory that does not exist: exit 0 and no output" "0:" "$ON_RC:$ON_OUT"
+ON_S="$TMPROOT/on-skills"; rm -rf "$ON_S"; mkdir -p "$ON_S/.claude/skills/mine" "$ON_S/.claude/commands"
+printf '{"permissions":{"allow":["Skill(cct:commit)","Bash(ls)"]}}\n' > "$ON_S/.claude/settings.json"
+printf '{"permissions":{"allow":["Skill(cct:jev)"]}}\n' > "$ON_S/.claude/settings.local.json"
+printf '# mine\nuse cct:mcp-usage\n' > "$ON_S/.claude/skills/mine/SKILL.md"
+printf 'run cct:retro-review\n' > "$ON_S/.claude/commands/c.md"
+ON_B=$(on_sum "$ON_S")
+ON_OUT=$(bash "$ON" "$ON_S" 2>&1)
+expect "ON6 the project's own skills, commands and settings files: four hits" 4 "$(printf '%s\n' "$ON_OUT" | grep -c .)"
+expect "ON6 ... a Skill(cct:commit) permission line is reported with its new name" 1 "$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/settings\.json:1: cct:commit -> cct-helpers:commit ')"
+expect "ON6 ... so are settings.local.json, a skill file and a command file" "1:1:1" \
+  "$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/settings\.local\.json:1: cct:jev -> '):$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/skills/mine/SKILL\.md:2: cct:mcp-usage -> '):$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/commands/c\.md:1: cct:retro-review -> ')"
+expect "ON6 ... and nothing was changed" "$ON_B" "$(on_sum "$ON_S")"
 on_gone=""
 while read -r on_old on_new; do
   on_pl=${on_new%%:*}; on_sk=${on_new#*:}

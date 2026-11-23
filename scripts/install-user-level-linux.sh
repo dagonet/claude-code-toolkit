@@ -109,13 +109,17 @@ while [ $# -gt 0 ]; do
     --with=*) with_list=${1#--with=}; shift ;;
     *) die "unknown argument: $1 (usage: $0 [--with <plugin,...>])" ;;
   esac
-  [ -n "$with_list" ] || die "--with needs at least one plugin name"
+  # no globbing in the word split below (a `*` is a name, and an unknown one), and at least one name per --with
+  set -f; with_n=0
   for w in $(printf '%s' "$with_list" | tr ',' ' '); do
+    with_n=$((with_n + 1))
     w=${w%@dagonet}
     jq -e --arg n "$w" 'any(.plugins[]; .name == $n and .name != "cct")' "$ROOT/.claude-plugin/marketplace.json" >/dev/null 2>&1 \
       || die "unknown optional plugin: $w (known: $(jq -r '[.plugins[].name | select(. != "cct")] | join(" ")' "$ROOT/.claude-plugin/marketplace.json" 2>/dev/null))"
     case " $WITH_IDS " in *" $w@dagonet "*) ;; *) WITH_IDS="$WITH_IDS${WITH_IDS:+ }$w@dagonet" ;; esac
   done
+  set +f
+  [ "$with_n" -gt 0 ] || die "--with needs at least one plugin name"
 done
 CCT_SRC=${CCT_MARKETPLACE:-dagonet/claude-code-toolkit#v$(head -1 "$ROOT/VERSION")}
 # The default source is a release tag. Check it exists BEFORE anything is removed (an upgrade removes the old
