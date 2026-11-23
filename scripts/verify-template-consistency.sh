@@ -65,6 +65,10 @@ fi
 #    and every spawn carries its brief instead, so no workflow doc may
 #    reintroduce the mandate or name the deleted hook. One alternation per file
 #    so a partial revival fails on the file it lives in.
+#    v6.3: the plan CHALLENGE is a T3/T4 step again -- not a gate: no hook parses it,
+#    and the deleted literals above stay banned. It lives in two places of
+#    AGENT_TEAM.md (the Workflow sentence and the Definition-of-Done row `Plan
+#    challenged`); both are asserted below, so neither can be dropped silently.
 # ---------------------------------------------------------------------------
 GATE_LITERALS='Plan Challenge Protocol|EnterPlanMode|Challenge 1|Challenge 2|tier-before-coder'
 for v in $VARIANTS; do
@@ -77,6 +81,13 @@ for v in $VARIANTS; do
       ok "$f: carries no plan-gate mandate"
     fi
   done
+  f="templates/$v/AGENT_TEAM.md"
+  if [ -f "$f" ] && grep -qxF '| Plan challenged | — | — | Yes | Yes |' "$f" \
+     && grep -qF 'T3 and T4: the plan is challenged (`challenge` skill) before coding starts' "$f"; then
+    ok "$f: the plan challenge is a T3/T4 step (sentence + checkpoint row)"
+  else
+    ko "$f: the T3/T4 plan-challenge sentence or the 'Plan challenged' checkpoint row is missing"
+  fi
 done
 
 # ---------------------------------------------------------------------------

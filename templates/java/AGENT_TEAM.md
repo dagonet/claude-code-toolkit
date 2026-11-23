@@ -129,6 +129,7 @@ Every tier: existing tests pass, build clean and formatted, no `TODO`/`FIXME`/`H
 | New tests for changed logic | — | if logic changed | Yes | Yes |
 | Code reviewer approved | — | Yes | Yes | Yes |
 | BDD scenarios / architect guidance followed | — | — | — | Yes |
+| Plan challenged | — | — | Yes | Yes |
 
 ### Lean Dev Prompt Templates
 
@@ -241,7 +242,7 @@ An agent that has to go looking for any of the five is under-briefed — a promp
 
 **Plan files are optional** — write one in `docs/plans/` when work spans sessions or several workstreams need a shared reference; nothing blocks a spawn on one, and no hook parses a literal in it.
 
-**Challenging a plan is optional and on demand** — invoke the `challenge` skill or spawn the architect with the draft.
+T3 and T4: the plan is challenged (`challenge` skill) before coding starts; at T4 the architect runs it as part of its design review.
 
 ---
 

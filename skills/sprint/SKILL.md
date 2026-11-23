@@ -34,6 +34,7 @@ You are the Product Owner for this sprint. Execute the sprint backlog using para
 
 - **If the sprint is a single T4-sized task that is too big for one pass** (multi-module migration, a sweep across many files, competing hypotheses), say **"use a workflow"** first: Claude builds a script-orchestrated dynamic workflow — waves of implementers → two verifiers → a fixer per task — and runs it in the background under auto mode. Come back to this loop for the merge. Fan-out below is for a backlog of independent items.
 - Max 3 parallel workstreams to avoid rate limits
+- T3/T4 tasks are challenged (`challenge` skill) before dispatch
 - Each subagent gets a clear, self-contained scope and its own worktree
 - Assign independent workstreams first; queue dependent ones
 - Spawn long-running workstreams with `background: true` so the sprint loop is not blocked on a single Agent call

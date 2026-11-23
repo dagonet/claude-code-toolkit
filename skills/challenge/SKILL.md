@@ -1,7 +1,6 @@
 ---
 name: challenge
 description: Challenge a plan, design, or approach in two structured passes — scope/necessity, then correctness/completeness. Use before executing any plan.
-disable-model-invocation: true
 argument-hint: "[what to challenge]"
 ---
 
@@ -21,6 +20,7 @@ Challenge the current plan, approach, or design with two structured passes. Catc
    - If no clear target exists, ASK the user what to challenge
 
 2. **Attempt architect delegation**
+   - If you are the architect, run both passes yourself
    - If an architect agent is available (team context with AGENT_TEAM.md), spawn the architect to perform both challenges
    - If no architect is available (solo session), perform both challenges directly
 
@@ -53,5 +53,5 @@ Challenge the current plan, approach, or design with two structured passes. Catc
 - MUST challenge substance, not style — focus on correctness, scope, and completeness
 - MUST preserve the original intent while cutting scope or simplifying
 - MUST NOT rubber-stamp — if you can't find issues, look harder at assumptions and edge cases
-- If the architect agent is available, MUST delegate to it rather than self-challenging
+- If you are the architect, run both passes yourself; otherwise, if the architect agent is available, MUST delegate to it rather than self-challenging
 - After both passes, present the final revised version for user approval
