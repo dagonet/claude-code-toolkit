@@ -1,6 +1,6 @@
 {
   "name": "cct",
-  "version": "6.2.0",
+  "version": "7.0.0",
   "description": "claude-code-toolkit: agents, skills, report style and enforcement hooks for toolkit projects",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/claude-code-toolkit",

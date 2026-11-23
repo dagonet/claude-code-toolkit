@@ -1,2 +1,2 @@
-6.2.0
-v6.2.0: project-owned hook handlers in settings.json; two sync-status loopholes closed; Windows drift-probe fix
+7.0.0
+v7.0.0: slim core with optional plugins, cheap-first model ladder, backlog discipline (Item trailer), counter and guard fixes

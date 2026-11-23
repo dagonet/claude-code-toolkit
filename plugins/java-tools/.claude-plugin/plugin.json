@@ -1,6 +1,6 @@
 {
   "name": "java-tools",
-  "version": "6.2.0",
+  "version": "7.0.0",
   "description": "Optional: the Java (Spring Boot) coder agent, java-tools:java-coder, for projects from the java template; builds and tests with Bash mvn or gradle, no MCP server",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/claude-code-toolkit",

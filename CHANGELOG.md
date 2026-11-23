@@ -1,9 +1,27 @@
 # Changelog
 
-## Unreleased (v7.0.0)
+## v7.0.0 — 2026-11-23
 
-<!-- Not `## v7.0.0 — unreleased` on purpose: checks 42, 56 and 57 read the newest `## v<n>` heading as this release and compare it with VERSION (6.2.0), so that heading is red until VERSION is bumped. The release task renames this heading to `## v7.0.0 — <date>` and adds the rest of the section. -->
+Major. The core `cct` plugin gets slim: the cost and context guards, the learning loop, the small helper skills, Jev and the language coders move into optional plugins of the `dagonet` marketplace, and a machine installs the ones it wants. Four finished plans land together:
+- **Slim core, part 2: the plugin split** (breaking renames, below). Design and plan: `docs/plans/2026-11-22-slim-core-plugin-split-design.md` and `docs/plans/2026-11-22-slim-core-plugin-split-plan.md`.
+- **Slim core, part 1: backlog discipline.** Every PR names a backlog item or says `Item: none`; `hooks/backlog-item-check.sh` refuses one that does neither, `hooks/backlog-brief.sh` shows backlog debt at session start, and reviewer and tester follow-ups prompt a backlog entry. Design and plan: `docs/plans/2026-11-22-backlog-discipline-design.md` and `docs/plans/2026-11-22-backlog-discipline-plan.md`.
+- **The cheap-first model ladder.** `user-level-reference/CLAUDE.md` replaces the Jev exception with a ladder (cheap tier first, a step up on failure), a step-up note is added when a pipeline helper fails, and the counter records which model each helper started on. Design and plan: `docs/plans/2026-11-22-model-ladder-design.md` and `docs/plans/2026-11-22-model-ladder-plan.md`.
+- **The first self-review report's items** (`docs/self-review/2026-11-20.md`; plan `docs/plans/2026-11-20-v6.3-self-review-items-plan.md`). Statuses are below.
 
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. The server source did not change (`server/src/template_sync/VERSION` and its tests only), and `templates/ownership.json` changed only in two description strings. The templates did change, but every change reaches a project as plain template-class text or JSON that a v5.0-v6.2 skill already applies: the `## Backlog` subsections and the `Item:` line in `PROJECT_STATE.md` and `AGENT_TEAM.md`, the renamed agent types, and `"onFailure": "block"` on the inline plugin-off guard (a wholesale apply and a three-way merge both deliver the key, pinned by a new assertion in `server/tests/test_template_sync_settings_hooks.py`). What an older skill body lacks is the new step-wise behaviour in `skills/sync-template/SKILL.md` (the `old-names.sh` warning, and `Item: none` in the sync commit and PR body): the old-names warning only informs, and a sync PR without `Item: none` is refused by the backlog check, the safe direction (see Downstream migration). Beyond that, `template_load_manifest` refuses a skill body older than the checkout's own marker (`load_skill_refusal` in `server/src/template_sync/v3.py`), and this release moves the marker to v7.0.0, so a checkout of this release is never synced by an older skill. The sync-template `SKILL.md` marker and `server/src/template_sync/VERSION` move to v7.0.0 because consistency checks 21c-2g and 44 require them to equal `VERSION`; the skill's own `Requires` floor stays at server >= 5.2.0, because the server did not change.
+
+### Self-review items (`docs/self-review/2026-11-20.md`)
+- **Shipped:**
+  - **1:** `deny-hang-shapes` lets a read-only `cd` chain inside the session's cwd through (a character whitelist; heredocs and quoted or expanded option words stay refused).
+  - **2:** the fail-closed handlers carry `"onFailure": "block"` (needs Claude Code 2.1.295 or later, see Downstream migration; check 83), in the plugin `hooks/hooks.json` and the template's inline guard.
+  - **4 (counter side):** the counter counts backlog refusals, `Item: none` and follow-ups, and maps the toolkit's refusal texts; the project-side change is the backlog discipline above.
+  - **5:** made optional through the plugin split (the user's rule: low use on our machines never justifies removing a part). The rarely used skills, commands and agents are installable plugins; nothing is deleted.
+  - **6:** counter fixes: slash-command starts count, a plain "no" is not a correction, plugin skills and agents count as `<plugin>:<name>`.
+  - **7:** the model ladder (above).
+  - **9:** a `/status` step after a live update, in `docs/verification.md`.
+- **Closed by measurement:** **3** (the "safety checks could not run" refusals stopped after 2026-11-06, with none since, so nothing is left to change) and **8** (the router already sets the Agent tool's own `effort` field, and effort is left to the agent files: the model is the one dial the ladder turns).
+- **Deferred:** **10** (path-scoped rules).
+- **Counter rename:** the counter's `spawns` rows are now `start_models` rows (same data, new name; `spawns` is kept in the counts file for one release), so the next report compares like with like.
 
 ### Downstream migration
 - **The first PR after the update adds the backlog shape and carries `Item: none`.** `hooks/backlog-item-check.sh` refuses a PR that names no backlog item. In file mode (`Task source: plan-files`) a base whose `PROJECT_STATE.md` lacks `## Backlog` with `### Untriaged`, `### Ranked` and `### Done` has nowhere to move an item, so the first PR adds the three subsections. In issue mode (`Task source: github-issues`) create the `priority:1..3` labels; the hook does not check them, `backlog-brief` reads them. That first PR carries the commit trailer `Item: none` in the last trailer block (file mode) or a line exactly `Item: none` in the PR body (issue mode).
@@ -47,6 +65,19 @@ The hooks keep their names; only where they come from changed: `read-size-gate`,
 - **Drift reads `enabledPlugins`** (above). New rows pin both directions (enabled and missing, disabled and missing, installed and not enabled, none installed, another version, CRLF python3).
 - **`skills/sync-template/old-names.sh`** is the table of old names behind the sync warning. It prints `<file>:<line>: <old> -> <new>` for the project files a sync keeps, writes nothing and always exits 0. Check 76 exempts that one path (its job is to name old parts); every other file, `SKILL.md` included, stays scanned, and the check's controls pin both arms.
 - **`scripts/plugin-smoke.sh` row 11 (release only):** `claude -p --plugin-dir` with `cct` alone and no optional plugin; no registered command names a script that moved. It reads at least five registrations from `hooks/hooks.json` first, so an empty read cannot pass.
+
+### Docs
+- `docs/architecture.md`: the Context Budget table gains a `wc -c` column for v7.0.0. The variant `CLAUDE.md` files, the user-level `CLAUDE.md`, the `project-instructions.md` seed, every `PROJECT_CONTEXT.md` and `AGENT_TEAM.md` moved, and the core plugin now ships 3 skills and 6 agents (9 and 10 with every optional plugin). Every figure was re-measured, none carried forward.
+- `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md`: the install lines and the pinned tag move to v7.0.0.
+- `docs/self-review/2026-11-20.md`: items 3 and 8 are marked closed and item 5 shipped through the plugin split; a line notes that the counter's `spawns` rows are now `start_models` rows. Nothing else in the report is applied.
+
+### Measured
+Taken from the full gate at 3b2960f on agent-host-1 (`GATE PASS`), the commit before this release commit; the release commit changes only version text, the CHANGELOG, `docs/architecture.md` and `docs/self-review/2026-11-20.md`.
+- **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (check 50 prints as a PASS line while skipping: no system `python`, only `python3`).
+- **`bash scripts/test-hooks.sh`:** 7407 passed, 0 failed, 6 skipped (7413 assertions).
+- **`bash scripts/test-server.sh`:** 628 passed, 9 skipped.
+- **Bootstrap fixtures** (`scripts/test-setup-project.sh`, run inside the consistency script): 66 passed, 0 failed, 62 skipped (128 assertions).
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`):** run by the release controller; its three lines are added to this section when it has run.
 
 ## v6.2.0 — 2026-11-12
 
