@@ -12862,6 +12862,41 @@ else
   skip "v5 agents: enforce-agent-contract cct: cases" "no node on this host" 7
 fi
 # ---- end v5.0 agents
+# ---- v7.0.0 agent type table: hooks/lib/agent-model.sh resolves the core types and the four language plugins' coders
+# from ONE fixed table, consulted before any agent file is read. The plugin root below has no agents/ at all, so a
+# row that answers proves the table, not a file. Check 87 pins every row against its agent file's frontmatter.
+V7R="$TMPROOT/v7root"; mkdir -p "$V7R/hooks/lib" "$TMPROOT/v7home" "$TMPROOT/v7noproj"
+v7am() ( export HOME="$TMPROOT/v7home" CLAUDE_PLUGIN_ROOT="$V7R"; . "$ROOT/hooks/lib/agent-model.sh"; am_resolve "$1" "$TMPROOT/v7noproj"; printf '%s|%s|%s|%s' "$AM_KIND" "$AM_MODEL" "$AM_EFFORT" "${AM_PIPELINE:-}" )
+expect "v7 table: dotnet-tools:dotnet-coder -> own sonnet medium, pipeline true" "own|sonnet|medium|true" "$(v7am dotnet-tools:dotnet-coder)"
+expect "v7 table: python-tools:python-coder"  "own|sonnet|medium|true" "$(v7am python-tools:python-coder)"
+expect "v7 table: rust-tools:rust-coder"      "own|sonnet|medium|true" "$(v7am rust-tools:rust-coder)"
+expect "v7 table: java-tools:java-coder"      "own|sonnet|medium|true" "$(v7am java-tools:java-coder)"
+expect "v7 table: cct:coder resolves with no agent file"     "own|sonnet|medium|true"   "$(v7am cct:coder)"
+expect "v7 table: cct:code-reviewer"          "own|opus|xhigh|true"    "$(v7am cct:code-reviewer)"
+expect "v7 table: cct:tester (pipeline notify)" "own|sonnet|medium|notify" "$(v7am cct:tester)"
+expect "v7 table: cct:architect"              "own|opus|xhigh|notify"  "$(v7am cct:architect)"
+expect "v7 table: cct:Explore (no pipeline)"  "own|haiku|low|"         "$(v7am cct:Explore)"
+expect "v7 table: cct:ops (no pipeline)"      "own|sonnet|medium|"     "$(v7am cct:ops)"
+expect "v7 table: an unknown foo-tools:foo-coder changes nothing" "none|||"  "$(v7am foo-tools:foo-coder)"
+expect "v7 table: another agent of a language plugin is not a row" "none|||" "$(v7am dotnet-tools:other-agent)"
+expect "v7 table: cct:nobody with no agents/ -> none" "none|||" "$(v7am cct:nobody)"
+expect "v7 table: a bare coder is not a row" "none|||" "$(v7am coder)"
+expect "v7 table: the CLI line for dotnet-tools:dotnet-coder" "own sonnet 0 medium" "$(HOME="$TMPROOT/v7home" CLAUDE_PLUGIN_ROOT="$V7R" bash "$ROOT/hooks/lib/agent-model.sh" dotnet-tools:dotnet-coder "$TMPROOT/v7noproj" | cut -d' ' -f1-4)"
+expect "v7 table: the CLI line for cct:coder (Jev reads it)" "own sonnet 0 medium" "$(HOME="$TMPROOT/v7home" CLAUDE_PLUGIN_ROOT="$V7R" bash "$ROOT/hooks/lib/agent-model.sh" cct:coder "$TMPROOT/v7noproj" | cut -d' ' -f1-4)"
+expect "v7 table: CLAUDE_CODE_SUBAGENT_MODEL_FORCE still wins over a row" "env|opus||" "$(CLAUDE_CODE_SUBAGENT_MODEL=opus CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 v7am dotnet-tools:dotnet-coder)"
+if [ -n "$HAVE_NODE" ]; then
+  # v5ctr/V5BAD come from the v5.0 agents block above (a fresh agent id per call, CLAUDE_PLUGIN_ROOT=$V5A)
+  expect "v7 table: dotnet-tools:dotnet-coder report without contract lines -> contract blocks" "rc=2" "$(v5ctr dotnet-tools:dotnet-coder "$V5BAD")"
+  expect "v7 table: python-tools:python-coder bad report -> blocks"  "rc=2" "$(v5ctr python-tools:python-coder "$V5BAD")"
+  expect "v7 table: rust-tools:rust-coder bad report -> blocks"      "rc=2" "$(v5ctr rust-tools:rust-coder "$V5BAD")"
+  expect "v7 table: java-tools:java-coder bad report -> blocks"      "rc=2" "$(v5ctr java-tools:java-coder "$V5BAD")"
+  expect "v7 table: a language coder with a compliant report passes" "rc=0" "$(v5ctr dotnet-tools:dotnet-coder "$CT_STR")"
+  expect "v7 table: unknown foo-tools:foo-coder passes (no row)"     "rc=0" "$(v5ctr foo-tools:foo-coder "$V5BAD")"
+  expect "v7 table: another dotnet-tools agent passes (no row)"      "rc=0" "$(v5ctr dotnet-tools:other-agent "$V5BAD")"
+else
+  skip "v7 table: enforce-agent-contract plugin-coder cases" "no node on this host" 7
+fi
+# ---- end v7.0.0 agent type table
 # ---- v5.0 cct-gate: same artifact as run-gate.sh; gc_gate_cmd names the right command (spec §3.4, §5)
 V5G=$(mkrepo v5gate main)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$V5G/PROJECT_CONTEXT.md"
@@ -13176,6 +13211,11 @@ anr_run "background spawn (async_launched): no output (Review Focus 1)" "" "$(an
 anr_run "status completed without content: no output" "" "$(anr_payload cct:coder sonnet completed - -)"
 anr_run "unknown model foo: no output"     "" "$(anr_payload cct:coder foo completed - "$ANR_FAIL")"
 anr_run "unknown agent type: no output"    "" "$(anr_payload cct:no-such-agent sonnet completed - "$ANR_FAIL")"
+anr_run "language coder dotnet-tools:dotnet-coder fails on sonnet -> opus (v7 table, Review Focus 3)" "$(ANR_NOTE dotnet-tools:dotnet-coder sonnet "brief item 2 failed" opus)" "$(anr_payload dotnet-tools:dotnet-coder sonnet completed - "$ANR_FAIL")"
+anr_run "language coder, no model in the payload: the table's sonnet" "$(ANR_NOTE python-tools:python-coder sonnet "gate failed" opus)" "$(anr_payload python-tools:python-coder - completed - "$ANR_GATE")"
+anr_run "language coder clean report: no output" "" "$(anr_payload rust-tools:rust-coder sonnet completed - '- [pass] 1. a\nCommit: abc\nGate: GATE PASS abc\nConcerns: none')"
+anr_run "unknown foo-tools:foo-coder fail line: no output" "" "$(anr_payload foo-tools:foo-coder sonnet completed - "$ANR_FAIL")"
+anr_run "another language-plugin agent (no table row): no output" "" "$(anr_payload dotnet-tools:other-agent sonnet completed - "$ANR_FAIL")"
 anr_run "another tool_name: no output"     "" "$(anr_payload cct:coder sonnet completed - "$ANR_FAIL" | sed 's/"tool_name":"Agent"/"tool_name":"Task"/')"
 anr_run "unreadable payload: no output"    "" 'this is not json'
 anr_run "empty payload: no output"         "" ''

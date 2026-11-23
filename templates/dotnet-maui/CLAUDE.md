@@ -30,10 +30,10 @@ Table is a **maximum**; question turns get at most one agent; never re-spawn `cc
 
 | Task Domain | subagent_type | When |
 |---|---|---|
-| **.NET/MAUI** | `cct:dotnet-coder` | ViewModels, svc |
+| **.NET/MAUI** | `cct:coder`; prefer `dotnet-tools:dotnet-coder` if installed | ViewModels, svc |
 | **General** | `cct:coder` | Scripts, non-.NET |
 
-**Every spawn carries the task brief** (goal, constraints, files in scope, definition of done) — `AGENT_TEAM.md` → *Task Brief Upfront*.
+**Every spawn carries the task brief** — `AGENT_TEAM.md` → *Task Brief Upfront*.
 
 **Pipeline:** Developer -> Reviewer -> Tester -> Developer merges PR (`AGENT_TEAM.md` → Merge Protocol). **Escalation** after 3 fix cycles: (a) reduce scope, (b) re-spawn architect, or (c) escalate — `AGENT_TEAM.md` → *Escalation Protocol*.
 

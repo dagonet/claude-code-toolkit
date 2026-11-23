@@ -1,7 +1,7 @@
 {
   "name": "dotnet-tools",
   "version": "6.2.0",
-  "description": "MCP server for .NET build, test and project operations with compact output; started with uv (uvx) and drives the .NET SDK (dotnet CLI)",
+  "description": "MCP server for .NET build, test and project operations with compact output; started with uv (uvx) and drives the .NET SDK (dotnet CLI); also ships the dotnet-tools:dotnet-coder agent",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/mcp-dev-servers",
   "license": "MIT"

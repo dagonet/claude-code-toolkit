@@ -80,13 +80,15 @@ sys.stdout.buffer.write(t.encode("utf-8", "replace"))
 # anr_step_up -- prints the note JSON or nothing. Reads ANR_TYPE, ANR_MODEL (the first non-empty of
 # resolvedModel and tool_input.model, else empty), ANR_CWD and, through anr_text, the payload.
 anr_step_up() {
-  local t=${ANR_TYPE#cct:} file fam next why txt note
+  local t=${ANR_TYPE#cct:} pipe fam next why txt note
   case "$t" in architect|code-reviewer|tester) return 0 ;; esac
   am_file=""
   am_resolve "$ANR_TYPE" "$ANR_CWD"
   case "$AM_KIND" in own|floor) ;; *) return 0 ;; esac
-  file=$am_file
-  [ -f "$file" ] && [ "$(am_fm "$file" pipeline)" = true ] || return 0
+  # a table row carries its own pipeline flag (core and language-plugin types); any other type's is in its file
+  pipe=$AM_PIPELINE
+  [ -n "$pipe" ] || { [ -f "$am_file" ] && pipe=$(am_fm "$am_file" pipeline); }
+  [ "$pipe" = true ] || return 0
   # which model ran: resolvedModel, else the spawn's model, else what its agent file resolves to
   fam=${ANR_MODEL:-$AM_MODEL}
   case "$fam" in

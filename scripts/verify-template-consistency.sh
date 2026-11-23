@@ -120,7 +120,7 @@ fi
 
 # v5.0: the shipped agents are the plugin's agents/ (templates ship none); the coder
 # count is computed by glob, and an empty glob is a failure, not a vacuous pass.
-plugin_coders=$(ls agents/coder.md agents/*-coder.md 2>/dev/null)
+plugin_coders=$(ls agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null)
 plugin_coder_n=$(printf '%s\n' "$plugin_coders" | grep -c .)
 coder_contract=$(grep -lF "## Report (HARD REQUIREMENT)" $plugin_coders /dev/null 2>/dev/null | wc -l)
 if [ "$plugin_coder_n" -gt 0 ] && [ "$coder_contract" = "$plugin_coder_n" ]; then
@@ -185,15 +185,15 @@ fi
 
 # Liveness & Scope block: every agents/*.md file.
 # Guards the final-message reporting contract and the scope-abort clause.
-all_agents=$(ls agents/*.md 2>/dev/null | wc -l)
-liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" agents/*.md 2>/dev/null | wc -l)
+all_agents=$(ls agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
+liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$liveness_count" = "$all_agents" ]; then
   ok "Liveness & Scope block present in all $all_agents agent files"
 else
   ko "Liveness & Scope block present in only $liveness_count/$all_agents agent files"
 fi
 
-scope_abort=$(grep -lF "Scope abort:" agents/*.md 2>/dev/null | wc -l)
+scope_abort=$(grep -lF "Scope abort:" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$scope_abort" = "$all_agents" ]; then
   ok "Scope-abort clause present in all $all_agents agent files"
 else
@@ -203,12 +203,12 @@ fi
 # v2.0: subagents report in their FINAL MESSAGE. SendMessage was the named-teammate
 # channel and must not creep back into an agent definition — a partial sweep of the
 # 61 files would otherwise pass every assertion above.
-sendmsg=$(grep -lF "SendMessage" agents/*.md 2>/dev/null | wc -l)
+sendmsg=$(grep -lF "SendMessage" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$sendmsg" = "0" ]; then
   ok "No agent definition instructs SendMessage reporting (agent teams retired)"
 else
   ko "SendMessage reporting survives in $sendmsg agent files:"
-  grep -lF "SendMessage" agents/*.md 2>/dev/null
+  grep -lF "SendMessage" agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 
 banned='fixes code directly|PO only|PO fixes directly|PO reviews directly|PO verifies directly|may be committed directly'
@@ -388,7 +388,7 @@ done
 # ---------------------------------------------------------------------------
 echo
 allow_fail=0
-for f in agents/*.md; do
+for f in agents/*.md plugins/*/agents/*.md; do
   [ -f "$f" ] || continue
   tools_line=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb&&/^tools:/{print}' "$f")
   [ -z "$tools_line" ] && continue
@@ -423,12 +423,12 @@ else
   ko "Explore not pinned to haiku (agents/Explore.md)"
 fi
 
-pinned_ids=$(grep -l "^model: claude-" agents/*.md 2>/dev/null | wc -l)
+pinned_ids=$(grep -l "^model: claude-" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$pinned_ids" = "0" ]; then
   ok "no agent pins a full claude-* model id (aliases only — a proxy may reroute them)"
 else
   ko "$pinned_ids agent files pin a full claude-* model id instead of an alias"
-  grep -l "^model: claude-" agents/*.md 2>/dev/null
+  grep -l "^model: claude-" agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 
 # The CLI does not validate `effort:`/`model:` — a v2.1 PR8 probe ran an agent
@@ -436,27 +436,27 @@ fi
 # So a typo ships silently unless something here pins the documented value lists.
 # Count the raw lines first: with no `effort:` anywhere, "0 offenders" is a
 # vacuous pass and the whole check silently stops meaning anything.
-all_effort=$(grep -h "^effort: " agents/*.md 2>/dev/null | grep -c .)
+all_effort=$(grep -h "^effort: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -c .)
 [ "$all_effort" -gt 0 ] || ko "no agent file carries an 'effort:' line — the level-list check would pass vacuously"
-bad_effort=$(grep -h "^effort: " agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
+bad_effort=$(grep -h "^effort: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
 if [ "$bad_effort" = "0" ]; then
   ok "every agent 'effort:' value is one of low/medium/high/xhigh"
 else
   ko "$bad_effort agent 'effort:' values are outside low/medium/high/xhigh (the CLI does not validate this field)"
-  grep -n "^effort: " agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
+  grep -n "^effort: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
 fi
 
-all_model=$(grep -h "^model: " agents/*.md 2>/dev/null | grep -c .)
+all_model=$(grep -h "^model: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -c .)
 [ "$all_model" -gt 0 ] || ko "no agent file carries a 'model:' line — the alias-list check would pass vacuously"
-bad_model=$(grep -h "^model: " agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
+bad_model=$(grep -h "^model: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
 if [ "$bad_model" = "0" ]; then
   ok "every agent 'model:' value is one of sonnet/opus/haiku/fable/inherit"
 else
   ko "$bad_model agent 'model:' values are outside the alias list (the CLI does not validate this field)"
-  grep -n "^model: " agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
+  grep -n "^model: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
 fi
 
-mode_field=$(grep -l "^mode: " agents/*.md 2>/dev/null | wc -l)
+mode_field=$(grep -l "^mode: " agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$mode_field" = "0" ]; then
   ok "no agent carries the undocumented 'mode:' frontmatter field"
 else
@@ -467,7 +467,7 @@ fi
 # tools: omits it cannot open the skills its `## Skills` table names.
 # Counted over the SAME file list, so adding Skill to one of the excluded
 # agents later is a passing change, not a spurious count mismatch.
-skill_list=$(ls agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
+skill_list=$(ls agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
 skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
 skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
 if [ "$skill_tool" = "$skill_users" ]; then
@@ -482,7 +482,7 @@ fi
 # exactly the up-front cost v4.5.0 removed. Each agent opens skills on demand
 # from its own `## Skills` table; the coders carry the karpathy preferences as
 # the `## Working rules` digest (check 67).
-skill_preload=$(grep -lE '^skills:' agents/*.md 2>/dev/null)
+skill_preload=$(grep -lE '^skills:' agents/*.md plugins/*/agents/*.md 2>/dev/null)
 if [ -z "$skill_preload" ]; then
   ok "no agent file preloads a skill via skills: frontmatter"
 else
@@ -491,10 +491,10 @@ fi
 
 # A coder that cannot create a file is not a coder: 44 Write calls died on the
 # tool allowlist in the mined sessions.
-coder_files=$(ls agents/coder.md agents/*-coder.md 2>/dev/null | wc -l)
-coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" agents/coder.md agents/*-coder.md 2>/dev/null | wc -l)
+coder_files=$(ls agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null | wc -l)
+coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null | wc -l)
 if [ "$coder_files" -gt 0 ] && [ "$coder_write" = "$coder_files" ]; then
-  ok "Write tool present in all $coder_files coder files (agents/coder.md, agents/*-coder.md)"
+  ok "Write tool present in all $coder_files coder files (agents/coder.md, plugins/*/agents/*-coder.md)"
 else
   ko "Write tool present in only $coder_write/$coder_files coder files"
 fi
@@ -1674,7 +1674,7 @@ echo
 relhook=$(
   {
     grep -h '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
-    grep -h 'command: "bash hooks/' agents/*.md 2>/dev/null
+    grep -h 'command: "bash hooks/' agents/*.md plugins/*/agents/*.md 2>/dev/null
   } | grep -c .
 )
 if [ "$relhook" -eq 0 ]; then
@@ -1682,14 +1682,14 @@ if [ "$relhook" -eq 0 ]; then
 else
   ko "$relhook hook command(s) still cwd-relative ('bash hooks/...') — they 127 after any cd"
   grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
-  grep -n 'command: "bash hooks/' agents/*.md 2>/dev/null
+  grep -n 'command: "bash hooks/' agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 #     The intermediate no-fallback form `bash "$CLAUDE_PROJECT_DIR/hooks/` is rejected by name.
 NOFALLBACK_FORM='bash \"$CLAUDE_PROJECT_DIR/hooks/'
 nofallback=$(
   {
     grep -hF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
-    grep -hF "$NOFALLBACK_FORM" agents/*.md 2>/dev/null
+    grep -hF "$NOFALLBACK_FORM" agents/*.md plugins/*/agents/*.md 2>/dev/null
   } | grep -c .
 )
 if [ "$nofallback" -eq 0 ]; then
@@ -1697,7 +1697,7 @@ if [ "$nofallback" -eq 0 ]; then
 else
   ko "$nofallback hook command(s) use \$CLAUDE_PROJECT_DIR without the :-. default — they hard-block if the host does not export it"
   grep -nF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
-  grep -nF "$NOFALLBACK_FORM" agents/*.md 2>/dev/null
+  grep -nF "$NOFALLBACK_FORM" agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 #     v5.0: the ${CLAUDE_PROJECT_DIR:-.} census (every hook command line naming a hooks/
 #     script uses the fallback form) is retired: the templates and agents/ carry no hook
@@ -2169,10 +2169,10 @@ fi
 # legitimately unflagged with no gate failure in their repo.
 # ---------------------------------------------------------------------------
 echo
-a5_names=$( { ls agents/*.md 2>/dev/null; } \
+a5_names=$( { ls agents/*.md plugins/*/agents/*.md 2>/dev/null; } \
   | sed 's@.*/@@;s@\.md$@@' | sort -u )
 a5_true_names=$(
-  for a5f in agents/*.md; do
+  for a5f in agents/*.md plugins/*/agents/*.md; do
     [ -f "$a5f" ] || continue
     awk '/^---$/{n++; next} n==1' "$a5f" \
       | grep -qE '^pipeline:[[:space:]]*true[[:space:]]*$' \
@@ -4286,7 +4286,7 @@ else
   # excludes a wildcard grant (`mcp__<alias>__*`) on its own -- nothing to
   # go stale about a name
   # that isn't there.
-  c50_agent_tokens=$(grep -h '^tools:' agents/*.md 2>/dev/null \
+  c50_agent_tokens=$(grep -h '^tools:' agents/*.md plugins/*/agents/*.md 2>/dev/null \
     | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+')
   c50_settings_parsed=$(c50_parse_settings templates/*/.claude/settings.json user-level-reference/settings.json)
   c50_settings_grant_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="ALLOW"||$1=="MATCHER"{print $2}' | sed '/^$/d' | sort -u)
@@ -4555,7 +4555,7 @@ c53_classify() {
 c53_agents=0
 c53_one_line=0
 c53_bad=""
-for f in agents/*.md; do
+for f in agents/*.md plugins/*/agents/*.md; do
   [ -f "$f" ] || continue
   c53_agents=$((c53_agents + 1))
   c53_r=$(c53_classify "$f")
@@ -4916,15 +4916,15 @@ fi
 # ---------------------------------------------------------------------------
 # Check 67 -- the coder's `## Working rules`, `## Skills (...)` and `## Report
 # (HARD REQUIREMENT)` sections are byte-identical in every coder file
-# (v4.5.0 A1/A2/B1; v5.0: the plugin's agents/coder.md and agents/*-coder.md, reference
+# (v4.5.0 A1/A2/B1; v5.0: the plugin's agents/coder.md and plugins/*/agents/*-coder.md, reference
 # agents/coder.md -- the template and user-level copies are gone). The digest replaced the karpathy-guidelines preload and
 # the Report is what hooks/enforce-agent-contract.sh checks, so one drifted
 # copy silently changes one coder. Each section runs from its heading to the
 # next `## `. Control: a section that extracts 0 B from the reference copy is
 # a failure, never a pass.
 # ---------------------------------------------------------------------------
-note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across agents/coder.md and agents/*-coder.md"
-c67_files=$(ls agents/coder.md agents/*-coder.md 2>/dev/null)
+note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across agents/coder.md and plugins/*/agents/*-coder.md"
+c67_files=$(ls agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null)
 c67_count=$(printf '%s\n' "$c67_files" | grep -c .)
 c67_sec() { # <file> <heading line> -> the section, heading included
   awk -v h="$2" 'index($0, h) == 1 { f = 1; print; next } f && /^## / { exit } f { print }' "$1"
@@ -4939,9 +4939,9 @@ for c67_h in '## Working rules' '## Skills (open one only when its trigger fires
   for c67_f in $c67_files; do
     [ "$(c67_sec "$c67_f" "$c67_h")" = "$c67_ref" ] || c67_bad="$c67_bad $c67_f"
   done
-  c67_want=$(( $(ls agents/*-coder.md 2>/dev/null | wc -l) + 1 ))
+  c67_want=$(( $(ls plugins/*/agents/*-coder.md 2>/dev/null | wc -l) + 1 ))
   if [ "$c67_count" -lt 2 ] || [ "$c67_count" -ne "$c67_want" ]; then
-    ko "check 67: found $c67_count coder files, expected $c67_want (agents/coder.md, agents/*-coder.md)"
+    ko "check 67: found $c67_count coder files, expected $c67_want (agents/coder.md, plugins/*/agents/*-coder.md)"
   elif [ -n "$c67_bad" ]; then
     ko "check 67: '$c67_h' differs from agents/coder.md's copy in:$c67_bad"
   else
@@ -4963,7 +4963,7 @@ note "Check 68: no workflow file carries '## Required Skills', require-skills-bl
 C68_LITERALS='## Required Skills|require-skills-block|\.gate/last-pass'
 c68_n=0
 c68_bad=""
-for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json"; done) agents/*.md; do
+for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json"; done) agents/*.md plugins/*/agents/*.md; do
   [ -f "$c68_f" ] || { ko "check 68: $c68_f missing"; continue; }
   c68_n=$((c68_n + 1))
   if grep -qE "$C68_LITERALS" "$c68_f"; then
@@ -5005,12 +5005,13 @@ c72_ctl=$(c72_eval "$c72_tmp")
 rm -rf "$c72_tmp"
 c72_real=$(c72_eval .)
 c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
+c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
 if [ -z "$c72_first" ] || [ "${c72_ctl#*|}" = "0" ]; then
   ko "72: CONTROL failed (one sub-plugin at a version other than VERSION was not flagged; fixture '$c72_ctl')"
-elif [ -n "$c72_want" ] && [ "$c72_real" = "7|0" ] && [ "$c72_name" = "cct" ]; then
-  ok "72: cct plus 6 sub-plugin plugin.json files all carry version $c72_want (= VERSION); control fires"
+elif [ -n "$c72_want" ] && [ "$c72_real" = "8|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
+  ok "72: cct plus 7 sub-plugin (the six MCP plugins and java-tools) plugin.json files all carry version $c72_want (= VERSION); control fires"
 else
-  ko "72: expected 7 plugin.json (cct + 6 sub-plugins) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name'"
+  ko "72: expected 8 plugin.json (cct + 7 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5071,10 +5072,20 @@ if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) h
 
 # ---------------------------------------------------------------------------
 # Check 75 (v5.0, spec §5): no plugin agent carries frontmatter hooks: (F4: silently ignored)
+# v7.0.0: the language plugins' agents (plugins/*/agents/*.md) are plugin agents too. Control: a copy of one
+# of them with a `hooks:` frontmatter line must be flagged.
 # ---------------------------------------------------------------------------
-c75=$(for f in agents/*.md; do awk 'NR==1&&/^---$/{fm=1;next} fm&&/^---$/{exit} fm&&/^hooks:/{print FILENAME}' "$f"; done)
+c75_scan() { for f in "$@"; do awk 'NR==1&&/^---$/{fm=1;next} fm&&/^---$/{exit} fm&&/^hooks:/{print FILENAME}' "$f"; done; }
+c75=$(c75_scan agents/*.md plugins/*/agents/*.md)
+c75_tmp=$(mktemp -d)
+c75_first=$(ls plugins/*/agents/*.md 2>/dev/null | head -1)
+[ -n "$c75_first" ] && sed '1a hooks:' "$c75_first" > "$c75_tmp/planted.md"
+c75_ctl=$(c75_scan "$c75_tmp/planted.md" 2>/dev/null)
+rm -rf "$c75_tmp"
 if [ -z "$(ls agents/*.md 2>/dev/null)" ]; then ko "75: agents/ has no *.md (the check would pass vacuously)"
-elif [ -z "$c75" ]; then ok "75: no agents/*.md carries frontmatter hooks:"
+elif [ -z "$c75_first" ]; then ko "75: no plugins/*/agents/*.md (the language coders moved there; the check would pass vacuously)"
+elif [ -z "$c75_ctl" ]; then ko "75: CONTROL failed (a plugin agent copy with a hooks: frontmatter line was not flagged)"
+elif [ -z "$c75" ]; then ok "75: no agents/*.md or plugins/*/agents/*.md carries frontmatter hooks:; control fires"
 else ko "75: frontmatter hooks: in $c75"; fi
 
 # ---------------------------------------------------------------------------
@@ -5089,7 +5100,15 @@ for n in $(grep -rhoE 'cct:[A-Za-z][A-Za-z-]*' templates user-level-reference sk
   [ -f "output-styles/${n#cct:}.md" ] && continue
   [ -f "agents/${n#cct:}.md" ] || c76_bad="$c76_bad $n"
 done
-[ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen)" || ko "76: unknown agents:$c76_bad"
+# v7.0.0: the language coders left agents/. A stale `cct:<lang>-coder` mention is flagged by the loop above (no
+# agents/<lang>-coder.md); a `<lang>-tools:<lang>-coder` mention must name a file under plugins/<lang>-tools/agents/.
+c76_pn=0
+for n in $(grep -rhoE '[a-z]+-tools:[a-z]+-coder' templates user-level-reference skills agents plugins README.md AGENTS.md 2>/dev/null | sort -u); do
+  c76_pn=$((c76_pn + 1))
+  [ -f "plugins/${n%%:*}/agents/${n#*:}.md" ] || c76_bad="$c76_bad $n"
+done
+[ "$c76_pn" -gt 0 ] || c76_bad="$c76_bad (no <lang>-tools:<lang>-coder mention found: the plugin-name scan is vacuous)"
+[ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen), every <lang>-tools:<lang>-coder in plugins/ ($c76_pn)" || ko "76: unknown agents:$c76_bad"
 
 # ---------------------------------------------------------------------------
 # Check 77 (v5.0 fix round 1): every `claude-code-toolkit#vX.Y.Z` pin literal in the user-facing docs
@@ -5142,12 +5161,14 @@ else ok "79: no hooks.json registration starts a bare 'exec bash '"; fi
 # Check 80 (v6.1): every plugins/*/.mcp.json pins ONE tagged mcp-dev-servers commit (v0.4.0), runs it with uvx,
 # names its own script, is listed in the marketplace at ./plugins/<dir>, and its plugin.json description names uv.
 # Two-sided: fixtures with a wrong SHA, a wrong script name and a description without uv must each be flagged.
+# v7.0.0: only the plugin folders that hold a .mcp.json are MCP plugins (java-tools ships an agent and no server);
+# the control mutates the first of those, and the expected count stays 6.
 # ---------------------------------------------------------------------------
 C80_SHA=0a20b97dd42733c629e369e16f4e79af81f93d47
 # prints the plugin count, then one line per problem, for the tree rooted at $1
 c80_eval() {
   node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1],sha=process.argv[2];
-const pd=path.join(r,"plugins");const dirs=fs.existsSync(pd)?fs.readdirSync(pd).sort():[];
+const pd=path.join(r,"plugins");const dirs=fs.existsSync(pd)?fs.readdirSync(pd).sort().filter(d=>fs.existsSync(path.join(pd,d,".mcp.json"))):[];
 let mk={plugins:[]};try{mk=JSON.parse(fs.readFileSync(path.join(r,".claude-plugin/marketplace.json"),"utf8"));}catch(e){}
 const out=[];
 for(const d of dirs){
@@ -5170,7 +5191,7 @@ c80_n=$(printf '%s\n' "$c80_real" | head -1)
 c80_probs=$(printf '%s\n' "$c80_real" | tail -n +2)
 c80_tmp=$(mktemp -d)
 c80_ctl_ok=1
-c80_first=$(ls plugins 2>/dev/null | head -1)
+c80_first=$(for c80_d in plugins/*/; do [ -f "${c80_d}.mcp.json" ] && basename "$c80_d"; done | head -1)
 if [ -z "$c80_first" ]; then c80_ctl_ok=0; else
   for c80_mut in sha name desc; do
     rm -rf "$c80_tmp/t"; mkdir -p "$c80_tmp/t/.claude-plugin"
@@ -5483,6 +5504,55 @@ if [ "$(c86_fn "$c86_tmp/backlog-brief.sh")" = "$c86_a" ]; then
 fi
 rm -rf "${c86_tmp:?}"
 [ "$c86_fail" -eq 0 ] && ok "check 86: bic_mode is defined once in each of backlog-item-check.sh and backlog-brief.sh and the two bodies are byte-identical; control fires"
+
+# ---------------------------------------------------------------------------
+# Check 87 (v7.0.0, agent type table): the table in hooks/lib/agent-model.sh (am_table) is pinned, both ways, to the
+# agent files' frontmatter. Every agent file (agents/*.md as cct:<name>, plugins/<plugin>/agents/*.md as
+# <plugin>:<name>) must be a row whose model, effort and pipeline equal its frontmatter, and every row must name a
+# file. A row that drifts from its file would make the model floor, the step-up note and the contract gate answer
+# for an agent that is not the one that runs; an agent without a row is silent on all three. Control: a copy of the
+# agent tree with one frontmatter value edited (model, effort, then pipeline) must be flagged each time.
+# ---------------------------------------------------------------------------
+c87_eval() { # <root> -> one PROBLEM line per disagreement, then "COUNT <files>|<rows>"; the table is always the real lib
+  ( . hooks/lib/agent-model.sh
+    r=$1; nf=0; nr=0; seen=" "
+    for f in "$r"/agents/*.md "$r"/plugins/*/agents/*.md; do
+      [ -f "$f" ] || continue
+      nf=$((nf + 1))
+      case "$f" in "$r"/plugins/*) p=${f#"$r"/plugins/}; p=${p%%/*} ;; *) p=cct ;; esac
+      t="$p:$(am_fm "$f" name)"; seen="$seen$t "
+      if ! am_table "$t"; then printf 'PROBLEM %s: no row in the table\n' "$t"; continue; fi
+      [ "$AM_T_MODEL" = "$(am_fm "$f" model)" ]    || printf 'PROBLEM %s: model %s != file %s\n' "$t" "$AM_T_MODEL" "$(am_fm "$f" model)"
+      [ "$AM_T_EFFORT" = "$(am_fm "$f" effort)" ]  || printf 'PROBLEM %s: effort %s != file %s\n' "$t" "$AM_T_EFFORT" "$(am_fm "$f" effort)"
+      [ "$AM_T_PIPE" = "$(am_fm "$f" pipeline)" ]  || printf 'PROBLEM %s: pipeline %s != file %s\n' "$t" "$AM_T_PIPE" "$(am_fm "$f" pipeline)"
+    done
+    for t in $(grep -oE '^    [A-Za-z][A-Za-z0-9-]*:[A-Za-z][A-Za-z0-9-]*\)' hooks/lib/agent-model.sh | tr -d ' )'); do
+      nr=$((nr + 1))
+      case "$seen" in *" $t "*) ;; *) printf 'PROBLEM %s: a row with no agent file\n' "$t" ;; esac
+    done
+    printf 'COUNT %s|%s\n' "$nf" "$nr"
+  )
+}
+c87_real=$(c87_eval .)
+c87_probs=$(printf '%s\n' "$c87_real" | grep '^PROBLEM' | sed 's/^PROBLEM //' | tr '\n' ';')
+c87_counts=$(printf '%s\n' "$c87_real" | sed -n 's/^COUNT //p')
+c87_tmp=$(mktemp -d)
+c87_ctl_ok=1
+for c87_mut in model effort pipeline; do
+  rm -rf "$c87_tmp/t"; mkdir -p "$c87_tmp/t"; cp -r agents "$c87_tmp/t/"; cp -r plugins "$c87_tmp/t/"
+  case $c87_mut in
+    model)    sed -i 's/^model: sonnet$/model: opus/' "$c87_tmp/t/plugins/dotnet-tools/agents/dotnet-coder.md" ;;
+    effort)   sed -i 's/^effort: medium$/effort: high/' "$c87_tmp/t/agents/coder.md" ;;
+    pipeline) sed -i 's/^pipeline: true$/pipeline: notify/' "$c87_tmp/t/plugins/java-tools/agents/java-coder.md" ;;
+  esac
+  c87_one=$(c87_eval "$c87_tmp/t" | grep -c '^PROBLEM')
+  [ "$c87_one" -ge 1 ] || c87_ctl_ok=0
+done
+rm -rf "$c87_tmp"
+if [ "$c87_ctl_ok" -ne 1 ]; then ko "check 87: CONTROL failed (an edited model, effort or pipeline value in an agent file was not flagged)"
+elif [ "$c87_counts" != "10|10" ]; then ko "check 87: expected 10 agent files and 10 table rows, got files|rows '$c87_counts' (a new agent needs a row in am_table, and this count)"
+elif [ -n "$c87_probs" ]; then ko "check 87: the agent type table and the agent files disagree: $c87_probs"
+else ok "check 87: all 10 agent type table rows equal their agent file's model, effort and pipeline, and every agent file is a row; control fires on model, effort and pipeline"; fi
 
 
 # ---------------------------------------------------------------------------

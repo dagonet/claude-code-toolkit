@@ -374,6 +374,9 @@ if ($Variant -eq "rust-tauri") {
     if (-not $TechStack) {
         $replacements['{{TECH_STACK}}'] = "Tauri v2, Rust, TypeScript, SolidJS, SQLite"
     }
+    # v7.0.0: the default Gate carries the format check (as python and java do); the dotnet and dotnet-maui
+    # templates already ship theirs (`dotnet format ... --verify-no-changes`). Backend-only.
+    Add-Derived '{{GATE_COMMAND}}' "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo test --manifest-path src-tauri/Cargo.toml"
 }
 
 # Auto-derived: Python variant placeholders

@@ -458,6 +458,9 @@ fi
 # parenthesised lines stay for a human reading the file.
 if [[ "$VARIANT" == "rust-tauri" ]]; then
     add_derived '{{TEST_COMMAND}}' "cargo test --manifest-path src-tauri/Cargo.toml"
+    # v7.0.0: the default Gate carries the format check (as python and java do); the dotnet and dotnet-maui
+    # templates already ship theirs (`dotnet format ... --verify-no-changes`). Backend-only, like the Test.
+    add_derived '{{GATE_COMMAND}}' "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo test --manifest-path src-tauri/Cargo.toml"
 fi
 
 # Auto-derived: Python variant

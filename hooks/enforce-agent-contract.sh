@@ -75,14 +75,23 @@ case "$AGENT_TYPE" in
   *"/"*|*"\\"*|*".."*) exit 0 ;;
 esac
 # v5.0: cct:<name> is a plugin agent, read from the plugin's agents/ (spec §2);
-# another plugin's x:y is not a toolkit agent. The verdict below keys on the bare name.
+# another plugin's x:y is a toolkit agent only when it is a row of the agent type table (v7.0.0:
+# the language plugins' coders, hooks/lib/agent-model.sh), whose pipeline flag comes from that row --
+# no sibling plugin's file is read. The verdict below keys on the bare name.
+PIPELINE_MODE=""
 case "$AGENT_TYPE" in
   cct:*) AGENT_TYPE=${AGENT_TYPE#cct:}
          def="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/agents/${AGENT_TYPE}.md" ;;
-  *:*)   exit 0 ;;
+  *:*)   amlib="$(dirname "$0")/lib/agent-model.sh"
+         [ -f "$amlib" ] || { echo "WARN: enforce-agent-contract: hooks/lib/agent-model.sh missing — plugin coders unenforced" >&2; exit 0; }
+         . "$amlib"
+         am_table "$AGENT_TYPE" || exit 0
+         PIPELINE_MODE=$AM_T_PIPE; def="" ;;
   *)     def="${CLAUDE_PROJECT_DIR:-.}/.claude/agents/${AGENT_TYPE}.md" ;;
 esac
-if [ -f "$def" ]; then
+if [ -n "$PIPELINE_MODE" ]; then
+  :   # a table row: the flag is already set
+elif [ -f "$def" ]; then
   # Confine the match to the frontmatter block (between the first two `---`
   # lines) so a `pipeline:` line appearing only in the agent's body text does
   # not make it eligible.

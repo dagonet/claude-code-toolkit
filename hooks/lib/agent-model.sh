@@ -8,7 +8,8 @@
 #   - the user-level Jev router (~/.claude/skills/jev/jev_route.py) RUNS it:
 #       bash agent-model.sh <subagent_type> <cwd>
 #     and reads ONE line: "<kind> <model|-> <jev 0|1> <effort|-> <git common dir|->".
-#     Arguments are data: a type outside [A-Za-z0-9_.-] (bar one `cct:` prefix) resolves to `none`.
+#     Arguments are data: a type outside [A-Za-z0-9_.-] (bar one `cct:` prefix) resolves to `none`,
+#     unless it is exactly a row of the agent type table (am_table).
 # kind: own   -- the agent file sets a model (an alias or a full id): its choice
 #       floor -- no model of its own (`inherit`, none, or a known inheriting
 #                built-in with no file): **Subagent default model**, else sonnet
@@ -17,8 +18,9 @@
 #                aside (the native default wins); the Jev router routes from
 #                that value (user ruling U-1)
 #       none  -- a self-modelled built-in, a type no visible file defines (cct:<n> is
-#                looked up in the plugin's agents/ only), another plugin's x:y, or an
-#                unsafe name: change nothing
+#                looked up in the plugin's agents/ only), another plugin's x:y that is not
+#                a row of the agent type table (am_table, v7.0.0), or an unsafe name:
+#                change nothing
 # Agent identity (S-22): the frontmatter `name:`, .claude/agents/ scanned
 # recursively, project before user level, filename as the fallback.
 # No JSON parser needed: it reads frontmatter and PROJECT_CONTEXT.md only.
@@ -56,13 +58,41 @@ am_find() {
 # ~/.claude, which Tasks 7/13 retire.
 am_plugin_root() { printf '%s' "${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"; }
 
-# am_resolve <type> <cwd> -- sets AM_KIND, AM_MODEL, AM_EFFORT, AM_ROOT.
-# AM_ROOT stays empty on the early `env`/`none` answers (no git call needed).
+# am_table <type> -- the fixed agent type table (v7.0.0, spec section 10 item 1). One row per toolkit agent type:
+# the six core types and the four language plugins' coders. A row sets AM_T_MODEL, AM_T_EFFORT and AM_T_PIPE (the
+# `pipeline:` flag, empty for none); a type that is not a row returns 1 and sets nothing. No sibling-plugin file is
+# read: a plugin's agents are not on a path this library can know. Check 87 pins every row, two-sided, against
+# the agent file's frontmatter, so the table cannot drift from the file it describes.
+am_table() {
+  AM_T_MODEL=""; AM_T_EFFORT=""; AM_T_PIPE=""
+  case "$1" in
+    cct:coder)                  AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    cct:code-reviewer)          AM_T_MODEL=opus   AM_T_EFFORT=xhigh  AM_T_PIPE=true ;;
+    cct:tester)                 AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=notify ;;
+    cct:architect)              AM_T_MODEL=opus   AM_T_EFFORT=xhigh  AM_T_PIPE=notify ;;
+    cct:Explore)                AM_T_MODEL=haiku  AM_T_EFFORT=low ;;
+    cct:ops)                    AM_T_MODEL=sonnet AM_T_EFFORT=medium ;;
+    dotnet-tools:dotnet-coder)  AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    python-tools:python-coder)  AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    rust-tools:rust-coder)      AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    java-tools:java-coder)      AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    *) return 1 ;;
+  esac
+}
+
+# am_resolve <type> <cwd> -- sets AM_KIND, AM_MODEL, AM_EFFORT, AM_PIPELINE, AM_ROOT.
+# AM_ROOT stays empty on the early `env`/`none`/table answers (no git call needed). AM_PIPELINE is set only
+# by a table row (the other types' `pipeline:` flag is read from their file by whoever needs it).
 am_resolve() {
-  AM_KIND=none; AM_MODEL=""; AM_EFFORT=""; AM_ROOT=""
+  AM_KIND=none; AM_MODEL=""; AM_EFFORT=""; AM_PIPELINE=""; AM_ROOT=""
   am_t=${1:-general-purpose}
   am_env_forced && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
   [ -n "$AM_ENV_REAL" ] && [ "$am_t" = general-purpose ] && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
+  # v7.0.0: a table row answers before any file is read (the plugin's agents/ included).
+  if am_table "$am_t"; then
+    AM_KIND=own; AM_MODEL=$AM_T_MODEL; AM_EFFORT=$AM_T_EFFORT; AM_PIPELINE=$AM_T_PIPE
+    return 0
+  fi
   # v5.0: plugin agents are named cct:<name> and live in the plugin's agents/ (spec §2).
   # Another plugin's agent (x:y) is not a toolkit agent: not ours, change nothing.
   am_plug=""

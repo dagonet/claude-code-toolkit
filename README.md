@@ -17,7 +17,7 @@ Claude hands work to specialists instead of doing everything itself. Call them a
 | Agent | What it does |
 |---|---|
 | `cct:coder` | Implements a change in its own git worktree, so your working copy stays clean |
-| `cct:dotnet-coder`, `cct:java-coder`, `cct:python-coder`, `cct:rust-coder` | The same, with the habits of that language |
+| `dotnet-tools:dotnet-coder`, `java-tools:java-coder`, `python-tools:python-coder`, `rust-tools:rust-coder` | The same, with the habits of that language. Each comes with its language plugin, if that plugin is installed |
 | `cct:tester` | Checks a feature against its acceptance criteria with tests and logs |
 | `cct:code-reviewer` | Reviews code and posts sorted findings. Never edits |
 | `cct:architect` | Reviews design and keeps the architecture notes. Never writes application code |

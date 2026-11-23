@@ -282,6 +282,33 @@ expect "dotnet bootstrap: Gate-checked branches still defaults to none" \
   "- **Gate-checked branches**: none" \
   "$(derived_value_only "$(derived_line "$DOTNETDIR" 'Gate-checked branches')")"
 
+# --- v7.0.0: every language variant's default Gate carries the format check ---
+# python and java derive theirs (ruff format --check / spotless:check); dotnet and dotnet-maui ship it in the
+# template's Gate line; rust-tauri derives `cargo fmt --check` here. Backend-only, like the derived Test.
+DGDIR="$TMPROOT/derived-gate"
+for dg in dotnet dotnet-maui rust-tauri; do
+  mkdir -p "$DGDIR/$dg"
+  bash "$ROOT/setup-project.sh" --variant "$dg" --project-name SetupFixture --solution-file Fixture.sln \
+    --target-path "$DGDIR/$dg" > "$TMPROOT/derived-gate-$dg.out" 2>&1
+done
+expect "dotnet bootstrap: the default Gate carries the format check" \
+  "- **Gate**: \`dotnet format Fixture.sln --verify-no-changes && dotnet build Fixture.sln && dotnet test\`" \
+  "$(derived_value_only "$(derived_line "$DGDIR/dotnet" 'Gate')")"
+expect "dotnet-maui bootstrap: the default Gate carries the format check" \
+  "- **Gate**: \`dotnet format Fixture.sln --verify-no-changes && dotnet build Fixture.sln && dotnet test\`" \
+  "$(derived_value_only "$(derived_line "$DGDIR/dotnet-maui" 'Gate')")"
+expect "rust-tauri bootstrap: the default Gate carries the format check" \
+  "- **Gate**: cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo test --manifest-path src-tauri/Cargo.toml" \
+  "$(derived_value_only "$(derived_line "$DGDIR/rust-tauri" 'Gate')")"
+expect "rust-tauri bootstrap: no {{GATE_COMMAND}} placeholder survives" 0 \
+  "$(grep -c '{{GATE_COMMAND}}' "$DGDIR/rust-tauri/PROJECT_CONTEXT.md")"
+mkdir -p "$DGDIR/rust-override"
+bash "$ROOT/setup-project.sh" --variant rust-tauri --project-name SetupFixture --gate-cmd 'make check' \
+  --target-path "$DGDIR/rust-override" > /dev/null 2>&1
+expect "rust-tauri bootstrap: --gate-cmd still overrides the derived Gate" \
+  "- **Gate**: make check" \
+  "$(derived_value_only "$(derived_line "$DGDIR/rust-override" 'Gate')")"
+
 # --- v4.0: the template-sync registration points at the toolkit's OWN exe --
 #
 # setup asserted the exe exists BEFORE writing the path -- otherwise the

@@ -27,13 +27,13 @@ Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Sessio
 **A sub-agent only has the tools its `tools:` frontmatter lists** — a platform limitation, not a config error. Git needs `Bash`; GitHub writes need the matching `mcp__MCP_DOCKER__*` tool. **The agent file is the source of truth (`cct:<name>` = the cct plugin's `agents/<name>.md`; a project's own agents live in `.claude/agents/`) — read the target agent's `tools:` line before putting an operation in its spawn prompt.**
 
 ### Agents that can do their own git + GitHub I/O:
-`cct:coder`/`cct:<lang>-coder` (`Bash` + PR tools); `cct:code-reviewer` (`Bash`, review-write); `cct:tester` (`Bash`, issue-comment).
+`cct:coder`/`<lang>-tools:<lang>-coder` if installed (`Bash` + PR tools); `cct:code-reviewer` (`Bash`, review-write); `cct:tester` (`Bash`, issue-comment).
 
 ### Agents without `Bash`:
 `cct:architect` — cannot commit, push, create PRs, merge, or post comments.
 
 ### The rule that covers every tool, not just `Bash`
-`cct:Explore`/`cct:code-reviewer` hold neither `Edit` nor `Write`. `cct:Explore`/`cct:architect`/`cct:ops` hold no GitHub MCP tool. `isolation: worktree` (`cct:coder`, `cct:tester`, `cct:<lang>-coder`) means those agents cannot reach the main checkout for a sync.
+`cct:Explore`/`cct:code-reviewer` hold neither `Edit` nor `Write`. `cct:Explore`/`cct:architect`/`cct:ops` hold no GitHub MCP tool. `isolation: worktree` agents (`cct:coder`/`cct:tester`/language coders) cannot reach the main checkout for a sync.
 
 **PO responsibility:** if an agent lacks a needed tool, it returns the work product and the PO performs the git/GitHub I/O.
 
@@ -202,7 +202,7 @@ See `PROJECT_CONTEXT.md` for the worktree base path; see Mode Behavior Table for
 
 ## Merge Protocol
 
-After review and testing pass, the developer executes the merge — git/GitHub MCP tools are listed explicitly in its `tools:` frontmatter (`cct:coder`, `cct:<lang>-coder`, `general-purpose`).
+After review and testing pass, the developer executes the merge — git/GitHub MCP tools are listed explicitly in its `tools:` frontmatter (`cct:coder`/language coders/`general-purpose`).
 
 ### Steps (Developer-executed)
 

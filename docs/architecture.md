@@ -10,7 +10,7 @@ Claude Code supports layered configuration: **project-level `.claude/` overrides
 
 - **Plugin agents** (`agents/` in the `cct` plugin, named `cct:<name>`): 6 generic agents -- Explore, architect, code-reviewer, coder, ops, tester.
 - **Templates ship no `.claude/agents/`** since v5.0. A project that wants a specialised agent adds its own `.claude/agents/<name>.md`; it sits **beside** the plugin's `cct:<name>`, never replaces it, because plugin agents are namespaced and `AGENT_TEAM.md` dispatches the `cct:` names. A project agent is used only when a spawn names it without the prefix.
-- **Domain-specific coders** (`dotnet-coder`, `rust-coder`, `java-coder`, `python-coder`) ship in the plugin's `agents/` with the generic ones (10 agents in all).
+- **Domain-specific coders** (`dotnet-tools:dotnet-coder`, `rust-tools:rust-coder`, `java-tools:java-coder`, `python-tools:python-coder`) ship in their language plugins' `agents/`, used if that plugin is installed; the plugin's own `agents/` holds the six core agents. One agent type table in `hooks/lib/agent-model.sh` gives all ten their model, effort and pipeline flag, so the model floor, the step-up note and the contract gate cover the language coders too (check 87 pins it to the agent files).
 - **Plugin output style** (`output-styles/pm-report.md` in the `cct` plugin, selected with `outputStyle` in the user's `settings.json`): `pm-report` -- no project template overrides it.
 
 ## AGENT_TEAM.md v2.0 -- Dual-Mode Workflow
@@ -212,11 +212,11 @@ Each variant's CLAUDE.md carries a table mapping task domains to `subagent_type`
 | Variant | Task Domain | Agent |
 |---------|-------------|-------|
 | General | Any code task | `cct:coder` |
-| Dotnet | .NET backend | `cct:dotnet-coder` |
-| Dotnet-MAUI | .NET backend / MAUI UI | `cct:dotnet-coder` |
-| Rust-Tauri | Rust/Tauri backend | `cct:rust-coder` |
-| Java | Java/Spring backend | `cct:java-coder` |
-| Python | Python backend | `cct:python-coder` |
+| Dotnet | .NET backend | `cct:coder`; prefer `dotnet-tools:dotnet-coder` if installed |
+| Dotnet-MAUI | .NET backend / MAUI UI | `cct:coder`; prefer `dotnet-tools:dotnet-coder` if installed |
+| Rust-Tauri | Rust/Tauri backend | `cct:coder`; prefer `rust-tools:rust-coder` if installed |
+| Java | Java/Spring backend | `cct:coder`; prefer `java-tools:java-coder` if installed |
+| Python | Python backend | `cct:coder`; prefer `python-tools:python-coder` if installed |
 | All | Frontend / docs / other | `cct:coder` |
 
 ## MCP Permissions & Hooks
@@ -322,7 +322,7 @@ claude-code-toolkit/
 │   ├── rust-tauri/                        # + rules/rust.md + frontend.md, rustfmt.toml, .prettierrc
 │   ├── java/                              # + rules/java.md, .editorconfig
 │   └── python/                            # + rules/python.md, .editorconfig
-├── agents/                                # 10 agents at the plugin root since v5.0 (installed as cct:<name>)
+├── agents/                                # the 6 core agents at the plugin root (cct:<name>); the 4 language coders live in plugins/<lang>-tools/agents/
 ├── bin/                                   # cct-gate [<dir>]: runs the plugin's hooks/run-gate.sh in the current project, or in the work tree given (on PATH from the plugin)
 ├── skills/                                # 9 skills at the plugin root since v5.0 (installed as /cct:<name>)
 ├── output-styles/                         # pm-report output style (selected as "outputStyle": "cct:pm-report")
