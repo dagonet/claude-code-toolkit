@@ -57,12 +57,20 @@ CORRECTION_RE = re.compile(
     r"^(no\b|nope\b|don['’]?t\b|do not\b|stop\b|wrong\b|that['’]?s (not|wrong)\b|not what\b|i said\b"
     r"|i told you\b|why did you\b|you (forgot|missed|didn['’]?t)\b)", re.IGNORECASE)
 CORRECTION_CHARS = 300
+# The step-up note the hook agent-result-notes.sh adds to the parent's context, one of two fixed forms:
+#   Step-up: <type> failed on <model> (<reason>). Start the same job again on <next model>.
+#   Step-up: <type> failed on fable (<reason>). Report this to the user instead of retrying.
+# Only the type and the two models are read; the reason is never kept.
+STEP_UP_RE = re.compile(r'Step-up: (\S+) failed on (\S+) \(.*?\)\. (?:Start the same job again on ([^\s.]+)\.'
+                        r'|Report this to the user instead of retrying\.)')
+LADDER = ('haiku', 'sonnet', 'opus', 'fable')  # the model names the note carries
+USER = 'user'  # the `<to>` of the top-rung form
 OTHER = 'other'
 NOTE_KINDS = ('helped', 'recurring_failure', 'rule_unused')
 # The shared JSON keys merge() handles: the header ones are not table rows. The self-test fails when
 # count() writes a key outside these, so a new measure cannot silently miss the merged table.
 HEADER_KEYS = {'schema', 'machine', 'since', 'until', 'claude_code_versions'}
-MEASURE_KEYS = {'spawns', 'tokens_by_model', 'token_share', 'toolkit_use', 'hook_blocks', 'correction_candidates',
+MEASURE_KEYS = {'spawns', 'start_models', 'step_ups', 'tokens_by_model', 'token_share', 'toolkit_use', 'hook_blocks', 'correction_candidates',
                 'correction_kinds', 'notes', 'notes_malformed', 'jev', 'unreadable_files'}
 SURFACE_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:+-]{0,63}')  # a name, never a path
 
@@ -124,6 +132,12 @@ def norm_model(model):
     hit = MODEL_RE.search(model)
     name = re.sub(r'-v\d+$', '', hit.group()) if hit else ''
     return name if MODEL_ALLOWED_RE.fullmatch(name) else 'other-model'
+
+
+def ladder_model(name, allowed=LADDER):
+    """A model name from a step-up note when it is on the ladder (or in `allowed`), else the
+    norm_model answer ('other-model' for anything that is not a known `claude-...` name)."""
+    return name if name in allowed else norm_model(name)
 
 
 def cut_text(text):
@@ -245,7 +259,18 @@ def assistant_text(msg):
                      and isinstance(b.get('text'), str)) if isinstance(content, list) else ''
 
 
-def scan(rows, since, until, refusals=()):
+def walk_strings(value, depth=0):
+    """Every string inside a parsed JSON value that holds a step-up note (the note lands in a tool
+    result, an attachment or a reminder: the row shape differs, the text does not)."""
+    if isinstance(value, str):
+        if 'Step-up: ' in value:
+            yield value
+    elif depth < 12:
+        for item in value.values() if isinstance(value, dict) else value if isinstance(value, list) else ():
+            yield from walk_strings(item, depth + 1)
+
+
+def scan(rows, since, until, refusals=(), step_ups=False):
     """Reduce one transcript to what counts inside the window.
 
     -> dict: first_day (of the first timestamped row, in or out of the window), first_model (first
@@ -254,11 +279,14 @@ def scan(rows, since, until, refusals=()):
     commands [skill name of each `/cct:<skill>` command row, once per row],
     blocks [attributed hook name of each real hook denial, see block_hook],
     corrections [(timestamp, text) of each typed user turn that reads as a correction and does not
-    answer a question: the latest assistant text before it does not end in `?`].
+    answer a question: the latest assistant text before it does not end in `?`],
+    step_ups [(type, from model, to model or None) of each step-up note, see STEP_UP_RE], only when
+    `step_ups` is set (a main transcript), found in every in-window row but an assistant's, which may
+    only quote one.
     A message split over several rows repeats its usage, so usage is kept once per message id.
     """
     out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': [],
-           'commands': [], 'blocks': [], 'corrections': []}
+           'commands': [], 'blocks': [], 'corrections': [], 'step_ups': []}
     asked = False  # the latest assistant text, in or out of the window, ends in a question mark
     for i, row in enumerate(rows):
         msg = row.get('message')
@@ -299,6 +327,8 @@ def scan(rows, since, until, refusals=()):
             text = None if row.get('isMeta') or asked else correction_text(typed)
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
+        if step_ups and row.get('type') != 'assistant':
+            out['step_ups'] += [hit.groups() for text in walk_strings(row) for hit in STEP_UP_RE.finditer(text)]
         if not isinstance(msg, dict) or row.get('type') != 'assistant':
             continue
         usage = msg.get('usage')
@@ -328,9 +358,13 @@ def agent_type_of(sub_path, agent_names):
         return 'unknown', 'unknown'
     if not isinstance(name, str) or not name:
         return 'unknown', 'unknown'
-    if name in BUILTIN_AGENTS or toolkit_name(name, agent_names):
-        return name, name
-    return 'other', name
+    return type_key(name, agent_names), name
+
+
+def type_key(name, agent_names):
+    """The shared key of an agent type: a toolkit agent (`cct:<name>`) or a built-in passes through,
+    anything else is 'other'."""
+    return name if name in BUILTIN_AGENTS or toolkit_name(name, agent_names) else OTHER
 
 
 def _zero():
@@ -444,7 +478,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     clone roots. -> (shared, local)."""
     skill_names, agent_names = toolkit_names(toolkit_root)
     use = {'skills': {n: 0 for n in skill_names}, 'agents': {n: 0 for n in agent_names}}
-    versions, spawns, by_model, per_project = {}, {}, {}, {}
+    versions, spawns, by_model, per_project, step_ups = {}, {}, {}, {}, {}
     share = {'main': _zero(), 'sub': _zero()}
     hook_names = toolkit_hooks(toolkit_root)
     refusals = refusal_table(toolkit_root, hook_names)
@@ -464,7 +498,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
             except OSError:
                 unreadable += 1
                 continue
-            s = scan(rows, since, until, refusals)
+            s = scan(rows, since, until, refusals, step_ups=not is_sub)
             for v, n in s['versions'].items():
                 versions[v] = versions.get(v, 0) + n
             for model, tok in s['usage'].values():
@@ -479,6 +513,10 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                 local_hooks[hook] = local_hooks.get(hook, 0) + 1
             if not is_sub:  # a subagent's user rows are its parent's prompts, not the user's words
                 corrections += [{'project': slug, 'ts': ts, 'text': cut_text(text)} for ts, text in s['corrections']]
+            for kind, was, then in s['step_ups']:
+                move = '%s->%s' % (ladder_model(was), ladder_model(then or USER, LADDER + (USER,)))
+                by_move = step_ups.setdefault(type_key(kind, agent_names), {})
+                by_move[move] = by_move.get(move, 0) + 1
             for skill in [] if is_sub else s['commands']:  # a `/cct:<skill>` row starts the skill like a Skill call
                 key = toolkit_name(PLUGIN_PREFIX + skill, use['skills'])
                 if key:
@@ -504,7 +542,8 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     known = toolkit_surfaces(toolkit_root, skill_names, agent_names, hook_names)
     notes, local_notes, notes_malformed, notes_unreadable = read_notes(clone_roots, known, since, until)
     shared = {'schema': SCHEMA, 'machine': machine, 'since': since, 'until': until,
-              'claude_code_versions': versions, 'spawns': spawns, 'tokens_by_model': by_model,
+              'claude_code_versions': versions, 'spawns': spawns, 'start_models': spawns, 'step_ups': step_ups,
+              'tokens_by_model': by_model,
               'token_share': share, 'toolkit_use': use, 'hook_blocks': hook_blocks,
               'correction_candidates': len(corrections), 'notes': notes, 'notes_malformed': notes_malformed,
               'jev': jev_counts(clone_roots, since, until), 'unreadable_files': unreadable + notes_unreadable}
@@ -576,9 +615,20 @@ def measures(data):
     def safe_model(model):  # a file may come from an older or hand-made run: never trust its model keys
         return model if model == 'unknown' else norm_model(model)
 
-    for kind, by_model in _dict(data.get('spawns')).items():
+    def safe_move(move):  # `<from>-><to>`: each side on the ladder (`to` may be `user`), else other-model
+        sides = move.split('->') if isinstance(move, str) else []
+        if len(sides) != 2:
+            return 'other-model->other-model'
+        return '%s->%s' % (ladder_model(sides[0]), ladder_model(sides[1], LADDER + (USER,)))
+
+    # `spawns` is the older name of `start_models`: a file that has both is counted once, under the new name.
+    starts = data['start_models'] if 'start_models' in data else data.get('spawns')
+    for kind, by_model in _dict(starts).items():
         for model, n in _dict(by_model).items():
-            add('spawns %s %s' % (kind, safe_model(model)), n)
+            add('start_models %s %s' % (kind, safe_model(model)), n)
+    for kind, by_move in _dict(data.get('step_ups')).items():
+        for move, n in _dict(by_move).items():
+            add('step_ups %s %s' % (kind, safe_move(move)), n)
     for model, by_field in _dict(data.get('tokens_by_model')).items():
         for field, n in _dict(by_field).items():
             add('tokens %s %s' % (safe_model(model), field), n)
@@ -757,14 +807,21 @@ def merge_checks():
             leaky['tokens_by_model'] = {'other-model': {'input': 1, 'cache_read': 0, 'output': 0},
                                         'claude-gateway.corp.example.com': {'input': 2, 'cache_read': 0, 'output': 0},
                                         'claude-opus-5-5[1m]': {'input': 4, 'cache_read': 0, 'output': 0}}
-            leaky['spawns'] = {'cct:coder': {'claude-gateway.corp.example.com': 3, 'other-model': 1, 'unknown': 5}}
+            leaky['start_models'] = {'cct:coder': {'claude-gateway.corp.example.com': 3, 'other-model': 1, 'unknown': 5}}
+            leaky['step_ups'] = {'cct:coder': {'claude-gateway.corp.example.com->opus': 2, 'sonnet->user': 1,
+                                               'sonnet->corp.example.com': 1, 'not a move': 1}}
             write_json(os.path.join(tmp, 'a.json'), leaky)
             got = merge(inbox_paths(tmp))
             if 'corp.example' in got or '| tokens other-model input | 3 | 3 |' not in got \
                     or '| tokens claude-opus-5-5 input | 4 | 4 |' not in got \
-                    or '| spawns cct:coder other-model | 4 | 4 |' not in got \
-                    or '| spawns cct:coder unknown | 5 | 5 |' not in got:
+                    or '| start_models cct:coder other-model | 4 | 4 |' not in got \
+                    or '| start_models cct:coder unknown | 5 | 5 |' not in got:
                 bad.append('/merge: a model key is not normalised and summed, or a host name reaches the table')
+            if '| step_ups cct:coder other-model->opus | 2 | 2 |' not in got \
+                    or '| step_ups cct:coder sonnet->user | 1 | 1 |' not in got \
+                    or '| step_ups cct:coder sonnet->other-model | 1 | 1 |' not in got \
+                    or '| step_ups cct:coder other-model->other-model | 1 | 1 |' not in got:
+                bad.append('/merge: a step-up move is not normalised, or a host name or a free text reaches the table')
     except Exception as exc:  # a crash must read as a failed test, not a traceback
         bad.append('/merge: exception %s: %s' % (type(exc).__name__, exc))
     return bad
@@ -819,7 +876,7 @@ def self_test():
         bad.append('/merge: toolkit_use has keys merge() does not handle: %s' % sorted(set(shared['toolkit_use'])))
     # compare() ignores keys the expectation lacks; these maps must hold exactly the expected keys,
     # all the way down (so "one model per spawn" is pinned too).
-    for key in ('claude_code_versions', 'spawns', 'tokens_by_model', 'toolkit_use', 'hook_blocks', 'notes', 'jev'):
+    for key in ('claude_code_versions', 'spawns', 'start_models', 'step_ups', 'tokens_by_model', 'toolkit_use', 'hook_blocks', 'notes', 'jev'):
         bad += key_diffs(shared.get(key), expected[key], '/' + key)
     want_local = {'-home-u-git-alpha': {'spawns': {'cct:coder': 1, 'Explore': 1, 'alpha-db-expert': 1, 'unknown': 2},
                                         'tokens': 9127}}
