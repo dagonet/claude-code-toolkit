@@ -33,7 +33,7 @@
   },
   "toolkit_use": {
     "skills": {"commit": 1, "jev": 1, "sprint": 0},
-    "agents": {"coder": 1, "Explore": 0}
+    "agents": {"coder": 1, "Explore": 0, "dotnet-tools:dotnet-coder": 0}
   },
   "hook_blocks": {"gate-before-merge": 4, "deny-hang-shapes": 2, "other": 16},
   "backlog_item_none": 4,

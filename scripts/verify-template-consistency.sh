@@ -5538,21 +5538,23 @@ c87_probs=$(printf '%s\n' "$c87_real" | grep '^PROBLEM' | sed 's/^PROBLEM //' | 
 c87_counts=$(printf '%s\n' "$c87_real" | sed -n 's/^COUNT //p')
 c87_tmp=$(mktemp -d)
 c87_ctl_ok=1
-for c87_mut in model effort pipeline; do
+for c87_mut in model effort pipeline delete extra; do
   rm -rf "$c87_tmp/t"; mkdir -p "$c87_tmp/t"; cp -r agents "$c87_tmp/t/"; cp -r plugins "$c87_tmp/t/"
   case $c87_mut in
     model)    sed -i 's/^model: sonnet$/model: opus/' "$c87_tmp/t/plugins/dotnet-tools/agents/dotnet-coder.md" ;;
     effort)   sed -i 's/^effort: medium$/effort: high/' "$c87_tmp/t/agents/coder.md" ;;
     pipeline) sed -i 's/^pipeline: true$/pipeline: notify/' "$c87_tmp/t/plugins/java-tools/agents/java-coder.md" ;;
+    delete)   rm "$c87_tmp/t/plugins/rust-tools/agents/rust-coder.md" ;;
+    extra)    sed "s/^name: java-coder$/name: java-extra/" "$c87_tmp/t/plugins/java-tools/agents/java-coder.md" > "$c87_tmp/t/plugins/java-tools/agents/java-extra.md" ;;
   esac
   c87_one=$(c87_eval "$c87_tmp/t" | grep -c '^PROBLEM')
   [ "$c87_one" -ge 1 ] || c87_ctl_ok=0
 done
 rm -rf "$c87_tmp"
-if [ "$c87_ctl_ok" -ne 1 ]; then ko "check 87: CONTROL failed (an edited model, effort or pipeline value in an agent file was not flagged)"
+if [ "$c87_ctl_ok" -ne 1 ]; then ko "check 87: CONTROL failed (an edited model, effort or pipeline value, a deleted agent file, or an agent file with no row was not flagged)"
 elif [ "$c87_counts" != "10|10" ]; then ko "check 87: expected 10 agent files and 10 table rows, got files|rows '$c87_counts' (a new agent needs a row in am_table, and this count)"
 elif [ -n "$c87_probs" ]; then ko "check 87: the agent type table and the agent files disagree: $c87_probs"
-else ok "check 87: all 10 agent type table rows equal their agent file's model, effort and pipeline, and every agent file is a row; control fires on model, effort and pipeline"; fi
+else ok "check 87: all 10 agent type table rows equal their agent file's model, effort and pipeline, and every agent file is a row; control fires on model, effort, pipeline, a deleted file and a file without a row"; fi
 
 
 # ---------------------------------------------------------------------------

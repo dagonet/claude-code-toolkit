@@ -147,11 +147,14 @@ def default_machine(system, id_path):
 
 
 def toolkit_name(called, names):
-    """The bare toolkit name behind a call, or None. Only `cct:<name>` is the toolkit's: a bare name
-    may be a Claude Code built-in (Explore) or another plugin's."""
-    if isinstance(called, str) and called.startswith(PLUGIN_PREFIX) and called[len(PLUGIN_PREFIX):] in names:
-        return called[len(PLUGIN_PREFIX):]
-    return None
+    """The toolkit name behind a call, or None. `cct:<name>` is the toolkit's (the bare name comes back);
+    so is `<plugin>:<name>` when the repo's own plugins/<plugin>/agents/<name>.md holds it (the qualified name
+    comes back, as toolkit_names lists it). A bare name may be a Claude Code built-in (Explore) or another plugin's."""
+    if not isinstance(called, str):
+        return None
+    if called.startswith(PLUGIN_PREFIX):
+        return called[len(PLUGIN_PREFIX):] if called[len(PLUGIN_PREFIX):] in names else None
+    return called if ':' in called and called in names else None
 
 
 def num(value):
@@ -187,7 +190,8 @@ def in_window(day, since, until):
 
 
 def toolkit_names(toolkit_root):
-    """-> (skill names, agent names) the toolkit ships, from its skills/ dirs and agents/*.md."""
+    """-> (skill names, agent names) the toolkit ships, from its skills/ dirs, agents/*.md (bare names)
+    and plugins/<plugin>/agents/*.md (listed as `<plugin>:<name>`, the plugin being the folder name)."""
     skills_dir, agents_dir = os.path.join(toolkit_root, 'skills'), os.path.join(toolkit_root, 'agents')
     skills = []
     agents = []
@@ -195,6 +199,9 @@ def toolkit_names(toolkit_root):
         skills = [n for n in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, n))]
     if os.path.isdir(agents_dir):
         agents = [n[:-len('.md')] for n in os.listdir(agents_dir) if n.endswith('.md')]
+    for path in glob.glob(os.path.join(toolkit_root, 'plugins', '*', 'agents', '*.md')):
+        plugin = os.path.basename(os.path.dirname(os.path.dirname(path)))
+        agents.append('%s:%s' % (plugin, os.path.basename(path)[:-len('.md')]))
     return sorted(skills), sorted(agents)
 
 
@@ -445,7 +452,7 @@ def agent_type_of(sub_path, agent_names):
 
 
 def type_key(name, agent_names):
-    """The shared key of an agent type: a toolkit agent (`cct:<name>`) or a built-in passes through,
+    """The shared key of an agent type: a toolkit agent (`cct:<name>` or a repo-held `<plugin>:<name>`) or a built-in passes through,
     anything else is 'other'."""
     return name if name in BUILTIN_AGENTS or toolkit_name(name, agent_names) else OTHER
 
@@ -992,6 +999,20 @@ def self_test():
     if local['per_project'] != want_local:
         bad.append('/per_project: got %s' % local['per_project'])
     bad += leak_probes(shared, local)
+    # v7.0.0: a language plugin's agent counts by `<plugin>:<name>` (the plugin is the folder under plugins/);
+    # a name the repo's own files do not hold stays 'other'.
+    fixture_agents = toolkit_names(os.path.join(FIXTURES, 'toolkit'))[1]
+    for want, got, what in (
+            ('dotnet-tools:dotnet-coder', toolkit_name('dotnet-tools:dotnet-coder', fixture_agents), 'a plugin agent the files hold'),
+            (None, toolkit_name('foo-tools:foo-coder', fixture_agents), 'an unknown plugin agent'),
+            (None, toolkit_name('dotnet-tools:other-agent', fixture_agents), 'another agent of a known plugin'),
+            (None, toolkit_name('cct:dotnet-coder', fixture_agents), 'the old cct: name of a moved coder'),
+            (None, toolkit_name('dotnet-coder', fixture_agents), 'the bare name of a plugin agent'),
+            ('coder', toolkit_name('cct:coder', fixture_agents), 'a core agent'),
+            ('dotnet-tools:dotnet-coder', type_key('dotnet-tools:dotnet-coder', fixture_agents), 'a plugin agent as a spawn type'),
+            (OTHER, type_key('foo-tools:foo-coder', fixture_agents), 'an unknown plugin agent as a spawn type')):
+        if got != want:
+            bad.append('/plugin agents: %s: want %r, got %r' % (what, want, got))
     with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-3.jsonl'), encoding='utf-8') as fh:
         raw = fh.read()
     for needle in ('corp.example', 'secretproject', 'acme', 'internal'):  # control: the rows the two probes are about are in the input,

@@ -1119,6 +1119,35 @@ else
   skip "setup-project.ps1 v6.1 server plugins" "no PowerShell on this host" 23
 fi
 
+# --- v7.0.0: the ps1 twin of the default-Gate rows above (every language variant's Gate carries the format check) ---
+if [ -n "$PSBIN" ] && [ -f "$ROOT/setup-project.ps1" ]; then
+  PSDGDIR="$TMPROOT/ps-derived-gate"
+  for dg in dotnet dotnet-maui rust-tauri; do
+    mkdir -p "$PSDGDIR/$dg"
+    "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" -Variant "$dg" -ProjectName SetupFixture \
+      -SolutionFile Fixture.sln -TargetPath "$PSDGDIR/$dg" -DefaultBranch main > "$TMPROOT/ps-derived-gate-$dg.out" 2>&1
+  done
+  expect "ps1 dotnet bootstrap: the default Gate carries the format check" \
+    "- **Gate**: \`dotnet format Fixture.sln --verify-no-changes && dotnet build Fixture.sln && dotnet test\`" \
+    "$(derived_value_only "$(derived_line "$PSDGDIR/dotnet" 'Gate')")"
+  expect "ps1 dotnet-maui bootstrap: the default Gate carries the format check" \
+    "- **Gate**: \`dotnet format Fixture.sln --verify-no-changes && dotnet build Fixture.sln && dotnet test\`" \
+    "$(derived_value_only "$(derived_line "$PSDGDIR/dotnet-maui" 'Gate')")"
+  expect "ps1 rust-tauri bootstrap: the default Gate carries the format check" \
+    "- **Gate**: cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo test --manifest-path src-tauri/Cargo.toml" \
+    "$(derived_value_only "$(derived_line "$PSDGDIR/rust-tauri" 'Gate')")"
+  expect "ps1 rust-tauri bootstrap: no {{GATE_COMMAND}} placeholder survives" 0 \
+    "$(grep -c '{{GATE_COMMAND}}' "$PSDGDIR/rust-tauri/PROJECT_CONTEXT.md")"
+  mkdir -p "$PSDGDIR/rust-override"
+  "$PSBIN" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/setup-project.ps1" -Variant rust-tauri -ProjectName SetupFixture \
+    -GateCmd 'make check' -TargetPath "$PSDGDIR/rust-override" -DefaultBranch main > /dev/null 2>&1
+  expect "ps1 rust-tauri bootstrap: -GateCmd still overrides the derived Gate" \
+    "- **Gate**: make check" \
+    "$(derived_value_only "$(derived_line "$PSDGDIR/rust-override" 'Gate')")"
+else
+  skip "setup-project.ps1 default Gate rows" "no PowerShell on this host" 5
+fi
+
 echo "----------------------------------------------------------------"
 echo "test-setup-project.sh: $pass passed, $fail failed, $skipped skipped ($((pass + fail + skipped)) assertions)"
 [ "$fail" -eq 0 ] || exit 1
