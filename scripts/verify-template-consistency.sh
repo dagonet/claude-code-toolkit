@@ -5416,7 +5416,7 @@ rm -rf "${c84_tmp:?}"
 #       three subsections "### Untriaged", "### Ranked", "### Done", in that order and nothing else at ### level;
 #   (b) templates/general/AGENT_TEAM.md carries the "## Backlog" heading and the three rules the item check
 #       (hooks/backlog-item-check.sh, a later task) enforces;
-#   (c) skills/sync-template/SKILL.md does not tell a sync to create its PR with "gh pr create --fill" -- a
+#   (d) skills/sync-template/SKILL.md does not tell a sync to create its PR with "gh pr create --fill" -- a
 #       generated body has no "Item: none" line, so the item check would refuse every sync PR;
 #   (e) control: a temp copy of a template without "### Ranked" is reported, so (a) cannot pass vacuously.
 # ---------------------------------------------------------------------------
@@ -5439,7 +5439,7 @@ for c85_s in '^## Backlog$' 'Before picking the next task, groom the backlog' 'O
   fi
 done
 if grep -q 'gh pr create --fill' skills/sync-template/SKILL.md; then
-  ko "check 85 (c): skills/sync-template/SKILL.md still creates the sync PR with 'gh pr create --fill' (use --body-file with an 'Item: none' line)"; c85_fail=1
+  ko "check 85 (d): skills/sync-template/SKILL.md still creates the sync PR with 'gh pr create --fill' (use --body-file with an 'Item: none' line)"; c85_fail=1
 fi
 c85_tmp=$(mktemp -d)
 grep -v '^### Ranked' templates/general/PROJECT_STATE.md > "$c85_tmp/PROJECT_STATE.md"

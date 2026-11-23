@@ -89,12 +89,12 @@ The `task-source` field in `PROJECT_CONTEXT.md` determines which column applies.
 
 ## Backlog
 
-Issue mode: item = issue `#N`, done = closed, rank = label `priority:1`..`3`, untriaged = open without one. File mode: `PROJECT_STATE.md` `## Backlog` holds `### Untriaged`, `### Ranked` (top = next) and `### Done` (last 20) as `- B-<n> [in progress] <title>` (tag optional; numbers rise, never reused).
+Issue mode: item = issue `#N`, done = closed, rank = label `priority:1`..`3`, untriaged = open without one. File mode: `PROJECT_STATE.md` `## Backlog` holds `### Untriaged`, `### Ranked` (top = next) and `### Done` (last 20) as `- B-<n> [in progress] <title>` (tag optional, none = open; numbers rise, never reused).
 
 - Before picking the next task, groom the backlog: close finished items, rank every untriaged item, re-check the top three.
 - Grooming lands on the trunk before any helper starts: a PR that touches only `PROJECT_STATE.md` needs no item.
 - One item = one pull request: an item that needs several PRs is split into several items when ranked.
-- Every PR names its item (issue mode: `Closes #N` in the body; file mode: the PR moves the item into `### Done`), or carries `Item: none` (T1 and template sync only; counted).
+- Every PR names its item (issue mode: `Closes #N` in the body; file mode: the PR moves the item into `### Done`), or carries `Item: none` (issue mode: a PR-body line; file mode: a line in the commit's last trailer block; T1 and template sync only; counted).
 - Parallel PRs touching `PROJECT_STATE.md` rebase before merge, as every PR does.
 
 ---
@@ -156,7 +156,7 @@ Item: {B-<n> | #N | none}
 ## Definition of done
 {tests to pass} + `cct-gate` green (it gates the current directory, or the work tree given as its one argument: `cct-gate <absolute worktree path>`), then PR.
 
-Context: the GitHub issue (reference only). Workflow: implement -> gate -> commit -> push -> create PR -> report the PR URL.
+Context: the GitHub issue (reference only). Workflow: implement -> gate -> commit -> push -> create PR (`--body-file`, with `Closes #N`) -> report the PR URL.
 ```
 
 **plan-files mode (T2-T3):** same shape as above, except the Task line reads `Task: {title}. Worktree: {path}, branch: {branch}.` (no issue number), the workflow gains "move the item into `### Done` in `PROJECT_STATE.md`" before commit, plus `Architect guidance: {summary or "none"}` and `Context: {plan_file_path} if one exists (reference only)`.

@@ -1313,7 +1313,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/template-manifest.json
 # the sync commit is sync-only: the project's own docs (PROJECT_STATE.md, plans, ...) never go in it;
 # commit them separately, on the same branch if wanted
-# write the message to a FILE first (Write tool), ending with its own paragraph `Item: none` (a git trailer), then:
+# write the message to a FILE first (Write tool), with the line `Item: none` in its final trailer block, directly above any Co-Authored-By line, no blank line between, then:
 git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** present this
                                                    # runs the tests only and writes NO artifact
 # --> with **Test** present: now delegate ONE `cct-gate` run to `cct:ops` (the PO cannot run the gate)
