@@ -47,8 +47,8 @@
 #   count; the one leading cd && does not), the literal words `gh pr`, optionally -R/--repo <v>, then create, new or
 #   merge as a plain unquoted word, then flags; no `&`, `$(`, backtick or process substitution in it. Anything else
 #   (a chain, env/sudo/bash -c, a quoted or $ word, a script body that matched) is refused without analysis.
-#   KNOWN LIMITS. Accepted: a `git commit -m` or echo whose text holds the words gh, pr and create/new/merge is refused
-#   too (move that text into a file). Unseen: xargs, running ./x.sh directly, PowerShell `& x.ps1`, nested scripts, and
+#   KNOWN LIMITS. Accepted: a `git commit -m` or echo whose text holds the words gh, pr and create/new/merge, in any
+#   order, or a backticked or `$` word before pr and a verb after it, is refused too (move that text into a file). Unseen: xargs, running ./x.sh directly, PowerShell `& x.ps1`, nested scripts, and
 #   interpreters (python, make); `gh alias`; a command word or verb built so that neither the words gh, pr and a verb
 #   nor a `$` next to pr appear (`$G pr create` with G set elsewhere is caught only because a verb follows a `$` word);
 #   a glob or brace in the verb (`mer?e` matching a file, `m{e,}rge`).
@@ -352,11 +352,12 @@ if [ "$bic_op" = shell ]; then
   # STEP A, detection: the typed text plus the script bodies, normalized (quotes removed, newlines to spaces, lowercase;
   # `$` kept). Two texts, any match counts: backslashes and backticks deleted (`g\h`, PowerShell g`h), or backslashes
   # turned into spaces (a Windows path `cli\gh.exe`) and backticks into `$` (a built word mer`x`ge). Each holds the typed
-  # text, the bodies, the typed text, the bodies: every split of the three words across a wrapper script and its
-  # arguments is in that order (`gh "$@"` run as `bash s.sh pr merge 5`, `gh "$1" merge` run as `bash s.sh pr`). No
-  # match: not this hook's shape, exit 0 (everyday text such as "Fix PR template" or `gh pr view` never reaches Step B).
-  bic_bodies=${GC_CMD#"$bic_typed"}
-  bic_x="$GC_CMD $bic_typed $bic_bodies"   # typed, bodies, typed, bodies, as one text
+  # text and the bodies three times over: gh can come from the first copy, pr from the second and the verb from the
+  # third, so the three words match in any order across a wrapper script and its arguments (`gh "$@"` run as
+  # `bash s.sh pr merge 5`, `gh "$2" "$1" "$3"` run as `bash s.sh merge pr 5`, `"$3" "$2" "$1"` run as
+  # `bash s.sh merge pr gh`). No match: not this hook's shape, exit 0 (everyday text such as "Fix PR template" or
+  # `gh pr view` never reaches Step B).
+  bic_x="$GC_CMD $GC_CMD $GC_CMD"   # typed and bodies, three times, as one text
   bic_n1=$(printf '%s' "$bic_x" | tr -d "\"'\\\\\`" | LC_ALL=C tr 'A-Z\n' 'a-z ')
   bic_n2=$(printf '%s' "$bic_x" | tr -d "\"'" | LC_ALL=C tr 'A-Z\n\\`' 'a-z  $')
   printf '%s\n%s\n' "$bic_n1" "$bic_n2" | LC_ALL=C grep -qE -e "$BIC_A_RE" -e "$BIC_A_RE_V" -e "$BIC_A_RE_W" || exit 0

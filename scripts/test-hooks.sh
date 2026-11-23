@@ -13489,6 +13489,11 @@ check_nomsg "backlog-item-check: gh pr view \`cat n\` passes" "$BIC_HOOK" 0 "$(b
 check_nomsg "backlog-item-check: gh pr -R o/r view \$n passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr -R o/r view $n')" "BLOCKED"
 check_msg "backlog-item-check: gh pr -R o/r merge 5, no move: judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr -R o/r merge 5')" '### Done'
 check_nomsg "backlog-item-check: gh pr -R o/r merge 5, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr -R o/r merge 5')" "BLOCKED"
+# ---- fix round 5: a wrapper that reorders its arguments (the three words in any order across script and arguments)
+printf '%s\n' 'gh "$2" "$1" "$3"' > "$TMPROOT/bic-script-swap.sh"
+printf '%s\n' '"$3" "$2" "$1" "$4"' > "$TMPROOT/bic-script-rev.sh"
+check_msg "backlog-item-check: bash s.sh merge pr 5, s.sh holds gh \"\$2\" \"\$1\" \"\$3\": refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" "bash $TMPROOT/bic-script-swap.sh merge pr 5")" "as one plain command"
+check_msg "backlog-item-check: bash s.sh merge pr gh 5, s.sh holds \"\$3\" \"\$2\" \"\$1\" \"\$4\": refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" "bash $TMPROOT/bic-script-rev.sh merge pr gh 5")" "as one plain command"
 # 7. a payload that does not parse is refused with this hook's own prefix
 check_msg "backlog-item-check: a truncated payload is refused with the hook's own prefix" "$BIC_HOOK" 2 '{"tool_name":"Bash","tool_input":{"command":"gh pr' "BLOCKED: backlog-item-check:"
 
