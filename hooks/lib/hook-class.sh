@@ -9,12 +9,12 @@ hc_class() {
   local cls pol
   case "$1" in
     no-push-main|deny-secret-reads)                              cls=machine; pol=closed ;;
-    deny-hang-shapes|model-floor|bash-output-guard|verify-hooks) cls=machine; pol=open ;;
+    deny-hang-shapes|model-floor|verify-hooks)                   cls=machine; pol=open ;;
     jev-route|jev-notice)                                        cls=machine; pol=open ;;
     agent-result-notes|backlog-brief)                            cls=project; pol=open ;;
     pre-commit-test|gate-before-merge|deny-claude-md-writes|backlog-item-check) cls=project; pol=closed ;;
-    read-size-gate|enforce-delegation|agent-budget-warn)         cls=project; pol=warn ;;
-    post-edit-build|enforce-agent-contract|retro-ledger|retro-brief|now-brief) cls=project; pol=open ;;
+    enforce-delegation)                                          cls=project; pol=warn ;;
+    enforce-agent-contract|retro-ledger|retro-brief|now-brief)   cls=project; pol=open ;;
     *) return 1 ;;
   esac
   HC_CLS=$cls; HC_POL=$pol

@@ -1,0 +1,8 @@
+{
+  "name": "cct-guards",
+  "version": "6.2.0",
+  "description": "Optional: the cost and context guards of claude-code-toolkit (read-size-gate, bash-output-guard, agent-budget-warn, post-edit-build); each runs on many tool calls",
+  "author": { "name": "dagonet" },
+  "repository": "https://github.com/dagonet/claude-code-toolkit",
+  "license": "MIT"
+}

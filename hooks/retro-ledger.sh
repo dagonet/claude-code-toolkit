@@ -19,7 +19,7 @@
 #   $HOME/.claude/projects/<project-slug>/memory/retro.md
 #   YYYY-MM-DD HH:MM | <agent_type> | <agent_id> | dead=[a,b] | blocks=[x.sh] | budget=<n> | errors=<n>
 #
-# v2.1.4: a block from hooks/agent-budget-warn.sh (its literal "BUDGET: this
+# v2.1.4: a block from plugins/cct-guards/hooks/agent-budget-warn.sh (its literal "BUDGET: this
 # spawn has made N tool calls" text) is a liveness control tripping as
 # designed, not a failure needing investigation -- it is tallied separately as
 # budget=<n> instead of landing in blocks=[...]. Note a resumed subagent keeps

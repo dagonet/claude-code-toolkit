@@ -4433,7 +4433,7 @@ check "Bash commit still runs tests"      hooks/pre-commit-test.sh 2 \
 # ===========================================================================
 echo
 echo "=== hooks/read-size-gate.sh (Read cap via updatedInput) ==="
-H=hooks/read-size-gate.sh
+H=plugins/cct-guards/hooks/read-size-gate.sh
 readout() { # <json> -> the hook's stdout
   printf '%s' "$1" | bash "$ROOT/$H" 2>/dev/null
 }
@@ -4515,7 +4515,7 @@ fi
 # --- the ctx-tool advice the blocking version printed is gone for good.
 # A source grep, so it holds with or without node.
 expect "no context-mode advice in the hook" 0 \
-  "$(grep -c 'ctx_execute_file' "$ROOT/hooks/read-size-gate.sh")"
+  "$(grep -c 'ctx_execute_file' "$ROOT/plugins/cct-guards/hooks/read-size-gate.sh")"
 
 # ===========================================================================
 # bash-output-guard.sh (PostToolUse on Bash|PowerShell) — v2.0 PR3.
@@ -4526,7 +4526,7 @@ expect "no context-mode advice in the hook" 0 \
 # ===========================================================================
 echo
 echo "=== hooks/bash-output-guard.sh (PostToolUse output cap) ==="
-GUARD=hooks/bash-output-guard.sh
+GUARD=plugins/cct-guards/hooks/bash-output-guard.sh
 GUARDTMP="$TMPROOT/guardtmp"
 mkdir -p "$GUARDTMP"
 
@@ -4635,7 +4635,7 @@ fi
 # ===========================================================================
 echo
 echo "=== hooks/post-edit-build.sh (PostToolUse Edit|Write) ==="
-PEB=hooks/post-edit-build.sh
+PEB=plugins/cct-guards/hooks/post-edit-build.sh
 PEBDIR="$TMPROOT/pebdir"
 mkdir -p "$PEBDIR"
 
@@ -5348,7 +5348,7 @@ bud() {
   bud_err="$TMPROOT/budget.err"
   mkdir -p "$bud_tmp"
   printf '%s' "$(mkbudget "$bud_tool" "$bud_id" "$bud_sess")" \
-    | TMPDIR="$bud_tmp" bash "$ROOT/hooks/agent-budget-warn.sh" \
+    | TMPDIR="$bud_tmp" bash "$ROOT/plugins/cct-guards/hooks/agent-budget-warn.sh" \
       >/dev/null 2>"$bud_err"
   bud_got=$?
   if [ "$bud_got" = "$bud_want" ] &&
@@ -5868,7 +5868,7 @@ check_env "python3: quoted -C space repo"      "$PYONLY" hooks/no-push-main.sh 2
 check_env "python3: gh pr merge needs artifact" "$PYONLY" hooks/gate-before-merge.sh 2 \
   "$(mkjson Bash 'gh pr merge 1 --squash' "$GATEREPO")"
 # A node-only hook on a python3 box names the parser it actually needs.
-check_env "python3: read-size-gate names node" "$PYONLY" hooks/read-size-gate.sh 0 \
+check_env "python3: read-size-gate names node" "$PYONLY" plugins/cct-guards/hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
 else
 skip "python3 git-gate cases" "no python3 on this host" 5
@@ -6001,11 +6001,11 @@ else
 fi
 
 # --- the fail-open hooks stay open, but say so once -------------------------
-check_env "no parser: read-size-gate warns"    "$NOPARSER" hooks/read-size-gate.sh 0 \
+check_env "no parser: read-size-gate warns"    "$NOPARSER" plugins/cct-guards/hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "$NEEDLE_WARN"
 check_env "no parser: enforce-delegation warns" "$NOPARSER" hooks/enforce-delegation.sh 0 \
   "$(mkjson Bash 'pytest' "$DELEGREPO")" "$NEEDLE_WARN"
-check_env "no parser: bash-output-guard warns" "$NOPARSER" hooks/bash-output-guard.sh 0 \
+check_env "no parser: bash-output-guard warns" "$NOPARSER" plugins/cct-guards/hooks/bash-output-guard.sh 0 \
   "$(mkpost 40000)" "$NEEDLE_WARN"
 check_env "no parser: agent-contract warns"    "$NOPARSER" hooks/enforce-agent-contract.sh 0 \
   "$(mkstop "$ROOT" coder a1 /nonexistent)" "$NEEDLE_WARN"
@@ -6028,7 +6028,7 @@ warnruns() { # <session-json> [<session-json> ...] -> WARN line count
   rm -f "$TMPROOT/once.err"; : > "$TMPROOT/once.err"
   for wj in "$@"; do
     printf '%s' "$wj" | PATH="$NOPARSER" TMPDIR="$ONCETMP" \
-      "$BASHABS" "$ROOT/hooks/read-size-gate.sh" >/dev/null 2>>"$TMPROOT/once.err"
+      "$BASHABS" "$ROOT/plugins/cct-guards/hooks/read-size-gate.sh" >/dev/null 2>>"$TMPROOT/once.err"
   done
   grep -c 'enforcement inactive' "$TMPROOT/once.err"
 }
@@ -6169,7 +6169,7 @@ check_env "broken node + python3: feature allowed" "$STUB_NODE_PY" hooks/no-push
   "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
 # json_require_node's own path: `command -v node` SUCCEEDS here, so without the
 # probe this hook would run the stub, get nothing, and fail open in silence.
-check_env "broken node: require_node names the fallback" "$STUB_NODE_PY" hooks/read-size-gate.sh 0 \
+check_env "broken node: require_node names the fallback" "$STUB_NODE_PY" plugins/cct-guards/hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
 else
 skip "broken node + python3 cases" "no python3 on this host" 3
@@ -7573,7 +7573,7 @@ fw4scratch() { # <name> <hookfile> -> prints a scratch hooks/ dir holding a
                # corrupt arm even runs.
   local d="$TMPROOT/fw4-$1/hooks"
   mkdir -p "$d/lib"
-  cp "$ROOT/hooks/$2" "$d/$2"
+  cp "$ROOT/hooks/$2" "$d/$2" 2>/dev/null || cp "$ROOT/plugins/cct-guards/hooks/$2" "$d/$2"   # v7.0.0: post-edit-build moved into cct-guards
   cp -r "$ROOT/hooks/lib/." "$d/lib/"
   printf '%s\n' "$d"
 }
@@ -8390,7 +8390,7 @@ a3_cmd() { # <tool_name> <shell command> <agent_id> -- a Bash-shaped payload
 a3_run() {
   a3_label="$1"; a3_tmp="$2"; a3_pl="$3"; a3_want="$4"; a3_needle="${5:-}"
   a3_err="$TMPROOT/a3.err"
-  printf '%s' "$a3_pl" | TMPDIR="$a3_tmp" bash "$ROOT/hooks/agent-budget-warn.sh" \
+  printf '%s' "$a3_pl" | TMPDIR="$a3_tmp" bash "$ROOT/plugins/cct-guards/hooks/agent-budget-warn.sh" \
     >/dev/null 2>"$a3_err"
   a3_got=$?
   if [ "$a3_got" = "$a3_want" ] &&
@@ -8467,7 +8467,7 @@ mkdir -p "$A3GR/.claude" && git -C "$A3GR" init -q 2>/dev/null
 a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
 mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
 printf '{"session_id":"a3sess","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s","agent_id":"a3-agent"}\n' "$(jesc "$A3GR")" \
-  | TMPDIR="$a3_t" bash "$ROOT/hooks/agent-budget-warn.sh" >/dev/null 2>&1
+  | TMPDIR="$a3_t" bash "$ROOT/plugins/cct-guards/hooks/agent-budget-warn.sh" >/dev/null 2>&1
 expect "A3 tree-clean: git status --porcelain shows nothing after the hook logs" "" "$(git -C "$A3GR" status --porcelain 2>/dev/null)"
 expect "A3 tree-clean: the log is under <common git dir>/cct/" "yes" \
   "$(grep -q 'calls=120 action=commit-allowed' "$A3GR/.git/cct/liveness.log" 2>/dev/null && echo yes || echo no)"
@@ -10701,11 +10701,12 @@ C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_
 # A mid-line return (`[ x ] && return 4`, `|| return 0`, `; return`, `then return`) is matched too; the one exemption is an awk program held in a GC_AWK_* string assignment (hooks/lib/git-cmd.sh).
 # Not handled: an indented closing brace ending a column-0 function does not reset the depth flag (a later top-level return in that file would be missed after it; none exists, and the one-line/col-0 resets cover every function here).
 C2ARFILES=""
-for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes backlog-item-check; do
+for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor pre-commit-test gate-before-merge deny-claude-md-writes backlog-item-check; do
   C2ARFILES="$C2ARFILES $ROOT/hooks/$c2a_h.sh"
 done
+C2ARFILES="$C2ARFILES $ROOT/plugins/cct-guards/hooks/bash-output-guard.sh"   # v7.0.0: moved into cct-guards
 expect "C2a: R-1 no top-level return in any sourced/wrapped hook or hook lib" "" \
-  "$(awk "$C2AAWK" $C2ARFILES "$ROOT"/hooks/lib/*.sh)"
+  "$(awk "$C2AAWK" $C2ARFILES "$ROOT"/hooks/lib/*.sh "$ROOT"/plugins/*/hooks/lib/*.sh)"
 cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-ret.sh"; printf 'return 5\n' >> "$TMPROOT/c2a-ret.sh"
 expect "C2a: R-1 control: the same awk reports exactly one hit on a copy with a top-level return" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret.sh" | wc -l | tr -d ' ')"
@@ -10722,17 +10723,17 @@ expect "C2a: R-1 control: a one-line function with a trailing comment does not m
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret3.sh" | wc -l | tr -d ' ')"
 expect "C2a: R-2 the EXIT-trap hooks are exactly the six (run-gate.sh is not a registered hook; v4.5.0 retired require-skills-block; v6.3 added backlog-item-check)" \
   "backlog-item-check.sh deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh" \
-  "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+  "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh "$ROOT"/plugins/*/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 for c2a_h in $C2AHOOKS; do
   expect "C2a: R-2 $c2a_h has exactly one EXIT/0 trap" 1 "$(grep -ciE "$C2ATRAPRE" "$ROOT/hooks/$c2a_h.sh")"
 done
 expect "C2a: R-2 no hook lib sets an EXIT/0 trap (sourced after the hook's, it would replace it)" 0 \
-  "$(cat "$ROOT"/hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")"
+  "$(cat "$ROOT"/hooks/lib/*.sh "$ROOT"/plugins/*/hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")"
 cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-trap2.sh"; printf "trap 'x' exit;\n" >> "$TMPROOT/c2a-trap2.sh"
 expect "C2a: R-2 control: the per-hook count goes to 2 on a copy with a second EXIT trap" 2 "$(grep -ciE "$C2ATRAPRE" "$TMPROOT/c2a-trap2.sh")"
 expect "C2a: R-1 the set -u hooks are exactly the four non-sourced ones" \
   "agent-budget-warn.sh post-edit-build.sh retro-brief.sh retro-ledger.sh" \
-  "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh | xargs -n1 basename | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+  "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh "$ROOT"/plugins/*/hooks/*.sh | xargs -n1 basename | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v4.4.0 C2a
 
 # ---- v4.4.0 C3: json_fields -- any field list, ONE parser run; json_payload is built on it ----
@@ -10934,7 +10935,7 @@ c4_post() { # <stdout body, JSON-escaped> -> a PostToolUse payload
 }
 c4_bog() { # <label> <want 1 = prints a truncation, 0 = silent> <stdout body>
   c4_t="$TMPROOT/c4tmp.$$.$RANDOM"; mkdir -p "$c4_t"
-  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" ${C4LOC:+LC_ALL="$C4LOC" LANG="$C4LOC"} bash "$ROOT/hooks/bash-output-guard.sh" 2>/dev/null); c4_rc=$?
+  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" ${C4LOC:+LC_ALL="$C4LOC" LANG="$C4LOC"} bash "$ROOT/plugins/cct-guards/hooks/bash-output-guard.sh" 2>/dev/null); c4_rc=$?
   c4_g=0; [ -n "$c4_o" ] && c4_g=1
   expect "C4 bash-output-guard: $1" "$2:0" "$c4_g:$c4_rc"
 }
@@ -11236,6 +11237,8 @@ C2H0="$TMPROOT/c2b-home0"; mkdir -p "$C2H0"
 c2b_proj() { # <name> -> a project holding every repo hook and the v4.6.1 general template settings; echoes its path
   c2p_d="$TMPROOT/c2b-$1"; rm -rf "$c2p_d"; mkdir -p "$c2p_d/.claude"
   cp -R "$ROOT/hooks" "$c2p_d/hooks"; cp "$ROOT/scripts/fixtures/v461-template-settings.json" "$c2p_d/.claude/settings.json"
+  # v7.0.0: the frozen v4.6.1 settings register the four cct-guards hooks under hooks/; they now live in the plugin
+  cp "$ROOT"/plugins/cct-guards/hooks/{read-size-gate,bash-output-guard,agent-budget-warn,post-edit-build}.sh "$c2p_d/hooks/"
   printf '%s' "$c2p_d"
 }
 c2b_run() { # <home> <proj, or - for unset> [verify-hooks args] ; runs the project's copy; sets C2RC, C2OUT
@@ -12147,7 +12150,7 @@ rm "$V5HOME/.claude/settings.json"
 rm "$V5H/pre-commit-test.sh"
 expect "v5 run-hook: closed hook, script missing -> exit 2" "rc=2" "$(v5run pre-commit-test 2>/dev/null)"
 expect "v5 run-hook: open hook, script missing -> exit 0" "rc=0" "$(v5run now-brief 2>/dev/null)"
-expect "v5 run-hook: warn hook, script missing -> exit 0 + WARN" "WARN rc=0" "$(v5run read-size-gate 2>&1 | grep -o '^WARN\|rc=0' | tr '\n' ' ' | sed 's/ $//')"
+expect "v5 run-hook: warn hook, script missing -> exit 0 + WARN" "WARN rc=0" "$(v5run enforce-delegation 2>&1 | grep -o '^WARN\|rc=0' | tr '\n' ' ' | sed 's/ $//')"
 expect "v5 run-hook: unknown name -> exit 2" "rc=2" "$(v5run no-such-hook 2>/dev/null)"
 # stdin reaches the hook untouched
 printf '#!/usr/bin/env bash\ncat\n' > "$V5H/deny-secret-reads.sh"
@@ -12182,7 +12185,7 @@ V6S='{"command":"bash \"${CLAUDE_PROJECT_DIR}/hooks/pre-commit-test.sh\""}'   # 
 V6U='{"args":["-c",". \"$0\"","/home/u/.claude/hooks/no-push-main.sh"]}'    # the v4.6.1 user-level form (args path)
 v6hc() { env -i PATH="$PATH" bash -c '. "$1"; shift; eval "$1"; echo "rc=$?"' _ "$V6HC" "$1" 2>&1 | tr '\n' ' ' | sed 's/ $//'; }
 expect "v6 hook-class: no-push-main is machine/closed" "machine closed rc=0" "$(v6hc 'hc_class no-push-main && echo "$HC_CLS $HC_POL"')"
-expect "v6 hook-class: read-size-gate is project/warn" "project warn rc=0" "$(v6hc 'hc_class read-size-gate && echo "$HC_CLS $HC_POL"')"
+expect "v6 hook-class: enforce-delegation is project/warn" "project warn rc=0" "$(v6hc 'hc_class enforce-delegation && echo "$HC_CLS $HC_POL"')"
 expect "v6 hook-class: an unknown name returns 1" "rc=1" "$(v6hc 'hc_class no-such-hook')"
 expect "v6 hook-class: project-only hook, no manifest -> skip (0)" "rc=0" "$(v6hc "hc_skip pre-commit-test '$V6P' '' ''")"
 expect "v6 hook-class: machine hook, no manifest, no registration -> run (1)" "rc=1" "$(v6hc "hc_skip no-push-main '$V6P' '' ''")"
@@ -12196,8 +12199,87 @@ expect "v6 hook-class: user settings register another hook -> run (1)" "rc=1" "$
 expect "v6 hook-class: hc_skip on an unknown name returns 1" "rc=1" "$(v6hc "hc_skip no-such-hook '$V6P' '$V6S' '$V6U'")"
 # run-hook.sh without its lib refuses closed: the decision code is gone, so nothing may run
 V6RH="$TMPROOT/v6hc nolib"; mkdir -p "$V6RH"; cp "$ROOT/hooks/run-hook.sh" "$V6RH/"
-expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 2 + message" "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the cct plugin rc=2" "$( ( export CLAUDE_PROJECT_DIR="$V6P"; printf '{}' | bash "$V6RH/run-hook.sh" no-push-main 2>&1; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//')"
+expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 2 + message" "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the plugin that registers this hook rc=2" "$( ( export CLAUDE_PROJECT_DIR="$V6P"; printf '{}' | bash "$V6RH/run-hook.sh" no-push-main 2>&1; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v6.0 hook-class lib
+
+# ---- v7.0.0 cct-guards: the four cost and context guards run from plugins/cct-guards/hooks/ with the verdicts they had in cct
+echo "=== plugins/cct-guards (run-hook.sh, hook-class.sh, the four guards) ==="
+G7D="$ROOT/plugins/cct-guards/hooks"
+G7P="$TMPROOT/g7 proj"; mkdir -p "$G7P/.claude"; printf '{}' > "$G7P/.claude/template-manifest.json"   # a toolkit project: the project-class guards run
+G7HOME="$TMPROOT/g7home"; mkdir -p "$G7HOME/.claude"      # a bare HOME: no user-level registration to step aside for
+G7TMP="$TMPROOT/g7tmp"; mkdir -p "$G7TMP"
+g7out() { # <hook> <payload> [project] -> the hook's stdout, run through the plugin's own run-hook.sh
+  printf '%s' "$2" | env HOME="$G7HOME" TMPDIR="$G7TMP" CLAUDE_PROJECT_DIR="${3:-$G7P}" bash "$G7D/run-hook.sh" "$1" 2>/dev/null
+}
+g7err() { # <hook> <payload> [project] -> "<stderr> rc=<n>", newlines folded
+  ( printf '%s' "$2" | env HOME="$G7HOME" TMPDIR="$G7TMP" CLAUDE_PROJECT_DIR="${3:-$G7P}" bash "$G7D/run-hook.sh" "$1" 2>&1 1>/dev/null; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//'
+}
+G7ALL=1
+for g7f in hooks/read-size-gate.sh hooks/bash-output-guard.sh hooks/agent-budget-warn.sh hooks/post-edit-build.sh hooks/run-hook.sh hooks/hooks.json hooks/lib/json.sh hooks/lib/git-cmd.sh hooks/lib/hook-class.sh .claude-plugin/plugin.json; do
+  [ -s "$ROOT/plugins/cct-guards/$g7f" ] || { G7ALL=0; echo "  missing: plugins/cct-guards/$g7f"; }
+done
+expect "g7: the plugin ships the four guards, run-hook.sh, hooks.json, the three libs and its manifest" 1 "$G7ALL"
+G7LEFT=0
+for g7h in read-size-gate bash-output-guard agent-budget-warn post-edit-build; do
+  [ -e "$ROOT/hooks/$g7h.sh" ] && G7LEFT=$((G7LEFT + 1))
+  grep -q "run-hook.sh\\\\\" $g7h\"" "$ROOT/hooks/hooks.json" && G7LEFT=$((G7LEFT + 1))
+  env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2"' _ "$ROOT/hooks/lib/hook-class.sh" "$g7h" >/dev/null 2>&1 && G7LEFT=$((G7LEFT + 1))
+done
+expect "g7: nothing of the four is left in cct (no script, no registration, no class-table line)" 0 "$G7LEFT"
+g7cls() { env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2" && echo "$HC_CLS $HC_POL"' _ "$G7D/lib/hook-class.sh" "$1" 2>&1; }
+expect "g7: read-size-gate is project/warn in the plugin's table"  "project warn" "$(g7cls read-size-gate)"
+expect "g7: bash-output-guard is machine/open in the plugin's table" "machine open" "$(g7cls bash-output-guard)"
+expect "g7: agent-budget-warn is project/warn in the plugin's table" "project warn" "$(g7cls agent-budget-warn)"
+expect "g7: post-edit-build is project/open in the plugin's table"  "project open" "$(g7cls post-edit-build)"
+expect "g7: the plugin's table knows no cct hook (no-push-main -> unknown)" "" "$(g7cls no-push-main)"
+expect "g7: hooks.json registers exactly the four, each through run-hook.sh" "4 4" \
+  "$(grep -c 'run-hook.sh\\" ' "$ROOT/plugins/cct-guards/hooks/hooks.json" | tr -d ' ') $(grep -oE 'run-hook.sh\\" (read-size-gate|bash-output-guard|agent-budget-warn|post-edit-build)' "$ROOT/plugins/cct-guards/hooks/hooks.json" | sort -u | grep -c .)"
+
+# read-size-gate: an unbounded Read of a 600-line file is capped at 500 (updatedInput), through run-hook.sh
+G7BIG="$TMPROOT/g7big.txt"; : > "$G7BIG"; g7i=1; while [ "$g7i" -le 600 ]; do echo "line $g7i" >> "$G7BIG"; g7i=$((g7i + 1)); done
+if [ -n "$HAVE_NODE" ]; then
+  G7RSG=$(g7out read-size-gate "$(mkread "$G7BIG")")
+  expect "g7 read-size-gate: decision is allow, limit 500 (as in cct)" "allow 500" \
+    "$(jfield "$G7RSG" hookSpecificOutput.permissionDecision) $(jfield "$G7RSG" hookSpecificOutput.updatedInput.limit)"
+  G7NOM="$TMPROOT/g7nomanifest"; mkdir -p "$G7NOM/.claude"
+  expect "g7 read-size-gate: project class -> no toolkit project, no output" "" "$(g7out read-size-gate "$(mkread "$G7BIG")" "$G7NOM")"
+else
+  skip "g7 read-size-gate cap rows" "no node on this host" 2
+fi
+
+# bash-output-guard: machine class; 20 000 characters of stdout are cut and the full text goes to a log
+if [ -n "$HAVE_NODE" ]; then
+  G7BOG=$(g7out bash-output-guard "$(mkpost 20000)" "$G7NOM")
+  expect "g7 bash-output-guard: emits updatedToolOutput with the truncation marker" "PostToolUse 1" \
+    "$(jfield "$G7BOG" hookSpecificOutput.hookEventName) $(printf '%s' "$G7BOG" | grep -c 'chars truncated')"
+  expect "g7 bash-output-guard: 5 000 characters pass through untouched" "" "$(g7out bash-output-guard "$(mkpost 5000)" "$G7NOM")"
+else
+  skip "g7 bash-output-guard rows" "no node on this host" 2
+fi
+
+# agent-budget-warn: the 120th call of a spawn blocks (exit 2) except a commit
+g7bud() { # <command> -> "<stderr first word> rc=<n>" for call 120 of agent g7-agent
+  g7t="$TMPROOT/g7bud$g7n"; mkdir -p "$g7t/claude-agent-budget/g7sess"; printf '%s' 119 > "$g7t/claude-agent-budget/g7sess/g7-agent"
+  ( printf '{"session_id":"g7sess","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s","agent_id":"g7-agent"}\n' "$1" "$(jesc "$G7P")" \
+      | env HOME="$G7HOME" TMPDIR="$g7t" CLAUDE_PROJECT_DIR="$G7P" bash "$G7D/run-hook.sh" agent-budget-warn 2>&1 1>/dev/null; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//' | grep -oE 'BUDGET: this spawn has made 120|rc=[0-9]+' | tr '\n' ' ' | sed 's/ $//'
+}
+g7n=1; expect "g7 agent-budget-warn: call 120 'git status' blocks" "BUDGET: this spawn has made 120 rc=2" "$(g7bud 'git status')"
+g7n=2; expect "g7 agent-budget-warn: call 120 'git commit -m x' passes (a commit may land)" "rc=0" "$(g7bud 'git commit -m x' | grep -o 'rc=0')"
+
+# post-edit-build: the declared command runs after an edit and its output reaches stderr; never blocks
+G7PEB="$TMPROOT/g7peb"; mkdir -p "$G7PEB/.claude"; printf '{}' > "$G7PEB/.claude/template-manifest.json"
+printf '# ctx\n\n- **Post-edit build**: `printf built-%%s ok`\n' > "$G7PEB/PROJECT_CONTEXT.md"
+G7EDIT=$(printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"x"},"cwd":"%s","tool_response":{}}' "$(jesc "$G7PEB")")
+G7PEBO=$(g7err post-edit-build "$G7EDIT" "$G7PEB")
+expect "g7 post-edit-build: the Post-edit build command runs, output on stderr, exit 0" "1 rc=0" \
+  "$(printf '%s' "$G7PEBO" | grep -c 'built-ok') $(printf '%s' "$G7PEBO" | grep -o 'rc=[0-9]*')"
+
+# run-hook.sh copy: a missing warn-class script warns (exit 0) with the plugin-neutral reinstall text
+G7CP="$TMPROOT/g7copy"; mkdir -p "$G7CP"; cp -R "$G7D" "$G7CP/hooks"; rm -f "$G7CP/hooks/read-size-gate.sh"
+G7MISS=$( ( printf '{}' | env HOME="$G7HOME" CLAUDE_PROJECT_DIR="$G7P" bash "$G7CP/hooks/run-hook.sh" read-size-gate 2>&1; echo "rc=$?" ) | tr '\n' ' ')
+expect "g7 run-hook: a missing warn-class script -> WARN, neutral reinstall text, exit 0" "1 1 rc=0" \
+  "$(printf '%s' "$G7MISS" | grep -c '^WARN: ') $(printf '%s' "$G7MISS" | grep -c 'Reinstall the plugin that registers this hook') $(printf '%s' "$G7MISS" | grep -o 'rc=[0-9]*')"
+# ---- end v7.0.0 cct-guards
 
 # ---- v6.0 Task 3: the guards take the dispatcher payload (CCTD_MEMO[1]) and find their libs without dirname
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
@@ -12756,7 +12838,7 @@ V5GC="$(awk '/pol=closed/ { sub(/\).*/, ""); gsub(/\|/, " "); printf "%s ", $0 }
 V5GN=0
 # parser-free (the matrix hides node, python3 and jq): hooks.json has one `"command": "<escaped>"` entry per line;
 # V5RAW keeps the JSON-escaped value of every run-hook command, the loop unescapes it
-V5RAW="$(sed -n 's/.*"command": "\(.*[^\\]\)"\(, "timeout": [0-9]*\)\{0,1\} }.*/\1/p' "$ROOT/hooks/hooks.json" | grep 'run-hook\.sh')"
+V5RAW="$(sed -n 's/.*"command": "\(.*[^\\]\)"\(, "timeout": [0-9]*\)\{0,1\} }.*/\1/p' "$ROOT/hooks/hooks.json" "$ROOT"/plugins/*/hooks/hooks.json | grep 'run-hook\.sh')"   # v7.0.0: the optional plugins' registrations too
 while IFS= read -r v5g_cmd; do
   [ -n "$v5g_cmd" ] || continue
   v5g_name="${v5g_cmd##* }"; V5GN=$((V5GN + 1))

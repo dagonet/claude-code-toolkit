@@ -354,14 +354,14 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 
 ### Read Size Gate (PreToolUse, registered by the cct plugin)
 
-**Read size gate** (`hooks/read-size-gate.sh`):
+**Read size gate** (`plugins/cct-guards/hooks/read-size-gate.sh`, if `cct-guards` is installed):
 - Matcher: `Read`
 - **Caps** rather than blocks (v2.0 PR3). An unbounded `Read` whose remaining length (`file_lines - offset`) exceeds the threshold (default `500`) is rewritten via `hookSpecificOutput.updatedInput` to carry `limit: 500`, plus an `additionalContext` naming the offset to pass next. The call proceeds; nothing is refused.
 - `updatedInput` **replaces the whole input object**, so the hook copies the original `tool_input` wholesale (`Object.assign`) — `pages` and any future field survive.
 - Silent pass when: `limit` is already set, the file is short, the path is missing/unreadable, or the extension is `png|jpg|jpeg|gif|pdf|ipynb` (not line-addressable).
 - Over 10 MB the cap is decided from `stat` alone (`File is N MB; capped at 500 lines…`): no offset can bring the remainder under the cap, and counting lines would mean scanning every byte on a hook that fires on every Read. One node process per call, payload on stdin.
 - Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
-- Never exits non-zero, so it is registered fail-open: on a missing script `run-hook.sh` prints `WARN: <path> missing -- read-size-gate offline. Reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet).` and exits 0.
+- Never exits non-zero, so it is registered fail-open: on a missing script `run-hook.sh` prints `WARN: <path> missing -- read-size-gate offline. Reinstall the plugin that registers this hook (claude plugin uninstall it, then claude plugin install it again).` and exits 0.
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
 - Parses JSON through `hooks/lib/json.sh` (node, python3 or jq). Style-matches `no-push-main.sh`.
 
@@ -371,7 +371,7 @@ All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, pyth
 
 ### Bash Output Guard (PostToolUse, registered by the cct plugin)
 
-**Hook** (`hooks/bash-output-guard.sh`), matcher `Bash|PowerShell`:
+**Hook** (`plugins/cct-guards/hooks/bash-output-guard.sh`, if `cct-guards` is installed), matcher `Bash|PowerShell`:
 - Reads `tool_response` from stdin. Observed shape (2.1.250): `{stdout, stderr, interrupted, isImage, noOutputExpected}`.
 - `stdout` and `stderr` are checked independently. A stream over 12,000 chars is written to `$TMPDIR/claude-bash-out-$UID/<session_id>-<epoch>[-stderr].log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output|stderr: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
 - The payload is piped to `node` on stdin, not passed in argv: a 200 KB build log exceeds the platform argument limits, and an exec failure here would silently pass the untruncated output through.
@@ -415,4 +415,4 @@ Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `c
 - **Main-thread edits** are allowed only on the PO write surface (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md` (pre-v4 manifests only; under manifest v4 write `.claude/project-instructions.md` — `deny-claude-md-writes.sh` enforces it), `CLAUDE.local.md`, `AGENT_TEAM.md`, paths outside the repo). Everything else denies with a model-visible DELEGATE message naming the right agent. Handles `notebook_path` (NotebookEdit) and backslash Windows paths.
 - **Main-thread Bash** denies build/test-runner commands (`npm test`, `npm run test|build|e2e|coverage`, `npx vitest|jest|playwright`, `pytest`, `cargo test|build|run`, `dotnet build|test|run`, `mvn`, `gradlew`, `go test`) AND `hooks/run-gate.sh` — the PO verifies via the `<common git dir>/gate/last-pass.<sha>.json` artifact, never by running the suite. (It matches the `hooks/run-gate.sh` path, not the `cct-gate` command: a PO's `cct-gate` is not denied, a known gap since v5.0.)
 - **Kill-switch:** create `.claude/delegation-off` at the repo root to disable (also the recovery if a pre-`agent_id` CLI ever denies subagent calls).
-- **Failure polarity — deliberately fail-OPEN:** never apply the exit-2 127-wrapper (a missing script would block ALL edits including subagents' — total paralysis, same class as the SubagentStop stop-gate). `run-hook.sh` uses a **fail-open WARN form** instead: a missing script prints `WARN: <path> missing -- enforce-delegation offline. Reinstall the cct plugin (...)` to stderr and exits 0 — visible, never blocking. Internal parse failures pass through. Note: main-thread Bash-git stays guarded regardless — the three git gates (fail-closed) fire on the same Bash matcher.
+- **Failure polarity — deliberately fail-OPEN:** never apply the exit-2 127-wrapper (a missing script would block ALL edits including subagents' — total paralysis, same class as the SubagentStop stop-gate). `run-hook.sh` uses a **fail-open WARN form** instead: a missing script prints `WARN: <path> missing -- enforce-delegation offline. Reinstall the plugin that registers this hook (...)` to stderr and exits 0 — visible, never blocking. Internal parse failures pass through. Note: main-thread Bash-git stays guarded regardless — the three git gates (fail-closed) fire on the same Bash matcher.

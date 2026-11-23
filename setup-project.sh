@@ -521,7 +521,7 @@ if [[ "$VARIANT" == "java" ]]; then
     esac
 fi
 
-# Auto-derived: post-edit build (hooks/post-edit-build.sh, PostToolUse Edit|Write).
+# Auto-derived: post-edit build (plugins/cct-guards/hooks/post-edit-build.sh, if cct-guards is installed; PostToolUse Edit|Write).
 # Only the dotnet variants build after every edit; the rest declare `none`.
 if [[ "$VARIANT" == "dotnet" || "$VARIANT" == "dotnet-maui" ]]; then
     add_derived '{{POST_EDIT_BUILD}}' "dotnet build --no-restore -v q"

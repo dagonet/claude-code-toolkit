@@ -85,7 +85,7 @@ and check 20 greps `karpathy-guidelines`; the section is short enough
 Cut to the rationale file: the mechanism behind each enforced preference
 (which hook enforces which rule, and how) — `hooks/pre-commit-test.sh`,
 `hooks/run-gate.sh`, `hooks/gate-before-merge.sh`, `hooks/no-push-main.sh`,
-and `hooks/read-size-gate.sh` collectively enforce read-before-edit,
+and `read-size-gate` (if `cct-guards` is installed) collectively enforce read-before-edit,
 tests-before-commit, never-push-main, the 500-line `Read` cap, and
 delegation. The rule stays in `CLAUDE.md`; the hook names moved here because
 which specific hook enforces which rule is diagnostic detail, not something

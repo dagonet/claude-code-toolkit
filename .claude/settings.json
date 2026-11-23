@@ -78,7 +78,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/post-edit-build.sh\""
+            "command": "exec bash \"${CLAUDE_PROJECT_DIR:-.}/plugins/cct-guards/hooks/post-edit-build.sh\""
           }
         ]
       }

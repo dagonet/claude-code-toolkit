@@ -126,7 +126,7 @@ See `docs/architecture.md` → *MCP Layering* and `mcp-servers/HOWTO.md` → *Pr
 | `{{MAUI_PROJECT}}` | MAUI project path (MAUI) | src/MyApp.MAUI |
 | `{{TEST_PROJECT}}` | Test project path | tests/MyApp.Tests |
 | `{{GATE_CHECKED_BRANCHES}}` | Fills `**Gate-checked branches**:` in `PROJECT_CONTEXT.md` — glob list of branches whose merges the gate checks in addition to the protected set. Setup writes `none` (= no branch is gate-checked); edit the key afterwards to opt in | none |
-| `{{POST_EDIT_BUILD}}` | Fills `**Post-edit build**:` in `PROJECT_CONTEXT.md`, the command `hooks/post-edit-build.sh` runs after every edit. Derived: `dotnet build --no-restore -v q` for the dotnet variants, `none` (= no post-edit build) for the others | dotnet build --no-restore -v q |
+| `{{POST_EDIT_BUILD}}` | Fills `**Post-edit build**:` in `PROJECT_CONTEXT.md`, the command `post-edit-build` (if `cct-guards` is installed) runs after every edit. Derived: `dotnet build --no-restore -v q` for the dotnet variants, `none` (= no post-edit build) for the others | dotnet build --no-restore -v q |
 
 ## Template Manifest (v4)
 

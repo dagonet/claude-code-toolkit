@@ -25,9 +25,6 @@
       { "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
         { "type": "command", "onFailure": "block", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" deny-claude-md-writes" }
       ] },
-      { "matcher": "Read", "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" read-size-gate" }
-      ] },
       { "matcher": "mcp__MCP_DOCKER__create_pull_request", "hooks": [
         { "type": "command", "onFailure": "block", "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" backlog-item-check" }
       ] },
@@ -41,18 +38,9 @@
       ] },
       { "matcher": "Edit|Write|NotebookEdit", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" enforce-delegation" }
-      ] },
-      { "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" agent-budget-warn" }
       ] }
     ],
     "PostToolUse": [
-      { "matcher": "Bash|PowerShell", "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" bash-output-guard" }
-      ] },
-      { "matcher": "Edit|Write", "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" post-edit-build" }
-      ] },
       { "matcher": "Agent", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" agent-result-notes" }
       ] }

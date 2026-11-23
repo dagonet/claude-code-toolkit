@@ -46,7 +46,7 @@ the absolute numbers as host-local; the ~10x ratio is the part that travels.
 - **Gate extra**: `bash scripts/test-hooks.sh && bash scripts/test-server.sh`
 <!-- Opts this repo in: Gate == Test && Gate extra (R-A holds), so hooks/run-gate.sh may reuse a passing commit-time **Test** run instead of re-running verify-template-consistency.sh at merge time. The comment MUST sit on its own line -- GC_KEY_PRE anchors the **Gate extra** field's own line at column 0 (after an optional BOM/list-marker), and a trailing comment on the SAME line would leave the field's own sed-stripped value carrying a stray `<!--...-->` tail, silently breaking R-A's equality check. -->
 - **Post-edit build**: none
-<!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
+<!-- Post-edit build runs after every Edit/Write via plugins/cct-guards/hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none
 <!-- extra path prefixes the PO may write directly, space-separated; `none` = the template default -->
 <!-- Join Gate command steps with `&&`, never `;` — `;` discards an earlier step's failure status, so `<real gate> ; <anything>` exits 0 and the gate mints a pass artifact on a failing suite. -->

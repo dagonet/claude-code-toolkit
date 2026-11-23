@@ -50,7 +50,7 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 
 ## Read & Search Tool Selection
 
-`Read` loads file contents directly into the main context window (measured at **22% of total context** across recent claude-code-toolkit sessions — the largest actionable bucket after bulk `assistant_tool_use` and `assistant_thinking`). `hooks/read-size-gate.sh` now enforces the limit mechanically: it caps a `Read` at 500 lines, rewrites the call, and tells you the next `offset`. Use `Read` only for files you will immediately Edit or Write. Route everything else by this table — it supersedes any other search/read guidance:
+`Read` loads file contents directly into the main context window (measured at **22% of total context** across recent claude-code-toolkit sessions — the largest actionable bucket after bulk `assistant_tool_use` and `assistant_thinking`). If `cct-guards` is installed, `read-size-gate` caps a `Read` at 500 lines, rewrites the call, and tells you the next `offset`. Use `Read` only for files you will immediately Edit or Write. Route everything else by this table — it supersedes any other search/read guidance:
 
 | Need | Tool |
 |------|------|
