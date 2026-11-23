@@ -49,15 +49,15 @@ Select it with `"outputStyle": "cct:pm-report"` in `~/.claude/settings.json`. `/
 
 | Skill | What it does |
 |---|---|
-| `/cct:commit` | Shows you exactly what will be committed, then commits |
+| `/cct-helpers:commit` | If `cct-helpers` is installed: shows you exactly what will be committed, then commits |
 | `/cct:sprint` | Runs a backlog as parallel agent workstreams, with a rebase and the gate before each merge |
 | `/cct:challenge` | Questions a plan in two passes (is it needed, is it right) before you run it |
 | `/cct:sync-template` | Pulls template updates into your project and keeps your own edits |
-| `/cct:contribute-upstream` | Sends an improvement from your project back to the toolkit templates |
+| `/cct-helpers:contribute-upstream` | If `cct-helpers` is installed: sends an improvement from your project back to the toolkit templates |
 | `/cct-learning:retro-review` | If `cct-learning` is installed: reviews agent failures, config drift and which projects are behind |
 | `/cct:jev` | Switches the optional model routing on or off (below) |
 
-Two more start by themselves when they fit: `cct:mcp-usage` (steps for large inputs and MCP servers) and `cct:karpathy-guidelines` (habits that avoid common coding mistakes).
+If `cct-helpers` is installed, two more start by themselves when they fit: `cct-helpers:mcp-usage` (steps for large inputs and MCP servers) and `cct-helpers:karpathy-guidelines` (habits that avoid common coding mistakes).
 
 ### Project templates
 

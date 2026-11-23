@@ -1,6 +1,6 @@
 ---
 name: contribute-upstream
-description: Push project improvements back to the claude-code-toolkit template. Triggers on /cct:contribute-upstream.
+description: Push project improvements back to the claude-code-toolkit template. Triggers on /cct-helpers:contribute-upstream.
 disable-model-invocation: true
 ---
 

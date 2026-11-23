@@ -28,7 +28,7 @@ Pull template updates into your project. The skill calls MCP tools to classify e
 
 For conflicts, the MCP server reconstructs the common ancestor via `git show` and produces a three-way merge. If the merge is clean, it's offered for approval. If it has conflict markers, you resolve manually.
 
-## `/cct:contribute-upstream` (upstream: project -> template)
+## `/cct-helpers:contribute-upstream` (upstream: project -> template; if `cct-helpers` is installed)
 
 Push project improvements back to the template. The skill:
 
@@ -38,11 +38,11 @@ Push project improvements back to the template. The skill:
 4. Checks cross-variant file identity and propagates to matching variants
 5. Stages changes in the template repo (does not commit — you review first)
 
-## `/cct:commit` Integration
+## `/cct-helpers:commit` Integration (if `cct-helpers` is installed)
 
 When committing, if `.claude/template-manifest.json` exists, the commit workflow calls `template_compute_status` to detect drift:
 
-- **Locally modified files**: Prints a reminder to run `/cct:contribute-upstream`
+- **Locally modified files**: Prints a reminder to run `/cct-helpers:contribute-upstream`
 - **Template updates available**: Prints a reminder to run `/cct:sync-template`
 
 This is informational only — it never blocks a commit.

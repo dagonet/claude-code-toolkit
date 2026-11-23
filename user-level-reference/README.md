@@ -61,13 +61,13 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 | Skill | Invocation | Purpose |
 |-------|-----------|---------|
 | `challenge` | `/cct:challenge [target]` only | Two structured passes over a plan or design: scope/necessity, then correctness/completeness. Explicit-only because it may spawn the architect. |
-| `commit` | `/cct:commit` only | Stage and commit with native git, after showing the user the staged diff; includes the verification checklist |
+| `commit` | `/cct-helpers:commit` only, if `cct-helpers` is installed | Stage and commit with native git, after showing the user the staged diff; includes the verification checklist |
 | `sprint` | `/cct:sprint [plan]` only | Run a backlog as parallel **subagent** workstreams — rebase before merge, gate before merge, final-message reporting |
 | `sync-template` | `/cct:sync-template` only | Pull template updates from claude-code-toolkit into the current project |
-| `contribute-upstream` | `/cct:contribute-upstream` only | Push generalizable project improvements back to the template |
+| `contribute-upstream` | `/cct-helpers:contribute-upstream` only, if `cct-helpers` is installed | Push generalizable project improvements back to the template |
 | `retro-review` | `/cct-learning:retro-review [project-dir]` only, if `cct-learning` is installed | Local maintenance sweep: the subagent-failure retro ledger, `verify-user-level-drift.sh`, and consumer repos behind the toolkit `VERSION` → a ≤ 30-line summary in auto-memory. The local counterpart to the `toolkit-nightly-check` routine |
-| `karpathy-guidelines` | auto | Writing any new code (main thread); the coders carry a digest as `## Working rules`. Carries the *Toolkit working preferences (developer agents)* section |
-| `mcp-usage` | auto | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
+| `karpathy-guidelines` | auto, if `cct-helpers` is installed | Writing any new code (main thread); the coders carry a digest as `## Working rules`. Carries the *Toolkit working preferences (developer agents)* section |
+| `mcp-usage` | auto, if `cct-helpers` is installed | Occasional MCP procedures — digesting a large input, extracting structured data, mapping a repo, library lookups, headless batches |
 | `jev` | `/cct:jev on\|off\|status\|report` only | Optional, per clone (default off): routes sub-agent spawns that pass no `model` through TypeSafe's Jev -- any model at confidence >= the threshold (0.65), review/architect types never below sonnet and never a lower effort, a confident effort applied unless the call passes one, the project floor on any failure. Sends the redacted, trimmed spawn text off the machine while on. Needs python3 and `TYPESAFE_API_KEY` |
 
 **What replaced the culled artifacts**
@@ -80,7 +80,7 @@ Explicit workflows carry `disable-model-invocation: true` so they run only when 
 | `code-review` | the bundled `/code-review` plugin, or `superpowers:requesting-code-review` / `receiving-code-review` |
 | `arch-analyze`, `impact-analysis`, `explaining-code`, `orient` | the `cct:Explore` subagent (haiku) plus `superpowers:brainstorming` / `writing-plans` |
 | `security-audit` | `/code-review`'s security pass |
-| `refactor` | `karpathy-guidelines` + `superpowers:test-driven-development` |
+| `refactor` | `karpathy-guidelines` (if `cct-helpers` is installed) + `superpowers:test-driven-development` |
 | `/new-feature`, `/user-story`, `/spec-to-issues`, `/traceability`, `/arch-doc`, `/api-design`, `/tech-debt`, `/coverage-report`, `/dependency-audit`, `/dotnet-analyze`, `/ef-check`, `/nuget-audit`, `/pre-release`, `/godot-run`, `/issue-create`, `/add-tests` | deleted — near-zero measured use; the agent roster (`architect`, `tester`, `coder`, `ops`) covers the same ground. *(The roster named here was `requirements-engineer` / `test-writer` when these commands were deleted; both were retired by absorption in v3.0.0 — into `architect` and `tester` respectively.)* |
 
 ### Output styles (1)

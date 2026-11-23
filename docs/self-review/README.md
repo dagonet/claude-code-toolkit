@@ -36,4 +36,4 @@ Then run `/self-review` there. It merges the directory; for a repeated machine l
 
 Toolkit skill, agent and hook names come from the checkout you run it in, so keep that checkout on the same release as your installed plugin.
 
-Sessions whose records are on no included machine (for example cloud-hosted ones) are not counted. Keep the report in your own checkout, or offer findings upstream with `/cct:contribute-upstream`.
+Sessions whose records are on no included machine (for example cloud-hosted ones) are not counted. Keep the report in your own checkout, or offer findings upstream with `/cct-helpers:contribute-upstream` (if `cct-helpers` is installed).

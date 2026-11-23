@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Stage and commit changes with native git, after showing the user exactly what will be committed. Triggers on /cct:commit.
+description: Stage and commit changes with native git, after showing the user exactly what will be committed. Triggers on /cct-helpers:commit.
 disable-model-invocation: true
 ---
 
@@ -32,7 +32,7 @@ Execute a proper commit workflow using native git (PR1 removed the MCP-git manda
 6. **Template drift check** (requires template-sync-tools MCP)
    - If `.claude/template-manifest.json` exists in the repo root:
      1. Call `template_compute_status(project_path=".")`
-     2. If any files have status `PROJECT_CUSTOM` or `CONFLICT`, append after the commit: **"Template drift detected: X file(s) modified locally. Run `/cct:contribute-upstream` to push generalizable changes back, or `/cct:sync-template` to pull latest template updates."**
+     2. If any files have status `PROJECT_CUSTOM` or `CONFLICT`, append after the commit: **"Template drift detected: X file(s) modified locally. Run `/cct-helpers:contribute-upstream` to push generalizable changes back, or `/cct:sync-template` to pull latest template updates."**
      3. If any files have status `AUTO_UPDATE`, append after the commit: **"Template updates available for X file(s). Run `/cct:sync-template` to apply."**
    - If no manifest exists or template-sync-tools MCP is unavailable: skip silently
 

@@ -42,4 +42,4 @@ Usage counts come from the machines included, which are one user's projects. A s
 
 ## Rule
 
-Nothing is applied; each item waits for the user's approval of that item. The maintainer commits the report in the release PR. Anyone else keeps theirs in their own checkout, and may offer findings upstream via `/cct:contribute-upstream`.
+Nothing is applied; each item waits for the user's approval of that item. The maintainer commits the report in the release PR. Anyone else keeps theirs in their own checkout, and may offer findings upstream via `/cct-helpers:contribute-upstream` (if `cct-helpers` is installed).

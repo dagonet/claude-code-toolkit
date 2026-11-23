@@ -92,7 +92,7 @@ These are not optional. If the trigger fires, invoke the named skill BEFORE gene
 Apply unless another skill already covers the same ground:
 
 - Multi-step implementation about to start → invoke `superpowers:writing-plans`, then `superpowers:executing-plans` once the plan is approved.
-- Writing production code → invoke `superpowers:test-driven-development` together with `karpathy-guidelines`.
+- Writing production code → invoke `superpowers:test-driven-development` together with `karpathy-guidelines` (if `cct-helpers` is installed).
 - Requesting / digesting code review → `superpowers:requesting-code-review` / `superpowers:receiving-code-review`.
 
 ### Meta skills (no explicit trigger)

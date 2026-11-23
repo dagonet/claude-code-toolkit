@@ -578,7 +578,7 @@ done
 #     number and no bullet's literal text is baked into the assertion.
 # ---------------------------------------------------------------------------
 echo
-KG=skills/karpathy-guidelines/SKILL.md
+KG=plugins/cct-helpers/skills/karpathy-guidelines/SKILL.md
 WP_HEADING='## Toolkit working preferences'
 WP_MIN=11
 if [ ! -s "$KG" ]; then
@@ -5056,13 +5056,13 @@ c72_ctl=$(c72_eval "$c72_tmp")
 rm -rf "$c72_tmp"
 c72_real=$(c72_eval .)
 c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
-c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
+c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
 if [ -z "$c72_first" ] || [ "${c72_ctl#*|}" = "0" ]; then
   ko "72: CONTROL failed (one sub-plugin at a version other than VERSION was not flagged; fixture '$c72_ctl')"
-elif [ -n "$c72_want" ] && [ "$c72_real" = "10|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
-  ok "72: cct plus 9 sub-plugin (the six MCP plugins, java-tools, cct-guards and cct-learning) plugin.json files all carry version $c72_want (= VERSION); control fires"
+elif [ -n "$c72_want" ] && [ "$c72_real" = "11|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
+  ok "72: cct plus 10 sub-plugin (the six MCP plugins, java-tools, cct-guards, cct-learning and cct-helpers) plugin.json files all carry version $c72_want (= VERSION); control fires"
 else
-  ko "72: expected 10 plugin.json (cct + 9 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
+  ko "72: expected 11 plugin.json (cct + 10 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5199,7 +5199,16 @@ for n in $(grep -rhoE '[a-z]+-tools:[a-z]+-coder' templates user-level-reference
   [ -f "plugins/${n%%:*}/agents/${n#*:}.md" ] || c76_bad="$c76_bad $n"
 done
 [ "$c76_pn" -gt 0 ] || c76_bad="$c76_bad (no <lang>-tools:<lang>-coder mention found: the plugin-name scan is vacuous)"
-[ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen), every <lang>-tools:<lang>-coder in plugins/ ($c76_pn)" || ko "76: unknown agents:$c76_bad"
+# v6.3: commit, contribute-upstream, karpathy-guidelines and mcp-usage moved to the optional cct-helpers plugin. A stale
+# cct:<skill> mention is flagged by the first loop (no skills/<skill>); a cct-helpers:<skill> mention must name a
+# directory under plugins/cct-helpers/skills/.
+c76_hn=0
+for n in $(grep -rhoE 'cct-helpers:[A-Za-z][A-Za-z-]*' templates user-level-reference skills agents plugins/cct-helpers README.md AGENTS.md 2>/dev/null | sort -u); do
+  c76_hn=$((c76_hn + 1))
+  [ -d "plugins/cct-helpers/skills/${n#cct-helpers:}" ] || c76_bad="$c76_bad $n"
+done
+[ "$c76_hn" -gt 0 ] || c76_bad="$c76_bad (no cct-helpers:<skill> mention found: the helper-skill scan is vacuous)"
+[ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen), every <lang>-tools:<lang>-coder in plugins/ ($c76_pn), every cct-helpers:<skill> in plugins/cct-helpers/skills/ ($c76_hn)" || ko "76: unknown agents or skills:$c76_bad"
 
 # ---------------------------------------------------------------------------
 # Check 77 (v5.0 fix round 1): every `claude-code-toolkit#vX.Y.Z` pin literal in the user-facing docs
