@@ -13533,6 +13533,119 @@ check_msg "backlog-item-check: an unparseable payload is refused" "$BIC_HOOK" 2 
 check_msg "backlog-item-check: a cwd that is not a git checkout is refused" "$BIC_HOOK" 2 "$(bic_create "$TMPROOT/tmp" feat main -)" "backlog-item-check"
 # ---- end v6.3 backlog-item-check
 
+# ---- v6.3 backlog discipline: hooks/backlog-brief.sh -- one line of backlog debt at every session start (advisory, exit 0).
+# File mode reads PROJECT_STATE.md; issue mode calls `gh issue list` under `timeout 3`, tested with a fake gh on a private PATH
+# (never a real network call). A PATH without gh is a directory of symlinks to just the tools the hook uses.
+echo "=== hooks/backlog-brief.sh (backlog discipline, session-start line) ==="
+BB_HOOK="$ROOT/hooks/backlog-brief.sh"
+BB_BASH=$(command -v bash)
+BB_TOOLS="$TMPROOT/bb-tools"; mkdir -p "$BB_TOOLS"
+for bb_t in grep sed awk head tr cat sleep timeout; do
+  bb_p=$(command -v "$bb_t") && ln -sf "$bb_p" "$BB_TOOLS/$bb_t"
+done
+BB_NOTO="$TMPROOT/bb-notimeout"; mkdir -p "$BB_NOTO"
+for bb_t in grep sed awk head tr cat sleep; do
+  bb_p=$(command -v "$bb_t") && ln -sf "$bb_p" "$BB_NOTO/$bb_t"
+done
+bb_run() { # <project dir> <source> [PATH] -> sets BB_OUT (stdout, trailing newline stripped) and BB_RC
+  BB_OUT=$(printf '{"hook_event_name":"SessionStart","source":"%s"}' "$2" | env CLAUDE_PROJECT_DIR="$1" PATH="${3:-$PATH}" "$BB_BASH" "$BB_HOOK" 2>/dev/null); BB_RC=$?
+}
+bb_expect() { # <label> <want stdout> <project dir> <source> [PATH] -- exit 0 is part of every assertion
+  bb_run "$3" "$4" "${5:-}"
+  expect "$1" "rc=0 out=$2" "rc=$BB_RC out=$BB_OUT"
+}
+bb_proj() { # <name> <Task source line value|-> <state file text|-> -> project dir
+  local d="$TMPROOT/bb-$1"; mkdir -p "$d"
+  if [ "$2" != "-" ]; then printf '# Ctx\n\n- **Task source**: %s\n' "$2" > "$d/PROJECT_CONTEXT.md"; fi
+  if [ "$3" != "-" ]; then printf '%b' "$3" > "$d/PROJECT_STATE.md"; fi
+  printf '%s\n' "$d"
+}
+BB_FULL='# State\n\n## Now\n\n- B-99 not a backlog item\n\n## Backlog\n\n### Untriaged\n\n- B-10 First untriaged\n- B-11 Second untriaged\n\n### Ranked\n\n- B-4 Fix the export\n- B-5 [in progress] Calendar time-zone fix\n- B-6 Third\n\n### Done\n\n- B-1 [in progress] done item with a stray tag\n- B-2 Old\n'
+BB_WANT='backlog: 2 untriaged, 1 in progress, top: B-4 Fix the export'
+BB_P1=$(bb_proj full '`plan-files`' "$BB_FULL")
+for bb_s in startup resume clear compact; do
+  bb_expect "backlog-brief: file mode, source $bb_s: 2 untriaged, 1 in progress, top B-4" "$BB_WANT" "$BB_P1" "$bb_s"
+done
+BB_P2=$(bb_proj plain 'plan-files' "$BB_FULL")
+bb_expect "backlog-brief: file mode, Task source without backticks" "$BB_WANT" "$BB_P2" startup
+BB_P3=$(bb_proj crlf '`plan-files`' "$BB_FULL")
+sed 's/$/\r/' "$BB_P3/PROJECT_STATE.md" > "$BB_P3/PROJECT_STATE.crlf" && mv "$BB_P3/PROJECT_STATE.crlf" "$BB_P3/PROJECT_STATE.md"
+bb_expect "backlog-brief: file mode, CRLF line endings" "$BB_WANT" "$BB_P3" startup
+BB_P4=$(bb_proj marker '`plan-files`' '## Backlog\n\n### Untriaged  \n\n* B-10 star bullet\n  - B-11 indented\n- B-x not an item\n- B-13\n\n### Ranked \n\n_none_\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: file mode, star and indented bullets, a bare B-13, heading trailing spaces, empty Ranked: top none" \
+  "backlog: 3 untriaged, 0 in progress, top: none" "$BB_P4" startup
+BB_P5=$(bb_proj tagtop '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-9 [in progress] Calendar fix\n- B-12 [in progress] Two\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: file mode, the top item is in progress: shown without its tag, both counted" \
+  "backlog: 0 untriaged, 2 in progress, top: B-9 Calendar fix" "$BB_P5" startup
+BB_P6=$(bb_proj emptyall '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n_none_\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: file mode, every subsection empty" "backlog: 0 untriaged, 0 in progress, top: none" "$BB_P6" startup
+BB_P7=$(bb_proj bare '`plan-files`' '## Backlog\n\n### Untriaged\n\n- B-3 t\n\n### Ranked\n\n- B-7\n\n### Done\n')
+bb_expect "backlog-brief: file mode, a top item with no title" "backlog: 1 untriaged, 0 in progress, top: B-7" "$BB_P7" startup
+BB_HINT='backlog: PROJECT_STATE.md has no ### Untriaged/### Ranked/### Done -- see AGENT_TEAM.md § Backlog'
+BB_H1=$(bb_proj h-nobacklog '`plan-files`' '# State\n\n## Now\n\n- x\n')
+bb_expect "backlog-brief: file mode, no ## Backlog: the hint" "$BB_HINT" "$BB_H1" startup
+BB_H2=$(bb_proj h-none '`plan-files`' '# State\n\n## Backlog\n\n_none_\n')
+bb_expect "backlog-brief: file mode, ## Backlog without subsections: the hint" "$BB_HINT" "$BB_H2" compact
+BB_H3=$(bb_proj h-two '`plan-files`' '## Backlog\n\n### Untriaged\n\n- B-1 a\n\n### Ranked\n\n- B-2 b\n')
+bb_expect "backlog-brief: file mode, two of three subsections: the hint" "$BB_HINT" "$BB_H3" startup
+BB_H4=$(bb_proj h-outside '`plan-files`' '## Backlog\n\n### Untriaged\n\n- B-1 a\n\n### Ranked\n\n- B-2 b\n\n## Other\n\n### Done\n\n- B-3 c\n')
+bb_expect "backlog-brief: file mode, ### Done under another ## heading: the hint" "$BB_HINT" "$BB_H4" startup
+BB_N1=$(bb_proj nostate '`plan-files`' -)
+bb_expect "backlog-brief: file mode, no PROJECT_STATE.md: silent, exit 0" "" "$BB_N1" startup
+BB_N2=$(bb_proj nosource - "$BB_FULL")
+bb_expect "backlog-brief: no Task source line: silent, exit 0" "" "$BB_N2" startup
+BB_N3=$(bb_proj unknown 'jira' "$BB_FULL")
+bb_expect "backlog-brief: an unknown Task source: silent, exit 0" "" "$BB_N3" startup
+BB_N4=$(bb_proj empty '`plan-files`' '')
+bb_expect "backlog-brief: file mode, an empty PROJECT_STATE.md: the hint" "$BB_HINT" "$BB_N4" startup
+bb_run "$TMPROOT/bb-no-such-dir" startup
+expect "backlog-brief: a project dir that does not exist: silent, exit 0" "rc=0 out=" "rc=$BB_RC out=$BB_OUT"
+expect "backlog-brief: file mode needs no gh and no timeout (restricted PATH, the line is the same)" "rc=0 out=$BB_WANT" \
+  "$(bb_run "$BB_P1" startup "$BB_NOTO"; printf 'rc=%s out=%s' "$BB_RC" "$BB_OUT")"
+# issue mode: fake gh on a private PATH. It logs its arguments and prints the canned JSON.
+BB_FAKE="$TMPROOT/bb-fake"; mkdir -p "$BB_FAKE"
+for bb_t in grep sed awk head tr cat sleep timeout; do
+  bb_p=$(command -v "$bb_t") && ln -sf "$bb_p" "$BB_FAKE/$bb_t"
+done
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s/args"\ncat "%s/out"\nexit "$(cat "%s/rc")"\n' "$BB_FAKE" "$BB_FAKE" "$BB_FAKE" > "$BB_FAKE/gh"
+chmod +x "$BB_FAKE/gh"
+bb_gh() { printf '%s' "$1" > "$BB_FAKE/out"; printf '%s' "${2:-0}" > "$BB_FAKE/rc"; rm -f "$BB_FAKE/args"; } # <canned stdout> [exit code]
+BB_IS=$(bb_proj issue '`github-issues`' -)
+bb_expect "backlog-brief: issue mode, gh not on PATH: silent, exit 0" "" "$BB_IS" startup "$BB_TOOLS"
+bb_gh '[{"labels":[{"id":"L1","name":"priority:1","description":"","color":"fff"}]},{"labels":[{"id":"L2","name":"bug","description":"","color":"000"}]},{"labels":[]}]'
+bb_expect "backlog-brief: issue mode, 3 open and 1 with a priority label: 2 untriaged, 3 open" "backlog: 2 untriaged, 3 open" "$BB_IS" startup "$BB_FAKE"
+expect "backlog-brief: issue mode calls exactly 'issue list --state open --json labels --limit 200'" "issue list --state open --json labels --limit 200" "$(cat "$BB_FAKE/args" 2>/dev/null)"
+bb_expect "backlog-brief: issue mode, source compact gives the same line" "backlog: 2 untriaged, 3 open" "$BB_IS" compact "$BB_FAKE"
+bb_gh '[{"labels":[{"name":"priority:9"}]},{"labels":[{"name":"x"},{"name":"priority:3"}]}]'
+bb_expect "backlog-brief: issue mode, priority:9 is not a rank, priority:3 among other labels is" "backlog: 1 untriaged, 2 open" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[
+  {
+    "labels": [
+      {
+        "name": "priority:2"
+      }
+    ]
+  },
+  {
+    "labels": []
+  }
+]'
+bb_expect "backlog-brief: issue mode, pretty-printed JSON" "backlog: 1 untriaged, 2 open" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[]'
+bb_expect "backlog-brief: issue mode, no open issues" "backlog: 0 untriaged, 0 open" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[{"labels":[]}]' 1
+bb_expect "backlog-brief: issue mode, gh exits 1: silent, exit 0" "" "$BB_IS" startup "$BB_FAKE"
+bb_gh 'gh: not logged in'
+bb_expect "backlog-brief: issue mode, gh prints something that is not a JSON list: silent, exit 0" "" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[{"labels":[]}]'
+bb_expect "backlog-brief: issue mode, timeout missing: silent, exit 0" "" "$BB_IS" startup "$BB_NOTO"
+rm -f "$BB_FAKE/args"; ln -sf "$BB_FAKE/gh" "$BB_NOTO/gh"
+bb_expect "backlog-brief: issue mode, timeout missing but gh present: silent, exit 0" "" "$BB_IS" startup "$BB_NOTO"
+expect "backlog-brief: issue mode, timeout missing: gh was never called" "no" "$([ -e "$BB_FAKE/args" ] && echo yes || echo no)"
+printf '#!/bin/sh\nexec sleep 30\n' > "$BB_FAKE/gh"
+bb_expect "backlog-brief: issue mode, a gh that hangs is cut off by timeout 3: silent, exit 0" "" "$BB_IS" startup "$BB_FAKE"
+# ---- end v6.3 backlog-brief
+
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it
 # is host-INDEPENDENT, while the three tallies are not.

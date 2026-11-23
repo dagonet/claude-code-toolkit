@@ -30,6 +30,7 @@
     "root;PreToolUse;Bash;deny-hang-shapes;O",
     "root;PreToolUse;Agent;model-floor;O",
     "root;PostToolUse;Edit|Write;post-edit-build;U",
+    "root;SessionStart;;backlog-brief;O",
     "user;PreToolUse;Bash|PowerShell;no-push-main;UF",
     "user;PreToolUse;Read|Bash;deny-secret-reads;UF",
     "user;PreToolUse;Bash;deny-hang-shapes;UO",

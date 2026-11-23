@@ -5,7 +5,8 @@
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/cct-session.sh\"" },
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" retro-brief" },
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" verify-hooks" },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" jev-notice", "timeout": 5 }
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" jev-notice", "timeout": 5 },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" backlog-brief", "timeout": 10 }
       ] },
       { "matcher": "compact", "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" now-brief", "timeout": 10 }

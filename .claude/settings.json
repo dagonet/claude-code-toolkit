@@ -82,6 +82,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/backlog-brief.sh\"; [ -r \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

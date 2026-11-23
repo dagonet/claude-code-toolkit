@@ -689,18 +689,19 @@ else
 fi
 # run-gate.sh is standalone (it must run with no JSON parser on PATH, which
 # sourcing git-cmd.sh forbids), so it REPEATS the definition. lib/agent-model.sh
-# repeats it too (one sourced git call per Agent spawn is the cost it avoids).
-# Assert the three copies are the same literal — a duplicated constant that
+# repeats it too (one sourced git call per Agent spawn is the cost it avoids), and so does hooks/backlog-brief.sh
+# (a session-start hook must not source the 1800-line git-cmd.sh for one grep).
+# Assert the four copies are the same literal — a duplicated constant that
 # drifts is how the fixed instance and the unfixed one end up in the same release.
 GC_KEY_PRE_DEF='GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"'
 gkp_have=0
-for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh hooks/lib/agent-model.sh; do
+for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh hooks/lib/agent-model.sh hooks/backlog-brief.sh; do
   grep -qF "$GC_KEY_PRE_DEF" "$gkf" && gkp_have=$((gkp_have + 1))
 done
-if [ "$gkp_have" -eq 3 ]; then
-  ok "GC_KEY_PRE defined identically in git-cmd.sh, the standalone run-gate.sh and agent-model.sh"
+if [ "$gkp_have" -eq 4 ]; then
+  ok "GC_KEY_PRE defined identically in git-cmd.sh, the standalone run-gate.sh, agent-model.sh and backlog-brief.sh"
 else
-  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 3 files (git-cmd.sh, run-gate.sh, agent-model.sh)"
+  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 4 files (git-cmd.sh, run-gate.sh, agent-model.sh, backlog-brief.sh)"
 fi
 
 # 21c-2b. GC_TERMINAL_RC, same census for the same reason (v2.2.5).
@@ -4757,7 +4758,8 @@ PreToolUse;PowerShell;backlog-item-check
 PreToolUse;mcp__MCP_DOCKER__create_pull_request;backlog-item-check
 PreToolUse;mcp__MCP_DOCKER__merge_pull_request;backlog-item-check
 PreToolUse;mcp__github-tools__github_pr_auto_merge;backlog-item-check
-PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;backlog-item-check'
+PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;backlog-item-check
+SessionStart;;backlog-brief'
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
@@ -4785,7 +4787,7 @@ else
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
   c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
   c71_rh=$(c71_rhtab hooks/lib/hook-class.sh)
-  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\nbacklog-item-check closed\n')
+  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\nbacklog-item-check closed\nbacklog-brief open\n')
   c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
   [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/lib/hook-class.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
   # (1d) two-sided registration shape: a closed-class hook carries the inline existence check (G), every other one stays bare (B)
@@ -5454,6 +5456,33 @@ if [ "$(c85_shape "$c85_tmp/PROJECT_STATE.md")" = "$c85_want" ]; then
 fi
 rm -rf "${c85_tmp:?}"
 [ "$c85_fail" -eq 0 ] && ok "check 85: 7 PROJECT_STATE.md carry Untriaged/Ranked/Done in order, AGENT_TEAM.md carries the backlog rules, the sync skill does not use --fill; control fires"
+
+# ---------------------------------------------------------------------------
+# Check 86 (v6.3, backlog discipline): hooks/backlog-brief.sh (session-start line, advisory) reads `Task source` with
+# a copy of hooks/backlog-item-check.sh's bic_mode, so the line and the guard can never disagree about the mode. The
+# two function bodies (from `bic_mode() {` to the first closing brace at column 0) must be byte-identical, each file
+# defines it exactly once, and a mutated copy is reported, so the comparison cannot pass vacuously.
+# ---------------------------------------------------------------------------
+note "Check 86: backlog-brief.sh carries a byte-for-byte copy of backlog-item-check.sh's bic_mode"
+c86_fn() { awk '/^bic_mode\(\) \{$/ { on = 1 } on { print } on && /^\}$/ { exit }' "$1"; }
+c86_fail=0
+for c86_f in hooks/backlog-item-check.sh hooks/backlog-brief.sh; do
+  if [ "$(grep -c '^bic_mode() {$' "$c86_f")" -ne 1 ]; then
+    ko "check 86: $c86_f does not define bic_mode exactly once"; c86_fail=1
+  fi
+done
+c86_a=$(c86_fn hooks/backlog-item-check.sh)
+c86_b=$(c86_fn hooks/backlog-brief.sh)
+if [ -z "$c86_a" ] || [ "$c86_a" != "$c86_b" ]; then
+  ko "check 86: bic_mode in hooks/backlog-brief.sh differs from hooks/backlog-item-check.sh (or is empty) -- the two must stay byte-identical"; c86_fail=1
+fi
+c86_tmp=$(mktemp -d)
+sed 's/plan-files/plan-filez/' hooks/backlog-brief.sh > "$c86_tmp/backlog-brief.sh"
+if [ "$(c86_fn "$c86_tmp/backlog-brief.sh")" = "$c86_a" ]; then
+  ko "check 86 control: a copy with a changed mode word was NOT reported -- the comparison is vacuous"; c86_fail=1
+fi
+rm -rf "${c86_tmp:?}"
+[ "$c86_fail" -eq 0 ] && ok "check 86: bic_mode is defined once in each of backlog-item-check.sh and backlog-brief.sh and the two bodies are byte-identical; control fires"
 
 
 # ---------------------------------------------------------------------------
