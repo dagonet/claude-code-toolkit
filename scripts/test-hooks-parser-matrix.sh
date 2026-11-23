@@ -99,8 +99,12 @@ EXP_NODE_SKIP=0
 #   Measured at b17d800 on agent-host-1: python3 274 (v5.2.1: 241), jq 370 (v5.2.1: 337), +33 in both.
 #   EXP_PY_SKIP is the measured 274, not 255+33: 255 sat 14 above v5.2.1's 241, which left a Windows host
 #   (3-4 fewer python3 skips) about 2 inside the band.
-EXP_PY_SKIP=274
-EXP_JQ_SKIP=368
+# v7.0.0: measured at 7dc124c on agent-host-1: python3 293, jq 401 (v6.2.0 tree: 276, 378).
+#   +17 each, rows that need node: g7 read-size-gate 2, g7 bash-output-guard 2, l7 retro 6,
+#   v7 table enforce-agent-contract plugin-coder cases 7.
+#   +6 more for jq, rows that need python3: DL15 CRLF python3 arm 2, v5 jev registration 21 -> 25.
+EXP_PY_SKIP=293
+EXP_JQ_SKIP=401
 BAND=20
 
 matrix_fail=0
