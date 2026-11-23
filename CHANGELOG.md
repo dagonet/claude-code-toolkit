@@ -71,6 +71,10 @@ The hooks keep their names; only where they come from changed: `read-size-gate`,
 - `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md`: the install lines and the pinned tag move to v7.0.0.
 - `docs/self-review/2026-11-20.md`: items 3 and 8 are marked closed and item 5 shipped through the plugin split; a line notes that the counter's `spawns` rows are now `start_models` rows. Nothing else in the report is applied.
 
+### Fixed
+
+- **Bootstrap and Linux installer: an installed plugin could read as missing.** Both scripts run under `pipefail` and piped `claude plugin list` (and `marketplace list`) into `grep -q`, which stops reading at the first match; when the CLI still had lines to write it died of SIGPIPE and the check failed. The bootstrap then printed the install tip instead of enabling `dotnet-tools` or `rust-tools` for the clone, and the installer re-added the marketplace. Both now capture the list first and match it in the shell. Seen once as a flaky bootstrap fixture on a loaded host; the fixture's `claude` stub now writes its list line by line with a pause, so the old shape fails every time.
+
 ### Measured
 Taken from the full gate at 3b2960f on agent-host-1 (`GATE PASS`), the commit before this release commit; the release commit changes only version text, the CHANGELOG, `docs/architecture.md` and `docs/self-review/2026-11-20.md`.
 - **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (check 50 prints as a PASS line while skipping: no system `python`, only `python3`).

@@ -191,7 +191,8 @@ for w in $WITH_IDS; do
   printf '%s\n' "$SUBS" | awk -v w="$w" '$1 == w {f = 1} END {exit !f}' && continue
   claude plugin install "$w" </dev/null || die "cannot install $w: $NR"
 done
-claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
+mk_list=$(claude plugin marketplace list 2>/dev/null || true)
+[[ $mk_list == *"$MARKET"* ]] || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
 for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
 want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')
 claude plugin list --json 2>/dev/null | jq -e --arg v "$want_ver" 'any(.[]; .id == "cct@dagonet" and .scope == "user" and .enabled == true and .version == $v)' >/dev/null \

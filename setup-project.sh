@@ -1315,8 +1315,10 @@ case "$VARIANT" in
     *)                  srv_plugin="" ;;
 esac
 if [[ -n "$srv_plugin" ]]; then
+    # The list is captured, not piped: under pipefail a `grep -q` that exits at the first match kills the writer with SIGPIPE.
     if command -v claude >/dev/null 2>&1 \
-       && claude plugin list 2>/dev/null | grep -qF "$srv_plugin@dagonet" \
+       && srv_list=$(claude plugin list 2>/dev/null) \
+       && [[ $srv_list == *"$srv_plugin@dagonet"* ]] \
        && (cd "$TARGET_DIR" && claude plugin enable "$srv_plugin@dagonet" --scope local >/dev/null 2>&1); then
         echo "  [+] $srv_plugin@dagonet enabled for this clone (local scope)"
     else

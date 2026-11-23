@@ -1036,7 +1036,10 @@ STUBDIR="$TMPROOT/claude-stub"; mkdir -p "$STUBDIR"
 cat > "$STUBDIR/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB_LOG"
-if [ "${1:-}" = plugin ] && [ "${2:-}" = list ]; then printf '%s\n' "${STUB_LIST:-}"; fi
+# The pause after each line reproduces the pipefail + `grep -q` SIGPIPE race deterministically.
+if [ "${1:-}" = plugin ] && [ "${2:-}" = list ]; then
+  while IFS= read -r l; do printf '%s\n' "$l"; sleep 0.2; done <<<"${STUB_LIST:-}"
+fi
 exit 0
 STUB
 chmod +x "$STUBDIR/claude"
