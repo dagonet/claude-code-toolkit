@@ -5410,6 +5410,45 @@ else
 fi
 rm -rf "${c84_tmp:?}"
 
+# ---------------------------------------------------------------------------
+# Check 85 (v7.0.0, backlog discipline): the backlog shape ships.
+#   (a) the six templates' PROJECT_STATE.md and this repo's root PROJECT_STATE.md carry, under "## Backlog", the
+#       three subsections "### Untriaged", "### Ranked", "### Done", in that order and nothing else at ### level;
+#   (b) templates/general/AGENT_TEAM.md carries the "## Backlog" heading and the three rules the item check
+#       (hooks/backlog-item-check.sh, a later task) enforces;
+#   (c) skills/sync-template/SKILL.md does not tell a sync to create its PR with "gh pr create --fill" -- a
+#       generated body has no "Item: none" line, so the item check would refuse every sync PR;
+#   (e) control: a temp copy of a template without "### Ranked" is reported, so (a) cannot pass vacuously.
+# ---------------------------------------------------------------------------
+note "Check 85: backlog shape -- PROJECT_STATE.md subsections, AGENT_TEAM.md rules, sync PR without --fill"
+c85_shape() { # <file> -> prints the ### headings under "## Backlog", joined by "|"
+  awk '/^## /{in_b = ($0 == "## Backlog"); next} in_b && /^### /{printf "%s%s", sep, $0; sep="|"}' "$1"
+}
+c85_want="### Untriaged|### Ranked|### Done"
+c85_fail=0
+for c85_f in $(for v in $VARIANTS; do echo "templates/$v/PROJECT_STATE.md"; done) PROJECT_STATE.md; do
+  if [ ! -f "$c85_f" ]; then
+    ko "check 85 (a): $c85_f is missing"; c85_fail=1
+  elif [ "$(c85_shape "$c85_f")" != "$c85_want" ]; then
+    ko "check 85 (a): $c85_f has Backlog subsections '$(c85_shape "$c85_f")', expected '$c85_want'"; c85_fail=1
+  fi
+done
+for c85_s in '^## Backlog$' 'Before picking the next task, groom the backlog' 'One item = one pull request' 'Grooming lands on the trunk before any helper starts'; do
+  if ! grep -q -- "$c85_s" templates/general/AGENT_TEAM.md; then
+    ko "check 85 (b): templates/general/AGENT_TEAM.md lacks '$c85_s'"; c85_fail=1
+  fi
+done
+if grep -q 'gh pr create --fill' skills/sync-template/SKILL.md; then
+  ko "check 85 (c): skills/sync-template/SKILL.md still creates the sync PR with 'gh pr create --fill' (use --body-file with an 'Item: none' line)"; c85_fail=1
+fi
+c85_tmp=$(mktemp -d)
+grep -v '^### Ranked' templates/general/PROJECT_STATE.md > "$c85_tmp/PROJECT_STATE.md"
+if [ "$(c85_shape "$c85_tmp/PROJECT_STATE.md")" = "$c85_want" ]; then
+  ko "check 85 control: a copy without '### Ranked' was NOT reported -- the shape predicate is vacuous"; c85_fail=1
+fi
+rm -rf "${c85_tmp:?}"
+[ "$c85_fail" -eq 0 ] && ok "check 85: 7 PROJECT_STATE.md carry Untriaged/Ranked/Done in order, AGENT_TEAM.md carries the backlog rules, the sync skill does not use --fill; control fires"
+
 
 # ---------------------------------------------------------------------------
 echo

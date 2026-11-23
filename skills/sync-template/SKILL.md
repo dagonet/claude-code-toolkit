@@ -1301,7 +1301,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 >
 > The three-term formula `len(invocation) + 1 + len(body)` is retained as the EXPLANATION of what the pipeline does (invocation, one separator newline, the capped/stripped/joined body), never as the number to compute. **`cmd_len` is BYTES** (v4.1.2: the hook records `wc -c`, not `${#GC_CMD}`, so the figure no longer depends on the locale the harness happens to carry — under a UTF-8 locale the old character count read two short per `ö`); the recipe's `wc -c` is the same ruler.
 
-**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool), or `--fill` to reuse the commit message. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
+**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool; it must contain a line `Item: none`, which the backlog item check reads — a `--fill` body has none, and the check refuses a `--body` literal). One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
 
 > **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
 
@@ -1313,7 +1313,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/template-manifest.json
 # the sync commit is sync-only: the project's own docs (PROJECT_STATE.md, plans, ...) never go in it;
 # commit them separately, on the same branch if wanted
-# write the message to a FILE first (Write tool), then:
+# write the message to a FILE first (Write tool), ending with its own paragraph `Item: none` (a git trailer), then:
 git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** present this
                                                    # runs the tests only and writes NO artifact
 # --> with **Test** present: now delegate ONE `cct-gate` run to `cct:ops` (the PO cannot run the gate)
@@ -1321,7 +1321,7 @@ git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** p
 #     <common git dir>/gate/last-pass.tree-<HEAD^{tree}>.json for the committed tree --
 #     skip the extra run when that file exists and carries "status":"pass" (penumbra, v4.6.0)
 git push -u origin <branch>
-gh pr create --fill
+gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"   # the file carries a line: Item: none
 gh pr merge --squash --delete-branch               # `gh` only: it has a --delete-branch flag.
 # The MCP merge tool has NO --delete-branch equivalent. Using it: merge with
 # the MCP tool, then delete the remote branch as its OWN, separate tool call:

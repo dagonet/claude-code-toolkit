@@ -43,7 +43,7 @@ Look-up reference, not a read-through — load on demand (`CLAUDE.md` -> *Sessio
 
 ### Product Owner (PO)
 
-- Primary interface with the human stakeholder; maintains/prioritizes the backlog. Spawns the **Architect** for new features; reviews/publishes specs; plans sprints; monitors progress, handles escalations; writes a session summary after each sprint.
+- Primary interface with the human stakeholder; maintains/prioritizes the backlog (see `## Backlog`). Spawns the **Architect** for new features; reviews/publishes specs; plans sprints; monitors progress, handles escalations; writes a session summary after each sprint.
 - **T1 delegated fixes** (see Tiered Sprint Model) — brief inline, no plan file needed. **The PO NEVER edits code, at any tier.** Write surface: `docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `AGENT_TEAM.md` — enforced by the cct plugin's `enforce-delegation` hook.
 - **Never reviews code inline** — `cct:code-reviewer` is spawned T2+; T1 relies on the coder's gate run.
 - **Read discipline**: Read/Grep only for targeted verification (1-2 files) and orchestration files; open-ended exploration goes to **`cct:Explore`** (see Model & Effort Policy).
@@ -78,12 +78,24 @@ The `task-source` field in `PROJECT_CONTEXT.md` determines which column applies.
 | **Dev discovers task** | Dev reads issue via `mcp__MCP_DOCKER__issue_read` | PO inlines task AC + files in dev prompt |
 | **Review findings** | PR review via `mcp__MCP_DOCKER__pull_request_review_write` | same |
 | **Test findings** | PR comment via `mcp__MCP_DOCKER__add_issue_comment` | same |
-| **Close task** | PO closes GitHub Issue via `mcp__MCP_DOCKER__issue_write` | Task list (TaskUpdate); MEMORY.md after sprint |
+| **Close task** | PO closes GitHub Issue via `mcp__MCP_DOCKER__issue_write` | Move the item into `### Done` in `PROJECT_STATE.md` |
 | **Branch naming** | `feature/issue-{number}` or `bugfix/issue-{number}` | PO specifies per task (e.g. `feature/calendar-tz-fix`) |
 | **Worktree naming** | `{base}/{project}-issue-{number}/` | `{base}/{project}-{branch-name}/` |
 | **Commit convention** | `issue-{number}: {description}` | `feat:`/`fix:`/`chore:`/`test:`/`docs:` prefixes |
-| **Tech debt tracking** | GitHub Issue with `tech-debt` label | MEMORY.md or next sprint's plan file |
-| **Sprint state** | `PROJECT_STATE.md` with issue/PR numbers | MEMORY.md sprint summary |
+| **Tech debt tracking** | GitHub Issue with `tech-debt` label | Item under `## Backlog` in `PROJECT_STATE.md` |
+| **Sprint state** | `PROJECT_STATE.md` with issue/PR numbers | `PROJECT_STATE.md` `## Backlog` and `## Current Sprint` |
+
+---
+
+## Backlog
+
+Issue mode: item = issue `#N`, done = closed, rank = label `priority:1`..`3`, untriaged = open without one. File mode: `PROJECT_STATE.md` `## Backlog` holds `### Untriaged`, `### Ranked` (top = next) and `### Done` (last 20) as `- B-<n> [in progress] <title>` (tag optional; numbers rise, never reused).
+
+- Before picking the next task, groom the backlog: close finished items, rank every untriaged item, re-check the top three.
+- Grooming lands on the trunk before any helper starts: a PR that touches only `PROJECT_STATE.md` needs no item.
+- One item = one pull request: an item that needs several PRs is split into several items when ranked.
+- Every PR names its item (issue mode: `Closes #N` in the body; file mode: the PR moves the item into `### Done`), or carries `Item: none` (T1 and template sync only; counted).
+- Parallel PRs touching `PROJECT_STATE.md` rebase before merge, as every PR does.
 
 ---
 
@@ -127,6 +139,7 @@ is a reference, never a substitute for the brief.
 
 ```
 Task #{n}: issue #{issue}. Worktree: {path}, branch: feature/issue-{issue}.
+Item: {B-<n> | #N | none}
 
 ## Goal
 {1-2 sentences}
@@ -146,7 +159,7 @@ Task #{n}: issue #{issue}. Worktree: {path}, branch: feature/issue-{issue}.
 Context: the GitHub issue (reference only). Workflow: implement -> gate -> commit -> push -> create PR -> report the PR URL.
 ```
 
-**plan-files mode (T2-T3):** same shape as above, except the Task line reads `Task: {title}. Worktree: {path}, branch: {branch}.` (no issue number), plus `Architect guidance: {summary or "none"}` and `Context: {plan_file_path} if one exists (reference only)`.
+**plan-files mode (T2-T3):** same shape as above, except the Task line reads `Task: {title}. Worktree: {path}, branch: {branch}.` (no issue number), the workflow gains "move the item into `### Done` in `PROJECT_STATE.md`" before commit, plus `Architect guidance: {summary or "none"}` and `Context: {plan_file_path} if one exists (reference only)`.
 
 **PO responsibility (plan-files mode):** inline the acceptance criteria and file list directly in the dev spawn prompt — the dev should not need to read the plan file. The path is additional context only.
 
