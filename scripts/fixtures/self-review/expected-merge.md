@@ -8,8 +8,8 @@ windows differ: linux-aaaaaa 2026-11-01..2026-11-30; windows-bbbbbb 2026-11-08..
 | agent coder | 3 | 1 | 4 |
 | backlog_item_none | 3 | 1 | 4 |
 | backlog_refusals file/no-item | 2 | 1 | 3 |
+| backlog_refusals file/not-pushed | 1 | 0 | 1 |
 | backlog_refusals issue/no-item | 0 | 2 | 2 |
-| backlog_refusals other/not-pushed | 1 | 0 | 1 |
 | correction_candidates | 6 | 4 | 10 |
 | correction_kind ignored-instruction | 0 | 3 | 3 |
 | correction_kind scope-creep | 0 | 1 | 1 |

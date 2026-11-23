@@ -6,8 +6,8 @@
 
 
 ### Downstream migration
-- **The first PR after the update adds the backlog shape and carries `Item: none`.** `hooks/backlog-item-check.sh` refuses a PR that names no backlog item, and a base without `## Backlog` holding `### Untriaged`, `### Ranked` and `### Done` in `PROJECT_STATE.md` (`Task source: plan-files`), or without the `priority:1..3` labels (`Task source: github-issues`), has no item to name. That first PR adds the three subsections (or creates the three labels) and has the trailer `Item: none` in the last paragraph of a commit message (file mode) or a line exactly `Item: none` in the PR body (issue mode).
-- **Sync PRs carry `Item: none`.** The PR that lands a `/cct:sync-template` run changes template files, not a backlog item; put the trailer on its commit.
+- **The first PR after the update adds the backlog shape and carries `Item: none`.** `hooks/backlog-item-check.sh` refuses a PR that names no backlog item. In file mode (`Task source: plan-files`) a base whose `PROJECT_STATE.md` lacks `## Backlog` with `### Untriaged`, `### Ranked` and `### Done` has nowhere to move an item, so the first PR adds the three subsections. In issue mode (`Task source: github-issues`) create the `priority:1..3` labels; the hook does not check them, `backlog-brief` reads them. That first PR carries the commit trailer `Item: none` in the last trailer block (file mode) or a line exactly `Item: none` in the PR body (issue mode).
+- **Sync PRs carry `Item: none`.** The PR that lands a `/cct:sync-template` run changes template files, not a backlog item; put the commit trailer `Item: none` in the last trailer block (file mode) and a line exactly `Item: none` in the PR body (issue mode).
 - **Grooming PRs are exempt.** A PR whose diff touches only `PROJECT_STATE.md` passes without a trailer (file mode).
 
 ## v6.2.0 — 2026-11-12

@@ -69,9 +69,11 @@ USER = 'user'  # the `<to>` of the top-rung form
 OTHER = 'other'
 NOTE_KINDS = ('helped', 'recurring_failure', 'rule_unused')
 # Backlog discipline (hooks/backlog-item-check.sh). `backlog_refusals` keys are `<mode>/<reason>`, both from
-# these fixed lists, and only the count of each is kept, never the refusal text. The mode is `file` or `issue`
-# only when the refusal text itself is specific to one (it is not named in the text), else `other`. The reason
-# comes from the first fixed substring of the hook's own refusal text that the result holds, else `other`.
+# these fixed lists, and only the count of each is kept, never the refusal text. The text never names the mode;
+# it is read from the code path that prints the text: bic_refs and bic_file_ok run only on the file-mode branch of
+# bic_judge, bic_body_ok only on the issue-mode one. A text printed before the mode is known, or in both modes
+# (the body-file texts, `Task source`, not inside a checkout), has mode `other`. The reason comes from the first
+# fixed substring of the hook's own refusal text that the result holds, else `other`.
 BACKLOG_HOOK = 'backlog-item-check'
 BACKLOG_MODES = ('file', 'issue', OTHER)
 BACKLOG_REASONS = ('no-item', 'body-unreadable', 'no-subsections', 'wrong-checkout', 'not-pushed', 'no-base', 'mode', OTHER)
@@ -82,20 +84,21 @@ BACKLOG_REFUSALS = (  # (substring of the hook's refusal text, mode, reason); th
     ('cannot read the body file', OTHER, 'body-unreadable'),
     ('the body of this gh pr create cannot be read', OTHER, 'body-unreadable'),
     ('this check cannot tell which file it is', OTHER, 'body-unreadable'),
-    ('is not equal to refs/remotes/origin/', OTHER, 'not-pushed'),
-    ('no base branch given', OTHER, 'no-base'),
-    ('such as ~ or @{}): pass --base', OTHER, 'no-base'),
-    ('does not exist locally: fetch first', OTHER, 'no-base'),
-    ('such as ~ or @{}): run from the PR', OTHER, 'wrong-checkout'),
-    ('this checkout is on', OTHER, 'wrong-checkout'),
-    ('is on a detached HEAD', OTHER, 'wrong-checkout'),
-    ('cannot read the diff of HEAD', OTHER, 'wrong-checkout'),
-    ('cannot read the commits of', OTHER, 'wrong-checkout'),
+    ('is not equal to refs/remotes/origin/', 'file', 'not-pushed'),
+    ('no base branch given', 'file', 'no-base'),
+    ('such as ~ or @{}): pass --base', 'file', 'no-base'),
+    ('does not exist locally: fetch first', 'file', 'no-base'),
+    ('such as ~ or @{}): run from the PR', 'file', 'wrong-checkout'),
+    ('this checkout is on', 'file', 'wrong-checkout'),
+    ('is on a detached HEAD', 'file', 'wrong-checkout'),
+    ('cannot read the diff of HEAD', 'file', 'wrong-checkout'),
+    ('cannot read the commits of', 'file', 'wrong-checkout'),
     ('is not inside a git checkout', OTHER, 'wrong-checkout'),
     ('has no usable', OTHER, 'mode'),
 )
-# `Item: none` as a line of its own (a commit message or heredoc, optionally closed by a quote) or as a quoted -m text.
-ITEM_NONE_RE = re.compile(r'(?m)^[ \t]*Item: none[ \t]*["\']?[ \t]*\r?$|["\']Item: none["\']')
+# `Item: none` as a line of its own (a commit message or heredoc, optionally closed by a quote), as the last line
+# of a quoted -m text that starts with it, or as a quoted -m text of its own.
+ITEM_NONE_RE = re.compile(r'(?m)^[ \t]*Item: none[ \t]*["\']?[ \t]*\r?$|["\']Item: none(?:["\']|[ \t]*\r?$)')
 ITEM_NONE_LINE_RE = re.compile(r'(?m)^Item: none\r?$')  # a PR body: the line, as the hook reads it
 GIT_COMMIT_RE = re.compile(r'\bgit\b[^\n]*\bcommit\b')
 SHELL_TOOLS = {'Bash', 'PowerShell'}
@@ -1064,12 +1067,12 @@ def self_test():
             bad.append('/block_hook(%r, %s): want %s, got %s' % (text[:60], is_error, want, block_hook(text, is_error)))
     # the hook's own refusal texts the fixture rows do not hold, each as the hook prints it (the unmapped ones go to other/other)
     for text, want in (
-            ("the checkout is on a detached HEAD and no head branch was given: run from the PR's own checkout.", 'other/wrong-checkout'),
+            ("the checkout is on a detached HEAD and no head branch was given: run from the PR's own checkout.", 'file/wrong-checkout'),
             ("head 'x' is not a branch name (no revision expressions such as ~ or @{}): run from the PR's own checkout.",
-             'other/wrong-checkout'),
-            ("base 'x' is not a branch name (no revision expressions such as ~ or @{}): pass --base <branch>.", 'other/no-base'),
-            ('cannot read the diff of HEAD against refs/remotes/origin/main: run from the PR\'s own checkout.', 'other/wrong-checkout'),
-            ('cannot read the commits of refs/remotes/origin/main..HEAD: run from the PR\'s own checkout.', 'other/wrong-checkout'),
+             'file/wrong-checkout'),
+            ("base 'x' is not a branch name (no revision expressions such as ~ or @{}): pass --base <branch>.", 'file/no-base'),
+            ('cannot read the diff of HEAD against refs/remotes/origin/main: run from the PR\'s own checkout.', 'file/wrong-checkout'),
+            ('cannot read the commits of refs/remotes/origin/main..HEAD: run from the PR\'s own checkout.', 'file/wrong-checkout'),
             ('/x is not inside a git checkout: run from the PR\'s own checkout.', 'other/wrong-checkout'),
             ("the body of this gh pr create cannot be read from the command (--body, -b)", 'other/body-unreadable'),
             ("the body file '/x' holds a $, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use a plain path.",
@@ -1081,6 +1084,13 @@ def self_test():
             ('', 'other/other')):
         if backlog_refusal(text) != want:
             bad.append('/backlog_refusal(%r): want %s, got %s' % (text[:50], want, backlog_refusal(text)))
+    for command, want in (('git commit -m "feat: x" -m "Item: none\nCo-Authored-By: A <a@b>"', True),
+                          ('git commit -m "feat: x" -m "Item: none"', True),
+                          ('git commit -m "$(cat <<\'EOF\'\nfeat: x\n\nItem: none\nCo-Authored-By: A <a@b>\nEOF\n)"', True),
+                          ('git commit -m "feat: x" -m "Item: nonexistent"', False),
+                          ('git commit -m "feat: Item: none is only mentioned"', False)):
+        if item_none('Bash', {'command': command}) != want:
+            bad.append('/item_none(%r): want %s' % (command, want))
     for text, want in (('Follow-ups:\n- a', True), ('x\r\nFollow-ups:\r\n- a\r\n', True), ('Follow-ups:\n\n- a', False),
                        ('Follow-ups:\nnone', False), (' Follow-ups:\n- a', False), ('Follow-ups:', False),
                        ('Follow-ups:\nFollow-ups:\n- a', True), ('', False)):
