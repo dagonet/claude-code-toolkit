@@ -5093,6 +5093,39 @@ trow_str 'Looks fine to me, nothing to flag.' > "$CT_CHAT"
 ctr "reviewer: STRING prose blocks" "$TMPROOT/ct6" code-reviewer a-ch "$CT_CHAT" 2 \
   "CONTRACT VIOLATION"
 
+# --- 4b. v6.3: a reviewer verdict of 'clean' may be followed by ONE Follow-ups block ---
+CT_FU="$TMPROOT/contract-fu.jsonl"
+trow_str 'clean
+Follow-ups:
+- rename the helper
+- add a docs line' > "$CT_FU"
+ctr "reviewer: 'clean' + Follow-ups block passes" "$TMPROOT/ct5a" code-reviewer a-fu "$CT_FU" 0
+CT_FU_ARR="$TMPROOT/contract-fu-arr.jsonl"
+trow_text 'clean
+Follow-ups:
+- one' > "$CT_FU_ARR"
+ctr "reviewer: ARRAY-shaped 'clean' + block passes" "$TMPROOT/ct5b" code-reviewer a-fu2 "$CT_FU_ARR" 0
+CT_FU_EMPTY="$TMPROOT/contract-fu-empty.jsonl"
+trow_str 'clean
+Follow-ups:' > "$CT_FU_EMPTY"
+ctr "reviewer: 'clean' + header with no item blocks" "$TMPROOT/ct5c" code-reviewer a-fu3 "$CT_FU_EMPTY" 2 \
+  "CONTRACT VIOLATION"
+CT_FU_PROSE="$TMPROOT/contract-fu-prose.jsonl"
+trow_str 'clean
+Looks fine to me.
+Follow-ups:
+- one' > "$CT_FU_PROSE"
+ctr "reviewer: 'clean' + prose before the block blocks" "$TMPROOT/ct5d" code-reviewer a-fu4 "$CT_FU_PROSE" 2 \
+  "CONTRACT VIOLATION"
+CT_FU_TWO="$TMPROOT/contract-fu-two.jsonl"
+trow_str 'clean
+Follow-ups:
+- one
+Follow-ups:
+- two' > "$CT_FU_TWO"
+ctr "reviewer: 'clean' + two blocks blocks" "$TMPROOT/ct5e" code-reviewer a-fu5 "$CT_FU_TWO" 2 \
+  "CONTRACT VIOLATION"
+
 # --- 5. the loop guard bounds at ONE prod, over a SHARED marker dir ----------
 # Pre-v2.2.2 this sequence measured 2 / 0 / 2: the let-through path deleted the
 # marker, so stop 3 started fresh and prodded again — an unbounded alternation.
@@ -13146,6 +13179,27 @@ anr_run "unknown agent type: no output"    "" "$(anr_payload cct:no-such-agent s
 anr_run "another tool_name: no output"     "" "$(anr_payload cct:coder sonnet completed - "$ANR_FAIL" | sed 's/"tool_name":"Agent"/"tool_name":"Task"/')"
 anr_run "unreadable payload: no output"    "" 'this is not json'
 anr_run "empty payload: no output"         "" ''
+# ---- v6.3 backlog discipline: rule anr_followups -- a reviewer/tester report holding a "Follow-ups:" block with
+# at least one "- " line gets one fixed note (the item text is never quoted). Types: cct:code-reviewer|code-reviewer|cct:tester|tester.
+# The two rules are disjoint by type (step-up excludes code-reviewer and tester), so no payload makes both fire:
+# the single-space join of the two notes in one additionalContext cannot be pinned by a row.
+ANR_FU_NOTE='{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Add these follow-ups to the backlog as untriaged items."}}'
+anr_run "reviewer clean + Follow-ups block: the note (item text not quoted)" "$ANR_FU_NOTE" "$(anr_payload cct:code-reviewer sonnet completed - 'clean\nFollow-ups:\n- rename the helper (secret-token-xyz)\n- add a docs line')"
+anr_run "bare code-reviewer type: the note"             "$ANR_FU_NOTE" "$(anr_payload code-reviewer sonnet completed - 'clean\nFollow-ups:\n- one')"
+anr_run "cct:tester with a block: the note"             "$ANR_FU_NOTE" "$(anr_payload cct:tester sonnet completed - '**Verdict**: PASS\n\nFollow-ups:\n- flaky retry in suite B')"
+anr_run "bare tester type: the note"                    "$ANR_FU_NOTE" "$(anr_payload tester sonnet completed - 'PASS\nFollow-ups:\n- x')"
+anr_run "block in the second text block: the note"      "$ANR_FU_NOTE" \
+  "$(anr_payload cct:code-reviewer sonnet completed - 'clean' | sed 's/}\]}/},{"type":"text","text":"Follow-ups:\\n- later"}]}/')"
+anr_run "plain-string tool_response with a block: the note" "$ANR_FU_NOTE" \
+  '{"tool_name":"Agent","tool_input":{"subagent_type":"cct:code-reviewer"},"tool_response":"clean\nFollow-ups:\n- x","cwd":"."}'
+anr_run "reviewer clean alone: no output"               "" "$(anr_payload cct:code-reviewer sonnet completed - 'clean')"
+anr_run "Follow-ups header with no item line: no output" "" "$(anr_payload cct:code-reviewer sonnet completed - 'clean\nFollow-ups:\n')"
+anr_run "Follow-ups header, next line prose: no output" "" "$(anr_payload cct:code-reviewer sonnet completed - 'clean\nFollow-ups:\nnone really\n- stray bullet')"
+anr_run "Follow-ups: inside a sentence: no output"      "" "$(anr_payload cct:tester sonnet completed - 'PASS. See Follow-ups: below\n- a')"
+anr_run "coder report with a block: no output"          "" "$(anr_payload cct:coder sonnet completed - '- [pass] 1. a\nCommit: abc\nGate: GATE PASS abc\nConcerns: none\nFollow-ups:\n- x')"
+anr_run "architect with a block: no output"             "" "$(anr_payload cct:architect sonnet completed - 'Follow-ups:\n- x')"
+anr_run "background reviewer (async_launched): no output" "" "$(anr_payload cct:code-reviewer sonnet async_launched sonnet -)"
+anr_run "reviewer without content: no output"           "" "$(anr_payload cct:code-reviewer sonnet completed - -)"
 # ---- end v7.0.0 agent-result-notes
 
 # ---- v6.3 backlog discipline: hooks/backlog-item-check.sh -- an MCP PR creation / merge must name a backlog item.

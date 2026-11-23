@@ -79,7 +79,12 @@ Post findings directly via `mcp__MCP_DOCKER__add_issue_comment` (use the PR numb
 
 ### Findings
 {any issues found, using severity format below}
+
+Follow-ups:
+- {optional: something worth doing later that is not a finding}
 ```
+
+The `Follow-ups:` block is optional (a line exactly `Follow-ups:`, then `- <item>` lines); omit it when there is nothing. The orchestrator adds each item to the backlog as untriaged.
 
 For individual findings:
 ```

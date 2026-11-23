@@ -110,6 +110,8 @@ Your final message MUST be exactly one of:
 1. A findings list in the format above — every finding carries a **Severity** tag (critical | warning | suggestion) and a `file:line` locator; or
 2. The single word `clean` — meaning you completed the full review and found nothing to report.
 
+Either form may end with one optional block for things worth doing later that are not findings: a line exactly `Follow-ups:`, then `- <item>` lines. After `clean` it is the only thing that may follow. The orchestrator adds each item to the backlog as untriaged.
+
 Ending your run without one of these (going idle, returning only progress notes, or summarizing without findings) is a **failed review**: the PO treats the review as not done and re-dispatches it. Never end on "review in progress" or an empty message.
 
 **Subagent reporting (HARD REQUIREMENT):** your final message IS the deliverable — end your run with the full report in it. There is no side channel: a run that ends without a report is treated as failed and re-dispatched.

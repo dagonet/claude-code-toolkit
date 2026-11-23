@@ -17,7 +17,13 @@
 # ADVISORY: class project, polarity open, no onFailure, no state file. Any doubt -> exit 0, no output.
 # STDOUT is the whole contract: exactly one
 #   {"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"<note>"}}
-# or nothing. A later rule (anr_followups) goes beside anr_step_up and shares the payload parse.
+# or nothing. Two rules share the payload parse and each prints its note text; the notes are joined by one space.
+#
+# Backlog discipline, v6.3: rule anr_followups -- a reviewer/tester report (cct:code-reviewer, code-reviewer,
+# cct:tester, tester) holding a `Follow-ups:` line followed by at least one `- ` line gets the note
+# "Add these follow-ups to the backlog as untriaged items." The item text is never quoted. Foreground spawns
+# only: a background spawn fires at launch with no report. The rules are disjoint by type (step-up excludes
+# code-reviewer and tester), so the join is not reachable today.
 lib="$(dirname "$0")/lib/json.sh"
 [ -f "$lib" ] || exit 0
 # shellcheck source=lib/json.sh
@@ -99,7 +105,19 @@ anr_step_up() {
   [ -n "$why" ] || return 0
   if [ -n "$next" ]; then note="Step-up: $ANR_TYPE failed on $fam ($why). Start the same job again on $next."
   else note="Step-up: $ANR_TYPE failed on $fam ($why). Report this to the user instead of retrying."; fi
-  printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"%s"}}' "$note"
+  printf '%s' "$note"
+}
+
+# anr_followups -- prints the note text or nothing. A reviewer or tester report that holds a block
+# (a line exactly `Follow-ups:` followed at once by a `- ` line) gets one fixed note; the item text is
+# never quoted. The types come from tool_input.subagent_type, with or without the `cct:` prefix.
+anr_followups() {
+  local txt
+  case "$ANR_TYPE" in cct:code-reviewer|code-reviewer|cct:tester|tester) ;; *) return 0 ;; esac
+  txt=$(anr_text | tr -d '\r')
+  [ -n "$txt" ] || return 0
+  printf '%s\n' "$txt" | awk '/^Follow-ups:$/ { h = 1; next } h && /^- / { f = 1; exit } { h = 0 } END { exit !f }' || return 0
+  printf '%s' "Add these follow-ups to the backlog as untriaged items."
 }
 
 ANR_JSON=$(cat)
@@ -111,5 +129,9 @@ ANR_TYPE=${JF[1]}
 [ -n "$ANR_TYPE" ] || exit 0
 ANR_MODEL=${JF[3]:-${JF[4]}}
 ANR_CWD=${JF[5]:-.}
-anr_step_up
+# One JSON object per call: each rule prints its note text; the notes are joined by one space.
+ANR_NOTE=$(anr_step_up)
+ANR_FU=$(anr_followups)
+[ -n "$ANR_FU" ] && ANR_NOTE="${ANR_NOTE:+$ANR_NOTE }$ANR_FU"
+[ -n "$ANR_NOTE" ] && printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"%s"}}' "$ANR_NOTE"
 exit 0

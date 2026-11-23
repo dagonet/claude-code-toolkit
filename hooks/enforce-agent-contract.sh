@@ -141,7 +141,16 @@ missing=""
 case "$AGENT_TYPE" in
   code-reviewer)
     trimmed=$(printf '%s' "$LAST_TEXT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    if [ "$trimmed" = "clean" ] || printf '%s' "$LAST_TEXT" | grep -q '\*\*Severity\*\*'; then
+    # v6.3: 'clean' may be followed by exactly one optional `Follow-ups:` block of `- ` lines (the first
+    # non-blank line is `clean`, the next is the header, every later non-blank line is a `- ` item, at least one).
+    fu_clean=$(printf '%s\n' "$LAST_TEXT" | tr -d '\r' | awk '
+      { l = $0; gsub(/^[ \t]+|[ \t]+$/, "", l) }
+      l == "" { next }
+      n == 0 { if (l != "clean") bad = 1; n = 1; next }
+      n == 1 { if (l != "Follow-ups:") bad = 1; n = 2; next }
+      { if (substr(l, 1, 2) != "- ") bad = 1; items++ }
+      END { print (!bad && n == 2 && items > 0) ? "yes" : "no" }')
+    if [ "$trimmed" = "clean" ] || [ "$fu_clean" = yes ] || printf '%s' "$LAST_TEXT" | grep -q '\*\*Severity\*\*'; then
       ok=1
     else
       missing="a severity-tagged findings list (each finding with **Severity** and file:line) or the single word 'clean'"
