@@ -13967,17 +13967,23 @@ check_msg "backlog-item-check: a cwd that is not a git checkout is refused" "$BI
 
 # ---- v6.3 backlog discipline: hooks/backlog-brief.sh -- one line of backlog debt at every session start (advisory, exit 0).
 # File mode reads PROJECT_STATE.md; issue mode calls `gh issue list` under `timeout 3`, tested with a fake gh on a private PATH
-# (never a real network call). A PATH without gh is a directory of symlinks to just the tools the hook uses.
+# (never a real network call). A PATH without gh is a directory of wrappers for just the tools the hook uses.
 echo "=== hooks/backlog-brief.sh (backlog discipline, session-start line) ==="
 BB_HOOK="$ROOT/hooks/backlog-brief.sh"
 BB_BASH=$(command -v bash)
+# A copied/linked MSYS tool outside /usr/bin cannot load msys-2.0.dll, so each tool on a private PATH is a
+# wrapper that execs the real one by absolute path (the v5.2.1 rm shape).
+bb_tool() { # <dir> <tool> -> <dir>/<tool>, a wrapper that execs the real tool by absolute path
+  local p; p=$(command -v "$2") || return 0
+  printf '#!%s\nexec "%s" "$@"\n' "$BASH" "$p" > "$1/$2"; chmod +x "$1/$2"
+}
 BB_TOOLS="$TMPROOT/bb-tools"; mkdir -p "$BB_TOOLS"
 for bb_t in grep sed awk head tr cat sleep timeout; do
-  bb_p=$(command -v "$bb_t") && ln -sf "$bb_p" "$BB_TOOLS/$bb_t"
+  bb_tool "$BB_TOOLS" "$bb_t"
 done
 BB_NOTO="$TMPROOT/bb-notimeout"; mkdir -p "$BB_NOTO"
 for bb_t in grep sed awk head tr cat sleep; do
-  bb_p=$(command -v "$bb_t") && ln -sf "$bb_p" "$BB_NOTO/$bb_t"
+  bb_tool "$BB_NOTO" "$bb_t"
 done
 bb_run() { # <project dir> <source> [PATH] -> sets BB_OUT (stdout, trailing newline stripped) and BB_RC
   BB_OUT=$(printf '{"hook_event_name":"SessionStart","source":"%s"}' "$2" | env CLAUDE_PROJECT_DIR="$1" PATH="${3:-$PATH}" "$BB_BASH" "$BB_HOOK" 2>/dev/null); BB_RC=$?
@@ -14053,7 +14059,7 @@ bb_expect "backlog-brief: a top title of exactly 80 characters is kept whole" \
 # issue mode: fake gh on a private PATH. It logs its arguments and prints the canned JSON.
 BB_FAKE="$TMPROOT/bb-fake"; mkdir -p "$BB_FAKE"
 for bb_t in grep sed awk head tr cat sleep timeout; do
-  bb_p=$(command -v "$bb_t") && ln -sf "$bb_p" "$BB_FAKE/$bb_t"
+  bb_tool "$BB_FAKE" "$bb_t"
 done
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s/args"\ncat "%s/out"\nexit "$(cat "%s/rc")"\n' "$BB_FAKE" "$BB_FAKE" "$BB_FAKE" > "$BB_FAKE/gh"
 chmod +x "$BB_FAKE/gh"
