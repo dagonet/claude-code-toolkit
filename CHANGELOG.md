@@ -1,6 +1,6 @@
 # Changelog
 
-## v7.0.0 — 2026-11-23
+## v7.0.0 — 2026-11-25
 
 Major. The core `cct` plugin gets slim: the cost and context guards, the learning loop, the small helper skills, Jev and the language coders move into optional plugins of the `dagonet` marketplace, and a machine installs the ones it wants. Four finished plans land together:
 - **Slim core, part 2: the plugin split** (breaking renames, below). Design and plan: `docs/plans/2026-11-22-slim-core-plugin-split-design.md` and `docs/plans/2026-11-22-slim-core-plugin-split-plan.md`.
