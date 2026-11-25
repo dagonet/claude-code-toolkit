@@ -4,8 +4,8 @@ Template repo for bootstrapping projects with Claude Code config. It ships no ap
 
 ## Layout
 
-- `templates/<variant>/` — six variants: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`. Each carries `CLAUDE.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, `gitignore`, `.claude/{settings.json,agents/,rules/}`.
-- `user-level-reference/` — the copyable source for `~/.claude/` (CLAUDE.md, settings.json). Since v5.0 the agents, skills, output style and hooks ship in the cct plugin, whose root is the repo root: `agents/`, `skills/`, `output-styles/`, `hooks/hooks.json`.
+- `templates/<variant>/` — six variants: `general`, `dotnet`, `dotnet-maui`, `rust-tauri`, `java`, `python`. Each carries `CLAUDE.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, `gitignore`, `.claude/{settings.json,project-instructions.md,rules/}`.
+- `user-level-reference/` — the copyable source for `~/.claude/` (CLAUDE.md, settings.json). Since v5.0 the agents, skills, output style and hooks ship in the cct plugin, whose root is the repo root: `agents/`, `skills/`, `output-styles/`, `hooks/hooks.json`; since v7.0.0 the optional plugins (`cct-guards`, `cct-learning`, `cct-helpers`, `cct-jev`, the language and MCP server plugins) live under `plugins/<name>/`.
 - `hooks/` — the canonical enforcement hooks, referenced by both template settings and agent frontmatter.
 - `scripts/` — verification and propagation tooling. `setup-project.sh` / `.ps1` bootstrap a project.
 - `docs/plans/` — plans are committed markdown here, not ephemeral plan-mode files.

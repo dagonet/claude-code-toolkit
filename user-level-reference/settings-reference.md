@@ -117,7 +117,7 @@ Verbatim copy of `user-level-reference/settings.json` in this repo (v5.0). Perso
 |----------|-------|---------|
 | `CLAUDE_CODE_SHELL` | Path to bash.exe | Overrides the default shell used by Claude Code's Bash tool. Points to Git Bash so Unix-style commands work on Windows. |
 | `ENABLE_PROMPT_CACHING_1H` | `"1"` | Extends prompt-cache TTL to one hour — worth it for long orchestrator sessions that re-send a large stable prefix. |
-| `CLAUDE_CODE_USE_POWERSHELL_TOOL` | `"1"` | Exposes the dedicated `PowerShell` tool alongside `Bash` on Windows. The cct plugin covers both: the git gates run in the `Bash` and `PowerShell` dispatcher tables (v6.0), and the output guard's matcher is `Bash\|PowerShell`. |
+| `CLAUDE_CODE_USE_POWERSHELL_TOOL` | `"1"` | Exposes the dedicated `PowerShell` tool alongside `Bash` on Windows. The cct plugin covers both: the git gates run in the `Bash` and `PowerShell` dispatcher tables (v6.0), and, if `cct-guards` is installed, the output guard's matcher is `Bash\|PowerShell`. |
 | `CLAUDE_CODE_DISABLE_1M_CONTEXT` | `"false"` | Enables the 1M token context window on Opus 4.6/4.7 (claude.ai MAX plan). Must be a **string** (`"false"`), not JSON boolean. On Sonnet this has no effect — Sonnet caps at 200k on MAX. |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `"1000000"` | Sets the **context window size** (not the compaction trigger). Must match the model's max context, otherwise it clamps `/context` to this value. For Opus 4.7 with 1M context, keep at `"1000000"`. Setting it lower (e.g. `"700000"`) collapses `/context` back to 200k — a misleading symptom. Use `contextCompactionThreshold` to control *when* compaction triggers. |
 
@@ -328,7 +328,7 @@ A user-level hook may only reference scripts and paths that exist in *every* rep
 
 **Exit-code semantics (important):** a hook command exiting with anything other than 0 or 2 — including **127 when the script file is missing** — is FAIL-OPEN: the tool call proceeds and only a non-blocking error is logged. That is why, since v5.0, `hooks/run-hook.sh` tests the script first and, for the fail-closed hooks, exits 2 with a `HOOK SCRIPT MISSING` diagnostic, and why the fail-closed hooks carry an `EXIT` trap that maps their own exit 127 to 2. The deliberate exceptions get the silent-0 or WARN polarity instead — among them the SubagentStop contract enforcer: a missing stop-gate must fail open, or a broken installation would block agents from ever stopping.
 
-The cct plugin registers the toolkit's project hooks (gates, post-edit build, pipeline tracking, compaction brief); the template registers none of them. See `docs/architecture.md` → *Hooks* for the full table.
+The cct plugin registers the toolkit's project hooks (gates, pipeline tracking, compaction brief; the post-edit build comes from `cct-guards`, if installed); the template registers none of them. See `docs/architecture.md` → *Hooks* for the full table.
 
 #### Workflow Enforcement Hooks (project class, registered by the cct plugin)
 

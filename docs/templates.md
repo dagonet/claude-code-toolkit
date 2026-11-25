@@ -9,7 +9,7 @@
 | Language/Framework | Any | C#/.NET | .NET MAUI Desktop | Rust + TypeScript (Tauri v2) | Java (Spring Boot) | Python |
 | Default Task Source | `plan-files` | `plan-files` | `plan-files` | `plan-files` | `plan-files` | `plan-files` |
 | User-level MCP (universal) | git, github, ollama, template-sync, searxng, open-brain (+ plugins) | same | same | same | same | same |
-| Project-level MCP (auto-generated) | none (unless `--sqlite-db-path`) | `dotnet-tools` | `dotnet-tools`, `windows-mcp` | `rust-tools`, `windows-mcp` | none (unless `--sqlite-db-path`) | none (unless `--sqlite-db-path`) |
+| Project-level MCP (auto-generated) | none (unless `--sqlite-db-path`) | none (unless `--sqlite-db-path`) | `windows-mcp` | `windows-mcp` | none (unless `--sqlite-db-path`) | none (unless `--sqlite-db-path`) |
 | Agents (the six core agents from the cct plugin in every variant, the language coders from their plugins if installed; the variant's `CLAUDE.md` names its coder) | `cct:coder` | `cct:coder`, prefer `dotnet-tools:dotnet-coder` if installed | same | `cct:coder`, prefer `rust-tools:rust-coder` if installed | `cct:coder`, prefer `java-tools:java-coder` if installed | `cct:coder`, prefer `python-tools:python-coder` if installed |
 | Code Style | No | .editorconfig | .editorconfig | rustfmt.toml + .prettierrc | .editorconfig | .editorconfig |
 | Build/Test Integration | Generic | dotnet build/test | dotnet build/test | cargo + npm | Maven or Gradle | pytest + ruff |
@@ -72,7 +72,7 @@ Its `CLAUDE.md` routes Java work to `cct:coder`, preferring `java-tools:java-cod
 
 ### Python
 
-Its `CLAUDE.md` routes Python work to `cct:coder`, preferring `python-tools:python-coder` if installed (pytest/ruff discipline). Ships a Python-focused `.editorconfig` for whitespace and indent rules. `.claude/rules/python.md` carries the "Code Style (MANDATORY)" block plus Python conventions (type hints, `pathlib`, `logging` over `print`), scoped to `**/*.py`, `pyproject.toml`, `requirements*.txt`, and `ruff.toml`. The `python-tools:python-coder` agent uses Bash `pytest` / `ruff` commands directly -- no Python-specific MCP tools exist yet. Setup writes `**Post-edit build**: none`; the derived `**Gate**` runs `ruff format --check`, `ruff check` and pytest, so the merge gate fails unless all pass. The setup script accepts `--package-manager` (pip, poetry, or uv, default: pip) and `--python-version` (default: 3.12) to auto-derive build, test, format, and lint commands. SQLite MCP support is optional.
+Its `CLAUDE.md` routes Python work to `cct:coder`, preferring `python-tools:python-coder` if installed (pytest/ruff discipline). Ships a Python-focused `.editorconfig` for whitespace and indent rules. `.claude/rules/python.md` carries the "Code Style (MANDATORY)" block plus Python conventions (type hints, `pathlib`, `logging` over `print`), scoped to `**/*.py`, `pyproject.toml`, `requirements*.txt`, and `ruff.toml`. The `python-tools:python-coder` agent uses Bash `pytest` / `ruff` commands directly; it is not granted the `python-tools` MCP server's tools. Setup writes `**Post-edit build**: none`; the derived `**Gate**` runs `ruff format --check`, `ruff check` and pytest, so the merge gate fails unless all pass. The setup script accepts `--package-manager` (pip, poetry, or uv, default: pip) and `--python-version` (default: 3.12) to auto-derive build, test, format, and lint commands. SQLite MCP support is optional.
 
 ### Rust-Tauri
 
@@ -85,15 +85,15 @@ The setup script generates `<project-root>/.mcp.json` per variant at setup time,
 | Variant | Always generated | Optional (via flag) | Required flag |
 |---|---|---|---|
 | general | *(none — file omitted unless flags set)* | `sqlite` | `--sqlite-db-path` |
-| dotnet | `dotnet-tools` | `sqlite` | `--mcp-dev-servers-path` |
-| dotnet-maui | `dotnet-tools`, `windows-mcp` | `sqlite` | `--mcp-dev-servers-path` |
-| rust-tauri | `rust-tools`, `windows-mcp` | `sqlite` | `--mcp-dev-servers-path` |
+| dotnet | *(none — file omitted unless flags set)* | `sqlite` | `--sqlite-db-path` |
+| dotnet-maui | `windows-mcp` | `sqlite` | - |
+| rust-tauri | `windows-mcp` | `sqlite` | - |
 | java | *(none — file omitted unless flags set)* | `sqlite` | `--sqlite-db-path` |
 | python | *(none — file omitted unless flags set)* | `sqlite` | `--sqlite-db-path` |
 
 **Flag notes:**
 
-- `--mcp-dev-servers-path <path>` — points at a local clone of [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers). Required for variants that register `dotnet-tools` or `rust-tools`. If omitted, the setup script prints a warning and skips the affected entries (no default).
+- `--mcp-dev-servers-path <path>` — accepted and ignored since v6.1 (setup warns); `dotnet-tools` / `rust-tools` are plugins, enabled per clone by setup when installed.
 - `--sqlite-db-path <path>` — optional for any variant. Accepts absolute or relative (resolved against caller CWD).
 - `windows-mcp` is hard-coded to `uvx windows-mcp` — assumes `uvx` is on PATH.
 - If no entries would be written for a variant, `.mcp.json` is not created.
