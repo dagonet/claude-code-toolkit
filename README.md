@@ -38,7 +38,7 @@ In a project set up from the templates, they also:
 - hold a merge until the project's Gate command (run it with `cct-gate`) has passed on that commit; with no Gate command set, merges are not held;
 - stop a commit while the tests are red;
 - keep the lead session delegating: it plans and reviews, the agents edit code and run builds;
-- cap oversized file reads and stop runaway agents.
+- if `cct-guards` is installed: cap oversized file reads and stop runaway agents.
 
 ### A plain report style
 
@@ -92,7 +92,7 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
   `claude plugin marketplace add dagonet/claude-code-toolkit#v7.0.0 && claude plugin install cct@dagonet`
   To add MCP server plugins (next section), install `uv` first and append `&& claude plugin install <name>@dagonet` for each. `uv` is present in cloud sessions, and PyPI and GitHub are reachable from them.
 - **Moving to a new release:** a pinned install does not advance by itself: `claude plugin marketplace update` and `claude plugin update cct@dagonet` leave it where it is.
-  Run `claude plugin marketplace remove dagonet` (this uninstalls `cct` too), add the new `#tag` the same way, run `claude plugin install cct@dagonet`
+  Note every `@dagonet` plugin in `claude plugin list`, run `claude plugin marketplace remove dagonet` (this uninstalls `cct` and every other `@dagonet` plugin), add the new `#tag` the same way, run `claude plugin install cct@dagonet`, then reinstall each noted plugin by name (details: [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md), *Later releases*)
   (on Linux: pull the checkout, then run the installer). Pull your toolkit checkout to the same tag, then restart every session before the next `/cct:sync-template`.
   A session that syncs after the pull but before its restart is refused; restart it.
 - A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.

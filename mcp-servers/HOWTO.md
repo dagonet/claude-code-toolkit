@@ -251,7 +251,7 @@ The Context7 plugin provides up-to-date library documentation lookup.
 
 These servers are **not** registered at user level. They go into per-project `.mcp.json` files (repo root) so they only load in repos that actually need them — the user-level context stays small.
 
-`setup-project.{sh,ps1}` can generate `.mcp.json` automatically for the dotnet, dotnet-maui, and rust-tauri variants. Pass `--mcp-dev-servers-path <path>` so the script knows where your local `mcp-dev-servers` checkout lives. Optional: `--sqlite-db-path <path>` adds a sqlite entry. See `docs/templates.md` for the per-variant matrix.
+`setup-project.{sh,ps1}` writes `.mcp.json` with `windows-mcp` for dotnet-maui and rust-tauri, and `sqlite` with `--sqlite-db-path`; `dotnet-tools` and `rust-tools` are plugins (below), and `--mcp-dev-servers-path` is ignored since v6.1. Optional: `--sqlite-db-path <path>` adds a sqlite entry. See `docs/templates.md` for the per-variant matrix.
 
 If you register these manually instead, the commands below show what each entry looks like.
 

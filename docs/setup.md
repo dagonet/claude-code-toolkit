@@ -153,7 +153,7 @@ Bash flags use `--kebab-case`; PowerShell uses `-PascalCase`. Both scripts accep
 | `--default-branch <name>` | `-DefaultBranch <name>` | The repo's trunk. Rewrites the `**Protected branches**:` line in `PROJECT_CONTEXT.md` when `main master` would not cover it. Must be a plain ref name. Defaults to the target repo's current branch, else `main`. |
 | `--wrap-existing-claude-md` | `-WrapExistingClaudeMd` | When the target already has a `CLAUDE.md`, write the template and move the existing file's full content into `.claude/project-instructions.md` instead of skipping (`CLAUDE.md` has no `PROJECT-CUSTOM` region). An existing `.claude/project-instructions.md` is never overwritten or merged into; in that case nothing is moved and the old `CLAUDE.md` is overwritten by the template. |
 | `--force` | `-Force` | Overwrite existing files in the target directory (default: skip existing). |
-| `--mcp-dev-servers-path <path>` | `-McpDevServersPath <path>` | Path to a local clone of [`mcp-dev-servers`](https://github.com/dagonet/mcp-dev-servers). Required for `dotnet`, `dotnet-maui`, `rust-tauri` variants to generate project-level `dotnet-tools` / `rust-tools`. |
+| `--mcp-dev-servers-path <path>` | `-McpDevServersPath <path>` | Ignored since v6.1 (setup prints a warning): the .NET and Rust servers are the `dotnet-tools` / `rust-tools` plugins, which setup enables for the clone when they are installed. |
 | `--sqlite-db-path <path>` | `-SqliteDbPath <path>` | Optional; generates a project-level `sqlite` MCP entry for any variant. |
 
 See [`templates.md`](templates.md#project-level-mcp-matrix) for the per-variant project-level MCP matrix.

@@ -27,7 +27,7 @@ Follow these steps to configure Claude Code on a fresh machine:
    /plugin marketplace add dagonet/claude-code-toolkit#v<VERSION>
    /plugin install cct@dagonet
    ```
-   It brings every agent (`cct:<name>`), every skill (`/cct:<skill>`), the `pm-report` output style and the toolkit hooks, machine-wide. Delete `~/.claude/commands/` if it still exists — a leftover command file shadows its skill.
+   It brings the six core agents (`cct:<name>`), the three core skills (`/cct:<skill>`), the `pm-report` output style and the core hooks, machine-wide; the rest are optional plugins, installed by name (`claude plugin install <name>@dagonet`, see the README *Optional plugins*). Delete `~/.claude/commands/` if it still exists — a leftover command file shadows its skill.
 
 4. **Configure MCP servers**
    `.mcp.json.template` holds the user-scope server definitions. **It is a snippet, not a file to drop in place.** Merge its `mcpServers` object into **`~/.claude.json`** (note: `~/.claude.json`, a sibling of the `~/.claude/` directory — *not* `~/.claude/.mcp.json`, which Claude Code does not read, and *not* `~/.claude/settings.json`, where an `mcpServers` key is silently ignored). Equivalently, run `claude mcp add --scope user …`, which writes to the same place. Replace the placeholder values with real paths and tokens for your machine. See also [`../mcp-servers/HOWTO.md`](../mcp-servers/HOWTO.md).
